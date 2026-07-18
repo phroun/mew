@@ -1,0 +1,91 @@
+# mew syntax file for Dockerfiles
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# Instructions match case-insensitively at the start of a line.
+
+=Idle
+=Comment	green
+=Keyword	bold
+=String		cyan
+=StringEscape	bold cyan
+=Var		bold cyan
+
+:bol Idle
+	*		rest	noeat
+	" \t"		bol
+	"#"		comment	recolor=-1
+	"a-zA-Z"	instr	buffer recolor=-1
+	"\n"		bol
+
+:comment Comment
+	*		comment
+	"\n"		bol
+
+:instr Idle
+	*		rest	noeat istrings
+	"add"		kw
+	"arg"		kw
+	"as"		kw
+	"cmd"		kw
+	"copy"		kw
+	"entrypoint"	kw
+	"env"		kw
+	"expose"	kw
+	"from"		kw
+	"healthcheck"	kw
+	"label"		kw
+	"maintainer"	kw
+	"onbuild"	kw
+	"run"		kw
+	"shell"		kw
+	"stopsignal"	kw
+	"user"		kw
+	"volume"	kw
+	"workdir"	kw
+done
+	"a-zA-Z"	instr
+
+:kw Keyword
+	*	rest	noeat
+
+:rest Idle
+	*		rest
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+	"$"		dollar	recolor=-1
+	"\\"		cont
+
+# Backslash swallows the next character (including the newline for
+# continuation lines, which then stay in the instruction's tail).
+:cont Idle
+	*		rest
+
+:dq String
+	*		dq
+	"\""		rest
+	"\\"		dq_esc
+	"\n"		bol
+
+:dq_esc StringEscape
+	*		dq
+
+:sq String
+	*		sq
+	"'"		rest
+	"\n"		bol
+
+:dollar Var
+	*		rest	noeat
+	"{"		dollar_br
+	"a-zA-Z0-9_"	dollar_name
+
+:dollar_br Var
+	*		dollar_br
+	"}"		rest
+	"\n"		bol
+
+:dollar_name Var
+	*		rest	noeat
+	"a-zA-Z0-9_"	dollar_name

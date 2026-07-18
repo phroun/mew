@@ -1,0 +1,167 @@
+# mew syntax file for C# (.cs)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Char		cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+
+:idle Idle
+	*		idle
+	"/"		slash		recolor=-1
+	"\""		string		recolor=-1
+	"'"		char		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+	"\n"		idle	noeat
+
+:string_esc StringEscape
+	*		string
+
+:char Char
+	*		char
+	"'"		idle
+	"\\"		char_esc
+	"\n"		idle	noeat
+
+:char_esc StringEscape
+	*		char
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXbBuUlLfFeE_"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"abstract"	kw
+	"as"		kw
+	"async"		kw
+	"await"		kw
+	"base"		kw
+	"break"		kw
+	"case"		kw
+	"catch"		kw
+	"checked"	kw
+	"class"		kw
+	"const"		kw
+	"continue"	kw
+	"default"	kw
+	"delegate"	kw
+	"do"		kw
+	"else"		kw
+	"enum"		kw
+	"event"		kw
+	"explicit"	kw
+	"extern"	kw
+	"finally"	kw
+	"fixed"		kw
+	"for"		kw
+	"foreach"	kw
+	"goto"		kw
+	"if"		kw
+	"implicit"	kw
+	"in"		kw
+	"init"		kw
+	"interface"	kw
+	"internal"	kw
+	"is"		kw
+	"lock"		kw
+	"namespace"	kw
+	"new"		kw
+	"operator"	kw
+	"out"		kw
+	"override"	kw
+	"params"	kw
+	"partial"	kw
+	"private"	kw
+	"protected"	kw
+	"public"	kw
+	"readonly"	kw
+	"record"	kw
+	"ref"		kw
+	"required"	kw
+	"return"	kw
+	"sealed"	kw
+	"sizeof"	kw
+	"stackalloc"	kw
+	"static"	kw
+	"struct"	kw
+	"switch"	kw
+	"throw"		kw
+	"try"		kw
+	"typeof"	kw
+	"unchecked"	kw
+	"unsafe"	kw
+	"using"		kw
+	"var"		kw
+	"virtual"	kw
+	"volatile"	kw
+	"when"		kw
+	"where"		kw
+	"while"		kw
+	"yield"		kw
+	"bool"		type
+	"byte"		type
+	"char"		type
+	"decimal"	type
+	"double"	type
+	"dynamic"	type
+	"float"		type
+	"int"		type
+	"long"		type
+	"nint"		type
+	"nuint"		type
+	"object"	type
+	"sbyte"		type
+	"short"		type
+	"string"	type
+	"uint"		type
+	"ulong"		type
+	"ushort"	type
+	"void"		type
+	"base"		lit
+	"false"		lit
+	"null"		lit
+	"this"		lit
+	"true"		lit
+	"value"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

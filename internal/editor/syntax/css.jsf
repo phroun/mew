@@ -1,0 +1,97 @@
+# mew syntax file for CSS (.css)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Selector	bold
+=Prop		bold green
+=String		cyan
+=Number		red
+=Color		bold cyan
+=AtRule		blue
+
+# Between rules: selectors, at-rules, comments.
+:idle Idle
+	*		sel	noeat
+	" \t\n"		idle
+	"/"		slash	recolor=-1
+	"@"		atrule	recolor=-1
+	"{"		props
+
+:slash Idle
+	*		idle	noeat recolor=-1
+	"*"		comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment	noeat
+	"*"		comment_star
+	"/"		idle
+
+:atrule AtRule
+	*		idle	noeat
+	"a-zA-Z\-"	atrule
+
+:sel Selector
+	*		sel
+	"{"		props	noeat
+	"/"		sel_slash
+	"\n"		idle
+
+:sel_slash Selector
+	*		sel	noeat
+	"*"		comment	recolor=-2
+
+# Inside { }: property: value; pairs.
+:props Idle
+	*		props
+	"}"		idle
+	"/"		props_slash
+	"a-zA-Z\-"	prop	buffer mark noeat
+
+:props_slash Idle
+	*		props	noeat
+	"*"		comment	recolor=-2
+
+:prop Idle
+	*		value	noeat
+	"a-zA-Z\-"	prop
+	":"		prop_done	markend recolormark
+
+:prop_done Prop
+	*		value	noeat
+
+:value Idle
+	*		value
+	";"		props
+	"}"		idle
+	"/"		value_slash
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+	"#"		hexcolor	recolor=-1
+	"0-9"		number	recolor=-1
+	"\n"		value
+
+:value_slash Idle
+	*		value	noeat
+	"*"		comment	recolor=-2
+
+:dq String
+	*		dq
+	"\""		value
+
+:sq String
+	*		sq
+	"'"		value
+
+:hexcolor Color
+	*		value	noeat
+	"0-9a-fA-F"	hexcolor
+
+:number Number
+	*		value	noeat
+	"0-9.%a-z"	number

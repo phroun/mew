@@ -1,0 +1,117 @@
+# mew syntax file for Lua (.lua)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Builtin	bold
+=Constant	red
+
+:idle Idle
+	*		idle
+	"\-"		minus		recolor=-1
+	"\""		dq		recolor=-1
+	"'"		sq		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+# "-" alone is an operator; "--" opens a comment; "--[[" a block comment.
+:minus Idle
+	*		idle		noeat recolor=-1
+	"\-"		com_start	recolor=-2
+
+:com_start Comment
+	*		line_comment	noeat
+	"["		com_br
+
+:com_br Comment
+	*		line_comment	noeat
+	"["		block_comment
+
+:block_comment Comment
+	*		block_comment
+	"]"		block_end
+
+:block_end Comment
+	*		block_comment	noeat
+	"]"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:dq String
+	*		dq
+	"\""		idle
+	"\\"		dq_esc
+	"\n"		idle	noeat
+
+:dq_esc StringEscape
+	*		dq
+
+:sq String
+	*		sq
+	"'"		idle
+	"\\"		sq_esc
+	"\n"		idle	noeat
+
+:sq_esc StringEscape
+	*		sq
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXpPeE"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"and"		kw
+	"break"		kw
+	"do"		kw
+	"else"		kw
+	"elseif"	kw
+	"end"		kw
+	"for"		kw
+	"function"	kw
+	"goto"		kw
+	"if"		kw
+	"in"		kw
+	"local"		kw
+	"not"		kw
+	"or"		kw
+	"repeat"	kw
+	"return"	kw
+	"then"		kw
+	"until"		kw
+	"while"		kw
+	"error"		builtin
+	"ipairs"	builtin
+	"next"		builtin
+	"pairs"		builtin
+	"pcall"		builtin
+	"print"		builtin
+	"require"	builtin
+	"select"	builtin
+	"setmetatable"	builtin
+	"tonumber"	builtin
+	"tostring"	builtin
+	"type"		builtin
+	"unpack"	builtin
+	"false"		lit
+	"nil"		lit
+	"true"		lit
+	"self"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:builtin Builtin
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

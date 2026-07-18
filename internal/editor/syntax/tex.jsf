@@ -1,0 +1,54 @@
+# mew syntax file for TeX / LaTeX (.tex .ltx)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Command	bold
+=Math		cyan
+=MathCommand	bold cyan
+=Special	bold green
+
+:idle Idle
+	*		idle
+	"%"		comment	recolor=-1
+	"\\"		cmd	recolor=-1
+	"$"		math	recolor=-1
+	"{}&^_~"	special	recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+# \command or a single-character control symbol (\%, \\, ...).
+:cmd Command
+	*		cmd_sym
+	"a-zA-Z"	cmd_name
+
+:cmd_sym Command
+	*		idle	noeat
+
+:cmd_name Command
+	*		idle	noeat
+	"a-zA-Z*"	cmd_name
+
+:special Special
+	*		idle	noeat
+
+# $...$ (and $$...$$, seen as two toggles).
+:math Math
+	*		math
+	"$"		idle
+	"\\"		math_cmd	recolor=-1
+	"%"		comment	recolor=-1
+
+:math_cmd MathCommand
+	*		math_sym
+	"a-zA-Z"	math_name
+
+:math_sym MathCommand
+	*		math	noeat
+
+:math_name MathCommand
+	*		math	noeat
+	"a-zA-Z*"	math_name

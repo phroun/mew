@@ -1,0 +1,154 @@
+# mew syntax file for Rust (.rs)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Char		cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+=Macro		blue
+
+:idle Idle
+	*		idle
+	"/"		slash		recolor=-1
+	"\""		string		recolor=-1
+	"'"		squote		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		mark buffer recolor=-1
+
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+
+:string_esc StringEscape
+	*		string
+
+# 'x' is a char literal; 'name (no closing quote) is a lifetime — when the
+# second character isn't followed by a closing quote, repaint as plain code.
+:squote Char
+	*		sq2
+	"\\"		char_esc
+
+:char_esc StringEscape
+	*		sq2
+
+:sq2 Char
+	*		lifetime	noeat recolor=-3
+	"'"		idle
+
+:lifetime Idle
+	*		idle	noeat
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXoObBeE_iu"	number
+
+:ident Idle
+	*		ident_end	noeat markend strings
+	"as"		kw
+	"async"		kw
+	"await"		kw
+	"break"		kw
+	"const"		kw
+	"continue"	kw
+	"crate"		kw
+	"dyn"		kw
+	"else"		kw
+	"enum"		kw
+	"extern"	kw
+	"fn"		kw
+	"for"		kw
+	"if"		kw
+	"impl"		kw
+	"in"		kw
+	"let"		kw
+	"loop"		kw
+	"match"		kw
+	"mod"		kw
+	"move"		kw
+	"mut"		kw
+	"pub"		kw
+	"ref"		kw
+	"return"	kw
+	"static"	kw
+	"struct"	kw
+	"super"		kw
+	"trait"		kw
+	"type"		kw
+	"unsafe"	kw
+	"use"		kw
+	"where"		kw
+	"while"		kw
+	"bool"		type
+	"char"		type
+	"f32"		type
+	"f64"		type
+	"i8"		type
+	"i16"		type
+	"i32"		type
+	"i64"		type
+	"i128"		type
+	"isize"		type
+	"str"		type
+	"u8"		type
+	"u16"		type
+	"u32"		type
+	"u64"		type
+	"u128"		type
+	"usize"		type
+	"Box"		type
+	"Option"	type
+	"Result"	type
+	"String"	type
+	"Vec"		type
+	"false"		lit
+	"self"		lit
+	"Self"		lit
+	"true"		lit
+	"None"		lit
+	"Some"		lit
+	"Ok"		lit
+	"Err"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+# ident! is a macro invocation: repaint the marked name with the macro color.
+:ident_end Idle
+	*		idle	noeat
+	"!"		macro_done	recolormark
+
+:macro_done Macro
+	*		idle	noeat
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

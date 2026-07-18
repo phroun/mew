@@ -1,0 +1,211 @@
+# mew syntax file for C and C++
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Preproc	blue
+=String		cyan
+=StringEscape	bold cyan
+=Char		cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+=Bad		bold red
+
+# Lines begin here: leading whitespace, then a possible preprocessor line.
+:bol Idle
+	*		idle	noeat
+	" \t"		bol
+	"#"		pre	recolor=-1
+
+:idle Idle
+	*		idle
+	"\n"		bol
+	"/"		slash		recolor=-1
+	"\""		string		recolor=-1
+	"'"		char		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+# Preprocessor directives run to end of line; backslash continues them.
+:pre Preproc
+	*		pre
+	"\n"		bol
+	"\\"		pre_cont
+	"/"		pre_slash
+
+:pre_cont Preproc
+	*		pre
+
+:pre_slash Preproc
+	*		pre		noeat
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+# / begins a comment, or is just an operator.
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		bol
+
+# Strings do not span lines (an unescaped newline just ends the coloring).
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+	"\n"		bol	noeat
+
+:string_esc StringEscape
+	*		string
+
+:char Char
+	*		char
+	"'"		idle
+	"\\"		char_esc
+	"\n"		bol	noeat
+
+:char_esc StringEscape
+	*		char
+
+# Numbers: decimal, hex, octal, binary, floats, suffixes, C++14 separators.
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXbBuUlLfF'"	number
+	"eEpP"		number_exp
+
+:number_exp Number
+	*		idle	noeat
+	"+\-0-9"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"alignas"	kw
+	"alignof"	kw
+	"asm"		kw
+	"auto"		kw
+	"break"		kw
+	"case"		kw
+	"catch"		kw
+	"class"		kw
+	"co_await"	kw
+	"co_return"	kw
+	"co_yield"	kw
+	"concept"	kw
+	"const"		kw
+	"const_cast"	kw
+	"consteval"	kw
+	"constexpr"	kw
+	"constinit"	kw
+	"continue"	kw
+	"decltype"	kw
+	"default"	kw
+	"delete"	kw
+	"do"		kw
+	"dynamic_cast"	kw
+	"else"		kw
+	"enum"		kw
+	"explicit"	kw
+	"export"	kw
+	"extern"	kw
+	"final"		kw
+	"for"		kw
+	"friend"	kw
+	"goto"		kw
+	"if"		kw
+	"inline"	kw
+	"mutable"	kw
+	"namespace"	kw
+	"new"		kw
+	"noexcept"	kw
+	"operator"	kw
+	"override"	kw
+	"private"	kw
+	"protected"	kw
+	"public"	kw
+	"register"	kw
+	"reinterpret_cast"	kw
+	"requires"	kw
+	"restrict"	kw
+	"return"	kw
+	"sizeof"	kw
+	"static"	kw
+	"static_assert"	kw
+	"static_cast"	kw
+	"struct"	kw
+	"switch"	kw
+	"template"	kw
+	"this"		kw
+	"thread_local"	kw
+	"throw"		kw
+	"try"		kw
+	"typedef"	kw
+	"typeid"	kw
+	"typename"	kw
+	"union"		kw
+	"using"		kw
+	"virtual"	kw
+	"volatile"	kw
+	"while"		kw
+	"bool"		type
+	"char"		type
+	"char8_t"	type
+	"char16_t"	type
+	"char32_t"	type
+	"double"	type
+	"float"		type
+	"int"		type
+	"int8_t"	type
+	"int16_t"	type
+	"int32_t"	type
+	"int64_t"	type
+	"intptr_t"	type
+	"long"		type
+	"ptrdiff_t"	type
+	"short"		type
+	"signed"	type
+	"size_t"	type
+	"ssize_t"	type
+	"uint8_t"	type
+	"uint16_t"	type
+	"uint32_t"	type
+	"uint64_t"	type
+	"uintptr_t"	type
+	"unsigned"	type
+	"va_list"	type
+	"void"		type
+	"wchar_t"	type
+	"FILE"		type
+	"EOF"		lit
+	"NULL"		lit
+	"false"		lit
+	"nullptr"	lit
+	"stderr"	lit
+	"stdin"		lit
+	"stdout"	lit
+	"true"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

@@ -1,0 +1,144 @@
+# mew syntax file for Java (.java)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Char		cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+
+:idle Idle
+	*		idle
+	"/"		slash		recolor=-1
+	"\""		string		recolor=-1
+	"'"		char		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+	"\n"		idle	noeat
+
+:string_esc StringEscape
+	*		string
+
+:char Char
+	*		char
+	"'"		idle
+	"\\"		char_esc
+	"\n"		idle	noeat
+
+:char_esc StringEscape
+	*		char
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXbBuUlLfFeE_"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"abstract"	kw
+	"assert"	kw
+	"break"		kw
+	"case"		kw
+	"catch"		kw
+	"class"		kw
+	"const"		kw
+	"continue"	kw
+	"default"	kw
+	"do"		kw
+	"else"		kw
+	"enum"		kw
+	"extends"	kw
+	"final"		kw
+	"finally"	kw
+	"for"		kw
+	"goto"		kw
+	"if"		kw
+	"implements"	kw
+	"import"	kw
+	"instanceof"	kw
+	"interface"	kw
+	"native"	kw
+	"new"		kw
+	"package"	kw
+	"permits"	kw
+	"private"	kw
+	"protected"	kw
+	"public"	kw
+	"record"	kw
+	"return"	kw
+	"sealed"	kw
+	"static"	kw
+	"strictfp"	kw
+	"super"		kw
+	"switch"	kw
+	"synchronized"	kw
+	"throw"		kw
+	"throws"	kw
+	"transient"	kw
+	"try"		kw
+	"var"		kw
+	"volatile"	kw
+	"while"		kw
+	"yield"		kw
+	"Boolean"	type
+	"Character"	type
+	"Double"	type
+	"Float"		type
+	"Integer"	type
+	"List"		type
+	"Long"		type
+	"Map"		type
+	"Object"	type
+	"Set"		type
+	"String"	type
+	"boolean"	type
+	"byte"		type
+	"char"		type
+	"double"	type
+	"float"		type
+	"int"		type
+	"long"		type
+	"short"		type
+	"void"		type
+	"false"		lit
+	"null"		lit
+	"this"		lit
+	"true"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

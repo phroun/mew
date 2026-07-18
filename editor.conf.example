@@ -1,0 +1,337 @@
+# mew Editor Configuration File
+# This file contains settings and key mappings for the mew text editor
+# Lines starting with # or ; are comments
+# Semicolons can also be used for comments in the middle of a line
+#
+# Other configuration files can be spliced in with an #include directive:
+#   #include "relative.conf"   - relative to THIS file, via its file system
+#   #include <shared.conf>     - from the standard mew config directory
+# Each file is included at most once; nesting is bounded.
+#
+# Value keywords (in every section, at every layer): an unquoted
+#   default   - reset the key to mew's built-in ("system default"), erasing
+#               every earlier layer's opinion ("system default" also works)
+#   inherit   - no opinion here; earlier layers (or, for colors, the next
+#               cascade level) show through
+# A blank value keeps its per-table meaning: it deletes [formats]/[match]/
+# [outline] entries, unbinds a key mapping (bind to nop to disable a key
+# instead), masks a [colors.syntax] class to the grammar's own colors, turns
+# syntax="" off — and for other scalars simply inherits. Quote the word
+# ("default") to mean the literal text.
+#
+# Projects: like git, a .mew directory anywhere up the hierarchy from the
+# working directory layers its editor.conf over this one (outermost first,
+# nearest wins; mappings merge per key; relative [storage] scratch paths
+# land inside that project's .mew). Project .mew/syntax/ dirs join the
+# grammar search path. profile.mew never runs from project directories.
+# Disable with projectConfig=false in [general].
+
+[general]
+# Structural settings: key layout and mapping set, the project cascade, and
+# editing locks. Runtime-settable editor options live in [options] below.
+#
+# Editing locks: useLocks=false disables all locking; useEmacsLocks=false
+# turns off just the emacs-interoperable ".#<name>" lock files (mew then
+# keeps its own lock in the nearest .mew directory instead). Inside a git
+# repo whose .gitignore does not cover ".#*", emacs locks are skipped
+# automatically with a transient telling you the one-line fix.
+#useLocks=true
+#useEmacsLocks=true
+layout=qwerty
+mappings=mew
+
+[options]
+# Runtime-settable editor options. Each option here is exactly a set_option
+# command and a command-line --flag. Per-window options (tabSize,
+# showLineNumbers, showInvisibles, showBidi, showColumnRuler, direction) can
+# differ per buffer; the rest are editor-wide.
+#
+# Overlays refine these options along three dimensions — window class, syntax
+# grammar, and buffer type (main/work/prompt) — like the color overlays.
+# Sections are [<class>.]options[.<grammar>][.<type>], resolved most-specific
+# first with precedence class > grammar > type. A value overrides, "inherit"/
+# blank defers down the cascade, "default" is the shipped default. syntax and
+# syntaxDetect are excluded. A runtime/command-line set_option stays pinned.
+# Per-window options land on each window; the editor-wide ones (rulerShowsCursor,
+# search*, matchIgnores*, macOptionKeys, modebar*, mappings) follow the focused
+# window.
+#
+# [options.go]
+# tabSize=4
+# [options.markdown]
+# showLineNumbers=false
+# wordless prose gets a different key set and modebar in a side panel:
+# [panel.options.markdown]
+# mappings=prose
+# modebarInner=%FN% (prose)
+showLineNumbers=true
+showColumnRuler=true
+# Highlight the ruler cells under the cursor (and its ghost / bidi companion
+# cursor) with the rulerCursor color (default black on silver)
+rulerShowsCursor=false
+# Syntax highlighting: the name of a jsf grammar ("cpp", "go", ...), searched
+# in ~/.mew/syntax/, mew's built-in set, then installed JOE syntax dirs.
+# Empty (or "none") disables highlighting.
+#syntax="cpp"
+# Auto-detect each buffer's grammar: a #! shebang on the first line wins,
+# else the file extension (or extensionless basename like Makefile), both
+# resolved through [formats]; failing both, the syntax option applies.
+# [formats.<ext>] sections refine an extension by path: patterns without a
+# slash match any path component ("pages", "*wiki*"), with a slash the
+# whole path. Default: .txt inside a wiki tree highlights as dokuwiki.
+#
+# [formats.txt]
+# *notes* = markdown
+#syntaxDetect=true
+#
+# Grammar color classes map onto mew's systematic syntax* colors (see the
+# [colors] defaults: syntaxComment, syntaxString, syntaxEscape,
+# syntaxConstant, syntaxKeyword, syntaxType, syntaxPreproc, syntaxBad).
+# [colors.syntax] remaps classes for every grammar; [colors.syntax.<name>]
+# for one grammar:
+#
+# [colors.syntax.cpp]
+# Preproc = syntaxKeyword
+tabSize=4
+# go_match fallback context for buffers with NO syntax grammar: enabled
+# constructs read as strings/comments and are skipped when matching (a
+# grammar's real highlighter context supersedes these). Defaults: double
+# quotes on, the rest off.
+#matchIgnoresSingleQuote=false
+#matchIgnoresDoubleQuote=true
+#matchIgnoresSlashStar=false
+#matchIgnoresSlashSlash=false
+#matchIgnoresHash=false
+#matchIgnoresDoubleHyphen=false
+#matchIgnoresSemicolon=false
+#matchIgnoresPercent=false
+# macOS Option-key layer: unmapped Meta combos re-insert the character
+# macOS Option would type (M-p inserts π), so bindings steal individual
+# combos while the rest keep typing seamlessly.  auto (default) decodes
+# Option characters into M- strokes on macOS only; true forces decoding
+# everywhere; false disables the layer entirely.  The re-insert fallback
+# works on every platform, giving non-mac Alt keys the same layer.
+#macOptionKeys=auto
+showInvisibles=false
+wordWrap=false
+# Terminals that apply their own bidi reordering (macOS Terminal.app) re-flip
+# mew's already-visual RTL output. "true" emits RTL runs in logical order so
+# such terminals lay them out correctly; "false" keeps visual order (correct
+# for stream-order terminals: iTerm2, xterm, most others). "auto" (default)
+# probes the terminal once — at the first frame containing RTL content — by
+# printing a two-letter probe and asking where the cursor ended up (DSR),
+# falling back to TERM_PROGRAM when the answer is inconclusive.
+#flipBidiForHost=auto
+# Modebar templates. The status bar has three template-driven regions: the
+# inner label just right of the key-sequence readout, the default middle text
+# (shown when nothing more urgent — completions, a live breadcrumb — claims the
+# slot), and the outer readout pinned to the right before the logo. Each is a
+# template string where %CODE% tokens expand to live values and %% is a literal
+# percent. Unknown codes are left verbatim so a not-yet-supported code is
+# visible rather than silently dropped. The outer readout is ellipsized (with a
+# trailing …) when the window is too narrow to hold everything.
+#
+# Codes: %FN% filename (or [New File]), %FORTUNE% the buffer's spawn context,
+# %FRAG% rope fragmentation count, %HEAP% heap usage, %LINE% 1-based line,
+# %RUNE% 1-based rune within the line, %COL% 1-based visual column (tabs
+# expanded), %LINEBYTE% byte offset within the line, %ABSBYTE% absolute byte
+# offset in the buffer. %SPU% %SPD% %PPU% %PPD% resolve to the key bound to
+# stat_peek_up / stat_peek_down / prompt_peek_up / prompt_peek_down (used by
+# the [indicators] peek labels, but valid in any template).
+#modebarInner="%FN%"
+#modebarDefault="%FORTUNE%"
+#modebarOuter="Frag:%FRAG% Heap:%HEAP% Line:%LINE% Rune:%RUNE%"
+
+[indicators]
+rulerFill="░"
+rulerTick="."
+rulerMinor=":"
+rulerMajor="|"
+visibleSpace="·"
+visibleTab=">"
+visibleNewline="⮐"
+visibleReturn="M"
+emptyGutter="~"
+moreRight=">"
+moreLeft="<"
+cursorGhost="|"
+cursorOffScreen="@"
+# The peek labels run through the modebar's %CODE% engine: %SPU% %SPD% %PPU%
+# %PPD% resolve to the key bound to stat_peek_up / stat_peek_down /
+# prompt_peek_up / prompt_peek_down (in the stored spelling), so the hint
+# tracks the live keymap. Plain text (e.g. "[Esc U]") still works.
+statPeekUp="[%SPU%]"
+statPeekDown="[%SPD%]"
+promptPeekUp="[%PPU%]"
+promptPeekDown="[%PPD%]"
+
+
+
+[layout.qwerty]
+#
+# use | to mark absolute middle, and/or < and > to mark left/right hands
+# use || and/or << and >> to mark areas beyond convenient reach
+#
+row+3="esc  F1  F2  F3  F4  F5  F6||F7  F8  F9  F10  F11  F12     fdel"
+row+2="`   1   2   3   4   5<  6  >7   8   9   0>> -   =    del   home"
+row+1="tab   q   w   e   r < t | y > u   i   o   p>> [   ]   \    pgup"
+row-H="^   a   s   d   f   g | h   j   k   l   ;   '  \"  return>>pgdn"
+row-1="S-    z   x   c   v<  b > n   m   ,   .   /   S- >>  up     end"
+row-2="^   M-      <       space       >      M- >>  left  down  right"
+
+# The following [mappings] section defines mew key mappings:
+#
+# Multiple named sets can coexist: [mappings.<set>] (e.g. [mappings.emacs]).
+# The focused window's active set is the "mappings" option resolved through its
+# overlay (so [options.<grammar>] mappings=emacs switches a buffer's key set).
+# A set is refined by window class, grammar, and buffer type the same way
+# options are — [<class>.]mappings.<set>[.<grammar>][.<type>], resolved most-
+# specific first with precedence class > grammar > type (e.g.
+# [mappings.mew.cpp] rebinds a key only in C++ buffers using the mew set).
+# Only the default "mew" set carries the built-in bindings below; other sets are
+# whatever you define for them.
+#
+# ESCAPE SEQUENCES:
+#
+# Both keys and commands can use escape sequences:
+#  \n = newline             \t = tab
+#  \r = carriage return     \0 = null character
+#  \\ = backslash          \= = equal sign
+#  \: = colon               \, = comma
+#  \# = hash sign           \; = semicolon
+#  \[ = open bracket        \] = close bracket
+#  \xHH = character with hex code HH
+#
+# SPECIAL KEY FORMATS:
+#
+#  Basic Keys:
+#    ^X = Control+X
+#    up, down, left, right = Arrow keys
+#    ^up, ^down, ^left, ^right = Control + Arrow keys
+#    tab, S-tab = tab and Shift+Tab keys (tab=^I)
+#
+#  Key Sequences:
+#    esc X = Escape followed by the letter X
+#    ^K X = Control+K followed by the letter X
+#
+#  Special Extended Keys:
+#    home, end, pgup, pgdn, del, back (^H), fdel
+#    F1 through F12 = Function Keys (note uppercase F)
+#
+#  Modified Extended Keys:
+#    ^F1 = Control+F1
+#    S-F1 = Shift+F1
+#    S-^F1 = Shift+Ctrl+F1
+#    M-F1 = Meta+F1 (Usually Option or Alternate)
+#    M-^F1 = Meta+Ctrl+F1
+#    M-S-^F1 = Meta+Shift+Ctrl+F1
+#    H-F1 = Hyper+F1 (Rarely Implemented: Super, Command or Lose)
+#
+#  COMMAND SEQUENCE FORMAT:
+#
+#    single_command = Simple command
+#    command1; command2 = Command sequence (all executed)
+#    command1 & command2 = Conditional (command2 only if command1 succeeds)
+#    command1 | command2 = Fallback (command2 only if command1 fails)
+#    command 'param' = Command with string parameter
+#    command param = Command with non-string parameter
+#    command1 (command2) = Command1 with command2 as a parameter
+#    command param1, param2 = Command with multiple parameters
+
+[mappings.mew]
+^T	=editor_options
+^K H	=help_toggle
+esc X	=cmd
+#^M	=accept|insert '\n'
+#^C	=cancel|buffer_close
+esc >	=scroll_right
+esc <	=scroll_left
+esc ]	=window_next
+esc [	=window_prior
+esc U	=stat_peek_up
+esc V	=stat_peek_down
+esc P	=prompt_peek_up
+esc N	=prompt_peek_down
+^B	=go_char_prior
+left    =go_char_prior
+^F	=go_char_next
+right   =go_char_next
+^Z	=go_word_prior
+^left   =go_word_prior
+^X 	=go_word_next
+^right  =go_word_next
+^A	=go_line_beg
+home	=go_line_beg
+^E	=go_line_end
+end	=go_line_end
+^P	=go_line_prior
+up	=go_line_prior
+^N	=go_line_next
+down    =go_line_next
+^U	=go_page_prior
+pgup	=go_page_prior
+^V	=go_page_next
+pgdn    =go_page_next
+^G	=go_match
+^K L	=go_line
+esc B	=go_mark 'block_begin'
+esc K	=go_mark 'block_end'
+esc 1	=go_mark '1'
+esc 2	=go_mark '2'
+esc 3	=go_mark '3'
+esc 4	=go_mark '4'
+esc 5	=go_mark '5'
+esc 6	=go_mark '6'
+esc 7	=go_mark '7'
+esc 8	=go_mark '8'
+esc 9	=go_mark '9'
+esc 0	=go_mark '0'
+esc esc	=set_mark
+^K 9	=buffer_list
+^K B    =set_mark 'block_begin'
+^K K	=set_mark 'block_end'
+^K C	=block_copy
+^K M	=block_move
+^K Y	=block_delete
+^K W	=block_write
+^K .	=block_indent
+^K ,	=block_unindent
+^K F	=find
+^L	=find_next
+^D	=del_char_next
+#fdel	=del_char_next
+^O	=del_word_beg
+^W	=del_word_end
+^\[	=del_line_beg
+^J	=del_line_end
+^Y	=del_line
+^K N	=buffer_new
+^K Z	=buffer_close
+^-	=buffer_undo
+^_	=buffer_undo
+^+	=buffer_redo
+^^	=buffer_redo
+^K 2	=buffer_clone
+^K O	=buffer_open_file
+^K R	=buffer_insert_file
+^K A	=buffer_save_all
+^K Q	=buffer_save_all&exit
+^K S	=buffer_save
+^K X	=buffer_save_all true & exit
+^K D	=buffer_save_as
+^I	=insert '\t'
+
+[storage]
+# Local storage locations, honored only from local config files (never from
+# a host-supplied config string). scratch: Garland's cold-storage directory
+# (empty = system temp). backups: where automatic pre-session backups land
+# (empty = ~/.mew/backups). deadcat: where the crash/kill dump of modified
+# buffers lands (mew's DEADJOE; empty = the folder editor.conf loaded from,
+# with a breadcrumb copy left in the working directory). In a project layer
+# a relative path lands inside that project's .mew folder.
+#scratch=
+#backups=
+#deadcat=
+# documents: fallback directory filename completion globs for a buffer with no
+# file of its own (empty falls back to the launch directory).
+#documents=

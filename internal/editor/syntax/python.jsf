@@ -1,0 +1,179 @@
+# mew syntax file for Python (.py .pyw .rpy)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Builtin	bold
+=Constant	red
+=Decorator	blue
+
+:idle Idle
+	*		idle
+	"#"		comment		recolor=-1
+	"@"		decorator	recolor=-1
+	"\""		dq		recolor=-1
+	"'"		sq		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+:decorator Decorator
+	*		idle	noeat
+	"a-zA-Z0-9_."	decorator
+
+# Double-quoted: "", possibly opening """ (multi-line).
+:dq String
+	*		dq_body	noeat
+	"\""		dq2
+
+:dq_body String
+	*		dq_body
+	"\""		idle
+	"\\"		dq_esc
+	"\n"		idle	noeat
+
+:dq_esc StringEscape
+	*		dq_body
+
+:dq2 String
+	*		idle	noeat
+	"\""		dq3
+
+:dq3 String
+	*		dq3
+	"\\"		dq3_esc
+	"\""		dq3_a
+
+:dq3_esc StringEscape
+	*		dq3
+
+:dq3_a String
+	*		dq3	noeat
+	"\""		dq3_b
+
+:dq3_b String
+	*		dq3	noeat
+	"\""		idle
+
+:sq String
+	*		sq_body	noeat
+	"'"		sq2
+
+:sq_body String
+	*		sq_body
+	"'"		idle
+	"\\"		sq_esc
+	"\n"		idle	noeat
+
+:sq_esc StringEscape
+	*		sq_body
+
+:sq2 String
+	*		idle	noeat
+	"'"		sq3
+
+:sq3 String
+	*		sq3
+	"\\"		sq3_esc
+	"'"		sq3_a
+
+:sq3_esc StringEscape
+	*		sq3
+
+:sq3_a String
+	*		sq3	noeat
+	"'"		sq3_b
+
+:sq3_b String
+	*		sq3	noeat
+	"'"		idle
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXoObBjJeE_"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"and"		kw
+	"as"		kw
+	"assert"	kw
+	"async"		kw
+	"await"		kw
+	"break"		kw
+	"case"		kw
+	"class"		kw
+	"continue"	kw
+	"def"		kw
+	"del"		kw
+	"elif"		kw
+	"else"		kw
+	"except"	kw
+	"finally"	kw
+	"for"		kw
+	"from"		kw
+	"global"	kw
+	"if"		kw
+	"import"	kw
+	"in"		kw
+	"is"		kw
+	"lambda"	kw
+	"match"		kw
+	"nonlocal"	kw
+	"not"		kw
+	"or"		kw
+	"pass"		kw
+	"raise"		kw
+	"return"	kw
+	"try"		kw
+	"while"		kw
+	"with"		kw
+	"yield"		kw
+	"abs"		builtin
+	"dict"		builtin
+	"enumerate"	builtin
+	"filter"	builtin
+	"float"		builtin
+	"input"		builtin
+	"int"		builtin
+	"isinstance"	builtin
+	"len"		builtin
+	"list"		builtin
+	"map"		builtin
+	"max"		builtin
+	"min"		builtin
+	"open"		builtin
+	"print"		builtin
+	"range"		builtin
+	"repr"		builtin
+	"set"		builtin
+	"sorted"	builtin
+	"str"		builtin
+	"sum"		builtin
+	"super"		builtin
+	"tuple"		builtin
+	"type"		builtin
+	"zip"		builtin
+	"False"		lit
+	"None"		lit
+	"True"		lit
+	"self"		lit
+	"cls"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:builtin Builtin
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

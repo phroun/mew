@@ -1,0 +1,156 @@
+# mew syntax file for Go
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Char		cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Builtin	bold
+=Constant	red
+
+:idle Idle
+	*		idle
+	"/"		slash		recolor=-1
+	"\""		string		recolor=-1
+	"`"		rawstring	recolor=-1
+	"'"		char		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+	"\n"		idle	noeat
+
+:string_esc StringEscape
+	*		string
+
+# Raw strings span lines until the closing backquote.
+:rawstring String
+	*		rawstring
+	"`"		idle
+
+:char Char
+	*		char
+	"'"		idle
+	"\\"		char_esc
+	"\n"		idle	noeat
+
+:char_esc StringEscape
+	*		char
+
+:number Number
+	*		idle	noeat
+	"0-9a-fA-F.xXoObB_i"	number
+	"eEpP"		number_exp
+
+:number_exp Number
+	*		idle	noeat
+	"+\-0-9"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"break"		kw
+	"case"		kw
+	"chan"		kw
+	"const"		kw
+	"continue"	kw
+	"default"	kw
+	"defer"		kw
+	"else"		kw
+	"fallthrough"	kw
+	"for"		kw
+	"func"		kw
+	"go"		kw
+	"goto"		kw
+	"if"		kw
+	"import"	kw
+	"interface"	kw
+	"map"		kw
+	"package"	kw
+	"range"		kw
+	"return"	kw
+	"select"	kw
+	"struct"	kw
+	"switch"	kw
+	"type"		kw
+	"var"		kw
+	"any"		typ
+	"bool"		typ
+	"byte"		typ
+	"comparable"	typ
+	"complex64"	typ
+	"complex128"	typ
+	"error"		typ
+	"float32"	typ
+	"float64"	typ
+	"int"		typ
+	"int8"		typ
+	"int16"		typ
+	"int32"		typ
+	"int64"		typ
+	"rune"		typ
+	"string"	typ
+	"uint"		typ
+	"uint8"		typ
+	"uint16"	typ
+	"uint32"	typ
+	"uint64"	typ
+	"uintptr"	typ
+	"append"	builtin
+	"cap"		builtin
+	"clear"		builtin
+	"close"		builtin
+	"copy"		builtin
+	"delete"	builtin
+	"len"		builtin
+	"make"		builtin
+	"max"		builtin
+	"min"		builtin
+	"new"		builtin
+	"panic"		builtin
+	"print"		builtin
+	"println"	builtin
+	"recover"	builtin
+	"false"		lit
+	"iota"		lit
+	"nil"		lit
+	"true"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:typ Type
+	*	idle	noeat
+
+:builtin Builtin
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

@@ -1,0 +1,85 @@
+# mew syntax file for ini-style config files (.conf .ini .htaccess),
+# following mew's own editor.conf rules: full-line comments open with # or ;
+# after optional whitespace, but MID-line comments open only with an
+# unescaped # outside quotes (a mid-line ';' is ordinary value text — a
+# mappings command separator). Backslash escapes the next character
+# (\# \= \; \n \t \e ...), section headers shield their contents, and
+# values may be quoted with " or '.
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Section	bold
+=Key		bold green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+
+:bol Idle
+	*		key	noeat buffer mark
+	" \t"		bol
+	"#;"		comment	recolor=-1
+	"["		section	recolor=-1
+	"\n"		bol
+
+:comment Comment
+	*		comment
+	"\n"		bol
+
+# A '#' inside [ ] is part of the section name, not a comment.
+:section Section
+	*		section
+	"]"		section_end
+	"\n"		bol
+
+:section_end Section
+	*		rest	noeat
+
+# The key runs to the first unescaped '='; \= and \# stay part of the key.
+:key Idle
+	*		key
+	"\\"		key_esc
+	"="		key_done	markend recolormark
+	"\n"		bol
+
+:key_esc Idle
+	*		key
+
+:key_done Key
+	*		rest	noeat
+
+# The value tail: an unescaped '#' opens a comment; ';' does not.
+:rest Idle
+	*		rest
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"\\"		esc	recolor=-1
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+	"0-9"		number	recolor=-1
+
+:esc StringEscape
+	*		rest
+
+:dq String
+	*		dq
+	"\""		rest
+	"\\"		dq_esc
+	"\n"		bol
+
+:dq_esc StringEscape
+	*		dq
+
+:sq String
+	*		sq
+	"'"		rest
+	"\\"		sq_esc
+	"\n"		bol
+
+:sq_esc StringEscape
+	*		sq
+
+:number Number
+	*		rest	noeat
+	"0-9."		number

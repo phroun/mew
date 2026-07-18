@@ -1,0 +1,80 @@
+# mew syntax file for PawScript (.psl .paw .mew)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Operator	bold
+=Constant	red
+
+:idle Idle
+	*		idle
+	"#"		comment		recolor=-1
+	"'"		sq		recolor=-1
+	"\""		dq		recolor=-1
+	"0-9"		number		recolor=-1
+	";&|"		op		recolor=-1
+	"{}"		op		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+:sq String
+	*		sq
+	"'"		idle
+	"\\"		sq_esc
+	"$"		sq_sub		recolor=-1
+
+:sq_esc StringEscape
+	*		sq
+
+:sq_sub StringEscape
+	*		sq		noeat
+	"0-9"		sq_sub_end
+
+:sq_sub_end StringEscape
+	*		sq		noeat
+
+:dq String
+	*		dq
+	"\""		idle
+	"\\"		dq_esc
+	"$"		dq_sub		recolor=-1
+
+:dq_esc StringEscape
+	*		dq
+
+:dq_sub StringEscape
+	*		dq		noeat
+	"0-9"		dq_sub_end
+
+:dq_sub_end StringEscape
+	*		dq		noeat
+
+:number Number
+	*		idle	noeat
+	"0-9."		number
+
+:op Operator
+	*		idle	noeat
+
+:ident Idle
+	*		idle	noeat strings
+	"macro"		kw
+	"repeat"	kw
+	"true"		lit
+	"false"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

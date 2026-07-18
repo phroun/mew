@@ -1,0 +1,154 @@
+# mew syntax file for SQL (.sql)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# Keywords match case-insensitively (istrings).
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+
+:idle Idle
+	*		idle
+	"\-"		dash		recolor=-1
+	"/"		slash		recolor=-1
+	"'"		string		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:dash Idle
+	*		idle		noeat recolor=-1
+	"\-"		line_comment	recolor=-2
+
+:slash Idle
+	*		idle		noeat recolor=-1
+	"*"		comment		recolor=-2
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+# SQL strings escape a quote by doubling it.
+:string String
+	*		string
+	"'"		string_quote
+
+:string_quote String
+	*		idle	noeat
+	"'"		string
+
+:number Number
+	*		idle	noeat
+	"0-9.eE"	number
+
+:ident Idle
+	*		idle	noeat istrings
+	"add"		kw
+	"all"		kw
+	"alter"		kw
+	"and"		kw
+	"as"		kw
+	"asc"		kw
+	"begin"		kw
+	"between"	kw
+	"by"		kw
+	"case"		kw
+	"check"		kw
+	"column"	kw
+	"commit"	kw
+	"constraint"	kw
+	"create"	kw
+	"cross"		kw
+	"database"	kw
+	"default"	kw
+	"delete"	kw
+	"desc"		kw
+	"distinct"	kw
+	"drop"		kw
+	"else"		kw
+	"end"		kw
+	"exists"	kw
+	"foreign"	kw
+	"from"		kw
+	"group"		kw
+	"having"	kw
+	"if"		kw
+	"in"		kw
+	"index"		kw
+	"inner"		kw
+	"insert"	kw
+	"into"		kw
+	"is"		kw
+	"join"		kw
+	"key"		kw
+	"left"		kw
+	"like"		kw
+	"limit"		kw
+	"not"		kw
+	"offset"	kw
+	"on"		kw
+	"or"		kw
+	"order"		kw
+	"outer"		kw
+	"primary"	kw
+	"references"	kw
+	"rollback"	kw
+	"right"		kw
+	"select"	kw
+	"set"		kw
+	"table"		kw
+	"then"		kw
+	"transaction"	kw
+	"union"		kw
+	"unique"	kw
+	"update"	kw
+	"values"	kw
+	"view"		kw
+	"when"		kw
+	"where"		kw
+	"bigint"	type
+	"blob"		type
+	"boolean"	type
+	"char"		type
+	"date"		type
+	"datetime"	type
+	"decimal"	type
+	"double"	type
+	"float"		type
+	"int"		type
+	"integer"	type
+	"numeric"	type
+	"real"		type
+	"serial"	type
+	"smallint"	type
+	"text"		type
+	"time"		type
+	"timestamp"	type
+	"varchar"	type
+	"false"		lit
+	"null"		lit
+	"true"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

@@ -1,0 +1,116 @@
+# mew syntax file for TOML (.toml)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Section	bold
+=Key		bold green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Constant	red
+
+:bol Idle
+	*		key	noeat buffer mark
+	" \t"		bol
+	"#"		comment	recolor=-1
+	"["		section	recolor=-1
+	"\n"		bol
+
+:comment Comment
+	*		comment
+	"\n"		bol
+
+:section Section
+	*		section
+	"]"		section
+	"\n"		bol
+
+:key Idle
+	*		key
+	"="		key_done	markend recolormark
+	"\n"		bol
+
+:key_done Key
+	*		rest	noeat
+
+:rest Idle
+	*		rest
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+	"0-9"		number	recolor=-1
+	"a-z"		word	buffer recolor=-1
+
+:dq String
+	*		dq_body	noeat
+	"\""		dq2
+
+:dq_body String
+	*		dq_body
+	"\""		rest
+	"\\"		dq_esc
+	"\n"		bol
+
+:dq_esc StringEscape
+	*		dq_body
+
+# "" is either the empty string or the start of a multi-line basic string.
+:dq2 String
+	*		rest	noeat
+	"\""		dq3
+
+:dq3 String
+	*		dq3
+	"\""		dq3_a
+
+:dq3_a String
+	*		dq3	noeat
+	"\""		dq3_b
+
+:dq3_b String
+	*		dq3	noeat
+	"\""		rest
+
+:sq String
+	*		sq_body	noeat
+	"'"		sq2
+
+:sq_body String
+	*		sq_body
+	"'"		rest
+	"\n"		bol
+
+:sq2 String
+	*		rest	noeat
+	"'"		sq3
+
+:sq3 String
+	*		sq3
+	"'"		sq3_a
+
+:sq3_a String
+	*		sq3	noeat
+	"'"		sq3_b
+
+:sq3_b String
+	*		sq3	noeat
+	"'"		rest
+
+:number Number
+	*		rest	noeat
+	"0-9.:T\-+eExa-f_"	number
+
+:word Idle
+	*		rest	noeat strings
+	"true"		lit
+	"false"		lit
+	"inf"		lit
+	"nan"		lit
+done
+	"a-z"		word
+
+:lit Constant
+	*	rest	noeat

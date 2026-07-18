@@ -1,0 +1,201 @@
+# mew syntax file for JavaScript (.js .mjs .cjs .jsx .es .es6, also JSON)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# A "/" after a completed term (identifier, number, ")", "]", a closed
+# string) is division; anywhere else it opens a regex literal.
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Regexp		cyan
+=RegexpEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+
+# Expression context: a "/" here begins a regex literal.
+:idle Idle
+	*		idle
+	"/"		re_or_comment	recolor=-1
+	"\""		dq		recolor=-1
+	"'"		sq		recolor=-1
+	"`"		template	recolor=-1
+	"0-9"		number		recolor=-1
+	")\]"		after_term
+	"a-zA-Z_$"	ident		buffer recolor=-1
+
+# After a completed term: a "/" here is division (or a comment).
+:after_term Idle
+	*		idle	noeat
+	" \t"		after_term
+	"\n"		idle
+	"/"		div_or_comment	recolor=-1
+	")\]"		after_term
+	"."		idle
+
+:div_or_comment Idle
+	*		idle		noeat recolor=-1
+	"="		idle
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:re_or_comment Idle
+	*		regex		noeat recolor=-1
+	"*"		comment		recolor=-2
+	"/"		line_comment	recolor=-2
+
+:regex Regexp
+	*		regex
+	"\\"		regex_esc
+	"["		regex_class
+	"/"		regex_flags
+	"\n"		idle	noeat
+
+:regex_esc RegexpEscape
+	*		regex
+
+# Inside [...] a "/" does not end the regex.
+:regex_class Regexp
+	*		regex_class
+	"\\"		regex_class_esc
+	"]"		regex
+	"\n"		idle	noeat
+
+:regex_class_esc RegexpEscape
+	*		regex_class
+
+:regex_flags Regexp
+	*		after_term	noeat
+	"a-z"		regex_flags
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		idle
+
+:line_comment Comment
+	*		line_comment
+	"\n"		idle
+
+:dq String
+	*		dq
+	"\""		after_term
+	"\\"		dq_esc
+	"\n"		idle	noeat
+
+:dq_esc StringEscape
+	*		dq
+
+:sq String
+	*		sq
+	"'"		after_term
+	"\\"		sq_esc
+	"\n"		idle	noeat
+
+:sq_esc StringEscape
+	*		sq
+
+# Template literals span lines; ${...} interpolation marked as escapes.
+:template String
+	*		template
+	"`"		after_term
+	"\\"		template_esc
+	"$"		template_sub
+
+:template_esc StringEscape
+	*		template
+
+:template_sub String
+	*		template	noeat
+	"{"		template_expr	recolor=-2
+
+:template_expr StringEscape
+	*		template_expr
+	"}"		template
+
+:number Number
+	*		after_term	noeat
+	"0-9a-fA-F.xXoObBeE_n"	number
+
+# Keywords return to expression context (a regex may follow "return" or
+# "typeof"); identifiers, types and literals are completed terms.
+:ident Idle
+	*		after_term	noeat strings
+	"async"		kw
+	"await"		kw
+	"break"		kw
+	"case"		kw
+	"catch"		kw
+	"class"		kw
+	"const"		kw
+	"continue"	kw
+	"debugger"	kw
+	"default"	kw
+	"delete"	kw
+	"do"		kw
+	"else"		kw
+	"export"	kw
+	"extends"	kw
+	"finally"	kw
+	"for"		kw
+	"function"	kw
+	"if"		kw
+	"import"	kw
+	"in"		kw
+	"instanceof"	kw
+	"let"		kw
+	"new"		kw
+	"of"		kw
+	"return"	kw
+	"static"	kw
+	"switch"	kw
+	"throw"		kw
+	"try"		kw
+	"typeof"	kw
+	"var"		kw
+	"void"		kw
+	"while"		kw
+	"with"		kw
+	"yield"		kw
+	"Array"		type
+	"Boolean"	type
+	"Date"		type
+	"Error"		type
+	"JSON"		type
+	"Map"		type
+	"Math"		type
+	"Number"	type
+	"Object"	type
+	"Promise"	type
+	"RegExp"	type
+	"Set"		type
+	"String"	type
+	"Symbol"	type
+	"console"	type
+	"document"	type
+	"window"	type
+	"globalThis"	type
+	"false"		lit
+	"null"		lit
+	"this"		lit
+	"true"		lit
+	"undefined"	lit
+	"NaN"		lit
+	"Infinity"	lit
+done
+	"a-zA-Z0-9_$"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:type Type
+	*	after_term	noeat
+
+:lit Constant
+	*	after_term	noeat

@@ -1,0 +1,139 @@
+# mew syntax file for POSIX-family shells (.sh .bash .ksh .zsh)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Builtin	bold
+=Var		bold cyan
+
+:idle Idle
+	*		idle
+	"#"		comment		recolor=-1
+	"'"		sq		recolor=-1
+	"\""		dq		recolor=-1
+	"`"		bq		recolor=-1
+	"$"		dollar		recolor=-1
+	"\\"		esc
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+:esc Idle
+	*		idle
+
+# Single quotes: no escapes at all.
+:sq String
+	*		sq
+	"'"		idle
+
+# Double quotes: backslash escapes and $ expansion still apply.
+:dq String
+	*		dq
+	"\""		idle
+	"\\"		dq_esc
+	"$"		dq_dollar	recolor=-1
+
+:dq_esc StringEscape
+	*		dq
+
+:dq_dollar Var
+	*		dq	noeat
+	"{"		dq_dollar_br
+	"("		dq_dollar_par
+	"a-zA-Z0-9_?#@*$!\-"	dq_dollar_name
+
+:dq_dollar_br Var
+	*		dq_dollar_br
+	"}"		dq
+	"\n"		idle
+
+:dq_dollar_par Var
+	*		dq_dollar_par
+	")"		dq
+	"\n"		idle
+
+:dq_dollar_name Var
+	*		dq	noeat
+	"a-zA-Z0-9_"	dq_dollar_name
+
+:bq String
+	*		bq
+	"`"		idle
+	"\\"		bq_esc
+
+:bq_esc StringEscape
+	*		bq
+
+:dollar Var
+	*		idle	noeat
+	"{"		dollar_br
+	"("		dollar_par
+	"a-zA-Z0-9_?#@*$!\-"	dollar_name
+
+:dollar_br Var
+	*		dollar_br
+	"}"		idle
+	"\n"		idle
+
+:dollar_par Var
+	*		dollar_par
+	")"		idle
+	"\n"		idle
+
+:dollar_name Var
+	*		idle	noeat
+	"a-zA-Z0-9_"	dollar_name
+
+:ident Idle
+	*		idle	noeat strings
+	"if"		kw
+	"then"		kw
+	"elif"		kw
+	"else"		kw
+	"fi"		kw
+	"for"		kw
+	"while"		kw
+	"until"		kw
+	"do"		kw
+	"done"		kw
+	"case"		kw
+	"esac"		kw
+	"in"		kw
+	"function"	kw
+	"select"	kw
+	"time"		kw
+	"return"	kw
+	"break"		kw
+	"continue"	kw
+	"alias"		builtin
+	"cd"		builtin
+	"echo"		builtin
+	"eval"		builtin
+	"exec"		builtin
+	"exit"		builtin
+	"export"	builtin
+	"local"		builtin
+	"printf"	builtin
+	"read"		builtin
+	"readonly"	builtin
+	"set"		builtin
+	"shift"		builtin
+	"source"	builtin
+	"test"		builtin
+	"trap"		builtin
+	"unset"		builtin
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:builtin Builtin
+	*	idle	noeat

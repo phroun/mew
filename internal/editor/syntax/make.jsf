@@ -1,0 +1,108 @@
+# mew syntax file for Makefiles
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Target		bold
+=Var		bold cyan
+=Keyword	bold
+=String		cyan
+=Recipe		Idle
+
+:bol Idle
+	*		line	noeat
+	"\t"		recipe
+	"#"		comment	recolor=-1
+	"a-zA-Z0-9_.\-/$"	word	noeat buffer mark
+	"\n"		bol
+
+:comment Comment
+	*		comment
+	"\n"		bol
+
+# A leading word is a target (word:), an assignment (word = ...) or a
+# directive (include/ifeq/...).
+:word Idle
+	*		word_end	noeat markend strings
+	"include"	kw
+	"-include"	kw
+	"ifeq"		kw
+	"ifneq"		kw
+	"ifdef"		kw
+	"ifndef"	kw
+	"else"		kw
+	"endif"		kw
+	"define"	kw
+	"endef"		kw
+	"export"	kw
+	"unexport"	kw
+	"override"	kw
+	"vpath"		kw
+done
+	"a-zA-Z0-9_.\-/%"	word
+	"$"		word_var
+
+# $(VAR) inside a target/variable name.
+:word_var Var
+	*		word	noeat
+	"("		word_var_par
+
+:word_var_par Var
+	*		word_var_par
+	")"		word
+	"\n"		bol
+
+:word_end Idle
+	*		line	noeat
+	":"		target_done	recolormark
+	"="		assign_done	recolormark
+
+:target_done Target
+	*		line	noeat
+
+:assign_done Var
+	*		line	noeat
+
+:kw Keyword
+	*		line	noeat
+
+:line Idle
+	*		line
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"$"		linevar	recolor=-1
+	"\\"		line_cont
+
+:line_cont Idle
+	*		line
+
+:linevar Var
+	*		line	noeat
+	"({"		linevar_par
+	"a-zA-Z0-9_<@^*?"	line
+
+:linevar_par Var
+	*		linevar_par
+	")}"		line
+	"\n"		bol
+
+:recipe Recipe
+	*		recipe
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"$"		recipevar	recolor=-1
+	"\\"		recipe_cont
+
+:recipe_cont Recipe
+	*		recipe
+
+:recipevar Var
+	*		recipe	noeat
+	"({"		recipevar_par
+	"a-zA-Z0-9_<@^*?$"	recipe
+
+:recipevar_par Var
+	*		recipevar_par
+	")}"		recipe
+	"\n"		bol

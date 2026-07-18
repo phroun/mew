@@ -1,0 +1,107 @@
+# mew syntax file for Emacs Lisp (.el, .emacs)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Constant	red
+=Quote		bold cyan
+
+:idle Idle
+	*		idle
+	";"		comment		recolor=-1
+	"\""		string		recolor=-1
+	"?"		charlit		recolor=-1
+	"'`,"		quote		recolor=-1
+	"#"		hash		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z\-+*/_<>=!&:$%^~"	ident	buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+
+:string_esc StringEscape
+	*		string
+
+# ?x character literals (?\n etc).
+:charlit Constant
+	*		charlit_end
+	"\\"		charlit_esc
+
+:charlit_esc Constant
+	*		charlit_end
+
+:charlit_end Constant
+	*		idle	noeat
+
+:quote Quote
+	*		idle	noeat
+
+# #' function quote and other dispatch forms.
+:hash Quote
+	*		idle	noeat
+	"'"		hash_end
+
+:hash_end Quote
+	*		idle	noeat
+
+:number Number
+	*		idle	noeat
+	"0-9.eE\-+"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"and"			kw
+	"catch"			kw
+	"cl-defun"		kw
+	"cond"			kw
+	"condition-case"	kw
+	"defalias"		kw
+	"defconst"		kw
+	"defcustom"		kw
+	"defgroup"		kw
+	"defmacro"		kw
+	"defun"			kw
+	"defvar"		kw
+	"dolist"		kw
+	"dotimes"		kw
+	"if"			kw
+	"interactive"		kw
+	"lambda"		kw
+	"let"			kw
+	"let*"			kw
+	"not"			kw
+	"or"			kw
+	"pcase"			kw
+	"progn"			kw
+	"provide"		kw
+	"require"		kw
+	"save-excursion"	kw
+	"setq"			kw
+	"setq-default"		kw
+	"throw"			kw
+	"unless"		kw
+	"unwind-protect"	kw
+	"when"			kw
+	"while"			kw
+	"with-current-buffer"	kw
+	"nil"			lit
+	"t"			lit
+done
+	"a-zA-Z0-9\-+*/_<>=!&:$%^~"	ident
+
+:kw Keyword
+	*	idle	noeat
+
+:lit Constant
+	*	idle	noeat

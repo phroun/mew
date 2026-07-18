@@ -1,0 +1,97 @@
+# mew syntax file for HTML and XML-ish markup (.html .htm .xhtml .svg .xml)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# Tag contents are not sub-highlighted (script/style bodies render as text).
+
+=Idle
+=Tag		bold
+=Attr		bold green
+=String		cyan
+=Comment	green
+=Entity		bold cyan
+=Preproc	blue
+
+:idle Idle
+	*		idle
+	"<"		lt	recolor=-1
+	"&"		entity	recolor=-1
+
+:lt Tag
+	*		intag	noeat
+	"!"		excl
+	"?"		pi
+	"/"		lt
+
+# <!-- comments --> and <!DOCTYPE ...>
+:excl Preproc
+	*		doctype	noeat
+	"\-"		excl2
+
+:excl2 Preproc
+	*		doctype	noeat
+	"\-"		hcomment	recolor=-4
+
+:hcomment Comment
+	*		hcomment
+	"\-"		hc1
+
+:hc1 Comment
+	*		hcomment	noeat
+	"\-"		hc2
+
+:hc2 Comment
+	*		hcomment	noeat
+	"\-"		hc2
+	">"		idle
+
+:doctype Preproc
+	*		doctype
+	">"		idle
+
+:pi Preproc
+	*		pi
+	">"		idle
+
+:intag Tag
+	*		attrs	noeat
+	"a-zA-Z0-9\-:"	intag
+
+:attrs Idle
+	*		attrs
+	">"		tag_close	recolor=-1
+	"/"		attrs
+	"a-zA-Z\-:"	attr	recolor=-1
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+
+:tag_close Tag
+	*		idle	noeat
+
+:attr Attr
+	*		attrs	noeat
+	"a-zA-Z0-9\-:_"	attr
+
+:dq String
+	*		dq
+	"\""		attrs
+	"&"		dq_entity	recolor=-1
+
+:dq_entity Entity
+	*		dq	noeat
+	"a-zA-Z0-9#"	dq_entity
+	";"		dq
+
+:sq String
+	*		sq
+	"'"		attrs
+	"&"		sq_entity	recolor=-1
+
+:sq_entity Entity
+	*		sq	noeat
+	"a-zA-Z0-9#"	sq_entity
+	";"		sq
+
+:entity Entity
+	*		idle	noeat
+	"a-zA-Z0-9#"	entity
+	";"		idle

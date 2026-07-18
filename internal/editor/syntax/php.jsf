@@ -1,0 +1,184 @@
+# mew syntax file for PHP (.php .phtml)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# Text outside <?php ... ?> renders plain; keywords match case-insensitively.
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Type		bold green
+=Constant	red
+=Var		bold cyan
+=Preproc	blue
+
+# Outside the PHP tags: plain text (markup is not sub-highlighted).
+:text Idle
+	*		text
+	"<"		maybe_open
+
+:maybe_open Idle
+	*		text	noeat
+	"?"		open_tag	recolor=-2
+
+# <?php, <?=, <?
+:open_tag Preproc
+	*		code	noeat
+	"a-zA-Z="	open_tag
+
+:code Idle
+	*		code
+	"?"		maybe_close
+	"#"		line_comment	recolor=-1
+	"/"		slash		recolor=-1
+	"'"		sq		recolor=-1
+	"\""		dq		recolor=-1
+	"$"		phpvar		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z_"	ident		buffer recolor=-1
+
+:maybe_close Idle
+	*		code	noeat
+	">"		close_tag	recolor=-2
+
+:close_tag Preproc
+	*		text	noeat
+
+:slash Idle
+	*		code		noeat recolor=-1
+	"/"		line_comment	recolor=-2
+	"*"		comment		recolor=-2
+
+:line_comment Comment
+	*		line_comment
+	"\n"		code
+
+:comment Comment
+	*		comment
+	"*"		comment_star
+
+:comment_star Comment
+	*		comment		noeat
+	"*"		comment_star
+	"/"		code
+
+:sq String
+	*		sq
+	"'"		code
+	"\\"		sq_esc
+
+:sq_esc StringEscape
+	*		sq
+
+# Double quotes interpolate variables.
+:dq String
+	*		dq
+	"\""		code
+	"\\"		dq_esc
+	"$"		dq_var		recolor=-1
+
+:dq_esc StringEscape
+	*		dq
+
+:dq_var Var
+	*		dq	noeat
+	"a-zA-Z0-9_{}"	dq_var
+
+:phpvar Var
+	*		code	noeat
+	"a-zA-Z0-9_"	phpvar
+
+:number Number
+	*		code	noeat
+	"0-9a-fA-F.xXoObBeE_"	number
+
+:ident Idle
+	*		code	noeat istrings
+	"abstract"	kw
+	"and"		kw
+	"as"		kw
+	"break"		kw
+	"case"		kw
+	"catch"		kw
+	"class"		kw
+	"clone"		kw
+	"const"		kw
+	"continue"	kw
+	"declare"	kw
+	"default"	kw
+	"do"		kw
+	"echo"		kw
+	"else"		kw
+	"elseif"	kw
+	"empty"		kw
+	"enum"		kw
+	"extends"	kw
+	"final"		kw
+	"finally"	kw
+	"fn"		kw
+	"for"		kw
+	"foreach"	kw
+	"function"	kw
+	"global"	kw
+	"goto"		kw
+	"if"		kw
+	"implements"	kw
+	"include"	kw
+	"include_once"	kw
+	"instanceof"	kw
+	"insteadof"	kw
+	"interface"	kw
+	"isset"		kw
+	"list"		kw
+	"match"		kw
+	"namespace"	kw
+	"new"		kw
+	"or"		kw
+	"print"		kw
+	"private"	kw
+	"protected"	kw
+	"public"	kw
+	"readonly"	kw
+	"require"	kw
+	"require_once"	kw
+	"return"	kw
+	"static"	kw
+	"switch"	kw
+	"throw"		kw
+	"trait"		kw
+	"try"		kw
+	"unset"		kw
+	"use"		kw
+	"var"		kw
+	"while"		kw
+	"xor"		kw
+	"yield"		kw
+	"array"		type
+	"bool"		type
+	"callable"	type
+	"float"		type
+	"int"		type
+	"iterable"	type
+	"mixed"		type
+	"never"		type
+	"object"	type
+	"parent"	type
+	"self"		type
+	"string"	type
+	"void"		type
+	"false"		lit
+	"null"		lit
+	"true"		lit
+done
+	"a-zA-Z0-9_"	ident
+
+:kw Keyword
+	*	code	noeat
+
+:type Type
+	*	code	noeat
+
+:lit Constant
+	*	code	noeat

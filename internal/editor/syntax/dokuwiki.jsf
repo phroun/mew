@@ -1,0 +1,207 @@
+# mew syntax file for DokuWiki markup (.txt pages inside a wiki tree)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+# Headings ====== x ======, **bold**, //italic//, __underline__, ''mono'',
+# [[links]], {{media}}, <code>/<file>/<nowiki> blocks, %%nowiki%%,
+# list bullets, ^|table separators, > quotes.
+
+=Idle
+=Heading	bold
+=Bold		bold
+=Italic		italic
+=Underline	underline
+=Mono		cyan
+=Link		bold cyan
+=Media		bold cyan
+=Code		cyan
+=Bullet		red
+=Table		bold green
+=Quote		green
+
+:bol Idle
+	*		text	noeat
+	"="		heading	recolor=-1
+	" "		indent
+	"^|"		tsep	recolor=-1
+	">"		quote	recolor=-1
+	"\n"		bol
+
+# Indented lines: two-or-more spaces then * or - is a list bullet.
+:indent Idle
+	*		text	noeat
+	" "		indent
+	"*\-"		bullet	recolor=-1
+	"\n"		bol
+
+:bullet Bullet
+	*		text	noeat
+
+:heading Heading
+	*		heading
+	"\n"		bol
+
+:quote Quote
+	*		text	noeat
+
+# A table cell separator (^ header, | cell); the rest of the cell is text.
+:tsep Table
+	*		text	noeat
+
+:text Idle
+	*		text
+	"\n"		bol
+	"*"		star1
+	"/"		fslash1
+	"_"		under1
+	"'"		tick1
+	"["		br1
+	"{"		curl1
+	"<"		lt	mark
+	"%"		pct1
+	"|^"		tsep	recolor=-1
+
+# **bold** — toggled by doubled markers; formatting ends at the line end
+# (an approximation: DokuWiki inline spans rarely cross lines).
+:star1 Idle
+	*		text	noeat
+	"*"		bold	recolor=-2
+
+:bold Bold
+	*		bold
+	"\n"		bol
+	"*"		bstar1
+
+:bstar1 Bold
+	*		bold	noeat
+	"*"		text
+
+# //italic//
+:fslash1 Idle
+	*		text	noeat
+	"/"		italic	recolor=-2
+
+:italic Italic
+	*		italic
+	"\n"		bol
+	"/"		islash1
+
+:islash1 Italic
+	*		italic	noeat
+	"/"		text
+
+# __underline__
+:under1 Idle
+	*		text	noeat
+	"_"		underline	recolor=-2
+
+:underline Underline
+	*		underline
+	"\n"		bol
+	"_"		uunder1
+
+:uunder1 Underline
+	*		underline	noeat
+	"_"		text
+
+# ''monospace''
+:tick1 Idle
+	*		text	noeat
+	"'"		mono	recolor=-2
+
+:mono Mono
+	*		mono
+	"\n"		bol
+	"'"		mtick1
+
+:mtick1 Mono
+	*		mono	noeat
+	"'"		text
+
+# [[page|Title]] links
+:br1 Idle
+	*		text	noeat
+	"["		link	recolor=-2
+
+:link Link
+	*		link
+	"\n"		bol
+	"]"		lbr1
+
+:lbr1 Link
+	*		link	noeat
+	"]"		text
+
+# {{media}}
+:curl1 Idle
+	*		text	noeat
+	"{"		media	recolor=-2
+
+:media Media
+	*		media
+	"\n"		bol
+	"}"		mbr1
+
+:mbr1 Media
+	*		media	noeat
+	"}"		text
+
+# <code>, <file>, <nowiki> blocks: verbatim until the matching close tag.
+:lt Idle
+	*		text	noeat
+	"a-z"		ltname	buffer
+
+:ltname Idle
+	*		text	noeat strings
+	"code"		cb_gt
+	"file"		cb_gt
+	"nowiki"	cb_gt
+done
+	"a-z"		ltname
+
+:cb_gt Code
+	*		text	noeat
+	" "		cb_attr
+	">"		codeblock	recolormark
+
+# <code lang> attributes before the closing '>'.
+:cb_attr Code
+	*		cb_attr
+	"\n"		bol
+	">"		codeblock	recolormark
+
+:codeblock Code
+	*		codeblock
+	"<"		cb_lt
+
+:cb_lt Code
+	*		codeblock	noeat
+	"/"		cb_close
+
+:cb_close Code
+	*		codeblock	noeat
+	"a-z"		cb_cname	buffer
+
+:cb_cname Code
+	*		codeblock	noeat strings
+	"code"		cb_end
+	"file"		cb_end
+	"nowiki"	cb_end
+done
+	"a-z"		cb_cname
+
+:cb_end Code
+	*		codeblock	noeat
+	">"		text
+
+# %%nowiki%%
+:pct1 Idle
+	*		text	noeat
+	"%"		nowiki	recolor=-2
+
+:nowiki Mono
+	*		nowiki
+	"%"		npct1
+
+:npct1 Mono
+	*		nowiki	noeat
+	"%"		text

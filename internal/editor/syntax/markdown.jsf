@@ -1,0 +1,95 @@
+# mew syntax file for Markdown (.md; close enough for most wiki dialects)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Heading	bold
+=Quote		green
+=Bullet		red
+=Code		cyan
+=Link		bold cyan
+
+:bol Idle
+	*		text	noeat
+	" \t"		bol
+	"#"		heading	recolor=-1
+	">"		quote	recolor=-1
+	"-*+"		bullet	recolor=-1
+	"`"		bt1	recolor=-1
+	"\n"		bol
+
+:heading Heading
+	*		heading
+	"\n"		bol
+
+:quote Quote
+	*		quote
+	"\n"		bol
+	"`"		quote_code	recolor=-1
+
+:quote_code Code
+	*		quote_code
+	"`"		quote
+	"\n"		bol
+
+# A bullet only counts when followed by a space; otherwise ordinary text
+# (e.g. *emphasis* or a bare dash).
+:bullet Bullet
+	*		text	noeat recolor=-2
+	" "		text
+
+# Backticks at the start of a line: one is inline code, three open a fence.
+:bt1 Code
+	*		inline_code	noeat
+	"`"		bt2
+
+:bt2 Code
+	*		text	noeat
+	"`"		fence_info
+
+:fence_info Code
+	*		fence_info
+	"\n"		fence
+
+:fence Code
+	*		fence_bol	noeat
+
+:fence_line Code
+	*		fence_line
+	"\n"		fence_bol
+	"`"		fence_line
+
+:fence_bol Code
+	*		fence_line	noeat
+	"`"		fb1
+
+:fb1 Code
+	*		fence_line	noeat
+	"`"		fb2
+
+:fb2 Code
+	*		fence_line	noeat
+	"`"		fence_close
+
+:fence_close Code
+	*		fence_close
+	"\n"		bol
+
+:text Idle
+	*		text
+	"\n"		bol
+	"`"		inline_code	recolor=-1
+	"["		link	recolor=-1
+
+:inline_code Code
+	*		inline_code
+	"`"		text
+	"\n"		bol
+
+:link Link
+	*		link
+	"]"		link_end
+	"\n"		bol
+
+:link_end Link
+	*		text	noeat

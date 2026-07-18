@@ -1,0 +1,98 @@
+# mew syntax file for YAML (.yaml .yml)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=Key		bold green
+=String		cyan
+=Number		red
+=Constant	red
+=Anchor		bold cyan
+=Document	bold
+
+:bol Idle
+	*		item	noeat
+	" "		bol
+	"#"		comment	recolor=-1
+	"-"		dash	recolor=-1
+	"\n"		bol
+
+# "-" at the start: a list bullet, or the "---" document marker.
+:dash Document
+	*		item	noeat recolor=-1
+	" \n"		bol	noeat recolor=-1
+	"-"		dash2
+
+:dash2 Document
+	*		item	noeat recolor=-2
+	"-"		dash3
+
+:dash3 Document
+	*		dash3
+	"\n"		bol
+
+# A line item: quite likely "key: value".
+:item Idle
+	*		rest	noeat
+	"a-zA-Z_\"'"	key	noeat buffer mark
+
+:key Idle
+	*		rest	noeat
+	"a-zA-Z0-9_\-. \"'"	key
+	":"		key_done	markend recolormark
+
+:key_done Key
+	*		rest	noeat
+
+:rest Idle
+	*		rest
+	"\n"		bol
+	"#"		comment	recolor=-1
+	"\""		dq	recolor=-1
+	"'"		sq	recolor=-1
+	"0-9"		number	recolor=-1
+	"&*"		anchor	recolor=-1
+	"a-z~"		word	buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		bol
+
+:dq String
+	*		dq
+	"\""		rest
+	"\\"		dq_esc
+	"\n"		bol
+
+:dq_esc String
+	*		dq
+
+:sq String
+	*		sq
+	"'"		rest
+	"\n"		bol
+
+:number Number
+	*		rest	noeat
+	"0-9.eE\-+_:"	number
+
+:anchor Anchor
+	*		rest	noeat
+	"a-zA-Z0-9_\-"	anchor
+
+:word Idle
+	*		rest	noeat strings
+	"true"		lit
+	"false"		lit
+	"yes"		lit
+	"no"		lit
+	"on"		lit
+	"off"		lit
+	"null"		lit
+	"~"		lit
+done
+	"a-zA-Z0-9_\-"	word
+
+:lit Constant
+	*	rest	noeat

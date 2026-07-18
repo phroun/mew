@@ -1,0 +1,87 @@
+mew Source-Available License, Version 1.0 (provisional)
+
+Copyright (c) 2026 Jeff R. Day. All rights reserved.
+
+mew is SOURCE-AVAILABLE software. Its source code is published so that anyone
+may read, study, build, and run it — but mew is NOT open source or free
+software. The rights granted below are limited, and all rights not expressly
+granted are reserved by the copyright holder.
+
+This is a provisional license for mew's pre-release period. The copyright holder
+intends to consider more permissive terms (such as an MIT- or FSF-style license)
+as the project matures, and reserves the right to release any version of mew —
+including this one — under different terms in the future.
+
+1. DEFINITIONS.
+   "The software" is mew, as made available by the copyright holder under this
+   license, EXCLUDING any file that carries its own separate license notice
+   (see Section 6).
+   "You" is the person or entity exercising rights under this license.
+   "Verbatim copy" is a copy of the software, in source or compiled form, that
+   is identical to a version the copyright holder released — with the sole
+   allowed difference being compilation of the unmodified source into machine
+   form.
+
+2. PERMITTED USES.
+   For any purpose, including commercial purposes, you may:
+   (a) read, study, and build the software;
+   (b) run and use the software;
+   (c) make and distribute VERBATIM COPIES of the software, provided each copy
+       retains this license and every copyright, license, and attribution
+       notice unchanged, including the THIRD-PARTY-NOTICES file; and
+   (d) combine the UNMODIFIED software with other software — including by
+       statically or dynamically linking it, as a library, into a larger
+       program — and distribute the resulting combined work, in source or
+       compiled form, for any purpose including commercial purposes, provided
+       the software's own portion remains unmodified and this license and the
+       notices in (c) are included and identified as governing that portion.
+       The other software you combine it with stays under its own license; this
+       license governs only the mew portion of the combined work.
+
+3. NO MODIFICATION, NO DERIVATIVES, NO FORKS.
+   You may NOT modify the software's own code, create a modified or adapted
+   version of it, or distribute any modified, adapted, or derivative version of
+   it (a "fork"), in source or compiled form. The standard mew released by the
+   copyright holder is the only mew. For clarity, combining or linking the
+   UNMODIFIED software into a larger program under Section 2(d) is expressly
+   permitted and is NOT a prohibited modification — what is prohibited is
+   altering mew's own code. If you need to modify mew itself, contact the
+   copyright holder for a separate grant.
+
+4. CONTRIBUTIONS.
+   Bug reports and pull requests that fix defects are welcome. If you submit any
+   contribution (code, patch, or other material) for inclusion in the software,
+   you grant the copyright holder a perpetual, worldwide, irrevocable,
+   royalty-free license to use, reproduce, modify, distribute, sublicense, and
+   RELICENSE your contribution as part of the software under any terms, and you
+   represent that you have the right to grant that license. This lets the
+   copyright holder incorporate fixes and relicense mew in the future without
+   further agreement. Submitting a contribution grants you no additional rights
+   in the software.
+
+5. RESERVATION OF RIGHTS.
+   All rights not expressly granted here are reserved. This license grants no
+   right to the copyright holder's trademarks or the mew name, and nothing here
+   prevents the copyright holder from licensing the software to anyone else on
+   any terms, or from releasing future or past versions under different terms.
+
+6. SEPARATELY LICENSED COMPONENTS.
+   Some files distributed with the software carry their own license and are NOT
+   governed by this license:
+   - The syntax grammar files in internal/editor/syntax/ are each licensed under
+     the MIT License (see internal/editor/syntax/LICENSE). You may use, modify,
+     and redistribute those files under the MIT License, independently of mew.
+   - Third-party dependencies retain their own licenses; see THIRD-PARTY-NOTICES.
+
+7. TERMINATION.
+   Any breach of this license terminates the rights it grants you. Your rights
+   may be reinstated at the copyright holder's discretion.
+
+8. NO WARRANTY; NO LIABILITY.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. TO THE MAXIMUM EXTENT
+   PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM,
+   DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR ITS USE OR
+   OTHER DEALINGS IN THE SOFTWARE.

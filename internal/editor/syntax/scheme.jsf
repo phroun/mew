@@ -1,0 +1,100 @@
+# mew syntax file for Scheme (.scm .ss .sld .sls .sps .sc)
+# Written for mew in the jsf state-machine format.
+# SPDX-License-Identifier: MIT  (this grammar file is MIT; see ./LICENSE)
+
+=Idle
+=Comment	green
+=String		cyan
+=StringEscape	bold cyan
+=Number		red
+=Keyword	bold
+=Constant	red
+=Quote		bold cyan
+
+:idle Idle
+	*		idle
+	";"		comment		recolor=-1
+	"\""		string		recolor=-1
+	"'`,"		quote		recolor=-1
+	"#"		hash		recolor=-1
+	"0-9"		number		recolor=-1
+	"a-zA-Z\-+*/_<>=!?&:$%^~."	ident	buffer recolor=-1
+
+:comment Comment
+	*		comment
+	"\n"		idle
+
+:string String
+	*		string
+	"\""		idle
+	"\\"		string_esc
+
+:string_esc StringEscape
+	*		string
+
+:quote Quote
+	*		idle	noeat
+
+# #t #f #\x (char literals) and #| |# block comments.
+:hash Quote
+	*		idle	noeat
+	"tf"		hash_lit	recolor=-2
+	"\\"		hash_char	recolor=-2
+	"|"		block_comment	recolor=-2
+
+:hash_lit Constant
+	*		idle	noeat
+
+:hash_char Constant
+	*		hash_char_end
+
+:hash_char_end Constant
+	*		idle	noeat
+	"a-zA-Z0-9"	hash_char_end
+
+:block_comment Comment
+	*		block_comment
+	"|"		block_end
+
+:block_end Comment
+	*		block_comment	noeat
+	"#"		idle
+
+:number Number
+	*		idle	noeat
+	"0-9.eE\-+/"	number
+
+:ident Idle
+	*		idle	noeat strings
+	"and"		kw
+	"begin"		kw
+	"call/cc"	kw
+	"case"		kw
+	"cond"		kw
+	"define"	kw
+	"define-record-type"	kw
+	"define-syntax"	kw
+	"define-values"	kw
+	"do"		kw
+	"else"		kw
+	"if"		kw
+	"lambda"	kw
+	"let"		kw
+	"let*"		kw
+	"let-values"	kw
+	"letrec"	kw
+	"letrec*"	kw
+	"not"		kw
+	"or"		kw
+	"quasiquote"	kw
+	"quote"		kw
+	"set!"		kw
+	"syntax-rules"	kw
+	"unless"	kw
+	"unquote"	kw
+	"when"		kw
+done
+	"a-zA-Z0-9\-+*/_<>=!?&:$%^~."	ident
+
+:kw Keyword
+	*	idle	noeat
