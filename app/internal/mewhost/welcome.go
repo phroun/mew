@@ -23,21 +23,21 @@ import (
 //     running behind it. Nothing is written, so an uninstalled copy keeps
 //     offering to install on each launch.
 //
-// It is presented as a desktop system modal via WindowManager.ShowModal — the
-// same mechanism the display service's authorization prompt uses — so it always
-// surfaces on top and blocks the surface beneath it; it can't be ignored or lost
-// behind the solo editor. mew-sdl is the desktop owner here, so this host-level
-// gate is on the same footing as that prompt (not an app-scoped dialog).
+// It is presented as a WINDOW-level modal owned by the root editor: dlg.SetOwner
+// (root) before AddWindow. The owner matters — the window manager scopes modal
+// blocking by owner first, then app, else system (registerModalLocked). A modal
+// with no owner (and no app id) lands on the SYSTEM stack, which surfaces but
+// does not gate the solo editor's own surface — so it showed but didn't actually
+// block. Owning it by the editor makes it (a) an owned overlay that floats above
+// the editor in the z-order and (b) a window modal that blocks that editor. It is
+// still WindowTypeModal, not Dialog: a Dialog floats above its owner but blocks
+// nothing, and we want the first-run gate to block.
 //
-// Both choices tear the modal down with CloseModal (not window.Close): the
-// window manager refuses to front a window while a modal is live, so a plain
-// close would leave the editor blocked and unfrontable after "Try".
-func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, graphical bool) {
+// Closing goes through window.Close (the manager ties modal unregistration to the
+// window's close for owner/app modals, so the stack is popped cleanly) — unlike a
+// system modal, which needs WindowManager.CloseModal.
+func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool) {
 	if !graphical || !wininstall.Available() || wininstall.FirstRunDone() {
-		return
-	}
-	wm := desktop.WindowManager()
-	if wm == nil {
 		return
 	}
 	dlg := newWelcomeDialog(
@@ -45,9 +45,8 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, l
 		welcomeLines(),
 		func() { // Install
 			exe, err := wininstall.Install()
-			wm.CloseModal() // tear the welcome down first, either way
 			if err != nil {
-				showMewError(wm, desktop, "Install failed", err.Error())
+				showMewError(application, root, "Install failed", err.Error())
 				return
 			}
 			// Launch the freshly installed copy (with the same files) and bow out.
@@ -56,9 +55,10 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, l
 			}
 			desktop.Quit()
 		},
-		func() { wm.CloseModal() }, // Try — dismiss; the editor is already behind us.
+		func() {}, // Try — dismiss (doTry closes the dialog); the editor is behind us.
 	)
-	wm.ShowModal(&dlg.Window)
+	dlg.SetOwner(root)
+	application.AddWindow(&dlg.Window)
 	desktop.RequestUpdate()
 }
 
@@ -79,16 +79,15 @@ func welcomeLines() []string {
 	}
 }
 
-// showMewError pops a simple error dialog as a desktop system modal (so it
-// surfaces on top like the welcome it replaces), wiring OK to CloseModal so the
-// modal stack is popped cleanly and the editor becomes frontable again.
-func showMewError(wm *window.WindowManager, desktop *trinkets.Desktop, title, text string) {
+// showMewError pops a simple error dialog owned by the root editor (a window
+// modal that floats above and blocks it, like the welcome it replaces). The
+// MessageBox unregisters its modal on close, so no explicit CloseModal is needed.
+func showMewError(application *app.Application, root *window.Window, title, text string) {
 	mb := trinkets.NewMessageBox(title, text, trinkets.ButtonOK)
 	mb.SetIcon(trinkets.IconError)
-	mb.SetOnFinished(func(trinkets.DialogResult) { wm.CloseModal() })
-	wm.ShowModal(&mb.Window)
+	mb.SetOwner(root)
+	application.AddWindow(&mb.Window)
 	mb.ResizeToFitContent()
-	desktop.RequestUpdate()
 }
 
 // welcomeDialog is a modal window whose content is a paragraph of text over a
@@ -127,19 +126,22 @@ func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *we
 	return d
 }
 
-// doInstall / doTry invoke the wired action, which owns tearing the modal down
-// (via WindowManager.CloseModal) — the dialog does not close itself, so the
-// modal stack is popped cleanly and the editor becomes frontable again.
+// doInstall / doTry run the wired action, then close the dialog. Closing an
+// owner-scoped modal unregisters it from the manager's modal stack (the
+// AddWindow path ties unregistration to the window's close), so the editor
+// becomes interactive again after Try, and the install path has already quit.
 func (d *welcomeDialog) doInstall() {
 	if d.onInstall != nil {
 		d.onInstall()
 	}
+	d.Close()
 }
 
 func (d *welcomeDialog) doTry() {
 	if d.onTry != nil {
 		d.onTry()
 	}
+	d.Close()
 }
 
 // HandleKeyPress maps Enter to Install (the primary action) and Escape to Try

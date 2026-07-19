@@ -156,8 +156,8 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 			desktop.RaiseToFront()
 		}
 		// First-run welcome (graphical + Windows + not yet installed): a modal
-		// over the root editor offering Install or Try. No-op otherwise.
-		maybeShowWelcome(desktop, application, launchArgs, graphical)
+		// owned by the root editor offering Install or Try. No-op otherwise.
+		maybeShowWelcome(desktop, application, root, launchArgs, graphical)
 	})
 }
 
@@ -422,7 +422,12 @@ func showMewAbout(application *app.Application) {
 	byID, reply := execProtocol(fmt.Sprintf(
 		`dlg=new messagebox icon=information ok title="About mew" text=%s`,
 		protocol.Quote("mew "+mew.FullVersion()+"\n\nmew edits words.")), nil)
-	application.AddWindow(&byID[reply.IDs["dlg"]].(*trinkets.MessageBox).Window)
+	mb := byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
+	// Own the dialog by the app's main window so its modal is scoped to (and
+	// floats above) that window. Without an owner the manager files it as a
+	// system modal, which surfaces but doesn't gate the app's own (solo) surface.
+	mb.SetOwner(application.MainWindow())
+	application.AddWindow(&mb.Window)
 }
 
 // buildStatus executes a statusbar script and returns its sections.
