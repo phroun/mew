@@ -1,4 +1,11 @@
+//go:build !kittytk
+
 // Command mew is a console-based text editor.
+//
+// This is the plain build (no build tags): mew drives the terminal directly,
+// exactly as it always has. It pulls in none of the KittyTK host machinery, so
+// it stays a lean, standalone editor — the reference build for evaluating and
+// comparing behavior. Build the KittyTK TUI host instead with -tags kittytk.
 package main
 
 import (
