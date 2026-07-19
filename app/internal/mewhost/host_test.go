@@ -143,9 +143,9 @@ func TestClearHostShortcuts(t *testing.T) {
 
 // SplitArgs separates meta flags from the launch argv.
 func TestSplitArgs(t *testing.T) {
-	launch, wantV, wantH := SplitArgs([]string{"--syntax=go", "-v", "a.txt", "-h", "+3"})
-	if !wantV || !wantH {
-		t.Errorf("wantVersion=%v wantHelp=%v, want both true", wantV, wantH)
+	launch, wantV, wantH, wantW := SplitArgs([]string{"--syntax=go", "-v", "a.txt", "-h", "--window", "+3"})
+	if !wantV || !wantH || !wantW {
+		t.Errorf("wantVersion=%v wantHelp=%v wantWindow=%v, want all true", wantV, wantH, wantW)
 	}
 	want := []string{"--syntax=go", "a.txt", "+3"}
 	if strings.Join(launch, " ") != strings.Join(want, " ") {
