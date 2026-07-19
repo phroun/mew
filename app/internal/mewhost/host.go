@@ -15,6 +15,7 @@ package mewhost
 import (
 	"fmt"
 
+	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/app"
@@ -47,6 +48,10 @@ func SplitArgs(args []string) (launch []string, wantVersion, wantHelp bool) {
 // editor (launching launchArgs) and serves the display socket. The caller runs
 // the desktop afterward.
 func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string) {
+	// Free the host's built-in accelerators before any menu is synthesized, so
+	// those keys reach the mew editor instead of the host (see below).
+	clearHostShortcuts()
+
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMenuBarContent(buildMenus(desktop, application))
@@ -160,17 +165,51 @@ func firstOperand(argv []string) string {
 	return ""
 }
 
+// clearHostShortcuts removes the KittyTK host's built-in menu accelerators from
+// the global keybinding registry BEFORE the menus are synthesized, so their keys
+// fall through to the mew editor instead of being swallowed by the host: ^Q
+// (Quit), ^H/M-^H (Hide/Hide Others), M-^X (Exit Desktop), and ^X/^C/^V/M-a
+// (Cut/Copy/Paste/Select All). mew is a full text editor and binds most of these
+// itself, so the host must not intercept them.
+//
+// The actions stay reachable from the menus (clicking still works; the
+// synthesized items just render without an accelerator - all four synthesis
+// sites guard on len(keys) > 0, so an empty binding is safe). New Window and Raw
+// Key Input are app-declared in buildMenus below and simply carry no shortcut.
+//
+// This is a deliberate stopgap: it removes the conflicts now. Real rebinding and
+// the accessibility story (keyboard reachability of these actions) come with the
+// planned keybinding overhaul.
+func clearHostShortcuts() {
+	for _, action := range []string{
+		core.ActionQuit,
+		core.ActionAppHide,
+		core.ActionAppHideOthers,
+		core.ActionAppShowAll,
+		core.ActionExitDesktop,
+		core.ActionCut,
+		core.ActionCopy,
+		core.ActionPaste,
+		core.ActionSelectAll,
+	} {
+		core.DefaultKeyBindings.ClearAction(action)
+	}
+}
+
 // buildMenus builds the host menu bar from protocol text and registers the
 // action handlers. Raw Key Input passes the next keystroke straight to the
 // focused trinket (so control keys reach the mew editor), exactly as the demo.
 func buildMenus(desktop *trinkets.Desktop, application *app.Application) []*trinkets.Menu {
+	// No shortcut= on these two: like the host accelerators cleared in
+	// clearHostShortcuts, New Window and Raw Key Input are menu-only for now so
+	// their keys stay free for the mew editor. Rebinding comes later.
 	const script = `
 bar=new menubar children={
 	new menu caption="&mew" wellknown="app" children={
-		new menuitem caption="&New Window" shortcut="^N" action=mew.window.new
+		new menuitem caption="&New Window" action=mew.window.new
 	}
 	new menu caption="&Edit" wellknown="edit" children={
-		new menuitem caption="&Raw Key Input" shortcut="^\\" action=mew.edit.rawkey
+		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
 	}
 	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=mew.window.new
