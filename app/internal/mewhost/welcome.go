@@ -67,7 +67,8 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, r
 // box), kept comfortably narrow.
 func welcomeLines() []string {
 	return []string{
-		"mew edits words — a small, fast editor.",
+		"A programmable cross-platform text, prose, and code editor",
+		"in the WordStar tradition.",
 		"",
 		"You're running mew straight from the file you downloaded.",
 		"",
