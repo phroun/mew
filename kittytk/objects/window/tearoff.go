@@ -233,6 +233,11 @@ func (h *TearOffHost) isModalBlocked() bool {
 	return h.modalBlocked != nil && h.modalBlocked()
 }
 
+// IsModalBlocked reports whether this torn window is currently suppressed by a
+// modal. Exported so hosts (and tests) can confirm a torn host consults the
+// modal stack; nil checker (never wired) always reads false.
+func (h *TearOffHost) IsModalBlocked() bool { return h.isModalBlocked() }
+
 // blockedTitleDragStart reports whether a press at (x,y) on a modally-blocked
 // torn window may begin a title-bar move: on the draggable title area, not on
 // a titlebar button (or the tear handle), and not on a resize edge. This is

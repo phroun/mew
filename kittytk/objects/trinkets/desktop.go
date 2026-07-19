@@ -1182,6 +1182,17 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 		}
 	})
 
+	// The solo primary surface is a torn host too, so - exactly as createTornHost
+	// wires for a regular torn window - it must consult the modal stack: an
+	// application- or window-level modal of this window's own app blocks it (the
+	// host dims it and swallows input), and a press while blocked surfaces the
+	// blocking modal (OS-restoring it if minimized, raising it to the top).
+	// Without this the solo editor keeps taking input while a modal of its app is
+	// up - the modal shows but doesn't actually block.
+	host.SetModalChecker(
+		func() bool { return d.windowManager.IsTornWindowBlocked(win) },
+		func() { d.surfaceBlockingModal(win) })
+
 	win.SetDetached(true)
 	win.SetTearable(false) // no tear/redock handle in solo
 	d.attachMainWindowChrome(win)

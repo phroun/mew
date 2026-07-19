@@ -571,6 +571,62 @@ func TestSoloModeHostsMainOnPrimarySurface(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A modal owned by the solo window must block the solo primary surface. That
+// surface is a torn host, so it has to consult the modal stack exactly as a
+// regular torn host does - a regression guard for the solo host omitting
+// SetModalChecker, which left the editor taking input while its own modal was up
+// (the modal displayed but did not actually block).
+func TestSoloPrimaryHostBlockedByOwnedModal(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Solo")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		d.EnterSoloMode(main)
+
+		host := d.soloPrimaryHost
+		if host == nil {
+			t.Fatal("no solo primary host after EnterSoloMode")
+		}
+		if host.IsModalBlocked() {
+			t.Fatal("solo host reports blocked before any modal is up")
+		}
+
+		// A window-level modal owned by the solo window.
+		modal := window.NewWindow("Gate")
+		modal.SetType(window.WindowTypeModal)
+		modal.SetOwner(main)
+		d.WindowManager().AddWindow(modal)
+
+		if !host.IsModalBlocked() {
+			t.Error("solo primary host is not blocked by a modal owned by its window")
+		}
+
+		// Closing the modal releases the block.
+		modal.Close()
+		if host.IsModalBlocked() {
+			t.Error("solo primary host still blocked after its modal closed")
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
 // Closing the window on the primary surface (which owns the loop and
 // can't be destroyed) promotes a remaining peer onto that surface: the
 // primary surface takes on the peer's window and repositions/resizes to
