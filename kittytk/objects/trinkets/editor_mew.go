@@ -93,6 +93,13 @@ func NewEditor() *Editor {
 		curCols:    80,
 		curRows:    24,
 	}
+	// Re-point the embedded terminal's trinket identity at the Editor. The
+	// framework focuses the Editor (the registered trinket), but NewPurfecTerm
+	// set the shared base's `self` to the PurfecTerm; without this, focusing the
+	// Editor registers the wrong (out-of-chain) trinket with the focus manager,
+	// so the terminal's focused state and cursor don't engage until a mouse
+	// click re-focuses it. Same pattern the placeholder editor uses.
+	e.Init(e)
 	e.SetEditorMode(true)
 	return e
 }
