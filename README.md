@@ -1,6 +1,13 @@
 # mew - mew edits words
 
+```
+    |\_/|
+    >^.^<
+     (_)_~
+```
 
+Say hello to **miau-muah**, mew's mascot — a pretty female feline whose natural
+form is the ASCII above. She keeps an eye on your words.
 
 # History
 
