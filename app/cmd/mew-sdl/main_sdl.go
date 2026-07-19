@@ -55,6 +55,7 @@ func main() {
 	cfg := mewhost.LoadHostConfig()
 
 	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
+	plat.SetAppName("mew")       // OS app name is "mew", not the binary's "mew-sdl"
 	plat.SetScale(cfg.Scale)     // device zoom: pixels per unit at the base font
 	plat.SetShowFPS(cfg.ShowFPS) // [window] fps overlays the frame rate
 	plat.SetVSync(cfg.VSync)

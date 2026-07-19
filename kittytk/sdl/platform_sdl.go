@@ -22,6 +22,7 @@ import (
 // All callbacks on the OS-locked main thread per D21.
 type Platform struct {
 	title    string
+	appName  string // OS application name (macOS menu bar / task switcher); "" = SDL default
 	wPx, hPx int
 	scale    int              // device zoom: pixels per unit at 12pt; see SetScale
 	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
@@ -95,6 +96,14 @@ func New(title string, widthPx, heightPx int) *Platform {
 	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
 }
 
+// SetAppName sets the OS application name - on macOS the name shown in the
+// application (first) menu of the system menu bar and, where the OS uses it, the
+// task switcher. Empty leaves SDL's default (the executable/process name). Call
+// before Run.
+func (p *Platform) SetAppName(name string) {
+	p.appName = name
+}
+
 // SetScale sets how many window pixels one abstract unit covers.
 // The raster backend renders glyphs at the scaled size (crisp, not
 // upsampled) and input coordinates are converted back to units. Call
@@ -158,6 +167,13 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 func (p *Platform) Run(init func(platform.Platform)) int {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+
+	// The application name (macOS menu bar / task switcher) must be set before
+	// SDL initializes video, when it builds the Cocoa application menu. SDL
+	// otherwise falls back to the process name (here "mew-sdl").
+	if p.appName != "" {
+		_ = sdl2.SetHint("SDL_APP_NAME", p.appName)
+	}
 
 	if err := sdl2.Init(sdl2.INIT_VIDEO | sdl2.INIT_EVENTS); err != nil {
 		return 1
