@@ -1791,6 +1791,11 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 // shifted right when showMarks is on. Zero when showMarks is off or the line has
 // no marks. Kept in step with the "*" insertion in prepareLineForDisplay and the
 // editor's own caret math.
+//
+// This flat count is only exact for the bidi fallback: on a plain line a mark
+// before a tab steals a column the tab would otherwise fill, so the two changes
+// don't add up — markedLine callers use the inline walk (runeToVisualColumnMarked)
+// instead, matching prepareLineForDisplay cell for cell.
 func (sr *ScreenRenderer) markOffset(w *window.Window, docLine, runePos int) int {
 	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
 		return 0
@@ -1804,13 +1809,64 @@ func (sr *ScreenRenderer) markOffset(w *window.Window, docLine, runePos int) int
 	return n
 }
 
+// markedLine reports the case where caret math must account for the showMarks
+// "*" cells inline: showMarks on, the caret line non-bidi, and it actually has
+// marks. Returns the line's runes and its mark positions; ok is false (base path)
+// otherwise. Mirrors the editor's markedLine.
+func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []rune, marks []int, ok bool) {
+	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+		return nil, nil, false
+	}
+	runes = []rune(line)
+	if sr.layoutFor(w, runes) != nil {
+		return nil, nil, false
+	}
+	marks = w.Buffer.MarksOnLine(w.CursorPos().Line)
+	if len(marks) == 0 {
+		return nil, nil, false
+	}
+	return runes, marks, true
+}
+
+// runeToVisualColumnMarked is the forward walk with showMarks cells inserted:
+// a "*" cell before each marked rune, then the rune, with tab widths resolved at
+// the SHIFTED column exactly as prepareLineForDisplay paints them. Returns the
+// column of rune runePos's own cell. Mirrors the editor's runeToVisualColumnMarked.
+func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marks []int, runePos int, w *window.Window) int {
+	marked := make(map[int]bool, len(marks))
+	for _, p := range marks {
+		marked[p] = true
+	}
+	if runePos < 0 {
+		runePos = 0
+	}
+	col := 0
+	for i := 0; i < len(runes); i++ {
+		if marked[i] { // "*" cell before rune i
+			col++
+		}
+		if i == runePos {
+			return col
+		}
+		col += sr.getRuneVisualWidth(runes[i], col, w)
+	}
+	if marked[len(runes)] {
+		col++
+	}
+	return col
+}
+
 // caretVisualColumn is the caret's display column for a logical position,
 // biased by direction: in RTL context "before rune i" is at the rune's RIGHT
 // edge (one cell right of its cell); at end of line the boundary follows the
-// last rune's direction. Mirrors the editor's caretVisualColumn. Adds the
-// showMarks offset so the caret lands on the same cell prepareLineForDisplay
-// drew the character in.
+// last rune's direction. Mirrors the editor's caretVisualColumn. On a plain
+// line with marks it walks the "*" cells inline so the caret lands on the same
+// cell prepareLineForDisplay drew the character in (tabs shift correctly); bidi
+// lines keep the base + flat-offset approximation.
 func (sr *ScreenRenderer) caretVisualColumn(line string, runePos int, w *window.Window) int {
+	if runes, marks, ok := sr.markedLine(w, line); ok {
+		return sr.runeToVisualColumnMarked(runes, marks, runePos, w)
+	}
 	return sr.caretVisualColumnBase(line, runePos, w) + sr.markOffset(w, w.CursorPos().Line, runePos)
 }
 
