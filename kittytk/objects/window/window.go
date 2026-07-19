@@ -1184,11 +1184,11 @@ func (w *Window) contentBounds() core.UnitRect {
 	switch {
 	case state == WindowStateMaximized:
 		// Maximized: flush to the edges with no side borders. The top title row
-		// is reserved only when the window has a title bar; a NoTitle maximized
-		// window fills the whole surface (being maximized is independent of
-		// having a title bar).
+		// is reserved only when the window actually has a title bar - a NoTitle
+		// or Frameless maximized window fills the whole surface (being maximized
+		// is independent of having a title bar or a frame).
 		top := core.Unit(0)
-		if flags&WindowFlagNoTitle == 0 {
+		if flags&WindowFlagNoTitle == 0 && flags&WindowFlagFrameless == 0 {
 			top = metrics.CellHeight
 		}
 		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
@@ -1464,9 +1464,10 @@ func (w *Window) Paint(p *core.Painter) {
 	// Draw frame based on state
 	if state == WindowStateMaximized {
 		// Maximized: no side borders. Draw the top title bar only when the
-		// window has one; a NoTitle maximized window has no frame at all (no
-		// title, no border) - being maximized no longer implies a title bar.
-		if flags&WindowFlagNoTitle == 0 {
+		// window has one; a NoTitle or Frameless maximized window has no frame
+		// at all (no title, no border) - being maximized no longer implies a
+		// title bar, and Frameless means no frame in any state.
+		if flags&WindowFlagNoTitle == 0 && flags&WindowFlagFrameless == 0 {
 			w.paintMaximizedFrame(p, bounds, metrics, title, titleStyle, frameStyle, frameBorder)
 		}
 	} else if flags&WindowFlagFrameless == 0 {

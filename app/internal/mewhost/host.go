@@ -111,12 +111,13 @@ func startRootWindow(desktop *trinkets.Desktop, application *app.Application, la
 	// graphical solo the window is no longer manager-managed, so this is
 	// naturally skipped there.)
 	if wm := desktop.WindowManager(); wm != nil && windowManaged(wm, root) {
-		// Experimental: drop the title bar before maximizing so the editor fills
-		// its row too (the TUI single-app circumstance). A maximized NoTitle
-		// window is flush to the edges with no frame (see window.go's maximized
-		// rendering), so the editor fills the whole surface.
+		// Experimental: make the root window frameless before maximizing so the
+		// editor fills the whole surface (the TUI single-app circumstance).
+		// Frameless (not just NoTitle) means no title AND no border in EVERY
+		// state, so if the window ever leaves the maximized state (e.g. hidden
+		// then re-shown) it doesn't regain a frame.
 		if hideTitleBarSoleApp {
-			root.SetFlags(root.Flags() | window.WindowFlagNoTitle)
+			root.SetFlags(root.Flags() | window.WindowFlagFrameless)
 		}
 		wm.MaximizeWindow(root)
 		wm.ActivateWindow(root)
