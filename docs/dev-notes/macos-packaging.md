@@ -169,16 +169,22 @@ make notarize NOTARY_PROFILE=mew-notary
 ## Troubleshooting
 
 - **`make macapp-universal` aborts with `Error 134` (SIGABRT).** dyld couldn't
-  load SDL2. If it happens during the build's version read, it's already handled
-  (reads the bundled copy). If the finished app aborts on launch with
-  *"Library not loaded: @rpath/SDL2.framework…"*, your framework's **install
-  name is not `@rpath`-based** (a Homebrew-built framework can be absolute).
-  Either use libsdl.org's framework, or fix it after embedding:
+  load SDL2. During the build's version read this is already handled (it reads
+  the bundled copy).
+
+- **SDL2 install name (`@rpath`).** For the embedded framework to be what loads,
+  the binary's recorded SDL2 reference must be `@rpath/SDL2.framework/…`.
+  libsdl.org's framework already is; a Homebrew or hand-built one can record an
+  absolute path (`/opt/homebrew/…` or `/Library/Frameworks/…`), which dyld would
+  honor instead — ignoring the embedded copy and failing on other Macs with
+  *"Library not loaded: /abs/path/…"*. **`macapp.sh` now auto-fixes this**: after
+  embedding it reads the reference with `otool -L`, and if it isn't `@rpath`
+  it rewrites it (and the framework's own id) with `install_name_tool -change`
+  and ensures the `@executable_path/../Frameworks` rpath is present, before
+  signing. So any SDL2.framework source works. To inspect manually:
 
   ```
-  install_name_tool -id @rpath/SDL2.framework/Versions/A/SDL2 \
-    bin/mew.app/Contents/Frameworks/SDL2.framework/Versions/A/SDL2
-  # then re-sign the bundle
+  otool -L bin/mew.app/Contents/MacOS/mew   # the SDL2 line should read @rpath/…
   ```
 
 - **Notarization rejected.** Get the exact failing item:

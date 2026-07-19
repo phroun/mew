@@ -55,6 +55,34 @@ if [ -n "${MACAPP_SDL2_FW:-}" ] && [ -d "$MACAPP_SDL2_FW/SDL2.framework" ]; then
 	echo "macapp: embedded SDL2.framework from $MACAPP_SDL2_FW"
 fi
 
+# Make the binary load SDL2 via @rpath so the EMBEDDED framework is what runs,
+# no matter where the build's SDL2 came from. libsdl.org's framework already uses
+# an @rpath install name; a Homebrew or hand-built one records an absolute path,
+# which dyld would honor instead — ignoring the embedded copy and failing on
+# other Macs with "Library not loaded: /abs/path/…". When a framework is embedded
+# we rewrite the binary's recorded SDL2 reference (and the framework's own id) to
+# @rpath, and make sure the @executable_path/../Frameworks rpath is present.
+if [ -d "$app/Contents/Frameworks/SDL2.framework" ] && command -v otool >/dev/null 2>&1; then
+	macbin="$app/Contents/MacOS/$name"
+	cur="$(otool -L "$macbin" 2>/dev/null | awk '/SDL2\.framework/ {print $1; exit}')" || true
+	if [ -n "$cur" ]; then
+		# The path from "SDL2.framework" onward (keeps the version letter),
+		# prefixed with @rpath — e.g. @rpath/SDL2.framework/Versions/A/SDL2.
+		suffix="SDL2.framework${cur#*SDL2.framework}"
+		want="@rpath/$suffix"
+		if [ "$cur" != "$want" ]; then
+			install_name_tool -change "$cur" "$want" "$macbin"
+			echo "macapp: rewrote SDL2 reference: $cur -> $want"
+		fi
+		fwbin="$app/Contents/Frameworks/$suffix"
+		if [ -f "$fwbin" ]; then
+			install_name_tool -id "$want" "$fwbin" 2>/dev/null || true
+		fi
+	fi
+	# Idempotent: errors ("would duplicate") when the build already added it.
+	install_name_tool -add_rpath @executable_path/../Frameworks "$macbin" 2>/dev/null || true
+fi
+
 icontag=""
 if [ -f "$icns" ]; then
 	cp "$icns" "$app/Contents/Resources/$name.icns"
