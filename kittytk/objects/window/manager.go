@@ -1465,7 +1465,7 @@ func (m *WindowManager) isModalBlockedLocked(win *Window) bool {
 // edge). Every other press on a blocked window is swallowed with no effect -
 // no edge resize, no button, no content, and no raise.
 func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePressEvent, bounds core.UnitRect) {
-	if !hasTitleBar(win.Flags()) || win.Flags()&WindowFlagNoMove != 0 {
+	if !hasTitleBar(win.Flags(), win.State()) || win.Flags()&WindowFlagNoMove != 0 {
 		return
 	}
 	if m.detectResizeEdge(win, event.X, event.Y) != ResizeEdgeNone {
@@ -2151,7 +2151,7 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 			metrics := core.DefaultCellMetrics()
 			titleTop := core.FindFrameBorderUnits(win)
 			if event.Y < bounds.Y+titleTop+metrics.CellHeight &&
-				hasTitleBar(win.Flags()) {
+				hasTitleBar(win.Flags(), win.State()) {
 
 				// Activate (focus + raise) for titlebar interaction
 				m.ActivateWindow(win)
