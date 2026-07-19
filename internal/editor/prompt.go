@@ -161,9 +161,9 @@ func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, curso
 	// Create buffer with initial content
 	var buf *buffer.Buffer
 	if initialContent != "" {
-		buf = buffer.NewFromString(initialContent)
+		buf = pm.editor.lib.NewFromString(initialContent)
 	} else {
-		buf = buffer.New()
+		buf = pm.editor.lib.New()
 	}
 
 	// Ensure buffer has at least one line

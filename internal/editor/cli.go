@@ -216,7 +216,7 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 	// No file named: open one empty buffer carrying the running per-window
 	// options (bare `mew`, or `mew --showLineNumbers-`).
 	if primary == nil {
-		buf := buffer.New()
+		buf := e.lib.New()
 		w := e.createMainWindow(buf, winOpts, true)
 		primary = buf
 		lastWin = w

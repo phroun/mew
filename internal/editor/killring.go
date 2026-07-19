@@ -67,7 +67,7 @@ func (e *Editor) killCapture(w *window.Window, cap buffer.Captured, forward bool
 // pushKillEntry starts a new kill-ring entry at the head, evicting the oldest
 // past the killRingEntries capacity.
 func (e *Editor) pushKillEntry(cap buffer.Captured) {
-	kb := buffer.NewKillBuffer()
+	kb := e.lib.NewKillBuffer()
 	if kb == nil {
 		return
 	}

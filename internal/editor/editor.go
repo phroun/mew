@@ -134,6 +134,12 @@ type Editor struct {
 	mew  *mewVFS
 	home string
 
+	// lib is this editor's own garland-backed buffer library (per-instance, so
+	// many mews coexist in one process). coldDir is the unique cold-storage
+	// subfolder it owns, removed on Cleanup ("" if it shares a base directory).
+	lib     *buffer.Library
+	coldDir string
+
 	// State
 	Running        bool
 	ActiveSequence string
@@ -479,8 +485,30 @@ func New(cfg Config) (*Editor, error) {
 	if coldPath == "" && configFromDisk {
 		coldPath = loadedConfig.Storage.Scratch
 	}
-	if err := buffer.InitLibraryWithPath(coldPath); err != nil {
+	// Per-instance cold storage: this editor gets its OWN garland Library under a
+	// unique subfolder of the base cold-storage area, so many mews can run in one
+	// process (e.g. as KittyTK editor trinkets) without sharing garland state or
+	// colliding on cold storage. The subfolder is removed on Cleanup.
+	coldBase := coldPath
+	if coldBase == "" {
+		coldBase = os.TempDir()
+	}
+	_ = os.MkdirAll(coldBase, 0o755)
+	instCold, mkErr := os.MkdirTemp(coldBase, "mew-")
+	ownCold := mkErr == nil
+	if !ownCold {
+		instCold = coldPath // fall back to the shared base directory
+	}
+	lib, err := buffer.NewLibrary(instCold)
+	if err != nil {
+		if ownCold {
+			_ = os.RemoveAll(instCold)
+		}
 		return nil, fmt.Errorf("failed to initialize buffer library: %w", err)
+	}
+	coldDir := ""
+	if ownCold {
+		coldDir = instCold // this editor owns it and removes it on Cleanup
 	}
 
 	// Apply loaded config to editor config
@@ -546,6 +574,8 @@ func New(cfg Config) (*Editor, error) {
 		realTerminal:   cfg.Terminal == nil,
 		mew:            mewVFS,
 		home:           hostHome(&cfg),
+		lib:            lib,
+		coldDir:        coldDir,
 		ConfigMgr:      configMgr,
 		LoadedConfig:   loadedConfig,
 		configFromDisk: configFromDisk,
@@ -888,7 +918,7 @@ func (e *Editor) registerCommands() {
 			content.WriteString(fmt.Sprintf("  %s -> %s\n", key, cmd))
 		}
 		// Show in a work buffer window
-		buf := buffer.NewFromString(content.String())
+		buf := e.lib.NewFromString(content.String())
 		e.WindowManager.CreateWindow(window.WindowOptions{
 			Type:             window.WorkBuffer,
 			Class:            "mappings",
@@ -1595,7 +1625,7 @@ func (e *Editor) registerCommands() {
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
-		buf := buffer.NewFromString(e.bufferStatusText(w.Buffer))
+		buf := e.lib.NewFromString(e.bufferStatusText(w.Buffer))
 		e.WindowManager.CreateWindow(window.WindowOptions{
 			Type:             window.WorkBuffer,
 			Class:            "bufstatus",
@@ -1656,7 +1686,7 @@ func (e *Editor) registerCommands() {
 			content.WriteString(fmt.Sprintf("  %d: %s%s%s\n", i+1, filename, modified, focused))
 		}
 		// Show in a work buffer window
-		buf := buffer.NewFromString(content.String())
+		buf := e.lib.NewFromString(content.String())
 		e.WindowManager.CreateWindow(window.WindowOptions{
 			Type:             window.WorkBuffer,
 			Class:            "buffer_list",
@@ -3995,7 +4025,7 @@ func (e *Editor) openFile(filename string) bool {
 
 // createNewBuffer creates a new empty buffer window.
 func (e *Editor) createNewBuffer() {
-	buf := buffer.New()
+	buf := e.lib.New()
 
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Type:            window.MainBuffer,
@@ -4022,7 +4052,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 	if w == nil || w.Buffer == nil {
 		return false
 	}
-	buf := buffer.NewFromString(w.Buffer.GetContent())
+	buf := e.lib.NewFromString(w.Buffer.GetContent())
 
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Type:            window.MainBuffer,
@@ -4451,13 +4481,13 @@ func (e *Editor) Run(filename string) error {
 		loaded, err := e.loadBuffer(filename)
 		if err != nil {
 			// File doesn't exist, create empty buffer with the name
-			buf = buffer.New()
+			buf = e.lib.New()
 			buf.SetFilename(filename)
 		} else {
 			buf = loaded
 		}
 	} else {
-		buf = buffer.New()
+		buf = e.lib.New()
 	}
 
 	_, err := e.run(buf)
@@ -4472,10 +4502,10 @@ func (e *Editor) Run(filename string) error {
 // git hygiene allows it, mew-native otherwise.
 func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !e.usingOSFS {
-		return buffer.NewFromHostFile(e.FS, filename)
+		return e.lib.NewFromHostFile(e.FS, filename)
 	}
 	emacsLock, lockWarning := e.emacsLockDecision(filename)
-	buf, err := buffer.OpenFile(filename, buffer.OpenOptions{
+	buf, err := e.lib.OpenFile(filename, buffer.OpenOptions{
 		UseEmacsLocks: emacsLock,
 		LockOwner:     e.lockOwnerString(), // one identity for both emacs and mew-native locks
 	})
@@ -4503,7 +4533,7 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 // returns the document's final content when the session ends. This is the
 // content-in/content-out path for hosts embedding mew as a library.
 func (e *Editor) RunContent(content string) (string, error) {
-	buf := buffer.NewFromString(content)
+	buf := e.lib.NewFromString(content)
 	return e.run(buf)
 }
 
@@ -4874,7 +4904,7 @@ func (e *Editor) appendVerboseLog(lines ...string) {
 			Class:           "verboseLog",
 			Dock:            window.DockNone,
 			Priority:        0,
-			Buffer:          buffer.New(),
+			Buffer:          e.lib.New(),
 			ShowLineNumbers: true,
 			TabSize:         e.Config.TabSize,
 			Visible:         true,
@@ -4983,7 +5013,7 @@ Other:
 Press ^KH to close help...`
 
 	// Create a buffer with the help text
-	buf := buffer.NewFromString(helpText)
+	buf := e.lib.NewFromString(helpText)
 
 	// Create help window in top dock with medium priority (100)
 	e.WindowManager.CreateWindow(window.WindowOptions{
@@ -5077,7 +5107,7 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Layout: %s\n", e.LoadedConfig.General.Layout))
 	content.WriteString("\nInvoke editor_options again to close...")
 
-	buf := buffer.NewFromString(content.String())
+	buf := e.lib.NewFromString(content.String())
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Type:             window.WorkBuffer,
 		Class:            "options",
@@ -5098,6 +5128,15 @@ func (e *Editor) Cleanup() {
 	e.releaseAllMewLocks()
 	if e.PawScript != nil {
 		e.PawScript.Cleanup()
+	}
+	// Release this editor's own garland library and remove its private
+	// cold-storage subfolder, so a long-lived host that opens and closes many
+	// mew instances doesn't leak libraries or temp directories.
+	if e.lib != nil {
+		_ = e.lib.Close()
+	}
+	if e.coldDir != "" {
+		_ = os.RemoveAll(e.coldDir)
 	}
 }
 

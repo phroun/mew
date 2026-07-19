@@ -28,23 +28,23 @@ func enableEditingUndo(g *garland.Garland) {
 	}
 }
 
-var library *garland.Library
-
-// InitLibrary initializes the Garland library with default cold storage path.
-func InitLibrary() error {
-	return InitLibraryWithPath("")
+// Library owns one garland.Library (its own cold-storage tier). Each editor
+// instance holds its own Library so many mews can run in one process without
+// sharing garland state (see NewLibrary). The package-level constructors below
+// (New, NewFromString, OpenFile, ...) operate on a lazily-created process
+// default for callers and tests that don't manage their own.
+type Library struct {
+	g *garland.Library
 }
 
-// InitLibraryWithPath initializes the Garland library with a specific cold storage path.
-// If path is empty, it uses os.TempDir(), falling back to ~/.mew/cold-storage.
-func InitLibraryWithPath(path string) error {
-	coldStoragePath := path
-
+// NewLibrary creates an independent library backed by its own cold-storage
+// directory. An empty path uses the OS temp dir (falling back to
+// ~/.mew/cold-storage). Give each instance a DISTINCT directory so their cold
+// storage never collides.
+func NewLibrary(coldStoragePath string) (*Library, error) {
 	if coldStoragePath == "" {
-		// Try OS temp directory first
 		coldStoragePath = os.TempDir()
 		if coldStoragePath == "" {
-			// Fall back to ~/.mew/cold-storage
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
 				homeDir = "."
@@ -52,22 +52,62 @@ func InitLibraryWithPath(path string) error {
 			coldStoragePath = homeDir + "/.mew/cold-storage"
 		}
 	}
-
-	// Ensure the directory exists
 	os.MkdirAll(coldStoragePath, 0755)
-
-	var err error
-	library, err = garland.Init(garland.LibraryOptions{
-		ColdStoragePath: coldStoragePath,
-	})
-	return err
+	g, err := garland.Init(garland.LibraryOptions{ColdStoragePath: coldStoragePath})
+	if err != nil {
+		return nil, err
+	}
+	return &Library{g: g}, nil
 }
 
-// CloseLibrary closes the Garland library.
+// Close releases the library's garland resources. Safe on a nil or
+// already-closed library.
+func (lib *Library) Close() error {
+	if lib != nil && lib.g != nil {
+		err := lib.g.Close()
+		lib.g = nil
+		return err
+	}
+	return nil
+}
+
+// defaultLib backs the package-level constructors for callers that don't hold
+// their own Library (tests, simple embedders). Editors use their own.
+var defaultLib *Library
+
+// defaultLibrary lazily initializes the process default Library. If init fails
+// it returns a Library with a nil garland, and the constructors degrade the way
+// they always did (empty buffer / "not initialized" error).
+func defaultLibrary() *Library {
+	if defaultLib == nil {
+		_ = InitLibrary()
+	}
+	if defaultLib == nil {
+		return &Library{}
+	}
+	return defaultLib
+}
+
+// InitLibrary initializes the default Garland library with the default cold
+// storage path.
+func InitLibrary() error { return InitLibraryWithPath("") }
+
+// InitLibraryWithPath initializes the default Garland library with a specific
+// cold storage path (empty = OS temp, then ~/.mew/cold-storage).
+func InitLibraryWithPath(path string) error {
+	lib, err := NewLibrary(path)
+	if err != nil {
+		return err
+	}
+	defaultLib = lib
+	return nil
+}
+
+// CloseLibrary closes the default Garland library.
 func CloseLibrary() {
-	if library != nil {
-		library.Close()
-		library = nil
+	if defaultLib != nil {
+		_ = defaultLib.Close()
+		defaultLib = nil
 	}
 }
 
@@ -130,71 +170,51 @@ func (b *Buffer) captureSavePoint() {
 	b.hasSaved = true
 }
 
-// New creates a new empty buffer.
-func New() *Buffer {
-	if library == nil {
-		err := InitLibrary()
-		if err != nil || library == nil {
-			return &Buffer{filename: ""}
-		}
-	}
+// New creates a new empty buffer using the default library.
+func New() *Buffer { return defaultLibrary().New() }
 
-	g, err := library.Open(garland.FileOptions{
+// New creates a new empty buffer in this library.
+func (lib *Library) New() *Buffer {
+	if lib == nil || lib.g == nil {
+		return &Buffer{filename: ""}
+	}
+	g, err := lib.g.Open(garland.FileOptions{
 		DataBytes: []byte{}, // Empty byte slice is not nil, so counts as data source
 	})
 	if err != nil {
-		return &Buffer{
-			filename: "",
-		}
+		return &Buffer{filename: ""}
 	}
 	enableEditingUndo(g)
 
-	// Create read cursor for reading operations
 	readCursor := g.NewCursor()
 	readCursor.SeekByte(0)
-
-	return &Buffer{
-		garland:    g,
-		readCursor: readCursor,
-	}
+	return &Buffer{garland: g, readCursor: readCursor}
 }
 
-// NewFromString creates a buffer from string content.
-func NewFromString(content string) *Buffer {
-	if library == nil {
-		err := InitLibrary()
-		if err != nil || library == nil {
-			return &Buffer{filename: ""}
-		}
-	}
+// NewFromString creates a buffer from string content using the default library.
+func NewFromString(content string) *Buffer { return defaultLibrary().NewFromString(content) }
 
-	// Use DataBytes for empty content since empty DataString doesn't count as data source
+// NewFromString creates a buffer from string content in this library.
+func (lib *Library) NewFromString(content string) *Buffer {
+	if lib == nil || lib.g == nil {
+		return &Buffer{filename: ""}
+	}
+	// Use DataBytes for empty content since empty DataString doesn't count as a data source.
 	var g *garland.Garland
 	var err error
 	if content == "" {
-		g, err = library.Open(garland.FileOptions{
-			DataBytes: []byte{},
-		})
+		g, err = lib.g.Open(garland.FileOptions{DataBytes: []byte{}})
 	} else {
-		g, err = library.Open(garland.FileOptions{
-			DataString: content,
-		})
+		g, err = lib.g.Open(garland.FileOptions{DataString: content})
 	}
 	if err != nil {
-		return &Buffer{
-			filename: "",
-		}
+		return &Buffer{filename: ""}
 	}
 	enableEditingUndo(g)
 
-	// Create read cursor for reading operations
 	readCursor := g.NewCursor()
 	readCursor.SeekByte(0)
-
-	return &Buffer{
-		garland:    g,
-		readCursor: readCursor,
-	}
+	return &Buffer{garland: g, readCursor: readCursor}
 }
 
 // NewFromFile opens a file through Garland's own lazy-loading path: the file
@@ -218,18 +238,17 @@ type OpenOptions struct {
 	LockOwner string
 }
 
-// OpenFile is NewFromFile with options.
+// OpenFile is NewFromFile with options, using the default library.
 func OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().OpenFile(filename, opts)
+}
+
+// OpenFile opens a file-backed buffer in this library.
+func (lib *Library) OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
-
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		FilePath:      filename,
 		UseEmacsLocks: opts.UseEmacsLocks,
 		LockOwner:     opts.LockOwner,
@@ -258,17 +277,17 @@ func OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
 // points, revert) instead of the raw content writes NewFromBytes implies;
 // metadata-based change detection is off (the host volunteers none).
 func NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().NewFromHostFile(host, filename)
+}
+
+// NewFromHostFile opens a host-virtualized file in this library.
+func (lib *Library) NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
 
 	fs := BridgeFS(host)
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		FilePath:   filename,
 		FileSystem: fs,
 	})
@@ -296,16 +315,16 @@ func NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
 // only spill tier); use NewFromFile for real files so Garland can page them
 // lazily. This is the path for host-virtualized file systems.
 func NewFromBytes(data []byte, filename string) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().NewFromBytes(data, filename)
+}
+
+// NewFromBytes creates an in-memory buffer in this library.
+func (lib *Library) NewFromBytes(data []byte, filename string) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
 
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		DataBytes: data,
 	})
 	if err != nil {
