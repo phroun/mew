@@ -38,7 +38,7 @@ func TestRootWindowEntersSoloMode(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	root := startRootWindow(desktop, application, []string{"notes.txt"}, false)
+	root := startRootWindow(desktop, application, []string{"notes.txt"})
 	if root == nil {
 		t.Fatal("startRootWindow returned nil")
 	}

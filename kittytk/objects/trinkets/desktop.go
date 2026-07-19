@@ -119,6 +119,12 @@ type Desktop struct {
 	// desktop. Off by default (the menu bar always shows).
 	hideMenuBarSoleApp bool
 
+	// onApplicationsChanged, when set (SetOnApplicationsChanged), fires whenever
+	// an application is added to or removed from the desktop, so a host can react
+	// to the app set changing - e.g. a single-app host upgrading itself to
+	// multi-window once a peer app joins the server.
+	onApplicationsChanged func()
+
 	// solo: a single application owns the whole display. Its main window
 	// replaces the desktop entirely - no system (Psi) menu, no dock, no
 	// wallpaper - and the host quits when the last window closes.
@@ -703,6 +709,8 @@ func (d *Desktop) AddApplication(app ApplicationProvider) {
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
 	}
+
+	d.fireApplicationsChanged()
 }
 
 // RemoveApplication unregisters an application from the desktop.
@@ -737,6 +745,8 @@ func (d *Desktop) RemoveApplication(app ApplicationProvider) {
 		d.updateMenuBarContent()
 		d.updateStatusBarContent()
 	}
+
+	d.fireApplicationsChanged()
 }
 
 // SetApplication sets a single application (for backward compatibility).
@@ -758,6 +768,28 @@ func (d *Desktop) ActiveApplication() ApplicationProvider {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.activeApp
+}
+
+// SetOnApplicationsChanged registers a callback fired whenever the set of
+// applications changes (added or removed). A host uses it to adapt to the
+// presence of other apps; it runs on the platform thread, after the app set and
+// active application have been updated.
+func (d *Desktop) SetOnApplicationsChanged(fn func()) {
+	d.mu.Lock()
+	d.onApplicationsChanged = fn
+	d.mu.Unlock()
+}
+
+// fireApplicationsChanged invokes the applications-changed callback (if any)
+// without holding d.mu, so the callback may read Applications() and mutate app
+// state freely.
+func (d *Desktop) fireApplicationsChanged() {
+	d.mu.RLock()
+	fn := d.onApplicationsChanged
+	d.mu.RUnlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // Applications returns all registered applications.

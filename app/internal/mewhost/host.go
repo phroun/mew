@@ -62,38 +62,62 @@ const (
 	hideTitleBarSoleApp = true
 )
 
-// multiWindow controls whether the host presents itself as a multi-window app:
-// the graphical (SDL) host passes true (New Window opens peer editors, and the
-// system supplies a Window menu); the TUI host passes false (a single maximized
-// editor, no New Window, no Window menu).
-func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, multiWindow bool) {
+// BuildHost's application is single-window on its own and upgrades to
+// multi-window (New Window plus the system Window menu) whenever another app is
+// present - see the applications-changed hook below.
+func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string) {
 	application := app.New(nil)
 	application.SetName("mew")
-	application.SetMenuBarContent(buildMenus(desktop, application, multiWindow))
+	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
+	application.SetMenuBarContent(buildMenus(desktop, application, false))
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
 	desktop.SetHideMenuBarForSoleApp(hideMenuBarSoleApp)
 	desktop.AddApplication(application)
 
+	// mew's multi-window status follows the presence of OTHER (non-context)
+	// applications - single-window when it is the only app, multi-window once a
+	// peer joins the server, and back again when the last peer leaves. Its own
+	// maximized/restored state has no bearing on this. Rebuilding the menus keeps
+	// mew's New Window item in step; SetMenuBarContent tells the desktop to
+	// recompose the visible bar (including the system Window menu).
+	desktop.SetOnApplicationsChanged(func() {
+		multi := otherForegroundApps(desktop, application) > 0
+		if multi == application.MultiWindow() {
+			return
+		}
+		application.SetMultiWindow(multi)
+		application.SetMenuBarContent(buildMenus(desktop, application, multi))
+	})
+
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
-		startRootWindow(desktop, application, launchArgs, multiWindow)
+		startRootWindow(desktop, application, launchArgs)
 		serveSocket(desktop, cfg)
 	})
+}
+
+// otherForegroundApps counts the non-context-only applications on the desktop
+// other than self - i.e. how many peer apps are present.
+func otherForegroundApps(desktop *trinkets.Desktop, self *app.Application) int {
+	n := 0
+	for _, a := range desktop.Applications() {
+		if a != trinkets.ApplicationProvider(self) && !a.ContextOnly() {
+			n++
+		}
+	}
+	return n
 }
 
 // startRootWindow opens the root mew editor and makes it the whole display via
 // solo mode. Runs on the platform thread at startup (the surface and screen
 // bounds are ready), returning the root window.
-func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, multiWindow bool) *window.Window {
+func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string) *window.Window {
 	root := newEditorWindow(desktop, application, launchArgs, true)
 	application.AddWindow(root)
 	application.SetMainWindow(root)
-	// The graphical host is multi-window (New Window opens peer editors and the
-	// system supplies a Window menu); the TUI host is single-window (one
-	// maximized editor). Apps that dial in over the socket still embed their own
-	// mew editors either way.
-	application.SetMultiWindow(multiWindow)
+	// (Multi-window status is managed by BuildHost's applications-changed hook,
+	// following the presence of other apps - not set here.)
 	// Enter solo mode: the root mew window becomes the WHOLE display - no desktop
 	// wallpaper, no system (Psi) menu, no window border behind it, just mew's own
 	// menu/status chrome filling the surface. mew is the server here, so it

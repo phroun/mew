@@ -72,8 +72,6 @@ func main() {
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tui.NewTUIBackend(tuiOpts))
 
-	// The TUI host is single-window: one maximized editor, no New Window / Window
-	// menu (multiWindow=false).
-	mewhost.BuildHost(desktop, cfg, launchArgs, false)
+	mewhost.BuildHost(desktop, cfg, launchArgs)
 	os.Exit(desktop.Run())
 }
