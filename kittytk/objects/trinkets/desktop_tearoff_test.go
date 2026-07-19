@@ -50,6 +50,7 @@ func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
 func (s *msSurface) Raise()                           { s.raised = true }
 func (s *msSurface) Minimized() bool                  { return s.minimized }
 func (s *msSurface) Minimize()                        { s.minimized = true }
+func (s *msSurface) Restore()                         { s.minimized = false } // NativeRestorer
 func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports
@@ -625,6 +626,70 @@ func TestSoloPrimaryHostBlockedByOwnedModal(t *testing.T) {
 		modal.Close()
 		if host.IsModalBlocked() {
 			t.Error("solo primary host still blocked after its modal closed")
+		}
+
+		d.QuitWithCode(0)
+	}
+
+	d.RunOn(plat)
+}
+
+// A click on the blocked window must OS-restore the blocking modal when it is
+// minimized at the OS level (the user minimized its torn surface via the window
+// controls) - the window's own IsMinimized flag doesn't capture that - and then
+// raise it. Regression for surfaceModal gating the restore on IsMinimized alone.
+func TestSurfaceBlockingModalRestoresOSMinimized(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 480)
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	main := window.NewWindow("Main")
+	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
+	d.AddApplication(app)
+
+	d.SetOnStartup(func() {
+		wm := d.WindowManager()
+		wm.AddWindow(main)
+		main.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 300, Height: 200})
+		main.Layout()
+	})
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		d.EnterSoloMode(main)
+
+		// A modal owned by the solo window, torn onto its own peer surface.
+		modal := window.NewWindow("Gate")
+		modal.SetType(window.WindowTypeModal)
+		modal.SetOwner(main)
+		app.windows = append(app.windows, modal)
+		modal.SetBounds(core.UnitRect{X: 40, Y: 30, Width: 220, Height: 160})
+		wm.AddWindow(modal)
+		modal.Layout()
+
+		if len(plat.surfaces) != 2 {
+			t.Fatalf("want 2 surfaces (primary + torn modal), got %d", len(plat.surfaces))
+		}
+		modalSurf := plat.surfaces[1]
+
+		// The user OS-minimizes the modal's surface; the window's own flag stays
+		// clear (an OS-level minimize the app never initiated).
+		modalSurf.Minimize()
+		modalSurf.raised = false
+		if modal.IsMinimized() {
+			t.Fatal("precondition: window IsMinimized should be clear (OS-only minimize)")
+		}
+
+		// A press on the blocked solo editor surfaces the modal.
+		d.surfaceBlockingModal(main)
+
+		if modalSurf.Minimized() {
+			t.Error("modal surface was not OS-restored before raising")
+		}
+		if !modalSurf.raised {
+			t.Error("modal surface was not raised to the front")
 		}
 
 		d.QuitWithCode(0)

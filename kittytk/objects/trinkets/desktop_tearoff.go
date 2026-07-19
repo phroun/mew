@@ -355,13 +355,25 @@ func (d *Desktop) surfaceModal(modal *window.Window) {
 		return
 	}
 	if h := d.tornHostForWindow(modal); h != nil {
-		if modal.IsMinimized() {
-			if r, ok := h.Surface().(platform.NativeRestorer); ok {
+		surf := h.Surface()
+		// Restore before raising if the modal is minimized at EITHER level: the
+		// OS window (Minimized(), set when the user minimizes via the OS window
+		// controls - the app-level flag below doesn't capture that) or the
+		// window's own minimized flag. Raise alone won't un-minimize an
+		// OS-minimized window, so it would otherwise stay hidden.
+		osMinimized := false
+		if n, ok := surf.(platform.NativeSurface); ok {
+			osMinimized = n.Minimized()
+		}
+		if osMinimized || modal.IsMinimized() {
+			if r, ok := surf.(platform.NativeRestorer); ok {
 				r.Restore()
+			}
+			if modal.IsMinimized() {
 				modal.Restore()
 			}
 		}
-		if n, ok := h.Surface().(platform.NativeSurface); ok {
+		if n, ok := surf.(platform.NativeSurface); ok {
 			n.Raise()
 		}
 		return
