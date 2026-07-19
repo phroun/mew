@@ -8,6 +8,7 @@
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
 #   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
+#   make install-macapp    install mew.app into $(MACAPP_DIR) (default /Applications)
 #   make check      go vet + full test suite (the pre-flight gate)
 #   make test       run the test suite
 #   make vet        run go vet
@@ -35,6 +36,10 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 INSTALL_BIN := $(DESTDIR)$(PREFIX)/bin
 
+# Where `make install-macapp` puts mew.app on macOS. /Applications needs root;
+# a per-user install with no sudo is `make install-macapp MACAPP_DIR=$$HOME/Applications`.
+MACAPP_DIR ?= /Applications
+
 # Build tags: the KittyTK host (kittytk) with the real mew-backed editor (mew),
 # and the graphical SDL backend (sdl) for the windowed twin.
 TUI_TAGS := kittytk mew
@@ -46,7 +51,7 @@ BUILD_FILE := internal/version/version.go
 # Windows cross-build target architecture (amd64 or arm64).
 WINDOWS_ARCH ?= amd64
 
-.PHONY: all build mew mew-sdl mew-plain windows install uninstall macapp check vet test clean increment
+.PHONY: all build mew mew-sdl mew-plain windows install uninstall macapp install-macapp uninstall-macapp check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -93,6 +98,21 @@ uninstall:
 # (or a 1024x1024 assets/mew.png, converted on macOS) for the icon.
 macapp: mew-sdl
 	./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+
+# Install the bundle into $(MACAPP_DIR) (default /Applications). The terminal
+# mew (once installed on PATH) launches this bundle for --window/--detach when
+# it is present, so the window gets the Dock icon and name. Needs write access
+# to $(MACAPP_DIR) - use sudo, or a per-user MACAPP_DIR=$$HOME/Applications.
+install-macapp: macapp
+	mkdir -p "$(MACAPP_DIR)"
+	rm -rf "$(MACAPP_DIR)/mew.app"
+	cp -R "$(BIN_DIR)/mew.app" "$(MACAPP_DIR)/mew.app"
+	@echo "installed mew.app to $(MACAPP_DIR)"
+
+# Remove the installed bundle.
+uninstall-macapp:
+	rm -rf "$(MACAPP_DIR)/mew.app"
+	@echo "removed mew.app from $(MACAPP_DIR)"
 
 # Pre-flight gate: vet then the full test suite. Run before committing, and
 # reused by CI / hooks so there is one definition of "the checks pass".

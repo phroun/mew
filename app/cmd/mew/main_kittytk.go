@@ -108,19 +108,19 @@ func launchGraphical(detach bool) {
 		fmt.Fprintf(os.Stderr, "mew: cannot locate self: %v\n", err)
 		os.Exit(1)
 	}
-	sdlName := "mew-sdl"
-	if runtime.GOOS == "windows" {
-		sdlName = "mew-sdl.exe"
+	target := graphicalTarget(filepath.Dir(self))
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "mew: no graphical build found (expected mew.app or mew-sdl beside me)")
+		os.Exit(1)
 	}
-	sdlPath := filepath.Join(filepath.Dir(self), sdlName)
 
-	cmd := exec.Command(sdlPath, os.Args[1:]...)
+	cmd := exec.Command(target, os.Args[1:]...)
 	if detach {
 		// Own session, no inherited terminal: the shell returns at once and the
 		// window survives the terminal closing.
 		cmd.SysProcAttr = detachSysProcAttr()
 		if err := cmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "mew: cannot launch %s: %v\n", sdlPath, err)
+			fmt.Fprintf(os.Stderr, "mew: cannot launch %s: %v\n", target, err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -131,8 +131,38 @@ func launchGraphical(detach bool) {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())
 		}
-		fmt.Fprintf(os.Stderr, "mew: cannot launch %s: %v\n", sdlPath, err)
+		fmt.Fprintf(os.Stderr, "mew: cannot launch %s: %v\n", target, err)
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// graphicalTarget returns the executable to run for the graphical build. On
+// macOS it prefers a mew.app bundle's inner binary - Contents/MacOS/mew - so the
+// window inherits the bundle's Dock icon and name (macOS derives them from the
+// enclosing .app); it looks beside us first, then ~/Applications and
+// /Applications. Otherwise (and on every other platform) it uses the mew-sdl
+// binary beside us. Returns "" when neither is found.
+func graphicalTarget(dir string) string {
+	if runtime.GOOS == "darwin" {
+		apps := []string{filepath.Join(dir, "mew.app")}
+		if home, err := os.UserHomeDir(); err == nil {
+			apps = append(apps, filepath.Join(home, "Applications", "mew.app"))
+		}
+		apps = append(apps, "/Applications/mew.app")
+		for _, app := range apps {
+			inner := filepath.Join(app, "Contents", "MacOS", "mew")
+			if fi, err := os.Stat(inner); err == nil && !fi.IsDir() {
+				return inner
+			}
+		}
+	}
+	sdl := filepath.Join(dir, "mew-sdl")
+	if runtime.GOOS == "windows" {
+		sdl = filepath.Join(dir, "mew-sdl.exe")
+	}
+	if fi, err := os.Stat(sdl); err == nil && !fi.IsDir() {
+		return sdl
+	}
+	return ""
 }
