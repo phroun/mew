@@ -1,6 +1,4 @@
-//go:build kittytk
-
-package main
+package mewhost
 
 import (
 	"strings"
@@ -13,7 +11,8 @@ import (
 // The host builds its whole UI from protocol-style text, and those scripts'
 // reply names and type assertions only resolve at execution time. These tests
 // execute each script directly (no live desktop) so a typo in a script or a
-// wrong concrete type is caught here, not on first launch.
+// wrong concrete type is caught here, not on first launch. They run in both
+// editor builds (plain `go test`, and `go test -tags mew`).
 
 func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
@@ -28,6 +27,16 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	}
 	if w.Content() == nil {
 		t.Fatal("root window has no content trinket (the editor)")
+	}
+}
+
+func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	w := newEditorWindow(desktop, application, nil, false)
+	if w == nil || w.Content() == nil {
+		t.Fatal("scratch editor window did not build")
 	}
 }
 
@@ -48,16 +57,6 @@ func TestFirstOperandSkipsSwitchesAndGoto(t *testing.T) {
 		if got := firstOperand(c.argv); got != c.want {
 			t.Errorf("firstOperand(%v) = %q, want %q", c.argv, got, c.want)
 		}
-	}
-}
-
-func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
-	desktop := trinkets.NewDesktop()
-	application := app.New(nil)
-
-	w := newEditorWindow(desktop, application, nil, false)
-	if w == nil || w.Content() == nil {
-		t.Fatal("scratch editor window did not build")
 	}
 }
 
@@ -83,5 +82,17 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 		if !application.Commands().Has(action) {
 			t.Errorf("action %q was not registered", action)
 		}
+	}
+}
+
+// SplitArgs separates meta flags from the launch argv.
+func TestSplitArgs(t *testing.T) {
+	launch, wantV, wantH := SplitArgs([]string{"--syntax=go", "-v", "a.txt", "-h", "+3"})
+	if !wantV || !wantH {
+		t.Errorf("wantVersion=%v wantHelp=%v, want both true", wantV, wantH)
+	}
+	want := []string{"--syntax=go", "a.txt", "+3"}
+	if strings.Join(launch, " ") != strings.Join(want, " ") {
+		t.Errorf("launch = %v, want %v", launch, want)
 	}
 }
