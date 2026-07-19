@@ -4,7 +4,7 @@
 #   make mew        build the terminal (KittyTK TUI) host into bin/mew
 #   make mew-sdl    build the graphical (SDL) host into bin/mew-sdl
 #   make mew-plain  build the bare terminal editor (no host) into bin/mew-plain
-#   make windows    cross-build the Windows console mew.exe into bin/
+#   make windows    cross-build the Windows console mew.exe (with icon) into bin/
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
 #   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
@@ -51,6 +51,14 @@ BUILD_FILE := internal/version/version.go
 # Windows cross-build target architecture (amd64 or arm64).
 WINDOWS_ARCH ?= amd64
 
+# rsrc turns assets/mew.ico into a .syso resource object the Go linker embeds
+# into mew.exe (the app icon). Pinned; fetched on demand via `go run`.
+RSRC ?= go run github.com/akavel/rsrc@v0.10.2
+
+# The icon resource object. Arch-suffixed so the Go toolchain links it only for
+# the matching windows build and never for other platforms.
+WINDOWS_SYSO := app/cmd/mew/rsrc_windows_$(WINDOWS_ARCH).syso
+
 .PHONY: all build mew mew-sdl mew-plain windows install uninstall macapp install-macapp uninstall-macapp check vet test clean increment
 
 # Default: build both shipped binaries.
@@ -76,8 +84,13 @@ mew-plain:
 # keeps Go's default console subsystem — mew is a console editor, so no
 # `-H windowsgui`, which would detach the console we need. (mew-sdl is not
 # cross-built: SDL2 + cgo don't cross-compile cleanly.)
-windows:
+windows: $(WINDOWS_SYSO)
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
+
+# Build the Windows icon resource object from assets/mew.ico (regenerated when
+# the icon changes). The Go linker embeds it into mew.exe automatically.
+$(WINDOWS_SYSO): assets/mew.ico
+	$(RSRC) -ico assets/mew.ico -arch $(WINDOWS_ARCH) -o $(WINDOWS_SYSO)
 
 # Install both binaries onto PATH, co-located so `mew --window` can find
 # mew-sdl beside it. Needs write access to $(PREFIX)/bin (use sudo, or set a
@@ -126,9 +139,10 @@ vet:
 test:
 	$(GO) test ./...
 
-# Remove built binaries.
+# Remove built binaries and the generated Windows icon resource object.
 clean:
 	rm -rf $(BIN_DIR)
+	rm -f app/cmd/mew/rsrc_windows_*.syso
 
 # Bump the per-commit Build counter in internal/version/version.go. The file
 # holds Build on a single line of the form `const Build = N`; the awk script
