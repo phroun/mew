@@ -75,6 +75,10 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	application.SetMenuBarContent(buildMenus(desktop, application, false))
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
+	// The sole-app chrome suppression (hide Ψ / menu bar / status bar for a lone
+	// fullscreen app) is a TUI concern only; on the graphical host solo mode
+	// already handles fullscreen, so leave the desktop chrome alone there.
+	desktop.SetSoleAppChromeSuppression(!graphical)
 	desktop.SetHideMenuBarForSoleApp(hideMenuBarSoleApp)
 	desktop.AddApplication(application)
 

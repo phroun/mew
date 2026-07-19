@@ -113,10 +113,18 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
-	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), suppresses the
-	// desktop menu bar under the same single-app condition that hides Ψ and the
-	// status bar - an experimental toggle for a fully chrome-free single-app
-	// desktop. Off by default (the menu bar always shows).
+	// soleAppChromeSuppression, when enabled (SetSoleAppChromeSuppression), lets
+	// the sole-single-window-app condition hide the desktop chrome (Ψ menu, menu
+	// bar, status bar). Opt-in per host: a TUI host turns it on so a lone
+	// fullscreen app fills the screen; the graphical host leaves it off (solo
+	// mode already handles fullscreen there). Off by default - so the standalone
+	// hosts keep their normal chrome.
+	soleAppChromeSuppression bool
+
+	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), extends the
+	// suppression to the menu bar too (see menuBarShown) - an experimental toggle
+	// for a fully chrome-free single-app desktop. Off by default (the menu bar
+	// always shows).
 	hideMenuBarSoleApp bool
 
 	// onApplicationsChanged, when set (SetOnApplicationsChanged), fires whenever
@@ -1317,26 +1325,53 @@ func (d *Desktop) soleForegroundApp() bool {
 	return n == 1
 }
 
+// suppressSoleAppChrome reports whether the desktop's own chrome (Ψ menu, menu
+// bar, status bar) should be hidden because a single self-contained app owns the
+// desktop. This is opt-in per host (SetSoleAppChromeSuppression): a TUI host
+// enables it so a lone fullscreen app (mew) fills the screen; the graphical host
+// leaves it off, since solo mode already handles the fullscreen case there. It
+// applies only while exactly one non-context app is present AND that (active)
+// app is single-window; once the sole app declares itself multi-window (e.g. mew
+// on show_desktop), the chrome returns.
+func (d *Desktop) suppressSoleAppChrome() bool {
+	if !d.soleAppChromeSuppression || !d.soleForegroundApp() {
+		return false
+	}
+	if a := d.activeApp; a != nil && a.MultiWindow() {
+		return false
+	}
+	return true
+}
+
+// SetSoleAppChromeSuppression enables the sole-app chrome suppression (Ψ menu,
+// status bar, and - with SetHideMenuBarForSoleApp - the menu bar). Off by
+// default; a TUI host enables it, the graphical host does not.
+func (d *Desktop) SetSoleAppChromeSuppression(enabled bool) {
+	d.soleAppChromeSuppression = enabled
+	d.Update()
+}
+
 // statusBarShown reports whether the desktop's own status bar should occupy the
-// bottom row and paint. It is suppressed when a single application owns the
-// desktop (soleForegroundApp): that app provides its own status surface (e.g.
-// mew's modebar), so the desktop's is redundant and its row is reclaimed for
-// content. With zero or 2+ foreground apps the shared status bar returns.
+// bottom row and paint. It is suppressed when a single self-contained app owns
+// the desktop (see suppressSoleAppChrome): that app provides its own status
+// surface (e.g. mew's modebar), so the desktop's is redundant and its row is
+// reclaimed for content.
 func (d *Desktop) statusBarShown() bool {
-	return d.statusBar != nil && !d.soleForegroundApp()
+	return d.statusBar != nil && !d.suppressSoleAppChrome()
 }
 
 // menuBarShown reports whether the desktop menu bar should occupy the top row
 // and paint. It is present unless the experimental hideMenuBarSoleApp toggle is
-// on AND a single application owns the desktop, in which case it is suppressed
-// (its row reclaimed) for a fully chrome-free single-app desktop.
+// on AND the sole-app chrome is being suppressed, in which case it too is
+// hidden (its row reclaimed) for a fully chrome-free single-app desktop.
 func (d *Desktop) menuBarShown() bool {
-	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.soleForegroundApp())
+	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
 }
 
-// SetHideMenuBarForSoleApp toggles whether the desktop menu bar is hidden when a
-// single application owns the desktop (see menuBarShown). Experimental: hiding
-// it removes the only pointer route to the app's menus, so it is off by default.
+// SetHideMenuBarForSoleApp toggles whether the desktop menu bar is also hidden
+// while the sole-app chrome is suppressed (see menuBarShown). Experimental:
+// hiding it removes the only pointer route to the app's menus, so it is off by
+// default.
 func (d *Desktop) SetHideMenuBarForSoleApp(hide bool) {
 	d.hideMenuBarSoleApp = hide
 	d.Update()
@@ -1373,11 +1408,12 @@ func (d *Desktop) updateMenuBarContent() {
 		}
 	}
 
-	// Full bar: system menu first - unless a single application owns the whole
-	// desktop, in which case Ψ is suppressed as redundant furniture and that
-	// app's own menus are all that shows (a bundled single-app host like mew).
-	// An empty desktop (zero apps) still shows Ψ, and two or more bring it back.
-	if d.systemMenu != nil && !d.soleForegroundApp() {
+	// Full bar: system menu first - unless the sole-app chrome is suppressed
+	// (a bundled single-app host like mew on the TUI), in which case Ψ is
+	// dropped as redundant furniture and that app's own menus are all that
+	// shows. An empty desktop, a multi-window app, or a graphical host all keep
+	// Ψ.
+	if d.systemMenu != nil && !d.suppressSoleAppChrome() {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
