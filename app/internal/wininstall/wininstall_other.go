@@ -1,10 +1,10 @@
 //go:build !windows
 
 // Non-Windows stub for the Windows self-installer. The installer only makes
-// sense on Windows (Start Menu shortcut, per-user PATH, registry first-run flag),
-// so everywhere else it reports itself unavailable, treats the first run as
-// already done (so the graphical host never shows the Windows welcome window),
-// and fails loudly if asked to install.
+// sense on Windows (Start Menu shortcut, per-user PATH), so everywhere else it
+// reports itself unavailable, treats the first run as already done (so the
+// graphical host never shows the Windows welcome window), and fails loudly if
+// asked to install.
 package wininstall
 
 import "errors"

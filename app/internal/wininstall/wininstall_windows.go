@@ -4,9 +4,14 @@
 // framework, no PowerShell, just plain Go hitting the same Win32/COM APIs a real
 // installer uses. It copies the two binaries into a per-user location, drops a
 // Start Menu shortcut pointing at the graphical build (mew-sdl.exe, which carries
-// the embedded app icon), adds the install directory to the user's PATH, and
-// records a first-run flag in the registry. Everything lands under HKCU and
-// %LOCALAPPDATA%/%APPDATA%, so no elevation is needed.
+// the embedded app icon), and adds the install directory to the user's PATH.
+// Everything lands under HKCU and %LOCALAPPDATA%/%APPDATA%, so no elevation is
+// needed.
+//
+// Whether to offer the first-run welcome is decided from the binary's own
+// location (FirstRunDone), not a stored flag — the installer puts mew in a folder
+// named exactly "mew", so "already installed" is simply "I'm running from a mew
+// folder". No registry round-trip, nothing to clean up.
 //
 // Both the console binary's `mew --install` flag and the graphical binary's
 // first-run welcome window (Install button) call Install(); it is idempotent.
@@ -43,17 +48,27 @@ var (
 // is the Windows build).
 func Available() bool { return true }
 
-// FirstRunDone reports whether mew has been installed on this machine (the
-// HKCU\Software\mew "Installed" flag is set). The graphical host shows its
-// first-run welcome window only when this is false.
+// FirstRunDone reports whether this copy of mew looks already-installed, judged
+// purely from where its binary lives: true when the immediate parent folder is
+// named exactly "mew" (case-insensitive, as Windows paths are). That is where
+// the installer puts it (%LOCALAPPDATA%\Programs\mew, C:\Program Files\mew, a
+// "mew" folder on removable media, …), so a copy running from such a folder is
+// treated as installed and the graphical host skips the first-run welcome.
+//
+// A copy run from an extracted download folder — mew-0.3.2-sdl\, mew-sdl\, and
+// the like — is NOT "mew", so it still offers to install. The exact-match rule
+// is deliberate: only a folder literally called mew counts, never a versioned or
+// suffixed one. If the binary's location can't be determined, it errs toward
+// offering the welcome.
 func FirstRunDone() bool {
-	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\`+installAppName, registry.QUERY_VALUE)
+	exe, err := os.Executable()
 	if err != nil {
 		return false
 	}
-	defer k.Close()
-	v, _, err := k.GetIntegerValue("Installed")
-	return err == nil && v != 0
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return strings.EqualFold(filepath.Base(filepath.Dir(exe)), installAppName)
 }
 
 // Install copies the binaries into place, creates the Start Menu shortcut, adds
@@ -124,14 +139,13 @@ func Install() (string, error) {
 		fmt.Printf("%s already on your PATH\n", dir)
 	}
 
-	if err := markInstalled(); err != nil {
-		return "", fmt.Errorf("record install: %w", err)
-	}
+	// No install flag to record: "installed" is decided from the binary's
+	// location (this dir is named "mew"), so copying it here is the whole record.
 	return guiExe, nil
 }
 
 // Uninstall reverses Install (best-effort): removes the Start Menu shortcut, the
-// PATH entry, the installed binaries, and the first-run flag.
+// PATH entry, and the installed binaries.
 func Uninstall() error {
 	dir := installDir()
 	lnk := shortcutPath()
@@ -156,10 +170,6 @@ func Uninstall() error {
 		}
 	}
 	os.Remove(dir) // succeeds only if now empty
-
-	if err := registry.DeleteKey(registry.CURRENT_USER, `Software\`+installAppName); err != nil && err != registry.ErrNotExist {
-		fmt.Fprintf(os.Stderr, "mew: could not clear registry flag: %v\n", err)
-	}
 	return nil
 }
 
@@ -176,17 +186,6 @@ func installDir() string {
 func shortcutPath() string {
 	base := os.Getenv("APPDATA")
 	return filepath.Join(base, "Microsoft", "Windows", "Start Menu", "Programs", installAppName+".lnk")
-}
-
-// markInstalled records the first-run flag (HKCU\Software\mew "Installed"=1) so
-// the graphical host stops showing its welcome window.
-func markInstalled() error {
-	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\`+installAppName, registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer k.Close()
-	return k.SetDWordValue("Installed", 1)
 }
 
 func copyFile(src, dst string) error {
