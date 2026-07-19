@@ -41,10 +41,11 @@ type Editor struct {
 	core.AccessibleTrinket
 
 	scroll    *ScrollArea       // holds the preview label (top of the box)
-	label     *Label            // word-wrapped preview of the text
+	label     *Label            // preview of the text (we pre-wrap it ourselves)
 	button    *Button           // the interactive surface (bottom of the box)
 	box       *layout.BoxLayout // vertical layout: scroll (stretch) over button
 	laidOutAt core.UnitRect     // bounds the children were last laid out for
+	wrapWidth core.Unit         // width the preview text is currently wrapped to
 
 	value       string
 	placeholder string
@@ -76,12 +77,17 @@ func NewEditor() *Editor {
 	e.SetAccessibleRole(core.RoleGroup)
 	e.SetAccessibleName("editor")
 
-	// Preview: a word-wrapped label in a scroll area.
+	// Preview: a label in a scroll area. We pre-wrap the text ourselves — the
+	// scroll area sizes its content from SizeHint and does not honor a label's
+	// height-for-width wrapping, so a wrap-label would report its unwrapped
+	// width and scroll horizontally. Keeping the label non-wrapping and feeding
+	// it our own wrapped lines gives wrap + vertical scroll and no h-scroll.
 	e.label = NewLabel("")
-	e.label.SetWordWrap(true)
 	e.scroll = NewScrollArea()
 	e.scroll.SetContent(e.label)
 	e.scroll.SetParent(e)
+	e.scroll.SetSizePolicy(core.NewSizePolicy(core.SizeExpanding, core.SizeExpanding))
+	e.scroll.SetHorizontalScrollBarPolicy(ScrollBarAlwaysOff)
 
 	// The real Button is the focusable, keyboard-activatable, announced surface.
 	e.button = NewButton("Edit")
@@ -94,6 +100,9 @@ func NewEditor() *Editor {
 	e.box.SetMetricsSource(e)
 	e.box.AddTrinketWithStretch(e.scroll, 1)
 	e.box.AddTrinket(e.button)
+	if it := e.box.ItemAt(e.box.Count() - 1); it != nil {
+		it.Align = core.AlignCenter // center the button horizontally in the box
+	}
 
 	e.refreshPreview()
 	return e
@@ -122,6 +131,17 @@ func (e *Editor) Layout() {
 		Height: b.Height - 2*m.CellHeight,
 	}
 	e.box.Layout(e, interior)
+
+	// Re-wrap the preview to the scroll's viewport width (reserve a column for
+	// the vertical scrollbar) whenever that width changes.
+	w := e.scroll.Bounds().Width - m.CellWidth
+	if w < m.CellWidth {
+		w = m.CellWidth
+	}
+	if w != e.wrapWidth {
+		e.wrapWidth = w
+		e.refreshPreview()
+	}
 	e.laidOutAt = b
 }
 
@@ -170,7 +190,11 @@ func (e *Editor) refreshPreview() {
 	default:
 		t = "(empty)"
 	}
+	if e.wrapWidth > 0 {
+		t = strings.Join(wrapText(t, e.wrapWidth, e.label.EffectiveFont()), "\n")
+	}
 	e.label.SetText(t)
+	e.scroll.Layout() // re-measure content so the scroll range and preview refresh
 }
 
 // refreshButton syncs the button's label and enabled state to editor state.
@@ -338,45 +362,38 @@ func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
 	return c.HandleMousePress(local)
 }
 
-func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
+// HandleMouseMove and HandleMouseRelease forward to BOTH children (in their
+// local coordinates), not just the one under the pointer. A child in an active
+// drag/press — a pressed Button, or a ScrollArea whose scrollbar thumb is being
+// dragged — must keep receiving moves and the release even after the pointer
+// leaves its bounds, or it sticks in its dragging state.
+
+func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
 	handled := false
-	if e.button.pressed { // the button may have captured the press
-		bb := e.button.Bounds()
-		local := ev
-		local.X -= bb.X
-		local.Y -= bb.Y
-		handled = e.button.HandleMouseRelease(local) || handled
-	}
-	if c, b := e.childHit(ev.X, ev.Y); c != nil && c != e.button {
+	for _, c := range []core.Trinket{e.scroll, e.button} {
+		b := c.Bounds()
 		local := ev
 		local.X -= b.X
 		local.Y -= b.Y
-		handled = c.HandleMouseRelease(local) || handled
+		if c.HandleMouseMove(local) {
+			handled = true
+		}
 	}
 	return handled
 }
 
-func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
-	if e.button.pressed { // a pressed button keeps receiving moves
-		bb := e.button.Bounds()
-		local := ev
-		local.X -= bb.X
-		local.Y -= bb.Y
-		e.button.HandleMouseMove(local)
-		return true
-	}
-	if c, b := e.childHit(ev.X, ev.Y); c != nil {
+func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
+	handled := false
+	for _, c := range []core.Trinket{e.scroll, e.button} {
+		b := c.Bounds()
 		local := ev
 		local.X -= b.X
 		local.Y -= b.Y
-		return c.HandleMouseMove(local)
+		if c.HandleMouseRelease(local) {
+			handled = true
+		}
 	}
-	bb := e.button.Bounds() // off both: let the button clear hover state
-	local := ev
-	local.X -= bb.X
-	local.Y -= bb.Y
-	e.button.HandleMouseMove(local)
-	return false
+	return handled
 }
 
 func (e *Editor) HandleMouseWheel(ev core.MouseWheelEvent) bool {
