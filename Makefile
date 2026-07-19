@@ -7,6 +7,7 @@
 #   make windows    cross-build the Windows console mew.exe into bin/
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
+#   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
 #   make check      go vet + full test suite (the pre-flight gate)
 #   make test       run the test suite
 #   make vet        run go vet
@@ -45,7 +46,7 @@ BUILD_FILE := internal/version/version.go
 # Windows cross-build target architecture (amd64 or arm64).
 WINDOWS_ARCH ?= amd64
 
-.PHONY: all build mew mew-sdl mew-plain windows install uninstall check vet test clean increment
+.PHONY: all build mew mew-sdl mew-plain windows install uninstall macapp check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -86,6 +87,12 @@ install: build
 uninstall:
 	rm -f "$(INSTALL_BIN)/mew" "$(INSTALL_BIN)/mew-sdl"
 	@echo "removed mew and mew-sdl from $(INSTALL_BIN)"
+
+# Wrap the graphical binary in a macOS .app bundle (bin/mew.app) so it gets a
+# real application name and a Dock / task-switcher icon. Drop assets/mew.icns
+# (or a 1024x1024 assets/mew.png, converted on macOS) for the icon.
+macapp: mew-sdl
+	./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
 # Pre-flight gate: vet then the full test suite. Run before committing, and
 # reused by CI / hooks so there is one definition of "the checks pass".
