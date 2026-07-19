@@ -3,6 +3,7 @@
 # same name under examples/.
 /demo
 /demoapp
+/editordemo
 /kittytk-sdl
 /kittytk-tui
 /remoteapp
