@@ -82,6 +82,7 @@ func main() {
 	// larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
-	mewhost.BuildHost(desktop, cfg, launchArgs)
+	// Graphical host: show_desktop/hide_desktop toggle solo mode (graphical=true).
+	mewhost.BuildHost(desktop, cfg, launchArgs, true)
 	os.Exit(desktop.RunOn(plat))
 }

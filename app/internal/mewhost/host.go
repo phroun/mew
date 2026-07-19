@@ -64,8 +64,11 @@ const (
 
 // BuildHost's application is single-window on its own and upgrades to
 // multi-window (New Window plus the system Window menu) whenever another app is
-// present - see the applications-changed hook below.
-func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string) {
+// present - see the applications-changed hook below. graphical selects the
+// desktop-reveal mechanism for mew's show_desktop / hide_desktop commands: the
+// graphical (SDL) host toggles the built-in solo mode, the TUI host forces /
+// releases multi-window (it has no separate desktop surface to reveal).
+func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, graphical bool) {
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
@@ -75,31 +78,61 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	desktop.SetHideMenuBarForSoleApp(hideMenuBarSoleApp)
 	desktop.AddApplication(application)
 
-	// mew's multi-window status follows the presence of OTHER (non-context)
-	// applications - single-window when it is the only app, multi-window once a
-	// peer joins the server, and back again when the last peer leaves. Its own
-	// maximized/restored state has no bearing on this. Rebuilding the menus keeps
-	// mew's New Window item in step; SetMenuBarContent tells the desktop to
-	// recompose the visible bar (including the system Window menu).
 	var root *window.Window
-	desktop.SetOnApplicationsChanged(func() {
-		multi := otherForegroundApps(desktop, application) > 0
+	forceMulti := false // set by show_desktop on the TUI (see below)
+
+	// applyMulti recomputes mew's multi-window status - multi when a peer app is
+	// present OR when show_desktop forced it - and re-fits the maximized root
+	// window to the resulting client area. It follows the presence of OTHER
+	// (non-context) apps: single-window alone, multi-window once a peer joins the
+	// server, and back again when the last peer leaves; mew's own
+	// maximized/restored state has no bearing on it. Rebuilding the menus keeps
+	// mew's New Window item in step, and SetMenuBarContent recomposes the visible
+	// bar (including the system Window menu). The re-fit keeps the maximized
+	// window sized to the client area, which the Ψ menu and status bar (shown
+	// once mew is no longer the sole app) shrink.
+	applyMulti := func() {
+		multi := forceMulti || otherForegroundApps(desktop, application) > 0
 		if multi != application.MultiWindow() {
 			application.SetMultiWindow(multi)
 			application.SetMenuBarContent(buildMenus(desktop, application, multi))
 		}
-		// The app count also drives the desktop chrome (Ψ menu, status bar) and
-		// therefore the client area, so re-fit the maximized root window to the
-		// new bounds - otherwise it stays sized to the old area and ends up
-		// occluded by (or short of) the menu/status bars that just appeared or
-		// vanished. This is the "re-maximize on returning to single mode" (and
-		// entering multi mode) requirement.
 		refitRoot(desktop, root)
-	})
+	}
+	desktop.SetOnApplicationsChanged(applyMulti)
+
+	// mew's show_desktop / hide_desktop commands, wired onto the root editor at
+	// startup. On the graphical host they toggle the built-in solo mode (reveal /
+	// hide the desktop); on the TUI they force / release multi-window. Both post
+	// to the platform thread - the commands fire on mew's session goroutine.
+	showDesktop := func() {
+		desktop.Post(func() {
+			if graphical {
+				desktop.ExitSoloMode()
+			} else {
+				forceMulti = true
+				applyMulti()
+			}
+		})
+	}
+	hideDesktop := func() {
+		desktop.Post(func() {
+			if graphical {
+				desktop.EnterSoloFromDesktop()
+			} else {
+				forceMulti = false
+				applyMulti()
+			}
+		})
+	}
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
 		root = startRootWindow(desktop, application, launchArgs)
+		if ed, ok := root.Content().(*trinkets.Editor); ok {
+			ed.SetShowDesktop(showDesktop)
+			ed.SetHideDesktop(hideDesktop)
+		}
 		serveSocket(desktop, cfg)
 	})
 }

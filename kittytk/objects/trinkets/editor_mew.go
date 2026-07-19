@@ -63,6 +63,12 @@ type Editor struct {
 	// property — the host injects its process argv for the root editor.
 	launchArgv []string
 
+	// showDesktop / hideDesktop, when set by the host, back mew's show_desktop /
+	// hide_desktop commands. Host seams (the root editor's host wires them to
+	// reveal/hide its desktop).
+	showDesktop func()
+	hideDesktop func()
+
 	// Event hooks, wired by the protocol bind.
 	onCommit func(value, filename string)
 	onCancel func()
@@ -129,6 +135,11 @@ func (e *Editor) SetMewFileSystem(fs mew.FileSystem) { e.mewFileSystem = fs }
 // editor launches with mew's full command-line semantics (multi-file, per-file
 // options, +N). Takes precedence over filename/value/caret.
 func (e *Editor) SetLaunchArgv(argv []string) { e.launchArgv = argv }
+
+// SetShowDesktop / SetHideDesktop are host seams backing mew's show_desktop /
+// hide_desktop commands. The host wires them to reveal/hide its desktop.
+func (e *Editor) SetShowDesktop(fn func()) { e.showDesktop = fn }
+func (e *Editor) SetHideDesktop(fn func()) { e.hideDesktop = fn }
 
 // Paint starts the session on the first paint (once properties are applied),
 // then delegates to the terminal surface.
@@ -214,6 +225,12 @@ func (e *Editor) run() {
 	}
 	if cfg := e.configText(); cfg != "" {
 		options = append(options, mew.WithConfigText(cfg))
+	}
+	if e.showDesktop != nil {
+		options = append(options, mew.WithShowDesktop(e.showDesktop))
+	}
+	if e.hideDesktop != nil {
+		options = append(options, mew.WithHideDesktop(e.hideDesktop))
 	}
 
 	// Run the session. A host-injected argv wins (full mew command-line launch:

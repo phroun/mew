@@ -346,6 +346,13 @@ type Config struct {
 	// can persist it via config.EncodeState in PSL or JSON.
 	StateCallback func(state map[string]interface{})
 
+	// ShowDesktop / HideDesktop, when set, are invoked by the show_desktop /
+	// hide_desktop commands. A host that embeds mew as a window-manager surface
+	// (e.g. a KittyTK host) wires these to reveal or hide its desktop. Left
+	// unset - as in the standalone editor - both commands are no-ops.
+	ShowDesktop func()
+	HideDesktop func()
+
 	// SkipUserConfig prevents loading ~/.mew/editor.conf (built-in defaults
 	// apply). For embedding hosts that must not touch the user's home dir.
 	SkipUserConfig bool
@@ -788,6 +795,23 @@ func (e *Editor) registerCommands() {
 	// System commands
 	ps.RegisterCommand("exit", func(ctx *pawscript.Context) pawscript.Result {
 		e.Running = false
+		return pawscript.BoolStatus(true)
+	})
+
+	// show_desktop / hide_desktop ask the embedding host to reveal or hide its
+	// desktop (e.g. a KittyTK window-manager host). No-ops in the standalone
+	// editor, where no host wires the hooks.
+	ps.RegisterCommand("show_desktop", func(ctx *pawscript.Context) pawscript.Result {
+		if e.Config.ShowDesktop != nil {
+			e.Config.ShowDesktop()
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("hide_desktop", func(ctx *pawscript.Context) pawscript.Result {
+		if e.Config.HideDesktop != nil {
+			e.Config.HideDesktop()
+		}
 		return pawscript.BoolStatus(true)
 	})
 

@@ -124,6 +124,18 @@ func WithStateCallback(cb func(state map[string]interface{})) Option {
 	return func(cfg *editor.Config) { cfg.StateCallback = cb }
 }
 
+// WithShowDesktop / WithHideDesktop wire the show_desktop / hide_desktop
+// commands to host functions that reveal or hide the host's desktop (e.g. a
+// KittyTK window-manager host). Unset, both commands are no-ops.
+func WithShowDesktop(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.ShowDesktop = fn }
+}
+
+// WithHideDesktop wires the hide_desktop command (see WithShowDesktop).
+func WithHideDesktop(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.HideDesktop = fn }
+}
+
 // WithoutUserConfig prevents loading ~/.mew/editor.conf; built-in defaults
 // apply. For hosts that must not read the user's home directory.
 func WithoutUserConfig() Option {

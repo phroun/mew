@@ -72,6 +72,7 @@ func main() {
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tui.NewTUIBackend(tuiOpts))
 
-	mewhost.BuildHost(desktop, cfg, launchArgs)
+	// TUI host: show_desktop/hide_desktop toggle multi-window (graphical=false).
+	mewhost.BuildHost(desktop, cfg, launchArgs, false)
 	os.Exit(desktop.Run())
 }

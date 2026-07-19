@@ -182,6 +182,12 @@ func (e *Editor) SetLaunchArgv(argv []string) {
 	}
 }
 
+// SetShowDesktop / SetHideDesktop are host seams that back mew's show_desktop /
+// hide_desktop commands in the mew build; the placeholder runs no mew session,
+// so they are accepted and ignored (kept for a matching method surface).
+func (e *Editor) SetShowDesktop(func()) {}
+func (e *Editor) SetHideDesktop(func()) {}
+
 // --- Event-hook setters (bind) ---
 
 func (e *Editor) SetOnCommit(fn func(string)) { e.onCommit = fn }
