@@ -421,7 +421,10 @@ bar=new menubar children={%s
 func showMewAbout(application *app.Application) {
 	byID, reply := execProtocol(fmt.Sprintf(
 		`dlg=new messagebox icon=information ok title="About mew" text=%s`,
-		protocol.Quote("mew "+mew.FullVersion()+"\n\nmew edits words.")), nil)
+		protocol.Quote("mew "+mew.FullVersion()+"\n\n"+
+			"A programmable cross-platform text, prose,\n"+
+			"and code editor in the WordStar tradition.\n\n"+
+			"mew edits words.")), nil)
 	mb := byID[reply.IDs["dlg"]].(*trinkets.MessageBox)
 	// Own the dialog by the app's main window so its modal is scoped to (and
 	// floats above) that window. Without an owner the manager files it as a

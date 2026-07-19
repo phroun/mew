@@ -24,7 +24,8 @@ import (
 	"github.com/phroun/mew-app/internal/mewhost"
 )
 
-const usage = `mew edits words (KittyTK SDL host build)
+const usage = `mew — a programmable cross-platform text, prose, and code editor
+in the WordStar tradition. (KittyTK SDL host build)
 
 Usage:
   mew-sdl [options] [file ...]

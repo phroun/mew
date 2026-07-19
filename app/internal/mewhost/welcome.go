@@ -2,6 +2,7 @@ package mewhost
 
 import (
 	"os/exec"
+	"strings"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
@@ -10,6 +11,10 @@ import (
 	"github.com/phroun/mew"
 	"github.com/phroun/mew-app/internal/wininstall"
 )
+
+// welcomeWrapCols is the reading width (in cells) the welcome copy is wrapped to;
+// the window is sized to it so the text word-wraps rather than being hand-split.
+const welcomeWrapCols = 48
 
 // maybeShowWelcome opens the first-run welcome window when a graphical host
 // starts a copy of mew that has not been installed yet (Windows only — off
@@ -67,14 +72,11 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, r
 // box), kept comfortably narrow.
 func welcomeLines() []string {
 	return []string{
-		"A programmable cross-platform text, prose, and code editor",
-		"in the WordStar tradition.",
+		"A programmable cross-platform text, prose, and code editor in the WordStar tradition.",
 		"",
 		"You're running mew straight from the file you downloaded.",
 		"",
-		"Install adds mew to your Start Menu and PATH, then opens the",
-		"installed copy. Try just opens the editor now, without",
-		"installing anything.",
+		"Install adds mew to your Start Menu and PATH, then opens the installed copy. Try just opens the editor now, without installing anything.",
 		"",
 		"mew " + mew.FullVersion(),
 	}
@@ -108,7 +110,7 @@ func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *we
 	d.SetType(window.WindowTypeModal)
 	d.SetFlags(window.WindowFlagNoResize)
 
-	c := &welcomeContent{lines: lines}
+	c := &welcomeContent{paras: lines}
 	c.TrinketBase = *core.NewTrinketBase()
 	c.Init(c)
 	c.SetFocusPolicy(core.StrongFocus)
@@ -166,13 +168,13 @@ func (d *welcomeDialog) calculateSize() {
 	m := d.EffectiveCellMetrics()
 	font := d.content.EffectiveFont()
 
-	var maxLineW core.Unit
-	for _, line := range d.content.lines {
-		if w := font.MeasureText(line); w > maxLineW {
-			maxLineW = w
-		}
-	}
-	contentW := m.CellWidth*4 + maxLineW // a 2-column margin on each side
+	// Wrap the copy to a fixed reading width, then size the window to that width
+	// so Paint (which wraps to its bounds) reproduces the very same lines. Text
+	// area = contentW - 2*textX (textX is a 2-column margin), so contentW is the
+	// wrap width plus a 2-column margin on each side.
+	textW := m.CellWidth * welcomeWrapCols
+	d.content.wrap(textW, font)
+	contentW := textW + m.CellWidth*4
 
 	// Never narrower than the button row (as the content paints it) plus slack.
 	var rowW core.Unit
@@ -182,19 +184,12 @@ func (d *welcomeDialog) calculateSize() {
 	if n := len(d.content.buttons); n > 1 {
 		rowW += core.Unit(n-1) * m.CellWidth
 	}
-	minW := rowW + m.CellWidth*4
-	if floor := m.CellWidth * 28; minW < floor {
-		minW = floor
-	}
-	if contentW < minW {
+	if minW := rowW + m.CellWidth*4; contentW < minW {
 		contentW = minW
 	}
-	if maxW := m.CellWidth * 72; contentW > maxW {
-		contentW = maxW
-	}
 
-	// Height: top margin + text lines + gap + button row + bottom margin.
-	contentH := core.Unit(len(d.content.lines)+4) * m.CellHeight
+	// Height: top margin + wrapped lines + gap + button row + bottom margin.
+	contentH := core.Unit(len(d.content.wrapped)+4) * m.CellHeight
 
 	d.SetBounds(core.UnitRect{Width: contentW, Height: contentH})
 	cb := d.ContentBounds()
@@ -214,10 +209,65 @@ func (d *welcomeDialog) calculateSize() {
 // toolkit's messageBoxContent, using only its exported Button API).
 type welcomeContent struct {
 	core.TrinketBase
-	lines   []string
-	install *trinkets.Button
-	try     *trinkets.Button
-	buttons []*trinkets.Button
+	paras     []string   // the copy, as paragraphs (wrapped to the window width)
+	wrapped   []string   // paras flowed to wrapWidth; recomputed when width changes
+	wrapWidth core.Unit  // the text width wrapped was computed for
+	install   *trinkets.Button
+	try       *trinkets.Button
+	buttons   []*trinkets.Button
+}
+
+// wrap flows the paragraphs to textWidth (cached by width), so the copy is
+// written as natural paragraphs and word-wraps to the window - like the
+// placeholder editor's wrapped label, not the message box's literal
+// one-line-per-entry.
+func (c *welcomeContent) wrap(textWidth core.Unit, font *core.Font) {
+	if textWidth <= 0 || font == nil {
+		if c.wrapped == nil {
+			c.wrapped = c.paras
+		}
+		return
+	}
+	if c.wrapped != nil && textWidth == c.wrapWidth {
+		return
+	}
+	c.wrapped = wrapParagraphs(c.paras, textWidth, font)
+	c.wrapWidth = textWidth
+}
+
+// wrapParagraphs word-wraps each paragraph to maxWidth (measured in the given
+// font), preserving blank entries as blank spacer lines. Mirrors the toolkit's
+// internal wrapText, kept here so this package needn't reach into it.
+func wrapParagraphs(paras []string, maxWidth core.Unit, font *core.Font) []string {
+	space := font.MeasureText(" ")
+	var out []string
+	for _, para := range paras {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			out = append(out, "") // blank line between paragraphs
+			continue
+		}
+		var line strings.Builder
+		var w core.Unit
+		for _, word := range words {
+			ww := font.MeasureText(word)
+			if w > 0 && w+space+ww > maxWidth {
+				out = append(out, line.String())
+				line.Reset()
+				w = 0
+			}
+			if w > 0 {
+				line.WriteByte(' ')
+				w += space
+			}
+			line.WriteString(word)
+			w += ww
+		}
+		if line.Len() > 0 {
+			out = append(out, line.String())
+		}
+	}
+	return out
 }
 
 var _ core.Container = (*welcomeContent)(nil)
@@ -254,11 +304,12 @@ func (c *welcomeContent) Paint(p *core.Painter) {
 
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', st)
 
-	// Message text in the proportional font, one DrawText per line.
+	// Message text in the proportional font, word-wrapped to the text area.
 	font := c.EffectiveFont()
 	textX := m.CellWidth * 2
+	c.wrap(bounds.Width-textX*2, font) // no-op when already wrapped to this width
 	lineY := m.CellHeight
-	for _, line := range c.lines {
+	for _, line := range c.wrapped {
 		p.DrawText(textX, lineY, line, st, font)
 		lineY += m.CellHeight
 	}
