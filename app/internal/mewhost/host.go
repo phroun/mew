@@ -56,10 +56,10 @@ const (
 	// hideMenuBarSoleApp hides the desktop menu bar (mew / Edit / Help), leaving
 	// mew with no menu chrome at all. Its actions become unreachable by pointer,
 	// so this waits on the keybinding overhaul before it can be a default.
-	hideMenuBarSoleApp = false
+	hideMenuBarSoleApp = true
 	// hideTitleBarSoleApp hides the root window's title bar while it is maximized
 	// in the TUI (no [x][.][o] buttons); closing then relies on mew's own quit.
-	hideTitleBarSoleApp = false
+	hideTitleBarSoleApp = true
 )
 
 // multiWindow controls whether the host presents itself as a multi-window app:
