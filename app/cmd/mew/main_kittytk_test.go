@@ -19,7 +19,7 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	w := newEditorWindow(desktop, application, "notes.txt", true)
+	w := newEditorWindow(desktop, application, []string{"--syntax=go", "notes.txt"}, true)
 	if w == nil {
 		t.Fatal("newEditorWindow returned nil")
 	}
@@ -31,11 +31,31 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	}
 }
 
+// firstOperand titles the window from the first file-looking argument, skipping
+// switches and +N. It is best-effort (cosmetic), but must at least skip leading
+// switches and the +N form.
+func TestFirstOperandSkipsSwitchesAndGoto(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"--wordWrap", "+42", "main.go"}, "main.go"},
+		{[]string{"a.txt", "b.txt"}, "a.txt"},
+		{[]string{"--wordWrap"}, ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := firstOperand(c.argv); got != c.want {
+			t.Errorf("firstOperand(%v) = %q, want %q", c.argv, got, c.want)
+		}
+	}
+}
+
 func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	w := newEditorWindow(desktop, application, "", false)
+	w := newEditorWindow(desktop, application, nil, false)
 	if w == nil || w.Content() == nil {
 		t.Fatal("scratch editor window did not build")
 	}

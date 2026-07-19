@@ -57,6 +57,12 @@ type Editor struct {
 	fileSystem    mew.FileSystem
 	mewFileSystem mew.FileSystem
 
+	// launchArgv, when set by the host, runs the session as a full mew
+	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
+	// taking precedence over filename/value/caret. A host seam, not an app
+	// property — the host injects its process argv for the root editor.
+	launchArgv []string
+
 	// Event hooks, wired by the protocol bind.
 	onCommit func(value, filename string)
 	onCancel func()
@@ -111,6 +117,11 @@ func (e *Editor) SetOnCancel(fn func())                       { e.onCancel = fn 
 // filesystem for this session before it starts.
 func (e *Editor) SetFileSystem(fs mew.FileSystem)    { e.fileSystem = fs }
 func (e *Editor) SetMewFileSystem(fs mew.FileSystem) { e.mewFileSystem = fs }
+
+// SetLaunchArgv is a host seam: the host injects its process argv so the root
+// editor launches with mew's full command-line semantics (multi-file, per-file
+// options, +N). Takes precedence over filename/value/caret.
+func (e *Editor) SetLaunchArgv(argv []string) { e.launchArgv = argv }
 
 // Paint starts the session on the first paint (once properties are applied),
 // then delegates to the terminal surface.
@@ -198,11 +209,14 @@ func (e *Editor) run() {
 		options = append(options, mew.WithConfigText(cfg))
 	}
 
-	// Run the session. filename wins over value (per the contract); a caret
-	// opens the file at that position via mew's +N launch argument.
+	// Run the session. A host-injected argv wins (full mew command-line launch:
+	// multi-file, per-file options, +N); otherwise filename wins over value (per
+	// the contract), and a caret opens the file at that position via mew's +N.
 	var content string
 	var err error
 	switch {
+	case len(e.launchArgv) > 0:
+		err = mew.EditArgv(e.launchArgv, options...)
 	case e.filename != "" && e.caret != "":
 		err = mew.EditArgs(fmt.Sprintf("+%s %q", caretLine(e.caret), e.filename), options...)
 	case e.filename != "":

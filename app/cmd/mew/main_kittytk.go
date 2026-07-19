@@ -50,7 +50,7 @@ Build the standalone terminal editor without -tags kittytk.
 `
 
 func main() {
-	var file string
+	var launchArgs []string
 	for _, a := range os.Args[1:] {
 		switch a {
 		case "--version", "-v":
@@ -60,11 +60,10 @@ func main() {
 			fmt.Print(usage)
 			return
 		default:
-			// First non-flag argument is the root editor's file. Full argwild
-			// parsing (per-file options, +N) is the follow-up.
-			if file == "" && (len(a) == 0 || a[0] != '-') {
-				file = a
-			}
+			// Everything else is the mew command line for the root editor:
+			// switches, +N, and file operands, passed through verbatim so mew's
+			// own argwild launch applies them (multi-file, per-file options).
+			launchArgs = append(launchArgs, a)
 		}
 	}
 
@@ -90,7 +89,7 @@ func main() {
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
-		root := newEditorWindow(desktop, application, file, true)
+		root := newEditorWindow(desktop, application, launchArgs, true)
 		application.AddWindow(root)
 		application.SetMainWindow(root)
 		// Other apps dial in and embed their own mew editors, and File > New
@@ -117,31 +116,41 @@ func main() {
 }
 
 // newEditorWindow builds a window holding a mew `editor` trinket from protocol
-// text. When main, ending the mew session (the editor's commit event) quits the
-// host; a secondary window just closes on session end.
-func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, file string, isMain bool) *window.Window {
+// text, then injects the launch argv (if any) through the editor's host seam so
+// mew runs its full command-line launch inside the trinket. When main, ending
+// the mew session (the editor's commit event) quits the host; a secondary
+// window just closes on session end.
+func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, argv []string, isMain bool) *window.Window {
 	title := "mew"
-	editorLine := "ed=new editor"
-	if file != "" {
-		editorLine = "ed=new editor filename=" + protocol.Quote(file)
-		title = "mew - " + file
+	if f := firstOperand(argv); f != "" {
+		title = "mew - " + f
 	}
 	// `edref=w.ed` surfaces the nested editor as a top-level name so `sub` (and
 	// the id lookup below) can reach it - the same aliasing the demo host uses
-	// for a trinket built inside a window's children.
+	// for a trinket built inside a window's children. Files/options are not
+	// protocol properties here: mew parses the whole argv itself (below).
 	script := fmt.Sprintf(`
 w=new window title=%s children={
-	%s
+	ed=new editor
 }
 edref=w.ed
 sub edref commit
-`, protocol.Quote(title), editorLine)
+`, protocol.Quote(title))
 
 	dispatcher := protocol.NewEventDispatcher()
 	ctx := &protocol.BindContext{Emit: func(ev *protocol.Event) { dispatcher.Dispatch(ev) }}
 	byID, reply := execProtocol(script, ctx)
 
 	w := byID[reply.IDs["w"]].(*window.Window)
+	// Hand mew the command line through the editor's host seam: the trinket runs
+	// mew.EditArgv, so per-file options, +N, and multi-file open all apply as in
+	// the plain build (one editor, first file focused, the rest as background
+	// buffers). Secondary windows get no argv - a scratch editor.
+	if len(argv) > 0 {
+		if ed, ok := byID[reply.IDs["edref"]].(*trinkets.Editor); ok {
+			ed.SetLaunchArgv(argv)
+		}
+	}
 	// Session end (mew quit, or the placeholder's OK): quit the host from the
 	// root editor, otherwise just close this window.
 	dispatcher.On(reply.IDs["edref"], "commit", func(*protocol.Event) {
@@ -152,6 +161,20 @@ sub edref commit
 		}
 	})
 	return w
+}
+
+// firstOperand returns the first non-switch argument (a file) for the window
+// title only; mew itself does the authoritative parse. Best-effort: a valued
+// switch's separate value can be mistaken for a file here, but the editor's own
+// modeline shows the real filename.
+func firstOperand(argv []string) string {
+	for _, a := range argv {
+		if a == "" || a[0] == '-' || a[0] == '+' {
+			continue
+		}
+		return a
+	}
+	return ""
 }
 
 // idCaptureFactory records built protocol objects by ID so the host can reach
@@ -255,7 +278,7 @@ bar=new menubar children={
 	})
 	// New Window opens another (scratch) mew editor - a sub-mew of the host.
 	commands.Register("mew.window.new", func() {
-		application.AddWindow(newEditorWindow(desktop, application, "", false))
+		application.AddWindow(newEditorWindow(desktop, application, nil, false))
 	})
 	commands.Register("mew.help.about", func() {
 		byID, reply := execProtocol(fmt.Sprintf(
