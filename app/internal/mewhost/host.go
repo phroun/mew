@@ -81,7 +81,30 @@ func startRootWindow(desktop *trinkets.Desktop, application *app.Application, la
 	// connect become peers; any client can still reveal a desktop via the
 	// spawndesktop verb.
 	desktop.EnterSoloMode(root)
+
+	// On a graphical surface, solo mode re-hosts the root window onto its own OS
+	// surface to fill the display, and the tear-off host focuses it. On a
+	// single-surface backend (the TUI) the window instead stays docked in the
+	// desktop's window manager - so maximize it WITHIN the TUI desktop (its
+	// client area) and activate it so keystrokes reach the editor. (After a
+	// graphical solo the window is no longer manager-managed, so this is
+	// naturally skipped there.)
+	if wm := desktop.WindowManager(); wm != nil && windowManaged(wm, root) {
+		wm.MaximizeWindow(root)
+		wm.ActivateWindow(root)
+	}
 	return root
+}
+
+// windowManaged reports whether win is still tracked by the window manager (i.e.
+// docked, not lifted onto its own surface).
+func windowManaged(wm *window.WindowManager, win *window.Window) bool {
+	for _, w := range wm.Windows() {
+		if w == win {
+			return true
+		}
+	}
+	return false
 }
 
 // serveSocket starts the display service so apps appear as they connect,
@@ -235,14 +258,20 @@ bar=new menubar children={
 	commands.Register("mew.window.new", func() {
 		application.AddWindow(newEditorWindow(desktop, application, nil, false))
 	})
-	commands.Register("mew.help.about", func() {
-		byID, reply := execProtocol(fmt.Sprintf(
-			`dlg=new messagebox icon=information ok title="About mew" text=%s`,
-			protocol.Quote("mew "+mew.FullVersion()+"\n\nA KittyTK host presenting a root mew editor.")), nil)
-		application.AddWindow(&byID[reply.IDs["dlg"]].(*trinkets.MessageBox).Window)
-	})
+	commands.Register("mew.help.about", func() { showMewAbout(application) })
 
 	return menus
+}
+
+// showMewAbout opens mew's About dialog as a modal message box on the app. It
+// backs both mew's own Help > About and the system (Ψ) menu's About (wired via
+// desktop.SetAboutHandler in BuildHost), so the Ψ About shows mew's dialog
+// instead of the built-in About KittyTK one.
+func showMewAbout(application *app.Application) {
+	byID, reply := execProtocol(fmt.Sprintf(
+		`dlg=new messagebox icon=information ok title="About mew" text=%s`,
+		protocol.Quote("mew "+mew.FullVersion()+"\n\nmew edits words.")), nil)
+	application.AddWindow(&byID[reply.IDs["dlg"]].(*trinkets.MessageBox).Window)
 }
 
 // buildStatus executes a statusbar script and returns its sections.

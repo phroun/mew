@@ -1258,6 +1258,23 @@ func (d *Desktop) promoteToPrimary(peer *window.TearOffHost, reposition bool) {
 	d.soloHostOnPrimaryAt(win, target)
 }
 
+// soleForegroundApp reports whether exactly one non-context-only application is
+// present. When true, that app owns the whole menu bar, so the system (Ψ) menu
+// is suppressed as redundant furniture. A context-only app (a windowless host
+// context, e.g. the graphical service's own app) does not count, so an empty
+// desktop still reads as "no foreground app" and keeps Ψ.
+func (d *Desktop) soleForegroundApp() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	n := 0
+	for _, a := range d.applications {
+		if a != nil && !a.ContextOnly() {
+			n++
+		}
+	}
+	return n == 1
+}
+
 // updateMenuBarContent updates the menu bar with the active app's menus.
 // The first menu after the system menu automatically gets standard app items
 // (Hide, Hide Others, Show All, Quit) appended.
@@ -1289,8 +1306,11 @@ func (d *Desktop) updateMenuBarContent() {
 		}
 	}
 
-	// Full bar: system menu first
-	if d.systemMenu != nil {
+	// Full bar: system menu first - unless a single application owns the whole
+	// desktop, in which case Ψ is suppressed as redundant furniture and that
+	// app's own menus are all that shows (a bundled single-app host like mew).
+	// An empty desktop (zero apps) still shows Ψ, and two or more bring it back.
+	if d.systemMenu != nil && !d.soleForegroundApp() {
 		d.menuBar.AddMenu(d.systemMenu)
 	}
 
