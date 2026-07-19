@@ -16,22 +16,25 @@ import (
 // minimal, functional-but-lame stand-in for a real monospaced multiline editor
 // (mew ships the real one under -tags mew). It honors the editor trinket
 // contract (docs/editor-trinket.md) just enough that an app needing a text
-// editor still works on a stock build:
+// editor still works on a stock build.
 //
-//   - it holds the text (the `value` property), and
-//   - "click to edit" hands that text to the user's external OS editor through
-//     a temp file; a second click reads the file back and emits `commit`.
-//
-// GUI editors don't block per-document (modern Notepad is tabbed; macOS `open`
-// and Linux `xdg-open` return immediately), so rather than trying to detect
-// when editing finished, the placeholder uses an explicit click-again-to-commit
-// flow — peak "functional but lame," but robust on every platform.
+// It is a COMPOSITE: a framed preview of the text plus a real Button child
+// ("Edit"). The Button — exposed through Children() — owns focus, Enter/Space
+// activation, and screen-reader announcements, so keyboard accessibility
+// matches any other button rather than being hand-rolled. Clicking it hands the
+// text to the user's external OS editor via a temp file; the next click reads
+// the file back and emits `commit`. GUI editors don't block per-document
+// (modern Notepad is tabbed; macOS `open` and Linux `xdg-open` return at once),
+// so this uses an explicit click-again-to-commit flow rather than detecting
+// exit — lame but robust on every platform.
 //
 // The rich contract properties (wrap, tab_size, syntax, line_numbers, caret)
 // are accepted and ignored; mew honors them. See editor_protocol.go.
 type Editor struct {
 	core.TrinketBase
 	core.AccessibleTrinket
+
+	button *Button // the interactive surface (focus/keyboard/a11y live here)
 
 	value       string
 	placeholder string
@@ -44,7 +47,6 @@ type Editor struct {
 	tmpPath     string
 	editInitial string
 	status      string
-	pressed     bool
 
 	// Event hooks, wired by the protocol bind (editor_protocol.go).
 	onCommit func(value string)
@@ -52,16 +54,44 @@ type Editor struct {
 	onDirty  func(dirty bool)
 }
 
+// The placeholder must be a real Container so the framework's focus and
+// accessibility traversal descends into the Button child.
+var _ core.Container = (*Editor)(nil)
+
 // NewEditor builds a placeholder editor trinket.
 func NewEditor() *Editor {
 	e := &Editor{}
 	e.TrinketBase = *core.NewTrinketBase()
 	e.Init(e)
-	e.SetFocusPolicy(core.StrongFocus)
-	e.SetAccessibleRole(core.RoleTextInput)
+	e.SetAccessibleRole(core.RoleGroup)
 	e.SetAccessibleName("editor")
+
+	// The real Button is the focusable, keyboard-activatable, announced surface.
+	e.button = NewButton("Edit")
+	e.button.SetParent(e)
+	e.button.SetOnClick(e.activate)
+
 	return e
 }
+
+// --- Container: one internal Button child, exposed so the framework routes
+// focus, keyboard activation, and accessibility to it natively. ---
+
+func (e *Editor) Children() []core.Trinket { return []core.Trinket{e.button} }
+func (e *Editor) AddChild(core.Trinket)    {}
+func (e *Editor) RemoveChild(core.Trinket) {}
+
+func (e *Editor) ChildAt(pos core.UnitPoint) core.Trinket {
+	b := e.button.Bounds()
+	if pos.X >= b.X && pos.X < b.X+b.Width && pos.Y >= b.Y && pos.Y < b.Y+b.Height {
+		return e.button
+	}
+	return nil
+}
+
+func (e *Editor) Layout()                             {} // button positioned in Paint
+func (e *Editor) LayoutManager() core.LayoutManager   { return nil }
+func (e *Editor) SetLayoutManager(core.LayoutManager) {}
 
 // --- Property setters (public: bound by editor_protocol.go) ---
 
@@ -69,7 +99,7 @@ func (e *Editor) SetValue(s string)       { e.value = s; e.Update() }
 func (e *Editor) Value() string           { return e.value }
 func (e *Editor) SetPlaceholder(s string) { e.placeholder = s; e.Update() }
 func (e *Editor) SetCaption(s string)     { e.caption = s; e.SetAccessibleName(s); e.Update() }
-func (e *Editor) SetReadOnly(b bool)      { e.readonly = b; e.Update() }
+func (e *Editor) SetReadOnly(b bool)      { e.readonly = b; e.refreshButton(); e.Update() }
 func (e *Editor) SetFilename(s string)    { e.filename = s }
 
 // --- Event-hook setters (bind) ---
@@ -78,8 +108,23 @@ func (e *Editor) SetOnCommit(fn func(string)) { e.onCommit = fn }
 func (e *Editor) SetOnCancel(fn func())       { e.onCancel = fn }
 func (e *Editor) SetOnDirty(fn func(bool))    { e.onDirty = fn }
 
-// activate is the click/Enter action: start an external edit, or (if one is in
-// progress) finish it by reading the file back.
+// refreshButton syncs the button's label and enabled state to editor state.
+// (Called on state changes, never from Paint — SetText triggers a repaint.)
+func (e *Editor) refreshButton() {
+	switch {
+	case e.readonly:
+		e.button.SetText("View")
+		e.button.SetEnabled(false)
+	case e.editing:
+		e.button.SetText("Done")
+		e.button.SetEnabled(true)
+	default:
+		e.button.SetText("Edit")
+		e.button.SetEnabled(true)
+	}
+}
+
+// activate is the button's action: start an external edit, or finish one.
 func (e *Editor) activate() {
 	switch {
 	case e.readonly:
@@ -120,6 +165,7 @@ func (e *Editor) startEdit() {
 	e.tmpPath = f.Name()
 	e.editInitial = e.value
 	e.status = ""
+	e.refreshButton()
 	if e.onDirty != nil {
 		e.onDirty(true)
 	}
@@ -131,6 +177,7 @@ func (e *Editor) finishEdit() {
 	_ = os.Remove(e.tmpPath)
 	e.editing = false
 	e.tmpPath = ""
+	e.refreshButton()
 	if e.onDirty != nil {
 		e.onDirty(false)
 	}
@@ -172,52 +219,51 @@ func externalEditorArgv() ([]string, bool) {
 	}
 }
 
-// --- Rendering ---
+// --- Rendering: frame + preview text, then the Button child (painted via a
+// translated painter, its bounds recorded for hit-testing). ---
 
 func (e *Editor) Paint(p *core.Painter) {
 	b := e.Bounds()
-	rect := core.UnitRect{Width: b.Width, Height: b.Height}
-	scheme := e.GetScheme()
-	s := style.DefaultStyle().WithFg(scheme.GetLabelFG(true)).WithBg(e.EffectiveBackgroundColor())
-
-	p.FillRect(rect, ' ', s)
-	p.DrawBox(rect, style.BorderSingle, e.caption, s)
-
 	m := e.EffectiveCellMetrics()
 	font := e.EffectiveFont()
-	x := m.CellWidth
-	y := m.CellHeight
+	scheme := e.GetScheme()
+	s := scheme.GetNormal(true).WithBg(e.EffectiveBackgroundColor())
 
-	var line1 string
+	p.FillRect(core.UnitRect{Width: b.Width, Height: b.Height}, ' ', s)
+	p.DrawBox(core.UnitRect{Width: b.Width, Height: b.Height}, style.BorderSingle, e.caption, s)
+
+	var line string
 	switch {
 	case e.status != "":
-		line1 = e.status
+		line = e.status
 	case e.editing:
-		line1 = "editing externally…"
+		line = "editing externally…"
 	case e.value != "":
-		line1 = editorFirstLine(e.value)
+		line = editorFirstLine(e.value)
 	case e.placeholder != "":
-		line1 = e.placeholder
+		line = e.placeholder
 	default:
-		line1 = "(empty)"
+		line = "(empty)"
 	}
-	p.DrawText(x, y, line1, s, font)
+	p.DrawText(m.CellWidth*2, m.CellHeight, line, s, font)
 
-	hint := "[ click to edit ]"
-	switch {
-	case e.readonly:
-		hint = "[ read-only ]"
-	case e.editing:
-		hint = "[ click when done ]"
+	// The Edit button, bottom-left inside the border.
+	btnW := core.Unit(len(e.button.Text())+4) * m.CellWidth
+	btnH := m.CellHeight * 2 // face + shadow
+	btnX := m.CellWidth * 2
+	btnY := b.Height - btnH - m.CellHeight
+	if btnY < m.CellHeight*2 {
+		btnY = m.CellHeight * 2
 	}
-	p.DrawText(x, y+m.CellHeight, hint, s, font)
+	e.button.SetBounds(core.UnitRect{X: btnX, Y: btnY, Width: btnW, Height: btnH})
+	e.button.Paint(p.WithOffset(btnX, btnY))
 }
 
 func (e *Editor) SizeHint() core.UnitSize {
 	m := e.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  m.TextWidth(40) + 2*m.CellWidth,
-		Height: m.TextHeight(3) + 2*m.CellHeight,
+		Width:  m.TextWidth(40) + m.CellWidth*4,
+		Height: m.CellHeight * 5, // border + preview + gap + 2-row button + border
 	}
 }
 
@@ -228,34 +274,34 @@ func editorFirstLine(s string) string {
 	return s
 }
 
-// --- Input ---
+// --- Mouse: forward to the button in its local coordinates. Keyboard, focus,
+// and accessibility are handled by the framework via Children(). ---
 
 func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
-	if ev.Button != core.LeftButton || !e.IsEnabled() {
+	b := e.button.Bounds()
+	if ev.X < b.X || ev.X >= b.X+b.Width || ev.Y < b.Y || ev.Y >= b.Y+b.Height {
 		return false
 	}
-	e.SetFocus()
-	e.pressed = true
-	return true
+	local := ev
+	local.X -= b.X
+	local.Y -= b.Y
+	return e.button.HandleMousePress(local)
+}
+
+func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
+	b := e.button.Bounds()
+	local := ev
+	local.X -= b.X
+	local.Y -= b.Y
+	captured := e.button.pressed // a pressed button keeps receiving moves
+	e.button.HandleMouseMove(local)
+	return captured
 }
 
 func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
-	if !e.pressed {
-		return false
-	}
-	e.pressed = false
-	e.activate()
-	return true
-}
-
-func (e *Editor) HandleKeyPress(ev core.KeyPressEvent) bool {
-	if !e.IsEnabled() {
-		return false
-	}
-	switch ev.Key {
-	case "Enter", " ", "Space":
-		e.activate()
-		return true
-	}
-	return false
+	b := e.button.Bounds()
+	local := ev
+	local.X -= b.X
+	local.Y -= b.Y
+	return e.button.HandleMouseRelease(local)
 }
