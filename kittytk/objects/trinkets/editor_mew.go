@@ -1,0 +1,284 @@
+//go:build mew
+
+// Package trinkets: the mew-backed Editor trinket (the -tags mew build).
+//
+// This replaces the vanilla placeholder editor (editor.go, //go:build !mew)
+// with a full mew editor session, honoring the SAME editor trinket contract
+// (docs/editor-trinket.md) so an app runs identically on either. mew ships a
+// KittyTK fork built with -tags mew; upstream/vanilla ships the placeholder.
+//
+// Wiring: mew renders a terminal escape stream into PurfecTerm.Feed (display);
+// PurfecTerm encodes keystrokes/mouse into raw terminal bytes that flow back
+// into mew's input reader. No key-name translation — mew's own parser and
+// renderer do all the work, and PurfecTerm is a pure display+input surface,
+// exactly as when it drives a remote PTY.
+package trinkets
+
+import (
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/mew"
+)
+
+// Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
+// so focus, input routing, and painting are the terminal surface's, and adds
+// the mew session lifecycle plus the contract property/event surface.
+//
+// The session is started LAZILY, on the first paint: the app applies properties
+// (filename, value, options) after construction, so starting at construction
+// would race them. Close ends the session (EOF on mew's input).
+type Editor struct {
+	*PurfecTerm
+
+	// Contract properties (app -> editor), applied after construction. The *Set
+	// flags record an explicit override of a rich property vs. inheriting mew's
+	// own resolution.
+	value          string
+	filename       string
+	placeholder    string
+	caption        string
+	readonly       bool
+	wrap           bool
+	wrapSet        bool
+	tabSize        int
+	tabSizeSet     bool
+	syntax         string
+	lineNumbers    bool
+	lineNumbersSet bool
+	caret          string
+
+	// Host-provided seams (not app properties). Left at defaults for now: the
+	// mew session reads/writes the KittyTK host OS disk. Wiring the brokered,
+	// permission-scoped filesystem is future KittyTK work.
+	fileSystem    mew.FileSystem
+	mewFileSystem mew.FileSystem
+
+	// Event hooks, wired by the protocol bind.
+	onCommit func(value, filename string)
+	onCancel func()
+
+	// Session plumbing.
+	inPipeR  *io.PipeReader
+	inPipeW  *io.PipeWriter
+	resizeCh chan struct{}
+
+	mu          sync.Mutex
+	curCols     int
+	curRows     int
+	inputClosed bool
+	started     bool
+
+	done chan struct{}
+	err  error
+}
+
+// NewEditor creates a mew-backed editor trinket. The mew session does not start
+// until the first paint (see ensureStarted), so contract properties applied
+// after construction are honored.
+func NewEditor() *Editor {
+	e := &Editor{
+		PurfecTerm: NewPurfecTerm(),
+		resizeCh:   make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		curCols:    80,
+		curRows:    24,
+	}
+	e.SetEditorMode(true)
+	return e
+}
+
+// --- Contract property setters (bound by editor_protocol_mew.go) ---
+
+func (e *Editor) SetValue(s string)       { e.value = s }
+func (e *Editor) SetFilename(s string)    { e.filename = s }
+func (e *Editor) SetPlaceholder(s string) { e.placeholder = s }
+func (e *Editor) SetCaption(s string)     { e.caption = s }
+func (e *Editor) SetReadOnly(b bool)      { e.readonly = b }
+func (e *Editor) SetWrap(b bool)          { e.wrap, e.wrapSet = b, true }
+func (e *Editor) SetTabSize(n int)        { e.tabSize, e.tabSizeSet = n, true }
+func (e *Editor) SetSyntax(s string)      { e.syntax = s }
+func (e *Editor) SetLineNumbers(b bool)   { e.lineNumbers, e.lineNumbersSet = b, true }
+func (e *Editor) SetCaret(s string)       { e.caret = s }
+
+func (e *Editor) SetOnCommit(fn func(value, filename string)) { e.onCommit = fn }
+func (e *Editor) SetOnCancel(fn func())                       { e.onCancel = fn }
+
+// SetFileSystem / SetMewFileSystem let a host (not the app) inject the brokered
+// filesystem for this session before it starts.
+func (e *Editor) SetFileSystem(fs mew.FileSystem)    { e.fileSystem = fs }
+func (e *Editor) SetMewFileSystem(fs mew.FileSystem) { e.mewFileSystem = fs }
+
+// Paint starts the session on the first paint (once properties are applied),
+// then delegates to the terminal surface.
+func (e *Editor) Paint(p *core.Painter) {
+	e.ensureStarted()
+	if e.PurfecTerm != nil {
+		e.PurfecTerm.Paint(p)
+	}
+}
+
+// ensureStarted wires the pipes and launches the mew session exactly once.
+func (e *Editor) ensureStarted() {
+	e.mu.Lock()
+	if e.started {
+		e.mu.Unlock()
+		return
+	}
+	e.started = true
+	e.mu.Unlock()
+
+	if e.Terminal() == nil {
+		close(e.done) // no surface to render into
+		return
+	}
+
+	e.inPipeR, e.inPipeW = io.Pipe()
+
+	// Keystrokes/mouse the PurfecTerm encodes become mew's input.
+	e.SetInputSink(func(b []byte) {
+		e.mu.Lock()
+		closed := e.inputClosed
+		e.mu.Unlock()
+		if closed {
+			return
+		}
+		_, _ = e.inPipeW.Write(b)
+	})
+
+	// Grid-size changes wake mew's resize path (it re-reads Size()).
+	e.SetResizeSink(func(cols, rows int) {
+		e.mu.Lock()
+		e.curCols, e.curRows = cols, rows
+		e.mu.Unlock()
+		select {
+		case e.resizeCh <- struct{}{}:
+		default:
+		}
+	})
+
+	go e.run()
+}
+
+// writerFunc adapts a function to io.Writer (mew's display sink).
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+func (e *Editor) run() {
+	defer close(e.done)
+
+	term := mew.Terminal{
+		Output: writerFunc(func(p []byte) (int, error) {
+			e.Feed(p)
+			return len(p), nil
+		}),
+		Input: e.inPipeR,
+		Size: func() (int, int, error) {
+			e.mu.Lock()
+			c, r := e.curCols, e.curRows
+			e.mu.Unlock()
+			return c, r, nil
+		},
+		Resize: e.resizeCh,
+	}
+
+	fs := e.fileSystem
+	if fs == nil {
+		fs = mew.OSFileSystem()
+	}
+	options := []mew.Option{mew.WithTerminal(term), mew.WithFileSystem(fs)}
+	if e.mewFileSystem != nil {
+		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))
+	}
+	if cfg := e.configText(); cfg != "" {
+		options = append(options, mew.WithConfigText(cfg))
+	}
+
+	// Run the session. filename wins over value (per the contract); a caret
+	// opens the file at that position via mew's +N launch argument.
+	var content string
+	var err error
+	switch {
+	case e.filename != "" && e.caret != "":
+		err = mew.EditArgs(fmt.Sprintf("+%s %q", caretLine(e.caret), e.filename), options...)
+	case e.filename != "":
+		err = mew.EditFile(e.filename, options...)
+	default:
+		content, err = mew.EditContent(e.value, options...)
+	}
+	e.err = err
+
+	// Session ended: report the result. File-backed edits carry the filename
+	// (the app reads the file through the FS); ephemeral edits carry the value.
+	if e.onCommit != nil {
+		if e.filename != "" {
+			e.onCommit("", e.filename)
+		} else {
+			e.onCommit(content, "")
+		}
+	}
+}
+
+// configText builds a mew [options] snippet from the rich properties the app
+// explicitly set; unset ones inherit mew's own resolution. Empty when the app
+// overrode nothing.
+func (e *Editor) configText() string {
+	var b strings.Builder
+	n := 0
+	add := func(format string, a ...any) { fmt.Fprintf(&b, format, a...); n++ }
+	if e.wrapSet {
+		add("wordWrap=%v\n", e.wrap)
+	}
+	if e.tabSizeSet {
+		add("tabSize=%d\n", e.tabSize)
+	}
+	if e.syntax != "" {
+		add("syntax=%s\n", e.syntax)
+	}
+	if e.lineNumbersSet {
+		add("showLineNumbers=%v\n", e.lineNumbers)
+	}
+	// NOTE: `readonly` is accepted but not yet enforced — mew has no read-only
+	// session mode. That's a mew-side follow-up.
+	if n == 0 {
+		return ""
+	}
+	return "[options]\n" + b.String()
+}
+
+// caretLine returns the line component of a "line[:col]" caret string.
+func caretLine(caret string) string {
+	if i := strings.IndexByte(caret, ':'); i >= 0 {
+		return caret[:i]
+	}
+	return caret
+}
+
+// Close ends the mew session (EOF on its input) and releases the surface.
+// Idempotent.
+func (e *Editor) Close() {
+	e.mu.Lock()
+	if !e.inputClosed {
+		e.inputClosed = true
+		if e.inPipeW != nil {
+			e.inPipeW.Close()
+		}
+	}
+	e.mu.Unlock()
+	if e.PurfecTerm != nil {
+		e.PurfecTerm.Close()
+	}
+}
+
+// Wait blocks until the mew session has ended.
+func (e *Editor) Wait() { <-e.done }
+
+// Err blocks until the session ends and returns mew's result.
+func (e *Editor) Err() error {
+	<-e.done
+	return e.err
+}
