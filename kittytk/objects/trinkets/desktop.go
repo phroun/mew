@@ -1263,9 +1263,13 @@ func (d *Desktop) promoteToPrimary(peer *window.TearOffHost, reposition bool) {
 // is suppressed as redundant furniture. A context-only app (a windowless host
 // context, e.g. the graphical service's own app) does not count, so an empty
 // desktop still reads as "no foreground app" and keeps Ψ.
+//
+// This reads d.applications WITHOUT taking d.mu: it is consulted from the layout,
+// paint, and hit-test paths, some of which already run under d.mu, so locking
+// here would deadlock. The application set is only mutated on the platform
+// thread (AddApplication/RemoveApplication run pre-Run or via Post), the same
+// thread that lays out and paints, so the read needs no lock.
 func (d *Desktop) soleForegroundApp() bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
 	n := 0
 	for _, a := range d.applications {
 		if a != nil && !a.ContextOnly() {
@@ -1273,6 +1277,15 @@ func (d *Desktop) soleForegroundApp() bool {
 		}
 	}
 	return n == 1
+}
+
+// statusBarShown reports whether the desktop's own status bar should occupy the
+// bottom row and paint. It is suppressed when a single application owns the
+// desktop (soleForegroundApp): that app provides its own status surface (e.g.
+// mew's modebar), so the desktop's is redundant and its row is reclaimed for
+// content. With zero or 2+ foreground apps the shared status bar returns.
+func (d *Desktop) statusBarShown() bool {
+	return d.statusBar != nil && !d.soleForegroundApp()
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.
@@ -3382,7 +3395,7 @@ func (d *Desktop) Children() []core.Trinket {
 	if d.dockVisible() {
 		children = append(children, d.dockRow)
 	}
-	if d.statusBar != nil {
+	if d.statusBarShown() {
 		children = append(children, d.statusBar)
 	}
 	return children
@@ -3411,7 +3424,7 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 	}
 
 	// Check status bar
-	if d.statusBar != nil && pos.Y >= bounds.Height-metrics.CellHeight {
+	if d.statusBarShown() && pos.Y >= bounds.Height-metrics.CellHeight {
 		return d.statusBar
 	}
 
@@ -3654,8 +3667,9 @@ func (d *Desktop) layoutChildren() {
 		dockHeight = d.dockRow.RequiredHeight()
 	}
 
-	// Status bar at bottom
-	if d.statusBar != nil {
+	// Status bar at bottom (skipped when suppressed for a single-app desktop;
+	// its row is reclaimed by the content area, see ClientArea/statusBarShown).
+	if d.statusBarShown() {
 		d.statusBar.SetBounds(core.UnitRect{
 			X:      0,
 			Y:      bounds.Height - metrics.CellHeight,
@@ -3667,7 +3681,7 @@ func (d *Desktop) layoutChildren() {
 	// Dock row above status bar
 	if d.dockVisible() {
 		dockY := bounds.Height - metrics.CellHeight - dockHeight
-		if d.statusBar == nil {
+		if !d.statusBarShown() {
 			dockY = bounds.Height - dockHeight
 		}
 		d.dockRow.SetBounds(core.UnitRect{
@@ -3701,7 +3715,7 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	if d.menuBar != nil {
 		top = metrics.CellHeight
 	}
-	if d.statusBar != nil {
+	if d.statusBarShown() {
 		bottom -= metrics.CellHeight
 	}
 	// Account for dock row height (when not empty)
@@ -3727,17 +3741,19 @@ func (d *Desktop) MenuBarHeight() core.Unit {
 	return d.EffectiveCellMetrics().CellHeight
 }
 
-// StatusBarHeight returns the height of the status bar area (0 if no status bar).
+// StatusBarHeight returns the height of the status bar area (0 when there is no
+// status bar or it is suppressed for a single-app desktop).
 func (d *Desktop) StatusBarHeight() core.Unit {
-	if d.statusBar == nil {
+	if !d.statusBarShown() {
 		return 0
 	}
 	return d.EffectiveCellMetrics().CellHeight
 }
 
-// StatusBarBounds returns the bounds of the status bar area (empty rect if no status bar).
+// StatusBarBounds returns the bounds of the status bar area (empty rect when
+// there is no status bar or it is suppressed for a single-app desktop).
 func (d *Desktop) StatusBarBounds() core.UnitRect {
-	if d.statusBar == nil {
+	if !d.statusBarShown() {
 		return core.UnitRect{}
 	}
 	bounds := d.Bounds()
