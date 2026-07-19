@@ -155,6 +155,9 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		if graphical {
 			desktop.RaiseToFront()
 		}
+		// First-run welcome (graphical + Windows + not yet installed): a modal
+		// over the root editor offering Install or Try. No-op otherwise.
+		maybeShowWelcome(desktop, application, launchArgs, graphical)
 	})
 }
 

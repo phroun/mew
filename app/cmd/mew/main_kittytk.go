@@ -45,11 +45,21 @@ buffers).
       --window            open in a graphical window instead (hands off to mew-sdl)
       --detach            like --window, but return the shell immediately
                           instead of waiting for the window to close
+      --install           (Windows) install mew: copy the binaries, add a Start
+                          Menu shortcut, and put mew on your PATH
+      --uninstall         (Windows) reverse --install
 
 Build the standalone terminal editor without -tags kittytk.
 `
 
 func main() {
+	// Windows self-installer (--install / --uninstall). Handled before anything
+	// else so the flags never reach the editor as file operands; a no-op that
+	// returns (…, false) on other platforms and other flags.
+	if code, done := maybeInstall(os.Args[1:]); done {
+		os.Exit(code)
+	}
+
 	launchArgs, wantVersion, wantHelp, wantWindow, wantDetach := mewhost.SplitArgs(os.Args[1:])
 	switch {
 	case wantVersion:
