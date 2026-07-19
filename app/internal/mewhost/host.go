@@ -148,6 +148,13 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 			ed.SetHideDesktop(hideDesktop)
 		}
 		serveSocket(desktop, cfg)
+		// On the graphical host, bring our window to the front and focus it. A
+		// detached launch (mew --detach) otherwise opens in the background: the
+		// window manager doesn't focus a session-detached process's window. No-op
+		// on the TUI (single surface, nothing to reorder).
+		if graphical {
+			desktop.RaiseToFront()
+		}
 	})
 }
 

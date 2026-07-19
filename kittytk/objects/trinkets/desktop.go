@@ -937,12 +937,13 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
-// RaiseToFront brings the desktop's own OS surface (the primary window that
-// shows the desktop) to the front of the window stack. A host uses it after
-// ExitSoloMode so the revealed desktop comes forward - ExitSoloMode raises the
-// desktop surface too, but then re-homes the solo window above it, so the
-// desktop needs raising once more to end up on top. No-op on a single-surface
-// backend (the TUI) that can't reorder OS windows.
+// RaiseToFront brings the desktop's primary OS surface to the front of the
+// window stack (and focuses it). Two host uses: at startup, so the window comes
+// forward even from a session-detached launch that the window manager won't
+// focus; and after ExitSoloMode, so the revealed desktop ends up on top (that
+// call raises the surface too, but then re-homes the solo window above it, so it
+// needs raising once more). No-op on a single-surface backend (the TUI) that
+// can't reorder OS windows.
 func (d *Desktop) RaiseToFront() {
 	d.mu.RLock()
 	surf := d.surface
