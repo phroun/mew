@@ -112,15 +112,48 @@ windows:
 #     recipe turns it into CGO_CFLAGS/CGO_LDFLAGS. (If SDL2 is already in the
 #     mingw sysroot, leave SDL2_MINGW unset.)
 #
-# At RUNTIME mew-sdl.exe needs SDL2.dll beside it (from the dev package's bin/, or
-# the SDL2 runtime zip). The syso prerequisite carries the icon (the Go linker
-# embeds it automatically); -H windowsgui detaches the console — this is a
-# windowed app, not a terminal one. WINDOWS_CC/SDL2_MINGW are empty by default
-# (native Windows build); set them to cross-compile.
+# By default mew-sdl.exe links SDL2 dynamically, so at RUNTIME it needs SDL2.dll
+# beside it (from the dev package's bin/, or the SDL2 runtime zip). To instead
+# fold SDL2 into the exe — one self-contained file, no DLL to ship — set
+# SDL2_STATIC=1:
+#     make windows-sdl WINDOWS_CC=x86_64-w64-mingw32-gcc \
+#          SDL2_MINGW=/path/SDL2-<ver>/x86_64-w64-mingw32 SDL2_STATIC=1
+# That links libSDL2.a and the Windows system libs it depends on. It uses
+# `-static` (a global link MODE, immune to flag ordering — otherwise go-sdl2's
+# own bare `-lSDL2` can grab the dynamic import lib first) inside a linker group
+# so SDL2 and its deps resolve regardless of order, and drops -lSDL2main since the
+# Go runtime owns the entry point. The result is fully static (libgcc/winpthread
+# included too). If you'd rather keep the Windows system DLLs dynamic and fold in
+# only SDL2, replace `-static … group …` with
+# `-Wl,-Bstatic -lSDL2 -Wl,-Bdynamic $(SDL2_WIN_SYSLIBS) -static-libgcc` — that
+# needs the env flags to precede go-sdl2's directive, which cgo does here, but it
+# is less bulletproof than the mode switch.
+#
+# The syso prerequisite carries the icon (the Go linker embeds it automatically);
+# -H windowsgui detaches the console — this is a windowed app, not a terminal one.
+# WINDOWS_CC/SDL2_MINGW/SDL2_STATIC are empty by default (native, dynamic Windows
+# build); set them to cross-compile / static-link.
 WINDOWS_CC ?=
 SDL2_MINGW ?=
+SDL2_STATIC ?=
+
+# Windows system libs SDL2's static archive pulls in (mirrors
+# `sdl2-config --static-libs`, minus -lSDL2main). Only used for a static link.
+SDL2_WIN_SYSLIBS := -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
+
+# Assemble the cgo flags for the cross build from SDL2_MINGW (+ SDL2_STATIC).
+WINDOWS_SDL_CFLAGS  := $(if $(SDL2_MINGW),-I$(SDL2_MINGW)/include)
+WINDOWS_SDL_LDFLAGS := $(if $(SDL2_MINGW),-L$(SDL2_MINGW)/lib)
+ifneq ($(SDL2_STATIC),)
+WINDOWS_SDL_LDFLAGS += -static -Wl,--start-group -lSDL2 $(SDL2_WIN_SYSLIBS) -Wl,--end-group
+endif
+
+# The env prefix for `go build`: CC to cross-compile, CGO_CFLAGS/CGO_LDFLAGS to
+# find (and optionally static-link) SDL2. Each part appears only when relevant.
+WINDOWS_SDL_ENV = $(if $(WINDOWS_CC),CC=$(WINDOWS_CC) )$(if $(strip $(WINDOWS_SDL_CFLAGS)),CGO_CFLAGS="$(WINDOWS_SDL_CFLAGS)" )$(if $(strip $(WINDOWS_SDL_LDFLAGS)),CGO_LDFLAGS="$(WINDOWS_SDL_LDFLAGS)" )
+
 windows-sdl: $(WINDOWS_SYSO)
-	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(if $(WINDOWS_CC),CC=$(WINDOWS_CC) )$(if $(SDL2_MINGW),CGO_CFLAGS="-I$(SDL2_MINGW)/include" CGO_LDFLAGS="-L$(SDL2_MINGW)/lib" )$(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(WINDOWS_SDL_ENV)$(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
 
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
 # the icon changes). It lives in the mew-sdl package, so the Go linker embeds it
