@@ -844,10 +844,9 @@ func (h *TearOffHost) resizeMove() bool {
 		h.native.SetScreenPositionPx(x, y)
 	}
 	h.native.SetScreenSizePx(w, ht)
-	// Track the highlight on the edge being dragged (the OS resize reports
-	// back through Resized, updating the window bounds) and keep the resize
-	// cursor for the gesture.
-	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
+	// The OS resize reports back through Resized, which updates the window bounds
+	// AND the resize-edge highlights (computing them here from the pre-resize
+	// bounds would just set them stale). Keep the resize cursor for the gesture.
 	h.applyCursor(tornCursorForEdge(h.resizeEdges))
 	return true
 }
@@ -934,5 +933,13 @@ func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 func (h *TearOffHost) Resized(size core.UnitSize) {
 	h.win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 	h.win.Layout()
+	// While an edge-resize is in progress, keep the resize-edge highlight rects
+	// in step with the new size. resizeMove only asks the OS to resize; the new
+	// bounds land HERE (asynchronously), so this is the one place they can be
+	// recomputed accurately — otherwise they stay at the pre-resize position
+	// until the next hover recomputes them.
+	if h.resizing {
+		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
+	}
 	h.surf.Invalidate(core.UnitRect{})
 }
