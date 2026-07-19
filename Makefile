@@ -204,9 +204,13 @@ MAC_UNIVERSAL_ARCHS ?= arm64 amd64
 # one fat binary at bin/mew-sdl. Run on macOS (needs clang + lipo). PKG_CONFIG is
 # neutralized (/usr/bin/true) so go-sdl2's darwin `pkg-config: sdl2` directive
 # doesn't drag in the single-arch Homebrew SDL2 — the CGO flags point at the
-# framework instead, with an @rpath so the embedded copy is found at runtime.
-# lipo strips signatures, so re-apply an ad-hoc one (arm64 refuses to run an
-# unsigned binary). Distribution to other Macs still needs a Developer ID +
+# framework instead. The @rpath that lets the binary find the embedded framework
+# is added AFTER linking (install_name_tool -add_rpath), not via CGO_LDFLAGS: the
+# SDL build pulls in several cgo packages and an env CGO_LDFLAGS is attributed to
+# each, so a link-time -rpath would reach the linker several times (harmless, but
+# it warns "duplicate -rpath ignored"). Adding it once post-link is exactly one
+# LC_RPATH and no warnings. lipo strips signatures, so re-apply an ad-hoc one
+# (arm64 refuses to run unsigned). Distribution still needs Developer ID +
 # notarization; ad-hoc only satisfies "runs on this machine".
 mew-sdl-universal:
 	@command -v lipo >/dev/null || { echo "lipo not found — run on macOS"; exit 1; }
@@ -218,11 +222,12 @@ mew-sdl-universal:
 	    CC="clang -arch $$ca" \
 	    PKG_CONFIG=/usr/bin/true \
 	    CGO_CFLAGS="-F$(MACAPP_SDL2_FW) -I$(MACAPP_SDL2_FW)/SDL2.framework/Headers" \
-	    CGO_LDFLAGS="-F$(MACAPP_SDL2_FW) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks" \
+	    CGO_LDFLAGS="-F$(MACAPP_SDL2_FW) -framework SDL2" \
 	    $(GO) build -tags "$(SDL_TAGS)" -o "$(BIN_DIR)/mew-sdl.$$a" ./app/cmd/mew-sdl || exit 1; \
 	done
 	lipo -create $(foreach a,$(MAC_UNIVERSAL_ARCHS),$(BIN_DIR)/mew-sdl.$(a)) -output "$(BIN_DIR)/mew-sdl"
 	@rm -f $(foreach a,$(MAC_UNIVERSAL_ARCHS),$(BIN_DIR)/mew-sdl.$(a))
+	install_name_tool -add_rpath @executable_path/../Frameworks "$(BIN_DIR)/mew-sdl"
 	@codesign --force --sign - "$(BIN_DIR)/mew-sdl" 2>/dev/null || echo "note: codesign unavailable; arm64 may refuse to run unsigned"
 	@lipo -info "$(BIN_DIR)/mew-sdl"
 

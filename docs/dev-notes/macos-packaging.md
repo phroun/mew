@@ -65,13 +65,17 @@ darwin `#cgo pkg-config: sdl2` directive, so the build neutralizes pkg-config
 
 ```
 CGO_CFLAGS  = -F$(MACAPP_SDL2_FW) -I$(MACAPP_SDL2_FW)/SDL2.framework/Headers
-CGO_LDFLAGS = -F$(MACAPP_SDL2_FW) -framework SDL2 \
-              -Wl,-rpath,@executable_path/../Frameworks
+CGO_LDFLAGS = -F$(MACAPP_SDL2_FW) -framework SDL2
 ```
 
-The `@executable_path/../Frameworks` rpath is why the binary finds the embedded
-copy at runtime: from `Contents/MacOS/mew`, `../Frameworks` is
-`Contents/Frameworks/` where `macapp.sh` puts `SDL2.framework`.
+The `@executable_path/../Frameworks` **rpath** — what lets the binary find the
+embedded copy at runtime (from `Contents/MacOS/mew`, `../Frameworks` is
+`Contents/Frameworks/`, where `macapp.sh` puts `SDL2.framework`) — is added
+**after** linking with `install_name_tool -add_rpath`, not via `CGO_LDFLAGS`. The
+SDL build pulls in several cgo packages and an env `CGO_LDFLAGS` is attributed to
+each, so a link-time `-Wl,-rpath` reaches the linker several times and it warns
+`duplicate -rpath ignored` (harmless, but noisy). Adding it once post-link is
+exactly one `LC_RPATH` and silent.
 
 > Note: the loose `bin/mew-sdl` will **not** run on its own — that rpath only
 > resolves inside the bundle. Run `bin/mew.app`, not `bin/mew-sdl`. (This is why
