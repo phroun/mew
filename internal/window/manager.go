@@ -59,6 +59,10 @@ type ViewState struct {
 	// natural direction): "<" entering an RTL fragment, ">" entering LTR.
 	// Explicit direction-control characters render as their own marker.
 	ShowBidi bool
+	// ShowMarks renders a one-column "*" (in the "marks" color) at every mark /
+	// garland-decoration position in the text, giving each mark its own cell
+	// between the surrounding characters.
+	ShowMarks bool
 	// ShowRuler renders a column ruler on the window's top line, reducing the
 	// content area by one row. Ignored when the window is only one line tall.
 	ShowRuler bool
@@ -612,6 +616,7 @@ type WindowOptions struct {
 	ShowLineNumbers bool
 	ShowInvisibles  bool
 	ShowBidi        bool
+	ShowMarks       bool
 	ShowRuler       bool
 	TabSize         int
 	SetFocus        bool
@@ -698,6 +703,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			ShowLineNumbers: opts.ShowLineNumbers,
 			ShowInvisibles:  opts.ShowInvisibles,
 			ShowBidi:        opts.ShowBidi,
+			ShowMarks:       opts.ShowMarks,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
 		},

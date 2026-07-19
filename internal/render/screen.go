@@ -872,6 +872,27 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	selectionInvisiblesColor := sr.col(w, "selectionInvisibles")
 	invisibleSpace := sr.indicators.VisibleSpace // marker for a space
 
+	// showMarks: draw a "*" (in the "marks" color) at every mark / garland-
+	// decoration position on this line, each in its own cell before the rune it
+	// precedes. marksSet holds the marked rune positions; showMarks is cleared
+	// when this line has none, so the per-slot check below stays cheap.
+	showMarks := w.ViewState.ShowMarks
+	var marksColor string
+	var marksSet map[int]bool
+	if showMarks && w.Buffer != nil {
+		if cols := w.Buffer.MarksOnLine(docLine); len(cols) > 0 {
+			marksColor = sr.col(w, "marks")
+			marksSet = make(map[int]bool, len(cols))
+			for _, c := range cols {
+				marksSet[c] = true
+			}
+		} else {
+			showMarks = false
+		}
+	} else {
+		showMarks = false
+	}
+
 	// Get Unicode runes. When showing invisibles, append the line's terminator
 	// (stripped by the caller) so its \n / \r are drawn as end-of-line markers.
 	runes := []rune(line)
@@ -966,6 +987,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	lastCellStart := 0
 	lastCellColumn := 0
 
+	// markSlotDrawn is the documentRune (visual slot) whose leading mark "*" has
+	// already been emitted, so re-entering the same slot after emitting it draws
+	// the character rather than another "*".
+	markSlotDrawn := -1
+
 	// Helper to check if a rune position is within the selection
 	isSelected := func(runePos int) bool {
 		if !sel.exists || runePos < 0 {
@@ -1036,6 +1062,22 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			}
 			currentVisualColumn++
 			documentRune++
+			continue
+		}
+
+		// showMarks: a mark at this logical position gets its own "*" cell,
+		// emitted before the character it precedes. documentRune is NOT advanced
+		// (this is an inserted cell, not a text slot); markSlotDrawn prevents a
+		// second "*" when the loop re-enters the slot to draw the character.
+		if showMarks && marksSet[logicalIdx] && markSlotDrawn != documentRune {
+			if currentVisualColumn >= viewOffsetX && outputVisualColumn < width {
+				lastCellStart = displayLine.Len()
+				lastCellColumn = outputVisualColumn
+				displayLine.WriteString(marksColor + "*" + textColor)
+				outputVisualColumn++
+			}
+			currentVisualColumn++
+			markSlotDrawn = documentRune
 			continue
 		}
 
@@ -1744,11 +1786,35 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 	return column
 }
 
+// markOffset is the number of showMarks "*" cells inserted at or before rune
+// position runePos on docLine — how far the visual column of that position is
+// shifted right when showMarks is on. Zero when showMarks is off or the line has
+// no marks. Kept in step with the "*" insertion in prepareLineForDisplay and the
+// editor's own caret math.
+func (sr *ScreenRenderer) markOffset(w *window.Window, docLine, runePos int) int {
+	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+		return 0
+	}
+	n := 0
+	for _, p := range w.Buffer.MarksOnLine(docLine) {
+		if p <= runePos {
+			n++
+		}
+	}
+	return n
+}
+
 // caretVisualColumn is the caret's display column for a logical position,
 // biased by direction: in RTL context "before rune i" is at the rune's RIGHT
 // edge (one cell right of its cell); at end of line the boundary follows the
-// last rune's direction. Mirrors the editor's caretVisualColumn.
+// last rune's direction. Mirrors the editor's caretVisualColumn. Adds the
+// showMarks offset so the caret lands on the same cell prepareLineForDisplay
+// drew the character in.
 func (sr *ScreenRenderer) caretVisualColumn(line string, runePos int, w *window.Window) int {
+	return sr.caretVisualColumnBase(line, runePos, w) + sr.markOffset(w, w.CursorPos().Line, runePos)
+}
+
+func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *window.Window) int {
 	runes := []rune(line)
 	layout := sr.layoutFor(w, runes)
 	if layout == nil {

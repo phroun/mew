@@ -142,6 +142,9 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 	if !w.IsOptionOverridden("showinvisibles") {
 		w.ViewState.ShowInvisibles = e.optBool(w, "showinvisibles", e.Config.ShowInvisibles)
 	}
+	if !w.IsOptionOverridden("showmarks") {
+		w.ViewState.ShowMarks = e.optBool(w, "showmarks", e.Config.ShowMarks)
+	}
 	if !w.IsOptionOverridden("showbidi") {
 		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
 	}

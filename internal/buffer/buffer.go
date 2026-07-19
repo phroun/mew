@@ -4,6 +4,7 @@ package buffer
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -1349,6 +1350,40 @@ func (b *Buffer) GetMarkDebug(name string) (line, runePos int, bytePos int64, ex
 	lineNum, runeNum := b.readCursor.LinePos()
 
 	return int(lineNum), int(runeNum), addr.Byte, true
+}
+
+// MarksOnLine returns the sorted, de-duplicated rune (column) positions of the
+// user-visible marks (garland decorations) on the given document line. Internal
+// marks — keys beginning with "_", e.g. the block/match selection anchors — are
+// skipped. Used by the renderer's showMarks indicator ("*" per mark position).
+func (b *Buffer) MarksOnLine(docLine int) []int {
+	if b.garland == nil || b.readCursor == nil {
+		return nil
+	}
+	entries, err := b.garland.GetDecorationsOnLine(int64(docLine))
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(entries))
+	var cols []int
+	for _, e := range entries {
+		if e.Address == nil || strings.HasPrefix(e.Key, "_") {
+			continue
+		}
+		b.readCursor.SeekByte(e.Address.Byte)
+		ln, rn := b.readCursor.LinePos()
+		if int(ln) != docLine {
+			continue
+		}
+		col := int(rn)
+		if _, dup := seen[col]; dup {
+			continue
+		}
+		seen[col] = struct{}{}
+		cols = append(cols, col)
+	}
+	sort.Ints(cols)
+	return cols
 }
 
 // ClearMark removes a named mark.

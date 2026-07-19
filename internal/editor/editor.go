@@ -259,6 +259,7 @@ type Config struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
+	ShowMarks        bool
 	Syntax           string
 	SyntaxDetect     bool
 
@@ -443,6 +444,7 @@ func DefaultConfig() Config {
 		TabSize:          4,
 		ShowInvisibles:   false,
 		ShowBidi:         false,
+		ShowMarks:        false,
 		WordWrap:         false,
 		DebounceMs:       20,
 		MaxRenderDelayMs: 100,
@@ -536,6 +538,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.TabSize = loadedConfig.General.TabSize
 	cfg.ShowInvisibles = loadedConfig.General.ShowInvisibles
 	cfg.ShowBidi = loadedConfig.General.ShowBidi
+	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
 	cfg.MatchIgnoresSingleQuote = loadedConfig.General.MatchIgnoresSingleQuote
@@ -2056,6 +2059,12 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 			v = w.ViewState.ShowBidi
 		}
 		return strconv.FormatBool(v), true
+	case "showmarks":
+		v := e.Config.ShowMarks
+		if w != nil {
+			v = w.ViewState.ShowMarks
+		}
+		return strconv.FormatBool(v), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2199,6 +2208,16 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			w.ViewState.ShowBidi = b
 		} else {
 			e.Config.ShowBidi = b
+		}
+	case "showmarks":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.ShowMarks = b
+		} else {
+			e.Config.ShowMarks = b
 		}
 	case "showcolumnruler":
 		b, ok := parseBool()
@@ -3127,7 +3146,30 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // runeToVisualColumn converts a rune position to a visual column position.
 // This accounts for tabs (variable width) and control characters (2 chars wide).
 // Translated from TypeScript CoordinateUtils.documentRuneToColumn
+// markOffset is the number of showMarks "*" cells inserted at or before rune
+// position runePos on the caret's line — the amount that position's visual
+// column is shifted right when showMarks is on. Zero when showMarks is off or
+// the line has no marks. Kept in step with the renderer (screen.go markOffset).
+func (e *Editor) markOffset(w *window.Window, runePos int) int {
+	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+		return 0
+	}
+	n := 0
+	for _, p := range w.Buffer.MarksOnLine(w.CursorPos().Line) {
+		if p <= runePos {
+			n++
+		}
+	}
+	return n
+}
+
+// runeToVisualColumn is the display column of a rune, including the showMarks
+// offset so it stays in step with what the renderer draws.
 func (e *Editor) runeToVisualColumn(w *window.Window, line string, runePos int, tabSize int) int {
+	return e.runeToVisualColumnBase(w, line, runePos, tabSize) + e.markOffset(w, runePos)
+}
+
+func (e *Editor) runeToVisualColumnBase(w *window.Window, line string, runePos int, tabSize int) int {
 	runes := []rune(line)
 
 	// Bidirectional line: the rune's visual column is where its cell is
@@ -3215,10 +3257,17 @@ func (e *Editor) winRTL(w *window.Window) bool {
 // follows the last rune's direction (one cell LEFT of an RTL line's leftmost
 // cell — possibly -1, which the right-alignment pad absorbs).
 func (e *Editor) caretVisualColumn(w *window.Window, line string, runePos, tabSize int) int {
+	// The non-bidi branch of the base delegates to runeToVisualColumnBase, so add
+	// the showMarks offset once here for both branches (the bidi branch works in
+	// base columns). Mirrors the renderer's caretVisualColumn wrapper.
+	return e.caretVisualColumnBase(w, line, runePos, tabSize) + e.markOffset(w, runePos)
+}
+
+func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, tabSize int) int {
 	runes := []rune(line)
 	layout := e.layoutFor(w, runes)
 	if layout == nil {
-		return e.runeToVisualColumn(w, line, runePos, tabSize)
+		return e.runeToVisualColumnBase(w, line, runePos, tabSize)
 	}
 	cols, total := e.bidiColumns(runes, layout, tabSize)
 	rtlBase := e.winRTL(w)
@@ -3319,6 +3368,17 @@ func (e *Editor) bidiColumns(runes []rune, layout *bidi.Layout, tabSize int) (co
 func (e *Editor) visualColumnToRune(w *window.Window, line string, targetColumn int, tabSize int) int {
 	runes := []rune(line)
 
+	// showMarks (non-bidi): account for the inserted "*" cells via the marked
+	// walk, so a click maps to the right rune. (Bidi lines with marks fall
+	// through to the base walk below.)
+	if w != nil && w.ViewState.ShowMarks && w.Buffer != nil {
+		if e.layoutFor(w, runes) == nil {
+			if marks := w.Buffer.MarksOnLine(w.CursorPos().Line); len(marks) > 0 {
+				return e.visualColumnToRuneMarked(w, runes, marks, targetColumn, tabSize).Rune
+			}
+		}
+	}
+
 	// Bidirectional line: find the visual cell covering the target column and
 	// return its LOGICAL rune index (past the end returns len).
 	if layout := e.layoutFor(w, runes); layout != nil {
@@ -3407,7 +3467,53 @@ type visualColumnToRuneResult struct {
 // visualColumnToRuneWithActual converts a visual column to a rune position,
 // also returning the actual visual column at that position.
 // This is useful for detecting when the target falls within a wide character like a tab.
+// visualColumnToRuneWithActual maps a display column back to a rune. With
+// showMarks on (and a non-bidi line with marks), it walks the visual cells
+// including the inserted "*" cells so a click on/after a mark lands on the right
+// rune and the reported column is in the same marks-inclusive space as the
+// forward math. Bidi lines fall back to the base mapping (marks are rare there).
 func (e *Editor) visualColumnToRuneWithActual(w *window.Window, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
+	if w != nil && w.ViewState.ShowMarks && w.Buffer != nil {
+		runes := []rune(line)
+		if e.layoutFor(w, runes) == nil {
+			if marks := w.Buffer.MarksOnLine(w.CursorPos().Line); len(marks) > 0 {
+				return e.visualColumnToRuneMarked(w, runes, marks, targetColumn, tabSize)
+			}
+		}
+	}
+	return e.visualColumnToRuneWithActualBase(w, line, targetColumn, tabSize)
+}
+
+// visualColumnToRuneMarked is the non-bidi inverse walk with showMarks cells: it
+// emits, in order, the "*" cell(s) at each rune position then the rune, and
+// returns the rune whose cell (or leading "*") covers targetColumn. ActualColumn
+// is reported marks-inclusive.
+func (e *Editor) visualColumnToRuneMarked(w *window.Window, runes []rune, marks []int, targetColumn, tabSize int) visualColumnToRuneResult {
+	marked := make(map[int]bool, len(marks))
+	for _, p := range marks {
+		marked[p] = true
+	}
+	col := 0
+	for i := 0; i <= len(runes); i++ {
+		if marked[i] { // one "*" cell before rune i (or at end of line)
+			if targetColumn <= col {
+				return visualColumnToRuneResult{Rune: i, ActualColumn: col}
+			}
+			col++
+		}
+		if i == len(runes) {
+			break
+		}
+		rw := e.getRuneVisualWidth(runes[i], col, tabSize)
+		if targetColumn < col+rw {
+			return visualColumnToRuneResult{Rune: i, ActualColumn: col}
+		}
+		col += rw
+	}
+	return visualColumnToRuneResult{Rune: len(runes), ActualColumn: col}
+}
+
+func (e *Editor) visualColumnToRuneWithActualBase(w *window.Window, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
 	runes := []rune(line)
 
 	// Bidirectional line: the cell covering the target column, by visual walk.
@@ -4050,6 +4156,7 @@ func (e *Editor) openFile(filename string) bool {
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
+		ShowMarks:       e.Config.ShowMarks,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4072,6 +4179,7 @@ func (e *Editor) createNewBuffer() {
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
+		ShowMarks:       e.Config.ShowMarks,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4099,6 +4207,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
+		ShowMarks:       e.Config.ShowMarks,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4131,6 +4240,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 		TabSize:         w.ViewState.TabSize,
 		ShowInvisibles:  w.ViewState.ShowInvisibles,
 		ShowBidi:        w.ViewState.ShowBidi,
+		ShowMarks:       w.ViewState.ShowMarks,
 		ShowRuler:       w.ViewState.ShowRuler,
 		SetFocus:        true,
 	})
@@ -4598,6 +4708,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
+		ShowMarks:       e.Config.ShowMarks,
 		ShowRuler:       e.Config.ShowColumnRuler,
 	})
 
@@ -5133,6 +5244,7 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Tab Size: %s\n", opt("tabSize")))
 	content.WriteString(fmt.Sprintf("  Show Invisibles: %s\n", opt("showInvisibles")))
 	content.WriteString(fmt.Sprintf("  Show Bidi Markers: %s\n", opt("showBidi")))
+	content.WriteString(fmt.Sprintf("  Show Marks: %s\n", opt("showMarks")))
 	content.WriteString(fmt.Sprintf("  Word Wrap: %s\n", opt("wordWrap")))
 	content.WriteString(fmt.Sprintf("  Search Ignore Case: %s\n", opt("searchIgnoreCase")))
 	content.WriteString(fmt.Sprintf("  Search Wrap: %s\n", opt("searchWrap")))

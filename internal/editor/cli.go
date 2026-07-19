@@ -27,6 +27,7 @@ var cliPerWindowOptions = map[string]bool{
 	"showlinenumbers": true,
 	"showinvisibles":  true,
 	"showbidi":        true,
+	"showmarks":       true,
 	"showcolumnruler": true,
 	"direction":       true,
 }
@@ -36,7 +37,7 @@ var cliPerWindowOptions = map[string]bool{
 // mappings, projectConfig, useLocks, ...) are intentionally excluded for now.
 var cliKnownOptions = map[string]bool{
 	"tabsize": true, "showlinenumbers": true, "showinvisibles": true,
-	"showbidi": true, "showcolumnruler": true, "rulershowscursor": true,
+	"showbidi": true, "showmarks": true, "showcolumnruler": true, "rulershowscursor": true,
 	"syntax": true, "syntaxdetect": true, "macoptionkeys": true,
 	"matchignoressinglequote": true, "matchignoresdoublequote": true,
 	"matchignoresslashstar": true, "matchignoresslashslash": true,
@@ -254,6 +255,7 @@ func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string,
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
+		ShowMarks:       e.Config.ShowMarks,
 		ShowRuler:       e.Config.ShowColumnRuler,
 	})
 	w := e.WindowManager.GetWindow(id)

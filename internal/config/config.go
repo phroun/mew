@@ -282,6 +282,7 @@ type GeneralConfig struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
+	ShowMarks        bool
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -621,6 +622,7 @@ func DefaultConfig() Config {
 			TabSize:                 4,
 			ShowInvisibles:          false,
 			ShowBidi:                false,
+			ShowMarks:               false,
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -820,6 +822,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 		if v, ok := opt["showBidi"]; ok {
 			config.General.ShowBidi = parseBool(v, false)
+		}
+		if v, ok := opt["showMarks"]; ok {
+			config.General.ShowMarks = parseBool(v, false)
 		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
@@ -1642,6 +1647,8 @@ showInvisibles=false
 # ("<" entering RTL, ">" entering LTR); explicit direction controls render
 # as their own marker
 showBidi=false
+# Show a "*" (in the "marks" color) at every mark/decoration position in the text
+showMarks=false
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.
