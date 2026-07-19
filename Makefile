@@ -92,13 +92,26 @@ mew-plain:
 windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
 
-# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. SDL2 + cgo
-# don't cross-compile cleanly, so run this ON Windows (with a cgo toolchain and
-# SDL2 present); it can't be produced from the Linux/macOS cross-build. The syso
-# prerequisite carries the icon (the Go linker embeds it automatically), and
-# -H windowsgui detaches the console — this is a windowed app, not a terminal one.
+# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. It uses
+# SDL2 + cgo, so it needs a WINDOWS C toolchain — the plain host gcc on Linux/
+# macOS has no windows.h and fails. Two ways to satisfy that:
+#
+#   • On Windows: install Go, MSYS2's mingw-w64 gcc, and SDL2 dev libs, then
+#     `make windows-sdl` — the default gcc on PATH is already a Windows compiler.
+#
+#   • Cross-compile from Linux/macOS: install the mingw-w64 toolchain and SDL2's
+#     mingw development libraries, then point CC at the cross compiler:
+#         make windows-sdl WINDOWS_CC=x86_64-w64-mingw32-gcc
+#     go-sdl2 finds SDL2 via pkg-config; if the mingw SDL2 isn't on the default
+#     search path, prefix PKG_CONFIG_PATH (…/x86_64-w64-mingw32/lib/pkgconfig)
+#     or pass CGO_CFLAGS / CGO_LDFLAGS pointing at the mingw SDL2 include/lib.
+#
+# The syso prerequisite carries the icon (the Go linker embeds it automatically),
+# and -H windowsgui detaches the console — this is a windowed app, not a terminal
+# one. WINDOWS_CC is empty by default (native build); set it to cross-compile.
+WINDOWS_CC ?=
 windows-sdl: $(WINDOWS_SYSO)
-	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(if $(WINDOWS_CC),CC=$(WINDOWS_CC) )$(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
 
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
 # the icon changes). It lives in the mew-sdl package, so the Go linker embeds it
