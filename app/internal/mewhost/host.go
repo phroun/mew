@@ -48,6 +48,20 @@ func SplitArgs(args []string) (launch []string, wantVersion, wantHelp bool) {
 // editor (launching launchArgs) and serves the display socket. The caller runs
 // the desktop afterward.
 //
+// Experimental single-app chrome toggles - developer flags, flip in source and
+// rebuild. They take effect only when a single application owns the desktop (the
+// mew host case) and only bite on the TUI host: on the graphical host solo mode
+// already drops the desktop chrome. Off by default (all chrome shown).
+const (
+	// hideMenuBarSoleApp hides the desktop menu bar (mew / Edit / Help), leaving
+	// mew with no menu chrome at all. Its actions become unreachable by pointer,
+	// so this waits on the keybinding overhaul before it can be a default.
+	hideMenuBarSoleApp = false
+	// hideTitleBarSoleApp hides the root window's title bar while it is maximized
+	// in the TUI (no [x][.][o] buttons); closing then relies on mew's own quit.
+	hideTitleBarSoleApp = false
+)
+
 // multiWindow controls whether the host presents itself as a multi-window app:
 // the graphical (SDL) host passes true (New Window opens peer editors, and the
 // system supplies a Window menu); the TUI host passes false (a single maximized
@@ -58,6 +72,7 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	application.SetMenuBarContent(buildMenus(desktop, application, multiWindow))
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
+	desktop.SetHideMenuBarForSoleApp(hideMenuBarSoleApp)
 	desktop.AddApplication(application)
 
 	// Windows are created once the screen bounds are known.
@@ -96,6 +111,11 @@ func startRootWindow(desktop *trinkets.Desktop, application *app.Application, la
 	// graphical solo the window is no longer manager-managed, so this is
 	// naturally skipped there.)
 	if wm := desktop.WindowManager(); wm != nil && windowManaged(wm, root) {
+		// Experimental: drop the title bar before maximizing so the editor fills
+		// its row too (the TUI single-app circumstance).
+		if hideTitleBarSoleApp {
+			root.SetFlags(root.Flags() | window.WindowFlagNoTitle)
+		}
 		wm.MaximizeWindow(root)
 		wm.ActivateWindow(root)
 	}

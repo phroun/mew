@@ -113,6 +113,12 @@ type Desktop struct {
 	// System menu (always present, upper-left)
 	systemMenu *Menu
 
+	// hideMenuBarSoleApp, when set (SetHideMenuBarForSoleApp), suppresses the
+	// desktop menu bar under the same single-app condition that hides Ψ and the
+	// status bar - an experimental toggle for a fully chrome-free single-app
+	// desktop. Off by default (the menu bar always shows).
+	hideMenuBarSoleApp bool
+
 	// solo: a single application owns the whole display. Its main window
 	// replaces the desktop entirely - no system (Psi) menu, no dock, no
 	// wallpaper - and the host quits when the last window closes.
@@ -1286,6 +1292,22 @@ func (d *Desktop) soleForegroundApp() bool {
 // content. With zero or 2+ foreground apps the shared status bar returns.
 func (d *Desktop) statusBarShown() bool {
 	return d.statusBar != nil && !d.soleForegroundApp()
+}
+
+// menuBarShown reports whether the desktop menu bar should occupy the top row
+// and paint. It is present unless the experimental hideMenuBarSoleApp toggle is
+// on AND a single application owns the desktop, in which case it is suppressed
+// (its row reclaimed) for a fully chrome-free single-app desktop.
+func (d *Desktop) menuBarShown() bool {
+	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.soleForegroundApp())
+}
+
+// SetHideMenuBarForSoleApp toggles whether the desktop menu bar is hidden when a
+// single application owns the desktop (see menuBarShown). Experimental: hiding
+// it removes the only pointer route to the app's menus, so it is off by default.
+func (d *Desktop) SetHideMenuBarForSoleApp(hide bool) {
+	d.hideMenuBarSoleApp = hide
+	d.Update()
 }
 
 // updateMenuBarContent updates the menu bar with the active app's menus.
@@ -3386,7 +3408,7 @@ func (d *Desktop) Beep() {
 // Children returns all child trinkets.
 func (d *Desktop) Children() []core.Trinket {
 	var children []core.Trinket
-	if d.menuBar != nil {
+	if d.menuBarShown() {
 		children = append(children, d.menuBar)
 	}
 	if d.content != nil {
@@ -3419,7 +3441,7 @@ func (d *Desktop) ChildAt(pos core.UnitPoint) core.Trinket {
 	bounds := d.Bounds()
 
 	// Check menu bar
-	if d.menuBar != nil && pos.Y < metrics.CellHeight {
+	if d.menuBarShown() && pos.Y < metrics.CellHeight {
 		return d.menuBar
 	}
 
@@ -3510,7 +3532,7 @@ func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 // This is true when a menu is open, or when the menu bar is focused AND
 // actively showing accelerators (not just technically holding focus).
 func (d *Desktop) IsMenuBarActive() bool {
-	if d.menuBar == nil {
+	if !d.menuBarShown() {
 		return false
 	}
 	// Menu open always captures
@@ -3645,8 +3667,9 @@ func (d *Desktop) layoutChildren() {
 	bounds := d.Bounds()
 	metrics := d.EffectiveCellMetrics()
 
-	// Menu bar at top
-	if d.menuBar != nil {
+	// Menu bar at top (skipped when suppressed for a single-app desktop; its
+	// row is reclaimed by the content area, see ClientArea/menuBarShown).
+	if d.menuBarShown() {
 		d.menuBar.SetBounds(core.UnitRect{
 			X:      0,
 			Y:      0,
@@ -3712,7 +3735,7 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	top := core.Unit(0)
 	bottom := bounds.Height
 
-	if d.menuBar != nil {
+	if d.menuBarShown() {
 		top = metrics.CellHeight
 	}
 	if d.statusBarShown() {
@@ -3733,9 +3756,10 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	}
 }
 
-// MenuBarHeight returns the height of the menu bar area (0 if no menu bar).
+// MenuBarHeight returns the height of the menu bar area (0 when there is no menu
+// bar or it is suppressed for a single-app desktop).
 func (d *Desktop) MenuBarHeight() core.Unit {
-	if d.menuBar == nil {
+	if !d.menuBarShown() {
 		return 0
 	}
 	return d.EffectiveCellMetrics().CellHeight
@@ -3862,8 +3886,8 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.content.Paint(contentPainter)
 	}
 
-	// Draw menu bar at top
-	if d.menuBar != nil {
+	// Draw menu bar at top (skipped when suppressed for a single-app desktop)
+	if d.menuBarShown() {
 		// Set menu bar bounds
 		d.menuBar.SetBounds(core.UnitRect{
 			X:      0,
