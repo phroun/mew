@@ -45,6 +45,16 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/$name"
 chmod +x "$app/Contents/MacOS/$name"
 
+# Embed a universal SDL2.framework when provided (MACAPP_SDL2_FW), so the bundle
+# carries its own SDL2 and needs no Homebrew install at runtime. A universal
+# mew-sdl (make mew-sdl-universal) is linked with an @executable_path/../Frameworks
+# rpath, so this embedded copy is what it loads.
+if [ -n "${MACAPP_SDL2_FW:-}" ] && [ -d "$MACAPP_SDL2_FW/SDL2.framework" ]; then
+	mkdir -p "$app/Contents/Frameworks"
+	cp -R "$MACAPP_SDL2_FW/SDL2.framework" "$app/Contents/Frameworks/"
+	echo "macapp: embedded SDL2.framework from $MACAPP_SDL2_FW"
+fi
+
 icontag=""
 if [ -f "$icns" ]; then
 	cp "$icns" "$app/Contents/Resources/$name.icns"
@@ -75,5 +85,17 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Ad-hoc sign the bundle so it runs locally — Apple Silicon refuses to launch
+# unsigned code, and lipo/embedding invalidate any signature the linker applied.
+# Distributing to OTHER Macs needs a Developer ID signature + notarization; the
+# ad-hoc signature only satisfies "runs on this machine". Best-effort.
+if command -v codesign >/dev/null 2>&1; then
+	if codesign --force --deep --sign - "$app" >/dev/null 2>&1; then
+		echo "macapp: ad-hoc signed $app"
+	else
+		echo "macapp: codesign failed; the bundle is unsigned (may not launch on Apple Silicon)" >&2
+	fi
+fi
 
 echo "macapp: built $app"

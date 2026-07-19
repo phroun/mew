@@ -11,6 +11,8 @@
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
 #   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
+#   make mew-sdl-universal  fat arm64+x86_64 mew-sdl (needs a universal SDL2.framework)
+#   make macapp-universal   universal bin/mew.app with SDL2.framework embedded
 #   make install-macapp    install mew.app into $(MACAPP_DIR) (default /Applications)
 #   make check      go vet + full test suite (the pre-flight gate)
 #   make test       run the test suite
@@ -64,7 +66,7 @@ RSRC ?= go run github.com/akavel/rsrc@v0.10.2
 # the matching windows build and never for other platforms.
 WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 
-.PHONY: all build mew mew-sdl mew-plain windows windows-sdl install uninstall macapp install-macapp uninstall-macapp check vet test clean increment
+.PHONY: all build mew mew-sdl mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -176,9 +178,53 @@ uninstall:
 
 # Wrap the graphical binary in a macOS .app bundle (bin/mew.app) so it gets a
 # real application name and a Dock / task-switcher icon. Drop assets/mew.icns
-# (or a 1024x1024 assets/mew.png, converted on macOS) for the icon.
+# (or a 1024x1024 assets/mew.png, converted on macOS) for the icon. This wraps
+# the native single-arch binary (Homebrew SDL2, linked dynamically); for a
+# portable universal bundle use macapp-universal below.
 macapp: mew-sdl
 	./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+
+# --- macOS universal build (Intel + Apple Silicon) --------------------------
+# A universal mew-sdl needs SDL2 for BOTH arm64 and x86_64. The easy source is
+# the universal SDL2.framework from libsdl.org's macOS dmg (it carries both
+# slices; the dmg installs it to /Library/Frameworks or ~/Library/Frameworks).
+# Point MACAPP_SDL2_FW at the directory CONTAINING SDL2.framework. Override
+# MAC_UNIVERSAL_ARCHS to build a subset.
+MACAPP_SDL2_FW ?= $(HOME)/Library/Frameworks
+MAC_UNIVERSAL_ARCHS ?= arm64 amd64
+
+# Build mew-sdl for each arch against the universal framework and lipo them into
+# one fat binary at bin/mew-sdl. Run on macOS (needs clang + lipo). PKG_CONFIG is
+# neutralized (/usr/bin/true) so go-sdl2's darwin `pkg-config: sdl2` directive
+# doesn't drag in the single-arch Homebrew SDL2 — the CGO flags point at the
+# framework instead, with an @rpath so the embedded copy is found at runtime.
+# lipo strips signatures, so re-apply an ad-hoc one (arm64 refuses to run an
+# unsigned binary). Distribution to other Macs still needs a Developer ID +
+# notarization; ad-hoc only satisfies "runs on this machine".
+mew-sdl-universal:
+	@command -v lipo >/dev/null || { echo "lipo not found — run on macOS"; exit 1; }
+	@test -d "$(MACAPP_SDL2_FW)/SDL2.framework" || { echo "SDL2.framework not in $(MACAPP_SDL2_FW) — set MACAPP_SDL2_FW"; exit 1; }
+	@for a in $(MAC_UNIVERSAL_ARCHS); do \
+	  ca=$$( [ "$$a" = amd64 ] && echo x86_64 || echo "$$a" ); \
+	  echo "building mew-sdl for darwin/$$a ($$ca)"; \
+	  GOOS=darwin GOARCH=$$a CGO_ENABLED=1 \
+	    CC="clang -arch $$ca" \
+	    PKG_CONFIG=/usr/bin/true \
+	    CGO_CFLAGS="-F$(MACAPP_SDL2_FW) -I$(MACAPP_SDL2_FW)/SDL2.framework/Headers" \
+	    CGO_LDFLAGS="-F$(MACAPP_SDL2_FW) -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks" \
+	    $(GO) build -tags "$(SDL_TAGS)" -o "$(BIN_DIR)/mew-sdl.$$a" ./app/cmd/mew-sdl || exit 1; \
+	done
+	lipo -create $(foreach a,$(MAC_UNIVERSAL_ARCHS),$(BIN_DIR)/mew-sdl.$(a)) -output "$(BIN_DIR)/mew-sdl"
+	@rm -f $(foreach a,$(MAC_UNIVERSAL_ARCHS),$(BIN_DIR)/mew-sdl.$(a))
+	@codesign --force --sign - "$(BIN_DIR)/mew-sdl" 2>/dev/null || echo "note: codesign unavailable; arm64 may refuse to run unsigned"
+	@lipo -info "$(BIN_DIR)/mew-sdl"
+
+# Wrap the universal binary in a .app AND embed the universal SDL2.framework, so
+# the bundle is self-contained and runs on Intel and Apple Silicon with no
+# external SDL2. macapp.sh reads MACAPP_SDL2_FW to embed the framework and
+# ad-hoc-signs the bundle.
+macapp-universal: mew-sdl-universal
+	MACAPP_SDL2_FW="$(MACAPP_SDL2_FW)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
 # Install the bundle into $(MACAPP_DIR) (default /Applications). The terminal
 # mew (once installed on PATH) launches this bundle for --window/--detach when
