@@ -308,13 +308,19 @@ func (d *Desktop) tornHostForWindow(win *window.Window) *window.TearOffHost {
 }
 
 // surfaceBlockingModal is called when a press lands on a modally-blocked torn
-// window: if the application modal that blocks it is minimized, restore it -
-// OS-restoring a torn modal, or dock-restoring an in-surface one - so the user
-// is pulled to the modal they must resolve. Mirrors the in-surface pattern
-// where clicking a blocked window (or the wallpaper) surfaces a minimized
-// modal, with OS-level restore standing in for the desktop dock.
+// window: it surfaces whatever modal actually blocks that window - window-,
+// application-, or system-level - OS-restoring a torn modal (or dock-restoring
+// an in-surface one) if minimized, so the user is pulled to the modal they must
+// resolve. Mirrors the in-surface pattern where clicking a blocked window (or
+// the wallpaper) surfaces the blocking modal. Using TopModalBlocking (not just
+// the app stack) means an owner-scoped modal - e.g. a dialog owned by the solo
+// window - is surfaced too, not only application modals.
 func (d *Desktop) surfaceBlockingModal(win *window.Window) {
-	d.surfaceAppModal(win.AppID())
+	wm := d.windowManager
+	if wm == nil {
+		return
+	}
+	d.surfaceModal(wm.TopModalBlocking(win))
 }
 
 // surfaceActiveAppModal surfaces the modal of the application whose menu bar is
@@ -331,20 +337,24 @@ func (d *Desktop) surfaceActiveAppModal() {
 
 // surfaceAppModal raises (or restores, incl. OS-restore of a torn one) the top
 // modal of the given application, so the user is pulled to the modal blocking
-// that app.
+// that app. Used by the wallpaper-click path (surfaceActiveAppModal).
 func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
-	wm := d.windowManager
-	if wm == nil {
-		return
+	if wm := d.windowManager; wm != nil {
+		d.surfaceModal(wm.TopAppModal(appID))
 	}
-	modal := wm.TopAppModal(appID)
-	if modal == nil {
+}
+
+// surfaceModal pulls a specific modal window to the front: if it is torn onto
+// its own OS surface, un-minimize it (OS-restore) and raise that surface back
+// over the window the user just clicked; otherwise (in-surface) restore it from
+// the dock if minimized, else raise and activate it so the user lands on it
+// ready to interact. Nil is a no-op.
+func (d *Desktop) surfaceModal(modal *window.Window) {
+	wm := d.windowManager
+	if wm == nil || modal == nil {
 		return
 	}
 	if h := d.tornHostForWindow(modal); h != nil {
-		// The modal is torn onto its own OS surface: un-minimize it if
-		// needed, then raise it back over the window the user just clicked
-		// (which the OS brought forward), so it never stays lost behind.
 		if modal.IsMinimized() {
 			if r, ok := h.Surface().(platform.NativeRestorer); ok {
 				r.Restore()
@@ -356,10 +366,6 @@ func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 		}
 		return
 	}
-	// The modal is in-surface: restore it from the dock if minimized,
-	// otherwise raise it back to the top of the window stack and focus it
-	// (RestoreWindow already activates). Activating - not just raising - so
-	// the user lands on the modal ready to interact with it.
 	if modal.IsMinimized() {
 		wm.RestoreWindow(modal)
 	} else {

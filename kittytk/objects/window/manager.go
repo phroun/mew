@@ -1373,6 +1373,44 @@ func (m *WindowManager) TopAppModal(appID core.ObjectID) *Window {
 	return nil
 }
 
+// TopModalBlocking returns the top modal currently blocking win - at any scope -
+// or nil if win is not modal-blocked. It mirrors the block predicate
+// (isModalBlockedLocked), preferring the most specific scope: a window-level
+// modal on a window in win's group, then an application modal for win's app,
+// then a system modal. Used to surface the RIGHT modal when a blocked window is
+// clicked, whatever scope it was shown at (TopAppModal only covers app modals).
+func (m *WindowManager) TopModalBlocking(win *Window) *Window {
+	if win == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// Window-level: a modal owned by a window in win's group.
+	for owner, st := range m.windowModalStacks {
+		if len(st) == 0 {
+			continue
+		}
+		if top := st[len(st)-1]; m.windowInModalScope(win, owner) && !m.modalExempt(win, top) {
+			return top
+		}
+	}
+	// Application-level: a modal of win's own app.
+	if id := win.AppID(); id != 0 {
+		if st := m.appModalStacks[id]; len(st) > 0 {
+			if top := st[len(st)-1]; !m.modalExempt(win, top) {
+				return top
+			}
+		}
+	}
+	// System-level: blocks everything.
+	if n := len(m.modalStack); n > 0 {
+		if top := m.modalStack[n-1]; !m.modalExempt(win, top) {
+			return top
+		}
+	}
+	return nil
+}
+
 // unregisterModalLocked removes win from whichever modal stack holds it,
 // pruning empty per-key stacks. m.mu held.
 func (m *WindowManager) unregisterModalLocked(win *Window) {

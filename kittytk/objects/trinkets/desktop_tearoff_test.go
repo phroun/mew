@@ -615,6 +615,12 @@ func TestSoloPrimaryHostBlockedByOwnedModal(t *testing.T) {
 			t.Error("solo primary host is not blocked by a modal owned by its window")
 		}
 
+		// The blocked-press surfacing must find the window-scoped modal (not just
+		// application modals) so a click on the blocked editor pulls it forward.
+		if got := d.WindowManager().TopModalBlocking(main); got != modal {
+			t.Errorf("TopModalBlocking = %v, want the owning modal %v", got, modal)
+		}
+
 		// Closing the modal releases the block.
 		modal.Close()
 		if host.IsModalBlocked() {
