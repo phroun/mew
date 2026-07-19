@@ -82,6 +82,8 @@ func main() {
 	// larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
-	mewhost.BuildHost(desktop, cfg, launchArgs)
+	// The graphical host is multi-window: New Window opens peer editors and the
+	// system supplies a Window menu (multiWindow=true).
+	mewhost.BuildHost(desktop, cfg, launchArgs, true)
 	os.Exit(desktop.RunOn(plat))
 }

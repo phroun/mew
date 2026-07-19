@@ -38,7 +38,7 @@ func TestRootWindowEntersSoloMode(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	root := startRootWindow(desktop, application, []string{"notes.txt"})
+	root := startRootWindow(desktop, application, []string{"notes.txt"}, false)
 	if root == nil {
 		t.Fatal("startRootWindow returned nil")
 	}
@@ -92,7 +92,7 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	menus := buildMenus(desktop, application)
+	menus := buildMenus(desktop, application, true)
 	if len(menus) == 0 {
 		t.Fatal("buildMenus returned no menus")
 	}
@@ -102,6 +102,24 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 		if !application.Commands().Has(action) {
 			t.Errorf("action %q was not registered", action)
 		}
+	}
+}
+
+// The single-window (TUI) host drops New Window entirely: no mew.window.new
+// handler, and one fewer menu than the multi-window build (no Window menu).
+func TestMenusSingleWindowOmitsNewWindow(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	menus := buildMenus(desktop, application, false)
+	if len(menus) == 0 {
+		t.Fatal("buildMenus returned no menus")
+	}
+	if application.Commands().Has("mew.window.new") {
+		t.Error("mew.window.new should not be registered in the single-window build")
+	}
+	if application.Commands().Has("mew.edit.rawkey") == false {
+		t.Error("mew.edit.rawkey should still be registered")
 	}
 }
 

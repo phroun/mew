@@ -47,17 +47,22 @@ func SplitArgs(args []string) (launch []string, wantVersion, wantHelp bool) {
 // and status chrome, and a startup callback that opens the maximized root mew
 // editor (launching launchArgs) and serves the display socket. The caller runs
 // the desktop afterward.
-func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string) {
+//
+// multiWindow controls whether the host presents itself as a multi-window app:
+// the graphical (SDL) host passes true (New Window opens peer editors, and the
+// system supplies a Window menu); the TUI host passes false (a single maximized
+// editor, no New Window, no Window menu).
+func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, multiWindow bool) {
 	application := app.New(nil)
 	application.SetName("mew")
-	application.SetMenuBarContent(buildMenus(desktop, application))
+	application.SetMenuBarContent(buildMenus(desktop, application, multiWindow))
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
 	desktop.AddApplication(application)
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
-		startRootWindow(desktop, application, launchArgs)
+		startRootWindow(desktop, application, launchArgs, multiWindow)
 		serveSocket(desktop, cfg)
 	})
 }
@@ -65,14 +70,15 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 // startRootWindow opens the root mew editor and makes it the whole display via
 // solo mode. Runs on the platform thread at startup (the surface and screen
 // bounds are ready), returning the root window.
-func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string) *window.Window {
+func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, multiWindow bool) *window.Window {
 	root := newEditorWindow(desktop, application, launchArgs, true)
 	application.AddWindow(root)
 	application.SetMainWindow(root)
-	// Other apps dial in and embed their own mew editors, and New Window opens
-	// more here, so the host is multi-window: the system supplies the Window
-	// menu.
-	application.SetMultiWindow(true)
+	// The graphical host is multi-window (New Window opens peer editors and the
+	// system supplies a Window menu); the TUI host is single-window (one
+	// maximized editor). Apps that dial in over the socket still embed their own
+	// mew editors either way.
+	application.SetMultiWindow(multiWindow)
 	// Enter solo mode: the root mew window becomes the WHOLE display - no desktop
 	// wallpaper, no system (Psi) menu, no window border behind it, just mew's own
 	// menu/status chrome filling the surface. mew is the server here, so it
@@ -224,26 +230,39 @@ func ClearHostShortcuts() {
 // buildMenus builds the host menu bar from protocol text and registers the
 // action handlers. Raw Key Input passes the next keystroke straight to the
 // focused trinket (so control keys reach the mew editor), exactly as the demo.
-func buildMenus(desktop *trinkets.Desktop, application *app.Application) []*trinkets.Menu {
-	// No shortcut= on these two: like the host accelerators cleared in
-	// clearHostShortcuts, New Window and Raw Key Input are menu-only for now so
+//
+// When multiWindow is false (the TUI host), the New Window items and the Window
+// menu are omitted entirely - the app menu is left for the host to synthesize
+// (Hide/Quit), so the bar is just mew / Edit / Help. New windows only make sense
+// where they can be peers (the graphical host).
+func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWindow bool) []*trinkets.Menu {
+	// No shortcut= on these: like the host accelerators cleared in
+	// ClearHostShortcuts, New Window and Raw Key Input are menu-only for now so
 	// their keys stay free for the mew editor. Rebinding comes later.
-	const script = `
-bar=new menubar children={
+	//
+	// The app menu and Window menu carry New Window only in the multi-window
+	// (graphical) host; on the TUI both are dropped.
+	appMenu, windowMenu := "", ""
+	if multiWindow {
+		appMenu = `
 	new menu caption="&mew" wellknown="app" children={
 		new menuitem caption="&New Window" action=mew.window.new
-	}
-	new menu caption="&Edit" wellknown="edit" children={
-		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
-	}
+	}`
+		windowMenu = `
 	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=mew.window.new
+	}`
 	}
+	script := fmt.Sprintf(`
+bar=new menubar children={%s
+	new menu caption="&Edit" wellknown="edit" children={
+		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
+	}%s
 	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=mew.help.about
 	}
 }
-`
+`, appMenu, windowMenu)
 	byID, reply := execProtocol(script, nil)
 	menus := byID[reply.IDs["bar"]].(interface{ Menus() []*trinkets.Menu }).Menus()
 
@@ -254,10 +273,12 @@ bar=new menubar children={
 	commands.Register("mew.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToTrinket()
 	})
-	// New Window opens another (scratch) mew editor - a sub-mew of the host.
-	commands.Register("mew.window.new", func() {
-		application.AddWindow(newEditorWindow(desktop, application, nil, false))
-	})
+	if multiWindow {
+		// New Window opens another (scratch) mew editor - a sub-mew of the host.
+		commands.Register("mew.window.new", func() {
+			application.AddWindow(newEditorWindow(desktop, application, nil, false))
+		})
+	}
 	commands.Register("mew.help.about", func() { showMewAbout(application) })
 
 	return menus
