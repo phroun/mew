@@ -113,6 +113,10 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		desktop.Post(func() {
 			if graphical {
 				desktop.ExitSoloMode()
+				// Raise mew's own re-homed window explicitly: ExitSoloMode raises
+				// the desktop surface, but the app window's raise is buried in the
+				// re-home and the wrong surface can end up on top.
+				desktop.RaiseWindowToFront(root)
 			} else {
 				forceMulti = true
 				applyMulti()

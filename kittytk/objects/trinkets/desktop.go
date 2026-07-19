@@ -937,6 +937,22 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
+// RaiseWindowToFront brings a torn-off window's OS surface to the front of the
+// window stack and gives it focus. A host uses it after ExitSoloMode so the
+// revealed desktop's own window comes forward even if unrelated app windows had
+// been on top. No-op if win is not currently hosted on its own surface.
+func (d *Desktop) RaiseWindowToFront(win *window.Window) {
+	if win == nil {
+		return
+	}
+	if h := d.tornHostForWindow(win); h != nil {
+		if n, ok := h.Surface().(platform.NativeSurface); ok {
+			n.Raise()
+		}
+		d.windowFocusChanged(win)
+	}
+}
+
 // ExitSoloMode is the inverse of EnterSoloMode: it gives the primary
 // surface back to the desktop (re-bordered, wallpaper/dock/menu drawn
 // again) and re-homes the window that filled it as an ordinary tearable
