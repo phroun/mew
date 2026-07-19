@@ -1,0 +1,43 @@
+# Binary executables (example commands built into the repo root).
+# Root-anchored so they don't also match the example SOURCE dirs of the
+# same name under examples/.
+/demo
+/demoapp
+/kittytk-sdl
+/kittytk-tui
+/remoteapp
+/spawndesktop
+*.exe
+*.exe~
+*.so
+*.dylib
+
+# Built binaries (make build -> bin/)
+/bin/
+
+# Test binary
+*.test
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# C example binaries
+/c/demoapp
+/c/counter
+/c/mewdemo
+/c/interop_smoke
+/c/demoapp_smoke
+
+# Output of go coverage
+*.out
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+.DS_Store
+DEADJOE

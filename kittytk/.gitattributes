@@ -1,0 +1,5 @@
+# Files under dist/ are shipped to Windows users and edited in Notepad,
+# so keep them CRLF verbatim (classic Notepad shows LF-only files as one
+# long line). -text stores the bytes exactly, independent of anyone's
+# core.autocrlf, so every checkout gets CRLF.
+dist/* -text

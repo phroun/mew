@@ -1,14 +1,10 @@
 github.com/clipperhouse/uax29/v2 v2.2.0 h1:ChwIKnQN3kcZteTXMgb1wztSgaU+ZemkgWdohwgs8tY=
-github.com/clipperhouse/uax29/v2 v2.2.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/mattn/go-runewidth v0.0.24 h1:cpokDiIn0MGnhdHwuWnJBITySJ20QyNGnY2kR/ay2DU=
-github.com/mattn/go-runewidth v0.0.24/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
 github.com/phroun/argwild v0.0.1 h1:fuPz2nw3G1j4Jd8+6oqq6Icbs1qLCDIVrSwDxBeiFMw=
-github.com/phroun/argwild v0.0.1/go.mod h1:bWr6chqXHw2CEMUoMMwHK6vRn02jCvv1lEpJugW+/6E=
 github.com/phroun/direct-key-handler v0.3.7 h1:krckuCqr0rfwiijMVRByclj66lnA7/qzFsCx329iay8=
 github.com/phroun/garland v0.1.8 h1:b3gFxvKZ8TOY7AK5q2uojcdqFHcW8CwO2xiBTwjQV/w=
-github.com/phroun/garland v0.1.8/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
+github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4E=
 github.com/phroun/pawscript v0.2.11-alpha h1:Z2mVJ8agR2GE1DO6ZrccX3vpIXdLXb9gXL2/DgR+HPc=
-github.com/phroun/pawscript v0.2.11-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/term v0.45.0 h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=
 golang.org/x/text v0.40.0 h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=

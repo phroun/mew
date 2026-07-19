@@ -1,0 +1,12 @@
+// Workspace tying the repository's co-located modules together for local
+// development: the mew core editor library (.), the shippable applications
+// (./app), and the vendored KittyTK fork (./kittytk). External consumers of
+// github.com/phroun/mew ignore this file — it only affects builds inside the
+// workspace.
+go 1.25.0
+
+use (
+	.
+	./app
+	./kittytk
+)
