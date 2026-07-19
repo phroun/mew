@@ -426,6 +426,14 @@ func canMaximize(flags WindowFlags) bool {
 	return flags&WindowFlagNoMaximize == 0 && flags&WindowFlagNoResize == 0
 }
 
+// hasTitleBar reports whether the window shows a title bar, and thus whether its
+// title-bar hit regions are live: the caption buttons, drag-to-move/detach, and
+// double-click-to-restore. A NoTitle or Frameless window has none, so those
+// clicks must not be caught (the top row is ordinary content there).
+func hasTitleBar(flags WindowFlags) bool {
+	return flags&WindowFlagNoTitle == 0 && flags&WindowFlagFrameless == 0
+}
+
 // Maximize maximizes the window.
 func (w *Window) Maximize() {
 	w.mu.Lock()
@@ -2263,7 +2271,7 @@ func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleSty
 	tearable := w.flags&WindowFlagTearable != 0
 	detached := w.detached
 	w.mu.RUnlock()
-	if tearable == false || w.flags&WindowFlagNoTitle != 0 {
+	if tearable == false || !hasTitleBar(w.flags) {
 		return controlsRight
 	}
 	buttonWidth := metrics.TextWidth(3)
@@ -2316,7 +2324,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	y -= inset
 
 	// Must be in titlebar
-	if flags&WindowFlagNoTitle != 0 || y < 0 || y >= metrics.CellHeight {
+	if !hasTitleBar(flags) || y < 0 || y >= metrics.CellHeight {
 		return TitleButtonNone
 	}
 
@@ -2355,7 +2363,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// Check tear-off handle [%]/[#]. It floats immediately left of the
 	// centered title, so hit-test the same slot paintTearHandle draws. The
 	// handle is hidden while the title is focused, so it isn't hittable then.
-	if flags&WindowFlagTearable != 0 && flags&WindowFlagNoTitle == 0 && titleFocus != TitleFocusTitle {
+	if flags&WindowFlagTearable != 0 && hasTitleBar(flags) && titleFocus != TitleFocusTitle {
 		titleW := w.EffectiveFont().MeasureText(title)
 		// Inner width: the paint centers within the border-inset titlebar.
 		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
@@ -3177,7 +3185,7 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Check for title bar clicks
-	if flags&WindowFlagNoTitle == 0 && event.Y < titleBand {
+	if hasTitleBar(flags) && event.Y < titleBand {
 		// Check if clicking on a button
 		button := w.buttonAtPosition(event.X, event.Y)
 		if button != TitleButtonNone {
