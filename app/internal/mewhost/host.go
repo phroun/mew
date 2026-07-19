@@ -56,16 +56,31 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
-		root := newEditorWindow(desktop, application, launchArgs, true)
-		application.AddWindow(root)
-		application.SetMainWindow(root)
-		// Other apps dial in and embed their own mew editors, and New Window
-		// opens more here, so the host is multi-window: the system supplies the
-		// Window menu.
-		application.SetMultiWindow(true)
-		desktop.WindowManager().MaximizeWindow(root)
+		startRootWindow(desktop, application, launchArgs)
 		serveSocket(desktop, cfg)
 	})
+}
+
+// startRootWindow opens the root mew editor and makes it the whole display via
+// solo mode. Runs on the platform thread at startup (the surface and screen
+// bounds are ready), returning the root window.
+func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string) *window.Window {
+	root := newEditorWindow(desktop, application, launchArgs, true)
+	application.AddWindow(root)
+	application.SetMainWindow(root)
+	// Other apps dial in and embed their own mew editors, and New Window opens
+	// more here, so the host is multi-window: the system supplies the Window
+	// menu.
+	application.SetMultiWindow(true)
+	// Enter solo mode: the root mew window becomes the WHOLE display - no desktop
+	// wallpaper, no system (Psi) menu, no window border behind it, just mew's own
+	// menu/status chrome filling the surface. mew is the server here, so it
+	// drives the desktop directly (the "everything goes through the protocol"
+	// rule is for the apps that connect to it, not the host itself). Apps that
+	// connect become peers; any client can still reveal a desktop via the
+	// spawndesktop verb.
+	desktop.EnterSoloMode(root)
+	return root
 }
 
 // serveSocket starts the display service so apps appear as they connect,

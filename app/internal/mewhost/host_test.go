@@ -30,6 +30,25 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	}
 }
 
+// The host puts its root mew editor into solo mode: mew owns the whole display
+// rather than floating as a window on a desktop. EnterSoloMode records solo even
+// with no surface to reshape, so this holds headless.
+func TestRootWindowEntersSoloMode(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	root := startRootWindow(desktop, application, []string{"notes.txt"})
+	if root == nil {
+		t.Fatal("startRootWindow returned nil")
+	}
+	if !desktop.IsSolo() {
+		t.Error("desktop should be in solo mode after startRootWindow")
+	}
+	if application.MainWindow() != root {
+		t.Error("root window should be the app's main window")
+	}
+}
+
 func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
