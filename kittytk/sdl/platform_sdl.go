@@ -1287,13 +1287,30 @@ func (s *sdlSurface) Raise() {
 
 // Close implements platform.NativeSurface: destroys the OS window.
 // The main window ignores it (quitting the app is Platform.Quit).
+//
+// The SDL window/renderer/texture teardown — and the wins map, which the event
+// pump reads — are only safe on the platform's main loop thread (macOS requires
+// SDL video calls there, and touching wins off the pump's thread is a data
+// race). Close is reachable from other goroutines: a torn window closing from an
+// app's own session goroutine (mew's commit handler), a timer-driven dialog
+// dismissal, and so on. So marshal the whole teardown onto the main loop via
+// Post rather than destroying inline. The s.closed guard (and re-checking the
+// wins entry) makes it idempotent and safe against a reused window id.
 func (s *sdlSurface) Close() {
-	if s.closed || s.win == s.platform.main {
-		return
+	if s.win == s.platform.main {
+		return // never destroy the loop-owning window here
 	}
-	s.closed = true
-	s.handler = nil
-	delete(s.platform.wins, s.win.id)
-	s.win.destroy()
-	reassertCapture()
+	p := s.platform
+	p.Post(func() {
+		if s.closed {
+			return
+		}
+		s.closed = true
+		s.handler = nil
+		if cur, ok := p.wins[s.win.id]; ok && cur == s.win {
+			delete(p.wins, s.win.id)
+		}
+		s.win.destroy()
+		reassertCapture()
+	})
 }
