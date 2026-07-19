@@ -26,12 +26,12 @@ import (
 )
 
 // SplitArgs separates the meta flags from the mew command line: it reports
-// whether --version/-v, --help/-h, or --window was seen (so the caller can act
-// and exit), and returns everything else verbatim as the launch argv for the
-// root editor. --window is a mode selector - the TUI host hands off to mew-sdl,
-// the graphical host just ignores it - so it is stripped from the launch argv
-// either way.
-func SplitArgs(args []string) (launch []string, wantVersion, wantHelp, wantWindow bool) {
+// whether --version/-v, --help/-h, --window, or --detach was seen (so the caller
+// can act and exit), and returns everything else verbatim as the launch argv for
+// the root editor. --window / --detach are mode selectors - the TUI host hands
+// off to mew-sdl, the graphical host just ignores them - so they are stripped
+// from the launch argv either way.
+func SplitArgs(args []string) (launch []string, wantVersion, wantHelp, wantWindow, wantDetach bool) {
 	for _, a := range args {
 		switch a {
 		case "--version", "-v":
@@ -40,11 +40,13 @@ func SplitArgs(args []string) (launch []string, wantVersion, wantHelp, wantWindo
 			wantHelp = true
 		case "--window", "-window":
 			wantWindow = true
+		case "--detach", "-detach":
+			wantDetach = true
 		default:
 			launch = append(launch, a)
 		}
 	}
-	return launch, wantVersion, wantHelp, wantWindow
+	return launch, wantVersion, wantHelp, wantWindow, wantDetach
 }
 
 // BuildHost wires the host application onto an already-backed desktop: the menu

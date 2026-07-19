@@ -39,7 +39,7 @@ buffers).
 `
 
 func main() {
-	launchArgs, wantVersion, wantHelp, _ := mewhost.SplitArgs(os.Args[1:])
+	launchArgs, wantVersion, wantHelp, _, _ := mewhost.SplitArgs(os.Args[1:])
 	switch {
 	case wantVersion:
 		fmt.Printf("mew %s (kittytk sdl host)\n", mew.FullVersion())

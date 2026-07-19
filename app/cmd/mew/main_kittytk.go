@@ -43,12 +43,14 @@ buffers).
   -v, --version           print version and exit
   -h, --help              print this help and exit
       --window            open in a graphical window instead (hands off to mew-sdl)
+      --detach            like --window, but return the shell immediately
+                          instead of waiting for the window to close
 
 Build the standalone terminal editor without -tags kittytk.
 `
 
 func main() {
-	launchArgs, wantVersion, wantHelp, wantWindow := mewhost.SplitArgs(os.Args[1:])
+	launchArgs, wantVersion, wantHelp, wantWindow, wantDetach := mewhost.SplitArgs(os.Args[1:])
 	switch {
 	case wantVersion:
 		fmt.Printf("mew %s (kittytk host)\n", mew.FullVersion())
@@ -56,12 +58,15 @@ func main() {
 	case wantHelp:
 		fmt.Print(usage)
 		return
-	case wantWindow:
-		// --window opens the graphical build: hand off to the mew-sdl binary next
-		// to us, passing the same arguments, so one command opens either a
-		// terminal or a window. We wait for it and exit with its status, so from
-		// the shell's view mew-sdl simply ran in our place.
-		launchGraphical()
+	case wantWindow || wantDetach:
+		// --window / --detach open the graphical build: hand off to the mew-sdl
+		// binary next to us, passing the same arguments, so one command opens
+		// either a terminal or a window. Without --detach we wait for it and exit
+		// with its status (as if mew-sdl ran in our place); with --detach we start
+		// it in its own session and return the shell immediately. (--detach
+		// implies a window - a terminal editor can't detach from its own
+		// terminal.)
+		launchGraphical(wantDetach)
 		return // unreachable: launchGraphical exits the process
 	}
 
@@ -89,10 +94,15 @@ func main() {
 }
 
 // launchGraphical runs the mew-sdl binary sitting next to this executable,
-// forwarding our arguments verbatim (mew-sdl ignores the --window that got us
-// here), and exits with its status. It never returns. This gives the illusion
-// of a single binary that opens either a terminal or a window.
-func launchGraphical() {
+// forwarding our arguments verbatim (mew-sdl ignores the --window/--detach that
+// got us here). It never returns. This gives the illusion of a single binary
+// that opens either a terminal or a window.
+//
+// Without detach we inherit the terminal, wait for mew-sdl, and exit with its
+// status (as if it ran in our place). With detach we start it in its own
+// session with no controlling terminal and return the shell immediately, so the
+// window outlives the shell.
+func launchGraphical(detach bool) {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mew: cannot locate self: %v\n", err)
@@ -105,6 +115,17 @@ func launchGraphical() {
 	sdlPath := filepath.Join(filepath.Dir(self), sdlName)
 
 	cmd := exec.Command(sdlPath, os.Args[1:]...)
+	if detach {
+		// Own session, no inherited terminal: the shell returns at once and the
+		// window survives the terminal closing.
+		cmd.SysProcAttr = detachSysProcAttr()
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "mew: cannot launch %s: %v\n", sdlPath, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

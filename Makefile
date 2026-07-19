@@ -5,6 +5,8 @@
 #   make mew-sdl    build the graphical (SDL) host into bin/mew-sdl
 #   make mew-plain  build the bare terminal editor (no host) into bin/mew-plain
 #   make windows    cross-build the Windows console mew.exe into bin/
+#   make install    build and install mew + mew-sdl into $(PREFIX)/bin
+#   make uninstall  remove the installed binaries
 #   make check      go vet + full test suite (the pre-flight gate)
 #   make test       run the test suite
 #   make vet        run go vet
@@ -13,8 +15,9 @@
 #
 # mew (the terminal host) recognizes --window: it hands off to the mew-sdl
 # binary sitting beside it, so `mew --window …` opens a graphical window while
-# `mew …` stays in the terminal — one command, either surface. Keep the two
-# binaries in the same directory for the handoff to find mew-sdl.
+# `mew …` stays in the terminal — one command, either surface. --detach does
+# the same but returns the shell immediately (the window outlives it). Keep the
+# two binaries in the same directory for the handoff to find mew-sdl.
 #
 # mew-sdl requires SDL2 and cgo; the others are pure Go.
 
@@ -22,6 +25,14 @@ GO ?= go
 
 # Where built binaries land.
 BIN_DIR := bin
+
+# Install location: binaries go in $(PREFIX)/bin (on PATH, co-located so the
+# --window handoff finds mew-sdl). System prefixes need root - `sudo make
+# install` - or install per-user with `make install PREFIX=$$HOME/.local`.
+# DESTDIR supports staged/packaging installs.
+PREFIX ?= /usr/local
+DESTDIR ?=
+INSTALL_BIN := $(DESTDIR)$(PREFIX)/bin
 
 # Build tags: the KittyTK host (kittytk) with the real mew-backed editor (mew),
 # and the graphical SDL backend (sdl) for the windowed twin.
@@ -34,7 +45,7 @@ BUILD_FILE := internal/version/version.go
 # Windows cross-build target architecture (amd64 or arm64).
 WINDOWS_ARCH ?= amd64
 
-.PHONY: all build mew mew-sdl mew-plain windows check vet test clean increment
+.PHONY: all build mew mew-sdl mew-plain windows install uninstall check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -61,6 +72,20 @@ mew-plain:
 # cross-built: SDL2 + cgo don't cross-compile cleanly.)
 windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
+
+# Install both binaries onto PATH, co-located so `mew --window` can find
+# mew-sdl beside it. Needs write access to $(PREFIX)/bin (use sudo, or set a
+# per-user PREFIX). Depends on build, so it compiles first.
+install: build
+	install -d "$(INSTALL_BIN)"
+	install -m 0755 "$(BIN_DIR)/mew" "$(INSTALL_BIN)/mew"
+	install -m 0755 "$(BIN_DIR)/mew-sdl" "$(INSTALL_BIN)/mew-sdl"
+	@echo "installed mew and mew-sdl to $(INSTALL_BIN)"
+
+# Remove the installed binaries.
+uninstall:
+	rm -f "$(INSTALL_BIN)/mew" "$(INSTALL_BIN)/mew-sdl"
+	@echo "removed mew and mew-sdl from $(INSTALL_BIN)"
 
 # Pre-flight gate: vet then the full test suite. Run before committing, and
 # reused by CI / hooks so there is one definition of "the checks pass".
