@@ -18,7 +18,6 @@ import (
 	"os"
 
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/trinkets"
 	sdlplat "github.com/phroun/kittytk/sdl"
 	"github.com/phroun/mew"
@@ -50,10 +49,10 @@ func main() {
 		return
 	}
 
-	// Launch options come from kittytk.ini (current dir, then the exe's folder,
-	// then the user config dir); env vars still override. Same knobs as the
-	// kittytk-sdl host.
-	cfg := hostcfg.Load()
+	// Launch options come from the launching user's ~/.mew/editor.conf
+	// ([window]/[service]/[system] sections), not the standalone-KittyTK
+	// kittytk.ini; env vars still override. Same knobs as the kittytk-sdl host.
+	cfg := mewhost.LoadHostConfig()
 
 	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
 	plat.SetScale(cfg.Scale)     // device zoom: pixels per unit at the base font

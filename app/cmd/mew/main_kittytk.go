@@ -21,7 +21,6 @@ import (
 
 	"github.com/phroun/kittytk/backend/tui"
 	"github.com/phroun/kittytk/core"
-	"github.com/phroun/kittytk/hostcfg"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/mew"
 	"github.com/phroun/mew-app/internal/mewhost"
@@ -55,9 +54,10 @@ func main() {
 		return
 	}
 
-	// Shared launch config (kittytk.ini): the [service] socket endpoint/token,
-	// plus the [tui] native/clipboard knobs, exactly as the kittytk-tui host.
-	cfg := hostcfg.Load()
+	// Launch config comes from the launching user's ~/.mew/editor.conf [kittytk]
+	// section (not the standalone-KittyTK kittytk.ini): the service endpoint/
+	// token plus the terminal host's native/clipboard knobs. Env vars still win.
+	cfg := mewhost.LoadHostConfig()
 	core.SetMacNativeShortcuts(cfg.UseTUIMacNativeShortcuts())
 
 	tuiOpts := tui.DefaultTUIOptions()
