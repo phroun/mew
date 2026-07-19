@@ -14,6 +14,8 @@
 #   make mew-sdl-universal  fat arm64+x86_64 mew-sdl (needs a universal SDL2.framework)
 #   make macapp-universal   universal bin/mew.app with SDL2.framework embedded
 #   make install-macapp    install mew.app into $(MACAPP_DIR) (default /Applications)
+#   make notarize   notarize + staple bin/mew.app for distribution (needs a
+#                   Developer ID signature via CODESIGN_ID and NOTARY_PROFILE)
 #   make check      go vet + full test suite (the pre-flight gate)
 #   make test       run the test suite
 #   make vet        run go vet
@@ -66,7 +68,7 @@ RSRC ?= go run github.com/akavel/rsrc@v0.10.2
 # the matching windows build and never for other platforms.
 WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 
-.PHONY: all build mew mew-sdl mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp check vet test clean increment
+.PHONY: all build mew mew-sdl mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -181,8 +183,13 @@ uninstall:
 # (or a 1024x1024 assets/mew.png, converted on macOS) for the icon. This wraps
 # the native single-arch binary (Homebrew SDL2, linked dynamically); for a
 # portable universal bundle use macapp-universal below.
+# CODESIGN_ID: a "Developer ID Application: Name (TEAMID)" identity to sign the
+# bundle for distribution (hardened runtime + timestamp; see macapp.sh). Empty
+# = ad-hoc sign (runs locally only). Passed through to macapp.sh by the macapp*
+# targets. Notarize + staple afterwards with `make notarize`.
+CODESIGN_ID ?=
 macapp: mew-sdl
-	./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+	CODESIGN_ID="$(CODESIGN_ID)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
 # --- macOS universal build (Intel + Apple Silicon) --------------------------
 # A universal mew-sdl needs SDL2 for BOTH arm64 and x86_64. The easy source is
@@ -224,7 +231,26 @@ mew-sdl-universal:
 # external SDL2. macapp.sh reads MACAPP_SDL2_FW to embed the framework and
 # ad-hoc-signs the bundle.
 macapp-universal: mew-sdl-universal
-	MACAPP_SDL2_FW="$(MACAPP_SDL2_FW)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+	MACAPP_SDL2_FW="$(MACAPP_SDL2_FW)" CODESIGN_ID="$(CODESIGN_ID)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+
+# Notarize and staple bin/mew.app for distribution. Run AFTER building it signed
+# with a Developer ID (make macapp-universal CODESIGN_ID="Developer ID Application: …").
+# Needs a stored notarytool credential profile — create it once with:
+#   xcrun notarytool store-credentials <profile> \
+#     --apple-id you@example.com --team-id TEAMID --password <app-specific-pw>
+# then set NOTARY_PROFILE to <profile>. notarytool uploads a zip; stapler then
+# attaches the ticket to the .app itself so it validates offline. Ship the .app
+# (e.g. zipped or in a dmg) after this.
+NOTARY_PROFILE ?=
+notarize:
+	@test -n "$(NOTARY_PROFILE)" || { echo "set NOTARY_PROFILE (see the target comment)"; exit 1; }
+	@test -d "$(BIN_DIR)/mew.app" || { echo "no $(BIN_DIR)/mew.app — run: make macapp-universal CODESIGN_ID=\"Developer ID Application: …\""; exit 1; }
+	ditto -c -k --keepParent "$(BIN_DIR)/mew.app" "$(BIN_DIR)/mew-notarize.zip"
+	xcrun notarytool submit "$(BIN_DIR)/mew-notarize.zip" --keychain-profile "$(NOTARY_PROFILE)" --wait
+	xcrun stapler staple "$(BIN_DIR)/mew.app"
+	xcrun stapler validate "$(BIN_DIR)/mew.app"
+	@rm -f "$(BIN_DIR)/mew-notarize.zip"
+	@echo "notarized + stapled $(BIN_DIR)/mew.app — ready to distribute"
 
 # Install the bundle into $(MACAPP_DIR) (default /Applications). The terminal
 # mew (once installed on PATH) launches this bundle for --window/--detach when

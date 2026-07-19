@@ -95,8 +95,22 @@ PLIST
 # Distributing to OTHER Macs needs a Developer ID signature + notarization; the
 # ad-hoc signature only satisfies "runs on this machine". Best-effort.
 if command -v codesign >/dev/null 2>&1; then
-	if codesign --force --deep --sign - "$app" >/dev/null 2>&1; then
-		echo "macapp: ad-hoc signed $app"
+	if [ -n "${CODESIGN_ID:-}" ]; then
+		# Distribution signing with a Developer ID Application identity: hardened
+		# runtime (required for notarization) + a secure timestamp, signing nested
+		# code (the embedded framework) BEFORE the app that contains it. Signing
+		# the framework with the same identity keeps library validation happy, so
+		# no entitlements are needed for a plain SDL app. Notarize + staple after
+		# (make notarize). Failures here are fatal — you want to know.
+		fw="$app/Contents/Frameworks/SDL2.framework"
+		if [ -d "$fw" ]; then
+			codesign --force --options runtime --timestamp --sign "$CODESIGN_ID" "$fw"
+		fi
+		codesign --force --options runtime --timestamp --sign "$CODESIGN_ID" "$app"
+		codesign --verify --deep --strict "$app"
+		echo "macapp: signed $app with '$CODESIGN_ID' (hardened runtime); notarize next"
+	elif codesign --force --deep --sign - "$app" >/dev/null 2>&1; then
+		echo "macapp: ad-hoc signed $app (local use only — set CODESIGN_ID to distribute)"
 	else
 		echo "macapp: codesign failed; the bundle is unsigned (may not launch on Apple Silicon)" >&2
 	fi
