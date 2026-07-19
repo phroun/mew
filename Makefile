@@ -99,43 +99,42 @@ windows:
 # <SDL2/SDL.h>, so it just needs those on the compiler's search path (it does NOT
 # use pkg-config on Windows). Two ways to satisfy that:
 #
-#   • On Windows: install Go, MSYS2's mingw-w64 gcc, and the SDL2 dev libs into
-#     the mingw sysroot, then `make windows-sdl` — the default gcc on PATH is
-#     already a Windows compiler and finds SDL2 with no extra flags.
+# DEFAULT here is a cross build from macOS/Linux that STATIC-links SDL2, so the
+# only prerequisites are the mingw-w64 cross toolchain and the SDL2 mingw dev
+# package unpacked under $(SDL2_DIR) — `make windows-sdl` then produces a single
+# self-contained mew-sdl.exe with no SDL2.dll to ship. Override the variables
+# below to point at your SDL2, pick a version, or change linkage; clear them for
+# a native Windows build (see the examples under the variables).
 #
-#   • Cross-compile from Linux/macOS: install the mingw-w64 toolchain, download
-#     SDL2's mingw dev package (SDL2-devel-<ver>-mingw from libsdl.org), and point
-#     WINDOWS_CC at the cross gcc and SDL2_MINGW at the matching arch subdir:
-#         make windows-sdl WINDOWS_CC=x86_64-w64-mingw32-gcc \
-#              SDL2_MINGW=/path/SDL2-<ver>/x86_64-w64-mingw32
-#     SDL2_MINGW is the dir holding include/SDL2/SDL.h and lib/libSDL2.dll.a; the
-#     recipe turns it into CGO_CFLAGS/CGO_LDFLAGS. (If SDL2 is already in the
-#     mingw sysroot, leave SDL2_MINGW unset.)
+# Static link details: it links libSDL2.a plus the Windows system libs it needs,
+# using `-static` (a global link MODE, immune to flag ordering — otherwise
+# go-sdl2's own bare `-lSDL2` can grab the dynamic import lib first) inside a
+# --start-group/--end-group so SDL2 and its deps resolve regardless of order, and
+# drops -lSDL2main since the Go runtime owns the entry point. The exe is fully
+# static (libgcc/winpthread baked in too). SDL2_STATIC= (empty) instead links
+# dynamically, and then mew-sdl.exe needs SDL2.dll beside it at runtime.
 #
-# By default mew-sdl.exe links SDL2 dynamically, so at RUNTIME it needs SDL2.dll
-# beside it (from the dev package's bin/, or the SDL2 runtime zip). To instead
-# fold SDL2 into the exe — one self-contained file, no DLL to ship — set
-# SDL2_STATIC=1:
-#     make windows-sdl WINDOWS_CC=x86_64-w64-mingw32-gcc \
-#          SDL2_MINGW=/path/SDL2-<ver>/x86_64-w64-mingw32 SDL2_STATIC=1
-# That links libSDL2.a and the Windows system libs it depends on. It uses
-# `-static` (a global link MODE, immune to flag ordering — otherwise go-sdl2's
-# own bare `-lSDL2` can grab the dynamic import lib first) inside a linker group
-# so SDL2 and its deps resolve regardless of order, and drops -lSDL2main since the
-# Go runtime owns the entry point. The result is fully static (libgcc/winpthread
-# included too). If you'd rather keep the Windows system DLLs dynamic and fold in
-# only SDL2, replace `-static … group …` with
-# `-Wl,-Bstatic -lSDL2 -Wl,-Bdynamic $(SDL2_WIN_SYSLIBS) -static-libgcc` — that
-# needs the env flags to precede go-sdl2's directive, which cgo does here, but it
-# is less bulletproof than the mode switch.
+# go-sdl2 links Windows SDL2 with a plain `-lSDL2` and includes <SDL2/SDL.h> (no
+# pkg-config on Windows), so it just needs those on the compiler search path;
+# SDL2_MINGW is turned into CGO_CFLAGS/CGO_LDFLAGS below. The syso prerequisite
+# carries the icon (the Go linker embeds it); -H windowsgui detaches the console
+# (this is a windowed app, not a terminal one).
 #
-# The syso prerequisite carries the icon (the Go linker embeds it automatically);
-# -H windowsgui detaches the console — this is a windowed app, not a terminal one.
-# WINDOWS_CC/SDL2_MINGW/SDL2_STATIC are empty by default (native, dynamic Windows
-# build); set them to cross-compile / static-link.
-WINDOWS_CC ?=
-SDL2_MINGW ?=
-SDL2_STATIC ?=
+# Native Windows build (mingw gcc + SDL2 already in the sysroot), dynamic:
+#     make windows-sdl WINDOWS_CC= SDL2_MINGW= SDL2_STATIC=
+# Cross build with a different SDL2 location:
+#     make windows-sdl SDL2_DIR=/path/to/SDL2-2.32.10/x86_64-w64-mingw32/..  # or
+#     make windows-sdl SDL2_MINGW=/abs/path/x86_64-w64-mingw32
+WINDOWS_CC ?= x86_64-w64-mingw32-gcc
+SDL2_STATIC ?= 1
+
+# Where the SDL2 mingw dev package (SDL2-devel-<ver>-mingw from libsdl.org) is
+# unpacked. SDL2_MINGW is its amd64 arch subdir — the directory holding
+# include/SDL2/SDL.h and lib/libSDL2.a. Point SDL2_DIR (or SDL2_VERSION, or
+# SDL2_MINGW itself) at your copy; SDL2_DIR defaults under $(HOME).
+SDL2_VERSION ?= 2.32.10
+SDL2_DIR ?= $(HOME)/projects/vendor/SDL2-$(SDL2_VERSION)
+SDL2_MINGW ?= $(SDL2_DIR)/x86_64-w64-mingw32
 
 # Windows system libs SDL2's static archive pulls in (mirrors
 # `sdl2-config --static-libs`, minus -lSDL2main). Only used for a static link.
