@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/layout"
 	"github.com/phroun/kittytk/style"
 )
 
@@ -18,15 +19,20 @@ import (
 // contract (docs/editor-trinket.md) just enough that an app needing a text
 // editor still works on a stock build.
 //
-// It is a COMPOSITE: a framed preview of the text plus a real Button child
-// ("Edit"). The Button — exposed through Children() — owns focus, Enter/Space
-// activation, and screen-reader announcements, so keyboard accessibility
-// matches any other button rather than being hand-rolled. Clicking it hands the
-// text to the user's external OS editor via a temp file; the next click reads
-// the file back and emits `commit`. GUI editors don't block per-document
-// (modern Notepad is tabbed; macOS `open` and Linux `xdg-open` return at once),
-// so this uses an explicit click-again-to-commit flow rather than detecting
-// exit — lame but robust on every platform.
+// It composes real trinkets in a vertical box, so behavior and accessibility
+// match the rest of the toolkit rather than being hand-rolled:
+//
+//   - top (stretched): a ScrollArea holding a word-wrapped Label — a scrollable
+//     preview of the text, so long content wraps and scrolls instead of
+//     overflowing; and
+//   - bottom: a real Button ("Edit") that owns focus, Enter/Space activation,
+//     and screen-reader announcements.
+//
+// Clicking Edit hands the text to the user's external OS editor via a temp file;
+// the next click reads it back and emits `commit`. GUI editors don't block
+// per-document (modern Notepad is tabbed; macOS `open` and Linux `xdg-open`
+// return at once), so this uses an explicit click-again-to-commit flow rather
+// than detecting exit — lame but robust on every platform.
 //
 // The rich contract properties (wrap, tab_size, syntax, line_numbers, caret)
 // are accepted and ignored; mew honors them. See editor_protocol.go.
@@ -34,7 +40,11 @@ type Editor struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	button *Button // the interactive surface (focus/keyboard/a11y live here)
+	scroll    *ScrollArea       // holds the preview label (top of the box)
+	label     *Label            // word-wrapped preview of the text
+	button    *Button           // the interactive surface (bottom of the box)
+	box       *layout.BoxLayout // vertical layout: scroll (stretch) over button
+	laidOutAt core.UnitRect     // bounds the children were last laid out for
 
 	value       string
 	placeholder string
@@ -55,7 +65,7 @@ type Editor struct {
 }
 
 // The placeholder must be a real Container so the framework's focus and
-// accessibility traversal descends into the Button child.
+// accessibility traversal descends into the preview and the Button.
 var _ core.Container = (*Editor)(nil)
 
 // NewEditor builds a placeholder editor trinket.
@@ -66,38 +76,74 @@ func NewEditor() *Editor {
 	e.SetAccessibleRole(core.RoleGroup)
 	e.SetAccessibleName("editor")
 
+	// Preview: a word-wrapped label in a scroll area.
+	e.label = NewLabel("")
+	e.label.SetWordWrap(true)
+	e.scroll = NewScrollArea()
+	e.scroll.SetContent(e.label)
+	e.scroll.SetParent(e)
+
 	// The real Button is the focusable, keyboard-activatable, announced surface.
 	e.button = NewButton("Edit")
 	e.button.SetParent(e)
 	e.button.SetOnClick(e.activate)
 
+	// Vertical box: the scroll area stretches to fill, the button takes its
+	// natural height at the bottom.
+	e.box = layout.NewVBoxLayout()
+	e.box.SetMetricsSource(e)
+	e.box.AddTrinketWithStretch(e.scroll, 1)
+	e.box.AddTrinket(e.button)
+
+	e.refreshPreview()
 	return e
 }
 
-// --- Container: one internal Button child, exposed so the framework routes
-// focus, keyboard activation, and accessibility to it natively. ---
+// --- Container: the preview scroll area and the Button, exposed so the
+// framework routes focus, keyboard, and accessibility to them natively. ---
 
-func (e *Editor) Children() []core.Trinket { return []core.Trinket{e.button} }
+func (e *Editor) Children() []core.Trinket { return []core.Trinket{e.scroll, e.button} }
 func (e *Editor) AddChild(core.Trinket)    {}
 func (e *Editor) RemoveChild(core.Trinket) {}
 
 func (e *Editor) ChildAt(pos core.UnitPoint) core.Trinket {
-	b := e.button.Bounds()
-	if pos.X >= b.X && pos.X < b.X+b.Width && pos.Y >= b.Y && pos.Y < b.Y+b.Height {
-		return e.button
-	}
-	return nil
+	c, _ := e.childHit(pos.X, pos.Y)
+	return c
 }
 
-func (e *Editor) Layout()                             {} // button positioned in Paint
-func (e *Editor) LayoutManager() core.LayoutManager   { return nil }
-func (e *Editor) SetLayoutManager(core.LayoutManager) {}
+// Layout positions the children inside the frame using the vertical box.
+func (e *Editor) Layout() {
+	b := e.Bounds()
+	m := e.EffectiveCellMetrics()
+	interior := core.UnitRect{
+		X:      m.CellWidth,
+		Y:      m.CellHeight,
+		Width:  b.Width - 2*m.CellWidth,
+		Height: b.Height - 2*m.CellHeight,
+	}
+	e.box.Layout(e, interior)
+	e.laidOutAt = b
+}
+
+func (e *Editor) LayoutManager() core.LayoutManager   { return e.box }
+func (e *Editor) SetLayoutManager(core.LayoutManager) {} // fixed internal layout
+
+// childHit returns the child under (x,y) in editor-local coordinates.
+func (e *Editor) childHit(x, y core.Unit) (core.Trinket, core.UnitRect) {
+	for _, c := range []core.Trinket{e.button, e.scroll} {
+		b := c.Bounds()
+		if x >= b.X && x < b.X+b.Width && y >= b.Y && y < b.Y+b.Height {
+			return c, b
+		}
+	}
+	return nil, core.UnitRect{}
+}
 
 // --- Property setters (public: bound by editor_protocol.go) ---
 
-func (e *Editor) SetValue(s string)       { e.value = s; e.Update() }
+func (e *Editor) SetValue(s string)       { e.value = s; e.refreshPreview(); e.Update() }
 func (e *Editor) Value() string           { return e.value }
-func (e *Editor) SetPlaceholder(s string) { e.placeholder = s; e.Update() }
+func (e *Editor) SetPlaceholder(s string) { e.placeholder = s; e.refreshPreview(); e.Update() }
 func (e *Editor) SetCaption(s string)     { e.caption = s; e.SetAccessibleName(s); e.Update() }
 func (e *Editor) SetReadOnly(b bool)      { e.readonly = b; e.refreshButton(); e.Update() }
 func (e *Editor) SetFilename(s string)    { e.filename = s }
@@ -108,8 +154,26 @@ func (e *Editor) SetOnCommit(fn func(string)) { e.onCommit = fn }
 func (e *Editor) SetOnCancel(fn func())       { e.onCancel = fn }
 func (e *Editor) SetOnDirty(fn func(bool))    { e.onDirty = fn }
 
+// refreshPreview syncs the preview label to editor state. Called on state
+// changes, never from Paint (SetText triggers a repaint).
+func (e *Editor) refreshPreview() {
+	var t string
+	switch {
+	case e.status != "":
+		t = e.status
+	case e.editing:
+		t = "editing externally…"
+	case e.value != "":
+		t = e.value
+	case e.placeholder != "":
+		t = e.placeholder
+	default:
+		t = "(empty)"
+	}
+	e.label.SetText(t)
+}
+
 // refreshButton syncs the button's label and enabled state to editor state.
-// (Called on state changes, never from Paint — SetText triggers a repaint.)
 func (e *Editor) refreshButton() {
 	switch {
 	case e.readonly:
@@ -140,12 +204,14 @@ func (e *Editor) startEdit() {
 	argv, ok := externalEditorArgv()
 	if !ok {
 		e.status = "no external editor found"
+		e.refreshPreview()
 		e.Update()
 		return
 	}
 	f, err := os.CreateTemp("", "mew-edit-*"+editorTempExt(e.filename))
 	if err != nil {
 		e.status = "cannot create temp file"
+		e.refreshPreview()
 		e.Update()
 		return
 	}
@@ -156,6 +222,7 @@ func (e *Editor) startEdit() {
 	if err := cmd.Start(); err != nil {
 		_ = os.Remove(f.Name())
 		e.status = "cannot launch editor"
+		e.refreshPreview()
 		e.Update()
 		return
 	}
@@ -166,6 +233,7 @@ func (e *Editor) startEdit() {
 	e.editInitial = e.value
 	e.status = ""
 	e.refreshButton()
+	e.refreshPreview()
 	if e.onDirty != nil {
 		e.onDirty(true)
 	}
@@ -177,19 +245,23 @@ func (e *Editor) finishEdit() {
 	_ = os.Remove(e.tmpPath)
 	e.editing = false
 	e.tmpPath = ""
+	committed := err == nil && string(data) != e.editInitial
+	if committed {
+		e.value = string(data)
+	}
+	e.editInitial = ""
 	e.refreshButton()
+	e.refreshPreview()
 	if e.onDirty != nil {
 		e.onDirty(false)
 	}
-	if err == nil && string(data) != e.editInitial {
-		e.value = string(data)
+	if committed {
 		if e.onCommit != nil {
 			e.onCommit(e.value)
 		}
 	} else if e.onCancel != nil {
 		e.onCancel()
 	}
-	e.editInitial = ""
 	e.Update()
 }
 
@@ -219,89 +291,98 @@ func externalEditorArgv() ([]string, bool) {
 	}
 }
 
-// --- Rendering: frame + preview text, then the Button child (painted via a
-// translated painter, its bounds recorded for hit-testing). ---
+// --- Rendering: frame + caption, then the laid-out children. ---
 
 func (e *Editor) Paint(p *core.Painter) {
 	b := e.Bounds()
-	m := e.EffectiveCellMetrics()
-	font := e.EffectiveFont()
 	scheme := e.GetScheme()
 	s := scheme.GetNormal(true).WithBg(e.EffectiveBackgroundColor())
 
 	p.FillRect(core.UnitRect{Width: b.Width, Height: b.Height}, ' ', s)
 	p.DrawBox(core.UnitRect{Width: b.Width, Height: b.Height}, style.BorderSingle, e.caption, s)
 
-	var line string
-	switch {
-	case e.status != "":
-		line = e.status
-	case e.editing:
-		line = "editing externally…"
-	case e.value != "":
-		line = editorFirstLine(e.value)
-	case e.placeholder != "":
-		line = e.placeholder
-	default:
-		line = "(empty)"
+	// (Re)position the children when the frame size changed.
+	if b != e.laidOutAt {
+		e.Layout()
 	}
-	p.DrawText(m.CellWidth*2, m.CellHeight, line, s, font)
 
-	// The Edit button, bottom-left inside the border.
-	btnW := core.Unit(len(e.button.Text())+4) * m.CellWidth
-	btnH := m.CellHeight * 2 // face + shadow
-	btnX := m.CellWidth * 2
-	btnY := b.Height - btnH - m.CellHeight
-	if btnY < m.CellHeight*2 {
-		btnY = m.CellHeight * 2
+	for _, c := range []core.Trinket{e.scroll, e.button} {
+		if !c.IsVisible() {
+			continue
+		}
+		cb := c.Bounds()
+		c.Paint(p.WithOffset(cb.X, cb.Y))
 	}
-	e.button.SetBounds(core.UnitRect{X: btnX, Y: btnY, Width: btnW, Height: btnH})
-	e.button.Paint(p.WithOffset(btnX, btnY))
 }
 
 func (e *Editor) SizeHint() core.UnitSize {
 	m := e.EffectiveCellMetrics()
 	return core.UnitSize{
 		Width:  m.TextWidth(40) + m.CellWidth*4,
-		Height: m.CellHeight * 5, // border + preview + gap + 2-row button + border
+		Height: m.CellHeight * 8, // border + a few preview rows + button + border
 	}
 }
 
-func editorFirstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
-// --- Mouse: forward to the button in its local coordinates. Keyboard, focus,
-// and accessibility are handled by the framework via Children(). ---
+// --- Mouse: forward to the child under the pointer in its local coordinates.
+// Keyboard, focus, and accessibility are handled by the framework via
+// Children(). ---
 
 func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
-	b := e.button.Bounds()
-	if ev.X < b.X || ev.X >= b.X+b.Width || ev.Y < b.Y || ev.Y >= b.Y+b.Height {
+	c, b := e.childHit(ev.X, ev.Y)
+	if c == nil {
 		return false
 	}
 	local := ev
 	local.X -= b.X
 	local.Y -= b.Y
-	return e.button.HandleMousePress(local)
-}
-
-func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
-	b := e.button.Bounds()
-	local := ev
-	local.X -= b.X
-	local.Y -= b.Y
-	captured := e.button.pressed // a pressed button keeps receiving moves
-	e.button.HandleMouseMove(local)
-	return captured
+	return c.HandleMousePress(local)
 }
 
 func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
-	b := e.button.Bounds()
+	handled := false
+	if e.button.pressed { // the button may have captured the press
+		bb := e.button.Bounds()
+		local := ev
+		local.X -= bb.X
+		local.Y -= bb.Y
+		handled = e.button.HandleMouseRelease(local) || handled
+	}
+	if c, b := e.childHit(ev.X, ev.Y); c != nil && c != e.button {
+		local := ev
+		local.X -= b.X
+		local.Y -= b.Y
+		handled = c.HandleMouseRelease(local) || handled
+	}
+	return handled
+}
+
+func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
+	if e.button.pressed { // a pressed button keeps receiving moves
+		bb := e.button.Bounds()
+		local := ev
+		local.X -= bb.X
+		local.Y -= bb.Y
+		e.button.HandleMouseMove(local)
+		return true
+	}
+	if c, b := e.childHit(ev.X, ev.Y); c != nil {
+		local := ev
+		local.X -= b.X
+		local.Y -= b.Y
+		return c.HandleMouseMove(local)
+	}
+	bb := e.button.Bounds() // off both: let the button clear hover state
+	local := ev
+	local.X -= bb.X
+	local.Y -= bb.Y
+	e.button.HandleMouseMove(local)
+	return false
+}
+
+func (e *Editor) HandleMouseWheel(ev core.MouseWheelEvent) bool {
+	b := e.scroll.Bounds()
 	local := ev
 	local.X -= b.X
 	local.Y -= b.Y
-	return e.button.HandleMouseRelease(local)
+	return e.scroll.HandleMouseWheel(local)
 }
