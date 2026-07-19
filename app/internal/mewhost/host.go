@@ -112,7 +112,9 @@ func startRootWindow(desktop *trinkets.Desktop, application *app.Application, la
 	// naturally skipped there.)
 	if wm := desktop.WindowManager(); wm != nil && windowManaged(wm, root) {
 		// Experimental: drop the title bar before maximizing so the editor fills
-		// its row too (the TUI single-app circumstance).
+		// its row too (the TUI single-app circumstance). A maximized NoTitle
+		// window is flush to the edges with no frame (see window.go's maximized
+		// rendering), so the editor fills the whole surface.
 		if hideTitleBarSoleApp {
 			root.SetFlags(root.Flags() | window.WindowFlagNoTitle)
 		}
