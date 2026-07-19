@@ -9,7 +9,7 @@ import (
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/mew"
-	"github.com/phroun/mew-app/internal/wininstall"
+	"github.com/phroun/mew-app/internal/selfinstall"
 )
 
 // welcomeWrapCols is the reading width (in cells) the welcome copy is wrapped to;
@@ -17,13 +17,14 @@ import (
 const welcomeWrapCols = 48
 
 // maybeShowWelcome opens the first-run welcome window when a graphical host
-// starts a copy of mew that has not been installed yet (Windows only — off
-// Windows wininstall reports the first run already done). The window explains
-// what mew is and offers two choices, in the "lame trinket" spirit (a label over
-// a row of real Buttons):
+// starts a not-yet-installed copy of mew on a platform with a self-installer
+// (Windows and macOS — elsewhere selfinstall reports the first run already done,
+// so nothing shows). The window explains what mew is and offers two choices, in
+// the "lame trinket" spirit (a label over a row of real Buttons):
 //
-//   - Install — copy the binaries into place, add the Start Menu shortcut, set
-//     the registry flag, launch the freshly installed copy, and quit this one.
+//   - Install — copy mew into place (Start Menu + PATH on Windows, the
+//     Applications folder on macOS), launch the freshly installed copy, and quit
+//     this one.
 //   - Try — dismiss the window and drop through to the normal mew editor already
 //     running behind it. Nothing is written, so an uninstalled copy keeps
 //     offering to install on each launch.
@@ -42,14 +43,14 @@ const welcomeWrapCols = 48
 // window's close for owner/app modals, so the stack is popped cleanly) — unlike a
 // system modal, which needs WindowManager.CloseModal.
 func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool) {
-	if !graphical || !wininstall.Available() || wininstall.FirstRunDone() {
+	if !graphical || !selfinstall.Available() || selfinstall.FirstRunDone() {
 		return
 	}
 	dlg := newWelcomeDialog(
 		"Welcome to mew",
 		welcomeLines(),
 		func() { // Install
-			exe, err := wininstall.Install()
+			exe, err := selfinstall.Install()
 			if err != nil {
 				showMewError(application, root, "Install failed", err.Error())
 				return
@@ -67,16 +68,16 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, r
 	desktop.RequestUpdate()
 }
 
-// welcomeLines is the explanatory copy shown in the welcome window. Pre-split
-// into lines (the content trinket draws one line per entry, like the message
-// box), kept comfortably narrow.
+// welcomeLines is the explanatory copy shown in the welcome window, as
+// paragraphs (welcomeContent word-wraps them to the window width). The install
+// destination is platform-specific (Start Menu + PATH, or Applications).
 func welcomeLines() []string {
 	return []string{
 		"A programmable cross-platform text, prose, and code editor in the WordStar tradition.",
 		"",
 		"You're running mew straight from the file you downloaded.",
 		"",
-		"Install adds mew to your Start Menu and PATH, then opens the installed copy. Try just opens the editor now, without installing anything.",
+		"Install adds mew to " + selfinstall.InstallLocationPhrase() + ", then opens the installed copy. Try just opens the editor now, without installing anything.",
 		"",
 		"mew " + mew.FullVersion(),
 	}

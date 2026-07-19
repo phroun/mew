@@ -1,16 +1,19 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 // Non-Windows stub for the Windows self-installer. The installer only makes
 // sense on Windows (Start Menu shortcut, per-user PATH), so everywhere else it
 // reports itself unavailable, treats the first run as already done (so the
 // graphical host never shows the Windows welcome window), and fails loudly if
 // asked to install.
-package wininstall
+package selfinstall
 
 import "errors"
 
 // Available reports whether the installer works on this platform (false here).
 func Available() bool { return false }
+
+// InstallLocationPhrase is unused off the supported platforms.
+func InstallLocationPhrase() string { return "" }
 
 // FirstRunDone is true off Windows so no first-run welcome is ever shown.
 func FirstRunDone() bool { return true }

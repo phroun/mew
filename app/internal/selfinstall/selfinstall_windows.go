@@ -1,6 +1,6 @@
 //go:build windows
 
-// Package wininstall is mew's own Windows installer — no external installer
+// Windows implementation of the self-installer — no external installer
 // framework, no PowerShell, just plain Go hitting the same Win32/COM APIs a real
 // installer uses. It copies the two binaries into a per-user location, drops a
 // Start Menu shortcut pointing at the graphical build (mew-sdl.exe, which carries
@@ -15,7 +15,7 @@
 //
 // Both the console binary's `mew --install` flag and the graphical binary's
 // first-run welcome window (Install button) call Install(); it is idempotent.
-package wininstall
+package selfinstall
 
 import (
 	"fmt"
@@ -47,6 +47,10 @@ var (
 // Available reports that the installer is usable on this platform (it is — this
 // is the Windows build).
 func Available() bool { return true }
+
+// InstallLocationPhrase is a human phrase for where Install puts mew, for the
+// welcome copy ("Install adds mew to <phrase>…").
+func InstallLocationPhrase() string { return "your Start Menu and PATH" }
 
 // FirstRunDone reports whether this copy of mew looks already-installed, judged
 // purely from where its binary lives: true when the immediate parent folder is
