@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/phroun/mew/internal/window"
@@ -117,9 +119,12 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 		e, w := newTestEditor(t, "\ta\t\tbc\n")
 		line := "\ta\t\tbc"
 		for _, p := range []int{0, 2, 3, 5} { // marks before tabs and letters
-			if err := w.Buffer.SetMark("m", 0, p); err != nil {
+			if err := w.Buffer.SetMark(fmt.Sprintf("m%d", p), 0, p); err != nil {
 				t.Fatalf("SetMark(%d): %v", p, err)
 			}
+		}
+		if cols := w.Buffer.MarksOnLine(0); len(cols) != 4 {
+			t.Fatalf("want 4 distinct marks, got %v", cols)
 		}
 		w.ViewState.ShowMarks = true
 		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
@@ -131,4 +136,121 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 			}
 		}
 	})
+}
+
+// bidiMarkLine is bidiLine "abc שלום xyz": logical 0-2 "abc", 3 space, 4-7 the
+// Hebrew run (ש,ל,ו,ם) painted reversed at cols 4-7, 8 space, 9-11 "xyz".
+//
+// On a bidirectional line the showMarks "*" is inserted in VISUAL order, just
+// left of the marked rune's painted cell (exactly as prepareLineForDisplay
+// draws it) — NOT by a flat reading-order offset, which would land it on the
+// wrong side of a reversed rune. A mark at logical 5 (ל, painted at col 6)
+// inserts a "*" at col 6 and shifts ל and everything visually right of the "*"
+// one cell over; cells left of it (ו col 5, ם col 4) are untouched.
+func TestShowMarksBidiColumnMath(t *testing.T) {
+	e, w := newTestEditor(t, bidiLine+"\n")
+	w.ViewState.ShowMarks = true
+	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
+		t.Fatalf("SetMark: %v", err)
+	}
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+
+	for _, c := range []struct{ rune_, want int }{
+		{7, 4},                      // ם — left of the "*", unchanged
+		{6, 5},                      // ו — left of the "*", unchanged
+		{5, 7},                      // ל — marked; one past its "*" at col 6
+		{4, 8},                      // ש — right of the "*", shifted +1
+		{9, 10},                     // x — LTR tail, shifted +1
+		{len([]rune(bidiLine)), 13}, // EOL = total width (12 + 1 mark cell)
+	} {
+		if got := e.runeToVisualColumn(w, bidiLine, c.rune_, 4); got != c.want {
+			t.Errorf("runeToVisualColumn(%d) = %d, want %d", c.rune_, got, c.want)
+		}
+	}
+	if got := e.caretVisualColumn(w, bidiLine, 5, 4); got != 7 {
+		t.Errorf("caretVisualColumn(5) = %d, want 7", got)
+	}
+	// Inverse: the "*" cell (col 6) and ל's cell (col 7) both select rune 5.
+	for _, c := range []struct{ col, wantRune int }{
+		{6, 5}, // the "*"
+		{7, 5}, // ל
+		{5, 6}, // ו
+		{8, 4}, // ש
+		{4, 7}, // ם
+	} {
+		if got := e.visualColumnToRune(w, bidiLine, c.col, 4); got != c.wantRune {
+			t.Errorf("visualColumnToRune(%d) = %d, want %d", c.col, got, c.wantRune)
+		}
+	}
+	// Forward/inverse are mutual inverses at every rune's own cell.
+	for r := 0; r < len([]rune(bidiLine)); r++ {
+		col := e.runeToVisualColumn(w, bidiLine, r, 4)
+		if back := e.visualColumnToRune(w, bidiLine, col, 4); back != r {
+			t.Errorf("round trip: rune %d -> col %d -> rune %d", r, col, back)
+		}
+	}
+}
+
+// The rendered output ties the bidi mark math to what the renderer actually
+// paints: the "*" lands just left of the reversed ל, and the hardware cursor —
+// placed by the renderer's own caretVisualColumn — lands on the marked cell.
+func TestShowMarksBidiRendered(t *testing.T) {
+	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	w.ViewState.ShowMarks = true
+	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
+		t.Fatalf("SetMark: %v", err)
+	}
+	e.performRender()
+	if plain := stripAnsi(out.String()); !strings.Contains(plain, "abc םו*לש xyz") {
+		t.Fatalf("rendered marked bidi line = %q, want it to contain %q", plain, "abc םו*לש xyz")
+	}
+
+	// ל is painted at visual col 7 -> screen col 8 (no gutter); the renderer's
+	// cursor placement must agree with the editor's caret math.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	e.afterHorizontalMovement(w)
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 8 {
+		t.Fatalf("hardware cursor on the marked ל: col %d, want 8", col)
+	}
+}
+
+// showMarks stays an exact mutual inverse under an RTL base, with showBidi
+// markers, and with tabs intermixed into the bidi run — the cases the removed
+// flat-offset fallback got wrong. No hardcoded columns: forward-then-inverse
+// must return each rune.
+func TestShowMarksBidiRoundTrips(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		marks   []int
+		cfg     []string
+		bidi    bool
+	}{
+		{"ltr base hebrew", bidiLine, []int{2, 5, 9}, nil, false},
+		{"rtl base hebrew", bidiLine, []int{0, 5, 11}, []string{"direction=rtl"}, false},
+		{"showBidi markers", bidiLine, []int{4, 7}, nil, true},
+		{"tab before hebrew", "a\tאב c", []int{0, 1, 3}, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, w := newTestEditor(t, tc.content+"\n", tc.cfg...)
+			w.ViewState.ShowMarks = true
+			w.ViewState.ShowBidi = tc.bidi
+			for _, p := range tc.marks {
+				if err := w.Buffer.SetMark(fmt.Sprintf("m%d", p), 0, p); err != nil {
+					t.Fatalf("SetMark(%d): %v", p, err)
+				}
+			}
+			w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+			rn := []rune(tc.content)
+			for r := 0; r < len(rn); r++ {
+				col := e.runeToVisualColumn(w, tc.content, r, 4)
+				if back := e.visualColumnToRune(w, tc.content, col, 4); back != r {
+					t.Errorf("rune %d -> col %d -> rune %d", r, col, back)
+				}
+			}
+		})
+	}
 }

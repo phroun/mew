@@ -950,6 +950,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		vw := 0
 		for slot := 0; slot < totalSlots; slot++ {
 			li := logicalAt(slot)
+			// A marked slot draws its "*" cell before the rune (as in the loop
+			// below), so the right-anchored width must count it too.
+			if showMarks && li >= 0 && marksSet[li] {
+				vw++
+			}
 			vw += sr.slotWidth(layout, runes, li, vw, w)
 		}
 		leftPad, viewOffsetX = rtlView(vw, viewOffsetX, width)
@@ -1786,34 +1791,41 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 	return column
 }
 
-// markOffset is the number of showMarks "*" cells inserted at or before rune
-// position runePos on docLine — how far the visual column of that position is
-// shifted right when showMarks is on. Zero when showMarks is off or the line has
-// no marks. Kept in step with the "*" insertion in prepareLineForDisplay and the
-// editor's own caret math.
-//
-// This flat count is only exact for the bidi fallback: on a plain line a mark
-// before a tab steals a column the tab would otherwise fill, so the two changes
-// don't add up — markedLine callers use the inline walk (runeToVisualColumnMarked)
-// instead, matching prepareLineForDisplay cell for cell.
-func (sr *ScreenRenderer) markOffset(w *window.Window, docLine, runePos int) int {
+// lineMarkSet is the set of positions on the window's caret line that get a
+// showMarks "*" cell, mirroring what prepareLineForDisplay draws: one before the
+// cell of each marked rune, plus — only when invisibles are shown, so the
+// terminator slot exists to host it — a mark at end of line. nil when showMarks
+// is off or the line has no drawable marks. Every caret walk (plain and bidi)
+// consumes this one set. Mirrors the editor's lineMarkSet.
+func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
-		return 0
+		return nil
 	}
-	n := 0
-	for _, p := range w.Buffer.MarksOnLine(docLine) {
-		if p <= runePos {
-			n++
+	raw := w.Buffer.MarksOnLine(w.CursorPos().Line)
+	if len(raw) == 0 {
+		return nil
+	}
+	eolDrawn := w.ViewState.ShowInvisibles
+	m := make(map[int]bool, len(raw))
+	for _, p := range raw {
+		if p < 0 || p > len(runes) {
+			continue
 		}
+		if p == len(runes) && !eolDrawn {
+			continue
+		}
+		m[p] = true
 	}
-	return n
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
-// markedLine reports the case where caret math must account for the showMarks
-// "*" cells inline: showMarks on, the caret line non-bidi, and it actually has
-// marks. Returns the line's runes and its mark positions; ok is false (base path)
-// otherwise. Mirrors the editor's markedLine.
-func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []rune, marks []int, ok bool) {
+// markedLine reports the plain (non-bidi) showMarks case: showMarks on, the
+// caret line non-bidi, and it has drawable marks. Returns the line's runes and
+// its mark-cell set; ok is false (base path) otherwise. Mirrors the editor.
+func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
 	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
 		return nil, nil, false
 	}
@@ -1821,22 +1833,18 @@ func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []run
 	if sr.layoutFor(w, runes) != nil {
 		return nil, nil, false
 	}
-	marks = w.Buffer.MarksOnLine(w.CursorPos().Line)
-	if len(marks) == 0 {
+	marked = sr.lineMarkSet(w, runes)
+	if marked == nil {
 		return nil, nil, false
 	}
-	return runes, marks, true
+	return runes, marked, true
 }
 
-// runeToVisualColumnMarked is the forward walk with showMarks cells inserted:
-// a "*" cell before each marked rune, then the rune, with tab widths resolved at
-// the SHIFTED column exactly as prepareLineForDisplay paints them. Returns the
-// column of rune runePos's own cell. Mirrors the editor's runeToVisualColumnMarked.
-func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marks []int, runePos int, w *window.Window) int {
-	marked := make(map[int]bool, len(marks))
-	for _, p := range marks {
-		marked[p] = true
-	}
+// runeToVisualColumnMarked is the plain forward walk with showMarks cells: a "*"
+// cell before each marked rune, then the rune, with tab widths resolved at the
+// SHIFTED column exactly as prepareLineForDisplay paints them. Returns the column
+// of rune runePos's own cell. Mirrors the editor's runeToVisualColumnMarked.
+func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marked map[int]bool, runePos int, w *window.Window) int {
 	if runePos < 0 {
 		runePos = 0
 	}
@@ -1856,18 +1864,41 @@ func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marks []int, ru
 	return col
 }
 
+// bidiColumns walks a line's visual order accumulating cell columns: cols maps
+// each LOGICAL rune index to the visual column its cell starts at, total is the
+// full visual width. When marked is non-nil a showMarks "*" cell is inserted in
+// visual order just before each marked rune's cell (and a trailing one for an
+// end-of-line mark), so cols/total are exact for bidi lines with marks. Mirrors
+// the editor's bidiColumns and the "*" insertion in prepareLineForDisplay.
+func (sr *ScreenRenderer) bidiColumns(runes []rune, layout *bidi.Layout, marked map[int]bool, w *window.Window) (cols []int, total int) {
+	cols = make([]int, len(runes))
+	col := 0
+	for _, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++
+		}
+		if li >= 0 {
+			cols[li] = col
+		}
+		col += sr.slotWidth(layout, runes, li, col, w)
+	}
+	if marked[len(runes)] {
+		col++
+	}
+	return cols, col
+}
+
 // caretVisualColumn is the caret's display column for a logical position,
 // biased by direction: in RTL context "before rune i" is at the rune's RIGHT
 // edge (one cell right of its cell); at end of line the boundary follows the
 // last rune's direction. Mirrors the editor's caretVisualColumn. On a plain
-// line with marks it walks the "*" cells inline so the caret lands on the same
-// cell prepareLineForDisplay drew the character in (tabs shift correctly); bidi
-// lines keep the base + flat-offset approximation.
+// line with marks it walks the "*" cells inline; bidi lines are exact through
+// caretVisualColumnBase, whose cols/total include the "*" cells.
 func (sr *ScreenRenderer) caretVisualColumn(line string, runePos int, w *window.Window) int {
-	if runes, marks, ok := sr.markedLine(w, line); ok {
-		return sr.runeToVisualColumnMarked(runes, marks, runePos, w)
+	if runes, marked, ok := sr.markedLine(w, line); ok {
+		return sr.runeToVisualColumnMarked(runes, marked, runePos, w)
 	}
-	return sr.caretVisualColumnBase(line, runePos, w) + sr.markOffset(w, w.CursorPos().Line, runePos)
+	return sr.caretVisualColumnBase(line, runePos, w)
 }
 
 func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *window.Window) int {
@@ -1876,14 +1907,7 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *win
 	if layout == nil {
 		return sr.runeToVisualColumn(line, runePos, w)
 	}
-	cols := make([]int, len(runes))
-	col := 0
-	for _, li := range layout.Perm {
-		if li >= 0 {
-			cols[li] = col
-		}
-		col += sr.slotWidth(layout, runes, li, col, w)
-	}
+	cols, col := sr.bidiColumns(runes, layout, sr.lineMarkSet(w, runes), w)
 	rtlBase := sr.winRTL(w)
 
 	// Zero-width combining marks share their base's cell: step back to the
@@ -1945,16 +1969,21 @@ func rtlView(vw, offset, width int) (pad, eff int) {
 // the renderer's counterpart to the editor's lineVisualWidth.
 func (sr *ScreenRenderer) lineVisualWidth(w *window.Window, line string) int {
 	runes := []rune(line)
+	marked := sr.lineMarkSet(w, runes)
 	layout := sr.layoutFor(w, runes)
-	vw := 0
 	if layout != nil {
-		for _, li := range layout.Perm {
-			vw += sr.slotWidth(layout, runes, li, vw, w)
+		_, total := sr.bidiColumns(runes, layout, marked, w)
+		return total
+	}
+	vw := 0
+	for i, r := range runes {
+		if marked[i] {
+			vw++
 		}
-	} else {
-		for _, r := range runes {
-			vw += sr.getRuneVisualWidth(r, vw, w)
-		}
+		vw += sr.getRuneVisualWidth(r, vw, w)
+	}
+	if marked[len(runes)] {
+		vw++
 	}
 	return vw
 }

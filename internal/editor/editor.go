@@ -3146,36 +3146,49 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // runeToVisualColumn converts a rune position to a visual column position.
 // This accounts for tabs (variable width) and control characters (2 chars wide).
 // Translated from TypeScript CoordinateUtils.documentRuneToColumn
-// markOffset is the number of showMarks "*" cells inserted at or before rune
-// position runePos on the caret's line — the amount that position's visual
-// column is shifted right when showMarks is on. Zero when showMarks is off or
-// the line has no marks. Kept in step with the renderer (screen.go markOffset).
 //
-// This flat count is only correct for the bidi fallback: on a plain (non-bidi)
-// line, a mark that precedes a tab steals a column the tab would otherwise fill,
-// so the two changes don't add up — markedLine callers use the inline walk
-// instead (runeToVisualColumnMarked), and markOffset is left for the bidi case.
-func (e *Editor) markOffset(w *window.Window, runePos int) int {
+// lineMarkSet is the set of positions on the window's caret line that get a
+// showMarks "*" cell, mirroring what prepareLineForDisplay draws: one before the
+// cell of each marked rune, plus — only when invisibles are shown, so the
+// terminator slot exists to host it — a mark sitting at end of line. It returns
+// nil when showMarks is off or the line has no drawable marks. Every visual-
+// column walk (plain and bidi, forward and inverse) consumes this one set, so a
+// mark inserts its cell in the same place on all of them; there is no flat
+// offset (a mark before a tab steals a column the tab would otherwise fill, so
+// the shift is not additive). Marks are keyed on the caret's line, the only line
+// these coordinate helpers are asked about.
+func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
-		return 0
+		return nil
 	}
-	n := 0
-	for _, p := range w.Buffer.MarksOnLine(w.CursorPos().Line) {
-		if p <= runePos {
-			n++
+	raw := w.Buffer.MarksOnLine(w.CursorPos().Line)
+	if len(raw) == 0 {
+		return nil
+	}
+	eolDrawn := w.ViewState.ShowInvisibles // an EOL mark only draws atop the terminator
+	m := make(map[int]bool, len(raw))
+	for _, p := range raw {
+		if p < 0 || p > len(runes) {
+			continue
 		}
+		if p == len(runes) && !eolDrawn {
+			continue
+		}
+		m[p] = true
 	}
-	return n
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
-// markedLine reports the case where visual-column math must account for the
-// showMarks "*" cells inline: showMarks on, the window's caret line is non-bidi
-// (a flat offset is only exact without reordering), and it actually has marks.
-// It returns the line's runes and the line's mark positions; ok is false (and
-// callers take the base path) for bidi lines, marked-off, or lines with no
-// marks. Like markOffset it keys marks on the caret's line, which is the only
-// line these coordinate helpers are asked about.
-func (e *Editor) markedLine(w *window.Window, line string) (runes []rune, marks []int, ok bool) {
+// markedLine reports the plain (non-bidi) showMarks case, where the visual walk
+// is a simple left-to-right scan: showMarks on, the caret line non-bidi, and it
+// has drawable marks. It returns the line's runes and the mark-cell set; ok is
+// false (callers take the base path) for bidi lines, marks off, or no marks.
+// Bidi lines are exact too, but through bidiColumns / the bidi inverse walks,
+// which consume lineMarkSet directly.
+func (e *Editor) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
 	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
 		return nil, nil, false
 	}
@@ -3183,24 +3196,20 @@ func (e *Editor) markedLine(w *window.Window, line string) (runes []rune, marks 
 	if e.layoutFor(w, runes) != nil {
 		return nil, nil, false
 	}
-	marks = w.Buffer.MarksOnLine(w.CursorPos().Line)
-	if len(marks) == 0 {
+	marked = e.lineMarkSet(w, runes)
+	if marked == nil {
 		return nil, nil, false
 	}
-	return runes, marks, true
+	return runes, marked, true
 }
 
-// runeToVisualColumnMarked is the forward walk with showMarks cells inserted: it
+// runeToVisualColumnMarked is the plain forward walk with showMarks cells: it
 // emits a "*" cell before each marked rune, then the rune, resolving tab widths
 // at the SHIFTED column exactly as prepareLineForDisplay paints them. It returns
 // the visual column of rune runePos's own cell (past its leading "*"). It is the
 // forward twin of visualColumnToRuneMarked and mirrors the renderer's slot loop,
 // so a mark before a tab shrinks (or grows) that tab identically on both sides.
-func (e *Editor) runeToVisualColumnMarked(runes []rune, marks []int, runePos, tabSize int) int {
-	marked := make(map[int]bool, len(marks))
-	for _, p := range marks {
-		marked[p] = true
-	}
+func (e *Editor) runeToVisualColumnMarked(runes []rune, marked map[int]bool, runePos, tabSize int) int {
 	if runePos < 0 {
 		runePos = 0
 	}
@@ -3225,19 +3234,20 @@ func (e *Editor) runeToVisualColumnMarked(runes []rune, marks []int, runePos, ta
 // runeToVisualColumn is the display column of a rune, including the showMarks
 // "*" cells so it stays in step with what the renderer draws.
 func (e *Editor) runeToVisualColumn(w *window.Window, line string, runePos int, tabSize int) int {
-	if runes, marks, ok := e.markedLine(w, line); ok {
-		return e.runeToVisualColumnMarked(runes, marks, runePos, tabSize)
+	if runes, marked, ok := e.markedLine(w, line); ok {
+		return e.runeToVisualColumnMarked(runes, marked, runePos, tabSize)
 	}
-	return e.runeToVisualColumnBase(w, line, runePos, tabSize) + e.markOffset(w, runePos)
+	return e.runeToVisualColumnBase(w, line, runePos, tabSize)
 }
 
 func (e *Editor) runeToVisualColumnBase(w *window.Window, line string, runePos int, tabSize int) int {
 	runes := []rune(line)
 
 	// Bidirectional line: the rune's visual column is where its cell is
-	// painted in visual order, which can be anywhere on the line.
+	// painted in visual order, which can be anywhere on the line. bidiColumns
+	// inserts the showMarks "*" cells in visual order, so cols/total are exact.
 	if layout := e.layoutFor(w, runes); layout != nil {
-		cols, total := e.bidiColumns(runes, layout, tabSize)
+		cols, total := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), tabSize)
 		if runePos >= len(runes) {
 			return total
 		}
@@ -3321,12 +3331,12 @@ func (e *Editor) winRTL(w *window.Window) bool {
 func (e *Editor) caretVisualColumn(w *window.Window, line string, runePos, tabSize int) int {
 	// Non-bidi: the caret sits on the rune's own cell, so its column is exactly
 	// the marks-inclusive rune column from the inline walk (which resolves tab
-	// widths at the shifted column). Bidi keeps the base + flat approximation.
-	// Mirrors the renderer's caretVisualColumn wrapper.
-	if runes, marks, ok := e.markedLine(w, line); ok {
-		return e.runeToVisualColumnMarked(runes, marks, runePos, tabSize)
+	// widths at the shifted column). Bidi is exact through caretVisualColumnBase,
+	// whose cols/total include the "*" cells. Mirrors the renderer's wrapper.
+	if runes, marked, ok := e.markedLine(w, line); ok {
+		return e.runeToVisualColumnMarked(runes, marked, runePos, tabSize)
 	}
-	return e.caretVisualColumnBase(w, line, runePos, tabSize) + e.markOffset(w, runePos)
+	return e.caretVisualColumnBase(w, line, runePos, tabSize)
 }
 
 func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, tabSize int) int {
@@ -3335,7 +3345,7 @@ func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, t
 	if layout == nil {
 		return e.runeToVisualColumnBase(w, line, runePos, tabSize)
 	}
-	cols, total := e.bidiColumns(runes, layout, tabSize)
+	cols, total := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), tabSize)
 	rtlBase := e.winRTL(w)
 
 	// A zero-width combining mark shares its base character's cell, so the
@@ -3383,19 +3393,23 @@ func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, t
 // in visual order, matching the renderer).
 func (e *Editor) lineVisualWidth(w *window.Window, line string, tabSize int) int {
 	runes := []rune(line)
+	marked := e.lineMarkSet(w, runes)
 	layout := e.layoutFor(w, runes)
 	if layout == nil {
 		vw := 0
-		for _, r := range runes {
+		for i, r := range runes {
+			if marked[i] {
+				vw++
+			}
 			vw += e.getRuneVisualWidth(r, vw, tabSize)
+		}
+		if marked[len(runes)] {
+			vw++
 		}
 		return vw
 	}
-	vw := 0
-	for _, li := range layout.Perm {
-		vw += e.slotWidth(layout, runes, li, vw, tabSize)
-	}
-	return vw
+	_, total := e.bidiColumns(runes, layout, marked, tabSize)
+	return total
 }
 
 // idealColumn returns the direction-appropriate "sticky" column used to hold
@@ -3415,15 +3429,24 @@ func (e *Editor) idealColumn(w *window.Window, line string, runePos, tabSize int
 // bidiColumns walks a line's visual order accumulating cell columns: cols
 // maps each LOGICAL rune index to the visual column its cell starts at, and
 // total is the line's full visual width. Tab widths resolve at their VISUAL
-// column, like the renderer paints them.
-func (e *Editor) bidiColumns(runes []rune, layout *bidi.Layout, tabSize int) (cols []int, total int) {
+// column, like the renderer paints them. When marked is non-nil a showMarks "*"
+// cell is inserted in visual order just before each marked rune's cell (and a
+// trailing one for an end-of-line mark), so cols/total are exact for bidi lines
+// with marks — mirroring the "*" insertion in prepareLineForDisplay.
+func (e *Editor) bidiColumns(runes []rune, layout *bidi.Layout, marked map[int]bool, tabSize int) (cols []int, total int) {
 	cols = make([]int, len(runes))
 	col := 0
 	for _, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++
+		}
 		if li >= 0 {
 			cols[li] = col
 		}
 		col += e.slotWidth(layout, runes, li, col, tabSize)
+	}
+	if marked[len(runes)] {
+		col++
 	}
 	return cols, col
 }
@@ -3433,19 +3456,27 @@ func (e *Editor) bidiColumns(runes []rune, layout *bidi.Layout, tabSize int) (co
 // Translated from TypeScript CoordinateUtils.columnToDocumentRune
 func (e *Editor) visualColumnToRune(w *window.Window, line string, targetColumn int, tabSize int) int {
 	// showMarks (non-bidi): account for the inserted "*" cells via the marked
-	// walk, so a click maps to the right rune. (Bidi lines with marks fall
-	// through to the base walk below.)
-	if runes, marks, ok := e.markedLine(w, line); ok {
-		return e.visualColumnToRuneMarked(w, runes, marks, targetColumn, tabSize).Rune
+	// walk, so a click maps to the right rune.
+	if runes, marked, ok := e.markedLine(w, line); ok {
+		return e.visualColumnToRuneMarked(runes, marked, targetColumn, tabSize).Rune
 	}
 
 	runes := []rune(line)
 
 	// Bidirectional line: find the visual cell covering the target column and
-	// return its LOGICAL rune index (past the end returns len).
+	// return its LOGICAL rune index (past the end returns len). A showMarks "*"
+	// cell precedes each marked rune in visual order; a click on it selects that
+	// rune, keeping this the exact inverse of bidiColumns.
 	if layout := e.layoutFor(w, runes); layout != nil {
+		marked := e.lineMarkSet(w, runes)
 		col := 0
 		for v, li := range layout.Perm {
+			if li >= 0 && marked[li] {
+				if targetColumn < col+1 {
+					return li
+				}
+				col++
+			}
 			cw := e.slotWidth(layout, runes, li, col, tabSize)
 			if cw > 0 && targetColumn < col+cw {
 				if li >= 0 {
@@ -3535,21 +3566,17 @@ type visualColumnToRuneResult struct {
 // rune and the reported column is in the same marks-inclusive space as the
 // forward math. Bidi lines fall back to the base mapping (marks are rare there).
 func (e *Editor) visualColumnToRuneWithActual(w *window.Window, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
-	if runes, marks, ok := e.markedLine(w, line); ok {
-		return e.visualColumnToRuneMarked(w, runes, marks, targetColumn, tabSize)
+	if runes, marked, ok := e.markedLine(w, line); ok {
+		return e.visualColumnToRuneMarked(runes, marked, targetColumn, tabSize)
 	}
 	return e.visualColumnToRuneWithActualBase(w, line, targetColumn, tabSize)
 }
 
-// visualColumnToRuneMarked is the non-bidi inverse walk with showMarks cells: it
-// emits, in order, the "*" cell(s) at each rune position then the rune, and
-// returns the rune whose cell (or leading "*") covers targetColumn. ActualColumn
-// is reported marks-inclusive.
-func (e *Editor) visualColumnToRuneMarked(w *window.Window, runes []rune, marks []int, targetColumn, tabSize int) visualColumnToRuneResult {
-	marked := make(map[int]bool, len(marks))
-	for _, p := range marks {
-		marked[p] = true
-	}
+// visualColumnToRuneMarked is the plain (non-bidi) inverse walk with showMarks
+// cells: it emits, in order, the "*" cell at each marked rune position then the
+// rune, and returns the rune whose cell (or leading "*") covers targetColumn.
+// ActualColumn is reported marks-inclusive.
+func (e *Editor) visualColumnToRuneMarked(runes []rune, marked map[int]bool, targetColumn, tabSize int) visualColumnToRuneResult {
 	col := 0
 	for i := 0; i <= len(runes); i++ {
 		if marked[i] { // one "*" cell before rune i (or at end of line)
@@ -3574,9 +3601,18 @@ func (e *Editor) visualColumnToRuneWithActualBase(w *window.Window, line string,
 	runes := []rune(line)
 
 	// Bidirectional line: the cell covering the target column, by visual walk.
+	// A showMarks "*" cell precedes each marked rune (a click on it selects that
+	// rune), so this stays the exact inverse of bidiColumns.
 	if layout := e.layoutFor(w, runes); layout != nil {
+		marked := e.lineMarkSet(w, runes)
 		col := 0
 		for _, li := range layout.Perm {
+			if li >= 0 && marked[li] {
+				if targetColumn < col+1 {
+					return visualColumnToRuneResult{Rune: li, ActualColumn: col}
+				}
+				col++
+			}
 			cw := e.slotWidth(layout, runes, li, col, tabSize)
 			if li >= 0 && cw > 0 && targetColumn < col+cw {
 				return visualColumnToRuneResult{Rune: li, ActualColumn: col}
