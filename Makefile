@@ -4,7 +4,10 @@
 #   make mew        build the terminal (KittyTK TUI) host into bin/mew
 #   make mew-sdl    build the graphical (SDL) host into bin/mew-sdl
 #   make mew-plain  build the bare terminal editor (no host) into bin/mew-plain
-#   make windows    cross-build the Windows console mew.exe (with icon) into bin/
+#   make windows    cross-build the Windows console mew.exe into bin/
+#   make windows-sdl build the Windows GUI mew-sdl.exe (with icon) — run on Windows
+#                   Then scripts\install-windows.ps1 installs the binaries and
+#                   adds a Start Menu shortcut (see that script's header).
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
 #   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
@@ -52,14 +55,16 @@ BUILD_FILE := internal/version/version.go
 WINDOWS_ARCH ?= amd64
 
 # rsrc turns assets/mew.ico into a .syso resource object the Go linker embeds
-# into mew.exe (the app icon). Pinned; fetched on demand via `go run`.
+# into the Windows binary (the app icon). Pinned; fetched on demand via `go run`.
 RSRC ?= go run github.com/akavel/rsrc@v0.10.2
 
-# The icon resource object. Arch-suffixed so the Go toolchain links it only for
+# The icon resource object lives in the GRAPHICAL binary's package, so the icon
+# lands on mew-sdl.exe (the windowed app shown in Explorer / the taskbar) rather
+# than the console mew.exe. Arch-suffixed so the Go toolchain links it only for
 # the matching windows build and never for other platforms.
-WINDOWS_SYSO := app/cmd/mew/rsrc_windows_$(WINDOWS_ARCH).syso
+WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 
-.PHONY: all build mew mew-sdl mew-plain windows install uninstall macapp install-macapp uninstall-macapp check vet test clean increment
+.PHONY: all build mew mew-sdl mew-plain windows windows-sdl install uninstall macapp install-macapp uninstall-macapp check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -82,13 +87,22 @@ mew-plain:
 # Cross-build a Windows console executable of the terminal host. It is pure Go
 # (the SDL/cgo path is only under -tags sdl), so this builds without cgo and
 # keeps Go's default console subsystem — mew is a console editor, so no
-# `-H windowsgui`, which would detach the console we need. (mew-sdl is not
-# cross-built: SDL2 + cgo don't cross-compile cleanly.)
-windows: $(WINDOWS_SYSO)
+# `-H windowsgui`, which would detach the console we need. No icon: this is the
+# console binary, and the icon rides on the GUI mew-sdl.exe (see windows-sdl).
+windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
 
+# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. SDL2 + cgo
+# don't cross-compile cleanly, so run this ON Windows (with a cgo toolchain and
+# SDL2 present); it can't be produced from the Linux/macOS cross-build. The syso
+# prerequisite carries the icon (the Go linker embeds it automatically), and
+# -H windowsgui detaches the console — this is a windowed app, not a terminal one.
+windows-sdl: $(WINDOWS_SYSO)
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
-# the icon changes). The Go linker embeds it into mew.exe automatically.
+# the icon changes). It lives in the mew-sdl package, so the Go linker embeds it
+# into mew-sdl.exe automatically.
 $(WINDOWS_SYSO): assets/mew.ico
 	$(RSRC) -ico assets/mew.ico -arch $(WINDOWS_ARCH) -o $(WINDOWS_SYSO)
 
@@ -142,7 +156,7 @@ test:
 # Remove built binaries and the generated Windows icon resource object.
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f app/cmd/mew/rsrc_windows_*.syso
+	rm -f app/cmd/mew/rsrc_windows_*.syso app/cmd/mew-sdl/rsrc_windows_*.syso
 
 # Bump the per-commit Build counter in internal/version/version.go. The file
 # holds Build on a single line of the form `const Build = N`; the awk script

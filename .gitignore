@@ -2,5 +2,5 @@
 /mew
 bin/
 .#*
-# Generated Windows icon resource object (make windows).
-app/cmd/mew/*.syso
+# Generated Windows icon resource object (make windows-sdl).
+app/cmd/*/*.syso
