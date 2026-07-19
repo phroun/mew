@@ -161,13 +161,53 @@ func (b *Button) AnimatePress() {
 	b.animatingPress = true
 	b.Update()
 
-	// After 250ms, clear animation and trigger click
+	// After 250ms, clear the animation and fire the click — ON THE MAIN THREAD,
+	// via the desktop timer, NOT a raw goroutine. onClick may tear down a window,
+	// and on macOS SDL window destruction must run on the platform's main thread;
+	// the old `go func` ran onClick on a runtime-timer goroutine, so a keyboard-
+	// activated button that closed a window crashed with SIGTRAP in
+	// SDL_DestroyWindow. Desktop timers self-repost through the platform's
+	// PostAfter, so their callbacks run on the main loop.
+	if start := b.mainThreadTimer(); start != nil {
+		var timer interface{ Stop() }
+		timer = start(250*time.Millisecond, func() {
+			if timer != nil {
+				timer.Stop() // one-shot: stop the repeating timer after the first fire
+			}
+			b.animatingPress = false
+			b.Update()
+			b.Click()
+		})
+		return
+	}
+
+	// No desktop timer provider reachable (headless / tests): there is no SDL
+	// here, so no main-thread requirement — a plain timer goroutine is fine and
+	// keeps the animation working outside a running desktop.
 	go func() {
 		time.Sleep(250 * time.Millisecond)
 		b.animatingPress = false
 		b.Update()
 		b.Click()
 	}()
+}
+
+// mainThreadTimer walks up the parent chain for a desktop-style timer provider
+// and returns a starter whose callback runs on the platform's main thread
+// (desktop timers self-repost through PostAfter). Returns nil when none is
+// reachable. Used so a keyboard-activated button's deferred click runs on the
+// main thread, where SDL window teardown is legal on macOS.
+func (b *Button) mainThreadTimer() func(time.Duration, func()) interface{ Stop() } {
+	for p := b.Parent(); p != nil; p = p.Parent() {
+		if tp, ok := p.(interface {
+			StartRepeatingTimer(interval time.Duration, callback func()) *DesktopTimer
+		}); ok {
+			return func(d time.Duration, cb func()) interface{ Stop() } {
+				return tp.StartRepeatingTimer(d, cb)
+			}
+		}
+	}
+	return nil
 }
 
 // SetOnClick sets the click handler.
