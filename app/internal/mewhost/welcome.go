@@ -23,10 +23,21 @@ import (
 //     running behind it. Nothing is written, so an uninstalled copy keeps
 //     offering to install on each launch.
 //
-// It is shown as a modal over the root editor (the same mechanism as the About
-// dialog), so "Try" needs to do nothing but close.
+// It is presented as a desktop system modal via WindowManager.ShowModal — the
+// same mechanism the display service's authorization prompt uses — so it always
+// surfaces on top and blocks the surface beneath it; it can't be ignored or lost
+// behind the solo editor. mew-sdl is the desktop owner here, so this host-level
+// gate is on the same footing as that prompt (not an app-scoped dialog).
+//
+// Both choices tear the modal down with CloseModal (not window.Close): the
+// window manager refuses to front a window while a modal is live, so a plain
+// close would leave the editor blocked and unfrontable after "Try".
 func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, graphical bool) {
 	if !graphical || !wininstall.Available() || wininstall.FirstRunDone() {
+		return
+	}
+	wm := desktop.WindowManager()
+	if wm == nil {
 		return
 	}
 	dlg := newWelcomeDialog(
@@ -34,8 +45,9 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, l
 		welcomeLines(),
 		func() { // Install
 			exe, err := wininstall.Install()
+			wm.CloseModal() // tear the welcome down first, either way
 			if err != nil {
-				showMewError(application, "Install failed", err.Error())
+				showMewError(wm, desktop, "Install failed", err.Error())
 				return
 			}
 			// Launch the freshly installed copy (with the same files) and bow out.
@@ -44,9 +56,10 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, l
 			}
 			desktop.Quit()
 		},
-		func() {}, // Try — just dismiss; the editor is already running behind us.
+		func() { wm.CloseModal() }, // Try — dismiss; the editor is already behind us.
 	)
-	application.AddWindow(&dlg.Window)
+	wm.ShowModal(&dlg.Window)
+	desktop.RequestUpdate()
 }
 
 // welcomeLines is the explanatory copy shown in the welcome window. Pre-split
@@ -66,12 +79,16 @@ func welcomeLines() []string {
 	}
 }
 
-// showMewError pops a simple modal error dialog on the application.
-func showMewError(application *app.Application, title, text string) {
+// showMewError pops a simple error dialog as a desktop system modal (so it
+// surfaces on top like the welcome it replaces), wiring OK to CloseModal so the
+// modal stack is popped cleanly and the editor becomes frontable again.
+func showMewError(wm *window.WindowManager, desktop *trinkets.Desktop, title, text string) {
 	mb := trinkets.NewMessageBox(title, text, trinkets.ButtonOK)
 	mb.SetIcon(trinkets.IconError)
-	application.AddWindow(&mb.Window)
+	mb.SetOnFinished(func(trinkets.DialogResult) { wm.CloseModal() })
+	wm.ShowModal(&mb.Window)
 	mb.ResizeToFitContent()
+	desktop.RequestUpdate()
 }
 
 // welcomeDialog is a modal window whose content is a paragraph of text over a
@@ -110,18 +127,19 @@ func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *we
 	return d
 }
 
+// doInstall / doTry invoke the wired action, which owns tearing the modal down
+// (via WindowManager.CloseModal) — the dialog does not close itself, so the
+// modal stack is popped cleanly and the editor becomes frontable again.
 func (d *welcomeDialog) doInstall() {
 	if d.onInstall != nil {
 		d.onInstall()
 	}
-	d.Close()
 }
 
 func (d *welcomeDialog) doTry() {
 	if d.onTry != nil {
 		d.onTry()
 	}
-	d.Close()
 }
 
 // HandleKeyPress maps Enter to Install (the primary action) and Escape to Try
