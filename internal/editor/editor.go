@@ -161,6 +161,17 @@ type Editor struct {
 	// through statusWriter -> ShowError -> RequestRender).
 	renderRequested atomic.Bool
 
+	// renderMu serializes performRender. It runs on the main loop AND on the
+	// renderer's resize goroutine (SetOnResize -> performRender, because the main
+	// loop is blocked in GetEvent), so without this two full renders can execute
+	// at once — at startup the initial greeting render races the render from the
+	// host's first resize — and their shared editor-level state (option
+	// reconciliation, layout, modebar/ViewState, plugin maps) is written
+	// concurrently, which Go turns into a fatal "concurrent map write" that
+	// crashes the process (and garbles the terminal on the way out). No caller
+	// holds it and performRender never recurses, so a plain Lock is deadlock-free.
+	renderMu sync.Mutex
+
 	// appliedFocusedSig is the focused window's overlay signature whose
 	// focused-scoped options (modebar templates/location, macOptionKeys, key
 	// mappings) are currently applied. Re-derived when it changes.
@@ -4436,6 +4447,11 @@ func (e *Editor) RequestRender() {
 
 // performRender performs the actual render.
 func (e *Editor) performRender() {
+	// Serialize renders: this runs on both the main loop and the renderer's
+	// resize goroutine, and its editor-level work below is not otherwise guarded.
+	e.renderMu.Lock()
+	defer e.renderMu.Unlock()
+
 	// Resolve each main buffer's per-window options against its current grammar
 	// (base [options] overlaid by [options.<grammar>]) before any layout or
 	// paint reads ViewState, so direction/gutter/etc. are current this frame.
@@ -4700,7 +4716,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			if e.handleBidiProbeReply(event.Key) {
 				continue
 			}
-			// Process key
+			// Process key. Hold renderMu across the whole mutation so the
+			// renderer's resize goroutine can't run a render (which reads this
+			// same editor state) partway through command execution. The block
+			// doesn't call performRender, so this doesn't nest with its lock.
+			e.renderMu.Lock()
 			result := e.KeyProcessor.ProcessKey(event.Key)
 			if result.Command != "" {
 				e.executeCommand(result.Command)
@@ -4720,6 +4740,7 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 				e.activeCompletions = ""
 			}
 			e.updateModebar()
+			e.renderMu.Unlock()
 		}
 
 		// Render if needed
