@@ -104,6 +104,21 @@ func (p *Platform) SetAppName(name string) {
 	p.appName = name
 }
 
+// macAboutHandler backs the macOS application-menu "About" item (see
+// SetAboutHandler). Package-level because the Cocoa menu-action callback
+// (kittytkAboutClicked) reaches it from C with no receiver.
+var macAboutHandler func()
+
+// SetAboutHandler wires the native macOS application menu's "About <app>" item to
+// fn, replacing the standard Cocoa about panel; fn runs on the main (platform)
+// thread when the item is chosen. No-op on other platforms and when fn is nil.
+// Call before Run — Run installs it once the menu exists. fn should schedule its
+// work via the platform/desktop post queue rather than touch UI state directly,
+// since it fires from AppKit's menu-tracking loop.
+func (p *Platform) SetAboutHandler(fn func()) {
+	macAboutHandler = fn
+}
+
 // SetScale sets how many window pixels one abstract unit covers.
 // The raster backend renders glyphs at the scaled size (crisp, not
 // upsampled) and input coordinates are converted back to units. Call
@@ -199,6 +214,13 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			w.destroy()
 		}
 	}()
+
+	// Retarget the macOS app menu's "About <app>" item now that SDL has built
+	// the menu (during Init/window creation), if a handler was set. No-op off
+	// macOS and when no handler was set.
+	if macAboutHandler != nil {
+		installAboutMenuHandler()
+	}
 
 	sdl2.StartTextInput()
 

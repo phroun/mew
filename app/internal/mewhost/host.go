@@ -74,7 +74,11 @@ const (
 // desktop-reveal mechanism for mew's show_desktop / hide_desktop commands: the
 // graphical (SDL) host toggles the built-in solo mode, the TUI host forces /
 // releases multi-window (it has no separate desktop surface to reveal).
-func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, graphical bool) {
+// BuildHost returns an "about" invoker: calling it shows mew's About dialog on
+// the platform thread. The graphical main wires this to the native macOS
+// application-menu About item (plat.SetAboutHandler) so "mew ▸ About mew" shows
+// the same dialog as Help ▸ About; the TUI main ignores it.
+func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, graphical bool) func() {
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
@@ -159,6 +163,10 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		// owned by the root editor offering Install or Try. No-op otherwise.
 		maybeShowWelcome(desktop, application, root, launchArgs, graphical)
 	})
+
+	// The about invoker posts to the platform thread (the native menu action
+	// fires from AppKit's menu-tracking loop, off the desktop's own pump).
+	return func() { desktop.Post(func() { showMewAbout(application) }) }
 }
 
 // refitRoot re-maximizes the docked root window to the current client area, so

@@ -85,6 +85,9 @@ func main() {
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
 	// Graphical host: show_desktop/hide_desktop toggle solo mode (graphical=true).
-	mewhost.BuildHost(desktop, cfg, launchArgs, true)
+	about := mewhost.BuildHost(desktop, cfg, launchArgs, true)
+	// Make the macOS application menu's "About mew" show mew's own About dialog
+	// (Run installs this once SDL has built the menu). No-op off macOS.
+	plat.SetAboutHandler(about)
 	os.Exit(desktop.RunOn(plat))
 }
