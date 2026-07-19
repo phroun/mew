@@ -63,8 +63,12 @@ else
 	echo "macapp: no icon at $icns (add assets/mew.icns or assets/mew.png); using the default icon" >&2
 fi
 
-# Best-effort version from the binary's --version line ("mew 0.3.1 (…)").
-ver="$("$bin" --version 2>/dev/null | awk '{print $2; exit}')"
+# Best-effort version from the BUNDLED binary's --version line ("mew 0.3.1 (…)").
+# Run the copy inside the bundle, not the loose $bin: a universal build links
+# SDL2 with an @executable_path/../Frameworks rpath that only resolves within the
+# bundle (dyld loads SDL2 at startup even for --version), so the loose binary
+# would abort. Never fatal — fall back to "0".
+ver="$("$app/Contents/MacOS/$name" --version 2>/dev/null | awk '{print $2; exit}')" || true
 [ -n "$ver" ] || ver="0"
 
 cat > "$app/Contents/Info.plist" <<PLIST
