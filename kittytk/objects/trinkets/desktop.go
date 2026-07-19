@@ -937,19 +937,18 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	}
 }
 
-// RaiseWindowToFront brings a torn-off window's OS surface to the front of the
-// window stack and gives it focus. A host uses it after ExitSoloMode so the
-// revealed desktop's own window comes forward even if unrelated app windows had
-// been on top. No-op if win is not currently hosted on its own surface.
-func (d *Desktop) RaiseWindowToFront(win *window.Window) {
-	if win == nil {
-		return
-	}
-	if h := d.tornHostForWindow(win); h != nil {
-		if n, ok := h.Surface().(platform.NativeSurface); ok {
-			n.Raise()
-		}
-		d.windowFocusChanged(win)
+// RaiseToFront brings the desktop's own OS surface (the primary window that
+// shows the desktop) to the front of the window stack. A host uses it after
+// ExitSoloMode so the revealed desktop comes forward - ExitSoloMode raises the
+// desktop surface too, but then re-homes the solo window above it, so the
+// desktop needs raising once more to end up on top. No-op on a single-surface
+// backend (the TUI) that can't reorder OS windows.
+func (d *Desktop) RaiseToFront() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	if ns, ok := surf.(platform.NativeSurface); ok {
+		ns.Raise()
 	}
 }
 
