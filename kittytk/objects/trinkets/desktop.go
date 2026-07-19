@@ -1021,6 +1021,18 @@ func (d *Desktop) ExitSoloMode() {
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 	d.createTornHost(win, 0, 0)
 
+	// Stagger the revealed desktop down-right off the re-homed window (which
+	// stays at the old primary origin), so the two don't sit exactly on top of
+	// each other. The offset is a cascade step sized to the window's title bar
+	// plus the menu bar (and the frame border), so the re-homed window's title
+	// and menu bars peek out above and to the left of the desktop rather than
+	// being fully covered by it.
+	if ns, ok := surf.(platform.NativeSurface); ok {
+		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(win))
+		x, y := ns.ScreenPositionPx()
+		ns.SetScreenPositionPx(x+off, y+off)
+	}
+
 	d.invalidateSurface()
 }
 

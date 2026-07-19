@@ -834,11 +834,18 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 		if !main.IsTearable() {
 			t.Error("app window did not regain its tearable/redock handle")
 		}
-		// The torn window lands at the primary's rectangle (same location).
+		// The torn window keeps the old primary rectangle; the revealed desktop is
+		// staggered down-right off it by a cascade step (title bar + menu bar +
+		// frame border), so the app's chrome peeks out rather than being fully
+		// covered by the desktop on top.
 		torn := plat.surfaces[1]
-		if torn.x != primary.x || torn.y != primary.y {
-			t.Errorf("torn window at (%d,%d), want the primary's (%d,%d)",
-				torn.x, torn.y, primary.x, primary.y)
+		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
+		if off <= 0 {
+			t.Fatalf("cascade offset should be positive, got %d", off)
+		}
+		if primary.x != torn.x+off || primary.y != torn.y+off {
+			t.Errorf("desktop primary at (%d,%d), want the torn window's (%d,%d) staggered by %d",
+				primary.x, primary.y, torn.x, torn.y, off)
 		}
 		if torn.size != primary.size {
 			t.Errorf("torn window size %v, want the primary's %v", torn.size, primary.size)
