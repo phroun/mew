@@ -64,6 +64,11 @@ func main() {
 	tuiOpts.OSC52Clipboard = cfg.UseTUIOSC52Clipboard()
 	tuiOpts.OSC52Paste = cfg.UseTUIOSC52Paste()
 
+	// Free the host's built-in accelerators before the desktop is created: the Ψ
+	// system menu is built inside NewDesktop and never rebuilt, so its Exit
+	// Desktop shortcut must be cleared first.
+	mewhost.ClearHostShortcuts()
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tui.NewTUIBackend(tuiOpts))
 

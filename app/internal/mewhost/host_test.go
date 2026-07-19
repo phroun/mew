@@ -110,7 +110,7 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 func TestClearHostShortcuts(t *testing.T) {
 	// Seed the shipped defaults so the test is meaningful regardless of order.
 	core.DefaultKeyBindings.SetDefaults()
-	clearHostShortcuts()
+	ClearHostShortcuts()
 
 	for _, action := range []string{
 		core.ActionQuit, core.ActionAppHide, core.ActionAppHideOthers,

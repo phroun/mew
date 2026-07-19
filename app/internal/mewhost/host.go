@@ -48,10 +48,6 @@ func SplitArgs(args []string) (launch []string, wantVersion, wantHelp bool) {
 // editor (launching launchArgs) and serves the display socket. The caller runs
 // the desktop afterward.
 func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string) {
-	// Free the host's built-in accelerators before any menu is synthesized, so
-	// those keys reach the mew editor instead of the host (see below).
-	clearHostShortcuts()
-
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMenuBarContent(buildMenus(desktop, application))
@@ -165,22 +161,28 @@ func firstOperand(argv []string) string {
 	return ""
 }
 
-// clearHostShortcuts removes the KittyTK host's built-in menu accelerators from
-// the global keybinding registry BEFORE the menus are synthesized, so their keys
-// fall through to the mew editor instead of being swallowed by the host: ^Q
-// (Quit), ^H/M-^H (Hide/Hide Others), M-^X (Exit Desktop), and ^X/^C/^V/M-a
-// (Cut/Copy/Paste/Select All). mew is a full text editor and binds most of these
-// itself, so the host must not intercept them.
+// ClearHostShortcuts removes the KittyTK host's built-in menu accelerators from
+// the global keybinding registry so their keys fall through to the mew editor
+// instead of being swallowed by the host: ^Q (Quit), ^H/M-^H (Hide/Hide Others),
+// M-^X (Exit Desktop), and ^X/^C/^V/M-a (Cut/Copy/Paste/Select All). mew is a
+// full text editor and binds most of these itself, so the host must not
+// intercept them.
+//
+// Call this BEFORE trinkets.NewDesktop(): the Ψ system menu (which carries Exit
+// Desktop) is built once inside NewDesktop by reading this registry, and is not
+// rebuilt afterward - so clearing later leaves M-^X on it. The app/edit/window
+// menus are rebuilt on every menu-bar composition, so those pick up the cleared
+// registry regardless; the system menu is the one that must be cleared up front.
 //
 // The actions stay reachable from the menus (clicking still works; the
-// synthesized items just render without an accelerator - all four synthesis
-// sites guard on len(keys) > 0, so an empty binding is safe). New Window and Raw
-// Key Input are app-declared in buildMenus below and simply carry no shortcut.
+// synthesized items just render without an accelerator - all synthesis sites
+// guard on len(keys) > 0, so an empty binding is safe). New Window and Raw Key
+// Input are app-declared in buildMenus below and simply carry no shortcut.
 //
 // This is a deliberate stopgap: it removes the conflicts now. Real rebinding and
 // the accessibility story (keyboard reachability of these actions) come with the
 // planned keybinding overhaul.
-func clearHostShortcuts() {
+func ClearHostShortcuts() {
 	for _, action := range []string{
 		core.ActionQuit,
 		core.ActionAppHide,

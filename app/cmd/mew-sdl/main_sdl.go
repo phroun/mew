@@ -71,6 +71,11 @@ func main() {
 	// cross-platform clipboard integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
 
+	// Free the host's built-in accelerators before the desktop is created: the Ψ
+	// system menu is built inside NewDesktop and never rebuilt, so its Exit
+	// Desktop shortcut must be cleared first.
+	mewhost.ClearHostShortcuts()
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
 	// The UI font stays one cell tall in UNITS (12); font_size makes it render
