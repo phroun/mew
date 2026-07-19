@@ -81,20 +81,45 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	// maximized/restored state has no bearing on this. Rebuilding the menus keeps
 	// mew's New Window item in step; SetMenuBarContent tells the desktop to
 	// recompose the visible bar (including the system Window menu).
+	var root *window.Window
 	desktop.SetOnApplicationsChanged(func() {
 		multi := otherForegroundApps(desktop, application) > 0
-		if multi == application.MultiWindow() {
-			return
+		if multi != application.MultiWindow() {
+			application.SetMultiWindow(multi)
+			application.SetMenuBarContent(buildMenus(desktop, application, multi))
 		}
-		application.SetMultiWindow(multi)
-		application.SetMenuBarContent(buildMenus(desktop, application, multi))
+		// The app count also drives the desktop chrome (Ψ menu, status bar) and
+		// therefore the client area, so re-fit the maximized root window to the
+		// new bounds - otherwise it stays sized to the old area and ends up
+		// occluded by (or short of) the menu/status bars that just appeared or
+		// vanished. This is the "re-maximize on returning to single mode" (and
+		// entering multi mode) requirement.
+		refitRoot(desktop, root)
 	})
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
-		startRootWindow(desktop, application, launchArgs)
+		root = startRootWindow(desktop, application, launchArgs)
 		serveSocket(desktop, cfg)
 	})
+}
+
+// refitRoot re-maximizes the docked root window to the current client area, so
+// it tracks the desktop chrome (Ψ menu, status bar) appearing or disappearing
+// as the app set changes. No-op before the window exists, when it is not
+// maximized (a deliberately restored/floating window is left alone), or on the
+// graphical host (the window is lifted onto its own surface, not manager-
+// managed).
+func refitRoot(desktop *trinkets.Desktop, root *window.Window) {
+	if root == nil || !root.IsMaximized() {
+		return
+	}
+	wm := desktop.WindowManager()
+	if wm == nil || !windowManaged(wm, root) {
+		return
+	}
+	wm.MaximizeWindow(root) // recomputes bounds to the current client area
+	desktop.Update()
 }
 
 // otherForegroundApps counts the non-context-only applications on the desktop
