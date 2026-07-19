@@ -106,6 +106,11 @@ type Window struct {
 	// Position before maximization (for restore)
 	normalBounds core.UnitRect
 
+	// stateBeforeMinimize is the state the window was in when it was minimized
+	// (Normal or Maximized), so Restore returns it to the right one — a
+	// maximized window minimized to the dock comes back maximized, not normal.
+	stateBeforeMinimize WindowState
+
 	// Content
 	content core.Trinket
 	layout  core.LayoutManager
@@ -483,7 +488,14 @@ func (w *Window) Minimize() {
 		return
 	}
 
-	w.normalBounds = w.Bounds()
+	// Remember what to come back to. Only capture normalBounds from a NORMAL
+	// window: a maximized window's Bounds() is the full maximized rect, and
+	// normalBounds already holds its pre-maximize floating size — overwriting it
+	// here would lose that (and, with the state, its maximized-ness).
+	w.stateBeforeMinimize = w.state
+	if w.state == WindowStateNormal {
+		w.normalBounds = w.Bounds()
+	}
 	w.state = WindowStateMinimized
 	handler := w.onStateChange
 	w.mu.Unlock()
@@ -495,7 +507,11 @@ func (w *Window) Minimize() {
 	}
 }
 
-// Restore restores the window from maximized or minimized state.
+// Restore restores the window from maximized or minimized state. A window
+// minimized while maximized comes back MAXIMIZED (not normal); the window
+// manager re-applies the client-area bounds for that case (RestoreWindow), since
+// the window itself doesn't know the client area. Un-minimizing to normal (or
+// un-maximizing) restores the saved floating bounds here.
 func (w *Window) Restore() {
 	w.mu.Lock()
 	if w.state == WindowStateNormal {
@@ -503,16 +519,25 @@ func (w *Window) Restore() {
 		return
 	}
 
+	restoreTo := WindowStateNormal
+	if w.state == WindowStateMinimized && w.stateBeforeMinimize == WindowStateMaximized {
+		restoreTo = WindowStateMaximized
+	}
 	bounds := w.normalBounds
-	w.state = WindowStateNormal
+	w.state = restoreTo
+	w.stateBeforeMinimize = WindowStateNormal
 	w.pressedButton = TitleButtonNone // Reset pressed button state
 	handler := w.onStateChange
 	w.mu.Unlock()
 
-	w.SetBounds(bounds)
+	// Only the un-maximize/normal case restores the floating bounds; a
+	// return-to-maximized is resized to the client area by the manager.
+	if restoreTo == WindowStateNormal {
+		w.SetBounds(bounds)
+	}
 
 	if handler != nil {
-		handler(WindowStateNormal)
+		handler(restoreTo)
 	}
 }
 

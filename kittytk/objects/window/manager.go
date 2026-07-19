@@ -1626,6 +1626,14 @@ func (m *WindowManager) MinimizeWindow(win *Window) {
 // RestoreWindow restores a minimized window.
 func (m *WindowManager) RestoreWindow(win *Window) {
 	win.Restore()
+	// A window minimized while maximized comes back maximized: re-fit it to the
+	// current client area (its saved bounds are the pre-maximize floating size,
+	// and Restore deliberately left the bounds alone for this case). Without this
+	// it keeps stale bounds and, for a NoTitleWhenMaximized window, its frame,
+	// until the next manual resize/maximize.
+	if win.IsMaximized() {
+		win.SetBounds(m.ClientArea())
+	}
 	m.ActivateWindow(win)
 
 	// Notify via callback (for dock row integration)
