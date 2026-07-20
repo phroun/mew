@@ -42,19 +42,36 @@ type ButtonSpan struct {
 	ShadowColor string // SGR for the shadow cell
 }
 
-// asDisplaySpan expands a ButtonSpan to the general form.
+// Bidi isolate controls wrapping every button (see asDisplaySpan).
+const (
+	firstStrongIsolate = '⁨' // FSI
+	popDirIsolate      = '⁩' // PDI
+)
+
+// asDisplaySpan expands a ButtonSpan to the general form. The whole button
+// (caps + title + shadow) is wrapped in a First Strong Isolate / Pop
+// Directional Isolate pair so bidi resolves it as one atomic directional
+// object: the interior's direction is set by its own first strong character
+// and no surrounding RTL text can pull the button's chrome apart or reverse
+// it. The isolates are zero-width (see textwidth) and, like the caps, carry no
+// document rune (Doc -1); they steer our layout pass only.
 func (b ButtonSpan) asDisplaySpan() DisplaySpan {
-	runes := append([]rune(nil), b.Runes...)
-	styles := make([]string, len(b.Runes))
-	docs := make([]int, len(b.Runes))
-	for i := range styles {
+	runes := make([]rune, 0, len(b.Runes)+3)
+	runes = append(runes, firstStrongIsolate)
+	runes = append(runes, b.Runes...)
+	if b.Shadow != 0 {
+		runes = append(runes, b.Shadow)
+	}
+	runes = append(runes, popDirIsolate)
+
+	styles := make([]string, len(runes))
+	docs := make([]int, len(runes))
+	for i := range runes {
 		styles[i] = b.Color
 		docs[i] = -1
 	}
 	if b.Shadow != 0 {
-		runes = append(runes, b.Shadow)
-		styles = append(styles, b.ShadowColor)
-		docs = append(docs, -1)
+		styles[len(styles)-2] = b.ShadowColor // shadow sits just before the PDI
 	}
 	return DisplaySpan{Start: b.Start, End: b.End, Runes: runes, Doc: docs, Style: styles, Collapse: true}
 }

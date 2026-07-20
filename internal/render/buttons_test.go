@@ -1,10 +1,15 @@
 package render
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/phroun/mew/internal/bidi"
+)
 
 // A Collapse span (a button): display text, forced-color cells, and the
 // doc<->display maps that keep the caret and selection honest. "ab[[x]]cd" with
-// [2,7) replaced by "<X>" + shadow.
+// [2,7) replaced by "<X>" + shadow. The button is bracketed by an FSI/PDI
+// isolate pair (zero-width chrome cells) so it stays atomic under bidi.
 func TestSubstituteButtonMapping(t *testing.T) {
 	doc := []rune("ab[[x]]cd")
 	span := ButtonSpan{
@@ -15,25 +20,68 @@ func TestSubstituteButtonMapping(t *testing.T) {
 	if d == nil {
 		t.Fatal("substitution expected")
 	}
-	if d.Text != "ab<X>█cd" {
+	// display cells: a b FSI < X > █ PDI c d
+	if d.Text != "ab⁨<X>█⁩cd" {
 		t.Fatalf("display text = %q", d.Text)
 	}
 	// Doc boundaries: 0,1 unchanged; 2..6 (inside a Collapse span) park at the
-	// button start (display 2); 7 (span end) lands after the shadow (6); 8,9.
-	want := []int{0, 1, 2, 2, 2, 2, 2, 6, 7, 8}
+	// button start — the FSI cell (display 2); 7 (span end) lands after the PDI
+	// (display 8); 8,9.
+	want := []int{0, 1, 2, 2, 2, 2, 2, 8, 9, 10}
 	for p, wd := range want {
 		if d.DocToDisp[p] != wd {
 			t.Fatalf("DocToDisp[%d] = %d, want %d", p, d.DocToDisp[p], wd)
 		}
 	}
-	wantDoc := []int{0, 1, -1, -1, -1, -1, 7, 8}
+	// Content doc runes only reappear after the isolate: display 8,9 -> doc 7,8;
+	// every chrome/isolate cell between is -1.
+	wantDoc := []int{0, 1, -1, -1, -1, -1, -1, -1, 7, 8}
 	for i, wd := range wantDoc {
 		if d.DispToDoc[i] != wd {
 			t.Fatalf("DispToDoc[%d] = %d, want %d", i, d.DispToDoc[i], wd)
 		}
 	}
-	if d.Forced[2] != "B" || d.Forced[5] != "S" || d.Forced[0] != "" {
+	// FSI (2) and a cap (3) take the button color; the shadow (6) its own; the
+	// leading doc cell (0) none.
+	if d.Forced[3] != "B" || d.Forced[6] != "S" || d.Forced[0] != "" {
 		t.Fatalf("forced colors wrong: %q", d.Forced)
+	}
+}
+
+// The isolate wrapping does its job: a button set among RTL text under an RTL
+// base keeps its caps and title in left-to-right logical order, instead of
+// being reversed into the surrounding run (which is what happens without the
+// FSI/PDI pair — the un-isolated brackets resolve to R and flip).
+func TestButtonBidiIsolation(t *testing.T) {
+	he := []rune("אב") // strong-RTL neighbours on both sides
+	// doc: <he> LINK <he>, LINK occupying doc [2,4).
+	doc := append([]rune{}, he...)
+	doc = append(doc, 'X', 'X') // placeholder runes the button replaces
+	doc = append(doc, he...)
+	span := ButtonSpan{Start: 2, End: 4, Runes: []rune("[L]"), Color: "B"}.Span()
+	d := substituteSpans(doc, []DisplaySpan{span}, false)
+	if d == nil {
+		t.Fatal("substitution expected")
+	}
+	layout := bidi.Compute(d.Runes, true) // base RTL
+	if layout == nil {
+		t.Fatal("mixed-direction line should need layout")
+	}
+	// Visual slot of each button glyph in logical order.
+	slotOf := func(r rune) int {
+		for vslot, log := range layout.Perm {
+			if d.Runes[log] == r {
+				return vslot
+			}
+		}
+		return -1
+	}
+	l, mid, rgt := slotOf('['), slotOf('L'), slotOf(']')
+	if l < 0 || mid < 0 || rgt < 0 {
+		t.Fatalf("button glyphs missing from layout: %d %d %d", l, mid, rgt)
+	}
+	if !(l < mid && mid < rgt) {
+		t.Fatalf("isolated button must keep left-to-right order; got slots [%d]<L>%d<]>%d", l, mid, rgt)
 	}
 }
 
