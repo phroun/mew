@@ -176,6 +176,79 @@ func TestClearOptionRevertsToConfiguredDefault(t *testing.T) {
 	}
 }
 
+// set_option with no value opens a prompt seeded from the registry: the label
+// lists the choices, the history holds every value in order with the current
+// value repeated as the last filled line (the default on empty), and the cursor
+// starts on a trailing blank line.
+func TestSetOptionPromptsForValue(t *testing.T) {
+	e, w := newTestEditor(t, "x\n") // direction defaults ltr
+
+	e.PawScript.ExecuteAsync("set_option 'direction'")
+	fw := focusedPrompt(e)
+	if fw == nil {
+		t.Fatal("set_option with no value should open a prompt")
+	}
+	if len(fw.RowMessages) == 0 || !strings.Contains(fw.RowMessages[0], "Set direction (ltr/rtl)") {
+		t.Fatalf("prompt label = %v, want it to list (ltr/rtl)", fw.RowMessages)
+	}
+	if got := fw.Buffer.GetContent(); !strings.Contains(got, "ltr\nrtl\n") {
+		t.Fatalf("prompt history %q should list the values in order", got)
+	}
+	// Cursor on a blank line, with the current value (ltr) just above it.
+	if cur := strings.TrimRight(fw.Buffer.GetLine(fw.CursorPos().Line), "\n\r"); cur != "" {
+		t.Fatalf("cursor should start on the blank input line, got %q", cur)
+	}
+	if last := strings.TrimRight(fw.Buffer.GetLine(fw.CursorPos().Line-1), "\n\r"); last != "ltr" {
+		t.Fatalf("last filled line = %q, want the current value ltr", last)
+	}
+
+	// Empty accept keeps the current value.
+	answerPrompt(t, e, "")
+	if v, _ := e.getOption(w, "direction"); v != "ltr" {
+		t.Fatalf("empty accept should keep ltr, got %q", v)
+	}
+
+	// Typing a value applies it.
+	e.PawScript.ExecuteAsync("set_option 'direction'")
+	answerPrompt(t, e, "rtl")
+	if v, _ := e.getOption(w, "direction"); v != "rtl" {
+		t.Fatalf("typed rtl should apply, got %q", v)
+	}
+
+	// The repeated last-filled line now follows the new current value.
+	e.PawScript.ExecuteAsync("set_option 'direction'")
+	fw = focusedPrompt(e)
+	if fw == nil {
+		t.Fatal("expected prompt")
+	}
+	if last := strings.TrimRight(fw.Buffer.GetLine(fw.CursorPos().Line-1), "\n\r"); last != "rtl" {
+		t.Fatalf("last filled line after set = %q, want rtl", last)
+	}
+	cancelPrompt(t, e)
+}
+
+// A non-enumerable option (no fixed value list) still prompts, offering just the
+// current value as the editable default; no choice list appears in the label.
+func TestSetOptionPromptNonEnumerable(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	e.setOption(w, "tabSize", "4")
+	e.PawScript.ExecuteAsync("set_option 'tabSize'")
+	fw := focusedPrompt(e)
+	if fw == nil {
+		t.Fatal("set_option tabSize with no value should prompt")
+	}
+	if !strings.Contains(fw.RowMessages[0], "Set tabSize:") {
+		t.Fatalf("non-enumerable label should be a plain 'Set tabSize:' with no choice list: %q", fw.RowMessages[0])
+	}
+	if last := strings.TrimRight(fw.Buffer.GetLine(fw.CursorPos().Line-1), "\n\r"); last != "4" {
+		t.Fatalf("default line = %q, want current tabSize 4", last)
+	}
+	answerPrompt(t, e, "8")
+	if v, _ := e.getOption(w, "tabSize"); v != "8" {
+		t.Fatalf("typed tabSize should apply, got %q", v)
+	}
+}
+
 // clear_option through the command path targets the active main-buffer window.
 func TestClearOptionCommand(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")

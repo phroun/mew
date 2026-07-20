@@ -1991,15 +1991,20 @@ func (e *Editor) registerCommands() {
 	// set_option <name>, <value> - change a runtime editor option on the last
 	// active editor window (NOTE: arguments are comma-separated).
 	ps.RegisterCommand("set_option", func(ctx *pawscript.Context) pawscript.Result {
-		if len(ctx.Args) < 2 {
-			e.ShowWarning("Usage: set_option <name>, <value>")
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: set_option <name>[, <value>]")
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		value := fmt.Sprintf("%v", ctx.Args[1])
 		// Target the last active main-buffer window, not whatever is focused
 		// (a prompt window would be focused and is about to close).
 		w := e.WindowManager.GetLastMainBufferWindow()
+		if len(ctx.Args) < 2 {
+			// No value given: prompt for one, seeding the choices from the
+			// registry (the same value list set_option_next rotates through).
+			return pawscript.BoolStatus(e.promptSetOption(w, name))
+		}
+		value := fmt.Sprintf("%v", ctx.Args[1])
 		return pawscript.BoolStatus(e.setOption(w, name, value))
 	})
 

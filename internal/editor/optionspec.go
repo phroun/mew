@@ -217,3 +217,45 @@ func (e *Editor) rotateOption(w *window.Window, name string, dir int) bool {
 	}
 	return e.setOption(w, name, spec.Values[next])
 }
+
+// promptSetOption opens an input prompt for an option's value — used when
+// set_option is called with just a name. The label lists the canonical choices
+// ("Set direction (ltr/rtl): "), and the prompt history is seeded with every
+// value in registry order followed by the current value as the last filled
+// line, so pressing Up walks the choices and Enter on the blank line keeps the
+// current value (the assumed default). Options with no fixed value list just
+// offer the current value as an editable default. Returns true once the prompt
+// is open (the set happens in the callback); false for an unknown option.
+func (e *Editor) promptSetOption(w *window.Window, name string) bool {
+	spec, ok := lookupOptionSpec(name)
+	if !ok {
+		e.ShowWarning("Unknown option: " + name)
+		return false
+	}
+	cur, _ := e.getOption(w, spec.Name)
+
+	label := "Set " + spec.Name
+	if len(spec.Values) > 0 {
+		label += " (" + strings.Join(spec.Values, "/") + ")"
+	}
+	label += ": "
+
+	// One value per history line; the current value is repeated as the last
+	// filled line, and the trailing "\n" leaves the cursor on a blank input line
+	// whose Enter falls back to that default.
+	lines := append(append([]string{}, spec.Values...), cur)
+	initial := strings.Join(lines, "\n") + "\n"
+
+	e.PromptMgr.PromptForInput(label, initial, func(accepted bool, _, text string) {
+		defer e.RequestRender()
+		if !accepted {
+			return
+		}
+		v := strings.TrimSpace(text)
+		if v == "" {
+			v = cur // empty input keeps the current value
+		}
+		e.setOption(w, spec.Name, v)
+	}, "")
+	return true
+}
