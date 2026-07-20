@@ -13,7 +13,13 @@ import (
 // keyNameMap maps handler key names to mew's expected key names.
 // These should match the primary names in the key alias groups in sequence.go
 var keyNameMap = map[string]string{
-	"Escape":    "esc",
+	"Escape": "esc",
+	// Space arrives as its literal character " " (printables are named by
+	// themselves), but a bare space can't be a token in mew's space-separated
+	// binding syntax — bindings must spell it "space" (e.g. "^B space"). Map the
+	// character to that word so a pressed spacebar matches, and modified forms
+	// ("M- " -> "M-space") fall out of the prefix logic below.
+	" ":         "space",
 	"Tab":       "tab",
 	"Enter":     "return",
 	"Backspace": "back", // Primary for {"back", "^H", "backspace"} group
