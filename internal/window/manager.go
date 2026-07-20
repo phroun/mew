@@ -81,6 +81,11 @@ type ViewState struct {
 	// ReadOnly rejects content edits made through this window; navigation,
 	// search, marks, and undo/redo remain available. Per window; default false.
 	ReadOnly bool
+	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
+	// "go conf") whose highlighter should skip this document's project
+	// .mew/syntax folder and resolve from the user's own copy (mew:/syntax),
+	// the built-in set, or JOE instead. Per window; inherits the editor default.
+	SyntaxOverrides string
 }
 
 // MarksVisible reports whether showMarks draws any mark indicators for this
@@ -650,6 +655,7 @@ type WindowOptions struct {
 	ReadOnly        bool
 	ShowRuler       bool
 	TabSize         int
+	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
 	SetFocus        bool
 	CustomRenderer  string
 
@@ -739,6 +745,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			ReadOnly:        opts.ReadOnly,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
+			SyntaxOverrides: opts.SyntaxOverrides,
 		},
 		MinHeight:           minHeight,
 		MaxHeight:           opts.MaxHeight,

@@ -601,6 +601,55 @@ func TestProjectSyntaxDir(t *testing.T) {
 	}
 }
 
+// parseSyntaxOverrides accepts space-, comma-, and semicolon-separated flavor
+// lists and lowercases them.
+func TestParseSyntaxOverrides(t *testing.T) {
+	for _, in := range []string{"go conf", "go,conf", "  Go ; CONF ", "go\tconf"} {
+		set := parseSyntaxOverrides(in)
+		if !set["go"] || !set["conf"] || len(set) != 2 {
+			t.Fatalf("parseSyntaxOverrides(%q) = %v", in, set)
+		}
+	}
+	if parseSyntaxOverrides("") != nil || parseSyntaxOverrides("   ") != nil {
+		t.Fatal("empty input should yield a nil set")
+	}
+}
+
+// syntaxOverrides makes a listed flavor skip the document's project .mew/syntax
+// folder, so a project-only grammar no longer resolves under that name.
+func TestSyntaxOverridesSkipsProjectDir(t *testing.T) {
+	proj := t.TempDir()
+	mew := proj + "/.mew"
+	if err := os.MkdirAll(mew+"/syntax", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grammar := "=Idle\n=Zap\tbold red\n:idle Idle\n\t*\tidle\n\t\"z\"\tzap\trecolor=-1\n:zap Zap\n\t*\tidle\tnoeat\n"
+	if err := os.WriteFile(mew+"/syntax/zzgrammar.jsf", []byte(grammar), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Baseline: the project grammar resolves through the normal cascade.
+	e, _, _ := renderedEditorWithConfig(t, "z\n", "[general]\n")
+	e.LoadedConfig.ProjectDirs = []string{mew}
+	if _, err := e.resolveSyntaxFile("zzgrammar", false); err != nil {
+		t.Fatalf("project grammar should resolve with the project layer: %v", err)
+	}
+	// Skipping the project layer removes the only source, so it no longer loads.
+	if _, err := e.resolveSyntaxFile("zzgrammar", true); err == nil {
+		t.Fatal("skipProject should bypass the project .mew/syntax dir")
+	}
+
+	// End to end through the override loader: with zzgrammar overridden, the
+	// grammar (project-only) no longer loads.
+	if !e.setSyntax("zzgrammar") {
+		t.Fatal("baseline: project grammar should load")
+	}
+	e.Config.SyntaxOverrides = "zzgrammar"
+	if e.setSyntax("zzgrammar") {
+		t.Fatal("an overridden project-only grammar should fail to resolve")
+	}
+}
+
 // The conf grammar follows mew's own editor.conf rules.
 func TestConfGrammarMewRules(t *testing.T) {
 	const sgrEscape = "\x1b[0;96;40m" // syntaxEscape

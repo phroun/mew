@@ -213,9 +213,18 @@ type Editor struct {
 	// path and interns grammar instances; synCaches holds per-buffer line
 	// colors; synSGR memoizes color-class resolution (see syntaxhl.go).
 	syntaxLoader  *jsf.Loader
-	syntaxGrammar *jsf.Instance
-	synCaches     map[*buffer.Buffer]*synCache
-	synSGR        map[*jsf.ColorRef]string
+	// syntaxLoaderOverride resolves grammars with the project .mew/syntax layer
+	// skipped, for flavors named in the syntaxOverrides option. It is a separate
+	// loader so an overridden and a project-resolved instance of the same grammar
+	// name never collide in one instance cache. A grammar must be highlighted
+	// through the loader that produced it, so bufferGrammar returns both.
+	syntaxLoaderOverride *jsf.Loader
+	syntaxGrammar        *jsf.Instance
+	// syntaxGrammarLoader is the loader that produced syntaxGrammar (the global
+	// fallback grammar), honoring the editor-wide syntaxOverrides.
+	syntaxGrammarLoader *jsf.Loader
+	synCaches           map[*buffer.Buffer]*synCache
+	synSGR              map[*jsf.ColorRef]string
 
 	// Outline breadcrumb state (see outline.go): compiled [outline.*]
 	// patterns and the last computed breadcrumb.
@@ -264,6 +273,7 @@ type Config struct {
 	ReadOnly         bool
 	Syntax           string
 	SyntaxDetect     bool
+	SyntaxOverrides  string // space-separated grammar flavors that skip the project folder
 
 	// go_match fallback context flags (see config.GeneralConfig).
 	MatchIgnoresSingleQuote  bool
@@ -547,6 +557,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ReadOnly = loadedConfig.General.ReadOnly
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
+	cfg.SyntaxOverrides = loadedConfig.General.SyntaxOverrides
 	cfg.MatchIgnoresSingleQuote = loadedConfig.General.MatchIgnoresSingleQuote
 	cfg.MatchIgnoresDoubleQuote = loadedConfig.General.MatchIgnoresDoubleQuote
 	cfg.MatchIgnoresSlashStar = loadedConfig.General.MatchIgnoresSlashStar
@@ -2148,6 +2159,12 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 		return e.Config.Syntax, true
 	case "syntaxdetect":
 		return boolText(e.Config.SyntaxDetect), true
+	case "syntaxoverrides":
+		v := e.Config.SyntaxOverrides
+		if w != nil {
+			v = w.ViewState.SyntaxOverrides
+		}
+		return v, true
 	case "macoptionkeys":
 		if e.Config.MacOptionKeys == "" {
 			return "auto", true
@@ -2337,6 +2354,17 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 		}
 		e.Config.SyntaxDetect = b
 		e.resetSyntaxCaches()
+	case "syntaxoverrides":
+		v := strings.TrimSpace(value)
+		if w != nil {
+			w.ViewState.SyntaxOverrides = v
+		} else {
+			e.Config.SyntaxOverrides = v
+		}
+		// Grammar file resolution changes, so drop cached grammars and reload
+		// the global grammar under the new override set.
+		e.resetSyntaxCaches()
+		e.reloadGlobalGrammar()
 	case "macoptionkeys":
 		v := strings.ToLower(strings.TrimSpace(value))
 		if v != "auto" && v != "true" && v != "false" {
@@ -5180,6 +5208,7 @@ func (e *Editor) stateSnapshot() map[string]interface{} {
 		"modebarLocation": e.Config.ModebarLocation,
 		"syntax":          e.Config.Syntax,
 		"syntaxDetect":    e.Config.SyntaxDetect,
+		"syntaxOverrides": e.Config.SyntaxOverrides,
 	}
 }
 
@@ -5214,6 +5243,9 @@ func applyInitialState(cfg *Config) {
 	}
 	if v, ok := stateBool(state, "syntaxDetect"); ok {
 		cfg.SyntaxDetect = v
+	}
+	if v, ok := state["syntaxOverrides"].(string); ok {
+		cfg.SyntaxOverrides = v
 	}
 }
 
@@ -5518,6 +5550,9 @@ func (e *Editor) toggleOptions() bool {
 	}
 	content.WriteString(fmt.Sprintf("  Syntax: %s\n", syntaxName))
 	content.WriteString(fmt.Sprintf("  Syntax Detect: %s\n", opt("syntaxDetect")))
+	if ov := opt("syntaxOverrides"); strings.TrimSpace(ov) != "" {
+		content.WriteString(fmt.Sprintf("  Syntax Overrides: %s\n", ov))
+	}
 	var ignores []string
 	for _, f := range []struct {
 		on    bool

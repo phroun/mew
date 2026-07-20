@@ -231,6 +231,7 @@ func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string,
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		SyntaxOverrides: e.Config.SyntaxOverrides,
 	})
 	w := e.WindowManager.GetWindow(id)
 	for name, value := range winOpts {

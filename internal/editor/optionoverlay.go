@@ -112,7 +112,7 @@ func (e *Editor) bufferGrammarName(b *buffer.Buffer) string {
 	if c := e.synCaches[b]; c != nil && c.grammar != nil {
 		return c.grammar.Name
 	}
-	if g := e.bufferGrammar(b); g != nil {
+	if g, _ := e.bufferGrammar(b); g != nil {
 		return g.Name
 	}
 	return ""

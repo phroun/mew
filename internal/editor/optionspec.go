@@ -57,6 +57,7 @@ var optionSpecs = []optionSpec{
 	{"readOnly", true, optBoolKind, boolValues},
 	{"showColumnRuler", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
+	{"syntaxOverrides", true, optStrKind, nil},
 
 	// Global editor options.
 	{"rulerShowsCursor", false, optBoolKind, boolValues},
@@ -141,6 +142,8 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
 	case "direction":
 		w.ViewState.Direction = e.optDir(w, "direction", e.Config.Direction)
+	case "syntaxoverrides":
+		w.ViewState.SyntaxOverrides = e.optStr(w, "syntaxoverrides", e.Config.SyntaxOverrides)
 	}
 }
 

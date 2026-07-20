@@ -103,6 +103,9 @@ var defaultSyntaxMap = map[string]string{
 type synCache struct {
 	seq     int64
 	grammar *jsf.Instance
+	// loader is the loader that produced grammar; highlighting runs through it so
+	// its interned frame/state pointers stay consistent across the buffer.
+	loader  *jsf.Loader
 	colors  [][]string
 	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
 	entries []jsf.LineState // entry state per computed line (for point queries)
@@ -120,16 +123,20 @@ var joeSyntaxDirs = []string{
 // resolveSyntaxFile finds a grammar file by name, in order: project .mew/syntax
 // directories (nearest project first, through the document FS), the user's
 // mew:/syntax tree (virtualizable), mew's built-in set, then — on a real OS —
-// installed JOE directories.
-func (e *Editor) resolveSyntaxFile(name string) ([]byte, error) {
+// installed JOE directories. When skipProject is set — for a flavor named in the
+// syntaxOverrides option — the project layer is skipped, so the user's own copy
+// (or a fallback) wins over whatever the document's project tree ships.
+func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error) {
 	// A grammar name is a bare identifier, never a path.
 	if strings.ContainsAny(name, "/\\") || name == "" {
 		return nil, fmt.Errorf("invalid syntax name %q", name)
 	}
-	pd := e.LoadedConfig.ProjectDirs
-	for i := len(pd) - 1; i >= 0; i-- {
-		if src, err := e.FS.ReadFile(filepath.Join(pd[i], "syntax", name+".jsf")); err == nil {
-			return src, nil
+	if !skipProject {
+		pd := e.LoadedConfig.ProjectDirs
+		for i := len(pd) - 1; i >= 0; i-- {
+			if src, err := e.FS.ReadFile(filepath.Join(pd[i], "syntax", name+".jsf")); err == nil {
+				return src, nil
+			}
 		}
 	}
 	if src, err := e.mew.ReadFile("mew:/syntax/" + name + ".jsf"); err == nil {
@@ -157,10 +164,55 @@ func (e *Editor) canonicalSyntaxName(name string) string {
 	if !ok || alias == "" {
 		return name
 	}
-	if _, err := e.resolveSyntaxFile(name); err == nil {
+	if _, err := e.resolveSyntaxFile(name, false); err == nil {
 		return name
 	}
 	return alias
+}
+
+// parseSyntaxOverrides splits a syntaxOverrides value ("go conf") into a set of
+// lowercased grammar flavors. Whitespace- and comma-separated names are both
+// accepted, so "go,conf" and "go conf" mean the same.
+func parseSyntaxOverrides(s string) map[string]bool {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == ',' || r == ';'
+	})
+	if len(fields) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[strings.ToLower(f)] = true
+	}
+	return set
+}
+
+// loaderFor returns the loader to resolve grammar name through: the project-
+// skipping loader when name is in the given syntaxOverrides set, else the normal
+// one.
+func (e *Editor) loaderFor(name string, overrides map[string]bool) *jsf.Loader {
+	if overrides[strings.ToLower(name)] {
+		return e.syntaxLoaderOverride
+	}
+	return e.syntaxLoader
+}
+
+// bufferSyntaxOverrides returns the effective syntaxOverrides set for buffer b:
+// the per-window value from a main-buffer window showing b (already resolved
+// through the option overlay into its ViewState), else the editor default. It
+// reads the stored ViewState value directly (not through the overlay) so it can
+// be called while the overlay is being resolved without recursing.
+func (e *Editor) bufferSyntaxOverrides(b *buffer.Buffer) map[string]bool {
+	raw := e.Config.SyntaxOverrides
+	if b != nil && e.WindowManager != nil {
+		for _, w := range e.WindowManager.AllWindows() {
+			if w.Type == window.MainBuffer && w.Buffer == b {
+				raw = w.ViewState.SyntaxOverrides
+				break
+			}
+		}
+	}
+	return parseSyntaxOverrides(raw)
 }
 
 // initSyntax prepares the highlighter and loads the configured grammar, if
@@ -168,12 +220,27 @@ func (e *Editor) canonicalSyntaxName(name string) string {
 func (e *Editor) initSyntax() {
 	e.synCaches = make(map[*buffer.Buffer]*synCache)
 	e.synSGR = make(map[*jsf.ColorRef]string)
-	e.syntaxLoader = jsf.NewLoader(e.resolveSyntaxFile)
+	e.syntaxLoader = jsf.NewLoader(func(name string) ([]byte, error) {
+		return e.resolveSyntaxFile(name, false)
+	})
+	e.syntaxLoaderOverride = jsf.NewLoader(func(name string) ([]byte, error) {
+		return e.resolveSyntaxFile(name, true)
+	})
+	e.reloadGlobalGrammar()
+}
+
+// reloadGlobalGrammar (re)loads the global fallback grammar from Config.Syntax
+// through the editor-wide syntaxOverrides, recording the loader that produced it.
+// Load problems surface as a transient error and leave highlighting off.
+func (e *Editor) reloadGlobalGrammar() {
+	e.syntaxGrammar = nil
+	e.syntaxGrammarLoader = nil
 	if e.Config.Syntax == "" {
 		return
 	}
 	name := e.canonicalSyntaxName(e.Config.Syntax)
-	in, err := e.syntaxLoader.Load(name)
+	ld := e.loaderFor(name, parseSyntaxOverrides(e.Config.SyntaxOverrides))
+	in, err := ld.Load(name)
 	if err != nil {
 		e.ShowError("Syntax: " + err.Error())
 		e.Config.Syntax = ""
@@ -181,6 +248,7 @@ func (e *Editor) initSyntax() {
 	}
 	e.Config.Syntax = name
 	e.syntaxGrammar = in
+	e.syntaxGrammarLoader = ld
 }
 
 // setSyntax switches the active grammar at runtime ("" or "none" disables).
@@ -191,17 +259,20 @@ func (e *Editor) setSyntax(name string) bool {
 	if name == "" {
 		e.Config.Syntax = ""
 		e.syntaxGrammar = nil
+		e.syntaxGrammarLoader = nil
 		e.resetSyntaxCaches()
 		return true
 	}
 	name = e.canonicalSyntaxName(name)
-	in, err := e.syntaxLoader.Load(name)
+	ld := e.loaderFor(name, parseSyntaxOverrides(e.Config.SyntaxOverrides))
+	in, err := ld.Load(name)
 	if err != nil {
 		e.ShowError("Syntax: " + err.Error())
 		return false
 	}
 	e.Config.Syntax = name
 	e.syntaxGrammar = in
+	e.syntaxGrammarLoader = ld
 	e.resetSyntaxCaches()
 	return true
 }
@@ -285,16 +356,20 @@ func shebangName(line string) string {
 
 // detectName resolves a detected short name (interpreter or extension)
 // through the [formats] table and the grammar search path, returning the
-// loaded grammar or nil.
-func (e *Editor) detectName(name string) *jsf.Instance {
+// loaded grammar and the loader that produced it (or nil, nil). overrides is
+// the effective syntaxOverrides set: a flavor listed there resolves through the
+// project-skipping loader instead.
+func (e *Editor) detectName(name string, overrides map[string]bool) (*jsf.Instance, *jsf.Loader) {
 	if name == "" {
-		return nil
+		return nil, nil
 	}
-	in, err := e.syntaxLoader.Load(e.canonicalSyntaxName(name))
+	canon := e.canonicalSyntaxName(name)
+	ld := e.loaderFor(canon, overrides)
+	in, err := ld.Load(canon)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return in
+	return in, ld
 }
 
 // vimModelineRe matches vim/vi/ex modelines: "vim: set ft=python:" or
@@ -342,23 +417,26 @@ func (e *Editor) modelineScan(b *buffer.Buffer) string {
 	return ""
 }
 
-// bufferGrammar picks the grammar for one buffer. With syntaxDetect on, a
+// bufferGrammar picks the grammar for one buffer, returning it alongside the
+// loader that produced it (nil, nil when none applies). With syntaxDetect on, a
 // first-line shebang wins, then a vim/emacs modeline, then the filename's
 // extension (or extensionless basename, e.g. Makefile) — all resolved
 // through [formats]; a buffer that detects nothing falls back to the global
-// syntax option's grammar.
-func (e *Editor) bufferGrammar(b *buffer.Buffer) *jsf.Instance {
+// syntax option's grammar. Flavors named in the buffer's effective
+// syntaxOverrides resolve with the project .mew/syntax layer skipped.
+func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 	if !e.Config.SyntaxDetect {
-		return e.syntaxGrammar
+		return e.syntaxGrammar, e.syntaxGrammarLoader
 	}
+	overrides := e.bufferSyntaxOverrides(b)
 	if b.GetLineCount() > 0 {
 		first := strings.TrimRight(b.GetLine(0), "\n\r")
-		if in := e.detectName(shebangName(first)); in != nil {
-			return in
+		if in, ld := e.detectName(shebangName(first), overrides); in != nil {
+			return in, ld
 		}
 	}
-	if in := e.detectName(e.modelineScan(b)); in != nil {
-		return in
+	if in, ld := e.detectName(e.modelineScan(b), overrides); in != nil {
+		return in, ld
 	}
 	if fn := b.GetFilename(); fn != "" {
 		base := strings.ToLower(filepath.Base(fn))
@@ -382,17 +460,17 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) *jsf.Instance {
 			sort.Strings(pats)
 			for _, p := range pats {
 				if rules[p] != "" && config.PathMatches(p, abs) {
-					if in := e.detectName(rules[p]); in != nil {
-						return in
+					if in, ld := e.detectName(rules[p], overrides); in != nil {
+						return in, ld
 					}
 				}
 			}
 		}
-		if in := e.detectName(name); in != nil {
-			return in
+		if in, ld := e.detectName(name, overrides); in != nil {
+			return in, ld
 		}
 	}
-	return e.syntaxGrammar
+	return e.syntaxGrammar, e.syntaxGrammarLoader
 }
 
 // ensureSynCache returns the buffer's highlight cache extended through
@@ -411,7 +489,8 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 	case c == nil:
 		e.pruneSyntaxCaches()
 		b.TakeDirtyLow() // consume any pre-cache history
-		c = &synCache{seq: b.ChangeSeq(), grammar: e.bufferGrammar(b)}
+		g, ld := e.bufferGrammar(b)
+		c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld}
 		e.synCaches[b] = c
 	case c.seq != b.ChangeSeq():
 		// Content changed: the dirty watermark says where the damage starts.
@@ -421,7 +500,8 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		// shebang detection, so that (and a grammarless cache) rebuilds.
 		low := b.TakeDirtyLow()
 		if low <= 0 || c.grammar == nil {
-			c = &synCache{seq: b.ChangeSeq(), grammar: e.bufferGrammar(b)}
+			g, ld := e.bufferGrammar(b)
+			c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld}
 			e.synCaches[b] = c
 		} else {
 			if low < len(c.colors) {
@@ -445,7 +525,7 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		for _, raw := range lines {
 			line := strings.TrimRight(raw, "\n\r")
 			c.entries = append(c.entries, c.next)
-			attrs, ctx, next := e.syntaxLoader.HighlightLineFull(c.grammar, c.next, []rune(line))
+			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, []rune(line))
 			colors := make([]string, len(attrs))
 			for j, ref := range attrs {
 				colors[j] = e.syntaxColorFor(ref)
@@ -490,7 +570,7 @@ func (e *Editor) syntaxContextAt(b *buffer.Buffer, docLine, runePos int) (jsf.Co
 		return jsf.Context{}, false
 	}
 	line := strings.TrimRight(b.GetLine(docLine), "\n\r")
-	return e.syntaxLoader.ContextAt(c.grammar, c.entries[docLine], []rune(line), runePos), true
+	return c.loader.ContextAt(c.grammar, c.entries[docLine], []rune(line), runePos), true
 }
 
 // pruneSyntaxCaches drops cache entries for buffers no longer shown in any

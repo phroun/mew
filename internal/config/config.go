@@ -313,6 +313,13 @@ type GeneralConfig struct {
 	// detect nothing fall back to the syntax option.
 	SyntaxDetect bool
 
+	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
+	// "go conf") whose highlighter should ignore the document's own project
+	// .mew/syntax folder and resolve from the user's copy (mew:/syntax), the
+	// built-in set, or JOE instead. A per-window option: it descends through
+	// the option overlay and can be overridden for one window or buffer.
+	SyntaxOverrides string
+
 	// The matchIgnores* flags configure go_match's FALLBACK context scanner
 	// for buffers with no syntax grammar: enabled constructs read as
 	// string/comment regions, so their brackets and tokens neither answer
@@ -868,6 +875,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 		if v, ok := opt["syntaxDetect"]; ok {
 			config.General.SyntaxDetect = parseBool(v, false)
+		}
+		if v, ok := opt["syntaxOverrides"]; ok {
+			config.General.SyntaxOverrides = stripQuotes(strings.TrimSpace(v))
 		}
 		if v, ok := opt["macOptionKeys"]; ok {
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
@@ -1754,6 +1764,13 @@ syntax=""
 # Makefile), both resolved through the [formats] table. Buffers that
 # detect nothing fall back to the syntax option above.
 syntaxDetect=false
+# Grammar flavors (space-separated) whose highlighter should ignore the
+# document's own project .mew/syntax folder and resolve from your copy in
+# ~/.mew/syntax, the built-in set, or JOE instead. Use this when a project
+# ships a grammar you would rather override with your own — e.g.
+# syntaxOverrides="go conf". Descends through the option overlay, so it can be
+# set for one window or buffer too.
+syntaxOverrides=""
 # go_match fallback context for buffers with NO syntax grammar: enabled
 # constructs read as strings/comments and are skipped when matching (a
 # grammar's real highlighter context supersedes these). Quotes do not span
