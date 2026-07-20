@@ -878,6 +878,27 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navLink(-1))
 	})
 
+	// nav_start: enter nav (browse) mode, focusing the first link at/after the
+	// caret. nav_up/nav_down move to the nearest link on the next/prior link
+	// line (paging when none remains on screen); nav_left/nav_right move to the
+	// optically adjacent link on the same line (bidi-aware). All four act only
+	// in active nav mode.
+	ps.RegisterCommand("nav_start", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navStart())
+	})
+	ps.RegisterCommand("nav_down", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navVert(+1))
+	})
+	ps.RegisterCommand("nav_up", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navVert(-1))
+	})
+	ps.RegisterCommand("nav_right", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHoriz(+1))
+	})
+	ps.RegisterCommand("nav_left", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHoriz(-1))
+	})
+
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {

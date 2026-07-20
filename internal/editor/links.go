@@ -1,7 +1,10 @@
 package editor
 
 import (
+	"strings"
+
 	"github.com/phroun/mew/internal/render"
+	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/window"
 )
 
@@ -204,6 +207,196 @@ func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
 	w.HasGhostCursor = false
 	w.IdealVisualColumn = 0
 	e.ensureCursorVisible(w)
+}
+
+// navStart enters nav (browse) mode programmatically. If the caret is already
+// in a link it just arms; otherwise it moves to the first link at/after the
+// caret (cycling). Fails when the layer is off or the buffer has no links.
+func (e *Editor) navStart() bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Type != window.MainBuffer || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+		return false
+	}
+	if e.caretLinkSpan(w) != nil {
+		if !w.BrowseActive {
+			w.BrowseActive = true
+			e.RequestRender()
+		}
+		return true
+	}
+	line, span, ok := e.firstLinkFromCaret(w)
+	if !ok {
+		return false
+	}
+	w.BrowseActive = true
+	e.setCursorForNav(w, line, span.Start+1)
+	e.RequestRender()
+	return true
+}
+
+// firstLinkFromCaret finds the first link at/after the caret in document
+// order, wrapping to the top. ok=false when the buffer has no links.
+func (e *Editor) firstLinkFromCaret(w *window.Window) (int, linkSpan, bool) {
+	pos := w.CursorPos()
+	n := w.Buffer.GetLineCount()
+	for L := pos.Line; L < n; L++ {
+		for _, s := range e.linkSpansOnLine(w, L) {
+			if L > pos.Line || s.Start >= pos.Rune {
+				return L, s, true
+			}
+		}
+	}
+	for L := 0; L < n; L++ {
+		if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+			return L, spans[0], true
+		}
+	}
+	return 0, linkSpan{}, false
+}
+
+// navVert (nav_down / nav_up) moves to the nearest link on the next / previous
+// link-bearing line, but never scrolls past the current screen: when there is
+// no further link line on screen it pages instead (go_page_next / go_page_prior)
+// and still reports success. On the target line the link is chosen by the ideal
+// caret column — the one that overlaps it, else the nearest, with the first
+// (down) / last (up) link as the tiebreak. Requires active nav mode; the caret
+// need not be on a link (so it still works right after a page).
+func (e *Editor) navVert(dir int) bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Type != window.MainBuffer || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+		return false
+	}
+	tabSize := e.tabSize(w)
+	curLine := w.CursorPos().Line
+	curRaw := strings.TrimRight(w.Buffer.GetLine(curLine), "\n\r")
+	refCol := e.plainVisualColumn(curRaw, w.CursorPos().Rune, tabSize)
+
+	top := w.ViewState.ViewOffsetY
+	bottom := top + w.ContentHeight - 1
+	if n := w.Buffer.GetLineCount() - 1; bottom > n {
+		bottom = n
+	}
+	for L := curLine + dir; L >= top && L <= bottom; L += dir {
+		spans := e.linkSpansOnLine(w, L)
+		if len(spans) == 0 {
+			continue
+		}
+		target := e.pickLinkByColumn(w, L, spans, refCol, dir, tabSize)
+		e.setCursorForNav(w, L, target.Start+1)
+		e.RequestRender()
+		return true
+	}
+	// No further link on the current screen: page, and treat that as success.
+	if dir > 0 {
+		e.pageDown()
+	} else {
+		e.pageUp()
+	}
+	e.trackMove()
+	e.RequestRender()
+	return true
+}
+
+// pickLinkByColumn chooses the link on line L nearest refCol (a plain
+// tab-aware column): a link whose column range contains refCol wins; else the
+// nearest by distance, with ties broken toward the first link when moving down
+// (dir >= 0) and the last when moving up.
+func (e *Editor) pickLinkByColumn(w *window.Window, L int, spans []linkSpan, refCol, dir, tabSize int) linkSpan {
+	raw := strings.TrimRight(w.Buffer.GetLine(L), "\n\r")
+	best := spans[0]
+	bestDist := -1
+	for _, s := range spans {
+		sc := e.plainVisualColumn(raw, s.Start, tabSize)
+		ec := e.plainVisualColumn(raw, s.End, tabSize)
+		if refCol >= sc && refCol < ec {
+			return s // overlap wins outright
+		}
+		d := sc - refCol
+		if d < 0 {
+			d = refCol - (ec - 1)
+		}
+		if d < 0 {
+			d = 0
+		}
+		// Down: strict < keeps the first (earliest) on a tie; up: <= lets a
+		// later link win a tie, giving the last.
+		if bestDist < 0 || d < bestDist || (dir < 0 && d == bestDist) {
+			best, bestDist = s, d
+		}
+	}
+	return best
+}
+
+// navHoriz (nav_left / nav_right) moves to the link optically left (dir -1) or
+// right (dir +1) of the focused link, on the same line only. It orders links
+// by visual column (bidi-aware), so under RTL "left" moves toward higher rune
+// numbers. Requires a focused button; no wrap. Returns false when there is no
+// link on that side.
+func (e *Editor) navHoriz(dir int) bool {
+	w := e.WindowManager.GetFocusedWindow()
+	cur := e.focusedLinkButton(w)
+	if cur == nil {
+		return false
+	}
+	line := w.CursorPos().Line
+	raw := strings.TrimRight(w.Buffer.GetLine(line), "\n\r")
+	tabSize := e.tabSize(w)
+	curCol := e.runeToVisualColumn(w, raw, cur.Start, tabSize)
+
+	found := false
+	var best linkSpan
+	var bestCol int
+	for _, s := range e.linkSpansOnLine(w, line) {
+		if s.Start == cur.Start {
+			continue
+		}
+		c := e.runeToVisualColumn(w, raw, s.Start, tabSize)
+		if dir > 0 { // optical right: the nearest link at a higher visual column
+			if c > curCol && (!found || c < bestCol) {
+				found, best, bestCol = true, s, c
+			}
+		} else { // optical left: the nearest at a lower visual column
+			if c < curCol && (!found || c > bestCol) {
+				found, best, bestCol = true, s, c
+			}
+		}
+	}
+	if !found {
+		return false
+	}
+	e.setCursorForNav(w, line, best.Start+1)
+	e.RequestRender()
+	return true
+}
+
+// plainVisualColumn is a bidi-agnostic, mark-free visual column of a rune
+// position on any line — tabs expand to the next stop, control chars take two
+// cells, other runes their terminal width. Used for vertical link picking,
+// where a consistent proxy across non-caret lines matters more than exact
+// bidi placement.
+func (e *Editor) plainVisualColumn(line string, runePos, tabSize int) int {
+	runes := []rune(line)
+	if runePos > len(runes) {
+		runePos = len(runes)
+	}
+	if tabSize <= 0 {
+		tabSize = 8
+	}
+	col := 0
+	for i := 0; i < runePos; i++ {
+		r := runes[i]
+		switch {
+		case r == '\t':
+			col += tabSize - (col % tabSize)
+		case r < 0x20 || r == 0x7f:
+			col += 2
+		default:
+			if wd := textwidth.Rune(r); wd > 0 {
+				col += wd
+			}
+		}
+	}
+	return col
 }
 
 // lineButtons is the renderer's ButtonProvider: the button replacements for

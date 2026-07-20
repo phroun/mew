@@ -282,6 +282,143 @@ func TestNavNextPrior(t *testing.T) {
 	step(-1, "a:b", 0)
 }
 
+// nav_start enters nav mode and focuses the first link at/after the caret.
+func TestNavStart(t *testing.T) {
+	e, w, _ := linkEditor(t, "no link here\ntext [[a:b|T]] end\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	e.updateBrowseState()
+	if w.BrowseActive {
+		t.Fatal("browse mode should be off before nav_start")
+	}
+	if !e.navStart() {
+		t.Fatal("nav_start should enter nav mode when a link exists")
+	}
+	if !w.BrowseActive {
+		t.Fatal("nav_start should arm browse mode")
+	}
+	b := e.focusedLinkButton(w)
+	if b == nil || b.Target != "a:b" {
+		t.Fatalf("nav_start should focus the first link; got %+v", b)
+	}
+	if w.CursorPos().Line != 1 {
+		t.Fatalf("caret should move to the link line; got line %d", w.CursorPos().Line)
+	}
+
+	// No links at all: nav_start fails and does not arm.
+	e2, w2, _ := linkEditor(t, "nothing to see here\n")
+	if e2.navStart() || w2.BrowseActive {
+		t.Fatal("nav_start must fail (not arm) when there are no links")
+	}
+}
+
+// nav_left / nav_right move to the optically adjacent link on the same line.
+func TestNavLeftRight(t *testing.T) {
+	// [[a]] [0,5), [[b]] [10,15), [[c]] [20,25) — ascending columns (LTR).
+	e, w, _ := linkEditor(t, "[[a]] mid [[b]] end [[c]]\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 11}) // inside [[b]]
+	e.updateBrowseState()
+	if b := e.focusedLinkButton(w); b == nil || b.Target != "b" {
+		t.Fatalf("should focus b; got %+v", b)
+	}
+	if !e.navHoriz(+1) || e.focusedLinkButton(w).Target != "c" {
+		t.Fatalf("right should move b -> c; got %+v", e.focusedLinkButton(w))
+	}
+	if e.navHoriz(+1) {
+		t.Fatal("right off the last link must not move")
+	}
+	if !e.navHoriz(-1) || e.focusedLinkButton(w).Target != "b" {
+		t.Fatalf("left should move c -> b; got %+v", e.focusedLinkButton(w))
+	}
+	if !e.navHoriz(-1) || e.focusedLinkButton(w).Target != "a" {
+		t.Fatalf("left should move b -> a; got %+v", e.focusedLinkButton(w))
+	}
+	if e.navHoriz(-1) {
+		t.Fatal("left off the first link must not move")
+	}
+}
+
+// Under RTL the left/right sense is optical: left moves toward higher rune
+// columns (later in reading order).
+func TestNavLeftRightRTL(t *testing.T) {
+	// Hebrew makes the line lay out right-to-left; the two ASCII links keep
+	// their reading order, so the earlier-rune link sits optically to the
+	// RIGHT. Link x at rune 4, link y at rune 16.
+	e, w, _ := renderedEditorWithConfig(t,
+		"אבג [[x|א]] דהו [[y|ב]] זחט\n", "[options]\nsyntax=dokuwiki\ndirection=rtl\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside x
+	e.updateBrowseState()
+	if b := e.focusedLinkButton(w); b == nil || b.Target != "x" {
+		t.Fatalf("should focus x; got %+v", b)
+	}
+	// Optical left, in RTL, advances reading order -> the higher-rune link y.
+	if !e.navHoriz(-1) {
+		t.Fatal("nav_left should move under RTL")
+	}
+	b := e.focusedLinkButton(w)
+	if b == nil || b.Target != "y" {
+		t.Fatalf("RTL nav_left should reach y; got %+v", b)
+	}
+	if w.CursorPos().Rune <= 5 {
+		t.Fatalf("RTL nav_left should increase the rune column; got %d", w.CursorPos().Rune)
+	}
+}
+
+// nav_down / nav_up move to the column-nearest link on the next / previous
+// link line, and page (still succeeding) when none remains on screen.
+func TestNavVertical(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"aaaa [[a]] bbbb [[b]]\nplain line\ncccc [[c]] dddd [[d]]\n",
+		"[options]\nsyntax=dokuwiki\n")
+	out.Reset()
+	e.performRender() // establish ContentHeight
+
+	// Focus [[b]] (column ~15); nav_down lands on the column-nearest link of
+	// line 2, which is [[d]].
+	w.SetCursorPos(window.Position{Line: 0, Rune: 17})
+	e.updateBrowseState()
+	if !e.navVert(+1) {
+		t.Fatal("nav_down should move")
+	}
+	if w.CursorPos().Line != 2 || e.focusedLinkButton(w).Target != "d" {
+		t.Fatalf("down should reach [[d]] on line 2; got line %d %+v",
+			w.CursorPos().Line, e.focusedLinkButton(w))
+	}
+	// nav_up back to the column-nearest link of line 0: [[b]].
+	if !e.navVert(-1) || e.focusedLinkButton(w).Target != "b" {
+		t.Fatalf("up should reach [[b]]; got %+v", e.focusedLinkButton(w))
+	}
+}
+
+// nav_down with no link line left on screen pages instead, and still reports
+// success (staying in nav mode).
+func TestNavVerticalPages(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"top [[a]] here\nplain\nplain\nplain\n", "[options]\nsyntax=dokuwiki\n")
+	out.Reset()
+	e.performRender()
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside [[a]]
+	e.updateBrowseState()
+	if !e.navVert(+1) {
+		t.Fatal("nav_down should succeed (page) when no link line remains")
+	}
+	if !w.BrowseActive {
+		t.Fatal("paging must not leave nav mode")
+	}
+	if e.focusedLinkButton(w) != nil {
+		t.Fatal("after paging past the only link, nothing should be focused")
+	}
+}
+
+// The vertical/horizontal nav commands act only in active nav mode.
+func TestNavRequiresActiveMode(t *testing.T) {
+	e, w, _ := linkEditor(t, "[[a]] mid [[b]]\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // not in a link, browse off
+	e.updateBrowseState()
+	if e.navVert(+1) || e.navVert(-1) || e.navHoriz(+1) || e.navHoriz(-1) {
+		t.Fatal("nav up/down/left/right must not act outside active nav mode")
+	}
+}
+
 // nav_next respects linkBrowsing=no (never captures).
 func TestNavGatedByOption(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\nlinkBrowsing=no\n")
