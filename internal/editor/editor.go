@@ -4865,16 +4865,21 @@ func (e *Editor) closeCurrentBuffer() bool {
 		return false
 	}
 
-	// Check for changes that would be lost: the window's active buffer, plus
-	// any modified buffer stacked in its nav history that no OTHER window
-	// still holds open — closing this window drops its whole history.
+	// Check for changes that would be lost. The window's active buffer is
+	// always at stake. Its stacked buffers are only at stake when the WINDOW
+	// itself will close — with a non-empty graveyard, buffer_close instead
+	// resurrects the most recent burial into this window, so the history and
+	// graveyard survive intact.
+	resurrecting := len(w.GraveyardBuffers()) > 0
 	var atRisk []*buffer.Buffer
 	if w.Buffer != nil && w.Buffer.IsModified() {
 		atRisk = append(atRisk, w.Buffer)
 	}
-	for _, b := range w.StackedBuffers() {
-		if b != w.Buffer && b.IsModified() && !e.bufferReferencedElsewhere(b, w) {
-			atRisk = append(atRisk, b)
+	if !resurrecting {
+		for _, b := range w.StackedBuffers() {
+			if b != w.Buffer && b.IsModified() && !e.bufferReferencedElsewhere(b, w) {
+				atRisk = append(atRisk, b)
+			}
 		}
 	}
 	if len(atRisk) > 0 {
@@ -4907,8 +4912,46 @@ func (e *Editor) closeCurrentBuffer() bool {
 	return e.finishCloseBuffer(w.ID)
 }
 
+// bufferDisplayName is a short human name for a buffer: its filename's base,
+// or "Untitled".
+func bufferDisplayName(b *buffer.Buffer) string {
+	if b != nil {
+		if fn := b.GetFilename(); fn != "" {
+			return filepath.Base(fn)
+		}
+	}
+	return "Untitled"
+}
+
 // finishCloseBuffer performs the actual buffer close.
 func (e *Editor) finishCloseBuffer(windowID string) bool {
+	// Resurrection first: with buried bindings waiting, closing the buffer
+	// does NOT close the window — the most recently buried binding surfaces
+	// as the window's current one (full caret/scroll state), and the closed
+	// buffer is retired only if nothing else still holds it open.
+	if w := e.WindowManager.GetWindow(windowID); w != nil {
+		closed := w.Buffer
+		if w.ResurrectLastBuried() {
+			e.unburyEverywhere(w.Buffer)
+			if closed != nil {
+				stillOpen := false
+				for _, b := range e.openMainBuffers() {
+					if b == closed {
+						stillOpen = true
+						break
+					}
+				}
+				if !stillOpen {
+					e.forgetBufferSafety(closed)
+				}
+			}
+			e.ensureCursorVisible(w)
+			e.ShowNotification("Closed; resurfaced " + bufferDisplayName(w.Buffer))
+			e.RequestRender()
+			return true
+		}
+	}
+
 	// Get all main buffers
 	mainBuffers := e.getMainBuffers()
 	if len(mainBuffers) <= 1 {

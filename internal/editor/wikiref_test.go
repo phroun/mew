@@ -749,3 +749,86 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		t.Fatal("an empty history has nothing to clear (chains fall through)")
 	}
 }
+
+// buffer_close with a non-empty graveyard resurrects the most recent burial
+// into the SAME window instead of closing it; and a buffer becoming actively
+// bound anywhere (window creation, swap) leaves every graveyard — it is no
+// longer at risk of orphaning.
+func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
+
+	buryOther := func() *buffer.Buffer {
+		w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+		w.BrowseActive = true
+		if !e.navFollow() {
+			t.Fatal("follow should navigate")
+		}
+		other := w.Buffer
+		if !e.navHistory(-1) {
+			t.Fatal("prior should return")
+		}
+		third, err := buffer.NewFromBytes([]byte("third\n"), filepath.Join(root, "w", "third.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.swapBuffer(w, third) // invalidates fwd=[other]: buried
+		gb := w.GraveyardBuffers()
+		if len(gb) != 1 || gb[0] != other {
+			t.Fatalf("graveyard = %v, want [other]", gb)
+		}
+		return other
+	}
+
+	// Resurrection: closing the active buffer surfaces the burial; the
+	// window survives with its identity and history.
+	other := buryOther()
+	mains := len(e.getMainBuffers())
+	if !e.closeCurrentBuffer() {
+		t.Fatal("buffer_close should act")
+	}
+	if e.WindowManager.GetWindow("wiki") != w {
+		t.Fatal("the window must survive a resurrecting close")
+	}
+	if len(e.getMainBuffers()) != mains {
+		t.Fatal("no window should close during resurrection")
+	}
+	if w.Buffer != other {
+		t.Fatalf("the most recent burial should surface; got %q", w.Buffer.GetFilename())
+	}
+	if len(w.GraveyardBuffers()) != 0 {
+		t.Fatal("the resurrected binding must leave the graveyard")
+	}
+
+	// With the graveyard empty, a second close takes the normal window-close
+	// path (the harness "doc" window remains, so no exit).
+	if !e.closeCurrentBuffer() {
+		t.Fatal("second close should act")
+	}
+	if e.WindowManager.GetWindow("wiki") != nil {
+		t.Fatal("an empty-graveyard close removes the window")
+	}
+
+	// Unbury on active bind: rebuild a burial in a fresh window, then bind
+	// the buried buffer in a NEW window — the graveyard entry dissolves.
+	buf2, err := buffer.NewFromBytes([]byte(files["w/page.txt"]), filepath.Join(root, "w", "page.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: buf2, SetFocus: true, LinkBrowsing: true,
+	})
+	w = e.WindowManager.GetWindow("wiki")
+	other2 := buryOther()
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "viewer", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: other2, SetFocus: false, LinkBrowsing: true,
+	})
+	if len(w.GraveyardBuffers()) != 0 {
+		t.Fatal("binding the buried buffer in another window must unbury it")
+	}
+}

@@ -127,11 +127,24 @@ func (e *Editor) navCancel() bool {
 // binding whose buffer would lose its last reference (held nowhere outside
 // this window's nav structures) is buried in the window's graveyard for the
 // eventual save decision, instead of being released with the invalidated
-// forward trail.
+// forward trail. The newly bound buffer, conversely, leaves every graveyard.
 func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
 	w.SwapBuffer(buf, func(b *buffer.Buffer) bool {
 		return e.bufferReferencedElsewhere(b, w)
 	})
+	e.unburyEverywhere(buf)
+}
+
+// unburyEverywhere releases every graveyard binding of buf across all
+// windows: actively bound again, the buffer is no longer at risk of
+// orphaning and the graveyards have no claim to it.
+func (e *Editor) unburyEverywhere(buf *buffer.Buffer) {
+	if buf == nil {
+		return
+	}
+	for _, w := range e.WindowManager.AllWindows() {
+		w.Unbury(buf)
+	}
 }
 
 // navHistory walks the focused window's buffer-swap history: dir < 0 returns
@@ -152,6 +165,9 @@ func (e *Editor) navHistory(dir int) bool {
 	if !ok {
 		return false
 	}
+	// The restored buffer is actively bound again: no graveyard holds a
+	// claim on it now.
+	e.unburyEverywhere(w.Buffer)
 	// The restored binding carries its own viewport, but edits made while it
 	// was stacked may have slid the caret out of it: re-ensure visibility on
 	// the restored geometry.

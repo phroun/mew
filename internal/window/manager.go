@@ -876,6 +876,37 @@ func (w *Window) GraveyardBuffers() []*buffer.Buffer {
 	return out
 }
 
+// ResurrectLastBuried replaces the window's ACTIVE binding with the most
+// recently buried one: the active binding is released (the caller decides
+// what becomes of its buffer) and the graveyard binding surfaces with its
+// full caret/scroll/trail state. False when the graveyard is empty.
+func (w *Window) ResurrectLastBuried() bool {
+	if len(w.navGrave) == 0 {
+		return false
+	}
+	b := w.navGrave[len(w.navGrave)-1]
+	w.navGrave = w.navGrave[:len(w.navGrave)-1]
+	old := w.detachBinding()
+	old.release()
+	w.attachBinding(b)
+	return true
+}
+
+// Unbury releases any graveyard binding of buf: the buffer has become
+// actively bound somewhere, so it is no longer at risk of orphaning and the
+// graveyard has no claim to it.
+func (w *Window) Unbury(buf *buffer.Buffer) {
+	out := w.navGrave[:0]
+	for i := range w.navGrave {
+		if w.navGrave[i].Buffer == buf {
+			w.navGrave[i].release()
+			continue
+		}
+		out = append(out, w.navGrave[i])
+	}
+	w.navGrave = out
+}
+
 // NavHistoryPrior returns to the binding the window most recently swapped
 // away from, moving the active binding onto the forward stack. Reports false
 // (no state change) when there is no back history, so command chains can
@@ -1226,6 +1257,14 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 	// Bind the window to its buffer: mint the caret, viewport anchor, and
 	// edit-trail cursors that slide with edits (released in RemoveWindow).
 	w.bindBuffer(opts.Buffer)
+
+	// A buffer becoming actively bound is no longer at risk of orphaning:
+	// purge it from every window's graveyard.
+	if opts.Buffer != nil {
+		for _, other := range m.windows {
+			other.Unbury(opts.Buffer)
+		}
+	}
 
 	m.windows[id] = w
 
