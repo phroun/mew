@@ -181,7 +181,11 @@ func (e *Editor) navFollow() bool {
 	e.linkResolveCache[e.bufferCanonicalURL(w.Buffer)+"\x00"+span.Target] = key
 
 	if res.url == "" {
-		e.ShowNotification(res.message)
+		if res.createURL != "" && res.writable {
+			e.promptCreatePage(w.ID, span, res)
+		} else {
+			e.ShowNotification(res.message)
+		}
 		e.RequestRender()
 		return true
 	}
@@ -227,6 +231,42 @@ func (e *Editor) navFollow() bool {
 	e.ShowNotification("→ " + displayPath(res.url))
 	e.RequestRender()
 	return true
+}
+
+// promptCreatePage offers to create an unresolved wiki page, lock-prompt
+// style: the description on the top row, the short question on the input
+// row, with the prompt buffer offering "y" and "n" above the blank default
+// line. Creating mints an EMPTY buffer named for the page's would-be file —
+// the file itself appears on first save — and surfaces it exactly as a
+// successful follow would: in place for the window's own wiki, a fresh
+// window for a cross-root destination.
+func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followResolution) {
+	title := span.Title
+	if title == "" {
+		title = span.Target
+	}
+	e.PromptMgr.PromptForConfirmationTop("Page not found: "+title, "Create it? [y/N]: ", false,
+		func(accepted, yes bool) {
+			if !accepted || !yes {
+				e.RequestRender()
+				return
+			}
+			buf, err := e.createBufferURL(res.createURL)
+			if err != nil {
+				e.ShowError("Create: " + err.Error())
+				e.RequestRender()
+				return
+			}
+			if res.newWindow {
+				nw := e.createMainWindow(buf, nil, true)
+				nw.WikiRoot = res.root
+				nw.WikiName = res.wikiName
+			} else if w := e.WindowManager.GetWindow(windowID); w != nil {
+				w.SwapBuffer(buf)
+			}
+			e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
+			e.RequestRender()
+		})
 }
 
 // displayPath renders a canonical URL for a human: the path part of a

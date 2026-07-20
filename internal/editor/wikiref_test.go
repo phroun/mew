@@ -557,3 +557,84 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 		t.Fatal("re-follow must reuse the already-open destination buffer")
 	}
 }
+
+// Following a link to a missing page in a WRITABLE wiki space offers a
+// two-row create prompt (lock-prompt style; the prompt buffer holds "y" and
+// "n" above the blank default line). Accepting mints an empty, unsaved
+// buffer named for the would-be file and swaps to it; declining (the
+// default) stays put. A wiki registered non-writable never prompts.
+func TestCreatePagePrompt(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt": "see [[newpage|My New Page]] and [[another]] end\n",
+	}
+	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
+	src := w.Buffer
+
+	// Follow the missing page: the prompt appears with the title on the top
+	// row, the question on the input row, and y/n/blank in the buffer.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("navFollow should activate")
+	}
+	p := focusedPrompt(e)
+	if p == nil {
+		t.Fatal("a writable-space miss should prompt")
+	}
+	if p.MessageTopInner != "Page not found: My New Page" {
+		t.Fatalf("top message = %q", p.MessageTopInner)
+	}
+	if len(p.RowMessages) == 0 || !strings.Contains(p.RowMessages[0], "Create it? [y/N]: ") {
+		t.Fatalf("question row = %v", p.RowMessages)
+	}
+	if got := p.Buffer.GetContent(); got != "y\nn\n" {
+		t.Fatalf("prompt buffer = %q, want y/n/blank", got)
+	}
+
+	// Accept: an empty unsaved buffer named for the would-be file, swapped in.
+	answerPrompt(t, e, "y")
+	wantPath := filepath.Join(root, "w", "newpage.txt")
+	if w.Buffer == src || w.Buffer.GetFilename() != wantPath {
+		t.Fatalf("create should swap to %s; got %q", wantPath, w.Buffer.GetFilename())
+	}
+	if _, err := os.Stat(wantPath); !os.IsNotExist(err) {
+		t.Fatal("the file must not exist until the buffer is saved")
+	}
+	if !e.navHistory(-1) || w.Buffer != src {
+		t.Fatal("history should return to the source page")
+	}
+
+	// Decline (bare Enter = default No): nothing changes.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 34}) // inside [[another]]
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("navFollow should activate")
+	}
+	if focusedPrompt(e) == nil {
+		t.Fatal("second miss should prompt too")
+	}
+	answerPrompt(t, e, "")
+	if w.Buffer != src {
+		t.Fatal("declining must not swap")
+	}
+
+	// A non-writable registered wiki never prompts: notification only.
+	wikiRegistry["rotest"] = wikiDef{
+		Name: "rotest", Format: "dokuwiki",
+		Root: e.canonicalDocURL(filepath.Join(root, "w")), Ext: ".txt", Start: "start",
+	}
+	defer delete(wikiRegistry, "rotest")
+	w.WikiRoot = e.canonicalDocURL(filepath.Join(root, "w"))
+	w.WikiName = "rotest"
+	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("navFollow should still activate")
+	}
+	if focusedPrompt(e) != nil {
+		t.Fatal("a non-writable wiki must not offer creation")
+	}
+	if w.Buffer != src {
+		t.Fatal("non-writable miss must not swap")
+	}
+}

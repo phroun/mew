@@ -82,13 +82,29 @@ type wikiDef struct {
 	Root   string // canonical URL of the wiki root
 	Ext    string // page file extension
 	Start  string // start page name
+	// Writable allows creating missing pages on follow (the "Create it?"
+	// prompt). The unrooted document space is always writable; registered
+	// wikis say for themselves.
+	Writable bool
 }
 
 // wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
 // support tree. A config-driven registry can replace this later. Keys equal
-// each def's Name.
+// each def's Name. (help is writable for now; that will turn off once its
+// content ships.)
 var wikiRegistry = map[string]wikiDef{
-	"help": {Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start"},
+	"help": {Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start", Writable: true},
+}
+
+// wikiWritable reports whether pages may be created in the wiki a window
+// browses, by registry name: a registered wiki says for itself; the unrooted
+// document space ("" — no wiki) and an unregistered rooted window are
+// writable.
+func wikiWritable(wikiName string) bool {
+	if def, ok := wikiRegistry[wikiName]; ok {
+		return def.Writable
+	}
+	return true
 }
 
 // wikiSchemeRef reports whether ref invokes a registered wiki scheme with a
@@ -408,6 +424,12 @@ type followResolution struct {
 	// rootless window (possibly sharing an already-open buffer).
 	newWindow bool
 	message   string // human notification when url is ""
+	// createURL/writable describe the create-on-miss option when url is "":
+	// the canonical URL where the unresolved page WOULD be created, and
+	// whether its wiki permits creation. Empty createURL (gated schemes,
+	// interwiki, no context) means nothing can be offered.
+	createURL string
+	writable  bool
 }
 
 // resolveFollow resolves a link target against the window's current document
@@ -429,11 +451,15 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		// becomes its real file:/// subtree), so roots compare in the same
 		// identity space as every document URL.
 		rootURL := e.canonicalDocURL(def.Root)
-		if p := e.resolveInWiki(def, rootURL, rest); p != "" {
-			newWin := w == nil || w.WikiRoot != rootURL
+		newWin := w == nil || w.WikiRoot != rootURL
+		p, createURL := e.resolveInWiki(def, rootURL, rest)
+		if p != "" {
 			return followResolution{url: p, root: rootURL, wikiName: def.Name, newWindow: newWin}
 		}
-		return followResolution{message: "Page not found: " + ref}
+		return followResolution{
+			message: "Page not found: " + ref, root: rootURL, wikiName: def.Name,
+			newWindow: newWin, createURL: createURL, writable: def.Writable,
+		}
 	}
 
 	if scheme, ok := schemeRef(ref); ok {
@@ -495,7 +521,11 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		if p := e.matchWikiPath(base, names, srcExt, nsTarget, cfg); p != "" {
 			return followResolution{url: p, root: root, wikiName: wikiName}
 		}
-		return followResolution{message: "Page not found: " + target}
+		return followResolution{
+			message: "Page not found: " + target, root: root, wikiName: wikiName,
+			createURL: wikiCreateURL(base, names, nsTarget, srcExt, cfg),
+			writable:  wikiWritable(wikiName),
+		}
 	}
 
 	if root != "" {
@@ -503,7 +533,11 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		if p := e.matchWikiPath(root, segs, srcExt, nsTarget, cfg); p != "" {
 			return followResolution{url: p, root: root, wikiName: wikiName}
 		}
-		return followResolution{message: "Page not found: " + target}
+		return followResolution{
+			message: "Page not found: " + target, root: root, wikiName: wikiName,
+			createURL: wikiCreateURL(root, segs, nsTarget, srcExt, cfg),
+			writable:  wikiWritable(wikiName),
+		}
 	}
 
 	// Unrooted absolute: nearest ancestor of the current directory under
@@ -517,15 +551,22 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 			break
 		}
 	}
-	return followResolution{message: "Page not found: " + target}
+	// Unresolved: offer creation under the current document's directory (the
+	// nearest-namespace assumption; the unrooted space is always writable).
+	return followResolution{
+		message:   "Page not found: " + target,
+		createURL: wikiCreateURL(curDir, segs, nsTarget, srcExt, cfg),
+		writable:  true,
+	}
 }
 
 // resolveInWiki resolves a reference within a registered wiki, from its
 // CANONICALIZED root URL, with the wiki's own extension and start page. The
 // scheme form is URL-flavored, so "/" separates namespaces here
 // (help:/sample/widget ≡ help:/sample:widget); an empty reference is the
-// wiki's start page. Returns the matched canonical URL ("" = no page).
-func (e *Editor) resolveInWiki(def wikiDef, rootURL, rest string) string {
+// wiki's start page. Returns the matched canonical URL ("" = no page) plus
+// where the page WOULD be created (for the create-on-miss prompt).
+func (e *Editor) resolveInWiki(def wikiDef, rootURL, rest string) (url, createURL string) {
 	cfg := defaultWikiCfg()
 	cfg.useSlash = true
 	cfg.startPage = def.Start
@@ -535,7 +576,23 @@ func (e *Editor) resolveInWiki(def wikiDef, rootURL, rest string) string {
 	if id != "" {
 		segs = strings.Split(id, ":")
 	}
-	return e.matchWikiPath(rootURL, segs, def.Ext, nsTarget, cfg)
+	url = e.matchWikiPath(rootURL, segs, def.Ext, nsTarget, cfg)
+	return url, wikiCreateURL(rootURL, segs, nsTarget, def.Ext, cfg)
+}
+
+// wikiCreateURL is the canonical URL where a page WOULD be created for an
+// unresolved id: the cleaned segments under base, with the namespace start
+// page appended for a namespace target, and the page extension. The file
+// itself only appears when the created buffer is first saved.
+func wikiCreateURL(base string, segs []string, nsTarget bool, ext string, cfg wikiCfg) string {
+	parts := append([]string(nil), segs...)
+	if nsTarget || len(parts) == 0 {
+		parts = append(parts, cleanWikiID(cfg.startPage, cfg))
+	}
+	if ext == "" {
+		ext = ".txt"
+	}
+	return urlJoin(base, strings.Join(parts, "/")+ext)
 }
 
 // isRelativeRef applies Layer 2's relative/absolute rule to a raw reference:

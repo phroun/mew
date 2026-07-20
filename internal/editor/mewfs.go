@@ -22,6 +22,15 @@ import (
 // Either way a "mew:/" path is confined to its root: a ".." can never walk
 // above <home>/.mew (local) or above "mew:/" (virtual). Confinement happens by
 // cleaning the path as if rooted at "/", which drops any leading "..".
+//
+// Spelling convention: "mew:/x" (one slash — rooted within the scheme, no
+// authority) is the ADDRESS form used everywhere the tree is accessed,
+// including what a virtualized host's FileSystem receives (that spelling is
+// the host-visible contract; do not change it). "mew:///x" (empty authority)
+// is the CANONICAL IDENTITY form used in URL space — buffer identities, wiki
+// roots, comparisons — produced by canonicalDocURL. confine() accepts every
+// spelling, so the two forms name the same thing; only identity code needs
+// the canonical one.
 
 // mewVFS resolves and accesses the mew: tree.
 type mewVFS struct {

@@ -137,6 +137,36 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 	}, "", 1, "")
 }
 
+// PromptForConfirmationTop is a two-row confirmation in the lock-prompt
+// style: a descriptive top message bar, with the short question alone on the
+// input row. The prompt buffer is populated with the reachable answers — "y"
+// and "n" above the blank input line — so the arrows pick one and a bare
+// Enter takes the default.
+func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, defaultValue bool, callback func(accepted, response bool)) {
+	defaultAnswer := "N"
+	if defaultValue {
+		defaultAnswer = "Y"
+	}
+	pm.promptForInput("(C) "+question, "y\nn\n", func(accepted bool, _, cursorLineText string) {
+		if !accepted {
+			callback(false, false)
+			return
+		}
+		answer := strings.TrimSpace(cursorLineText)
+		if answer == "" {
+			answer = defaultAnswer
+		}
+		switch strings.ToUpper(answer) {
+		case "Y", "YES":
+			callback(true, true)
+		case "N", "NO":
+			callback(true, false)
+		default:
+			callback(true, defaultValue)
+		}
+	}, "", 1, topMessage)
+}
+
 // createPromptBuffer creates the actual prompt buffer window. maxRows caps
 // the displayed content height (0 means the default cap). When topMessage is
 // non-empty, an extra row is reserved above the input for a top message bar
