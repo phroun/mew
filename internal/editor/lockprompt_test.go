@@ -92,6 +92,23 @@ func TestEditLockCancelReprompts(t *testing.T) {
 	}
 }
 
+// A regular prompt stays one row (only the lock prompt, which carries a top
+// message, is two) — guards against the top-message row leaking to all prompts.
+func TestRegularPromptIsOneRow(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	e.PromptMgr.PromptForInput("Go to line: ", "", func(bool, string, string) {}, "goto")
+	p := focusedPrompt(e)
+	if p == nil {
+		t.Fatal("expected a prompt")
+	}
+	if p.MessageTopInner != "" {
+		t.Fatalf("a regular prompt should carry no top message, got %q", p.MessageTopInner)
+	}
+	if p.Height != 1 {
+		t.Fatalf("a regular prompt should be one row tall, got %d", p.Height)
+	}
+}
+
 // An unlocked buffer never prompts.
 func TestEditLockNoPromptWhenUnlocked(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "hi\n")

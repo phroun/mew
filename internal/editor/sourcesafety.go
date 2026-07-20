@@ -216,6 +216,24 @@ func pathHash(path string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// canonicalPath resolves a file path to a stable, canonical absolute form so the
+// same file always maps to the same lock — no matter which working directory a
+// relative name (mew go.work) was typed from, nor symlinks/firmlinks along the
+// way (macOS routes /Users through a firmlink, so filepath.Abs alone can leave
+// two references to one file looking different). Symlink resolution needs the
+// file to exist; for a not-yet-created file it falls back to a plain absolute
+// path.
+func canonicalPath(path string) string {
+	abs := path
+	if a, err := filepath.Abs(path); err == nil {
+		abs = a
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
 // ---------------------------------------------------------------------------
 // Locks. mew respects and maintains emacs locks first and foremost — but
 // skips them inside git repositories whose .gitignore does not cover the
@@ -311,16 +329,13 @@ func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) (skipReason str
 	if !e.Config.UseLocks || buf == nil {
 		return "" // locking not requested — not a failure
 	}
-	dir := e.mewLockDir()
+	abs := canonicalPath(path) // stable key: same file -> same lock
+	dir := e.mewLockDir(abs)   // resolve the project relative to the FILE
 	if dir == "" {
 		return "no project or home directory to hold the lock"
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "lock directory is not writable (" + err.Error() + ")"
-	}
-	abs := path
-	if a, err := filepath.Abs(path); err == nil {
-		abs = a
 	}
 	lockPath := filepath.Join(dir, pathHash(abs)+".lock")
 	owner := e.lockOwnerString()
@@ -364,17 +379,54 @@ func (e *Editor) releaseAllMewLocks() {
 	}
 }
 
-// mewLockDir returns the locks directory inside the nearest .mew folder:
-// the innermost project directory when a project cascade applies, else the
-// user's ~/.mew.
-func (e *Editor) mewLockDir() string {
-	if pd := e.LoadedConfig.ProjectDirs; len(pd) > 0 {
-		return filepath.Join(pd[len(pd)-1], "locks") // innermost project last
+// mewLockDir returns the locks directory for a file: inside the nearest .mew
+// project directory ABOVE THE FILE, else the user's ~/.mew. The project root is
+// resolved relative to the file being edited — not where mew was launched — so
+// two mew instances opening the same file (from any working directory) agree on
+// the same lock, which is what lets them see each other.
+func (e *Editor) mewLockDir(path string) string {
+	if mew := e.nearestProjectMewDir(path); mew != "" {
+		return filepath.Join(mew, "locks")
 	}
 	if e.home == "" {
 		return ""
 	}
 	return filepath.Join(e.home, ".mew", "locks")
+}
+
+// nearestProjectMewDir walks up from a file's directory to the filesystem root
+// and returns the nearest ".mew" project directory (a real directory), excluding
+// the user's own ~/.mew (which is config, not a project). Returns "" when the
+// file sits in no project or the project cascade is disabled. This is the
+// file-relative counterpart of the config manager's launch-time project walk.
+func (e *Editor) nearestProjectMewDir(path string) string {
+	if !e.LoadedConfig.General.ProjectConfig || path == "" {
+		return ""
+	}
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	dir = filepath.Dir(dir)
+	localMew := ""
+	if e.home != "" {
+		if a, err := filepath.Abs(filepath.Join(e.home, ".mew")); err == nil {
+			localMew = a
+		}
+	}
+	for {
+		mew := filepath.Join(dir, ".mew")
+		if mew != localMew {
+			if fi, err := os.Stat(mew); err == nil && fi.IsDir() {
+				return mew
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // lockOwnerString identifies this process in the emacs owner convention
