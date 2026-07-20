@@ -53,6 +53,7 @@ var optionSpecs = []optionSpec{
 	{"showInvisibles", true, optBoolKind, boolValues},
 	{"showBidi", true, optBoolKind, boolValues},
 	{"showMarks", true, optEnumKind, []string{"no", "yes", "all"}},
+	{"insertMode", true, optBoolKind, boolValues},
 	{"showColumnRuler", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
 
@@ -130,6 +131,9 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
 	case "showmarks":
 		w.ViewState.ShowMarks = e.optMarks(w, e.Config.ShowMarks)
+	case "insertmode":
+		// Resolve the insert-mode sense through the overlay, then store inverted.
+		w.ViewState.OverwriteMode = !e.optBool(w, "insertmode", !e.Config.OverwriteMode)
 	case "showcolumnruler":
 		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
 	case "direction":

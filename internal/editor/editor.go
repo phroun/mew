@@ -260,6 +260,7 @@ type Config struct {
 	ShowInvisibles   bool
 	ShowBidi         bool
 	ShowMarks        string // "no" | "yes" | "all"
+	OverwriteMode    bool   // inverse of insertMode; zero value = insert
 	Syntax           string
 	SyntaxDetect     bool
 
@@ -445,6 +446,7 @@ func DefaultConfig() Config {
 		ShowInvisibles:   false,
 		ShowBidi:         false,
 		ShowMarks:        "no",
+		OverwriteMode:    false, // insertMode=yes
 		WordWrap:         false,
 		DebounceMs:       20,
 		MaxRenderDelayMs: 100,
@@ -539,6 +541,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ShowInvisibles = loadedConfig.General.ShowInvisibles
 	cfg.ShowBidi = loadedConfig.General.ShowBidi
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
+	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
 	cfg.MatchIgnoresSingleQuote = loadedConfig.General.MatchIgnoresSingleQuote
@@ -2110,6 +2113,13 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 			v = "no"
 		}
 		return v, true
+	case "insertmode":
+		// Stored inverted (OverwriteMode); report the insert-mode sense.
+		over := e.Config.OverwriteMode
+		if w != nil {
+			over = w.ViewState.OverwriteMode
+		}
+		return boolText(!over), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2264,6 +2274,17 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			w.ViewState.ShowMarks = v
 		} else {
 			e.Config.ShowMarks = v
+		}
+	case "insertmode":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		// Stored inverted: insertMode on -> not overwrite.
+		if w != nil {
+			w.ViewState.OverwriteMode = !b
+		} else {
+			e.Config.OverwriteMode = !b
 		}
 	case "showcolumnruler":
 		b, ok := parseBool()
@@ -3761,16 +3782,41 @@ func (e *Editor) insertText(text string) {
 	// Ensure cursor is within valid bounds before insertion
 	e.clampCursorToBuffer(w)
 
-	// Insert through the window's own caret cursor, then read the caret back:
-	// garland advances it past the inserted text (splitting on embedded
-	// newlines internally), so there is no manual line/rune arithmetic.
-	w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
-	w.Caret.Insert(text)
+	if w.ViewState.OverwriteMode {
+		// Overwrite mode: typing replaces the character under the caret.
+		e.overwriteText(w, text)
+	} else {
+		// Insert through the window's own caret cursor, then read the caret back:
+		// garland advances it past the inserted text (splitting on embedded
+		// newlines internally), so there is no manual line/rune arithmetic.
+		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
+		w.Caret.Insert(text)
+	}
 
 	// Clear ghost cursor and update ideal column after typing
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	e.RequestRender()
+}
+
+// overwriteText types text in overwrite mode: each rune replaces the character
+// under the caret, except at end of line (where it appends) and for a newline
+// (which splits the line, like insert). The replace is a bare forward-delete
+// then insert — the same coalescible mutations as our other edits, so a run of
+// overwrites groups into one undo step the way typing and deleting do. The
+// overwritten character is discarded (not sent to the kill ring), matching how
+// typing over a selection works.
+func (e *Editor) overwriteText(w *window.Window, text string) {
+	for _, r := range text {
+		pos := w.CursorPos()
+		if r != '\n' && pos.Rune < e.getEffectiveLineLen(w.Buffer, pos.Line) {
+			// A character stands under the caret: remove it, then insert.
+			w.Caret.Seek(pos.Line, pos.Rune)
+			w.Caret.DeleteForward(1)
+		}
+		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
+		w.Caret.Insert(string(r))
+	}
 }
 
 // insertPasteChunk inserts a single chunk of paste content.
@@ -4300,6 +4346,7 @@ func (e *Editor) openFile(filename string) bool {
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
+		OverwriteMode:   e.Config.OverwriteMode,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4323,6 +4370,7 @@ func (e *Editor) createNewBuffer() {
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
+		OverwriteMode:   e.Config.OverwriteMode,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4351,6 +4399,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
+		OverwriteMode:   e.Config.OverwriteMode,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4384,6 +4433,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 		ShowInvisibles:  w.ViewState.ShowInvisibles,
 		ShowBidi:        w.ViewState.ShowBidi,
 		ShowMarks:       w.ViewState.ShowMarks,
+		OverwriteMode:   w.ViewState.OverwriteMode,
 		ShowRuler:       w.ViewState.ShowRuler,
 		SetFocus:        true,
 	})
@@ -4852,6 +4902,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
+		OverwriteMode:   e.Config.OverwriteMode,
 		ShowRuler:       e.Config.ShowColumnRuler,
 	})
 
@@ -5388,6 +5439,7 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Show Invisibles: %s\n", opt("showInvisibles")))
 	content.WriteString(fmt.Sprintf("  Show Bidi Markers: %s\n", opt("showBidi")))
 	content.WriteString(fmt.Sprintf("  Show Marks: %s\n", opt("showMarks")))
+	content.WriteString(fmt.Sprintf("  Insert Mode: %s\n", opt("insertMode")))
 	content.WriteString(fmt.Sprintf("  Word Wrap: %s\n", opt("wordWrap")))
 	content.WriteString(fmt.Sprintf("  Search Ignore Case: %s\n", opt("searchIgnoreCase")))
 	content.WriteString(fmt.Sprintf("  Search Wrap: %s\n", opt("searchWrap")))

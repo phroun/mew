@@ -73,6 +73,11 @@ type ViewState struct {
 	// "ltr", "rtl", or "" to inherit the [general] direction option. Prompt
 	// windows are pinned "ltr" at creation.
 	Direction string
+	// OverwriteMode is the inverse of the insertMode option: false (zero value,
+	// the default) is insert mode; true makes typing replace the character under
+	// the caret (except at end of line, where it appends). Stored inverted so a
+	// zero-value window defaults to insert mode.
+	OverwriteMode bool
 }
 
 // MarksVisible reports whether showMarks draws any mark indicators for this
@@ -638,6 +643,7 @@ type WindowOptions struct {
 	ShowInvisibles  bool
 	ShowBidi        bool
 	ShowMarks       string // "no" | "yes" | "all"
+	OverwriteMode   bool   // inverse of insertMode; zero value = insert
 	ShowRuler       bool
 	TabSize         int
 	SetFocus        bool
@@ -725,6 +731,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			ShowInvisibles:  opts.ShowInvisibles,
 			ShowBidi:        opts.ShowBidi,
 			ShowMarks:       opts.ShowMarks,
+			OverwriteMode:   opts.OverwriteMode,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
 		},

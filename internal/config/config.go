@@ -283,6 +283,11 @@ type GeneralConfig struct {
 	ShowInvisibles   bool
 	ShowBidi         bool
 	ShowMarks        string // "no" | "yes" | "all"
+	// OverwriteMode is the inverse of the user-facing insertMode option: false
+	// (the zero value, and the default) means insert mode; true means typing
+	// overwrites the character under the caret (except at end of line, where it
+	// appends). Stored inverted so the zero value is the intended default.
+	OverwriteMode bool
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -623,6 +628,7 @@ func DefaultConfig() Config {
 			ShowInvisibles:          false,
 			ShowBidi:                false,
 			ShowMarks:               "no",
+			OverwriteMode:           false, // insertMode=yes
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -827,6 +833,10 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 			if s, valid := ParseShowMarks(v); valid {
 				config.General.ShowMarks = s
 			}
+		}
+		if v, ok := opt["insertMode"]; ok {
+			// Stored inverted: insertMode=yes -> not overwrite.
+			config.General.OverwriteMode = !parseBool(v, true)
 		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
@@ -1653,6 +1663,10 @@ showBidi=false
 # text: no (off), yes (user marks), or all (also mew's internal marks). Boolean
 # aliases (on/off/true/false) are accepted as no/yes.
 showMarks=no
+# Insert mode: yes types text in (the default). no turns on overwrite mode,
+# where typing replaces the character under the caret — except at the end of a
+# line, where it still appends. Per window.
+insertMode=yes
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.

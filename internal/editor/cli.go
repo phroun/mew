@@ -228,6 +228,7 @@ func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
+		OverwriteMode:   e.Config.OverwriteMode,
 		ShowRuler:       e.Config.ShowColumnRuler,
 	})
 	w := e.WindowManager.GetWindow(id)
