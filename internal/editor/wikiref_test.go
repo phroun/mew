@@ -363,6 +363,116 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	}
 }
 
+// mewHomeEditor builds an editor whose mew: tree lives under a temp home,
+// pre-populated with files (paths relative to ~/.mew).
+func mewHomeEditor(t *testing.T, configText string, files map[string]string) *Editor {
+	t.Helper()
+	home := t.TempDir()
+	mewDir := filepath.Join(home, ".mew")
+	for rel, content := range files {
+		p := filepath.Join(mewDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	cfg.HomeDir = home
+	cfg.ConfigText = &configText
+	cfg.Terminal = &TerminalIO{
+		Input:  bytes.NewReader(nil),
+		Output: &out,
+		Size:   func() (int, int, error) { return 80, 24, nil },
+	}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return e
+}
+
+// The hardcoded help wiki: "help:/..." resolves within mew:///help with the
+// dokuwiki format, ".txt" pages, and a "start" start page; following it
+// surfaces a NEW window rooted at the wiki (in browse mode), unless the
+// current window already carries that root.
+func TestHelpWikiScheme(t *testing.T) {
+	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
+		"help/start.txt":         "[[sample:widget]]\n",
+		"help/sample/widget.txt": "widget page\n",
+	})
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: buffer.NewFromString("see [[help:/start]] ok\n"), SetFocus: true,
+		LinkBrowsing: true,
+	})
+	w := e.WindowManager.GetWindow("doc")
+
+	// Resolution: the scheme opens pages from the registered root; "/" and
+	// ":" both separate in the URL-flavored scheme form; the bare scheme is
+	// the start page.
+	for _, ref := range []string{"help:/start", "help:/", "help://start"} {
+		res := e.resolveFollow(w, ref)
+		if res.url != "mew:///help/start.txt" || res.root != "mew:///help" || !res.newWindow {
+			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
+		}
+	}
+	for _, ref := range []string{"help:/sample/widget", "help:/sample:widget"} {
+		if res := e.resolveFollow(w, ref); res.url != "mew:///help/sample/widget.txt" {
+			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
+		}
+	}
+	if res := e.resolveFollow(w, "help:/missing"); res.url != "" || res.message == "" {
+		t.Fatalf("missing help page should not resolve; got %+v", res)
+	}
+
+	// Following surfaces a fresh window rooted at the wiki, in browse mode;
+	// the source window keeps its blank root.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 6}) // inside [[help:/start]]
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("navFollow should activate")
+	}
+	hw := e.WindowManager.GetFocusedWindow()
+	if hw == w || hw.WikiRoot != "mew:///help" || !hw.BrowseActive {
+		t.Fatalf("help follow should focus a rooted, browsing window; got root %q", hw.WikiRoot)
+	}
+	if e.bufferCanonicalURL(hw.Buffer) != "mew:///help/start.txt" {
+		t.Fatalf("help window shows %q", e.bufferCanonicalURL(hw.Buffer))
+	}
+	if w.WikiRoot != "" {
+		t.Fatal("the source window's root must stay blank")
+	}
+
+	// From INSIDE the help window, a help:/ reference is an in-wiki jump:
+	// same root, no new window.
+	if res := e.resolveFollow(hw, "help:/sample:widget"); res.newWindow {
+		t.Fatal("a help:/ ref from the help window must swap in place")
+	}
+}
+
+// A page inside a registered wiki's root highlights as the wiki's format via
+// the registry (no [formats] config needed): the help tree's .txt pages get
+// the dokuwiki grammar, so their links extract and browse works.
+func TestHelpWikiGrammarFromRegistry(t *testing.T) {
+	e := mewHomeEditor(t, "[options]\nsyntaxDetect=yes\n", map[string]string{
+		"help/start.txt": "[[sample:widget]]\n",
+	})
+	buf, err := e.loadBufferURL("mew:///help/start.txt")
+	if err != nil {
+		t.Fatalf("loadBufferURL: %v", err)
+	}
+	g, _ := e.bufferGrammar(buf)
+	if g == nil || !grammarLinkable(g) {
+		t.Fatal("a help page must take the wiki's (linkable) dokuwiki grammar from the registry")
+	}
+}
+
 // navFollow navigates: the focused button's target loads (or reuses) the
 // destination buffer and swaps it into the window; nav_history_prior returns
 // to the source with the caret intact; re-following reuses the SAME buffer.

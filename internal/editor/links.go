@@ -197,10 +197,16 @@ func (e *Editor) navFollow() bool {
 		buf = loaded
 	}
 	if res.newWindow {
-		// A window's root never changes: a full-scheme destination leaves the
-		// rooted wiki by surfacing in a FRESH, rootless window — sharing the
-		// underlying buffer when it is already open elsewhere.
-		e.createMainWindow(buf, nil, true)
+		// A window's root never changes, so a destination under a DIFFERENT
+		// root surfaces in a fresh window — sharing the underlying buffer
+		// when it is already open elsewhere. A full-scheme escape gets a
+		// rootless window; a registered-wiki destination (help:/...) gets a
+		// window rooted at that wiki, arriving in browse mode.
+		nw := e.createMainWindow(buf, nil, true)
+		nw.WikiRoot = res.root
+		if res.root != "" {
+			nw.BrowseActive = nw.ViewState.LinkBrowsing
+		}
 		e.ShowNotification("→ " + displayPath(res.url))
 		e.RequestRender()
 		return true

@@ -70,6 +70,43 @@ func schemeRef(ref string) (scheme string, ok bool) {
 	return "", false
 }
 
+// wikiDef describes a REGISTERED wiki: the reference format its pages use,
+// the subtree its pages live under, the page-file extension auto-assumed for
+// its pages, and its start page. Registered wiki names act as schemes in
+// Layer 1 — "help:/start" opens the page "start" within the help wiki — and
+// a page inside a registered root highlights as the wiki's format (the
+// mew:-space analogue of the path-conditional [formats] rules).
+type wikiDef struct {
+	Format string // reference/grammar format ("dokuwiki")
+	Root   string // canonical URL of the wiki root
+	Ext    string // page file extension
+	Start  string // start page name
+}
+
+// wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
+// support tree. A config-driven registry can replace this later.
+var wikiRegistry = map[string]wikiDef{
+	"help": {Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start"},
+}
+
+// wikiSchemeRef reports whether ref invokes a registered wiki scheme with a
+// slash form (help:/id, help://id): the wiki plus the reference within it
+// ("" = the wiki's start page). Checked BEFORE the generic scheme gate, so a
+// registered wiki name opens pages instead of gating out as external; a bare
+// "help:foo" (no slash) stays an ordinary namespace reference, per the
+// slash-form rule.
+func wikiSchemeRef(ref string) (wikiDef, string, bool) {
+	i := strings.IndexByte(ref, ':')
+	if i <= 0 || i+1 >= len(ref) || ref[i+1] != '/' {
+		return wikiDef{}, "", false
+	}
+	def, ok := wikiRegistry[strings.ToLower(ref[:i])]
+	if !ok {
+		return wikiDef{}, "", false
+	}
+	return def, strings.TrimLeft(ref[i+1:], "/"), true
+}
+
 // interwikiRef reports whether ref uses DokuWiki's interwiki form
 // (shortcut>rest). The shortcut registry is not populated yet, but the form
 // itself always leaves the current wiki, so recognizing the syntax is enough
@@ -379,6 +416,19 @@ type followResolution struct {
 // ancestor discovery when it does not.
 func (e *Editor) resolveFollow(w *window.Window, target string) followResolution {
 	ref := strings.TrimSpace(target)
+
+	// Registered wiki schemes first: "help:/start" opens a page within that
+	// wiki, rooted at its registered root. The destination surfaces in a new
+	// window unless the current window already carries that exact root (a
+	// window's root never changes).
+	if def, rest, ok := wikiSchemeRef(ref); ok {
+		if p := e.resolveInWiki(def, rest); p != "" {
+			newWin := w == nil || w.WikiRoot != def.Root
+			return followResolution{url: p, root: def.Root, newWindow: newWin}
+		}
+		return followResolution{message: "Page not found: " + ref}
+	}
+
 	if scheme, ok := schemeRef(ref); ok {
 		if scheme == "mew" || scheme == "file" {
 			url := e.canonicalDocURL(ref)
@@ -460,6 +510,24 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		}
 	}
 	return followResolution{message: "Page not found: " + target}
+}
+
+// resolveInWiki resolves a reference within a registered wiki, from its
+// root, with the wiki's own extension and start page. The scheme form is
+// URL-flavored, so "/" separates namespaces here (help:/sample/widget ≡
+// help:/sample:widget); an empty reference is the wiki's start page. Returns
+// the matched canonical URL ("" = no page).
+func (e *Editor) resolveInWiki(def wikiDef, rest string) string {
+	cfg := defaultWikiCfg()
+	cfg.useSlash = true
+	cfg.startPage = def.Start
+	id, _, nsTarget := resolveWikiRef(rest, "", cfg)
+	id = cleanWikiID(id, cfg)
+	var segs []string
+	if id != "" {
+		segs = strings.Split(id, ":")
+	}
+	return e.matchWikiPath(def.Root, segs, def.Ext, nsTarget, cfg)
 }
 
 // isRelativeRef applies Layer 2's relative/absolute rule to a raw reference:

@@ -146,9 +146,9 @@ type synCache struct {
 	links    [][]linkSpan
 	markup   [][]markupSpan
 	colors   [][]string
-	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
-	entries []jsf.LineState // entry state per computed line (for point queries)
-	next    jsf.LineState
+	ctx      [][]uint8       // per-line, per-rune CtxComment/CtxString flags
+	entries  []jsf.LineState // entry state per computed line (for point queries)
+	next     jsf.LineState
 }
 
 // joeSyntaxDirs are the installed JOE grammar collections, consulted only when
@@ -478,6 +478,18 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 		return in, ld
 	}
 	if fn := b.GetFilename(); fn != "" {
+		// A page inside a REGISTERED wiki's root highlights as that wiki's
+		// format (mew:///help/*.txt as dokuwiki) — the registry is the
+		// mew:-space analogue of the path-conditional [formats] rules below.
+		if url := e.canonicalDocURL(fn); url != "" {
+			for _, def := range wikiRegistry {
+				if urlWithin(url, def.Root) {
+					if in, ld := e.detectName(def.Format, overrides); in != nil {
+						return in, ld
+					}
+				}
+			}
+		}
 		base := strings.ToLower(filepath.Base(fn))
 		name := strings.TrimPrefix(filepath.Ext(base), ".")
 		if name == "" {
