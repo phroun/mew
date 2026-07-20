@@ -532,6 +532,11 @@ func TestNavVerticalPages(t *testing.T) {
 	if e.focusedLinkButton(w) != nil {
 		t.Fatal("after paging past the only link, nothing should be focused")
 	}
+	// With no button focused (the caret paged off the link), a further nav_down
+	// does nothing: nav_up/down act only when a button is focused at activation.
+	if e.navVert(+1) {
+		t.Fatal("nav_down must not act once no button is focused")
+	}
 }
 
 // The vertical/horizontal nav commands act only in active nav mode.
@@ -622,8 +627,11 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	if !strings.Contains(out.String(), "\x1b[0;37;42m") {
-		t.Fatal("a visited button should paint in buttonRecent (silver on green)")
+	if !strings.Contains(out.String(), "\x1b[0;30;42m") {
+		t.Fatal("a visited button should paint in buttonRecent (black on dark green)")
+	}
+	if !strings.Contains(out.String(), "\x1b[0;90;42m") {
+		t.Fatal("a visited button's shadow should use buttonShadowRecent")
 	}
 
 	// Caret mode: the visited link uses linkRecent, not the plain link color.

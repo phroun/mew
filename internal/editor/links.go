@@ -267,11 +267,14 @@ func (e *Editor) firstLinkFromCaret(w *window.Window) (int, linkSpan, bool) {
 // no further link line on screen it pages instead (go_page_next / go_page_prior)
 // and still reports success. On the target line the link is chosen by the ideal
 // caret column — the one that overlaps it, else the nearest, with the first
-// (down) / last (up) link as the tiebreak. Requires active nav mode; the caret
-// need not be on a link (so it still works right after a page).
+// (down) / last (up) link as the tiebreak. Acts only when a button is focused
+// at activation.
 func (e *Editor) navVert(dir int) bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+	// Act only when a button is already focused at activation (like the other
+	// directional nav commands). After the paging fallback lands the caret off
+	// a link, a further nav_up/down does nothing until a link is focused again.
+	if e.focusedLinkButton(w) == nil {
 		return false
 	}
 	tabSize := e.tabSize(w)
@@ -495,8 +498,8 @@ func (e *Editor) lineButtons(w *window.Window, docLine int) []render.ButtonSpan 
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"
 		case w.Buffer.LinkVisited(s.Target):
-			// Visited (unfocused): the recent color, normal caps and shadow.
-			colorName = "buttonRecent"
+			// Visited (unfocused): the recent colors, normal caps and shadow glyph.
+			colorName, shadowName = "buttonRecent", "buttonShadowRecent"
 		}
 		var shadowRune rune
 		if sr := []rune(shadow); len(sr) > 0 {

@@ -70,8 +70,9 @@ var defaultGlobalColors = map[string]string{
 	"link":                "\x1b[0;4;93;40m", // underlined bright yellow on black
 	"linkrecent":          "\x1b[0;4;32;40m", // underlined green on black
 	"button":              "\x1b[0;30;47m",   // black on silver
-	"buttonrecent":        "\x1b[0;37;42m",   // silver on dark green (a visited link)
+	"buttonrecent":        "\x1b[0;30;42m",   // black on dark green (a visited link)
 	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+	"buttonshadowrecent":  "\x1b[0;90;42m",   // dark gray on dark green
 	"buttonfocused":       "\x1b[0;30;46m",   // black on cyan
 	"buttonshadowfocused": "\x1b[0;90;46m",   // dark gray on cyan
 
