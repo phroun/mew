@@ -909,6 +909,18 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navHoriz(-1))
 	})
 
+	// nav_history_prior / nav_history_next: walk the focused window's
+	// buffer-swap history (following a link swaps the buffer in place,
+	// stacking the departed binding — see Window.SwapBuffer). Prior returns
+	// to where you were; next re-advances. Both fail when there is no history
+	// in that direction, so chains fall through.
+	ps.RegisterCommand("nav_history_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistory(-1))
+	})
+	ps.RegisterCommand("nav_history_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistory(+1))
+	})
+
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
@@ -1545,15 +1557,16 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_save_all", func(ctx *pawscript.Context) pawscript.Result {
-		mainBuffers := e.getMainBuffers()
 		savedCount := 0
 		failedCount := 0
 		skippedCount := 0
-		for _, w := range mainBuffers {
-			if w.Buffer == nil || !w.Buffer.IsModified() {
+		// Every open buffer, each once — including buffers stacked in a
+		// window's nav history (unsaved work parked behind a link follow).
+		for _, b := range e.openMainBuffers() {
+			if !b.IsModified() {
 				continue
 			}
-			filename := w.Buffer.GetFilename()
+			filename := b.GetFilename()
 			if filename == "" {
 				failedCount++ // Can't save unnamed buffers
 				continue
@@ -1561,15 +1574,15 @@ func (e *Editor) registerCommands() {
 			// A batch save must not silently clobber a file that changed
 			// underneath its buffer, and cannot prompt mid-loop: skip it
 			// with a notice pointing at an individual save.
-			if w.Buffer.HasSource() {
-				if st := w.Buffer.SourceConsistency(); st.Changed() {
+			if b.HasSource() {
+				if st := b.SourceConsistency(); st.Changed() {
 					skippedCount++
-					e.noteBuffer(w.Buffer, "source",
+					e.noteBuffer(b, "source",
 						fmt.Sprintf("Skipped %s: %s on disk — save it individually", filename, st.State), true)
 					continue
 				}
 			}
-			if e.performSave(w.Buffer, filename) {
+			if e.performSave(b, filename) {
 				savedCount++
 			} else {
 				failedCount++
@@ -4825,12 +4838,26 @@ func (e *Editor) closeCurrentBuffer() bool {
 		return false
 	}
 
-	// Check if buffer is modified
+	// Check for changes that would be lost: the window's active buffer, plus
+	// any modified buffer stacked in its nav history that no OTHER window
+	// still holds open — closing this window drops its whole history.
+	var atRisk []*buffer.Buffer
 	if w.Buffer != nil && w.Buffer.IsModified() {
+		atRisk = append(atRisk, w.Buffer)
+	}
+	for _, b := range w.StackedBuffers() {
+		if b != w.Buffer && b.IsModified() && !e.bufferReferencedElsewhere(b, w) {
+			atRisk = append(atRisk, b)
+		}
+	}
+	if len(atRisk) > 0 {
 		// Get the name for the prompt
-		windowName := w.Buffer.GetFilename()
+		windowName := atRisk[0].GetFilename()
 		if windowName == "" {
 			windowName = "Untitled"
+		}
+		if len(atRisk) > 1 {
+			windowName = fmt.Sprintf("%s (+%d more in history)", windowName, len(atRisk)-1)
 		}
 
 		// Store window ID to close later
@@ -4868,12 +4895,13 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 	// Remove the window
 	e.WindowManager.RemoveWindow(windowID)
 
-	// Drop safety state (mew lock, notices) when no other window still
-	// shows this buffer (window_clone can share one buffer).
+	// Drop safety state (mew lock, notices) when no other window still holds
+	// this buffer open — actively or stacked in a nav history (window_clone
+	// can share one buffer; link-follow histories reference buffers too).
 	if closing != nil && closing.Buffer != nil {
 		shared := false
-		for _, w := range e.getMainBuffers() {
-			if w.Buffer == closing.Buffer {
+		for _, b := range e.openMainBuffers() {
+			if b == closing.Buffer {
 				shared = true
 				break
 			}

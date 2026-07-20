@@ -303,6 +303,20 @@ type Window struct {
 	BrowseActive bool
 	linkAnchor   *buffer.Anchor
 
+	// Nav history: the buffer bindings this window navigated away from, in
+	// browser back/forward form. SwapBuffer pushes the active binding onto
+	// navBack (and clears navFwd — a new departure invalidates the forward
+	// trail); NavHistoryPrior/NavHistoryNext shuffle bindings between the
+	// stacks and the window. Stacked bindings keep LIVE cursors on their
+	// buffers (see viewBinding), so returning restores the exact caret,
+	// scroll, and trail. History is navigation, not ownership: a stacked
+	// binding references its buffer but closing the window simply drops the
+	// whole history (released in RemoveWindow) — buffer retirement is decided
+	// by whoever still references it. Both stacks are released in
+	// RemoveWindow.
+	navBack []viewBinding
+	navFwd  []viewBinding
+
 	// Repeat arms the next keybound command to run inside a repeat(...) N times
 	// (see RepeatState). Set by repeat_next, consumed by the command dispatcher.
 	Repeat RepeatState
@@ -771,6 +785,87 @@ func (w *Window) releaseBinding() {
 	w.BrowseActive = browse
 }
 
+// SwapBuffer replaces the window's buffer in place: the active binding is
+// pushed (live, unreleased) onto the back history and a fresh binding is
+// minted on buf — caret at the start, view at the top. Any forward history is
+// dropped: departing to a new destination invalidates the re-advance trail,
+// exactly as in a browser. The caller decides WHICH buffer (reusing an open
+// one for the same file, or loading it) — the window only manages bindings.
+func (w *Window) SwapBuffer(buf *buffer.Buffer) {
+	w.navBack = append(w.navBack, w.detachBinding())
+	for i := range w.navFwd {
+		w.navFwd[i].release()
+	}
+	w.navFwd = nil
+	w.bindBuffer(buf)
+}
+
+// NavHistoryPrior returns to the binding the window most recently swapped
+// away from, moving the active binding onto the forward stack. Reports false
+// (no state change) when there is no back history, so command chains can
+// fall through.
+func (w *Window) NavHistoryPrior() bool {
+	if len(w.navBack) == 0 {
+		return false
+	}
+	b := w.navBack[len(w.navBack)-1]
+	w.navBack = w.navBack[:len(w.navBack)-1]
+	w.navFwd = append(w.navFwd, w.detachBinding())
+	w.attachBinding(b)
+	return true
+}
+
+// NavHistoryNext re-advances along the forward stack after a NavHistoryPrior
+// — the mirror operation. Reports false when there is nothing to re-advance
+// to.
+func (w *Window) NavHistoryNext() bool {
+	if len(w.navFwd) == 0 {
+		return false
+	}
+	b := w.navFwd[len(w.navFwd)-1]
+	w.navFwd = w.navFwd[:len(w.navFwd)-1]
+	w.navBack = append(w.navBack, w.detachBinding())
+	w.attachBinding(b)
+	return true
+}
+
+// NavHistoryDepths reports how many entries the back and forward histories
+// hold (for readouts and command gating).
+func (w *Window) NavHistoryDepths() (prior, next int) {
+	return len(w.navBack), len(w.navFwd)
+}
+
+// StackedBuffers returns the distinct buffers referenced by the window's nav
+// history (not its active binding). Data-safety enumerations — close checks,
+// save-all, crash dumps — must treat these as open: they are one
+// nav_history_prior away.
+func (w *Window) StackedBuffers() []*buffer.Buffer {
+	seen := map[*buffer.Buffer]bool{}
+	var out []*buffer.Buffer
+	for _, s := range [][]viewBinding{w.navBack, w.navFwd} {
+		for i := range s {
+			if b := s[i].Buffer; b != nil && !seen[b] {
+				seen[b] = true
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
+// releaseNavHistory releases every stacked binding's cursors and drops both
+// stacks (window removal).
+func (w *Window) releaseNavHistory() {
+	for i := range w.navBack {
+		w.navBack[i].release()
+	}
+	w.navBack = nil
+	for i := range w.navFwd {
+		w.navFwd[i].release()
+	}
+	w.navFwd = nil
+}
+
 // EventType represents the type of window event.
 type EventType int
 
@@ -1148,8 +1243,10 @@ func (m *Manager) RemoveWindow(id string) bool {
 		}
 	}
 
-	// Release the window's cursors so garland stops adjusting them on edits.
+	// Release the window's cursors so garland stops adjusting them on edits —
+	// the active binding and every binding stacked in its nav history.
 	w.releaseBinding()
+	w.releaseNavHistory()
 
 	delete(m.windows, id)
 

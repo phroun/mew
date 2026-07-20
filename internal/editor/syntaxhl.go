@@ -820,6 +820,11 @@ func (e *Editor) pruneSyntaxCaches() {
 		if w.Buffer != nil {
 			live[w.Buffer] = true
 		}
+		// Buffers stacked in a nav history are one nav_history_prior away:
+		// keep their highlight state warm too.
+		for _, b := range w.StackedBuffers() {
+			live[b] = true
+		}
 	}
 	for b := range e.synCaches {
 		if !live[b] {

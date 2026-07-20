@@ -22,11 +22,11 @@ func TestBidiControlsAreZeroWidth(t *testing.T) {
 // Ordinary and wide runes are unaffected by the control-zeroing.
 func TestOrdinaryWidthsUnchanged(t *testing.T) {
 	cases := map[rune]int{
-		'a':      1,
-		' ':      1,
-		'世':      2, // fullwidth CJK
-		0x0301:   0, // combining acute (Mn)
-		'​': 0, // zero-width space
+		'a':    1,
+		' ':    1,
+		'世':    2, // fullwidth CJK
+		0x0301: 0, // combining acute (Mn)
+		'​':    0, // zero-width space
 	}
 	for r, want := range cases {
 		if got := Rune(r); got != want {

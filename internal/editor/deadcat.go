@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/phroun/mew/internal/buffer"
 )
 
 // DEADCAT is mew's DEADJOE: when the editor dies unexpectedly (a terminal
@@ -181,16 +179,15 @@ func (e *Editor) deadcatCwdPath() string {
 type deadBuf struct{ name, content string }
 
 // modifiedBufferDump collects the content of every modified main buffer, each
-// buffer once (window_clone shares a buffer across windows).
+// buffer once (window_clone shares a buffer across windows), including buffers
+// stacked in a window's nav history — unsaved work parked behind a link
+// follow must survive a crash like any other.
 func (e *Editor) modifiedBufferDump() []deadBuf {
-	seen := map[*buffer.Buffer]bool{}
 	var out []deadBuf
-	for _, w := range e.getMainBuffers() {
-		b := w.Buffer
-		if b == nil || seen[b] || !b.IsModified() {
+	for _, b := range e.openMainBuffers() {
+		if !b.IsModified() {
 			continue
 		}
-		seen[b] = true
 		name := b.GetFilename()
 		if name == "" {
 			name = "(unnamed)"

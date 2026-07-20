@@ -121,6 +121,32 @@ func (e *Editor) navCancel() bool {
 	return true
 }
 
+// navHistory walks the focused window's buffer-swap history: dir < 0 returns
+// to the binding the window last swapped away from (nav_history_prior),
+// dir > 0 re-advances (nav_history_next). Reports false when there is no
+// history in that direction, so command chains fall through.
+func (e *Editor) navHistory(dir int) bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Type != window.MainBuffer {
+		return false
+	}
+	var ok bool
+	if dir < 0 {
+		ok = w.NavHistoryPrior()
+	} else {
+		ok = w.NavHistoryNext()
+	}
+	if !ok {
+		return false
+	}
+	// The restored binding carries its own viewport, but edits made while it
+	// was stacked may have slid the caret out of it: re-ensure visibility on
+	// the restored geometry.
+	e.ensureCursorVisible(w)
+	e.RequestRender()
+	return true
+}
+
 // focusedLinkButton returns the span rendered as the FOCUSED button in w: w
 // must be the focused window, in browse mode, with the caret strictly inside
 // the span. nil otherwise.
