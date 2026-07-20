@@ -136,6 +136,15 @@ func WithHideDesktop(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.HideDesktop = fn }
 }
 
+// WithPointerShape wires the mouse-pointer affordance: fn is told whenever
+// the pointer's shape should change — true while the pointer is over a link
+// button or a button is captured (show an arrow pointer), false for ordinary
+// text (the I-beam). Called only on transitions. Graphical hosts map it to
+// the system cursor; text hosts may ignore it.
+func WithPointerShape(fn func(overButton bool)) Option {
+	return func(cfg *editor.Config) { cfg.PointerShape = fn }
+}
+
 // WithoutUserConfig prevents loading ~/.mew/editor.conf; built-in defaults
 // apply. For hosts that must not read the user's home directory.
 func WithoutUserConfig() Option {

@@ -244,6 +244,9 @@ type Editor struct {
 	// capture holds.
 	mouseOnCaptured bool
 	mouseHovered    pressedLink
+	// pointerOverSent is the last affordance pushed through
+	// Config.PointerShape (see notifyPointerShape).
+	pointerOverSent bool
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
@@ -394,6 +397,12 @@ type Config struct {
 	// HomeDir overrides the home directory mew resolves "~" and the local mew:/
 	// root (<home>/.mew) against. "" uses the OS user home.
 	HomeDir string
+
+	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
+	// changes: true while the pointer is over a link button or a button is
+	// captured (a graphical host shows the arrow pointer), false for ordinary
+	// text (the I-beam). Called only on transitions, from the input thread.
+	PointerShape func(overButton bool)
 
 	// IdentityUser / IdentityHost / IdentityPID override the process identity
 	// mew stamps into native lock files and shows in the "being edited by"

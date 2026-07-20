@@ -88,9 +88,28 @@ func (e *Editor) handleMouseKey(key string) bool {
 	case base == "MouseScrollDown":
 		e.mouseScroll(e.mouseX, e.mouseY, +3)
 	}
+	// Every mouse event may change the pointer affordance (over a button /
+	// captured): push the change to the host, once per transition.
+	e.notifyPointerShape()
+
 	// Every other Mouse* event (middle/right buttons, their drags) is
 	// swallowed so it never leaks into keymap dispatch.
 	return true
+}
+
+// notifyPointerShape tells the host (via Config.PointerShape) whenever the
+// pointer's affordance changes: true while the pointer is over a link button
+// or a button is captured — a graphical host shows the arrow pointer — and
+// false for ordinary text (the I-beam). Pushed only on transitions.
+func (e *Editor) notifyPointerShape() {
+	if e.Config.PointerShape == nil {
+		return
+	}
+	over := e.mouseHovered.active || e.mousePressed.active
+	if over != e.pointerOverSent {
+		e.pointerOverSent = over
+		e.Config.PointerShape(over)
+	}
 }
 
 // parseMouseAt parses the "x,y" tail of a mouse position (1-based terminal
@@ -184,7 +203,15 @@ func (e *Editor) mouseHit(x, y int) (w *window.Window, docLine, runePos int, ok 
 
 	idx := e.runeAtVisualColumn(w, dispLine, target)
 	if dispToDoc != nil {
-		idx = displayToDoc(dispToDoc, idx)
+		if idx >= len(dispToDoc) {
+			// Past the end of the display line: the caret goes to the END of
+			// the document line — never inside a trailing button's span, so
+			// a click in the void after a button places the caret instead of
+			// following.
+			idx = len([]rune(raw))
+		} else {
+			idx = displayToDoc(dispToDoc, idx)
+		}
 	}
 	return w, docLine, idx, true
 }

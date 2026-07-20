@@ -19,6 +19,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/mew"
@@ -56,6 +57,11 @@ type Editor struct {
 	// permission-scoped filesystem is future KittyTK work.
 	fileSystem    mew.FileSystem
 	mewFileSystem mew.FileSystem
+
+	// pointerOverButton mirrors mew's pointer affordance (WithPointerShape):
+	// true while the pointer is over a link button or one is captured, so
+	// the cursor query below answers with the arrow instead of the I-beam.
+	pointerOverButton atomic.Bool
 
 	// launchArgv, when set by the host, runs the session as a full mew
 	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
@@ -219,7 +225,12 @@ func (e *Editor) run() {
 	if fs == nil {
 		fs = mew.OSFileSystem()
 	}
-	options := []mew.Option{mew.WithTerminal(term), mew.WithFileSystem(fs)}
+	options := []mew.Option{
+		mew.WithTerminal(term), mew.WithFileSystem(fs),
+		// The mouse-pointer affordance: an arrow over link buttons (and
+		// while one is captured), the I-beam otherwise. See CursorShapeAt.
+		mew.WithPointerShape(func(over bool) { e.pointerOverButton.Store(over) }),
+	}
 	if e.mewFileSystem != nil {
 		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))
 	}
@@ -298,6 +309,24 @@ func caretLine(caret string) string {
 
 // Close ends the mew session (EOF on its input) and releases the surface.
 // Idempotent.
+// CursorShape / CursorShapeAt override the embedded terminal's I-beam with
+// the arrow pointer while mew reports the pointer over a link button (or a
+// captured one) — the same affordance the classic PurfecTerm's scrollbar
+// lanes provide, driven here by mew's own hit knowledge.
+func (e *Editor) CursorShape() core.CursorShape {
+	if e.pointerOverButton.Load() {
+		return core.CursorDefault
+	}
+	return e.PurfecTerm.CursorShape()
+}
+
+func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	if e.pointerOverButton.Load() {
+		return core.CursorDefault
+	}
+	return e.PurfecTerm.CursorShapeAt(x, y)
+}
+
 func (e *Editor) Close() {
 	e.mu.Lock()
 	if !e.inputClosed {

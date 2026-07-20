@@ -406,3 +406,75 @@ func TestMouseWorksInSpawnedWindow(t *testing.T) {
 	}
 	e.handleMouseKey("MouseLeftRelease")
 }
+
+// Clicking PAST the end of a line whose last element is a button places the
+// caret at EOL — it must not park inside the trailing button's span (which
+// would make the release follow it).
+func TestMouseClickPastEOLButton(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]]\nmore\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	e.performRender()
+	src := w.Buffer
+	eol := len([]rune("go [[other]]"))
+
+	row := w.ContentY + 1
+	col := w.ContentX + 1 + 30 // well past the button
+	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftPress")
+	if got := w.CursorPos(); got.Line != 0 || got.Rune != eol {
+		t.Fatalf("past-EOL click should park at EOL (%d); got %+v", eol, got)
+	}
+	if e.mousePressed.active {
+		t.Fatal("past-EOL click must not capture the trailing button")
+	}
+	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftRelease")
+	if w.Buffer != src {
+		t.Fatal("past-EOL click must not follow")
+	}
+}
+
+// The pointer-shape hook fires on affordance TRANSITIONS: true entering a
+// button (hover or capture), false leaving.
+func TestMousePointerShapeHook(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	e.performRender()
+
+	var pushes []bool
+	e.Config.PointerShape = func(over bool) { pushes = append(pushes, over) }
+
+	row := w.ContentY + 1
+	move := func(cell int) {
+		e.handleMouseKey("MouseDrag@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
+	}
+
+	move(0)  // plain text: no transition (still false)
+	move(5)  // onto the button: -> true
+	move(6)  // still on it: no push
+	move(15) // off: -> false
+	if len(pushes) != 2 || !pushes[0] || pushes[1] {
+		t.Fatalf("hover transitions = %v, want [true false]", pushes)
+	}
+
+	// Capture also counts as "over": press on the button pushes true; the
+	// release (pointer still on it, but capture ends and hover state is
+	// whatever the last motion said) pushes false.
+	pushes = nil
+	e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+5) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftPress")
+	if len(pushes) != 1 || !pushes[0] {
+		t.Fatalf("press should push true; got %v", pushes)
+	}
+	e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+5) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftRelease")
+	if len(pushes) != 2 || pushes[1] {
+		t.Fatalf("release should push false; got %v", pushes)
+	}
+}
