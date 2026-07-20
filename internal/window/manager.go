@@ -88,6 +88,13 @@ func (w *Window) IsOptionOverridden(name string) bool {
 	return w.overriddenOptions[name]
 }
 
+// ClearOptionOverridden drops the explicit-override flag for a per-window
+// option, so the grammar overlay (and clear_option) may restore it to the
+// resolved default. Harmless if it was not overridden.
+func (w *Window) ClearOptionOverridden(name string) {
+	delete(w.overriddenOptions, name)
+}
+
 // AppliedOptionSig returns the overlay signature (class/grammar/type) whose
 // resolved options were last applied to this window.
 func (w *Window) AppliedOptionSig() string { return w.appliedOptionSig }

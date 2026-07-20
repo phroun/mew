@@ -133,26 +133,12 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 		return
 	}
 
-	if !w.IsOptionOverridden("tabsize") {
-		w.ViewState.TabSize = e.optInt(w, "tabsize", e.Config.TabSize, 1)
-	}
-	if !w.IsOptionOverridden("showlinenumbers") {
-		w.ViewState.ShowLineNumbers = e.optBool(w, "showlinenumbers", e.Config.ShowLineNumbers)
-	}
-	if !w.IsOptionOverridden("showinvisibles") {
-		w.ViewState.ShowInvisibles = e.optBool(w, "showinvisibles", e.Config.ShowInvisibles)
-	}
-	if !w.IsOptionOverridden("showmarks") {
-		w.ViewState.ShowMarks = e.optBool(w, "showmarks", e.Config.ShowMarks)
-	}
-	if !w.IsOptionOverridden("showbidi") {
-		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
-	}
-	if !w.IsOptionOverridden("showcolumnruler") {
-		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
-	}
-	if !w.IsOptionOverridden("direction") {
-		w.ViewState.Direction = e.optDir(w, "direction", e.Config.Direction)
+	// Re-derive every per-window option the user has not pinned. The resolution
+	// rule for each lives in applyResolvedOption, shared with clear_option.
+	for _, key := range perWindowOptionKeys {
+		if !w.IsOptionOverridden(key) {
+			e.applyResolvedOption(w, key)
+		}
 	}
 }
 

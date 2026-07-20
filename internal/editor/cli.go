@@ -18,39 +18,11 @@ import (
 // is the whole editor (not a window) are "global" and must precede the first
 // file.
 
-// cliPerWindowOptions is the set of option names set_option routes to a
-// window's ViewState (everything else it routes to the editor-wide Config).
-// This mirrors setOption; keep the two in sync (guarded by a test). These may
-// appear anywhere and apply to the files that follow; the rest are global.
-var cliPerWindowOptions = map[string]bool{
-	"tabsize":         true,
-	"showlinenumbers": true,
-	"showinvisibles":  true,
-	"showbidi":        true,
-	"showmarks":       true,
-	"showcolumnruler": true,
-	"direction":       true,
-}
-
-// cliKnownOptions is every option name set_option accepts at runtime — the
-// surface the command line can set. Load-time-only [general] keys (layout,
-// mappings, projectConfig, useLocks, ...) are intentionally excluded for now.
-var cliKnownOptions = map[string]bool{
-	"tabsize": true, "showlinenumbers": true, "showinvisibles": true,
-	"showbidi": true, "showmarks": true, "showcolumnruler": true, "rulershowscursor": true,
-	"syntax": true, "syntaxdetect": true, "macoptionkeys": true,
-	"matchignoressinglequote": true, "matchignoresdoublequote": true,
-	"matchignoresslashstar": true, "matchignoresslashslash": true,
-	"matchignoreshash": true, "matchignoresdoublehyphen": true,
-	"matchignoressemicolon": true, "matchignorespercent": true,
-	"wordwrap": true, "searchignorecase": true, "searchwrap": true,
-	"searchregex": true, "modebarlocation": true, "pagesizeoptimal": true,
-	"pageoverlapminimum": true, "pagesizestep": true, "maxrepeat": true,
-	"killringentries": true, "direction": true, "prompttimeout": true,
-	"scripttimeout": true, "debouncems": true, "maxrenderdelayms": true,
-	"modebarinner": true, "modebardefault": true, "modebarouter": true,
-	"mappings": true, "flipbidiforhost": true,
-}
+// cliPerWindowOptions (set_option routes these to a window's ViewState) and
+// cliKnownOptions (every option set_option accepts at runtime) are both derived
+// from optionSpecs in optionspec.go — the single canonical option table — so
+// they can never drift from setOption/getOption. Load-time-only [general] keys
+// (layout, mappings, projectConfig, useLocks, ...) are not part of that surface.
 
 // cliOp is one step of the launch walk.
 type cliOp struct {

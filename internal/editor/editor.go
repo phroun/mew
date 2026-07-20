@@ -2000,6 +2000,37 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.setOption(w, name, value))
 	})
 
+	// set_option_next / set_option_prior <name> - rotate an option through its
+	// canonical value sequence (from optionSpecs): read the current value via the
+	// cascade, step to the next/previous value, and set it. Fails with a warning
+	// for options that have no fixed value set (integers, counts, free text).
+	rotate := func(dir int) func(*pawscript.Context) pawscript.Result {
+		return func(ctx *pawscript.Context) pawscript.Result {
+			if len(ctx.Args) < 1 {
+				e.ShowWarning("Usage: set_option_next/prior <name>")
+				return pawscript.BoolStatus(false)
+			}
+			name := fmt.Sprintf("%v", ctx.Args[0])
+			w := e.WindowManager.GetLastMainBufferWindow()
+			return pawscript.BoolStatus(e.rotateOption(w, name, dir))
+		}
+	}
+	ps.RegisterCommand("set_option_next", rotate(+1))
+	ps.RegisterCommand("set_option_prior", rotate(-1))
+
+	// clear_option <name> - drop a per-window option's explicit override on the
+	// active window, reverting it to the resolved default (the configured /
+	// inherited value). Fails for global options and unknown names.
+	ps.RegisterCommand("clear_option", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 1 {
+			e.ShowWarning("Usage: clear_option <name>")
+			return pawscript.BoolStatus(false)
+		}
+		name := fmt.Sprintf("%v", ctx.Args[0])
+		w := e.WindowManager.GetLastMainBufferWindow()
+		return pawscript.BoolStatus(e.clearOption(w, name))
+	})
+
 	// get_option <name> - return the current effective value of an option, as a
 	// substitutable result, e.g. insert {get_option "tabSize"}.
 	ps.RegisterCommand("get_option", func(ctx *pawscript.Context) pawscript.Result {
