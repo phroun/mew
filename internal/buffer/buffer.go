@@ -907,6 +907,23 @@ func (k *Caret) DeleteBackward(count int) {
 	k.b.modified = true
 }
 
+// Overwrite replaces oldByteLen bytes at the caret with text (overwrite-mode
+// typing). Unlike a delete+insert pair, garland tags this as a single overwrite
+// mutation, so a run of overwrites coalesces into one undo step — and an
+// appending insert at the run's end continues that run (the one-way overtype ->
+// append transition). The caret is not moved; the caller advances it.
+func (k *Caret) Overwrite(oldByteLen int64, text string) {
+	if k == nil || k.c == nil {
+		return
+	}
+	k.b.beginMutation()
+	if l, _ := k.Position(); true {
+		k.b.touchContent(l)
+	}
+	k.c.OverwriteBytes(oldByteLen, []byte(text))
+	k.b.modified = true
+}
+
 // Release removes the caret cursor from garland. Safe to call more than once.
 func (k *Caret) Release() {
 	if k != nil && k.c != nil {

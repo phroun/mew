@@ -93,6 +93,68 @@ func TestInsertModeStillInserts(t *testing.T) {
 	}
 }
 
+// A run of overwrite-mode keystrokes coalesces into a single undo step, the way
+// typing does — garland tags them as overwrite mutations and merges the run.
+func TestOverwriteCoalescesIntoOneUndo(t *testing.T) {
+	e, w := newTestEditor(t, "abcdef\n")
+	w.ViewState.OverwriteMode = true
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	for _, ch := range []string{"X", "Y", "Z"} {
+		e.executeCommand(`insert "` + ch + `"`)
+	}
+	if got := docContent(w); got != "XYZdef" {
+		t.Fatalf("overwrote content = %q, want XYZdef", got)
+	}
+	if !w.Buffer.Undo() {
+		t.Fatal("expected an undo step")
+	}
+	if got := docContent(w); got != "abcdef" {
+		t.Fatalf("one undo should restore the whole overwrite run, got %q", got)
+	}
+}
+
+// Overtype that reaches the end of the line and switches to appending stays one
+// undo step: garland lets the appending insert continue the overwrite run.
+func TestOverwriteThenAppendIsOneUndo(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.ViewState.OverwriteMode = true
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	// X over a, Y over b, then Z appends past the end of line.
+	for _, ch := range []string{"X", "Y", "Z"} {
+		e.executeCommand(`insert "` + ch + `"`)
+	}
+	if got := docContent(w); got != "XYZ" {
+		t.Fatalf("overtype+append content = %q, want XYZ", got)
+	}
+	if !w.Buffer.Undo() {
+		t.Fatal("expected an undo step")
+	}
+	if got := docContent(w); got != "ab" {
+		t.Fatalf("overtype-then-append should undo in one step, got %q", got)
+	}
+}
+
+// A cursor move between overwrites bakes the run: each side is its own undo step.
+func TestOverwriteBreaksOnCursorMove(t *testing.T) {
+	e, w := newTestEditor(t, "abcdef\n")
+	w.ViewState.OverwriteMode = true
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	e.executeCommand(`insert "X"`) // Xbcdef
+	e.executeCommand(`insert "Y"`) // XYcdef (one run)
+	e.executeCommand("go_line_beg")
+	e.executeCommand(`insert "Z"`) // ZYcdef (new run)
+
+	if got := docContent(w); got != "ZYcdef" {
+		t.Fatalf("content = %q, want ZYcdef", got)
+	}
+	if !w.Buffer.Undo() || docContent(w) != "XYcdef" {
+		t.Fatalf("first undo should restore only the last overwrite, got %q", docContent(w))
+	}
+	if !w.Buffer.Undo() || docContent(w) != "abcdef" {
+		t.Fatalf("second undo should restore the first run, got %q", docContent(w))
+	}
+}
+
 // The mode is per-window: overwrite on one window does not leak to another on
 // the same editor.
 func TestInsertModePerWindow(t *testing.T) {

@@ -3805,23 +3805,41 @@ func (e *Editor) insertText(text string) {
 }
 
 // overwriteText types text in overwrite mode: each rune replaces the character
-// under the caret, except at end of line (where it appends) and for a newline
-// (which splits the line, like insert). The replace is a bare forward-delete
-// then insert — the same coalescible mutations as our other edits, so a run of
-// overwrites groups into one undo step the way typing and deleting do. The
+// under the caret via garland's overwrite mutation, which coalesces a run of
+// overwrites into one undo step (like typing and deleting do). At (or crossing)
+// end of line — and for a newline, which splits the line — it switches to a
+// plain insert so the text appends; garland lets that appending insert continue
+// the overwrite run, so overtype-then-append stays a single undo step. The
 // overwritten character is discarded (not sent to the kill ring), matching how
 // typing over a selection works.
 func (e *Editor) overwriteText(w *window.Window, text string) {
 	for _, r := range text {
 		pos := w.CursorPos()
-		if r != '\n' && pos.Rune < e.getEffectiveLineLen(w.Buffer, pos.Line) {
-			// A character stands under the caret: remove it, then insert.
+		if r == '\n' || pos.Rune >= e.getEffectiveLineLen(w.Buffer, pos.Line) {
+			// End of line reached (or a line break): append via insert.
 			w.Caret.Seek(pos.Line, pos.Rune)
-			w.Caret.DeleteForward(1)
+			w.Caret.Insert(string(r))
+			continue
 		}
-		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
-		w.Caret.Insert(string(r))
+		// Replace the rune under the caret, then advance past what we wrote so a
+		// continuing overwrite (or the appending insert at EOL) lands at the
+		// run's end.
+		byteLen := e.runeByteLenAt(w, pos.Line, pos.Rune)
+		w.Caret.Seek(pos.Line, pos.Rune)
+		w.Caret.Overwrite(int64(byteLen), string(r))
+		w.Caret.Seek(pos.Line, pos.Rune+1)
 	}
+}
+
+// runeByteLenAt returns the UTF-8 byte length of the rune at (line, rune), or 0
+// if the position is at or past end of line (no rune stands there).
+func (e *Editor) runeByteLenAt(w *window.Window, line, rune_ int) int {
+	content := strings.TrimRight(w.Buffer.GetLine(line), "\n\r")
+	runes := []rune(content)
+	if rune_ < 0 || rune_ >= len(runes) {
+		return 0
+	}
+	return len(string(runes[rune_]))
 }
 
 // insertPasteChunk inserts a single chunk of paste content.

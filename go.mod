@@ -6,7 +6,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.7
-	github.com/phroun/garland v0.1.8
+	github.com/phroun/garland v0.1.9
 	github.com/phroun/pawscript v0.2.11-alpha
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
