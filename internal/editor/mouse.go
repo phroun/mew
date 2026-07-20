@@ -190,20 +190,30 @@ func (e *Editor) mouseHit(x, y int) (w *window.Window, docLine, runePos int, ok 
 }
 
 // windowAtRow finds the visible window whose CONTENT area covers the 1-based
-// screen row (the renderer maintains ContentY/ContentHeight per frame).
+// screen row (the renderer maintains ContentY/ContentHeight per frame). The
+// FOCUSED window wins outright when it covers the row: only the current main
+// window is laid out each frame, so a background main window's stale
+// geometry can cover the same rows — and every mouse action is
+// focused-gated anyway, so the focused window is the only correct answer
+// wherever it covers.
 func (e *Editor) windowAtRow(y int) *window.Window {
 	row := y - 1 // ContentY is 0-based
+	covers := func(w *window.Window) bool {
+		return w != nil && w.Visible && w.Buffer != nil &&
+			row >= w.ContentY && row < w.ContentY+w.ContentHeight
+	}
+	if fw := e.WindowManager.GetFocusedWindow(); covers(fw) {
+		return fw
+	}
 	var best *window.Window
 	for _, w := range e.WindowManager.AllWindows() {
-		if !w.Visible || w.Buffer == nil {
+		if !covers(w) {
 			continue
 		}
-		if row >= w.ContentY && row < w.ContentY+w.ContentHeight {
-			// Prefer main buffers when areas would overlap (stale geometry
-			// on hidden windows).
-			if best == nil || (best.Type != window.MainBuffer && w.Type == window.MainBuffer) {
-				best = w
-			}
+		// Prefer main buffers when areas would overlap (stale geometry
+		// on hidden windows).
+		if best == nil || (best.Type != window.MainBuffer && w.Type == window.MainBuffer) {
+			best = w
 		}
 	}
 	return best

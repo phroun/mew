@@ -347,3 +347,62 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 		t.Log("session did not end on input close (known embedded-reader shutdown nuance)")
 	}
 }
+
+// After a follow spawns a NEW window, the old main window keeps stale
+// geometry covering the same rows (only the current main window is laid
+// out). Hit testing must resolve to the FOCUSED window, so the mouse works
+// in the freshly spawned window immediately.
+func TestMouseWorksInSpawnedWindow(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("click me [[here]] ok\nand [[gone]]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "wiki"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := "file://" + filepath.ToSlash(outside)
+	content := "x [[" + link + "]] y\n"
+	page := filepath.Join(root, "wiki", "page.txt")
+	if err := os.WriteFile(page, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e, _, _ := renderedEditorWithConfig(t, "seed\n", "[options]\nsyntax=dokuwiki\n")
+	buf, err := buffer.NewFromBytes([]byte(content), page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: buf, SetFocus: true, LinkBrowsing: true,
+	})
+	w := e.WindowManager.GetWindow("wiki")
+	e.performRender() // old window gets real geometry
+
+	// Follow the scheme link: a new focused window spawns.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("follow should spawn the new window")
+	}
+	nw := e.WindowManager.GetFocusedWindow()
+	if nw == w {
+		t.Fatal("a scheme follow should focus a fresh window")
+	}
+	e.performRender() // new window laid out; old geometry now STALE but overlapping
+
+	// A click in the new window must hit the new (focused) window, even
+	// though the old window's stale geometry covers the same rows.
+	row := nw.ContentY + 1
+	col := nw.ContentX + 1 + 2 // the 'i' of "click"
+	if hit := e.windowAtRow(row); hit != nw {
+		t.Fatalf("hit testing must prefer the focused window; got %v", hit.ID)
+	}
+	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftPress")
+	if got := nw.CursorPos(); got.Line != 0 || got.Rune != 2 {
+		t.Fatalf("click in the spawned window should set its caret; got %+v", got)
+	}
+	e.handleMouseKey("MouseLeftRelease")
+}
