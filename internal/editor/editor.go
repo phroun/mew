@@ -261,6 +261,7 @@ type Config struct {
 	ShowBidi         bool
 	ShowMarks        string // "no" | "yes" | "all"
 	OverwriteMode    bool   // inverse of insertMode; zero value = insert
+	ReadOnly         bool
 	Syntax           string
 	SyntaxDetect     bool
 
@@ -447,6 +448,7 @@ func DefaultConfig() Config {
 		ShowBidi:         false,
 		ShowMarks:        "no",
 		OverwriteMode:    false, // insertMode=yes
+		ReadOnly:         false,
 		WordWrap:         false,
 		DebounceMs:       20,
 		MaxRenderDelayMs: 100,
@@ -542,6 +544,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ShowBidi = loadedConfig.General.ShowBidi
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
+	cfg.ReadOnly = loadedConfig.General.ReadOnly
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
 	cfg.MatchIgnoresSingleQuote = loadedConfig.General.MatchIgnoresSingleQuote
@@ -2125,6 +2128,12 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 			over = w.ViewState.OverwriteMode
 		}
 		return boolText(!over), true
+	case "readonly":
+		v := e.Config.ReadOnly
+		if w != nil {
+			v = w.ViewState.ReadOnly
+		}
+		return boolText(v), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2290,6 +2299,16 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			w.ViewState.OverwriteMode = !b
 		} else {
 			e.Config.OverwriteMode = !b
+		}
+	case "readonly":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.ReadOnly = b
+		} else {
+			e.Config.ReadOnly = b
 		}
 	case "showcolumnruler":
 		b, ok := parseBool()
@@ -2506,12 +2525,25 @@ func (e *Editor) executeCommand(command string) {
 	// windows that have been on screen longer than 5 seconds.
 	e.expireStaleNotifications()
 
+	// A read-only window rejects content-mutating commands before dispatch, so
+	// no garland revision is ever created; navigation, search, marks, and
+	// undo/redo still run. (find_replace is blocked here, so its prompt never
+	// even opens — a plain find is not a mutation and proceeds.) Checked on the
+	// raw command before repeat-wrapping, so a repeated edit is caught by its
+	// own kind rather than the "repeat" wrapper.
+	fw := e.WindowManager.GetFocusedWindow()
+	if fw != nil && fw.ViewState.ReadOnly && commandMutatesContent(commandKind(command)) {
+		e.ShowWarning("Buffer is read-only")
+		e.RequestRender()
+		return
+	}
+
 	// If a repeat_next is armed, wrap this command so it runs N times.
 	command = e.applyRepeatNext(command)
 
 	var buf *buffer.Buffer
-	if w := e.WindowManager.GetFocusedWindow(); w != nil {
-		buf = w.Buffer
+	if fw != nil {
+		buf = fw.Buffer
 	}
 
 	// ExecuteAsync, not Execute: a command that opens a prompt suspends its
@@ -2583,6 +2615,27 @@ func commandKind(command string) string {
 func coalescibleEditKind(kind string) bool {
 	switch kind {
 	case "insert", "insert_bidi_control", "del_char_prior", "del_char_next":
+		return true
+	}
+	return false
+}
+
+// commandMutatesContent reports whether a command changes buffer text, so a
+// read-only window rejects it before dispatch (no garland revision is created).
+// Everything not listed here — navigation, search (find/find_next), marks
+// (set_mark, block anchors), scrolling, options, saving, and undo/redo/revert —
+// still runs in a read-only window. A replace (find_replace) is a mutation and
+// is blocked; a plain find is not. Kept in step with the mutating command
+// handlers (guarded by a test).
+func commandMutatesContent(kind string) bool {
+	switch kind {
+	case "insert", "insert_bidi_control",
+		"del_char_prior", "del_char_next", "del_line",
+		"del_line_beg", "del_line_end", "del_word_beg", "del_word_end",
+		"trim_line", "trim_line_beg", "trim_line_end",
+		"block_delete", "block_move", "block_indent", "block_unindent", "block_copy_kill",
+		"kill_ring_yank", "kill_ring_pop",
+		"buffer_insert_file", "find_replace":
 		return true
 	}
 	return false
@@ -3849,6 +3902,13 @@ func (e *Editor) insertPasteChunk(content []byte) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
+	// Bracketed paste arrives from the main loop, not executeCommand, so gate it
+	// here too: a read-only window drops pasted content.
+	if w.ViewState.ReadOnly {
+		e.ShowWarning("Buffer is read-only")
+		e.RequestRender()
+		return
+	}
 
 	text := string(content)
 	if text == "" {
@@ -4370,6 +4430,7 @@ func (e *Editor) openFile(filename string) bool {
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
+		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4394,6 +4455,7 @@ func (e *Editor) createNewBuffer() {
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
+		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4423,6 +4485,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
+		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
@@ -4457,6 +4520,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 		ShowBidi:        w.ViewState.ShowBidi,
 		ShowMarks:       w.ViewState.ShowMarks,
 		OverwriteMode:   w.ViewState.OverwriteMode,
+		ReadOnly:        w.ViewState.ReadOnly,
 		ShowRuler:       w.ViewState.ShowRuler,
 		SetFocus:        true,
 	})
@@ -4926,6 +4990,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		ShowBidi:        e.Config.ShowBidi,
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
+		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 	})
 
@@ -5463,6 +5528,7 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Show Bidi Markers: %s\n", opt("showBidi")))
 	content.WriteString(fmt.Sprintf("  Show Marks: %s\n", opt("showMarks")))
 	content.WriteString(fmt.Sprintf("  Insert Mode: %s\n", opt("insertMode")))
+	content.WriteString(fmt.Sprintf("  Read Only: %s\n", opt("readOnly")))
 	content.WriteString(fmt.Sprintf("  Word Wrap: %s\n", opt("wordWrap")))
 	content.WriteString(fmt.Sprintf("  Search Ignore Case: %s\n", opt("searchIgnoreCase")))
 	content.WriteString(fmt.Sprintf("  Search Wrap: %s\n", opt("searchWrap")))

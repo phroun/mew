@@ -78,6 +78,9 @@ type ViewState struct {
 	// the caret (except at end of line, where it appends). Stored inverted so a
 	// zero-value window defaults to insert mode.
 	OverwriteMode bool
+	// ReadOnly rejects content edits made through this window; navigation,
+	// search, marks, and undo/redo remain available. Per window; default false.
+	ReadOnly bool
 }
 
 // MarksVisible reports whether showMarks draws any mark indicators for this
@@ -644,6 +647,7 @@ type WindowOptions struct {
 	ShowBidi        bool
 	ShowMarks       string // "no" | "yes" | "all"
 	OverwriteMode   bool   // inverse of insertMode; zero value = insert
+	ReadOnly        bool
 	ShowRuler       bool
 	TabSize         int
 	SetFocus        bool
@@ -732,6 +736,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			ShowBidi:        opts.ShowBidi,
 			ShowMarks:       opts.ShowMarks,
 			OverwriteMode:   opts.OverwriteMode,
+			ReadOnly:        opts.ReadOnly,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
 		},

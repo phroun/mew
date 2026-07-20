@@ -288,6 +288,10 @@ type GeneralConfig struct {
 	// overwrites the character under the caret (except at end of line, where it
 	// appends). Stored inverted so the zero value is the intended default.
 	OverwriteMode bool
+	// ReadOnly rejects content-mutating edits made through a window (typing,
+	// deleting, replacing, pasting). Navigation, search, marks, and undo/redo
+	// still work. Per window; false by default.
+	ReadOnly bool
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -629,6 +633,7 @@ func DefaultConfig() Config {
 			ShowBidi:                false,
 			ShowMarks:               "no",
 			OverwriteMode:           false, // insertMode=yes
+			ReadOnly:                false,
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -837,6 +842,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if v, ok := opt["insertMode"]; ok {
 			// Stored inverted: insertMode=yes -> not overwrite.
 			config.General.OverwriteMode = !parseBool(v, true)
+		}
+		if v, ok := opt["readOnly"]; ok {
+			config.General.ReadOnly = parseBool(v, false)
 		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
@@ -1667,6 +1675,10 @@ showMarks=no
 # where typing replaces the character under the caret — except at the end of a
 # line, where it still appends. Per window.
 insertMode=yes
+# Read-only: yes rejects edits made through the window (typing, deleting,
+# replacing, pasting); movement, search, marks, and undo/redo still work. Per
+# window.
+readOnly=no
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.
