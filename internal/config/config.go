@@ -2022,6 +2022,12 @@ esc <   =scroll_left
 ^]      =go_match
 
 ^_      =buffer_undo
+# ^/ is straight undo you can lean on (Emacs/JOE muscle memory, and its own
+# key under the kitty keyboard protocol where it no longer collapses onto ^_).
+# It sits at the right end of the bottom row, mirroring ^Z at the left end,
+# whose redo-first fallback ping-pongs undo/redo forever the way a Windows
+# user expects.
+^/      =buffer_undo
 ^Z      =buffer_redo|buffer_undo
 `
 }
