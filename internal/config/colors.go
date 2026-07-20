@@ -47,30 +47,30 @@ var defaultGlobalColors = map[string]string{
 	"cursorghost":         "\x1b[0;30;100m",  // black on dark gray
 	"cursoroffscreen":     "\x1b[0;30;42m",   // black on green
 	"truncation":          "\x1b[0;37;41m",   // silver on red
-	"hint":                "\x1b[1;37;44m",   // bright white on blue (peek hints)
+	"hint":                "\x1b[0;97;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
 	"marks":               "\x1b[0;91m",       // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
 	"selection":           "\x1b[0;30;47m",   // black text on silver
 	"selectioninvisibles": "\x1b[1;30;47m",   // dark gray on silver
-	"rulerends":           "\x1b[0;1;37;45m", // bright white on magenta (end numbers)
+	"rulerends":           "\x1b[0;97;45m", // bright white on magenta (end numbers)
 	"rulerfill":           "\x1b[0;37;45m",   // silver on magenta (for the fill glyph)
 	"rulertick":           "\x1b[0;37;45m",   // silver on magenta (for ".")
-	"rulerminor":          "\x1b[1;33;45m",   // bright yellow on magenta (for ":")
-	"rulermajor":          "\x1b[1;32;45m",   // bright green on magenta ("|" and numbers)
+	"rulerminor":          "\x1b[0;93;45m",   // bright yellow on magenta (for ":")
+	"rulermajor":          "\x1b[0;92;45m",   // bright green on magenta ("|" and numbers)
 	"rulercursor":         "\x1b[0;30;47m",   // black on silver (cursor columns, rulerShowsCursor)
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
 	// these names (built-in conventions plus the [colors.syntax] maps).
 	"syntaxcomment":  "\x1b[0;32;40m",   // green on black
 	"syntaxstring":   "\x1b[0;36;40m",   // cyan on black
-	"syntaxescape":   "\x1b[0;1;36;40m", // bright cyan on black
+	"syntaxescape":   "\x1b[0;96;40m", // bright cyan on black
 	"syntaxconstant": "\x1b[0;91;40m",   // bright red on black (numbers, literals)
 	"syntaxkeyword":  "\x1b[0;1;97;40m", // bold bright white on black
 	"syntaxtype":     "\x1b[0;93;40m",   // bright yellow on black
 	"syntaxpreproc":  "\x1b[0;94;40m",   // bright blue on black
-	"syntaxbad":      "\x1b[0;1;37;41m", // bright white on red
+	"syntaxbad":      "\x1b[0;97;41m", // bright white on red
 }
 
 // defaultTypeColors are the built-in per-buffer-type colors
@@ -93,19 +93,23 @@ var defaultClassColors = map[string]map[string]string{
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill
 		"messages":   "\x1b[1;96;44m", // aqua on blue - stats readout (Frag/Heap/Line/Rune)
 		"modifiers":  "\x1b[0;44m",    // silver on blue - active modifiers & surrounding space
-		"buffer":     "\x1b[1;33;44m", // bright yellow on blue - buffer name (filename)
+		"buffer":     "\x1b[0;93;44m", // bright yellow on blue - buffer name (filename)
 		"completion": "\x1b[0;44m",    // silver on blue - autocompletion & surrounding space
-		"context":    "\x1b[1;32;44m", // bright green on blue - context (when autocompletion isn't showing)
+		"context":    "\x1b[0;92;44m", // bright green on blue - context (when autocompletion isn't showing)
 		"logo":       "\x1b[1;97;41m", // bright white on red - M_ logo
 	},
 	"notification": {
 		"messages": "\x1b[0;37;43m",
 	},
 	"warning": {
-		"messages": "\x1b[1;33;43m",
+		// Bright yellow on brown. Use 93 (bright yellow) rather than 1;33 (bold
+		// yellow): terminals that treat bold as weight-only, not "bold as bright"
+		// (macOS Terminal by default), render 33 as dark yellow — brown on the
+		// brown 43 background, i.e. invisible.
+		"messages": "\x1b[0;93;43m",
 	},
 	"error": {
-		"messages": "\x1b[1;37;41m",
+		"messages": "\x1b[0;97;41m", // bright white on red
 	},
 }
 

@@ -334,8 +334,8 @@ func TestSyntaxDetectEnvPhp(t *testing.T) {
 	if !strings.Contains(raw, sgrKeyword+"e") {
 		t.Fatal("php 'echo' should color as a keyword via the shebang")
 	}
-	// $greeting: the Var class maps to syntaxEscape (bold cyan on black).
-	if !strings.Contains(raw, "\x1b[0;1;36;40m$") {
+	// $greeting: the Var class maps to syntaxEscape (bright cyan on black).
+	if !strings.Contains(raw, "\x1b[0;96;40m$") {
 		t.Fatal("php variables should color via the Var class")
 	}
 }
@@ -475,7 +475,7 @@ func mainBuf(e *Editor) *buffer.Buffer {
 
 // The dokuwiki grammar colors the core constructs.
 func TestDokuwikiGrammar(t *testing.T) {
-	const sgrEscape = "\x1b[0;1;36;40m"
+	const sgrEscape = "\x1b[0;96;40m"
 	e, _, out := renderedEditorWithConfig(t,
 		"====== Head ======\n**bold** and [[wiki:page|x]]\n<code>\nraw < stuff\n</code>\nafter\n",
 		"[options]\nsyntax=dokuwiki\n")
@@ -603,7 +603,7 @@ func TestProjectSyntaxDir(t *testing.T) {
 
 // The conf grammar follows mew's own editor.conf rules.
 func TestConfGrammarMewRules(t *testing.T) {
-	const sgrEscape = "\x1b[0;1;36;40m" // syntaxEscape
+	const sgrEscape = "\x1b[0;96;40m" // syntaxEscape
 	render := func(content string) string {
 		e, _, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=conf\n")
 		out.Reset()

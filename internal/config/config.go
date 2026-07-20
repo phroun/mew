@@ -1808,27 +1808,27 @@ invisibles="\e[0;1;40;90m"        # bright black / dark gray on black
 cursorGhost="\e[0;30;100m"        # black on dark gray
 cursorOffScreen="\e[0;30;42m"     # black on green
 truncation="\e[0;37;41m"          # silver on red
-hint="\e[1;37;44m"                # bright white on blue - peek indicator hints
+hint="\e[0;97;44m"                # bright white on blue - peek indicator hints
 special="\e[33m"                  # yellow foreground - control code substitutes
 marks="\e[0;91m"                  # bright red
 notes="\e[0;36;40m"               # cyan on black
 lineNumbers="\e[1;96;44m"         # aqua on blue
 selection="\e[0;30;47m"           # black text on silver
 selectionInvisibles="\e[1;30;47m" # dark gray on silver
-rulerEnds="\e[0;1;37;45m"         # bright white on magenta (used for end numbers)
+rulerEnds="\e[0;97;45m"         # bright white on magenta (used for end numbers)
 rulerFill="\e[0;37;45m"           # silver on magenta (for the fill glyph)
 rulerTick="\e[0;37;45m"           # silver on magenta (for ".")
-rulerMinor="\e[1;33;45m"          # bright yellow on magenta (for ":")
-rulerMajor="\e[1;32;45m"          # bright green on magenta (for "|" or regular numbers)
+rulerMinor="\e[0;93;45m"          # bright yellow on magenta (for ":")
+rulerMajor="\e[0;92;45m"          # bright green on magenta (for "|" or regular numbers)
 rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerShowsCursor)
 syntaxComment="\e[0;32;40m"       # green on black
 syntaxString="\e[0;36;40m"        # cyan on black
-syntaxEscape="\e[0;1;36;40m"      # bright cyan on black
+syntaxEscape="\e[0;96;40m"      # bright cyan on black
 syntaxConstant="\e[0;91;40m"      # bright red on black (numbers, literals)
 syntaxKeyword="\e[0;1;97;40m"     # bold bright white on black
 syntaxType="\e[0;93;40m"          # bright yellow on black
 syntaxPreproc="\e[0;94;40m"       # bright blue on black
-syntaxBad="\e[0;1;37;41m"         # bright white on red
+syntaxBad="\e[0;97;41m"         # bright white on red
 
 # Syntax highlighting maps a grammar's color classes onto the systematic
 # syntax* colors above. [colors.syntax] adjusts the mapping for every
@@ -1889,19 +1889,19 @@ text="\e[0;1;42;97m"      # bright white on green
 text="\e[0;44m"        # silver on blue - modebar fill
 messages="\e[1;96;44m" # aqua on blue - stats readout (Frag/Heap/Line/Rune)
 modifiers="\e[0;44m"   # silver on blue - active modifiers & space before & after
-buffer="\e[1;33;44m"   # bright yellow on blue - buffer name (filename)
+buffer="\e[0;93;44m"   # bright yellow on blue - buffer name (filename)
 completion="\e[0;44m"  # silver on blue - autocompletion (and space before and after)
-context="\e[1;32;44m"  # bright green on blue - context (when autocompletion isn't showing)
+context="\e[0;92;44m"  # bright green on blue - context (when autocompletion isn't showing)
 logo="\e[1;97;41m"     # bright white on red - M_ logo
 
 [notification.colors]
 messages="\e[0;37;43m"
 
 [warning.colors]
-messages="\e[1;33;43m"
+messages="\e[0;93;43m"                # bright yellow on brown
 
 [error.colors]
-messages="\e[1;37;41m"
+messages="\e[0;97;41m"                # bright white on red
 
 [mappings.mew]
 ^K H	=help_toggle
