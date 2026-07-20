@@ -69,8 +69,8 @@ func TestFindOpenBufferAcrossStacks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w.SwapBuffer(bufA) // seed buffer -> back stack
-	w.SwapBuffer(bufB) // bufA -> back stack; bufB active
+	e.swapBuffer(w, bufA) // seed buffer -> back stack
+	e.swapBuffer(w, bufB) // bufA -> back stack; bufB active
 
 	// The active buffer matches, through a non-normalized spelling.
 	if got := e.findOpenBuffer(e.canonicalDocURL("/tmp/../tmp/canon-b.txt")); got != bufB {
@@ -105,7 +105,7 @@ func TestNavHistoryCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.SwapBuffer(bufB)
+	e.swapBuffer(w, bufB)
 
 	if !e.navHistory(-1) {
 		t.Fatal("prior should succeed after a swap")

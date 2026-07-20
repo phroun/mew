@@ -658,11 +658,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	if !e.navFollow() {
 		t.Fatal("follow should navigate")
 	}
-	if !e.linkTargetVisited(w, "other") {
-		// The paint memo resolves against the CURRENT buffer (other.txt), so
-		// check from the source's perspective after returning.
-		t.Log("visited check deferred until back on the source page")
-	}
+	otherBuf := w.Buffer
 	if !e.navHistory(-1) {
 		t.Fatal("history should return")
 	}
@@ -679,9 +675,9 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		t.Fatal("a second nav_clear has nothing to do (chains fall through)")
 	}
 
-	// Build history again: forward stack holds other.txt (referenced nowhere
-	// else). Also open third.txt in ANOTHER window and swap it through this
-	// window's history so its stacked binding is NOT a last reference.
+	// State now: fwd = [other] (its only reference). A new departure would
+	// invalidate the forward trail — the graveyard catches the orphan. Open
+	// third.txt in ANOTHER window so its bindings are never last references.
 	thirdPath := filepath.Join(root, "w", "third.txt")
 	thirdBuf, err := buffer.NewFromBytes([]byte(files["w/third.txt"]), thirdPath)
 	if err != nil {
@@ -691,47 +687,52 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		Visible: true, ID: "elsewhere", Type: window.MainBuffer, Dock: window.DockNone,
 		Buffer: thirdBuf, SetFocus: false, LinkBrowsing: true,
 	})
-	w.SwapBuffer(thirdBuf) // src -> back stack; third active (also shown elsewhere)
+	e.swapBuffer(w, thirdBuf) // invalidates fwd=[other]: other is BURIED, not released
+	gb := w.GraveyardBuffers()
+	if len(gb) != 1 || gb[0] != otherBuf {
+		t.Fatalf("graveyard = %v, want [other]", gb)
+	}
 	if !w.NavHistoryPrior() {
 		t.Fatal("prior should restore src")
 	}
-	// Now: back = [], fwd = [third (shared)], and follow other again so
-	// back = [src->... wait: follow pushes the ACTIVE binding (src).
+
+	// Re-following the link RESURRECTS the graveyard buffer: the same buffer
+	// object comes back, not a re-load.
+	otherURL := e.canonicalDocURL(filepath.Join(root, "w", "other.txt"))
+	if e.findOpenBuffer(otherURL) != otherBuf {
+		t.Fatal("the buried buffer must be findable by canonical URL")
+	}
 	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("re-follow should navigate")
 	}
-	// Active: other.txt. back = [src], fwd was cleared by the new departure.
-	// Rebuild the shape we want: prior back to src, so fwd = [other].
+	if w.Buffer != otherBuf {
+		t.Fatal("re-follow must resurrect the graveyard buffer, not re-load")
+	}
 	if !e.navHistory(-1) {
 		t.Fatal("prior should restore src again")
 	}
-	otherURL := e.canonicalDocURL(filepath.Join(root, "w", "other.txt"))
-	if e.findOpenBuffer(otherURL) == nil {
-		t.Fatal("other.txt should be held open by the forward stack")
-	}
 
-	// Clear: other.txt's binding is the LAST reference (kept); nothing else
-	// is stacked. src is active (not stacked), third is gone from history
-	// already (the new departure released it).
+	// Clear: fwd = [other] again, but other already has a graveyard entry, so
+	// the stack binding is released (duplicate burial) — the stacks empty,
+	// and the buffer stays reachable through the graveyard alone.
 	if !e.navHistoryClear() {
 		t.Fatal("nav_history_clear should act on a non-empty history")
 	}
-	prior, next := w.NavHistoryDepths()
-	if prior != 0 || next != 1 {
-		t.Fatalf("depths after clear = (%d,%d): the last-reference entry must be kept", prior, next)
+	if prior, next := w.NavHistoryDepths(); prior != 0 || next != 0 {
+		t.Fatalf("depths after clear = (%d,%d): the stacks must empty", prior, next)
 	}
-	if e.findOpenBuffer(otherURL) == nil {
-		t.Fatal("the kept binding must keep other.txt reachable")
+	if e.findOpenBuffer(otherURL) != otherBuf {
+		t.Fatal("the graveyard must keep other.txt reachable after the clear")
 	}
 	if w.Buffer != src {
 		t.Fatal("the active buffer is never touched by a history clear")
 	}
 
-	// A history whose entries are all referenced elsewhere clears fully:
-	// stack third (shown in the other window) then clear.
-	w.SwapBuffer(thirdBuf)
+	// A history whose entries are all referenced elsewhere clears fully with
+	// nothing new buried: stack third (shown in the other window) then clear.
+	e.swapBuffer(w, thirdBuf)
 	if !w.NavHistoryPrior() {
 		t.Fatal("prior should restore src once more")
 	}
@@ -740,6 +741,9 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	}
 	if prior, next := w.NavHistoryDepths(); prior != 0 || next != 0 {
 		t.Fatalf("depths = (%d,%d): a shared buffer's binding is released", prior, next)
+	}
+	if len(w.GraveyardBuffers()) != 1 {
+		t.Fatal("no new burials expected for a shared buffer")
 	}
 	if e.navHistoryClear() {
 		t.Fatal("an empty history has nothing to clear (chains fall through)")

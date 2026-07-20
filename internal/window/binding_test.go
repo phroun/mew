@@ -63,10 +63,15 @@ func TestDetachAttachBindingSurvivesEdits(t *testing.T) {
 	}
 }
 
+// nothingOutside is the SwapBuffer/ClearNavHistory predicate for pure
+// window-level tests: no buffer is referenced anywhere beyond this window.
+func nothingOutside(*buffer.Buffer) bool { return false }
+
 // SwapBuffer + NavHistoryPrior/NavHistoryNext implement browser-style history:
 // swapping pushes the departed binding onto the back stack, prior/next shuffle
 // bindings between the stacks and the window, and a new departure clears the
-// forward trail.
+// forward trail — burying a forward binding in the graveyard when it holds
+// its buffer's last reference.
 func TestSwapBufferHistory(t *testing.T) {
 	m := NewManager()
 	bufA := buffer.NewFromString("aaa\naaa\n")
@@ -77,7 +82,7 @@ func TestSwapBufferHistory(t *testing.T) {
 	w.SetCursorPos(Position{Line: 1, Rune: 2})
 
 	bufB := buffer.NewFromString("bbb\n")
-	w.SwapBuffer(bufB)
+	w.SwapBuffer(bufB, nothingOutside)
 	if w.Buffer != bufB {
 		t.Fatal("swap must bind the new buffer")
 	}
@@ -115,12 +120,21 @@ func TestSwapBufferHistory(t *testing.T) {
 		t.Fatal("prior (again) should succeed")
 	}
 	bufC := buffer.NewFromString("ccc\n")
-	w.SwapBuffer(bufC)
+	w.SwapBuffer(bufC, nothingOutside)
 	if w.NavHistoryNext() {
 		t.Fatal("a new departure must clear the forward history")
 	}
 	if p, _ := w.NavHistoryDepths(); p != 1 {
 		t.Fatalf("back depth after re-departure = %d, want 1 (bufA)", p)
+	}
+	// The invalidated forward binding (bufB) held its buffer's last
+	// reference: it is buried, not released.
+	gb := w.GraveyardBuffers()
+	if len(gb) != 1 || gb[0] != bufB {
+		t.Fatalf("graveyard = %v, want [bufB]", gb)
+	}
+	if sb := w.StackedBuffers(); len(sb) != 2 {
+		t.Fatalf("stacked (back+graveyard) = %v, want bufA and bufB", sb)
 	}
 }
 

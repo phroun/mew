@@ -123,6 +123,17 @@ func (e *Editor) navCancel() bool {
 	return true
 }
 
+// swapBuffer swaps w to buf with orphan protection: a forward-history
+// binding whose buffer would lose its last reference (held nowhere outside
+// this window's nav structures) is buried in the window's graveyard for the
+// eventual save decision, instead of being released with the invalidated
+// forward trail.
+func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
+	w.SwapBuffer(buf, func(b *buffer.Buffer) bool {
+		return e.bufferReferencedElsewhere(b, w)
+	})
+}
+
 // navHistory walks the focused window's buffer-swap history: dir < 0 returns
 // to the binding the window last swapped away from (nav_history_prior),
 // dir > 0 re-advances (nav_history_next). Reports false when there is no
@@ -164,12 +175,13 @@ func (e *Editor) navClearVisited() bool {
 	return true
 }
 
-// navHistoryClear (the nav_history_clear command) drops the focused window's
-// entire back/forward history, releasing the stacked bindings — except any
-// holding the LAST reference to a buffer (nothing else, active or stacked in
-// any window, still holds it): those entries are kept so the buffer stays
-// reachable rather than being orphaned with whatever unsaved state it
-// carries. Reports false when there is no history.
+// navHistoryClear (the nav_history_clear command) empties the focused
+// window's entire back/forward history, releasing the stacked bindings —
+// except any holding the LAST reference to a buffer (nothing else, active or
+// stacked in any window, still holds it): those move to the window's
+// GRAVEYARD, kept alive solely for the eventual "save its changes?"
+// reckoning rather than being orphaned. Reports false when there is no
+// history.
 func (e *Editor) navHistoryClear() bool {
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Type != window.MainBuffer {
@@ -178,14 +190,12 @@ func (e *Editor) navHistoryClear() bool {
 	if prior, next := w.NavHistoryDepths(); prior+next == 0 {
 		return false
 	}
-	dropped, kept := w.ClearNavHistory(func(b *buffer.Buffer) bool {
-		// The window's own ACTIVE buffer counts (clearing history never
-		// touches it); its stacks do not — they are what is being cleared.
-		return b == w.Buffer || e.bufferReferencedElsewhere(b, w)
+	dropped, buried := w.ClearNavHistory(func(b *buffer.Buffer) bool {
+		return e.bufferReferencedElsewhere(b, w)
 	})
 	switch {
-	case kept > 0:
-		e.ShowNotification(fmt.Sprintf("History cleared: %d dropped, %d kept (last reference)", dropped, kept))
+	case buried > 0:
+		e.ShowNotification(fmt.Sprintf("History cleared: %d dropped, %d moved to graveyard", dropped, buried))
 	default:
 		e.ShowNotification("History cleared")
 	}
@@ -269,7 +279,7 @@ func (e *Editor) navFollow() bool {
 		return true
 	}
 	// Same root by construction (in-wiki resolution): swap in place.
-	w.SwapBuffer(buf)
+	e.swapBuffer(w, buf)
 	// Stay in browse mode: following a link is browsing, and the reader keeps
 	// tabbing onward in the destination page.
 	w.BrowseActive = true
@@ -308,7 +318,7 @@ func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followRes
 				nw.WikiRoot = res.root
 				nw.WikiName = res.wikiName
 			} else if w := e.WindowManager.GetWindow(windowID); w != nil {
-				w.SwapBuffer(buf)
+				e.swapBuffer(w, buf)
 			}
 			e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
 			e.RequestRender()

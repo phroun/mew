@@ -333,10 +333,18 @@ type Window struct {
 	// scroll, and trail. History is navigation, not ownership: a stacked
 	// binding references its buffer but closing the window simply drops the
 	// whole history (released in RemoveWindow) — buffer retirement is decided
-	// by whoever still references it. Both stacks are released in
-	// RemoveWindow.
-	navBack []viewBinding
-	navFwd  []viewBinding
+	// by whoever still references it.
+	//
+	// navGrave is the GRAVEYARD: when history maintenance would drop the LAST
+	// reference to a buffer (a forward trail invalidated by a new departure,
+	// or an explicit history clear), the binding is buried here instead of
+	// released, so the buffer stays reachable for the eventual "save its
+	// changes?" reckoning. That is the graveyard's only purpose — it takes no
+	// part in navigation. One binding per buffer (a duplicate burial releases
+	// the newcomer). All three are released in RemoveWindow.
+	navBack  []viewBinding
+	navFwd   []viewBinding
+	navGrave []viewBinding
 
 	// Repeat arms the next keybound command to run inside a repeat(...) N times
 	// (see RepeatState). Set by repeat_next, consumed by the command dispatcher.
@@ -810,15 +818,62 @@ func (w *Window) releaseBinding() {
 // pushed (live, unreleased) onto the back history and a fresh binding is
 // minted on buf — caret at the start, view at the top. Any forward history is
 // dropped: departing to a new destination invalidates the re-advance trail,
-// exactly as in a browser. The caller decides WHICH buffer (reusing an open
-// one for the same file, or loading it) — the window only manages bindings.
-func (w *Window) SwapBuffer(buf *buffer.Buffer) {
+// exactly as in a browser — but never unconditionally: a forward binding
+// whose buffer would lose its LAST reference is buried in the graveyard
+// instead of released (referencedOutside must report whether a buffer is
+// held anywhere beyond this window's nav structures; the window accounts for
+// its own active buffer, back stack, and the new destination itself). The
+// caller decides WHICH buffer (reusing an open one for the same file, or
+// loading it) — the window only manages bindings.
+func (w *Window) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
+	inBack := func(b *buffer.Buffer) bool {
+		for i := range w.navBack {
+			if w.navBack[i].Buffer == b {
+				return true
+			}
+		}
+		return false
+	}
+	old := w.Buffer
 	w.navBack = append(w.navBack, w.detachBinding())
 	for i := range w.navFwd {
-		w.navFwd[i].release()
+		b := w.navFwd[i].Buffer
+		switch {
+		case b == nil || b == buf || b == old || inBack(b):
+			w.navFwd[i].release()
+		case referencedOutside != nil && referencedOutside(b):
+			w.navFwd[i].release()
+		default:
+			w.bury(w.navFwd[i])
+		}
 	}
 	w.navFwd = nil
 	w.bindBuffer(buf)
+}
+
+// bury moves a detached binding into the graveyard, keeping at most one
+// binding per buffer (a duplicate burial releases the newcomer — the buffer
+// is already safe).
+func (w *Window) bury(b viewBinding) {
+	for i := range w.navGrave {
+		if w.navGrave[i].Buffer == b.Buffer {
+			b.release()
+			return
+		}
+	}
+	w.navGrave = append(w.navGrave, b)
+}
+
+// GraveyardBuffers returns the distinct buffers held only by the window's
+// graveyard — parked awaiting the "save its changes?" reckoning.
+func (w *Window) GraveyardBuffers() []*buffer.Buffer {
+	out := make([]*buffer.Buffer, 0, len(w.navGrave))
+	for i := range w.navGrave {
+		if b := w.navGrave[i].Buffer; b != nil {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // NavHistoryPrior returns to the binding the window most recently swapped
@@ -857,13 +912,15 @@ func (w *Window) NavHistoryDepths() (prior, next int) {
 }
 
 // StackedBuffers returns the distinct buffers referenced by the window's nav
-// history (not its active binding). Data-safety enumerations — close checks,
-// save-all, crash dumps — must treat these as open: they are one
-// nav_history_prior away.
+// structures — back/forward history AND the graveyard — excluding its active
+// binding. Data-safety enumerations — close checks, save-all, crash dumps,
+// open-buffer reuse — must treat all of these as open: history entries are
+// one nav_history_prior away, and graveyard entries are being held precisely
+// for their unsaved state.
 func (w *Window) StackedBuffers() []*buffer.Buffer {
 	seen := map[*buffer.Buffer]bool{}
 	var out []*buffer.Buffer
-	for _, s := range [][]viewBinding{w.navBack, w.navFwd} {
+	for _, s := range [][]viewBinding{w.navBack, w.navFwd, w.navGrave} {
 		for i := range s {
 			if b := s[i].Buffer; b != nil && !seen[b] {
 				seen[b] = true
@@ -874,46 +931,48 @@ func (w *Window) StackedBuffers() []*buffer.Buffer {
 	return out
 }
 
-// releaseNavHistory releases every stacked binding's cursors and drops both
-// stacks (window removal).
+// releaseNavHistory releases every stacked binding's cursors and drops the
+// back/forward stacks and the graveyard (window removal — the close path has
+// already prompted for any at-risk buffers among them).
 func (w *Window) releaseNavHistory() {
-	for i := range w.navBack {
-		w.navBack[i].release()
+	for _, s := range [][]viewBinding{w.navBack, w.navFwd, w.navGrave} {
+		for i := range s {
+			s[i].release()
+		}
 	}
-	w.navBack = nil
-	for i := range w.navFwd {
-		w.navFwd[i].release()
-	}
-	w.navFwd = nil
+	w.navBack, w.navFwd, w.navGrave = nil, nil, nil
 }
 
-// ClearNavHistory empties the window's back/forward history, releasing each
-// stacked binding — EXCEPT a binding holding the LAST reference to its
-// buffer (per referencedOutside, which must report whether the buffer is
-// held anywhere beyond this window's own stacks): dropping that would orphan
-// the buffer, so the entry is kept and the buffer stays reachable through
-// nav_history_prior. Duplicate references within the history keep only their
-// oldest entry. Reports how many entries were dropped and kept.
-func (w *Window) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (dropped, kept int) {
-	seen := map[*buffer.Buffer]bool{}
-	filter := func(s []viewBinding) []viewBinding {
-		var out []viewBinding
+// ClearNavHistory empties the window's back/forward history entirely. Each
+// stacked binding is released — EXCEPT a binding holding the LAST reference
+// to its buffer (per referencedOutside, which must report whether the buffer
+// is held anywhere beyond this window's nav structures; the active buffer is
+// accounted here), which is buried in the graveyard so the buffer stays
+// reachable for the eventual save decision. Reports how many bindings were
+// released and how many buried.
+func (w *Window) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (dropped, buried int) {
+	clear := func(s []viewBinding) {
 		for i := range s {
 			b := s[i].Buffer
-			if b != nil && !seen[b] && !referencedOutside(b) {
-				seen[b] = true
-				out = append(out, s[i])
-				kept++
+			if b == nil || b == w.Buffer || (referencedOutside != nil && referencedOutside(b)) {
+				s[i].release()
+				dropped++
 				continue
 			}
-			s[i].release()
-			dropped++
+			before := len(w.navGrave)
+			w.bury(s[i])
+			if len(w.navGrave) > before {
+				buried++
+			} else {
+				dropped++ // duplicate burial: the buffer was already safe
+			}
 		}
-		return out
 	}
-	w.navBack = filter(w.navBack)
-	w.navFwd = filter(w.navFwd)
-	return dropped, kept
+	clear(w.navBack)
+	w.navBack = nil
+	clear(w.navFwd)
+	w.navFwd = nil
+	return dropped, buried
 }
 
 // EventType represents the type of window event.
