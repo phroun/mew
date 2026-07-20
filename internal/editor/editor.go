@@ -936,6 +936,17 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navHistory(+1))
 	})
 
+	// nav_clear forgets every visited link (editor-wide repaint to the
+	// unvisited style). nav_history_clear drops the focused window's whole
+	// back/forward history, releasing stacked bindings except any that hold
+	// the LAST reference to a buffer (kept, so the buffer stays reachable).
+	ps.RegisterCommand("nav_clear", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navClearVisited())
+	})
+	ps.RegisterCommand("nav_history_clear", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navHistoryClear())
+	})
+
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {

@@ -887,6 +887,35 @@ func (w *Window) releaseNavHistory() {
 	w.navFwd = nil
 }
 
+// ClearNavHistory empties the window's back/forward history, releasing each
+// stacked binding — EXCEPT a binding holding the LAST reference to its
+// buffer (per referencedOutside, which must report whether the buffer is
+// held anywhere beyond this window's own stacks): dropping that would orphan
+// the buffer, so the entry is kept and the buffer stays reachable through
+// nav_history_prior. Duplicate references within the history keep only their
+// oldest entry. Reports how many entries were dropped and kept.
+func (w *Window) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (dropped, kept int) {
+	seen := map[*buffer.Buffer]bool{}
+	filter := func(s []viewBinding) []viewBinding {
+		var out []viewBinding
+		for i := range s {
+			b := s[i].Buffer
+			if b != nil && !seen[b] && !referencedOutside(b) {
+				seen[b] = true
+				out = append(out, s[i])
+				kept++
+				continue
+			}
+			s[i].release()
+			dropped++
+		}
+		return out
+	}
+	w.navBack = filter(w.navBack)
+	w.navFwd = filter(w.navFwd)
+	return dropped, kept
+}
+
 // EventType represents the type of window event.
 type EventType int
 

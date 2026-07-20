@@ -638,3 +638,110 @@ func TestCreatePagePrompt(t *testing.T) {
 		t.Fatal("non-writable miss must not swap")
 	}
 }
+
+// nav_clear forgets every visited link editor-wide; nav_history_clear drops
+// the window's back/forward history, releasing stacked bindings EXCEPT one
+// holding the last reference to a buffer, which is kept so the buffer stays
+// reachable.
+func TestNavClearAndHistoryClear(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+		"w/third.txt": "third content\n",
+	}
+	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
+	src := w.Buffer
+
+	// Visit a link, then clear the visited set.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("follow should navigate")
+	}
+	if !e.linkTargetVisited(w, "other") {
+		// The paint memo resolves against the CURRENT buffer (other.txt), so
+		// check from the source's perspective after returning.
+		t.Log("visited check deferred until back on the source page")
+	}
+	if !e.navHistory(-1) {
+		t.Fatal("history should return")
+	}
+	if !e.linkTargetVisited(w, "other") {
+		t.Fatal("the followed link should read visited")
+	}
+	if !e.navClearVisited() {
+		t.Fatal("nav_clear should clear something")
+	}
+	if e.linkTargetVisited(w, "other") {
+		t.Fatal("visited status should be gone after nav_clear")
+	}
+	if e.navClearVisited() {
+		t.Fatal("a second nav_clear has nothing to do (chains fall through)")
+	}
+
+	// Build history again: forward stack holds other.txt (referenced nowhere
+	// else). Also open third.txt in ANOTHER window and swap it through this
+	// window's history so its stacked binding is NOT a last reference.
+	thirdPath := filepath.Join(root, "w", "third.txt")
+	thirdBuf, err := buffer.NewFromBytes([]byte(files["w/third.txt"]), thirdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "elsewhere", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: thirdBuf, SetFocus: false, LinkBrowsing: true,
+	})
+	w.SwapBuffer(thirdBuf) // src -> back stack; third active (also shown elsewhere)
+	if !w.NavHistoryPrior() {
+		t.Fatal("prior should restore src")
+	}
+	// Now: back = [], fwd = [third (shared)], and follow other again so
+	// back = [src->... wait: follow pushes the ACTIVE binding (src).
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("re-follow should navigate")
+	}
+	// Active: other.txt. back = [src], fwd was cleared by the new departure.
+	// Rebuild the shape we want: prior back to src, so fwd = [other].
+	if !e.navHistory(-1) {
+		t.Fatal("prior should restore src again")
+	}
+	otherURL := e.canonicalDocURL(filepath.Join(root, "w", "other.txt"))
+	if e.findOpenBuffer(otherURL) == nil {
+		t.Fatal("other.txt should be held open by the forward stack")
+	}
+
+	// Clear: other.txt's binding is the LAST reference (kept); nothing else
+	// is stacked. src is active (not stacked), third is gone from history
+	// already (the new departure released it).
+	if !e.navHistoryClear() {
+		t.Fatal("nav_history_clear should act on a non-empty history")
+	}
+	prior, next := w.NavHistoryDepths()
+	if prior != 0 || next != 1 {
+		t.Fatalf("depths after clear = (%d,%d): the last-reference entry must be kept", prior, next)
+	}
+	if e.findOpenBuffer(otherURL) == nil {
+		t.Fatal("the kept binding must keep other.txt reachable")
+	}
+	if w.Buffer != src {
+		t.Fatal("the active buffer is never touched by a history clear")
+	}
+
+	// A history whose entries are all referenced elsewhere clears fully:
+	// stack third (shown in the other window) then clear.
+	w.SwapBuffer(thirdBuf)
+	if !w.NavHistoryPrior() {
+		t.Fatal("prior should restore src once more")
+	}
+	if !e.navHistoryClear() {
+		t.Fatal("clear should act")
+	}
+	if prior, next := w.NavHistoryDepths(); prior != 0 || next != 0 {
+		t.Fatalf("depths = (%d,%d): a shared buffer's binding is released", prior, next)
+	}
+	if e.navHistoryClear() {
+		t.Fatal("an empty history has nothing to clear (chains fall through)")
+	}
+}

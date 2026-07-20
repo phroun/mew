@@ -1,10 +1,12 @@
 package editor
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/window"
@@ -143,6 +145,50 @@ func (e *Editor) navHistory(dir int) bool {
 	// was stacked may have slid the caret out of it: re-ensure visibility on
 	// the restored geometry.
 	e.ensureCursorVisible(w)
+	e.RequestRender()
+	return true
+}
+
+// navClearVisited (the nav_clear command) forgets every visited link,
+// editor-wide: the presence set and the chronological log reset, so all
+// links repaint in their unvisited style. Reports false when there was
+// nothing to clear, so chains fall through.
+func (e *Editor) navClearVisited() bool {
+	if len(e.linkVisitSeen) == 0 && len(e.linkVisitLog) == 0 {
+		return false
+	}
+	e.linkVisitSeen = make(map[string]bool)
+	e.linkVisitLog = nil
+	e.ShowNotification("Visited links cleared")
+	e.RequestRender()
+	return true
+}
+
+// navHistoryClear (the nav_history_clear command) drops the focused window's
+// entire back/forward history, releasing the stacked bindings — except any
+// holding the LAST reference to a buffer (nothing else, active or stacked in
+// any window, still holds it): those entries are kept so the buffer stays
+// reachable rather than being orphaned with whatever unsaved state it
+// carries. Reports false when there is no history.
+func (e *Editor) navHistoryClear() bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Type != window.MainBuffer {
+		return false
+	}
+	if prior, next := w.NavHistoryDepths(); prior+next == 0 {
+		return false
+	}
+	dropped, kept := w.ClearNavHistory(func(b *buffer.Buffer) bool {
+		// The window's own ACTIVE buffer counts (clearing history never
+		// touches it); its stacks do not — they are what is being cleared.
+		return b == w.Buffer || e.bufferReferencedElsewhere(b, w)
+	})
+	switch {
+	case kept > 0:
+		e.ShowNotification(fmt.Sprintf("History cleared: %d dropped, %d kept (last reference)", dropped, kept))
+	default:
+		e.ShowNotification("History cleared")
+	}
 	e.RequestRender()
 	return true
 }
