@@ -108,9 +108,11 @@ func (r *recFS) WriteFile(name string, data []byte) error {
 }
 func (r *recFS) Glob(string) ([]string, error) { return nil, nil }
 
-// In virtual mode the host receives "mew:/rel" verbatim (scheme intact) and
+// In virtual mode the host receives the canonical "mew:///rel" spelling
+// (empty authority — the slot reserved for future instance selection) and
 // always confined — never a real filesystem path and never with a surviving
-// "..".
+// "..". Input spellings still normalize (the one-slash form is valid user
+// notation).
 func TestMewVFSVirtualRouting(t *testing.T) {
 	fs := &recFS{}
 	v := newMewVFS(&Config{MewFS: fs})
@@ -118,19 +120,19 @@ func TestMewVFSVirtualRouting(t *testing.T) {
 		t.Fatal("MewFS supplied: expected virtual mode")
 	}
 
-	_ = v.WriteFile("mew:/editor.conf", []byte("x"))
+	_ = v.WriteFile("mew:///editor.conf", []byte("x"))
 	_, _ = v.ReadFile("mew:/../../../etc/passwd")
 
 	for _, n := range fs.names {
-		if !strings.HasPrefix(n, "mew:/") {
-			t.Errorf("host was handed a non-scheme name: %q", n)
+		if !strings.HasPrefix(n, "mew:///") {
+			t.Errorf("host was handed a non-canonical name: %q", n)
 		}
 		if strings.Contains(n, "..") {
 			t.Errorf("host was handed an unconfined name: %q", n)
 		}
 	}
-	if got := fs.names[len(fs.names)-1]; got != "mew:/etc/passwd" {
-		t.Errorf("climbing read = %q, want mew:/etc/passwd", got)
+	if got := fs.names[len(fs.names)-1]; got != "mew:///etc/passwd" {
+		t.Errorf("climbing read = %q, want mew:///etc/passwd", got)
 	}
 }
 

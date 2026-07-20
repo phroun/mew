@@ -486,11 +486,13 @@ type StorageConfig struct {
 }
 
 // FileIO is the file access the Manager uses for config, profile, and @include
-// files. A path beginning "mew:/" addresses mew's own config tree (editor.conf,
+// files. A path beginning "mew:" addresses mew's own config tree (editor.conf,
 // profile.mew, angle-bracket includes); every other path is an ordinary
-// project/document file. A host injects a scheme-aware implementation
-// (SetFileIO); the default maps mew:/ to <UserHomeDir>/.mew and everything else
-// straight to the OS. Write creates parent directories.
+// project/document file. Paths handed to a FileIO always use the canonical
+// "mew:///rel" spelling (empty authority — the authority slot is reserved for
+// future instance selection). A host injects a scheme-aware implementation
+// (SetFileIO); the default maps mew:/// to <UserHomeDir>/.mew and everything
+// else straight to the OS. Write creates parent directories.
 type FileIO struct {
 	Read  func(path string) ([]byte, error)
 	Write func(path string, data []byte) error
@@ -499,8 +501,8 @@ type FileIO struct {
 
 // Manager handles configuration file operations.
 type Manager struct {
-	configDir  string // "mew:" — the mew config tree root
-	configPath string // "mew:/editor.conf"
+	configDir  string // "mew:///" — the mew config tree root
+	configPath string // "mew:///editor.conf"
 	fio        FileIO
 	// localMewDir, when set, is the real ~/.mew directory: excluded from
 	// project discovery so the user config layer is not also treated as a
@@ -513,11 +515,11 @@ type Manager struct {
 }
 
 // NewManager creates a new config manager whose config tree is addressed with
-// the "mew:/" scheme (default: <UserHomeDir>/.mew on the real OS).
+// the "mew:///" scheme (default: <UserHomeDir>/.mew on the real OS).
 func NewManager() *Manager {
 	return &Manager{
-		configDir:  "mew:",
-		configPath: "mew:/editor.conf",
+		configDir:  "mew:///",
+		configPath: "mew:///editor.conf",
 		fio:        osFileIO(),
 	}
 }
@@ -544,8 +546,8 @@ func (m *Manager) SetIncludeReader(read func(path string) ([]byte, error)) {
 	m.includeRead = read
 }
 
-// osFileIO is the default file access: mew:/ maps to <UserHomeDir>/.mew, other
-// paths go straight to the OS.
+// osFileIO is the default file access: mew:/// maps to <UserHomeDir>/.mew,
+// other paths go straight to the OS.
 func osFileIO() FileIO {
 	return FileIO{
 		Read: func(p string) ([]byte, error) { return os.ReadFile(mewToLocal(p)) },
@@ -563,13 +565,13 @@ func osFileIO() FileIO {
 	}
 }
 
-// mewToLocal maps a "mew:/rel" path to <UserHomeDir>/.mew/rel; other paths pass
-// through unchanged.
+// mewToLocal maps a "mew:///rel" path to <UserHomeDir>/.mew/rel; other paths
+// pass through unchanged.
 func mewToLocal(p string) string {
 	if !strings.HasPrefix(p, "mew:") {
 		return p
 	}
-	rel := strings.TrimPrefix(strings.TrimPrefix(p, "mew:"), "/")
+	rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
@@ -594,23 +596,24 @@ var includeRe = regexp.MustCompile(`^\s*@include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
 // joinInclude resolves an @include reference against a base directory. When the
 // base is a "mew:" path the result stays inside the mew tree: the reference is
 // joined as if rooted at the tree top, so any leading "../" is dropped and can
-// never rise above "mew:/" — the confinement a virtualizing host relies on.
+// never rise above "mew:///" — the confinement a virtualizing host relies on.
 // Other bases join with ordinary OS-path semantics.
 func joinInclude(base, ref string) string {
 	if strings.HasPrefix(base, "mew:") {
-		rel := strings.TrimPrefix(strings.TrimPrefix(base, "mew:"), "/")
+		rel := strings.TrimLeft(strings.TrimPrefix(base, "mew:"), "/")
 		clean := path.Clean("/" + rel + "/" + ref) // rooted: ".." cannot escape "/"
-		return "mew:" + clean
+		return "mew://" + clean
 	}
 	return filepath.Join(base, ref)
 }
 
-// includeDir is the directory of an include path, preserving the "mew:" scheme
-// so a nested quoted include resolves against its includer's mew: location.
+// includeDir is the directory of an include path, preserving the "mew:///"
+// scheme so a nested quoted include resolves against its includer's mew
+// location.
 func includeDir(p string) string {
 	if strings.HasPrefix(p, "mew:") {
-		rel := strings.TrimPrefix(strings.TrimPrefix(p, "mew:"), "/")
-		return "mew:" + path.Dir("/"+rel)
+		rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
+		return "mew://" + path.Dir("/"+rel)
 	}
 	return filepath.Dir(p)
 }
@@ -1380,7 +1383,7 @@ func mergeStringMap(dst *map[string]string, src map[string]string) {
 
 // ProfilePath returns the mew: path of the user's profile.mew startup script.
 func (m *Manager) ProfilePath() string {
-	return "mew:/profile.mew"
+	return "mew:///profile.mew"
 }
 
 // defaultProfileScript is written to profile.mew when it doesn't exist yet,
@@ -1640,7 +1643,7 @@ func (m *Manager) unescapeValue(value string) string {
 
 // WriteDefault writes the default configuration file, and drops the shipped
 // default resource files (the @included keymap sets and layouts) into
-// mew:/defaults/ so they resolve and are discoverable.
+// mew:///defaults/ so they resolve and are discoverable.
 func (m *Manager) WriteDefault() error {
 	if err := m.io().Write(m.configPath, []byte(m.generateDefaultConfig())); err != nil {
 		return err
@@ -1648,7 +1651,7 @@ func (m *Manager) WriteDefault() error {
 	return m.writeEmbeddedDefaults()
 }
 
-// writeEmbeddedDefaults copies each embedded defaults/*.conf into mew:/defaults/,
+// writeEmbeddedDefaults copies each embedded defaults/*.conf into mew:///defaults/,
 // skipping any that already exist so user edits are never clobbered.
 func (m *Manager) writeEmbeddedDefaults() error {
 	entries, err := embeddedDefaults.ReadDir("defaults")
@@ -1659,7 +1662,7 @@ func (m *Manager) writeEmbeddedDefaults() error {
 		if e.IsDir() {
 			continue
 		}
-		dest := "mew:/defaults/" + e.Name()
+		dest := "mew:///defaults/" + e.Name()
 		if _, err := m.io().Read(dest); err == nil {
 			continue // already present — keep the user's copy
 		}

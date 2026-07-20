@@ -136,7 +136,7 @@ func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
 		return nil, fmt.Errorf("not a document URL: %s", url)
 	}
 	if prefix == "mew://" {
-		data, err := e.mew.ReadFile("mew:" + p)
+		data, err := e.mew.ReadFile("mew://" + p)
 		if err != nil {
 			return nil, err
 		}

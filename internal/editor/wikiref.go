@@ -364,7 +364,7 @@ func (e *Editor) docStat(url string) (isDir, exists bool) {
 		return false, false
 	}
 	if prefix == "mew://" {
-		info, ok := e.mew.Stat("mew:" + p)
+		info, ok := e.mew.Stat("mew://" + p)
 		return info.IsDir, ok
 	}
 	name := filepath.FromSlash(p)
@@ -390,7 +390,7 @@ func (e *Editor) docList(dirURL string) []string {
 		return nil
 	}
 	if prefix == "mew://" {
-		matches, err := e.mew.Glob("mew:" + path.Join(p, "*"))
+		matches, err := e.mew.Glob("mew://" + path.Join(p, "*"))
 		if err != nil {
 			return nil
 		}

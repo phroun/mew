@@ -28,7 +28,7 @@ var builtinSyntax embed.FS
 // directory (the user owns it from then on), and it is a no-op when the mew tree
 // is virtualized (a host owns its own layout).
 func (e *Editor) installDefaultGrammars() {
-	if !e.usingOSFS || e.mew == nil || e.mew.IsDir("mew:/syntax") {
+	if !e.usingOSFS || e.mew == nil || e.mew.IsDir("mew:///syntax") {
 		return
 	}
 	entries, err := builtinSyntax.ReadDir("syntax")
@@ -43,7 +43,7 @@ func (e *Editor) installDefaultGrammars() {
 		if err != nil {
 			continue
 		}
-		_ = e.mew.WriteFile("mew:/syntax/"+ent.Name(), data)
+		_ = e.mew.WriteFile("mew:///syntax/"+ent.Name(), data)
 	}
 }
 
@@ -178,7 +178,7 @@ func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error
 			}
 		}
 	}
-	if src, err := e.mew.ReadFile("mew:/syntax/" + name + ".jsf"); err == nil {
+	if src, err := e.mew.ReadFile("mew:///syntax/" + name + ".jsf"); err == nil {
 		return src, nil
 	}
 	if src, err := builtinSyntax.ReadFile("syntax/" + name + ".jsf"); err == nil {

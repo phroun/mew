@@ -128,7 +128,7 @@ type Editor struct {
 	// Garland's own lazy warm-storage path instead of reading whole files.
 	usingOSFS bool
 
-	// mew accesses the "mew:/" support tree (config, profile, syntax, native
+	// mew accesses the "mew:///" support tree (config, profile, syntax, native
 	// locks, crash dumps) — virtualized or mapped to <home>/.mew. home is the
 	// resolved home directory (host override or OS), used for "~" expansion.
 	mew  *mewVFS
@@ -372,7 +372,7 @@ type Config struct {
 	// insert, block write, globbing). Nil means the real OS file system.
 	FS FileSystem
 
-	// MewFS, when set, virtualizes mew's own support tree (the "mew:/" scheme —
+	// MewFS, when set, virtualizes mew's own support tree (the "mew:///" scheme —
 	// editor.conf, profile.mew, syntax grammars, native locks, crash dumps):
 	// mew:/x paths are handed to it verbatim. Nil maps mew:/ to <home>/.mew on
 	// the real OS.

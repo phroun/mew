@@ -9,28 +9,26 @@ import (
 	"github.com/phroun/mew/internal/config"
 )
 
-// The "mew:/" scheme addresses mew's own support tree — what used to be spelled
+// The "mew:" scheme addresses mew's own support tree — what used to be spelled
 // "~/.mew/": editor.conf, profile.mew, the syntax/ grammars, native lock files,
 // crash dumps. A host chooses where that tree lives:
 //
-//   - default (local): "mew:/x" maps to <home>/.mew/x on the real OS, where
+//   - default (local): "mew:///x" maps to <home>/.mew/x on the real OS, where
 //     <home> is the host-overridable home directory (WithHomeDir, else the OS
 //     UserHomeDir).
-//   - virtualized: with WithMewFileSystem, "mew:/x" is handed to the host's
-//     FileSystem verbatim (scheme intact), so the host owns the tree.
+//   - virtualized: with WithMewFileSystem, "mew:///x" is handed to the host's
+//     FileSystem (scheme intact), so the host owns the tree.
 //
-// Either way a "mew:/" path is confined to its root: a ".." can never walk
-// above <home>/.mew (local) or above "mew:/" (virtual). Confinement happens by
+// Either way a mew: path is confined to its root: a ".." can never walk above
+// <home>/.mew (local) or above "mew:///" (virtual). Confinement happens by
 // cleaning the path as if rooted at "/", which drops any leading "..".
 //
-// Spelling convention: "mew:/x" (one slash — rooted within the scheme, no
-// authority) is the ADDRESS form used everywhere the tree is accessed,
-// including what a virtualized host's FileSystem receives (that spelling is
-// the host-visible contract; do not change it). "mew:///x" (empty authority)
-// is the CANONICAL IDENTITY form used in URL space — buffer identities, wiki
-// roots, comparisons — produced by canonicalDocURL. confine() accepts every
-// spelling, so the two forms name the same thing; only identity code needs
-// the canonical one.
+// Spelling: everything mew PRODUCES — host FileSystem calls, config paths,
+// listings, canonical identities — uses "mew:///x", the empty-authority form,
+// so the authority slot stays open for addressing other instances later
+// (mew://<authority>/x). On INPUT, confine() accepts the user-notation
+// spellings the reference spec allows ("mew:/x" is the rooted-no-authority
+// form) and normalizes them all to the same confined path.
 
 // mewVFS resolves and accesses the mew: tree.
 type mewVFS struct {
@@ -73,12 +71,12 @@ func confine(mewPath string) string {
 }
 
 // name returns the concrete name to hand the underlying FileSystem for a mew:
-// path: the confined "mew:/rel" (virtual) or <localRoot>/rel (local). Returns
-// ("", false) in local mode when the home root is unknown.
+// path: the confined "mew:///rel" (virtual) or <localRoot>/rel (local).
+// Returns ("", false) in local mode when the home root is unknown.
 func (v *mewVFS) name(mewPath string) (string, bool) {
 	rel := confine(mewPath)
 	if v.virtual {
-		return "mew:/" + rel, true
+		return "mew:///" + rel, true
 	}
 	if v.localRoot == "" {
 		return "", false
@@ -118,10 +116,10 @@ func (v *mewVFS) LocalPath(mewPath string) (string, bool) {
 	return filepath.Join(v.localRoot, filepath.FromSlash(confine(mewPath))), true
 }
 
-// Glob lists mew: entries matching a confined pattern, returned as "mew:/rel"
-// paths (local results are mapped back out of the on-disk root). Used by the
-// wiki resolver to match page ids against the files actually present in a
-// mew:-hosted wiki tree.
+// Glob lists mew: entries matching a confined pattern, returned as
+// "mew:///rel" paths (local results are mapped back out of the on-disk root).
+// Used by the wiki resolver to match page ids against the files actually
+// present in a mew:-hosted wiki tree.
 func (v *mewVFS) Glob(mewPattern string) ([]string, error) {
 	n, ok := v.name(mewPattern)
 	if !ok {
@@ -134,14 +132,14 @@ func (v *mewVFS) Glob(mewPattern string) ([]string, error) {
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		if v.virtual {
-			out = append(out, m) // host results are already mew:/ names
+			out = append(out, m) // host results are already mew: names
 			continue
 		}
 		rel, err := filepath.Rel(v.localRoot, m)
 		if err != nil {
 			continue
 		}
-		out = append(out, "mew:/"+filepath.ToSlash(rel))
+		out = append(out, "mew:///"+filepath.ToSlash(rel))
 	}
 	return out, nil
 }
