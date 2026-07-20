@@ -1960,6 +1960,7 @@ rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerSh
 # linkRecent is reserved for recently-followed links.
 link="\e[0;4;93;40m"              # underlined bright yellow on black
 linkRecent="\e[0;4;32;40m"        # underlined green on black
+linkHover="\e[0;4;92;40m"        # underlined bright green on black (pointer over)
 # Dokuwiki heading base color (browse mode adds bold/underline per level).
 heading="\e[0;96;40m"             # bright cyan on black
 button="\e[0;30;47m"              # black on silver
@@ -1970,6 +1971,8 @@ buttonFocused="\e[0;30;46m"       # black on cyan
 buttonShadowFocused="\e[0;90;46m" # dark gray on cyan
 buttonPressed="\e[0;97;44m"       # bright white on blue (mouse held down)
 buttonShadowPressed="\e[0;37;44m" # silver on blue
+buttonHover="\e[0;93;45m"         # bright yellow on purple (pointer over)
+buttonShadowHover="\e[0;90;45m"   # dark gray on purple
 syntaxComment="\e[0;32;40m"       # green on black
 syntaxString="\e[0;36;40m"        # cyan on black
 syntaxEscape="\e[0;96;40m"      # bright cyan on black

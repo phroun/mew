@@ -782,12 +782,17 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
 		linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link")
 		recentSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkRecent")
+		hoverSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkHover")
 		if linkSGR != "" || recentSGR != "" {
 			colors := append([]string(nil), c.colors[docLine]...)
 			for _, s := range c.links[docLine] {
 				sgr := linkSGR
 				if recentSGR != "" && e.linkTargetVisited(w, s.Target) {
 					sgr = recentSGR // a visited link paints in the recent color
+				}
+				if hoverSGR != "" && e.mouseHovered.active && e.mouseHovered.winID == w.ID &&
+					e.mouseHovered.line == docLine && e.mouseHovered.start == s.Start {
+					sgr = hoverSGR // the pointer is over it (all-motion hosts)
 				}
 				if sgr == "" {
 					continue

@@ -781,8 +781,10 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 	focusedHere := e.WindowManager.GetFocusedWindow() == w && pos.Line == docLine
 	for _, s := range e.linkSpansOnLine(w, docLine) {
 		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
-		pressed := e.mousePressed.active && e.mousePressed.winID == w.ID &&
+		pressed := e.mousePressed.active && e.mouseOnCaptured && e.mousePressed.winID == w.ID &&
 			e.mousePressed.line == docLine && e.mousePressed.start == s.Start
+		hovered := e.mouseHovered.active && e.mouseHovered.winID == w.ID &&
+			e.mouseHovered.line == docLine && e.mouseHovered.start == s.Start
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
 		switch {
@@ -794,6 +796,9 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 		case focused:
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"
+		case hovered:
+			// Pointer over the button (all-motion hosts): the hover style.
+			colorName, shadowName = "buttonHover", "buttonShadowHover"
 		case e.linkTargetVisited(w, s.Target):
 			colorName, shadowName = "buttonRecent", "buttonShadowRecent"
 		}

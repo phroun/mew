@@ -69,6 +69,7 @@ var defaultGlobalColors = map[string]string{
 	// half/full-block shadow cell.
 	"link":       "\x1b[0;4;93;40m", // underlined bright yellow on black
 	"linkrecent": "\x1b[0;4;32;40m", // underlined green on black
+	"linkhover":  "\x1b[0;4;92;40m", // underlined bright green on black (pointer over)
 	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
 	// browse mode can add bold/underline per level (see the editor). Bright
 	// cyan on black.
@@ -81,6 +82,8 @@ var defaultGlobalColors = map[string]string{
 	"buttonshadowfocused": "\x1b[0;90;46m", // dark gray on cyan
 	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
 	"buttonshadowpressed": "\x1b[0;37;44m", // silver on blue
+	"buttonhover":         "\x1b[0;93;45m", // bright yellow on purple (pointer over)
+	"buttonshadowhover":   "\x1b[0;90;45m", // dark gray on purple
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
 	// these names (built-in conventions plus the [colors.syntax] maps).

@@ -1,10 +1,16 @@
 package editor
 
 import (
+	"io"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/window"
 )
 
@@ -63,16 +69,29 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 		t.Fatal("the pressed button should paint in buttonPressed")
 	}
 
-	// Dragging off the button cancels the click for good.
+	// Dragging off the button: the capture HOLDS but the pressed style
+	// reverts (the caret is still in the span, so the focused style shows).
 	if !e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(0)) + "," + itoa(row)) {
 		t.Fatal("drag pseudo-key should be consumed")
 	}
-	if e.mousePressed.active {
-		t.Fatal("dragging off the button must cancel the pressed state")
+	if !e.mousePressed.active || e.mouseOnCaptured {
+		t.Fatal("dragging off must keep the capture but drop the pressed style")
 	}
-	click("MouseLeftRelease", 5)
-	if w.Buffer != src {
-		t.Fatal("a cancelled click must not follow")
+	if out := renderTo(e); !strings.Contains(out, "[0;30;46m") {
+		t.Fatal("dragged-off captured button should show the focused style")
+	}
+	// Dragging back on re-presses.
+	if !e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(5)) + "," + itoa(row)) {
+		t.Fatal("drag pseudo-key should be consumed")
+	}
+	if !e.mousePressed.active || !e.mouseOnCaptured {
+		t.Fatal("dragging back on must re-press the captured button")
+	}
+	// Releasing OFF the captured button abandons the click.
+	e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(0)) + "," + itoa(row))
+	click("MouseLeftRelease", 0)
+	if e.mousePressed.active || w.Buffer != src {
+		t.Fatal("a release off the captured button must not follow")
 	}
 
 	// Press and release on the button: the follow triggers.
@@ -130,4 +149,201 @@ func TestMouseKeyPassthrough(t *testing.T) {
 		}
 	}
 	_ = window.Position{}
+}
+
+// Modal safety: only the FOCUSED window processes mouse actions. With a
+// prompt up, clicks in the main window do nothing at all — no focus steal,
+// no caret move, no follow.
+func TestMouseModalSafety(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	e.performRender()
+	src := w.Buffer
+	caretBefore := w.CursorPos()
+
+	// Raise a modal prompt (it takes focus).
+	answered := false
+	e.PromptMgr.PromptForConfirmationTop("modal test", "Sure? [y/N]: ", false,
+		func(accepted, yes bool) { answered = true })
+	pw := focusedPrompt(e)
+	if pw == nil {
+		t.Fatal("prompt should be focused")
+	}
+
+	// Click on the wiki window's button cell: ignored outright.
+	row := w.ContentY + 1
+	col := w.ContentX + 1 + 5
+	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
+	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeftRelease")
+	if e.WindowManager.GetFocusedWindow() != pw {
+		t.Fatal("a click outside the prompt must not steal focus")
+	}
+	if w.Buffer != src || w.CursorPos() != caretBefore {
+		t.Fatal("a click outside the focused window must not act")
+	}
+	if e.mousePressed.active {
+		t.Fatal("no pressed state may arm in an unfocused window")
+	}
+	answerPrompt(t, e, "")
+	if !answered {
+		t.Fatal("the prompt should still complete normally")
+	}
+}
+
+// Hover (all-motion hosts): plain motion over a button paints the hover
+// style; motion elsewhere clears it. In caret mode the hovered link paints
+// linkHover.
+func TestMouseHoverStyles(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	e.performRender()
+
+	row := w.ContentY + 1
+	over := func(cell int) {
+		e.handleMouseKey("MouseDrag@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
+	}
+
+	// Browse mode (auto-armed): hover over the button.
+	over(5)
+	if !e.mouseHovered.active {
+		t.Fatal("hover should latch over a button")
+	}
+	if out := renderTo(e); !strings.Contains(out, "\x1b[0;93;45m") {
+		t.Fatal("the hovered button should paint in buttonHover")
+	}
+
+	// Hover away: clears and repaints without the hover color on the button.
+	over(15)
+	if e.mouseHovered.active {
+		t.Fatal("hover should clear off the button")
+	}
+
+	// Caret mode (model a ^C'd user): the hovered link paints linkHover.
+	w.BrowseActive = false
+	over(5)
+	if !e.mouseHovered.active {
+		t.Fatal("hover should latch over a caret-mode link")
+	}
+	if out := renderTo(e); !strings.Contains(out, "\x1b[0;4;92;40m") {
+		t.Fatal("the hovered link should paint in linkHover")
+	}
+}
+
+// syncBuffer is a goroutine-safe output sink for driving the real run loop.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// The REAL run loop repaints on mouse input alone: raw SGR reports go in
+// through the terminal byte stream, and the pressed style plus the follow's
+// destination content come out — with zero keyboard input. Guards the
+// mouse -> handler -> render plumbing end to end.
+func TestRunLoopRendersOnMouseAlone(t *testing.T) {
+	root := t.TempDir()
+	pagePath := filepath.Join(root, "page.txt")
+	otherPath := filepath.Join(root, "other.txt")
+	if err := os.WriteFile(pagePath, []byte("go [[other]] now\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherPath, []byte("OTHERCONTENT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pr, pw := io.Pipe()
+	out := &syncBuffer{}
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	configText := "[options]\nsyntax=dokuwiki\n"
+	cfg.ConfigText = &configText
+	cfg.Terminal = &TerminalIO{
+		Input:  pr,
+		Output: out,
+		Size:   func() (int, int, error) { return 80, 24, nil },
+	}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	buf, err := buffer.NewFromBytes([]byte("go [[other]] now\n"), pagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = e.run(buf)
+	}()
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s", what)
+	}
+
+	// Wait for the initial frame and window geometry.
+	var w *window.Window
+	waitFor("initial render", func() bool {
+		w = e.WindowManager.GetFocusedWindow()
+		return len(out.String()) > 0 && w != nil && w.ContentWidth > 0
+	})
+
+	// Raw SGR press on the button cell (no keyboard involved).
+	row := w.ContentY + 1
+	col := w.ContentX + 1 + 5
+	if _, err := pw.Write([]byte("\x1b[<0;" + itoa(col) + ";" + itoa(row) + "M")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("pressed style to paint", func() bool {
+		return strings.Contains(out.String(), "\x1b[0;97;44m")
+	})
+
+	// Raw SGR release: the follow runs and the destination paints. The
+	// back-buffer diff interleaves escapes mid-word, so compare stripped.
+	if _, err := pw.Write([]byte("\x1b[<0;" + itoa(col) + ";" + itoa(row) + "m")); err != nil {
+		t.Fatal(err)
+	}
+	esc := regexp.MustCompile("\x1b\\[[0-9;<>?]*[A-Za-z]|\x1b#[0-9]|\x1b[()][A-Z0-9]")
+	waitFor("follow destination to paint", func() bool {
+		return strings.Contains(esc.ReplaceAllString(out.String(), ""), "OTHERCONTENT")
+	})
+
+	// Best-effort shutdown: closing the input source should end the session
+	// (dkh Closed event). Today an embedded pipe reader does not always
+	// surface EOF promptly — a separate shutdown nuance, not the mouse path
+	// under test — so a hung session is only logged and the goroutine leaks
+	// into process exit.
+	_ = pw.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Log("session did not end on input close (known embedded-reader shutdown nuance)")
+	}
 }

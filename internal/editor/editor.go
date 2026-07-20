@@ -233,10 +233,17 @@ type Editor struct {
 	linkResolveCache map[string]string
 
 	// Mouse state: the last reported pointer position (the key layer emits a
-	// Mouse@x,y position before each press/release/scroll), and the link
-	// button currently held down (see mouse.go).
+	// Mouse@x,y position before each press/release/scroll), the link button
+	// currently held down, and the link under the pointer (hover; delivered
+	// only by hosts with all-motion tracking, e.g. the graphical build). See
+	// mouse.go.
 	mouseX, mouseY int
-	mousePressed   pressedLink
+	mousePressed   pressedLink // the CAPTURED button (press-to-release)
+	// mouseOnCaptured: the pointer is currently over the captured button
+	// (paints pressed); dragging off reverts to the focused style while the
+	// capture holds.
+	mouseOnCaptured bool
+	mouseHovered    pressedLink
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
@@ -5361,6 +5368,8 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		LinkBrowsing:    e.Config.LinkBrowsing,
+		SyntaxOverrides: e.Config.SyntaxOverrides,
 	})
 
 	return e.serve(buf)

@@ -14,20 +14,26 @@ import (
 // all (see EnableMouseReporting; purfecterm answers the same DECSET trio by
 // routing mouse to the app instead of local selection).
 //
-// mew's semantics:
-//   - A left press anywhere in a window's content area focuses the window
-//     and sets the caret to the clicked cell (tab-, bidi-, double-width- and
-//     button-substitution-aware).
-//   - In browse mode, a press ON a link button shows the button in the
-//     pressed style; dragging off the button cancels the click (the style
-//     reverts and a later release does nothing); a release still on the same
-//     button reverts the style and follows the link exactly as keyboard
-//     navigation would.
-//   - The scroll wheel scrolls the window under the pointer.
+// mew's semantics — MODAL-SAFE: only the FOCUSED window processes mouse
+// actions. A click in any other window is ignored outright (no focus steal),
+// so a modal prompt keeps the whole keyboard-and-mouse stage to itself.
+//   - A left press in the focused window's content area sets the caret to
+//     the clicked cell (tab-, bidi-, double-width- and button-substitution-
+//     aware).
+//   - In browse mode, a press ON a link button CAPTURES it: the button
+//     shows the pressed style while the pointer is over it, reverts to its
+//     focused style when dragged off (the capture holds), and re-presses
+//     when dragged back on. Releasing on the captured button follows the
+//     link exactly as keyboard navigation would; releasing anywhere else
+//     abandons the click.
+//   - The scroll wheel scrolls the focused window (when under the pointer).
+//   - With all-motion tracking delivered (the graphical build), the link or
+//     button under the pointer takes a hover style.
 
-// pressedLink identifies the button held down by the mouse (window identity,
-// document line, span start). Ephemeral press-to-release state: identity by
-// position is fine at this lifetime.
+// pressedLink identifies a link by position (window identity, document
+// line, span start) — used for the mouse CAPTURE (the button a press
+// grabbed, held until release) and for hover. Ephemeral press-to-release /
+// motion-to-motion state: identity by position is fine at this lifetime.
 type pressedLink struct {
 	active bool
 	winID  string
@@ -71,6 +77,12 @@ func (e *Editor) handleMouseKey(key string) bool {
 		}
 	case base == "MouseLeftRelease", base == "MouseRelease":
 		e.mouseRelease(e.mouseX, e.mouseY)
+	case strings.HasPrefix(base, "MouseDrag@"):
+		// Plain motion, no button (all-motion tracking): hover.
+		if x, y, ok := parseMouseAt(base[len("MouseDrag@"):]); ok {
+			e.mouseX, e.mouseY = x, y
+			e.mouseHoverAt(x, y)
+		}
 	case base == "MouseScrollUp":
 		e.mouseScroll(e.mouseX, e.mouseY, -3)
 	case base == "MouseScrollDown":
@@ -263,53 +275,77 @@ func displayToDoc(dispToDoc []int, idx int) int {
 	return 0
 }
 
-// mousePress: focus the window, set the caret to the clicked cell, and — on
-// a link button in browse mode — arm the pressed style.
+// mousePress: set the caret to the clicked cell and — on a link button in
+// browse mode — arm the pressed style. ONLY the focused window processes
+// presses: a click anywhere else is ignored (no focus steal), preserving the
+// modal prompt system.
 func (e *Editor) mousePress(x, y int) {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
-	if !ok {
+	if !ok || e.WindowManager.GetFocusedWindow() != w {
 		return
-	}
-	if e.WindowManager.GetFocusedWindow() != w {
-		e.WindowManager.SetFocus(w.ID)
 	}
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
 	e.updateBrowseState()
 	if span := e.focusedLinkButton(w); span != nil {
 		e.mousePressed = pressedLink{active: true, winID: w.ID, line: docLine, start: span.Start}
+		e.mouseOnCaptured = true
 	}
 	e.RequestRender()
 }
 
-// mouseDrag: dragging off the pressed button cancels the click for good (the
-// style reverts; the release will do nothing).
+// mouseDrag: the captured button tracks the pointer — pressed style while
+// over it, its ordinary (focused) style while dragged off, re-pressed when
+// dragged back on. The capture itself holds until release.
 func (e *Editor) mouseDrag(x, y int) {
 	if !e.mousePressed.active {
 		return
 	}
-	if !e.hitOnPressedButton(x, y) {
-		e.mousePressed = pressedLink{}
+	if on := e.hitOnPressedButton(x, y); on != e.mouseOnCaptured {
+		e.mouseOnCaptured = on
 		e.RequestRender()
 	}
 }
 
-// mouseRelease: a release still on the pressed button reverts its style and
-// follows the link, exactly as keyboard navigation would.
+// mouseRelease: releasing ON the captured button follows the link, exactly
+// as keyboard navigation would; releasing anywhere else abandons the click.
+// Either way the capture ends.
 func (e *Editor) mouseRelease(x, y int) {
 	if !e.mousePressed.active {
 		return
 	}
 	onButton := e.hitOnPressedButton(x, y)
 	e.mousePressed = pressedLink{}
+	e.mouseOnCaptured = false
 	if onButton {
 		e.navFollow()
 	}
 	e.RequestRender()
 }
 
+// mouseHoverAt tracks the link under the pointer (plain motion, no button).
+// Hover follows the same modal rule as every mouse action — only the focused
+// window's links light up — and repaints only when the hovered identity
+// actually changes.
+func (e *Editor) mouseHoverAt(x, y int) {
+	nh := pressedLink{}
+	if w, docLine, runePos, ok := e.mouseHit(x, y); ok &&
+		e.WindowManager.GetFocusedWindow() == w && w.ViewState.LinkBrowsing {
+		for _, s := range e.linkSpansOnLine(w, docLine) {
+			if s.Start <= runePos && runePos < s.End {
+				nh = pressedLink{active: true, winID: w.ID, line: docLine, start: s.Start}
+				break
+			}
+		}
+	}
+	if nh != e.mouseHovered {
+		e.mouseHovered = nh
+		e.RequestRender()
+	}
+}
+
 // hitOnPressedButton reports whether the coordinates land on the very button
-// the press armed (same window, same line, same span).
+// the press CAPTURED (same window, same line, same span).
 func (e *Editor) hitOnPressedButton(x, y int) bool {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
 	if !ok || w.ID != e.mousePressed.winID || docLine != e.mousePressed.line {
@@ -323,10 +359,11 @@ func (e *Editor) hitOnPressedButton(x, y int) bool {
 	return false
 }
 
-// mouseScroll scrolls the window under the pointer by delta lines.
+// mouseScroll scrolls the window under the pointer by delta lines — only
+// when it is the focused window (modal safety, as with every mouse action).
 func (e *Editor) mouseScroll(x, y int, delta int) {
 	w := e.windowAtRow(y)
-	if w == nil || w.Buffer == nil {
+	if w == nil || w.Buffer == nil || e.WindowManager.GetFocusedWindow() != w {
 		return
 	}
 	top := w.ViewState.ViewOffsetY + delta
