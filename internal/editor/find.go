@@ -770,6 +770,10 @@ func (e *Editor) runReplaceLoop(state window.FindState, opts findOptions, m matc
 		}
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "", "y", "yes":
+			if e.windowEditLocked(mi.w) {
+				finish(mi.w)
+				return
+			}
 			nl, nc := e.applyReplacement(state, mi)
 			e.runReplaceLoop(state, opts, m, mi.w, nl, nc, replaced+1)
 		case "n", "no":
@@ -792,6 +796,9 @@ func (e *Editor) runReplaceLoop(state window.FindState, opts findOptions, m matc
 // scan direction without asking, honoring the count limit, and returns the
 // total replaced. Single-buffer runs collapse into one undo revision.
 func (e *Editor) replaceRest(state window.FindState, opts findOptions, m matcher, mi matchInfo, replaced int) int {
+	if e.windowEditLocked(mi.w) {
+		return replaced
+	}
 	if !opts.allBuffers && mi.w.Buffer != nil {
 		mi.w.Buffer.BeginUserCommand("replace")
 		defer mi.w.Buffer.EndUserCommand()

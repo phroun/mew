@@ -212,7 +212,7 @@ type Editor struct {
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
 	// colors; synSGR memoizes color-class resolution (see syntaxhl.go).
-	syntaxLoader  *jsf.Loader
+	syntaxLoader *jsf.Loader
 	// syntaxLoaderOverride resolves grammars with the project .mew/syntax layer
 	// skipped, for flavors named in the syntaxOverrides option. It is a separate
 	// loader so an overridden and a project-resolved instance of the same grammar
@@ -2626,28 +2626,12 @@ func (e *Editor) executeCommand(command string) {
 	// windows that have been on screen longer than 5 seconds.
 	e.expireStaleNotifications()
 
-	// A read-only window rejects content-mutating commands before dispatch, so
-	// no garland revision is ever created; navigation, search, marks, and
-	// undo/redo still run. (find_replace is blocked here, so its prompt never
-	// even opens — a plain find is not a mutation and proceeds.) Checked on the
-	// raw command before repeat-wrapping, so a repeated edit is caught by its
-	// own kind rather than the "repeat" wrapper.
+	// Content mutations (read-only windows, focused link buttons) are NOT gated
+	// here by command name: the script language can rename or chain any command,
+	// so a name is not a reliable signal of what a command does. The lock is
+	// enforced inside each mutation's implementation instead — the one place
+	// that always sees the actual buffer change (see contentLocked).
 	fw := e.WindowManager.GetFocusedWindow()
-	if fw != nil && commandMutatesContent(commandKind(command)) {
-		// A read-only window, or a focused link button (the caret is inert
-		// inside it — its source text is protected until the button is left or
-		// nav_cancel'd), rejects content-mutating commands before dispatch.
-		if fw.ViewState.ReadOnly {
-			e.ShowWarning("Buffer is read-only")
-			e.RequestRender()
-			return
-		}
-		if e.focusedLinkButton(fw) != nil {
-			e.ShowWarning("Link is focused (^C to edit)")
-			e.RequestRender()
-			return
-		}
-	}
 
 	// If a repeat_next is armed, wrap this command so it runs N times.
 	command = e.applyRepeatNext(command)
@@ -2731,22 +2715,32 @@ func coalescibleEditKind(kind string) bool {
 	return false
 }
 
-// commandMutatesContent reports whether a command changes buffer text, so a
-// read-only window rejects it before dispatch (no garland revision is created).
-// Everything not listed here — navigation, search (find/find_next), marks
-// (set_mark, block anchors), scrolling, options, saving, and undo/redo/revert —
-// still runs in a read-only window. A replace (find_replace) is a mutation and
-// is blocked; a plain find is not. Kept in step with the mutating command
-// handlers (guarded by a test).
-func commandMutatesContent(kind string) bool {
-	switch kind {
-	case "insert", "insert_bidi_control",
-		"del_char_prior", "del_char_next", "del_line",
-		"del_line_beg", "del_line_end", "del_word_beg", "del_word_end",
-		"trim_line", "trim_line_beg", "trim_line_end",
-		"block_delete", "block_move", "block_indent", "block_unindent", "block_copy_kill",
-		"kill_ring_yank", "kill_ring_pop",
-		"buffer_insert_file", "find_replace":
+// contentLocked reports whether the focused window currently forbids content
+// mutations — it is read-only, or a link button is focused (the caret is inert
+// inside it, its source text protected until nav_cancel) — and warns when it
+// does. Every mutation's implementation calls this at the point it would change
+// the buffer, so the lock holds no matter how the command was named, aliased,
+// or chained in the script language. There is deliberately no command-name
+// list: a name cannot tell you what a command does.
+func (e *Editor) contentLocked() bool {
+	return e.windowEditLocked(e.WindowManager.GetFocusedWindow())
+}
+
+// windowEditLocked is contentLocked for a specific window — used where the
+// mutating implementation names its target window directly (find/replace
+// applies to the match's window, not necessarily the focused one).
+func (e *Editor) windowEditLocked(w *window.Window) bool {
+	if w == nil {
+		return false
+	}
+	if w.ViewState.ReadOnly {
+		e.ShowWarning("Buffer is read-only")
+		e.RequestRender()
+		return true
+	}
+	if e.focusedLinkButton(w) != nil {
+		e.ShowWarning("Link is focused (^C to edit)")
+		e.RequestRender()
 		return true
 	}
 	return false
@@ -3272,6 +3266,11 @@ func (e *Editor) cursorRingGo(next bool) bool {
 
 // deleteCharBefore deletes the character before the cursor.
 func (e *Editor) deleteCharBefore() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -3302,6 +3301,11 @@ func (e *Editor) deleteCharBefore() {
 
 // deleteCharAt deletes the character at the cursor.
 func (e *Editor) deleteCharAt() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -3330,6 +3334,11 @@ func (e *Editor) deleteCharAt() {
 
 // deleteLine deletes the current line.
 func (e *Editor) deleteLine() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -3942,6 +3951,11 @@ func bidiControlRune(name string) (rune, bool) {
 // like the insert command (insert the text, track the edit). Reports false on
 // an unknown name.
 func (e *Editor) insertBidiControl(name string) bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	r, ok := bidiControlRune(name)
 	if !ok {
 		e.ShowWarning("Unknown control mark: " + name)
@@ -3954,6 +3968,11 @@ func (e *Editor) insertBidiControl(name string) bool {
 
 // insertText inserts text at the cursor position.
 func (e *Editor) insertText(text string) {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -4024,16 +4043,9 @@ func (e *Editor) insertPasteChunk(content []byte) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
-	// Bracketed paste arrives from the main loop, not executeCommand, so gate it
-	// here too: a read-only window — or a focused link button — drops it.
-	if w.ViewState.ReadOnly {
-		e.ShowWarning("Buffer is read-only")
-		e.RequestRender()
-		return
-	}
-	if e.focusedLinkButton(w) != nil {
-		e.ShowWarning("Link is focused (^C to edit)")
-		e.RequestRender()
+	// Bracketed paste arrives from the main loop, not executeCommand, but it is
+	// still a content mutation: gate it at its own source.
+	if e.contentLocked() {
 		return
 	}
 
@@ -4178,6 +4190,11 @@ func (e *Editor) moveToPrevWord() {
 
 // deleteToWordStart deletes from cursor to beginning of word.
 func (e *Editor) deleteToWordStart() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -4219,6 +4236,11 @@ func (e *Editor) deleteToWordStart() {
 
 // deleteToWordEnd deletes from cursor to end of word.
 func (e *Editor) deleteToWordEnd() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -4258,6 +4280,11 @@ func (e *Editor) deleteToWordEnd() {
 
 // deleteToLineStart deletes from cursor to beginning of line.
 func (e *Editor) deleteToLineStart() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -4274,6 +4301,11 @@ func (e *Editor) deleteToLineStart() {
 
 // deleteToLineEnd deletes from cursor to end of line.
 func (e *Editor) deleteToLineEnd() {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return
@@ -4293,6 +4325,11 @@ func (e *Editor) deleteToLineEnd() {
 // current line, keeping the cursor on the same character where possible.
 // Reports whether anything was removed.
 func (e *Editor) trimLineStart() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return false
@@ -4321,6 +4358,11 @@ func (e *Editor) trimLineStart() bool {
 // ends where it did, just without trailing whitespace before the newline.
 // Reports whether anything was removed.
 func (e *Editor) trimLineEnd() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return false
@@ -4393,6 +4435,11 @@ func (e *Editor) copyBlock() bool {
 
 // deleteBlock deletes the marked block.
 func (e *Editor) deleteBlock() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
@@ -4430,6 +4477,11 @@ func (e *Editor) deleteBlock() bool {
 
 // moveBlock moves the marked block to the cursor position.
 func (e *Editor) moveBlock() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
@@ -4478,6 +4530,11 @@ func (e *Editor) moveBlock() bool {
 
 // indentBlock indents all lines in the marked block.
 func (e *Editor) indentBlock() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
@@ -4506,6 +4563,11 @@ func (e *Editor) indentBlock() bool {
 
 // unindentBlock removes leading whitespace from all lines in the marked block.
 func (e *Editor) unindentBlock() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
@@ -4713,6 +4775,11 @@ func (e *Editor) writeBlock() bool {
 // insertFile inserts the contents of a file at the cursor position, as a single
 // undo revision. Line endings are normalized to '\n' like paste.
 func (e *Editor) insertFile(filename string) bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return false

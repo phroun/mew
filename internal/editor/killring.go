@@ -80,6 +80,11 @@ func (e *Editor) pushKillEntry(cap buffer.Captured) {
 // killRingYank inserts the most recent kill entry at the caret, marks and all,
 // like insert. Records the yanked extent so kill_ring_pop can replace it.
 func (e *Editor) killRingYank() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil || w.Caret == nil {
 		return false
@@ -120,6 +125,11 @@ func (e *Editor) killRingYank() bool {
 // to where it was — leaving no droppings from entries passed through while
 // cycling. The rotated entry is then placed as a fresh yank.
 func (e *Editor) killRingPop() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil || w.Caret == nil || len(e.killRing) == 0 {
 		return false
@@ -159,6 +169,11 @@ func (e *Editor) killRingPop() bool {
 // deleting it (kill-ring-save). The copy is its own entry: it never merges
 // with a delete accumulation, and it breaks any accumulation in progress.
 func (e *Editor) blockCopyKill() bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")

@@ -42,6 +42,17 @@ func TestReadOnlyBlocksEdits(t *testing.T) {
 		t.Fatal("a blocked edit should warn that the buffer is read-only")
 	}
 
+	// The lock lives in the mutation's implementation, not a command-name gate,
+	// so a mutation reached through a fallthrough chain (the way return/tab are
+	// bound) is blocked too — the exact case a name-parsing gate would miss,
+	// and it holds no matter what name the script reaches the mutation by.
+	for _, cmd := range []string{`nav_follow|accept|insert "\n"`, `nav_next|completion|insert "\t"`} {
+		e.executeCommand(cmd)
+		if got := docContent(w); got != "abc" {
+			t.Fatalf("chain %q must not edit a read-only buffer (got %q)", cmd, got)
+		}
+	}
+
 	// Bracketed paste is gated on its own path.
 	e.insertPasteChunk([]byte("paste"))
 	if got := docContent(w); got != "abc" {
@@ -76,30 +87,3 @@ func TestReadOnlyAllowsNavAndMarksAndUnlock(t *testing.T) {
 	}
 }
 
-// The mutation classifier draws the intended line: edits are mutations; movement,
-// search, marks, saving, and undo/redo are not.
-func TestCommandMutatesContentClassification(t *testing.T) {
-	mutating := []string{
-		"insert", "insert_bidi_control", "del_char_next", "del_char_prior",
-		"del_line", "del_word_beg", "del_word_end", "del_line_beg", "del_line_end",
-		"trim_line", "block_delete", "block_move", "block_indent", "block_unindent",
-		"block_copy_kill", "kill_ring_yank", "kill_ring_pop", "buffer_insert_file",
-		"find_replace",
-	}
-	for _, k := range mutating {
-		if !commandMutatesContent(k) {
-			t.Errorf("%q should be classified as a content mutation", k)
-		}
-	}
-	notMutating := []string{
-		"go_char_next", "go_line_next", "go_word_next", "go_mark", "go_match",
-		"find", "find_next", "set_mark", "set_block_begin", "set_block_end",
-		"block_copy", "block_write", "kill_ring_append", "buffer_undo",
-		"buffer_redo", "buffer_revert", "buffer_save", "scroll_left", "set_option",
-	}
-	for _, k := range notMutating {
-		if commandMutatesContent(k) {
-			t.Errorf("%q should NOT be classified as a content mutation", k)
-		}
-	}
-}
