@@ -151,21 +151,24 @@ func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
 	return buf, nil
 }
 
-// createBufferURL mints an EMPTY buffer named for a canonical URL that does
-// not exist yet — the file itself only appears when the buffer is first
-// saved. file:/// buffers carry the real path; a virtualized mew:/// buffer
-// carries the canonical URL as its filename (identity round-trips either
-// way).
-func (e *Editor) createBufferURL(url string) (*buffer.Buffer, error) {
+// createBufferURL mints a buffer named for a canonical URL that does not
+// exist yet, holding the given seed content — the file itself only appears
+// when the buffer is first saved. file:/// buffers carry the real path; a
+// virtualized mew:/// buffer carries the canonical URL as its filename
+// (identity round-trips either way).
+func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 	url = e.canonicalDocURL(url)
 	prefix, p, ok := urlSplit(url)
 	if !ok {
 		return nil, fmt.Errorf("not a document URL: %s", url)
 	}
 	if prefix == "mew://" {
-		return e.lib.NewFromBytes(nil, url)
+		// []byte(seed) is non-nil even when empty: garland treats a nil
+		// DataBytes as "no data source provided" rather than as empty
+		// content.
+		return e.lib.NewFromBytes([]byte(seed), url)
 	}
-	buf := e.lib.New()
+	buf := e.lib.NewFromString(seed)
 	buf.SetFilename(filepath.FromSlash(p))
 	return buf, nil
 }

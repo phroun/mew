@@ -308,10 +308,11 @@ func (e *Editor) navFollow() bool {
 // promptCreatePage offers to create an unresolved wiki page, lock-prompt
 // style: the description on the top row, the short question on the input
 // row, with the prompt buffer offering "y" and "n" above the blank default
-// line. Creating mints an EMPTY buffer named for the page's would-be file —
-// the file itself appears on first save — and surfaces it exactly as a
-// successful follow would: in place for the window's own wiki, a fresh
-// window for a cross-root destination.
+// line. Creating mints a buffer named for the page's would-be file, seeded
+// with a heading carrying the link's title and the caret parked at the end,
+// ready to write — the file itself appears on first save. The page surfaces
+// exactly as a successful follow would: in place for the window's own wiki,
+// a fresh window for a cross-root destination.
 func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followResolution) {
 	title := span.Title
 	if title == "" {
@@ -323,18 +324,25 @@ func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followRes
 				e.RequestRender()
 				return
 			}
-			buf, err := e.createBufferURL(res.createURL)
+			buf, err := e.createBufferURL(res.createURL, "=== "+title+" ===\n\n")
 			if err != nil {
 				e.ShowError("Create: " + err.Error())
 				e.RequestRender()
 				return
 			}
+			var target *window.Window
 			if res.newWindow {
-				nw := e.createMainWindow(buf, nil, true)
-				nw.WikiRoot = res.root
-				nw.WikiName = res.wikiName
+				target = e.createMainWindow(buf, nil, true)
+				target.WikiRoot = res.root
+				target.WikiName = res.wikiName
 			} else if w := e.WindowManager.GetWindow(windowID); w != nil {
 				e.swapBuffer(w, buf)
+				target = w
+			}
+			if target != nil {
+				// Caret at the end of the seeded page, ready to write.
+				target.SetCursorPos(window.Position{Line: buf.GetLineCount() - 1, Rune: 0})
+				e.ensureCursorVisible(target)
 			}
 			e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
 			e.RequestRender()

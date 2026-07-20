@@ -591,11 +591,18 @@ func TestCreatePagePrompt(t *testing.T) {
 		t.Fatalf("prompt buffer = %q, want y/n/blank", got)
 	}
 
-	// Accept: an empty unsaved buffer named for the would-be file, swapped in.
+	// Accept: an unsaved buffer named for the would-be file, seeded with a
+	// heading from the link's title, caret at EOF, swapped in.
 	answerPrompt(t, e, "y")
 	wantPath := filepath.Join(root, "w", "newpage.txt")
 	if w.Buffer == src || w.Buffer.GetFilename() != wantPath {
 		t.Fatalf("create should swap to %s; got %q", wantPath, w.Buffer.GetFilename())
+	}
+	if got := w.Buffer.GetContent(); got != "=== My New Page ===\n\n" {
+		t.Fatalf("created page seed = %q", got)
+	}
+	if pos := w.CursorPos(); pos.Line != w.Buffer.GetLineCount()-1 || pos.Rune != 0 {
+		t.Fatalf("caret should sit at EOF; got %+v of %d lines", pos, w.Buffer.GetLineCount())
 	}
 	if _, err := os.Stat(wantPath); !os.IsNotExist(err) {
 		t.Fatal("the file must not exist until the buffer is saved")
@@ -830,5 +837,45 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	})
 	if len(w.GraveyardBuffers()) != 0 {
 		t.Fatal("binding the buried buffer in another window must unbury it")
+	}
+}
+
+// createBufferURL under a VIRTUALIZED mew tree (no real path exists) mints an
+// empty memory buffer whose filename is the canonical URL — regression for
+// garland treating nil DataBytes as "no data source provided".
+func TestCreateBufferURLVirtualMew(t *testing.T) {
+	var out bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	cfg.MewFS = &recFS{}
+	configText := "[options]\n"
+	cfg.ConfigText = &configText
+	cfg.Terminal = &TerminalIO{
+		Input:  bytes.NewReader(nil),
+		Output: &out,
+		Size:   func() (int, int, error) { return 80, 24, nil },
+	}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	buf, err := e.createBufferURL("mew:///help/newpage.txt", "")
+	if err != nil {
+		t.Fatalf("createBufferURL: %v", err)
+	}
+	if buf.GetFilename() != "mew:///help/newpage.txt" {
+		t.Fatalf("virtual mew buffer filename = %q", buf.GetFilename())
+	}
+	if got := buf.GetContent(); got != "" {
+		t.Fatalf("created page should be empty; got %q", got)
+	}
+	seeded, err := e.createBufferURL("mew:///help/seeded.txt", "=== T ===\n\n")
+	if err != nil {
+		t.Fatalf("seeded create: %v", err)
+	}
+	if got := seeded.GetContent(); got != "=== T ===\n\n" {
+		t.Fatalf("seed content = %q", got)
 	}
 }
