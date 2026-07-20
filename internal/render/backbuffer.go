@@ -70,6 +70,10 @@ type backBuffer struct {
 	// — which DECDWL would misplace — is ever used on it.
 	rowWide     []bool
 	dispRowWide []bool
+	// rowWideFill is the SGR the erase-to-end uses on a double-width row, so the
+	// cleared cells take the row's own background instead of whatever colour was
+	// last emitted.
+	rowWideFill []string
 }
 
 // bbCell is one terminal cell. A width-2 glyph occupies a base cell (width 2)
@@ -111,6 +115,7 @@ func (b *backBuffer) reshape(w, h int) {
 	b.disp = make([][]bbCell, h)
 	b.rowWide = make([]bool, h)
 	b.dispRowWide = make([]bool, h)
+	b.rowWideFill = make([]string, h)
 	for y := 0; y < h; y++ {
 		b.cur[y] = make([]bbCell, w)
 		b.disp[y] = make([]bbCell, w)
@@ -139,12 +144,14 @@ func (b *backBuffer) begin() {
 	}
 }
 
-// setRowWide marks the pen's current row double-width for this frame. The
-// renderer calls it after painting a double-width line; the content must
-// already be confined to the left half of the row.
-func (b *backBuffer) setRowWide() {
+// setRowWide marks the pen's current row double-width for this frame, with the
+// SGR its erase-to-end should use (the row's own background). The renderer
+// calls it after painting a double-width line; the content must already be
+// confined to the left half of the row.
+func (b *backBuffer) setRowWide(fill string) {
 	if b.penY >= 0 && b.penY < len(b.rowWide) {
 		b.rowWide[b.penY] = true
+		b.rowWideFill[b.penY] = fill
 	}
 }
 
@@ -165,7 +172,14 @@ func (b *backBuffer) forceRedraw() {
 // addressing is used. disp is synced so the normal diff skips this row.
 func (b *backBuffer) emitWideRow(sb *strings.Builder, y int) {
 	writeCUP(sb, y+1, 1)
-	sb.WriteString("\x1b#6")  // DECDWL: double-width line
+	sb.WriteString("\x1b#6") // DECDWL: double-width line
+	// Set the row's background BEFORE erasing, so the cleared cells take it
+	// rather than whatever colour was last emitted.
+	fill := b.rowWideFill[y]
+	if fill == "" {
+		fill = defaultStyleSeq
+	}
+	sb.WriteString(fill)
 	sb.WriteString("\x1b[0K") // erase to end of line
 	half := b.w / 2
 	for x := 0; x < half; x++ {

@@ -86,3 +86,33 @@ func TestBrowseHeadingDoubleWidth(t *testing.T) {
 		t.Fatal("a level-5 heading must not be double-width")
 	}
 }
+
+// With line numbers on, a double-width row shows a single space in the gutter
+// instead of its (oversized, doubled) number; a normal row shows its number.
+func TestBrowseHeadingGutter(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"====== Big ======\nplain line two\n",
+		"[options]\nsyntax=dokuwiki\nshowLineNumbers=yes\n")
+	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	// Strip SGR and the DEC line-mode sequences (ESC#6 / ESC#5, whose "6"/"5"
+	// are not content).
+	plain := strings.NewReplacer("\x1b#6", "", "\x1b#5", "").Replace(stripSGR(out.String()))
+	// The doubled heading is on doc line 1 (number "1"); the normal line 2
+	// keeps its "2". So "2" appears but the heading's "1" gutter is gone.
+	if !strings.Contains(plain, "2") {
+		t.Fatal("a normal row should still show its line number")
+	}
+	// The heading text "Big" must not be preceded by a "1" gutter digit; find
+	// "Big" and check the run right before it has no digit.
+	i := strings.Index(plain, "Big")
+	if i < 0 {
+		t.Fatal("heading text missing")
+	}
+	before := plain[:i]
+	if strings.ContainsAny(before[strings.LastIndexByte(before, '\n')+1:], "0123456789") {
+		t.Fatalf("double-width heading gutter should show no number; got %q", before)
+	}
+}

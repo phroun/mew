@@ -753,53 +753,59 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 			}
 		}
 
-		// Line number gutter. Under RTL it mirrors to the RIGHT side of the
-		// content (emitted after the content below), with its separator space
-		// adjacent to the content and the number left-aligned — the mirror
-		// image of the LTR right-aligned-number-plus-space form.
 		rtl := sr.winRTL(w)
 		docLine := w.ViewState.ViewOffsetY + row
+
+		// Fetch the line content and its browse-mode display transform up front:
+		// the gutter (below) needs to know whether this row is double-width.
+		var disp *lineDisplay
+		var dispSyn []string
+		var lineContent, lineEnding string
+		haveContent := w.Buffer != nil && docLine < w.Buffer.GetLineCount()
+		if haveContent {
+			rawLine := w.Buffer.GetLine(docLine)
+			lineContent = strings.TrimRight(rawLine, "\n\r")
+			lineEnding = rawLine[len(lineContent):] // "", "\n", "\r\n", ...
+			disp, dispSyn = sr.displayFor(w, docLine, lineContent)
+		}
+		doubleWide := disp != nil && disp.DoubleWide
+
+		// Line number gutter. Under RTL it mirrors to the RIGHT side (emitted
+		// after the content below). A double-width row shows a single space in
+		// the gutter colour instead of the number — a doubled number is
+		// oversized and misaligned, and one cell still leaves room for a marker.
 		if w.ViewState.ShowLineNumbers && !rtl {
 			sr.Write(lineNumbersColor)
-			if w.Buffer != nil && docLine < w.Buffer.GetLineCount() {
-				lineNum := fmt.Sprintf("%*d ", lineNumWidth-1, docLine+1)
-				sr.Write(lineNum)
-			} else {
-				// Lines beyond document end - show ~ marker like TS version
-				lineNum := fmt.Sprintf("%*s ", lineNumWidth-1, sr.indicators.GutterEmpty)
-				sr.Write(lineNum)
+			switch {
+			case doubleWide:
+				sr.Write(" ")
+			case haveContent:
+				sr.Write(fmt.Sprintf("%*d ", lineNumWidth-1, docLine+1))
+			default:
+				sr.Write(fmt.Sprintf("%*s ", lineNumWidth-1, sr.indicators.GutterEmpty))
 			}
 		}
 
 		// Content
-		if w.Buffer != nil && docLine < w.Buffer.GetLineCount() {
-			// Get line content and strip trailing newlines/carriage returns
-			// (Garland ReadLine includes the line terminator)
-			rawLine := w.Buffer.GetLine(docLine)
-			lineContent := strings.TrimRight(rawLine, "\n\r")
-			lineEnding := rawLine[len(lineContent):] // "", "\n", "\r\n", ...
-
-			// Browse-mode display transform: swap in the display form of the
-			// line before any walk below sees it. nil disp — the common case —
-			// leaves the original path untouched.
-			disp, dispSyn := sr.displayFor(w, docLine, lineContent)
-
+		if haveContent {
 			// A double-width (heading) line: the terminal shows only the left
-			// half at 2x, so lay the content into half the columns and mark the
-			// row so present() emits the DECDWL mode.
+			// half at 2x, so lay the content into half the columns, interpret the
+			// horizontal scroll at one cell per two scrolled positions, and mark
+			// the row so present() emits the DECDWL mode.
 			lineWidth := contentWidth
-			if disp != nil && disp.DoubleWide {
+			voff := w.ViewState.ViewOffsetX
+			if doubleWide {
 				lineWidth = contentWidth / 2
 				if lineWidth < 1 {
 					lineWidth = 1
 				}
+				voff /= 2
 			}
-
-			// Prepare line for display with proper control character handling and selection
-			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, lineWidth, w.ViewState.ViewOffsetX, w, docLine, sel, disp, dispSyn)
+			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, lineWidth, voff, w, docLine, sel, disp, dispSyn)
 			sr.Write(displayLine)
-			if disp != nil && disp.DoubleWide {
-				sr.frame.setRowWide()
+			if doubleWide {
+				// The erase-to-end fills with the row's own text background.
+				sr.frame.setRowWide(textColor)
 			}
 		} else {
 			// Empty line - fill with background color
@@ -813,9 +819,12 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 		// RTL: the mirrored line-number gutter, between content and right margin.
 		if w.ViewState.ShowLineNumbers && rtl {
 			sr.Write(lineNumbersColor)
-			if w.Buffer != nil && docLine < w.Buffer.GetLineCount() {
+			switch {
+			case doubleWide:
+				sr.Write(" ")
+			case haveContent:
 				sr.Write(fmt.Sprintf(" %-*d", lineNumWidth-1, docLine+1))
-			} else {
+			default:
 				sr.Write(fmt.Sprintf(" %-*s", lineNumWidth-1, sr.indicators.GutterEmpty))
 			}
 		}
