@@ -99,6 +99,55 @@ func (v *mewVFS) WriteFile(mewPath string, data []byte) error {
 	return v.fs.WriteFile(n, data)
 }
 
+// Glob lists mew: entries matching a confined pattern, returned as "mew:/rel"
+// paths (local results are mapped back out of the on-disk root). Used by the
+// wiki resolver to match page ids against the files actually present in a
+// mew:-hosted wiki tree.
+func (v *mewVFS) Glob(mewPattern string) ([]string, error) {
+	n, ok := v.name(mewPattern)
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	matches, err := v.fs.Glob(n)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if v.virtual {
+			out = append(out, m) // host results are already mew:/ names
+			continue
+		}
+		rel, err := filepath.Rel(v.localRoot, m)
+		if err != nil {
+			continue
+		}
+		out = append(out, "mew:/"+filepath.ToSlash(rel))
+	}
+	return out, nil
+}
+
+// Stat reports metadata for a mew: path (exists=false when the underlying
+// FileSystem cannot answer or the path is absent). Plain FileSystems without
+// a Statter degrade to a read probe, which cannot see directories.
+func (v *mewVFS) Stat(mewPath string) (info FileInfo, exists bool) {
+	n, ok := v.name(mewPath)
+	if !ok {
+		return FileInfo{}, false
+	}
+	if st, ok := v.fs.(Statter); ok {
+		fi, err := st.Stat(n)
+		if err != nil {
+			return FileInfo{}, false
+		}
+		return fi, true
+	}
+	if _, err := v.fs.ReadFile(n); err == nil {
+		return FileInfo{Path: n}, true
+	}
+	return FileInfo{}, false
+}
+
 // IsDir reports whether a mew: path is an existing directory (best effort:
 // false when the FileSystem cannot answer).
 func (v *mewVFS) IsDir(mewPath string) bool {

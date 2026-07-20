@@ -1,7 +1,6 @@
 package editor
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -189,15 +188,22 @@ func (e *Editor) navFollow() bool {
 
 	buf := e.findOpenBuffer(res.url)
 	if buf == nil {
-		osPath := filepath.FromSlash(strings.TrimPrefix(res.url, "file://"))
-		loaded, err := e.loadBuffer(osPath)
+		loaded, err := e.loadBufferURL(res.url)
 		if err != nil {
-			e.ShowError("Open " + osPath + ": " + err.Error())
+			e.ShowError("Open " + displayPath(res.url) + ": " + err.Error())
 			e.RequestRender()
 			return true
 		}
-		loaded.SetFilename(osPath)
 		buf = loaded
+	}
+	if res.newWindow {
+		// A window's root never changes: a full-scheme destination leaves the
+		// rooted wiki by surfacing in a FRESH, rootless window — sharing the
+		// underlying buffer when it is already open elsewhere.
+		e.createMainWindow(buf, nil, true)
+		e.ShowNotification("→ " + displayPath(res.url))
+		e.RequestRender()
+		return true
 	}
 	if buf == w.Buffer {
 		// Self-link: nothing to swap (and no history entry to create).
@@ -205,6 +211,7 @@ func (e *Editor) navFollow() bool {
 		e.RequestRender()
 		return true
 	}
+	// Same root by construction (in-wiki resolution): swap in place.
 	w.SwapBuffer(buf)
 	// Stay in browse mode: following a link is browsing, and the reader keeps
 	// tabbing onward in the destination page.

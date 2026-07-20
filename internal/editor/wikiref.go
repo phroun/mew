@@ -253,43 +253,170 @@ func foldAccents(s string) string {
 	return norm.NFC.String(b.String())
 }
 
+// ---- Canonical-URL space -------------------------------------------------
+//
+// Resolution-time matching works entirely in canonical-URL space, so a wiki
+// can live on the document filesystem (file:///...) or inside mew's own
+// support tree (mew:///docs/...) with identical behavior. urlSplit/urlDir/
+// urlJoin are the path algebra; docStat/docList dispatch to the right backing
+// store per scheme.
+
+// urlSplit splits a canonical document URL into its scheme prefix ("file://",
+// "mew://") and rooted "/"-path. ok=false for anything else (unnamed buffers,
+// foreign schemes).
+func urlSplit(url string) (prefix, p string, ok bool) {
+	for _, pre := range []string{"file://", "mew://"} {
+		if strings.HasPrefix(url, pre) {
+			p = url[len(pre):]
+			if !strings.HasPrefix(p, "/") {
+				p = "/" + p
+			}
+			return pre, p, true
+		}
+	}
+	return "", "", false
+}
+
+// urlDir is the parent of a canonical URL, clamped at the scheme root
+// ("file:///", "mew:///").
+func urlDir(url string) string {
+	prefix, p, ok := urlSplit(url)
+	if !ok {
+		return url
+	}
+	return prefix + path.Dir(p)
+}
+
+// urlJoin appends a name to a canonical directory URL.
+func urlJoin(url, name string) string {
+	prefix, p, ok := urlSplit(url)
+	if !ok {
+		return url + "/" + name
+	}
+	return prefix + path.Join(p, name)
+}
+
+// urlWithin reports whether url lies at or under the subtree rooted at root.
+func urlWithin(url, root string) bool {
+	return url == root || strings.HasPrefix(url, strings.TrimSuffix(root, "/")+"/")
+}
+
+// docStat reports existence and directory-ness for a canonical URL, through
+// the document FileSystem (file://) or the mew support tree (mew://).
+func (e *Editor) docStat(url string) (isDir, exists bool) {
+	prefix, p, ok := urlSplit(url)
+	if !ok {
+		return false, false
+	}
+	if prefix == "mew://" {
+		info, ok := e.mew.Stat("mew:" + p)
+		return info.IsDir, ok
+	}
+	name := filepath.FromSlash(p)
+	if st, ok := e.FS.(Statter); ok {
+		info, err := st.Stat(name)
+		if err != nil {
+			return false, false
+		}
+		return info.IsDir, true
+	}
+	// A plain FileSystem cannot see directories; a readable name is a file.
+	if _, err := e.FS.ReadFile(name); err == nil {
+		return false, true
+	}
+	return false, false
+}
+
+// docList returns the canonical URLs of the entries in a canonical directory
+// URL (nil on error or foreign scheme).
+func (e *Editor) docList(dirURL string) []string {
+	prefix, p, ok := urlSplit(dirURL)
+	if !ok {
+		return nil
+	}
+	if prefix == "mew://" {
+		matches, err := e.mew.Glob("mew:" + path.Join(p, "*"))
+		if err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(matches))
+		for _, m := range matches {
+			out = append(out, e.canonicalDocURL(m))
+		}
+		return out
+	}
+	matches, err := e.FS.Glob(filepath.FromSlash(path.Join(p, "*")))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, "file://"+filepath.ToSlash(m))
+	}
+	return out
+}
+
 // ---- Resolution-time file matching ----------------------------------------
 
 // followResolution is the outcome of resolving a link target for navigation.
 type followResolution struct {
-	url     string // canonical URL of an existing file; "" when not followable
-	message string // human notification when url is ""
+	url  string // canonical URL of an existing file; "" when not followable
+	root string // WikiRoot for the destination window ("" = none)
+	// newWindow: the destination must surface in a FRESH window rather than
+	// swapping in place — a window's root never changes, so a full-scheme
+	// reference (the one way a link leaves a rooted wiki) opens a new,
+	// rootless window (possibly sharing an already-open buffer).
+	newWindow bool
+	message   string // human notification when url is ""
 }
 
 // resolveFollow resolves a link target against the window's current document
 // into the canonical URL of an EXISTING file, per the three layers plus
-// resolution-time matching. Non-wiki targets (schemes, interwiki) and
-// unresolvable ids come back with a message instead of a URL.
+// resolution-time matching. Document schemes (mew:///, file:///) resolve as
+// new-window destinations; other schemes and interwiki are gated out; wiki
+// ids resolve within the window's root when it has one — absolute ids from
+// the root, relative climbs clamped at it, no escape — and by nearest-
+// ancestor discovery when it does not.
 func (e *Editor) resolveFollow(w *window.Window, target string) followResolution {
 	ref := strings.TrimSpace(target)
-	if _, ok := schemeRef(ref); ok {
+	if scheme, ok := schemeRef(ref); ok {
+		if scheme == "mew" || scheme == "file" {
+			url := e.canonicalDocURL(ref)
+			if isDir, exists := e.docStat(url); exists && !isDir {
+				return followResolution{url: url, newWindow: true}
+			}
+			return followResolution{message: "Not found: " + ref}
+		}
 		return followResolution{message: "External link: " + ref}
 	}
 	if _, _, ok := interwikiRef(ref); ok {
 		return followResolution{message: "Interwiki link: " + ref}
 	}
 
-	src := e.bufferCanonicalURL(w.Buffer)
-	if !strings.HasPrefix(src, "file://") {
-		// An unnamed buffer (or a non-file tree) has no namespace context to
-		// resolve against.
+	src := ""
+	if w != nil {
+		src = e.bufferCanonicalURL(w.Buffer)
+	}
+	prefix, _, ok := urlSplit(src)
+	if !ok {
+		// An unnamed buffer has no namespace context to resolve against.
 		return followResolution{message: "Link: " + target}
 	}
-	curPath := strings.TrimPrefix(src, "file://")
-	curDir := path.Dir(curPath)
-	srcExt := path.Ext(curPath)
+	curDir := urlDir(src)
+	srcExt := path.Ext(src)
 	cfg := defaultWikiCfg()
 
+	// The window's wiki root confines resolution. A root that does not cover
+	// the current document would be a bug elsewhere; ignore it defensively.
+	root := w.WikiRoot
+	if root != "" && !urlWithin(src, root) {
+		root = ""
+	}
+
 	// Layer 2 decides relative vs absolute; the walk happens in id space with
-	// an empty context, and the file-space base supplies the context instead:
-	// a relative reference resolves under the current file's directory, an
-	// absolute one from the wiki root — discovered by matching against real
-	// files up the ancestor chain (the spec's resolution-time rule).
+	// an empty context, and the URL-space base supplies the context instead:
+	// a relative reference resolves under the current document's directory,
+	// an absolute one from the wiki root.
 	relative := isRelativeRef(ref, cfg)
 	id, _, nsTarget := resolveWikiRef(ref, "", cfg)
 	id = cleanWikiID(id, cfg)
@@ -299,23 +426,36 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	}
 
 	if relative {
-		// Re-apply the dot-walk against the real directory: resolveWikiRef's
-		// root is the reference's own start, so climb segments ("..") must
-		// pop the actual path instead.
-		base, names := relativeBase(curDir, ref, cfg)
+		// Re-apply the dot-walk against the real directory: climbs ("..")
+		// pop the actual path, clamped at the window's root when set (a
+		// rooted window's links can never back out of it).
+		floor := prefix + "/"
+		if root != "" {
+			floor = root
+		}
+		base, names := relativeBase(curDir, floor, ref, cfg)
 		if p := e.matchWikiPath(base, names, srcExt, nsTarget, cfg); p != "" {
-			return followResolution{url: e.canonicalDocURL(p)}
+			return followResolution{url: p, root: root}
 		}
 		return followResolution{message: "Page not found: " + target}
 	}
 
-	// Absolute: nearest ancestor of the current directory under which the id
-	// matches real files wins.
-	for dir := curDir; ; dir = path.Dir(dir) {
-		if p := e.matchWikiPath(dir, segs, srcExt, nsTarget, cfg); p != "" {
-			return followResolution{url: e.canonicalDocURL(p)}
+	if root != "" {
+		// Absolute within a rooted window: from the root, nowhere else.
+		if p := e.matchWikiPath(root, segs, srcExt, nsTarget, cfg); p != "" {
+			return followResolution{url: p, root: root}
 		}
-		if dir == "/" || dir == path.Dir(dir) {
+		return followResolution{message: "Page not found: " + target}
+	}
+
+	// Unrooted absolute: nearest ancestor of the current directory under
+	// which the id matches real files wins (the spec's resolution-time rule).
+	schemeRoot := prefix + "/"
+	for dir := curDir; ; dir = urlDir(dir) {
+		if p := e.matchWikiPath(dir, segs, srcExt, nsTarget, cfg); p != "" {
+			return followResolution{url: p}
+		}
+		if dir == schemeRoot || urlDir(dir) == dir {
 			break
 		}
 	}
@@ -336,10 +476,10 @@ func isRelativeRef(ref string, cfg wikiCfg) bool {
 }
 
 // relativeBase resolves a RELATIVE reference's dot-walk against the real
-// directory of the current file: "." stays, ".." climbs (never above the
-// filesystem root), and the remaining name segments come back cleaned for
-// matching.
-func relativeBase(curDir, ref string, cfg wikiCfg) (base string, names []string) {
+// directory URL of the current document: "." stays, ".." climbs — never
+// above floor (the window's wiki root, or the scheme root) — and the
+// remaining name segments come back cleaned for matching.
+func relativeBase(curDir, floor, ref string, cfg wikiCfg) (base string, names []string) {
 	if i := strings.IndexByte(ref, '#'); i >= 0 {
 		ref = ref[:i]
 	}
@@ -352,8 +492,11 @@ func relativeBase(curDir, ref string, cfg wikiCfg) (base string, names []string)
 		switch s {
 		case "", ".":
 		case "..":
-			if base != "/" {
-				base = path.Dir(base)
+			// Climb only while strictly below the floor; at (or somehow
+			// outside) it, ".." is a no-op — a rooted window's links can
+			// never back out of their root.
+			if base != floor && urlWithin(base, floor) {
+				base = urlDir(base)
 			}
 		default:
 			if c := cleanWikiID(s, cfg); c != "" {
@@ -365,12 +508,13 @@ func relativeBase(curDir, ref string, cfg wikiCfg) (base string, names []string)
 }
 
 // matchWikiPath matches cleaned id segments against the files actually under
-// base: namespace segments match subdirectories, the final segment matches a
-// page file. Comparison folds case and cleans the on-disk name, so canonical
-// lowercase ids find MyPage.txt. Candidate page names try the source file's
-// extension first, then DokuWiki's ".txt", then the bare name; a namespace
-// target (or a namespace that exists where a page does not) resolves to its
-// start page. Returns the matched path ("" = no match).
+// the base directory URL: namespace segments match subdirectories, the final
+// segment matches a page file. Comparison folds case and cleans the on-disk
+// name, so canonical lowercase ids find MyPage.txt. Candidate page names try
+// the source file's extension first, then DokuWiki's ".txt", then the bare
+// name; a namespace target (or a namespace that exists where a page does
+// not) resolves to its start page. Returns the matched canonical URL
+// ("" = no match).
 func (e *Editor) matchWikiPath(base string, segs []string, srcExt string, nsTarget bool, cfg wikiCfg) string {
 	dir := base
 	for i, seg := range segs {
@@ -402,8 +546,9 @@ func (e *Editor) matchWikiPath(base string, segs []string, srcExt string, nsTarg
 	return e.matchPageFile(dir, cleanWikiID(cfg.startPage, cfg), srcExt, cfg)
 }
 
-// matchPageFile finds a page FILE for a cleaned id segment in dir: the
-// segment plus the source extension, then ".txt", then the bare name.
+// matchPageFile finds a page FILE for a cleaned id segment in a directory
+// URL: the segment plus the source extension, then ".txt", then the bare
+// name.
 func (e *Editor) matchPageFile(dir, seg, srcExt string, cfg wikiCfg) string {
 	exts := []string{}
 	if srcExt != "" {
@@ -421,21 +566,17 @@ func (e *Editor) matchPageFile(dir, seg, srcExt string, cfg wikiCfg) string {
 	return ""
 }
 
-// matchEntry scans dir for an entry whose cleaned name equals seg (+ext):
-// exact spelling first (the overwhelmingly common case — one probe, no
-// listing), then a listing pass comparing cleaned, case-folded names.
-// wantDir selects directories; otherwise files. Paths are "/"-separated.
+// matchEntry scans a directory URL for an entry whose cleaned name equals
+// seg (+ext): exact spelling first (the overwhelmingly common case — one
+// probe, no listing), then a listing pass comparing cleaned, case-folded
+// names. wantDir selects directories; otherwise files. Returns the entry's
+// canonical URL.
 func (e *Editor) matchEntry(dir, seg, ext string, wantDir bool, cfg wikiCfg) string {
-	direct := path.Join(dir, seg+ext)
-	if isDir, exists := e.statPath(direct); exists && isDir == wantDir {
+	direct := urlJoin(dir, seg+ext)
+	if isDir, exists := e.docStat(direct); exists && isDir == wantDir {
 		return direct
 	}
-	entries, err := e.FS.Glob(filepath.FromSlash(path.Join(dir, "*")))
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		entry = filepath.ToSlash(entry)
+	for _, entry := range e.docList(dir) {
 		name := path.Base(entry)
 		if ext != "" {
 			if !strings.EqualFold(path.Ext(name), ext) {
@@ -446,27 +587,9 @@ func (e *Editor) matchEntry(dir, seg, ext string, wantDir bool, cfg wikiCfg) str
 		if cleanWikiID(name, cfg) != seg {
 			continue
 		}
-		if isDir, exists := e.statPath(entry); exists && isDir == wantDir {
+		if isDir, exists := e.docStat(entry); exists && isDir == wantDir {
 			return entry
 		}
 	}
 	return ""
-}
-
-// statPath reports whether a "/"-separated path exists and is a directory,
-// through the document FileSystem's Statter when it has one (falling back to
-// a read probe for plain FileSystems, which cannot see directories).
-func (e *Editor) statPath(p string) (isDir, exists bool) {
-	name := filepath.FromSlash(p)
-	if st, ok := e.FS.(Statter); ok {
-		info, err := st.Stat(name)
-		if err != nil {
-			return false, false
-		}
-		return info.IsDir, true
-	}
-	if _, err := e.FS.ReadFile(name); err == nil {
-		return false, true
-	}
-	return false, false
 }

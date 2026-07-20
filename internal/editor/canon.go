@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,32 @@ func (e *Editor) findOpenBuffer(url string) *buffer.Buffer {
 		}
 	}
 	return nil
+}
+
+// loadBufferURL loads the document a canonical URL names: file:/// through
+// the full document open path (locks, backups, notices); mew:/// by reading
+// mew's support tree (no locks — the tree is mew's own). A mew buffer's
+// filename is the canonical URL itself, so its identity round-trips through
+// bufferCanonicalURL.
+func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
+	prefix, p, ok := urlSplit(url)
+	if !ok {
+		return nil, fmt.Errorf("not a document URL: %s", url)
+	}
+	if prefix == "mew://" {
+		data, err := e.mew.ReadFile("mew:" + p)
+		if err != nil {
+			return nil, err
+		}
+		return e.lib.NewFromBytes(data, url)
+	}
+	osPath := filepath.FromSlash(p)
+	buf, err := e.loadBuffer(osPath)
+	if err != nil {
+		return nil, err
+	}
+	buf.SetFilename(osPath)
+	return buf, nil
 }
 
 // bufferReferencedElsewhere reports whether b is held open — actively or

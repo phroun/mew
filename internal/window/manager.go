@@ -303,6 +303,20 @@ type Window struct {
 	BrowseActive bool
 	linkAnchor   *buffer.Anchor
 
+	// WikiRoot confines this window's wiki-reference resolution to a subtree:
+	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
+	// When set, absolute wiki refs resolve from this root and relative climbs
+	// ("..") clamp at it — leaving the wiki requires a full scheme reference.
+	// A window's root NEVER changes: it is part of the window's identity, set
+	// by how the window came to be (a wiki-scheme open carries its registry
+	// root, a plain buffer_open carries none). Following a link that resolves
+	// under a DIFFERENT root surfaces a different window — possibly sharing
+	// the same underlying buffer (a Help window and an editor window can show
+	// one document with different roots, types, and colors). Because it is
+	// window identity, it deliberately does NOT travel with the buffer-swap
+	// nav history.
+	WikiRoot string
+
 	// Nav history: the buffer bindings this window navigated away from, in
 	// browser back/forward form. SwapBuffer pushes the active binding onto
 	// navBack (and clears navFwd — a new departure invalidates the forward
@@ -969,7 +983,7 @@ type WindowOptions struct {
 	ShowMarks       string // "no" | "yes" | "all"
 	OverwriteMode   bool   // inverse of insertMode; zero value = insert
 	ReadOnly        bool
-	LinkBrowsing    bool   // hyperlink layer (link colors, browse-mode buttons)
+	LinkBrowsing    bool // hyperlink layer (link colors, browse-mode buttons)
 	ShowRuler       bool
 	TabSize         int
 	SyntaxOverrides string // space-separated grammar flavors that skip the project folder

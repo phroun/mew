@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -167,6 +168,198 @@ func TestResolveFollowMatching(t *testing.T) {
 		if res := e.resolveFollow(w, ref); res.url != "" || res.message == "" {
 			t.Errorf("resolveFollow(%q) should not resolve; got %q", ref, res.url)
 		}
+	}
+}
+
+// A window's WikiRoot confines resolution: absolute ids resolve from the
+// root (never by ancestor discovery above it) and relative climbs clamp at
+// it — a rooted window's links cannot back out of the root.
+func TestWikiRootConfinement(t *testing.T) {
+	files := map[string]string{
+		"wiki/notes/a/b/c.txt":  "[[..:..:..:escape]] [[top:page]]\n",
+		"wiki/notes/escape.txt": "clamped target\n",
+		"escape.txt":            "outside the root\n",
+		"top/page.txt":          "outside the root too\n",
+	}
+	e, w, root := wikiTreeEditor(t, files, "wiki/notes/a/b/c.txt")
+	w.WikiRoot = e.canonicalDocURL(filepath.Join(root, "wiki", "notes"))
+
+	// A triple climb from notes/a/b would reach the tree root; the clamp
+	// stops at the wiki root, so it finds notes/escape.txt — NOT the
+	// escape.txt above the root.
+	res := e.resolveFollow(w, "..:..:..:escape")
+	want := e.canonicalDocURL(filepath.Join(root, "wiki", "notes", "escape.txt"))
+	if res.url != want {
+		t.Fatalf("clamped climb = %q (%q), want %q", res.url, res.message, want)
+	}
+	if res.root != w.WikiRoot {
+		t.Fatal("an in-wiki resolution must carry the window's root")
+	}
+
+	// An absolute id resolves from the root ONLY: top/page.txt exists above
+	// the root, so within the rooted window it is not found.
+	if res := e.resolveFollow(w, "top:page"); res.url != "" {
+		t.Fatalf("absolute id above the root must not resolve; got %q", res.url)
+	}
+
+	// The same reference resolves fine in an unrooted window (ancestor
+	// discovery finds it).
+	w.WikiRoot = ""
+	if res := e.resolveFollow(w, "top:page"); res.url == "" {
+		t.Fatalf("unrooted ancestor discovery should find top:page; got %q", res.message)
+	}
+}
+
+// A full-scheme reference is the one way out of a rooted wiki: it resolves
+// as a NEW-WINDOW destination with no root, and navFollow surfaces a fresh
+// window rather than swapping in place — the source window keeps its buffer
+// and its root untouched.
+func TestSchemeRefOpensNewWindow(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside doc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wikiDir := filepath.Join(root, "wiki")
+	if err := os.MkdirAll(wikiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := "file://" + filepath.ToSlash(outside)
+	content := "x [[" + link + "]] y\n"
+	page := filepath.Join(wikiDir, "page.txt")
+	if err := os.WriteFile(page, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e, _, _ := renderedEditorWithConfig(t, "seed\n", "[options]\nsyntax=dokuwiki\n")
+	buf, err := buffer.NewFromBytes([]byte(content), page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: buf, SetFocus: true, LinkBrowsing: true,
+	})
+	w := e.WindowManager.GetWindow("wiki")
+	w.WikiRoot = e.canonicalDocURL(wikiDir)
+
+	res := e.resolveFollow(w, link)
+	if res.url == "" || !res.newWindow || res.root != "" {
+		t.Fatalf("a scheme ref must be a new-window, rootless destination; got %+v", res)
+	}
+
+	srcBuf := w.Buffer
+	before := len(e.getMainBuffers())                 // notifications spawn work windows; count main ones
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the [[...]] span
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("navFollow should activate")
+	}
+	if len(e.getMainBuffers()) != before+1 {
+		t.Fatal("a scheme follow must create a new main window")
+	}
+	if w.Buffer != srcBuf || w.WikiRoot == "" {
+		t.Fatal("the source window must keep its buffer and its root")
+	}
+	fw := e.WindowManager.GetFocusedWindow()
+	if fw == w || fw.WikiRoot != "" {
+		t.Fatalf("focus should move to a fresh rootless window; got root %q", fw.WikiRoot)
+	}
+	if fw.Buffer.GetFilename() != outside {
+		t.Fatalf("new window should show the destination; got %q", fw.Buffer.GetFilename())
+	}
+}
+
+// A wiki hosted inside mew's own support tree (mew:///docs) resolves through
+// the mew VFS: in-wiki ids match under the root, climbs clamp at it (the
+// tree above stays unreachable), and a full mew:/// reference is the
+// explicit way out.
+func TestMewSpaceWikiRoot(t *testing.T) {
+	home := t.TempDir()
+	mewDir := filepath.Join(home, ".mew")
+	for rel, content := range map[string]string{
+		"docs/start.txt":         "[[sample:widget]] [[..:editor.conf]] [[mew:///editor.conf]]\n",
+		"docs/sample/widget.txt": "widget page\n",
+		"editor.conf":            "# config\n",
+	} {
+		p := filepath.Join(mewDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	cfg.HomeDir = home
+	configText := "[options]\nsyntax=dokuwiki\n"
+	cfg.ConfigText = &configText
+	cfg.Terminal = &TerminalIO{
+		Input:  bytes.NewReader(nil),
+		Output: &out,
+		Size:   func() (int, int, error) { return 80, 24, nil },
+	}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	buf, err := e.loadBufferURL("mew:///docs/start.txt")
+	if err != nil {
+		t.Fatalf("loadBufferURL: %v", err)
+	}
+	if got := e.bufferCanonicalURL(buf); got != "mew:///docs/start.txt" {
+		t.Fatalf("mew buffer identity = %q", got)
+	}
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "helpdoc", Type: window.MainBuffer, Dock: window.DockNone,
+		Buffer: buf, SetFocus: true, LinkBrowsing: true,
+	})
+	w := e.WindowManager.GetWindow("helpdoc")
+	w.WikiRoot = "mew:///docs"
+
+	// In-wiki absolute id: resolves under the root through the mew VFS.
+	res := e.resolveFollow(w, "sample:widget")
+	if res.url != "mew:///docs/sample/widget.txt" || res.root != "mew:///docs" {
+		t.Fatalf("sample:widget = %+v", res)
+	}
+
+	// A climb cannot back out of the root, even though editor.conf exists
+	// one level up.
+	if res := e.resolveFollow(w, "..:editor.conf"); res.url != "" {
+		t.Fatalf("climb must clamp at the wiki root; got %q", res.url)
+	}
+
+	// The full-scheme reference IS the way out: a new-window, rootless
+	// destination.
+	res = e.resolveFollow(w, "mew:///editor.conf")
+	if res.url != "mew:///editor.conf" || !res.newWindow || res.root != "" {
+		t.Fatalf("mew:///editor.conf = %+v", res)
+	}
+
+	// In-place follow keeps the window's root (root is window identity, not
+	// visit state), and history restores don't touch it either.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 3}) // inside [[sample:widget]]
+	w.BrowseActive = true
+	if !e.navFollow() {
+		t.Fatal("in-wiki follow should navigate")
+	}
+	if e.bufferCanonicalURL(w.Buffer) != "mew:///docs/sample/widget.txt" {
+		t.Fatalf("follow landed on %q", e.bufferCanonicalURL(w.Buffer))
+	}
+	if w.WikiRoot != "mew:///docs" {
+		t.Fatal("the window's root must survive an in-wiki swap")
+	}
+	if !e.navHistory(-1) {
+		t.Fatal("history should return")
+	}
+	if w.WikiRoot != "mew:///docs" {
+		t.Fatal("the window's root must survive a history restore")
 	}
 }
 
