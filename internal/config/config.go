@@ -1957,6 +1957,8 @@ rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerSh
 # linkRecent is reserved for recently-followed links.
 link="\e[0;4;93;40m"              # underlined bright yellow on black
 linkRecent="\e[0;4;32;40m"        # underlined green on black
+# Dokuwiki heading base color (browse mode adds bold/underline per level).
+heading="\e[0;96;40m"             # bright cyan on black
 button="\e[0;30;47m"              # black on silver
 buttonRecent="\e[0;30;42m"        # black on dark green (a visited link)
 buttonShadow="\e[0;90;47m"        # dark gray on silver

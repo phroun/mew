@@ -69,6 +69,10 @@ var defaultGlobalColors = map[string]string{
 	// half/full-block shadow cell.
 	"link":                "\x1b[0;4;93;40m", // underlined bright yellow on black
 	"linkrecent":          "\x1b[0;4;32;40m", // underlined green on black
+	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
+	// browse mode can add bold/underline per level (see the editor). Bright
+	// cyan on black.
+	"heading": "\x1b[0;96;40m",
 	"button":              "\x1b[0;30;47m",   // black on silver
 	"buttonrecent":        "\x1b[0;30;42m",   // black on dark green (a visited link)
 	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver

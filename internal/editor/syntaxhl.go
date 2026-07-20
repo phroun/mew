@@ -110,6 +110,29 @@ type linkSpan struct {
 	Target, Title string
 }
 
+// markupKind classifies a dokuwiki inline/heading run that browse mode renders
+// with its markers hidden and its text restyled.
+type markupKind uint8
+
+const (
+	markupBold markupKind = iota
+	markupItalic
+	markupUnderline
+	markupHeading
+)
+
+// markupSpan is one such run on a line: its full doc-rune source range
+// (markers included), the marker length on each side, its kind, and — for a
+// heading — its level 1..5 (====== is 1, == is 5). Lives in the syntax cache
+// beside links and colors, same ChangeSeq lifecycle.
+type markupSpan struct {
+	Start, End int
+	MarkLeft   int // marker runes hidden at the start
+	MarkRight  int // marker runes hidden at the end
+	Kind       markupKind
+	Level      int
+}
+
 type synCache struct {
 	seq     int64
 	grammar *jsf.Instance
@@ -117,10 +140,11 @@ type synCache struct {
 	// its interned frame/state pointers stay consistent across the buffer.
 	loader *jsf.Loader
 	// linkable notes that the grammar recognizes hyperlinks mew can navigate
-	// (currently the dokuwiki grammar); links then holds per-line spans,
+	// (currently the dokuwiki grammar); links/markup then hold per-line spans,
 	// truncated/extended in lockstep with colors.
 	linkable bool
 	links    [][]linkSpan
+	markup   [][]markupSpan
 	colors   [][]string
 	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
 	entries []jsf.LineState // entry state per computed line (for point queries)
@@ -524,8 +548,13 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 				c.colors = c.colors[:low]
 				c.ctx = c.ctx[:low]
 				c.entries = c.entries[:low]
-				if c.linkable && low < len(c.links) {
-					c.links = c.links[:low]
+				if c.linkable {
+					if low < len(c.links) {
+						c.links = c.links[:low]
+					}
+					if low < len(c.markup) {
+						c.markup = c.markup[:low]
+					}
 				}
 			}
 			c.seq = b.ChangeSeq()
@@ -553,6 +582,7 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 			c.ctx = append(c.ctx, ctx)
 			if c.linkable {
 				c.links = append(c.links, extractLinkSpans(lineRunes, attrs))
+				c.markup = append(c.markup, extractMarkupSpans(lineRunes, attrs))
 			}
 			c.next = next
 		}
@@ -614,6 +644,87 @@ func extractLinkSpans(runes []rune, attrs []*jsf.ColorRef) []linkSpan {
 			spans = append(spans, linkSpan{Start: ls, End: le, Target: target, Title: title})
 			j = le
 		}
+	}
+	return spans
+}
+
+// extractMarkupSpans finds the Bold/Italic/Underline/Heading runs the grammar
+// colored on a line and records each with its marker widths so browse mode can
+// hide the markers and restyle the text. Inline markers are the doubled
+// **, //, __ (2 runes each side). A Heading run is ...====== text ======...:
+// the leading/trailing "=" groups (with one adjacent space) are the markers,
+// and the leading "=" count gives the level (6→1 ... 2→5).
+func extractMarkupSpans(runes []rune, attrs []*jsf.ColorRef) []markupSpan {
+	class := func(i int) string {
+		if i < len(attrs) && i < len(runes) && attrs[i] != nil {
+			return attrs[i].Class
+		}
+		return ""
+	}
+	n := len(runes)
+	if len(attrs) < n {
+		n = len(attrs)
+	}
+	var spans []markupSpan
+	for i := 0; i < n; {
+		cl := class(i)
+		var kind markupKind
+		switch {
+		case strings.EqualFold(cl, "Bold"):
+			kind = markupBold
+		case strings.EqualFold(cl, "Italic"):
+			kind = markupItalic
+		case strings.EqualFold(cl, "Underline"):
+			kind = markupUnderline
+		case strings.EqualFold(cl, "Heading"):
+			kind = markupHeading
+		default:
+			i++
+			continue
+		}
+		start := i
+		for i < n && strings.EqualFold(class(i), cl) {
+			i++
+		}
+		end := i
+		s := markupSpan{Start: start, End: end, Kind: kind}
+		if kind == markupHeading {
+			// Count leading '=' (and one following space), trailing '=' (and one
+			// preceding space).
+			l := 0
+			for start+l < end && runes[start+l] == '=' {
+				l++
+			}
+			r := 0
+			for end-1-r >= start && runes[end-1-r] == '=' {
+				r++
+			}
+			s.Level = 7 - l
+			if s.Level < 1 {
+				s.Level = 1
+			}
+			if s.Level > 5 {
+				s.Level = 5
+			}
+			if start+l < end && runes[start+l] == ' ' {
+				l++
+			}
+			if end-1-r >= start && runes[end-1-r] == ' ' {
+				r++
+			}
+			s.MarkLeft, s.MarkRight = l, r
+		} else {
+			// Doubled inline markers, but only when both sides are present and
+			// there is content between them.
+			if end-start >= 5 {
+				s.MarkLeft, s.MarkRight = 2, 2
+			}
+		}
+		// Guard against a malformed run with no content left after the markers.
+		if s.MarkLeft+s.MarkRight >= end-start {
+			s.MarkLeft, s.MarkRight = 0, 0
+		}
+		spans = append(spans, s)
 	}
 	return spans
 }

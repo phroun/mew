@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,19 @@ func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
 		return nil
 	}
 	return c.links[docLine]
+}
+
+// markupSpansOnLine returns the grammar-derived markup runs (bold/italic/
+// underline/heading) for one line, or nil.
+func (e *Editor) markupSpansOnLine(w *window.Window, docLine int) []markupSpan {
+	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+		return nil
+	}
+	c := e.ensureSynCache(w.Buffer, docLine)
+	if c == nil || !c.linkable || docLine >= len(c.markup) {
+		return nil
+	}
+	return c.markup[docLine]
 }
 
 // caretLinkSpan returns the link span the window's caret is on, treating the
@@ -361,16 +375,18 @@ func (e *Editor) displayVisualColumn(w *window.Window, docLine, docRune, tabSize
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
 	text := raw
 	dr := docRune
-	if spans := e.lineButtons(w, docLine); len(spans) > 0 {
-		t, docToDisp := render.SubstituteButtons(raw, spans)
-		text = t
-		if dr < 0 {
-			dr = 0
+	if spans, dw := e.lineDisplaySpans(w, docLine); len(spans) > 0 || dw {
+		t, docToDisp := render.SubstituteButtons(raw, spans, dw)
+		if docToDisp != nil {
+			text = t
+			if dr < 0 {
+				dr = 0
+			}
+			if dr >= len(docToDisp) {
+				dr = len(docToDisp) - 1
+			}
+			dr = docToDisp[dr]
 		}
-		if dr >= len(docToDisp) {
-			dr = len(docToDisp) - 1
-		}
-		dr = docToDisp[dr]
 	}
 	return e.visualColumnNoMarks(w, text, dr, tabSize)
 }
@@ -468,65 +484,127 @@ func (e *Editor) plainVisualColumn(line string, runePos, tabSize int) int {
 	return col
 }
 
-// lineButtons is the renderer's ButtonProvider: the button replacements for
-// one line of a window, nil unless the window is in browse mode and the line
-// has links. Everything here is computed fresh per paint — nothing based on
-// line numbers survives the frame.
-func (e *Editor) lineButtons(w *window.Window, docLine int) []render.ButtonSpan {
-	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type != window.MainBuffer {
-		return nil
+// lineDisplaySpans is the renderer's DisplayProvider: the browse-mode display
+// transform for one line — link buttons, dokuwiki markup marker-hiding and
+// heading restyle — plus whether the line is drawn double-width. nil/false
+// unless the window is in browse mode over a linkable (dokuwiki) buffer.
+// Computed fresh per paint; nothing based on line numbers survives the frame.
+func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.DisplaySpan, bool) {
+	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type != window.MainBuffer || w.Buffer == nil {
+		return nil, false
 	}
-	spans := e.linkSpansOnLine(w, docLine)
-	if len(spans) == 0 {
-		return nil
-	}
-	ind := e.LoadedConfig.Indicators
 	cls, typ := w.Class, w.Type.Name()
 	col := func(name string) string { return e.LoadedConfig.Colors.Resolve(cls, typ, name) }
+	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
+	runes := []rune(raw)
 
+	var spans []render.DisplaySpan
+	doubleWide := false
+
+	// Link buttons.
+	ind := e.LoadedConfig.Indicators
 	pos := w.CursorPos()
 	focusedHere := e.WindowManager.GetFocusedWindow() == w && pos.Line == docLine
-
-	out := make([]render.ButtonSpan, 0, len(spans))
-	for _, s := range spans {
+	for _, s := range e.linkSpansOnLine(w, docLine) {
 		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
 		switch {
 		case focused:
-			// Focus wins over recent: a focused visited link still shows focused.
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"
 		case w.Buffer.LinkVisited(s.Target):
-			// Visited (unfocused): the recent colors, normal caps and shadow glyph.
 			colorName, shadowName = "buttonRecent", "buttonShadowRecent"
 		}
 		var shadowRune rune
 		if sr := []rune(shadow); len(sr) > 0 {
 			shadowRune = sr[0]
 		}
-		out = append(out, render.ButtonSpan{
-			Start:       s.Start,
-			End:         s.End,
+		spans = append(spans, render.ButtonSpan{
+			Start: s.Start, End: s.End,
 			Runes:       []rune(capL + render.SanitizeButtonTitle(s.Title) + capR),
 			Shadow:      shadowRune,
 			Color:       col(colorName),
 			ShadowColor: col(shadowName),
+		}.Span())
+	}
+
+	// Markup: hide markers, keep/restyle the content between them.
+	for _, m := range e.markupSpansOnLine(w, docLine) {
+		if m.MarkLeft+m.MarkRight == 0 {
+			continue // no markers to hide
+		}
+		cs, ce := m.Start+m.MarkLeft, m.End-m.MarkRight
+		if cs < 0 || ce > len(runes) || cs >= ce {
+			continue
+		}
+		content := runes[cs:ce]
+		docs := make([]int, len(content))
+		styles := make([]string, len(content))
+		var forced string
+		if m.Kind == markupHeading {
+			forced = headingSGR(col("heading"), m.Level)
+			doubleWide = doubleWide || m.Level <= 2
+		}
+		for i := range content {
+			docs[i] = cs + i
+			styles[i] = forced // "" for inline: keep the grammar's bold/italic/underline
+		}
+		spans = append(spans, render.DisplaySpan{
+			Start: m.Start, End: m.End, Runes: append([]rune(nil), content...),
+			Doc: docs, Style: styles,
 		})
+	}
+
+	spans = mergeDisplaySpans(spans)
+	return spans, doubleWide
+}
+
+// mergeDisplaySpans sorts spans by Start and drops any that overlap an earlier
+// one (a link inside a heading, say): the first-registered wins. The result is
+// ordered and non-overlapping, as the substitution requires.
+func mergeDisplaySpans(spans []render.DisplaySpan) []render.DisplaySpan {
+	if len(spans) < 2 {
+		return spans
+	}
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].Start < spans[j].Start })
+	out := spans[:0:0]
+	end := -1
+	for _, s := range spans {
+		if s.Start < end {
+			continue
+		}
+		out = append(out, s)
+		end = s.End
 	}
 	return out
 }
 
+// headingSGR builds the per-level heading SGR from the base heading color:
+// L1 bold+underline, L2 underline, L3 bold+underline, L4 underline, L5 plain.
+// (Double-width is a line attribute, applied separately.) The base color
+// starts with a reset, so appended \e[1m/\e[4m add attributes without clearing.
+func headingSGR(base string, level int) string {
+	bold := level == 1 || level == 3
+	underline := level >= 1 && level <= 4
+	if bold {
+		base += "\x1b[1m"
+	}
+	if underline {
+		base += "\x1b[4m"
+	}
+	return base
+}
+
 // displayCaretLine mirrors the renderer's substitution for the editor's own
-// scroll/visibility math: the caret line as it is actually painted (buttons
-// substituted) and the caret position mapped onto it. Identity when the line
-// has no buttons.
+// scroll/visibility math: the caret line as it is actually painted and the
+// caret position mapped onto it. Identity when no transform applies.
 func (e *Editor) displayCaretLine(w *window.Window, line string, runePos int) (string, int) {
-	spans := e.lineButtons(w, w.CursorPos().Line)
-	if len(spans) == 0 {
+	spans, dw := e.lineDisplaySpans(w, w.CursorPos().Line)
+	if len(spans) == 0 && !dw {
 		return line, runePos
 	}
-	text, docToDisp := render.SubstituteButtons(line, spans)
+	text, docToDisp := render.SubstituteButtons(line, spans, dw)
 	if docToDisp == nil {
 		return line, runePos
 	}

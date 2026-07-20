@@ -49,9 +49,10 @@ type ScreenRenderer struct {
 	// the editor when syntax highlighting is configured.
 	syntaxColorizer func(w *window.Window, docLine int) []string
 
-	// buttonProvider supplies link-as-button replacements per line (browse
-	// mode); nil — the default — disables substitution entirely. See buttons.go.
-	buttonProvider ButtonProvider
+	// displayProvider supplies the per-line browse-mode display transform
+	// (buttons, markup marker-hiding/restyle, double-width); nil — the default
+	// — disables all substitution. See buttons.go.
+	displayProvider DisplayProvider
 
 	// caretHiddenFn reports whether the hardware caret should be hidden for a
 	// window even though it is on screen — set by the editor to hide the caret
@@ -1880,7 +1881,7 @@ func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bo
 	// Mark cells are suppressed on a button-substituted caret line: the doc
 	// positions the marks name have no cells of their own there (the paint
 	// side suppresses identically in prepareLineForDisplay).
-	if sr.lineHasButtons(w, w.CursorPos().Line) {
+	if sr.lineIsSubstituted(w, w.CursorPos().Line) {
 		return nil
 	}
 	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())

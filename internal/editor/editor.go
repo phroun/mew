@@ -710,7 +710,7 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetSyntaxColorizer(e.syntaxLineColors)
 	// Browse-mode link buttons: the renderer substitutes these per line at
 	// paint/measure time (see links.go); nil results leave lines untouched.
-	renderer.SetButtonProvider(e.lineButtons)
+	renderer.SetDisplayProvider(e.lineDisplaySpans)
 	// Hide the hardware caret while it is inert inside a focused button.
 	renderer.SetCaretHiddenFn(func(w *window.Window) bool { return e.focusedLinkButton(w) != nil })
 
@@ -3425,10 +3425,10 @@ func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil
 	}
-	// Mark cells are suppressed on a button-substituted caret line — the doc
-	// positions the marks name have no cells of their own there. Mirrors the
-	// renderer's lineMarkSet gate.
-	if len(e.lineButtons(w, w.CursorPos().Line)) > 0 {
+	// Mark cells are suppressed on a substituted caret line — the doc positions
+	// the marks name have no cells of their own there. Mirrors the renderer's
+	// lineMarkSet gate.
+	if spans, dw := e.lineDisplaySpans(w, w.CursorPos().Line); len(spans) > 0 || dw {
 		return nil
 	}
 	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())
