@@ -204,6 +204,7 @@ func (e *Editor) navFollow() bool {
 		// window rooted at that wiki, arriving in browse mode.
 		nw := e.createMainWindow(buf, nil, true)
 		nw.WikiRoot = res.root
+		nw.WikiName = res.wikiName
 		if res.root != "" {
 			nw.BrowseActive = nw.ViewState.LinkBrowsing
 		}

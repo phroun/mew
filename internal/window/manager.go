@@ -317,6 +317,13 @@ type Window struct {
 	// nav history.
 	WikiRoot string
 
+	// WikiName is the registry name of the wiki this window browses ("help";
+	// "" for every non-wiki window). Window identity like WikiRoot — set when
+	// the window is surfaced for a registered wiki, never changed after —
+	// so window-level behavior (chrome, colors, commands) can key off WHICH
+	// wiki this is, not just where its tree lives.
+	WikiName string
+
 	// Nav history: the buffer bindings this window navigated away from, in
 	// browser back/forward form. SwapBuffer pushes the active binding onto
 	// navBack (and clears navFwd — a new departure invalidates the forward

@@ -77,6 +77,7 @@ func schemeRef(ref string) (scheme string, ok bool) {
 // a page inside a registered root highlights as the wiki's format (the
 // mew:-space analogue of the path-conditional [formats] rules).
 type wikiDef struct {
+	Name   string // registry name — the scheme that opens this wiki ("help")
 	Format string // reference/grammar format ("dokuwiki")
 	Root   string // canonical URL of the wiki root
 	Ext    string // page file extension
@@ -84,9 +85,10 @@ type wikiDef struct {
 }
 
 // wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
-// support tree. A config-driven registry can replace this later.
+// support tree. A config-driven registry can replace this later. Keys equal
+// each def's Name.
 var wikiRegistry = map[string]wikiDef{
-	"help": {Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start"},
+	"help": {Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start"},
 }
 
 // wikiSchemeRef reports whether ref invokes a registered wiki scheme with a
@@ -397,8 +399,9 @@ func (e *Editor) docList(dirURL string) []string {
 
 // followResolution is the outcome of resolving a link target for navigation.
 type followResolution struct {
-	url  string // canonical URL of an existing file; "" when not followable
-	root string // WikiRoot for the destination window ("" = none)
+	url      string // canonical URL of an existing file; "" when not followable
+	root     string // WikiRoot for the destination window ("" = none)
+	wikiName string // WikiName for the destination window ("" = not a registered wiki)
 	// newWindow: the destination must surface in a FRESH window rather than
 	// swapping in place — a window's root never changes, so a full-scheme
 	// reference (the one way a link leaves a rooted wiki) opens a new,
@@ -424,7 +427,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	if def, rest, ok := wikiSchemeRef(ref); ok {
 		if p := e.resolveInWiki(def, rest); p != "" {
 			newWin := w == nil || w.WikiRoot != def.Root
-			return followResolution{url: p, root: def.Root, newWindow: newWin}
+			return followResolution{url: p, root: def.Root, wikiName: def.Name, newWindow: newWin}
 		}
 		return followResolution{message: "Page not found: " + ref}
 	}
@@ -457,10 +460,11 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	cfg := defaultWikiCfg()
 
 	// The window's wiki root confines resolution. A root that does not cover
-	// the current document would be a bug elsewhere; ignore it defensively.
-	root := w.WikiRoot
+	// the current document would be a bug elsewhere; ignore it defensively
+	// (the wiki name goes with it — the pair is one identity).
+	root, wikiName := w.WikiRoot, w.WikiName
 	if root != "" && !urlWithin(src, root) {
-		root = ""
+		root, wikiName = "", ""
 	}
 
 	// Layer 2 decides relative vs absolute; the walk happens in id space with
@@ -485,7 +489,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		}
 		base, names := relativeBase(curDir, floor, ref, cfg)
 		if p := e.matchWikiPath(base, names, srcExt, nsTarget, cfg); p != "" {
-			return followResolution{url: p, root: root}
+			return followResolution{url: p, root: root, wikiName: wikiName}
 		}
 		return followResolution{message: "Page not found: " + target}
 	}
@@ -493,7 +497,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	if root != "" {
 		// Absolute within a rooted window: from the root, nowhere else.
 		if p := e.matchWikiPath(root, segs, srcExt, nsTarget, cfg); p != "" {
-			return followResolution{url: p, root: root}
+			return followResolution{url: p, root: root, wikiName: wikiName}
 		}
 		return followResolution{message: "Page not found: " + target}
 	}

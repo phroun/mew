@@ -418,7 +418,8 @@ func TestHelpWikiScheme(t *testing.T) {
 	// the start page.
 	for _, ref := range []string{"help:/start", "help:/", "help://start"} {
 		res := e.resolveFollow(w, ref)
-		if res.url != "mew:///help/start.txt" || res.root != "mew:///help" || !res.newWindow {
+		if res.url != "mew:///help/start.txt" || res.root != "mew:///help" ||
+			res.wikiName != "help" || !res.newWindow {
 			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
 		}
 	}
@@ -442,11 +443,19 @@ func TestHelpWikiScheme(t *testing.T) {
 	if hw == w || hw.WikiRoot != "mew:///help" || !hw.BrowseActive {
 		t.Fatalf("help follow should focus a rooted, browsing window; got root %q", hw.WikiRoot)
 	}
+	if hw.WikiName != "help" {
+		t.Fatalf("the help window must know its registry name; got %q", hw.WikiName)
+	}
 	if e.bufferCanonicalURL(hw.Buffer) != "mew:///help/start.txt" {
 		t.Fatalf("help window shows %q", e.bufferCanonicalURL(hw.Buffer))
 	}
-	if w.WikiRoot != "" {
-		t.Fatal("the source window's root must stay blank")
+	if w.WikiRoot != "" || w.WikiName != "" {
+		t.Fatal("the source window's root and wiki name must stay blank")
+	}
+
+	// In-wiki resolutions from the rooted window carry the full identity.
+	if res := e.resolveFollow(hw, "sample:widget"); res.wikiName != "help" || res.root != "mew:///help" {
+		t.Fatalf("in-wiki resolution should carry the wiki identity; got %+v", res)
 	}
 
 	// From INSIDE the help window, a help:/ reference is an in-wiki jump:
