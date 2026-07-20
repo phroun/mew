@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -309,23 +310,39 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
+	// LOCAL mode: a mew:/// name canonicalizes to the REAL file it names, so
+	// the mew spelling and the ~/.mew path are ONE identity (one buffer),
+	// and the buffer loads with a real filename (full source tracking).
+	rootURL := e.canonicalDocURL("mew:///docs")
+	startURL := e.canonicalDocURL("mew:///docs/start.txt")
+	widgetURL := e.canonicalDocURL("mew:///docs/sample/widget.txt")
+	if !strings.HasPrefix(startURL, "file://") {
+		t.Fatalf("local mew identity should be the real file; got %q", startURL)
+	}
+	if startURL != e.canonicalDocURL(filepath.Join(mewDir, "docs", "start.txt")) {
+		t.Fatal("the mew spelling and the real path must be one identity")
+	}
+
 	buf, err := e.loadBufferURL("mew:///docs/start.txt")
 	if err != nil {
 		t.Fatalf("loadBufferURL: %v", err)
 	}
-	if got := e.bufferCanonicalURL(buf); got != "mew:///docs/start.txt" {
-		t.Fatalf("mew buffer identity = %q", got)
+	if got := e.bufferCanonicalURL(buf); got != startURL {
+		t.Fatalf("mew buffer identity = %q, want %q", got, startURL)
+	}
+	if buf.GetFilename() != filepath.Join(mewDir, "docs", "start.txt") {
+		t.Fatalf("local mew buffer should carry the real path; got %q", buf.GetFilename())
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Visible: true, ID: "helpdoc", Type: window.MainBuffer, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
 	w := e.WindowManager.GetWindow("helpdoc")
-	w.WikiRoot = "mew:///docs"
+	w.WikiRoot = rootURL
 
-	// In-wiki absolute id: resolves under the root through the mew VFS.
+	// In-wiki absolute id: resolves under the root.
 	res := e.resolveFollow(w, "sample:widget")
-	if res.url != "mew:///docs/sample/widget.txt" || res.root != "mew:///docs" {
+	if res.url != widgetURL || res.root != rootURL {
 		t.Fatalf("sample:widget = %+v", res)
 	}
 
@@ -336,9 +353,9 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	}
 
 	// The full-scheme reference IS the way out: a new-window, rootless
-	// destination.
+	// destination (canonicalized to its real-file identity).
 	res = e.resolveFollow(w, "mew:///editor.conf")
-	if res.url != "mew:///editor.conf" || !res.newWindow || res.root != "" {
+	if res.url != e.canonicalDocURL(filepath.Join(mewDir, "editor.conf")) || !res.newWindow || res.root != "" {
 		t.Fatalf("mew:///editor.conf = %+v", res)
 	}
 
@@ -349,16 +366,16 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	if !e.navFollow() {
 		t.Fatal("in-wiki follow should navigate")
 	}
-	if e.bufferCanonicalURL(w.Buffer) != "mew:///docs/sample/widget.txt" {
+	if e.bufferCanonicalURL(w.Buffer) != widgetURL {
 		t.Fatalf("follow landed on %q", e.bufferCanonicalURL(w.Buffer))
 	}
-	if w.WikiRoot != "mew:///docs" {
+	if w.WikiRoot != rootURL {
 		t.Fatal("the window's root must survive an in-wiki swap")
 	}
 	if !e.navHistory(-1) {
 		t.Fatal("history should return")
 	}
-	if w.WikiRoot != "mew:///docs" {
+	if w.WikiRoot != rootURL {
 		t.Fatal("the window's root must survive a history restore")
 	}
 }
@@ -413,18 +430,24 @@ func TestHelpWikiScheme(t *testing.T) {
 	})
 	w := e.WindowManager.GetWindow("doc")
 
+	// Canonical identities (in local mode the mew:/// spellings translate to
+	// the real ~/.mew files — one identity either way).
+	helpRoot := e.canonicalDocURL("mew:///help")
+	startURL := e.canonicalDocURL("mew:///help/start.txt")
+	widgetURL := e.canonicalDocURL("mew:///help/sample/widget.txt")
+
 	// Resolution: the scheme opens pages from the registered root; "/" and
 	// ":" both separate in the URL-flavored scheme form; the bare scheme is
 	// the start page.
 	for _, ref := range []string{"help:/start", "help:/", "help://start"} {
 		res := e.resolveFollow(w, ref)
-		if res.url != "mew:///help/start.txt" || res.root != "mew:///help" ||
+		if res.url != startURL || res.root != helpRoot ||
 			res.wikiName != "help" || !res.newWindow {
 			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
 		}
 	}
 	for _, ref := range []string{"help:/sample/widget", "help:/sample:widget"} {
-		if res := e.resolveFollow(w, ref); res.url != "mew:///help/sample/widget.txt" {
+		if res := e.resolveFollow(w, ref); res.url != widgetURL {
 			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
 		}
 	}
@@ -440,13 +463,13 @@ func TestHelpWikiScheme(t *testing.T) {
 		t.Fatal("navFollow should activate")
 	}
 	hw := e.WindowManager.GetFocusedWindow()
-	if hw == w || hw.WikiRoot != "mew:///help" || !hw.BrowseActive {
+	if hw == w || hw.WikiRoot != helpRoot || !hw.BrowseActive {
 		t.Fatalf("help follow should focus a rooted, browsing window; got root %q", hw.WikiRoot)
 	}
 	if hw.WikiName != "help" {
 		t.Fatalf("the help window must know its registry name; got %q", hw.WikiName)
 	}
-	if e.bufferCanonicalURL(hw.Buffer) != "mew:///help/start.txt" {
+	if e.bufferCanonicalURL(hw.Buffer) != startURL {
 		t.Fatalf("help window shows %q", e.bufferCanonicalURL(hw.Buffer))
 	}
 	if w.WikiRoot != "" || w.WikiName != "" {
@@ -454,7 +477,7 @@ func TestHelpWikiScheme(t *testing.T) {
 	}
 
 	// In-wiki resolutions from the rooted window carry the full identity.
-	if res := e.resolveFollow(hw, "sample:widget"); res.wikiName != "help" || res.root != "mew:///help" {
+	if res := e.resolveFollow(hw, "sample:widget"); res.wikiName != "help" || res.root != helpRoot {
 		t.Fatalf("in-wiki resolution should carry the wiki identity; got %+v", res)
 	}
 

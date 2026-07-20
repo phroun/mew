@@ -479,11 +479,13 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 	}
 	if fn := b.GetFilename(); fn != "" {
 		// A page inside a REGISTERED wiki's root highlights as that wiki's
-		// format (mew:///help/*.txt as dokuwiki) — the registry is the
-		// mew:-space analogue of the path-conditional [formats] rules below.
+		// format (the help tree's .txt pages as dokuwiki) — the registry is
+		// the mew:-space analogue of the path-conditional [formats] rules
+		// below. Both sides canonicalize, so a local mew:/// root and the
+		// real ~/.mew path it names compare as one subtree.
 		if url := e.canonicalDocURL(fn); url != "" {
 			for _, def := range wikiRegistry {
-				if urlWithin(url, def.Root) {
+				if urlWithin(url, e.canonicalDocURL(def.Root)) {
 					if in, ld := e.detectName(def.Format, overrides); in != nil {
 						return in, ld
 					}

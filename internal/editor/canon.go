@@ -29,11 +29,25 @@ import (
 // canonicalDocURL resolves a document name (an OS path, a host-FS name, a
 // mew: path, or an already-canonical URL) to its canonical URL. Empty in,
 // empty out.
+//
+// In fully-LOCAL mode (real OS document FS, real ~/.mew tree) a mew: name
+// canonicalizes to the REAL file it names: mew:///help/start.txt and
+// ~/.mew/help/start.txt are one physical file, so they must be ONE identity
+// (one buffer) — and the real-path identity means mew: documents load
+// through the full file open path (source tracking, saves, locks, backups)
+// instead of as sourceless memory buffers. Under a virtualized mew tree (or
+// a virtual document FS) no real path exists, so the mew:/// spelling IS the
+// identity.
 func (e *Editor) canonicalDocURL(name string) string {
 	if name == "" {
 		return ""
 	}
 	if isMewPath(name) {
+		if e.usingOSFS {
+			if p, ok := e.mew.LocalPath(name); ok {
+				return canonicalOSFileURL(p, e.home)
+			}
+		}
 		// confine collapses dot segments and can never escape the mew root,
 		// normalizing every accepted spelling (mew:x, mew:/x, mew://x,
 		// mew:///x) to the same identity.
@@ -45,22 +59,27 @@ func (e *Editor) canonicalDocURL(name string) string {
 		p := strings.TrimPrefix(name, "file://")
 		return "file://" + path.Clean("/"+strings.TrimPrefix(p, "/"))
 	}
-	p := name
 	if e.usingOSFS {
-		if ex, ok := expandTilde(p, e.home); ok {
-			p = ex
-		}
-		if !filepath.IsAbs(p) {
-			if abs, err := filepath.Abs(p); err == nil {
-				p = abs
-			}
-		}
-		p = filepath.ToSlash(filepath.Clean(p))
-	} else {
-		// A virtual host FS owns its namespace: normalize separators and
-		// collapse dot segments as a rooted path, without consulting the OS.
-		p = path.Clean("/" + strings.TrimPrefix(filepath.ToSlash(p), "/"))
+		return canonicalOSFileURL(name, e.home)
 	}
+	// A virtual host FS owns its namespace: normalize separators and
+	// collapse dot segments as a rooted path, without consulting the OS.
+	p := path.Clean("/" + strings.TrimPrefix(filepath.ToSlash(name), "/"))
+	return "file://" + p
+}
+
+// canonicalOSFileURL canonicalizes a real OS path (tilde-expanded against
+// home, made absolute, cleaned, slash-normalized) into file:///... form.
+func canonicalOSFileURL(p, home string) string {
+	if ex, ok := expandTilde(p, home); ok {
+		p = ex
+	}
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+	}
+	p = filepath.ToSlash(filepath.Clean(p))
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
@@ -105,10 +124,13 @@ func (e *Editor) findOpenBuffer(url string) *buffer.Buffer {
 
 // loadBufferURL loads the document a canonical URL names: file:/// through
 // the full document open path (locks, backups, notices); mew:/// by reading
-// mew's support tree (no locks — the tree is mew's own). A mew buffer's
-// filename is the canonical URL itself, so its identity round-trips through
-// bufferCanonicalURL.
+// mew's support tree. The URL is re-canonicalized first, so in local mode a
+// mew:/// name translates to its real file and loads with full source
+// tracking; only under a VIRTUALIZED mew tree does the mew:/// branch run,
+// producing a memory buffer whose filename is the canonical URL itself (its
+// identity round-trips through bufferCanonicalURL).
 func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
+	url = e.canonicalDocURL(url)
 	prefix, p, ok := urlSplit(url)
 	if !ok {
 		return nil, fmt.Errorf("not a document URL: %s", url)

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -18,14 +19,27 @@ func TestCanonicalDocURL(t *testing.T) {
 		"/a/./b//c.txt":     "file:///a/b/c.txt",
 		"file:///x//y/../z": "file:///x/z",
 		"file://x/y":        "file:///x/y",
-		"mew:syntax/x.jsf":  "mew:///syntax/x.jsf",
-		"mew:/syntax/x.jsf": "mew:///syntax/x.jsf",
-		"mew:///a/../../b":  "mew:///b",
 		"":                  "",
 	}
 	for in, want := range cases {
 		if got := e.canonicalDocURL(in); got != want {
 			t.Errorf("canonicalDocURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// In LOCAL mode every mew: spelling translates to the REAL file under
+	// ~/.mew — the same identity the plain path canonicalizes to, so the two
+	// routes to one file can never alias into two buffers.
+	mewCases := map[string]string{
+		"mew:syntax/x.jsf":  "syntax/x.jsf",
+		"mew:/syntax/x.jsf": "syntax/x.jsf",
+		"mew:///a/../../b":  "b", // confined: ".." cannot escape the mew root
+	}
+	for in, rel := range mewCases {
+		want := e.canonicalDocURL(filepath.Join(e.home, ".mew", filepath.FromSlash(rel)))
+		got := e.canonicalDocURL(in)
+		if got != want || !strings.HasPrefix(got, "file://") {
+			t.Errorf("canonicalDocURL(%q) = %q, want real-file identity %q", in, got, want)
 		}
 	}
 

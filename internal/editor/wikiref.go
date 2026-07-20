@@ -425,9 +425,13 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	// window unless the current window already carries that exact root (a
 	// window's root never changes).
 	if def, rest, ok := wikiSchemeRef(ref); ok {
-		if p := e.resolveInWiki(def, rest); p != "" {
-			newWin := w == nil || w.WikiRoot != def.Root
-			return followResolution{url: p, root: def.Root, wikiName: def.Name, newWindow: newWin}
+		// The registered root canonicalizes per mode (a local mew:/// root
+		// becomes its real file:/// subtree), so roots compare in the same
+		// identity space as every document URL.
+		rootURL := e.canonicalDocURL(def.Root)
+		if p := e.resolveInWiki(def, rootURL, rest); p != "" {
+			newWin := w == nil || w.WikiRoot != rootURL
+			return followResolution{url: p, root: rootURL, wikiName: def.Name, newWindow: newWin}
 		}
 		return followResolution{message: "Page not found: " + ref}
 	}
@@ -517,11 +521,11 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 }
 
 // resolveInWiki resolves a reference within a registered wiki, from its
-// root, with the wiki's own extension and start page. The scheme form is
-// URL-flavored, so "/" separates namespaces here (help:/sample/widget ≡
-// help:/sample:widget); an empty reference is the wiki's start page. Returns
-// the matched canonical URL ("" = no page).
-func (e *Editor) resolveInWiki(def wikiDef, rest string) string {
+// CANONICALIZED root URL, with the wiki's own extension and start page. The
+// scheme form is URL-flavored, so "/" separates namespaces here
+// (help:/sample/widget ≡ help:/sample:widget); an empty reference is the
+// wiki's start page. Returns the matched canonical URL ("" = no page).
+func (e *Editor) resolveInWiki(def wikiDef, rootURL, rest string) string {
 	cfg := defaultWikiCfg()
 	cfg.useSlash = true
 	cfg.startPage = def.Start
@@ -531,7 +535,7 @@ func (e *Editor) resolveInWiki(def wikiDef, rest string) string {
 	if id != "" {
 		segs = strings.Split(id, ":")
 	}
-	return e.matchWikiPath(def.Root, segs, def.Ext, nsTarget, cfg)
+	return e.matchWikiPath(rootURL, segs, def.Ext, nsTarget, cfg)
 }
 
 // isRelativeRef applies Layer 2's relative/absolute rule to a raw reference:

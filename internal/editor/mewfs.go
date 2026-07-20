@@ -99,6 +99,16 @@ func (v *mewVFS) WriteFile(mewPath string, data []byte) error {
 	return v.fs.WriteFile(n, data)
 }
 
+// LocalPath returns the real OS path backing a mew: path in LOCAL mode
+// (<home>/.mew/rel), or ok=false when the tree is virtualized (no real path
+// exists) or the home root is unknown.
+func (v *mewVFS) LocalPath(mewPath string) (string, bool) {
+	if v.virtual || v.localRoot == "" {
+		return "", false
+	}
+	return filepath.Join(v.localRoot, filepath.FromSlash(confine(mewPath))), true
+}
+
 // Glob lists mew: entries matching a confined pattern, returned as "mew:/rel"
 // paths (local results are mapped back out of the on-disk root). Used by the
 // wiki resolver to match page ids against the files actually present in a
