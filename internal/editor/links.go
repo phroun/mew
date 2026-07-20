@@ -43,9 +43,10 @@ func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
 	return c.links[docLine]
 }
 
-// caretLinkSpan returns the link span the window's caret is strictly inside
-// (Start < caret < End — the boundaries just outside the brackets don't
-// count), or nil. The line number is read fresh from the caret each call.
+// caretLinkSpan returns the link span the window's caret is on, treating the
+// range as half-open [Start, End): the caret is "on" the link the moment it
+// reaches the first character (the left edge counts), and leaves it only past
+// the last (End does not count). The line number is read fresh each call.
 func (e *Editor) caretLinkSpan(w *window.Window) *linkSpan {
 	if w == nil {
 		return nil
@@ -53,7 +54,7 @@ func (e *Editor) caretLinkSpan(w *window.Window) *linkSpan {
 	pos := w.CursorPos()
 	spans := e.linkSpansOnLine(w, pos.Line)
 	for i := range spans {
-		if spans[i].Start < pos.Rune && pos.Rune < spans[i].End {
+		if spans[i].Start <= pos.Rune && pos.Rune < spans[i].End {
 			return &spans[i]
 		}
 	}
@@ -480,7 +481,7 @@ func (e *Editor) lineButtons(w *window.Window, docLine int) []render.ButtonSpan 
 
 	out := make([]render.ButtonSpan, 0, len(spans))
 	for _, s := range spans {
-		focused := focusedHere && s.Start < pos.Rune && pos.Rune < s.End
+		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
 		if focused {

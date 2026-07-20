@@ -73,6 +73,30 @@ func TestAdjacentLinkSpans(t *testing.T) {
 	}
 }
 
+// The "on a link" range is half-open [Start, End): the left edge (first
+// character) counts, so entering from the left registers immediately; the
+// position past the last character (End) does not.
+func TestLinkEdgeBoundaries(t *testing.T) {
+	// [[a:b|Title]] occupies [5, 18).
+	e, w, _ := linkEditor(t, "text [[a:b|Title]] more\n")
+	at := func(rune int) *linkSpan {
+		w.SetCursorPos(window.Position{Line: 0, Rune: rune})
+		return e.caretLinkSpan(w)
+	}
+	if at(4) != nil {
+		t.Fatal("rune 4 (the space before) must be outside the link")
+	}
+	if s := at(5); s == nil || s.Target != "a:b" {
+		t.Fatal("rune 5 (left edge, first '[') must count as on the link")
+	}
+	if s := at(17); s == nil { // the last ']'
+		t.Fatal("rune 17 (last character) must be inside")
+	}
+	if at(18) != nil {
+		t.Fatal("rune 18 (End, just past the link) must be outside")
+	}
+}
+
 // A focused button protects the link's source text: content-mutating commands
 // are rejected as though the buffer were read-only, and navigation/undo still
 // work. Leaving the button (nav_cancel) restores editing.
@@ -116,16 +140,17 @@ func TestBrowseModeArming(t *testing.T) {
 	if w.BrowseActive {
 		t.Fatal("browse must not arm outside a link")
 	}
-	// Boundary positions are NOT inside: the span starts at 5.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	// The position just before the link (rune 4, the space) is still outside.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
 	e.updateBrowseState()
 	if w.BrowseActive {
-		t.Fatal("the span's start boundary must not arm")
+		t.Fatal("the cell before the link must not arm")
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10}) // strictly inside
+	// The left edge (rune 5, the first '[') counts: the range is [Start, End).
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
 	e.updateBrowseState()
 	if !w.BrowseActive {
-		t.Fatal("entering the link must arm browse mode")
+		t.Fatal("the link's left edge should arm (entering from the left)")
 	}
 
 	// nav_cancel disarms; moving within the same span must not re-arm.
@@ -512,8 +537,11 @@ func TestNavVerticalPages(t *testing.T) {
 // The vertical/horizontal nav commands act only in active nav mode.
 func TestNavRequiresActiveMode(t *testing.T) {
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]]\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // not in a link, browse off
+	w.SetCursorPos(window.Position{Line: 0, Rune: 7}) // the 'i' in "mid": outside any link
 	e.updateBrowseState()
+	if w.BrowseActive {
+		t.Fatal("browse should be off between links")
+	}
 	if e.navVert(+1) || e.navVert(-1) || e.navHoriz(+1) || e.navHoriz(-1) {
 		t.Fatal("nav up/down/left/right must not act outside active nav mode")
 	}
