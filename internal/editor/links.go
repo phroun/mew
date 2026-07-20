@@ -100,6 +100,7 @@ func (e *Editor) navCancel() bool {
 		return false
 	}
 	w.BrowseActive = false
+	w.NavIdealSet = false
 	e.RequestRender()
 	return true
 }
@@ -206,6 +207,7 @@ func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
 	w.SetCursorPos(window.Position{Line: line, Rune: runePos})
 	w.HasGhostCursor = false
 	w.IdealVisualColumn = 0
+	w.NavIdealSet = false // a non-vertical nav move re-anchors the vertical ideal
 	e.ensureCursorVisible(w)
 }
 
@@ -267,64 +269,122 @@ func (e *Editor) navVert(dir int) bool {
 		return false
 	}
 	tabSize := e.tabSize(w)
-	curLine := w.CursorPos().Line
-	curRaw := strings.TrimRight(w.Buffer.GetLine(curLine), "\n\r")
-	refCol := e.plainVisualColumn(curRaw, w.CursorPos().Rune, tabSize)
+	// Establish the target column once per vertical run (display space, so it
+	// matches where the caret actually sits on screen), then preserve it across
+	// the run so repeated up/down keep a consistent column like normal caret
+	// up/down does — regardless of where each link lands.
+	if !w.NavIdealSet {
+		w.NavIdealCol = e.displayVisualColumn(w, w.CursorPos().Line, w.CursorPos().Rune, tabSize)
+		w.NavIdealSet = true
+	}
+	target := w.NavIdealCol
 
 	top := w.ViewState.ViewOffsetY
 	bottom := top + w.ContentHeight - 1
 	if n := w.Buffer.GetLineCount() - 1; bottom > n {
 		bottom = n
 	}
-	for L := curLine + dir; L >= top && L <= bottom; L += dir {
+	for L := w.CursorPos().Line + dir; L >= top && L <= bottom; L += dir {
 		spans := e.linkSpansOnLine(w, L)
 		if len(spans) == 0 {
 			continue
 		}
-		target := e.pickLinkByColumn(w, L, spans, refCol, dir, tabSize)
-		e.setCursorForNav(w, L, target.Start+1)
+		chosen := e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize)
+		// Move without disturbing the vertical ideal (keep the run's target).
+		w.SetCursorPos(window.Position{Line: L, Rune: chosen.Start + 1})
+		w.HasGhostCursor = false
+		e.ensureCursorVisible(w)
 		e.RequestRender()
 		return true
 	}
 	// No further link on the current screen: page, and treat that as success.
+	// Paging clears NavIdealSet (via afterVerticalMovement), so save/restore it
+	// — a page is part of the same vertical run.
+	saved, wasSet := w.NavIdealCol, w.NavIdealSet
 	if dir > 0 {
 		e.pageDown()
 	} else {
 		e.pageUp()
 	}
 	e.trackMove()
+	w.NavIdealCol, w.NavIdealSet = saved, wasSet
 	e.RequestRender()
 	return true
 }
 
-// pickLinkByColumn chooses the link on line L nearest refCol (a plain
-// tab-aware column): a link whose column range contains refCol wins; else the
-// nearest by distance, with ties broken toward the first link when moving down
-// (dir >= 0) and the last when moving up.
-func (e *Editor) pickLinkByColumn(w *window.Window, L int, spans []linkSpan, refCol, dir, tabSize int) linkSpan {
-	raw := strings.TrimRight(w.Buffer.GetLine(L), "\n\r")
+// pickLinkByDisplayColumn chooses the link on line L nearest the display-space
+// column target: a link whose painted column range contains target wins; else
+// the nearest by distance, with ties broken toward the first link moving down
+// (dir >= 0) and the last moving up. Columns are measured with buttons
+// substituted and bidi applied, so the choice matches what is on screen.
+func (e *Editor) pickLinkByDisplayColumn(w *window.Window, L int, spans []linkSpan, target, dir, tabSize int) linkSpan {
 	best := spans[0]
 	bestDist := -1
 	for _, s := range spans {
-		sc := e.plainVisualColumn(raw, s.Start, tabSize)
-		ec := e.plainVisualColumn(raw, s.End, tabSize)
-		if refCol >= sc && refCol < ec {
-			return s // overlap wins outright
+		c0 := e.displayVisualColumn(w, L, s.Start, tabSize)
+		c1 := e.displayVisualColumn(w, L, s.End, tabSize)
+		lo, hi := c0, c1
+		if lo > hi { // RTL: the button's start cell sits at the higher column
+			lo, hi = hi, lo
 		}
-		d := sc - refCol
+		if target >= lo && target < hi {
+			return s // overlaps the target column
+		}
+		d := lo - target
 		if d < 0 {
-			d = refCol - (ec - 1)
+			d = target - (hi - 1)
 		}
 		if d < 0 {
 			d = 0
 		}
-		// Down: strict < keeps the first (earliest) on a tie; up: <= lets a
-		// later link win a tie, giving the last.
 		if bestDist < 0 || d < bestDist || (dir < 0 && d == bestDist) {
 			best, bestDist = s, d
 		}
 	}
 	return best
+}
+
+// displayVisualColumn returns the on-screen visual column of a document rune on
+// line docLine, with browse-mode buttons substituted (so a link measures where
+// its button paints) and bidi applied. A doc rune inside a link maps to its
+// button's start cell — the same place the caret parks.
+func (e *Editor) displayVisualColumn(w *window.Window, docLine, docRune, tabSize int) int {
+	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
+	text := raw
+	dr := docRune
+	if spans := e.lineButtons(w, docLine); len(spans) > 0 {
+		t, docToDisp := render.SubstituteButtons(raw, spans)
+		text = t
+		if dr < 0 {
+			dr = 0
+		}
+		if dr >= len(docToDisp) {
+			dr = len(docToDisp) - 1
+		}
+		dr = docToDisp[dr]
+	}
+	return e.visualColumnNoMarks(w, text, dr, tabSize)
+}
+
+// visualColumnNoMarks is the bidi-aware visual column of a rune position on an
+// arbitrary (not necessarily caret) line, without showMarks cells — safe to
+// call for any line during vertical link picking.
+func (e *Editor) visualColumnNoMarks(w *window.Window, line string, runePos, tabSize int) int {
+	runes := []rune(line)
+	if runePos < 0 {
+		runePos = 0
+	}
+	if runePos > len(runes) {
+		runePos = len(runes)
+	}
+	if layout := e.layoutFor(w, runes); layout != nil {
+		cols, total := e.bidiColumns(runes, layout, nil, tabSize)
+		if runePos >= len(runes) {
+			return total
+		}
+		return cols[runePos]
+	}
+	return e.plainVisualColumn(line, runePos, tabSize)
 }
 
 // navHoriz (nav_left / nav_right) moves to the link optically left (dir -1) or

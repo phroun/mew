@@ -2865,6 +2865,10 @@ func (e *Editor) afterVerticalMovement(w *window.Window) {
 		return
 	}
 
+	// Normal vertical movement is not link nav: drop any vertical nav ideal
+	// (navVert saves/restores it around its own paging fallback).
+	w.NavIdealSet = false
+
 	tabSize := e.tabSize(w)
 
 	// Get line content (without trailing newline)
@@ -3025,6 +3029,7 @@ func (e *Editor) afterHorizontalMovement(w *window.Window) {
 	// Clear ghost cursor
 	w.HasGhostCursor = false
 	w.GhostCursorVisualColumn = 0
+	w.NavIdealSet = false // a horizontal move re-anchors any vertical nav ideal
 
 	// Update ideal column to current visual position (reading column in RTL).
 	if w.Buffer != nil {

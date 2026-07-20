@@ -320,6 +320,16 @@ type Window struct {
 	GhostCursorVisualColumn int
 	HasGhostCursor          bool
 
+	// NavIdealCol is the DISPLAY-space target column for vertical link nav
+	// (nav_up / nav_down), held separately from IdealVisualColumn (which is a
+	// raw column re-anchored by every horizontal move). NavIdealSet gates it:
+	// it is established on the first vertical nav of a run and preserved across
+	// the run — including its paging fallback — so repeated up/down keep a
+	// consistent target regardless of where each link sits, then cleared by any
+	// other caret move. See the editor's navVert.
+	NavIdealCol int
+	NavIdealSet bool
+
 	// Window chrome slots are named by READING side, like the inner and
 	// outer margins of a book page: Inner is the reading-start side (left in
 	// an LTR window, right in RTL), Outer is the opposite edge. The renderer

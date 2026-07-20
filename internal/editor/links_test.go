@@ -389,6 +389,49 @@ func TestNavVertical(t *testing.T) {
 	}
 }
 
+// The vertical nav ideal is established once and held for the whole run, so
+// repeated nav_down keeps a consistent target column even as links land at
+// other columns — and a horizontal caret move re-anchors it.
+func TestNavVerticalConsistentIdeal(t *testing.T) {
+	// One link per line at different columns: [[a]] col 10, [[b]] col 0,
+	// [[c]] col 5.
+	e, w, out := renderedEditorWithConfig(t,
+		"          [[a]]\n[[b]]\n     [[c]]\n", "[options]\nsyntax=dokuwiki\n")
+	out.Reset()
+	e.performRender()
+
+	w.SetCursorPos(window.Position{Line: 0, Rune: 11}) // inside [[a]] (col ~10)
+	e.updateBrowseState()
+	if !e.navVert(+1) {
+		t.Fatal("first nav_down should move")
+	}
+	if !w.NavIdealSet {
+		t.Fatal("the vertical ideal should be established")
+	}
+	ideal := w.NavIdealCol
+	if ideal < 9 || ideal > 11 {
+		t.Fatalf("ideal should track the starting column (~10); got %d", ideal)
+	}
+	// Landed on [[b]] at column 0 — off the ideal.
+	if w.CursorPos().Line != 1 {
+		t.Fatalf("should be on line 1; got %d", w.CursorPos().Line)
+	}
+	// The next nav_down must still target the original ideal, not the column
+	// [[b]] happened to sit at.
+	if !e.navVert(+1) || w.NavIdealCol != ideal || !w.NavIdealSet {
+		t.Fatalf("ideal must stay %d across the run; got %d (set=%v)",
+			ideal, w.NavIdealCol, w.NavIdealSet)
+	}
+	if w.CursorPos().Line != 2 {
+		t.Fatalf("should be on line 2; got %d", w.CursorPos().Line)
+	}
+	// A horizontal caret move re-anchors the vertical ideal.
+	e.executeCommand("go_char_next")
+	if w.NavIdealSet {
+		t.Fatal("a horizontal move should clear the vertical nav ideal")
+	}
+}
+
 // nav_down with no link line left on screen pages instead, and still reports
 // success (staying in nav mode).
 func TestNavVerticalPages(t *testing.T) {
