@@ -15,10 +15,37 @@ import (
 	"github.com/phroun/mew/internal/window"
 )
 
-// builtinSyntax carries mew's own MIT-licensed grammar files.
+// builtinSyntax carries mew's own MIT-licensed grammar files (and their
+// LICENSE). They always resolve from here as the last-resort layer; on a real
+// OS they are also dropped into ~/.mew/syntax/ for discoverability and editing.
 //
-//go:embed syntax/*.jsf
+//go:embed syntax
 var builtinSyntax embed.FS
+
+// installDefaultGrammars drops the embedded grammar pack into ~/.mew/syntax/ the
+// first time that directory does not exist, so the shipped highlighters are
+// visible and editable next to the user's own. It never clobbers an existing
+// directory (the user owns it from then on), and it is a no-op when the mew tree
+// is virtualized (a host owns its own layout).
+func (e *Editor) installDefaultGrammars() {
+	if !e.usingOSFS || e.mew == nil || e.mew.IsDir("mew:/syntax") {
+		return
+	}
+	entries, err := builtinSyntax.ReadDir("syntax")
+	if err != nil {
+		return
+	}
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		data, err := builtinSyntax.ReadFile("syntax/" + ent.Name())
+		if err != nil {
+			continue
+		}
+		_ = e.mew.WriteFile("mew:/syntax/"+ent.Name(), data)
+	}
+}
 
 // defaultSyntaxMap is the built-in mapping from conventional jsf color-class
 // names to mew's systematic syntax* color names. [colors.syntax] and

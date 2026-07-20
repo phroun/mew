@@ -2,6 +2,7 @@
 package config
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"path"
@@ -11,6 +12,15 @@ import (
 	"strings"
 	"sync"
 )
+
+// embeddedDefaults carries mew's shipped default resource files that the
+// generated editor.conf @includes — the modular key-mapping sets and the
+// keyboard layouts. They are written into ~/.mew/defaults/ on first run (for
+// discoverability and user editing) and also resolve the built-in mappings
+// baseline without touching disk.
+//
+//go:embed defaults/*.conf
+var embeddedDefaults embed.FS
 
 // Config holds the editor configuration.
 type Config struct {
@@ -674,7 +684,9 @@ func DefaultConfig() Config {
 func builtinMappings() map[string]string {
 	builtinMappingsOnce.Do(func() {
 		m := &Manager{}
-		parsed := m.parseConfigFile(m.generateDefaultConfig())
+		// The default config @includes the modular keymap files; expand them from
+		// the embedded copies so the baseline is complete without disk access.
+		parsed := m.parseConfigFile(expandEmbeddedIncludes(m.generateDefaultConfig()))
 		builtinMappingsCache = parsed["mappings_mew"]
 		if builtinMappingsCache == nil {
 			builtinMappingsCache = map[string]string{}
@@ -1584,9 +1596,62 @@ func (m *Manager) unescapeValue(value string) string {
 	return result.String()
 }
 
-// WriteDefault writes the default configuration file.
+// WriteDefault writes the default configuration file, and drops the shipped
+// default resource files (the @included keymap sets and layouts) into
+// mew:/defaults/ so they resolve and are discoverable.
 func (m *Manager) WriteDefault() error {
-	return m.io().Write(m.configPath, []byte(m.generateDefaultConfig()))
+	if err := m.io().Write(m.configPath, []byte(m.generateDefaultConfig())); err != nil {
+		return err
+	}
+	return m.writeEmbeddedDefaults()
+}
+
+// writeEmbeddedDefaults copies each embedded defaults/*.conf into mew:/defaults/,
+// skipping any that already exist so user edits are never clobbered.
+func (m *Manager) writeEmbeddedDefaults() error {
+	entries, err := embeddedDefaults.ReadDir("defaults")
+	if err != nil {
+		return nil // nothing embedded: nothing to drop
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		dest := "mew:/defaults/" + e.Name()
+		if _, err := m.io().Read(dest); err == nil {
+			continue // already present — keep the user's copy
+		}
+		data, err := embeddedDefaults.ReadFile("defaults/" + e.Name())
+		if err != nil {
+			continue
+		}
+		if err := m.io().Write(dest, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expandEmbeddedIncludes replaces each @include "defaults/…" line in text with
+// the embedded file's contents, so the built-in config resolves entirely from
+// the binary. Non-embedded includes are left for the normal disk-based
+// expansion during Load.
+func expandEmbeddedIncludes(text string) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if sub := includeRe.FindStringSubmatch(strings.TrimSuffix(line, "\r")); sub != nil {
+			ref := sub[1]
+			if ref == "" {
+				ref = sub[2]
+			}
+			if data, err := embeddedDefaults.ReadFile(ref); err == nil {
+				out = append(out, string(data))
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // generateDefaultConfig generates the default config file content.
@@ -1905,151 +1970,42 @@ messages="\e[0;93;43m"                # bright yellow on brown
 messages="\e[0;97;41m"                # bright white on red
 
 [mappings.mew]
-^K H	=help_toggle
-esc X	=cmd
-^@ U	=stat_peek_up
-^@ V	=stat_peek_down
-^@ P	=prompt_peek_up
-^@ N	=prompt_peek_down
-^@ O	=editor_options
-^@ ,	=window_prior
-^@ .	=window_next
 
-^I	=completion|insert '\t'
-^M	=accept|insert '\n'
-^C	=cancel|buffer_close
+# -- first, include all the mew defaults --
+@include "defaults/keys_cursor_movement.conf"
+@include "defaults/keys_editing.conf"
+@include "defaults/keys_quick_menu.conf"
+@include "defaults/keys_block_menu.conf"
+@include "defaults/keys_buffer_and_save_menus.conf"
+@include "defaults/keys_options_menu.conf"
+@include "defaults/keys_backcompat.conf"
 
-esc >	=scroll_right
-esc <	=scroll_left
+# -- override as needed --
+^K H    =help_toggle
+esc X   =cmd
+esc y   =kill_ring_yank
+esc Y   =kill_ring_pop
+^@ U    =stat_peek_up
+^@ V    =stat_peek_down
+^@ P    =prompt_peek_up
+^@ N    =prompt_peek_down
+^@ O    =editor_options
+^@ ,    =window_prior
+^@ .    =window_next
 
-# ============= Cursor Nav ============
-^J	=go_char_prior
-left	=go_char_prior
-^F	=go_char_next
-right	=go_char_next
+tab     =completion|insert '\t'
+return  =accept|insert '\n'
+^C      =cancel|buffer_close
+^R      =repeat_next
 
-M-j	=go_word_prior
-esc j	=go_word_prior
-^left	=go_word_prior
+esc >   =scroll_right
+esc <   =scroll_left
 
-esc f	=go_word_next
-M-f	=go_word_next
-^right	=go_word_next
+^L      =find_next
+^]      =go_match
 
-^A	=go_line_beg
-home	=go_line_beg
-^E	=go_line_end
-end	=go_line_end
-
-^P	=go_line_prior
-up	=go_line_prior
-^N	=go_line_next
-down	=go_line_next
-
-^U	=go_page_prior
-^Q U	=go_buffer_beg
-pgup	=go_page_prior
-^V	=go_page_next|go_line_end
-^Q V	=go_buffer_end
-pgdn	=go_page_next
-
-^]	=go_match
-
-^D	=del_char_next	# unix-style
-^G	=del_char_next  # wordstar-style
-#fdel	=del_char_next
-^W	=del_word_beg
-^T	=del_word_end
-esc w	=del_line_beg
-esc t	=del_line_end
-^\	=del_line_end|del_line
-^Y	=del_line
-
-^_	=buffer_undo
-^Z	=buffer_redo|buffer_undo
-
-# ---- Cursor Nav Backwards Compat ----
-^K U	=go_buffer_beg
-^K V	=go_buffer_end
-
-# ============= Quick Menu ============
-^Q F	=find
-^Q B	=go_block_begin
-^Q K	=go_block_end
-^Q L	=go_line
-^Q N	=go_pos_next
-^Q P	=go_pos_prior
-^Q M	=go_mark
-^Q 1	=go_mark '1'
-^Q 2	=go_mark '2'
-^Q 3	=go_mark '3'
-^Q 4	=go_mark '4'
-^Q 5	=go_mark '5'
-^Q 6	=go_mark '6'
-^Q 7	=go_mark '7'
-^Q 8	=go_mark '8'
-^Q 9	=go_mark '9'
-^Q 0	=go_mark '0'
-^Q return	=go_mark
-^Q Q M	=set_mark
-^Q Q 1	=set_mark '1'
-^Q Q 2	=set_mark '2'
-^Q Q 3	=set_mark '3'
-^Q Q 4	=set_mark '4'
-^Q Q 5	=set_mark '5'
-^Q Q 6	=set_mark '6'
-^Q Q 7	=set_mark '7'
-^Q Q 8	=set_mark '8'
-^Q Q 9	=set_mark '9'
-^Q Q 0	=set_mark '0'
-^Q Q return	=set_mark
-# --- Quick Backwards Compatibility ---
-^K 1	=set_mark '1'
-^K 2	=set_mark '2'
-^K 3	=set_mark '3'
-^K 4	=set_mark '4'
-^K 5	=set_mark '5'
-^K 6	=set_mark '6'
-^K 7	=set_mark '7'
-^K 8	=set_mark '8'
-^K 9	=set_mark '9'
-^K 0	=set_mark '0'
-^K F	=find
-
-# ============= Block Menu ============
-^K B	=set_block_begin
-^K K	=set_block_end
-^K L	=go_line
-^K C	=block_copy
-^K M	=block_move
-^K Y	=block_delete
-^K W	=block_write
-^K .	=block_indent
-^K ,	=block_unindent
-
-^L	=find_next
-
-# ============= Buffer Menu ============
-^B L	=buffer_list
-^B N	=buffer_new
-^B Z	=buffer_close
-^B 2	=buffer_clone
-^B O	=buffer_open_file
-^B R	=buffer_insert_file
-^B U	=buffer_undo
-
-# ============= Save Menu ============
-^S A	=buffer_save_all
-^S Q	=buffer_save_all&exit
-^S S	=buffer_save
-^S X	=buffer_save_all true & exit
-^S D	=buffer_save_as
-# --- Save Backwards Compatibility ---
-^K A	=buffer_save_all
-^K Q	=buffer_save_all&exit
-^K S	=buffer_save
-^K X	=buffer_save_all true & exit
-^K D	=buffer_save_as
+^_      =buffer_undo
+^Z      =buffer_redo|buffer_undo
 `
 }
 

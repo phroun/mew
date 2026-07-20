@@ -679,8 +679,10 @@ func New(cfg Config) (*Editor, error) {
 		return plugins.ExpandModebar(raw, e.peekBindingValues())
 	})
 
-	// Syntax highlighting: load the configured grammar (if any) and give the
-	// renderer its per-line colorizer.
+	// Drop the shipped grammar pack into ~/.mew/syntax/ on first run (they also
+	// resolve from the embedded copies regardless), then load the configured
+	// grammar and give the renderer its per-line colorizer.
+	e.installDefaultGrammars()
 	e.initSyntax()
 	renderer.SetSyntaxColorizer(e.syntaxLineColors)
 
