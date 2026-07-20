@@ -40,8 +40,8 @@ func TestConfigMewRoutingAndConfinement(t *testing.T) {
 	rec := &recFileIO{files: map[string][]byte{
 		"mew:/editor.conf": []byte(
 			"[options]\ntabSize=7\n" +
-				"#include <../../secret.conf>\n" + // angle: resolves under the tree root
-				"#include \"../../../q.conf\"\n"), // quoted: relative to the includer (mew:)
+				"@include <../../secret.conf>\n" + // angle: resolves under the tree root
+				"@include \"../../../q.conf\"\n"), // quoted: relative to the includer (mew:)
 		"mew:/secret.conf": []byte("[options]\nshowLineNumbers=false\n"),
 		"mew:/q.conf":      []byte("[options]\nwordWrap=true\n"),
 	}}

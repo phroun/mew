@@ -659,6 +659,17 @@ func TestConfGrammarMewRules(t *testing.T) {
 	if !strings.Contains(raw, sgrComment+"#") {
 		t.Fatal("the tail comment should still be found after an escaped '='")
 	}
+
+	// An @include directive colors as a preprocessor at-rule — distinct from a
+	// '#' comment, so it stands out (and is never mistaken for one).
+	const sgrPreproc = "\x1b[0;94;40m" // syntaxPreproc
+	raw = render("# a comment\n@include \"team.conf\"\n")
+	if !strings.Contains(raw, sgrPreproc+"@") {
+		t.Fatal("@include should color as a preprocessor directive")
+	}
+	if strings.Contains(raw, sgrComment+"@") {
+		t.Fatal("@include must not color as a comment")
+	}
 }
 
 // fsMap is a virtual FileSystem for sandboxed-host tests.
@@ -673,7 +684,7 @@ func (f fsMap) ReadFile(name string) ([]byte, error) {
 func (f fsMap) WriteFile(name string, data []byte) error { f[name] = string(data); return nil }
 func (f fsMap) Glob(pattern string) ([]string, error)    { return nil, nil }
 
-// A sandboxed host's config text can #include further files, served back
+// A sandboxed host's config text can @include further files, served back
 // through the host's own FileSystem.
 func TestConfigIncludeThroughHostFS(t *testing.T) {
 	var out bytes.Buffer
@@ -681,7 +692,7 @@ func TestConfigIncludeThroughHostFS(t *testing.T) {
 	cfg.SkipUserConfig = true
 	cfg.SkipProfileScript = true
 	cfg.ColdStoragePath = t.TempDir()
-	text := "#include \"team.conf\"\n[options]\ntabSize=3\n"
+	text := "@include \"team.conf\"\n[options]\ntabSize=3\n"
 	cfg.ConfigText = &text
 	cfg.FS = fsMap{"team.conf": "[options]\nsyntax=go\n"}
 	cfg.Terminal = &TerminalIO{

@@ -446,7 +446,7 @@ type StorageConfig struct {
 	Documents string
 }
 
-// FileIO is the file access the Manager uses for config, profile, and #include
+// FileIO is the file access the Manager uses for config, profile, and @include
 // files. A path beginning "mew:/" addresses mew's own config tree (editor.conf,
 // profile.mew, angle-bracket includes); every other path is an ordinary
 // project/document file. A host injects a scheme-aware implementation
@@ -468,7 +468,7 @@ type Manager struct {
 	// project layer when home is an ancestor of the working directory.
 	localMewDir string
 
-	// includeRead, when set (legacy SetIncludeReader), overrides #include reads
+	// includeRead, when set (legacy SetIncludeReader), overrides @include reads
 	// specifically; nil routes them through fio like everything else.
 	includeRead func(path string) ([]byte, error)
 }
@@ -499,7 +499,7 @@ func (m *Manager) io() FileIO {
 // discovery (local mode only).
 func (m *Manager) SetLocalMewDir(dir string) { m.localMewDir = dir }
 
-// SetIncludeReader (legacy) routes only #include reads through a host reader.
+// SetIncludeReader (legacy) routes only @include reads through a host reader.
 // Prefer SetFileIO. Retained for compatibility.
 func (m *Manager) SetIncludeReader(read func(path string) ([]byte, error)) {
 	m.includeRead = read
@@ -545,13 +545,14 @@ func (m *Manager) readInclude(path string) ([]byte, error) {
 	return m.io().Read(path)
 }
 
-// includeRe matches the #include directive: an ordinary comment line to any
-// other reader, so configs using it stay loadable elsewhere. Quotes resolve
-// relative to the including file (through the same file system it came
-// from); angle brackets resolve in the standard mew config directory.
-var includeRe = regexp.MustCompile(`^\s*#include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
+// includeRe matches the "@include" directive — an at-rule (à la CSS/Sass),
+// visually distinct from "#" comments and carrying its own syntax-highlight
+// class. Quotes resolve relative to the including file (through the same file
+// system it came from); angle brackets resolve in the standard mew config
+// directory.
+var includeRe = regexp.MustCompile(`^\s*@include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
 
-// joinInclude resolves an #include reference against a base directory. When the
+// joinInclude resolves an @include reference against a base directory. When the
 // base is a "mew:" path the result stays inside the mew tree: the reference is
 // joined as if rooted at the tree top, so any leading "../" is dropped and can
 // never rise above "mew:/" — the confinement a virtualizing host relies on.
@@ -575,7 +576,7 @@ func includeDir(p string) string {
 	return filepath.Dir(p)
 }
 
-// expandIncludes splices #include directives into the content, recursively.
+// expandIncludes splices @include directives into the content, recursively.
 // Each file is included at most once (repeats and cycles are dropped), and
 // nesting is bounded. A failed include becomes a comment noting the failure
 // so the rest of the configuration still parses.
@@ -607,7 +608,7 @@ func (m *Manager) expandIncludes(content, base string, depth int, visited map[st
 		visited[incPath] = true
 		data, err := m.readInclude(incPath)
 		if err != nil {
-			out = append(out, "# include failed: "+incPath)
+			out = append(out, "# @include failed: "+incPath)
 			continue
 		}
 		out = append(out, m.expandIncludes(string(data), nextBase, depth+1, visited))
@@ -704,7 +705,7 @@ func (m *Manager) Load() (Config, error) {
 		content = []byte(m.generateDefaultConfig())
 	}
 
-	// The user layer: quoted #include directives resolve relative to the
+	// The user layer: quoted @include directives resolve relative to the
 	// config file's own directory (the mew: tree root).
 	m.applyLayer(&config, string(content), m.configDir, false)
 
@@ -762,7 +763,7 @@ func (m *Manager) projectMewDirs(start string) []string {
 }
 
 // LoadFromString parses configuration from a string (a host-supplied
-// editor.conf equivalent). #include directives are honored: quoted paths are
+// editor.conf equivalent). @include directives are honored: quoted paths are
 // requested as-is (relative, through the include reader — the host's file
 // system when one is set), angle-bracket paths under the standard mew
 // directory.
@@ -780,12 +781,12 @@ func (m *Manager) loadExpanded(content, base string) Config {
 // present in the source override; everything else is inherited from the
 // layers already applied. This is the unit of the config cascade — built-in
 // defaults, then ~/.mew/editor.conf, then each project .mew/editor.conf from
-// the outermost tree down to the nearest. base resolves quoted #include
+// the outermost tree down to the nearest. base resolves quoted @include
 // directives and relative [storage] paths. project marks a project layer:
 // its key mappings merge per key instead of replacing the map (a project
 // adds bindings; it does not silently discard the user's keymap).
 func (m *Manager) applyLayer(config *Config, content, base string, project bool) {
-	// Splice #include directives, then parse.
+	// Splice @include directives, then parse.
 	content = m.expandIncludes(content, base, 0, map[string]bool{})
 	parsed := m.parseConfigFile(content)
 
@@ -1595,10 +1596,10 @@ func (m *Manager) generateDefaultConfig() string {
 # Lines starting with # or ; are comments
 # Hash can also be used for comments in the middle of a line
 
-# Other configuration files can be spliced in with an #include directive
-# (an ordinary comment to any other reader):
-#   #include "relative.conf"   - relative to THIS file, via its file system
-#   #include <shared.conf>     - from the standard mew config directory
+# Other configuration files can be spliced in with an @include directive (an
+# at-rule, so it reads distinctly from a # comment and highlights on its own):
+#   @include "relative.conf"   - relative to THIS file, via its file system
+#   @include <shared.conf>     - from the standard mew config directory
 # Each file is included at most once; nesting is bounded.
 #
 # Value keywords (in every section, at every layer): an unquoted

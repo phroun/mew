@@ -15,12 +15,20 @@
 =String		cyan
 =StringEscape	bold cyan
 =Number		red
+=Preproc	blue
 
 :bol Idle
 	*		key	noeat buffer mark
 	" \t"		bol
 	"#;"		comment	recolor=-1
+	"@"		preproc	recolor=-1
 	"["		section	recolor=-1
+	"\n"		bol
+
+# An @-directive (e.g. @include "file") runs to end of line: its own class,
+# distinct from a # comment.
+:preproc Preproc
+	*		preproc
 	"\n"		bol
 
 :comment Comment
