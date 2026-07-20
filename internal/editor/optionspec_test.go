@@ -31,8 +31,8 @@ func TestOptionSpecCanonicalValuesRoundTrip(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 	for _, s := range optionSpecs {
 		if s.Kind == optBoolKind {
-			if len(s.Values) != 2 || s.Values[0] != "false" || s.Values[1] != "true" {
-				t.Errorf("%s: boolean should have values [false true], got %v", s.Name, s.Values)
+			if len(s.Values) != 2 || s.Values[0] != "no" || s.Values[1] != "yes" {
+				t.Errorf("%s: boolean should have values [no yes], got %v", s.Name, s.Values)
 			}
 		}
 		if s.Values == nil {
@@ -56,17 +56,17 @@ func TestOptionSpecCanonicalValuesRoundTrip(t *testing.T) {
 func TestSetOptionRotate(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 
-	// Boolean (per-window): false -> true -> false.
+	// Boolean (per-window): no -> yes -> no. Input alias "false" still accepted.
 	e.setOption(w, "showMarks", "false")
 	if !e.rotateOption(w, "showMarks", +1) {
 		t.Fatal("rotate showMarks next should succeed")
 	}
-	if v, _ := e.getOption(w, "showMarks"); v != "true" {
-		t.Fatalf("showMarks after next: %q, want true", v)
+	if v, _ := e.getOption(w, "showMarks"); v != "yes" {
+		t.Fatalf("showMarks after next: %q, want yes", v)
 	}
 	e.rotateOption(w, "showMarks", +1)
-	if v, _ := e.getOption(w, "showMarks"); v != "false" {
-		t.Fatalf("showMarks wraps back to false, got %q", v)
+	if v, _ := e.getOption(w, "showMarks"); v != "no" {
+		t.Fatalf("showMarks wraps back to no, got %q", v)
 	}
 
 	// Enum with three values: auto -> true -> false -> auto (and prior wraps

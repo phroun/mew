@@ -80,10 +80,10 @@ func TestLaunchPerFileOptions(t *testing.T) {
 	if wa == nil || wb == nil {
 		t.Fatal("both files should open")
 	}
-	if v, _ := e.getOption(wa, "showlinenumbers"); v != "false" {
+	if v, _ := e.getOption(wa, "showlinenumbers"); v != "no" {
 		t.Fatalf("a should have line numbers off, got %q", v)
 	}
-	if v, _ := e.getOption(wb, "showlinenumbers"); v != "true" {
+	if v, _ := e.getOption(wb, "showlinenumbers"); v != "yes" {
 		t.Fatalf("b should have line numbers on, got %q", v)
 	}
 	// The first file wins focus.
@@ -150,12 +150,14 @@ func TestLaunchEnableDisableGrammar(t *testing.T) {
 		arg  string
 		want string
 	}{
-		{"--showInvisibles", "true"},
-		{"--showInvisibles=on", "true"},
-		{"--showInvisibles=1", "true"},
-		{"--showInvisibles-", "false"},
-		{"--showInvisibles=off", "false"},
-		{"--showInvisibles=false", "false"},
+		{"--showInvisibles", "yes"},
+		{"--showInvisibles=on", "yes"},
+		{"--showInvisibles=1", "yes"},
+		{"--showInvisibles=yes", "yes"},
+		{"--showInvisibles-", "no"},
+		{"--showInvisibles=off", "no"},
+		{"--showInvisibles=false", "no"},
+		{"--showInvisibles=no", "no"},
 	}
 	for _, tc := range cases {
 		e := newBareEditor(t)

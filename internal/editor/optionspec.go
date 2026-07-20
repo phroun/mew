@@ -37,8 +37,10 @@ type optionSpec struct {
 }
 
 // boolValues is the canonical value sequence shared by every boolean option:
-// off first, then on, so a rotation reads as a natural toggle.
-var boolValues = []string{"false", "true"}
+// no (off) first, then yes (on), so a rotation reads as a natural toggle. These
+// are exactly what getOption reports (see boolText); setOption additionally
+// accepts on/true/1 and off/false/0 as input aliases.
+var boolValues = []string{"no", "yes"}
 
 // optionSpecs is the ordered, canonical list of every option set_option accepts
 // at runtime. Load-time-only [general] keys (layout, projectConfig, useLocks,

@@ -2061,6 +2061,17 @@ func parseBoolOption(v string) (bool, bool) {
 	return false, false
 }
 
+// boolText is the canonical display form of a boolean option: yes / no. Most
+// boolean options carry a verb in their name (show…, …Ignores…, wrap), so
+// "showMarks: yes" reads naturally. Input still accepts on/true/1/yes and
+// off/false/0/no (parseBoolOption); this is only how a value is reported.
+func boolText(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
 // getOption returns the current effective value of a named editor option (as a
 // string) for the given main-buffer window. Per-window options are read from the
 // window's view state (what actually renders); globals from the runtime Config.
@@ -2077,37 +2088,37 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 		if w != nil {
 			v = w.ViewState.ShowLineNumbers
 		}
-		return strconv.FormatBool(v), true
+		return boolText(v), true
 	case "showinvisibles":
 		v := e.Config.ShowInvisibles
 		if w != nil {
 			v = w.ViewState.ShowInvisibles
 		}
-		return strconv.FormatBool(v), true
+		return boolText(v), true
 	case "showbidi":
 		v := e.Config.ShowBidi
 		if w != nil {
 			v = w.ViewState.ShowBidi
 		}
-		return strconv.FormatBool(v), true
+		return boolText(v), true
 	case "showmarks":
 		v := e.Config.ShowMarks
 		if w != nil {
 			v = w.ViewState.ShowMarks
 		}
-		return strconv.FormatBool(v), true
+		return boolText(v), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
 			v = w.ViewState.ShowRuler
 		}
-		return strconv.FormatBool(v), true
+		return boolText(v), true
 	case "rulershowscursor":
-		return strconv.FormatBool(e.Config.RulerShowsCursor), true
+		return boolText(e.Config.RulerShowsCursor), true
 	case "syntax":
 		return e.Config.Syntax, true
 	case "syntaxdetect":
-		return strconv.FormatBool(e.Config.SyntaxDetect), true
+		return boolText(e.Config.SyntaxDetect), true
 	case "macoptionkeys":
 		if e.Config.MacOptionKeys == "" {
 			return "auto", true
@@ -2116,15 +2127,15 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 	case "matchignoressinglequote", "matchignoresdoublequote", "matchignoresslashstar",
 		"matchignoresslashslash", "matchignoreshash", "matchignoresdoublehyphen",
 		"matchignoressemicolon", "matchignorespercent":
-		return strconv.FormatBool(*e.matchIgnoreFlag(name)), true
+		return boolText(*e.matchIgnoreFlag(name)), true
 	case "wordwrap":
-		return strconv.FormatBool(e.Config.WordWrap), true
+		return boolText(e.Config.WordWrap), true
 	case "searchignorecase":
-		return strconv.FormatBool(e.Config.SearchIgnoreCase), true
+		return boolText(e.Config.SearchIgnoreCase), true
 	case "searchwrap":
-		return strconv.FormatBool(e.Config.SearchWrap), true
+		return boolText(e.Config.SearchWrap), true
 	case "searchregex":
-		return strconv.FormatBool(e.Config.SearchRegex), true
+		return boolText(e.Config.SearchRegex), true
 	case "modebarlocation":
 		return e.Config.ModebarLocation, true
 	case "modebarinner":

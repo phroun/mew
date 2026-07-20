@@ -521,7 +521,7 @@ func TestShowBidiOption(t *testing.T) {
 	if w.ViewState.ShowBidi {
 		t.Fatal("set_option should clear the window's showBidi")
 	}
-	if v, _ := e.getOption(w, "showBidi"); v != "false" {
+	if v, _ := e.getOption(w, "showBidi"); v != "no" {
 		t.Fatalf("get_option showBidi: %q", v)
 	}
 }

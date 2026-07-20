@@ -389,7 +389,7 @@ func TestSyntaxDetectBasenameAndFallback(t *testing.T) {
 // The syntaxDetect option round-trips and takes effect at runtime.
 func TestSyntaxDetectOption(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, "#!/bin/bash\nif true; then\n", "[general]\n")
-	if v, _ := e.getOption(nil, "syntaxDetect"); v != "false" {
+	if v, _ := e.getOption(nil, "syntaxDetect"); v != "no" {
 		t.Fatalf("default syntaxDetect: %q", v)
 	}
 	out.Reset()
@@ -399,7 +399,7 @@ func TestSyntaxDetectOption(t *testing.T) {
 	}
 
 	e.PawScript.ExecuteAsync("set_option 'syntaxDetect', 'true'")
-	if v, _ := e.getOption(nil, "syntaxDetect"); v != "true" {
+	if v, _ := e.getOption(nil, "syntaxDetect"); v != "yes" {
 		t.Fatalf("syntaxDetect after set_option: %q", v)
 	}
 	_ = w
