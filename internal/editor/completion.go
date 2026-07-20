@@ -23,6 +23,12 @@ func (e *Editor) completeFilename(w *window.Window) bool {
 	}
 	raw := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
 
+	// A bare "~partial" (no separator yet) completes user names — sibling home
+	// directories — presented as "~name/".
+	if e.usingOSFS && strings.HasPrefix(raw, "~") && !strings.ContainsAny(raw, `/\`) {
+		return e.completeUserName(w, raw)
+	}
+
 	globDir, prefix := e.completionSplit(w, raw)
 	pattern := prefix + "*"
 	if globDir != "" {
@@ -46,6 +52,47 @@ func (e *Editor) completeFilename(w *window.Window) bool {
 	}
 	if len(names) > 1 {
 		// Tagged so a re-completion replaces this list rather than stacking.
+		e.showTaggedTransient("Complete: "+completionList(names), "notification", "completion")
+	}
+	return true
+}
+
+// completeUserName completes a "~partial" into "~name/" over the user home
+// directories that neighbor the current user's home (its parent — /Users on
+// macOS, /home on most Linux). It auto-fills the shared part and lists the rest,
+// like ordinary filename completion. Always owns the tab (returns true).
+func (e *Editor) completeUserName(w *window.Window, raw string) bool {
+	root := filepath.Dir(e.home)
+	if e.home == "" || root == "" || root == "." || root == e.home {
+		return true
+	}
+	partial := strings.TrimPrefix(raw, "~")
+	infos, err := e.globStat(filepath.Join(root, partial+"*"))
+	if err != nil || len(infos) == 0 {
+		return true
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, info := range infos {
+		if !info.IsDir {
+			continue // a user's home is a directory
+		}
+		n := filepath.Base(info.Path)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		names = append(names, "~"+n+"/")
+	}
+	if len(names) == 0 {
+		return true
+	}
+	sort.Strings(names)
+	common := longestCommonPrefix(names)
+	if len(common) > len(raw) {
+		e.insertText(common[len(raw):]) // auto-fill the shared "~name" part
+	}
+	if len(names) > 1 {
 		e.showTaggedTransient("Complete: "+completionList(names), "notification", "completion")
 	}
 	return true
@@ -83,9 +130,10 @@ func (e *Editor) globStat(pattern string) ([]FileInfo, error) {
 func (e *Editor) completionSplit(w *window.Window, raw string) (globDir, prefix string) {
 	base := e.completionBaseDir(w)
 	text := raw
-	if e.usingOSFS && strings.HasPrefix(text, "~") {
-		if e.home != "" {
-			text = filepath.Join(e.home, strings.TrimPrefix(text, "~"))
+	if e.usingOSFS {
+		// ~/… and ~user/… (and bare ~ / ~user) resolve to a home directory.
+		if expanded, ok := expandTilde(text, e.home); ok {
+			text = expanded
 		}
 	}
 	switch {
@@ -113,13 +161,17 @@ func (e *Editor) completionSplit(w *window.Window, raw string) (globDir, prefix 
 // it truly non-relative: an absolute path (/…) or a scheme (proto:/…). A
 // leading ~ expands to the home directory (standalone only).
 func (e *Editor) resolvePromptPath(text, baseDir string) string {
-	if text == "" || baseDir == "" {
+	if text == "" {
 		return text
 	}
-	if e.usingOSFS && strings.HasPrefix(text, "~") {
-		if e.home != "" {
-			return filepath.Join(e.home, strings.TrimPrefix(text, "~"))
+	// A leading ~ / ~user resolves to a home directory regardless of the base.
+	if e.usingOSFS {
+		if expanded, ok := expandTilde(text, e.home); ok {
+			return expanded
 		}
+	}
+	if baseDir == "" {
+		return text
 	}
 	if strings.HasPrefix(text, "/") || hasScheme(text) {
 		return text // absolute or scheme: not relative to the base
