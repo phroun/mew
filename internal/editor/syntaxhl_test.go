@@ -477,9 +477,10 @@ func mainBuf(e *Editor) *buffer.Buffer {
 // The dokuwiki grammar colors the core constructs.
 func TestDokuwikiGrammar(t *testing.T) {
 	const sgrEscape = "\x1b[0;96;40m"
-	e, _, out := renderedEditorWithConfig(t,
+	e, w, out := renderedEditorWithConfig(t,
 		"====== Head ======\n**bold** and [[wiki:page|x]]\n<code>\nraw < stuff\n</code>\nafter\n",
 		"[options]\nsyntax=dokuwiki\n")
+	w.BrowseAutoArmed = true // caret-mode colors: model a user who ^C'd out of browse
 	out.Reset()
 	e.performRender()
 	raw := out.String()

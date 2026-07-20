@@ -92,6 +92,7 @@ func (e *Editor) updateBrowseState() {
 	if !w.ViewState.LinkBrowsing {
 		return // hyperlink layer off: never arms
 	}
+	e.autoArmBrowse(w)
 	span := e.caretLinkSpan(w)
 	if span == nil {
 		w.ClearLinkAnchor()
@@ -105,6 +106,25 @@ func (e *Editor) updateBrowseState() {
 	if !w.BrowseActive {
 		w.BrowseActive = true
 		e.RequestRender()
+	}
+}
+
+// autoArmBrowse starts browse mode the moment a wiki-format page is first
+// seen in a window: as soon as the binding's grammar proves linkable, the
+// window arms — once per binding (the BrowseAutoArmed latch), so nav_cancel
+// (^C) bails out to caret mode without being instantly re-armed; arrowing
+// back onto a link re-arms as always.
+func (e *Editor) autoArmBrowse(w *window.Window) {
+	if w == nil || w.BrowseAutoArmed || w.Type != window.MainBuffer ||
+		w.Buffer == nil || !w.ViewState.LinkBrowsing {
+		return
+	}
+	if c := e.ensureSynCache(w.Buffer, 0); c != nil && c.linkable {
+		w.BrowseAutoArmed = true
+		if !w.BrowseActive {
+			w.BrowseActive = true
+			e.RequestRender()
+		}
 	}
 }
 
@@ -283,6 +303,7 @@ func (e *Editor) navFollow() bool {
 		nw.WikiName = res.wikiName
 		if res.root != "" {
 			nw.BrowseActive = nw.ViewState.LinkBrowsing
+			nw.BrowseAutoArmed = nw.BrowseActive
 		}
 		e.ShowNotification("→ " + displayPath(res.url))
 		e.RequestRender()
@@ -299,6 +320,7 @@ func (e *Editor) navFollow() bool {
 	// Stay in browse mode: following a link is browsing, and the reader keeps
 	// tabbing onward in the destination page.
 	w.BrowseActive = true
+	w.BrowseAutoArmed = true
 	e.ensureCursorVisible(w)
 	e.ShowNotification("→ " + displayPath(res.url))
 	e.RequestRender()
@@ -759,9 +781,16 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 	focusedHere := e.WindowManager.GetFocusedWindow() == w && pos.Line == docLine
 	for _, s := range e.linkSpansOnLine(w, docLine) {
 		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
+		pressed := e.mousePressed.active && e.mousePressed.winID == w.ID &&
+			e.mousePressed.line == docLine && e.mousePressed.start == s.Start
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
 		switch {
+		case pressed:
+			// Held down by the mouse: the pressed style, until release or a
+			// drag off the button.
+			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
+			colorName, shadowName = "buttonPressed", "buttonShadowPressed"
 		case focused:
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"

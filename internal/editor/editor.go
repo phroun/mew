@@ -232,6 +232,12 @@ type Editor struct {
 	linkVisitLog     []linkVisit
 	linkResolveCache map[string]string
 
+	// Mouse state: the last reported pointer position (the key layer emits a
+	// Mouse@x,y position before each press/release/scroll), and the link
+	// button currently held down (see mouse.go).
+	mouseX, mouseY int
+	mousePressed   pressedLink
+
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
 	// colors; synSGR memoizes color-class resolution (see syntaxhl.go).
@@ -5200,6 +5206,9 @@ func (e *Editor) performRender() {
 	focusedWindow := e.WindowManager.GetFocusedWindow()
 	if focusedWindow != nil {
 		e.ensureCursorVisibleVertical(focusedWindow)
+		// A wiki-format page starts in browse mode the moment it is first
+		// painted — including the very first frame after launch.
+		e.autoArmBrowse(focusedWindow)
 	}
 
 	// Flip the modebar logo (M_ vs _M) to the text direction at the focused
@@ -5417,6 +5426,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// transient, not a prompt — they recover it when they choose to).
 	e.deadcatLaunchNotice()
 
+	// Mouse reporting on for the whole session (Cleanup turns it back off):
+	// button presses, drags, releases and the scroll wheel arrive through the
+	// key stream as Mouse* pseudo-keys.
+	e.Renderer.EnableMouseReporting()
+
 	// Initial render
 	e.performRender()
 
@@ -5469,6 +5483,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// A terminal cursor-position report (the flipBidiForHost probe's
 			// reply) is consumed here, never typed.
 			if e.handleBidiProbeReply(event.Key) {
+				continue
+			}
+			// Mouse pseudo-keys (position/press/drag/release/scroll) never
+			// enter keymap dispatch; see mouse.go.
+			if e.handleMouseKey(event.Key) {
 				continue
 			}
 			// Process key. Hold renderMu across the whole mutation so the

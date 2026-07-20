@@ -86,4 +86,3 @@ func TestReadOnlyAllowsNavAndMarksAndUnlock(t *testing.T) {
 		t.Fatalf("editing after unlock failed, content = %q", got)
 	}
 }
-

@@ -49,12 +49,12 @@ var defaultGlobalColors = map[string]string{
 	"truncation":          "\x1b[0;37;41m",   // silver on red
 	"hint":                "\x1b[0;97;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
-	"marks":               "\x1b[0;91m",       // bright red
+	"marks":               "\x1b[0;91m",      // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
 	"selection":           "\x1b[0;30;47m",   // black text on silver
 	"selectioninvisibles": "\x1b[1;30;47m",   // dark gray on silver
-	"rulerends":           "\x1b[0;97;45m", // bright white on magenta (end numbers)
+	"rulerends":           "\x1b[0;97;45m",   // bright white on magenta (end numbers)
 	"rulerfill":           "\x1b[0;37;45m",   // silver on magenta (for the fill glyph)
 	"rulertick":           "\x1b[0;37;45m",   // silver on magenta (for ".")
 	"rulerminor":          "\x1b[0;93;45m",   // bright yellow on magenta (for ":")
@@ -67,29 +67,31 @@ var defaultGlobalColors = map[string]string{
 	// links as buttons in the button* colors, with the *focused variants on
 	// the button the caret occupies. The shadow colors paint the trailing
 	// half/full-block shadow cell.
-	"link":                "\x1b[0;4;93;40m", // underlined bright yellow on black
-	"linkrecent":          "\x1b[0;4;32;40m", // underlined green on black
+	"link":       "\x1b[0;4;93;40m", // underlined bright yellow on black
+	"linkrecent": "\x1b[0;4;32;40m", // underlined green on black
 	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
 	// browse mode can add bold/underline per level (see the editor). Bright
 	// cyan on black.
-	"heading": "\x1b[0;96;40m",
-	"button":              "\x1b[0;30;47m",   // black on silver
-	"buttonrecent":        "\x1b[0;30;42m",   // black on dark green (a visited link)
-	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
-	"buttonshadowrecent":  "\x1b[0;90;42m",   // dark gray on dark green
-	"buttonfocused":       "\x1b[0;30;46m",   // black on cyan
-	"buttonshadowfocused": "\x1b[0;90;46m",   // dark gray on cyan
+	"heading":             "\x1b[0;96;40m",
+	"button":              "\x1b[0;30;47m", // black on silver
+	"buttonrecent":        "\x1b[0;30;42m", // black on dark green (a visited link)
+	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
+	"buttonshadowrecent":  "\x1b[0;90;42m", // dark gray on dark green
+	"buttonfocused":       "\x1b[0;30;46m", // black on cyan
+	"buttonshadowfocused": "\x1b[0;90;46m", // dark gray on cyan
+	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
+	"buttonshadowpressed": "\x1b[0;37;44m", // silver on blue
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
 	// these names (built-in conventions plus the [colors.syntax] maps).
 	"syntaxcomment":  "\x1b[0;32;40m",   // green on black
 	"syntaxstring":   "\x1b[0;36;40m",   // cyan on black
-	"syntaxescape":   "\x1b[0;96;40m", // bright cyan on black
+	"syntaxescape":   "\x1b[0;96;40m",   // bright cyan on black
 	"syntaxconstant": "\x1b[0;91;40m",   // bright red on black (numbers, literals)
 	"syntaxkeyword":  "\x1b[0;1;97;40m", // bold bright white on black
 	"syntaxtype":     "\x1b[0;93;40m",   // bright yellow on black
 	"syntaxpreproc":  "\x1b[0;94;40m",   // bright blue on black
-	"syntaxbad":      "\x1b[0;97;41m", // bright white on red
+	"syntaxbad":      "\x1b[0;97;41m",   // bright white on red
 }
 
 // defaultTypeColors are the built-in per-buffer-type colors

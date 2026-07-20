@@ -303,6 +303,13 @@ type Window struct {
 	BrowseActive bool
 	linkAnchor   *buffer.Anchor
 
+	// BrowseAutoArmed records that browse mode auto-armed once for this
+	// binding: a wiki-format page STARTS browsing as soon as its grammar
+	// proves linkable, and this latch keeps nav_cancel (^C) from being
+	// instantly re-armed. Per binding (travels with the nav history; a fresh
+	// binding auto-arms anew).
+	BrowseAutoArmed bool
+
 	// WikiRoot confines this window's wiki-reference resolution to a subtree:
 	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
 	// When set, absolute wiki refs resolve from this root and relative climbs
@@ -676,6 +683,7 @@ type viewBinding struct {
 	findOrigin     *buffer.Anchor
 	findWrapped    bool
 	browseActive   bool
+	browseAuto     bool
 	linkAnchor     *buffer.Anchor
 	viewOffsetX    int
 	viewOffsetY    int
@@ -756,6 +764,7 @@ func (w *Window) detachBinding() viewBinding {
 		findOrigin:     w.findOrigin,
 		findWrapped:    w.findWrapped,
 		browseActive:   w.BrowseActive,
+		browseAuto:     w.BrowseAutoArmed,
 		linkAnchor:     w.linkAnchor,
 		viewOffsetX:    w.ViewState.ViewOffsetX,
 		viewOffsetY:    w.ViewState.ViewOffsetY,
@@ -770,6 +779,7 @@ func (w *Window) detachBinding() viewBinding {
 	w.findOrigin = nil
 	w.findWrapped = false
 	w.BrowseActive = false
+	w.BrowseAutoArmed = false
 	w.linkAnchor = nil
 	w.ViewState.ViewOffsetX = 0
 	w.ViewState.ViewOffsetY = 0
@@ -792,6 +802,7 @@ func (w *Window) attachBinding(b viewBinding) {
 	w.findOrigin = b.findOrigin
 	w.findWrapped = b.findWrapped
 	w.BrowseActive = b.browseActive
+	w.BrowseAutoArmed = b.browseAuto
 	w.linkAnchor = b.linkAnchor
 	w.ViewState.ViewOffsetX = b.viewOffsetX
 	w.ViewState.ViewOffsetY = b.viewOffsetY

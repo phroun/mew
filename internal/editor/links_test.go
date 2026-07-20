@@ -130,30 +130,27 @@ func TestFocusedButtonReadOnly(t *testing.T) {
 	}
 }
 
-// Entering a link arms browse mode; nav_cancel disarms it and staying within
-// the same span does not re-arm; leaving and re-entering re-arms.
+// A wiki-format page STARTS in browse mode (auto-arm, once per binding);
+// nav_cancel disarms it and staying within the same span does not re-arm;
+// leaving a span and re-entering one re-arms.
 func TestBrowseModeArming(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2}) // outside
-	e.updateBrowseState()
-	if w.BrowseActive {
-		t.Fatal("browse must not arm outside a link")
-	}
-	// The position just before the link (rune 4, the space) is still outside.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
-	e.updateBrowseState()
-	if w.BrowseActive {
-		t.Fatal("the cell before the link must not arm")
-	}
-	// The left edge (rune 5, the first '[') counts: the range is [Start, End).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	// The linkable grammar auto-arms on first sight, wherever the caret is.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 2}) // outside any link
 	e.updateBrowseState()
 	if !w.BrowseActive {
-		t.Fatal("the link's left edge should arm (entering from the left)")
+		t.Fatal("a wiki page should START in browse mode")
+	}
+	if !w.BrowseAutoArmed {
+		t.Fatal("the auto-arm latch should be set")
 	}
 
-	// nav_cancel disarms; moving within the same span must not re-arm.
+	// Enter the link, then nav_cancel: disarmed, and the latch prevents an
+	// instant auto re-arm; moving within the same span must not re-arm
+	// either (the anchor remembers the span).
+	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	e.updateBrowseState()
 	if !e.navCancel() {
 		t.Fatal("nav_cancel should succeed while armed")
 	}
@@ -182,7 +179,9 @@ func TestBrowseModeArming(t *testing.T) {
 func TestLinkRenderStyles(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\n")
 
-	// Caret mode: raw text, link color, no button chrome.
+	// Caret mode: raw text, link color, no button chrome. (Wiki pages START
+	// in browse mode; pre-set the latch to model a user who ^C'd out.)
+	w.BrowseAutoArmed = true
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -367,6 +366,7 @@ func TestNavNextPrior(t *testing.T) {
 // nav_start enters nav mode and focuses the first link at/after the caret.
 func TestNavStart(t *testing.T) {
 	e, w, _ := linkEditor(t, "no link here\ntext [[a:b|T]] end\n")
+	w.BrowseAutoArmed = true // model a user who bailed with ^C
 	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
 	e.updateBrowseState()
 	if w.BrowseActive {
@@ -542,6 +542,7 @@ func TestNavVerticalPages(t *testing.T) {
 // The vertical/horizontal nav commands act only in active nav mode.
 func TestNavRequiresActiveMode(t *testing.T) {
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]]\n")
+	w.BrowseAutoArmed = true                          // model a user who bailed with ^C
 	w.SetCursorPos(window.Position{Line: 0, Rune: 7}) // the 'i' in "mid": outside any link
 	e.updateBrowseState()
 	if w.BrowseActive {

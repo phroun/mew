@@ -340,11 +340,21 @@ func (sr *ScreenRenderer) Stop() {
 	close(sr.resizeChan)
 }
 
+// EnableMouseReporting asks the terminal for X11 press/release + cell-motion
+// tracking with SGR encoding — the same DECSET trio the KittyTK TUI backend
+// uses, which purfecterm answers by routing mouse reports to the hosted app
+// instead of doing local selection. Written directly (a mode switch, not a
+// frame).
+func (sr *ScreenRenderer) EnableMouseReporting() {
+	fmt.Fprint(sr.out, "\x1b[?1000h\x1b[?1002h\x1b[?1006h")
+}
+
 // Cleanup restores terminal state. It writes directly to the terminal
 // (bypassing the back buffer) because it runs at shutdown, after the last
-// frame, when there is no present() to flush the buffer.
+// frame, when there is no present() to flush the buffer. Mouse reporting is
+// turned back off so the terminal's own selection returns to the user.
 func (sr *ScreenRenderer) Cleanup() {
-	fmt.Fprintf(sr.out, "\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
+	fmt.Fprintf(sr.out, "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
 }
 
 // ClearScreen forces a full clear-and-repaint on the next presented frame.

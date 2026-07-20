@@ -277,6 +277,17 @@ func SubstituteButtons(line string, spans []DisplaySpan, doubleWidth bool) (stri
 	return d.Text, d.DocToDisp
 }
 
+// SubstituteDisplay is the inverse-direction export, for hit testing (mouse):
+// the display text of a line and the map from each display rune back to its
+// document rune (-1 for chrome cells — button caps, shadow, isolates).
+func SubstituteDisplay(line string, spans []DisplaySpan, doubleWidth bool) (string, []int) {
+	d := substituteSpans([]rune(line), spans, doubleWidth)
+	if d == nil {
+		return line, nil
+	}
+	return d.Text, d.DispToDoc
+}
+
 // sanitizeButtonTitle is a helper for providers: control characters and tabs
 // inside substituted content become plain spaces so they never re-enter the
 // tab/control rendering paths inside a chrome cell.
