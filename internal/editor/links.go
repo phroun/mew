@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"time"
 
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
@@ -126,7 +127,11 @@ func (e *Editor) navFollow() bool {
 	if span == nil {
 		return false
 	}
+	// Record the visit (per buffer): the target joins the visited set and the
+	// timestamped visit log, so the link now paints in the "recent" style.
+	w.Buffer.MarkLinkVisited(span.Target, time.Now())
 	e.ShowNotification("Link: " + span.Target)
+	e.RequestRender()
 	return true
 }
 
@@ -484,9 +489,14 @@ func (e *Editor) lineButtons(w *window.Window, docLine int) []render.ButtonSpan 
 		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
-		if focused {
+		switch {
+		case focused:
+			// Focus wins over recent: a focused visited link still shows focused.
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"
+		case w.Buffer.LinkVisited(s.Target):
+			// Visited (unfocused): the recent color, normal caps and shadow.
+			colorName = "buttonRecent"
 		}
 		var shadowRune rune
 		if sr := []rune(shadow); len(sr) > 0 {

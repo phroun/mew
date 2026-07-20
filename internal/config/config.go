@@ -1958,6 +1958,7 @@ rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerSh
 link="\e[0;4;93;40m"              # underlined bright yellow on black
 linkRecent="\e[0;4;32;40m"        # underlined green on black
 button="\e[0;30;47m"              # black on silver
+buttonRecent="\e[0;37;42m"        # silver on dark green (a visited link)
 buttonShadow="\e[0;90;47m"        # dark gray on silver
 buttonFocused="\e[0;30;46m"       # black on cyan
 buttonShadowFocused="\e[0;90;46m" # dark gray on cyan

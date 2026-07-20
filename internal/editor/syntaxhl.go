@@ -655,11 +655,20 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 	// so the overlay is skipped there — and linkBrowsing=no disables the
 	// whole layer (links render exactly as the grammar colors them).
 	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
-		if linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link"); linkSGR != "" {
+		linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link")
+		recentSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkRecent")
+		if linkSGR != "" || recentSGR != "" {
 			colors := append([]string(nil), c.colors[docLine]...)
 			for _, s := range c.links[docLine] {
+				sgr := linkSGR
+				if recentSGR != "" && w.Buffer.LinkVisited(s.Target) {
+					sgr = recentSGR // a visited link paints in the recent color
+				}
+				if sgr == "" {
+					continue
+				}
 				for i := s.Start; i < s.End && i < len(colors); i++ {
-					colors[i] = linkSGR
+					colors[i] = sgr
 				}
 			}
 			return colors

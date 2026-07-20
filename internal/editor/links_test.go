@@ -592,3 +592,49 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 		t.Fatal("button should be focused inside the link (caret then hides)")
 	}
 }
+
+// nav_follow records the visit on the buffer (presence set + timestamped log),
+// and the link then paints in the recent style: buttonRecent in browse mode,
+// linkRecent in caret mode.
+func TestVisitedLinkTrackingAndColor(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"text [[a:b|Title]] more\n", "[options]\nsyntax=dokuwiki\n")
+
+	// Follow the link; the buffer records it.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	e.updateBrowseState()
+	if !e.navFollow() {
+		t.Fatal("nav_follow should activate the focused button")
+	}
+	if !w.Buffer.LinkVisited("a:b") {
+		t.Fatal("the visited target should be in the presence set")
+	}
+	if w.Buffer.LinkVisited("nope") {
+		t.Fatal("an unvisited target must not be present")
+	}
+	log := w.Buffer.LinkVisits()
+	if len(log) != 1 || log[0].Target != "a:b" || log[0].At.IsZero() {
+		t.Fatalf("visit log should hold one timestamped entry; got %+v", log)
+	}
+
+	// Browse mode, unfocused: the visited button uses the recent color.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	if !strings.Contains(out.String(), "\x1b[0;37;42m") {
+		t.Fatal("a visited button should paint in buttonRecent (silver on green)")
+	}
+
+	// Caret mode: the visited link uses linkRecent, not the plain link color.
+	w.BrowseActive = false
+	out.Reset()
+	e.performRender()
+	raw := out.String()
+	if !strings.Contains(raw, "\x1b[0;4;32;40m") {
+		t.Fatal("a visited link should paint in linkRecent in caret mode")
+	}
+	if strings.Contains(raw, "\x1b[0;4;93;40m") {
+		t.Fatal("a visited link must not still show the unvisited link color")
+	}
+}
