@@ -147,6 +147,50 @@ func (t *PurfecTerm) toChild(b []byte) {
 	}
 }
 
+// --- Mouse-report relay (embedded mode) -----------------------------------
+//
+// When the hosted app requests mouse tracking (DECSET 1000/1002/1003, SGR
+// via 1006 — mew does this for its link buttons), the trinket relays encoded
+// reports STRAIGHT to the child. The embedded cli.Terminal's own pseudo-key
+// mouse path encodes reports too, but writes them only to its PTY — which an
+// embedded terminal does not have — so the bytes were silently dropped.
+// Until purfecterm's sendToPTY falls back to the input callback, the trinket
+// owns this relay. With tracking OFF, everything falls through to the local
+// pseudo-key path (selection, scrollback) exactly as before.
+
+// mouseTracking reports the hosted app's mouse tracking and encoding modes
+// (0 = off).
+func (t *PurfecTerm) mouseTracking() (mode, enc int) {
+	if t.terminal == nil {
+		return 0, 0
+	}
+	buf := t.terminal.Buffer()
+	if buf == nil {
+		return 0, 0
+	}
+	return buf.GetMouseTrackingMode(), buf.GetMouseEncodingMode()
+}
+
+// sendMouseReport encodes one mouse event and hands the bytes to the child.
+func (t *PurfecTerm) sendMouseReport(btn, cellX, cellY int, press bool, enc int) {
+	if data := purfecterm.EncodeMouseEvent(btn, cellX, cellY, press, enc); data != nil {
+		t.toChild(data)
+	}
+}
+
+// purfMouseButton maps a toolkit button to purfecterm's report encoding.
+func purfMouseButton(b core.MouseButton) (int, bool) {
+	switch b {
+	case core.LeftButton:
+		return purfecterm.MouseButtonLeft, true
+	case core.MiddleButton:
+		return purfecterm.MouseButtonMiddle, true
+	case core.RightButton:
+		return purfecterm.MouseButtonRight, true
+	}
+	return 0, false
+}
+
 // emitResize notifies the sink of a new grid size (deduplication is the
 // caller's - it only fires when cols/rows actually change).
 func (t *PurfecTerm) emitResize(cols, rows int) {
@@ -663,6 +707,15 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	cellX := cellCol + 1
 	cellY := cellRow + 1
 
+	// App-owned mouse: relay the encoded press straight to the child.
+	if mode, enc := t.mouseTracking(); mode != 0 {
+		if btn, ok := purfMouseButton(event.Button); ok {
+			t.sendMouseReport(btn, cellX, cellY, true, enc)
+		}
+		t.Update()
+		return true
+	}
+
 	// Send position update first
 	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
 
@@ -706,6 +759,15 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	cellX := int(event.X/cw) + 1
 	cellY := int(event.Y/chh) + 1
 
+	// App-owned mouse: relay the encoded release straight to the child.
+	if mode, enc := t.mouseTracking(); mode != 0 {
+		if btn, ok := purfMouseButton(event.Button); ok {
+			t.sendMouseReport(btn, cellX, cellY, false, enc)
+		}
+		t.Update()
+		return true
+	}
+
 	// Send position update first
 	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
 
@@ -740,6 +802,21 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	cellX := int(event.X/cw) + 1
 	cellY := int(event.Y/chh) + 1
 
+	// App-owned mouse: relay motion per the tracking mode — drags from 1002
+	// up, plain motion only under all-motion (1003). Motion the mode does
+	// not report is swallowed (the app owns the mouse either way).
+	if mode, enc := t.mouseTracking(); mode != 0 {
+		if btn, ok := purfMouseButton(t.heldButton); ok {
+			if mode >= 1002 {
+				t.sendMouseReport(btn|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+			}
+		} else if mode >= 1003 {
+			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+		}
+		t.Update()
+		return true
+	}
+
 	// Use tracked button state for drag events (since event.Buttons may not be set)
 	switch t.heldButton {
 	case core.LeftButton:
@@ -772,6 +849,17 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	cw, chh := t.cellDims()
 	cellX := int(event.X/cw) + 1
 	cellY := int(event.Y/chh) + 1
+
+	// App-owned mouse: relay the wheel as scroll-button presses.
+	if mode, enc := t.mouseTracking(); mode != 0 {
+		if event.DeltaY < 0 {
+			t.sendMouseReport(purfecterm.MouseScrollUp, cellX, cellY, true, enc)
+		} else if event.DeltaY > 0 {
+			t.sendMouseReport(purfecterm.MouseScrollDown, cellX, cellY, true, enc)
+		}
+		t.Update()
+		return true
+	}
 
 	// Send position update first
 	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
