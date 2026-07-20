@@ -826,6 +826,12 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			lineCount = 10
 		}
 		w.LineNumWidth = len(fmt.Sprintf("%d", lineCount)) + 1
+		// Browse mode rounds the gutter to an even width so double-width rows
+		// can halve it cleanly (see renderContent); the render pass recomputes
+		// this each frame, this keeps the initial value consistent.
+		if w.BrowseActive && w.LineNumWidth%2 != 0 {
+			w.LineNumWidth++
+		}
 	}
 
 	// Prompt buffers always edit left-to-right regardless of the editor's

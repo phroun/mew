@@ -117,6 +117,54 @@ func TestBrowseHeadingGutter(t *testing.T) {
 	}
 }
 
+// The caret on a double-width row is placed against the halved gutter and
+// content: with the browse-mode gutter rounded to an even width, the doubled
+// content begins at the same physical column as a normal row (no notch), and
+// the reported caret column reflects the 2x cell mapping. A normal caret line
+// is unaffected.
+func TestDoubleWidthCaretColumnAligns(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"====== Big ======\nplain line\n",
+		"[options]\nsyntax=dokuwiki\nshowLineNumbers=yes\n")
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+
+	if w.LineNumWidth%2 != 0 {
+		t.Fatalf("browse-mode gutter width should be rounded even; got %d", w.LineNumWidth)
+	}
+
+	contains := func(cols []int, v int) bool {
+		for _, c := range cols {
+			if c == v {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Caret at the first content cell of the double-width heading. base is in
+	// cell space (half gutter); the ruler column is its physical (2x) position.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	base := 1 + w.MarginInner + w.LineNumWidth/2
+	want := 2*base - 1
+	if cols := e.Renderer.CursorColumns(w); !contains(cols, want) {
+		t.Fatalf("double-width caret column = %v, want %d", cols, want)
+	}
+	// No notch: with a zero inner margin the doubled content begins at the same
+	// physical column as a normal row's content (just past the gutter).
+	if w.MarginInner == 0 && want != 1+w.LineNumWidth {
+		t.Fatalf("double-width content start %d should align with normal %d", want, 1+w.LineNumWidth)
+	}
+
+	// A normal caret line is placed with the full gutter and no 2x mapping.
+	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	normWant := 1 + w.MarginInner + w.LineNumWidth + 3
+	if cols := e.Renderer.CursorColumns(w); !contains(cols, normWant) {
+		t.Fatalf("normal caret column = %v, want %d", cols, normWant)
+	}
+}
+
 // ensureCursorVisibleHorizontal treats the screen as half as wide on a
 // double-width caret line: a heading wider than half the content scrolls where
 // the same-length normal line would still fit.

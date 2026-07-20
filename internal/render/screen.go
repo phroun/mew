@@ -491,6 +491,13 @@ func (sr *ScreenRenderer) updateWindowContentProperties(layout window.Layout) {
 				lineCount = 10
 			}
 			w.LineNumWidth = len(fmt.Sprintf("%d", lineCount)) + 1
+			// In browse mode a heading may render double-width. Round the gutter
+			// up to an even width so a doubled row can show exactly half as many
+			// gutter cells (each drawn 2x) and align its content with the normal
+			// rows — otherwise an odd gutter leaves a one-column notch.
+			if w.BrowseActive && w.LineNumWidth%2 != 0 {
+				w.LineNumWidth++
+			}
 		}
 
 		// Calculate content dimensions. ContentWidth is the width of the text
@@ -771,14 +778,16 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 		doubleWide := disp != nil && disp.DoubleWide
 
 		// Line number gutter. Under RTL it mirrors to the RIGHT side (emitted
-		// after the content below). A double-width row shows a single space in
-		// the gutter colour instead of the number — a doubled number is
-		// oversized and misaligned, and one cell still leaves room for a marker.
+		// after the content below). A double-width row shows blank gutter cells
+		// in the gutter colour instead of the number — a doubled number is
+		// oversized and misaligned. The gutter width is rounded even in browse
+		// mode, so half as many cells (each drawn 2x) match the normal gutter
+		// exactly and still leave room for a marker.
 		if w.ViewState.ShowLineNumbers && !rtl {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
-				sr.Write(" ")
+				sr.Write(strings.Repeat(" ", lineNumWidth/2))
 			case haveContent:
 				sr.Write(fmt.Sprintf("%*d ", lineNumWidth-1, docLine+1))
 			default:
@@ -821,7 +830,7 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
-				sr.Write(" ")
+				sr.Write(strings.Repeat(" ", lineNumWidth/2))
 			case haveContent:
 				sr.Write(fmt.Sprintf(" %-*d", lineNumWidth-1, docLine+1))
 			default:
@@ -1502,12 +1511,6 @@ func (sr *ScreenRenderer) renderPeekIndicators(layout window.Layout) {
 // if the hardware cursor should be hidden for this frame (used for the
 // right-edge off-screen "@", so the block cursor doesn't obscure the marker).
 func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.WindowLayout) bool {
-	// Calculate screen position
-	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
-		lineNumWidth = w.LineNumWidth
-	}
-
 	// Adjust for the column ruler and top message bar
 	topOffset := 0
 	if rulerActive(w, layout.Height) {
@@ -1519,30 +1522,23 @@ func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.Window
 
 	// Convert cursor rune position to visual column — the caret-biased column
 	// (an RTL caret parks at its rune's right edge), plus the right-alignment
-	// pad of this line under direction=rtl.
-	// Under RTL the line-number gutter mirrors to the RIGHT side, so content
-	// begins directly after the left margin.
+	// pad of this line under direction=rtl. The geometry (base, content width,
+	// scroll offset) comes from caretRowGeom in the caret line's cell space, so
+	// a double-width caret line — one-cell gutter, half-width content, halved
+	// scroll — is placed correctly with no special-casing here.
 	rtl := sr.winRTL(w)
-	marginL, _ := sr.physMargins(w)
-	base := 1 + marginL + lineNumWidth
-	if rtl {
-		base = 1 + marginL
-	}
-	contentWidth := sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
-	visualColumn := 0
-	pad := 0
-	viewOff := w.ViewState.ViewOffsetX
+	line := ""
+	visualColumn := w.CursorPos().Rune
 	if w.Buffer != nil {
-		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+		raw := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
 		// Browse-mode buttons: measure against the substituted display line,
 		// with the caret mapped onto it (inside a button it parks on the
 		// button's first cell). Identity when no buttons apply.
-		line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune)
+		var curRune int
+		line, curRune = sr.displayCaretLine(w, raw, w.CursorPos().Rune)
 		visualColumn = sr.caretVisualColumn(line, curRune, w)
-		pad, viewOff = sr.rtlPadOffset(line, w, contentWidth)
-	} else {
-		visualColumn = w.CursorPos().Rune
 	}
+	base, pad, viewOff, contentWidth, _ := sr.caretRowGeom(w, line)
 
 	screenY := layout.Y + 1 + topOffset + (w.CursorPos().Line - w.ViewState.ViewOffsetY)
 	screenX := base + pad + (visualColumn - viewOff)
@@ -1594,12 +1590,6 @@ func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.Win
 		return
 	}
 
-	// Calculate screen position
-	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
-		lineNumWidth = w.LineNumWidth
-	}
-
 	// Adjust for the column ruler and top message bar
 	topOffset := 0
 	if rulerActive(w, layout.Height) {
@@ -1612,33 +1602,26 @@ func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.Win
 	// Ghost cursor is at the ideal visual column (shifted by the line's
 	// right-alignment pad under direction=rtl, where the stored column is a
 	// READING column — distance back from the reading start — that maps to the
-	// left-based visual column vw-reading before positioning).
+	// left-based visual column vw-reading before positioning). Geometry (base,
+	// content width, scroll) is in the caret line's cell space via caretRowGeom.
 	rtl := sr.winRTL(w)
 	ghostVisualColumn := w.GhostCursorVisualColumn
-	marginL, _ := sr.physMargins(w)
-	contentWidthForPad := sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
-	pad := 0
-	viewOff := w.ViewState.ViewOffsetX
+	line := ""
 	if w.Buffer != nil {
-		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-		line, _ = sr.displayCaretLine(w, line, 0) // browse-mode buttons: display geometry
-		pad, viewOff = sr.rtlPadOffset(line, w, contentWidthForPad)
+		raw := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+		line, _ = sr.displayCaretLine(w, raw, 0) // browse-mode buttons: display geometry
 		if rtl {
 			ghostVisualColumn = sr.lineVisualWidth(w, line) - w.GhostCursorVisualColumn
 		}
 	}
+	ghostBase, pad, viewOff, contentWidth, _ := sr.caretRowGeom(w, line)
 
-	ghostBase := 1 + marginL + lineNumWidth
-	if rtl {
-		ghostBase = 1 + marginL
-	}
 	screenY := layout.Y + 1 + topOffset + (w.CursorPos().Line - w.ViewState.ViewOffsetY)
 	screenX := ghostBase + pad + (ghostVisualColumn - viewOff)
 
 	// Check if ghost cursor is visible on screen. The last visible content cell
 	// is at column base+contentWidth-1, so a ghost at base+contentWidth would
 	// land in the right margin and must be hidden.
-	contentWidth := sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
 	if screenX < ghostBase || screenX >= ghostBase+contentWidth {
 		return // Ghost cursor is outside visible area
 	}
@@ -1661,29 +1644,23 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 	if w == nil || w.Buffer == nil {
 		return nil
 	}
-	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
-		lineNumWidth = w.LineNumWidth
-	}
 	rtl := sr.winRTL(w)
-	marginL, _ := sr.physMargins(w)
-	base := 1 + marginL + lineNumWidth
-	if rtl {
-		base = 1 + marginL
-	}
-	contentWidth := sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
+	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune) // browse-mode buttons
+	base, pad, viewOff, contentWidth, dw := sr.caretRowGeom(w, line)
 	if contentWidth <= 0 {
 		return nil
 	}
-	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-	line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune) // browse-mode buttons
-	pad, viewOff := sr.rtlPadOffset(line, w, contentWidth)
 
 	var cols []int
-	add := func(screenX int) {
-		if screenX < base || screenX > base+contentWidth-1 {
+	// The caret columns are computed in the caret line's cell space; the ruler
+	// is painted on a NORMAL-width row, so a cell column on a double-width caret
+	// line is mapped to its physical position before being recorded.
+	add := func(cellX int) {
+		if cellX < base || cellX > base+contentWidth-1 {
 			return
 		}
+		screenX := cellToPhysical(cellX, dw)
 		for _, c := range cols {
 			if c == screenX {
 				return
@@ -1783,10 +1760,6 @@ func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window
 		return
 	}
 
-	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
-		lineNumWidth = w.LineNumWidth
-	}
 	topOffset := 0
 	if rulerActive(w, layout.Height) {
 		topOffset++
@@ -1794,13 +1767,7 @@ func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window
 	if w.MessageTopInner != "" || w.MessageTopCenter != "" || w.MessageTopOuter != "" {
 		topOffset++
 	}
-	marginL, _ := sr.physMargins(w)
-	base := 1 + marginL + lineNumWidth
-	if sr.winRTL(w) {
-		base = 1 + marginL
-	}
-	contentWidth := sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
-	pad, viewOff := sr.rtlPadOffset(line, w, contentWidth)
+	base, pad, viewOff, contentWidth, _ := sr.caretRowGeom(w, line)
 
 	screenY := layout.Y + 1 + topOffset + (w.CursorPos().Line - w.ViewState.ViewOffsetY)
 	screenX := base + pad + (secCol - viewOff)
@@ -2103,9 +2070,16 @@ func (sr *ScreenRenderer) lineVisualWidth(w *window.Window, line string) int {
 // invisible-terminator markers prepareLineForDisplay may append occupy the
 // visual END of the line; include their cells when they are shown.
 func (sr *ScreenRenderer) rtlPadOffset(line string, w *window.Window, width int) (int, int) {
+	// A double-width caret line lays its content into half the columns at half
+	// the horizontal scroll; callers pass the halved (cell-space) width, so the
+	// offset must be halved to match.
+	off := w.ViewState.ViewOffsetX
+	if sr.caretLineDoubleWide(w) {
+		off /= 2
+	}
 	rtl := sr.winRTL(w)
 	if !rtl || width <= 0 {
-		return 0, w.ViewState.ViewOffsetX
+		return 0, off
 	}
 	runes := []rune(line)
 	layout := sr.layoutFor(w, runes)
@@ -2127,7 +2101,52 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *window.Window, width int)
 		}
 		vw += len([]rune(full)) - len([]rune(strings.TrimRight(full, "\n\r")))
 	}
-	return rtlView(vw, w.ViewState.ViewOffsetX, width)
+	return rtlView(vw, off, width)
+}
+
+// caretRowGeom returns the horizontal geometry for placing a cursor on the
+// window's caret line: base is the physical 1-based screen column where the
+// content begins, contentCells its usable width, and pad/viewOff the
+// right-alignment pad and horizontal scroll offset from rtlPadOffset. On a
+// double-width caret line the gutter shrinks to half as many cells and the
+// content lays into half the columns at half the scroll (matching
+// renderContent), so every value is in that row's CELL space; dw reports it so
+// a caller painting on a NORMAL row (the ruler) can map a cell column to its
+// physical position with cellToPhysical. `line` is the display
+// (button-substituted) caret line.
+func (sr *ScreenRenderer) caretRowGeom(w *window.Window, line string) (base, pad, viewOff, contentCells int, dw bool) {
+	lineNumWidth := 0
+	if w.ViewState.ShowLineNumbers {
+		lineNumWidth = w.LineNumWidth
+	}
+	marginL, _ := sr.physMargins(w)
+	contentCells = sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
+	gutter := lineNumWidth
+	dw = sr.caretLineDoubleWide(w)
+	if dw {
+		gutter /= 2 // the doubled row shows half as many gutter cells (rounded even)
+		contentCells /= 2
+		if contentCells < 1 {
+			contentCells = 1
+		}
+	}
+	base = 1 + marginL + gutter
+	if sr.winRTL(w) {
+		base = 1 + marginL // the gutter mirrors to the right side
+	}
+	pad, viewOff = sr.rtlPadOffset(line, w, contentCells)
+	return
+}
+
+// cellToPhysical maps a caret-line cell column to the physical screen column of
+// its left edge. Identity on ordinary rows; on a double-width (DECDWL) row each
+// cell spans two physical columns, so cell c starts at physical 2c-1 — used to
+// place ruler marks (drawn on a normal-width row) under a doubled caret.
+func cellToPhysical(cellX int, doubleWide bool) int {
+	if doubleWide {
+		return 2*cellX - 1
+	}
+	return cellX
 }
 
 // getRuneVisualWidth returns the visual width of a rune at a given visual
