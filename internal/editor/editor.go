@@ -5486,8 +5486,13 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 				continue
 			}
 			// Mouse pseudo-keys (position/press/drag/release/scroll) never
-			// enter keymap dispatch; see mouse.go.
+			// enter keymap dispatch; see mouse.go. They DO reach the render
+			// tail: a click's effect (caret, pressed button, a follow) must
+			// paint now, not on the next keystroke.
 			if e.handleMouseKey(event.Key) {
+				if e.renderRequested.Load() {
+					e.performRender()
+				}
 				continue
 			}
 			// Process key. Hold renderMu across the whole mutation so the
