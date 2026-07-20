@@ -219,6 +219,19 @@ type Editor struct {
 	editCoalesced     bool
 	yankedThisCommand bool
 
+	// Visited hyperlinks, editor-wide, keyed by RESOLVED identity (the
+	// canonical URL a follow resolves to, or the raw target for gated/
+	// unresolvable refs). Editor-level because two spellings in two buffers
+	// that resolve to one file are one destination: visiting it from anywhere
+	// paints it visited everywhere. linkVisitLog is the chronological record
+	// (key + timestamp). linkResolveCache memoizes PAINT-TIME resolution of
+	// (source doc, raw target) -> visit key, so the recent-style decision
+	// never re-walks the filesystem per frame; navFollow itself always
+	// resolves fresh (see visitKeyFor).
+	linkVisitSeen    map[string]bool
+	linkVisitLog     []linkVisit
+	linkResolveCache map[string]string
+
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
 	// colors; synSGR memoizes color-class resolution (see syntaxhl.go).
@@ -615,22 +628,24 @@ func New(cfg Config) (*Editor, error) {
 
 	// Create editor instance first (without PawScript)
 	e := &Editor{
-		WindowManager:  wm,
-		LayoutManager:  lm,
-		Renderer:       renderer,
-		Config:         cfg,
-		FS:             docFS,
-		usingOSFS:      usingOSFS,
-		realTerminal:   cfg.Terminal == nil,
-		mew:            mewVFS,
-		home:           hostHome(&cfg),
-		lib:            lib,
-		coldDir:        coldDir,
-		ConfigMgr:      configMgr,
-		LoadedConfig:   loadedConfig,
-		configFromDisk: configFromDisk,
-		bufNotices:     make(map[*buffer.Buffer][]bufferNotice),
-		mewLocks:       make(map[*buffer.Buffer]string),
+		WindowManager:    wm,
+		LayoutManager:    lm,
+		Renderer:         renderer,
+		Config:           cfg,
+		FS:               docFS,
+		usingOSFS:        usingOSFS,
+		realTerminal:     cfg.Terminal == nil,
+		mew:              mewVFS,
+		home:             hostHome(&cfg),
+		lib:              lib,
+		coldDir:          coldDir,
+		ConfigMgr:        configMgr,
+		LoadedConfig:     loadedConfig,
+		configFromDisk:   configFromDisk,
+		bufNotices:       make(map[*buffer.Buffer][]bufferNotice),
+		mewLocks:         make(map[*buffer.Buffer]string),
+		linkVisitSeen:    make(map[string]bool),
+		linkResolveCache: make(map[string]string),
 	}
 
 	// Create writers to capture PawScript I/O

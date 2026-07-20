@@ -598,28 +598,28 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	}
 }
 
-// nav_follow records the visit on the buffer (presence set + timestamped log),
-// and the link then paints in the recent style: buttonRecent in browse mode,
-// linkRecent in caret mode.
+// nav_follow records the visit editor-wide under the target's RESOLVED
+// identity (presence set + timestamped log), and the link then paints in the
+// recent style: buttonRecent in browse mode, linkRecent in caret mode.
 func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"text [[a:b|Title]] more\n", "[options]\nsyntax=dokuwiki\n")
 
-	// Follow the link; the buffer records it.
+	// Follow the link; the editor records it (an unnamed buffer has no
+	// resolution context, so the identity is the raw target).
 	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	if !e.navFollow() {
 		t.Fatal("nav_follow should activate the focused button")
 	}
-	if !w.Buffer.LinkVisited("a:b") {
+	if !e.linkTargetVisited(w, "a:b") {
 		t.Fatal("the visited target should be in the presence set")
 	}
-	if w.Buffer.LinkVisited("nope") {
+	if e.linkTargetVisited(w, "nope") {
 		t.Fatal("an unvisited target must not be present")
 	}
-	log := w.Buffer.LinkVisits()
-	if len(log) != 1 || log[0].Target != "a:b" || log[0].At.IsZero() {
-		t.Fatalf("visit log should hold one timestamped entry; got %+v", log)
+	if len(e.linkVisitLog) != 1 || e.linkVisitLog[0].Key != "a:b" || e.linkVisitLog[0].At.IsZero() {
+		t.Fatalf("visit log should hold one timestamped entry; got %+v", e.linkVisitLog)
 	}
 
 	// Browse mode, unfocused: the visited button uses the recent color.

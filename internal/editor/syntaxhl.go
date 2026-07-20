@@ -772,7 +772,7 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 			colors := append([]string(nil), c.colors[docLine]...)
 			for _, s := range c.links[docLine] {
 				sgr := linkSGR
-				if recentSGR != "" && w.Buffer.LinkVisited(s.Target) {
+				if recentSGR != "" && e.linkTargetVisited(w, s.Target) {
 					sgr = recentSGR // a visited link paints in the recent color
 				}
 				if sgr == "" {

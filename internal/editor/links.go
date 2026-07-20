@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -157,22 +158,113 @@ func (e *Editor) focusedLinkButton(w *window.Window) *linkSpan {
 	return e.caretLinkSpan(w)
 }
 
-// navFollow (the nav_follow command) activates the focused button: a
-// transient notification naming the destination (navigation itself comes
-// later). Reports false when not in active browse mode with a focused button,
-// so a nav_follow|accept|insert chain falls through.
+// navFollow (the nav_follow command) activates the focused button and
+// NAVIGATES: the target resolves through the dokuwiki reference layers
+// (wikiref.go) to the canonical URL of a real file, which is opened IN PLACE —
+// an already-open buffer (active or stacked anywhere) is reused, a fresh one
+// is loaded otherwise, and the window's previous binding goes onto its nav
+// history (nav_history_prior returns). Non-wiki targets (schemes, interwiki)
+// and unresolved pages show a notification instead. Reports false when not in
+// active browse mode with a focused button, so a nav_follow|accept|insert
+// chain falls through.
 func (e *Editor) navFollow() bool {
 	w := e.WindowManager.GetFocusedWindow()
 	span := e.focusedLinkButton(w)
 	if span == nil {
 		return false
 	}
-	// Record the visit (per buffer): the target joins the visited set and the
-	// timestamped visit log, so the link now paints in the "recent" style.
-	w.Buffer.MarkLinkVisited(span.Target, time.Now())
-	e.ShowNotification("Link: " + span.Target)
+	// Resolve, then record the visit under its RESOLVED identity (editor-wide):
+	// any other spelling of the same destination, in any buffer, now paints in
+	// the "recent" style. The paint memo is primed with the fresh resolution.
+	res := e.resolveFollow(w, span.Target)
+	key := visitKey(res, span.Target)
+	e.markLinkVisited(key, time.Now())
+	e.linkResolveCache[e.bufferCanonicalURL(w.Buffer)+"\x00"+span.Target] = key
+
+	if res.url == "" {
+		e.ShowNotification(res.message)
+		e.RequestRender()
+		return true
+	}
+
+	buf := e.findOpenBuffer(res.url)
+	if buf == nil {
+		osPath := filepath.FromSlash(strings.TrimPrefix(res.url, "file://"))
+		loaded, err := e.loadBuffer(osPath)
+		if err != nil {
+			e.ShowError("Open " + osPath + ": " + err.Error())
+			e.RequestRender()
+			return true
+		}
+		loaded.SetFilename(osPath)
+		buf = loaded
+	}
+	if buf == w.Buffer {
+		// Self-link: nothing to swap (and no history entry to create).
+		e.ShowNotification("Already here: " + span.Target)
+		e.RequestRender()
+		return true
+	}
+	w.SwapBuffer(buf)
+	// Stay in browse mode: following a link is browsing, and the reader keeps
+	// tabbing onward in the destination page.
+	w.BrowseActive = true
+	e.ensureCursorVisible(w)
+	e.ShowNotification("→ " + displayPath(res.url))
 	e.RequestRender()
 	return true
+}
+
+// displayPath renders a canonical URL for a human: the path part of a
+// file:/// URL, the URL itself otherwise.
+func displayPath(url string) string {
+	if p := strings.TrimPrefix(url, "file://"); p != url {
+		return p
+	}
+	return url
+}
+
+// linkVisit records one hyperlink follow: the resolved visit key and when.
+type linkVisit struct {
+	Key string
+	At  time.Time
+}
+
+// markLinkVisited records a visit under its resolved identity: the presence
+// set answers "visited?" in O(1) and the log keeps the chronological record.
+func (e *Editor) markLinkVisited(key string, at time.Time) {
+	if key == "" {
+		return
+	}
+	e.linkVisitSeen[key] = true
+	e.linkVisitLog = append(e.linkVisitLog, linkVisit{Key: key, At: at})
+}
+
+// visitKey is a link target's visit identity: the canonical URL it resolves
+// to, or the trimmed raw target when the resolution yields none (external
+// schemes, interwiki, missing pages — those are destinations too). Two
+// spellings in two buffers that resolve to one file share one identity.
+func visitKey(res followResolution, target string) string {
+	if res.url != "" {
+		return res.url
+	}
+	return strings.TrimSpace(target)
+}
+
+// linkTargetVisited answers the PAINT-TIME "draw this link recent?" question:
+// the target's visit key, memoized per (source document, raw target) so the
+// renderer never re-walks the filesystem per frame, checked against the
+// editor-wide visited set. The memo can go stale when a previously missing
+// page appears on disk mid-session — a cosmetic staleness only; navFollow
+// always resolves fresh.
+func (e *Editor) linkTargetVisited(w *window.Window, target string) bool {
+	cacheKey := e.bufferCanonicalURL(w.Buffer) + "\x00" + target
+	key, ok := e.linkResolveCache[cacheKey]
+	if !ok {
+		key = visitKey(e.resolveFollow(w, target), target)
+		e.linkResolveCache[cacheKey] = key
+	}
+	return e.linkVisitSeen[key]
 }
 
 // navLink (nav_next / nav_prior) moves the caret from the focused button to
@@ -539,7 +631,7 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 		case focused:
 			capL, capR, shadow = ind.FocusedButtonLeft, ind.FocusedButtonRight, ind.FocusedButtonShadow
 			colorName, shadowName = "buttonFocused", "buttonShadowFocused"
-		case w.Buffer.LinkVisited(s.Target):
+		case e.linkTargetVisited(w, s.Target):
 			colorName, shadowName = "buttonRecent", "buttonShadowRecent"
 		}
 		var shadowRune rune

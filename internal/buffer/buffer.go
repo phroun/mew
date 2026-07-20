@@ -158,47 +158,6 @@ type Buffer struct {
 	savedFork garland.ForkID
 	savedRev  garland.RevisionID
 	hasSaved  bool
-
-	// Visited hyperlinks (browse mode). linkSeen is a set of visited link
-	// targets for O(1) presence checks; linkVisits is the chronological log of
-	// every visit (target + timestamp), so "recent" ordering and the set stay
-	// in step. Per buffer, so history is naturally scoped and freed with it.
-	linkSeen   map[string]bool
-	linkVisits []LinkVisit
-}
-
-// LinkVisit records one hyperlink follow: the target that was visited and when.
-type LinkVisit struct {
-	Target string
-	At     time.Time
-}
-
-// MarkLinkVisited records a visit to a link target at the given time: it adds
-// the target to the fast presence set and appends a timestamped entry to the
-// visit log.
-func (b *Buffer) MarkLinkVisited(target string, at time.Time) {
-	if b == nil || target == "" {
-		return
-	}
-	if b.linkSeen == nil {
-		b.linkSeen = make(map[string]bool)
-	}
-	b.linkSeen[target] = true
-	b.linkVisits = append(b.linkVisits, LinkVisit{Target: target, At: at})
-}
-
-// LinkVisited reports whether a link target has been visited (O(1)).
-func (b *Buffer) LinkVisited(target string) bool {
-	return b != nil && b.linkSeen[target]
-}
-
-// LinkVisits returns the chronological visit log (oldest first). The slice is
-// the buffer's own; callers must not mutate it.
-func (b *Buffer) LinkVisits() []LinkVisit {
-	if b == nil {
-		return nil
-	}
-	return b.linkVisits
 }
 
 // captureSavePoint records the current garland fork/revision as the buffer's

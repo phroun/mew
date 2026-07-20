@@ -46,7 +46,7 @@ func (e *Editor) canonicalDocURL(name string) string {
 	}
 	p := name
 	if e.usingOSFS {
-		if ex, ok := expandTilde(p, hostHome(&e.Config)); ok {
+		if ex, ok := expandTilde(p, e.home); ok {
 			p = ex
 		}
 		if !filepath.IsAbs(p) {

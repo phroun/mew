@@ -1,6 +1,8 @@
 # DokuWiki-Compatible Reference Resolution — clean-room spec
 
-Status: design reference, not yet built. This document specifies how mew parses,
+Status: the page resolver is implemented in `internal/editor/wikiref.go`
+(Layers 1–3 plus resolution-time file matching; media references, anchors, and
+per-wiki config discovery remain open). This document specifies how mew parses,
 resolves, and canonicalizes DokuWiki-style page and media references, so that mew
 can *navigate real DokuWiki repositories* faithfully while layering its own
 scheme/interwiki system on top.
