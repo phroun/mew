@@ -5005,6 +5005,33 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
 		ghostReadingRTL = e.winRTL(w)
 	}
 
+	// A double-width (heading) caret line shows half as many columns, and the
+	// renderer reads the horizontal scroll at one cell per two positions. So the
+	// visibility test runs in that halved display space, and the resulting
+	// offset is scaled back to the stored (normal-column) ViewOffsetX.
+	dw := false
+	if w.Buffer != nil {
+		_, dw = e.lineDisplaySpans(w, w.CursorPos().Line)
+	}
+	effWidth := w.ContentWidth
+	dispOff := w.ViewState.ViewOffsetX
+	if dw {
+		effWidth /= 2
+		if effWidth < 1 {
+			effWidth = 1
+		}
+		dispOff /= 2
+	}
+	setOff := func(v int) {
+		if v < 0 {
+			v = 0
+		}
+		if dw {
+			v *= 2
+		}
+		w.ViewState.ViewOffsetX = v
+	}
+
 	// direction=rtl: the view is right-anchored, so visibility is decided in
 	// READING columns — the caret's distance back from the line's reading
 	// start (its rightmost visual cell). ViewOffsetX counts reading columns
@@ -5017,18 +5044,18 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
 		if reading < 0 {
 			reading = 0
 		}
-		if reading < w.ViewState.ViewOffsetX {
-			w.ViewState.ViewOffsetX = reading
-		} else if reading > w.ViewState.ViewOffsetX+w.ContentWidth-1 {
-			w.ViewState.ViewOffsetX = reading - w.ContentWidth + 1
+		if reading < dispOff {
+			setOff(reading)
+		} else if reading > dispOff+effWidth-1 {
+			setOff(reading - effWidth + 1)
 		}
 		return
 	}
 
-	if targetCol < w.ViewState.ViewOffsetX {
-		w.ViewState.ViewOffsetX = targetCol
-	} else if targetCol >= w.ViewState.ViewOffsetX+w.ContentWidth {
-		w.ViewState.ViewOffsetX = targetCol - w.ContentWidth + 1
+	if targetCol < dispOff {
+		setOff(targetCol)
+	} else if targetCol >= dispOff+effWidth {
+		setOff(targetCol - effWidth + 1)
 	}
 }
 

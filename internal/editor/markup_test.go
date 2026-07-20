@@ -116,3 +116,33 @@ func TestBrowseHeadingGutter(t *testing.T) {
 		t.Fatalf("double-width heading gutter should show no number; got %q", before)
 	}
 }
+
+// ensureCursorVisibleHorizontal treats the screen as half as wide on a
+// double-width caret line: a heading wider than half the content scrolls where
+// the same-length normal line would still fit.
+func TestDoubleWidthHorizontalScroll(t *testing.T) {
+	head := "====== " + strings.Repeat("x", 60) + " ======\n"
+	e, w, out := renderedEditorWithConfig(t, head, "[options]\nsyntax=dokuwiki\n")
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender() // establish ContentWidth
+	// caret near the end of the (60-char) heading content
+	lineLen := len([]rune(strings.TrimRight(head, "\n")))
+	w.SetCursorPos(window.Position{Line: 0, Rune: lineLen - 9})
+	e.ensureCursorVisibleHorizontal(w)
+	if w.ViewState.ViewOffsetX == 0 {
+		t.Fatal("a double-width heading wider than half the screen should scroll")
+	}
+
+	// The same length as a normal line fits without scrolling.
+	e2, w2, out2 := renderedEditorWithConfig(t, strings.Repeat("x", 60)+"\n",
+		"[options]\nsyntax=dokuwiki\n")
+	w2.BrowseActive = true
+	out2.Reset()
+	e2.performRender()
+	w2.SetCursorPos(window.Position{Line: 0, Rune: 52})
+	e2.ensureCursorVisibleHorizontal(w2)
+	if w2.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("a normal 60-col line should fit without scrolling; off=%d", w2.ViewState.ViewOffsetX)
+	}
+}
