@@ -230,6 +230,7 @@ func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string,
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
+		LinkBrowsing:    e.Config.LinkBrowsing,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SyntaxOverrides: e.Config.SyntaxOverrides,
 	})

@@ -41,6 +41,7 @@ func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
+		LinkBrowsing: e.Config.LinkBrowsing,
 	})
 	return e, e.WindowManager.GetWindow("doc"), &out
 }
@@ -488,8 +489,10 @@ func TestDokuwikiGrammar(t *testing.T) {
 	if !strings.Contains(raw, "\x1b[0;1m*") && !strings.Contains(raw, "\x1b[0;1mb") {
 		t.Fatal("bold spans should use the grammar's bold attr")
 	}
-	if !strings.Contains(raw, sgrEscape+"[") && !strings.Contains(raw, sgrType+"[") {
-		t.Fatal("links should color via the Link class")
+	// Grammar-recognized links now paint in the "link" color (caret mode):
+	// the followable-link affordance overrides the Link class's syntax color.
+	if !strings.Contains(raw, "\x1b[0;4;93;40m[") {
+		t.Fatal("links should paint in the link color in caret mode")
 	}
 	if !strings.Contains(raw, sgrString+"r") {
 		t.Fatal("code block content should color via Code -> syntaxString")

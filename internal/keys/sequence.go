@@ -516,7 +516,7 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 	case "return":
 		return "accept|insert '\\n'"
 	case "^C":
-		return "cancel|buffer_close"
+		return "nav_cancel|cancel|buffer_close"
 	case "esc":
 		return "cmd"
 	default:

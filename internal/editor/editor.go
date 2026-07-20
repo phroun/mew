@@ -271,6 +271,7 @@ type Config struct {
 	ShowMarks        string // "no" | "yes" | "all"
 	OverwriteMode    bool   // inverse of insertMode; zero value = insert
 	ReadOnly         bool
+	LinkBrowsing     bool // hyperlink layer (link colors, browse-mode buttons)
 	Syntax           string
 	SyntaxDetect     bool
 	SyntaxOverrides  string // space-separated grammar flavors that skip the project folder
@@ -555,6 +556,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.ReadOnly = loadedConfig.General.ReadOnly
+	cfg.LinkBrowsing = loadedConfig.General.LinkBrowsing
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
 	cfg.SyntaxOverrides = loadedConfig.General.SyntaxOverrides
@@ -696,6 +698,9 @@ func New(cfg Config) (*Editor, error) {
 	e.installDefaultGrammars()
 	e.initSyntax()
 	renderer.SetSyntaxColorizer(e.syntaxLineColors)
+	// Browse-mode link buttons: the renderer substitutes these per line at
+	// paint/measure time (see links.go); nil results leave lines untouched.
+	renderer.SetButtonProvider(e.lineButtons)
 
 	// Register editor commands with PawScript
 	e.registerCommands()
@@ -848,6 +853,12 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
+	// nav_cancel: turn link browse mode off on the focused window. Fails when
+	// browse mode is not active, so nav_cancel|cancel|... chains fall through.
+	ps.RegisterCommand("nav_cancel", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navCancel())
+	})
+
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
@@ -870,6 +881,11 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("accept", func(ctx *pawscript.Context) pawscript.Result {
+		// A focused link button consumes accept: activate it (a transient
+		// notification until navigation lands) instead of inserting a newline.
+		if e.activateFocusedLink() {
+			return pawscript.BoolStatus(true)
+		}
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
 			// Capture callbacks before removing window
@@ -2147,6 +2163,12 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 			v = w.ViewState.ReadOnly
 		}
 		return boolText(v), true
+	case "linkbrowsing":
+		v := e.Config.LinkBrowsing
+		if w != nil {
+			v = w.ViewState.LinkBrowsing
+		}
+		return boolText(v), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2329,6 +2351,20 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 		} else {
 			e.Config.ReadOnly = b
 		}
+	case "linkbrowsing":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.LinkBrowsing = b
+			if !b {
+				w.BrowseActive = false // turning the layer off retires the buttons
+			}
+		} else {
+			e.Config.LinkBrowsing = b
+		}
+		e.RequestRender()
 	case "showcolumnruler":
 		b, ok := parseBool()
 		if !ok {
@@ -3314,6 +3350,12 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // these coordinate helpers are asked about.
 func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
+		return nil
+	}
+	// Mark cells are suppressed on a button-substituted caret line — the doc
+	// positions the marks name have no cells of their own there. Mirrors the
+	// renderer's lineMarkSet gate.
+	if len(e.lineButtons(w, w.CursorPos().Line)) > 0 {
 		return nil
 	}
 	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())
@@ -4797,12 +4839,19 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
 	if w.Buffer != nil {
 		tabSize := e.tabSize(w)
 		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-		targetCol = e.caretVisualColumn(w, line, w.CursorPos().Rune, tabSize)
+		// Browse-mode buttons: visibility runs in DISPLAY space — the line as
+		// painted, with the caret mapped onto it (a caret inside a button
+		// parks on the button). Identity when the line has no buttons.
+		rawLen := len([]rune(line))
+		line, curRune := e.displayCaretLine(w, line, w.CursorPos().Rune)
+		targetCol = e.caretVisualColumn(w, line, curRune, tabSize)
 		if e.winRTL(w) {
 			vw = e.lineVisualWidth(w, line, tabSize)
 			if w.ViewState.ShowInvisibles {
+				// Terminator marker cells, counted against the RAW line (the
+				// display substitution above changes the content length).
 				full := w.Buffer.GetLine(w.CursorPos().Line)
-				vw += len([]rune(full)) - len([]rune(line))
+				vw += len([]rune(full)) - rawLen
 			}
 		}
 		if targetCol < 0 && !e.winRTL(w) {
@@ -4908,7 +4957,11 @@ func (e *Editor) performRender() {
 			cw = e.WindowManager.GetLastMainBufferWindow()
 		}
 		if cw != nil {
-			if mark := e.caretMarkContext(cw); mark != "" {
+			if btn := e.focusedLinkButton(cw); btn != nil {
+				// A focused link button shows its destination — the one thing
+				// the button's resolved title hides.
+				cw.Context = btn.Target
+			} else if mark := e.caretMarkContext(cw); mark != "" {
 				cw.Context = mark
 			} else if crumb := e.outlineContext(cw); crumb != "" {
 				cw.Context = crumb
@@ -5147,6 +5200,8 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 					e.pasteActive = false
 					e.pasteBuf = nil
 				}
+				// A paste moves the caret too: re-evaluate link browse arming.
+				e.updateBrowseState()
 			}
 		} else if event.Key != "" {
 			// A terminal cursor-position report (the flipBidiForHost probe's
@@ -5163,6 +5218,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			if result.Command != "" {
 				e.executeCommand(result.Command)
 			}
+
+			// Link browse mode: arm when the caret has entered a link span it
+			// was not previously inside (identity tracked by anchor, not line).
+			e.updateBrowseState()
 
 			// Update active sequence display with possible completions
 			e.ActiveSequence = e.KeyProcessor.GetActiveSequence()

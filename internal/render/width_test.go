@@ -79,7 +79,7 @@ func TestPrepareLineWidthExact(t *testing.T) {
 	for _, line := range lines {
 		for _, width := range []int{3, 4, 10, 40} {
 			for _, offset := range []int{0, 1, 2} {
-				out := stripAnsi(sr.prepareLineForDisplay(line, "\n", width, offset, w, 0, selectionRange{}))
+				out := stripAnsi(sr.prepareLineForDisplay(line, "\n", width, offset, w, 0, selectionRange{}, nil, nil))
 				if got := widthOf(sr, w, out); got != width {
 					t.Errorf("line %q width %d offset %d: rendered %d columns (%q)",
 						line, width, offset, got, out)
@@ -91,7 +91,7 @@ func TestPrepareLineWidthExact(t *testing.T) {
 
 func TestPrepareLineKeepsCombiningMarks(t *testing.T) {
 	sr, w := testRenderer()
-	out := stripAnsi(sr.prepareLineForDisplay("e"+combAcute+"x", "\n", 10, 0, w, 0, selectionRange{}))
+	out := stripAnsi(sr.prepareLineForDisplay("e"+combAcute+"x", "\n", 10, 0, w, 0, selectionRange{}, nil, nil))
 	if !strings.Contains(out, "e"+combAcute) {
 		t.Errorf("combining mark lost: %q", out)
 	}
@@ -101,7 +101,7 @@ func TestPrepareLineKeepsCombiningMarks(t *testing.T) {
 // truncation indicator.
 func TestNoFalseTruncationFromTrailingMark(t *testing.T) {
 	sr, w := testRenderer()
-	out := stripAnsi(sr.prepareLineForDisplay("abe"+combAcute, "\n", 3, 0, w, 0, selectionRange{}))
+	out := stripAnsi(sr.prepareLineForDisplay("abe"+combAcute, "\n", 3, 0, w, 0, selectionRange{}, nil, nil))
 	if strings.Contains(out, sr.indicators.TruncationRight) {
 		t.Errorf("false truncation for %q", out)
 	}
@@ -114,7 +114,7 @@ func TestNoFalseTruncationFromTrailingMark(t *testing.T) {
 // never an overflowing row.
 func TestWideCharRightEdge(t *testing.T) {
 	sr, w := testRenderer()
-	out := stripAnsi(sr.prepareLineForDisplay("ab日", "\n", 3, 0, w, 0, selectionRange{}))
+	out := stripAnsi(sr.prepareLineForDisplay("ab日", "\n", 3, 0, w, 0, selectionRange{}, nil, nil))
 	if got := widthOf(sr, w, out); got != 3 {
 		t.Errorf("row overflow: %d columns (%q)", got, out)
 	}
@@ -127,7 +127,7 @@ func TestWideCharRightEdge(t *testing.T) {
 // its base rather than attaching to the first visible character.
 func TestScrolledOffMarkDropped(t *testing.T) {
 	sr, w := testRenderer()
-	out := stripAnsi(sr.prepareLineForDisplay("e"+combAcute+"xyz", "\n", 3, 1, w, 0, selectionRange{}))
+	out := stripAnsi(sr.prepareLineForDisplay("e"+combAcute+"xyz", "\n", 3, 1, w, 0, selectionRange{}, nil, nil))
 	if strings.Contains(out, combAcute) {
 		t.Errorf("orphaned combining mark: %q", out)
 	}
@@ -202,7 +202,7 @@ func TestTruncateToWidth(t *testing.T) {
 // width even when that cell was wider than one column (wide rune or tab).
 func TestTruncationIndicatorPadsWideCell(t *testing.T) {
 	sr, w := testRenderer()
-	out := stripAnsi(sr.prepareLineForDisplay("日本語 wide", "\n", 4, 0, w, 0, selectionRange{}))
+	out := stripAnsi(sr.prepareLineForDisplay("日本語 wide", "\n", 4, 0, w, 0, selectionRange{}, nil, nil))
 	if got := widthOf(sr, w, out); got != 4 {
 		t.Errorf("truncated row width %d, want 4 (%q)", got, out)
 	}

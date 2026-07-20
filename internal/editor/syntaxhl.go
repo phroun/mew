@@ -100,13 +100,28 @@ var defaultSyntaxMap = map[string]string{
 // the buffer (detected or global), per-line resolved colors, and the machine
 // state entering the next uncomputed line. Content edits (seen via ChangeSeq)
 // drop the cache; lines re-highlight lazily as rendered.
+// linkSpan is one hyperlink recognized by the buffer's grammar on a single
+// line: the doc-rune range of its full source text ([[target|Title]]), and
+// the parsed destination and display title. Link spans live in the syntax
+// cache alongside the colors — same lifecycle, same ChangeSeq invalidation —
+// so they are derived data, never stale across edits.
+type linkSpan struct {
+	Start, End    int // [Start, End) doc runes on the line
+	Target, Title string
+}
+
 type synCache struct {
 	seq     int64
 	grammar *jsf.Instance
 	// loader is the loader that produced grammar; highlighting runs through it so
 	// its interned frame/state pointers stay consistent across the buffer.
-	loader  *jsf.Loader
-	colors  [][]string
+	loader *jsf.Loader
+	// linkable notes that the grammar recognizes hyperlinks mew can navigate
+	// (currently the dokuwiki grammar); links then holds per-line spans,
+	// truncated/extended in lockstep with colors.
+	linkable bool
+	links    [][]linkSpan
+	colors   [][]string
 	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
 	entries []jsf.LineState // entry state per computed line (for point queries)
 	next    jsf.LineState
@@ -490,7 +505,7 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		e.pruneSyntaxCaches()
 		b.TakeDirtyLow() // consume any pre-cache history
 		g, ld := e.bufferGrammar(b)
-		c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld}
+		c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld, linkable: grammarLinkable(g)}
 		e.synCaches[b] = c
 	case c.seq != b.ChangeSeq():
 		// Content changed: the dirty watermark says where the damage starts.
@@ -501,7 +516,7 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		low := b.TakeDirtyLow()
 		if low <= 0 || c.grammar == nil {
 			g, ld := e.bufferGrammar(b)
-			c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld}
+			c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld, linkable: grammarLinkable(g)}
 			e.synCaches[b] = c
 		} else {
 			if low < len(c.colors) {
@@ -509,6 +524,9 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 				c.colors = c.colors[:low]
 				c.ctx = c.ctx[:low]
 				c.entries = c.entries[:low]
+				if c.linkable && low < len(c.links) {
+					c.links = c.links[:low]
+				}
 			}
 			c.seq = b.ChangeSeq()
 		}
@@ -524,18 +542,74 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		lines := b.GetLineRange(start, docLine+1)
 		for _, raw := range lines {
 			line := strings.TrimRight(raw, "\n\r")
+			lineRunes := []rune(line)
 			c.entries = append(c.entries, c.next)
-			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, []rune(line))
+			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, lineRunes)
 			colors := make([]string, len(attrs))
 			for j, ref := range attrs {
 				colors[j] = e.syntaxColorFor(ref)
 			}
 			c.colors = append(c.colors, colors)
 			c.ctx = append(c.ctx, ctx)
+			if c.linkable {
+				c.links = append(c.links, extractLinkSpans(lineRunes, attrs))
+			}
 			c.next = next
 		}
 	}
 	return c
+}
+
+// grammarLinkable reports whether a grammar's Link-class runs are hyperlinks
+// mew understands. Currently the dokuwiki grammar (which also covers plain
+// .txt files that the path-conditional [formats] rules route to it).
+func grammarLinkable(g *jsf.Instance) bool {
+	return g != nil && strings.EqualFold(g.Name, "dokuwiki")
+}
+
+// extractLinkSpans finds the maximal runs of runes the grammar colored with
+// the "Link" class and parses each into a span. The dokuwiki grammar colors
+// the whole [[target|Title]] source — brackets included — as one run, and a
+// link never crosses a line (an unclosed [[ resets at the newline).
+func extractLinkSpans(runes []rune, attrs []*jsf.ColorRef) []linkSpan {
+	var spans []linkSpan
+	n := len(attrs)
+	if n > len(runes) {
+		n = len(runes)
+	}
+	for i := 0; i < n; {
+		if attrs[i] == nil || !strings.EqualFold(attrs[i].Class, "Link") {
+			i++
+			continue
+		}
+		start := i
+		for i < n && attrs[i] != nil && strings.EqualFold(attrs[i].Class, "Link") {
+			i++
+		}
+		target, title := parseDokuLink(string(runes[start:i]))
+		spans = append(spans, linkSpan{Start: start, End: i, Target: target, Title: title})
+	}
+	return spans
+}
+
+// parseDokuLink splits a raw [[target|Title]] source into its destination and
+// display title: the part before the first "|" is the target, the part after
+// it the title, defaulting to the target when absent ([[target]]). Lenient —
+// missing brackets leave the text as both.
+func parseDokuLink(text string) (target, title string) {
+	inner := strings.TrimSuffix(strings.TrimPrefix(text, "[["), "]]")
+	if t, rest, ok := strings.Cut(inner, "|"); ok {
+		target, title = strings.TrimSpace(t), strings.TrimSpace(rest)
+	} else {
+		target = strings.TrimSpace(inner)
+	}
+	if title == "" {
+		title = target
+	}
+	if title == "" {
+		title = text
+	}
+	return target, title
 }
 
 // syntaxLineColors returns per-rune SGR colors for one document line of w
@@ -548,6 +622,22 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 	c := e.ensureSynCache(w.Buffer, docLine)
 	if c == nil {
 		return nil
+	}
+	// Caret mode (browse off): links paint in the "link" color over their
+	// syntax colors, marking them as followable. Copy-on-write — the cached
+	// slice is shared. Browse mode replaces link text with buttons instead,
+	// so the overlay is skipped there — and linkBrowsing=no disables the
+	// whole layer (links render exactly as the grammar colors them).
+	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
+		if linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link"); linkSGR != "" {
+			colors := append([]string(nil), c.colors[docLine]...)
+			for _, s := range c.links[docLine] {
+				for i := s.Start; i < s.End && i < len(colors); i++ {
+					colors[i] = linkSGR
+				}
+			}
+			return colors
+		}
 	}
 	return c.colors[docLine]
 }

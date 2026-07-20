@@ -61,6 +61,19 @@ var defaultGlobalColors = map[string]string{
 	"rulermajor":          "\x1b[0;92;45m",   // bright green on magenta ("|" and numbers)
 	"rulercursor":         "\x1b[0;30;47m",   // black on silver (cursor columns, rulerShowsCursor)
 
+	// Hyperlinks (grammar-derived; see the editor's link browse mode).
+	// Caret mode paints link source text in "link" ("linkrecent" is reserved
+	// for recently-followed links once navigation lands); browse mode renders
+	// links as buttons in the button* colors, with the *focused variants on
+	// the button the caret occupies. The shadow colors paint the trailing
+	// half/full-block shadow cell.
+	"link":                "\x1b[0;4;93;40m", // underlined bright yellow on black
+	"linkrecent":          "\x1b[0;4;32;40m", // underlined green on black
+	"button":              "\x1b[0;30;47m",   // black on silver
+	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+	"buttonfocused":       "\x1b[0;30;46m",   // black on cyan
+	"buttonshadowfocused": "\x1b[0;90;46m",   // dark gray on cyan
+
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
 	// these names (built-in conventions plus the [colors.syntax] maps).
 	"syntaxcomment":  "\x1b[0;32;40m",   // green on black

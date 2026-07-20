@@ -770,6 +770,23 @@ func (a *Anchor) SeekLine(line int) {
 	}
 }
 
+// SeekLineRune parks the anchor at a line/rune position.
+func (a *Anchor) SeekLineRune(line, runePos int) {
+	if a != nil && a.c != nil {
+		a.c.SeekLine(int64(line), int64(runePos))
+	}
+}
+
+// LineRune reports the anchor's current line and rune position; both slide as
+// the buffer is edited.
+func (a *Anchor) LineRune() (line, runePos int) {
+	if a == nil || a.c == nil {
+		return 0, 0
+	}
+	l, r := a.c.LinePos()
+	return int(l), int(r)
+}
+
 // Line reports the anchor's current line; it slides as the buffer is edited.
 func (a *Anchor) Line() int {
 	if a == nil || a.c == nil {

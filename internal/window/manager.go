@@ -81,6 +81,10 @@ type ViewState struct {
 	// ReadOnly rejects content edits made through this window; navigation,
 	// search, marks, and undo/redo remain available. Per window; default false.
 	ReadOnly bool
+	// LinkBrowsing enables the hyperlink layer for this window: link
+	// coloring, browse-mode buttons, and arming on caret entry. Off, links
+	// render exactly as the grammar colors them. Default true.
+	LinkBrowsing bool
 	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
 	// "go conf") whose highlighter should skip this document's project
 	// .mew/syntax folder and resolve from the user's own copy (mew:/syntax),
@@ -98,6 +102,37 @@ func (vs ViewState) MarksVisible() bool {
 // underscore-prefixed marks (mode "all").
 func (vs ViewState) MarksShowInternal() bool {
 	return vs.ShowMarks == "all"
+}
+
+// SetLinkAnchor plants (or moves) the window's link anchor at a line/rune
+// position — the start of the link span the caret now occupies. The anchor is
+// a tracking cursor: the recorded identity slides with edits.
+func (w *Window) SetLinkAnchor(line, runePos int) {
+	if w.Buffer == nil {
+		return
+	}
+	if w.linkAnchor == nil {
+		w.linkAnchor = w.Buffer.NewAnchor()
+	}
+	w.linkAnchor.SeekLineRune(line, runePos)
+}
+
+// LinkAnchorPos reports the link anchor's current (slid-with-edits) position,
+// or ok=false when no link anchor is set.
+func (w *Window) LinkAnchorPos() (line, runePos int, ok bool) {
+	if w.linkAnchor == nil {
+		return 0, 0, false
+	}
+	l, r := w.linkAnchor.LineRune()
+	return l, r, true
+}
+
+// ClearLinkAnchor releases the link anchor (caret no longer inside a link).
+func (w *Window) ClearLinkAnchor() {
+	if w.linkAnchor != nil {
+		w.linkAnchor.Release()
+		w.linkAnchor = nil
+	}
 }
 
 // MarkOptionOverridden records that a per-window option was set explicitly on
@@ -257,6 +292,16 @@ type Window struct {
 	// RemoveWindow.
 	findOrigin  *buffer.Anchor
 	findWrapped bool
+
+	// Link browse mode (link-as-button rendering). BrowseActive turns button
+	// rendering on for this window's links; it is set by the editor when the
+	// caret enters a link span it was not previously inside, and cleared by
+	// nav_cancel. linkAnchor marks the START of the link span the caret last
+	// occupied — a tracking cursor, so the identity slides with edits like
+	// every other position (never a raw line number). nil = caret not in a
+	// link. Released in RemoveWindow.
+	BrowseActive bool
+	linkAnchor   *buffer.Anchor
 
 	// Repeat arms the next keybound command to run inside a repeat(...) N times
 	// (see RepeatState). Set by repeat_next, consumed by the command dispatcher.
@@ -653,6 +698,7 @@ type WindowOptions struct {
 	ShowMarks       string // "no" | "yes" | "all"
 	OverwriteMode   bool   // inverse of insertMode; zero value = insert
 	ReadOnly        bool
+	LinkBrowsing    bool   // hyperlink layer (link colors, browse-mode buttons)
 	ShowRuler       bool
 	TabSize         int
 	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
@@ -743,6 +789,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 			ShowMarks:       opts.ShowMarks,
 			OverwriteMode:   opts.OverwriteMode,
 			ReadOnly:        opts.ReadOnly,
+			LinkBrowsing:    opts.LinkBrowsing,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
 			SyntaxOverrides: opts.SyntaxOverrides,
@@ -948,6 +995,10 @@ func (m *Manager) RemoveWindow(id string) bool {
 	if w.findOrigin != nil {
 		w.findOrigin.Release()
 		w.findOrigin = nil
+	}
+	if w.linkAnchor != nil {
+		w.linkAnchor.Release()
+		w.linkAnchor = nil
 	}
 	for i := range w.cursorRing {
 		if w.cursorRing[i] != nil {

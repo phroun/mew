@@ -257,6 +257,15 @@ type Indicators struct {
 	StatPeekDown    string
 	PromptPeekUp    string
 	PromptPeekDown  string
+	// Link-as-button chrome (browse mode): a button renders as
+	// ButtonLeft + title + ButtonRight + ButtonShadow, with the Focused*
+	// variants when the caret is inside the button.
+	ButtonLeft          string
+	ButtonRight         string
+	ButtonShadow        string
+	FocusedButtonLeft   string
+	FocusedButtonRight  string
+	FocusedButtonShadow string
 }
 
 // DefaultIndicators returns the built-in indicator glyphs.
@@ -281,6 +290,13 @@ func DefaultIndicators() Indicators {
 		StatPeekDown:    "[%SPD%]",
 		PromptPeekUp:    "[%PPU%]",
 		PromptPeekDown:  "[%PPD%]",
+
+		ButtonLeft:          " ",
+		ButtonRight:         " ",
+		ButtonShadow:        "▐",
+		FocusedButtonLeft:   "<",
+		FocusedButtonRight:  ">",
+		FocusedButtonShadow: "█",
 	}
 }
 
@@ -302,6 +318,12 @@ type GeneralConfig struct {
 	// deleting, replacing, pasting). Navigation, search, marks, and undo/redo
 	// still work. Per window; false by default.
 	ReadOnly bool
+
+	// LinkBrowsing enables the hyperlink layer for grammar-recognized links
+	// (link coloring, browse-mode buttons, arming on caret entry). Off, links
+	// render exactly as their grammar colors them, with no interaction. Per
+	// window; on by default.
+	LinkBrowsing bool
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -652,6 +674,7 @@ func DefaultConfig() Config {
 			ShowMarks:               "no",
 			OverwriteMode:           false, // insertMode=yes
 			ReadOnly:                false,
+			LinkBrowsing:            true,
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -866,6 +889,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if v, ok := opt["readOnly"]; ok {
 			config.General.ReadOnly = parseBool(v, false)
 		}
+		if v, ok := opt["linkBrowsing"]; ok {
+			config.General.LinkBrowsing = parseBool(v, true)
+		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
 			if strings.EqualFold(v, "none") {
@@ -1061,6 +1087,12 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		set(&config.Indicators.StatPeekDown, "statPeekDown")
 		set(&config.Indicators.PromptPeekUp, "promptPeekUp")
 		set(&config.Indicators.PromptPeekDown, "promptPeekDown")
+		set(&config.Indicators.ButtonLeft, "buttonLeft")
+		set(&config.Indicators.ButtonRight, "buttonRight")
+		set(&config.Indicators.ButtonShadow, "buttonShadow")
+		set(&config.Indicators.FocusedButtonLeft, "focusedButtonLeft")
+		set(&config.Indicators.FocusedButtonRight, "focusedButtonRight")
+		set(&config.Indicators.FocusedButtonShadow, "focusedButtonShadow")
 	}
 
 	// Color sections. Key names are dynamic: [colors] is the root level,
@@ -1755,6 +1787,12 @@ insertMode=yes
 # replacing, pasting); movement, search, marks, and undo/redo still work. Per
 # window.
 readOnly=no
+# Hyperlink layer for grammar-recognized links (dokuwiki): links paint in the
+# link color, and when the caret enters one the window switches to browse
+# mode, rendering links as buttons (nav_cancel — ^C's first stop — exits).
+# no disables all of it: links render exactly as the grammar colors them.
+# Per window.
+linkBrowsing=yes
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.
@@ -1882,6 +1920,15 @@ statPeekUp="[%SPU%]"
 statPeekDown="[%SPD%]"
 promptPeekUp="[%PPU%]"
 promptPeekDown="[%PPD%]"
+# Link-as-button chrome (browse mode): a link renders as
+# buttonLeft + title + buttonRight + buttonShadow; the focused* variants
+# apply to the button the caret is inside.
+buttonLeft=" "
+buttonRight=" "
+buttonShadow="▐"
+focusedButtonLeft="<"
+focusedButtonRight=">"
+focusedButtonShadow="█"
 
 [colors]                          # root-level defaults
 reset="\e[0m"                     # reset to default
@@ -1904,6 +1951,16 @@ rulerTick="\e[0;37;45m"           # silver on magenta (for ".")
 rulerMinor="\e[0;93;45m"          # bright yellow on magenta (for ":")
 rulerMajor="\e[0;92;45m"          # bright green on magenta (for "|" or regular numbers)
 rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerShowsCursor)
+# Hyperlinks (grammar-derived links, e.g. dokuwiki). Caret mode paints link
+# source text in "link"; browse mode renders links as buttons (button/
+# buttonShadow, with the *Focused variants on the button the caret occupies).
+# linkRecent is reserved for recently-followed links.
+link="\e[0;4;93;40m"              # underlined bright yellow on black
+linkRecent="\e[0;4;32;40m"        # underlined green on black
+button="\e[0;30;47m"              # black on silver
+buttonShadow="\e[0;90;47m"        # dark gray on silver
+buttonFocused="\e[0;30;46m"       # black on cyan
+buttonShadowFocused="\e[0;90;46m" # dark gray on cyan
 syntaxComment="\e[0;32;40m"       # green on black
 syntaxString="\e[0;36;40m"        # cyan on black
 syntaxEscape="\e[0;96;40m"      # bright cyan on black
@@ -2012,7 +2069,7 @@ esc Y   =kill_ring_pop
 
 tab     =completion|insert '\t'
 return  =accept|insert '\n'
-^C      =cancel|buffer_close
+^C      =nav_cancel|cancel|buffer_close
 ^R      =repeat_next
 
 esc >   =scroll_right

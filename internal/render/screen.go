@@ -49,6 +49,10 @@ type ScreenRenderer struct {
 	// the editor when syntax highlighting is configured.
 	syntaxColorizer func(w *window.Window, docLine int) []string
 
+	// buttonProvider supplies link-as-button replacements per line (browse
+	// mode); nil — the default — disables substitution entirely. See buttons.go.
+	buttonProvider ButtonProvider
+
 	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
 	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
 	// nil leaves the configured label verbatim.
@@ -763,8 +767,13 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 			lineContent := strings.TrimRight(rawLine, "\n\r")
 			lineEnding := rawLine[len(lineContent):] // "", "\n", "\r\n", ...
 
+			// Link-as-button substitution (browse mode): swap in the display
+			// form of the line before any walk below sees it. nil disp — the
+			// common case — leaves the original path untouched.
+			disp, dispSyn := sr.displayFor(w, docLine, lineContent)
+
 			// Prepare line for display with proper control character handling and selection
-			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, contentWidth, w.ViewState.ViewOffsetX, w, docLine, sel)
+			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, contentWidth, w.ViewState.ViewOffsetX, w, docLine, sel, disp, dispSyn)
 			sr.Write(displayLine)
 		} else {
 			// Empty line - fill with background color
@@ -855,8 +864,17 @@ func (sr *ScreenRenderer) composeTabMarker(width int) []rune {
 
 // prepareLineForDisplay prepares a line for display by handling UTF-8, control characters, tabs, etc.
 // Translated directly from TypeScript window-renderer.js prepareLineForDisplay
-func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, viewOffsetX int, w *window.Window, docLine int, sel selectionRange) string {
+func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, viewOffsetX int, w *window.Window, docLine int, sel selectionRange, disp *lineDisplay, dispSyn []string) string {
 	var displayLine strings.Builder
+
+	// Link-as-button substitution: when disp is non-nil the walk below runs
+	// over the substituted display runes. Selection is checked against the
+	// original doc positions through disp.DispToDoc; chrome (button/shadow)
+	// cells carry a forced color and take no selection tint or whitespace
+	// markers. Syntax colors arrive display-aligned in dispSyn.
+	if disp != nil {
+		line = disp.Text
+	}
 
 	textColor := sr.col(w, "text")
 	selectionColor := sr.col(w, "selection")
@@ -875,8 +893,10 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// showMarks: draw a "*" (in the "marks" color) at every mark / garland-
 	// decoration position on this line, each in its own cell before the rune it
 	// precedes. marksSet holds the marked rune positions; showMarks is cleared
-	// when this line has none, so the per-slot check below stays cheap.
-	showMarks := w.ViewState.MarksVisible()
+	// when this line has none, so the per-slot check below stays cheap. On a
+	// button-substituted line mark cells are suppressed: doc positions inside a
+	// replaced span have no cells of their own (lineMarkSet gates identically).
+	showMarks := w.ViewState.MarksVisible() && disp == nil
 	var marksColor string
 	var marksSet map[int]bool
 	if showMarks && w.Buffer != nil {
@@ -997,8 +1017,16 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// the character rather than another "*".
 	markSlotDrawn := -1
 
-	// Helper to check if a rune position is within the selection
+	// Helper to check if a rune position is within the selection. On a
+	// substituted line the walk's positions are display indices: map back to
+	// the doc rune the cell came from; chrome cells (-1) are never selected.
 	isSelected := func(runePos int) bool {
+		if disp != nil {
+			if runePos < 0 || runePos >= len(disp.DispToDoc) {
+				return false
+			}
+			runePos = disp.DispToDoc[runePos]
+		}
 		if !sel.exists || runePos < 0 {
 			return false
 		}
@@ -1018,14 +1046,22 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	}
 
 	// Syntax highlighting: per-rune SGR colors for this document line (nil
-	// when no grammar applies). Selection still wins over syntax color.
+	// when no grammar applies). Selection still wins over syntax color. On a
+	// substituted line the display-aligned dispSyn replaces the doc-aligned
+	// colorizer output.
 	var synColors []string
-	if sr.syntaxColorizer != nil {
+	if disp != nil {
+		synColors = dispSyn
+	} else if sr.syntaxColorizer != nil {
 		synColors = sr.syntaxColorizer(w, docLine)
 	}
 
-	// Get the appropriate base color for a rune position
+	// Get the appropriate base color for a rune position. A chrome cell's
+	// forced color wins outright — buttons keep their look through selections.
 	getBaseColor := func(runePos int) string {
+		if disp != nil && runePos >= 0 && runePos < len(disp.Forced) && disp.Forced[runePos] != "" {
+			return disp.Forced[runePos]
+		}
 		if isSelected(runePos) {
 			return selectionColor
 		}
@@ -1042,6 +1078,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			return selectionInvisiblesColor
 		}
 		return plainInvisiblesColor
+	}
+
+	// isChrome reports whether a display cell belongs to a button (forced
+	// color): chrome cells never take whitespace markers — a space inside a
+	// button cap or title stays a plain space.
+	isChrome := func(runePos int) bool {
+		return disp != nil && runePos >= 0 && runePos < len(disp.Forced) && disp.Forced[runePos] != ""
 	}
 
 	// Process each visual slot of the line (logical order on plain lines).
@@ -1123,8 +1166,8 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 				runeDisplay = strings.Repeat(" ", tabWidth)
 			}
 			runeVisualWidth = tabWidth
-		} else if showInvisibles && r == ' ' {
-			// Space shown as a marker glyph.
+		} else if showInvisibles && r == ' ' && !isChrome(logicalIdx) {
+			// Space shown as a marker glyph (never inside button chrome).
 			runeDisplay = invisiblesColor + invisibleSpace + baseColor
 			runeVisualWidth = 1
 		} else if showInvisibles && r == '\n' {
@@ -1456,7 +1499,11 @@ func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.Window
 	viewOff := w.ViewState.ViewOffsetX
 	if w.Buffer != nil {
 		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-		visualColumn = sr.caretVisualColumn(line, w.CursorPos().Rune, w)
+		// Browse-mode buttons: measure against the substituted display line,
+		// with the caret mapped onto it (inside a button it parks on the
+		// button's first cell). Identity when no buttons apply.
+		line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune)
+		visualColumn = sr.caretVisualColumn(line, curRune, w)
 		pad, viewOff = sr.rtlPadOffset(line, w, contentWidth)
 	} else {
 		visualColumn = w.CursorPos().Rune
@@ -1539,6 +1586,7 @@ func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.Win
 	viewOff := w.ViewState.ViewOffsetX
 	if w.Buffer != nil {
 		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+		line, _ = sr.displayCaretLine(w, line, 0) // browse-mode buttons: display geometry
 		pad, viewOff = sr.rtlPadOffset(line, w, contentWidthForPad)
 		if rtl {
 			ghostVisualColumn = sr.lineVisualWidth(w, line) - w.GhostCursorVisualColumn
@@ -1593,6 +1641,7 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 		return nil
 	}
 	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune) // browse-mode buttons
 	pad, viewOff := sr.rtlPadOffset(line, w, contentWidth)
 
 	var cols []int
@@ -1609,7 +1658,7 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 	}
 
 	// Regular caret (caret-biased column, with the RTL right-edge clamp).
-	caretX := base + pad + (sr.caretVisualColumn(line, w.CursorPos().Rune, w) - viewOff)
+	caretX := base + pad + (sr.caretVisualColumn(line, curRune, w) - viewOff)
 	if rtl && caretX == base+contentWidth {
 		caretX = base + contentWidth - 1
 	}
@@ -1627,7 +1676,7 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 	// Secondary bidi cursor at an automatic direction boundary.
 	runes := []rune(line)
 	if bl := sr.layoutFor(w, runes); bl != nil {
-		if secCol, ok := sr.secondaryCursorColumn(w, runes, bl); ok {
+		if secCol, ok := sr.secondaryCursorColumn(runes, bl, curRune, w); ok {
 			add(base + pad + (secCol - viewOff))
 		}
 	}
@@ -1644,14 +1693,15 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 // PREVIOUS rune's fragment — one cell past that rune in ITS direction (left
 // of its cell for RTL, right for LTR), the same "one past, in its own
 // direction" form as the end-of-line rule.
-func (sr *ScreenRenderer) secondaryCursorColumn(w *window.Window, runes []rune, layout *bidi.Layout) (int, bool) {
+func (sr *ScreenRenderer) secondaryCursorColumn(runes []rune, layout *bidi.Layout, p int, w *window.Window) (int, bool) {
 	// The dual cursor shows whenever the line is bidirectional — with or
 	// without showBidi's markers — since the boundary ambiguity exists either
-	// way; only the layout (and thus the exact cells) differs.
+	// way; only the layout (and thus the exact cells) differs. p is the caret
+	// position in the coordinate space of runes (display space when the line
+	// carries button substitution — the caller maps it).
 	if layout == nil {
 		return 0, false
 	}
-	p := w.CursorPos().Rune
 	if p <= 0 || p >= len(runes) {
 		return 0, false
 	}
@@ -1690,9 +1740,10 @@ func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window
 		return
 	}
 	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune) // browse-mode buttons
 	runes := []rune(line)
 	bl := sr.layoutFor(w, runes)
-	secCol, ok := sr.secondaryCursorColumn(w, runes, bl)
+	secCol, ok := sr.secondaryCursorColumn(runes, bl, curRune, w)
 	if !ok {
 		return
 	}
@@ -1813,6 +1864,12 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 // consumes this one set. Mirrors the editor's lineMarkSet.
 func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
+		return nil
+	}
+	// Mark cells are suppressed on a button-substituted caret line: the doc
+	// positions the marks name have no cells of their own there (the paint
+	// side suppresses identically in prepareLineForDisplay).
+	if sr.lineHasButtons(w, w.CursorPos().Line) {
 		return nil
 	}
 	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())

@@ -55,6 +55,7 @@ var optionSpecs = []optionSpec{
 	{"showMarks", true, optEnumKind, []string{"no", "yes", "all"}},
 	{"insertMode", true, optBoolKind, boolValues},
 	{"readOnly", true, optBoolKind, boolValues},
+	{"linkBrowsing", true, optBoolKind, boolValues},
 	{"showColumnRuler", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
 	{"syntaxOverrides", true, optStrKind, nil},
@@ -138,6 +139,11 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 		w.ViewState.OverwriteMode = !e.optBool(w, "insertmode", !e.Config.OverwriteMode)
 	case "readonly":
 		w.ViewState.ReadOnly = e.optBool(w, "readonly", e.Config.ReadOnly)
+	case "linkbrowsing":
+		w.ViewState.LinkBrowsing = e.optBool(w, "linkbrowsing", e.Config.LinkBrowsing)
+		if !w.ViewState.LinkBrowsing {
+			w.BrowseActive = false // no stale buttons when the layer goes off
+		}
 	case "showcolumnruler":
 		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
 	case "direction":
