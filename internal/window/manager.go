@@ -605,6 +605,172 @@ func (w *Window) RefreshViewTop() {
 	}
 }
 
+// viewBinding is the complete bundle of state tying a window to ONE buffer:
+// the garland cursors that slide with edits — caret, viewport anchor, the
+// edit-trail ring, find origin, link anchor — plus the scalar state that
+// travels with them (ring indices, browse flag, view offsets). The ACTIVE
+// binding lives inlined in the Window's own fields; detachBinding /
+// attachBinding move the bundle wholesale in and out of a viewBinding record.
+// A detached record keeps its cursors LIVE on the old buffer (garland keeps
+// sliding them with edits), which is what makes a buffer-swap history stack
+// safe: re-attaching restores the exact caret, scroll, and trail no matter
+// what happened to the buffer in between. release() retires a record whose
+// history is being dropped.
+//
+// The window's find TERM (Find) deliberately stays outside the binding —
+// searching again after a swap should reuse the term; only the positional
+// find state (origin cursor, wrap flag) is buffer-tied.
+type viewBinding struct {
+	Buffer         *buffer.Buffer
+	caret          *buffer.Caret
+	viewportAnchor *buffer.Anchor
+	lastEditPoint  *buffer.Anchor
+	hasMoved       bool
+	cursorRing     [cursorRingSize]*buffer.Anchor
+	ringFirst      int
+	ringCount      int
+	ringNav        int
+	findOrigin     *buffer.Anchor
+	findWrapped    bool
+	browseActive   bool
+	linkAnchor     *buffer.Anchor
+	viewOffsetX    int
+	viewOffsetY    int
+}
+
+// release retires a detached binding: every garland cursor is released so the
+// buffer stops adjusting them on edits. Used when a stacked binding's history
+// is dropped (window removal, stack eviction); the ACTIVE binding is released
+// through Window.releaseBinding instead.
+func (b *viewBinding) release() {
+	if b.caret != nil {
+		b.caret.Release()
+		b.caret = nil
+	}
+	if b.viewportAnchor != nil {
+		b.viewportAnchor.Release()
+		b.viewportAnchor = nil
+	}
+	if b.lastEditPoint != nil {
+		b.lastEditPoint.Release()
+		b.lastEditPoint = nil
+	}
+	if b.findOrigin != nil {
+		b.findOrigin.Release()
+		b.findOrigin = nil
+	}
+	if b.linkAnchor != nil {
+		b.linkAnchor.Release()
+		b.linkAnchor = nil
+	}
+	for i := range b.cursorRing {
+		if b.cursorRing[i] != nil {
+			b.cursorRing[i].Release()
+			b.cursorRing[i] = nil
+		}
+	}
+}
+
+// bindBuffer attaches w to buf and mints its cursor bundle — the caret, the
+// viewport anchor, and the edit-trail ring — so every position slides with
+// edits. One bundle per window: two windows sharing a buffer edit and scroll
+// independently. The window must be unbound (fresh, or after detachBinding /
+// releaseBinding).
+func (w *Window) bindBuffer(buf *buffer.Buffer) {
+	w.Buffer = buf
+	w.ringNav = -1
+	if buf == nil {
+		return
+	}
+	w.Caret = buf.NewCaret()
+	w.viewportAnchor = buf.NewAnchor()
+	// Every window with a buffer gets its own cursor ring — a caret moves and
+	// edits in a prompt buffer just as in a document, so its edit history is
+	// worth tracking too.
+	w.lastEditPoint = buf.NewAnchor()
+	for i := range w.cursorRing {
+		w.cursorRing[i] = buf.NewAnchor()
+	}
+}
+
+// detachBinding moves the window's ACTIVE binding out into a record, leaving
+// the window unbound: no buffer, no cursors, view offsets zeroed. Nothing is
+// released — the record's cursors stay live on the old buffer and keep
+// sliding with edits, so a later attachBinding restores the exact caret,
+// scroll, and trail. The caller owns the record: stack it for a future
+// re-attach, or release() it.
+func (w *Window) detachBinding() viewBinding {
+	b := viewBinding{
+		Buffer:         w.Buffer,
+		caret:          w.Caret,
+		viewportAnchor: w.viewportAnchor,
+		lastEditPoint:  w.lastEditPoint,
+		hasMoved:       w.hasMoved,
+		cursorRing:     w.cursorRing,
+		ringFirst:      w.ringFirst,
+		ringCount:      w.ringCount,
+		ringNav:        w.ringNav,
+		findOrigin:     w.findOrigin,
+		findWrapped:    w.findWrapped,
+		browseActive:   w.BrowseActive,
+		linkAnchor:     w.linkAnchor,
+		viewOffsetX:    w.ViewState.ViewOffsetX,
+		viewOffsetY:    w.ViewState.ViewOffsetY,
+	}
+	w.Buffer = nil
+	w.Caret = nil
+	w.viewportAnchor = nil
+	w.lastEditPoint = nil
+	w.hasMoved = false
+	w.cursorRing = [cursorRingSize]*buffer.Anchor{}
+	w.ringFirst, w.ringCount, w.ringNav = 0, 0, -1
+	w.findOrigin = nil
+	w.findWrapped = false
+	w.BrowseActive = false
+	w.linkAnchor = nil
+	w.ViewState.ViewOffsetX = 0
+	w.ViewState.ViewOffsetY = 0
+	return b
+}
+
+// attachBinding installs a previously detached record as the window's active
+// binding — the mirror of detachBinding. The window must be unbound. The
+// vertical view offset re-derives from the viewport anchor (which slid with
+// any edits made while the binding was stacked); the horizontal offset is
+// restored as saved.
+func (w *Window) attachBinding(b viewBinding) {
+	w.Buffer = b.Buffer
+	w.Caret = b.caret
+	w.viewportAnchor = b.viewportAnchor
+	w.lastEditPoint = b.lastEditPoint
+	w.hasMoved = b.hasMoved
+	w.cursorRing = b.cursorRing
+	w.ringFirst, w.ringCount, w.ringNav = b.ringFirst, b.ringCount, b.ringNav
+	w.findOrigin = b.findOrigin
+	w.findWrapped = b.findWrapped
+	w.BrowseActive = b.browseActive
+	w.linkAnchor = b.linkAnchor
+	w.ViewState.ViewOffsetX = b.viewOffsetX
+	w.ViewState.ViewOffsetY = b.viewOffsetY
+	w.RefreshViewTop()
+}
+
+// releaseBinding releases every garland cursor of the window's ACTIVE binding
+// so the buffer stops adjusting them on edits. The Buffer reference, view
+// offsets, and browse flag are kept: removal paths inspect w.Buffer after the
+// window is gone (the shared-buffer close check), and the removal event
+// carries the window as it was.
+func (w *Window) releaseBinding() {
+	buf := w.Buffer
+	offX, offY := w.ViewState.ViewOffsetX, w.ViewState.ViewOffsetY
+	browse := w.BrowseActive
+	b := w.detachBinding()
+	b.release()
+	w.Buffer = buf
+	w.ViewState.ViewOffsetX, w.ViewState.ViewOffsetY = offX, offY
+	w.BrowseActive = browse
+}
+
 // EventType represents the type of window event.
 type EventType int
 
@@ -853,22 +1019,9 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 		}
 	}
 
-	// Give the window its own edit cursor and viewport anchor on its buffer, so
-	// the caret and the top-of-view line each slide with edits. One set per
-	// window, so two windows sharing a buffer edit and scroll independently;
-	// released in RemoveWindow.
-	w.ringNav = -1
-	if w.Buffer != nil {
-		w.Caret = w.Buffer.NewCaret()
-		w.viewportAnchor = w.Buffer.NewAnchor()
-		// Every window with a buffer gets its own cursor ring — a caret moves and
-		// edits in a prompt buffer just as in a document, so its edit history is
-		// worth tracking too. Released in RemoveWindow.
-		w.lastEditPoint = w.Buffer.NewAnchor()
-		for i := range w.cursorRing {
-			w.cursorRing[i] = w.Buffer.NewAnchor()
-		}
-	}
+	// Bind the window to its buffer: mint the caret, viewport anchor, and
+	// edit-trail cursors that slide with edits (released in RemoveWindow).
+	w.bindBuffer(opts.Buffer)
 
 	m.windows[id] = w
 
@@ -996,32 +1149,7 @@ func (m *Manager) RemoveWindow(id string) bool {
 	}
 
 	// Release the window's cursors so garland stops adjusting them on edits.
-	if w.viewportAnchor != nil {
-		w.viewportAnchor.Release()
-		w.viewportAnchor = nil
-	}
-	if w.Caret != nil {
-		w.Caret.Release()
-		w.Caret = nil
-	}
-	if w.lastEditPoint != nil {
-		w.lastEditPoint.Release()
-		w.lastEditPoint = nil
-	}
-	if w.findOrigin != nil {
-		w.findOrigin.Release()
-		w.findOrigin = nil
-	}
-	if w.linkAnchor != nil {
-		w.linkAnchor.Release()
-		w.linkAnchor = nil
-	}
-	for i := range w.cursorRing {
-		if w.cursorRing[i] != nil {
-			w.cursorRing[i].Release()
-			w.cursorRing[i] = nil
-		}
-	}
+	w.releaseBinding()
 
 	delete(m.windows, id)
 
