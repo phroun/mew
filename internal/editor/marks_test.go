@@ -18,18 +18,18 @@ func TestShowMarksColumnMath(t *testing.T) {
 	if err := w.Buffer.SetMark("m", 0, 2); err != nil {
 		t.Fatalf("SetMark: %v", err)
 	}
-	if cols := w.Buffer.MarksOnLine(0); len(cols) != 1 || cols[0] != 2 {
+	if cols := w.Buffer.MarksOnLine(0, false); len(cols) != 1 || cols[0] != 2 {
 		t.Fatalf("MarksOnLine(0) = %v, want [2]", cols)
 	}
 
 	// showMarks off: no offset.
-	w.ViewState.ShowMarks = false
+	w.ViewState.ShowMarks = "no"
 	if got := e.caretVisualColumn(w, "abcd", 3, 4); got != 3 {
 		t.Fatalf("off: caretVisualColumn(3) = %d, want 3", got)
 	}
 
 	// showMarks on: visual layout is [a@0][b@1][*@2][c@3][d@4].
-	w.ViewState.ShowMarks = true
+	w.ViewState.ShowMarks = "yes"
 	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // marks are read from the caret line
 	for _, c := range []struct{ rune_, want int }{
 		{0, 0}, {1, 1}, {2, 3}, {3, 4}, {4, 5},
@@ -62,7 +62,7 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 		if err := w.Buffer.SetMark("m", 0, 0); err != nil {
 			t.Fatalf("SetMark: %v", err)
 		}
-		w.ViewState.ShowMarks = true
+		w.ViewState.ShowMarks = "yes"
 		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
 
 		for _, c := range []struct{ rune_, want int }{
@@ -90,7 +90,7 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 		if err := w.Buffer.SetMark("m", 0, 1); err != nil {
 			t.Fatalf("SetMark: %v", err)
 		}
-		w.ViewState.ShowMarks = true
+		w.ViewState.ShowMarks = "yes"
 		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
 
 		for _, c := range []struct{ rune_, want int }{
@@ -123,10 +123,10 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 				t.Fatalf("SetMark(%d): %v", p, err)
 			}
 		}
-		if cols := w.Buffer.MarksOnLine(0); len(cols) != 4 {
+		if cols := w.Buffer.MarksOnLine(0, false); len(cols) != 4 {
 			t.Fatalf("want 4 distinct marks, got %v", cols)
 		}
-		w.ViewState.ShowMarks = true
+		w.ViewState.ShowMarks = "yes"
 		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
 
 		for r := 0; r <= len([]rune(line)); r++ {
@@ -143,11 +143,11 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 // and the caret math reserves it, so the final mark on the line is visible.
 func TestShowMarksEndOfLine(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "abc\n")
-	w.ViewState.ShowMarks = true
+	w.ViewState.ShowMarks = "yes"
 	if err := w.Buffer.SetMark("m", 0, 3); err != nil { // past 'c'
 		t.Fatalf("SetMark: %v", err)
 	}
-	if cols := w.Buffer.MarksOnLine(0); len(cols) != 1 || cols[0] != 3 {
+	if cols := w.Buffer.MarksOnLine(0, false); len(cols) != 1 || cols[0] != 3 {
 		t.Fatalf("MarksOnLine(0) = %v, want [3]", cols)
 	}
 
@@ -187,7 +187,7 @@ func TestShowMarksEndOfLine(t *testing.T) {
 // one cell over; cells left of it (ו col 5, ם col 4) are untouched.
 func TestShowMarksBidiColumnMath(t *testing.T) {
 	e, w := newTestEditor(t, bidiLine+"\n")
-	w.ViewState.ShowMarks = true
+	w.ViewState.ShowMarks = "yes"
 	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
 		t.Fatalf("SetMark: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestShowMarksBidiColumnMath(t *testing.T) {
 // placed by the renderer's own caretVisualColumn — lands on the marked cell.
 func TestShowMarksBidiRendered(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
-	w.ViewState.ShowMarks = true
+	w.ViewState.ShowMarks = "yes"
 	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
 		t.Fatalf("SetMark: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestShowMarksBidiRoundTrips(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e, w := newTestEditor(t, tc.content+"\n", tc.cfg...)
-			w.ViewState.ShowMarks = true
+			w.ViewState.ShowMarks = "yes"
 			w.ViewState.ShowBidi = tc.bidi
 			for _, p := range tc.marks {
 				if err := w.Buffer.SetMark(fmt.Sprintf("m%d", p), 0, p); err != nil {
@@ -290,5 +290,42 @@ func TestShowMarksBidiRoundTrips(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// showMarks "all" also indicates mew's internal (underscore-prefixed) marks,
+// which "yes" hides. MarksOnLine's includeInternal flag drives it, and the caret
+// math reserves a cell for each indicated mark.
+func TestShowMarksAllIncludesInternal(t *testing.T) {
+	e, w := newTestEditor(t, "abcd\n")
+	if err := w.Buffer.SetMark("user", 0, 1); err != nil {
+		t.Fatalf("SetMark user: %v", err)
+	}
+	if err := w.Buffer.SetMark("_internal", 0, 3); err != nil {
+		t.Fatalf("SetMark internal: %v", err)
+	}
+
+	// The buffer filter: "yes" mode sees only the user mark, "all" sees both.
+	if cols := w.Buffer.MarksOnLine(0, false); len(cols) != 1 || cols[0] != 1 {
+		t.Fatalf("user-visible marks = %v, want [1]", cols)
+	}
+	if cols := w.Buffer.MarksOnLine(0, true); len(cols) != 2 || cols[0] != 1 || cols[1] != 3 {
+		t.Fatalf("all marks = %v, want [1 3]", cols)
+	}
+
+	// Through the view mode: "all" reserves two "*" cells before end of line,
+	// "yes" only one.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.ViewState.ShowMarks = "all"
+	if got := e.caretVisualColumn(w, "abcd", 4, 4); got != 6 {
+		t.Fatalf("all-mode EOL caret: %d, want 6 (both marks reserved)", got)
+	}
+	w.ViewState.ShowMarks = "yes"
+	if got := e.caretVisualColumn(w, "abcd", 4, 4); got != 5 {
+		t.Fatalf("yes-mode EOL caret: %d, want 5 (only the user mark)", got)
+	}
+	w.ViewState.ShowMarks = "no"
+	if got := e.caretVisualColumn(w, "abcd", 4, 4); got != 4 {
+		t.Fatalf("no-mode EOL caret: %d, want 4 (no marks)", got)
 	}
 }

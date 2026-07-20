@@ -876,11 +876,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// decoration position on this line, each in its own cell before the rune it
 	// precedes. marksSet holds the marked rune positions; showMarks is cleared
 	// when this line has none, so the per-slot check below stays cheap.
-	showMarks := w.ViewState.ShowMarks
+	showMarks := w.ViewState.MarksVisible()
 	var marksColor string
 	var marksSet map[int]bool
 	if showMarks && w.Buffer != nil {
-		if cols := w.Buffer.MarksOnLine(docLine); len(cols) > 0 {
+		if cols := w.Buffer.MarksOnLine(docLine, w.ViewState.MarksShowInternal()); len(cols) > 0 {
 			marksColor = sr.col(w, "marks")
 			marksSet = make(map[int]bool, len(cols))
 			for _, c := range cols {
@@ -1812,10 +1812,10 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 // is off or the line has no drawable marks. Every caret walk (plain and bidi)
 // consumes this one set. Mirrors the editor's lineMarkSet.
 func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
-	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil
 	}
-	raw := w.Buffer.MarksOnLine(w.CursorPos().Line)
+	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())
 	if len(raw) == 0 {
 		return nil
 	}
@@ -1843,7 +1843,7 @@ func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bo
 // caret line non-bidi, and it has drawable marks. Returns the line's runes and
 // its mark-cell set; ok is false (base path) otherwise. Mirrors the editor.
 func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
-	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil, nil, false
 	}
 	runes = []rune(line)

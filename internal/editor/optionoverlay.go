@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/window"
 )
 
@@ -68,6 +69,21 @@ func (e *Editor) optInt(w *window.Window, key string, base, min int) int {
 func (e *Editor) optStr(w *window.Window, key, base string) string {
 	if raw, ok := e.resolveOpt(w, key); ok {
 		return raw
+	}
+	return base
+}
+
+// optMarks resolves the showMarks enum for a window: the class/grammar/type
+// overlay if present and valid, else the given base, normalized to no/yes/all
+// (config.ParseShowMarks, which also accepts boolean aliases).
+func (e *Editor) optMarks(w *window.Window, base string) string {
+	if raw, ok := e.resolveOpt(w, "showmarks"); ok {
+		if v, ok := config.ParseShowMarks(raw); ok {
+			return v
+		}
+	}
+	if base == "" {
+		return "no"
 	}
 	return base
 }

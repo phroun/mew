@@ -61,8 +61,10 @@ type ViewState struct {
 	ShowBidi bool
 	// ShowMarks renders a one-column "*" (in the "marks" color) at every mark /
 	// garland-decoration position in the text, giving each mark its own cell
-	// between the surrounding characters.
-	ShowMarks bool
+	// between the surrounding characters. It is a three-way enum: "no" (off),
+	// "yes" (user-visible marks), or "all" (also mew's internal, underscore-
+	// prefixed marks). "" is treated as "no".
+	ShowMarks string
 	// ShowRuler renders a column ruler on the window's top line, reducing the
 	// content area by one row. Ignored when the window is only one line tall.
 	ShowRuler bool
@@ -71,6 +73,18 @@ type ViewState struct {
 	// "ltr", "rtl", or "" to inherit the [general] direction option. Prompt
 	// windows are pinned "ltr" at creation.
 	Direction string
+}
+
+// MarksVisible reports whether showMarks draws any mark indicators for this
+// window (mode "yes" or "all"). "" and "no" are off.
+func (vs ViewState) MarksVisible() bool {
+	return vs.ShowMarks == "yes" || vs.ShowMarks == "all"
+}
+
+// MarksShowInternal reports whether showMarks also indicates mew's internal,
+// underscore-prefixed marks (mode "all").
+func (vs ViewState) MarksShowInternal() bool {
+	return vs.ShowMarks == "all"
 }
 
 // MarkOptionOverridden records that a per-window option was set explicitly on
@@ -623,7 +637,7 @@ type WindowOptions struct {
 	ShowLineNumbers bool
 	ShowInvisibles  bool
 	ShowBidi        bool
-	ShowMarks       bool
+	ShowMarks       string // "no" | "yes" | "all"
 	ShowRuler       bool
 	TabSize         int
 	SetFocus        bool

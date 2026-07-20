@@ -259,7 +259,7 @@ type Config struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
-	ShowMarks        bool
+	ShowMarks        string // "no" | "yes" | "all"
 	Syntax           string
 	SyntaxDetect     bool
 
@@ -444,7 +444,7 @@ func DefaultConfig() Config {
 		TabSize:          4,
 		ShowInvisibles:   false,
 		ShowBidi:         false,
-		ShowMarks:        false,
+		ShowMarks:        "no",
 		WordWrap:         false,
 		DebounceMs:       20,
 		MaxRenderDelayMs: 100,
@@ -2106,7 +2106,10 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 		if w != nil {
 			v = w.ViewState.ShowMarks
 		}
-		return boolText(v), true
+		if v == "" {
+			v = "no"
+		}
+		return v, true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2252,14 +2255,15 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			e.Config.ShowBidi = b
 		}
 	case "showmarks":
-		b, ok := parseBool()
+		v, ok := config.ParseShowMarks(value)
 		if !ok {
+			e.ShowWarning("showMarks must be no, yes, or all")
 			return false
 		}
 		if w != nil {
-			w.ViewState.ShowMarks = b
+			w.ViewState.ShowMarks = v
 		} else {
-			e.Config.ShowMarks = b
+			e.Config.ShowMarks = v
 		}
 	case "showcolumnruler":
 		b, ok := parseBool()
@@ -3200,10 +3204,10 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // the shift is not additive). Marks are keyed on the caret's line, the only line
 // these coordinate helpers are asked about.
 func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
-	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil
 	}
-	raw := w.Buffer.MarksOnLine(w.CursorPos().Line)
+	raw := w.Buffer.MarksOnLine(w.CursorPos().Line, w.ViewState.MarksShowInternal())
 	if len(raw) == 0 {
 		return nil
 	}
@@ -3235,7 +3239,7 @@ func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 // Bidi lines are exact too, but through bidiColumns / the bidi inverse walks,
 // which consume lineMarkSet directly.
 func (e *Editor) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
-	if w == nil || !w.ViewState.ShowMarks || w.Buffer == nil {
+	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil, nil, false
 	}
 	runes = []rune(line)

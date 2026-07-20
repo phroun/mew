@@ -1353,10 +1353,11 @@ func (b *Buffer) GetMarkDebug(name string) (line, runePos int, bytePos int64, ex
 }
 
 // MarksOnLine returns the sorted, de-duplicated rune (column) positions of the
-// user-visible marks (garland decorations) on the given document line. Internal
-// marks — keys beginning with "_", e.g. the block/match selection anchors — are
-// skipped. Used by the renderer's showMarks indicator ("*" per mark position).
-func (b *Buffer) MarksOnLine(docLine int) []int {
+// marks (garland decorations) on the given document line. Internal marks — keys
+// beginning with "_", e.g. the block/match selection anchors — are skipped
+// unless includeInternal is set (the showMarks "all" mode). Used by the
+// renderer's showMarks indicator ("*" per mark position).
+func (b *Buffer) MarksOnLine(docLine int, includeInternal bool) []int {
 	if b.garland == nil || b.readCursor == nil {
 		return nil
 	}
@@ -1367,7 +1368,10 @@ func (b *Buffer) MarksOnLine(docLine int) []int {
 	seen := make(map[int]struct{}, len(entries))
 	var cols []int
 	for _, e := range entries {
-		if e.Address == nil || strings.HasPrefix(e.Key, "_") {
+		if e.Address == nil {
+			continue
+		}
+		if !includeInternal && strings.HasPrefix(e.Key, "_") {
 			continue
 		}
 		b.readCursor.SeekByte(e.Address.Byte)

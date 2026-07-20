@@ -282,7 +282,7 @@ type GeneralConfig struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
-	ShowMarks        bool
+	ShowMarks        string // "no" | "yes" | "all"
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -622,7 +622,7 @@ func DefaultConfig() Config {
 			TabSize:                 4,
 			ShowInvisibles:          false,
 			ShowBidi:                false,
-			ShowMarks:               false,
+			ShowMarks:               "no",
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -824,7 +824,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 			config.General.ShowBidi = parseBool(v, false)
 		}
 		if v, ok := opt["showMarks"]; ok {
-			config.General.ShowMarks = parseBool(v, false)
+			if s, valid := ParseShowMarks(v); valid {
+				config.General.ShowMarks = s
+			}
 		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
@@ -1647,8 +1649,10 @@ showInvisibles=false
 # ("<" entering RTL, ">" entering LTR); explicit direction controls render
 # as their own marker
 showBidi=false
-# Show a "*" (in the "marks" color) at every mark/decoration position in the text
-showMarks=false
+# Show a "*" (in the "marks" color) at every mark/decoration position in the
+# text: no (off), yes (user marks), or all (also mew's internal marks). Boolean
+# aliases (on/off/true/false) are accepted as no/yes.
+showMarks=no
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.
@@ -2032,6 +2036,22 @@ func parseBool(s string, defaultVal bool) bool {
 		return false
 	}
 	return defaultVal
+}
+
+// ParseShowMarks normalizes a showMarks value to its canonical enum form: "no"
+// (off), "yes" (user-visible marks), or "all" (also mew's internal, underscore-
+// prefixed marks). Boolean aliases are accepted so older configs keep working
+// (on/true/1 -> yes, off/false/0 -> no). ok is false for anything unrecognized.
+func ParseShowMarks(s string) (value string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "all":
+		return "all", true
+	case "yes", "on", "true", "1":
+		return "yes", true
+	case "no", "off", "false", "0":
+		return "no", true
+	}
+	return "", false
 }
 
 // parseInt parses a string as integer with a default.

@@ -52,7 +52,7 @@ var optionSpecs = []optionSpec{
 	{"showLineNumbers", true, optBoolKind, boolValues},
 	{"showInvisibles", true, optBoolKind, boolValues},
 	{"showBidi", true, optBoolKind, boolValues},
-	{"showMarks", true, optBoolKind, boolValues},
+	{"showMarks", true, optEnumKind, []string{"no", "yes", "all"}},
 	{"showColumnRuler", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
 
@@ -129,7 +129,7 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 	case "showbidi":
 		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
 	case "showmarks":
-		w.ViewState.ShowMarks = e.optBool(w, "showmarks", e.Config.ShowMarks)
+		w.ViewState.ShowMarks = e.optMarks(w, e.Config.ShowMarks)
 	case "showcolumnruler":
 		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
 	case "direction":

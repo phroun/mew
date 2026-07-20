@@ -57,16 +57,27 @@ func TestSetOptionRotate(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 
 	// Boolean (per-window): no -> yes -> no. Input alias "false" still accepted.
-	e.setOption(w, "showMarks", "false")
-	if !e.rotateOption(w, "showMarks", +1) {
-		t.Fatal("rotate showMarks next should succeed")
+	e.setOption(w, "showLineNumbers", "false")
+	if !e.rotateOption(w, "showLineNumbers", +1) {
+		t.Fatal("rotate showLineNumbers next should succeed")
 	}
-	if v, _ := e.getOption(w, "showMarks"); v != "yes" {
-		t.Fatalf("showMarks after next: %q, want yes", v)
+	if v, _ := e.getOption(w, "showLineNumbers"); v != "yes" {
+		t.Fatalf("showLineNumbers after next: %q, want yes", v)
 	}
-	e.rotateOption(w, "showMarks", +1)
-	if v, _ := e.getOption(w, "showMarks"); v != "no" {
-		t.Fatalf("showMarks wraps back to no, got %q", v)
+	e.rotateOption(w, "showLineNumbers", +1)
+	if v, _ := e.getOption(w, "showLineNumbers"); v != "no" {
+		t.Fatalf("showLineNumbers wraps back to no, got %q", v)
+	}
+
+	// Three-value per-window enum: showMarks cycles no -> yes -> all -> no.
+	e.setOption(w, "showMarks", "no")
+	for _, want := range []string{"yes", "all", "no"} {
+		if !e.rotateOption(w, "showMarks", +1) {
+			t.Fatal("rotate showMarks next should succeed")
+		}
+		if v, _ := e.getOption(w, "showMarks"); v != want {
+			t.Fatalf("showMarks next: %q, want %q", v, want)
+		}
 	}
 
 	// Enum with three values: auto -> true -> false -> auto (and prior wraps
@@ -116,20 +127,20 @@ func TestSetOptionRotateCommands(t *testing.T) {
 // resolved default (here, the editor default), leaving the option no longer
 // pinned.
 func TestClearOption(t *testing.T) {
-	e, w := newTestEditor(t, "x\n") // showMarks defaults false
+	e, w := newTestEditor(t, "x\n") // showMarks defaults "no"
 
 	// Pin an override on the window.
-	e.setOption(w, "showMarks", "true")
-	if !w.ViewState.ShowMarks || !w.IsOptionOverridden("showmarks") {
-		t.Fatal("set_option should pin showMarks=true on the window")
+	e.setOption(w, "showMarks", "all")
+	if w.ViewState.ShowMarks != "all" || !w.IsOptionOverridden("showmarks") {
+		t.Fatal("set_option should pin showMarks=all on the window")
 	}
 
 	// Clearing reverts to the editor default and un-pins it.
 	if !e.clearOption(w, "showMarks") {
 		t.Fatal("clear_option should succeed for a per-window option")
 	}
-	if w.ViewState.ShowMarks {
-		t.Fatal("clear_option should revert showMarks to the default (false)")
+	if w.ViewState.ShowMarks != "no" {
+		t.Fatalf("clear_option should revert showMarks to the default (no), got %q", w.ViewState.ShowMarks)
 	}
 	if w.IsOptionOverridden("showmarks") {
 		t.Fatal("clear_option should drop the override flag")
@@ -148,20 +159,20 @@ func TestClearOption(t *testing.T) {
 // clear_option reverts to the configured default when one is set, not a
 // hardcoded zero value.
 func TestClearOptionRevertsToConfiguredDefault(t *testing.T) {
-	e, w := newTestEditor(t, "x\n", "showMarks=true") // editor default on
-	if !e.Config.ShowMarks {
-		t.Fatal("config should set the editor default showMarks=true")
+	e, w := newTestEditor(t, "x\n", "showMarks=all") // editor default: all
+	if e.Config.ShowMarks != "all" {
+		t.Fatalf("config should set the editor default showMarks=all, got %q", e.Config.ShowMarks)
 	}
-	// Override the window off, then clear: it should return to the config's true.
-	e.setOption(w, "showMarks", "false")
-	if w.ViewState.ShowMarks {
-		t.Fatal("override should turn the window's showMarks off")
+	// Override the window off, then clear: it should return to the config's "all".
+	e.setOption(w, "showMarks", "no")
+	if w.ViewState.ShowMarks != "no" {
+		t.Fatalf("override should turn the window's showMarks off, got %q", w.ViewState.ShowMarks)
 	}
 	if !e.clearOption(w, "showMarks") {
 		t.Fatal("clear_option should succeed")
 	}
-	if !w.ViewState.ShowMarks {
-		t.Fatal("clear_option should restore the configured default (true)")
+	if w.ViewState.ShowMarks != "all" {
+		t.Fatalf("clear_option should restore the configured default (all), got %q", w.ViewState.ShowMarks)
 	}
 }
 
