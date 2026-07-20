@@ -1198,6 +1198,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			continue
 		}
 
+		// Outside showBidi, a direction control is layout INPUT, never
+		// output: mew's own bidi pass already consumed it and the emitted
+		// stream is in visual order, so writing the raw control would invite
+		// a bidi-aware terminal to reorder that stream a second time (and
+		// even inert terminals may draw a stray glyph for a lone format
+		// character). It occupies no cell and emits no bytes. This also keeps
+		// the FSI/PDI isolates injected around browse-mode buttons out of the
+		// terminal byte stream entirely.
+		if bidi.IsDirectionControl(r) {
+			documentRune++
+			continue
+		}
+
 		// Calculate what this rune should look like and its visual width
 		if r == '\t' {
 			// Tab - calculate width to next tab stop

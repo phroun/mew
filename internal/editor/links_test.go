@@ -646,3 +646,38 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 		t.Fatal("a visited link must not still show the unvisited link color")
 	}
 }
+
+// Direction controls never reach the terminal byte stream (outside showBidi's
+// visible markers): not the FSI/PDI isolates injected around browse-mode
+// buttons, and not document-embedded controls — the emitted stream is already
+// in visual order, so raw controls would invite a bidi-aware terminal to
+// reorder it again.
+func TestNoDirectionControlsEmitted(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"go [[page|Title]] on\n", "[options]\nsyntax=dokuwiki\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	for _, c := range []rune{'⁦', '⁧', '⁨', '⁩'} {
+		if strings.ContainsRune(out.String(), c) {
+			t.Fatalf("browse-mode output must not contain isolate U+%04X", c)
+		}
+	}
+
+	// A document-embedded LRM/RLM stays out of the stream too (unmarked mode).
+	e2, _, out2 := renderedEditorWithConfig(t, "a‎b ‏c\n", "[options]\n")
+	out2.Reset()
+	e2.performRender()
+	for _, c := range []string{"‎", "‏"} {
+		if strings.Contains(out2.String(), c) {
+			t.Fatal("document direction controls must not be emitted raw")
+		}
+	}
+	plain := stripSGR(out2.String())
+	for _, want := range []string{"a", "b", "c"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("content %q should still render; got %q", want, plain)
+		}
+	}
+}
