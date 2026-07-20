@@ -567,27 +567,53 @@ func grammarLinkable(g *jsf.Instance) bool {
 	return g != nil && strings.EqualFold(g.Name, "dokuwiki")
 }
 
-// extractLinkSpans finds the maximal runs of runes the grammar colored with
-// the "Link" class and parses each into a span. The dokuwiki grammar colors
-// the whole [[target|Title]] source — brackets included — as one run, and a
-// link never crosses a line (an unclosed [[ resets at the newline).
+// extractLinkSpans finds the runs the grammar colored with the "Link" class
+// and splits each into individual [[target|Title]] links. The dokuwiki grammar
+// colors the whole source — brackets included — as Link, and two adjacent
+// links (...]][[...) form one continuous Link run with no gap between them, so
+// a run is parsed into separate "[[" ... "]]" segments rather than taken whole.
+// A link never crosses a line (an unclosed [[ resets at the newline).
 func extractLinkSpans(runes []rune, attrs []*jsf.ColorRef) []linkSpan {
 	var spans []linkSpan
 	n := len(attrs)
 	if n > len(runes) {
 		n = len(runes)
 	}
+	isLink := func(i int) bool {
+		return i < n && attrs[i] != nil && strings.EqualFold(attrs[i].Class, "Link")
+	}
 	for i := 0; i < n; {
-		if attrs[i] == nil || !strings.EqualFold(attrs[i].Class, "Link") {
+		if !isLink(i) {
 			i++
 			continue
 		}
-		start := i
-		for i < n && attrs[i] != nil && strings.EqualFold(attrs[i].Class, "Link") {
+		runStart := i
+		for isLink(i) {
 			i++
 		}
-		target, title := parseDokuLink(string(runes[start:i]))
-		spans = append(spans, linkSpan{Start: start, End: i, Target: target, Title: title})
+		runEnd := i
+		// Split the Link run into individual links on the "[[ ... ]]" pattern.
+		for j := runStart; j < runEnd; {
+			// Advance to the next "[[".
+			for j < runEnd && !(runes[j] == '[' && j+1 < runEnd && runes[j+1] == '[') {
+				j++
+			}
+			if j >= runEnd {
+				break
+			}
+			ls := j
+			// Find the closing "]]" (dokuwiki titles never contain "]]").
+			le := runEnd
+			for k := ls + 2; k+1 < runEnd; k++ {
+				if runes[k] == ']' && runes[k+1] == ']' {
+					le = k + 2
+					break
+				}
+			}
+			target, title := parseDokuLink(string(runes[ls:le]))
+			spans = append(spans, linkSpan{Start: ls, End: le, Target: target, Title: title})
+			j = le
+		}
 	}
 	return spans
 }

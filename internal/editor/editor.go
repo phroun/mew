@@ -2633,10 +2633,20 @@ func (e *Editor) executeCommand(command string) {
 	// raw command before repeat-wrapping, so a repeated edit is caught by its
 	// own kind rather than the "repeat" wrapper.
 	fw := e.WindowManager.GetFocusedWindow()
-	if fw != nil && fw.ViewState.ReadOnly && commandMutatesContent(commandKind(command)) {
-		e.ShowWarning("Buffer is read-only")
-		e.RequestRender()
-		return
+	if fw != nil && commandMutatesContent(commandKind(command)) {
+		// A read-only window, or a focused link button (the caret is inert
+		// inside it — its source text is protected until the button is left or
+		// nav_cancel'd), rejects content-mutating commands before dispatch.
+		if fw.ViewState.ReadOnly {
+			e.ShowWarning("Buffer is read-only")
+			e.RequestRender()
+			return
+		}
+		if e.focusedLinkButton(fw) != nil {
+			e.ShowWarning("Link is focused (^C to edit)")
+			e.RequestRender()
+			return
+		}
 	}
 
 	// If a repeat_next is armed, wrap this command so it runs N times.
@@ -4015,9 +4025,14 @@ func (e *Editor) insertPasteChunk(content []byte) {
 		return
 	}
 	// Bracketed paste arrives from the main loop, not executeCommand, so gate it
-	// here too: a read-only window drops pasted content.
+	// here too: a read-only window — or a focused link button — drops it.
 	if w.ViewState.ReadOnly {
 		e.ShowWarning("Buffer is read-only")
+		e.RequestRender()
+		return
+	}
+	if e.focusedLinkButton(w) != nil {
+		e.ShowWarning("Link is focused (^C to edit)")
 		e.RequestRender()
 		return
 	}

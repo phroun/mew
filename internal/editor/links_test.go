@@ -49,6 +49,63 @@ func TestLinkSpanExtraction(t *testing.T) {
 	}
 }
 
+// Two links back-to-back (]][[  with no gap) extract as two separate spans,
+// not one merged span — the grammar colors the whole run "Link".
+func TestAdjacentLinkSpans(t *testing.T) {
+	e, w, _ := linkEditor(t, "[[a]][[b]] and [[c]][[d]][[e]]\n")
+	spans := e.linkSpansOnLine(w, 0)
+	got := make([]string, len(spans))
+	for i, s := range spans {
+		got[i] = s.Target
+	}
+	want := []string{"a", "b", "c", "d", "e"}
+	if len(got) != len(want) {
+		t.Fatalf("want %d links, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("link %d = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+	// The first two are adjacent: [[a]] = [0,5), [[b]] = [5,10).
+	if spans[0].Start != 0 || spans[0].End != 5 || spans[1].Start != 5 || spans[1].End != 10 {
+		t.Fatalf("adjacent spans should abut at 5: %+v %+v", spans[0], spans[1])
+	}
+}
+
+// A focused button protects the link's source text: content-mutating commands
+// are rejected as though the buffer were read-only, and navigation/undo still
+// work. Leaving the button (nav_cancel) restores editing.
+func TestFocusedButtonReadOnly(t *testing.T) {
+	e, w, _ := linkEditor(t, "text [[a:b|Title]] more\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 10}) // inside the link
+	e.updateBrowseState()
+	if e.focusedLinkButton(w) == nil {
+		t.Fatal("button should be focused")
+	}
+	before := w.Buffer.GetLine(0)
+	e.executeCommand("insert 'X'")
+	if w.Buffer.GetLine(0) != before {
+		t.Fatal("a focused button must reject content edits")
+	}
+	e.executeCommand("del_char_next")
+	if w.Buffer.GetLine(0) != before {
+		t.Fatal("a focused button must reject deletion")
+	}
+	// Navigation still works while focused.
+	if !e.navFollow() {
+		t.Fatal("nav_follow should still work on a focused button")
+	}
+	// nav_cancel leaves the button; editing resumes.
+	if !e.navCancel() {
+		t.Fatal("nav_cancel should disarm")
+	}
+	e.executeCommand("insert 'X'")
+	if w.Buffer.GetLine(0) == before {
+		t.Fatal("editing should resume after leaving the button")
+	}
+}
+
 // Entering a link arms browse mode; nav_cancel disarms it and staying within
 // the same span does not re-arm; leaving and re-entering re-arms.
 func TestBrowseModeArming(t *testing.T) {
