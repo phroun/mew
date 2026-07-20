@@ -71,8 +71,11 @@ func (e *Editor) checkEditLock() {
 	if fn := buf.GetFilename(); fn != "" {
 		name = filepath.Base(fn)
 	}
-	msg := fmt.Sprintf("%s is being edited by %s — [S]teal lock, [P]roceed, [Q]uit edit", name, info.owner)
-	e.PromptMgr.promptForInput(msg, "", func(accepted bool, _, line string) {
+	// Two-row prompt: a top message bar describes who already holds the lock,
+	// and the input row asks only the short question.
+	desc := fmt.Sprintf("%s is being edited by %s", name, info.owner)
+	question := "[S]teal lock, [P]roceed, [Q]uit edit: "
+	e.PromptMgr.promptForInput(question, "", func(accepted bool, _, line string) {
 		e.lockPrompting = false
 		resp := strings.ToLower(strings.TrimSpace(line))
 		first := ""
@@ -93,7 +96,7 @@ func (e *Editor) checkEditLock() {
 			e.ShowNotification("Edit cancelled; " + name + " left untouched")
 		}
 		e.RequestRender()
-	}, "lock", 1)
+	}, "lock", 1, desc)
 }
 
 // foreignLockLive reports whether the recorded foreign lock is still held.

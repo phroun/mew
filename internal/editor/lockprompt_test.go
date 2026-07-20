@@ -16,8 +16,20 @@ func TestEditLockPromptProceed(t *testing.T) {
 	e.recordForeignLock(w.Buffer, foreignLockInfo{owner: "jeff@other.1", kind: "emacs"})
 
 	e.checkEditLock() // the trackEdit hook
-	if focusedPrompt(e) == nil {
+	fp := focusedPrompt(e)
+	if fp == nil {
 		t.Fatal("expected a lock prompt on the first edit of a locked buffer")
+	}
+	// Two rows: a top message bar describes who holds the lock; the input row's
+	// label asks only the short question.
+	if !strings.Contains(fp.MessageTopInner, "is being edited by jeff@other.1") {
+		t.Fatalf("top message = %q, want the who-holds-the-lock description", fp.MessageTopInner)
+	}
+	if len(fp.RowMessages) == 0 || !strings.Contains(fp.RowMessages[0], "[S]teal lock") {
+		t.Fatalf("prompt label = %v, want the short question", fp.RowMessages)
+	}
+	if fp.MessageTopInner != "" && fp.Height < 2 {
+		t.Fatalf("a lock prompt with a top message should be 2 rows tall, got height %d", fp.Height)
 	}
 	answerPrompt(t, e, "p") // Proceed
 	if focusedPrompt(e) != nil {

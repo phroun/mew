@@ -38,12 +38,13 @@ func NewPromptManager(editor *Editor) *PromptManager {
 // Prompts display a single row; history lines above the cursor line remain
 // reachable by arrow, just not shown.
 func (pm *PromptManager) PromptForInput(message, defaultValue string, callback PromptCallback, windowClass string) {
-	pm.promptForInput(message, defaultValue, callback, windowClass, 1)
+	pm.promptForInput(message, defaultValue, callback, windowClass, 1, "")
 }
 
-// promptForInput is PromptForInput with an optional display-row cap
-// (maxRows 0 means the default content-based height).
-func (pm *PromptManager) promptForInput(message, defaultValue string, callback PromptCallback, windowClass string, maxRows int) {
+// promptForInput is PromptForInput with an optional display-row cap (maxRows 0
+// means the default content-based height) and an optional top message bar
+// (topMessage), which adds a row above the input for a fuller description.
+func (pm *PromptManager) promptForInput(message, defaultValue string, callback PromptCallback, windowClass string, maxRows int, topMessage string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -83,7 +84,7 @@ func (pm *PromptManager) promptForInput(message, defaultValue string, callback P
 	promptMessage := "(PI)" + message
 
 	// Create the prompt buffer
-	pm.createPromptBuffer(promptMessage, initialContent, cursorLine, windowClass, callback, maxRows)
+	pm.createPromptBuffer(promptMessage, initialContent, cursorLine, windowClass, callback, maxRows, topMessage)
 }
 
 // PromptForFilename prompts for a filename with history.
@@ -133,12 +134,15 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 			// Invalid response - treat as default
 			callback(true, defaultValue)
 		}
-	}, "", 1)
+	}, "", 1, "")
 }
 
 // createPromptBuffer creates the actual prompt buffer window. maxRows caps
-// the displayed height (0 means the default cap).
-func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, cursorLine int, windowClass string, callback PromptCallback, maxRows int) {
+// the displayed content height (0 means the default cap). When topMessage is
+// non-empty, an extra row is reserved above the input for a top message bar
+// (the window's MessageTopInner) — e.g. a lock prompt's description of who
+// already holds the file.
+func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, cursorLine int, windowClass string, callback PromptCallback, maxRows int, topMessage string) {
 	wm := pm.editor.WindowManager
 
 	// Find highest priority bottom window. A bottom-located modebar is
@@ -184,19 +188,25 @@ func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, curso
 	if height > maxHeight {
 		height = maxHeight
 	}
+	// A top message bar occupies its own row above the input, so grow the window
+	// by one to keep the input row (and any history) their full height.
+	if topMessage != "" {
+		height++
+	}
 
 	id := wm.CreateWindow(window.WindowOptions{
-		Type:        window.PromptBuffer,
-		Class:       windowClass,
-		Dock:        window.DockBottom,
-		Priority:    highestPriority + 10,
-		MinHeight:   1,
-		MaxHeight:   height,
-		Height:      height,
-		MarginInner: promptLength,
-		RowMessages: []string{prompt},
-		Buffer:      buf,
-		SetFocus:    true,
+		Type:            window.PromptBuffer,
+		Class:           windowClass,
+		Dock:            window.DockBottom,
+		Priority:        highestPriority + 10,
+		MinHeight:       1,
+		MaxHeight:       height,
+		Height:          height,
+		MarginInner:     promptLength,
+		RowMessages:     []string{prompt},
+		MessageTopInner: topMessage,
+		Buffer:          buf,
+		SetFocus:        true,
 	})
 
 	// Set up the window with proper cursor position and callback
