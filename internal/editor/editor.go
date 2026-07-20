@@ -209,6 +209,16 @@ type Editor struct {
 	lastEditKill   bool
 	lastYank       yankRecord
 
+	// Per-command signals set by the mutation implementations, read after
+	// dispatch — so the decision follows what a command DID, never its name
+	// (which the script language can rename or chain). editCoalesced marks a
+	// single-point edit that garland coalesces into the current undo run (so
+	// the run is not baked shut afterward); yankedThisCommand marks a kill-ring
+	// yank/pop (so lastYank stays valid for a following pop). Both are reset
+	// before each command runs.
+	editCoalesced     bool
+	yankedThisCommand bool
+
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
 	// colors; synSGR memoizes color-class resolution (see syntaxhl.go).
@@ -1238,12 +1248,14 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("del_char_prior", func(ctx *pawscript.Context) pawscript.Result {
 		e.deleteCharBefore()
 		e.trackEdit()
+		e.editCoalesced = true // a single-point edit: coalesce the undo run
 		return pawscript.BoolStatus(true)
 	})
 
 	ps.RegisterCommand("del_char_next", func(ctx *pawscript.Context) pawscript.Result {
 		e.deleteCharAt()
 		e.trackEdit()
+		e.editCoalesced = true // a single-point edit: coalesce the undo run
 		return pawscript.BoolStatus(true)
 	})
 
@@ -1314,6 +1326,7 @@ func (e *Editor) registerCommands() {
 			text := fmt.Sprintf("%v", ctx.Args[0])
 			e.insertText(text)
 			e.trackEdit()
+			e.editCoalesced = true // a single-point edit: coalesce the undo run
 			return pawscript.BoolStatus(true)
 		}
 		return pawscript.BoolStatus(false)
@@ -2633,6 +2646,12 @@ func (e *Editor) executeCommand(command string) {
 	// that always sees the actual buffer change (see contentLocked).
 	fw := e.WindowManager.GetFocusedWindow()
 
+	// Reset the per-command behavior signals; the mutation implementations set
+	// them as they run, and the post-dispatch logic below reads them instead of
+	// re-classifying the command by name.
+	e.editCoalesced = false
+	e.yankedThisCommand = false
+
 	// If a repeat_next is armed, wrap this command so it runs N times.
 	command = e.applyRepeatNext(command)
 
@@ -2652,29 +2671,37 @@ func (e *Editor) executeCommand(command string) {
 	// and character deletes flow as bare edits that garland coalesces into a
 	// single revision; compound commands (and scripts, via buffer_tx_*) open
 	// their own transaction in their handler. Close any transaction a script
-	// left dangling, then — unless this WAS one of the coalescible edits — bake
-	// the run so the next edit starts a fresh undo step. That bake is what makes
-	// a cursor move (or any other command) end the current typing/deleting run,
-	// giving the "new cursor position breaks the run" behavior.
+	// left dangling, then — unless this command performed a coalescible edit
+	// (the edit implementation set editCoalesced) — bake the run so the next
+	// edit starts a fresh undo step. That bake is what makes a cursor move (or
+	// any other command) end the current typing/deleting run.
 	if buf != nil {
 		buf.CloseUserCommand()
-		if !coalescibleEditKind(commandKind(command)) {
+		if !e.editCoalesced {
 			buf.BakeUndo()
 		}
 	}
 
 	// kill_ring_pop may only replace text yanked by the immediately preceding
-	// command: any other keybound command invalidates the recorded yank.
-	if k := commandKind(command); k != "kill_ring_yank" && k != "kill_ring_pop" {
+	// command: any command that was not itself a yank/pop invalidates the
+	// recorded yank (the yank/pop implementations set yankedThisCommand).
+	if !e.yankedThisCommand {
 		e.lastYank.valid = false
 	}
 	e.RequestRender()
 }
 
 // applyRepeatNext consumes a pending repeat_next arm on the target window,
-// wrapping command in a PawScript repeat(...) so it runs Count times. A
-// repeat_next invocation is never itself wrapped (it sets the arm), and the
-// command is returned unchanged when nothing is armed.
+// wrapping command in a PawScript repeat(...) so it runs Count times.
+//
+// A repeat_next invocation must not wrap itself (pressing it while already
+// armed would otherwise repeat the arming command). This is the one decision
+// that cannot be moved into the implementation: the wrap happens BEFORE the
+// command runs, so it cannot observe what the command did — it can only look at
+// the command about to run. It therefore still inspects the leading token, and
+// so is the lone place a renamed/aliased command name would slip past. Left as
+// a known limitation rather than papered over; a proper fix needs repeat-arm
+// metadata carried on the command registration.
 func (e *Editor) applyRepeatNext(command string) string {
 	if commandKind(command) == "repeat_next" {
 		return command
@@ -2691,28 +2718,15 @@ func (e *Editor) applyRepeatNext(command string) string {
 	return fmt.Sprintf("repeat (%s), %d", command, n)
 }
 
-// commandKind returns the leading token of a command string, used to name its
-// undo transaction (its "kind") for later classification.
+// commandKind returns the leading token of a command string. Its only remaining
+// use is applyRepeatNext's pre-dispatch self-check (see there); behavioral
+// decisions that CAN see what a command did read per-command signals instead.
 func commandKind(command string) string {
 	command = strings.TrimSpace(command)
 	if i := strings.IndexAny(command, " \t"); i >= 0 {
 		return command[:i]
 	}
 	return command
-}
-
-// coalescibleEditKind reports whether a command is a simple single-point edit —
-// plain typing or a character delete — that flows as a bare mutation so garland
-// coalesces a run of them into one undo step. Every other command bakes the run
-// when it finishes (see executeCommand), ending the streak; compound edit
-// commands additionally open their own transaction so their internal mutations
-// stay one revision.
-func coalescibleEditKind(kind string) bool {
-	switch kind {
-	case "insert", "insert_bidi_control", "del_char_prior", "del_char_next":
-		return true
-	}
-	return false
 }
 
 // contentLocked reports whether the focused window currently forbids content
@@ -3963,6 +3977,7 @@ func (e *Editor) insertBidiControl(name string) bool {
 	}
 	e.insertText(string(r))
 	e.trackEdit()
+	e.editCoalesced = true // a single-point edit: coalesce the undo run
 	return true
 }
 

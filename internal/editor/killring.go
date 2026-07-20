@@ -85,6 +85,9 @@ func (e *Editor) killRingYank() bool {
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
+	// A yank keeps lastYank valid for a following pop (the post-dispatch
+	// invalidation reads this instead of the command name).
+	e.yankedThisCommand = true
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil || w.Caret == nil {
 		return false
@@ -130,6 +133,9 @@ func (e *Editor) killRingPop() bool {
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
+	// A pop consumes the current lastYank and records a new one; keep it valid
+	// so a further pop can cycle (name-agnostic, mirrors killRingYank).
+	e.yankedThisCommand = true
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil || w.Caret == nil || len(e.killRing) == 0 {
 		return false
