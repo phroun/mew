@@ -1294,6 +1294,20 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		documentRune++
 	}
 
+	// showMarks: a mark at end of line has no rune to precede. With invisibles
+	// on it rides the terminator marker (drawn in the loop above); with them off
+	// there is no terminator slot, so on a plain line append its "*" as a
+	// trailing cell — otherwise the final mark on the line would vanish. (Bidi
+	// lines keep riding the terminator, since "after the content" is ambiguous
+	// under reordering; lineMarkSet gates the caret math to match.)
+	if showMarks && !showInvisibles && layout == nil && marksSet[len(runes)] &&
+		documentRune >= totalSlots && outputVisualColumn < width {
+		lastCellStart = displayLine.Len()
+		lastCellColumn = outputVisualColumn
+		displayLine.WriteString(marksColor + "*" + textColor)
+		outputVisualColumn++
+	}
+
 	// Right-edge truncation indicator: when content continues past the right
 	// edge, replace the last visible cell (dropped whole, escapes and all) with
 	// the configured marker. Slicing at the recorded cell boundary avoids
@@ -1805,7 +1819,10 @@ func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bo
 	if len(raw) == 0 {
 		return nil
 	}
-	eolDrawn := w.ViewState.ShowInvisibles
+	// A plain line appends a trailing "*" for an end-of-line mark, so it always
+	// shows; a bidi line's "end" is ambiguous under reordering, so there the EOL
+	// mark still rides the terminator slot (invisibles only). Mirrors the editor.
+	eolDrawn := w.ViewState.ShowInvisibles || sr.layoutFor(w, runes) == nil
 	m := make(map[int]bool, len(raw))
 	for _, p := range raw {
 		if p < 0 || p > len(runes) {

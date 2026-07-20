@@ -49,7 +49,7 @@ var defaultGlobalColors = map[string]string{
 	"truncation":          "\x1b[0;37;41m",   // silver on red
 	"hint":                "\x1b[1;37;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
-	"marks":               "\x1b[1;32;40m",   // bright green on black
+	"marks":               "\x1b[0;91m",       // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
 	"selection":           "\x1b[0;30;47m",   // black text on silver

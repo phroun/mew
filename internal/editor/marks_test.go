@@ -138,6 +138,44 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 	})
 }
 
+// A mark at end of line (rune position len, past the last character) shows even
+// with invisibles off: on a plain line the renderer appends a trailing "*" cell
+// and the caret math reserves it, so the final mark on the line is visible.
+func TestShowMarksEndOfLine(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	w.ViewState.ShowMarks = true
+	if err := w.Buffer.SetMark("m", 0, 3); err != nil { // past 'c'
+		t.Fatalf("SetMark: %v", err)
+	}
+	if cols := w.Buffer.MarksOnLine(0); len(cols) != 1 || cols[0] != 3 {
+		t.Fatalf("MarksOnLine(0) = %v, want [3]", cols)
+	}
+
+	// Invisibles OFF: the "*" is appended right after the content.
+	e.performRender()
+	if plain := stripAnsi(out.String()); !strings.Contains(plain, "abc*") {
+		t.Fatalf("EOL mark should append a trailing '*' with invisibles off: %q", plain)
+	}
+
+	// Caret math reserves the cell: the "*" is at col 3, the EOL caret one past.
+	if got := e.caretVisualColumn(w, "abc", 3, 4); got != 4 {
+		t.Errorf("EOL caret with trailing mark: col %d, want 4", got)
+	}
+	if got := e.visualColumnToRune(w, "abc", 3, 4); got != 3 {
+		t.Errorf("click on the trailing '*' (col 3): rune %d, want 3", got)
+	}
+
+	// The renderer's own cursor placement agrees: caret at EOL sits at visual
+	// col 4 -> screen col 5 (no gutter).
+	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	e.afterHorizontalMovement(w)
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 5 {
+		t.Errorf("hardware cursor past the trailing mark: col %d, want 5", col)
+	}
+}
+
 // bidiMarkLine is bidiLine "abc שלום xyz": logical 0-2 "abc", 3 space, 4-7 the
 // Hebrew run (ש,ל,ו,ם) painted reversed at cols 4-7, 8 space, 9-11 "xyz".
 //

@@ -3165,7 +3165,11 @@ func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 	if len(raw) == 0 {
 		return nil
 	}
-	eolDrawn := w.ViewState.ShowInvisibles // an EOL mark only draws atop the terminator
+	// A mark at end of line has no rune to precede. On a plain line the renderer
+	// just appends a trailing "*" cell, so it always shows; on a bidi line
+	// "after the content" is ambiguous under reordering, so there it still rides
+	// the terminator slot and only shows when invisibles are on.
+	eolDrawn := w.ViewState.ShowInvisibles || e.layoutFor(w, runes) == nil
 	m := make(map[int]bool, len(raw))
 	for _, p := range raw {
 		if p < 0 || p > len(runes) {
