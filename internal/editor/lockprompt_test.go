@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/phroun/mew/internal/buffer"
 )
 
 // The first edit of a buffer whose file another editor holds a lock on prompts
@@ -97,5 +99,52 @@ func TestEditLockNoPromptWhenUnlocked(t *testing.T) {
 	e.checkEditLock()
 	if focusedPrompt(e) != nil {
 		t.Error("no foreign lock: must not prompt")
+	}
+}
+
+// The mew-native lock coordinates instances even when the buffer content is
+// virtualized through a host FileSystem (usingOSFS false): a second instance
+// opening the same path detects the first's lock and records it as foreign.
+func TestMewLockDetectedWithoutOSFS(t *testing.T) {
+	home := t.TempDir() // shared ~/.mew/locks between the two instances
+	mk := func(pid int) *Editor {
+		e, _ := newTestEditor(t, "")
+		e.usingOSFS = false // content path is virtualized
+		e.home = home
+		e.Config.IdentityUser, e.Config.IdentityHost, e.Config.IdentityPID = "tester", "testhost", pid
+		return e
+	}
+
+	e1 := mk(1) // pid 1 (init) always reads as alive
+	b1 := buffer.NewFromString("x\n")
+	if reason := e1.acquireMewLock(b1, "/proj/doc.txt"); reason != "" {
+		t.Fatalf("first instance should take the lock, got %q", reason)
+	}
+
+	e2 := mk(2)
+	b2 := buffer.NewFromString("x\n")
+	if reason := e2.acquireMewLock(b2, "/proj/doc.txt"); reason != "" {
+		t.Fatalf("second instance acquire: %q", reason)
+	}
+	info, ok := e2.foreignLocks[b2]
+	if !ok {
+		t.Fatal("second instance should record a foreign lock even without OSFS")
+	}
+	if info.owner != "tester@testhost.1" || info.kind != "mew" {
+		t.Fatalf("foreign lock = %+v, want owner tester@testhost.1 kind mew", info)
+	}
+}
+
+// A lock that cannot be taken is reported (a reason), so the caller can warn —
+// no silent skip.
+func TestMewLockReportsFailure(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	e.usingOSFS = false
+	e.home = "" // no home and no project: nowhere to hold the lock
+	e.LoadedConfig.ProjectDirs = nil
+	b := buffer.NewFromString("x\n")
+	reason := e.acquireMewLock(b, "/proj/doc.txt")
+	if reason == "" {
+		t.Fatal("acquireMewLock should report a reason when it cannot lock")
 	}
 }

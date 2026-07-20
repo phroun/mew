@@ -301,16 +301,22 @@ func gitignoreCoversLocks(path string) bool {
 // live foreign lock is respected: mew warns and proceeds without the lock
 // (advisory, like the emacs protocol); a stale lock from a dead process on
 // this host is replaced silently.
-func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) {
-	if !e.Config.UseLocks || !e.usingOSFS || buf == nil {
-		return
+// It works regardless of whether the buffer's CONTENT is virtualized through a
+// host FileSystem: the lock itself is an OS-level advisory file under ~/.mew (or
+// the project), keyed to the file's path, so it coordinates any mew instances
+// that share that lock directory. It returns "" on success (or when a live
+// foreign lock is respected, or when locking is disabled) and a human reason
+// when a lock was wanted but could not be taken, so the caller can warn.
+func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) (skipReason string) {
+	if !e.Config.UseLocks || buf == nil {
+		return "" // locking not requested — not a failure
 	}
 	dir := e.mewLockDir()
 	if dir == "" {
-		return
+		return "no project or home directory to hold the lock"
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return "lock directory is not writable (" + err.Error() + ")"
 	}
 	abs := path
 	if a, err := filepath.Abs(path); err == nil {
@@ -326,19 +332,20 @@ func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) {
 			if e.lockHolderAlive(holder) {
 				e.noteBuffer(buf, "lock", fmt.Sprintf("%s is being edited by %s (mew lock)", filepath.Base(abs), holder), true)
 				e.recordForeignLock(buf, foreignLockInfo{owner: holder, kind: "mew", path: lockPath})
-				return // respect the live lock; open stays advisory
+				return "" // respect the live lock; open stays advisory
 			}
 			// Stale lock from a dead process: fall through and take it.
 		}
 	}
 	content := owner + "\n" + abs + "\n"
 	if err := os.WriteFile(lockPath, []byte(content), 0o644); err != nil {
-		return
+		return "could not write the lock file (" + err.Error() + ")"
 	}
 	if e.mewLocks == nil {
 		e.mewLocks = make(map[*buffer.Buffer]string)
 	}
 	e.mewLocks[buf] = lockPath
+	return ""
 }
 
 // releaseMewLock drops the mew-native lock held for a buffer, if any.

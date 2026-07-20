@@ -4932,7 +4932,20 @@ func (e *Editor) Run(filename string) error {
 // git hygiene allows it, mew-native otherwise.
 func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !e.usingOSFS {
-		return e.lib.NewFromHostFile(e.FS, filename)
+		buf, err := e.lib.NewFromHostFile(e.FS, filename)
+		if err != nil {
+			return nil, err
+		}
+		// The content is virtualized through the host FileSystem, but a mew-native
+		// editing lock still coordinates multiple mew instances editing the same
+		// path (it is an OS-level advisory lock under ~/.mew or the project, not
+		// written through the host FS; it also records a live foreign lock so the
+		// first edit prompts). Emacs locks need the real file's directory and so
+		// are not available on this path. Any lock failure is surfaced.
+		if reason := e.acquireMewLock(buf, filename); reason != "" {
+			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
+		}
+		return buf, nil
 	}
 	emacsLock, lockWarning := e.emacsLockDecision(filename)
 	buf, err := e.lib.OpenFile(filename, buffer.OpenOptions{
@@ -4949,7 +4962,9 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		// No emacs lock (config or git hygiene): fall back to a mew-native
 		// lock in the nearest .mew directory. Its most common catch is the
 		// user opening the same file in another mew window.
-		e.acquireMewLock(buf, filename)
+		if reason := e.acquireMewLock(buf, filename); reason != "" {
+			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
+		}
 	}
 	if owner, ok := buf.SourceLockOwner(); ok && owner != "" {
 		e.noteBuffer(buf, "lock", fmt.Sprintf("%s is being edited by %s", filepath.Base(filename), owner), true)
