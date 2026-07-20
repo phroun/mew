@@ -779,14 +779,28 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 			lineContent := strings.TrimRight(rawLine, "\n\r")
 			lineEnding := rawLine[len(lineContent):] // "", "\n", "\r\n", ...
 
-			// Link-as-button substitution (browse mode): swap in the display
-			// form of the line before any walk below sees it. nil disp — the
-			// common case — leaves the original path untouched.
+			// Browse-mode display transform: swap in the display form of the
+			// line before any walk below sees it. nil disp — the common case —
+			// leaves the original path untouched.
 			disp, dispSyn := sr.displayFor(w, docLine, lineContent)
 
+			// A double-width (heading) line: the terminal shows only the left
+			// half at 2x, so lay the content into half the columns and mark the
+			// row so present() emits the DECDWL mode.
+			lineWidth := contentWidth
+			if disp != nil && disp.DoubleWide {
+				lineWidth = contentWidth / 2
+				if lineWidth < 1 {
+					lineWidth = 1
+				}
+			}
+
 			// Prepare line for display with proper control character handling and selection
-			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, contentWidth, w.ViewState.ViewOffsetX, w, docLine, sel, disp, dispSyn)
+			displayLine := sr.prepareLineForDisplay(lineContent, lineEnding, lineWidth, w.ViewState.ViewOffsetX, w, docLine, sel, disp, dispSyn)
 			sr.Write(displayLine)
+			if disp != nil && disp.DoubleWide {
+				sr.frame.setRowWide()
+			}
 		} else {
 			// Empty line - fill with background color
 			sr.Write(textColor)

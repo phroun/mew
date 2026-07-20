@@ -58,3 +58,31 @@ func TestBrowseHeadingLevels(t *testing.T) {
 		t.Fatal("bold and underline attributes should appear on higher levels")
 	}
 }
+
+// L1/L2 headings render double-width: the row is emitted with DECDWL (ESC#6)
+// and an erase-to-end; a level-5 heading (no double-width) is not.
+func TestBrowseHeadingDoubleWidth(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t,
+		"====== Big ======\n", "[options]\nsyntax=dokuwiki\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	full := out.String()
+	if !strings.Contains(full, "\x1b#6") {
+		t.Fatal("an L1 heading row should emit DECDWL (ESC#6)")
+	}
+	if !strings.Contains(full, "\x1b[0K") {
+		t.Fatal("a double-width row should erase to end of line")
+	}
+
+	// A level-5 heading is not double-width.
+	e2, w2, out2 := renderedEditorWithConfig(t, "== Small ==\n", "[options]\nsyntax=dokuwiki\n")
+	w2.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w2.BrowseActive = true
+	out2.Reset()
+	e2.performRender()
+	if strings.Contains(out2.String(), "\x1b#6") {
+		t.Fatal("a level-5 heading must not be double-width")
+	}
+}

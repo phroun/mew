@@ -61,6 +61,15 @@ type backBuffer struct {
 	// one-time flipBidiForHost=auto terminal probe (RTL is the first point the
 	// setting matters).
 	sawRTL bool
+
+	// rowWide[y] draws that row double-width (DEC DECDWL, ESC#6): the terminal
+	// shows the row's left half at 2x and hides the right half, so the renderer
+	// lays content into the left half only. dispRowWide tracks what the terminal
+	// was last told, so the mode is (re)emitted only on change. A double-width
+	// row is always fully re-emitted (no cell diff) so no mid-row cursor address
+	// — which DECDWL would misplace — is ever used on it.
+	rowWide     []bool
+	dispRowWide []bool
 }
 
 // bbCell is one terminal cell. A width-2 glyph occupies a base cell (width 2)
@@ -100,6 +109,8 @@ func (b *backBuffer) reshape(w, h int) {
 	b.w, b.h = w, h
 	b.cur = make([][]bbCell, h)
 	b.disp = make([][]bbCell, h)
+	b.rowWide = make([]bool, h)
+	b.dispRowWide = make([]bool, h)
 	for y := 0; y < h; y++ {
 		b.cur[y] = make([]bbCell, w)
 		b.disp[y] = make([]bbCell, w)
@@ -122,6 +133,18 @@ func (b *backBuffer) begin() {
 		for x := 0; x < b.w; x++ {
 			row[x] = bbCell{width: 1}
 		}
+		if y < len(b.rowWide) {
+			b.rowWide[y] = false
+		}
+	}
+}
+
+// setRowWide marks the pen's current row double-width for this frame. The
+// renderer calls it after painting a double-width line; the content must
+// already be confined to the left half of the row.
+func (b *backBuffer) setRowWide() {
+	if b.penY >= 0 && b.penY < len(b.rowWide) {
+		b.rowWide[b.penY] = true
 	}
 }
 
@@ -132,7 +155,40 @@ func (b *backBuffer) forceRedraw() {
 		for x := 0; x < b.w; x++ {
 			b.disp[y][x] = bbCell{width: -1}
 		}
+		b.dispRowWide[y] = false // re-emit the line mode next present
 	}
+}
+
+// emitWideRow writes one double-width row in full: DECDWL, an erase-to-end (so
+// a terminal that mis-handles the right half shows no junk), then the row's
+// left-half cells (the only half DECDWL displays). No mid-row cursor
+// addressing is used. disp is synced so the normal diff skips this row.
+func (b *backBuffer) emitWideRow(sb *strings.Builder, y int) {
+	writeCUP(sb, y+1, 1)
+	sb.WriteString("\x1b#6")  // DECDWL: double-width line
+	sb.WriteString("\x1b[0K") // erase to end of line
+	half := b.w / 2
+	for x := 0; x < half; x++ {
+		nc := b.cur[y][x]
+		if nc.cont {
+			b.disp[y][x] = nc
+			continue
+		}
+		style := nc.style
+		if style == "" {
+			style = defaultStyleSeq
+		}
+		sb.WriteString(style)
+		sb.WriteString(runesOf(nc))
+		b.disp[y][x] = nc
+		if nc.width == 2 && x+1 < b.w {
+			b.disp[y][x+1] = b.cur[y][x+1]
+		}
+	}
+	for x := half; x < b.w; x++ {
+		b.disp[y][x] = b.cur[y][x] // synced (blank, off-screen right half)
+	}
+	b.dispRowWide[y] = true
 }
 
 // moveTo positions the pen (1-based, matching the terminal's CUP coordinates).
@@ -292,6 +348,23 @@ func (b *backBuffer) present(out io.Writer) {
 	if b.pendingClear {
 		sb.WriteString("\x1b[2J\x1b[H")
 		b.pendingClear = false
+	}
+
+	// Double-width rows are emitted fully here (no cell diff, so no mid-row
+	// cursor addressing lands on a DECDWL line), then the normal diff below
+	// skips them (their disp is synced). A row that stopped being double-width
+	// is reset to single-width and handed back to the diff to repaint.
+	for y := 0; y < b.h; y++ {
+		if b.rowWide[y] {
+			b.emitWideRow(&sb, y)
+		} else if b.dispRowWide[y] {
+			writeCUP(&sb, y+1, 1)
+			sb.WriteString("\x1b#5") // DECSWL: back to single-width
+			b.dispRowWide[y] = false
+			for x := 0; x < b.w; x++ {
+				b.disp[y][x] = bbCell{width: -1} // force the diff to repaint it
+			}
+		}
 	}
 
 	if b.flipBidi {
