@@ -154,9 +154,9 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 	}
 
 	lines := w.Buffer.GetLineCount()
-	e.executeCommand("accept|insert '\\n'")
+	e.executeCommand("nav_follow|accept|insert '\\n'")
 	if w.Buffer.GetLineCount() != lines {
-		t.Fatal("accept on a focused button must not insert a newline")
+		t.Fatal("nav_follow on a focused button must not insert a newline")
 	}
 	found := false
 	for _, nw := range e.WindowManager.AllWindows() {
@@ -165,16 +165,16 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("activating a button should show a 'Link: <target>' notification")
+		t.Fatal("nav_follow should show a 'Link: <target>' notification")
 	}
 
-	// Disarmed (caret mode), accept falls through to insert.
+	// Disarmed (caret mode), the chain falls through nav_follow -> insert.
 	if !e.navCancel() {
 		t.Fatal("nav_cancel should disarm")
 	}
-	e.executeCommand("accept|insert '\\n'")
+	e.executeCommand("nav_follow|accept|insert '\\n'")
 	if w.Buffer.GetLineCount() != lines+1 {
-		t.Fatal("accept in caret mode should fall through to insert")
+		t.Fatal("nav_follow in caret mode should fall through to insert")
 	}
 }
 
@@ -240,11 +240,90 @@ func TestLinkBrowsingGate(t *testing.T) {
 	}
 }
 
-// The ^C default chain leads with nav_cancel so browse mode disarms before
-// cancel/close, in both the builtin keymap and the processor's fallback.
-func TestNavCancelKeyChain(t *testing.T) {
-	e, _, _ := linkEditor(t, linkLine)
-	if got := e.KeyProcessor.GetMapping("^C"); got != "nav_cancel|cancel|buffer_close" {
-		t.Fatalf("^C = %q, want nav_cancel|cancel|buffer_close", got)
+// nav_next / nav_prior cycle the caret between links, and capture only while
+// a button is focused (so a fallthrough chain yields to editing otherwise).
+func TestNavNextPrior(t *testing.T) {
+	// Three links in document order: A (a:b) and B (b:c) on line 0, C (d:e)
+	// on line 2.
+	e, w, _ := linkEditor(t, "text [[a:b|Title]] mid [[b:c]] z\nplain line\ntail [[d:e]] end\n")
+
+	// Not inside a link: nav does not capture.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	e.updateBrowseState()
+	if e.navLink(+1) {
+		t.Fatal("nav_next must not capture when no button is focused")
+	}
+
+	// Enter link A, then nav_next walks A -> B -> C -> (wrap) A.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 8})
+	e.updateBrowseState()
+	if b := e.focusedLinkButton(w); b == nil || b.Target != "a:b" {
+		t.Fatalf("should focus link A; got %+v", b)
+	}
+	step := func(dir int, wantTarget string, wantLine int) {
+		t.Helper()
+		if !e.navLink(dir) {
+			t.Fatalf("nav should capture while a button is focused")
+		}
+		e.updateBrowseState()
+		b := e.focusedLinkButton(w)
+		if b == nil || b.Target != wantTarget {
+			t.Fatalf("after nav: want %s, got %+v", wantTarget, b)
+		}
+		if w.CursorPos().Line != wantLine {
+			t.Fatalf("after nav: want line %d, got %d", wantLine, w.CursorPos().Line)
+		}
+	}
+	step(+1, "b:c", 0)
+	step(+1, "d:e", 2)
+	step(+1, "a:b", 0) // wrapped to the first link
+	step(-1, "d:e", 2) // prior wraps back to the last
+	step(-1, "b:c", 0)
+	step(-1, "a:b", 0)
+}
+
+// nav_next respects linkBrowsing=no (never captures).
+func TestNavGatedByOption(t *testing.T) {
+	e, w, _ := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\nlinkBrowsing=no\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	e.updateBrowseState()
+	if e.navLink(+1) || e.navFollow() {
+		t.Fatal("nav must not act when linkBrowsing is off")
+	}
+}
+
+// The caret-hide predicate the renderer consults reports true exactly when a
+// button is focused, and the keymap wires the three nav commands.
+func TestNavKeymapAndCaretHide(t *testing.T) {
+	e, w, _ := linkEditor(t, linkLine)
+	// Exact for the no-escape bindings; prefix for the ones whose insert arg
+	// carries a control char (the parser unescapes \n/\t in mapping values).
+	for k, want := range map[string]string{
+		"^C":    "nav_cancel|cancel|buffer_close",
+		"S-tab": "nav_prior",
+	} {
+		if got := e.KeyProcessor.GetMapping(k); got != want {
+			t.Fatalf("%s = %q, want %q", k, got, want)
+		}
+	}
+	for k, prefix := range map[string]string{
+		"return": "nav_follow|accept|insert ",
+		"tab":    "nav_next|completion|insert ",
+	} {
+		if got := e.KeyProcessor.GetMapping(k); !strings.HasPrefix(got, prefix) {
+			t.Fatalf("%s = %q, want prefix %q", k, got, prefix)
+		}
+	}
+
+	// Caret-hide predicate: false outside a link, true on a focused button.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	e.updateBrowseState()
+	if e.focusedLinkButton(w) != nil {
+		t.Fatal("no button focused outside a link")
+	}
+	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	e.updateBrowseState()
+	if e.focusedLinkButton(w) == nil {
+		t.Fatal("button should be focused inside the link (caret then hides)")
 	}
 }

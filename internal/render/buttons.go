@@ -105,6 +105,13 @@ func (sr *ScreenRenderer) SetButtonProvider(p ButtonProvider) {
 	sr.buttonProvider = p
 }
 
+// SetCaretHiddenFn installs a predicate that hides the hardware caret for a
+// window even when it is on screen (the caret is inert inside a focused
+// button). nil never hides for this reason.
+func (sr *ScreenRenderer) SetCaretHiddenFn(fn func(w *window.Window) bool) {
+	sr.caretHiddenFn = fn
+}
+
 // displayFor returns the substituted display form of a document line, with a
 // display-aligned syntax color array spliced from the normal colorizer, or
 // nil when no buttons apply to the line (the common case).

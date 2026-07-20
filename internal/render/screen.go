@@ -53,6 +53,12 @@ type ScreenRenderer struct {
 	// mode); nil — the default — disables substitution entirely. See buttons.go.
 	buttonProvider ButtonProvider
 
+	// caretHiddenFn reports whether the hardware caret should be hidden for a
+	// window even though it is on screen — set by the editor to hide the caret
+	// while it is inert inside a focused button. nil = never hide for this
+	// reason.
+	caretHiddenFn func(w *window.Window) bool
+
 	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
 	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
 	// nil leaves the configured label verbatim.
@@ -437,6 +443,11 @@ func (sr *ScreenRenderer) Render(layout window.Layout) {
 			sr.renderSecondaryCursor(focusedWindow, windowLayout)
 			// Position the real cursor
 			hideCursor = sr.positionCursor(focusedWindow, windowLayout)
+		}
+		// The caret is inert inside a focused button: keep it positioned (so
+		// its column tracks) but hide the hardware cursor.
+		if sr.caretHiddenFn != nil && sr.caretHiddenFn(focusedWindow) {
+			hideCursor = true
 		}
 	}
 

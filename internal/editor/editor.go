@@ -701,6 +701,8 @@ func New(cfg Config) (*Editor, error) {
 	// Browse-mode link buttons: the renderer substitutes these per line at
 	// paint/measure time (see links.go); nil results leave lines untouched.
 	renderer.SetButtonProvider(e.lineButtons)
+	// Hide the hardware caret while it is inert inside a focused button.
+	renderer.SetCaretHiddenFn(func(w *window.Window) bool { return e.focusedLinkButton(w) != nil })
 
 	// Register editor commands with PawScript
 	e.registerCommands()
@@ -859,6 +861,23 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navCancel())
 	})
 
+	// nav_follow: activate the focused link button (transient notification for
+	// now). Fails when not in active browse mode, so nav_follow|accept|insert
+	// falls through to the normal Enter behavior.
+	ps.RegisterCommand("nav_follow", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navFollow())
+	})
+
+	// nav_next / nav_prior: move to the next/previous link (cycling). Capture
+	// only when a button is focused, so a tab = nav_next|... chain yields to
+	// editing when the caret is not inside a link.
+	ps.RegisterCommand("nav_next", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navLink(+1))
+	})
+	ps.RegisterCommand("nav_prior", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.navLink(-1))
+	})
+
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
@@ -881,11 +900,6 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("accept", func(ctx *pawscript.Context) pawscript.Result {
-		// A focused link button consumes accept: activate it (a transient
-		// notification until navigation lands) instead of inserting a newline.
-		if e.activateFocusedLink() {
-			return pawscript.BoolStatus(true)
-		}
 		focusedWindow := e.WindowManager.GetFocusedWindow()
 		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
 			// Capture callbacks before removing window

@@ -2067,8 +2067,9 @@ esc Y   =kill_ring_pop
 ^@ ,    =window_prior
 ^@ .    =window_next
 
-tab     =completion|insert '\t'
-return  =accept|insert '\n'
+tab     =nav_next|completion|insert '\t'
+S-tab   =nav_prior
+return  =nav_follow|accept|insert '\n'
 ^C      =nav_cancel|cancel|buffer_close
 ^R      =repeat_next
 

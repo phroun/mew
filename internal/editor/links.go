@@ -111,10 +111,11 @@ func (e *Editor) focusedLinkButton(w *window.Window) *linkSpan {
 	return e.caretLinkSpan(w)
 }
 
-// activateFocusedLink handles accept on a focused button: a transient
-// notification naming the destination (navigation itself comes later).
-// Reports false when no button is focused, so accept|insert falls through.
-func (e *Editor) activateFocusedLink() bool {
+// navFollow (the nav_follow command) activates the focused button: a
+// transient notification naming the destination (navigation itself comes
+// later). Reports false when not in active browse mode with a focused button,
+// so a nav_follow|accept|insert chain falls through.
+func (e *Editor) navFollow() bool {
 	w := e.WindowManager.GetFocusedWindow()
 	span := e.focusedLinkButton(w)
 	if span == nil {
@@ -122,6 +123,87 @@ func (e *Editor) activateFocusedLink() bool {
 	}
 	e.ShowNotification("Link: " + span.Target)
 	return true
+}
+
+// navLink (nav_next / nav_prior) moves the caret from the focused button to
+// the next (dir +1) or previous (dir -1) link in the document, cycling at the
+// ends. It captures (returns true) only when a button is currently focused —
+// so in a fallthrough chain (tab = nav_next|completion|insert) it yields to
+// editing whenever the caret is not inside a link. The move re-arms browse
+// mode on the new span via the main loop's updateBrowseState.
+func (e *Editor) navLink(dir int) bool {
+	w := e.WindowManager.GetFocusedWindow()
+	cur := e.focusedLinkButton(w)
+	if cur == nil {
+		return false
+	}
+	line, span, ok := e.siblingLink(w, cur, dir)
+	if !ok {
+		return false
+	}
+	// Land strictly inside the target (Start+1) so it focuses. Dokuwiki link
+	// spans are always >= 4 runes ("[[]]"), so Start+1 < End holds.
+	e.setCursorForNav(w, line, span.Start+1)
+	e.RequestRender()
+	return true
+}
+
+// siblingLink finds the link to move to from the currently focused span cur,
+// in direction dir, cycling through the document. The reference position is
+// cur's own start on the caret line, so the current link is skipped. ok is
+// false only when the buffer somehow has no links (cur guarantees at least
+// one, so cycling always finds a target — possibly cur itself).
+func (e *Editor) siblingLink(w *window.Window, cur *linkSpan, dir int) (int, linkSpan, bool) {
+	refLine := w.CursorPos().Line
+	refStart := cur.Start
+	n := w.Buffer.GetLineCount()
+
+	if dir >= 0 {
+		// Forward from the current line: first span past the reference, then
+		// the first span on any later line.
+		for L := refLine; L < n; L++ {
+			for _, s := range e.linkSpansOnLine(w, L) {
+				if L > refLine || s.Start > refStart {
+					return L, s, true
+				}
+			}
+		}
+		// Wrap: the first link in the document.
+		for L := 0; L < n; L++ {
+			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+				return L, spans[0], true
+			}
+		}
+		return 0, linkSpan{}, false
+	}
+
+	// Backward: last span before the reference on the current line, then the
+	// last span on any earlier line.
+	for L := refLine; L >= 0; L-- {
+		spans := e.linkSpansOnLine(w, L)
+		for i := len(spans) - 1; i >= 0; i-- {
+			if L < refLine || spans[i].Start < refStart {
+				return L, spans[i], true
+			}
+		}
+	}
+	// Wrap: the last link in the document.
+	for L := n - 1; L >= 0; L-- {
+		if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+			return L, spans[len(spans)-1], true
+		}
+	}
+	return 0, linkSpan{}, false
+}
+
+// setCursorForNav moves the caret to a link target and brings it on screen,
+// mirroring the bookkeeping a movement command does (ideal column reset, no
+// ghost, viewport follow).
+func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
+	w.SetCursorPos(window.Position{Line: line, Rune: runePos})
+	w.HasGhostCursor = false
+	w.IdealVisualColumn = 0
+	e.ensureCursorVisible(w)
 }
 
 // lineButtons is the renderer's ButtonProvider: the button replacements for
