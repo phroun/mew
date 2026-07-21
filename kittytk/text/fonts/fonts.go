@@ -37,15 +37,38 @@ var HebrewRegular []byte
 //go:embed NotoSansHebrew-Bold.ttf
 var HebrewBold []byte
 
-// Noto Naskh Arabic carries the Arabic Presentation Forms-A/B blocks
-// (U+FB50-FDFF, U+FE70-FEFF) as real cmap entries, so the terminal's
-// per-cell Arabic shaper — which emits a precomposed presentation-form
-// codepoint per cell (isolated/initial/medial/final + lam-alef ligature) —
-// resolves to properly connecting glyphs deterministically, without
-// depending on a system Arabic face being installed or winning fallback.
+// Noto Serif Hebrew: the DEFAULT Hebrew fallback — the more legible body face,
+// with the clearest niqqud. Registered before the sans Hebrew (above) in
+// fontdb so it wins the fallback; the sans stays addressable by name
+// ("Noto Sans Hebrew") for a sans look.
+
+//go:embed NotoSerifHebrew-Regular.ttf
+var HebrewSerifRegular []byte
+
+//go:embed NotoSerifHebrew-Bold.ttf
+var HebrewSerifBold []byte
+
+// Two Arabic faces. Both carry the Arabic Presentation Forms-A/B blocks
+// (U+FB50-FDFF, U+FE70-FEFF) as real cmap entries, which the terminal's
+// per-cell shaper needs — it emits a precomposed presentation-form codepoint
+// per cell (isolated/initial/medial/final + lam-alef ligature), so a face
+// must map those codepoints to render joined text at all.
+//
+// Naskh is the default Arabic fallback: the standard body-text style, most
+// legible at terminal sizes and with the clearest harakat (vowel marks) — the
+// right choice for reading and typing. Kufi is a geometric DISPLAY style,
+// embedded and addressable by name ("Noto Kufi Arabic") for a retro look when
+// wanted, but not the default because it tires the eye for running text.
+// Registration order (Naskh first, in fontdb) makes Naskh win the fallback.
 
 //go:embed NotoNaskhArabic-Regular.ttf
 var ArabicRegular []byte
 
 //go:embed NotoNaskhArabic-Bold.ttf
 var ArabicBold []byte
+
+//go:embed NotoKufiArabic-Regular.ttf
+var ArabicKufiRegular []byte
+
+//go:embed NotoKufiArabic-Bold.ttf
+var ArabicKufiBold []byte

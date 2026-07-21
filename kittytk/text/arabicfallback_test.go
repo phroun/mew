@@ -61,6 +61,36 @@ func TestArabicPresentationFormsResolve(t *testing.T) {
 	}
 }
 
+// Both Arabic styles are embedded: Naskh is the default (asserted above), Kufi
+// is addressable by name for a geometric/display look, and it too maps the
+// presentation forms the per-cell shaper emits.
+func TestArabicKufiAvailableByName(t *testing.T) {
+	db := newFontDB()
+	face := db.resolve(&core.Font{Name: "Noto Kufi Arabic"})
+	if got := familyName(face); got != "Noto Kufi Arabic" {
+		t.Fatalf("resolve by name = %q, want Noto Kufi Arabic", got)
+	}
+	if _, ok := face.NominalGlyph(0xFEDF); !ok {
+		t.Errorf("Noto Kufi Arabic lacks U+FEDF (lam initial) — unusable with the per-cell shaper")
+	}
+}
+
+// Hebrew: Serif is the default fallback (more legible, clearest niqqud), Sans
+// stays addressable by name. Covers a base letter (alef) and a niqqud mark.
+func TestHebrewDefaultsSerif(t *testing.T) {
+	db := newFontDB()
+	primary := db.resolve(&core.Font{Name: "Noto Sans Mono"}) // no Hebrew
+	fm := fallbackMap{db: db, primary: primary}
+	for _, r := range []rune{0x05D0 /* alef */, 0x05B4 /* hiriq niqqud */} {
+		if got := familyName(fm.ResolveFace(r)); got != "Noto Serif Hebrew" {
+			t.Errorf("U+%04X fell back to %q, want Noto Serif Hebrew (the default)", r, got)
+		}
+	}
+	if got := familyName(db.resolve(&core.Font{Name: "Noto Sans Hebrew"})); got != "Noto Sans Hebrew" {
+		t.Errorf("Noto Sans Hebrew should still resolve by name, got %q", got)
+	}
+}
+
 func familyName(f *gtfont.Face) string {
 	if f == nil {
 		return "<nil>"

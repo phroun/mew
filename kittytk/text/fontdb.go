@@ -89,10 +89,21 @@ func newFontDB() *fontDB {
 	must(db.register("Noto Sans", Aspect{Bold: true, Italic: true}, fonts.SansBoldItalic))
 	must(db.register("Noto Sans Mono", Aspect{}, fonts.MonoRegular))
 	must(db.register("Noto Sans Mono", Aspect{Bold: true}, fonts.MonoBold))
+	// Hebrew: Serif first, so it wins the per-rune fallback (the more legible
+	// body face, with the clearest niqqud). Noto Sans Hebrew stays registered
+	// after it — addressable by name for a sans look — but no longer the default.
+	must(db.register("Noto Serif Hebrew", Aspect{}, fonts.HebrewSerifRegular))
+	must(db.register("Noto Serif Hebrew", Aspect{Bold: true}, fonts.HebrewSerifBold))
 	must(db.register("Noto Sans Hebrew", Aspect{}, fonts.HebrewRegular))
 	must(db.register("Noto Sans Hebrew", Aspect{Bold: true}, fonts.HebrewBold))
+	// Arabic: Naskh first, so it wins the per-rune fallback for the terminal
+	// grid (the most legible body-text style). Kufi is registered too — a
+	// geometric display face addressable by name for a retro look — but comes
+	// after Naskh, so it never preempts the default.
 	must(db.register("Noto Naskh Arabic", Aspect{}, fonts.ArabicRegular))
 	must(db.register("Noto Naskh Arabic", Aspect{Bold: true}, fonts.ArabicBold))
+	must(db.register("Noto Kufi Arabic", Aspect{}, fonts.ArabicKufiRegular))
+	must(db.register("Noto Kufi Arabic", Aspect{Bold: true}, fonts.ArabicKufiBold))
 	must(db.register("Noto Sans Symbols 2", Aspect{}, fonts.Symbols2Regular))
 	must(db.register("Go", Aspect{}, goregular.TTF))
 	must(db.register("Go", Aspect{Bold: true}, gobold.TTF))
