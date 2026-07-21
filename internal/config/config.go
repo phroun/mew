@@ -518,6 +518,15 @@ type WindowConfig struct {
 	// family names, exactly like the set_font command does at runtime. Empty
 	// leaves the built-in default (the monospace face).
 	UITerm []string
+
+	// UITermCJK / UITermHebrew / UITermArabic re-point the per-script terminal
+	// font aliases ([window] ui_term_cjk / ui_term_hebrew / ui_term_arabic):
+	// the face used when the primary can't render a CJK / Hebrew / Arabic glyph,
+	// each an ordered fallback list. Empty leaves the embedded default (Noto
+	// Sans CJK, Noto Serif Hebrew, Noto Naskh Arabic).
+	UITermCJK    []string
+	UITermHebrew []string
+	UITermArabic []string
 }
 
 // FileIO is the file access the Manager uses for config, profile, and @include
@@ -1144,13 +1153,21 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 				}
 			}
 		}
-		if v, ok := win["ui_term"]; ok {
-			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
-				config.Window.UITerm = nil // default/inherit/blank -> built-in default
-			} else {
-				config.Window.UITerm = splitFontList(v)
+		// ui_term and the per-script ui_term_<class> keys each re-point a font
+		// alias at a fallback list; default/inherit/blank restores the built-in.
+		aliasList := func(key string, dst *[]string) {
+			if v, ok := win[key]; ok {
+				if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+					*dst = nil
+				} else {
+					*dst = splitFontList(v)
+				}
 			}
 		}
+		aliasList("ui_term", &config.Window.UITerm)
+		aliasList("ui_term_cjk", &config.Window.UITermCJK)
+		aliasList("ui_term_hebrew", &config.Window.UITermHebrew)
+		aliasList("ui_term_arabic", &config.Window.UITermArabic)
 	}
 
 	// Indicator glyphs

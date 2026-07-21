@@ -47,6 +47,43 @@ ui_term = "JetBrainsMono, Monday"
 	}
 }
 
+// The per-script ui_term_<class> aliases each fire through FontSink at startup.
+func TestApplyFontConfigScriptClasses(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	cfg.ConfigText = ptrTo(`
+[window]
+ui_term_cjk = "Noto Sans CJK JP"
+ui_term_hebrew = "SBL Hebrew"
+ui_term_arabic = "Noto Kufi Arabic"
+`)
+	got := map[string][]string{}
+	cfg.FontSink = func(alias string, names []string) bool {
+		got[alias] = names
+		return true
+	}
+
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { settleBackups(e) })
+
+	for alias, want := range map[string]string{
+		"ui-term-cjk": "Noto Sans CJK JP", "ui-term-hebrew": "SBL Hebrew",
+		"ui-term-arabic": "Noto Kufi Arabic",
+	} {
+		if len(got[alias]) != 1 || got[alias][0] != want {
+			t.Errorf("FontSink[%q] = %v, want [%q]", alias, got[alias], want)
+		}
+	}
+	if _, fired := got["ui-term"]; fired {
+		t.Errorf("ui-term should not fire when only script classes are set")
+	}
+}
+
 // With no [fonts]/[window] font config, neither sink fires (a plain terminal
 // owns its own fonts).
 func TestApplyFontConfigNoConfig(t *testing.T) {

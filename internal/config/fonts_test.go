@@ -32,6 +32,26 @@ ui_term = "JetBrainsMono, Monday"
 	}
 }
 
+// The per-script terminal font aliases parse into their own fallback lists.
+func TestFontConfigScriptClasses(t *testing.T) {
+	m := NewManager()
+	c := m.LoadFromString(`
+[window]
+ui_term_cjk = "Noto Sans Mono CJK JP, Noto Sans CJK SC"
+ui_term_hebrew = SBL Hebrew
+ui_term_arabic = "Noto Kufi Arabic"
+`)
+	if len(c.Window.UITermCJK) != 2 || c.Window.UITermCJK[0] != "Noto Sans Mono CJK JP" {
+		t.Errorf("UITermCJK = %v", c.Window.UITermCJK)
+	}
+	if len(c.Window.UITermHebrew) != 1 || c.Window.UITermHebrew[0] != "SBL Hebrew" {
+		t.Errorf("UITermHebrew = %v", c.Window.UITermHebrew)
+	}
+	if len(c.Window.UITermArabic) != 1 || c.Window.UITermArabic[0] != "Noto Kufi Arabic" {
+		t.Errorf("UITermArabic = %v", c.Window.UITermArabic)
+	}
+}
+
 // A single unquoted ui_term value is a one-element fallback list; a plain
 // fonts_path is one directory.
 func TestFontConfigSingleValues(t *testing.T) {
