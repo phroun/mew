@@ -2,19 +2,53 @@ package trinkets
 
 import (
 	"image"
+	"strings"
 	"testing"
 
 	"github.com/phroun/purfecterm"
 )
 
-// The gfx renderer joins cursive Arabic by extending each letter's own
-// connecting stroke from its real ink edge out to the cell boundary. These
-// tests lock in that a joined form reaches the cell edge (so adjacent cells
-// connect) while an unjoined form stays clear — the regression the Arabic work
-// chased (a centered letter with no connecting stroke looked broken apart).
+// The gfx renderer joins cursive Arabic by shaping a five-piece window —
+// prev + tatweel + letter + tatweel + next — as ONE run (so the font's GSUB
+// produces the true joined forms) and cutting this cell's piece out by cluster
+// position, stretching the tatweel connectors to the cell edges. These tests
+// lock in that the joined pieces really reach the edges and that adjacent
+// cells connect at their shared boundary.
 
-// A medial form asked to join on both sides paints ink to BOTH cell edges;
-// asked to join on neither, it stays centered with clear edges.
+func colInked(img *image.RGBA, x int) bool {
+	b := img.Bounds()
+	if x < b.Min.X || x >= b.Max.X {
+		return false
+	}
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		if img.RGBAAt(x, y).A != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// renderArabicCell mirrors the paint path for one visual cell of a word.
+func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, boxH int, ppu float64) *image.RGBA {
+	t.Helper()
+	var leftCh, rightCh rune
+	if i > 0 {
+		leftCh = visual[i-1]
+	}
+	if i+1 < len(visual) {
+		rightCh = visual[i+1]
+	}
+	shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, visual[i], rightCh)
+	if suppress {
+		return image.NewRGBA(image.Rect(0, 0, boxW, boxH))
+	}
+	kashL, kashR := arabicKashida(visual[i], leftCh, rightCh)
+	actx := arabicRenderContext(visual[i], shaped, leftCh, rightCh, kashL, kashR)
+	return term.cellTextImage(actx.s, "ui-term", false, false, boxW, boxH, ppu, false, visual[i], kashL, kashR, actx)
+}
+
+// A medial letter with joining neighbours paints ink to BOTH cell edges; an
+// isolated letter (space neighbours) keeps clear edges.
 func TestArabicKashidaReachesEdges(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -24,25 +58,22 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 24, 32, 1.0
 
-	medialAin := "ﻌ" // U+FECC, joins on both sides
-	joined := term.cellTextImage(medialAin, "ui-term", false, false, boxW, boxH, ppu, false, 'ﻌ', true, true)
+	joined := renderArabicCell(t, term, []rune{'ل', 'ي', 'ك'}, 1, boxW, boxH, ppu)
 	if !colInked(joined, 0) || !colInked(joined, boxW-1) {
-		t.Errorf("joined medial form should reach both cell edges; left=%v right=%v",
+		t.Errorf("medial yeh should reach both cell edges; left=%v right=%v",
 			colInked(joined, 0), colInked(joined, boxW-1))
 	}
 
-	// New cache key (kashL/kashR false) — must not be served the joined mask.
-	lone := term.cellTextImage(medialAin, "ui-term", false, false, boxW, boxH, ppu, false, 'ﻌ', false, false)
+	lone := renderArabicCell(t, term, []rune{' ', 'ي', ' '}, 1, boxW, boxH, ppu)
 	if colInked(lone, 0) || colInked(lone, boxW-1) {
-		t.Errorf("unjoined form should stay centered with clear edges; left=%v right=%v",
+		t.Errorf("isolated yeh should keep clear edges; left=%v right=%v",
 			colInked(lone, 0), colInked(lone, boxW-1))
 	}
 }
 
-// End to end over a real word: laying out عليكم in visual cells and shaping +
-// joining each cell as the paint loop does, every interior cell boundary is
-// bridged — some row has ink in both the left cell's last column and the right
-// cell's first column, so the letters visibly connect.
+// End to end over عليكم: every interior cell boundary is bridged — some row has
+// ink in both the left cell's last column and the right cell's first column.
+// The stitched word is logged as ASCII so joins can be inspected by eye.
 func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -50,30 +81,37 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	if term.gfxEngine() == nil {
 		t.Skip("no gfx engine")
 	}
-	const boxW, boxH, ppu = 14, 30, 1.0
+	const boxW, boxH, ppu = 16, 30, 2.0
 
 	// Visual order (RTL reversed to LTR cells) for logical ع ل ي ك م.
 	visual := []rune{'م', 'ك', 'ي', 'ل', 'ع'}
 	masks := make([]*image.RGBA, len(visual))
-	for i, ch := range visual {
-		var leftCh, rightCh rune
-		if i > 0 {
-			leftCh = visual[i-1]
-		}
-		if i+1 < len(visual) {
-			rightCh = visual[i+1]
-		}
-		shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, ch, rightCh)
-		if suppress {
-			masks[i] = image.NewRGBA(image.Rect(0, 0, boxW, boxH))
-			continue
-		}
-		kashL, kashR := arabicKashida(ch, leftCh, rightCh)
-		// Exercise the real render path: ZWJ-joined base letters, not the legacy
-		// presentation-form codepoint.
-		shapeStr := arabicRenderString(ch, shaped, kashL, kashR)
-		masks[i] = term.cellTextImage(shapeStr, "ui-term", false, false, boxW, boxH, ppu, false, ch, kashL, kashR)
+	for i := range visual {
+		masks[i] = renderArabicCell(t, term, visual, i, boxW, boxH, ppu)
 	}
+
+	stitched := image.NewRGBA(image.Rect(0, 0, boxW*len(masks), boxH))
+	for i, m := range masks {
+		if m != nil {
+			compositeInto(stitched, m, i*boxW, 0)
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("\n")
+	for y := 0; y < boxH; y++ {
+		for x := 0; x < boxW*len(masks); x++ {
+			if x > 0 && x%boxW == 0 {
+				sb.WriteString("|")
+			}
+			if stitched.RGBAAt(x, y).A > 32 {
+				sb.WriteString("#")
+			} else {
+				sb.WriteString(".")
+			}
+		}
+		sb.WriteString("\n")
+	}
+	t.Log(sb.String())
 
 	bridged := func(left, right *image.RGBA) bool {
 		for y := 0; y < boxH; y++ {

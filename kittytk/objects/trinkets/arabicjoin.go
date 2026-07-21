@@ -15,9 +15,9 @@ package trinkets
 // Persian/Urdu): these letters connect to the previous letter but not the next.
 var arabicRightJoining = map[rune]bool{
 	0x0622: true, 0x0623: true, 0x0624: true, 0x0625: true, 0x0627: true, // alef family, waw-hamza
-	0x0629: true,                             // teh marbuta
-	0x062F: true, 0x0630: true,               // dal, thal
-	0x0631: true, 0x0632: true,               // ra, zay
+	0x0629: true,               // teh marbuta
+	0x062F: true, 0x0630: true, // dal, thal
+	0x0631: true, 0x0632: true, // ra, zay
 	0x0648: true,                             // waw
 	0x0671: true,                             // alef wasla
 	0x0688: true, 0x0691: true, 0x0698: true, // ddal, rreh, jeh
@@ -60,42 +60,60 @@ func arabicJoinsPrev(r rune) bool {
 	return isArabicLetter(r) && !arabicNonJoining[r]
 }
 
-// arabicRenderString builds the string the gfx renderer actually shapes for an
-// Arabic cell. Rather than a legacy presentation-form codepoint (U+FE70..FEFF)
-// — which many fonts, notably the macOS system Arabic faces, do NOT carry in
-// their cmap, implementing joining through GSUB on the BASE letters instead —
-// it returns the base letter(s) flanked by Zero-Width Joiners so the font's own
-// shaping selects the contextual (isolated/initial/medial/final) form. A leading
-// ZWJ requests a join toward the preceding letter (kashR, the right visual
-// edge); a trailing ZWJ a join toward the following letter (kashL, the left
-// visual edge). A lam-alef ligature form is reconstructed as the lam+alef base
-// pair so the font forms the mandatory ligature via GSUB.
-//
-// form is ShapeArabicCellVisual's presentation-form result, used only to detect
-// (and rebuild) the lam-alef ligatures; base is the cell's own letter.
-func arabicRenderString(base, form rune, kashL, kashR bool) string {
-	const zwj = "‍"
-	var seq string
+// arabicCellShape describes what one Arabic cell shapes and which slice of the
+// shaped run belongs on screen. The renderer shapes S — a five-piece window of
+// LOGICAL text, prev + tatweel + letter + tatweel + next (pieces present only
+// on sides that join) — as ONE run, so the shaper produces the true joined
+// forms with real connecting strokes, then cuts the neighbour letters off the
+// ends by cluster position and keeps the letter plus its tatweel connectors.
+// Rune ranges are half-open indices into S's runes; -1 marks an absent piece.
+type arabicCellShape struct {
+	s          string // logical window text (bidi/shaping handled by the engine)
+	seg0, seg1 int    // the cell's own letter (or lam-alef ligature pair)
+	rt0, rt1   int    // tatweel toward the logically-PREV letter (visual right)
+	lt0, lt1   int    // tatweel toward the logically-NEXT letter (visual left)
+}
+
+// arabicRenderContext builds the five-piece shaping window for one cell.
+// leftBase/rightBase are the VISUAL neighbours (cells are visual order, RTL
+// reversed), so the logical previous letter is rightBase and the logical next
+// is leftBase. kashL/kashR come from arabicKashida and are true only when both
+// letters actually join across that edge, so a non-joining side contributes
+// neither a neighbour nor a tatweel and the letter takes its correct
+// final/initial/isolated form. form is ShapeArabicCellVisual's result, used
+// only to detect lam-alef ligatures (rebuilt as the base pair so the font's
+// GSUB forms the mandatory ligature; the alef half's cell is suppressed
+// upstream). Legacy presentation-form codepoints are never emitted — many
+// faces (notably the macOS system Arabic fonts) do not carry that block.
+func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR bool) *arabicCellShape {
+	var seq []rune
 	switch form {
 	case 0xFEF5, 0xFEF6:
-		seq = "لآ" // lam + alef with madda
+		seq = []rune{'ل', 'آ'} // lam + alef with madda
 	case 0xFEF7, 0xFEF8:
-		seq = "لأ" // lam + alef with hamza above
+		seq = []rune{'ل', 'أ'} // lam + alef with hamza above
 	case 0xFEF9, 0xFEFA:
-		seq = "لإ" // lam + alef with hamza below
+		seq = []rune{'ل', 'إ'} // lam + alef with hamza below
 	case 0xFEFB, 0xFEFC:
-		seq = "لا" // lam + alef
+		seq = []rune{'ل', 'ا'} // lam + alef
 	default:
-		seq = string(base)
+		seq = []rune{base}
 	}
-	pre, post := "", ""
-	if kashR {
-		pre = zwj
+	ctx := &arabicCellShape{rt0: -1, rt1: -1, lt0: -1, lt1: -1}
+	var rs []rune
+	if kashR { // logical prev = visual right neighbour
+		rs = append(rs, rightBase, 'ـ')
+		ctx.rt0, ctx.rt1 = 1, 2
 	}
-	if kashL {
-		post = zwj
+	ctx.seg0 = len(rs)
+	rs = append(rs, seq...)
+	ctx.seg1 = len(rs)
+	if kashL { // logical next = visual left neighbour
+		ctx.lt0, ctx.lt1 = len(rs), len(rs)+1
+		rs = append(rs, 'ـ', leftBase)
 	}
-	return pre + seq + post
+	ctx.s = string(rs)
+	return ctx
 }
 
 // arabicKashida returns whether a cell holding base (with visual neighbours

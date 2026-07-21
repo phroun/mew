@@ -420,16 +420,16 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
 					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
 					dc := cell
-					shapeStr := ""
+					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
-						// Shape the base letter (ZWJ-joined) so the font's GSUB
-						// picks the contextual form — robust across faces that
-						// lack the legacy presentation-form codepoints.
-						shapeStr = arabicRenderString(cell.Char, shaped, kashL, kashR)
+						// Shape a five-piece window (neighbours + tatweels +
+						// letter) as one run so the font's GSUB joins for real;
+						// the renderer cuts this cell's piece out of it.
+						actx = arabicRenderContext(cell.Char, shaped, leftCh, rightCh, kashL, kashR)
 					} else {
 						dc.Char = shaped
 					}
-					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth, kashL, kashR, shapeStr)
+					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth, kashL, kashR, actx)
 				}
 			}
 
@@ -549,7 +549,7 @@ func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) s
 // gtk stretch/center rules, and caches it keyed WITHOUT color. Callers tint the
 // mask with the cell's foreground at draw time (DrawImageMaskTintOffset), so a
 // glyph shown in many colors rasterizes once and re-tints per cell.
-func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune, kashL, kashR bool) *image.RGBA {
+func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune, kashL, kashR bool, actx *arabicCellShape) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
 	}
@@ -599,8 +599,23 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	sp := eng.ShapeRun(f, str)
 	naturalW := int(math.Round(float64(sp.Width()) * ppu))
 	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
+	// LineHeight is the PRIMARY face's line box; a run that falls back to a
+	// taller face (e.g. Arabic → Noto Naskh, whose ascent+descent exceeds the
+	// mono line height) would then be rasterized into a box too short and have
+	// its lower half — deep descenders and the connecting curves that dip below
+	// the baseline — clipped away before it reaches the cell. Grow the canvas to
+	// the shaped run's real vertical extent so nothing is cut off.
+	if len(sp.Lines) > 0 {
+		l := &sp.Lines[0]
+		if ext := int(math.Round(float64(l.Baseline+l.Descent+l.Gap) * ppu)); ext > naturalH {
+			naturalH = ext
+		}
+	}
 	if naturalW <= 0 {
 		naturalW = 1
+	}
+	if naturalH <= 0 {
+		naturalH = 1
 	}
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
 	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
@@ -610,37 +625,57 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
-	if purfecterm.ScriptClass(ch) == "arabic" {
-		// Arabic is cursive: centering each letter would strand its joining
-		// strokes mid-cell so neighbours never touch. Draw the letter at natural
-		// width, centered (body never distorted), then — only on sides that
-		// actually join (kashL/kashR, from the Unicode joining type) — extend the
-		// letter's OWN connecting stroke out to the cell edge, so adjacent cells
-		// meet at the boundary. The stroke is replicated from the letter's real
-		// ink edge (not its advance box), so a face with side bearing does not
-		// leave the join floating. This reuses the glyph's designed stroke rather
-		// than a separately-shaped tatweel, which need not share the letters'
-		// baseline in whatever face the host resolves. A ligature wider than the
-		// cell (lam-alef) is fit to width; an isolated form (no join) is untouched.
-		g := raw
-		gw := naturalW
-		if gw > boxWPx {
-			gw = boxWPx
+	if actx != nil {
+		// Arabic: str is the five-piece shaping window (prev + tatweel + letter
+		// + tatweel + next, joining sides only), shaped above as ONE run so the
+		// font's own GSUB produced the true joined forms with real connecting
+		// strokes. Cut the cell's piece out by cluster position: keep the letter
+		// (or lam-alef ligature), centred; cut the neighbour letters off the
+		// ends; and stretch each side's tatweel slice — genuinely joined to the
+		// letter in the shaped image — across the remaining gap to the cell
+		// edge, meeting the neighbour cell's stroke at the boundary. Kashida
+		// elongation is exactly this stretch, so the join is the designer's
+		// stroke at the letters' true baseline.
+		b0, b1, okB := sp.RuneSpanX(actx.seg0, actx.seg1)
+		var letter *image.RGBA
+		if okB {
+			letter = cropCols(raw, int(math.Floor(b0*ppu)), int(math.Ceil(b1*ppu)))
 		}
-		if gw != naturalW || naturalH != boxHPx {
-			g = scaleRGBA(raw, gw, boxHPx)
+		if letter == nil {
+			letter = raw // no cluster data — draw the whole window, centred
 		}
-		gw = g.Rect.Dx()
-		xo := (boxWPx - gw) / 2
+		lw := letter.Rect.Dx()
+		if lw > boxWPx {
+			lw = boxWPx
+		}
+		if lw != letter.Rect.Dx() || letter.Rect.Dy() != boxHPx {
+			letter = scaleRGBA(letter, lw, boxHPx)
+			lw = letter.Rect.Dx()
+		}
+		xo := (boxWPx - lw) / 2
 		if xo < 0 {
 			xo = 0
 		}
-		compositeInto(out, g, xo, 0)
-		if kashR {
-			extendArabicStroke(out, boxWPx, boxHPx, true)
+		compositeInto(out, letter, xo, 0)
+		fillSide := func(t0, t1 int, dstX, dstW int) {
+			if dstW <= 0 {
+				return
+			}
+			u0, u1, ok := sp.RuneSpanX(t0, t1)
+			if !ok {
+				return
+			}
+			seg := cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu)))
+			if seg == nil {
+				return
+			}
+			compositeInto(out, scaleRGBA(seg, dstW, boxHPx), dstX, 0)
 		}
-		if kashL {
-			extendArabicStroke(out, boxWPx, boxHPx, false)
+		if actx.rt0 >= 0 { // toward the logical prev = visual right edge
+			fillSide(actx.rt0, actx.rt1, xo+lw, boxWPx-(xo+lw))
+		}
+		if actx.lt0 >= 0 { // toward the logical next = visual left edge
+			fillSide(actx.lt0, actx.lt1, 0, xo)
 		}
 	} else {
 		var placed *image.RGBA
@@ -682,82 +717,14 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	return out
 }
 
-// extendArabicStroke connects the Arabic letter already composited into out to
-// its neighbour on one side (right = toward the logically-previous letter) by
-// replicating the letter's OWN connecting-stroke pixels from its real ink edge
-// out to the cell boundary, so adjacent cells meet.
-//
-// It scans inward from the cell edge for the letter's outermost inked column —
-// which for a connecting form is the tip of its baseline joining stroke — and
-// copies that column's inked pixels across the remaining gap. Anchoring at the
-// real ink (not the glyph's advance box) means a face with side bearing does not
-// leave the join floating; reusing the letter's own pixels means the join is the
-// designer's stroke at exactly the letters' baseline, with no separately-shaped
-// tatweel that might land at a different height in whatever face the host
-// resolves. An isolated form has no ink toward that side (its outermost column
-// is the cell edge itself, or empty), so nothing is drawn.
-func extendArabicStroke(out *image.RGBA, boxWPx, boxHPx int, right bool) {
-	// Outermost inked column on this side.
-	edge := -1
-	if right {
-		for x := boxWPx - 1; x >= 0; x-- {
-			if colInked(out, x) {
-				edge = x
-				break
-			}
-		}
-		if edge < 0 || edge >= boxWPx-1 {
-			return
-		}
-		for y := 0; y < boxHPx; y++ {
-			if c := out.RGBAAt(edge, y); c.A != 0 {
-				for x := edge + 1; x < boxWPx; x++ {
-					out.SetRGBA(x, y, c)
-				}
-			}
-		}
-		return
-	}
-	for x := 0; x < boxWPx; x++ {
-		if colInked(out, x) {
-			edge = x
-			break
-		}
-	}
-	if edge <= 0 {
-		return
-	}
-	for y := 0; y < boxHPx; y++ {
-		if c := out.RGBAAt(edge, y); c.A != 0 {
-			for x := 0; x < edge; x++ {
-				out.SetRGBA(x, y, c)
-			}
-		}
-	}
-}
-
-// colInked reports whether column x of img has any inked pixel.
-func colInked(img *image.RGBA, x int) bool {
-	b := img.Bounds()
-	if x < b.Min.X || x >= b.Max.X {
-		return false
-	}
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		if img.RGBAAt(x, y).A != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // drawCellText renders one cell's character with all scaling rules,
 // including double-width/height lines (top/bottom halves clipped).
 func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family string, fg purfecterm.Color,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64, kashL, kashR bool, shapeStr string) {
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64, kashL, kashR bool, actx *arabicCellShape) {
 
 	str := cell.String()
-	if shapeStr != "" {
-		str = shapeStr // Arabic: the ZWJ-joined base letters to shape
+	if actx != nil {
+		str = actx.s // Arabic: the five-piece shaping window (also the cache key)
 	}
 	boxW := int(math.Round(cellW * ppu))
 	contentH := int(math.Round(cellH * ppu))
@@ -766,15 +733,10 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 	wide := cellVisualWidth > 1.0
 
 	frgb := pcRGBA(fg)
-	if shapeStr != "" {
-		// TEMP DIAGNOSTIC: force Arabic cells to bright white so it is obvious
-		// whether this shaping path is the one on screen. Remove after checking.
-		frgb.R, frgb.G, frgb.B = 255, 255, 255
-	}
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
 		if mask == nil {
 			return
 		}
@@ -787,7 +749,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		}
 		clip.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	default:
-		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char, kashL, kashR)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
 		if mask == nil {
 			return
 		}
@@ -825,6 +787,24 @@ func compositeInto(dst, src *image.RGBA, xOff, yOff int) {
 			}
 		}
 	}
+}
+
+// cropCols returns the column slice [x0,x1) of src at full height, or nil if
+// the clamped range is empty. Used to cut one cluster's pixels out of a shaped
+// Arabic window.
+func cropCols(src *image.RGBA, x0, x1 int) *image.RGBA {
+	if x0 < 0 {
+		x0 = 0
+	}
+	if x1 > src.Rect.Dx() {
+		x1 = src.Rect.Dx()
+	}
+	if x1 <= x0 {
+		return nil
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, x1-x0, src.Rect.Dy()))
+	compositeInto(dst, src, -x0, 0)
+	return dst
 }
 
 // ---------------------------------------------------------------
@@ -1373,13 +1353,13 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				if !suppress {
 					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
 					dc := cell
-					shapeStr := ""
+					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
-						shapeStr = arabicRenderString(cell.Char, shaped, kashL, kashR)
+						actx = arabicRenderContext(cell.Char, shaped, leftCh, rightCh, kashL, kashR)
 					} else {
 						dc.Char = shaped
 					}
-					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0, kashL, kashR, shapeStr)
+					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0, kashL, kashR, actx)
 				}
 			}
 		}
