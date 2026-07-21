@@ -350,12 +350,24 @@ func (sr *ScreenRenderer) EnableMouseReporting() {
 	fmt.Fprint(sr.out, "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h")
 }
 
+// EnableGraphemeWidth requests DEC private mode 2027 (grapheme-cluster width):
+// the terminal measures a cell's width per grapheme cluster — East Asian wide
+// glyphs, ZWJ emoji, combining sequences — the same model mew's own textwidth
+// uses to lay out and place the caret. Emitting it aligns the terminal (mew's
+// purfecterm, or any host that honors 2027) with those expectations; terminals
+// that do not implement the mode ignore the unknown DECSET. Written directly, a
+// mode switch, not a frame. Reset by Cleanup.
+func (sr *ScreenRenderer) EnableGraphemeWidth() {
+	fmt.Fprint(sr.out, "\x1b[?2027h")
+}
+
 // Cleanup restores terminal state. It writes directly to the terminal
 // (bypassing the back buffer) because it runs at shutdown, after the last
 // frame, when there is no present() to flush the buffer. Mouse reporting is
-// turned back off so the terminal's own selection returns to the user.
+// turned back off so the terminal's own selection returns to the user, and the
+// grapheme-width mode (2027) is reset for symmetry.
 func (sr *ScreenRenderer) Cleanup() {
-	fmt.Fprintf(sr.out, "\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
+	fmt.Fprintf(sr.out, "\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
 }
 
 // ClearScreen forces a full clear-and-repaint on the next presented frame.

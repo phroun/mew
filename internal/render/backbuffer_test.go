@@ -110,6 +110,35 @@ func TestBackBufferIdenticalFrameEmitsNoContent(t *testing.T) {
 	}
 }
 
+// present() coalesces SGR: a run of same-styled cells emits its style once and
+// keeps the glyphs contiguous (no escape injected between them, which a terminal
+// needs for Arabic shaping / grapheme joining); a style change re-emits.
+func TestBackBufferCoalescesRunSGR(t *testing.T) {
+	b := newBackBuffer(10, 2)
+	out := paint(b, mv(1, 1), wr("\x1b[0;37;40mabc"))
+	if n := strings.Count(out, "\x1b[0;37;40m"); n != 1 {
+		t.Errorf("same-style run should emit its SGR once, got %d: %q", n, out)
+	}
+	if !strings.Contains(out, "\x1b[0;37;40mabc") {
+		t.Errorf("same-style glyphs must stay contiguous after one SGR: %q", out)
+	}
+
+	// Arabic run: the two letters must be adjacent in the stream (one SGR ahead
+	// of both), so the terminal can join them.
+	b2 := newBackBuffer(10, 2)
+	out2 := paint(b2, mv(1, 1), wr("\x1b[0;37;40mلا"))
+	if !strings.Contains(out2, "\x1b[0;37;40mلا") {
+		t.Errorf("adjacent Arabic letters must not be split by an SGR: %q", out2)
+	}
+
+	// A color change still re-emits the style at the boundary.
+	b3 := newBackBuffer(10, 2)
+	out3 := paint(b3, mv(1, 1), wr("\x1b[0;37;40ma\x1b[0;91;40mb"))
+	if !strings.Contains(out3, "\x1b[0;37;40ma\x1b[0;91;40mb") {
+		t.Errorf("a color change must re-emit the SGR: %q", out3)
+	}
+}
+
 func TestBackBufferWideRune(t *testing.T) {
 	b := newBackBuffer(10, 2)
 	out := paint(b, mv(1, 1), wr("\x1b[0m日x"))

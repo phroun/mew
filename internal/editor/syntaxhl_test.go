@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/window"
@@ -18,6 +19,54 @@ const (
 	sgrConstant = "\x1b[0;91;40m"
 	sgrType     = "\x1b[0;93;40m"
 )
+
+// escEnd returns the index just past the terminal escape sequence at s[i:]
+// (i points at ESC): a CSI (ESC [ … final) or a two/three-byte ESC form.
+func escEnd(s string, i int) int {
+	if i+1 >= len(s) {
+		return i + 1
+	}
+	switch s[i+1] {
+	case '[':
+		j := i + 2
+		for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+			j++
+		}
+		return j + 1 // include the final byte
+	case '#', '(', ')', '*', '+':
+		return i + 3
+	default:
+		return i + 2
+	}
+}
+
+// expandSGR rewrites a (now SGR-coalesced) terminal stream back into the
+// one-SGR-per-glyph form the highlight assertions were written against: it
+// tracks the pen (the last CSI '…m') and re-emits it before every printable
+// rune, dropping other escapes. So a "<sgr><glyph>" check verifies the glyph's
+// EFFECTIVE style regardless of whether present() actually repeated the SGR.
+func expandSGR(raw string) string {
+	var out strings.Builder
+	pen := ""
+	for i := 0; i < len(raw); {
+		if raw[i] == 0x1b {
+			j := escEnd(raw, i)
+			if seq := raw[i:j]; strings.HasPrefix(seq, "\x1b[") && strings.HasSuffix(seq, "m") {
+				pen = seq
+			}
+			i = j
+			continue
+		}
+		_, sz := utf8.DecodeRuneInString(raw[i:])
+		if sz == 0 {
+			sz = 1
+		}
+		out.WriteString(pen)
+		out.WriteString(raw[i : i+sz])
+		i += sz
+	}
+	return out.String()
+}
 
 // renderedEditorWithConfig is newRenderedEditor with a full custom config
 // text (for [syntax.*] sections and the syntax option).
@@ -230,7 +279,7 @@ func TestBuiltinGrammarsSmoke(t *testing.T) {
 			}
 			out.Reset()
 			e.performRender()
-			if !strings.Contains(out.String(), c.wantSGR+c.before) {
+			if !strings.Contains(expandSGR(out.String()), c.wantSGR+c.before) {
 				t.Fatalf("expected %q before %q in rendered %s output",
 					c.wantSGR, c.before, c.grammar)
 			}
@@ -483,7 +532,7 @@ func TestDokuwikiGrammar(t *testing.T) {
 	w.BrowseAutoArmed = true // caret-mode colors: model a user who ^C'd out of browse
 	out.Reset()
 	e.performRender()
-	raw := out.String()
+	raw := expandSGR(out.String()) // present() coalesces SGR; expand to check effective styles
 	if !strings.Contains(raw, sgrKeyword+"=") {
 		t.Fatal("headings should color via Heading -> syntaxKeyword")
 	}
@@ -556,7 +605,7 @@ func TestJavascriptRegexLiterals(t *testing.T) {
 		e, _, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=javascript\n")
 		out.Reset()
 		e.performRender()
-		return out.String()
+		return expandSGR(out.String()) // coalesced SGR -> per-glyph, for effective-style checks
 	}
 
 	// Expression position: /ab+c/g is a regex (Regexp -> syntaxString).
@@ -661,7 +710,7 @@ func TestConfGrammarMewRules(t *testing.T) {
 		e, _, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=conf\n")
 		out.Reset()
 		e.performRender()
-		return out.String()
+		return expandSGR(out.String()) // coalesced SGR -> per-glyph, for effective-style checks
 	}
 
 	// A mid-line ';' is value text (a mappings command separator), not a

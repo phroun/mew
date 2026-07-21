@@ -50,6 +50,16 @@ type backBuffer struct {
 	// everything — set on resize and by ForceRedraw/screen_refresh.
 	pendingClear bool
 
+	// emitPen is the SGR currently in effect on the terminal during present():
+	// the last style putStyle emitted. Same-style cells then skip re-emitting the
+	// sequence, which both shrinks the byte stream and keeps adjacent glyphs
+	// contiguous — so a terminal's Arabic shaping / grapheme joining is not broken
+	// by an escape injected mid-run. The pen persists across cursor moves (CUP
+	// does not change SGR), so it is tracked across the whole present() frame and
+	// reset to emitPenUnknown at its top (the prior frame's trailing pen is not
+	// reliably known).
+	emitPen string
+
 	// flipBidi re-emits each RTL run of a row in reverse (logical) order, with
 	// mirrored glyphs restored, for host terminals that apply their own bidi
 	// (macOS Terminal.app): they reorder the run back to the visual layout mew
@@ -88,6 +98,27 @@ type bbCell struct {
 }
 
 const defaultStyleSeq = "\x1b[0m"
+
+// emitPenUnknown is the sentinel emitPen is reset to at the top of each
+// present(): no real style string equals it, so the first cell always emits its
+// SGR (the prior frame's trailing pen is not reliably known).
+const emitPenUnknown = "\x00"
+
+// putStyle emits style's SGR bytes only when they differ from the pen already in
+// effect on the terminal (emitPen), collapsing runs of same-styled cells. The
+// pen persists across cursor moves — CUP does not change SGR — so this is
+// tracked across the whole present() frame. An empty style is the terminal
+// default.
+func (b *backBuffer) putStyle(sb *strings.Builder, style string) {
+	if style == "" {
+		style = defaultStyleSeq
+	}
+	if style == b.emitPen {
+		return
+	}
+	sb.WriteString(style)
+	b.emitPen = style
+}
 
 func newBackBuffer(w, h int) *backBuffer {
 	b := &backBuffer{curVisible: true}
@@ -175,11 +206,7 @@ func (b *backBuffer) emitWideRow(sb *strings.Builder, y int) {
 	sb.WriteString("\x1b#6") // DECDWL: double-width line
 	// Set the row's background BEFORE erasing, so the cleared cells take it
 	// rather than whatever colour was last emitted.
-	fill := b.rowWideFill[y]
-	if fill == "" {
-		fill = defaultStyleSeq
-	}
-	sb.WriteString(fill)
+	b.putStyle(sb, b.rowWideFill[y])
 	sb.WriteString("\x1b[0K") // erase to end of line
 	half := b.w / 2
 	for x := 0; x < half; x++ {
@@ -188,11 +215,7 @@ func (b *backBuffer) emitWideRow(sb *strings.Builder, y int) {
 			b.disp[y][x] = nc
 			continue
 		}
-		style := nc.style
-		if style == "" {
-			style = defaultStyleSeq
-		}
-		sb.WriteString(style)
+		b.putStyle(sb, nc.style)
 		sb.WriteString(runesOf(nc))
 		b.disp[y][x] = nc
 		if nc.width == 2 && x+1 < b.w {
@@ -358,6 +381,7 @@ func (b *backBuffer) attachCombining(r rune) {
 // mode.
 func (b *backBuffer) present(out io.Writer) {
 	var sb strings.Builder
+	b.emitPen = emitPenUnknown // the terminal's trailing pen from last frame is unknown
 
 	if b.pendingClear {
 		sb.WriteString("\x1b[2J\x1b[H")
@@ -403,10 +427,7 @@ func (b *backBuffer) present(out io.Writer) {
 		fill := bbCell{style: style, width: 1}
 		if !cellsEqual(fill, b.disp[b.h-1][b.w-1]) {
 			writeCUP(&sb, b.h, b.w)
-			if style == "" {
-				style = defaultStyleSeq
-			}
-			sb.WriteString(style)
+			b.putStyle(&sb, style)
 			sb.WriteString("\x1b[K")
 			b.disp[b.h-1][b.w-1] = fill
 		}
@@ -458,15 +479,11 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 					termCol = -1
 					break
 				}
-				// Emit the style before every cell — matching the direct
-				// renderer, which writes the active color ahead of each glyph —
-				// so a full repaint is byte-identical and callers that assert
-				// "<color><glyph>" mid-run keep working.
-				style := nc.style
-				if style == "" {
-					style = defaultStyleSeq
-				}
-				sb.WriteString(style)
+				// Emit the style only when it changes from the pen already in
+				// effect (putStyle), so a same-styled run stays a contiguous glyph
+				// stream — no SGR is injected between adjacent letters, which the
+				// terminal needs for Arabic shaping / grapheme joining.
+				b.putStyle(sb, nc.style)
 				sb.WriteString(runesOf(nc))
 				b.disp[y][x] = nc
 				wd := int(nc.width)
@@ -535,15 +552,11 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 	}
 
 	emit := func(c bbCell, mirror bool) {
-		// Emit the style before every cell — matching the direct renderer,
-		// which writes the active color ahead of each glyph — so a full repaint
-		// is byte-identical and callers that assert "<color><glyph>" mid-run
-		// keep working.
-		style := c.style
-		if style == "" {
-			style = defaultStyleSeq
-		}
-		sb.WriteString(style)
+		// Emit the style only when it changes from the pen already in effect, so a
+		// same-styled run stays contiguous — critical here, the flip/RTL path,
+		// where an SGR injected between Arabic letters breaks the terminal's own
+		// shaping and joining.
+		b.putStyle(sb, c.style)
 		if len(c.runes) == 0 {
 			sb.WriteByte(' ')
 			return

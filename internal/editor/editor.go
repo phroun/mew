@@ -5652,6 +5652,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// key stream as Mouse* pseudo-keys.
 	e.Renderer.EnableMouseReporting()
 
+	// Request grapheme-cluster width (DEC mode 2027) so the terminal — mew's
+	// purfecterm, or any host that honors it — measures cell width the same way
+	// mew's textwidth does. Terminals without the mode ignore it.
+	e.Renderer.EnableGraphemeWidth()
+
 	// Initial render
 	e.performRender()
 
