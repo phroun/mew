@@ -1858,13 +1858,14 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// debug_screen forces a full repaint of the live screen, then captures that
-	// same complete frame as ANSI and writes it to a timestamped ".ans" file in
-	// the mew:/// support tree (~/.mew locally) — a snapshot that reproduces the
-	// screen when cat'd to a terminal.
+	// debug_screen captures a full frame of the current screen as ANSI and
+	// writes it to a timestamped ".ans" file in the mew:/// support tree (~/.mew
+	// locally) — a snapshot that reproduces the screen when cat'd to a terminal.
+	// It must NOT call performRender: commands run inside the key loop's
+	// renderMu, which performRender re-locks (a hard lock). CaptureFrame uses the
+	// renderer's own mutex, free here, and the live full repaint is scheduled via
+	// ForceRedraw + RequestRender (deferred to the main loop after this returns).
 	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
-		e.Renderer.ForceRedraw()
-		e.performRender()
 		layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
 		ans := e.Renderer.CaptureFrame(layout)
 		target := "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
@@ -1872,6 +1873,8 @@ func (e *Editor) registerCommands() {
 			e.ShowError("debug_screen: " + err.Error())
 			return pawscript.BoolStatus(false)
 		}
+		e.Renderer.ForceRedraw()
+		e.RequestRender()
 		e.ShowNotification("Wrote " + target)
 		return pawscript.BoolStatus(true)
 	})

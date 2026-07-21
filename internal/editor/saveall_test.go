@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/phroun/mew/internal/buffer"
 )
@@ -128,14 +129,29 @@ func TestSaveAllInteractiveCancelBailsEntireBatch(t *testing.T) {
 }
 
 // debug_screen writes a timestamped .ans capture of the current screen into the
-// mew:/// support tree (~/.mew), reproducing the visible text.
+// mew:/// support tree (~/.mew), reproducing the visible text — and must do so
+// WITHOUT re-locking renderMu, which the key loop holds across command
+// execution (calling performRender there is a hard lock).
 func TestDebugScreenWritesAnsFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	e, _, _ := renderedEditorWithConfig(t, "hello world\n", "[options]\nsyntax=go\n")
-	e.performRender()
+	e.performRender() // establish geometry (not holding the lock yet)
 
-	e.PawScript.ExecuteAsync("debug_screen")
+	// Run the command exactly as the key loop does: holding renderMu. A guard
+	// timeout turns a re-entrant deadlock into a test failure instead of a hang.
+	e.renderMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		e.executeCommand("debug_screen")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("debug_screen deadlocked while renderMu was held")
+	}
+	e.renderMu.Unlock()
 
 	matches, _ := filepath.Glob(filepath.Join(home, ".mew", "*.ans"))
 	if len(matches) != 1 {
