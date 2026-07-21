@@ -60,6 +60,44 @@ func arabicJoinsPrev(r rune) bool {
 	return isArabicLetter(r) && !arabicNonJoining[r]
 }
 
+// arabicRenderString builds the string the gfx renderer actually shapes for an
+// Arabic cell. Rather than a legacy presentation-form codepoint (U+FE70..FEFF)
+// — which many fonts, notably the macOS system Arabic faces, do NOT carry in
+// their cmap, implementing joining through GSUB on the BASE letters instead —
+// it returns the base letter(s) flanked by Zero-Width Joiners so the font's own
+// shaping selects the contextual (isolated/initial/medial/final) form. A leading
+// ZWJ requests a join toward the preceding letter (kashR, the right visual
+// edge); a trailing ZWJ a join toward the following letter (kashL, the left
+// visual edge). A lam-alef ligature form is reconstructed as the lam+alef base
+// pair so the font forms the mandatory ligature via GSUB.
+//
+// form is ShapeArabicCellVisual's presentation-form result, used only to detect
+// (and rebuild) the lam-alef ligatures; base is the cell's own letter.
+func arabicRenderString(base, form rune, kashL, kashR bool) string {
+	const zwj = "‍"
+	var seq string
+	switch form {
+	case 0xFEF5, 0xFEF6:
+		seq = "لآ" // lam + alef with madda
+	case 0xFEF7, 0xFEF8:
+		seq = "لأ" // lam + alef with hamza above
+	case 0xFEF9, 0xFEFA:
+		seq = "لإ" // lam + alef with hamza below
+	case 0xFEFB, 0xFEFC:
+		seq = "لا" // lam + alef
+	default:
+		seq = string(base)
+	}
+	pre, post := "", ""
+	if kashR {
+		pre = zwj
+	}
+	if kashL {
+		post = zwj
+	}
+	return pre + seq + post
+}
+
 // arabicKashida returns whether a cell holding base (with visual neighbours
 // leftBase to its left and rightBase to its right — cells are in visual order,
 // so the left neighbour is the logically-NEXT letter and the right neighbour

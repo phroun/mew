@@ -420,8 +420,16 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
 					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
 					dc := cell
-					dc.Char = shaped
-					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth, kashL, kashR)
+					shapeStr := ""
+					if purfecterm.ScriptClass(cell.Char) == "arabic" {
+						// Shape the base letter (ZWJ-joined) so the font's GSUB
+						// picks the contextual form — robust across faces that
+						// lack the legacy presentation-form codepoints.
+						shapeStr = arabicRenderString(cell.Char, shaped, kashL, kashR)
+					} else {
+						dc.Char = shaped
+					}
+					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth, kashL, kashR, shapeStr)
 				}
 			}
 
@@ -745,9 +753,12 @@ func colInked(img *image.RGBA, x int) bool {
 // drawCellText renders one cell's character with all scaling rules,
 // including double-width/height lines (top/bottom halves clipped).
 func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family string, fg purfecterm.Color,
-	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64, kashL, kashR bool) {
+	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64, kashL, kashR bool, shapeStr string) {
 
 	str := cell.String()
+	if shapeStr != "" {
+		str = shapeStr // Arabic: the ZWJ-joined base letters to shape
+	}
 	boxW := int(math.Round(cellW * ppu))
 	contentH := int(math.Round(cellH * ppu))
 	xPx := int(math.Round(cellX * ppu))
@@ -1357,8 +1368,13 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				if !suppress {
 					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
 					dc := cell
-					dc.Char = shaped
-					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0, kashL, kashR)
+					shapeStr := ""
+					if purfecterm.ScriptClass(cell.Char) == "arabic" {
+						shapeStr = arabicRenderString(cell.Char, shaped, kashL, kashR)
+					} else {
+						dc.Char = shaped
+					}
+					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0, kashL, kashR, shapeStr)
 				}
 			}
 		}

@@ -69,7 +69,10 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 			continue
 		}
 		kashL, kashR := arabicKashida(ch, leftCh, rightCh)
-		masks[i] = term.cellTextImage(string(shaped), "ui-term", false, false, boxW, boxH, ppu, false, ch, kashL, kashR)
+		// Exercise the real render path: ZWJ-joined base letters, not the legacy
+		// presentation-form codepoint.
+		shapeStr := arabicRenderString(ch, shaped, kashL, kashR)
+		masks[i] = term.cellTextImage(shapeStr, "ui-term", false, false, boxW, boxH, ppu, false, ch, kashL, kashR)
 	}
 
 	bridged := func(left, right *image.RGBA) bool {
