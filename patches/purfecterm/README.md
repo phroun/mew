@@ -8,11 +8,13 @@ directory remains as the development record; PROTOCOL.md's contract now
 lives with the purfecterm repo.
 
 **v0.2.24** landed the font-slot **machine model** (item 3 below):
-`Cell.Font`, the buffer slot API, SGR 10-20, and OSC 7004. **v0.2.25** then
-landed the **renderer wiring** (item 4): the gtk/qt widgets now honor
-`cell.Font`. Both are upstream; the KittyTK gfx/SDL renderer honors slots in
-the kittytk tree. This directory keeps the patch artifacts as the development
-record.
+`Cell.Font`, the buffer slot API, SGR 10-20, and OSC 7004. **v0.2.25** landed
+the font-slot **renderer wiring** (item 4): the gtk/qt widgets honor
+`cell.Font`. **v0.2.26** landed the **script-class fonts** (item 5): the
+`scriptFonts` map, `ScriptClass`, OSC 7005, and the gtk/qt script-class
+fallback. All are upstream; the KittyTK gfx/SDL renderer honors slots (and
+resolves scripts through its own font engine) in the kittytk tree. This
+directory keeps the patch artifacts as the development record.
 
 Verified patches for the purfecterm repo, developed from the mew/KittyTK
 integration work:
@@ -61,7 +63,7 @@ integration work:
    ClearScriptFonts`, the exported `ScriptClass(rune)`, OSC 7005 (`s`/`sd`/`sda`),
    and a script-class branch in each widget's `getFontForCharacter`. Verified:
    patched v0.2.25 root + cli suites pass; gtk/qt by patch-applies-clean + gofmt
-   + review (same toolkit caveat as item 4). **Not yet landed upstream.**
+   + review (same toolkit caveat as item 4). **LANDED in v0.2.26.**
 
 ---
 

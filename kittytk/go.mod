@@ -7,7 +7,7 @@ require (
 	github.com/go-text/typesetting v0.3.4
 	github.com/phroun/direct-key-handler v0.3.7
 	github.com/phroun/mew v0.3.1-alpha
-	github.com/phroun/purfecterm v0.2.25
+	github.com/phroun/purfecterm v0.2.26
 	github.com/veandco/go-sdl2 v0.4.40
 	golang.org/x/image v0.44.0
 	golang.org/x/term v0.45.0
