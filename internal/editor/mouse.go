@@ -323,6 +323,9 @@ func (e *Editor) mousePress(x, y int) {
 	}
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
+	// A click is a cursor movement: re-engage caret following, cancelling any
+	// free scroll left by the wheel so the view tracks the caret again.
+	w.ViewState.ScrollDetached = false
 	e.updateBrowseState()
 	if span := e.focusedLinkButton(w); span != nil {
 		e.mousePressed = pressedLink{active: true, winID: w.ID, line: docLine, start: span.Start}
@@ -403,13 +406,7 @@ func (e *Editor) mouseScroll(x, y int, delta int) {
 	if w == nil || w.Buffer == nil || e.WindowManager.GetFocusedWindow() != w {
 		return
 	}
-	top := w.ViewState.ViewOffsetY + delta
-	if max := w.Buffer.GetLineCount() - 1; top > max {
-		top = max
-	}
-	if top < 0 {
-		top = 0
-	}
-	w.SetViewTop(top)
-	e.RequestRender()
+	// Free scroll: park the viewport delta lines away and leave the caret where
+	// it is (detaching from caret-follow until a cursor/edit command re-engages).
+	e.scrollViewByLines(w, delta)
 }

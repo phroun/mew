@@ -97,6 +97,14 @@ type ViewState struct {
 	// .mew/syntax folder and resolve from the user's own copy (mew:/syntax),
 	// the built-in set, or JOE instead. Per window; inherits the editor default.
 	SyntaxOverrides string
+
+	// ScrollDetached parks the viewport free of the caret: while set, the
+	// per-frame caret follow leaves the view exactly where a mouse-wheel scroll
+	// or a scroll_* command placed it, even with the caret off-screen (the
+	// cursorOffScreen indicator marks where it went). A cursor-movement or edit
+	// command re-engages following and clears this. Transient per-window UI
+	// state, not part of the buffer binding.
+	ScrollDetached bool
 }
 
 // MarksVisible reports whether showMarks draws any mark indicators for this

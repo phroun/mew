@@ -1200,6 +1200,86 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
+	// Scroll commands park the viewport WITHOUT moving the caret — the
+	// programmatic analogue of the mouse wheel. Each detaches the view from
+	// caret-follow (ScrollDetached) so the per-frame follow leaves it put until a
+	// cursor-movement or edit command re-engages it. They mirror the go_* family
+	// name-for-name (scroll_line ~ go_line, scroll_line_next ~ go_line_next, ...).
+	ps.RegisterCommand("scroll_line_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewByLines(e.resolveTargetMain(), -1)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_line_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewByLines(e.resolveTargetMain(), 1)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_page_prior", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil {
+			_, page := e.pageSize(w)
+			e.scrollViewByLines(w, -page)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_page_next", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil {
+			_, page := e.pageSize(w)
+			e.scrollViewByLines(w, page)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_buffer_beg", func(ctx *pawscript.Context) pawscript.Result {
+		e.scrollViewTo(e.resolveTargetMain(), 0)
+		return pawscript.BoolStatus(true)
+	})
+
+	ps.RegisterCommand("scroll_buffer_end", func(ctx *pawscript.Context) pawscript.Result {
+		if w := e.resolveTargetMain(); w != nil && w.Buffer != nil {
+			viewHeight, _ := e.pageSize(w)
+			// Park the last line on the bottom row (clamped when the buffer is
+			// shorter than the view).
+			e.scrollViewTo(w, w.Buffer.GetLineCount()-viewHeight)
+		}
+		return pawscript.BoolStatus(true)
+	})
+
+	// scroll_line parks a given 1-based line at the TOP of the view (the scroll
+	// analogue of go_line); it takes a line-number argument or, lacking one,
+	// prompts for it exactly as go_line does.
+	ps.RegisterCommand("scroll_line", func(ctx *pawscript.Context) pawscript.Result {
+		scrollLine := func(input string) bool {
+			n, err := strconv.Atoi(strings.TrimSpace(input))
+			if err != nil || n < 1 {
+				e.ShowWarning("Invalid line number")
+				return false
+			}
+			e.scrollLineTop(n)
+			return true
+		}
+		if arg, ok := argString(ctx, 0); ok {
+			return pawscript.BoolStatus(scrollLine(arg))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		e.PromptMgr.PromptForInput("Scroll to line: ", "", func(accepted bool, _, input string) {
+			defer e.RequestRender()
+			if expired.Load() {
+				e.ShowWarning("Prompt timed out")
+				return
+			}
+			if !accepted || strings.TrimSpace(input) == "" {
+				ctx.ResumeToken(token, false)
+				return
+			}
+			ctx.ResumeToken(token, scrollLine(input))
+		}, "scrollline")
+		return pawscript.TokenResult(token)
+	})
+
 	ps.RegisterCommand("go_word_prior", func(ctx *pawscript.Context) pawscript.Result {
 		e.moveToPrevWord()
 		e.trackMove()
@@ -3197,6 +3277,12 @@ func (e *Editor) gotoLine(lineNum int) {
 	e.ensureCursorVisible(w)
 }
 
+// scrollLineTop parks line lineNum (1-based) at the top of the target window's
+// viewport without moving the caret — the scroll analogue of gotoLine.
+func (e *Editor) scrollLineTop(lineNum int) {
+	e.scrollViewTo(e.resolveTargetMain(), lineNum-1)
+}
+
 // cursorToTop moves cursor to start of buffer.
 func (e *Editor) cursorToTop() {
 	w := e.WindowManager.GetFocusedWindow()
@@ -3304,6 +3390,9 @@ func (e *Editor) rebuildPageSizeSpec() {
 func (e *Editor) trackEdit() {
 	if w := e.WindowManager.GetFocusedWindow(); w != nil {
 		w.TrackEdit()
+		// An edit re-engages caret following (edits also call ensureCursorVisible,
+		// but not every path does; make the re-engage unconditional here).
+		w.ViewState.ScrollDetached = false
 	}
 	e.lastEditKill = e.pendingKill
 	e.pendingKill = false
@@ -5071,7 +5160,25 @@ func (e *Editor) ensureCursorVisible(w *window.Window) {
 // ensureCursorVisibleVertical scrolls the viewport vertically so the cursor's
 // line is visible. It never changes the horizontal offset, so it does not
 // disturb a manual horizontal scroll or force the ghost column on-screen.
+//
+// This is the COMMAND path: a command asking to show the caret is, by
+// definition, done browsing a detached (free) scroll, so it RE-ENGAGES caret
+// following — clearing any ScrollDetached parked by the mouse wheel or a
+// scroll_* command. (The per-frame render follow uses renderFollowCaret, which
+// instead respects a detached scroll.) Cursor-movement and edit leaf commands
+// reach here through their own ensureCursorVisible / ...Vertical calls, so the
+// re-engagement lives in their definitions, not in any command-name analysis.
 func (e *Editor) ensureCursorVisibleVertical(w *window.Window) {
+	w.ViewState.ScrollDetached = false
+	e.clampViewToCaret(w)
+}
+
+// clampViewToCaret scrolls the viewport vertically the minimum needed to bring
+// the caret's line on-screen, WITHOUT touching ScrollDetached. Both the command
+// path (ensureCursorVisibleVertical, which first re-engages following) and the
+// per-frame render follow (renderFollowCaret, which first honors a detached
+// scroll) share it.
+func (e *Editor) clampViewToCaret(w *window.Window) {
 	if w.ContentHeight <= 0 {
 		w.ContentHeight = 20 // Default
 	}
@@ -5086,6 +5193,48 @@ func (e *Editor) ensureCursorVisibleVertical(w *window.Window) {
 	} else if w.CursorPos().Line >= top+w.ContentHeight {
 		w.SetViewTop(w.CursorPos().Line - w.ContentHeight + 1)
 	}
+}
+
+// renderFollowCaret is the per-frame vertical caret follow. Unlike the command
+// path it RESPECTS a free scroll: while the focused window is ScrollDetached
+// (mouse wheel / scroll_* command), the viewport is left exactly where the user
+// parked it — the caret may sit off-screen, marked by the cursorOffScreen
+// indicator — until a cursor-movement or edit command re-engages following.
+func (e *Editor) renderFollowCaret(w *window.Window) {
+	if w.ViewState.ScrollDetached {
+		return
+	}
+	e.clampViewToCaret(w)
+}
+
+// scrollViewByLines parks the focused-content viewport delta lines away from
+// its current top (negative = toward the start), detaching it from the caret
+// like the mouse wheel: the caret stays put and the per-frame follow will not
+// snap the view back until a cursor-movement or edit command re-engages it.
+func (e *Editor) scrollViewByLines(w *window.Window, delta int) {
+	if w == nil {
+		return
+	}
+	w.RefreshViewTop() // base the relative move on the actually-painted top
+	e.scrollViewTo(w, w.ViewState.ViewOffsetY+delta)
+}
+
+// scrollViewTo parks the viewport at an absolute top line (clamped to the
+// buffer), detaching it from caret-follow. Shared by the mouse wheel and every
+// scroll_* command.
+func (e *Editor) scrollViewTo(w *window.Window, top int) {
+	if w == nil || w.Buffer == nil {
+		return
+	}
+	if max := w.Buffer.GetLineCount() - 1; top > max {
+		top = max
+	}
+	if top < 0 {
+		top = 0
+	}
+	w.ViewState.ScrollDetached = true
+	w.SetViewTop(top)
+	e.RequestRender()
 }
 
 // ensureCursorVisibleHorizontal scrolls the viewport horizontally so the cursor
@@ -5227,7 +5376,7 @@ func (e *Editor) performRender() {
 	// navigation are not snapped back on every render.
 	focusedWindow := e.WindowManager.GetFocusedWindow()
 	if focusedWindow != nil {
-		e.ensureCursorVisibleVertical(focusedWindow)
+		e.renderFollowCaret(focusedWindow)
 		// A wiki-format page starts in browse mode the moment it is first
 		// painted — including the very first frame after launch.
 		e.autoArmBrowse(focusedWindow)
