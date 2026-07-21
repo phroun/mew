@@ -91,6 +91,8 @@ func newFontDB() *fontDB {
 	must(db.register("Noto Sans Mono", Aspect{Bold: true}, fonts.MonoBold))
 	must(db.register("Noto Sans Hebrew", Aspect{}, fonts.HebrewRegular))
 	must(db.register("Noto Sans Hebrew", Aspect{Bold: true}, fonts.HebrewBold))
+	must(db.register("Noto Naskh Arabic", Aspect{}, fonts.ArabicRegular))
+	must(db.register("Noto Naskh Arabic", Aspect{Bold: true}, fonts.ArabicBold))
 	must(db.register("Noto Sans Symbols 2", Aspect{}, fonts.Symbols2Regular))
 	must(db.register("Go", Aspect{}, goregular.TTF))
 	must(db.register("Go", Aspect{Bold: true}, gobold.TTF))
