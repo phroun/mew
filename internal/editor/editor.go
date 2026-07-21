@@ -419,6 +419,14 @@ type Config struct {
 	// its shared text engine); nil on a plain terminal, where set_font warns.
 	FontSink func(alias string, names []string) bool
 
+	// FontLoader, when set, is invoked ONCE at startup with the [fonts] map
+	// (family name -> font file path) and the [window] fonts_path search
+	// directories, so the host registers them into its font engine before any
+	// alias resolves. Wired by graphical hosts alongside FontSink; nil on a
+	// plain terminal, which owns its own fonts. The startup [window] ui_term
+	// alias is applied through FontSink after this runs.
+	FontLoader func(files map[string]string, searchPaths []string)
+
 	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
 	// changes: true while the pointer is over a link button or a button is
 	// captured (a graphical host shows the arrow pointer), false for ordinary
@@ -690,6 +698,10 @@ func New(cfg Config) (*Editor, error) {
 		linkVisitSeen:    make(map[string]bool),
 		linkResolveCache: make(map[string]string),
 	}
+
+	// Register configured fonts into the host font engine and apply the
+	// startup ui-term alias, before any painting resolves font names.
+	e.applyFontConfig()
 
 	// Create writers to capture PawScript I/O
 	stderrWriter := &statusWriter{editor: e}
@@ -5841,6 +5853,24 @@ func (e *Editor) stateSnapshot() map[string]interface{} {
 }
 
 // applyInitialState restores a previously captured state snapshot over the
+// applyFontConfig registers the fonts declared in the loaded config into the
+// host font engine and applies the startup ui-term alias. It runs once at
+// startup, before any painting resolves font names: the [fonts] map and
+// [window] fonts_path go through FontLoader (explicit-path and search-path
+// registration); [window] ui_term rides FontSink, the same path the set_font
+// command uses live. All are no-ops on a plain terminal (nil sinks), which
+// owns its own fonts.
+func (e *Editor) applyFontConfig() {
+	files := e.LoadedConfig.Fonts
+	paths := e.LoadedConfig.Window.FontsPath
+	if e.Config.FontLoader != nil && (len(files) > 0 || len(paths) > 0) {
+		e.Config.FontLoader(files, paths)
+	}
+	if uiTerm := e.LoadedConfig.Window.UITerm; len(uiTerm) > 0 && e.Config.FontSink != nil {
+		e.Config.FontSink("ui-term", uiTerm)
+	}
+}
+
 // loaded configuration, reading numbers tolerantly (PSL yields int64, JSON
 // float64).
 func applyInitialState(cfg *Config) {

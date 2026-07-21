@@ -199,6 +199,53 @@ func TestTUIClipboardConfig(t *testing.T) {
 	}
 }
 
+// The [fonts] section is a family -> path map (keys keep their case); [window]
+// fonts_path and ui_term are comma-separated lists.
+func TestApplyFontConfig(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte(`
+[fonts]
+JetBrainsMono = /usr/share/fonts/jbm.ttf
+Comic Mono = "/opt/comic mono.otf"
+
+[window]
+fonts_path = /a/fonts, "/b/more fonts"
+ui_term = "JetBrainsMono, Monday"
+`), &cfg)
+
+	if cfg.Fonts["JetBrainsMono"] != "/usr/share/fonts/jbm.ttf" {
+		t.Errorf("Fonts[JetBrainsMono] = %q", cfg.Fonts["JetBrainsMono"])
+	}
+	if cfg.Fonts["Comic Mono"] != "/opt/comic mono.otf" {
+		t.Errorf("Fonts[Comic Mono] = %q (quotes should strip)", cfg.Fonts["Comic Mono"])
+	}
+	if len(cfg.FontsPath) != 2 || cfg.FontsPath[0] != "/a/fonts" || cfg.FontsPath[1] != "/b/more fonts" {
+		t.Errorf("FontsPath = %v", cfg.FontsPath)
+	}
+	if len(cfg.UITerm) != 2 || cfg.UITerm[0] != "JetBrainsMono" || cfg.UITerm[1] != "Monday" {
+		t.Errorf("UITerm = %v", cfg.UITerm)
+	}
+}
+
+// Load resolves relative [fonts] paths and fonts_path against the ini's own
+// directory, so fonts can ship next to kittytk.ini.
+func TestLoadResolvesRelativeFontPaths(t *testing.T) {
+	dir := t.TempDir()
+	ini := "[fonts]\nMyFont = fonts/my.ttf\n\n[window]\nfonts_path = extra\n"
+	if err := os.WriteFile(filepath.Join(dir, IniName), []byte(ini), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	cfg := Load()
+	if got, want := cfg.Fonts["MyFont"], filepath.Join(dir, "fonts/my.ttf"); got != want {
+		t.Errorf("Fonts[MyFont] = %q, want %q", got, want)
+	}
+	if len(cfg.FontsPath) != 1 || cfg.FontsPath[0] != filepath.Join(dir, "extra") {
+		t.Errorf("FontsPath = %v, want [%s]", cfg.FontsPath, filepath.Join(dir, "extra"))
+	}
+}
+
 // Load uses the first kittytk.ini found; the current directory is searched
 // before the exe dir and the user config dir.
 func TestLoadFirstFoundWinsFromCWD(t *testing.T) {
@@ -226,8 +273,18 @@ func TestLoadDefaultsWhenNoIni(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 
 	cfg := Load()
-	if cfg != Defaults() {
+	d := Defaults()
+	// Config carries maps/slices (fonts) and so is no longer comparable with
+	// ==; check the scalar knobs field-wise and assert no font config appeared.
+	if cfg.Title != d.Title || cfg.Width != d.Width || cfg.Height != d.Height ||
+		cfg.Scale != d.Scale || cfg.FontSize != d.FontSize || cfg.BorderWidth != d.BorderWidth ||
+		cfg.ShowFPS != d.ShowFPS || cfg.VSync != d.VSync || cfg.Endpoint != d.Endpoint ||
+		cfg.Token != d.Token || cfg.Native != d.Native || cfg.TUINative != d.TUINative ||
+		cfg.TUIClipboard != d.TUIClipboard {
 		t.Errorf("no ini should yield defaults, got %+v", cfg)
+	}
+	if len(cfg.Fonts) != 0 || len(cfg.FontsPath) != 0 || len(cfg.UITerm) != 0 {
+		t.Errorf("no ini should yield no font config, got %+v", cfg)
 	}
 }
 

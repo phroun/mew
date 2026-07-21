@@ -249,6 +249,23 @@ func (e *Editor) run() {
 			e.Update()
 			return ok
 		}),
+		// Startup font registration ([fonts] name->path, [window] fonts_path):
+		// register the explicit files and add the search directories to the
+		// shared engine before any name resolves. The [window] ui_term alias is
+		// applied afterward through the FontSink above. No-op in the pure-TUI
+		// path (no shared engine).
+		mew.WithFontConfig(func(files map[string]string, searchPaths []string) {
+			eng := text.Shared()
+			if eng == nil {
+				return
+			}
+			for _, dir := range searchPaths {
+				eng.AddFontSearchPath(dir)
+			}
+			for family, path := range files {
+				_ = eng.RegisterFontFile(family, path)
+			}
+		}),
 	}
 	if e.mewFileSystem != nil {
 		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))

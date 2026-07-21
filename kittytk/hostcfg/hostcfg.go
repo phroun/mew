@@ -26,6 +26,13 @@
 //	border_width =            ; window frame thickness in device px (blank/0 = default)
 //	fps          =            ; true = show the render frame rate in the graphical
 //	                          ;        host's OS title bar (kittytk-sdl only)
+//	fonts_path   =            ; extra font search directories (comma list, relative
+//	                          ;   to this ini) the engine scans to find families by name
+//	ui_term      =            ; the ui-term terminal face: a family name or comma-
+//	                          ;   separated fallback list (blank = the monospace default)
+//
+//	[fonts]                   ; family name -> font file path (graphical host only;
+//	JetBrainsMono = /path/to/JetBrainsMono.ttf   ; relative paths resolve against this ini)
 //
 //	[service]
 //	endpoint =            ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -91,6 +98,24 @@ type Config struct {
 	// Copy/Cut to the terminal's clipboard via OSC 52.
 	TUIClipboard string
 
+	// Fonts maps a font family name to a font file path, read from the [fonts]
+	// section (keys keep their original case — a family name). Registered into
+	// the graphical host's shared text engine at startup so any name (including
+	// the ui-term terminal face) resolves against it. Relative paths resolve
+	// against the ini's directory. Ignored by the terminal host (fonts aren't
+	// real there).
+	Fonts map[string]string
+
+	// FontsPath lists extra directories the font engine scans to resolve
+	// families by NAME, from [window] fonts_path (comma-separated). Relative
+	// entries resolve against the ini's directory.
+	FontsPath []string
+
+	// UITerm re-points the "ui-term" font alias — the embedded terminal grid's
+	// primary face — at an ordered fallback list of family names, from [window]
+	// ui_term (comma-separated). Empty leaves the built-in monospace default.
+	UITerm []string
+
 	// Source is the path of the ini that was loaded, or "" if none was
 	// found (defaults were used).
 	Source string
@@ -127,9 +152,50 @@ func Load() Config {
 		}
 		apply(data, &cfg)
 		cfg.Source = p
+		// Resolve relative font paths against the ini's own directory, so a
+		// user can ship fonts next to their kittytk.ini.
+		if dir := filepath.Dir(p); dir != "" {
+			for family, fp := range cfg.Fonts {
+				if !filepath.IsAbs(fp) {
+					cfg.Fonts[family] = filepath.Join(dir, fp)
+				}
+			}
+			for i, sp := range cfg.FontsPath {
+				if !filepath.IsAbs(sp) {
+					cfg.FontsPath[i] = filepath.Join(dir, sp)
+				}
+			}
+		}
 		break // first found wins
 	}
 	return cfg
+}
+
+// splitList parses a comma-separated value (font families or paths), stripping
+// surrounding quotes off the whole value and off each element, dropping empties.
+func splitList(v string) []string {
+	v = stripQuotes(strings.TrimSpace(v))
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = stripQuotes(strings.TrimSpace(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// stripQuotes removes a matching pair of surrounding single or double quotes.
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		q := s[0]
+		if (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // apply parses ini text and sets the recognized keys on cfg. Section
@@ -155,8 +221,25 @@ func apply(data []byte, cfg *Config) {
 		if eq < 0 {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(line[:eq]))
+		origKey := strings.TrimSpace(line[:eq])
+		key := strings.ToLower(origKey)
 		val := strings.TrimSpace(stripInlineComment(line[eq+1:]))
+		// [fonts] is the one section whose keys are DATA (family names, kept in
+		// their original case), not fixed knobs — a family -> file path map.
+		if section == "fonts" {
+			if origKey == "" {
+				continue
+			}
+			v := stripQuotes(val)
+			if v == "" {
+				continue
+			}
+			if cfg.Fonts == nil {
+				cfg.Fonts = map[string]string{}
+			}
+			cfg.Fonts[origKey] = v
+			continue
+		}
 		switch key {
 		case "title":
 			cfg.Title = val
@@ -203,6 +286,12 @@ func apply(data []byte, cfg *Config) {
 			if section == "tui" {
 				cfg.TUIClipboard = val
 			}
+		case "fonts_path":
+			// [window] fonts_path: extra font search directories (comma list).
+			cfg.FontsPath = append(cfg.FontsPath, splitList(val)...)
+		case "ui_term":
+			// [window] ui_term: the ui-term alias fallback list (comma list).
+			cfg.UITerm = splitList(val)
 		}
 	}
 }

@@ -78,6 +78,18 @@ type Config struct {
 	// for the modebar context breadcrumb; see DefaultOutline.
 	Outline map[string]map[string]string
 
+	// Fonts maps a font family name to a font file path (the [fonts] section):
+	// explicit-path font registration (Decision B(i)), loaded into the host's
+	// font engine at startup so [window] ui_term and the set_font command can
+	// reference the family by name. A relative path resolves against the config
+	// layer's own directory (a project can ship fonts in its .mew folder). Only
+	// meaningful on a graphical host; a plain terminal owns its own fonts.
+	Fonts map[string]string
+
+	// Window holds the [window] section: window-scoped display settings (the
+	// font search path and the ui-term font alias).
+	Window WindowConfig
+
 	// ProjectDirs lists the .mew project directories whose editor.conf
 	// layers were applied (outermost first) — git-style parents of the
 	// working directory. Consumers also use them for project-local
@@ -491,6 +503,21 @@ type StorageConfig struct {
 	// falls back to the launch directory (standalone) or the host's default
 	// (module mode).
 	Documents string
+}
+
+// WindowConfig holds the [window] section: window-scoped display settings.
+type WindowConfig struct {
+	// FontsPath lists extra directories the host's font engine scans to resolve
+	// font families BY NAME (Decision B(ii)), beyond the OS font directories.
+	// Entries accumulate across config layers; a relative path resolves against
+	// its layer's own directory. Only meaningful on a graphical host.
+	FontsPath []string
+
+	// UITerm re-points the "ui-term" font alias — the terminal grid's primary
+	// face (purfecterm font slot 0 / SGR 10) — at an ordered fallback list of
+	// family names, exactly like the set_font command does at runtime. Empty
+	// leaves the built-in default (the monospace face).
+	UITerm []string
 }
 
 // FileIO is the file access the Manager uses for config, profile, and @include
@@ -1075,6 +1102,57 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 	}
 
+	// [fonts]: family name -> font file path (Decision B(i), explicit paths),
+	// registered into the host's font engine at startup so [window] ui_term and
+	// the set_font command can reference the family by name. A relative path
+	// resolves against this layer's directory (a project can ship fonts in its
+	// .mew folder). default/inherit/blank clears the entry.
+	if fonts, ok := parsed["fonts"]; ok {
+		if config.Fonts == nil {
+			config.Fonts = make(map[string]string)
+		}
+		for k, v := range fonts {
+			name := strings.TrimSpace(k)
+			if name == "" {
+				continue
+			}
+			v = stripQuotes(strings.TrimSpace(v))
+			if v == "" || keywordOf(v) != "" {
+				delete(config.Fonts, name)
+				continue
+			}
+			if base != "" && !filepath.IsAbs(v) {
+				v = filepath.Join(base, v)
+			}
+			config.Fonts[name] = v
+		}
+	}
+
+	// [window]: window-scoped display settings. fonts_path adds font search
+	// directories (Decision B(ii), name-based lookup); ui_term re-points the
+	// ui-term font alias at a fallback list of family names.
+	if win, ok := parsed["window"]; ok {
+		if v, ok := win["fonts_path"]; ok {
+			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+				config.Window.FontsPath = nil // default/inherit/blank clears
+			} else {
+				for _, dir := range splitFontList(v) {
+					if base != "" && !filepath.IsAbs(dir) {
+						dir = filepath.Join(base, dir)
+					}
+					config.Window.FontsPath = append(config.Window.FontsPath, dir)
+				}
+			}
+		}
+		if v, ok := win["ui_term"]; ok {
+			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+				config.Window.UITerm = nil // default/inherit/blank -> built-in default
+			} else {
+				config.Window.UITerm = splitFontList(v)
+			}
+		}
+	}
+
 	// Indicator glyphs
 	if ind, ok := parsed["indicators"]; ok {
 		set := func(dst *string, key string) {
@@ -1476,6 +1554,25 @@ func stripQuotes(s string) string {
 		return strings.ReplaceAll(inner, string(q)+string(q), string(q))
 	}
 	return s
+}
+
+// splitFontList parses a comma-separated list of font family names or paths
+// (e.g. ui_term = "JetBrainsMono, Monday" or fonts_path = /a, /b), stripping
+// surrounding quotes off the whole value and off each element, and dropping
+// empties. Returns nil for an empty or keyword value.
+func splitFontList(v string) []string {
+	v = stripQuotes(strings.TrimSpace(v))
+	if v == "" || keywordOf(v) != "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		p = stripQuotes(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // parseConfigFile parses the config file content.

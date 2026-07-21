@@ -154,6 +154,18 @@ func WithFontSink(fn func(alias string, names []string) bool) Option {
 	return func(cfg *editor.Config) { cfg.FontSink = fn }
 }
 
+// WithFontConfig wires the startup [fonts] / [window] fonts_path registration
+// to a host that owns a font engine: at editor startup fn is handed the
+// configured family-name -> file-path map and the extra font search
+// directories, so the host registers them before any font name resolves. The
+// KittyTK trinket loads the files and adds the search paths to its shared text
+// engine; the startup [window] ui_term alias is applied separately through the
+// FontSink. Only meaningful on a graphical host; a plain terminal leaves it
+// unset (it owns its own fonts).
+func WithFontConfig(fn func(files map[string]string, searchPaths []string)) Option {
+	return func(cfg *editor.Config) { cfg.FontLoader = fn }
+}
+
 // WithFlexTerminal declares the host terminal a flex-width (logical-grid)
 // terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
 // so the editor addresses the cursor by logical column instead of visual
