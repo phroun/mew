@@ -495,7 +495,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			// Per-cell visual width, same resolution as the graphical path.
 			w := 1.0
 			raw := buf.GetVisibleCell(col, row)
-			if raw.FlexWidth && raw.CellWidth > 0 {
+			if raw.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 				w = raw.CellWidth
 			}
 
@@ -540,7 +540,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			for c := 0; c < cursorCol; c++ {
 				w := 1.0
 				raw := buf.GetVisibleCell(c, cursorRow)
-				if raw.FlexWidth && raw.CellWidth > 0 {
+				if raw.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 					w = raw.CellWidth
 				}
 				acc += w * mul

@@ -345,7 +345,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			cell := buf.GetVisibleCell(x, y)
 
 			cellVisualWidth := 1.0
-			if cell.FlexWidth && cell.CellWidth > 0 {
+			if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 				cellVisualWidth = cell.CellWidth
 			}
 
@@ -1559,7 +1559,7 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 	for col := horizOffset; col < cols+horizOffset; col++ {
 		cell := buf.GetVisibleCell(col-horizOffset, cellY)
 		w := 1.0
-		if cell.FlexWidth && cell.CellWidth > 0 {
+		if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
 			w = cell.CellWidth
 		}
 		cellPixelWidth := w * cw * lineScale

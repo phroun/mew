@@ -1,3 +1,18 @@
+# PurfecTerm patches
+
+Two verified patches for the purfecterm repo, developed from the mew/KittyTK
+integration work:
+
+1. **Standard-by-default protocol** — see `PROTOCOL.md` (the contract),
+   `visualprotocol.go` + `arabicshape.go` (drop-in root-package files),
+   `standard-default.patch` (unified diff for parser.go + buffer_output.go,
+   verified: patched tree builds and `visualprotocol_test.go` passes against
+   v0.2.22), and `visualprotocol_test.go` (drop-in test locking the
+   contract).
+2. **Arabic contextual joining** — below.
+
+---
+
 # PurfecTerm patch: Arabic contextual joining for the per-cell renderers
 
 ## The bug
