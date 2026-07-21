@@ -404,3 +404,43 @@ OSC 7005 and also configure the engine.
 set / case-insensitive read / clear-one / clear-all; and OSC 7005 `s` / `sd` /
 `sda` driving it. Patched v0.2.25 tree builds and the full root + cli suites
 pass.
+
+---
+
+# VTFRAKTUR: the fraktur slot's default name (SGR 20)
+
+Companion patch: `vtfraktur.patch` (cell.go, buffer.go, cli/renderer.go against
+v0.2.26) + `_src/vtfraktur_test.go` + `_src/cli_vtfraktur_test.go`. Not yet
+landed upstream.
+
+## The idea
+
+SGR 20 (ECMA-48 fraktur) selects font slot 10. Before this, an unmapped fraktur
+slot inherited the primary face, so a renderer had no way to tell a fraktur cell
+apart from normal text. This gives the fraktur slot a well-known DEFAULT family
+name — `VTFRAKTUR` — so every renderer recognizes the VT100 fraktur request and
+can act on it (pass real fraktur through, cipher it, or substitute a face),
+without a special detection hook. An app that maps the slot itself (OSC 7004
+`f;10;Family`) still wins; clearing it restores the `VTFRAKTUR` default.
+
+## The machine model
+
+- `cell.go`: exported constants `VTFrakturSlot = 10` and `VTFrakturFont =
+  "VTFRAKTUR"`.
+- `buffer.go`: `GetFontSlot(10)` returns `VTFRAKTUR` when the slot is unmapped
+  (instead of inheriting slot 0), so the name IS the SGR-20 signal.
+- `cli/renderer.go`: a font-slot-10 cell emits real **SGR 20** to the host
+  terminal (tracked like bold/italic; the existing SGR-0 reset turns it off on
+  transition) — the CLI connector passes VT100 fraktur straight through.
+
+Consumers: the KittyTK gfx/TUI trinket already resolves a cell's family via
+`GetFontSlot`, so a fraktur cell resolves to `VTFRAKTUR` and the KittyTK text
+backend renders it per its `fraktur_mode` (native / pseudo / off). The two ends
+agree on the name with no extra wiring.
+
+## Verification
+
+`_src/vtfraktur_test.go`: the slot-10 default is `VTFRAKTUR`, SGR 20 paints into
+slot 10, an explicit mapping wins, and clearing restores the default.
+`_src/cli_vtfraktur_test.go`: the CLI renderer emits SGR 20 for a fraktur cell
+and not for a plain one. Patched v0.2.26 root + cli suites pass.

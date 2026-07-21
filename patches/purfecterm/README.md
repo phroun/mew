@@ -64,6 +64,15 @@ integration work:
    and a script-class branch in each widget's `getFontForCharacter`. Verified:
    patched v0.2.25 root + cli suites pass; gtk/qt by patch-applies-clean + gofmt
    + review (same toolkit caveat as item 4). **LANDED in v0.2.26.**
+6. **VTFRAKTUR — the fraktur slot's default name (SGR 20)** — makes the SGR-20
+   fraktur slot resolve to the reserved family name `VTFRAKTUR` by default, so
+   every renderer recognizes a VT100 fraktur request without a special hook, and
+   the CLI connector passes real SGR 20 through to the host terminal. See the
+   "VTFRAKTUR" section of `PROTOCOL.md`, `vtfraktur.patch` (cell.go, buffer.go,
+   cli/renderer.go **against v0.2.26**), and `_src/vtfraktur_test.go` +
+   `_src/cli_vtfraktur_test.go`. Adds `VTFrakturSlot`/`VTFrakturFont` constants,
+   the `GetFontSlot(10)` default, and the CLI SGR-20 emit. Verified: patched
+   v0.2.26 root + cli suites pass. **Not yet landed upstream.**
 
 ---
 
