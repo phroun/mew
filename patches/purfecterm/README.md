@@ -7,6 +7,13 @@ which KittyTK now consumes directly, its private copy retired). This
 directory remains as the development record; PROTOCOL.md's contract now
 lives with the purfecterm repo.
 
+**v0.2.24** additionally landed the font-slot **machine model** (item 3
+below): `Cell.Font`, the buffer slot API, SGR 10-20, and OSC 7004. What is
+NOT yet upstream is the **renderer wiring** that makes slots visible —
+`font-slots-renderers.patch` (item 4) for gtk/qt, provided here for the
+purfecterm team. The KittyTK gfx/SDL renderer already honors slots in the
+kittytk tree.
+
 Verified patches for the purfecterm repo, developed from the mew/KittyTK
 integration work:
 
@@ -18,13 +25,30 @@ integration work:
    contract). **LANDED in v0.2.23.**
 2. **Arabic contextual joining** — below. **LANDED in v0.2.23**
    (`ShapeArabicCellVisual` exported).
-3. **Font slots (SGR 10-20 + OSC 7004)** — per-cell font selection. See the
-   "Font slots" section of `PROTOCOL.md` (wire protocol + machine model),
-   `font-slots.patch` (unified diff for cell.go, buffer.go, buffer_output.go,
-   parser.go, cli/terminal.go against v0.2.23), and `_src/fontslot_test.go` +
-   `_src/cli_fontslot_test.go` (drop-in tests). Verified: patched v0.2.23 tree
-   builds and the full root + cli suites pass. **Not yet landed upstream** —
-   apply with `patch -p1 < font-slots.patch` from the purfecterm root.
+3. **Font slots — machine model (SGR 10-20 + OSC 7004)** — per-cell font
+   selection. See the "Font slots" section of `PROTOCOL.md` (wire protocol +
+   machine model), `font-slots.patch` (unified diff for cell.go, buffer.go,
+   buffer_output.go, parser.go, cli/terminal.go against v0.2.23), and
+   `_src/fontslot_test.go` + `_src/cli_fontslot_test.go` (drop-in tests).
+   **LANDED in v0.2.24** (`Cell.Font`, `Buffer.SetFont/GetFont/SetFontSlot/
+   GetFontSlot`, SGR 10-20, OSC 7004, `cli.RenderedCell.Font`).
+4. **Font slots — GTK + Qt renderers honor `cell.Font`** — the per-cell
+   renderers still paint every glyph in the primary face; this teaches them to
+   read the slot. `font-slots-renderers.patch` (unified diff for gtk/widget.go
+   and qt/widget.go **against v0.2.24**) adds a `cellFontFamily(cell, primary)`
+   helper to each widget and routes the per-cell font through it: slot 0 (and
+   any unconfigured slot) stays the primary family; a configured slot names its
+   own family, still subject to the existing per-character CJK/Unicode fallback.
+   Both the main paint and the split-view paint are covered. Apply with
+   `patch -p1 < font-slots-renderers.patch` from the purfecterm root. **Not yet
+   landed upstream.** (The KittyTK gfx trinket — the SDL path — already honors
+   `cell.Font` in the kittytk tree; this patch brings gtk/qt to parity.)
+
+   *Compile note:* gtk/qt need their system toolkits (pango/gdk, Qt) present to
+   build, so these two hunks were verified by patch-applies-clean + gofmt +
+   review rather than a local `go build`; the change mirrors the existing
+   `getFontForCharacter(cell.Char, fontFamily, …)` idiom, substituting the
+   slot-resolved family for the bare primary.
 
 ---
 

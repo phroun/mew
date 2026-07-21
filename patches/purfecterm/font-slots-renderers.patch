@@ -1,0 +1,103 @@
+--- a/gtk/widget.go	2026-07-21 17:07:29.179870670 +0000
++++ b/gtk/widget.go	2026-07-21 17:13:40.135075602 +0000
+@@ -747,6 +747,23 @@
+ 	return mainFont
+ }
+ 
++// cellFontFamily resolves the family a cell paints in from its font slot
++// (SGR 10-20 select the slot, OSC 7004 configures slot -> family): slot 0, and
++// any slot this terminal has not configured, use the primary family; a
++// configured slot names its own family. The result is still the *main* font
++// handed to getFontForCharacter, so per-character CJK/Unicode fallback applies
++// on top. GetFontSlot folds unset slots onto slot 0, so an empty result just
++// means "primary".
++func (w *Widget) cellFontFamily(cell *purfecterm.Cell, primary string) string {
++	if cell.Font == 0 {
++		return primary
++	}
++	if fam := w.buffer.GetFontSlot(int(cell.Font)); fam != "" {
++		return fam
++	}
++	return primary
++}
++
+ // resolveFirstAvailableFont parses a comma-separated font list and returns the first available font.
+ // Uses Pango/Cairo font map to check font availability. Falls back to "Monospace" if none found.
+ func resolveFirstAvailableFont(familyList string) string {
+@@ -1670,7 +1687,7 @@
+ 				cell.Char = shapedChar
+ 
+ 				charStr := cell.String()
+-				charFont := w.getFontForCharacter(cell.Char, fontFamily, fontSize)
++				charFont := w.getFontForCharacter(cell.Char, w.cellFontFamily(&cell, fontFamily), fontSize)
+ 
+ 				fgR := float64(fg.R) / 255.0
+ 				fgG := float64(fg.G) / 255.0
+@@ -1929,8 +1946,10 @@
+ 					cell.Char = shapedChar
+ 				}
+ 
+-				// Determine which font to use for this character (with fallback for Unicode/CJK)
+-				charFont := w.getFontForCharacter(cell.Char, fontFamily, fontSize)
++				// Determine which font to use for this character: the cell's font
++				// slot picks the primary family (SGR 10-20), then per-character
++				// CJK/Unicode fallback applies on top.
++				charFont := w.getFontForCharacter(cell.Char, w.cellFontFamily(&cell, fontFamily), fontSize)
+ 
+ 				// Get character string including any combining marks
+ 				charStr := cell.String()
+--- a/qt/widget.go	2026-07-21 17:07:29.184768111 +0000
++++ b/qt/widget.go	2026-07-21 17:15:00.979080407 +0000
+@@ -812,6 +812,22 @@
+ 	return mainFont
+ }
+ 
++// cellFontFamily resolves the family a cell paints in from its font slot
++// (SGR 10-20 select the slot, OSC 7004 configures slot -> family): slot 0, and
++// any slot this terminal has not configured, use the primary family; a
++// configured slot names its own family. The result feeds getFontForCharacter
++// as the main font, so per-character CJK/Unicode fallback still applies.
++// GetFontSlot folds unset slots onto slot 0, so an empty result means primary.
++func (w *Widget) cellFontFamily(cell *purfecterm.Cell, primary string) string {
++	if cell.Font == 0 {
++		return primary
++	}
++	if fam := w.buffer.GetFontSlot(int(cell.Font)); fam != "" {
++		return fam
++	}
++	return primary
++}
++
+ // SetMouseReportingEnabled enables or disables xterm mouse event reporting.
+ // When enabled, a toggle menu item is added to the context menu.
+ func (w *Widget) SetMouseReportingEnabled(enabled bool) {
+@@ -1481,7 +1497,15 @@
+ 					fgQColor := qt.NewQColor3(int(fg.R), int(fg.G), int(fg.B))
+ 					pen := qt.NewQPen3(fgQColor)
+ 					painter.SetPenWithPen(pen)
+-					painter.DrawText3(cellX, rowPixelY+charHeight*3/4, cell.String())
++					// Honor the cell's font slot (SGR 10-20): a non-primary slot
++					// swaps the painter font for this glyph, then restores the base.
++					if fam := w.cellFontFamily(&cell, fontFamily); fam != fontFamily {
++						painter.SetFont(qt.NewQFont6(fam, fontSize))
++						painter.DrawText3(cellX, rowPixelY+charHeight*3/4, cell.String())
++						painter.SetFont(font)
++					} else {
++						painter.DrawText3(cellX, rowPixelY+charHeight*3/4, cell.String())
++					}
+ 				}
+ 			}
+ 		}
+@@ -1716,8 +1740,10 @@
+ 					cell.Char = shapedChar
+ 				}
+ 
+-				// Determine which font to use for this character (with fallback for Unicode/CJK)
+-				charFontFamily := w.getFontForCharacter(cell.Char, fontFamily, fontSize)
++				// Determine which font to use for this character: the cell's font
++				// slot picks the primary family (SGR 10-20), then per-character
++				// CJK/Unicode fallback applies on top.
++				charFontFamily := w.getFontForCharacter(cell.Char, w.cellFontFamily(&cell, fontFamily), fontSize)
+ 
+ 				// Create the appropriate font for this character
+ 				var drawFont *qt.QFont

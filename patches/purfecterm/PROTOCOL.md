@@ -311,10 +311,23 @@ name through its shared font engine (KittyTK's `text` engine, where `ui-term`
 and `ui-fraktur` are live-redefinable aliases). Because `GetFontSlot` already
 folds unset slots onto slot 0, the renderer never has to special-case an
 unconfigured slot. A renderer that does nothing with `cell.Font` renders
-everything in its primary face — the GTK/Qt builds' current behavior — so the
-patch is safe to land ahead of any renderer honoring it. mew's KittyTK gfx /
-GTK / Qt / TUI paint paths gain this once mew bumps to a purfecterm release
-carrying `Cell.Font`.
+everything in its primary face — the GTK/Qt builds' pre-wiring behavior — so
+the machine model is safe to land (and did, in v0.2.24) ahead of any renderer
+honoring it.
+
+**Renderer wiring status.** The KittyTK gfx (SDL) trinket honors `cell.Font`
+in the kittytk tree: `drawCellText` resolves the cell's family via a
+`cellFamily(buf, cell)` helper — slot 0 → the "ui-term" primary alias, an
+unset slot → GetFontSlot's slot-0 fallback, a configured slot → its family —
+and threads it through the coverage-mask cache (keyed by family). The GTK and
+Qt per-cell renderers are brought to parity by `font-slots-renderers.patch`
+(against v0.2.24): each gains a `cellFontFamily(cell, primary)` helper, and the
+per-cell font — already computed as
+`getFontForCharacter(cell.Char, fontFamily, size)` — takes the slot-resolved
+family in place of the bare primary, so the existing per-character CJK/Unicode
+fallback still layers on top. Slot 0 stays the widget's `SetFont` family; the
+KittyTK "ui-term" alias is a KittyTK-engine concept, not a purfecterm one, so
+on the standalone gtk/qt builds slot 0 is simply the configured widget font.
 
 ## Verification
 

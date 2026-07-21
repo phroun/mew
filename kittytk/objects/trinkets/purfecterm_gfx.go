@@ -419,7 +419,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
 					dc := cell
 					dc.Char = shaped
-					t.drawCellText(painter, &dc, fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
+					t.drawCellText(painter, &dc, t.cellFamily(buf, &cell), fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
 				}
 			}
 
@@ -500,22 +500,45 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 // Text rendering with scaling (double lines, screen scale, flex)
 // ---------------------------------------------------------------
 
+// primaryTermFamily is the terminal grid's primary face — font slot 0 (SGR
+// 10). It is the app-chosen terminal font (the "ui-term" engine alias),
+// falling back to the historical monospace name.
+func (t *PurfecTerm) primaryTermFamily() string {
+	if t.termFont != nil && t.termFont.Name != "" {
+		return t.termFont.Name
+	}
+	return "Monday"
+}
+
+// cellFamily resolves the font family a cell paints in from its font slot
+// (SGR 10-20, OSC 7004): slot 0 (and any slot not configured for this
+// terminal) is the primary face; a configured slot names a family the shared
+// engine resolves. GetFontSlot already folds unset slots onto slot 0, so the
+// only work here is mapping an empty result back to the primary.
+func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) string {
+	if cell.Font == 0 {
+		return t.primaryTermFamily()
+	}
+	if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
+		return fam
+	}
+	return t.primaryTermFamily()
+}
+
 // cellTextImage rasterizes one cell's glyph into a color-independent COVERAGE
 // mask (white ink, alpha = coverage) at an exact device-pixel box, applying the
 // gtk stretch/center rules, and caches it keyed WITHOUT color. Callers tint the
 // mask with the cell's foreground at draw time (DrawImageMaskTintOffset), so a
 // glyph shown in many colors rasterizes once and re-tints per cell.
-func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
+func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx, boxHPx int, ppu float64, wideCell bool, ch rune) *image.RGBA {
 	if boxWPx <= 0 || boxHPx <= 0 {
 		return nil
 	}
 	if ppu <= 0 {
 		ppu = 1
 	}
-
-	family := "Monday"
-	if t.termFont != nil {
-		family = t.termFont.Name
+	if family == "" {
+		family = t.primaryTermFamily()
 	}
 
 	// A live font change (SetFontAlias / register) bumps the engine epoch: the
@@ -608,7 +631,7 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx
 
 // drawCellText renders one cell's character with all scaling rules,
 // including double-width/height lines (top/bottom halves clipped).
-func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg purfecterm.Color,
+func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family string, fg purfecterm.Color,
 	cellX, cellY, cellW, cellH float64, lineAttr purfecterm.LineAttribute, ppu float64, yOffPx int, cellVisualWidth float64) {
 
 	str := cell.String()
@@ -622,7 +645,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
-		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char)
 		if mask == nil {
 			return
 		}
@@ -635,7 +658,7 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, fg pur
 		}
 		clip.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	default:
-		mask := t.cellTextImage(str, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char)
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH, ppu, wide, cell.Char)
 		if mask == nil {
 			return
 		}
@@ -1221,7 +1244,7 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				if !suppress {
 					dc := cell
 					dc.Char = shaped
-					t.drawCellText(clip, &dc, fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
+					t.drawCellText(clip, &dc, t.cellFamily(buf, &cell), fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
 				}
 			}
 		}
