@@ -7,10 +7,10 @@ import (
 )
 
 // A face whose presentation forms carry side bearing ends its ink before the
-// advance edge. The no-tatweel fill path (k=nil) must still bridge from the
-// letter's REAL ink to the cell edge — not from the advance box — so the join
-// never floats detached. Synthesize such a glyph and check both edges fill.
-func TestJoinFillClosesSideBearingGap(t *testing.T) {
+// advance edge. extendArabicStroke must still bridge from the letter's REAL ink
+// to the cell edge — not from the advance box — so the join never floats
+// detached. Synthesize such a glyph and check both edges fill.
+func TestExtendArabicStrokeClosesSideBearingGap(t *testing.T) {
 	const boxW, boxH = 20, 30
 	white := color.RGBA{255, 255, 255, 255}
 
@@ -23,65 +23,37 @@ func TestJoinFillClosesSideBearingGap(t *testing.T) {
 		}
 	}
 
-	term := &PurfecTerm{}
+	extendArabicStroke(out, boxW, boxH, true)  // right
+	extendArabicStroke(out, boxW, boxH, false) // left
 
-	// Right side: fill from the letter's rightmost band ink (x=13) to the edge.
-	edge := -1
-	for x := boxW - 1; x >= 0; x-- {
-		if colInkedInBand(out, x, top, bot) {
-			edge = x
-			break
-		}
-	}
-	if edge != 13 {
-		t.Fatalf("right ink edge = %d, want 13", edge)
-	}
-	term.fillJoin(out, nil, nil, boxH, 1.0, edge, boxW, top, bot)
-	if !colInkedInBand(out, boxW-1, top, bot) {
+	if !colInked(out, boxW-1) {
 		t.Errorf("right cell edge not filled after join")
 	}
-
-	// Left side: fill from 0 to the leftmost band ink (x=6).
-	edgeL := -1
-	for x := 0; x < boxW; x++ {
-		if colInkedInBand(out, x, top, bot) {
-			edgeL = x
-			break
-		}
-	}
-	if edgeL != 6 {
-		t.Fatalf("left ink edge = %d, want 6", edgeL)
-	}
-	term.fillJoin(out, nil, nil, boxH, 1.0, 0, edgeL+1, top, bot)
-	if !colInkedInBand(out, 0, top, bot) {
+	if !colInked(out, 0) {
 		t.Errorf("left cell edge not filled after join")
 	}
-
-	// The whole baseline band is now continuous edge to edge.
+	// The baseline band is now continuous edge to edge; rows outside it stay clear.
 	for x := 0; x < boxW; x++ {
-		if !colInkedInBand(out, x, top, bot) {
-			t.Errorf("baseline band has a gap at column %d", x)
+		if out.RGBAAt(x, top).A == 0 {
+			t.Errorf("baseline row %d has a gap at column %d", top, x)
+		}
+		if out.RGBAAt(x, 0).A != 0 {
+			t.Errorf("non-baseline row 0 wrongly inked at column %d", x)
 		}
 	}
 }
 
-// arabicJoinBand falls back to the letter's lowest ink rows when no tatweel mask
-// is available, so the smear path targets the baseline rather than an ascender.
-func TestArabicJoinBandFallback(t *testing.T) {
+// An isolated form (ink already spanning to both cell edges, or none) gets no
+// extension: extendArabicStroke only fills when there is an interior ink edge.
+func TestExtendArabicStrokeNoStrayFill(t *testing.T) {
 	const boxW, boxH = 20, 30
-	white := color.RGBA{255, 255, 255, 255}
-	out := image.NewRGBA(image.Rect(0, 0, boxW, boxH))
-	// A tall stroke up high (rows 4-6) plus a baseline nub (rows 25-26).
-	for x := 8; x < 12; x++ {
-		for _, y := range []int{4, 5, 6, 25, 26} {
-			out.SetRGBA(x, y, white)
+	// Empty cell: nothing to extend, must stay empty.
+	empty := image.NewRGBA(image.Rect(0, 0, boxW, boxH))
+	extendArabicStroke(empty, boxW, boxH, true)
+	extendArabicStroke(empty, boxW, boxH, false)
+	for x := 0; x < boxW; x++ {
+		if colInked(empty, x) {
+			t.Fatalf("empty cell should stay empty, column %d inked", x)
 		}
-	}
-	top, bot := arabicJoinBand(nil, out, boxH)
-	if bot != 26 {
-		t.Errorf("band bottom = %d, want 26 (baseline, not ascender)", bot)
-	}
-	if top > 25 || top < 20 {
-		t.Errorf("band top = %d, want it near the baseline (~20-25)", top)
 	}
 }

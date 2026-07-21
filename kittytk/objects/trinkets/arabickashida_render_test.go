@@ -4,32 +4,17 @@ import (
 	"image"
 	"testing"
 
-	"github.com/phroun/kittytk/core"
 	"github.com/phroun/purfecterm"
 )
 
-// The gfx renderer joins cursive Arabic by filling the gap between a centered
-// letter and the cell edge with the font's own kashida (U+0640 tatweel). These
-// tests lock in that the join actually renders and reaches the cell boundary,
-// so adjacent cells connect — the regression the "font-native kashida" work
+// The gfx renderer joins cursive Arabic by extending each letter's own
+// connecting stroke from its real ink edge out to the cell boundary. These
+// tests lock in that a joined form reaches the cell edge (so adjacent cells
+// connect) while an unjoined form stays clear — the regression the Arabic work
 // chased (a centered letter with no connecting stroke looked broken apart).
 
-func colInked(img *image.RGBA, x int) bool {
-	b := img.Bounds()
-	if x < b.Min.X || x >= b.Max.X {
-		return false
-	}
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		if img.RGBAAt(x, y).A != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// The embedded Arabic fallback provides a tatweel, and a medial form asked to
-// join on both sides paints ink to BOTH cell edges; asked to join on neither,
-// it stays centered with clear edges.
+// A medial form asked to join on both sides paints ink to BOTH cell edges;
+// asked to join on neither, it stays centered with clear edges.
 func TestArabicKashidaReachesEdges(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -39,11 +24,6 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 24, 32, 1.0
 
-	f := &core.Font{Name: "ui-term", Size: boxH * 3 / 4}
-	if km := term.kashidaMask(f, boxH, ppu); km == nil {
-		t.Fatalf("kashidaMask returned nil — the embedded Arabic fallback has no tatweel")
-	}
-
 	medialAin := "ﻌ" // U+FECC, joins on both sides
 	joined := term.cellTextImage(medialAin, "ui-term", false, false, boxW, boxH, ppu, false, 'ﻌ', true, true)
 	if !colInked(joined, 0) || !colInked(joined, boxW-1) {
@@ -51,7 +31,7 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 			colInked(joined, 0), colInked(joined, boxW-1))
 	}
 
-	// New key (kashL/kashR false) — must not be served the joined mask from cache.
+	// New cache key (kashL/kashR false) — must not be served the joined mask.
 	lone := term.cellTextImage(medialAin, "ui-term", false, false, boxW, boxH, ppu, false, 'ﻌ', false, false)
 	if colInked(lone, 0) || colInked(lone, boxW-1) {
 		t.Errorf("unjoined form should stay centered with clear edges; left=%v right=%v",
