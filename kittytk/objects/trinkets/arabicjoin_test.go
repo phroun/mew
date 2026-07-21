@@ -4,20 +4,20 @@ import "testing"
 
 func TestArabicKashida(t *testing.T) {
 	const (
-		ain  = 0x0639 // dual
-		lam  = 0x0644 // dual
-		yeh  = 0x064A // dual
-		kaf  = 0x0643 // dual
-		meem = 0x0645 // dual
-		ba   = 0x0628 // dual
-		alef = 0x0627 // right-joining (joins prev only)
+		ain   = 0x0639 // dual
+		lam   = 0x0644 // dual
+		yeh   = 0x064A // dual
+		kaf   = 0x0643 // dual
+		meem  = 0x0645 // dual
+		ba    = 0x0628 // dual
+		alef  = 0x0627 // right-joining (joins prev only)
 		hamza = 0x0621 // non-joining
 	)
 	space := rune(' ')
 
 	cases := []struct {
-		name                     string
-		base, leftN, rightN      rune
+		name                string
+		base, leftN, rightN rune
 		wantLeft, wantRight bool
 	}{
 		// "عليكم" visual cells: م ك ي ل ع. A medial dual letter (lam) with dual

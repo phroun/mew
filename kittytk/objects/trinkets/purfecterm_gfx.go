@@ -599,18 +599,6 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	sp := eng.ShapeRun(f, str)
 	naturalW := int(math.Round(float64(sp.Width()) * ppu))
 	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
-	// LineHeight is the PRIMARY face's line box; a run that falls back to a
-	// taller face (e.g. Arabic → Noto Naskh, whose ascent+descent exceeds the
-	// mono line height) would then be rasterized into a box too short and have
-	// its lower half — deep descenders and the connecting curves that dip below
-	// the baseline — clipped away before it reaches the cell. Grow the canvas to
-	// the shaped run's real vertical extent so nothing is cut off.
-	if len(sp.Lines) > 0 {
-		l := &sp.Lines[0]
-		if ext := int(math.Round(float64(l.Baseline+l.Descent+l.Gap) * ppu)); ext > naturalH {
-			naturalH = ext
-		}
-	}
 	if naturalW <= 0 {
 		naturalW = 1
 	}
@@ -657,25 +645,46 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			xo = 0
 		}
 		compositeInto(out, letter, xo, 0)
-		fillSide := func(t0, t1 int, dstX, dstW int) {
+		// letterEdgeL/R: the letter crop's columns in raw, for the fallback
+		// connector slices when the face merges the tatweel into the letter's
+		// cluster and the tatweel has no span of its own. Zero (no slice) when
+		// the letter span itself was unknown.
+		edgeL, edgeR := 0, 0
+		if okB {
+			edgeL = int(math.Floor(b0 * ppu))
+			edgeR = int(math.Ceil(b1 * ppu))
+		}
+		fillSide := func(t0, t1 int, dstX, dstW int, fbLo, fbHi int) {
 			if dstW <= 0 {
 				return
 			}
-			u0, u1, ok := sp.RuneSpanX(t0, t1)
-			if !ok {
-				return
+			var seg *image.RGBA
+			if u0, u1, ok := sp.RuneSpanX(t0, t1); ok {
+				// Middle of the tatweel: clean uniform stroke, clear of the
+				// junction regions where neighbouring glyph ink overhangs the
+				// tatweel's advance box.
+				q := (u1 - u0) / 4
+				seg = cropCols(raw, int(math.Floor((u0+q)*ppu)), int(math.Ceil((u1-q)*ppu)))
+				if seg == nil {
+					seg = cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu)))
+				}
 			}
-			seg := cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu)))
+			if seg == nil && okB {
+				// No separate tatweel cluster (some faces merge it with the
+				// letter): slice the shaped window just past the letter's edge —
+				// still the joined stroke the font drew, never synthesized ink.
+				seg = cropCols(raw, fbLo, fbHi)
+			}
 			if seg == nil {
 				return
 			}
 			compositeInto(out, scaleRGBA(seg, dstW, boxHPx), dstX, 0)
 		}
 		if actx.rt0 >= 0 { // toward the logical prev = visual right edge
-			fillSide(actx.rt0, actx.rt1, xo+lw, boxWPx-(xo+lw))
+			fillSide(actx.rt0, actx.rt1, xo+lw, boxWPx-(xo+lw), edgeR, edgeR+3)
 		}
 		if actx.lt0 >= 0 { // toward the logical next = visual left edge
-			fillSide(actx.lt0, actx.lt1, 0, xo)
+			fillSide(actx.lt0, actx.lt1, 0, xo, edgeL-3, edgeL)
 		}
 	} else {
 		var placed *image.RGBA
