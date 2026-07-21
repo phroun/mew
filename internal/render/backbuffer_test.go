@@ -139,36 +139,41 @@ func TestBackBufferCoalescesRunSGR(t *testing.T) {
 	}
 }
 
-// Under logical addressing (flex-width terminals, purfecterm ?2027) a changed
-// row is re-emitted WHOLE from column 1 and its logical remainder truncated
-// with EL. Mid-row span updates are unsound there: overwriting content whose
-// width profile changed (narrow chars over a wide cell, as when lines shift)
-// consumes a different number of logical cells than it replaced, silently
-// shifting everything preserved to its right — the duplicated-fragment /
-// stale-tail corruption.
-func TestBackBufferLogicalCUPRowGranularity(t *testing.T) {
+// Flex-terminal (logicalCUP) emission is ADAPTIVE: while a row's width
+// profile is stable, minimal span diffs apply with the CUP column mapped to
+// LOGICAL cells (characters, not visual columns). When the profile changes —
+// narrow chars over a wide cell, as when lines shift — a span write would
+// consume a different number of logical cells than it replaced, shifting
+// everything preserved to its right; such a row is rewritten whole from
+// column 1 and its logical remainder truncated with EL.
+func TestBackBufferLogicalCUPAdaptive(t *testing.T) {
 	b := newBackBuffer(10, 2)
 	b.logicalCUP = true
 	paint(b, mv(1, 1), wr("\x1b[0m日abc"))
 
-	// Change one cell: the whole row re-emits from column 1, no mid-row CUP.
+	// Same width profile ('X' over 'b'): a minimal span, addressed at the
+	// LOGICAL column — cell 3 (日,a,X), not visual column 4.
 	out := paint(b, mv(1, 1), wr("\x1b[0m日aXc"))
-	if !strings.Contains(out, "\x1b[1;1H") || !strings.Contains(out, "日aXc") {
-		t.Errorf("logical mode should re-emit the whole changed row, got %q", out)
+	if !strings.Contains(out, "\x1b[1;3H") {
+		t.Errorf("stable profile should span-update at logical column 3, got %q", out)
 	}
-	if strings.Contains(out, "\x1b[1;3H") || strings.Contains(out, "\x1b[1;4H") {
-		t.Errorf("logical mode must not address mid-row, got %q", out)
+	if strings.Contains(out, "\x1b[1;4H") {
+		t.Errorf("visual column 4 must not be addressed under logical CUP, got %q", out)
 	}
-	if !strings.Contains(out, "\x1b[0K") {
-		t.Errorf("logical mode should truncate the row's logical tail with EL, got %q", out)
+	if strings.Contains(out, "\x1b[0K") {
+		t.Errorf("a stable-profile span needs no EL truncation, got %q", out)
 	}
 
-	// Narrow content replacing a wide glyph (the line-shift case): the full
-	// row including the visually-unchanged tail is rewritten, so the logical
-	// grid can't end up with 'a' swallowed and "bc" shifted.
+	// Narrow content replacing the wide glyph (the line-shift case): profile
+	// changed, so the WHOLE row rewrites from column 1 — including the
+	// visually-unchanged tail, which would otherwise shift in the logical
+	// grid — and EL truncates the leftover logical cells.
 	out = paint(b, mv(1, 1), wr("\x1b[0mxxaXc"))
-	if !strings.Contains(out, "xxaXc") {
-		t.Errorf("narrow-over-wide must rewrite the whole row, got %q", out)
+	if !strings.Contains(out, "\x1b[1;1H") || !strings.Contains(out, "xxaXc") {
+		t.Errorf("profile change must rewrite the whole row, got %q", out)
+	}
+	if !strings.Contains(out, "\x1b[0K") {
+		t.Errorf("profile change should truncate the logical tail with EL, got %q", out)
 	}
 
 	// Logical addressing off: classic minimal span at the visual column.

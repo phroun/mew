@@ -415,15 +415,10 @@ func (b *backBuffer) present(out io.Writer) {
 	}
 
 	// Emission granularity. flipBidi needs whole rows (the run-level flip).
-	// logicalCUP needs whole rows too, for a deeper reason: in a logical-grid
-	// terminal, overwriting mid-row content whose WIDTH PROFILE changed (a
-	// narrow pair over one wide cell, or vice versa) consumes a different
-	// number of logical cells than it replaced, silently shifting every
-	// preserved cell to its right — a minimal span diff corrupts the row (the
-	// classic symptom: inserting a line above CJK leaves duplicated fragments
-	// and stale colored tails). A changed row is therefore re-emitted whole,
-	// and presentRows truncates its logical remainder with EL.
-	if b.flipBidi || b.logicalCUP {
+	// Under logicalCUP, presentSpans itself escalates to a whole row exactly
+	// when that row's width profile changed (see rowProfileChanged) — minimal
+	// spans whenever they are safe, the full rewrite only when necessary.
+	if b.flipBidi {
 		b.presentRows(&sb)
 	} else {
 		b.presentSpans(&sb)
@@ -471,9 +466,41 @@ func (b *backBuffer) present(out io.Writer) {
 // presentSpans emits minimal cell-span diffs: a cursor move to each changed
 // span, then only its changed cells. The default mode for stream-order
 // terminals, which place every addressed cell exactly.
+// rowProfileChanged reports whether a row's WIDTH PROFILE — which cells are
+// wide-glyph continuations — differs between the new frame and what the
+// terminal shows. On a logical-grid terminal that means the row's logical
+// cell structure changed: a mid-row span write would then consume a different
+// number of logical cells than it replaces, silently shifting everything
+// preserved to its right. Such a row must be rewritten whole.
+func (b *backBuffer) rowProfileChanged(y int) bool {
+	for x := 0; x < b.w; x++ {
+		if b.cur[y][x].cont != b.disp[y][x].cont {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *backBuffer) presentSpans(sb *strings.Builder) {
 	termRow, termCol := -1, -1 // where the terminal cursor sits (unknown)
 	for y := 0; y < b.h; y++ {
+		// Flex-terminal escalation: minimal spans are safe only while the
+		// row's logical structure is stable. When the width profile changed,
+		// rewrite the row whole and truncate its logical remainder with EL
+		// (the old row may have held more logical cells than the new content
+		// writes; leftovers would resurface as stale fragments).
+		if b.logicalCUP && b.rowProfileChanged(y) {
+			writeCUP(sb, y+1, 1)
+			b.emitRow(sb, y)
+			sb.WriteString("\x1b[0K")
+			if y == b.h-1 && b.w >= 1 {
+				// The EL cleared the never-written corner cell: force the
+				// corner-fill pass below to repaint it.
+				b.disp[y][b.w-1] = bbCell{width: -1}
+			}
+			termRow, termCol = -1, -1
+			continue
+		}
 		x := 0
 		for x < b.w {
 			if b.isCornerCut(y, x) {
@@ -544,6 +571,11 @@ func (b *backBuffer) presentRows(sb *strings.Builder) {
 			// the new content is one cell there), and any leftover would
 			// resurface as stale fragments past the new content.
 			sb.WriteString("\x1b[0K")
+			if y == b.h-1 && b.w >= 1 {
+				// The EL cleared the never-written corner cell: force the
+				// corner-fill pass to repaint it.
+				b.disp[y][b.w-1] = bbCell{width: -1}
+			}
 		}
 	}
 }
