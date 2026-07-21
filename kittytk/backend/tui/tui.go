@@ -623,9 +623,14 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	row := t.metrics.UnitsToCellY(y)
 
 	startCol := col
-	// The text backend has no real fonts: "Tuesday" is the double-width
-	// design-aid pseudo-font; every other name — ui-term, ui-text, Monday, or a
-	// graphical family — collapses to the normal fixed-width Monday cell.
+	// The text backend has no real fonts, so pseudo-fonts fake style by
+	// transforming the text: "Tuesday" double-widths it (below), and the cipher
+	// fonts (Black Serif, Fraktur, Double-Struck, …) swap ASCII for the
+	// visually-styled Unicode math-alphanumerics — width-preserving, so it just
+	// changes which glyphs the outer terminal draws. Every other name (ui-term,
+	// ui-text, Monday, a graphical family) passes through as the normal Monday
+	// cell. Cipher and Tuesday are distinct names, so they never combine.
+	text = cipherText(font.Name, text)
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
@@ -753,9 +758,14 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	boxWidth := col2 - col1
 	boxHeight := row2 - row1
 
-	// The text backend has no real fonts: "Tuesday" is the double-width
-	// design-aid pseudo-font; every other name — ui-term, ui-text, Monday, or a
-	// graphical family — collapses to the normal fixed-width Monday cell.
+	// The text backend has no real fonts, so pseudo-fonts fake style by
+	// transforming the text: "Tuesday" double-widths it (below), and the cipher
+	// fonts (Black Serif, Fraktur, Double-Struck, …) swap ASCII for the
+	// visually-styled Unicode math-alphanumerics — width-preserving, so it just
+	// changes which glyphs the outer terminal draws. Every other name (ui-term,
+	// ui-text, Monday, a graphical family) passes through as the normal Monday
+	// cell. Cipher and Tuesday are distinct names, so they never combine.
+	text = cipherText(font.Name, text)
 	isTuesday := font.Name == "Tuesday"
 
 	// Calculate text width in cells accounting for font

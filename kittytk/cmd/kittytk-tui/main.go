@@ -39,6 +39,11 @@ func main() {
 	tuiOpts.OSC52Paste = cfg.UseTUIOSC52Paste()
 	tuiBackend := tui.NewTUIBackend(tuiOpts)
 
+	// [tui] pseudofont_<group> = off disables a cipher pseudo-font (it renders
+	// plain); real_fraktur = on forwards a terminal's VT100 fraktur to the
+	// enclosing terminal (independent of the fraktur cipher).
+	tui.ConfigurePseudoFonts(cfg.TUIPseudoFontsDisabled, cfg.TUIRealFraktur)
+
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(tuiBackend) // seeds root metrics from the cell grid
 

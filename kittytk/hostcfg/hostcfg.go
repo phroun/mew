@@ -55,6 +55,14 @@
 //	                      ;                         (read-back), falling back to the
 //	                      ;                         internal clipboard if it is silent
 //	                      ;   internal/off        = host-internal clipboard only
+//	pseudofont_black_serif = ; text-backend cipher pseudo-fonts (Unicode
+//	pseudofont_black_sans  = ;   math-alphanumerics faking a style). Each
+//	pseudofont_double      = ;   defaults on; set = off to render that style
+//	pseudofont_fraktur     = ;   as plain text instead.
+//	pseudofont_script      = ;
+//	real_fraktur           = ; on = also forward a terminal's VT100 fraktur
+//	                      ;   (SGR 20) to the enclosing terminal — independent
+//	                      ;   of the fraktur cipher; both can be on.
 //
 // Environment variables still take precedence over the file: KITTYTK_DISPLAY
 // for the endpoint and KITTYTK_TOKEN for the token.
@@ -93,6 +101,17 @@ type Config struct {
 	// and terminal ([tui]) hosts respectively.
 	Native    string
 	TUINative string
+
+	// TUIPseudoFontsDisabled turns off individual cipher pseudo-fonts in the
+	// text backend ([tui] pseudofont_<group> = off): keyed by toggle group
+	// (black_serif, black_sans, double, fraktur, script). A disabled group
+	// renders plain instead of the styled Unicode. Absent = enabled.
+	TUIPseudoFontsDisabled map[string]bool
+
+	// TUIRealFraktur ([tui] real_fraktur = on): let a terminal's VT100 fraktur
+	// request pass through as REAL fraktur instead of being rendered with the
+	// fraktur cipher. Default off (fraktur is ciphered).
+	TUIRealFraktur bool
 
 	// TUIClipboard controls the terminal host's clipboard integration, set by
 	// the [tui] section's `clipboard` key. "internal"/"off"/"none"/"false"
@@ -257,6 +276,23 @@ func apply(data []byte, cfg *Config) {
 				delete(cfg.FontAliases, alias)
 			}
 			continue
+		}
+		// [tui] cipher pseudo-font gating: pseudofont_<group> = off disables a
+		// group; real_fraktur = on forwards VT100 fraktur to the enclosing
+		// terminal (independent of the fraktur cipher).
+		if section == "tui" {
+			if strings.HasPrefix(key, "pseudofont_") {
+				group := strings.TrimPrefix(key, "pseudofont_")
+				if cfg.TUIPseudoFontsDisabled == nil {
+					cfg.TUIPseudoFontsDisabled = map[string]bool{}
+				}
+				cfg.TUIPseudoFontsDisabled[group] = isFalsey(val) // off/false/no/0
+				continue
+			}
+			if key == "real_fraktur" {
+				cfg.TUIRealFraktur = parseBool(val)
+				continue
+			}
 		}
 		switch key {
 		case "title":

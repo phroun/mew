@@ -8,6 +8,7 @@ package trinkets
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
@@ -167,13 +168,22 @@ func init() {
 		if err != nil {
 			return err
 		}
-		fnt, ok := map[string]*core.Font{
+		// The built-in pseudo-fonts have dedicated constants; any other name is
+		// a family the renderer resolves — the ui-* tree and real families on
+		// the graphical side, or the text backend's cipher pseudo-fonts (Black
+		// Serif, Fraktur, Double-Struck, …) which stay plain on the graphical
+		// side. Empty is rejected (use the default via omission).
+		fnt := map[string]*core.Font{
 			"ui-text": core.FontUIText12,
+			"ui-term": core.FontUITerm12,
 			"Monday":  core.FontMonday12,
 			"Tuesday": core.FontTuesday12,
 		}[s]
-		if !ok {
-			return fmt.Errorf("font: unknown family %q", s)
+		if fnt == nil {
+			if strings.TrimSpace(s) == "" {
+				return fmt.Errorf("font: empty family")
+			}
+			fnt = &core.Font{Name: s, Size: core.FontMonday12.Size}
 		}
 		fw, ok := w.(interface{ SetFont(*core.Font) })
 		if !ok {
@@ -181,7 +191,10 @@ func init() {
 		}
 		fw.SetFont(fnt)
 		return nil
-	})).OneOf("ui-text", "Monday", "Tuesday").Def("inherited").Tip("Font family for this trinket's text."))
+	})).OneOf("ui-text", "ui-term", "Monday", "Tuesday",
+		"Black Serif", "Double-Struck", "Bold Fraktur", "Bold Italic", "Fraktur",
+		"Bold Script", "Black Sans", "Black Italic", "Italic").
+		Def("inherited").Tip("Font family for this trinket's text (graphical: a family or the ui-* tree; text backend: Monday, Tuesday, or a cipher style)."))
 
 	protocol.RegisterCommonProperty("acc_name", protocol.NewProperty("string", wprop("acc_name", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
 		s, err := protocol.AsString("acc_name", v, f)
