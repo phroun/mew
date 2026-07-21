@@ -137,6 +137,7 @@ const (
 	StyleReverse
 	StyleStrikethrough
 	StyleOverline // Virtual attribute: overline below becomes underline above during render
+	StyleFraktur  // ECMA-48 fraktur (SGR 20) — emitted to the terminal (real VT fraktur)
 )
 
 // Code returns the ANSI codes for text style.
@@ -165,6 +166,9 @@ func (s TextStyle) Code() string {
 	}
 	if s&StyleStrikethrough != 0 {
 		codes = append(codes, "9")
+	}
+	if s&StyleFraktur != 0 {
+		codes = append(codes, "20")
 	}
 	if len(codes) == 0 {
 		return ""

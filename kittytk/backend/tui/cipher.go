@@ -61,40 +61,56 @@ var CipherFontNames = []string{
 	"Bold Script", "Black Sans", "Black Italic", "Italic",
 }
 
-// Pseudo-font gating, configured once at host startup from the [tui] section.
-// These are two INDEPENDENT knobs:
-//   - disabledPseudoFonts turns a cipher group off, so that style renders plain.
-//   - realFraktur is unrelated to the cipher: it controls whether a terminal's
-//     VT100 fraktur (SGR 20) escape is ALSO passed through to the enclosing
-//     terminal. Both pseudofont_fraktur and real_fraktur can be on at once.
+// Fraktur mode constants ([tui] fraktur_mode).
+const (
+	FrakturNative = "native" // forward the terminal's VT100 fraktur (SGR 20) to the enclosing terminal
+	FrakturPseudo = "pseudo" // render fraktur with the pseudo-fraktur cipher (default)
+	FrakturOff    = "off"    // don't honor fraktur: use the normal terminal font
+)
+
+// Two independent [tui] knobs, configured once at host startup:
+//
+//   - disabledPseudoFonts gates the CIPHER pseudo-fonts when selected BY NAME
+//     (a UI element's font = "Fraktur", "Black Serif", …): a disabled group
+//     (black_serif, black_sans, double, fraktur, script) renders plain. This is
+//     what cipherText / active() consult.
+//
+//   - frakturMode is a SEPARATE concern: how a terminal's VT100 fraktur REQUEST
+//     (font 20 / SGR 20) is handled by the terminal-render path — native (pass
+//     the escape to the enclosing terminal), pseudo (render it via the fraktur
+//     cipher), or off (normal font). It does NOT gate the by-name cipher; the
+//     two only share the word "fraktur".
 var (
 	disabledPseudoFonts = map[string]bool{}
-	realFraktur         = false
+	frakturMode         = FrakturPseudo
 )
 
 // ConfigurePseudoFonts sets the [tui] pseudo-font gating. disabled maps a
-// toggle group (black_serif, black_sans, double, fraktur, script) to true to
-// turn it off. realFrakturOn passes real VT100 fraktur through to the enclosing
-// terminal (independent of the fraktur cipher). Call once at startup.
-func ConfigurePseudoFonts(disabled map[string]bool, realFrakturOn bool) {
+// cipher toggle group to true to turn it off (includes fraktur, for the
+// by-name cipher); fMode is the separate VT fraktur-request mode (native /
+// pseudo / off — empty keeps the current). Call once at startup.
+func ConfigurePseudoFonts(disabled map[string]bool, fMode string) {
 	m := map[string]bool{}
 	for k, v := range disabled {
 		m[k] = v
 	}
 	disabledPseudoFonts = m
-	realFraktur = realFrakturOn
+	switch fMode {
+	case FrakturNative, FrakturPseudo, FrakturOff:
+		frakturMode = fMode
+	}
 }
 
-// PseudoFontEnabled reports whether a cipher toggle group is active.
+// PseudoFontEnabled reports whether a cipher toggle group is active (by-name).
 func PseudoFontEnabled(group string) bool { return !disabledPseudoFonts[group] }
 
-// RealFrakturPassthrough reports whether a terminal's VT100 fraktur (SGR 20)
-// escape should be forwarded to the enclosing terminal. Independent of whether
-// the fraktur cipher is applied.
-func RealFrakturPassthrough() bool { return realFraktur }
+// FrakturMode returns the VT fraktur-request mode (native / pseudo / off) — the
+// terminal-render path consults it for a font-20 (SGR 20) cell. Independent of
+// the by-name fraktur cipher toggle above.
+func FrakturMode() string { return frakturMode }
 
-// active reports whether this style's cipher currently applies, honoring only
-// its toggle group (real_fraktur is a separate, orthogonal knob).
+// active reports whether this style's by-name cipher applies, honoring its
+// toggle group (fraktur included).
 func (st cipherStyle) active() bool {
 	return st.group == "" || !disabledPseudoFonts[st.group]
 }
@@ -127,18 +143,49 @@ func (st cipherStyle) cipherRune(r rune) rune {
 	return r
 }
 
-// cipherText ciphers s through the pseudo-font named fontName. A non-cipher
-// name (Monday, Tuesday, ui-term, a real family, …) returns s unchanged, so
-// callers can apply it unconditionally.
-func cipherText(fontName, s string) string {
-	st, ok := lookupCipherStyle(fontName)
-	if !ok || !st.active() {
-		return s
-	}
+// apply ciphers every rune of s through the style.
+func (st cipherStyle) apply(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
 		b.WriteRune(st.cipherRune(r))
 	}
 	return b.String()
+}
+
+// VTFrakturName is the reserved family name for the VT100 fraktur request
+// (font 20 / SGR 20). It is DISTINCT from the by-name "Fraktur" cipher: a
+// terminal that requests fraktur resolves its font-20 cell to this name, and
+// the text backend renders it per fraktur_mode. The name itself is the SGR-20
+// signal — no separate detection hook.
+const VTFrakturName = "VTFRAKTUR"
+
+// vtFrakturNative reports whether fontName is the VTFRAKTUR request AND
+// fraktur_mode is native — meaning the draw path should tag the cells with the
+// fraktur attribute so the flush emits real SGR-20 fraktur (rather than
+// ciphering). In pseudo/off modes cipherText handles the characters instead.
+func vtFrakturNative(fontName string) bool {
+	return frakturMode == FrakturNative &&
+		strings.EqualFold(strings.TrimSpace(fontName), VTFrakturName)
+}
+
+// cipherText ciphers s through the pseudo-font named fontName. A non-cipher
+// name (Monday, Tuesday, ui-term, a real family, …) returns s unchanged, so
+// callers can apply it unconditionally.
+func cipherText(fontName, s string) string {
+	// VTFRAKTUR = the VT100 fraktur request, governed by fraktur_mode (not the
+	// pseudofont_fraktur by-name toggle): pseudo renders it via the fraktur
+	// cipher; native/off leave the characters plain (native additionally
+	// forwards the SGR-20 escape — the terminal-output path's job).
+	if strings.EqualFold(strings.TrimSpace(fontName), VTFrakturName) {
+		if frakturMode == FrakturPseudo {
+			return cipherStyles["fraktur"].apply(s)
+		}
+		return s
+	}
+	st, ok := lookupCipherStyle(fontName)
+	if !ok || !st.active() {
+		return s
+	}
+	return st.apply(s)
 }

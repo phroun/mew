@@ -250,8 +250,8 @@ func TestLoadResolvesRelativeFontPaths(t *testing.T) {
 	}
 }
 
-// [tui] pseudofont_<group> = off disables a cipher group; real_fraktur = on
-// forwards VT100 fraktur. Both are read only under [tui].
+// [tui] pseudofont_<group> = off disables a by-name cipher; fraktur_mode is a
+// separate VT-request knob. Both are read only under [tui].
 func TestApplyTUIPseudoFonts(t *testing.T) {
 	cfg := Defaults()
 	apply([]byte(`
@@ -259,11 +259,11 @@ func TestApplyTUIPseudoFonts(t *testing.T) {
 pseudofont_fraktur = off
 pseudofont_double = no
 pseudofont_black_serif = on
-real_fraktur = true
+fraktur_mode = native
 `), &cfg)
 
 	if !cfg.TUIPseudoFontsDisabled["fraktur"] {
-		t.Errorf("pseudofont_fraktur=off should disable fraktur")
+		t.Errorf("pseudofont_fraktur=off should disable the fraktur cipher")
 	}
 	if !cfg.TUIPseudoFontsDisabled["double"] {
 		t.Errorf("pseudofont_double=no should disable double")
@@ -271,15 +271,22 @@ real_fraktur = true
 	if cfg.TUIPseudoFontsDisabled["black_serif"] {
 		t.Errorf("pseudofont_black_serif=on should stay enabled")
 	}
-	if !cfg.TUIRealFraktur {
-		t.Errorf("real_fraktur=true should set TUIRealFraktur")
+	if cfg.TUIFrakturMode != "native" {
+		t.Errorf("fraktur_mode=native should set TUIFrakturMode, got %q", cfg.TUIFrakturMode)
+	}
+
+	// An unrecognized fraktur_mode is ignored (stays empty -> backend default).
+	c1 := Defaults()
+	apply([]byte("[tui]\nfraktur_mode = sideways\n"), &c1)
+	if c1.TUIFrakturMode != "" {
+		t.Errorf("invalid fraktur_mode should be ignored, got %q", c1.TUIFrakturMode)
 	}
 
 	// The same keys outside [tui] are ignored.
 	c2 := Defaults()
-	apply([]byte("pseudofont_fraktur = off\nreal_fraktur = true\n"), &c2)
-	if len(c2.TUIPseudoFontsDisabled) != 0 || c2.TUIRealFraktur {
-		t.Errorf("pseudofont/real_fraktur outside [tui] should be ignored")
+	apply([]byte("pseudofont_fraktur = off\nfraktur_mode = native\n"), &c2)
+	if len(c2.TUIPseudoFontsDisabled) != 0 || c2.TUIFrakturMode != "" {
+		t.Errorf("pseudofont/fraktur_mode outside [tui] should be ignored")
 	}
 }
 

@@ -631,6 +631,11 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	// ui-text, Monday, a graphical family) passes through as the normal Monday
 	// cell. Cipher and Tuesday are distinct names, so they never combine.
 	text = cipherText(font.Name, text)
+	if vtFrakturNative(font.Name) {
+		// VTFRAKTUR in native mode: leave the characters plain and emit real
+		// SGR-20 fraktur to the enclosing terminal via the cell attribute.
+		effectiveStyle.Attrs |= style.StyleFraktur
+	}
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
@@ -766,6 +771,11 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	// ui-text, Monday, a graphical family) passes through as the normal Monday
 	// cell. Cipher and Tuesday are distinct names, so they never combine.
 	text = cipherText(font.Name, text)
+	if vtFrakturNative(font.Name) {
+		// VTFRAKTUR in native mode: leave the characters plain and emit real
+		// SGR-20 fraktur to the enclosing terminal via the cell attribute.
+		effectiveStyle.Attrs |= style.StyleFraktur
+	}
 	isTuesday := font.Name == "Tuesday"
 
 	// Calculate text width in cells accounting for font
