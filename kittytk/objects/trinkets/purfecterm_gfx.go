@@ -600,35 +600,74 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
-	var placed *image.RGBA
-	xOff := 0
-	switch {
-	case naturalW > boxWPx:
-		// Squeeze wide glyphs to fit the box.
-		placed = scaleRGBA(raw, boxWPx, boxHPx)
-	case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
-		// Ambiguous-width char in a wide cell: 1.5x, centered.
-		w := naturalW * 3 / 2
-		if w > boxWPx {
-			w = boxWPx
+	if purfecterm.ScriptClass(ch) == "arabic" {
+		// Arabic is cursive: centering each letter would strand its joining
+		// strokes mid-cell, so neighbours never touch. Instead draw the letter
+		// at its natural width, centered (never distorting the body), then extend
+		// its baseline connecting stroke — a KASHIDA — out to the cell edges by
+		// replicating the glyph's edge columns across the side gaps. This is
+		// self-gating: a connecting form has ink at its advance edge (the stroke
+		// meets the neighbour's), so it extends; an isolated form's edges are
+		// empty, so nothing is drawn — no joining table, no re-shaping, no stray
+		// strokes. A ligature wider than the cell (lam-alef) is fit to width.
+		g := raw
+		gw := naturalW
+		if gw > boxWPx {
+			gw = boxWPx
 		}
-		placed = scaleRGBA(raw, w, boxHPx)
-		xOff = (boxWPx - w) / 2
-	case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
-		// Block/line drawing stretches to connect.
-		placed = scaleRGBA(raw, boxWPx, boxHPx)
-	default:
-		if naturalH != boxHPx {
-			placed = scaleRGBA(raw, naturalW, boxHPx)
-		} else {
-			placed = raw
+		if gw != naturalW || naturalH != boxHPx {
+			g = scaleRGBA(raw, gw, boxHPx)
 		}
-		xOff = (boxWPx - naturalW) / 2
-		if xOff < 0 {
-			xOff = 0
+		gw = g.Rect.Dx()
+		gh := g.Rect.Dy()
+		xo := (boxWPx - gw) / 2
+		if xo < 0 {
+			xo = 0
 		}
+		compositeInto(out, g, xo, 0)
+		for y := 0; y < gh; y++ {
+			if l := g.RGBAAt(0, y); l.A != 0 { // extend the left connecting stroke
+				for x := 0; x < xo; x++ {
+					out.SetRGBA(x, y, l)
+				}
+			}
+			if r := g.RGBAAt(gw-1, y); r.A != 0 { // extend the right connecting stroke
+				for x := xo + gw; x < boxWPx; x++ {
+					out.SetRGBA(x, y, r)
+				}
+			}
+		}
+	} else {
+		var placed *image.RGBA
+		xOff := 0
+		switch {
+		case naturalW > boxWPx:
+			// Squeeze wide glyphs to fit the box.
+			placed = scaleRGBA(raw, boxWPx, boxHPx)
+		case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
+			// Ambiguous-width char in a wide cell: 1.5x, centered.
+			w := naturalW * 3 / 2
+			if w > boxWPx {
+				w = boxWPx
+			}
+			placed = scaleRGBA(raw, w, boxHPx)
+			xOff = (boxWPx - w) / 2
+		case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
+			// Block/line drawing stretches to connect.
+			placed = scaleRGBA(raw, boxWPx, boxHPx)
+		default:
+			if naturalH != boxHPx {
+				placed = scaleRGBA(raw, naturalW, boxHPx)
+			} else {
+				placed = raw
+			}
+			xOff = (boxWPx - naturalW) / 2
+			if xOff < 0 {
+				xOff = 0
+			}
+		}
+		compositeInto(out, placed, xOff, 0)
 	}
-	compositeInto(out, placed, xOff, 0)
 
 	if len(t.gfx.textCur) >= gfxCacheMax {
 		t.gfx.textPrev = t.gfx.textCur
