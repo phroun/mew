@@ -67,12 +67,12 @@ func main() {
 	// integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
 
-	// [fonts] / [window] fonts_path / ui_term from kittytk.ini: register the
+	// [fonts] / [window] fonts_path / ui_* from kittytk.ini: register the
 	// configured font files and search directories into the shared text engine
-	// (embedded terminals resolve fonts from the same set), then point the
-	// ui-term terminal face at its family. Editor.conf's own [fonts] still
+	// (embedded terminals resolve fonts from the same set), then re-point any
+	// ui-* font aliases at their families. Editor.conf's own [fonts] still
 	// applies on top per embedded mew instance.
-	if len(cfg.Fonts) > 0 || len(cfg.FontsPath) > 0 || len(cfg.UITerm) > 0 {
+	if len(cfg.Fonts) > 0 || len(cfg.FontsPath) > 0 || len(cfg.FontAliases) > 0 {
 		eng := backend.Engine()
 		for _, dir := range cfg.FontsPath {
 			eng.AddFontSearchPath(dir)
@@ -80,8 +80,8 @@ func main() {
 		for family, path := range cfg.Fonts {
 			_ = eng.RegisterFontFile(family, path)
 		}
-		if len(cfg.UITerm) > 0 {
-			eng.UseFont("ui-term", cfg.UITerm...)
+		for alias, names := range cfg.FontAliases {
+			eng.UseFont(alias, names...)
 		}
 	}
 

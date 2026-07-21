@@ -513,20 +513,14 @@ type WindowConfig struct {
 	// its layer's own directory. Only meaningful on a graphical host.
 	FontsPath []string
 
-	// UITerm re-points the "ui-term" font alias — the terminal grid's primary
-	// face (purfecterm font slot 0 / SGR 10) — at an ordered fallback list of
-	// family names, exactly like the set_font command does at runtime. Empty
-	// leaves the built-in default (the monospace face).
-	UITerm []string
-
-	// UITermCJK / UITermHebrew / UITermArabic re-point the per-script terminal
-	// font aliases ([window] ui_term_cjk / ui_term_hebrew / ui_term_arabic):
-	// the face used when the primary can't render a CJK / Hebrew / Arabic glyph,
-	// each an ordered fallback list. Empty leaves the embedded default (Noto
-	// Sans CJK, Noto Serif Hebrew, Noto Naskh Arabic).
-	UITermCJK    []string
-	UITermHebrew []string
-	UITermArabic []string
+	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
+	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
+	// at an ordered fallback list. This is the whole systematic font tree,
+	// overridable at exactly the level wanted — a root (ui_term), a style
+	// (ui_text_serif), a script (ui_term_hebrew), or a single leaf
+	// (ui_term_hebrew_sans). Keyed by the hyphenated alias name. default /
+	// inherit / blank clears an entry. Only meaningful on a graphical host.
+	FontAliases map[string][]string
 }
 
 // FileIO is the file access the Manager uses for config, profile, and @include
@@ -1138,8 +1132,8 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	}
 
 	// [window]: window-scoped display settings. fonts_path adds font search
-	// directories (Decision B(ii), name-based lookup); ui_term re-points the
-	// ui-term font alias at a fallback list of family names.
+	// directories (Decision B(ii), name-based lookup); any ui_* key re-points
+	// the matching ui-* font alias at a fallback list (the whole font tree).
 	if win, ok := parsed["window"]; ok {
 		if v, ok := win["fonts_path"]; ok {
 			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
@@ -1153,21 +1147,24 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 				}
 			}
 		}
-		// ui_term and the per-script ui_term_<class> keys each re-point a font
-		// alias at a fallback list; default/inherit/blank restores the built-in.
-		aliasList := func(key string, dst *[]string) {
-			if v, ok := win[key]; ok {
-				if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
-					*dst = nil
-				} else {
-					*dst = splitFontList(v)
-				}
+		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
+		// a fallback list; default/inherit/blank clears it (restoring the
+		// built-in). This covers the whole systematic tree at any level.
+		for k, v := range win {
+			lk := strings.ToLower(strings.TrimSpace(k))
+			if !strings.HasPrefix(lk, "ui_") {
+				continue
+			}
+			alias := strings.ReplaceAll(lk, "_", "-")
+			if config.Window.FontAliases == nil {
+				config.Window.FontAliases = map[string][]string{}
+			}
+			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+				delete(config.Window.FontAliases, alias)
+			} else {
+				config.Window.FontAliases[alias] = splitFontList(v)
 			}
 		}
-		aliasList("ui_term", &config.Window.UITerm)
-		aliasList("ui_term_cjk", &config.Window.UITermCJK)
-		aliasList("ui_term_hebrew", &config.Window.UITermHebrew)
-		aliasList("ui_term_arabic", &config.Window.UITermArabic)
 	}
 
 	// Indicator glyphs

@@ -5867,18 +5867,9 @@ func (e *Editor) applyFontConfig() {
 		e.Config.FontLoader(files, paths)
 	}
 	if e.Config.FontSink != nil {
-		w := e.LoadedConfig.Window
-		for _, a := range []struct {
-			alias string
-			names []string
-		}{
-			{"ui-term", w.UITerm},
-			{"ui-term-cjk", w.UITermCJK},
-			{"ui-term-hebrew", w.UITermHebrew},
-			{"ui-term-arabic", w.UITermArabic},
-		} {
-			if len(a.names) > 0 {
-				e.Config.FontSink(a.alias, a.names)
+		for alias, names := range e.LoadedConfig.Window.FontAliases {
+			if len(names) > 0 {
+				e.Config.FontSink(alias, names)
 			}
 		}
 	}

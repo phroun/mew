@@ -211,6 +211,7 @@ Comic Mono = "/opt/comic mono.otf"
 [window]
 fonts_path = /a/fonts, "/b/more fonts"
 ui_term = "JetBrainsMono, Monday"
+ui_text_hebrew_serif = SBL Hebrew
 `), &cfg)
 
 	if cfg.Fonts["JetBrainsMono"] != "/usr/share/fonts/jbm.ttf" {
@@ -222,8 +223,11 @@ ui_term = "JetBrainsMono, Monday"
 	if len(cfg.FontsPath) != 2 || cfg.FontsPath[0] != "/a/fonts" || cfg.FontsPath[1] != "/b/more fonts" {
 		t.Errorf("FontsPath = %v", cfg.FontsPath)
 	}
-	if len(cfg.UITerm) != 2 || cfg.UITerm[0] != "JetBrainsMono" || cfg.UITerm[1] != "Monday" {
-		t.Errorf("UITerm = %v", cfg.UITerm)
+	if got := cfg.FontAliases["ui-term"]; len(got) != 2 || got[0] != "JetBrainsMono" || got[1] != "Monday" {
+		t.Errorf("FontAliases[ui-term] = %v", got)
+	}
+	if got := cfg.FontAliases["ui-text-hebrew-serif"]; len(got) != 1 || got[0] != "SBL Hebrew" {
+		t.Errorf("FontAliases[ui-text-hebrew-serif] = %v", got)
 	}
 }
 
@@ -283,7 +287,7 @@ func TestLoadDefaultsWhenNoIni(t *testing.T) {
 		cfg.TUIClipboard != d.TUIClipboard {
 		t.Errorf("no ini should yield defaults, got %+v", cfg)
 	}
-	if len(cfg.Fonts) != 0 || len(cfg.FontsPath) != 0 || len(cfg.UITerm) != 0 {
+	if len(cfg.Fonts) != 0 || len(cfg.FontsPath) != 0 || len(cfg.FontAliases) != 0 {
 		t.Errorf("no ini should yield no font config, got %+v", cfg)
 	}
 }

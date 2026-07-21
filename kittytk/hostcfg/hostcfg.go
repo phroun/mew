@@ -28,8 +28,10 @@
 //	                          ;        host's OS title bar (kittytk-sdl only)
 //	fonts_path   =            ; extra font search directories (comma list, relative
 //	                          ;   to this ini) the engine scans to find families by name
-//	ui_term      =            ; the ui-term terminal face: a family name or comma-
-//	                          ;   separated fallback list (blank = the monospace default)
+//	ui_term      =            ; the ui-term terminal face (family or comma fallback
+//	                          ;   list). Any ui_* key re-points the matching font
+//	                          ;   alias: ui_text_serif, ui_term_hebrew, ui_term_cjk_sans,
+//	                          ;   … — the whole ui-{text,term}-{script}-{style} tree.
 //
 //	[fonts]                   ; family name -> font file path (graphical host only;
 //	JetBrainsMono = /path/to/JetBrainsMono.ttf   ; relative paths resolve against this ini)
@@ -111,10 +113,12 @@ type Config struct {
 	// entries resolve against the ini's directory.
 	FontsPath []string
 
-	// UITerm re-points the "ui-term" font alias — the embedded terminal grid's
-	// primary face — at an ordered fallback list of family names, from [window]
-	// ui_term (comma-separated). Empty leaves the built-in monospace default.
-	UITerm []string
+	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
+	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
+	// at a comma-separated fallback list — the whole systematic font tree,
+	// overridable at any level (ui_term, ui_text_serif, ui_term_hebrew_sans, …).
+	// Keyed by the hyphenated alias name.
+	FontAliases map[string][]string
 
 	// Source is the path of the ini that was loaded, or "" if none was
 	// found (defaults were used).
@@ -240,6 +244,20 @@ func apply(data []byte, cfg *Config) {
 			cfg.Fonts[origKey] = v
 			continue
 		}
+		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
+		// a comma-separated fallback list — the whole systematic font tree.
+		if strings.HasPrefix(key, "ui_") {
+			alias := strings.ReplaceAll(key, "_", "-")
+			if list := splitList(val); len(list) > 0 {
+				if cfg.FontAliases == nil {
+					cfg.FontAliases = map[string][]string{}
+				}
+				cfg.FontAliases[alias] = list
+			} else {
+				delete(cfg.FontAliases, alias)
+			}
+			continue
+		}
 		switch key {
 		case "title":
 			cfg.Title = val
@@ -289,9 +307,6 @@ func apply(data []byte, cfg *Config) {
 		case "fonts_path":
 			// [window] fonts_path: extra font search directories (comma list).
 			cfg.FontsPath = append(cfg.FontsPath, splitList(val)...)
-		case "ui_term":
-			// [window] ui_term: the ui-term alias fallback list (comma list).
-			cfg.UITerm = splitList(val)
 		}
 	}
 }

@@ -27,28 +27,33 @@ ui_term = "JetBrainsMono, Monday"
 	if len(c.Window.FontsPath) != 2 || c.Window.FontsPath[0] != "/a/fonts" || c.Window.FontsPath[1] != "/b/more fonts" {
 		t.Errorf("Window.FontsPath = %v, want [/a/fonts /b/more fonts]", c.Window.FontsPath)
 	}
-	if len(c.Window.UITerm) != 2 || c.Window.UITerm[0] != "JetBrainsMono" || c.Window.UITerm[1] != "Monday" {
-		t.Errorf("Window.UITerm = %v, want [JetBrainsMono Monday]", c.Window.UITerm)
+	if got := c.Window.FontAliases["ui-term"]; len(got) != 2 || got[0] != "JetBrainsMono" || got[1] != "Monday" {
+		t.Errorf("FontAliases[ui-term] = %v, want [JetBrainsMono Monday]", got)
 	}
 }
 
-// The per-script terminal font aliases parse into their own fallback lists.
-func TestFontConfigScriptClasses(t *testing.T) {
+// Any ui_* key maps to the alias ui-* at any level of the systematic tree.
+func TestFontConfigAliasTree(t *testing.T) {
 	m := NewManager()
 	c := m.LoadFromString(`
 [window]
 ui_term_cjk = "Noto Sans Mono CJK JP, Noto Sans CJK SC"
-ui_term_hebrew = SBL Hebrew
-ui_term_arabic = "Noto Kufi Arabic"
+ui_text_hebrew_sans = SBL Hebrew
+ui_term_arabic_serif = "Noto Naskh Arabic"
+ui_text_serif = Noto Serif
 `)
-	if len(c.Window.UITermCJK) != 2 || c.Window.UITermCJK[0] != "Noto Sans Mono CJK JP" {
-		t.Errorf("UITermCJK = %v", c.Window.UITermCJK)
+	fa := c.Window.FontAliases
+	if got := fa["ui-term-cjk"]; len(got) != 2 || got[0] != "Noto Sans Mono CJK JP" {
+		t.Errorf("ui-term-cjk = %v", got)
 	}
-	if len(c.Window.UITermHebrew) != 1 || c.Window.UITermHebrew[0] != "SBL Hebrew" {
-		t.Errorf("UITermHebrew = %v", c.Window.UITermHebrew)
+	if got := fa["ui-text-hebrew-sans"]; len(got) != 1 || got[0] != "SBL Hebrew" {
+		t.Errorf("ui-text-hebrew-sans = %v", got)
 	}
-	if len(c.Window.UITermArabic) != 1 || c.Window.UITermArabic[0] != "Noto Kufi Arabic" {
-		t.Errorf("UITermArabic = %v", c.Window.UITermArabic)
+	if got := fa["ui-term-arabic-serif"]; len(got) != 1 || got[0] != "Noto Naskh Arabic" {
+		t.Errorf("ui-term-arabic-serif = %v", got)
+	}
+	if got := fa["ui-text-serif"]; len(got) != 1 || got[0] != "Noto Serif" {
+		t.Errorf("ui-text-serif = %v", got)
 	}
 }
 
@@ -61,8 +66,8 @@ func TestFontConfigSingleValues(t *testing.T) {
 ui_term = JetBrainsMono
 fonts_path = /only/one
 `)
-	if len(c.Window.UITerm) != 1 || c.Window.UITerm[0] != "JetBrainsMono" {
-		t.Errorf("Window.UITerm = %v, want [JetBrainsMono]", c.Window.UITerm)
+	if got := c.Window.FontAliases["ui-term"]; len(got) != 1 || got[0] != "JetBrainsMono" {
+		t.Errorf("FontAliases[ui-term] = %v, want [JetBrainsMono]", got)
 	}
 	if len(c.Window.FontsPath) != 1 || c.Window.FontsPath[0] != "/only/one" {
 		t.Errorf("Window.FontsPath = %v, want [/only/one]", c.Window.FontsPath)
@@ -84,8 +89,8 @@ fonts_path = inherit
 	if _, ok := c.Fonts["Gone"]; ok {
 		t.Errorf("blank [fonts] entry should be dropped, got %q", c.Fonts["Gone"])
 	}
-	if c.Window.UITerm != nil {
-		t.Errorf("blank ui_term should clear, got %v", c.Window.UITerm)
+	if _, ok := c.Window.FontAliases["ui-term"]; ok {
+		t.Errorf("blank ui_term should clear, got %v", c.Window.FontAliases["ui-term"])
 	}
 	if c.Window.FontsPath != nil {
 		t.Errorf("inherit fonts_path should clear, got %v", c.Window.FontsPath)
