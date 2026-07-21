@@ -68,5 +68,5 @@ func TestShowYehCell(t *testing.T) {
 	dump(raw, "WHOLE WINDOW (uncropped, with tatweels):", false)
 
 	mask := term.cellTextImage(actx.s, "ui-term", false, false, boxW, boxH, ppu, false, 'ي', true, true, actx)
-	dump(mask, "FINAL 3-CELL MASK (cell = middle third):", true)
+	dump(mask, "FINAL CELL MASK (exactly one cell wide):", true)
 }
