@@ -7,12 +7,12 @@ which KittyTK now consumes directly, its private copy retired). This
 directory remains as the development record; PROTOCOL.md's contract now
 lives with the purfecterm repo.
 
-**v0.2.24** additionally landed the font-slot **machine model** (item 3
-below): `Cell.Font`, the buffer slot API, SGR 10-20, and OSC 7004. What is
-NOT yet upstream is the **renderer wiring** that makes slots visible —
-`font-slots-renderers.patch` (item 4) for gtk/qt, provided here for the
-purfecterm team. The KittyTK gfx/SDL renderer already honors slots in the
-kittytk tree.
+**v0.2.24** landed the font-slot **machine model** (item 3 below):
+`Cell.Font`, the buffer slot API, SGR 10-20, and OSC 7004. **v0.2.25** then
+landed the **renderer wiring** (item 4): the gtk/qt widgets now honor
+`cell.Font`. Both are upstream; the KittyTK gfx/SDL renderer honors slots in
+the kittytk tree. This directory keeps the patch artifacts as the development
+record.
 
 Verified patches for the purfecterm repo, developed from the mew/KittyTK
 integration work:
@@ -40,9 +40,9 @@ integration work:
    any unconfigured slot) stays the primary family; a configured slot names its
    own family, still subject to the existing per-character CJK/Unicode fallback.
    Both the main paint and the split-view paint are covered. Apply with
-   `patch -p1 < font-slots-renderers.patch` from the purfecterm root. **Not yet
-   landed upstream.** (The KittyTK gfx trinket — the SDL path — already honors
-   `cell.Font` in the kittytk tree; this patch brings gtk/qt to parity.)
+   `patch -p1 < font-slots-renderers.patch` from the purfecterm root. **LANDED
+   in v0.2.25.** (The KittyTK gfx trinket — the SDL path — honors `cell.Font`
+   in the kittytk tree; this patch brought gtk/qt to parity.)
 
    *Compile note:* gtk/qt need their system toolkits (pango/gdk, Qt) present to
    build, so these two hunks were verified by patch-applies-clean + gofmt +
