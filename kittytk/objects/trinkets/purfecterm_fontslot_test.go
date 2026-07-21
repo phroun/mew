@@ -77,3 +77,21 @@ func TestGfxCellFamilyScriptFontOSC(t *testing.T) {
 		t.Errorf("explicit slot should win over the script map, got %q", fam)
 	}
 }
+
+// End to end: an SGR-20 fraktur cell resolves to the VTFRAKTUR family name
+// (purfecterm's unmapped-slot-10 default, v0.2.27), which the TUI backend then
+// renders per fraktur_mode. Confirms the two ends agree on the name.
+func TestGfxCellFamilyVTFraktur(t *testing.T) {
+	term := NewPurfecTerm()
+	term.SetTerminalFontFamily("ui-term")
+	buf := term.Terminal().Buffer()
+
+	term.Feed([]byte("\x1b[20mF")) // SGR 20 -> fraktur slot (10)
+	f := buf.GetVisibleCell(0, 0)
+	if got := f.Font; got != 10 {
+		t.Fatalf("SGR 20 should select the fraktur slot, got %d", got)
+	}
+	if fam := term.cellFamily(buf, &f); fam != "VTFRAKTUR" {
+		t.Errorf("fraktur cell should resolve to VTFRAKTUR, got %q", fam)
+	}
+}

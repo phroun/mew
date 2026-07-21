@@ -72,7 +72,7 @@ integration work:
    cli/renderer.go **against v0.2.26**), and `_src/vtfraktur_test.go` +
    `_src/cli_vtfraktur_test.go`. Adds `VTFrakturSlot`/`VTFrakturFont` constants,
    the `GetFontSlot(10)` default, and the CLI SGR-20 emit. Verified: patched
-   v0.2.26 root + cli suites pass. **Not yet landed upstream.**
+   v0.2.26 root + cli suites pass. **LANDED in v0.2.27.**
 
 ---
 

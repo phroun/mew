@@ -14,6 +14,6 @@ require (
 
 require (
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
-	github.com/phroun/purfecterm v0.2.26 // indirect
+	github.com/phroun/purfecterm v0.2.27 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
