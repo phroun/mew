@@ -104,6 +104,11 @@ func newFontDB() *fontDB {
 	must(db.register("Noto Naskh Arabic", Aspect{Bold: true}, fonts.ArabicBold))
 	must(db.register("Noto Kufi Arabic", Aspect{}, fonts.ArabicKufiRegular))
 	must(db.register("Noto Kufi Arabic", Aspect{Bold: true}, fonts.ArabicKufiBold))
+	// Pan-CJK: full C/J/K coverage in one face each. Sans is the default CJK
+	// fallback; the serif (byte-identical to Noto Serif CJK SC) is by name.
+	// Register the sans first so it wins the per-rune fallback for CJK.
+	must(db.register("Noto Sans CJK SC", Aspect{}, fonts.CJKSansRegular))
+	must(db.register("Noto Serif CJK SC", Aspect{}, fonts.CJKSerifRegular))
 	must(db.register("Noto Sans Symbols 2", Aspect{}, fonts.Symbols2Regular))
 	must(db.register("Go", Aspect{}, goregular.TTF))
 	must(db.register("Go", Aspect{Bold: true}, gobold.TTF))
@@ -129,6 +134,15 @@ func newFontDB() *fontDB {
 	// until a Fraktur face is registered.
 	db.aliases[canonical("ui-term")] = []string{canonical("Noto Sans Mono")}
 	db.aliases[canonical("ui-fraktur")] = []string{canonical("Noto Sans Mono")}
+	// Script-class defaults for the terminal grid: when the primary (ui-term)
+	// doesn't cover a glyph, resolution consults ui-term-<class> for the rune's
+	// script BEFORE the general fallback chain (see scriptClassAlias /
+	// fallbackMap.ResolveFace). Each is a redefinable alias ([window]
+	// ui_term_cjk/ui_term_hebrew/ui_term_arabic, or set_font), so a host can
+	// pick its own script faces; unset, it falls through to the general chain.
+	db.aliases[canonical("ui-term-cjk")] = []string{canonical("Noto Sans CJK SC")}
+	db.aliases[canonical("ui-term-hebrew")] = []string{canonical("Noto Serif Hebrew")}
+	db.aliases[canonical("ui-term-arabic")] = []string{canonical("Noto Naskh Arabic")}
 	return db
 }
 
@@ -242,6 +256,21 @@ func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
 	}
 	m.db.mu.RLock()
 	defer m.db.mu.RUnlock()
+	// Script-class preference: for a Hebrew/Arabic/CJK rune, try the
+	// ui-term-<class> alias's family before the general registration-order
+	// chain, so a host's chosen (or the embedded default) script face wins even
+	// if some earlier-registered family happens to also cover the rune.
+	if alias := scriptClassAlias(r); alias != "" {
+		if fk, ok := m.db.resolveFamily(alias, 0); ok {
+			if fam := m.db.families[fk]; fam != nil {
+				if face := fam.face(Aspect{}); face != nil {
+					if _, ok := face.NominalGlyph(r); ok {
+						return face
+					}
+				}
+			}
+		}
+	}
 	for _, key := range m.db.order {
 		face := m.db.families[key].face(Aspect{})
 		if face == nil {
@@ -253,4 +282,35 @@ func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
 	}
 	// Nothing covers it: the primary face renders its .notdef glyph.
 	return m.primary
+}
+
+// scriptClassAlias returns the canonical ui-term-<class> alias for a rune's
+// script — "ui-term-hebrew", "ui-term-arabic", or "ui-term-cjk" — or "" for
+// scripts with no class (Latin and the rest resolve via the general chain).
+// Ranges cover the letters plus the Presentation Forms the RTL shapers emit.
+func scriptClassAlias(r rune) string {
+	switch {
+	case (r >= 0x0590 && r <= 0x05FF) || // Hebrew
+		(r >= 0xFB1D && r <= 0xFB4F): // Hebrew presentation forms
+		return "ui-term-hebrew"
+	case (r >= 0x0600 && r <= 0x06FF) || // Arabic
+		(r >= 0x0750 && r <= 0x077F) || // Arabic Supplement
+		(r >= 0x08A0 && r <= 0x08FF) || // Arabic Extended-A
+		(r >= 0xFB50 && r <= 0xFDFF) || // Arabic Presentation Forms-A
+		(r >= 0xFE70 && r <= 0xFEFF): // Arabic Presentation Forms-B
+		return "ui-term-arabic"
+	case (r >= 0x1100 && r <= 0x11FF) || // Hangul Jamo
+		(r >= 0x3040 && r <= 0x30FF) || // Hiragana + Katakana
+		(r >= 0x3100 && r <= 0x312F) || // Bopomofo
+		(r >= 0x3130 && r <= 0x318F) || // Hangul Compatibility Jamo
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Ext A
+		(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+		(r >= 0xA960 && r <= 0xA97F) || // Hangul Jamo Extended-A
+		(r >= 0xAC00 && r <= 0xD7FF) || // Hangul Syllables + Jamo Ext-B
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+		(r >= 0xFF00 && r <= 0xFFEF) || // Halfwidth/Fullwidth Forms
+		(r >= 0x20000 && r <= 0x2FA1F): // CJK Ext B..F + compat supplement
+		return "ui-term-cjk"
+	}
+	return ""
 }

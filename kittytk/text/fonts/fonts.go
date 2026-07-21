@@ -72,3 +72,17 @@ var ArabicKufiRegular []byte
 
 //go:embed NotoKufiArabic-Bold.ttf
 var ArabicKufiBold []byte
+
+// Pan-CJK faces (OpenType/CFF, ~16-24 MB each): the SC region carries the
+// FULL CJK repertoire — Han, Hiragana/Katakana, Hangul, Bopomofo, fullwidth
+// forms — with Chinese-preferred Han glyph shapes, so a single face renders
+// Chinese, Japanese, and Korean reliably on any platform (no dependence on a
+// system CJK font). Noto Sans CJK SC is the default CJK fallback; the serif is
+// the byte-identical Adobe co-release of Noto Serif CJK SC, addressable by name.
+// Regular weight only — bold CJK degrades to regular via the aspect fallback.
+
+//go:embed NotoSansCJKsc-Regular.otf
+var CJKSansRegular []byte
+
+//go:embed NotoSerifCJKsc-Regular.otf
+var CJKSerifRegular []byte
