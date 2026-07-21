@@ -81,6 +81,19 @@ func TestScriptFallbackStyleTristate(t *testing.T) {
 	}
 }
 
+// Box-drawing / block elements have no serif form of their own; under a serif
+// terminal face (Noto Serif, which lacks them) they fall through to Noto Sans
+// Mono — the monospace face that fills the cell — never the proportional serif.
+func TestBoxDrawingUsesMono(t *testing.T) {
+	db := newFontDB()
+	fm := db.fallbackFor(&core.Font{Name: "ui-term-serif"})
+	for _, r := range []rune{0x2500, 0x2502, 0x250C, 0x2588, 0x2591, 0x2550} {
+		if got := familyName(fm.ResolveFace(r)); got != "Noto Sans Mono" {
+			t.Errorf("box-drawing U+%04X under ui-term-serif -> %q, want Noto Sans Mono", r, got)
+		}
+	}
+}
+
 // Overriding a single leaf reroutes only that (root,script,style) cell.
 func TestScriptAliasLeafOverride(t *testing.T) {
 	e := NewEngine()

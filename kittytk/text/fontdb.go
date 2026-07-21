@@ -156,12 +156,13 @@ func (db *fontDB) installUIAliases() {
 		"arabic-sans": "Noto Kufi Arabic", "arabic-serif": "Noto Naskh Arabic",
 		"cjk-sans": "Noto Sans CJK SC", "cjk-serif": "Noto Serif CJK SC",
 	}
-	// The monospace root swaps only the western leaves for the mono faces; the
+	// The monospace root swaps the western SANS leaf for the mono face; the
 	// script faces are shared (there is no monospaced Hebrew/Arabic/CJK Noto).
-	// No libre "Noto Serif Mono" exists, so ui-term-western-serif degrades to
-	// the sans mono until a serif-monospace face is embedded.
+	// No libre "Noto Serif Mono" exists, so ui-term-western-serif uses the
+	// proportional Noto Serif — the terminal grid still places each glyph in a
+	// fixed cell, so it reads as a serif terminal face.
 	termWestern := map[string]string{
-		"western-sans": "Noto Sans Mono", "western-serif": "Noto Sans Mono",
+		"western-sans": "Noto Sans Mono", "western-serif": "Noto Serif",
 	}
 	// Each script's default STYLE when a caller doesn't specify one.
 	defStyle := map[string]string{
