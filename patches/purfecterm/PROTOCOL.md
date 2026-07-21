@@ -56,11 +56,34 @@ application owns row geometry — mew handles this with whole-row rewrites when
 a row's width profile changes). An application that sends ?2027h declares it
 speaks this contract.
 
-Note for the future: the terminal-wg is standardizing mode 2027 with
-*different* semantics (grapheme clustering over visual columns). Before the
-ecosystem grows, consider moving flex to a private number (e.g. ?7027) and
-letting ?2027 mean only "cluster combining sequences", which Contract A
-already effectively provides. `visualprotocol.go` is agnostic to the number.
+### Assigned mode numbers (decided 2026-07)
+
+PurfecTerm's private DECSET block is **7020–7049**, rhyming with the OSC
+7000-series graphics protocol: *7000s = PurfecTerm extensions*, in both
+namespaces. The width family moves there keeping its last-two-digit
+mnemonics:
+
+| old       | new       | meaning                          |
+|-----------|-----------|----------------------------------|
+| `?2027`   | `?7027`   | flex width (Contract B opt-in)   |
+| `?2028`   | `?7028`   | visual-width line wrap           |
+| `?2029`   | `?7029`   | ambiguous width: narrow          |
+| `?2030`   | `?7030`   | ambiguous width: wide            |
+
+`?2027` is then repurposed to its terminal-wg standards-track meaning
+(grapheme cluster processing over visual columns): ACCEPT it and treat it as
+inherently satisfied — purfecterm always clusters combining marks and
+Contract A supplies visual-column widths — and report it set/always under
+DECRQM when implemented. No flex alias is kept on 2027 (a clean break is the
+point; both sides of the wire are in this repo family today).
+
+Sweep sites for the renumber: the parser's DECSET cases 2027–2030, and
+`buffer_scrollback.go`'s per-run re-emission of `?2027h/l` → `?7027h/l`.
+
+mew consequence: mew's startup `?2027h` (EnableGraphemeWidth) becomes correct
+everywhere — real terminals enable standards grapheme clustering, patched
+purfecterm acks it as inherent — and only true flex clients ever send
+`?7027h`. `visualprotocol.go` is agnostic to the mode number.
 
 ## The patch
 
