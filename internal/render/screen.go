@@ -1588,7 +1588,28 @@ func (sr *ScreenRenderer) renderPeekIndicators(layout window.Layout) {
 // positionCursor positions the terminal cursor within a window. It returns true
 // if the hardware cursor should be hidden for this frame (used for the
 // right-edge off-screen "@", so the block cursor doesn't obscure the marker).
+// caretLineVisible reports whether the caret's document line is within the
+// window's visible content rows. It is false when a free scroll (mouse wheel
+// or scroll_* command) has parked the viewport away from a stationary caret,
+// leaving the caret above or below the content area. ContentHeight already
+// excludes the ruler and message bars, so this is the exact visible span.
+func caretLineVisible(w *window.Window) bool {
+	if w.ContentHeight <= 0 {
+		return true // geometry not established yet: don't hide
+	}
+	rel := w.CursorPos().Line - w.ViewState.ViewOffsetY
+	return rel >= 0 && rel < w.ContentHeight
+}
+
 func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.WindowLayout) bool {
+	// A free scroll can leave the caret above or below the visible content
+	// (its line scrolled out of view). Park the hardware cursor at home and
+	// hide it rather than placing it on an unrelated row.
+	if !caretLineVisible(w) {
+		sr.MoveCursor(1, 1)
+		return true
+	}
+
 	// Adjust for the column ruler and top message bar
 	topOffset := 0
 	if rulerActive(w, layout.Height) {
@@ -1698,6 +1719,9 @@ func (sr *ScreenRenderer) visualColIsWideTrail(w *window.Window, line string, co
 func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.WindowLayout) {
 	if !w.HasGhostCursor || w.GhostCursorVisualColumn <= 0 {
 		return
+	}
+	if !caretLineVisible(w) {
+		return // caret line scrolled out of view (free scroll): no ghost
 	}
 
 	// Adjust for the column ruler and top message bar
@@ -1867,6 +1891,9 @@ func (sr *ScreenRenderer) secondaryCursorColumn(runes []rune, layout *bidi.Layou
 func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window.WindowLayout) {
 	if w.Buffer == nil {
 		return
+	}
+	if !caretLineVisible(w) {
+		return // caret line scrolled out of view (free scroll): no secondary
 	}
 	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
 	line, curRune := sr.displayCaretLine(w, line, w.CursorPos().Rune) // browse-mode buttons

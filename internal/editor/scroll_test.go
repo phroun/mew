@@ -73,6 +73,39 @@ func TestEditReengagesFollow(t *testing.T) {
 	}
 }
 
+// When a free scroll carries the caret's line off-screen, the hardware cursor
+// is parked at home (row 1, col 1) and hidden, rather than placed on an
+// unrelated row.
+func TestFreeScrollParksCursorHome(t *testing.T) {
+	e, w, out := renderedEditorWithConfig(t, strings.Repeat("x\n", 100), "")
+	e.performRender() // establish geometry, cursor shown at the caret
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+
+	// Wheel-scroll the viewport well past the caret; the caret line is now
+	// above the visible content.
+	e.scrollViewByLines(w, 30)
+	if rel := w.CursorPos().Line - w.ViewState.ViewOffsetY; rel >= 0 && rel < w.ContentHeight {
+		t.Fatalf("precondition: the caret line should be off-screen, rel=%d height=%d", rel, w.ContentHeight)
+	}
+	out.Reset()
+	e.performRender()
+	raw := out.String()
+
+	// Home CUP immediately followed by the hide — the cursor's final placement
+	// this frame.
+	if !strings.Contains(raw, "\x1b[1;1H\x1b[?25l") {
+		t.Fatalf("off-screen caret should home and hide the hardware cursor: %q", raw)
+	}
+
+	// Scrolling back so the caret is visible again shows the cursor.
+	out.Reset()
+	e.scrollViewTo(w, 0) // caret line 0 now within view
+	e.performRender()
+	if raw := out.String(); !strings.Contains(raw, "\x1b[?25h") {
+		t.Fatalf("returning the caret on-screen should show the cursor again: %q", raw)
+	}
+}
+
 // The scroll_* command family parks the viewport without moving the caret,
 // mirroring the go_* movement family.
 func TestScrollCommands(t *testing.T) {
