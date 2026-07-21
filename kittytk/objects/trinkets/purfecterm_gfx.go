@@ -766,6 +766,11 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 	wide := cellVisualWidth > 1.0
 
 	frgb := pcRGBA(fg)
+	if shapeStr != "" {
+		// TEMP DIAGNOSTIC: force Arabic cells to bright white so it is obvious
+		// whether this shaping path is the one on screen. Remove after checking.
+		frgb.R, frgb.G, frgb.B = 255, 255, 255
+	}
 	switch lineAttr {
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
