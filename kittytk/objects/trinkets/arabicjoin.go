@@ -99,18 +99,21 @@ func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR
 	default:
 		seq = []rune{base}
 	}
+	// Two tatweels per joining side: enough connecting stroke that a cell-width
+	// window centred on the letter always cuts mid-tatweel at the cell edges,
+	// never running out of stroke before the boundary.
 	ctx := &arabicCellShape{rt0: -1, rt1: -1, lt0: -1, lt1: -1}
 	var rs []rune
 	if kashR { // logical prev = visual right neighbour
-		rs = append(rs, rightBase, 'ـ')
-		ctx.rt0, ctx.rt1 = 1, 2
+		rs = append(rs, rightBase, 'ـ', 'ـ')
+		ctx.rt0, ctx.rt1 = 1, 3
 	}
 	ctx.seg0 = len(rs)
 	rs = append(rs, seq...)
 	ctx.seg1 = len(rs)
 	if kashL { // logical next = visual left neighbour
-		ctx.lt0, ctx.lt1 = len(rs), len(rs)+1
-		rs = append(rs, 'ـ', leftBase)
+		ctx.lt0, ctx.lt1 = len(rs), len(rs)+2
+		rs = append(rs, 'ـ', 'ـ', leftBase)
 	}
 	ctx.s = string(rs)
 	return ctx

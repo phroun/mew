@@ -614,78 +614,44 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	// Stretch/center per the gtk rules.
 	out := image.NewRGBA(image.Rect(0, 0, boxWPx, boxHPx))
 	if actx != nil {
-		// Arabic: str is the five-piece shaping window (prev + tatweel + letter
-		// + tatweel + next, joining sides only), shaped above as ONE run so the
-		// font's own GSUB produced the true joined forms with real connecting
-		// strokes. Cut the cell's piece out by cluster position: keep the letter
-		// (or lam-alef ligature), centred; cut the neighbour letters off the
-		// ends; and stretch each side's tatweel slice — genuinely joined to the
-		// letter in the shaped image — across the remaining gap to the cell
-		// edge, meeting the neighbour cell's stroke at the boundary. Kashida
-		// elongation is exactly this stretch, so the join is the designer's
-		// stroke at the letters' true baseline.
-		b0, b1, okB := sp.RuneSpanX(actx.seg0, actx.seg1)
-		var letter *image.RGBA
-		if okB {
-			letter = cropCols(raw, int(math.Floor(b0*ppu)), int(math.Ceil(b1*ppu)))
+		// Arabic: str is the shaping window (prev + tatweels + letter + tatweels
+		// + next, joining sides only), shaped above as ONE run so the font's own
+		// GSUB produced the true joined forms with real connecting strokes. The
+		// cell keeps the slice between the neighbour letters — the letter WITH
+		// its tatweel connectors INCLUDED — at NATURAL size (no horizontal
+		// scaling, vertical exactly as every other cell): the letter is centred
+		// in the cell and the tatweel runs simply continue to the cell edges,
+		// where the crop cuts them mid-stroke to meet the neighbouring cells'
+		// strokes. The window carries more tatweel than a cell can need, so the
+		// stroke never runs out before the boundary; neighbour letters and
+		// surplus tatweel fall outside the cell and are clipped.
+		keep0, keep1 := actx.seg0, actx.seg1
+		if actx.rt0 >= 0 {
+			keep0 = actx.rt0 // include the right-side tatweels; drop prev
 		}
-		if letter == nil {
-			letter = raw // no cluster data — draw the whole window, centred
+		if actx.lt0 >= 0 {
+			keep1 = actx.lt1 // include the left-side tatweels; drop next
 		}
-		lw := letter.Rect.Dx()
-		if lw > boxWPx {
-			lw = boxWPx
-		}
-		if lw != letter.Rect.Dx() || letter.Rect.Dy() != boxHPx {
-			letter = scaleRGBA(letter, lw, boxHPx)
-			lw = letter.Rect.Dx()
-		}
-		xo := (boxWPx - lw) / 2
-		if xo < 0 {
-			xo = 0
-		}
-		compositeInto(out, letter, xo, 0)
-		// letterEdgeL/R: the letter crop's columns in raw, for the fallback
-		// connector slices when the face merges the tatweel into the letter's
-		// cluster and the tatweel has no span of its own. Zero (no slice) when
-		// the letter span itself was unknown.
-		edgeL, edgeR := 0, 0
-		if okB {
-			edgeL = int(math.Floor(b0 * ppu))
-			edgeR = int(math.Ceil(b1 * ppu))
-		}
-		fillSide := func(t0, t1 int, dstX, dstW int, fbLo, fbHi int) {
-			if dstW <= 0 {
-				return
+		piece := raw
+		pOff := 0.0 // piece's origin within the shaped window, px
+		if u0, u1, ok := sp.RuneSpanX(keep0, keep1); ok {
+			if c := cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu))); c != nil {
+				piece = c
+				pOff = math.Floor(u0 * ppu)
 			}
-			var seg *image.RGBA
-			if u0, u1, ok := sp.RuneSpanX(t0, t1); ok {
-				// Middle of the tatweel: clean uniform stroke, clear of the
-				// junction regions where neighbouring glyph ink overhangs the
-				// tatweel's advance box.
-				q := (u1 - u0) / 4
-				seg = cropCols(raw, int(math.Floor((u0+q)*ppu)), int(math.Ceil((u1-q)*ppu)))
-				if seg == nil {
-					seg = cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu)))
-				}
-			}
-			if seg == nil && okB {
-				// No separate tatweel cluster (some faces merge it with the
-				// letter): slice the shaped window just past the letter's edge —
-				// still the joined stroke the font drew, never synthesized ink.
-				seg = cropCols(raw, fbLo, fbHi)
-			}
-			if seg == nil {
-				return
-			}
-			compositeInto(out, scaleRGBA(seg, dstW, boxHPx), dstX, 0)
 		}
-		if actx.rt0 >= 0 { // toward the logical prev = visual right edge
-			fillSide(actx.rt0, actx.rt1, xo+lw, boxWPx-(xo+lw), edgeR, edgeR+3)
+		if piece.Rect.Dy() != boxHPx {
+			// Same vertical treatment as every cell: height to the box,
+			// width untouched.
+			piece = scaleRGBA(piece, piece.Rect.Dx(), boxHPx)
 		}
-		if actx.lt0 >= 0 { // toward the logical next = visual left edge
-			fillSide(actx.lt0, actx.lt1, 0, xo, edgeL-3, edgeL)
+		// Centre the LETTER (not the piece) in the cell; compositeInto clips
+		// whatever falls outside the box.
+		center := float64(piece.Rect.Dx()) / 2
+		if b0, b1, ok := sp.RuneSpanX(actx.seg0, actx.seg1); ok {
+			center = (b0+b1)/2*ppu - pOff
 		}
+		compositeInto(out, piece, boxWPx/2-int(math.Round(center)), 0)
 	} else {
 		var placed *image.RGBA
 		xOff := 0

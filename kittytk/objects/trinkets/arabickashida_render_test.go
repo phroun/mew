@@ -88,6 +88,22 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	masks := make([]*image.RGBA, len(visual))
 	for i := range visual {
 		masks[i] = renderArabicCell(t, term, visual, i, boxW, boxH, ppu)
+		// Show each cell's FINAL clip in full.
+		var cb strings.Builder
+		cb.WriteString("\ncell ")
+		cb.WriteRune(visual[i])
+		cb.WriteString(":\n")
+		for y := 0; y < boxH; y++ {
+			for x := 0; x < boxW; x++ {
+				if masks[i].RGBAAt(x, y).A > 32 {
+					cb.WriteString("#")
+				} else {
+					cb.WriteString(".")
+				}
+			}
+			cb.WriteString("\n")
+		}
+		t.Log(cb.String())
 	}
 
 	stitched := image.NewRGBA(image.Rect(0, 0, boxW*len(masks), boxH))
