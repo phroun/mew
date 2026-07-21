@@ -307,26 +307,34 @@ func (db *fontDB) fallbackFor(f *core.Font) fallbackMap {
 }
 
 func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
-	if _, ok := m.primary.NominalGlyph(r); ok {
-		return m.primary
-	}
-	m.db.mu.RLock()
-	defer m.db.mu.RUnlock()
-	// Script-class preference: for a Hebrew/Arabic/CJK rune, try the matching
-	// ui-<root>-<script>[-<style>] alias's family before the general
-	// registration-order chain, so the configured (or embedded default) script
-	// face for this context wins even if an earlier-registered family covers r.
+	// Script-class preference: a Hebrew/Arabic/CJK rune takes the configured
+	// (or embedded default) ui-<root>-<script>[-<style>] face BEFORE the
+	// primary. This outranks even a primary that nominally covers the rune:
+	// many Latin-centric faces carry incidental isolated-only glyphs for a few
+	// script codepoints (e.g. a mono primary covering the base Arabic letters
+	// at fixed advance), and resolving those runes to the primary both renders
+	// the wrong (non-joining) forms and SPLITS the shaping run at every face
+	// change, so cursive text can never join. Script text must resolve to its
+	// script face as a unit.
 	if alias := m.scriptTarget(r); alias != "" {
+		m.db.mu.RLock()
 		if fk, ok := m.db.resolveFamily(alias, 0); ok {
 			if fam := m.db.families[fk]; fam != nil {
 				if face := fam.face(Aspect{}); face != nil {
 					if _, ok := face.NominalGlyph(r); ok {
+						m.db.mu.RUnlock()
 						return face
 					}
 				}
 			}
 		}
+		m.db.mu.RUnlock()
 	}
+	if _, ok := m.primary.NominalGlyph(r); ok {
+		return m.primary
+	}
+	m.db.mu.RLock()
+	defer m.db.mu.RUnlock()
 	for _, key := range m.db.order {
 		face := m.db.families[key].face(Aspect{})
 		if face == nil {

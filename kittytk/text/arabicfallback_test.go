@@ -62,16 +62,20 @@ func TestArabicPresentationFormsResolve(t *testing.T) {
 }
 
 // Both Arabic styles are embedded: Naskh is the default (asserted above), Kufi
-// is addressable by name for a geometric/display look, and it too maps the
-// presentation forms the per-cell shaper emits.
+// is addressable by name for a geometric/display look. Coverage is asserted on
+// the BASE letters: the renderer shapes base characters through the font's own
+// GSUB (the legacy presentation-form block is not required — the embedded
+// archive Kufi build omits it).
 func TestArabicKufiAvailableByName(t *testing.T) {
 	db := newFontDB()
 	face := db.resolve(&core.Font{Name: "Noto Kufi Arabic"})
 	if got := familyName(face); got != "Noto Kufi Arabic" {
 		t.Fatalf("resolve by name = %q, want Noto Kufi Arabic", got)
 	}
-	if _, ok := face.NominalGlyph(0xFEDF); !ok {
-		t.Errorf("Noto Kufi Arabic lacks U+FEDF (lam initial) — unusable with the per-cell shaper")
+	for _, r := range []rune{0x0644, 0x064A, 0x0643, 0x0640} { // lam yeh kaf tatweel
+		if _, ok := face.NominalGlyph(r); !ok {
+			t.Errorf("Noto Kufi Arabic lacks base U+%04X", r)
+		}
 	}
 }
 

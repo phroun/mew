@@ -58,16 +58,20 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 24, 32, 1.0
 
+	// The Arabic mask is THREE cells wide (the cell in the middle, columns
+	// [boxW, 2*boxW)), so connecting strokes can continue past the cell
+	// boundaries. A joined medial letter must carry ink ACROSS both boundary
+	// columns; an isolated letter must not.
 	joined := renderArabicCell(t, term, []rune{'ل', 'ي', 'ك'}, 1, boxW, boxH, ppu)
-	if !colInked(joined, 0) || !colInked(joined, boxW-1) {
-		t.Errorf("medial yeh should reach both cell edges; left=%v right=%v",
-			colInked(joined, 0), colInked(joined, boxW-1))
+	if !colInked(joined, boxW) || !colInked(joined, 2*boxW-1) {
+		t.Errorf("medial yeh should reach both cell boundaries; left=%v right=%v",
+			colInked(joined, boxW), colInked(joined, 2*boxW-1))
 	}
 
 	lone := renderArabicCell(t, term, []rune{' ', 'ي', ' '}, 1, boxW, boxH, ppu)
-	if colInked(lone, 0) || colInked(lone, boxW-1) {
-		t.Errorf("isolated yeh should keep clear edges; left=%v right=%v",
-			colInked(lone, 0), colInked(lone, boxW-1))
+	if colInked(lone, boxW) || colInked(lone, 2*boxW-1) {
+		t.Errorf("isolated yeh should keep clear boundaries; left=%v right=%v",
+			colInked(lone, boxW), colInked(lone, 2*boxW-1))
 	}
 }
 
@@ -94,7 +98,10 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 		cb.WriteRune(visual[i])
 		cb.WriteString(":\n")
 		for y := 0; y < boxH; y++ {
-			for x := 0; x < boxW; x++ {
+			for x := 0; x < masks[i].Rect.Dx(); x++ {
+				if x > 0 && x%boxW == 0 {
+					cb.WriteString("|")
+				}
 				if masks[i].RGBAAt(x, y).A > 32 {
 					cb.WriteString("#")
 				} else {
@@ -106,10 +113,13 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 		t.Log(cb.String())
 	}
 
+	// Masks are three cells wide, drawn a cell to the left of their cell, so
+	// neighbouring overflow overlaps at the boundaries (as the paint loop
+	// composites them).
 	stitched := image.NewRGBA(image.Rect(0, 0, boxW*len(masks), boxH))
 	for i, m := range masks {
 		if m != nil {
-			compositeInto(stitched, m, i*boxW, 0)
+			compositeInto(stitched, m, i*boxW-boxW, 0)
 		}
 	}
 	var sb strings.Builder
@@ -129,18 +139,19 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	}
 	t.Log(sb.String())
 
-	bridged := func(left, right *image.RGBA) bool {
+	// Every interior cell boundary of the stitched word carries ink.
+	for i := 1; i < len(masks); i++ {
+		x := i * boxW
+		found := false
 		for y := 0; y < boxH; y++ {
-			if left.RGBAAt(boxW-1, y).A != 0 && right.RGBAAt(0, y).A != 0 {
-				return true
+			if stitched.RGBAAt(x-1, y).A != 0 && stitched.RGBAAt(x, y).A != 0 {
+				found = true
+				break
 			}
 		}
-		return false
-	}
-	for i := 0; i+1 < len(masks); i++ {
-		if !bridged(masks[i], masks[i+1]) {
+		if !found {
 			t.Errorf("cells %d(%c) and %d(%c) do not connect at their shared boundary",
-				i, visual[i], i+1, visual[i+1])
+				i-1, visual[i-1], i, visual[i])
 		}
 	}
 }

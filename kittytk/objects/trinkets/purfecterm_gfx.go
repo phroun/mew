@@ -632,26 +632,50 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		if actx.lt0 >= 0 {
 			keep1 = actx.lt1 // include the left-side tatweels; drop next
 		}
-		piece := raw
-		pOff := 0.0 // piece's origin within the shaped window, px
+		// The keep range in window px: everything between the neighbour
+		// letters (the letter with its tatweel runs).
+		k0, k1 := 0, raw.Rect.Dx()
 		if u0, u1, ok := sp.RuneSpanX(keep0, keep1); ok {
-			if c := cropCols(raw, int(math.Floor(u0*ppu)), int(math.Ceil(u1*ppu))); c != nil {
-				piece = c
-				pOff = math.Floor(u0 * ppu)
-			}
+			k0 = int(math.Floor(u0 * ppu))
+			k1 = int(math.Ceil(u1 * ppu))
 		}
-		if piece.Rect.Dy() != boxHPx {
-			// Same vertical treatment as every cell: height to the box,
-			// width untouched.
-			piece = scaleRGBA(piece, piece.Rect.Dx(), boxHPx)
-		}
-		// Centre the LETTER (not the piece) in the cell; compositeInto clips
-		// whatever falls outside the box.
-		center := float64(piece.Rect.Dx()) / 2
+		// The letter's centre in window px.
+		center := float64(k0+k1) / 2
 		if b0, b1, ok := sp.RuneSpanX(actx.seg0, actx.seg1); ok {
-			center = (b0+b1)/2*ppu - pOff
+			center = (b0 + b1) / 2 * ppu
 		}
-		compositeInto(out, piece, boxWPx/2-int(math.Round(center)), 0)
+		// A terminal cell (mono aspect, ~0.45 of the height) is often NARROWER
+		// than the Arabic letter at the cell-height font size — measured: cell
+		// 14px vs medial yeh 15px. At the required natural size the letter plus
+		// its connectors cannot fit inside the cell, so the Arabic mask is
+		// THREE cells wide with the cell in the middle: the letter is centred
+		// at natural size and the real tatweel ink continues PAST the cell
+		// boundaries into the neighbours. The draw offsets the mask a cell to
+		// the left, so overflow lands on the neighbouring cells, where their
+		// own tatweel overflow overlaps it — the joined strokes meet ACROSS the
+		// boundary instead of being clipped at it. Non-joining sides have no
+		// tatweel in the window and end naturally. No scaling in either axis
+		// beyond the standard height-to-box treatment.
+		outW := 3 * boxWPx
+		out = image.NewRGBA(image.Rect(0, 0, outW, boxHPx))
+		lo := int(math.Round(center - float64(outW)/2))
+		s0, s1 := lo, lo+outW
+		if s0 < k0 {
+			s0 = k0
+		}
+		if s1 > k1 {
+			s1 = k1
+		}
+		slice := cropCols(raw, s0, s1)
+		if slice == nil {
+			slice = raw
+			s0, lo = 0, 0
+		}
+		if slice.Rect.Dy() != boxHPx {
+			// Height to the box, width untouched — same as every cell.
+			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
+		}
+		compositeInto(out, slice, s0-lo, 0)
 	} else {
 		var placed *image.RGBA
 		xOff := 0
@@ -704,6 +728,11 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 	boxW := int(math.Round(cellW * ppu))
 	contentH := int(math.Round(cellH * ppu))
 	xPx := int(math.Round(cellX * ppu))
+	if actx != nil {
+		// The Arabic mask is three cells wide (the cell in the middle) so the
+		// connecting strokes can continue past the cell boundaries.
+		xPx -= boxW
+	}
 	yPx := int(math.Round(cellY*ppu)) + yOffPx
 	wide := cellVisualWidth > 1.0
 

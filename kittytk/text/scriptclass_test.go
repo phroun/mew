@@ -43,9 +43,9 @@ func TestScriptFallbackTermDefault(t *testing.T) {
 	db := newFontDB()
 	fm := db.fallbackFor(&core.Font{Name: "ui-term"})
 	cases := map[rune]string{
-		0x4E00: "Noto Sans CJK SC",    // cjk -> sans default
-		0x05D0: "Noto Serif Hebrew",   // hebrew -> serif default
-		0xFEDF: "Noto Naskh Arabic",   // arabic -> serif(=Naskh) default
+		0x4E00: "Noto Sans CJK SC",  // cjk -> sans default
+		0x05D0: "Noto Serif Hebrew", // hebrew -> serif default
+		0xFEDF: "Noto Naskh Arabic", // arabic -> serif(=Naskh) default
 	}
 	for r, want := range cases {
 		if got := familyName(fm.ResolveFace(r)); got != want {
@@ -61,11 +61,11 @@ func TestScriptFallbackStyleTristate(t *testing.T) {
 	serif := db.fallbackFor(&core.Font{Name: "ui-text-serif"})
 	sans := db.fallbackFor(&core.Font{Name: "ui-text-sans"})
 	cases := []struct {
-		r                rune
+		r                   rune
 		wantSerif, wantSans string
 	}{
 		{0x05D0, "Noto Serif Hebrew", "Noto Sans Hebrew"},
-		{0xFEDF, "Noto Naskh Arabic", "Noto Kufi Arabic"}, // arabic: serif=Naskh, sans=Kufi
+		{0x0639, "Noto Naskh Arabic", "Noto Kufi Arabic"}, // arabic (base ain): serif=Naskh, sans=Kufi
 		// The serif CJK is registered as "Noto Serif CJK SC" but the embedded
 		// file is the byte-identical Adobe co-release, which self-reports this
 		// family name via Describe(); resolution by the Noto name still works.
@@ -99,7 +99,7 @@ func TestScriptAliasLeafOverride(t *testing.T) {
 	e := NewEngine()
 	e.SetFontAlias("ui-term-arabic-serif", "Noto Kufi Arabic")
 	fm := e.db.fallbackFor(&core.Font{Name: "ui-term"}) // arabic default = serif
-	if got := familyName(fm.ResolveFace(0xFEDF)); got != "Noto Kufi Arabic" {
+	if got := familyName(fm.ResolveFace(0x0639)); got != "Noto Kufi Arabic" {
 		t.Errorf("after overriding ui-term-arabic-serif, Arabic -> %q, want Noto Kufi Arabic", got)
 	}
 	// ui-text side and Hebrew untouched.
