@@ -155,6 +155,29 @@ every renderer with no other changes. `getLineVisualWidth` already follows
 this rule. Scrollback ANSI re-emission keys `?2027h` runs off `FlexWidth`,
 which standard cells do not set — unchanged.
 
+### 4b. cli/renderer.go — the real-terminal renderer emits visual columns
+
+The CLI adapter writes into a HOST terminal, which is always visual: with
+standard-mode wide cells (one logical cell, width 2), its logical-index
+column math places everything after a wide glyph one column early and CUPs
+into glyph halves. Included in `standard-default.patch`:
+
+- `hostCellWidth(cell)`: the columns a cell occupies on the host (2 when
+  `CellWidth >= 1.5`, else 1 — fractional flex widths quantize; a host
+  terminal cannot render halves).
+- `Render()` and `RenderToString()` track `vx`, the accumulated visual
+  column, and address each emitted cell at `vx` instead of its logical
+  index x (the clip test in RenderToString also runs on the visual column).
+- Both hardware-cursor CUPs map through `buffer.LogicalToVisualCol`.
+- `renderedCell` carries `cellWidth` in the diff comparison, so a
+  width-attribute change re-emits the cell.
+
+Verified: `_src/cli_visualprotocol_test.go` (drop into `cli/`) feeds
+"日abc" through the real parser and asserts 'a' emits at visual column 3,
+the wide glyph's right half is never addressed, and the cursor parks at
+visual column 6 — and the pre-existing root + cli test suites still pass
+with the whole patch applied.
+
 ### 5. Mouse / selection sweep (gtk & qt widgets)
 
 Pixel→column division by cell width yields a VISUAL column once rendering
