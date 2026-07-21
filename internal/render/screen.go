@@ -423,7 +423,38 @@ func (sr *ScreenRenderer) Render(layout window.Layout) {
 	}
 	sr.frame.begin()
 	defer sr.frame.present(sr.out)
+	sr.paintFrame(layout)
+}
 
+// CaptureFrame renders a full frame of the layout to an ANSI string — a forced,
+// complete repaint against a blank display — without disturbing the live
+// terminal or the incremental diff state. It powers debug_screen: the returned
+// bytes, written to a file, reproduce the screen when cat'd to a terminal.
+func (sr *ScreenRenderer) CaptureFrame(layout window.Layout) string {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+
+	// Paint into a throwaway buffer whose display starts blank, so present()
+	// emits every cell (a full frame) rather than a diff against the live
+	// terminal. A leading clear makes the file self-contained.
+	saved := sr.frame
+	tmp := newBackBuffer(sr.Width, sr.Height)
+	tmp.flipBidi = saved.flipBidi
+	tmp.pendingClear = true
+	sr.frame = tmp
+	tmp.begin()
+	sr.paintFrame(layout)
+	var sb strings.Builder
+	tmp.present(&sb)
+	sr.frame = saved
+	return sb.String()
+}
+
+// paintFrame paints the whole layout into sr.frame — peek indicators, window
+// groups, ghost/secondary/real cursors — and applies the hardware-cursor
+// visibility. The caller must hold renderMu and have called sr.frame.begin();
+// it presents the frame afterward. Shared by Render and CaptureFrame.
+func (sr *ScreenRenderer) paintFrame(layout window.Layout) {
 	// Save peek indicator state
 	sr.peekIndicators.StatPeekUp = layout.NeedsStatPeekUp
 	sr.peekIndicators.StatPeekDown = layout.NeedsStatPeekDown

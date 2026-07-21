@@ -90,7 +90,7 @@ func TestSaveOverDifferentExistingFilePrompts(t *testing.T) {
 
 	// Confirm: the file is replaced and the buffer adopts it.
 	done := false
-	e.requestSave(w.Buffer, victim, func(ok bool) { done = ok })
+	e.requestSave(w.Buffer, victim, func(ok, cancelled bool) { done = ok })
 	confirmPrompt(t, e, true)
 	if !done {
 		t.Fatal("confirmed save should succeed")

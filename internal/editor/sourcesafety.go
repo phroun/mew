@@ -57,16 +57,35 @@ func (e *Editor) noteBuffer(buf *buffer.Buffer, kind, text string, warn bool) {
 // the destination as the buffer's new source (history preserved).
 
 // requestSave routes one buffer save through the safety prompts and performs
-// it. target must be non-empty; done (optional) receives the outcome.
-func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(bool)) {
-	finish := func(ok bool) {
+// it. target must be non-empty. done (optional) receives the outcome: ok is
+// true only on a completed write; cancelled is true when the user aborted a
+// prompt with ^C/escape (as opposed to answering "no"), which buffer_save_all
+// uses to bail the whole batch. A declined overwrite is (false, false).
+func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(ok, cancelled bool)) {
+	finish := func(ok, cancelled bool) {
 		if done != nil {
-			done(ok)
+			done(ok, cancelled)
 		}
 		e.RequestRender()
 	}
+	// confirmOverwrite runs the shared yes/no overwrite prompt: ^C bails
+	// (cancelled), "no" declines, "yes" proceeds to commitSave.
+	confirmOverwrite := func(message string) {
+		e.PromptMgr.PromptForConfirmation(message, false, func(accepted, confirmed bool) {
+			switch {
+			case !accepted:
+				e.ShowNotification("Save cancelled")
+				finish(false, true)
+			case confirmed:
+				e.commitSave(buf, target, finish)
+			default:
+				e.ShowNotification("Save cancelled")
+				finish(false, false)
+			}
+		})
+	}
 	if buf == nil || target == "" {
-		finish(false)
+		finish(false, false)
 		return
 	}
 
@@ -80,49 +99,178 @@ func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(bool))
 					msg += " locked by " + st.LockedBy
 				}
 				e.noteBuffer(buf, "source", "Source "+st.State+" on disk before save: "+target, false)
-				e.PromptMgr.PromptForConfirmation(msg+" — OVERWRITE?", false, func(accepted, confirmed bool) {
-					if accepted && confirmed {
-						finish(e.performSave(buf, target))
-					} else {
-						e.ShowNotification("Save cancelled")
-						finish(false)
-					}
-				})
+				confirmOverwrite(msg + " — OVERWRITE?")
 				return
 			}
-			finish(e.performSave(buf, target))
+			e.commitSave(buf, target, finish)
 			return
 		}
 		// No tracked source (new file, pasted content): if the path has
 		// appeared on disk since, it is someone else's file now — confirm.
 		if e.fileExists(target) {
-			e.PromptMgr.PromptForConfirmation(fmt.Sprintf("19: %s EXISTS ON DISK — OVERWRITE?", target), false, func(accepted, confirmed bool) {
-				if accepted && confirmed {
-					finish(e.performSave(buf, target))
-				} else {
-					e.ShowNotification("Save cancelled")
-					finish(false)
-				}
-			})
+			confirmOverwrite(fmt.Sprintf("19: %s EXISTS ON DISK — OVERWRITE?", target))
 			return
 		}
-		finish(e.performSave(buf, target))
+		e.commitSave(buf, target, finish)
 		return
 	}
 
 	// Different file than the buffer's known source.
 	if e.fileExists(target) {
-		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("13: OVERWRITE EXISTING FILE %s?", target), false, func(accepted, confirmed bool) {
-			if accepted && confirmed {
-				finish(e.performSave(buf, target))
-			} else {
-				e.ShowNotification("Save cancelled")
-				finish(false)
+		confirmOverwrite(fmt.Sprintf("13: OVERWRITE EXISTING FILE %s?", target))
+		return
+	}
+	e.commitSave(buf, target, finish)
+}
+
+// commitSave performs the save once the overwrite question is settled, first
+// making sure the destination DIRECTORY exists: when it does not, it prompts to
+// create it (the same yes/no shape as the overwrite prompt) rather than letting
+// the write fail. done receives (ok, cancelled) — cancelled marks a ^C/escape
+// on the create-directory prompt so a batch save can bail.
+func (e *Editor) commitSave(buf *buffer.Buffer, target string, done func(ok, cancelled bool)) {
+	dir := e.missingSaveDir(target)
+	if dir == "" {
+		done(e.performSave(buf, target), false)
+		return
+	}
+	e.PromptMgr.PromptForConfirmation(fmt.Sprintf("Directory does not exist: %s — CREATE?", dir), false, func(accepted, confirmed bool) {
+		switch {
+		case !accepted:
+			e.ShowNotification("Save cancelled")
+			done(false, true) // ^C / escape
+		case !confirmed:
+			e.ShowNotification("Save cancelled")
+			done(false, false) // declined
+		default:
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				e.ShowError("Failed to create directory: " + err.Error())
+				e.noteBuffer(buf, "save", "Directory creation failed: "+err.Error(), false)
+				done(false, false)
+				return
+			}
+			done(e.performSave(buf, target), false)
+		}
+	})
+}
+
+// missingSaveDir returns the destination directory of a save target when it
+// does not yet exist and mew can create it — a real OS-filesystem path. It is
+// "" (nothing to prompt for) for mew:-scheme targets and host-virtualized
+// filesystems, which manage their own directories, and when the directory is
+// already present.
+func (e *Editor) missingSaveDir(target string) string {
+	if isMewPath(target) || !e.usingOSFS {
+		return ""
+	}
+	dir := filepath.Dir(e.normalizeDocPath(target))
+	if dir == "" || dir == "." {
+		return ""
+	}
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// saveAllTally accumulates buffer_save_all's per-buffer outcomes across the
+// asynchronous save sequence.
+type saveAllTally struct{ saved, failed, skipped int }
+
+// saveAllNonInteractive is the buffer_save_all "true" mode used by save-and-
+// quit: it saves every modified buffer WITHOUT prompting. An unnamed buffer or
+// a source that changed on disk is skipped with a notice (mew never blindly
+// clobbers); a write error fails. It returns true only when everything was
+// saved — nothing skipped or failed — so `buffer_save_all true & exit` will not
+// exit leaving unsaved work behind.
+func (e *Editor) saveAllNonInteractive(pending []*buffer.Buffer) bool {
+	var tally saveAllTally
+	for _, b := range pending {
+		filename := b.GetFilename()
+		if filename == "" {
+			tally.skipped++
+			e.noteBuffer(b, "save", "Skipped an unnamed buffer — save it individually", true)
+			continue
+		}
+		if b.HasSource() {
+			if st := b.SourceConsistency(); st.Changed() {
+				tally.skipped++
+				e.noteBuffer(b, "source",
+					fmt.Sprintf("Skipped %s: %s on disk — save it individually", filename, st.State), true)
+				continue
+			}
+		}
+		if e.performSave(b, filename) {
+			tally.saved++
+		} else {
+			tally.failed++
+		}
+	}
+	e.reportSaveAll(tally)
+	return tally.failed == 0 && tally.skipped == 0
+}
+
+// saveAllSequential is the interactive buffer_save_all: it saves each modified
+// buffer through the full requestSave path (overwrite / create-directory / name
+// prompts) one at a time, the completion of each save driving the next, since
+// the prompts are async and cannot run inside a plain loop. An unnamed buffer
+// prompts for a name (like buffer_save). ANY ^C — at a name prompt or a save
+// prompt — bails the entire remaining batch with a false result. done receives
+// the overall success (false on any failure or abort).
+func (e *Editor) saveAllSequential(pending []*buffer.Buffer, tally saveAllTally, done func(success bool)) {
+	if len(pending) == 0 {
+		e.reportSaveAll(tally)
+		done(tally.failed == 0 && tally.skipped == 0)
+		return
+	}
+	buf, rest := pending[0], pending[1:]
+	// A ^C at any prompt abandons the whole remaining batch with false.
+	abort := func() {
+		e.ShowNotification("Save all cancelled")
+		e.RequestRender()
+		done(false)
+	}
+	outcome := func(ok, cancelled bool) {
+		if cancelled {
+			abort()
+			return
+		}
+		if ok {
+			tally.saved++
+		} else {
+			tally.failed++
+		}
+		e.saveAllSequential(rest, tally, done)
+	}
+	if buf.GetFilename() == "" {
+		// Unnamed buffer: prompt for a name, exactly as buffer_save does.
+		e.PromptMgr.PromptForFilename("Save as", "", func(accepted bool, _, name string) {
+			switch {
+			case !accepted:
+				abort() // ^C on the name prompt
+			case name == "":
+				tally.skipped++
+				e.saveAllSequential(rest, tally, done)
+			default:
+				e.requestSave(buf, name, outcome)
 			}
 		})
 		return
 	}
-	finish(e.performSave(buf, target))
+	e.requestSave(buf, buf.GetFilename(), outcome)
+}
+
+// reportSaveAll shows the end-of-batch summary shared by both save-all modes.
+func (e *Editor) reportSaveAll(tally saveAllTally) {
+	switch {
+	case tally.failed > 0 || tally.skipped > 0:
+		e.ShowError(fmt.Sprintf("Saved %d files, %d failed, %d skipped", tally.saved, tally.failed, tally.skipped))
+	case tally.saved > 0:
+		e.ShowNotification(fmt.Sprintf("Saved %d files", tally.saved))
+	default:
+		e.ShowNotification("No modified files to save")
+	}
+	e.RequestRender()
 }
 
 // performSave executes the actual write: in place when target is the

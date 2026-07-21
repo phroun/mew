@@ -1686,47 +1686,47 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
+	// buffer_save_all saves every modified buffer, once each — including buffers
+	// stacked in a window's nav history (unsaved work parked behind a link
+	// follow). With the argument "true" it is NON-INTERACTIVE (for save-and-quit,
+	// `buffer_save_all true & exit`): it never prompts, skips unnamed/changed
+	// buffers with a notice, and returns false if anything was skipped or failed.
+	// Otherwise it is INTERACTIVE: it prompts per file (name / overwrite / create
+	// directory), and ANY ^C bails the whole remaining batch with a false result.
 	ps.RegisterCommand("buffer_save_all", func(ctx *pawscript.Context) pawscript.Result {
-		savedCount := 0
-		failedCount := 0
-		skippedCount := 0
-		// Every open buffer, each once — including buffers stacked in a
-		// window's nav history (unsaved work parked behind a link follow).
+		var pending []*buffer.Buffer
 		for _, b := range e.openDocWindows() {
-			if !b.IsModified() {
-				continue
-			}
-			filename := b.GetFilename()
-			if filename == "" {
-				failedCount++ // Can't save unnamed buffers
-				continue
-			}
-			// A batch save must not silently clobber a file that changed
-			// underneath its buffer, and cannot prompt mid-loop: skip it
-			// with a notice pointing at an individual save.
-			if b.HasSource() {
-				if st := b.SourceConsistency(); st.Changed() {
-					skippedCount++
-					e.noteBuffer(b, "source",
-						fmt.Sprintf("Skipped %s: %s on disk — save it individually", filename, st.State), true)
-					continue
-				}
-			}
-			if e.performSave(b, filename) {
-				savedCount++
-			} else {
-				failedCount++
+			if b.IsModified() {
+				pending = append(pending, b)
 			}
 		}
-		switch {
-		case failedCount > 0 || skippedCount > 0:
-			e.ShowError(fmt.Sprintf("Saved %d files, %d failed, %d skipped", savedCount, failedCount, skippedCount))
-		case savedCount > 0:
-			e.ShowNotification(fmt.Sprintf("Saved %d files", savedCount))
-		default:
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "true") {
+			return pawscript.BoolStatus(e.saveAllNonInteractive(pending))
+		}
+		if len(pending) == 0 {
 			e.ShowNotification("No modified files to save")
+			return pawscript.BoolStatus(true)
 		}
-		return pawscript.BoolStatus(failedCount == 0 && skippedCount == 0)
+		// Interactive: the prompts are async. If the whole batch finishes without
+		// suspending on a prompt (every buffer saved cleanly), report the result
+		// synchronously; otherwise defer it through a token so a following `& exit`
+		// waits for — and respects — the outcome. The prompt callbacks cannot fire
+		// until this command returns to the main loop, so `token` is always set
+		// before any resume runs.
+		token := ""
+		completedSync, syncResult := false, false
+		e.saveAllSequential(pending, saveAllTally{}, func(success bool) {
+			if token == "" {
+				completedSync, syncResult = true, success
+			} else {
+				ctx.ResumeToken(token, success)
+			}
+		})
+		if completedSync {
+			return pawscript.BoolStatus(syncResult)
+		}
+		token = e.PawScript.RequestToken(nil, "", tokenTimeout(0))
+		return pawscript.TokenResult(token)
 	})
 
 	// Block commands (TypeScript uses set_mark '_block_begin' / '_block_end')
@@ -1855,6 +1855,24 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("screen_refresh", func(ctx *pawscript.Context) pawscript.Result {
 		e.Renderer.ForceRedraw()
 		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// debug_screen forces a full repaint of the live screen, then captures that
+	// same complete frame as ANSI and writes it to a timestamped ".ans" file in
+	// the mew:/// support tree (~/.mew locally) — a snapshot that reproduces the
+	// screen when cat'd to a terminal.
+	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
+		e.Renderer.ForceRedraw()
+		e.performRender()
+		layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
+		ans := e.Renderer.CaptureFrame(layout)
+		target := "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
+		if err := e.mew.WriteFile(target, []byte(ans)); err != nil {
+			e.ShowError("debug_screen: " + err.Error())
+			return pawscript.BoolStatus(false)
+		}
+		e.ShowNotification("Wrote " + target)
 		return pawscript.BoolStatus(true)
 	})
 
