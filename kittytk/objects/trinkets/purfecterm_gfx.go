@@ -627,10 +627,10 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		}
 		compositeInto(out, g, xo, 0)
 		if kashR && xo+gw < boxWPx {
-			t.fillKashida(out, f, boxHPx, ppu, xo+gw, boxWPx)
+			t.fillKashida(out, g, f, boxHPx, ppu, xo+gw, boxWPx, gw-1)
 		}
 		if kashL && xo > 0 {
-			t.fillKashida(out, f, boxHPx, ppu, 0, xo)
+			t.fillKashida(out, g, f, boxHPx, ppu, 0, xo, 0)
 		}
 	} else {
 		var placed *image.RGBA
@@ -728,17 +728,36 @@ func (t *PurfecTerm) kashidaMask(f *core.Font, boxHPx int, ppu float64) *image.R
 	return out
 }
 
-// fillKashida stretches the font's kashida stroke across [x0,x1) at the cell's
-// baseline, joining an Arabic letter to its neighbour with the designed stroke.
-func (t *PurfecTerm) fillKashida(dst *image.RGBA, f *core.Font, boxHPx int, ppu float64, x0, x1 int) {
+// fillKashida joins an Arabic letter to its neighbour across [x0,x1) at the
+// cell's baseline. It prefers the FONT'S OWN kashida (the U+0640 tatweel), the
+// designer's stroke; but if the resolved face yields no tatweel glyph, it falls
+// back to smearing the letter glyph g's own connecting-edge column (edgeCol)
+// across the gap — the letter is always on screen, so this join always appears.
+// The smear reuses ink the letter actually rasterized, so it is never a stray
+// stroke: an isolated form has no edge ink and nothing is drawn.
+func (t *PurfecTerm) fillKashida(dst, g *image.RGBA, f *core.Font, boxHPx int, ppu float64, x0, x1, edgeCol int) {
 	if x1 <= x0 {
 		return
 	}
-	k := t.kashidaMask(f, boxHPx, ppu)
-	if k == nil {
+	if k := t.kashidaMask(f, boxHPx, ppu); k != nil {
+		compositeInto(dst, scaleRGBA(k, x1-x0, boxHPx), x0, 0)
 		return
 	}
-	compositeInto(dst, scaleRGBA(k, x1-x0, boxHPx), x0, 0)
+	// Fallback: replicate the glyph's connecting-edge column across the gap.
+	gh := g.Rect.Dy()
+	dw, dh := dst.Rect.Dx(), dst.Rect.Dy()
+	if edgeCol < 0 || edgeCol >= g.Rect.Dx() {
+		return
+	}
+	for y := 0; y < gh && y < dh; y++ {
+		c := g.RGBAAt(edgeCol, y)
+		if c.A == 0 {
+			continue
+		}
+		for x := x0; x < x1 && x < dw; x++ {
+			dst.SetRGBA(x, y, c)
+		}
+	}
 }
 
 // drawCellText renders one cell's character with all scaling rules,
