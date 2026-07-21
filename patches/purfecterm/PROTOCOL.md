@@ -230,3 +230,98 @@ already reports screen columns, which are visual.)
   widths, so both contracts remain coherent on the same screen.
 - `getPreviousCellWidth` auto-matching stays flex-only; standard mode is
   deterministic by design.
+
+---
+
+# Font slots: per-cell font selection (SGR 10-20 + OSC 7004)
+
+Companion patch: `font-slots.patch` (unified diff for cell.go, buffer.go,
+buffer_output.go, parser.go, cli/terminal.go against v0.2.23) plus
+`_src/fontslot_test.go` and `_src/cli_fontslot_test.go` (drop-in tests).
+Developed against v0.2.23; not yet landed upstream.
+
+## The idea
+
+A cell already carries color, weight, and flip attributes; this adds a **font
+slot** — a small integer chosen with the standard ANSI font-selection SGRs and
+resolved, per terminal, to a family name that a renderer maps through its
+shared font engine. It is deliberately just an *index* in the machine model:
+purfecterm stores a `uint8` per cell and a slot→family map per terminal, and
+stays entirely out of font loading and rasterization (that is the renderer's —
+KittyTK's — job). This keeps the GTK and Qt builds working unchanged: they
+simply ignore `Cell.Font` until they choose to honor it, exactly as they
+ignore any attribute they do not yet draw.
+
+## The wire protocol
+
+### SGR — select the active slot (ANSI-standard 10-20)
+
+| SGR       | slot | meaning                                   |
+|-----------|------|-------------------------------------------|
+| `10`      | 0    | primary font (also the reset default)     |
+| `11`-`19` | 1-9  | alternate fonts                           |
+| `20`      | 10   | Fraktur / gothic                          |
+
+These are the historical ECMA-48 font-selection codes (10 = primary, 11-19 =
+alternate 1-9, 20 = Fraktur), so a naive terminal that ignores them and a
+purfecterm renderer that honors them stay wire-compatible. SGR `0` (reset)
+returns to slot 0 along with the other attributes. The active slot is written
+into every subsequently painted cell's `Font` field.
+
+### OSC 7004 — configure the slot→family map
+
+```
+ESC ] 7004 ; <cmd> BEL
+```
+
+| cmd                | effect                                            |
+|--------------------|---------------------------------------------------|
+| `f;SLOT;FAMILY`    | map slot SLOT (0-10) to family name FAMILY        |
+| `fd;SLOT`          | clear slot SLOT (it then inherits slot 0)         |
+| `fda`              | clear all slot mappings                           |
+
+`FAMILY` is an opaque name handed to the renderer's font engine (e.g.
+`JetBrainsMono`, or a KittyTK alias like `ui-term` / `ui-fraktur`). Slot 0 is
+the primary; **any unset slot inherits slot 0's family**, so an application can
+configure just the slots it uses and everything else falls back to the primary
+face. This mirrors KittyTK's own alias fallback and the "any font not
+specified defaults back to the primary" rule.
+
+## The machine model (what the patch adds)
+
+- `Cell.Font uint8` — slot 0..10 stored per cell (cell.go), written from
+  `Buffer.currentFont` in `buffer_output.go`.
+- `Buffer.currentFont uint8` + `Buffer.fontSlots map[uint8]string`
+  (buffer.go): the active slot and the per-terminal slot→family map.
+- `Buffer.SetFont(slot)` / `GetFont()` — active slot, clamped to 0..10.
+- `Buffer.SetFontSlot(slot, family)` / `GetFontSlot(slot)` — the map;
+  empty family clears a slot; `GetFontSlot` returns slot 0's family for any
+  unset slot (and "" when even slot 0 is unset → renderer's default primary).
+- `ResetAttributes` clears `currentFont` to 0 alongside the other SGR state.
+- parser.go: SGR cases 10 / 11-19 / 20 call `SetFont`; OSC dispatch routes
+  7004 to `executeOSCFont`, which parses the `f` / `fd` / `fda` commands.
+- cli/terminal.go: `RenderedCell.Font` carries the slot out through
+  `GetCells` so a CLI consumer can resolve it too.
+
+## Renderer contract (KittyTK side, staged)
+
+A renderer honoring font slots reads `cell.Font`, looks up
+`buffer.GetFontSlot(int(cell.Font))` for the family name, and resolves that
+name through its shared font engine (KittyTK's `text` engine, where `ui-term`
+and `ui-fraktur` are live-redefinable aliases). Because `GetFontSlot` already
+folds unset slots onto slot 0, the renderer never has to special-case an
+unconfigured slot. A renderer that does nothing with `cell.Font` renders
+everything in its primary face — the GTK/Qt builds' current behavior — so the
+patch is safe to land ahead of any renderer honoring it. mew's KittyTK gfx /
+GTK / Qt / TUI paint paths gain this once mew bumps to a purfecterm release
+carrying `Cell.Font`.
+
+## Verification
+
+`_src/fontslot_test.go` (root package) drives the parser with
+`A ESC[11m B ESC[20m C ESC[10m D ESC[0m E` and asserts slots
+`[0,1,10,0,0]`; checks the slot map's inherit-slot-0 and clear semantics; and
+feeds `ESC]7004;f;2;Comic Mono BEL` then `ESC[12mZ` to confirm OSC config +
+SGR select paint slot 2. `_src/cli_fontslot_test.go` (cli package) confirms
+`RenderedCell.Font` survives `GetCells`. Patched tree builds and the full root
++ cli suites pass against v0.2.23.
