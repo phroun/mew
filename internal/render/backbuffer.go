@@ -610,11 +610,22 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 	}
 
 	emit := func(c bbCell, mirror bool) {
-		// Emit the style only when it changes from the pen already in effect, so a
-		// same-styled run stays contiguous — critical here, the flip/RTL path,
-		// where an SGR injected between Arabic letters breaks the terminal's own
-		// shaping and joining.
-		b.putStyle(sb, c.style)
+		// Style emission depends on the mode. flipBidi exists for Terminal.app,
+		// whose own bidi engine re-processes each parsed line: coalesced
+		// run-level SGR does not survive that reordering (colors vanish), while
+		// per-glyph attributes do — and since it shapes from parsed characters,
+		// per-glyph SGR cannot break its Arabic joining. Everywhere else
+		// (logicalCUP whole-row escalation) coalesce via the pen as usual.
+		if b.flipBidi {
+			style := c.style
+			if style == "" {
+				style = defaultStyleSeq
+			}
+			sb.WriteString(style)
+			b.emitPen = style
+		} else {
+			b.putStyle(sb, c.style)
+		}
 		if len(c.runes) == 0 {
 			sb.WriteByte(' ')
 			return

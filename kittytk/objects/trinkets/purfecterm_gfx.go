@@ -394,8 +394,21 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 					wavePhase := t.gfx.blinkPhase + float64(x)*0.5
 					yOffPx = int(math.Round(math.Sin(wavePhase) * 3.0 * ppu))
 				}
-				if !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
-					t.drawCellText(painter, &cell, fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
+				// Arabic contextual joining: a per-cell renderer must pick the
+				// presentation form itself (a lone letter always shapes
+				// isolated), from the neighbor cells' base characters.
+				var leftCh, rightCh rune
+				if x > 0 {
+					leftCh = buf.GetVisibleCell(x-1, y).Char
+				}
+				if x+1 < effectiveCols {
+					rightCh = buf.GetVisibleCell(x+1, y).Char
+				}
+				shaped, suppress := shapeArabicVisual(leftCh, cell.Char, rightCh)
+				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
+					dc := cell
+					dc.Char = shaped
+					t.drawCellText(painter, &dc, fg, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx, cellVisualWidth)
 				}
 			}
 
@@ -1176,7 +1189,18 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				fillPixels(clip, cellX, rowY, cellX+cellW, rowY+chh, ppu, bg)
 			}
 			if cell.Char != ' ' && cell.Char != 0 {
-				t.drawCellText(clip, &cell, fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
+				// Arabic contextual joining from the split-view neighbors.
+				var leftCh, rightCh rune
+				if screenCol+horizOffset > 0 {
+					leftCh = buf.GetCellForSplit(screenCol+horizOffset-1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
+				}
+				rightCh = buf.GetCellForSplit(screenCol+horizOffset+1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
+				shaped, suppress := shapeArabicVisual(leftCh, cell.Char, rightCh)
+				if !suppress {
+					dc := cell
+					dc.Char = shaped
+					t.drawCellText(clip, &dc, fg, cellX, rowY, cellW, chh, lineAttr, ppu, 0, 1.0)
+				}
 			}
 		}
 
