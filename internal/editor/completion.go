@@ -208,8 +208,8 @@ func isSchemeAlpha(c byte) bool {
 // case), else the launch directory (standalone), else [storage] documents=,
 // else empty so module mode globs the host's default location.
 func (e *Editor) completionBaseDir(w *window.Window) string {
-	main := w.ParentMain
-	if main == nil && w.Type == window.MainBuffer {
+	main := w.ParentWindow
+	if main == nil && w.Type != window.PromptWindow {
 		main = w
 	}
 	if main != nil && main.Buffer != nil {

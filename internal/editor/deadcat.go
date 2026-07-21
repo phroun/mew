@@ -184,7 +184,7 @@ type deadBuf struct{ name, content string }
 // follow must survive a crash like any other.
 func (e *Editor) modifiedBufferDump() []deadBuf {
 	var out []deadBuf
-	for _, b := range e.openMainBuffers() {
+	for _, b := range e.openDocWindows() {
 		if !b.IsModified() {
 			continue
 		}

@@ -84,9 +84,9 @@ func TestFindOpenBufferAcrossStacks(t *testing.T) {
 		t.Fatal("an unopened file must not match")
 	}
 
-	// openMainBuffers spans active + stacked (seed, bufA, bufB).
-	if got := len(e.openMainBuffers()); got != 3 {
-		t.Fatalf("openMainBuffers = %d buffers, want 3", got)
+	// openDocWindows spans active + stacked (seed, bufA, bufB).
+	if got := len(e.openDocWindows()); got != 3 {
+		t.Fatalf("openDocWindows = %d buffers, want 3", got)
 	}
 }
 

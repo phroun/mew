@@ -68,14 +68,14 @@ func parseFindOptions(s string) (findOptions, error) {
 func (e *Editor) resolveTargetMain() *window.Window {
 	w := e.WindowManager.GetFocusedWindow()
 	if w != nil {
-		if w.Type == window.MainBuffer {
+		if w.Type != window.PromptWindow {
 			return w
 		}
-		if w.ParentMain != nil {
-			return w.ParentMain
+		if w.ParentWindow != nil {
+			return w.ParentWindow
 		}
 	}
-	return e.WindowManager.GetLastMainBufferWindow()
+	return e.WindowManager.GetLastMainWindow()
 }
 
 // matchInfo describes one located match.
@@ -388,7 +388,7 @@ func (e *Editor) findFrom(m matcher, opts findOptions, startW *window.Window, li
 	}
 
 	// All-buffers mode: walk the ring of main buffers starting at startW.
-	mains := e.getMainBuffers()
+	mains := e.contentWindows()
 	if len(mains) == 0 {
 		return matchInfo{}, false
 	}

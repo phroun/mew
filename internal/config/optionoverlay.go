@@ -6,7 +6,7 @@ import "strings"
 // used as the trailing qualifier of overlay sections, so [options.<x>] can be
 // told apart: a trailing segment in this set is a buffer type, otherwise the
 // segment is a grammar name.
-var bufferTypeNames = map[string]bool{"main": true, "work": true, "prompt": true}
+var bufferTypeNames = map[string]bool{"doc": true, "tool": true, "prompt": true}
 
 const overlaySep = "\x1f"
 
@@ -108,7 +108,7 @@ func parseMappingsSection(name string) (set, class, grammar, bufType string, ok 
 }
 
 // splitQuals splits a qualifier tail into a leading name and an optional
-// trailing buffer type. A lone buffer-type segment (e.g. "main") is a type with
+// trailing buffer type. A lone buffer-type segment (e.g. "doc") is a type with
 // an empty leading name, so [options.main] is a type overlay, not a grammar.
 func splitQuals(quals string) (name, bufType string) {
 	if quals == "" {

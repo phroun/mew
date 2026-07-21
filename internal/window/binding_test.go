@@ -15,7 +15,7 @@ func TestDetachAttachBindingSurvivesEdits(t *testing.T) {
 	m := NewManager()
 	buf1 := buffer.NewFromString("alpha\nbravo\ncharlie\ndelta\n")
 	id := m.CreateWindow(WindowOptions{
-		Type: MainBuffer, Dock: DockNone, Buffer: buf1, Visible: true, SetFocus: true,
+		Type: DocWindow, Dock: DockNone, Buffer: buf1, Visible: true, SetFocus: true,
 	})
 	w := m.GetWindow(id)
 
@@ -76,7 +76,7 @@ func TestSwapBufferHistory(t *testing.T) {
 	m := NewManager()
 	bufA := buffer.NewFromString("aaa\naaa\n")
 	id := m.CreateWindow(WindowOptions{
-		Type: MainBuffer, Dock: DockNone, Buffer: bufA, Visible: true, SetFocus: true,
+		Type: DocWindow, Dock: DockNone, Buffer: bufA, Visible: true, SetFocus: true,
 	})
 	w := m.GetWindow(id)
 	w.SetCursorPos(Position{Line: 1, Rune: 2})
@@ -145,7 +145,7 @@ func TestRemoveWindowKeepsBufferReference(t *testing.T) {
 	m := NewManager()
 	buf := buffer.NewFromString("hello\n")
 	id := m.CreateWindow(WindowOptions{
-		Type: MainBuffer, Dock: DockNone, Buffer: buf, Visible: true, SetFocus: true,
+		Type: DocWindow, Dock: DockNone, Buffer: buf, Visible: true, SetFocus: true,
 	})
 	w := m.GetWindow(id)
 	if !m.RemoveWindow(id) {

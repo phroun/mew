@@ -25,7 +25,7 @@ func testRenderer() (*ScreenRenderer, *window.Window) {
 	wm := window.NewManager()
 	lm := window.NewLayoutManager(wm)
 	sr := NewScreenRenderer(wm, lm)
-	w := &window.Window{Type: window.MainBuffer}
+	w := &window.Window{Type: window.DocWindow}
 	return sr, w
 }
 

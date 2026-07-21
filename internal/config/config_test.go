@@ -114,11 +114,11 @@ func TestColorSchemeResolveCascade(t *testing.T) {
 	c := m.LoadFromString(strings.Join([]string{
 		"[colors]",
 		`text="\e[0m"`,
-		"[colors.main]",
+		"[colors.doc]",
 		`text="\e[1m"`,
 	}, "\n"))
 	// Buffer-type layer overrides global for main buffers...
-	if got := c.Colors.Resolve("", "main", "text"); got != "\x1b[1m" {
+	if got := c.Colors.Resolve("", "doc", "text"); got != "\x1b[1m" {
 		t.Fatalf("main text color: %q", got)
 	}
 	// ...and the global layer resolves directly. (A type with a built-in

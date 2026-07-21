@@ -37,7 +37,7 @@ func newSyntaxBenchEditor(b *testing.B, content string) (*Editor, *window.Window
 		b.Fatalf("New: %v", err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
 	if !e.setSyntax("go") {

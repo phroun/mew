@@ -245,7 +245,7 @@ func (e *Editor) bufferSyntaxOverrides(b *buffer.Buffer) map[string]bool {
 	raw := e.Config.SyntaxOverrides
 	if b != nil && e.WindowManager != nil {
 		for _, w := range e.WindowManager.AllWindows() {
-			if w.Type == window.MainBuffer && w.Buffer == b {
+			if w.Type != window.PromptWindow && w.Buffer == b {
 				raw = w.ViewState.SyntaxOverrides
 				break
 			}
@@ -357,7 +357,7 @@ func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef) string {
 		return "", false
 	}
 	if mewName, ok := lookup(class); ok && mewName != "" {
-		if sgr := e.LoadedConfig.Colors.Resolve("", "main", mewName); sgr != "" {
+		if sgr := e.LoadedConfig.Colors.Resolve("", "doc", mewName); sgr != "" {
 			return sgr
 		}
 	}
@@ -767,7 +767,7 @@ func parseDokuLink(text string) (target, title string) {
 // ("" entries paint in the normal text color), or nil when highlighting does
 // not apply. This is the renderer's syntax colorizer callback.
 func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)

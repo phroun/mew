@@ -11,12 +11,12 @@ import (
 // (min 3), B wants 6 (min 2).
 func addNegotiableTopWindows(e *Editor) {
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "A", Type: window.WorkBuffer, Dock: window.DockTop,
+		Visible: true, ID: "A", Type: window.ToolWindow, Dock: window.DockTop,
 		Priority: 90, MinHeight: 3, MaxHeight: 8, Height: 8,
 		Buffer: buffer.NewFromString("A\n"),
 	})
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "B", Type: window.WorkBuffer, Dock: window.DockTop,
+		Visible: true, ID: "B", Type: window.ToolWindow, Dock: window.DockTop,
 		Priority: 50, MinHeight: 2, MaxHeight: 6, Height: 6,
 		Buffer: buffer.NewFromString("B\n"),
 	})
@@ -65,7 +65,7 @@ func TestModebarBottomOwnsLastLine(t *testing.T) {
 	}
 	promptY := -1
 	for _, wl := range l.BottomLayout {
-		if wl.Window.Type == window.PromptBuffer {
+		if wl.Window.Type == window.PromptWindow {
 			promptY = wl.Y
 		}
 	}
@@ -162,7 +162,7 @@ func TestNegotiationModebarSurvivesSqueeze(t *testing.T) {
 		}
 		promptSeen := false
 		for _, wl := range l.BottomLayout {
-			if wl.Window.Type == window.PromptBuffer {
+			if wl.Window.Type == window.PromptWindow {
 				promptSeen = true
 			}
 		}

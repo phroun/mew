@@ -37,7 +37,7 @@ import (
 // linkSpansOnLine returns the grammar-derived link spans for one line of w's
 // buffer, or nil when the grammar has none (not linkable, line out of range).
 func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
@@ -50,7 +50,7 @@ func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
 // markupSpansOnLine returns the grammar-derived markup runs (bold/italic/
 // underline/heading) for one line, or nil.
 func (e *Editor) markupSpansOnLine(w *window.Window, docLine int) []markupSpan {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
@@ -86,7 +86,7 @@ func (e *Editor) caretLinkSpan(w *window.Window) *linkSpan {
 // only nav_cancel does that.
 func (e *Editor) updateBrowseState() {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer || w.Buffer == nil {
+	if w == nil || w.Type == window.PromptWindow || w.Buffer == nil {
 		return
 	}
 	if !w.ViewState.LinkBrowsing {
@@ -115,7 +115,7 @@ func (e *Editor) updateBrowseState() {
 // (^C) bails out to caret mode without being instantly re-armed; arrowing
 // back onto a link re-arms as always.
 func (e *Editor) autoArmBrowse(w *window.Window) {
-	if w == nil || w.BrowseAutoArmed || w.Type != window.MainBuffer ||
+	if w == nil || w.BrowseAutoArmed || w.Type == window.PromptWindow ||
 		w.Buffer == nil || !w.ViewState.LinkBrowsing {
 		return
 	}
@@ -173,7 +173,7 @@ func (e *Editor) unburyEverywhere(buf *buffer.Buffer) {
 // history in that direction, so command chains fall through.
 func (e *Editor) navHistory(dir int) bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Type == window.PromptWindow {
 		return false
 	}
 	var ok bool
@@ -220,7 +220,7 @@ func (e *Editor) navClearVisited() bool {
 // history.
 func (e *Editor) navHistoryClear() bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Type == window.PromptWindow {
 		return false
 	}
 	if prior, next := w.NavHistoryDepths(); prior+next == 0 {
@@ -510,7 +510,7 @@ func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
 // caret (cycling). Fails when the layer is off or the buffer has no links.
 func (e *Editor) navStart() bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+	if w == nil || w.Type == window.PromptWindow || !w.ViewState.LinkBrowsing || w.Buffer == nil {
 		return false
 	}
 	if e.caretLinkSpan(w) != nil {
@@ -764,7 +764,7 @@ func (e *Editor) plainVisualColumn(line string, runePos, tabSize int) int {
 // unless the window is in browse mode over a linkable (dokuwiki) buffer.
 // Computed fresh per paint; nothing based on line numbers survives the frame.
 func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.DisplaySpan, bool) {
-	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type != window.MainBuffer || w.Buffer == nil {
+	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type == window.PromptWindow || w.Buffer == nil {
 		return nil, false
 	}
 	cls, typ := w.Class, w.Type.Name()

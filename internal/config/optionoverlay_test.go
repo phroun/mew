@@ -58,9 +58,9 @@ tabSize=1
 
 [options.cpp]
 tabSize=2
-[options.main]
+[options.doc]
 tabSize=3
-[options.cpp.main]
+[options.cpp.doc]
 tabSize=4
 [myclass.options]
 tabSize=5
@@ -70,11 +70,11 @@ tabSize=6
 	cases := []struct {
 		class, grammar, bufType, want string
 	}{
-		{"myclass", "cpp", "main", "6"}, // [myclass.options.cpp] (class beats grammar+type)
-		{"", "cpp", "main", "4"},        // [options.cpp.main]
-		{"", "cpp", "work", "2"},        // [options.cpp] (no cpp.work)
-		{"", "go", "main", "3"},         // [options.main] (type only)
-		{"myclass", "go", "work", "5"},  // [myclass.options] (class, no grammar/type match)
+		{"myclass", "cpp", "doc", "6"}, // [myclass.options.cpp] (class beats grammar+type)
+		{"", "cpp", "doc", "4"},        // [options.cpp.doc]
+		{"", "cpp", "tool", "2"},       // [options.cpp] (no cpp.tool)
+		{"", "go", "doc", "3"},         // [options.doc] (type only)
+		{"myclass", "go", "tool", "5"}, // [myclass.options] (class, no grammar/type match)
 	}
 	for _, tc := range cases {
 		got, ok := c.ResolveOptionOverlay(tc.class, tc.grammar, tc.bufType, "tabsize")
@@ -83,7 +83,7 @@ tabSize=6
 		}
 	}
 	// A grammar/type with no section at all falls through (base applies).
-	if _, ok := c.ResolveOptionOverlay("", "go", "work", "tabsize"); ok {
+	if _, ok := c.ResolveOptionOverlay("", "go", "tool", "tabsize"); ok {
 		t.Error("go/work should not resolve (fall through to base)")
 	}
 }
@@ -94,8 +94,8 @@ func TestMappingSetGrammarCascade(t *testing.T) {
 	m := NewManager()
 	c := m.LoadFromString("[mappings.mew]\nk\t=base\n" +
 		"[mappings.mew.cpp]\nk\t=grammar\n" +
-		"[mappings.mew.main]\nk\t=type\n" +
-		"[mappings.mew.cpp.main]\nk\t=grammartype\n" +
+		"[mappings.mew.doc]\nk\t=type\n" +
+		"[mappings.mew.cpp.doc]\nk\t=grammartype\n" +
 		"[panel.mappings.mew]\nk\t=class\n")
 	get := func(class, grammar, bufType string) string {
 		return c.ResolveMappingSet("mew", class, grammar, bufType, "", nil)["k"]
@@ -106,14 +106,14 @@ func TestMappingSetGrammarCascade(t *testing.T) {
 	if got := get("", "cpp", ""); got != "grammar" {
 		t.Errorf("grammar: got %q, want grammar", got)
 	}
-	if got := get("", "", "main"); got != "type" {
+	if got := get("", "", "doc"); got != "type" {
 		t.Errorf("type: got %q, want type", got)
 	}
-	if got := get("", "cpp", "main"); got != "grammartype" {
+	if got := get("", "cpp", "doc"); got != "grammartype" {
 		t.Errorf("grammar+type: got %q, want grammartype", got)
 	}
 	// class outranks grammar and type even when they are more qualified.
-	if got := get("panel", "cpp", "main"); got != "class" {
+	if got := get("panel", "cpp", "doc"); got != "class" {
 		t.Errorf("class should win: got %q, want class", got)
 	}
 }

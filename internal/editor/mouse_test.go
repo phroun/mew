@@ -374,7 +374,7 @@ func TestMouseWorksInSpawnedWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
 	w := e.WindowManager.GetWindow("wiki")

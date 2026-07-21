@@ -13,7 +13,7 @@ var rulerAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 func renderRulerPlain(rtl bool, width int) string {
 	c := NewColumnRuler()
 	c.SetRTL(rtl)
-	w := &window.Window{Type: window.MainBuffer}
+	w := &window.Window{Type: window.DocWindow}
 	return rulerAnsiRe.ReplaceAllString(c.RenderContent(w, width, nil), "")
 }
 

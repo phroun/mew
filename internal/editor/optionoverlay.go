@@ -125,7 +125,7 @@ func (e *Editor) bufferGrammarName(b *buffer.Buffer) string {
 // on an actual change, so a plain window (empty signature, no overlays) is never
 // touched.
 func (e *Editor) reconcileGrammarOptions(w *window.Window) {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return
 	}
 	class, grammar, bufType := e.windowClass(w), e.windowGrammarName(w), e.windowType(w)

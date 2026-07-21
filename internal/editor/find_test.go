@@ -183,7 +183,7 @@ func TestFindVerboseLogWindow(t *testing.T) {
 	if e.WindowManager.GetLastNormalWindow().ID != w.ID {
 		t.Fatal("verbose log must not steal the painted main area")
 	}
-	if e.WindowManager.GetLastMainBufferWindow().ID != w.ID {
+	if e.WindowManager.GetLastMainWindow().ID != w.ID {
 		t.Fatal("verbose log must not become the last main buffer")
 	}
 	if !strings.Contains(vw.Buffer.GetContent(), `term="needle"`) {

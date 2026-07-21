@@ -42,7 +42,7 @@ func TestDeadcatSignalHelper(t *testing.T) {
 	}
 	buf := buffer.NewFromString("chapter one\n")
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true,
 	})
 	e.insertText("UNSAVED ") // now the buffer is modified

@@ -15,7 +15,7 @@ func TestLinkButtonColorAndIndicatorSlots(t *testing.T) {
 		"buttonFocused":       "\x1b[0;30;46m",
 		"buttonShadowFocused": "\x1b[0;90;46m",
 	} {
-		if got := cfg.Colors.Resolve("", "main", name); got != want {
+		if got := cfg.Colors.Resolve("", "doc", name); got != want {
 			t.Fatalf("%s = %q, want %q", name, got, want)
 		}
 	}

@@ -169,7 +169,7 @@ func (e *Editor) outlineDefOn(b *buffer.Buffer, patterns []*regexp.Regexp, docLi
 // outward through definitions at strictly shallower depths, outermost first:
 // "Manager·Load", "Intro·Setup·Deep".
 func (e *Editor) outlineContext(w *window.Window) string {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return ""
 	}
 	b := w.Buffer

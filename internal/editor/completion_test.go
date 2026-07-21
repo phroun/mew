@@ -200,7 +200,7 @@ func TestFilenameCompletionDirGlobber(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(""), SetFocus: true,
 	})
 	e.WindowManager.GetWindow("doc").Buffer.SetFilename("proj/anchor.txt")
@@ -302,7 +302,7 @@ func TestFilenameCompletionHostFS(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(""), SetFocus: true,
 	})
 	doc := e.WindowManager.GetWindow("doc")

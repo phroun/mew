@@ -35,7 +35,7 @@ func newTestEditor(t *testing.T, content string, generalConfig ...string) (*Edit
 	// runs first (cleanup is LIFO).
 	t.Cleanup(func() { settleBackups(e) })
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
 	return e, e.WindowManager.GetWindow("doc")
@@ -74,7 +74,7 @@ func sectionizeConfig(lines []string) string {
 // finish streaming, so background writes don't outlive the test.
 func settleBackups(e *Editor) {
 	deadline := time.Now().Add(3 * time.Second)
-	for _, w := range e.getMainBuffers() {
+	for _, w := range e.contentWindows() {
 		if w.Buffer == nil {
 			continue
 		}
@@ -110,7 +110,7 @@ func newRenderedEditor(t *testing.T, content string) (*Editor, *window.Window, *
 		t.Fatalf("New: %v", err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
 	return e, e.WindowManager.GetWindow("doc"), &out
@@ -121,7 +121,7 @@ func newRenderedEditor(t *testing.T, content string) (*Editor, *window.Window, *
 func answerPrompt(t *testing.T, e *Editor, text string) {
 	t.Helper()
 	fw := e.WindowManager.GetFocusedWindow()
-	if fw == nil || fw.Type != window.PromptBuffer {
+	if fw == nil || fw.Type != window.PromptWindow {
 		t.Fatalf("expected a focused prompt window")
 	}
 	if text != "" {
@@ -139,7 +139,7 @@ func cancelPrompt(t *testing.T, e *Editor) {
 // focusedPrompt returns the focused prompt window, or nil.
 func focusedPrompt(e *Editor) *window.Window {
 	fw := e.WindowManager.GetFocusedWindow()
-	if fw != nil && fw.Type == window.PromptBuffer {
+	if fw != nil && fw.Type == window.PromptWindow {
 		return fw
 	}
 	return nil

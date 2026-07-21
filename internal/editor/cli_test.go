@@ -64,7 +64,7 @@ func TestLaunchPerFileOptions(t *testing.T) {
 	if err := launch(t, e, "--showLineNumbers-", a, "--showLineNumbers", b); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	mb := e.getMainBuffers()
+	mb := e.contentWindows()
 	if len(mb) != 2 {
 		t.Fatalf("want 2 buffers, got %d", len(mb))
 	}
@@ -102,7 +102,7 @@ func TestLaunchGotoLine(t *testing.T) {
 		t.Fatalf("launch: %v", err)
 	}
 	var wa, wb *window.Window
-	for _, w := range e.getMainBuffers() {
+	for _, w := range e.contentWindows() {
 		if w.Buffer.GetFilename() == a {
 			wa = w
 		} else if w.Buffer.GetFilename() == b {
@@ -165,7 +165,7 @@ func TestLaunchEnableDisableGrammar(t *testing.T) {
 		if err := launch(t, e, tc.arg, a); err != nil {
 			t.Fatalf("%s: %v", tc.arg, err)
 		}
-		w := e.getMainBuffers()[0]
+		w := e.contentWindows()[0]
 		if v, _ := e.getOption(w, "showinvisibles"); v != tc.want {
 			t.Fatalf("%s: showInvisibles=%q want %q", tc.arg, v, tc.want)
 		}
@@ -179,7 +179,7 @@ func TestLaunchValuedOption(t *testing.T) {
 	if err := launch(t, e, "--tabSize=8", a); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	w := e.getMainBuffers()[0]
+	w := e.contentWindows()[0]
 	if v, _ := e.getOption(w, "tabsize"); v != "8" {
 		t.Fatalf("tabSize should be 8, got %q", v)
 	}
@@ -191,7 +191,7 @@ func TestLaunchNoFiles(t *testing.T) {
 	if err := launch(t, e); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	if n := len(e.getMainBuffers()); n != 1 {
+	if n := len(e.contentWindows()); n != 1 {
 		t.Fatalf("no-file launch should open one empty buffer, got %d", n)
 	}
 }

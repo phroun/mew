@@ -141,7 +141,8 @@ func (s *ModebarPlugin) CreateWindow() string {
 	// Create the modebar window with custom rendering; colors resolve
 	// dynamically through the "modebar" class.
 	s.windowID = s.windowManager.CreateWindow(window.WindowOptions{
-		Type:           window.WorkBuffer,
+		Type:           window.ToolWindow,
+		WindowSet:      window.WindowSetModebar,
 		Class:          "modebar",
 		Dock:           dock,
 		Priority:       priority,
@@ -175,7 +176,7 @@ func (s *ModebarPlugin) SetLogoRTL(rtl bool) {
 
 // RenderContent renders the modebar content.
 func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string {
-	mainBufferWindow := s.windowManager.GetLastMainBufferWindow()
+	mainBufferWindow := s.windowManager.GetLastMainWindow()
 	focusedWindow := s.windowManager.GetFocusedWindow()
 
 	// Resolve colors dynamically through the modebar's class/type:
@@ -203,7 +204,7 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	// The context/position window is the focused window, unless a prompt is
 	// focused, in which case it is the last main buffer (the document).
 	ctxWindow := focusedWindow
-	if ctxWindow == nil || ctxWindow.Type == window.PromptBuffer {
+	if ctxWindow == nil || ctxWindow.Type == window.PromptWindow {
 		ctxWindow = mainBufferWindow
 	}
 	vals := modebarValues(mainBufferWindow, ctxWindow)

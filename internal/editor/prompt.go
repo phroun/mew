@@ -84,7 +84,7 @@ func (pm *PromptManager) promptForInput(message, defaultValue string, callback P
 	promptMessage := "(PI)" + message
 
 	// Create the prompt buffer
-	pm.createPromptBuffer(promptMessage, initialContent, cursorLine, windowClass, callback, maxRows, topMessage)
+	pm.createPromptWindow(promptMessage, initialContent, cursorLine, windowClass, callback, maxRows, topMessage)
 }
 
 // PromptForFilename prompts for a filename with history.
@@ -167,12 +167,12 @@ func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, d
 	}, "", 1, topMessage)
 }
 
-// createPromptBuffer creates the actual prompt buffer window. maxRows caps
+// createPromptWindow creates the actual prompt buffer window. maxRows caps
 // the displayed content height (0 means the default cap). When topMessage is
 // non-empty, an extra row is reserved above the input for a top message bar
 // (the window's MessageTopInner) — e.g. a lock prompt's description of who
 // already holds the file.
-func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, cursorLine int, windowClass string, callback PromptCallback, maxRows int, topMessage string) {
+func (pm *PromptManager) createPromptWindow(prompt, initialContent string, cursorLine int, windowClass string, callback PromptCallback, maxRows int, topMessage string) {
 	wm := pm.editor.WindowManager
 
 	// Find highest priority bottom window. A bottom-located modebar is
@@ -225,7 +225,7 @@ func (pm *PromptManager) createPromptBuffer(prompt, initialContent string, curso
 	}
 
 	id := wm.CreateWindow(window.WindowOptions{
-		Type:            window.PromptBuffer,
+		Type:            window.PromptWindow,
 		Class:           windowClass,
 		Dock:            window.DockBottom,
 		Priority:        highestPriority + 10,

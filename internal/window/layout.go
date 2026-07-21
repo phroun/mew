@@ -72,12 +72,12 @@ func (lm *LayoutManager) CalculateLayout(screenWidth, screenHeight int) Layout {
 
 	// Prompt buffers belong to a main buffer's modal stack: only the current
 	// (last) main buffer's prompts are laid out, plus orphaned prompts with no
-	// ParentMain. Other mains' stacks stay hidden until their main is current
+	// ParentWindow. Other mains' stacks stay hidden until their main is current
 	// again (focusing one of their prompts restores it).
-	lastMain := wm.GetLastMainBufferWindow()
+	lastMain := wm.GetLastMainWindow()
 	visibleBottom := bottomWindows[:0]
 	for _, w := range bottomWindows {
-		if w.Type == PromptBuffer && w.ParentMain != nil && w.ParentMain != lastMain {
+		if w.Type == PromptWindow && w.ParentWindow != nil && w.ParentWindow != lastMain {
 			continue
 		}
 		visibleBottom = append(visibleBottom, w)
@@ -119,7 +119,7 @@ func (lm *LayoutManager) CalculateLayout(screenWidth, screenHeight int) Layout {
 	}
 	var activePrompt *Window
 	for _, w := range bottomWindows {
-		if w.Type == PromptBuffer {
+		if w.Type == PromptWindow {
 			activePrompt = w
 			break
 		}

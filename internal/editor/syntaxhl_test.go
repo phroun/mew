@@ -39,7 +39,7 @@ func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor
 		t.Fatalf("New: %v", err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 		LinkBrowsing: e.Config.LinkBrowsing,
 	})

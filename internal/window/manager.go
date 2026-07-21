@@ -165,27 +165,55 @@ func (w *Window) AppliedOptionSig() string { return w.appliedOptionSig }
 // window's ViewState.
 func (w *Window) SetAppliedOptionSig(sig string) { w.appliedOptionSig = sig }
 
-// WindowType represents the type of window buffer.
+// WindowType represents the kind of window. DocWindow and ToolWindow are
+// PEER interactive surfaces — both focusable, both get the full feature set
+// (links/browse, outline, completion, per-window options); only PromptWindow
+// (the modal input line) is special.
 type WindowType int
 
 const (
-	MainBuffer   WindowType = iota // Editable content area
-	WorkBuffer                     // Read-only information display
-	PromptBuffer                   // Single-line input at screen bottom
+	DocWindow    WindowType = iota // A document (editable content)
+	ToolWindow                     // A tool surface (help, listings, readouts)
+	PromptWindow                   // Single-line modal input at screen bottom
 )
 
-// Name returns the buffer type's name as used in color/config lookups
-// ([colors.<name>] sections).
+// Name returns the type's name as used in color/config lookups
+// ([colors.<name>] sections): "doc", "tool", "prompt".
 func (t WindowType) Name() string {
 	switch t {
-	case MainBuffer:
-		return "main"
-	case WorkBuffer:
-		return "work"
-	case PromptBuffer:
+	case DocWindow:
+		return "doc"
+	case ToolWindow:
+		return "tool"
+	case PromptWindow:
 		return "prompt"
 	}
 	return ""
+}
+
+// Chrome WindowSets: windows in them never hold keyboard focus and never take
+// part in focus cycling, focus-target selection, or the content-window
+// enumerations (buffer cycling, save-all, DEADCAT, exit-on-last). The
+// modebar is persistent chrome; transient notification/warning/error toasts
+// are ephemeral chrome. Other sets ("" for documents, "help" for the help
+// system) are fully focus-eligible content groupings.
+const (
+	WindowSetModebar   = "modebar"
+	WindowSetTransient = "transient"
+)
+
+// isChromeSet reports whether a WindowSet is chrome (excluded from focus and
+// from content enumerations).
+func isChromeSet(set string) bool {
+	return set == WindowSetModebar || set == WindowSetTransient
+}
+
+// FocusEligible reports whether the window can hold keyboard focus and take
+// part in focus cycling / focus-target selection: every window except a
+// PromptWindow (which focuses transiently, on its own path) and chrome (the
+// modebar). Doc and tool windows both qualify.
+func (w *Window) FocusEligible() bool {
+	return w != nil && w.Type != PromptWindow && !isChromeSet(w.WindowSet)
 }
 
 // DockPosition represents where a window is docked.
@@ -202,12 +230,17 @@ const cursorRingSize = 10
 
 // Window represents an editor window with its buffer and display state.
 type Window struct {
-	ID       string
-	Type     WindowType
-	Class    string
-	Dock     DockPosition
-	Priority int
-	Visible  bool
+	ID    string
+	Type  WindowType
+	Class string
+	// WindowSet groups windows into a named space orthogonal to Type: "" for
+	// ordinary documents, "help" for the help system, "modebar" for the
+	// modebar (chrome). Each set has its own last-focused-window memory (see
+	// lastFocusedBySet), and the chrome set is excluded from focus.
+	WindowSet string
+	Dock      DockPosition
+	Priority  int
+	Visible   bool
 
 	// Seq is a monotonically increasing creation sequence number, unique
 	// across all windows: each new window gets the previous number +1.
@@ -227,11 +260,11 @@ type Window struct {
 	// notification/error/warning windows.
 	SpawnedAt time.Time
 
-	// ParentMain is the main-buffer window that (transitively) spawned this
+	// ParentWindow is the main-buffer window that (transitively) spawned this
 	// window. Set at creation for prompt buffers: inherited from the focused
-	// window's ParentMain when present, else the last main buffer. Cleared if
+	// window's ParentWindow when present, else the last main buffer. Cleared if
 	// the parent window is removed.
-	ParentMain *Window
+	ParentWindow *Window
 
 	Buffer *buffer.Buffer
 
@@ -422,13 +455,43 @@ type Window struct {
 	Tag string
 }
 
-// LastMainWindow returns the main-buffer window currently occupying the
-// main editing area (nil when none) — the "last main buffer" the session
-// most recently worked in.
+// noteMainFocus records w as the last-focused main-area window and the
+// last-focused window within its WindowSet. Called (under m.mu) for a
+// focus-eligible window that just took focus, or a prompt's parent standing
+// in for it.
+func (m *Manager) noteMainFocus(w *Window) {
+	m.lastMainWindow = w
+	if m.lastFocusedBySet == nil {
+		m.lastFocusedBySet = make(map[string]*Window)
+	}
+	m.lastFocusedBySet[w.WindowSet] = w
+}
+
+// LastMainWindow returns the last-focused main-area (focus-eligible) window
+// occupying the main editing area (nil when none), validated against the
+// live window set.
 func (m *Manager) LastMainWindow() *Window {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.lastMainBufferWindow
+	if m.lastMainWindow != nil {
+		if _, ok := m.windows[m.lastMainWindow.ID]; ok {
+			return m.lastMainWindow
+		}
+	}
+	return nil
+}
+
+// LastFocusedInSet returns the window most recently focused within the named
+// WindowSet (nil when none is live), for set-scoped focus restoration.
+func (m *Manager) LastFocusedInSet(set string) *Window {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if w := m.lastFocusedBySet[set]; w != nil {
+		if _, ok := m.windows[w.ID]; ok {
+			return w
+		}
+	}
+	return nil
 }
 
 // CursorPos returns the window's caret position, read straight from its
@@ -1059,8 +1122,15 @@ type Manager struct {
 	windows         map[string]*Window
 	focusedWindowID string
 
-	// Track last main buffer for system-wide access
-	lastMainBufferWindow *Window
+	// Track the last-focused main-area (focus-eligible) window for
+	// system-wide access.
+	lastMainWindow *Window
+
+	// lastFocusedBySet remembers the last-focused window WITHIN each
+	// WindowSet, keyed by set name (updated alongside lastMainWindow). Lets a
+	// set — e.g. the "help" system — restore focus to where it last was,
+	// independent of the document set.
+	lastFocusedBySet map[string]*Window
 
 	// Track the last focused non-docked (main-area) window, regardless of its
 	// buffer type. Currently the only non-docked window painted is this one
@@ -1115,6 +1185,7 @@ type WindowOptions struct {
 	ID              string
 	Type            WindowType
 	Class           string
+	WindowSet       string
 	Tag             string
 	Buffer          *buffer.Buffer
 	Dock            DockPosition
@@ -1159,13 +1230,13 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 	id := opts.ID
 	if id == "" {
 		switch opts.Type {
-		case MainBuffer:
+		case DocWindow:
 			m.mainBufferCount++
 			id = fmt.Sprintf("main_%d", m.mainBufferCount)
-		case WorkBuffer:
+		case ToolWindow:
 			m.workBufferCount++
 			id = fmt.Sprintf("work_%d", m.workBufferCount)
-		case PromptBuffer:
+		case PromptWindow:
 			m.promptBufferCount++
 			id = fmt.Sprintf("prompt_%d", m.promptBufferCount)
 		default:
@@ -1203,6 +1274,7 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 		Seq:          m.seqCounter,
 		Type:         opts.Type,
 		Class:        opts.Class,
+		WindowSet:    opts.WindowSet,
 		Tag:          opts.Tag,
 		Dock:         opts.Dock,
 		Priority:     opts.Priority,
@@ -1257,19 +1329,19 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 
 	// Prompt buffers always edit left-to-right regardless of the editor's
 	// base direction option.
-	if opts.Type == PromptBuffer {
+	if opts.Type == PromptWindow {
 		w.ViewState.Direction = "ltr"
 	}
 
 	// Track which main buffer spawned a new prompt buffer: inherit the focused
-	// window's ParentMain when it has one (e.g. a prompt spawning another
+	// window's ParentWindow when it has one (e.g. a prompt spawning another
 	// prompt), otherwise the last main buffer.
-	if opts.Type == PromptBuffer {
-		if focused := m.windows[m.focusedWindowID]; focused != nil && focused.ParentMain != nil {
-			w.ParentMain = focused.ParentMain
-		} else if m.lastMainBufferWindow != nil {
-			if _, exists := m.windows[m.lastMainBufferWindow.ID]; exists {
-				w.ParentMain = m.lastMainBufferWindow
+	if opts.Type == PromptWindow {
+		if focused := m.windows[m.focusedWindowID]; focused != nil && focused.ParentWindow != nil {
+			w.ParentWindow = focused.ParentWindow
+		} else if m.lastMainWindow != nil {
+			if _, exists := m.windows[m.lastMainWindow.ID]; exists {
+				w.ParentWindow = m.lastMainWindow
 			}
 		}
 	}
@@ -1297,14 +1369,14 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 	// becomes the current one — a background window (e.g. the verbose log)
 	// must not steal the painted main area or the modebar.
 	tookFocus := m.focusedWindowID == id
-	if opts.Type == MainBuffer && tookFocus {
-		m.lastMainBufferWindow = w
-	} else if tookFocus && opts.Type == PromptBuffer && w.ParentMain != nil {
-		// A focused prompt keeps its spawning main as the last main buffer
-		// (and the painted main-area window) — see SetFocus.
-		m.lastMainBufferWindow = w.ParentMain
-		if w.ParentMain.Dock == DockNone {
-			m.lastNormalWindow = w.ParentMain
+	if tookFocus && w.FocusEligible() {
+		m.noteMainFocus(w)
+	} else if tookFocus && w.Type == PromptWindow && w.ParentWindow != nil {
+		// A focused prompt keeps its spawning window as the last main-area
+		// window (and the painted one) — see SetFocus.
+		m.noteMainFocus(w.ParentWindow)
+		if w.ParentWindow.Dock == DockNone {
+			m.lastNormalWindow = w.ParentWindow
 		}
 	}
 	// Update non-docked (main-area) window tracking, regardless of buffer type.
@@ -1349,24 +1421,24 @@ func (m *Manager) SetFocus(id string) bool {
 		return false
 	}
 
-	// Work buffers cannot receive focus
-	if w.Type == WorkBuffer {
+	// Chrome (the modebar) cannot receive focus; doc/tool/prompt windows can.
+	if isChromeSet(w.WindowSet) {
 		return false
 	}
 
 	oldFocusID := m.focusedWindowID
 	m.focusedWindowID = id
 
-	// Update main buffer tracking
-	if w.Type == MainBuffer {
-		m.lastMainBufferWindow = w
-	} else if w.Type == PromptBuffer && w.ParentMain != nil {
-		// Focusing a prompt restores its spawning main as the last main
-		// buffer — and as the painted main-area window — so the parent
-		// becomes visible behind the prompt.
-		m.lastMainBufferWindow = w.ParentMain
-		if w.ParentMain.Dock == DockNone {
-			m.lastNormalWindow = w.ParentMain
+	// Update main-area window tracking
+	if w.FocusEligible() {
+		m.noteMainFocus(w)
+	} else if w.Type == PromptWindow && w.ParentWindow != nil {
+		// Focusing a prompt restores its spawning window as the last
+		// main-area window — and as the painted one — so the parent becomes
+		// visible behind the prompt.
+		m.noteMainFocus(w.ParentWindow)
+		if w.ParentWindow.Dock == DockNone {
+			m.lastNormalWindow = w.ParentWindow
 		}
 	}
 	// Update non-docked (main-area) window tracking, regardless of buffer type.
@@ -1397,17 +1469,23 @@ func (m *Manager) RemoveWindow(id string) bool {
 	}
 
 	// Clear last main buffer tracking if this was it
-	if m.lastMainBufferWindow != nil && m.lastMainBufferWindow.ID == id {
-		m.lastMainBufferWindow = nil
+	if m.lastMainWindow != nil && m.lastMainWindow.ID == id {
+		m.lastMainWindow = nil
 	}
 	// Clear last non-docked window tracking if this was it
 	if m.lastNormalWindow != nil && m.lastNormalWindow.ID == id {
 		m.lastNormalWindow = nil
 	}
-	// Clear any ParentMain references to the removed window
+	// Clear per-set last-focused tracking if this was it
+	for set, fw := range m.lastFocusedBySet {
+		if fw != nil && fw.ID == id {
+			delete(m.lastFocusedBySet, set)
+		}
+	}
+	// Clear any ParentWindow references to the removed window
 	for _, other := range m.windows {
-		if other.ParentMain == w {
-			other.ParentMain = nil
+		if other.ParentWindow == w {
+			other.ParentWindow = nil
 		}
 	}
 
@@ -1445,9 +1523,9 @@ func (m *Manager) RemoveWindow(id string) bool {
 // window `closed` was removed (which has already happened). Must be called
 // with the lock held.
 //
-// The anchor main buffer is the tracked lastMainBufferWindow when it still
+// The anchor main buffer is the tracked lastMainWindow when it still
 // exists — for a closed prompt that is its spawning main, since focusing a
-// prompt restores its ParentMain there. When the closed window WAS the last
+// prompt restores its ParentWindow there. When the closed window WAS the last
 // main buffer (tracking already cleared), the anchor falls back to the main
 // created next after it (the lowest Seq above closed.Seq), and failing that
 // the main with the highest remaining Seq. Focus then goes to the anchor's
@@ -1456,9 +1534,9 @@ func (m *Manager) RemoveWindow(id string) bool {
 func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 	// Validate the tracked last main buffer.
 	var anchor *Window
-	if m.lastMainBufferWindow != nil {
-		if _, ok := m.windows[m.lastMainBufferWindow.ID]; ok {
-			anchor = m.lastMainBufferWindow
+	if m.lastMainWindow != nil {
+		if _, ok := m.windows[m.lastMainWindow.ID]; ok {
+			anchor = m.lastMainWindow
 		}
 	}
 
@@ -1466,7 +1544,7 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 	if anchor == nil {
 		var nextHigher, highest *Window
 		for _, w := range m.windows {
-			if w.Type != MainBuffer || !w.Visible {
+			if !w.FocusEligible() || !w.Visible {
 				continue
 			}
 			if w.Seq > closed.Seq && (nextHigher == nil || w.Seq < nextHigher.Seq) {
@@ -1486,7 +1564,7 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 	if anchor == nil {
 		var newest *Window
 		for _, w := range m.windows {
-			if w.Type == PromptBuffer && w.Visible && (newest == nil || w.Seq > newest.Seq) {
+			if w.Type == PromptWindow && w.Visible && (newest == nil || w.Seq > newest.Seq) {
 				newest = w
 			}
 		}
@@ -1499,7 +1577,7 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 	// The anchor's newest prompt takes focus in its place, if it has one.
 	target := anchor
 	for _, w := range m.windows {
-		if w.Type == PromptBuffer && w.Visible && w.ParentMain == anchor {
+		if w.Type == PromptWindow && w.Visible && w.ParentWindow == anchor {
 			if target == anchor || w.Seq > target.Seq {
 				target = w
 			}
@@ -1513,7 +1591,7 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 //
 // The cycle runs over visible MAIN buffers only; prompt buffers are not cycle
 // stops of their own. The current position is the focused main buffer, or the
-// focused window's ParentMain (a prompt counts as being "on" its spawning
+// focused window's ParentWindow (a prompt counts as being "on" its spawning
 // main). Once the target main is chosen, focus resolves to the newest
 // (highest-Seq) visible prompt buffer spawned from it, if any — landing the
 // user on that buffer's pending interaction — else the main itself.
@@ -1521,10 +1599,10 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Collect visible main buffers in deterministic (ID) order.
+	// Collect visible focus-eligible windows in deterministic (ID) order.
 	var mains []*Window
 	for _, w := range m.windows {
-		if w.Type == MainBuffer && w.Visible {
+		if w.FocusEligible() && w.Visible {
 			mains = append(mains, w)
 		}
 	}
@@ -1540,12 +1618,12 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	}
 
 	// Locate the current position in the main cycle.
-	currentMain := m.lastMainBufferWindow
+	currentMain := m.lastMainWindow
 	if current := m.windows[m.focusedWindowID]; current != nil {
-		if current.Type == MainBuffer {
+		if current.FocusEligible() {
 			currentMain = current
-		} else if current.ParentMain != nil {
-			currentMain = current.ParentMain
+		} else if current.ParentWindow != nil {
+			currentMain = current.ParentWindow
 		}
 	}
 	currentIndex := -1
@@ -1565,7 +1643,7 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	target := targetMain
 	var newestPrompt *Window
 	for _, w := range m.windows {
-		if w.Type == PromptBuffer && w.Visible && w.ParentMain == targetMain {
+		if w.Type == PromptWindow && w.Visible && w.ParentWindow == targetMain {
 			if newestPrompt == nil || w.Seq > newestPrompt.Seq {
 				newestPrompt = w
 			}
@@ -1648,21 +1726,21 @@ func (m *Manager) GetWindowsByDock(dock DockPosition) []*Window {
 	return result
 }
 
-// GetLastMainBufferWindow returns the last focused main buffer window.
-func (m *Manager) GetLastMainBufferWindow() *Window {
+// GetLastMainWindow returns the last focused main buffer window.
+func (m *Manager) GetLastMainWindow() *Window {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.lastMainBufferWindow != nil {
-		if _, exists := m.windows[m.lastMainBufferWindow.ID]; exists {
-			return m.lastMainBufferWindow
+	if m.lastMainWindow != nil {
+		if _, exists := m.windows[m.lastMainWindow.ID]; exists {
+			return m.lastMainWindow
 		}
-		m.lastMainBufferWindow = nil
+		m.lastMainWindow = nil
 	}
 
-	// Find any main buffer
+	// Find any focus-eligible window
 	for _, w := range m.windows {
-		if w.Type == MainBuffer {
+		if w.FocusEligible() {
 			return w
 		}
 	}
@@ -1671,7 +1749,7 @@ func (m *Manager) GetLastMainBufferWindow() *Window {
 }
 
 // GetLastNormalWindow returns the last focused non-docked (main-area) window,
-// regardless of buffer type. Modeled on GetLastMainBufferWindow.
+// regardless of buffer type. Modeled on GetLastMainWindow.
 func (m *Manager) GetLastNormalWindow() *Window {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1714,8 +1792,8 @@ func (m *Manager) UpdateWindow(id string, updates func(*Window)) bool {
 	return true
 }
 
-// CreatePromptBuffer creates a prompt buffer for user input.
-func (m *Manager) CreatePromptBuffer(prompt, defaultValue string, callback func(string, bool)) string {
+// CreatePromptWindow creates a prompt buffer for user input.
+func (m *Manager) CreatePromptWindow(prompt, defaultValue string, callback func(string, bool)) string {
 	// Find highest priority bottom window. A bottom-located modebar is
 	// excluded: its fixed priority pins it to the last screen line, and
 	// prompts must stack above it, not outbid it.
@@ -1747,7 +1825,7 @@ func (m *Manager) CreatePromptBuffer(prompt, defaultValue string, callback func(
 	}
 
 	id := m.CreateWindow(WindowOptions{
-		Type:        PromptBuffer,
+		Type:        PromptWindow,
 		Dock:        DockBottom,
 		Priority:    highestPriority + 10,
 		MinHeight:   1,

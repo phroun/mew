@@ -972,7 +972,7 @@ func (e *Editor) registerCommands() {
 
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
-		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
+		if focusedWindow != nil && focusedWindow.Type == window.PromptWindow {
 			// Capture callbacks before removing window
 			legacyCallback := focusedWindow.Callback
 			promptCallback := focusedWindow.PromptCallback
@@ -993,7 +993,7 @@ func (e *Editor) registerCommands() {
 
 	ps.RegisterCommand("accept", func(ctx *pawscript.Context) pawscript.Result {
 		focusedWindow := e.WindowManager.GetFocusedWindow()
-		if focusedWindow != nil && focusedWindow.Type == window.PromptBuffer {
+		if focusedWindow != nil && focusedWindow.Type == window.PromptWindow {
 			// Capture callbacks before removing window
 			legacyCallback := focusedWindow.Callback
 			promptCallback := focusedWindow.PromptCallback
@@ -1099,7 +1099,8 @@ func (e *Editor) registerCommands() {
 		// Show in a work buffer window
 		buf := e.lib.NewFromString(content.String())
 		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.WorkBuffer,
+			Type:             window.ToolWindow,
+			WindowSet:        "help",
 			Class:            "mappings",
 			Dock:             window.DockTop,
 			Priority:         100,
@@ -1611,7 +1612,7 @@ func (e *Editor) registerCommands() {
 		skippedCount := 0
 		// Every open buffer, each once — including buffers stacked in a
 		// window's nav history (unsaved work parked behind a link follow).
-		for _, b := range e.openMainBuffers() {
+		for _, b := range e.openDocWindows() {
 			if !b.IsModified() {
 				continue
 			}
@@ -1810,7 +1811,8 @@ func (e *Editor) registerCommands() {
 		}
 		buf := e.lib.NewFromString(e.bufferStatusText(w.Buffer))
 		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.WorkBuffer,
+			Type:             window.ToolWindow,
+			WindowSet:        "help",
 			Class:            "bufstatus",
 			Dock:             window.DockTop,
 			Priority:         100,
@@ -1842,7 +1844,7 @@ func (e *Editor) registerCommands() {
 				return pawscript.BoolStatus(true)
 			}
 		}
-		mainBuffers := e.getMainBuffers()
+		mainBuffers := e.contentWindows()
 		if len(mainBuffers) == 0 {
 			e.ShowWarning("No open buffers")
 			return pawscript.BoolStatus(false)
@@ -1871,7 +1873,8 @@ func (e *Editor) registerCommands() {
 		// Show in a work buffer window
 		buf := e.lib.NewFromString(content.String())
 		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.WorkBuffer,
+			Type:             window.ToolWindow,
+			WindowSet:        "help",
 			Class:            "buffer_list",
 			Dock:             window.DockTop,
 			Priority:         100,
@@ -2140,7 +2143,7 @@ func (e *Editor) registerCommands() {
 		name := fmt.Sprintf("%v", ctx.Args[0])
 		// Target the last active main-buffer window, not whatever is focused
 		// (a prompt window would be focused and is about to close).
-		w := e.WindowManager.GetLastMainBufferWindow()
+		w := e.WindowManager.GetLastMainWindow()
 		if len(ctx.Args) < 2 {
 			// No value given: prompt for one, seeding the choices from the
 			// registry (the same value list set_option_next rotates through).
@@ -2161,7 +2164,7 @@ func (e *Editor) registerCommands() {
 				return pawscript.BoolStatus(false)
 			}
 			name := fmt.Sprintf("%v", ctx.Args[0])
-			w := e.WindowManager.GetLastMainBufferWindow()
+			w := e.WindowManager.GetLastMainWindow()
 			return pawscript.BoolStatus(e.rotateOption(w, name, dir))
 		}
 	}
@@ -2177,7 +2180,7 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		w := e.WindowManager.GetLastMainBufferWindow()
+		w := e.WindowManager.GetLastMainWindow()
 		return pawscript.BoolStatus(e.clearOption(w, name))
 	})
 
@@ -2189,7 +2192,7 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		w := e.WindowManager.GetLastMainBufferWindow()
+		w := e.WindowManager.GetLastMainWindow()
 		value, ok := e.getOption(w, name)
 		if !ok {
 			e.ShowWarning("Unknown option: " + name)
@@ -4685,7 +4688,7 @@ func (e *Editor) openFile(filename string) bool {
 
 	// Create new main buffer window
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          buf,
 		Dock:            window.DockNone,
 		Priority:        0,
@@ -4710,7 +4713,7 @@ func (e *Editor) createNewBuffer() {
 	buf := e.lib.New()
 
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          buf,
 		Dock:            window.DockNone,
 		Priority:        0,
@@ -4740,7 +4743,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 	buf := e.lib.NewFromString(w.Buffer.GetContent())
 
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          buf,
 		Dock:            window.DockNone,
 		Priority:        0,
@@ -4767,7 +4770,7 @@ func (e *Editor) cloneCurrentBuffer() bool {
 // made through either window.
 func (e *Editor) cloneCurrentWindow() bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		e.ShowWarning("No buffer to clone a window for")
 		return false
 	}
@@ -4775,7 +4778,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 	srcPos := w.CursorPos()
 
 	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          w.Buffer, // SAME buffer, not a copy
 		Dock:            window.DockNone,
 		Priority:        0,
@@ -4883,7 +4886,7 @@ func (e *Editor) insertFile(filename string) bool {
 // closeCurrentBuffer closes the current buffer window.
 func (e *Editor) closeCurrentBuffer() bool {
 	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type != window.MainBuffer {
+	if w == nil || w.Type == window.PromptWindow {
 		return false
 	}
 
@@ -4957,7 +4960,7 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 			e.unburyEverywhere(w.Buffer)
 			if closed != nil {
 				stillOpen := false
-				for _, b := range e.openMainBuffers() {
+				for _, b := range e.openDocWindows() {
 					if b == closed {
 						stillOpen = true
 						break
@@ -4975,7 +4978,7 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 	}
 
 	// Get all main buffers
-	mainBuffers := e.getMainBuffers()
+	mainBuffers := e.contentWindows()
 	if len(mainBuffers) <= 1 {
 		// Last buffer - exit instead
 		e.Running = false
@@ -4992,7 +4995,7 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 	// can share one buffer; link-follow histories reference buffers too).
 	if closing != nil && closing.Buffer != nil {
 		shared := false
-		for _, b := range e.openMainBuffers() {
+		for _, b := range e.openDocWindows() {
 			if b == closing.Buffer {
 				shared = true
 				break
@@ -5008,7 +5011,7 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 
 // cycleBuffer switches to the next or previous buffer.
 func (e *Editor) cycleBuffer(direction int) bool {
-	mainBuffers := e.getMainBuffers()
+	mainBuffers := e.contentWindows()
 	if len(mainBuffers) <= 1 {
 		return false
 	}
@@ -5040,11 +5043,14 @@ func (e *Editor) cycleBuffer(direction int) bool {
 	return true
 }
 
-// getMainBuffers returns all main buffer windows.
-func (e *Editor) getMainBuffers() []*window.Window {
+// contentWindows returns every content window — documents and tool surfaces
+// (help, listings) — but not prompts or chrome (the modebar). These are the
+// windows the data-safety and navigation enumerations act on (buffer close,
+// save-all, DEADCAT, nav-history liveness, buffer cycling).
+func (e *Editor) contentWindows() []*window.Window {
 	var result []*window.Window
 	for _, w := range e.WindowManager.AllWindows() {
-		if w.Type == window.MainBuffer {
+		if w.FocusEligible() {
 			result = append(result, w)
 		}
 	}
@@ -5240,8 +5246,8 @@ func (e *Editor) performRender() {
 	// the one thing on screen the user cannot see), then the outline breadcrumb
 	// (the enclosing function/section chain), then the spawn placeholder.
 	if cw := focusedWindow; cw != nil {
-		if cw.Type == window.PromptBuffer {
-			cw = e.WindowManager.GetLastMainBufferWindow()
+		if cw.Type == window.PromptWindow {
+			cw = e.WindowManager.GetLastMainWindow()
 		}
 		if cw != nil {
 			if btn := e.focusedLinkButton(cw); btn != nil {
@@ -5372,7 +5378,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 
 	// Create main window
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          buf,
 		Dock:            window.DockNone,
 		Priority:        0,
@@ -5705,7 +5711,8 @@ var transientNotificationClasses = map[string]bool{
 // expireStaleNotifications.
 func (e *Editor) showTransient(message, class string) {
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.WorkBuffer,
+		Type:            window.ToolWindow,
+		WindowSet:       window.WindowSetTransient,
 		Class:           class,
 		Dock:            window.DockBottom,
 		Priority:        0, // Very low priority - below everything else
@@ -5736,7 +5743,8 @@ func (e *Editor) showTaggedTransient(message, class, tag string) {
 		}
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.WorkBuffer,
+		Type:            window.ToolWindow,
+		WindowSet:       "help",
 		Class:           class,
 		Tag:             tag,
 		Dock:            window.DockBottom,
@@ -5763,7 +5771,7 @@ func (e *Editor) appendVerboseLog(lines ...string) {
 	}
 	if vw == nil {
 		id := e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:            window.MainBuffer,
+			Type:            window.DocWindow,
 			Class:           "verboseLog",
 			Dock:            window.DockNone,
 			Priority:        0,
@@ -5880,7 +5888,8 @@ Press ^KH to close help...`
 
 	// Create help window in top dock with medium priority (100)
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:             window.WorkBuffer,
+		Type:             window.ToolWindow,
+		WindowSet:        "help",
 		Class:            "help",
 		Dock:             window.DockTop,
 		Priority:         100,
@@ -5910,7 +5919,7 @@ func (e *Editor) toggleOptions() bool {
 
 	// Build options display, showing the EFFECTIVE values for the last
 	// active editor window (per-window settings govern the window).
-	optWin := e.WindowManager.GetLastMainBufferWindow()
+	optWin := e.WindowManager.GetLastMainWindow()
 	opt := func(name string) string {
 		v, _ := e.getOption(optWin, name)
 		return v
@@ -5978,7 +5987,8 @@ func (e *Editor) toggleOptions() bool {
 
 	buf := e.lib.NewFromString(content.String())
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:             window.WorkBuffer,
+		Type:             window.ToolWindow,
+		WindowSet:        "help",
 		Class:            "options",
 		Dock:             window.DockTop,
 		Priority:         100,
@@ -6011,6 +6021,6 @@ func (e *Editor) Cleanup() {
 
 // PromptForInput creates an input prompt.
 func (e *Editor) PromptForInput(prompt, defaultValue string, callback func(string, bool)) {
-	e.WindowManager.CreatePromptBuffer(prompt, defaultValue, callback)
+	e.WindowManager.CreatePromptWindow(prompt, defaultValue, callback)
 	e.RequestRender()
 }

@@ -209,7 +209,7 @@ func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 // The close path uses it to decide whether dropping a window's history would
 // lose a modified buffer's last reference.
 func (e *Editor) bufferReferencedElsewhere(b *buffer.Buffer, exclude *window.Window) bool {
-	for _, w := range e.getMainBuffers() {
+	for _, w := range e.contentWindows() {
 		if w == exclude {
 			continue
 		}
@@ -225,11 +225,11 @@ func (e *Editor) bufferReferencedElsewhere(b *buffer.Buffer, exclude *window.Win
 	return false
 }
 
-// openMainBuffers returns every distinct buffer a main-buffer window holds
+// openDocWindows returns every distinct buffer a main-buffer window holds
 // open — active bindings plus nav-history stacks. Data-safety paths (close
 // liveness, save-all, DEADCAT dumps) enumerate THIS set, so work stacked in a
 // window's history is never invisible to them.
-func (e *Editor) openMainBuffers() []*buffer.Buffer {
+func (e *Editor) openDocWindows() []*buffer.Buffer {
 	seen := map[*buffer.Buffer]bool{}
 	var out []*buffer.Buffer
 	add := func(b *buffer.Buffer) {
@@ -238,7 +238,7 @@ func (e *Editor) openMainBuffers() []*buffer.Buffer {
 			out = append(out, b)
 		}
 	}
-	for _, w := range e.getMainBuffers() {
+	for _, w := range e.contentWindows() {
 		add(w.Buffer)
 		for _, b := range w.StackedBuffers() {
 			add(b)

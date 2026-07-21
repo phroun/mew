@@ -65,7 +65,7 @@ func TestTwoWindowsIndependentViewports(t *testing.T) {
 	e, w1 := newTestEditor(t, strings.Repeat("x\n", 100))
 
 	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc2", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc2", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: w1.Buffer, SetFocus: false,
 	})
 	w2 := e.WindowManager.GetWindow(id)

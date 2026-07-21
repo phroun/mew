@@ -220,7 +220,7 @@ func (e *Editor) openLaunchFile(filename string, winOpts map[string]string, focu
 // reachable via buffer_next) and applies the per-window option overrides.
 func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string, focus bool) *window.Window {
 	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.MainBuffer,
+		Type:            window.DocWindow,
 		Buffer:          buf,
 		Dock:            window.DockNone,
 		Priority:        0,

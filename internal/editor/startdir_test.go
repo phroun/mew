@@ -133,7 +133,7 @@ func TestSaveMewTargetVirtual(t *testing.T) {
 // windowMainOpts is a tiny helper: a visible, focused main-buffer window.
 func windowMainOpts(id string, buf *buffer.Buffer) window.WindowOptions {
 	return window.WindowOptions{
-		Visible: true, ID: id, Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: id, Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	}
 }

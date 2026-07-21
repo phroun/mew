@@ -239,7 +239,7 @@ func (e *Editor) windowAtRow(y int) *window.Window {
 		}
 		// Prefer main buffers when areas would overlap (stale geometry
 		// on hidden windows).
-		if best == nil || (best.Type != window.MainBuffer && w.Type == window.MainBuffer) {
+		if best == nil || (!best.FocusEligible() && w.FocusEligible()) {
 			best = w
 		}
 	}

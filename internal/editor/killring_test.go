@@ -125,7 +125,7 @@ func TestKillRingMarksCrossBuffer(t *testing.T) {
 	e.executeCommand("kill_ring_yank") // source buffer's mark now at (0,3)
 
 	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc2", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc2", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString("second\n"), SetFocus: true,
 	})
 	w2 := e.WindowManager.GetWindow(id)
@@ -264,7 +264,7 @@ func TestKillRingCrossBuffer(t *testing.T) {
 	e.executeCommand("del_word_end") // kills "abcdef"
 
 	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc2", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc2", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString("second\n"), SetFocus: true,
 	})
 	w2 := e.WindowManager.GetWindow(id)

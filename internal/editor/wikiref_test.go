@@ -129,7 +129,7 @@ func wikiTreeEditor(t *testing.T, files map[string]string, openRel string) (*Edi
 		t.Fatal(err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
 	return e, e.WindowManager.GetWindow("wiki"), root
@@ -238,7 +238,7 @@ func TestSchemeRefOpensNewWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
 	w := e.WindowManager.GetWindow("wiki")
@@ -250,13 +250,13 @@ func TestSchemeRefOpensNewWindow(t *testing.T) {
 	}
 
 	srcBuf := w.Buffer
-	before := len(e.getMainBuffers())                 // notifications spawn work windows; count main ones
+	before := len(e.contentWindows())                 // notifications spawn work windows; count main ones
 	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the [[...]] span
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate")
 	}
-	if len(e.getMainBuffers()) != before+1 {
+	if len(e.contentWindows()) != before+1 {
 		t.Fatal("a scheme follow must create a new main window")
 	}
 	if w.Buffer != srcBuf || w.WikiRoot == "" {
@@ -334,7 +334,7 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatalf("local mew buffer should carry the real path; got %q", buf.GetFilename())
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "helpdoc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "helpdoc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
 	w := e.WindowManager.GetWindow("helpdoc")
@@ -424,7 +424,7 @@ func TestHelpWikiScheme(t *testing.T) {
 		"help/sample/widget.txt": "widget page\n",
 	})
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buffer.NewFromString("see [[help:/start]] ok\n"), SetFocus: true,
 		LinkBrowsing: true,
 	})
@@ -691,7 +691,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "elsewhere", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "elsewhere", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: thirdBuf, SetFocus: false, LinkBrowsing: true,
 	})
 	e.swapBuffer(w, thirdBuf) // invalidates fwd=[other]: other is BURIED, not released
@@ -793,14 +793,14 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	// Resurrection: closing the active buffer surfaces the burial; the
 	// window survives with its identity and history.
 	other := buryOther()
-	mains := len(e.getMainBuffers())
+	mains := len(e.contentWindows())
 	if !e.closeCurrentBuffer() {
 		t.Fatal("buffer_close should act")
 	}
 	if e.WindowManager.GetWindow("wiki") != w {
 		t.Fatal("the window must survive a resurrecting close")
 	}
-	if len(e.getMainBuffers()) != mains {
+	if len(e.contentWindows()) != mains {
 		t.Fatal("no window should close during resurrection")
 	}
 	if w.Buffer != other {
@@ -826,13 +826,13 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: buf2, SetFocus: true, LinkBrowsing: true,
 	})
 	w = e.WindowManager.GetWindow("wiki")
 	other2 := buryOther()
 	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "viewer", Type: window.MainBuffer, Dock: window.DockNone,
+		Visible: true, ID: "viewer", Type: window.DocWindow, Dock: window.DockNone,
 		Buffer: other2, SetFocus: false, LinkBrowsing: true,
 	})
 	if len(w.GraveyardBuffers()) != 0 {

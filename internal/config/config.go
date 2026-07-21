@@ -2044,7 +2044,7 @@ syntaxBad="\e[0;97;41m"         # bright white on red
 # [outline.python]
 # route = ^([ \t]*)@app\\.route.*def\\s+(\\w+)
 
-[colors.work]             # defaults for workbuffers
+[colors.tool]             # defaults for tool windows (help, listings)
 text="\e[0;1;46;97m"      # bright white on cyan
 messages="\e[0;1;43;97m"  # bright white on amber
 
@@ -2052,7 +2052,7 @@ messages="\e[0;1;43;97m"  # bright white on amber
 messages="\e[0;1;42;93m"  # bright yellow on green
 text="\e[0;1;42;97m"      # bright white on green
 
-[modebar.colors]       # the modebar class - a specific workbuffer type
+[modebar.colors]       # the modebar class - chrome, WindowSet "modebar"
 text="\e[0;44m"        # silver on blue - modebar fill
 messages="\e[1;96;44m" # aqua on blue - stats readout (Frag/Heap/Line/Rune)
 modifiers="\e[0;44m"   # silver on blue - active modifiers & space before & after

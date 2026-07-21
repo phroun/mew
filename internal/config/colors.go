@@ -21,7 +21,7 @@ type ColorScheme struct {
 	// Global holds [colors] from the config file. Keys are lowercased.
 	Global map[string]string
 	// ByType holds [colors.<bufferType>] sections, keyed by buffer type name
-	// ("main", "work", "prompt"). Keys within each map are lowercased.
+	// ("doc", "tool", "prompt"). Keys within each map are lowercased.
 	ByType map[string]map[string]string
 	// ByClass holds [<class>.colors] sections, keyed by window class name
 	// (lowercased). Keys within each map are lowercased.
@@ -100,7 +100,7 @@ var defaultGlobalColors = map[string]string{
 // defaultTypeColors are the built-in per-buffer-type colors
 // ([colors.<bufferType>] defaults).
 var defaultTypeColors = map[string]map[string]string{
-	"work": {
+	"tool": {
 		"text":     "\x1b[0;1;46;97m", // bright white on cyan
 		"messages": "\x1b[0;1;43;97m", // bright white on amber
 	},
@@ -157,7 +157,7 @@ func lookupLevel(cfg, def map[string]string, name string) (string, bool) {
 }
 
 // Resolve returns the color escape sequence for the given window class,
-// buffer type ("main", "work", "prompt"), and color name, cascading
+// buffer type ("doc", "tool", "prompt"), and color name, cascading
 // class -> buffer type -> global -> built-in global defaults. Names, classes,
 // and types are case-insensitive. Returns "" for a name unknown at every
 // level.
