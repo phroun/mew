@@ -1315,6 +1315,20 @@ func (b *Buffer) SaveTo(filename string) (warnings []string, err error) {
 	return warnings, nil
 }
 
+// MarkCleanSavedTo records an EXTERNAL save — content written outside
+// garland (e.g. through the mew: VFS to a virtualized support tree): the
+// buffer is no longer modified and carries the given filename. Garland
+// source tracking is unchanged (these buffers have none).
+func (b *Buffer) MarkCleanSavedTo(filename string) {
+	if b == nil {
+		return
+	}
+	if filename != "" {
+		b.filename = filename
+	}
+	b.modified = false
+}
+
 // SetMark sets a named mark at a specific line and rune position.
 // Uses readCursor to avoid disturbing window carets.
 func (b *Buffer) SetMark(name string, line, runePos int) error {

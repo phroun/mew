@@ -129,6 +129,23 @@ func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(bool))
 // buffer's tracked source, else a save-as that adopts target as the new
 // source. Scars and backup failures surface as notices.
 func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
+	// A mew:-scheme target (a virtualized support-tree page, e.g. the help
+	// wiki under a host) saves through the mew VFS: garland has no source
+	// for it and the document filesystem does not speak the scheme.
+	if isMewPath(target) {
+		if err := e.mew.WriteFile(target, []byte(buf.GetContent())); err != nil {
+			e.ShowError("Failed to save: " + err.Error())
+			e.noteBuffer(buf, "save", "Save failed: "+err.Error(), false)
+			return false
+		}
+		buf.MarkCleanSavedTo(target)
+		e.ShowNotification("Saved: " + target)
+		return true
+	}
+	// Tilde/relative targets normalize so garland's save (and its
+	// rename/backup dance) always sees a real absolute path.
+	target = e.normalizeDocPath(target)
+
 	var warnings []string
 	var err error
 	adopted := false
@@ -161,6 +178,10 @@ func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
 // buffer's world: a real stat on the OS, a read probe through the host FS
 // (hosts expose no stat; the read is the only honest signal).
 func (e *Editor) fileExists(path string) bool {
+	if isMewPath(path) {
+		_, ok := e.mew.Stat(path)
+		return ok
+	}
 	if e.usingOSFS {
 		_, err := os.Stat(path)
 		return err == nil

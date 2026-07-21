@@ -209,7 +209,9 @@ func (e *Editor) openLaunchFile(filename string, winOpts map[string]string, focu
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", filename, err)
 	}
-	buf.SetFilename(filename)
+	if !isMewPath(filename) {
+		buf.SetFilename(e.normalizeDocPath(filename))
+	}
 	return e.createMainWindow(buf, winOpts, focus), nil
 }
 

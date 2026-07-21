@@ -32,9 +32,9 @@ type ColorDef struct {
 
 // action is everything one transition rule can instruct the engine to do.
 type action struct {
-	target *state
-	noeat  bool // re-examine the character in the target state
-	repaint int // recolor=-N: negative count of recent chars to repaint
+	target  *state
+	noeat   bool // re-examine the character in the target state
+	repaint int  // recolor=-N: negative count of recent chars to repaint
 
 	beginWord bool // buffer: start collecting a word at this character
 	holdWord  bool // hold: stop collecting; keep the word for later lookup
@@ -79,12 +79,12 @@ const (
 
 // state is one ":name Class" state of a grammar.
 type state struct {
-	name     string
-	inst     *Instance
-	color    int     // index into inst.Colors; -1 = no/unknown class
-	ctx      uint8   // CtxComment/CtxString flags
-	rules    []rule  // quoted-list rules, in file order
-	fallback *action // the "*" rule
+	name      string
+	inst      *Instance
+	color     int     // index into inst.Colors; -1 = no/unknown class
+	ctx       uint8   // CtxComment/CtxString flags
+	rules     []rule  // quoted-list rules, in file order
+	fallback  *action // the "*" rule
 	onPartner *action // the "&" rule: matches the saved delimiter's partner
 	onSaved   *action // the "%" rule: matches the saved delimiter itself
 }

@@ -5301,6 +5301,14 @@ func (e *Editor) Run(filename string) error {
 // net: automatic backups, and an editing lock — emacs-interoperable when
 // git hygiene allows it, mew-native otherwise.
 func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
+	// mew:-scheme names load through the URL path: the real file in local
+	// mode, the virtualized support tree otherwise. Everything else is
+	// normalized (tilde-expanded, absolutized) so the buffer's filename
+	// survives saves and working-directory changes.
+	if isMewPath(filename) {
+		return e.loadBufferURL(filename)
+	}
+	filename = e.normalizeDocPath(filename)
 	if !e.usingOSFS {
 		buf, err := e.lib.NewFromHostFile(e.FS, filename)
 		if err != nil {
@@ -5390,6 +5398,11 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 // the library content-in/content-out path) and RunArgs (one or more files
 // opened from a parsed command line).
 func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
+	// A GUI launch starts at the filesystem root: move somewhere useful
+	// (beside the opened document, [general] startPath, or home) before any
+	// relative operation runs. A deliberate working directory is untouched.
+	e.ensureUsefulStartDir()
+
 	// On a panic, dump DEADCAT then re-raise. Registered first so it unwinds
 	// LAST — after the terminal-restoring defers below — then the crash still
 	// surfaces with its stack trace.

@@ -422,6 +422,15 @@ type Window struct {
 	Tag string
 }
 
+// LastMainWindow returns the main-buffer window currently occupying the
+// main editing area (nil when none) — the "last main buffer" the session
+// most recently worked in.
+func (m *Manager) LastMainWindow() *Window {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastMainBufferWindow
+}
+
 // CursorPos returns the window's caret position, read straight from its
 // garland caret cursor — the single source of truth. Garland maintains the
 // cursor across every edit (including edits made through another window on the

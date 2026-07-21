@@ -43,7 +43,7 @@ func (e *Editor) canonicalDocURL(name string) string {
 		return ""
 	}
 	if isMewPath(name) {
-		if e.usingOSFS {
+		if e.osBackedFS() {
 			if p, ok := e.mew.LocalPath(name); ok {
 				return canonicalOSFileURL(p, e.home)
 			}
@@ -59,7 +59,7 @@ func (e *Editor) canonicalDocURL(name string) string {
 		p := strings.TrimPrefix(name, "file://")
 		return "file://" + path.Clean("/"+strings.TrimPrefix(p, "/"))
 	}
-	if e.usingOSFS {
+	if e.osBackedFS() {
 		return canonicalOSFileURL(name, e.home)
 	}
 	// A virtual host FS owns its namespace: normalize separators and
@@ -120,6 +120,37 @@ func (e *Editor) findOpenBuffer(url string) *buffer.Buffer {
 		}
 	}
 	return nil
+}
+
+// osBackedFS reports whether documents live on the real OS filesystem —
+// either directly (no host FS) or through mew's own OS-backed FileSystem
+// (a host wiring OSFileSystem explicitly, as the KittyTK trinket does).
+func (e *Editor) osBackedFS() bool {
+	if e.usingOSFS {
+		return true
+	}
+	_, ok := e.FS.(osFileSystem)
+	return ok
+}
+
+// normalizeDocPath canonicalizes a document filename for STORAGE on a
+// buffer: mew: names pass through untouched; on an OS-backed document
+// filesystem, "~" expands and relative names absolutize, so the buffer
+// carries a stable path that survives garland's save/rename dance and any
+// working-directory change. Virtual host namespaces are left verbatim.
+func (e *Editor) normalizeDocPath(p string) string {
+	if p == "" || isMewPath(p) || !e.osBackedFS() {
+		return p
+	}
+	if ex, ok := expandTilde(p, e.home); ok {
+		p = ex
+	}
+	if !filepath.IsAbs(p) {
+		if a, err := filepath.Abs(p); err == nil {
+			p = a
+		}
+	}
+	return p
 }
 
 // loadBufferURL loads the document a canonical URL names: file:/// through

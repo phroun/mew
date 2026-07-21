@@ -335,6 +335,13 @@ type GeneralConfig struct {
 	// detect nothing fall back to the syntax option.
 	SyntaxDetect bool
 
+	// StartPath, when set, is where a session STARTS when its working
+	// directory cannot be derived any other way: GUI launches typically begin
+	// at the filesystem root, and the editor then falls back to the last main
+	// buffer's file location, this path, then the user's home (see the
+	// editor's start-directory resolution).
+	StartPath string
+
 	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
 	// "go conf") whose highlighter should ignore the document's own project
 	// .mew/syntax folder and resolve from the user's copy (mew:/syntax), the
@@ -1012,6 +1019,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	if general, ok := parsed["general"]; ok {
 		if v, ok := general["projectConfig"]; ok {
 			config.General.ProjectConfig = parseBool(v, true)
+		}
+		if v, ok := general["startPath"]; ok {
+			config.General.StartPath = stripQuotes(strings.TrimSpace(v))
 		}
 		if v, ok := general["useLocks"]; ok {
 			config.General.UseLocks = parseBool(v, true)
@@ -1739,6 +1749,11 @@ func (m *Manager) generateDefaultConfig() string {
 # Layer project .mew/editor.conf files (found walking up from the working
 # directory) over this configuration
 projectConfig=true
+# Where a session starts when its working directory cannot be derived any
+# other way (GUI launches begin at the filesystem root). The editor prefers
+# the current document's own location, then this path, then your home.
+# startPath=~/projects
+
 # Editing locks: useLocks=false disables all locking. useEmacsLocks controls
 # the emacs-interoperable ".#<name>" lock files specifically (skipped
 # automatically inside git repos whose .gitignore does not cover them); when
