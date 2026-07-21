@@ -1215,8 +1215,13 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		for k, v := range section {
 			k = strings.TrimSpace(k)
 			lk := strings.ToLower(k)
-			if lk == "syntax" || lk == "syntaxdetect" {
-				continue // excluded from the cascade
+			// syntaxDetect never overlays. `syntax` overlays only in
+			// grammar-AGNOSTIC sections (base/class/type): a grammar-keyed
+			// overlay picking its own grammar would be circular, but
+			// [options.tool] / [<class>.options] setting the default grammar
+			// for a window kind is well-defined.
+			if lk == "syntaxdetect" || (lk == "syntax" && grammar != "") {
+				continue
 			}
 			switch keywordOf(v) {
 			case "inherit":

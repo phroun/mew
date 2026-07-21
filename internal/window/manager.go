@@ -85,6 +85,13 @@ type ViewState struct {
 	// coloring, browse-mode buttons, and arming on caret entry. Off, links
 	// render exactly as the grammar colors them. Default true.
 	LinkBrowsing bool
+	// Syntax is the per-window default grammar name resolved from a
+	// grammar-agnostic option overlay ([options.tool] syntax=dokuwiki,
+	// [<class>.options] syntax=...); "" inherits the global syntax option.
+	// It is the fallback grammar for the window's buffer when nothing is
+	// detected from a shebang/modeline/filename.
+	Syntax string
+
 	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
 	// "go conf") whose highlighter should skip this document's project
 	// .mew/syntax folder and resolve from the user's own copy (mew:/syntax),

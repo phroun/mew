@@ -523,7 +523,60 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 			return in, ld
 		}
 	}
+	// Fallback grammar. A per-window default ([options.tool] syntax=dokuwiki,
+	// [<class>.options] syntax=...) resolved onto the window's ViewState wins
+	// — that is the explicit way to give a window kind a grammar. Otherwise
+	// the GLOBAL syntax option applies, but only to DOCUMENTS: a buffer shown
+	// solely in tool-window readouts (no filename, nothing detected) stays
+	// plain rather than inheriting the document grammar.
+	if name := e.bufferWindowSyntax(b); name != "" {
+		if in, ld := e.detectName(name, overrides); in != nil {
+			return in, ld
+		}
+		return nil, nil
+	}
+	if !e.bufferIsDocument(b) {
+		return nil, nil
+	}
 	return e.syntaxGrammar, e.syntaxGrammarLoader
+}
+
+// bufferWindowSyntax returns the per-window default grammar (ViewState.Syntax)
+// of the first window showing b that has one set, or "" — the grammar-
+// agnostic overlay's contribution (see reconcileWindowSyntax).
+func (e *Editor) bufferWindowSyntax(b *buffer.Buffer) string {
+	if b == nil || e.WindowManager == nil {
+		return ""
+	}
+	for _, w := range e.WindowManager.AllWindows() {
+		if w.Buffer == b && w.ViewState.Syntax != "" {
+			return w.ViewState.Syntax
+		}
+	}
+	return ""
+}
+
+// bufferIsDocument reports whether the global syntax fallback should apply to
+// a buffer: true when a document window shows it (or no window shows it yet —
+// the permissive default for launch and tests), false when only tool windows
+// do (a generated readout that should stay plain text).
+func (e *Editor) bufferIsDocument(b *buffer.Buffer) bool {
+	if b == nil || e.WindowManager == nil {
+		return true
+	}
+	shownInTool := false
+	for _, w := range e.WindowManager.AllWindows() {
+		if w.Buffer != b {
+			continue
+		}
+		if w.Type == window.DocWindow {
+			return true
+		}
+		if w.Type == window.ToolWindow {
+			shownInTool = true
+		}
+	}
+	return !shownInTool
 }
 
 // ensureSynCache returns the buffer's highlight cache extended through

@@ -128,6 +128,10 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
 		return
 	}
+	// Per-window syntax first (grammar-agnostic: class + type, never grammar,
+	// which would be circular). Set before anything reads the window's
+	// grammar, so windowGrammarName below reflects it.
+	e.reconcileWindowSyntax(w)
 	class, grammar, bufType := e.windowClass(w), e.windowGrammarName(w), e.windowType(w)
 	newSig := class + "\x1f" + grammar + "\x1f" + bufType
 	oldSig := w.AppliedOptionSig()
@@ -154,6 +158,27 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 	for _, key := range perWindowOptionKeys {
 		if !w.IsOptionOverridden(key) {
 			e.applyResolvedOption(w, key)
+		}
+	}
+}
+
+// reconcileWindowSyntax resolves the window's default grammar from a
+// grammar-agnostic overlay ([options.<type>] / [<class>.options] syntax=...)
+// and stores it in ViewState.Syntax. On a change it drops the buffer's
+// highlight cache so the new grammar takes effect. "" inherits the global
+// syntax option.
+func (e *Editor) reconcileWindowSyntax(w *window.Window) {
+	name := ""
+	if v, ok := e.LoadedConfig.ResolveOptionOverlay(e.windowClass(w), "", e.windowType(w), "syntax"); ok {
+		name = strings.TrimSpace(v)
+		if strings.EqualFold(name, "none") {
+			name = ""
+		}
+	}
+	if name != w.ViewState.Syntax {
+		w.ViewState.Syntax = name
+		if e.synCaches != nil {
+			delete(e.synCaches, w.Buffer)
 		}
 	}
 }
