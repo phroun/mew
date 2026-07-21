@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
 )
 
@@ -234,6 +235,20 @@ func (e *Editor) run() {
 		// visual-column contract by default (its flex mode moved to ?7027,
 		// opt-in), so mew talks to it exactly as to any terminal — no
 		// WithFlexTerminal, no logical-column translation.
+
+		// Live font swaps (set_font "ui-term", "JetBrainsMono"): re-point the
+		// alias in the shared text engine — loading the font on demand — and
+		// repaint. The engine's epoch bump flushes the terminal's glyph caches
+		// on the next paint. No-op in the pure-TUI path (no shared engine).
+		mew.WithFontSink(func(alias string, names []string) bool {
+			eng := text.Shared()
+			if eng == nil {
+				return false
+			}
+			ok := eng.UseFont(alias, names...)
+			e.Update()
+			return ok
+		}),
 	}
 	if e.mewFileSystem != nil {
 		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))

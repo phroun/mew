@@ -412,6 +412,13 @@ type Config struct {
 	// Set by the KittyTK trinket hosts; plain terminals leave it off.
 	LogicalColumnTerminal bool
 
+	// FontSink, when set, is invoked by the set_font command to re-point a
+	// host font alias (e.g. "ui-term") at an ordered list of font names,
+	// loading them if needed and repainting. It returns whether the preferred
+	// (first) font resolved. Wired by graphical hosts (the KittyTK trinket to
+	// its shared text engine); nil on a plain terminal, where set_font warns.
+	FontSink func(alias string, names []string) bool
+
 	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
 	// changes: true while the pointer is over a link button or a button is
 	// captured (a graphical host shows the arrow pointer), false for ordinary
@@ -1870,6 +1877,45 @@ func (e *Editor) registerCommands() {
 		e.Renderer.ForceRedraw()
 		e.RequestRender()
 		return pawscript.BoolStatus(true)
+	})
+
+	// set_font re-points a host font alias at one or more font names on a
+	// graphical host (e.g. set_font "ui-term", "JetBrainsMono"): the first name
+	// that resolves is used, later names are fallbacks. The host loads unknown
+	// names (system scan / configured search paths) and repaints live. On a
+	// plain terminal (no FontSink) it warns — fonts are the terminal's there.
+	ps.RegisterCommand("set_font", func(ctx *pawscript.Context) pawscript.Result {
+		alias, ok := argString(ctx, 0)
+		if !ok || strings.TrimSpace(alias) == "" {
+			e.ShowWarning("set_font: usage: set_font \"<alias>\", \"<font>\" [, \"<fallback>\"...]")
+			return pawscript.BoolStatus(false)
+		}
+		var names []string
+		for i := 1; ; i++ {
+			n, ok := argString(ctx, i)
+			if !ok {
+				break
+			}
+			if n = strings.TrimSpace(n); n != "" {
+				names = append(names, n)
+			}
+		}
+		if len(names) == 0 {
+			e.ShowWarning("set_font: no font name given")
+			return pawscript.BoolStatus(false)
+		}
+		if e.Config.FontSink == nil {
+			e.ShowWarning("set_font: not supported on this terminal")
+			return pawscript.BoolStatus(false)
+		}
+		got := e.Config.FontSink(strings.TrimSpace(alias), names)
+		e.RequestRender()
+		if got {
+			e.ShowNotification(fmt.Sprintf("Font %q set to %s", alias, names[0]))
+		} else {
+			e.ShowWarning(fmt.Sprintf("Font %q: %q not found (using fallback)", alias, names[0]))
+		}
+		return pawscript.BoolStatus(got)
 	})
 
 	// debug_screen arms a full-frame ANSI snapshot of the screen, written to a

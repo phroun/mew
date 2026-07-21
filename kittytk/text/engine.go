@@ -184,6 +184,41 @@ func (e *Engine) Epoch() uint64 {
 	return e.epoch
 }
 
+// SetFontAlias re-points a font alias (e.g. "ui-term", "ui-fraktur") at an
+// ordered list of target families; resolve uses the first that is registered,
+// so the list is a fallback chain. No targets deletes the alias. Bumps the
+// epoch so caches keyed on the font set flush. The named families must already
+// be registered (RegisterFontFile / RegisterFontByName, or UseFont which loads
+// on demand).
+func (e *Engine) SetFontAlias(alias string, targets ...string) {
+	e.db.setAlias(alias, targets)
+	e.bumpEpoch()
+}
+
+// sharedEngine is the process-wide engine a graphical backend publishes so
+// every surface — UI chrome and each embedded terminal — resolves fonts from
+// one font set. A live font change then reaches them all through one handle.
+var (
+	sharedMu     sync.RWMutex
+	sharedEngine *Engine
+)
+
+// SetShared publishes e as the process-wide engine (called by the raster
+// backend when it builds its engine). Pass nil to clear.
+func SetShared(e *Engine) {
+	sharedMu.Lock()
+	sharedEngine = e
+	sharedMu.Unlock()
+}
+
+// Shared returns the process-wide engine, or nil if none is published (e.g. the
+// pure-TUI path, where fonts are the outer terminal's concern).
+func Shared() *Engine {
+	sharedMu.RLock()
+	defer sharedMu.RUnlock()
+	return sharedEngine
+}
+
 // shapeCache is a two-generation cache: inserts land in cur; when cur
 // fills, it becomes prev and a fresh cur starts. Anything untouched
 // for two generations is dropped - no per-entry bookkeeping, bounded

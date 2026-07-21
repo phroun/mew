@@ -655,6 +655,9 @@ func engine() *text.Engine {
 		// macOS's UI font, addressable by name so native-mode menu
 		// shortcuts render in Apple's own typeface (no-op off macOS).
 		engineInst.LoadMacMenuFont()
+		// Publish it process-wide so embedded terminals resolve fonts from
+		// the same set — one handle for a live font change to reach them all.
+		text.SetShared(engineInst)
 	})
 	return engineInst
 }

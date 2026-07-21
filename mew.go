@@ -145,6 +145,15 @@ func WithPointerShape(fn func(overButton bool)) Option {
 	return func(cfg *editor.Config) { cfg.PointerShape = fn }
 }
 
+// WithFontSink wires the set_font command to a host that can change fonts
+// live: fn re-points a font alias (e.g. "ui-term") at an ordered list of font
+// names — the KittyTK trinket loads them into its shared text engine and
+// repaints — returning whether the preferred name resolved. Only meaningful on
+// a graphical host; a plain terminal leaves it unset and set_font warns.
+func WithFontSink(fn func(alias string, names []string) bool) Option {
+	return func(cfg *editor.Config) { cfg.FontSink = fn }
+}
+
 // WithFlexTerminal declares the host terminal a flex-width (logical-grid)
 // terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
 // so the editor addresses the cursor by logical column instead of visual

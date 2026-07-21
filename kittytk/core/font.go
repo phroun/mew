@@ -136,6 +136,17 @@ var (
 		Foreground: DefaultFontColor(), // Use scheme colors
 	}
 
+	// FontUITerm12 is the terminal grid's primary face — purfecterm's font
+	// slot 0 (SGR 10). It starts aliased to the monospace default and is meant
+	// to be re-pointed live (SetFontAlias via [fonts]/[window] ui_term or the
+	// set_font command). In the text-based system fonts are the outer
+	// terminal's, so the name is inert there.
+	FontUITerm12 = &Font{
+		Name:       "ui-term",
+		Size:       12,
+		Foreground: DefaultFontColor(),
+	}
+
 	// FontTuesday12 is a proportional-style font (16 units for letters/digits,
 	// 8 units for punctuation and symbols).
 	// DEBUG: Uses bright red foreground to distinguish text from decorative elements.

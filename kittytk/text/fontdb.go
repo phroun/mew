@@ -54,10 +54,17 @@ func (f *family) face(a Aspect) *gtfont.Face {
 // provides the per-rune fallback chain used during segmentation.
 type fontDB struct {
 	mu       sync.RWMutex
-	families map[string]*family // canonical (lower-case) name -> family
-	order    []string           // registration order = fallback order
-	aliases  map[string]string  // canonical alias -> canonical name
-	def      string             // default family (canonical)
+	families map[string]*family  // canonical (lower-case) name -> family
+	order    []string            // registration order = fallback order
+	aliases  map[string][]string // canonical alias -> ordered target families
+	def      string              // default family (canonical)
+
+	// searchPaths are extra directories (beyond the OS defaults) scanned
+	// by RegisterFontByName; nameIndex is the lazily-built normalized
+	// family-name -> file paths map over searchPaths + OS font dirs, dropped
+	// whenever searchPaths changes.
+	searchPaths []string
+	nameIndex   map[string][]string
 }
 
 func canonical(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
@@ -65,7 +72,7 @@ func canonical(name string) string { return strings.ToLower(strings.TrimSpace(na
 func newFontDB() *fontDB {
 	db := &fontDB{
 		families: map[string]*family{},
-		aliases:  map[string]string{},
+		aliases:  map[string][]string{},
 	}
 	// The embedded defaults: Noto Sans (UI) and Noto Sans Mono,
 	// chosen for Unicode coverage. The Go families stay registered
@@ -97,12 +104,36 @@ func newFontDB() *fontDB {
 	// "ui-text" is the internal UI font name: each renderer maps it
 	// to its own face. Here (the graphical engine) it is the default
 	// proportional family; the text-based system maps it to Monday.
-	db.aliases[canonical("ui-text")] = canonical("Noto Sans")
+	db.aliases[canonical("ui-text")] = []string{canonical("Noto Sans")}
 	// The TUI-era font names keep meaning on the graphical side:
 	// Monday has always been the monospace cell font.
-	db.aliases[canonical("Monday")] = canonical("Noto Sans Mono")
-	db.aliases[canonical("Tuesday")] = canonical("Noto Sans")
+	db.aliases[canonical("Monday")] = []string{canonical("Noto Sans Mono")}
+	db.aliases[canonical("Tuesday")] = []string{canonical("Noto Sans")}
+	// "ui-term" is the terminal grid's face — the primary of purfecterm's font
+	// slots (SGR 10). It starts pointed at the monospace default and is meant
+	// to be re-pointed live via SetAlias ([fonts]/[window] ui_term). "ui-fraktur"
+	// (slot 20) is defined but unmapped, so it falls back to the mono default
+	// until a Fraktur face is registered.
+	db.aliases[canonical("ui-term")] = []string{canonical("Noto Sans Mono")}
+	db.aliases[canonical("ui-fraktur")] = []string{canonical("Noto Sans Mono")}
 	return db
+}
+
+// setAlias re-points a canonical alias at an ordered list of target families
+// (resolve picks the first registered one). An empty list deletes the alias.
+func (db *fontDB) setAlias(alias string, targets []string) {
+	key := canonical(alias)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if len(targets) == 0 {
+		delete(db.aliases, key)
+		return
+	}
+	list := make([]string, len(targets))
+	for i, t := range targets {
+		list[i] = canonical(t)
+	}
+	db.aliases[key] = list
 }
 
 func (db *fontDB) register(familyName string, a Aspect, ttf []byte) error {
@@ -133,15 +164,42 @@ func (db *fontDB) resolve(f *core.Font) *gtfont.Face {
 	name, aspect := describe(f)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	key := canonical(name)
-	if target, ok := db.aliases[key]; ok {
-		key = target
+	fk, found := db.resolveFamily(canonical(name), 0)
+	if !found {
+		fk = db.def
 	}
-	fam, ok := db.families[key]
+	fam, ok := db.families[fk]
 	if !ok {
 		fam = db.families[db.def]
 	}
 	return fam.face(aspect)
+}
+
+// resolveFamily follows aliases — possibly nested (ui-term -> Monday -> Noto
+// Sans Mono) and with fallback lists ("JetBrainsMono, Monday" uses Monday when
+// the first is unregistered) — to a registered family's canonical key. found
+// reports whether it landed on a real family. Bounded against alias cycles.
+// Caller holds the lock.
+func (db *fontDB) resolveFamily(key string, depth int) (famKey string, found bool) {
+	if depth > 8 {
+		return key, false
+	}
+	if _, ok := db.families[key]; ok {
+		return key, true
+	}
+	targets, ok := db.aliases[key]
+	if !ok {
+		return key, false // neither a family nor an alias
+	}
+	last := key
+	for _, t := range targets {
+		if fk, ok := db.resolveFamily(t, depth+1); ok {
+			return fk, true
+		} else {
+			last = fk // remember the guaranteed-fallback's landing key
+		}
+	}
+	return last, false
 }
 
 // describe maps a core.Font to a family name + aspect.

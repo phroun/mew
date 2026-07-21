@@ -93,6 +93,7 @@ type purfecTermGfx struct {
 
 	// Caches + engine for scaled glyph imagery.
 	engine     *text.Engine
+	fontEpoch  uint64 // engine font-set epoch the text cache was built against
 	textCur    map[coverMaskKey]*image.RGBA
 	textPrev   map[coverMaskKey]*image.RGBA
 	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
@@ -103,8 +104,11 @@ type purfecTermGfx struct {
 // coverMaskKey identifies a cached glyph COVERAGE mask - deliberately
 // color-independent (no fg), so recoloring a glyph (an ls listing, a fire
 // animation) is a cache hit that just re-tints the same grayscale mask.
+// family distinguishes faces (font slots), so two families at the same box
+// size never collide.
 type coverMaskKey struct {
 	str      string
+	family   string
 	bold     bool
 	italic   bool
 	wPx, hPx int
@@ -138,6 +142,13 @@ func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
 }
 
 func (t *PurfecTerm) gfxEngine() *text.Engine {
+	// Prefer the process-wide engine (published by the raster backend) so the
+	// terminal grid and the UI chrome share one font set — a live font change
+	// via SetFontAlias / UseFont then re-fonts every surface at once.
+	if shared := text.Shared(); shared != nil {
+		t.gfx.engine = shared
+		return shared
+	}
 	if t.gfx.engine == nil {
 		t.gfx.engine = text.NewEngine()
 		// Same tail-of-chain system fallbacks as the raster engine,
@@ -501,18 +512,29 @@ func (t *PurfecTerm) cellTextImage(str string, bold, italic bool, boxWPx, boxHPx
 	if ppu <= 0 {
 		ppu = 1
 	}
-	key := coverMaskKey{str: str, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell}
+
+	family := "Monday"
+	if t.termFont != nil {
+		family = t.termFont.Name
+	}
+
+	// A live font change (SetFontAlias / register) bumps the engine epoch: the
+	// coverage masks were rasterized against the OLD font set, so flush them.
+	if eng := t.gfxEngine(); eng != nil {
+		if ep := eng.Epoch(); ep != t.gfx.fontEpoch {
+			t.gfx.fontEpoch = ep
+			t.gfx.textCur = map[coverMaskKey]*image.RGBA{}
+			t.gfx.textPrev = map[coverMaskKey]*image.RGBA{}
+		}
+	}
+
+	key := coverMaskKey{str: str, family: family, bold: bold, italic: italic, wPx: boxWPx, hPx: boxHPx, wide: wideCell}
 	if img, ok := t.gfx.textCur[key]; ok {
 		return img
 	}
 	if img, ok := t.gfx.textPrev[key]; ok {
 		t.gfx.textCur[key] = img
 		return img
-	}
-
-	family := "Monday"
-	if t.termFont != nil {
-		family = t.termFont.Name
 	}
 	// Choose the point size whose line budget fills the box height. The box
 	// is device pixels at ppu, so dividing it back out gives the cell height
