@@ -64,7 +64,7 @@ already effectively provides. `visualprotocol.go` is agnostic to the number.
 
 ## The patch
 
-### 1. Drop in `visualprotocol.go` (root package)
+### 1. Drop in `_src/visualprotocol.go` (root package)
 
 Provides: `standardCharWidth`, `visualToLogicalLocked` /
 `logicalToVisualLocked` (+ exported `VisualColToLogical` /
