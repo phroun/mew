@@ -501,26 +501,35 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 // ---------------------------------------------------------------
 
 // primaryTermFamily is the terminal grid's primary face — font slot 0 (SGR
-// 10). It is the app-chosen terminal font (the "ui-term" engine alias),
-// falling back to the historical monospace name.
+// 10). It is the app-chosen terminal font (the "ui-term" engine alias by
+// default, so the systematic ui-* tree and [window] ui_term config reach the
+// grid), via effTermFont so the default is honored even before SetTerminalFont.
 func (t *PurfecTerm) primaryTermFamily() string {
-	if t.termFont != nil && t.termFont.Name != "" {
-		return t.termFont.Name
+	if f := t.effTermFont(); f != nil && f.Name != "" {
+		return f.Name
 	}
-	return "Monday"
+	return "ui-term"
 }
 
-// cellFamily resolves the font family a cell paints in from its font slot
-// (SGR 10-20, OSC 7004): slot 0 (and any slot not configured for this
-// terminal) is the primary face; a configured slot names a family the shared
-// engine resolves. GetFontSlot already folds unset slots onto slot 0, so the
-// only work here is mapping an empty result back to the primary.
+// cellFamily resolves the font family a cell paints in, most specific first:
+//  1. an explicit per-cell font slot (SGR 10-20 / OSC 7004) the app selected;
+//  2. an app-configured script-class font (OSC 7005) for the glyph's script,
+//     overriding the engine's ui-term-<script> default so a program running in
+//     the terminal gets the same script fonts on the SDL path as on gtk/qt;
+//  3. the terminal's primary face.
+//
+// mew never sends OSC 7005, so step 2 is inert there (GetScriptFont == "") and
+// scripts resolve through the engine's ui-term-<script> tree as before.
 func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) string {
-	if cell.Font == 0 {
-		return t.primaryTermFamily()
+	if cell.Font != 0 {
+		if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
+			return fam
+		}
 	}
-	if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
-		return fam
+	if cls := purfecterm.ScriptClass(cell.Char); cls != "" {
+		if fam := buf.GetScriptFont(cls); fam != "" {
+			return fam
+		}
 	}
 	return t.primaryTermFamily()
 }

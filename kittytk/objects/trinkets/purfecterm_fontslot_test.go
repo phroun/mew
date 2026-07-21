@@ -47,3 +47,33 @@ func TestGfxCellFamilyUnsetSlotInheritsPrimary(t *testing.T) {
 		t.Errorf("unconfigured slot 5 should fall back to primary, got %q", fam)
 	}
 }
+
+// An app-configured script-class font (OSC 7005) overrides the engine's
+// ui-term-<script> default for a glyph of that script on the SDL/gfx path — the
+// same map the standalone gtk/qt renderers honor. An explicit font slot still
+// wins over it, and non-script (Latin) cells are untouched.
+func TestGfxCellFamilyScriptFontOSC(t *testing.T) {
+	term := NewPurfecTerm()
+	term.SetTerminalFontFamily("ui-term")
+	buf := term.Terminal().Buffer()
+
+	// OSC 7005: hebrew -> "My Hebrew"; then paint a Hebrew alef and a Latin 'A'.
+	term.Feed([]byte("\x1b]7005;s;hebrew;My Hebrew\x07אA"))
+	alef := buf.GetVisibleCell(0, 0)
+	latin := buf.GetVisibleCell(1, 0)
+
+	if fam := term.cellFamily(buf, &alef); fam != "My Hebrew" {
+		t.Errorf("Hebrew cell should use the OSC-7005 font, got %q", fam)
+	}
+	if fam := term.cellFamily(buf, &latin); fam != "ui-term" {
+		t.Errorf("Latin cell should stay on the primary, got %q", fam)
+	}
+
+	// A hebrew cell painted in an explicit slot uses the slot, not the script map.
+	buf.SetFontSlot(3, "Slot Three")
+	term.Feed([]byte("\x1b[13mב")) // SGR 13 = slot 3, Hebrew bet
+	bet := buf.GetVisibleCell(2, 0)
+	if fam := term.cellFamily(buf, &bet); fam != "Slot Three" {
+		t.Errorf("explicit slot should win over the script map, got %q", fam)
+	}
+}

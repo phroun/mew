@@ -327,10 +327,14 @@ func (t *PurfecTerm) SetTerminalFontFamily(name string) {
 	t.SetTerminalFont(&f)
 }
 
-// defaultTermFont is the monospace font used when no terminal font has
-// been set. Its family MUST match the default render family in
-// cellTextImage so the measured cell grid equals the rasterized glyphs.
-var defaultTermFont = core.Font{Name: "Monday", Size: 12}
+// defaultTermFont is the font used when no terminal font has been set: the
+// "ui-term" alias, so the systematic ui-* tree and [window] ui_term config
+// reach the grid (it resolves to the monospace default like the old "Monday",
+// but now tracks reconfiguration). Its family MUST match the default render
+// family in cellTextImage so the measured cell grid equals the rasterized
+// glyphs. In the text (TUI) backend, "ui-term" is not the Tuesday design-aid,
+// so it renders as the normal fixed-width Monday cell.
+var defaultTermFont = core.Font{Name: "ui-term", Size: 12}
 
 // effTermFont is the terminal's effective font: the app-chosen one, or
 // the monospace default. Its Size is the app's REQUESTED point size

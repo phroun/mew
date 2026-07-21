@@ -623,6 +623,9 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	row := t.metrics.UnitsToCellY(y)
 
 	startCol := col
+	// The text backend has no real fonts: "Tuesday" is the double-width
+	// design-aid pseudo-font; every other name — ui-term, ui-text, Monday, or a
+	// graphical family — collapses to the normal fixed-width Monday cell.
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
@@ -750,6 +753,9 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	boxWidth := col2 - col1
 	boxHeight := row2 - row1
 
+	// The text backend has no real fonts: "Tuesday" is the double-width
+	// design-aid pseudo-font; every other name — ui-term, ui-text, Monday, or a
+	// graphical family — collapses to the normal fixed-width Monday cell.
 	isTuesday := font.Name == "Tuesday"
 
 	// Calculate text width in cells accounting for font
