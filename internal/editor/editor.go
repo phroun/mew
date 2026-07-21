@@ -172,6 +172,13 @@ type Editor struct {
 	// holds it and performRender never recurses, so a plain Lock is deadlock-free.
 	renderMu sync.Mutex
 
+	// pendingScreenCapture, when non-empty, is a mew:/// target the next
+	// performRender writes a full-frame ANSI snapshot to (the debug_screen
+	// command). Set and read under renderMu, so the capture rides the natural
+	// render loop — snapshotting the exact frame just painted — rather than a
+	// command re-rendering (and re-locking renderMu) itself.
+	pendingScreenCapture string
+
 	// appliedFocusedSig is the focused window's overlay signature whose
 	// focused-scoped options (modebar templates/location, macOptionKeys, key
 	// mappings) are currently applied. Re-derived when it changes.
@@ -1858,24 +1865,16 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// debug_screen captures a full frame of the current screen as ANSI and
-	// writes it to a timestamped ".ans" file in the mew:/// support tree (~/.mew
-	// locally) — a snapshot that reproduces the screen when cat'd to a terminal.
-	// It must NOT call performRender: commands run inside the key loop's
-	// renderMu, which performRender re-locks (a hard lock). CaptureFrame uses the
-	// renderer's own mutex, free here, and the live full repaint is scheduled via
-	// ForceRedraw + RequestRender (deferred to the main loop after this returns).
+	// debug_screen arms a full-frame ANSI snapshot of the screen, written to a
+	// timestamped ".ans" file in the mew:/// support tree (~/.mew locally) — a
+	// capture that reproduces the screen when cat'd to a terminal. The write
+	// rides the NEXT render (see performRender): the command only arms the target
+	// and forces a full repaint, so it never re-renders (or re-locks renderMu)
+	// itself — snapshotting the exact frame that gets painted.
 	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
-		layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
-		ans := e.Renderer.CaptureFrame(layout)
-		target := "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
-		if err := e.mew.WriteFile(target, []byte(ans)); err != nil {
-			e.ShowError("debug_screen: " + err.Error())
-			return pawscript.BoolStatus(false)
-		}
+		e.pendingScreenCapture = "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
 		e.Renderer.ForceRedraw()
 		e.RequestRender()
-		e.ShowNotification("Wrote " + target)
 		return pawscript.BoolStatus(true)
 	})
 
@@ -5442,6 +5441,21 @@ func (e *Editor) performRender() {
 
 	e.lastRenderTime = time.Now()
 	e.renderRequested.Store(false)
+
+	// debug_screen: snapshot the exact frame just painted (same layout) to its
+	// armed mew:/// target. CaptureFrame takes the renderer's own mutex (free
+	// now that Render has returned); we hold renderMu, which is fine. Done after
+	// clearing renderRequested so the "Wrote" toast's own RequestRender sticks
+	// and schedules the frame that shows it.
+	if e.pendingScreenCapture != "" {
+		target := e.pendingScreenCapture
+		e.pendingScreenCapture = ""
+		if err := e.mew.WriteFile(target, []byte(e.Renderer.CaptureFrame(layout))); err != nil {
+			e.ShowError("debug_screen: " + err.Error())
+		} else {
+			e.ShowNotification("Wrote " + target)
+		}
+	}
 
 	// flipBidiForHost=auto: probe the terminal the first time RTL content
 	// reaches the screen; resolve a probe whose reply never came.

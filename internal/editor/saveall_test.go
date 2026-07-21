@@ -136,14 +136,17 @@ func TestDebugScreenWritesAnsFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	e, _, _ := renderedEditorWithConfig(t, "hello world\n", "[options]\nsyntax=go\n")
-	e.performRender() // establish geometry (not holding the lock yet)
+	e.performRender() // establish geometry
 
-	// Run the command exactly as the key loop does: holding renderMu. A guard
-	// timeout turns a re-entrant deadlock into a test failure instead of a hang.
-	e.renderMu.Lock()
+	// Arm the command exactly as the key loop does: holding renderMu. The command
+	// must only arm (never re-render), so this can't deadlock; a guard timeout
+	// turns a regression that re-introduces performRender into a failure, not a
+	// hang.
 	done := make(chan struct{})
 	go func() {
+		e.renderMu.Lock()
 		e.executeCommand("debug_screen")
+		e.renderMu.Unlock()
 		close(done)
 	}()
 	select {
@@ -151,7 +154,9 @@ func TestDebugScreenWritesAnsFile(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("debug_screen deadlocked while renderMu was held")
 	}
-	e.renderMu.Unlock()
+
+	// The capture rides the next render.
+	e.performRender()
 
 	matches, _ := filepath.Glob(filepath.Join(home, ".mew", "*.ans"))
 	if len(matches) != 1 {
