@@ -1575,6 +1575,46 @@ func (t *PurfecTerm) screenToCellGfx(x, y core.Unit) (cellX, cellY int) {
 	return cellX, cellY
 }
 
+// screenToVisualCellGfx maps trinket-unit coordinates to the PHYSICAL
+// viewport cell — the coordinates a mouse report carries. Under the standard
+// contract, mouse reports are visual screen columns (what a hardware terminal
+// sends), which diverge from screenToCellGfx's LOGICAL buffer cells whenever
+// wide characters precede the pointer: reporting the logical cell parks the
+// hosted app's caret left of the click. Local selection keeps the logical
+// mapping; reports must use this one.
+func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
+	buf := t.terminal.Buffer()
+	baseCW, baseCH := t.cellDims()
+	cw := float64(baseCW) * buf.GetHorizontalScale()
+	chh := float64(baseCH) * buf.GetVerticalScale()
+	if cw <= 0 || chh <= 0 {
+		return 0, 0
+	}
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	col = int(float64(x) * kx / cw)
+	row = int(float64(y) * ky / chh)
+	cols, rows := buf.GetSize()
+	if col < 0 {
+		col = 0
+	}
+	if cols > 0 && col >= cols {
+		col = cols - 1
+	}
+	if row < 0 {
+		row = 0
+	}
+	if rows > 0 && row >= rows {
+		row = rows - 1
+	}
+	return col, row
+}
+
 // sendMouseEventGfx forwards an xterm-encoded mouse event to the PTY
 // when the application requested tracking.
 func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) bool {
@@ -1620,7 +1660,8 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
-			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 			return true
 		}
 		t.showContextMenu(event)
@@ -1633,7 +1674,8 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+		repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 		return true
 	}
 
@@ -1674,7 +1716,8 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 			if t.gfx.mouseDown {
 				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
 			}
-			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true)
+			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
 		}
 		return true
 	}
@@ -1747,7 +1790,7 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToCellGfx(event.X, event.Y)
+		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		btn := purfecterm.MouseButtonLeft
 		switch event.Button {
 		case core.MiddleButton:
@@ -1778,7 +1821,7 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToCellGfx(event.X, event.Y)
+		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		mods := gfxMouseModifiers(event.Modifiers)
 		if event.DeltaY < 0 {
 			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
