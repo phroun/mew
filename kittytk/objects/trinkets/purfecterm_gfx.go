@@ -626,11 +626,18 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			xo = 0
 		}
 		compositeInto(out, g, xo, 0)
-		if kashR && xo+gw < boxWPx {
-			t.fillKashida(out, g, f, boxHPx, ppu, xo+gw, boxWPx, gw-1)
+		// Connect on the sides that actually join. The fill is anchored at the
+		// letter's REAL rendered ink edge (found by scanning out), not its advance
+		// box: a face whose presentation forms carry side bearing (e.g. macOS SF
+		// Arabic / Geeza Pro vs the embedded Noto Naskh) ends its ink before the
+		// advance edge, so filling from the advance box would leave the join
+		// floating detached above the baseline. Anchoring at the ink closes that
+		// gap in any face.
+		if kashR {
+			t.joinArabicSide(out, f, boxWPx, boxHPx, ppu, true)
 		}
-		if kashL && xo > 0 {
-			t.fillKashida(out, g, f, boxHPx, ppu, 0, xo, 0)
+		if kashL {
+			t.joinArabicSide(out, f, boxWPx, boxHPx, ppu, false)
 		}
 	} else {
 		var placed *image.RGBA
@@ -728,36 +735,163 @@ func (t *PurfecTerm) kashidaMask(f *core.Font, boxHPx int, ppu float64) *image.R
 	return out
 }
 
-// fillKashida joins an Arabic letter to its neighbour across [x0,x1) at the
-// cell's baseline. It prefers the FONT'S OWN kashida (the U+0640 tatweel), the
-// designer's stroke; but if the resolved face yields no tatweel glyph, it falls
-// back to smearing the letter glyph g's own connecting-edge column (edgeCol)
-// across the gap — the letter is always on screen, so this join always appears.
-// The smear reuses ink the letter actually rasterized, so it is never a stray
-// stroke: an isolated form has no edge ink and nothing is drawn.
-func (t *PurfecTerm) fillKashida(dst, g *image.RGBA, f *core.Font, boxHPx int, ppu float64, x0, x1, edgeCol int) {
+// joinArabicSide connects the Arabic letter already composited into out to its
+// neighbour on one side (right = toward the logically-previous letter), filling
+// from the letter's own connecting stroke out to the cell edge so adjacent
+// cells meet at the boundary.
+//
+// The vertical band is the font tatweel's inked rows — the designer's baseline
+// stroke — so the join sits exactly where the letters connect; the fill uses the
+// tatweel stroke itself, stretched horizontally. If the face yields no tatweel,
+// the band falls back to the letter's own lowest ink rows (its baseline nub) and
+// the fill smears the letter's ink across the gap. Either way the horizontal
+// start is the letter's REAL ink edge within the band (not its advance box), so
+// side bearing never leaves the join floating. An isolated form has no ink in
+// the band toward that side, so nothing is drawn (still self-gating).
+func (t *PurfecTerm) joinArabicSide(out *image.RGBA, f *core.Font, boxWPx, boxHPx int, ppu float64, right bool) {
+	k := t.kashidaMask(f, boxHPx, ppu)
+	top, bot := arabicJoinBand(k, out, boxHPx)
+	if top < 0 || top > bot {
+		return
+	}
+	// The letter's ink edge on this side, restricted to the baseline band so a
+	// tall stroke (ascender) elsewhere can't anchor the join at the wrong height.
+	edge := -1
+	if right {
+		for x := boxWPx - 1; x >= 0; x-- {
+			if colInkedInBand(out, x, top, bot) {
+				edge = x
+				break
+			}
+		}
+		if edge < 0 || edge >= boxWPx-1 {
+			return // no connecting ink, or already at the edge
+		}
+		t.fillJoin(out, k, f, boxHPx, ppu, edge, boxWPx, top, bot)
+	} else {
+		for x := 0; x < boxWPx; x++ {
+			if colInkedInBand(out, x, top, bot) {
+				edge = x
+				break
+			}
+		}
+		if edge <= 0 {
+			return
+		}
+		t.fillJoin(out, k, f, boxHPx, ppu, 0, edge+1, top, bot)
+	}
+}
+
+// fillJoin paints the connecting stroke across [x0,x1). With a tatweel mask k it
+// stretches k (which self-positions vertically) across the span; without one it
+// replicates, per band row, the nearest already-inked pixel across the span so
+// the letter's own stroke is extended.
+func (t *PurfecTerm) fillJoin(out, k *image.RGBA, f *core.Font, boxHPx int, ppu float64, x0, x1, top, bot int) {
 	if x1 <= x0 {
 		return
 	}
-	if k := t.kashidaMask(f, boxHPx, ppu); k != nil {
-		compositeInto(dst, scaleRGBA(k, x1-x0, boxHPx), x0, 0)
+	if k != nil {
+		compositeInto(out, scaleRGBA(k, x1-x0, boxHPx), x0, 0)
 		return
 	}
-	// Fallback: replicate the glyph's connecting-edge column across the gap.
-	gh := g.Rect.Dy()
-	dw, dh := dst.Rect.Dx(), dst.Rect.Dy()
-	if edgeCol < 0 || edgeCol >= g.Rect.Dx() {
-		return
-	}
-	for y := 0; y < gh && y < dh; y++ {
-		c := g.RGBAAt(edgeCol, y)
-		if c.A == 0 {
+	dw := out.Rect.Dx()
+	for y := top; y <= bot && y < out.Rect.Dy(); y++ {
+		// Find an inked sample in this row inside [x0,x1] (or its ends).
+		var sample color.RGBA
+		found := false
+		for x := x0; x < x1 && x < dw; x++ {
+			if c := out.RGBAAt(x, y); c.A != 0 {
+				sample = c
+				found = true
+				break
+			}
+		}
+		if !found {
 			continue
 		}
 		for x := x0; x < x1 && x < dw; x++ {
-			dst.SetRGBA(x, y, c)
+			if out.RGBAAt(x, y).A == 0 {
+				out.SetRGBA(x, y, sample)
+			}
 		}
 	}
+}
+
+// arabicJoinBand returns the vertical row span of the baseline connecting
+// stroke: the tatweel mask's inked rows when available, else the lowest ~18% of
+// the cell (where the cursive baseline sits) clamped to rows the letter actually
+// inked. Returns (-1,-1) if there is nothing to anchor to.
+func arabicJoinBand(k, out *image.RGBA, boxHPx int) (top, bot int) {
+	if k != nil {
+		top, bot = -1, -1
+		h := k.Rect.Dy()
+		if h > boxHPx {
+			h = boxHPx
+		}
+		for y := 0; y < h; y++ {
+			if rowInked(k, y) {
+				if top < 0 {
+					top = y
+				}
+				bot = y
+			}
+		}
+		if top >= 0 {
+			return top, bot
+		}
+	}
+	// No tatweel: use the letter's own lowest ink rows as the baseline band.
+	lowest := -1
+	for y := boxHPx - 1; y >= 0; y-- {
+		if rowInked(out, y) {
+			lowest = y
+			break
+		}
+	}
+	if lowest < 0 {
+		return -1, -1
+	}
+	band := boxHPx * 18 / 100
+	if band < 2 {
+		band = 2
+	}
+	top = lowest - band
+	if top < 0 {
+		top = 0
+	}
+	return top, lowest
+}
+
+func rowInked(img *image.RGBA, y int) bool {
+	b := img.Bounds()
+	if y < b.Min.Y || y >= b.Max.Y {
+		return false
+	}
+	for x := b.Min.X; x < b.Max.X; x++ {
+		if img.RGBAAt(x, y).A != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func colInkedInBand(img *image.RGBA, x, top, bot int) bool {
+	b := img.Bounds()
+	if x < b.Min.X || x >= b.Max.X {
+		return false
+	}
+	if top < b.Min.Y {
+		top = b.Min.Y
+	}
+	if bot >= b.Max.Y {
+		bot = b.Max.Y - 1
+	}
+	for y := top; y <= bot; y++ {
+		if img.RGBAAt(x, y).A != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // drawCellText renders one cell's character with all scaling rules,
