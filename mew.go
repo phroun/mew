@@ -146,10 +146,11 @@ func WithPointerShape(fn func(overButton bool)) Option {
 }
 
 // WithFlexTerminal declares the host terminal a flex-width (logical-grid)
-// terminal — purfecterm honoring DECSET 2027, one cell per character — so the
-// editor addresses the cursor by logical column instead of visual column.
-// The KittyTK hosts, which run mew's output through an embedded purfecterm,
-// set this; plain terminals must not.
+// terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
+// so the editor addresses the cursor by logical column instead of visual
+// column. Since purfecterm v0.2.23 its DEFAULT is the standard visual-column
+// contract, so ordinary hosts (including the KittyTK trinkets) must NOT set
+// this; it remains for a host that deliberately runs mew under ?7027.
 func WithFlexTerminal() Option {
 	return func(cfg *editor.Config) { cfg.LogicalColumnTerminal = true }
 }

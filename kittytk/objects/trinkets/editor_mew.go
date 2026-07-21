@@ -230,10 +230,10 @@ func (e *Editor) run() {
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
 		mew.WithPointerShape(func(over bool) { e.pointerOverButton.Store(over) }),
-		// mew's output lands in the embedded purfecterm, a flex-width
-		// (logical-grid) terminal: cursor addressing counts characters, so
-		// mew must translate its visual columns (see WithFlexTerminal).
-		mew.WithFlexTerminal(),
+		// Since purfecterm v0.2.23 the embedded terminal speaks the STANDARD
+		// visual-column contract by default (its flex mode moved to ?7027,
+		// opt-in), so mew talks to it exactly as to any terminal — no
+		// WithFlexTerminal, no logical-column translation.
 	}
 	if e.mewFileSystem != nil {
 		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))

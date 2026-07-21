@@ -1,5 +1,12 @@
 # PurfecTerm patches
 
+**STATUS: LANDED upstream in purfecterm v0.2.23** (standard-by-default
+protocol, ?7027 renumber with ?2027 accepted as inherently satisfied, CLI
+renderer visual emission, and the exported ShapeArabicCellVisual shaper —
+which KittyTK now consumes directly, its private copy retired). This
+directory remains as the development record; PROTOCOL.md's contract now
+lives with the purfecterm repo.
+
 Two verified patches for the purfecterm repo, developed from the mew/KittyTK
 integration work:
 

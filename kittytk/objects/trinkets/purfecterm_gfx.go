@@ -404,7 +404,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				if x+1 < effectiveCols {
 					rightCh = buf.GetVisibleCell(x+1, y).Char
 				}
-				shaped, suppress := shapeArabicVisual(leftCh, cell.Char, rightCh)
+				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
 				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
 					dc := cell
 					dc.Char = shaped
@@ -1195,7 +1195,7 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 					leftCh = buf.GetCellForSplit(screenCol+horizOffset-1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
 				}
 				rightCh = buf.GetCellForSplit(screenCol+horizOffset+1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
-				shaped, suppress := shapeArabicVisual(leftCh, cell.Char, rightCh)
+				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
 				if !suppress {
 					dc := cell
 					dc.Char = shaped

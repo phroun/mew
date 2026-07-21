@@ -1,8 +1,13 @@
 package trinkets
 
-import "testing"
+import (
+	"testing"
 
-// السلام stored in visual order (RTL reversed into cells): each cell resolves
+	"github.com/phroun/purfecterm"
+)
+
+// Integration guard on the UPSTREAM shaper (purfecterm.ShapeArabicCellVisual,
+// the single shaping authority since v0.2.23): السلام in visual-order cells
 // to its contextual presentation form, with the mandatory lam-alef ligature
 // drawn in the lam's cell and its alef suppressed.
 func TestShapeArabicVisualSalaam(t *testing.T) {
@@ -26,7 +31,7 @@ func TestShapeArabicVisualSalaam(t *testing.T) {
 		{0xFE8D, false}, // ا isolated (word-initial, nothing joins into it)
 	}
 	for i := range cells {
-		g, s := shapeArabicVisual(at(i-1), cells[i], at(i+1))
+		g, s := purfecterm.ShapeArabicCellVisual(at(i-1), cells[i], at(i+1))
 		if g != want[i].glyph || s != want[i].suppress {
 			t.Errorf("cell %d (%U): got %U suppress=%v, want %U suppress=%v",
 				i, cells[i], g, s, want[i].glyph, want[i].suppress)
@@ -37,7 +42,7 @@ func TestShapeArabicVisualSalaam(t *testing.T) {
 // Non-Arabic content passes through untouched.
 func TestShapeArabicVisualPassthrough(t *testing.T) {
 	for _, r := range []rune{'a', 'ש', '日', ' ', 0} {
-		if g, s := shapeArabicVisual('x', r, 'y'); g != r || s {
+		if g, s := purfecterm.ShapeArabicCellVisual('x', r, 'y'); g != r || s {
 			t.Errorf("%U should pass through, got %U suppress=%v", r, g, s)
 		}
 	}
