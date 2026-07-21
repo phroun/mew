@@ -6,58 +6,95 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// Script-class resolution: a glyph the primary (mono) can't render is routed to
-// the ui-term-<class> face for its script — CJK/Hebrew/Arabic — before the
-// general chain. The embedded defaults are Noto Sans CJK SC, Noto Serif Hebrew,
-// and Noto Naskh Arabic.
-func TestScriptClassDefaults(t *testing.T) {
-	db := newFontDB()
-	fm := fallbackMap{db: db, primary: db.resolve(&core.Font{Name: "Noto Sans Mono"})}
-	cases := []struct {
-		r    rune
-		name string
-		want string
-	}{
-		{0x4E00, "Han 一", "Noto Sans CJK SC"},
-		{0xAC00, "Hangul 가", "Noto Sans CJK SC"},
-		{0x3042, "Hiragana あ", "Noto Sans CJK SC"},
-		{0x05D0, "Hebrew alef", "Noto Serif Hebrew"},
-		{0xFEDF, "Arabic lam-initial", "Noto Naskh Arabic"},
-	}
-	for _, c := range cases {
-		if got := familyName(fm.ResolveFace(c.r)); got != c.want {
-			t.Errorf("%s (U+%04X) -> %q, want %q", c.name, c.r, got, c.want)
-		}
-	}
-}
-
-// scriptClassAlias classifies runes; non-RTL/CJK scripts have no class.
-func TestScriptClassAlias(t *testing.T) {
+// scriptClass classifies a rune; western and other scripts have no class.
+func TestScriptClass(t *testing.T) {
 	cases := map[rune]string{
 		'A': "", '5': "", 0x00E9 /*é*/ : "",
-		0x05D0: "ui-term-hebrew", 0xFB2A /*heb pres*/ : "ui-term-hebrew",
-		0x0627: "ui-term-arabic", 0xFEDF: "ui-term-arabic",
-		0x4E00: "ui-term-cjk", 0xAC00: "ui-term-cjk", 0x30AB: "ui-term-cjk",
-		0x20000: "ui-term-cjk",
+		0x05D0: "hebrew", 0xFB2A /*heb pres*/ : "hebrew",
+		0x0627: "arabic", 0xFEDF: "arabic",
+		0x4E00: "cjk", 0xAC00: "cjk", 0x30AB: "cjk", 0x20000: "cjk",
 	}
 	for r, want := range cases {
-		if got := scriptClassAlias(r); got != want {
-			t.Errorf("scriptClassAlias(U+%04X) = %q, want %q", r, got, want)
+		if got := scriptClass(r); got != want {
+			t.Errorf("scriptClass(U+%04X) = %q, want %q", r, got, want)
 		}
 	}
 }
 
-// The class aliases are redefinable: pointing ui-term-arabic at Kufi makes
-// Arabic resolve there instead of the Naskh default.
-func TestScriptClassAliasRedefinable(t *testing.T) {
-	e := NewEngine()
-	e.SetFontAlias("ui-term-arabic", "Noto Kufi Arabic")
-	fm := fallbackMap{db: e.db, primary: e.db.resolve(&core.Font{Name: "Noto Sans Mono"})}
-	if got := familyName(fm.ResolveFace(0xFEDF)); got != "Noto Kufi Arabic" {
-		t.Errorf("after re-aliasing ui-term-arabic, Arabic -> %q, want Noto Kufi Arabic", got)
+// scriptContext derives root+style from a UI font name.
+func TestScriptContext(t *testing.T) {
+	cases := []struct{ name, root, style string }{
+		{"ui-text", "ui-text", ""},
+		{"ui-text-sans", "ui-text", "sans"},
+		{"ui-text-serif", "ui-text", "serif"},
+		{"ui-term", "ui-term", ""},
+		{"ui-term-serif", "ui-term", "serif"},
+		{"JetBrainsMono", "", ""},
 	}
-	// Hebrew and CJK untouched.
+	for _, c := range cases {
+		if root, style := scriptContext(c.name); root != c.root || style != c.style {
+			t.Errorf("scriptContext(%q) = (%q,%q), want (%q,%q)", c.name, root, style, c.root, c.style)
+		}
+	}
+}
+
+// A ui-term primary (no style) pulls each script's own DEFAULT-style face.
+func TestScriptFallbackTermDefault(t *testing.T) {
+	db := newFontDB()
+	fm := db.fallbackFor(&core.Font{Name: "ui-term"})
+	cases := map[rune]string{
+		0x4E00: "Noto Sans CJK SC",    // cjk -> sans default
+		0x05D0: "Noto Serif Hebrew",   // hebrew -> serif default
+		0xFEDF: "Noto Naskh Arabic",   // arabic -> serif(=Naskh) default
+	}
+	for r, want := range cases {
+		if got := familyName(fm.ResolveFace(r)); got != want {
+			t.Errorf("ui-term U+%04X -> %q, want %q", r, got, want)
+		}
+	}
+}
+
+// The serif/sans tristate: a serif primary pulls serif script faces, a sans
+// primary pulls sans ones — the same root, no font names needed by the caller.
+func TestScriptFallbackStyleTristate(t *testing.T) {
+	db := newFontDB()
+	serif := db.fallbackFor(&core.Font{Name: "ui-text-serif"})
+	sans := db.fallbackFor(&core.Font{Name: "ui-text-sans"})
+	cases := []struct {
+		r                rune
+		wantSerif, wantSans string
+	}{
+		{0x05D0, "Noto Serif Hebrew", "Noto Sans Hebrew"},
+		{0xFEDF, "Noto Naskh Arabic", "Noto Kufi Arabic"}, // arabic: serif=Naskh, sans=Kufi
+		// The serif CJK is registered as "Noto Serif CJK SC" but the embedded
+		// file is the byte-identical Adobe co-release, which self-reports this
+		// family name via Describe(); resolution by the Noto name still works.
+		{0x4E00, "Source Han Serif SC", "Noto Sans CJK SC"},
+	}
+	for _, c := range cases {
+		if got := familyName(serif.ResolveFace(c.r)); got != c.wantSerif {
+			t.Errorf("ui-text-serif U+%04X -> %q, want %q", c.r, got, c.wantSerif)
+		}
+		if got := familyName(sans.ResolveFace(c.r)); got != c.wantSans {
+			t.Errorf("ui-text-sans U+%04X -> %q, want %q", c.r, got, c.wantSans)
+		}
+	}
+}
+
+// Overriding a single leaf reroutes only that (root,script,style) cell.
+func TestScriptAliasLeafOverride(t *testing.T) {
+	e := NewEngine()
+	e.SetFontAlias("ui-term-arabic-serif", "Noto Kufi Arabic")
+	fm := e.db.fallbackFor(&core.Font{Name: "ui-term"}) // arabic default = serif
+	if got := familyName(fm.ResolveFace(0xFEDF)); got != "Noto Kufi Arabic" {
+		t.Errorf("after overriding ui-term-arabic-serif, Arabic -> %q, want Noto Kufi Arabic", got)
+	}
+	// ui-text side and Hebrew untouched.
+	txt := e.db.fallbackFor(&core.Font{Name: "ui-text"})
+	if got := familyName(txt.ResolveFace(0xFEDF)); got != "Noto Naskh Arabic" {
+		t.Errorf("ui-text Arabic changed unexpectedly: %q", got)
+	}
 	if got := familyName(fm.ResolveFace(0x05D0)); got != "Noto Serif Hebrew" {
-		t.Errorf("Hebrew default changed unexpectedly: %q", got)
+		t.Errorf("Hebrew changed unexpectedly: %q", got)
 	}
 }

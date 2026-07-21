@@ -87,6 +87,10 @@ func newFontDB() *fontDB {
 	must(db.register("Noto Sans", Aspect{Bold: true}, fonts.SansBold))
 	must(db.register("Noto Sans", Aspect{Italic: true}, fonts.SansItalic))
 	must(db.register("Noto Sans", Aspect{Bold: true, Italic: true}, fonts.SansBoldItalic))
+	must(db.register("Noto Serif", Aspect{}, fonts.SerifRegular))
+	must(db.register("Noto Serif", Aspect{Bold: true}, fonts.SerifBold))
+	must(db.register("Noto Serif", Aspect{Italic: true}, fonts.SerifItalic))
+	must(db.register("Noto Serif", Aspect{Bold: true, Italic: true}, fonts.SerifBoldItalic))
 	must(db.register("Noto Sans Mono", Aspect{}, fonts.MonoRegular))
 	must(db.register("Noto Sans Mono", Aspect{Bold: true}, fonts.MonoBold))
 	// Hebrew: Serif first, so it wins the per-rune fallback (the more legible
@@ -119,31 +123,68 @@ func newFontDB() *fontDB {
 	must(db.register("Go Mono", Aspect{Italic: true}, gomonoitalic.TTF))
 	must(db.register("Go Mono", Aspect{Bold: true, Italic: true}, gomonobolditalic.TTF))
 	db.def = canonical("Noto Sans")
-	// "ui-text" is the internal UI font name: each renderer maps it
-	// to its own face. Here (the graphical engine) it is the default
-	// proportional family; the text-based system maps it to Monday.
-	db.aliases[canonical("ui-text")] = []string{canonical("Noto Sans")}
+	db.installUIAliases()
 	// The TUI-era font names keep meaning on the graphical side:
 	// Monday has always been the monospace cell font.
 	db.aliases[canonical("Monday")] = []string{canonical("Noto Sans Mono")}
 	db.aliases[canonical("Tuesday")] = []string{canonical("Noto Sans")}
-	// "ui-term" is the terminal grid's face — the primary of purfecterm's font
-	// slots (SGR 10). It starts pointed at the monospace default and is meant
-	// to be re-pointed live via SetAlias ([fonts]/[window] ui_term). "ui-fraktur"
-	// (slot 20) is defined but unmapped, so it falls back to the mono default
-	// until a Fraktur face is registered.
-	db.aliases[canonical("ui-term")] = []string{canonical("Noto Sans Mono")}
+	// "ui-fraktur" (font slot 20) is defined but unmapped, so it falls back to
+	// the mono default until a Fraktur face is registered.
 	db.aliases[canonical("ui-fraktur")] = []string{canonical("Noto Sans Mono")}
-	// Script-class defaults for the terminal grid: when the primary (ui-term)
-	// doesn't cover a glyph, resolution consults ui-term-<class> for the rune's
-	// script BEFORE the general fallback chain (see scriptClassAlias /
-	// fallbackMap.ResolveFace). Each is a redefinable alias ([window]
-	// ui_term_cjk/ui_term_hebrew/ui_term_arabic, or set_font), so a host can
-	// pick its own script faces; unset, it falls through to the general chain.
-	db.aliases[canonical("ui-term-cjk")] = []string{canonical("Noto Sans CJK SC")}
-	db.aliases[canonical("ui-term-hebrew")] = []string{canonical("Noto Serif Hebrew")}
-	db.aliases[canonical("ui-term-arabic")] = []string{canonical("Noto Naskh Arabic")}
 	return db
+}
+
+// installUIAliases wires the systematic UI font tree. Two roots — ui-text
+// (KittyTK's proportional face) and ui-term (the terminal grid / purfecterm
+// slot 0) — each cross four script classes (western/hebrew/arabic/cjk) and two
+// styles (sans/serif). Every level is a redefinable alias with a cascading
+// default, so a host or user overrides at exactly the level they care about
+// (a single leaf, a whole script, or a whole root) via [window] ui_* or
+// set_font. Renderers/trinkets select a face by NAME — "ui-text" (default),
+// "ui-text-sans", or "ui-text-serif" — a serif/sans/default tristate that
+// needs no font knowledge; the per-glyph script fallback then follows the same
+// root+style (see fallbackMap). Arabic maps sans->Kufi (geometric),
+// serif->Naskh (traditional), per the script's own style analogy.
+func (db *fontDB) installUIAliases() {
+	set := func(alias string, target string) {
+		db.aliases[canonical(alias)] = []string{canonical(target)}
+	}
+	// Leaves: script+style -> concrete embedded family.
+	leaves := map[string]string{
+		"western-sans": "Noto Sans", "western-serif": "Noto Serif",
+		"hebrew-sans": "Noto Sans Hebrew", "hebrew-serif": "Noto Serif Hebrew",
+		"arabic-sans": "Noto Kufi Arabic", "arabic-serif": "Noto Naskh Arabic",
+		"cjk-sans": "Noto Sans CJK SC", "cjk-serif": "Noto Serif CJK SC",
+	}
+	// The monospace root swaps only the western leaves for the mono faces; the
+	// script faces are shared (there is no monospaced Hebrew/Arabic/CJK Noto).
+	// No libre "Noto Serif Mono" exists, so ui-term-western-serif degrades to
+	// the sans mono until a serif-monospace face is embedded.
+	termWestern := map[string]string{
+		"western-sans": "Noto Sans Mono", "western-serif": "Noto Sans Mono",
+	}
+	// Each script's default STYLE when a caller doesn't specify one.
+	defStyle := map[string]string{
+		"western": "sans", "hebrew": "serif", "arabic": "serif", "cjk": "sans",
+	}
+	for _, root := range []string{"ui-text", "ui-term"} {
+		for scr, ds := range defStyle {
+			for _, st := range []string{"sans", "serif"} {
+				fam := leaves[scr+"-"+st]
+				if root == "ui-term" {
+					if tf, ok := termWestern[scr+"-"+st]; ok {
+						fam = tf
+					}
+				}
+				set(root+"-"+scr+"-"+st, fam) // e.g. ui-text-hebrew-serif -> Noto Serif Hebrew
+			}
+			set(root+"-"+scr, root+"-"+scr+"-"+ds) // ui-text-hebrew -> ui-text-hebrew-serif
+		}
+		// Style conveniences default the script to western (the primary face).
+		set(root+"-sans", root+"-western-sans")
+		set(root+"-serif", root+"-western-serif")
+		set(root, root+"-sans") // ui-text -> ui-text-sans (sans by default)
+	}
 }
 
 // setAlias re-points a canonical alias at an ordered list of target families
@@ -248,6 +289,20 @@ func describe(f *core.Font) (string, Aspect) {
 type fallbackMap struct {
 	db      *fontDB
 	primary *gtfont.Face
+	// scriptRoot / scriptStyle carry the primary request's UI context ("ui-text"
+	// or "ui-term"; "sans"/"serif"/"") so an uncovered Hebrew/Arabic/CJK glyph
+	// falls back to the MATCHING ui-<root>-<script>-<style> face — a serif
+	// primary pulls serif script faces, a term primary pulls the term variants.
+	// Derived by scriptContext; empty root defaults to ui-term.
+	scriptRoot  string
+	scriptStyle string
+}
+
+// fallbackFor builds the fallbackMap for a font request: its resolved primary
+// face plus the root/style context that steers per-glyph script fallback.
+func (db *fontDB) fallbackFor(f *core.Font) fallbackMap {
+	root, style := scriptContext(f.Name)
+	return fallbackMap{db: db, primary: db.resolve(f), scriptRoot: root, scriptStyle: style}
 }
 
 func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
@@ -256,11 +311,11 @@ func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
 	}
 	m.db.mu.RLock()
 	defer m.db.mu.RUnlock()
-	// Script-class preference: for a Hebrew/Arabic/CJK rune, try the
-	// ui-term-<class> alias's family before the general registration-order
-	// chain, so a host's chosen (or the embedded default) script face wins even
-	// if some earlier-registered family happens to also cover the rune.
-	if alias := scriptClassAlias(r); alias != "" {
+	// Script-class preference: for a Hebrew/Arabic/CJK rune, try the matching
+	// ui-<root>-<script>[-<style>] alias's family before the general
+	// registration-order chain, so the configured (or embedded default) script
+	// face for this context wins even if an earlier-registered family covers r.
+	if alias := m.scriptTarget(r); alias != "" {
 		if fk, ok := m.db.resolveFamily(alias, 0); ok {
 			if fam := m.db.families[fk]; fam != nil {
 				if face := fam.face(Aspect{}); face != nil {
@@ -284,21 +339,61 @@ func (m fallbackMap) ResolveFace(r rune) *gtfont.Face {
 	return m.primary
 }
 
-// scriptClassAlias returns the canonical ui-term-<class> alias for a rune's
-// script — "ui-term-hebrew", "ui-term-arabic", or "ui-term-cjk" — or "" for
-// scripts with no class (Latin and the rest resolve via the general chain).
-// Ranges cover the letters plus the Presentation Forms the RTL shapers emit.
-func scriptClassAlias(r rune) string {
+// scriptTarget builds the ui-<root>-<script>[-<style>] alias to consult for a
+// rune, from the class of its script and the primary's root/style context. "" when
+// the rune has no non-western class (western is the primary's own job).
+func (m fallbackMap) scriptTarget(r rune) string {
+	cls := scriptClass(r)
+	if cls == "" {
+		return ""
+	}
+	root := m.scriptRoot
+	if root == "" {
+		root = "ui-term"
+	}
+	if m.scriptStyle != "" {
+		return root + "-" + cls + "-" + m.scriptStyle // ui-text-hebrew-serif
+	}
+	return root + "-" + cls // ui-text-hebrew (its own default style)
+}
+
+// scriptContext derives the (root, style) a UI font name selects — root
+// "ui-text"/"ui-term", style "sans"/"serif"/"" — for the per-glyph script
+// fallback. A non-ui or concrete family yields ("",""), which scriptTarget
+// treats as the ui-term default.
+func scriptContext(name string) (root, style string) {
+	n := canonical(name)
+	switch {
+	case strings.HasPrefix(n, "ui-text"):
+		root = "ui-text"
+	case strings.HasPrefix(n, "ui-term"):
+		root = "ui-term"
+	default:
+		return "", ""
+	}
+	switch {
+	case strings.HasSuffix(n, "-serif"):
+		style = "serif"
+	case strings.HasSuffix(n, "-sans"):
+		style = "sans"
+	}
+	return root, style
+}
+
+// scriptClass classifies a rune into "hebrew", "arabic", "cjk", or "" (western
+// and everything else, which the primary/general chain handles). Ranges cover
+// the letters plus the Presentation Forms the RTL shapers emit.
+func scriptClass(r rune) string {
 	switch {
 	case (r >= 0x0590 && r <= 0x05FF) || // Hebrew
 		(r >= 0xFB1D && r <= 0xFB4F): // Hebrew presentation forms
-		return "ui-term-hebrew"
+		return "hebrew"
 	case (r >= 0x0600 && r <= 0x06FF) || // Arabic
 		(r >= 0x0750 && r <= 0x077F) || // Arabic Supplement
 		(r >= 0x08A0 && r <= 0x08FF) || // Arabic Extended-A
 		(r >= 0xFB50 && r <= 0xFDFF) || // Arabic Presentation Forms-A
 		(r >= 0xFE70 && r <= 0xFEFF): // Arabic Presentation Forms-B
-		return "ui-term-arabic"
+		return "arabic"
 	case (r >= 0x1100 && r <= 0x11FF) || // Hangul Jamo
 		(r >= 0x3040 && r <= 0x30FF) || // Hiragana + Katakana
 		(r >= 0x3100 && r <= 0x312F) || // Bopomofo
@@ -310,7 +405,7 @@ func scriptClassAlias(r rune) string {
 		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
 		(r >= 0xFF00 && r <= 0xFFEF) || // Halfwidth/Fullwidth Forms
 		(r >= 0x20000 && r <= 0x2FA1F): // CJK Ext B..F + compat supplement
-		return "ui-term-cjk"
+		return "cjk"
 	}
 	return ""
 }

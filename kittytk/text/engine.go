@@ -387,7 +387,9 @@ func (e *Engine) shapeOutputs(runes []rune, pieces []spanPiece, base di.Directio
 			Face:      face,
 			Size:      emFor(face, pc.font),
 		}
-		for _, si := range e.seg.Split(in, fallbackMap{db: e.db, primary: face}) {
+		fbRoot, fbStyle := scriptContext(pc.font.Name)
+		fb := fallbackMap{db: e.db, primary: face, scriptRoot: fbRoot, scriptStyle: fbStyle}
+		for _, si := range e.seg.Split(in, fb) {
 			outs = append(outs, e.shaper.Shape(si))
 		}
 	}

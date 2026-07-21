@@ -24,6 +24,21 @@ var MonoRegular []byte
 //go:embed NotoSansMono-Bold.ttf
 var MonoBold []byte
 
+// Noto Serif: the western proportional serif — the ui-text-western-serif leaf,
+// the serif companion to Noto Sans for trinkets that ask for a serif face.
+
+//go:embed NotoSerif-Regular.ttf
+var SerifRegular []byte
+
+//go:embed NotoSerif-Bold.ttf
+var SerifBold []byte
+
+//go:embed NotoSerif-Italic.ttf
+var SerifItalic []byte
+
+//go:embed NotoSerif-BoldItalic.ttf
+var SerifBoldItalic []byte
+
 // Fallback-only faces: never selected by name in the UI, but they
 // extend per-rune coverage (geometric shapes and other symbols used
 // by trinket chrome; Hebrew; Arabic).
