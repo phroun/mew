@@ -139,24 +139,39 @@ func TestBackBufferCoalescesRunSGR(t *testing.T) {
 	}
 }
 
-// Under logical addressing (flex-width terminals, purfecterm ?2027), CUP
-// counts characters, not visual cells: on "日abc" the cell at visual column 3
-// ('b' — 日 spans two visual cells) addresses logical column 3 (1-based),
-// not visual column 4. Without the mapping, every partial update after a wide
-// glyph lands one cell off and duplicates fragments across the line.
-func TestBackBufferLogicalCUP(t *testing.T) {
+// Under logical addressing (flex-width terminals, purfecterm ?2027) a changed
+// row is re-emitted WHOLE from column 1 and its logical remainder truncated
+// with EL. Mid-row span updates are unsound there: overwriting content whose
+// width profile changed (narrow chars over a wide cell, as when lines shift)
+// consumes a different number of logical cells than it replaced, silently
+// shifting everything preserved to its right — the duplicated-fragment /
+// stale-tail corruption.
+func TestBackBufferLogicalCUPRowGranularity(t *testing.T) {
 	b := newBackBuffer(10, 2)
 	b.logicalCUP = true
 	paint(b, mv(1, 1), wr("\x1b[0m日abc"))
+
+	// Change one cell: the whole row re-emits from column 1, no mid-row CUP.
 	out := paint(b, mv(1, 1), wr("\x1b[0m日aXc"))
-	if !strings.Contains(out, "\x1b[1;3H") {
-		t.Errorf("logical CUP should address character cell 3, got %q", out)
+	if !strings.Contains(out, "\x1b[1;1H") || !strings.Contains(out, "日aXc") {
+		t.Errorf("logical mode should re-emit the whole changed row, got %q", out)
 	}
-	if strings.Contains(out, "\x1b[1;4H") {
-		t.Errorf("visual column 4 must not be addressed under logical CUP, got %q", out)
+	if strings.Contains(out, "\x1b[1;3H") || strings.Contains(out, "\x1b[1;4H") {
+		t.Errorf("logical mode must not address mid-row, got %q", out)
+	}
+	if !strings.Contains(out, "\x1b[0K") {
+		t.Errorf("logical mode should truncate the row's logical tail with EL, got %q", out)
 	}
 
-	// Same edit with logical addressing off: classic visual column 4.
+	// Narrow content replacing a wide glyph (the line-shift case): the full
+	// row including the visually-unchanged tail is rewritten, so the logical
+	// grid can't end up with 'a' swallowed and "bc" shifted.
+	out = paint(b, mv(1, 1), wr("\x1b[0mxxaXc"))
+	if !strings.Contains(out, "xxaXc") {
+		t.Errorf("narrow-over-wide must rewrite the whole row, got %q", out)
+	}
+
+	// Logical addressing off: classic minimal span at the visual column.
 	b2 := newBackBuffer(10, 2)
 	paint(b2, mv(1, 1), wr("\x1b[0m日abc"))
 	out2 := paint(b2, mv(1, 1), wr("\x1b[0m日aXc"))

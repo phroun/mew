@@ -414,7 +414,16 @@ func (b *backBuffer) present(out io.Writer) {
 		}
 	}
 
-	if b.flipBidi {
+	// Emission granularity. flipBidi needs whole rows (the run-level flip).
+	// logicalCUP needs whole rows too, for a deeper reason: in a logical-grid
+	// terminal, overwriting mid-row content whose WIDTH PROFILE changed (a
+	// narrow pair over one wide cell, or vice versa) consumes a different
+	// number of logical cells than it replaced, silently shifting every
+	// preserved cell to its right — a minimal span diff corrupts the row (the
+	// classic symptom: inserting a line above CJK leaves duplicated fragments
+	// and stale colored tails). A changed row is therefore re-emitted whole,
+	// and presentRows truncates its logical remainder with EL.
+	if b.flipBidi || b.logicalCUP {
 		b.presentRows(&sb)
 	} else {
 		b.presentSpans(&sb)
@@ -529,6 +538,13 @@ func (b *backBuffer) presentRows(sb *strings.Builder) {
 		}
 		writeCUP(sb, y+1, 1)
 		b.emitRow(sb, y)
+		if b.logicalCUP {
+			// Truncate the logical-grid row's remainder: the old row may have
+			// held MORE logical cells than we just wrote (each wide glyph in
+			// the new content is one cell there), and any leftover would
+			// resurface as stale fragments past the new content.
+			sb.WriteString("\x1b[0K")
+		}
 	}
 }
 
