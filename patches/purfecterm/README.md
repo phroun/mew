@@ -49,6 +49,19 @@ integration work:
    review rather than a local `go build`; the change mirrors the existing
    `getFontForCharacter(cell.Char, fontFamily, …)` idiom, substituting the
    slot-resolved family for the bare primary.
+5. **Script-class fonts (OSC 7005)** — the *automatic* per-script counterpart
+   to the app-selected font slots: a per-terminal map from a script class
+   (`hebrew`/`arabic`/`cjk`) to the family a renderer uses when the primary
+   can't cover a glyph of that script, so the standalone gtk/qt builds render
+   RTL + CJK reliably (as the KittyTK/SDL renderer already does via its engine).
+   See the "Script-class fonts" section of `PROTOCOL.md`,
+   `font-scriptclass.patch` (buffer.go, scriptclass.go [new], parser.go,
+   gtk/widget.go, qt/widget.go **against v0.2.25**), and
+   `_src/scriptfont_test.go`. Adds `Buffer.SetScriptFont/GetScriptFont/
+   ClearScriptFonts`, the exported `ScriptClass(rune)`, OSC 7005 (`s`/`sd`/`sda`),
+   and a script-class branch in each widget's `getFontForCharacter`. Verified:
+   patched v0.2.25 root + cli suites pass; gtk/qt by patch-applies-clean + gofmt
+   + review (same toolkit caveat as item 4). **Not yet landed upstream.**
 
 ---
 

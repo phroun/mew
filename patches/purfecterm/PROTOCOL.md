@@ -338,3 +338,69 @@ feeds `ESC]7004;f;2;Comic Mono BEL` then `ESC[12mZ` to confirm OSC config +
 SGR select paint slot 2. `_src/cli_fontslot_test.go` (cli package) confirms
 `RenderedCell.Font` survives `GetCells`. Patched tree builds and the full root
 + cli suites pass against v0.2.23.
+
+---
+
+# Script-class fonts: automatic per-script fallback (OSC 7005)
+
+Companion patch: `font-scriptclass.patch` (buffer.go, scriptclass.go [new],
+parser.go, gtk/widget.go, qt/widget.go against v0.2.25) + `_src/scriptfont_test.go`.
+Not yet landed upstream.
+
+## The idea
+
+Font slots (OSC 7004) are *app-selected per cell* (SGR 10-20). Script-class
+fonts are the orthogonal *automatic* mechanism: a per-terminal map from a
+script class — `hebrew`, `arabic`, `cjk` — to the family a renderer uses when
+the primary font can't cover a glyph of that script. The app configures the
+map once; the renderer classifies each glyph by its Unicode script and picks
+the mapped face. This is what lets the standalone gtk/qt builds render Hebrew,
+Arabic, and CJK reliably, the way the KittyTK/SDL renderer already does through
+its font engine.
+
+## The wire protocol
+
+```
+ESC ] 7005 ; <cmd> BEL
+```
+
+| cmd                | effect                                                   |
+|--------------------|----------------------------------------------------------|
+| `s;CLASS;FAMILY`   | map script class CLASS (hebrew/arabic/cjk) to FAMILY     |
+| `sd;CLASS`         | clear CLASS (renderer falls back to its own default)     |
+| `sda`              | clear all script-class mappings                          |
+
+`FAMILY` is a concrete family name the renderer's font system resolves
+(Pango / Qt on the standalone builds). `CLASS` is lower-cased.
+
+## The machine model
+
+- `Buffer.scriptFonts map[string]string` + `SetScriptFont(class, family)` /
+  `GetScriptFont(class)` / `ClearScriptFonts()` (buffer.go). It is terminal
+  config, not per-cell state, so `ResetAttributes` does NOT touch it (like the
+  font-slot map).
+- `ScriptClass(r rune) string` (scriptclass.go, exported root helper): buckets
+  a rune into `hebrew` / `arabic` / `cjk` / `""` by Unicode range (letters plus
+  the RTL Presentation Forms and the full CJK/Hangul/kana/fullwidth blocks).
+- parser.go routes OSC 7005 to `executeOSCScriptFont`.
+- gtk/qt `getFontForCharacter`: after the primary-has-glyph check and before
+  the generic CJK/Unicode fallback, consult
+  `buffer.GetScriptFont(ScriptClass(r))` and use it when set. So an app's
+  Hebrew/Arabic/CJK face choice wins over the widget's generic fallbacks, and
+  Latin/box-drawing/etc. are unaffected (ScriptClass returns "").
+
+## Relationship to the KittyTK/SDL path
+
+The KittyTK gfx renderer resolves scripts through its own font engine (the
+`ui-term-<script>` alias tree), so it does not need OSC 7005 — the two are
+parallel mechanisms: OSC 7005 is the portable, per-terminal wire protocol for
+renderers without that engine; the alias tree is KittyTK's richer, host-config
+mechanism. An app that wants to run identically on gtk/qt and KittyTK can send
+OSC 7005 and also configure the engine.
+
+## Verification
+
+`_src/scriptfont_test.go` (root package): `ScriptClass` bucketing; the map's
+set / case-insensitive read / clear-one / clear-all; and OSC 7005 `s` / `sd` /
+`sda` driving it. Patched v0.2.25 tree builds and the full root + cli suites
+pass.
