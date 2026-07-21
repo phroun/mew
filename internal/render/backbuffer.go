@@ -50,6 +50,15 @@ type backBuffer struct {
 	// everything — set on resize and by ForceRedraw/screen_refresh.
 	pendingClear bool
 
+	// logicalCUP switches cursor addressing to LOGICAL columns for flex-width
+	// terminals (purfecterm under DECSET 2027): their grid stores one cell per
+	// character — a wide glyph occupies a single cell whose 2-column width is an
+	// attribute — so a CUP column must count characters, not visual cells.
+	// mew's grid is visual (wide = base + continuation), so the emitted column
+	// is the count of non-continuation cells left of the target. Off (default)
+	// emits visual columns, the classic terminal contract.
+	logicalCUP bool
+
 	// emitPen is the SGR currently in effect on the terminal during present():
 	// the last style putStyle emitted. Same-style cells then skip re-emitting the
 	// sequence, which both shrinks the byte stream and keeps adjacent glyphs
@@ -426,7 +435,7 @@ func (b *backBuffer) present(out io.Writer) {
 		}
 		fill := bbCell{style: style, width: 1}
 		if !cellsEqual(fill, b.disp[b.h-1][b.w-1]) {
-			writeCUP(&sb, b.h, b.w)
+			writeCUP(&sb, b.h, b.logicalColFor(b.h-1, b.w-1)+1)
 			b.putStyle(&sb, style)
 			sb.WriteString("\x1b[K")
 			b.disp[b.h-1][b.w-1] = fill
@@ -434,8 +443,9 @@ func (b *backBuffer) present(out io.Writer) {
 	}
 
 	// Place the hardware cursor where the renderer left the pen, then apply
-	// visibility only when it changed.
-	writeCUP(&sb, b.penY+1, b.penX+1)
+	// visibility only when it changed. The pen is a visual column; a
+	// flex-width terminal is addressed by its logical column instead.
+	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.penX)+1)
 	if !b.haveVisible || b.curVisible != b.lastVisible {
 		if b.curVisible {
 			sb.WriteString("\x1b[?25h")
@@ -466,7 +476,7 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 			}
 			// Position the cursor at the start of this changed span.
 			if termRow != y || termCol != x {
-				writeCUP(sb, y+1, x+1)
+				writeCUP(sb, y+1, b.logicalColFor(y, x)+1)
 				termRow, termCol = y, x
 			}
 			for x < b.w && !b.isCornerCut(y, x) && !cellsEqual(b.cur[y][x], b.disp[y][x]) {
@@ -619,6 +629,26 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 // terminals scrolling when the last column of the last row is filled.
 func (b *backBuffer) isCornerCut(y, x int) bool {
 	return y == b.h-1 && x == b.w-1
+}
+
+// logicalColFor maps a 0-based visual grid column to the 0-based column to
+// address in CUP: identity normally; under logicalCUP, the count of
+// non-continuation cells to its left on the row (each wide glyph is ONE cell
+// in a flex-width terminal's logical grid). It reads cur, which is valid for
+// every present-path CUP: spans emit left-to-right within a row, so cells left
+// of the target are already reconciled (or were unchanged).
+func (b *backBuffer) logicalColFor(y, x int) int {
+	if !b.logicalCUP || y < 0 || y >= b.h {
+		return x
+	}
+	col := 0
+	row := b.cur[y]
+	for i := 0; i < x && i < b.w; i++ {
+		if !row[i].cont {
+			col++
+		}
+	}
+	return col
 }
 
 func writeCUP(sb *strings.Builder, row, col int) {

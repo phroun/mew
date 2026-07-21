@@ -658,6 +658,30 @@ func (p *Painter) DrawCell(x, y Unit, ch rune, s style.CellStyle) {
 	p.backend.DrawCell(sx, sy, ch, s)
 }
 
+// DWLCellDrawer is an optional backend capability: draw one logical cell of a
+// DEC double-width/double-height line as a visual-column group (the carrier
+// glyph plus filler cells, twice the glyph's width). Cell backends that can
+// emit real DECDWL rows implement it (the TUI backend); mode is the DEC line
+// selector ('6' DECDWL, '3'/'4' DECDHL halves). Returns columns consumed.
+type DWLCellDrawer interface {
+	DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte) int
+}
+
+// DrawCellDWL draws one logical cell of a DEC double-width line through the
+// backend's DWL capability. Backends without it get a literal fallback — the
+// glyph followed by a filler space (double-spaced, no DEC modes) — so content
+// still lands in the right columns. Returns the columns consumed.
+func (p *Painter) DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+	sx, sy := p.toScreen(x, y)
+	p.applyClip()
+	if d, ok := p.backend.(DWLCellDrawer); ok {
+		return d.DrawCellDWL(sx, sy, ch, combining, s, mode)
+	}
+	p.backend.DrawCell(sx, sy, ch, s)
+	p.backend.DrawCell(sx+p.metrics.CellToUnitsX(1), sy, ' ', s)
+	return 2
+}
+
 // DrawRoundedRect paints a filled, stroked rounded rectangle when
 // the backend supports it (see RoundedRectDrawer). Returns false on
 // cell surfaces; the caller then falls back to its cell-idiom

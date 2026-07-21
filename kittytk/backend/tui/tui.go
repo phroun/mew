@@ -13,13 +13,55 @@ import (
 	"github.com/phroun/direct-key-handler/keyboard"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
+	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
 )
 
 // Cell represents a single character cell on the terminal.
+//
+// Width model: the buffer is a VISUAL grid — an East-Asian wide glyph occupies
+// its base cell plus a continuation cell (Char 0) to its right, exactly the
+// columns the terminal will advance. Zero-width combining marks ride the base
+// cell's Combining string, never their own cell, so grapheme clusters stay
+// intact in the emitted stream.
+//
+// DEC double-width/height lines (DECDWL/DECDHL): a hosted terminal's
+// double-width row is stored as visual-column GROUPS — the glyph carrier cell
+// (DWLMode set, DWLFill false: the "left half") followed by filler space cells
+// (DWLFill true: the "right half"; a wide glyph carries one continuation plus
+// two fillers, 2x its width in all). EndFrame decides per row: when EVERY cell
+// on a terminal row belongs to the same DWL mode, the row is emitted as a real
+// DEC line (ESC#6/#3/#4) using only the carrier glyphs; a mixed row (other
+// windows sharing it) emits the cells literally instead — the same content
+// D O U B L E  S P A C E D, every glyph still in its correct column.
 type Cell struct {
-	Char  rune
-	Style style.CellStyle
+	Char      rune
+	Combining string // zero-width marks attached to Char ("" for none)
+	Style     style.CellStyle
+	DWLMode   byte // 0 = normal; else the DEC line selector: '6' DWL, '3'/'4' DHL halves
+	DWLFill   bool // filler ("right half") cell of a DWL group; never a carrier
+}
+
+// invalidCell is a front-buffer sentinel that compares unequal to every real
+// cell, forcing re-emission (used when a row leaves DEC double-width mode).
+var invalidCell = Cell{Char: utf8.MaxRune + 1}
+
+// cellRuneWidth returns the terminal columns a base rune occupies (1 or 2),
+// from purfecterm's East Asian Width table — the same width authority the
+// PurfecTerm trinket's grid uses, so layout and emission agree end to end.
+// Ambiguous-width runes count as narrow (purfecterm's default); combining
+// marks are zero-width (they belong in Cell.Combining, not their own cell).
+func cellRuneWidth(r rune) int {
+	if r == 0 {
+		return 1
+	}
+	if purfecterm.IsCombiningMark(r) {
+		return 0
+	}
+	if w := purfecterm.GetEastAsianWidth(r); w >= 1.5 {
+		return 2
+	}
+	return 1
 }
 
 // TUIBackend implements RenderBackend for terminal rendering.
@@ -38,6 +80,12 @@ type TUIBackend struct {
 	// Screen buffers (double buffering)
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
+
+	// frontLineAttr tracks the DEC line mode the terminal currently shows per
+	// row (0 = normal; '6'/'3'/'4' = the DECDWL/DECDHL selector last emitted),
+	// so a row entering or leaving double-width re-emits the mode escape and
+	// forces a full repaint of that row.
+	frontLineAttr []byte
 
 	// Current state
 	currentStyle  style.CellStyle
@@ -275,6 +323,7 @@ func (t *TUIBackend) Shutdown() {
 func (t *TUIBackend) allocateBuffers() {
 	t.frontBuffer = make([][]Cell, t.rows)
 	t.backBuffer = make([][]Cell, t.rows)
+	t.frontLineAttr = make([]byte, t.rows)
 
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
 
@@ -320,7 +369,33 @@ func (t *TUIBackend) BeginFrame() {
 	}
 }
 
-// EndFrame completes the frame and presents it.
+// rowUniformDWL reports the DEC line selector when EVERY cell on the back
+// buffer row belongs to the same double-width group mode; 0 for a normal or
+// mixed row (which must render literally, double-spaced).
+func (t *TUIBackend) rowUniformDWL(y int) byte {
+	mode := byte(0)
+	for x := 0; x < t.cols; x++ {
+		m := t.backBuffer[y][x].DWLMode
+		if m == 0 {
+			return 0
+		}
+		if mode == 0 {
+			mode = m
+		} else if m != mode {
+			return 0
+		}
+	}
+	return mode
+}
+
+// EndFrame completes the frame and presents it: a minimal diff against what
+// the terminal shows. The emitted stream is width-honest — a wide glyph's
+// continuation cell is never addressed or overwritten, SGR is emitted only
+// when the pen changes (so same-styled runs stay contiguous and the
+// terminal's Arabic shaping/grapheme joining is preserved), and the cursor is
+// re-addressed only when it is not already in position. Rows fully owned by a
+// DEC double-width group emit as real DECDWL/DECDHL lines; mixed rows emit
+// their cells literally (double-spaced) so side-by-side content never shifts.
 func (t *TUIBackend) EndFrame() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -329,56 +404,139 @@ func (t *TUIBackend) EndFrame() {
 	clearLines := t.needsLineClear
 	t.needsLineClear = false
 
-	// Perform differential update
+	termX, termY := -1, -1 // where the terminal cursor sits (unknown)
+	penStyle := ""         // SGR last emitted ("" = unknown, always emit)
+
 	for y := 0; y < t.rows; y++ {
 		lineCleared := false
 
-		// After resize, clear each line before updating
+		// After resize, clear each line (and its DEC line mode) before updating.
 		if clearLines {
-			// Move to line start, reset attributes, clear line
 			sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+			t.frontLineAttr[y] = 0
 			lineCleared = true
+			termY, termX = y, 0
+			penStyle = "" // the [0m reset invalidated the tracked pen
 		}
 
-		for x := 0; x < t.cols; x++ {
-			// Check if cell below has overline attribute - if so, we need to add underline
-			cellBelowHasOverline := false
-			if y+1 < t.rows {
-				belowStyle := t.backBuffer[y+1][x].Style
-				if belowStyle.Attrs&style.StyleOverline != 0 {
-					cellBelowHasOverline = true
+		// A row uniformly owned by one DEC double-width group renders as a
+		// real DEC line: mode escape, clear, then only the carrier glyphs
+		// (the terminal doubles them). Fully re-emitted on any change — no
+		// mid-row addressing on a DEC line, whose columns are doubled.
+		if mode := t.rowUniformDWL(y); mode != 0 {
+			changed := lineCleared || t.frontLineAttr[y] != mode
+			if !changed {
+				for x := 0; x < t.cols; x++ {
+					if t.backBuffer[y][x] != t.frontBuffer[y][x] {
+						changed = true
+						break
+					}
+				}
+			}
+			if changed {
+				sb.WriteString(fmt.Sprintf("\033[%d;1H\033#%c\033[0m\033[2K", y+1, mode))
+				penStyle = ""
+				for x := 0; x < t.cols; x++ {
+					c := t.backBuffer[y][x]
+					t.frontBuffer[y][x] = c
+					if c.DWLFill || c.Char == 0 {
+						continue // fillers/continuations: the carrier covers them
+					}
+					if code := c.Style.Code(); code != penStyle {
+						sb.WriteString(code)
+						penStyle = code
+					}
+					sb.WriteRune(c.Char)
+					sb.WriteString(c.Combining)
+				}
+				t.frontLineAttr[y] = mode
+				termX, termY = -1, -1 // cursor position on a DEC line: treat as unknown
+			}
+			continue
+		}
+
+		// The row is normal (or mixed): if the terminal still shows it as a
+		// DEC line, revert to single-width and force a full repaint of it.
+		if t.frontLineAttr[y] != 0 {
+			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5", y+1))
+			t.frontLineAttr[y] = 0
+			for x := 0; x < t.cols; x++ {
+				t.frontBuffer[y][x] = invalidCell
+			}
+			termY, termX = y, 0
+		}
+
+		for x := 0; x < t.cols; {
+			cell := t.backBuffer[y][x]
+
+			// Continuation cell (right half of a wide glyph): never addressed
+			// or emitted on its own — its base cell wrote both columns.
+			if cell.Char == 0 && x > 0 && cellRuneWidth(t.backBuffer[y][x-1].Char) == 2 {
+				t.frontBuffer[y][x] = cell
+				x++
+				continue
+			}
+
+			w := 1
+			if cell.Char != 0 && cellRuneWidth(cell.Char) == 2 {
+				w = 2
+			}
+
+			// A cell below with the overline attribute reads as an underline on
+			// this cell — the "top line" trick (a tab bar overlines its own row
+			// so the window frame row above it shows a drawn top border). A
+			// wide glyph checks below BOTH of its columns, since the single
+			// glyph is the only thing that can carry the underline for either.
+			effectiveCell := cell
+			for i := 0; i < w && y+1 < t.rows && x+i < t.cols; i++ {
+				if t.backBuffer[y+1][x+i].Style.Attrs&style.StyleOverline != 0 {
+					effectiveCell.Style.Attrs |= style.StyleUnderline
+					break
 				}
 			}
 
-			// Determine the effective cell for comparison (with underline from overline below)
-			effectiveCell := t.backBuffer[y][x]
-			if cellBelowHasOverline {
-				effectiveCell.Style.Attrs |= style.StyleUnderline
+			if !lineCleared && effectiveCell == t.frontBuffer[y][x] {
+				x++
+				continue
 			}
 
-			if lineCleared || effectiveCell != t.frontBuffer[y][x] {
-				// Move cursor to position
+			if termY != y || termX != x {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
+				termY, termX = y, x
+			}
+			if code := effectiveCell.Style.Code(); code != penStyle {
+				sb.WriteString(code)
+				penStyle = code
+			}
 
-				// Set style (use effective style with underline from overline below)
-				sb.WriteString(effectiveCell.Style.Code())
+			if effectiveCell.Char == 0 {
+				sb.WriteRune(' ') // stray placeholder with no wide base
+			} else {
+				sb.WriteRune(effectiveCell.Char)
+				sb.WriteString(effectiveCell.Combining)
+			}
 
-				// Write character
-				if effectiveCell.Char == 0 {
-					sb.WriteRune(' ')
-				} else {
-					sb.WriteRune(effectiveCell.Char)
-				}
-
-				// Update front buffer with effective cell
-				t.frontBuffer[y][x] = effectiveCell
+			t.frontBuffer[y][x] = effectiveCell
+			if w == 2 && x+1 < t.cols {
+				t.frontBuffer[y][x+1] = t.backBuffer[y][x+1]
+			}
+			x += w
+			if x >= t.cols {
+				termX, termY = -1, -1 // wrote at the boundary: cursor unpredictable
+			} else {
+				termX = x
 			}
 		}
 	}
 
-	// Restore cursor position if visible
+	// Restore cursor position if visible. On a DEC double-width line the
+	// terminal addresses doubled columns, so the X is halved there.
 	if t.cursorVisible {
-		sb.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, t.cursorX+1))
+		cx := t.cursorX
+		if t.cursorY >= 0 && t.cursorY < len(t.frontLineAttr) && t.frontLineAttr[t.cursorY] != 0 {
+			cx /= 2
+		}
+		sb.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
 		sb.WriteString("\033[?25h")
 	}
 
@@ -468,6 +626,12 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	isTuesday := font.Name == "Tuesday"
 
 	for _, ch := range text {
+		// Zero-width combining marks attach to the previously drawn cell —
+		// they never occupy a cell of their own.
+		if cellRuneWidth(ch) == 0 {
+			t.appendCombining(col-1, row, ch)
+			continue
+		}
 		if col >= t.cols {
 			break
 		}
@@ -475,9 +639,9 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 		col++
 
 		// Handle wide characters (CJK, emoji)
-		if runeWidth(ch) > 1 {
+		if cellRuneWidth(ch) > 1 {
 			if col < t.cols {
-				t.setCell(col, row, 0, effectiveStyle) // Placeholder for wide char
+				t.setCell(col, row, 0, effectiveStyle) // continuation of the wide glyph
 				col++
 			}
 		} else if isTuesday && isAlphanumeric(ch) {
@@ -492,6 +656,69 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	}
 
 	return t.metrics.TextWidth(col - startCol)
+}
+
+// appendCombining attaches a zero-width mark to the base cell at (x, row),
+// stepping left off a wide glyph's continuation onto its base.
+func (t *TUIBackend) appendCombining(x, row int, ch rune) {
+	if row < 0 || row >= t.rows {
+		return
+	}
+	if x >= 0 && x < t.cols && t.backBuffer[row][x].Char == 0 {
+		x--
+	}
+	if x < 0 || x >= t.cols || !t.isInClip(x, row) {
+		return
+	}
+	if t.backBuffer[row][x].Char != 0 {
+		t.backBuffer[row][x].Combining += string(ch)
+	}
+}
+
+// DrawCellDWL draws one logical cell of a DEC double-width (or double-height)
+// line as a visual-column group: the glyph carrier at the given position, a
+// continuation cell when the glyph is East-Asian wide, then filler spaces out
+// to twice the glyph's width — the "left half carries the character, right
+// half is a space" model. mode is the DEC selector ('6' DECDWL, '3'/'4' the
+// DECDHL halves). Returns the columns consumed. EndFrame emits a row whose
+// cells all belong to one DWL mode as a real DEC line (carriers only); a
+// mixed row renders these cells literally, i.e. double-spaced.
+func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	col := t.metrics.UnitsToCellX(x)
+	row := t.metrics.UnitsToCellY(y)
+	if ch == 0 {
+		ch = ' '
+	}
+	w := cellRuneWidth(ch)
+	if w < 1 {
+		w = 1
+	}
+	group := 2 * w
+
+	// Carrier ("left half"), then a continuation for a wide carrier (so its
+	// own two columns are never re-addressed in the mixed fallback), then
+	// filler spaces ("right halves").
+	t.setCellDWL(col, row, Cell{Char: ch, Combining: combining, Style: s, DWLMode: mode})
+	next := col + 1
+	if w == 2 {
+		t.setCellDWL(next, row, Cell{Char: 0, Style: s, DWLMode: mode, DWLFill: true})
+		next++
+	}
+	for ; next < col+group; next++ {
+		t.setCellDWL(next, row, Cell{Char: ' ', Style: s, DWLMode: mode, DWLFill: true})
+	}
+	return group
+}
+
+// setCellDWL stores a fully-specified cell (with DWL marks) under clipping.
+func (t *TUIBackend) setCellDWL(col, row int, c Cell) {
+	if col < 0 || col >= t.cols || row < 0 || row >= t.rows || !t.isInClip(col, row) {
+		return
+	}
+	t.backBuffer[row][col] = c
 }
 
 // isAlphanumeric returns true if the character is a letter or digit.
@@ -528,10 +755,12 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 	// Calculate text width in cells accounting for font
 	textCells := 0
 	for _, ch := range text {
-		textCells++
-		if runeWidth(ch) > 1 {
-			textCells++
-		} else if isTuesday && isAlphanumeric(ch) {
+		w := cellRuneWidth(ch)
+		if w == 0 {
+			continue // combining marks ride the previous cell
+		}
+		textCells += w
+		if w == 1 && isTuesday && isAlphanumeric(ch) {
 			textCells++ // Extra cell for spacing
 		}
 	}
@@ -564,6 +793,12 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 
 	// Draw text
 	for _, ch := range text {
+		if cellRuneWidth(ch) == 0 {
+			if col-1 >= col1 {
+				t.appendCombining(col-1, row, ch)
+			}
+			continue
+		}
 		if col >= col2 {
 			break
 		}
@@ -573,7 +808,7 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 		col++
 
 		// Handle wide characters
-		if runeWidth(ch) > 1 {
+		if cellRuneWidth(ch) > 1 {
 			if col < col2 && col >= col1 {
 				t.setCell(col, row, 0, effectiveStyle)
 			}
@@ -983,22 +1218,3 @@ func detectColorDepth() int {
 	return 16
 }
 
-// runeWidth returns the display width of a rune.
-func runeWidth(r rune) int {
-	// CJK characters, emoji, etc. are typically double-width
-	if r >= 0x1100 &&
-		(r <= 0x115F || // Hangul Jamo
-			r == 0x2329 || r == 0x232A || // Angle brackets
-			(r >= 0x2E80 && r <= 0xA4CF && r != 0x303F) || // CJK
-			(r >= 0xAC00 && r <= 0xD7A3) || // Hangul Syllables
-			(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility
-			(r >= 0xFE10 && r <= 0xFE1F) || // Vertical forms
-			(r >= 0xFE30 && r <= 0xFE6F) || // CJK Compatibility Forms
-			(r >= 0xFF00 && r <= 0xFF60) || // Fullwidth forms
-			(r >= 0xFFE0 && r <= 0xFFE6) || // Fullwidth forms
-			(r >= 0x1F000 && r <= 0x1FFFF) || // Emoji and symbols
-			(r >= 0x20000 && r <= 0x2FFFF)) { // CJK Extension
-		return 2
-	}
-	return 1
-}

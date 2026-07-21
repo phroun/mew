@@ -139,6 +139,32 @@ func TestBackBufferCoalescesRunSGR(t *testing.T) {
 	}
 }
 
+// Under logical addressing (flex-width terminals, purfecterm ?2027), CUP
+// counts characters, not visual cells: on "日abc" the cell at visual column 3
+// ('b' — 日 spans two visual cells) addresses logical column 3 (1-based),
+// not visual column 4. Without the mapping, every partial update after a wide
+// glyph lands one cell off and duplicates fragments across the line.
+func TestBackBufferLogicalCUP(t *testing.T) {
+	b := newBackBuffer(10, 2)
+	b.logicalCUP = true
+	paint(b, mv(1, 1), wr("\x1b[0m日abc"))
+	out := paint(b, mv(1, 1), wr("\x1b[0m日aXc"))
+	if !strings.Contains(out, "\x1b[1;3H") {
+		t.Errorf("logical CUP should address character cell 3, got %q", out)
+	}
+	if strings.Contains(out, "\x1b[1;4H") {
+		t.Errorf("visual column 4 must not be addressed under logical CUP, got %q", out)
+	}
+
+	// Same edit with logical addressing off: classic visual column 4.
+	b2 := newBackBuffer(10, 2)
+	paint(b2, mv(1, 1), wr("\x1b[0m日abc"))
+	out2 := paint(b2, mv(1, 1), wr("\x1b[0m日aXc"))
+	if !strings.Contains(out2, "\x1b[1;4H") {
+		t.Errorf("visual CUP should address visual column 4, got %q", out2)
+	}
+}
+
 func TestBackBufferWideRune(t *testing.T) {
 	b := newBackBuffer(10, 2)
 	out := paint(b, mv(1, 1), wr("\x1b[0m日x"))

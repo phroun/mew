@@ -405,6 +405,13 @@ type Config struct {
 	// root (<home>/.mew) against. "" uses the OS user home.
 	HomeDir string
 
+	// LogicalColumnTerminal marks the host terminal as a flex-width
+	// (logical-grid) terminal — purfecterm honoring DECSET 2027 — whose cursor
+	// addressing counts characters rather than visual cells. The renderer then
+	// translates its CUP columns by the wide glyphs to the left of the target.
+	// Set by the KittyTK trinket hosts; plain terminals leave it off.
+	LogicalColumnTerminal bool
+
 	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
 	// changes: true while the pointer is over a link button or a button is
 	// captured (a graphical host shows the arrow pointer), false for ordinary
@@ -5656,6 +5663,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// purfecterm, or any host that honors it — measures cell width the same way
 	// mew's textwidth does. Terminals without the mode ignore it.
 	e.Renderer.EnableGraphemeWidth()
+
+	// A flex-width host stores one cell per character, so cursor addressing
+	// counts characters: switch the renderer's CUP columns to logical.
+	e.Renderer.SetLogicalColumns(e.Config.LogicalColumnTerminal)
 
 	// Initial render
 	e.performRender()

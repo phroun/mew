@@ -459,18 +459,44 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 
 	// Get terminal cells
 	cells := t.terminal.GetCells()
+	buf := t.terminal.Buffer()
 
-	// Render each cell
+	// Render each cell. The purfecterm grid is LOGICAL — one cell per
+	// character, a wide character occupying ONE cell with its visual width
+	// stored as an attribute (FlexWidth/CellWidth, the ?2027 model) — so map
+	// logical cells to VISUAL columns by accumulating each cell's width,
+	// exactly as the graphical path does. Without this, everything after a
+	// wide glyph paints one column early and overlaps it. DEC double-width
+	// lines route through the painter's DWL path (2x per cell): rows the
+	// terminal fully owns become real ESC#6 lines; rows shared with other
+	// windows degrade to double-spacing (see the TUI backend's EndFrame).
 	for row, rowCells := range cells {
 		y := metrics.CellToUnitsY(row)
 		if y >= bounds.Height {
 			break
 		}
+		var mode byte
+		switch buf.GetVisibleLineAttribute(row) {
+		case purfecterm.LineAttrDoubleWidth:
+			mode = '6'
+		case purfecterm.LineAttrDoubleTop:
+			mode = '3'
+		case purfecterm.LineAttrDoubleBottom:
+			mode = '4'
+		}
 
+		acc := 0.0
 		for col, cell := range rowCells {
-			x := metrics.CellToUnitsX(col)
+			x := metrics.CellToUnitsX(int(acc))
 			if x >= bounds.Width {
 				break
+			}
+
+			// Per-cell visual width, same resolution as the graphical path.
+			w := 1.0
+			raw := buf.GetVisibleCell(col, row)
+			if raw.FlexWidth && raw.CellWidth > 0 {
+				w = raw.CellWidth
 			}
 
 			// Convert purfecterm cell to KittyTK style
@@ -482,21 +508,49 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 				ch = ' '
 			}
 
-			p.DrawCell(x, y, ch, cellStyle)
+			if mode != 0 {
+				p.DrawCellDWL(x, y, ch, cell.Combining, cellStyle, mode)
+				acc += 2 * w
+				continue
+			}
+			if cell.Combining != "" || w >= 1.5 {
+				// DrawText attaches combining marks to the base cell and
+				// claims the continuation column for a wide glyph.
+				p.DrawText(x, y, string(ch)+cell.Combining, cellStyle, nil)
+			} else {
+				p.DrawCell(x, y, ch, cellStyle)
+			}
+			acc += w
 		}
 	}
 
 	// Draw cursor if focused AND the terminal hasn't hidden its cursor
 	// (some apps like vim/emacs manage their own cursor display)
-	if t.HasFocus() && t.terminal.Buffer().IsCursorVisible() {
-		cursorCol, cursorRow := t.terminal.Buffer().GetCursor()
-		if cursorRow < len(cells) && cursorCol < t.cols {
-			cursorX := metrics.CellToUnitsX(cursorCol)
+	if t.HasFocus() && buf.IsCursorVisible() {
+		cursorCol, cursorRow := buf.GetCursor()
+		if cursorRow >= 0 && cursorRow < len(cells) && cursorCol >= 0 && cursorCol < t.cols {
+			// The logical cursor column maps to a visual column through the
+			// accumulated widths of the cells before it (doubled on a DEC
+			// double-width line).
+			mul := 1.0
+			if buf.GetVisibleLineAttribute(cursorRow) != purfecterm.LineAttrNormal {
+				mul = 2.0
+			}
+			acc := 0.0
+			for c := 0; c < cursorCol; c++ {
+				w := 1.0
+				raw := buf.GetVisibleCell(c, cursorRow)
+				if raw.FlexWidth && raw.CellWidth > 0 {
+					w = raw.CellWidth
+				}
+				acc += w * mul
+			}
+			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
 				// Draw cursor as reverse video
 				var ch rune = ' '
-				if cursorRow < len(cells) && cursorCol < len(cells[cursorRow]) {
+				if cursorCol < len(cells[cursorRow]) {
 					ch = cells[cursorRow][cursorCol].Char
 					if ch == 0 {
 						ch = ' '

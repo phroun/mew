@@ -145,6 +145,15 @@ func WithPointerShape(fn func(overButton bool)) Option {
 	return func(cfg *editor.Config) { cfg.PointerShape = fn }
 }
 
+// WithFlexTerminal declares the host terminal a flex-width (logical-grid)
+// terminal — purfecterm honoring DECSET 2027, one cell per character — so the
+// editor addresses the cursor by logical column instead of visual column.
+// The KittyTK hosts, which run mew's output through an embedded purfecterm,
+// set this; plain terminals must not.
+func WithFlexTerminal() Option {
+	return func(cfg *editor.Config) { cfg.LogicalColumnTerminal = true }
+}
+
 // WithoutUserConfig prevents loading ~/.mew/editor.conf; built-in defaults
 // apply. For hosts that must not read the user's home directory.
 func WithoutUserConfig() Option {

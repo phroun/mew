@@ -350,6 +350,17 @@ func (sr *ScreenRenderer) EnableMouseReporting() {
 	fmt.Fprint(sr.out, "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h")
 }
 
+// SetLogicalColumns switches cursor addressing to logical columns, for
+// flex-width terminal hosts (purfecterm under DECSET 2027) whose grid stores
+// one cell per character: a CUP column there counts characters, not visual
+// cells, so a visual column must be translated by the wide glyphs before it.
+// Plain terminals keep the classic visual-column addressing (off, default).
+func (sr *ScreenRenderer) SetLogicalColumns(enabled bool) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	sr.frame.logicalCUP = enabled
+}
+
 // EnableGraphemeWidth requests DEC private mode 2027 (grapheme-cluster width):
 // the terminal measures a cell's width per grapheme cluster — East Asian wide
 // glyphs, ZWJ emoji, combining sequences — the same model mew's own textwidth
@@ -1650,6 +1661,38 @@ func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.Window
 	return false
 }
 
+// visualColIsWideTrail reports whether a left-based visual column on the
+// display line falls on the TRAILING cell of a double-width glyph — a cell
+// that cannot be individually overstruck (the glyph lights up as a whole).
+func (sr *ScreenRenderer) visualColIsWideTrail(w *window.Window, line string, col int) bool {
+	runes := []rune(line)
+	if len(runes) == 0 || col <= 0 {
+		return false
+	}
+	marked := sr.lineMarkSet(w, runes)
+	if layout := sr.layoutFor(w, runes); layout != nil {
+		cols, _ := sr.bidiColumns(runes, layout, marked, w)
+		for i := range runes {
+			if sr.slotWidth(layout, runes, i, cols[i], w) == 2 && col == cols[i]+1 {
+				return true
+			}
+		}
+		return false
+	}
+	vw := 0
+	for i, r := range runes {
+		if marked[i] {
+			vw++
+		}
+		wd := sr.getRuneVisualWidth(r, vw, w)
+		if wd == 2 && col == vw+1 {
+			return true
+		}
+		vw += wd
+	}
+	return false
+}
+
 // renderGhostCursor renders the ghost cursor indicator at the ideal visual column.
 // The ghost cursor shows where the cursor "wants" to be on a shorter line.
 func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.WindowLayout) {
@@ -1691,6 +1734,13 @@ func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.Win
 	// land in the right margin and must be hidden.
 	if screenX < ghostBase || screenX >= ghostBase+contentWidth {
 		return // Ghost cursor is outside visible area
+	}
+
+	// A ghost landing on the TRAILING half of a double-width glyph draws
+	// nothing: the glyph occupies both cells, and half of it cannot be
+	// overstruck — writing there just corrupts the character.
+	if sr.visualColIsWideTrail(w, line, ghostVisualColumn) {
+		return
 	}
 
 	// Render ghost cursor as '|' with ghost cursor color
