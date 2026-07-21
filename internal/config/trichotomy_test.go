@@ -62,14 +62,14 @@ func TestTrichotomyColors(t *testing.T) {
 	// restores the class's own builtin — observably different for the
 	// notification class, which has a builtin messages color.
 	inh := layered(t,
-		"[notification.colors]\nmessages=\"X\"\n",
-		"[notification.colors]\nmessages = inherit\n")
+		"[notification::colors]\nmessages=\"X\"\n",
+		"[notification::colors]\nmessages = inherit\n")
 	if got := inh.Colors.Resolve("notification", "work", "messages"); got == defaultClassColors["notification"]["messages"] {
 		t.Fatal("inherit must skip the class level, not restore its builtin")
 	}
 	def := layered(t,
-		"[notification.colors]\nmessages=\"X\"\n",
-		"[notification.colors]\nmessages = default\n")
+		"[notification::colors]\nmessages=\"X\"\n",
+		"[notification::colors]\nmessages = default\n")
 	if got := def.Colors.Resolve("notification", "work", "messages"); got != defaultClassColors["notification"]["messages"] {
 		t.Fatalf("default must restore the class builtin, got %q", got)
 	}
@@ -79,13 +79,13 @@ func TestTrichotomyColors(t *testing.T) {
 // conventions); blank stays as the mask state.
 func TestTrichotomySyntaxMaps(t *testing.T) {
 	cfg := layered(t,
-		"[colors.syntax]\nComment = syntaxString\n",
-		"[colors.syntax]\nComment = default\n")
+		"[syntax]\nComment = syntaxString\n",
+		"[syntax]\nComment = default\n")
 	if _, ok := cfg.SyntaxMaps[""]["comment"]; ok {
 		t.Fatal("default should delete the map entry")
 	}
 
-	cfg = layered(t, "", "[colors.syntax.cpp]\nComment =\n")
+	cfg = layered(t, "", "[syntax.cpp]\nComment =\n")
 	if v, ok := cfg.SyntaxMaps["cpp"]["comment"]; !ok || v != "" {
 		t.Fatal("blank must persist as the mask state")
 	}
@@ -95,8 +95,8 @@ func TestTrichotomySyntaxMaps(t *testing.T) {
 // own keyword entries are dropped too.
 func TestTrichotomyMappings(t *testing.T) {
 	cfg := layered(t,
-		"[mappings.mew]\n^Q\t=user_cmd\n^R\t=other_cmd\n",
-		"[mappings.mew]\n^Q\t=default\n^W\t=nop\n")
+		"[mappings:mew]\n^Q\t=user_cmd\n^R\t=other_cmd\n",
+		"[mappings:mew]\n^Q\t=default\n^W\t=nop\n")
 	if _, ok := cfg.Mappings["^Q"]; ok {
 		t.Fatal("project default should unbind the user's key")
 	}
@@ -104,7 +104,7 @@ func TestTrichotomyMappings(t *testing.T) {
 		t.Fatalf("other bindings should survive/merge: %v", cfg.Mappings)
 	}
 
-	cfg = layered(t, "[mappings.mew]\n^Q\t=user_cmd\n^T\t=\n")
+	cfg = layered(t, "[mappings:mew]\n^Q\t=user_cmd\n^T\t=\n")
 	if _, ok := cfg.Mappings["^T"]; ok {
 		t.Fatal("a blank user binding is an unbind, not an empty command")
 	}

@@ -114,7 +114,7 @@ func TestColorSchemeResolveCascade(t *testing.T) {
 	c := m.LoadFromString(strings.Join([]string{
 		"[colors]",
 		`text="\e[0m"`,
-		"[colors.doc]",
+		"[colors/doc]",
 		`text="\e[1m"`,
 	}, "\n"))
 	// Buffer-type layer overrides global for main buffers...

@@ -86,7 +86,7 @@ type ViewState struct {
 	// render exactly as the grammar colors them. Default true.
 	LinkBrowsing bool
 	// Syntax is the per-window default grammar name resolved from a
-	// grammar-agnostic option overlay ([options.tool] syntax=dokuwiki,
+	// grammar-agnostic option overlay ([options/tool] syntax=dokuwiki,
 	// [<class>.options] syntax=...); "" inherits the global syntax option.
 	// It is the fallback grammar for the window's buffer when nothing is
 	// detected from a shebang/modeline/filename.

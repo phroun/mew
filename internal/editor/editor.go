@@ -5188,7 +5188,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
 // setupKeyMappingsFromConfig sets up key mappings from the loaded config file.
 // All mappings come from the config file (default or user-customized).
 // This matches the TypeScript version's architecture where mappings are
-// defined in the [mappings.mew] section of the config file.
+// defined in the [mappings:mew] section of the config file.
 func (e *Editor) setupKeyMappingsFromConfig() {
 	kp := e.KeyProcessor
 

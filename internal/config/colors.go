@@ -6,9 +6,9 @@ import "strings"
 // the config file, plus built-in defaults. Colors are resolved by cascading
 // through four levels, from most to least specific:
 //
-//  1. Window class:   [<class>.colors] section, falling back to the built-in
+//  1. Window class:   [<class>::colors] section, falling back to the built-in
 //     class defaults when the key is absent from the config section.
-//  2. Buffer type:    [colors.<bufferType>] section, falling back to the
+//  2. Buffer type:    [colors/<bufferType>] section, falling back to the
 //     built-in buffer-type defaults when the key is absent.
 //  3. Global:         [colors] section.
 //  4. Global default: the built-in root defaults.
@@ -20,10 +20,10 @@ import "strings"
 type ColorScheme struct {
 	// Global holds [colors] from the config file. Keys are lowercased.
 	Global map[string]string
-	// ByType holds [colors.<bufferType>] sections, keyed by buffer type name
+	// ByType holds [colors/<bufferType>] sections, keyed by buffer type name
 	// ("doc", "tool", "prompt"). Keys within each map are lowercased.
 	ByType map[string]map[string]string
-	// ByClass holds [<class>.colors] sections, keyed by window class name
+	// ByClass holds [<class>::colors] sections, keyed by window class name
 	// (lowercased). Keys within each map are lowercased.
 	ByClass map[string]map[string]string
 }
@@ -86,7 +86,7 @@ var defaultGlobalColors = map[string]string{
 	"buttonshadowhover":   "\x1b[0;90;45m", // dark gray on purple
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
-	// these names (built-in conventions plus the [colors.syntax] maps).
+	// these names (built-in conventions plus the [syntax] maps).
 	"syntaxcomment":  "\x1b[0;32;40m",   // green on black
 	"syntaxstring":   "\x1b[0;36;40m",   // cyan on black
 	"syntaxescape":   "\x1b[0;96;40m",   // bright cyan on black
@@ -98,7 +98,7 @@ var defaultGlobalColors = map[string]string{
 }
 
 // defaultTypeColors are the built-in per-buffer-type colors
-// ([colors.<bufferType>] defaults).
+// ([colors/<bufferType>] defaults).
 var defaultTypeColors = map[string]map[string]string{
 	"tool": {
 		"text":     "\x1b[0;1;46;97m", // bright white on cyan
@@ -111,7 +111,7 @@ var defaultTypeColors = map[string]map[string]string{
 }
 
 // defaultClassColors are the built-in per-window-class colors
-// ([<class>.colors] defaults).
+// ([<class>::colors] defaults).
 var defaultClassColors = map[string]map[string]string{
 	"modebar": {
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill

@@ -31,14 +31,14 @@ type Config struct {
 	Colors     ColorScheme
 
 	// SyntaxMaps maps jsf color-class names to mew color names, so grammar
-	// files plug into the systematic palette: [colors.syntax] is the global
-	// map (key ""), [colors.syntax.<grammar>] overrides per grammar. Class
-	// names are stored lowercased.
+	// files plug into the systematic palette: [syntax] is the global map
+	// (key ""), [syntax.<grammar>] overrides per grammar. Class names are
+	// stored lowercased.
 	SyntaxMaps map[string]map[string]string
 
 	// OptionOverlays overlays the base [options] along three dimensions: window
 	// class, syntax grammar, and buffer type. Sections are
-	// [<class>.]options[.<grammar>][.<type>]; each is stored under a signature
+	// [<class>::]options[/<type>][.<grammar>]; each is stored under a signature
 	// (see optionOverlayKey) and resolved most-specific-first by
 	// ResolveOptionOverlay with precedence class > grammar > type. syntax and
 	// syntaxDetect are excluded. "default" resolves to the shipped default,
@@ -46,11 +46,12 @@ type Config struct {
 	// stored lowercased.
 	OptionOverlays map[string]map[string]string
 
-	// MappingSets holds the key-mapping sets refined by window class and buffer
-	// type: [<class>.]mappings.<set>[.<type>] stored under a signature (see
-	// mappingSetKey). ResolveMappingSet merges the class/type cascade for one
-	// set name into an effective keymap. The active set name for a window comes
-	// from the "mappings" option (itself overlay-resolvable).
+	// MappingSets holds the key-mapping sets refined by window class, buffer
+	// type, and grammar: [<class>::]mappings:<set>[/<type>][.<grammar>] stored
+	// under a signature (see mappingSetKey). ResolveMappingSet merges the
+	// class/grammar/type cascade for one set name into an effective keymap. The
+	// active set name for a window comes from the "mappings" option (itself
+	// overlay-resolvable).
 	MappingSets map[string]map[string]string
 
 	// Formats maps short format names / file extensions to the grammar that
@@ -58,7 +59,7 @@ type Config struct {
 	// defaults are merged first; a blank value removes an entry.
 	Formats map[string]string
 
-	// FormatPaths refines Formats by location: [formats.<ext>] sections map
+	// FormatPaths refines Formats by location: [formats.<ext>] grammar sections map
 	// path patterns (see PathMatches) to grammars, consulted before the
 	// plain extension mapping — so a .txt inside a wiki tree can highlight
 	// as dokuwiki while other .txt files stay plain. Built-in defaults are
@@ -727,7 +728,7 @@ func builtinMappings() map[string]string {
 		// The default config @includes the modular keymap files; expand them from
 		// the embedded copies so the baseline is complete without disk access.
 		parsed := m.parseConfigFile(expandEmbeddedIncludes(m.generateDefaultConfig()))
-		builtinMappingsCache = parsed["mappings_mew"]
+		builtinMappingsCache = parsed["mappings:mew"]
 		if builtinMappingsCache == nil {
 			builtinMappingsCache = map[string]string{}
 		}
@@ -1108,17 +1109,28 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		set(&config.Indicators.FocusedButtonShadow, "focusedButtonShadow")
 	}
 
-	// Color sections. Key names are dynamic: [colors] is the root level,
-	// [colors.<bufferType>] the buffer-type level, and [<class>.colors] the
-	// window-class level. [colors.syntax] and [colors.syntax.<grammar>] are
-	// syntax-highlighting class maps (jsf class -> mew color name), claimed
-	// before the buffer-type rule. Section names arrive with "." mapped to "_".
+	// Color sections. [colors] is the root level, [colors/<type>] the
+	// buffer-type level, and [<class>::colors] the window-class level.
+	// [syntax] and [syntax.<grammar>] are the separate syntax-highlighting
+	// class maps (jsf class -> mew color name), handled in their own family.
 	for sectionName, section := range parsed {
-		switch {
-		case sectionName == "colors":
-			mergeStringMap(&config.Colors.Global, cleanColorSection(section))
-		case sectionName == "colors_syntax" || strings.HasPrefix(sectionName, "colors_syntax_"):
-			grammar := strings.TrimPrefix(strings.TrimPrefix(sectionName, "colors_syntax"), "_")
+		h := parseSectionHeader(sectionName)
+		switch h.family {
+		case "colors":
+			switch {
+			case h.class != "":
+				sub := config.Colors.ByClass[h.class]
+				mergeStringMap(&sub, cleanColorSection(section))
+				config.Colors.ByClass[h.class] = sub
+			case h.bufType != "":
+				sub := config.Colors.ByType[h.bufType]
+				mergeStringMap(&sub, cleanColorSection(section))
+				config.Colors.ByType[h.bufType] = sub
+			default:
+				mergeStringMap(&config.Colors.Global, cleanColorSection(section))
+			}
+		case "syntax":
+			grammar := h.grammar // "" is the global syntax map
 			if config.SyntaxMaps == nil {
 				config.SyntaxMaps = make(map[string]map[string]string)
 			}
@@ -1135,16 +1147,6 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 				}
 				config.SyntaxMaps[grammar][strings.ToLower(k)] = stripQuotes(strings.TrimSpace(v))
 			}
-		case strings.HasPrefix(sectionName, "colors_"):
-			bufType := strings.TrimPrefix(sectionName, "colors_")
-			sub := config.Colors.ByType[bufType]
-			mergeStringMap(&sub, cleanColorSection(section))
-			config.Colors.ByType[bufType] = sub
-		case strings.HasSuffix(sectionName, "_colors"):
-			class := strings.TrimSuffix(sectionName, "_colors")
-			sub := config.Colors.ByClass[class]
-			mergeStringMap(&sub, cleanColorSection(section))
-			config.Colors.ByClass[class] = sub
 		}
 	}
 
@@ -1153,16 +1155,20 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	// breadcrumb, and path-conditional format rules — each merged over the
 	// built-in defaults (blank value removes one).
 	for sectionName, section := range parsed {
+		h := parseSectionHeader(sectionName)
+		if h.grammar == "" {
+			continue // bare [formats] is the alias table (handled below)
+		}
 		var table map[string]map[string]string
 		var builtin map[string]map[string]string
-		var grammar string
-		switch {
-		case strings.HasPrefix(sectionName, "match_"):
-			table, builtin, grammar = config.MatchPairs, DefaultMatchPairs(), strings.TrimPrefix(sectionName, "match_")
-		case strings.HasPrefix(sectionName, "outline_"):
-			table, builtin, grammar = config.Outline, DefaultOutline(), strings.TrimPrefix(sectionName, "outline_")
-		case strings.HasPrefix(sectionName, "formats_"):
-			table, builtin, grammar = config.FormatPaths, DefaultFormatPaths(), strings.TrimPrefix(sectionName, "formats_")
+		grammar := h.grammar
+		switch h.family {
+		case "match":
+			table, builtin = config.MatchPairs, DefaultMatchPairs()
+		case "outline":
+			table, builtin = config.Outline, DefaultOutline()
+		case "formats":
+			table, builtin = config.FormatPaths, DefaultFormatPaths()
 		default:
 			continue
 		}
@@ -1192,17 +1198,18 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 	}
 
-	// [<class>.]options[.<grammar>][.<type>] overlays the base [options] along
+	// [<class>::]options[/<type>][.<grammar>] overlays the base [options] along
 	// the class/grammar/type cascade (resolved most-specific-first at apply time,
 	// like the color overlays). Trichotomy: "default" -> the shipped default;
 	// "inherit"/blank -> defer down the cascade; a real value wins.
 	// syntax/syntaxDetect are excluded (a grammar can't pick its own detection).
 	shippedOptions := defaultSectionValues("options")
 	for sectionName, section := range parsed {
-		class, grammar, bufType, isOpt := parseOptionsSection(sectionName)
-		if !isOpt || (class == "" && grammar == "" && bufType == "") {
+		h := parseSectionHeader(sectionName)
+		if h.family != "options" || (h.class == "" && h.grammar == "" && h.bufType == "") {
 			continue // not an overlay (the base [options] is applied above)
 		}
+		class, grammar, bufType := h.class, h.grammar, h.bufType
 		if config.OptionOverlays == nil {
 			config.OptionOverlays = make(map[string]map[string]string)
 		}
@@ -1218,7 +1225,7 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 			// syntaxDetect never overlays. `syntax` overlays only in
 			// grammar-AGNOSTIC sections (base/class/type): a grammar-keyed
 			// overlay picking its own grammar would be circular, but
-			// [options.tool] / [<class>.options] setting the default grammar
+			// [options/tool] / [<class>::options] setting the default grammar
 			// for a window kind is well-defined.
 			if lk == "syntaxdetect" || (lk == "syntax" && grammar != "") {
 				continue
@@ -1244,16 +1251,18 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 	}
 
-	// [<class>.]mappings.<set>[.<type>] refine a key-mapping set by window class
-	// and buffer type. Each cleaned section is stored under its signature; the
-	// active set is merged across the cascade at focus time (ResolveMappingSet).
-	// The base [mappings.<set>] is applied to config.Mappings above (the default
-	// set); here we retain every set/refinement for per-window switching.
+	// [<class>::]mappings:<set>[/<type>][.<grammar>] refine a key-mapping set by
+	// window class, buffer type, and grammar. Each cleaned section is stored under
+	// its signature; the active set is merged across the cascade at focus time
+	// (ResolveMappingSet). The base [mappings:<set>] is applied to config.Mappings
+	// above (the default set); here we retain every set/refinement for per-window
+	// switching.
 	for sectionName, section := range parsed {
-		set, class, grammar, bufType, isMap := parseMappingsSection(sectionName)
-		if !isMap {
+		h := parseSectionHeader(sectionName)
+		if h.family != "mappings" || h.set == "" {
 			continue
 		}
+		set, class, grammar, bufType := h.set, h.class, h.grammar, h.bufType
 		if config.MappingSets == nil {
 			config.MappingSets = make(map[string]map[string]string)
 		}
@@ -1297,9 +1306,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	}
 
 	// Apply key mappings. The user layer replaces the keymap wholesale
-	// (removing a line from [mappings.X] really unbinds it); project layers
+	// (removing a line from [mappings:X] really unbinds it); project layers
 	// merge per key on top of the inherited map.
-	mappingsKey := "mappings_" + config.General.MappingsName
+	mappingsKey := "mappings:" + config.General.MappingsName
 	if mappings, ok := parsed[mappingsKey]; ok {
 		if project {
 			for k, v := range mappings {
@@ -1501,7 +1510,10 @@ func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
 
 		// Check for section header
 		if strings.HasPrefix(trimmedLine, "[") && strings.HasSuffix(trimmedLine, "]") {
-			currentSection = strings.ToLower(strings.ReplaceAll(trimmedLine[1:len(trimmedLine)-1], ".", "_"))
+			// Section names keep their real separators (:: : / .); the unified
+			// grammar parser (parseSectionHeader) splits them. Only case and
+			// surrounding whitespace are normalized here.
+			currentSection = strings.ToLower(strings.TrimSpace(trimmedLine[1 : len(trimmedLine)-1]))
 			if _, ok := result[currentSection]; !ok {
 				result[currentSection] = make(map[string]string)
 			}
@@ -1734,7 +1746,7 @@ func (m *Manager) generateDefaultConfig() string {
 #               cascade level) show through
 # A blank value keeps its per-table meaning: it deletes [formats]/[match]/
 # [outline] entries, unbinds a key mapping (bind to nop to disable a key
-# instead), masks a [colors.syntax] class to the grammar's own colors, turns
+# instead), masks a [syntax] class to the grammar's own colors, turns
 # syntax="" off — and for other scalars simply inherits. Quote the word
 # ("default") to mean the literal text.
 #
@@ -1776,13 +1788,14 @@ mappings=mew
 # differ from buffer to buffer; the rest are editor-wide.
 #
 # [options.<grammar>] overlays these per-window options for buffers of a given
-# syntax grammar, the same way [colors.syntax.<grammar>] overlays colors — e.g.
-# [options.markdown] wordless prose settings, [options.go] tabSize=4. A value
-# overrides; "inherit" (or blank) defers to the base [options]; "default"
-# resolves to the shipped default. syntax and syntaxDetect are excluded (a
-# grammar cannot pick the detection that selected it). A value the user sets at
-# runtime (set_option) or per file on the command line is pinned and not
-# overwritten by the overlay.
+# syntax grammar, the same way [syntax.<grammar>] overlays colors — e.g.
+# [options.markdown] wordless prose settings, [options.go] tabSize=4. Add a
+# /<type> for a window kind ([options/tool]) or <class>:: for a window class
+# ([myclass::options]). A value overrides; "inherit" (or blank) defers to the
+# base [options]; "default" resolves to the shipped default. syntax and
+# syntaxDetect are excluded (a grammar cannot pick the detection that selected
+# it). A value the user sets at runtime (set_option) or per file on the command
+# line is pinned and not overwritten by the overlay.
 #
 # [options.go]
 # tabSize=4
@@ -2003,10 +2016,10 @@ syntaxPreproc="\e[0;94;40m"       # bright blue on black
 syntaxBad="\e[0;97;41m"         # bright white on red
 
 # Syntax highlighting maps a grammar's color classes onto the systematic
-# syntax* colors above. [colors.syntax] adjusts the mapping for every
-# grammar; [colors.syntax.<name>] overrides it for one grammar, e.g.:
+# syntax* colors above. [syntax] adjusts the mapping for every grammar;
+# [syntax.<name>] overrides it for one grammar, e.g.:
 #
-# [colors.syntax.cpp]
+# [syntax.cpp]
 # Preproc = syntaxKeyword
 
 # [formats] maps short format names and file extensions onto grammar files
@@ -2049,15 +2062,15 @@ syntaxBad="\e[0;97;41m"         # bright white on red
 # [outline.python]
 # route = ^([ \t]*)@app\\.route.*def\\s+(\\w+)
 
-[colors.tool]             # defaults for tool windows (help, listings)
+[colors/tool]             # defaults for tool windows (help, listings)
 text="\e[0;1;46;97m"      # bright white on cyan
 messages="\e[0;1;43;97m"  # bright white on amber
 
-[colors.prompt]           # defaults for promptbuffers
+[colors/prompt]           # defaults for promptbuffers
 messages="\e[0;1;42;93m"  # bright yellow on green
 text="\e[0;1;42;97m"      # bright white on green
 
-[modebar.colors]       # the modebar class - chrome, WindowSet "modebar"
+[modebar::colors]      # the modebar class - chrome, WindowSet "modebar"
 text="\e[0;44m"        # silver on blue - modebar fill
 messages="\e[1;96;44m" # aqua on blue - stats readout (Frag/Heap/Line/Rune)
 modifiers="\e[0;44m"   # silver on blue - active modifiers & space before & after
@@ -2066,16 +2079,16 @@ completion="\e[0;44m"  # silver on blue - autocompletion (and space before and a
 context="\e[0;92;44m"  # bright green on blue - context (when autocompletion isn't showing)
 logo="\e[1;97;41m"     # bright white on red - M_ logo
 
-[notification.colors]
+[notification::colors]
 messages="\e[0;37;43m"
 
-[warning.colors]
+[warning::colors]
 messages="\e[0;93;43m"                # bright yellow on brown
 
-[error.colors]
+[error::colors]
 messages="\e[0;97;41m"                # bright white on red
 
-[mappings.mew]
+[mappings:mew]
 
 # -- first, include all the mew defaults --
 @include "defaults/keys_cursor_movement.conf"

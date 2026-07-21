@@ -48,8 +48,8 @@ func (e *Editor) installDefaultGrammars() {
 }
 
 // defaultSyntaxMap is the built-in mapping from conventional jsf color-class
-// names to mew's systematic syntax* color names. [colors.syntax] and
-// [colors.syntax.<grammar>] override it; classes that resolve nowhere fall
+// names to mew's systematic syntax* color names. [syntax] and
+// [syntax.<grammar>] override it; classes that resolve nowhere fall
 // back to the attributes in the grammar file itself. Keys are lowercase.
 var defaultSyntaxMap = map[string]string{
 	"comment":      "syntaxComment",
@@ -196,7 +196,7 @@ func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error
 
 // canonicalSyntaxName maps [formats] aliases to their grammar BEFORE loading,
 // so the instance (and its color-class references, which key the
-// [colors.syntax.*] maps) carries the canonical name. An actual file with the
+// [syntax.*] maps) carries the canonical name. An actual file with the
 // alias's own name — a user's or JOE's js.jsf, say — wins over the alias.
 func (e *Editor) canonicalSyntaxName(name string) string {
 	alias, ok := e.LoadedConfig.Formats[strings.ToLower(name)]
@@ -322,8 +322,8 @@ func (e *Editor) resetSyntaxCaches() {
 }
 
 // syntaxColorFor resolves a grammar color class to the SGR string painted for
-// it, through the mapping chain: the per-grammar [colors.syntax.<name>] map,
-// the global [colors.syntax] map, then the built-in conventions — each naming
+// it, through the mapping chain: the per-grammar [syntax.<name>] map,
+// the global [syntax] map, then the built-in conventions — each naming
 // a mew color resolved through the color scheme. When no mapping resolves,
 // the grammar file's own "=Class attrs" colors apply.
 func (e *Editor) syntaxColorFor(ref *jsf.ColorRef) string {
@@ -523,7 +523,7 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 			return in, ld
 		}
 	}
-	// Fallback grammar. A per-window default ([options.tool] syntax=dokuwiki,
+	// Fallback grammar. A per-window default ([options/tool] syntax=dokuwiki,
 	// [<class>.options] syntax=...) resolved onto the window's ViewState wins
 	// — that is the explicit way to give a window kind a grammar. Otherwise
 	// the GLOBAL syntax option applies, but only to DOCUMENTS: a buffer shown

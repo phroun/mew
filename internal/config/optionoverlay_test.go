@@ -58,23 +58,23 @@ tabSize=1
 
 [options.cpp]
 tabSize=2
-[options.doc]
+[options/doc]
 tabSize=3
-[options.cpp.doc]
+[options/doc.cpp]
 tabSize=4
-[myclass.options]
+[myclass::options]
 tabSize=5
-[myclass.options.cpp]
+[myclass::options.cpp]
 tabSize=6
 `)
 	cases := []struct {
 		class, grammar, bufType, want string
 	}{
-		{"myclass", "cpp", "doc", "6"}, // [myclass.options.cpp] (class beats grammar+type)
-		{"", "cpp", "doc", "4"},        // [options.cpp.doc]
-		{"", "cpp", "tool", "2"},       // [options.cpp] (no cpp.tool)
-		{"", "go", "doc", "3"},         // [options.doc] (type only)
-		{"myclass", "go", "tool", "5"}, // [myclass.options] (class, no grammar/type match)
+		{"myclass", "cpp", "doc", "6"}, // [myclass::options.cpp] (class beats grammar+type)
+		{"", "cpp", "doc", "4"},        // [options/doc.cpp]
+		{"", "cpp", "tool", "2"},       // [options.cpp] (no cpp+tool)
+		{"", "go", "doc", "3"},         // [options/doc] (type only)
+		{"myclass", "go", "tool", "5"}, // [myclass::options] (class, no grammar/type match)
 	}
 	for _, tc := range cases {
 		got, ok := c.ResolveOptionOverlay(tc.class, tc.grammar, tc.bufType, "tabsize")
@@ -92,11 +92,11 @@ tabSize=6
 // precedence as options (class > grammar > type).
 func TestMappingSetGrammarCascade(t *testing.T) {
 	m := NewManager()
-	c := m.LoadFromString("[mappings.mew]\nk\t=base\n" +
-		"[mappings.mew.cpp]\nk\t=grammar\n" +
-		"[mappings.mew.doc]\nk\t=type\n" +
-		"[mappings.mew.cpp.doc]\nk\t=grammartype\n" +
-		"[panel.mappings.mew]\nk\t=class\n")
+	c := m.LoadFromString("[mappings:mew]\nk\t=base\n" +
+		"[mappings:mew.cpp]\nk\t=grammar\n" +
+		"[mappings:mew/doc]\nk\t=type\n" +
+		"[mappings:mew/doc.cpp]\nk\t=grammartype\n" +
+		"[panel::mappings:mew]\nk\t=class\n")
 	get := func(class, grammar, bufType string) string {
 		return c.ResolveMappingSet("mew", class, grammar, bufType, "", nil)["k"]
 	}
@@ -115,6 +115,44 @@ func TestMappingSetGrammarCascade(t *testing.T) {
 	// class outranks grammar and type even when they are more qualified.
 	if got := get("panel", "cpp", "doc"); got != "class" {
 		t.Errorf("class should win: got %q, want class", got)
+	}
+}
+
+// parseSectionHeader splits the unified section grammar on its four distinct
+// separators, so no component is ambiguous with another. The key case: "." is
+// a grammar and "/" is a buffer type, so [options.tool] is a grammar named
+// "tool" while [options/tool] is the tool buffer type.
+func TestParseSectionHeader(t *testing.T) {
+	cases := []struct {
+		name                              string
+		class, family, set, bufType, gram string
+	}{
+		{"options", "", "options", "", "", ""},
+		{"options.tool", "", "options", "", "", "tool"}, // grammar, not type
+		{"options/tool", "", "options", "", "tool", ""}, // type, not grammar
+		{"options.cpp", "", "options", "", "", "cpp"},
+		{"options/doc.cpp", "", "options", "", "doc", "cpp"},
+		{"myclass::options", "myclass", "options", "", "", ""},
+		{"myclass::options/tool.cpp", "myclass", "options", "", "tool", "cpp"},
+		{"colors", "", "colors", "", "", ""},
+		{"colors/tool", "", "colors", "", "tool", ""},
+		{"modebar::colors", "modebar", "colors", "", "", ""},
+		{"syntax", "", "syntax", "", "", ""},
+		{"syntax.cpp", "", "syntax", "", "", "cpp"},
+		{"mappings:mew", "", "mappings", "mew", "", ""},
+		{"mappings:mew.cpp", "", "mappings", "mew", "", "cpp"},
+		{"mappings:mew/doc.cpp", "", "mappings", "mew", "doc", "cpp"},
+		{"panel::mappings:mew/tool.go", "panel", "mappings", "mew", "tool", "go"},
+		{"formats.txt", "", "formats", "", "", "txt"},
+	}
+	for _, tc := range cases {
+		h := parseSectionHeader(tc.name)
+		if h.class != tc.class || h.family != tc.family || h.set != tc.set ||
+			h.bufType != tc.bufType || h.grammar != tc.gram {
+			t.Errorf("parseSectionHeader(%q) = {class:%q family:%q set:%q type:%q grammar:%q}, want {class:%q family:%q set:%q type:%q grammar:%q}",
+				tc.name, h.class, h.family, h.set, h.bufType, h.grammar,
+				tc.class, tc.family, tc.set, tc.bufType, tc.gram)
+		}
 	}
 }
 

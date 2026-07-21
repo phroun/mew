@@ -20,7 +20,7 @@ const (
 )
 
 // renderedEditorWithConfig is newRenderedEditor with a full custom config
-// text (for [colors.syntax.*] sections and the syntax option).
+// text (for [syntax.*] sections and the syntax option).
 func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor, *window.Window, *bytes.Buffer) {
 	t.Helper()
 	var out bytes.Buffer
@@ -84,11 +84,11 @@ func TestSyntaxMultilineComment(t *testing.T) {
 	}
 }
 
-// [colors.syntax.<grammar>] remaps a jsf class to another mew color name.
+// [syntax.<grammar>] remaps a jsf class to another mew color name.
 func TestSyntaxPerGrammarColorMap(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t,
 		"int x;\n",
-		"[options]\nsyntax=cpp\n\n[colors.syntax.cpp]\nType = syntaxConstant\n")
+		"[options]\nsyntax=cpp\n\n[syntax.cpp]\nType = syntaxConstant\n")
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -101,11 +101,11 @@ func TestSyntaxPerGrammarColorMap(t *testing.T) {
 	}
 }
 
-// [colors.syntax] (global) remaps a class for every grammar.
+// [syntax] (global) remaps a class for every grammar.
 func TestSyntaxGlobalColorMap(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t,
 		"// hey\n",
-		"[options]\nsyntax=cpp\n\n[colors.syntax]\nComment = syntaxString\n")
+		"[options]\nsyntax=cpp\n\n[syntax]\nComment = syntaxString\n")
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -252,7 +252,7 @@ func TestUnmappedClassFallsBackToFileAttrs(t *testing.T) {
 }
 
 // [formats] aliases resolve to their builtin grammars (canonicalized before
-// loading, so [colors.syntax.<grammar>] maps key on the real grammar name).
+// loading, so [syntax.<grammar>] maps key on the real grammar name).
 func TestSyntaxFormatsAliases(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t, "x\n", "[general]\n")
 	for alias, want := range map[string]string{

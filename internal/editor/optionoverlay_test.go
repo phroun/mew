@@ -91,7 +91,7 @@ func TestOptionOverlayEditorWideScoped(t *testing.T) {
 // A window's class refines the overlay: [<class>.options.<grammar>] wins over
 // [options.<grammar>].
 func TestOptionOverlayClassDimension(t *testing.T) {
-	cfg := "[options]\nsyntax=cpp\ntabSize=8\n[options.cpp]\ntabSize=2\n[panel.options.cpp]\ntabSize=3\n"
+	cfg := "[options]\nsyntax=cpp\ntabSize=8\n[options.cpp]\ntabSize=2\n[panel::options.cpp]\ntabSize=3\n"
 	e, w, _ := renderedEditorWithConfig(t, "int x;\n", cfg)
 	// Without a class, the grammar overlay applies.
 	e.performRender()
@@ -123,9 +123,9 @@ func TestModebarTemplateOverlay(t *testing.T) {
 // default mew set.
 func TestPerWindowMappings(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\nmappings=mew\n" +
-		"[mappings.emacs]\n^X ^S\t=buffer_save\n" +
+		"[mappings:emacs]\n^X ^S\t=buffer_save\n" +
 		"[options.cpp]\nmappings=emacs\n" +
-		"[plain.options.cpp]\nmappings=mew\n"
+		"[plain::options.cpp]\nmappings=mew\n"
 	e, w, _ := renderedEditorWithConfig(t, "int x;\n", cfg)
 	e.performRender()
 	if got := e.KeyProcessor.GetMapping("^X ^S"); got != "buffer_save" {

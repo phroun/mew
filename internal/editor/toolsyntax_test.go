@@ -7,12 +7,12 @@ import (
 	"github.com/phroun/mew/internal/window"
 )
 
-// [options.tool] syntax=dokuwiki gives every tool window the dokuwiki grammar
+// [options/tool] syntax=dokuwiki gives every tool window the dokuwiki grammar
 // (via a grammar-agnostic overlay), while documents keep the global syntax
 // and prompts are unaffected.
 func TestToolWindowSyntaxOverlay(t *testing.T) {
 	e, doc, _ := renderedEditorWithConfig(t,
-		"return 1\n", "[options]\nsyntax=go\nsyntaxDetect=yes\n\n[options.tool]\nsyntax=dokuwiki\n")
+		"return 1\n", "[options]\nsyntax=go\nsyntaxDetect=yes\n\n[options/tool]\nsyntax=dokuwiki\n")
 
 	// A tool readout (no filename) — like toggle_help — resolves to dokuwiki,
 	// not the global go.
@@ -34,7 +34,7 @@ func TestToolWindowSyntaxOverlay(t *testing.T) {
 	}
 }
 
-// Without any [options.tool] syntax, a filename-less tool readout stays plain
+// Without any [options/tool] syntax, a filename-less tool readout stays plain
 // (does NOT inherit the global document grammar).
 func TestToolWindowNoSyntaxStaysPlain(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t,
