@@ -84,9 +84,15 @@ func (e *Editor) handleMouseKey(key string) bool {
 			e.mouseHoverAt(x, y)
 		}
 	case base == "MouseScrollUp":
+		e.hScrollReset() // a vertical tick re-arms the sideways barrier
 		e.mouseScroll(e.mouseX, e.mouseY, -3)
 	case base == "MouseScrollDown":
+		e.hScrollReset()
 		e.mouseScroll(e.mouseX, e.mouseY, +3)
+	case base == "MouseScrollLeft":
+		e.mouseScrollHoriz(e.mouseY, -1)
+	case base == "MouseScrollRight":
+		e.mouseScrollHoriz(e.mouseY, +1)
 	}
 	// Every mouse event may change the pointer affordance (over a button /
 	// captured): push the change to the host, once per transition.
@@ -397,6 +403,48 @@ func (e *Editor) hitOnPressedButton(x, y int) bool {
 		}
 	}
 	return false
+}
+
+// hScrollBarrier is how many horizontal wheel ticks must accumulate in one
+// direction before a sideways scroll engages — a deliberately higher bar than
+// the vertical wheel (which acts on the first tick), so incidental left/right
+// motion during a normal up/down scroll does not drift the view sideways.
+const hScrollBarrier = 3
+
+// hScrollReset re-arms the horizontal barrier: the next sideways gesture must
+// clear hScrollBarrier ticks again. Called on any vertical wheel tick.
+func (e *Editor) hScrollReset() {
+	e.hScrollAccum = 0
+	e.hScrollEngaged = false
+	e.hScrollDir = 0
+}
+
+// mouseScrollHoriz scrolls the focused window under the pointer sideways by one
+// step (via the registered scroll_left/scroll_right command, so the step and
+// clamping match the keyboard), but only once the barrier is cleared. dir is
+// -1 for left, +1 for right. A direction reversal restarts the barrier.
+func (e *Editor) mouseScrollHoriz(y, dir int) {
+	w := e.windowAtRow(y)
+	if w == nil || w.Buffer == nil || e.WindowManager.GetFocusedWindow() != w {
+		return
+	}
+	if e.hScrollDir != dir { // first tick, or reversed: re-arm
+		e.hScrollAccum = 0
+		e.hScrollEngaged = false
+		e.hScrollDir = dir
+	}
+	if !e.hScrollEngaged {
+		e.hScrollAccum++
+		if e.hScrollAccum < hScrollBarrier {
+			return // not enough sideways movement yet
+		}
+		e.hScrollEngaged = true
+	}
+	if dir < 0 {
+		e.executeCommand("scroll_left")
+	} else {
+		e.executeCommand("scroll_right")
+	}
 }
 
 // mouseScroll scrolls the window under the pointer by delta lines — only

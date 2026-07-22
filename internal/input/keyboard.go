@@ -66,6 +66,11 @@ type KeyboardHandler struct {
 	// there is nothing to swallow off the Keys channel. Touched only from
 	// GetEvent (the single input-consuming goroutine), so it needs no locking.
 	pasteCarry []byte
+
+	// synthKeys carries synthetic key events plucked from the raw byte stream
+	// before the decoder — currently horizontal-wheel scrolls (see
+	// mousehscroll.go), which the decoder cannot distinguish from vertical.
+	synthKeys chan string
 }
 
 // NewKeyboardHandler creates a new keyboard handler reading from input and
@@ -83,7 +88,12 @@ func NewKeyboardHandler(input io.Reader, termOut io.Writer) *KeyboardHandler {
 	kh := &KeyboardHandler{
 		termOut:     termOut,
 		PasteChunks: make(chan PasteChunk, 4096), // Large buffer to handle big pastes
+		synthKeys:   make(chan string, 256),
 	}
+
+	// Pluck horizontal-wheel SGR reports out of the stream before the decoder
+	// (which cannot tell them from vertical); they arrive on synthKeys instead.
+	input = newHScrollReader(input, kh.synthKeys)
 
 	noPasteKeys := false
 	h := keyboard.New(keyboard.Options{
@@ -143,12 +153,16 @@ func (kh *KeyboardHandler) GetEvent() InputEvent {
 		select {
 		case raw := <-kh.PasteChunks:
 			return kh.handlePasteChunk(raw)
+		case key := <-kh.synthKeys:
+			return InputEvent{Key: key}
 		default:
 		}
 
 		select {
 		case raw := <-kh.PasteChunks:
 			return kh.handlePasteChunk(raw)
+		case key := <-kh.synthKeys:
+			return InputEvent{Key: key}
 		case key := <-kh.handler.Keys:
 			return InputEvent{Key: normalizeKey(key)}
 		}

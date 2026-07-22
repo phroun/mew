@@ -254,6 +254,13 @@ type Editor struct {
 	// pointerOverSent is the last affordance pushed through
 	// Config.PointerShape (see notifyPointerShape).
 	pointerOverSent bool
+	// Horizontal wheel barrier (mouse.go): a sideways scroll gesture only
+	// engages after hScrollBarrier ticks accumulate in one direction, so a
+	// stray sideways tick during a vertical scroll never nudges the view. A
+	// vertical wheel tick, or a direction reversal, re-arms the barrier.
+	hScrollAccum   int
+	hScrollEngaged bool
+	hScrollDir     int
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
