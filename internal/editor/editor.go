@@ -1868,12 +1868,12 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	ps.RegisterCommand("buffer_clone", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.cloneCurrentBuffer())
+	ps.RegisterCommand("buffer_duplicate", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.duplicateCurrentBuffer())
 	})
 
 	// window_clone opens a second window onto the SAME buffer (not a content
-	// copy like buffer_clone) so you can edit in two places at once and switch
+	// copy like buffer_duplicate) so you can edit in two places at once and switch
 	// between them. Each window keeps its own caret and viewport.
 	ps.RegisterCommand("window_clone", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.cloneCurrentWindow())
@@ -4924,10 +4924,10 @@ func (e *Editor) createNewBuffer() {
 	e.RequestRender()
 }
 
-// cloneCurrentBuffer opens a new buffer window containing a copy of the current
-// buffer's content. The clone is unnamed (no filename) so saving it can't
-// overwrite the original.
-func (e *Editor) cloneCurrentBuffer() bool {
+// duplicateCurrentBuffer opens a new buffer window containing a copy of the
+// current buffer's content. The duplicate is unnamed (no filename) so saving it
+// can't overwrite the original.
+func (e *Editor) duplicateCurrentBuffer() bool {
 	w := e.WindowManager.GetFocusedWindow()
 	if w == nil || w.Buffer == nil {
 		return false
