@@ -1726,6 +1726,15 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
+	// buffer_write EXPORTS the whole buffer to a prompted-for file without
+	// adopting it as the source (garland's SaveCopyTo): the buffer keeps its
+	// original source, filename, modified flag, and save history. It is the
+	// whole-buffer parallel to block_write — a plain "write these bytes there",
+	// not a save-as. Distinct from buffer_save_as, which re-homes the buffer.
+	ps.RegisterCommand("buffer_write", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.writeBufferCopy())
+	})
+
 	// buffer_save_all saves every modified buffer, once each — including buffers
 	// stacked in a window's nav history (unsaved work parked behind a link
 	// follow). With the argument "true" it is NON-INTERACTIVE (for save-and-quit,
@@ -5034,6 +5043,53 @@ func (e *Editor) writeBlock() bool {
 					write()
 				} else {
 					e.ShowNotification("Block write cancelled")
+					e.RequestRender()
+				}
+			})
+			return
+		}
+		write()
+	})
+	return true
+}
+
+// writeBufferCopy exports the whole buffer to a prompted-for file WITHOUT
+// adopting it as the buffer's source (garland's SaveCopyTo, a streaming write):
+// the buffer keeps working from its original source, and its filename, modified
+// flag, and save history are all left untouched — this is not a save. The
+// whole-buffer parallel to writeBlock. Like a block write, overwriting ANY
+// existing file (the buffer's own source included) is confirmed first. Scars
+// (data lost to placeholders) surface as buffer notices, same as a real save.
+func (e *Editor) writeBufferCopy() bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	e.PromptMgr.PromptForFilename("Write buffer to", "", func(accepted bool, _, filename string) {
+		if !accepted || filename == "" {
+			e.RequestRender()
+			return
+		}
+		write := func() {
+			warnings, err := w.Buffer.SaveCopyTo(filename)
+			for _, warn := range warnings {
+				e.noteBuffer(w.Buffer, "save", warn, true)
+			}
+			if err != nil {
+				e.ShowError("Failed to write buffer: " + err.Error())
+			} else {
+				e.ShowNotification("Buffer written: " + filename)
+			}
+			e.RequestRender()
+		}
+		// An export is never the buffer's own save, so overwriting ANY existing
+		// file (the buffer's own source included) gets a prompt.
+		if e.fileExists(filename) {
+			e.PromptMgr.PromptForConfirmation(fmt.Sprintf("13: OVERWRITE EXISTING FILE %s?", filename), false, func(accepted, confirmed bool) {
+				if accepted && confirmed {
+					write()
+				} else {
+					e.ShowNotification("Buffer write cancelled")
 					e.RequestRender()
 				}
 			})
