@@ -14,6 +14,18 @@ import (
 // grayscale ramp, whichever is nearer), and further down to the basic 16
 // ANSI colors for 16-color terminals. The TUI backend detects the depth
 // (COLORTERM/TERM) and serializes every cell through CodeDepth.
+//
+// NOTE — palette support: the quantizers below assume the CONVENTIONAL
+// xterm values for the 256 palette and the basic 16 (ansi16RGB), which is
+// only an approximation of what the user's terminal actually shows — real
+// terminals re-theme the basic 16 (and some the cube) freely, and KittyTK
+// itself has palette knowledge elsewhere (style.ActiveTermPalette /
+// ActiveTermANSIColor). If richer color-palette support ever lands, revisit
+// this file: quantization should map through the ACTIVE palette's real RGB
+// values (and any user-declared preferences) instead of these conventional
+// tables, so lower depths pick the perceptually right entries — e.g. a
+// theme's dark-red mapping to the terminal's re-themed red rather than the
+// nearest conventional slot.
 
 // TrueColorDepth is the colorDepth value meaning full 24-bit emission.
 const TrueColorDepth = 16777216
