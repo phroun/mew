@@ -951,15 +951,12 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	}
 	var matches []string
 	for seq, cmd := range e.KeyProcessor.GetAllMappings() {
-		// Match the whole command, or the PRIMARY of a "primary|fallback" chain
-		// — so keys#buffer_redo.buffer_undo (the full chain) and keys#buffer_redo
-		// (the primary alone) both answer ^Z, while keys#buffer_undo answers only
-		// ^/ and ^_ (buffer_undo is ^Z's fallback, not what ^Z is for).
-		primary := cmd
-		if i := strings.IndexByte(cmd, '|'); i >= 0 {
-			primary = cmd[:i]
-		}
-		if cmd == action || primary == action {
+		// EXACT binding match only. A binding is an explicit action (or
+		// "a|b" fallback chain); matching a chain by its primary would claim a
+		// key does something narrower than it really does — a lie at best. So
+		// keys#buffer_redo.buffer_undo answers ^Z (the exact chain), while
+		// keys#buffer_redo matches nothing here (no binding IS just that).
+		if cmd == action {
 			matches = append(matches, seq)
 		}
 	}

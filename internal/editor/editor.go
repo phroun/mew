@@ -5567,7 +5567,15 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !e.usingOSFS {
 		buf, err := e.lib.NewFromHostFile(e.FS, filename)
 		if err != nil {
-			return nil, err
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+			// A filename that does not exist yet is a NEW document under that
+			// name, not an error — open an empty buffer carrying the name (save
+			// creates it). Without this, launching mew on a new filename exits.
+			buf = e.lib.New()
+			buf.SetFilename(filename)
+			e.noteBuffer(buf, "new", "New file", false)
 		}
 		// The content is virtualized through the host FileSystem, but a mew-native
 		// editing lock still coordinates multiple mew instances editing the same
@@ -5586,7 +5594,19 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		LockOwner:     e.lockOwnerString(), // one identity for both emacs and mew-native locks
 	})
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		// A filename that does not exist yet is a NEW document under that name,
+		// as in every editor — start an empty buffer carrying the name; save
+		// creates the file, with the same backup + lock machinery armed below.
+		// (Without this, `mew newfile` exited straight back to the shell.) No
+		// emacs lock for a path with no directory entry: use the mew-native
+		// lock only.
+		buf = e.lib.New()
+		buf.SetFilename(filename)
+		emacsLock, lockWarning = false, ""
+		e.noteBuffer(buf, "new", "New file", false)
 	}
 	if lockWarning != "" {
 		e.noteBuffer(buf, "lock", lockWarning, true)

@@ -51,9 +51,9 @@ func TestKeyBindingDisplay(t *testing.T) {
 		{"buffer_undo", "^Q", "^/, ^_"},
 		// Single binding, no preferred.
 		{"go_page_prior", "", "^P"},
-		// The chain's PRIMARY answers ^Z...
-		{"buffer_redo", "", "^Z"},
-		// ...as does the full decoded chain command.
+
+		{"buffer_redo", "", "buffer_redo"}, // primary alone is NOT an exact binding -> unbound fallback (action name)
+		// The full decoded chain command matches ^Z exactly.
 		{"buffer_redo|buffer_undo", "", "^Z"},
 		// buffer_undo is ^Z's FALLBACK, not its purpose -> ^Z excluded.
 		{"buffer_undo", "", "^/, ^_"},
