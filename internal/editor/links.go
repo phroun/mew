@@ -785,6 +785,22 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 			e.mousePressed.line == docLine && e.mousePressed.start == s.Start
 		hovered := e.mouseHovered.active && e.mouseHovered.winID == w.ID &&
 			e.mouseHovered.line == docLine && e.mouseHovered.start == s.Start
+		// Key badge: a [[keys#action|alias]] reference resolves to the live
+		// binding and renders as a tight badge (no caps, no shadow) in the
+		// "key" color — "keyFocused" when the caret is on it. Everything else
+		// falls through to the normal link-button styling below.
+		if action, ok := keysRefAction(s.Target); ok {
+			name := "key"
+			if focused || pressed {
+				name = "keyFocused"
+			}
+			spans = append(spans, render.ButtonSpan{
+				Start: s.Start, End: s.End,
+				Runes: []rune(render.SanitizeButtonTitle(e.keyBindingDisplay(action, s.Title))),
+				Color: col(name),
+			}.Span())
+			continue
+		}
 		capL, capR, shadow := ind.ButtonLeft, ind.ButtonRight, ind.ButtonShadow
 		colorName, shadowName := "button", "buttonShadow"
 		switch {
@@ -901,4 +917,68 @@ func (e *Editor) displayCaretLine(w *window.Window, line string, runePos int) (s
 		runePos = len(docToDisp) - 1
 	}
 	return text, docToDisp[runePos]
+}
+
+// keysRefAction extracts the action name from a [[keys#action|alias]] link
+// target ("keys#go_page_prior" -> "go_page_prior"), or reports false. This is
+// the help system's live-keybinding reference: a plain dokuwiki internal link
+// on the web (to the "keys" page anchor), a live key badge in mew.
+func keysRefAction(target string) (string, bool) {
+	const prefix = "keys#"
+	if strings.HasPrefix(target, prefix) {
+		if a := strings.TrimSpace(target[len(prefix):]); a != "" {
+			return a, true
+		}
+	}
+	return "", false
+}
+
+// keyBindingDisplay resolves what a key badge shows for an action, preferring
+// the author's alias when it is actually one of the live bindings, else listing
+// the current bindings, else falling back to the documented alias. The result
+// is run through kludgeKeyText for dokuwiki-display safety.
+func (e *Editor) keyBindingDisplay(action, preferred string) string {
+	if e.KeyProcessor == nil {
+		return kludgeKeyText(preferred)
+	}
+	var matches []string
+	for seq, cmd := range e.KeyProcessor.GetAllMappings() {
+		// Match the command, or the PRIMARY of a "primary|fallback" chain — so
+		// ^Z (buffer_redo|buffer_undo) answers a keys#buffer_redo reference but
+		// not a keys#buffer_undo one (that is the fallback, not what ^Z is for).
+		primary := cmd
+		if i := strings.IndexByte(cmd, '|'); i >= 0 {
+			primary = cmd[:i]
+		}
+		if primary == action {
+			matches = append(matches, seq)
+		}
+	}
+	// Prefer the author's spelling if it is genuinely bound to this action.
+	if preferred != "" {
+		for _, m := range matches {
+			if m == preferred {
+				return kludgeKeyText(preferred)
+			}
+		}
+	}
+	if len(matches) > 0 {
+		sort.Strings(matches) // deterministic
+		return kludgeKeyText(strings.Join(matches, ", "))
+	}
+	// Unbound: show the documented alias, or the bare action name.
+	if preferred != "" {
+		return kludgeKeyText(preferred)
+	}
+	return kludgeKeyText(action)
+}
+
+// kludgeKeyText swaps the two characters that are structural in the dokuwiki
+// display pipeline for safe stand-ins inside a key badge: "|" (table cell /
+// fallback separator) -> "." and "&" -> ",". A binding to the literal "|" or
+// "&" key would otherwise disturb the surrounding markup.
+func kludgeKeyText(s string) string {
+	s = strings.ReplaceAll(s, "|", ".")
+	s = strings.ReplaceAll(s, "&", ",")
+	return s
 }
