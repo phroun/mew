@@ -29,6 +29,17 @@ func TestMewEditorEditActions(t *testing.T) {
 		t.Error("mew Editor must defer selection state to mew (always true)")
 	}
 
+	// A read-only focused buffer (mirrored from mew via WithEditState)
+	// greys Cut out; back to writable re-enables it.
+	e.readOnlyFocused.Store(true)
+	if e.CutEnabled() {
+		t.Error("Cut must grey out while the focused buffer is read-only")
+	}
+	e.readOnlyFocused.Store(false)
+	if !e.CutEnabled() {
+		t.Error("Cut must re-enable when the buffer is writable again")
+	}
+
 	// With no running session (unbound port) every action is a safe no-op.
 	e.Cut()
 	e.Copy()

@@ -768,7 +768,9 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	// App-owned mouse: relay the encoded press straight to the child.
 	if mode, enc := t.mouseTracking(); mode != 0 {
 		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn, cellX, cellY, true, enc)
+			// Carry the modifier bits (shift/alt/ctrl) so the app can see a
+			// shift+click — an editor guest extends its selection on it.
+			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true, enc)
 		}
 		t.Update()
 		return true
@@ -820,7 +822,7 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	// App-owned mouse: relay the encoded release straight to the child.
 	if mode, enc := t.mouseTracking(); mode != 0 {
 		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn, cellX, cellY, false, enc)
+			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false, enc)
 		}
 		t.Update()
 		return true
@@ -864,12 +866,13 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	// up, plain motion only under all-motion (1003). Motion the mode does
 	// not report is swallowed (the app owns the mouse either way).
 	if mode, enc := t.mouseTracking(); mode != 0 {
+		mods := gfxMouseModifiers(event.Modifiers)
 		if btn, ok := purfMouseButton(t.heldButton); ok {
 			if mode >= 1002 {
-				t.sendMouseReport(btn|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+				t.sendMouseReport(btn|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
 			}
 		} else if mode >= 1003 {
-			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag, cellX, cellY, true, enc)
+			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
 		}
 		t.Update()
 		return true

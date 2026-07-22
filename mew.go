@@ -175,6 +175,14 @@ func WithHostPort(p *HostPort) Option {
 	return func(cfg *editor.Config) { cfg.HostPort = p }
 }
 
+// WithEditState wires the focused window's read-only state to the host: fn
+// is told whenever the focused buffer's read-only state changes (and once at
+// the first render), so the host can grey out mutating affordances — its
+// Edit-menu Cut, say. Called only on transitions.
+func WithEditState(fn func(readOnly bool)) Option {
+	return func(cfg *editor.Config) { cfg.EditState = fn }
+}
+
 // WithPointerShape wires the mouse-pointer affordance: fn is told whenever
 // the pointer's shape should change — true while the pointer is over a link
 // button or a button is captured (show an arrow pointer), false for ordinary

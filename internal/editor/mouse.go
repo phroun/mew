@@ -41,16 +41,39 @@ type pressedLink struct {
 	start  int
 }
 
+// dragSelState tracks a drag block-selection in progress. A plain left press
+// in the focused window's content area arms it (begun=false): the first drag
+// onto a DIFFERENT cell places _block_begin at the press origin, and every
+// drag onto a new cell re-places _block_end (the caret follows). A
+// shift+click arms it pre-begun (begun=true): _block_begin is already placed
+// at the ORIGINAL caret position and only _block_end follows the drag.
+// Press-to-release lifetime, focused window only.
+type dragSelState struct {
+	active     bool
+	begun      bool
+	winID      string
+	originLine int
+	originRune int
+	lastLine   int
+	lastRune   int
+}
+
 // handleMouseKey consumes mouse pseudo-keys from the key stream. Reports
 // true when the key was a mouse event (handled or deliberately ignored), so
 // the caller skips keymap dispatch.
 func (e *Editor) handleMouseKey(key string) bool {
-	// Strip modifier prefixes: a modified click acts like a plain one (for
-	// now), and recognizing the base name is what matters.
+	// Strip modifier prefixes, remembering SHIFT: a shift+click extends the
+	// block from the caret (see mousePress); other modified clicks act like
+	// plain ones (for now), and recognizing the base name is what matters.
 	base := key
+	shift := false
 	for {
 		switch {
-		case strings.HasPrefix(base, "S-"), strings.HasPrefix(base, "M-"), strings.HasPrefix(base, "C-"):
+		case strings.HasPrefix(base, "S-"):
+			shift = true
+			base = base[2:]
+			continue
+		case strings.HasPrefix(base, "M-"), strings.HasPrefix(base, "C-"):
 			base = base[2:]
 			continue
 		}
@@ -69,7 +92,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 			e.mouseX, e.mouseY = x, y
 		}
 	case base == "MouseLeftPress":
-		e.mousePress(e.mouseX, e.mouseY)
+		e.mousePress(e.mouseX, e.mouseY, shift)
 	case strings.HasPrefix(base, "MouseLeftDrag@"):
 		if x, y, ok := parseMouseAt(base[len("MouseLeftDrag@"):]); ok {
 			e.mouseX, e.mouseY = x, y
@@ -117,6 +140,26 @@ func (e *Editor) notifyPointerShape() {
 	if over != e.pointerOverSent {
 		e.pointerOverSent = over
 		e.Config.PointerShape(over)
+	}
+}
+
+// notifyEditState tells the host (via Config.EditState) whenever the FOCUSED
+// window's read-only state changes — a host greys out its mutating
+// affordances (the Edit menu's Cut) while a read-only buffer holds focus.
+// Pushed once at the first render, then only on transitions. Called from
+// performRender, which runs after every state-changing event.
+func (e *Editor) notifyEditState() {
+	if e.Config.EditState == nil {
+		return
+	}
+	ro := false
+	if w := e.WindowManager.GetFocusedWindow(); w != nil {
+		ro = w.ViewState.ReadOnly
+	}
+	if !e.readOnlyPushed || ro != e.readOnlySent {
+		e.readOnlyPushed = true
+		e.readOnlySent = ro
+		e.Config.EditState(ro)
 	}
 }
 
@@ -324,11 +367,40 @@ func displayToDoc(dispToDoc []int, idx int) int {
 // browse mode — arm the pressed style. ONLY the focused window processes
 // presses: a click anywhere else is ignored (no focus steal), preserving the
 // modal prompt system.
-func (e *Editor) mousePress(x, y int) {
+//
+// A SHIFT+click extends instead: the block is marked from the caret's
+// CURRENT position — a document position, which may be scrolled out of view —
+// to the clicked cell, and the caret moves to the click. A drag continuing
+// from the shift+click keeps moving only the block's end.
+//
+// A plain press also ARMS drag selection: if the pointer then drags to a new
+// cell before release, the block marks from the press origin (see mouseDrag /
+// dragSelUpdate). A press that captured a link button does not — its drag
+// tracks the button.
+func (e *Editor) mousePress(x, y int, shift bool) {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
 	if !ok || e.WindowManager.GetFocusedWindow() != w {
 		return
 	}
+
+	if shift {
+		// Extend from the caret's current document position to the click.
+		origin := w.CursorPos()
+		w.Buffer.SetMark("_block_begin", origin.Line, origin.Rune)
+		w.Buffer.SetMark("_block_end", docLine, runePos)
+		e.dragSel = dragSelState{
+			active: true, begun: true, winID: w.ID,
+			originLine: origin.Line, originRune: origin.Rune,
+			lastLine: docLine, lastRune: runePos,
+		}
+		w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
+		e.afterHorizontalMovement(w)
+		w.ViewState.ScrollDetached = false
+		e.updateBrowseState()
+		e.RequestRender()
+		return
+	}
+
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
 	// A click is a cursor movement: re-engage caret following, cancelling any
@@ -338,6 +410,14 @@ func (e *Editor) mousePress(x, y int) {
 	if span := e.focusedLinkButton(w); span != nil {
 		e.mousePressed = pressedLink{active: true, winID: w.ID, line: docLine, start: span.Start}
 		e.mouseOnCaptured = true
+	} else {
+		// Arm drag selection from this press origin; it only takes effect
+		// when the drag reaches a different cell (dragSelUpdate).
+		e.dragSel = dragSelState{
+			active: true, winID: w.ID,
+			originLine: docLine, originRune: runePos,
+			lastLine: docLine, lastRune: runePos,
+		}
 	}
 	e.RequestRender()
 }
@@ -361,23 +441,58 @@ func (e *Editor) mouseRightPress(x, y int) {
 	e.Config.ShowContextMenu(x, y)
 }
 
-// mouseDrag: the captured button tracks the pointer — pressed style while
-// over it, its ordinary (focused) style while dragged off, re-pressed when
-// dragged back on. The capture itself holds until release.
+// mouseDrag: with a captured link button, the button tracks the pointer —
+// pressed style while over it, its ordinary (focused) style while dragged
+// off, re-pressed when dragged back on (the capture holds until release).
+// Otherwise an armed drag selection extends the block (dragSelUpdate).
 func (e *Editor) mouseDrag(x, y int) {
-	if !e.mousePressed.active {
+	if e.mousePressed.active {
+		if on := e.hitOnPressedButton(x, y); on != e.mouseOnCaptured {
+			e.mouseOnCaptured = on
+			e.RequestRender()
+		}
 		return
 	}
-	if on := e.hitOnPressedButton(x, y); on != e.mouseOnCaptured {
-		e.mouseOnCaptured = on
-		e.RequestRender()
+	if e.dragSel.active {
+		e.dragSelUpdate(x, y)
 	}
+}
+
+// dragSelUpdate extends the drag block-selection to the cell under the
+// pointer. The first drag onto a cell that differs from the press origin
+// places _block_begin at the origin (a click that never leaves its cell
+// marks nothing); after that, every NEW cell re-places _block_end there and
+// the caret follows. Drags outside the content area (or over another
+// window) are ignored — the selection resumes when the pointer returns.
+func (e *Editor) dragSelUpdate(x, y int) {
+	w, docLine, runePos, ok := e.mouseHit(x, y)
+	if !ok || w.ID != e.dragSel.winID || e.WindowManager.GetFocusedWindow() != w {
+		return
+	}
+	if !e.dragSel.begun {
+		if docLine == e.dragSel.originLine && runePos == e.dragSel.originRune {
+			return // still on the press cell: no selection yet
+		}
+		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, e.dragSel.originRune)
+		e.dragSel.begun = true
+	}
+	if docLine == e.dragSel.lastLine && runePos == e.dragSel.lastRune {
+		return // same cell as the last update
+	}
+	w.Buffer.SetMark("_block_end", docLine, runePos)
+	e.dragSel.lastLine, e.dragSel.lastRune = docLine, runePos
+	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	e.RequestRender()
 }
 
 // mouseRelease: releasing ON the captured button follows the link, exactly
 // as keyboard navigation would; releasing anywhere else abandons the click.
-// Either way the capture ends.
+// Either way the capture — and any armed drag selection — ends (a block the
+// drag marked stays marked).
 func (e *Editor) mouseRelease(x, y int) {
+	e.dragSel = dragSelState{}
 	if !e.mousePressed.active {
 		return
 	}

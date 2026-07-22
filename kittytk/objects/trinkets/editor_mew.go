@@ -64,6 +64,11 @@ type Editor struct {
 	// the cursor query below answers with the arrow instead of the I-beam.
 	pointerOverButton atomic.Bool
 
+	// readOnlyFocused mirrors mew's focused-window read-only state
+	// (WithEditState), so CutEnabled greys the Edit menu's Cut while a
+	// read-only buffer holds focus.
+	readOnlyFocused atomic.Bool
+
 	// launchArgv, when set by the host, runs the session as a full mew
 	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
 	// taking precedence over filename/value/caret. A host seam, not an app
@@ -268,6 +273,11 @@ func (e *Editor) run() {
 		mew.WithContextMenu(func(col, row int) {
 			e.postUI(func() { e.showMewContextMenu(col, row) })
 		}),
+		// Focused-window read-only state, mirrored so CutEnabled can grey
+		// the Edit menu's Cut for a read-only buffer.
+		mew.WithEditState(func(readOnly bool) {
+			e.readOnlyFocused.Store(readOnly)
+		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
 		mew.WithPointerShape(func(over bool) { e.pointerOverButton.Store(over) }),
@@ -459,8 +469,9 @@ func (e *Editor) Paste() { e.execMew("os_paste") }
 func (e *Editor) SelectAll() { e.execMew("os_select_all") }
 
 // CutEnabled overrides the embedded terminal's "never": a mew document's
-// block CAN be cut.
-func (e *Editor) CutEnabled() bool { return true }
+// block CAN be cut — unless the focused buffer is read-only (mirrored from
+// mew via WithEditState), in which case the Edit menu greys Cut out.
+func (e *Editor) CutEnabled() bool { return !e.readOnlyFocused.Load() }
 
 // HasSelection overrides the embedded terminal's grid-selection answer:
 // always true, so the desktop never raises its own "nothing selected"

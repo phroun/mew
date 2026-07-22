@@ -273,6 +273,16 @@ type Editor struct {
 	hScrollAccum   int
 	hScrollEngaged bool
 	hScrollDir     int
+	// Drag selection (mouse.go): a left press in the focused window's content
+	// area arms this; dragging then marks the block (begin at the press
+	// origin, end following the pointer). A shift+click arms it pre-begun
+	// with the ORIGINAL caret position as the origin.
+	dragSel dragSelState
+	// readOnlySent/readOnlyPushed: the last focused-window read-only state
+	// pushed through Config.EditState (see notifyEditState), and whether an
+	// initial push has happened.
+	readOnlySent   bool
+	readOnlyPushed bool
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
@@ -451,6 +461,12 @@ type Config struct {
 	// captured (a graphical host shows the arrow pointer), false for ordinary
 	// text (the I-beam). Called only on transitions, from the input thread.
 	PointerShape func(overButton bool)
+
+	// EditState, when set, is told whenever the FOCUSED window's read-only
+	// state changes (and once at the first render), so a host can grey out
+	// affordances that mutate — its Edit-menu Cut, say. Called only on
+	// transitions, from the editor loop.
+	EditState func(readOnly bool)
 
 	// IdentityUser / IdentityHost / IdentityPID override the process identity
 	// mew stamps into native lock files and shows in the "being edited by"
@@ -5735,6 +5751,10 @@ func (e *Editor) performRender() {
 	// Focused-scoped options (modebar, macOptionKeys, key mappings) follow the
 	// focused window's grammar/class/type.
 	e.reconcileFocusedOptions()
+
+	// Push the focused window's read-only state to the host on transitions
+	// (a host greys out its Edit-menu Cut for a read-only buffer).
+	e.notifyEditState()
 
 	// Follow the cursor VERTICALLY only. Horizontal following is a "lock-in"
 	// action performed by cursor/edit commands, not by rendering, so a manual

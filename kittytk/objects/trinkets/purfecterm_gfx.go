@@ -1883,7 +1883,10 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	}
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Shift classically bypasses app mouse tracking for LOCAL grid selection —
+	// except in editor mode, where the grid has no useful local selection and
+	// the guest editor owns shift+click (extend-selection) itself.
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if event.Button == core.RightButton {
@@ -1935,7 +1938,8 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 	}
 	buf := t.terminal.Buffer()
 	cellX, cellY := t.screenToCellGfx(event.X, event.Y)
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift (see gfxMousePress).
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	trackingMode := buf.GetMouseTrackingMode()
 	forwardToPTY := !t.gfx.reportingDisabled && trackingMode != 0 && !hasShift
 
@@ -2015,7 +2019,8 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 		return false
 	}
 	buf := t.terminal.Buffer()
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift (see gfxMousePress).
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
@@ -2053,7 +2058,10 @@ const (
 
 func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	buf := t.terminal.Buffer()
-	hasShift := event.Modifiers&core.ShiftModifier != 0
+	// Editor mode forwards shift+wheel too: the grid never scrolls under an
+	// editor (alt screen), so the local shift-horizontal-scroll is meaningless
+	// there — the guest editor interprets the modifier itself.
+	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
