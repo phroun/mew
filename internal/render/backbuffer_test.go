@@ -416,6 +416,49 @@ func TestFlipCursorCUPTranslated(t *testing.T) {
 	}
 }
 
+// POINTED Hebrew under flip with a selection: every base glyph must be
+// immediately preceded by ITS OWN cell's SGR, with its niqqud marks
+// following the base BEFORE the next SGR — the selection styles landing on
+// exactly the selected logical cells. This pins OUR side of the wire for
+// the mixed-style pointed case (the bare-letters tests above cannot see a
+// combining-mark interaction), so a mis-rendered selection bar in a
+// flip-mode terminal can be attributed across the boundary with evidence.
+func TestFlipPointedHebrewSelectionWire(t *testing.T) {
+	const (
+		green = "\x1b[0;32;40m"
+		sel   = "\x1b[0;30;47m"
+	)
+	b := newBackBuffer(20, 2)
+	b.flipBidi = true
+	// Visual order (as the renderer paints, left to right): the logical text
+	// is  שָׁתָּה  (shin+shin-dot+qamats, tav+dagesh+qamats, he) — visually
+	// he, tav, shin. The MIDDLE cell (tav+dagesh+qamats) is selected.
+	out := paint(b, mv(1, 1), wr(green+"ה"+sel+"תָּ"+green+"שָׁ"))
+	p := plain(out)
+
+	// The flip restores logical order: shin(+marks), tav(+marks), he.
+	wantText := "שָׁתָּה"
+	if !strings.Contains(p, wantText) {
+		t.Fatalf("flip should emit logical pointed order %q, got %q", wantText, p)
+	}
+
+	// The wire around the tav: [sel SGR][ת][ּ dagesh][ָ qamats][green SGR][ה].
+	// Its marks stay inside its own SGR span; the next base opens its own.
+	if !strings.Contains(out, sel+"תָּ") {
+		t.Errorf("selected tav must carry its marks inside the selection SGR: %q", out)
+	}
+	if !strings.Contains(out, green+"ה") {
+		t.Errorf("the he after the selection must re-open its own SGR: %q", out)
+	}
+	if !strings.Contains(out, green+"שָׁ") {
+		t.Errorf("the shin must open with its own green SGR and carry its marks: %q", out)
+	}
+	// The selection SGR appears for exactly one cell on this row.
+	if n := strings.Count(out, sel); n != 1 {
+		t.Errorf("selection SGR should be emitted exactly once (one selected cell), got %d in %q", n, out)
+	}
+}
+
 // Without the flip (default), the wire carries the visual order unchanged.
 func TestBackBufferNoFlipKeepsVisual(t *testing.T) {
 	b := newBackBuffer(30, 2)
