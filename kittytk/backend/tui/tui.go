@@ -1117,8 +1117,10 @@ func (t *TUIBackend) handleKey(key string) {
 		return // Position events don't generate UI events
 	}
 
-	// Check for mouse action events
-	if strings.HasPrefix(key, "Mouse") {
+	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
+	// ("S-MouseRightPress" from a terminal that forwards shifted clicks, as
+	// iTerm2 does), so the mouse-ness test looks past the prefixes.
+	if _, name := core.ParseKeyModifiers(key); strings.HasPrefix(name, "Mouse") {
 		t.handleMouseAction(key)
 		return
 	}
@@ -1158,6 +1160,13 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	y := t.pendingMouseY
 	t.mu.Unlock()
 
+	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
+	// Terminals VARY in whether they forward modified clicks to the app —
+	// iTerm2 sends shift+clicks through (shifted), stock Terminal strips
+	// the shift — and a modified mouse event must reach the trinkets with
+	// its modifiers, not be dropped as unknown here.
+	mods, key := core.ParseKeyModifiers(key)
+
 	// Convert cell coordinates to units
 	unitX := t.metrics.CellToUnitsX(x)
 	unitY := t.metrics.CellToUnitsY(y)
@@ -1180,30 +1189,34 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	switch key {
 	case "MouseLeftPress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 	case "MouseMiddlePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
 	case "MouseRightPress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
 	case "MousePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	case "MouseLeftRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 	case "MouseMiddleRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
 	case "MouseRightRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
 	case "MouseRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton}
+		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
-		event = core.MouseMoveEvent{X: unitX, Y: unitY}
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":
-		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1}
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: -1, Modifiers: mods}
 	case "MouseScrollDown":
-		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1}
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaY: 1, Modifiers: mods}
+	case "MouseScrollLeft":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaX: -1, Modifiers: mods}
+	case "MouseScrollRight":
+		event = core.MouseWheelEvent{X: unitX, Y: unitY, DeltaX: 1, Modifiers: mods}
 
 	default:
 		return // Unknown mouse event
