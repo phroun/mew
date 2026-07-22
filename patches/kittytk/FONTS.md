@@ -46,7 +46,27 @@ same versions). Copy them from `mew/kittytk/text/fonts/`.
 | NotoSerif-BoldItalic.ttf | Version 2.015 (GOOG static) | `24003396…24b899c6` | 〃 |
 | NotoSerifHebrew-Regular.ttf | Version 2.004 (GOOG static) | `5e72a179…20c3fe02` | github.com/notofonts/hebrew (via fonts.google.com "Noto Serif Hebrew") |
 | NotoSerifHebrew-Bold.ttf | Version 2.004 (GOOG static) | `ff3e3495…be6389cc` | 〃 |
-| NotoSerifCJKsc-Regular.otf | Version 2.003 (Adobe build, self-reports "Source Han Serif SC") | `ff80afff…4b5bbb67` | github.com/adobe-fonts/source-han-serif @ 2.003R — repo file `OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf` is the same version but differs by ~100 bytes (release-asset vs repo build); ours is registered under the Noto name, and `text/scriptclass_test.go` documents the Adobe self-reported family |
+| NotoSerifCJKsc-Regular.otf | Version 2.003 (Adobe build, self-reports "Source Han Serif SC") | `ff80afff…4b5bbb67` | **github.com/adobe-fonts/source-han-serif @ tag `2.003R` (commit 7cedb7f), file `OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf`** — see the CRITICAL note below |
+
+### CRITICAL: the serif CJK file — which build passes, which fails
+
+The test `text/scriptclass_test.go` asserts the *family name* the serif CJK
+face self-reports (`"Source Han Serif SC"`), NOT its sha256. So the requirement
+is an **Adobe-built** Source Han Serif SC, whatever the exact bytes:
+
+- ✅ **USE:** `github.com/adobe-fonts/source-han-serif` @ tag `2.003R`,
+  `OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf`
+  (sha256 `78aa7a32…464117`). This is NOT byte-identical to our embedded
+  `ff80afff…` file, but it self-reports `"Source Han Serif SC"` — **verified:
+  it passes the full `text` suite in a freshly-patched tree.** Fetch it via
+  raw.githubusercontent.com (reachable) at the pinned tag, or copy the
+  byte-exact file from `mew/kittytk/text/fonts/`.
+- ❌ **DO NOT USE:** anything from `notofonts/noto-cjk` (the `Serif/OTF/...`
+  tree). Those are Google-branded builds that self-report `"Noto Serif CJK
+  SC"`, so `scriptclass_test.go` fails — this is the exact mismatch a
+  re-sourcing attempt hits. (The *Sans* CJK is the opposite: it IS the
+  Noto-named build from `notofonts/noto-cjk`, verified matching, so only the
+  serif needs the Adobe name.)
 
 Full 64-hex sha256 for the second table:
 
