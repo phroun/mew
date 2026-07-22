@@ -302,6 +302,27 @@ func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
 	if popped != 3 {
 		t.Fatalf("below-doc alt+click should pop the menu (popped=%d)", popped)
 	}
+
+	// Ctrl+click (and any other non-shift modifier, even combined with
+	// shift) triggers the menu too — terminals vary in which modified
+	// clicks they let through.
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("C-MouseLeftPress")
+	if popped != 4 {
+		t.Fatalf("ctrl+click should pop the menu (popped=%d)", popped)
+	}
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("S-C-MouseLeftPress")
+	if popped != 5 {
+		t.Fatalf("shift+ctrl+click should still pop the menu (popped=%d)", popped)
+	}
+	// Plain shift+click stays a selection extension, never a menu.
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("S-MouseLeftPress")
+	if popped != 5 {
+		t.Fatalf("plain shift+click must not pop the menu (popped=%d)", popped)
+	}
+	send("MouseLeftRelease")
 }
 
 // Block provenance decides whether a plain click dissolves the block: a

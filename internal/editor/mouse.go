@@ -71,22 +71,20 @@ type dragSelState struct {
 // the caller skips keymap dispatch.
 func (e *Editor) handleMouseKey(key string) bool {
 	// Strip modifier prefixes, remembering SHIFT (a shift+click extends the
-	// block from the caret — see mousePress) and META/ALT (an alt+left-click
-	// stands in for a right-click); other modified clicks act like plain
-	// ones (for now), and recognizing the base name is what matters.
+	// block from the caret — see mousePress) separately from EVERY OTHER
+	// modifier (meta/alt, ctrl, super/hyper): any of those on a left-click
+	// stands in for a right-click, because which modified clicks a terminal
+	// actually lets through varies wildly.
 	base := key
-	shift, alt := false, false
+	shift, mod := false, false
 	for {
 		switch {
 		case strings.HasPrefix(base, "S-"):
 			shift = true
 			base = base[2:]
 			continue
-		case strings.HasPrefix(base, "M-"):
-			alt = true
-			base = base[2:]
-			continue
-		case strings.HasPrefix(base, "C-"):
+		case strings.HasPrefix(base, "M-"), strings.HasPrefix(base, "C-"), strings.HasPrefix(base, "H-"):
+			mod = true
 			base = base[2:]
 			continue
 		}
@@ -105,9 +103,11 @@ func (e *Editor) handleMouseKey(key string) bool {
 			e.mouseX, e.mouseY = x, y
 		}
 	case base == "MouseLeftPress":
-		// M-/alt+left-click is a RIGHT-click alternative (some terminals
-		// never deliver a real right button to the app).
-		if alt {
+		// Any modifier beyond shift on a left-click is a RIGHT-click
+		// alternative (some terminals never deliver a real right button —
+		// or reserve alt-click for themselves; ctrl/super+click covers
+		// those).
+		if mod {
 			e.mouseRightPress(e.mouseX, e.mouseY)
 		} else {
 			e.mousePress(e.mouseX, e.mouseY, shift)
