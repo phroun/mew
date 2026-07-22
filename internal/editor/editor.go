@@ -3346,6 +3346,9 @@ func (e *Editor) setBlockMark(markName, label string) bool {
 		e.ShowError("Failed to set mark: " + err.Error())
 		return false
 	}
+	// A keyboard-placed block mark makes the block deliberate: it survives
+	// plain mouse clicks (unlike a transient mouse-drag selection).
+	w.Buffer.SetMouseBlock(false)
 	e.ShowNotification(label + " set")
 	return true
 }

@@ -118,3 +118,83 @@ func TestMouseShiftClickExtends(t *testing.T) {
 	}
 	send("MouseLeftRelease")
 }
+
+// Block provenance decides whether a plain click dissolves the block: a
+// plain mouse DRAG makes a transient block (mouseBlock on -> the next plain
+// click deletes the marks), while keyboard-set marks and shift+click
+// selections are deliberate (mouseBlock off -> clicks leave them alone).
+func TestMouseBlockDissolvesOnClick(t *testing.T) {
+	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n")
+	press := func(kind string, line, cell int) {
+		x, y := screenAt(w, line, cell)
+		send(fmt.Sprintf("Mouse@%d,%d", x, y))
+		send(kind)
+	}
+	drag := func(line, cell int) {
+		x, y := screenAt(w, line, cell)
+		send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, y))
+	}
+
+	// Plain drag: transient. The next plain click dissolves the block.
+	press("MouseLeftPress", 0, 0)
+	drag(1, 2)
+	send("MouseLeftRelease")
+	if !w.Buffer.MouseBlock() {
+		t.Fatal("a plain drag selection must set the mouse-block flag")
+	}
+	press("MouseLeftPress", 2, 1)
+	if w.Buffer.HasBlockMarks() {
+		t.Fatal("a plain click must dissolve a mouse-dragged block")
+	}
+	if w.Buffer.MouseBlock() {
+		t.Fatal("the flag must clear with the dissolved marks")
+	}
+	send("MouseLeftRelease")
+
+	// Keyboard-set marks: deliberate. A plain click leaves them.
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	e.executeCommand("set_block_begin")
+	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	e.executeCommand("set_block_end")
+	if w.Buffer.MouseBlock() {
+		t.Fatal("keyboard-set marks must leave the mouse-block flag off")
+	}
+	press("MouseLeftPress", 2, 1)
+	send("MouseLeftRelease")
+	if !w.Buffer.HasBlockMarks() {
+		t.Fatal("a plain click must NOT dissolve a keyboard-made block")
+	}
+
+	// A keyboard set_block_end ADJUSTING a mouse-dragged block also makes it
+	// deliberate.
+	press("MouseLeftPress", 0, 0)
+	drag(1, 1)
+	send("MouseLeftRelease")
+	w.SetCursorPos(window.Position{Line: 2, Rune: 2})
+	e.executeCommand("set_block_end")
+	press("MouseLeftPress", 0, 3)
+	send("MouseLeftRelease")
+	if !w.Buffer.HasBlockMarks() {
+		t.Fatal("a keyboard-adjusted block must survive a plain click")
+	}
+
+	// Shift+click: a DELIBERATE mouse selection — flag off, survives clicks —
+	// including a drag that continues the shift gesture.
+	w.Buffer.ClearBlockMarks()
+	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	press("S-MouseLeftPress", 1, 3)
+	if w.Buffer.MouseBlock() {
+		t.Fatal("shift+click must leave the mouse-block flag OFF")
+	}
+	x, y := screenAt(w, 2, 2)
+	send(fmt.Sprintf("S-MouseLeftDrag@%d,%d", x, y))
+	if w.Buffer.MouseBlock() {
+		t.Fatal("a drag continuing a shift+click must keep the flag OFF")
+	}
+	send("MouseLeftRelease")
+	press("MouseLeftPress", 0, 0)
+	send("MouseLeftRelease")
+	if !w.Buffer.HasBlockMarks() {
+		t.Fatal("a shift+click selection must survive a plain click")
+	}
+}

@@ -122,6 +122,10 @@ type Buffer struct {
 	modified bool
 	filename string
 
+	// mouseBlock: the current block selection was made by a plain mouse
+	// drag (transient — a plain click dissolves it). See SetMouseBlock.
+	mouseBlock bool
+
 	// Command-scoped transaction. Groups all mutations from a single user
 	// command into one named garland revision. Opened lazily on the first
 	// mutation (see beginMutation), so a command that edits nothing — a cursor
@@ -1491,11 +1495,23 @@ func (b *Buffer) markRange(beginName, endName string) (startLine, startRune, end
 	return beginLine, beginRune, endLine, endRune, true
 }
 
-// ClearBlockMarks removes both block marks.
+// ClearBlockMarks removes both block marks. The mouse-block flag clears with
+// them — no block, no provenance.
 func (b *Buffer) ClearBlockMarks() {
 	b.ClearMark("_block_begin")
 	b.ClearMark("_block_end")
+	b.mouseBlock = false
 }
+
+// SetMouseBlock records whether the current block selection was made (or
+// last adjusted) BY THE MOUSE. A mouse-made block is transient: a plain
+// click dissolves it (see editor mousePress), where a keyboard-made block
+// (set_block_begin / set_block_end) survives clicks. The keyboard commands
+// reset this to false; ClearBlockMarks clears it with the marks.
+func (b *Buffer) SetMouseBlock(on bool) { b.mouseBlock = on }
+
+// MouseBlock reports whether the current block selection is mouse-made.
+func (b *Buffer) MouseBlock() bool { return b.mouseBlock }
 
 // ClearMatchMarks removes both match-highlight marks.
 func (b *Buffer) ClearMatchMarks() {

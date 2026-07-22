@@ -48,9 +48,16 @@ type pressedLink struct {
 // shift+click arms it pre-begun (begun=true): _block_begin is already placed
 // at the ORIGINAL caret position and only _block_end follows the drag.
 // Press-to-release lifetime, focused window only.
+//
+// shifted records the gesture's origin for the buffer's mouse-block flag: a
+// PLAIN drag makes a transient selection (mouseBlock on — a later plain
+// click dissolves it), while a shift+click gesture — including its
+// continuing drag — is the mouse user's DELIBERATE, persistent selection
+// (mouseBlock off, like a keyboard-made block).
 type dragSelState struct {
 	active     bool
 	begun      bool
+	shifted    bool
 	winID      string
 	originLine int
 	originRune int
@@ -385,11 +392,15 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 
 	if shift {
 		// Extend from the caret's current document position to the click.
+		// A shift+click is the mouse user's DELIBERATE selection: the
+		// mouse-block flag goes OFF, so this block persists through later
+		// plain clicks exactly like a keyboard-made one.
 		origin := w.CursorPos()
 		w.Buffer.SetMark("_block_begin", origin.Line, origin.Rune)
 		w.Buffer.SetMark("_block_end", docLine, runePos)
+		w.Buffer.SetMouseBlock(false)
 		e.dragSel = dragSelState{
-			active: true, begun: true, winID: w.ID,
+			active: true, begun: true, shifted: true, winID: w.ID,
 			originLine: origin.Line, originRune: origin.Rune,
 			lastLine: docLine, lastRune: runePos,
 		}
@@ -399,6 +410,12 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		e.updateBrowseState()
 		e.RequestRender()
 		return
+	}
+
+	// A plain click dissolves a MOUSE-made block (a transient drag
+	// selection); a keyboard-made or shift+click-made block survives.
+	if w.Buffer.MouseBlock() {
+		w.Buffer.ClearBlockMarks() // clears the flag with the marks
 	}
 
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
@@ -480,6 +497,10 @@ func (e *Editor) dragSelUpdate(x, y int) {
 		return // same cell as the last update
 	}
 	w.Buffer.SetMark("_block_end", docLine, runePos)
+	// A plain drag marks a TRANSIENT mouse block (a later plain click
+	// dissolves it); a drag continuing a shift+click keeps that gesture's
+	// deliberate, persistent nature.
+	w.Buffer.SetMouseBlock(!e.dragSel.shifted)
 	e.dragSel.lastLine, e.dragSel.lastRune = docLine, runePos
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
