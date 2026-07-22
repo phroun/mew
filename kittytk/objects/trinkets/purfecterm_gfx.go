@@ -20,7 +20,9 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -28,6 +30,13 @@ import (
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/purfecterm"
 )
+
+// arabicDiagOnce prints, the first time an Arabic cell is rendered, which face
+// Arabic actually resolves to at RUNTIME and whether it cursively joins under
+// the embedded shaper — the ground truth for diagnosing disconnected Arabic on
+// a user machine (e.g. a locally-installed font silently overriding the
+// embedded one).
+var arabicDiagOnce sync.Once
 
 const (
 	// Overlay lane thickness: one layout column, matching every other
@@ -722,6 +731,11 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 	str := cell.String()
 	if actx != nil {
 		str = actx.s // Arabic: the five-piece shaping window (also the cache key)
+		arabicDiagOnce.Do(func() {
+			if eng := t.gfxEngine(); eng != nil {
+				fmt.Fprintf(os.Stderr, "kittytk: %s\n", eng.ArabicJoinDiag(family))
+			}
+		})
 	}
 	boxW := int(math.Round(cellW * ppu))
 	contentH := int(math.Round(cellH * ppu))

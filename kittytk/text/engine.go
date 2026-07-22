@@ -26,6 +26,7 @@
 package text
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -158,6 +159,40 @@ type Engine struct {
 // families kept as fallbacks.
 func NewEngine() *Engine {
 	return &Engine{db: newFontDB(), cache: newShapeCache(2048)}
+}
+
+// ArabicJoinDiag reports, for the given family context, which face Arabic
+// letters actually resolve to and whether shaping a run substitutes contextual
+// forms — the one-line ground truth for "why doesn't Arabic connect": a face
+// whose GSUB this shaper cannot execute leaves the middle letter of ليك as its
+// isolated glyph. Meant for a one-time stderr print from the renderer.
+func (e *Engine) ArabicJoinDiag(family string) string {
+	f := &core.Font{Name: family, Size: 12}
+	face := e.db.fallbackFor(f).ResolveFace('ي')
+	fam := "?"
+	if face != nil {
+		fam = face.Describe().Family
+	}
+	ids := func(s string) map[uint32]bool {
+		out := map[uint32]bool{}
+		sp := e.ShapeRun(f, s)
+		for li := range sp.Lines {
+			for ri := range sp.Lines[li].Runs {
+				for _, g := range sp.Lines[li].Runs[ri].raw.Glyphs {
+					out[uint32(g.GlyphID)] = true
+				}
+			}
+		}
+		return out
+	}
+	run := ids("ليك")
+	verdict := "OK (contextual forms substituted)"
+	for id := range ids("ي") {
+		if run[id] {
+			verdict = "BROKEN (middle letter shapes as its ISOLATED glyph — this face's GSUB is not executable by the embedded shaper; is a locally-installed font overriding the embedded one?)"
+		}
+	}
+	return fmt.Sprintf("arabic face=%q via %q: join=%s", fam, family, verdict)
 }
 
 // RegisterFont adds a font variant (TTF/OTF bytes) under a family
