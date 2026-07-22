@@ -2440,7 +2440,12 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 						label = "  " + label
 					}
 				}
-				p.DrawText(menuBounds.X+lay.indent, pos, label, st.WithBg(style.ColorTransparent), nil)
+				// Draw with the style's EXPLICIT background: a transparent bg
+				// composites correctly on the graphical backend but resolves to
+				// the terminal's default (dark) background on the text backend,
+				// leaving dark boxes behind the labels. The explicit bg equals
+				// the fill (or hover) color, so the graphical look is unchanged.
+				p.DrawText(menuBounds.X+lay.indent, pos, label, st, nil)
 				pos += lay.rowH
 			}
 		},

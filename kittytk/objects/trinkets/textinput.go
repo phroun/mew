@@ -1397,7 +1397,11 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 					st = hover
 					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
 				}
-				p.DrawText(menuBounds.X+8, pos, it.label, st.WithBg(style.ColorTransparent), nil)
+				// Explicit bg: transparent resolves to the terminal's dark
+				// default on the text backend (dark boxes behind the labels);
+				// the explicit bg equals the fill/hover color, so the
+				// graphical look is unchanged.
+				p.DrawText(menuBounds.X+8, pos, it.label, st, nil)
 				pos += gfxMenuItemHeight
 			}
 		},
