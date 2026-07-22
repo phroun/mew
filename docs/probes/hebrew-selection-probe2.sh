@@ -71,6 +71,22 @@ emit_span G1 5 13 "$RED" CL
 # G2: POINTED, cells 6..14 with the full selection style (bar reference).
 emit_span G2 5 13 "$S" CL
 
+# H) mid-cluster SGR legality: the whole sentence green, but a white-bg SGR
+#    is injected BETWEEN the shin base and its shin-dot/sheva (letter 11),
+#    reverting to green before the next base. The planned fix must place
+#    background changes at codepoint positions, which fall mid-cluster.
+#    Report: (1) does the shin still render correctly POINTED?
+#            (2) which numbered letter (if any) shows the white background?
+printf 'H) '
+for i in $(seq 0 18); do
+  if [ "$i" -eq 10 ]; then
+    printf '%sש%sְׁ%s' "$G" "$S" "$G"
+    continue
+  fi
+  printf '%s%s' "$G" "${CL[$i]}"
+done
+printf '%s\n' "$R"
+
 echo
 echo "answer key: 1=alef 2=nun 3=yud 4=sp 5=resh 6=vav 7=tsadi 8=he 9=sp"
 echo "            10=lamed 11=shin 12=tav 13=vav 14=tav 15=sp 16=mem 17=yud 18=mem 19=."
