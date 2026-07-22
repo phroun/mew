@@ -41,11 +41,23 @@ type PasteChunk struct {
 	IsFinal bool
 }
 
-// InputEvent represents either a key press or a paste chunk.
+// InputEvent represents a key press, a paste chunk, or a posted action.
 type InputEvent struct {
 	Key    string      // Non-empty if this is a key event
 	Paste  *PasteChunk // Non-nil if this is a paste event
+	Do     func()      // Non-nil if this is a posted action (see ActionPoster)
 	Closed bool        // The source has ended; no further events will come
+}
+
+// ActionPoster is the optional Source capability of accepting closures from
+// other goroutines, delivered in order as Do events on the editor's main
+// loop. It is how asynchronous host callbacks — a clipboard read resolving, a
+// host menu item firing — marshal their work onto the editor thread instead
+// of touching editor state from outside. Post blocks briefly when the editor
+// is busy and the queue is full (the same contract as EventFeed.SendKey) and
+// reports false when the source cannot deliver.
+type ActionPoster interface {
+	PostAction(fn func()) bool
 }
 
 // KeyboardHandler wraps the direct-key-handler for keyboard input.
@@ -66,6 +78,10 @@ type KeyboardHandler struct {
 	// there is nothing to swallow off the Keys channel. Touched only from
 	// GetEvent (the single input-consuming goroutine), so it needs no locking.
 	pasteCarry []byte
+
+	// actions carries closures posted from other goroutines (ActionPoster),
+	// surfaced by GetEvent as Do events so they run on the editor main loop.
+	actions chan func()
 }
 
 // NewKeyboardHandler creates a new keyboard handler reading from input and
@@ -83,6 +99,7 @@ func NewKeyboardHandler(input io.Reader, termOut io.Writer) *KeyboardHandler {
 	kh := &KeyboardHandler{
 		termOut:     termOut,
 		PasteChunks: make(chan PasteChunk, 4096), // Large buffer to handle big pastes
+		actions:     make(chan func(), 64),
 	}
 
 	noPasteKeys := false
@@ -151,8 +168,21 @@ func (kh *KeyboardHandler) GetEvent() InputEvent {
 			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
 			return InputEvent{Key: normalizeKey(key)}
+		case fn := <-kh.actions:
+			return InputEvent{Do: fn}
 		}
 	}
+}
+
+// PostAction implements ActionPoster: fn is queued and later surfaced by
+// GetEvent as a Do event, running on the editor's main loop. Safe from any
+// goroutine; blocks briefly when the editor is busy and the queue is full.
+func (kh *KeyboardHandler) PostAction(fn func()) bool {
+	if fn == nil {
+		return false
+	}
+	kh.actions <- fn
+	return true
 }
 
 // handlePasteChunk rejoins a multibyte rune split across a chunk boundary and

@@ -77,6 +77,8 @@ func (e *Editor) handleMouseKey(key string) bool {
 		}
 	case base == "MouseLeftRelease", base == "MouseRelease":
 		e.mouseRelease(e.mouseX, e.mouseY)
+	case base == "MouseRightPress":
+		e.mouseRightPress(e.mouseX, e.mouseY)
 	case strings.HasPrefix(base, "MouseDrag@"):
 		// Plain motion, no button (all-motion tracking): hover.
 		if x, y, ok := parseMouseAt(base[len("MouseDrag@"):]); ok {
@@ -98,7 +100,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 	// captured): push the change to the host, once per transition.
 	e.notifyPointerShape()
 
-	// Every other Mouse* event (middle/right buttons, their drags) is
+	// Every other Mouse* event (middle button, right release/drags) is
 	// swallowed so it never leaks into keymap dispatch.
 	return true
 }
@@ -338,6 +340,25 @@ func (e *Editor) mousePress(x, y int) {
 		e.mouseOnCaptured = true
 	}
 	e.RequestRender()
+}
+
+// mouseRightPress: a right-click within the EDITING AREA of the focused
+// window asks the host to pop its context menu at the clicked cell
+// (Config.ShowContextMenu). The gate is mouseHit + the focused-window rule —
+// exactly the left-click caret path's routing — so the modebar, gutters,
+// column ruler, and title/message rows never pop the menu, and neither does
+// any unfocused window (modal safety, like every mouse action). The caret
+// does NOT move: a right-click inspects, it doesn't relocate — moving it
+// would silently change what a subsequent paste targets (caret-in-block).
+func (e *Editor) mouseRightPress(x, y int) {
+	if e.Config.ShowContextMenu == nil {
+		return
+	}
+	w, _, _, ok := e.mouseHit(x, y)
+	if !ok || e.WindowManager.GetFocusedWindow() != w {
+		return
+	}
+	e.Config.ShowContextMenu(x, y)
 }
 
 // mouseDrag: the captured button tracks the pointer — pressed style while

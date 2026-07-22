@@ -471,6 +471,29 @@ type Config struct {
 	ShowDesktop func()
 	HideDesktop func()
 
+	// ClipboardWrite / ClipboardRead, when set, bridge the HOST's system
+	// clipboard for the os_copy / os_cut / os_paste commands — a separate
+	// channel from mew's own kill ring, so the two never interfere.
+	// ClipboardWrite receives the text mew places on the host clipboard.
+	// ClipboardRead resolves the host clipboard and calls deliver exactly once
+	// with the result; the resolution (and deliver) may happen asynchronously
+	// on any thread — mew marshals the delivery back onto its own loop. Left
+	// unset, the os_* clipboard commands warn that no host clipboard exists.
+	ClipboardWrite func(text string)
+	ClipboardRead  func(deliver func(text string))
+
+	// ShowContextMenu, when set, is invoked when a right-click lands within
+	// the EDITING AREA of the focused window (never the modebar, gutters,
+	// column ruler, or title/message rows) with the click's 1-based terminal
+	// cell. A host pops its context menu there (Cut/Copy/Paste/Select All,
+	// wired back through a HostPort). Left unset, right-clicks are swallowed.
+	ShowContextMenu func(col, row int)
+
+	// HostPort, when set, is bound to the session at startup so the host can
+	// inject editor commands (port.Execute("os_copy")) from its own threads:
+	// each command is marshaled onto the editor main loop. See HostPort.
+	HostPort *HostPort
+
 	// SkipUserConfig prevents loading ~/.mew/editor.conf (built-in defaults
 	// apply). For embedding hosts that must not touch the user's home dir.
 	SkipUserConfig bool
@@ -821,6 +844,13 @@ func New(cfg Config) (*Editor, error) {
 			termOut = cfg.Terminal.Output
 		}
 		e.KeyHandler = input.NewKeyboardHandler(termIn, termOut)
+	}
+
+	// Bind the host command port (if the host supplied one) now that the
+	// input source exists: Execute marshals through PostAction onto the main
+	// loop, so a host menu item runs its command with keystroke safety.
+	if cfg.HostPort != nil {
+		cfg.HostPort.bind(e.PostAction, e.executeCommand)
 	}
 
 	// Set up key mappings from config
@@ -1872,6 +1902,21 @@ func (e *Editor) registerCommands() {
 	// marked around the streamed-in text.
 	ps.RegisterCommand("block_from_file", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.promptBlockFromFile())
+	})
+
+	// OS-clipboard commands: the host system-clipboard bridge (see
+	// osclipboard.go). A channel deliberately separate from the kill ring.
+	ps.RegisterCommand("os_copy", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osCopy())
+	})
+	ps.RegisterCommand("os_cut", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osCut())
+	})
+	ps.RegisterCommand("os_paste", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osPaste())
+	})
+	ps.RegisterCommand("os_select_all", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osSelectAll())
 	})
 
 	ps.RegisterCommand("buffer_insert_file", func(ctx *pawscript.Context) pawscript.Result {
@@ -5167,15 +5212,11 @@ func (e *Editor) promptBlockFromFile() bool {
 		e.ShowWarning("No active buffer")
 		return false
 	}
-	startLine, startRune, endLine, endRune, exists := w.Buffer.GetBlockRange()
-	if !exists {
+	if !w.Buffer.HasBlockMarks() {
 		e.ShowWarning("No block marked")
 		return false
 	}
-	pos := w.CursorPos()
-	within := (pos.Line > startLine || (pos.Line == startLine && pos.Rune >= startRune)) &&
-		(pos.Line < endLine || (pos.Line == endLine && pos.Rune <= endRune))
-	if !within {
+	if !e.caretWithinBlock(w) {
 		e.ShowWarning("Caret must be within the block")
 		return false
 	}
@@ -5189,14 +5230,50 @@ func (e *Editor) promptBlockFromFile() bool {
 	return true
 }
 
+// caretWithinBlock reports whether the focused window's caret lies within the
+// marked block or on either of its edges — the inclusive span the block
+// commands that TARGET the block (block_from_file, os_paste's replace mode)
+// demand. False when no block is marked.
+func (e *Editor) caretWithinBlock(w *window.Window) bool {
+	startLine, startRune, endLine, endRune, exists := w.Buffer.GetBlockRange()
+	if !exists {
+		return false
+	}
+	pos := w.CursorPos()
+	return (pos.Line > startLine || (pos.Line == startLine && pos.Rune >= startRune)) &&
+		(pos.Line < endLine || (pos.Line == endLine && pos.Rune <= endRune))
+}
+
 // blockFromFile replaces the marked block's contents with the contents of
-// filename, streamed in at the block's location, and leaves the newly inserted
-// text marked as the block (so it is immediately ready for another block op).
-// Line endings are normalized to '\n' like paste/insert. The delete, insert,
-// and re-mark are grouped into one user command so a single undo reverses the
-// whole replace. The caller (promptBlockFromFile) has already verified there is
-// a block and the caret is within it.
+// filename, streamed in at the block's location (see replaceBlockText for the
+// replace semantics). The caller (promptBlockFromFile) has already verified
+// there is a block and the caret is within it.
 func (e *Editor) blockFromFile(filename string) bool {
+	data, err := e.FS.ReadFile(filename)
+	if err != nil {
+		e.ShowError("Failed to read file: " + err.Error())
+		return false
+	}
+	if !e.replaceBlockText(normalizeLineEndings(string(data)), "block_from_file") {
+		return false
+	}
+	e.ShowNotification("Block replaced from " + filename)
+	return true
+}
+
+// normalizeLineEndings converts CRLF and lone CR to '\n', the same
+// normalization paste and buffer_insert_file apply.
+func normalizeLineEndings(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+// replaceBlockText replaces the marked block's contents with text (already
+// newline-normalized) and leaves the newly inserted text marked as the block,
+// so it is immediately ready for another block op. The delete, insert, and
+// re-mark are grouped into one user command (cmdName) so a single undo
+// reverses the whole replace.
+func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	if e.contentLocked() {
 		// The buffer's owning window is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
@@ -5212,21 +5289,13 @@ func (e *Editor) blockFromFile(filename string) bool {
 		return false
 	}
 
-	data, err := e.FS.ReadFile(filename)
-	if err != nil {
-		e.ShowError("Failed to read file: " + err.Error())
-		return false
-	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-
-	// Delete the old block content, stream the file in at its place, and mark
+	// Delete the old block content, place the text at its location, and mark
 	// the inserted text as the new block. All one undo step. The old markers
 	// collapse to the deletion point on delete; we clear them and re-set both to
 	// absolute positions around the inserted text, so the block surrounds the
 	// stream regardless of insert gravity. insertText advances the window caret
 	// to the end of what it inserts, which is the block's new end.
-	w.Buffer.BeginUserCommand("block_from_file")
+	w.Buffer.BeginUserCommand(cmdName)
 	w.Buffer.DeleteTextRange(startLine, startRune, endLine, endRune)
 	w.Buffer.ClearBlockMarks()
 	w.SetCursorPos(window.Position{Line: startLine, Rune: startRune})
@@ -5244,7 +5313,6 @@ func (e *Editor) blockFromFile(filename string) bool {
 	e.clampCursorToBuffer(w)
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
-	e.ShowNotification("Block replaced from " + filename)
 	return true
 }
 
@@ -5972,6 +6040,20 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// wind the session down. The state snapshot below is still
 			// delivered, so nothing is lost that the host wanted kept.
 			e.Running = false
+			continue
+		}
+
+		if event.Do != nil {
+			// A posted action (host command port, async clipboard delivery):
+			// run it with keystroke safety — under renderMu, followed by the
+			// same render tail a key command gets.
+			e.renderMu.Lock()
+			event.Do()
+			e.updateModebar()
+			e.renderMu.Unlock()
+			if e.renderRequested.Load() {
+				e.performRender()
+			}
 			continue
 		}
 

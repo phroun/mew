@@ -136,6 +136,45 @@ func WithHideDesktop(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.HideDesktop = fn }
 }
 
+// WithClipboard bridges the HOST's system clipboard for the os_copy /
+// os_cut / os_paste commands — a channel deliberately separate from mew's
+// kill ring, so the two never interfere. write receives text mew places on
+// the host clipboard; read resolves the host clipboard and calls its deliver
+// callback exactly once (possibly asynchronously, on any thread — mew
+// marshals the delivery onto its own loop). Left unset, as on a plain
+// terminal, the os_* clipboard commands warn.
+func WithClipboard(write func(text string), read func(deliver func(text string))) Option {
+	return func(cfg *editor.Config) {
+		cfg.ClipboardWrite = write
+		cfg.ClipboardRead = read
+	}
+}
+
+// WithContextMenu is invoked when a right-click lands within the EDITING
+// AREA of the focused window (never the modebar, gutters, column ruler, or
+// title/message rows), with the click's 1-based terminal cell. The host pops
+// its context menu there, typically wiring the items back through a HostPort
+// (Cut → port.Execute("os_cut"), and so on).
+func WithContextMenu(fn func(col, row int)) Option {
+	return func(cfg *editor.Config) { cfg.ShowContextMenu = fn }
+}
+
+// HostPort lets the host inject editor commands into a running session from
+// its own threads (an Edit-menu item firing, a context-menu action): each
+// Execute is marshaled onto the editor's main loop and runs with exactly the
+// safety of a keystroke. Create one with NewHostPort, attach it with
+// WithHostPort, then call port.Execute("os_copy") and friends once the
+// session is running.
+type HostPort = editor.HostPort
+
+// NewHostPort creates a HostPort for WithHostPort.
+func NewHostPort() *HostPort { return &HostPort{} }
+
+// WithHostPort attaches a host command port to the session.
+func WithHostPort(p *HostPort) Option {
+	return func(cfg *editor.Config) { cfg.HostPort = p }
+}
+
 // WithPointerShape wires the mouse-pointer affordance: fn is told whenever
 // the pointer's shape should change — true while the pointer is over a link
 // button or a button is captured (show an arrow pointer), false for ordinary
