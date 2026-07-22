@@ -38,6 +38,10 @@ import (
 // embedded one).
 var arabicDiagOnce sync.Once
 
+// arabicGeomOnce prints the first both-sides-joining cell's exact slice
+// geometry (box, ppu, window, keep range, slice bounds, edge-ink verdict).
+var arabicGeomOnce sync.Once
+
 const (
 	// Overlay lane thickness: one layout column, matching every other
 	// scrollbar in the toolkit.
@@ -689,6 +693,17 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
 		}
 		compositeInto(out, slice, s0-lo, 0)
+		if actx.rt0 >= 0 && actx.lt0 >= 0 {
+			// One-time geometry report for the first both-sides-joining cell:
+			// the exact runtime numbers behind the slice, plus whether the
+			// finished mask's ink really reaches both cell edges.
+			arabicGeomOnce.Do(func() {
+				fmt.Fprintf(os.Stderr,
+					"kittytk: arabic geom: box=%dx%d ppu=%.3f pt=%d window=%q rawW=%d keep=[%d,%d) letter-center=%.1f slice=[%d,%d) dstX=%d edgeInk L=%v R=%v\n",
+					boxWPx, boxHPx, ppu, f.Size, str, raw.Rect.Dx(), k0, k1, center, s0, s1, s0-lo,
+					colInked(out, 0), colInked(out, boxWPx-1))
+			})
+		}
 	} else {
 		var placed *image.RGBA
 		xOff := 0
@@ -743,10 +758,17 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 			}
 		})
 	}
-	boxW := int(math.Round(cellW * ppu))
-	contentH := int(math.Round(cellH * ppu))
+	// The mask box must be EXACTLY the painted purfecterm cell rect. Cell
+	// rects are painted (fillPixels) as [round(x0*ppu), round(x1*ppu)) — at
+	// fractional ppu (font_size not a multiple of 12) that differs from
+	// round(width*ppu) by a pixel, so the mask must use the same edge math or
+	// it is measurably narrower/shorter than the cell it fills and Arabic
+	// joins fall short of the boundary.
 	xPx := int(math.Round(cellX * ppu))
-	yPx := int(math.Round(cellY*ppu)) + yOffPx
+	yPx0 := int(math.Round(cellY * ppu))
+	boxW := int(math.Round((cellX+cellW)*ppu)) - xPx
+	contentH := int(math.Round((cellY+cellH)*ppu)) - yPx0
+	yPx := yPx0 + yOffPx
 	wide := cellVisualWidth > 1.0
 
 	frgb := pcRGBA(fg)
@@ -792,6 +814,20 @@ func scaleRGBA(src *image.RGBA, w, h int) *image.RGBA {
 		}
 	}
 	return dst
+}
+
+// colInked reports whether column x of img has any inked pixel.
+func colInked(img *image.RGBA, x int) bool {
+	b := img.Bounds()
+	if x < b.Min.X || x >= b.Max.X {
+		return false
+	}
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		if img.RGBAAt(x, y).A != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func compositeInto(dst, src *image.RGBA, xOff, yOff int) {

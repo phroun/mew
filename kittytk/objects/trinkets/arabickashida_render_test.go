@@ -15,19 +15,6 @@ import (
 // lock in that the joined pieces really reach the edges and that adjacent
 // cells connect at their shared boundary.
 
-func colInked(img *image.RGBA, x int) bool {
-	b := img.Bounds()
-	if x < b.Min.X || x >= b.Max.X {
-		return false
-	}
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		if img.RGBAAt(x, y).A != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // renderArabicCell mirrors the paint path for one visual cell of a word.
 func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, boxH int, ppu float64) *image.RGBA {
 	t.Helper()
