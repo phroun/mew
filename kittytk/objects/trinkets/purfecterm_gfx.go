@@ -2304,6 +2304,14 @@ func (t *PurfecTerm) contextMenuID() string {
 // showContextMenu opens the right-click menu (Copy / Paste / Select
 // All / Mouse Reporting toggle) as a popup overlay.
 func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
+	t.showTermItemsMenu(core.UnitPoint{X: event.X, Y: event.Y}, t.contextMenuItems())
+}
+
+// showTermItemsMenu opens a context menu of the given items as a popup
+// overlay anchored at a LOCAL point of this trinket — the shared
+// presentation behind the terminal's right-click menu, reused by the
+// mew-backed Editor for its own (mew-driven) context menu.
+func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuItem) {
 	pc := t.PopupController()
 	if pc == nil {
 		pc = t.findPopupControllerTerm()
@@ -2311,7 +2319,6 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 	if pc == nil {
 		return
 	}
-	items := t.contextMenuItems()
 	height := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
@@ -2321,7 +2328,7 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 		}
 	}
 	height += 4 // padding
-	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: event.X, Y: event.Y})
+	at := pc.MapToScreen(t.Self(), local)
 	screen := pc.ScreenBounds()
 	if at.X+gfxMenuWidth > screen.X+screen.Width {
 		at.X = screen.X + screen.Width - gfxMenuWidth
@@ -2404,6 +2411,33 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 		},
 	})
 	t.Update()
+}
+
+// cellToLocal maps a 1-based terminal cell to this trinket's local units —
+// the anchor for a popup at that cell. The inverse of screenToCellGfx's
+// uniform-grid part: cell pitch from the effective font (graphical) or the
+// cell metrics (text UI), the terminal's scale factors, and the hit-space
+// snap ratio applied in reverse. An approximation over per-cell width walks
+// (double-width lines), which is fine for a menu anchor.
+func (t *PurfecTerm) cellToLocal(col, row int) core.UnitPoint {
+	baseCW, baseCH := t.cellDims()
+	cw, chh := float64(baseCW), float64(baseCH)
+	if t.terminal != nil {
+		buf := t.terminal.Buffer()
+		cw *= buf.GetHorizontalScale()
+		chh *= buf.GetVerticalScale()
+	}
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	return core.UnitPoint{
+		X: core.Unit(float64(col-1) * cw / kx),
+		Y: core.Unit(float64(row-1) * chh / ky),
+	}
 }
 
 // findPopupControllerTerm walks the parent chain for a popup

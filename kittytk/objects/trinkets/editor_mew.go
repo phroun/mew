@@ -80,6 +80,11 @@ type Editor struct {
 	onCommit func(value, filename string)
 	onCancel func()
 
+	// port injects editor commands into the running mew session from UI
+	// threads (Edit-menu and context-menu items): each Execute marshals
+	// onto mew's main loop. Created with the session in run().
+	port *mew.HostPort
+
 	// Session plumbing.
 	inPipeR  *io.PipeReader
 	inPipeW  *io.PipeWriter
@@ -226,8 +231,43 @@ func (e *Editor) run() {
 	if fs == nil {
 		fs = mew.OSFileSystem()
 	}
+	e.port = mew.NewHostPort()
 	options := []mew.Option{
 		mew.WithTerminal(term), mew.WithFileSystem(fs),
+		// The host command port: Edit-menu and context-menu items inject
+		// mew commands (os_copy and friends), each marshaled onto mew's
+		// main loop with keystroke safety.
+		mew.WithHostPort(e.port),
+		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
+		// — the same desktop clipboard TextInput and the classic PurfecTerm
+		// use, kept separate from mew's own kill ring. mew calls these on
+		// its session goroutine; postUI marshals onto the desktop loop,
+		// where SetClipboard and the (possibly async) ReadClipboardAsync
+		// are safe. The paste delivery then marshals back into mew.
+		mew.WithClipboard(
+			func(s string) {
+				e.postUI(func() {
+					if d := e.findDesktop(); d != nil {
+						d.SetClipboard(s)
+					}
+				})
+			},
+			func(deliver func(string)) {
+				e.postUI(func() {
+					if d := e.findDesktop(); d != nil {
+						d.ReadClipboardAsync(deliver)
+						return
+					}
+					deliver("")
+				})
+			},
+		),
+		// The right-click context menu: mew validates the click (editing
+		// area of the focused window only) and reports the cell; the menu
+		// pops there in the TextInput style.
+		mew.WithContextMenu(func(col, row int) {
+			e.postUI(func() { e.showMewContextMenu(col, row) })
+		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
 		mew.WithPointerShape(func(over bool) { e.pointerOverButton.Store(over) }),
@@ -384,4 +424,78 @@ func (e *Editor) Wait() { <-e.done }
 func (e *Editor) Err() error {
 	<-e.done
 	return e.err
+}
+
+// --- Edit menu / clipboard / context menu (the editActor standard) ---
+//
+// The mew Editor overrides the embedded PurfecTerm's edit actions: the
+// terminal's semantics (grid-selection copy, no-op cut, raw bracketed paste)
+// are wrong for a mew document. Every action delegates to a mew command
+// through the host port, so the block logic — what the current selection IS,
+// whether cut applies, how a paste lands — lives in mew (os_copy / os_cut /
+// os_paste / os_select_all), exactly where the same actions are key-bindable.
+
+// execMew injects a mew command from a UI thread. Safe before the session
+// starts (the unbound port refuses) and after it ends.
+func (e *Editor) execMew(cmd string) {
+	if e.port != nil {
+		e.port.Execute(cmd)
+	}
+}
+
+// Copy places mew's marked block on the system clipboard.
+func (e *Editor) Copy() { e.execMew("os_copy") }
+
+// Cut places mew's marked block on the system clipboard and removes it
+// (bypassing mew's kill ring, so the two clipboards never interfere).
+func (e *Editor) Cut() { e.execMew("os_cut") }
+
+// Paste applies the system clipboard: replacing the marked block when the
+// caret is engaged with it (block_from_file semantics), else inserting at
+// the caret (buffer_insert_file semantics).
+func (e *Editor) Paste() { e.execMew("os_paste") }
+
+// SelectAll marks the whole mew buffer as the block.
+func (e *Editor) SelectAll() { e.execMew("os_select_all") }
+
+// CutEnabled overrides the embedded terminal's "never": a mew document's
+// block CAN be cut.
+func (e *Editor) CutEnabled() bool { return true }
+
+// HasSelection overrides the embedded terminal's grid-selection answer:
+// always true, so the desktop never raises its own "nothing selected"
+// notice — mew reports "No block marked" through its own UI, where the
+// answer is actually known.
+func (e *Editor) HasSelection() bool { return true }
+
+// postUI runs fn on the desktop's UI loop (a zero-delay desktop timer, the
+// thread-safe way in), falling back to inline when no desktop is reachable
+// (headless tests). Called from mew's session goroutine.
+func (e *Editor) postUI(fn func()) {
+	if d := e.findDesktop(); d != nil {
+		d.StartTimer(0, fn)
+		return
+	}
+	fn()
+}
+
+// mewContextMenuItems builds the right-click menu — the same items, in the
+// same order, as the TextInput control's menu, each action the matching
+// Edit-menu action (routed through mew).
+func (e *Editor) mewContextMenuItems() []termMenuItem {
+	return []termMenuItem{
+		{label: "Cut", action: e.Cut},
+		{label: "Copy", action: e.Copy},
+		{label: "Paste", action: e.Paste},
+		{separator: true},
+		{label: "Select All", action: e.SelectAll},
+	}
+}
+
+// showMewContextMenu pops the right-click menu anchored at a 1-based
+// terminal cell — the cell mew validated as being within the focused
+// window's editing area. Presentation is the shared terminal items-menu
+// (the TextInput / PurfecTerm popup style).
+func (e *Editor) showMewContextMenu(col, row int) {
+	e.showTermItemsMenu(e.cellToLocal(col, row), e.mewContextMenuItems())
 }
