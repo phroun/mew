@@ -442,7 +442,7 @@ func (t *TUIBackend) EndFrame() {
 					if c.DWLFill || c.Char == 0 {
 						continue // fillers/continuations: the carrier covers them
 					}
-					if code := c.Style.Code(); code != penStyle {
+					if code := c.Style.CodeDepth(t.colorDepth); code != penStyle {
 						sb.WriteString(code)
 						penStyle = code
 					}
@@ -504,7 +504,7 @@ func (t *TUIBackend) EndFrame() {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 				termY, termX = y, x
 			}
-			if code := effectiveCell.Style.Code(); code != penStyle {
+			if code := effectiveCell.Style.CodeDepth(t.colorDepth); code != penStyle {
 				sb.WriteString(code)
 				penStyle = code
 			}
