@@ -15,7 +15,7 @@ const Version = "0.1"
 // release number), it is bumped automatically by `make increment`, whose awk
 // script rewrites the single `const Build = N` line below - so keep it on its
 // own line in exactly that form.
-const Build = 1
+const Build = 3
 
 // FullVersion returns the complete version string, major.minor.build (e.g.
 // "0.1.1"), assembled from Version and Build.

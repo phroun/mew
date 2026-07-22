@@ -1,11 +1,28 @@
 # KittyTK upstream sync patch
 
-`kittytk-sync.patch` brings upstream KittyTK (`github.com/phroun/kittytk`,
-verified against main @ `27e64de`) up to date with the improvements developed
+**STATUS: LANDED upstream in KittyTK `v0.1.3-alpha`** (commits `c6854ac` "Apply
+downstream mew sync patch: cursive Arabic, script-aware fonts, TUI cipher" and
+`d835c71` "Use genuine Adobe Source Han Serif SC…", build bumped to 3). mew's
+vendored `./kittytk` is now re-synced to that release: fonts, `fonts.go`, and
+`core/version.go` adopted from the tag, so the only remaining vendored↔upstream
+divergence is the mew boundary below. `app/go.mod` pins
+`github.com/phroun/kittytk v0.1.3-alpha`. This directory is kept as the
+development record.
+
+`kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
+developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs
-to mew itself. Verified: applies clean to `27e64de`, and the patched tree
-builds and passes its FULL test suite standalone (`GOWORK=off go build ./... &&
+to mew itself. Verified: applied clean to `27e64de`, and the patched tree built
+and passed its FULL test suite standalone (`GOWORK=off go build ./... &&
 go test ./...`) with no mew module anywhere in the graph.
+
+Note on the release fonts: upstream re-sourced the embedded fonts from
+`FONTS.md` rather than copying mew's exact bytes, so the release's Arabic/Serif
+builds differ byte-for-byte from the ones originally verified on-screen — but
+they are valid joining builds (`TestEmbeddedArabicFacesJoin` passes on the
+release tree) and mew has adopted them for consistency. The genuine Adobe
+Source Han Serif SC (`78aa7a32…`, adobe-fonts/source-han-serif @ tag `2.003R`)
+replaces mew's earlier byte-twin.
 
 ## What it achieves
 

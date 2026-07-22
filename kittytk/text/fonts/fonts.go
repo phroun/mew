@@ -93,7 +93,11 @@ var ArabicKufiBold []byte
 // forms — with Chinese-preferred Han glyph shapes, so a single face renders
 // Chinese, Japanese, and Korean reliably on any platform (no dependence on a
 // system CJK font). Noto Sans CJK SC is the default CJK fallback; the serif is
-// the byte-identical Adobe co-release of Noto Serif CJK SC, addressable by name.
+// the Adobe co-release of Noto Serif CJK SC (same outlines, self-reports the
+// family name "Source Han Serif SC"), addressable by that name. The embedded
+// file is adobe-fonts/source-han-serif @ tag 2.003R,
+// OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf
+// (sha256 78aa7a328fd974df2d688c8a9fd74a33d8334dfa84ab24d9d11efb2ffc464117).
 // Regular weight only — bold CJK degrades to regular via the aspect fallback.
 
 //go:embed NotoSansCJKsc-Regular.otf
