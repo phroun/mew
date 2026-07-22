@@ -134,25 +134,36 @@ func (c *Config) HasOptionOverlay(class, grammar, bufType string) bool {
 // specific first so the most specific wins per key (class > grammar > type).
 // defaultSet/defaultMap carry the active set's fully-resolved map (including
 // built-ins) so it need not be rebuilt.
-func (c *Config) ResolveMappingSet(set, class, grammar, bufType, defaultSet string, defaultMap map[string]string) map[string]string {
+func (c *Config) ResolveMappingSet(set, class, grammar, bufType, defaultSet string, defaultMap map[string]string) (map[string]string, map[string]MappingOrigin) {
 	result := make(map[string]string)
+	origins := make(map[string]MappingOrigin)
+	// merge overlays one layer's keymap onto the result, carrying provenance in
+	// lockstep: a key set by this layer takes the layer's origin, or clears any
+	// prior origin when this layer has none (a built-in override → resolve as
+	// AuthorSystem when read).
+	merge := func(km map[string]string, om map[string]MappingOrigin) {
+		for k, v := range km {
+			result[k] = v
+			if o, ok := om[k]; ok {
+				origins[k] = o
+			} else {
+				delete(origins, k)
+			}
+		}
+	}
 	if set == defaultSet {
-		for k, v := range defaultMap {
-			result[k] = v
-		}
+		merge(defaultMap, c.MappingOrigins)
 	} else {
-		for k, v := range c.MappingSets[mappingSetKey(set, "", "", "")] {
-			result[k] = v
-		}
+		sig := mappingSetKey(set, "", "", "")
+		merge(c.MappingSets[sig], c.MappingSetOrigins[sig])
 	}
 	// Merge the refinements least-specific first (reverse of the most-specific-
 	// first cascade), so a more specific section overrides per key.
 	tuples := qualCascade(class, grammar, bufType)
 	for i := len(tuples) - 1; i >= 0; i-- {
 		t := tuples[i]
-		for k, v := range c.MappingSets[mappingSetKey(set, t[0], t[1], t[2])] {
-			result[k] = v
-		}
+		sig := mappingSetKey(set, t[0], t[1], t[2])
+		merge(c.MappingSets[sig], c.MappingSetOrigins[sig])
 	}
-	return result
+	return result, origins
 }

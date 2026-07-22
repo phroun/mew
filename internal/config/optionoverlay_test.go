@@ -98,7 +98,8 @@ func TestMappingSetGrammarCascade(t *testing.T) {
 		"[mappings:mew/doc.cpp]\nk\t=grammartype\n" +
 		"[panel::mappings:mew]\nk\t=class\n")
 	get := func(class, grammar, bufType string) string {
-		return c.ResolveMappingSet("mew", class, grammar, bufType, "", nil)["k"]
+		km, _ := c.ResolveMappingSet("mew", class, grammar, bufType, "", nil)
+		return km["k"]
 	}
 	if got := get("", "", ""); got != "base" {
 		t.Errorf("no qualifiers: got %q, want base", got)

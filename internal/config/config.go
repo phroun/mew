@@ -54,6 +54,16 @@ type Config struct {
 	// overlay-resolvable).
 	MappingSets map[string]map[string]string
 
+	// MappingOrigins records provenance for the base Mappings, keyed by key
+	// sequence: source file, line, load-order precedence, and @author. Kept
+	// parallel to Mappings so that map stays a plain map[string]string. A key
+	// absent here is a built-in (resolve as AuthorSystem, precedence 0).
+	MappingOrigins map[string]MappingOrigin
+
+	// MappingSetOrigins is MappingOrigins for each refined MappingSets entry,
+	// keyed by the same signature as MappingSets.
+	MappingSetOrigins map[string]map[string]MappingOrigin
+
 	// Formats maps short format names / file extensions to the grammar that
 	// covers them (the [formats] section), e.g. js = javascript. Built-in
 	// defaults are merged first; a blank value removes an entry.
@@ -631,6 +641,13 @@ func (m *Manager) readInclude(path string) ([]byte, error) {
 // directory.
 var includeRe = regexp.MustCompile(`^\s*@include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
 
+// authorRe matches the "@author <name>" directive — an at-rule like @include.
+// It credits the bindings that FOLLOW it (within the same file) to <name>, and
+// can appear more than once to change author mid-file. It does not cross an
+// @include boundary: each included file starts with a blank author again and
+// must declare its own. A blank author defaults per load (Customized / System).
+var authorRe = regexp.MustCompile(`^\s*@author\s+(.+?)\s*$`)
+
 // joinInclude resolves an @include reference against a base directory. When the
 // base is a "mew:" path the result stays inside the mew tree: the reference is
 // joined as if rooted at the tree top, so any leading "../" is dropped and can
@@ -694,6 +711,53 @@ func (m *Manager) expandIncludes(content, base string, depth int, visited map[st
 		out = append(out, m.expandIncludes(string(data), nextBase, depth+1, visited))
 	}
 	return strings.Join(out, "\n")
+}
+
+// expandIncludesSourced is expandIncludes that preserves provenance: it returns
+// the flattened lines, each tagged with its source file, 1-based line number,
+// and the @author in effect. source labels the top-level content. @author sets
+// the current author for the lines that follow it in THIS file only; descending
+// into an @include starts the child with a blank author again, and returning
+// resumes this file's author. Directive lines (@author, @include) are consumed,
+// not emitted, but they still advance the line counter so emitted lines keep
+// their true source line.
+func (m *Manager) expandIncludesSourced(content, source, base string, depth int, visited map[string]bool) []SourcedLine {
+	if depth > 16 {
+		return nil
+	}
+	var out []SourcedLine
+	author := ""
+	for i, line := range strings.Split(content, "\n") {
+		raw := strings.TrimSuffix(line, "\r")
+		if sub := authorRe.FindStringSubmatch(raw); sub != nil {
+			author = strings.TrimSpace(sub[1])
+			continue
+		}
+		sub := includeRe.FindStringSubmatch(raw)
+		if sub == nil {
+			out = append(out, SourcedLine{Text: line, Source: source, Line: i + 1, Author: author})
+			continue
+		}
+		var incPath, nextBase string
+		if sub[1] != "" {
+			incPath = joinInclude(base, sub[1])
+			nextBase = includeDir(incPath)
+		} else {
+			incPath = joinInclude(m.configDir, sub[2])
+			nextBase = m.configDir
+		}
+		if visited[incPath] {
+			continue
+		}
+		visited[incPath] = true
+		data, err := m.readInclude(incPath)
+		if err != nil {
+			out = append(out, SourcedLine{Text: "# @include failed: " + incPath, Source: source, Line: i + 1, Author: author})
+			continue
+		}
+		out = append(out, m.expandIncludesSourced(string(data), incPath, nextBase, depth+1, visited)...)
+	}
+	return out
 }
 
 // DefaultConfig returns sensible default configuration, including the
@@ -788,9 +852,14 @@ func (m *Manager) Load() (Config, error) {
 		content = []byte(m.generateDefaultConfig())
 	}
 
+	// A single monotonic precedence counter across every layer of this load,
+	// so a project binding (applied later) outranks a user binding, which
+	// outranks nothing but the origin-less built-ins (precedence 0).
+	prec := 0
+
 	// The user layer: quoted @include directives resolve relative to the
 	// config file's own directory (the mew: tree root).
-	m.applyLayer(&config, string(content), m.configDir, false)
+	m.applyLayer(&config, string(content), m.configPath, m.configDir, false, &prec)
 
 	// Project layers: git-style .mew directories walking up from the
 	// working directory, outermost first, each editor.conf building on the
@@ -803,7 +872,7 @@ func (m *Manager) Load() (Config, error) {
 			for _, mewDir := range m.projectMewDirs(cwd) {
 				config.ProjectDirs = append(config.ProjectDirs, mewDir)
 				if src, err := m.io().Read(filepath.Join(mewDir, "editor.conf")); err == nil {
-					m.applyLayer(&config, string(src), mewDir, true)
+					m.applyLayer(&config, string(src), filepath.Join(mewDir, "editor.conf"), mewDir, true, &prec)
 				}
 			}
 		}
@@ -856,7 +925,8 @@ func (m *Manager) LoadFromString(content string) Config {
 
 func (m *Manager) loadExpanded(content, base string) Config {
 	config := DefaultConfig()
-	m.applyLayer(&config, content, base, false)
+	prec := 0
+	m.applyLayer(&config, content, "<config>", base, false, &prec)
 	return config
 }
 
@@ -868,10 +938,13 @@ func (m *Manager) loadExpanded(content, base string) Config {
 // directives and relative [storage] paths. project marks a project layer:
 // its key mappings merge per key instead of replacing the map (a project
 // adds bindings; it does not silently discard the user's keymap).
-func (m *Manager) applyLayer(config *Config, content, base string, project bool) {
-	// Splice @include directives, then parse.
-	content = m.expandIncludes(content, base, 0, map[string]bool{})
-	parsed := m.parseConfigFile(content)
+func (m *Manager) applyLayer(config *Config, content, source, base string, project bool, prec *int) {
+	// Splice @include directives (carrying source/line/@author provenance),
+	// then parse. A blank @author on a mapping in a config file defaults to
+	// AuthorCustomized; built-in mappings never reach here, so they stay
+	// origin-less and resolve as AuthorSystem.
+	sourced := m.expandIncludesSourced(content, source, base, 0, map[string]bool{})
+	parsed, mapOrigins := m.parseSourced(sourced, AuthorCustomized, prec)
 
 	// Value keywords for the scalar sections: "default" restores the shipped
 	// value, "inherit"/blank fall through to earlier layers (blank keeps its
@@ -1358,19 +1431,32 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if config.MappingSets == nil {
 			config.MappingSets = make(map[string]map[string]string)
 		}
+		if config.MappingSetOrigins == nil {
+			config.MappingSetOrigins = make(map[string]map[string]MappingOrigin)
+		}
 		sig := mappingSetKey(set, class, grammar, bufType)
 		m := config.MappingSets[sig]
 		if m == nil {
 			m = make(map[string]string)
 			config.MappingSets[sig] = m
 		}
+		mo := config.MappingSetOrigins[sig]
+		if mo == nil {
+			mo = make(map[string]MappingOrigin)
+			config.MappingSetOrigins[sig] = mo
+		}
+		secOrigins := mapOrigins[sectionName]
 		for k, v := range section {
 			k = strings.TrimSpace(k)
 			if keywordOf(v) != "" || strings.TrimSpace(stripQuotes(v)) == "" {
 				delete(m, k) // unbind / defer
+				delete(mo, k)
 				continue
 			}
 			m[k] = v
+			if o, ok := secOrigins[k]; ok {
+				mo[k] = o
+			}
 		}
 	}
 
@@ -1402,21 +1488,39 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	// merge per key on top of the inherited map.
 	mappingsKey := "mappings:" + config.General.MappingsName
 	if mappings, ok := parsed[mappingsKey]; ok {
+		baseOrigins := mapOrigins[mappingsKey]
 		if project {
+			// A project layer merges per key: keep origins in lockstep so a
+			// project's binding carries the project file's provenance.
+			if config.MappingOrigins == nil {
+				config.MappingOrigins = make(map[string]MappingOrigin)
+			}
 			for k, v := range mappings {
 				if keywordOf(v) != "" || strings.TrimSpace(v) == "" {
 					// Unbind: the key falls back to its default handling.
 					// (Bind a key to the nop command to disable it instead.)
 					delete(config.Mappings, k)
+					delete(config.MappingOrigins, k)
 					continue
 				}
 				config.Mappings[k] = v
+				if o, ok := baseOrigins[k]; ok {
+					config.MappingOrigins[k] = o
+				}
 			}
 		} else {
+			// The user layer replaces the keymap wholesale; its origins replace
+			// too. Keys with no recorded origin (there should be none here) fall
+			// back to the built-in default when read.
 			config.Mappings = mappings
+			config.MappingOrigins = make(map[string]MappingOrigin)
 			for k, v := range config.Mappings {
 				if keywordOf(v) != "" || strings.TrimSpace(v) == "" {
 					delete(config.Mappings, k)
+					continue
+				}
+				if o, ok := baseOrigins[k]; ok {
+					config.MappingOrigins[k] = o
 				}
 			}
 		}
@@ -1591,13 +1695,30 @@ func splitFontList(v string) []string {
 
 // parseConfigFile parses the config file content.
 func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
+	lines := strings.Split(content, "\n")
+	sourced := make([]SourcedLine, len(lines))
+	for i, line := range lines {
+		sourced[i] = SourcedLine{Text: line, Line: i + 1}
+	}
+	prec := 0
+	sections, _ := m.parseSourced(sourced, "", &prec)
+	return sections
+}
+
+// parseSourced parses sourced config lines into the section→key→value map, and
+// alongside it the provenance of every key in a [mappings…] section. prec is a
+// monotonic counter bumped per mapping key (so a later line outranks an earlier
+// one, giving "last configured wins"); defaultAuthor fills a blank @author.
+// Non-mapping sections carry no origins (only key mappings need provenance
+// today).
+func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *int) (map[string]map[string]string, map[string]map[string]MappingOrigin) {
 	result := make(map[string]map[string]string)
+	origins := make(map[string]map[string]MappingOrigin)
 	var currentSection string
 
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
+	for _, sl := range lines {
 		// Remove carriage returns for Windows line endings
-		line = strings.TrimSuffix(line, "\r")
+		line := strings.TrimSuffix(sl.Text, "\r")
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines and full-line comments
@@ -1643,10 +1764,26 @@ func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
 			value := m.unescapeValue(strings.TrimSpace(processedLine[equalPos+1:]))
 
 			result[currentSection][key] = value
+
+			// Record provenance for key mappings only. Precedence advances per
+			// mapping line so a key rebound later (in the same or a later layer)
+			// carries a higher ordinal than the one it shadows.
+			if strings.HasPrefix(currentSection, "mappings") {
+				*prec++
+				if origins[currentSection] == nil {
+					origins[currentSection] = make(map[string]MappingOrigin)
+				}
+				origins[currentSection][key] = MappingOrigin{
+					Source:     sl.Source,
+					Line:       sl.Line,
+					Precedence: *prec,
+					Author:     resolveAuthor(sl.Author, defaultAuthor),
+				}
+			}
 		}
 	}
 
-	return result
+	return result, origins
 }
 
 // findUnescapedChar finds the position of an unescaped character outside of quoted strings.

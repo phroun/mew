@@ -223,6 +223,8 @@ func (e *Editor) applyFocusedMappings(fw *window.Window) {
 		return
 	}
 	e.appliedMappingSet = mapSig
-	km := e.LoadedConfig.ResolveMappingSet(setName, class, grammar, bufType, e.Config.MappingsName, e.LoadedConfig.Mappings)
+	km, origins := e.LoadedConfig.ResolveMappingSet(setName, class, grammar, bufType, e.Config.MappingsName, e.LoadedConfig.Mappings)
 	e.KeyProcessor.SetMappings(km)
+	e.mappingOrigins = origins
+	e.remapPrec = maxPrecedence(origins)
 }

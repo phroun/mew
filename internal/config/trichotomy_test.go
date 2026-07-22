@@ -11,9 +11,10 @@ func layered(t *testing.T, user string, projects ...string) Config {
 	t.Helper()
 	m := &Manager{configDir: "/std"}
 	cfg := DefaultConfig()
-	m.applyLayer(&cfg, user, "", false)
+	prec := 0
+	m.applyLayer(&cfg, user, "<user>", "", false, &prec)
 	for _, p := range projects {
-		m.applyLayer(&cfg, p, "", true)
+		m.applyLayer(&cfg, p, "<project>", "", true, &prec)
 	}
 	return cfg
 }
@@ -164,11 +165,12 @@ func TestTrichotomyIndicators(t *testing.T) {
 func TestTrichotomyStorage(t *testing.T) {
 	m := &Manager{configDir: "/std"}
 	cfg := DefaultConfig()
-	m.applyLayer(&cfg, "[storage]\nscratch=backups\n", filepath.Join("/proj", ".mew"), true)
+	prec := 0
+	m.applyLayer(&cfg, "[storage]\nscratch=backups\n", "<project>", filepath.Join("/proj", ".mew"), true, &prec)
 	if cfg.Storage.Scratch != filepath.Join("/proj", ".mew", "backups") {
 		t.Fatalf("relative scratch: %q", cfg.Storage.Scratch)
 	}
-	m.applyLayer(&cfg, "[storage]\nscratch=default\n", "", true)
+	m.applyLayer(&cfg, "[storage]\nscratch=default\n", "<project>", "", true, &prec)
 	if cfg.Storage.Scratch != "" {
 		t.Fatalf("scratch=default must reset to system temp, got %q", cfg.Storage.Scratch)
 	}

@@ -119,6 +119,18 @@ type Editor struct {
 	ConfigMgr    *config.Manager
 	LoadedConfig config.Config
 
+	// mappingOrigins is provenance for the ACTIVE keymap (the one pushed to
+	// KeyProcessor), keyed by key sequence: which config file/line bound it,
+	// its load-order precedence, and its @author. Kept parallel to the keymap
+	// so the low-level keys package stays provenance-free. A sequence absent
+	// here is a built-in (resolve as config.AuthorSystem, precedence 0). See
+	// keyBindingDisplay (key-badge "last configured" tie-break) and the `map`
+	// command (runtime remaps recorded as config.AuthorRemapped).
+	mappingOrigins map[string]config.MappingOrigin
+	// remapPrec advances above every config precedence so a runtime remap
+	// always outranks a config-file binding when tie-breaking.
+	remapPrec int
+
 	// Configuration
 	Config Config
 
@@ -1079,6 +1091,17 @@ func (e *Editor) registerCommands() {
 		key := fmt.Sprintf("%v", ctx.Args[0])
 		command := fmt.Sprintf("%v", ctx.Args[1])
 		e.KeyProcessor.MapKey(key, command)
+		// A runtime remap: credit it to AuthorRemapped and give it a precedence
+		// above every config binding so it wins the key-badge tie-break.
+		if e.mappingOrigins == nil {
+			e.mappingOrigins = make(map[string]config.MappingOrigin)
+		}
+		e.remapPrec++
+		e.mappingOrigins[key] = config.MappingOrigin{
+			Source:     config.SourceRemap,
+			Precedence: e.remapPrec,
+			Author:     config.AuthorRemapped,
+		}
 		e.ShowNotification("Mapped " + key + " -> " + command)
 		return pawscript.BoolStatus(true)
 	})
@@ -5599,6 +5622,28 @@ func (e *Editor) setupKeyMappingsFromConfig() {
 	for key, command := range e.LoadedConfig.Mappings {
 		kp.MapKey(key, command)
 	}
+
+	// Mirror provenance for the active keymap so key badges can attribute
+	// bindings and tie-break on "last configured". A pristine (config-less)
+	// keymap leaves this empty — every key resolves as a built-in.
+	e.mappingOrigins = make(map[string]config.MappingOrigin, len(e.LoadedConfig.MappingOrigins))
+	for key, o := range e.LoadedConfig.MappingOrigins {
+		e.mappingOrigins[key] = o
+	}
+	e.remapPrec = maxPrecedence(e.mappingOrigins)
+}
+
+// maxPrecedence returns the highest precedence in an origins map (0 when empty),
+// the baseline a runtime remap counts up from so it outranks every config
+// binding.
+func maxPrecedence(origins map[string]config.MappingOrigin) int {
+	max := 0
+	for _, o := range origins {
+		if o.Precedence > max {
+			max = o.Precedence
+		}
+	}
+	return max
 }
 
 // RequestRender requests a render with debouncing.
