@@ -1831,6 +1831,17 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.unindentBlock())
 	})
 
+	// block_from_file streams a prompted-for file over the marked block: it
+	// replaces the block's contents with the file's, but only when a block is
+	// marked AND the caret sits within it (or on either edge). The gate is
+	// enforced up front (promptBlockFromFile) so the filename is never even
+	// asked for on an invalid target; the replace itself (blockFromFile) is
+	// wrapped like the other block mutations — one grouped undo, block left
+	// marked around the streamed-in text.
+	ps.RegisterCommand("block_from_file", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.promptBlockFromFile())
+	})
+
 	ps.RegisterCommand("buffer_insert_file", func(ctx *pawscript.Context) pawscript.Result {
 		e.PromptMgr.PromptForFilename("Insert file", "", func(accepted bool, _, filename string) {
 			if accepted && filename != "" {
@@ -5061,6 +5072,100 @@ func (e *Editor) insertFile(filename string) bool {
 	w.Buffer.EndUserCommand()
 	w.TrackEdit()
 	e.lastEditKill = false // an insert, not a kill: breaks delete accumulation
+	return true
+}
+
+// promptBlockFromFile gates block_from_file: there must be a marked block and
+// the caret must lie within it (or on either edge). Only when that holds does
+// it prompt for the file to stream in over the block's contents. The caret gate
+// is the same inclusive span block_move refuses to move a block into — demanded
+// here rather than forbidden. Prompts are modal (focus is on the prompt window),
+// so the block and caret cannot shift before the callback fires; blockFromFile
+// re-reads the range defensively anyway.
+func (e *Editor) promptBlockFromFile() bool {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Buffer == nil {
+		e.ShowWarning("No active buffer")
+		return false
+	}
+	startLine, startRune, endLine, endRune, exists := w.Buffer.GetBlockRange()
+	if !exists {
+		e.ShowWarning("No block marked")
+		return false
+	}
+	pos := w.CursorPos()
+	within := (pos.Line > startLine || (pos.Line == startLine && pos.Rune >= startRune)) &&
+		(pos.Line < endLine || (pos.Line == endLine && pos.Rune <= endRune))
+	if !within {
+		e.ShowWarning("Caret must be within the block")
+		return false
+	}
+
+	e.PromptMgr.PromptForFilename("Stream file into block", "", func(accepted bool, _, filename string) {
+		if accepted && filename != "" {
+			e.blockFromFile(filename)
+		}
+		e.RequestRender()
+	})
+	return true
+}
+
+// blockFromFile replaces the marked block's contents with the contents of
+// filename, streamed in at the block's location, and leaves the newly inserted
+// text marked as the block (so it is immediately ready for another block op).
+// Line endings are normalized to '\n' like paste/insert. The delete, insert,
+// and re-mark are grouped into one user command so a single undo reverses the
+// whole replace. The caller (promptBlockFromFile) has already verified there is
+// a block and the caret is within it.
+func (e *Editor) blockFromFile(filename string) bool {
+	if e.contentLocked() {
+		// The buffer's owning window is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	startLine, startRune, endLine, endRune, exists := w.Buffer.GetBlockRange()
+	if !exists {
+		e.ShowWarning("No block marked")
+		return false
+	}
+
+	data, err := e.FS.ReadFile(filename)
+	if err != nil {
+		e.ShowError("Failed to read file: " + err.Error())
+		return false
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	// Delete the old block content, stream the file in at its place, and mark
+	// the inserted text as the new block. All one undo step. The old markers
+	// collapse to the deletion point on delete; we clear them and re-set both to
+	// absolute positions around the inserted text, so the block surrounds the
+	// stream regardless of insert gravity. insertText advances the window caret
+	// to the end of what it inserts, which is the block's new end.
+	w.Buffer.BeginUserCommand("block_from_file")
+	w.Buffer.DeleteTextRange(startLine, startRune, endLine, endRune)
+	w.Buffer.ClearBlockMarks()
+	w.SetCursorPos(window.Position{Line: startLine, Rune: startRune})
+	if text != "" {
+		e.insertText(text)
+	}
+	endPos := w.CursorPos()
+	w.Buffer.SetMark("_block_begin", startLine, startRune)
+	w.Buffer.SetMark("_block_end", endPos.Line, endPos.Rune)
+	w.Buffer.EndUserCommand()
+
+	w.TrackEdit()
+	e.lastEditKill = false // an insert, not a kill: breaks delete accumulation
+
+	e.clampCursorToBuffer(w)
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	e.ShowNotification("Block replaced from " + filename)
 	return true
 }
 
