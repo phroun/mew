@@ -693,14 +693,21 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
 		}
 		compositeInto(out, slice, s0-lo, 0)
-		if actx.rt0 >= 0 && actx.lt0 >= 0 {
-			// One-time geometry report for the first both-sides-joining cell:
-			// the exact runtime numbers behind the slice, plus whether the
-			// finished mask's ink really reaches both cell edges.
+		if actx.rt0 >= 0 || actx.lt0 >= 0 {
+			// One-time geometry report for the first joining cell: every term
+			// of the sizing equation at RUNTIME, plus whether the finished
+			// mask's ink really reaches the joining cell edges.
 			arabicGeomOnce.Do(func() {
+				cwU, chU := t.cellDims()
+				tf := t.effTermFont()
+				tfSize := 0
+				if tf != nil {
+					tfSize = tf.Size
+				}
 				fmt.Fprintf(os.Stderr,
-					"kittytk: arabic geom: box=%dx%d ppu=%.3f pt=%d window=%q rawW=%d keep=[%d,%d) letter-center=%.1f slice=[%d,%d) dstX=%d edgeInk L=%v R=%v\n",
-					boxWPx, boxHPx, ppu, f.Size, str, raw.Rect.Dx(), k0, k1, center, s0, s1, s0-lo,
+					"kittytk: arabic geom: box=%dx%d ppu=%.3f pt=%d cell=%vx%v units termFontSize=%d window=%q rawW=%d rawH=%d keep=[%d,%d) center=%.1f slice=[%d,%d) dstX=%d joinL=%v joinR=%v edgeInk L=%v R=%v\n",
+					boxWPx, boxHPx, ppu, f.Size, cwU, chU, tfSize, str, raw.Rect.Dx(), raw.Rect.Dy(), k0, k1, center, s0, s1, s0-lo,
+					actx.lt0 >= 0, actx.rt0 >= 0,
 					colInked(out, 0), colInked(out, boxWPx-1))
 			})
 		}
