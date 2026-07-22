@@ -278,6 +278,13 @@ type Editor struct {
 	// origin, end following the pointer). A shift+click arms it pre-begun
 	// with the ORIGINAL caret position as the origin.
 	dragSel dragSelState
+	// Drag-edge autoscroll (mouse.go): while a drag selection holds the
+	// pointer beyond (or at) the window's edges, a ticker scrolls the view —
+	// after a short delay, at a speed from the overshoot — and keeps
+	// extending the selection. dragScrollPending throttles the ticker to one
+	// posted tick in flight.
+	dragScroll        dragScrollState
+	dragScrollPending atomic.Bool
 	// readOnlySent/readOnlyPushed: the last focused-window read-only state
 	// pushed through Config.EditState (see notifyEditState), and whether an
 	// initial push has happened.

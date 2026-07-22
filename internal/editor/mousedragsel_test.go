@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/phroun/mew/internal/window"
 )
@@ -201,6 +202,105 @@ func TestMousePressBelowDocSelectsFromEOF(t *testing.T) {
 	sl, sr, el, er, ok := w.Buffer.GetBlockRange()
 	if !ok || sl != 1 || sr != 1 || el != 3 || er != 0 {
 		t.Fatalf("normalized range: (%d,%d)-(%d,%d) ok=%v", sl, sr, el, er, ok)
+	}
+}
+
+// Drag-edge autoscroll: with the pointer held past the bottom edge, ticks
+// scroll the view (speed from overshoot, after the delay gate) and keep
+// extending the selection; horizontal ticks ride the scroll_right command.
+func TestMouseDragAutoScrollTick(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&b, "line%02d-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", i)
+	}
+	e, w, send := dragHarness(t, b.String())
+
+	// Start a drag and park the pointer below the window's bottom edge.
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	belowY := w.ContentY + w.ContentHeight + 2
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, belowY))
+	if e.dragScroll.vert != 2 {
+		t.Fatalf("overshoot rows: %d, want 2", e.dragScroll.vert)
+	}
+
+	// Before the delay elapses, a tick does nothing (accident guard).
+	topBefore := w.ViewState.ViewOffsetY
+	e.dragScrollTick()
+	if w.ViewState.ViewOffsetY != topBefore {
+		t.Fatal("a tick inside the delay window must not scroll")
+	}
+
+	// Age the engagement past the delay: ticks now scroll by the overshoot
+	// and extend the selection to the newly revealed rows.
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
+	e.dragScrollTick()
+	if got := w.ViewState.ViewOffsetY; got != topBefore+2 {
+		t.Fatalf("tick should scroll by the overshoot: top %d, want %d", got, topBefore+2)
+	}
+	endL, _ := mark(t, w, "_block_end")
+	if endL <= 0 {
+		t.Fatalf("tick should extend the selection downward: end line %d", endL)
+	}
+	e.dragScrollTick()
+	if got := w.ViewState.ViewOffsetY; got != topBefore+4 {
+		t.Fatalf("second tick should keep scrolling: top %d, want %d", got, topBefore+4)
+	}
+
+	// Park the pointer ON the far (right) column of a long line: horizontal
+	// ticks ride scroll_right (8-column steps, the keyboard's own increment).
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+2))
+	if e.dragScroll.horiz == 0 {
+		t.Fatal("far-column park should engage horizontal overshoot")
+	}
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
+	xBefore := w.ViewState.ViewOffsetX
+	e.dragScrollTick()
+	if got := w.ViewState.ViewOffsetX; got != xBefore+8 {
+		t.Fatalf("horizontal tick should step by scroll_right's 8: %d, want %d", got, xBefore+8)
+	}
+
+	send("MouseLeftRelease")
+	if e.dragScroll.stop != nil || e.dragScroll.vert != 0 {
+		t.Fatal("release must stop and clear the autoscroll state")
+	}
+}
+
+// M-/alt+left-click stands in for a right-click (a terminal may never
+// deliver the real right button), and right-click works on the blank area
+// below the document too — same as within it.
+func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
+	e, w, send := dragHarness(t, "hello\nworld\n")
+	var popped int
+	e.Config.ShowContextMenu = func(col, row int) { popped++ }
+
+	// Alt+left-click in the content area pops the menu and moves no caret.
+	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("M-MouseLeftPress")
+	if popped != 1 {
+		t.Fatalf("alt+click should pop the context menu (popped=%d)", popped)
+	}
+	if pos := w.CursorPos(); pos.Line != 1 || pos.Rune != 2 {
+		t.Fatalf("alt+click must not move the caret: %+v", pos)
+	}
+
+	// Right-click below the document's last line pops too.
+	lineCount := w.Buffer.GetLineCount()
+	by := w.ContentY + 1 + lineCount + 1
+	send(fmt.Sprintf("Mouse@%d,%d", x, by))
+	send("MouseRightPress")
+	if popped != 2 {
+		t.Fatalf("below-doc right-click should pop the menu (popped=%d)", popped)
+	}
+
+	// And alt+click below the doc as well.
+	send(fmt.Sprintf("Mouse@%d,%d", x, by))
+	send("M-MouseLeftPress")
+	if popped != 3 {
+		t.Fatalf("below-doc alt+click should pop the menu (popped=%d)", popped)
 	}
 }
 

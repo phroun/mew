@@ -2315,10 +2315,50 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 	t.showTermItemsMenu(core.UnitPoint{X: event.X, Y: event.Y}, t.contextMenuItems())
 }
 
+// termMenuLayout is the popup menu's measurement: fixed pixel-ish rows on a
+// graphical desktop (the established TextInput/PurfecTerm look), CELL
+// metrics on the text desktop — one full character row per item, cell-
+// aligned width — following the same measurement approach as the Menu
+// dropdowns and the ComboBox popup.
+type termMenuLayout struct {
+	rowH, sepH, width, padTop, indent core.Unit
+	graphical                         bool
+}
+
+func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
+	if core.FindGraphicalFrames(t) {
+		return termMenuLayout{rowH: gfxMenuItemHeight, sepH: 4, width: gfxMenuWidth, padTop: 2, indent: 8, graphical: true}
+	}
+	// Popups are desktop-surface overlays: like the ComboBox popup, measure
+	// in the SCREEN's denomination (the popup controller's cell metrics),
+	// not this trinket's possibly re-denominated interior.
+	m := core.DefaultCellMetrics()
+	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
+		if s := sm.ScreenCellMetrics(); s.CellWidth > 0 && s.CellHeight > 0 {
+			m = s
+		}
+	}
+	cols := 12
+	for _, it := range items {
+		if n := len([]rune(it.label)) + 6; n > cols { // gutter + checkmark room
+			cols = n
+		}
+	}
+	return termMenuLayout{
+		rowH:   m.CellHeight,
+		sepH:   m.CellHeight, // a separator needs a full character row
+		width:  core.Unit(cols) * m.CellWidth,
+		indent: m.CellWidth, // one cell in
+		// no sub-cell padding: rows land exactly on character rows
+	}
+}
+
 // showTermItemsMenu opens a context menu of the given items as a popup
 // overlay anchored at a LOCAL point of this trinket — the shared
 // presentation behind the terminal's right-click menu, reused by the
-// mew-backed Editor for its own (mew-driven) context menu.
+// mew-backed Editor for its own (mew-driven) context menu. It works on
+// both desktops: the popup overlay machinery is backend-neutral, and the
+// layout is measured per backend (termMenuLayoutFor).
 func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuItem) {
 	pc := t.PopupController()
 	if pc == nil {
@@ -2327,32 +2367,33 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 	if pc == nil {
 		return
 	}
+	lay := t.termMenuLayoutFor(pc, items)
 	height := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
-			height += 4
+			height += lay.sepH
 		} else {
-			height += gfxMenuItemHeight
+			height += lay.rowH
 		}
 	}
-	height += 4 // padding
+	height += 2 * lay.padTop
 	at := pc.MapToScreen(t.Self(), local)
 	screen := pc.ScreenBounds()
-	if at.X+gfxMenuWidth > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - gfxMenuWidth
+	if at.X+lay.width > screen.X+screen.Width {
+		at.X = screen.X + screen.Width - lay.width
 	}
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: gfxMenuWidth, Height: height}
+	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
 	t.gfx.menuHover = -1
 
 	itemAt := func(y core.Unit) int {
-		pos := core.Unit(2)
+		pos := lay.padTop
 		for i, it := range items {
-			h := gfxMenuItemHeight
+			h := lay.rowH
 			if it.separator {
-				h = 4
+				h = lay.sepH
 			}
 			if y >= pos && y < pos+h {
 				if it.separator {
@@ -2372,18 +2413,24 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
 			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
 			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
-			pos := menuBounds.Y + 2
+			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {
-					p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
-						style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
-					pos += 4
+					if lay.graphical {
+						p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
+							style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+					} else {
+						// Text cells: a full dim rule row.
+						p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.sepH}, '─',
+							bg.WithFg(style.RGB(160, 160, 160)))
+					}
+					pos += lay.sepH
 					continue
 				}
 				st := bg
 				if i == t.gfx.menuHover {
 					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
+					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
 				}
 				label := it.label
 				if it.checked != nil {
@@ -2393,8 +2440,8 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 						label = "  " + label
 					}
 				}
-				p.DrawText(menuBounds.X+8, pos, label, st.WithBg(style.ColorTransparent), nil)
-				pos += gfxMenuItemHeight
+				p.DrawText(menuBounds.X+lay.indent, pos, label, st.WithBg(style.ColorTransparent), nil)
+				pos += lay.rowH
 			}
 		},
 		HandleMouseMove: func(event core.MouseMoveEvent) bool {

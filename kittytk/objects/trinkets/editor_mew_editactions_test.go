@@ -2,7 +2,11 @@
 
 package trinkets
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/phroun/kittytk/core"
+)
 
 // The mew-backed Editor satisfies the desktop's Edit-menu standard
 // (editActor) with mew semantics, OVERRIDING the embedded PurfecTerm's
@@ -45,6 +49,53 @@ func TestMewEditorEditActions(t *testing.T) {
 	e.Copy()
 	e.Paste()
 	e.SelectAll()
+}
+
+// mewMenuPopupController captures RegisterPopup requests, standing in for
+// the window manager on ANY backend (text or graphical) — the popup overlay
+// machinery is backend-neutral, which is what makes the mew context menu
+// work on the TUI desktop too.
+type mewMenuPopupController struct {
+	registered []*core.PopupRequest
+}
+
+func (r *mewMenuPopupController) RegisterPopup(req *core.PopupRequest) {
+	r.registered = append(r.registered, req)
+}
+func (r *mewMenuPopupController) UnregisterPopup(string) {}
+func (r *mewMenuPopupController) MapToScreen(_ core.Trinket, p core.UnitPoint) core.UnitPoint {
+	return p
+}
+func (r *mewMenuPopupController) ScreenBounds() core.UnitRect {
+	return core.UnitRect{Width: 10000, Height: 10000}
+}
+
+// The context menu registers through the backend-neutral popup controller,
+// anchored by cellToLocal under TEXT cell metrics — i.e. it works on the
+// TUI desktop, where classic PurfecTerm deliberately pops no menu of its
+// own. (No graphical measurer is installed in this test, so cellDims
+// resolves to the text-mode cell metrics.)
+func TestMewEditorContextMenuOnTextBackend(t *testing.T) {
+	e := NewEditor()
+	defer e.Close()
+
+	pc := &mewMenuPopupController{}
+	e.SetPopupController(pc)
+
+	e.showMewContextMenu(5, 3)
+	if len(pc.registered) != 1 {
+		t.Fatalf("expected one popup registration, got %d", len(pc.registered))
+	}
+	req := pc.registered[0]
+	if req.Paint == nil || req.HandleMousePress == nil {
+		t.Fatal("popup must carry paint and press handlers")
+	}
+	// cellToLocal under text metrics: cell (5,3) -> units ((5-1)*cw, (3-1)*ch).
+	cw, ch := e.cellDims()
+	if req.Bounds.X != core.Unit(4)*cw || req.Bounds.Y != core.Unit(2)*ch {
+		t.Fatalf("menu anchored at (%d,%d), want (%d,%d) for cell (5,3) with cell %dx%d",
+			req.Bounds.X, req.Bounds.Y, core.Unit(4)*cw, core.Unit(2)*ch, cw, ch)
+	}
 }
 
 // The right-click menu mirrors the TextInput control's menu: the same
