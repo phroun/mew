@@ -814,6 +814,11 @@ func translateKey(sym sdl2.Keysym) string {
 				name = "^^"
 			case shift && ch == '-':
 				name = "^_"
+			case ch == '/':
+				name = "^_" // Ctrl+/ collapses onto ^_ (byte 0x1F), the terminal
+				// convention (xterm), so Ctrl+/ reaches a terminal app instead of
+				// being dropped. Without this the unshifted-punctuation path names
+				// it "C-/", which purfecterm's key encoder has no byte for.
 			case shift && ch == '2':
 				name = "^@"
 			}

@@ -393,10 +393,10 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 	}
 	script := fmt.Sprintf(`
 bar=new menubar children={%s
-	new menu caption="&Edit" wellknown="edit" children={
+	new menu caption="Edit" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
 	}%s
-	new menu caption="&Help" wellknown="help" children={
+	new menu caption="Help" wellknown="help" children={
 		new menuitem caption="&About" action=mew.help.about
 	}
 }
