@@ -119,6 +119,91 @@ func TestMouseShiftClickExtends(t *testing.T) {
 	send("MouseLeftRelease")
 }
 
+// A held drag is CAPTURED: leaving the content area keeps adjusting the
+// selection. The gutter resolves to the START of the row's line (drag into
+// the line numbers to pin the selection to line beginnings), rows past the
+// text clamp to the nearest text row, and the far edge clamps to the last
+// visible cell (line end for a line that ends in view).
+func TestMouseDragCapturedOutsideContent(t *testing.T) {
+	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n")
+	_ = e
+
+	// Press mid-line-0, then drag into the GUTTER on row 1: the end pins to
+	// the beginning of line 1.
+	x, y := screenAt(w, 0, 2)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	_, gy := screenAt(w, 1, 0)
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 1, gy)) // x=1: over the line numbers
+	if l, r := mark(t, w, "_block_end"); l != 1 || r != 0 {
+		t.Fatalf("gutter drag should pin to line start: end (%d,%d), want (1,0)", l, r)
+	}
+
+	// Drag BELOW the last text row: clamps to the last line (still tracking).
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, w.ContentY+w.ContentHeight+3))
+	if l, _ := mark(t, w, "_block_end"); l != 3 {
+		t.Fatalf("below-window drag should clamp to the last line: end line %d, want 3", l)
+	}
+
+	// Drag ABOVE the window (over the modebar): clamps to the first row.
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 1, 0))
+	if l, r := mark(t, w, "_block_end"); l != 0 || r != 0 {
+		t.Fatalf("above-window gutter drag should clamp to (0,0): end (%d,%d)", l, r)
+	}
+
+	// Drag far past the RIGHT edge on row 2: clamps to that line's end.
+	_, ry := screenAt(w, 2, 0)
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 500, ry))
+	if l, r := mark(t, w, "_block_end"); l != 2 || r != 4 {
+		t.Fatalf("past-right drag should clamp to line end: end (%d,%d), want (2,4)", l, r)
+	}
+	send("MouseLeftRelease")
+
+	// The begin anchor never moved through all of it.
+	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 2 {
+		t.Fatalf("_block_begin drifted: (%d,%d), want (0,2)", l, r)
+	}
+}
+
+// A press on the blank area BELOW the document's last line parks the caret
+// at the end of the document, and dragging upward from there selects the
+// document's tail.
+func TestMousePressBelowDocSelectsFromEOF(t *testing.T) {
+	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n")
+	_ = e
+
+	// The doc shows 4 lines (3 text + trailing empty); the window is taller.
+	// Click two rows below the last line, still inside the content area.
+	lineCount := w.Buffer.GetLineCount()
+	x := w.ContentX + 3
+	y := w.ContentY + 1 + lineCount + 1 // a blank row below the text
+	if y > w.ContentY+w.ContentHeight {
+		t.Fatalf("test setup: blank row %d outside the window", y)
+	}
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	// EOF: the trailing empty line (index 3), column 0.
+	if pos := w.CursorPos(); pos.Line != 3 || pos.Rune != 0 {
+		t.Fatalf("below-doc click should park at EOF: %+v", pos)
+	}
+
+	// Drag upward to (1,1): the tail of the document is selected.
+	dx, dy := screenAt(w, 1, 1)
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx, dy))
+	send("MouseLeftRelease")
+	if l, r := mark(t, w, "_block_begin"); l != 3 || r != 0 {
+		t.Fatalf("_block_begin should anchor at EOF: (%d,%d), want (3,0)", l, r)
+	}
+	if l, r := mark(t, w, "_block_end"); l != 1 || r != 1 {
+		t.Fatalf("_block_end after upward drag: (%d,%d), want (1,1)", l, r)
+	}
+	// The normalized range reads bottom-up correctly.
+	sl, sr, el, er, ok := w.Buffer.GetBlockRange()
+	if !ok || sl != 1 || sr != 1 || el != 3 || er != 0 {
+		t.Fatalf("normalized range: (%d,%d)-(%d,%d) ok=%v", sl, sr, el, er, ok)
+	}
+}
+
 // Block provenance decides whether a plain click dissolves the block: a
 // plain mouse DRAG makes a transient block (mouseBlock on -> the next plain
 // click deletes the marks), while keyboard-set marks and shift+click

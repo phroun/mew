@@ -386,6 +386,12 @@ func displayToDoc(dispToDoc []int, idx int) int {
 // tracks the button.
 func (e *Editor) mousePress(x, y int, shift bool) {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
+	if !ok {
+		// A press on the BLANK AREA below the document's last line (still
+		// inside the window's content area) means the END of the document:
+		// click below the doc and drag upward to select its tail.
+		w, docLine, runePos, ok = e.mouseHitBelowText(x, y)
+	}
 	if !ok || e.WindowManager.GetFocusedWindow() != w {
 		return
 	}
@@ -475,15 +481,25 @@ func (e *Editor) mouseDrag(x, y int) {
 	}
 }
 
-// dragSelUpdate extends the drag block-selection to the cell under the
-// pointer. The first drag onto a cell that differs from the press origin
+// dragSelUpdate extends the drag block-selection to the position under the
+// pointer. The first drag onto a position that differs from the press origin
 // places _block_begin at the origin (a click that never leaves its cell
-// marks nothing); after that, every NEW cell re-places _block_end there and
-// the caret follows. Drags outside the content area (or over another
-// window) are ignored — the selection resumes when the pointer returns.
+// marks nothing); after that, every NEW position re-places _block_end there
+// and the caret follows.
+//
+// The drag is CAPTURED: while the button is held, positions outside the
+// content area still resolve instead of being ignored (dragSelResolve) — the
+// gutter/line-number side means the START of that row's line, so selecting
+// exactly to line beginnings just means dragging into the gutter, no
+// precision required; rows above/below the content clamp to the nearest
+// text row, and columns past the far edge clamp to the last visible cell.
 func (e *Editor) dragSelUpdate(x, y int) {
-	w, docLine, runePos, ok := e.mouseHit(x, y)
-	if !ok || w.ID != e.dragSel.winID || e.WindowManager.GetFocusedWindow() != w {
+	w := e.WindowManager.GetFocusedWindow()
+	if w == nil || w.Buffer == nil || w.ID != e.dragSel.winID {
+		return
+	}
+	docLine, runePos, ok := e.dragSelResolve(w, x, y)
+	if !ok {
 		return
 	}
 	if !e.dragSel.begun {
@@ -506,6 +522,89 @@ func (e *Editor) dragSelUpdate(x, y int) {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	e.RequestRender()
+}
+
+// mouseHitBelowText resolves a click that mouseHit rejected when it landed
+// on the blank rows BELOW the document's last line, inside a window's
+// content area (content columns only — the gutter stays inert, as on text
+// rows). It answers the END of the document (last line, end of line), so a
+// click below the doc parks the caret at EOF — and a drag upward from there
+// selects the document's tail.
+func (e *Editor) mouseHitBelowText(x, y int) (w *window.Window, docLine, runePos int, ok bool) {
+	w = e.windowAtRow(y)
+	if w == nil || w.Buffer == nil {
+		return nil, 0, 0, false
+	}
+	lineCount := w.Buffer.GetLineCount()
+	row := w.ViewState.ViewOffsetY + (y - 1 - w.ContentY)
+	if row < lineCount || lineCount < 1 {
+		// Not a below-the-text row: this was some other rejection (gutter,
+		// margin) — stay inert.
+		return nil, 0, 0, false
+	}
+	if x < w.ContentX+1 || x > w.ContentX+w.ContentWidth {
+		return nil, 0, 0, false
+	}
+	docLine = lineCount - 1
+	runePos = len([]rune(strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")))
+	return w, docLine, runePos, true
+}
+
+// dragSelResolve resolves a held-drag pointer position to a document
+// position in w, CLAMPING instead of rejecting (the drag owns the pointer):
+//
+//   - rows above/below the window's text clamp to the nearest row that
+//     holds a visible line;
+//   - the gutter side (line numbers — left in LTR, right in RTL) resolves
+//     to rune 0 of the row's line, so a drag into the gutter pins the
+//     selection to the line's beginning;
+//   - the far side clamps to the last content column (the rightmost —
+//     in RTL leftmost — visible cell, or the line end when the line ends
+//     inside the view).
+//
+// ok is false only when the window shows no text at all or the clamped
+// position still fails to resolve (a double-width edge case).
+func (e *Editor) dragSelResolve(w *window.Window, x, y int) (docLine, runePos int, ok bool) {
+	lineCount := w.Buffer.GetLineCount()
+	visText := lineCount - w.ViewState.ViewOffsetY
+	if visText > w.ContentHeight {
+		visText = w.ContentHeight
+	}
+	if visText < 1 {
+		return 0, 0, false
+	}
+	top := w.ContentY + 1 // 1-based first content row
+	bottom := w.ContentY + visText
+	if y < top {
+		y = top
+	}
+	if y > bottom {
+		y = bottom
+	}
+	docLine = w.ViewState.ViewOffsetY + (y - 1 - w.ContentY)
+	if docLine < 0 {
+		docLine = 0
+	}
+	if docLine >= lineCount {
+		docLine = lineCount - 1
+	}
+
+	first := w.ContentX + 1 // 1-based first content column
+	last := w.ContentX + w.ContentWidth
+	if (!e.winRTL(w) && x < first) || (e.winRTL(w) && x > last) {
+		// Over the gutter: the START of this row's line.
+		return docLine, 0, true
+	}
+	if x < first {
+		x = first
+	}
+	if x > last {
+		x = last
+	}
+	if hw, hl, hr, hok := e.mouseHit(x, y); hok && hw == w {
+		return hl, hr, true
+	}
+	return 0, 0, false
 }
 
 // mouseRelease: releasing ON the captured button follows the link, exactly
