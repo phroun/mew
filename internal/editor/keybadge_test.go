@@ -6,6 +6,9 @@ import (
 	"github.com/phroun/mew/internal/keys"
 )
 
+// keysRefAction extracts and DECODES the action from a keys#... anchor: "."
+// decodes to "|" and "," to "&", because a dokuwiki anchor cannot carry those
+// literally (a fallback-chain command name contains "|").
 func TestKeysRefAction(t *testing.T) {
 	cases := []struct {
 		target string
@@ -14,6 +17,8 @@ func TestKeysRefAction(t *testing.T) {
 	}{
 		{"keys#go_page_prior", "go_page_prior", true},
 		{"keys#buffer_undo", "buffer_undo", true},
+		{"keys#buffer_redo.buffer_undo", "buffer_redo|buffer_undo", true}, // . -> |
+		{"keys#a,b", "a&b", true},                                         // , -> &
 		{"keys# spaced ", "spaced", true},
 		{"keys#", "", false},
 		{"help:keys#x", "", false}, // must be the bare "keys" page
@@ -27,20 +32,6 @@ func TestKeysRefAction(t *testing.T) {
 	}
 }
 
-func TestKludgeKeyText(t *testing.T) {
-	for in, want := range map[string]string{
-		"^P":    "^P",
-		"|":     ".",
-		"&":     ",",
-		"^|":    "^.",
-		"a|b&c": "a.b,c",
-	} {
-		if got := kludgeKeyText(in); got != want {
-			t.Errorf("kludgeKeyText(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestKeyBindingDisplay(t *testing.T) {
 	e := &Editor{}
 	e.KeyProcessor = keys.NewSequenceProcessor(nil)
@@ -48,8 +39,7 @@ func TestKeyBindingDisplay(t *testing.T) {
 		"^/": "buffer_undo",
 		"^_": "buffer_undo",
 		"^P": "go_page_prior",
-		"^Z": "buffer_redo|buffer_undo", // a fallback chain, NOT a match for buffer_undo
-		"|":  "some_action",             // a literal-pipe key binding
+		"^Z": "buffer_redo|buffer_undo", // a fallback chain
 	})
 
 	cases := []struct {
@@ -61,12 +51,14 @@ func TestKeyBindingDisplay(t *testing.T) {
 		{"buffer_undo", "^Q", "^/, ^_"},
 		// Single binding, no preferred.
 		{"go_page_prior", "", "^P"},
-		// Chain command (^Z) must NOT count as a buffer_undo binding.
+		// The chain's PRIMARY answers ^Z...
 		{"buffer_redo", "", "^Z"},
+		// ...as does the full decoded chain command.
+		{"buffer_redo|buffer_undo", "", "^Z"},
+		// buffer_undo is ^Z's FALLBACK, not its purpose -> ^Z excluded.
+		{"buffer_undo", "", "^/, ^_"},
 		// Unbound action -> falls back to the documented alias.
 		{"nonexistent", "^X", "^X"},
-		// Literal-pipe key binding is kludged in the display.
-		{"some_action", "", "."},
 	}
 	for _, c := range cases {
 		if got := e.keyBindingDisplay(c.action, c.preferred); got != c.want {

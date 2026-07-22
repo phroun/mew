@@ -923,10 +923,18 @@ func (e *Editor) displayCaretLine(w *window.Window, line string, runePos int) (s
 // target ("keys#go_page_prior" -> "go_page_prior"), or reports false. This is
 // the help system's live-keybinding reference: a plain dokuwiki internal link
 // on the web (to the "keys" page anchor), a live key badge in mew.
+//
+// A dokuwiki anchor cannot contain "|" (it would separate the target from the
+// title) or "&" (entity trouble), yet a fallback-chain command name literally
+// contains "|" (e.g. "buffer_redo|buffer_undo"). So the author writes "." where
+// a "|" belongs and "," where an "&" belongs; we decode them back here before
+// matching against the keymap.
 func keysRefAction(target string) (string, bool) {
 	const prefix = "keys#"
 	if strings.HasPrefix(target, prefix) {
 		if a := strings.TrimSpace(target[len(prefix):]); a != "" {
+			a = strings.ReplaceAll(a, ".", "|")
+			a = strings.ReplaceAll(a, ",", "&")
 			return a, true
 		}
 	}
@@ -939,18 +947,19 @@ func keysRefAction(target string) (string, bool) {
 // is run through kludgeKeyText for dokuwiki-display safety.
 func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	if e.KeyProcessor == nil {
-		return kludgeKeyText(preferred)
+		return preferred
 	}
 	var matches []string
 	for seq, cmd := range e.KeyProcessor.GetAllMappings() {
-		// Match the command, or the PRIMARY of a "primary|fallback" chain — so
-		// ^Z (buffer_redo|buffer_undo) answers a keys#buffer_redo reference but
-		// not a keys#buffer_undo one (that is the fallback, not what ^Z is for).
+		// Match the whole command, or the PRIMARY of a "primary|fallback" chain
+		// — so keys#buffer_redo.buffer_undo (the full chain) and keys#buffer_redo
+		// (the primary alone) both answer ^Z, while keys#buffer_undo answers only
+		// ^/ and ^_ (buffer_undo is ^Z's fallback, not what ^Z is for).
 		primary := cmd
 		if i := strings.IndexByte(cmd, '|'); i >= 0 {
 			primary = cmd[:i]
 		}
-		if primary == action {
+		if cmd == action || primary == action {
 			matches = append(matches, seq)
 		}
 	}
@@ -958,27 +967,17 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	if preferred != "" {
 		for _, m := range matches {
 			if m == preferred {
-				return kludgeKeyText(preferred)
+				return preferred
 			}
 		}
 	}
 	if len(matches) > 0 {
 		sort.Strings(matches) // deterministic
-		return kludgeKeyText(strings.Join(matches, ", "))
+		return strings.Join(matches, ", ")
 	}
 	// Unbound: show the documented alias, or the bare action name.
 	if preferred != "" {
-		return kludgeKeyText(preferred)
+		return preferred
 	}
-	return kludgeKeyText(action)
-}
-
-// kludgeKeyText swaps the two characters that are structural in the dokuwiki
-// display pipeline for safe stand-ins inside a key badge: "|" (table cell /
-// fallback separator) -> "." and "&" -> ",". A binding to the literal "|" or
-// "&" key would otherwise disturb the surrounding markup.
-func kludgeKeyText(s string) string {
-	s = strings.ReplaceAll(s, "|", ".")
-	s = strings.ReplaceAll(s, "&", ",")
-	return s
+	return action
 }
