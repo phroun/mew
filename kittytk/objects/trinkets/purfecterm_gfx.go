@@ -667,10 +667,16 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 		// height-to-box treatment.
 		lo := int(math.Round(center - float64(boxWPx)/2))
 		s0, s1 := lo, lo+boxWPx
-		if s0 < k0 {
+		// A JOINING side is never cropped short of the cell edge: the slice
+		// keeps the full half-cell of the shaped window on that side — the
+		// tatweel run, and past it the junction toward the neighbour letter —
+		// whatever ink is there, so the cell's ink always reaches the edge.
+		// Only a side with NO join is trimmed back to the keep range, so an
+		// isolated or final edge keeps its natural gap.
+		if actx.lt0 < 0 && s0 < k0 {
 			s0 = k0
 		}
-		if s1 > k1 {
+		if actx.rt0 < 0 && s1 > k1 {
 			s1 = k1
 		}
 		slice := cropCols(raw, s0, s1)
