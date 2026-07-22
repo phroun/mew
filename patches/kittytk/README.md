@@ -66,9 +66,16 @@ NotoSerifCJKsc-Regular.otf} text/fonts/
     GOWORK=off go build ./... && GOWORK=off go test ./...
 
 The 12 font binaries (~43 MB) are shipped as a copy step rather than inflating
-this patch; their bytes live in `mew/kittytk/text/fonts/`. For a single
-self-contained artifact instead, run in the patched tree:
+this patch; their bytes live in `mew/kittytk/text/fonts/`. Per-file provenance
+— exact versions, sha256 hashes, and verified external source URLs (all on
+raw.githubusercontent.com) — is in `FONTS.md`. For a single self-contained
+artifact instead, run in the patched tree:
 `git add -A && git diff --staged --binary > full.patch`.
+
+Note: the patch's `go.mod`/`go.sum` carry NO `github.com/phroun/mew`
+requirement (the vendored tree needs it only for the build-tagged
+`editor_mew.go`, which this patch excludes; the upstream module graph stays
+mew-free — verified zero references after apply).
 
 ## Deliberately excluded (the mew boundary)
 
