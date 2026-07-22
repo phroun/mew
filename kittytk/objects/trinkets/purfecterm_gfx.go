@@ -2044,6 +2044,13 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	return true
 }
 
+// Horizontal wheel buttons continue purfecterm's SGR scroll series
+// (MouseScrollUp=64, MouseScrollDown=65): left=66, right=67, matching xterm.
+const (
+	mouseScrollLeftBtn  = 66
+	mouseScrollRightBtn = 67
+)
+
 func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	buf := t.terminal.Buffer()
 	hasShift := event.Modifiers&core.ShiftModifier != 0
@@ -2056,6 +2063,15 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
 		} else if event.DeltaY > 0 {
 			t.sendMouseEventGfx(purfecterm.MouseScrollDown|mods, cellX, cellY, true)
+		}
+		// Horizontal wheel: SGR buttons 66/67 continue purfecterm's scroll
+		// series (Up=64, Down=65). DeltaX>0 = scroll right. (An app whose input
+		// layer decodes 66/67 as left/right acts on it; older decoders that only
+		// know 64/65 ignore the extra buttons rather than mis-scroll vertically.)
+		if event.DeltaX < 0 {
+			t.sendMouseEventGfx(mouseScrollLeftBtn|mods, cellX, cellY, true)
+		} else if event.DeltaX > 0 {
+			t.sendMouseEventGfx(mouseScrollRightBtn|mods, cellX, cellY, true)
 		}
 		return true
 	}

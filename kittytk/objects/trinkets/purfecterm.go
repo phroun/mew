@@ -915,6 +915,11 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		} else if event.DeltaY > 0 {
 			t.sendMouseReport(purfecterm.MouseScrollDown, cellX, cellY, true, enc)
 		}
+		if event.DeltaX < 0 {
+			t.sendMouseReport(mouseScrollLeftBtn, cellX, cellY, true, enc)
+		} else if event.DeltaX > 0 {
+			t.sendMouseReport(mouseScrollRightBtn, cellX, cellY, true, enc)
+		}
 		t.Update()
 		return true
 	}
@@ -927,6 +932,11 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 		t.terminal.HandleKeyString("MouseScrollUp")
 	} else if event.DeltaY > 0 {
 		t.terminal.HandleKeyString("MouseScrollDown")
+	}
+	if event.DeltaX < 0 {
+		t.terminal.HandleKeyString("MouseScrollLeft")
+	} else if event.DeltaX > 0 {
+		t.terminal.HandleKeyString("MouseScrollRight")
 	}
 	t.Update()
 	return true
