@@ -431,14 +431,20 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				}
 				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
 				if !suppress && !t.renderCustomGlyphCell(painter, buf, &cell, cellX, cellY, cellW, cellH, lineAttr, ppu, yOffPx) {
-					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
+					// The app may emit PRESENTATION forms (mew pre-shapes
+					// Arabic); joining and the shaping window are computed
+					// from the BASE letters, or nothing would ever join.
+					baseC := arabicBaseChar(cell.Char)
+					baseL := arabicBaseChar(leftCh)
+					baseR := arabicBaseChar(rightCh)
+					kashL, kashR := arabicKashida(baseC, baseL, baseR)
 					dc := cell
 					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
 						// Shape a five-piece window (neighbours + tatweels +
 						// letter) as one run so the font's GSUB joins for real;
 						// the renderer cuts this cell's piece out of it.
-						actx = arabicRenderContext(cell.Char, shaped, leftCh, rightCh, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
 					} else {
 						dc.Char = shaped
 					}
@@ -1411,11 +1417,14 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 				rightCh = buf.GetCellForSplit(screenCol+horizOffset+1, rowInSplit, currentSplit.BufferRow, currentSplit.BufferCol).Char
 				shaped, suppress := purfecterm.ShapeArabicCellVisual(leftCh, cell.Char, rightCh)
 				if !suppress {
-					kashL, kashR := arabicKashida(cell.Char, leftCh, rightCh)
+					baseC := arabicBaseChar(cell.Char)
+					baseL := arabicBaseChar(leftCh)
+					baseR := arabicBaseChar(rightCh)
+					kashL, kashR := arabicKashida(baseC, baseL, baseR)
 					dc := cell
 					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
-						actx = arabicRenderContext(cell.Char, shaped, leftCh, rightCh, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
 					} else {
 						dc.Char = shaped
 					}

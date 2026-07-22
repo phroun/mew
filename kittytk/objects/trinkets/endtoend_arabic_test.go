@@ -6,6 +6,7 @@ import (
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/purfecterm"
 )
 
 // The definitive reproduction: run the REAL production pipeline — raster
@@ -41,8 +42,26 @@ func endToEndArabicPaint(t *testing.T, scale, fontSize int) {
 		t.Skip("painter not graphical")
 	}
 	term.Paint(p) // size the grid
-	// mew emits RTL in VISUAL order: logical "السلام عليكم" reversed.
-	term.Feed([]byte("مكيلع مالسلا"))
+	// mew emits RTL in VISUAL order AND pre-shaped to PRESENTATION forms
+	// (internal/bidi/shape.go) — feed exactly what mew feeds: each visual
+	// cell's contextual form.
+	visual := []rune("مكيلع مالسلا")
+	out := make([]rune, 0, len(visual))
+	for i, ch := range visual {
+		var l, r rune
+		if i > 0 {
+			l = visual[i-1]
+		}
+		if i+1 < len(visual) {
+			r = visual[i+1]
+		}
+		shaped, suppress := purfecterm.ShapeArabicCellVisual(l, ch, r)
+		if suppress {
+			shaped = ' '
+		}
+		out = append(out, shaped)
+	}
+	term.Feed([]byte(string(out)))
 	term.Paint(p)
 
 	img := b.Image()
