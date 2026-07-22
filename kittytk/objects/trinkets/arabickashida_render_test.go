@@ -8,14 +8,24 @@ import (
 	"github.com/phroun/purfecterm"
 )
 
-// The gfx renderer joins cursive Arabic by shaping a five-piece window —
-// prev + tatweel + letter + tatweel + next — as ONE run (so the font's GSUB
-// produces the true joined forms) and cutting this cell's piece out by cluster
-// position, stretching the tatweel connectors to the cell edges. These tests
-// lock in that the joined pieces really reach the edges and that adjacent
-// cells connect at their shared boundary.
+// The gfx renderer joins cursive Arabic by mapping each cell (and its
+// neighbours) back to base letters, then shaping a window — prev + tatweel +
+// letter + tatweel + next — as ONE run so the font's GSUB produces the true
+// joined forms, and cutting this cell's piece out by cluster position.
+//
+// THE REGRESSION THIS FILE GUARDS: mew emits Arabic as PRESENTATION FORMS
+// (internal/bidi/shape.go), not base letters. For a long time the join logic
+// read those presentation forms directly, the base-only classifier saw every
+// cell as non-joining, and nothing ever connected — while every test that fed
+// BASE letters passed. So these tests feed BOTH encodings and assert the
+// renderer treats them identically. A test that only feeds base letters would
+// not have caught the bug and must never be the only coverage again.
 
-// renderArabicCell mirrors the paint path for one visual cell of a word.
+// renderArabicCell mirrors paintGraphical EXACTLY for one visual cell: it maps
+// the raw cell chars (which may be presentation forms, as mew emits) back to
+// base letters via arabicBaseChar before computing joins and the shaping
+// window. Do not "simplify" this to pass the raw runes through — that
+// divergence from the paint path is the original bug.
 func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, boxH int, ppu float64) *image.RGBA {
 	t.Helper()
 	var leftCh, rightCh rune
@@ -29,13 +39,92 @@ func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, bo
 	if suppress {
 		return image.NewRGBA(image.Rect(0, 0, boxW, boxH))
 	}
-	kashL, kashR := arabicKashida(visual[i], leftCh, rightCh)
-	actx := arabicRenderContext(visual[i], shaped, leftCh, rightCh, kashL, kashR)
-	return term.cellTextImage(actx.s, "ui-term", false, false, boxW, boxH, ppu, false, visual[i], kashL, kashR, actx)
+	baseC := arabicBaseChar(visual[i])
+	baseL := arabicBaseChar(leftCh)
+	baseR := arabicBaseChar(rightCh)
+	kashL, kashR := arabicKashida(baseC, baseL, baseR)
+	actx := arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+	return term.cellTextImage(actx.s, "ui-term", false, false, boxW, boxH, ppu, false, baseC, kashL, kashR, actx)
+}
+
+// encodePresentation turns a visual word of BASE letters into the
+// presentation-form cells mew actually emits — each cell shaped by its base
+// neighbours — so a render test can feed the renderer exactly what mew feeds.
+func encodePresentation(visual []rune) []rune {
+	out := make([]rune, len(visual))
+	for i, ch := range visual {
+		var l, r rune
+		if i > 0 {
+			l = visual[i-1]
+		}
+		if i+1 < len(visual) {
+			r = visual[i+1]
+		}
+		shaped, suppress := purfecterm.ShapeArabicCellVisual(l, ch, r)
+		if suppress {
+			shaped = ' '
+		}
+		out[i] = shaped
+	}
+	return out
+}
+
+func imagesEqual(a, b *image.RGBA) bool {
+	if a.Rect != b.Rect {
+		return false
+	}
+	for y := a.Rect.Min.Y; y < a.Rect.Max.Y; y++ {
+		for x := a.Rect.Min.X; x < a.Rect.Max.X; x++ {
+			if a.RGBAAt(x, y) != b.RGBAAt(x, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// THE core regression guard: the renderer must produce byte-identical masks
+// whether a word arrives as base letters or as the presentation forms mew
+// emits. The historical bug made the base encoding join and the presentation
+// encoding not — so equality is exactly the invariant that was broken.
+func TestArabicRenderEncodingIndependent(t *testing.T) {
+	term := NewPurfecTerm()
+	term.SetTerminalFontFamily("ui-term")
+	term.rotateGfxCaches()
+	if term.gfxEngine() == nil {
+		t.Skip("no gfx engine")
+	}
+	const boxW, boxH, ppu = 16, 30, 2.0
+
+	// عليكم in visual order (no lam-alef, so no suppressed cells to align).
+	base := []rune{'م', 'ك', 'ي', 'ل', 'ع'}
+	pres := encodePresentation(base)
+
+	// Sanity: the two encodings really are different bytes (else the test is
+	// vacuous — it would pass even if arabicBaseChar were the identity).
+	diff := false
+	for i := range base {
+		if base[i] != pres[i] {
+			diff = true
+		}
+	}
+	if !diff {
+		t.Fatal("presentation encoding equals base encoding — test would be vacuous")
+	}
+
+	for i := range base {
+		mb := renderArabicCell(t, term, base, i, boxW, boxH, ppu)
+		mp := renderArabicCell(t, term, pres, i, boxW, boxH, ppu)
+		if !imagesEqual(mb, mp) {
+			t.Errorf("cell %d (%c / %c): base and presentation-form encodings render differently — the mew-emits-presentation-forms path has regressed",
+				i, base[i], pres[i])
+		}
+	}
 }
 
 // A medial letter with joining neighbours paints ink to BOTH cell edges; an
-// isolated letter (space neighbours) keeps clear edges.
+// isolated letter keeps clear edges. Run over the presentation-form encoding —
+// mew's real wire format — so this asserts the actual production path.
 func TestArabicKashidaReachesEdges(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -45,12 +134,18 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 24, 32, 1.0
 
-	// The mask is exactly one cell: a joined medial letter carries ink at BOTH
-	// edge columns (the slice cuts mid-stroke); an isolated letter does not.
-	joined := renderArabicCell(t, term, []rune{'ل', 'ي', 'ك'}, 1, boxW, boxH, ppu)
-	if !colInked(joined, 0) || !colInked(joined, boxW-1) {
-		t.Errorf("medial yeh should reach both cell edges; left=%v right=%v",
-			colInked(joined, 0), colInked(joined, boxW-1))
+	for _, enc := range []struct {
+		name string
+		word []rune
+	}{
+		{"base", []rune{'ل', 'ي', 'ك'}},
+		{"presentation", encodePresentation([]rune{'ل', 'ي', 'ك'})},
+	} {
+		joined := renderArabicCell(t, term, enc.word, 1, boxW, boxH, ppu)
+		if !colInked(joined, 0) || !colInked(joined, boxW-1) {
+			t.Errorf("%s: medial yeh should reach both cell edges; left=%v right=%v",
+				enc.name, colInked(joined, 0), colInked(joined, boxW-1))
+		}
 	}
 
 	lone := renderArabicCell(t, term, []rune{' ', 'ي', ' '}, 1, boxW, boxH, ppu)
@@ -60,9 +155,8 @@ func TestArabicKashidaReachesEdges(t *testing.T) {
 	}
 }
 
-// End to end over عليكم: every interior cell boundary is bridged — some row has
-// ink in both the left cell's last column and the right cell's first column.
-// The stitched word is logged as ASCII so joins can be inspected by eye.
+// End to end over عليكم (presentation-form encoding): every interior cell
+// boundary is bridged. The stitched word is logged as ASCII for eyeballing.
 func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -72,30 +166,11 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 16, 30, 2.0
 
-	// Visual order (RTL reversed to LTR cells) for logical ع ل ي ك م.
-	visual := []rune{'م', 'ك', 'ي', 'ل', 'ع'}
+	// Visual order for logical ع ل ي ك م, as mew emits it (presentation forms).
+	visual := encodePresentation([]rune{'م', 'ك', 'ي', 'ل', 'ع'})
 	masks := make([]*image.RGBA, len(visual))
 	for i := range visual {
 		masks[i] = renderArabicCell(t, term, visual, i, boxW, boxH, ppu)
-		// Show each cell's FINAL clip in full.
-		var cb strings.Builder
-		cb.WriteString("\ncell ")
-		cb.WriteRune(visual[i])
-		cb.WriteString(":\n")
-		for y := 0; y < boxH; y++ {
-			for x := 0; x < masks[i].Rect.Dx(); x++ {
-				if x > 0 && x%boxW == 0 {
-					cb.WriteString("|")
-				}
-				if masks[i].RGBAAt(x, y).A > 32 {
-					cb.WriteString("#")
-				} else {
-					cb.WriteString(".")
-				}
-			}
-			cb.WriteString("\n")
-		}
-		t.Log(cb.String())
 	}
 
 	stitched := image.NewRGBA(image.Rect(0, 0, boxW*len(masks), boxH))
@@ -121,7 +196,6 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	}
 	t.Log(sb.String())
 
-	// Every interior cell boundary of the stitched word carries ink.
 	for i := 1; i < len(masks); i++ {
 		x := i * boxW
 		found := false
@@ -132,8 +206,42 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("cells %d(%c) and %d(%c) do not connect at their shared boundary",
-				i-1, visual[i-1], i, visual[i])
+			t.Errorf("cells %d and %d do not connect at their shared boundary", i-1, i)
+		}
+	}
+}
+
+// arabicBaseChar must invert whatever contextual form the pipeline's shaper
+// (purfecterm.ShapeArabicCellVisual — the same call the paint path makes) can
+// produce for a letter. Tying the coverage to the actual shaper, not a
+// hand-list, means adding a letter to the shaper without extending the reverse
+// map fails HERE instead of silently on screen.
+func TestArabicBaseCharInvertsShaper(t *testing.T) {
+	// A spread of dual-, right-, and non-joining letters, incl. Persian/Urdu.
+	for _, base := range []rune{
+		0x0628, 0x062C, 0x0633, 0x0639, 0x0643, 0x0644, 0x0645, 0x0646, 0x064A, // dual
+		0x0627, 0x062F, 0x0631, 0x0648, // right-joining
+		0x0621,                         // hamza (non-joining)
+		0x067E, 0x0686, 0x06A9, 0x06AF, // peh, tcheh, keheh, gaf
+	} {
+		// Every neighbour combination exercises isolated/initial/medial/final.
+		for _, l := range []rune{0, 0x0628} { // no next / dual next
+			for _, r := range []rune{0, 0x0628} { // no prev / dual prev
+				form, suppress := purfecterm.ShapeArabicCellVisual(l, base, r)
+				if suppress || form == 0 {
+					continue
+				}
+				if got := arabicBaseChar(form); got != base {
+					t.Errorf("shaper made U+%04X from base U+%04X (l=%U r=%U), but arabicBaseChar(U+%04X)=U+%04X — reverse map is missing this form",
+						form, base, l, r, form, got)
+				}
+			}
+		}
+	}
+	// Non-form runes pass through unchanged.
+	for _, r := range []rune{'A', '5', 0x0644, ' '} { // ascii, base letter, space
+		if got := arabicBaseChar(r); got != r {
+			t.Errorf("arabicBaseChar(U+%04X)=U+%04X, want passthrough", r, got)
 		}
 	}
 }

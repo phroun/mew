@@ -68,16 +68,23 @@ func endToEndArabicPaint(t *testing.T, scale, fontSize int) {
 	bounds := img.Bounds()
 	var sb strings.Builder
 	sb.WriteString("\n")
+	longestRun := 0
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		row := ""
 		any := false
+		run := 0
 		for x := bounds.Min.X; x < bounds.Max.X && x < 200; x++ {
 			c := img.RGBAAt(x, y)
 			if int(c.R)+int(c.G)+int(c.B) > 96 {
 				row += "#"
 				any = true
+				run++
+				if run > longestRun {
+					longestRun = run
+				}
 			} else {
 				row += "."
+				run = 0
 			}
 		}
 		if any {
@@ -85,6 +92,21 @@ func endToEndArabicPaint(t *testing.T, scale, fontSize int) {
 		}
 	}
 	t.Log(sb.String())
+
+	// The join assertion, on the REAL framebuffer: a joined Arabic word has a
+	// continuous baseline, so the longest horizontal run of lit pixels spans
+	// many cells; isolated letters (the bug) cap the longest run near a single
+	// letter's width (< one cell). Threshold is cell-relative so it holds at any
+	// scale: a joined 5-letter word clears 3 cells easily; isolated forms cannot.
+	cwU, _ := term.cellDims()
+	cellPx := int(float64(cwU) * p.PxPerUnitF())
+	if cellPx < 1 {
+		cellPx = 1
+	}
+	if longestRun < 3*cellPx {
+		t.Errorf("longest baseline run = %d px (cell=%d px) — Arabic is not joining across cells; isolated forms cap the run below one cell",
+			longestRun, cellPx)
+	}
 }
 
 // Log the REAL production geometry numbers.
