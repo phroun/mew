@@ -1,8 +1,14 @@
 # direct-key-handler patch: horizontal scroll wheel
 
+**STATUS: LANDED upstream in direct-key-handler `v0.3.8`.** mew now requires
+that version and its own byte-stream workaround (the former
+`internal/input/mousehscroll.go`) has been removed — the decoder emits
+`MouseScrollLeft`/`MouseScrollRight` directly. This directory is kept as the
+development record.
+
 `hscroll.patch` teaches the SGR mouse decoder to distinguish the horizontal
 scroll wheel. Verified against `github.com/phroun/direct-key-handler@v0.3.7`:
-applies clean, and the patched tree builds and passes `go test ./keyboard/`.
+applied clean, and the patched tree built and passed `go test ./keyboard/`.
 
 ## The bug
 
