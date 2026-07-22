@@ -118,9 +118,16 @@ func (e *Editor) osPasteText(text string) bool {
 	}
 
 	if w.Buffer.HasBlockMarks() && e.caretWithinBlock(w) {
+		// A host-layer paste (Edit menu, context menu) REPLACES the block but
+		// does not change its provenance: the replace path clears the
+		// mouse-block flag with the old marks, so restore whatever it was —
+		// a transient drag selection pasted into stays transient, a
+		// deliberate block stays deliberate.
+		wasMouseBlock := w.Buffer.MouseBlock()
 		if !e.replaceBlockText(text, "os_paste") {
 			return false
 		}
+		w.Buffer.SetMouseBlock(wasMouseBlock)
 		e.ShowNotification("Block replaced from clipboard")
 		return true
 	}

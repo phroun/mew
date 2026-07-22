@@ -120,6 +120,30 @@ func TestOSPasteReplacesEngagedBlock(t *testing.T) {
 	}
 }
 
+// A host-layer paste into an engaged block preserves the block's
+// mouse-block provenance: a transient (mouse-dragged) block stays
+// transient after the replace, a deliberate one stays deliberate.
+func TestOSPastePreservesMouseBlockFlag(t *testing.T) {
+	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
+
+	// Transient (mouse-made) block: flag survives the replace.
+	markBlock(w, 1, 0, 1, 3)
+	w.Buffer.SetMouseBlock(true)
+	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	e.osPasteText("XY")
+	if !w.Buffer.MouseBlock() {
+		t.Fatal("paste into a mouse-made block must keep it transient")
+	}
+
+	// Deliberate block: stays deliberate.
+	w.Buffer.SetMouseBlock(false)
+	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	e.osPasteText("Z")
+	if w.Buffer.MouseBlock() {
+		t.Fatal("paste into a deliberate block must keep it deliberate")
+	}
+}
+
 // osPasteText with no block (or the caret away from it) inserts at the caret
 // (buffer_insert_file semantics), normalizing line endings, one undo step.
 func TestOSPasteInsertsAtCaret(t *testing.T) {
