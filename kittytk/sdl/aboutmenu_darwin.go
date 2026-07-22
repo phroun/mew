@@ -18,7 +18,8 @@ static void kittytk_about_imp(id self, SEL _cmd, id sender) {
 
 // kittytk_install_about_handler retargets the application menu's standard
 // "About <app>" item (whose action is orderFrontStandardAboutPanel:) to our own
-// handler, so it shows mew's About dialog instead of the default Cocoa panel.
+// handler, so it shows the application's About dialog instead of the default
+// Cocoa panel.
 // It walks NSApp.mainMenu -> item 0 (the app menu) -> its submenu, finds the
 // About item by its standard action (falling back to the first item), and points
 // its target/action at a shared KittyTKAboutTarget instance. Idempotent and a

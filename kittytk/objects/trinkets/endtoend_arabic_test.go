@@ -42,9 +42,9 @@ func endToEndArabicPaint(t *testing.T, scale, fontSize int) {
 		t.Skip("painter not graphical")
 	}
 	term.Paint(p) // size the grid
-	// mew emits RTL in VISUAL order AND pre-shaped to PRESENTATION forms
-	// (internal/bidi/shape.go) — feed exactly what mew feeds: each visual
-	// cell's contextual form.
+	// Bidi-aware apps (e.g. mew) emit RTL in VISUAL order AND pre-shaped to
+	// PRESENTATION forms — feed exactly that wire format: each visual cell's
+	// contextual form.
 	visual := []rune("مكيلع مالسلا")
 	out := make([]rune, 0, len(visual))
 	for i, ch := range visual {

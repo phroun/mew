@@ -136,12 +136,13 @@ func arabicKashida(base, leftBase, rightBase rune) (left, right bool) {
 }
 
 // arabicPresentationBase maps an Arabic presentation-form code point
-// (Forms-A/B) back to its base letter. mew pre-shapes Arabic before emitting
-// (internal/bidi/shape.go), so terminal cells carry PRESENTATION forms — the
-// joining classifier and the shaping window must be computed from the BASE
-// letters or no cell ever joins. Generated from mew's arabicForms table; the
-// lam-alef ligature forms map to alef (the ligature joins toward the previous
-// letter only, exactly like an alef).
+// (Forms-A/B) back to its base letter. Bidi-aware applications that emit
+// visual-order text (terminal editors such as mew) pre-shape Arabic, so
+// terminal cells carry PRESENTATION forms — the joining classifier and the
+// shaping window must be computed from the BASE letters or no cell ever
+// joins. Data is the standard Unicode Arabic Presentation Forms-A/B
+// decomposition; the lam-alef ligature forms map to alef (the ligature joins
+// toward the previous letter only, exactly like an alef).
 var arabicPresentationBase = map[rune]rune{
 	0xFB56: 0x067E,
 	0xFB57: 0x067E,

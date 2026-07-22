@@ -71,7 +71,7 @@ func main() {
 	// configured font files and search directories into the shared text engine
 	// (embedded terminals resolve fonts from the same set), then re-point any
 	// ui-* font aliases at their families. Editor.conf's own [fonts] still
-	// applies on top per embedded mew instance.
+	// applies on top per embedded editor instance.
 	if len(cfg.Fonts) > 0 || len(cfg.FontsPath) > 0 || len(cfg.FontAliases) > 0 {
 		eng := backend.Engine()
 		for _, dir := range cfg.FontsPath {

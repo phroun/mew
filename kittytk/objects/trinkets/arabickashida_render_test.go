@@ -13,17 +13,17 @@ import (
 // letter + tatweel + next — as ONE run so the font's GSUB produces the true
 // joined forms, and cutting this cell's piece out by cluster position.
 //
-// THE REGRESSION THIS FILE GUARDS: mew emits Arabic as PRESENTATION FORMS
-// (internal/bidi/shape.go), not base letters. For a long time the join logic
-// read those presentation forms directly, the base-only classifier saw every
-// cell as non-joining, and nothing ever connected — while every test that fed
-// BASE letters passed. So these tests feed BOTH encodings and assert the
-// renderer treats them identically. A test that only feeds base letters would
-// not have caught the bug and must never be the only coverage again.
+// THE REGRESSION THIS FILE GUARDS: bidi-aware applications (e.g. mew) emit
+// Arabic as PRESENTATION FORMS, not base letters. For a long time the join
+// logic read those presentation forms directly, the base-only classifier saw
+// every cell as non-joining, and nothing ever connected — while every test
+// that fed BASE letters passed. So these tests feed BOTH encodings and assert
+// the renderer treats them identically. A test that only feeds base letters
+// would not have caught the bug and must never be the only coverage again.
 
 // renderArabicCell mirrors paintGraphical EXACTLY for one visual cell: it maps
-// the raw cell chars (which may be presentation forms, as mew emits) back to
-// base letters via arabicBaseChar before computing joins and the shaping
+// the raw cell chars (which may be presentation forms, as emitting apps send)
+// back to base letters via arabicBaseChar before computing joins and the shaping
 // window. Do not "simplify" this to pass the raw runes through — that
 // divergence from the paint path is the original bug.
 func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, boxH int, ppu float64) *image.RGBA {
@@ -48,8 +48,9 @@ func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, bo
 }
 
 // encodePresentation turns a visual word of BASE letters into the
-// presentation-form cells mew actually emits — each cell shaped by its base
-// neighbours — so a render test can feed the renderer exactly what mew feeds.
+// presentation-form cells a pre-shaping application emits — each cell shaped
+// by its base neighbours — so a render test can feed the renderer exactly the
+// production wire format.
 func encodePresentation(visual []rune) []rune {
 	out := make([]rune, len(visual))
 	for i, ch := range visual {
@@ -84,8 +85,8 @@ func imagesEqual(a, b *image.RGBA) bool {
 }
 
 // THE core regression guard: the renderer must produce byte-identical masks
-// whether a word arrives as base letters or as the presentation forms mew
-// emits. The historical bug made the base encoding join and the presentation
+// whether a word arrives as base letters or as pre-shaped presentation forms.
+// The historical bug made the base encoding join and the presentation
 // encoding not — so equality is exactly the invariant that was broken.
 func TestArabicRenderEncodingIndependent(t *testing.T) {
 	term := NewPurfecTerm()
@@ -116,7 +117,7 @@ func TestArabicRenderEncodingIndependent(t *testing.T) {
 		mb := renderArabicCell(t, term, base, i, boxW, boxH, ppu)
 		mp := renderArabicCell(t, term, pres, i, boxW, boxH, ppu)
 		if !imagesEqual(mb, mp) {
-			t.Errorf("cell %d (%c / %c): base and presentation-form encodings render differently — the mew-emits-presentation-forms path has regressed",
+			t.Errorf("cell %d (%c / %c): base and presentation-form encodings render differently — the presentation-form input path has regressed",
 				i, base[i], pres[i])
 		}
 	}
@@ -124,7 +125,7 @@ func TestArabicRenderEncodingIndependent(t *testing.T) {
 
 // A medial letter with joining neighbours paints ink to BOTH cell edges; an
 // isolated letter keeps clear edges. Run over the presentation-form encoding —
-// mew's real wire format — so this asserts the actual production path.
+// the pre-shaping apps' wire format — so this asserts the actual production path.
 func TestArabicKashidaReachesEdges(t *testing.T) {
 	term := NewPurfecTerm()
 	term.SetTerminalFontFamily("ui-term")
@@ -166,7 +167,7 @@ func TestArabicWordConnectsAcrossCells(t *testing.T) {
 	}
 	const boxW, boxH, ppu = 16, 30, 2.0
 
-	// Visual order for logical ع ل ي ك م, as mew emits it (presentation forms).
+	// Visual order for logical ع ل ي ك م, in presentation forms (the wire format).
 	visual := encodePresentation([]rune{'م', 'ك', 'ي', 'ل', 'ع'})
 	masks := make([]*image.RGBA, len(visual))
 	for i := range visual {
