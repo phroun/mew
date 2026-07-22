@@ -76,7 +76,7 @@ var defaultGlobalColors = map[string]string{
 	"heading": "\x1b[0;96;40m",
 	// Key badges: [[keys#action|alias]] references in help text render as a
 	// tight cap-less/shadow-less badge showing the live binding for the action.
-	"key":                 "\x1b[0;90;46m", // dark gray (bright black) on cyan
+	"key":                 "\x1b[0;93;45m", // bright yellow on purple
 	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
 	"button":              "\x1b[0;30;47m", // black on silver
 	"buttonrecent":        "\x1b[0;30;42m", // black on dark green (a visited link)
