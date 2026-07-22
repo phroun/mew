@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/window"
@@ -941,40 +942,113 @@ func keysRefAction(target string) (string, bool) {
 	return "", false
 }
 
-// keyBindingDisplay resolves what a key badge shows for an action, preferring
-// the author's alias when it is actually one of the live bindings, else listing
-// the current bindings, else falling back to the documented alias. The result
-// is run through kludgeKeyText for dokuwiki-display safety.
+// keyBindingDisplay resolves the SINGLE key a badge shows for an action. The
+// candidate set is every key bound EXACTLY to the action — a binding is an
+// explicit action (or an "a|b" fallback chain), and a badge never shows a key
+// that runs something else, so the command match stays exact (keys#buffer_redo
+// .buffer_undo answers the ^Z chain; keys#buffer_redo alone matches no key
+// whose command IS just that). The CHOICE among candidates is by how well each
+// key SEQUENCE matches the author's given binding (preferred, the link alias):
+// an exact key, else the closest shared beginning, else the closest shared end,
+// else the last-configured key. When there are no candidates it falls back to
+// the documented alias, or the bare action name.
 func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	if e.KeyProcessor == nil {
 		return preferred
 	}
-	var matches []string
+	var seqs []string
 	for seq, cmd := range e.KeyProcessor.GetAllMappings() {
-		// EXACT binding match only. A binding is an explicit action (or
-		// "a|b" fallback chain); matching a chain by its primary would claim a
-		// key does something narrower than it really does — a lie at best. So
-		// keys#buffer_redo.buffer_undo answers ^Z (the exact chain), while
-		// keys#buffer_redo matches nothing here (no binding IS just that).
 		if cmd == action {
-			matches = append(matches, seq)
+			seqs = append(seqs, seq)
 		}
 	}
-	// Prefer the author's spelling if it is genuinely bound to this action.
+	if len(seqs) == 0 {
+		if preferred != "" {
+			return preferred
+		}
+		return action
+	}
+	return e.chooseKeyBinding(seqs, preferred)
+}
+
+// chooseKeyBinding picks one key from seqs (all bound to the same action) to
+// display, ranking each key SEQUENCE against the author's given binding
+// (preferred): an exact key wins; else the key whose beginning matches
+// preferred most closely; else whose end does; else — no alias, or nothing
+// shares a start or end — the last-configured key. Precedence (then the
+// sequence text) breaks every tie: "the last one configured, or the last among
+// ties."
+func (e *Editor) chooseKeyBinding(seqs []string, preferred string) string {
+	// better reports whether a is the stronger "last configured" than b —
+	// higher precedence, and the greater sequence text as a deterministic
+	// stand-in for "last" when precedence ties (built-ins all sit at 0).
+	better := func(a, b string) bool {
+		oa, ob := e.originFor(a), e.originFor(b)
+		if oa.Precedence != ob.Precedence {
+			return oa.Precedence > ob.Precedence
+		}
+		return a > b
+	}
 	if preferred != "" {
-		for _, m := range matches {
-			if m == preferred {
-				return preferred
+		for _, s := range seqs {
+			if s == preferred {
+				return s // exact key match
+			}
+		}
+		// Longest shared beginning, then (only if none) longest shared end.
+		for _, suffix := range []bool{false, true} {
+			best, bestScore := "", 0
+			for _, s := range seqs {
+				sc := sharedAffixLen(s, preferred, suffix)
+				if sc == 0 {
+					continue
+				}
+				if best == "" || sc > bestScore || (sc == bestScore && better(s, best)) {
+					best, bestScore = s, sc
+				}
+			}
+			if best != "" {
+				return best
 			}
 		}
 	}
-	if len(matches) > 0 {
-		sort.Strings(matches) // deterministic
-		return strings.Join(matches, ", ")
+	// No alias, or nothing shared its start or end: last configured.
+	best := seqs[0]
+	for _, s := range seqs[1:] {
+		if better(s, best) {
+			best = s
+		}
 	}
-	// Unbound: show the documented alias, or the bare action name.
-	if preferred != "" {
-		return preferred
+	return best
+}
+
+// sharedAffixLen counts the runes a and b share from the front (suffix=false)
+// or the back (suffix=true).
+func sharedAffixLen(a, b string, suffix bool) int {
+	ra, rb := []rune(a), []rune(b)
+	n := len(ra)
+	if len(rb) < n {
+		n = len(rb)
 	}
-	return action
+	count := 0
+	for i := 0; i < n; i++ {
+		ca, cb := ra[i], rb[i]
+		if suffix {
+			ca, cb = ra[len(ra)-1-i], rb[len(rb)-1-i]
+		}
+		if ca != cb {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+// originFor returns the provenance of a bound key sequence, or the built-in
+// default (AuthorSystem, precedence 0) when the key carries no recorded origin.
+func (e *Editor) originFor(seq string) config.MappingOrigin {
+	if o, ok := e.mappingOrigins[seq]; ok {
+		return o
+	}
+	return config.MappingOrigin{Author: config.AuthorSystem}
 }
