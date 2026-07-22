@@ -448,8 +448,12 @@ func (b *backBuffer) present(out io.Writer) {
 
 	// Place the hardware cursor where the renderer left the pen, then apply
 	// visibility only when it changed. The pen is a visual column; a
-	// flex-width terminal is addressed by its logical column instead.
-	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.penX)+1)
+	// flex-width terminal is addressed by its logical column instead, and a
+	// flip-bidi terminal by the STREAM column its transform emitted the
+	// pen's cell at (flipColFor) — the terminal's grid stores the stream, so
+	// its displayed cursor lands wherever it drew that stored cell. The TEXT
+	// emission is untouched: this affects only the final cursor address.
+	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.flipColFor(b.penY, b.penX))+1)
 	if !b.haveVisible || b.curVisible != b.lastVisible {
 		if b.curVisible {
 			sb.WriteString("\x1b[?25h")
@@ -580,15 +584,19 @@ func (b *backBuffer) presentRows(sb *strings.Builder) {
 	}
 }
 
-// emitRow writes one full row's cells into sb (left to right) and syncs disp.
-// With flipBidi, each RTL run's cells are emitted in reverse (logical) order
-// with mirrored glyphs restored — the host terminal's own bidi reorders the
-// run back to the visual layout the grid holds.
-func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
-	// Collect the row's visual cells (base cells only; a stray continuation
-	// with no base paints as a blank).
-	type vc struct{ cell bbCell }
-	cells := make([]vc, 0, b.w)
+// rowCell is one visual base cell of a row, with its 0-based start column
+// and cell width — the shared currency of the flip emission (emitRow) and
+// the flip cursor mapping (flipColFor), which must agree cell for cell.
+type rowCell struct {
+	cell  bbCell
+	col   int
+	width int
+}
+
+// rowVisualCells collects row y's base cells left to right (a stray
+// continuation with no base reads as a blank), stopping at the corner cut.
+func (b *backBuffer) rowVisualCells(y int) []rowCell {
+	cells := make([]rowCell, 0, b.w)
 	for x := 0; x < b.w; {
 		if b.isCornerCut(y, x) {
 			break
@@ -597,16 +605,107 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		if nc.cont {
 			nc = bbCell{width: 1}
 		}
-		cells = append(cells, vc{cell: nc})
-		b.disp[y][x] = b.cur[y][x]
 		wd := int(nc.width)
 		if wd < 1 {
 			wd = 1
 		}
-		if wd == 2 && x+1 < b.w {
-			b.disp[y][x+1] = b.cur[y][x+1]
-		}
+		cells = append(cells, rowCell{cell: nc, col: x, width: wd})
 		x += wd
+	}
+	return cells
+}
+
+// flipEmitPlan computes the flip transform over a row's visual cells: the
+// order the cells are emitted in (RTL runs — maximal segments bounded by
+// strong-RTL cells with no interior strong-LTR content — reversed into
+// logical order) and, per emission slot, whether the glyph mirrors back.
+// The host terminal's own bidi reorders each emitted run to the visual
+// layout the grid holds; the cursor mapping (flipColFor) reads the same
+// plan, so where a glyph is EMITTED and where the cursor ADDRESSES it can
+// never disagree.
+func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
+	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
+	isStrongLTR := func(c bbCell) bool {
+		if len(c.runes) == 0 {
+			return false
+		}
+		r := c.runes[0]
+		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
+	}
+	order = make([]int, 0, len(cells))
+	mirror = make([]bool, 0, len(cells))
+	for i := 0; i < len(cells); {
+		if !isRTL(cells[i].cell) {
+			order = append(order, i)
+			mirror = append(mirror, false)
+			i++
+			continue
+		}
+		// Extend the run: through further RTL cells, absorbing interior
+		// neutral cells only when another RTL cell follows before any strong
+		// LTR content.
+		end := i
+		for j := i + 1; j < len(cells); j++ {
+			if isRTL(cells[j].cell) {
+				end = j
+				continue
+			}
+			if isStrongLTR(cells[j].cell) {
+				break
+			}
+		}
+		for j := end; j >= i; j-- {
+			order = append(order, j)
+			mirror = append(mirror, true)
+		}
+		i = end + 1
+	}
+	return order, mirror
+}
+
+// flipColFor translates a 0-based visual column into the 0-based STREAM
+// column at which the covering cell is emitted under the flip transform.
+// The hardware cursor must address the stream column: a flip-mode terminal
+// stores the line in stream order (its own bidi maps stored cells to visual
+// positions at display time — the CPR probe confirms stream-order
+// advancement), so the displayed cursor lands wherever the terminal drew
+// the stored cell at that column. Identity when flip is off, for columns
+// past the row's content, and on LTR content (where stream order IS visual
+// order).
+func (b *backBuffer) flipColFor(y, x int) int {
+	if !b.flipBidi || y < 0 || y >= b.h {
+		return x
+	}
+	cells := b.rowVisualCells(y)
+	order, _ := flipEmitPlan(cells)
+	stream := make([]int, len(cells))
+	col := 0
+	for _, idx := range order {
+		stream[idx] = col
+		col += cells[idx].width
+	}
+	for i, rc := range cells {
+		if x >= rc.col && x < rc.col+rc.width {
+			return stream[i]
+		}
+	}
+	return x
+}
+
+// emitRow writes one full row's cells into sb (left to right) and syncs disp.
+// With flipBidi, each RTL run's cells are emitted in reverse (logical) order
+// with mirrored glyphs restored — the host terminal's own bidi reorders the
+// run back to the visual layout the grid holds.
+func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
+	cells := b.rowVisualCells(y)
+
+	// Sync disp for the visited cells (base + a wide glyph's continuation),
+	// exactly the span the emission below covers.
+	for _, rc := range cells {
+		b.disp[y][rc.col] = b.cur[y][rc.col]
+		if rc.width == 2 && rc.col+1 < b.w {
+			b.disp[y][rc.col+1] = b.cur[y][rc.col+1]
+		}
 	}
 
 	emit := func(c bbCell, mirror bool) {
@@ -647,40 +746,12 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		return
 	}
 
-	// Flip mode: find maximal RTL runs — segments bounded by strong-RTL cells
-	// whose interior holds no strong-LTR content — and emit each run's cells in
-	// reverse order with mirrored glyphs restored (Mirror is an involution).
-	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
-	isStrongLTR := func(c bbCell) bool {
-		if len(c.runes) == 0 {
-			return false
-		}
-		r := c.runes[0]
-		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
-	}
-	for i := 0; i < len(cells); {
-		if !isRTL(cells[i].cell) {
-			emit(cells[i].cell, false)
-			i++
-			continue
-		}
-		// Extend the run: through further RTL cells, absorbing interior
-		// neutral cells only when another RTL cell follows before any strong
-		// LTR content.
-		end := i
-		for j := i + 1; j < len(cells); j++ {
-			if isRTL(cells[j].cell) {
-				end = j
-				continue
-			}
-			if isStrongLTR(cells[j].cell) {
-				break
-			}
-		}
-		for j := end; j >= i; j-- {
-			emit(cells[j].cell, true)
-		}
-		i = end + 1
+	// Flip mode: emit per the shared plan (RTL runs reversed into logical
+	// order with mirrored glyphs restored — Mirror is an involution). The
+	// cursor mapping (flipColFor) reads the SAME plan.
+	order, mirror := flipEmitPlan(cells)
+	for k, idx := range order {
+		emit(cells[idx].cell, mirror[k])
 	}
 }
 

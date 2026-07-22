@@ -339,6 +339,83 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 	}
 }
 
+// Flip mode must address the hardware cursor by the STREAM column its
+// transform emitted the pen's cell at: the terminal stores the line in
+// stream order and its own bidi decides where each stored cell displays, so
+// a visual-column CUP lands the cursor on the wrong glyph inside any RTL
+// run. LTR content is identity (stream order IS visual order there).
+func TestFlipColForMapsRTLRunToStream(t *testing.T) {
+	b := newBackBuffer(30, 2)
+	b.flipBidi = true
+	paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
+
+	// Visual cells (0-based): a=0 b=1 c=2 sp=3 ם=4 ו=5 ל=6 ש=7 sp=8 x=9.
+	// The run [4..7] emits reversed, so its stream columns mirror.
+	cases := map[int]int{0: 0, 2: 2, 3: 3, 4: 7, 5: 6, 6: 5, 7: 4, 8: 8, 9: 9, 11: 11}
+	for vis, want := range cases {
+		if got := b.flipColFor(0, vis); got != want {
+			t.Errorf("flipColFor(%d) = %d, want %d", vis, got, want)
+		}
+	}
+
+	// Flip off: identity everywhere.
+	b2 := newBackBuffer(30, 2)
+	paint(b2, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
+	if got := b2.flipColFor(0, 5); got != 5 {
+		t.Errorf("no-flip flipColFor(5) = %d, want identity", got)
+	}
+}
+
+// Niqqud (combining marks riding their base cell) must not shift the cursor
+// mapping: a cell is one stream advance whether or not it carries marks —
+// the very drift a terminal shows when the caret walks a pointed Hebrew
+// line under flip mode.
+func TestFlipColForNiqqudNeutral(t *testing.T) {
+	bare := newBackBuffer(20, 2)
+	bare.flipBidi = true
+	paint(bare, mv(1, 1), wr("\x1b[0mשלום")) // visual order as painted
+
+	pointed := newBackBuffer(20, 2)
+	pointed.flipBidi = true
+	// The same four letters, each carrying a niqqud mark (qamats U+05B8).
+	paint(pointed, mv(1, 1), wr("\x1b[0mשָלָוָםָ"))
+
+	for vis := 0; vis < 6; vis++ {
+		if g1, g2 := bare.flipColFor(0, vis), pointed.flipColFor(0, vis); g1 != g2 {
+			t.Errorf("niqqud shifted the cursor mapping at col %d: bare %d, pointed %d", vis, g1, g2)
+		}
+	}
+}
+
+// End to end: the final hardware-cursor CUP present() appends uses the
+// flip-translated column when the pen rests inside an RTL run, and the
+// plain visual column on LTR content.
+func TestFlipCursorCUPTranslated(t *testing.T) {
+	lastCUP := func(out string) string {
+		all := cupRe.FindAllString(out, -1)
+		for i := len(all) - 1; i >= 0; i-- {
+			if strings.HasSuffix(all[i], "H") {
+				return all[i]
+			}
+		}
+		return ""
+	}
+
+	b := newBackBuffer(30, 2)
+	b.flipBidi = true
+	// Pen parks on ם (visual 0-based col 4 -> stream col 7 -> 1-based CUP 8).
+	out := paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(5, 1))
+	if got := lastCUP(out); got != "\x1b[1;8H" {
+		t.Errorf("flip cursor CUP = %q, want \\x1b[1;8H", got)
+	}
+
+	// LTR pen: untranslated.
+	out = paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(2, 1))
+	if got := lastCUP(out); got != "\x1b[1;2H" {
+		t.Errorf("LTR cursor CUP = %q, want \\x1b[1;2H", got)
+	}
+}
+
 // Without the flip (default), the wire carries the visual order unchanged.
 func TestBackBufferNoFlipKeepsVisual(t *testing.T) {
 	b := newBackBuffer(30, 2)
