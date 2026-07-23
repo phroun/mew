@@ -601,6 +601,13 @@ func (sr *ScreenRenderer) renderWindow(w *window.Window, startY, height int) {
 	// Check for custom renderer
 	if w.CustomRenderer != "" {
 		if renderer, ok := sr.customRenderers[w.CustomRenderer]; ok {
+			// Record the bar's screen geometry (it writes from column 1) so the
+			// editor can hit-test clicks on it — e.g. the modebar's nav-history
+			// buttons. A custom-rendered chrome window has no Buffer, so this
+			// never affects content hit-testing (windowAtRow requires a buffer).
+			w.ContentX = 0
+			w.ContentY = startY - 1
+			w.ContentHeight = height
 			sr.MoveCursor(1, startY)
 			content := renderer(w, sr.Width)
 			sr.Write(content)

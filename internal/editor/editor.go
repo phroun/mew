@@ -285,6 +285,15 @@ type Editor struct {
 	// posted tick in flight.
 	dragScroll        dragScrollState
 	dragScrollPending atomic.Bool
+	// Modebar nav-history buttons (mouse.go): the captured button (0 none,
+	// ModebarNavBack, ModebarNavFwd) held from press to release, whether the
+	// pointer is currently over it (paints pressed), and the button under the
+	// pointer for hover (graphical all-motion tracking only). Clicking a
+	// modebar nav button never steals focus — nav operates on the focused
+	// window.
+	modebarNavCapture int
+	modebarNavOn      bool
+	modebarNavHover   int
 	// readOnlySent/readOnlyPushed: the last focused-window read-only state
 	// pushed through Config.EditState (see notifyEditState), and whether an
 	// initial push has happened.
@@ -842,6 +851,9 @@ func New(cfg Config) (*Editor, error) {
 	e.Modebar.SetTemplates(loadedConfig.General.ModebarInner, loadedConfig.General.ModebarDefault, loadedConfig.General.ModebarOuter)
 	// A wiki page shows its scheme form ("help:/start"), not "start.txt".
 	e.Modebar.SetFilenameFunc(e.wikiDisplayName)
+	e.Modebar.SetNavStateFunc(func() (int, bool, int) {
+		return e.modebarNavCapture, e.modebarNavOn, e.modebarNavHover
+	})
 	e.ColumnRuler.SetColorScheme(loadedConfig.Colors)
 
 	// Create prompt manager for history-aware prompts

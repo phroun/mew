@@ -107,18 +107,29 @@ func (e *Editor) handleMouseKey(key string) bool {
 		// alternative (some terminals never deliver a real right button —
 		// or reserve alt-click for themselves; ctrl/super+click covers
 		// those).
-		if mod {
+		switch {
+		case mod:
 			e.mouseRightPress(e.mouseX, e.mouseY)
-		} else {
+		case e.modebarNavPressAt(e.mouseX, e.mouseY):
+			// Consumed by a modebar nav-history button (capture started).
+		default:
 			e.mousePress(e.mouseX, e.mouseY, shift)
 		}
 	case strings.HasPrefix(base, "MouseLeftDrag@"):
 		if x, y, ok := parseMouseAt(base[len("MouseLeftDrag@"):]); ok {
 			e.mouseX, e.mouseY = x, y
-			e.mouseDrag(x, y)
+			if e.modebarNavCapture != 0 {
+				e.modebarNavDrag(x, y)
+			} else {
+				e.mouseDrag(x, y)
+			}
 		}
 	case base == "MouseLeftRelease", base == "MouseRelease":
-		e.mouseRelease(e.mouseX, e.mouseY)
+		if e.modebarNavCapture != 0 {
+			e.modebarNavRelease(e.mouseX, e.mouseY)
+		} else {
+			e.mouseRelease(e.mouseX, e.mouseY)
+		}
 	case base == "MouseRightPress":
 		e.mouseRightPress(e.mouseX, e.mouseY)
 	case strings.HasPrefix(base, "MouseDrag@"):
@@ -126,6 +137,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 		if x, y, ok := parseMouseAt(base[len("MouseDrag@"):]); ok {
 			e.mouseX, e.mouseY = x, y
 			e.mouseHoverAt(x, y)
+			e.modebarNavHoverAt(x, y)
 		}
 	case base == "MouseScrollUp":
 		e.hScrollReset() // a vertical tick re-arms the sideways barrier
@@ -155,7 +167,8 @@ func (e *Editor) notifyPointerShape() {
 	if e.Config.PointerShape == nil {
 		return
 	}
-	over := e.mouseHovered.active || e.mousePressed.active
+	over := e.mouseHovered.active || e.mousePressed.active ||
+		e.modebarNavCapture != 0 || e.modebarNavHover != 0
 	if over != e.pointerOverSent {
 		e.pointerOverSent = over
 		e.Config.PointerShape(over)

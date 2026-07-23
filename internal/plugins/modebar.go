@@ -44,11 +44,101 @@ type ModebarPlugin struct {
 	// ("help:/start") instead of the underlying file base ("start.txt").
 	// Returning "" defers to the ordinary filename base.
 	filenameFn func(*window.Window) string
+
+	// Nav-history buttons ([<] / [>]) shown just before the filename when the
+	// context window has back/forward history. navStateFn supplies the live
+	// mouse state the editor tracks (the captured button, whether the pointer
+	// is over it, and the hovered button); the button column ranges are
+	// recorded each render (content-relative, 0-based, [start,end)) so the
+	// editor can hit-test a click against them. end<=start means absent.
+	navStateFn               func() (pressed int, pressedOn bool, hover int)
+	navBackStart, navBackEnd int
+	navFwdStart, navFwdEnd   int
 }
+
+// Modebar nav-button identities (also the editor's).
+const (
+	ModebarNavNone = 0
+	ModebarNavBack = 1
+	ModebarNavFwd  = 2
+)
 
 // SetFilenameFunc installs a display-name provider for %FN% (see filenameFn).
 func (s *ModebarPlugin) SetFilenameFunc(fn func(*window.Window) string) {
 	s.filenameFn = fn
+}
+
+// SetNavStateFunc installs the provider for the nav-history buttons' live
+// mouse state (captured button, pointer-over, hovered button).
+func (s *ModebarPlugin) SetNavStateFunc(fn func() (pressed int, pressedOn bool, hover int)) {
+	s.navStateFn = fn
+}
+
+// WindowID returns the modebar window's id ("" before CreateWindow), so the
+// editor can locate the bar's screen row for nav-button hit-testing.
+func (s *ModebarPlugin) WindowID() string { return s.windowID }
+
+// NavButtonAtColumn reports which nav button ([<]=Back, [>]=Fwd) occupies the
+// content-relative column, from the ranges recorded by the last render, or
+// ModebarNavNone. The 3-space placeholder that holds the back button's width
+// when only forward history exists is inert (no button there).
+func (s *ModebarPlugin) NavButtonAtColumn(col int) int {
+	if col >= s.navBackStart && col < s.navBackEnd {
+		return ModebarNavBack
+	}
+	if col >= s.navFwdStart && col < s.navFwdEnd {
+		return ModebarNavFwd
+	}
+	return ModebarNavNone
+}
+
+// renderNav builds the nav-history button section shown just before the
+// filename and records the buttons' content-relative column ranges. It
+// collapses to "" when the context window has no history. Each button paints
+// its brackets in the button-SHADOW color and the "<"/">" glyph in the button
+// color, in one of three states — normal, pressed (mouse held over the
+// captured button), or hover (pointer over, graphical build only). When only
+// forward history exists, a 3-space placeholder holds the missing back
+// button's width so [>] stays put. startCol is the section's content column.
+func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctxWindow *window.Window, startCol int) string {
+	s.navBackStart, s.navBackEnd, s.navFwdStart, s.navFwdEnd = 0, 0, 0, 0
+	prior, next := 0, 0
+	if ctxWindow != nil {
+		prior, next = ctxWindow.NavHistoryDepths()
+	}
+	back, fwd := prior > 0, next > 0
+	if !back && !fwd {
+		return ""
+	}
+	pressed, pressedOn, hover := 0, false, 0
+	if s.navStateFn != nil {
+		pressed, pressedOn, hover = s.navStateFn()
+	}
+	// btn resolves the face + shadow colors for one button given its state.
+	btn := func(id int, glyph string) string {
+		faceName, shadowName := "button", "buttonShadow"
+		switch {
+		case pressed == id && pressedOn:
+			faceName, shadowName = "buttonPressed", "buttonShadowPressed"
+		case pressed == ModebarNavNone && hover == id:
+			faceName, shadowName = "buttonHover", "buttonShadowHover"
+		}
+		return col(shadowName) + "[" + col(faceName) + glyph + col(shadowName) + "]"
+	}
+
+	var b strings.Builder
+	if back {
+		b.WriteString(btn(ModebarNavBack, "<"))
+		s.navBackStart, s.navBackEnd = startCol, startCol+3
+	} else {
+		// Placeholder that keeps [>] in the same place a [<][>] pair would.
+		b.WriteString(fillColor + "   ")
+	}
+	if fwd {
+		b.WriteString(btn(ModebarNavFwd, ">"))
+		s.navFwdStart, s.navFwdEnd = startCol+3, startCol+6
+	}
+	return b.String()
 }
 
 // modebarBottomPriority keeps a bottom-located modebar on the very last
@@ -241,6 +331,14 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	}
 	logoStr := " " + logo + " "
 
+	// Nav-history buttons, inserted just BEFORE the filename and only as wide
+	// as needed (collapsing to nothing when the context window has no history).
+	// The section sits in the gap that already exists between the key-sequence
+	// area and the filename (each is space-padded), so when it collapses the
+	// layout is unchanged.
+	navStr := s.renderNav(col, modifiersColor, ctxWindow, calculateVisibleLength(leftText))
+	navWidth := calculateVisibleLength(navStr)
+
 	// Inner (filename) and outer (readout) come from templates.
 	innerStr := " " + expandModebar(s.tmplInner, vals) + " "
 	outerStr := " " + expandModebar(s.tmplOuter, vals) + " "
@@ -262,7 +360,7 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	// Lay out the space between inner and the logo: the outer readout is
 	// right-aligned and ellipsized when it does not fit the remaining space;
 	// the middle fills the gap (truncated as needed). Inner and logo are kept.
-	remaining := screenWidth - calculateVisibleLength(leftText) - calculateVisibleLength(innerStr) - calculateVisibleLength(logoStr)
+	remaining := screenWidth - calculateVisibleLength(leftText) - navWidth - calculateVisibleLength(innerStr) - calculateVisibleLength(logoStr)
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -274,6 +372,7 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	var modebar strings.Builder
 	modebar.WriteString(modifiersColor)
 	modebar.WriteString(leftText)
+	modebar.WriteString(navStr)
 	modebar.WriteString(bufferColor)
 	modebar.WriteString(innerStr)
 	modebar.WriteString(middleColor)
