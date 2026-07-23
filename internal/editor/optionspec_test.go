@@ -261,3 +261,22 @@ func TestClearOptionCommand(t *testing.T) {
 		t.Fatalf("clear_option tabSize: %d, want editor default %d", w.ViewState.TabSize, e.Config.TabSize)
 	}
 }
+
+// rtlCombining defaults ON (marks shown), stored inverted so an untouched
+// window keeps that default; setting it off flips the ViewState sense.
+func TestRtlCombiningDefaultsOn(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	if v, _ := e.getOption(w, "rtlCombining"); v != "yes" {
+		t.Fatalf("rtlCombining should default to yes, got %q", v)
+	}
+	if w.ViewState.SuppressRTLCombining {
+		t.Fatal("default window must not suppress RTL combining")
+	}
+	e.setOption(w, "rtlCombining", "no")
+	if !w.ViewState.SuppressRTLCombining {
+		t.Fatal("rtlCombining=no must set SuppressRTLCombining")
+	}
+	if v, _ := e.getOption(w, "rtlCombining"); v != "no" {
+		t.Fatalf("rtlCombining should read back no, got %q", v)
+	}
+}

@@ -350,6 +350,7 @@ type Config struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
+	RtlCombining     bool   // show combining marks on RTL letters (default true)
 	ShowMarks        string // "no" | "yes" | "all"
 	OverwriteMode    bool   // inverse of insertMode; zero value = insert
 	ReadOnly         bool
@@ -596,6 +597,7 @@ func DefaultConfig() Config {
 		TabSize:          4,
 		ShowInvisibles:   false,
 		ShowBidi:         false,
+		RtlCombining:     true,
 		ShowMarks:        "no",
 		OverwriteMode:    false, // insertMode=yes
 		ReadOnly:         false,
@@ -692,6 +694,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.TabSize = loadedConfig.General.TabSize
 	cfg.ShowInvisibles = loadedConfig.General.ShowInvisibles
 	cfg.ShowBidi = loadedConfig.General.ShowBidi
+	cfg.RtlCombining = loadedConfig.General.RtlCombining
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.ReadOnly = loadedConfig.General.ReadOnly
@@ -2537,6 +2540,13 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 			v = w.ViewState.ShowBidi
 		}
 		return boolText(v), true
+	case "rtlcombining":
+		// Stored inverted (SuppressRTLCombining); report the on/off sense.
+		v := e.Config.RtlCombining
+		if w != nil {
+			v = !w.ViewState.SuppressRTLCombining
+		}
+		return boolText(v), true
 	case "showmarks":
 		v := e.Config.ShowMarks
 		if w != nil {
@@ -2714,6 +2724,16 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			w.ViewState.ShowBidi = b
 		} else {
 			e.Config.ShowBidi = b
+		}
+	case "rtlcombining":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.SuppressRTLCombining = !b // stored inverted
+		} else {
+			e.Config.RtlCombining = b
 		}
 	case "showmarks":
 		v, ok := config.ParseShowMarks(value)

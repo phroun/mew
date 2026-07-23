@@ -331,7 +331,10 @@ type GeneralConfig struct {
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
-	ShowMarks        string // "no" | "yes" | "all"
+	// RtlCombining shows combining marks on RTL letters (niqqud/harakat).
+	// Default true; off renders RTL scripts unpointed (see the option).
+	RtlCombining bool
+	ShowMarks    string // "no" | "yes" | "all"
 	// OverwriteMode is the inverse of the user-facing insertMode option: false
 	// (the zero value, and the default) means insert mode; true means typing
 	// overwrites the character under the caret (except at end of line, where it
@@ -776,6 +779,7 @@ func DefaultConfig() Config {
 			TabSize:                 4,
 			ShowInvisibles:          false,
 			ShowBidi:                false,
+			RtlCombining:            true,
 			ShowMarks:               "no",
 			OverwriteMode:           false, // insertMode=yes
 			ReadOnly:                false,
@@ -990,6 +994,9 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["showBidi"]; ok {
 			config.General.ShowBidi = parseBool(v, false)
+		}
+		if v, ok := opt["rtlCombining"]; ok {
+			config.General.RtlCombining = parseBool(v, true)
 		}
 		if v, ok := opt["showMarks"]; ok {
 			if s, valid := ParseShowMarks(v); valid {
@@ -2059,6 +2066,13 @@ showInvisibles=false
 # ("<" entering RTL, ">" entering LTR); explicit direction controls render
 # as their own marker
 showBidi=false
+# Show combining marks (niqqud, harakat) on right-to-left letters. Default on.
+# Turn it off to render RTL scripts UNPOINTED — one codepoint per cell, like
+# mew's pre-shaped Arabic — which keeps the selection bar correct under
+# flipBidiForHost terminals (macOS Terminal.app) that otherwise misplace it on
+# pointed text. The marks stay in the file and editable; the caret still walks
+# them and the modebar names the one under the caret. Only display is affected.
+rtlCombining=true
 # Show a "*" (in the "marks" color) at every mark/decoration position in the
 # text: no (off), yes (user marks), or all (also mew's internal marks). Boolean
 # aliases (on/off/true/false) are accepted as no/yes.

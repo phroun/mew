@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode"
 
 	"golang.org/x/term"
 
@@ -994,7 +995,12 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// (see the selectionFlip colors). Mark-free lines (English; Arabic,
 	// which mew pre-shapes to single presentation forms) keep the real bar.
 	selName, selInvName := "selection", "selectionInvisibles"
-	if sr.frame.flipBidi && lineHasZeroWidth(line) {
+	// The ride-safe selection is only needed when the marks are actually
+	// EMITTED: with rtlCombining off they are suppressed below, so the line
+	// carries codepoints == cells and the real bar works. (An LTR combining
+	// mark under flip is a rarer case that keeps the bar here; rtlCombining
+	// targets RTL scripts, whose marks are the ones this line strips.)
+	if sr.frame.flipBidi && !w.ViewState.SuppressRTLCombining && lineHasZeroWidth(line) {
 		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
 	}
 	selectionColor := sr.col(w, selName)
@@ -1341,7 +1347,15 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// only when that cell was actually output, so a mark whose base is
 		// scrolled off or truncated is dropped along with its base.
 		if runeVisualWidth == 0 {
-			if currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
+			// rtlCombining=off suppresses combining marks (Mn/Mc/Me — niqqud,
+			// harakat) that ride an RTL letter, so pointed RTL renders like
+			// mew's pre-shaped Arabic (one codepoint per cell). The mark is
+			// only dropped from DISPLAY; it stays in the buffer (the caret
+			// still walks it, the modebar still names it). ZWJ / bidi controls
+			// (not mark categories) and LTR combining are never suppressed.
+			suppress := w.ViewState.SuppressRTLCombining && rtlCell(logicalIdx) &&
+				unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me)
+			if !suppress && currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
 				displayLine.WriteString(runeDisplay)
 			}
 			documentRune++

@@ -52,6 +52,7 @@ var optionSpecs = []optionSpec{
 	{"showLineNumbers", true, optBoolKind, boolValues},
 	{"showInvisibles", true, optBoolKind, boolValues},
 	{"showBidi", true, optBoolKind, boolValues},
+	{"rtlCombining", true, optBoolKind, boolValues},
 	{"showMarks", true, optEnumKind, []string{"no", "yes", "all"}},
 	{"insertMode", true, optBoolKind, boolValues},
 	{"readOnly", true, optBoolKind, boolValues},
@@ -132,6 +133,10 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 		w.ViewState.ShowInvisibles = e.optBool(w, "showinvisibles", e.Config.ShowInvisibles)
 	case "showbidi":
 		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
+	case "rtlcombining":
+		// Stored inverted (zero value = marks shown), so a window not yet
+		// reconciled keeps the default.
+		w.ViewState.SuppressRTLCombining = !e.optBool(w, "rtlcombining", e.Config.RtlCombining)
 	case "showmarks":
 		w.ViewState.ShowMarks = e.optMarks(w, e.Config.ShowMarks)
 	case "insertmode":

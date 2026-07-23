@@ -59,6 +59,16 @@ type ViewState struct {
 	// natural direction): "<" entering an RTL fragment, ">" entering LTR.
 	// Explicit direction-control characters render as their own marker.
 	ShowBidi bool
+	// SuppressRTLCombining hides combining marks (niqqud, harakat) that ride
+	// RTL base letters — the "rtlCombining" option, INVERTED so the zero
+	// value keeps the default (marks shown). Turning rtlCombining off makes
+	// pointed Hebrew render like mew's pre-shaped Arabic: one codepoint per
+	// cell, so a bidi-applying host terminal (flipBidiForHost) no longer
+	// miscounts background fills — the selection bar works instead of the
+	// ride-safe fallback. The marks stay in the BUFFER (the caret still walks
+	// them, and the modebar shows the one under the caret); only display is
+	// suppressed.
+	SuppressRTLCombining bool
 	// ShowMarks renders a one-column "*" (in the "marks" color) at every mark /
 	// garland-decoration position in the text, giving each mark its own cell
 	// between the surrounding characters. It is a three-way enum: "no" (off),

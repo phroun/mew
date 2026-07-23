@@ -277,3 +277,67 @@ func TestLineHasZeroWidth(t *testing.T) {
 		}
 	}
 }
+
+// rtlCombining off (ViewState.SuppressRTLCombining) drops combining marks
+// that ride RTL letters from the DISPLAY, so pointed RTL renders unpointed;
+// and with the marks gone the flip-mode selection uses the real bar, not
+// the ride-safe fallback. LTR combining marks are never suppressed.
+func TestSuppressRTLCombining(t *testing.T) {
+	sr, w := testRenderer()
+	// A Hebrew base + niqqud (qamats, Mn) then a Latin base + acute (Mn).
+	line := "שָ" + "e" + combAcute // shin+qamats, e+acute
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+
+	render := func() string {
+		return stripAnsi(sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil))
+	}
+
+	// Marks shown (default): both marks present.
+	w.ViewState.SuppressRTLCombining = false
+	out := render()
+	if !strings.Contains(out, "ָ") {
+		t.Errorf("default should keep the Hebrew niqqud: %q", out)
+	}
+
+	// Suppressed: the RTL niqqud is gone, the LTR acute stays, the bases stay.
+	w.ViewState.SuppressRTLCombining = true
+	out = render()
+	if strings.Contains(out, "ָ") {
+		t.Errorf("rtlCombining off must drop the Hebrew niqqud: %q", out)
+	}
+	if !strings.Contains(out, "ש") {
+		t.Errorf("the Hebrew base letter must remain: %q", out)
+	}
+	if !strings.Contains(out, "́") {
+		t.Errorf("an LTR combining mark must NOT be suppressed: %q", out)
+	}
+}
+
+// With rtlCombining off, the flip-mode selection reverts to the real bar
+// (the marks are stripped, so no drift).
+func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	line := "שָם" // pointed Hebrew (has an RTL combining mark)
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+
+	// rtlCombining ON -> ride-safe selection (marks emitted, bar would drift).
+	w.ViewState.SuppressRTLCombining = false
+	if out := sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil); !strings.Contains(out, flipSel) {
+		t.Errorf("flip + marks shown should use the ride-safe selection: %q", out)
+	}
+
+	// rtlCombining OFF -> the real bar (marks suppressed, no drift).
+	w.ViewState.SuppressRTLCombining = true
+	out := sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
+	if !strings.Contains(out, bar) {
+		t.Errorf("flip + marks suppressed should use the real selection bar: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("suppressed marks must not trigger the ride-safe selection: %q", out)
+	}
+}
