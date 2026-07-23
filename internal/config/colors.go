@@ -92,9 +92,9 @@ var defaultGlobalColors = map[string]string{
 	"key":                 "\x1b[0;93;45m", // bright yellow on purple
 	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
 	"button":              "\x1b[0;30;47m", // black on silver
-	"buttonrecent":        "\x1b[0;30;42m", // black on dark green (a visited link)
+	"buttonrecent":        "\x1b[0;31;47m", // dark red on silver (a visited link)
 	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
-	"buttonshadowrecent":  "\x1b[0;90;42m", // dark gray on dark green
+	"buttonshadowrecent":  "\x1b[0;90;47m", // dark gray on silver
 	"buttonfocused":       "\x1b[0;30;46m", // black on cyan
 	"buttonshadowfocused": "\x1b[0;90;46m", // dark gray on cyan
 	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
@@ -129,7 +129,7 @@ var defaultTypeColors = map[string]map[string]string{
     	"key":                 "\x1b[0;93;45m", // bright yellow on purple
     	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
     	"button":              "\x1b[0;30;47m", // black on silver
-    	"buttonrecent":        "\x1b[0;32;47m", // dark green on silver (a visited link)
+    	"buttonrecent":        "\x1b[0;31;47m", // dark red on silver (a visited link)
     	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
     	"buttonshadowrecent":  "\x1b[0;90;42m", // dark gray on dark green
     	"buttonfocused":       "\x1b[0;97;41m", // white on red
