@@ -283,11 +283,21 @@ func (e *Editor) createWikiWindow(buf *buffer.Buffer, def wikiDef, focus bool) *
 	if def.WinType == window.DocWindow && def.Dock == window.DockNone {
 		return e.createMainWindow(buf, nil, focus)
 	}
+	// The help wiki shares ONE docked slot with the built-in Quick Help window
+	// (both carry Tag "help"): clear it so a help page always opens in the same
+	// docked position, mutually exclusive with whatever help was showing.
+	if def.Name == helpWindowTag && def.Dock == window.DockTop {
+		e.closeHelpWindows()
+	}
 	opts := e.docWindowOptions()
 	opts.Type = def.WinType
 	opts.Dock = def.Dock
 	opts.WindowSet = def.WindowSet
 	opts.Class = def.Name
+	// Tag by wiki name so a wiki's pages share one docked slot: the help wiki
+	// (Tag "help") is mutually exclusive with the built-in Quick Help window,
+	// which carries the same tag.
+	opts.Tag = def.Name
 	opts.Priority = def.Priority
 	opts.MinHeight = def.MinHeight
 	opts.MaxHeight = def.MaxHeight

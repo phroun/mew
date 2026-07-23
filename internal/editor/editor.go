@@ -2479,8 +2479,15 @@ func (e *Editor) registerCommands() {
 	})
 
 	// Help toggle command
+	// help_toggle with a page argument opens that help wiki page in the shared
+	// help slot (help_toggle "keys"); with no argument it toggles the built-in
+	// Quick Help. So one key can open the help index and another the Quick Help.
 	ps.RegisterCommand("help_toggle", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.toggleHelp())
+		arg := ""
+		if len(ctx.Args) > 0 {
+			arg = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.toggleHelp(arg))
 	})
 
 	// Editor options command
@@ -6605,33 +6612,74 @@ func (e *Editor) expireStaleNotifications() {
 	}
 }
 
-// helpWindowOpen reports whether the built-in help window (the WordStar
-// command reference toggled by help_toggle) is currently open. It is the
-// top-dock Class-"help" window that is NOT a wiki page — a help:/ wiki window
-// also carries Class "help" but has a WikiName, so the two never conflate.
-func (e *Editor) helpWindowOpen() bool {
+// The help family shares ONE docked slot: both the built-in Quick Help window
+// (the WordStar command reference) and a help:/ wiki page carry Tag "help" and
+// live in the top dock, so they are mutually exclusive — opening either, or a
+// help_toggle, first clears the slot. The Quick Help window is the one with no
+// WikiName (a wiki page carries its WikiName); help windows are told apart from
+// wiki pages by that, and the "Quick Help" checkmark tracks the Quick Help
+// window specifically.
+const helpWindowTag = "help"
+
+// anyHelpWindowOpen reports whether ANY help window (Quick Help or a help:/
+// wiki page) occupies the shared help slot.
+func (e *Editor) anyHelpWindowOpen() bool {
 	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
-		if w.Class == "help" && w.WikiName == "" {
+		if w.Tag == helpWindowTag {
 			return true
 		}
 	}
 	return false
 }
 
-// toggleHelp toggles the built-in help window (the WordStar command
-// reference). It targets only its OWN window — a help:/ wiki page shares the
-// Class but carries a WikiName, so toggling help never closes a wiki page.
-func (e *Editor) toggleHelp() bool {
-	// Look for existing help window in top dock
-	topWindows := e.WindowManager.GetWindowsByDock(window.DockTop)
-	for _, w := range topWindows {
-		if w.Class == "help" && w.WikiName == "" {
-			// Close existing help window
-			e.WindowManager.RemoveWindow(w.ID)
-			e.RequestRender()
+// quickHelpWindowOpen reports whether the built-in Quick Help window
+// specifically is open (a help slot window with no WikiName) — what the
+// "Quick Help" menu checkmark reflects.
+func (e *Editor) quickHelpWindowOpen() bool {
+	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+		if w.Tag == helpWindowTag && w.WikiName == "" {
 			return true
 		}
 	}
+	return false
+}
+
+// closeHelpWindows clears the shared help slot: it removes every top-dock help
+// window (Quick Help or a help:/ wiki page), so the next help content opens in
+// the same docked position.
+func (e *Editor) closeHelpWindows() {
+	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+		if w.Tag == helpWindowTag {
+			e.WindowManager.RemoveWindow(w.ID)
+		}
+	}
+}
+
+// toggleHelp is the help_toggle command. With a page argument it shows that
+// help wiki page in the shared help slot (the same as buffer_open_file
+// "help:/<arg>", which clears the slot first) — so one key can open the help
+// index and another the Quick Help. With no argument it toggles the built-in
+// Quick Help window: any open help window closes (either kind), and when none
+// is open the Quick Help appears in the slot.
+func (e *Editor) toggleHelp(arg string) bool {
+	if arg = strings.TrimSpace(arg); arg != "" {
+		return e.openFile("help:/" + arg)
+	}
+	if e.anyHelpWindowOpen() {
+		e.closeHelpWindows()
+		e.RequestRender()
+		return true
+	}
+	e.openQuickHelp()
+	e.RequestRender()
+	return true
+}
+
+// openQuickHelp fills the shared help slot with the built-in Quick Help window
+// (the WordStar command reference). It clears the slot first so it replaces any
+// help:/ wiki page showing there.
+func (e *Editor) openQuickHelp() {
+	e.closeHelpWindows()
 
 	// Create help content
 	helpText := `WordStar Style Command Reference:
@@ -6671,11 +6719,14 @@ Press ^KH to close help...`
 	// Create a buffer with the help text
 	buf := e.lib.NewFromString(helpText)
 
-	// Create help window in top dock with medium priority (100)
+	// Create help window in top dock with medium priority (100). Tag "help"
+	// puts it in the shared help slot (mutually exclusive with a help:/ wiki
+	// page); no WikiName marks it as the Quick Help window specifically.
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Type:             window.ToolWindow,
 		WindowSet:        "help",
 		Class:            "help",
+		Tag:              helpWindowTag,
 		Dock:             window.DockTop,
 		Priority:         100,
 		MinHeight:        4,
@@ -6684,9 +6735,6 @@ Press ^KH to close help...`
 		Buffer:           buf,
 		ShowLineNumbers:  false,
 	})
-
-	e.RequestRender()
-	return true
 }
 
 // toggleOptions shows the editor-options display, or dismisses it if a second

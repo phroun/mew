@@ -282,7 +282,7 @@ func (e *Editor) notifyHelpState() {
 	if e.Config.HelpState == nil {
 		return
 	}
-	open := e.helpWindowOpen()
+	open := e.quickHelpWindowOpen()
 	if !e.helpStatePushed || open != e.helpStateSent {
 		e.helpStatePushed = true
 		e.helpStateSent = open
