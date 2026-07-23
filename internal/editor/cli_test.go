@@ -92,6 +92,66 @@ func TestLaunchPerFileOptions(t *testing.T) {
 	}
 }
 
+// A wiki-scheme operand on the command line (mew help:/start) resolves to the
+// real page and opens it in the window Type/dock the wiki declares — a
+// top-docked ToolWindow for help — with the actual page content, NOT a blank
+// buffer under the literal "help:/start" name. An empty main editing area
+// still opens beneath the readout, and the help readout keeps focus.
+func TestLaunchWikiScheme(t *testing.T) {
+	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
+		"help/start.txt": "=== Start ===\n[[sample:widget]]\n",
+	})
+	r, err := argwild.ParseArgs([]string{"help:/start"})
+	if err != nil {
+		t.Fatalf("argwild parse: %v", err)
+	}
+	plan, err := buildLaunchPlan(r)
+	if err != nil {
+		t.Fatalf("buildLaunchPlan: %v", err)
+	}
+	if _, err := e.applyLaunch(plan); err != nil {
+		t.Fatalf("applyLaunch: %v", err)
+	}
+
+	// The help page opened in a top-docked ToolWindow rooted at the wiki.
+	startURL := e.canonicalDocURL("mew:///help/start.txt")
+	var help *window.Window
+	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+		if w.WikiName == "help" {
+			help = w
+		}
+	}
+	if help == nil {
+		t.Fatal("no top-docked help window opened")
+	}
+	if help.Type != window.ToolWindow {
+		t.Fatalf("help window Type = %v, want ToolWindow", help.Type)
+	}
+	if u := e.bufferCanonicalURL(help.Buffer); u != startURL {
+		t.Fatalf("help window shows %q, want the real page %q (blank fallback?)", u, startURL)
+	}
+	if n := help.Buffer.GetLineCount(); n < 2 {
+		t.Fatalf("help page came up blank: %d lines", n)
+	}
+	if !help.BrowseActive {
+		t.Fatal("help page should open in browse mode")
+	}
+	if f := e.WindowManager.GetFocusedWindow(); f != help {
+		t.Fatal("the launched help readout should hold focus")
+	}
+
+	// An empty main editing area still exists beneath the readout.
+	mainArea := false
+	for _, w := range e.WindowManager.AllWindows() {
+		if w.Type == window.DocWindow && w.Dock == window.DockNone {
+			mainArea = true
+		}
+	}
+	if !mainArea {
+		t.Fatal("no main editing area opened beneath the help readout")
+	}
+}
+
 // +N places the next file's caret; it is one-shot (does not carry to a later
 // file).
 func TestLaunchGotoLine(t *testing.T) {

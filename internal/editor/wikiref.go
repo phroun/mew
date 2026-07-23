@@ -86,6 +86,20 @@ type wikiDef struct {
 	// prompt). The unrooted document space is always writable; registered
 	// wikis say for themselves.
 	Writable bool
+
+	// Window placement: the kind of window a page of this wiki opens in and
+	// where it docks. The zero value (DocWindow / DockNone) is an ordinary
+	// main-area document window; help declares a ToolWindow in the top dock,
+	// so its pages surface as a readout above the document instead of taking
+	// over the editing area. WindowSet/Priority/MinHeight/MaxHeight only
+	// matter for a docked tool surface (they drive layout negotiation with
+	// the other docked readouts) and are ignored for a main-area window.
+	WinType   window.WindowType
+	Dock      window.DockPosition
+	WindowSet string
+	Priority  int
+	MinHeight int
+	MaxHeight int
 }
 
 // wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
@@ -93,7 +107,14 @@ type wikiDef struct {
 // each def's Name. (help is writable for now; that will turn off once its
 // content ships.)
 var wikiRegistry = map[string]wikiDef{
-	"help": {Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt", Start: "start", Writable: true},
+	"help": {
+		Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt",
+		Start: "start", Writable: true,
+		// Help pages surface as a top-docked tool readout above the document,
+		// not in the main editing area.
+		WinType: window.ToolWindow, Dock: window.DockTop,
+		WindowSet: "help", Priority: 100, MinHeight: 4, MaxHeight: 20,
+	},
 }
 
 // wikiWritable reports whether pages may be created in the wiki a window

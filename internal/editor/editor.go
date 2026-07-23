@@ -5013,7 +5013,7 @@ func (e *Editor) openFile(filename string) bool {
 	// real page file (~/.mew/help/start.txt) loads and the window is rooted
 	// in the wiki. Without this the name fell through to a plain OS open of
 	// "help:/start", which found nothing and came up blank.
-	if handled := e.openWikiScheme(strings.TrimSpace(filename)); handled {
+	if _, handled := e.openWikiScheme(strings.TrimSpace(filename), true); handled {
 		return true
 	}
 

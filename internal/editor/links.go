@@ -297,9 +297,15 @@ func (e *Editor) navFollow() bool {
 		// A window's root never changes, so a destination under a DIFFERENT
 		// root surfaces in a fresh window — sharing the underlying buffer
 		// when it is already open elsewhere. A full-scheme escape gets a
-		// rootless window; a registered-wiki destination (help:/...) gets a
-		// window rooted at that wiki, arriving in browse mode.
-		nw := e.createMainWindow(buf, nil, true)
+		// rootless main-area window; a registered-wiki destination (help:/...)
+		// gets a window rooted at that wiki, in the Type/dock the wiki
+		// declares, arriving in browse mode.
+		var nw *window.Window
+		if def, ok := wikiRegistry[res.wikiName]; ok {
+			nw = e.createWikiWindow(buf, def, true)
+		} else {
+			nw = e.createMainWindow(buf, nil, true)
+		}
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		if res.root != "" {
@@ -354,17 +360,22 @@ func (e *Editor) wikiDisplayName(w *window.Window) string {
 }
 
 // openWikiScheme opens a registered wiki-scheme reference ("help:/start")
-// typed at the Open prompt (or launched), resolving it through the same wiki
-// machinery a followed link uses and surfacing the page in a fresh rooted
-// window in browse mode. A trailing wiki extension is tolerated and stripped
-// ("help:/start.txt" == "help:/start"), since the page id is extensionless
-// (the .Ext is implied internally). Reports whether the ref was a wiki scheme
-// (handled here, whether it resolved, created, or reported not-found); a
-// non-wiki name returns false to fall through to the ordinary file open.
-func (e *Editor) openWikiScheme(ref string) bool {
+// typed at the Open prompt (or launched from the command line), resolving it
+// through the same wiki machinery a followed link uses and surfacing the page
+// in a fresh window rooted at the wiki — in the window Type and dock the wiki
+// declares (help is a top-docked ToolWindow), in browse mode. A trailing wiki
+// extension is tolerated and stripped ("help:/start.txt" == "help:/start"),
+// since the page id is extensionless (the .Ext is implied internally).
+//
+// The window takes focus when focus is set. Returns the opened window (nil
+// when the page could not be loaded or was only reported not-found) and
+// whether the ref was a wiki scheme (handled here regardless of outcome); a
+// non-wiki name returns (nil, false) to fall through to the ordinary file
+// open.
+func (e *Editor) openWikiScheme(ref string, focus bool) (*window.Window, bool) {
 	def, rest, ok := wikiSchemeRef(ref)
 	if !ok {
-		return false
+		return nil, false
 	}
 	// Tolerate (and hide) the page-file extension in what the user typed.
 	if def.Ext != "" && strings.HasSuffix(strings.ToLower(rest), strings.ToLower(def.Ext)) {
@@ -380,18 +391,18 @@ func (e *Editor) openWikiScheme(ref string) bool {
 			if err != nil {
 				e.ShowError("Open " + displayPath(res.url) + ": " + err.Error())
 				e.RequestRender()
-				return true
+				return nil, true
 			}
 			buf = loaded
 		}
-		nw := e.createMainWindow(buf, nil, true)
+		nw := e.createWikiWindow(buf, def, focus)
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.BrowseActive = nw.ViewState.LinkBrowsing
 		nw.BrowseAutoArmed = nw.BrowseActive
 		e.ShowNotification("→ " + displayPath(res.url))
 		e.RequestRender()
-		return true
+		return nw, true
 	}
 
 	// The page does not exist: offer to create it when the wiki is writable,
@@ -405,19 +416,20 @@ func (e *Editor) openWikiScheme(ref string) bool {
 		if err != nil {
 			e.ShowError("Create: " + err.Error())
 			e.RequestRender()
-			return true
+			return nil, true
 		}
-		nw := e.createMainWindow(buf, nil, true)
+		nw := e.createWikiWindow(buf, def, focus)
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.SetCursorPos(window.Position{Line: buf.GetLineCount() - 1, Rune: 0})
 		e.ensureCursorVisible(nw)
 		e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
-	} else {
-		e.ShowNotification(res.message)
+		e.RequestRender()
+		return nw, true
 	}
+	e.ShowNotification(res.message)
 	e.RequestRender()
-	return true
+	return nil, true
 }
 
 // promptCreatePage offers to create an unresolved wiki page, lock-prompt
@@ -447,7 +459,11 @@ func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followRes
 			}
 			var target *window.Window
 			if res.newWindow {
-				target = e.createMainWindow(buf, nil, true)
+				if def, ok := wikiRegistry[res.wikiName]; ok {
+					target = e.createWikiWindow(buf, def, true)
+				} else {
+					target = e.createMainWindow(buf, nil, true)
+				}
 				target.WikiRoot = res.root
 				target.WikiName = res.wikiName
 			} else if w := e.WindowManager.GetWindow(windowID); w != nil {

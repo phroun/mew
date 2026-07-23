@@ -157,8 +157,9 @@ func (e *Editor) RunArgs(r *argwild.Result) error {
 func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 	winOpts := map[string]string{} // running per-window option set
 	pendingGoto := 0               // 1-based line for the next file, 0 = none
-	var primary *buffer.Buffer
+	var primary *buffer.Buffer     // first MAIN-AREA document buffer (session snapshot)
 	var lastWin *window.Window
+	anyFocus := false // has any opened window claimed focus yet?
 
 	for _, op := range plan.ops {
 		switch op.kind {
@@ -171,12 +172,17 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 		case cliGotoLine:
 			pendingGoto = op.line
 		case cliOpenFile:
-			w, err := e.openLaunchFile(op.value, winOpts, primary == nil)
+			// The first opened window wins focus. A docked wiki tool window
+			// (mew help:/start) is a readout, not the session's main content:
+			// it does not become the primary buffer, so an empty editing area
+			// is still opened beneath it below.
+			w, err := e.openLaunchFile(op.value, winOpts, !anyFocus)
 			if err != nil {
 				return nil, err
 			}
+			anyFocus = true
 			lastWin = w
-			if primary == nil {
+			if primary == nil && w.Type == window.DocWindow && w.Dock == window.DockNone {
 				primary = w.Buffer
 			}
 			if pendingGoto > 0 {
@@ -186,11 +192,13 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 		}
 	}
 
-	// No file named: open one empty buffer carrying the running per-window
-	// options (bare `mew`, or `mew --showLineNumbers-`).
+	// No main-area document opened — bare `mew`, `mew --showLineNumbers-`, or a
+	// launch that named only docked tool surfaces (mew help:/start): open one
+	// empty document window carrying the running per-window options so there is
+	// an editing area. It takes focus only when nothing else already did.
 	if primary == nil {
 		buf := e.lib.New()
-		w := e.createMainWindow(buf, winOpts, true)
+		w := e.createMainWindow(buf, winOpts, !anyFocus)
 		primary = buf
 		lastWin = w
 	}
@@ -205,6 +213,20 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 // path: locks, backups, notices), applies the running per-window options, and
 // focuses the first one.
 func (e *Editor) openLaunchFile(filename string, winOpts map[string]string, focus bool) (*window.Window, error) {
+	// A registered wiki scheme ("mew help:/start") names a PAGE, not a literal
+	// file: resolve it through the same machinery the Open prompt uses so the
+	// real page file loads and the window is rooted in the wiki (in the
+	// Type/dock the wiki declares). Without this the name fell through to a
+	// plain OS open of "help:/start", which found nothing and came up blank.
+	// Per-window launch options do not apply to a wiki's own (possibly docked)
+	// window.
+	if w, handled := e.openWikiScheme(strings.TrimSpace(filename), focus); handled {
+		if w == nil {
+			return nil, fmt.Errorf("open %s: page not found", filename)
+		}
+		return w, nil
+	}
+
 	buf, err := e.loadBuffer(filename)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", filename, err)
@@ -215,16 +237,12 @@ func (e *Editor) openLaunchFile(filename string, winOpts map[string]string, focu
 	return e.createMainWindow(buf, winOpts, focus), nil
 }
 
-// createMainWindow creates a main-buffer window for buf (focused when focus is
-// set — the first opened file wins focus; the rest are background buffers
-// reachable via buffer_next) and applies the per-window option overrides.
-func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string, focus bool) *window.Window {
-	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
-		Buffer:          buf,
-		Dock:            window.DockNone,
-		Priority:        0,
-		SetFocus:        focus,
+// docWindowOptions returns a WindowOptions seeded with the editor's current
+// per-window view defaults (line numbers, tab size, marks, read-only, browse,
+// …). Callers stamp Type/Dock/Buffer/SetFocus (and, for a docked tool
+// surface, WindowSet/Priority/height) on top before creating the window.
+func (e *Editor) docWindowOptions() window.WindowOptions {
+	return window.WindowOptions{
 		ShowLineNumbers: e.Config.ShowLineNumbers,
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
@@ -235,12 +253,47 @@ func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string,
 		LinkBrowsing:    e.Config.LinkBrowsing,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SyntaxOverrides: e.Config.SyntaxOverrides,
-	})
-	w := e.WindowManager.GetWindow(id)
+	}
+}
+
+// createMainWindow creates a main-buffer window for buf (focused when focus is
+// set — the first opened file wins focus; the rest are background buffers
+// reachable via buffer_next) and applies the per-window option overrides.
+func (e *Editor) createMainWindow(buf *buffer.Buffer, winOpts map[string]string, focus bool) *window.Window {
+	opts := e.docWindowOptions()
+	opts.Type = window.DocWindow
+	opts.Dock = window.DockNone
+	opts.Buffer = buf
+	opts.SetFocus = focus
+	w := e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
 	for name, value := range winOpts {
 		e.setOption(w, name, value)
 	}
 	return w
+}
+
+// createWikiWindow creates the window a wiki page opens in, honoring the
+// wiki's declared window Type and Dock: a wiki that leaves them at the zero
+// value gets an ordinary main-area document window (identical to
+// createMainWindow); help declares a top-docked ToolWindow, so its pages
+// surface as a readout above the document. A docked tool surface also carries
+// the wiki's WindowSet/Priority/height so it negotiates space with the other
+// docked readouts.
+func (e *Editor) createWikiWindow(buf *buffer.Buffer, def wikiDef, focus bool) *window.Window {
+	if def.WinType == window.DocWindow && def.Dock == window.DockNone {
+		return e.createMainWindow(buf, nil, focus)
+	}
+	opts := e.docWindowOptions()
+	opts.Type = def.WinType
+	opts.Dock = def.Dock
+	opts.WindowSet = def.WindowSet
+	opts.Class = def.Name
+	opts.Priority = def.Priority
+	opts.MinHeight = def.MinHeight
+	opts.MaxHeight = def.MaxHeight
+	opts.Buffer = buf
+	opts.SetFocus = focus
+	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
 }
 
 // gotoLaunchLine places a window's caret at a 1-based line (argwild "+N"),
