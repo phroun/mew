@@ -6612,76 +6612,142 @@ func (e *Editor) expireStaleNotifications() {
 	}
 }
 
-// The help family shares ONE docked slot: both the built-in Quick Help window
-// (the WordStar command reference) and a help:/ wiki page carry Tag "help" and
-// live in the top dock, so they are mutually exclusive — opening either, or a
-// help_toggle, first clears the slot. The Quick Help window is the one with no
-// WikiName (a wiki page carries its WikiName); help windows are told apart from
-// wiki pages by that, and the "Quick Help" checkmark tracks the Quick Help
-// window specifically.
+// There is ONE docked help window (Tag "help", top dock): help_toggle NAVIGATES
+// it between help "locations" — the built-in Quick Help (the WordStar command
+// reference) and help:/ wiki pages — building the window's own nav history, so
+// its back button returns to where the reader came from. help_toggle on the
+// location already showing closes the window. buffer_open_file, by contrast,
+// opens ordinary UNtagged help windows that can stack; only this slot is
+// tagged, and only help_toggle manages it. The Quick Help checkmark tracks
+// whether the slot is currently showing Quick Help.
 const helpWindowTag = "help"
 
-// anyHelpWindowOpen reports whether ANY help window (Quick Help or a help:/
-// wiki page) occupies the shared help slot.
-func (e *Editor) anyHelpWindowOpen() bool {
+// quickHelpDocURL is the synthetic identity of the Quick Help buffer. It sits
+// OUTSIDE the help wiki root (mew:///help) so it never resolves as, or displays
+// like, a wiki page; it just gives the location a stable URL to compare against.
+const quickHelpDocURL = "mew:///quickhelp"
+
+// helpWindow returns the single docked help window (Tag "help"), or nil.
+func (e *Editor) helpWindow() *window.Window {
 	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
 		if w.Tag == helpWindowTag {
-			return true
+			return w
 		}
 	}
-	return false
+	return nil
 }
 
-// quickHelpWindowOpen reports whether the built-in Quick Help window
-// specifically is open (a help slot window with no WikiName) — what the
-// "Quick Help" menu checkmark reflects.
+// quickHelpWindowOpen reports whether the docked help window is open AND
+// currently showing Quick Help (not a wiki page) — what the "Quick Help"
+// checkmark reflects.
 func (e *Editor) quickHelpWindowOpen() bool {
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
-		if w.Tag == helpWindowTag && w.WikiName == "" {
+	hw := e.helpWindow()
+	return hw != nil && e.bufferCanonicalURL(hw.Buffer) == e.canonicalDocURL(quickHelpDocURL)
+}
+
+// toggleHelp is the help_toggle command. With no argument the target is Quick
+// Help; with one it is the help wiki page help:/<arg> ("help:/..." is accepted
+// whole, so help_toggle "help:/" opens the index). If the docked help window is
+// already showing that target it closes; otherwise the window NAVIGATES to it
+// (its nav history grows, so back returns), opening the docked window when none
+// exists. So one key can hold Quick Help and another a help page, each landing
+// in the same docked window.
+func (e *Editor) toggleHelp(arg string) bool {
+	arg = strings.TrimSpace(arg)
+	hw := e.helpWindow()
+
+	if arg == "" {
+		targetURL := e.canonicalDocURL(quickHelpDocURL)
+		if hw != nil && e.bufferCanonicalURL(hw.Buffer) == targetURL {
+			e.WindowManager.RemoveWindow(hw.ID) // already here: toggle off
+			e.RequestRender()
 			return true
 		}
+		e.showHelpLocation(hw, e.quickHelpBuffer(), "", "", false)
+		return true
 	}
-	return false
-}
 
-// closeHelpWindows clears the shared help slot: it removes every top-dock help
-// window (Quick Help or a help:/ wiki page), so the next help content opens in
-// the same docked position.
-func (e *Editor) closeHelpWindows() {
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
-		if w.Tag == helpWindowTag {
-			e.WindowManager.RemoveWindow(w.ID)
+	ref := arg
+	if !strings.HasPrefix(strings.ToLower(ref), "help:") {
+		ref = "help:/" + strings.TrimPrefix(ref, "/")
+	}
+	res := e.resolveFollow(nil, ref)
+	if res.url == "" {
+		// Missing page: offer creation when the wiki allows it, else report.
+		if res.createURL != "" && res.writable {
+			title := strings.TrimPrefix(arg, "help:/")
+			buf, err := e.createBufferURL(res.createURL, "=== "+title+" ===\n\n")
+			if err != nil {
+				e.ShowError("Create: " + err.Error())
+			} else {
+				e.showHelpLocation(hw, buf, res.root, res.wikiName, true)
+			}
+		} else {
+			e.ShowNotification(res.message)
 		}
-	}
-}
-
-// toggleHelp is the help_toggle command. With a page argument it shows that
-// help wiki page in the shared help slot (the same as buffer_open_file
-// "help:/<arg>", which clears the slot first) — so one key can open the help
-// index and another the Quick Help. With no argument it toggles the built-in
-// Quick Help window: any open help window closes (either kind), and when none
-// is open the Quick Help appears in the slot.
-func (e *Editor) toggleHelp(arg string) bool {
-	if arg = strings.TrimSpace(arg); arg != "" {
-		return e.openFile("help:/" + arg)
-	}
-	if e.anyHelpWindowOpen() {
-		e.closeHelpWindows()
 		e.RequestRender()
 		return true
 	}
-	e.openQuickHelp()
-	e.RequestRender()
+	if hw != nil && e.bufferCanonicalURL(hw.Buffer) == res.url {
+		e.WindowManager.RemoveWindow(hw.ID) // already here: toggle off
+		e.RequestRender()
+		return true
+	}
+	buf := e.findOpenBuffer(res.url)
+	if buf == nil {
+		loaded, err := e.loadBufferURL(res.url)
+		if err != nil {
+			e.ShowError("Open " + displayPath(res.url) + ": " + err.Error())
+			e.RequestRender()
+			return true
+		}
+		buf = loaded
+	}
+	e.showHelpLocation(hw, buf, res.root, res.wikiName, true)
 	return true
 }
 
-// openQuickHelp fills the shared help slot with the built-in Quick Help window
-// (the WordStar command reference). It clears the slot first so it replaces any
-// help:/ wiki page showing there.
-func (e *Editor) openQuickHelp() {
-	e.closeHelpWindows()
+// showHelpLocation puts buf into the docked help window: it NAVIGATES an
+// existing window (swap_buffer, so the previous location goes onto the back
+// history), or creates the docked window when none exists. root/wikiName wire
+// the window to the help wiki (empty for Quick Help), and browse arms link
+// browsing for a wiki page.
+func (e *Editor) showHelpLocation(hw *window.Window, buf *buffer.Buffer, root, wikiName string, browse bool) {
+	if hw == nil {
+		hw = e.createHelpWindow(buf)
+	} else {
+		e.swapBuffer(hw, buf)
+	}
+	hw.WikiRoot = root
+	hw.WikiName = wikiName
+	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
+	hw.BrowseAutoArmed = hw.BrowseActive
+	e.ensureCursorVisible(hw)
+	e.RequestRender()
+}
 
-	// Create help content
+// createHelpWindow creates the single docked help window (Tag "help") holding
+// buf, focused so the reader can scroll and follow links straight away.
+func (e *Editor) createHelpWindow(buf *buffer.Buffer) *window.Window {
+	opts := e.docWindowOptions()
+	opts.Type = window.ToolWindow
+	opts.WindowSet = "help"
+	opts.Class = "help"
+	opts.Tag = helpWindowTag
+	opts.Dock = window.DockTop
+	opts.Priority = 100
+	opts.MinHeight = 4
+	opts.MaxHeight = 20
+	opts.MessageTopCenter = "Help"
+	opts.Buffer = buf
+	opts.SetFocus = true
+	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
+}
+
+// quickHelpBuffer builds the Quick Help buffer (the WordStar command
+// reference), named by the synthetic quickHelpDocURL so the help window can
+// recognize the Quick Help location.
+func (e *Editor) quickHelpBuffer() *buffer.Buffer {
 	helpText := `WordStar Style Command Reference:
 -------------------------------
 Navigation:
@@ -6716,25 +6782,9 @@ Other:
 
 Press ^KH to close help...`
 
-	// Create a buffer with the help text
 	buf := e.lib.NewFromString(helpText)
-
-	// Create help window in top dock with medium priority (100). Tag "help"
-	// puts it in the shared help slot (mutually exclusive with a help:/ wiki
-	// page); no WikiName marks it as the Quick Help window specifically.
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:             window.ToolWindow,
-		WindowSet:        "help",
-		Class:            "help",
-		Tag:              helpWindowTag,
-		Dock:             window.DockTop,
-		Priority:         100,
-		MinHeight:        4,
-		MaxHeight:        15,
-		MessageTopCenter: "Help",
-		Buffer:           buf,
-		ShowLineNumbers:  false,
-	})
+	buf.SetFilename(quickHelpDocURL)
+	return buf
 }
 
 // toggleOptions shows the editor-options display, or dismisses it if a second

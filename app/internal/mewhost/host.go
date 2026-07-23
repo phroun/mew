@@ -413,7 +413,7 @@ bar=new menubar children={%s
 	// product's own top-level help affordances.
 	commands.Register("mew.help.usingmew", func() {
 		if ed, ok := rootMewEditor(application); ok {
-			ed.Execute(`buffer_open_file "help:/"`) // same as ^B O then "help:/"
+			ed.Execute(`help_toggle "help:/"`) // the help index, in the docked help window
 		}
 	})
 	commands.Register("mew.help.quickhelp", func() {
