@@ -404,3 +404,66 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 		t.Fatal("a shift+click selection must survive a plain click")
 	}
 }
+
+// Dragging a selection DOWN past the document's last line selects to EOF
+// (end of the last line), not just the horizontal position on that row.
+func TestMouseDragBelowLastLineSelectsToEOF(t *testing.T) {
+	_, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n") // lines 0..3 (3 is "")
+	press := func(line, cell int) {
+		x, y := screenAt(w, line, cell)
+		send(fmt.Sprintf("Mouse@%d,%d", x, y))
+		send("MouseLeftPress")
+	}
+	press(1, 1) // start mid-document
+
+	// Drag to a blank row below the last line, at a middle column.
+	lineCount := w.Buffer.GetLineCount()
+	belowY := w.ContentY + 1 + lineCount + 1
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+3, belowY))
+
+	// The end lands at EOF (last line, end of line), regardless of the column.
+	last := lineCount - 1
+	endRune := len([]rune("")) // last line "cccc\n" -> "" after trailing split
+	if l, r := mark(t, w, "_block_end"); l != last || r != endRune {
+		t.Fatalf("below-last-line drag: end (%d,%d), want (%d,%d)", l, r, last, endRune)
+	}
+	send("MouseLeftRelease")
+}
+
+// Vertical edge autoscroll keeps progressing even once HORIZONTAL autoscroll
+// has engaged — the tick must not re-follow the caret (which would clamp the
+// view back and stall the free scroll).
+func TestMouseDragAutoScrollVerticalSurvivesHorizontal(t *testing.T) {
+	var b strings.Builder
+	long := strings.Repeat("x", 200)
+	for i := 0; i < 80; i++ {
+		fmt.Fprintf(&b, "%02d-%s\n", i, long)
+	}
+	e, w, send := dragHarness(t, b.String())
+
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	// Park the pointer past BOTH the bottom edge and the right edge.
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+w.ContentHeight+2))
+	if e.dragScroll.vert <= 0 || e.dragScroll.horiz <= 0 {
+		t.Fatalf("both overshoots should engage: vert=%d horiz=%d", e.dragScroll.vert, e.dragScroll.horiz)
+	}
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second) // clear the delay gate
+
+	top0 := w.ViewState.ViewOffsetY
+	e.dragScrollTick()
+	top1 := w.ViewState.ViewOffsetY
+	if top1 <= top0 {
+		t.Fatalf("first tick should scroll down (with horizontal engaged): %d -> %d", top0, top1)
+	}
+	// The crux: a SECOND tick, with horizontal still engaged, must keep
+	// scrolling vertically (the bug stalled it here).
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
+	e.dragScrollTick()
+	top2 := w.ViewState.ViewOffsetY
+	if top2 <= top1 {
+		t.Fatalf("vertical autoscroll stalled after horizontal engaged: %d -> %d", top1, top2)
+	}
+	send("MouseLeftRelease")
+}

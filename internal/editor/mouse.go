@@ -538,7 +538,15 @@ func (e *Editor) dragSelUpdate(x, y int) {
 	e.dragSel.lastLine, e.dragSel.lastRune = docLine, runePos
 	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
-	e.ensureCursorVisible(w)
+	// While an edge autoscroll is engaged the ticker OWNS the viewport (a free
+	// scroll, ScrollDetached). ensureCursorVisible re-attaches caret-following
+	// and clamps the view back to the caret, which fights the free scroll and
+	// stalls the autoscroll — so skip it while overshoot is nonzero. The caret
+	// sits at the clamped edge, which the autoscrolled view keeps visible
+	// anyway; a drag INSIDE the content (no overshoot) follows as usual.
+	if e.dragScroll.vert == 0 && e.dragScroll.horiz == 0 {
+		e.ensureCursorVisible(w)
+	}
 	e.RequestRender()
 }
 
@@ -591,6 +599,19 @@ func (e *Editor) dragSelResolve(w *window.Window, x, y int) (docLine, runePos in
 	if visText < 1 {
 		return 0, 0, false
 	}
+
+	// Dragged below the document's LAST line (its row is visible and the
+	// pointer sits below it): the selection reaches the END of the document
+	// (EOF), not just the horizontal position on the last row. When the last
+	// line is scrolled off the bottom the pointer can't be below its row, so
+	// this doesn't fire and the autoscroll below carries the drag onward.
+	lastLine := lineCount - 1
+	lastLineRow := w.ContentY + 1 + (lastLine - w.ViewState.ViewOffsetY)
+	if y > lastLineRow {
+		endRune := len([]rune(strings.TrimRight(w.Buffer.GetLine(lastLine), "\n\r")))
+		return lastLine, endRune, true
+	}
+
 	top := w.ContentY + 1 // 1-based first content row
 	bottom := w.ContentY + visText
 	if y < top {
