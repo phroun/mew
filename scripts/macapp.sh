@@ -91,6 +91,22 @@ else
 	echo "macapp: no icon at $icns (add assets/mew.icns or assets/mew.png); using the default icon" >&2
 fi
 
+# Ship mew's support tree (grammar pack, help manual) into the bundle's
+# Contents/Resources — this is the on-disk "system resource" layer the mew:
+# filesystem falls back to on macOS (<mew.app>/Contents/Resources), sitting
+# above the copy embedded in the binary. Shipping it on disk keeps the files
+# discoverable and updatable without a rebuild. Its subtrees (syntax/, help/,
+# …) land directly under Contents/Resources, alongside the icon. MACAPP_RESOURCES
+# overrides the source; the default is resolved relative to this script so it
+# works regardless of the caller's working directory.
+res_src="${MACAPP_RESOURCES:-$(cd "$(dirname "$0")/.." && pwd)/internal/editor/resources}"
+if [ -d "$res_src" ]; then
+	cp -R "$res_src/." "$app/Contents/Resources/"
+	echo "macapp: copied resources from $res_src"
+else
+	echo "macapp: no resources tree at $res_src — bundle relies on the embedded copy" >&2
+fi
+
 # Best-effort version from the BUNDLED binary's --version line ("mew 0.3.1 (…)").
 # Run the copy inside the bundle, not the loose $bin: a universal build links
 # SDL2 with an @executable_path/../Frameworks rpath that only resolves within the
