@@ -174,8 +174,7 @@ func (e *Editor) notifyPointerRegion() {
 	}
 	var rect [4]int // col, row, width, height (1-based cells; zero w/h = none)
 	var arrows []PointerArrowSpan
-	if w := e.WindowManager.GetFocusedWindow(); w != nil && w.Buffer != nil &&
-		w.ContentWidth > 0 && w.ContentHeight > 0 {
+	if w := e.pointerRegionWindow(); w != nil {
 		rect = [4]int{w.ContentX + 1, w.ContentY + 1, w.ContentWidth, w.ContentHeight}
 		arrows = e.pointerArrowSpans(w)
 	}
@@ -244,6 +243,29 @@ func arrowSpansEqual(a, b []PointerArrowSpan) bool {
 		}
 	}
 	return true
+}
+
+// pointerRegionWindow returns the window whose editable text drives the I-beam
+// region. It is the focused window ONLY when that window is actually on screen
+// — VISIBLE, holding a buffer, and laid out this frame (non-zero content
+// geometry). A focused window that is invisible or not laid out (a background
+// or stacked window that never rendered) has stale or zero geometry that would
+// blank or misplace the region — the I-beam then never lands over the visible
+// text — so we fall back to the visible document instead. A visible prompt is a
+// legitimate focus target (its own field shows the I-beam); only genuinely
+// off-screen focus falls through to the document.
+func (e *Editor) pointerRegionWindow() *window.Window {
+	onScreen := func(w *window.Window) bool {
+		return w != nil && w.Visible && w.Buffer != nil &&
+			w.ContentWidth > 0 && w.ContentHeight > 0
+	}
+	if w := e.WindowManager.GetFocusedWindow(); onScreen(w) {
+		return w
+	}
+	if m := e.WindowManager.GetLastMainWindow(); onScreen(m) {
+		return m
+	}
+	return nil
 }
 
 // promptHasPriority reports whether a modal prompt currently holds focus, so
