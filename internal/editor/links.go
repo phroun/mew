@@ -328,6 +328,31 @@ func (e *Editor) navFollow() bool {
 	return true
 }
 
+// wikiDisplayName renders a wiki-rooted window's page as its extensionless
+// scheme form ("help:/start", "help:/sample/widget") — what the user typed
+// and what they should SEE — instead of the underlying file base
+// ("start.txt"). Returns "" for a non-wiki window, a buffer outside the
+// window's root, or an unknown registry, so the modebar falls back to the
+// ordinary filename.
+func (e *Editor) wikiDisplayName(w *window.Window) string {
+	if w == nil || w.Buffer == nil || w.WikiName == "" || w.WikiRoot == "" {
+		return ""
+	}
+	def, ok := wikiRegistry[w.WikiName]
+	if !ok {
+		return ""
+	}
+	url := e.bufferCanonicalURL(w.Buffer)
+	if url == "" || !urlWithin(url, w.WikiRoot) {
+		return ""
+	}
+	rel := strings.TrimPrefix(strings.TrimPrefix(url, w.WikiRoot), "/")
+	if def.Ext != "" && strings.HasSuffix(strings.ToLower(rel), strings.ToLower(def.Ext)) {
+		rel = rel[:len(rel)-len(def.Ext)]
+	}
+	return def.Name + ":/" + rel
+}
+
 // openWikiScheme opens a registered wiki-scheme reference ("help:/start")
 // typed at the Open prompt (or launched), resolving it through the same wiki
 // machinery a followed link uses and surfacing the page in a fresh rooted

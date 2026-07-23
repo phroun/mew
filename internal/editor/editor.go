@@ -832,6 +832,8 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetColorScheme(loadedConfig.Colors)
 	e.Modebar.SetColorScheme(loadedConfig.Colors)
 	e.Modebar.SetTemplates(loadedConfig.General.ModebarInner, loadedConfig.General.ModebarDefault, loadedConfig.General.ModebarOuter)
+	// A wiki page shows its scheme form ("help:/start"), not "start.txt".
+	e.Modebar.SetFilenameFunc(e.wikiDisplayName)
 	e.ColumnRuler.SetColorScheme(loadedConfig.Colors)
 
 	// Create prompt manager for history-aware prompts

@@ -38,6 +38,17 @@ type ModebarPlugin struct {
 	// keymap (e.g. %SPU% -> the key bound to stat_peek_up). Merged into the
 	// substitution set so templates and the peek labels resolve them.
 	bindingValues map[string]string
+
+	// filenameFn, when set, supplies a display name for %FN% given the main
+	// buffer window — the editor uses it to show a wiki page's scheme form
+	// ("help:/start") instead of the underlying file base ("start.txt").
+	// Returning "" defers to the ordinary filename base.
+	filenameFn func(*window.Window) string
+}
+
+// SetFilenameFunc installs a display-name provider for %FN% (see filenameFn).
+func (s *ModebarPlugin) SetFilenameFunc(fn func(*window.Window) string) {
+	s.filenameFn = fn
 }
 
 // modebarBottomPriority keeps a bottom-located modebar on the very last
@@ -208,6 +219,11 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 		ctxWindow = mainBufferWindow
 	}
 	vals := modebarValues(mainBufferWindow, ctxWindow)
+	if s.filenameFn != nil {
+		if name := s.filenameFn(mainBufferWindow); name != "" {
+			vals["FN"] = name
+		}
+	}
 	for code, v := range s.bindingValues {
 		vals[code] = v
 	}

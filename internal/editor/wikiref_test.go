@@ -931,3 +931,33 @@ func TestOpenFileWikiSchemeMissingCreates(t *testing.T) {
 		t.Fatalf("created buffer should carry the resolved page path, not %q", fn)
 	}
 }
+
+// A wiki-rooted window displays its page as the scheme form (help:/start),
+// hiding the .txt and the underlying file path; non-wiki windows and buffers
+// outside the root defer to the ordinary filename.
+func TestWikiDisplayName(t *testing.T) {
+	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
+		"help/start.txt":         "start\n",
+		"help/sample/widget.txt": "widget\n",
+	})
+	e.openFile("help:/start")
+	w := e.WindowManager.GetFocusedWindow()
+	if got := e.wikiDisplayName(w); got != "help:/start" {
+		t.Fatalf("wikiDisplayName(start) = %q, want help:/start", got)
+	}
+
+	e.openFile("help:/sample/widget")
+	w2 := e.WindowManager.GetFocusedWindow()
+	if got := e.wikiDisplayName(w2); got != "help:/sample/widget" {
+		t.Fatalf("wikiDisplayName(widget) = %q, want help:/sample/widget", got)
+	}
+
+	// A non-wiki window has no scheme display name.
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, ID: "plain", Type: window.DocWindow, Dock: window.DockNone,
+		Buffer: buffer.NewFromString("hi\n"), SetFocus: true,
+	})
+	if got := e.wikiDisplayName(e.WindowManager.GetWindow("plain")); got != "" {
+		t.Fatalf("a non-wiki window should have no wiki display name, got %q", got)
+	}
+}
