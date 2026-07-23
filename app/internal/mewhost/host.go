@@ -397,6 +397,9 @@ bar=new menubar children={%s
 		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
 	}%s
 	new menu caption="Help" wellknown="help" children={
+		new menuitem caption="&Using mew" action=mew.help.usingmew
+		new menuitem caption="&Quick Help" action=mew.help.quickhelp checkable=true
+		new menuitem separator
 		new menuitem caption="&About" action=mew.help.about
 	}
 }
@@ -405,6 +408,23 @@ bar=new menubar children={%s
 	menus := byID[reply.IDs["bar"]].(interface{ Menus() []*trinkets.Menu }).Menus()
 
 	commands := application.Commands()
+	// The Help ▸ "Using mew" / "Quick Help" items drive the ROOT mew editor
+	// (the app's main window), never a peer scratch window: they are the
+	// product's own top-level help affordances.
+	commands.Register("mew.help.usingmew", func() {
+		if ed, ok := rootMewEditor(application); ok {
+			ed.Execute(`buffer_open_file "help:/"`) // same as ^B O then "help:/"
+		}
+	})
+	commands.Register("mew.help.quickhelp", func() {
+		if ed, ok := rootMewEditor(application); ok {
+			ed.Execute("help_toggle")
+		}
+	})
+	// Keep the Quick Help checkmark in sync with the root editor's built-in
+	// help window each time the Help menu opens (help_toggle, or closing the
+	// window, can change it out from under the menu).
+	syncQuickHelpCheckmark(menus, application)
 	// Raw Key Input: pass the next keystroke straight to the focused trinket, so
 	// a control key mew binds (and the host would otherwise consume) reaches the
 	// editor. Same handler the demo wires.
@@ -420,6 +440,48 @@ bar=new menubar children={%s
 	commands.Register("mew.help.about", func() { showMewAbout(application) })
 
 	return menus
+}
+
+// rootMewEditor returns the mew editor trinket behind the app's main (root)
+// window, or ok=false before it exists. The Help ▸ Using mew / Quick Help
+// items act on this editor specifically — the product's root session, not a
+// peer scratch window.
+func rootMewEditor(application *app.Application) (*trinkets.Editor, bool) {
+	w := application.MainWindow()
+	if w == nil {
+		return nil, false
+	}
+	ed, ok := w.Content().(*trinkets.Editor)
+	return ed, ok
+}
+
+// syncQuickHelpCheckmark wires the Help menu's about-to-show hook so the Quick
+// Help item's checkmark reflects whether the root editor's built-in help
+// window is open at the moment the menu is dropped.
+func syncQuickHelpCheckmark(menus []*trinkets.Menu, application *app.Application) {
+	for _, m := range menus {
+		if m.WellKnownID() != "help" {
+			continue
+		}
+		var quickHelp *trinkets.MenuItem
+		for _, it := range m.Items() {
+			if it.ID() == "mew.help.quickhelp" {
+				quickHelp = it
+				break
+			}
+		}
+		if quickHelp == nil {
+			return
+		}
+		m.SetOnAboutToShow(func() {
+			open := false
+			if ed, ok := rootMewEditor(application); ok {
+				open = ed.QuickHelpOpen()
+			}
+			quickHelp.SetChecked(open)
+		})
+		return
+	}
 }
 
 // showMewAbout opens mew's About dialog as a modal message box on the app. It

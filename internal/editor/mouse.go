@@ -274,6 +274,22 @@ func (e *Editor) notifyEditState() {
 	}
 }
 
+// notifyHelpState tells the host (via Config.HelpState) whether the built-in
+// help window is open, once at the first render and thereafter on transitions,
+// so a host keeps a "Quick Help" menu checkmark in sync as help_toggle (or a
+// close) opens and closes it. Called from performRender.
+func (e *Editor) notifyHelpState() {
+	if e.Config.HelpState == nil {
+		return
+	}
+	open := e.helpWindowOpen()
+	if !e.helpStatePushed || open != e.helpStateSent {
+		e.helpStatePushed = true
+		e.helpStateSent = open
+		e.Config.HelpState(open)
+	}
+}
+
 // parseMouseAt parses the "x,y" tail of a mouse position (1-based terminal
 // coordinates).
 func parseMouseAt(s string) (x, y int, ok bool) {

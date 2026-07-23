@@ -77,6 +77,11 @@ type Editor struct {
 	// read-only buffer holds focus.
 	readOnlyFocused atomic.Bool
 
+	// helpOpen mirrors whether mew's built-in help window is open
+	// (WithHelpState), so a host can keep a "Quick Help" checkmark in sync
+	// (QuickHelpOpen).
+	helpOpen atomic.Bool
+
 	// launchArgv, when set by the host, runs the session as a full mew
 	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
 	// taking precedence over filename/value/caret. A host seam, not an app
@@ -285,6 +290,11 @@ func (e *Editor) run() {
 		// the Edit menu's Cut for a read-only buffer.
 		mew.WithEditState(func(readOnly bool) {
 			e.readOnlyFocused.Store(readOnly)
+		}),
+		// Built-in help-window open state, mirrored so a host can keep a
+		// "Quick Help" menu checkmark in sync (QuickHelpOpen).
+		mew.WithHelpState(func(open bool) {
+			e.helpOpen.Store(open)
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
@@ -499,6 +509,17 @@ func (e *Editor) execMew(cmd string) {
 		e.port.Execute(cmd)
 	}
 }
+
+// Execute injects a mew command from a UI thread — the generic seam a host
+// uses to drive this editor from its own affordances (a menu item running
+// buffer_open_file or help_toggle, say). Marshaled onto mew's main loop with
+// keystroke safety; safe before the session starts and after it ends.
+func (e *Editor) Execute(cmd string) { e.execMew(cmd) }
+
+// QuickHelpOpen reports whether mew's built-in help window is currently open
+// (mirrored from mew via WithHelpState), so a host can keep a "Quick Help"
+// menu checkmark in sync with it.
+func (e *Editor) QuickHelpOpen() bool { return e.helpOpen.Load() }
 
 // Copy places mew's marked block on the system clipboard.
 func (e *Editor) Copy() { e.execMew("os_copy") }

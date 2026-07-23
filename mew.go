@@ -206,6 +206,14 @@ func WithPointerRegion(fn func(col, row, width, height int, arrows []PointerArro
 	return func(cfg *editor.Config) { cfg.PointerRegion = fn }
 }
 
+// WithHelpState wires a callback told whether mew's built-in help window (the
+// WordStar command reference toggled by help_toggle) is open — once at the
+// first render and thereafter on transitions. A host uses it to keep a "Quick
+// Help" menu checkmark in sync with the window.
+func WithHelpState(fn func(open bool)) Option {
+	return func(cfg *editor.Config) { cfg.HelpState = fn }
+}
+
 // WithFontSink wires the set_font command to a host that can change fonts
 // live: fn re-points a font alias (e.g. "ui-term") at an ordered list of font
 // names — the KittyTK trinket loads them into its shared text engine and

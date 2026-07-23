@@ -270,6 +270,10 @@ type Editor struct {
 	pointerRegionSent   [4]int
 	pointerArrowsSent   []PointerArrowSpan
 	pointerRegionPushed bool
+	// helpStateSent/helpStatePushed: the last built-in-help-window open state
+	// pushed through Config.HelpState (see notifyHelpState).
+	helpStateSent   bool
+	helpStatePushed bool
 	// Horizontal wheel barrier (mouse.go): a sideways scroll gesture only
 	// engages after hScrollBarrier ticks accumulate in one direction, so a
 	// stray sideways tick during a vertical scroll never nudges the view. A
@@ -504,6 +508,12 @@ type Config struct {
 	// host answers per-pixel cursor queries locally, without every hover
 	// round-tripping through mew's input stream. Called from the render path.
 	PointerRegion func(col, row, width, height int, arrows []PointerArrowSpan)
+
+	// HelpState, when set, is told whether the built-in help window (the
+	// WordStar command reference toggled by help_toggle) is open, once at the
+	// first render and thereafter on transitions — so a host can keep a "Quick
+	// Help" menu checkmark in sync with it. Called from the render path.
+	HelpState func(open bool)
 
 	// EditState, when set, is told whenever the FOCUSED window's read-only
 	// state changes (and once at the first render), so a host can grey out
@@ -2019,7 +2029,18 @@ func (e *Editor) registerCommands() {
 	})
 
 	// Multi-buffer commands
+	// buffer_open_file with an argument opens THAT file directly (no prompt) —
+	// the scripted/menu equivalent of typing the name at the Open prompt, e.g.
+	// `buffer_open_file "help:/"`. With no argument it raises the Open prompt.
 	ps.RegisterCommand("buffer_open_file", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) > 0 {
+			name := strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0]))
+			if name != "" {
+				ok := e.openFile(name)
+				e.RequestRender()
+				return pawscript.BoolStatus(ok)
+			}
+		}
 		e.PromptMgr.PromptForFilename("Open", "", func(accepted bool, _, cursorLineText string) {
 			if accepted && cursorLineText != "" {
 				e.openFile(cursorLineText)
@@ -5857,6 +5878,9 @@ func (e *Editor) performRender() {
 	// Push the focused window's read-only state to the host on transitions
 	// (a host greys out its Edit-menu Cut for a read-only buffer).
 	e.notifyEditState()
+	// Push whether the built-in help window is open (a host syncs a "Quick
+	// Help" menu checkmark to it).
+	e.notifyHelpState()
 
 	// Follow the cursor VERTICALLY only. Horizontal following is a "lock-in"
 	// action performed by cursor/edit commands, not by rendering, so a manual
@@ -6581,12 +6605,27 @@ func (e *Editor) expireStaleNotifications() {
 	}
 }
 
-// toggleHelp toggles the help window visibility.
+// helpWindowOpen reports whether the built-in help window (the WordStar
+// command reference toggled by help_toggle) is currently open. It is the
+// top-dock Class-"help" window that is NOT a wiki page — a help:/ wiki window
+// also carries Class "help" but has a WikiName, so the two never conflate.
+func (e *Editor) helpWindowOpen() bool {
+	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+		if w.Class == "help" && w.WikiName == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// toggleHelp toggles the built-in help window (the WordStar command
+// reference). It targets only its OWN window — a help:/ wiki page shares the
+// Class but carries a WikiName, so toggling help never closes a wiki page.
 func (e *Editor) toggleHelp() bool {
 	// Look for existing help window in top dock
 	topWindows := e.WindowManager.GetWindowsByDock(window.DockTop)
 	for _, w := range topWindows {
-		if w.Class == "help" {
+		if w.Class == "help" && w.WikiName == "" {
 			// Close existing help window
 			e.WindowManager.RemoveWindow(w.ID)
 			e.RequestRender()
