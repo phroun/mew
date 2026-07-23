@@ -986,7 +986,18 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	}
 
 	textColor := sr.col(w, "text")
-	selectionColor := sr.col(w, "selection")
+	// Selection styling. Under flipBidiForHost a line carrying combining
+	// marks cannot use a background/reverse selection bar — the host
+	// terminal's bidi reorder miscounts the fill (codepoints vs cells) and
+	// the bar drifts and half-vanishes on pointed RTL. Foreground + bold
+	// ride each glyph intact, so those lines use the flip-safe selection
+	// (see the selectionFlip colors). Mark-free lines (English; Arabic,
+	// which mew pre-shapes to single presentation forms) keep the real bar.
+	selName, selInvName := "selection", "selectionInvisibles"
+	if sr.frame.flipBidi && lineHasZeroWidth(line) {
+		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
+	}
+	selectionColor := sr.col(w, selName)
 	resetColor := sr.col(w, "reset")
 	substitutesColor := sr.col(w, "special") // control char substitutes (^X / hex)
 	truncatedColor := sr.col(w, "truncation")
@@ -996,7 +1007,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// selection variant when the marker falls inside the selection).
 	showInvisibles := w.ViewState.ShowInvisibles
 	plainInvisiblesColor := sr.col(w, "invisibles")
-	selectionInvisiblesColor := sr.col(w, "selectionInvisibles")
+	selectionInvisiblesColor := sr.col(w, selInvName)
 	invisibleSpace := sr.indicators.VisibleSpace // marker for a space
 
 	// showMarks: draw a "*" (in the "marks" color) at every mark / garland-
@@ -2306,6 +2317,20 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *windo
 		return 2
 	}
 	return textwidth.Rune(r)
+}
+
+// lineHasZeroWidth reports whether s contains any zero-width rune (a combining
+// mark) — the exact condition under which the emitted codepoint count exceeds
+// the cell count, which is what makes a flip-mode host terminal misplace a
+// background/reverse selection fill. Control characters (rendered as ^X, two
+// cells) are excluded. s is plain display text (no ANSI).
+func lineHasZeroWidth(s string) bool {
+	for _, r := range s {
+		if r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // getTabSize returns the tab size for a window.

@@ -210,3 +210,70 @@ func TestTruncationIndicatorPadsWideCell(t *testing.T) {
 		t.Errorf("expected truncation indicator: %q", out)
 	}
 }
+
+// Under flipBidiForHost, selection on a line CARRYING COMBINING MARKS uses
+// the ride-safe (foreground+bold, no background) style — the bar drifts on
+// such lines in a bidi-applying terminal. Mark-free lines (English; Arabic,
+// which mew pre-shapes to single presentation forms) keep the real bar, and
+// the bar is always used when flip is off.
+func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m" // normal selection (bg fill)
+		flipSel = "\x1b[0;1;93m"  // ride-safe selection (fg+bold)
+	)
+	sr, w := testRenderer()
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+
+	render := func(line string, flip bool) string {
+		sr.frame.flipBidi = flip
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
+	}
+
+	marked := "a" + hebrewDot + "b" // a base + a combining mark + b
+	plain := "abc"
+
+	// flip + marks -> ride-safe fg+bold, never the bar.
+	out := render(marked, true)
+	if !strings.Contains(out, flipSel) {
+		t.Errorf("flip+marks should use the ride-safe selection: %q", out)
+	}
+	if strings.Contains(out, bar) {
+		t.Errorf("flip+marks must NOT emit the background bar: %q", out)
+	}
+
+	// flip + NO marks -> the real bar (English keeps its selection).
+	out = render(plain, true)
+	if !strings.Contains(out, bar) {
+		t.Errorf("flip without marks should keep the bar: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("flip without marks must not use the ride-safe style: %q", out)
+	}
+
+	// flip OFF + marks -> the real bar (every non-flip terminal unchanged).
+	out = render(marked, false)
+	if !strings.Contains(out, bar) {
+		t.Errorf("no-flip should keep the bar even with marks: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("no-flip must never use the ride-safe style: %q", out)
+	}
+}
+
+// lineHasZeroWidth flags combining marks (and zero-width joiners) but not
+// plain text, control characters, or wide glyphs.
+func TestLineHasZeroWidth(t *testing.T) {
+	cases := map[string]bool{
+		"abc":               false,
+		"日本語":               false,
+		"ctrl\x01char":      false, // control -> ^X (two cells), not zero width
+		"e" + combAcute:     true,
+		"a" + hebrewDot:     true,
+		"x" + zwj + "y":     true,
+	}
+	for s, want := range cases {
+		if got := lineHasZeroWidth(s); got != want {
+			t.Errorf("lineHasZeroWidth(%q) = %v, want %v", s, got, want)
+		}
+	}
+}

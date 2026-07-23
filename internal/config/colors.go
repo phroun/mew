@@ -54,6 +54,19 @@ var defaultGlobalColors = map[string]string{
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
 	"selection":           "\x1b[0;30;47m",   // black text on silver
 	"selectioninvisibles": "\x1b[1;30;47m",   // dark gray on silver
+	// Flip-safe selection: under flipBidiForHost (macOS Terminal.app etc.),
+	// a background/reverse selection FILL is misplaced on any line holding
+	// combining marks — the terminal's bidi engine counts codepoints where
+	// the grid counts cells, so a niqqud-pointed Hebrew selection drifts and
+	// half-vanishes. Foreground color and BOLD, by contrast, ride each glyph
+	// through the reorder intact. So on such lines the selection is drawn as
+	// bold + a distinct foreground instead of a bar: correctly positioned,
+	// unambiguous (its own weight+color), and using only glyph-riding
+	// channels — NO background, NO reverse, NO underline (underline drifts
+	// too). Lines without combining marks (English, and Arabic, which mew
+	// pre-shapes to single presentation-form codepoints) keep the real bar.
+	"selectionflip":           "\x1b[0;1;93m", // bold bright-yellow (no bg)
+	"selectioninvisiblesflip": "\x1b[0;1;33m", // bold yellow (no bg)
 	"rulerends":           "\x1b[0;97;45m",   // bright white on magenta (end numbers)
 	"rulerfill":           "\x1b[0;37;45m",   // silver on magenta (for the fill glyph)
 	"rulertick":           "\x1b[0;37;45m",   // silver on magenta (for ".")
