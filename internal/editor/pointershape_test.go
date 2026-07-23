@@ -7,72 +7,94 @@ import (
 	"github.com/phroun/mew/internal/window"
 )
 
-// The pointer shows the I-beam only over the focused window's editable text —
-// its content area and the blank rows below the document — and the arrow
-// everywhere else (the gutter, the modebar, an unfocused pane).
-func TestPointerIBeamOverFocusedText(t *testing.T) {
-	e, doc, _ := renderedEditorWithConfig(t, "hello world\nsecond line\n", "[options]\nshowLineNumbers=yes\n")
+// The I-beam region mew publishes after a render is the FOCUSED window's
+// editable content rectangle (1-based cells), so a graphical host shows the
+// I-beam over text and the arrow over the gutter, modebar, and other chrome.
+func TestPointerRegionPublished(t *testing.T) {
+	e, doc, _ := renderedEditorWithConfig(t, "hello\nworld\n", "[options]\nshowLineNumbers=yes\n")
+	var last [4]int
+	var arrows []PointerArrowSpan
+	e.Config.PointerRegion = func(col, row, w, h int, a []PointerArrowSpan) {
+		last = [4]int{col, row, w, h}
+		arrows = a
+	}
 	e.createPluginWindows()
 	e.performRender()
 
-	// A column inside the content area (past the gutter) over a text row.
-	tx := doc.ContentX + 2
-	ty := doc.ContentY + 1 // first content row, 1-based
-	if !e.pointerShowIBeam(tx, ty) {
-		t.Fatal("pointer over focused text should show the I-beam")
+	want := [4]int{doc.ContentX + 1, doc.ContentY + 1, doc.ContentWidth, doc.ContentHeight}
+	if last != want {
+		t.Fatalf("pointer region = %v, want the focused doc content rect %v", last, want)
 	}
-
-	// The gutter (line-number) columns are chrome: arrow.
-	if doc.ViewState.ShowLineNumbers && doc.LineNumWidth > 0 {
-		if e.pointerShowIBeam(1, ty) {
-			t.Fatal("pointer over the gutter should show the arrow, not the I-beam")
-		}
+	if len(arrows) != 0 {
+		t.Fatalf("a plain document has no button exclusions; got %v", arrows)
 	}
-
-	// A blank row below the last line (still click-to-EOF) is text: I-beam.
-	belowY := doc.ContentY + 1 + 5 // several rows below the 2-line document
-	if !e.pointerShowIBeam(tx, belowY) {
-		t.Fatal("pointer below the document should show the I-beam (click-to-EOF area)")
+	// The gutter sits left of the region.
+	if doc.ViewState.ShowLineNumbers && doc.LineNumWidth > 0 && last[0] <= 1 {
+		t.Fatal("the I-beam region should start past the gutter")
 	}
-
-	// The modebar row is chrome: arrow.
-	mw := e.WindowManager.GetWindow(e.Modebar.WindowID())
-	if mw != nil {
-		if e.pointerShowIBeam(tx, mw.ContentY+1) {
-			t.Fatal("pointer over the modebar should show the arrow")
+	// The modebar row is chrome — outside the region's rows.
+	if mw := e.WindowManager.GetWindow(e.Modebar.WindowID()); mw != nil {
+		mrow := mw.ContentY + 1
+		if mrow >= last[1] && mrow < last[1]+last[3] {
+			t.Fatal("the modebar row must lie outside the I-beam region")
 		}
 	}
 }
 
-// While a prompt holds focus the document area shows the ARROW (a cue that
-// input is awaited at the prompt), but the prompt's own field shows the I-beam.
-func TestPointerIBeamPromptFocus(t *testing.T) {
-	e, doc, _ := renderedEditorWithConfig(t, "hello world\n", "[options]\n")
+// When a prompt takes focus the region becomes the PROMPT's own field, so the
+// document area shows the arrow (a cue that input is awaited at the prompt)
+// while the prompt field shows the I-beam.
+func TestPointerRegionFollowsPromptFocus(t *testing.T) {
+	e, doc, _ := renderedEditorWithConfig(t, "hello\n", "[options]\n")
+	var last [4]int
+	e.Config.PointerRegion = func(col, row, w, h int, _ []PointerArrowSpan) { last = [4]int{col, row, w, h} }
 	e.createPluginWindows()
 	e.performRender()
-	tx := doc.ContentX + 2
-	ty := doc.ContentY + 1
-	if !e.pointerShowIBeam(tx, ty) {
-		t.Fatal("precondition: doc text should show the I-beam when the doc is focused")
+	docRect := [4]int{doc.ContentX + 1, doc.ContentY + 1, doc.ContentWidth, doc.ContentHeight}
+	if last != docRect {
+		t.Fatalf("precondition: region should be the doc rect %v, got %v", docRect, last)
 	}
 
-	// Raise a prompt (it takes focus).
 	e.PromptForInput("Find: ", "", func(string, bool) {})
 	e.performRender()
-	if !e.promptHasPriority() {
-		t.Fatal("the prompt should hold focus")
-	}
-	// The document text now shows the arrow, not the I-beam.
-	if e.pointerShowIBeam(tx, ty) {
-		t.Fatal("with a prompt focused, the document area should show the arrow")
-	}
-	// The prompt's own field shows the I-beam.
 	pw := e.WindowManager.GetFocusedWindow()
 	if pw == nil || pw.Type != window.PromptWindow {
-		t.Fatal("focused window should be the prompt")
+		t.Fatal("the prompt should hold focus")
 	}
-	if !e.pointerShowIBeam(pw.ContentX+1, pw.ContentY+1) {
-		t.Fatal("the prompt's own field should show the I-beam")
+	promptRect := [4]int{pw.ContentX + 1, pw.ContentY + 1, pw.ContentWidth, pw.ContentHeight}
+	if last != promptRect {
+		t.Fatalf("with a prompt focused, region = %v, want the prompt field %v", last, promptRect)
+	}
+	if last == docRect {
+		t.Fatal("the region must move off the document while a prompt is focused")
+	}
+}
+
+// A browse-mode link button that sits inside the text is published as an
+// arrow-exclusion span, so the host shows the arrow over the button and the
+// I-beam over the surrounding text.
+func TestPointerRegionExcludesBrowseButtons(t *testing.T) {
+	files := map[string]string{
+		"w/page.txt":  "go [[other]] now\n",
+		"w/other.txt": "other content\n",
+	}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	var arrows []PointerArrowSpan
+	e.Config.PointerRegion = func(_, _, _, _ int, a []PointerArrowSpan) { arrows = a }
+	e.performRender()
+
+	if !w.BrowseActive {
+		t.Fatal("precondition: the wiki page should be in browse mode")
+	}
+	if len(arrows) == 0 {
+		t.Fatal("the browse-mode link button should publish an arrow-exclusion span")
+	}
+	a := arrows[0]
+	if a.Row != w.ContentY+1 {
+		t.Fatalf("button span row = %d, want the first content row %d", a.Row, w.ContentY+1)
+	}
+	if a.Col < w.ContentX+1 || a.Width <= 0 {
+		t.Fatalf("button span should sit within the content columns: %+v", a)
 	}
 }
 

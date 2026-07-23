@@ -263,12 +263,13 @@ type Editor struct {
 	// capture holds.
 	mouseOnCaptured bool
 	mouseHovered    pressedLink
-	// pointerIBeamSent is the last affordance pushed through
-	// Config.PointerShape (true = I-beam over focused text); pointerShapePushed
-	// records whether anything was pushed yet, so the first computed shape is
-	// always sent even when it equals the false zero value.
-	pointerIBeamSent   bool
-	pointerShapePushed bool
+	// pointerRegionSent / pointerArrowsSent are the last I-beam rectangle and
+	// button-exclusion spans pushed through Config.PointerRegion (1-based
+	// cells); pointerRegionPushed records whether anything was pushed yet, so
+	// the first computed region is always sent even when it is the zero value.
+	pointerRegionSent   [4]int
+	pointerArrowsSent   []PointerArrowSpan
+	pointerRegionPushed bool
 	// Horizontal wheel barrier (mouse.go): a sideways scroll gesture only
 	// engages after hScrollBarrier ticks accumulate in one direction, so a
 	// stray sideways tick during a vertical scroll never nudges the view. A
@@ -352,6 +353,14 @@ type Editor struct {
 	// launchDir is the working directory captured at startup — the fallback
 	// anchor for filename completion in a fresh buffer (standalone mode).
 	launchDir string
+}
+
+// PointerArrowSpan is one on-screen cell span, on a single row, that must show
+// the ARROW rather than the text I-beam even though it lies inside the I-beam
+// rectangle — a browse-mode link button. Row and Col are 1-based terminal
+// cells; the span covers columns [Col, Col+Width).
+type PointerArrowSpan struct {
+	Row, Col, Width int
 }
 
 // Config holds editor configuration options.
@@ -476,15 +485,25 @@ type Config struct {
 	// alias is applied through FontSink after this runs.
 	FontLoader func(files map[string]string, searchPaths []string)
 
-	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
-	// changes: true when the pointer is over EDITABLE TEXT of the focused mew
-	// window (its content area or the blank rows below the document that still
-	// follow click-to-EOF) and a graphical host should show the I-beam; false
-	// everywhere else — over a button (link or nav), the gutter, the modebar
-	// and other chrome, an unfocused window, or (when a prompt holds focus)
-	// the document area — where the ordinary arrow is correct. Called only on
-	// transitions, from the input thread.
-	PointerShape func(showIBeam bool)
+	// PointerRegion, when set, publishes where a graphical host should show the
+	// text I-beam: the FOCUSED window's editable content area (its cells,
+	// including the blank rows below the document that still follow
+	// click-to-EOF), in 1-based terminal cells (col, row, width, height); a
+	// zero width/height means "nowhere" (arrow everywhere). Everything OUTSIDE
+	// it — the gutter, the modebar and other chrome, an unfocused pane, and
+	// (when a prompt holds focus) the document area — is the ordinary arrow.
+	//
+	// arrows are cell spans WITHIN that rectangle that must still show the
+	// arrow, not the I-beam: the on-screen browse-mode link BUTTONS (the only
+	// buttons that sit inside the text — the modebar's are already outside the
+	// rect). The host shows the I-beam inside the rectangle EXCEPT on an arrow
+	// span.
+	//
+	// It is pushed after each render, only when the region CHANGES (layout,
+	// focus, scroll, or the on-screen buttons), NOT per mouse motion — so the
+	// host answers per-pixel cursor queries locally, without every hover
+	// round-tripping through mew's input stream. Called from the render path.
+	PointerRegion func(col, row, width, height int, arrows []PointerArrowSpan)
 
 	// EditState, when set, is told whenever the FOCUSED window's read-only
 	// state changes (and once at the first render), so a host can grey out
@@ -5887,6 +5906,12 @@ func (e *Editor) performRender() {
 
 	// Render
 	e.Renderer.Render(layout)
+
+	// The frame's window geometry is now set: publish the focused window's
+	// editable rectangle to the host so a graphical pointer shows the I-beam
+	// over text and the arrow over chrome, resolved locally from the pointer
+	// cell (no per-motion round trip). Pushed only when the rectangle changes.
+	e.notifyPointerRegion()
 
 	e.lastRenderTime = time.Now()
 	e.renderRequested.Store(false)

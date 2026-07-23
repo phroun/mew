@@ -150,64 +150,100 @@ func (e *Editor) handleMouseKey(key string) bool {
 	case base == "MouseScrollRight":
 		e.mouseScrollHoriz(e.mouseY, +1)
 	}
-	// Every mouse event may change the pointer affordance (over a button /
-	// captured): push the change to the host, once per transition.
-	e.notifyPointerShape()
-
 	// Every other Mouse* event (middle button, right release/drags) is
 	// swallowed so it never leaks into keymap dispatch.
 	return true
 }
 
-// notifyPointerShape tells the host (via Config.PointerShape) whenever the
-// pointer's affordance changes: true (I-beam) while the pointer is over the
-// focused window's editable text, false (arrow) everywhere else. Pushed on the
-// first computation and thereafter only on transitions.
-func (e *Editor) notifyPointerShape() {
-	if e.Config.PointerShape == nil {
+// notifyPointerRegion publishes the rectangle where a graphical host should
+// show the text I-beam (Config.PointerRegion): the FOCUSED window's editable
+// content area — its cells, including the blank rows below the document that
+// still follow click-to-EOF — in 1-based terminal cells. Everything outside it
+// is the ordinary arrow: the gutter (left of the content), the modebar and
+// other chrome (other windows), an unfocused pane, and — when a prompt holds
+// focus — the document area (only the prompt's own field then yields the
+// I-beam, a cue that input is awaited there).
+//
+// Pushed after each render, on the first computation and thereafter only when
+// the rectangle changes (layout, focus, scroll) — NOT per mouse motion — so
+// the host resolves per-pixel cursor queries locally. Runs under renderMu with
+// the frame's geometry already set by the renderer.
+func (e *Editor) notifyPointerRegion() {
+	if e.Config.PointerRegion == nil {
 		return
 	}
-	iBeam := e.pointerShowIBeam(e.mouseX, e.mouseY)
-	if !e.pointerShapePushed || iBeam != e.pointerIBeamSent {
-		e.pointerShapePushed = true
-		e.pointerIBeamSent = iBeam
-		e.Config.PointerShape(iBeam)
+	var rect [4]int // col, row, width, height (1-based cells; zero w/h = none)
+	var arrows []PointerArrowSpan
+	if w := e.WindowManager.GetFocusedWindow(); w != nil && w.Buffer != nil &&
+		w.ContentWidth > 0 && w.ContentHeight > 0 {
+		rect = [4]int{w.ContentX + 1, w.ContentY + 1, w.ContentWidth, w.ContentHeight}
+		arrows = e.pointerArrowSpans(w)
+	}
+	if !e.pointerRegionPushed || rect != e.pointerRegionSent || !arrowSpansEqual(arrows, e.pointerArrowsSent) {
+		e.pointerRegionPushed = true
+		e.pointerRegionSent = rect
+		e.pointerArrowsSent = arrows
+		e.Config.PointerRegion(rect[0], rect[1], rect[2], rect[3], arrows)
 	}
 }
 
-// pointerShowIBeam reports whether the pointer should show the text I-beam:
-// only over the FOCUSED window's editable text — its content area (but not a
-// browse-mode link button, which is a button → arrow) or the blank rows below
-// the document that still follow click-to-EOF. Everywhere else — a captured
-// button, the gutter, the modebar and other chrome, an unfocused window, or
-// (when a prompt holds focus) the document area — is the ordinary arrow. When
-// a prompt is focused, only the PROMPT's own field yields the I-beam; the
-// document area shows the arrow, a cue that input is awaited at the prompt.
-func (e *Editor) pointerShowIBeam(x, y int) bool {
-	// A captured button (link or nav) is a button interaction: arrow.
-	if e.mousePressed.active || e.modebarNavCapture != 0 {
-		return false
+// pointerArrowSpans returns the on-screen cell spans of the focused window's
+// browse-mode link BUTTONS — the buttons that sit INSIDE the text region and
+// so must show the arrow, not the I-beam. Empty unless the window is in browse
+// mode over a linkable buffer. LTR only: an RTL page's right-anchored button
+// columns are not mapped, so its buttons fall back to the I-beam (an exotic
+// edge — RTL wiki browsing).
+func (e *Editor) pointerArrowSpans(w *window.Window) []PointerArrowSpan {
+	if w == nil || w.Buffer == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || e.winRTL(w) {
+		return nil
 	}
-	fw := e.WindowManager.GetFocusedWindow()
-	if fw == nil {
-		return false
+	tabSize := e.tabSize(w)
+	top := w.ViewState.ViewOffsetY
+	bottom := top + w.ContentHeight
+	if n := w.Buffer.GetLineCount(); bottom > n {
+		bottom = n
 	}
-	if w, docLine, runePos, ok := e.mouseHit(x, y); ok && w == fw {
-		// A browse-mode link button under the pointer is a button, not text.
-		if w.BrowseActive && w.ViewState.LinkBrowsing {
-			for _, s := range e.linkSpansOnLine(w, docLine) {
-				if s.Start <= runePos && runePos < s.End {
-					return false
-				}
+	loCol := w.ContentX + 1
+	hiCol := w.ContentX + w.ContentWidth + 1 // exclusive
+	var arrows []PointerArrowSpan
+	for docLine := top; docLine < bottom; docLine++ {
+		screenRow := w.ContentY + 1 + (docLine - top)
+		for _, s := range e.linkSpansOnLine(w, docLine) {
+			c0 := e.displayVisualColumn(w, docLine, s.Start, tabSize)
+			c1 := e.displayVisualColumn(w, docLine, s.End, tabSize)
+			if c1 < c0 {
+				c0, c1 = c1, c0
+			}
+			// Visual columns -> screen columns (LTR): the content origin plus
+			// the visual column offset by the horizontal scroll. Clamp to the
+			// window's visible content columns.
+			col0 := w.ContentX + 1 + (c0 - w.ViewState.ViewOffsetX)
+			col1 := w.ContentX + 1 + (c1 - w.ViewState.ViewOffsetX)
+			if col0 < loCol {
+				col0 = loCol
+			}
+			if col1 > hiCol {
+				col1 = hiCol
+			}
+			if col1 > col0 {
+				arrows = append(arrows, PointerArrowSpan{Row: screenRow, Col: col0, Width: col1 - col0})
 			}
 		}
-		return true
 	}
-	// Blank rows below the document still park the caret at EOF on a click.
-	if w, _, _, ok := e.mouseHitBelowText(x, y); ok && w == fw {
-		return true
+	return arrows
+}
+
+// arrowSpansEqual reports whether two exclusion-span slices are element-equal.
+func arrowSpansEqual(a, b []PointerArrowSpan) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	return false
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // promptHasPriority reports whether a modal prompt currently holds focus, so

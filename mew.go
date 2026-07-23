@@ -183,13 +183,27 @@ func WithEditState(fn func(readOnly bool)) Option {
 	return func(cfg *editor.Config) { cfg.EditState = fn }
 }
 
-// WithPointerShape wires the mouse-pointer affordance: fn is told whenever
-// the pointer's shape should change — true while the pointer is over a link
-// button or a button is captured (show an arrow pointer), false for ordinary
-// text (the I-beam). Called only on transitions. Graphical hosts map it to
-// the system cursor; text hosts may ignore it.
-func WithPointerShape(fn func(overButton bool)) Option {
-	return func(cfg *editor.Config) { cfg.PointerShape = fn }
+// PointerArrowSpan is one on-screen cell span that shows the arrow rather than
+// the I-beam even though it lies inside the I-beam rectangle — a browse-mode
+// link button (see WithPointerRegion).
+type PointerArrowSpan = editor.PointerArrowSpan
+
+// WithPointerRegion wires the mouse-pointer affordance: fn is told the
+// rectangle where a graphical host should show the text I-beam — the focused
+// window's editable content area (its cells, including the blank rows below
+// the document that still follow click-to-EOF), in 1-based terminal cells
+// (col, row, width, height); a zero width/height means "nowhere". Everything
+// outside it — the gutter, the modebar and other chrome, an unfocused pane,
+// and (when a prompt holds focus) the document area — is the ordinary arrow.
+// arrows are cell spans WITHIN the rectangle that still show the arrow (the
+// on-screen browse-mode link buttons).
+//
+// It is pushed after a render, only when the region changes (layout, focus,
+// scroll, on-screen buttons), NOT per mouse motion, so a graphical host
+// resolves the cursor for a given pointer pixel locally — no hover round-trips
+// through mew's input. Text hosts may ignore it.
+func WithPointerRegion(fn func(col, row, width, height int, arrows []PointerArrowSpan)) Option {
+	return func(cfg *editor.Config) { cfg.PointerRegion = fn }
 }
 
 // WithFontSink wires the set_font command to a host that can change fonts

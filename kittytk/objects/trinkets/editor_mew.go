@@ -59,12 +59,18 @@ type Editor struct {
 	fileSystem    mew.FileSystem
 	mewFileSystem mew.FileSystem
 
-	// pointerWantsIBeam mirrors mew's pointer affordance (WithPointerShape):
-	// true only while the pointer is over the focused mew window's editable
-	// text, so the cursor query below answers with the I-beam; everywhere else
-	// (buttons, gutter, modebar/chrome, an unfocused pane, the document area
-	// while a prompt awaits input) it answers with the ordinary arrow.
-	pointerWantsIBeam atomic.Bool
+	// pointerRegion mirrors mew's pointer affordance (WithPointerRegion): the
+	// terminal-cell rectangle (1-based [col, row, width, height]) where the
+	// focused mew window's editable text lives, plus pointerArrows, the
+	// on-screen link-button spans WITHIN it that still show the arrow — both
+	// republished after each render. CursorShapeAt shows the I-beam inside the
+	// rectangle except on an arrow span, resolved locally from the pointer's
+	// cell (no per-motion round trip through mew's input stream). Guarded
+	// because mew republishes from its session goroutine while the desktop
+	// queries the cursor from its own.
+	pointerRegion   [4]int
+	pointerArrows   []mew.PointerArrowSpan
+	pointerRegionMu sync.Mutex
 
 	// readOnlyFocused mirrors mew's focused-window read-only state
 	// (WithEditState), so CutEnabled greys the Edit menu's Cut while a
@@ -282,7 +288,12 @@ func (e *Editor) run() {
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
-		mew.WithPointerShape(func(showIBeam bool) { e.pointerWantsIBeam.Store(showIBeam) }),
+		mew.WithPointerRegion(func(col, row, w, h int, arrows []mew.PointerArrowSpan) {
+			e.pointerRegionMu.Lock()
+			e.pointerRegion = [4]int{col, row, w, h}
+			e.pointerArrows = arrows
+			e.pointerRegionMu.Unlock()
+		}),
 		// Since purfecterm v0.2.23 the embedded terminal speaks the STANDARD
 		// visual-column contract by default (its flex mode moved to ?7027,
 		// opt-in), so mew talks to it exactly as to any terminal — no
@@ -397,24 +408,56 @@ func caretLine(caret string) string {
 
 // Close ends the mew session (EOF on its input) and releases the surface.
 // Idempotent.
-// CursorShape / CursorShapeAt answer the desktop's cursor query for the mew
+// CursorShapeAt answers the desktop's per-pixel cursor query for the mew
 // surface. mew (a full editor, not a scrollbar-fringed terminal) owns the
-// affordance entirely: the text I-beam ONLY over the focused window's editable
-// text (mew reports it via WithPointerShape), and the ordinary arrow
-// everywhere else — buttons, gutter, the modebar and other chrome, and the
-// document area while a prompt awaits input.
-func (e *Editor) CursorShape() core.CursorShape {
-	if e.pointerWantsIBeam.Load() {
+// affordance entirely via the I-beam region it publishes (WithPointerRegion):
+// the text I-beam over the focused window's editable text EXCEPT on a
+// link-button span, and the ordinary arrow everywhere else — buttons, the
+// gutter, the modebar and other chrome, an unfocused pane, and the document
+// area while a prompt awaits input. Resolved locally from the pointer's cell,
+// so no mouse motion has to round-trip through mew.
+func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	if e.pointerInText(x, y) {
 		return core.CursorText
 	}
 	return core.CursorDefault
 }
 
-func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
-	if e.pointerWantsIBeam.Load() {
-		return core.CursorText
+// CursorShape is the position-less fallback (used only if the cursor descent
+// cannot supply a point): a text editor surface defaults to the I-beam.
+func (e *Editor) CursorShape() core.CursorShape {
+	return core.CursorText
+}
+
+// pointerInText reports whether the local point falls on the focused mew
+// window's editable text — inside the published I-beam rectangle and not on a
+// link-button exclusion span. The pointer coordinate arrives in the same space
+// as HandleMouseMove, so the terminal cell metrics map it to a 1-based cell.
+func (e *Editor) pointerInText(x, y core.Unit) bool {
+	cw, chh := e.cellDims()
+	if cw <= 0 || chh <= 0 {
+		return false
 	}
-	return core.CursorDefault
+	col := int(x/cw) + 1 // 1-based cell, matching mew's coordinates
+	row := int(y/chh) + 1
+
+	e.pointerRegionMu.Lock()
+	r := e.pointerRegion
+	arrows := e.pointerArrows
+	e.pointerRegionMu.Unlock()
+
+	if r[2] <= 0 || r[3] <= 0 { // no I-beam region
+		return false
+	}
+	if col < r[0] || col >= r[0]+r[2] || row < r[1] || row >= r[1]+r[3] {
+		return false // outside the editable rectangle
+	}
+	for _, a := range arrows { // a link button within the rectangle: arrow
+		if row == a.Row && col >= a.Col && col < a.Col+a.Width {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Editor) Close() {
