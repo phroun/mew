@@ -142,6 +142,65 @@ func TestHelpPageEmbeddedFallbackAndShadow(t *testing.T) {
 	}
 }
 
+// Opening "help:/" (the wiki start page) must surface the shipped help
+// content — never a blank buffer — in BOTH launch configurations: the plain
+// TUI (no host FS, usingOSFS) and a host that wires its own OS-backed
+// FileSystem (the KittyTK trinket / macapp, !usingOSFS). The latter took a
+// different loadBuffer branch that lacked the fallback, so help came up blank.
+func TestOpenHelpRootFallbackBothFSConfigs(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		wireHost bool // wire an explicit OS-backed FS (trinket) -> !usingOSFS
+	}{
+		{"plain-tui", false},
+		{"host-osfs-trinket", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := mewHomeEditorHostFS(t, "[options]\nsyntax=dokuwiki\n", nil, tc.wireHost)
+			if e.usingOSFS == tc.wireHost {
+				t.Fatalf("usingOSFS=%v with wireHost=%v — test setup wrong", e.usingOSFS, tc.wireHost)
+			}
+			if !e.openFile("help:/") {
+				t.Fatal(`openFile("help:/") returned false`)
+			}
+			w := e.WindowManager.GetFocusedWindow()
+			if w == nil || w.Buffer == nil {
+				t.Fatal("no focused help window")
+			}
+			if w.Buffer.GetLineCount() < 2 || !strings.Contains(w.Buffer.GetLine(0), "mew Help") {
+				t.Fatalf("help:/ came up blank/wrong: lines=%d line0=%q",
+					w.Buffer.GetLineCount(), w.Buffer.GetLine(0))
+			}
+		})
+	}
+}
+
+// mewHomeEditorHostFS is mewHomeEditor with an optional explicit OS-backed
+// document FileSystem, so a test can exercise the host-FS (!usingOSFS) load
+// path the KittyTK trinket uses, not just the plain-TUI OS path.
+func mewHomeEditorHostFS(t *testing.T, configText string, files map[string]string, wireHost bool) *Editor {
+	t.Helper()
+	home := t.TempDir()
+	mewDir := filepath.Join(home, ".mew")
+	for rel, content := range files {
+		mustWrite(t, filepath.Join(mewDir, filepath.FromSlash(rel)), content)
+	}
+	cfg := DefaultConfig()
+	cfg.SkipUserConfig = true
+	cfg.SkipProfileScript = true
+	cfg.ColdStoragePath = t.TempDir()
+	cfg.HomeDir = home
+	cfg.ConfigText = &configText
+	if wireHost {
+		cfg.FS = OSFileSystem()
+	}
+	e, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return e
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

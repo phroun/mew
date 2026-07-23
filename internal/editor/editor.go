@@ -5932,9 +5932,20 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 			// A filename that does not exist yet is a NEW document under that
 			// name, not an error — open an empty buffer carrying the name (save
 			// creates it). Without this, launching mew on a new filename exits.
-			buf = e.lib.New()
-			buf.SetFilename(filename)
-			e.noteBuffer(buf, "new", "New file", false)
+			// A ~/.mew/... page absent from the user tree but SHIPPED in the
+			// read-only system/embedded layers opens with the shipped content
+			// (a shadow it becomes the moment it is edited and saved) — the same
+			// fallback the OS path does below, so a host wiring its own OS-backed
+			// FS (the KittyTK trinket) surfaces the help manual too.
+			if data, ok := e.mew.fallbackForLocal(filename); ok {
+				buf = e.lib.NewFromString(string(data))
+				buf.SetFilename(filename)
+				e.noteBuffer(buf, "resource", "Shipped page (edits save to your ~/.mew copy)", false)
+			} else {
+				buf = e.lib.New()
+				buf.SetFilename(filename)
+				e.noteBuffer(buf, "new", "New file", false)
+			}
 		}
 		// The content is virtualized through the host FileSystem, but a mew-native
 		// editing lock still coordinates multiple mew instances editing the same
