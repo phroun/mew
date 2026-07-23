@@ -120,7 +120,25 @@ var defaultTypeColors = map[string]map[string]string{
 	"tool": {
 		"text":     "\x1b[0;1;46;97m", // bright white on cyan
 		"messages": "\x1b[0;1;43;97m", // bright white on amber
-	},
+    	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
+    	// browse mode can add bold/underline per level (see the editor). Black
+    	// on cyan.
+    	"heading": "\x1b[0;30;46m",
+    	// Key badges: [[keys#action|alias]] references in help text render as a
+    	// tight cap-less/shadow-less badge showing the live binding for the action.
+    	"key":                 "\x1b[0;93;45m", // bright yellow on purple
+    	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
+    	"button":              "\x1b[0;30;47m", // black on silver
+    	"buttonrecent":        "\x1b[0;32;47m", // dark green on silver (a visited link)
+    	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
+    	"buttonshadowrecent":  "\x1b[0;90;42m", // dark gray on dark green
+    	"buttonfocused":       "\x1b[0;97;41m", // white on red
+    	"buttonshadowfocused": "\x1b[0;90;41m", // dark gray on cyan
+    	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
+    	"buttonshadowpressed": "\x1b[0;37;44m", // silver on blue
+    	"buttonhover":         "\x1b[0;93;45m", // bright yellow on purple (pointer over)
+    	"buttonshadowhover":   "\x1b[0;90;45m", // dark gray on purple
+    },
 	"prompt": {
 		"messages": "\x1b[0;1;42;93m", // bright yellow on green
 		"text":     "\x1b[0;1;42;97m", // bright white on green

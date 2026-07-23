@@ -512,7 +512,7 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 	case "space":
 		return "insert ' '"
 	case "del", "back":
-		return "del_char_prior"
+		return "nav_history_back|del_char_prior"
 	case "return":
 		return "nav_follow|accept|insert '\\n'"
 	case "^C":
