@@ -134,12 +134,18 @@ func (e *Editor) osBackedFS() bool {
 }
 
 // normalizeDocPath canonicalizes a document filename for STORAGE on a
-// buffer: mew: names pass through untouched; on an OS-backed document
-// filesystem, "~" expands and relative names absolutize, so the buffer
-// carries a stable path that survives garland's save/rename dance and any
-// working-directory change. Virtual host namespaces are left verbatim.
+// buffer: mew: names — and any other "scheme:/" namespace (help:/, file:/,
+// http://, …) — pass through untouched; on an OS-backed document filesystem,
+// "~" expands and relative names absolutize, so the buffer carries a stable
+// path that survives garland's save/rename dance and any working-directory
+// change. Virtual host namespaces are left verbatim.
+//
+// A scheme path is NOT filepath.IsAbs (it has no leading "/"), so without the
+// hasScheme guard filepath.Abs would prepend the working directory to it —
+// e.g. "help:/start.txt" became "<cwd>/help:/start.txt", which then surfaced
+// as a bogus Save-as default.
 func (e *Editor) normalizeDocPath(p string) string {
-	if p == "" || isMewPath(p) || !e.osBackedFS() {
+	if p == "" || isMewPath(p) || hasScheme(p) || !e.osBackedFS() {
 		return p
 	}
 	if ex, ok := expandTilde(p, e.home); ok {
