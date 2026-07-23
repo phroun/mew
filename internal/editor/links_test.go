@@ -205,7 +205,7 @@ func TestLinkRenderStyles(t *testing.T) {
 	if strings.Contains(plain, "[[a:b") {
 		t.Fatal("browse mode: raw link source must not paint")
 	}
-	if !strings.Contains(out.String(), "\x1b[0;30;47m") {
+	if !strings.Contains(out.String(), "\x1b[0;1;30;47m") {
 		t.Fatal("browse mode: button color expected")
 	}
 
@@ -628,10 +628,10 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	if !strings.Contains(out.String(), "\x1b[0;30;42m") {
-		t.Fatal("a visited button should paint in buttonRecent (black on dark green)")
+	if !strings.Contains(out.String(), "\x1b[0;30;47m") {
+		t.Fatal("a visited button should paint in buttonRecent (black on silver)")
 	}
-	if !strings.Contains(out.String(), "\x1b[0;90;42m") {
+	if !strings.Contains(out.String(), "\x1b[0;34;47m") {
 		t.Fatal("a visited button's shadow should use buttonShadowRecent")
 	}
 
