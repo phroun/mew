@@ -333,7 +333,12 @@ type GeneralConfig struct {
 	ShowBidi         bool
 	// RtlCombining shows combining marks on RTL letters (niqqud/harakat).
 	// Default true; off renders RTL scripts unpointed (see the option).
-	RtlCombining bool
+	// RtlCombiningSet records whether the config set it EXPLICITLY, so an
+	// unset value can take an environment-aware default (off in a
+	// bidi-applying real terminal — macOS Terminal.app) while an explicit
+	// setting is always honored.
+	RtlCombining    bool
+	RtlCombiningSet bool
 	ShowMarks    string // "no" | "yes" | "all"
 	// OverwriteMode is the inverse of the user-facing insertMode option: false
 	// (the zero value, and the default) means insert mode; true means typing
@@ -997,6 +1002,7 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["rtlCombining"]; ok {
 			config.General.RtlCombining = parseBool(v, true)
+			config.General.RtlCombiningSet = true
 		}
 		if v, ok := opt["showMarks"]; ok {
 			if s, valid := ParseShowMarks(v); valid {
@@ -2066,13 +2072,15 @@ showInvisibles=false
 # ("<" entering RTL, ">" entering LTR); explicit direction controls render
 # as their own marker
 showBidi=false
-# Show combining marks (niqqud, harakat) on right-to-left letters. Default on.
-# Turn it off to render RTL scripts UNPOINTED — one codepoint per cell, like
-# mew's pre-shaped Arabic — which keeps the selection bar correct under
-# flipBidiForHost terminals (macOS Terminal.app) that otherwise misplace it on
-# pointed text. The marks stay in the file and editable; the caret still walks
-# them and the modebar names the one under the caret. Only display is affected.
-rtlCombining=true
+# Show combining marks (niqqud, harakat) on right-to-left letters. Default on,
+# EXCEPT it auto-defaults OFF in a bidi-applying real terminal (macOS
+# Terminal.app, TERM_PROGRAM=Apple_Terminal), where a pointed RTL selection bar
+# would otherwise be misplaced — there Hebrew renders unpointed, like mew's
+# pre-shaped Arabic. Setting it here (uncomment) overrides the auto-default.
+# Off renders RTL scripts UNPOINTED — one codepoint per cell; the marks stay in
+# the file and editable (the caret still walks them and the modebar names the
+# one under the caret), only display is affected.
+# rtlCombining=true
 # Show a "*" (in the "marks" color) at every mark/decoration position in the
 # text: no (off), yes (user marks), or all (also mew's internal marks). Boolean
 # aliases (on/off/true/false) are accepted as no/yes.

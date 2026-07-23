@@ -695,6 +695,16 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ShowInvisibles = loadedConfig.General.ShowInvisibles
 	cfg.ShowBidi = loadedConfig.General.ShowBidi
 	cfg.RtlCombining = loadedConfig.General.RtlCombining
+	// Environment-aware default: in a bidi-applying REAL terminal (macOS
+	// Terminal.app), and only when the config did not set rtlCombining
+	// explicitly, default it OFF so pointed RTL renders unpointed (codepoints
+	// == cells) and the selection bar stays correct — flipBidiForHost=auto
+	// enables for the same terminal. A virtualized terminal (the KittyTK host,
+	// which renders marks correctly) keeps marks on; an explicit config value
+	// always wins.
+	if !loadedConfig.General.RtlCombiningSet && cfg.Terminal == nil && envSaysBidiTerminal() {
+		cfg.RtlCombining = false
+	}
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.ReadOnly = loadedConfig.General.ReadOnly

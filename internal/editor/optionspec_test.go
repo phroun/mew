@@ -265,6 +265,7 @@ func TestClearOptionCommand(t *testing.T) {
 // rtlCombining defaults ON (marks shown), stored inverted so an untouched
 // window keeps that default; setting it off flips the ViewState sense.
 func TestRtlCombiningDefaultsOn(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "") // not a bidi-applying terminal: plain default
 	e, w := newTestEditor(t, "x\n")
 	if v, _ := e.getOption(w, "rtlCombining"); v != "yes" {
 		t.Fatalf("rtlCombining should default to yes, got %q", v)
@@ -278,5 +279,32 @@ func TestRtlCombiningDefaultsOn(t *testing.T) {
 	}
 	if v, _ := e.getOption(w, "rtlCombining"); v != "no" {
 		t.Fatalf("rtlCombining should read back no, got %q", v)
+	}
+}
+
+// In macOS Terminal.app (TERM_PROGRAM=Apple_Terminal), a real-terminal
+// session with no explicit rtlCombining defaults it OFF, so pointed RTL
+// renders unpointed and the selection bar stays correct there. An explicit
+// config value overrides the auto-default.
+func TestRtlCombiningAutoOffInAppleTerminal(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+
+	// No explicit setting -> auto off.
+	e, _ := newTestEditor(t, "x\n")
+	if e.Config.RtlCombining {
+		t.Error("Apple_Terminal with no config should auto-default rtlCombining OFF")
+	}
+
+	// Explicit rtlCombining=true in config -> honored despite the terminal.
+	e2, _ := newTestEditor(t, "x\n", "rtlCombining=true")
+	if !e2.Config.RtlCombining {
+		t.Error("an explicit rtlCombining=true must override the Apple_Terminal auto-default")
+	}
+
+	// A non-bidi terminal keeps the on default.
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	e3, _ := newTestEditor(t, "x\n")
+	if !e3.Config.RtlCombining {
+		t.Error("a non-bidi terminal should keep rtlCombining ON by default")
 	}
 }
