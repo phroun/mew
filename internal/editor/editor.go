@@ -5006,6 +5006,15 @@ func (e *Editor) getBlockContent(buf *buffer.Buffer, startLine, startRune, endLi
 // opened through Garland's lazy warm-storage path (huge files are paged, not
 // slurped); virtualized file systems read through the host callbacks.
 func (e *Editor) openFile(filename string) bool {
+	// A registered wiki scheme ("help:/start") opens a PAGE, not a literal
+	// file: route it through the same resolver a followed link uses, so the
+	// real page file (~/.mew/help/start.txt) loads and the window is rooted
+	// in the wiki. Without this the name fell through to a plain OS open of
+	// "help:/start", which found nothing and came up blank.
+	if handled := e.openWikiScheme(strings.TrimSpace(filename)); handled {
+		return true
+	}
+
 	buf, err := e.loadBuffer(filename)
 	if err != nil {
 		return false

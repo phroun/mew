@@ -328,6 +328,73 @@ func (e *Editor) navFollow() bool {
 	return true
 }
 
+// openWikiScheme opens a registered wiki-scheme reference ("help:/start")
+// typed at the Open prompt (or launched), resolving it through the same wiki
+// machinery a followed link uses and surfacing the page in a fresh rooted
+// window in browse mode. A trailing wiki extension is tolerated and stripped
+// ("help:/start.txt" == "help:/start"), since the page id is extensionless
+// (the .Ext is implied internally). Reports whether the ref was a wiki scheme
+// (handled here, whether it resolved, created, or reported not-found); a
+// non-wiki name returns false to fall through to the ordinary file open.
+func (e *Editor) openWikiScheme(ref string) bool {
+	def, rest, ok := wikiSchemeRef(ref)
+	if !ok {
+		return false
+	}
+	// Tolerate (and hide) the page-file extension in what the user typed.
+	if def.Ext != "" && strings.HasSuffix(strings.ToLower(rest), strings.ToLower(def.Ext)) {
+		rest = rest[:len(rest)-len(def.Ext)]
+		ref = def.Name + ":/" + rest
+	}
+
+	res := e.resolveFollow(nil, ref)
+	if res.url != "" {
+		buf := e.findOpenBuffer(res.url)
+		if buf == nil {
+			loaded, err := e.loadBufferURL(res.url)
+			if err != nil {
+				e.ShowError("Open " + displayPath(res.url) + ": " + err.Error())
+				e.RequestRender()
+				return true
+			}
+			buf = loaded
+		}
+		nw := e.createMainWindow(buf, nil, true)
+		nw.WikiRoot = res.root
+		nw.WikiName = res.wikiName
+		nw.BrowseActive = nw.ViewState.LinkBrowsing
+		nw.BrowseAutoArmed = nw.BrowseActive
+		e.ShowNotification("→ " + displayPath(res.url))
+		e.RequestRender()
+		return true
+	}
+
+	// The page does not exist: offer to create it when the wiki is writable,
+	// else report it (never a blank buffer under the literal scheme name).
+	if res.createURL != "" && res.writable {
+		title := rest
+		if title == "" {
+			title = def.Start
+		}
+		buf, err := e.createBufferURL(res.createURL, "=== "+title+" ===\n\n")
+		if err != nil {
+			e.ShowError("Create: " + err.Error())
+			e.RequestRender()
+			return true
+		}
+		nw := e.createMainWindow(buf, nil, true)
+		nw.WikiRoot = res.root
+		nw.WikiName = res.wikiName
+		nw.SetCursorPos(window.Position{Line: buf.GetLineCount() - 1, Rune: 0})
+		e.ensureCursorVisible(nw)
+		e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
+	} else {
+		e.ShowNotification(res.message)
+	}
+	e.RequestRender()
+	return true
+}
+
 // promptCreatePage offers to create an unresolved wiki page, lock-prompt
 // style: the description on the top row, the short question on the input
 // row, with the prompt buffer offering "y" and "n" above the blank default

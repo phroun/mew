@@ -879,3 +879,55 @@ func TestCreateBufferURLVirtualMew(t *testing.T) {
 		t.Fatalf("seed content = %q", got)
 	}
 }
+
+// openFile on a registered wiki scheme opens the PAGE (loading the real
+// file, rooted in the wiki), instead of a blank buffer under the literal
+// name — and a trailing ".txt" the user typed is tolerated and stripped
+// (the page id is extensionless internally).
+func TestOpenFileWikiScheme(t *testing.T) {
+	startURL := ""
+	newFocused := func(e *Editor) *window.Window {
+		return e.WindowManager.GetFocusedWindow()
+	}
+
+	for _, ref := range []string{"help:/start", "help:/start.txt", "help:/"} {
+		e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
+			"help/start.txt": "the start page body\n",
+		})
+		if startURL == "" {
+			startURL = e.canonicalDocURL("mew:///help/start.txt")
+		}
+		if !e.openFile(ref) {
+			t.Fatalf("openFile(%q) should succeed", ref)
+		}
+		w := newFocused(e)
+		if got := e.bufferCanonicalURL(w.Buffer); got != e.canonicalDocURL("mew:///help/start.txt") {
+			t.Fatalf("openFile(%q): buffer %q, want the help start page", ref, got)
+		}
+		if !strings.Contains(w.Buffer.GetContent(), "the start page body") {
+			t.Fatalf("openFile(%q): page content not loaded: %q", ref, w.Buffer.GetContent())
+		}
+		if w.WikiName != "help" || w.WikiRoot != e.canonicalDocURL("mew:///help") {
+			t.Fatalf("openFile(%q): window not rooted in the wiki (name %q root %q)", ref, w.WikiName, w.WikiRoot)
+		}
+	}
+}
+
+// openFile on a missing wiki page creates it (writable wiki) rather than
+// leaving a blank buffer named for the literal scheme text.
+func TestOpenFileWikiSchemeMissingCreates(t *testing.T) {
+	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
+		"help/start.txt": "start\n",
+	})
+	if !e.openFile("help:/brandnew") {
+		t.Fatal("openFile on a missing writable page should succeed (create)")
+	}
+	w := e.WindowManager.GetFocusedWindow()
+	if w.WikiName != "help" {
+		t.Fatalf("created page window should be rooted in the wiki, got %q", w.WikiName)
+	}
+	// The buffer must not be named for the literal "help:/brandnew".
+	if fn := w.Buffer.GetFilename(); strings.Contains(fn, "help:/") {
+		t.Fatalf("created buffer should carry the resolved page path, not %q", fn)
+	}
+}
