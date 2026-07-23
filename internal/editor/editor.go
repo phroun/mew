@@ -652,6 +652,14 @@ func New(cfg Config) (*Editor, error) {
 		configFromDisk = true
 	}
 
+	// Refine the mew: tree's read-only system resource layer now that config is
+	// loaded: a local [storage] resources= override wins over the OS-default
+	// dirs seeded at construction (which already backed the config read itself).
+	// A host-supplied config string cannot redirect it (same rule as scratch).
+	if configFromDisk {
+		mewVFS.setSystemResources(loadedConfig.Storage.Resources)
+	}
+
 	// Initialize the buffer library with a local cold storage path. Garland
 	// always gets a real local directory, even when document I/O is
 	// virtualized: host override first, then the LOCAL config's [storage]
@@ -852,10 +860,9 @@ func New(cfg Config) (*Editor, error) {
 		return plugins.ExpandModebar(raw, e.peekBindingValues())
 	})
 
-	// Drop the shipped grammar pack into ~/.mew/syntax/ on first run (they also
-	// resolve from the embedded copies regardless), then load the configured
+	// The shipped grammar pack resolves through the mew: tree's read-only
+	// system/embedded layers (no copy into ~/.mew), then load the configured
 	// grammar and give the renderer its per-line colorizer.
-	e.installDefaultGrammars()
 	e.initSyntax()
 	renderer.SetSyntaxColorizer(e.syntaxLineColors)
 	// Browse-mode link buttons: the renderer substitutes these per line at
@@ -5955,10 +5962,22 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		// (Without this, `mew newfile` exited straight back to the shell.) No
 		// emacs lock for a path with no directory entry: use the mew-native
 		// lock only.
-		buf = e.lib.New()
-		buf.SetFilename(filename)
 		emacsLock, lockWarning = false, ""
-		e.noteBuffer(buf, "new", "New file", false)
+		if data, ok := e.mew.fallbackForLocal(filename); ok {
+			// A ~/.mew/... page the user has no local copy of, but which ships
+			// in the read-only system/embedded layers: open its content as an
+			// unmodified buffer named for the user path. It reads like the
+			// shipped page; the moment it is edited and saved it becomes the
+			// user's own ~/.mew shadow (garland arms backups/locks then and on
+			// every reopen thereafter).
+			buf = e.lib.NewFromString(string(data))
+			buf.SetFilename(filename)
+			e.noteBuffer(buf, "resource", "Shipped page (edits save to your ~/.mew copy)", false)
+		} else {
+			buf = e.lib.New()
+			buf.SetFilename(filename)
+			e.noteBuffer(buf, "new", "New file", false)
+		}
 	}
 	if lockWarning != "" {
 		e.noteBuffer(buf, "lock", lockWarning, true)

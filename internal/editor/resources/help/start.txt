@@ -1,0 +1,21 @@
+====== mew Help ======
+
+Welcome to **mew**, a terminal text editor in the WordStar / JOE tradition.
+
+This page ships inside mew itself (and in the system resources directory),
+so it is available without copying anything into your ''~/.mew'' folder. If
+you edit it, your changes are saved as your own ''~/.mew/help/start.txt'',
+which then shadows this built-in copy.
+
+===== Getting around =====
+
+  * [[keys#toggle_help|^KH]] toggles this help window.
+  * [[keys#nav_follow|Enter]] follows the link the caret is on.
+  * [[keys#nav_cancel|^C]] leaves browse mode.
+
+===== More pages =====
+
+  * [[editing|Editing basics]]
+  * [[keys|Key bindings]]
+
+The full manual is a work in progress.

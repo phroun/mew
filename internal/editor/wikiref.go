@@ -390,15 +390,20 @@ func (e *Editor) docStat(url string) (isDir, exists bool) {
 	}
 	name := filepath.FromSlash(p)
 	if st, ok := e.FS.(Statter); ok {
-		info, err := st.Stat(name)
-		if err != nil {
-			return false, false
+		if info, err := st.Stat(name); err == nil {
+			return info.IsDir, true
 		}
-		return info.IsDir, true
-	}
-	// A plain FileSystem cannot see directories; a readable name is a file.
-	if _, err := e.FS.ReadFile(name); err == nil {
+	} else if _, err := e.FS.ReadFile(name); err == nil {
+		// A plain FileSystem cannot see directories; a readable name is a file.
 		return false, true
+	}
+	// A file:/// path under the local mew root (~/.mew/...) that is absent from
+	// the user tree may still be shipped in the read-only system/embedded
+	// layers — a help page the user has never copied locally.
+	if e.mew != nil {
+		if isDir, ok := e.mew.statFallbackForLocal(name); ok {
+			return isDir, true
+		}
 	}
 	return false, false
 }
@@ -421,13 +426,30 @@ func (e *Editor) docList(dirURL string) []string {
 		}
 		return out
 	}
-	matches, err := e.FS.Glob(filepath.FromSlash(path.Join(p, "*")))
+	dir := filepath.FromSlash(p)
+	matches, err := e.FS.Glob(filepath.Join(dir, "*"))
 	if err != nil {
 		return nil
 	}
+	seen := map[string]bool{}
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
-		out = append(out, "file://"+filepath.ToSlash(m))
+		slash := filepath.ToSlash(m)
+		seen[slash] = true
+		out = append(out, "file://"+slash)
+	}
+	// Union in pages that exist ONLY in the read-only fallback layers under the
+	// local mew root, presented at their ~/.mew/... path (their file:/// URL),
+	// so a shipped help page lists alongside the user's own.
+	if e.mew != nil {
+		for _, name := range e.mew.listFallbackForLocal(dir) {
+			slash := filepath.ToSlash(filepath.Join(dir, name))
+			if seen[slash] {
+				continue
+			}
+			seen[slash] = true
+			out = append(out, "file://"+slash)
+		}
 	}
 	return out
 }

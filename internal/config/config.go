@@ -521,6 +521,14 @@ type StorageConfig struct {
 	// falls back to the launch directory (standalone) or the host's default
 	// (module mode).
 	Documents string
+
+	// Resources is the read-only system directory the mew: filesystem falls
+	// back to for shipped support files (grammars, the help manual, …) that
+	// the user has no ~/.mew copy of. Empty means the OS convention
+	// (/usr/share/mew, /usr/local/share/mew, %ProgramFiles%\mew\Resources, or
+	// a mac .app bundle's Contents/Resources). Below it, mew's embedded
+	// built-in tree is always the last resort.
+	Resources string
 }
 
 // WindowConfig holds the [window] section: window-scoped display settings.
@@ -1188,6 +1196,13 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 				v = filepath.Join(base, v)
 			}
 			config.Storage.Documents = v
+		}
+		if v, ok := storage["resources"]; ok {
+			v = stripQuotes(v)
+			if v != "" && base != "" && !filepath.IsAbs(v) {
+				v = filepath.Join(base, v)
+			}
+			config.Storage.Resources = v
 		}
 	}
 
@@ -2193,12 +2208,18 @@ row-2="^   M-      <       space       >      M- >>  left  down  right"
 # (normally ~/.mew), with a breadcrumb copy left in the working directory.
 # documents is the fallback directory filename completion globs for a buffer
 # with no file of its own; empty falls back to the launch directory.
+# resources is the read-only system directory the mew: filesystem falls back
+# to for shipped support files (grammars, the help manual) the user has no
+# ~/.mew copy of; empty means the OS convention (/usr/share/mew,
+# /usr/local/share/mew, %ProgramFiles%\mew\Resources, or a mac .app bundle's
+# Contents/Resources). mew's embedded built-in tree is always the last resort.
 # A relative path in a project layer resolves inside that project's .mew.
 # Only honored from this local config file, never from host-supplied config.
 scratch=
 backups=
 deadcat=
 documents=
+resources=
 
 [indicators]
 # Glyphs/labels used to draw editor chrome. Values are quoted.
