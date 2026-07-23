@@ -263,9 +263,12 @@ type Editor struct {
 	// capture holds.
 	mouseOnCaptured bool
 	mouseHovered    pressedLink
-	// pointerOverSent is the last affordance pushed through
-	// Config.PointerShape (see notifyPointerShape).
-	pointerOverSent bool
+	// pointerIBeamSent is the last affordance pushed through
+	// Config.PointerShape (true = I-beam over focused text); pointerShapePushed
+	// records whether anything was pushed yet, so the first computed shape is
+	// always sent even when it equals the false zero value.
+	pointerIBeamSent   bool
+	pointerShapePushed bool
 	// Horizontal wheel barrier (mouse.go): a sideways scroll gesture only
 	// engages after hScrollBarrier ticks accumulate in one direction, so a
 	// stray sideways tick during a vertical scroll never nudges the view. A
@@ -474,10 +477,14 @@ type Config struct {
 	FontLoader func(files map[string]string, searchPaths []string)
 
 	// PointerShape, when set, is told whenever the MOUSE POINTER's affordance
-	// changes: true while the pointer is over a link button or a button is
-	// captured (a graphical host shows the arrow pointer), false for ordinary
-	// text (the I-beam). Called only on transitions, from the input thread.
-	PointerShape func(overButton bool)
+	// changes: true when the pointer is over EDITABLE TEXT of the focused mew
+	// window (its content area or the blank rows below the document that still
+	// follow click-to-EOF) and a graphical host should show the I-beam; false
+	// everywhere else — over a button (link or nav), the gutter, the modebar
+	// and other chrome, an unfocused window, or (when a prompt holds focus)
+	// the document area — where the ordinary arrow is correct. Called only on
+	// transitions, from the input thread.
+	PointerShape func(showIBeam bool)
 
 	// EditState, when set, is told whenever the FOCUSED window's read-only
 	// state changes (and once at the first render), so a host can grey out
@@ -852,7 +859,13 @@ func New(cfg Config) (*Editor, error) {
 	// A wiki page shows its scheme form ("help:/start"), not "start.txt".
 	e.Modebar.SetFilenameFunc(e.wikiDisplayName)
 	e.Modebar.SetNavStateFunc(func() (int, bool, int) {
-		return e.modebarNavCapture, e.modebarNavOn, e.modebarNavHover
+		// Suppress hover styling while a modal prompt holds focus (the buttons
+		// stand down), even if a stale hover lingered from before the prompt.
+		hover := e.modebarNavHover
+		if e.promptHasPriority() {
+			hover = 0
+		}
+		return e.modebarNavCapture, e.modebarNavOn, hover
 	})
 	e.ColumnRuler.SetColorScheme(loadedConfig.Colors)
 

@@ -59,10 +59,12 @@ type Editor struct {
 	fileSystem    mew.FileSystem
 	mewFileSystem mew.FileSystem
 
-	// pointerOverButton mirrors mew's pointer affordance (WithPointerShape):
-	// true while the pointer is over a link button or one is captured, so
-	// the cursor query below answers with the arrow instead of the I-beam.
-	pointerOverButton atomic.Bool
+	// pointerWantsIBeam mirrors mew's pointer affordance (WithPointerShape):
+	// true only while the pointer is over the focused mew window's editable
+	// text, so the cursor query below answers with the I-beam; everywhere else
+	// (buttons, gutter, modebar/chrome, an unfocused pane, the document area
+	// while a prompt awaits input) it answers with the ordinary arrow.
+	pointerWantsIBeam atomic.Bool
 
 	// readOnlyFocused mirrors mew's focused-window read-only state
 	// (WithEditState), so CutEnabled greys the Edit menu's Cut while a
@@ -280,7 +282,7 @@ func (e *Editor) run() {
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
-		mew.WithPointerShape(func(over bool) { e.pointerOverButton.Store(over) }),
+		mew.WithPointerShape(func(showIBeam bool) { e.pointerWantsIBeam.Store(showIBeam) }),
 		// Since purfecterm v0.2.23 the embedded terminal speaks the STANDARD
 		// visual-column contract by default (its flex mode moved to ?7027,
 		// opt-in), so mew talks to it exactly as to any terminal — no
@@ -395,22 +397,24 @@ func caretLine(caret string) string {
 
 // Close ends the mew session (EOF on its input) and releases the surface.
 // Idempotent.
-// CursorShape / CursorShapeAt override the embedded terminal's I-beam with
-// the arrow pointer while mew reports the pointer over a link button (or a
-// captured one) — the same affordance the classic PurfecTerm's scrollbar
-// lanes provide, driven here by mew's own hit knowledge.
+// CursorShape / CursorShapeAt answer the desktop's cursor query for the mew
+// surface. mew (a full editor, not a scrollbar-fringed terminal) owns the
+// affordance entirely: the text I-beam ONLY over the focused window's editable
+// text (mew reports it via WithPointerShape), and the ordinary arrow
+// everywhere else — buttons, gutter, the modebar and other chrome, and the
+// document area while a prompt awaits input.
 func (e *Editor) CursorShape() core.CursorShape {
-	if e.pointerOverButton.Load() {
-		return core.CursorDefault
+	if e.pointerWantsIBeam.Load() {
+		return core.CursorText
 	}
-	return e.PurfecTerm.CursorShape()
+	return core.CursorDefault
 }
 
 func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
-	if e.pointerOverButton.Load() {
-		return core.CursorDefault
+	if e.pointerWantsIBeam.Load() {
+		return core.CursorText
 	}
-	return e.PurfecTerm.CursorShapeAt(x, y)
+	return core.CursorDefault
 }
 
 func (e *Editor) Close() {

@@ -160,19 +160,62 @@ func (e *Editor) handleMouseKey(key string) bool {
 }
 
 // notifyPointerShape tells the host (via Config.PointerShape) whenever the
-// pointer's affordance changes: true while the pointer is over a link button
-// or a button is captured — a graphical host shows the arrow pointer — and
-// false for ordinary text (the I-beam). Pushed only on transitions.
+// pointer's affordance changes: true (I-beam) while the pointer is over the
+// focused window's editable text, false (arrow) everywhere else. Pushed on the
+// first computation and thereafter only on transitions.
 func (e *Editor) notifyPointerShape() {
 	if e.Config.PointerShape == nil {
 		return
 	}
-	over := e.mouseHovered.active || e.mousePressed.active ||
-		e.modebarNavCapture != 0 || e.modebarNavHover != 0
-	if over != e.pointerOverSent {
-		e.pointerOverSent = over
-		e.Config.PointerShape(over)
+	iBeam := e.pointerShowIBeam(e.mouseX, e.mouseY)
+	if !e.pointerShapePushed || iBeam != e.pointerIBeamSent {
+		e.pointerShapePushed = true
+		e.pointerIBeamSent = iBeam
+		e.Config.PointerShape(iBeam)
 	}
+}
+
+// pointerShowIBeam reports whether the pointer should show the text I-beam:
+// only over the FOCUSED window's editable text — its content area (but not a
+// browse-mode link button, which is a button → arrow) or the blank rows below
+// the document that still follow click-to-EOF. Everywhere else — a captured
+// button, the gutter, the modebar and other chrome, an unfocused window, or
+// (when a prompt holds focus) the document area — is the ordinary arrow. When
+// a prompt is focused, only the PROMPT's own field yields the I-beam; the
+// document area shows the arrow, a cue that input is awaited at the prompt.
+func (e *Editor) pointerShowIBeam(x, y int) bool {
+	// A captured button (link or nav) is a button interaction: arrow.
+	if e.mousePressed.active || e.modebarNavCapture != 0 {
+		return false
+	}
+	fw := e.WindowManager.GetFocusedWindow()
+	if fw == nil {
+		return false
+	}
+	if w, docLine, runePos, ok := e.mouseHit(x, y); ok && w == fw {
+		// A browse-mode link button under the pointer is a button, not text.
+		if w.BrowseActive && w.ViewState.LinkBrowsing {
+			for _, s := range e.linkSpansOnLine(w, docLine) {
+				if s.Start <= runePos && runePos < s.End {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	// Blank rows below the document still park the caret at EOF on a click.
+	if w, _, _, ok := e.mouseHitBelowText(x, y); ok && w == fw {
+		return true
+	}
+	return false
+}
+
+// promptHasPriority reports whether a modal prompt currently holds focus, so
+// mouse interactions on the document/chrome (the modebar nav buttons, their
+// hover styling) stand down while input is awaited at the prompt.
+func (e *Editor) promptHasPriority() bool {
+	w := e.WindowManager.GetFocusedWindow()
+	return w != nil && w.Type == window.PromptWindow
 }
 
 // notifyEditState tells the host (via Config.EditState) whenever the FOCUSED

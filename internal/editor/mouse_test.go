@@ -448,33 +448,36 @@ func TestMousePointerShapeHook(t *testing.T) {
 	e.performRender()
 
 	var pushes []bool
-	e.Config.PointerShape = func(over bool) { pushes = append(pushes, over) }
+	e.Config.PointerShape = func(iBeam bool) { pushes = append(pushes, iBeam) }
 
 	row := w.ContentY + 1
 	move := func(cell int) {
 		e.handleMouseKey("MouseDrag@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
 	}
 
-	move(0)  // plain text: no transition (still false)
-	move(5)  // onto the button: -> true
+	// The I-beam shows over the focused window's text and the arrow over a
+	// browse-mode link button (true = I-beam, false = arrow).
+	move(0)  // plain text: I-beam (first computation always pushes) -> true
+	move(5)  // onto the button: arrow -> false
 	move(6)  // still on it: no push
-	move(15) // off: -> false
-	if len(pushes) != 2 || !pushes[0] || pushes[1] {
-		t.Fatalf("hover transitions = %v, want [true false]", pushes)
+	move(15) // off the button, back on text: I-beam -> true
+	if len(pushes) != 3 || !pushes[0] || pushes[1] || !pushes[2] {
+		t.Fatalf("i-beam transitions = %v, want [true false true]", pushes)
 	}
 
-	// Capture also counts as "over": press on the button pushes true; the
-	// release (pointer still on it, but capture ends and hover state is
-	// whatever the last motion said) pushes false.
+	// A captured button is a button interaction: it holds the arrow even when
+	// the pointer is dragged onto text. (Releasing ON the button would follow
+	// the link and land the pointer on the destination's text — legitimately an
+	// I-beam — so this drags OFF and releases in the void to isolate the
+	// capture behavior.)
 	pushes = nil
-	e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+5) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftPress")
-	if len(pushes) != 1 || !pushes[0] {
-		t.Fatalf("press should push true; got %v", pushes)
+	e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+5) + "," + itoa(row))         // onto the button -> arrow
+	e.handleMouseKey("MouseLeftPress")                                          // capture
+	e.handleMouseKey("MouseLeftDrag@" + itoa(w.ContentX+1+0) + "," + itoa(row)) // drag onto text, still captured
+	for i, p := range pushes {
+		if p {
+			t.Fatalf("a captured button must hold the arrow over text; pushes[%d]=true (%v)", i, pushes)
+		}
 	}
-	e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+5) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftRelease")
-	if len(pushes) != 2 || pushes[1] {
-		t.Fatalf("release should push false; got %v", pushes)
-	}
+	e.handleMouseKey("MouseLeftRelease") // release off the button (no follow)
 }

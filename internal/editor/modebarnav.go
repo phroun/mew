@@ -34,8 +34,11 @@ func (e *Editor) modebarNavHit(x, y int) (button int, ok bool) {
 
 // modebarNavPressAt captures a modebar nav button under a plain left press,
 // reporting whether the press was consumed (so the caller skips the ordinary
-// content-window press).
+// content-window press). A modal prompt holding focus stands the buttons down.
 func (e *Editor) modebarNavPressAt(x, y int) bool {
+	if e.promptHasPriority() {
+		return false
+	}
 	button, ok := e.modebarNavHit(x, y)
 	if !ok {
 		return false
@@ -82,10 +85,11 @@ func (e *Editor) modebarNavRelease(x, y int) {
 }
 
 // modebarNavHoverAt lights the nav button under the pointer (graphical
-// all-motion tracking), but only while nothing is captured.
+// all-motion tracking), but only while nothing is captured and no modal
+// prompt holds focus (a prompt stands the buttons — and their hover — down).
 func (e *Editor) modebarNavHoverAt(x, y int) {
 	hover := plugins.ModebarNavNone
-	if e.modebarNavCapture == plugins.ModebarNavNone {
+	if e.modebarNavCapture == plugins.ModebarNavNone && !e.promptHasPriority() {
 		if button, ok := e.modebarNavHit(x, y); ok {
 			hover = button
 		}
