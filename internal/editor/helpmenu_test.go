@@ -363,6 +363,28 @@ func TestQuickHelpNoHelpAvailable(t *testing.T) {
 	}
 }
 
+// The docked slot carries class "quickhelp" while showing Quick Help and "help"
+// while showing a page, so per-class config can target each. The Tag stays
+// "help" so helpWindow() finds the slot in either role.
+func TestHelpWindowClassFlipsWithRole(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	e.KeyProcessor.MapKey("help", "no_such_help_page_xyz") // Quick Help -> the notice
+
+	e.executeCommand("help_toggle") // Quick Help
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should open")
+	}
+	if hw.Class != "quickhelp" {
+		t.Errorf("Quick Help class = %q, want %q", hw.Class, "quickhelp")
+	}
+
+	e.executeCommand(`help_toggle "manual"`) // navigate to a page
+	if hw.Class != "help" {
+		t.Errorf("a help page's class = %q, want %q", hw.Class, "help")
+	}
+}
+
 // Opening a help page that does not exist reports a transient error toast and
 // opens no window — it never creates a stub page.
 func TestHelpOpenMissingPageErrors(t *testing.T) {

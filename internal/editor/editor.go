@@ -6660,6 +6660,14 @@ func (e *Editor) expireStaleNotifications() {
 // whether the slot is currently showing Quick Help.
 const helpWindowTag = "help"
 
+// The docked help slot carries one of two window CLASSES depending on its role,
+// so per-class config (colors, mappings, options overlays) can target each: a
+// regular help page is class "help", Quick Help is class "quickhelp".
+// applyHelpWindowChrome flips it as the slot changes role. The Tag stays "help"
+// either way, so helpWindow() still finds the slot.
+const helpWindowClass = "help"
+const quickHelpClass = "quickhelp"
+
 // quickHelpDocURL is the synthetic identity of the Quick Help buffer. It sits
 // OUTSIDE the help wiki root (mew:///help) so it never resolves as, or displays
 // like, a wiki page; it just gives the location a stable URL to compare against.
@@ -6855,14 +6863,16 @@ func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
 		return
 	}
 	if e.quickHelpMode {
-		hw.MessageTopCenter = "" // no title bar: all MessageTop* empty hides the row
-		hw.CanFocus = false      // the focus switcher (^B N/^B P) skips the peek
+		hw.Class = quickHelpClass // distinct class for per-class config
+		hw.MessageTopCenter = ""  // no title bar: all MessageTop* empty hides the row
+		hw.CanFocus = false       // the focus switcher (^B N/^B P) skips the peek
 		fit := quickHelpFitHeight(hw.Buffer)
 		hw.MaxHeight = fit
 		if hw.MinHeight > fit {
 			hw.MinHeight = fit
 		}
 	} else {
+		hw.Class = helpWindowClass
 		hw.MessageTopCenter = "Help"
 		hw.CanFocus = true
 		hw.MinHeight = 4
@@ -6896,7 +6906,7 @@ func (e *Editor) createHelpWindow(buf *buffer.Buffer, focus bool) *window.Window
 	opts := e.docWindowOptions()
 	opts.Type = window.ToolWindow
 	opts.WindowSet = "help"
-	opts.Class = "help"
+	opts.Class = helpWindowClass // applyHelpWindowChrome flips this to quickHelpClass in Quick Help
 	opts.Tag = helpWindowTag
 	opts.Dock = window.DockTop
 	opts.Priority = 100
