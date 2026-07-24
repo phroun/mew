@@ -363,6 +363,25 @@ func TestQuickHelpNoHelpAvailable(t *testing.T) {
 	}
 }
 
+// Opening a help page that does not exist reports a transient error toast and
+// opens no window — it never creates a stub page.
+func TestHelpOpenMissingPageErrors(t *testing.T) {
+	e := helpTestEditor(t, nil)
+	e.executeCommand(`help_open "definitely_not_a_real_page"`)
+	if e.helpWindow() != nil {
+		t.Fatal("a missing help page must not open or create a help window")
+	}
+	found := false
+	for _, w := range e.WindowManager.AllWindows() {
+		if w.Class == "error" && strings.Contains(w.MessageTopInner, "not found") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected a transient error toast for a missing help page")
+	}
+}
+
 // notifyHelpState pushes whether the docked help window is showing Quick Help,
 // on the first render and on transitions (a host syncs the checkmark to it).
 func TestNotifyHelpStateTransitions(t *testing.T) {

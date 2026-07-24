@@ -6779,18 +6779,11 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	}
 	res := e.resolveFollow(nil, ref)
 	if res.url == "" {
-		// Missing page: offer creation when the wiki allows it, else report.
-		if res.createURL != "" && res.writable {
-			title := strings.TrimPrefix(arg, "help:/")
-			buf, err := e.createBufferURL(res.createURL, "=== "+title+" ===\n\n")
-			if err != nil {
-				e.ShowError("Create: " + err.Error())
-			} else {
-				e.showHelpLocation(hw, buf, res.root, res.wikiName, true, focus)
-			}
-		} else {
-			e.ShowNotification(res.message)
-		}
+		// Opening a help page that does not exist is an error, like opening a
+		// missing file — not an invitation to author one. Report it as a
+		// transient toast and leave any open help window untouched. (Authoring a
+		// new help page is done deliberately through buffer_open, not here.)
+		e.ShowError(res.message)
 		e.RequestRender()
 		return true
 	}
