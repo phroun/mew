@@ -6685,10 +6685,20 @@ func (e *Editor) syncQuickHelpMode() {
 		return
 	}
 	hw := e.helpWindow()
-	if hw == nil || hw.Buffer != e.quickHelpBuf {
+	if hw == nil {
 		e.quickHelpMode = false
 		e.quickHelpBuf = nil
 		e.quickHelpShownTopic = ""
+		return
+	}
+	if hw.Buffer != e.quickHelpBuf {
+		// The user browsed away (link / history): the slot is a regular help
+		// page now, so leave quick mode and restore the page chrome (title bar,
+		// standard height) that Quick Help had stripped.
+		e.quickHelpMode = false
+		e.quickHelpBuf = nil
+		e.quickHelpShownTopic = ""
+		e.applyHelpWindowChrome(hw)
 	}
 }
 
@@ -6718,10 +6728,12 @@ func (e *Editor) toggleHelp(arg string) bool {
 		// stale one.
 		e.quickHelpTopic = e.KeyProcessor.HelpTopic(e.ActiveSequence)
 		buf, root, wikiName, browse := e.quickHelpDestination()
-		e.showHelpLocation(hw, buf, root, wikiName, browse)
+		// Mark Quick Help mode BEFORE showing, so showHelpLocation's chrome pass
+		// (applyHelpWindowChrome) drops the title bar and fits the height.
 		e.quickHelpMode = true
 		e.quickHelpBuf = buf
 		e.quickHelpShownTopic = e.quickHelpTopic
+		e.showHelpLocation(hw, buf, root, wikiName, browse)
 		return true
 	}
 
@@ -6786,12 +6798,58 @@ func (e *Editor) showHelpLocation(hw *window.Window, buf *buffer.Buffer, root, w
 	hw.WikiName = wikiName
 	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
 	hw.BrowseAutoArmed = hw.BrowseActive
+	e.applyHelpWindowChrome(hw) // title bar + height per Quick Help vs. page role
 	e.ensureCursorVisible(hw)
 	e.RequestRender()
 }
 
+// applyHelpWindowChrome sets the docked help window's chrome for its CURRENT
+// role, read from quickHelpMode. Quick Help is a dynamic, chromeless page: it
+// drops the top "Help" message bar entirely and sizes its max height to the
+// loaded file so the window fits its content. Regular help keeps the "Help"
+// title bar and the standard height envelope. Called whenever the window's role
+// or loaded buffer changes — not per edit — so the message bar enables and
+// disables as the same slot flips between Quick Help and a help page.
+func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
+	if hw == nil {
+		return
+	}
+	if e.quickHelpMode {
+		hw.MessageTopCenter = "" // no title bar: all MessageTop* empty hides the row
+		fit := quickHelpFitHeight(hw.Buffer)
+		hw.MaxHeight = fit
+		if hw.MinHeight > fit {
+			hw.MinHeight = fit
+		}
+	} else {
+		hw.MessageTopCenter = "Help"
+		hw.MinHeight = 4
+		hw.MaxHeight = 20
+	}
+}
+
+// quickHelpFitHeight is the height Quick Help sizes its window to: the visible
+// line count of buf, less the phantom empty line a trailing newline would add,
+// and at least 1.
+func quickHelpFitHeight(buf *buffer.Buffer) int {
+	if buf == nil {
+		return 1
+	}
+	n := buf.GetLineCount()
+	if strings.HasSuffix(buf.GetContent(), "\n") {
+		n-- // GetLineCount counts the empty line after a trailing newline
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 // createHelpWindow creates the single docked help window (Tag "help") holding
-// buf, focused so the reader can scroll and follow links straight away.
+// buf, focused so the reader can scroll and follow links straight away. Its
+// chrome (title bar, height envelope) is set immediately afterward by
+// applyHelpWindowChrome per the window's role; the values here are the
+// regular-help defaults.
 func (e *Editor) createHelpWindow(buf *buffer.Buffer) *window.Window {
 	opts := e.docWindowOptions()
 	opts.Type = window.ToolWindow
@@ -6847,6 +6905,7 @@ func (e *Editor) refreshQuickHelp(hw *window.Window) {
 	hw.BrowseAutoArmed = hw.BrowseActive
 	e.quickHelpBuf = buf
 	e.quickHelpShownTopic = e.quickHelpTopic
+	e.applyHelpWindowChrome(hw) // re-fit height to the newly loaded page
 	e.ensureCursorVisible(hw)
 	e.RequestRender()
 }

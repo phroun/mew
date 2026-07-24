@@ -214,6 +214,66 @@ func TestBrowsingLeavesQuickMode(t *testing.T) {
 	}
 }
 
+// Quick Help drops the top message bar and fits its window height to the loaded
+// file; a regular help page restores the "Help" title bar and standard height.
+// The same docked slot flips chrome as its role changes.
+func TestQuickHelpChromeAndFit(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{
+		"help/keys.txt":   "l1\nl2\nl3\n", // 3 content lines
+		"help/manual.txt": "=== Manual ===\nbody\n",
+	})
+	e.KeyProcessor.MapKey("help", "keys")
+
+	e.executeCommand("help_toggle") // Quick Help -> help:/keys
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should open")
+	}
+	if hw.MessageTopCenter != "" {
+		t.Errorf("Quick Help must hide the top message bar, got %q", hw.MessageTopCenter)
+	}
+	if hw.MaxHeight != 3 {
+		t.Errorf("Quick Help MaxHeight should fit the 3-line file, got %d", hw.MaxHeight)
+	}
+	if hw.MinHeight > hw.MaxHeight {
+		t.Errorf("MinHeight %d must not exceed the fitted MaxHeight %d", hw.MinHeight, hw.MaxHeight)
+	}
+
+	// Navigate to a regular help page: the title bar and standard height return.
+	e.executeCommand(`help_toggle "manual"`)
+	if e.helpWindow() != hw {
+		t.Fatal("should stay the same docked window")
+	}
+	if hw.MessageTopCenter != "Help" {
+		t.Errorf("a help page must show the Help title bar, got %q", hw.MessageTopCenter)
+	}
+	if hw.MaxHeight != 20 {
+		t.Errorf("a help page uses the standard height envelope, got MaxHeight %d", hw.MaxHeight)
+	}
+}
+
+// Browsing away from Quick Help (a link swap, not a help_toggle) restores the
+// page chrome the dynamic view had stripped.
+func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/keys.txt": "a\nb\n"})
+	e.KeyProcessor.MapKey("help", "keys")
+	e.executeCommand("help_toggle")
+	hw := e.helpWindow()
+	if hw == nil || hw.MessageTopCenter != "" {
+		t.Fatal("Quick Help should open chromeless")
+	}
+
+	e.swapBuffer(hw, buffer.NewFromString("elsewhere\n")) // as link-follow does
+	e.syncQuickHelpMode()                                 // reconcile (key loop / render does this)
+	if e.quickHelpWindowOpen() {
+		t.Fatal("browsing away should leave quick mode")
+	}
+	if hw.MessageTopCenter != "Help" || hw.MaxHeight != 20 {
+		t.Errorf("browsing away should restore page chrome, got title %q maxH %d",
+			hw.MessageTopCenter, hw.MaxHeight)
+	}
+}
+
 // notifyHelpState pushes whether the docked help window is showing Quick Help,
 // on the first render and on transitions (a host syncs the checkmark to it).
 func TestNotifyHelpStateTransitions(t *testing.T) {
