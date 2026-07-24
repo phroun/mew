@@ -16,6 +16,7 @@ import (
 // (the class renders in the window's normal text color).
 func attrSGR(attrs []string) string {
 	var codes []string
+	hasColor := false
 	for _, a := range attrs {
 		switch a {
 		case "bold":
@@ -33,13 +34,23 @@ func attrSGR(attrs []string) string {
 		default:
 			if c, ok := colorCode(a); ok {
 				codes = append(codes, c)
+				hasColor = true
 			}
 		}
 	}
 	if len(codes) == 0 {
 		return ""
 	}
-	return "\x1b[0;" + strings.Join(codes, ";") + "m"
+	// A class that names a COLOR resets first ("\x1b[0;…") so its fg/bg is exact
+	// and no prior attributes bleed in. An attribute-ONLY class (bold, italic,
+	// underline — no color) instead LAYERS onto the current pen: "\x1b[1m" adds
+	// bold without touching fg/bg, so the run keeps whatever color the text
+	// already had (the window background, or a surrounding syntax color) rather
+	// than resetting it to the terminal default.
+	if hasColor {
+		return "\x1b[0;" + strings.Join(codes, ";") + "m"
+	}
+	return "\x1b[" + strings.Join(codes, ";") + "m"
 }
 
 // namedColors maps the base color names to their standard ANSI offsets.

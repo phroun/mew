@@ -587,7 +587,11 @@ func TestAttrSGR(t *testing.T) {
 		{[]string{"WHITE"}, "\x1b[0;97m"},
 		{[]string{"bg_white", "black"}, "\x1b[0;47;30m"},
 		{[]string{"BG_CYAN"}, "\x1b[0;106m"},
-		{[]string{"underline", "inverse"}, "\x1b[0;4;7m"},
+		// Attribute-only classes layer onto the current pen (no leading reset),
+		// so they keep the text's existing fg/bg and just add the attribute.
+		{[]string{"bold"}, "\x1b[1m"},
+		{[]string{"italic"}, "\x1b[3m"},
+		{[]string{"underline", "inverse"}, "\x1b[4;7m"},
 		{[]string{"fg_500"}, "\x1b[0;38;5;196m"},
 		{[]string{"bg_012"}, "\x1b[0;48;5;24m"},
 		{[]string{"fg_12"}, "\x1b[0;38;5;244m"},
