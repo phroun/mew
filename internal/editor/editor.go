@@ -2510,6 +2510,17 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.toggleHelp(arg))
 	})
 
+	// help_open is help_toggle that only ever opens/replaces (never closes) and
+	// FOCUSES the help window — for landing in help ready to scroll and follow
+	// links, versus help_toggle's peek that leaves the caret in place.
+	ps.RegisterCommand("help_open", func(ctx *pawscript.Context) pawscript.Result {
+		arg := ""
+		if len(ctx.Args) > 0 {
+			arg = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.openHelpFocused(arg))
+	})
+
 	// Editor options command
 	ps.RegisterCommand("editor_options", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.toggleOptions())
@@ -6702,25 +6713,44 @@ func (e *Editor) syncQuickHelpMode() {
 	}
 }
 
-// toggleHelp is the help_toggle command. With no argument the target is Quick
-// Help; with one it is the help wiki page help:/<arg> ("help:/..." is accepted
-// whole, so help_toggle "help:/" opens the index). If the docked help window is
-// already showing that target it closes; otherwise the window NAVIGATES to it
-// (its nav history grows, so back returns), opening the docked window when none
-// exists. So one key can hold Quick Help and another a help page, each landing
-// in the same docked window.
-func (e *Editor) toggleHelp(arg string) bool {
+// toggleHelp is the help_toggle command: open/navigate the docked help slot, or
+// close it when it is already showing the target — and NEVER steal focus, so it
+// is a peek that leaves the caret where it was.
+func (e *Editor) toggleHelp(arg string) bool { return e.openHelp(arg, true, false) }
+
+// openHelpFocused is the help_open command: like help_toggle but it only ever
+// opens or replaces — it never closes — and it FOCUSES the help window, so the
+// reader can scroll and follow links straight away.
+func (e *Editor) openHelpFocused(arg string) bool { return e.openHelp(arg, false, true) }
+
+// openHelp drives the single docked help slot (Tag "help", top dock). With no
+// argument the target is Quick Help; with one it is the help wiki page
+// help:/<arg> ("help:/..." is accepted whole, so `help:/` opens the index).
+//
+//	allowClose — when the slot is ALREADY showing the target, close it (toggle
+//	             behavior); otherwise leave it open and merely re-assert it.
+//	focus      — focus the help window after opening/navigating (help_open);
+//	             help_toggle passes false so it never steals the caret.
+//
+// Navigating an existing slot grows its nav history, so its back button returns
+// to where the reader came from.
+func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	arg = strings.TrimSpace(arg)
 	e.syncQuickHelpMode()
 	hw := e.helpWindow()
 
 	if arg == "" {
 		if e.quickHelpMode && hw != nil {
-			e.WindowManager.RemoveWindow(hw.ID) // already here: toggle off
-			e.quickHelpMode = false
-			e.quickHelpBuf = nil
-			e.quickHelpShownTopic = ""
-			e.RequestRender()
+			// Already at Quick Help: toggle closes; open just re-asserts focus.
+			if allowClose {
+				e.WindowManager.RemoveWindow(hw.ID)
+				e.quickHelpMode = false
+				e.quickHelpBuf = nil
+				e.quickHelpShownTopic = ""
+				e.RequestRender()
+				return true
+			}
+			e.focusHelpWindow(hw, focus)
 			return true
 		}
 		// Resolve the topic for the current prefix now, so a menu-driven open
@@ -6733,7 +6763,7 @@ func (e *Editor) toggleHelp(arg string) bool {
 		e.quickHelpMode = true
 		e.quickHelpBuf = buf
 		e.quickHelpShownTopic = e.quickHelpTopic
-		e.showHelpLocation(hw, buf, root, wikiName, browse)
+		e.showHelpLocation(hw, buf, root, wikiName, browse, focus)
 		return true
 	}
 
@@ -6756,7 +6786,7 @@ func (e *Editor) toggleHelp(arg string) bool {
 			if err != nil {
 				e.ShowError("Create: " + err.Error())
 			} else {
-				e.showHelpLocation(hw, buf, res.root, res.wikiName, true)
+				e.showHelpLocation(hw, buf, res.root, res.wikiName, true, focus)
 			}
 		} else {
 			e.ShowNotification(res.message)
@@ -6765,8 +6795,13 @@ func (e *Editor) toggleHelp(arg string) bool {
 		return true
 	}
 	if hw != nil && e.bufferCanonicalURL(hw.Buffer) == res.url {
-		e.WindowManager.RemoveWindow(hw.ID) // already here: toggle off
-		e.RequestRender()
+		// Already at this page: toggle closes; open just re-asserts focus.
+		if allowClose {
+			e.WindowManager.RemoveWindow(hw.ID)
+			e.RequestRender()
+			return true
+		}
+		e.focusHelpWindow(hw, focus)
 		return true
 	}
 	buf := e.findOpenBuffer(res.url)
@@ -6779,20 +6814,32 @@ func (e *Editor) toggleHelp(arg string) bool {
 		}
 		buf = loaded
 	}
-	e.showHelpLocation(hw, buf, res.root, res.wikiName, true)
+	e.showHelpLocation(hw, buf, res.root, res.wikiName, true, focus)
 	return true
+}
+
+// focusHelpWindow focuses hw when focus is set (help_open), repainting; a no-op
+// otherwise (help_toggle re-asserting an already-open slot).
+func (e *Editor) focusHelpWindow(hw *window.Window, focus bool) {
+	if focus && hw != nil {
+		e.WindowManager.SetFocus(hw.ID)
+	}
+	e.RequestRender()
 }
 
 // showHelpLocation puts buf into the docked help window: it NAVIGATES an
 // existing window (swap_buffer, so the previous location goes onto the back
 // history), or creates the docked window when none exists. root/wikiName wire
-// the window to the help wiki (empty for Quick Help), and browse arms link
-// browsing for a wiki page.
-func (e *Editor) showHelpLocation(hw *window.Window, buf *buffer.Buffer, root, wikiName string, browse bool) {
+// the window to the help wiki (empty for Quick Help), browse arms link browsing
+// for a wiki page, and focus (help_open only) moves the caret to the slot.
+func (e *Editor) showHelpLocation(hw *window.Window, buf *buffer.Buffer, root, wikiName string, browse, focus bool) {
 	if hw == nil {
-		hw = e.createHelpWindow(buf)
+		hw = e.createHelpWindow(buf, focus)
 	} else {
 		e.swapBuffer(hw, buf)
+		if focus {
+			e.WindowManager.SetFocus(hw.ID)
+		}
 	}
 	hw.WikiRoot = root
 	hw.WikiName = wikiName
@@ -6816,6 +6863,7 @@ func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
 	}
 	if e.quickHelpMode {
 		hw.MessageTopCenter = "" // no title bar: all MessageTop* empty hides the row
+		hw.CanFocus = false      // the focus switcher (^B N/^B P) skips the peek
 		fit := quickHelpFitHeight(hw.Buffer)
 		hw.MaxHeight = fit
 		if hw.MinHeight > fit {
@@ -6823,6 +6871,7 @@ func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
 		}
 	} else {
 		hw.MessageTopCenter = "Help"
+		hw.CanFocus = true
 		hw.MinHeight = 4
 		hw.MaxHeight = 20
 	}
@@ -6846,11 +6895,11 @@ func quickHelpFitHeight(buf *buffer.Buffer) int {
 }
 
 // createHelpWindow creates the single docked help window (Tag "help") holding
-// buf, focused so the reader can scroll and follow links straight away. Its
-// chrome (title bar, height envelope) is set immediately afterward by
-// applyHelpWindowChrome per the window's role; the values here are the
-// regular-help defaults.
-func (e *Editor) createHelpWindow(buf *buffer.Buffer) *window.Window {
+// buf. focus moves the caret to it (help_open); help_toggle passes false so the
+// slot opens without stealing focus. Its chrome (title bar, height envelope) is
+// set immediately afterward by applyHelpWindowChrome per the window's role; the
+// values here are the regular-help defaults.
+func (e *Editor) createHelpWindow(buf *buffer.Buffer, focus bool) *window.Window {
 	opts := e.docWindowOptions()
 	opts.Type = window.ToolWindow
 	opts.WindowSet = "help"
@@ -6862,7 +6911,7 @@ func (e *Editor) createHelpWindow(buf *buffer.Buffer) *window.Window {
 	opts.MaxHeight = 20
 	opts.MessageTopCenter = "Help"
 	opts.Buffer = buf
-	opts.SetFocus = true
+	opts.SetFocus = focus
 	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
 }
 

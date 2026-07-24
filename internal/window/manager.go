@@ -267,6 +267,13 @@ type Window struct {
 	Priority  int
 	Visible   bool
 
+	// CanFocus gates the focus SWITCHER (FocusNextWindow / FocusPrevWindow):
+	// a window with CanFocus=false is skipped when cycling focus, though it can
+	// still be focused explicitly (SetFocus, a mouse click, help_open). Defaults
+	// to true; the editor drops it to false for a window that should not be a
+	// cycle stop (e.g. the auto-following Quick Help peek).
+	CanFocus bool
+
 	// Seq is a monotonically increasing creation sequence number, unique
 	// across all windows: each new window gets the previous number +1.
 	Seq int64
@@ -1356,6 +1363,9 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 		RowMessages:         opts.RowMessages,
 		CustomRenderer:      opts.CustomRenderer,
 	}
+	// Windows are focus-cycle stops by default; a caller lowers CanFocus later
+	// for a window that explicit focus may still reach but the switcher skips.
+	w.CanFocus = true
 
 	// Calculate line number width if showing line numbers
 	if w.ViewState.ShowLineNumbers && w.Buffer != nil {
@@ -1644,10 +1654,12 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Collect visible focus-eligible windows in deterministic (ID) order.
+	// Collect visible focus-eligible windows in deterministic (ID) order. A
+	// window with CanFocus=false (e.g. Quick Help) is skipped as a cycle stop,
+	// though explicit focus can still reach it.
 	var mains []*Window
 	for _, w := range m.windows {
-		if w.FocusEligible() && w.Visible {
+		if w.FocusEligible() && w.Visible && w.CanFocus {
 			mains = append(mains, w)
 		}
 	}

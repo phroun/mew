@@ -274,6 +274,79 @@ func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
 	}
 }
 
+// help_toggle is a peek: it opens the help slot without stealing focus.
+func TestHelpToggleDoesNotFocus(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	doc := e.WindowManager.GetFocusedWindow()
+	if doc == nil {
+		t.Fatal("a doc window should be focused at start")
+	}
+	e.executeCommand(`help_toggle "manual"`)
+	if e.helpWindow() == nil {
+		t.Fatal("help_toggle should open the page")
+	}
+	if e.WindowManager.GetFocusedWindow() != doc {
+		t.Fatal("help_toggle must not steal focus")
+	}
+}
+
+// help_open focuses the help window and never closes it (a second invocation at
+// the same location keeps it open, unlike help_toggle).
+func TestHelpOpenFocusesAndNeverCloses(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	e.executeCommand(`help_open "manual"`)
+	hw := e.helpWindow()
+	if hw == nil {
+		t.Fatal("help_open should open the page")
+	}
+	if e.WindowManager.GetFocusedWindow() != hw {
+		t.Fatal("help_open should focus the help window")
+	}
+	e.executeCommand(`help_open "manual"`) // same location again
+	if e.helpWindow() == nil {
+		t.Fatal("help_open must never close the help window")
+	}
+}
+
+// help_open focuses even Quick Help (CanFocus=false) — explicit focus is not
+// gated by CanFocus, only the switcher is.
+func TestHelpOpenFocusesQuickHelp(t *testing.T) {
+	e := helpTestEditor(t, nil) // no files: Quick Help is the built-in reference
+	e.executeCommand("help_open")
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("help_open should open Quick Help")
+	}
+	if hw.CanFocus {
+		t.Fatal("Quick Help should have CanFocus=false")
+	}
+	if e.WindowManager.GetFocusedWindow() != hw {
+		t.Fatal("help_open should focus Quick Help on explicit request")
+	}
+}
+
+// The focus switcher (window_next / window_prior) skips Quick Help.
+func TestFocusSwitcherSkipsQuickHelp(t *testing.T) {
+	e := helpTestEditor(t, nil)
+	// A second focusable doc window, so cycling has a real destination.
+	e.WindowManager.CreateWindow(window.WindowOptions{
+		Visible: true, Type: window.DocWindow, Dock: window.DockNone,
+		Buffer: buffer.NewFromString("two\n"),
+	})
+	e.executeCommand("help_toggle") // Quick Help, unfocused
+	hw := e.helpWindow()
+	if hw == nil || hw.CanFocus {
+		t.Fatal("Quick Help should be open with CanFocus=false")
+	}
+	// Cycle through every window twice; the switcher must never land on it.
+	for i := 0; i < 4; i++ {
+		e.WindowManager.FocusNextWindow()
+		if e.WindowManager.GetFocusedWindow() == hw {
+			t.Fatal("the focus switcher must skip Quick Help")
+		}
+	}
+}
+
 // notifyHelpState pushes whether the docked help window is showing Quick Help,
 // on the first render and on transitions (a host syncs the checkmark to it).
 func TestNotifyHelpStateTransitions(t *testing.T) {
