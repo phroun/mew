@@ -915,7 +915,7 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 			}
 			disp := e.keyBindingDisplay(action, s.Title)
 			if verbose {
-				disp = verboseKeySequence(disp)
+				disp = e.verboseKeys(disp)
 			}
 			spans = append(spans, render.ButtonSpan{
 				Start: s.Start, End: s.End,

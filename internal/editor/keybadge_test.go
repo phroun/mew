@@ -38,27 +38,49 @@ func TestKeysRefAction(t *testing.T) {
 	}
 }
 
-// verboseKeySequence spells a binding out for beginners: modifiers as words,
-// chord keys joined with then / followed by / and finally, and Shift derived
-// from letter case for non-Ctrl keys only.
+// verboseKeySequence spells a binding out for beginners: modifiers as words and
+// chord keys joined with then / followed by / and finally. Letters case-fold, so
+// no Shift is shown unless a token is written with S- or its case-flipped
+// binding also exists (disambiguation).
 func TestVerboseKeySequence(t *testing.T) {
+	// Nothing else is bound, so no letter case is significant.
+	none := func(string) bool { return false }
 	cases := []struct{ seq, want string }{
 		{"^B", "Ctrl+B"},
 		{"^B O", "Ctrl+B then O"},
 		{"^K F", "Ctrl+K then F"},
-		{"M-b", "Meta+B"},                         // non-Ctrl lowercase: no Shift
-		{"M-B", "Meta+Shift-B"},                   // non-Ctrl uppercase: Shift
-		{"^C", "Ctrl+C"},                          // Ctrl uppercase: NOT Shift
-		{"S-tab", "Shift-Tab"},                    // explicit Shift on a named key
-		{"s-x", "Super+X"},                        // Super
-		{"^M-b", "Ctrl+Meta+B"},                   // combined modifiers
-		{"esc x", "Esc then X"},                   // named key + letter chord
-		{"^B C D", "Ctrl+B then C followed by D"}, // 3 keys: no "and finally"
-		{"^B C D E", "Ctrl+B then C followed by D and finally E"},    // 4 keys
-		{"a b c d e", "A then B followed by C then D and finally E"}, // 5 keys
+		{"M-b", "Meta+B"},
+		{"M-B", "Meta+B"}, // uppercase but not disambiguated: case-folded, no Shift
+		{"^C", "Ctrl+C"},
+		{"S-tab", "Shift-Tab"}, // explicit Shift on a named key
+		{"s-x", "Super+X"},
+		{"^M-b", "Ctrl+Meta+B"},
+		{"esc x", "Esc then X"},
+		{"^B C D", "Ctrl+B then C followed by D"},
+		{"^B C D E", "Ctrl+B then C followed by D and finally E"},
+		{"a b c d e", "A then B followed by C then D and finally E"},
 	}
 	for _, c := range cases {
-		if got := verboseKeySequence(c.seq); got != c.want {
+		if got := verboseKeySequence(c.seq, none); got != c.want {
+			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
+		}
+	}
+}
+
+// When both case variants of a key are bound, the case disambiguates them and
+// Shift is shown for the uppercase one.
+func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {
+	// A keymap where both M-b/M-B and both ^c/^C exist.
+	bound := map[string]bool{"M-b": true, "M-B": true, "^c": true, "^C": true}
+	isBound := func(s string) bool { return bound[s] }
+	cases := []struct{ seq, want string }{
+		{"M-b", "Meta+B"},       // lowercase variant: no Shift
+		{"M-B", "Meta+Shift-B"}, // uppercase variant: Shift (disambiguated)
+		{"^c", "Ctrl+C"},        // lowercase Ctrl variant
+		{"^C", "Ctrl+Shift-C"},  // uppercase Ctrl variant: Shift (disambiguated)
+	}
+	for _, c := range cases {
+		if got := verboseKeySequence(c.seq, isBound); got != c.want {
 			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
 		}
 	}

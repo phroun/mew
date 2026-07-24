@@ -30,25 +30,70 @@ var verboseKeyNames = map[string]string{
 	"pgdn":      "Page Down",
 }
 
-// verboseKeySequence renders a space-separated key binding (e.g. "^B O") in the
-// long, beginner-facing form the keys_verbose# help helper uses, for teaching
-// shortcuts before the terse notation has been introduced. Modifiers are
-// spelled out — ^ becomes "Ctrl+", M- "Meta+", s- "Super+", and Shift attaches
-// to the base key as "Shift-" — and the keys of a chord are joined with "then",
-// "followed by", and "and finally" (see joinVerboseTerms). Shift is inferred
-// from letter case for NON-Ctrl keys (M-b -> Meta+B, M-B -> Meta+Shift-B); a
-// Ctrl letter never carries an implied Shift (^K stays Ctrl+K, not
-// Ctrl+Shift-K), only an explicit S- adds it.
-func verboseKeySequence(seq string) string {
+// verboseKeys renders a key binding in the long, beginner-facing form the
+// keys_verbose# helper uses, consulting the live keymap for Shift
+// disambiguation (see verboseKeySequence).
+func (e *Editor) verboseKeys(seq string) string {
+	isBound := func(s string) bool {
+		return e.KeyProcessor != nil && e.KeyProcessor.GetMapping(s) != ""
+	}
+	return verboseKeySequence(seq, isBound)
+}
+
+// verboseKeySequence spells a space-separated binding (e.g. "^B O") out for
+// beginners, for help pages written before the terse notation is introduced.
+// Modifiers spell out — ^ becomes "Ctrl+", M- "Meta+", s- "Super+", and Shift
+// attaches to the base key as "Shift-" — and the keys of a chord are joined
+// with "then", "followed by", and "and finally" (see joinVerboseTerms).
+//
+// Shift on a letter is shown only when it MATTERS: an explicit S- in the
+// binding, or a letter whose case is significant — i.e. the same binding with
+// that letter's case flipped is ALSO bound (both defined to disambiguate). The
+// keybinding system otherwise case-folds letters, so their case implies no
+// Shift. isBound reports whether a full sequence string is a live binding.
+func verboseKeySequence(seq string, isBound func(string) bool) string {
 	fields := strings.Fields(seq)
 	if len(fields) == 0 {
 		return seq
 	}
 	terms := make([]string, len(fields))
 	for i, f := range fields {
-		terms[i] = verboseKeyToken(f)
+		terms[i] = verboseKeyToken(f, caseSignificant(fields, i, isBound))
 	}
 	return joinVerboseTerms(terms)
+}
+
+// caseSignificant reports whether the case of fields[i]'s letter must be shown
+// as Shift: the same sequence with that token's letter flipped is ALSO bound
+// (both cases defined, so the case disambiguates two real bindings). A token
+// with no single letter, or whose flipped form is unbound, is case-folded.
+func caseSignificant(fields []string, i int, isBound func(string) bool) bool {
+	if isBound == nil {
+		return false
+	}
+	flipped, ok := flipTokenLetter(fields, i)
+	if !ok {
+		return false
+	}
+	return isBound(flipped)
+}
+
+// flipTokenLetter returns the full sequence with the letter of fields[i]'s base
+// switched in case (Meta+b <-> Meta+B), or ok=false when that token has no
+// single-letter base.
+func flipTokenLetter(fields []string, i int) (string, bool) {
+	prefix, base := splitKeyToken(fields[i])
+	if !isSingleLetter(base) {
+		return "", false
+	}
+	flipped := strings.ToUpper(base)
+	if base == flipped {
+		flipped = strings.ToLower(base)
+	}
+	out := make([]string, len(fields))
+	copy(out, fields)
+	out[i] = prefix + flipped
+	return strings.Join(out, " "), true
 }
 
 // joinVerboseTerms joins chord terms into prose: "then" between the first two,
@@ -83,32 +128,18 @@ func joinVerboseTerms(terms []string) string {
 	return b.String()
 }
 
-// verboseKeyToken renders one key token ("^B", "M-b", "S-tab", "s-x") in the
-// verbose form.
-func verboseKeyToken(tok string) string {
-	ctrl, meta, super, shift := false, false, false, false
-	base := tok
-	for stripping := true; stripping; {
-		switch {
-		case strings.HasPrefix(base, "M-"):
-			meta, base = true, base[2:]
-		case strings.HasPrefix(base, "S-"):
-			shift, base = true, base[2:]
-		case strings.HasPrefix(base, "s-"):
-			super, base = true, base[2:]
-		case strings.HasPrefix(base, "^") && len(base) > 1:
-			ctrl, base = true, base[1:]
-		default:
-			stripping = false
-		}
-	}
+// verboseKeyToken renders one key token ("^B", "M-b", "S-tab"). caseSignificant
+// says whether the base letter's case encodes a real Shift (both cases bound).
+func verboseKeyToken(tok string, caseSignificant bool) string {
+	prefix, base := splitKeyToken(tok)
+	ctrl := strings.Contains(prefix, "^")
+	meta := strings.Contains(prefix, "M-")
+	super := strings.Contains(prefix, "s-")
+	shift := strings.Contains(prefix, "S-") // explicit Shift in the binding
 
-	// A Meta/Super letter written uppercase implies Shift — those combos make
-	// the two letter cases distinct keys (M-b vs M-B is Meta+B vs Meta+Shift-B).
-	// A Ctrl letter and a bare chord-continuation letter do NOT: mew case-folds
-	// them (^C == ^c, and "^B O" == "^B o"), so their uppercase carries no
-	// Shift, and only an explicit S- adds one.
-	if (meta || super) && isSingleLetter(base) && base == strings.ToUpper(base) {
+	// An uppercase letter means Shift only when its case is significant — the
+	// lowercase binding also exists, so the two are told apart by Shift.
+	if caseSignificant && isSingleLetter(base) && base == strings.ToUpper(base) {
 		shift = true
 	}
 
@@ -127,6 +158,26 @@ func verboseKeyToken(tok string) string {
 	}
 	b.WriteString(verboseKeyBase(base))
 	return b.String()
+}
+
+// splitKeyToken peels the modifier prefixes (^, M-, S-, s-) off a token,
+// returning the accumulated prefix string and the bare base key.
+func splitKeyToken(tok string) (prefix, base string) {
+	base = tok
+	for {
+		switch {
+		case strings.HasPrefix(base, "M-"):
+			prefix, base = prefix+"M-", base[2:]
+		case strings.HasPrefix(base, "S-"):
+			prefix, base = prefix+"S-", base[2:]
+		case strings.HasPrefix(base, "s-"):
+			prefix, base = prefix+"s-", base[2:]
+		case strings.HasPrefix(base, "^") && len(base) > 1:
+			prefix, base = prefix+"^", base[1:]
+		default:
+			return prefix, base
+		}
+	}
 }
 
 // verboseKeyBase renders a bare key (no modifiers): a friendly name for a named
