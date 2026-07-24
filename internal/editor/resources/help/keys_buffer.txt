@@ -1,0 +1,12 @@
+| __BUFFER QUICK HELP__ |**---BUFFERS-----------------------**|
+|**--------HELP-------**| [[keys#buffer_new|^B E]] make a new empty buffer    |
+| [[keys#toggle_help|^B H]] toggle help  | [[keys#buffer_open|^B O]] open a new buffer          |
+|**-----TOP DOCK------**| [[keys#window_clone|^B 2]] clone (make a new view)    |
+| [[keys#stat_peek_up|^B U]] hide tools   | [[keys#buffer_save|^B S]] save current buffer        |
+| [[keys#stat_peek_down|^B V]] show more    | [[keys#buffer_save_all|^B A]] save all buffers           |
+|**--------NAV--------**| [[keys#buffer_duplicate|^B C]] copy (duplicate content)   |
+| [[keys#window_prior|^B P]] prior window | [[keys#buffer_write|^B W]] write and become (save as) |
+| [[keys#window_next|^B N]] next window  | [[keys#buffer_undo|^B -]] undo (repeatable)          |
+| [[keys#buffer_list|^B L]] list         | [[keys#buffer_redo|^B =]] redo (repeatable)          |
+| [[keys#memo.main|^B M]] main window  | [[keys#buffer_revert|^B ~]] revert to last save        |
+| [[keys#nav_cancel.cancel.buffer_close]] close window   | [[keys#buffer_save_all,exit|^B X]] save all buffers then quit |
