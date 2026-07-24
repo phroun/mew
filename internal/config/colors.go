@@ -148,6 +148,11 @@ var defaultTypeColors = map[string]map[string]string{
 // defaultClassColors are the built-in per-window-class colors
 // ([<class>::colors] defaults).
 var defaultClassColors = map[string]map[string]string{
+    "quickhelp": {
+        "key":        "\x1b[0;1;93;45m", // bright yellow on blue
+        "text":       "\x1b[0;37;44m", // silver on blue
+        "syntaxtable": "\x1b[0;37;44m", // silver on blue
+    },
 	"modebar": {
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill
 		"messages":   "\x1b[1;96;44m", // aqua on blue - stats readout (Frag/Heap/Line/Rune)
