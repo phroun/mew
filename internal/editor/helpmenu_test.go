@@ -348,6 +348,43 @@ func TestFocusSwitcherSkipsQuickHelp(t *testing.T) {
 	}
 }
 
+// While Quick Help is open, following the context to a topic whose page does
+// NOT exist keeps the current page showing — it does not replace it with the
+// no-help notice.
+func TestQuickHelpKeepsCurrentWhenTopicMissing(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/root.txt": "=== Root ===\nroot page\n"})
+	e.KeyProcessor.MapKey("help", "root")               // root topic -> a real page
+	e.KeyProcessor.MapKey("^Q help", "no_such_page_xyz") // deeper topic -> missing page
+
+	e.ActiveSequence = ""
+	e.executeCommand("help_toggle") // Quick Help at the root topic
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should open")
+	}
+	rootURL := e.bufferCanonicalURL(hw.Buffer)
+	if rootURL != helpURL(t, e, "help:/root") {
+		t.Fatalf("Quick Help should show help:/root, showing %q", rootURL)
+	}
+
+	// Context deepens to "^Q" -> topic "no_such_page_xyz" (no page). Keep root.
+	e.ActiveSequence = "^Q"
+	e.updateQuickHelp()
+	if got := e.bufferCanonicalURL(hw.Buffer); got != rootURL {
+		t.Fatalf("a missing follow-topic must keep the current page; changed to %q", got)
+	}
+	if !e.quickHelpWindowOpen() {
+		t.Fatal("still Quick Help after a missing follow-topic")
+	}
+
+	// Back to the root context -> the valid page stays.
+	e.ActiveSequence = ""
+	e.updateQuickHelp()
+	if got := e.bufferCanonicalURL(hw.Buffer); got != rootURL {
+		t.Fatalf("returning to a valid topic should still show help:/root, got %q", got)
+	}
+}
+
 // When the matched topic names no existing page, Quick Help shows the plain
 // "no help" notice — not the old hardcoded reference.
 func TestQuickHelpNoHelpAvailable(t *testing.T) {

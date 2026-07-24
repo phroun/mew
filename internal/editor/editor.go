@@ -6793,7 +6793,12 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 		// (no keypress pending) still lands on the root topic rather than a
 		// stale one.
 		e.quickHelpTopic = e.KeyProcessor.HelpTopic(e.ActiveSequence)
-		buf, root, wikiName, browse := e.quickHelpDestination()
+		buf, root, wikiName, browse, ok := e.quickHelpDestination()
+		if !ok {
+			// Fresh open with no page for the topic: nothing to keep, so show
+			// the no-help notice.
+			buf, root, wikiName, browse = e.quickHelpBuffer(), "", "", false
+		}
 		// Mark Quick Help mode BEFORE showing, so showHelpLocation's chrome pass
 		// (applyHelpWindowChrome) drops the title bar and fits the height.
 		e.quickHelpMode = true
@@ -6946,14 +6951,14 @@ func (e *Editor) createHelpWindow(buf *buffer.Buffer, focus bool) *window.Window
 	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
 }
 
-// quickHelpDestination resolves what Quick Help should show for the current
-// quickHelpTopic. A topic that names a help wiki page (help:/<topic>) yields
-// that page plus its wiki wiring (so its links are followable). When no topic
-// matches the key context (HelpTopic already backs off to the longest shorter
-// prefix, so this means not even the root has a help binding) or the matched
-// topic names no existing page, it shows a plain "no help" notice. It never
-// surfaces an error — Quick Help follows the key context silently.
-func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName string, browse bool) {
+// quickHelpDestination resolves the help wiki page for the current
+// quickHelpTopic (help:/<topic>), plus its wiki wiring (so its links are
+// followable). ok is false when the topic names no existing page — the caller
+// decides what to do (keep the current help showing, or, on a fresh open, fall
+// back to the no-help notice). HelpTopic already backs off to the longest
+// shorter prefix, so !ok means neither the matched topic nor the root has a
+// live, existing page.
+func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName string, browse, ok bool) {
 	if e.quickHelpTopic != "" {
 		ref := "help:/" + e.quickHelpTopic
 		if res := e.resolveFollow(nil, ref); res.url != "" {
@@ -6964,19 +6969,25 @@ func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName stri
 				}
 			}
 			if b != nil {
-				return b, res.root, res.wikiName, true
+				return b, res.root, res.wikiName, true, true
 			}
 		}
 	}
-	return e.quickHelpBuffer(), "", "", false
+	return nil, "", "", false, false
 }
 
 // refreshQuickHelp re-renders the docked Quick Help window for the current
 // quickHelpTopic, in place — no history entry, because Quick Help is a single
 // dynamic slot. Called from the key loop when the context topic changes while
-// Quick Help is open; a no-op when the destination is unchanged.
+// Quick Help is open. When the new topic has no page it KEEPS the current help
+// showing (rather than replacing it with the no-help notice), only recording
+// the topic so it is not re-resolved every keystroke.
 func (e *Editor) refreshQuickHelp(hw *window.Window) {
-	buf, root, wikiName, browse := e.quickHelpDestination()
+	buf, root, wikiName, browse, ok := e.quickHelpDestination()
+	if !ok {
+		e.quickHelpShownTopic = e.quickHelpTopic // keep the current page; don't retry each key
+		return
+	}
 	if buf != hw.Buffer {
 		e.replaceBuffer(hw, buf)
 	}
