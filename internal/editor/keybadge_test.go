@@ -12,23 +12,54 @@ import (
 // literally (a fallback-chain command name contains "|").
 func TestKeysRefAction(t *testing.T) {
 	cases := []struct {
-		target string
-		want   string
-		ok     bool
+		target      string
+		want        string
+		wantVerbose bool
+		ok          bool
 	}{
-		{"keys#go_page_prior", "go_page_prior", true},
-		{"keys#buffer_undo", "buffer_undo", true},
-		{"keys#buffer_redo.buffer_undo", "buffer_redo|buffer_undo", true}, // . -> |
-		{"keys#a,b", "a&b", true},                                         // , -> &
-		{"keys# spaced ", "spaced", true},
-		{"keys#", "", false},
-		{"help:keys#x", "", false}, // must be the bare "keys" page
-		{"go_page_prior", "", false},
+		{"keys#go_page_prior", "go_page_prior", false, true},
+		{"keys#buffer_undo", "buffer_undo", false, true},
+		{"keys#buffer_redo.buffer_undo", "buffer_redo|buffer_undo", false, true}, // . -> |
+		{"keys#a,b", "a&b", false, true},                                         // , -> &
+		{"keys# spaced ", "spaced", false, true},
+		{"keys#", "", false, false},
+		{"help:keys#x", "", false, false}, // must be the bare "keys" page
+		{"go_page_prior", "", false, false},
+		{"keys_verbose#go_page_prior", "go_page_prior", true, true}, // verbose variant
+		{"keys_verbose#buffer_redo.buffer_undo", "buffer_redo|buffer_undo", true, true},
+		{"keys_verbose#", "", true, false},
 	}
 	for _, c := range cases {
-		got, ok := keysRefAction(c.target)
-		if got != c.want || ok != c.ok {
-			t.Errorf("keysRefAction(%q) = (%q,%v), want (%q,%v)", c.target, got, ok, c.want, c.ok)
+		got, verbose, ok := keysRefAction(c.target)
+		if got != c.want || verbose != c.wantVerbose || ok != c.ok {
+			t.Errorf("keysRefAction(%q) = (%q,%v,%v), want (%q,%v,%v)",
+				c.target, got, verbose, ok, c.want, c.wantVerbose, c.ok)
+		}
+	}
+}
+
+// verboseKeySequence spells a binding out for beginners: modifiers as words,
+// chord keys joined with then / followed by / and finally, and Shift derived
+// from letter case for non-Ctrl keys only.
+func TestVerboseKeySequence(t *testing.T) {
+	cases := []struct{ seq, want string }{
+		{"^B", "Ctrl+B"},
+		{"^B O", "Ctrl+B then O"},
+		{"^K F", "Ctrl+K then F"},
+		{"M-b", "Meta+B"},                         // non-Ctrl lowercase: no Shift
+		{"M-B", "Meta+Shift-B"},                   // non-Ctrl uppercase: Shift
+		{"^C", "Ctrl+C"},                          // Ctrl uppercase: NOT Shift
+		{"S-tab", "Shift-Tab"},                    // explicit Shift on a named key
+		{"s-x", "Super+X"},                        // Super
+		{"^M-b", "Ctrl+Meta+B"},                   // combined modifiers
+		{"esc x", "Esc then X"},                   // named key + letter chord
+		{"^B C D", "Ctrl+B then C followed by D"}, // 3 keys: no "and finally"
+		{"^B C D E", "Ctrl+B then C followed by D and finally E"},    // 4 keys
+		{"a b c d e", "A then B followed by C then D and finally E"}, // 5 keys
+	}
+	for _, c := range cases {
+		if got := verboseKeySequence(c.seq); got != c.want {
+			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
 		}
 	}
 }
@@ -60,9 +91,9 @@ func TestKeyBindingDisplay(t *testing.T) {
 		name, action, preferred, want string
 	}{
 		{"exact alias wins", "buffer_undo", "^_", "^_"},
-		{"no alias -> last configured", "buffer_undo", "", "^B -"},   // highest precedence of the three
-		{"closest beginning", "buffer_undo", "^B W", "^B -"},         // shares "^B " with ^B -
-		{"closest end", "buffer_undo", "X -", "^B -"},                // no shared start; shares " -" at the end
+		{"no alias -> last configured", "buffer_undo", "", "^B -"},          // highest precedence of the three
+		{"closest beginning", "buffer_undo", "^B W", "^B -"},                // shares "^B " with ^B -
+		{"closest end", "buffer_undo", "X -", "^B -"},                       // no shared start; shares " -" at the end
 		{"tie on beginning -> last configured", "buffer_undo", "^", "^B -"}, // all share "^"; prec breaks it
 		{"single exact-command chain", "buffer_redo|buffer_undo", "", "^Z"},
 		{"primary alone is not a binding", "buffer_redo", "", "^B ="}, // ^B = is bound to bare buffer_redo

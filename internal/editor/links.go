@@ -908,14 +908,18 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 		// binding and renders as a tight badge (no caps, no shadow) in the
 		// "key" color — "keyFocused" when the caret is on it. Everything else
 		// falls through to the normal link-button styling below.
-		if action, ok := keysRefAction(s.Target); ok {
+		if action, verbose, ok := keysRefAction(s.Target); ok {
 			name := "key"
 			if focused || pressed {
 				name = "keyFocused"
 			}
+			disp := e.keyBindingDisplay(action, s.Title)
+			if verbose {
+				disp = verboseKeySequence(disp)
+			}
 			spans = append(spans, render.ButtonSpan{
 				Start: s.Start, End: s.End,
-				Runes: []rune(render.SanitizeButtonTitle(e.keyBindingDisplay(action, s.Title))),
+				Runes: []rune(render.SanitizeButtonTitle(disp)),
 				Color: col(name),
 			}.Span())
 			continue
@@ -1039,25 +1043,34 @@ func (e *Editor) displayCaretLine(w *window.Window, line string, runePos int) (s
 }
 
 // keysRefAction extracts the action name from a [[keys#action|alias]] link
-// target ("keys#go_page_prior" -> "go_page_prior"), or reports false. This is
-// the help system's live-keybinding reference: a plain dokuwiki internal link
-// on the web (to the "keys" page anchor), a live key badge in mew.
+// target ("keys#go_page_prior" -> "go_page_prior"), or reports false. The
+// "keys_verbose#" prefix requests the same live binding spelled out in prose
+// (Ctrl+B then C) for beginner-facing help — verbose is true then. This is the
+// help system's live-keybinding reference: a plain dokuwiki internal link on
+// the web (to the "keys" page anchor), a live key badge in mew.
 //
 // A dokuwiki anchor cannot contain "|" (it would separate the target from the
 // title) or "&" (entity trouble), yet a fallback-chain command name literally
 // contains "|" (e.g. "buffer_redo|buffer_undo"). So the author writes "." where
 // a "|" belongs and "," where an "&" belongs; we decode them back here before
 // matching against the keymap.
-func keysRefAction(target string) (string, bool) {
-	const prefix = "keys#"
-	if strings.HasPrefix(target, prefix) {
-		if a := strings.TrimSpace(target[len(prefix):]); a != "" {
-			a = strings.ReplaceAll(a, ".", "|")
-			a = strings.ReplaceAll(a, ",", "&")
-			return a, true
-		}
+func keysRefAction(target string) (action string, verbose, ok bool) {
+	prefix := ""
+	switch {
+	case strings.HasPrefix(target, "keys_verbose#"):
+		prefix, verbose = "keys_verbose#", true
+	case strings.HasPrefix(target, "keys#"):
+		prefix = "keys#"
+	default:
+		return "", false, false
 	}
-	return "", false
+	a := strings.TrimSpace(target[len(prefix):])
+	if a == "" {
+		return "", verbose, false
+	}
+	a = strings.ReplaceAll(a, ".", "|")
+	a = strings.ReplaceAll(a, ",", "&")
+	return a, verbose, true
 }
 
 // keyBindingDisplay resolves the SINGLE key a badge shows for an action. The
