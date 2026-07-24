@@ -1018,9 +1018,6 @@ func (p *Platform) Beep() {}
 // system mouse cursor. System cursors are created on demand and cached;
 // redundant sets (same shape) are skipped.
 func (p *Platform) SetCursor(shape core.CursorShape) {
-	if p.cursorSet && p.curCursor == shape {
-		return
-	}
 	if p.cursors == nil {
 		p.cursors = map[core.CursorShape]*sdl2.Cursor{}
 	}
@@ -1032,6 +1029,13 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	if cur == nil {
 		return
 	}
+	// RE-ASSERT on every call, even when the shape is unchanged: macOS resets
+	// the window's cursor to the arrow on every mouse-move event unless the app
+	// re-sets it, so short-circuiting an "unchanged" shape lets that reset win —
+	// the cursor flips back to the arrow the moment the pointer moves (a real
+	// resize keeps its cursor only because the held button suppresses the OS
+	// reset). Re-setting the cached cursor object is cheap and idempotent
+	// elsewhere. The cache above still avoids re-creating cursor objects.
 	sdl2.SetCursor(cur)
 	p.curCursor = shape
 	p.cursorSet = true
