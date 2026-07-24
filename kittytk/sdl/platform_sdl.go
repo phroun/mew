@@ -1046,6 +1046,15 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 		fmt.Fprintf(os.Stderr, "[cursor apply] shape=%d from %s:%d\n", shape, file, line)
 	}
 	sdl2.SetCursor(cur)
+	// FORCE a backend re-apply. SDL_SetCursor(cur) is a no-op inside SDL when
+	// its cached cur_cursor already equals cur, so on macOS — which resets the
+	// window's cursor to the arrow on every mouse-move — the shape we just
+	// "set" is never actually re-asserted and the OS reset wins: the cursor
+	// flashes the right shape for one frame on the transition, then reverts to
+	// the arrow. SDL_SetCursor(NULL) re-applies the CURRENT cursor through the
+	// backend unconditionally, bypassing that cache, so the shape sticks as the
+	// pointer moves. Cheap and idempotent on every platform.
+	sdl2.SetCursor(nil)
 	p.curCursor = shape
 	p.cursorSet = true
 }
