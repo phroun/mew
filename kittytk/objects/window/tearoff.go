@@ -111,9 +111,8 @@ type TearOffHost struct {
 
 	// setCursor applies a system mouse cursor (wired by the desktop from
 	// the platform's CursorController). nil when the platform can't set
-	// cursors. lastCursor avoids redundant applications.
-	setCursor  func(core.CursorShape)
-	lastCursor core.CursorShape
+	// cursors.
+	setCursor func(core.CursorShape)
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -282,7 +281,6 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 	// otherwise), so a same-shape short-circuit here would starve it and the
 	// cursor would flip back to the arrow as the pointer moves over the torn
 	// window. The platform's SetCursor is the idempotent, cheap re-set.
-	h.lastCursor = shape
 	h.setCursor(shape)
 }
 
