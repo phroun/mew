@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -344,6 +345,21 @@ func TestFocusSwitcherSkipsQuickHelp(t *testing.T) {
 		if e.WindowManager.GetFocusedWindow() == hw {
 			t.Fatal("the focus switcher must skip Quick Help")
 		}
+	}
+}
+
+// When the matched topic names no existing page, Quick Help shows the plain
+// "no help" notice — not the old hardcoded reference.
+func TestQuickHelpNoHelpAvailable(t *testing.T) {
+	e := helpTestEditor(t, nil)
+	e.KeyProcessor.MapKey("help", "no_such_help_page_xyz") // resolves to nothing
+	e.executeCommand("help_toggle")
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should open")
+	}
+	if got := hw.Buffer.GetContent(); !strings.Contains(got, "No quick help is available.") {
+		t.Fatalf("expected the no-help notice, got %q", got)
 	}
 }
 

@@ -18,11 +18,13 @@ func TestHelpTopicResolvesDeepestPrefix(t *testing.T) {
 	})
 
 	cases := []struct{ seq, want string }{
-		{"", "keys"},          // root
-		{"^B", "keys_buffer"}, // deepest match
-		{"^K", "keys"},        // no "^K help": fall back to root
-		{"^K B", "keys"},      // still no help under ^K: root
-		{"^X", "keys"},        // root fallback
+		{"", "keys"},            // root
+		{"^B", "keys_buffer"},   // deepest match
+		{"^B Z", "keys_buffer"}, // typed longer than the match: back off to "^B"
+		{"^K", "keys"},          // no "^K help": fall back to root
+		{"^K B", "keys"},        // still no help under ^K: root
+		{"^X", "keys"},          // root fallback
+		{"^O", "keys"},          // undefined prefix: still matches the root "help"
 	}
 	for _, c := range cases {
 		if got := sp.HelpTopic(c.seq); got != c.want {

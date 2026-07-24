@@ -6917,10 +6917,11 @@ func (e *Editor) createHelpWindow(buf *buffer.Buffer, focus bool) *window.Window
 
 // quickHelpDestination resolves what Quick Help should show for the current
 // quickHelpTopic. A topic that names a help wiki page (help:/<topic>) yields
-// that page plus its wiki wiring (so its links are followable); a missing or
-// empty topic falls back to the built-in WordStar reference. It never surfaces
-// an error — Quick Help follows the key context silently, keystroke by
-// keystroke, so a bad topic simply shows the built-in page.
+// that page plus its wiki wiring (so its links are followable). When no topic
+// matches the key context (HelpTopic already backs off to the longest shorter
+// prefix, so this means not even the root has a help binding) or the matched
+// topic names no existing page, it shows a plain "no help" notice. It never
+// surfaces an error — Quick Help follows the key context silently.
 func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName string, browse bool) {
 	if e.quickHelpTopic != "" {
 		ref := "help:/" + e.quickHelpTopic
@@ -6977,45 +6978,12 @@ func (e *Editor) updateQuickHelp() {
 	}
 }
 
-// quickHelpBuffer builds the Quick Help buffer (the WordStar command
-// reference), named by the synthetic quickHelpDocURL so the help window can
-// recognize the Quick Help location.
+// quickHelpBuffer builds the placeholder shown when Quick Help has no page for
+// the current key context — a single "no help" line, named by the synthetic
+// quickHelpDocURL. Quick Help mode is tracked by quickHelpMode (not this URL),
+// so the notice needs no special identity beyond a stable name.
 func (e *Editor) quickHelpBuffer() *buffer.Buffer {
-	helpText := `WordStar Style Command Reference:
--------------------------------
-Navigation:
-  ^P - Line up       ^N - Line down     ^B - Char left     ^F - Char right
-  ^A - Start of line ^E - End of line   ^Z - Prev word     ^X - Next word
-  ^U - Page up       ^V - Page down
-
-Editing:
-  ^H - Backspace     ^D - Delete char   ^O - Delete word beg  ^W - Delete word end
-     - Del line beg  ^J - Del line end
-
-Block Operations:
-  ^KB - Mark begin   ^KK - Mark end     ^KC - Copy block   ^KM - Move block
-  ^KY - Delete block ^KW - Write block  ^K. - Indent block ^K, - Unindent block
-
-File Operations:
-  ^KS - Save         ^KD - Save as      ^KQ - Quit         ^KX - Save and exit
-  ^KR - Read file    ^C  - Abort        ^KA - Save all     ^KN - New buffer
-  ^KO - Open file    ^KZ - Close buffer ^KB - List buffers
-
-Window Navigation:
-  Esc ] - Next window Esc [ - Prev window
-  Esc U - Show more top windows   Esc V - Show more bottom top windows
-  Esc P - Show more bottom windows  Esc N - Show more bottom windows
-
-Search and Navigate:
-  ^KF - Find         ^L - Find next     ^KL - Go to line   ^G - Go to match
-
-Other:
-  ^KH - Toggle help  ^T - Editor options ^- or ^_ - Undo   ^+ or ^^ - Redo
-  Esc X - Cmd prompt Esc > - Scroll right Esc < - Scroll left
-
-Press ^KH to close help...`
-
-	buf := e.lib.NewFromString(helpText)
+	buf := e.lib.NewFromString("No quick help is available.")
 	buf.SetFilename(quickHelpDocURL)
 	return buf
 }
