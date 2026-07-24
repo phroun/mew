@@ -34,9 +34,17 @@ const (
 	Tagline = "mew edits words"
 )
 
-// Banner is the launch greeting: product identity, version, and the two
-// keys a stranded user needs first.
+// Banner is the launch greeting: product identity, version, and the two keys a
+// stranded user needs first. The two keys are TFC codes (Text Format Control):
+// shown through the transient's TFC-expanding path they resolve to the LIVE
+// bindings, spelled out for beginners and colored; shown raw (or where TFC is
+// not expanded) they simply read as the codes. The %…% key references are
+// passed as %s arguments so fmt does not try to interpret them.
 func Banner() string {
-	return fmt.Sprintf("%s %s build %d ** Type Ctrl-C to close or Ctrl-K then H for help.",
-		Tagline, Version, Build)
+	const (
+		cancelKey = "%keys_verbose#nav_cancel.cancel.buffer_close|^C%"
+		helpKey   = "%keys_verbose#help_toggle|^Q H%"
+	)
+	return fmt.Sprintf("%s %s build %d ** Type %s to close or %s for help.",
+		Tagline, Version, Build, cancelKey, helpKey)
 }

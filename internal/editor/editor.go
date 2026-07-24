@@ -6223,8 +6223,9 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 
 	// Launch greeting: product, version, and the first keys a new user
 	// needs. It rides the normal transient-notification machinery, so it
-	// expires like any other notice.
-	e.ShowNotification(version.Banner())
+	// expires like any other notice — and expands its TFC codes, so the two
+	// keys resolve to the LIVE bindings, spelled out and colored.
+	e.ShowNotificationTFC(version.Banner())
 
 	// If a DEADCAT from a prior crash is present, let the user know (a
 	// transient, not a prompt — they recover it when they choose to).
@@ -6528,7 +6529,10 @@ var transientNotificationClasses = map[string]bool{
 // class; the class drives its colors. Transient windows are not cleared on
 // creation; they stack and are removed purely by age via
 // expireStaleNotifications.
-func (e *Editor) showTransient(message, class string) {
+func (e *Editor) showTransient(message, class string, tfc bool) {
+	if tfc {
+		message = e.expandTransientTFC(message, class)
+	}
 	e.WindowManager.CreateWindow(window.WindowOptions{
 		Type:            window.ToolWindow,
 		WindowSet:       window.WindowSetTransient,
@@ -6544,10 +6548,30 @@ func (e *Editor) showTransient(message, class string) {
 	e.RequestRender()
 }
 
+// expandTransientTFC expands TFC codes in a transient's message (opt-in, per
+// notification). A %keys#…% / %keys_verbose#…% badge is wrapped in the "key"
+// color and closed with the transient class's own "messages" color, so the
+// badge stands out and the surrounding text returns to the bar's color — the
+// renderer paints the whole bar in that "messages" color, so the close restores
+// it exactly.
+func (e *Editor) expandTransientTFC(message, class string) string {
+	const typ = "tool" // transients are ToolWindows
+	keyColor := e.LoadedConfig.Colors.Resolve(class, typ, "key")
+	barColor := e.LoadedConfig.Colors.Resolve(class, typ, "messages")
+	return plugins.ExpandTFC(message, nil, e.tfcKeyResolver(keyColor, barColor))
+}
+
 // ShowNotification creates a transient notification window at the bottom of the
 // screen (informational messages, command confirmations).
 func (e *Editor) ShowNotification(message string) {
-	e.showTransient(message, "notification")
+	e.showTransient(message, "notification", false)
+}
+
+// ShowNotificationTFC is ShowNotification for a message that should have its TFC
+// codes expanded — e.g. %keys_verbose#help_toggle|^Q H% resolved to the live
+// binding and colored. TFC support is opt-in per notification.
+func (e *Editor) ShowNotificationTFC(message string) {
+	e.showTransient(message, "notification", true)
 }
 
 // showTaggedTransient is showTransient for messages that should replace their
@@ -6635,12 +6659,12 @@ func (e *Editor) announceFocusedWindow() {
 
 // ShowError shows a transient error window at the bottom of the screen.
 func (e *Editor) ShowError(message string) {
-	e.showTransient(message, "error")
+	e.showTransient(message, "error", false)
 }
 
 // ShowWarning shows a transient warning window at the bottom of the screen.
 func (e *Editor) ShowWarning(message string) {
-	e.showTransient(message, "warning")
+	e.showTransient(message, "warning", false)
 }
 
 // expireStaleNotifications removes transient notification/error/warning windows
