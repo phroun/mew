@@ -264,6 +264,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		}
 
 		delivered := p.pumpEvents()
+		p.reassertCursor()
 
 		for _, w := range p.wins {
 			s := w.surface
@@ -1046,17 +1047,23 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 		fmt.Fprintf(os.Stderr, "[cursor apply] shape=%d from %s:%d\n", shape, file, line)
 	}
 	sdl2.SetCursor(cur)
-	// FORCE a backend re-apply. SDL_SetCursor(cur) is a no-op inside SDL when
-	// its cached cur_cursor already equals cur, so on macOS — which resets the
-	// window's cursor to the arrow on every mouse-move — the shape we just
-	// "set" is never actually re-asserted and the OS reset wins: the cursor
-	// flashes the right shape for one frame on the transition, then reverts to
-	// the arrow. SDL_SetCursor(NULL) re-applies the CURRENT cursor through the
-	// backend unconditionally, bypassing that cache, so the shape sticks as the
-	// pointer moves. Cheap and idempotent on every platform.
-	sdl2.SetCursor(nil)
 	p.curCursor = shape
 	p.cursorSet = true
+}
+
+// reassertCursor re-applies the current cursor once, AFTER the event pump.
+// macOS resets a window's cursor to the arrow while processing mouse-move
+// events, and SDL_SetCursor no-ops when its cached cur_cursor is unchanged, so
+// the shape we set during motion handling gets stomped by the OS reset.
+// Re-applying per motion event fights the OS on every move and flickers;
+// doing it ONCE per frame, after all of the batch's move events (and their
+// resets) have been drained, makes our shape the final one the WindowServer
+// composites — steady, not flickering. SDL_SetCursor(NULL) re-applies the
+// current cursor through the backend, bypassing SDL's no-op cache.
+func (p *Platform) reassertCursor() {
+	if p.cursorSet {
+		sdl2.SetCursor(nil)
+	}
 }
 
 // systemCursorID maps a core cursor shape to its SDL system cursor.
