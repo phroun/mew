@@ -149,9 +149,9 @@ var defaultTypeColors = map[string]map[string]string{
 // ([<class>::colors] defaults).
 var defaultClassColors = map[string]map[string]string{
     "quickhelp": {
-        "key":        "\x1b[0;1;93;45m", // bright yellow on blue
-        "text":       "\x1b[0;37;44m", // silver on blue
-        "syntaxtable": "\x1b[0;37;44m", // silver on blue
+        "key":         "\x1b[0;1;93;45m", // bright yellow on blue
+        "text":        "\x1b[0;37;44m", // silver on blue
+        "syntaxtable": "\x1b[0;35;44m", // silver on blue
     },
 	"modebar": {
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill
