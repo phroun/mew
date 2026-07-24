@@ -17,6 +17,7 @@ package trinkets
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,11 @@ import (
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
 )
+
+// cursorDebug turns on stderr tracing of the mouse-pointer affordance
+// (MEW_CURSOR_DEBUG=1): the I-beam region mew publishes and how each pointer
+// query resolves against it. A diagnostic for the "no I-beam" investigation.
+var cursorDebug = os.Getenv("MEW_CURSOR_DEBUG") != ""
 
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
 // so focus, input routing, and painting are the terminal surface's, and adds
@@ -303,6 +309,9 @@ func (e *Editor) run() {
 			e.pointerRegion = [4]int{col, row, w, h}
 			e.pointerArrows = arrows
 			e.pointerRegionMu.Unlock()
+			if cursorDebug {
+				fmt.Fprintf(os.Stderr, "[mew cursor] region published col=%d row=%d w=%d h=%d arrows=%d\n", col, row, w, h, len(arrows))
+			}
 		}),
 		// Since purfecterm v0.2.23 the embedded terminal speaks the STANDARD
 		// visual-column contract by default (its flex mode moved to ?7027,
@@ -444,9 +453,17 @@ func (e *Editor) CursorShape() core.CursorShape {
 // link-button exclusion span. The pointer coordinate arrives in the same space
 // as HandleMouseMove, so the terminal cell metrics map it to a 1-based cell.
 func (e *Editor) pointerInText(x, y core.Unit) bool {
+	inText, why := e.pointerInTextWhy(x, y)
+	if cursorDebug {
+		fmt.Fprintf(os.Stderr, "[mew cursor] query x=%v y=%v -> inText=%v (%s)\n", x, y, inText, why)
+	}
+	return inText
+}
+
+func (e *Editor) pointerInTextWhy(x, y core.Unit) (bool, string) {
 	cw, chh := e.cellDims()
 	if cw <= 0 || chh <= 0 {
-		return false
+		return false, fmt.Sprintf("cellDims zero cw=%v chh=%v", cw, chh)
 	}
 	col := int(x/cw) + 1 // 1-based cell, matching mew's coordinates
 	row := int(y/chh) + 1
@@ -457,17 +474,17 @@ func (e *Editor) pointerInText(x, y core.Unit) bool {
 	e.pointerRegionMu.Unlock()
 
 	if r[2] <= 0 || r[3] <= 0 { // no I-beam region
-		return false
+		return false, fmt.Sprintf("no region (cw=%v chh=%v col=%d row=%d region=%v)", cw, chh, col, row, r)
 	}
 	if col < r[0] || col >= r[0]+r[2] || row < r[1] || row >= r[1]+r[3] {
-		return false // outside the editable rectangle
+		return false, fmt.Sprintf("outside rect col=%d row=%d region=%v", col, row, r)
 	}
 	for _, a := range arrows { // a link button within the rectangle: arrow
 		if row == a.Row && col >= a.Col && col < a.Col+a.Width {
-			return false
+			return false, "on a link button"
 		}
 	}
-	return true
+	return true, fmt.Sprintf("in text col=%d row=%d region=%v", col, row, r)
 }
 
 func (e *Editor) Close() {
