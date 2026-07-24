@@ -6224,8 +6224,14 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// Launch greeting: product, version, and the first keys a new user
 	// needs. It rides the normal transient-notification machinery, so it
 	// expires like any other notice — and expands its TFC codes, so the two
-	// keys resolve to the LIVE bindings, spelled out and colored.
+	// keys resolve to the LIVE bindings, spelled out and colored. That
+	// expansion READS the live keymap (verboseKeys), which the renderer's
+	// resize goroutine may be rewriting (performRender -> applyFocusedMappings
+	// -> SetMappings); every other keymap access is serialized by renderMu, and
+	// this one — uniquely off the main key/render path — must be too.
+	e.renderMu.Lock()
 	e.ShowNotificationTFC(version.Banner())
+	e.renderMu.Unlock()
 
 	// If a DEADCAT from a prior crash is present, let the user know (a
 	// transient, not a prompt — they recover it when they choose to).
