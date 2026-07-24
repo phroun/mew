@@ -40,7 +40,7 @@ func TestPeekBindingValuesTrackKeymap(t *testing.T) {
 		t.Errorf("SPU should track the rebind, got %q", got)
 	}
 	// The label expands through the shared engine.
-	if got := plugins.ExpandModebar("[%SPU%]", e.peekBindingValues()); got != "[^K U]" {
+	if got := plugins.ExpandTFC("[%SPU%]", e.peekBindingValues(), nil); got != "[^K U]" {
 		t.Errorf("peek label = %q, want %q", got, "[^K U]")
 	}
 }

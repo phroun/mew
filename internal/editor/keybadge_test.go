@@ -5,6 +5,7 @@ import (
 
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/keys"
+	"github.com/phroun/mew/internal/plugins"
 )
 
 // keysRefAction extracts and DECODES the action from a keys#... anchor: "."
@@ -83,6 +84,45 @@ func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {
 		if got := verboseKeySequence(c.seq, isBound); got != c.want {
 			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
 		}
+	}
+}
+
+// tfcKeyResolver resolves %keys#…% / %keys_verbose#…% TFC codes to live
+// bindings, wrapped in the call site's ANSI, and returns ok=false for anything
+// that is not a keys# reference (left verbatim by the engine).
+func TestTFCKeyResolver(t *testing.T) {
+	e := &Editor{}
+	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor.SetMappings(map[string]string{"^B S": "buffer_save"})
+
+	res := e.tfcKeyResolver("<", ">") // ANSI stand-ins
+	cases := []struct {
+		code, want string
+		ok         bool
+	}{
+		{"keys#buffer_save", "<^B S>", true},                  // resolves + wraps
+		{"keys#buffer_save|^K S", "<^B S>", true},             // bound wins over the alias
+		{"keys#no_such_command|^K S", "<^K S>", true},         // unbound -> the alias
+		{"keys_verbose#buffer_save", "<Ctrl+B then S>", true}, // spelled out
+		{"FN", "", false}, // not a keys# code
+		{"line:%d", "", false},
+	}
+	for _, c := range cases {
+		got, ok := res(c.code)
+		if got != c.want || ok != c.ok {
+			t.Errorf("resolver(%q) = (%q,%v), want (%q,%v)", c.code, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// The TFC engine resolves %keys#…% through the editor's resolver end to end.
+func TestExpandTFCResolvesKeysCode(t *testing.T) {
+	e := &Editor{}
+	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor.SetMappings(map[string]string{"^B S": "buffer_save"})
+	got := plugins.ExpandTFC("Save with %keys_verbose#buffer_save%.", nil, e.tfcKeyResolver("", ""))
+	if got != "Save with Ctrl+B then S." {
+		t.Errorf("ExpandTFC = %q", got)
 	}
 }
 

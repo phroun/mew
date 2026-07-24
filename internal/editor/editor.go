@@ -907,6 +907,9 @@ func New(cfg Config) (*Editor, error) {
 	e.Modebar.SetTemplates(loadedConfig.General.ModebarInner, loadedConfig.General.ModebarDefault, loadedConfig.General.ModebarOuter)
 	// A wiki page shows its scheme form ("help:/start"), not "start.txt".
 	e.Modebar.SetFilenameFunc(e.wikiDisplayName)
+	// Resolve %keys#…% / %keys_verbose#…% TFC codes in modebar templates to
+	// live bindings (no ANSI wrap — the key text inherits the modebar color).
+	e.Modebar.SetTFCResolver(e.tfcKeyResolver("", ""))
 	e.Modebar.SetNavStateFunc(func() (int, bool, int) {
 		// Suppress hover styling while a modal prompt holds focus (the buttons
 		// stand down), even if a stale hover lingered from before the prompt.
@@ -928,10 +931,11 @@ func New(cfg Config) (*Editor, error) {
 	// top line of any window whose ShowRuler view option is enabled.
 	renderer.SetRulerRenderer(e.renderColumnRuler)
 
-	// Peek-indicator labels run through the modebar %CODE% engine so codes like
-	// %SPU% resolve to the live peek-command bindings.
+	// Peek-indicator labels run through the shared TFC engine so codes like
+	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
+	// resolve to live bindings too).
 	renderer.SetPeekLabelResolver(func(raw string) string {
-		return plugins.ExpandModebar(raw, e.peekBindingValues())
+		return plugins.ExpandTFC(raw, e.peekBindingValues(), e.tfcKeyResolver("", ""))
 	})
 
 	// The shipped grammar pack resolves through the mew: tree's read-only

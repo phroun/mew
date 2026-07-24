@@ -32,8 +32,8 @@ func TestExpandModebar(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := expandModebar(tt.tmpl, vals); got != tt.want {
-				t.Errorf("expandModebar(%q) = %q, want %q", tt.tmpl, got, tt.want)
+			if got := expandTFC(tt.tmpl, vals, nil); got != tt.want {
+				t.Errorf("expandTFC(%q) = %q, want %q", tt.tmpl, got, tt.want)
 			}
 		})
 	}
@@ -170,7 +170,7 @@ func TestSetTemplatesBlankLeavesCurrent(t *testing.T) {
 
 func TestExpandModebarRoundTripsThroughTemplate(t *testing.T) {
 	vals := map[string]string{"FRAG": "1,234", "HEAP": "5m", "LINE": "7", "RUNE": "3"}
-	got := expandModebar("Frag:%FRAG% Heap:%HEAP% Line:%LINE% Rune:%RUNE%", vals)
+	got := expandTFC("Frag:%FRAG% Heap:%HEAP% Line:%LINE% Rune:%RUNE%", vals, nil)
 	want := "Frag:1,234 Heap:5m Line:7 Rune:3"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)

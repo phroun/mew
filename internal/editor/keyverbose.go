@@ -3,6 +3,8 @@ package editor
 import (
 	"strings"
 	"unicode"
+
+	"github.com/phroun/mew/internal/plugins"
 )
 
 // verboseKeyNames maps mew's internal key-token names to the beginner-facing
@@ -28,6 +30,31 @@ var verboseKeyNames = map[string]string{
 	"ins":       "Insert",
 	"pgup":      "Page Up",
 	"pgdn":      "Page Down",
+}
+
+// tfcKeyResolver builds a TFC (Text Format Control) resolver for the
+// %keys#…% and %keys_verbose#…% codes: the code inside the %…% mirrors a
+// [[keys#action|alias]] link — a "keys#"/"keys_verbose#" target, then a "|" and
+// the fallback/alias key — and resolves to the live binding (spelled out for
+// keys_verbose#). Each resolved binding is wrapped in open…close (ANSI the call
+// site chooses; empty for none), so a badge can be colored where TFC is
+// expanded. A non-keys# code returns ok=false, left verbatim by the engine.
+func (e *Editor) tfcKeyResolver(open, closing string) plugins.TFCResolver {
+	return func(code string) (string, bool) {
+		target, alias := code, ""
+		if i := strings.IndexByte(code, '|'); i >= 0 {
+			target, alias = code[:i], code[i+1:]
+		}
+		action, verbose, ok := keysRefAction(target)
+		if !ok {
+			return "", false
+		}
+		disp := e.keyBindingDisplay(action, alias)
+		if verbose {
+			disp = e.verboseKeys(disp)
+		}
+		return open + disp + closing, true
+	}
 }
 
 // verboseKeys renders a key binding in the long, beginner-facing form the

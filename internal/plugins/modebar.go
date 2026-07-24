@@ -39,6 +39,10 @@ type ModebarPlugin struct {
 	// substitution set so templates and the peek labels resolve them.
 	bindingValues map[string]string
 
+	// tfcResolve resolves dynamic TFC codes (e.g. %keys#save|^K S%) not present
+	// in the static value map, so the modebar's own templates can use them.
+	tfcResolve TFCResolver
+
 	// filenameFn, when set, supplies a display name for %FN% given the main
 	// buffer window — the editor uses it to show a wiki page's scheme form
 	// ("help:/start") instead of the underlying file base ("start.txt").
@@ -184,12 +188,24 @@ func (s *ModebarPlugin) SetBindingValues(vals map[string]string) {
 	s.bindingValues = vals
 }
 
-// ExpandModebar substitutes %CODE% tokens in tmpl from vals (see the internal
-// engine): %% is a literal %, an unrecognized %CODE% is left verbatim. Exported
-// so other UI strings — the peek-indicator labels — run through the same engine
-// as the modebar templates.
-func ExpandModebar(tmpl string, vals map[string]string) string {
-	return expandModebar(tmpl, vals)
+// TFCResolver resolves a TFC (Text Format Control) %CODE% that is not a static
+// value in the substitution map — for instance a "keys#save|^K S" live-binding
+// reference. It returns the replacement text and true, or false to leave the
+// code verbatim. nil means "no dynamic codes".
+type TFCResolver func(code string) (string, bool)
+
+// ExpandTFC substitutes TFC %CODE% tokens in tmpl: %% is a literal %; a code
+// present in vals wins; else resolve (when non-nil) is tried; else the %CODE% is
+// left verbatim. This is the shared Text Format Control engine — the modebar
+// templates, the peek-indicator labels, and any other UI string run through it.
+func ExpandTFC(tmpl string, vals map[string]string, resolve TFCResolver) string {
+	return expandTFC(tmpl, vals, resolve)
+}
+
+// SetTFCResolver installs the dynamic-code resolver used when expanding the
+// modebar's own templates (so %keys#…% and the like resolve there too).
+func (s *ModebarPlugin) SetTFCResolver(resolve TFCResolver) {
+	s.tfcResolve = resolve
 }
 
 // SetColorScheme sets the layered color scheme used to resolve modebar colors.
@@ -340,8 +356,8 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	navWidth := calculateVisibleLength(navStr)
 
 	// Inner (filename) and outer (readout) come from templates.
-	innerStr := " " + expandModebar(s.tmplInner, vals) + " "
-	outerStr := " " + expandModebar(s.tmplOuter, vals) + " "
+	innerStr := " " + expandTFC(s.tmplInner, vals, s.tfcResolve) + " "
+	outerStr := " " + expandTFC(s.tmplOuter, vals, s.tfcResolve) + " "
 
 	// Middle: key-sequence completion, else a live outline breadcrumb, else the
 	// default template. Context is a live breadcrumb only when it differs from
@@ -353,7 +369,7 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 		if ctx := ctxWindow.Context; ctx != "" && ctx != ctxWindow.SpawnContext {
 			middle = ctx
 		} else {
-			middle = expandModebar(s.tmplDefault, vals)
+			middle = expandTFC(s.tmplDefault, vals, s.tfcResolve)
 		}
 	}
 
@@ -436,10 +452,12 @@ func modebarValues(mainWin, ctxWin *window.Window) map[string]string {
 	}
 }
 
-// expandModebar substitutes %CODE% tokens from vals (case-insensitive keys),
-// turns %% into a literal %, and leaves an unrecognized %CODE% verbatim so a
-// not-yet-implemented code is visible rather than silently dropped.
-func expandModebar(tmpl string, vals map[string]string) string {
+// expandTFC substitutes TFC %CODE% tokens: a code found in vals (matched
+// case-insensitively) wins; else resolve (when non-nil) is offered the code in
+// its ORIGINAL case (keys#/keys_verbose# references are case-sensitive); else
+// the %CODE% is left verbatim so a not-yet-implemented code is visible rather
+// than silently dropped. %% is a literal %.
+func expandTFC(tmpl string, vals map[string]string, resolve TFCResolver) string {
 	var b strings.Builder
 	for i := 0; i < len(tmpl); {
 		if tmpl[i] != '%' {
@@ -460,12 +478,22 @@ func expandModebar(tmpl string, vals map[string]string) string {
 		code := tmpl[i+1 : i+1+j]
 		if v, ok := vals[strings.ToUpper(code)]; ok {
 			b.WriteString(v)
+		} else if v, ok := resolveTFC(resolve, code); ok {
+			b.WriteString(v)
 		} else {
 			b.WriteString("%" + code + "%")
 		}
 		i += 1 + j + 1
 	}
 	return b.String()
+}
+
+// resolveTFC offers code to a dynamic resolver, guarding a nil one.
+func resolveTFC(resolve TFCResolver, code string) (string, bool) {
+	if resolve == nil {
+		return "", false
+	}
+	return resolve(code)
 }
 
 // visualColumn returns the visual column (0-based) at rune index upto, tabs
