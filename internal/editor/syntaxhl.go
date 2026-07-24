@@ -119,10 +119,22 @@ type synCache struct {
 	linkable bool
 	links    [][]linkSpan
 	markup   [][]markupSpan
-	colors   [][]string
-	ctx      [][]uint8       // per-line, per-rune CtxComment/CtxString flags
-	entries  []jsf.LineState // entry state per computed line (for point queries)
-	next     jsf.LineState
+	// refs holds each line's per-rune grammar color classes. Resolution to SGR
+	// is deferred to render time (syntaxLineColors), so the same buffer painted
+	// in windows of different classes gets each window's class/type-scoped syntax
+	// colors (e.g. [quickhelp::colors] syntaxTable).
+	refs    [][]*jsf.ColorRef
+	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
+	entries []jsf.LineState // entry state per computed line (for point queries)
+	next    jsf.LineState
+}
+
+// synColorKey memoizes a grammar color class resolved for a specific window
+// class/type (see syntaxColorFor).
+type synColorKey struct {
+	ref   *jsf.ColorRef
+	class string
+	typ   string
 }
 
 // joeSyntaxDirs are the installed JOE grammar collections, consulted only when
@@ -232,7 +244,7 @@ func (e *Editor) bufferSyntaxOverrides(b *buffer.Buffer) map[string]bool {
 // any. Load problems surface as a transient error and leave highlighting off.
 func (e *Editor) initSyntax() {
 	e.synCaches = make(map[*buffer.Buffer]*synCache)
-	e.synSGR = make(map[*jsf.ColorRef]string)
+	e.synSGR = make(map[synColorKey]string)
 	e.syntaxLoader = jsf.NewLoader(func(name string) ([]byte, error) {
 		return e.resolveSyntaxFile(name, false)
 	})
@@ -292,7 +304,7 @@ func (e *Editor) setSyntax(name string) bool {
 
 func (e *Editor) resetSyntaxCaches() {
 	e.synCaches = make(map[*buffer.Buffer]*synCache)
-	e.synSGR = make(map[*jsf.ColorRef]string)
+	e.synSGR = make(map[synColorKey]string)
 }
 
 // syntaxColorFor resolves a grammar color class to the SGR string painted for
@@ -300,19 +312,25 @@ func (e *Editor) resetSyntaxCaches() {
 // the global [syntax] map, then the built-in conventions — each naming
 // a mew color resolved through the color scheme. When no mapping resolves,
 // the grammar file's own "=Class attrs" colors apply.
-func (e *Editor) syntaxColorFor(ref *jsf.ColorRef) string {
+func (e *Editor) syntaxColorFor(ref *jsf.ColorRef, winClass, winType string) string {
 	if ref == nil {
 		return ""
 	}
-	if sgr, ok := e.synSGR[ref]; ok {
+	key := synColorKey{ref, winClass, winType}
+	if sgr, ok := e.synSGR[key]; ok {
 		return sgr
 	}
-	sgr := e.resolveSyntaxColor(ref)
-	e.synSGR[ref] = sgr
+	sgr := e.resolveSyntaxColor(ref, winClass, winType)
+	e.synSGR[key] = sgr
 	return sgr
 }
 
-func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef) string {
+// resolveSyntaxColor maps a grammar color class to an SGR, resolving the mapped
+// mew color name through the color scheme at the PAINTING window's class/type —
+// so [<class>::colors] and [colors/<type>] overlays reach syntax highlighting,
+// just as they do link/button/text colors. Falls back to the grammar file's own
+// "=Class attrs" color when nothing maps.
+func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef, winClass, winType string) string {
 	class := strings.ToLower(ref.Class)
 	lookup := func(name string) (string, bool) {
 		if m := e.LoadedConfig.SyntaxMaps[strings.ToLower(ref.Syntax)]; m != nil {
@@ -330,8 +348,11 @@ func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef) string {
 		}
 		return "", false
 	}
+	if winType == "" {
+		winType = "doc"
+	}
 	if mewName, ok := lookup(class); ok && mewName != "" {
-		if sgr := e.LoadedConfig.Colors.Resolve("", "doc", mewName); sgr != "" {
+		if sgr := e.LoadedConfig.Colors.Resolve(winClass, winType, mewName); sgr != "" {
 			return sgr
 		}
 	}
@@ -584,9 +605,9 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 			c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld, linkable: grammarLinkable(g)}
 			e.synCaches[b] = c
 		} else {
-			if low < len(c.colors) {
+			if low < len(c.refs) {
 				c.next = c.entries[low]
-				c.colors = c.colors[:low]
+				c.refs = c.refs[:low]
 				c.ctx = c.ctx[:low]
 				c.entries = c.entries[:low]
 				if c.linkable {
@@ -608,18 +629,17 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 	// Per-line GetLine re-seeks to an absolute line (O(line)), so tokenizing a
 	// large prefix that way is O(n²) — the dominant cost on big files. A single
 	// GetLineRange is O(span).
-	if start := len(c.colors); start <= docLine {
+	if start := len(c.refs); start <= docLine {
 		lines := b.GetLineRange(start, docLine+1)
 		for _, raw := range lines {
 			line := strings.TrimRight(raw, "\n\r")
 			lineRunes := []rune(line)
 			c.entries = append(c.entries, c.next)
 			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, lineRunes)
-			colors := make([]string, len(attrs))
-			for j, ref := range attrs {
-				colors[j] = e.syntaxColorFor(ref)
-			}
-			c.colors = append(c.colors, colors)
+			// Keep the color CLASSES; resolve to SGR per painting window at
+			// render time (syntaxLineColors). Copy, so a loader that reuses its
+			// attrs slice can't mutate the cache.
+			c.refs = append(c.refs, append([]*jsf.ColorRef(nil), attrs...))
 			c.ctx = append(c.ctx, ctx)
 			if c.linkable {
 				c.links = append(c.links, extractLinkSpans(lineRunes, attrs))
@@ -801,17 +821,19 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 	if c == nil {
 		return nil
 	}
+	// Resolve this line's color classes to SGR for THIS window's class/type, so
+	// [<class>::colors]/[colors/<type>] overlays reach syntax highlighting.
+	colors := e.resolveLineColors(c, docLine, w.Class, w.Type.Name())
 	// Caret mode (browse off): links paint in the "link" color over their
-	// syntax colors, marking them as followable. Copy-on-write — the cached
-	// slice is shared. Browse mode replaces link text with buttons instead,
-	// so the overlay is skipped there — and linkBrowsing=no disables the
-	// whole layer (links render exactly as the grammar colors them).
+	// syntax colors, marking them as followable. Browse mode replaces link text
+	// with buttons instead, so the overlay is skipped there — and
+	// linkBrowsing=no disables the whole layer (links render exactly as the
+	// grammar colors them).
 	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
 		linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link")
 		recentSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkRecent")
 		hoverSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkHover")
 		if linkSGR != "" || recentSGR != "" {
-			colors := append([]string(nil), c.colors[docLine]...)
 			for _, s := range c.links[docLine] {
 				sgr := linkSGR
 				if recentSGR != "" && e.linkTargetVisited(w, s.Target) {
@@ -831,7 +853,22 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 			return colors
 		}
 	}
-	return c.colors[docLine]
+	return colors
+}
+
+// resolveLineColors resolves one cached line's grammar color classes to SGR for
+// a window class/type. Returns a fresh slice (the caller may overlay link
+// colors onto it), or nil when the line is not cached.
+func (e *Editor) resolveLineColors(c *synCache, docLine int, winClass, winType string) []string {
+	if docLine < 0 || docLine >= len(c.refs) {
+		return nil
+	}
+	refs := c.refs[docLine]
+	out := make([]string, len(refs))
+	for i, ref := range refs {
+		out[i] = e.syntaxColorFor(ref, winClass, winType)
+	}
+	return out
 }
 
 // syntaxCtxLine returns the context flags (CtxComment/CtxString per rune) for

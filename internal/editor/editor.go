@@ -343,7 +343,7 @@ type Editor struct {
 	// fallback grammar), honoring the editor-wide syntaxOverrides.
 	syntaxGrammarLoader *jsf.Loader
 	synCaches           map[*buffer.Buffer]*synCache
-	synSGR              map[*jsf.ColorRef]string
+	synSGR              map[synColorKey]string
 
 	// Outline breadcrumb state (see outline.go): compiled [outline.*]
 	// patterns and the last computed breadcrumb.
