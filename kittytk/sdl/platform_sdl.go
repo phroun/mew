@@ -4,6 +4,7 @@ package sdl
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,10 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
 )
+
+// cursorDebug traces every OS-cursor application (MEW_CURSOR_DEBUG=1) — the
+// single apply point, so the shape sequence reveals a competing setter.
+var cursorDebug = os.Getenv("MEW_CURSOR_DEBUG") != ""
 
 // Platform runs KittyTK over SDL2 windows: each surface is an OS
 // window with its own raster backend, SDL presents and feeds input.
@@ -1036,6 +1041,10 @@ func (p *Platform) SetCursor(shape core.CursorShape) {
 	// resize keeps its cursor only because the held button suppresses the OS
 	// reset). Re-setting the cached cursor object is cheap and idempotent
 	// elsewhere. The cache above still avoids re-creating cursor objects.
+	if cursorDebug {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Fprintf(os.Stderr, "[cursor apply] shape=%d from %s:%d\n", shape, file, line)
+	}
 	sdl2.SetCursor(cur)
 	p.curCursor = shape
 	p.cursorSet = true
