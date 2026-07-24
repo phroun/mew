@@ -159,6 +159,26 @@ type Editor struct {
 	// in the modebar. It is transient key-sequence state, not window context.
 	activeCompletions string
 
+	// quickHelpTopic is the context-sensitive help topic for the current key
+	// prefix — the deepest "help" virtual binding matching the active sequence
+	// (e.g. "" at rest resolves the root "help =", "^B" resolves "^B help ="). It
+	// names the help wiki page Quick Help shows; empty falls back to the built-in
+	// reference. It ONLY drives Quick Help — the main help ("Using mew") ignores
+	// it entirely.
+	quickHelpTopic string
+	// quickHelpMode marks the docked help window as Quick Help (the dynamic,
+	// context-following page) rather than an ordinary help page reached by
+	// browsing. It is what the "Quick Help" checkmark reflects, and what keeps
+	// Quick Help identifiable apart from a normal help page showing the same URL.
+	quickHelpMode bool
+	// quickHelpBuf is the buffer currently displayed AS Quick Help, and
+	// quickHelpShownTopic the topic it was built from. If the help window's
+	// buffer drifts from quickHelpBuf the user browsed away (link/history/Using
+	// mew), which ends quick mode; if quickHelpTopic drifts from
+	// quickHelpShownTopic the context changed and Quick Help re-navigates.
+	quickHelpBuf        *buffer.Buffer
+	quickHelpShownTopic string
+
 	// Cross-buffer find state (the find command's "a" option). When set,
 	// find_next continues across all main buffers instead of using the
 	// focused window's per-window find state.
@@ -6314,6 +6334,13 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			} else {
 				e.activeCompletions = ""
 			}
+
+			// Context-sensitive Quick Help: recompute the topic for the current
+			// key prefix and, if Quick Help is open and following, re-render it
+			// in place. This ONLY touches Quick Help — the main help is never
+			// steered by the topic. Skipped entirely when nothing consults it.
+			e.updateQuickHelp()
+
 			e.updateModebar()
 			e.renderMu.Unlock()
 		}
@@ -6637,12 +6664,32 @@ func (e *Editor) helpWindow() *window.Window {
 	return nil
 }
 
-// quickHelpWindowOpen reports whether the docked help window is open AND
-// currently showing Quick Help (not a wiki page) — what the "Quick Help"
-// checkmark reflects.
+// quickHelpWindowOpen reports whether the docked help window is open AND in
+// Quick Help (dynamic, context-following) mode — what the "Quick Help"
+// checkmark reflects. It reads the quickHelpMode flag rather than the buffer
+// URL: Quick Help now shows real help pages, so URL alone can't tell it apart
+// from a page reached by browsing. syncQuickHelpMode() first reconciles the
+// flag with reality (the window may have closed, or the user may have browsed
+// away) so the answer is always current.
 func (e *Editor) quickHelpWindowOpen() bool {
+	e.syncQuickHelpMode()
+	return e.quickHelpMode && e.helpWindow() != nil
+}
+
+// syncQuickHelpMode reconciles quickHelpMode with the docked help window: quick
+// mode ends the moment the window closes or its buffer drifts from the one
+// Quick Help installed (the user followed a link, walked history, or opened the
+// main help). Called before anything reads or acts on quick mode.
+func (e *Editor) syncQuickHelpMode() {
+	if !e.quickHelpMode {
+		return
+	}
 	hw := e.helpWindow()
-	return hw != nil && e.bufferCanonicalURL(hw.Buffer) == e.canonicalDocURL(quickHelpDocURL)
+	if hw == nil || hw.Buffer != e.quickHelpBuf {
+		e.quickHelpMode = false
+		e.quickHelpBuf = nil
+		e.quickHelpShownTopic = ""
+	}
 }
 
 // toggleHelp is the help_toggle command. With no argument the target is Quick
@@ -6654,18 +6701,35 @@ func (e *Editor) quickHelpWindowOpen() bool {
 // in the same docked window.
 func (e *Editor) toggleHelp(arg string) bool {
 	arg = strings.TrimSpace(arg)
+	e.syncQuickHelpMode()
 	hw := e.helpWindow()
 
 	if arg == "" {
-		targetURL := e.canonicalDocURL(quickHelpDocURL)
-		if hw != nil && e.bufferCanonicalURL(hw.Buffer) == targetURL {
+		if e.quickHelpMode && hw != nil {
 			e.WindowManager.RemoveWindow(hw.ID) // already here: toggle off
+			e.quickHelpMode = false
+			e.quickHelpBuf = nil
+			e.quickHelpShownTopic = ""
 			e.RequestRender()
 			return true
 		}
-		e.showHelpLocation(hw, e.quickHelpBuffer(), "", "", false)
+		// Resolve the topic for the current prefix now, so a menu-driven open
+		// (no keypress pending) still lands on the root topic rather than a
+		// stale one.
+		e.quickHelpTopic = e.KeyProcessor.HelpTopic(e.ActiveSequence)
+		buf, root, wikiName, browse := e.quickHelpDestination()
+		e.showHelpLocation(hw, buf, root, wikiName, browse)
+		e.quickHelpMode = true
+		e.quickHelpBuf = buf
+		e.quickHelpShownTopic = e.quickHelpTopic
 		return true
 	}
+
+	// A page argument opens/navigates the main help — this is browsing, so it
+	// leaves Quick Help mode: the quickHelpTopic must never steer "Using mew".
+	e.quickHelpMode = false
+	e.quickHelpBuf = nil
+	e.quickHelpShownTopic = ""
 
 	ref := arg
 	if !strings.HasPrefix(strings.ToLower(ref), "help:") {
@@ -6742,6 +6806,67 @@ func (e *Editor) createHelpWindow(buf *buffer.Buffer) *window.Window {
 	opts.Buffer = buf
 	opts.SetFocus = true
 	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
+}
+
+// quickHelpDestination resolves what Quick Help should show for the current
+// quickHelpTopic. A topic that names a help wiki page (help:/<topic>) yields
+// that page plus its wiki wiring (so its links are followable); a missing or
+// empty topic falls back to the built-in WordStar reference. It never surfaces
+// an error — Quick Help follows the key context silently, keystroke by
+// keystroke, so a bad topic simply shows the built-in page.
+func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName string, browse bool) {
+	if e.quickHelpTopic != "" {
+		ref := "help:/" + e.quickHelpTopic
+		if res := e.resolveFollow(nil, ref); res.url != "" {
+			b := e.findOpenBuffer(res.url)
+			if b == nil {
+				if loaded, err := e.loadBufferURL(res.url); err == nil {
+					b = loaded
+				}
+			}
+			if b != nil {
+				return b, res.root, res.wikiName, true
+			}
+		}
+	}
+	return e.quickHelpBuffer(), "", "", false
+}
+
+// refreshQuickHelp re-renders the docked Quick Help window for the current
+// quickHelpTopic, in place — no history entry, because Quick Help is a single
+// dynamic slot. Called from the key loop when the context topic changes while
+// Quick Help is open; a no-op when the destination is unchanged.
+func (e *Editor) refreshQuickHelp(hw *window.Window) {
+	buf, root, wikiName, browse := e.quickHelpDestination()
+	if buf != hw.Buffer {
+		e.replaceBuffer(hw, buf)
+	}
+	hw.WikiRoot = root
+	hw.WikiName = wikiName
+	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
+	hw.BrowseAutoArmed = hw.BrowseActive
+	e.quickHelpBuf = buf
+	e.quickHelpShownTopic = e.quickHelpTopic
+	e.ensureCursorVisible(hw)
+	e.RequestRender()
+}
+
+// updateQuickHelp recomputes quickHelpTopic from the current key prefix and, if
+// Quick Help is open in follow mode, re-navigates it when the topic changed.
+// Called once per processed key, after the active sequence is settled. It never
+// affects the main help — only the dedicated Quick Help slot.
+func (e *Editor) updateQuickHelp() {
+	e.quickHelpTopic = e.KeyProcessor.HelpTopic(e.ActiveSequence)
+	e.syncQuickHelpMode()
+	if !e.quickHelpMode {
+		return
+	}
+	if e.quickHelpTopic == e.quickHelpShownTopic {
+		return // already showing this topic — don't reload on every keypress
+	}
+	if hw := e.helpWindow(); hw != nil {
+		e.refreshQuickHelp(hw)
+	}
 }
 
 // quickHelpBuffer builds the Quick Help buffer (the WordStar command

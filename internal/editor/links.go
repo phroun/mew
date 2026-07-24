@@ -156,6 +156,16 @@ func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
 	e.unburyEverywhere(buf)
 }
 
+// replaceBuffer swaps w to buf in place WITHOUT growing the nav history (see
+// Window.ReplaceBuffer), with the same orphan protection as swapBuffer. Used
+// for Quick Help's dynamic re-render as the key context changes.
+func (e *Editor) replaceBuffer(w *window.Window, buf *buffer.Buffer) {
+	w.ReplaceBuffer(buf, func(b *buffer.Buffer) bool {
+		return e.bufferReferencedElsewhere(b, w)
+	})
+	e.unburyEverywhere(buf)
+}
+
 // unburyEverywhere releases every graveyard binding of buf across all
 // windows: actively bound again, the buffer is no longer at risk of
 // orphaning and the graveyards have no claim to it.

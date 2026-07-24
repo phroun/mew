@@ -103,6 +103,114 @@ func TestHelpToggleClosesAtCurrentLocation(t *testing.T) {
 	}
 }
 
+// helpURL resolves a "help:/..." ref to the canonical buffer URL it opens, so
+// tests can assert what a help window is showing.
+func helpURL(t *testing.T, e *Editor, ref string) string {
+	t.Helper()
+	res := e.resolveFollow(nil, ref)
+	if res.url == "" {
+		t.Fatalf("resolveFollow(%q) found no page: %s", ref, res.message)
+	}
+	return res.url
+}
+
+// Quick Help follows the key context: it shows help:/<quickHelpTopic> — the
+// topic being the deepest "help" virtual binding for the active key prefix —
+// and when the context deepens while it is open it re-navigates IN PLACE (no
+// history churn — Quick Help is a single dynamic slot).
+func TestQuickHelpFollowsTopic(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{
+		"help/keys.txt":        "=== Root Keys ===\nroot\n",
+		"help/keys_buffer.txt": "=== Buffer Keys ===\nbuffer\n",
+	})
+	e.KeyProcessor.MapKey("help", "keys")
+	e.KeyProcessor.MapKey("^B help", "keys_buffer")
+
+	// Root context -> topic "keys". Open Quick Help; it shows help:/keys.
+	e.ActiveSequence = ""
+	e.executeCommand("help_toggle")
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should be open in quick mode")
+	}
+	if got := e.bufferCanonicalURL(hw.Buffer); got != helpURL(t, e, "help:/keys") {
+		t.Fatalf("Quick Help should show help:/keys, showing %q", got)
+	}
+
+	// Context deepens to "^B" -> topic "keys_buffer". A follow re-navigates the
+	// SAME window in place, WITHOUT adding back history.
+	backBefore, _ := hw.NavHistoryDepths()
+	e.ActiveSequence = "^B"
+	e.updateQuickHelp()
+	if e.helpWindow() != hw {
+		t.Fatal("Quick Help should follow the topic in the SAME window")
+	}
+	if got := e.bufferCanonicalURL(hw.Buffer); got != helpURL(t, e, "help:/keys_buffer") {
+		t.Fatalf("Quick Help should have followed to help:/keys_buffer, showing %q", got)
+	}
+	if backAfter, _ := hw.NavHistoryDepths(); backAfter != backBefore {
+		t.Fatalf("following the topic must not grow back history: %d -> %d", backBefore, backAfter)
+	}
+	if !e.quickHelpWindowOpen() {
+		t.Fatal("still Quick Help after following the topic")
+	}
+}
+
+// The main help ("Using mew" = help_toggle <page>) is never affected by the
+// quickHelpTopic, and opening it leaves quick mode.
+func TestMainHelpIgnoresQuickHelpTopic(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{
+		"help/start.txt":       "=== Index ===\nindex\n",
+		"help/keys_buffer.txt": "=== Buffer Keys ===\nbuffer\n",
+	})
+	e.KeyProcessor.MapKey("^B help", "keys_buffer")
+	e.ActiveSequence = "^B" // context topic is "keys_buffer"
+
+	e.executeCommand(`help_toggle "help:/"`) // Using mew -> the index
+	hw := e.helpWindow()
+	if hw == nil {
+		t.Fatal("Using mew should open the docked help window")
+	}
+	if e.quickHelpWindowOpen() {
+		t.Fatal("the main help is not Quick Help (checkmark off), regardless of topic")
+	}
+	startURL := helpURL(t, e, "help:/start")
+	if got := e.bufferCanonicalURL(hw.Buffer); got != startURL {
+		t.Fatalf("Using mew should show the help index, not the quick topic; showing %q", got)
+	}
+
+	// A context change must NOT move the main help.
+	e.updateQuickHelp()
+	if got := e.bufferCanonicalURL(hw.Buffer); got != startURL {
+		t.Fatalf("the quick topic must never steer the main help; moved to %q", got)
+	}
+}
+
+// Following a link (browsing) out of Quick Help leaves quick mode: the topic
+// stops steering the window thereafter.
+func TestBrowsingLeavesQuickMode(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{
+		"help/keys.txt": "=== Root Keys ===\nroot\n",
+	})
+	e.KeyProcessor.MapKey("help", "keys")
+	e.executeCommand("help_toggle")
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should be open")
+	}
+
+	// Simulate a browse away: swap the window to another buffer, as link-follow
+	// does. Quick mode must then read as off, and the topic must not drag it.
+	e.swapBuffer(hw, buffer.NewFromString("elsewhere\n"))
+	if e.quickHelpWindowOpen() {
+		t.Fatal("browsing away should leave quick mode")
+	}
+	e.updateQuickHelp()
+	if got := e.bufferCanonicalURL(hw.Buffer); got == helpURL(t, e, "help:/keys") {
+		t.Fatal("after leaving quick mode the topic must not re-navigate the window")
+	}
+}
+
 // notifyHelpState pushes whether the docked help window is showing Quick Help,
 // on the first render and on transitions (a host syncs the checkmark to it).
 func TestNotifyHelpStateTransitions(t *testing.T) {

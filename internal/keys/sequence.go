@@ -7,6 +7,11 @@ import (
 	"unicode"
 )
 
+// virtualHelpKey is the reserved pseudo-key whose mapping names the Quick Help
+// topic for a prefix (see HelpTopic). It is not a real key and is filtered out
+// of key completions.
+const virtualHelpKey = "help"
+
 // ProcessResult represents the result of processing a key.
 type ProcessResult struct {
 	Command string // Command to execute (empty if none)
@@ -103,6 +108,31 @@ func (sp *SequenceProcessor) UnmapKey(keySequence string) {
 // GetMapping returns the command mapped to a key sequence, or empty string if not found.
 func (sp *SequenceProcessor) GetMapping(keySequence string) string {
 	return sp.keyMap[keySequence]
+}
+
+// HelpTopic resolves the context-sensitive help topic for a key prefix: the
+// value of the deepest "help" virtual binding matching activeSequence. It walks
+// the prefix from full length down to the root, returning the first "<prefix>
+// help" mapping found ("help" at the root). Empty when no help binding applies.
+// The "help" pseudo-key never fires as a command — it exists only to be looked
+// up here — so it is excluded from completions.
+func (sp *SequenceProcessor) HelpTopic(activeSequence string) string {
+	var parts []string
+	if activeSequence != "" {
+		parts = strings.Split(activeSequence, " ")
+	}
+	for i := len(parts); i >= 0; i-- {
+		var key string
+		if i == 0 {
+			key = "help"
+		} else {
+			key = strings.Join(parts[:i], " ") + " help"
+		}
+		if v := sp.keyMap[key]; v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // SetMappings replaces the entire keymap with a copy of m (used to switch the
@@ -576,6 +606,11 @@ func (sp *SequenceProcessor) GetPossibleCompletions() []string {
 			}
 		}
 	}
+
+	// "help" is a virtual binding (it names the Quick Help topic for this
+	// prefix, resolved by HelpTopic), not a key the user can press — never
+	// offer it as a completion.
+	delete(completions, virtualHelpKey)
 
 	result := make([]string, 0, len(completions))
 	for k := range completions {

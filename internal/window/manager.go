@@ -959,6 +959,26 @@ func (w *Window) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.B
 	w.bindBuffer(buf)
 }
 
+// ReplaceBuffer swaps the window's ACTIVE buffer for buf WITHOUT touching the
+// navigation history: the back and forward stacks are left exactly as they are
+// and only the active binding is exchanged. It exists for a "dynamic page" that
+// re-renders in place (Quick Help following the key context), so repeated
+// updates never accumulate history entries — the page stays a single history
+// slot. The departing buffer is released, or buried when it would otherwise
+// lose its last reference (same orphan protection as SwapBuffer).
+func (w *Window) ReplaceBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
+	old := w.detachBinding()
+	switch {
+	case old.Buffer == nil || old.Buffer == buf:
+		old.release()
+	case referencedOutside != nil && referencedOutside(old.Buffer):
+		old.release()
+	default:
+		w.bury(old)
+	}
+	w.bindBuffer(buf)
+}
+
 // bury moves a detached binding into the graveyard, keeping at most one
 // binding per buffer (a duplicate burial releases the newcomer — the buffer
 // is already safe).

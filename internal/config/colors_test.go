@@ -10,7 +10,7 @@ func TestLinkButtonColorAndIndicatorSlots(t *testing.T) {
 	for name, want := range map[string]string{
 		"link":                "\x1b[0;4;93;40m",
 		"linkRecent":          "\x1b[0;4;32;40m",
-		"button":              "\x1b[0;30;47m",
+		"button":              "\x1b[0;1;30;47m",
 		"buttonShadow":        "\x1b[0;90;47m",
 		"buttonFocused":       "\x1b[0;30;46m",
 		"buttonShadowFocused": "\x1b[0;90;46m",
