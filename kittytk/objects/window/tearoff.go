@@ -274,9 +274,14 @@ func (h *TearOffHost) ResizeGrip() core.Unit { return h.resizeGrip }
 
 // applyCursor sets the system cursor, skipping redundant applications.
 func (h *TearOffHost) applyCursor(shape core.CursorShape) {
-	if h.setCursor == nil || shape == h.lastCursor {
+	if h.setCursor == nil {
 		return
 	}
+	// Re-assert on every hover, even when the shape is unchanged: the platform
+	// must re-set the OS cursor on each mouse-move (macOS resets it to the arrow
+	// otherwise), so a same-shape short-circuit here would starve it and the
+	// cursor would flip back to the arrow as the pointer moves over the torn
+	// window. The platform's SetCursor is the idempotent, cheap re-set.
 	h.lastCursor = shape
 	h.setCursor(shape)
 }
