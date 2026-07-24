@@ -31,6 +31,22 @@ func TestHelpTopicResolvesDeepestPrefix(t *testing.T) {
 	}
 }
 
+// The config parser keeps surrounding quotes on a mapping value; HelpTopic
+// strips them so `help ="keys"` yields the topic keys, not the literal "keys".
+func TestHelpTopicStripsQuotes(t *testing.T) {
+	sp := NewSequenceProcessor(nil)
+	sp.SetMappings(map[string]string{
+		"help":    `"keys"`,
+		"^B help": `"keys_buffer"`,
+	})
+	if got := sp.HelpTopic(""); got != "keys" {
+		t.Errorf(`HelpTopic("") = %q, want "keys"`, got)
+	}
+	if got := sp.HelpTopic("^B"); got != "keys_buffer" {
+		t.Errorf(`HelpTopic("^B") = %q, want "keys_buffer"`, got)
+	}
+}
+
 // With no help bindings at all, HelpTopic is always empty (Quick Help then
 // falls back to its built-in reference).
 func TestHelpTopicEmptyWithoutBindings(t *testing.T) {

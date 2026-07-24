@@ -129,10 +129,22 @@ func (sp *SequenceProcessor) HelpTopic(activeSequence string) string {
 			key = strings.Join(parts[:i], " ") + " help"
 		}
 		if v := sp.keyMap[key]; v != "" {
-			return v
+			return unquoteMapping(v)
 		}
 	}
 	return ""
+}
+
+// unquoteMapping strips one layer of surrounding double quotes from a mapping
+// value. Mapping values are usually written bare (window_prior), but a topic is
+// naturally quoted (help ="keys"), and the config parser keeps the quotes — so
+// the help topic would otherwise be the literal `"keys"`, not keys.
+func unquoteMapping(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return v[1 : len(v)-1]
+	}
+	return v
 }
 
 // SetMappings replaces the entire keymap with a copy of m (used to switch the
