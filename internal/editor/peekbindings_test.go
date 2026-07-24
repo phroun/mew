@@ -33,7 +33,8 @@ func TestKeyForCommand(t *testing.T) {
 func TestPeekBindingValuesTrackKeymap(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "hi\n")
 
-	e.KeyProcessor.UnmapKey("^@ U") // clear the default mew binding
+	e.KeyProcessor.UnmapKey("^@ U") // clear the default mew bindings
+	e.KeyProcessor.UnmapKey("^B U")
 	e.KeyProcessor.MapKey("^K U", "stat_peek_up")
 	if got := e.peekBindingValues()["SPU"]; got != "^K U" {
 		t.Errorf("SPU should track the rebind, got %q", got)

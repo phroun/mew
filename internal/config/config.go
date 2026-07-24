@@ -2,8 +2,8 @@
 package config
 
 import (
-	"embed"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,14 +13,21 @@ import (
 	"sync"
 )
 
-// embeddedDefaults carries mew's shipped default resource files that the
-// generated editor.conf @includes — the modular key-mapping sets and the
-// keyboard layouts. They are written into ~/.mew/defaults/ on first run (for
-// discoverability and user editing) and also resolve the built-in mappings
-// baseline without touching disk.
-//
-//go:embed defaults/*.conf
-var embeddedDefaults embed.FS
+// embeddedResources is the shipped mew: resource tree (rooted so a name like
+// "defaults/keys_cursor_movement.conf" resolves), supplied by the caller via
+// SetEmbeddedResources. The config package does NOT embed its own copy: the
+// editor already embeds the whole resources/ tree (grammars, help, and the
+// modular default key-mapping sets), and injecting that single embed here keeps
+// the built-in mappings baseline resolvable — the generated editor.conf
+// @includes "defaults/…" — without a second, drift-prone copy. Nil in bare
+// library use, where the baseline mappings are simply empty until a config is
+// loaded through a FileIO.
+var embeddedResources fs.FS
+
+// SetEmbeddedResources injects the shipped resource tree the built-in config
+// @includes resolve against (see embeddedResources). The editor calls this from
+// package init, before any DefaultConfig()/builtinMappings() use.
+func SetEmbeddedResources(fsys fs.FS) { embeddedResources = fsys }
 
 // Config holds the editor configuration.
 type Config struct {
@@ -943,7 +950,11 @@ func (m *Manager) LoadFromString(content string) Config {
 func (m *Manager) loadExpanded(content, base string) Config {
 	config := DefaultConfig()
 	prec := 0
-	m.applyLayer(&config, content, "<config>", base, false, &prec)
+	// A string-loaded config (host-supplied, or the generated default) has no
+	// mew: tree behind it to resolve `@include "defaults/…"` against, so inline
+	// the shipped resources from the binary first — the same source the built-in
+	// mappings baseline uses. Any remaining includes fall to disk expansion.
+	m.applyLayer(&config, expandEmbeddedIncludes(content), "<config>", base, false, &prec)
 	return config
 }
 
@@ -1944,47 +1955,25 @@ func (m *Manager) unescapeValue(value string) string {
 	return result.String()
 }
 
-// WriteDefault writes the default configuration file, and drops the shipped
-// default resource files (the @included keymap sets and layouts) into
-// mew:///defaults/ so they resolve and are discoverable.
+// WriteDefault writes the default configuration file. The shipped default
+// resource files it @includes (the modular keymap sets and layouts) are NOT
+// copied into ~/.mew: they resolve through the layered mew: filesystem straight
+// from the embedded resources, and the user's own ~/.mew/defaults/ copy — if
+// they choose to make one — shadows them. Pre-seeding would freeze a copy that
+// then silently shadows every future shipped update.
 func (m *Manager) WriteDefault() error {
-	if err := m.io().Write(m.configPath, []byte(m.generateDefaultConfig())); err != nil {
-		return err
-	}
-	return m.writeEmbeddedDefaults()
-}
-
-// writeEmbeddedDefaults copies each embedded defaults/*.conf into mew:///defaults/,
-// skipping any that already exist so user edits are never clobbered.
-func (m *Manager) writeEmbeddedDefaults() error {
-	entries, err := embeddedDefaults.ReadDir("defaults")
-	if err != nil {
-		return nil // nothing embedded: nothing to drop
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		dest := "mew:///defaults/" + e.Name()
-		if _, err := m.io().Read(dest); err == nil {
-			continue // already present — keep the user's copy
-		}
-		data, err := embeddedDefaults.ReadFile("defaults/" + e.Name())
-		if err != nil {
-			continue
-		}
-		if err := m.io().Write(dest, data); err != nil {
-			return err
-		}
-	}
-	return nil
+	return m.io().Write(m.configPath, []byte(m.generateDefaultConfig()))
 }
 
 // expandEmbeddedIncludes replaces each @include "defaults/…" line in text with
-// the embedded file's contents, so the built-in config resolves entirely from
-// the binary. Non-embedded includes are left for the normal disk-based
-// expansion during Load.
+// the injected embedded resource's contents, so the built-in config resolves
+// entirely from the binary. Non-embedded includes (and, when no embedded tree
+// was injected, all of them) are left for the normal disk-based expansion
+// during Load.
 func expandEmbeddedIncludes(text string) string {
+	if embeddedResources == nil {
+		return text
+	}
 	var out []string
 	for _, line := range strings.Split(text, "\n") {
 		if sub := includeRe.FindStringSubmatch(strings.TrimSuffix(line, "\r")); sub != nil {
@@ -1992,7 +1981,7 @@ func expandEmbeddedIncludes(text string) string {
 			if ref == "" {
 				ref = sub[2]
 			}
-			if data, err := embeddedDefaults.ReadFile(ref); err == nil {
+			if data, err := fs.ReadFile(embeddedResources, ref); err == nil {
 				out = append(out, string(data))
 				continue
 			}

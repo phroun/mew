@@ -7,14 +7,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/phroun/mew/internal/config"
 )
 
 // embeddedResources is mew's statically-linked support tree: the MIT-licensed
 // grammar pack (resources/syntax/*.jsf), the built-in help manual
-// (resources/help/*), and anything else that should ship inside the binary as
-// the LAST-RESORT layer of the mew: filesystem. It is read-only and always
-// present, so a fresh install has working syntax highlighting and help without
-// writing a single file into the user's ~/.mew.
+// (resources/help/*), the modular default key-mapping sets
+// (resources/defaults/*.conf), and anything else that should ship inside the
+// binary as the LAST-RESORT layer of the mew: filesystem. It is read-only and
+// always present, so a fresh install has working syntax highlighting, help, and
+// key bindings without writing a single file into the user's ~/.mew.
 //
 //go:embed resources
 var embeddedResources embed.FS
@@ -23,6 +26,17 @@ var embeddedResources embed.FS
 // mew: rel path "syntax/go.jsf" lives at "resources/syntax/go.jsf" in the
 // embed.
 const embeddedResourcePrefix = "resources"
+
+// The config package resolves the built-in mappings baseline from the same
+// shipped resources (its editor.conf @includes "defaults/…"), but must not
+// embed a second, drift-prone copy — so hand it this one, rooted at
+// "resources/" so a "defaults/keys_*.conf" include resolves. Done in init so it
+// is set before the first DefaultConfig()/builtinMappings() call.
+func init() {
+	if sub, err := fs.Sub(embeddedResources, embeddedResourcePrefix); err == nil {
+		config.SetEmbeddedResources(sub)
+	}
+}
 
 // readEmbeddedResource reads a mew: rel path ("syntax/go.jsf") from the
 // embedded tree, or ok=false when it is absent.

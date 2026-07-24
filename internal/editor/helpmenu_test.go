@@ -61,7 +61,10 @@ func TestHelpToggleQuickHelp(t *testing.T) {
 // growing its nav history so BACK returns to where the reader came from; the
 // checkmark turns off (a page is not Quick Help).
 func TestHelpToggleNavigatesWithHistory(t *testing.T) {
-	e := helpTestEditor(t, map[string]string{"help/keys.txt": "=== Keys ===\nbindings\n"})
+	// The manual page is a DISTINCT id from the Quick Help topic, which has no
+	// file here, so Quick Help stays the built-in reference — a location apart
+	// from the page we navigate to.
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== Manual ===\nbindings\n"})
 
 	e.executeCommand("help_toggle") // Quick Help
 	hw := e.helpWindow()
@@ -70,7 +73,7 @@ func TestHelpToggleNavigatesWithHistory(t *testing.T) {
 	}
 	quickURL := e.bufferCanonicalURL(hw.Buffer)
 
-	e.executeCommand(`help_toggle "keys"`) // navigate to the page
+	e.executeCommand(`help_toggle "manual"`) // navigate to the page
 	if e.helpWindow() != hw {
 		t.Fatal("help_toggle should navigate the SAME docked window")
 	}

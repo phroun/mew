@@ -21,22 +21,24 @@ func TestMacOptionInsertFallback(t *testing.T) {
 	if got := docContent(w); got != "ß" {
 		t.Fatalf("unmapped M-s should insert ß, got %q", got)
 	}
-	press(e, "M-p")
+	// M-d and M-5 are unbound in the shipped defaults (M-a/e/n/p/f/j drive
+	// scroll/word/page), so they fall through to the Option-character insert.
+	press(e, "M-d")
 	press(e, "M-5")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("letter and number combos should insert, got %q", got)
 	}
 
 	// A binding steals the combo: no insertion, the command runs instead.
 	e.PawScript.ExecuteAsync("map 'M-s', 'nop'")
 	press(e, "M-s")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("bound M-s must not insert, got %q", got)
 	}
 
 	// Unknown Meta combos still do nothing.
 	press(e, "M-F1")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("unknown meta keys stay ignored, got %q", got)
 	}
 }
