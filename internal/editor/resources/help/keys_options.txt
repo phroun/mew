@@ -1,0 +1,49 @@
+#!wiki
+| A |x Auto-Indent         | N |  Navigation Mode    |**----^OV VIEW OPTIONS-----**|**-----^OG GLOBAL OPTIONS-----|--
+| B |x Show Bidi Markers   | O |  Mode Bar           | VC |  Column Ruler      | GA |  Audible Bell         |
+| C |x Create Backups      | Q |  ----               | VL |  Line Numbers      | GB |  Disable Backups      |
+| D |  Direction: LTR      | R |  Read Only          | VN |  Invisibles        | GC |  Disable Current Dir  |
+| E |  ----                | T |  Table / Text-Art   | VO |  Modebar Location  | GD |  Disable DEADCAT      |
+| F |  ----                | U |  Ruler Shows Cursor | VV |  Linter Violations | GF |  Break Links N/H/ALL  |
+| H |  ----                | W |  Word Wrap (Soft)   |**---^OS SEARCH OPTIONS----**| GL |  Disable Locks        |
+| I |x Insert Mode         | X |  Syntax Detect      | SF |  Wrap From Top     | GM |  Mac Option Keys      |
+| J |  ----                | Y |  ----               | SR |  RegEx Support     | GO |  Mode Bar (T/B/None)  |
+| K |  Block Rectangles    | Z |  ----               | SI |  Case Insensitive  | GS |x Use mew_state File   |
+|==============================================================================| GT |  Disable mtime Check  |
+| SUB-MENUS: ^OG=Global ^OL=Linter ^OM=Match ^OP=Page/Para ^OS=Search ^OV=View | GX |  Exit Ask             |
+
+|**====**|**===^P PAGE & PARAGRAPHS OPTIONS =========**|
+|**----**|**---Page Width Options--------------------**|
+| PN |   Inner Margin:  column 5               | (Left Margin for LTR documents, Right Margin for RTL documents)
+| PM |   Outer Margin:  column 75              |
+| PB |x  Book Spread                           | (Inner/Outer swapped on Even Pages)
+|**----**|**---Page Length Options-------------------**|
+| PL |x  Soft Page Breaks                      |
+| PZ |   Page Size:  50 Lines                  |
+| PC |   Page Scroll Context Window: 4 <50%    | (4 lines, but never more than 50% whichever) 
+| PV |   Page Vertical Scroll Step: 10 Lines   | (increment to reduce if can't see a whole page at once)
+|**----**|**---Paragraph Options---------------------**|
+| PS |x  Trailing Space Paragraph Continuation |
+| PH |   Hanging Indent Characters: ">-*|"     |
+| PJ |   Non-Paragraph Characters: ""          |
+
+Smart Backspace, Smart Tab
+
+Tab expansion rules will be in the Linter submenu.
+French spacing will be in the Linter submenu.
+CRLF rules will be in the Linter submenu.
+Force newline will be in the Linter submenu.
+
+
+Tell me about hidden hyphens?
+
+Undo History Size
+
+Soft hyphen: ¬?
+
+Path to Backup Files (with vs. Elsewhere)
+   Alongside, Local .mewbackups, Project, or User Default
+
+[[link]]
+
+Line Spacing, 1/1.5/ Double Spacing

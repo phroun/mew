@@ -1,0 +1,12 @@
+| __BLOCK MENU__                     |**--MOVE CURSOR TO---**|
+| [[keys#set_block_begin|^K B]] mark beginning of block   | [[keys#go_block_begin|^Q B]] beginning or |
+| [[keys#set_block_end|^K B]] mark end of block         | [[keys#go_block_end|^Q K]] end of block |
+|**---------BLOCK OPERATIONS-------**|**---FORMAT BLOCK----**|
+| [[keys#block_move|^K M]] move block to cursor      | [[keys#block_unindent|^,]] unindent     |
+| [[keys#block_delete|^K Y]] delete block              | [[keys#block_indent|^K .]] indent       |
+| [[keys#block_copy|^K C]] copy block to cursor      | ^K J justify      |
+| [[keys#os_copy|????]] send to host OS clipboard | ^K / through cmd  |
+| ^K X exchange for OS clipboard | ^K O block format |
+| [[keys#block_write|^K W]] write block to a file     |**----BLOCK TOOLS----**|
+| [[keys#block_read|^K R]] replace block with a file | ^K G grow block   |
+| (or: [[keys#buffer_insert_file|^B R]] read file to cursor) | ^K ? find matches |
