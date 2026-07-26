@@ -10,6 +10,15 @@
 =Bold		bold
 =Italic		italic
 =Underline	underline
+# Combined inline-emphasis classes: **bold**, //italic//, __underline__ nest in
+# any combination, so a run carries the FULL active attribute set as one class.
+# attrSGR renders each as an absolute attribute state, so moving between them
+# (e.g. BoldItalic -> Italic when a nested "**" closes) turns just that
+# attribute off while the color and the other attributes stay.
+=BoldItalic		bold italic
+=BoldUnderline		bold underline
+=ItalicUnderline	italic underline
+=BoldItalicUnderline	bold italic underline
 =Mono		cyan
 =Link		bold cyan
 =Media		bold cyan
@@ -50,9 +59,9 @@
 :text Idle
 	*		text
 	"\n"		bol
-	"*"		star1
-	"/"		fslash1
-	"_"		under1
+	"*"		ps0
+	"/"		pf0
+	"_"		pu0
 	"'"		tick1
 	"["		br1
 	"{"		curl1
@@ -60,48 +69,163 @@
 	"%"		pct1
 	"|^"		tsep	recolor=-1
 
-# **bold** — toggled by doubled markers; formatting ends at the line end
-# (an approximation: DokuWiki inline spans rarely cross lines).
-:star1 Idle
-	*		text	noeat
-	"*"		bold	recolor=-2
-
-:bold Bold
-	*		bold
+# Inline emphasis — **bold**, //italic//, __underline__ — toggled by doubled
+# markers, nesting in any combination. Each body state is one of the eight
+# attribute subsets {}, {B}, {I}, {U}, {B,I}, {B,U}, {I,U}, {B,I,U}; a doubled
+# marker moves to the state with that attribute flipped (symmetric difference),
+# so an inner "**" inside //italic// enters BoldItalic and its closing "**"
+# returns to Italic. Opening markers recolor to the richer class; closing
+# markers keep the class they were in. Emphasis ends at the line end (an
+# approximation: DokuWiki inline spans rarely cross lines). The non-emphasis
+# constructs (mono, links, media, code, tables) are recognized only at the
+# outermost level, matching the grammar's prior behavior.
+:em_b Bold
+	*		em_b
 	"\n"		bol
-	"*"		bstar1
+	"*"		psB
+	"/"		pfB
+	"_"		puB
 
-:bstar1 Bold
-	*		bold	noeat
+:em_i Italic
+	*		em_i
+	"\n"		bol
+	"*"		psI
+	"/"		pfI
+	"_"		puI
+
+:em_u Underline
+	*		em_u
+	"\n"		bol
+	"*"		psU
+	"/"		pfU
+	"_"		puU
+
+:em_bi BoldItalic
+	*		em_bi
+	"\n"		bol
+	"*"		psBI
+	"/"		pfBI
+	"_"		puBI
+
+:em_bu BoldUnderline
+	*		em_bu
+	"\n"		bol
+	"*"		psBU
+	"/"		pfBU
+	"_"		puBU
+
+:em_iu ItalicUnderline
+	*		em_iu
+	"\n"		bol
+	"*"		psIU
+	"/"		pfIU
+	"_"		puIU
+
+:em_biu BoldItalicUnderline
+	*		em_biu
+	"\n"		bol
+	"*"		psBIU
+	"/"		pfBIU
+	"_"		puBIU
+
+# Bold toggle: one "*" seen; a second flips B, anything else was literal.
+:ps0 Idle
+	*		text	noeat
+	"*"		em_b	recolor=-2
+
+:psB Bold
+	*		em_b	noeat
 	"*"		text
 
-# //italic//
-:fslash1 Idle
+:psI Italic
+	*		em_i	noeat
+	"*"		em_bi	recolor=-2
+
+:psU Underline
+	*		em_u	noeat
+	"*"		em_bu	recolor=-2
+
+:psBI BoldItalic
+	*		em_bi	noeat
+	"*"		em_i
+
+:psBU BoldUnderline
+	*		em_bu	noeat
+	"*"		em_u
+
+:psIU ItalicUnderline
+	*		em_iu	noeat
+	"*"		em_biu	recolor=-2
+
+:psBIU BoldItalicUnderline
+	*		em_biu	noeat
+	"*"		em_iu
+
+# Italic toggle.
+:pf0 Idle
 	*		text	noeat
-	"/"		italic	recolor=-2
+	"/"		em_i	recolor=-2
 
-:italic Italic
-	*		italic
-	"\n"		bol
-	"/"		islash1
+:pfB Bold
+	*		em_b	noeat
+	"/"		em_bi	recolor=-2
 
-:islash1 Italic
-	*		italic	noeat
+:pfI Italic
+	*		em_i	noeat
 	"/"		text
 
-# __underline__
-:under1 Idle
+:pfU Underline
+	*		em_u	noeat
+	"/"		em_iu	recolor=-2
+
+:pfBI BoldItalic
+	*		em_bi	noeat
+	"/"		em_b
+
+:pfBU BoldUnderline
+	*		em_bu	noeat
+	"/"		em_biu	recolor=-2
+
+:pfIU ItalicUnderline
+	*		em_iu	noeat
+	"/"		em_u
+
+:pfBIU BoldItalicUnderline
+	*		em_biu	noeat
+	"/"		em_bu
+
+# Underline toggle.
+:pu0 Idle
 	*		text	noeat
-	"_"		underline	recolor=-2
+	"_"		em_u	recolor=-2
 
-:underline Underline
-	*		underline
-	"\n"		bol
-	"_"		uunder1
+:puB Bold
+	*		em_b	noeat
+	"_"		em_bu	recolor=-2
 
-:uunder1 Underline
-	*		underline	noeat
+:puI Italic
+	*		em_i	noeat
+	"_"		em_iu	recolor=-2
+
+:puU Underline
+	*		em_u	noeat
 	"_"		text
+
+:puBI BoldItalic
+	*		em_bi	noeat
+	"_"		em_biu	recolor=-2
+
+:puBU BoldUnderline
+	*		em_bu	noeat
+	"_"		em_b
+
+:puIU ItalicUnderline
+	*		em_iu	noeat
+	"_"		em_i
+
+:puBIU BoldItalicUnderline
+	*		em_biu	noeat
+	"_"		em_bi
 
 # ''monospace''
 :tick1 Idle

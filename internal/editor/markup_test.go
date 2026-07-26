@@ -29,6 +29,31 @@ func TestBrowseMarkupMarkersHidden(t *testing.T) {
 	}
 }
 
+// Browse mode still hides the markers when emphasis nests, even though the
+// grammar splits the run at each inner toggle. Only the true open/close markers
+// are hidden; the inner words survive.
+func TestBrowseNestedMarkupMarkersHidden(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // use the embedded grammar, not a dev ~/.mew shadow
+	e, w, out := renderedEditorWithConfig(t,
+		"x //it **bo** more// y\n", "[options]\nsyntax=dokuwiki\n")
+	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	plain := stripSGR(out.String())
+	for _, marker := range []string{"**", "//"} {
+		if strings.Contains(plain, marker) {
+			t.Fatalf("browse mode should hide %q even when nested; got %q", marker, plain)
+		}
+	}
+	// The words on every nesting level survive the marker hiding.
+	for _, word := range []string{"it", "bo", "more"} {
+		if !strings.Contains(plain, word) {
+			t.Fatalf("nested word %q should remain; got %q", word, plain)
+		}
+	}
+}
+
 // Browse mode hides heading "=" and restyles by level: the equals go away, the
 // heading color paints, and the per-level bold/underline attributes apply.
 func TestBrowseHeadingLevels(t *testing.T) {

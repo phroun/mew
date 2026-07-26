@@ -709,12 +709,50 @@ func extractLinkSpans(runes []rune, attrs []*jsf.ColorRef) []linkSpan {
 	return spans
 }
 
-// extractMarkupSpans finds the Bold/Italic/Underline/Heading runs the grammar
-// colored on a line and records each with its marker widths so browse mode can
-// hide the markers and restyle the text. Inline markers are the doubled
-// **, //, __ (2 runes each side). A Heading run is ...====== text ======...:
-// the leading/trailing "=" groups (with one adjacent space) are the markers,
-// and the leading "=" count gives the level (6→1 ... 2→5).
+// markupKindFor classifies a grammar class as an inline-emphasis or heading
+// markup run, or reports false. The emphasis classes include the combined
+// forms (BoldItalic, …) the grammar emits for nested **//__ spans; the exact
+// inline kind is metadata only (browse mode keeps the grammar's own color for
+// inline runs), so a combined run reports markupBold.
+func markupKindFor(cl string) (markupKind, bool) {
+	switch {
+	case strings.EqualFold(cl, "Bold"):
+		return markupBold, true
+	case strings.EqualFold(cl, "Italic"):
+		return markupItalic, true
+	case strings.EqualFold(cl, "Underline"):
+		return markupUnderline, true
+	case strings.EqualFold(cl, "Heading"):
+		return markupHeading, true
+	case strings.EqualFold(cl, "BoldItalic"),
+		strings.EqualFold(cl, "BoldUnderline"),
+		strings.EqualFold(cl, "ItalicUnderline"),
+		strings.EqualFold(cl, "BoldItalicUnderline"):
+		return markupBold, true
+	}
+	return 0, false
+}
+
+// doubledMarkerAt reports whether runes[i:i+2] is a doubled inline emphasis
+// marker (**, //, __).
+func doubledMarkerAt(runes []rune, i int) bool {
+	if i < 0 || i+1 >= len(runes) {
+		return false
+	}
+	r := runes[i]
+	return r == runes[i+1] && (r == '*' || r == '/' || r == '_')
+}
+
+// extractMarkupSpans finds the Bold/Italic/Underline (including the combined
+// BoldItalic … classes) and Heading runs the grammar colored on a line and
+// records each with its marker widths so browse mode can hide the markers and
+// restyle the text. Inline markers are the doubled **, //, __. Because nesting
+// SPLITS an emphasis run at each inner toggle (//italic **bold** more// is an
+// Italic run, then a BoldItalic run, then another Italic run), a run may carry
+// a marker on only one side — or neither — so the sides are detected from the
+// runes rather than assumed. A Heading run is ...====== text ======...: the
+// leading/trailing "=" groups (with one adjacent space) are the markers, and
+// the leading "=" count gives the level (6→1 ... 2→5).
 func extractMarkupSpans(runes []rune, attrs []*jsf.ColorRef) []markupSpan {
 	class := func(i int) string {
 		if i < len(attrs) && i < len(runes) && attrs[i] != nil {
@@ -729,17 +767,8 @@ func extractMarkupSpans(runes []rune, attrs []*jsf.ColorRef) []markupSpan {
 	var spans []markupSpan
 	for i := 0; i < n; {
 		cl := class(i)
-		var kind markupKind
-		switch {
-		case strings.EqualFold(cl, "Bold"):
-			kind = markupBold
-		case strings.EqualFold(cl, "Italic"):
-			kind = markupItalic
-		case strings.EqualFold(cl, "Underline"):
-			kind = markupUnderline
-		case strings.EqualFold(cl, "Heading"):
-			kind = markupHeading
-		default:
+		kind, ok := markupKindFor(cl)
+		if !ok {
 			i++
 			continue
 		}
@@ -775,10 +804,15 @@ func extractMarkupSpans(runes []rune, attrs []*jsf.ColorRef) []markupSpan {
 			}
 			s.MarkLeft, s.MarkRight = l, r
 		} else {
-			// Doubled inline markers, but only when both sides are present and
-			// there is content between them.
-			if end-start >= 5 {
-				s.MarkLeft, s.MarkRight = 2, 2
+			// Hide a doubled marker only on a side that actually has one: an
+			// opening marker was recolored into the run's start, a closing one
+			// kept at its end; an inner toggle boundary (where the run abuts a
+			// richer/poorer sibling) has none.
+			if doubledMarkerAt(runes, start) {
+				s.MarkLeft = 2
+			}
+			if end-2 >= start+s.MarkLeft && doubledMarkerAt(runes, end-2) {
+				s.MarkRight = 2
 			}
 		}
 		// Guard against a malformed run with no content left after the markers.

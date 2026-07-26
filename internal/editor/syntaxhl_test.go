@@ -556,6 +556,31 @@ func TestDokuwikiGrammar(t *testing.T) {
 	}
 }
 
+// Nested inline emphasis composes: a **bold** word inside an //italic// phrase
+// renders bold+italic, and the closing "**" drops back to italic while the
+// color is untouched. The grammar emits combined classes (BoldItalic, …) and
+// absolute-state attrSGR turns exactly the one attribute off at each boundary.
+func TestDokuwikiNestedEmphasis(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // use the embedded grammar, not a dev ~/.mew shadow
+	e, w, out := renderedEditorWithConfig(t,
+		"//it **bo** more//\n", "[options]\nsyntax=dokuwiki\n")
+	w.BrowseAutoArmed = true // caret mode: markers stay, colors show
+	out.Reset()
+	e.performRender()
+	raw := expandSGR(out.String())
+	// The bold word inside the italic phrase is bold AND italic (bold+italic on,
+	// underline/blink/inverse off), with no color reset.
+	const boldItalic = "\x1b[24;25;27;1;3m"
+	if !strings.Contains(raw, boldItalic+"b") {
+		t.Fatalf("nested bold-in-italic should render bold+italic; got %q", raw)
+	}
+	// After the closing "**", "more" is italic again: bold turned back OFF (22).
+	const italicOnly = "\x1b[22;24;25;27;3m"
+	if !strings.Contains(raw, italicOnly+"m") {
+		t.Fatalf("text after the nested ** should return to italic-only; got %q", raw)
+	}
+}
+
 // DokuWiki headings outline with INVERTED depth: more '=' is shallower.
 func TestOutlineDokuwikiHeadings(t *testing.T) {
 	e, w := newTestEditor(t,
