@@ -163,7 +163,8 @@ var defaultClassColors = map[string]map[string]string{
 		"logo":       "\x1b[1;97;41m", // bright white on red - M_ logo
 	},
 	"notification": {
-		"messages": "\x1b[0;37;43m",
+		"messages": "\x1b[0;30;47m",
+		"key":      "\x1b[0;1;30;47m", // bright bold white on silver
 	},
 	"warning": {
 		// Bright yellow on brown. Use 93 (bright yellow) rather than 1;33 (bold
@@ -171,9 +172,11 @@ var defaultClassColors = map[string]map[string]string{
 		// (macOS Terminal by default), render 33 as dark yellow — brown on the
 		// brown 43 background, i.e. invisible.
 		"messages": "\x1b[0;93;43m",
+		"key":      "\x1b[0;1;97;43m", // bright bold white on brown
 	},
 	"error": {
 		"messages": "\x1b[0;97;41m", // bright white on red
+		"key":      "\x1b[0;1;93;41m", // bright bold yellow on red
 	},
 }
 

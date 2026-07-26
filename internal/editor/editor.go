@@ -6056,7 +6056,8 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 			if data, ok := e.mew.fallbackForLocal(filename); ok {
 				buf = e.lib.NewFromString(string(data))
 				buf.SetFilename(filename)
-				e.noteBuffer(buf, "resource", "Shipped page (edits save to your ~/.mew copy)", false)
+				// TODO: Later we will defer this note to the point of saving rather than here:
+				// e.noteBuffer(buf, "resource", "Shipped page (edits save to your ~/.mew copy)", false)
 			} else {
 				buf = e.lib.New()
 				buf.SetFilename(filename)
