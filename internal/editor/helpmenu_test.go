@@ -353,7 +353,7 @@ func TestFocusSwitcherSkipsQuickHelp(t *testing.T) {
 // no-help notice.
 func TestQuickHelpKeepsCurrentWhenTopicMissing(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/root.txt": "=== Root ===\nroot page\n"})
-	e.KeyProcessor.MapKey("help", "root")               // root topic -> a real page
+	e.KeyProcessor.MapKey("help", "root")                // root topic -> a real page
 	e.KeyProcessor.MapKey("^Q help", "no_such_page_xyz") // deeper topic -> missing page
 
 	e.ActiveSequence = ""
