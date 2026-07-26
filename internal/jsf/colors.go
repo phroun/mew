@@ -15,41 +15,71 @@ import (
 // using newer attributes still load. Returns "" for an empty attribute list
 // (the class renders in the window's normal text color).
 func attrSGR(attrs []string) string {
-	var codes []string
+	var on []string
 	hasColor := false
+	var bolddim, italic, underline, blink, inverse bool
 	for _, a := range attrs {
 		switch a {
 		case "bold":
-			codes = append(codes, "1")
+			on = append(on, "1")
+			bolddim = true
 		case "dim":
-			codes = append(codes, "2")
+			on = append(on, "2")
+			bolddim = true
 		case "italic":
-			codes = append(codes, "3")
+			on = append(on, "3")
+			italic = true
 		case "underline":
-			codes = append(codes, "4")
+			on = append(on, "4")
+			underline = true
 		case "blink":
-			codes = append(codes, "5")
+			on = append(on, "5")
+			blink = true
 		case "inverse":
-			codes = append(codes, "7")
+			on = append(on, "7")
+			inverse = true
 		default:
 			if c, ok := colorCode(a); ok {
-				codes = append(codes, c)
+				on = append(on, c)
 				hasColor = true
 			}
 		}
 	}
-	if len(codes) == 0 {
+	if len(on) == 0 {
 		return ""
 	}
 	// A class that names a COLOR resets first ("\x1b[0;…") so its fg/bg is exact
-	// and no prior attributes bleed in. An attribute-ONLY class (bold, italic,
-	// underline — no color) instead LAYERS onto the current pen: "\x1b[1m" adds
-	// bold without touching fg/bg, so the run keeps whatever color the text
-	// already had (the window background, or a surrounding syntax color) rather
-	// than resetting it to the terminal default.
+	// and no prior attributes bleed in.
 	if hasColor {
-		return "\x1b[0;" + strings.Join(codes, ";") + "m"
+		return "\x1b[0;" + strings.Join(on, ";") + "m"
 	}
+	// An attribute-ONLY class (bold, italic, underline — no color) asserts an
+	// ABSOLUTE attribute state without touching color: it turns OFF the toggles
+	// it does not set, then turns its own ON. Color is left alone, so the run
+	// keeps whatever fg/bg the pen already held (the window background, or a
+	// surrounding syntax color) rather than resetting to the terminal default.
+	// Turning the others off is what makes adjacent styles behave like the
+	// markup reads: in "**bold**//italic//" the italic run does NOT stay bold,
+	// because the closing "**" (i.e. the start of a non-bold run) clears it.
+	// Each rune carries exactly one grammar class, so an absolute state per run
+	// is always correct — nothing legitimately combines across the boundary.
+	var codes []string
+	if !bolddim {
+		codes = append(codes, "22") // neither bold nor dim
+	}
+	if !italic {
+		codes = append(codes, "23")
+	}
+	if !underline {
+		codes = append(codes, "24")
+	}
+	if !blink {
+		codes = append(codes, "25")
+	}
+	if !inverse {
+		codes = append(codes, "27")
+	}
+	codes = append(codes, on...)
 	return "\x1b[" + strings.Join(codes, ";") + "m"
 }
 
