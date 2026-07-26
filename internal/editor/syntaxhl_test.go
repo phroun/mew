@@ -536,8 +536,11 @@ func TestDokuwikiGrammar(t *testing.T) {
 	if !strings.Contains(raw, sgrKeyword+"=") {
 		t.Fatal("headings should color via Heading -> syntaxKeyword")
 	}
-	if !strings.Contains(raw, "\x1b[1m*") && !strings.Contains(raw, "\x1b[1mb") {
-		t.Fatal("bold spans should use the grammar's bold attr (layered, no reset)")
+	// Bold asserts an absolute attribute state (bold on, other toggles off) and
+	// leaves color alone, so it keeps the surrounding pen rather than resetting.
+	const boldSGR = "\x1b[23;24;25;27;1m"
+	if !strings.Contains(raw, boldSGR+"*") && !strings.Contains(raw, boldSGR+"b") {
+		t.Fatal("bold spans should assert bold-on with other toggles off, no color reset")
 	}
 	// Grammar-recognized links now paint in the "link" color (caret mode):
 	// the followable-link affordance overrides the Link class's syntax color.

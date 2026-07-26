@@ -587,11 +587,13 @@ func TestAttrSGR(t *testing.T) {
 		{[]string{"WHITE"}, "\x1b[0;97m"},
 		{[]string{"bg_white", "black"}, "\x1b[0;47;30m"},
 		{[]string{"BG_CYAN"}, "\x1b[0;106m"},
-		// Attribute-only classes layer onto the current pen (no leading reset),
-		// so they keep the text's existing fg/bg and just add the attribute.
-		{[]string{"bold"}, "\x1b[1m"},
-		{[]string{"italic"}, "\x1b[3m"},
-		{[]string{"underline", "inverse"}, "\x1b[4;7m"},
+		// Attribute-only classes assert an absolute attribute state without
+		// touching color: they turn OFF the toggles they don't set (so an
+		// adjacent style run doesn't inherit them) and turn their own ON,
+		// keeping the pen's existing fg/bg.
+		{[]string{"bold"}, "\x1b[23;24;25;27;1m"},
+		{[]string{"italic"}, "\x1b[22;24;25;27;3m"},
+		{[]string{"underline", "inverse"}, "\x1b[22;23;25;4;7m"},
 		{[]string{"fg_500"}, "\x1b[0;38;5;196m"},
 		{[]string{"bg_012"}, "\x1b[0;48;5;24m"},
 		{[]string{"fg_12"}, "\x1b[0;38;5;244m"},
