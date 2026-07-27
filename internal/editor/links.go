@@ -957,6 +957,11 @@ func (e *Editor) lineDisplaySpans(w *viewport.Viewport, docLine int) ([]render.D
 			Shadow:      shadowRune,
 			Color:       col(colorName),
 			ShadowColor: col(shadowName),
+			// Selected cells take the button's own selected scheme rather than
+			// the plain selection bar, whatever state the button is otherwise
+			// in. Shaping is untouched: same caps, same shadow glyph.
+			SelColor:       col("buttonSelected"),
+			SelShadowColor: col("buttonShadowSelected"),
 		}.Span())
 	}
 

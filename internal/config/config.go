@@ -2357,6 +2357,10 @@ buttonFocused="\e[0;30;46m"       # black on cyan
 buttonShadowFocused="\e[0;90;46m" # dark gray on cyan
 buttonPressed="\e[0;97;44m"       # bright white on blue (mouse held down)
 buttonShadowPressed="\e[0;37;44m" # silver on blue
+# A button inside a text selection. Defaults to the pressed look; only the
+# colour changes, never the caps or the shadow glyph.
+buttonSelected="\e[0;97;44m"       # bright white on blue
+buttonShadowSelected="\e[0;37;44m" # silver on blue
 buttonHover="\e[0;93;45m"         # bright yellow on purple (pointer over)
 buttonShadowHover="\e[0;90;45m"   # dark gray on purple
 syntaxComment="\e[0;32;40m"       # green on black

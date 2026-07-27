@@ -29,7 +29,13 @@ type DisplaySpan struct {
 	Runes      []rune
 	Doc        []int
 	Style      []string
-	Collapse   bool
+	// SelStyle is the per-display-rune SGR to use where the cell is SELECTED,
+	// overriding both Style and the plain selection colour. Empty (the usual
+	// case) means a selected cell shows the ordinary selection colour — so a
+	// heading's own colour steps aside for the selection bar instead of
+	// hiding it. Buttons fill it with their selected scheme.
+	SelStyle []string
+	Collapse bool
 }
 
 // ButtonSpan is the convenience shape the link code builds; it becomes a
@@ -40,6 +46,12 @@ type ButtonSpan struct {
 	Shadow      rune   // trailing shadow cell glyph (0 = none)
 	Color       string // SGR for the button cells
 	ShadowColor string // SGR for the shadow cell
+	// SelColor / SelShadowColor are the same two slots for a SELECTED cell.
+	// Shaping is untouched — the caps and the shadow glyph stay exactly as
+	// they are — only the colour changes, and only on the cells the selection
+	// actually covers, so a partly-selected button splits cleanly.
+	SelColor       string
+	SelShadowColor string
 }
 
 // Bidi isolate controls wrapping every button (see asDisplaySpan).
@@ -65,15 +77,19 @@ func (b ButtonSpan) asDisplaySpan() DisplaySpan {
 	runes = append(runes, popDirIsolate)
 
 	styles := make([]string, len(runes))
+	selStyles := make([]string, len(runes))
 	docs := make([]int, len(runes))
 	for i := range runes {
 		styles[i] = b.Color
+		selStyles[i] = b.SelColor
 		docs[i] = -1
 	}
 	if b.Shadow != 0 {
 		styles[len(styles)-2] = b.ShadowColor // shadow sits just before the PDI
+		selStyles[len(selStyles)-2] = b.SelShadowColor
 	}
-	return DisplaySpan{Start: b.Start, End: b.End, Runes: runes, Doc: docs, Style: styles, Collapse: true}
+	return DisplaySpan{Start: b.Start, End: b.End, Runes: runes, Doc: docs,
+		Style: styles, SelStyle: selStyles, Collapse: true}
 }
 
 // DisplayProvider returns the browse-mode display transform for one line of a
@@ -88,8 +104,17 @@ type lineDisplay struct {
 	Text  string
 	Runes []rune
 	// Forced holds, per display rune, a fixed SGR ("" = colour normally from
-	// its doc rune). Forced cells take no selection tint or whitespace marker.
+	// its doc rune). Forced cells take no whitespace marker.
 	Forced []string
+	// ForcedSel is the SGR for a forced cell that is SELECTED ("" = show the
+	// ordinary selection colour, which is what everything but a button wants).
+	ForcedSel []string
+	// SelSpan gives, per display rune, the doc range [lo, hi) whose overlap
+	// with the selection decides whether the cell counts as selected. Chrome
+	// cells (caps, shadow, isolates) carry no doc rune of their own, so this
+	// is how a button knows the selection has reached it. {0,0} elsewhere: an
+	// ordinary cell answers from its own doc rune.
+	SelSpan [][2]int
 	// DocToDisp maps every doc-rune boundary (0..len(docRunes)) to a display
 	// boundary; DispToDoc maps each display rune back to its doc rune (-1 for
 	// chrome). See DisplaySpan for the per-span mapping rules.
@@ -114,6 +139,8 @@ func substituteSpans(docRunes []rune, spans []DisplaySpan, doubleWidth bool) *li
 		for ; doc < upto && doc < len(docRunes); doc++ {
 			d.Runes = append(d.Runes, docRunes[doc])
 			d.Forced = append(d.Forced, "")
+			d.ForcedSel = append(d.ForcedSel, "")
+			d.SelSpan = append(d.SelSpan, [2]int{})
 			d.DispToDoc = append(d.DispToDoc, doc)
 		}
 	}
@@ -133,6 +160,12 @@ func substituteSpans(docRunes []rune, spans []DisplaySpan, doubleWidth bool) *li
 				st = s.Style[i]
 			}
 			d.Forced = append(d.Forced, st)
+			sel := ""
+			if i < len(s.SelStyle) {
+				sel = s.SelStyle[i]
+			}
+			d.ForcedSel = append(d.ForcedSel, sel)
+			d.SelSpan = append(d.SelSpan, [2]int{s.Start, s.End})
 			src := -1
 			if i < len(s.Doc) {
 				src = s.Doc[i]

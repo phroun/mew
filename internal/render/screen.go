@@ -1263,13 +1263,35 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// Helper to check if a rune position is within the selection. On a
 	// substituted line the walk's positions are display indices: map back to
 	// the doc rune the cell came from; chrome cells (-1) are never selected.
+	// selCovers reports whether the selection covers doc rune p on this line.
+	var selCovers func(p int) bool
 	isSelected := func(runePos int) bool {
 		if disp != nil {
 			if runePos < 0 || runePos >= len(disp.DispToDoc) {
 				return false
 			}
-			runePos = disp.DispToDoc[runePos]
+			if d := disp.DispToDoc[runePos]; d < 0 {
+				// A chrome cell (a button's caps, shadow, isolates) has no doc
+				// rune of its own, so it answers for the span it belongs to:
+				// selected once the selection reaches that span's doc range.
+				// The button's cells are ALL chrome, so it colours as a unit —
+				// there is no per-cell doc position to split it on.
+				if runePos < len(disp.SelSpan) {
+					r := disp.SelSpan[runePos]
+					for p := r[0]; p < r[1]; p++ {
+						if selCovers(p) {
+							return true
+						}
+					}
+				}
+				return false
+			} else {
+				runePos = d
+			}
 		}
+		return selCovers(runePos)
+	}
+	selCovers = func(runePos int) bool {
 		if !sel.exists || runePos < 0 {
 			return false
 		}
@@ -1302,11 +1324,23 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// Get the appropriate base color for a rune position. A chrome cell's
 	// forced color wins outright — buttons keep their look through selections.
 	getBaseColor := func(runePos int) string {
-		if disp != nil && runePos >= 0 && runePos < len(disp.Forced) && disp.Forced[runePos] != "" {
-			return disp.Forced[runePos]
+		forced := ""
+		if disp != nil && runePos >= 0 && runePos < len(disp.Forced) {
+			forced = disp.Forced[runePos]
 		}
 		if isSelected(runePos) {
+			// Selection outranks a forced colour: a selected heading shows the
+			// selection bar rather than hiding it behind the heading colour.
+			// A button says so explicitly instead — its own selected scheme,
+			// per cell, so a partly-selected button splits at the boundary.
+			if disp != nil && runePos >= 0 && runePos < len(disp.ForcedSel) &&
+				disp.ForcedSel[runePos] != "" {
+				return disp.ForcedSel[runePos]
+			}
 			return selectionColor
+		}
+		if forced != "" {
+			return forced
 		}
 		if runePos >= 0 && runePos < len(synColors) && synColors[runePos] != "" {
 			return synColors[runePos]
