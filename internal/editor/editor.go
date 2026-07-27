@@ -403,6 +403,15 @@ type Editor struct {
 	evalCap          evalCapture
 	evalFocusRestore string
 
+	// afterKeyArmed is set by dispatchKey to the viewport owning the current
+	// key event when that viewport carries an after-key pseudo-binding. The
+	// FIRST command that completes during the dispatch — the bound command, or
+	// the first key of an unwinding non-matching sequence landing as a normal
+	// press — consumes it and runs the script (see executeCommandResult).
+	// Disarmed without firing when the key resolved nothing (a silent prefix
+	// step, an unmapped named key).
+	afterKeyArmed *viewport.Viewport
+
 	// deadcat is the crash-dump destination, resolved once at startup so the
 	// death path never computes a path or makes a decision (see deadcat.go).
 	deadcat deadcatPlan
@@ -1325,6 +1334,20 @@ func (e *Editor) registerCommands() {
 		}
 		e.ShowWarning("No original mapping for " + key)
 		return pawscript.BoolStatus(false)
+	})
+
+	// after_key sets the focused viewport's after-key pseudo-binding: the
+	// PawScript command run each time a key's binding activity resolves while
+	// that viewport owns the keyboard (see viewport.Viewport.AfterKey). With no
+	// argument (or ""), it clears the binding.
+	ps.RegisterCommand("after_key", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		script, _ := argString(ctx, 0)
+		w.AfterKey = script
+		return pawscript.BoolStatus(true)
 	})
 
 	ps.RegisterCommand("mappings_show", func(ctx *pawscript.Context) pawscript.Result {
@@ -3212,6 +3235,50 @@ func (e *Editor) executeCommand(command string) {
 	e.executeCommandResult(command)
 }
 
+// dispatchKey routes one keyboard key through the sequence processor and runs
+// whatever it resolves to, then refreshes the sequence/QuickHelp/modebar
+// displays. Runs under renderMu (the serve loop's key branch, or a test
+// standing in for it).
+func (e *Editor) dispatchKey(key string) {
+	// Arm the after-key pseudo-binding on the viewport that owns this key —
+	// the first command that completes during this dispatch fires it (see
+	// executeCommandResult): the bound command when a binding matches, or the
+	// first key of an unwinding non-matching sequence landing as a normal
+	// press. A key that resolves nothing (a silent prefix step, an unmapped
+	// named key) leaves it to be disarmed below, unfired.
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil && w.AfterKey != "" {
+		e.afterKeyArmed = w
+	}
+
+	result := e.KeyProcessor.ProcessKey(key)
+	if result.Command != "" {
+		e.executeCommand(result.Command)
+	}
+	e.afterKeyArmed = nil
+
+	// Update active sequence display with possible completions
+	e.ActiveSequence = e.KeyProcessor.GetActiveSequence()
+	if e.ActiveSequence != "" {
+		// Show possible completions for the current sequence
+		completions := e.KeyProcessor.GetPossibleCompletions()
+		if len(completions) > 0 {
+			e.activeCompletions = strings.Join(completions, " ")
+		} else {
+			e.activeCompletions = ""
+		}
+	} else {
+		e.activeCompletions = ""
+	}
+
+	// Context-sensitive Quick Help: recompute the topic for the current
+	// key prefix and, if Quick Help is open and following, re-render it
+	// in place. This ONLY touches Quick Help — the main help is never
+	// steered by the topic. Skipped entirely when nothing consults it.
+	e.updateQuickHelp()
+
+	e.updateModebar()
+}
+
 // executeCommandResult is executeCommand returning the PawScript result, for
 // the one caller that must know whether the command suspended on an async
 // token (the launch-eval runner, which waits for the token before starting
@@ -3275,6 +3342,18 @@ func (e *Editor) executeCommandResult(command string) pawscript.Result {
 		e.lastYank.valid = false
 	}
 	e.RequestRender()
+
+	// After-key pseudo-binding: this command's completion resolves the key
+	// event that armed it (see dispatchKey). Disarm BEFORE running the script
+	// so the script — an ordinary command, not a key — cannot re-trigger, and
+	// later commands of the same dispatch (the rest of a sequence unwind)
+	// don't fire it again. Skipped if the binding closed the owning viewport.
+	if w := e.afterKeyArmed; w != nil {
+		e.afterKeyArmed = nil
+		if w.AfterKey != "" && e.ViewportManager.GetViewport(w.ID) == w {
+			e.executeCommand(w.AfterKey)
+		}
+	}
 	return res
 }
 
@@ -6439,32 +6518,7 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// same editor state) partway through command execution. The block
 			// doesn't call performRender, so this doesn't nest with its lock.
 			e.renderMu.Lock()
-			result := e.KeyProcessor.ProcessKey(event.Key)
-			if result.Command != "" {
-				e.executeCommand(result.Command)
-			}
-
-			// Update active sequence display with possible completions
-			e.ActiveSequence = e.KeyProcessor.GetActiveSequence()
-			if e.ActiveSequence != "" {
-				// Show possible completions for the current sequence
-				completions := e.KeyProcessor.GetPossibleCompletions()
-				if len(completions) > 0 {
-					e.activeCompletions = strings.Join(completions, " ")
-				} else {
-					e.activeCompletions = ""
-				}
-			} else {
-				e.activeCompletions = ""
-			}
-
-			// Context-sensitive Quick Help: recompute the topic for the current
-			// key prefix and, if Quick Help is open and following, re-render it
-			// in place. This ONLY touches Quick Help — the main help is never
-			// steered by the topic. Skipped entirely when nothing consults it.
-			e.updateQuickHelp()
-
-			e.updateModebar()
+			e.dispatchKey(event.Key)
 			e.renderMu.Unlock()
 		}
 

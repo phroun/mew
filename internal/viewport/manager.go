@@ -335,6 +335,16 @@ type Viewport struct {
 	// nav_cancel and by turning navigationMode off.
 	BrowseActive bool
 
+	// AfterKey is this viewport's after-key pseudo-binding: a PawScript command
+	// the editor runs each time a key's binding activity RESOLVES while this
+	// viewport owns the keyboard — after the bound (or fallthrough-insert)
+	// command completes, or, when a non-matching sequence starts to unwind,
+	// after the FIRST unwound key lands as a normal press (nothing waits for
+	// the rest of the unwind). It does not fire while a prefix is silently
+	// pending (^K alone) or for a key that executed nothing. Normally empty;
+	// a prompt (say) sets it to react to every keystroke the user lands.
+	AfterKey string
+
 	// WikiRoot confines this viewport's wiki-reference resolution to a subtree:
 	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
 	// When set, absolute wiki refs resolve from this root and relative climbs
@@ -1210,6 +1220,7 @@ type ViewportOptions struct {
 	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
 	SetFocus        bool
 	CustomRenderer  string
+	AfterKey        string // after-key pseudo-binding (see Viewport.AfterKey)
 
 	// Message bars
 	MessageTopInner     string
@@ -1314,6 +1325,7 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 		MarginOuter:         opts.MarginOuter,
 		RowMessages:         opts.RowMessages,
 		CustomRenderer:      opts.CustomRenderer,
+		AfterKey:            opts.AfterKey,
 	}
 	// Viewports are focus-cycle stops by default; a caller lowers CanFocus later
 	// for a viewport that explicit focus may still reach but the switcher skips.
