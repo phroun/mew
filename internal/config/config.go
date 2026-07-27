@@ -1340,7 +1340,7 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
 				delete(config.Window.FontAliases, alias)
 			} else {
-				config.Window.FontAliases[alias] = splitFontList(v)
+				config.Window.FontAliases[alias] = normalizeUITargets(splitFontList(v))
 			}
 		}
 	}
@@ -1783,6 +1783,21 @@ func stripQuotes(s string) string {
 // (e.g. ui_term = "JetBrainsMono, Monday" or fonts_path = /a, /b), stripping
 // surrounding quotes off the whole value and off each element, and dropping
 // empties. Returns nil for an empty or keyword value.
+// normalizeUITargets rewrites underscores to hyphens in any entry naming
+// another UI alias, so the underscored spelling works on BOTH sides of a
+// [window] ui_* line: ui_term_hebrew = ui_term_hebrew_sans reads naturally
+// even though the internal alias is ui-term-hebrew-sans. Only entries that
+// name the ui tree are touched — a real font family may contain underscores
+// and must survive verbatim.
+func normalizeUITargets(names []string) []string {
+	for i, n := range names {
+		if l := strings.ToLower(n); strings.HasPrefix(l, "ui_") || strings.HasPrefix(l, "ui-") {
+			names[i] = strings.ReplaceAll(n, "_", "-")
+		}
+	}
+	return names
+}
+
 func splitFontList(v string) []string {
 	v = stripQuotes(strings.TrimSpace(v))
 	if v == "" || keywordOf(v) != "" {

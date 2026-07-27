@@ -70,6 +70,17 @@ Any key of the form `ui_<...>` re-points the alias `ui-<...>` — underscores
 become hyphens, and that is the whole rule. There is no fixed list of keys; the
 tree defines what is meaningful.
 
+The same rewrite applies to a **value** that names another UI alias, so the
+underscored spelling works on both sides of the equals sign:
+
+```ini
+[window]
+ui_term_hebrew = ui_term_hebrew_sans   ; same as ui-term-hebrew-sans
+```
+
+Only entries naming the `ui` tree are rewritten — a real font family containing
+underscores (`My_Custom_Mono`) survives verbatim.
+
 The value is a **comma-separated fallback list**, tried in order:
 
 ```ini

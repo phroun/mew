@@ -200,6 +200,20 @@ func Load() Config {
 
 // splitList parses a comma-separated value (font families or paths), stripping
 // surrounding quotes off the whole value and off each element, dropping empties.
+// normalizeUITargets rewrites underscores to hyphens in any entry naming
+// another UI alias, so the underscored spelling works on BOTH sides of a
+// ui_* line: ui_term_hebrew = ui_term_hebrew_sans reads naturally even though
+// the internal alias is ui-term-hebrew-sans. Only entries naming the ui tree
+// are touched — a real font family may contain underscores.
+func normalizeUITargets(names []string) []string {
+	for i, n := range names {
+		if l := strings.ToLower(n); strings.HasPrefix(l, "ui_") || strings.HasPrefix(l, "ui-") {
+			names[i] = strings.ReplaceAll(n, "_", "-")
+		}
+	}
+	return names
+}
+
 func splitList(v string) []string {
 	v = stripQuotes(strings.TrimSpace(v))
 	if v == "" {
@@ -271,7 +285,7 @@ func apply(data []byte, cfg *Config) {
 		// a comma-separated fallback list — the whole systematic font tree.
 		if strings.HasPrefix(key, "ui_") {
 			alias := strings.ReplaceAll(key, "_", "-")
-			if list := splitList(val); len(list) > 0 {
+			if list := normalizeUITargets(splitList(val)); len(list) > 0 {
 				if cfg.FontAliases == nil {
 					cfg.FontAliases = map[string][]string{}
 				}
