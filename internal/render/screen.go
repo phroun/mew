@@ -1103,18 +1103,36 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 
 	// Bidirectional layout: the walk below runs over VISUAL slots left to
 	// right; logicalAt maps each slot to the logical rune it paints (identity
-	// on pure-LTR lines, where layout is nil). Terminator marker cells always
-	// paint at the visual end of the line. rtlCell drives bracket mirroring.
+	// on pure-LTR lines, where layout is nil). rtlCell drives bracket mirroring.
 	rtl := sr.winRTL(w)
 	layout := sr.layoutFor(w, runes[:contentLen])
-	totalSlots := len(runes)
+	termCount := len(runes) - contentLen
+	contentSlots := contentLen
 	if layout != nil {
-		totalSlots = len(layout.Perm) + (len(runes) - contentLen)
+		contentSlots = len(layout.Perm)
 	}
+	totalSlots := contentSlots + termCount
+	// The terminator's marker cells belong at the line's END, and a line ends
+	// wherever its direction runs out: the visual RIGHT under ltr, the visual
+	// LEFT under rtl. Appending them to the slot order pins them to the right
+	// in both, which under rtl put them at the line's reading START — reading
+	// as though the terminator switched to LTR all by itself.
+	//
+	// Under rtl they take PADDING cells rather than content columns (see the
+	// leftPad adjustment below), so the content — and every caret, ghost and
+	// ruler position measured against it — lands exactly where it does with
+	// invisibles off. rtlPadOffset omits them for the same reason.
+	termFirst := rtl && termCount > 0
 	logicalAt := func(slot int) int {
-		if layout == nil || slot >= len(layout.Perm) {
+		if termFirst {
+			if slot < termCount {
+				return contentLen + slot
+			}
+			slot -= termCount
+		}
+		if layout == nil || slot >= contentSlots {
 			if layout != nil {
-				return contentLen + (slot - len(layout.Perm))
+				return contentLen + (slot - contentSlots)
 			}
 			return slot
 		}
@@ -1145,11 +1163,22 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// extends past the line's left end the difference becomes left padding
 	// (right alignment). Rewriting viewOffsetX to the viewport's left bound
 	// lets the walk below run unchanged.
+	// The phantom column (ViewOffsetX -1) opens one cell beyond the content's
+	// leading edge for a caret that would otherwise sit off-screen. It is NOT
+	// data, so it takes the plain text color wherever it is painted — never the
+	// selection bar (see the padding at the end of this function).
+	phantom := viewOffsetX < 0
 	leftPad := 0
 	if rtl {
+		// CONTENT width only: the terminator markers ride in the padding, so
+		// counting them here would shift the text a cell out of step with the
+		// caret column, which never counts them either.
 		vw := 0
-		for slot := 0; slot < totalSlots; slot++ {
-			li := logicalAt(slot)
+		for slot := 0; slot < contentSlots; slot++ {
+			li := slot
+			if layout != nil {
+				li = layout.Perm[slot]
+			}
 			// A marked slot draws its "*" cell before the rune (as in the loop
 			// below), so the right-anchored width must count it too.
 			if showMarks && li >= 0 && marksSet[li] {
@@ -1158,6 +1187,27 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			vw += sr.slotWidth(layout, runes, li, vw, w)
 		}
 		leftPad, viewOffsetX = rtlView(vw, viewOffsetX, width)
+	}
+	if termFirst {
+		// Each terminator paints as a ONE-column marker (the two columns a raw
+		// control character would take never apply here), plus a "*" cell for a
+		// mark sitting at end of line.
+		termCells := termCount
+		for i := 0; showMarks && i < termCount; i++ {
+			if marksSet[contentLen+i] {
+				termCells++
+			}
+		}
+		if leftPad >= termCells {
+			leftPad -= termCells
+		} else {
+			// No padding to ride in: the line's visual end is off the left edge
+			// (a full-width or horizontally scrolled line), and so are its
+			// markers. Drop the slots rather than displace the text.
+			termFirst = false
+			totalSlots -= termCount
+			termCount = 0
+		}
 	}
 
 	// Build visual representation of the line with proper scrolling
@@ -1592,11 +1642,25 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// A single-line selection or the selection's end line stops at its last
 	// selected rune and must not bleed into the padding.
 	if outputVisualColumn < width {
+		padWidth := width - outputVisualColumn
 		padColor := textColor
 		if sel.exists && docLine >= sel.startLine && docLine < sel.endLine {
 			padColor = selectionColor
 		}
-		displayLine.WriteString(padColor + strings.Repeat(" ", width-outputVisualColumn))
+		// Under rtl the phantom column opens at the RIGHT edge, which is this
+		// padding's last cell. It holds no data, so highlighting it would show
+		// a selected space that does not exist in the line. (The ltr phantom is
+		// written above, already in the plain text color.)
+		if phantom && rtl && padColor != textColor && padWidth > 0 {
+			if padWidth > 1 {
+				displayLine.WriteString(padColor + strings.Repeat(" ", padWidth-1))
+			}
+			displayLine.WriteString(textColor + " ")
+			padWidth = 0
+		}
+		if padWidth > 0 {
+			displayLine.WriteString(padColor + strings.Repeat(" ", padWidth))
+		}
 	}
 
 	return textColor + displayLine.String() + resetColor
@@ -2411,14 +2475,11 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *viewport.Viewport, width 
 			vw += sr.getRuneVisualWidth(r, vw, w)
 		}
 	}
-	if w.ViewState.ShowInvisibles {
-		// Terminator markers (one cell each) paint at the visual end.
-		full := ""
-		if w.Buffer != nil {
-			full = w.Buffer.GetLine(w.CursorPos().Line)
-		}
-		vw += len([]rune(full)) - len([]rune(strings.TrimRight(full, "\n\r")))
-	}
+	// Terminator markers are deliberately NOT counted: under rtl they paint
+	// into the left padding rather than taking content columns (see
+	// prepareLineForDisplay), so the content — and every caret, ghost and ruler
+	// position measured against it — sits exactly where it would with
+	// invisibles off.
 	return rtlView(vw, off, width)
 }
 

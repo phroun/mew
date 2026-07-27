@@ -498,3 +498,30 @@ func TestMouseDragIsOneUndoStep(t *testing.T) {
 		t.Fatal("one undo should remove the whole drag selection, not one cell of it")
 	}
 }
+
+// The mirror at the top: dragging a selection UP past the document's first
+// line selects to BOF (line 0, rune 0), not just the horizontal position on
+// that row — the same rule the bottom edge has always had for EOF.
+func TestMouseDragAboveFirstLineSelectsToBOF(t *testing.T) {
+	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n") // lines 0..3 (3 is "")
+	x, y := screenAt(w, 2, 2)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress") // start mid-document, mid-line
+
+	// The harness viewport begins on the grid's FIRST row, so no host can
+	// report a row above it: parking there is the up-edge gesture. Without the
+	// BOF rule the clamp would land on line 0 at the pointer's COLUMN.
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+3, 1))
+	if l, r := mark(t, w, "_block_end"); l != 0 || r != 0 {
+		t.Fatalf("pinned-top drag: end (%d,%d), want (0,0)", l, r)
+	}
+
+	// And with a row genuinely above the content (a top-docked bar), a pointer
+	// on it resolves the same way.
+	w.ContentY = 1
+	if l, r, ok := e.dragSelResolve(w, w.ContentX+3, 1); !ok || l != 0 || r != 0 {
+		t.Fatalf("above-first-row drag: (%d,%d) ok=%v, want (0,0) ok=true", l, r, ok)
+	}
+	w.ContentY = 0
+	send("MouseLeftRelease")
+}

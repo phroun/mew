@@ -2585,30 +2585,17 @@ func (e *Editor) registerCommands() {
 	})
 
 	// Scroll commands
+	// scroll_left / scroll_right are VISUAL, not reading-relative: unlike the
+	// _prior/_next commands, which follow the text's own direction, these move
+	// the view the way the words name whichever way the text runs. Under
+	// direction=rtl that is the opposite sign on the stored offset — see
+	// scrollViewHorizontal.
 	ps.RegisterCommand("scroll_left", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.ViewportManager.GetFocusedViewport()
-		if w == nil {
-			return pawscript.BoolStatus(false)
-		}
-		if w.ViewState.ViewOffsetX > 0 {
-			w.ViewState.ViewOffsetX -= 8
-			if w.ViewState.ViewOffsetX < 0 {
-				w.ViewState.ViewOffsetX = 0
-			}
-			e.RequestRender()
-			return pawscript.BoolStatus(true)
-		}
-		return pawscript.BoolStatus(false)
+		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), -1))
 	})
 
 	ps.RegisterCommand("scroll_right", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.ViewportManager.GetFocusedViewport()
-		if w == nil {
-			return pawscript.BoolStatus(false)
-		}
-		w.ViewState.ViewOffsetX += 8
-		e.RequestRender()
-		return pawscript.BoolStatus(true)
+		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), +1))
 	})
 
 	// Viewport navigation commands
@@ -6092,6 +6079,35 @@ func (e *Editor) renderFollowCaret(w *viewport.Viewport) {
 	e.clampViewToCaret(w)
 }
 
+// scrollViewHorizontal moves the view one step in a VISUAL direction: dir -1 is
+// leftward on screen, +1 rightward, whichever way the text runs.
+//
+// ViewOffsetX counts columns scrolled past the NEAR edge, and which edge that
+// is depends on direction: the left under ltr, the reading start on the right
+// under rtl. So a visual direction maps to opposite signs in the two modes —
+// under rtl, moving the view LEFT (further into the reading tail) RAISES the
+// offset. It reports whether the view actually moved; already at the near edge,
+// it cannot.
+func (e *Editor) scrollViewHorizontal(w *viewport.Viewport, dir int) bool {
+	if w == nil || dir == 0 {
+		return false
+	}
+	step := 8 * dir
+	if e.winRTL(w) {
+		step = -step
+	}
+	off := w.ViewState.ViewOffsetX + step
+	if off < 0 {
+		off = 0
+	}
+	if off == w.ViewState.ViewOffsetX {
+		return false
+	}
+	w.ViewState.ViewOffsetX = off
+	e.RequestRender()
+	return true
+}
+
 // scrollViewByLines parks the focused-content viewport delta lines away from
 // its current top (negative = toward the start), detaching it from the caret
 // like the mouse wheel: the caret stays put and the per-frame follow will not
@@ -6139,17 +6155,14 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		// Browse-mode buttons: visibility runs in DISPLAY space — the line as
 		// painted, with the caret mapped onto it (a caret inside a button
 		// parks on the button). Identity when the line has no buttons.
-		rawLen := len([]rune(line))
 		line, curRune := e.displayCaretLine(w, line, w.CursorPos().Rune)
 		targetCol = e.caretVisualColumn(w, line, curRune, tabSize)
 		if e.winRTL(w) {
+			// Content only: the terminator's marker cells paint into the left
+			// padding under rtl (see prepareLineForDisplay), so counting them
+			// here would put the reading-space scroll a cell out of step with
+			// the caret column, which never counts them either.
 			vw = e.lineVisualWidth(w, line, tabSize)
-			if w.ViewState.ShowInvisibles {
-				// Terminator marker cells, counted against the RAW line (the
-				// display substitution above changes the content length).
-				full := w.Buffer.GetLine(w.CursorPos().Line)
-				vw += len([]rune(full)) - rawLen
-			}
 		}
 		if targetCol < 0 && !e.winRTL(w) && !e.caretWantsPhantom(w) {
 			targetCol = 0

@@ -776,6 +776,19 @@ func (e *Editor) dragSelResolve(w *viewport.Viewport, x, y int) (docLine, runePo
 		return lastLine, endRune, true
 	}
 
+	// The mirror at the top: dragged above the document's FIRST line — its row
+	// is visible and the pointer sits above it — the selection reaches the
+	// START of the document (BOF), not just the horizontal position on that
+	// row. A pointer pinned on the grid's first row counts as "above" when the
+	// document's first line is already there, since no host can report a row
+	// that does not exist (the same allowance dragScrollTrack makes to engage
+	// the scroll). While line 0 is still scrolled off the top neither test
+	// passes, so the autoscroll carries the drag upward until it is.
+	firstLineRow := w.ContentY + 1 - w.ViewState.ViewOffsetY
+	if y < firstLineRow || (y <= 1 && firstLineRow <= 1) {
+		return 0, 0, true
+	}
+
 	top := w.ContentY + 1 // 1-based first content row
 	bottom := w.ContentY + visText
 	if y < top {
@@ -999,15 +1012,14 @@ func (e *Editor) dragScrollTick() {
 		// running past the text would strand the view in blank space).
 		raw := strings.TrimRight(w.Buffer.GetLine(e.dragSel.lastLine), "\n\r")
 		if e.lineVisualWidth(w, raw, e.tabSize(w)) > w.ViewState.ViewOffsetX+w.ContentWidth {
-			// scroll_right in BOTH directions. ViewOffsetX counts columns
-			// scrolled past the near edge, and under direction=rtl that near
-			// edge is the reading start on the right — so raising it reveals
-			// the tail either way, and dragScrollTrack has already mirrored
-			// WHICH edge arms the scroll. Flipping the command here mirrored it
-			// a second time: scroll_left drove the view back toward the reading
-			// start, and at offset 0 (or the phantom's -1) it does nothing at
-			// all, so dragging past an RTL line's far edge never scrolled.
+			// Scroll toward the edge the pointer is past, named visually:
+			// dragScrollTrack arms on the right edge under ltr and the left
+			// under rtl, and scroll_left/scroll_right are visual commands, so
+			// the two agree without any sign juggling here.
 			cmd := "scroll_right"
+			if e.winRTL(w) {
+				cmd = "scroll_left"
+			}
 			reps := 1 + (ds.horiz-1)/8
 			if reps > dragScrollMaxReps {
 				reps = dragScrollMaxReps
@@ -1152,17 +1164,13 @@ func (e *Editor) mouseScrollHoriz(y, dir int) {
 		}
 		e.hScrollEngaged = true
 	}
+	// The wheel is a VISUAL gesture, so it goes through the same visual
+	// mapping the scroll_left/scroll_right commands use: tilting left moves the
+	// view left whichever way the text runs.
 	if dir < 0 {
-		if w.ViewState.ViewOffsetX > 0 {
-			w.ViewState.ViewOffsetX -= 8
-			if w.ViewState.ViewOffsetX < 0 {
-				w.ViewState.ViewOffsetX = 0
-			}
-			e.RequestRender()
-		}
+		e.scrollViewHorizontal(w, -1)
 	} else {
-		w.ViewState.ViewOffsetX += 8
-		e.RequestRender()
+		e.scrollViewHorizontal(w, +1)
 	}
 }
 
