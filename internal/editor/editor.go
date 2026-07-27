@@ -6052,6 +6052,10 @@ func (e *Editor) ensureCursorVisible(w *viewport.Viewport) {
 func (e *Editor) ensureCursorVisibleVertical(w *viewport.Viewport) {
 	w.ViewState.ScrollDetached = false
 	e.clampViewToCaret(w)
+	// Vertical movement does not scroll horizontally, but the caret may have
+	// landed on (or left) a line whose end needs the phantom column, which is a
+	// one-cell adjustment rather than a scroll.
+	e.reconcilePhantomColumn(w)
 }
 
 // clampViewToCaret scrolls the viewport vertically the minimum needed to bring
@@ -6147,7 +6151,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 				vw += len([]rune(full)) - rawLen
 			}
 		}
-		if targetCol < 0 && !e.winRTL(w) && !e.phantomColumnWanted(w, targetCol) {
+		if targetCol < 0 && !e.winRTL(w) && !e.caretWantsPhantom(w) {
 			targetCol = 0
 		}
 	}
@@ -6219,8 +6223,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		if reading < 0 {
 			reading = 0
 		}
-		if reading == 0 && targetCol == vw && !w.HasGhostCursor &&
-			e.phantomColumnWanted(w, targetCol) {
+		if !w.HasGhostCursor && e.caretWantsPhantom(w) {
 			phantom = true
 			reading = -1
 		}
@@ -6234,7 +6237,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		return
 	}
 
-	if targetCol < 0 && !w.HasGhostCursor && e.phantomColumnWanted(w, targetCol) {
+	if !w.HasGhostCursor && e.caretWantsPhantom(w) {
 		phantom = true // targetCol stays -1: the window checks scroll to it
 	}
 	if targetCol < dispOff {
@@ -6246,25 +6249,89 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 	}
 }
 
-// phantomColumnWanted reports whether the caret has earned the phantom column:
-// its computed visual position is one cell past the line's leading edge
-// (targetCol -1 under an LTR base; at the reading start's far side under RTL,
-// which the caller detects as targetCol == vw) while its logical rune is
-// positive — there is content it stands after. Under RTL it additionally
-// requires the caret to take an LTR run's direction: a caret on an RTL rune at
-// the reading start marks the cell the NEXT character will occupy and clamps
-// onto the edge cell as it always has (the same split the gutter dip and the
-// bar nudge use, via bidi.RTLAt).
-func (e *Editor) phantomColumnWanted(w *viewport.Viewport, targetCol int) bool {
-	if w == nil || w.Buffer == nil || w.CursorPos().Rune <= 0 {
+// caretWantsPhantom reports whether the caret has earned the phantom column:
+// its insertion point lies one cell PAST the line's leading edge while its
+// logical rune is positive — there is content it stands after. Under an LTR
+// base that is visual column -1 (the reading end of an RTL run starting the
+// line); under RTL it is one cell past the content's rightmost cell, and the
+// caret must additionally take an LTR run's direction — a caret on an RTL rune
+// at the reading start marks the cell the NEXT character will occupy and keeps
+// its clamp (the same split the gutter dip and the bar nudge use, via
+// bidi.RTLAt).
+//
+// The RTL measure is the CONTENT's visual width, deliberately excluding the
+// terminator marker cells showInvisibles appends: the caret's own column never
+// counts them, so measuring against the marker-inflated width read as "one cell
+// in from the edge" and silently withheld the phantom whenever invisibles were
+// on.
+//
+// This is pure CARET geometry: a ghost column does not enter into it. Vertical
+// movement sets a ghost even when the caret lands exactly at a line's end (the
+// remembered column and the caret coincide there), so excluding ghosts here
+// withheld the phantom from every arrival by arrow key. Where the ghost really
+// matters is the horizontal FOLLOW, whose scroll target is the ghost rather
+// than the caret; that is gated separately.
+func (e *Editor) caretWantsPhantom(w *viewport.Viewport) bool {
+	if w == nil || w.Buffer == nil {
 		return false
 	}
-	if !e.winRTL(w) {
-		return targetCol == -1
-	}
+	// An insertion point past the leading edge needs content it stands AFTER,
+	// so rune 0 cannot want the phantom for that reason. The bar case below is
+	// the exception: it is about a bar needing the cell beside the character it
+	// sits ON, which is exactly the line's first rune.
+	afterContent := w.CursorPos().Rune > 0
 	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
 	dispLine, curRune := e.displayCaretLine(w, line, w.CursorPos().Rune)
-	return !bidi.RTLAt([]rune(dispLine), curRune, true)
+	tabSize := e.tabSize(w)
+	col := e.caretVisualColumn(w, dispLine, curRune, tabSize)
+	if !e.winRTL(w) {
+		return afterContent && col == -1
+	}
+	vwContent := e.lineVisualWidth(w, dispLine, tabSize)
+	caretRTL := bidi.RTLAt([]rune(dispLine), curRune, true)
+	if col == vwContent {
+		return afterContent && !caretRTL
+	}
+	// One more RTL case, for the BAR shapes alone. A bar draws on the LEFT edge
+	// of the cell it is addressed to, so on the reading start's RTL character
+	// its insertion point — that character's right edge — is one cell further
+	// out. A mirrored gutter supplies that cell (positionCursor dips into it);
+	// with line numbers off there is nothing past the content, and the bar
+	// clamps back onto the character, landing exactly where the caret one rune
+	// along would. The phantom gives it a cell of its own.
+	if caretRTL && col == vwContent-1 && !w.ViewState.ShowLineNumbers {
+		if shape := e.cursorStyleFor(w); shape == 5 || shape == 6 {
+			return true
+		}
+	}
+	return false
+}
+
+// reconcilePhantomColumn takes or releases the phantom column for the caret as
+// it now stands, WITHOUT otherwise disturbing the horizontal scroll — it only
+// ever moves between 0 and -1, never touching a scrolled view.
+//
+// Vertical movement deliberately leaves the horizontal offset alone (see
+// ensureCursorVisibleVertical), so arriving at a line whose end sits at the
+// leading edge would otherwise leave the caret pinned on the character it
+// stands after — or, under rtl with a gutter, dipped onto a line-number digit —
+// until some later command happened to run the full horizontal follow.
+func (e *Editor) reconcilePhantomColumn(w *viewport.Viewport) {
+	if w == nil {
+		return
+	}
+	phantomOff := -1
+	if w.Buffer != nil {
+		if _, dw := e.lineDisplaySpans(w, w.CursorPos().Line); dw {
+			phantomOff = -2 // a doubled row stores twice the display offset
+		}
+	}
+	switch want := e.caretWantsPhantom(w); {
+	case want && w.ViewState.ViewOffsetX == 0:
+		w.ViewState.ViewOffsetX = phantomOff
+	case !want && w.ViewState.ViewOffsetX < 0:
+		w.ViewState.ViewOffsetX = 0
+	}
 }
 
 // setupKeyMappingsFromConfig sets up key mappings from the loaded config file.

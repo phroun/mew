@@ -1041,11 +1041,14 @@ func TestBidiPhantomBeatsGutterDip(t *testing.T) {
 	}
 }
 
-// A caret ON an RTL rune at the reading start is not the phantom's case: it
-// marks the cell the next character will occupy and the offset stays put.
+// A caret ON an RTL rune at the reading start is not the phantom's case for a
+// cell-filling shape: it marks the cell the next character will occupy and the
+// offset stays put. (A BAR there is the one exception — see
+// TestBidiPhantomForBarAtReadingStart.)
 func TestBidiPhantomNotForRTLReadingStart(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "אבג\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.Config.InsertCursor = 2 // block
 	w.ViewState.ShowLineNumbers = false
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.ensureCursorVisible(w)
@@ -1106,5 +1109,111 @@ func TestBidiPhantomSymmetricBothDirections(t *testing.T) {
 				t.Fatalf("caret col %d, want %d", col, tc.caretCol(e, w))
 			}
 		})
+	}
+}
+
+// rtlPhantomEditor: an RTL viewport with line numbers on, a long first line
+// ending in Latin text and two shorter lines, for arrival-path tests.
+func rtlPhantomEditor(t *testing.T) (*Editor, *viewport.Viewport, *bytes.Buffer) {
+	t.Helper()
+	e, w, out := newRenderedEditor(t, "this is a test of it working. h\nsecond line here\nthird line here!\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.Config.InsertCursor = 2 // block: its column IS the caret cell
+	e.performRender()
+	return e, w, out
+}
+
+// The caret must reach the phantom column however it ARRIVES at a line's end.
+// Vertical movement deliberately does not scroll horizontally, so it once left
+// the caret dipped onto a line-number digit; and it sets a ghost even when the
+// caret lands exactly at the end, which must not withhold the phantom either.
+func TestBidiPhantomOnEveryArrival(t *testing.T) {
+	arrivals := []struct {
+		name string
+		rune int
+		do   func(e *Editor, w *viewport.Viewport)
+	}{
+		{"go_line_end", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+			e.executeCommand("go_line_end")
+		}},
+		{"go_char_next", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 30})
+			e.executeCommand("go_char_next")
+		}},
+		{"arrow up to a longer line's end", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 1, Rune: 16})
+			e.afterHorizontalMovement(w)
+			e.executeCommand("go_line_prior")
+		}},
+		{"arrow up to a shorter line's end", 16, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 2, Rune: 16})
+			e.afterHorizontalMovement(w)
+			e.executeCommand("go_line_prior")
+		}},
+		{"arrow down to a shorter line's end", 16, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 31})
+			e.afterHorizontalMovement(w)
+			e.executeCommand("go_line_next")
+		}},
+	}
+	for _, a := range arrivals {
+		t.Run(a.name, func(t *testing.T) {
+			e, w, out := rtlPhantomEditor(t)
+			a.do(e, w)
+			if got := w.CursorPos().Rune; got != a.rune {
+				t.Fatalf("caret at rune %d, want %d (test setup)", got, a.rune)
+			}
+			if w.ViewState.ViewOffsetX != -1 {
+				t.Fatalf("offset %d, want the phantom column -1", w.ViewState.ViewOffsetX)
+			}
+			out.Reset()
+			e.performRender()
+			_, col := lastCursor(out.Bytes())
+			contentRight := e.Renderer.Width - w.LineNumWidth
+			if col != contentRight {
+				t.Fatalf("caret col %d, want the content edge %d — NOT the gutter at %d",
+					col, contentRight, contentRight+1)
+			}
+		})
+	}
+}
+
+// showInvisibles appends terminator marker cells to the line's measured width
+// that the caret's own column never counts. Measuring the phantom against that
+// inflated width read as "one cell in from the edge" and withheld it.
+func TestBidiPhantomWithInvisibles(t *testing.T) {
+	e, w, _ := rtlPhantomEditor(t)
+	e.setOption(w, "showInvisibles", "yes")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.executeCommand("go_line_end")
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("offset %d, want the phantom column -1 with invisibles on",
+			w.ViewState.ViewOffsetX)
+	}
+}
+
+// A BAR at an RTL line's FIRST rune is the one case where a caret sitting ON a
+// character still needs the phantom: the bar draws on its cell's left edge, so
+// its insertion point is one cell further out, and with no gutter to supply
+// that cell it would clamp back onto the character — indistinguishable from the
+// caret one rune along. Block and underline shapes fill their cell and do not.
+func TestBidiPhantomForBarAtReadingStart(t *testing.T) {
+	for _, tc := range []struct {
+		shape int
+		want  int
+	}{{2, 0}, {4, 0}, {5, -1}, {6, -1}} {
+		e, w, _ := newRenderedEditor(t, "אבגד\n")
+		e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+		e.setOption(w, "showLineNumbers", "no")
+		e.Config.InsertCursor = tc.shape
+		e.performRender()
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+		e.ensureCursorVisible(w)
+		if w.ViewState.ViewOffsetX != tc.want {
+			t.Fatalf("shape %d: offset %d, want %d", tc.shape, w.ViewState.ViewOffsetX, tc.want)
+		}
 	}
 }
