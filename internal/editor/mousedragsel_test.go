@@ -467,3 +467,34 @@ func TestMouseDragAutoScrollVerticalSurvivesHorizontal(t *testing.T) {
 	}
 	send("MouseLeftRelease")
 }
+
+// One drag gesture is ONE undo step: however many cells the pointer crosses
+// (each moving _block_end, minting decoration revisions), press-to-release is
+// wrapped in a user-command transaction, so a single undo removes the whole
+// selection — not one cell movement at a time.
+func TestMouseDragIsOneUndoStep(t *testing.T) {
+	_, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\ndddd\n")
+
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	// A slow drag: several distinct cells, each a mark movement.
+	for _, cell := range []struct{ line, col int }{
+		{0, 2}, {0, 3}, {1, 1}, {1, 3}, {2, 2}, {3, 1},
+	} {
+		dx, dy := screenAt(w, cell.line, cell.col)
+		send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx, dy))
+	}
+	send("MouseLeftRelease")
+	if !w.Buffer.HasBlockMarks() {
+		t.Fatal("the drag should have marked a block")
+	}
+
+	// ONE undo removes the entire drag's marks.
+	if !w.Buffer.Undo() {
+		t.Fatal("undo should have a step to remove")
+	}
+	if w.Buffer.HasBlockMarks() {
+		t.Fatal("one undo should remove the whole drag selection, not one cell of it")
+	}
+}

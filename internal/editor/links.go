@@ -208,6 +208,24 @@ func (e *Editor) focusedLinkButton(w *viewport.Viewport) *linkSpan {
 	return e.caretLinkSpan(w)
 }
 
+// linkButtonAt returns the rendered link button covering a document position
+// of w, independent of focus and of w's caret: w must be in browse mode with
+// the link layer on, and the position must fall in a link span (half-open,
+// left edge counts). Mouse routing uses it to recognize a button press in an
+// UNFOCUSED viewport.
+func (e *Editor) linkButtonAt(w *viewport.Viewport, docLine, runePos int) *linkSpan {
+	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing {
+		return nil
+	}
+	spans := e.linkSpansOnLine(w, docLine)
+	for i := range spans {
+		if spans[i].Start <= runePos && runePos < spans[i].End {
+			return &spans[i]
+		}
+	}
+	return nil
+}
+
 // navFollow (the nav_follow command) NAVIGATES to the link at the caret: the
 // target resolves through the dokuwiki reference layers (wikiref.go) to the
 // canonical URL of a real file, which is opened IN PLACE — an already-open
@@ -240,6 +258,14 @@ func (e *Editor) navFollow(always bool) bool {
 	if span == nil {
 		return false
 	}
+	return e.followLinkSpan(w, span)
+}
+
+// followLinkSpan performs the follow of one link span in viewport w — the
+// shared tail of navFollow and the mouse press/release follow, which may act
+// on an UNFOCUSED (but visible) viewport. w navigates in place (or spawns per
+// the resolution), never gaining or losing focus here.
+func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 	// Resolve, then record the visit under its RESOLVED identity (editor-wide):
 	// any other spelling of the same destination, in any buffer, now paints in
 	// the "recent" style. The paint memo is primed with the fresh resolution.

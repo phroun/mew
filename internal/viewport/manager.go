@@ -428,6 +428,13 @@ type Viewport struct {
 	ContentHeight int
 	LineNumWidth  int
 
+	// LayoutEpoch is the renderer's frame counter as of the last frame that
+	// actually laid this viewport out. A viewport whose epoch matches the
+	// renderer's current epoch is TRULY on screen; a stale epoch marks a
+	// background viewport (an unshown main) whose geometry above is left over
+	// from an earlier frame and must not win mouse hit-testing.
+	LayoutEpoch uint64
+
 	// Legacy callback for simple prompts (2 params)
 	Callback func(input string, accepted bool)
 	// PromptCallback for full prompt support (3 params matching TypeScript)
@@ -1642,7 +1649,18 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	targetMain := mains[targetIndex]
 
 	// Resolve to the target main's newest prompt buffer, if it has one.
-	target := targetMain
+	target := m.cycleResolveLocked(targetMain)
+
+	if target.ID == m.focusedViewportID {
+		return ""
+	}
+	return target.ID
+}
+
+// cycleResolveLocked resolves a cycle-target main to what the focus switcher
+// actually lands on: the main's newest visible prompt buffer when one is open,
+// else the main itself. Caller must hold m.mu (read or write).
+func (m *Manager) cycleResolveLocked(targetMain *Viewport) *Viewport {
 	var newestPrompt *Viewport
 	for _, w := range m.viewports {
 		if w.Type == PromptViewport && w.Visible && w.ParentViewport == targetMain {
@@ -1652,13 +1670,33 @@ func (m *Manager) focusCycleTarget(offset int) string {
 		}
 	}
 	if newestPrompt != nil {
-		target = newestPrompt
+		return newestPrompt
 	}
+	return targetMain
+}
 
-	if target.ID == m.focusedViewportID {
-		return ""
+// FocusViewportAsCycle focuses w exactly the way the focus switcher
+// (FocusNextViewport / ^B N) would land on it: only if w is a cycle stop
+// (focus-eligible, visible, CanFocus), and resolving to w's newest open
+// prompt buffer when it has one. Reports whether focus changed. Used by
+// mouse routing: a click on an unfocused cycle-reachable viewport focuses it
+// like a cycle step.
+func (m *Manager) FocusViewportAsCycle(w *Viewport) bool {
+	if w == nil {
+		return false
 	}
-	return target.ID
+	m.mu.RLock()
+	eligible := w.FocusEligible() && w.Visible && w.CanFocus
+	var target *Viewport
+	if eligible {
+		target = m.cycleResolveLocked(w)
+	}
+	focused := m.focusedViewportID
+	m.mu.RUnlock()
+	if target == nil || target.ID == focused {
+		return false
+	}
+	return m.SetFocus(target.ID)
 }
 
 // FocusNextViewport cycles focus to the next focusable viewport. The switch is

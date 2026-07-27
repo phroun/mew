@@ -306,6 +306,13 @@ type Editor struct {
 	// origin, end following the pointer). A shift+click arms it pre-begun
 	// with the ORIGINAL caret position as the origin.
 	dragSel dragSelState
+	// dragTxnBuf is the buffer holding an open user-command transaction for
+	// the CURRENT drag selection, so the whole gesture's mark movements
+	// coalesce into ONE garland revision (one undo step) instead of one per
+	// pointer cell. Opened when the drag first places marks, closed on
+	// release. Like pasteBuf, the buffer is pinned at open so a mid-gesture
+	// buffer swap cannot orphan the transaction.
+	dragTxnBuf *buffer.Buffer
 	// Drag-edge autoscroll (mouse.go): while a drag selection holds the
 	// pointer beyond (or at) the viewport's edges, a ticker scrolls the view —
 	// after a short delay, at a speed from the overshoot — and keeps

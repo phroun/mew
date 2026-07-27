@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/viewport"
 )
@@ -416,17 +417,24 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 	return w, docLine, idx, true
 }
 
-// viewportAtRow finds the visible viewport whose CONTENT area covers the 1-based
-// screen row (the renderer maintains ContentY/ContentHeight per frame). The
-// FOCUSED viewport wins outright when it covers the row: only the current main
-// viewport is laid out each frame, so a background main viewport's stale
-// geometry can cover the same rows — and every mouse action is
-// focused-gated anyway, so the focused viewport is the only correct answer
-// wherever it covers.
+// viewportOnScreen reports whether w was laid out by the most recent frame —
+// truly visible, with current geometry. A background main viewport keeps its
+// Visible flag and stale geometry from an earlier frame; the layout-epoch
+// stamp is what tells the two apart.
+func (e *Editor) viewportOnScreen(w *viewport.Viewport) bool {
+	return w != nil && w.Visible && w.Buffer != nil &&
+		e.Renderer != nil && w.LayoutEpoch == e.Renderer.LayoutEpoch()
+}
+
+// viewportAtRow finds the on-screen viewport whose CONTENT area covers the
+// 1-based screen row (the renderer maintains ContentY/ContentHeight per
+// frame). Only viewports laid out by the CURRENT frame qualify — a background
+// main viewport's stale geometry can cover the same rows and must not win.
+// The focused viewport takes the row as a tiebreak when areas overlap.
 func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
 	row := y - 1 // ContentY is 0-based
 	covers := func(w *viewport.Viewport) bool {
-		return w != nil && w.Visible && w.Buffer != nil &&
+		return e.viewportOnScreen(w) &&
 			row >= w.ContentY && row < w.ContentY+w.ContentHeight
 	}
 	if fw := e.ViewportManager.GetFocusedViewport(); covers(fw) {
@@ -437,8 +445,6 @@ func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
 		if !covers(w) {
 			continue
 		}
-		// Prefer main buffers when areas would overlap (stale geometry
-		// on hidden viewports).
 		if best == nil || (!best.FocusEligible() && w.FocusEligible()) {
 			best = w
 		}
@@ -527,6 +533,7 @@ func displayToDoc(dispToDoc []int, idx int) int {
 // dragSelUpdate). A press that captured a link button does not — its drag
 // tracks the button.
 func (e *Editor) mousePress(x, y int, shift bool) {
+	e.endDragTxn() // a lost release: never carry a stale gesture transaction
 	w, docLine, runePos, ok := e.mouseHit(x, y)
 	if !ok {
 		// A press on the BLANK AREA below the document's last line (still
@@ -534,7 +541,32 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// click below the doc and drag upward to select its tail.
 		w, docLine, runePos, ok = e.mouseHitBelowText(x, y)
 	}
-	if !ok || e.ViewportManager.GetFocusedViewport() != w {
+	if !ok {
+		return
+	}
+	if e.ViewportManager.GetFocusedViewport() != w {
+		// An UNFOCUSED viewport takes a press in exactly two cases — and only
+		// while no modal prompt holds focus (clicks elsewhere stay inert then).
+		if e.promptHasPriority() || !e.viewportOnScreen(w) {
+			return
+		}
+		// A link button does NOT steal focus: pressing one in a truly visible
+		// viewport captures it for the press/release follow, same as in the
+		// focused viewport, leaving focus (and this viewport's caret) alone.
+		if span := e.linkButtonAt(w, docLine, runePos); span != nil {
+			e.mousePressed = pressedLink{active: true, winID: w.ID, line: docLine, start: span.Start}
+			e.mouseOnCaptured = true
+			e.RequestRender()
+			return
+		}
+		// A NON-link press focuses the viewport exactly the way the focus
+		// switcher (^B N) would land on it — cycle-stop eligibility and the
+		// newest-prompt resolution included. The click only switches focus;
+		// it does not also place the caret.
+		if e.ViewportManager.FocusViewportAsCycle(w) {
+			e.announceFocusedViewport()
+			e.RequestRender()
+		}
 		return
 	}
 
@@ -543,6 +575,7 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// A shift+click is the mouse user's DELIBERATE selection: the
 		// mouse-block flag goes OFF, so this block persists through later
 		// plain clicks exactly like a keyboard-made one.
+		e.beginDragTxn(w.Buffer)
 		origin := w.CursorPos()
 		w.Buffer.SetMark("_block_begin", origin.Line, origin.Rune)
 		w.Buffer.SetMark("_block_end", docLine, runePos)
@@ -652,6 +685,9 @@ func (e *Editor) dragSelUpdate(x, y int) {
 		if docLine == e.dragSel.originLine && runePos == e.dragSel.originRune {
 			return // still on the press cell: no selection yet
 		}
+		// The drag becomes a selection here: open the gesture's transaction so
+		// every mark movement until release lands in ONE undo step.
+		e.beginDragTxn(w.Buffer)
 		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, e.dragSel.originRune)
 		e.dragSel.begun = true
 	}
@@ -839,6 +875,30 @@ func (e *Editor) dragScrollTrack(w *viewport.Viewport, x, y int) {
 	}
 }
 
+// beginDragTxn opens (once) the user-command transaction that makes a whole
+// drag selection ONE undo step: garland coalesces every mark movement inside
+// it into a single revision. The buffer is pinned so a mid-gesture swap
+// cannot orphan the open transaction. The transaction itself opens lazily in
+// garland on the first mutation, so a drag that never marks costs nothing.
+func (e *Editor) beginDragTxn(buf *buffer.Buffer) {
+	if e.dragTxnBuf != nil || buf == nil {
+		return
+	}
+	e.dragTxnBuf = buf
+	buf.BeginUserCommand("drag_select")
+}
+
+// endDragTxn closes the drag-selection transaction, if one is open. Called on
+// release (the gesture's natural end) and defensively on a fresh press (a
+// release the terminal never delivered).
+func (e *Editor) endDragTxn() {
+	if e.dragTxnBuf == nil {
+		return
+	}
+	e.dragTxnBuf.EndUserCommand()
+	e.dragTxnBuf = nil
+}
+
 // dragScrollStop ends the autoscroll ticker (mouse release).
 func (e *Editor) dragScrollStop() {
 	if e.dragScroll.stop != nil {
@@ -931,14 +991,27 @@ func (e *Editor) dragScrollTick() {
 func (e *Editor) mouseRelease(x, y int) {
 	e.dragSel = dragSelState{}
 	e.dragScrollStop()
+	e.endDragTxn()
 	if !e.mousePressed.active {
 		return
 	}
+	pressed := e.mousePressed
 	onButton := e.hitOnPressedButton(x, y)
 	e.mousePressed = pressedLink{}
 	e.mouseOnCaptured = false
 	if onButton {
-		e.navFollow(false)
+		// Follow in the viewport the press CAPTURED — which may be an
+		// unfocused (but visible) one; the follow neither needs nor takes
+		// focus there.
+		if w := e.ViewportManager.GetViewport(pressed.winID); w != nil {
+			for _, s := range e.linkSpansOnLine(w, pressed.line) {
+				if s.Start == pressed.start {
+					sp := s
+					e.followLinkSpan(w, &sp)
+					break
+				}
+			}
+		}
 	}
 	e.RequestRender()
 }
@@ -949,12 +1022,19 @@ func (e *Editor) mouseRelease(x, y int) {
 // actually changes.
 func (e *Editor) mouseHoverAt(x, y int) {
 	nh := pressedLink{}
-	if w, docLine, runePos, ok := e.mouseHit(x, y); ok &&
-		e.ViewportManager.GetFocusedViewport() == w && w.ViewState.LinkBrowsing {
-		for _, s := range e.linkSpansOnLine(w, docLine) {
-			if s.Start <= runePos && runePos < s.End {
-				nh = pressedLink{active: true, winID: w.ID, line: docLine, start: s.Start}
-				break
+	if w, docLine, runePos, ok := e.mouseHit(x, y); ok && w.ViewState.LinkBrowsing {
+		focused := e.ViewportManager.GetFocusedViewport() == w
+		// The focused viewport hovers links in either mode; an UNFOCUSED but
+		// truly visible viewport hovers only its browse-mode BUTTONS — the
+		// ones a click now follows — and never while a modal prompt is up.
+		hoverable := focused ||
+			(!e.promptHasPriority() && e.viewportOnScreen(w) && w.BrowseActive)
+		if hoverable {
+			for _, s := range e.linkSpansOnLine(w, docLine) {
+				if s.Start <= runePos && runePos < s.End {
+					nh = pressedLink{active: true, winID: w.ID, line: docLine, start: s.Start}
+					break
+				}
 			}
 		}
 	}
@@ -993,13 +1073,32 @@ func (e *Editor) hScrollReset() {
 	e.hScrollDir = 0
 }
 
-// mouseScrollHoriz scrolls the focused viewport under the pointer sideways by one
-// step (via the registered scroll_left/scroll_right command, so the step and
-// clamping match the keyboard), but only once the barrier is cleared. dir is
-// -1 for left, +1 for right. A direction reversal restarts the barrier.
-func (e *Editor) mouseScrollHoriz(y, dir int) {
+// wheelTarget resolves the viewport a wheel event over row y may scroll: the
+// on-screen viewport under the pointer. The focused viewport always
+// qualifies; an UNFOCUSED one qualifies too — the wheel scrolls what the
+// pointer is over, without moving focus — except while a modal prompt holds
+// focus (then, as with every mouse action, only the prompt itself responds).
+func (e *Editor) wheelTarget(y int) *viewport.Viewport {
 	w := e.viewportAtRow(y)
-	if w == nil || w.Buffer == nil || e.ViewportManager.GetFocusedViewport() != w {
+	if w == nil || w.Buffer == nil {
+		return nil
+	}
+	if e.ViewportManager.GetFocusedViewport() == w {
+		return w
+	}
+	if e.promptHasPriority() || !e.viewportOnScreen(w) {
+		return nil
+	}
+	return w
+}
+
+// mouseScrollHoriz scrolls the viewport under the pointer sideways by one
+// 8-column step (the same step and clamping as the scroll_left/scroll_right
+// commands), but only once the barrier is cleared. dir is -1 for left, +1 for
+// right. A direction reversal restarts the barrier.
+func (e *Editor) mouseScrollHoriz(y, dir int) {
+	w := e.wheelTarget(y)
+	if w == nil {
 		return
 	}
 	if e.hScrollDir != dir { // first tick, or reversed: re-arm
@@ -1015,17 +1114,25 @@ func (e *Editor) mouseScrollHoriz(y, dir int) {
 		e.hScrollEngaged = true
 	}
 	if dir < 0 {
-		e.executeCommand("scroll_left")
+		if w.ViewState.ViewOffsetX > 0 {
+			w.ViewState.ViewOffsetX -= 8
+			if w.ViewState.ViewOffsetX < 0 {
+				w.ViewState.ViewOffsetX = 0
+			}
+			e.RequestRender()
+		}
 	} else {
-		e.executeCommand("scroll_right")
+		w.ViewState.ViewOffsetX += 8
+		e.RequestRender()
 	}
 }
 
-// mouseScroll scrolls the viewport under the pointer by delta lines — only
-// when it is the focused viewport (modal safety, as with every mouse action).
+// mouseScroll scrolls the viewport under the pointer by delta lines — the
+// focused one, or any truly visible viewport the pointer is over (the wheel
+// follows the pointer, not the focus; a modal prompt still blocks it).
 func (e *Editor) mouseScroll(x, y int, delta int) {
-	w := e.viewportAtRow(y)
-	if w == nil || w.Buffer == nil || e.ViewportManager.GetFocusedViewport() != w {
+	w := e.wheelTarget(y)
+	if w == nil {
 		return
 	}
 	// Free scroll: park the viewport delta lines away and leave the caret where

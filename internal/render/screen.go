@@ -37,6 +37,11 @@ type ScreenRenderer struct {
 	viewportManager *viewport.Manager
 	layoutManager   *viewport.LayoutManager
 
+	// layoutEpoch counts layout passes; each pass stamps the viewports it laid
+	// out (Viewport.LayoutEpoch), giving mouse hit-testing a "truly on screen
+	// this frame" test that stale geometry cannot satisfy.
+	layoutEpoch uint64
+
 	// Custom renderers for plugin viewports
 	customRenderers map[string]CustomRendererFunc
 
@@ -244,6 +249,13 @@ func (sr *ScreenRenderer) SetRulerRenderer(renderer CustomRendererFunc) {
 
 // SetSyntaxColorizer sets the per-line syntax-color source used as the base
 // text color of content cells.
+// LayoutEpoch reports the current layout pass counter. A viewport whose
+// LayoutEpoch equals this value was laid out by the most recent frame — it is
+// truly on screen, with current geometry.
+func (sr *ScreenRenderer) LayoutEpoch() uint64 {
+	return sr.layoutEpoch
+}
+
 func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport, docLine int) []string) {
 	sr.syntaxColorizer = colorizer
 }
@@ -526,12 +538,17 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 }
 
 // updateViewportContentProperties updates calculated properties on viewports.
+// Each laid-out viewport is stamped with the new layout epoch: geometry on a
+// viewport whose stamp is older belongs to an earlier frame (a background main
+// not shown now) and mouse hit-testing must ignore it.
 func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout) {
 	allLayouts := append(append(layout.TopLayout, layout.MainLayout...), layout.BottomLayout...)
+	sr.layoutEpoch++
 
 	for _, wl := range allLayouts {
 		w := wl.Viewport
 
+		w.LayoutEpoch = sr.layoutEpoch
 		w.ContentY = wl.Y
 		w.ContentHeight = wl.Height
 
