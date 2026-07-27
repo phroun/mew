@@ -347,19 +347,75 @@ func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
 	}
 }
 
-// help_toggle is a peek: it opens the help slot without stealing focus.
-func TestHelpToggleDoesNotFocus(t *testing.T) {
+// help_toggle with a PAGE argument is a request to read: it focuses the help
+// viewport, so the keyboard drives the page the reader just asked for.
+func TestHelpTogglePageFocuses(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	e.executeCommand(`help_toggle "manual"`)
+	hw := e.helpViewport()
+	if hw == nil {
+		t.Fatal("help_toggle should open the page")
+	}
+	if e.ViewportManager.GetFocusedViewport() != hw {
+		t.Fatal("help_toggle with a page should focus the help viewport")
+	}
+}
+
+// Quick Help (help_toggle with NO argument) stays a peek: it follows the key
+// prefix being typed, so it must never take the caret.
+func TestHelpToggleQuickHelpDoesNotFocus(t *testing.T) {
+	e := helpTestEditor(t, nil)
 	doc := e.ViewportManager.GetFocusedViewport()
 	if doc == nil {
 		t.Fatal("a doc viewport should be focused at start")
 	}
-	e.executeCommand(`help_toggle "manual"`)
+	e.executeCommand("help_toggle")
 	if e.helpViewport() == nil {
-		t.Fatal("help_toggle should open the page")
+		t.Fatal("help_toggle should open Quick Help")
 	}
 	if e.ViewportManager.GetFocusedViewport() != doc {
-		t.Fatal("help_toggle must not steal focus")
+		t.Fatal("Quick Help must not steal focus")
+	}
+}
+
+// Toggling a focused help page back off returns focus to the viewport last
+// focused in the blank viewport set — the document the reader came from, even
+// when another document was created after it.
+func TestHelpToggleOffRestoresFocus(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	// A second document, created LAST, so a fallback that picks by creation
+	// order would land here instead of on the reader's own document.
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, Type: viewport.DocViewport, Dock: viewport.DockNone,
+		Buffer: buffer.NewFromString("other\n"),
+	})
+	doc := e.ViewportManager.GetFocusedViewport()
+
+	e.executeCommand(`help_toggle "manual"`)
+	if e.ViewportManager.GetFocusedViewport() == doc {
+		t.Fatal("help_toggle with a page should have moved focus into help")
+	}
+	e.executeCommand(`help_toggle "manual"`) // same location: toggles off
+
+	if e.helpViewport() != nil {
+		t.Fatal("the second toggle should close the help viewport")
+	}
+	if got := e.ViewportManager.GetFocusedViewport(); got != doc {
+		t.Fatalf("focus returned to %v, want the document the reader came from", got)
+	}
+}
+
+// Closing help that does NOT hold the keyboard leaves focus alone.
+func TestHelpToggleOffLeavesUnfocusedCaret(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
+	doc := e.ViewportManager.GetFocusedViewport()
+	e.executeCommand(`help_toggle "manual"`) // focuses help
+	e.ViewportManager.SetFocus(doc.ID)       // reader clicks back into the document
+
+	e.executeCommand(`help_toggle "manual"`) // closes the slot
+
+	if got := e.ViewportManager.GetFocusedViewport(); got != doc {
+		t.Fatalf("focus = %v, want the document to keep the caret", got)
 	}
 }
 

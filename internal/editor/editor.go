@@ -6974,9 +6974,18 @@ func (e *Editor) syncQuickHelpMode() {
 }
 
 // toggleHelp is the help_toggle command: open/navigate the docked help slot, or
-// close it when it is already showing the target — and NEVER steal focus, so it
-// is a peek that leaves the caret where it was.
-func (e *Editor) toggleHelp(arg string) bool { return e.openHelp(arg, true, false) }
+// close it when it is already showing the target.
+//
+// A PAGE argument (help_toggle "keys") is a request to READ, so it focuses the
+// help viewport — a reader who opened help to learn the keys cannot be expected
+// to already know the key that would move focus there — and toggling it back off
+// returns focus where the reader came from (see closeHelpViewport). With NO
+// argument the target is Quick Help, which is a peek that must never steal the
+// caret: it follows the key prefix you are typing, so taking focus would stop
+// the very typing it is describing.
+func (e *Editor) toggleHelp(arg string) bool {
+	return e.openHelp(arg, true, strings.TrimSpace(arg) != "")
+}
 
 // openHelpFocused is the help_open command: like help_toggle but it only ever
 // opens or replaces — it never closes — and it FOCUSES the help viewport, so the
@@ -6989,8 +6998,9 @@ func (e *Editor) openHelpFocused(arg string) bool { return e.openHelp(arg, false
 //
 //	allowClose — when the slot is ALREADY showing the target, close it (toggle
 //	             behavior); otherwise leave it open and merely re-assert it.
-//	focus      — focus the help viewport after opening/navigating (help_open);
-//	             help_toggle passes false so it never steals the caret.
+//	focus      — focus the help viewport after opening/navigating (help_open, and
+//	             help_toggle for a page); Quick Help passes false so the peek
+//	             never steals the caret.
 //
 // Navigating an existing slot grows its nav history, so its back button returns
 // to where the reader came from.
@@ -7003,7 +7013,7 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 		if e.quickHelpMode && hw != nil {
 			// Already at Quick Help: toggle closes; open just re-asserts focus.
 			if allowClose {
-				e.ViewportManager.RemoveViewport(hw.ID)
+				e.closeHelpViewport(hw)
 				e.quickHelpMode = false
 				e.quickHelpBuf = nil
 				e.quickHelpShownTopic = ""
@@ -7055,7 +7065,7 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	if hw != nil && e.bufferCanonicalURL(hw.Buffer) == res.url {
 		// Already at this page: toggle closes; open just re-asserts focus.
 		if allowClose {
-			e.ViewportManager.RemoveViewport(hw.ID)
+			e.closeHelpViewport(hw)
 			e.RequestRender()
 			return true
 		}
@@ -7074,6 +7084,30 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	}
 	e.showHelpLocation(hw, buf, res.root, res.wikiName, true, focus)
 	return true
+}
+
+// closeHelpViewport closes the docked help slot and, when the slot held the
+// keyboard, hands focus back to the viewport last focused in the BLANK viewport
+// set — the ordinary document group the reader came from, as opposed to the
+// "help" set the slot itself belongs to. Reading help is a detour, so toggling
+// it off must land the reader exactly where they left, not wherever
+// RemoveViewport's generic fallback (nearest by creation order) would pick.
+//
+// The target is captured BEFORE removal: RemoveViewport re-focuses through that
+// fallback, which would overwrite the blank set's last-focused record on its way
+// out. Focus is restored only if the slot actually had it — closing help from
+// the document leaves the caret in the document, untouched.
+func (e *Editor) closeHelpViewport(hw *viewport.Viewport) {
+	if hw == nil {
+		return
+	}
+	fw := e.ViewportManager.GetFocusedViewport()
+	hadFocus := fw != nil && fw.ID == hw.ID
+	back := e.ViewportManager.LastFocusedInSet("")
+	e.ViewportManager.RemoveViewport(hw.ID)
+	if hadFocus && back != nil {
+		e.ViewportManager.SetFocus(back.ID)
+	}
 }
 
 // focusHelpViewport focuses hw when focus is set (help_open), repainting; a no-op
@@ -7154,10 +7188,10 @@ func quickHelpFitHeight(buf *buffer.Buffer) int {
 }
 
 // createHelpViewport creates the single docked help viewport (Tag "help") holding
-// buf. focus moves the caret to it (help_open); help_toggle passes false so the
-// slot opens without stealing focus. Its chrome (title bar, height envelope) is
-// set immediately afterward by applyHelpViewportChrome per the viewport's role; the
-// values here are the regular-help defaults.
+// buf. focus moves the caret to it (help_open, and help_toggle for a page); Quick
+// Help passes false so the peek opens without stealing focus. Its chrome (title
+// bar, height envelope) is set immediately afterward by applyHelpViewportChrome
+// per the viewport's role; the values here are the regular-help defaults.
 func (e *Editor) createHelpViewport(buf *buffer.Buffer, focus bool) *viewport.Viewport {
 	opts := e.docViewportOptions()
 	opts.Type = viewport.ToolViewport
