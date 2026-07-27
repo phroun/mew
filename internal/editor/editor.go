@@ -6231,8 +6231,6 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 			setOff(reading)
 		} else if reading > dispOff+effWidth-1 {
 			setOff(reading - effWidth + 1)
-		} else if dispOff < 0 && !phantom {
-			setOff(0) // the phantom column is no longer needed: release it
 		}
 		return
 	}
@@ -6244,8 +6242,6 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		setOff(targetCol)
 	} else if targetCol >= dispOff+effWidth {
 		setOff(targetCol - effWidth + 1)
-	} else if dispOff < 0 && !phantom {
-		setOff(0) // the phantom column is no longer needed: release it
 	}
 }
 
@@ -6307,9 +6303,17 @@ func (e *Editor) caretWantsPhantom(w *viewport.Viewport) bool {
 	return false
 }
 
-// reconcilePhantomColumn takes or releases the phantom column for the caret as
-// it now stands, WITHOUT otherwise disturbing the horizontal scroll — it only
-// ever moves between 0 and -1, never touching a scrolled view.
+// reconcilePhantomColumn TAKES the phantom column for the caret as it now
+// stands, WITHOUT otherwise disturbing the horizontal scroll — it only ever
+// moves from 0 to -1, never touching a scrolled view.
+//
+// It does not release: this is caret VISIBILITY, not a snap. Whether a caret
+// "wants" the phantom flips as the text around it changes — a trailing space is
+// a neutral that resolves to the base direction, so typing one at the end of an
+// LTR run in an RTL line reclassifies the caret for exactly one keystroke — and
+// releasing on that would jerk the whole line back and forth by a column as you
+// type. The phantom is given up only when some action genuinely requires a
+// different scroll, which the follow's range checks then compute.
 //
 // Vertical movement deliberately leaves the horizontal offset alone (see
 // ensureCursorVisibleVertical), so arriving at a line whose end sits at the
@@ -6326,11 +6330,8 @@ func (e *Editor) reconcilePhantomColumn(w *viewport.Viewport) {
 			phantomOff = -2 // a doubled row stores twice the display offset
 		}
 	}
-	switch want := e.caretWantsPhantom(w); {
-	case want && w.ViewState.ViewOffsetX == 0:
+	if w.ViewState.ViewOffsetX == 0 && e.caretWantsPhantom(w) {
 		w.ViewState.ViewOffsetX = phantomOff
-	case !want && w.ViewState.ViewOffsetX < 0:
-		w.ViewState.ViewOffsetX = 0
 	}
 }
 

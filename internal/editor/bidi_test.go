@@ -974,8 +974,12 @@ func TestBidiPhantomColumnLTR(t *testing.T) {
 	}
 }
 
-// Moving the caret away releases the phantom: the offset snaps back to 0.
-func TestBidiPhantomColumnReleases(t *testing.T) {
+// Moving the caret somewhere that does not need the phantom does NOT snap it
+// away: this is caret visibility, not a snap, and a caret visible at offset 0
+// is equally visible at -1. Only a real scroll requirement gives it up (see
+// TestBidiPhantomReleasedByRealScroll) — releasing on mere want/don't-want
+// jerked the line by a column on every space typed.
+func TestBidiPhantomHoldsWhenNoLongerNeeded(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "אבגד\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
 	e.ensureCursorVisible(w)
@@ -985,8 +989,8 @@ func TestBidiPhantomColumnReleases(t *testing.T) {
 
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	e.ensureCursorVisible(w)
-	if w.ViewState.ViewOffsetX != 0 {
-		t.Fatalf("phantom no longer needed: offset %d, want 0", w.ViewState.ViewOffsetX)
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("the phantom should hold, offset %d", w.ViewState.ViewOffsetX)
 	}
 }
 
@@ -1215,5 +1219,55 @@ func TestBidiPhantomForBarAtReadingStart(t *testing.T) {
 		if w.ViewState.ViewOffsetX != tc.want {
 			t.Fatalf("shape %d: offset %d, want %d", tc.shape, w.ViewState.ViewOffsetX, tc.want)
 		}
+	}
+}
+
+// The phantom is caret VISIBILITY, not a snap: once taken it is given up only
+// when some action genuinely requires a different scroll. Typing Latin in an
+// RTL line reclassifies the caret for exactly one keystroke every time a space
+// is typed — a trailing space is a neutral that resolves to the base direction
+// — and releasing the phantom on that jerked the whole line back and forth by
+// a column as the user typed.
+func TestBidiPhantomStickyWhileTyping(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+
+	sawNeutral := false
+	for _, ch := range strings.Split("hello world", "") {
+		e.executeCommand("insert '" + ch + "'")
+		if !e.caretWantsPhantom(w) {
+			sawNeutral = true // the space keystroke: classification flipped
+		}
+		if w.ViewState.ViewOffsetX != -1 {
+			t.Fatalf("after %q the offset moved to %d; the phantom must hold",
+				ch, w.ViewState.ViewOffsetX)
+		}
+	}
+	if !sawNeutral {
+		t.Fatal("expected a keystroke where the caret stops wanting the phantom")
+	}
+}
+
+// A genuine scroll requirement still releases it: moving the caret deep into a
+// long line's reading tail computes a real offset.
+func TestBidiPhantomReleasedByRealScroll(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("abcde ", 30)+"x\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.executeCommand("go_line_end")
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("precondition: phantom taken, got offset %d", w.ViewState.ViewOffsetX)
+	}
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX < 0 {
+		t.Fatalf("a real scroll requirement should release the phantom, offset %d",
+			w.ViewState.ViewOffsetX)
 	}
 }
