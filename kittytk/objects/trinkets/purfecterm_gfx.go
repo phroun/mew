@@ -791,19 +791,17 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		// the box HEIGHT alone, so widening the box on its own only centres an
 		// ordinary glyph in it — which is what a DECDWL heading looked like.
 		//
-		// Render the glyph at its ORDINARY size into an ordinary-width mask —
-		// the very raster it gets on a normal row, hinted and grid-fitted for
-		// this exact cell height — then double every column to fill the box.
-		// Vertical stroke weights and pixel intensities come out identical to
-		// normal text, which is what DEC hardware does and what keeps a doubled
-		// row as crisp as the rows around it.
+		// Ask for a 2x-TALL mask instead: that doubles the point size, and
+		// since the box is already the doubled cell width the bigger glyph
+		// fills it. Averaging the mask back down to one row keeps the full
+		// horizontal detail of the 2x rasterization, which is what makes a
+		// doubled heading read as drawn at that size rather than magnified.
 		//
-		// (Rendering at 2x point size and resampling back down is the obvious
-		// alternative and reads sharper in the abstract, but it discards half
-		// the vertical resolution after the fact: the glyph is no longer hinted
-		// for its final height and thin horizontal features come back at part
-		// intensity, so the row looks washed out beside ordinary text. That
-		// path is kept under KITTYTK_DWL=supersample for comparison.)
+		// (The alternative — rasterize at the ORDINARY size and repeat each
+		// column — reproduces the normal row's pixels exactly, so it cannot
+		// lose density, but it widens by nearest-neighbour and gives up the
+		// extra outline detail the 2x render carries. Kept under
+		// KITTYTK_DWL=widen; judged by eye, the 2x render looks better.)
 		mask := t.dwlDoubleWideMask(str, family, cell, boxW, contentH, ppu, wide, kashL, kashR, actx)
 		if mask == nil {
 			return
@@ -832,35 +830,37 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 	}
 }
 
-// dwlSupersample selects the alternative double-width strategy: rasterize at
-// 2x point size and resample back to one row. Kept for side-by-side comparison
-// (KITTYTK_DWL=supersample); the default preserves pixel density instead.
-var dwlSupersample = strings.Contains(os.Getenv("KITTYTK_DWL"), "supersample")
+// dwlWiden selects the alternative double-width strategy: rasterize at the
+// ordinary size and repeat each column, reproducing the normal row's pixels
+// exactly rather than resampling. Kept for side-by-side comparison
+// (KITTYTK_DWL=widen); the default rasterizes at 2x for the finer outline.
+var dwlWiden = strings.Contains(os.Getenv("KITTYTK_DWL"), "widen")
 
 // dwlDoubleWideMask builds the glyph mask for one DECDWL cell, filling a box
 // twice the ordinary cell width.
 func (t *PurfecTerm) dwlDoubleWideMask(str, family string, cell *purfecterm.Cell,
 	boxW, contentH int, ppu float64, wide, kashL, kashR bool, actx *arabicCellShape) *image.RGBA {
 
-	if dwlSupersample {
-		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
+	if dwlWiden {
+		// The ordinary-size raster, in the ordinary cell width — bit for bit
+		// what this glyph looks like on a normal row — widened by repeating
+		// columns, so no pixel is re-derived.
+		natural := boxW / 2
+		if natural < 1 {
+			natural = 1
+		}
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, natural, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
 		if mask == nil {
 			return nil
 		}
-		return squashRowsRGBA(mask, contentH)
+		return widenCols(mask, boxW)
 	}
 
-	// The ordinary-size raster, in the ordinary cell width — bit for bit what
-	// this glyph looks like on a normal row.
-	natural := boxW / 2
-	if natural < 1 {
-		natural = 1
-	}
-	mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, natural, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
+	mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
 	if mask == nil {
 		return nil
 	}
-	return widenCols(mask, boxW)
+	return squashRowsRGBA(mask, contentH)
 }
 
 // widenCols stretches an image to dstW columns by repeating source columns —

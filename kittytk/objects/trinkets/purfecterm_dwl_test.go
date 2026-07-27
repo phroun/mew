@@ -108,17 +108,17 @@ func columnPeaks(t *testing.T, feed string, cols int) []int {
 	return peaks
 }
 
-// Doubling a row must not cost the glyph any pixel density. The default path
-// rasterizes at the ORDINARY size — the very raster the glyph gets on a normal
+// The KITTYTK_DWL=widen strategy reproduces the ordinary raster exactly: it
+// rasterizes at the normal size — the very raster the glyph gets on a normal
 // row, hinted for this cell height — and repeats each column, so the widened
 // profile is the normal profile with every intensity appearing twice and no
-// new value in between.
-//
-// Rasterizing at 2x and resampling back down (KITTYTK_DWL=supersample) instead
-// re-derives every pixel: it introduces intensities the glyph never had and
-// weakens thin strokes, which on Hebrew shows up as a stroke that muddles
-// almost to a gap.
-func TestGraphicalDECDWLPreservesPixelDensity(t *testing.T) {
+// new value in between. That is the guarantee this path exists to offer; the
+// default 2x-and-resample path deliberately trades it for finer outline
+// detail, so this test selects the widen path rather than the default.
+func TestGraphicalDECDWLWidenPreservesPixelDensity(t *testing.T) {
+	defer func(prev bool) { dwlWiden = prev }(dwlWiden)
+	dwlWiden = true
+
 	const glyph = "ש" // shin: three uprights, the thinnest test in the alphabet
 	normal := columnPeaks(t, glyph, 40)
 
