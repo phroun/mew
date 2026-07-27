@@ -999,10 +999,15 @@ func (e *Editor) dragScrollTick() {
 		// running past the text would strand the view in blank space).
 		raw := strings.TrimRight(w.Buffer.GetLine(e.dragSel.lastLine), "\n\r")
 		if e.lineVisualWidth(w, raw, e.tabSize(w)) > w.ViewState.ViewOffsetX+w.ContentWidth {
+			// scroll_right in BOTH directions. ViewOffsetX counts columns
+			// scrolled past the near edge, and under direction=rtl that near
+			// edge is the reading start on the right — so raising it reveals
+			// the tail either way, and dragScrollTrack has already mirrored
+			// WHICH edge arms the scroll. Flipping the command here mirrored it
+			// a second time: scroll_left drove the view back toward the reading
+			// start, and at offset 0 (or the phantom's -1) it does nothing at
+			// all, so dragging past an RTL line's far edge never scrolled.
 			cmd := "scroll_right"
-			if e.winRTL(w) {
-				cmd = "scroll_left"
-			}
 			reps := 1 + (ds.horiz-1)/8
 			if reps > dragScrollMaxReps {
 				reps = dragScrollMaxReps

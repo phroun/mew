@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Vertical drag-past-bottom autoscroll keeps working after horizontal
@@ -140,4 +142,37 @@ func TestDragAutoscrollDormantWhenRowsExistBeyond(t *testing.T) {
 		t.Fatalf("parking on the last content row with rows beyond must not engage; got %d", e.dragScroll.vert)
 	}
 	send("MouseLeftRelease")
+}
+
+// Under direction=rtl, dragging past the far edge must reveal the line's
+// reading TAIL. ViewOffsetX counts columns scrolled past the near edge — the
+// reading start, on the right — so raising it reveals the tail in BOTH
+// directions; dragScrollTrack already mirrors which edge arms the scroll.
+// Flipping the command as well mirrored it twice, driving the view back toward
+// the reading start — and since scroll_left does nothing at offset 0 (or the
+// phantom's -1), an RTL drag never scrolled at all.
+func TestDragAutoscrollRTLRevealsTail(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("abcde ", 40)+"x\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.executeCommand("go_line_end") // park at the reading start
+	before := w.ViewState.ViewOffsetX
+
+	e.dragSel = dragSelState{active: true, winID: w.ID, lastLine: 0}
+	x := w.ContentX - 2 // past the LEFT edge: an RTL line's far side
+	y := w.ContentY + 2
+	e.mouseX, e.mouseY = x, y
+	e.dragScrollTrack(w, x, y)
+	if e.dragScroll.horiz == 0 {
+		t.Fatal("dragging past an RTL line's far edge should arm horizontal autoscroll")
+	}
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
+	e.dragScrollTick()
+	e.dragScrollStop()
+
+	if w.ViewState.ViewOffsetX <= before {
+		t.Fatalf("offset %d did not advance past %d: the drag scrolled the wrong way (or not at all)",
+			w.ViewState.ViewOffsetX, before)
+	}
 }
