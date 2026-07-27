@@ -11,4 +11,3 @@
 | [[keys#buffer_list|^B L]] list           | [[keys#buffer_redo|^B =]] redo (repeatable)           |
 | [[keys#memo.main|^B M]] main viewport  | [[keys#buffer_revert|^B ~]] revert to last save         |
 | [[keys#cancel.buffer_close]] close viewport   | [[keys#buffer_save_all , exit|^B X]] save all buffers then quit  |
-|
