@@ -6,7 +6,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
 )
 
@@ -320,10 +319,27 @@ func literalMatchAt(lineRunes, lit []rune, col int, ignoreCase bool) bool {
 	return true
 }
 
+// lineSource is the read surface a scan needs: a line count and line text.
+// *buffer.Buffer satisfies it for main-loop searches; *buffer.LineReader —
+// which carries a garland cursor of its own — satisfies it for the background
+// incremental search, whose goroutine must not seek the buffer's shared
+// readCursor out from under the renderer.
+type lineSource interface {
+	GetLineCount() int
+	GetLine(line int) string
+}
+
 // searchBufferDir scans buf for the matcher. (fromLine, fromCol) is the
 // first allowed match-start position in the scan direction (inclusive); the
 // scan runs to the corresponding end of the buffer without wrapping.
-func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backwards bool) (matchInfo, bool) {
+//
+// stopped, when non-nil, is polled every few lines: once it reports true the
+// scan gives up and returns no match. It is how the background incremental
+// search abandons a superseded or cancelled pass over a large document.
+func searchBufferDir(buf lineSource, m matcher, fromLine, fromCol int, backwards bool, stopped func() bool) (matchInfo, bool) {
+	// Poll the cancellation check on a line stride: often enough to abandon a
+	// long scan promptly, rarely enough not to cost anything per line.
+	const stopStride = 64
 	lineCount := buf.GetLineCount()
 	if backwards {
 		if fromLine >= lineCount {
@@ -331,6 +347,9 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 			fromCol = farCol
 		}
 		for line := fromLine; line >= 0; line-- {
+			if stopped != nil && (fromLine-line)%stopStride == 0 && stopped() {
+				return matchInfo{}, false
+			}
 			lineRunes := []rune(strings.TrimRight(buf.GetLine(line), "\n\r"))
 			maxCol := farCol
 			if line == fromLine {
@@ -350,6 +369,9 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 		fromCol = 0
 	}
 	for line := fromLine; line < lineCount; line++ {
+		if stopped != nil && (line-fromLine)%stopStride == 0 && stopped() {
+			return matchInfo{}, false
+		}
 		lineRunes := []rune(strings.TrimRight(buf.GetLine(line), "\n\r"))
 		minCol := 0
 		if line == fromLine {
@@ -362,46 +384,62 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 	return matchInfo{}, false
 }
 
-// findFrom locates the next match at or after (line, col) in the scan
-// direction, starting in startW. In all-buffers mode the search continues
-// through the other main buffers (and, when wrapping, back around to the
-// origin); otherwise it stays in startW, restarting from the far end when
-// allowWrap is set.
-func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport, line, col int, allowWrap bool) (matchInfo, bool) {
-	if !opts.allBuffers {
-		if startW == nil || startW.Buffer == nil {
-			return matchInfo{}, false
-		}
-		if mi, ok := searchBufferDir(startW.Buffer, m, line, col, opts.backwards); ok {
-			mi.w = startW
-			return mi, true
-		}
-		if allowWrap {
-			fl, fc := farStart(startW.Buffer, opts.backwards)
-			if mi, ok := searchBufferDir(startW.Buffer, m, fl, fc, opts.backwards); ok {
-				mi.w = startW
-				mi.wrapped = true
-				return mi, true
-			}
-		}
-		return matchInfo{}, false
+// findSource is one buffer a scan may visit: the viewport it belongs to (by ID,
+// so the main loop can resolve it once the scan is over) and the surface to
+// read it through — the buffer itself for a main-loop search, an independent
+// buffer.LineReader for one running on a background goroutine.
+type findSource struct {
+	id  string
+	src lineSource
+}
+
+// findHit is a match located by the source-based scan core: an index into the
+// sources it was handed, plus the position within that source. It carries no
+// viewport pointer, so a background goroutine never touches one.
+type findHit struct {
+	idx     int
+	line    int
+	col     int
+	length  int
+	text    string
+	groups  []string
+	wrapped bool
+}
+
+// findInSources is the scan core, over line sources alone: it locates the next
+// match at or after (line, col) in the scan direction, beginning in srcs[start].
+// In all-buffers mode it continues through the remaining sources (and, when
+// wrapping, back around to the origin); otherwise it stays in the starting
+// source, restarting from its far end when allowWrap is set. stopped, when
+// non-nil, abandons the scan (see searchBufferDir).
+//
+// Everything it touches is passed in, so the same core serves the main loop and
+// the background find.
+func findInSources(m matcher, opts findOptions, srcs []findSource, start, line, col int, allowWrap bool, stopped func() bool) (findHit, bool) {
+	if len(srcs) == 0 || start < 0 || start >= len(srcs) {
+		return findHit{}, false
+	}
+	hitFrom := func(idx int, mi matchInfo, wrapped bool) findHit {
+		return findHit{idx: idx, line: mi.line, col: mi.col, length: mi.length,
+			text: mi.text, groups: mi.groups, wrapped: wrapped}
 	}
 
-	// All-buffers mode: walk the ring of main buffers starting at startW.
-	mains := e.contentViewports()
-	if len(mains) == 0 {
-		return matchInfo{}, false
-	}
-	start := 0
-	if startW != nil {
-		for i, w := range mains {
-			if w.ID == startW.ID {
-				start = i
-				break
+	if !opts.allBuffers {
+		s := srcs[start]
+		if mi, ok := searchBufferDir(s.src, m, line, col, opts.backwards, stopped); ok {
+			return hitFrom(start, mi, false), true
+		}
+		if allowWrap {
+			fl, fc := farStart(s.src, opts.backwards)
+			if mi, ok := searchBufferDir(s.src, m, fl, fc, opts.backwards, stopped); ok {
+				return hitFrom(start, mi, true), true
 			}
 		}
+		return findHit{}, false
 	}
-	n := len(mains)
+
+	// All-buffers mode: walk the ring of sources starting at srcs[start].
+	n := len(srcs)
 	segments := n
 	if allowWrap {
 		segments = n + 1 // revisit the origin buffer once when wrapping
@@ -413,26 +451,71 @@ func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport
 		} else {
 			idx = (start + i) % n
 		}
-		w := mains[idx]
-		if w.Buffer == nil {
+		s := srcs[idx]
+		if s.src == nil {
 			continue
 		}
 		fromLine, fromCol := line, col
 		if i != 0 {
-			fromLine, fromCol = farStart(w.Buffer, opts.backwards)
+			fromLine, fromCol = farStart(s.src, opts.backwards)
 		}
-		if mi, ok := searchBufferDir(w.Buffer, m, fromLine, fromCol, opts.backwards); ok {
-			mi.w = w
-			mi.wrapped = i == n // the extra revisit segment: back in the origin buffer
-			return mi, true
+		if mi, ok := searchBufferDir(s.src, m, fromLine, fromCol, opts.backwards, stopped); ok {
+			// The extra revisit segment means we are back in the origin buffer.
+			return hitFrom(idx, mi, i == n), true
 		}
 	}
-	return matchInfo{}, false
+	return findHit{}, false
+}
+
+// findViewportSources returns the viewports a search covers, in ring order,
+// reading through their buffers directly (a main-loop scan), plus the index of
+// the starting viewport. Single-buffer searches yield just startW.
+func (e *Editor) findViewportSources(opts findOptions, startW *viewport.Viewport) ([]*viewport.Viewport, []findSource, int) {
+	if !opts.allBuffers {
+		if startW == nil || startW.Buffer == nil {
+			return nil, nil, 0
+		}
+		return []*viewport.Viewport{startW},
+			[]findSource{{id: startW.ID, src: startW.Buffer}}, 0
+	}
+	mains := e.contentViewports()
+	if len(mains) == 0 {
+		return nil, nil, 0
+	}
+	srcs := make([]findSource, len(mains))
+	start := 0
+	for i, w := range mains {
+		srcs[i] = findSource{id: w.ID}
+		if w.Buffer != nil {
+			srcs[i].src = w.Buffer
+		}
+		if startW != nil && w.ID == startW.ID {
+			start = i
+		}
+	}
+	return mains, srcs, start
+}
+
+// findFrom locates the next match at or after (line, col) in the scan
+// direction, starting in startW. In all-buffers mode the search continues
+// through the other main buffers (and, when wrapping, back around to the
+// origin); otherwise it stays in startW, restarting from the far end when
+// allowWrap is set. Synchronous: the main loop's own path into the scan core.
+func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport, line, col int, allowWrap bool) (matchInfo, bool) {
+	mains, srcs, start := e.findViewportSources(opts, startW)
+	hit, ok := findInSources(m, opts, srcs, start, line, col, allowWrap, nil)
+	if !ok {
+		return matchInfo{}, false
+	}
+	return matchInfo{
+		w: mains[hit.idx], line: hit.line, col: hit.col, length: hit.length,
+		text: hit.text, groups: hit.groups, wrapped: hit.wrapped,
+	}, true
 }
 
 // farStart returns the scan start position for a fresh pass over a buffer:
 // its beginning for forward searches, its end for backward ones.
-func farStart(buf *buffer.Buffer, backwards bool) (int, int) {
+func farStart(buf lineSource, backwards bool) (int, int) {
 	if backwards {
 		return buf.GetLineCount() - 1, farCol
 	}
@@ -721,9 +804,9 @@ func (e *Editor) commitFind(term, options, replacement string, replaceMode bool)
 		e.runReplaceLoop(state, opts, m, w, w.CursorPos().Line, w.CursorPos().Rune, 0)
 		return
 	}
-	if !e.findStep(state, opts.count, true) {
-		e.ShowNotification("Not found: " + term)
-	}
+	// The scan runs off the main loop; the caret move and any "Not found" come
+	// back through findPump (see findasync.go).
+	e.findStepAsync(state, opts.count, true)
 }
 
 // runReplaceLoop steps through matches interactively: y replaces, n skips,

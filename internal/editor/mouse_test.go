@@ -307,11 +307,23 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 		t.Fatalf("timed out waiting for %s", what)
 	}
 
-	// Wait for the initial frame and viewport geometry.
+	// Wait for the initial frame and viewport geometry. The painted geometry is
+	// written by performRender under renderMu, on the run loop's goroutine, so
+	// this test — which peeks at live editor state from outside that loop —
+	// reads it under the same lock rather than racing the renderer.
+	geom := func(w *viewport.Viewport) (x, y, width int) {
+		e.renderMu.Lock()
+		defer e.renderMu.Unlock()
+		return w.ContentX, w.ContentY, w.ContentWidth
+	}
 	var w *viewport.Viewport
 	waitFor("initial render", func() bool {
 		w = e.ViewportManager.GetFocusedViewport()
-		return len(out.String()) > 0 && w != nil && w.ContentWidth > 0
+		if w == nil {
+			return false
+		}
+		_, _, width := geom(w)
+		return len(out.String()) > 0 && width > 0
 	})
 
 	// Enter navigation mode THROUGH the loop (^O N = set_option_next
@@ -325,8 +337,9 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 	})
 
 	// Raw SGR press on the button cell (no keyboard involved).
-	row := w.ContentY + 1
-	col := w.ContentX + 1 + 5
+	cx, cy, _ := geom(w)
+	row := cy + 1
+	col := cx + 1 + 5
 	if _, err := pw.Write([]byte("\x1b[<0;" + itoa(col) + ";" + itoa(row) + "M")); err != nil {
 		t.Fatal(err)
 	}

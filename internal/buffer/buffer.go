@@ -1519,6 +1519,78 @@ func (b *Buffer) ClearMatchMarks() {
 	b.ClearMark("_match_end")
 }
 
+// LineReader reads lines through a garland cursor of its OWN, so a goroutine
+// that is not the editor's main loop can scan the document without disturbing
+// (or being disturbed by) the shared readCursor that every other Buffer read
+// seeks. Garland's public API is fully concurrent — that shared cursor is the
+// only hazard, and this sidesteps it.
+//
+// Release the reader when the scan ends, so garland stops adjusting its cursor
+// on every edit. A reader is NOT safe for use from two goroutines at once (it
+// has exactly one cursor); make one per scan.
+type LineReader struct {
+	b *Buffer
+	c *garland.Cursor
+}
+
+// NewLineReader opens an independent line reader over the buffer.
+func (b *Buffer) NewLineReader() *LineReader {
+	if b == nil || b.garland == nil {
+		return &LineReader{b: b}
+	}
+	// Ephemeral: a scan's position is not worth recording per revision.
+	return &LineReader{b: b, c: b.garland.NewEphemeralCursor()}
+}
+
+// GetLineCount reports the buffer's line count. It reads garland's counters
+// directly (no cursor), so it matches Buffer.GetLineCount exactly.
+func (r *LineReader) GetLineCount() int {
+	if r == nil || r.b == nil {
+		return 1
+	}
+	return r.b.GetLineCount()
+}
+
+// GetLine returns line's content (0-indexed) through this reader's own cursor.
+// It mirrors Buffer.GetLine, including its byte-seek handling of line 0, whose
+// SeekLine is unreliable for a partial first line.
+func (r *LineReader) GetLine(line int) string {
+	if r == nil || r.b == nil || r.b.garland == nil || r.c == nil {
+		return ""
+	}
+	if line == 0 {
+		r.c.SeekByte(0)
+		content, err := r.c.ReadLine()
+		if content != "" {
+			return content
+		}
+		if err != nil {
+			r.c.SeekByte(0)
+			byteCount := r.b.garland.ByteCount()
+			if byteCount.Value > 0 {
+				bytes, _ := r.c.ReadBytes(byteCount.Value)
+				return string(bytes)
+			}
+		}
+		return ""
+	}
+	if err := r.c.SeekLine(int64(line), 0); err != nil {
+		return ""
+	}
+	content, _ := r.c.ReadLine()
+	return content
+}
+
+// Release removes the reader's cursor from garland. Safe to call more than once.
+func (r *LineReader) Release() {
+	if r != nil && r.c != nil {
+		if r.b != nil && r.b.garland != nil {
+			r.b.garland.RemoveCursor(r.c)
+		}
+		r.c = nil
+	}
+}
+
 // Cursor provides a position-based interface to the buffer.
 type Cursor struct {
 	buffer        *Buffer

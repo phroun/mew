@@ -237,3 +237,15 @@ func lastCursor(out []byte) (row, col int) {
 	fmt.Sscanf(string(m[2]), "%d", &col)
 	return row, col
 }
+
+// findSettle waits for the background find pass (find / find_next; see
+// findasync.go) to finish and applies its result the way the editor's action
+// port would on the main loop. The headless harness runs no event loop, so
+// tests pump it here instead.
+func findSettle(t *testing.T, e *Editor) {
+	t.Helper()
+	if fr := e.findRun; fr != nil {
+		fr.done.Wait()
+	}
+	e.findPump()
+}

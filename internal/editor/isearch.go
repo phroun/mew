@@ -2,6 +2,8 @@ package editor
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/phroun/mew/internal/viewport"
 )
@@ -31,11 +33,40 @@ import (
 // The current match is shown with the transient match highlight (the same
 // marks the replace loop uses) while the prompt is open.
 
+// The scan itself runs OFF the main loop. Each keystroke starts a pass on its
+// own goroutine, reading through a garland cursor of its own (buffer.LineReader)
+// so it never seeks the shared read cursor the renderer uses. While a pass is in
+// flight a tagged "Searching…" toast names the cancel key; the toast clears the
+// moment the newest pass lands (or is cancelled), so it is only on screen while
+// there is genuinely something to wait for. The prompt's cleanup — the natural
+// action of ^C — stops the thread, and so does every keystroke that supersedes
+// it. Results come back through the editor's action port and are applied on the
+// main loop, so nothing but the scan touches editor state off-thread.
+
+// isearchToastTag tags the "Searching…" transient so each pass replaces the
+// previous one rather than stacking, and so it can be cleared by tag.
+const isearchToastTag = "isearch_progress"
+
+// isearchToastMessage is the progress toast; its TFC code resolves to whatever
+// key is bound to cancel (the prompt's own ^C).
+const isearchToastMessage = "Searching (%keys#cancel.buffer_close% to cancel)..."
+
 // isearchFrame records the match-start position that was current while the
 // pattern had patLen runes — the position backspace returns to.
 type isearchFrame struct {
 	patLen int
 	pos    viewport.Position
+}
+
+// isearchResult is one completed (or abandoned) background pass.
+type isearchResult struct {
+	seq       int    // the pass's generation; stale ones are discarded
+	pattern   string // the pattern this pass searched for
+	cancelled bool   // the pass was stopped before it could finish
+	found     bool
+	line      int
+	col       int
+	length    int
 }
 
 // isearchState is the live state of the open incremental-search prompt.
@@ -47,6 +78,46 @@ type isearchState struct {
 	stack     []isearchFrame     // positions to pop back to on backspace
 	lastLen   int                // rune length of the pattern last seen
 	backwards bool               // current direction (the find "b" option)
+
+	// Background scanning. seq is the newest pass's generation; stop belongs to
+	// that pass and is raised to abandon it (by a superseding keystroke, or by
+	// the prompt's cleanup). done tracks the goroutines so a test — or a
+	// shutdown — can wait them out. pending collects finished passes for
+	// isearchPump to apply on the main loop.
+	seq     int
+	stop    *atomic.Bool
+	done    sync.WaitGroup
+	mu      sync.Mutex
+	pending []isearchResult
+}
+
+// armIsearchToast is the incremental search's grace-timer payload (see
+// afterSearchGrace).
+func (e *Editor) armIsearchToast(seq int, stop, settled *atomic.Bool) {
+	e.armSearchToast(isearchToastMessage, isearchToastTag, seq,
+		func() int {
+			if e.isearch == nil {
+				return -1
+			}
+			return e.isearch.seq
+		}, stop, settled)
+}
+
+// isearchStop abandons the in-flight pass, if any. It does not wait: the
+// goroutine notices the flag, and its result is discarded as stale.
+func (st *isearchState) isearchStop() {
+	if st != nil && st.stop != nil {
+		st.stop.Store(true)
+	}
+}
+
+// takePending removes and returns every finished pass collected so far.
+func (st *isearchState) takePending() []isearchResult {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := st.pending
+	st.pending = nil
+	return out
 }
 
 // isearchOptions renders the state's direction as find option letters.
@@ -98,6 +169,13 @@ func (e *Editor) startIncrementalSearch(dir int) bool {
 	// class colors; history is neither preloaded nor wanted — the pattern
 	// grows from empty, exactly one line.
 	e.PromptMgr.promptForInputHist(st.label(), "", func(accepted bool, _, text string) {
+		// The prompt's cleanup runs for BOTH outcomes — ^C and Enter alike — so
+		// this is where the background pass is told to stop and the progress
+		// toast comes down. Nothing waits on the goroutine: it sees the flag,
+		// and its answer is discarded as stale (isearchPump).
+		st.isearchStop()
+		e.clearTaggedTransient(isearchToastTag)
+
 		s := e.isearch
 		e.isearch = nil
 		target := e.ViewportManager.GetViewport(st.targetID)
@@ -233,6 +311,10 @@ func (e *Editor) isearchKeystroke() bool {
 			e.ensureCursorVisible(tw)
 		}
 		if plen == 0 {
+			// Erased back to nothing: no pass to wait for, so retire both the
+			// running scan and its toast.
+			st.isearchStop()
+			e.clearTaggedTransient(isearchToastTag)
 			clearMatchHighlight(tw)
 			tw.Find = st.prevFind
 			return true
@@ -243,9 +325,10 @@ func (e *Editor) isearchKeystroke() bool {
 }
 
 // isearchApply commits pattern (and the direction) to the ordinary find state
-// and parks the caret on its first match at or beyond from, scanning in the
-// search's direction — no focus change; the prompt keeps the keyboard. A miss
-// leaves the caret where it was and says so.
+// and starts a background pass for its first match at or beyond from, scanning
+// in the search's direction. It returns immediately: the caret moves when
+// isearchPump applies the result on the main loop. Any pass already running is
+// abandoned first — only the newest keystroke's answer matters.
 func (e *Editor) isearchApply(st *isearchState, tw *viewport.Viewport, pattern string, from viewport.Position) {
 	// Committed on every change so find_next rotates the current increment.
 	tw.Find = viewport.FindState{Term: pattern, Options: st.options()}
@@ -255,19 +338,108 @@ func (e *Editor) isearchApply(st *isearchState, tw *viewport.Viewport, pattern s
 	opts.ignoreCase = e.optBool(tw, "searchignorecase", e.Config.SearchIgnoreCase)
 	m, err := buildMatcher(pattern, opts, e.optBool(tw, "searchregex", e.Config.SearchRegex))
 	if err != nil {
+		// A malformed pattern is not worth a thread: report it and stand still.
+		st.isearchStop()
+		e.clearTaggedTransient(isearchToastTag)
 		e.ShowWarning(err.Error())
 		return
 	}
-	mi, ok := e.findFrom(m, opts, tw, from.Line, from.Rune, false)
-	if !ok {
-		clearMatchHighlight(tw)
-		e.ShowWarningTagged("Not found: "+pattern, "isearch_miss")
+	if tw.Buffer == nil {
 		return
 	}
-	tw.SetCursorPos(viewport.Position{Line: mi.line, Rune: mi.col})
+
+	st.isearchStop() // supersede whatever was running
+	st.seq++
+	seq := st.seq
+	stop := &atomic.Bool{}
+	st.stop = stop
+
+	// The pass reads through a cursor of its own, so it never disturbs (or is
+	// disturbed by) the shared read cursor the main loop seeks.
+	reader := tw.Buffer.NewLineReader()
+	backwards := opts.backwards
+
+	// The toast waits out the grace period, so typing does not strobe one per
+	// keystroke — only a pattern that takes real work to place raises it.
+	settled := &atomic.Bool{}
+	grace := e.afterSearchGrace(func() { e.armIsearchToast(seq, stop, settled) })
+
+	st.done.Add(1)
+	go func() {
+		defer st.done.Done()
+		defer func() {
+			settled.Store(true)
+			grace.Stop()
+			reader.Release()
+		}()
+
+		mi, ok := searchBufferDir(reader, m, from.Line, from.Rune, backwards, stop.Load)
+		res := isearchResult{seq: seq, pattern: pattern, cancelled: stop.Load()}
+		if ok {
+			res.found, res.line, res.col, res.length = true, mi.line, mi.col, mi.length
+		}
+
+		st.mu.Lock()
+		st.pending = append(st.pending, res)
+		st.mu.Unlock()
+
+		// Hand the main loop the job of applying it. With no action port (the
+		// session is winding down, or a headless test), the result simply waits
+		// in pending for whoever pumps next.
+		e.PostAction(e.isearchPump)
+	}()
+}
+
+// isearchPump applies finished background passes on the main loop: the newest
+// pass wins, stale and cancelled ones are dropped, and the toast clears once
+// nothing is left to wait for. Safe to call when the search is already over —
+// it then just retires the toast.
+func (e *Editor) isearchPump() {
+	st := e.isearch
+	if st == nil {
+		e.clearTaggedTransient(isearchToastTag)
+		e.RequestRender()
+		return
+	}
+
+	var latest *isearchResult
+	for _, res := range st.takePending() {
+		if res.cancelled || res.seq != st.seq {
+			continue // superseded or abandoned: its answer is not wanted
+		}
+		r := res
+		latest = &r
+	}
+	if latest == nil {
+		// Everything collected was stale. A newer pass still running keeps the
+		// toast; with nothing outstanding it comes down, so a cancelled pass
+		// whose answer arrives late cannot leave it stranded on screen.
+		if st.stop == nil || st.stop.Load() {
+			e.clearTaggedTransient(isearchToastTag)
+		}
+		e.RequestRender()
+		return
+	}
+
+	// This IS the newest pass, and it finished: the search is caught up.
+	e.clearTaggedTransient(isearchToastTag)
+
+	tw := e.ViewportManager.GetViewport(st.targetID)
+	if tw == nil || tw.Buffer == nil {
+		e.RequestRender()
+		return
+	}
+	if !latest.found {
+		clearMatchHighlight(tw)
+		e.ShowWarningTagged("Not found: "+latest.pattern, "isearch_miss")
+		e.RequestRender()
+		return
+	}
+	tw.SetCursorPos(viewport.Position{Line: latest.line, Rune: latest.col})
 	e.afterHorizontalMovement(tw)
 	e.ensureCursorVisible(tw)
-	highlightMatch(tw, mi.line, mi.col, mi.length)
+	highlightMatch(tw, latest.line, latest.col, latest.length)
+	e.RequestRender()
 }
 
 // isearchRefreshHighlight re-marks the match under the caret after a rotation
