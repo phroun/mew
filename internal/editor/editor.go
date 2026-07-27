@@ -6220,7 +6220,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 			reading = 0
 		}
 		if reading == 0 && targetCol == vw && !w.HasGhostCursor &&
-			!w.ViewState.ShowLineNumbers && e.phantomColumnWanted(w, targetCol) {
+			e.phantomColumnWanted(w, targetCol) {
 			phantom = true
 			reading = -1
 		}

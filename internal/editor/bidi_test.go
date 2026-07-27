@@ -852,9 +852,12 @@ func rtlGutterEditor(t *testing.T, content string) (*Editor, *viewport.Viewport,
 	return e, w, out
 }
 
-// Under direction=rtl the caret after the last LATIN character belongs one
-// column to its RIGHT — which is the mirrored gutter. Clamping it back onto the
-// character made it read as sitting BEFORE the text just typed.
+// The gutter dip is positionCursor's FALLBACK for a caret that computes one
+// column past the content's right edge while the view sits at offset 0 — the
+// state a ghost cursor still reaches, since the phantom declines it. (For an
+// ordinary caret the follow now takes the phantom first; see
+// TestBidiPhantomBeatsGutterDip.) Without the dip such a caret clamped back
+// onto the character, reading as if it sat BEFORE the text just typed.
 func TestBidiCaretDipsIntoGutterAfterLatin(t *testing.T) {
 	e, w, out := rtlGutterEditor(t, "abc\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // after 'c'
@@ -870,7 +873,8 @@ func TestBidiCaretDipsIntoGutterAfterLatin(t *testing.T) {
 	}
 }
 
-// Every cursor shape gets the dip: it is a position, not a shape correction.
+// Every cursor shape gets that fallback dip: it is a position, not a shape
+// correction.
 func TestBidiGutterDipAppliesToEveryShape(t *testing.T) {
 	e, w, out := rtlGutterEditor(t, "abc\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
@@ -1014,15 +1018,26 @@ func TestBidiPhantomColumnRTLNoGutter(t *testing.T) {
 	}
 }
 
-// With the mirrored gutter present, the dip continues to serve and the phantom
-// stays out of it: the offset holds at 0.
-func TestBidiPhantomDefersToGutterDip(t *testing.T) {
-	e, w, _ := rtlGutterEditor(t, "abc\n")
+// The phantom takes PRECEDENCE over the gutter dip: with a mirrored gutter
+// present the caret still scrolls to the phantom column and lands on the
+// content's own edge cell, rather than dipping onto a line-number digit.
+func TestBidiPhantomBeatsGutterDip(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	e.Config.InsertCursor = 2 // block: its column IS the caret cell
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.ensureCursorVisible(w)
-	if w.ViewState.ViewOffsetX != 0 {
-		t.Fatalf("with a gutter to dip into the phantom must not engage, offset %d",
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("the phantom should engage even with a gutter, offset %d",
 			w.ViewState.ViewOffsetX)
+	}
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight {
+		t.Fatalf("caret col %d, want the content edge %d — NOT the gutter at %d",
+			col, contentRight, contentRight+1)
 	}
 }
 
@@ -1048,5 +1063,48 @@ func TestBidiPhantomNeedsPositiveRune(t *testing.T) {
 	e.ensureCursorVisible(w)
 	if w.ViewState.ViewOffsetX != 0 {
 		t.Fatalf("rune 0 must not take the phantom, offset %d", w.ViewState.ViewOffsetX)
+	}
+}
+
+// The phantom is symmetric: an RTL run ending an LTR line pushes the caret one
+// cell LEFT of column 0, and an LTR run ending an RTL line pushes it one cell
+// RIGHT of the reading start. Both take the phantom column, with or without a
+// gutter, so neither ever lands on a character it stands after.
+func TestBidiPhantomSymmetricBothDirections(t *testing.T) {
+	cases := []struct {
+		name     string
+		content  string
+		rtl      bool
+		gutter   bool
+		caretCol func(e *Editor, w *viewport.Viewport) int
+	}{
+		{"ltr viewport, hebrew line", "אבגד\n", false, false,
+			func(e *Editor, w *viewport.Viewport) int { return 1 }},
+		{"rtl viewport, latin line, no gutter", "abc\n", true, false,
+			func(e *Editor, w *viewport.Viewport) int { return e.Renderer.Width }},
+		{"rtl viewport, latin line, with gutter", "abc\n", true, true,
+			func(e *Editor, w *viewport.Viewport) int { return e.Renderer.Width - w.LineNumWidth }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, w, out := newRenderedEditor(t, tc.content)
+			e.Config.InsertCursor = 2 // block: its column IS the caret cell
+			if tc.rtl {
+				e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+			}
+			w.ViewState.ShowLineNumbers = tc.gutter
+			e.performRender() // settle LineNumWidth
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: len([]rune(strings.TrimRight(tc.content, "\n")))})
+			e.ensureCursorVisible(w)
+
+			if w.ViewState.ViewOffsetX != -1 {
+				t.Fatalf("offset %d, want the phantom column -1", w.ViewState.ViewOffsetX)
+			}
+			out.Reset()
+			e.performRender()
+			if _, col := lastCursor(out.Bytes()); col != tc.caretCol(e, w) {
+				t.Fatalf("caret col %d, want %d", col, tc.caretCol(e, w))
+			}
+		})
 	}
 }
