@@ -219,3 +219,107 @@ func TestDoubleWidthHorizontalScroll(t *testing.T) {
 		t.Fatalf("a normal 60-col line should fit without scrolling; off=%d", w2.ViewState.ViewOffsetX)
 	}
 }
+
+// dwHeadingEditor renders a document whose first line is a level-6 heading
+// (painted double-width in browse mode) over a plain second line.
+func dwHeadingEditor(t *testing.T, heading, second, extra string) (*Editor, *viewport.Viewport) {
+	t.Helper()
+	e, w, out := renderedEditorWithConfig(t, heading+"\n"+second+"\n",
+		"[options]\nsyntax=dokuwiki\n"+extra)
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	if _, dw := e.lineDisplaySpans(w, 0); !dw {
+		t.Fatal("the heading should paint double-width in browse mode")
+	}
+	return e, w
+}
+
+// A double-width row is addressed in CELLS (each spans two physical columns),
+// but the mouse reports a PHYSICAL column. Subtracting the cell-space base
+// from the physical column and halving the difference charged the gutter's
+// cells at physical width, landing every click a cell right of the pointer —
+// further right the wider the gutter. Round-tripping the renderer's own caret
+// placement is the check: click where the caret is painted, land on its rune.
+func TestDoubleWidthMouseRoundTrip(t *testing.T) {
+	for _, ln := range []string{"no", "yes"} {
+		e, w := dwHeadingEditor(t, "====== Like This ======", strings.Repeat("y", 40), "")
+		e.setOption(w, "showLineNumbers", ln)
+		e.performRender()
+
+		for _, rune_ := range []int{7, 8, 9, 12, 15} {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: rune_})
+			cols := e.Renderer.CursorColumns(w)
+			if len(cols) == 0 {
+				t.Fatalf("lineNumbers=%s rune %d: caret is not on screen", ln, rune_)
+			}
+			// Both physical columns of the cell resolve to the same rune.
+			for _, x := range []int{cols[0], cols[0] + 1} {
+				_, line, got, ok := e.mouseHit(x, w.ContentY+1)
+				if !ok || line != 0 || got != rune_ {
+					t.Errorf("lineNumbers=%s: click x=%d (caret painted at %d) hit rune %d (line %d, ok=%v), want %d",
+						ln, x, cols[0], got, line, ok, rune_)
+				}
+			}
+		}
+	}
+}
+
+// Under direction=rtl the hit test maps the click through the line's
+// right-anchored geometry, which needs THIS row's scroll offset — halved on a
+// doubled row, exactly like its cell count. Mixing the raw offset with halved
+// cells walked the hit further off with every column scrolled, which is why
+// only RTL drifted (the LTR path already used the halved offset).
+func TestDoubleWidthMouseRoundTripRTLScrolled(t *testing.T) {
+	e, w := dwHeadingEditor(t, "====== "+strings.Repeat("abcdefghij", 8)+" ======",
+		strings.Repeat("y", 40), "direction=rtl\n")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.performRender()
+
+	for _, off := range []int{0, 4, 12, 30} {
+		w.ViewState.ViewOffsetX = off
+		for _, rune_ := range []int{10, 25, 45} {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: rune_})
+			cols := e.Renderer.CursorColumns(w)
+			if len(cols) == 0 {
+				continue // scrolled off screen at this offset
+			}
+			if _, _, got, ok := e.mouseHit(cols[0], w.ContentY+1); !ok || got != rune_ {
+				t.Errorf("rtl off=%d: click x=%d (caret painted there) hit rune %d (ok=%v), want %d",
+					off, cols[0], got, ok, rune_)
+			}
+		}
+	}
+}
+
+// The sticky ideal column holds the caret's SCREEN X across a vertical move.
+// A double-width line's own column space is half as dense, and its "======"
+// markers take no display columns at all, so the ideal is stored in normal
+// screen columns measured on the line as DISPLAYED — and converted back on
+// arrival. Measuring the raw line at single density moved the caret by twice
+// the marker width on every crossing.
+func TestDoubleWidthIdealColumnHoldsScreenX(t *testing.T) {
+	e, w := dwHeadingEditor(t, "====== Like This Heading ======", strings.Repeat("y", 60), "")
+
+	for _, clickX := range []int{11, 15, 21} {
+		_, _, r, ok := e.mouseHit(clickX, w.ContentY+1)
+		if !ok {
+			t.Fatalf("click x=%d missed the heading", clickX)
+		}
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: r})
+		e.afterHorizontalMovement(w)
+		if cols := e.Renderer.CursorColumns(w); len(cols) == 0 || cols[0] != clickX {
+			t.Fatalf("click x=%d landed the caret at %v", clickX, cols)
+		}
+
+		e.executeCommand("go_line_next")
+		if cols := e.Renderer.CursorColumns(w); len(cols) == 0 || cols[0] != clickX {
+			t.Errorf("down from the heading: caret at %v, want screen X %d held", cols, clickX)
+		}
+		// And coming back up onto the doubled line holds it too.
+		e.executeCommand("go_line_prior")
+		if cols := e.Renderer.CursorColumns(w); len(cols) == 0 || cols[0] != clickX {
+			t.Errorf("back up onto the heading: caret at %v, want screen X %d held", cols, clickX)
+		}
+	}
+}

@@ -344,6 +344,12 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 // (half-width gutter, two columns per cell), bidi visual order, tabs, and
 // browse-mode display substitution all resolve back to a document rune;
 // clicking button chrome parks inside the button's source span.
+// physicalToCell maps a 1-based PHYSICAL screen column to the 1-based cell it
+// falls in on a double-width (DECDWL) row, where every cell spans two physical
+// columns: cell c covers columns 2c-1 and 2c. The inverse of the renderer's
+// cellToPhysical.
+func physicalToCell(x int) int { return (x + 1) / 2 }
+
 func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
 	w = e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil {
@@ -369,17 +375,25 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
 	}
-	base := w.ContentX + 1 // first content column, 1-based
+	base := w.ContentX + 1 // first content CELL, 1-based
 	cells := w.ContentWidth
 	viewOff := w.ViewState.ViewOffsetX
 	cell := x - base
 	if dw {
+		// A doubled row is addressed in CELLS: each one spans two physical
+		// columns, and the row shows half as many gutter and content cells
+		// (matching caretRowGeom, which places the caret in the same space).
+		// x arrives as a PHYSICAL column, so map it into cell space FIRST —
+		// subtracting a cell-space base from a physical column and halving the
+		// difference charges the gutter's cells at physical width and lands
+		// the click a cell right of the pointer, further right the wider the
+		// gutter.
 		if !e.winRTL(w) {
 			base = w.ContentX - lineNumWidth + lineNumWidth/2 + 1
 		}
-		cell = (x - base) / 2
 		cells /= 2
 		viewOff /= 2
+		cell = physicalToCell(x) - base
 	}
 	if cell < 0 || (cells > 0 && cell >= cells) {
 		return nil, 0, 0, false
@@ -389,8 +403,11 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 	if e.winRTL(w) {
 		// Right-anchored view: visible visual columns are [vw-off-width,
 		// vw-off), with left padding when the line is narrower.
+		// The offset here is the row's own (halved on a doubled row, like
+		// cells) — mixing the raw offset with halved cells walked the hit
+		// further off with every column scrolled.
 		vw := e.lineVisualWidth(w, dispLine, e.tabSize(w))
-		eff := vw - w.ViewState.ViewOffsetX - cells
+		eff := vw - viewOff - cells
 		pad := 0
 		if eff < 0 {
 			pad = -eff

@@ -1048,6 +1048,27 @@ func (e *Editor) displayCaretLine(w *viewport.Viewport, line string, runePos int
 	return text, docToDisp[runePos]
 }
 
+// displayCaretDoc is the inverse of displayCaretLine for the caret's line: it
+// maps a DISPLAY rune index back to the document rune it came from. Identity
+// when the line paints verbatim. Column math for the sticky ideal column runs
+// in display space (that is where the caret is painted, and where a heading's
+// "======" markers no longer take columns), so the landing position has to
+// come back through here before it can be a cursor position.
+func (e *Editor) displayCaretDoc(w *viewport.Viewport, line string, dispRune int) int {
+	spans, dw := e.lineDisplaySpans(w, w.CursorPos().Line)
+	if len(spans) == 0 && !dw {
+		return dispRune
+	}
+	_, dispToDoc := render.SubstituteDisplay(line, spans, dw)
+	if dispToDoc == nil {
+		return dispRune
+	}
+	if dispRune < 0 {
+		dispRune = 0
+	}
+	return displayToDoc(dispToDoc, dispRune)
+}
+
 // keysRefAction extracts the action name from a [[keys#action|alias]] link
 // target ("keys#go_page_prior" -> "go_page_prior"), or reports false. The
 // "keys_verbose#" prefix requests the same live binding spelled out in prose

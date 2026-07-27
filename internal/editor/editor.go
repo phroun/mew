@@ -3637,7 +3637,42 @@ func (e *Editor) ensureIdealColumn(w *viewport.Viewport) {
 	}
 	tabSize := e.tabSize(w)
 	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-	w.IdealVisualColumn = e.idealColumn(w, line, w.CursorPos().Rune, tabSize)
+	w.IdealVisualColumn = e.storedIdealColumn(w, line, w.CursorPos().Rune, tabSize)
+}
+
+// idealDenominator is how many NORMAL screen columns one column of a
+// document line's own space covers: 2 on a double-width (DECDWL heading)
+// line, 1 everywhere else.
+func (e *Editor) idealDenominator(w *viewport.Viewport, docLine int) int {
+	if w == nil || w.Buffer == nil || docLine < 0 || docLine >= w.Buffer.GetLineCount() {
+		return 1
+	}
+	if _, dw := e.lineDisplaySpans(w, docLine); dw {
+		return 2
+	}
+	return 1
+}
+
+// storedIdealColumn is the sticky column to REMEMBER for the caret at runePos
+// on line: the caret's column in the line as DISPLAYED, converted to normal
+// screen columns.
+//
+// Display space, because that is where the caret is painted — a browse-mode
+// heading's "======" markers and a link's target text take no columns of their
+// own, so measuring the raw line would remember a column the caret never sat
+// at. Normal screen columns, because a double-width line's space is half as
+// dense (see idealDenominator); applyIdealColumn undoes both.
+func (e *Editor) storedIdealColumn(w *viewport.Viewport, line string, runePos, tabSize int) int {
+	dispLine, dispRune := e.displayCaretLine(w, line, runePos)
+	return e.idealColumn(w, dispLine, dispRune, tabSize) *
+		e.idealDenominator(w, w.CursorPos().Line)
+}
+
+// applyIdealColumn converts the stored ideal into the caret line's own display
+// column space — the space every column computation in afterVerticalMovement
+// works in, and the space the renderer paints the ghost cursor in.
+func (e *Editor) applyIdealColumn(w *viewport.Viewport) int {
+	return w.IdealVisualColumn / e.idealDenominator(w, w.CursorPos().Line)
 }
 
 // afterVerticalMovement applies ghost cursor logic after up/down movement.
@@ -3655,20 +3690,31 @@ func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 
 	tabSize := e.tabSize(w)
 
-	// Get line content (without trailing newline)
-	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	// Get line content (without trailing newline), as DISPLAYED: every column
+	// below — the reach checks, the landing position, and the ghost's own
+	// column, which the renderer paints in this same space — is a display
+	// column. place() maps a landing back to the document rune it came from.
+	raw := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	line, _ := e.displayCaretLine(w, raw, w.CursorPos().Rune)
 	lineLen := len([]rune(line))
+	place := func(dispRune int) {
+		w.SetCursorRune(e.displayCaretDoc(w, raw, dispRune))
+	}
+
+	// The stored ideal is in NORMAL screen columns; this line's own column
+	// space is half as dense when it paints double-width, so divide in.
+	ideal := e.applyIdealColumn(w)
 
 	// direction=rtl: the view is right-anchored, so the ideal is a READING
 	// column (distance back from the reading start). Placement and the ghost
 	// mirror the LTR logic below, but in reading space so screen X is held.
 	if e.winRTL(w) {
-		idealReading := w.IdealVisualColumn
+		idealReading := ideal
 		vw := e.lineVisualWidth(w, line, tabSize)
 		if lineLen == 0 {
 			// Empty line: the caret can only sit at the reading start; a
 			// non-trivial ideal reads as "past the end", so ghost it.
-			w.SetCursorRune(0)
+			place(0)
 			w.HasGhostCursor = idealReading > 0
 			if w.HasGhostCursor {
 				w.GhostCursorVisualColumn = idealReading
@@ -3688,7 +3734,7 @@ func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 			// Line does not reach that far back — ghost past its reading
 			// end, with the real caret parked at the reachable position
 			// nearest the ghost.
-			w.SetCursorRune(farPos)
+			place(farPos)
 			w.HasGhostCursor = true
 			w.GhostCursorVisualColumn = idealReading
 			return
@@ -3696,7 +3742,7 @@ func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 		// Map the reading column to a left-based visual column and land on the
 		// covering rune. A mismatch (short line / inside a wide cell) ghosts.
 		result := e.visualColumnToRuneWithActual(w, line, vw-idealReading, tabSize)
-		w.SetCursorRune(result.Rune)
+		place(result.Rune)
 		if vw-result.ActualColumn != idealReading {
 			w.HasGhostCursor = true
 			w.GhostCursorVisualColumn = idealReading
@@ -3710,21 +3756,21 @@ func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 	// Calculate the maximum visual column for this line (end of line position)
 	maxVisualColumn := e.runeToVisualColumn(w, line, lineLen, tabSize)
 
-	if maxVisualColumn < w.IdealVisualColumn {
+	if maxVisualColumn < ideal {
 		// Line is shorter than ideal visual column - show ghost cursor at end
-		w.SetCursorRune(lineLen)
+		place(lineLen)
 		w.HasGhostCursor = true
-		w.GhostCursorVisualColumn = w.IdealVisualColumn
+		w.GhostCursorVisualColumn = ideal
 	} else {
 		// Line is long enough - position at the rune that corresponds to ideal visual column
-		result := e.visualColumnToRuneWithActual(w, line, w.IdealVisualColumn, tabSize)
-		w.SetCursorRune(result.Rune)
+		result := e.visualColumnToRuneWithActual(w, line, ideal, tabSize)
+		place(result.Rune)
 
 		// Check if we landed inside a wide character (like a tab)
 		// If the actual column differs from ideal, we're inside a tab stop
-		if result.ActualColumn != w.IdealVisualColumn {
+		if result.ActualColumn != ideal {
 			w.HasGhostCursor = true
-			w.GhostCursorVisualColumn = w.IdealVisualColumn
+			w.GhostCursorVisualColumn = ideal
 		} else {
 			w.HasGhostCursor = false
 			w.GhostCursorVisualColumn = 0
@@ -3829,7 +3875,7 @@ func (e *Editor) afterHorizontalMovement(w *viewport.Viewport) {
 	if w.Buffer != nil {
 		tabSize := e.tabSize(w)
 		line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
-		w.IdealVisualColumn = e.idealColumn(w, line, w.CursorPos().Rune, tabSize)
+		w.IdealVisualColumn = e.storedIdealColumn(w, line, w.CursorPos().Rune, tabSize)
 	} else {
 		w.IdealVisualColumn = w.CursorPos().Rune
 	}
