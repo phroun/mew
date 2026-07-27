@@ -1256,4 +1256,3 @@ func detectColorDepth() int {
 	// Default to 16 colors
 	return 16
 }
-

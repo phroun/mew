@@ -116,8 +116,8 @@ type TreeView struct {
 	keyCaption string // header caption over the key (tree) column
 	ledger     bool   // alternate non-selected rows in LedgerOdd/LedgerEven
 	treeLines  bool   // connector lines + leaf glyphs in the indent space
-	fitWidth   bool // true: squeeze to width (no hscroll); false: pan
-	fixedLeft  int  // visible columns pinned outside the hscroll region
+	fitWidth   bool   // true: squeeze to width (no hscroll); false: pan
+	fixedLeft  int    // visible columns pinned outside the hscroll region
 	fixedRight int
 	keyWidth   int // key column cells in scroll mode (0 = default)
 	hScroll    int // horizontal scroll offset in cells

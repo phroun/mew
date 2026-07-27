@@ -7,15 +7,15 @@ import (
 
 // LayoutItem wraps a trinket with additional layout properties.
 type LayoutItem struct {
-	Trinket  core.Trinket
-	Stretch int        // Stretch factor (0 = use preferred size)
+	Trinket core.Trinket
+	Stretch int // Stretch factor (0 = use preferred size)
 	Align   core.Alignment
 }
 
 // NewLayoutItem creates a layout item with default properties.
 func NewLayoutItem(trinket core.Trinket) *LayoutItem {
 	return &LayoutItem{
-		Trinket:  trinket,
+		Trinket: trinket,
 		Stretch: 0,
 		Align:   core.AlignLeft,
 	}
@@ -63,8 +63,8 @@ func (s *Spacer) SizeHint() core.UnitSize {
 
 // BaseLayout provides common layout functionality.
 type BaseLayout struct {
-	spacing  core.Unit
-	margins  core.UnitMargins
+	spacing core.Unit
+	margins core.UnitMargins
 }
 
 // Spacing returns the spacing between items.

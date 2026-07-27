@@ -148,27 +148,27 @@ func NewSizePolicy(h, v SizePolicy) SizePolicyPair {
 type FocusPolicy int
 
 const (
-	NoFocus      FocusPolicy = iota // Cannot receive focus
-	TabFocus                        // Can receive focus via Tab
-	ClickFocus                      // Can receive focus via mouse click
-	StrongFocus                     // Can receive focus via Tab or click
-	WheelFocus                      // Like StrongFocus, plus mouse wheel
+	NoFocus     FocusPolicy = iota // Cannot receive focus
+	TabFocus                       // Can receive focus via Tab
+	ClickFocus                     // Can receive focus via mouse click
+	StrongFocus                    // Can receive focus via Tab or click
+	WheelFocus                     // Like StrongFocus, plus mouse wheel
 )
 
 // WindowFlags control window behavior and appearance.
 type WindowFlags int
 
 const (
-	WindowDefault     WindowFlags = 0
-	WindowFrameless   WindowFlags = 1 << iota // No window frame
-	WindowNoTitle                             // No title bar
-	WindowNoResize                            // Cannot be resized
-	WindowNoMove                              // Cannot be moved
-	WindowNoClose                             // No close button
-	WindowModal                               // Blocks input to other windows
-	WindowStaysOnTop                          // Always on top
-	WindowMaximized                           // Start maximized
-	WindowMinimized                           // Start minimized
+	WindowDefault    WindowFlags = 0
+	WindowFrameless  WindowFlags = 1 << iota // No window frame
+	WindowNoTitle                            // No title bar
+	WindowNoResize                           // Cannot be resized
+	WindowNoMove                             // Cannot be moved
+	WindowNoClose                            // No close button
+	WindowModal                              // Blocks input to other windows
+	WindowStaysOnTop                         // Always on top
+	WindowMaximized                          // Start maximized
+	WindowMinimized                          // Start minimized
 )
 
 // WindowState represents the current state of a window.

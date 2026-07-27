@@ -10,10 +10,10 @@ func TestShortcutMatchesBothControlSpellings(t *testing.T) {
 		key      string
 		want     bool
 	}{
-		{"^\\", "^\\", true},   // exact caret form (TUI backend, byte 0x1C)
-		{"^\\", "C-\\", true},  // prefix form (SDL fallback path)
-		{"C-\\", "^\\", true},  // reversed declaration
-		{"^H", "C-h", true},    // letter case folds under control
+		{"^\\", "^\\", true},  // exact caret form (TUI backend, byte 0x1C)
+		{"^\\", "C-\\", true}, // prefix form (SDL fallback path)
+		{"C-\\", "^\\", true}, // reversed declaration
+		{"^H", "C-h", true},   // letter case folds under control
 		{"C-h", "^H", true},
 		{"^]", "C-]", true},
 		{"C-Up", "C-Up", true}, // named keys stay in prefix form

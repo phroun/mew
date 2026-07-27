@@ -13,13 +13,13 @@ type a11yParent struct {
 	am *core.AccessibilityManager
 }
 
-func (p *a11yParent) Children() []core.Trinket          { return nil }
-func (p *a11yParent) AddChild(core.Trinket)             {}
-func (p *a11yParent) RemoveChild(core.Trinket)          {}
-func (p *a11yParent) ChildAt(core.UnitPoint) core.Trinket { return nil }
-func (p *a11yParent) Layout()                          {}
-func (p *a11yParent) LayoutManager() core.LayoutManager { return nil }
-func (p *a11yParent) SetLayoutManager(core.LayoutManager) {}
+func (p *a11yParent) Children() []core.Trinket                         { return nil }
+func (p *a11yParent) AddChild(core.Trinket)                            {}
+func (p *a11yParent) RemoveChild(core.Trinket)                         {}
+func (p *a11yParent) ChildAt(core.UnitPoint) core.Trinket              { return nil }
+func (p *a11yParent) Layout()                                          {}
+func (p *a11yParent) LayoutManager() core.LayoutManager                { return nil }
+func (p *a11yParent) SetLayoutManager(core.LayoutManager)              {}
 func (p *a11yParent) AccessibilityManager() *core.AccessibilityManager { return p.am }
 
 // The tear handle announces its current action when keyboard-focused:

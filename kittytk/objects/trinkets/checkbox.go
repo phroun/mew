@@ -11,10 +11,10 @@ type Checkbox struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	text     string
-	checked  bool
-	triState bool // If true, supports indeterminate state
-	wordWrap bool
+	text       string
+	checked    bool
+	triState   bool // If true, supports indeterminate state
+	wordWrap   bool
 	checkState CheckState
 
 	// Callbacks

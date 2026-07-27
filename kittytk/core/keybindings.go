@@ -21,14 +21,14 @@ type KeyBindings struct {
 // Standard action names for keyboard navigation and editing.
 const (
 	// Navigation
-	ActionMoveLeft     = "move-left"
-	ActionMoveRight    = "move-right"
-	ActionMoveUp       = "move-up"
-	ActionMoveDown     = "move-down"
-	ActionMoveHome     = "move-home"
-	ActionMoveEnd      = "move-end"
-	ActionPageUp       = "page-up"
-	ActionPageDown     = "page-down"
+	ActionMoveLeft  = "move-left"
+	ActionMoveRight = "move-right"
+	ActionMoveUp    = "move-up"
+	ActionMoveDown  = "move-down"
+	ActionMoveHome  = "move-home"
+	ActionMoveEnd   = "move-end"
+	ActionPageUp    = "page-up"
+	ActionPageDown  = "page-down"
 
 	// Selection (navigation with selection)
 	ActionSelectLeft  = "select-left"

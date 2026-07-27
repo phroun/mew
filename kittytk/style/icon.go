@@ -265,21 +265,21 @@ var StandardIcons = struct {
 	Application string
 
 	// Status
-	Info    string
-	Warning string
-	Error   string
-	Success string
+	Info     string
+	Warning  string
+	Error    string
+	Success  string
 	Question string
 
 	// Actions
-	Add    string
-	Remove string
-	Check  string
-	Close  string
-	Menu   string
+	Add      string
+	Remove   string
+	Check    string
+	Close    string
+	Menu     string
 	Settings string
-	Search string
-	Help   string
+	Search   string
+	Help     string
 
 	// Media
 	Play  string
@@ -289,12 +289,12 @@ var StandardIcons = struct {
 	Prev  string
 
 	// Misc
-	User    string
-	Lock    string
-	Unlock  string
-	Star    string
-	Heart   string
-	Flag    string
+	User   string
+	Lock   string
+	Unlock string
+	Star   string
+	Heart  string
+	Flag   string
 }{
 	FileNew:    "file.new",
 	FileOpen:   "file.open",

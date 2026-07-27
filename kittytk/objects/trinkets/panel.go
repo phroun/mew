@@ -316,7 +316,9 @@ func (p *Panel) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Forward press to the target child
 	if targetChild != nil {
-		if handler, ok := targetChild.(interface{ HandleMousePress(core.MousePressEvent) bool }); ok {
+		if handler, ok := targetChild.(interface {
+			HandleMousePress(core.MousePressEvent) bool
+		}); ok {
 			childBounds := targetChild.Bounds()
 			childEvent := event
 			childEvent.X -= childBounds.X

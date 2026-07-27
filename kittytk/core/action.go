@@ -477,9 +477,9 @@ func (s Shortcut) AccessibilityString() string {
 
 // ActionGroup manages a collection of related actions.
 type ActionGroup struct {
-	mu       sync.RWMutex
-	actions  map[string]*Action
-	order    []string // Maintains insertion order
+	mu      sync.RWMutex
+	actions map[string]*Action
+	order   []string // Maintains insertion order
 }
 
 // NewActionGroup creates a new action group.
@@ -638,9 +638,9 @@ var StandardActions = struct {
 	ZoomReset string
 
 	// Window actions
-	Minimize  string
-	Maximize  string
-	Restore   string
+	Minimize    string
+	Maximize    string
+	Restore     string
 	CloseWindow string
 
 	// Navigation

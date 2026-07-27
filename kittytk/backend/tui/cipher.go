@@ -36,10 +36,10 @@ var cipherStyles = map[string]cipherStyle{
 	"bold fraktur":  {upper: 0x1D56C, lower: 0x1D586, group: "fraktur"},
 	"bold italic":   {upper: 0x1D468, lower: 0x1D482}, // Math Bold Italic (serif); always on
 	"fraktur":       {upper: 0x1D504, lower: 0x1D51E, holes: frakHoles, group: "fraktur"},
-	"bold script":   {upper: 0x1D4D0, lower: 0x1D4EA, group: "script"},              // Math Bold Script
+	"bold script":   {upper: 0x1D4D0, lower: 0x1D4EA, group: "script"},                     // Math Bold Script
 	"black sans":    {upper: 0x1D5D4, lower: 0x1D5EE, digit: 0x1D7EC, group: "black_sans"}, // Math Sans Bold
-	"black italic":  {upper: 0x1D63C, lower: 0x1D656}, // Math Sans Bold Italic; always on
-	"italic":        {upper: 0x1D608, lower: 0x1D622}, // Math Sans Italic; always on
+	"black italic":  {upper: 0x1D63C, lower: 0x1D656},                                      // Math Sans Bold Italic; always on
+	"italic":        {upper: 0x1D608, lower: 0x1D622},                                      // Math Sans Italic; always on
 }
 
 // cipherAliases accepts a few alternate spellings for the same style.

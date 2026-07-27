@@ -346,7 +346,7 @@ type GeneralConfig struct {
 	// setting is always honored.
 	RtlCombining    bool
 	RtlCombiningSet bool
-	ShowMarks    string // "no" | "yes" | "all"
+	ShowMarks       string // "no" | "yes" | "all"
 	// OverwriteMode is the inverse of the user-facing insertMode option: false
 	// (the zero value, and the default) means insert mode; true means typing
 	// overwrites the character under the caret (except at end of line, where it

@@ -65,14 +65,14 @@ var defaultGlobalColors = map[string]string{
 	// channels — NO background, NO reverse, NO underline (underline drifts
 	// too). Lines without combining marks (English, and Arabic, which mew
 	// pre-shapes to single presentation-form codepoints) keep the real bar.
-	"selectionflip":           "\x1b[0;1;93m", // bold bright-yellow (no bg)
-	"selectioninvisiblesflip": "\x1b[0;1;33m", // bold yellow (no bg)
-	"rulerends":           "\x1b[0;97;45m",   // bright white on magenta (end numbers)
-	"rulerfill":           "\x1b[0;37;45m",   // silver on magenta (for the fill glyph)
-	"rulertick":           "\x1b[0;37;45m",   // silver on magenta (for ".")
-	"rulerminor":          "\x1b[0;93;45m",   // bright yellow on magenta (for ":")
-	"rulermajor":          "\x1b[0;92;45m",   // bright green on magenta ("|" and numbers)
-	"rulercursor":         "\x1b[0;30;47m",   // black on silver (cursor columns, rulerShowsCursor)
+	"selectionflip":           "\x1b[0;1;93m",  // bold bright-yellow (no bg)
+	"selectioninvisiblesflip": "\x1b[0;1;33m",  // bold yellow (no bg)
+	"rulerends":               "\x1b[0;97;45m", // bright white on magenta (end numbers)
+	"rulerfill":               "\x1b[0;37;45m", // silver on magenta (for the fill glyph)
+	"rulertick":               "\x1b[0;37;45m", // silver on magenta (for ".")
+	"rulerminor":              "\x1b[0;93;45m", // bright yellow on magenta (for ":")
+	"rulermajor":              "\x1b[0;92;45m", // bright green on magenta ("|" and numbers)
+	"rulercursor":             "\x1b[0;30;47m", // black on silver (cursor columns, rulerShowsCursor)
 
 	// Hyperlinks (grammar-derived; see the editor's link browse mode).
 	// Caret mode paints link source text in "link" ("linkrecent" is reserved
@@ -89,18 +89,18 @@ var defaultGlobalColors = map[string]string{
 	"heading": "\x1b[0;96;40m",
 	// Key badges: [[keys#action|alias]] references in help text render as a
 	// tight cap-less/shadow-less badge showing the live binding for the action.
-	"key":                 "\x1b[0;93;45m", // bright yellow on purple
-	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
+	"key":                 "\x1b[0;93;45m",   // bright yellow on purple
+	"keyfocused":          "\x1b[0;31;47m",   // red on silver (the focused badge)
 	"button":              "\x1b[0;1;30;47m", // bold black on silver
-	"buttonrecent":        "\x1b[0;30;47m", // black on silver (a visited link)
-	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
-	"buttonshadowrecent":  "\x1b[0;34;47m", // dark blue on silver
-	"buttonfocused":       "\x1b[0;30;46m", // black on cyan
-	"buttonshadowfocused": "\x1b[0;90;46m", // dark gray on cyan
-	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
-	"buttonshadowpressed": "\x1b[0;37;44m", // silver on blue
-	"buttonhover":         "\x1b[0;93;45m", // bright yellow on purple (pointer over)
-	"buttonshadowhover":   "\x1b[0;90;45m", // dark gray on purple
+	"buttonrecent":        "\x1b[0;30;47m",   // black on silver (a visited link)
+	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+	"buttonshadowrecent":  "\x1b[0;34;47m",   // dark blue on silver
+	"buttonfocused":       "\x1b[0;30;46m",   // black on cyan
+	"buttonshadowfocused": "\x1b[0;90;46m",   // dark gray on cyan
+	"buttonpressed":       "\x1b[0;97;44m",   // bright white on blue (mouse held)
+	"buttonshadowpressed": "\x1b[0;37;44m",   // silver on blue
+	"buttonhover":         "\x1b[0;93;45m",   // bright yellow on purple (pointer over)
+	"buttonshadowhover":   "\x1b[0;90;45m",   // dark gray on purple
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
 	// these names (built-in conventions plus the [syntax] maps).
@@ -120,25 +120,25 @@ var defaultTypeColors = map[string]map[string]string{
 	"tool": {
 		"text":     "\x1b[0;1;46;97m", // bright white on cyan
 		"messages": "\x1b[0;1;43;97m", // bright white on amber
-    	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
-    	// browse mode can add bold/underline per level (see the editor). Black
-    	// on cyan.
-    	"heading": "\x1b[0;30;46m",
-    	// Key badges: [[keys#action|alias]] references in help text render as a
-    	// tight cap-less/shadow-less badge showing the live binding for the action.
-    	"key":                 "\x1b[0;93;45m", // bright yellow on purple
-    	"keyfocused":          "\x1b[0;31;47m", // red on silver (the focused badge)
-    	"button":              "\x1b[0;1;30;47m", // black on silver
-    	"buttonrecent":        "\x1b[0;30;47m", // dark red on silver (a visited link)
-    	"buttonshadow":        "\x1b[0;90;47m", // dark gray on silver
-    	"buttonshadowrecent":  "\x1b[0;34;47m", // dark blue on silver
-    	"buttonfocused":       "\x1b[0;97;41m", // white on red
-    	"buttonshadowfocused": "\x1b[0;90;41m", // dark gray on cyan
-    	"buttonpressed":       "\x1b[0;97;44m", // bright white on blue (mouse held)
-    	"buttonshadowpressed": "\x1b[0;37;44m", // silver on blue
-    	"buttonhover":         "\x1b[0;93;45m", // bright yellow on purple (pointer over)
-    	"buttonshadowhover":   "\x1b[0;90;45m", // dark gray on purple
-    },
+		// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
+		// browse mode can add bold/underline per level (see the editor). Black
+		// on cyan.
+		"heading": "\x1b[0;30;46m",
+		// Key badges: [[keys#action|alias]] references in help text render as a
+		// tight cap-less/shadow-less badge showing the live binding for the action.
+		"key":                 "\x1b[0;93;45m",   // bright yellow on purple
+		"keyfocused":          "\x1b[0;31;47m",   // red on silver (the focused badge)
+		"button":              "\x1b[0;1;30;47m", // black on silver
+		"buttonrecent":        "\x1b[0;30;47m",   // dark red on silver (a visited link)
+		"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+		"buttonshadowrecent":  "\x1b[0;34;47m",   // dark blue on silver
+		"buttonfocused":       "\x1b[0;97;41m",   // white on red
+		"buttonshadowfocused": "\x1b[0;90;41m",   // dark gray on cyan
+		"buttonpressed":       "\x1b[0;97;44m",   // bright white on blue (mouse held)
+		"buttonshadowpressed": "\x1b[0;37;44m",   // silver on blue
+		"buttonhover":         "\x1b[0;93;45m",   // bright yellow on purple (pointer over)
+		"buttonshadowhover":   "\x1b[0;90;45m",   // dark gray on purple
+	},
 	"prompt": {
 		"messages": "\x1b[0;1;42;93m", // bright yellow on green
 		"text":     "\x1b[0;1;42;97m", // bright white on green
@@ -148,11 +148,11 @@ var defaultTypeColors = map[string]map[string]string{
 // defaultClassColors are the built-in per-window-class colors
 // ([<class>::colors] defaults).
 var defaultClassColors = map[string]map[string]string{
-    "quickhelp": {
-        "key":         "\x1b[0;1;93;100m", // bright yellow on blue
-        "text":        "\x1b[0;1;97;100m", // silver on blue
-        "syntaxtable": "\x1b[0;37;100m", // silver on blue
-    },
+	"quickhelp": {
+		"key":         "\x1b[0;1;93;100m", // bright yellow on blue
+		"text":        "\x1b[0;1;97;100m", // silver on blue
+		"syntaxtable": "\x1b[0;37;100m",   // silver on blue
+	},
 	"modebar": {
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill
 		"messages":   "\x1b[1;96;44m", // aqua on blue - stats readout (Frag/Heap/Line/Rune)
@@ -175,7 +175,7 @@ var defaultClassColors = map[string]map[string]string{
 		"key":      "\x1b[0;1;97;43m", // bright bold white on brown
 	},
 	"error": {
-		"messages": "\x1b[0;97;41m", // bright white on red
+		"messages": "\x1b[0;97;41m",   // bright white on red
 		"key":      "\x1b[0;1;93;41m", // bright bold yellow on red
 	},
 }

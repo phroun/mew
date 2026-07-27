@@ -262,8 +262,8 @@ func (r *RadioButton) AccessibleInfo() core.AccessibleInfo {
 
 // RadioGroup manages a group of mutually exclusive radio buttons.
 type RadioGroup struct {
-	mu      sync.RWMutex
-	buttons []*RadioButton
+	mu       sync.RWMutex
+	buttons  []*RadioButton
 	selected *RadioButton
 
 	// Callbacks

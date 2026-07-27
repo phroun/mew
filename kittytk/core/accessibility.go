@@ -110,7 +110,7 @@ func (r AccessibleRole) String() string {
 type AccessibleState int
 
 const (
-	StateNone AccessibleState = 0
+	StateNone    AccessibleState = 0
 	StateChecked AccessibleState = 1 << iota
 	StateSelected
 	StateExpanded
@@ -503,8 +503,8 @@ type ScreenReaderAdapter interface {
 type NullScreenReader struct{}
 
 func (NullScreenReader) Announce(message string, priority string) {}
-func (NullScreenReader) SetFocus(info AccessibleInfo)              {}
-func (NullScreenReader) IsAvailable() bool                         { return false }
+func (NullScreenReader) SetFocus(info AccessibleInfo)             {}
+func (NullScreenReader) IsAvailable() bool                        { return false }
 
 // TerminalScreenReader outputs accessibility messages to a terminal.
 // This is useful for development and debugging.

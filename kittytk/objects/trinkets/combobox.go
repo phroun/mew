@@ -26,10 +26,10 @@ type ComboBox struct {
 
 	// Scroll state for drop-down
 	scrollOffset     int
-	maxVisible       int  // User-configured maximum (0 = auto-size to screen)
-	popupVisibleRows int            // Actual visible rows for current popup (calculated from screen space)
-	popupDropUp      bool           // popup opened above the box (drop-up) rather than below
-	popupControlRect core.UnitRect  // the originating control's screen rect (for its outer stroke)
+	maxVisible       int           // User-configured maximum (0 = auto-size to screen)
+	popupVisibleRows int           // Actual visible rows for current popup (calculated from screen space)
+	popupDropUp      bool          // popup opened above the box (drop-up) rather than below
+	popupControlRect core.UnitRect // the originating control's screen rect (for its outer stroke)
 
 	// popupScreenMetrics is the screen/desktop denomination captured
 	// when the popup opens; popup-space geometry, painting, and input
@@ -37,17 +37,17 @@ type ComboBox struct {
 	popupScreenMetrics core.CellMetrics
 
 	// Mouse interaction state
-	mouseDown     bool       // Mouse button is held down
-	dragging      bool       // Actually dragging (mouse moved while down)
-	clickMode     bool       // True = click-to-open mode (popup stays open), False = hold-and-drag mode
-	mouseDownX    core.Unit  // Initial mouse X position
-	mouseDownY    core.Unit  // Initial mouse Y position
-	originalIndex int        // Index before popup opened (for cancel on release outside)
-	scrollHoverZone int      // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
+	mouseDown       bool      // Mouse button is held down
+	dragging        bool      // Actually dragging (mouse moved while down)
+	clickMode       bool      // True = click-to-open mode (popup stays open), False = hold-and-drag mode
+	mouseDownX      core.Unit // Initial mouse X position
+	mouseDownY      core.Unit // Initial mouse Y position
+	originalIndex   int       // Index before popup opened (for cancel on release outside)
+	scrollHoverZone int       // -1 = hovering top scroll, 1 = bottom scroll, 0 = none
 
 	// Scrollbar interaction state (click mode only)
-	scrollbarDragging   bool  // Whether scrollbar thumb is being dragged
-	scrollbarDragStartY int   // Row where drag started
+	scrollbarDragging   bool // Whether scrollbar thumb is being dragged
+	scrollbarDragStartY int  // Row where drag started
 
 	// Smooth (pixel-surface) popup scrollbar drag: the thumb follows
 	// the pointer at unit granularity while scrollOffset snaps to
@@ -58,8 +58,8 @@ type ComboBox struct {
 	sbThumbPos   float64
 
 	// Fractional rows carried between trackpad wheel events.
-	wheelAccum float64
-	scrollbarDragOffset int   // Scroll offset when drag started
+	wheelAccum          float64
+	scrollbarDragOffset int // Scroll offset when drag started
 
 	// Timer for scroll repeating
 	scrollTimer        *DesktopTimer

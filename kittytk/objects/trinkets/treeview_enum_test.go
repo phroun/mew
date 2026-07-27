@@ -455,7 +455,7 @@ func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
 	cw := tv.EffectiveCellMetrics().CellWidth
 	lay := tv.columnLayout()
 	textX := lay.spans[0].x + core.Unit(1+treeLeftPadCells)*cw // level 0: pad, expander cell, then text
-	rowY := core.Unit(16 + 3*16 + 8) // blank sits at visual row 3
+	rowY := core.Unit(16 + 3*16 + 8)                           // blank sits at visual row 3
 
 	tv.HandleMousePress(core.MousePressEvent{X: textX + cw, Y: rowY, Button: core.LeftButton})
 	if tv.clickEditItem != blank || tv.clickEditCol != treeKeyColumn {

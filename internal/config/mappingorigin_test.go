@@ -37,10 +37,10 @@ func TestMappingProvenanceThroughInclude(t *testing.T) {
 		author string
 	}{
 		"^A": {"<config>", 3, "Alice"},
-		"^B": {"<config>", 5, "Alice"},     // author resumed after the include
-		"^C": {"<config>", 7, "Bob"},       // author changed mid-file
+		"^B": {"<config>", 5, "Alice"},       // author resumed after the include
+		"^C": {"<config>", 7, "Bob"},         // author changed mid-file
 		"^D": {"more.conf", 2, "Customized"}, // blank @author -> load default
-		"^E": {"more.conf", 4, "Carol"},    // include declared its own author
+		"^E": {"more.conf", 4, "Carol"},      // include declared its own author
 	}
 	for seq, w := range want {
 		o, ok := cfg.MappingOrigins[seq]

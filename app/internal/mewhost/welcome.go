@@ -210,9 +210,9 @@ func (d *welcomeDialog) calculateSize() {
 // toolkit's messageBoxContent, using only its exported Button API).
 type welcomeContent struct {
 	core.TrinketBase
-	paras     []string   // the copy, as paragraphs (wrapped to the window width)
-	wrapped   []string   // paras flowed to wrapWidth; recomputed when width changes
-	wrapWidth core.Unit  // the text width wrapped was computed for
+	paras     []string  // the copy, as paragraphs (wrapped to the window width)
+	wrapped   []string  // paras flowed to wrapWidth; recomputed when width changes
+	wrapWidth core.Unit // the text width wrapped was computed for
 	install   *trinkets.Button
 	try       *trinkets.Button
 	buttons   []*trinkets.Button
