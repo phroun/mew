@@ -572,7 +572,7 @@ type Config struct {
 	// Keyed by family rather than alias so one entry corrects the face
 	// however it is reached. Wired by graphical hosts; nil on a plain
 	// terminal, whose faces are the terminal's own.
-	FontAdjustSink func(family string, baselineUnits int)
+	FontAdjustSink func(family string, baselineUnits int, sizeScale float64)
 
 	// PointerRegion, when set, publishes where a graphical host should show the
 	// text I-beam: the FOCUSED viewport's editable content area (its cells,
@@ -6978,8 +6978,12 @@ func (e *Editor) applyFontConfig() {
 		// Before the aliases: a correction must be in place by the time any
 		// name resolves and the first mask is rasterized.
 		for family, adj := range e.LoadedConfig.FontAdjust {
-			if adj.HasBaseline {
-				e.Config.FontAdjustSink(family, adj.Baseline)
+			scale := 1.0
+			if adj.HasScale {
+				scale = adj.Scale
+			}
+			if adj.HasBaseline || adj.HasScale {
+				e.Config.FontAdjustSink(family, adj.Baseline, scale)
 			}
 		}
 	}

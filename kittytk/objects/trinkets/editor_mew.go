@@ -316,9 +316,10 @@ func (e *Editor) run() {
 		// Per-face metric corrections ([fonts] "Noto Kufi Arabic = (baseline:
 		// -6)"): recorded on the shared engine, which bumps its epoch so any
 		// mask rasterized at the old placement is flushed.
-		mew.WithFontAdjust(func(family string, baselineUnits int) {
+		mew.WithFontAdjust(func(family string, baselineUnits int, sizeScale float64) {
 			if eng := text.Shared(); eng != nil {
 				eng.SetBaselineAdjust(family, baselineUnits)
+				eng.SetSizeScale(family, sizeScale)
 			}
 		}),
 		mew.WithFontSink(func(alias string, names []string) bool {

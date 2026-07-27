@@ -236,11 +236,12 @@ func WithFontConfig(fn func(files map[string]string, searchPaths []string)) Opti
 }
 
 // WithFontAdjust wires per-FACE metric corrections from the [fonts] section
-// (family -> baseline units, positive down, in the 16-unit cell denomination)
+// (family -> baseline units, positive down, in the 16-unit cell denomination;
+// and an optical size multiplier, 1 for none)
 // to a host that can apply them. Keyed by family rather than alias, so one
 // entry corrects a face through every route that reaches it. Only meaningful
 // on a graphical host; a plain terminal leaves it nil.
-func WithFontAdjust(fn func(family string, baselineUnits int)) Option {
+func WithFontAdjust(fn func(family string, baselineUnits int, sizeScale float64)) Option {
 	return func(cfg *editor.Config) { cfg.FontAdjustSink = fn }
 }
 

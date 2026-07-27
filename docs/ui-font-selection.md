@@ -119,8 +119,23 @@ the left of the equals sign:
 ```ini
 [fonts]
 Noto Kufi Arabic  = fonts/NotoKufiArabic.ttf (baseline: -6)  ; path + correction
-Noto Serif Hebrew = (baseline: +1)                           ; correction alone
+Noto Serif Hebrew = (baseline: +1, size: 1.1)                ; correction alone
 ```
+
+Two keys are recognised, alone or together:
+
+| key | means |
+|---|---|
+| `baseline: -6` | move the face's baseline, in cell units (1/16 row), positive **down** |
+| `size: 1.1` | render the face at 110% of its natural size (`110%` spells the same thing) |
+
+`size` is for balancing OPTICAL sizes: a face that reads small or large beside
+the base `ui-term` / `ui-text` faces can be brought into line without touching
+the base face. On the terminal grid the glyph fills more or less of its fixed
+cell; on the proportional path the whole face renders larger or smaller, so its
+advances change with it. It reaches a face chosen by per-glyph fallback, which
+is the case it exists for — the shaping size is computed once from the
+requested font, so scaling only that would leave every script face untouched.
 
 The path is optional, so an embedded face that needs no registration can still
 be nudged. Three things to know:

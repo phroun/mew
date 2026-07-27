@@ -425,6 +425,17 @@ func (e *Engine) shapeOutputs(runes []rune, pieces []spanPiece, base di.Directio
 		fbRoot, fbStyle := scriptContext(pc.font.Name)
 		fb := fallbackMap{db: e.db, primary: face, scriptRoot: fbRoot, scriptStyle: fbStyle}
 		for _, si := range e.seg.Split(in, fb) {
+			// Per-face optical size: the shaping em was computed once from the
+			// REQUESTED font, but segmentation may have handed this run to a
+			// fallback face. Scale by the face that will actually paint it, so
+			// a script face can be balanced against the base face without
+			// touching the base face's own size.
+			e.db.mu.RLock()
+			sc := e.db.scaleForFace(si.Face)
+			e.db.mu.RUnlock()
+			if sc != 1 {
+				si.Size = fixed.Int26_6(math.Round(float64(si.Size) * sc))
+			}
 			outs = append(outs, e.shaper.Shape(si))
 		}
 	}

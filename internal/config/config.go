@@ -572,6 +572,13 @@ type StorageConfig struct {
 // and this nudges a face whose own metrics lie about where that should be.
 type FaceAdjust struct {
 	Baseline int
+	// Scale is an optical size multiplier: 1.1 renders the face at 110% of
+	// the size its own metrics give it. On the terminal grid the glyph fills
+	// more or less of its fixed cell; on the proportional path the whole face
+	// renders larger or smaller. For balancing a face that reads small or
+	// large beside the base ui-term / ui-text faces.
+	Scale    float64
+	HasScale bool
 	// HasBaseline distinguishes "baseline: 0" from "not specified", so a
 	// future second key does not resurrect a cleared correction.
 	HasBaseline bool
@@ -1889,6 +1896,15 @@ func parseFaceAdjust(inner string) (adj FaceAdjust, ok bool) {
 				continue
 			}
 			adj.Baseline, adj.HasBaseline, ok = n, true, true
+		case "size":
+			f, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(val, "+"), "%"), 64)
+			if err != nil || f <= 0 {
+				continue
+			}
+			if strings.HasSuffix(val, "%") {
+				f /= 100 // "110%" and "1.1" mean the same thing
+			}
+			adj.Scale, adj.HasScale, ok = f, true, true
 		}
 	}
 	return adj, ok

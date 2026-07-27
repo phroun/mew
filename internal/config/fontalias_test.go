@@ -104,3 +104,40 @@ func TestFontsAdjustParses(t *testing.T) {
 		t.Error("an adjustment-only line must not register a font path")
 	}
 }
+
+// The size multiplier parses alongside baseline, accepts either the decimal
+// or the percent spelling, and both keys may ride one group.
+func TestFaceAdjustSize(t *testing.T) {
+	for _, c := range []struct {
+		name, val string
+		wantScale float64
+		wantBase  int
+		hasScale  bool
+		hasBase   bool
+	}{
+		{"decimal", "(size: 1.1)", 1.1, 0, true, false},
+		{"percent", "(size: 110%)", 1.1, 0, true, false},
+		{"shrink", "(size: 0.9)", 0.9, 0, true, false},
+		{"both keys", "(baseline: -6, size: 1.25)", 1.25, -6, true, true},
+		{"baseline only", "(baseline: -6)", 0, -6, false, true},
+		{"nonsense size ignored", "(size: nope)", 0, 0, false, false},
+		{"zero refused", "(size: 0)", 0, 0, false, false},
+	} {
+		_, adj, has := splitFacePath(c.val)
+		if has != (c.hasScale || c.hasBase) {
+			t.Errorf("%s: recognised=%v, want %v", c.name, has, c.hasScale || c.hasBase)
+			continue
+		}
+		if adj.HasScale != c.hasScale || adj.HasBaseline != c.hasBase {
+			t.Errorf("%s: hasScale=%v hasBaseline=%v, want %v/%v",
+				c.name, adj.HasScale, adj.HasBaseline, c.hasScale, c.hasBase)
+			continue
+		}
+		if c.hasScale && (adj.Scale < c.wantScale-0.0001 || adj.Scale > c.wantScale+0.0001) {
+			t.Errorf("%s: scale %v, want %v", c.name, adj.Scale, c.wantScale)
+		}
+		if c.hasBase && adj.Baseline != c.wantBase {
+			t.Errorf("%s: baseline %d, want %d", c.name, adj.Baseline, c.wantBase)
+		}
+	}
+}
