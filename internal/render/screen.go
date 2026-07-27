@@ -1723,12 +1723,32 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 	screenY := layout.Y + 1 + topOffset + (w.CursorPos().Line - w.ViewState.ViewOffsetY)
 	screenX := base + pad + (visualColumn - viewOff)
 
-	// The reading-start boundary of an RTL line (one past its rightmost
-	// visual cell) has no cell of its own when that cell sits at the right
-	// edge: clamp onto the edge cell — covering the character just passed,
-	// like everywhere else in an RTL run — rather than reporting off-screen.
+	// One column past the content's right edge has no content cell of its own.
+	// Whether the caret may sit there depends on which side of its character
+	// the insertion point is:
+	//
+	//   - On an LTR character the insertion point is to its RIGHT, so a caret
+	//     after the last Latin letter of an RTL line belongs in that column.
+	//     Under direction=rtl the mirrored gutter is exactly there, so the
+	//     caret dips one column into it (caretGutterSlack) instead of falling
+	//     back onto the letter it just passed — which read as being BEFORE it.
+	//   - On an RTL character — the reading start, where the caret marks the
+	//     cell the NEXT character will occupy rather than a position after one
+	//     — there is nothing to its right, so it still clamps onto the edge
+	//     cell, as it always has.
+	//
+	// With no gutter to dip into, the clamp stands either way rather than
+	// addressing a column outside the viewport.
+	caretRTL := sr.caretRunRTL(w, line, caretRune)
+	gutterSlack := sr.caretGutterSlack(w)
+	rightMost := base + contentWidth - 1
+	if gutterSlack > 0 {
+		rightMost++ // the caret may occupy at most the first gutter column
+	}
 	if rtl && contentWidth > 0 && screenX == base+contentWidth {
-		screenX = base + contentWidth - 1
+		if caretRTL || gutterSlack <= 0 {
+			screenX = base + contentWidth - 1
+		}
 	}
 
 	// When the cursor is horizontally scrolled off-screen (e.g. after a manual
@@ -1737,7 +1757,7 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 	// edge. On the LEFT edge, park the terminal cursor one column left of the "@"
 	// (clamped to column 1) so the block cursor sits beside it rather than
 	// obscuring it; on the RIGHT edge, park directly on the "@".
-	if contentWidth > 0 && (screenX < base || screenX > base+contentWidth-1) {
+	if contentWidth > 0 && (screenX < base || screenX > rightMost) {
 		indicatorColor := sr.col(w, "cursorOffScreen")
 		isRight := screenX > base+contentWidth-1
 		edgeX := base
@@ -1768,6 +1788,11 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 	// cell further right or it draws on the far side of the character.
 	if sr.barCursorOnRTL(w, line, caretRune) {
 		screenX++
+		// The nudge obeys the same right bound as everything above: one column
+		// into the gutter when there is one, otherwise the content's edge.
+		if contentWidth > 0 && screenX > rightMost {
+			screenX = rightMost
+		}
 		if screenX > sr.Width {
 			screenX = sr.Width
 		}
@@ -1777,12 +1802,16 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 	return false
 }
 
+// caretRunRTL reports whether the caret sits on a right-to-left character.
+// bidi.RTLAt is the same predicate that flips the modebar logo from M_ to _M,
+// so every caret-side decision below agrees with what the logo is showing.
+func (sr *ScreenRenderer) caretRunRTL(w *viewport.Viewport, line string, runePos int) bool {
+	return bidi.RTLAt([]rune(line), runePos, sr.winRTL(w))
+}
+
 // barCursorOnRTL reports whether the caret's shape is a bar (DECSCUSR 5 or 6)
 // AND it sits on a right-to-left character — the one combination whose cell
 // address differs from the block/underline geometry the caret math produces.
-// The direction test is bidi.RTLAt, the same predicate that flips the modebar
-// logo from M_ to _M, so the bar and the logo always agree about which side of
-// the text the caret is on.
 func (sr *ScreenRenderer) barCursorOnRTL(w *viewport.Viewport, line string, runePos int) bool {
 	if sr.cursorStyleFn == nil || w == nil {
 		return false
@@ -1790,7 +1819,28 @@ func (sr *ScreenRenderer) barCursorOnRTL(w *viewport.Viewport, line string, rune
 	if s := sr.cursorStyleFn(w); s != 5 && s != 6 {
 		return false
 	}
-	return bidi.RTLAt([]rune(line), runePos, sr.winRTL(w))
+	return sr.caretRunRTL(w, line, runePos)
+}
+
+// caretGutterSlack is how many columns lie to the RIGHT of the caret line's
+// content area: the line-number gutter, which caretRowGeom mirrors to that side
+// under direction=rtl. Zero otherwise — an LTR gutter sits on the left, and
+// there is nothing but margin to the right of the content.
+//
+// It is the room the caret has to sit ONE column past the content's right edge,
+// which is where an insertion point after the rightmost character belongs.
+func (sr *ScreenRenderer) caretGutterSlack(w *viewport.Viewport) int {
+	if w == nil || !sr.winRTL(w) || !w.ViewState.ShowLineNumbers {
+		return 0
+	}
+	gutter := w.LineNumWidth
+	if sr.caretLineDoubleWide(w) {
+		gutter /= 2 // matches caretRowGeom's halving on a doubled row
+	}
+	if gutter < 0 {
+		return 0
+	}
+	return gutter
 }
 
 // visualColIsWideTrail reports whether a left-based visual column on the
