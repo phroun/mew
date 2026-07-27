@@ -28,6 +28,11 @@ type Platform struct {
 	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
 	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
+	// defaultFontSize is the CONFIGURED font size (the SetFontSize value):
+	// the target the Command/Meta+0 zoom chord restores, however far the
+	// live fontSize has been zoomed from it.
+	defaultFontSize int
+
 	mu     sync.Mutex
 	posts  []func()
 	timers []timerEntry
@@ -143,9 +148,15 @@ func (p *Platform) SetCellMetrics(m core.CellMetrics) {
 // SetFontSize sets the UI point size that fixes the cell's pixel size on
 // EVERY surface's backend (12pt = the base 8x16-pixel cell at zoom 1). It
 // scales pixels-per-unit, so layout is unchanged in units and only the
-// pixel size of every cell grows. Call before EnsureBackend/Run.
+// pixel size of every cell grows. Call before EnsureBackend/Run. The value
+// also becomes the CONFIGURED default the Command/Meta+0 zoom chord returns
+// to (see fontZoomKey); positive values are bounded to the zoom range.
 func (p *Platform) SetFontSize(size int) {
+	if size > 0 {
+		size = clampFontPt(size)
+	}
 	p.fontSize = size
+	p.defaultFontSize = size
 }
 
 // applyMetrics re-seeds a freshly created backend with the platform's
@@ -491,6 +502,112 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) {
 	}
 }
 
+// Host-level font zoom (this GUI host only — a TUI has no say over its
+// terminal's font): Command on macOS, the Meta/Windows key elsewhere, with
+// "+"/"=" to grow, "-" to shrink, "0" to return to the configured
+// [window] font_size. The dynamic size is bounded to 4..100pt.
+const (
+	minFontPt = 4
+	maxFontPt = 100
+)
+
+// clampFontPt bounds a point size to the dynamic zoom range.
+func clampFontPt(size int) int {
+	if size < minFontPt {
+		return minFontPt
+	}
+	if size > maxFontPt {
+		return maxFontPt
+	}
+	return size
+}
+
+// zoomTarget resolves a Command/Meta zoom chord to the font size it asks
+// for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns to
+// the configured default; the keypad's +/-/0 count too. ok is false for any
+// other key: Ctrl or Alt in the chord makes it an ordinary key combination,
+// but Shift rides along freely — "+" IS Shift+"=" on common layouts.
+func zoomTarget(sym sdl2.Keysym, cur, def int) (int, bool) {
+	if sym.Mod&sdl2.KMOD_GUI == 0 || sym.Mod&(sdl2.KMOD_CTRL|sdl2.KMOD_ALT) != 0 {
+		return 0, false
+	}
+	switch sym.Sym {
+	case sdl2.K_EQUALS, sdl2.K_PLUS, sdl2.K_KP_PLUS:
+		return clampFontPt(cur + 1), true
+	case sdl2.K_MINUS, sdl2.K_KP_MINUS:
+		return clampFontPt(cur - 1), true
+	case sdl2.K_0, sdl2.K_KP_0:
+		return clampFontPt(def), true
+	}
+	return 0, false
+}
+
+// fontZoomKey consumes a KEYDOWN when it is one of the zoom chords, applying
+// the resulting size live; the key never reaches the surface handler.
+func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
+	cur, def := p.fontSize, p.defaultFontSize
+	if cur < 1 {
+		cur = 12 // the raster base when no size was ever configured
+	}
+	if def < 1 {
+		def = 12
+	}
+	size, ok := zoomTarget(sym, cur, def)
+	if !ok {
+		return false
+	}
+	p.applyFontSize(size)
+	return true
+}
+
+// applyFontSize changes the live font_size on every open window at once. The
+// MAIN window keeps its pixel size and its unit grid re-derives, exactly as
+// in a window resize. Secondary windows (torn-offs, native-mode windows)
+// instead keep their UNIT size and re-size in pixels — a torn-off dialog is a
+// fixed-unit scene with no resize border, so shrinking its grid would clip
+// its content with no way back. Backends created later (new windows, resize
+// framebuffers) pick the size up from p.fontSize via applyMetrics.
+func (p *Platform) applyFontSize(size int) {
+	cur := p.fontSize
+	if cur < 1 {
+		cur = 12
+	}
+	if size == cur {
+		return
+	}
+	p.fontSize = size
+	for _, w := range p.wins {
+		if w.backend == nil {
+			continue
+		}
+		if w == p.main {
+			w.backend.SetFontSize(size)
+			if s := w.surface; s != nil && s.handler != nil {
+				s.handler.Resized(w.backend.Size())
+				p.paintAndPresent(w, true)
+				s.dirty.Store(false)
+			}
+			continue
+		}
+		units := w.backend.Size()
+		w.backend.SetFontSize(size)
+		wPx := w.backend.UnitToPxX(units.Width)
+		hPx := w.backend.UnitToPxY(units.Height)
+		if w.window != nil {
+			w.window.SetSize(int32(wPx), int32(hPx))
+		}
+		if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
+			continue
+		}
+		w.applyShape()
+		if s := w.surface; s != nil && s.handler != nil {
+			s.handler.Resized(w.backend.Size())
+			p.paintAndPresent(w, true)
+			s.dirty.Store(false)
+		}
+	}
+}
+
 // surfaceFor routes an event's window ID to its surface.
 func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	if w, ok := p.wins[id]; ok {
@@ -568,6 +685,9 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Type == sdl2.KEYDOWN {
+				if p.fontZoomKey(e.Keysym) {
+					continue // a host zoom chord, never an app key
+				}
 				if key := translateKey(e.Keysym); key != "" {
 					mods, name := core.ParseKeyModifiers(key)
 					text := ""
