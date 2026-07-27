@@ -153,48 +153,86 @@ func TestGraphicalDECDWLWidenPreservesPixelDensity(t *testing.T) {
 	}
 }
 
-// Every terminal face must sit on the SAME baseline as the primary (Latin)
-// face. A face splits its line budget between ascent and descent however its
-// designer chose — Noto Kufi Arabic reports 9 of 16 units above the baseline,
-// Noto Naskh 11, Latin and Noto Serif Hebrew 13 — so left alone each script
-// rides at its own height in the row: Kufi sat low with its descenders cut
-// off, Hebrew serif slightly high. The mask is shifted (never scaled) to put
-// every baseline where the primary face puts its own.
+// Every script must sit on the SAME baseline as the primary face.
+//
+// This drives the call the RENDERER makes, which is the whole point: a
+// terminal cell resolves its font once — cellFamily returns the primary for
+// every cell mew draws — and the engine picks the script face per glyph inside
+// ShapeRun. An earlier version of this test passed concrete family names
+// instead, which no paint ever does, and so happily passed while the shift was
+// returning zero for every cell on screen. Ask it the way the cell asks it.
 func TestTerminalFacesShareABaseline(t *testing.T) {
 	term := NewPurfecTerm()
 	if term.Terminal() == nil {
 		t.Skip("terminal unavailable")
 	}
-	term.SetTerminalFontFamily("ui-term-western-sans")
+	term.SetTerminalFontFamily("ui-term")
 	eng := term.gfxEngine()
 	if eng == nil {
 		t.Skip("font engine unavailable")
 	}
 
 	const pt = 12
-	ref := eng.ShapeRun(&core.Font{Name: "Noto Sans Mono", Size: pt}, "M")
+	primary := term.primaryTermFamily() // what every cell passes
+	ref := eng.ShapeRun(&core.Font{Name: primary, Size: pt}, "M")
 	if len(ref.Lines) == 0 {
 		t.Skip("reference face unavailable")
 	}
 	want := int(ref.Lines[0].Baseline)
 
-	for _, c := range []struct{ name, fam, s string }{
-		{"latin (the reference itself)", "Noto Sans Mono", "M"},
-		{"hebrew sans", "Noto Sans Hebrew", "ש"},
-		{"hebrew serif", "Noto Serif Hebrew", "ש"},
-		{"arabic sans (kufi)", "Noto Kufi Arabic", "ح"},
-		{"arabic serif (naskh)", "Noto Naskh Arabic", "ح"},
+	for _, c := range []struct {
+		name string
+		ch   rune
+	}{
+		{"latin", 'M'},
+		{"hebrew", 'ש'},
+		{"arabic", 'ح'},
+		{"cjk", '日'},
 	} {
-		sp := eng.ShapeRun(&core.Font{Name: c.fam, Size: pt}, c.s)
+		sp := eng.ShapeRun(&core.Font{Name: primary, Size: pt}, string(c.ch))
 		if len(sp.Lines) == 0 {
 			t.Errorf("%s: nothing shaped", c.name)
 			continue
 		}
 		own := int(sp.Lines[0].Baseline)
-		aligned := own + term.baselineShiftPx(c.fam, []rune(c.s)[0], pt, 0, sp, 1.0)
+		aligned := own + term.baselineShiftPx(primary, c.ch, pt, 0, sp, 1.0)
 		if aligned != want {
-			t.Errorf("%s: baseline %d shifts to %d, want the reference's %d",
+			t.Errorf("%s: baseline %d aligns to %d, want the primary's %d",
 				c.name, own, aligned, want)
 		}
+	}
+}
+
+// A configured per-face correction reaches the face through the alias chain
+// and rides on top of the automatic alignment, again via the renderer's own
+// call shape. Guards the lookup going to the face that actually paints rather
+// than the primary family the cell nominally requested.
+func TestConfiguredCorrectionRidesOnAlignment(t *testing.T) {
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	eng := term.gfxEngine()
+	if eng == nil {
+		t.Skip("font engine unavailable")
+	}
+	eng.UseFont("ui-term-arabic", "ui-term-arabic-sans") // Kufi as the arabic face
+	term.SetTerminalFontFamily("ui-term")
+	primary := term.primaryTermFamily()
+
+	const pt = 12
+	sp := eng.ShapeRun(&core.Font{Name: primary, Size: pt}, "ح")
+	if len(sp.Lines) == 0 {
+		t.Skip("arabic face unavailable")
+	}
+	before := term.baselineShiftPx(primary, 'ح', pt, 0, sp, 1.0)
+
+	eng.SetBaselineAdjust("Noto Kufi Arabic", -12)
+	defer eng.SetBaselineAdjust("Noto Kufi Arabic", 0)
+
+	after := term.baselineShiftPx(primary, 'ح', pt, 0, sp, 1.0)
+	if after != before-12 {
+		t.Errorf("correction did not reach the face: shift %+d -> %+d, want %+d",
+			before, after, before-12)
 	}
 }
