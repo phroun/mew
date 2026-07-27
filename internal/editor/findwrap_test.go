@@ -18,6 +18,7 @@ func TestFindWrapAndLoopForward(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
 	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0}) // origin mid-file
 	e.startFind("foo", "", "", true, true, false)
+	findSettle(t, e)
 	if w.CursorPos().Line != 4 {
 		t.Fatalf("first match should be line 4, got %d", w.CursorPos().Line)
 	}
@@ -26,6 +27,7 @@ func TestFindWrapAndLoopForward(t *testing.T) {
 	}
 
 	e.PawScript.ExecuteAsync("find_next") // wraps to line 0
+	findSettle(t, e)
 	if w.CursorPos().Line != 0 {
 		t.Fatalf("wrap should land on line 0, got %d", w.CursorPos().Line)
 	}
@@ -35,6 +37,7 @@ func TestFindWrapAndLoopForward(t *testing.T) {
 
 	clearNotifications(e)
 	e.PawScript.ExecuteAsync("find_next") // line 2 — crosses the origin
+	findSettle(t, e)
 	if w.CursorPos().Line != 2 {
 		t.Fatalf("should reach line 2, got %d", w.CursorPos().Line)
 	}
@@ -44,11 +47,13 @@ func TestFindWrapAndLoopForward(t *testing.T) {
 
 	clearNotifications(e)
 	e.PawScript.ExecuteAsync("find_next") // line 4 — plain step, no messages
+	findSettle(t, e)
 	if hasNotification(e, "Search continued") || hasNotification(e, "Search has looped") {
 		t.Fatal("no notification expected on a plain forward step")
 	}
 
 	e.PawScript.ExecuteAsync("find_next") // wraps again: cycle restarts
+	findSettle(t, e)
 	if !hasNotification(e, "Search continued from top") {
 		t.Fatal("expected the wrap message again on the second revolution")
 	}
@@ -60,11 +65,13 @@ func TestFindWrapAndLoopBackward(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
 	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.startFind("foo", "b", "", true, true, false)
+	findSettle(t, e)
 	if w.CursorPos().Line != 0 {
 		t.Fatalf("first backwards match should be line 0, got %d", w.CursorPos().Line)
 	}
 
 	e.PawScript.ExecuteAsync("find_next") // wraps to the bottom match (line 4)
+	findSettle(t, e)
 	if w.CursorPos().Line != 4 {
 		t.Fatalf("backwards wrap should land on line 4, got %d", w.CursorPos().Line)
 	}
@@ -74,6 +81,7 @@ func TestFindWrapAndLoopBackward(t *testing.T) {
 
 	clearNotifications(e)
 	e.PawScript.ExecuteAsync("find_next") // line 2 — at the origin: looped
+	findSettle(t, e)
 	if w.CursorPos().Line != 2 {
 		t.Fatalf("should reach line 2, got %d", w.CursorPos().Line)
 	}
@@ -89,8 +97,11 @@ func TestFindWrapAtOriginTop(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.startFind("foo", "", "", true, true, false) // matches line 2
-	e.PawScript.ExecuteAsync("find_next")         // line 4
-	e.PawScript.ExecuteAsync("find_next")         // wraps to line 0 == origin
+	findSettle(t, e)
+	e.PawScript.ExecuteAsync("find_next") // line 4
+	findSettle(t, e)
+	e.PawScript.ExecuteAsync("find_next") // wraps to line 0 == origin
+	findSettle(t, e)
 	if w.CursorPos().Line != 0 {
 		t.Fatalf("wrap should land on line 0, got %d", w.CursorPos().Line)
 	}
@@ -105,17 +116,20 @@ func TestFindOriginSlidesWithEdits(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
 	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.startFind("foo", "", "", true, true, false) // origin at old line 2; caret at line 4
+	findSettle(t, e)
 
 	// Insert two lines at the very top: the origin's logical line is now 4.
 	w.Buffer.InsertLine(0, "pad")
 	w.Buffer.InsertLine(0, "pad")
 
 	e.PawScript.ExecuteAsync("find_next") // wraps to (old line 0, now line 2)
+	findSettle(t, e)
 	if !hasNotification(e, "Search continued from top") {
 		t.Fatal("expected wrap message")
 	}
 	clearNotifications(e)
 	e.PawScript.ExecuteAsync("find_next") // old line 2 (now 4) — the slid origin
+	findSettle(t, e)
 	if !hasNotification(e, "Search has looped") {
 		t.Fatal("loop detection should follow the slid origin")
 	}

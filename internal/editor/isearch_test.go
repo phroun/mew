@@ -101,10 +101,12 @@ func TestIsearchFindNextRotates(t *testing.T) {
 	}
 
 	e.executeCommand("find_next")
+	findSettle(t, e)
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 4 {
 		t.Fatalf("after find_next: caret %v, want second cat at 0:4", got)
 	}
 	e.executeCommand("find_next")
+	findSettle(t, e)
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 8 {
 		t.Fatalf("after find_next x2: caret %v, want third cat at 0:8", got)
 	}
@@ -134,6 +136,7 @@ func TestIsearchEnterAcceptsAndFindNextContinues(t *testing.T) {
 		t.Fatalf("find state term = %q, want cat", w.Find.Term)
 	}
 	e.executeCommand("find_next")
+	findSettle(t, e)
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 4 {
 		t.Fatalf("after find_next: caret %v, want 0:4", got)
 	}
@@ -166,6 +169,7 @@ func TestIsearchDirectionKeys(t *testing.T) {
 	e.dispatchKey("t")
 	isearchSettle(t, e)
 	e.executeCommand("find_next") // 0:4
+	findSettle(t, e)
 
 	e.executeCommand("search_reverse")
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 0 {

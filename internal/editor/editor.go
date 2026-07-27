@@ -410,6 +410,10 @@ type Editor struct {
 	confirmKey map[string]confirmKeyBase
 	isearch    *isearchState
 
+	// findRun is the background find/find_next pass (see findasync.go), nil
+	// until the first search of the session.
+	findRun *findRun
+
 	// afterKeyArmed is set by dispatchKey to the viewport owning the current
 	// key event when that viewport carries an after-key pseudo-binding. The
 	// FIRST command that completes during the dispatch — the bound command, or
@@ -1251,6 +1255,13 @@ func (e *Editor) registerCommands() {
 			} else if legacyCallback != nil {
 				legacyCallback("", false)
 			}
+			return pawscript.BoolStatus(true)
+		}
+		// No prompt to dismiss: a background find still running is what a
+		// cancel means here, so call it off and report success — otherwise the
+		// ^C chain would fall through to buffer_close and ask about losing
+		// changes to a document the user was only searching.
+		if e.cancelFind() {
 			return pawscript.BoolStatus(true)
 		}
 		return pawscript.BoolStatus(false)
@@ -2398,12 +2409,10 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(true)
 		}
 		// find_next always steps a single occurrence; a count in the stored
-		// options applies only to the invocation that gave it.
-		if !e.findStep(state, 1, true) {
-			e.ShowNotification("Not found: " + state.Term)
-			return pawscript.BoolStatus(false)
-		}
-		return pawscript.BoolStatus(true)
+		// options applies only to the invocation that gave it. The scan runs on
+		// a goroutine, so this reports only that the pass STARTED — the caret
+		// move and any "Not found" arrive from findPump (see findasync.go).
+		return pawscript.BoolStatus(e.findStepAsync(state, 1, true))
 	})
 
 	// search - incremental search: an "I-search:" prompt whose keystrokes
