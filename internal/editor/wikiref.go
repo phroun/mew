@@ -100,6 +100,11 @@ type wikiDef struct {
 	Priority    int
 	MinHeight   int
 	MaxHeight   int
+	// Title is the docked viewport's title-bar text (MessageTopCenter). A
+	// docked wiki page ALWAYS shows its title bar — the chromeless, title-less
+	// form is reserved for Quick Help. Empty leaves a docked page title-less
+	// (only sensible for a wiki that deliberately mimics Quick Help).
+	Title string
 }
 
 // wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
@@ -111,9 +116,11 @@ var wikiRegistry = map[string]wikiDef{
 		Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt",
 		Start: "start", Writable: true,
 		// Help pages surface as a top-docked tool readout above the document,
-		// not in the main editing area.
+		// not in the main editing area, and carry the "Help" title bar (the
+		// title-less form belongs to Quick Help alone).
 		WinType: viewport.ToolViewport, Dock: viewport.DockTop,
 		ViewportSet: "help", Priority: 100, MinHeight: 4, MaxHeight: 20,
+		Title: "Help",
 	},
 }
 

@@ -29,14 +29,51 @@ func TestBufferOpenFileHelpIsUntagged(t *testing.T) {
 	if e.helpViewport() != nil {
 		t.Fatal("buffer_open_file must not create a tagged help-slot viewport")
 	}
-	found := false
+	var hw *viewport.Viewport
 	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.WikiName == "help" {
-			found = true
+			hw = w
 		}
 	}
-	if !found {
+	if hw == nil {
 		t.Fatal(`buffer_open_file "help:/" should still open a help wiki viewport`)
+	}
+	// It is a real help PAGE, so it wears the "Help" title bar — the title-less
+	// chrome is reserved for Quick Help. (This is what ^B O / ^B F must match,
+	// not the Quick Help look.)
+	if hw.MessageTopCenter != "Help" {
+		t.Fatalf("an opened help page should carry the Help title bar, got %q", hw.MessageTopCenter)
+	}
+	if hw.Class == quickHelpClass {
+		t.Fatal("an opened help page must not use the Quick Help class")
+	}
+}
+
+// A FOLLOWED help link (nav_follow into help://) lands in a docked help page
+// with the "Help" title bar too — the same page chrome as buffer_open_file,
+// never the title-less Quick Help form.
+func TestFollowHelpLinkHasTitle(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{"help/start.txt": "=== Start ===\nbody\n"})
+	// A buffer whose only content is a help:// link; caret on it, then follow.
+	e.executeCommand("buffer_new")
+	w := e.ViewportManager.GetFocusedViewport()
+	w.ViewState.LinkBrowsing = true // the hyperlink layer (global default), as on a real page
+	e.executeCommand("insert '[[help://]]'")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // inside the [[help://]] source
+	if !e.navFollow(true) {
+		t.Fatal("nav_follow should follow the help:// link")
+	}
+	var hw *viewport.Viewport
+	for _, v := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
+		if v.WikiName == "help" {
+			hw = v
+		}
+	}
+	if hw == nil {
+		t.Fatal("following help:// should open a docked help page")
+	}
+	if hw.MessageTopCenter != "Help" {
+		t.Fatalf("a followed help page should carry the Help title bar, got %q", hw.MessageTopCenter)
 	}
 }
 

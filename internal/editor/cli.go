@@ -294,6 +294,10 @@ func (e *Editor) createWikiViewport(buf *buffer.Buffer, def wikiDef, focus bool)
 	opts.Priority = def.Priority
 	opts.MinHeight = def.MinHeight
 	opts.MaxHeight = def.MaxHeight
+	// A docked wiki page always shows its title bar; the title-less chrome is
+	// reserved for Quick Help. (An undocked main-area page returned above never
+	// reaches here.)
+	opts.MessageTopCenter = def.Title
 	opts.Buffer = buf
 	opts.SetFocus = focus
 	return e.ViewportManager.GetViewport(e.ViewportManager.CreateViewport(opts))
