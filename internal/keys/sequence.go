@@ -275,48 +275,33 @@ func (sp *SequenceProcessor) getKeyFallbacks(sequence string) []string {
 		}
 	}
 
-	// Multi-part sequence handling
+	// Multi-part sequence handling: every part after the starter admits its
+	// equivalent spellings (see partVariants), combined across ALL parts at
+	// once — a continuation key must reach the mapping whichever spelling the
+	// map uses, even when several parts are aliased simultaneously ("^O ^V C"
+	// for a mapped "^O V ^C"). The as-pressed sequence enumerates first, so an
+	// exact mapping always wins over an alias.
 	if strings.Contains(sequence, " ") {
 		parts := strings.Split(sequence, " ")
-		firstPart := parts[0]
-		isControlStarter := sp.controlSequenceStarters[firstPart]
+		isControlStarter := sp.controlSequenceStarters[parts[0]]
 
+		seqs := []string{parts[0]}
 		for i := 1; i < len(parts); i++ {
-			part := parts[i]
-
-			// Case insensitivity for single letters
-			if len(part) == 1 {
-				r := rune(part[0])
-				if unicode.IsLetter(r) {
-					altParts := make([]string, len(parts))
-					copy(altParts, parts)
-					if unicode.IsUpper(r) {
-						altParts[i] = strings.ToLower(part)
-					} else {
-						altParts[i] = strings.ToUpper(part)
-					}
-					fallbacks = append(fallbacks, strings.Join(altParts, " "))
+			variants := sp.partVariants(parts[i], isControlStarter)
+			next := make([]string, 0, len(seqs)*len(variants))
+			for _, prefix := range seqs {
+				for _, v := range variants {
+					next = append(next, prefix+" "+v)
 				}
 			}
-
-			// Control character fallbacks for control sequence starters
-			if isControlStarter {
-				if controlVersion := sp.getSimpleControl(part); controlVersion != "" {
-					// Try control version
-					altParts := make([]string, len(parts))
-					copy(altParts, parts)
-					altParts[i] = controlVersion
-					fallbacks = append(fallbacks, strings.Join(altParts, " "))
-
-					// Try non-control version
-					if len(controlVersion) == 2 && controlVersion[0] == '^' {
-						nonControlVersion := string(controlVersion[1])
-						altParts2 := make([]string, len(parts))
-						copy(altParts2, parts)
-						altParts2[i] = nonControlVersion
-						fallbacks = append(fallbacks, strings.Join(altParts2, " "))
-					}
-				}
+			seqs = next
+			if len(seqs) > 256 {
+				seqs = seqs[:256] // runaway guard; real chords are 2-4 parts
+			}
+		}
+		for _, s := range seqs {
+			if s != sequence {
+				fallbacks = append(fallbacks, s)
 			}
 		}
 	}
@@ -332,6 +317,48 @@ func (sp *SequenceProcessor) getKeyFallbacks(sequence string) []string {
 	}
 
 	return fallbacks
+}
+
+// partVariants returns the equivalent spellings of one continuation key token
+// within a sequence, the token itself always first (so as-pressed outranks any
+// alias). A single letter admits its case flip; within a control-started
+// sequence it also admits its control form (c/C ~ ^C), and a control token or
+// a named key with a control alias admits its plain letter in both cases
+// (^C ~ C ~ c, return ~ ^M ~ M ~ m). This is what lets "^B C" entered as
+// "^B ^C" complete the mapping mid-sequence instead of abandoning the prefix.
+// Named-key aliases (esc/^[, back/^H, ...) at the sequence tail are handled by
+// the alias suffix pass in getKeyFallbacks.
+func (sp *SequenceProcessor) partVariants(part string, controlSeq bool) []string {
+	out := []string{part}
+	add := func(s string) {
+		for _, e := range out {
+			if e == s {
+				return
+			}
+		}
+		out = append(out, s)
+	}
+	if r := []rune(part); len(r) == 1 && unicode.IsLetter(r[0]) {
+		if unicode.IsUpper(r[0]) {
+			add(strings.ToLower(part))
+		} else {
+			add(strings.ToUpper(part))
+		}
+		if controlSeq {
+			add("^" + strings.ToUpper(part)) // control keys are canonically ^X
+		}
+	}
+	if controlSeq {
+		if cv := sp.getSimpleControl(part); cv != "" {
+			add(cv)
+			if len(cv) == 2 && cv[0] == '^' {
+				letter := string(cv[1])
+				add(letter)
+				add(strings.ToLower(letter))
+			}
+		}
+	}
+	return out
 }
 
 // getSimpleControl converts a key to its control character equivalent.
