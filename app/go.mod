@@ -19,10 +19,10 @@ require (
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/argwild v0.0.1 // indirect
-	github.com/phroun/direct-key-handler v0.3.8 // indirect
+	github.com/phroun/direct-key-handler v0.3.9 // indirect
 	github.com/phroun/garland v0.1.9 // indirect
 	github.com/phroun/pawscript v0.2.11-alpha // indirect
-	github.com/phroun/purfecterm v0.2.22 // indirect
+	github.com/phroun/purfecterm v0.2.27 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/veandco/go-sdl2 v0.4.40 // indirect
