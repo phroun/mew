@@ -102,6 +102,7 @@ func (g *gridBackend) PollEvent() core.Event                  { return nil }
 func (g *gridBackend) WaitEvent() core.Event                  { return nil }
 func (g *gridBackend) SetCursorVisible(bool)                  {}
 func (g *gridBackend) SetCursorPosition(core.Unit, core.Unit) {}
+func (g *gridBackend) SetCursorStyle(int)                     {}
 func (g *gridBackend) SupportsColor() bool                    { return true }
 func (g *gridBackend) SupportsMouse() bool                    { return false }
 func (g *gridBackend) SupportsUnicode() bool                  { return true }

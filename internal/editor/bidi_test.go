@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 	"testing"
@@ -833,5 +834,101 @@ func TestBidiBarNudgeTracksLogoFlip(t *testing.T) {
 			t.Fatalf("rune %d: bar %d - block %d = %d, want %d (logo RTL=%v)",
 				pos, barCol, blockCol, barCol-blockCol, wantNudge, wantNudge == 1)
 		}
+	}
+}
+
+// rtlGutterEditor is an RTL viewport WITH line numbers, so the gutter mirrors
+// to the right of the content and the caret has somewhere to dip.
+func rtlGutterEditor(t *testing.T, content string) (*Editor, *viewport.Viewport, *bytes.Buffer) {
+	t.Helper()
+	e, w, out := newRenderedEditor(t, content)
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = true
+	e.performRender() // settle LineNumWidth
+	return e, w, out
+}
+
+// Under direction=rtl the caret after the last LATIN character belongs one
+// column to its RIGHT — which is the mirrored gutter. Clamping it back onto the
+// character made it read as sitting BEFORE the text just typed.
+func TestBidiCaretDipsIntoGutterAfterLatin(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // after 'c'
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight+1 {
+		t.Fatalf("caret col %d, want %d — one column into the gutter, after the text",
+			col, contentRight+1)
+	}
+}
+
+// Every cursor shape gets the dip: it is a position, not a shape correction.
+func TestBidiGutterDipAppliesToEveryShape(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	contentRight := e.Renderer.Width - w.LineNumWidth
+
+	for _, shape := range []int{1, 2, 3, 4, 5, 6} {
+		e.Config.InsertCursor = shape
+		out.Reset()
+		e.performRender()
+		if _, col := lastCursor(out.Bytes()); col != contentRight+1 {
+			t.Fatalf("shape %d: caret col %d, want %d", shape, col, contentRight+1)
+		}
+	}
+}
+
+// The RTL reading start is NOT an "after a character" position — it marks the
+// cell the next character will occupy — so it still clamps onto the edge cell,
+// exactly as before.
+func TestBidiRTLReadingStartStillClamps(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "אבג\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
+	e.Config.InsertCursor = 2                           // block, so no bar nudge is in play
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight {
+		t.Fatalf("caret col %d, want the content edge %d (the reading start must not dip)",
+			col, contentRight)
+	}
+}
+
+// With no gutter to dip into, the clamp stands rather than addressing a column
+// outside the viewport — the pre-existing behavior, unchanged.
+func TestBidiNoGutterKeepsClamp(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != e.Renderer.Width {
+		t.Fatalf("caret col %d, want the screen edge %d with no gutter available",
+			col, e.Renderer.Width)
+	}
+}
+
+// An LTR viewport is untouched: its gutter is on the LEFT, so there is no slack
+// to the right and the caret geometry is exactly what it always was.
+func TestBidiLTRViewportUnaffected(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	w.ViewState.ShowLineNumbers = true
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	if col != w.LineNumWidth+4 { // gutter + "abc", caret after the 3rd char
+		t.Fatalf("caret col %d, want %d (LTR geometry unchanged)", col, w.LineNumWidth+4)
 	}
 }

@@ -34,6 +34,7 @@ func (s *msSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 func (s *msSurface) Invalidate(core.UnitRect)             { s.invalidated = true }
 func (s *msSurface) SetCursorVisible(bool)                {}
 func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
+func (s *msSurface) SetCursorStyle(int)                   {}
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) ScreenSizePx() (int, int)             { return int(s.size.Width), int(s.size.Height) }

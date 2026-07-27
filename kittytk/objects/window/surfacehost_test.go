@@ -13,16 +13,24 @@ type fakeSurface struct {
 	size        core.UnitSize
 	handler     platform.SurfaceHandler
 	invalidated int
+
+	// Platform text caret, as the host last set it.
+	caretVisible bool
+	caretX       core.Unit
+	caretY       core.Unit
+	caretStyle   int
+	caretCalls   int
 }
 
 func (s *fakeSurface) Size() core.UnitSize { return s.size }
 func (s *fakeSurface) Metrics() core.CellMetrics {
 	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
 }
-func (s *fakeSurface) SetHandler(h platform.SurfaceHandler)   { s.handler = h }
-func (s *fakeSurface) Invalidate(core.UnitRect)               { s.invalidated++ }
-func (s *fakeSurface) SetCursorVisible(bool)                  {}
-func (s *fakeSurface) SetCursorPosition(core.Unit, core.Unit) {}
+func (s *fakeSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
+func (s *fakeSurface) Invalidate(core.UnitRect)             { s.invalidated++ }
+func (s *fakeSurface) SetCursorVisible(v bool)              { s.caretVisible = v; s.caretCalls++ }
+func (s *fakeSurface) SetCursorPosition(x, y core.Unit)     { s.caretX, s.caretY = x, y }
+func (s *fakeSurface) SetCursorStyle(style int)             { s.caretStyle = style }
 
 // clickTrinket counts presses and records its laid-out bounds.
 type clickTrinket struct {
@@ -76,6 +84,7 @@ func (nullPaintBackend) PollEvent() core.Event                                  
 func (nullPaintBackend) WaitEvent() core.Event                                             { return nil }
 func (nullPaintBackend) SetCursorVisible(bool)                                             {}
 func (nullPaintBackend) SetCursorPosition(core.Unit, core.Unit)                            {}
+func (nullPaintBackend) SetCursorStyle(int)                                                {}
 func (nullPaintBackend) SupportsColor() bool                                               { return true }
 func (nullPaintBackend) SupportsMouse() bool                                               { return true }
 func (nullPaintBackend) SupportsUnicode() bool                                             { return true }
@@ -147,5 +156,99 @@ func TestNativeRequestedFlag(t *testing.T) {
 	win.SetNativeRequested(true)
 	if !win.NativeRequested() {
 		t.Error("request not recorded")
+	}
+}
+
+// caretTrinket asks for the platform text caret at a fixed local position while
+// it has focus — a stand-in for a focused terminal.
+type caretTrinket struct {
+	core.TrinketBase
+	focused bool
+	style   int
+	localX  core.Unit
+	localY  core.Unit
+}
+
+func newCaretTrinket(style int, x, y core.Unit) *caretTrinket {
+	c := &caretTrinket{style: style, localX: x, localY: y}
+	c.TrinketBase = *core.NewTrinketBase()
+	return c
+}
+
+func (c *caretTrinket) Paint(p *core.Painter) {
+	if c.focused {
+		p.RequestTextCaret(c.localX, c.localY, c.style)
+	}
+}
+
+// A focused trinket's caret request reaches the surface, translated into
+// surface coordinates, with its DECSCUSR shape.
+func TestSurfaceHostAppliesTextCaret(t *testing.T) {
+	win := NewWindow("Hosted")
+	caret := newCaretTrinket(5, 24, 32)
+	caret.focused = true
+	win.SetContent(caret)
+
+	surface := &fakeSurface{size: core.UnitSize{Width: 8 * 50, Height: 16 * 12}}
+	host := NewSurfaceHost(win, surface)
+	host.Frame(core.NewPainter(nullPaintBackend{}))
+
+	if !surface.caretVisible {
+		t.Fatal("a focused caret request should show the platform caret")
+	}
+	if surface.caretStyle != 5 {
+		t.Fatalf("caret style = %d, want the requested 5", surface.caretStyle)
+	}
+	// Frameless window at the origin: local coordinates ARE surface ones.
+	if surface.caretX != 24 || surface.caretY != 32 {
+		t.Fatalf("caret at (%v,%v), want (24,32)", surface.caretX, surface.caretY)
+	}
+}
+
+// No request in a frame leaves the platform caret hidden — an unfocused
+// terminal paints its own instead.
+func TestSurfaceHostHidesCaretWithoutRequest(t *testing.T) {
+	win := NewWindow("Hosted")
+	caret := newCaretTrinket(5, 24, 32) // not focused: never requests
+	win.SetContent(caret)
+
+	surface := &fakeSurface{size: core.UnitSize{Width: 8 * 50, Height: 16 * 12}}
+	host := NewSurfaceHost(win, surface)
+	host.Frame(core.NewPainter(nullPaintBackend{}))
+
+	if surface.caretVisible {
+		t.Fatal("a frame with no caret request must leave the caret hidden")
+	}
+}
+
+// The LAST request of a frame wins, so whatever paints on top — an overlay, a
+// menu, a torn-off window — takes the caret from the content underneath.
+func TestTextCaretLastRequestWins(t *testing.T) {
+	p := core.NewPainter(nullPaintBackend{})
+	p.ResetTextCaretRequest()
+	p.RequestTextCaret(10, 10, 2) // content underneath
+	p.RequestTextCaret(40, 8, 5)  // overlay painted after it
+
+	got := p.TextCaretRequest()
+	if !got.Visible || got.X != 40 || got.Y != 8 || got.Style != 5 {
+		t.Fatalf("caret = %+v, want the overlay's request", got)
+	}
+}
+
+// A request made through a derived (translated) painter reaches the frame's
+// sink, in surface coordinates.
+func TestTextCaretSurvivesPainterDerivation(t *testing.T) {
+	p := core.NewPainter(nullPaintBackend{})
+	p.ResetTextCaretRequest()
+
+	child := p.WithTransform(core.NewTranslation(16, 48))
+	child.RequestTextCaret(8, 16, 3)
+
+	got := p.TextCaretRequest()
+	if !got.Visible || got.X != 24 || got.Y != 64 {
+		t.Fatalf("caret = %+v, want the translated (24,64)", got)
+	}
+	if got.Style != 3 {
+		t.Fatalf("caret style = %d, want 3", got.Style)
 	}
 }

@@ -43,9 +43,30 @@ func (h *SurfaceHost) Invalidate() {
 	h.surface.Invalidate(core.UnitRect{})
 }
 
-// Frame implements platform.SurfaceHandler.
+// Frame implements platform.SurfaceHandler. After painting, the frame's
+// platform text-caret request is handed to the surface: the last trinket to
+// ask for it during the paint owns it (see core/textcaret.go), so an overlay,
+// menu or torn-off window painted above the content takes the caret from
+// whatever is underneath. No request leaves the caret hidden.
 func (h *SurfaceHost) Frame(p *core.Painter) {
+	p.ResetTextCaretRequest()
 	h.win.Paint(p)
+	applyTextCaret(h.surface, p.TextCaretRequest())
+}
+
+// applyTextCaret pushes a frame's caret request to the surface. The shape goes
+// first so a caret about to be shown appears already wearing it.
+func applyTextCaret(surface platform.Surface, caret core.TextCaret) {
+	if surface == nil {
+		return
+	}
+	if !caret.Visible {
+		surface.SetCursorVisible(false)
+		return
+	}
+	surface.SetCursorStyle(caret.Style)
+	surface.SetCursorPosition(caret.X, caret.Y)
+	surface.SetCursorVisible(true)
 }
 
 // Event implements platform.SurfaceHandler: surface coordinates ARE

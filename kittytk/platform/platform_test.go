@@ -66,6 +66,7 @@ func (f *fakeBackend) PollEvent() core.Event {
 func (f *fakeBackend) WaitEvent() core.Event                  { return nil }
 func (f *fakeBackend) SetCursorVisible(bool)                  {}
 func (f *fakeBackend) SetCursorPosition(core.Unit, core.Unit) {}
+func (f *fakeBackend) SetCursorStyle(int)                     {}
 func (f *fakeBackend) SupportsColor() bool                    { return true }
 func (f *fakeBackend) SupportsMouse() bool                    { return true }
 func (f *fakeBackend) SupportsUnicode() bool                  { return true }

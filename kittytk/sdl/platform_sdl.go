@@ -1149,6 +1149,7 @@ func unionUnitRect(a, b core.UnitRect) core.UnitRect {
 }
 func (s *sdlSurface) SetCursorVisible(bool)            {}
 func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
+func (s *sdlSurface) SetCursorStyle(int)               {}
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {

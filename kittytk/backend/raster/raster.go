@@ -1569,6 +1569,7 @@ func (b *Backend) PollEvent() core.Event                  { return nil }
 func (b *Backend) WaitEvent() core.Event                  { return nil }
 func (b *Backend) SetCursorVisible(bool)                  {}
 func (b *Backend) SetCursorPosition(core.Unit, core.Unit) {}
+func (b *Backend) SetCursorStyle(int)                     {}
 func (b *Backend) SupportsColor() bool                    { return true }
 func (b *Backend) SupportsMouse() bool                    { return true }
 func (b *Backend) SupportsUnicode() bool                  { return true }

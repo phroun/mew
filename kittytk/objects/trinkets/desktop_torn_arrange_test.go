@@ -24,6 +24,7 @@ func (s *fakeNativeSurface) SetHandler(h platform.SurfaceHandler) { s.handler = 
 func (s *fakeNativeSurface) Invalidate(core.UnitRect)             {}
 func (s *fakeNativeSurface) SetCursorVisible(bool)                {}
 func (s *fakeNativeSurface) SetCursorPosition(x, y core.Unit)     {}
+func (s *fakeNativeSurface) SetCursorStyle(int)                   {}
 func (s *fakeNativeSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *fakeNativeSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *fakeNativeSurface) ScreenSizePx() (int, int)             { return s.pxW, s.pxH }
