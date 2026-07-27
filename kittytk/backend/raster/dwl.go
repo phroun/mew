@@ -3,6 +3,8 @@ package raster
 import (
 	"image"
 	"image/color"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/phroun/kittytk/core"
@@ -70,6 +72,12 @@ var dwlCache = struct {
 }
 
 const dwlCacheMax = 512
+
+// dwlSqueeze enables the over-wide-glyph squeeze; KITTYTK_DWL=nosqueeze turns
+// it off for side-by-side fidelity comparison. Note this is the CELL path —
+// the graphical (SDL) path does no horizontal squeeze at all, so this knob
+// does not affect it; see dwlNearest in the PurfecTerm trinket for that one.
+var dwlSqueeze = !strings.Contains(os.Getenv("KITTYTK_DWL"), "nosqueeze")
 
 // DrawCellDWL implements core.DWLCellDrawer: one logical cell of a DEC
 // double-width or double-height line, occupying twice its ordinary width on
@@ -199,8 +207,10 @@ func (b *Backend) renderDWLGlyph(ch rune, combining string, fg color.RGBA, mode 
 	// A glyph wider than its box is squeezed to fit rather than allowed to
 	// spill into the neighbouring cell — the same rule the GTK and Qt
 	// renderers apply (textScaleX *= targetCellWidth / actualWidth). Narrow
-	// glyphs are left alone and centred by the caller.
-	if out != nil && boxPx > 0 && out.Rect.Dx() > boxPx {
+	// glyphs are left alone and centred by the caller. KITTYTK_DWL=nosqueeze
+	// turns it off (an evaluation knob: it lets an over-wide glyph overlap its
+	// neighbour, which is wrong, but shows what the resample costs in fidelity).
+	if dwlSqueeze && out != nil && boxPx > 0 && out.Rect.Dx() > boxPx {
 		out = squashCols(out, boxPx)
 	}
 	return out

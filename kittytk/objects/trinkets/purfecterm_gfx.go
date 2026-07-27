@@ -790,15 +790,25 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		// Double width, single height. cellTextImage takes its point size from
 		// the box HEIGHT alone, so widening the box on its own only centres an
 		// ordinary glyph in it — which is what a DECDWL heading looked like.
-		// Ask for a 2x-TALL mask instead: that doubles the point size, and
-		// since the box is already the doubled cell width the bigger glyph
-		// fills it. Then average the mask back down to one row, keeping the
-		// full horizontal detail of the 2x rasterization.
-		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
+		//
+		// Render the glyph at its ORDINARY size into an ordinary-width mask —
+		// the very raster it gets on a normal row, hinted and grid-fitted for
+		// this exact cell height — then double every column to fill the box.
+		// Vertical stroke weights and pixel intensities come out identical to
+		// normal text, which is what DEC hardware does and what keeps a doubled
+		// row as crisp as the rows around it.
+		//
+		// (Rendering at 2x point size and resampling back down is the obvious
+		// alternative and reads sharper in the abstract, but it discards half
+		// the vertical resolution after the fact: the glyph is no longer hinted
+		// for its final height and thin horizontal features come back at part
+		// intensity, so the row looks washed out beside ordinary text. That
+		// path is kept under KITTYTK_DWL=supersample for comparison.)
+		mask := t.dwlDoubleWideMask(str, family, cell, boxW, contentH, ppu, wide, kashL, kashR, actx)
 		if mask == nil {
 			return
 		}
-		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, squashRowsRGBA(mask, contentH), frgb.R, frgb.G, frgb.B)
+		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
 		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
@@ -820,6 +830,61 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		}
 		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	}
+}
+
+// dwlSupersample selects the alternative double-width strategy: rasterize at
+// 2x point size and resample back to one row. Kept for side-by-side comparison
+// (KITTYTK_DWL=supersample); the default preserves pixel density instead.
+var dwlSupersample = strings.Contains(os.Getenv("KITTYTK_DWL"), "supersample")
+
+// dwlDoubleWideMask builds the glyph mask for one DECDWL cell, filling a box
+// twice the ordinary cell width.
+func (t *PurfecTerm) dwlDoubleWideMask(str, family string, cell *purfecterm.Cell,
+	boxW, contentH int, ppu float64, wide, kashL, kashR bool, actx *arabicCellShape) *image.RGBA {
+
+	if dwlSupersample {
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
+		if mask == nil {
+			return nil
+		}
+		return squashRowsRGBA(mask, contentH)
+	}
+
+	// The ordinary-size raster, in the ordinary cell width — bit for bit what
+	// this glyph looks like on a normal row.
+	natural := boxW / 2
+	if natural < 1 {
+		natural = 1
+	}
+	mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, natural, contentH, ppu, wide, cell.Char, kashL, kashR, actx)
+	if mask == nil {
+		return nil
+	}
+	return widenCols(mask, boxW)
+}
+
+// widenCols stretches an image to dstW columns by repeating source columns —
+// an exact column doubling at the 2:1 ratio double-width asks for. No filter:
+// every output pixel is a source pixel at its original intensity, so the
+// glyph's density and vertical crispness survive the widening untouched.
+func widenCols(src *image.RGBA, dstW int) *image.RGBA {
+	srcW, h := src.Rect.Dx(), src.Rect.Dy()
+	if srcW <= 0 || h <= 0 || dstW <= srcW {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, h))
+	for x := 0; x < dstW; x++ {
+		sx := x * srcW / dstW
+		if sx >= srcW {
+			sx = srcW - 1
+		}
+		for y := 0; y < h; y++ {
+			si := src.PixOffset(src.Rect.Min.X+sx, src.Rect.Min.Y+y)
+			di := dst.PixOffset(x, y)
+			copy(dst.Pix[di:di+4], src.Pix[si:si+4])
+		}
+	}
+	return dst
 }
 
 // squashRowsRGBA box-filters an image down to dstH rows, averaging each output
