@@ -157,12 +157,11 @@ func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
 }
 
 // replaceBuffer swaps w to buf in place WITHOUT growing the nav history (see
-// Window.ReplaceBuffer), with the same orphan protection as swapBuffer. Used
-// for Quick Help's dynamic re-render as the key context changes.
+// Window.ReplaceBuffer). Used for Quick Help's dynamic re-render as the key
+// context changes: the departing page is ephemeral and is released outright, so
+// successive context changes never pile buffers into the window's graveyard.
 func (e *Editor) replaceBuffer(w *window.Window, buf *buffer.Buffer) {
-	w.ReplaceBuffer(buf, func(b *buffer.Buffer) bool {
-		return e.bufferReferencedElsewhere(b, w)
-	})
+	w.ReplaceBuffer(buf)
 	e.unburyEverywhere(buf)
 }
 

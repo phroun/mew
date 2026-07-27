@@ -160,6 +160,41 @@ func TestQuickHelpFollowsTopic(t *testing.T) {
 	}
 }
 
+// Quick Help is ephemeral: as the key context walks from topic to topic, each
+// departing page is RELEASED, never buried. So the docked window's graveyard
+// stays empty however many contexts are visited — nothing accumulates to
+// resurface (as a would-be unsaved document) when the window later closes.
+func TestQuickHelpDoesNotAccumulateGraveyard(t *testing.T) {
+	e := helpTestEditor(t, map[string]string{
+		"help/keys.txt":        "=== Root ===\nroot\n",
+		"help/keys_buffer.txt": "=== Buffer ===\nbuffer\n",
+		"help/keys_win.txt":    "=== Window ===\nwindow\n",
+	})
+	e.KeyProcessor.MapKey("help", "keys")
+	e.KeyProcessor.MapKey("^B help", "keys_buffer")
+	e.KeyProcessor.MapKey("^W help", "keys_win")
+
+	e.ActiveSequence = ""
+	e.executeCommand("help_toggle")
+	hw := e.helpWindow()
+	if hw == nil || !e.quickHelpWindowOpen() {
+		t.Fatal("Quick Help should be open in quick mode")
+	}
+
+	// Walk the context across several distinct pages, then back to the root.
+	for _, seq := range []string{"^B", "^W", ""} {
+		e.ActiveSequence = seq
+		e.updateQuickHelp()
+	}
+
+	if n := len(hw.GraveyardBuffers()); n != 0 {
+		t.Fatalf("Quick Help must not bury departed pages; graveyard holds %d", n)
+	}
+	if back, _ := hw.NavHistoryDepths(); back != 0 {
+		t.Fatalf("Quick Help is a single dynamic slot; back history grew to %d", back)
+	}
+}
+
 // The main help ("Using mew" = help_toggle <page>) is never affected by the
 // quickHelpTopic, and opening it leaves quick mode.
 func TestMainHelpIgnoresQuickHelpTopic(t *testing.T) {
