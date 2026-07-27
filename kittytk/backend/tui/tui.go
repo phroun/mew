@@ -422,8 +422,13 @@ func (t *TUIBackend) EndFrame() {
 		lineCleared := false
 
 		// After resize, clear each line (and its DEC line mode) before updating.
+		// DECSWL (ESC#5) is what actually retires the line mode: erase-line
+		// clears a row's CONTENT, never its DEC line attribute, so zeroing
+		// frontLineAttr without it left the record saying "normal" while the
+		// terminal kept the row doubled — and the reversion below, which fires
+		// only on a non-zero record, could never rescue it again.
 		if clearLines {
-			sb.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[2K", y+1))
+			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5\033[0m\033[2K", y+1))
 			t.frontLineAttr[y] = 0
 			lineCleared = true
 			termY, termX = y, 0
