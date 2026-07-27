@@ -38,6 +38,11 @@ type statusWriter struct {
 }
 
 func (sw *statusWriter) Write(p []byte) (n int, err error) {
+	// A running launch-eval batch captures #err instead (see eval.go).
+	if sw.editor.evalCaptureWrite(true, p) {
+		return len(p), nil
+	}
+
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
 
@@ -78,6 +83,11 @@ type insertWriter struct {
 }
 
 func (iw *insertWriter) Write(p []byte) (n int, err error) {
+	// A running launch-eval batch captures #out instead (see eval.go).
+	if iw.editor.evalCaptureWrite(false, p) {
+		return len(p), nil
+	}
+
 	iw.mu.Lock()
 	defer iw.mu.Unlock()
 
@@ -384,6 +394,14 @@ type Editor struct {
 	// cliPSL holds the launch command line as parsed PSL (see cli.go), kept
 	// for future script access to arbitrary command-line arguments.
 	cliPSL interface{}
+
+	// Launch evals (see eval.go): the --eval scripts queued by the launch walk
+	// in file order, the ordered #out/#err capture that diverts PawScript
+	// output while they run, and the focused viewport to restore when a batch
+	// produces no output.
+	launchEvals      []launchEval
+	evalCap          evalCapture
+	evalFocusRestore string
 
 	// deadcat is the crash-dump destination, resolved once at startup so the
 	// death path never computes a path or makes a decision (see deadcat.go).
@@ -3191,8 +3209,16 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 // command was one of the coalescible edits, bakes the undo run — so a cursor
 // move or any other command ends the streak and the next edit starts fresh.
 func (e *Editor) executeCommand(command string) {
+	e.executeCommandResult(command)
+}
+
+// executeCommandResult is executeCommand returning the PawScript result, for
+// the one caller that must know whether the command suspended on an async
+// token (the launch-eval runner, which waits for the token before starting
+// the next script).
+func (e *Editor) executeCommandResult(command string) pawscript.Result {
 	if command == "" {
-		return
+		return nil
 	}
 
 	// Before running any command, expire transient notification/error/warning
@@ -3225,7 +3251,7 @@ func (e *Editor) executeCommand(command string) {
 	// this same goroutine. The blocking Execute would deadlock the main loop
 	// waiting for input that can never arrive. A returned TokenResult simply
 	// means "still running"; the prompt callback finishes the sequence later.
-	e.PawScript.ExecuteAsync(command)
+	res := e.PawScript.ExecuteAsync(command)
 
 	// Undo grouping is no longer a blanket per-command transaction. Plain typing
 	// and character deletes flow as bare edits that garland coalesces into a
@@ -3249,6 +3275,7 @@ func (e *Editor) executeCommand(command string) {
 		e.lastYank.valid = false
 	}
 	e.RequestRender()
+	return res
 }
 
 // applyRepeatNext consumes a pending repeat_next arm on the target viewport,
@@ -6329,6 +6356,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 
 	// Initial render
 	e.performRender()
+
+	// Queue the launch --eval scripts (if any) as the first events the loop
+	// processes, so they run visually in the freshly rendered session.
+	e.startLaunchEvals()
 
 	// Main event loop
 	for e.Running {

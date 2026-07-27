@@ -2,11 +2,13 @@ package editor
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/phroun/argwild"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
+	"github.com/phroun/pawscript"
 )
 
 // This file turns a parsed argwild command line into a mew launch: each long
@@ -17,6 +19,10 @@ import (
 // file changes only the files that follow it. Options whose set_option target
 // is the whole editor (not a viewport) are "global" and must precede the first
 // file.
+//
+// --eval="script" rides the same walk: the script runs as a PawScript command
+// against each file opened while it is set (sticky, like the option set),
+// --eval= turns it off, and eval.go owns the execution and #out/#err capture.
 
 // cliPerViewportOptions (set_option routes these to a viewport's ViewState) and
 // cliKnownOptions (every option set_option accepts at runtime) are both derived
@@ -26,9 +32,9 @@ import (
 
 // cliOp is one step of the launch walk.
 type cliOp struct {
-	kind  int    // cliSetOption | cliOpenFile | cliGotoLine
+	kind  int    // cliSetOption | cliOpenFile | cliGotoLine | cliEval
 	name  string // option name (lowercased) for cliSetOption
-	value string // option value for cliSetOption; filename for cliOpenFile
+	value string // option value for cliSetOption; filename for cliOpenFile; script for cliEval
 	line  int    // 1-based line for cliGotoLine
 }
 
@@ -36,6 +42,7 @@ const (
 	cliSetOption = iota
 	cliOpenFile
 	cliGotoLine
+	cliEval
 )
 
 // launchPlan is the ordered walk plus the raw parse (kept for future
@@ -68,6 +75,15 @@ func buildLaunchPlan(r *argwild.Result) (*launchPlan, error) {
 			if name == "" {
 				continue
 			}
+			// Shell rescue for --eval: the natural spelling
+			// `mew --eval="insert 'hi'" file` reaches argv as ONE token whose
+			// value holds spaces, which argwild's switch lexer cannot attach —
+			// the whole token degrades to an operand. Nobody edits a file
+			// literally named "--eval=...", so reclaim it as the eval switch.
+			if script, ok := strings.CutPrefix(name, "--eval="); ok {
+				plan.ops = append(plan.ops, cliOp{kind: cliEval, value: unquoteEvalScript(script)})
+				continue
+			}
 			sawFile = true
 			plan.ops = append(plan.ops, cliOp{kind: cliOpenFile, value: name})
 		}
@@ -91,6 +107,20 @@ func switchToOp(sw argwild.Switch) (cliOp, error) {
 		return cliOp{}, fmt.Errorf("unsupported switch %q (use --optionName)", sw.String())
 	}
 	name := strings.ToLower(sw.Name)
+	// --eval is not a set_option key: its value is a PawScript to run once the
+	// following file has loaded (sticky across later files; see applyLaunch).
+	// A blank --eval= parses as StateBare and turns the sticky script off.
+	if name == "eval" {
+		switch sw.State {
+		case argwild.StateBare, argwild.StateOff:
+			return cliOp{kind: cliEval, value: ""}, nil
+		case argwild.StateValued:
+			v, _ := sw.First()
+			return cliOp{kind: cliEval, value: evalScriptFromValue(v)}, nil
+		default:
+			return cliOp{}, fmt.Errorf(`--eval takes a script value (--eval="command ..." or --eval= to clear)`)
+		}
+	}
 	if !cliKnownOptions[name] {
 		return cliOp{}, fmt.Errorf("unknown option --%s", sw.Name)
 	}
@@ -127,6 +157,46 @@ func switchValue(sw argwild.Switch) (string, error) {
 	}
 }
 
+// evalScriptFromValue renders a --eval switch value as the PawScript to run.
+// A parenthesized PSL list value (--eval=(cmd1,cmd2)) is a list of command
+// strings, joined with ";" into one sequence; any other value is its literal
+// text. (The `(cmd "a"; cmd2)` spelling is not valid PSL, so it arrives as
+// plain text instead — and PawScript executes the paren-wrapped sequence
+// directly.)
+func evalScriptFromValue(v argwild.Value) string {
+	if v.Kind == argwild.KindPSL {
+		var items []interface{}
+		switch t := v.PSL.(type) {
+		case pawscript.PSLList:
+			items = t
+		case []interface{}:
+			items = t
+		}
+		if items != nil {
+			parts := make([]string, 0, len(items))
+			for _, it := range items {
+				if s, ok := it.(string); ok {
+					parts = append(parts, s)
+				} else {
+					parts = append(parts, fmt.Sprintf("%v", it))
+				}
+			}
+			return strings.Join(parts, "; ")
+		}
+	}
+	return v.AsString()
+}
+
+// unquoteEvalScript strips one layer of symmetric double quotes from a
+// shell-rescued --eval= operand value, for hosts that pass the quotes through
+// literally (`--eval="script"` arriving with the quotes intact).
+func unquoteEvalScript(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // RunArgs launches the editor from a parsed command line: it applies options
 // and opens files per the walk described above, then runs the session. A
 // launch with no file opens a single empty buffer (as bare `mew` does).
@@ -146,6 +216,11 @@ func (e *Editor) RunArgs(r *argwild.Result) error {
 	}
 	e.cliPSL = plan.psl
 	_, err = e.serve(primary)
+	// A launch-eval batch a script exited out of (or that was still running
+	// when the session ended) never got its results buffer: deliver its
+	// captured #out/#err to the real streams instead, in occurrence order —
+	// after serve's defers have restored the terminal.
+	e.dumpEvalOutput(os.Stdout, os.Stderr)
 	return err
 }
 
@@ -157,6 +232,8 @@ func (e *Editor) RunArgs(r *argwild.Result) error {
 func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 	winOpts := map[string]string{} // running per-viewport option set
 	pendingGoto := 0               // 1-based line for the next file, 0 = none
+	pendingEval := ""              // sticky --eval script for each following file
+	evalFresh := false             // pendingEval set but not yet applied to any file
 	var primary *buffer.Buffer     // first MAIN-AREA document buffer (session snapshot)
 	var lastWin *viewport.Viewport
 	anyFocus := false // has any opened viewport claimed focus yet?
@@ -171,6 +248,9 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 			}
 		case cliGotoLine:
 			pendingGoto = op.line
+		case cliEval:
+			pendingEval = op.value
+			evalFresh = pendingEval != ""
 		case cliOpenFile:
 			// The first opened viewport wins focus. A docked wiki tool viewport
 			// (mew help:/start) is a readout, not the session's main content:
@@ -189,6 +269,14 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 				e.gotoLaunchLine(w, pendingGoto)
 				pendingGoto = 0
 			}
+			// The sticky eval runs against every file opened while it is set
+			// (a later --eval replaces it; --eval= turns it off). The scripts
+			// queue here in file order and run visually once the session is
+			// rendering (see startLaunchEvals).
+			if pendingEval != "" {
+				e.launchEvals = append(e.launchEvals, launchEval{winID: w.ID, script: pendingEval})
+				evalFresh = false
+			}
 		}
 	}
 
@@ -201,10 +289,21 @@ func (e *Editor) applyLaunch(plan *launchPlan) (*buffer.Buffer, error) {
 		w := e.createMainViewport(buf, winOpts, !anyFocus)
 		primary = buf
 		lastWin = w
+		// A launch with no file still honors --eval: the implicit empty
+		// document viewport is the "following file" the script applies to.
+		if pendingEval != "" {
+			e.launchEvals = append(e.launchEvals, launchEval{winID: w.ID, script: pendingEval})
+			evalFresh = false
+		}
 	}
 	// A trailing +N with no file after it lands on the last-opened viewport.
 	if pendingGoto > 0 && lastWin != nil {
 		e.gotoLaunchLine(lastWin, pendingGoto)
+	}
+	// Mirroring that rule, a trailing --eval that no file followed runs against
+	// the last-opened viewport.
+	if evalFresh && lastWin != nil {
+		e.launchEvals = append(e.launchEvals, launchEval{winID: lastWin.ID, script: pendingEval})
 	}
 	return primary, nil
 }

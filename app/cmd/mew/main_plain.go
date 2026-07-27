@@ -28,6 +28,10 @@ the files after it, and an option after a file changes only later files:
   --optionName-           disable a boolean option   (also --optionName=off/0)
   --optionName value      set a valued option        (also --optionName=value)
   +N                      open the next file at line N
+  --eval="script"         run a PawScript command against each following file
+                          once it has loaded (sticky; --eval= turns it off).
+                          Captured script output opens in a results buffer, or
+                          goes to stdout/stderr when a script exits the editor
 
   -v, --version           print version and exit
   -h, --help              print this help and exit

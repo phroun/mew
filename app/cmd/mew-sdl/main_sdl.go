@@ -31,9 +31,9 @@ Usage:
   mew-sdl [options] [file ...]
 
 Hosts mew inside a maximized graphical KittyTK window and serves the KittyTK
-protocol. The command line is mew's own: switches, +N, and files apply as in
-the plain build (one editor, first file focused, the rest as background
-buffers).
+protocol. The command line is mew's own: switches, +N, --eval, and files
+apply as in the plain build (one editor, first file focused, the rest as
+background buffers).
 
   -v, --version           print version and exit
   -h, --help              print this help and exit

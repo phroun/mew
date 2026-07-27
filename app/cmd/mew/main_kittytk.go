@@ -37,9 +37,9 @@ Usage:
 
 This build hosts mew inside a maximized KittyTK TUI window and serves the
 KittyTK protocol, so other apps can connect and embed their own mew editor
-trinkets. The command line is mew's own: switches, +N, and files apply as in
-the plain build (one editor, first file focused, the rest as background
-buffers).
+trinkets. The command line is mew's own: switches, +N, --eval, and files
+apply as in the plain build (one editor, first file focused, the rest as
+background buffers).
 
   -v, --version           print version and exit
   -h, --help              print this help and exit
