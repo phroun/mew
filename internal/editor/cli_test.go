@@ -267,7 +267,7 @@ func TestCliOptionAlignment(t *testing.T) {
 	}
 	valid := map[string]string{
 		"tabsize": "4", "showlinenumbers": "true", "showinvisibles": "true",
-		"showbidi": "true", "rtlcombining": "true", "showmarks": "yes", "insertmode": "yes", "readonly": "true", "linkbrowsing": "yes", "navigationmode": "no", "showcolumnruler": "true", "rulershowscursor": "true",
+		"showbidi": "true", "rtlcombining": "true", "showmarks": "yes", "insertmode": "yes", "autoindent": "yes", "readonly": "true", "linkbrowsing": "yes", "navigationmode": "no", "showcolumnruler": "true", "rulershowscursor": "true",
 		"syntax": "", "syntaxdetect": "true", "syntaxoverrides": "go conf", "macoptionkeys": "auto",
 		"matchignoressinglequote": "true", "matchignoresdoublequote": "true",
 		"matchignoresslashstar": "true", "matchignoresslashslash": "true",

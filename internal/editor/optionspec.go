@@ -55,6 +55,7 @@ var optionSpecs = []optionSpec{
 	{"rtlCombining", true, optBoolKind, boolValues},
 	{"showMarks", true, optEnumKind, []string{"no", "yes", "all"}},
 	{"insertMode", true, optBoolKind, boolValues},
+	{"autoIndent", true, optBoolKind, boolValues},
 	{"readOnly", true, optBoolKind, boolValues},
 	{"linkBrowsing", true, optBoolKind, boolValues},
 	{"navigationMode", true, optBoolKind, boolValues},
@@ -143,6 +144,8 @@ func (e *Editor) applyResolvedOption(w *viewport.Viewport, key string) {
 	case "insertmode":
 		// Resolve the insert-mode sense through the overlay, then store inverted.
 		w.ViewState.OverwriteMode = !e.optBool(w, "insertmode", !e.Config.OverwriteMode)
+	case "autoindent":
+		w.ViewState.AutoIndent = e.optBool(w, "autoindent", e.Config.AutoIndent)
 	case "readonly":
 		w.ViewState.ReadOnly = e.optBool(w, "readonly", e.Config.ReadOnly)
 		if !w.ViewState.ReadOnly {

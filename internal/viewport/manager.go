@@ -91,6 +91,10 @@ type ViewState struct {
 	// ReadOnly rejects content edits made through this viewport; navigation,
 	// search, marks, and undo/redo remain available. Per viewport; default false.
 	ReadOnly bool
+	// AutoIndent makes insert_newline start each new line with the leading
+	// whitespace of the line it split, replicating tabs and spaces exactly as
+	// they appear. Per viewport; default false.
+	AutoIndent bool
 	// LinkBrowsing enables the hyperlink layer for this viewport: link
 	// coloring, browse-mode buttons, and arming on caret entry. Off, links
 	// render exactly as the grammar colors them. Default true.
@@ -1214,6 +1218,7 @@ type ViewportOptions struct {
 	ShowMarks       string // "no" | "yes" | "all"
 	OverwriteMode   bool   // inverse of insertMode; zero value = insert
 	ReadOnly        bool
+	AutoIndent      bool // replicate the split line's indent on insert_newline
 	LinkBrowsing    bool // hyperlink layer (link colors, browse-mode buttons)
 	ShowRuler       bool
 	TabSize         int
@@ -1307,6 +1312,7 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 			ShowMarks:       opts.ShowMarks,
 			OverwriteMode:   opts.OverwriteMode,
 			ReadOnly:        opts.ReadOnly,
+			AutoIndent:      opts.AutoIndent,
 			LinkBrowsing:    opts.LinkBrowsing,
 			ShowRuler:       opts.ShowRuler,
 			TabSize:         opts.TabSize,
