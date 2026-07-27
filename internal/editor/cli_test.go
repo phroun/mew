@@ -273,6 +273,7 @@ func TestCliOptionAlignment(t *testing.T) {
 		"matchignoresslashstar": "true", "matchignoresslashslash": "true",
 		"matchignoreshash": "true", "matchignoresdoublehyphen": "true",
 		"matchignoressemicolon": "true", "matchignorespercent": "true",
+		"insertcursor": "5", "overwritecursor": "3", "navigationcursor": "2",
 		"wordwrap": "true", "searchignorecase": "true", "searchwrap": "true",
 		"searchregex": "true", "modebarlocation": "top", "pagesizeoptimal": "100%",
 		"pageoverlapminimum": "1", "pagesizestep": "0", "maxrepeat": "100",
