@@ -453,3 +453,51 @@ func TestTornHostModalBlockedAllowsTitleDrag(t *testing.T) {
 		t.Error("a content press on a blocked torn window must not start a drag")
 	}
 }
+
+// A popup composited on the torn surface (a dropdown menu, a context menu)
+// blocks the cursor shape of the content underneath: hovering over the popup
+// shows the plain arrow, never an I-beam bleeding through from a text-editing
+// trinket below — the same rule the desktop's CursorAt applies.
+func TestTearOffHostPopupBlocksContentCursor(t *testing.T) {
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}, x: 500, y: 300}
+	win := NewWindow("torn")
+	h := NewTearOffHost(win, surf, 1, func() (int, int) { return 0, 0 }, nil)
+
+	var got core.CursorShape
+	h.SetCursorSetter(func(s core.CursorShape) { got = s })
+
+	// A content trinket that always wants the I-beam (see ibeamContent in
+	// test_manager_cursor_test.go).
+	content := &ibeamContent{}
+	content.TrinketBase = *core.NewTrinketBase()
+	win.SetContent(content)
+
+	// No popup: hovering the content shows the I-beam.
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorText {
+		t.Fatalf("without a popup the content's I-beam should show; got %v", got)
+	}
+
+	// A popup over that spot: the arrow shows, not the I-beam through it.
+	h.RegisterPopup(&core.PopupRequest{
+		ID:     "menu",
+		Bounds: core.UnitRect{X: 80, Y: 30, Width: 60, Height: 40},
+	})
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorDefault {
+		t.Fatalf("over a popup the arrow should show; got %v", got)
+	}
+
+	// Outside the popup the content's cursor returns.
+	h.updateHoverAndCursor(30, 80)
+	if got != core.CursorText {
+		t.Fatalf("outside the popup the I-beam should return; got %v", got)
+	}
+
+	// Dismissing the popup restores the content cursor under it too.
+	h.UnregisterPopup("menu")
+	h.updateHoverAndCursor(100, 50)
+	if got != core.CursorText {
+		t.Fatalf("after dismissal the I-beam should return; got %v", got)
+	}
+}

@@ -354,6 +354,18 @@ func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
 // cursor for a plain (non-drag, non-resize) hover over the torn window.
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
+	// A popup (dropdown menu, context menu) composited on the torn surface
+	// floats above the content: over it, no trinket cursor from underneath
+	// shows through — just the arrow. Mirrors the desktop's CursorAt rule, so
+	// a torn-off window never shows an I-beam THROUGH an open menu.
+	for _, p := range h.popups {
+		b := p.Bounds
+		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
+			h.win.SetResizeHoverRects(nil)
+			h.applyCursor(core.CursorDefault)
+			return
+		}
+	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
 		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges, h.resizeGrip))
