@@ -617,13 +617,33 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	eng := t.gfxEngine()
 	sp := eng.ShapeRun(f, str)
 	naturalW := int(math.Round(float64(sp.Width()) * ppu))
-	naturalH := int(math.Round(float64(eng.LineHeight(f)) * ppu))
+	// The raster must hold the face's REAL ink, not just its nominal line
+	// budget. emFor sizes a face so ascent+descent+gap fills the budget, but
+	// the per-run bounds each round up independently and land a unit or two
+	// either side of it — Noto Naskh reports 18 against a 16-unit budget, and
+	// a budget-sized raster simply cut its descenders off.
+	lineH := eng.LineHeight(f)
+	if len(sp.Lines) > 0 {
+		if ink := sp.Lines[0].Ascent + sp.Lines[0].Descent + sp.Lines[0].Gap; ink > lineH {
+			lineH = ink
+		}
+	}
+	naturalH := int(math.Round(float64(lineH) * ppu))
 	if naturalW <= 0 {
 		naturalW = 1
 	}
 	if naturalH <= 0 {
 		naturalH = 1
 	}
+	// Baseline alignment: each face splits its line budget between ascent and
+	// descent however its designer chose, so its baseline sits at its own
+	// height in the box — Noto Kufi's shallow ascent (9 of 16) parks it high,
+	// Noto Naskh's (11) lower, Latin's and Noto Serif Hebrew's (13) lower
+	// still. Left alone every script rides at a different level in the row.
+	// Shift the finished mask so this face's baseline lands where the PRIMARY
+	// terminal face puts its own. A translation of whole pixels: the glyph
+	// keeps its size and shape, it only moves.
+	yShift := t.baselineShiftPx(family, pt, fs, sp, ppu)
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
 	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
 	// the result is a color-independent coverage mask (alpha = ink coverage);
@@ -694,11 +714,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 			slice = raw
 			s0, lo = 0, 0
 		}
-		if slice.Rect.Dy() != boxHPx {
-			// Height to the box, width untouched — same as every cell.
-			slice = scaleRGBA(slice, slice.Rect.Dx(), boxHPx)
-		}
-		compositeInto(out, slice, s0-lo, 0)
+		compositeInto(out, slice, s0-lo, yShift)
 		if actx.rt0 >= 0 || actx.lt0 >= 0 {
 			// One-time geometry report for the first joining cell: every term
 			// of the sizing equation at RUNTIME, plus whether the finished
@@ -720,33 +736,32 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	} else {
 		var placed *image.RGBA
 		xOff := 0
+		// Width rules only: the height stays the raster's own so the baseline
+		// shift below lands where it was computed. (Vertical scaling was a
+		// no-op in any case — the budget-sized raster already matched the box.)
 		switch {
 		case naturalW > boxWPx:
 			// Squeeze wide glyphs to fit the box.
-			placed = scaleRGBA(raw, boxWPx, boxHPx)
+			placed = scaleRGBA(raw, boxWPx, naturalH)
 		case wideCell && purfecterm.IsAmbiguousWidth(ch) && !purfecterm.IsBlockOrLineDrawing(ch):
 			// Ambiguous-width char in a wide cell: 1.5x, centered.
 			w := naturalW * 3 / 2
 			if w > boxWPx {
 				w = boxWPx
 			}
-			placed = scaleRGBA(raw, w, boxHPx)
+			placed = scaleRGBA(raw, w, naturalH)
 			xOff = (boxWPx - w) / 2
 		case wideCell && purfecterm.IsBlockOrLineDrawing(ch):
 			// Block/line drawing stretches to connect.
-			placed = scaleRGBA(raw, boxWPx, boxHPx)
+			placed = scaleRGBA(raw, boxWPx, naturalH)
 		default:
-			if naturalH != boxHPx {
-				placed = scaleRGBA(raw, naturalW, boxHPx)
-			} else {
-				placed = raw
-			}
+			placed = raw
 			xOff = (boxWPx - naturalW) / 2
 			if xOff < 0 {
 				xOff = 0
 			}
 		}
-		compositeInto(out, placed, xOff, 0)
+		compositeInto(out, placed, xOff, yShift)
 	}
 
 	if len(t.gfx.textCur) >= gfxCacheMax {
@@ -755,6 +770,59 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	}
 	t.gfx.textCur[key] = out
 	return out
+}
+
+// baselineShiftPx is how far to move a face's mask vertically so its baseline
+// lands where the PRIMARY terminal face puts its own — the alignment that makes
+// Hebrew and Arabic sit on the same line as Latin rather than each script
+// riding at its own face-declared height.
+//
+// Zero for the primary face itself, and zero whenever the reference cannot be
+// shaped (no engine, empty run), so an unknown case falls back to today's
+// behaviour rather than a guess.
+func (t *PurfecTerm) baselineShiftPx(family string, pt int, fs core.FontStyle, sp *text.ShapedParagraph, ppu float64) int {
+	if sp == nil || len(sp.Lines) == 0 {
+		return 0
+	}
+	eng := t.gfxEngine()
+	if eng == nil {
+		return 0
+	}
+	ref := t.primaryTermFamily()
+	if ref == "" || canonicalFamily(ref) == canonicalFamily(family) {
+		return 0 // the reference face aligns to itself
+	}
+	refSP := eng.ShapeRun(&core.Font{Name: ref, Size: pt, Style: fs}, "M")
+	if refSP == nil || len(refSP.Lines) == 0 {
+		return 0
+	}
+	shift := int(math.Round(float64(refSP.Lines[0].Baseline-sp.Lines[0].Baseline) * ppu))
+	// A correction larger than the cell is not an alignment, it is a bad
+	// metric; leave such a face where it is rather than launching it out of
+	// the row.
+	limit := int(math.Round(float64(eng.LineHeight(&core.Font{Name: ref, Size: pt})) * ppu))
+	if limit > 0 {
+		if shift > limit {
+			shift = limit
+		}
+		if shift < -limit {
+			shift = -limit
+		}
+	}
+	return shift
+}
+
+// canonicalFamily lowercases and strips spaces/hyphens so "Noto Sans Mono",
+// "noto-sans-mono" and "notosansmono" compare equal — the same leniency the
+// font database applies to alias names.
+func canonicalFamily(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // drawCellText renders one cell's character with all scaling rules,

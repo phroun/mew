@@ -152,3 +152,49 @@ func TestGraphicalDECDWLWidenPreservesPixelDensity(t *testing.T) {
 			strong(doubled), strong(normal))
 	}
 }
+
+// Every terminal face must sit on the SAME baseline as the primary (Latin)
+// face. A face splits its line budget between ascent and descent however its
+// designer chose — Noto Kufi Arabic reports 9 of 16 units above the baseline,
+// Noto Naskh 11, Latin and Noto Serif Hebrew 13 — so left alone each script
+// rides at its own height in the row: Kufi sat low with its descenders cut
+// off, Hebrew serif slightly high. The mask is shifted (never scaled) to put
+// every baseline where the primary face puts its own.
+func TestTerminalFacesShareABaseline(t *testing.T) {
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetTerminalFontFamily("ui-term-western-sans")
+	eng := term.gfxEngine()
+	if eng == nil {
+		t.Skip("font engine unavailable")
+	}
+
+	const pt = 12
+	ref := eng.ShapeRun(&core.Font{Name: "Noto Sans Mono", Size: pt}, "M")
+	if len(ref.Lines) == 0 {
+		t.Skip("reference face unavailable")
+	}
+	want := int(ref.Lines[0].Baseline)
+
+	for _, c := range []struct{ name, fam, s string }{
+		{"latin (the reference itself)", "Noto Sans Mono", "M"},
+		{"hebrew sans", "Noto Sans Hebrew", "ש"},
+		{"hebrew serif", "Noto Serif Hebrew", "ש"},
+		{"arabic sans (kufi)", "Noto Kufi Arabic", "ح"},
+		{"arabic serif (naskh)", "Noto Naskh Arabic", "ح"},
+	} {
+		sp := eng.ShapeRun(&core.Font{Name: c.fam, Size: pt}, c.s)
+		if len(sp.Lines) == 0 {
+			t.Errorf("%s: nothing shaped", c.name)
+			continue
+		}
+		own := int(sp.Lines[0].Baseline)
+		aligned := own + term.baselineShiftPx(c.fam, pt, 0, sp, 1.0)
+		if aligned != want {
+			t.Errorf("%s: baseline %d shifts to %d, want the reference's %d",
+				c.name, own, aligned, want)
+		}
+	}
+}
