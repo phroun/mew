@@ -642,20 +642,20 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	}
 }
 
-// nav_follow records the visit editor-wide under the target's RESOLVED
-// identity (presence set + timestamped log), and the link then paints in the
-// recent style: buttonRecent in browse mode, linkRecent in caret mode.
+// A visited target is recorded editor-wide (presence set + timestamped log)
+// and the link then paints in the recent style: buttonRecent in browse mode,
+// linkRecent in caret mode. (The recording itself is exercised via the
+// internal helper here; TestFollowMissingLinkVisitOnlyOnCreate covers WHEN a
+// follow records a visit.)
 func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"text [[a:b|Title]] more\n", "[options]\nsyntax=dokuwiki\n")
 
-	// Follow the link; the editor records it (an unnamed buffer has no
-	// resolution context, so the identity is the raw target).
+	// Record the visit (an unnamed buffer has no resolution context, so the
+	// identity is the raw target).
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	w.BrowseActive = true
-	if !e.navFollow(true) {
-		t.Fatal("nav_follow should activate the focused button")
-	}
+	e.recordLinkVisit(w.Buffer, "a:b", e.resolveFollow(w, "a:b"))
 	if !e.linkTargetVisited(w, "a:b") {
 		t.Fatal("the visited target should be in the presence set")
 	}
@@ -723,5 +723,39 @@ func TestNoDirectionControlsEmitted(t *testing.T) {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("content %q should still render; got %q", want, plain)
 		}
+	}
+}
+
+// Following a link whose page does not exist yet asks "Create it?" — and the
+// link is marked VISITED only if the page is actually created. Declining (or
+// cancelling) leaves the link unfollowed, still painting as unvisited.
+func TestFollowMissingLinkVisitOnlyOnCreate(t *testing.T) {
+	files := map[string]string{"w/page.txt": "go [[missing]] now\n"}
+	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	w.BrowseActive = true
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside [[missing]]
+
+	// Follow; the create prompt appears. Decline it.
+	if !e.navFollow(true) {
+		t.Fatal("nav_follow should engage (create prompt)")
+	}
+	answerPrompt(t, e, "") // plain accept = default N
+	if e.linkTargetVisited(w, "missing") {
+		t.Fatal("declining creation must leave the link UNvisited")
+	}
+	if len(e.linkVisitLog) != 0 {
+		t.Fatalf("no visit may be logged on decline; log %+v", e.linkVisitLog)
+	}
+
+	// Follow again; accept creation this time.
+	if !e.navFollow(true) {
+		t.Fatal("nav_follow should engage again")
+	}
+	answerPrompt(t, e, "y")
+	if !e.linkTargetVisited(w, "missing") {
+		t.Fatal("creating the page should mark the link visited")
+	}
+	if len(e.linkVisitLog) != 1 {
+		t.Fatalf("exactly one visit should be logged; log %+v", e.linkVisitLog)
 	}
 }

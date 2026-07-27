@@ -3300,7 +3300,9 @@ func (e *Editor) viewportEditLocked(w *viewport.Viewport) bool {
 		return false
 	}
 	if w.ViewState.ReadOnly {
-		e.ShowWarning("Buffer is read-only")
+		// Tagged so a burst of rejected edits (holding a key) collapses to one
+		// warning instead of stacking a bar per keystroke.
+		e.ShowWarningTagged("Buffer is read-only", "readonly_warning")
 		e.RequestRender()
 		return true
 	}
@@ -6595,14 +6597,28 @@ var transientNotificationClasses = map[string]bool{
 // class; the class drives its colors. Transient viewports are not cleared on
 // creation; they stack and are removed purely by age via
 // expireStaleNotifications.
-func (e *Editor) showTransient(message, class string, tfc bool) {
+//
+// A non-empty tag makes the message REPLACE its predecessor rather than stack:
+// any existing transient carrying the same tag is removed first. A rapid
+// series of same-tag toasts (e.g. "Switched to …" as focus cycles) collapses
+// to just the latest instead of piling up. The tag rides ViewportOptions and
+// is otherwise inert — colors, chrome set, and age-expiry are unchanged.
+func (e *Editor) showTransient(message, class, tag string, tfc bool) {
 	if tfc {
 		message = e.expandTransientTFC(message, class)
+	}
+	if tag != "" {
+		for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
+			if w.Tag == tag {
+				e.ViewportManager.RemoveViewport(w.ID)
+			}
+		}
 	}
 	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
 		Type:            viewport.ToolViewport,
 		ViewportSet:     viewport.ViewportSetTransient,
 		Class:           class,
+		Tag:             tag,
 		Dock:            viewport.DockBottom,
 		Priority:        0, // Very low priority - below everything else
 		MinHeight:       1,
@@ -6630,14 +6646,22 @@ func (e *Editor) expandTransientTFC(message, class string) string {
 // ShowNotification creates a transient notification viewport at the bottom of the
 // screen (informational messages, command confirmations).
 func (e *Editor) ShowNotification(message string) {
-	e.showTransient(message, "notification", false)
+	e.showTransient(message, "notification", "", false)
+}
+
+// ShowNotificationTagged is ShowNotification for a message that should REPLACE
+// its predecessor instead of stacking: a new toast with the same tag removes
+// the old one first. For repeated messages that would otherwise pile up — the
+// "Switched to …" focus toast, the "Buffer is read-only" warning.
+func (e *Editor) ShowNotificationTagged(message, tag string) {
+	e.showTransient(message, "notification", tag, false)
 }
 
 // ShowNotificationTFC is ShowNotification for a message that should have its TFC
 // codes expanded — e.g. %keys_verbose#help_toggle|^Q H% resolved to the live
 // binding and colored. TFC support is opt-in per notification.
 func (e *Editor) ShowNotificationTFC(message string) {
-	e.showTransient(message, "notification", true)
+	e.showTransient(message, "notification", "", true)
 }
 
 // showTaggedTransient is showTransient for messages that should replace their
@@ -6720,17 +6744,26 @@ func (e *Editor) announceFocusedViewport() {
 	if name == "" {
 		name = w.ID
 	}
-	e.ShowNotification("Switched to " + name)
+	// Tagged so a rapid cycle (^B N / mouse focus) collapses to the latest
+	// "Switched to …" rather than stacking one per step.
+	e.ShowNotificationTagged("Switched to "+name, "switched_viewport")
 }
 
 // ShowError shows a transient error viewport at the bottom of the screen.
 func (e *Editor) ShowError(message string) {
-	e.showTransient(message, "error", false)
+	e.showTransient(message, "error", "", false)
 }
 
 // ShowWarning shows a transient warning viewport at the bottom of the screen.
 func (e *Editor) ShowWarning(message string) {
-	e.showTransient(message, "warning", false)
+	e.showTransient(message, "warning", "", false)
+}
+
+// ShowWarningTagged is ShowWarning for a warning that should REPLACE its
+// predecessor instead of stacking — e.g. the "Buffer is read-only" warning,
+// which fires on every rejected edit and would otherwise pile up.
+func (e *Editor) ShowWarningTagged(message, tag string) {
+	e.showTransient(message, "warning", tag, false)
 }
 
 // expireStaleNotifications removes transient notification/error/warning viewports

@@ -261,28 +261,40 @@ func (e *Editor) navFollow(always bool) bool {
 	return e.followLinkSpan(w, span)
 }
 
+// recordLinkVisit marks target (as resolved) visited editor-wide and primes
+// the resolution memo keyed by the SOURCE buffer's URL — the buffer the link
+// lives in, passed explicitly so it is captured before any buffer swap.
+func (e *Editor) recordLinkVisit(srcBuf *buffer.Buffer, target string, res followResolution) {
+	key := visitKey(res, target)
+	e.markLinkVisited(key, time.Now())
+	e.linkResolveCache[e.bufferCanonicalURL(srcBuf)+"\x00"+target] = key
+}
+
 // followLinkSpan performs the follow of one link span in viewport w — the
 // shared tail of navFollow and the mouse press/release follow, which may act
 // on an UNFOCUSED (but visible) viewport. w navigates in place (or spawns per
 // the resolution), never gaining or losing focus here.
 func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
-	// Resolve, then record the visit under its RESOLVED identity (editor-wide):
-	// any other spelling of the same destination, in any buffer, now paints in
-	// the "recent" style. The paint memo is primed with the fresh resolution.
 	res := e.resolveFollow(w, span.Target)
-	key := visitKey(res, span.Target)
-	e.markLinkVisited(key, time.Now())
-	e.linkResolveCache[e.bufferCanonicalURL(w.Buffer)+"\x00"+span.Target] = key
 
 	if res.url == "" {
+		// The target does not resolve to a real page yet: DON'T mark the link
+		// visited — it hasn't been followed. A writable missing page offers
+		// creation; the visit is recorded only if the user actually creates it
+		// (promptCreatePage). An unresolvable target just reports.
 		if res.createURL != "" && res.writable {
-			e.promptCreatePage(w.ID, span, res)
+			e.promptCreatePage(w.ID, w.Buffer, span, res)
 		} else {
 			e.ShowNotification(res.message)
 		}
 		e.RequestRender()
 		return true
 	}
+
+	// A real destination: record the visit under its RESOLVED identity
+	// (editor-wide), so any other spelling of it, in any buffer, now paints in
+	// the "recent" style. The paint memo is primed with the fresh resolution.
+	e.recordLinkVisit(w.Buffer, span.Target, res)
 
 	buf := e.findOpenBuffer(res.url)
 	if buf == nil {
@@ -438,14 +450,16 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*viewport.Viewport, boo
 // ready to write — the file itself appears on first save. The page surfaces
 // exactly as a successful follow would: in place for the viewport's own wiki,
 // a fresh viewport for a cross-root destination.
-func (e *Editor) promptCreatePage(viewportID string, span *linkSpan, res followResolution) {
+func (e *Editor) promptCreatePage(viewportID string, srcBuf *buffer.Buffer, span *linkSpan, res followResolution) {
 	title := span.Title
 	if title == "" {
 		title = span.Target
 	}
+	target := span.Target
 	e.PromptMgr.PromptForConfirmationTop("Page not found: "+title, "Create it? [y/N]: ", false,
 		func(accepted, yes bool) {
 			if !accepted || !yes {
+				// Declined: the link stays UNfollowed, painted as unvisited.
 				e.RequestRender()
 				return
 			}
@@ -455,6 +469,10 @@ func (e *Editor) promptCreatePage(viewportID string, span *linkSpan, res followR
 				e.RequestRender()
 				return
 			}
+			// The page now exists (in memory; it hits disk on save): NOW the
+			// link is genuinely followed — record the visit against the source
+			// buffer, captured before the swap below.
+			e.recordLinkVisit(srcBuf, target, res)
 			var target *viewport.Viewport
 			if res.newViewport {
 				if def, ok := wikiRegistry[res.wikiName]; ok {
