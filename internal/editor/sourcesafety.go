@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // This file wires garland's source-safety cluster into the editor: save
@@ -177,19 +178,49 @@ func (e *Editor) missingSaveDir(target string) string {
 // asynchronous save sequence.
 type saveAllTally struct{ saved, failed, skipped int }
 
-// saveAllNonInteractive is the buffer_save_all "true" mode used by save-and-
-// quit: it saves every modified buffer WITHOUT prompting. An unnamed buffer or
-// a source that changed on disk is skipped with a notice (mew never blindly
-// clobbers); a write error fails. It returns true only when everything was
-// saved — nothing skipped or failed — so `buffer_save_all true & exit` will not
-// exit leaving unsaved work behind.
-func (e *Editor) saveAllNonInteractive(pending []*buffer.Buffer) bool {
+// saveAllQuiet reports whether a buffer can be saved with NO question at all:
+// named, in-place over its own unchanged source, destination directory
+// present. These save first in both save-all modes, before any prompting.
+func (e *Editor) saveAllQuiet(b *buffer.Buffer) bool {
+	filename := b.GetFilename()
+	if filename == "" || !b.HasSource() {
+		return false
+	}
+	if st := b.SourceConsistency(); st.Changed() {
+		return false
+	}
+	return e.missingSaveDir(filename) == ""
+}
+
+// surfaceBuffer makes buf the VISIBLY painted buffer: the doc viewport showing
+// it becomes the focused (and thus laid-out) main, its caret scrolled into
+// view — so a save prompt about the buffer appears over the buffer itself,
+// never over some unrelated file.
+func (e *Editor) surfaceBuffer(buf *buffer.Buffer) {
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Type == viewport.DocViewport && w.Buffer == buf {
+			e.ViewportManager.SetFocus(w.ID)
+			e.ensureCursorVisible(w)
+			e.RequestRender()
+			return
+		}
+	}
+}
+
+// saveAllNonInteractive is the buffer_save_all "true" mode (also the
+// save-and-quit path): named buffers save without prompting — a source that
+// changed on disk is skipped with a notice (mew never blindly clobbers), a
+// write error fails. An UNNAMED buffer is no longer skipped with a toast: it
+// surfaces visibly and raises the same Save-as prompt as the interactive
+// mode; cancelling it abandons the remaining batch with false, so a chained
+// `& exit` does not run off leaving unsaved work.
+func (e *Editor) saveAllNonInteractive(pending []*buffer.Buffer, done func(success bool)) {
 	var tally saveAllTally
+	var prompting []*buffer.Buffer
 	for _, b := range pending {
 		filename := b.GetFilename()
 		if filename == "" {
-			tally.skipped++
-			e.noteBuffer(b, "save", "Skipped an unnamed buffer — save it individually", true)
+			prompting = append(prompting, b)
 			continue
 		}
 		if b.HasSource() {
@@ -206,25 +237,51 @@ func (e *Editor) saveAllNonInteractive(pending []*buffer.Buffer) bool {
 			tally.failed++
 		}
 	}
-	e.reportSaveAll(tally)
-	return tally.failed == 0 && tally.skipped == 0
+	e.saveAllPrompting(prompting, tally, done)
 }
 
-// saveAllSequential is the interactive buffer_save_all: it saves each modified
-// buffer through the full requestSave path (overwrite / create-directory / name
-// prompts) one at a time, the completion of each save driving the next, since
-// the prompts are async and cannot run inside a plain loop. An unnamed buffer
-// prompts for a name (like buffer_save). ANY ^C — at a name prompt or a save
-// prompt — bails the entire remaining batch with a false result. done receives
-// the overall success (false on any failure or abort).
-func (e *Editor) saveAllSequential(pending []*buffer.Buffer, tally saveAllTally, done func(success bool)) {
+// saveAllInteractive is the interactive buffer_save_all. Everything that can
+// be saved WITHOUT any question — named, in-place, source unchanged,
+// directory present — saves first; only then does the prompting pass walk the
+// rest one at a time (the prompts are async and drive each other). done
+// receives the overall success (false on any failure, skip, or abort).
+func (e *Editor) saveAllInteractive(pending []*buffer.Buffer, done func(success bool)) {
+	var tally saveAllTally
+	var prompting []*buffer.Buffer
+	for _, b := range pending {
+		if e.saveAllQuiet(b) {
+			if e.performSave(b, b.GetFilename()) {
+				tally.saved++
+			} else {
+				tally.failed++
+			}
+			continue
+		}
+		prompting = append(prompting, b)
+	}
+	e.saveAllPrompting(prompting, tally, done)
+}
+
+// saveAllPrompting walks the buffers that need a question, one at a time. Each
+// buffer SURFACES first (its viewport becomes the visible main), so the prompt
+// appears over the file it is about:
+//
+//   - a never-saved buffer (unnamed, or named with no source yet) raises a
+//     Save-as prompt seeded with just its current name — no history above it —
+//     and the entered name flows through requestSave, so a name that collides
+//     with an existing file gets the overwrite question next;
+//   - a named buffer with source questions (changed on disk, missing
+//     directory) goes through requestSave's own prompts as before.
+//
+// ANY ^C — at a name prompt or a save prompt — bails the entire remaining
+// batch with a false result.
+func (e *Editor) saveAllPrompting(pending []*buffer.Buffer, tally saveAllTally, done func(success bool)) {
 	if len(pending) == 0 {
 		e.reportSaveAll(tally)
 		done(tally.failed == 0 && tally.skipped == 0)
 		return
 	}
 	buf, rest := pending[0], pending[1:]
-	// A ^C at any prompt abandons the whole remaining batch with false.
 	abort := func() {
 		e.ShowNotification("Save all cancelled")
 		e.RequestRender()
@@ -240,17 +297,18 @@ func (e *Editor) saveAllSequential(pending []*buffer.Buffer, tally saveAllTally,
 		} else {
 			tally.failed++
 		}
-		e.saveAllSequential(rest, tally, done)
+		e.saveAllPrompting(rest, tally, done)
 	}
-	if buf.GetFilename() == "" {
-		// Unnamed buffer: prompt for a name, exactly as buffer_save does.
-		e.PromptMgr.PromptForFilename("Save as", "", func(accepted bool, _, name string) {
+	e.surfaceBuffer(buf)
+	if buf.GetFilename() == "" || !buf.HasSource() {
+		// Never saved: confirm (or supply) the name with the buffer in view.
+		e.PromptMgr.PromptForFilenameFresh("Save as", buf.GetFilename(), func(accepted bool, _, name string) {
 			switch {
 			case !accepted:
 				abort() // ^C on the name prompt
 			case name == "":
 				tally.skipped++
-				e.saveAllSequential(rest, tally, done)
+				e.saveAllPrompting(rest, tally, done)
 			default:
 				e.requestSave(buf, name, outcome)
 			}

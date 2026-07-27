@@ -45,13 +45,20 @@ func (pm *PromptManager) PromptForInput(message, defaultValue string, callback P
 // means the default content-based height) and an optional top message bar
 // (topMessage), which adds a row above the input for a fuller description.
 func (pm *PromptManager) promptForInput(message, defaultValue string, callback PromptCallback, viewportClass string, maxRows int, topMessage string) {
+	pm.promptForInputHist(message, defaultValue, callback, viewportClass, maxRows, topMessage, true)
+}
+
+// promptForInputHist is promptForInput with the history preload optional:
+// withHistory=false starts the prompt with ONLY the default value, while the
+// viewport class (colors, filename completion) still applies.
+func (pm *PromptManager) promptForInputHist(message, defaultValue string, callback PromptCallback, viewportClass string, maxRows int, topMessage string, withHistory bool) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	// Prepare initial content based on history and default value
 	var initialContent string
 
-	if viewportClass != "" {
+	if viewportClass != "" && withHistory {
 		history := pm.getHistoryLocked(viewportClass)
 		if len(history) > 0 {
 			// Start with history
@@ -90,6 +97,15 @@ func (pm *PromptManager) promptForInput(message, defaultValue string, callback P
 // PromptForFilename prompts for a filename with history.
 func (pm *PromptManager) PromptForFilename(action, defaultFilename string, callback PromptCallback) {
 	pm.PromptForInput("(F) "+action+": ", defaultFilename, callback, "filename")
+}
+
+// PromptForFilenameFresh is PromptForFilename WITHOUT the shared filename
+// history preloaded: the prompt starts with only the seeded name (arrow-up
+// finds nothing above it). Used by buffer_save_all's per-file Save-as, where
+// unrelated past filenames would only invite saving over the wrong file. The
+// class stays "filename", so colors and completion behave identically.
+func (pm *PromptManager) PromptForFilenameFresh(action, defaultFilename string, callback PromptCallback) {
+	pm.promptForInputHist("(F) "+action+": ", defaultFilename, callback, "filename", 1, "", false)
 }
 
 // PromptForConfirmation prompts for a yes/no confirmation.

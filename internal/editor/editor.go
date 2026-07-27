@@ -1948,28 +1948,36 @@ func (e *Editor) registerCommands() {
 				pending = append(pending, b)
 			}
 		}
-		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "true") {
-			return pawscript.BoolStatus(e.saveAllNonInteractive(pending))
-		}
 		if len(pending) == 0 {
 			e.ShowNotification("No modified files to save")
 			return pawscript.BoolStatus(true)
 		}
-		// Interactive: the prompts are async. If the whole batch finishes without
-		// suspending on a prompt (every buffer saved cleanly), report the result
-		// synchronously; otherwise defer it through a token so a following `& exit`
-		// waits for — and respects — the outcome. The prompt callbacks cannot fire
-		// until this command returns to the main loop, so `token` is always set
-		// before any resume runs.
+		nonInteractive := false
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "true") {
+			nonInteractive = true
+		}
+		// Both modes may prompt (the "true" mode only for never-saved buffers,
+		// which now surface with a Save-as instead of being skipped), and the
+		// prompts are async. If the whole batch finishes without suspending on
+		// a prompt, report the result synchronously; otherwise defer it
+		// through a token so a following `& exit` waits for — and respects —
+		// the outcome. The prompt callbacks cannot fire until this command
+		// returns to the main loop, so `token` is always set before any
+		// resume runs.
 		token := ""
 		completedSync, syncResult := false, false
-		e.saveAllSequential(pending, saveAllTally{}, func(success bool) {
+		finish := func(success bool) {
 			if token == "" {
 				completedSync, syncResult = true, success
 			} else {
 				ctx.ResumeToken(token, success)
 			}
-		})
+		}
+		if nonInteractive {
+			e.saveAllNonInteractive(pending, finish)
+		} else {
+			e.saveAllInteractive(pending, finish)
+		}
 		if completedSync {
 			return pawscript.BoolStatus(syncResult)
 		}
