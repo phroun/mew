@@ -403,6 +403,13 @@ type Editor struct {
 	evalCap          evalCapture
 	evalFocusRestore string
 
+	// confirmKey holds the opening buffer size of each armed single-keystroke
+	// confirmation prompt, by viewport ID (see confirmkey.go). isearch is the
+	// live incremental-search state, nil when no search prompt is open (see
+	// isearch.go).
+	confirmKey map[string]confirmKeyBase
+	isearch    *isearchState
+
 	// afterKeyArmed is set by dispatchKey to the viewport owning the current
 	// key event when that viewport carries an after-key pseudo-binding. The
 	// FIRST command that completes during the dispatch — the bound command, or
@@ -1233,6 +1240,7 @@ func (e *Editor) registerCommands() {
 			promptCallback := focusedViewport.PromptCallback
 
 			// Remove prompt viewport FIRST so focus returns to main buffer
+			delete(e.confirmKey, focusedViewport.ID)
 			e.ViewportManager.RemoveViewport(focusedViewport.ID)
 
 			// Call the appropriate callback
@@ -1271,6 +1279,7 @@ func (e *Editor) registerCommands() {
 
 			// Remove prompt viewport FIRST so focus returns to main buffer
 			// This ensures any output from the callback goes to the right viewport
+			delete(e.confirmKey, focusedViewport.ID)
 			e.ViewportManager.RemoveViewport(focusedViewport.ID)
 
 			// Call the appropriate callback
@@ -2380,6 +2389,29 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		return pawscript.BoolStatus(true)
+	})
+
+	// search - incremental search: an "I-search:" prompt whose keystrokes
+	// drive the caret to matches live, JOE-style (see isearch.go). It starts
+	// in the direction the find state stored; search_reverse/search_forward
+	// set the direction (stepping one occurrence) inside an open search, or
+	// start one that way. isearch_key is the prompt's after-key classifier;
+	// confirm_key is the single-keystroke classifier armed on yes/no
+	// confirmation prompts (see confirmkey.go).
+	ps.RegisterCommand("search", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.startIncrementalSearch(0))
+	})
+	ps.RegisterCommand("search_reverse", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchDirection(true))
+	})
+	ps.RegisterCommand("search_forward", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchDirection(false))
+	})
+	ps.RegisterCommand("isearch_key", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.isearchKeystroke())
+	})
+	ps.RegisterCommand("confirm_key", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.confirmKeyStroke())
 	})
 
 	// find_replace [term], [replacement] - find with replace mode forced;

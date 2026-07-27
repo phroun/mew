@@ -440,9 +440,13 @@ func farStart(buf *buffer.Buffer, backwards bool) (int, int) {
 }
 
 // moveToMatch places the cursor on a match, switching focus first when the
-// match lives in another viewport (all-buffers searches).
+// match lives in another viewport (all-buffers searches). A focused PROMPT
+// keeps the keyboard: find_next fired from an open prompt (the incremental
+// search, say) parks the caret and scrolls the match into view without
+// stealing focus from the prompt.
 func (e *Editor) moveToMatch(w *viewport.Viewport, line, col int) {
-	if fw := e.ViewportManager.GetFocusedViewport(); fw == nil || fw.ID != w.ID {
+	if fw := e.ViewportManager.GetFocusedViewport(); (fw == nil || fw.ID != w.ID) &&
+		(fw == nil || fw.Type != viewport.PromptViewport) {
 		e.ViewportManager.SetFocus(w.ID)
 		e.announceFocusedViewport()
 	}

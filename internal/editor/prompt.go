@@ -151,6 +151,10 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 			callback(true, defaultValue)
 		}
 	}, "", 1, "")
+
+	// Single-keystroke answers: y/n (or Enter for the default) settle the
+	// prompt without a confirming Enter (see confirmkey.go).
+	pm.armConfirmKeys()
 }
 
 // PromptForConfirmationTop is a two-row confirmation in the lock-prompt
@@ -181,6 +185,9 @@ func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, d
 			callback(true, defaultValue)
 		}
 	}, "", 1, topMessage)
+
+	// Single-keystroke answers, exactly as in PromptForConfirmation.
+	pm.armConfirmKeys()
 }
 
 // createPromptViewport creates the actual prompt buffer viewport. maxRows caps

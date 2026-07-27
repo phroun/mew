@@ -832,15 +832,42 @@ func DefaultConfig() Config {
 			Direction:               "ltr",
 			FlipBidiForHost:         "auto",
 		},
-		Mappings:   builtinMappings(),
-		Indicators: DefaultIndicators(),
-		Colors:     NewColorScheme(),
+		Mappings:    builtinMappings(),
+		MappingSets: builtinMappingSets(),
+		Indicators:  DefaultIndicators(),
+		Colors:      NewColorScheme(),
 	}
 }
 
 // builtinMappings returns a fresh copy of the default key mappings, parsed
 // once from the built-in config text.
 func builtinMappings() map[string]string {
+	parseBuiltinMappings()
+	out := make(map[string]string, len(builtinMappingsCache))
+	for k, v := range builtinMappingsCache {
+		out[k] = v
+	}
+	return out
+}
+
+// builtinMappingSets returns a fresh copy of the default text's mapping-set
+// REFINEMENTS ([<class>::mappings:mew] and friends), keyed by their storage
+// signature, so class-scoped built-in bindings (the isearch prompt's ^R/^F)
+// exist even when no config file was loaded.
+func builtinMappingSets() map[string]map[string]string {
+	parseBuiltinMappings()
+	out := make(map[string]map[string]string, len(builtinMappingSetsCache))
+	for sig, km := range builtinMappingSetsCache {
+		c := make(map[string]string, len(km))
+		for k, v := range km {
+			c[k] = v
+		}
+		out[sig] = c
+	}
+	return out
+}
+
+func parseBuiltinMappings() {
 	builtinMappingsOnce.Do(func() {
 		m := &Manager{}
 		// The default config @includes the modular keymap files; expand them from
@@ -850,17 +877,26 @@ func builtinMappings() map[string]string {
 		if builtinMappingsCache == nil {
 			builtinMappingsCache = map[string]string{}
 		}
+		builtinMappingSetsCache = map[string]map[string]string{}
+		for sectionName, section := range parsed {
+			h := parseSectionHeader(sectionName)
+			if h.family != "mappings" || h.set == "" ||
+				(h.class == "" && h.grammar == "" && h.bufType == "") {
+				continue
+			}
+			km := make(map[string]string, len(section))
+			for k, v := range section {
+				km[strings.TrimSpace(k)] = v
+			}
+			builtinMappingSetsCache[mappingSetKey(h.set, h.class, h.grammar, h.bufType)] = km
+		}
 	})
-	out := make(map[string]string, len(builtinMappingsCache))
-	for k, v := range builtinMappingsCache {
-		out[k] = v
-	}
-	return out
 }
 
 var (
-	builtinMappingsOnce  sync.Once
-	builtinMappingsCache map[string]string
+	builtinMappingsOnce     sync.Once
+	builtinMappingsCache    map[string]string
+	builtinMappingSetsCache map[string]map[string]string
 )
 
 // Load loads configuration from file.
@@ -2411,6 +2447,16 @@ esc <   =scroll_left
 # user expects.
 ^/      =buffer_undo
 ^Z      =buffer_redo|buffer_undo
+
+# Inside the incremental-search prompt only (the search command's "I-search:"
+# prompt, viewport class "isearch"): the direction keys. ^R steps to the
+# previous occurrence and turns the search around; ^F steps forward. The
+# direction is the same "b" option the find state stores, so find_next keeps
+# rotating the same way afterwards. Everywhere else ^R/^F keep their normal
+# meanings.
+[isearch::mappings:mew]
+^R      =search_reverse
+^F      =search_forward
 `
 }
 
