@@ -8,6 +8,7 @@ import (
 
 	"github.com/phroun/pawscript"
 
+	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
@@ -223,6 +224,7 @@ func fmtSscan(s string, out *int) {
 // there while the real caret clamps to the shorter line's end.
 func TestBidiRTLGhostHoldsScreenColumn(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבגדהוזח\nאב\n") // 8 letters, then 2
+	blockCaret(e)                                       // these pin the block/underline cell geometry, not the bar
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
@@ -265,6 +267,7 @@ func TestBidiRTLGhostReadingStartPreserved(t *testing.T) {
 // letter, is painted at visual col 6 -> screen col 7 with no gutter).
 func TestBidiHardwareCursorSide(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	blockCaret(e)                                       // these pin the block/underline cell geometry, not the bar
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the Hebrew word
 	e.performRender()
 	_, col := lastCursor(out.Bytes())
@@ -278,6 +281,7 @@ func TestBidiHardwareCursorSide(t *testing.T) {
 // screen cols 5-8, so logical runes 4..7 (ש,ל,ו,ם) sit at cols 8,7,6,5.
 func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	blockCaret(e) // these pin the block/underline cell geometry, not the bar
 	want := map[int]int{4: 8, 5: 7, 6: 6, 7: 5}
 	for rune_, wantCol := range want {
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: rune_})
@@ -294,6 +298,7 @@ func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 // edge with the padding on the left, and the hardware cursor follows.
 func TestBidiRTLRightAligned(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבג\n")
+	blockCaret(e) // these pin the block/underline cell geometry, not the bar
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
 	out.Reset()
@@ -754,5 +759,79 @@ func TestLamAlefLigatureCell(t *testing.T) {
 	// Now "بل" is two cells (no ligature).
 	if got := e.lineVisualWidth(w, "بل", 4); got != 2 {
 		t.Fatalf("broken-apart width: %d, want 2", got)
+	}
+}
+
+// A BAR caret (DECSCUSR 5/6) draws on the LEFT edge of the cell it is
+// addressed to, so on an RTL character — whose insertion point is its RIGHT
+// edge — it is addressed one cell further right than a block would be.
+// Same line and caret as TestBidiHardwareCursorSide, which pins the block
+// column at 7.
+func TestBidiBarCaretNudgedRightOnRTL(t *testing.T) {
+	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	e.Config.InsertCursor = 5 // blinking bar (the shipped default)
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 8 {
+		t.Fatalf("bar caret col %d, want 8 (block's 7, one cell right)", col)
+	}
+
+	// Block and underline shapes keep the cell geometry.
+	for _, shape := range []int{1, 2, 3, 4} {
+		out.Reset()
+		e.Config.InsertCursor = shape
+		e.performRender()
+		if _, col := lastCursor(out.Bytes()); col != 7 {
+			t.Fatalf("shape %d: caret col %d, want the block column 7", shape, col)
+		}
+	}
+}
+
+// On LTR text the bar needs no nudge: the left edge of the cell after the last
+// character already IS that character's right edge.
+func TestBidiBarCaretUnchangedOnLTR(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abcdef\n")
+	e.Config.InsertCursor = 5
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.performRender()
+	_, barCol := lastCursor(out.Bytes())
+
+	out.Reset()
+	e.Config.InsertCursor = 2
+	e.performRender()
+	_, blockCol := lastCursor(out.Bytes())
+
+	if barCol != blockCol {
+		t.Fatalf("LTR bar col %d != block col %d; no nudge belongs here", barCol, blockCol)
+	}
+}
+
+// The nudge lands exactly where the modebar logo flips to its RTL form: both
+// consult bidi.RTLAt, so the caret shape and the logo never disagree about
+// which side of the text the caret is on.
+func TestBidiBarNudgeTracksLogoFlip(t *testing.T) {
+	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	line := strings.TrimRight(w.Buffer.GetLine(0), "\n\r")
+	for _, pos := range []int{0, 2, 5, 8, 11} {
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: pos})
+
+		out.Reset()
+		e.Config.InsertCursor = 2 // block
+		e.performRender()
+		_, blockCol := lastCursor(out.Bytes())
+
+		out.Reset()
+		e.Config.InsertCursor = 5 // bar
+		e.performRender()
+		_, barCol := lastCursor(out.Bytes())
+
+		wantNudge := 0
+		if bidi.RTLAt([]rune(line), pos, e.winRTL(w)) {
+			wantNudge = 1
+		}
+		if barCol-blockCol != wantNudge {
+			t.Fatalf("rune %d: bar %d - block %d = %d, want %d (logo RTL=%v)",
+				pos, barCol, blockCol, barCol-blockCol, wantNudge, wantNudge == 1)
+		}
 	}
 }
