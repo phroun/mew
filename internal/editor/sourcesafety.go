@@ -532,6 +532,48 @@ func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) (skipReason str
 	return ""
 }
 
+// deferMewLock records that buf's mew-native lock was deliberately not taken
+// at open because the open was read-only: a viewer holds no editing lock (the
+// emacs school — garland's emacs locks are lazy the same way, appearing only
+// on the first content mutation). The lock is acquired post-hoc by
+// ensureDeferredMewLock the moment read-only is turned off for the buffer —
+// the intent-to-edit boundary — and the foreign-lock warning moves there too.
+func (e *Editor) deferMewLock(buf *buffer.Buffer, path string) {
+	if !e.Config.UseLocks || buf == nil {
+		return
+	}
+	if e.mewLockDeferred == nil {
+		e.mewLockDeferred = make(map[*buffer.Buffer]string)
+	}
+	e.mewLockDeferred[buf] = path
+}
+
+// ensureDeferredMewLock acquires the mew-native lock for a buffer whose
+// acquisition was deferred by a read-only open. Called when read-only turns
+// off (set_option, option overlay). No-op for buffers that were never
+// deferred — the common editable open acquired at load time. Once editing
+// intent is declared the lock stays for the session, matching emacs (lock
+// until save) and vim (swapfile until close): re-enabling read-only does not
+// release it.
+func (e *Editor) ensureDeferredMewLock(buf *buffer.Buffer) {
+	path, ok := e.mewLockDeferred[buf]
+	if !ok {
+		return
+	}
+	delete(e.mewLockDeferred, buf)
+	if reason := e.acquireMewLock(buf, path); reason != "" {
+		e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
+	}
+}
+
+// ensureAllDeferredMewLocks acquires every deferred lock — the global
+// read-only option was turned off, so every viewer became editable at once.
+func (e *Editor) ensureAllDeferredMewLocks() {
+	for buf := range e.mewLockDeferred {
+		e.ensureDeferredMewLock(buf)
+	}
+}
+
 // releaseMewLock drops the mew-native lock held for a buffer, if any.
 func (e *Editor) releaseMewLock(buf *buffer.Buffer) {
 	if lockPath, ok := e.mewLocks[buf]; ok {
@@ -730,6 +772,7 @@ func (e *Editor) bufferStatusText(buf *buffer.Buffer) string {
 // forgetBufferSafety clears safety state when a buffer leaves the editor.
 func (e *Editor) forgetBufferSafety(buf *buffer.Buffer) {
 	e.releaseMewLock(buf)
+	delete(e.mewLockDeferred, buf)
 	delete(e.bufNotices, buf)
 	e.clearBufferLockState(buf)
 }

@@ -358,6 +358,14 @@ type Editor struct {
 	mewLocks       map[*buffer.Buffer]string
 	configFromDisk bool
 
+	// mewLockDeferred records buffers whose mew-native lock was deliberately
+	// NOT taken at open because the open was read-only (a viewer holds no
+	// editing lock — the emacs school; garland's emacs locks are lazy the
+	// same way). The recorded source path is used to acquire post-hoc at the
+	// intent-to-edit boundary: the moment read-only is turned off for the
+	// buffer (see ensureDeferredMewLock).
+	mewLockDeferred map[*buffer.Buffer]string
+
 	// Edit-time lock resolution. foreignLocks records a live foreign lock we
 	// respected on open (emacs or mew-native); lockResolved marks a buffer whose
 	// foreign-lock prompt the user has answered (steal or proceed), so the first
@@ -846,6 +854,7 @@ func New(cfg Config) (*Editor, error) {
 		configFromDisk:   configFromDisk,
 		bufNotices:       make(map[*buffer.Buffer][]bufferNotice),
 		mewLocks:         make(map[*buffer.Buffer]string),
+		mewLockDeferred:  make(map[*buffer.Buffer]string),
 		linkVisitSeen:    make(map[string]bool),
 		linkResolveCache: make(map[string]string),
 	}
@@ -2890,8 +2899,17 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 		}
 		if w != nil {
 			w.ViewState.ReadOnly = b
+			if !b {
+				// Read-only turned off: the intent-to-edit boundary. A lock
+				// deferred by a read-only open is acquired now (with any
+				// foreign-lock warning surfacing here rather than at open).
+				e.ensureDeferredMewLock(w.Buffer)
+			}
 		} else {
 			e.Config.ReadOnly = b
+			if !b {
+				e.ensureAllDeferredMewLocks()
+			}
 		}
 	case "linkbrowsing":
 		b, ok := parseBool()
@@ -6070,7 +6088,11 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		// written through the host FS; it also records a live foreign lock so the
 		// first edit prompts). Emacs locks need the real file's directory and so
 		// are not available on this path. Any lock failure is surfaced.
-		if reason := e.acquireMewLock(buf, filename); reason != "" {
+		// A READ-ONLY open takes no editing lock: acquisition (and its
+		// warnings) defer to the moment read-only is turned off.
+		if e.Config.ReadOnly {
+			e.deferMewLock(buf, filename)
+		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
 			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
 		}
 		return buf, nil
@@ -6113,8 +6135,14 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !emacsLock {
 		// No emacs lock (config or git hygiene): fall back to a mew-native
 		// lock in the nearest .mew directory. Its most common catch is the
-		// user opening the same file in another mew window.
-		if reason := e.acquireMewLock(buf, filename); reason != "" {
+		// user opening the same file in another mew window. A READ-ONLY open
+		// takes no editing lock — a viewer advertises nothing; acquisition
+		// (and its warnings) defer to the moment read-only is turned off.
+		// (Garland's emacs locks need no such deferral: they are lazy by
+		// contract, appearing only on the first content mutation.)
+		if e.Config.ReadOnly {
+			e.deferMewLock(buf, filename)
+		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
 			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
 		}
 	}
