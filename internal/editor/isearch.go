@@ -91,6 +91,18 @@ type isearchState struct {
 	pending []isearchResult
 }
 
+// armIsearchToast is the incremental search's grace-timer payload (see
+// afterSearchGrace).
+func (e *Editor) armIsearchToast(seq int, stop, settled *atomic.Bool) {
+	e.armSearchToast(isearchToastMessage, isearchToastTag, seq,
+		func() int {
+			if e.isearch == nil {
+				return -1
+			}
+			return e.isearch.seq
+		}, stop, settled)
+}
+
 // isearchStop abandons the in-flight pass, if any. It does not wait: the
 // goroutine notices the flag, and its result is discarded as stale.
 func (st *isearchState) isearchStop() {
@@ -347,12 +359,19 @@ func (e *Editor) isearchApply(st *isearchState, tw *viewport.Viewport, pattern s
 	reader := tw.Buffer.NewLineReader()
 	backwards := opts.backwards
 
-	e.showTransient(isearchToastMessage, "notification", isearchToastTag, true)
+	// The toast waits out the grace period, so typing does not strobe one per
+	// keystroke — only a pattern that takes real work to place raises it.
+	settled := &atomic.Bool{}
+	grace := e.afterSearchGrace(func() { e.armIsearchToast(seq, stop, settled) })
 
 	st.done.Add(1)
 	go func() {
 		defer st.done.Done()
-		defer reader.Release()
+		defer func() {
+			settled.Store(true)
+			grace.Stop()
+			reader.Release()
+		}()
 
 		mi, ok := searchBufferDir(reader, m, from.Line, from.Rune, backwards, stop.Load)
 		res := isearchResult{seq: seq, pattern: pattern, cancelled: stop.Load()}
@@ -392,8 +411,12 @@ func (e *Editor) isearchPump() {
 		latest = &r
 	}
 	if latest == nil {
-		// Everything collected was stale. If the newest pass is still running,
-		// leave the toast up; otherwise nothing is pending and it can go.
+		// Everything collected was stale. A newer pass still running keeps the
+		// toast; with nothing outstanding it comes down, so a cancelled pass
+		// whose answer arrives late cannot leave it stranded on screen.
+		if st.stop == nil || st.stop.Load() {
+			e.clearTaggedTransient(isearchToastTag)
+		}
 		e.RequestRender()
 		return
 	}

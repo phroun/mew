@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/phroun/pawscript"
@@ -17,8 +18,15 @@ func TestFindNextRunsOffTheMainLoop(t *testing.T) {
 	w.SetCursorPos(viewport.Position{})
 
 	e.executeCommand("find_next")
+	// The toast waits out the grace period, so a search this small never
+	// raises one at all.
+	if hasTaggedTransient(e, findToastTag) {
+		t.Fatal("a fast find should not flash a progress toast")
+	}
+	// Stand in for the grace timer firing on a search that IS slow.
+	e.armFindToast(e.findRun.seq, e.findRun.stop, &atomic.Bool{})
 	if !hasTaggedTransient(e, findToastTag) {
-		t.Fatal("a running find should raise the progress toast")
+		t.Fatal("a find still running past the grace period should raise the toast")
 	}
 
 	findSettle(t, e)
@@ -31,11 +39,35 @@ func TestFindNextRunsOffTheMainLoop(t *testing.T) {
 	}
 }
 
+// The grace timer's payload stays quiet once its pass is over, so a toast can
+// never appear after the search it belongs to has landed.
+func TestFindToastSuppressedAfterPass(t *testing.T) {
+	e, w := newTestEditor(t, "aa bb aa\n")
+	w.Find = viewport.FindState{Term: "aa"}
+	e.executeCommand("find_next")
+	seq, stop := e.findRun.seq, e.findRun.stop
+	findSettle(t, e)
+
+	settled := &atomic.Bool{}
+	settled.Store(true) // the pass finished before the timer fired
+	e.armFindToast(seq, stop, settled)
+	if hasTaggedTransient(e, findToastTag) {
+		t.Fatal("a finished pass must not raise a toast")
+	}
+
+	// Nor may a superseded one.
+	e.armFindToast(seq-1, stop, &atomic.Bool{})
+	if hasTaggedTransient(e, findToastTag) {
+		t.Fatal("a superseded pass must not raise a toast")
+	}
+}
+
 // The progress toast names the live cancel key, expanded from its TFC code.
 func TestFindToastNamesCancelKey(t *testing.T) {
 	e, w := newTestEditor(t, "aa bb aa\n")
 	w.Find = viewport.FindState{Term: "aa"}
 	e.executeCommand("find_next")
+	e.armFindToast(e.findRun.seq, e.findRun.stop, &atomic.Bool{})
 
 	var msg string
 	for _, vw := range e.ViewportManager.AllViewports() {
@@ -80,6 +112,7 @@ func TestCancelStopsRunningFind(t *testing.T) {
 
 	e.executeCommand("find_next")
 	fr := e.findRun
+	e.armFindToast(fr.seq, fr.stop, &atomic.Bool{}) // a slow search: toast up
 	if !fr.running() {
 		t.Fatal("the find should be running")
 	}
@@ -95,11 +128,38 @@ func TestCancelStopsRunningFind(t *testing.T) {
 	if focusedPrompt(e) != nil {
 		t.Fatal("cancel must not fall through to buffer_close's LOSE CHANGES prompt")
 	}
-	// The thread winds down on its own and its answer is discarded as stale.
+	// The thread winds down on its own. Whether its answer still lands is a
+	// genuine race — a scan that had already finished cannot be un-found — so
+	// the deterministic claim is only that nothing hangs or panics here.
 	fr.done.Wait()
 	e.findPump()
-	if got := w.CursorPos(); got.Line != 0 || got.Rune != 1 {
-		t.Fatalf("caret %v, want it left where the cancelled search found it", got)
+}
+
+// A pass that was cancelled has its answer discarded: findPump leaves the caret
+// alone and takes the toast down.
+func TestFindPumpDiscardsCancelledResult(t *testing.T) {
+	e, w := newTestEditor(t, "aa bb aa\n")
+	w.Find = viewport.FindState{Term: "aa"}
+	e.executeCommand("find_next")
+	fr := e.findRun
+	findSettle(t, e)
+
+	before := w.CursorPos()
+	e.armFindToast(fr.seq, fr.stop, &atomic.Bool{})
+	fr.stopPass() // a cancelled answer always follows a raised stop flag
+	fr.mu.Lock()
+	fr.pending = append(fr.pending, findRunResult{
+		seq: fr.seq, term: "aa", cancelled: true, found: true, viewportID: w.ID, line: 0, col: 0,
+	})
+	fr.mu.Unlock()
+
+	e.findPump()
+
+	if got := w.CursorPos(); got != before {
+		t.Fatalf("caret %v, want it untouched at %v by a cancelled answer", got, before)
+	}
+	if hasTaggedTransient(e, findToastTag) {
+		t.Fatal("the toast should not survive a pump with nothing outstanding")
 	}
 }
 

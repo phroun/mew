@@ -2,6 +2,7 @@ package editor
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/phroun/mew/internal/viewport"
@@ -257,8 +258,15 @@ func TestIsearchToastShownThenCleared(t *testing.T) {
 	e, _, _ := isearchEditor(t, "cargo\nbanana\n")
 
 	e.dispatchKey("b")
+	// The toast waits out the grace period, so typing in a small document
+	// never strobes one per keystroke.
+	if hasTaggedTransient(e, isearchToastTag) {
+		t.Fatal("a fast search should not flash a progress toast")
+	}
+	// Stand in for the grace timer firing on a pattern that IS slow to place.
+	e.armIsearchToast(e.isearch.seq, e.isearch.stop, &atomic.Bool{})
 	if !hasTaggedTransient(e, isearchToastTag) {
-		t.Fatal("a running search should raise the progress toast")
+		t.Fatal("a search still running past the grace period should raise the toast")
 	}
 	if !hasNotification(e, "Searching") {
 		t.Fatal("the toast should name what it is waiting on")
@@ -276,6 +284,7 @@ func TestIsearchToastShownThenCleared(t *testing.T) {
 func TestIsearchToastNamesCancelKey(t *testing.T) {
 	e, _, _ := isearchEditor(t, "cargo\n")
 	e.dispatchKey("c")
+	e.armIsearchToast(e.isearch.seq, e.isearch.stop, &atomic.Bool{})
 
 	var msg string
 	for _, w := range e.ViewportManager.AllViewports() {
@@ -304,6 +313,7 @@ func TestIsearchCancelStopsThreadAndClearsToast(t *testing.T) {
 	if st == nil {
 		t.Fatal("search state should be live")
 	}
+	e.armIsearchToast(st.seq, st.stop, &atomic.Bool{}) // a slow search: toast up
 
 	e.dispatchKey("^C")
 
@@ -347,6 +357,7 @@ func TestIsearchEmptyPatternClearsToast(t *testing.T) {
 	isearchSettle(t, e)
 
 	e.dispatchKey("back")
+	e.armIsearchToast(e.isearch.seq, e.isearch.stop, &atomic.Bool{})
 
 	if hasTaggedTransient(e, isearchToastTag) {
 		t.Fatal("an empty pattern has nothing to wait for: the toast should go")

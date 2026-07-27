@@ -3,6 +3,7 @@ package editor
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
@@ -32,6 +33,45 @@ const findToastTag = "find_progress"
 // findToastMessage is the progress toast; its TFC code resolves to whatever key
 // is bound to cancel, which is exactly the key that stops the search.
 const findToastMessage = "Searching (%keys#cancel.buffer_close% to cancel)..."
+
+// searchToastGrace is how long a background scan may run before its progress
+// toast appears — shared by the find and the incremental search. Nearly every
+// search finishes well inside it and never raises a toast at all, so typing in
+// the incremental search does not strobe one per keystroke; only a search
+// actually worth waiting for announces itself and offers the cancel key.
+const searchToastGrace = 200 * time.Millisecond
+
+// armSearchToast raises a background scan's progress toast, unless the pass it
+// belongs to is already over: stopped (superseded or cancelled), finished, or
+// no longer the current one. It is the grace timer's payload — and, since it
+// takes no timing of its own, what a test drives directly to stand in for the
+// timer having fired.
+func (e *Editor) armSearchToast(message, tag string, seq int, current func() int, stop, settled *atomic.Bool) {
+	if stop.Load() || settled.Load() || current() != seq {
+		return
+	}
+	e.showTransient(message, "notification", tag, true)
+	e.RequestRender()
+}
+
+// afterSearchGrace runs the toast payload once the grace period has passed,
+// hopping back onto the main loop to do it (a toast creates a viewport). The
+// returned timer is stopped by the pass when it finishes; should it have fired
+// already, the payload's own checks suppress the toast.
+func (e *Editor) afterSearchGrace(fn func()) *time.Timer {
+	return time.AfterFunc(searchToastGrace, func() { e.PostAction(fn) })
+}
+
+// armFindToast is the find's grace-timer payload.
+func (e *Editor) armFindToast(seq int, stop, settled *atomic.Bool) {
+	e.armSearchToast(findToastMessage, findToastTag, seq,
+		func() int {
+			if e.findRun == nil {
+				return -1
+			}
+			return e.findRun.seq
+		}, stop, settled)
+}
 
 // findRunResult is one completed (or abandoned) background find pass.
 type findRunResult struct {
@@ -148,12 +188,19 @@ func (e *Editor) findStepAsync(state viewport.FindState, count int, allowWrap bo
 
 	term := state.Term
 	backwards := opts.backwards
-	e.showTransient(findToastMessage, "notification", findToastTag, true)
+
+	// The toast waits out the grace period: a search that lands inside it never
+	// raises one. settled marks this pass finished, so a timer that fires in the
+	// gap between the scan ending and its result being applied stays quiet.
+	settled := &atomic.Bool{}
+	grace := e.afterSearchGrace(func() { e.armFindToast(seq, stop, settled) })
 
 	fr.done.Add(1)
 	go func() {
 		defer fr.done.Done()
 		defer func() {
+			settled.Store(true)
+			grace.Stop()
 			for _, r := range readers {
 				r.Release()
 			}
@@ -222,8 +269,12 @@ func (e *Editor) findPump() {
 		latest = &r
 	}
 	if latest == nil {
-		// Everything collected was stale. If the newest pass is still running
-		// the toast stays up; otherwise there is nothing left to wait for.
+		// Everything collected was stale. A newer pass still running keeps the
+		// toast; with nothing outstanding it comes down, so a cancelled pass
+		// whose answer arrives late cannot leave it stranded on screen.
+		if !fr.running() {
+			e.clearTaggedTransient(findToastTag)
+		}
 		e.RequestRender()
 		return
 	}
