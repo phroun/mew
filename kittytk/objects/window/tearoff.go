@@ -519,13 +519,17 @@ func (h *TearOffHost) EndDrag() {
 	h.dragRestored = false
 }
 
-// Frame implements platform.SurfaceHandler.
+// Frame implements platform.SurfaceHandler. Like SurfaceHost, the frame's
+// platform text-caret request is applied after painting — and popups paint
+// last, so a menu open over the window's content owns the caret.
 func (h *TearOffHost) Frame(p *core.Painter) {
 	if h.ghost {
 		// The window lives on the desktop again; this surface only
 		// survives (invisibly) to finish its mouse session.
 		return
 	}
+	p.ResetTextCaretRequest()
+	defer func() { applyTextCaret(h.Surface(), p.TextCaretRequest()) }()
 	h.win.Paint(p)
 	// A modally-blocked torn window is darkened, mirroring an in-surface
 	// window suppressed by a modal.

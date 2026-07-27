@@ -163,6 +163,9 @@ type Surface interface {
 	// Cursor control (text caret).
 	SetCursorVisible(visible bool)
 	SetCursorPosition(x, y core.Unit)
+	// SetCursorStyle selects the caret's DECSCUSR shape (0 the platform's
+	// own default, 1/2 blinking/steady block, 3/4 underline, 5/6 bar).
+	SetCursorStyle(style int)
 }
 
 // SurfaceHandler receives a surface's callbacks, always on the
@@ -360,6 +363,7 @@ func (s *pollingSurface) Size() core.UnitSize         { return s.platform.backen
 func (s *pollingSurface) Metrics() core.CellMetrics   { return s.platform.backend.Metrics() }
 func (s *pollingSurface) SetHandler(h SurfaceHandler) { s.handler = h }
 func (s *pollingSurface) SetCursorVisible(v bool)     { s.platform.backend.SetCursorVisible(v) }
+func (s *pollingSurface) SetCursorStyle(style int)    { s.platform.backend.SetCursorStyle(style) }
 func (s *pollingSurface) SetCursorPosition(x, y core.Unit) {
 	s.platform.backend.SetCursorPosition(x, y)
 }

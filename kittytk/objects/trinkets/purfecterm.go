@@ -528,9 +528,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		}
 	}
 
-	// Draw cursor if focused AND the terminal hasn't hidden its cursor
-	// (some apps like vim/emacs manage their own cursor display)
-	if t.HasFocus() && buf.IsCursorVisible() {
+	// The cursor. A FOCUSED terminal asks the platform for its real caret, so
+	// the outer terminal draws the shape DECSCUSR selected and blinks it
+	// natively — a bar stays a bar, which no cell grid can represent. An
+	// UNFOCUSED one keeps the painted block below, so you can still see where
+	// its caret sits. Either way, a terminal that hid its own cursor (vim,
+	// emacs, mew between frames) gets neither.
+	if buf.IsCursorVisible() {
 		cursorCol, cursorRow := buf.GetCursor()
 		if cursorRow >= 0 && cursorRow < len(cells) && cursorCol >= 0 && cursorCol < t.cols {
 			// The logical cursor column maps to a visual column through the
@@ -552,20 +556,55 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
-				// Draw cursor as reverse video
-				var ch rune = ' '
-				if cursorCol < len(cells[cursorRow]) {
-					ch = cells[cursorRow][cursorCol].Char
-					if ch == 0 {
-						ch = ' '
+				if t.HasFocus() {
+					// Hand the platform the caret, in the shape the terminal
+					// asked for. Nothing is painted here: the real cursor is
+					// drawn by the surface underneath us.
+					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
+				} else {
+					// Painted fallback for an unfocused terminal.
+					var ch rune = ' '
+					if cursorCol < len(cells[cursorRow]) {
+						ch = cells[cursorRow][cursorCol].Char
+						if ch == 0 {
+							ch = ' '
+						}
 					}
+					cursorStyle := style.DefaultStyle().
+						WithFg(style.ColorBlack).
+						WithBg(style.ColorWhite)
+					p.DrawCell(cursorX, cursorY, ch, cursorStyle)
 				}
-				cursorStyle := style.DefaultStyle().
-					WithFg(style.ColorBlack).
-					WithBg(style.ColorWhite)
-				p.DrawCell(cursorX, cursorY, ch, cursorStyle)
 			}
 		}
+	}
+}
+
+// decscusrStyle re-encodes the terminal's stored cursor style as the DECSCUSR
+// parameter that produced it. purfecterm splits the code into (shape, blink) on
+// the way in; the platform caret speaks DECSCUSR, so this is the way back out.
+func (t *PurfecTerm) decscusrStyle() int {
+	if t.terminal == nil {
+		return 0
+	}
+	shape, blink := t.terminal.Buffer().GetCursorStyle()
+	return decscusrFor(shape, blink)
+}
+
+// decscusrFor maps purfecterm's (shape, blink) pair back to its DECSCUSR
+// parameter: block 1/2, underline 3/4, bar 5/6, blinking first.
+func decscusrFor(shape, blink int) int {
+	steady := 0
+	if blink == 0 {
+		steady = 1
+	}
+	switch shape {
+	case 1: // underline
+		return 3 + steady
+	case 2: // bar
+		return 5 + steady
+	default: // block
+		return 1 + steady
 	}
 }
 

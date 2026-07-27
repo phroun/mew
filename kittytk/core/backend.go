@@ -81,6 +81,11 @@ type RenderBackend interface {
 	// SetCursorPosition positions the cursor (for text input feedback).
 	SetCursorPosition(x, y Unit)
 
+	// SetCursorStyle selects the cursor's DECSCUSR shape (0 the terminal's
+	// own default, 1/2 blinking/steady block, 3/4 underline, 5/6 bar).
+	// Backends without a real cursor ignore it.
+	SetCursorStyle(style int)
+
 	// Capabilities
 
 	// SupportsColor returns whether the backend supports color.
@@ -558,6 +563,10 @@ type Painter struct {
 	// corners.
 	roundClip       UnitRect
 	roundClipRadius Unit
+
+	// caret is the frame's platform text-caret request slot, shared by every
+	// painter derived from this one (see textcaret.go).
+	caret *caretSink
 }
 
 // NewPainter creates a painter for a backend.
@@ -568,6 +577,7 @@ func NewPainter(backend RenderBackend) *Painter {
 		transform: IdentityTransform(),
 		clip:      UnitRect{Width: size.Width, Height: size.Height},
 		metrics:   backend.Metrics(),
+		caret:     &caretSink{},
 	}
 }
 

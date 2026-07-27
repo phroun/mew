@@ -93,6 +93,11 @@ type TUIBackend struct {
 	cursorX       int
 	cursorY       int
 	cursorVisible bool
+	// cursorStyle is the DECSCUSR shape the focused trinket asked for, and
+	// cursorStyleSent what the terminal was last told, so an unchanged shape
+	// stays off the wire. Emitted only while the cursor is visible.
+	cursorStyle     int
+	cursorStyleSent int
 
 	// Input handling
 	keyboard   *keyboard.Handler
@@ -537,6 +542,12 @@ func (t *TUIBackend) EndFrame() {
 			cx /= 2
 		}
 		sb.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
+		// Shape before visibility, so a cursor about to be shown appears
+		// already wearing it rather than flickering through the last one.
+		if t.cursorStyle != t.cursorStyleSent {
+			sb.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
+			t.cursorStyleSent = t.cursorStyle
+		}
 		sb.WriteString("\033[?25h")
 	}
 
@@ -1001,6 +1012,18 @@ func (t *TUIBackend) SetCursorVisible(visible bool) {
 	} else {
 		t.write("\033[?25l")
 	}
+}
+
+// SetCursorStyle records the DECSCUSR shape for the next present. It is not
+// written immediately: a shape only reaches the terminal beside the cursor it
+// belongs to, so it can never reveal or restyle a hidden cursor.
+func (t *TUIBackend) SetCursorStyle(style int) {
+	if style < 0 || style > 6 {
+		return
+	}
+	t.mu.Lock()
+	t.cursorStyle = style
+	t.mu.Unlock()
 }
 
 // SetCursorPosition positions the cursor.
