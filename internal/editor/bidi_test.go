@@ -385,8 +385,12 @@ func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 85})
 
 	e.executeCommand("insert 'q'") // caret at EOL of an 86-col line
-	if w.ViewState.ViewOffsetX != 0 {
-		t.Fatalf("typing at the reading start must not scroll, offset %d", w.ViewState.ViewOffsetX)
+	// The caret's insertion point is one cell RIGHT of the reading start —
+	// past the content's edge — so the follow takes the phantom column:
+	// offset -1 shifts the line left one and opens an empty cell at the right
+	// edge for the caret to occupy, AFTER the q rather than on it.
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL past the reading start should take the phantom column, offset %d", w.ViewState.ViewOffsetX)
 	}
 	out.Reset()
 	e.performRender()
@@ -930,5 +934,119 @@ func TestBidiLTRViewportUnaffected(t *testing.T) {
 	_, col := lastCursor(out.Bytes())
 	if col != w.LineNumWidth+4 { // gutter + "abc", caret after the 3rd char
 		t.Fatalf("caret col %d, want %d (LTR geometry unchanged)", col, w.LineNumWidth+4)
+	}
+}
+
+// phantomStripped removes every escape (including DECSCUSR's space-
+// intermediate form) from a rendered frame, leaving the painted text.
+func phantomStripped(out *bytes.Buffer) string {
+	esc := regexp.MustCompile("\x1b\\[[0-9;<>?]* ?[A-Za-z]|\x1b#[0-9]|\x1b[()][A-Z0-9]")
+	return esc.ReplaceAllString(out.String(), "")
+}
+
+// LTR viewport, wholly-RTL line, caret at EOL: its insertion point is one cell
+// LEFT of visual column 0 — the phantom column. The follow scrolls to -1, the
+// line paints shifted right one behind a leading space, and the caret occupies
+// that space.
+func TestBidiPhantomColumnLTR(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "אבגד\n")
+	e.Config.InsertCursor = 2                           // block: its column IS the phantom cell
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4}) // EOL
+	e.ensureCursorVisible(w)
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL after a line-starting RTL run should take the phantom column, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 1 {
+		t.Fatalf("caret col %d, want the phantom cell at 1", col)
+	}
+	// The line paints shifted right one behind the phantom space: the visual
+	// form of the RTL word (דגבא) with a space ahead of it.
+	if !strings.Contains(phantomStripped(out), " דגבא") {
+		t.Fatal("content should follow a leading phantom space, shifted right one")
+	}
+}
+
+// Moving the caret away releases the phantom: the offset snaps back to 0.
+func TestBidiPhantomColumnReleases(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "אבגד\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatal("precondition: phantom taken")
+	}
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("phantom no longer needed: offset %d, want 0", w.ViewState.ViewOffsetX)
+	}
+}
+
+// RTL viewport WITHOUT a gutter: the caret after a trailing LTR run takes the
+// phantom column at the RIGHT edge — the case the gutter dip could not cover.
+func TestBidiPhantomColumnRTLNoGutter(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.ensureCursorVisible(w)
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL past the reading start should take the phantom column, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+	e.Config.InsertCursor = 2 // block: its column IS the phantom cell
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	if col != e.Renderer.Width {
+		t.Fatalf("caret col %d, want the phantom at the right edge %d", col, e.Renderer.Width)
+	}
+	// The content shifted left one, opening the phantom cell the caret (col
+	// asserted above, at the screen edge) occupies; the pad math places abc
+	// one cell in from the edge, which the offset and caret column pin.
+	if !strings.Contains(phantomStripped(out), "abc") {
+		t.Fatal("the line should still paint")
+	}
+}
+
+// With the mirrored gutter present, the dip continues to serve and the phantom
+// stays out of it: the offset holds at 0.
+func TestBidiPhantomDefersToGutterDip(t *testing.T) {
+	e, w, _ := rtlGutterEditor(t, "abc\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("with a gutter to dip into the phantom must not engage, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+}
+
+// A caret ON an RTL rune at the reading start is not the phantom's case: it
+// marks the cell the next character will occupy and the offset stays put.
+func TestBidiPhantomNotForRTLReadingStart(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "אבג\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("an RTL reading-start caret keeps the clamp, offset %d", w.ViewState.ViewOffsetX)
+	}
+}
+
+// Rune 0 never takes the phantom — there is no content the caret stands after.
+func TestBidiPhantomNeedsPositiveRune(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("rune 0 must not take the phantom, offset %d", w.ViewState.ViewOffsetX)
 	}
 }

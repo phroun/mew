@@ -6147,7 +6147,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 				vw += len([]rune(full)) - rawLen
 			}
 		}
-		if targetCol < 0 && !e.winRTL(w) {
+		if targetCol < 0 && !e.winRTL(w) && !e.phantomColumnWanted(w, targetCol) {
 			targetCol = 0
 		}
 	}
@@ -6178,9 +6178,28 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		}
 		dispOff /= 2
 	}
+	// The PHANTOM COLUMN: a caret whose insertion point lies one cell past the
+	// line's leading edge — the reading end of an RTL fragment starting an LTR
+	// line (one cell LEFT of visual column 0), or an insertion point right of
+	// an LTR run at an RTL line's reading start (one cell RIGHT of it). Neither
+	// column exists in the content, so the follow may scroll ONE further than
+	// the content itself allows: ViewOffsetX -1, a state where the first
+	// visible column is 0 instead of 1 and the renderer shows a plain space
+	// there for the caret to occupy (see prepareLineForDisplay / rtlView).
+	// Guarded on the caret's logical rune being positive — there must be
+	// content the caret is after — per the shape of the problem: rune positive
+	// but visual column at the leading edge. Under direction=rtl a mirrored
+	// line-number gutter already gives that caret a cell to dip into
+	// (positionCursor), so the phantom only steps in without one.
+	phantom := false
+
 	setOff := func(v int) {
 		if v < 0 {
-			v = 0
+			if phantom && v == -1 {
+				// The one legal negative offset: the phantom column.
+			} else {
+				v = 0
+			}
 		}
 		if dw {
 			v *= 2
@@ -6200,19 +6219,52 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 		if reading < 0 {
 			reading = 0
 		}
+		if reading == 0 && targetCol == vw && !w.HasGhostCursor &&
+			!w.ViewState.ShowLineNumbers && e.phantomColumnWanted(w, targetCol) {
+			phantom = true
+			reading = -1
+		}
 		if reading < dispOff {
 			setOff(reading)
 		} else if reading > dispOff+effWidth-1 {
 			setOff(reading - effWidth + 1)
+		} else if dispOff < 0 && !phantom {
+			setOff(0) // the phantom column is no longer needed: release it
 		}
 		return
 	}
 
+	if targetCol < 0 && !w.HasGhostCursor && e.phantomColumnWanted(w, targetCol) {
+		phantom = true // targetCol stays -1: the window checks scroll to it
+	}
 	if targetCol < dispOff {
 		setOff(targetCol)
 	} else if targetCol >= dispOff+effWidth {
 		setOff(targetCol - effWidth + 1)
+	} else if dispOff < 0 && !phantom {
+		setOff(0) // the phantom column is no longer needed: release it
 	}
+}
+
+// phantomColumnWanted reports whether the caret has earned the phantom column:
+// its computed visual position is one cell past the line's leading edge
+// (targetCol -1 under an LTR base; at the reading start's far side under RTL,
+// which the caller detects as targetCol == vw) while its logical rune is
+// positive — there is content it stands after. Under RTL it additionally
+// requires the caret to take an LTR run's direction: a caret on an RTL rune at
+// the reading start marks the cell the NEXT character will occupy and clamps
+// onto the edge cell as it always has (the same split the gutter dip and the
+// bar nudge use, via bidi.RTLAt).
+func (e *Editor) phantomColumnWanted(w *viewport.Viewport, targetCol int) bool {
+	if w == nil || w.Buffer == nil || w.CursorPos().Rune <= 0 {
+		return false
+	}
+	if !e.winRTL(w) {
+		return targetCol == -1
+	}
+	line := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
+	dispLine, curRune := e.displayCaretLine(w, line, w.CursorPos().Rune)
+	return !bidi.RTLAt([]rune(dispLine), curRune, true)
 }
 
 // setupKeyMappingsFromConfig sets up key mappings from the loaded config file.

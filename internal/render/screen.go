@@ -1164,6 +1164,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	currentVisualColumn := 0
 	documentRune := 0
 	outputVisualColumn := 0
+	// The phantom column (ViewOffsetX -1): the caret follow scrolled ONE past
+	// the content's leading edge, because a caret's insertion point fell one
+	// cell left of visual column 0 (the reading end of an RTL fragment
+	// starting the line — see ensureCursorVisibleHorizontal). Paint a plain
+	// space in the first cell for the caret to occupy and run the walk from a
+	// zero offset, shifting the whole line right one. Under direction=rtl the
+	// same offset flows through rtlView above instead, shortening the pad so
+	// the phantom cell opens at the RIGHT edge.
+	if viewOffsetX < 0 && !rtl {
+		displayLine.WriteString(textColor + " ")
+		outputVisualColumn++
+		viewOffsetX = 0
+	}
 	if leftPad > 0 {
 		// rtlView returns an unclamped pad (positioners need the true off-screen
 		// distance); when the content is scrolled fully off the right, cap the
