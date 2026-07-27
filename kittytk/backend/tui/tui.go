@@ -88,11 +88,16 @@ type TUIBackend struct {
 	frontLineAttr []byte
 
 	// Current state
-	currentStyle  style.CellStyle
-	clipRect      core.UnitRect
-	cursorX       int
-	cursorY       int
+	currentStyle style.CellStyle
+	clipRect     core.UnitRect
+	cursorX      int
+	cursorY      int
+	// cursorVisible is what the APP asked for; cursorShown is what the
+	// TERMINAL was last told. They diverge across a present: the hardware
+	// cursor is hidden for the repaint and shown again only once EndFrame has
+	// put it back at its settled position.
 	cursorVisible bool
+	cursorShown   bool
 	// cursorStyle is the DECSCUSR shape the focused trinket asked for, and
 	// cursorStyleSent what the terminal was last told, so an unchanged shape
 	// stays off the wire. Emitted only while the cursor is visible.
@@ -316,6 +321,7 @@ func (t *TUIBackend) Shutdown() {
 
 	// Show cursor
 	t.write("\033[?25h")
+	t.cursorShown = true
 
 	// Leave alternate screen
 	t.write("\033[?1049l")
@@ -534,6 +540,21 @@ func (t *TUIBackend) EndFrame() {
 		}
 	}
 
+	// The diff addresses cells all over the screen, and a terminal renders the
+	// stream as it parses it — a visible hardware cursor would skate along
+	// with the repaint. Hide it for the duration and let the tail below reveal
+	// it again, once it is back at its settled position. An empty diff needs
+	// no bracket (and must not blink the cursor on an idle present).
+	body := sb.String()
+	var out strings.Builder
+	if body != "" {
+		if t.cursorShown {
+			out.WriteString("\033[?25l")
+			t.cursorShown = false
+		}
+		out.WriteString(body)
+	}
+
 	// Restore cursor position if visible. On a DEC double-width line the
 	// terminal addresses doubled columns, so the X is halved there.
 	if t.cursorVisible {
@@ -541,17 +562,20 @@ func (t *TUIBackend) EndFrame() {
 		if t.cursorY >= 0 && t.cursorY < len(t.frontLineAttr) && t.frontLineAttr[t.cursorY] != 0 {
 			cx /= 2
 		}
-		sb.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
+		out.WriteString(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, cx+1))
 		// Shape before visibility, so a cursor about to be shown appears
 		// already wearing it rather than flickering through the last one.
 		if t.cursorStyle != t.cursorStyleSent {
-			sb.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
+			out.WriteString(fmt.Sprintf("\033[%d q", t.cursorStyle))
 			t.cursorStyleSent = t.cursorStyle
 		}
-		sb.WriteString("\033[?25h")
+		if !t.cursorShown {
+			out.WriteString("\033[?25h")
+			t.cursorShown = true
+		}
 	}
 
-	t.write(sb.String())
+	t.write(out.String())
 }
 
 // Clear fills the entire surface with a style.
@@ -1001,15 +1025,22 @@ func (t *TUIBackend) WaitEvent() core.Event {
 	}
 }
 
-// SetCursorVisible shows or hides the cursor.
+// SetCursorVisible shows or hides the cursor. HIDING takes effect at once;
+// SHOWING is recorded and left to the next present, which addresses the cursor
+// before revealing it — the same rule SetCursorStyle follows, and for the same
+// reason: the cursor must never appear at a stale position, and must never be
+// visible while a repaint drags it across the screen. (Callers show the caret
+// from inside their Frame, so an EndFrame always follows.)
 func (t *TUIBackend) SetCursorVisible(visible bool) {
 	t.mu.Lock()
 	t.cursorVisible = visible
+	hide := !visible && t.cursorShown
+	if hide {
+		t.cursorShown = false
+	}
 	t.mu.Unlock()
 
-	if visible {
-		t.write("\033[?25h")
-	} else {
+	if hide {
 		t.write("\033[?25l")
 	}
 }
@@ -1027,13 +1058,16 @@ func (t *TUIBackend) SetCursorStyle(style int) {
 }
 
 // SetCursorPosition positions the cursor.
+// The position is recorded, not written: the present addresses the cursor
+// itself, once the repaint that would have dragged it around is done (see
+// EndFrame). Writing here would move a visible cursor mid-frame — the very
+// jump the present's hide/show bracket exists to prevent — and be re-issued
+// moments later anyway.
 func (t *TUIBackend) SetCursorPosition(x, y core.Unit) {
 	t.mu.Lock()
 	t.cursorX = t.metrics.UnitsToCellX(x)
 	t.cursorY = t.metrics.UnitsToCellY(y)
 	t.mu.Unlock()
-
-	t.write(fmt.Sprintf("\033[%d;%dH", t.cursorY+1, t.cursorX+1))
 }
 
 // SupportsColor returns whether the backend supports color.
