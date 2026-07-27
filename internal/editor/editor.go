@@ -3677,11 +3677,18 @@ func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 			}
 			return
 		}
-		// The furthest-back reachable reading column is end-of-line.
-		eolReading := vw - e.caretVisualColumn(w, line, lineLen, tabSize)
-		if idealReading > eolReading {
-			// Line does not reach that far back - ghost past the end.
-			w.SetCursorRune(lineLen)
+		// The furthest-back reachable reading column belongs to the line's
+		// LEFTMOST caret position. That is end-of-line only when the line
+		// ENDS in RTL text; a right-anchored line ending in an LTR fragment
+		// has its EOL caret at the reading-START side (reading 0), and its
+		// furthest-back caret inside the line — measuring EOL here read every
+		// such line as "too short" and ghosted columns it actually reaches.
+		farCol, farPos := e.leftmostCaret(w, line, tabSize)
+		if idealReading > vw-farCol {
+			// Line does not reach that far back — ghost past its reading
+			// end, with the real caret parked at the reachable position
+			// nearest the ghost.
+			w.SetCursorRune(farPos)
 			w.HasGhostCursor = true
 			w.GhostCursorVisualColumn = idealReading
 			return
@@ -4439,6 +4446,38 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 	// caret inside an RTL fragment stays on the rune rather than parking one
 	// cell to its right.
 	return cols[runePos]
+}
+
+// leftmostCaret returns the smallest visual column any caret position on the
+// line can occupy, and the position (rune index; len for end-of-line) that
+// occupies it. Under direction=rtl this is the line's furthest-back READING
+// position — vw minus the returned column is the largest reading column the
+// line reaches. On a plain left-to-right layout that caret is position 0 at
+// column 0; on bidi lines it can sit anywhere, including one cell LEFT of the
+// content when the line ends in RTL text (the EOL boundary's own cell).
+func (e *Editor) leftmostCaret(w *viewport.Viewport, line string, tabSize int) (col, pos int) {
+	runes := []rune(line)
+	layout := e.layoutFor(w, runes)
+	col, pos = e.caretVisualColumn(w, line, len(runes), tabSize), len(runes)
+	if layout == nil {
+		// Monotonic columns: position 0 is the leftmost caret.
+		if c := e.caretVisualColumn(w, line, 0, tabSize); c < col {
+			return c, 0
+		}
+		return col, pos
+	}
+	cols, _ := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), tabSize)
+	for i, c := range cols {
+		// A zero-width slot (combining mark, absorbed ligature half) shares
+		// its base character's cell; the caret rests there via the base.
+		if e.slotWidth(layout, runes, i, c, tabSize) == 0 {
+			continue
+		}
+		if c < col {
+			col, pos = c, i
+		}
+	}
+	return col, pos
 }
 
 // lineVisualWidth is the total visual width of a line (tab widths resolved

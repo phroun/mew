@@ -1130,8 +1130,9 @@ func rtlPhantomEditor(t *testing.T) (*Editor, *viewport.Viewport, *bytes.Buffer)
 
 // The caret must reach the phantom column however it ARRIVES at a line's end.
 // Vertical movement deliberately does not scroll horizontally, so it once left
-// the caret dipped onto a line-number digit; and it sets a ghost even when the
-// caret lands exactly at the end, which must not withhold the phantom either.
+// the caret dipped onto a line-number digit. (An arrival whose ideal exceeds
+// the line's reach GHOSTS instead, parking the caret adjacent to the ghost —
+// see TestRTLGhostFromPhantomEOLParksAdjacent.)
 func TestBidiPhantomOnEveryArrival(t *testing.T) {
 	arrivals := []struct {
 		name string
@@ -1148,11 +1149,6 @@ func TestBidiPhantomOnEveryArrival(t *testing.T) {
 		}},
 		{"arrow up to a longer line's end", 31, func(e *Editor, w *viewport.Viewport) {
 			w.SetCursorPos(viewport.Position{Line: 1, Rune: 16})
-			e.afterHorizontalMovement(w)
-			e.executeCommand("go_line_prior")
-		}},
-		{"arrow up to a shorter line's end", 16, func(e *Editor, w *viewport.Viewport) {
-			w.SetCursorPos(viewport.Position{Line: 2, Rune: 16})
 			e.afterHorizontalMovement(w)
 			e.executeCommand("go_line_prior")
 		}},
@@ -1269,5 +1265,99 @@ func TestBidiPhantomReleasedByRealScroll(t *testing.T) {
 	if w.ViewState.ViewOffsetX < 0 {
 		t.Fatalf("a real scroll requirement should release the phantom, offset %d",
 			w.ViewState.ViewOffsetX)
+	}
+}
+
+// Under direction=rtl the ghost-cursor range check must measure the line's
+// LEFTMOST caret position, not end-of-line: a right-anchored line ending in an
+// LTR fragment has its EOL caret at the reading-START side (reading column 0),
+// so measuring EOL read every such line as "too short" — arrowing down from an
+// LTR path onto "start_maximized=true" ghosted mid-word with the real caret
+// snapped to EOL, even though the line easily reaches the ideal column.
+func TestRTLGhostReachesIntoTrailingLTRLine(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "/jeffd/projects/go/mew/resources\n\nstart_maximized=true\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	src := "/jeffd/projects/go/mew/resources"
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: strings.Index(src, "/mew")})
+	tabSize := e.tabSize(w)
+	ideal := e.idealColumn(w, src, w.CursorPos().Rune, tabSize)
+
+	e.executeCommand("go_line_next")
+	e.executeCommand("go_line_next")
+
+	if w.CursorPos().Line != 2 {
+		t.Fatalf("expected to land on line 2, got %d", w.CursorPos().Line)
+	}
+	if w.HasGhostCursor {
+		t.Fatalf("the line reaches reading column %d; ghosted anyway (rune %d, ghost %d)",
+			ideal, w.CursorPos().Rune, w.GhostCursorVisualColumn)
+	}
+	dst := "start_maximized=true"
+	if got := e.idealColumn(w, dst, w.CursorPos().Rune, tabSize); got != ideal {
+		t.Fatalf("caret should hold reading column %d, landed at %d (rune %d)",
+			ideal, got, w.CursorPos().Rune)
+	}
+}
+
+// When the ideal reading column genuinely exceeds the line's reach, the ghost
+// engages and the real caret parks at the reachable position NEAREST the ghost
+// — the line's leftmost caret. For a line ending in LTR text under rtl that is
+// the line's logical START, not EOL (which sits at the far right).
+func TestRTLGhostParksAtLeftmostCaret(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x", 40)+"\n\nshort=1\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // reading col 35
+	e.executeCommand("go_line_next")
+	e.executeCommand("go_line_next")
+
+	if !w.HasGhostCursor {
+		t.Fatal("ideal reading 35 is past a 7-cell line: the ghost must engage")
+	}
+	if got := w.CursorPos().Rune; got != 0 {
+		t.Fatalf("caret should park at the line's leftmost caret (rune 0), got %d", got)
+	}
+}
+
+// Pure-RTL lines keep the old contract: end-of-line IS the leftmost caret, so
+// a shorter Hebrew line still ghosts past its end with the caret at EOL.
+func TestRTLGhostStillEOLForRTLLines(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("א", 30)+"\nאבג\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 20})
+	e.executeCommand("go_line_next")
+
+	if !w.HasGhostCursor {
+		t.Fatal("a 3-cell Hebrew line cannot reach reading column 20: expected a ghost")
+	}
+	if got := w.CursorPos().Rune; got != 3 {
+		t.Fatalf("caret should park at EOL (rune 3, the leftmost caret of an RTL line), got %d", got)
+	}
+}
+
+// Arriving from a phantom EOL: "third line here!" ends in a bidi NEUTRAL that
+// takes the RTL base direction, so its EOL caret sits one cell past the line's
+// LEFT edge (the phantom, reading 17 on a 16-cell line). Arrowing up to
+// "second line here" (leftmost caret: rune 0 at reading 16) cannot reach 17 —
+// the ghost engages there and the real caret parks ADJACENT to it on rune 0,
+// exactly as an LTR ghost past EOL parks at EOL. It must NOT snap to this
+// line's EOL, which sits 17 cells away at the reading-start edge.
+func TestRTLGhostFromPhantomEOLParksAdjacent(t *testing.T) {
+	e, w, _ := rtlPhantomEditor(t)
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 16})
+	e.afterHorizontalMovement(w)
+	e.executeCommand("go_line_prior")
+
+	if !w.HasGhostCursor || w.GhostCursorVisualColumn != 17 {
+		t.Fatalf("expected a ghost at reading 17; ghost=%v col=%d",
+			w.HasGhostCursor, w.GhostCursorVisualColumn)
+	}
+	if got := w.CursorPos().Rune; got != 0 {
+		t.Fatalf("caret should park adjacent to the ghost (rune 0), got %d", got)
 	}
 }
