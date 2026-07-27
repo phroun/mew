@@ -4,7 +4,7 @@ __mew Quick Help__  [[keys#cancel.buffer_close]] close/cancel  [[keys#repeat_nex
 ┃ “FILE MENU” ┃ [[keys#go_word_beg|M-j]] by word    ┃ [[keys#go_page_prior|^U]]   page up   ┃ [[keys#go_word_right|M-f]] by word  ┃ [[keys#scroll_page_prior|esc U]] page up ┃
 ┃             ┃ [[keys#go_char_prior|^J]] one rune    ┃ [[keys#go_line_up|^P]]   line up   ┃ [[keys#go_char_next|^F]] one rune  ┃ [[keys#scroll_line_prior|esc ']]   line up ┃
 ┃ [[keys#help|^K]] **BLOCK**    ┣━**SCAN/FIND/NEXT**━┫                ┣━━━━**DELETE**━━━━┫ **left**    **right** ┃
-┃ [[keys#help|^Q]] **QUICK**    ┃ ^S / [[keys#find|^Q F]] / [[keys#find_next|^L]] ┃ [[keys#go_line|^Q L]] line #    ┃ [[keys#del_line|^Y]] del line  ┃ [[keys#scroll_left|esc <]] / [[keys#scroll_right|esc >]] ┃
+┃ [[keys#help|^Q]] **QUICK**    ┃ [[keys#search|^S]] / [[keys#find|^Q F]] / [[keys#find_next|^L]] ┃ [[keys#go_line|^Q L]] line #    ┃ [[keys#del_line|^Y]] del line  ┃ [[keys#scroll_left|esc <]] / [[keys#scroll_right|esc >]] ┃
 ┃             ┣━━━**DEL: BACK**━━━━┫                ┣━**DEL: FORWARD**━┫               ┃
 ┃ [[keys#help|^[]] **NERD**     ┃ [[keys#del_char_prior|^H]] one rune    ┃ [[keys#go_line_down|^N]]   line down ┃ [[keys#del_char_next|^G]] one rune  ┃ [[keys#scroll_line_next|esc /]]   ln down ┃
 ┃ [[keys#help|^X]] **EXECUTE**  ┃ [[keys#del_word_beg|^W]] word start  ┃ [[keys#go_page_next.go_line_end|^V]]   page down ┃ [[keys#del_word_end|^T]] word end  ┃ [[keys#scroll_page_next|esc V]] pg down ┃
