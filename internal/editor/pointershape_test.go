@@ -79,6 +79,7 @@ func TestPointerRegionExcludesBrowseButtons(t *testing.T) {
 		"w/other.txt": "other content\n",
 	}
 	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	w.BrowseActive = true // enter navigation mode (no auto-arm any more)
 	var arrows []PointerArrowSpan
 	e.Config.PointerRegion = func(_, _, _, _ int, a []PointerArrowSpan) { arrows = a }
 	e.performRender()

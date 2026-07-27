@@ -253,7 +253,7 @@ func TestSchemeRefOpensNewViewport(t *testing.T) {
 	before := len(e.contentViewports())                 // notifications spawn work viewports; count main ones
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the [[...]] span
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should activate")
 	}
 	if len(e.contentViewports()) != before+1 {
@@ -363,7 +363,7 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	// visit state), and history restores don't touch it either.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // inside [[sample:widget]]
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("in-wiki follow should navigate")
 	}
 	if e.bufferCanonicalURL(w.Buffer) != widgetURL {
@@ -459,7 +459,7 @@ func TestHelpWikiScheme(t *testing.T) {
 	// the source viewport keeps its blank root.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6}) // inside [[help:/start]]
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should activate")
 	}
 	hw := e.ViewportManager.GetFocusedViewport()
@@ -519,7 +519,7 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 	// Focus the button: caret inside the [[other]] span (runes 3..12).
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should activate the focused button")
 	}
 	wantPath := filepath.Join(root, "w", "other.txt")
@@ -550,7 +550,7 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 	// Re-follow: the destination buffer is REUSED (found in the forward
 	// stack), not re-loaded.
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("re-follow should activate")
 	}
 	if w.Buffer != dest {
@@ -574,7 +574,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	// row, the question on the input row, and y/n/blank in the buffer.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should activate")
 	}
 	p := focusedPrompt(e)
@@ -614,7 +614,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	// Decline (bare Enter = default No): nothing changes.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 34}) // inside [[another]]
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should activate")
 	}
 	if focusedPrompt(e) == nil {
@@ -635,7 +635,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	w.WikiName = "rotest"
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("navFollow should still activate")
 	}
 	if focusedPrompt(e) != nil {
@@ -662,7 +662,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	// Visit a link, then clear the visited set.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("follow should navigate")
 	}
 	otherBuf := w.Buffer
@@ -711,7 +711,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	}
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("re-follow should navigate")
 	}
 	if w.Buffer != otherBuf {
@@ -771,7 +771,7 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	buryOther := func() *buffer.Buffer {
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 		w.BrowseActive = true
-		if !e.navFollow() {
+		if !e.navFollow(true) {
 			t.Fatal("follow should navigate")
 		}
 		other := w.Buffer

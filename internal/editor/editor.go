@@ -1122,11 +1122,18 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navCancel())
 	})
 
-	// nav_follow: activate the focused link button (transient notification for
-	// now). Fails when not in active browse mode, so nav_follow|accept|insert
-	// falls through to the normal Enter behavior.
+	// nav_follow [always]: follow the link at the caret. With no argument (or
+	// "true") it ALWAYS follows when the caret is within/at the edge of a
+	// link's source, even in ordinary edit mode — so `^B F =nav_follow` jumps
+	// without entering navigation mode first. With "false" it follows only in
+	// navigation mode (a focused button); otherwise it fails, so a
+	// `nav_follow false|accept|insert` chain falls through to plain Enter.
 	ps.RegisterCommand("nav_follow", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navFollow())
+		always := true
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "false") {
+			always = false
+		}
+		return pawscript.BoolStatus(e.navFollow(always))
 	})
 
 	// nav_next / nav_prior: move to the next/previous link (cycling). Capture
@@ -2710,6 +2717,14 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.LinkBrowsing
 		}
 		return boolText(v), true
+	case "navigationmode":
+		// Navigation mode is the viewport's live browse state — per-viewport
+		// only, no global config default.
+		v := false
+		if w != nil {
+			v = w.BrowseActive
+		}
+		return boolText(v), true
 	case "showcolumnruler":
 		v := e.Config.ShowColumnRuler
 		if w != nil {
@@ -2925,6 +2940,24 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			e.Config.LinkBrowsing = b
 		}
 		e.RequestRender()
+	case "navigationmode":
+		// Enter/leave link browse (navigation) mode for the viewport — the
+		// explicit replacement for the old auto-arm. Per-viewport only; a
+		// nil target (global) has no navigation state to toggle. Rendering
+		// still gates buttons on the link layer being on and the page being
+		// linkable, so toggling this on a non-wiki viewport is a harmless no-op.
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			// Entering nav mode needs the link layer on (buttons render only
+			// then); with linkBrowsing off, ^O N is a no-op. Leaving always
+			// disarms.
+			w.BrowseActive = b && w.ViewState.LinkBrowsing
+			w.NavIdealSet = false // drop any vertical-nav ideal on a mode flip
+			e.RequestRender()
+		}
 	case "showcolumnruler":
 		b, ok := parseBool()
 		if !ok {
@@ -5949,9 +5982,6 @@ func (e *Editor) performRender() {
 	focusedViewport := e.ViewportManager.GetFocusedViewport()
 	if focusedViewport != nil {
 		e.renderFollowCaret(focusedViewport)
-		// A wiki-format page starts in browse mode the moment it is first
-		// painted — including the very first frame after launch.
-		e.autoArmBrowse(focusedViewport)
 	}
 
 	// Flip the modebar logo (M_ vs _M) to the text direction at the focused
@@ -6339,8 +6369,6 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 					e.pasteActive = false
 					e.pasteBuf = nil
 				}
-				// A paste moves the caret too: re-evaluate link browse arming.
-				e.updateBrowseState()
 			}
 		} else if event.Key != "" {
 			// A terminal cursor-position report (the flipBidiForHost probe's
@@ -6367,10 +6395,6 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			if result.Command != "" {
 				e.executeCommand(result.Command)
 			}
-
-			// Link browse mode: arm when the caret has entered a link span it
-			// was not previously inside (identity tracked by anchor, not line).
-			e.updateBrowseState()
 
 			// Update active sequence display with possible completions
 			e.ActiveSequence = e.KeyProcessor.GetActiveSequence()
@@ -6913,7 +6937,6 @@ func (e *Editor) showHelpLocation(hw *viewport.Viewport, buf *buffer.Buffer, roo
 	hw.WikiRoot = root
 	hw.WikiName = wikiName
 	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
-	hw.BrowseAutoArmed = hw.BrowseActive
 	e.applyHelpViewportChrome(hw) // title bar + height per Quick Help vs. page role
 	e.ensureCursorVisible(hw)
 	e.RequestRender()
@@ -7029,7 +7052,6 @@ func (e *Editor) refreshQuickHelp(hw *viewport.Viewport) {
 	hw.WikiRoot = root
 	hw.WikiName = wikiName
 	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
-	hw.BrowseAutoArmed = hw.BrowseActive
 	e.quickHelpBuf = buf
 	e.quickHelpShownTopic = e.quickHelpTopic
 	e.applyHelpViewportChrome(hw) // re-fit height to the newly loaded page

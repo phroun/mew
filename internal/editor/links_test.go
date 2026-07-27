@@ -103,7 +103,7 @@ func TestLinkEdgeBoundaries(t *testing.T) {
 func TestFocusedButtonReadOnly(t *testing.T) {
 	e, w, _ := linkEditor(t, "text [[a:b|Title]] more\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10}) // inside the link
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if e.focusedLinkButton(w) == nil {
 		t.Fatal("button should be focused")
 	}
@@ -117,7 +117,7 @@ func TestFocusedButtonReadOnly(t *testing.T) {
 		t.Fatal("a focused button must reject deletion")
 	}
 	// Navigation still works while focused.
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("nav_follow should still work on a focused button")
 	}
 	// nav_cancel leaves the button; editing resumes.
@@ -130,46 +130,48 @@ func TestFocusedButtonReadOnly(t *testing.T) {
 	}
 }
 
-// A wiki-format page STARTS in browse mode (auto-arm, once per binding);
-// nav_cancel disarms it and staying within the same span does not re-arm;
-// leaving a span and re-entering one re-arms.
-func TestBrowseModeArming(t *testing.T) {
+// Navigation mode is entered EXPLICITLY through the navigationMode option
+// (the ^O N binding is set_option_next navigationMode), not by the caret
+// landing on a link. Toggling it arms/disarms browse mode; moving the caret
+// never changes it; and nav_cancel disarms just like turning the option off.
+func TestNavigationModeOption(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
 
-	// The linkable grammar auto-arms on first sight, wherever the caret is.
-	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2}) // outside any link
-	e.updateBrowseState()
-	if !w.BrowseActive {
-		t.Fatal("a wiki page should START in browse mode")
-	}
-	if !w.BrowseAutoArmed {
-		t.Fatal("the auto-arm latch should be set")
+	// A linkable page does NOT auto-arm — it opens in caret mode.
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside a link
+	if w.BrowseActive {
+		t.Fatal("a page must not auto-arm browse mode any more")
 	}
 
-	// Enter the link, then nav_cancel: disarmed, and the latch prevents an
-	// instant auto re-arm; moving within the same span must not re-arm
-	// either (the anchor remembers the span).
-	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
-	e.updateBrowseState()
+	// The option turns it on (rotating through set_option_next, as ^O N does).
+	if !e.setOption(w, "navigationMode", "yes") {
+		t.Fatal("set_option navigationMode yes failed")
+	}
+	if !w.BrowseActive {
+		t.Fatal("navigationMode=yes should arm browse mode")
+	}
+	if got, _ := e.getOption(w, "navigationMode"); got != "yes" {
+		t.Fatalf("getOption navigationMode = %q, want yes", got)
+	}
+
+	// Moving the caret — onto a link or off it — never changes the mode.
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2}) // outside any link
+	if !w.BrowseActive {
+		t.Fatal("moving off a link must not disarm")
+	}
+
+	// nav_cancel disarms; a second one fails (chain falls through).
 	if !e.navCancel() {
 		t.Fatal("nav_cancel should succeed while armed")
 	}
-	if e.navCancel() {
-		t.Fatal("nav_cancel should fail when not armed (chain falls through)")
-	}
-	w.SetCursorPos(viewport.Position{Line: 0, Rune: 12})
-	e.updateBrowseState()
 	if w.BrowseActive {
-		t.Fatal("moving within the disarmed span must not re-arm")
+		t.Fatal("nav_cancel should have disarmed")
 	}
-
-	// Leave, then re-enter: arms again.
-	w.SetCursorPos(viewport.Position{Line: 0, Rune: 20})
-	e.updateBrowseState()
-	w.SetCursorPos(viewport.Position{Line: 0, Rune: 7})
-	e.updateBrowseState()
-	if !w.BrowseActive {
-		t.Fatal("re-entering the span after leaving must re-arm")
+	if e.navCancel() {
+		t.Fatal("nav_cancel should fail when not armed")
+	}
+	if got, _ := e.getOption(w, "navigationMode"); got != "no" {
+		t.Fatalf("getOption navigationMode after cancel = %q, want no", got)
 	}
 }
 
@@ -179,9 +181,8 @@ func TestBrowseModeArming(t *testing.T) {
 func TestLinkRenderStyles(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\n")
 
-	// Caret mode: raw text, link color, no button chrome. (Wiki pages START
-	// in browse mode; pre-set the latch to model a user who ^C'd out.)
-	w.BrowseAutoArmed = true
+	// Caret mode is the default now (no auto-arm): raw text, link color, no
+	// button chrome.
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -211,7 +212,7 @@ func TestLinkRenderStyles(t *testing.T) {
 
 	// Focused button: caret inside the span switches caps/shadow/colors.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
 	plain = stripSGR(out.String())
@@ -228,16 +229,18 @@ func TestLinkRenderStyles(t *testing.T) {
 func TestFocusedLinkContextAndAccept(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	e.performRender()
 	if w.Context != "a:b" {
 		t.Fatalf("context should show the destination; got %q", w.Context)
 	}
 
+	// The Enter binding: nav_follow false only fires in navigation mode, so
+	// here (browse mode, focused button) it follows and no newline is inserted.
 	lines := w.Buffer.GetLineCount()
-	e.executeCommand("nav_follow|accept|insert '\\n'")
+	e.executeCommand("nav_follow false|accept|insert '\\n'")
 	if w.Buffer.GetLineCount() != lines {
-		t.Fatal("nav_follow on a focused button must not insert a newline")
+		t.Fatal("nav_follow false on a focused button must not insert a newline")
 	}
 	found := false
 	for _, nw := range e.ViewportManager.AllViewports() {
@@ -249,13 +252,54 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 		t.Fatal("nav_follow should show a 'Link: <target>' notification")
 	}
 
-	// Disarmed (caret mode), the chain falls through nav_follow -> insert.
+	// Disarmed (caret mode): nav_follow false does NOT follow, so the chain
+	// falls through to insert. (Bare nav_follow / nav_follow true WOULD follow
+	// here — covered by TestNavFollowAlways.)
 	if !e.navCancel() {
 		t.Fatal("nav_cancel should disarm")
 	}
-	e.executeCommand("nav_follow|accept|insert '\\n'")
+	e.executeCommand("nav_follow false|accept|insert '\\n'")
 	if w.Buffer.GetLineCount() != lines+1 {
-		t.Fatal("nav_follow in caret mode should fall through to insert")
+		t.Fatal("nav_follow false in caret mode should fall through to insert")
+	}
+}
+
+// nav_follow (no arg / true) follows from ordinary EDIT mode when the caret is
+// within a link's source, while nav_follow false stays gated to navigation
+// mode. This is what lets ^B F jump directly and the Enter binding
+// (nav_follow false) fall through to a newline.
+func TestNavFollowAlways(t *testing.T) {
+	e, w, _ := linkEditor(t, linkLine)
+
+	// Caret mode (browse off), caret inside the link source.
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
+	if w.BrowseActive {
+		t.Fatal("precondition: not in navigation mode")
+	}
+
+	// Gated form does nothing here (falls through).
+	if e.navFollow(false) {
+		t.Fatal("nav_follow false must not follow outside navigation mode")
+	}
+
+	// Always form follows even from edit mode: a notification names the target.
+	if !e.navFollow(true) {
+		t.Fatal("nav_follow (always) should follow from edit mode when on a link")
+	}
+	found := false
+	for _, nw := range e.ViewportManager.AllViewports() {
+		if nw.Class == "notification" && strings.Contains(nw.MessageTopInner, "Link: a:b") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("always-follow should activate the link (Link: a:b notification)")
+	}
+
+	// Off any link, even the always form fails (nothing to follow).
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	if e.navFollow(true) {
+		t.Fatal("always-follow must fail when the caret is not on a link")
 	}
 }
 
@@ -263,7 +307,7 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 func TestLinkButtonRTLTitle(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, "x [[p|שלום]] y\n", "[options]\nsyntax=dokuwiki\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if !w.BrowseActive {
 		t.Fatal("caret inside the RTL-titled link should arm")
 	}
@@ -296,15 +340,17 @@ func TestLinkBrowsingGate(t *testing.T) {
 		t.Fatal("linkBrowsing=no: links should keep their grammar syntax color")
 	}
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
+	if !e.setOption(w, "navigationMode", "yes") {
+		t.Fatal("set_option navigationMode yes should not error")
+	}
 	if w.BrowseActive {
-		t.Fatal("linkBrowsing=no: entering a link must not arm")
+		t.Fatal("linkBrowsing=no: navigationMode must not arm without the link layer")
 	}
 
 	// Turning the option off while armed retires the buttons.
 	e2, w2, out2 := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\n")
 	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e2.updateBrowseState()
+	w2.BrowseActive = true
 	if !w2.BrowseActive {
 		t.Fatal("default: entering a link should arm")
 	}
@@ -330,14 +376,14 @@ func TestNavNextPrior(t *testing.T) {
 
 	// Not inside a link: nav does not capture.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if e.navLink(+1) {
 		t.Fatal("nav_next must not capture when no button is focused")
 	}
 
 	// Enter link A, then nav_next walks A -> B -> C -> (wrap) A.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "a:b" {
 		t.Fatalf("should focus link A; got %+v", b)
 	}
@@ -346,7 +392,7 @@ func TestNavNextPrior(t *testing.T) {
 		if !e.navLink(dir) {
 			t.Fatalf("nav should capture while a button is focused")
 		}
-		e.updateBrowseState()
+		w.BrowseActive = true
 		b := e.focusedLinkButton(w)
 		if b == nil || b.Target != wantTarget {
 			t.Fatalf("after nav: want %s, got %+v", wantTarget, b)
@@ -366,9 +412,7 @@ func TestNavNextPrior(t *testing.T) {
 // nav_start enters nav mode and focuses the first link at/after the caret.
 func TestNavStart(t *testing.T) {
 	e, w, _ := linkEditor(t, "no link here\ntext [[a:b|T]] end\n")
-	w.BrowseAutoArmed = true // model a user who bailed with ^C
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
-	e.updateBrowseState()
 	if w.BrowseActive {
 		t.Fatal("browse mode should be off before nav_start")
 	}
@@ -398,7 +442,7 @@ func TestNavLeftRight(t *testing.T) {
 	// [[a]] [0,5), [[b]] [10,15), [[c]] [20,25) — ascending columns (LTR).
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]] end [[c]]\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 11}) // inside [[b]]
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "b" {
 		t.Fatalf("should focus b; got %+v", b)
 	}
@@ -428,7 +472,7 @@ func TestNavLeftRightRTL(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t,
 		"אבג [[x|א]] דהו [[y|ב]] זחט\n", "[options]\nsyntax=dokuwiki\ndirection=rtl\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside x
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "x" {
 		t.Fatalf("should focus x; got %+v", b)
 	}
@@ -457,7 +501,7 @@ func TestNavVertical(t *testing.T) {
 	// Focus [[b]] (column ~15); nav_down lands on the column-nearest link of
 	// line 2, which is [[d]].
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 17})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if !e.navVert(+1) {
 		t.Fatal("nav_down should move")
 	}
@@ -483,7 +527,7 @@ func TestNavVerticalConsistentIdeal(t *testing.T) {
 	e.performRender()
 
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 11}) // inside [[a]] (col ~10)
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if !e.navVert(+1) {
 		t.Fatal("first nav_down should move")
 	}
@@ -522,7 +566,7 @@ func TestNavVerticalPages(t *testing.T) {
 	out.Reset()
 	e.performRender()
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside [[a]]
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if !e.navVert(+1) {
 		t.Fatal("nav_down should succeed (page) when no link line remains")
 	}
@@ -542,12 +586,11 @@ func TestNavVerticalPages(t *testing.T) {
 // The vertical/horizontal nav commands act only in active nav mode.
 func TestNavRequiresActiveMode(t *testing.T) {
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]]\n")
-	w.BrowseAutoArmed = true                            // model a user who bailed with ^C
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 7}) // the 'i' in "mid": outside any link
-	e.updateBrowseState()
 	if w.BrowseActive {
-		t.Fatal("browse should be off between links")
+		t.Fatal("browse should be off (no auto-arm)")
 	}
+	// Not in nav mode: the vertical/horizontal nav commands do nothing.
 	if e.navVert(+1) || e.navVert(-1) || e.navHoriz(+1) || e.navHoriz(-1) {
 		t.Fatal("nav up/down/left/right must not act outside active nav mode")
 	}
@@ -557,8 +600,8 @@ func TestNavRequiresActiveMode(t *testing.T) {
 func TestNavGatedByOption(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\nlinkBrowsing=no\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
-	if e.navLink(+1) || e.navFollow() {
+	w.BrowseActive = true
+	if e.navLink(+1) || e.navFollow(true) {
 		t.Fatal("nav must not act when linkBrowsing is off")
 	}
 }
@@ -570,7 +613,7 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	// Exact for the no-escape bindings; prefix for the ones whose insert arg
 	// carries a control char (the parser unescapes \n/\t in mapping values).
 	for k, want := range map[string]string{
-		"^C":    "nav_cancel|cancel|buffer_close",
+		"^C":    "cancel|buffer_close",
 		"S-tab": "nav_prior",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); got != want {
@@ -578,7 +621,7 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 		}
 	}
 	for k, prefix := range map[string]string{
-		"return": "nav_follow|accept|insert ",
+		"return": "nav_follow false|accept|insert ",
 		"tab":    "nav_next|completion|insert ",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); !strings.HasPrefix(got, prefix) {
@@ -588,12 +631,12 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 
 	// Caret-hide predicate: false outside a link, true on a focused button.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if e.focusedLinkButton(w) != nil {
 		t.Fatal("no button focused outside a link")
 	}
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
+	w.BrowseActive = true
 	if e.focusedLinkButton(w) == nil {
 		t.Fatal("button should be focused inside the link (caret then hides)")
 	}
@@ -609,8 +652,8 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	// Follow the link; the editor records it (an unnamed buffer has no
 	// resolution context, so the identity is the raw target).
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
-	e.updateBrowseState()
-	if !e.navFollow() {
+	w.BrowseActive = true
+	if !e.navFollow(true) {
 		t.Fatal("nav_follow should activate the focused button")
 	}
 	if !e.linkTargetVisited(w, "a:b") {

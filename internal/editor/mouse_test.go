@@ -24,10 +24,8 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 		"w/other.txt": "other content\n",
 	}
 	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
-	e.performRender() // establish viewport geometry (ContentX/Y, widths)
-	if !w.BrowseActive {
-		t.Fatal("the wiki page should have auto-armed browse mode")
-	}
+	w.BrowseActive = true // enter navigation mode (no auto-arm any more)
+	e.performRender()     // establish viewport geometry (ContentX/Y, widths)
 	src := w.Buffer
 
 	row := w.ContentY + 1 // line 0 of the buffer, 1-based screen row
@@ -203,6 +201,7 @@ func TestMouseHoverStyles(t *testing.T) {
 		"w/other.txt": "other content\n",
 	}
 	e, w, _ := wikiTreeEditor(t, files, "w/page.txt")
+	w.BrowseActive = true // enter navigation mode (no auto-arm any more)
 	e.performRender()
 
 	row := w.ContentY + 1
@@ -210,7 +209,7 @@ func TestMouseHoverStyles(t *testing.T) {
 		e.handleMouseKey("MouseDrag@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
 	}
 
-	// Browse mode (auto-armed): hover over the button.
+	// Browse mode: hover over the button.
 	over(5)
 	if !e.mouseHovered.active {
 		t.Fatal("hover should latch over a button")
@@ -315,6 +314,16 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 		return len(out.String()) > 0 && w != nil && w.ContentWidth > 0
 	})
 
+	// Enter navigation mode THROUGH the loop (^O N = set_option_next
+	// navigationMode) — the page no longer auto-arms. Wait for the link
+	// button to paint before pressing it.
+	if _, err := pw.Write([]byte("\x0fN")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("browse-mode button to paint", func() bool {
+		return strings.Contains(out.String(), "\x1b[0;1;30;47m")
+	})
+
 	// Raw SGR press on the button cell (no keyboard involved).
 	row := w.ContentY + 1
 	col := w.ContentX + 1 + 5
@@ -383,7 +392,7 @@ func TestMouseWorksInSpawnedViewport(t *testing.T) {
 	// Follow the scheme link: a new focused viewport spawns.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
-	if !e.navFollow() {
+	if !e.navFollow(true) {
 		t.Fatal("follow should spawn the new viewport")
 	}
 	nw := e.ViewportManager.GetFocusedViewport()

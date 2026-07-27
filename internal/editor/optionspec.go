@@ -57,6 +57,7 @@ var optionSpecs = []optionSpec{
 	{"insertMode", true, optBoolKind, boolValues},
 	{"readOnly", true, optBoolKind, boolValues},
 	{"linkBrowsing", true, optBoolKind, boolValues},
+	{"navigationMode", true, optBoolKind, boolValues},
 	{"showColumnRuler", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
 	{"syntaxOverrides", true, optStrKind, nil},

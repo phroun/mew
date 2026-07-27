@@ -555,7 +555,6 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
 		e.afterHorizontalMovement(w)
 		w.ViewState.ScrollDetached = false
-		e.updateBrowseState()
 		e.RequestRender()
 		return
 	}
@@ -571,7 +570,6 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 	// A click is a cursor movement: re-engage caret following, cancelling any
 	// free scroll left by the wheel so the view tracks the caret again.
 	w.ViewState.ScrollDetached = false
-	e.updateBrowseState()
 	if span := e.focusedLinkButton(w); span != nil {
 		e.mousePressed = pressedLink{active: true, winID: w.ID, line: docLine, start: span.Start}
 		e.mouseOnCaptured = true
@@ -940,7 +938,7 @@ func (e *Editor) mouseRelease(x, y int) {
 	e.mousePressed = pressedLink{}
 	e.mouseOnCaptured = false
 	if onButton {
-		e.navFollow()
+		e.navFollow(false)
 	}
 	e.RequestRender()
 }

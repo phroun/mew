@@ -2098,10 +2098,9 @@ insertMode=yes
 # window.
 readOnly=no
 # Hyperlink layer for grammar-recognized links (dokuwiki): links paint in the
-# link color, and when the caret enters one the window switches to browse
-# mode, rendering links as buttons (nav_cancel — ^C's first stop — exits).
-# no disables all of it: links render exactly as the grammar colors them.
-# Per window.
+# link color and can be navigated as buttons in navigation mode (the
+# navigationMode option, ^O N; nav_cancel exits). no disables all of it: links
+# render exactly as the grammar colors them. Per viewport.
 linkBrowsing=yes
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
@@ -2389,13 +2388,13 @@ esc Y   =kill_ring_pop
 ^@ P    =prompt_peek_up
 ^@ N    =prompt_peek_down
 ^@ O    =editor_options
-^@ ,    =window_prior
-^@ .    =window_next
+^@ ,    =viewport_prior
+^@ .    =viewport_next
 
 tab     =nav_next|completion|insert '\t'
 S-tab   =nav_prior
-return  =nav_follow|accept|insert '\n'
-^C      =nav_cancel|cancel|buffer_close
+return  =nav_follow false|accept|insert '\n'
+^C      =cancel|buffer_close
 ^R      =repeat_next
 
 esc >   =scroll_right

@@ -129,37 +129,6 @@ func (vs ViewState) MarksShowInternal() bool {
 	return vs.ShowMarks == "all"
 }
 
-// SetLinkAnchor plants (or moves) the viewport's link anchor at a line/rune
-// position — the start of the link span the caret now occupies. The anchor is
-// a tracking cursor: the recorded identity slides with edits.
-func (w *Viewport) SetLinkAnchor(line, runePos int) {
-	if w.Buffer == nil {
-		return
-	}
-	if w.linkAnchor == nil {
-		w.linkAnchor = w.Buffer.NewAnchor()
-	}
-	w.linkAnchor.SeekLineRune(line, runePos)
-}
-
-// LinkAnchorPos reports the link anchor's current (slid-with-edits) position,
-// or ok=false when no link anchor is set.
-func (w *Viewport) LinkAnchorPos() (line, runePos int, ok bool) {
-	if w.linkAnchor == nil {
-		return 0, 0, false
-	}
-	l, r := w.linkAnchor.LineRune()
-	return l, r, true
-}
-
-// ClearLinkAnchor releases the link anchor (caret no longer inside a link).
-func (w *Viewport) ClearLinkAnchor() {
-	if w.linkAnchor != nil {
-		w.linkAnchor.Release()
-		w.linkAnchor = nil
-	}
-}
-
 // MarkOptionOverridden records that a per-viewport option was set explicitly on
 // this viewport, so a grammar options overlay leaves it alone.
 func (w *Viewport) MarkOptionOverridden(name string) {
@@ -359,21 +328,12 @@ type Viewport struct {
 	findWrapped bool
 
 	// Link browse mode (link-as-button rendering). BrowseActive turns button
-	// rendering on for this viewport's links; it is set by the editor when the
-	// caret enters a link span it was not previously inside, and cleared by
-	// nav_cancel. linkAnchor marks the START of the link span the caret last
-	// occupied — a tracking cursor, so the identity slides with edits like
-	// every other position (never a raw line number). nil = caret not in a
-	// link. Released in RemoveViewport.
+	// rendering on for this viewport's links, so the caret parks on whole
+	// buttons and the nav_* commands drive between them. It is entered
+	// explicitly (the navigationMode option, toggled by set_option / ^O N) and
+	// carried when following a link into another wiki page; cleared by
+	// nav_cancel and by turning navigationMode off.
 	BrowseActive bool
-	linkAnchor   *buffer.Anchor
-
-	// BrowseAutoArmed records that browse mode auto-armed once for this
-	// binding: a wiki-format page STARTS browsing as soon as its grammar
-	// proves linkable, and this latch keeps nav_cancel (^C) from being
-	// instantly re-armed. Per binding (travels with the nav history; a fresh
-	// binding auto-arms anew).
-	BrowseAutoArmed bool
 
 	// WikiRoot confines this viewport's wiki-reference resolution to a subtree:
 	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
@@ -787,8 +747,6 @@ type viewBinding struct {
 	findOrigin     *buffer.Anchor
 	findWrapped    bool
 	browseActive   bool
-	browseAuto     bool
-	linkAnchor     *buffer.Anchor
 	viewOffsetX    int
 	viewOffsetY    int
 }
@@ -813,10 +771,6 @@ func (b *viewBinding) release() {
 	if b.findOrigin != nil {
 		b.findOrigin.Release()
 		b.findOrigin = nil
-	}
-	if b.linkAnchor != nil {
-		b.linkAnchor.Release()
-		b.linkAnchor = nil
 	}
 	for i := range b.cursorRing {
 		if b.cursorRing[i] != nil {
@@ -868,8 +822,6 @@ func (w *Viewport) detachBinding() viewBinding {
 		findOrigin:     w.findOrigin,
 		findWrapped:    w.findWrapped,
 		browseActive:   w.BrowseActive,
-		browseAuto:     w.BrowseAutoArmed,
-		linkAnchor:     w.linkAnchor,
 		viewOffsetX:    w.ViewState.ViewOffsetX,
 		viewOffsetY:    w.ViewState.ViewOffsetY,
 	}
@@ -883,8 +835,6 @@ func (w *Viewport) detachBinding() viewBinding {
 	w.findOrigin = nil
 	w.findWrapped = false
 	w.BrowseActive = false
-	w.BrowseAutoArmed = false
-	w.linkAnchor = nil
 	w.ViewState.ViewOffsetX = 0
 	w.ViewState.ViewOffsetY = 0
 	return b
@@ -906,8 +856,6 @@ func (w *Viewport) attachBinding(b viewBinding) {
 	w.findOrigin = b.findOrigin
 	w.findWrapped = b.findWrapped
 	w.BrowseActive = b.browseActive
-	w.BrowseAutoArmed = b.browseAuto
-	w.linkAnchor = b.linkAnchor
 	w.ViewState.ViewOffsetX = b.viewOffsetX
 	w.ViewState.ViewOffsetY = b.viewOffsetY
 	w.RefreshViewTop()

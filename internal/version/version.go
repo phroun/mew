@@ -42,7 +42,7 @@ const (
 // passed as %s arguments so fmt does not try to interpret them.
 func Banner() string {
 	const (
-		cancelKey = "%keys_verbose#nav_cancel.cancel.buffer_close|^C%"
+		cancelKey = "%keys_verbose#cancel.buffer_close|^C%"
 		helpKey   = "%keys_verbose#help_toggle|^Q H%"
 	)
 	return fmt.Sprintf("%s %s build %d ** Type %s to close or %s for help.",

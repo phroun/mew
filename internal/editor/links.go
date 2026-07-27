@@ -27,13 +27,12 @@ import (
 //     style, its destination shows in the modebar context slot, and accept
 //     activates it (a transient notification for now).
 //
-// Browse mode arms automatically when the caret enters a link span it was
-// not previously inside, and disarms via nav_cancel (^C's first stop). The
-// "previously inside" identity is a garland tracking anchor at the span's
-// start — it slides with edits like every other position; no line numbers
-// are kept between operations. The caret stays inert inside a button: it
-// still knows its rune position within the link's source text, but the
-// button paints (and parks the terminal cursor) as one unit.
+// Browse mode is entered explicitly — the navigationMode option (set_option /
+// ^O N) — and disarmed via nav_cancel or by turning navigationMode off;
+// following a link carries it into the destination page. It does NOT arm on
+// its own when the caret lands on a link. The caret stays inert inside a
+// button: it still knows its rune position within the link's source text, but
+// the button paints (and parks the terminal cursor) as one unit.
 
 // linkSpansOnLine returns the grammar-derived link spans for one line of w's
 // buffer, or nil when the grammar has none (not linkable, line out of range).
@@ -77,56 +76,6 @@ func (e *Editor) caretLinkSpan(w *viewport.Viewport) *linkSpan {
 		}
 	}
 	return nil
-}
-
-// updateBrowseState runs after every executed command (and paste): when the
-// caret has entered a link span it was not previously inside, browse mode
-// arms for the viewport. The occupied span's identity is its start position,
-// held in a tracking anchor so edits slide it rather than staling it.
-// Leaving all links clears the anchor but does NOT disarm browse mode —
-// only nav_cancel does that.
-func (e *Editor) updateBrowseState() {
-	w := e.ViewportManager.GetFocusedViewport()
-	if w == nil || w.Type == viewport.PromptViewport || w.Buffer == nil {
-		return
-	}
-	if !w.ViewState.LinkBrowsing {
-		return // hyperlink layer off: never arms
-	}
-	e.autoArmBrowse(w)
-	span := e.caretLinkSpan(w)
-	if span == nil {
-		w.ClearLinkAnchor()
-		return
-	}
-	line := w.CursorPos().Line
-	if al, ar, ok := w.LinkAnchorPos(); ok && al == line && ar == span.Start {
-		return // still inside the same span: no re-entry
-	}
-	w.SetLinkAnchor(line, span.Start)
-	if !w.BrowseActive {
-		w.BrowseActive = true
-		e.RequestRender()
-	}
-}
-
-// autoArmBrowse starts browse mode the moment a wiki-format page is first
-// seen in a viewport: as soon as the binding's grammar proves linkable, the
-// viewport arms — once per binding (the BrowseAutoArmed latch), so nav_cancel
-// (^C) bails out to caret mode without being instantly re-armed; arrowing
-// back onto a link re-arms as always.
-func (e *Editor) autoArmBrowse(w *viewport.Viewport) {
-	if w == nil || w.BrowseAutoArmed || w.Type == viewport.PromptViewport ||
-		w.Buffer == nil || !w.ViewState.LinkBrowsing {
-		return
-	}
-	if c := e.ensureSynCache(w.Buffer, 0); c != nil && c.linkable {
-		w.BrowseAutoArmed = true
-		if !w.BrowseActive {
-			w.BrowseActive = true
-			e.RequestRender()
-		}
-	}
 }
 
 // navCancel turns browse mode off on the focused viewport (links revert to
@@ -259,18 +208,35 @@ func (e *Editor) focusedLinkButton(w *viewport.Viewport) *linkSpan {
 	return e.caretLinkSpan(w)
 }
 
-// navFollow (the nav_follow command) activates the focused button and
-// NAVIGATES: the target resolves through the dokuwiki reference layers
-// (wikiref.go) to the canonical URL of a real file, which is opened IN PLACE —
-// an already-open buffer (active or stacked anywhere) is reused, a fresh one
-// is loaded otherwise, and the viewport's previous binding goes onto its nav
-// history (nav_history_prior returns). Non-wiki targets (schemes, interwiki)
-// and unresolved pages show a notification instead. Reports false when not in
-// active browse mode with a focused button, so a nav_follow|accept|insert
-// chain falls through.
-func (e *Editor) navFollow() bool {
+// navFollow (the nav_follow command) NAVIGATES to the link at the caret: the
+// target resolves through the dokuwiki reference layers (wikiref.go) to the
+// canonical URL of a real file, which is opened IN PLACE — an already-open
+// buffer (active or stacked anywhere) is reused, a fresh one is loaded
+// otherwise, and the viewport's previous binding goes onto its nav history
+// (nav_history_prior returns). Non-wiki targets (schemes, interwiki) and
+// unresolved pages show a notification instead.
+//
+// always=true (the default; ^B F) follows whenever the caret is within/at the
+// left edge of a link's source, even in ordinary edit mode — the link layer
+// (linkBrowsing) must still be enabled. always=false follows only the focused
+// button of navigation mode, and reports false otherwise so a
+// `nav_follow false|accept|insert` chain falls through to plain Enter.
+func (e *Editor) navFollow(always bool) bool {
 	w := e.ViewportManager.GetFocusedViewport()
-	span := e.focusedLinkButton(w)
+	var span *linkSpan
+	if always {
+		// Follow from ordinary edit mode too: the link the caret is within
+		// (or at the left edge of), independent of navigation mode. The link
+		// layer must still be enabled (linkBrowsing) — the whole feature is
+		// off otherwise.
+		if w != nil && w.Type != viewport.PromptViewport && w.ViewState.LinkBrowsing {
+			span = e.caretLinkSpan(w)
+		}
+	} else {
+		// Navigation-mode only: the focused button (nil unless browse mode is
+		// on with the caret on a link), so a fallthrough chain yields to Enter.
+		span = e.focusedLinkButton(w)
+	}
 	if span == nil {
 		return false
 	}
@@ -319,7 +285,6 @@ func (e *Editor) navFollow() bool {
 		nw.WikiName = res.wikiName
 		if res.root != "" {
 			nw.BrowseActive = nw.ViewState.LinkBrowsing
-			nw.BrowseAutoArmed = nw.BrowseActive
 		}
 		e.ShowNotification("→ " + displayPath(res.url))
 		e.RequestRender()
@@ -336,7 +301,6 @@ func (e *Editor) navFollow() bool {
 	// Stay in browse mode: following a link is browsing, and the reader keeps
 	// tabbing onward in the destination page.
 	w.BrowseActive = true
-	w.BrowseAutoArmed = true
 	e.ensureCursorVisible(w)
 	e.ShowNotification("→ " + displayPath(res.url))
 	e.RequestRender()
@@ -408,7 +372,6 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*viewport.Viewport, boo
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.BrowseActive = nw.ViewState.LinkBrowsing
-		nw.BrowseAutoArmed = nw.BrowseActive
 		e.ShowNotification("→ " + displayPath(res.url))
 		e.RequestRender()
 		return nw, true
@@ -545,8 +508,8 @@ func (e *Editor) linkTargetVisited(w *viewport.Viewport, target string) bool {
 // the next (dir +1) or previous (dir -1) link in the document, cycling at the
 // ends. It captures (returns true) only when a button is currently focused —
 // so in a fallthrough chain (tab = nav_next|completion|insert) it yields to
-// editing whenever the caret is not inside a link. The move re-arms browse
-// mode on the new span via the main loop's updateBrowseState.
+// editing whenever the caret is not inside a link. The move keeps browse mode
+// active, landing the caret on the new button.
 func (e *Editor) navLink(dir int) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	cur := e.focusedLinkButton(w)

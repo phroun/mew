@@ -583,9 +583,9 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 	case "del", "back":
 		return "nav_history_prior|del_char_prior"
 	case "return":
-		return "nav_follow|accept|insert '\\n'"
+		return "nav_follow false|accept|insert '\\n'"
 	case "^C":
-		return "nav_cancel|cancel|buffer_close"
+		return "cancel|buffer_close"
 	case "esc":
 		return "cmd"
 	default:
