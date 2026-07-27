@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -45,6 +46,16 @@ type backBuffer struct {
 	curVisible  bool
 	lastVisible bool
 	haveVisible bool
+
+	// Desired hardware-cursor SHAPE (DECSCUSR "CSI Ps SP q": 0 default,
+	// 1/2 blinking/steady block, 3/4 underline, 5/6 bar), set via
+	// SetCursorStyle. Emitted only while the cursor is visible, so selecting a
+	// shape never reveals a caret the editor deliberately hid; the style is
+	// re-asserted when the cursor comes back. lastStyle/haveStyle keep an
+	// unchanged shape off the wire.
+	curStyle  int
+	lastStyle int
+	haveStyle bool
 
 	// pendingClear forces present() to emit a full clear (\x1b[2J) and repaint
 	// everything — set on resize and by ForceRedraw/screen_refresh.
@@ -454,6 +465,15 @@ func (b *backBuffer) present(out io.Writer) {
 	// its displayed cursor lands wherever it drew that stored cell. The TEXT
 	// emission is untouched: this affects only the final cursor address.
 	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.flipColFor(b.penY, b.penX))+1)
+	// Shape before visibility: a terminal that is about to be told to show the
+	// cursor shows it already wearing the right shape, with no flicker through
+	// the previous one. Only while visible — DECSCUSR on a hidden cursor would
+	// be wasted, and re-asserting on the way back covers it.
+	if b.curVisible && (!b.haveStyle || b.curStyle != b.lastStyle) {
+		fmt.Fprintf(&sb, "\x1b[%d q", b.curStyle)
+		b.lastStyle = b.curStyle
+		b.haveStyle = true
+	}
 	if !b.haveVisible || b.curVisible != b.lastVisible {
 		if b.curVisible {
 			sb.WriteString("\x1b[?25h")

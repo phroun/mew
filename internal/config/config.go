@@ -357,6 +357,14 @@ type GeneralConfig struct {
 	// still work. Per window; false by default.
 	ReadOnly bool
 
+	// InsertCursor, OverwriteCursor and NavigationCursor are the DECSCUSR
+	// cursor shapes (0 terminal default, 1/2 blinking/steady block, 3/4
+	// underline, 5/6 bar) mew selects for each editing mode whenever it is
+	// showing a cursor at all. Editor-wide.
+	InsertCursor     int
+	OverwriteCursor  int
+	NavigationCursor int
+
 	// AutoIndent makes the insert_newline command (the default Enter binding)
 	// start each new line with the leading whitespace of the line it split,
 	// replicating the tabs and spaces exactly as they appear rather than
@@ -810,6 +818,9 @@ func DefaultConfig() Config {
 			OverwriteMode:           false, // insertMode=yes
 			ReadOnly:                false,
 			AutoIndent:              false,
+			InsertCursor:            5, // blinking bar
+			OverwriteCursor:         3, // blinking underline
+			NavigationCursor:        2, // steady block
 			LinkBrowsing:            true,
 			ProjectConfig:           true,
 			UseLocks:                true,
@@ -1080,6 +1091,15 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["autoIndent"]; ok {
 			config.General.AutoIndent = parseBool(v, false)
+		}
+		if v, ok := opt["insertCursor"]; ok {
+			config.General.InsertCursor = parseCursorStyle(v, 5)
+		}
+		if v, ok := opt["overwriteCursor"]; ok {
+			config.General.OverwriteCursor = parseCursorStyle(v, 3)
+		}
+		if v, ok := opt["navigationCursor"]; ok {
+			config.General.NavigationCursor = parseCursorStyle(v, 2)
 		}
 		if v, ok := opt["linkBrowsing"]; ok {
 			config.General.LinkBrowsing = parseBool(v, true)
@@ -2139,6 +2159,14 @@ showMarks=no
 # where typing replaces the character under the caret — except at the end of a
 # line, where it still appends. Per window.
 insertMode=yes
+# Cursor shape per editing mode, as the DECSCUSR codes every modern terminal
+# understands: 0 the terminal's own default, 1/2 blinking/steady block, 3/4
+# blinking/steady underline, 5/6 blinking/steady bar. mew selects the shape
+# only while it is showing a cursor at all, so these never reveal a caret it is
+# deliberately hiding (say, inside a focused link button).
+insertCursor=5
+overwriteCursor=3
+navigationCursor=2
 # Read-only: yes rejects edits made through the window (typing, deleting,
 # replacing, pasting); movement, search, marks, and undo/redo still work. Per
 # window.
@@ -2496,6 +2524,16 @@ func ParseShowMarks(s string) (value string, ok bool) {
 		return "no", true
 	}
 	return "", false
+}
+
+// parseCursorStyle parses a DECSCUSR cursor shape (0-6), falling back to
+// defaultVal for anything unparseable or out of range.
+func parseCursorStyle(s string, defaultVal int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 || n > 6 {
+		return defaultVal
+	}
+	return n
 }
 
 // parseInt parses a string as integer with a default.

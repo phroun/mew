@@ -453,6 +453,10 @@ type Config struct {
 	OverwriteMode    bool   // inverse of insertMode; zero value = insert
 	ReadOnly         bool
 	AutoIndent       bool // insert_newline replicates the split line's indent
+	// DECSCUSR cursor shapes per editing mode (0-6); see cursorStyleFor.
+	InsertCursor     int
+	OverwriteCursor  int
+	NavigationCursor int
 	LinkBrowsing     bool // hyperlink layer (link colors, browse-mode buttons)
 	Syntax           string
 	SyntaxDetect     bool
@@ -836,6 +840,9 @@ func New(cfg Config) (*Editor, error) {
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.ReadOnly = loadedConfig.General.ReadOnly
 	cfg.AutoIndent = loadedConfig.General.AutoIndent
+	cfg.InsertCursor = loadedConfig.General.InsertCursor
+	cfg.OverwriteCursor = loadedConfig.General.OverwriteCursor
+	cfg.NavigationCursor = loadedConfig.General.NavigationCursor
 	cfg.LinkBrowsing = loadedConfig.General.LinkBrowsing
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
@@ -1004,6 +1011,7 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetDisplayProvider(e.lineDisplaySpans)
 	// Hide the hardware caret while it is inert inside a focused button.
 	renderer.SetCaretHiddenFn(func(w *viewport.Viewport) bool { return e.focusedLinkButton(w) != nil })
+	renderer.SetCursorStyleFn(e.cursorStyleFor)
 
 	// Register editor commands with PawScript
 	e.registerCommands()
@@ -2823,6 +2831,12 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.ReadOnly
 		}
 		return boolText(v), true
+	case "insertcursor":
+		return strconv.Itoa(e.Config.InsertCursor), true
+	case "overwritecursor":
+		return strconv.Itoa(e.Config.OverwriteCursor), true
+	case "navigationcursor":
+		return strconv.Itoa(e.Config.NavigationCursor), true
 	case "autoindent":
 		v := e.Config.AutoIndent
 		if w != nil {
@@ -3044,6 +3058,24 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 				e.ensureAllDeferredMewLocks()
 			}
 		}
+	case "insertcursor", "overwritecursor", "navigationcursor":
+		n, ok := parseInt(0)
+		if !ok {
+			return false
+		}
+		if n > 6 {
+			e.ShowWarning(name + " must be a DECSCUSR shape 0-6")
+			return false
+		}
+		switch lname {
+		case "insertcursor":
+			e.Config.InsertCursor = n
+		case "overwritecursor":
+			e.Config.OverwriteCursor = n
+		default:
+			e.Config.NavigationCursor = n
+		}
+		e.RequestRender()
 	case "autoindent":
 		b, ok := parseBool()
 		if !ok {
@@ -6898,6 +6930,23 @@ func (e *Editor) ShowNotificationTagged(message, tag string) {
 // binding and colored. TFC support is opt-in per notification.
 func (e *Editor) ShowNotificationTFC(message string) {
 	e.showTransient(message, "notification", "", true)
+}
+
+// cursorStyleFor reports the DECSCUSR shape a viewport's CURRENT editing mode
+// calls for: navigationCursor while link browsing is armed (the mode sits over
+// the top of the other two), overwriteCursor while typing replaces, and
+// insertCursor otherwise. The renderer consults it only on frames that show the
+// caret, so a shape is never selected for one being hidden — including the
+// inert caret inside a focused link button.
+func (e *Editor) cursorStyleFor(w *viewport.Viewport) int {
+	switch {
+	case w != nil && w.BrowseActive:
+		return e.Config.NavigationCursor
+	case w != nil && w.ViewState.OverwriteMode:
+		return e.Config.OverwriteCursor
+	default:
+		return e.Config.InsertCursor
+	}
 }
 
 // clearTaggedTransient removes any transient carrying tag, for a progress

@@ -66,6 +66,11 @@ type ScreenRenderer struct {
 	// reason.
 	caretHiddenFn func(w *viewport.Viewport) bool
 
+	// cursorStyleFn reports the DECSCUSR shape the focused viewport's mode calls
+	// for — the insertCursor / overwriteCursor / navigationCursor options. Only
+	// consulted on frames that show the cursor. nil leaves the shape alone.
+	cursorStyleFn func(w *viewport.Viewport) int
+
 	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
 	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
 	// nil leaves the configured label verbatim.
@@ -389,9 +394,11 @@ func (sr *ScreenRenderer) EnableGraphemeWidth() {
 // (bypassing the back buffer) because it runs at shutdown, after the last
 // frame, when there is no present() to flush the buffer. Mouse reporting is
 // turned back off so the terminal's own selection returns to the user, and the
-// grapheme-width mode (2027) is reset for symmetry.
+// grapheme-width mode (2027) is reset for symmetry. The cursor shape is reset
+// to the terminal's own default (DECSCUSR 0) so the shell that follows does not
+// inherit whichever mode's cursor mew happened to leave selected.
 func (sr *ScreenRenderer) Cleanup() {
-	fmt.Fprintf(sr.out, "\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
+	fmt.Fprintf(sr.out, "\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[0 q\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
 }
 
 // ClearScreen forces a full clear-and-repaint on the next presented frame.
@@ -423,6 +430,24 @@ func (sr *ScreenRenderer) ShowCursor() {
 // HideCursor requests the hardware cursor be hidden after the next present.
 func (sr *ScreenRenderer) HideCursor() {
 	sr.frame.curVisible = false
+}
+
+// SetCursorStyle selects the hardware cursor's DECSCUSR shape (0 default,
+// 1/2 blinking/steady block, 3/4 underline, 5/6 bar) for the next present.
+// Out-of-range values are ignored rather than passed to the terminal.
+func (sr *ScreenRenderer) SetCursorStyle(style int) {
+	if style < 0 || style > 6 {
+		return
+	}
+	sr.frame.curStyle = style
+}
+
+// SetCursorStyleFn installs the callback that reports which DECSCUSR shape the
+// focused viewport's current mode calls for (insert / overwrite / navigation).
+// It is consulted only on frames that SHOW the cursor, so a shape is never
+// selected for a caret the editor is deliberately hiding.
+func (sr *ScreenRenderer) SetCursorStyleFn(fn func(w *viewport.Viewport) int) {
+	sr.cursorStyleFn = fn
 }
 
 // ClearLine blanks the pen's row in the back buffer.
@@ -533,6 +558,11 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 	if hideCursor {
 		sr.HideCursor()
 	} else {
+		// Only a frame that actually shows the caret selects its shape, so the
+		// mode's cursor style is never asserted for a caret being hidden.
+		if sr.cursorStyleFn != nil && focusedViewport != nil {
+			sr.SetCursorStyle(sr.cursorStyleFn(focusedViewport))
+		}
 		sr.ShowCursor()
 	}
 }
