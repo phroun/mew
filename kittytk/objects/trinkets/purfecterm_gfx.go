@@ -643,7 +643,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 	// Shift the finished mask so this face's baseline lands where the PRIMARY
 	// terminal face puts its own. A translation of whole pixels: the glyph
 	// keeps its size and shape, it only moves.
-	yShift := t.baselineShiftPx(family, pt, fs, sp, ppu)
+	yShift := t.baselineShiftPx(family, ch, pt, fs, sp, ppu)
 	raw := image.NewRGBA(image.Rect(0, 0, naturalW, naturalH))
 	// Rasterize a WHITE glyph at the renderer's font_size-aware pixels-per-unit:
 	// the result is a color-independent coverage mask (alpha = ink coverage);
@@ -780,7 +780,7 @@ func (t *PurfecTerm) cellTextImage(str, family string, bold, italic bool, boxWPx
 // Zero for the primary face itself, and zero whenever the reference cannot be
 // shaped (no engine, empty run), so an unknown case falls back to today's
 // behaviour rather than a guess.
-func (t *PurfecTerm) baselineShiftPx(family string, pt int, fs core.FontStyle, sp *text.ShapedParagraph, ppu float64) int {
+func (t *PurfecTerm) baselineShiftPx(family string, ch rune, pt int, fs core.FontStyle, sp *text.ShapedParagraph, ppu float64) int {
 	if sp == nil || len(sp.Lines) == 0 {
 		return 0
 	}
@@ -789,9 +789,14 @@ func (t *PurfecTerm) baselineShiftPx(family string, pt int, fs core.FontStyle, s
 		return 0
 	}
 	ref := t.primaryTermFamily()
-	if ref == "" || canonicalFamily(ref) == canonicalFamily(family) {
-		return 0 // the reference face aligns to itself
+	if ref == "" {
+		return 0
 	}
+	// Compare BASELINES, not family names. A terminal cell resolves its font
+	// once — for mew that is always the primary family — while the engine
+	// picks the script face per glyph inside ShapeRun, so sp already reflects
+	// the face that will really paint. Gating on the requested name being
+	// different from the primary made this a no-op for every cell mew draws.
 	refSP := eng.ShapeRun(&core.Font{Name: ref, Size: pt, Style: fs}, "M")
 	if refSP == nil || len(refSP.Lines) == 0 {
 		return 0
@@ -801,7 +806,9 @@ func (t *PurfecTerm) baselineShiftPx(family string, pt int, fs core.FontStyle, s
 	// metrics misplace it however faithfully they are followed. Cell units
 	// (1/16 of a row), positive down — so it survives the live font zoom,
 	// which the device-pixel conversion here applies.
-	if adj := eng.BaselineAdjust(family); adj != 0 {
+	// The correction belongs to the face that actually painted, which for a
+	// script glyph is the fallback target rather than the requested primary.
+	if adj := eng.BaselineAdjust(eng.ScriptFaceFor(family, ch)); adj != 0 {
 		shift += int(math.Round(float64(adj) * ppu))
 	}
 	// A correction larger than the cell is not an alignment, it is a bad

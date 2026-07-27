@@ -191,7 +191,7 @@ func TestTerminalFacesShareABaseline(t *testing.T) {
 			continue
 		}
 		own := int(sp.Lines[0].Baseline)
-		aligned := own + term.baselineShiftPx(c.fam, pt, 0, sp, 1.0)
+		aligned := own + term.baselineShiftPx(c.fam, []rune(c.s)[0], pt, 0, sp, 1.0)
 		if aligned != want {
 			t.Errorf("%s: baseline %d shifts to %d, want the reference's %d",
 				c.name, own, aligned, want)

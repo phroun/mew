@@ -90,6 +90,29 @@ func faceKey(name string) string {
 	return b.String()
 }
 
+// ScriptFaceFor reports the face NAME a rune actually resolves to when painted
+// with the given primary font: the per-glyph script fallback target
+// (ui-<root>-<script>-<style>) when the rune belongs to a script class the
+// primary does not own, and the primary itself otherwise.
+//
+// Callers that see only the primary family — a terminal cell resolves its font
+// once per cell, while the engine picks the script face per glyph — need this
+// to ask about the face that will really be used.
+func (e *Engine) ScriptFaceFor(primary string, r rune) string {
+	cls := scriptClass(r)
+	if cls == "" {
+		return primary
+	}
+	root, style := scriptContext(primary)
+	if root == "" {
+		root = "ui-term"
+	}
+	if style != "" {
+		return root + "-" + cls + "-" + style
+	}
+	return root + "-" + cls
+}
+
 // SetBaselineAdjust records a per-face baseline correction in CELL UNITS
 // (1/16 of a row), positive moving the face DOWN. It is a delta applied on top
 // of automatic baseline alignment, for a face whose own metrics misplace it.
