@@ -6891,6 +6891,22 @@ func (e *Editor) ShowNotificationTFC(message string) {
 	e.showTransient(message, "notification", "", true)
 }
 
+// clearTaggedTransient removes any transient carrying tag, for a progress
+// message whose work has finished (or been cancelled) and which should come
+// down NOW rather than linger out its five-second expiry — the incremental
+// search's "Searching…" toast.
+func (e *Editor) clearTaggedTransient(tag string) {
+	if tag == "" {
+		return
+	}
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
+		if w.Tag == tag {
+			e.ViewportManager.RemoveViewport(w.ID)
+			e.RequestRender()
+		}
+	}
+}
+
 // showTaggedTransient is showTransient for messages that should replace their
 // predecessor instead of stacking: any existing transient carrying the same
 // tag is removed first. The class still drives colors and age-expiry (so pass

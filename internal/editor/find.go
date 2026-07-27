@@ -320,10 +320,27 @@ func literalMatchAt(lineRunes, lit []rune, col int, ignoreCase bool) bool {
 	return true
 }
 
+// lineSource is the read surface a scan needs: a line count and line text.
+// *buffer.Buffer satisfies it for main-loop searches; *buffer.LineReader —
+// which carries a garland cursor of its own — satisfies it for the background
+// incremental search, whose goroutine must not seek the buffer's shared
+// readCursor out from under the renderer.
+type lineSource interface {
+	GetLineCount() int
+	GetLine(line int) string
+}
+
 // searchBufferDir scans buf for the matcher. (fromLine, fromCol) is the
 // first allowed match-start position in the scan direction (inclusive); the
 // scan runs to the corresponding end of the buffer without wrapping.
-func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backwards bool) (matchInfo, bool) {
+//
+// stopped, when non-nil, is polled every few lines: once it reports true the
+// scan gives up and returns no match. It is how the background incremental
+// search abandons a superseded or cancelled pass over a large document.
+func searchBufferDir(buf lineSource, m matcher, fromLine, fromCol int, backwards bool, stopped func() bool) (matchInfo, bool) {
+	// Poll the cancellation check on a line stride: often enough to abandon a
+	// long scan promptly, rarely enough not to cost anything per line.
+	const stopStride = 64
 	lineCount := buf.GetLineCount()
 	if backwards {
 		if fromLine >= lineCount {
@@ -331,6 +348,9 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 			fromCol = farCol
 		}
 		for line := fromLine; line >= 0; line-- {
+			if stopped != nil && (fromLine-line)%stopStride == 0 && stopped() {
+				return matchInfo{}, false
+			}
 			lineRunes := []rune(strings.TrimRight(buf.GetLine(line), "\n\r"))
 			maxCol := farCol
 			if line == fromLine {
@@ -350,6 +370,9 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 		fromCol = 0
 	}
 	for line := fromLine; line < lineCount; line++ {
+		if stopped != nil && (line-fromLine)%stopStride == 0 && stopped() {
+			return matchInfo{}, false
+		}
 		lineRunes := []rune(strings.TrimRight(buf.GetLine(line), "\n\r"))
 		minCol := 0
 		if line == fromLine {
@@ -372,13 +395,13 @@ func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport
 		if startW == nil || startW.Buffer == nil {
 			return matchInfo{}, false
 		}
-		if mi, ok := searchBufferDir(startW.Buffer, m, line, col, opts.backwards); ok {
+		if mi, ok := searchBufferDir(startW.Buffer, m, line, col, opts.backwards, nil); ok {
 			mi.w = startW
 			return mi, true
 		}
 		if allowWrap {
 			fl, fc := farStart(startW.Buffer, opts.backwards)
-			if mi, ok := searchBufferDir(startW.Buffer, m, fl, fc, opts.backwards); ok {
+			if mi, ok := searchBufferDir(startW.Buffer, m, fl, fc, opts.backwards, nil); ok {
 				mi.w = startW
 				mi.wrapped = true
 				return mi, true
@@ -421,7 +444,7 @@ func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport
 		if i != 0 {
 			fromLine, fromCol = farStart(w.Buffer, opts.backwards)
 		}
-		if mi, ok := searchBufferDir(w.Buffer, m, fromLine, fromCol, opts.backwards); ok {
+		if mi, ok := searchBufferDir(w.Buffer, m, fromLine, fromCol, opts.backwards, nil); ok {
 			mi.w = w
 			mi.wrapped = i == n // the extra revisit segment: back in the origin buffer
 			return mi, true
