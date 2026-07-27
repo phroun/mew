@@ -179,12 +179,12 @@ func (e *Editor) deadcatCwdPath() string {
 type deadBuf struct{ name, content string }
 
 // modifiedBufferDump collects the content of every modified main buffer, each
-// buffer once (window_clone shares a buffer across windows), including buffers
-// stacked in a window's nav history — unsaved work parked behind a link
+// buffer once (viewport_clone shares a buffer across viewports), including buffers
+// stacked in a viewport's nav history — unsaved work parked behind a link
 // follow must survive a crash like any other.
 func (e *Editor) modifiedBufferDump() []deadBuf {
 	var out []deadBuf
-	for _, b := range e.openDocWindows() {
+	for _, b := range e.openDocViewports() {
 		if !b.IsModified() {
 			continue
 		}

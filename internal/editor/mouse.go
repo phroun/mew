@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/render"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Mouse input (TUI). The key layer (direct-key-handler) decodes SGR/X10
@@ -15,10 +15,10 @@ import (
 // all (see EnableMouseReporting; purfecterm answers the same DECSET trio by
 // routing mouse to the app instead of local selection).
 //
-// mew's semantics — MODAL-SAFE: only the FOCUSED window processes mouse
-// actions. A click in any other window is ignored outright (no focus steal),
+// mew's semantics — MODAL-SAFE: only the FOCUSED viewport processes mouse
+// actions. A click in any other viewport is ignored outright (no focus steal),
 // so a modal prompt keeps the whole keyboard-and-mouse stage to itself.
-//   - A left press in the focused window's content area sets the caret to
+//   - A left press in the focused viewport's content area sets the caret to
 //     the clicked cell (tab-, bidi-, double-width- and button-substitution-
 //     aware).
 //   - In browse mode, a press ON a link button CAPTURES it: the button
@@ -27,11 +27,11 @@ import (
 //     when dragged back on. Releasing on the captured button follows the
 //     link exactly as keyboard navigation would; releasing anywhere else
 //     abandons the click.
-//   - The scroll wheel scrolls the focused window (when under the pointer).
+//   - The scroll wheel scrolls the focused viewport (when under the pointer).
 //   - With all-motion tracking delivered (the graphical build), the link or
 //     button under the pointer takes a hover style.
 
-// pressedLink identifies a link by position (window identity, document
+// pressedLink identifies a link by position (viewport identity, document
 // line, span start) — used for the mouse CAPTURE (the button a press
 // grabbed, held until release) and for hover. Ephemeral press-to-release /
 // motion-to-motion state: identity by position is fine at this lifetime.
@@ -43,12 +43,12 @@ type pressedLink struct {
 }
 
 // dragSelState tracks a drag block-selection in progress. A plain left press
-// in the focused window's content area arms it (begun=false): the first drag
+// in the focused viewport's content area arms it (begun=false): the first drag
 // onto a DIFFERENT cell places _block_begin at the press origin, and every
 // drag onto a new cell re-places _block_end (the caret follows). A
 // shift+click arms it pre-begun (begun=true): _block_begin is already placed
 // at the ORIGINAL caret position and only _block_end follows the drag.
-// Press-to-release lifetime, focused window only.
+// Press-to-release lifetime, focused viewport only.
 //
 // shifted records the gesture's origin for the buffer's mouse-block flag: a
 // PLAIN drag makes a transient selection (mouseBlock on — a later plain
@@ -156,11 +156,11 @@ func (e *Editor) handleMouseKey(key string) bool {
 }
 
 // notifyPointerRegion publishes the rectangle where a graphical host should
-// show the text I-beam (Config.PointerRegion): the FOCUSED window's editable
+// show the text I-beam (Config.PointerRegion): the FOCUSED viewport's editable
 // content area — its cells, including the blank rows below the document that
 // still follow click-to-EOF — in 1-based terminal cells. Everything outside it
 // is the ordinary arrow: the gutter (left of the content), the modebar and
-// other chrome (other windows), an unfocused pane, and — when a prompt holds
+// other chrome (other viewports), an unfocused pane, and — when a prompt holds
 // focus — the document area (only the prompt's own field then yields the
 // I-beam, a cue that input is awaited there).
 //
@@ -174,7 +174,7 @@ func (e *Editor) notifyPointerRegion() {
 	}
 	var rect [4]int // col, row, width, height (1-based cells; zero w/h = none)
 	var arrows []PointerArrowSpan
-	if w := e.pointerRegionWindow(); w != nil {
+	if w := e.pointerRegionViewport(); w != nil {
 		rect = [4]int{w.ContentX + 1, w.ContentY + 1, w.ContentWidth, w.ContentHeight}
 		arrows = e.pointerArrowSpans(w)
 	}
@@ -186,13 +186,13 @@ func (e *Editor) notifyPointerRegion() {
 	}
 }
 
-// pointerArrowSpans returns the on-screen cell spans of the focused window's
+// pointerArrowSpans returns the on-screen cell spans of the focused viewport's
 // browse-mode link BUTTONS — the buttons that sit INSIDE the text region and
-// so must show the arrow, not the I-beam. Empty unless the window is in browse
+// so must show the arrow, not the I-beam. Empty unless the viewport is in browse
 // mode over a linkable buffer. LTR only: an RTL page's right-anchored button
 // columns are not mapped, so its buttons fall back to the I-beam (an exotic
 // edge — RTL wiki browsing).
-func (e *Editor) pointerArrowSpans(w *window.Window) []PointerArrowSpan {
+func (e *Editor) pointerArrowSpans(w *viewport.Viewport) []PointerArrowSpan {
 	if w == nil || w.Buffer == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || e.winRTL(w) {
 		return nil
 	}
@@ -215,7 +215,7 @@ func (e *Editor) pointerArrowSpans(w *window.Window) []PointerArrowSpan {
 			}
 			// Visual columns -> screen columns (LTR): the content origin plus
 			// the visual column offset by the horizontal scroll. Clamp to the
-			// window's visible content columns.
+			// viewport's visible content columns.
 			col0 := w.ContentX + 1 + (c0 - w.ViewState.ViewOffsetX)
 			col1 := w.ContentX + 1 + (c1 - w.ViewState.ViewOffsetX)
 			if col0 < loCol {
@@ -245,24 +245,24 @@ func arrowSpansEqual(a, b []PointerArrowSpan) bool {
 	return true
 }
 
-// pointerRegionWindow returns the window whose editable text drives the I-beam
-// region. It is the focused window ONLY when that window is actually on screen
+// pointerRegionViewport returns the viewport whose editable text drives the I-beam
+// region. It is the focused viewport ONLY when that viewport is actually on screen
 // — VISIBLE, holding a buffer, and laid out this frame (non-zero content
-// geometry). A focused window that is invisible or not laid out (a background
-// or stacked window that never rendered) has stale or zero geometry that would
+// geometry). A focused viewport that is invisible or not laid out (a background
+// or stacked viewport that never rendered) has stale or zero geometry that would
 // blank or misplace the region — the I-beam then never lands over the visible
 // text — so we fall back to the visible document instead. A visible prompt is a
 // legitimate focus target (its own field shows the I-beam); only genuinely
 // off-screen focus falls through to the document.
-func (e *Editor) pointerRegionWindow() *window.Window {
-	onScreen := func(w *window.Window) bool {
+func (e *Editor) pointerRegionViewport() *viewport.Viewport {
+	onScreen := func(w *viewport.Viewport) bool {
 		return w != nil && w.Visible && w.Buffer != nil &&
 			w.ContentWidth > 0 && w.ContentHeight > 0
 	}
-	if w := e.WindowManager.GetFocusedWindow(); onScreen(w) {
+	if w := e.ViewportManager.GetFocusedViewport(); onScreen(w) {
 		return w
 	}
-	if m := e.WindowManager.GetLastMainWindow(); onScreen(m) {
+	if m := e.ViewportManager.GetLastMainViewport(); onScreen(m) {
 		return m
 	}
 	return nil
@@ -272,12 +272,12 @@ func (e *Editor) pointerRegionWindow() *window.Window {
 // mouse interactions on the document/chrome (the modebar nav buttons, their
 // hover styling) stand down while input is awaited at the prompt.
 func (e *Editor) promptHasPriority() bool {
-	w := e.WindowManager.GetFocusedWindow()
-	return w != nil && w.Type == window.PromptWindow
+	w := e.ViewportManager.GetFocusedViewport()
+	return w != nil && w.Type == viewport.PromptViewport
 }
 
 // notifyEditState tells the host (via Config.EditState) whenever the FOCUSED
-// window's read-only state changes — a host greys out its mutating
+// viewport's read-only state changes — a host greys out its mutating
 // affordances (the Edit menu's Cut) while a read-only buffer holds focus.
 // Pushed once at the first render, then only on transitions. Called from
 // performRender, which runs after every state-changing event.
@@ -286,7 +286,7 @@ func (e *Editor) notifyEditState() {
 		return
 	}
 	ro := false
-	if w := e.WindowManager.GetFocusedWindow(); w != nil {
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		ro = w.ViewState.ReadOnly
 	}
 	if !e.readOnlyPushed || ro != e.readOnlySent {
@@ -297,14 +297,14 @@ func (e *Editor) notifyEditState() {
 }
 
 // notifyHelpState tells the host (via Config.HelpState) whether the built-in
-// help window is open, once at the first render and thereafter on transitions,
+// help viewport is open, once at the first render and thereafter on transitions,
 // so a host keeps a "Quick Help" menu checkmark in sync as help_toggle (or a
 // close) opens and closes it. Called from performRender.
 func (e *Editor) notifyHelpState() {
 	if e.Config.HelpState == nil {
 		return
 	}
-	open := e.quickHelpWindowOpen()
+	open := e.quickHelpViewportOpen()
 	if !e.helpStatePushed || open != e.helpStateSent {
 		e.helpStatePushed = true
 		e.helpStateSent = open
@@ -337,14 +337,14 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 	return x, y, okX && okY
 }
 
-// mouseHit resolves 1-based screen coordinates to a window and document
-// position. ok is false outside every window's content area. The column math
+// mouseHit resolves 1-based screen coordinates to a viewport and document
+// position. ok is false outside every viewport's content area. The column math
 // mirrors the painter: gutter/margins, horizontal scroll, double-width rows
 // (half-width gutter, two columns per cell), bidi visual order, tabs, and
 // browse-mode display substitution all resolve back to a document rune;
 // clicking button chrome parks inside the button's source span.
-func (e *Editor) mouseHit(x, y int) (w *window.Window, docLine, runePos int, ok bool) {
-	w = e.windowAtRow(y)
+func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
+	w = e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, false
 	}
@@ -416,29 +416,29 @@ func (e *Editor) mouseHit(x, y int) (w *window.Window, docLine, runePos int, ok 
 	return w, docLine, idx, true
 }
 
-// windowAtRow finds the visible window whose CONTENT area covers the 1-based
+// viewportAtRow finds the visible viewport whose CONTENT area covers the 1-based
 // screen row (the renderer maintains ContentY/ContentHeight per frame). The
-// FOCUSED window wins outright when it covers the row: only the current main
-// window is laid out each frame, so a background main window's stale
+// FOCUSED viewport wins outright when it covers the row: only the current main
+// viewport is laid out each frame, so a background main viewport's stale
 // geometry can cover the same rows — and every mouse action is
-// focused-gated anyway, so the focused window is the only correct answer
+// focused-gated anyway, so the focused viewport is the only correct answer
 // wherever it covers.
-func (e *Editor) windowAtRow(y int) *window.Window {
+func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
 	row := y - 1 // ContentY is 0-based
-	covers := func(w *window.Window) bool {
+	covers := func(w *viewport.Viewport) bool {
 		return w != nil && w.Visible && w.Buffer != nil &&
 			row >= w.ContentY && row < w.ContentY+w.ContentHeight
 	}
-	if fw := e.WindowManager.GetFocusedWindow(); covers(fw) {
+	if fw := e.ViewportManager.GetFocusedViewport(); covers(fw) {
 		return fw
 	}
-	var best *window.Window
-	for _, w := range e.WindowManager.AllWindows() {
+	var best *viewport.Viewport
+	for _, w := range e.ViewportManager.AllViewports() {
 		if !covers(w) {
 			continue
 		}
 		// Prefer main buffers when areas would overlap (stale geometry
-		// on hidden windows).
+		// on hidden viewports).
 		if best == nil || (!best.FocusEligible() && w.FocusEligible()) {
 			best = w
 		}
@@ -449,7 +449,7 @@ func (e *Editor) windowAtRow(y int) *window.Window {
 // runeAtVisualColumn is the inverse of the caret-column math: the logical
 // index of the rune whose visual cell run covers the target column, or the
 // line length when the target lies past the end.
-func (e *Editor) runeAtVisualColumn(w *window.Window, line string, target int) int {
+func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target int) int {
 	runes := []rune(line)
 	tabSize := e.tabSize(w)
 	layout := e.layoutFor(w, runes)
@@ -513,7 +513,7 @@ func displayToDoc(dispToDoc []int, idx int) int {
 }
 
 // mousePress: set the caret to the clicked cell and — on a link button in
-// browse mode — arm the pressed style. ONLY the focused window processes
+// browse mode — arm the pressed style. ONLY the focused viewport processes
 // presses: a click anywhere else is ignored (no focus steal), preserving the
 // modal prompt system.
 //
@@ -530,11 +530,11 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
 	if !ok {
 		// A press on the BLANK AREA below the document's last line (still
-		// inside the window's content area) means the END of the document:
+		// inside the viewport's content area) means the END of the document:
 		// click below the doc and drag upward to select its tail.
 		w, docLine, runePos, ok = e.mouseHitBelowText(x, y)
 	}
-	if !ok || e.WindowManager.GetFocusedWindow() != w {
+	if !ok || e.ViewportManager.GetFocusedViewport() != w {
 		return
 	}
 
@@ -552,7 +552,7 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 			originLine: origin.Line, originRune: origin.Rune,
 			lastLine: docLine, lastRune: runePos,
 		}
-		w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
+		w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
 		e.afterHorizontalMovement(w)
 		w.ViewState.ScrollDetached = false
 		e.updateBrowseState()
@@ -566,7 +566,7 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		w.Buffer.ClearBlockMarks() // clears the flag with the marks
 	}
 
-	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
+	w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
 	// A click is a cursor movement: re-engage caret following, cancelling any
 	// free scroll left by the wheel so the view tracks the caret again.
@@ -588,11 +588,11 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 }
 
 // mouseRightPress: a right-click within the EDITING AREA of the focused
-// window asks the host to pop its context menu at the clicked cell
-// (Config.ShowContextMenu). The gate is mouseHit + the focused-window rule —
+// viewport asks the host to pop its context menu at the clicked cell
+// (Config.ShowContextMenu). The gate is mouseHit + the focused-viewport rule —
 // exactly the left-click caret path's routing — so the modebar, gutters,
 // column ruler, and title/message rows never pop the menu, and neither does
-// any unfocused window (modal safety, like every mouse action). The caret
+// any unfocused viewport (modal safety, like every mouse action). The caret
 // does NOT move: a right-click inspects, it doesn't relocate — moving it
 // would silently change what a subsequent paste targets (caret-in-block).
 func (e *Editor) mouseRightPress(x, y int) {
@@ -605,7 +605,7 @@ func (e *Editor) mouseRightPress(x, y int) {
 		// editing area too — same as a left press there.
 		w, _, _, ok = e.mouseHitBelowText(x, y)
 	}
-	if !ok || e.WindowManager.GetFocusedWindow() != w {
+	if !ok || e.ViewportManager.GetFocusedViewport() != w {
 		return
 	}
 	e.Config.ShowContextMenu(x, y)
@@ -641,7 +641,7 @@ func (e *Editor) mouseDrag(x, y int) {
 // precision required; rows above/below the content clamp to the nearest
 // text row, and columns past the far edge clamp to the last visible cell.
 func (e *Editor) dragSelUpdate(x, y int) {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil || w.ID != e.dragSel.winID {
 		return
 	}
@@ -666,7 +666,7 @@ func (e *Editor) dragSelUpdate(x, y int) {
 	// deliberate, persistent nature.
 	w.Buffer.SetMouseBlock(!e.dragSel.shifted)
 	e.dragSel.lastLine, e.dragSel.lastRune = docLine, runePos
-	w.SetCursorPos(window.Position{Line: docLine, Rune: runePos})
+	w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
 	e.afterHorizontalMovement(w)
 	// While an edge autoscroll is engaged the ticker OWNS the viewport (a free
 	// scroll, ScrollDetached). ensureCursorVisible re-attaches caret-following
@@ -681,13 +681,13 @@ func (e *Editor) dragSelUpdate(x, y int) {
 }
 
 // mouseHitBelowText resolves a click that mouseHit rejected when it landed
-// on the blank rows BELOW the document's last line, inside a window's
+// on the blank rows BELOW the document's last line, inside a viewport's
 // content area (content columns only — the gutter stays inert, as on text
 // rows). It answers the END of the document (last line, end of line), so a
 // click below the doc parks the caret at EOF — and a drag upward from there
 // selects the document's tail.
-func (e *Editor) mouseHitBelowText(x, y int) (w *window.Window, docLine, runePos int, ok bool) {
-	w = e.windowAtRow(y)
+func (e *Editor) mouseHitBelowText(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
+	w = e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, false
 	}
@@ -709,7 +709,7 @@ func (e *Editor) mouseHitBelowText(x, y int) (w *window.Window, docLine, runePos
 // dragSelResolve resolves a held-drag pointer position to a document
 // position in w, CLAMPING instead of rejecting (the drag owns the pointer):
 //
-//   - rows above/below the window's text clamp to the nearest row that
+//   - rows above/below the viewport's text clamp to the nearest row that
 //     holds a visible line;
 //   - the gutter side (line numbers — left in LTR, right in RTL) resolves
 //     to rune 0 of the row's line, so a drag into the gutter pins the
@@ -718,9 +718,9 @@ func (e *Editor) mouseHitBelowText(x, y int) (w *window.Window, docLine, runePos
 //     in RTL leftmost — visible cell, or the line end when the line ends
 //     inside the view).
 //
-// ok is false only when the window shows no text at all or the clamped
+// ok is false only when the viewport shows no text at all or the clamped
 // position still fails to resolve (a double-width edge case).
-func (e *Editor) dragSelResolve(w *window.Window, x, y int) (docLine, runePos int, ok bool) {
+func (e *Editor) dragSelResolve(w *viewport.Viewport, x, y int) (docLine, runePos int, ok bool) {
 	lineCount := w.Buffer.GetLineCount()
 	visText := lineCount - w.ViewState.ViewOffsetY
 	if visText > w.ContentHeight {
@@ -777,7 +777,7 @@ func (e *Editor) dragSelResolve(w *window.Window, x, y int) (docLine, runePos in
 }
 
 // Drag-edge autoscroll: while a drag selection holds the pointer beyond the
-// window's top/bottom (or parked on the far column), the view scrolls and
+// viewport's top/bottom (or parked on the far column), the view scrolls and
 // the selection keeps extending — after a short delay so an ordinary drag
 // that clips an edge never scrolls by accident, at a speed taken from how
 // far past the edge the pointer sits. Vertical scrolling uses the shared
@@ -807,7 +807,7 @@ type dragScrollState struct {
 // the far column too (the pointer cannot leave the terminal grid sideways,
 // so parking on the last column is the far-edge gesture). The gutter side
 // never scrolls — dragSelResolve pins it to the line start instead.
-func (e *Editor) dragScrollTrack(w *window.Window, x, y int) {
+func (e *Editor) dragScrollTrack(w *viewport.Viewport, x, y int) {
 	top := w.ContentY + 1
 	bottom := w.ContentY + w.ContentHeight
 	vert := 0
@@ -885,7 +885,7 @@ func (e *Editor) dragScrollTick() {
 	if time.Since(ds.since) < dragScrollDelay {
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil || w.ID != e.dragSel.winID {
 		return
 	}
@@ -947,12 +947,12 @@ func (e *Editor) mouseRelease(x, y int) {
 
 // mouseHoverAt tracks the link under the pointer (plain motion, no button).
 // Hover follows the same modal rule as every mouse action — only the focused
-// window's links light up — and repaints only when the hovered identity
+// viewport's links light up — and repaints only when the hovered identity
 // actually changes.
 func (e *Editor) mouseHoverAt(x, y int) {
 	nh := pressedLink{}
 	if w, docLine, runePos, ok := e.mouseHit(x, y); ok &&
-		e.WindowManager.GetFocusedWindow() == w && w.ViewState.LinkBrowsing {
+		e.ViewportManager.GetFocusedViewport() == w && w.ViewState.LinkBrowsing {
 		for _, s := range e.linkSpansOnLine(w, docLine) {
 			if s.Start <= runePos && runePos < s.End {
 				nh = pressedLink{active: true, winID: w.ID, line: docLine, start: s.Start}
@@ -967,7 +967,7 @@ func (e *Editor) mouseHoverAt(x, y int) {
 }
 
 // hitOnPressedButton reports whether the coordinates land on the very button
-// the press CAPTURED (same window, same line, same span).
+// the press CAPTURED (same viewport, same line, same span).
 func (e *Editor) hitOnPressedButton(x, y int) bool {
 	w, docLine, runePos, ok := e.mouseHit(x, y)
 	if !ok || w.ID != e.mousePressed.winID || docLine != e.mousePressed.line {
@@ -995,13 +995,13 @@ func (e *Editor) hScrollReset() {
 	e.hScrollDir = 0
 }
 
-// mouseScrollHoriz scrolls the focused window under the pointer sideways by one
+// mouseScrollHoriz scrolls the focused viewport under the pointer sideways by one
 // step (via the registered scroll_left/scroll_right command, so the step and
 // clamping match the keyboard), but only once the barrier is cleared. dir is
 // -1 for left, +1 for right. A direction reversal restarts the barrier.
 func (e *Editor) mouseScrollHoriz(y, dir int) {
-	w := e.windowAtRow(y)
-	if w == nil || w.Buffer == nil || e.WindowManager.GetFocusedWindow() != w {
+	w := e.viewportAtRow(y)
+	if w == nil || w.Buffer == nil || e.ViewportManager.GetFocusedViewport() != w {
 		return
 	}
 	if e.hScrollDir != dir { // first tick, or reversed: re-arm
@@ -1023,11 +1023,11 @@ func (e *Editor) mouseScrollHoriz(y, dir int) {
 	}
 }
 
-// mouseScroll scrolls the window under the pointer by delta lines — only
-// when it is the focused window (modal safety, as with every mouse action).
+// mouseScroll scrolls the viewport under the pointer by delta lines — only
+// when it is the focused viewport (modal safety, as with every mouse action).
 func (e *Editor) mouseScroll(x, y int, delta int) {
-	w := e.windowAtRow(y)
-	if w == nil || w.Buffer == nil || e.WindowManager.GetFocusedWindow() != w {
+	w := e.viewportAtRow(y)
+	if w == nil || w.Buffer == nil || e.ViewportManager.GetFocusedViewport() != w {
 		return
 	}
 	// Free scroll: park the viewport delta lines away and leave the caret where

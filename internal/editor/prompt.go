@@ -7,7 +7,7 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // PromptCallback is the callback signature for prompt completion.
@@ -20,7 +20,7 @@ type PromptCallback func(accepted bool, bufferContent, cursorLineText string)
 // PromptManager handles user prompts with consistent UI behavior and history management.
 type PromptManager struct {
 	editor        *Editor
-	promptHistory map[string][]string // History by window class
+	promptHistory map[string][]string // History by viewport class
 	mu            sync.Mutex
 	maxHistory    int
 }
@@ -37,22 +37,22 @@ func NewPromptManager(editor *Editor) *PromptManager {
 // PromptForInput prompts the user for input with optional history support.
 // Prompts display a single row; history lines above the cursor line remain
 // reachable by arrow, just not shown.
-func (pm *PromptManager) PromptForInput(message, defaultValue string, callback PromptCallback, windowClass string) {
-	pm.promptForInput(message, defaultValue, callback, windowClass, 1, "")
+func (pm *PromptManager) PromptForInput(message, defaultValue string, callback PromptCallback, viewportClass string) {
+	pm.promptForInput(message, defaultValue, callback, viewportClass, 1, "")
 }
 
 // promptForInput is PromptForInput with an optional display-row cap (maxRows 0
 // means the default content-based height) and an optional top message bar
 // (topMessage), which adds a row above the input for a fuller description.
-func (pm *PromptManager) promptForInput(message, defaultValue string, callback PromptCallback, windowClass string, maxRows int, topMessage string) {
+func (pm *PromptManager) promptForInput(message, defaultValue string, callback PromptCallback, viewportClass string, maxRows int, topMessage string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	// Prepare initial content based on history and default value
 	var initialContent string
 
-	if windowClass != "" {
-		history := pm.getHistoryLocked(windowClass)
+	if viewportClass != "" {
+		history := pm.getHistoryLocked(viewportClass)
 		if len(history) > 0 {
 			// Start with history
 			initialContent = strings.Join(history, "\n")
@@ -69,7 +69,7 @@ func (pm *PromptManager) promptForInput(message, defaultValue string, callback P
 			initialContent = defaultValue
 		}
 	} else {
-		// No window class, use traditional behavior
+		// No viewport class, use traditional behavior
 		initialContent = defaultValue
 	}
 
@@ -84,7 +84,7 @@ func (pm *PromptManager) promptForInput(message, defaultValue string, callback P
 	promptMessage := "(PI)" + message
 
 	// Create the prompt buffer
-	pm.createPromptWindow(promptMessage, initialContent, cursorLine, windowClass, callback, maxRows, topMessage)
+	pm.createPromptViewport(promptMessage, initialContent, cursorLine, viewportClass, callback, maxRows, topMessage)
 }
 
 // PromptForFilename prompts for a filename with history.
@@ -167,20 +167,20 @@ func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, d
 	}, "", 1, topMessage)
 }
 
-// createPromptWindow creates the actual prompt buffer window. maxRows caps
+// createPromptViewport creates the actual prompt buffer viewport. maxRows caps
 // the displayed content height (0 means the default cap). When topMessage is
 // non-empty, an extra row is reserved above the input for a top message bar
-// (the window's MessageTopInner) — e.g. a lock prompt's description of who
+// (the viewport's MessageTopInner) — e.g. a lock prompt's description of who
 // already holds the file.
-func (pm *PromptManager) createPromptWindow(prompt, initialContent string, cursorLine int, windowClass string, callback PromptCallback, maxRows int, topMessage string) {
-	wm := pm.editor.WindowManager
+func (pm *PromptManager) createPromptViewport(prompt, initialContent string, cursorLine int, viewportClass string, callback PromptCallback, maxRows int, topMessage string) {
+	wm := pm.editor.ViewportManager
 
-	// Find highest priority bottom window. A bottom-located modebar is
+	// Find highest priority bottom viewport. A bottom-located modebar is
 	// excluded: its fixed priority pins it to the last screen line, and
 	// prompts must stack above it, not outbid it.
-	bottomWindows := wm.GetWindowsByDock(window.DockBottom)
+	bottomViewports := wm.GetViewportsByDock(viewport.DockBottom)
 	highestPriority := 0
-	for _, w := range bottomWindows {
+	for _, w := range bottomViewports {
 		if w.Class == "modebar" {
 			continue
 		}
@@ -218,16 +218,16 @@ func (pm *PromptManager) createPromptWindow(prompt, initialContent string, curso
 	if height > maxHeight {
 		height = maxHeight
 	}
-	// A top message bar occupies its own row above the input, so grow the window
+	// A top message bar occupies its own row above the input, so grow the viewport
 	// by one to keep the input row (and any history) their full height.
 	if topMessage != "" {
 		height++
 	}
 
-	id := wm.CreateWindow(window.WindowOptions{
-		Type:            window.PromptWindow,
-		Class:           windowClass,
-		Dock:            window.DockBottom,
+	id := wm.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.PromptViewport,
+		Class:           viewportClass,
+		Dock:            viewport.DockBottom,
 		Priority:        highestPriority + 10,
 		MinHeight:       1,
 		MaxHeight:       height,
@@ -239,8 +239,8 @@ func (pm *PromptManager) createPromptWindow(prompt, initialContent string, curso
 		SetFocus:        true,
 	})
 
-	// Set up the window with proper cursor position and callback
-	wm.UpdateWindow(id, func(w *window.Window) {
+	// Set up the viewport with proper cursor position and callback
+	wm.UpdateViewport(id, func(w *viewport.Viewport) {
 		// Position cursor at the specified line, at end of that line
 		w.SetCursorLine(cursorLine)
 		if cursorLine < buf.GetLineCount() {
@@ -263,15 +263,15 @@ func (pm *PromptManager) createPromptWindow(prompt, initialContent string, curso
 		// Set content height explicitly
 		w.ContentHeight = lineCount
 
-		// Store the window class for history updates
-		w.Class = windowClass
+		// Store the viewport class for history updates
+		w.Class = viewportClass
 
 		// Filename prompts complete paths on the completion command (tab), and
 		// resolve their accepted result against the same directory completion
 		// searches — so a plain name opens/saves next to the anchoring file,
 		// not in the process's working directory. The anchor is captured now
 		// (it does not depend on the typed text). History keeps the raw text.
-		if windowClass == "filename" {
+		if viewportClass == "filename" {
 			win := w
 			w.CompletionCallback = func() bool { return pm.editor.completeFilename(win) }
 			baseDir := pm.editor.completionBaseDir(win)
@@ -289,9 +289,9 @@ func (pm *PromptManager) createPromptWindow(prompt, initialContent string, curso
 
 		// Wrap callback to handle history update
 		w.PromptCallback = func(accepted bool, bufferContent, cursorLineText string) {
-			// Update history if accepted and we have a window class
-			if accepted && windowClass != "" && cursorLineText != "" {
-				pm.updateHistory(windowClass, cursorLineText)
+			// Update history if accepted and we have a viewport class
+			if accepted && viewportClass != "" && cursorLineText != "" {
+				pm.updateHistory(viewportClass, cursorLineText)
 			}
 
 			// Call the original callback
@@ -304,20 +304,20 @@ func (pm *PromptManager) createPromptWindow(prompt, initialContent string, curso
 	pm.editor.RequestRender()
 }
 
-// getHistoryLocked returns history for a window class. Must be called with lock held.
-func (pm *PromptManager) getHistoryLocked(windowClass string) []string {
-	if history, exists := pm.promptHistory[windowClass]; exists {
+// getHistoryLocked returns history for a viewport class. Must be called with lock held.
+func (pm *PromptManager) getHistoryLocked(viewportClass string) []string {
+	if history, exists := pm.promptHistory[viewportClass]; exists {
 		return history
 	}
 	return nil
 }
 
-// updateHistory adds a value to the history for a window class.
-func (pm *PromptManager) updateHistory(windowClass, value string) {
+// updateHistory adds a value to the history for a viewport class.
+func (pm *PromptManager) updateHistory(viewportClass, value string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	history := pm.promptHistory[windowClass]
+	history := pm.promptHistory[viewportClass]
 
 	// Don't add if it matches the last entry
 	if len(history) > 0 && history[len(history)-1] == value {
@@ -332,15 +332,15 @@ func (pm *PromptManager) updateHistory(windowClass, value string) {
 		history = history[1:]
 	}
 
-	pm.promptHistory[windowClass] = history
+	pm.promptHistory[viewportClass] = history
 }
 
-// GetHistory returns the history for a window class.
-func (pm *PromptManager) GetHistory(windowClass string) []string {
+// GetHistory returns the history for a viewport class.
+func (pm *PromptManager) GetHistory(viewportClass string) []string {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	if history, exists := pm.promptHistory[windowClass]; exists {
+	if history, exists := pm.promptHistory[viewportClass]; exists {
 		result := make([]string, len(history))
 		copy(result, history)
 		return result

@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // dragHarness renders an editor and returns cell->screen helpers plus a
 // pseudo-key driver, shared by the drag/shift-click selection tests.
-func dragHarness(t *testing.T, content string) (*Editor, *window.Window, func(key string)) {
+func dragHarness(t *testing.T, content string) (*Editor, *viewport.Viewport, func(key string)) {
 	t.Helper()
 	e, w, _ := newRenderedEditor(t, content)
 	e.performRender() // establish geometry
@@ -24,7 +24,7 @@ func dragHarness(t *testing.T, content string) (*Editor, *window.Window, func(ke
 }
 
 // col/row build 1-based screen coordinates for a document cell of w.
-func screenAt(w *window.Window, line, cell int) (x, y int) {
+func screenAt(w *viewport.Viewport, line, cell int) (x, y int) {
 	return w.ContentX + 1 + cell, w.ContentY + 1 + (line - w.ViewState.ViewOffsetY)
 }
 
@@ -91,7 +91,7 @@ func TestMouseShiftClickExtends(t *testing.T) {
 
 	// Caret parks at (0,2); the view scrolls to line 20 — the caret is
 	// offscreen, but its DOCUMENT position anchors the selection.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	w.SetViewTop(20)
 	e.performRender()
 
@@ -143,13 +143,13 @@ func TestMouseDragCapturedOutsideContent(t *testing.T) {
 	// Drag BELOW the last text row: clamps to the last line (still tracking).
 	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, w.ContentY+w.ContentHeight+3))
 	if l, _ := mark(t, w, "_block_end"); l != 3 {
-		t.Fatalf("below-window drag should clamp to the last line: end line %d, want 3", l)
+		t.Fatalf("below-viewport drag should clamp to the last line: end line %d, want 3", l)
 	}
 
-	// Drag ABOVE the window (over the modebar): clamps to the first row.
+	// Drag ABOVE the viewport (over the modebar): clamps to the first row.
 	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 1, 0))
 	if l, r := mark(t, w, "_block_end"); l != 0 || r != 0 {
-		t.Fatalf("above-window gutter drag should clamp to (0,0): end (%d,%d)", l, r)
+		t.Fatalf("above-viewport gutter drag should clamp to (0,0): end (%d,%d)", l, r)
 	}
 
 	// Drag far past the RIGHT edge on row 2: clamps to that line's end.
@@ -173,13 +173,13 @@ func TestMousePressBelowDocSelectsFromEOF(t *testing.T) {
 	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n")
 	_ = e
 
-	// The doc shows 4 lines (3 text + trailing empty); the window is taller.
+	// The doc shows 4 lines (3 text + trailing empty); the viewport is taller.
 	// Click two rows below the last line, still inside the content area.
 	lineCount := w.Buffer.GetLineCount()
 	x := w.ContentX + 3
 	y := w.ContentY + 1 + lineCount + 1 // a blank row below the text
 	if y > w.ContentY+w.ContentHeight {
-		t.Fatalf("test setup: blank row %d outside the window", y)
+		t.Fatalf("test setup: blank row %d outside the viewport", y)
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
 	send("MouseLeftPress")
@@ -215,7 +215,7 @@ func TestMouseDragAutoScrollTick(t *testing.T) {
 	}
 	e, w, send := dragHarness(t, b.String())
 
-	// Start a drag and park the pointer below the window's bottom edge.
+	// Start a drag and park the pointer below the viewport's bottom edge.
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
 	send("MouseLeftPress")
@@ -229,7 +229,7 @@ func TestMouseDragAutoScrollTick(t *testing.T) {
 	topBefore := w.ViewState.ViewOffsetY
 	e.dragScrollTick()
 	if w.ViewState.ViewOffsetY != topBefore {
-		t.Fatal("a tick inside the delay window must not scroll")
+		t.Fatal("a tick inside the delay viewport must not scroll")
 	}
 
 	// Age the engagement past the delay: ticks now scroll by the overshoot
@@ -276,7 +276,7 @@ func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
 	e.Config.ShowContextMenu = func(col, row int) { popped++ }
 
 	// Alt+left-click in the content area pops the menu and moves no caret.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2})
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
 	send("M-MouseLeftPress")
@@ -358,9 +358,9 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	send("MouseLeftRelease")
 
 	// Keyboard-set marks: deliberate. A plain click leaves them.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("set_block_begin")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2})
 	e.executeCommand("set_block_end")
 	if w.Buffer.MouseBlock() {
 		t.Fatal("keyboard-set marks must leave the mouse-block flag off")
@@ -376,7 +376,7 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	press("MouseLeftPress", 0, 0)
 	drag(1, 1)
 	send("MouseLeftRelease")
-	w.SetCursorPos(window.Position{Line: 2, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 2})
 	e.executeCommand("set_block_end")
 	press("MouseLeftPress", 0, 3)
 	send("MouseLeftRelease")
@@ -387,7 +387,7 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	// Shift+click: a DELIBERATE mouse selection — flag off, survives clicks —
 	// including a drag that continues the shift gesture.
 	w.Buffer.ClearBlockMarks()
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	press("S-MouseLeftPress", 1, 3)
 	if w.Buffer.MouseBlock() {
 		t.Fatal("shift+click must leave the mouse-block flag OFF")

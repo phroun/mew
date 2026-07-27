@@ -3,7 +3,7 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // go_mark with no argument prompts for the mark identifier (like set_mark) and
@@ -12,11 +12,11 @@ func TestGoMarkPromptsWithoutArgument(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\nddd\n")
 
 	// Set mark "2" on line 2 via the explicit-argument form.
-	w.SetCursorPos(window.Position{Line: 2, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 1})
 	e.PawScript.ExecuteAsync("set_mark '2'")
 
 	// Move away, then go_mark with no argument opens a prompt.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.PawScript.ExecuteAsync("go_mark")
 	if focusedPrompt(e) == nil {
 		t.Fatal("go_mark with no argument should open a prompt")
@@ -27,7 +27,7 @@ func TestGoMarkPromptsWithoutArgument(t *testing.T) {
 	}
 
 	// The explicit-argument form still jumps directly (no prompt).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.PawScript.ExecuteAsync("go_mark '2'")
 	if focusedPrompt(e) != nil {
 		t.Fatal("go_mark with an argument should not open a prompt")
@@ -40,7 +40,7 @@ func TestGoMarkPromptsWithoutArgument(t *testing.T) {
 // Cancelling the prompt, or naming an unset mark, leaves the caret where it was.
 func TestGoMarkPromptCancelOrUnset(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\nddd\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 
 	// Cancel the prompt: caret unchanged.
 	e.PawScript.ExecuteAsync("go_mark")

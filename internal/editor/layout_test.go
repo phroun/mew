@@ -4,30 +4,30 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// addNegotiableTopWindows creates two top-dock windows: A wants 8 rows
+// addNegotiableTopViewports creates two top-dock viewports: A wants 8 rows
 // (min 3), B wants 6 (min 2).
-func addNegotiableTopWindows(e *Editor) {
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "A", Type: window.ToolWindow, Dock: window.DockTop,
+func addNegotiableTopViewports(e *Editor) {
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "A", Type: viewport.ToolViewport, Dock: viewport.DockTop,
 		Priority: 90, MinHeight: 3, MaxHeight: 8, Height: 8,
 		Buffer: buffer.NewFromString("A\n"),
 	})
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "B", Type: window.ToolWindow, Dock: window.DockTop,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "B", Type: viewport.ToolViewport, Dock: viewport.DockTop,
 		Priority: 50, MinHeight: 2, MaxHeight: 6, Height: 6,
 		Buffer: buffer.NewFromString("B\n"),
 	})
 }
 
-func layoutHeights(l window.Layout) map[string]int {
+func layoutHeights(l viewport.Layout) map[string]int {
 	h := map[string]int{}
-	for _, group := range [][]window.WindowLayout{l.TopLayout, l.BottomLayout} {
+	for _, group := range [][]viewport.ViewportLayout{l.TopLayout, l.BottomLayout} {
 		for _, wl := range group {
-			key := wl.Window.ID
-			if wl.Window.Class == "modebar" {
+			key := wl.Viewport.ID
+			if wl.Viewport.Class == "modebar" {
 				key = "modebar"
 			}
 			h[key] = wl.Height
@@ -40,7 +40,7 @@ func layoutHeights(l window.Layout) map[string]int {
 
 func TestModebarTopDefault(t *testing.T) {
 	e, _ := newTestEditor(t, "hello\n")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	l := e.LayoutManager.CalculateLayout(80, 24)
 	mb := layoutByClass(l, "modebar")
 	if mb == nil || mb.Y != 0 {
@@ -50,7 +50,7 @@ func TestModebarTopDefault(t *testing.T) {
 
 func TestModebarBottomOwnsLastLine(t *testing.T) {
 	e, _ := newTestEditor(t, "hello\n", "modebarLocation=bottom")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	l := e.LayoutManager.CalculateLayout(80, 24)
 	mb := layoutByClass(l, "modebar")
 	if mb == nil || mb.Y != 23 || mb.Height != 1 {
@@ -65,7 +65,7 @@ func TestModebarBottomOwnsLastLine(t *testing.T) {
 	}
 	promptY := -1
 	for _, wl := range l.BottomLayout {
-		if wl.Window.Type == window.PromptWindow {
+		if wl.Viewport.Type == viewport.PromptViewport {
 			promptY = wl.Y
 		}
 	}
@@ -76,7 +76,7 @@ func TestModebarBottomOwnsLastLine(t *testing.T) {
 
 func TestModebarBottomNotificationStacks(t *testing.T) {
 	e, _ := newTestEditor(t, "hello\n", "modebarLocation=bottom")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.ShowNotification("hi there")
 	l := e.LayoutManager.CalculateLayout(80, 24)
 	mb := layoutByClass(l, "modebar")
@@ -91,7 +91,7 @@ func TestModebarBottomNotificationStacks(t *testing.T) {
 
 func TestModebarSetOptionRelocates(t *testing.T) {
 	e, _ := newTestEditor(t, "hello\n")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.PawScript.ExecuteAsync(`set_option modebarLocation, bottom`)
 	if e.Config.ModebarLocation != "bottom" {
 		t.Fatalf("config not updated: %q", e.Config.ModebarLocation)
@@ -114,15 +114,15 @@ func TestModebarSetOptionRelocates(t *testing.T) {
 
 // --- Space negotiation ---
 
-// Negotiation must treat the other windows identically regardless of where
+// Negotiation must treat the other viewports identically regardless of where
 // the modebar is located: essential status belongs to the modebar itself,
 // not to a dock position.
 func TestNegotiationLocationParity(t *testing.T) {
 	results := map[string]map[string]int{}
 	for _, loc := range []string{"top", "bottom"} {
 		e, _ := newTestEditor(t, "hello\n", "modebarLocation="+loc)
-		e.createPluginWindows()
-		addNegotiableTopWindows(e)
+		e.createPluginViewports()
+		addNegotiableTopViewports(e)
 		// 18 rows: top dock wants 8+6(+1 modebar)=15, main needs 6, so
 		// shrinking must kick in.
 		l := e.LayoutManager.CalculateLayout(80, 18)
@@ -136,11 +136,11 @@ func TestNegotiationLocationParity(t *testing.T) {
 	}
 	for _, id := range []string{"A", "B", "modebar"} {
 		if results["top"][id] != results["bottom"][id] {
-			t.Errorf("window %s: height %d with modebar top, %d with modebar bottom",
+			t.Errorf("viewport %s: height %d with modebar top, %d with modebar bottom",
 				id, results["top"][id], results["bottom"][id])
 		}
 	}
-	// The highest-priority negotiable window shrinks first: A gives up 3
+	// The highest-priority negotiable viewport shrinks first: A gives up 3
 	// rows (8->5), B keeps its desired 6.
 	if results["bottom"]["A"] != 5 || results["bottom"]["B"] != 6 {
 		t.Errorf("expected A=5 B=6, got A=%d B=%d", results["bottom"]["A"], results["bottom"]["B"])
@@ -152,8 +152,8 @@ func TestNegotiationLocationParity(t *testing.T) {
 func TestNegotiationModebarSurvivesSqueeze(t *testing.T) {
 	for _, loc := range []string{"top", "bottom"} {
 		e, _ := newTestEditor(t, "hello\n", "modebarLocation="+loc)
-		e.createPluginWindows()
-		addNegotiableTopWindows(e)
+		e.createPluginViewports()
+		addNegotiableTopViewports(e)
 		e.PromptMgr.PromptForInput("Q: ", "", func(bool, string, string) {}, "")
 		l := e.LayoutManager.CalculateLayout(80, 10)
 		h := layoutHeights(l)
@@ -162,7 +162,7 @@ func TestNegotiationModebarSurvivesSqueeze(t *testing.T) {
 		}
 		promptSeen := false
 		for _, wl := range l.BottomLayout {
-			if wl.Window.Type == window.PromptWindow {
+			if wl.Viewport.Type == viewport.PromptViewport {
 				promptSeen = true
 			}
 		}
@@ -171,7 +171,7 @@ func TestNegotiationModebarSurvivesSqueeze(t *testing.T) {
 		}
 		if loc == "bottom" {
 			for _, wl := range l.BottomLayout {
-				if wl.Window.Class == "modebar" && wl.Y != 9 {
+				if wl.Viewport.Class == "modebar" && wl.Y != 9 {
 					t.Fatalf("bottom modebar should hold the last line, Y=%d", wl.Y)
 				}
 			}
@@ -179,15 +179,15 @@ func TestNegotiationModebarSurvivesSqueeze(t *testing.T) {
 	}
 }
 
-// A background window creation (the verbose log) must not disturb which
-// window owns the painted main area.
-func TestBackgroundWindowDoesNotStealMainArea(t *testing.T) {
+// A background viewport creation (the verbose log) must not disturb which
+// viewport owns the painted main area.
+func TestBackgroundViewportDoesNotStealMainArea(t *testing.T) {
 	e, w := newTestEditor(t, "hello\n")
 	e.appendVerboseLog("line")
 	l := e.LayoutManager.CalculateLayout(80, 24)
 	main := layoutByID(l, w.ID)
 	if main == nil {
-		t.Fatal("doc window should still be laid out in the main area")
+		t.Fatal("doc viewport should still be laid out in the main area")
 	}
 	if lg := layoutByClass(l, "verboseLog"); lg != nil {
 		t.Fatal("unfocused verbose log should not be painted in the main area")

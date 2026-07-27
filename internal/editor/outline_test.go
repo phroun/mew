@@ -102,7 +102,7 @@ func TestOutlineShowsInModebar(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"top\nfunc Shown() {\n\tx := 1\n}\n",
 		"[options]\nsyntax=go\n")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	atPos(t, w, 2, 1)
 	out.Reset()
 	e.performRender()
@@ -110,7 +110,7 @@ func TestOutlineShowsInModebar(t *testing.T) {
 		t.Fatal("modebar should show the enclosing function name")
 	}
 	if w.Context != "Shown" {
-		t.Fatalf("window context %q, want Shown", w.Context)
+		t.Fatalf("viewport context %q, want Shown", w.Context)
 	}
 
 	atPos(t, w, 0, 0)

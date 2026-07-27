@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // buffer_write exports the whole buffer to the named file without adopting it:
@@ -18,7 +18,7 @@ func TestBufferWriteExportsWithoutAdopting(t *testing.T) {
 	e, w := newTestEditor(t, "hello\nworld\n")
 	w.Buffer.SetFilename(orig)
 	// Dirty the buffer so we can prove the export does NOT clear modified.
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync(`insert "!"`)
 	if !w.Buffer.IsModified() {
 		t.Fatal("precondition: buffer should be modified after an edit")

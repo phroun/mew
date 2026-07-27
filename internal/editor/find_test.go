@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // --- Occurrence counting (nnn option) ---
@@ -17,7 +17,7 @@ func TestFindNthOccurrence(t *testing.T) {
 		t.Fatalf("3rd occurrence should be col 10, got %v", w.CursorPos())
 	}
 	// Counting never wraps: the 9th occurrence does not exist.
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind("x", "9", "", true, true, false)
 	if w.CursorPos().Rune != 0 {
 		t.Fatalf("9th occurrence should not be found, cursor moved to %v", w.CursorPos())
@@ -29,10 +29,10 @@ func TestFindNthAcrossLines(t *testing.T) {
 		"# This file contains settings and key mappings for the mew text editor\n" +
 		"other\n" +
 		"mappings=mew\n"
-	want := []window.Position{{Line: 0, Rune: 2}, {Line: 1, Rune: 55}, {Line: 3, Rune: 9}}
+	want := []viewport.Position{{Line: 0, Rune: 2}, {Line: 1, Rune: 55}, {Line: 3, Rune: 9}}
 	for n := 1; n <= 3; n++ {
 		e, w := newTestEditor(t, content)
-		w.SetCursorPos(window.Position{})
+		w.SetCursorPos(viewport.Position{})
 		e.startFind("mew", string(rune('0'+n)), "", true, true, false)
 		if w.CursorPos() != want[n-1] {
 			t.Errorf("count=%d: cursor %v, want %v", n, w.CursorPos(), want[n-1])
@@ -50,7 +50,7 @@ func TestFindJoeSyntaxDefaultIsLiteral(t *testing.T) {
 		t.Fatalf("unescaped dot should match literally at col 12, got %v", w.CursorPos())
 	}
 	// Escaped \. is the any-character operator: matches axb first.
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind(`a\.b`, "", "", true, true, false)
 	if w.CursorPos().Rune != 3 {
 		t.Fatalf(`\. should match axb at col 3, got %v`, w.CursorPos())
@@ -70,12 +70,12 @@ func TestFindStandardSyntaxOption(t *testing.T) {
 
 	// searchRegex config default, and y overriding it back to JOE literal.
 	e.Config.SearchRegex = true
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind("b.t", "", "", true, true, false)
 	if w.CursorPos().Rune != 1 {
 		t.Fatalf("searchRegex default should regex-match bat, got %v", w.CursorPos())
 	}
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind("b.t", "y", "", true, true, false)
 	if w.CursorPos().Rune != 0 {
 		t.Fatalf("y should force literal (no match, cursor unmoved): %v", w.CursorPos())
@@ -130,7 +130,7 @@ func TestFindSearchWrapAndIgnoreCaseConfig(t *testing.T) {
 	e, w := newTestEditor(t, "alpha\nBETA\n")
 	// searchWrap=false: no match behind the cursor.
 	e.Config.SearchWrap = false
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.startFind("alpha", "", "", true, true, false)
 	if w.CursorPos().Line != 1 {
 		t.Fatalf("wrap disabled: cursor should not move, got %v", w.CursorPos())
@@ -143,7 +143,7 @@ func TestFindSearchWrapAndIgnoreCaseConfig(t *testing.T) {
 
 	// searchIgnoreCase default applies without the i letter.
 	e.Config.SearchIgnoreCase = true
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind("beta", "", "", true, true, false)
 	if w.CursorPos().Line != 1 {
 		t.Fatalf("icase default should match BETA, got %v", w.CursorPos())
@@ -168,39 +168,39 @@ func TestFindSetOptionSearchToggles(t *testing.T) {
 
 // --- Verbose log (v option and verbose_log command) ---
 
-func TestFindVerboseLogWindow(t *testing.T) {
+func TestFindVerboseLogViewport(t *testing.T) {
 	e, w := newTestEditor(t, "needle in haystack\n")
 	e.startFind("needle", "v", "", true, true, false)
 
-	vw := windowByClass(e, "verboseLog")
+	vw := viewportByClass(e, "verboseLog")
 	if vw == nil {
-		t.Fatal("verbose log window should exist")
+		t.Fatal("verbose log viewport should exist")
 	}
 	// Unfocused, and it must not steal the painted main area or modebar.
-	if e.WindowManager.GetFocusedWindow().ID == vw.ID {
+	if e.ViewportManager.GetFocusedViewport().ID == vw.ID {
 		t.Fatal("verbose log must not take focus")
 	}
-	if e.WindowManager.GetLastNormalWindow().ID != w.ID {
+	if e.ViewportManager.GetLastNormalViewport().ID != w.ID {
 		t.Fatal("verbose log must not steal the painted main area")
 	}
-	if e.WindowManager.GetLastMainWindow().ID != w.ID {
+	if e.ViewportManager.GetLastMainViewport().ID != w.ID {
 		t.Fatal("verbose log must not become the last main buffer")
 	}
 	if !strings.Contains(vw.Buffer.GetContent(), `term="needle"`) {
 		t.Fatalf("log content: %q", vw.Buffer.GetContent())
 	}
 
-	// A second verbose search appends to the SAME window.
+	// A second verbose search appends to the SAME viewport.
 	before := vw.Buffer.GetLineCount()
 	e.startFind("haystack", "v", "", true, true, false)
 	count := 0
-	for _, win := range e.WindowManager.AllWindows() {
+	for _, win := range e.ViewportManager.AllViewports() {
 		if win.Class == "verboseLog" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("verbose log window should be reused, found %d", count)
+		t.Fatalf("verbose log viewport should be reused, found %d", count)
 	}
 	if vw.Buffer.GetLineCount() <= before {
 		t.Fatal("second search should append to the log")
@@ -214,7 +214,7 @@ func TestVerboseLogCommand(t *testing.T) {
 	if !strings.Contains(got, "hello log") || !strings.Contains(got, "second line") {
 		t.Fatalf("log content: %q", got)
 	}
-	if vw := windowByClass(e, "verboseLog"); e.WindowManager.GetFocusedWindow().ID == vw.ID {
+	if vw := viewportByClass(e, "verboseLog"); e.ViewportManager.GetFocusedViewport().ID == vw.ID {
 		t.Fatal("verbose_log must not take focus")
 	}
 }
@@ -223,7 +223,7 @@ func TestVerboseLogCommand(t *testing.T) {
 
 func TestFindInteractiveFlow(t *testing.T) {
 	e, w := newTestEditor(t, "- x 1 x 2 x 3\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync("find") // fully bare: term prompt, then options
 	answerPrompt(t, e, "x")
 	answerPrompt(t, e, "2")
@@ -245,7 +245,7 @@ func TestFindBlankAcceptRepeatsPrevious(t *testing.T) {
 	// Blank-accept at the term prompt repeats the previous term. With wrap
 	// off, a backwards search from the start finds nothing.
 	e.Config.SearchWrap = false
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync("find")
 	answerPrompt(t, e, "")  // blank term = repeat "aa"
 	answerPrompt(t, e, "b") // backwards: nothing behind the start
@@ -288,7 +288,7 @@ func TestFindOptionsHistoryNotDefaulted(t *testing.T) {
 
 func TestFindReplaceInteractive(t *testing.T) {
 	e, w := newTestEditor(t, "cat dog cat\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.startFind("cat", "r", "pet", true, true, true)
 	// First match offered at col 0 (replace scans from cursor inclusive).
 	answerPrompt(t, e, "y")

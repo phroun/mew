@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // ensureUsefulStartDir: a root working directory (a GUI launch) moves to the
@@ -46,7 +46,7 @@ func TestStartDirResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e3.WindowManager.CreateWindow(windowMainOpts("doc3", buf))
+	e3.ViewportManager.CreateViewport(viewportMainOpts("doc3", buf))
 	t.Chdir("/")
 	e3.ensureUsefulStartDir()
 	if wd, _ := os.Getwd(); wd != docDir {
@@ -130,10 +130,10 @@ func TestSaveMewTargetVirtual(t *testing.T) {
 	}
 }
 
-// windowMainOpts is a tiny helper: a visible, focused main-buffer window.
-func windowMainOpts(id string, buf *buffer.Buffer) window.WindowOptions {
-	return window.WindowOptions{
-		Visible: true, ID: id, Type: window.DocWindow, Dock: window.DockNone,
+// viewportMainOpts is a tiny helper: a visible, focused main-buffer viewport.
+func viewportMainOpts(id string, buf *buffer.Buffer) viewport.ViewportOptions {
+	return viewport.ViewportOptions{
+		Visible: true, ID: id, Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	}
 }

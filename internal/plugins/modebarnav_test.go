@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // The modebar nav-history buttons render only as wide as needed and collapse
@@ -14,12 +14,12 @@ import (
 // inert.
 func TestModebarNavRenderAndHitTest(t *testing.T) {
 	keep := func(*buffer.Buffer) bool { return false } // nothing held outside
-	wm := window.NewManager()
-	id := wm.CreateWindow(window.WindowOptions{
-		Type: window.DocWindow, Dock: window.DockNone, Visible: true, SetFocus: true,
+	wm := viewport.NewManager()
+	id := wm.CreateViewport(viewport.ViewportOptions{
+		Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, SetFocus: true,
 		Buffer: buffer.NewFromString("A\n"),
 	})
-	w := wm.GetWindow(id)
+	w := wm.GetViewport(id)
 	m := NewModebar(wm)
 	plain := func(string) string { return "" } // strip colors: assert the glyphs
 	const start = 5
@@ -73,12 +73,12 @@ func TestModebarNavRenderAndHitTest(t *testing.T) {
 // color; the captured-and-pressed button uses the pressed variants.
 func TestModebarNavButtonColors(t *testing.T) {
 	keep := func(*buffer.Buffer) bool { return false }
-	wm := window.NewManager()
-	id := wm.CreateWindow(window.WindowOptions{
-		Type: window.DocWindow, Dock: window.DockNone, Visible: true, SetFocus: true,
+	wm := viewport.NewManager()
+	id := wm.CreateViewport(viewport.ViewportOptions{
+		Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, SetFocus: true,
 		Buffer: buffer.NewFromString("A\n"),
 	})
-	w := wm.GetWindow(id)
+	w := wm.GetViewport(id)
 	w.SwapBuffer(buffer.NewFromString("B\n"), keep) // back history
 	m := NewModebar(wm)
 	tag := func(name string) string { return "<" + name + ">" } // sentinel colors

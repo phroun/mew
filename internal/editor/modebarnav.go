@@ -3,15 +3,15 @@ package editor
 import "github.com/phroun/mew/internal/plugins"
 
 // Modebar nav-history buttons. The modebar shows [<] / [>] just before the
-// filename when the focused (context) window has back / forward history. They
+// filename when the focused (context) viewport has back / forward history. They
 // behave like proper buttons: a press CAPTURES the button (without stealing
-// focus — nav runs on the focused window), it paints pressed while the pointer
+// focus — nav runs on the focused viewport), it paints pressed while the pointer
 // is over it and reverts when dragged off, and it activates only if the
 // release lands back on it. Hover (graphical all-motion builds) lights the
 // button under the pointer while nothing is captured.
 //
-// These live outside the content-window mouse path (mouse.go), which is
-// focused-window-gated and would ignore the modebar (a chrome window). The
+// These live outside the content-viewport mouse path (mouse.go), which is
+// focused-viewport-gated and would ignore the modebar (a chrome viewport). The
 // hit-test reads the button column ranges the modebar recorded on its last
 // render.
 
@@ -21,7 +21,7 @@ func (e *Editor) modebarNavHit(x, y int) (button int, ok bool) {
 	if e.Modebar == nil {
 		return plugins.ModebarNavNone, false
 	}
-	mw := e.WindowManager.GetWindow(e.Modebar.WindowID())
+	mw := e.ViewportManager.GetViewport(e.Modebar.ViewportID())
 	if mw == nil || !mw.Visible {
 		return plugins.ModebarNavNone, false
 	}
@@ -34,7 +34,7 @@ func (e *Editor) modebarNavHit(x, y int) (button int, ok bool) {
 
 // modebarNavPressAt captures a modebar nav button under a plain left press,
 // reporting whether the press was consumed (so the caller skips the ordinary
-// content-window press). A modal prompt holding focus stands the buttons down.
+// content-viewport press). A modal prompt holding focus stands the buttons down.
 func (e *Editor) modebarNavPressAt(x, y int) bool {
 	if e.promptHasPriority() {
 		return false
@@ -66,7 +66,7 @@ func (e *Editor) modebarNavDrag(x, y int) {
 
 // modebarNavRelease ends the capture and, when the release lands back on the
 // captured button, runs the corresponding history navigation on the focused
-// window.
+// viewport.
 func (e *Editor) modebarNavRelease(x, y int) {
 	button := e.modebarNavCapture
 	e.modebarNavCapture = plugins.ModebarNavNone

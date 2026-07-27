@@ -3,18 +3,18 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// insertMode defaults to yes (insert), and is a per-window boolean stored
-// inverted as OverwriteMode so a zero-value window still defaults to insert.
+// insertMode defaults to yes (insert), and is a per-viewport boolean stored
+// inverted as OverwriteMode so a zero-value viewport still defaults to insert.
 func TestInsertModeOption(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 	if v, _ := e.getOption(w, "insertMode"); v != "yes" {
 		t.Fatalf("default insertMode = %q, want yes", v)
 	}
 	if w.ViewState.OverwriteMode {
-		t.Fatal("a fresh window should default to insert mode (OverwriteMode false)")
+		t.Fatal("a fresh viewport should default to insert mode (OverwriteMode false)")
 	}
 	e.setOption(w, "insertMode", "no")
 	if v, _ := e.getOption(w, "insertMode"); v != "no" {
@@ -55,7 +55,7 @@ func TestOverwriteTyping(t *testing.T) {
 			e, w := newTestEditor(t, tc.start+"\n")
 			w.ViewState.OverwriteMode = true
 			for _, s := range tc.steps {
-				w.SetCursorPos(window.Position{Line: 0, Rune: s.rune_})
+				w.SetCursorPos(viewport.Position{Line: 0, Rune: s.rune_})
 				e.insertText(s.typed)
 				if got := docContent(w); got != s.want {
 					t.Fatalf("type %q at %d: content %q, want %q", s.typed, s.rune_, got, s.want)
@@ -72,7 +72,7 @@ func TestOverwriteTyping(t *testing.T) {
 func TestOverwriteNewlineInserts(t *testing.T) {
 	e, w := newTestEditor(t, "abcd\n")
 	w.ViewState.OverwriteMode = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	e.insertText("\n")
 	if l0, l1 := w.Buffer.GetLine(0), w.Buffer.GetLine(1); l0 != "a\n" || l1 != "bcd\n" {
 		t.Fatalf("newline in overwrite should split: line0=%q line1=%q", l0, l1)
@@ -86,7 +86,7 @@ func TestOverwriteNewlineInserts(t *testing.T) {
 func TestInsertModeStillInserts(t *testing.T) {
 	e, w := newTestEditor(t, "abcd\n")
 	// OverwriteMode false by default.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	e.insertText("X")
 	if got := docContent(w); got != "aXbcd" {
 		t.Fatalf("insert mode content %q, want aXbcd", got)
@@ -98,7 +98,7 @@ func TestInsertModeStillInserts(t *testing.T) {
 func TestOverwriteCoalescesIntoOneUndo(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
 	w.ViewState.OverwriteMode = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	for _, ch := range []string{"X", "Y", "Z"} {
 		e.executeCommand(`insert "` + ch + `"`)
 	}
@@ -118,7 +118,7 @@ func TestOverwriteCoalescesIntoOneUndo(t *testing.T) {
 func TestOverwriteThenAppendIsOneUndo(t *testing.T) {
 	e, w := newTestEditor(t, "ab\n")
 	w.ViewState.OverwriteMode = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	// X over a, Y over b, then Z appends past the end of line.
 	for _, ch := range []string{"X", "Y", "Z"} {
 		e.executeCommand(`insert "` + ch + `"`)
@@ -138,7 +138,7 @@ func TestOverwriteThenAppendIsOneUndo(t *testing.T) {
 func TestOverwriteBreaksOnCursorMove(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
 	w.ViewState.OverwriteMode = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand(`insert "X"`) // Xbcdef
 	e.executeCommand(`insert "Y"`) // XYcdef (one run)
 	e.executeCommand("go_line_beg")
@@ -155,19 +155,19 @@ func TestOverwriteBreaksOnCursorMove(t *testing.T) {
 	}
 }
 
-// The mode is per-window: overwrite on one window does not leak to another on
+// The mode is per-viewport: overwrite on one viewport does not leak to another on
 // the same editor.
-func TestInsertModePerWindow(t *testing.T) {
+func TestInsertModePerViewport(t *testing.T) {
 	e, w := newTestEditor(t, "abcd\n")
-	w2 := e.WindowManager.GetWindow("doc")
+	w2 := e.ViewportManager.GetViewport("doc")
 	_ = w2
 	e.setOption(w, "insertMode", "no")
 	if !w.ViewState.OverwriteMode {
-		t.Fatal("target window should be in overwrite mode")
+		t.Fatal("target viewport should be in overwrite mode")
 	}
 	// The editor-wide default is untouched.
 	if e.Config.OverwriteMode {
-		t.Fatal("a per-window override must not change the editor default")
+		t.Fatal("a per-viewport override must not change the editor default")
 	}
 	if v, _ := e.getOption(nil, "insertMode"); v != "yes" {
 		t.Fatalf("global insertMode should stay yes, got %q", v)

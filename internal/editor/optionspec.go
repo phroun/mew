@@ -3,14 +3,14 @@ package editor
 import (
 	"strings"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // This file is the single canonical description of mew's set_option surface:
-// every option name, whether set_option routes it to a window or the editor,
+// every option name, whether set_option routes it to a viewport or the editor,
 // its value grammar, and — for boolean and enum options — the ordered list of
 // canonical values a rotation walks. Everything else that needs to know the
-// option set (the CLI known/per-window maps, set_option_next / set_option_prior)
+// option set (the CLI known/per-viewport maps, set_option_next / set_option_prior)
 // derives from optionSpecs here, so there is one place to keep in step.
 
 // optionKind classifies an option's value grammar.
@@ -31,7 +31,7 @@ const (
 // a rotation can round-trip them through the cascade.
 type optionSpec struct {
 	Name   string     // canonical camelCase name, e.g. "showMarks"
-	PerWin bool       // set_option routes it to the window's ViewState (else the editor Config)
+	PerWin bool       // set_option routes it to the viewport's ViewState (else the editor Config)
 	Kind   optionKind //
 	Values []string   // ordered canonical values (bool/enum only), else nil
 }
@@ -47,7 +47,7 @@ var boolValues = []string{"no", "yes"}
 // ...) are deliberately not here — they are not part of the set_option surface.
 // The order is the sequence other code should present these in.
 var optionSpecs = []optionSpec{
-	// Per-window view options (set_option targets a window's ViewState).
+	// Per-viewport view options (set_option targets a viewport's ViewState).
 	{"tabSize", true, optIntKind, nil},
 	{"showLineNumbers", true, optBoolKind, boolValues},
 	{"showInvisibles", true, optBoolKind, boolValues},
@@ -96,15 +96,15 @@ var optionSpecs = []optionSpec{
 }
 
 // optionSpecByLower maps a lowercased option name to its spec. cliKnownOptions /
-// cliPerWindowOptions (the maps the launch walk and setOption consult) are
+// cliPerViewportOptions (the maps the launch walk and setOption consult) are
 // derived from the same table, so the three can never drift.
 var (
-	optionSpecByLower   = map[string]optionSpec{}
-	cliKnownOptions     = map[string]bool{}
-	cliPerWindowOptions = map[string]bool{}
-	// perWindowOptionKeys is the lowercased per-window option names in canonical
+	optionSpecByLower     = map[string]optionSpec{}
+	cliKnownOptions       = map[string]bool{}
+	cliPerViewportOptions = map[string]bool{}
+	// perViewportOptionKeys is the lowercased per-viewport option names in canonical
 	// order — the set reconcileGrammarOptions and clear_option re-derive.
-	perWindowOptionKeys []string
+	perViewportOptionKeys []string
 )
 
 func init() {
@@ -113,17 +113,17 @@ func init() {
 		optionSpecByLower[key] = s
 		cliKnownOptions[key] = true
 		if s.PerWin {
-			cliPerWindowOptions[key] = true
-			perWindowOptionKeys = append(perWindowOptionKeys, key)
+			cliPerViewportOptions[key] = true
+			perViewportOptionKeys = append(perViewportOptionKeys, key)
 		}
 	}
 }
 
-// applyResolvedOption writes a per-window option's ViewState value from the
-// class/grammar/type overlay over the editor default — the value the window
+// applyResolvedOption writes a per-viewport option's ViewState value from the
+// class/grammar/type overlay over the editor default — the value the viewport
 // would have with no explicit override. reconcileGrammarOptions and clear_option
 // share it, so the resolution rule for each option lives in exactly one place.
-func (e *Editor) applyResolvedOption(w *window.Window, key string) {
+func (e *Editor) applyResolvedOption(w *viewport.Viewport, key string) {
 	switch key {
 	case "tabsize":
 		w.ViewState.TabSize = e.optInt(w, "tabsize", e.Config.TabSize, 1)
@@ -134,7 +134,7 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 	case "showbidi":
 		w.ViewState.ShowBidi = e.optBool(w, "showbidi", e.Config.ShowBidi)
 	case "rtlcombining":
-		// Stored inverted (zero value = marks shown), so a window not yet
+		// Stored inverted (zero value = marks shown), so a viewport not yet
 		// reconciled keeps the default.
 		w.ViewState.SuppressRTLCombining = !e.optBool(w, "rtlcombining", e.Config.RtlCombining)
 	case "showmarks":
@@ -145,7 +145,7 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 	case "readonly":
 		w.ViewState.ReadOnly = e.optBool(w, "readonly", e.Config.ReadOnly)
 		if !w.ViewState.ReadOnly {
-			// An overlay resolving the window editable is intent-to-edit for
+			// An overlay resolving the viewport editable is intent-to-edit for
 			// a buffer whose lock a read-only open deferred.
 			e.ensureDeferredMewLock(w.Buffer)
 		}
@@ -163,28 +163,28 @@ func (e *Editor) applyResolvedOption(w *window.Window, key string) {
 	}
 }
 
-// clearOption drops a per-window option's explicit override on the given window
+// clearOption drops a per-viewport option's explicit override on the given viewport
 // and reverts its ViewState to the resolved default (the class/grammar/type
 // overlay over the editor default). It fails (with a transient warning) for
-// unknown options and for global options, which have no per-window layer.
-func (e *Editor) clearOption(w *window.Window, name string) bool {
+// unknown options and for global options, which have no per-viewport layer.
+func (e *Editor) clearOption(w *viewport.Viewport, name string) bool {
 	spec, ok := lookupOptionSpec(name)
 	if !ok {
 		e.ShowWarning("Unknown option: " + name)
 		return false
 	}
 	if !spec.PerWin {
-		e.ShowWarning(spec.Name + " is a global option; it has no per-window value to clear")
+		e.ShowWarning(spec.Name + " is a global option; it has no per-viewport value to clear")
 		return false
 	}
 	if w == nil {
-		e.ShowWarning("clear_option needs a target window")
+		e.ShowWarning("clear_option needs a target viewport")
 		return false
 	}
 	key := strings.ToLower(spec.Name)
 	w.ClearOptionOverridden(key)
 	// Re-derive unconditionally (not via the overlay-gated reconcile) so a plain
-	// window with no overlay also reverts to the editor default.
+	// viewport with no overlay also reverts to the editor default.
 	e.applyResolvedOption(w, key)
 	e.ShowNotification("Option '" + spec.Name + "' cleared")
 	e.RequestRender()
@@ -202,7 +202,7 @@ func lookupOptionSpec(name string) (optionSpec, bool) {
 // by dir (+1 = next, -1 = prior) within its canonical value sequence, and sets
 // the result. It fails (with a transient warning) for unknown options and for
 // options with no finite value list — integers, counts, and free-form strings.
-func (e *Editor) rotateOption(w *window.Window, name string, dir int) bool {
+func (e *Editor) rotateOption(w *viewport.Viewport, name string, dir int) bool {
 	spec, ok := lookupOptionSpec(name)
 	if !ok {
 		e.ShowWarning("Unknown option: " + name)
@@ -248,7 +248,7 @@ func (e *Editor) rotateOption(w *window.Window, name string, dir int) bool {
 // current value (the assumed default). Options with no fixed value list just
 // offer the current value as an editable default. Returns true once the prompt
 // is open (the set happens in the callback); false for an unknown option.
-func (e *Editor) promptSetOption(w *window.Window, name string) bool {
+func (e *Editor) promptSetOption(w *viewport.Viewport, name string) bool {
 	spec, ok := lookupOptionSpec(name)
 	if !ok {
 		e.ShowWarning("Unknown option: " + name)

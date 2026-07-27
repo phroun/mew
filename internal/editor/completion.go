@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // completeFilename is the completion handler attached to filename prompts. It
@@ -17,7 +17,7 @@ import (
 // once it owns the key (even with no candidates): a filename prompt must never
 // fall through to inserting a literal tab. Only the absence of a handler (a
 // plain buffer) lets the tab fallback run.
-func (e *Editor) completeFilename(w *window.Window) bool {
+func (e *Editor) completeFilename(w *viewport.Viewport) bool {
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -61,7 +61,7 @@ func (e *Editor) completeFilename(w *window.Window) bool {
 // directories that neighbor the current user's home (its parent — /Users on
 // macOS, /home on most Linux). It auto-fills the shared part and lists the rest,
 // like ordinary filename completion. Always owns the tab (returns true).
-func (e *Editor) completeUserName(w *window.Window, raw string) bool {
+func (e *Editor) completeUserName(w *viewport.Viewport, raw string) bool {
 	root := filepath.Dir(e.home)
 	if e.home == "" || root == "" || root == "." || root == e.home {
 		return true
@@ -127,7 +127,7 @@ func (e *Editor) globStat(pattern string) ([]FileInfo, error) {
 // match from the partial text on the prompt line. Path text in the partial
 // (foo/ba) descends from the base directory; an absolute path is used as-is; a
 // trailing slash lists the directory's contents.
-func (e *Editor) completionSplit(w *window.Window, raw string) (globDir, prefix string) {
+func (e *Editor) completionSplit(w *viewport.Viewport, raw string) (globDir, prefix string) {
 	base := e.completionBaseDir(w)
 	text := raw
 	if e.usingOSFS {
@@ -207,9 +207,9 @@ func isSchemeAlpha(c byte) bool {
 // parent buffer's own directory (where the file was opened from — the classic
 // case), else the launch directory (standalone), else [storage] documents=,
 // else empty so module mode globs the host's default location.
-func (e *Editor) completionBaseDir(w *window.Window) string {
-	main := w.ParentWindow
-	if main == nil && w.Type != window.PromptWindow {
+func (e *Editor) completionBaseDir(w *viewport.Viewport) string {
+	main := w.ParentViewport
+	if main == nil && w.Type != viewport.PromptViewport {
 		main = w
 	}
 	if main != nil && main.Buffer != nil {

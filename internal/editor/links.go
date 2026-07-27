@@ -10,14 +10,14 @@ import (
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Hyperlink browse mode (rendering pass — no navigation yet).
 //
 // When a buffer's grammar recognizes links (dokuwiki, including .txt files
 // the path-conditional [formats] rules route there), each link renders in one
-// of two styles per window:
+// of two styles per viewport:
 //
 //   - caret mode (BrowseActive off): the raw [[target|Title]] text, painted
 //     in the "link" color over its syntax colors;
@@ -37,8 +37,8 @@ import (
 
 // linkSpansOnLine returns the grammar-derived link spans for one line of w's
 // buffer, or nil when the grammar has none (not linkable, line out of range).
-func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
-	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
+func (e *Editor) linkSpansOnLine(w *viewport.Viewport, docLine int) []linkSpan {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
@@ -50,8 +50,8 @@ func (e *Editor) linkSpansOnLine(w *window.Window, docLine int) []linkSpan {
 
 // markupSpansOnLine returns the grammar-derived markup runs (bold/italic/
 // underline/heading) for one line, or nil.
-func (e *Editor) markupSpansOnLine(w *window.Window, docLine int) []markupSpan {
-	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
+func (e *Editor) markupSpansOnLine(w *viewport.Viewport, docLine int) []markupSpan {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
@@ -61,11 +61,11 @@ func (e *Editor) markupSpansOnLine(w *window.Window, docLine int) []markupSpan {
 	return c.markup[docLine]
 }
 
-// caretLinkSpan returns the link span the window's caret is on, treating the
+// caretLinkSpan returns the link span the viewport's caret is on, treating the
 // range as half-open [Start, End): the caret is "on" the link the moment it
 // reaches the first character (the left edge counts), and leaves it only past
 // the last (End does not count). The line number is read fresh each call.
-func (e *Editor) caretLinkSpan(w *window.Window) *linkSpan {
+func (e *Editor) caretLinkSpan(w *viewport.Viewport) *linkSpan {
 	if w == nil {
 		return nil
 	}
@@ -81,13 +81,13 @@ func (e *Editor) caretLinkSpan(w *window.Window) *linkSpan {
 
 // updateBrowseState runs after every executed command (and paste): when the
 // caret has entered a link span it was not previously inside, browse mode
-// arms for the window. The occupied span's identity is its start position,
+// arms for the viewport. The occupied span's identity is its start position,
 // held in a tracking anchor so edits slide it rather than staling it.
 // Leaving all links clears the anchor but does NOT disarm browse mode —
 // only nav_cancel does that.
 func (e *Editor) updateBrowseState() {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type == window.PromptWindow || w.Buffer == nil {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport || w.Buffer == nil {
 		return
 	}
 	if !w.ViewState.LinkBrowsing {
@@ -111,12 +111,12 @@ func (e *Editor) updateBrowseState() {
 }
 
 // autoArmBrowse starts browse mode the moment a wiki-format page is first
-// seen in a window: as soon as the binding's grammar proves linkable, the
-// window arms — once per binding (the BrowseAutoArmed latch), so nav_cancel
+// seen in a viewport: as soon as the binding's grammar proves linkable, the
+// viewport arms — once per binding (the BrowseAutoArmed latch), so nav_cancel
 // (^C) bails out to caret mode without being instantly re-armed; arrowing
 // back onto a link re-arms as always.
-func (e *Editor) autoArmBrowse(w *window.Window) {
-	if w == nil || w.BrowseAutoArmed || w.Type == window.PromptWindow ||
+func (e *Editor) autoArmBrowse(w *viewport.Viewport) {
+	if w == nil || w.BrowseAutoArmed || w.Type == viewport.PromptViewport ||
 		w.Buffer == nil || !w.ViewState.LinkBrowsing {
 		return
 	}
@@ -129,12 +129,12 @@ func (e *Editor) autoArmBrowse(w *window.Window) {
 	}
 }
 
-// navCancel turns browse mode off on the focused window (links revert to
+// navCancel turns browse mode off on the focused viewport (links revert to
 // caret-mode link styling until the caret enters another link). Reports
 // false when browse mode was not active, so a nav_cancel|cancel|... chain
 // falls through to the next command.
 func (e *Editor) navCancel() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || !w.BrowseActive {
 		return false
 	}
@@ -146,10 +146,10 @@ func (e *Editor) navCancel() bool {
 
 // swapBuffer swaps w to buf with orphan protection: a forward-history
 // binding whose buffer would lose its last reference (held nowhere outside
-// this window's nav structures) is buried in the window's graveyard for the
+// this viewport's nav structures) is buried in the viewport's graveyard for the
 // eventual save decision, instead of being released with the invalidated
 // forward trail. The newly bound buffer, conversely, leaves every graveyard.
-func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
+func (e *Editor) swapBuffer(w *viewport.Viewport, buf *buffer.Buffer) {
 	w.SwapBuffer(buf, func(b *buffer.Buffer) bool {
 		return e.bufferReferencedElsewhere(b, w)
 	})
@@ -157,33 +157,33 @@ func (e *Editor) swapBuffer(w *window.Window, buf *buffer.Buffer) {
 }
 
 // replaceBuffer swaps w to buf in place WITHOUT growing the nav history (see
-// Window.ReplaceBuffer). Used for Quick Help's dynamic re-render as the key
+// Viewport.ReplaceBuffer). Used for Quick Help's dynamic re-render as the key
 // context changes: the departing page is ephemeral and is released outright, so
-// successive context changes never pile buffers into the window's graveyard.
-func (e *Editor) replaceBuffer(w *window.Window, buf *buffer.Buffer) {
+// successive context changes never pile buffers into the viewport's graveyard.
+func (e *Editor) replaceBuffer(w *viewport.Viewport, buf *buffer.Buffer) {
 	w.ReplaceBuffer(buf)
 	e.unburyEverywhere(buf)
 }
 
 // unburyEverywhere releases every graveyard binding of buf across all
-// windows: actively bound again, the buffer is no longer at risk of
+// viewports: actively bound again, the buffer is no longer at risk of
 // orphaning and the graveyards have no claim to it.
 func (e *Editor) unburyEverywhere(buf *buffer.Buffer) {
 	if buf == nil {
 		return
 	}
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		w.Unbury(buf)
 	}
 }
 
-// navHistory walks the focused window's buffer-swap history: dir < 0 returns
-// to the binding the window last swapped away from (nav_history_prior),
+// navHistory walks the focused viewport's buffer-swap history: dir < 0 returns
+// to the binding the viewport last swapped away from (nav_history_prior),
 // dir > 0 re-advances (nav_history_next). Reports false when there is no
 // history in that direction, so command chains fall through.
 func (e *Editor) navHistory(dir int) bool {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type == window.PromptWindow {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport {
 		return false
 	}
 	var ok bool
@@ -222,15 +222,15 @@ func (e *Editor) navClearVisited() bool {
 }
 
 // navHistoryClear (the nav_history_clear command) empties the focused
-// window's entire back/forward history, releasing the stacked bindings —
+// viewport's entire back/forward history, releasing the stacked bindings —
 // except any holding the LAST reference to a buffer (nothing else, active or
-// stacked in any window, still holds it): those move to the window's
+// stacked in any viewport, still holds it): those move to the viewport's
 // GRAVEYARD, kept alive solely for the eventual "save its changes?"
 // reckoning rather than being orphaned. Reports false when there is no
 // history.
 func (e *Editor) navHistoryClear() bool {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type == window.PromptWindow {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport {
 		return false
 	}
 	if prior, next := w.NavHistoryDepths(); prior+next == 0 {
@@ -250,10 +250,10 @@ func (e *Editor) navHistoryClear() bool {
 }
 
 // focusedLinkButton returns the span rendered as the FOCUSED button in w: w
-// must be the focused window, in browse mode, with the caret strictly inside
+// must be the focused viewport, in browse mode, with the caret strictly inside
 // the span. nil otherwise.
-func (e *Editor) focusedLinkButton(w *window.Window) *linkSpan {
-	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || e.WindowManager.GetFocusedWindow() != w {
+func (e *Editor) focusedLinkButton(w *viewport.Viewport) *linkSpan {
+	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || e.ViewportManager.GetFocusedViewport() != w {
 		return nil
 	}
 	return e.caretLinkSpan(w)
@@ -263,13 +263,13 @@ func (e *Editor) focusedLinkButton(w *window.Window) *linkSpan {
 // NAVIGATES: the target resolves through the dokuwiki reference layers
 // (wikiref.go) to the canonical URL of a real file, which is opened IN PLACE —
 // an already-open buffer (active or stacked anywhere) is reused, a fresh one
-// is loaded otherwise, and the window's previous binding goes onto its nav
+// is loaded otherwise, and the viewport's previous binding goes onto its nav
 // history (nav_history_prior returns). Non-wiki targets (schemes, interwiki)
 // and unresolved pages show a notification instead. Reports false when not in
 // active browse mode with a focused button, so a nav_follow|accept|insert
 // chain falls through.
 func (e *Editor) navFollow() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	span := e.focusedLinkButton(w)
 	if span == nil {
 		return false
@@ -302,18 +302,18 @@ func (e *Editor) navFollow() bool {
 		}
 		buf = loaded
 	}
-	if res.newWindow {
-		// A window's root never changes, so a destination under a DIFFERENT
-		// root surfaces in a fresh window — sharing the underlying buffer
+	if res.newViewport {
+		// A viewport's root never changes, so a destination under a DIFFERENT
+		// root surfaces in a fresh viewport — sharing the underlying buffer
 		// when it is already open elsewhere. A full-scheme escape gets a
-		// rootless main-area window; a registered-wiki destination (help:/...)
-		// gets a window rooted at that wiki, in the Type/dock the wiki
+		// rootless main-area viewport; a registered-wiki destination (help:/...)
+		// gets a viewport rooted at that wiki, in the Type/dock the wiki
 		// declares, arriving in browse mode.
-		var nw *window.Window
+		var nw *viewport.Viewport
 		if def, ok := wikiRegistry[res.wikiName]; ok {
-			nw = e.createWikiWindow(buf, def, true)
+			nw = e.createWikiViewport(buf, def, true)
 		} else {
-			nw = e.createMainWindow(buf, nil, true)
+			nw = e.createMainViewport(buf, nil, true)
 		}
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
@@ -343,13 +343,13 @@ func (e *Editor) navFollow() bool {
 	return true
 }
 
-// wikiDisplayName renders a wiki-rooted window's page as its extensionless
+// wikiDisplayName renders a wiki-rooted viewport's page as its extensionless
 // scheme form ("help:/start", "help:/sample/widget") — what the user typed
 // and what they should SEE — instead of the underlying file base
-// ("start.txt"). Returns "" for a non-wiki window, a buffer outside the
-// window's root, or an unknown registry, so the modebar falls back to the
+// ("start.txt"). Returns "" for a non-wiki viewport, a buffer outside the
+// viewport's root, or an unknown registry, so the modebar falls back to the
 // ordinary filename.
-func (e *Editor) wikiDisplayName(w *window.Window) string {
+func (e *Editor) wikiDisplayName(w *viewport.Viewport) string {
 	if w == nil || w.Buffer == nil || w.WikiName == "" || w.WikiRoot == "" {
 		return ""
 	}
@@ -371,17 +371,17 @@ func (e *Editor) wikiDisplayName(w *window.Window) string {
 // openWikiScheme opens a registered wiki-scheme reference ("help:/start")
 // typed at the Open prompt (or launched from the command line), resolving it
 // through the same wiki machinery a followed link uses and surfacing the page
-// in a fresh window rooted at the wiki — in the window Type and dock the wiki
-// declares (help is a top-docked ToolWindow), in browse mode. A trailing wiki
+// in a fresh viewport rooted at the wiki — in the viewport Type and dock the wiki
+// declares (help is a top-docked ToolViewport), in browse mode. A trailing wiki
 // extension is tolerated and stripped ("help:/start.txt" == "help:/start"),
 // since the page id is extensionless (the .Ext is implied internally).
 //
-// The window takes focus when focus is set. Returns the opened window (nil
+// The viewport takes focus when focus is set. Returns the opened viewport (nil
 // when the page could not be loaded or was only reported not-found) and
 // whether the ref was a wiki scheme (handled here regardless of outcome); a
 // non-wiki name returns (nil, false) to fall through to the ordinary file
 // open.
-func (e *Editor) openWikiScheme(ref string, focus bool) (*window.Window, bool) {
+func (e *Editor) openWikiScheme(ref string, focus bool) (*viewport.Viewport, bool) {
 	def, rest, ok := wikiSchemeRef(ref)
 	if !ok {
 		return nil, false
@@ -404,7 +404,7 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*window.Window, bool) {
 			}
 			buf = loaded
 		}
-		nw := e.createWikiWindow(buf, def, focus)
+		nw := e.createWikiViewport(buf, def, focus)
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.BrowseActive = nw.ViewState.LinkBrowsing
@@ -427,10 +427,10 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*window.Window, bool) {
 			e.RequestRender()
 			return nil, true
 		}
-		nw := e.createWikiWindow(buf, def, focus)
+		nw := e.createWikiViewport(buf, def, focus)
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
-		nw.SetCursorPos(window.Position{Line: buf.GetLineCount() - 1, Rune: 0})
+		nw.SetCursorPos(viewport.Position{Line: buf.GetLineCount() - 1, Rune: 0})
 		e.ensureCursorVisible(nw)
 		e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
 		e.RequestRender()
@@ -447,9 +447,9 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*window.Window, bool) {
 // line. Creating mints a buffer named for the page's would-be file, seeded
 // with a heading carrying the link's title and the caret parked at the end,
 // ready to write — the file itself appears on first save. The page surfaces
-// exactly as a successful follow would: in place for the window's own wiki,
-// a fresh window for a cross-root destination.
-func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followResolution) {
+// exactly as a successful follow would: in place for the viewport's own wiki,
+// a fresh viewport for a cross-root destination.
+func (e *Editor) promptCreatePage(viewportID string, span *linkSpan, res followResolution) {
 	title := span.Title
 	if title == "" {
 		title = span.Target
@@ -466,22 +466,22 @@ func (e *Editor) promptCreatePage(windowID string, span *linkSpan, res followRes
 				e.RequestRender()
 				return
 			}
-			var target *window.Window
-			if res.newWindow {
+			var target *viewport.Viewport
+			if res.newViewport {
 				if def, ok := wikiRegistry[res.wikiName]; ok {
-					target = e.createWikiWindow(buf, def, true)
+					target = e.createWikiViewport(buf, def, true)
 				} else {
-					target = e.createMainWindow(buf, nil, true)
+					target = e.createMainViewport(buf, nil, true)
 				}
 				target.WikiRoot = res.root
 				target.WikiName = res.wikiName
-			} else if w := e.WindowManager.GetWindow(windowID); w != nil {
+			} else if w := e.ViewportManager.GetViewport(viewportID); w != nil {
 				e.swapBuffer(w, buf)
 				target = w
 			}
 			if target != nil {
 				// Caret at the end of the seeded page, ready to write.
-				target.SetCursorPos(window.Position{Line: buf.GetLineCount() - 1, Rune: 0})
+				target.SetCursorPos(viewport.Position{Line: buf.GetLineCount() - 1, Rune: 0})
 				e.ensureCursorVisible(target)
 			}
 			e.ShowNotification("New page: " + displayPath(e.canonicalDocURL(res.createURL)) + " (save to create the file)")
@@ -531,7 +531,7 @@ func visitKey(res followResolution, target string) string {
 // editor-wide visited set. The memo can go stale when a previously missing
 // page appears on disk mid-session — a cosmetic staleness only; navFollow
 // always resolves fresh.
-func (e *Editor) linkTargetVisited(w *window.Window, target string) bool {
+func (e *Editor) linkTargetVisited(w *viewport.Viewport, target string) bool {
 	cacheKey := e.bufferCanonicalURL(w.Buffer) + "\x00" + target
 	key, ok := e.linkResolveCache[cacheKey]
 	if !ok {
@@ -548,7 +548,7 @@ func (e *Editor) linkTargetVisited(w *window.Window, target string) bool {
 // editing whenever the caret is not inside a link. The move re-arms browse
 // mode on the new span via the main loop's updateBrowseState.
 func (e *Editor) navLink(dir int) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	cur := e.focusedLinkButton(w)
 	if cur == nil {
 		return false
@@ -569,7 +569,7 @@ func (e *Editor) navLink(dir int) bool {
 // cur's own start on the caret line, so the current link is skipped. ok is
 // false only when the buffer somehow has no links (cur guarantees at least
 // one, so cycling always finds a target — possibly cur itself).
-func (e *Editor) siblingLink(w *window.Window, cur *linkSpan, dir int) (int, linkSpan, bool) {
+func (e *Editor) siblingLink(w *viewport.Viewport, cur *linkSpan, dir int) (int, linkSpan, bool) {
 	refLine := w.CursorPos().Line
 	refStart := cur.Start
 	n := w.Buffer.GetLineCount()
@@ -615,8 +615,8 @@ func (e *Editor) siblingLink(w *window.Window, cur *linkSpan, dir int) (int, lin
 // setCursorForNav moves the caret to a link target and brings it on screen,
 // mirroring the bookkeeping a movement command does (ideal column reset, no
 // ghost, viewport follow).
-func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
-	w.SetCursorPos(window.Position{Line: line, Rune: runePos})
+func (e *Editor) setCursorForNav(w *viewport.Viewport, line, runePos int) {
+	w.SetCursorPos(viewport.Position{Line: line, Rune: runePos})
 	w.HasGhostCursor = false
 	w.IdealVisualColumn = 0
 	w.NavIdealSet = false // a non-vertical nav move re-anchors the vertical ideal
@@ -627,8 +627,8 @@ func (e *Editor) setCursorForNav(w *window.Window, line, runePos int) {
 // in a link it just arms; otherwise it moves to the first link at/after the
 // caret (cycling). Fails when the layer is off or the buffer has no links.
 func (e *Editor) navStart() bool {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type == window.PromptWindow || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport || !w.ViewState.LinkBrowsing || w.Buffer == nil {
 		return false
 	}
 	if e.caretLinkSpan(w) != nil {
@@ -650,7 +650,7 @@ func (e *Editor) navStart() bool {
 
 // firstLinkFromCaret finds the first link at/after the caret in document
 // order, wrapping to the top. ok=false when the buffer has no links.
-func (e *Editor) firstLinkFromCaret(w *window.Window) (int, linkSpan, bool) {
+func (e *Editor) firstLinkFromCaret(w *viewport.Viewport) (int, linkSpan, bool) {
 	pos := w.CursorPos()
 	n := w.Buffer.GetLineCount()
 	for L := pos.Line; L < n; L++ {
@@ -676,7 +676,7 @@ func (e *Editor) firstLinkFromCaret(w *window.Window) (int, linkSpan, bool) {
 // (down) / last (up) link as the tiebreak. Acts only when a button is focused
 // at activation.
 func (e *Editor) navVert(dir int) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	// Act only when a button is already focused at activation (like the other
 	// directional nav commands). After the paging fallback lands the caret off
 	// a link, a further nav_up/down does nothing until a link is focused again.
@@ -706,7 +706,7 @@ func (e *Editor) navVert(dir int) bool {
 		}
 		chosen := e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize)
 		// Move without disturbing the vertical ideal (keep the run's target).
-		w.SetCursorPos(window.Position{Line: L, Rune: chosen.Start + 1})
+		w.SetCursorPos(viewport.Position{Line: L, Rune: chosen.Start + 1})
 		w.HasGhostCursor = false
 		e.ensureCursorVisible(w)
 		e.RequestRender()
@@ -732,7 +732,7 @@ func (e *Editor) navVert(dir int) bool {
 // the nearest by distance, with ties broken toward the first link moving down
 // (dir >= 0) and the last moving up. Columns are measured with buttons
 // substituted and bidi applied, so the choice matches what is on screen.
-func (e *Editor) pickLinkByDisplayColumn(w *window.Window, L int, spans []linkSpan, target, dir, tabSize int) linkSpan {
+func (e *Editor) pickLinkByDisplayColumn(w *viewport.Viewport, L int, spans []linkSpan, target, dir, tabSize int) linkSpan {
 	best := spans[0]
 	bestDist := -1
 	for _, s := range spans {
@@ -763,7 +763,7 @@ func (e *Editor) pickLinkByDisplayColumn(w *window.Window, L int, spans []linkSp
 // line docLine, with browse-mode buttons substituted (so a link measures where
 // its button paints) and bidi applied. A doc rune inside a link maps to its
 // button's start cell — the same place the caret parks.
-func (e *Editor) displayVisualColumn(w *window.Window, docLine, docRune, tabSize int) int {
+func (e *Editor) displayVisualColumn(w *viewport.Viewport, docLine, docRune, tabSize int) int {
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
 	text := raw
 	dr := docRune
@@ -786,7 +786,7 @@ func (e *Editor) displayVisualColumn(w *window.Window, docLine, docRune, tabSize
 // visualColumnNoMarks is the bidi-aware visual column of a rune position on an
 // arbitrary (not necessarily caret) line, without showMarks cells — safe to
 // call for any line during vertical link picking.
-func (e *Editor) visualColumnNoMarks(w *window.Window, line string, runePos, tabSize int) int {
+func (e *Editor) visualColumnNoMarks(w *viewport.Viewport, line string, runePos, tabSize int) int {
 	runes := []rune(line)
 	if runePos < 0 {
 		runePos = 0
@@ -810,7 +810,7 @@ func (e *Editor) visualColumnNoMarks(w *window.Window, line string, runePos, tab
 // numbers. Requires a focused button; no wrap. Returns false when there is no
 // link on that side.
 func (e *Editor) navHoriz(dir int) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	cur := e.focusedLinkButton(w)
 	if cur == nil {
 		return false
@@ -879,10 +879,10 @@ func (e *Editor) plainVisualColumn(line string, runePos, tabSize int) int {
 // lineDisplaySpans is the renderer's DisplayProvider: the browse-mode display
 // transform for one line — link buttons, dokuwiki markup marker-hiding and
 // heading restyle — plus whether the line is drawn double-width. nil/false
-// unless the window is in browse mode over a linkable (dokuwiki) buffer.
+// unless the viewport is in browse mode over a linkable (dokuwiki) buffer.
 // Computed fresh per paint; nothing based on line numbers survives the frame.
-func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.DisplaySpan, bool) {
-	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type == window.PromptWindow || w.Buffer == nil {
+func (e *Editor) lineDisplaySpans(w *viewport.Viewport, docLine int) ([]render.DisplaySpan, bool) {
+	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type == viewport.PromptViewport || w.Buffer == nil {
 		return nil, false
 	}
 	cls, typ := w.Class, w.Type.Name()
@@ -896,7 +896,7 @@ func (e *Editor) lineDisplaySpans(w *window.Window, docLine int) ([]render.Displ
 	// Link buttons.
 	ind := e.LoadedConfig.Indicators
 	pos := w.CursorPos()
-	focusedHere := e.WindowManager.GetFocusedWindow() == w && pos.Line == docLine
+	focusedHere := e.ViewportManager.GetFocusedViewport() == w && pos.Line == docLine
 	for _, s := range e.linkSpansOnLine(w, docLine) {
 		focused := focusedHere && s.Start <= pos.Rune && pos.Rune < s.End
 		pressed := e.mousePressed.active && e.mouseOnCaptured && e.mousePressed.winID == w.ID &&
@@ -1023,7 +1023,7 @@ func headingSGR(base string, level int) string {
 // displayCaretLine mirrors the renderer's substitution for the editor's own
 // scroll/visibility math: the caret line as it is actually painted and the
 // caret position mapped onto it. Identity when no transform applies.
-func (e *Editor) displayCaretLine(w *window.Window, line string, runePos int) (string, int) {
+func (e *Editor) displayCaretLine(w *viewport.Viewport, line string, runePos int) (string, int) {
 	spans, dw := e.lineDisplaySpans(w, w.CursorPos().Line)
 	if len(spans) == 0 && !dw {
 		return line, runePos

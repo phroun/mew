@@ -71,7 +71,7 @@ func buildPageSizeSpec(optimal, overlap string, step int) pageSizeSpec {
 // Order: the optimal distance (percentage floored); then cap so at least
 // `overlap` lines of context remain — a percentage overlap is CEILed so a
 // non-zero percentage never rounds away to zero on a short screen (only a
-// literal 0 gives no overlap), and the cap floors at 1 so a window too short
+// literal 0 gives no overlap), and the cap floors at 1 so a viewport too short
 // to honor the overlap still moves one line; then round down to the step
 // multiple, unless that would zero it out; finally floor at 1.
 func (s pageSizeSpec) eval(height int) int {

@@ -11,13 +11,13 @@ package editor
 import (
 	"strings"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// osClipboardText returns the marked block's text from the focused window,
+// osClipboardText returns the marked block's text from the focused viewport,
 // or ok=false (with a warning shown) when there is no buffer or no block.
-func (e *Editor) osClipboardText() (w *window.Window, text string, ok bool) {
-	w = e.WindowManager.GetFocusedWindow()
+func (e *Editor) osClipboardText() (w *viewport.Viewport, text string, ok bool) {
+	w = e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return nil, "", false
@@ -55,7 +55,7 @@ func (e *Editor) osCut() bool {
 		return false
 	}
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
@@ -107,7 +107,7 @@ func (e *Editor) osPaste() bool {
 // identical semantics to buffer_insert_file. Line endings normalize like any
 // paste.
 func (e *Editor) osPasteText(text string) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -148,7 +148,7 @@ func (e *Editor) osPasteText(text string) bool {
 // osSelectAll marks the whole buffer as the block — mew's analog of a system
 // Select All — without moving the caret.
 func (e *Editor) osSelectAll() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}

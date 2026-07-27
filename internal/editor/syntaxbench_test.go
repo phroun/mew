@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // bigGoSource synthesizes n lines of plausible Go so the highlighter has real
@@ -26,7 +26,7 @@ func bigGoSource(n int) string {
 	return b.String()
 }
 
-func newSyntaxBenchEditor(b *testing.B, content string) (*Editor, *window.Window) {
+func newSyntaxBenchEditor(b *testing.B, content string) (*Editor, *viewport.Viewport) {
 	b.Helper()
 	cfg := DefaultConfig()
 	cfg.SkipUserConfig = true
@@ -36,14 +36,14 @@ func newSyntaxBenchEditor(b *testing.B, content string) (*Editor, *window.Window
 	if err != nil {
 		b.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
 	if !e.setSyntax("go") {
 		b.Fatal("setSyntax(go) failed")
 	}
-	return e, e.WindowManager.GetWindow("doc")
+	return e, e.ViewportManager.GetViewport("doc")
 }
 
 // Cost to reach the LAST line from a cold cache — this is what "jump to end of
@@ -87,7 +87,7 @@ func BenchmarkSyntaxEditTopViewBottom(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// Simulate a content edit near the top: touch line 2, then re-reach bottom.
 		w.Buffer.BeginUserCommand("bench")
-		w.SetCursorPos(window.Position{Line: 2, Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 		e.insertText("x")
 		w.Buffer.EndUserCommand()
 		if c := e.ensureSynCache(w.Buffer, last); c == nil {
@@ -106,7 +106,7 @@ func BenchmarkOutlineDeepLine(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.outlineMemoVal = nil // force recompute (as a caret-line change would)
-		w.SetCursorPos(window.Position{Line: last - (i % 3), Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: last - (i % 3), Rune: 0})
 		_ = e.outlineContext(w)
 	}
 }

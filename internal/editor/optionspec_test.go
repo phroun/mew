@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// The CLI known/per-window maps are derived from optionSpecs, so the table is
+// The CLI known/per-viewport maps are derived from optionSpecs, so the table is
 // the single source of truth: every spec appears in cliKnownOptions, and PerWin
-// exactly matches cliPerWindowOptions.
+// exactly matches cliPerViewportOptions.
 func TestOptionSpecsDeriveCliMaps(t *testing.T) {
 	if len(cliKnownOptions) != len(optionSpecs) {
 		t.Fatalf("cliKnownOptions has %d entries, optionSpecs has %d", len(cliKnownOptions), len(optionSpecs))
@@ -17,8 +17,8 @@ func TestOptionSpecsDeriveCliMaps(t *testing.T) {
 		if !cliKnownOptions[key] {
 			t.Errorf("%s missing from cliKnownOptions", s.Name)
 		}
-		if s.PerWin != cliPerWindowOptions[key] {
-			t.Errorf("%s: PerWin=%v but cliPerWindowOptions=%v", s.Name, s.PerWin, cliPerWindowOptions[key])
+		if s.PerWin != cliPerViewportOptions[key] {
+			t.Errorf("%s: PerWin=%v but cliPerViewportOptions=%v", s.Name, s.PerWin, cliPerViewportOptions[key])
 		}
 	}
 }
@@ -56,7 +56,7 @@ func TestOptionSpecCanonicalValuesRoundTrip(t *testing.T) {
 func TestSetOptionRotate(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 
-	// Boolean (per-window): no -> yes -> no. Input alias "false" still accepted.
+	// Boolean (per-viewport): no -> yes -> no. Input alias "false" still accepted.
 	e.setOption(w, "showLineNumbers", "false")
 	if !e.rotateOption(w, "showLineNumbers", +1) {
 		t.Fatal("rotate showLineNumbers next should succeed")
@@ -69,7 +69,7 @@ func TestSetOptionRotate(t *testing.T) {
 		t.Fatalf("showLineNumbers wraps back to no, got %q", v)
 	}
 
-	// Three-value per-window enum: showMarks cycles no -> yes -> all -> no.
+	// Three-value per-viewport enum: showMarks cycles no -> yes -> all -> no.
 	e.setOption(w, "showMarks", "no")
 	for _, want := range []string{"yes", "all", "no"} {
 		if !e.rotateOption(w, "showMarks", +1) {
@@ -123,21 +123,21 @@ func TestSetOptionRotateCommands(t *testing.T) {
 	}
 }
 
-// clear_option drops a per-window override and reverts the window to the
+// clear_option drops a per-viewport override and reverts the viewport to the
 // resolved default (here, the editor default), leaving the option no longer
 // pinned.
 func TestClearOption(t *testing.T) {
 	e, w := newTestEditor(t, "x\n") // showMarks defaults "no"
 
-	// Pin an override on the window.
+	// Pin an override on the viewport.
 	e.setOption(w, "showMarks", "all")
 	if w.ViewState.ShowMarks != "all" || !w.IsOptionOverridden("showmarks") {
-		t.Fatal("set_option should pin showMarks=all on the window")
+		t.Fatal("set_option should pin showMarks=all on the viewport")
 	}
 
 	// Clearing reverts to the editor default and un-pins it.
 	if !e.clearOption(w, "showMarks") {
-		t.Fatal("clear_option should succeed for a per-window option")
+		t.Fatal("clear_option should succeed for a per-viewport option")
 	}
 	if w.ViewState.ShowMarks != "no" {
 		t.Fatalf("clear_option should revert showMarks to the default (no), got %q", w.ViewState.ShowMarks)
@@ -146,7 +146,7 @@ func TestClearOption(t *testing.T) {
 		t.Fatal("clear_option should drop the override flag")
 	}
 
-	// A global option has no per-window layer to clear.
+	// A global option has no per-viewport layer to clear.
 	if e.clearOption(w, "wordWrap") {
 		t.Fatal("clear_option on a global option should fail")
 	}
@@ -163,10 +163,10 @@ func TestClearOptionRevertsToConfiguredDefault(t *testing.T) {
 	if e.Config.ShowMarks != "all" {
 		t.Fatalf("config should set the editor default showMarks=all, got %q", e.Config.ShowMarks)
 	}
-	// Override the window off, then clear: it should return to the config's "all".
+	// Override the viewport off, then clear: it should return to the config's "all".
 	e.setOption(w, "showMarks", "no")
 	if w.ViewState.ShowMarks != "no" {
-		t.Fatalf("override should turn the window's showMarks off, got %q", w.ViewState.ShowMarks)
+		t.Fatalf("override should turn the viewport's showMarks off, got %q", w.ViewState.ShowMarks)
 	}
 	if !e.clearOption(w, "showMarks") {
 		t.Fatal("clear_option should succeed")
@@ -249,7 +249,7 @@ func TestSetOptionPromptNonEnumerable(t *testing.T) {
 	}
 }
 
-// clear_option through the command path targets the active main-buffer window.
+// clear_option through the command path targets the active main-buffer viewport.
 func TestClearOptionCommand(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 	e.setOption(w, "tabSize", "8")
@@ -263,7 +263,7 @@ func TestClearOptionCommand(t *testing.T) {
 }
 
 // rtlCombining defaults ON (marks shown), stored inverted so an untouched
-// window keeps that default; setting it off flips the ViewState sense.
+// viewport keeps that default; setting it off flips the ViewState sense.
 func TestRtlCombiningDefaultsOn(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "") // not a bidi-applying terminal: plain default
 	e, w := newTestEditor(t, "x\n")
@@ -271,7 +271,7 @@ func TestRtlCombiningDefaultsOn(t *testing.T) {
 		t.Fatalf("rtlCombining should default to yes, got %q", v)
 	}
 	if w.ViewState.SuppressRTLCombining {
-		t.Fatal("default window must not suppress RTL combining")
+		t.Fatal("default viewport must not suppress RTL combining")
 	}
 	e.setOption(w, "rtlCombining", "no")
 	if !w.ViewState.SuppressRTLCombining {

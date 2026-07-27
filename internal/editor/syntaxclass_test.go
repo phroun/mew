@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// Syntax colors cascade by the PAINTING window's class/type: a [syntax.dokuwiki]
-// mapping resolves its color name through the window's class, so the same buffer
-// paints the "Table" separators one color in a plain doc window and another in a
-// "quickhelp"-class window.
-func TestSyntaxColorPerWindowClass(t *testing.T) {
+// Syntax colors cascade by the PAINTING viewport's class/type: a [syntax.dokuwiki]
+// mapping resolves its color name through the viewport's class, so the same buffer
+// paints the "Table" separators one color in a plain doc viewport and another in a
+// "quickhelp"-class viewport.
+func TestSyntaxColorPerViewportClass(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SkipUserConfig = true
 	cfg.SkipProfileScript = true
@@ -34,11 +34,11 @@ func TestSyntaxColorPerWindowClass(t *testing.T) {
 	}
 
 	buf := buffer.NewFromString("| a | b |\n") // starts with a Table separator
-	docWin := e.WindowManager.GetWindow(e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, Type: window.DocWindow, Dock: window.DockNone, Buffer: buf, SetFocus: true,
+	docWin := e.ViewportManager.GetViewport(e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, Type: viewport.DocViewport, Dock: viewport.DockNone, Buffer: buf, SetFocus: true,
 	}))
-	qhWin := e.WindowManager.GetWindow(e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, Type: window.ToolWindow, Class: "quickhelp", Dock: window.DockTop, Buffer: buf,
+	qhWin := e.ViewportManager.GetViewport(e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, Type: viewport.ToolViewport, Class: "quickhelp", Dock: viewport.DockTop, Buffer: buf,
 	}))
 
 	docColors := e.syntaxLineColors(docWin, 0)
@@ -48,9 +48,9 @@ func TestSyntaxColorPerWindowClass(t *testing.T) {
 	}
 	// Rune 0 is the leading "|" — the Table separator.
 	if docColors[0] != "\x1b[0;31m" {
-		t.Errorf("doc window separator = %q, want red \\e[0;31m", docColors[0])
+		t.Errorf("doc viewport separator = %q, want red \\e[0;31m", docColors[0])
 	}
 	if qhColors[0] != "\x1b[0;34m" {
-		t.Errorf("quickhelp window separator = %q, want blue \\e[0;34m", qhColors[0])
+		t.Errorf("quickhelp viewport separator = %q, want blue \\e[0;34m", qhColors[0])
 	}
 }

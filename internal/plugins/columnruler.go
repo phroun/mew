@@ -5,13 +5,13 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// ColumnRulerPlugin renders the column ruler line. The ruler is not a window
-// of its own: any window with ViewState.ShowRuler enabled gets a ruler drawn
+// ColumnRulerPlugin renders the column ruler line. The ruler is not a viewport
+// of its own: any viewport with ViewState.ShowRuler enabled gets a ruler drawn
 // on its own top line by the screen renderer, which calls RenderContent with
-// that window.
+// that viewport.
 type ColumnRulerPlugin struct {
 	colors     config.ColorScheme
 	indicators config.Indicators
@@ -65,17 +65,17 @@ func firstRune(s string, fallback rune) rune {
 	return fallback
 }
 
-// RenderContent renders the column ruler line for the given window, aligned
-// to that window's own margins, line-number gutter, and horizontal scroll.
+// RenderContent renders the column ruler line for the given viewport, aligned
+// to that viewport's own margins, line-number gutter, and horizontal scroll.
 // cursorCols are 1-based SCREEN columns to highlight with the rulerCursor
 // color (the caret and its ghost/secondary companions); nil when
 // rulerShowsCursor is off.
-func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cursorCols []int) string {
+func (c *ColumnRulerPlugin) RenderContent(w *viewport.Viewport, screenWidth int, cursorCols []int) string {
 	if w == nil {
 		return strings.Repeat(" ", screenWidth)
 	}
 
-	// Resolve ruler colors through the window's class/type cascade.
+	// Resolve ruler colors through the viewport's class/type cascade.
 	col := func(name string) string {
 		return c.colors.Resolve(w.Class, w.Type.Name(), name)
 	}
@@ -92,7 +92,7 @@ func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cur
 
 	viewOffsetX := w.ViewState.ViewOffsetX
 
-	// Calculate the effective left margin of the window
+	// Calculate the effective left margin of the viewport
 	lineNumberWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumberWidth = w.LineNumWidth

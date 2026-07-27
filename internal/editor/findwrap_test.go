@@ -3,7 +3,7 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Content used by the wrap tests: matches on lines 0, 2 and 4, with the
@@ -16,7 +16,7 @@ const wrapDoc = "foo\nxx\nfoo\nyy\nfoo\n"
 // revolution.
 func TestFindWrapAndLoopForward(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0}) // origin mid-file
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0}) // origin mid-file
 	e.startFind("foo", "", "", true, true, false)
 	if w.CursorPos().Line != 4 {
 		t.Fatalf("first match should be line 4, got %d", w.CursorPos().Line)
@@ -58,7 +58,7 @@ func TestFindWrapAndLoopForward(t *testing.T) {
 // "Search has looped" when it crosses the origin from above.
 func TestFindWrapAndLoopBackward(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.startFind("foo", "b", "", true, true, false)
 	if w.CursorPos().Line != 0 {
 		t.Fatalf("first backwards match should be line 0, got %d", w.CursorPos().Line)
@@ -87,7 +87,7 @@ func TestFindWrapAndLoopBackward(t *testing.T) {
 // announced as such.
 func TestFindWrapAtOriginTop(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.startFind("foo", "", "", true, true, false) // matches line 2
 	e.PawScript.ExecuteAsync("find_next")         // line 4
 	e.PawScript.ExecuteAsync("find_next")         // wraps to line 0 == origin
@@ -103,7 +103,7 @@ func TestFindWrapAtOriginTop(t *testing.T) {
 // loop detection stays anchored to the logical position, not a stale offset.
 func TestFindOriginSlidesWithEdits(t *testing.T) {
 	e, w := newTestEditor(t, wrapDoc)
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.startFind("foo", "", "", true, true, false) // origin at old line 2; caret at line 4
 
 	// Insert two lines at the very top: the origin's logical line is now 4.

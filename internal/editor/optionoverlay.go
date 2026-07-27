@@ -6,27 +6,27 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// windowClass / windowType / windowGrammarName expose a window's three overlay
-// dimensions. A window's syntax is its buffer's syntax, so every option can be
-// resolved for a window through the class/grammar/type cascade.
-func (e *Editor) windowClass(w *window.Window) string {
+// viewportClass / viewportType / viewportGrammarName expose a viewport's three overlay
+// dimensions. A viewport's syntax is its buffer's syntax, so every option can be
+// resolved for a viewport through the class/grammar/type cascade.
+func (e *Editor) viewportClass(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
 	}
 	return w.Class
 }
 
-func (e *Editor) windowType(w *window.Window) string {
+func (e *Editor) viewportType(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
 	}
 	return w.Type.Name()
 }
 
-func (e *Editor) windowGrammarName(w *window.Window) string {
+func (e *Editor) viewportGrammarName(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
 	}
@@ -34,21 +34,21 @@ func (e *Editor) windowGrammarName(w *window.Window) string {
 }
 
 // optSig is the composite overlay signature (class, grammar, type) for a
-// window — used to tell when a window's resolved options need re-deriving.
-func (e *Editor) optSig(w *window.Window) string {
-	return e.windowClass(w) + "\x1f" + e.windowGrammarName(w) + "\x1f" + e.windowType(w)
+// viewport — used to tell when a viewport's resolved options need re-deriving.
+func (e *Editor) optSig(w *viewport.Viewport) string {
+	return e.viewportClass(w) + "\x1f" + e.viewportGrammarName(w) + "\x1f" + e.viewportType(w)
 }
 
 // resolveOpt returns the raw overlaid value for key and whether the cascade
 // supplied it (else the caller's base applies).
-func (e *Editor) resolveOpt(w *window.Window, key string) (string, bool) {
-	return e.LoadedConfig.ResolveOptionOverlay(e.windowClass(w), e.windowGrammarName(w), e.windowType(w), key)
+func (e *Editor) resolveOpt(w *viewport.Viewport, key string) (string, bool) {
+	return e.LoadedConfig.ResolveOptionOverlay(e.viewportClass(w), e.viewportGrammarName(w), e.viewportType(w), key)
 }
 
-// optBool / optInt / optStr / optDir resolve a typed option for a window: the
+// optBool / optInt / optStr / optDir resolve a typed option for a viewport: the
 // class/grammar/type overlay if present, else the given base (the editor-wide
 // value).
-func (e *Editor) optBool(w *window.Window, key string, base bool) bool {
+func (e *Editor) optBool(w *viewport.Viewport, key string, base bool) bool {
 	if raw, ok := e.resolveOpt(w, key); ok {
 		if b, ok := parseBoolOption(raw); ok {
 			return b
@@ -57,7 +57,7 @@ func (e *Editor) optBool(w *window.Window, key string, base bool) bool {
 	return base
 }
 
-func (e *Editor) optInt(w *window.Window, key string, base, min int) int {
+func (e *Editor) optInt(w *viewport.Viewport, key string, base, min int) int {
 	if raw, ok := e.resolveOpt(w, key); ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n >= min {
 			return n
@@ -66,17 +66,17 @@ func (e *Editor) optInt(w *window.Window, key string, base, min int) int {
 	return base
 }
 
-func (e *Editor) optStr(w *window.Window, key, base string) string {
+func (e *Editor) optStr(w *viewport.Viewport, key, base string) string {
 	if raw, ok := e.resolveOpt(w, key); ok {
 		return raw
 	}
 	return base
 }
 
-// optMarks resolves the showMarks enum for a window: the class/grammar/type
+// optMarks resolves the showMarks enum for a viewport: the class/grammar/type
 // overlay if present and valid, else the given base, normalized to no/yes/all
 // (config.ParseShowMarks, which also accepts boolean aliases).
-func (e *Editor) optMarks(w *window.Window, base string) string {
+func (e *Editor) optMarks(w *viewport.Viewport, base string) string {
 	if raw, ok := e.resolveOpt(w, "showmarks"); ok {
 		if v, ok := config.ParseShowMarks(raw); ok {
 			return v
@@ -88,7 +88,7 @@ func (e *Editor) optMarks(w *window.Window, base string) string {
 	return base
 }
 
-func (e *Editor) optDir(w *window.Window, key, base string) string {
+func (e *Editor) optDir(w *viewport.Viewport, key, base string) string {
 	if raw, ok := e.resolveOpt(w, key); ok {
 		switch strings.ToLower(strings.TrimSpace(raw)) {
 		case "ltr":
@@ -118,21 +118,21 @@ func (e *Editor) bufferGrammarName(b *buffer.Buffer) string {
 	return ""
 }
 
-// reconcileGrammarOptions re-derives a main-buffer window's per-window options
+// reconcileGrammarOptions re-derives a main-buffer viewport's per-viewport options
 // from the base [options] overlaid by the class/grammar/type cascade whenever
-// the window's overlay signature changes. Options the user set explicitly
+// the viewport's overlay signature changes. Options the user set explicitly
 // (marked overridden) are left untouched. It runs each frame but only does work
-// on an actual change, so a plain window (empty signature, no overlays) is never
+// on an actual change, so a plain viewport (empty signature, no overlays) is never
 // touched.
-func (e *Editor) reconcileGrammarOptions(w *window.Window) {
-	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
+func (e *Editor) reconcileGrammarOptions(w *viewport.Viewport) {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return
 	}
-	// Per-window syntax first (grammar-agnostic: class + type, never grammar,
-	// which would be circular). Set before anything reads the window's
-	// grammar, so windowGrammarName below reflects it.
-	e.reconcileWindowSyntax(w)
-	class, grammar, bufType := e.windowClass(w), e.windowGrammarName(w), e.windowType(w)
+	// Per-viewport syntax first (grammar-agnostic: class + type, never grammar,
+	// which would be circular). Set before anything reads the viewport's
+	// grammar, so viewportGrammarName below reflects it.
+	e.reconcileViewportSyntax(w)
+	class, grammar, bufType := e.viewportClass(w), e.viewportGrammarName(w), e.viewportType(w)
 	newSig := class + "\x1f" + grammar + "\x1f" + bufType
 	oldSig := w.AppliedOptionSig()
 	if newSig == oldSig {
@@ -141,7 +141,7 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 	w.SetAppliedOptionSig(newSig)
 
 	// Only rewrite ViewState when an overlay applies now, or applied before (so
-	// a removed overlay reverts to base). A plain window — no overlay either way
+	// a removed overlay reverts to base). A plain viewport — no overlay either way
 	// — is left exactly as created.
 	affected := e.LoadedConfig.HasOptionOverlay(class, grammar, bufType)
 	if !affected {
@@ -153,23 +153,23 @@ func (e *Editor) reconcileGrammarOptions(w *window.Window) {
 		return
 	}
 
-	// Re-derive every per-window option the user has not pinned. The resolution
+	// Re-derive every per-viewport option the user has not pinned. The resolution
 	// rule for each lives in applyResolvedOption, shared with clear_option.
-	for _, key := range perWindowOptionKeys {
+	for _, key := range perViewportOptionKeys {
 		if !w.IsOptionOverridden(key) {
 			e.applyResolvedOption(w, key)
 		}
 	}
 }
 
-// reconcileWindowSyntax resolves the window's default grammar from a
+// reconcileViewportSyntax resolves the viewport's default grammar from a
 // grammar-agnostic overlay ([options.<type>] / [<class>.options] syntax=...)
 // and stores it in ViewState.Syntax. On a change it drops the buffer's
 // highlight cache so the new grammar takes effect. "" inherits the global
 // syntax option.
-func (e *Editor) reconcileWindowSyntax(w *window.Window) {
+func (e *Editor) reconcileViewportSyntax(w *viewport.Viewport) {
 	name := ""
-	if v, ok := e.LoadedConfig.ResolveOptionOverlay(e.windowClass(w), "", e.windowType(w), "syntax"); ok {
+	if v, ok := e.LoadedConfig.ResolveOptionOverlay(e.viewportClass(w), "", e.viewportType(w), "syntax"); ok {
 		name = strings.TrimSpace(v)
 		if strings.EqualFold(name, "none") {
 			name = ""
@@ -189,11 +189,11 @@ func (e *Editor) invalidateFocusedOptions() { e.appliedFocusedSig = "\x00" }
 
 // reconcileFocusedOptions applies the focused-scoped options — the modebar
 // templates and location, the macOS-Option key layer, and the active key
-// mapping set — resolved through the focused window's class/grammar/type
-// overlay, whenever that window's signature changes. These are editor-wide in
-// effect (one modebar, one key processor), so they follow the focused window.
+// mapping set — resolved through the focused viewport's class/grammar/type
+// overlay, whenever that viewport's signature changes. These are editor-wide in
+// effect (one modebar, one key processor), so they follow the focused viewport.
 func (e *Editor) reconcileFocusedOptions() {
-	fw := e.WindowManager.GetFocusedWindow()
+	fw := e.ViewportManager.GetFocusedViewport()
 	sig := e.optSig(fw)
 	if sig == e.appliedFocusedSig {
 		return
@@ -210,12 +210,12 @@ func (e *Editor) reconcileFocusedOptions() {
 	e.applyFocusedMappings(fw)
 }
 
-// applyFocusedMappings loads the mapping set the focused window resolves to
+// applyFocusedMappings loads the mapping set the focused viewport resolves to
 // (its "mappings" option over the base, refined by the class/type cascade) into
 // the key processor, skipping the rebuild when the set name is unchanged.
-func (e *Editor) applyFocusedMappings(fw *window.Window) {
+func (e *Editor) applyFocusedMappings(fw *viewport.Viewport) {
 	setName := e.optStr(fw, "mappings", e.Config.MappingsName)
-	class, grammar, bufType := e.windowClass(fw), e.windowGrammarName(fw), e.windowType(fw)
+	class, grammar, bufType := e.viewportClass(fw), e.viewportGrammarName(fw), e.viewportType(fw)
 	// The effective keymap depends on the set name and the class/grammar/type
 	// refinements, so key the skip on all of them.
 	mapSig := setName + "\x1f" + class + "\x1f" + grammar + "\x1f" + bufType

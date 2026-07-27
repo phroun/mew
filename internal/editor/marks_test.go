@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // showMarks inserts a "*" cell at each mark position; the caret and click column
@@ -30,7 +30,7 @@ func TestShowMarksColumnMath(t *testing.T) {
 
 	// showMarks on: visual layout is [a@0][b@1][*@2][c@3][d@4].
 	w.ViewState.ShowMarks = "yes"
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // marks are read from the caret line
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // marks are read from the caret line
 	for _, c := range []struct{ rune_, want int }{
 		{0, 0}, {1, 1}, {2, 3}, {3, 4}, {4, 5},
 	} {
@@ -63,7 +63,7 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 			t.Fatalf("SetMark: %v", err)
 		}
 		w.ViewState.ShowMarks = "yes"
-		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 		for _, c := range []struct{ rune_, want int }{
 			{0, 1}, // tab cell, one past its leading "*"
@@ -91,7 +91,7 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 			t.Fatalf("SetMark: %v", err)
 		}
 		w.ViewState.ShowMarks = "yes"
-		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 		for _, c := range []struct{ rune_, want int }{
 			{0, 0}, // 'a'
@@ -127,7 +127,7 @@ func TestShowMarksTabColumnMath(t *testing.T) {
 			t.Fatalf("want 4 distinct marks, got %v", cols)
 		}
 		w.ViewState.ShowMarks = "yes"
-		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 		for r := 0; r <= len([]rune(line)); r++ {
 			col := e.caretVisualColumn(w, line, r, 4)
@@ -167,7 +167,7 @@ func TestShowMarksEndOfLine(t *testing.T) {
 
 	// The renderer's own cursor placement agrees: caret at EOL sits at visual
 	// col 4 -> screen col 5 (no gutter).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
@@ -191,7 +191,7 @@ func TestShowMarksBidiColumnMath(t *testing.T) {
 	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
 		t.Fatalf("SetMark: %v", err)
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	for _, c := range []struct{ rune_, want int }{
 		{7, 4},                      // ם — left of the "*", unchanged
@@ -245,7 +245,7 @@ func TestShowMarksBidiRendered(t *testing.T) {
 
 	// ל is painted at visual col 7 -> screen col 8 (no gutter); the renderer's
 	// cursor placement must agree with the editor's caret math.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
@@ -281,7 +281,7 @@ func TestShowMarksBidiRoundTrips(t *testing.T) {
 					t.Fatalf("SetMark(%d): %v", p, err)
 				}
 			}
-			w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 			rn := []rune(tc.content)
 			for r := 0; r < len(rn); r++ {
 				col := e.runeToVisualColumn(w, tc.content, r, 4)
@@ -315,7 +315,7 @@ func TestShowMarksAllIncludesInternal(t *testing.T) {
 
 	// Through the view mode: "all" reserves two "*" cells before end of line,
 	// "yes" only one.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.ViewState.ShowMarks = "all"
 	if got := e.caretVisualColumn(w, "abcd", 4, 4); got != 6 {
 		t.Fatalf("all-mode EOL caret: %d, want 6 (both marks reserved)", got)

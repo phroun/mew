@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Layer 2: the spec's worked examples, context namespace "a:b".
@@ -109,8 +109,8 @@ func TestSchemeGate(t *testing.T) {
 }
 
 // wikiTreeEditor builds a real on-disk wiki tree, opens the page at relPath
-// (content given) in a focused main window, and returns the pieces.
-func wikiTreeEditor(t *testing.T, files map[string]string, openRel string) (*Editor, *window.Window, string) {
+// (content given) in a focused main viewport, and returns the pieces.
+func wikiTreeEditor(t *testing.T, files map[string]string, openRel string) (*Editor, *viewport.Viewport, string) {
 	t.Helper()
 	root := t.TempDir()
 	for rel, content := range files {
@@ -128,11 +128,11 @@ func wikiTreeEditor(t *testing.T, files map[string]string, openRel string) (*Edi
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "wiki", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
-	return e, e.WindowManager.GetWindow("wiki"), root
+	return e, e.ViewportManager.GetViewport("wiki"), root
 }
 
 // resolveFollow matches ids against the real tree: relative and dot-climb
@@ -172,9 +172,9 @@ func TestResolveFollowMatching(t *testing.T) {
 	}
 }
 
-// A window's WikiRoot confines resolution: absolute ids resolve from the
+// A viewport's WikiRoot confines resolution: absolute ids resolve from the
 // root (never by ancestor discovery above it) and relative climbs clamp at
-// it — a rooted window's links cannot back out of the root.
+// it — a rooted viewport's links cannot back out of the root.
 func TestWikiRootConfinement(t *testing.T) {
 	files := map[string]string{
 		"wiki/notes/a/b/c.txt":  "[[..:..:..:escape]] [[top:page]]\n",
@@ -194,16 +194,16 @@ func TestWikiRootConfinement(t *testing.T) {
 		t.Fatalf("clamped climb = %q (%q), want %q", res.url, res.message, want)
 	}
 	if res.root != w.WikiRoot {
-		t.Fatal("an in-wiki resolution must carry the window's root")
+		t.Fatal("an in-wiki resolution must carry the viewport's root")
 	}
 
 	// An absolute id resolves from the root ONLY: top/page.txt exists above
-	// the root, so within the rooted window it is not found.
+	// the root, so within the rooted viewport it is not found.
 	if res := e.resolveFollow(w, "top:page"); res.url != "" {
 		t.Fatalf("absolute id above the root must not resolve; got %q", res.url)
 	}
 
-	// The same reference resolves fine in an unrooted window (ancestor
+	// The same reference resolves fine in an unrooted viewport (ancestor
 	// discovery finds it).
 	w.WikiRoot = ""
 	if res := e.resolveFollow(w, "top:page"); res.url == "" {
@@ -213,9 +213,9 @@ func TestWikiRootConfinement(t *testing.T) {
 
 // A full-scheme reference is the one way out of a rooted wiki: it resolves
 // as a NEW-WINDOW destination with no root, and navFollow surfaces a fresh
-// window rather than swapping in place — the source window keeps its buffer
+// viewport rather than swapping in place — the source viewport keeps its buffer
 // and its root untouched.
-func TestSchemeRefOpensNewWindow(t *testing.T) {
+func TestSchemeRefOpensNewViewport(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside.txt")
 	if err := os.WriteFile(outside, []byte("outside doc\n"), 0o644); err != nil {
@@ -237,37 +237,37 @@ func TestSchemeRefOpensNewWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "wiki", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
-	w := e.WindowManager.GetWindow("wiki")
+	w := e.ViewportManager.GetViewport("wiki")
 	w.WikiRoot = e.canonicalDocURL(wikiDir)
 
 	res := e.resolveFollow(w, link)
-	if res.url == "" || !res.newWindow || res.root != "" {
-		t.Fatalf("a scheme ref must be a new-window, rootless destination; got %+v", res)
+	if res.url == "" || !res.newViewport || res.root != "" {
+		t.Fatalf("a scheme ref must be a new-viewport, rootless destination; got %+v", res)
 	}
 
 	srcBuf := w.Buffer
-	before := len(e.contentWindows())                 // notifications spawn work windows; count main ones
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the [[...]] span
+	before := len(e.contentViewports())                 // notifications spawn work viewports; count main ones
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the [[...]] span
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate")
 	}
-	if len(e.contentWindows()) != before+1 {
-		t.Fatal("a scheme follow must create a new main window")
+	if len(e.contentViewports()) != before+1 {
+		t.Fatal("a scheme follow must create a new main viewport")
 	}
 	if w.Buffer != srcBuf || w.WikiRoot == "" {
-		t.Fatal("the source window must keep its buffer and its root")
+		t.Fatal("the source viewport must keep its buffer and its root")
 	}
-	fw := e.WindowManager.GetFocusedWindow()
+	fw := e.ViewportManager.GetFocusedViewport()
 	if fw == w || fw.WikiRoot != "" {
-		t.Fatalf("focus should move to a fresh rootless window; got root %q", fw.WikiRoot)
+		t.Fatalf("focus should move to a fresh rootless viewport; got root %q", fw.WikiRoot)
 	}
 	if fw.Buffer.GetFilename() != outside {
-		t.Fatalf("new window should show the destination; got %q", fw.Buffer.GetFilename())
+		t.Fatalf("new viewport should show the destination; got %q", fw.Buffer.GetFilename())
 	}
 }
 
@@ -333,11 +333,11 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	if buf.GetFilename() != filepath.Join(mewDir, "docs", "start.txt") {
 		t.Fatalf("local mew buffer should carry the real path; got %q", buf.GetFilename())
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "helpdoc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "helpdoc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
-	w := e.WindowManager.GetWindow("helpdoc")
+	w := e.ViewportManager.GetViewport("helpdoc")
 	w.WikiRoot = rootURL
 
 	// In-wiki absolute id: resolves under the root.
@@ -352,16 +352,16 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatalf("climb must clamp at the wiki root; got %q", res.url)
 	}
 
-	// The full-scheme reference IS the way out: a new-window, rootless
+	// The full-scheme reference IS the way out: a new-viewport, rootless
 	// destination (canonicalized to its real-file identity).
 	res = e.resolveFollow(w, "mew:///editor.conf")
-	if res.url != e.canonicalDocURL(filepath.Join(mewDir, "editor.conf")) || !res.newWindow || res.root != "" {
+	if res.url != e.canonicalDocURL(filepath.Join(mewDir, "editor.conf")) || !res.newViewport || res.root != "" {
 		t.Fatalf("mew:///editor.conf = %+v", res)
 	}
 
-	// In-place follow keeps the window's root (root is window identity, not
+	// In-place follow keeps the viewport's root (root is viewport identity, not
 	// visit state), and history restores don't touch it either.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3}) // inside [[sample:widget]]
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // inside [[sample:widget]]
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("in-wiki follow should navigate")
@@ -370,13 +370,13 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatalf("follow landed on %q", e.bufferCanonicalURL(w.Buffer))
 	}
 	if w.WikiRoot != rootURL {
-		t.Fatal("the window's root must survive an in-wiki swap")
+		t.Fatal("the viewport's root must survive an in-wiki swap")
 	}
 	if !e.navHistory(-1) {
 		t.Fatal("history should return")
 	}
 	if w.WikiRoot != rootURL {
-		t.Fatal("the window's root must survive a history restore")
+		t.Fatal("the viewport's root must survive a history restore")
 	}
 }
 
@@ -416,19 +416,19 @@ func mewHomeEditor(t *testing.T, configText string, files map[string]string) *Ed
 
 // The hardcoded help wiki: "help:/..." resolves within mew:///help with the
 // dokuwiki format, ".txt" pages, and a "start" start page; following it
-// surfaces a NEW window rooted at the wiki (in browse mode), unless the
-// current window already carries that root.
+// surfaces a NEW viewport rooted at the wiki (in browse mode), unless the
+// current viewport already carries that root.
 func TestHelpWikiScheme(t *testing.T) {
 	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
 		"help/start.txt":         "[[sample:widget]]\n",
 		"help/sample/widget.txt": "widget page\n",
 	})
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("see [[help:/start]] ok\n"), SetFocus: true,
 		LinkBrowsing: true,
 	})
-	w := e.WindowManager.GetWindow("doc")
+	w := e.ViewportManager.GetViewport("doc")
 
 	// Canonical identities (in local mode the mew:/// spellings translate to
 	// the real ~/.mew files — one identity either way).
@@ -442,7 +442,7 @@ func TestHelpWikiScheme(t *testing.T) {
 	for _, ref := range []string{"help:/start", "help:/", "help://start"} {
 		res := e.resolveFollow(w, ref)
 		if res.url != startURL || res.root != helpRoot ||
-			res.wikiName != "help" || !res.newWindow {
+			res.wikiName != "help" || !res.newViewport {
 			t.Fatalf("resolveFollow(%q) = %+v", ref, res)
 		}
 	}
@@ -455,36 +455,36 @@ func TestHelpWikiScheme(t *testing.T) {
 		t.Fatalf("missing help page should not resolve; got %+v", res)
 	}
 
-	// Following surfaces a fresh window rooted at the wiki, in browse mode;
-	// the source window keeps its blank root.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6}) // inside [[help:/start]]
+	// Following surfaces a fresh viewport rooted at the wiki, in browse mode;
+	// the source viewport keeps its blank root.
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6}) // inside [[help:/start]]
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate")
 	}
-	hw := e.WindowManager.GetFocusedWindow()
+	hw := e.ViewportManager.GetFocusedViewport()
 	if hw == w || hw.WikiRoot != helpRoot || !hw.BrowseActive {
-		t.Fatalf("help follow should focus a rooted, browsing window; got root %q", hw.WikiRoot)
+		t.Fatalf("help follow should focus a rooted, browsing viewport; got root %q", hw.WikiRoot)
 	}
 	if hw.WikiName != "help" {
-		t.Fatalf("the help window must know its registry name; got %q", hw.WikiName)
+		t.Fatalf("the help viewport must know its registry name; got %q", hw.WikiName)
 	}
 	if e.bufferCanonicalURL(hw.Buffer) != startURL {
-		t.Fatalf("help window shows %q", e.bufferCanonicalURL(hw.Buffer))
+		t.Fatalf("help viewport shows %q", e.bufferCanonicalURL(hw.Buffer))
 	}
 	if w.WikiRoot != "" || w.WikiName != "" {
-		t.Fatal("the source window's root and wiki name must stay blank")
+		t.Fatal("the source viewport's root and wiki name must stay blank")
 	}
 
-	// In-wiki resolutions from the rooted window carry the full identity.
+	// In-wiki resolutions from the rooted viewport carry the full identity.
 	if res := e.resolveFollow(hw, "sample:widget"); res.wikiName != "help" || res.root != helpRoot {
 		t.Fatalf("in-wiki resolution should carry the wiki identity; got %+v", res)
 	}
 
-	// From INSIDE the help window, a help:/ reference is an in-wiki jump:
-	// same root, no new window.
-	if res := e.resolveFollow(hw, "help:/sample:widget"); res.newWindow {
-		t.Fatal("a help:/ ref from the help window must swap in place")
+	// From INSIDE the help viewport, a help:/ reference is an in-wiki jump:
+	// same root, no new viewport.
+	if res := e.resolveFollow(hw, "help:/sample:widget"); res.newViewport {
+		t.Fatal("a help:/ ref from the help viewport must swap in place")
 	}
 }
 
@@ -506,7 +506,7 @@ func TestHelpWikiGrammarFromRegistry(t *testing.T) {
 }
 
 // navFollow navigates: the focused button's target loads (or reuses) the
-// destination buffer and swaps it into the window; nav_history_prior returns
+// destination buffer and swaps it into the viewport; nav_history_prior returns
 // to the source with the caret intact; re-following reuses the SAME buffer.
 func TestNavFollowSwapsAndReuses(t *testing.T) {
 	files := map[string]string{
@@ -517,7 +517,7 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 	src := w.Buffer
 
 	// Focus the button: caret inside the [[other]] span (runes 3..12).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate the focused button")
@@ -572,7 +572,7 @@ func TestCreatePagePrompt(t *testing.T) {
 
 	// Follow the missing page: the prompt appears with the title on the top
 	// row, the question on the input row, and y/n/blank in the buffer.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate")
@@ -612,7 +612,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	}
 
 	// Decline (bare Enter = default No): nothing changes.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 34}) // inside [[another]]
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 34}) // inside [[another]]
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should activate")
@@ -633,7 +633,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	defer delete(wikiRegistry, "rotest")
 	w.WikiRoot = e.canonicalDocURL(filepath.Join(root, "w"))
 	w.WikiName = "rotest"
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("navFollow should still activate")
@@ -647,7 +647,7 @@ func TestCreatePagePrompt(t *testing.T) {
 }
 
 // nav_clear forgets every visited link editor-wide; nav_history_clear drops
-// the window's back/forward history, releasing stacked bindings EXCEPT one
+// the viewport's back/forward history, releasing stacked bindings EXCEPT one
 // holding the last reference to a buffer, which is kept so the buffer stays
 // reachable.
 func TestNavClearAndHistoryClear(t *testing.T) {
@@ -660,7 +660,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	src := w.Buffer
 
 	// Visit a link, then clear the visited set.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("follow should navigate")
@@ -684,14 +684,14 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 
 	// State now: fwd = [other] (its only reference). A new departure would
 	// invalidate the forward trail — the graveyard catches the orphan. Open
-	// third.txt in ANOTHER window so its bindings are never last references.
+	// third.txt in ANOTHER viewport so its bindings are never last references.
 	thirdPath := filepath.Join(root, "w", "third.txt")
 	thirdBuf, err := buffer.NewFromBytes([]byte(files["w/third.txt"]), thirdPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "elsewhere", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "elsewhere", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: thirdBuf, SetFocus: false, LinkBrowsing: true,
 	})
 	e.swapBuffer(w, thirdBuf) // invalidates fwd=[other]: other is BURIED, not released
@@ -709,7 +709,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	if e.findOpenBuffer(otherURL) != otherBuf {
 		t.Fatal("the buried buffer must be findable by canonical URL")
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
 	if !e.navFollow() {
 		t.Fatal("re-follow should navigate")
@@ -738,7 +738,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	}
 
 	// A history whose entries are all referenced elsewhere clears fully with
-	// nothing new buried: stack third (shown in the other window) then clear.
+	// nothing new buried: stack third (shown in the other viewport) then clear.
 	e.swapBuffer(w, thirdBuf)
 	if !w.NavHistoryPrior() {
 		t.Fatal("prior should restore src once more")
@@ -758,8 +758,8 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 }
 
 // buffer_close with a non-empty graveyard resurrects the most recent burial
-// into the SAME window instead of closing it; and a buffer becoming actively
-// bound anywhere (window creation, swap) leaves every graveyard — it is no
+// into the SAME viewport instead of closing it; and a buffer becoming actively
+// bound anywhere (viewport creation, swap) leaves every graveyard — it is no
 // longer at risk of orphaning.
 func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	files := map[string]string{
@@ -769,7 +769,7 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
 
 	buryOther := func() *buffer.Buffer {
-		w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 		w.BrowseActive = true
 		if !e.navFollow() {
 			t.Fatal("follow should navigate")
@@ -791,17 +791,17 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	}
 
 	// Resurrection: closing the active buffer surfaces the burial; the
-	// window survives with its identity and history.
+	// viewport survives with its identity and history.
 	other := buryOther()
-	mains := len(e.contentWindows())
+	mains := len(e.contentViewports())
 	if !e.closeCurrentBuffer() {
 		t.Fatal("buffer_close should act")
 	}
-	if e.WindowManager.GetWindow("wiki") != w {
-		t.Fatal("the window must survive a resurrecting close")
+	if e.ViewportManager.GetViewport("wiki") != w {
+		t.Fatal("the viewport must survive a resurrecting close")
 	}
-	if len(e.contentWindows()) != mains {
-		t.Fatal("no window should close during resurrection")
+	if len(e.contentViewports()) != mains {
+		t.Fatal("no viewport should close during resurrection")
 	}
 	if w.Buffer != other {
 		t.Fatalf("the most recent burial should surface; got %q", w.Buffer.GetFilename())
@@ -810,33 +810,33 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 		t.Fatal("the resurrected binding must leave the graveyard")
 	}
 
-	// With the graveyard empty, a second close takes the normal window-close
-	// path (the harness "doc" window remains, so no exit).
+	// With the graveyard empty, a second close takes the normal viewport-close
+	// path (the harness "doc" viewport remains, so no exit).
 	if !e.closeCurrentBuffer() {
 		t.Fatal("second close should act")
 	}
-	if e.WindowManager.GetWindow("wiki") != nil {
-		t.Fatal("an empty-graveyard close removes the window")
+	if e.ViewportManager.GetViewport("wiki") != nil {
+		t.Fatal("an empty-graveyard close removes the viewport")
 	}
 
-	// Unbury on active bind: rebuild a burial in a fresh window, then bind
-	// the buried buffer in a NEW window — the graveyard entry dissolves.
+	// Unbury on active bind: rebuild a burial in a fresh viewport, then bind
+	// the buried buffer in a NEW viewport — the graveyard entry dissolves.
 	buf2, err := buffer.NewFromBytes([]byte(files["w/page.txt"]), filepath.Join(root, "w", "page.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "wiki", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf2, SetFocus: true, LinkBrowsing: true,
 	})
-	w = e.WindowManager.GetWindow("wiki")
+	w = e.ViewportManager.GetViewport("wiki")
 	other2 := buryOther()
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "viewer", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "viewer", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: other2, SetFocus: false, LinkBrowsing: true,
 	})
 	if len(w.GraveyardBuffers()) != 0 {
-		t.Fatal("binding the buried buffer in another window must unbury it")
+		t.Fatal("binding the buried buffer in another viewport must unbury it")
 	}
 }
 
@@ -886,8 +886,8 @@ func TestCreateBufferURLVirtualMew(t *testing.T) {
 // (the page id is extensionless internally).
 func TestOpenFileWikiScheme(t *testing.T) {
 	startURL := ""
-	newFocused := func(e *Editor) *window.Window {
-		return e.WindowManager.GetFocusedWindow()
+	newFocused := func(e *Editor) *viewport.Viewport {
+		return e.ViewportManager.GetFocusedViewport()
 	}
 
 	for _, ref := range []string{"help:/start", "help:/start.txt", "help:/"} {
@@ -908,7 +908,7 @@ func TestOpenFileWikiScheme(t *testing.T) {
 			t.Fatalf("openFile(%q): page content not loaded: %q", ref, w.Buffer.GetContent())
 		}
 		if w.WikiName != "help" || w.WikiRoot != e.canonicalDocURL("mew:///help") {
-			t.Fatalf("openFile(%q): window not rooted in the wiki (name %q root %q)", ref, w.WikiName, w.WikiRoot)
+			t.Fatalf("openFile(%q): viewport not rooted in the wiki (name %q root %q)", ref, w.WikiName, w.WikiRoot)
 		}
 	}
 }
@@ -922,9 +922,9 @@ func TestOpenFileWikiSchemeMissingCreates(t *testing.T) {
 	if !e.openFile("help:/brandnew") {
 		t.Fatal("openFile on a missing writable page should succeed (create)")
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w.WikiName != "help" {
-		t.Fatalf("created page window should be rooted in the wiki, got %q", w.WikiName)
+		t.Fatalf("created page viewport should be rooted in the wiki, got %q", w.WikiName)
 	}
 	// The buffer must not be named for the literal "help:/brandnew".
 	if fn := w.Buffer.GetFilename(); strings.Contains(fn, "help:/") {
@@ -932,8 +932,8 @@ func TestOpenFileWikiSchemeMissingCreates(t *testing.T) {
 	}
 }
 
-// A wiki-rooted window displays its page as the scheme form (help:/start),
-// hiding the .txt and the underlying file path; non-wiki windows and buffers
+// A wiki-rooted viewport displays its page as the scheme form (help:/start),
+// hiding the .txt and the underlying file path; non-wiki viewports and buffers
 // outside the root defer to the ordinary filename.
 func TestWikiDisplayName(t *testing.T) {
 	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", map[string]string{
@@ -941,23 +941,23 @@ func TestWikiDisplayName(t *testing.T) {
 		"help/sample/widget.txt": "widget\n",
 	})
 	e.openFile("help:/start")
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if got := e.wikiDisplayName(w); got != "help:/start" {
 		t.Fatalf("wikiDisplayName(start) = %q, want help:/start", got)
 	}
 
 	e.openFile("help:/sample/widget")
-	w2 := e.WindowManager.GetFocusedWindow()
+	w2 := e.ViewportManager.GetFocusedViewport()
 	if got := e.wikiDisplayName(w2); got != "help:/sample/widget" {
 		t.Fatalf("wikiDisplayName(widget) = %q, want help:/sample/widget", got)
 	}
 
-	// A non-wiki window has no scheme display name.
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "plain", Type: window.DocWindow, Dock: window.DockNone,
+	// A non-wiki viewport has no scheme display name.
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "plain", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("hi\n"), SetFocus: true,
 	})
-	if got := e.wikiDisplayName(e.WindowManager.GetWindow("plain")); got != "" {
-		t.Fatalf("a non-wiki window should have no wiki display name, got %q", got)
+	if got := e.wikiDisplayName(e.ViewportManager.GetViewport("plain")); got != "" {
+		t.Fatalf("a non-wiki viewport should have no wiki display name, got %q", got)
 	}
 }

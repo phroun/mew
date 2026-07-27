@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
@@ -21,15 +21,15 @@ const (
 	repl      = "\uFFFD" // replacement character
 )
 
-func testRenderer() (*ScreenRenderer, *window.Window) {
-	wm := window.NewManager()
-	lm := window.NewLayoutManager(wm)
+func testRenderer() (*ScreenRenderer, *viewport.Viewport) {
+	wm := viewport.NewManager()
+	lm := viewport.NewLayoutManager(wm)
 	sr := NewScreenRenderer(wm, lm)
-	w := &window.Window{Type: window.DocWindow}
+	w := &viewport.Viewport{Type: viewport.DocViewport}
 	return sr, w
 }
 
-func widthOf(sr *ScreenRenderer, w *window.Window, s string) int {
+func widthOf(sr *ScreenRenderer, w *viewport.Viewport, s string) int {
 	total := 0
 	for _, r := range s {
 		total += sr.getRuneVisualWidth(r, total, w)
@@ -136,7 +136,7 @@ func TestScrolledOffMarkDropped(t *testing.T) {
 	}
 }
 
-// A message-bar line (notification/window title bar) that is longer than the
+// A message-bar line (notification/viewport title bar) that is longer than the
 // bar is wide must be ellipsized to exactly the width — never emitted at full
 // length, which would wrap onto and blank the row below in the terminal.
 func TestMessageBarEllipsizesOverlongContent(t *testing.T) {
@@ -264,12 +264,12 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 // plain text, control characters, or wide glyphs.
 func TestLineHasZeroWidth(t *testing.T) {
 	cases := map[string]bool{
-		"abc":               false,
-		"日本語":               false,
-		"ctrl\x01char":      false, // control -> ^X (two cells), not zero width
-		"e" + combAcute:     true,
-		"a" + hebrewDot:     true,
-		"x" + zwj + "y":     true,
+		"abc":           false,
+		"日本語":           false,
+		"ctrl\x01char":  false, // control -> ^X (two cells), not zero width
+		"e" + combAcute: true,
+		"a" + hebrewDot: true,
+		"x" + zwj + "y": true,
 	}
 	for s, want := range cases {
 		if got := lineHasZeroWidth(s); got != want {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Browse mode hides dokuwiki inline markers and keeps the styled text; the
@@ -12,7 +12,7 @@ import (
 func TestBrowseMarkupMarkersHidden(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"a **bold** b //it// c __un__ d\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -36,7 +36,7 @@ func TestBrowseNestedMarkupMarkersHidden(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // use the embedded grammar, not a dev ~/.mew shadow
 	e, w, out := renderedEditorWithConfig(t,
 		"x //it **bo** more// y\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -60,7 +60,7 @@ func TestBrowseHeadingLevels(t *testing.T) {
 	// L1 ======, L3 ====, L5 == : bold on 1&3, underline on 1&3 (not 5).
 	e, w, out := renderedEditorWithConfig(t,
 		"====== Big ======\n==== Mid ====\n== Small ==\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0}) // keep caret off the styled lines
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0}) // keep caret off the styled lines
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -89,7 +89,7 @@ func TestBrowseHeadingLevels(t *testing.T) {
 func TestBrowseHeadingDoubleWidth(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"====== Big ======\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -103,7 +103,7 @@ func TestBrowseHeadingDoubleWidth(t *testing.T) {
 
 	// A level-5 heading is not double-width.
 	e2, w2, out2 := renderedEditorWithConfig(t, "== Small ==\n", "[options]\nsyntax=dokuwiki\n")
-	w2.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w2.BrowseActive = true
 	out2.Reset()
 	e2.performRender()
@@ -118,7 +118,7 @@ func TestBrowseHeadingGutter(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"====== Big ======\nplain line two\n",
 		"[options]\nsyntax=dokuwiki\nshowLineNumbers=yes\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -170,7 +170,7 @@ func TestDoubleWidthCaretColumnAligns(t *testing.T) {
 
 	// Caret at the first content cell of the double-width heading. base is in
 	// cell space (half gutter); the ruler column is its physical (2x) position.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	base := 1 + w.MarginInner + w.LineNumWidth/2
 	want := 2*base - 1
 	if cols := e.Renderer.CursorColumns(w); !contains(cols, want) {
@@ -183,7 +183,7 @@ func TestDoubleWidthCaretColumnAligns(t *testing.T) {
 	}
 
 	// A normal caret line is placed with the full gutter and no 2x mapping.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 3})
 	normWant := 1 + w.MarginInner + w.LineNumWidth + 3
 	if cols := e.Renderer.CursorColumns(w); !contains(cols, normWant) {
 		t.Fatalf("normal caret column = %v, want %d", cols, normWant)
@@ -201,7 +201,7 @@ func TestDoubleWidthHorizontalScroll(t *testing.T) {
 	e.performRender() // establish ContentWidth
 	// caret near the end of the (60-char) heading content
 	lineLen := len([]rune(strings.TrimRight(head, "\n")))
-	w.SetCursorPos(window.Position{Line: 0, Rune: lineLen - 9})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: lineLen - 9})
 	e.ensureCursorVisibleHorizontal(w)
 	if w.ViewState.ViewOffsetX == 0 {
 		t.Fatal("a double-width heading wider than half the screen should scroll")
@@ -213,7 +213,7 @@ func TestDoubleWidthHorizontalScroll(t *testing.T) {
 	w2.BrowseActive = true
 	out2.Reset()
 	e2.performRender()
-	w2.SetCursorPos(window.Position{Line: 0, Rune: 52})
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 52})
 	e2.ensureCursorVisibleHorizontal(w2)
 	if w2.ViewState.ViewOffsetX != 0 {
 		t.Fatalf("a normal 60-col line should fit without scrolling; off=%d", w2.ViewState.ViewOffsetX)

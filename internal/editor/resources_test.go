@@ -163,9 +163,9 @@ func TestOpenHelpRootFallbackBothFSConfigs(t *testing.T) {
 			if !e.openFile("help:/") {
 				t.Fatal(`openFile("help:/") returned false`)
 			}
-			w := e.WindowManager.GetFocusedWindow()
+			w := e.ViewportManager.GetFocusedViewport()
 			if w == nil || w.Buffer == nil {
-				t.Fatal("no focused help window")
+				t.Fatal("no focused help viewport")
 			}
 			if w.Buffer.GetLineCount() < 2 || !strings.Contains(w.Buffer.GetLine(0), "mew Help") {
 				t.Fatalf("help:/ came up blank/wrong: lines=%d line0=%q",

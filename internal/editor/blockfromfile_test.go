@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // blockFromFileWith drives the real command flow: mark a block, place the
@@ -33,7 +33,7 @@ func TestBlockFromFileReplacesAndRemarks(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 1, 0)
 	w.Buffer.SetMark("_block_end", 1, 3) // block is "bbb"
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 
 	if !runBlockFromFile(t, e, src) {
 		t.Fatal("block_from_file did not prompt with caret inside the block")
@@ -63,7 +63,7 @@ func TestBlockFromFileMultilineUndoesAsOne(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 1, 0)
 	w.Buffer.SetMark("_block_end", 1, 3)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0}) // on the very edge
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0}) // on the very edge
 
 	if !runBlockFromFile(t, e, src) {
 		t.Fatal("block_from_file did not prompt with caret on the block edge")
@@ -90,7 +90,7 @@ func TestBlockFromFileRefusesCaretOutsideBlock(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 1, 0)
 	w.Buffer.SetMark("_block_end", 1, 3)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // outside the block
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // outside the block
 
 	if runBlockFromFile(t, e, src) {
 		t.Fatal("block_from_file prompted with the caret outside the block")
@@ -103,7 +103,7 @@ func TestBlockFromFileRefusesCaretOutsideBlock(t *testing.T) {
 // With no block marked at all, the command refuses.
 func TestBlockFromFileRefusesNoBlock(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 	if runBlockFromFile(t, e, "/nonexistent") {
 		t.Fatal("block_from_file prompted with no block marked")
 	}

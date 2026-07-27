@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Mouse input end to end, through the pseudo-key stream the key layer emits:
@@ -24,7 +24,7 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 		"w/other.txt": "other content\n",
 	}
 	e, w, root := wikiTreeEditor(t, files, "w/page.txt")
-	e.performRender() // establish window geometry (ContentX/Y, widths)
+	e.performRender() // establish viewport geometry (ContentX/Y, widths)
 	if !w.BrowseActive {
 		t.Fatal("the wiki page should have auto-armed browse mode")
 	}
@@ -110,7 +110,7 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 	}
 }
 
-// The scroll wheel scrolls the window under the pointer.
+// The scroll wheel scrolls the viewport under the pointer.
 func TestMouseScroll(t *testing.T) {
 	lines := strings.Repeat("line\n", 60)
 	e, w, _ := wikiTreeEditor(t, map[string]string{"w/long.txt": lines}, "w/long.txt")
@@ -148,11 +148,11 @@ func TestMouseKeyPassthrough(t *testing.T) {
 			t.Fatalf("handleMouseKey(%q) = %v, want %v", k, got, want)
 		}
 	}
-	_ = window.Position{}
+	_ = viewport.Position{}
 }
 
-// Modal safety: only the FOCUSED window processes mouse actions. With a
-// prompt up, clicks in the main window do nothing at all — no focus steal,
+// Modal safety: only the FOCUSED viewport processes mouse actions. With a
+// prompt up, clicks in the main viewport do nothing at all — no focus steal,
 // no caret move, no follow.
 func TestMouseModalSafety(t *testing.T) {
 	files := map[string]string{
@@ -173,20 +173,20 @@ func TestMouseModalSafety(t *testing.T) {
 		t.Fatal("prompt should be focused")
 	}
 
-	// Click on the wiki window's button cell: ignored outright.
+	// Click on the wiki viewport's button cell: ignored outright.
 	row := w.ContentY + 1
 	col := w.ContentX + 1 + 5
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
 	e.handleMouseKey("MouseLeftPress")
 	e.handleMouseKey("MouseLeftRelease")
-	if e.WindowManager.GetFocusedWindow() != pw {
+	if e.ViewportManager.GetFocusedViewport() != pw {
 		t.Fatal("a click outside the prompt must not steal focus")
 	}
 	if w.Buffer != src || w.CursorPos() != caretBefore {
-		t.Fatal("a click outside the focused window must not act")
+		t.Fatal("a click outside the focused viewport must not act")
 	}
 	if e.mousePressed.active {
-		t.Fatal("no pressed state may arm in an unfocused window")
+		t.Fatal("no pressed state may arm in an unfocused viewport")
 	}
 	answerPrompt(t, e, "")
 	if !answered {
@@ -308,10 +308,10 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 		t.Fatalf("timed out waiting for %s", what)
 	}
 
-	// Wait for the initial frame and window geometry.
-	var w *window.Window
+	// Wait for the initial frame and viewport geometry.
+	var w *viewport.Viewport
 	waitFor("initial render", func() bool {
-		w = e.WindowManager.GetFocusedWindow()
+		w = e.ViewportManager.GetFocusedViewport()
 		return len(out.String()) > 0 && w != nil && w.ContentWidth > 0
 	})
 
@@ -348,11 +348,11 @@ func TestRunLoopRendersOnMouseAlone(t *testing.T) {
 	}
 }
 
-// After a follow spawns a NEW window, the old main window keeps stale
-// geometry covering the same rows (only the current main window is laid
-// out). Hit testing must resolve to the FOCUSED window, so the mouse works
-// in the freshly spawned window immediately.
-func TestMouseWorksInSpawnedWindow(t *testing.T) {
+// After a follow spawns a NEW viewport, the old main viewport keeps stale
+// geometry covering the same rows (only the current main viewport is laid
+// out). Hit testing must resolve to the FOCUSED viewport, so the mouse works
+// in the freshly spawned viewport immediately.
+func TestMouseWorksInSpawnedViewport(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside.txt")
 	if err := os.WriteFile(outside, []byte("click me [[here]] ok\nand [[gone]]\n"), 0o644); err != nil {
@@ -373,36 +373,36 @@ func TestMouseWorksInSpawnedWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "wiki", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "wiki", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true, LinkBrowsing: true,
 	})
-	w := e.WindowManager.GetWindow("wiki")
-	e.performRender() // old window gets real geometry
+	w := e.ViewportManager.GetViewport("wiki")
+	e.performRender() // old viewport gets real geometry
 
-	// Follow the scheme link: a new focused window spawns.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	// Follow the scheme link: a new focused viewport spawns.
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	w.BrowseActive = true
 	if !e.navFollow() {
-		t.Fatal("follow should spawn the new window")
+		t.Fatal("follow should spawn the new viewport")
 	}
-	nw := e.WindowManager.GetFocusedWindow()
+	nw := e.ViewportManager.GetFocusedViewport()
 	if nw == w {
-		t.Fatal("a scheme follow should focus a fresh window")
+		t.Fatal("a scheme follow should focus a fresh viewport")
 	}
-	e.performRender() // new window laid out; old geometry now STALE but overlapping
+	e.performRender() // new viewport laid out; old geometry now STALE but overlapping
 
-	// A click in the new window must hit the new (focused) window, even
-	// though the old window's stale geometry covers the same rows.
+	// A click in the new viewport must hit the new (focused) viewport, even
+	// though the old viewport's stale geometry covers the same rows.
 	row := nw.ContentY + 1
 	col := nw.ContentX + 1 + 2 // the 'i' of "click"
-	if hit := e.windowAtRow(row); hit != nw {
-		t.Fatalf("hit testing must prefer the focused window; got %v", hit.ID)
+	if hit := e.viewportAtRow(row); hit != nw {
+		t.Fatalf("hit testing must prefer the focused viewport; got %v", hit.ID)
 	}
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
 	e.handleMouseKey("MouseLeftPress")
 	if got := nw.CursorPos(); got.Line != 0 || got.Rune != 2 {
-		t.Fatalf("click in the spawned window should set its caret; got %+v", got)
+		t.Fatalf("click in the spawned viewport should set its caret; got %+v", got)
 	}
 	e.handleMouseKey("MouseLeftRelease")
 }

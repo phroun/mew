@@ -10,7 +10,7 @@ import (
 // findModebarNavButton scans the rendered modebar row for the screen column of
 // a nav button (ModebarNavBack / ModebarNavFwd), or ok=false.
 func (e *Editor) findModebarNavButton(want int) (x, y int, ok bool) {
-	mw := e.WindowManager.GetWindow(e.Modebar.WindowID())
+	mw := e.ViewportManager.GetViewport(e.Modebar.ViewportID())
 	if mw == nil {
 		return 0, 0, false
 	}
@@ -24,7 +24,7 @@ func (e *Editor) findModebarNavButton(want int) (x, y int, ok bool) {
 }
 
 // A press-then-release on the modebar's [<] button runs nav_history_prior on
-// the focused window (returning to the prior buffer), like a proper button:
+// the focused viewport (returning to the prior buffer), like a proper button:
 // the release must land back on the button to activate.
 func TestModebarNavButtonActivates(t *testing.T) {
 	e, doc, _ := renderedEditorWithConfig(t, "A\n", "[options]\n")
@@ -34,8 +34,8 @@ func TestModebarNavButtonActivates(t *testing.T) {
 		t.Fatalf("setup: want back depth 1, got %d", prior)
 	}
 
-	e.createPluginWindows() // the modebar window (normally made by run())
-	e.performRender()       // records the modebar's row + button column ranges
+	e.createPluginViewports() // the modebar viewport (normally made by run())
+	e.performRender()         // records the modebar's row + button column ranges
 
 	// Only a back button should exist (no forward history yet).
 	if _, _, ok := e.findModebarNavButton(2 /*Fwd*/); ok {
@@ -77,11 +77,11 @@ func TestModebarNavButtonActivates(t *testing.T) {
 	}
 }
 
-// Clicking a modebar nav button does not steal focus from the document window.
+// Clicking a modebar nav button does not steal focus from the document viewport.
 func TestModebarNavKeepsFocus(t *testing.T) {
 	e, doc, _ := renderedEditorWithConfig(t, "A\n", "[options]\n")
 	doc.SwapBuffer(buffer.NewFromString("B\n"), func(*buffer.Buffer) bool { return false })
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.performRender()
 	bx, by, ok := e.findModebarNavButton(1)
 	if !ok {
@@ -89,7 +89,7 @@ func TestModebarNavKeepsFocus(t *testing.T) {
 	}
 	e.modebarNavPressAt(bx, by)
 	e.modebarNavRelease(bx, by)
-	if f := e.WindowManager.GetFocusedWindow(); f != doc {
-		t.Fatalf("focus should stay on the document window, got %v", f)
+	if f := e.ViewportManager.GetFocusedViewport(); f != doc {
+		t.Fatalf("focus should stay on the document viewport, got %v", f)
 	}
 }

@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/phroun/argwild"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// newBareEditor builds a headless editor with NO pre-created document window,
-// so windows created by a launch walk are the only main buffers. HOME is a
+// newBareEditor builds a headless editor with NO pre-created document viewport,
+// so viewports created by a launch walk are the only main buffers. HOME is a
 // temp dir (opening files arms backups/locks there); backups settle at
 // cleanup so background writes don't race TempDir teardown.
 func newBareEditor(t *testing.T) *Editor {
@@ -53,7 +53,7 @@ func writeTemp(t *testing.T, name, content string) string {
 	return p
 }
 
-// A per-window option before a file applies to it and persists; changing it
+// A per-viewport option before a file applies to it and persists; changing it
 // before a later file changes only that file.
 func TestLaunchPerFileOptions(t *testing.T) {
 	e := newBareEditor(t)
@@ -64,11 +64,11 @@ func TestLaunchPerFileOptions(t *testing.T) {
 	if err := launch(t, e, "--showLineNumbers-", a, "--showLineNumbers", b); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	mb := e.contentWindows()
+	mb := e.contentViewports()
 	if len(mb) != 2 {
 		t.Fatalf("want 2 buffers, got %d", len(mb))
 	}
-	var wa, wb *window.Window
+	var wa, wb *viewport.Viewport
 	for _, w := range mb {
 		switch w.Buffer.GetFilename() {
 		case a:
@@ -87,14 +87,14 @@ func TestLaunchPerFileOptions(t *testing.T) {
 		t.Fatalf("b should have line numbers on, got %q", v)
 	}
 	// The first file wins focus.
-	if f := e.WindowManager.GetFocusedWindow(); f != wa {
+	if f := e.ViewportManager.GetFocusedViewport(); f != wa {
 		t.Fatal("first file should be focused")
 	}
 }
 
 // A wiki-scheme operand on the command line (mew help:/start) resolves to the
-// real page and opens it in the window Type/dock the wiki declares — a
-// top-docked ToolWindow for help — with the actual page content, NOT a blank
+// real page and opens it in the viewport Type/dock the wiki declares — a
+// top-docked ToolViewport for help — with the actual page content, NOT a blank
 // buffer under the literal "help:/start" name. An empty main editing area
 // still opens beneath the readout, and the help readout keeps focus.
 func TestLaunchWikiScheme(t *testing.T) {
@@ -113,22 +113,22 @@ func TestLaunchWikiScheme(t *testing.T) {
 		t.Fatalf("applyLaunch: %v", err)
 	}
 
-	// The help page opened in a top-docked ToolWindow rooted at the wiki.
+	// The help page opened in a top-docked ToolViewport rooted at the wiki.
 	startURL := e.canonicalDocURL("mew:///help/start.txt")
-	var help *window.Window
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+	var help *viewport.Viewport
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.WikiName == "help" {
 			help = w
 		}
 	}
 	if help == nil {
-		t.Fatal("no top-docked help window opened")
+		t.Fatal("no top-docked help viewport opened")
 	}
-	if help.Type != window.ToolWindow {
-		t.Fatalf("help window Type = %v, want ToolWindow", help.Type)
+	if help.Type != viewport.ToolViewport {
+		t.Fatalf("help viewport Type = %v, want ToolViewport", help.Type)
 	}
 	if u := e.bufferCanonicalURL(help.Buffer); u != startURL {
-		t.Fatalf("help window shows %q, want the real page %q (blank fallback?)", u, startURL)
+		t.Fatalf("help viewport shows %q, want the real page %q (blank fallback?)", u, startURL)
 	}
 	if n := help.Buffer.GetLineCount(); n < 2 {
 		t.Fatalf("help page came up blank: %d lines", n)
@@ -136,14 +136,14 @@ func TestLaunchWikiScheme(t *testing.T) {
 	if !help.BrowseActive {
 		t.Fatal("help page should open in browse mode")
 	}
-	if f := e.WindowManager.GetFocusedWindow(); f != help {
+	if f := e.ViewportManager.GetFocusedViewport(); f != help {
 		t.Fatal("the launched help readout should hold focus")
 	}
 
 	// An empty main editing area still exists beneath the readout.
 	mainArea := false
-	for _, w := range e.WindowManager.AllWindows() {
-		if w.Type == window.DocWindow && w.Dock == window.DockNone {
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Type == viewport.DocViewport && w.Dock == viewport.DockNone {
 			mainArea = true
 		}
 	}
@@ -161,8 +161,8 @@ func TestLaunchGotoLine(t *testing.T) {
 	if err := launch(t, e, "+3", a, b); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	var wa, wb *window.Window
-	for _, w := range e.contentWindows() {
+	var wa, wb *viewport.Viewport
+	for _, w := range e.contentViewports() {
 		if w.Buffer.GetFilename() == a {
 			wa = w
 		} else if w.Buffer.GetFilename() == b {
@@ -225,7 +225,7 @@ func TestLaunchEnableDisableGrammar(t *testing.T) {
 		if err := launch(t, e, tc.arg, a); err != nil {
 			t.Fatalf("%s: %v", tc.arg, err)
 		}
-		w := e.contentWindows()[0]
+		w := e.contentViewports()[0]
 		if v, _ := e.getOption(w, "showinvisibles"); v != tc.want {
 			t.Fatalf("%s: showInvisibles=%q want %q", tc.arg, v, tc.want)
 		}
@@ -239,7 +239,7 @@ func TestLaunchValuedOption(t *testing.T) {
 	if err := launch(t, e, "--tabSize=8", a); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	w := e.contentWindows()[0]
+	w := e.contentViewports()[0]
 	if v, _ := e.getOption(w, "tabsize"); v != "8" {
 		t.Fatalf("tabSize should be 8, got %q", v)
 	}
@@ -251,18 +251,18 @@ func TestLaunchNoFiles(t *testing.T) {
 	if err := launch(t, e); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	if n := len(e.contentWindows()); n != 1 {
+	if n := len(e.contentViewports()); n != 1 {
 		t.Fatalf("no-file launch should open one empty buffer, got %d", n)
 	}
 }
 
-// cliPerWindowOptions must be a subset of cliKnownOptions, and every known
+// cliPerViewportOptions must be a subset of cliKnownOptions, and every known
 // option name must be one set_option actually accepts (not silently unknown).
 // A representative valid value guards against drift from setOption.
 func TestCliOptionAlignment(t *testing.T) {
-	for name := range cliPerWindowOptions {
+	for name := range cliPerViewportOptions {
 		if !cliKnownOptions[name] {
-			t.Fatalf("per-window option %q is not in cliKnownOptions", name)
+			t.Fatalf("per-viewport option %q is not in cliKnownOptions", name)
 		}
 	}
 	valid := map[string]string{

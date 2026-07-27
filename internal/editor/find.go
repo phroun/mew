@@ -7,7 +7,7 @@ import (
 	"unicode"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // farCol is a column sentinel meaning "the far end of the line"; search
@@ -62,25 +62,25 @@ func parseFindOptions(s string) (findOptions, error) {
 	return o, nil
 }
 
-// resolveTargetMain returns the main-buffer window a command should operate
+// resolveTargetMain returns the main-buffer viewport a command should operate
 // on: the focused main buffer, the focused prompt's spawning main, else the
 // last main buffer.
-func (e *Editor) resolveTargetMain() *window.Window {
-	w := e.WindowManager.GetFocusedWindow()
+func (e *Editor) resolveTargetMain() *viewport.Viewport {
+	w := e.ViewportManager.GetFocusedViewport()
 	if w != nil {
-		if w.Type != window.PromptWindow {
+		if w.Type != viewport.PromptViewport {
 			return w
 		}
-		if w.ParentWindow != nil {
-			return w.ParentWindow
+		if w.ParentViewport != nil {
+			return w.ParentViewport
 		}
 	}
-	return e.WindowManager.GetLastMainWindow()
+	return e.ViewportManager.GetLastMainViewport()
 }
 
 // matchInfo describes one located match.
 type matchInfo struct {
-	w      *window.Window
+	w      *viewport.Viewport
 	line   int
 	col    int      // rune column of the match start
 	length int      // rune length of the matched text
@@ -367,7 +367,7 @@ func searchBufferDir(buf *buffer.Buffer, m matcher, fromLine, fromCol int, backw
 // through the other main buffers (and, when wrapping, back around to the
 // origin); otherwise it stays in startW, restarting from the far end when
 // allowWrap is set.
-func (e *Editor) findFrom(m matcher, opts findOptions, startW *window.Window, line, col int, allowWrap bool) (matchInfo, bool) {
+func (e *Editor) findFrom(m matcher, opts findOptions, startW *viewport.Viewport, line, col int, allowWrap bool) (matchInfo, bool) {
 	if !opts.allBuffers {
 		if startW == nil || startW.Buffer == nil {
 			return matchInfo{}, false
@@ -388,7 +388,7 @@ func (e *Editor) findFrom(m matcher, opts findOptions, startW *window.Window, li
 	}
 
 	// All-buffers mode: walk the ring of main buffers starting at startW.
-	mains := e.contentWindows()
+	mains := e.contentViewports()
 	if len(mains) == 0 {
 		return matchInfo{}, false
 	}
@@ -440,13 +440,13 @@ func farStart(buf *buffer.Buffer, backwards bool) (int, int) {
 }
 
 // moveToMatch places the cursor on a match, switching focus first when the
-// match lives in another window (all-buffers searches).
-func (e *Editor) moveToMatch(w *window.Window, line, col int) {
-	if fw := e.WindowManager.GetFocusedWindow(); fw == nil || fw.ID != w.ID {
-		e.WindowManager.SetFocus(w.ID)
-		e.announceFocusedWindow()
+// match lives in another viewport (all-buffers searches).
+func (e *Editor) moveToMatch(w *viewport.Viewport, line, col int) {
+	if fw := e.ViewportManager.GetFocusedViewport(); fw == nil || fw.ID != w.ID {
+		e.ViewportManager.SetFocus(w.ID)
+		e.announceFocusedViewport()
 	}
-	w.SetCursorPos(window.Position{Line: line, Rune: col})
+	w.SetCursorPos(viewport.Position{Line: line, Rune: col})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
@@ -455,7 +455,7 @@ func (e *Editor) moveToMatch(w *window.Window, line, col int) {
 // cursor position (before it, for backwards searches). A single-occurrence
 // step wraps when allowWrap and the searchWrap option permit; occurrence
 // counting (count > 1) never wraps.
-func (e *Editor) findStep(state window.FindState, count int, allowWrap bool) bool {
+func (e *Editor) findStep(state viewport.FindState, count int, allowWrap bool) bool {
 	opts, err := parseFindOptions(state.Options)
 	if err != nil {
 		e.ShowWarning(err.Error())
@@ -559,14 +559,14 @@ func wrapMessage(backwards bool) string {
 // currentFindState returns the find state find_next should continue from:
 // the editor-wide state when an all-buffers ("a") find is active, else the
 // target main buffer's own state.
-func (e *Editor) currentFindState() window.FindState {
+func (e *Editor) currentFindState() viewport.FindState {
 	if e.globalFindSet {
 		return e.globalFind
 	}
 	if w := e.resolveTargetMain(); w != nil {
 		return w.Find
 	}
-	return window.FindState{}
+	return viewport.FindState{}
 }
 
 // startFind runs the find command. Missing pieces are gathered through
@@ -651,11 +651,11 @@ func (e *Editor) continueFind(term, options, replacement string, haveReplacement
 	e.commitFind(term, options, replacement, replaceMode)
 }
 
-// commitFind stores the find state — on the target main buffer window, or
+// commitFind stores the find state — on the target main buffer viewport, or
 // editor-wide for an all-buffers search — and starts the search or the
 // interactive replace loop.
 func (e *Editor) commitFind(term, options, replacement string, replaceMode bool) {
-	state := window.FindState{Term: term, Options: options, Replacement: replacement, Replace: replaceMode}
+	state := viewport.FindState{Term: term, Options: options, Replacement: replacement, Replace: replaceMode}
 	opts, _ := parseFindOptions(options)
 	tw := e.resolveTargetMain()
 	searchRegex := e.optBool(tw, "searchregex", e.Config.SearchRegex)
@@ -734,8 +734,8 @@ func (e *Editor) commitFind(term, options, replacement string, replaceMode bool)
 // (_match_begin/_match_end), which the renderer shows as the selection in
 // place of the user's block while the prompt is open; the block marks
 // themselves are untouched and repaint when the loop ends.
-func (e *Editor) runReplaceLoop(state window.FindState, opts findOptions, m matcher, w *window.Window, line, col int, replaced int) {
-	finish := func(fw *window.Window) {
+func (e *Editor) runReplaceLoop(state viewport.FindState, opts findOptions, m matcher, w *viewport.Viewport, line, col int, replaced int) {
+	finish := func(fw *viewport.Viewport) {
 		clearMatchHighlight(fw)
 		if opts.verbose {
 			e.appendVerboseLog(fmt.Sprintf("replace done: %d replaced", replaced))
@@ -770,7 +770,7 @@ func (e *Editor) runReplaceLoop(state window.FindState, opts findOptions, m matc
 		}
 		switch strings.ToLower(strings.TrimSpace(answer)) {
 		case "", "y", "yes":
-			if e.windowEditLocked(mi.w) {
+			if e.viewportEditLocked(mi.w) {
 				finish(mi.w)
 				return
 			}
@@ -795,8 +795,8 @@ func (e *Editor) runReplaceLoop(state window.FindState, opts findOptions, m matc
 // replaceRest replaces the current match and every further match in the
 // scan direction without asking, honoring the count limit, and returns the
 // total replaced. Single-buffer runs collapse into one undo revision.
-func (e *Editor) replaceRest(state window.FindState, opts findOptions, m matcher, mi matchInfo, replaced int) int {
-	if e.windowEditLocked(mi.w) {
+func (e *Editor) replaceRest(state viewport.FindState, opts findOptions, m matcher, mi matchInfo, replaced int) int {
+	if e.viewportEditLocked(mi.w) {
 		return replaced
 	}
 	if !opts.allBuffers && mi.w.Buffer != nil {
@@ -822,7 +822,7 @@ func (e *Editor) replaceRest(state window.FindState, opts findOptions, m matcher
 
 // applyReplacement splices the expanded replacement over the match and
 // returns the next allowed match-start position in the scan direction.
-func (e *Editor) applyReplacement(state window.FindState, mi matchInfo) (int, int) {
+func (e *Editor) applyReplacement(state viewport.FindState, mi matchInfo) (int, int) {
 	opts, _ := parseFindOptions(state.Options)
 	expanded := expandReplacement(state.Replacement, mi.text, mi.groups)
 
@@ -842,7 +842,7 @@ func (e *Editor) applyReplacement(state window.FindState, mi matchInfo) (int, in
 	// of collapsing the whole line's marks. Cursor-relative via a fresh seek.
 	mi.w.Buffer.ReplaceText(mi.line, col, end-col, expanded)
 
-	// Record the replacement in the window's cursor ring. A replace-all makes
+	// Record the replacement in the viewport's cursor ring. A replace-all makes
 	// many calls, but TrackEdit collapses them into at most one ring entry (only
 	// the first, if the caret had moved, pushes the prior edit point). Not a
 	// kill: breaks any delete accumulation.
@@ -945,7 +945,7 @@ func afterSkipPos(line, col int, backwards bool) (int, int) {
 
 // highlightMatch marks a found match with the transient match marks so the
 // renderer shows it highlighted while the replace prompt is open.
-func highlightMatch(w *window.Window, line, col, termLen int) {
+func highlightMatch(w *viewport.Viewport, line, col, termLen int) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -956,7 +956,7 @@ func highlightMatch(w *window.Window, line, col, termLen int) {
 
 // clearMatchHighlight removes the replace loop's match highlight, letting
 // the user's own block selection show again.
-func clearMatchHighlight(w *window.Window) {
+func clearMatchHighlight(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil {
 		return
 	}

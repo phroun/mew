@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 func helpTestEditor(t *testing.T, files map[string]string) *Editor {
 	t.Helper()
 	e := mewHomeEditor(t, "[options]\nsyntax=dokuwiki\n", files)
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("start\n"), SetFocus: true,
 		LinkBrowsing: e.Config.LinkBrowsing,
 	})
@@ -20,45 +20,45 @@ func helpTestEditor(t *testing.T, files map[string]string) *Editor {
 }
 
 // buffer_open_file with an argument opens THAT file directly — an ORDINARY,
-// UNtagged help window (stackable), NOT the docked help slot that help_toggle
+// UNtagged help viewport (stackable), NOT the docked help slot that help_toggle
 // owns.
 func TestBufferOpenFileHelpIsUntagged(t *testing.T) {
 	e := helpTestEditor(t, nil)
 	e.executeCommand(`buffer_open_file "help:/"`)
 
-	if e.helpWindow() != nil {
-		t.Fatal("buffer_open_file must not create a tagged help-slot window")
+	if e.helpViewport() != nil {
+		t.Fatal("buffer_open_file must not create a tagged help-slot viewport")
 	}
 	found := false
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.WikiName == "help" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal(`buffer_open_file "help:/" should still open a help wiki window`)
+		t.Fatal(`buffer_open_file "help:/" should still open a help wiki viewport`)
 	}
 }
 
 // help_toggle with no argument toggles the Quick Help location in the docked
-// help window: it opens the window at Quick Help, and toggling again (still at
+// help viewport: it opens the viewport at Quick Help, and toggling again (still at
 // Quick Help) closes it.
 func TestHelpToggleQuickHelp(t *testing.T) {
 	e := helpTestEditor(t, nil)
-	if e.helpWindow() != nil {
-		t.Fatal("no help window at start")
+	if e.helpViewport() != nil {
+		t.Fatal("no help viewport at start")
 	}
 	e.executeCommand("help_toggle")
-	if !e.quickHelpWindowOpen() || e.helpWindow() == nil {
-		t.Fatal("help_toggle should open the docked help window at Quick Help")
+	if !e.quickHelpViewportOpen() || e.helpViewport() == nil {
+		t.Fatal("help_toggle should open the docked help viewport at Quick Help")
 	}
 	e.executeCommand("help_toggle")
-	if e.helpWindow() != nil {
-		t.Fatal("help_toggle at Quick Help should close the docked help window")
+	if e.helpViewport() != nil {
+		t.Fatal("help_toggle at Quick Help should close the docked help viewport")
 	}
 }
 
-// help_toggle <page> navigates the SAME docked window to that help page,
+// help_toggle <page> navigates the SAME docked viewport to that help page,
 // growing its nav history so BACK returns to where the reader came from; the
 // checkmark turns off (a page is not Quick Help).
 func TestHelpToggleNavigatesWithHistory(t *testing.T) {
@@ -68,47 +68,47 @@ func TestHelpToggleNavigatesWithHistory(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== Manual ===\nbindings\n"})
 
 	e.executeCommand("help_toggle") // Quick Help
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil {
-		t.Fatal("Quick Help should open the docked window")
+		t.Fatal("Quick Help should open the docked viewport")
 	}
 	quickURL := e.bufferCanonicalURL(hw.Buffer)
 
 	e.executeCommand(`help_toggle "manual"`) // navigate to the page
-	if e.helpWindow() != hw {
-		t.Fatal("help_toggle should navigate the SAME docked window")
+	if e.helpViewport() != hw {
+		t.Fatal("help_toggle should navigate the SAME docked viewport")
 	}
-	if e.quickHelpWindowOpen() {
+	if e.quickHelpViewportOpen() {
 		t.Fatal("a wiki page is not Quick Help (checkmark off)")
 	}
 	if e.bufferCanonicalURL(hw.Buffer) == quickURL {
-		t.Fatal("the window should have navigated off Quick Help")
+		t.Fatal("the viewport should have navigated off Quick Help")
 	}
 
-	// Back returns to Quick Help via the window's nav history.
+	// Back returns to Quick Help via the viewport's nav history.
 	if !hw.NavHistoryPrior() {
-		t.Fatal("the help window should carry back history after navigating")
+		t.Fatal("the help viewport should carry back history after navigating")
 	}
 	if e.bufferCanonicalURL(hw.Buffer) != quickURL {
 		t.Fatal("back should return to the Quick Help location")
 	}
 }
 
-// help_toggle <page> when the window is already showing that page closes it.
+// help_toggle <page> when the viewport is already showing that page closes it.
 func TestHelpToggleClosesAtCurrentLocation(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/keys.txt": "=== Keys ===\n"})
 	e.executeCommand(`help_toggle "keys"`)
-	if e.helpWindow() == nil {
+	if e.helpViewport() == nil {
 		t.Fatal(`help_toggle "keys" should open the page`)
 	}
 	e.executeCommand(`help_toggle "keys"`)
-	if e.helpWindow() != nil {
-		t.Fatal("help_toggle at the current location should close the docked window")
+	if e.helpViewport() != nil {
+		t.Fatal("help_toggle at the current location should close the docked viewport")
 	}
 }
 
 // helpURL resolves a "help:/..." ref to the canonical buffer URL it opens, so
-// tests can assert what a help window is showing.
+// tests can assert what a help viewport is showing.
 func helpURL(t *testing.T, e *Editor, ref string) string {
 	t.Helper()
 	res := e.resolveFollow(nil, ref)
@@ -133,8 +133,8 @@ func TestQuickHelpFollowsTopic(t *testing.T) {
 	// Root context -> topic "keys". Open Quick Help; it shows help:/keys.
 	e.ActiveSequence = ""
 	e.executeCommand("help_toggle")
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should be open in quick mode")
 	}
 	if got := e.bufferCanonicalURL(hw.Buffer); got != helpURL(t, e, "help:/keys") {
@@ -142,12 +142,12 @@ func TestQuickHelpFollowsTopic(t *testing.T) {
 	}
 
 	// Context deepens to "^B" -> topic "keys_buffer". A follow re-navigates the
-	// SAME window in place, WITHOUT adding back history.
+	// SAME viewport in place, WITHOUT adding back history.
 	backBefore, _ := hw.NavHistoryDepths()
 	e.ActiveSequence = "^B"
 	e.updateQuickHelp()
-	if e.helpWindow() != hw {
-		t.Fatal("Quick Help should follow the topic in the SAME window")
+	if e.helpViewport() != hw {
+		t.Fatal("Quick Help should follow the topic in the SAME viewport")
 	}
 	if got := e.bufferCanonicalURL(hw.Buffer); got != helpURL(t, e, "help:/keys_buffer") {
 		t.Fatalf("Quick Help should have followed to help:/keys_buffer, showing %q", got)
@@ -155,20 +155,20 @@ func TestQuickHelpFollowsTopic(t *testing.T) {
 	if backAfter, _ := hw.NavHistoryDepths(); backAfter != backBefore {
 		t.Fatalf("following the topic must not grow back history: %d -> %d", backBefore, backAfter)
 	}
-	if !e.quickHelpWindowOpen() {
+	if !e.quickHelpViewportOpen() {
 		t.Fatal("still Quick Help after following the topic")
 	}
 }
 
 // Quick Help is ephemeral: as the key context walks from topic to topic, each
-// departing page is RELEASED, never buried. So the docked window's graveyard
+// departing page is RELEASED, never buried. So the docked viewport's graveyard
 // stays empty however many contexts are visited — nothing accumulates to
-// resurface (as a would-be unsaved document) when the window later closes.
+// resurface (as a would-be unsaved document) when the viewport later closes.
 func TestQuickHelpDoesNotAccumulateGraveyard(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{
 		"help/keys.txt":        "=== Root ===\nroot\n",
 		"help/keys_buffer.txt": "=== Buffer ===\nbuffer\n",
-		"help/keys_win.txt":    "=== Window ===\nwindow\n",
+		"help/keys_win.txt":    "=== Viewport ===\nviewport\n",
 	})
 	e.KeyProcessor.MapKey("help", "keys")
 	e.KeyProcessor.MapKey("^B help", "keys_buffer")
@@ -176,8 +176,8 @@ func TestQuickHelpDoesNotAccumulateGraveyard(t *testing.T) {
 
 	e.ActiveSequence = ""
 	e.executeCommand("help_toggle")
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should be open in quick mode")
 	}
 
@@ -206,11 +206,11 @@ func TestMainHelpIgnoresQuickHelpTopic(t *testing.T) {
 	e.ActiveSequence = "^B" // context topic is "keys_buffer"
 
 	e.executeCommand(`help_toggle "help:/"`) // Using mew -> the index
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil {
-		t.Fatal("Using mew should open the docked help window")
+		t.Fatal("Using mew should open the docked help viewport")
 	}
-	if e.quickHelpWindowOpen() {
+	if e.quickHelpViewportOpen() {
 		t.Fatal("the main help is not Quick Help (checkmark off), regardless of topic")
 	}
 	startURL := helpURL(t, e, "help:/start")
@@ -226,31 +226,31 @@ func TestMainHelpIgnoresQuickHelpTopic(t *testing.T) {
 }
 
 // Following a link (browsing) out of Quick Help leaves quick mode: the topic
-// stops steering the window thereafter.
+// stops steering the viewport thereafter.
 func TestBrowsingLeavesQuickMode(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{
 		"help/keys.txt": "=== Root Keys ===\nroot\n",
 	})
 	e.KeyProcessor.MapKey("help", "keys")
 	e.executeCommand("help_toggle")
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should be open")
 	}
 
-	// Simulate a browse away: swap the window to another buffer, as link-follow
+	// Simulate a browse away: swap the viewport to another buffer, as link-follow
 	// does. Quick mode must then read as off, and the topic must not drag it.
 	e.swapBuffer(hw, buffer.NewFromString("elsewhere\n"))
-	if e.quickHelpWindowOpen() {
+	if e.quickHelpViewportOpen() {
 		t.Fatal("browsing away should leave quick mode")
 	}
 	e.updateQuickHelp()
 	if got := e.bufferCanonicalURL(hw.Buffer); got == helpURL(t, e, "help:/keys") {
-		t.Fatal("after leaving quick mode the topic must not re-navigate the window")
+		t.Fatal("after leaving quick mode the topic must not re-navigate the viewport")
 	}
 }
 
-// Quick Help drops the top message bar and fits its window height to the loaded
+// Quick Help drops the top message bar and fits its viewport height to the loaded
 // file; a regular help page restores the "Help" title bar and standard height.
 // The same docked slot flips chrome as its role changes.
 func TestQuickHelpChromeAndFit(t *testing.T) {
@@ -261,8 +261,8 @@ func TestQuickHelpChromeAndFit(t *testing.T) {
 	e.KeyProcessor.MapKey("help", "keys")
 
 	e.executeCommand("help_toggle") // Quick Help -> help:/keys
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should open")
 	}
 	if hw.MessageTopCenter != "" {
@@ -277,8 +277,8 @@ func TestQuickHelpChromeAndFit(t *testing.T) {
 
 	// Navigate to a regular help page: the title bar and standard height return.
 	e.executeCommand(`help_toggle "manual"`)
-	if e.helpWindow() != hw {
-		t.Fatal("should stay the same docked window")
+	if e.helpViewport() != hw {
+		t.Fatal("should stay the same docked viewport")
 	}
 	if hw.MessageTopCenter != "Help" {
 		t.Errorf("a help page must show the Help title bar, got %q", hw.MessageTopCenter)
@@ -294,14 +294,14 @@ func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/keys.txt": "a\nb\n"})
 	e.KeyProcessor.MapKey("help", "keys")
 	e.executeCommand("help_toggle")
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil || hw.MessageTopCenter != "" {
 		t.Fatal("Quick Help should open chromeless")
 	}
 
 	e.swapBuffer(hw, buffer.NewFromString("elsewhere\n")) // as link-follow does
 	e.syncQuickHelpMode()                                 // reconcile (key loop / render does this)
-	if e.quickHelpWindowOpen() {
+	if e.quickHelpViewportOpen() {
 		t.Fatal("browsing away should leave quick mode")
 	}
 	if hw.MessageTopCenter != "Help" || hw.MaxHeight != 20 {
@@ -313,34 +313,34 @@ func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
 // help_toggle is a peek: it opens the help slot without stealing focus.
 func TestHelpToggleDoesNotFocus(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
-	doc := e.WindowManager.GetFocusedWindow()
+	doc := e.ViewportManager.GetFocusedViewport()
 	if doc == nil {
-		t.Fatal("a doc window should be focused at start")
+		t.Fatal("a doc viewport should be focused at start")
 	}
 	e.executeCommand(`help_toggle "manual"`)
-	if e.helpWindow() == nil {
+	if e.helpViewport() == nil {
 		t.Fatal("help_toggle should open the page")
 	}
-	if e.WindowManager.GetFocusedWindow() != doc {
+	if e.ViewportManager.GetFocusedViewport() != doc {
 		t.Fatal("help_toggle must not steal focus")
 	}
 }
 
-// help_open focuses the help window and never closes it (a second invocation at
+// help_open focuses the help viewport and never closes it (a second invocation at
 // the same location keeps it open, unlike help_toggle).
 func TestHelpOpenFocusesAndNeverCloses(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
 	e.executeCommand(`help_open "manual"`)
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil {
 		t.Fatal("help_open should open the page")
 	}
-	if e.WindowManager.GetFocusedWindow() != hw {
-		t.Fatal("help_open should focus the help window")
+	if e.ViewportManager.GetFocusedViewport() != hw {
+		t.Fatal("help_open should focus the help viewport")
 	}
 	e.executeCommand(`help_open "manual"`) // same location again
-	if e.helpWindow() == nil {
-		t.Fatal("help_open must never close the help window")
+	if e.helpViewport() == nil {
+		t.Fatal("help_open must never close the help viewport")
 	}
 }
 
@@ -349,35 +349,35 @@ func TestHelpOpenFocusesAndNeverCloses(t *testing.T) {
 func TestHelpOpenFocusesQuickHelp(t *testing.T) {
 	e := helpTestEditor(t, nil) // no files: Quick Help is the built-in reference
 	e.executeCommand("help_open")
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("help_open should open Quick Help")
 	}
 	if hw.CanFocus {
 		t.Fatal("Quick Help should have CanFocus=false")
 	}
-	if e.WindowManager.GetFocusedWindow() != hw {
+	if e.ViewportManager.GetFocusedViewport() != hw {
 		t.Fatal("help_open should focus Quick Help on explicit request")
 	}
 }
 
-// The focus switcher (window_next / window_prior) skips Quick Help.
+// The focus switcher (viewport_next / viewport_prior) skips Quick Help.
 func TestFocusSwitcherSkipsQuickHelp(t *testing.T) {
 	e := helpTestEditor(t, nil)
-	// A second focusable doc window, so cycling has a real destination.
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, Type: window.DocWindow, Dock: window.DockNone,
+	// A second focusable doc viewport, so cycling has a real destination.
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("two\n"),
 	})
 	e.executeCommand("help_toggle") // Quick Help, unfocused
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil || hw.CanFocus {
 		t.Fatal("Quick Help should be open with CanFocus=false")
 	}
-	// Cycle through every window twice; the switcher must never land on it.
+	// Cycle through every viewport twice; the switcher must never land on it.
 	for i := 0; i < 4; i++ {
-		e.WindowManager.FocusNextWindow()
-		if e.WindowManager.GetFocusedWindow() == hw {
+		e.ViewportManager.FocusNextViewport()
+		if e.ViewportManager.GetFocusedViewport() == hw {
 			t.Fatal("the focus switcher must skip Quick Help")
 		}
 	}
@@ -393,8 +393,8 @@ func TestQuickHelpKeepsCurrentWhenTopicMissing(t *testing.T) {
 
 	e.ActiveSequence = ""
 	e.executeCommand("help_toggle") // Quick Help at the root topic
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should open")
 	}
 	rootURL := e.bufferCanonicalURL(hw.Buffer)
@@ -408,7 +408,7 @@ func TestQuickHelpKeepsCurrentWhenTopicMissing(t *testing.T) {
 	if got := e.bufferCanonicalURL(hw.Buffer); got != rootURL {
 		t.Fatalf("a missing follow-topic must keep the current page; changed to %q", got)
 	}
-	if !e.quickHelpWindowOpen() {
+	if !e.quickHelpViewportOpen() {
 		t.Fatal("still Quick Help after a missing follow-topic")
 	}
 
@@ -426,8 +426,8 @@ func TestQuickHelpNoHelpAvailable(t *testing.T) {
 	e := helpTestEditor(t, nil)
 	e.KeyProcessor.MapKey("help", "no_such_help_page_xyz") // resolves to nothing
 	e.executeCommand("help_toggle")
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should open")
 	}
 	if got := hw.Buffer.GetContent(); !strings.Contains(got, "No quick help is available.") {
@@ -437,14 +437,14 @@ func TestQuickHelpNoHelpAvailable(t *testing.T) {
 
 // The docked slot carries class "quickhelp" while showing Quick Help and "help"
 // while showing a page, so per-class config can target each. The Tag stays
-// "help" so helpWindow() finds the slot in either role.
-func TestHelpWindowClassFlipsWithRole(t *testing.T) {
+// "help" so helpViewport() finds the slot in either role.
+func TestHelpViewportClassFlipsWithRole(t *testing.T) {
 	e := helpTestEditor(t, map[string]string{"help/manual.txt": "=== M ===\nbody\n"})
 	e.KeyProcessor.MapKey("help", "no_such_help_page_xyz") // Quick Help -> the notice
 
 	e.executeCommand("help_toggle") // Quick Help
-	hw := e.helpWindow()
-	if hw == nil || !e.quickHelpWindowOpen() {
+	hw := e.helpViewport()
+	if hw == nil || !e.quickHelpViewportOpen() {
 		t.Fatal("Quick Help should open")
 	}
 	if hw.Class != "quickhelp" {
@@ -458,15 +458,15 @@ func TestHelpWindowClassFlipsWithRole(t *testing.T) {
 }
 
 // Opening a help page that does not exist reports a transient error toast and
-// opens no window — it never creates a stub page.
+// opens no viewport — it never creates a stub page.
 func TestHelpOpenMissingPageErrors(t *testing.T) {
 	e := helpTestEditor(t, nil)
 	e.executeCommand(`help_open "definitely_not_a_real_page"`)
-	if e.helpWindow() != nil {
-		t.Fatal("a missing help page must not open or create a help window")
+	if e.helpViewport() != nil {
+		t.Fatal("a missing help page must not open or create a help viewport")
 	}
 	found := false
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == "error" && strings.Contains(w.MessageTopInner, "not found") {
 			found = true
 		}
@@ -476,13 +476,13 @@ func TestHelpOpenMissingPageErrors(t *testing.T) {
 	}
 }
 
-// notifyHelpState pushes whether the docked help window is showing Quick Help,
+// notifyHelpState pushes whether the docked help viewport is showing Quick Help,
 // on the first render and on transitions (a host syncs the checkmark to it).
 func TestNotifyHelpStateTransitions(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t, "hi\n", "[options]\n")
 	var states []bool
 	e.Config.HelpState = func(open bool) { states = append(states, open) }
-	e.createPluginWindows()
+	e.createPluginViewports()
 
 	e.performRender() // first push: closed
 	e.executeCommand("help_toggle")

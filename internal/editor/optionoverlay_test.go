@@ -6,7 +6,7 @@ import (
 )
 
 // A buffer whose grammar has an [options.<grammar>] overlay takes the overlaid
-// per-window options; the base [options] shows through where the overlay is
+// per-viewport options; the base [options] shows through where the overlay is
 // silent.
 func TestOptionOverlayAppliesForGrammar(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\ntabSize=8\nshowLineNumbers=true\nshowInvisibles=false\n" +
@@ -27,11 +27,11 @@ func TestOptionOverlayAppliesForGrammar(t *testing.T) {
 }
 
 // A grammar with no overlay is left at the base [options]: the cpp overlay must
-// not bleed into a go window.
+// not bleed into a go viewport.
 func TestOptionOverlayBaseForOtherGrammar(t *testing.T) {
 	cfg := "[options]\nsyntax=go\ntabSize=8\n[options.cpp]\ntabSize=2\n"
 	e, w, _ := renderedEditorWithConfig(t, "package main\n", cfg)
-	w.ViewState.TabSize = e.Config.TabSize // as createMainWindow seeds it
+	w.ViewState.TabSize = e.Config.TabSize // as createMainViewport seeds it
 	e.performRender()
 	if w.ViewState.TabSize != 8 {
 		t.Errorf("a go buffer should keep base tabSize 8 (cpp overlay must not apply), got %d", w.ViewState.TabSize)
@@ -71,24 +71,24 @@ func TestOptionOverlayUserOverridePinned(t *testing.T) {
 	}
 }
 
-// The editor-wide-but-window-scoped options (rulerShowsCursor, search*,
-// matchIgnores*) resolve through the same overlay for a window.
+// The editor-wide-but-viewport-scoped options (rulerShowsCursor, search*,
+// matchIgnores*) resolve through the same overlay for a viewport.
 func TestOptionOverlayEditorWideScoped(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\nrulerShowsCursor=false\nsearchIgnoreCase=false\nmatchIgnoresHash=false\n" +
 		"[options.cpp]\nrulerShowsCursor=true\nsearchIgnoreCase=true\nmatchIgnoresHash=true\n"
 	e, w, _ := renderedEditorWithConfig(t, "int x;\n", cfg)
 	if !e.optBool(w, "rulershowscursor", e.Config.RulerShowsCursor) {
-		t.Error("rulerShowsCursor should resolve true for a cpp window")
+		t.Error("rulerShowsCursor should resolve true for a cpp viewport")
 	}
 	if !e.optBool(w, "searchignorecase", e.Config.SearchIgnoreCase) {
-		t.Error("searchIgnoreCase should resolve true for a cpp window")
+		t.Error("searchIgnoreCase should resolve true for a cpp viewport")
 	}
 	if !e.resolvedMatchIgnores(w).hash {
-		t.Error("matchIgnoresHash should resolve true for a cpp window")
+		t.Error("matchIgnoresHash should resolve true for a cpp viewport")
 	}
 }
 
-// A window's class refines the overlay: [<class>.options.<grammar>] wins over
+// A viewport's class refines the overlay: [<class>.options.<grammar>] wins over
 // [options.<grammar>].
 func TestOptionOverlayClassDimension(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\ntabSize=8\n[options.cpp]\ntabSize=2\n[panel::options.cpp]\ntabSize=3\n"
@@ -98,7 +98,7 @@ func TestOptionOverlayClassDimension(t *testing.T) {
 	if w.ViewState.TabSize != 2 {
 		t.Fatalf("no class: want grammar overlay tabSize 2, got %d", w.ViewState.TabSize)
 	}
-	// Give the window a class and re-resolve: the class overlay wins.
+	// Give the viewport a class and re-resolve: the class overlay wins.
 	w.Class = "panel"
 	e.performRender()
 	if w.ViewState.TabSize != 3 {
@@ -106,22 +106,22 @@ func TestOptionOverlayClassDimension(t *testing.T) {
 	}
 }
 
-// Focused-scoped options follow the focused window: the modebar templates
+// Focused-scoped options follow the focused viewport: the modebar templates
 // resolve through its grammar overlay.
 func TestModebarTemplateOverlay(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\nmodebarInner=BASEBAR\n[options.cpp]\nmodebarInner=CPPBAR\n"
 	e, _, out := renderedEditorWithConfig(t, "int x;\n", cfg)
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.performRender()
 	if !strings.Contains(stripAnsi(out.String()), "CPPBAR") {
 		t.Errorf("modebar should use the cpp overlay's inner template: %q", stripAnsi(out.String()))
 	}
 }
 
-// The focused window's grammar (or class) selects its key-mapping set: a cpp
-// window uses the emacs set, and a class overlay switches it back to the
+// The focused viewport's grammar (or class) selects its key-mapping set: a cpp
+// viewport uses the emacs set, and a class overlay switches it back to the
 // default mew set.
-func TestPerWindowMappings(t *testing.T) {
+func TestPerViewportMappings(t *testing.T) {
 	cfg := "[options]\nsyntax=cpp\nmappings=mew\n" +
 		"[mappings:emacs]\n^X ^S\t=buffer_save\n" +
 		"[options.cpp]\nmappings=emacs\n" +
@@ -129,7 +129,7 @@ func TestPerWindowMappings(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, "int x;\n", cfg)
 	e.performRender()
 	if got := e.KeyProcessor.GetMapping("^X ^S"); got != "buffer_save" {
-		t.Fatalf("cpp window should load the emacs set (^X ^S), got %q", got)
+		t.Fatalf("cpp viewport should load the emacs set (^X ^S), got %q", got)
 	}
 	// A class overlay switches the set back to the default mew set (with
 	// built-ins), dropping the emacs binding.

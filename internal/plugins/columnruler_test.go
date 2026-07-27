@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 var rulerAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
@@ -13,7 +13,7 @@ var rulerAnsiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 func renderRulerPlain(rtl bool, width int) string {
 	c := NewColumnRuler()
 	c.SetRTL(rtl)
-	w := &window.Window{Type: window.DocWindow}
+	w := &viewport.Viewport{Type: viewport.DocViewport}
 	return rulerAnsiRe.ReplaceAllString(c.RenderContent(w, width, nil), "")
 }
 

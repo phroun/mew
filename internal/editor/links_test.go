@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Content used across these tests: one dokuwiki link with a distinct target
@@ -18,7 +18,7 @@ var linkAnsiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
 func stripSGR(s string) string { return linkAnsiRe.ReplaceAllString(s, "") }
 
-func linkEditor(t *testing.T, content string) (*Editor, *window.Window, *strings.Builder) {
+func linkEditor(t *testing.T, content string) (*Editor, *viewport.Viewport, *strings.Builder) {
 	t.Helper()
 	e, w, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=dokuwiki\n")
 	var sb strings.Builder
@@ -80,7 +80,7 @@ func TestLinkEdgeBoundaries(t *testing.T) {
 	// [[a:b|Title]] occupies [5, 18).
 	e, w, _ := linkEditor(t, "text [[a:b|Title]] more\n")
 	at := func(rune int) *linkSpan {
-		w.SetCursorPos(window.Position{Line: 0, Rune: rune})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: rune})
 		return e.caretLinkSpan(w)
 	}
 	if at(4) != nil {
@@ -102,7 +102,7 @@ func TestLinkEdgeBoundaries(t *testing.T) {
 // work. Leaving the button (nav_cancel) restores editing.
 func TestFocusedButtonReadOnly(t *testing.T) {
 	e, w, _ := linkEditor(t, "text [[a:b|Title]] more\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10}) // inside the link
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10}) // inside the link
 	e.updateBrowseState()
 	if e.focusedLinkButton(w) == nil {
 		t.Fatal("button should be focused")
@@ -137,7 +137,7 @@ func TestBrowseModeArming(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
 
 	// The linkable grammar auto-arms on first sight, wherever the caret is.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2}) // outside any link
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2}) // outside any link
 	e.updateBrowseState()
 	if !w.BrowseActive {
 		t.Fatal("a wiki page should START in browse mode")
@@ -149,7 +149,7 @@ func TestBrowseModeArming(t *testing.T) {
 	// Enter the link, then nav_cancel: disarmed, and the latch prevents an
 	// instant auto re-arm; moving within the same span must not re-arm
 	// either (the anchor remembers the span).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.updateBrowseState()
 	if !e.navCancel() {
 		t.Fatal("nav_cancel should succeed while armed")
@@ -157,16 +157,16 @@ func TestBrowseModeArming(t *testing.T) {
 	if e.navCancel() {
 		t.Fatal("nav_cancel should fail when not armed (chain falls through)")
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 12})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 12})
 	e.updateBrowseState()
 	if w.BrowseActive {
 		t.Fatal("moving within the disarmed span must not re-arm")
 	}
 
 	// Leave, then re-enter: arms again.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 20})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 20})
 	e.updateBrowseState()
-	w.SetCursorPos(window.Position{Line: 0, Rune: 7})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 7})
 	e.updateBrowseState()
 	if !w.BrowseActive {
 		t.Fatal("re-entering the span after leaving must re-arm")
@@ -194,7 +194,7 @@ func TestLinkRenderStyles(t *testing.T) {
 
 	// Browse mode, unfocused button (caret elsewhere): " Title " + shadow,
 	// raw [[...]] gone from the painted line.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -210,7 +210,7 @@ func TestLinkRenderStyles(t *testing.T) {
 	}
 
 	// Focused button: caret inside the span switches caps/shadow/colors.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	out.Reset()
 	e.performRender()
@@ -227,7 +227,7 @@ func TestLinkRenderStyles(t *testing.T) {
 // accept activates it (transient notification; no newline inserted).
 func TestFocusedLinkContextAndAccept(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	e.performRender()
 	if w.Context != "a:b" {
@@ -240,7 +240,7 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 		t.Fatal("nav_follow on a focused button must not insert a newline")
 	}
 	found := false
-	for _, nw := range e.WindowManager.AllWindows() {
+	for _, nw := range e.ViewportManager.AllViewports() {
 		if nw.Class == "notification" && strings.Contains(nw.MessageTopInner, "Link: a:b") {
 			found = true
 		}
@@ -262,7 +262,7 @@ func TestFocusedLinkContextAndAccept(t *testing.T) {
 // An RTL title flows through the normal bidi machinery inside the button.
 func TestLinkButtonRTLTitle(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, "x [[p|שלום]] y\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.updateBrowseState()
 	if !w.BrowseActive {
 		t.Fatal("caret inside the RTL-titled link should arm")
@@ -295,7 +295,7 @@ func TestLinkBrowsingGate(t *testing.T) {
 	if !strings.Contains(raw, sgrType+"[") {
 		t.Fatal("linkBrowsing=no: links should keep their grammar syntax color")
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	if w.BrowseActive {
 		t.Fatal("linkBrowsing=no: entering a link must not arm")
@@ -303,7 +303,7 @@ func TestLinkBrowsingGate(t *testing.T) {
 
 	// Turning the option off while armed retires the buttons.
 	e2, w2, out2 := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\n")
-	w2.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e2.updateBrowseState()
 	if !w2.BrowseActive {
 		t.Fatal("default: entering a link should arm")
@@ -329,14 +329,14 @@ func TestNavNextPrior(t *testing.T) {
 	e, w, _ := linkEditor(t, "text [[a:b|Title]] mid [[b:c]] z\nplain line\ntail [[d:e]] end\n")
 
 	// Not inside a link: nav does not capture.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.updateBrowseState()
 	if e.navLink(+1) {
 		t.Fatal("nav_next must not capture when no button is focused")
 	}
 
 	// Enter link A, then nav_next walks A -> B -> C -> (wrap) A.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 8})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8})
 	e.updateBrowseState()
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "a:b" {
 		t.Fatalf("should focus link A; got %+v", b)
@@ -367,7 +367,7 @@ func TestNavNextPrior(t *testing.T) {
 func TestNavStart(t *testing.T) {
 	e, w, _ := linkEditor(t, "no link here\ntext [[a:b|T]] end\n")
 	w.BrowseAutoArmed = true // model a user who bailed with ^C
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.updateBrowseState()
 	if w.BrowseActive {
 		t.Fatal("browse mode should be off before nav_start")
@@ -397,7 +397,7 @@ func TestNavStart(t *testing.T) {
 func TestNavLeftRight(t *testing.T) {
 	// [[a]] [0,5), [[b]] [10,15), [[c]] [20,25) — ascending columns (LTR).
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]] end [[c]]\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 11}) // inside [[b]]
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 11}) // inside [[b]]
 	e.updateBrowseState()
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "b" {
 		t.Fatalf("should focus b; got %+v", b)
@@ -427,7 +427,7 @@ func TestNavLeftRightRTL(t *testing.T) {
 	// RIGHT. Link x at rune 4, link y at rune 16.
 	e, w, _ := renderedEditorWithConfig(t,
 		"אבג [[x|א]] דהו [[y|ב]] זחט\n", "[options]\nsyntax=dokuwiki\ndirection=rtl\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside x
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside x
 	e.updateBrowseState()
 	if b := e.focusedLinkButton(w); b == nil || b.Target != "x" {
 		t.Fatalf("should focus x; got %+v", b)
@@ -456,7 +456,7 @@ func TestNavVertical(t *testing.T) {
 
 	// Focus [[b]] (column ~15); nav_down lands on the column-nearest link of
 	// line 2, which is [[d]].
-	w.SetCursorPos(window.Position{Line: 0, Rune: 17})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 17})
 	e.updateBrowseState()
 	if !e.navVert(+1) {
 		t.Fatal("nav_down should move")
@@ -482,7 +482,7 @@ func TestNavVerticalConsistentIdeal(t *testing.T) {
 	out.Reset()
 	e.performRender()
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 11}) // inside [[a]] (col ~10)
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 11}) // inside [[a]] (col ~10)
 	e.updateBrowseState()
 	if !e.navVert(+1) {
 		t.Fatal("first nav_down should move")
@@ -521,7 +521,7 @@ func TestNavVerticalPages(t *testing.T) {
 		"top [[a]] here\nplain\nplain\nplain\n", "[options]\nsyntax=dokuwiki\n")
 	out.Reset()
 	e.performRender()
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside [[a]]
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside [[a]]
 	e.updateBrowseState()
 	if !e.navVert(+1) {
 		t.Fatal("nav_down should succeed (page) when no link line remains")
@@ -542,8 +542,8 @@ func TestNavVerticalPages(t *testing.T) {
 // The vertical/horizontal nav commands act only in active nav mode.
 func TestNavRequiresActiveMode(t *testing.T) {
 	e, w, _ := linkEditor(t, "[[a]] mid [[b]]\n")
-	w.BrowseAutoArmed = true                          // model a user who bailed with ^C
-	w.SetCursorPos(window.Position{Line: 0, Rune: 7}) // the 'i' in "mid": outside any link
+	w.BrowseAutoArmed = true                            // model a user who bailed with ^C
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 7}) // the 'i' in "mid": outside any link
 	e.updateBrowseState()
 	if w.BrowseActive {
 		t.Fatal("browse should be off between links")
@@ -556,7 +556,7 @@ func TestNavRequiresActiveMode(t *testing.T) {
 // nav_next respects linkBrowsing=no (never captures).
 func TestNavGatedByOption(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\nlinkBrowsing=no\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	if e.navLink(+1) || e.navFollow() {
 		t.Fatal("nav must not act when linkBrowsing is off")
@@ -587,12 +587,12 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	}
 
 	// Caret-hide predicate: false outside a link, true on a focused button.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.updateBrowseState()
 	if e.focusedLinkButton(w) != nil {
 		t.Fatal("no button focused outside a link")
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	if e.focusedLinkButton(w) == nil {
 		t.Fatal("button should be focused inside the link (caret then hides)")
@@ -608,7 +608,7 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 
 	// Follow the link; the editor records it (an unnamed buffer has no
 	// resolution context, so the identity is the raw target).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 10})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	e.updateBrowseState()
 	if !e.navFollow() {
 		t.Fatal("nav_follow should activate the focused button")
@@ -624,7 +624,7 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 	}
 
 	// Browse mode, unfocused: the visited button uses the recent color.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
@@ -656,7 +656,7 @@ func TestVisitedLinkTrackingAndColor(t *testing.T) {
 func TestNoDirectionControlsEmitted(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"go [[page|Title]] on\n", "[options]\nsyntax=dokuwiki\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()

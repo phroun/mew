@@ -10,13 +10,13 @@ import (
 
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // ModebarPlugin renders the main modebar.
 type ModebarPlugin struct {
-	windowManager     *window.Manager
-	windowID          string
+	viewportManager   *viewport.Manager
+	viewportID        string
 	location          string // "top" (default) or "bottom" screen line
 	maxSequenceLength int
 	activeSequence    string
@@ -44,13 +44,13 @@ type ModebarPlugin struct {
 	tfcResolve TFCResolver
 
 	// filenameFn, when set, supplies a display name for %FN% given the main
-	// buffer window — the editor uses it to show a wiki page's scheme form
+	// buffer viewport — the editor uses it to show a wiki page's scheme form
 	// ("help:/start") instead of the underlying file base ("start.txt").
 	// Returning "" defers to the ordinary filename base.
-	filenameFn func(*window.Window) string
+	filenameFn func(*viewport.Viewport) string
 
 	// Nav-history buttons ([<] / [>]) shown just before the filename when the
-	// context window has back/forward history. navStateFn supplies the live
+	// context viewport has back/forward history. navStateFn supplies the live
 	// mouse state the editor tracks (the captured button, whether the pointer
 	// is over it, and the hovered button); the button column ranges are
 	// recorded each render (content-relative, 0-based, [start,end)) so the
@@ -68,7 +68,7 @@ const (
 )
 
 // SetFilenameFunc installs a display-name provider for %FN% (see filenameFn).
-func (s *ModebarPlugin) SetFilenameFunc(fn func(*window.Window) string) {
+func (s *ModebarPlugin) SetFilenameFunc(fn func(*viewport.Viewport) string) {
 	s.filenameFn = fn
 }
 
@@ -78,9 +78,9 @@ func (s *ModebarPlugin) SetNavStateFunc(fn func() (pressed int, pressedOn bool, 
 	s.navStateFn = fn
 }
 
-// WindowID returns the modebar window's id ("" before CreateWindow), so the
+// ViewportID returns the modebar viewport's id ("" before CreateViewport), so the
 // editor can locate the bar's screen row for nav-button hit-testing.
-func (s *ModebarPlugin) WindowID() string { return s.windowID }
+func (s *ModebarPlugin) ViewportID() string { return s.viewportID }
 
 // NavButtonAtColumn reports which nav button ([<]=Back, [>]=Fwd) occupies the
 // content-relative column, from the ranges recorded by the last render, or
@@ -98,17 +98,17 @@ func (s *ModebarPlugin) NavButtonAtColumn(col int) int {
 
 // renderNav builds the nav-history button section shown just before the
 // filename and records the buttons' content-relative column ranges. It
-// collapses to "" when the context window has no history. Each button paints
+// collapses to "" when the context viewport has no history. Each button paints
 // its brackets in the button-SHADOW color and the "<"/">" glyph in the button
 // color, in one of three states — normal, pressed (mouse held over the
 // captured button), or hover (pointer over, graphical build only). When only
 // forward history exists, a 3-space placeholder holds the missing back
 // button's width so [>] stays put. startCol is the section's content column.
-func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctxWindow *window.Window, startCol int) string {
+func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctxViewport *viewport.Viewport, startCol int) string {
 	s.navBackStart, s.navBackEnd, s.navFwdStart, s.navFwdEnd = 0, 0, 0, 0
 	prior, next := 0, 0
-	if ctxWindow != nil {
-		prior, next = ctxWindow.NavHistoryDepths()
+	if ctxViewport != nil {
+		prior, next = ctxViewport.NavHistoryDepths()
 	}
 	back, fwd := prior > 0, next > 0
 	if !back && !fwd {
@@ -146,15 +146,15 @@ func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctx
 }
 
 // modebarBottomPriority keeps a bottom-located modebar on the very last
-// screen line: the bottom dock renders its highest-priority window at the
+// screen line: the bottom dock renders its highest-priority viewport at the
 // screen bottom, and prompt priorities (which exclude the modebar from
 // their scan) never climb anywhere near this.
 const modebarBottomPriority = 1 << 20
 
 // NewModebar creates a new modebar plugin.
-func NewModebar(wm *window.Manager) *ModebarPlugin {
+func NewModebar(wm *viewport.Manager) *ModebarPlugin {
 	return &ModebarPlugin{
-		windowManager:     wm,
+		viewportManager:   wm,
 		maxSequenceLength: 4,
 		colors:            config.NewColorScheme(),
 		tmplInner:         "%FN%",
@@ -214,52 +214,52 @@ func (s *ModebarPlugin) SetColorScheme(cs config.ColorScheme) {
 }
 
 // SetLocation places the modebar on the "top" (default) or "bottom" screen
-// line. When the window already exists it is relocated in place, so the
+// line. When the viewport already exists it is relocated in place, so the
 // option can be flipped at runtime via set_option.
 func (s *ModebarPlugin) SetLocation(location string) {
 	if location != "bottom" {
 		location = "top"
 	}
 	s.location = location
-	if s.windowID == "" {
+	if s.viewportID == "" {
 		return
 	}
 	dock, priority := s.dockAndPriority()
-	s.windowManager.UpdateWindow(s.windowID, func(w *window.Window) {
+	s.viewportManager.UpdateViewport(s.viewportID, func(w *viewport.Viewport) {
 		w.Dock = dock
 		w.Priority = priority
 	})
 }
 
 // dockAndPriority returns the dock placement for the configured location.
-// At the top the modebar outranks the other top windows; at the bottom it
+// At the top the modebar outranks the other top viewports; at the bottom it
 // takes the fixed always-last-line priority.
-func (s *ModebarPlugin) dockAndPriority() (window.DockPosition, int) {
+func (s *ModebarPlugin) dockAndPriority() (viewport.DockPosition, int) {
 	if s.location == "bottom" {
-		return window.DockBottom, modebarBottomPriority
+		return viewport.DockBottom, modebarBottomPriority
 	}
 	highestPriority := 0
-	for _, w := range s.windowManager.GetWindowsByDock(window.DockTop) {
+	for _, w := range s.viewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.Priority > highestPriority {
 			highestPriority = w.Priority
 		}
 	}
-	return window.DockTop, highestPriority + 100
+	return viewport.DockTop, highestPriority + 100
 }
 
-// CreateWindow creates the modebar window.
-func (s *ModebarPlugin) CreateWindow() string {
-	if s.windowID != "" {
-		return s.windowID
+// CreateViewport creates the modebar viewport.
+func (s *ModebarPlugin) CreateViewport() string {
+	if s.viewportID != "" {
+		return s.viewportID
 	}
 
 	dock, priority := s.dockAndPriority()
 
-	// Create the modebar window with custom rendering; colors resolve
+	// Create the modebar viewport with custom rendering; colors resolve
 	// dynamically through the "modebar" class.
-	s.windowID = s.windowManager.CreateWindow(window.WindowOptions{
-		Type:           window.ToolWindow,
-		WindowSet:      window.WindowSetModebar,
+	s.viewportID = s.viewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:           viewport.ToolViewport,
+		ViewportSet:    viewport.ViewportSetModebar,
 		Class:          "modebar",
 		Dock:           dock,
 		Priority:       priority,
@@ -268,7 +268,7 @@ func (s *ModebarPlugin) CreateWindow() string {
 		CustomRenderer: "modebar",
 	})
 
-	return s.windowID
+	return s.viewportID
 }
 
 // SetActiveSequence sets the active key sequence for display.
@@ -280,7 +280,7 @@ func (s *ModebarPlugin) SetActiveSequence(seq string) {
 }
 
 // SetCompletions sets the key-sequence autocompletion text for display. When
-// non-empty it takes precedence over the focused window's context in the
+// non-empty it takes precedence over the focused viewport's context in the
 // modebar's middle section.
 func (s *ModebarPlugin) SetCompletions(completions string) {
 	s.completions = completions
@@ -292,16 +292,16 @@ func (s *ModebarPlugin) SetLogoRTL(rtl bool) {
 }
 
 // RenderContent renders the modebar content.
-func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string {
-	mainBufferWindow := s.windowManager.GetLastMainWindow()
-	focusedWindow := s.windowManager.GetFocusedWindow()
+func (s *ModebarPlugin) RenderContent(w *viewport.Viewport, screenWidth int) string {
+	mainBufferViewport := s.viewportManager.GetLastMainViewport()
+	focusedViewport := s.viewportManager.GetFocusedViewport()
 
 	// Resolve colors dynamically through the modebar's class/type:
 	// - text:       modebar fill
 	// - modifiers:  active modifiers (key sequence) & surrounding space
 	// - buffer:     buffer name (filename)
 	// - completion: autocompletion (& surrounding space) when showing
-	// - context:    window context when autocompletion isn't showing
+	// - context:    viewport context when autocompletion isn't showing
 	// - messages:   Frag/Heap/Line/Rune stats readout
 	// - logo:       M_ logo
 	col := func(name string) string {
@@ -314,19 +314,19 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	logoColor := col("logo")
 	resetColor := col("reset")
 
-	if mainBufferWindow == nil {
+	if mainBufferViewport == nil {
 		return s.padToWidth(textColor+" Mew Editor "+resetColor, screenWidth)
 	}
 
-	// The context/position window is the focused window, unless a prompt is
+	// The context/position viewport is the focused viewport, unless a prompt is
 	// focused, in which case it is the last main buffer (the document).
-	ctxWindow := focusedWindow
-	if ctxWindow == nil || ctxWindow.Type == window.PromptWindow {
-		ctxWindow = mainBufferWindow
+	ctxViewport := focusedViewport
+	if ctxViewport == nil || ctxViewport.Type == viewport.PromptViewport {
+		ctxViewport = mainBufferViewport
 	}
-	vals := modebarValues(mainBufferWindow, ctxWindow)
+	vals := modebarValues(mainBufferViewport, ctxViewport)
 	if s.filenameFn != nil {
-		if name := s.filenameFn(mainBufferWindow); name != "" {
+		if name := s.filenameFn(mainBufferViewport); name != "" {
 			vals["FN"] = name
 		}
 	}
@@ -348,11 +348,11 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	logoStr := " " + logo + " "
 
 	// Nav-history buttons, inserted just BEFORE the filename and only as wide
-	// as needed (collapsing to nothing when the context window has no history).
+	// as needed (collapsing to nothing when the context viewport has no history).
 	// The section sits in the gap that already exists between the key-sequence
 	// area and the filename (each is space-padded), so when it collapses the
 	// layout is unchanged.
-	navStr := s.renderNav(col, modifiersColor, ctxWindow, calculateVisibleLength(leftText))
+	navStr := s.renderNav(col, modifiersColor, ctxViewport, calculateVisibleLength(leftText))
 	navWidth := calculateVisibleLength(navStr)
 
 	// Inner (filename) and outer (readout) come from templates.
@@ -361,12 +361,12 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 
 	// Middle: key-sequence completion, else a live outline breadcrumb, else the
 	// default template. Context is a live breadcrumb only when it differs from
-	// the window's spawn placeholder (the fortune).
+	// the viewport's spawn placeholder (the fortune).
 	middleColor := col("completion")
 	middle := s.completions
 	if middle == "" {
 		middleColor = col("context")
-		if ctx := ctxWindow.Context; ctx != "" && ctx != ctxWindow.SpawnContext {
+		if ctx := ctxViewport.Context; ctx != "" && ctx != ctxViewport.SpawnContext {
 			middle = ctx
 		} else {
 			middle = expandTFC(s.tmplDefault, vals, s.tfcResolve)
@@ -403,10 +403,10 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 }
 
 // modebarValues computes the %CODE% substitution values from the current
-// editor state: the document window drives file/fragment metrics; the context
-// window (focused, or the document when a prompt is focused) drives caret
+// editor state: the document viewport drives file/fragment metrics; the context
+// viewport (focused, or the document when a prompt is focused) drives caret
 // position.
-func modebarValues(mainWin, ctxWin *window.Window) map[string]string {
+func modebarValues(mainWin, ctxWin *viewport.Viewport) map[string]string {
 	filename := "[New File]"
 	fragStr := "0"
 	if mainWin != nil && mainWin.Buffer != nil {

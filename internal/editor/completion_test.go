@@ -9,7 +9,7 @@ import (
 	"github.com/phroun/pawscript"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // promptLine returns the trimmed text on the focused prompt's caret line.
@@ -22,7 +22,7 @@ func promptLine(t *testing.T, e *Editor) string {
 	return strings.TrimRight(p.Buffer.GetLine(p.CursorPos().Line), "\n\r")
 }
 
-// The completion command routes to the focused window's callback and returns
+// The completion command routes to the focused viewport's callback and returns
 // its result; with no callback it fails (so a tab fallback can run).
 func TestCompletionCommandRouting(t *testing.T) {
 	e, w := newTestEditor(t, "")
@@ -41,7 +41,7 @@ func TestCompletionCommandRouting(t *testing.T) {
 
 // anchorPrompt opens a filename prompt whose parent buffer is anchored at dir,
 // so completion globs dir.
-func anchorPrompt(t *testing.T, e *Editor, doc *window.Window, dir string) {
+func anchorPrompt(t *testing.T, e *Editor, doc *viewport.Viewport, dir string) {
 	t.Helper()
 	doc.Buffer.SetFilename(filepath.Join(dir, "anchor.txt"))
 	e.PromptMgr.PromptForFilename("Open", "", func(bool, string, string) {})
@@ -155,7 +155,7 @@ func TestCompletionTransientReplaces(t *testing.T) {
 
 	countTagged := func() int {
 		n := 0
-		for _, w := range e.WindowManager.GetWindowsByDock(window.DockBottom) {
+		for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
 			if w.Tag == "completion" {
 				n++
 			}
@@ -199,11 +199,11 @@ func TestFilenameCompletionDirGlobber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(""), SetFocus: true,
 	})
-	e.WindowManager.GetWindow("doc").Buffer.SetFilename("proj/anchor.txt")
+	e.ViewportManager.GetViewport("doc").Buffer.SetFilename("proj/anchor.txt")
 
 	e.PromptMgr.PromptForFilename("Open", "", func(bool, string, string) {})
 	typeText(t, e, "s")
@@ -301,11 +301,11 @@ func TestFilenameCompletionHostFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(""), SetFocus: true,
 	})
-	doc := e.WindowManager.GetWindow("doc")
+	doc := e.ViewportManager.GetViewport("doc")
 	doc.Buffer.SetFilename("proj/anchor.txt")
 
 	e.PromptMgr.PromptForFilename("Open", "", func(bool, string, string) {})

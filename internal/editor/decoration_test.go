@@ -3,11 +3,11 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // mark reads a named mark as (line, rune), failing if it is unset.
-func mark(t *testing.T, w *window.Window, name string) (int, int) {
+func mark(t *testing.T, w *viewport.Viewport, name string) (int, int) {
 	t.Helper()
 	line, rune_, ok := w.Buffer.GetMark(name)
 	if !ok {
@@ -26,7 +26,7 @@ func TestLineJoinSlidesMarks(t *testing.T) {
 	if err := w.Buffer.SetMark("m", 1, 1); err != nil { // the 'd'
 		t.Fatal(err)
 	}
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.PawScript.ExecuteAsync("del_char_prior") // backspace at col 0 -> join
 
 	if got := docContent(w); got != "abcd" {
@@ -45,8 +45,8 @@ func TestLineJoinForwardSlidesMarks(t *testing.T) {
 	if err := w.Buffer.SetMark("m", 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2}) // end of "ab"
-	e.PawScript.ExecuteAsync("del_char_next")         // delete at EOL -> join next
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2}) // end of "ab"
+	e.PawScript.ExecuteAsync("del_char_next")           // delete at EOL -> join next
 
 	if got := docContent(w); got != "abcd" {
 		t.Fatalf("forward join content: %q", got)
@@ -58,7 +58,7 @@ func TestLineJoinForwardSlidesMarks(t *testing.T) {
 
 func TestCRLFJoinDeletesWholeTerminator(t *testing.T) {
 	e, w := newTestEditor(t, "ab\r\ncd\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.PawScript.ExecuteAsync("del_char_prior")
 	// The whole "\r\n" terminator is removed, not just the "\n" (which would
 	// orphan a "\r").
@@ -113,7 +113,7 @@ func TestBlockUnindentSlidesMarks(t *testing.T) {
 
 func TestReplaceSlidesDownstreamMark(t *testing.T) {
 	e, w := newTestEditor(t, "foo bar foo\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	w.Buffer.SetMark("m", 0, 8) // start of the SECOND "foo"
 
 	// Replace the first "foo" with "XY" (3 runes -> 2), skip the second.
@@ -133,7 +133,7 @@ func TestReplaceSlidesDownstreamMark(t *testing.T) {
 // downstream mark on the (now next) line coherent.
 func TestReplaceWithNewlineKeepsMark(t *testing.T) {
 	e, w := newTestEditor(t, "aXb tail\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	w.Buffer.SetMark("m", 0, 4) // 't' of "tail"
 
 	e.startFind("X", "", `\n`, true, true, true) // replace X with a line break
@@ -154,7 +154,7 @@ func TestBlockIndentCaretInsideSlides(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 2, 3)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2}) // inside the block
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2}) // inside the block
 
 	e.PawScript.ExecuteAsync("block_indent") // 4 spaces per line
 
@@ -166,8 +166,8 @@ func TestBlockIndentCaretInsideSlides(t *testing.T) {
 func TestBlockIndentCaretOutsideUnmoved(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\nZZZ\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
-	w.Buffer.SetMark("_block_end", 1, 3)              // block is only lines 0-1
-	w.SetCursorPos(window.Position{Line: 3, Rune: 2}) // below the block
+	w.Buffer.SetMark("_block_end", 1, 3)                // block is only lines 0-1
+	w.SetCursorPos(viewport.Position{Line: 3, Rune: 2}) // below the block
 
 	e.PawScript.ExecuteAsync("block_indent")
 
@@ -185,7 +185,7 @@ func TestBlockUnindentCaretSlidesLeft(t *testing.T) {
 	e, w := newTestEditor(t, "    aaa\n    bbb\n    ccc\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 2, 7)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 6}) // a 'b'
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 6}) // a 'b'
 
 	e.PawScript.ExecuteAsync("block_unindent")
 
@@ -199,7 +199,7 @@ func TestBlockUnindentTab(t *testing.T) {
 	e, w := newTestEditor(t, "\taaa\n\tbbb\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 1, 4)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.PawScript.ExecuteAsync("block_unindent")
 
@@ -213,7 +213,7 @@ func TestBlockIndentSingleLine(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 1, 0)
 	w.Buffer.SetMark("_block_end", 1, 3)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 
 	e.PawScript.ExecuteAsync("block_indent")
 
@@ -231,7 +231,7 @@ func TestBlockIndentLastLineNoTrailingNewline(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 1, 3)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.PawScript.ExecuteAsync("block_indent")
 
@@ -246,7 +246,7 @@ func TestBlockIndentSkipsBlankLines(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\n\n  \nbbb\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 3, 3)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.PawScript.ExecuteAsync("block_indent")
 
@@ -262,7 +262,7 @@ func TestBlockIndentAllBlankNoOp(t *testing.T) {
 	e, w := newTestEditor(t, "\n  \n\t\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
 	w.Buffer.SetMark("_block_end", 2, 0)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.Buffer.SetModified(false)
 
 	e.PawScript.ExecuteAsync("block_indent")
@@ -280,8 +280,8 @@ func TestBlockIndentAllBlankNoOp(t *testing.T) {
 func TestDeleteBlockCaretAfter(t *testing.T) {
 	e, w := newTestEditor(t, "abcdefgh\n")
 	w.Buffer.SetMark("_block_begin", 0, 2)
-	w.Buffer.SetMark("_block_end", 0, 5)              // deletes "cde"
-	w.SetCursorPos(window.Position{Line: 0, Rune: 7}) // 'h', after the block
+	w.Buffer.SetMark("_block_end", 0, 5)                // deletes "cde"
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 7}) // 'h', after the block
 
 	e.PawScript.ExecuteAsync("block_delete")
 
@@ -297,7 +297,7 @@ func TestDeleteBlockCaretInside(t *testing.T) {
 	e, w := newTestEditor(t, "abcdefgh\n")
 	w.Buffer.SetMark("_block_begin", 0, 2)
 	w.Buffer.SetMark("_block_end", 0, 5)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3}) // inside the block
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // inside the block
 
 	e.PawScript.ExecuteAsync("block_delete")
 
@@ -310,7 +310,7 @@ func TestDeleteBlockCaretBefore(t *testing.T) {
 	e, w := newTestEditor(t, "abcdefgh\n")
 	w.Buffer.SetMark("_block_begin", 0, 2)
 	w.Buffer.SetMark("_block_end", 0, 5)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1}) // before the block
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1}) // before the block
 
 	e.PawScript.ExecuteAsync("block_delete")
 
@@ -322,8 +322,8 @@ func TestDeleteBlockCaretBefore(t *testing.T) {
 func TestDeleteBlockCaretAfterMultiline(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	w.Buffer.SetMark("_block_begin", 0, 1)
-	w.Buffer.SetMark("_block_end", 1, 2)              // deletes "aa\nbb"
-	w.SetCursorPos(window.Position{Line: 2, Rune: 1}) // 'c' on line 2
+	w.Buffer.SetMark("_block_end", 1, 2)                // deletes "aa\nbb"
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 1}) // 'c' on line 2
 
 	e.PawScript.ExecuteAsync("block_delete")
 
@@ -340,8 +340,8 @@ func TestDeleteBlockCaretAfterMultiline(t *testing.T) {
 func TestMoveBlockCaretAfter(t *testing.T) {
 	e, w := newTestEditor(t, "AAA\nBBB\nCCC\n")
 	w.Buffer.SetMark("_block_begin", 0, 0)
-	w.Buffer.SetMark("_block_end", 1, 0)              // block is "AAA\n"
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0}) // start of CCC, after the block
+	w.Buffer.SetMark("_block_end", 1, 0)                // block is "AAA\n"
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0}) // start of CCC, after the block
 
 	e.PawScript.ExecuteAsync("block_move")
 

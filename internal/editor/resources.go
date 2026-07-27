@@ -89,7 +89,7 @@ func listEmbeddedResource(rel string) []string {
 // The conventions:
 //
 //	linux/unix   /usr/local/share/mew, /usr/share/mew
-//	windows      %ProgramFiles%\mew\Resources
+//	viewports      %ProgramFiles%\mew\Resources
 //	darwin       <mew.app>/Contents/Resources (derived from the executable)
 //
 // Only local (real-OS) installs have system directories; a virtualized mew

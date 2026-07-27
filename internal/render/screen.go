@@ -14,7 +14,7 @@ import (
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // selectionRange holds the normalized selection range for rendering.
@@ -26,29 +26,29 @@ type selectionRange struct {
 	exists    bool
 }
 
-// CustomRendererFunc is a function that renders custom window content.
-type CustomRendererFunc func(w *window.Window, screenWidth int) string
+// CustomRendererFunc is a function that renders custom viewport content.
+type CustomRendererFunc func(w *viewport.Viewport, screenWidth int) string
 
 // ScreenRenderer handles terminal screen output.
 type ScreenRenderer struct {
 	Width  int
 	Height int
 
-	windowManager *window.Manager
-	layoutManager *window.LayoutManager
+	viewportManager *viewport.Manager
+	layoutManager   *viewport.LayoutManager
 
-	// Custom renderers for plugin windows
+	// Custom renderers for plugin viewports
 	customRenderers map[string]CustomRendererFunc
 
 	// rulerRenderer produces the column-ruler line drawn on the top row of any
-	// window whose ViewState.ShowRuler is enabled (and that is taller than one
+	// viewport whose ViewState.ShowRuler is enabled (and that is taller than one
 	// line).
 	rulerRenderer CustomRendererFunc
 
 	// syntaxColorizer returns per-rune SGR colors for a document line of a
-	// window ("" entries and nil slices mean the normal text color). Set by
+	// viewport ("" entries and nil slices mean the normal text color). Set by
 	// the editor when syntax highlighting is configured.
-	syntaxColorizer func(w *window.Window, docLine int) []string
+	syntaxColorizer func(w *viewport.Viewport, docLine int) []string
 
 	// displayProvider supplies the per-line browse-mode display transform
 	// (buttons, markup marker-hiding/restyle, double-width); nil — the default
@@ -56,10 +56,10 @@ type ScreenRenderer struct {
 	displayProvider DisplayProvider
 
 	// caretHiddenFn reports whether the hardware caret should be hidden for a
-	// window even though it is on screen — set by the editor to hide the caret
+	// viewport even though it is on screen — set by the editor to hide the caret
 	// while it is inert inside a focused button. nil = never hide for this
 	// reason.
-	caretHiddenFn func(w *window.Window) bool
+	caretHiddenFn func(w *viewport.Viewport) bool
 
 	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
 	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
@@ -89,7 +89,7 @@ type ScreenRenderer struct {
 	// cursor indicators, peek tab labels).
 	indicators config.Indicators
 
-	// Layered color scheme; colors are resolved per window by class, buffer
+	// Layered color scheme; colors are resolved per viewport by class, buffer
 	// type, and color name.
 	colorScheme config.ColorScheme
 
@@ -109,10 +109,10 @@ func (sr *ScreenRenderer) SetIndicators(ind config.Indicators) {
 	sr.indicators = ind
 }
 
-// winRTL is the effective text direction for a window: its own
-// ViewState.Direction override when set (prompt windows are pinned "ltr"),
+// winRTL is the effective text direction for a viewport: its own
+// ViewState.Direction override when set (prompt viewports are pinned "ltr"),
 // else the editor-wide base direction.
-func (sr *ScreenRenderer) winRTL(w *window.Window) bool {
+func (sr *ScreenRenderer) winRTL(w *viewport.Viewport) bool {
 	if w != nil {
 		switch w.ViewState.Direction {
 		case "ltr":
@@ -124,9 +124,9 @@ func (sr *ScreenRenderer) winRTL(w *window.Window) bool {
 	return sr.baseRTL
 }
 
-// layoutFor computes a line's visual layout for a window, including
-// direction-marker slots when the window's showBidi is enabled.
-func (sr *ScreenRenderer) layoutFor(w *window.Window, runes []rune) *bidi.Layout {
+// layoutFor computes a line's visual layout for a viewport, including
+// direction-marker slots when the viewport's showBidi is enabled.
+func (sr *ScreenRenderer) layoutFor(w *viewport.Viewport, runes []rune) *bidi.Layout {
 	if w != nil && w.ViewState.ShowBidi {
 		return bidi.ComputeMarked(runes, sr.winRTL(w))
 	}
@@ -136,7 +136,7 @@ func (sr *ScreenRenderer) layoutFor(w *window.Window, runes []rune) *bidi.Layout
 // slotWidth is the visual width of one layout slot: marker slots are one
 // column; explicit direction controls are one column under a marked layout;
 // everything else uses the ordinary rune width.
-func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, col int, w *window.Window) int {
+func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, col int, w *viewport.Viewport) int {
 	if entry < 0 {
 		return 1
 	}
@@ -150,10 +150,10 @@ func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, co
 	return sr.getRuneVisualWidth(r, col, w)
 }
 
-// physMargins maps a window's logical margins (Inner = reading-start side,
+// physMargins maps a viewport's logical margins (Inner = reading-start side,
 // Outer = opposite, like a book page) to physical left/right columns per the
-// window's effective direction.
-func (sr *ScreenRenderer) physMargins(w *window.Window) (left, right int) {
+// viewport's effective direction.
+func (sr *ScreenRenderer) physMargins(w *viewport.Viewport) (left, right int) {
 	if sr.winRTL(w) {
 		return w.MarginOuter, w.MarginInner
 	}
@@ -165,24 +165,24 @@ func (sr *ScreenRenderer) SetBaseRTL(rtl bool) {
 	sr.baseRTL = rtl
 }
 
-// SetColorScheme sets the layered color scheme used for all window rendering.
+// SetColorScheme sets the layered color scheme used for all viewport rendering.
 func (sr *ScreenRenderer) SetColorScheme(cs config.ColorScheme) {
 	sr.colorScheme = cs
 }
 
-// col resolves a named color for a window, cascading window class ->
+// col resolves a named color for a viewport, cascading viewport class ->
 // buffer type -> global -> built-in defaults.
-func (sr *ScreenRenderer) col(w *window.Window, name string) string {
+func (sr *ScreenRenderer) col(w *viewport.Viewport, name string) string {
 	return sr.colorScheme.Resolve(w.Class, w.Type.Name(), name)
 }
 
 // NewScreenRenderer creates a new screen renderer targeting the real
 // terminal (stdout); use SetTerminal to virtualize output and size.
-func NewScreenRenderer(wm *window.Manager, lm *window.LayoutManager) *ScreenRenderer {
+func NewScreenRenderer(wm *viewport.Manager, lm *viewport.LayoutManager) *ScreenRenderer {
 	sr := &ScreenRenderer{
 		Width:             80,
 		Height:            24,
-		windowManager:     wm,
+		viewportManager:   wm,
 		layoutManager:     lm,
 		customRenderers:   make(map[string]CustomRendererFunc),
 		resizeChan:        make(chan struct{}, 1),
@@ -232,19 +232,19 @@ func (sr *ScreenRenderer) TriggerResize() {
 	}
 }
 
-// RegisterCustomRenderer registers a custom renderer function for a window type.
+// RegisterCustomRenderer registers a custom renderer function for a viewport type.
 func (sr *ScreenRenderer) RegisterCustomRenderer(name string, renderer CustomRendererFunc) {
 	sr.customRenderers[name] = renderer
 }
 
-// SetRulerRenderer sets the function used to render the per-window column ruler.
+// SetRulerRenderer sets the function used to render the per-viewport column ruler.
 func (sr *ScreenRenderer) SetRulerRenderer(renderer CustomRendererFunc) {
 	sr.rulerRenderer = renderer
 }
 
 // SetSyntaxColorizer sets the per-line syntax-color source used as the base
 // text color of content cells.
-func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *window.Window, docLine int) []string) {
+func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport, docLine int) []string) {
 	sr.syntaxColorizer = colorizer
 }
 
@@ -292,10 +292,10 @@ func (sr *ScreenRenderer) EmitProbe(seq string, dirtyRow int) {
 	}
 }
 
-// rulerActive reports whether a window should render a column ruler on its top
-// line. A one-line window ignores the ruler option: the single content line
-// takes precedence. Custom-rendered windows draw their own content entirely.
-func rulerActive(w *window.Window, height int) bool {
+// rulerActive reports whether a viewport should render a column ruler on its top
+// line. A one-line viewport ignores the ruler option: the single content line
+// takes precedence. Custom-rendered viewports draw their own content entirely.
+func rulerActive(w *viewport.Viewport, height int) bool {
 	return w.ViewState.ShowRuler && height > 1 && w.CustomRenderer == ""
 }
 
@@ -435,9 +435,9 @@ func (sr *ScreenRenderer) Sync() {
 	}
 }
 
-// Render renders all visible windows. It composes the whole frame into the
+// Render renders all visible viewports. It composes the whole frame into the
 // off-screen back buffer, then presents the minimal diff to the terminal.
-func (sr *ScreenRenderer) Render(layout window.Layout) {
+func (sr *ScreenRenderer) Render(layout viewport.Layout) {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
 
@@ -454,7 +454,7 @@ func (sr *ScreenRenderer) Render(layout window.Layout) {
 // complete repaint against a blank display — without disturbing the live
 // terminal or the incremental diff state. It powers debug_screen: the returned
 // bytes, written to a file, reproduce the screen when cat'd to a terminal.
-func (sr *ScreenRenderer) CaptureFrame(layout window.Layout) string {
+func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
 
@@ -474,46 +474,46 @@ func (sr *ScreenRenderer) CaptureFrame(layout window.Layout) string {
 	return sb.String()
 }
 
-// paintFrame paints the whole layout into sr.frame — peek indicators, window
+// paintFrame paints the whole layout into sr.frame — peek indicators, viewport
 // groups, ghost/secondary/real cursors — and applies the hardware-cursor
 // visibility. The caller must hold renderMu and have called sr.frame.begin();
 // it presents the frame afterward. Shared by Render and CaptureFrame.
-func (sr *ScreenRenderer) paintFrame(layout window.Layout) {
+func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 	// Save peek indicator state
 	sr.peekIndicators.StatPeekUp = layout.NeedsStatPeekUp
 	sr.peekIndicators.StatPeekDown = layout.NeedsStatPeekDown
 	sr.peekIndicators.PromptPeekUp = layout.NeedsPromptPeekUp
 	sr.peekIndicators.PromptPeekDown = layout.NeedsPromptPeekDown
 
-	// Update window content properties
-	sr.updateWindowContentProperties(layout)
+	// Update viewport content properties
+	sr.updateViewportContentProperties(layout)
 
-	// Render all window groups
-	sr.renderWindowGroup(layout.TopLayout)
-	sr.renderWindowGroup(layout.MainLayout)
-	sr.renderWindowGroup(layout.BottomLayout)
+	// Render all viewport groups
+	sr.renderViewportGroup(layout.TopLayout)
+	sr.renderViewportGroup(layout.MainLayout)
+	sr.renderViewportGroup(layout.BottomLayout)
 
 	// Render peek indicators
 	sr.renderPeekIndicators(layout)
 
 	// Render ghost cursor if present, then position real cursor
 	hideCursor := false
-	focusedWindow := sr.windowManager.GetFocusedWindow()
-	if focusedWindow != nil {
-		windowLayout := layout.FindWindowLayout(focusedWindow.ID)
-		if windowLayout != nil {
+	focusedViewport := sr.viewportManager.GetFocusedViewport()
+	if focusedViewport != nil {
+		viewportLayout := layout.FindViewportLayout(focusedViewport.ID)
+		if viewportLayout != nil {
 			// Render ghost cursor first (if present)
-			if focusedWindow.HasGhostCursor {
-				sr.renderGhostCursor(focusedWindow, windowLayout)
+			if focusedViewport.HasGhostCursor {
+				sr.renderGhostCursor(focusedViewport, viewportLayout)
 			}
 			// Secondary bidi cursor at an automatic direction boundary
-			sr.renderSecondaryCursor(focusedWindow, windowLayout)
+			sr.renderSecondaryCursor(focusedViewport, viewportLayout)
 			// Position the real cursor
-			hideCursor = sr.positionCursor(focusedWindow, windowLayout)
+			hideCursor = sr.positionCursor(focusedViewport, viewportLayout)
 		}
 		// The caret is inert inside a focused button: keep it positioned (so
 		// its column tracks) but hide the hardware cursor.
-		if sr.caretHiddenFn != nil && sr.caretHiddenFn(focusedWindow) {
+		if sr.caretHiddenFn != nil && sr.caretHiddenFn(focusedViewport) {
 			hideCursor = true
 		}
 	}
@@ -525,17 +525,17 @@ func (sr *ScreenRenderer) paintFrame(layout window.Layout) {
 	}
 }
 
-// updateWindowContentProperties updates calculated properties on windows.
-func (sr *ScreenRenderer) updateWindowContentProperties(layout window.Layout) {
+// updateViewportContentProperties updates calculated properties on viewports.
+func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout) {
 	allLayouts := append(append(layout.TopLayout, layout.MainLayout...), layout.BottomLayout...)
 
 	for _, wl := range allLayouts {
-		w := wl.Window
+		w := wl.Viewport
 
 		w.ContentY = wl.Y
 		w.ContentHeight = wl.Height
 
-		// Adjust for the column ruler, which occupies the window's top line
+		// Adjust for the column ruler, which occupies the viewport's top line
 		if rulerActive(w, wl.Height) {
 			w.ContentY++
 			w.ContentHeight--
@@ -586,15 +586,15 @@ func (sr *ScreenRenderer) updateWindowContentProperties(layout window.Layout) {
 	}
 }
 
-// renderWindowGroup renders a group of windows.
-func (sr *ScreenRenderer) renderWindowGroup(layouts []window.WindowLayout) {
+// renderViewportGroup renders a group of viewports.
+func (sr *ScreenRenderer) renderViewportGroup(layouts []viewport.ViewportLayout) {
 	for _, wl := range layouts {
-		sr.renderWindow(wl.Window, wl.Y+1, wl.Height)
+		sr.renderViewport(wl.Viewport, wl.Y+1, wl.Height)
 	}
 }
 
-// renderWindow renders a single window.
-func (sr *ScreenRenderer) renderWindow(w *window.Window, startY, height int) {
+// renderViewport renders a single viewport.
+func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height int) {
 	messagesColor := sr.col(w, "messages")
 	resetColor := sr.col(w, "reset")
 
@@ -603,8 +603,8 @@ func (sr *ScreenRenderer) renderWindow(w *window.Window, startY, height int) {
 		if renderer, ok := sr.customRenderers[w.CustomRenderer]; ok {
 			// Record the bar's screen geometry (it writes from column 1) so the
 			// editor can hit-test clicks on it — e.g. the modebar's nav-history
-			// buttons. A custom-rendered chrome window has no Buffer, so this
-			// never affects content hit-testing (windowAtRow requires a buffer).
+			// buttons. A custom-rendered chrome viewport has no Buffer, so this
+			// never affects content hit-testing (viewportAtRow requires a buffer).
 			w.ContentX = 0
 			w.ContentY = startY - 1
 			w.ContentHeight = height
@@ -619,7 +619,7 @@ func (sr *ScreenRenderer) renderWindow(w *window.Window, startY, height int) {
 	y := startY
 	remainingHeight := height
 
-	// Column ruler on the window's top line, above everything else
+	// Column ruler on the viewport's top line, above everything else
 	if rulerActive(w, height) && sr.rulerRenderer != nil {
 		sr.MoveCursor(1, y)
 		sr.Write(sr.rulerRenderer(w, sr.Width))
@@ -711,7 +711,7 @@ func composeMessageBar(left, center, right string, width int) string {
 
 	// Never emit more columns than the bar is wide. An over-long message would
 	// wrap onto the row below in the terminal, corrupting (blanking) the
-	// windows beneath it — so ellipsize it to fit instead of omitting it.
+	// viewports beneath it — so ellipsize it to fit instead of omitting it.
 	if calculateAnsiAwareLength(line) > width {
 		line = truncateToWidth(line, width)
 	}
@@ -758,8 +758,8 @@ func truncateToWidth(s string, maxCols int) string {
 	return b.String()
 }
 
-// renderContent renders the main content area of a window.
-func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
+// renderContent renders the main content area of a viewport.
+func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int) {
 	textColor := sr.col(w, "text")
 	messagesColor := sr.col(w, "messages")
 	lineNumbersColor := sr.col(w, "lineNumbers")
@@ -814,7 +814,7 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 		}
 
 		// Physical left margin. Row messages (prompt labels) belong to the
-		// INNER margin, which is the left side only in LTR windows.
+		// INNER margin, which is the left side only in LTR viewports.
 		if marginL > 0 {
 			sr.Write(messagesColor)
 			if !sr.winRTL(w) && row < len(w.RowMessages) {
@@ -911,7 +911,7 @@ func (sr *ScreenRenderer) renderContent(w *window.Window, startY, height int) {
 			}
 		}
 
-		// Physical right margin — the INNER margin of an RTL window, where
+		// Physical right margin — the INNER margin of an RTL viewport, where
 		// its row messages (prompt labels) paint.
 		if marginR > 0 {
 			sr.Write(messagesColor)
@@ -980,8 +980,8 @@ func (sr *ScreenRenderer) composeTabMarker(width int) []rune {
 }
 
 // prepareLineForDisplay prepares a line for display by handling UTF-8, control characters, tabs, etc.
-// Translated directly from TypeScript window-renderer.js prepareLineForDisplay
-func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, viewOffsetX int, w *window.Window, docLine int, sel selectionRange, disp *lineDisplay, dispSyn []string) string {
+// Translated directly from TypeScript viewport-renderer.js prepareLineForDisplay
+func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, viewOffsetX int, w *viewport.Viewport, docLine int, sel selectionRange, disp *lineDisplay, dispSyn []string) string {
 	var displayLine strings.Builder
 
 	// Link-as-button substitution: when disp is non-nil the walk below runs
@@ -1015,7 +1015,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	substitutesColor := sr.col(w, "special") // control char substitutes (^X / hex)
 	truncatedColor := sr.col(w, "truncation")
 
-	// Whitespace visualization. When enabled for this window, tabs and spaces
+	// Whitespace visualization. When enabled for this viewport, tabs and spaces
 	// are drawn with visible marker glyphs in the invisibles color (or the
 	// selection variant when the marker falls inside the selection).
 	showInvisibles := w.ViewState.ShowInvisibles
@@ -1090,13 +1090,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		return runes[li]
 	}
 
-	// direction=rtl anchors the view to the RIGHT: the visible window in
+	// direction=rtl anchors the view to the RIGHT: the visible viewport in
 	// visual columns is [vw-offset-width, vw-offset), so the line's reading
 	// start (its rightmost visual cell) sits at the right edge and horizontal
 	// scrolling advances through READING order — trimming the reading head
-	// off the right as the tail is revealed on the left. When the window
+	// off the right as the tail is revealed on the left. When the viewport
 	// extends past the line's left end the difference becomes left padding
-	// (right alignment). Rewriting viewOffsetX to the window's left bound
+	// (right alignment). Rewriting viewOffsetX to the viewport's left bound
 	// lets the walk below run unchanged.
 	leftPad := 0
 	if rtl {
@@ -1130,7 +1130,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	}
 	// RTL: content trimmed off the LEFT edge is the line's reading tail
 	// continuing — mark it per line (the mirror of LTR's right-edge marker).
-	// The marker takes the first content cell; advancing the window start by
+	// The marker takes the first content cell; advancing the viewport start by
 	// one keeps every remaining cell on its screen column.
 	if rtl && viewOffsetX > 0 {
 		displayLine.WriteString(truncatedColor + sr.indicators.TruncationLeft + textColor)
@@ -1543,7 +1543,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 }
 
 // getTabWidth calculates the width of a tab at the given visual column.
-func (sr *ScreenRenderer) getTabWidth(visualColumn int, w *window.Window) int {
+func (sr *ScreenRenderer) getTabWidth(visualColumn int, w *viewport.Viewport) int {
 	tabSize := sr.getTabSize(w)
 	return tabSize - (visualColumn % tabSize)
 }
@@ -1566,10 +1566,10 @@ func runeToHexOrCtrl(r rune) string {
 	}
 }
 
-// renderPeekIndicators renders peek indicators for scrolled dock windows.
-// These hints live at the window-manager level, not inside any window, so
+// renderPeekIndicators renders peek indicators for scrolled dock viewports.
+// These hints live at the viewport-manager level, not inside any viewport, so
 // their colors resolve at the global level only (no class/type cascade).
-func (sr *ScreenRenderer) renderPeekIndicators(layout window.Layout) {
+func (sr *ScreenRenderer) renderPeekIndicators(layout viewport.Layout) {
 	hintColor := sr.colorScheme.Resolve("", "", "hint")
 	resetColor := sr.colorScheme.Resolve("", "", "reset")
 	// Right-align the (configurable, variable-width) label near the right edge.
@@ -1617,15 +1617,15 @@ func (sr *ScreenRenderer) renderPeekIndicators(layout window.Layout) {
 	}
 }
 
-// positionCursor positions the terminal cursor within a window. It returns true
+// positionCursor positions the terminal cursor within a viewport. It returns true
 // if the hardware cursor should be hidden for this frame (used for the
 // right-edge off-screen "@", so the block cursor doesn't obscure the marker).
 // caretLineVisible reports whether the caret's document line is within the
-// window's visible content rows. It is false when a free scroll (mouse wheel
+// viewport's visible content rows. It is false when a free scroll (mouse wheel
 // or scroll_* command) has parked the viewport away from a stationary caret,
 // leaving the caret above or below the content area. ContentHeight already
 // excludes the ruler and message bars, so this is the exact visible span.
-func caretLineVisible(w *window.Window) bool {
+func caretLineVisible(w *viewport.Viewport) bool {
 	if w.ContentHeight <= 0 {
 		return true // geometry not established yet: don't hide
 	}
@@ -1633,7 +1633,7 @@ func caretLineVisible(w *window.Window) bool {
 	return rel >= 0 && rel < w.ContentHeight
 }
 
-func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.WindowLayout) bool {
+func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.ViewportLayout) bool {
 	// A free scroll can leave the caret above or below the visible content
 	// (its line scrolled out of view). Park the hardware cursor at home and
 	// hide it rather than placing it on an unrelated row.
@@ -1717,7 +1717,7 @@ func (sr *ScreenRenderer) positionCursor(w *window.Window, layout *window.Window
 // visualColIsWideTrail reports whether a left-based visual column on the
 // display line falls on the TRAILING cell of a double-width glyph — a cell
 // that cannot be individually overstruck (the glyph lights up as a whole).
-func (sr *ScreenRenderer) visualColIsWideTrail(w *window.Window, line string, col int) bool {
+func (sr *ScreenRenderer) visualColIsWideTrail(w *viewport.Viewport, line string, col int) bool {
 	runes := []rune(line)
 	if len(runes) == 0 || col <= 0 {
 		return false
@@ -1748,7 +1748,7 @@ func (sr *ScreenRenderer) visualColIsWideTrail(w *window.Window, line string, co
 
 // renderGhostCursor renders the ghost cursor indicator at the ideal visual column.
 // The ghost cursor shows where the cursor "wants" to be on a shorter line.
-func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.WindowLayout) {
+func (sr *ScreenRenderer) renderGhostCursor(w *viewport.Viewport, layout *viewport.ViewportLayout) {
 	if !w.HasGhostCursor || w.GhostCursorVisualColumn <= 0 {
 		return
 	}
@@ -1813,7 +1813,7 @@ func (sr *ScreenRenderer) renderGhostCursor(w *window.Window, layout *window.Win
 // this to mark the cursor's column(s) when rulerShowsCursor is enabled. The
 // screen-X math mirrors positionCursor / renderGhostCursor / the secondary
 // cursor exactly, so the highlighted ruler cells line up with the caret.
-func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
+func (sr *ScreenRenderer) CursorColumns(w *viewport.Viewport) []int {
 	if w == nil || w.Buffer == nil {
 		return nil
 	}
@@ -1878,7 +1878,7 @@ func (sr *ScreenRenderer) CursorColumns(w *window.Window) []int {
 // PREVIOUS rune's fragment — one cell past that rune in ITS direction (left
 // of its cell for RTL, right for LTR), the same "one past, in its own
 // direction" form as the end-of-line rule.
-func (sr *ScreenRenderer) secondaryCursorColumn(runes []rune, layout *bidi.Layout, p int, w *window.Window) (int, bool) {
+func (sr *ScreenRenderer) secondaryCursorColumn(runes []rune, layout *bidi.Layout, p int, w *viewport.Viewport) (int, bool) {
 	// The dual cursor shows whenever the line is bidirectional — with or
 	// without showBidi's markers — since the boundary ambiguity exists either
 	// way; only the layout (and thus the exact cells) differs. p is the caret
@@ -1920,7 +1920,7 @@ func (sr *ScreenRenderer) secondaryCursorColumn(runes []rune, layout *bidi.Layou
 
 // renderSecondaryCursor paints the secondary bidi cursor by re-drawing the
 // cell just beyond the other end of the caret's fragment in reverse video.
-func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window.WindowLayout) {
+func (sr *ScreenRenderer) renderSecondaryCursor(w *viewport.Viewport, layout *viewport.ViewportLayout) {
 	if w.Buffer == nil {
 		return
 	}
@@ -1996,7 +1996,7 @@ func (sr *ScreenRenderer) renderSecondaryCursor(w *window.Window, layout *window
 
 // runeToVisualColumn converts a rune position to a visual column position.
 // This accounts for tabs (variable width) and control characters (2 chars wide).
-func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window.Window) int {
+func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *viewport.Viewport) int {
 	runes := []rune(line)
 
 	// Bidirectional line: the cursor's cell is wherever its logical rune is
@@ -2034,13 +2034,13 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *window
 	return column
 }
 
-// lineMarkSet is the set of positions on the window's caret line that get a
+// lineMarkSet is the set of positions on the viewport's caret line that get a
 // showMarks "*" cell, mirroring what prepareLineForDisplay draws: one before the
 // cell of each marked rune, plus — only when invisibles are shown, so the
 // terminator slot exists to host it — a mark at end of line. nil when showMarks
 // is off or the line has no drawable marks. Every caret walk (plain and bidi)
 // consumes this one set. Mirrors the editor's lineMarkSet.
-func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
+func (sr *ScreenRenderer) lineMarkSet(w *viewport.Viewport, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil
 	}
@@ -2077,7 +2077,7 @@ func (sr *ScreenRenderer) lineMarkSet(w *window.Window, runes []rune) map[int]bo
 // markedLine reports the plain (non-bidi) showMarks case: showMarks on, the
 // caret line non-bidi, and it has drawable marks. Returns the line's runes and
 // its mark-cell set; ok is false (base path) otherwise. Mirrors the editor.
-func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
+func (sr *ScreenRenderer) markedLine(w *viewport.Viewport, line string) (runes []rune, marked map[int]bool, ok bool) {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil, nil, false
 	}
@@ -2096,7 +2096,7 @@ func (sr *ScreenRenderer) markedLine(w *window.Window, line string) (runes []run
 // cell before each marked rune, then the rune, with tab widths resolved at the
 // SHIFTED column exactly as prepareLineForDisplay paints them. Returns the column
 // of rune runePos's own cell. Mirrors the editor's runeToVisualColumnMarked.
-func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marked map[int]bool, runePos int, w *window.Window) int {
+func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marked map[int]bool, runePos int, w *viewport.Viewport) int {
 	if runePos < 0 {
 		runePos = 0
 	}
@@ -2122,7 +2122,7 @@ func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marked map[int]
 // visual order just before each marked rune's cell (and a trailing one for an
 // end-of-line mark), so cols/total are exact for bidi lines with marks. Mirrors
 // the editor's bidiColumns and the "*" insertion in prepareLineForDisplay.
-func (sr *ScreenRenderer) bidiColumns(runes []rune, layout *bidi.Layout, marked map[int]bool, w *window.Window) (cols []int, total int) {
+func (sr *ScreenRenderer) bidiColumns(runes []rune, layout *bidi.Layout, marked map[int]bool, w *viewport.Viewport) (cols []int, total int) {
 	cols = make([]int, len(runes))
 	col := 0
 	for _, li := range layout.Perm {
@@ -2146,14 +2146,14 @@ func (sr *ScreenRenderer) bidiColumns(runes []rune, layout *bidi.Layout, marked 
 // last rune's direction. Mirrors the editor's caretVisualColumn. On a plain
 // line with marks it walks the "*" cells inline; bidi lines are exact through
 // caretVisualColumnBase, whose cols/total include the "*" cells.
-func (sr *ScreenRenderer) caretVisualColumn(line string, runePos int, w *window.Window) int {
+func (sr *ScreenRenderer) caretVisualColumn(line string, runePos int, w *viewport.Viewport) int {
 	if runes, marked, ok := sr.markedLine(w, line); ok {
 		return sr.runeToVisualColumnMarked(runes, marked, runePos, w)
 	}
 	return sr.caretVisualColumnBase(line, runePos, w)
 }
 
-func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *window.Window) int {
+func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *viewport.Viewport) int {
 	runes := []rune(line)
 	layout := sr.layoutFor(w, runes)
 	if layout == nil {
@@ -2198,9 +2198,9 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *win
 }
 
 // rtlView maps a line of total visual width vw, scrolled by offset reading
-// columns, into a view of the given width: the visible visual-column window
+// columns, into a view of the given width: the visible visual-column viewport
 // is [eff, vw-offset), right-anchored, with pad columns of left padding when
-// the window extends past the line's left end (right alignment).
+// the viewport extends past the line's left end (right alignment).
 //
 // pad is returned UNCLAMPED: when the line is scrolled entirely off the right
 // (offset so large that pad exceeds width), the extra pad is how far past the
@@ -2216,10 +2216,10 @@ func rtlView(vw, offset, width int) (pad, eff int) {
 	return pad, eff
 }
 
-// lineVisualWidth is the total visual width of a line in this window (tab
+// lineVisualWidth is the total visual width of a line in this viewport (tab
 // widths resolved in visual order, marker/ligature slot widths respected) —
 // the renderer's counterpart to the editor's lineVisualWidth.
-func (sr *ScreenRenderer) lineVisualWidth(w *window.Window, line string) int {
+func (sr *ScreenRenderer) lineVisualWidth(w *viewport.Viewport, line string) int {
 	runes := []rune(line)
 	marked := sr.lineMarkSet(w, runes)
 	layout := sr.layoutFor(w, runes)
@@ -2240,12 +2240,12 @@ func (sr *ScreenRenderer) lineVisualWidth(w *window.Window, line string) int {
 	return vw
 }
 
-// rtlPadOffset returns the (pad, effective window start) prepareLineForDisplay
+// rtlPadOffset returns the (pad, effective viewport start) prepareLineForDisplay
 // uses for a line under direction=rtl — (0, ViewOffsetX) otherwise — so the
 // cursor and ghost land on the same cells the line was painted with. The
 // invisible-terminator markers prepareLineForDisplay may append occupy the
 // visual END of the line; include their cells when they are shown.
-func (sr *ScreenRenderer) rtlPadOffset(line string, w *window.Window, width int) (int, int) {
+func (sr *ScreenRenderer) rtlPadOffset(line string, w *viewport.Viewport, width int) (int, int) {
 	// A double-width caret line lays its content into half the columns at half
 	// the horizontal scroll; callers pass the halved (cell-space) width, so the
 	// offset must be halved to match.
@@ -2281,7 +2281,7 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *window.Window, width int)
 }
 
 // caretRowGeom returns the horizontal geometry for placing a cursor on the
-// window's caret line: base is the physical 1-based screen column where the
+// viewport's caret line: base is the physical 1-based screen column where the
 // content begins, contentCells its usable width, and pad/viewOff the
 // right-alignment pad and horizontal scroll offset from rtlPadOffset. On a
 // double-width caret line the gutter shrinks to half as many cells and the
@@ -2290,7 +2290,7 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *window.Window, width int)
 // a caller painting on a NORMAL row (the ruler) can map a cell column to its
 // physical position with cellToPhysical. `line` is the display
 // (button-substituted) caret line.
-func (sr *ScreenRenderer) caretRowGeom(w *window.Window, line string) (base, pad, viewOff, contentCells int, dw bool) {
+func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base, pad, viewOff, contentCells int, dw bool) {
 	lineNumWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
@@ -2329,7 +2329,7 @@ func cellToPhysical(cellX int, doubleWide bool) int {
 // column: variable for tabs, 2 for control characters (^X display), and the
 // terminal cell width otherwise — 0 for combining/zero-width characters,
 // 2 for wide (CJK, emoji).
-func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *window.Window) int {
+func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewport.Viewport) int {
 	if r == '\t' {
 		tabSize := sr.getTabSize(w)
 		return tabSize - (currentColumn % tabSize)
@@ -2354,9 +2354,9 @@ func lineHasZeroWidth(s string) bool {
 	return false
 }
 
-// getTabSize returns the tab size for a window.
-func (sr *ScreenRenderer) getTabSize(w *window.Window) int {
-	// TODO: Get from window or config preferences
+// getTabSize returns the tab size for a viewport.
+func (sr *ScreenRenderer) getTabSize(w *viewport.Viewport) int {
+	// TODO: Get from viewport or config preferences
 	tabSize := 8 // Default
 	if w != nil && w.ViewState.TabSize > 0 {
 		tabSize = w.ViewState.TabSize

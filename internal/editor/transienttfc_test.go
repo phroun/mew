@@ -41,7 +41,7 @@ func TestTransientTFCIsOptIn(t *testing.T) {
 	msg := "Press %keys_verbose#help_toggle% for help."
 
 	notifText := func() string {
-		for _, w := range e.WindowManager.AllWindows() {
+		for _, w := range e.ViewportManager.AllViewports() {
 			if w.Class == "notification" {
 				return w.MessageTopInner
 			}

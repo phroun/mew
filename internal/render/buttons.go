@@ -3,7 +3,7 @@ package render
 import (
 	"strings"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Browse-mode display transforms. In browse mode the editor rewrites how a
@@ -77,9 +77,9 @@ func (b ButtonSpan) asDisplaySpan() DisplaySpan {
 }
 
 // DisplayProvider returns the browse-mode display transform for one line of a
-// window: the ordered, non-overlapping spans and whether the line is drawn
+// viewport: the ordered, non-overlapping spans and whether the line is drawn
 // double-width. Nil spans + false is the identity (the common case).
-type DisplayProvider func(w *window.Window, docLine int) (spans []DisplaySpan, doubleWidth bool)
+type DisplayProvider func(w *viewport.Viewport, docLine int) (spans []DisplaySpan, doubleWidth bool)
 
 // lineDisplay is one document line rewritten for display, with the position
 // maps the renderer needs to keep cursor, selection, and syntax colours honest
@@ -187,15 +187,15 @@ func (sr *ScreenRenderer) SetDisplayProvider(p DisplayProvider) {
 }
 
 // SetCaretHiddenFn installs a predicate that hides the hardware caret for a
-// window even when it is on screen (the caret is inert inside a focused
+// viewport even when it is on screen (the caret is inert inside a focused
 // button). nil never hides for this reason.
-func (sr *ScreenRenderer) SetCaretHiddenFn(fn func(w *window.Window) bool) {
+func (sr *ScreenRenderer) SetCaretHiddenFn(fn func(w *viewport.Viewport) bool) {
 	sr.caretHiddenFn = fn
 }
 
 // lineTransform fetches a line's display transform, or (nil,false) when none
 // applies.
-func (sr *ScreenRenderer) lineTransform(w *window.Window, docLine int) ([]DisplaySpan, bool) {
+func (sr *ScreenRenderer) lineTransform(w *viewport.Viewport, docLine int) ([]DisplaySpan, bool) {
 	if sr.displayProvider == nil {
 		return nil, false
 	}
@@ -205,7 +205,7 @@ func (sr *ScreenRenderer) lineTransform(w *window.Window, docLine int) ([]Displa
 // displayFor returns the substituted display form of a document line, with a
 // display-aligned syntax colour array spliced from the normal colorizer, or
 // nil when no transform applies to the line (the common case).
-func (sr *ScreenRenderer) displayFor(w *window.Window, docLine int, line string) (*lineDisplay, []string) {
+func (sr *ScreenRenderer) displayFor(w *viewport.Viewport, docLine int, line string) (*lineDisplay, []string) {
 	spans, dw := sr.lineTransform(w, docLine)
 	if len(spans) == 0 && !dw {
 		return nil, nil
@@ -228,11 +228,11 @@ func (sr *ScreenRenderer) displayFor(w *window.Window, docLine int, line string)
 	return d, syn
 }
 
-// displayCaretLine substitutes the window's caret line and maps the given
+// displayCaretLine substitutes the viewport's caret line and maps the given
 // doc-rune caret position into display space. Identity when no transform
 // applies. Used by every cursor-side measurement so the caret, ghost, and
 // ruler land on the cells the line was painted with.
-func (sr *ScreenRenderer) displayCaretLine(w *window.Window, line string, runePos int) (string, int) {
+func (sr *ScreenRenderer) displayCaretLine(w *viewport.Viewport, line string, runePos int) (string, int) {
 	spans, dw := sr.lineTransform(w, w.CursorPos().Line)
 	if len(spans) == 0 && !dw {
 		return line, runePos
@@ -253,14 +253,14 @@ func (sr *ScreenRenderer) displayCaretLine(w *window.Window, line string, runePo
 // lineIsSubstituted reports whether any display transform applies to a line of
 // w. The showMarks cell walks consult it: mark cells are suppressed on
 // substituted lines (their doc positions have no cells of their own there).
-func (sr *ScreenRenderer) lineIsSubstituted(w *window.Window, docLine int) bool {
+func (sr *ScreenRenderer) lineIsSubstituted(w *viewport.Viewport, docLine int) bool {
 	spans, dw := sr.lineTransform(w, docLine)
 	return len(spans) > 0 || dw
 }
 
-// caretLineDoubleWide reports whether the window's caret line is drawn
+// caretLineDoubleWide reports whether the viewport's caret line is drawn
 // double-width, so the cursor-positioning math can count its columns by two.
-func (sr *ScreenRenderer) caretLineDoubleWide(w *window.Window) bool {
+func (sr *ScreenRenderer) caretLineDoubleWide(w *viewport.Viewport) bool {
 	_, dw := sr.lineTransform(w, w.CursorPos().Line)
 	return dw
 }

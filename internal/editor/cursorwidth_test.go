@@ -3,13 +3,13 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // The painted hardware cursor must land on the terminal column that
 // wcwidth-style rendering produces: combining marks and zero-width
 // characters advance no columns, wide characters advance two, and the
-// window's column ruler offsets the row by one.
+// viewport's column ruler offsets the row by one.
 func TestRenderedCursorColumnComplexText(t *testing.T) {
 	const comb = "́" // combining acute
 	const dot = "֗"  // hebrew accent revia (combining)
@@ -21,7 +21,7 @@ func TestRenderedCursorColumnComplexText(t *testing.T) {
 
 	for runePos, want := range wantCol {
 		e, w, out := newRenderedEditor(t, content)
-		w.SetCursorPos(window.Position{Line: 0, Rune: runePos})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: runePos})
 		e.performRender()
 		_, col := lastCursor(out.Bytes())
 		// No line numbers, no margins: screen column = visual column + 1.
@@ -37,7 +37,7 @@ func TestRenderedCursorWithRulerAndLineNumbers(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "hello\nworld\n")
 	w.ViewState.ShowRuler = true
 	w.ViewState.ShowLineNumbers = true
-	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 3})
 	e.performRender()
 	row, col := lastCursor(out.Bytes())
 	// Ruler takes row 1; line 1 renders on row 3. Gutter is LineNumWidth

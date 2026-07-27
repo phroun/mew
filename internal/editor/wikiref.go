@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // DokuWiki-compatible reference resolution — the implementation of
@@ -87,19 +87,19 @@ type wikiDef struct {
 	// wikis say for themselves.
 	Writable bool
 
-	// Window placement: the kind of window a page of this wiki opens in and
-	// where it docks. The zero value (DocWindow / DockNone) is an ordinary
-	// main-area document window; help declares a ToolWindow in the top dock,
+	// Viewport placement: the kind of viewport a page of this wiki opens in and
+	// where it docks. The zero value (DocViewport / DockNone) is an ordinary
+	// main-area document viewport; help declares a ToolViewport in the top dock,
 	// so its pages surface as a readout above the document instead of taking
-	// over the editing area. WindowSet/Priority/MinHeight/MaxHeight only
+	// over the editing area. ViewportSet/Priority/MinHeight/MaxHeight only
 	// matter for a docked tool surface (they drive layout negotiation with
-	// the other docked readouts) and are ignored for a main-area window.
-	WinType   window.WindowType
-	Dock      window.DockPosition
-	WindowSet string
-	Priority  int
-	MinHeight int
-	MaxHeight int
+	// the other docked readouts) and are ignored for a main-area viewport.
+	WinType     viewport.ViewportType
+	Dock        viewport.DockPosition
+	ViewportSet string
+	Priority    int
+	MinHeight   int
+	MaxHeight   int
 }
 
 // wikiRegistry is hardcoded for now — the built-in help wiki lives in mew's
@@ -112,14 +112,14 @@ var wikiRegistry = map[string]wikiDef{
 		Start: "start", Writable: true,
 		// Help pages surface as a top-docked tool readout above the document,
 		// not in the main editing area.
-		WinType: window.ToolWindow, Dock: window.DockTop,
-		WindowSet: "help", Priority: 100, MinHeight: 4, MaxHeight: 20,
+		WinType: viewport.ToolViewport, Dock: viewport.DockTop,
+		ViewportSet: "help", Priority: 100, MinHeight: 4, MaxHeight: 20,
 	},
 }
 
-// wikiWritable reports whether pages may be created in the wiki a window
+// wikiWritable reports whether pages may be created in the wiki a viewport
 // browses, by registry name: a registered wiki says for itself; the unrooted
-// document space ("" — no wiki) and an unregistered rooted window are
+// document space ("" — no wiki) and an unregistered rooted viewport are
 // writable.
 func wikiWritable(wikiName string) bool {
 	if def, ok := wikiRegistry[wikiName]; ok {
@@ -459,14 +459,14 @@ func (e *Editor) docList(dirURL string) []string {
 // followResolution is the outcome of resolving a link target for navigation.
 type followResolution struct {
 	url      string // canonical URL of an existing file; "" when not followable
-	root     string // WikiRoot for the destination window ("" = none)
-	wikiName string // WikiName for the destination window ("" = not a registered wiki)
-	// newWindow: the destination must surface in a FRESH window rather than
-	// swapping in place — a window's root never changes, so a full-scheme
+	root     string // WikiRoot for the destination viewport ("" = none)
+	wikiName string // WikiName for the destination viewport ("" = not a registered wiki)
+	// newViewport: the destination must surface in a FRESH viewport rather than
+	// swapping in place — a viewport's root never changes, so a full-scheme
 	// reference (the one way a link leaves a rooted wiki) opens a new,
-	// rootless window (possibly sharing an already-open buffer).
-	newWindow bool
-	message   string // human notification when url is ""
+	// rootless viewport (possibly sharing an already-open buffer).
+	newViewport bool
+	message     string // human notification when url is ""
 	// createURL/writable describe the create-on-miss option when url is "":
 	// the canonical URL where the unresolved page WOULD be created, and
 	// whether its wiki permits creation. Empty createURL (gated schemes,
@@ -475,20 +475,20 @@ type followResolution struct {
 	writable  bool
 }
 
-// resolveFollow resolves a link target against the window's current document
+// resolveFollow resolves a link target against the viewport's current document
 // into the canonical URL of an EXISTING file, per the three layers plus
 // resolution-time matching. Document schemes (mew:///, file:///) resolve as
-// new-window destinations; other schemes and interwiki are gated out; wiki
-// ids resolve within the window's root when it has one — absolute ids from
+// new-viewport destinations; other schemes and interwiki are gated out; wiki
+// ids resolve within the viewport's root when it has one — absolute ids from
 // the root, relative climbs clamped at it, no escape — and by nearest-
 // ancestor discovery when it does not.
-func (e *Editor) resolveFollow(w *window.Window, target string) followResolution {
+func (e *Editor) resolveFollow(w *viewport.Viewport, target string) followResolution {
 	ref := strings.TrimSpace(target)
 
 	// Registered wiki schemes first: "help:/start" opens a page within that
 	// wiki, rooted at its registered root. The destination surfaces in a new
-	// window unless the current window already carries that exact root (a
-	// window's root never changes).
+	// viewport unless the current viewport already carries that exact root (a
+	// viewport's root never changes).
 	if def, rest, ok := wikiSchemeRef(ref); ok {
 		// The registered root canonicalizes per mode (a local mew:/// root
 		// becomes its real file:/// subtree), so roots compare in the same
@@ -497,11 +497,11 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		newWin := w == nil || w.WikiRoot != rootURL
 		p, createURL := e.resolveInWiki(def, rootURL, rest)
 		if p != "" {
-			return followResolution{url: p, root: rootURL, wikiName: def.Name, newWindow: newWin}
+			return followResolution{url: p, root: rootURL, wikiName: def.Name, newViewport: newWin}
 		}
 		return followResolution{
 			message: "Page not found: " + ref, root: rootURL, wikiName: def.Name,
-			newWindow: newWin, createURL: createURL, writable: def.Writable,
+			newViewport: newWin, createURL: createURL, writable: def.Writable,
 		}
 	}
 
@@ -509,7 +509,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 		if scheme == "mew" || scheme == "file" {
 			url := e.canonicalDocURL(ref)
 			if isDir, exists := e.docStat(url); exists && !isDir {
-				return followResolution{url: url, newWindow: true}
+				return followResolution{url: url, newViewport: true}
 			}
 			return followResolution{message: "Not found: " + ref}
 		}
@@ -532,7 +532,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	srcExt := path.Ext(src)
 	cfg := defaultWikiCfg()
 
-	// The window's wiki root confines resolution. A root that does not cover
+	// The viewport's wiki root confines resolution. A root that does not cover
 	// the current document would be a bug elsewhere; ignore it defensively
 	// (the wiki name goes with it — the pair is one identity).
 	root, wikiName := w.WikiRoot, w.WikiName
@@ -554,8 +554,8 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 
 	if relative {
 		// Re-apply the dot-walk against the real directory: climbs ("..")
-		// pop the actual path, clamped at the window's root when set (a
-		// rooted window's links can never back out of it).
+		// pop the actual path, clamped at the viewport's root when set (a
+		// rooted viewport's links can never back out of it).
 		floor := prefix + "/"
 		if root != "" {
 			floor = root
@@ -572,7 +572,7 @@ func (e *Editor) resolveFollow(w *window.Window, target string) followResolution
 	}
 
 	if root != "" {
-		// Absolute within a rooted window: from the root, nowhere else.
+		// Absolute within a rooted viewport: from the root, nowhere else.
 		if p := e.matchWikiPath(root, segs, srcExt, nsTarget, cfg); p != "" {
 			return followResolution{url: p, root: root, wikiName: wikiName}
 		}
@@ -653,7 +653,7 @@ func isRelativeRef(ref string, cfg wikiCfg) bool {
 
 // relativeBase resolves a RELATIVE reference's dot-walk against the real
 // directory URL of the current document: "." stays, ".." climbs — never
-// above floor (the window's wiki root, or the scheme root) — and the
+// above floor (the viewport's wiki root, or the scheme root) — and the
 // remaining name segments come back cleaned for matching.
 func relativeBase(curDir, floor, ref string, cfg wikiCfg) (base string, names []string) {
 	if i := strings.IndexByte(ref, '#'); i >= 0 {
@@ -669,7 +669,7 @@ func relativeBase(curDir, floor, ref string, cfg wikiCfg) (base string, names []
 		case "", ".":
 		case "..":
 			// Climb only while strictly below the floor; at (or somehow
-			// outside) it, ".." is a no-op — a rooted window's links can
+			// outside) it, ".." is a no-op — a rooted viewport's links can
 			// never back out of their root.
 			if base != floor && urlWithin(base, floor) {
 				base = urlDir(base)

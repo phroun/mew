@@ -46,7 +46,7 @@ func (e *Editor) checkEditLock() {
 	if e.lockPrompting {
 		return // a prompt is already up; ignore the edits it may cause
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}

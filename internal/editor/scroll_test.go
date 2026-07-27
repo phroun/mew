@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // A free scroll (mouse wheel or scroll_* command) detaches the viewport from
@@ -13,7 +13,7 @@ import (
 func TestScrollDetachesUntilCursorMoves(t *testing.T) {
 	e, w := newTestEditor(t, strings.Repeat("x\n", 100))
 	w.ContentHeight = 20
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.SetViewTop(0)
 
 	// Wheel-scroll ten lines down: the caret stays on line 0 (now off-screen).
@@ -49,7 +49,7 @@ func TestScrollDetachesUntilCursorMoves(t *testing.T) {
 func TestRenderFollowStillSnapsWhenAttached(t *testing.T) {
 	e, w := newTestEditor(t, strings.Repeat("x\n", 100))
 	w.ContentHeight = 20
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.SetViewTop(10) // moved away, but NOT via a detaching scroll
 
 	e.renderFollowCaret(w)
@@ -62,7 +62,7 @@ func TestRenderFollowStillSnapsWhenAttached(t *testing.T) {
 func TestEditReengagesFollow(t *testing.T) {
 	e, w := newTestEditor(t, strings.Repeat("x\n", 100))
 	w.ContentHeight = 20
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.scrollViewByLines(w, 10)
 	if !w.ViewState.ScrollDetached {
 		t.Fatal("precondition: the view should be detached")
@@ -79,7 +79,7 @@ func TestEditReengagesFollow(t *testing.T) {
 func TestFreeScrollParksCursorHome(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, strings.Repeat("x\n", 100), "")
 	e.performRender() // establish geometry, cursor shown at the caret
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	// Wheel-scroll the viewport well past the caret; the caret line is now
 	// above the visible content.
@@ -114,7 +114,7 @@ func TestScrollCommands(t *testing.T) {
 	lineCount := w.Buffer.GetLineCount()
 
 	reset := func() {
-		w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 		w.SetViewTop(0)
 		w.ViewState.ScrollDetached = false
 	}
@@ -144,7 +144,7 @@ func TestScrollCommands(t *testing.T) {
 	}
 
 	// scroll_buffer_beg / scroll_line_prior return toward the top.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.SetViewTop(40)
 	e.PawScript.ExecuteAsync("scroll_line_prior")
 	if w.ViewState.ViewOffsetY != 39 {

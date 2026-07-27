@@ -4,10 +4,10 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// The I-beam region mew publishes after a render is the FOCUSED window's
+// The I-beam region mew publishes after a render is the FOCUSED viewport's
 // editable content rectangle (1-based cells), so a graphical host shows the
 // I-beam over text and the arrow over the gutter, modebar, and other chrome.
 func TestPointerRegionPublished(t *testing.T) {
@@ -18,7 +18,7 @@ func TestPointerRegionPublished(t *testing.T) {
 		last = [4]int{col, row, w, h}
 		arrows = a
 	}
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.performRender()
 
 	want := [4]int{doc.ContentX + 1, doc.ContentY + 1, doc.ContentWidth, doc.ContentHeight}
@@ -33,7 +33,7 @@ func TestPointerRegionPublished(t *testing.T) {
 		t.Fatal("the I-beam region should start past the gutter")
 	}
 	// The modebar row is chrome — outside the region's rows.
-	if mw := e.WindowManager.GetWindow(e.Modebar.WindowID()); mw != nil {
+	if mw := e.ViewportManager.GetViewport(e.Modebar.ViewportID()); mw != nil {
 		mrow := mw.ContentY + 1
 		if mrow >= last[1] && mrow < last[1]+last[3] {
 			t.Fatal("the modebar row must lie outside the I-beam region")
@@ -48,7 +48,7 @@ func TestPointerRegionFollowsPromptFocus(t *testing.T) {
 	e, doc, _ := renderedEditorWithConfig(t, "hello\n", "[options]\n")
 	var last [4]int
 	e.Config.PointerRegion = func(col, row, w, h int, _ []PointerArrowSpan) { last = [4]int{col, row, w, h} }
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.performRender()
 	docRect := [4]int{doc.ContentX + 1, doc.ContentY + 1, doc.ContentWidth, doc.ContentHeight}
 	if last != docRect {
@@ -57,8 +57,8 @@ func TestPointerRegionFollowsPromptFocus(t *testing.T) {
 
 	e.PromptForInput("Find: ", "", func(string, bool) {})
 	e.performRender()
-	pw := e.WindowManager.GetFocusedWindow()
-	if pw == nil || pw.Type != window.PromptWindow {
+	pw := e.ViewportManager.GetFocusedViewport()
+	if pw == nil || pw.Type != viewport.PromptViewport {
 		t.Fatal("the prompt should hold focus")
 	}
 	promptRect := [4]int{pw.ContentX + 1, pw.ContentY + 1, pw.ContentWidth, pw.ContentHeight}
@@ -103,7 +103,7 @@ func TestPointerRegionExcludesBrowseButtons(t *testing.T) {
 func TestModebarNavStandsDownForPrompt(t *testing.T) {
 	e, doc, _ := renderedEditorWithConfig(t, "A\n", "[options]\n")
 	doc.SwapBuffer(buffer.NewFromString("B\n"), func(*buffer.Buffer) bool { return false })
-	e.createPluginWindows()
+	e.createPluginViewports()
 	e.performRender()
 	bx, by, ok := e.findModebarNavButton(1) // back button
 	if !ok {

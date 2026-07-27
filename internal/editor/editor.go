@@ -27,7 +27,7 @@ import (
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/version"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // statusWriter captures stderr output and stores it for display.
@@ -96,13 +96,13 @@ func (iw *insertWriter) Write(p []byte) (n int, err error) {
 // Editor is the main editor instance that orchestrates all components.
 type Editor struct {
 	// Core components
-	WindowManager *window.Manager
-	LayoutManager *window.LayoutManager
-	Renderer      *render.ScreenRenderer
-	KeyProcessor  *keys.SequenceProcessor
-	KeyHandler    input.Source
-	PawScript     *pawscript.PawScript
-	PromptMgr     *PromptManager
+	ViewportManager *viewport.Manager
+	LayoutManager   *viewport.LayoutManager
+	Renderer        *render.ScreenRenderer
+	KeyProcessor    *keys.SequenceProcessor
+	KeyHandler      input.Source
+	PawScript       *pawscript.PawScript
+	PromptMgr       *PromptManager
 
 	// pawConfig is the live PawScript configuration; DefaultTokenTimeout is
 	// read at each host-level token request, so runtime option changes
@@ -156,7 +156,7 @@ type Editor struct {
 	Running        bool
 	ActiveSequence string
 	// activeCompletions holds the current key-sequence autocompletion text shown
-	// in the modebar. It is transient key-sequence state, not window context.
+	// in the modebar. It is transient key-sequence state, not viewport context.
 	activeCompletions string
 
 	// quickHelpTopic is the context-sensitive help topic for the current key
@@ -166,13 +166,13 @@ type Editor struct {
 	// reference. It ONLY drives Quick Help — the main help ("Using mew") ignores
 	// it entirely.
 	quickHelpTopic string
-	// quickHelpMode marks the docked help window as Quick Help (the dynamic,
+	// quickHelpMode marks the docked help viewport as Quick Help (the dynamic,
 	// context-following page) rather than an ordinary help page reached by
 	// browsing. It is what the "Quick Help" checkmark reflects, and what keeps
 	// Quick Help identifiable apart from a normal help page showing the same URL.
 	quickHelpMode bool
 	// quickHelpBuf is the buffer currently displayed AS Quick Help, and
-	// quickHelpShownTopic the topic it was built from. If the help window's
+	// quickHelpShownTopic the topic it was built from. If the help viewport's
 	// buffer drifts from quickHelpBuf the user browsed away (link/history/Using
 	// mew), which ends quick mode; if quickHelpTopic drifts from
 	// quickHelpShownTopic the context changed and Quick Help re-navigates.
@@ -181,8 +181,8 @@ type Editor struct {
 
 	// Cross-buffer find state (the find command's "a" option). When set,
 	// find_next continues across all main buffers instead of using the
-	// focused window's per-window find state.
-	globalFind    window.FindState
+	// focused viewport's per-viewport find state.
+	globalFind    viewport.FindState
 	globalFindSet bool
 
 	// Render debouncing
@@ -211,7 +211,7 @@ type Editor struct {
 	// command re-rendering (and re-locking renderMu) itself.
 	pendingScreenCapture string
 
-	// appliedFocusedSig is the focused window's overlay signature whose
+	// appliedFocusedSig is the focused viewport's overlay signature whose
 	// focused-scoped options (modebar templates/location, macOptionKeys, key
 	// mappings) are currently applied. Re-derived when it changes.
 	appliedFocusedSig string
@@ -290,7 +290,7 @@ type Editor struct {
 	pointerRegionSent   [4]int
 	pointerArrowsSent   []PointerArrowSpan
 	pointerRegionPushed bool
-	// helpStateSent/helpStatePushed: the last built-in-help-window open state
+	// helpStateSent/helpStatePushed: the last built-in-help-viewport open state
 	// pushed through Config.HelpState (see notifyHelpState).
 	helpStateSent   bool
 	helpStatePushed bool
@@ -301,13 +301,13 @@ type Editor struct {
 	hScrollAccum   int
 	hScrollEngaged bool
 	hScrollDir     int
-	// Drag selection (mouse.go): a left press in the focused window's content
+	// Drag selection (mouse.go): a left press in the focused viewport's content
 	// area arms this; dragging then marks the block (begin at the press
 	// origin, end following the pointer). A shift+click arms it pre-begun
 	// with the ORIGINAL caret position as the origin.
 	dragSel dragSelState
 	// Drag-edge autoscroll (mouse.go): while a drag selection holds the
-	// pointer beyond (or at) the window's edges, a ticker scrolls the view —
+	// pointer beyond (or at) the viewport's edges, a ticker scrolls the view —
 	// after a short delay, at a speed from the overshoot — and keeps
 	// extending the selection. dragScrollPending throttles the ticker to one
 	// posted tick in flight.
@@ -318,11 +318,11 @@ type Editor struct {
 	// pointer is currently over it (paints pressed), and the button under the
 	// pointer for hover (graphical all-motion tracking only). Clicking a
 	// modebar nav button never steals focus — nav operates on the focused
-	// window.
+	// viewport.
 	modebarNavCapture int
 	modebarNavOn      bool
 	modebarNavHover   int
-	// readOnlySent/readOnlyPushed: the last focused-window read-only state
+	// readOnlySent/readOnlyPushed: the last focused-viewport read-only state
 	// pushed through Config.EditState (see notifyEditState), and whether an
 	// initial push has happened.
 	readOnlySent   bool
@@ -447,7 +447,7 @@ type Config struct {
 	// ModebarLocation places the modebar on the "top" (default) or
 	// "bottom" screen line. ModebarInner/Default/Outer are the base modebar
 	// templates; MappingsName is the base key-mapping set. All four are the
-	// base for the focused window's overlay (see reconcileFocusedOptions).
+	// base for the focused viewport's overlay (see reconcileFocusedOptions).
 	ModebarLocation string
 	ModebarInner    string
 	ModebarDefault  string
@@ -518,7 +518,7 @@ type Config struct {
 	FontLoader func(files map[string]string, searchPaths []string)
 
 	// PointerRegion, when set, publishes where a graphical host should show the
-	// text I-beam: the FOCUSED window's editable content area (its cells,
+	// text I-beam: the FOCUSED viewport's editable content area (its cells,
 	// including the blank rows below the document that still follow
 	// click-to-EOF), in 1-based terminal cells (col, row, width, height); a
 	// zero width/height means "nowhere" (arrow everywhere). Everything OUTSIDE
@@ -537,13 +537,13 @@ type Config struct {
 	// round-tripping through mew's input stream. Called from the render path.
 	PointerRegion func(col, row, width, height int, arrows []PointerArrowSpan)
 
-	// HelpState, when set, is told whether the built-in help window (the
+	// HelpState, when set, is told whether the built-in help viewport (the
 	// WordStar command reference toggled by help_toggle) is open, once at the
 	// first render and thereafter on transitions — so a host can keep a "Quick
 	// Help" menu checkmark in sync with it. Called from the render path.
 	HelpState func(open bool)
 
-	// EditState, when set, is told whenever the FOCUSED window's read-only
+	// EditState, when set, is told whenever the FOCUSED viewport's read-only
 	// state changes (and once at the first render), so a host can grey out
 	// affordances that mutate — its Edit-menu Cut, say. Called only on
 	// transitions, from the editor loop.
@@ -562,7 +562,7 @@ type Config struct {
 	StateCallback func(state map[string]interface{})
 
 	// ShowDesktop / HideDesktop, when set, are invoked by the show_desktop /
-	// hide_desktop commands. A host that embeds mew as a window-manager surface
+	// hide_desktop commands. A host that embeds mew as a viewport-manager surface
 	// (e.g. a KittyTK host) wires these to reveal or hide its desktop. Left
 	// unset - as in the standalone editor - both commands are no-ops.
 	ShowDesktop func()
@@ -580,7 +580,7 @@ type Config struct {
 	ClipboardRead  func(deliver func(text string))
 
 	// ShowContextMenu, when set, is invoked when a right-click lands within
-	// the EDITING AREA of the focused window (never the modebar, gutters,
+	// the EDITING AREA of the focused viewport (never the modebar, gutters,
 	// column ruler, or title/message rows) with the click's 1-based terminal
 	// cell. A host pops its context menu there (Cut/Copy/Paste/Select All,
 	// wired back through a HostPort). Left unset, right-clicks are swallowed.
@@ -683,11 +683,11 @@ func DefaultConfig() Config {
 
 // New creates a new Editor instance.
 func New(cfg Config) (*Editor, error) {
-	// Create window manager
-	wm := window.NewManager()
+	// Create viewport manager
+	wm := viewport.NewManager()
 
 	// Create layout manager
-	lm := window.NewLayoutManager(wm)
+	lm := viewport.NewLayoutManager(wm)
 
 	// Create screen renderer, virtualizing its terminal when the host
 	// provided one (native resize signals only apply to the real terminal).
@@ -838,7 +838,7 @@ func New(cfg Config) (*Editor, error) {
 
 	// Create editor instance first (without PawScript)
 	e := &Editor{
-		WindowManager:    wm,
+		ViewportManager:  wm,
 		LayoutManager:    lm,
 		Renderer:         renderer,
 		Config:           cfg,
@@ -936,8 +936,8 @@ func New(cfg Config) (*Editor, error) {
 	// Register custom renderers
 	renderer.RegisterCustomRenderer("modebar", e.renderModebar)
 
-	// The column ruler is not a window of its own: the renderer draws it on the
-	// top line of any window whose ShowRuler view option is enabled.
+	// The column ruler is not a viewport of its own: the renderer draws it on the
+	// top line of any viewport whose ShowRuler view option is enabled.
 	renderer.SetRulerRenderer(e.renderColumnRuler)
 
 	// Peek-indicator labels run through the shared TFC engine so codes like
@@ -956,7 +956,7 @@ func New(cfg Config) (*Editor, error) {
 	// paint/measure time (see links.go); nil results leave lines untouched.
 	renderer.SetDisplayProvider(e.lineDisplaySpans)
 	// Hide the hardware caret while it is inert inside a focused button.
-	renderer.SetCaretHiddenFn(func(w *window.Window) bool { return e.focusedLinkButton(w) != nil })
+	renderer.SetCaretHiddenFn(func(w *viewport.Viewport) bool { return e.focusedLinkButton(w) != nil })
 
 	// Register editor commands with PawScript
 	e.registerCommands()
@@ -1003,7 +1003,7 @@ func New(cfg Config) (*Editor, error) {
 // applyMacOptionKeys pushes the macOptionKeys option into the input decoder
 // and the key processor's reverse-insert fallback.
 func (e *Editor) applyMacOptionKeys() {
-	fw := e.WindowManager.GetFocusedWindow()
+	fw := e.ViewportManager.GetFocusedViewport()
 	mode := strings.ToLower(e.optStr(fw, "macoptionkeys", e.Config.MacOptionKeys))
 	if mode == "" {
 		mode = "auto"
@@ -1017,7 +1017,7 @@ func (e *Editor) applyMacOptionKeys() {
 }
 
 // renderModebar is the custom renderer for the modebar.
-func (e *Editor) renderModebar(w *window.Window, screenWidth int) string {
+func (e *Editor) renderModebar(w *viewport.Viewport, screenWidth int) string {
 	e.Modebar.SetActiveSequence(e.ActiveSequence)
 	e.Modebar.SetCompletions(e.activeCompletions)
 	e.Modebar.SetBindingValues(e.peekBindingValues())
@@ -1036,8 +1036,8 @@ var peekBindingCommands = map[string]string{
 // peekBindingValues resolves the peek %CODE%s (SPU/SPD/PPU/PPD) to the key
 // currently bound to each peek command, for the modebar substitution engine and
 // the peek-indicator labels. Mappings are editor-global today; the resolver
-// runs at render time, so if per-window keymaps are ever added the focused
-// window's map is the natural source.
+// runs at render time, so if per-viewport keymaps are ever added the focused
+// viewport's map is the natural source.
 func (e *Editor) peekBindingValues() map[string]string {
 	vals := make(map[string]string, len(peekBindingCommands))
 	for code, cmd := range peekBindingCommands {
@@ -1059,11 +1059,11 @@ func (e *Editor) KeyForCommand(command string) string {
 	return best
 }
 
-// renderColumnRuler renders the column ruler line for a window with the
+// renderColumnRuler renders the column ruler line for a viewport with the
 // ShowRuler view option enabled. With rulerShowsCursor on, the cursor's
 // column(s) — caret, ghost, and secondary bidi cursor — are marked with the
 // rulerCursor color.
-func (e *Editor) renderColumnRuler(w *window.Window, screenWidth int) string {
+func (e *Editor) renderColumnRuler(w *viewport.Viewport, screenWidth int) string {
 	var cursorCols []int
 	if e.optBool(w, "rulershowscursor", e.Config.RulerShowsCursor) {
 		cursorCols = e.Renderer.CursorColumns(w)
@@ -1100,7 +1100,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	// show_desktop / hide_desktop ask the embedding host to reveal or hide its
-	// desktop (e.g. a KittyTK window-manager host). No-ops in the standalone
+	// desktop (e.g. a KittyTK viewport-manager host). No-ops in the standalone
 	// editor, where no host wires the hooks.
 	ps.RegisterCommand("show_desktop", func(ctx *pawscript.Context) pawscript.Result {
 		if e.Config.ShowDesktop != nil {
@@ -1116,7 +1116,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// nav_cancel: turn link browse mode off on the focused window. Fails when
+	// nav_cancel: turn link browse mode off on the focused viewport. Fails when
 	// browse mode is not active, so nav_cancel|cancel|... chains fall through.
 	ps.RegisterCommand("nav_cancel", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.navCancel())
@@ -1160,9 +1160,9 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navHoriz(-1))
 	})
 
-	// nav_history_prior / nav_history_next: walk the focused window's
+	// nav_history_prior / nav_history_next: walk the focused viewport's
 	// buffer-swap history (following a link swaps the buffer in place,
-	// stacking the departed binding — see Window.SwapBuffer). Prior returns
+	// stacking the departed binding — see Viewport.SwapBuffer). Prior returns
 	// to where you were; next re-advances. Both fail when there is no history
 	// in that direction, so chains fall through.
 	ps.RegisterCommand("nav_history_prior", func(ctx *pawscript.Context) pawscript.Result {
@@ -1173,9 +1173,9 @@ func (e *Editor) registerCommands() {
 	})
 
 	// nav_clear forgets every visited link (editor-wide repaint to the
-	// unvisited style). nav_history_clear empties the focused window's whole
+	// unvisited style). nav_history_clear empties the focused viewport's whole
 	// back/forward history, releasing stacked bindings except any that hold
-	// the LAST reference to a buffer — those move to the window's graveyard,
+	// the LAST reference to a buffer — those move to the viewport's graveyard,
 	// held for the eventual save decision.
 	ps.RegisterCommand("nav_clear", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.navClearVisited())
@@ -1185,14 +1185,14 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("cancel", func(ctx *pawscript.Context) pawscript.Result {
-		focusedWindow := e.WindowManager.GetFocusedWindow()
-		if focusedWindow != nil && focusedWindow.Type == window.PromptWindow {
-			// Capture callbacks before removing window
-			legacyCallback := focusedWindow.Callback
-			promptCallback := focusedWindow.PromptCallback
+		focusedViewport := e.ViewportManager.GetFocusedViewport()
+		if focusedViewport != nil && focusedViewport.Type == viewport.PromptViewport {
+			// Capture callbacks before removing viewport
+			legacyCallback := focusedViewport.Callback
+			promptCallback := focusedViewport.PromptCallback
 
-			// Remove prompt window FIRST so focus returns to main buffer
-			e.WindowManager.RemoveWindow(focusedWindow.ID)
+			// Remove prompt viewport FIRST so focus returns to main buffer
+			e.ViewportManager.RemoveViewport(focusedViewport.ID)
 
 			// Call the appropriate callback
 			if promptCallback != nil {
@@ -1206,31 +1206,31 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("accept", func(ctx *pawscript.Context) pawscript.Result {
-		focusedWindow := e.WindowManager.GetFocusedWindow()
-		if focusedWindow != nil && focusedWindow.Type == window.PromptWindow {
-			// Capture callbacks before removing window
-			legacyCallback := focusedWindow.Callback
-			promptCallback := focusedWindow.PromptCallback
+		focusedViewport := e.ViewportManager.GetFocusedViewport()
+		if focusedViewport != nil && focusedViewport.Type == viewport.PromptViewport {
+			// Capture callbacks before removing viewport
+			legacyCallback := focusedViewport.Callback
+			promptCallback := focusedViewport.PromptCallback
 
 			// Get buffer content from line 0 (for backward compatibility)
 			bufferContent := ""
-			if focusedWindow.Buffer != nil && focusedWindow.Buffer.GetLineCount() > 0 {
-				bufferContent = strings.TrimRight(focusedWindow.Buffer.GetLine(0), "\n\r")
+			if focusedViewport.Buffer != nil && focusedViewport.Buffer.GetLineCount() > 0 {
+				bufferContent = strings.TrimRight(focusedViewport.Buffer.GetLine(0), "\n\r")
 			}
 
 			// Get the text from the line where the cursor is positioned
 			// This is the key difference from TypeScript - we read cursor line, not line 0
 			cursorLineText := ""
-			if focusedWindow.Buffer != nil {
-				cursorLine := focusedWindow.CursorPos().Line
-				if cursorLine < focusedWindow.Buffer.GetLineCount() {
-					cursorLineText = strings.TrimRight(focusedWindow.Buffer.GetLine(cursorLine), "\n\r")
+			if focusedViewport.Buffer != nil {
+				cursorLine := focusedViewport.CursorPos().Line
+				if cursorLine < focusedViewport.Buffer.GetLineCount() {
+					cursorLineText = strings.TrimRight(focusedViewport.Buffer.GetLine(cursorLine), "\n\r")
 				}
 			}
 
-			// Remove prompt window FIRST so focus returns to main buffer
-			// This ensures any output from the callback goes to the right window
-			e.WindowManager.RemoveWindow(focusedWindow.ID)
+			// Remove prompt viewport FIRST so focus returns to main buffer
+			// This ensures any output from the callback goes to the right viewport
+			e.ViewportManager.RemoveViewport(focusedViewport.ID)
 
 			// Call the appropriate callback
 			if promptCallback != nil {
@@ -1321,13 +1321,13 @@ func (e *Editor) registerCommands() {
 		for key, cmd := range mappings {
 			content.WriteString(fmt.Sprintf("  %s -> %s\n", key, cmd))
 		}
-		// Show in a work buffer window
+		// Show in a work buffer viewport
 		buf := e.lib.NewFromString(content.String())
-		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.ToolWindow,
-			WindowSet:        "help",
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:             viewport.ToolViewport,
+			ViewportSet:      "help",
 			Class:            "mappings",
-			Dock:             window.DockTop,
+			Dock:             viewport.DockTop,
 			Priority:         100,
 			MinHeight:        5,
 			MaxHeight:        15,
@@ -1389,7 +1389,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("garland_balance", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w != nil && w.Buffer != nil {
 			w.Buffer.Balance()
 		}
@@ -1397,7 +1397,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("debug_marks", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			e.ShowWarning("No buffer")
 			return pawscript.BoolStatus(false)
@@ -1530,7 +1530,7 @@ func (e *Editor) registerCommands() {
 	// may be an embedded language), or 'stack' (embedded-language chain,
 	// innermost first, space-separated). Fails when no grammar applies.
 	ps.RegisterCommand("syntax_context", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1576,12 +1576,12 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// completion invokes the focused window's completion handler, if it has
+	// completion invokes the focused viewport's completion handler, if it has
 	// one (filename prompts do). It returns that handler's result; with no
 	// handler, or when the handler declines, it fails — so a binding like
 	// completion|insert '\t' falls through to inserting a tab.
 	ps.RegisterCommand("completion", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.CompletionCallback == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1591,7 +1591,7 @@ func (e *Editor) registerCommands() {
 	// rtl reports whether the caret currently sits inside a right-to-left
 	// segment of its line (resolved under the configured base direction).
 	ps.RegisterCommand("rtl", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1675,7 +1675,7 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("trim_line", func(ctx *pawscript.Context) pawscript.Result {
 		// Trims both ends: two separate deletes that must undo as one step.
 		var buf *buffer.Buffer
-		if w := e.WindowManager.GetFocusedWindow(); w != nil {
+		if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 			buf = w.Buffer
 		}
 		if buf != nil {
@@ -1743,7 +1743,7 @@ func (e *Editor) registerCommands() {
 
 	// Undo/Redo (using Garland's versioning, TypeScript naming convention)
 	ps.RegisterCommand("buffer_undo", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1755,7 +1755,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_redo", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1774,7 +1774,7 @@ func (e *Editor) registerCommands() {
 	// step. buffer_tx_start with no matching commit/cancel is closed at the end
 	// of the enclosing command dispatch, so a stray open transaction can't leak.
 	ps.RegisterCommand("buffer_tx_start", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1789,7 +1789,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_tx_commit", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1798,7 +1798,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_tx_cancel", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1809,7 +1809,7 @@ func (e *Editor) registerCommands() {
 
 	// Mark commands
 	ps.RegisterCommand("set_mark", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1820,7 +1820,7 @@ func (e *Editor) registerCommands() {
 		// No name given (e.g. "esc esc") - prompt for the mark identifier.
 		// The position is captured as a garland decoration, not as absolute
 		// coordinates: anything that edits the buffer while the prompt is up
-		// (a second window, an async script) slides the pending mark along
+		// (a second viewport, an async script) slides the pending mark along
 		// with the text, so the mark lands where the caret's TEXT is, not
 		// where its line number used to be.
 		const pendingMark = "_pending_set_mark"
@@ -1840,7 +1840,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("go_mark", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1877,7 +1877,7 @@ func (e *Editor) registerCommands() {
 
 	// File commands
 	ps.RegisterCommand("buffer_save", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1897,7 +1897,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_save_as", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -1921,7 +1921,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	// buffer_save_all saves every modified buffer, once each — including buffers
-	// stacked in a window's nav history (unsaved work parked behind a link
+	// stacked in a viewport's nav history (unsaved work parked behind a link
 	// follow). With the argument "true" it is NON-INTERACTIVE (for save-and-quit,
 	// `buffer_save_all true & exit`): it never prompts, skips unnamed/changed
 	// buffers with a notice, and returns false if anything was skipped or failed.
@@ -1929,7 +1929,7 @@ func (e *Editor) registerCommands() {
 	// directory), and ANY ^C bails the whole remaining batch with a false result.
 	ps.RegisterCommand("buffer_save_all", func(ctx *pawscript.Context) pawscript.Result {
 		var pending []*buffer.Buffer
-		for _, b := range e.openDocWindows() {
+		for _, b := range e.openDocViewports() {
 			if b.IsModified() {
 				pending = append(pending, b)
 			}
@@ -2092,11 +2092,11 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.duplicateCurrentBuffer())
 	})
 
-	// window_clone opens a second window onto the SAME buffer (not a content
+	// viewport_clone opens a second viewport onto the SAME buffer (not a content
 	// copy like buffer_duplicate) so you can edit in two places at once and switch
-	// between them. Each window keeps its own caret and viewport.
-	ps.RegisterCommand("window_clone", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.cloneCurrentWindow())
+	// between them. Each viewport keeps its own caret and viewport.
+	ps.RegisterCommand("viewport_clone", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.cloneCurrentViewport())
 	})
 
 	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
@@ -2106,7 +2106,7 @@ func (e *Editor) registerCommands() {
 	// buffer_revert seeks the buffer's history back to its last save point.
 	// A pure history move: redo still reaches the abandoned edits.
 	ps.RegisterCommand("buffer_revert", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil || w.Buffer == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -2213,11 +2213,11 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		buf := e.lib.NewFromString(e.bufferStatusText(w.Buffer))
-		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.ToolWindow,
-			WindowSet:        "help",
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:             viewport.ToolViewport,
+			ViewportSet:      "help",
 			Class:            "bufstatus",
-			Dock:             window.DockTop,
+			Dock:             viewport.DockTop,
 			Priority:         100,
 			MinHeight:        5,
 			MaxHeight:        15,
@@ -2240,14 +2240,14 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("buffer_list", func(ctx *pawscript.Context) pawscript.Result {
 		// A second invocation while the list is showing dismisses it (like
 		// help_toggle / editor_options).
-		for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+		for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 			if w.Class == "buffer_list" {
-				e.WindowManager.RemoveWindow(w.ID)
+				e.ViewportManager.RemoveViewport(w.ID)
 				e.RequestRender()
 				return pawscript.BoolStatus(true)
 			}
 		}
-		mainBuffers := e.contentWindows()
+		mainBuffers := e.contentViewports()
 		if len(mainBuffers) == 0 {
 			e.ShowWarning("No open buffers")
 			return pawscript.BoolStatus(false)
@@ -2268,18 +2268,18 @@ func (e *Editor) registerCommands() {
 				modified = " [modified]"
 			}
 			focused := ""
-			if w == e.WindowManager.GetFocusedWindow() {
+			if w == e.ViewportManager.GetFocusedViewport() {
 				focused = " *"
 			}
 			content.WriteString(fmt.Sprintf("  %d: %s%s%s\n", i+1, filename, modified, focused))
 		}
-		// Show in a work buffer window
+		// Show in a work buffer viewport
 		buf := e.lib.NewFromString(content.String())
-		e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:             window.ToolWindow,
-			WindowSet:        "help",
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:             viewport.ToolViewport,
+			ViewportSet:      "help",
 			Class:            "buffer_list",
-			Dock:             window.DockTop,
+			Dock:             viewport.DockTop,
 			Priority:         100,
 			MinHeight:        3,
 			MaxHeight:        10,
@@ -2328,7 +2328,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// verbose_log appends text to the shared verbose-log window (class
+	// verbose_log appends text to the shared verbose-log viewport (class
 	// "verboseLog"), creating it in the background on first use - the
 	// logging counterpart of insert. Each argument becomes its own line.
 	ps.RegisterCommand("verbose_log", func(ctx *pawscript.Context) pawscript.Result {
@@ -2407,7 +2407,7 @@ func (e *Editor) registerCommands() {
 	// repeat_next arms the next keybound command to run inside a PawScript
 	// repeat(...) N times. With a count argument it arms immediately; with none
 	// it prompts. The count is clamped to the maxRepeat option. The arming is
-	// tracked per-window (like Find); the command dispatcher consumes it.
+	// tracked per-viewport (like Find); the command dispatcher consumes it.
 	ps.RegisterCommand("repeat_next", func(ctx *pawscript.Context) pawscript.Result {
 		w := e.resolveTargetMain()
 		if w == nil {
@@ -2426,7 +2426,7 @@ func (e *Editor) registerCommands() {
 			if n > max {
 				n = max
 			}
-			w.Repeat = window.RepeatState{Pending: true, Count: n}
+			w.Repeat = viewport.RepeatState{Pending: true, Count: n}
 			return true
 		}
 		if arg, ok := argString(ctx, 0); ok {
@@ -2452,7 +2452,7 @@ func (e *Editor) registerCommands() {
 
 	// Scroll commands
 	ps.RegisterCommand("scroll_left", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -2468,7 +2468,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("scroll_right", func(ctx *pawscript.Context) pawscript.Result {
-		w := e.WindowManager.GetFocusedWindow()
+		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil {
 			return pawscript.BoolStatus(false)
 		}
@@ -2477,38 +2477,38 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
-	// Window navigation commands
-	ps.RegisterCommand("window_next", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.WindowManager.FocusNextWindow()
+	// Viewport navigation commands
+	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusNextViewport()
 		if ok {
-			e.announceFocusedWindow()
+			e.announceFocusedViewport()
 		}
 		return pawscript.BoolStatus(ok)
 	})
 
-	ps.RegisterCommand("window_prior", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.WindowManager.FocusPrevWindow()
+	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusPrevViewport()
 		if ok {
-			e.announceFocusedWindow()
+			e.announceFocusedViewport()
 		}
 		return pawscript.BoolStatus(ok)
 	})
 
 	// Peek commands
 	ps.RegisterCommand("stat_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.WindowManager.StatPeekUp())
+		return pawscript.BoolStatus(e.ViewportManager.StatPeekUp())
 	})
 
 	ps.RegisterCommand("stat_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.WindowManager.StatPeekDown())
+		return pawscript.BoolStatus(e.ViewportManager.StatPeekDown())
 	})
 
 	ps.RegisterCommand("prompt_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.WindowManager.PromptPeekUp())
+		return pawscript.BoolStatus(e.ViewportManager.PromptPeekUp())
 	})
 
 	ps.RegisterCommand("prompt_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.WindowManager.PromptPeekDown())
+		return pawscript.BoolStatus(e.ViewportManager.PromptPeekDown())
 	})
 
 	// Help toggle command
@@ -2524,7 +2524,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	// help_open is help_toggle that only ever opens/replaces (never closes) and
-	// FOCUSES the help window — for landing in help ready to scroll and follow
+	// FOCUSES the help viewport — for landing in help ready to scroll and follow
 	// links, versus help_toggle's peek that leaves the caret in place.
 	ps.RegisterCommand("help_open", func(ctx *pawscript.Context) pawscript.Result {
 		arg := ""
@@ -2555,16 +2555,16 @@ func (e *Editor) registerCommands() {
 	})
 
 	// set_option <name>, <value> - change a runtime editor option on the last
-	// active editor window (NOTE: arguments are comma-separated).
+	// active editor viewport (NOTE: arguments are comma-separated).
 	ps.RegisterCommand("set_option", func(ctx *pawscript.Context) pawscript.Result {
 		if len(ctx.Args) < 1 {
 			e.ShowWarning("Usage: set_option <name>[, <value>]")
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		// Target the last active main-buffer window, not whatever is focused
-		// (a prompt window would be focused and is about to close).
-		w := e.WindowManager.GetLastMainWindow()
+		// Target the last active main-buffer viewport, not whatever is focused
+		// (a prompt viewport would be focused and is about to close).
+		w := e.ViewportManager.GetLastMainViewport()
 		if len(ctx.Args) < 2 {
 			// No value given: prompt for one, seeding the choices from the
 			// registry (the same value list set_option_next rotates through).
@@ -2585,15 +2585,15 @@ func (e *Editor) registerCommands() {
 				return pawscript.BoolStatus(false)
 			}
 			name := fmt.Sprintf("%v", ctx.Args[0])
-			w := e.WindowManager.GetLastMainWindow()
+			w := e.ViewportManager.GetLastMainViewport()
 			return pawscript.BoolStatus(e.rotateOption(w, name, dir))
 		}
 	}
 	ps.RegisterCommand("set_option_next", rotate(+1))
 	ps.RegisterCommand("set_option_prior", rotate(-1))
 
-	// clear_option <name> - drop a per-window option's explicit override on the
-	// active window, reverting it to the resolved default (the configured /
+	// clear_option <name> - drop a per-viewport option's explicit override on the
+	// active viewport, reverting it to the resolved default (the configured /
 	// inherited value). Fails for global options and unknown names.
 	ps.RegisterCommand("clear_option", func(ctx *pawscript.Context) pawscript.Result {
 		if len(ctx.Args) < 1 {
@@ -2601,7 +2601,7 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		w := e.WindowManager.GetLastMainWindow()
+		w := e.ViewportManager.GetLastMainViewport()
 		return pawscript.BoolStatus(e.clearOption(w, name))
 	})
 
@@ -2613,7 +2613,7 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(false)
 		}
 		name := fmt.Sprintf("%v", ctx.Args[0])
-		w := e.WindowManager.GetLastMainWindow()
+		w := e.ViewportManager.GetLastMainViewport()
 		value, ok := e.getOption(w, name)
 		if !ok {
 			e.ShowWarning("Unknown option: " + name)
@@ -2647,9 +2647,9 @@ func boolText(b bool) string {
 }
 
 // getOption returns the current effective value of a named editor option (as a
-// string) for the given main-buffer window. Per-window options are read from the
-// window's view state (what actually renders); globals from the runtime Config.
-func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
+// string) for the given main-buffer viewport. Per-viewport options are read from the
+// viewport's view state (what actually renders); globals from the runtime Config.
+func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "tabsize":
 		v := e.Config.TabSize
@@ -2766,7 +2766,7 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 	case "killringentries":
 		return strconv.Itoa(e.Config.KillRingEntries), true
 	case "direction":
-		// Per-window override when set, else the global base direction.
+		// Per-viewport override when set, else the global base direction.
 		if w != nil && w.ViewState.Direction != "" {
 			return w.ViewState.Direction, true
 		}
@@ -2788,12 +2788,12 @@ func (e *Editor) getOption(w *window.Window, name string) (string, bool) {
 	return "", false
 }
 
-// setOption sets a named editor option. Per-window options (tabSize,
+// setOption sets a named editor option. Per-viewport options (tabSize,
 // showLineNumbers, showInvisibles, showColumnRuler) are written to the given
-// window's own ViewState, so the change applies to that window and does not
-// leak into the editor defaults or future windows. Global options are written to the runtime
+// viewport's own ViewState, so the change applies to that viewport and does not
+// leak into the editor defaults or future viewports. Global options are written to the runtime
 // Config. Nothing is written to config.GeneralConfig / the on-disk config.
-func (e *Editor) setOption(w *window.Window, name, value string) bool {
+func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 	parseInt := func(minVal int) (int, bool) {
 		n, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || n < minVal {
@@ -2811,15 +2811,15 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 	}
 
 	lname := strings.ToLower(strings.TrimSpace(name))
-	// Setting a per-window option on a specific window is a deliberate choice:
+	// Setting a per-viewport option on a specific viewport is a deliberate choice:
 	// pin it so the grammar options overlay does not overwrite it later.
-	if w != nil && cliPerWindowOptions[lname] {
+	if w != nil && cliPerViewportOptions[lname] {
 		w.MarkOptionOverridden(lname)
 	}
 
 	switch lname {
-	// Per-window options: write the window's ViewState (fall back to the
-	// editor default only when there is no window).
+	// Per-viewport options: write the viewport's ViewState (fall back to the
+	// editor default only when there is no viewport).
 	case "tabsize":
 		n, ok := parseInt(1)
 		if !ok {
@@ -3010,7 +3010,7 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			return false
 		}
 		e.Config.ModebarLocation = loc
-		e.Modebar.SetLocation(e.optStr(e.WindowManager.GetFocusedWindow(), "modebarlocation", loc))
+		e.Modebar.SetLocation(e.optStr(e.ViewportManager.GetFocusedViewport(), "modebarlocation", loc))
 		e.invalidateFocusedOptions()
 		e.RequestRender()
 	case "modebarinner":
@@ -3071,7 +3071,7 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 			return false
 		}
 		if w != nil {
-			// Per-window base direction (rendering reads ViewState.Direction
+			// Per-viewport base direction (rendering reads ViewState.Direction
 			// first — see winRTL). The global renderer base is untouched.
 			w.ViewState.Direction = dir
 		} else {
@@ -3133,7 +3133,7 @@ func (e *Editor) setOption(w *window.Window, name, value string) bool {
 
 // executeCommand executes a command string via PawScript.
 // Errors are captured via the custom stderr writer and shown as transient
-// error windows.
+// error viewports.
 //
 // Undo grouping is NOT a blanket per-command transaction. Plain typing and
 // character deletes run as bare mutations that garland coalesces into one
@@ -3148,15 +3148,15 @@ func (e *Editor) executeCommand(command string) {
 	}
 
 	// Before running any command, expire transient notification/error/warning
-	// windows that have been on screen longer than 5 seconds.
+	// viewports that have been on screen longer than 5 seconds.
 	e.expireStaleNotifications()
 
-	// Content mutations (read-only windows, focused link buttons) are NOT gated
+	// Content mutations (read-only viewports, focused link buttons) are NOT gated
 	// here by command name: the script language can rename or chain any command,
 	// so a name is not a reliable signal of what a command does. The lock is
 	// enforced inside each mutation's implementation instead — the one place
 	// that always sees the actual buffer change (see contentLocked).
-	fw := e.WindowManager.GetFocusedWindow()
+	fw := e.ViewportManager.GetFocusedViewport()
 
 	// Reset the per-command behavior signals; the mutation implementations set
 	// them as they run, and the post-dispatch logic below reads them instead of
@@ -3203,7 +3203,7 @@ func (e *Editor) executeCommand(command string) {
 	e.RequestRender()
 }
 
-// applyRepeatNext consumes a pending repeat_next arm on the target window,
+// applyRepeatNext consumes a pending repeat_next arm on the target viewport,
 // wrapping command in a PawScript repeat(...) so it runs Count times.
 //
 // A repeat_next invocation must not wrap itself (pressing it while already
@@ -3223,7 +3223,7 @@ func (e *Editor) applyRepeatNext(command string) string {
 		return command
 	}
 	n := w.Repeat.Count
-	w.Repeat = window.RepeatState{} // one-shot: consume the arm
+	w.Repeat = viewport.RepeatState{} // one-shot: consume the arm
 	if n < 1 {
 		return command
 	}
@@ -3241,7 +3241,7 @@ func commandKind(command string) string {
 	return command
 }
 
-// contentLocked reports whether the focused window currently forbids content
+// contentLocked reports whether the focused viewport currently forbids content
 // mutations — it is read-only, or a link button is focused (the caret is inert
 // inside it, its source text protected until nav_cancel) — and warns when it
 // does. Every mutation's implementation calls this at the point it would change
@@ -3249,13 +3249,13 @@ func commandKind(command string) string {
 // or chained in the script language. There is deliberately no command-name
 // list: a name cannot tell you what a command does.
 func (e *Editor) contentLocked() bool {
-	return e.windowEditLocked(e.WindowManager.GetFocusedWindow())
+	return e.viewportEditLocked(e.ViewportManager.GetFocusedViewport())
 }
 
-// windowEditLocked is contentLocked for a specific window — used where the
-// mutating implementation names its target window directly (find/replace
-// applies to the match's window, not necessarily the focused one).
-func (e *Editor) windowEditLocked(w *window.Window) bool {
+// viewportEditLocked is contentLocked for a specific viewport — used where the
+// mutating implementation names its target viewport directly (find/replace
+// applies to the match's viewport, not necessarily the focused one).
+func (e *Editor) viewportEditLocked(w *viewport.Viewport) bool {
 	if w == nil {
 		return false
 	}
@@ -3297,7 +3297,7 @@ func (e *Editor) matchIgnoreFlag(name string) *bool {
 
 // moveCursor moves the cursor by delta amounts.
 func (e *Editor) moveCursor(dx, dy int) {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3356,10 +3356,10 @@ func (e *Editor) moveCursor(dx, dy int) {
 	}
 }
 
-// tabSize returns the effective tab size for a window. Per-window settings
-// govern the window, so cursor math must use this — the window's own
+// tabSize returns the effective tab size for a viewport. Per-viewport settings
+// govern the viewport, so cursor math must use this — the viewport's own
 // ViewState.TabSize — rather than the global e.Config.TabSize default.
-func (e *Editor) tabSize(w *window.Window) int {
+func (e *Editor) tabSize(w *viewport.Viewport) int {
 	if w != nil && w.ViewState.TabSize > 0 {
 		return w.ViewState.TabSize
 	}
@@ -3374,7 +3374,7 @@ func (e *Editor) tabSize(w *window.Window) int {
 // cursor's Line is changed for a vertical move, so the ideal is computed from
 // the source line (computing it after the move would pair the destination
 // line's content with the source rune index and mis-handle tabs).
-func (e *Editor) ensureIdealColumn(w *window.Window) {
+func (e *Editor) ensureIdealColumn(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3390,7 +3390,7 @@ func (e *Editor) ensureIdealColumn(w *window.Window) {
 // It tries to position cursor at the ideal visual column, showing a ghost
 // cursor if the line is shorter than the ideal. Callers must establish the
 // ideal column (via ensureIdealColumn) before changing the cursor's line.
-func (e *Editor) afterVerticalMovement(w *window.Window) {
+func (e *Editor) afterVerticalMovement(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3473,7 +3473,7 @@ func (e *Editor) afterVerticalMovement(w *window.Window) {
 
 // setUserMark sets a user-defined mark at the given position. It rejects empty
 // names and the reserved "_" internal-mark namespace.
-func (e *Editor) setUserMark(w *window.Window, name string, line, runePos int) bool {
+func (e *Editor) setUserMark(w *viewport.Viewport, name string, line, runePos int) bool {
 	if w == nil || w.Buffer == nil || name == "" {
 		return false
 	}
@@ -3491,7 +3491,7 @@ func (e *Editor) setUserMark(w *window.Window, name string, line, runePos int) b
 
 // gotoUserMark moves the caret to a named user mark, warning if it is unset.
 // Shared by go_mark's direct-argument and prompted paths.
-func (e *Editor) gotoUserMark(w *window.Window, name string) bool {
+func (e *Editor) gotoUserMark(w *viewport.Viewport, name string) bool {
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -3500,7 +3500,7 @@ func (e *Editor) gotoUserMark(w *window.Window, name string) bool {
 		e.ShowWarning("Mark '" + name + "' not set")
 		return false
 	}
-	w.SetCursorPos(window.Position{Line: line, Rune: runePos})
+	w.SetCursorPos(viewport.Position{Line: line, Rune: runePos})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	w.TrackMove()
@@ -3509,7 +3509,7 @@ func (e *Editor) gotoUserMark(w *window.Window, name string) bool {
 
 // setBlockMark sets an internal block-selection mark at the cursor position.
 func (e *Editor) setBlockMark(markName, label string) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -3526,7 +3526,7 @@ func (e *Editor) setBlockMark(markName, label string) bool {
 
 // goBlockMark moves the cursor to an internal block-selection mark.
 func (e *Editor) goBlockMark(markName, label string) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -3535,15 +3535,15 @@ func (e *Editor) goBlockMark(markName, label string) bool {
 		e.ShowWarning(label + " not set")
 		return false
 	}
-	w.SetCursorPos(window.Position{Line: line, Rune: rune_})
+	w.SetCursorPos(viewport.Position{Line: line, Rune: rune_})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
 }
 
 // syncCursorAfterUndoRedo moves the editor cursor to the post-undo position
-// garland slid the window's caret to, clamps it, and refreshes derived state.
-func (e *Editor) syncCursorAfterUndoRedo(w *window.Window) {
+// garland slid the viewport's caret to, clamps it, and refreshes derived state.
+func (e *Editor) syncCursorAfterUndoRedo(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil || w.Caret == nil {
 		return
 	}
@@ -3554,7 +3554,7 @@ func (e *Editor) syncCursorAfterUndoRedo(w *window.Window) {
 }
 
 // afterHorizontalMovement clears ghost cursor and updates ideal column.
-func (e *Editor) afterHorizontalMovement(w *window.Window) {
+func (e *Editor) afterHorizontalMovement(w *viewport.Viewport) {
 	if w == nil {
 		return
 	}
@@ -3576,7 +3576,7 @@ func (e *Editor) afterHorizontalMovement(w *window.Window) {
 
 // cursorToLineStart moves cursor to start of line.
 func (e *Editor) cursorToLineStart() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil {
 		return
 	}
@@ -3587,7 +3587,7 @@ func (e *Editor) cursorToLineStart() {
 
 // cursorToLineEnd moves cursor to end of line.
 func (e *Editor) cursorToLineEnd() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3599,18 +3599,18 @@ func (e *Editor) cursorToLineEnd() {
 
 // cursorToBufferStart moves cursor to beginning of buffer (line 0, rune 0).
 func (e *Editor) cursorToBufferStart() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
 
 // cursorToBufferEnd moves cursor to end of buffer (last line, last rune).
 func (e *Editor) cursorToBufferEnd() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3618,14 +3618,14 @@ func (e *Editor) cursorToBufferEnd() {
 	if lastLine < 0 {
 		lastLine = 0
 	}
-	w.SetCursorPos(window.Position{Line: lastLine, Rune: e.getEffectiveLineLen(w.Buffer, lastLine)})
+	w.SetCursorPos(viewport.Position{Line: lastLine, Rune: e.getEffectiveLineLen(w.Buffer, lastLine)})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
 
 // gotoLine moves cursor to a specific line number (1-based).
 func (e *Editor) gotoLine(lineNum int) {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3642,12 +3642,12 @@ func (e *Editor) gotoLine(lineNum int) {
 		targetLine = maxLine
 	}
 
-	w.SetCursorPos(window.Position{Line: targetLine, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: targetLine, Rune: 0})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
 
-// scrollLineTop parks line lineNum (1-based) at the top of the target window's
+// scrollLineTop parks line lineNum (1-based) at the top of the target viewport's
 // viewport without moving the caret — the scroll analogue of gotoLine.
 func (e *Editor) scrollLineTop(lineNum int) {
 	e.scrollViewTo(e.resolveTargetMain(), lineNum-1)
@@ -3655,29 +3655,29 @@ func (e *Editor) scrollLineTop(lineNum int) {
 
 // cursorToTop moves cursor to start of buffer.
 func (e *Editor) cursorToTop() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil {
 		return
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
 
 // cursorToBottom moves cursor to end of buffer.
 func (e *Editor) cursorToBottom() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
-	w.SetCursorPos(window.Position{Line: w.Buffer.GetLineCount() - 1, Rune: e.getEffectiveLineLen(w.Buffer, w.CursorPos().Line)})
+	w.SetCursorPos(viewport.Position{Line: w.Buffer.GetLineCount() - 1, Rune: e.getEffectiveLineLen(w.Buffer, w.CursorPos().Line)})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 }
 
 // pageUp moves up by a page.
 func (e *Editor) pageUp() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil {
 		return
 	}
@@ -3701,7 +3701,7 @@ func (e *Editor) pageUp() {
 
 // pageDown moves down by a page.
 func (e *Editor) pageDown() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3735,10 +3735,10 @@ func (e *Editor) pageDown() {
 	e.ensureCursorVisibleVertical(w) // guarantee the caret is visible
 }
 
-// pageSize returns the window's view height and the configured page distance
+// pageSize returns the viewport's view height and the configured page distance
 // (evaluated against that height). The height falls back to a default when it
 // is not yet known.
-func (e *Editor) pageSize(w *window.Window) (viewHeight, page int) {
+func (e *Editor) pageSize(w *viewport.Viewport) (viewHeight, page int) {
 	viewHeight = w.ContentHeight
 	if viewHeight < 1 {
 		viewHeight = 20
@@ -3752,13 +3752,13 @@ func (e *Editor) rebuildPageSizeSpec() {
 	e.pageSizeSpec = buildPageSizeSpec(e.Config.PageSizeOptimal, e.Config.PageOverlapMinimum, e.Config.PageSizeStep)
 }
 
-// trackEdit records a caret-area edit on the focused window's cursor ring, run
+// trackEdit records a caret-area edit on the focused viewport's cursor ring, run
 // after an editing command has completed. A no-op when there is no ring (e.g. a
-// prompt window). See Window.TrackEdit. It also shifts the kill-chain flag:
+// prompt viewport). See Viewport.TrackEdit. It also shifts the kill-chain flag:
 // lastEditKill becomes true only when this edit was a kill capture, so a
 // non-kill edit (typing, paste) between deletes breaks the accumulation.
 func (e *Editor) trackEdit() {
-	if w := e.WindowManager.GetFocusedWindow(); w != nil {
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		w.TrackEdit()
 		// An edit re-engages caret following (edits also call ensureCursorVisible,
 		// but not every path does; make the re-engage unconditional here).
@@ -3769,10 +3769,10 @@ func (e *Editor) trackEdit() {
 	e.checkEditLock()
 }
 
-// trackMove records a deliberate caret movement on the focused window's cursor
-// ring, run after a movement command has completed. See Window.TrackMove.
+// trackMove records a deliberate caret movement on the focused viewport's cursor
+// ring, run after a movement command has completed. See Viewport.TrackMove.
 func (e *Editor) trackMove() {
-	if w := e.WindowManager.GetFocusedWindow(); w != nil {
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		w.TrackMove()
 	}
 }
@@ -3782,7 +3782,7 @@ func (e *Editor) trackMove() {
 // view. Returns false, leaving the caret put, when there is nowhere further to
 // go in that direction.
 func (e *Editor) cursorRingGo(next bool) bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -3805,17 +3805,17 @@ func (e *Editor) cursorRingGo(next bool) bool {
 // deleteCharBefore deletes the character before the cursor.
 func (e *Editor) deleteCharBefore() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
 
 	if w.CursorPos().Rune > 0 {
-		// Delete the rune before the caret through the window's caret cursor,
+		// Delete the rune before the caret through the viewport's caret cursor,
 		// which moves back with the deletion. Backspace kills prepend.
 		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
 		e.killCapture(w, w.Caret.DeleteBackwardCaptured(1), false)
@@ -3840,11 +3840,11 @@ func (e *Editor) deleteCharBefore() {
 // deleteCharAt deletes the character at the cursor.
 func (e *Editor) deleteCharAt() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3873,11 +3873,11 @@ func (e *Editor) deleteCharAt() {
 // deleteLine deletes the current line.
 func (e *Editor) deleteLine() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3897,7 +3897,7 @@ func (e *Editor) deleteLine() {
 }
 
 // clampCursorToBuffer ensures the cursor position is within valid buffer bounds.
-func (e *Editor) clampCursorToBuffer(w *window.Window) {
+func (e *Editor) clampCursorToBuffer(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -3935,7 +3935,7 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // This accounts for tabs (variable width) and control characters (2 chars wide).
 // Translated from TypeScript CoordinateUtils.documentRuneToColumn
 //
-// lineMarkSet is the set of positions on the window's caret line that get a
+// lineMarkSet is the set of positions on the viewport's caret line that get a
 // showMarks "*" cell, mirroring what prepareLineForDisplay draws: one before the
 // cell of each marked rune, plus — only when invisibles are shown, so the
 // terminator slot exists to host it — a mark sitting at end of line. It returns
@@ -3945,7 +3945,7 @@ func (e *Editor) getEffectiveLineLen(buf *buffer.Buffer, lineNum int) int {
 // offset (a mark before a tab steals a column the tab would otherwise fill, so
 // the shift is not additive). Marks are keyed on the caret's line, the only line
 // these coordinate helpers are asked about.
-func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
+func (e *Editor) lineMarkSet(w *viewport.Viewport, runes []rune) map[int]bool {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil
 	}
@@ -3986,7 +3986,7 @@ func (e *Editor) lineMarkSet(w *window.Window, runes []rune) map[int]bool {
 // false (callers take the base path) for bidi lines, marks off, or no marks.
 // Bidi lines are exact too, but through bidiColumns / the bidi inverse walks,
 // which consume lineMarkSet directly.
-func (e *Editor) markedLine(w *window.Window, line string) (runes []rune, marked map[int]bool, ok bool) {
+func (e *Editor) markedLine(w *viewport.Viewport, line string) (runes []rune, marked map[int]bool, ok bool) {
 	if w == nil || !w.ViewState.MarksVisible() || w.Buffer == nil {
 		return nil, nil, false
 	}
@@ -4031,14 +4031,14 @@ func (e *Editor) runeToVisualColumnMarked(runes []rune, marked map[int]bool, run
 
 // runeToVisualColumn is the display column of a rune, including the showMarks
 // "*" cells so it stays in step with what the renderer draws.
-func (e *Editor) runeToVisualColumn(w *window.Window, line string, runePos int, tabSize int) int {
+func (e *Editor) runeToVisualColumn(w *viewport.Viewport, line string, runePos int, tabSize int) int {
 	if runes, marked, ok := e.markedLine(w, line); ok {
 		return e.runeToVisualColumnMarked(runes, marked, runePos, tabSize)
 	}
 	return e.runeToVisualColumnBase(w, line, runePos, tabSize)
 }
 
-func (e *Editor) runeToVisualColumnBase(w *window.Window, line string, runePos int, tabSize int) int {
+func (e *Editor) runeToVisualColumnBase(w *viewport.Viewport, line string, runePos int, tabSize int) int {
 	runes := []rune(line)
 
 	// Bidirectional line: the rune's visual column is where its cell is
@@ -4076,10 +4076,10 @@ func (e *Editor) runeToVisualColumnBase(w *window.Window, line string, runePos i
 // baseRTL reports whether the configured base direction is right-to-left.
 func (e *Editor) baseRTL() bool { return e.Config.Direction == "rtl" }
 
-// layoutFor computes a line's visual layout for a window: with the window's
+// layoutFor computes a line's visual layout for a viewport: with the viewport's
 // showBidi enabled it includes direction-marker slots (bidi.ComputeMarked),
 // whose cell widths every visual-column computation must account for.
-func (e *Editor) layoutFor(w *window.Window, runes []rune) *bidi.Layout {
+func (e *Editor) layoutFor(w *viewport.Viewport, runes []rune) *bidi.Layout {
 	if w != nil && w.ViewState.ShowBidi {
 		return bidi.ComputeMarked(runes, e.winRTL(w))
 	}
@@ -4105,9 +4105,9 @@ func (e *Editor) slotWidth(layout *bidi.Layout, runes []rune, entry, col, tabSiz
 	return e.getRuneVisualWidth(r, col, tabSize)
 }
 
-// winRTL is the EFFECTIVE direction for a window: its ViewState.Direction
-// override when set (prompt windows are pinned "ltr"), else the base option.
-func (e *Editor) winRTL(w *window.Window) bool {
+// winRTL is the EFFECTIVE direction for a viewport: its ViewState.Direction
+// override when set (prompt viewports are pinned "ltr"), else the base option.
+func (e *Editor) winRTL(w *viewport.Viewport) bool {
 	if w != nil {
 		switch w.ViewState.Direction {
 		case "ltr":
@@ -4126,7 +4126,7 @@ func (e *Editor) winRTL(w *window.Window) bool {
 // parks one cell to the right of the rune's cell. At end of line the boundary
 // follows the last rune's direction (one cell LEFT of an RTL line's leftmost
 // cell — possibly -1, which the right-alignment pad absorbs).
-func (e *Editor) caretVisualColumn(w *window.Window, line string, runePos, tabSize int) int {
+func (e *Editor) caretVisualColumn(w *viewport.Viewport, line string, runePos, tabSize int) int {
 	// Non-bidi: the caret sits on the rune's own cell, so its column is exactly
 	// the marks-inclusive rune column from the inline walk (which resolves tab
 	// widths at the shifted column). Bidi is exact through caretVisualColumnBase,
@@ -4137,7 +4137,7 @@ func (e *Editor) caretVisualColumn(w *window.Window, line string, runePos, tabSi
 	return e.caretVisualColumnBase(w, line, runePos, tabSize)
 }
 
-func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, tabSize int) int {
+func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePos, tabSize int) int {
 	runes := []rune(line)
 	layout := e.layoutFor(w, runes)
 	if layout == nil {
@@ -4189,7 +4189,7 @@ func (e *Editor) caretVisualColumnBase(w *window.Window, line string, runePos, t
 
 // lineVisualWidth is the total visual width of a line (tab widths resolved
 // in visual order, matching the renderer).
-func (e *Editor) lineVisualWidth(w *window.Window, line string, tabSize int) int {
+func (e *Editor) lineVisualWidth(w *viewport.Viewport, line string, tabSize int) int {
 	runes := []rune(line)
 	marked := e.lineMarkSet(w, runes)
 	layout := e.layoutFor(w, runes)
@@ -4217,7 +4217,7 @@ func (e *Editor) lineVisualWidth(w *window.Window, line string, tabSize int) int
 // tracks the READING column — the caret's distance back from the line's
 // reading start (its rightmost visual cell) — which stays put on screen as
 // lines of different widths right-align beneath it.
-func (e *Editor) idealColumn(w *window.Window, line string, runePos, tabSize int) int {
+func (e *Editor) idealColumn(w *viewport.Viewport, line string, runePos, tabSize int) int {
 	if e.winRTL(w) {
 		return e.lineVisualWidth(w, line, tabSize) - e.caretVisualColumn(w, line, runePos, tabSize)
 	}
@@ -4252,7 +4252,7 @@ func (e *Editor) bidiColumns(runes []rune, layout *bidi.Layout, marked map[int]b
 // visualColumnToRune converts a visual column position to a rune position.
 // This is the inverse of runeToVisualColumn.
 // Translated from TypeScript CoordinateUtils.columnToDocumentRune
-func (e *Editor) visualColumnToRune(w *window.Window, line string, targetColumn int, tabSize int) int {
+func (e *Editor) visualColumnToRune(w *viewport.Viewport, line string, targetColumn int, tabSize int) int {
 	// showMarks (non-bidi): account for the inserted "*" cells via the marked
 	// walk, so a click maps to the right rune.
 	if runes, marked, ok := e.markedLine(w, line); ok {
@@ -4363,7 +4363,7 @@ type visualColumnToRuneResult struct {
 // including the inserted "*" cells so a click on/after a mark lands on the right
 // rune and the reported column is in the same marks-inclusive space as the
 // forward math. Bidi lines fall back to the base mapping (marks are rare there).
-func (e *Editor) visualColumnToRuneWithActual(w *window.Window, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
+func (e *Editor) visualColumnToRuneWithActual(w *viewport.Viewport, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
 	if runes, marked, ok := e.markedLine(w, line); ok {
 		return e.visualColumnToRuneMarked(runes, marked, targetColumn, tabSize)
 	}
@@ -4395,7 +4395,7 @@ func (e *Editor) visualColumnToRuneMarked(runes []rune, marked map[int]bool, tar
 	return visualColumnToRuneResult{Rune: len(runes), ActualColumn: col}
 }
 
-func (e *Editor) visualColumnToRuneWithActualBase(w *window.Window, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
+func (e *Editor) visualColumnToRuneWithActualBase(w *viewport.Viewport, line string, targetColumn int, tabSize int) visualColumnToRuneResult {
 	runes := []rune(line)
 
 	// Bidirectional line: the cell covering the target column, by visual walk.
@@ -4490,7 +4490,7 @@ func bidiControlRune(name string) (rune, bool) {
 // an unknown name.
 func (e *Editor) insertBidiControl(name string) bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
@@ -4508,11 +4508,11 @@ func (e *Editor) insertBidiControl(name string) bool {
 // insertText inserts text at the cursor position.
 func (e *Editor) insertText(text string) {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4524,7 +4524,7 @@ func (e *Editor) insertText(text string) {
 		// Overwrite mode: typing replaces the character under the caret.
 		e.overwriteText(w, text)
 	} else {
-		// Insert through the window's own caret cursor, then read the caret back:
+		// Insert through the viewport's own caret cursor, then read the caret back:
 		// garland advances it past the inserted text (splitting on embedded
 		// newlines internally), so there is no manual line/rune arithmetic.
 		w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
@@ -4545,7 +4545,7 @@ func (e *Editor) insertText(text string) {
 // the overwrite run, so overtype-then-append stays a single undo step. The
 // overwritten character is discarded (not sent to the kill ring), matching how
 // typing over a selection works.
-func (e *Editor) overwriteText(w *window.Window, text string) {
+func (e *Editor) overwriteText(w *viewport.Viewport, text string) {
 	for _, r := range text {
 		pos := w.CursorPos()
 		if r == '\n' || pos.Rune >= e.getEffectiveLineLen(w.Buffer, pos.Line) {
@@ -4566,7 +4566,7 @@ func (e *Editor) overwriteText(w *window.Window, text string) {
 
 // runeByteLenAt returns the UTF-8 byte length of the rune at (line, rune), or 0
 // if the position is at or past end of line (no rune stands there).
-func (e *Editor) runeByteLenAt(w *window.Window, line, rune_ int) int {
+func (e *Editor) runeByteLenAt(w *viewport.Viewport, line, rune_ int) int {
 	content := strings.TrimRight(w.Buffer.GetLine(line), "\n\r")
 	runes := []rune(content)
 	if rune_ < 0 || rune_ >= len(runes) {
@@ -4578,7 +4578,7 @@ func (e *Editor) runeByteLenAt(w *window.Window, line, rune_ int) int {
 // insertPasteChunk inserts a single chunk of paste content.
 // Called by the main loop as chunks arrive from the keyboard handler.
 func (e *Editor) insertPasteChunk(content []byte) {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4600,7 +4600,7 @@ func (e *Editor) insertPasteChunk(content []byte) {
 	// Ensure cursor is within valid bounds before insertion
 	e.clampCursorToBuffer(w)
 
-	// Insert through the window's caret cursor and read it back.
+	// Insert through the viewport's caret cursor and read it back.
 	w.Caret.Seek(w.CursorPos().Line, w.CursorPos().Rune)
 	w.Caret.Insert(text)
 
@@ -4616,7 +4616,7 @@ func (e *Editor) insertPasteChunk(content []byte) {
 // doFind searches for text in the current buffer.
 // deleteWord deletes from cursor to end of current word.
 func (e *Editor) deleteWord() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4659,7 +4659,7 @@ func isWordRune(r rune) bool {
 
 // moveToNextWord moves cursor to the next word.
 func (e *Editor) moveToNextWord() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4692,7 +4692,7 @@ func (e *Editor) moveToNextWord() {
 
 // moveToPrevWord moves cursor to the previous word.
 func (e *Editor) moveToPrevWord() {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4730,11 +4730,11 @@ func (e *Editor) moveToPrevWord() {
 // deleteToWordStart deletes from cursor to beginning of word.
 func (e *Editor) deleteToWordStart() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4776,11 +4776,11 @@ func (e *Editor) deleteToWordStart() {
 // deleteToWordEnd deletes from cursor to end of word.
 func (e *Editor) deleteToWordEnd() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4820,11 +4820,11 @@ func (e *Editor) deleteToWordEnd() {
 // deleteToLineStart deletes from cursor to beginning of line.
 func (e *Editor) deleteToLineStart() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4841,11 +4841,11 @@ func (e *Editor) deleteToLineStart() {
 // deleteToLineEnd deletes from cursor to end of line.
 func (e *Editor) deleteToLineEnd() {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -4865,11 +4865,11 @@ func (e *Editor) deleteToLineEnd() {
 // Reports whether anything was removed.
 func (e *Editor) trimLineStart() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -4884,7 +4884,7 @@ func (e *Editor) trimLineStart() bool {
 		return false
 	}
 
-	// Garland slides the window caret with the deletion (back by n if it was
+	// Garland slides the viewport caret with the deletion (back by n if it was
 	// past the indent, collapsing to 0 if it was within it) — no manual adjust.
 	w.Buffer.DeleteText(w.CursorPos().Line, 0, n)
 	e.afterHorizontalMovement(w)
@@ -4898,11 +4898,11 @@ func (e *Editor) trimLineStart() bool {
 // Reports whether anything was removed.
 func (e *Editor) trimLineEnd() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -4917,7 +4917,7 @@ func (e *Editor) trimLineEnd() bool {
 		return false
 	}
 
-	// Garland slides the window caret with the deletion (a caret inside the
+	// Garland slides the viewport caret with the deletion (a caret inside the
 	// trimmed run collapses to its start) — no manual adjust.
 	w.Buffer.DeleteText(w.CursorPos().Line, end, len(runes)-end)
 	e.afterHorizontalMovement(w)
@@ -4927,7 +4927,7 @@ func (e *Editor) trimLineEnd() bool {
 
 // copyBlock copies the marked block to the cursor position.
 func (e *Editor) copyBlock() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -4975,11 +4975,11 @@ func (e *Editor) copyBlock() bool {
 // deleteBlock deletes the marked block.
 func (e *Editor) deleteBlock() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -4994,7 +4994,7 @@ func (e *Editor) deleteBlock() bool {
 	// Delete KILLING into the ring (emacs kill-region): the removed text and
 	// its in-range user marks become a kill entry, yankable anywhere. The
 	// block markers themselves stay behind (kill filter) and are cleared just
-	// below. Garland slides the window's own caret with the edit — a caret
+	// below. Garland slides the viewport's own caret with the edit — a caret
 	// after the block moves back, a caret inside it collapses to the deletion
 	// point, a caret before it stays put — so no hand-computed adjustment.
 	// The delete and the marker-clear are two mutations: group them so one undo
@@ -5017,11 +5017,11 @@ func (e *Editor) deleteBlock() bool {
 // moveBlock moves the marked block to the cursor position.
 func (e *Editor) moveBlock() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -5043,7 +5043,7 @@ func (e *Editor) moveBlock() bool {
 	// Delete the block CAPTURING its text and marks — the in-range user marks
 	// plus the block markers themselves (same filtering decision as the kill
 	// capture, block markers included because a move cannot duplicate them).
-	// Garland slides the window's caret to the correct insertion point (moved
+	// Garland slides the viewport's caret to the correct insertion point (moved
 	// back if the caret was after the block, unchanged if before — a caret
 	// inside was rejected above). Re-inserting the capture at the caret places
 	// every mark at its offset in the moved text, so the block stays marked at
@@ -5070,11 +5070,11 @@ func (e *Editor) moveBlock() bool {
 // indentBlock indents all lines in the marked block.
 func (e *Editor) indentBlock() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -5089,7 +5089,7 @@ func (e *Editor) indentBlock() bool {
 
 	// The block is delimited by the _block_begin/_block_end decorations;
 	// IndentBlock walks a garland cursor between them, anchored to positions
-	// garland maintains rather than captured line numbers. The window's caret
+	// garland maintains rather than captured line numbers. The viewport's caret
 	// slides with the inserted indent on its own — no read-back needed.
 	w.Buffer.IndentBlock("_block_begin", "_block_end", indentString)
 
@@ -5103,11 +5103,11 @@ func (e *Editor) indentBlock() bool {
 // unindentBlock removes leading whitespace from all lines in the marked block.
 func (e *Editor) unindentBlock() bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -5118,7 +5118,7 @@ func (e *Editor) unindentBlock() bool {
 		return false
 	}
 
-	// Decoration-anchored cursor walk (see indentBlock); the window's caret
+	// Decoration-anchored cursor walk (see indentBlock); the viewport's caret
 	// slides left with the deleted indent on its own.
 	w.Buffer.UnindentBlock("_block_begin", "_block_end", e.tabSize(w))
 
@@ -5136,13 +5136,13 @@ func (e *Editor) getBlockContent(buf *buffer.Buffer, startLine, startRune, endLi
 	return buf.GetTextRange(startLine, startRune, endLine, endRune)
 }
 
-// openFile opens a file in a new buffer window. On the real OS the file is
+// openFile opens a file in a new buffer viewport. On the real OS the file is
 // opened through Garland's lazy warm-storage path (huge files are paged, not
 // slurped); virtualized file systems read through the host callbacks.
 func (e *Editor) openFile(filename string) bool {
 	// A registered wiki scheme ("help:/start") opens a PAGE, not a literal
 	// file: route it through the same resolver a followed link uses, so the
-	// real page file (~/.mew/help/start.txt) loads and the window is rooted
+	// real page file (~/.mew/help/start.txt) loads and the viewport is rooted
 	// in the wiki. Without this the name fell through to a plain OS open of
 	// "help:/start", which found nothing and came up blank.
 	if _, handled := e.openWikiScheme(strings.TrimSpace(filename), true); handled {
@@ -5154,11 +5154,11 @@ func (e *Editor) openFile(filename string) bool {
 		return false
 	}
 
-	// Create new main buffer window
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
+	// Create new main buffer viewport
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.DocViewport,
 		Buffer:          buf,
-		Dock:            window.DockNone,
+		Dock:            viewport.DockNone,
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: true,
@@ -5176,14 +5176,14 @@ func (e *Editor) openFile(filename string) bool {
 	return true
 }
 
-// createNewBuffer creates a new empty buffer window.
+// createNewBuffer creates a new empty buffer viewport.
 func (e *Editor) createNewBuffer() {
 	buf := e.lib.New()
 
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.DocViewport,
 		Buffer:          buf,
-		Dock:            window.DockNone,
+		Dock:            viewport.DockNone,
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: true,
@@ -5200,20 +5200,20 @@ func (e *Editor) createNewBuffer() {
 	e.RequestRender()
 }
 
-// duplicateCurrentBuffer opens a new buffer window containing a copy of the
+// duplicateCurrentBuffer opens a new buffer viewport containing a copy of the
 // current buffer's content. The duplicate is unnamed (no filename) so saving it
 // can't overwrite the original.
 func (e *Editor) duplicateCurrentBuffer() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
 	buf := e.lib.NewFromString(w.Buffer.GetContent())
 
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.DocViewport,
 		Buffer:          buf,
-		Dock:            window.DockNone,
+		Dock:            viewport.DockNone,
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: true,
@@ -5231,24 +5231,24 @@ func (e *Editor) duplicateCurrentBuffer() bool {
 	return true
 }
 
-// cloneCurrentWindow opens a second window onto the focused window's buffer
+// cloneCurrentViewport opens a second viewport onto the focused viewport's buffer
 // (the same *buffer.Buffer, not a copy), starting at the same caret and
-// viewport. Both windows then edit and scroll independently — each owns its
+// viewport. Both viewports then edit and scroll independently — each owns its
 // caret cursor and viewport anchor, and garland keeps both in sync with edits
-// made through either window.
-func (e *Editor) cloneCurrentWindow() bool {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
-		e.ShowWarning("No buffer to clone a window for")
+// made through either viewport.
+func (e *Editor) cloneCurrentViewport() bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
+		e.ShowWarning("No buffer to clone a viewport for")
 		return false
 	}
 
 	srcPos := w.CursorPos()
 
-	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.DocViewport,
 		Buffer:          w.Buffer, // SAME buffer, not a copy
-		Dock:            window.DockNone,
+		Dock:            viewport.DockNone,
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: w.ViewState.ShowLineNumbers,
@@ -5263,7 +5263,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 	})
 
 	// Start the clone at the source's caret and viewport.
-	if cw := e.WindowManager.GetWindow(id); cw != nil {
+	if cw := e.ViewportManager.GetViewport(id); cw != nil {
 		cw.SetCursorPos(srcPos)
 		cw.SetViewTop(w.ViewState.ViewOffsetY)
 	}
@@ -5274,7 +5274,7 @@ func (e *Editor) cloneCurrentWindow() bool {
 
 // writeBlock writes the marked block's text to a prompted-for file.
 func (e *Editor) writeBlock() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -5328,7 +5328,7 @@ func (e *Editor) writeBlock() bool {
 // existing file (the buffer's own source included) is confirmed first. Scars
 // (data lost to placeholders) surface as buffer notices, same as a real save.
 func (e *Editor) writeBufferCopy() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -5371,11 +5371,11 @@ func (e *Editor) writeBufferCopy() bool {
 // undo revision. Line endings are normalized to '\n' like paste.
 func (e *Editor) insertFile(filename string) bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -5402,11 +5402,11 @@ func (e *Editor) insertFile(filename string) bool {
 // the caret must lie within it (or on either edge). Only when that holds does
 // it prompt for the file to stream in over the block's contents. The caret gate
 // is the same inclusive span block_move refuses to move a block into — demanded
-// here rather than forbidden. Prompts are modal (focus is on the prompt window),
+// here rather than forbidden. Prompts are modal (focus is on the prompt viewport),
 // so the block and caret cannot shift before the callback fires; blockFromFile
 // re-reads the range defensively anyway.
 func (e *Editor) promptBlockFromFile() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false
@@ -5429,11 +5429,11 @@ func (e *Editor) promptBlockFromFile() bool {
 	return true
 }
 
-// caretWithinBlock reports whether the focused window's caret lies within the
+// caretWithinBlock reports whether the focused viewport's caret lies within the
 // marked block or on either of its edges — the inclusive span the block
 // commands that TARGET the block (block_from_file, os_paste's replace mode)
 // demand. False when no block is marked.
-func (e *Editor) caretWithinBlock(w *window.Window) bool {
+func (e *Editor) caretWithinBlock(w *viewport.Viewport) bool {
 	startLine, startRune, endLine, endRune, exists := w.Buffer.GetBlockRange()
 	if !exists {
 		return false
@@ -5474,11 +5474,11 @@ func normalizeLineEndings(s string) string {
 // reverses the whole replace.
 func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	if e.contentLocked() {
-		// The buffer's owning window is read-only, or a link button is
+		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
 		return false
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -5492,12 +5492,12 @@ func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	// the inserted text as the new block. All one undo step. The old markers
 	// collapse to the deletion point on delete; we clear them and re-set both to
 	// absolute positions around the inserted text, so the block surrounds the
-	// stream regardless of insert gravity. insertText advances the window caret
+	// stream regardless of insert gravity. insertText advances the viewport caret
 	// to the end of what it inserts, which is the block's new end.
 	w.Buffer.BeginUserCommand(cmdName)
 	w.Buffer.DeleteTextRange(startLine, startRune, endLine, endRune)
 	w.Buffer.ClearBlockMarks()
-	w.SetCursorPos(window.Position{Line: startLine, Rune: startRune})
+	w.SetCursorPos(viewport.Position{Line: startLine, Rune: startRune})
 	if text != "" {
 		e.insertText(text)
 	}
@@ -5515,17 +5515,17 @@ func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	return true
 }
 
-// closeCurrentBuffer closes the current buffer window.
+// closeCurrentBuffer closes the current buffer viewport.
 func (e *Editor) closeCurrentBuffer() bool {
-	w := e.WindowManager.GetFocusedWindow()
-	if w == nil || w.Type == window.PromptWindow {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport {
 		return false
 	}
 
-	// Check for changes that would be lost. The window's active buffer is
+	// Check for changes that would be lost. The viewport's active buffer is
 	// always at stake. Its stacked buffers are only at stake when the WINDOW
 	// itself will close — with a non-empty graveyard, buffer_close instead
-	// resurrects the most recent burial into this window, so the history and
+	// resurrects the most recent burial into this viewport, so the history and
 	// graveyard survive intact.
 	resurrecting := len(w.GraveyardBuffers()) > 0
 	var atRisk []*buffer.Buffer
@@ -5541,22 +5541,22 @@ func (e *Editor) closeCurrentBuffer() bool {
 	}
 	if len(atRisk) > 0 {
 		// Get the name for the prompt
-		windowName := atRisk[0].GetFilename()
-		if windowName == "" {
-			windowName = "Untitled"
+		viewportName := atRisk[0].GetFilename()
+		if viewportName == "" {
+			viewportName = "Untitled"
 		}
 		if len(atRisk) > 1 {
-			windowName = fmt.Sprintf("%s (+%d more in history)", windowName, len(atRisk)-1)
+			viewportName = fmt.Sprintf("%s (+%d more in history)", viewportName, len(atRisk)-1)
 		}
 
-		// Store window ID to close later
-		windowID := w.ID
+		// Store viewport ID to close later
+		viewportID := w.ID
 
 		// Prompt for confirmation using PromptManager
-		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("04: LOSE CHANGES TO %s?", windowName), true, func(accepted bool, confirmed bool) {
+		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("04: LOSE CHANGES TO %s?", viewportName), true, func(accepted bool, confirmed bool) {
 			if accepted && confirmed {
 				// User confirmed - close the buffer
-				e.finishCloseBuffer(windowID)
+				e.finishCloseBuffer(viewportID)
 			} else {
 				e.ShowNotification("Close cancelled")
 			}
@@ -5581,18 +5581,18 @@ func bufferDisplayName(b *buffer.Buffer) string {
 }
 
 // finishCloseBuffer performs the actual buffer close.
-func (e *Editor) finishCloseBuffer(windowID string) bool {
+func (e *Editor) finishCloseBuffer(viewportID string) bool {
 	// Resurrection first: with buried bindings waiting, closing the buffer
-	// does NOT close the window — the most recently buried binding surfaces
-	// as the window's current one (full caret/scroll state), and the closed
+	// does NOT close the viewport — the most recently buried binding surfaces
+	// as the viewport's current one (full caret/scroll state), and the closed
 	// buffer is retired only if nothing else still holds it open.
-	if w := e.WindowManager.GetWindow(windowID); w != nil {
+	if w := e.ViewportManager.GetViewport(viewportID); w != nil {
 		closed := w.Buffer
 		if w.ResurrectLastBuried() {
 			e.unburyEverywhere(w.Buffer)
 			if closed != nil {
 				stillOpen := false
-				for _, b := range e.openDocWindows() {
+				for _, b := range e.openDocViewports() {
 					if b == closed {
 						stillOpen = true
 						break
@@ -5610,24 +5610,24 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 	}
 
 	// Get all main buffers
-	mainBuffers := e.contentWindows()
+	mainBuffers := e.contentViewports()
 	if len(mainBuffers) <= 1 {
 		// Last buffer - exit instead
 		e.Running = false
 		return true
 	}
 
-	closing := e.WindowManager.GetWindow(windowID)
+	closing := e.ViewportManager.GetViewport(viewportID)
 
-	// Remove the window
-	e.WindowManager.RemoveWindow(windowID)
+	// Remove the viewport
+	e.ViewportManager.RemoveViewport(viewportID)
 
-	// Drop safety state (mew lock, notices) when no other window still holds
-	// this buffer open — actively or stacked in a nav history (window_clone
+	// Drop safety state (mew lock, notices) when no other viewport still holds
+	// this buffer open — actively or stacked in a nav history (viewport_clone
 	// can share one buffer; link-follow histories reference buffers too).
 	if closing != nil && closing.Buffer != nil {
 		shared := false
-		for _, b := range e.openDocWindows() {
+		for _, b := range e.openDocViewports() {
 			if b == closing.Buffer {
 				shared = true
 				break
@@ -5643,14 +5643,14 @@ func (e *Editor) finishCloseBuffer(windowID string) bool {
 
 // cycleBuffer switches to the next or previous buffer.
 func (e *Editor) cycleBuffer(direction int) bool {
-	mainBuffers := e.contentWindows()
+	mainBuffers := e.contentViewports()
 	if len(mainBuffers) <= 1 {
 		return false
 	}
 
 	// Find current buffer index
 	currentID := ""
-	if w := e.WindowManager.GetFocusedWindow(); w != nil {
+	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		currentID = w.ID
 	}
 
@@ -5670,18 +5670,18 @@ func (e *Editor) cycleBuffer(direction int) bool {
 	newIndex := (currentIndex + direction + len(mainBuffers)) % len(mainBuffers)
 
 	// Focus the new buffer
-	e.WindowManager.SetFocus(mainBuffers[newIndex].ID)
+	e.ViewportManager.SetFocus(mainBuffers[newIndex].ID)
 	e.RequestRender()
 	return true
 }
 
-// contentWindows returns every content window — documents and tool surfaces
+// contentViewports returns every content viewport — documents and tool surfaces
 // (help, listings) — but not prompts or chrome (the modebar). These are the
-// windows the data-safety and navigation enumerations act on (buffer close,
+// viewports the data-safety and navigation enumerations act on (buffer close,
 // save-all, DEADCAT, nav-history liveness, buffer cycling).
-func (e *Editor) contentWindows() []*window.Window {
-	var result []*window.Window
-	for _, w := range e.WindowManager.AllWindows() {
+func (e *Editor) contentViewports() []*viewport.Viewport {
+	var result []*viewport.Viewport
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.FocusEligible() {
 			result = append(result, w)
 		}
@@ -5695,7 +5695,7 @@ func (e *Editor) contentWindows() []*window.Window {
 // bare vertical movement (see ensureCursorVisibleVertical), so a run of up/down
 // with an active ghost cursor keeps the horizontal view (and any manual scroll)
 // stable until a horizontal/locking action.
-func (e *Editor) ensureCursorVisible(w *window.Window) {
+func (e *Editor) ensureCursorVisible(w *viewport.Viewport) {
 	e.ensureCursorVisibleVertical(w)
 	e.ensureCursorVisibleHorizontal(w)
 }
@@ -5711,7 +5711,7 @@ func (e *Editor) ensureCursorVisible(w *window.Window) {
 // instead respects a detached scroll.) Cursor-movement and edit leaf commands
 // reach here through their own ensureCursorVisible / ...Vertical calls, so the
 // re-engagement lives in their definitions, not in any command-name analysis.
-func (e *Editor) ensureCursorVisibleVertical(w *window.Window) {
+func (e *Editor) ensureCursorVisibleVertical(w *viewport.Viewport) {
 	w.ViewState.ScrollDetached = false
 	e.clampViewToCaret(w)
 }
@@ -5721,12 +5721,12 @@ func (e *Editor) ensureCursorVisibleVertical(w *window.Window) {
 // path (ensureCursorVisibleVertical, which first re-engages following) and the
 // per-frame render follow (renderFollowCaret, which first honors a detached
 // scroll) share it.
-func (e *Editor) clampViewToCaret(w *window.Window) {
+func (e *Editor) clampViewToCaret(w *viewport.Viewport) {
 	if w.ContentHeight <= 0 {
 		w.ContentHeight = 20 // Default
 	}
 	// Absorb any slide the viewport anchor took from edits (e.g. lines inserted
-	// above the top by another window on the same buffer), then scroll only as
+	// above the top by another viewport on the same buffer), then scroll only as
 	// far as needed to keep the caret visible. Both writes go through
 	// SetViewTop so the anchor stays in lockstep with the painting offset.
 	w.RefreshViewTop()
@@ -5739,11 +5739,11 @@ func (e *Editor) clampViewToCaret(w *window.Window) {
 }
 
 // renderFollowCaret is the per-frame vertical caret follow. Unlike the command
-// path it RESPECTS a free scroll: while the focused window is ScrollDetached
+// path it RESPECTS a free scroll: while the focused viewport is ScrollDetached
 // (mouse wheel / scroll_* command), the viewport is left exactly where the user
 // parked it — the caret may sit off-screen, marked by the cursorOffScreen
 // indicator — until a cursor-movement or edit command re-engages following.
-func (e *Editor) renderFollowCaret(w *window.Window) {
+func (e *Editor) renderFollowCaret(w *viewport.Viewport) {
 	if w.ViewState.ScrollDetached {
 		return
 	}
@@ -5754,7 +5754,7 @@ func (e *Editor) renderFollowCaret(w *window.Window) {
 // its current top (negative = toward the start), detaching it from the caret
 // like the mouse wheel: the caret stays put and the per-frame follow will not
 // snap the view back until a cursor-movement or edit command re-engages it.
-func (e *Editor) scrollViewByLines(w *window.Window, delta int) {
+func (e *Editor) scrollViewByLines(w *viewport.Viewport, delta int) {
 	if w == nil {
 		return
 	}
@@ -5765,7 +5765,7 @@ func (e *Editor) scrollViewByLines(w *window.Window, delta int) {
 // scrollViewTo parks the viewport at an absolute top line (clamped to the
 // buffer), detaching it from caret-follow. Shared by the mouse wheel and every
 // scroll_* command.
-func (e *Editor) scrollViewTo(w *window.Window, top int) {
+func (e *Editor) scrollViewTo(w *viewport.Viewport, top int) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
@@ -5785,7 +5785,7 @@ func (e *Editor) scrollViewTo(w *window.Window, top int) {
 // renderer slices and positions by visual column), so decisions use the cursor's
 // visual column, not its rune index — otherwise tabs and control chars (visual
 // width > 1) let the cursor drift off the edge.
-func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
+func (e *Editor) ensureCursorVisibleHorizontal(w *viewport.Viewport) {
 	if w.ContentWidth <= 0 {
 		w.ContentWidth = 80 // Default
 	}
@@ -5853,7 +5853,7 @@ func (e *Editor) ensureCursorVisibleHorizontal(w *window.Window) {
 	// direction=rtl: the view is right-anchored, so visibility is decided in
 	// READING columns — the caret's distance back from the line's reading
 	// start (its rightmost visual cell). ViewOffsetX counts reading columns
-	// scrolled past, matching the renderer's right-anchored window.
+	// scrolled past, matching the renderer's right-anchored viewport.
 	if e.winRTL(w) && vw >= 0 {
 		reading := vw - targetCol
 		if ghostReadingRTL {
@@ -5925,20 +5925,20 @@ func (e *Editor) performRender() {
 	e.renderMu.Lock()
 	defer e.renderMu.Unlock()
 
-	// Resolve each main buffer's per-window options against its current grammar
+	// Resolve each main buffer's per-viewport options against its current grammar
 	// (base [options] overlaid by [options.<grammar>]) before any layout or
 	// paint reads ViewState, so direction/gutter/etc. are current this frame.
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		e.reconcileGrammarOptions(w)
 	}
 	// Focused-scoped options (modebar, macOptionKeys, key mappings) follow the
-	// focused window's grammar/class/type.
+	// focused viewport's grammar/class/type.
 	e.reconcileFocusedOptions()
 
-	// Push the focused window's read-only state to the host on transitions
+	// Push the focused viewport's read-only state to the host on transitions
 	// (a host greys out its Edit-menu Cut for a read-only buffer).
 	e.notifyEditState()
-	// Push whether the built-in help window is open (a host syncs a "Quick
+	// Push whether the built-in help viewport is open (a host syncs a "Quick
 	// Help" menu checkmark to it).
 	e.notifyHelpState()
 
@@ -5946,29 +5946,29 @@ func (e *Editor) performRender() {
 	// action performed by cursor/edit commands, not by rendering, so a manual
 	// horizontal scroll (scroll_left/right) and the ghost column during vertical
 	// navigation are not snapped back on every render.
-	focusedWindow := e.WindowManager.GetFocusedWindow()
-	if focusedWindow != nil {
-		e.renderFollowCaret(focusedWindow)
+	focusedViewport := e.ViewportManager.GetFocusedViewport()
+	if focusedViewport != nil {
+		e.renderFollowCaret(focusedViewport)
 		// A wiki-format page starts in browse mode the moment it is first
 		// painted — including the very first frame after launch.
-		e.autoArmBrowse(focusedWindow)
+		e.autoArmBrowse(focusedViewport)
 	}
 
 	// Flip the modebar logo (M_ vs _M) to the text direction at the focused
 	// caret, so the user can see which way the next keypress will move.
-	if focusedWindow != nil && focusedWindow.Buffer != nil {
-		lineText := strings.TrimRight(focusedWindow.Buffer.GetLine(focusedWindow.CursorPos().Line), "\n\r")
-		e.Modebar.SetLogoRTL(bidi.RTLAt([]rune(lineText), focusedWindow.CursorPos().Rune, e.winRTL(focusedWindow)))
+	if focusedViewport != nil && focusedViewport.Buffer != nil {
+		lineText := strings.TrimRight(focusedViewport.Buffer.GetLine(focusedViewport.CursorPos().Line), "\n\r")
+		e.Modebar.SetLogoRTL(bidi.RTLAt([]rune(lineText), focusedViewport.CursorPos().Rune, e.winRTL(focusedViewport)))
 	}
 
-	// Fill the modebar's context slot — computed for the same window the
+	// Fill the modebar's context slot — computed for the same viewport the
 	// modebar reads context from. Priority: the zero-width character backspace
 	// would delete at the caret (a combining diacritic or invisible control —
 	// the one thing on screen the user cannot see), then the outline breadcrumb
 	// (the enclosing function/section chain), then the spawn placeholder.
-	if cw := focusedWindow; cw != nil {
-		if cw.Type == window.PromptWindow {
-			cw = e.WindowManager.GetLastMainWindow()
+	if cw := focusedViewport; cw != nil {
+		if cw.Type == viewport.PromptViewport {
+			cw = e.ViewportManager.GetLastMainViewport()
 		}
 		if cw != nil {
 			if btn := e.focusedLinkButton(cw); btn != nil {
@@ -5991,7 +5991,7 @@ func (e *Editor) performRender() {
 	// Render
 	e.Renderer.Render(layout)
 
-	// The frame's window geometry is now set: publish the focused window's
+	// The frame's viewport geometry is now set: publish the focused viewport's
 	// editable rectangle to the host so a graphical pointer shows the I-beam
 	// over text and the arrow over chrome, resolved locally from the pointer
 	// cell (no per-motion round trip). Pushed only when the rectangle changes.
@@ -6135,7 +6135,7 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !emacsLock {
 		// No emacs lock (config or git hygiene): fall back to a mew-native
 		// lock in the nearest .mew directory. Its most common catch is the
-		// user opening the same file in another mew window. A READ-ONLY open
+		// user opening the same file in another mew viewport. A READ-ONLY open
 		// takes no editing lock — a viewer advertises nothing; acquisition
 		// (and its warnings) defer to the moment read-only is turned off.
 		// (Garland's emacs locks need no such deferral: they are lazy by
@@ -6168,15 +6168,15 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 	e.Running = true
 
 	// Run the startup script (host-supplied, or ~/.mew/profile.mew) before
-	// any window exists, so it can't modify the opened file or complicate
+	// any viewport exists, so it can't modify the opened file or complicate
 	// its undo history; it is for macros, mappings, and option setup.
 	e.runProfileScript()
 
-	// Create main window
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.DocWindow,
+	// Create main viewport
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.DocViewport,
 		Buffer:          buf,
-		Dock:            window.DockNone,
+		Dock:            viewport.DockNone,
 		Priority:        0,
 		SetFocus:        true,
 		ShowLineNumbers: e.Config.ShowLineNumbers,
@@ -6194,8 +6194,8 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 	return e.serve(buf)
 }
 
-// serve creates the plugin windows and runs the main event loop over the
-// already-created buffer window(s), returning the primary buffer's final
+// serve creates the plugin viewports and runs the main event loop over the
+// already-created buffer viewport(s), returning the primary buffer's final
 // content when the session ends. Shared by run (a single initial buffer, for
 // the library content-in/content-out path) and RunArgs (one or more files
 // opened from a parsed command line).
@@ -6215,8 +6215,8 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 		}
 	}()
 
-	// Create plugin windows (modebar, column ruler, etc.)
-	e.createPluginWindows()
+	// Create plugin viewports (modebar, column ruler, etc.)
+	e.createPluginViewports()
 
 	// Set up resize callback to trigger re-render
 	// Since the main loop blocks on GetKey(), we perform the render directly
@@ -6314,7 +6314,7 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// Begin the paste transaction on the first chunk so the whole paste
 			// collapses into a single undo revision.
 			if !e.pasteActive {
-				if w := e.WindowManager.GetFocusedWindow(); w != nil && w.Buffer != nil {
+				if w := e.ViewportManager.GetFocusedViewport(); w != nil && w.Buffer != nil {
 					e.pasteBuf = w.Buffer
 					e.pasteBuf.BeginUserCommand("paste")
 					e.pasteActive = true
@@ -6324,13 +6324,13 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// Handle paste chunk
 			e.insertPasteChunk(event.Paste.Content)
 			// Render and flush for visual feedback
-			e.ensureCursorVisible(e.WindowManager.GetFocusedWindow())
+			e.ensureCursorVisible(e.ViewportManager.GetFocusedViewport())
 			e.performRender()
 			e.Renderer.Sync()
 
 			if event.Paste.IsFinal {
 				// Final chunk - do cleanup and close the paste transaction.
-				w := e.WindowManager.GetFocusedWindow()
+				w := e.ViewportManager.GetFocusedViewport()
 				if w != nil {
 					e.afterHorizontalMovement(w)
 				}
@@ -6515,19 +6515,19 @@ func stateInt(state map[string]interface{}, key string) (int, bool) {
 	return 0, false
 }
 
-// createPluginWindows creates windows for all enabled plugins.
-func (e *Editor) createPluginWindows() {
-	// Create modebar window (always enabled) at its configured location
+// createPluginViewports creates viewports for all enabled plugins.
+func (e *Editor) createPluginViewports() {
+	// Create modebar viewport (always enabled) at its configured location
 	e.Modebar.SetLocation(e.Config.ModebarLocation)
-	e.Modebar.CreateWindow()
+	e.Modebar.CreateViewport()
 }
 
 // runProfileScript executes the startup pawscript: a host-supplied script
 // when one was provided, else the user's profile.mew (created with a small
 // default when missing), unless the host opted out. It runs before any
-// window exists, so it cannot modify the opened file or its undo history;
+// viewport exists, so it cannot modify the opened file or its undo history;
 // script errors surface through the usual PawScript stderr writer as error
-// windows.
+// viewports.
 func (e *Editor) runProfileScript() {
 	if e.Config.ProfileScript != nil {
 		e.PawScript.ExecuteFile(*e.Config.ProfileScript, "profile.mew")
@@ -6551,8 +6551,8 @@ func (e *Editor) updateModebar() {
 	e.RequestRender()
 }
 
-// transientNotificationClasses are the window classes used for the transient
-// bottom-docked message windows created by ShowNotification/ShowError/
+// transientNotificationClasses are the viewport classes used for the transient
+// bottom-docked message viewports created by ShowNotification/ShowError/
 // ShowWarning. They share a single display slot and are auto-expired.
 var transientNotificationClasses = map[string]bool{
 	"notification": true,
@@ -6560,19 +6560,19 @@ var transientNotificationClasses = map[string]bool{
 	"warning":      true,
 }
 
-// showTransient creates a one-line bottom-docked message window of the given
-// class; the class drives its colors. Transient windows are not cleared on
+// showTransient creates a one-line bottom-docked message viewport of the given
+// class; the class drives its colors. Transient viewports are not cleared on
 // creation; they stack and are removed purely by age via
 // expireStaleNotifications.
 func (e *Editor) showTransient(message, class string, tfc bool) {
 	if tfc {
 		message = e.expandTransientTFC(message, class)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.ToolWindow,
-		WindowSet:       window.WindowSetTransient,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.ToolViewport,
+		ViewportSet:     viewport.ViewportSetTransient,
 		Class:           class,
-		Dock:            window.DockBottom,
+		Dock:            viewport.DockBottom,
 		Priority:        0, // Very low priority - below everything else
 		MinHeight:       1,
 		MaxHeight:       1,
@@ -6590,13 +6590,13 @@ func (e *Editor) showTransient(message, class string, tfc bool) {
 // renderer paints the whole bar in that "messages" color, so the close restores
 // it exactly.
 func (e *Editor) expandTransientTFC(message, class string) string {
-	const typ = "tool" // transients are ToolWindows
+	const typ = "tool" // transients are ToolViewports
 	keyColor := e.LoadedConfig.Colors.Resolve(class, typ, "key")
 	barColor := e.LoadedConfig.Colors.Resolve(class, typ, "messages")
 	return plugins.ExpandTFC(message, nil, e.tfcKeyResolver(keyColor, barColor))
 }
 
-// ShowNotification creates a transient notification window at the bottom of the
+// ShowNotification creates a transient notification viewport at the bottom of the
 // screen (informational messages, command confirmations).
 func (e *Editor) ShowNotification(message string) {
 	e.showTransient(message, "notification", false)
@@ -6615,17 +6615,17 @@ func (e *Editor) ShowNotificationTFC(message string) {
 // "notification"); the tag only groups the message for replacement. Used by
 // filename completion so re-completing does not pile up option lists.
 func (e *Editor) showTaggedTransient(message, class, tag string) {
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockBottom) {
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
 		if w.Tag == tag {
-			e.WindowManager.RemoveWindow(w.ID)
+			e.ViewportManager.RemoveViewport(w.ID)
 		}
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:            window.ToolWindow,
-		WindowSet:       "help",
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:            viewport.ToolViewport,
+		ViewportSet:     "help",
 		Class:           class,
 		Tag:             tag,
-		Dock:            window.DockBottom,
+		Dock:            viewport.DockBottom,
 		Priority:        0,
 		MinHeight:       1,
 		MaxHeight:       1,
@@ -6635,30 +6635,30 @@ func (e *Editor) showTaggedTransient(message, class, tag string) {
 	e.RequestRender()
 }
 
-// appendVerboseLog appends lines to the shared verbose-log window (class
-// "verboseLog"), creating it on first use: a new empty buffer window like
+// appendVerboseLog appends lines to the shared verbose-log viewport (class
+// "verboseLog"), creating it on first use: a new empty buffer viewport like
 // buffer_new makes, but in the background — it never takes focus or the
-// painted main area; the user reaches it later via window cycling.
+// painted main area; the user reaches it later via viewport cycling.
 func (e *Editor) appendVerboseLog(lines ...string) {
-	var vw *window.Window
-	for _, w := range e.WindowManager.AllWindows() {
+	var vw *viewport.Viewport
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == "verboseLog" {
 			vw = w
 			break
 		}
 	}
 	if vw == nil {
-		id := e.WindowManager.CreateWindow(window.WindowOptions{
-			Type:            window.DocWindow,
+		id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:            viewport.DocViewport,
 			Class:           "verboseLog",
-			Dock:            window.DockNone,
+			Dock:            viewport.DockNone,
 			Priority:        0,
 			Buffer:          e.lib.New(),
 			ShowLineNumbers: true,
 			TabSize:         e.Config.TabSize,
 			Visible:         true,
 		})
-		vw = e.WindowManager.GetWindow(id)
+		vw = e.ViewportManager.GetViewport(id)
 	}
 	if vw == nil || vw.Buffer == nil {
 		return
@@ -6674,11 +6674,11 @@ func (e *Editor) appendVerboseLog(lines ...string) {
 	}
 }
 
-// announceFocusedWindow shows a "Switched to ..." notification naming the
-// newly focused window: its top-center message, else its buffer's filename,
+// announceFocusedViewport shows a "Switched to ..." notification naming the
+// newly focused viewport: its top-center message, else its buffer's filename,
 // else its ID.
-func (e *Editor) announceFocusedWindow() {
-	w := e.WindowManager.GetFocusedWindow()
+func (e *Editor) announceFocusedViewport() {
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil {
 		return
 	}
@@ -6692,43 +6692,43 @@ func (e *Editor) announceFocusedWindow() {
 	e.ShowNotification("Switched to " + name)
 }
 
-// ShowError shows a transient error window at the bottom of the screen.
+// ShowError shows a transient error viewport at the bottom of the screen.
 func (e *Editor) ShowError(message string) {
 	e.showTransient(message, "error", false)
 }
 
-// ShowWarning shows a transient warning window at the bottom of the screen.
+// ShowWarning shows a transient warning viewport at the bottom of the screen.
 func (e *Editor) ShowWarning(message string) {
 	e.showTransient(message, "warning", false)
 }
 
-// expireStaleNotifications removes transient notification/error/warning windows
+// expireStaleNotifications removes transient notification/error/warning viewports
 // that are older than 5 seconds. Called before each command executes.
 func (e *Editor) expireStaleNotifications() {
 	now := time.Now()
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockBottom) {
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
 		if transientNotificationClasses[w.Class] && now.Sub(w.SpawnedAt) > 5*time.Second {
-			e.WindowManager.RemoveWindow(w.ID)
+			e.ViewportManager.RemoveViewport(w.ID)
 		}
 	}
 }
 
-// There is ONE docked help window (Tag "help", top dock): help_toggle NAVIGATES
+// There is ONE docked help viewport (Tag "help", top dock): help_toggle NAVIGATES
 // it between help "locations" — the built-in Quick Help (the WordStar command
-// reference) and help:/ wiki pages — building the window's own nav history, so
+// reference) and help:/ wiki pages — building the viewport's own nav history, so
 // its back button returns to where the reader came from. help_toggle on the
-// location already showing closes the window. buffer_open_file, by contrast,
-// opens ordinary UNtagged help windows that can stack; only this slot is
+// location already showing closes the viewport. buffer_open_file, by contrast,
+// opens ordinary UNtagged help viewports that can stack; only this slot is
 // tagged, and only help_toggle manages it. The Quick Help checkmark tracks
 // whether the slot is currently showing Quick Help.
-const helpWindowTag = "help"
+const helpViewportTag = "help"
 
-// The docked help slot carries one of two window CLASSES depending on its role,
+// The docked help slot carries one of two viewport CLASSES depending on its role,
 // so per-class config (colors, mappings, options overlays) can target each: a
 // regular help page is class "help", Quick Help is class "quickhelp".
-// applyHelpWindowChrome flips it as the slot changes role. The Tag stays "help"
-// either way, so helpWindow() still finds the slot.
-const helpWindowClass = "help"
+// applyHelpViewportChrome flips it as the slot changes role. The Tag stays "help"
+// either way, so helpViewport() still finds the slot.
+const helpViewportClass = "help"
 const quickHelpClass = "quickhelp"
 
 // quickHelpDocURL is the synthetic identity of the Quick Help buffer. It sits
@@ -6736,37 +6736,37 @@ const quickHelpClass = "quickhelp"
 // like, a wiki page; it just gives the location a stable URL to compare against.
 const quickHelpDocURL = "mew:///quickhelp"
 
-// helpWindow returns the single docked help window (Tag "help"), or nil.
-func (e *Editor) helpWindow() *window.Window {
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
-		if w.Tag == helpWindowTag {
+// helpViewport returns the single docked help viewport (Tag "help"), or nil.
+func (e *Editor) helpViewport() *viewport.Viewport {
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
+		if w.Tag == helpViewportTag {
 			return w
 		}
 	}
 	return nil
 }
 
-// quickHelpWindowOpen reports whether the docked help window is open AND in
+// quickHelpViewportOpen reports whether the docked help viewport is open AND in
 // Quick Help (dynamic, context-following) mode — what the "Quick Help"
 // checkmark reflects. It reads the quickHelpMode flag rather than the buffer
 // URL: Quick Help now shows real help pages, so URL alone can't tell it apart
 // from a page reached by browsing. syncQuickHelpMode() first reconciles the
-// flag with reality (the window may have closed, or the user may have browsed
+// flag with reality (the viewport may have closed, or the user may have browsed
 // away) so the answer is always current.
-func (e *Editor) quickHelpWindowOpen() bool {
+func (e *Editor) quickHelpViewportOpen() bool {
 	e.syncQuickHelpMode()
-	return e.quickHelpMode && e.helpWindow() != nil
+	return e.quickHelpMode && e.helpViewport() != nil
 }
 
-// syncQuickHelpMode reconciles quickHelpMode with the docked help window: quick
-// mode ends the moment the window closes or its buffer drifts from the one
+// syncQuickHelpMode reconciles quickHelpMode with the docked help viewport: quick
+// mode ends the moment the viewport closes or its buffer drifts from the one
 // Quick Help installed (the user followed a link, walked history, or opened the
 // main help). Called before anything reads or acts on quick mode.
 func (e *Editor) syncQuickHelpMode() {
 	if !e.quickHelpMode {
 		return
 	}
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 	if hw == nil {
 		e.quickHelpMode = false
 		e.quickHelpBuf = nil
@@ -6780,7 +6780,7 @@ func (e *Editor) syncQuickHelpMode() {
 		e.quickHelpMode = false
 		e.quickHelpBuf = nil
 		e.quickHelpShownTopic = ""
-		e.applyHelpWindowChrome(hw)
+		e.applyHelpViewportChrome(hw)
 	}
 }
 
@@ -6790,7 +6790,7 @@ func (e *Editor) syncQuickHelpMode() {
 func (e *Editor) toggleHelp(arg string) bool { return e.openHelp(arg, true, false) }
 
 // openHelpFocused is the help_open command: like help_toggle but it only ever
-// opens or replaces — it never closes — and it FOCUSES the help window, so the
+// opens or replaces — it never closes — and it FOCUSES the help viewport, so the
 // reader can scroll and follow links straight away.
 func (e *Editor) openHelpFocused(arg string) bool { return e.openHelp(arg, false, true) }
 
@@ -6800,7 +6800,7 @@ func (e *Editor) openHelpFocused(arg string) bool { return e.openHelp(arg, false
 //
 //	allowClose — when the slot is ALREADY showing the target, close it (toggle
 //	             behavior); otherwise leave it open and merely re-assert it.
-//	focus      — focus the help window after opening/navigating (help_open);
+//	focus      — focus the help viewport after opening/navigating (help_open);
 //	             help_toggle passes false so it never steals the caret.
 //
 // Navigating an existing slot grows its nav history, so its back button returns
@@ -6808,20 +6808,20 @@ func (e *Editor) openHelpFocused(arg string) bool { return e.openHelp(arg, false
 func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	arg = strings.TrimSpace(arg)
 	e.syncQuickHelpMode()
-	hw := e.helpWindow()
+	hw := e.helpViewport()
 
 	if arg == "" {
 		if e.quickHelpMode && hw != nil {
 			// Already at Quick Help: toggle closes; open just re-asserts focus.
 			if allowClose {
-				e.WindowManager.RemoveWindow(hw.ID)
+				e.ViewportManager.RemoveViewport(hw.ID)
 				e.quickHelpMode = false
 				e.quickHelpBuf = nil
 				e.quickHelpShownTopic = ""
 				e.RequestRender()
 				return true
 			}
-			e.focusHelpWindow(hw, focus)
+			e.focusHelpViewport(hw, focus)
 			return true
 		}
 		// Resolve the topic for the current prefix now, so a menu-driven open
@@ -6835,7 +6835,7 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 			buf, root, wikiName, browse = e.quickHelpBuffer(), "", "", false
 		}
 		// Mark Quick Help mode BEFORE showing, so showHelpLocation's chrome pass
-		// (applyHelpWindowChrome) drops the title bar and fits the height.
+		// (applyHelpViewportChrome) drops the title bar and fits the height.
 		e.quickHelpMode = true
 		e.quickHelpBuf = buf
 		e.quickHelpShownTopic = e.quickHelpTopic
@@ -6857,7 +6857,7 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	if res.url == "" {
 		// Opening a help page that does not exist is an error, like opening a
 		// missing file — not an invitation to author one. Report it as a
-		// transient toast and leave any open help window untouched. (Authoring a
+		// transient toast and leave any open help viewport untouched. (Authoring a
 		// new help page is done deliberately through buffer_open, not here.)
 		e.ShowError(res.message)
 		e.RequestRender()
@@ -6866,11 +6866,11 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	if hw != nil && e.bufferCanonicalURL(hw.Buffer) == res.url {
 		// Already at this page: toggle closes; open just re-asserts focus.
 		if allowClose {
-			e.WindowManager.RemoveWindow(hw.ID)
+			e.ViewportManager.RemoveViewport(hw.ID)
 			e.RequestRender()
 			return true
 		}
-		e.focusHelpWindow(hw, focus)
+		e.focusHelpViewport(hw, focus)
 		return true
 	}
 	buf := e.findOpenBuffer(res.url)
@@ -6887,46 +6887,46 @@ func (e *Editor) openHelp(arg string, allowClose, focus bool) bool {
 	return true
 }
 
-// focusHelpWindow focuses hw when focus is set (help_open), repainting; a no-op
+// focusHelpViewport focuses hw when focus is set (help_open), repainting; a no-op
 // otherwise (help_toggle re-asserting an already-open slot).
-func (e *Editor) focusHelpWindow(hw *window.Window, focus bool) {
+func (e *Editor) focusHelpViewport(hw *viewport.Viewport, focus bool) {
 	if focus && hw != nil {
-		e.WindowManager.SetFocus(hw.ID)
+		e.ViewportManager.SetFocus(hw.ID)
 	}
 	e.RequestRender()
 }
 
-// showHelpLocation puts buf into the docked help window: it NAVIGATES an
-// existing window (swap_buffer, so the previous location goes onto the back
-// history), or creates the docked window when none exists. root/wikiName wire
-// the window to the help wiki (empty for Quick Help), browse arms link browsing
+// showHelpLocation puts buf into the docked help viewport: it NAVIGATES an
+// existing viewport (swap_buffer, so the previous location goes onto the back
+// history), or creates the docked viewport when none exists. root/wikiName wire
+// the viewport to the help wiki (empty for Quick Help), browse arms link browsing
 // for a wiki page, and focus (help_open only) moves the caret to the slot.
-func (e *Editor) showHelpLocation(hw *window.Window, buf *buffer.Buffer, root, wikiName string, browse, focus bool) {
+func (e *Editor) showHelpLocation(hw *viewport.Viewport, buf *buffer.Buffer, root, wikiName string, browse, focus bool) {
 	if hw == nil {
-		hw = e.createHelpWindow(buf, focus)
+		hw = e.createHelpViewport(buf, focus)
 	} else {
 		e.swapBuffer(hw, buf)
 		if focus {
-			e.WindowManager.SetFocus(hw.ID)
+			e.ViewportManager.SetFocus(hw.ID)
 		}
 	}
 	hw.WikiRoot = root
 	hw.WikiName = wikiName
 	hw.BrowseActive = browse && hw.ViewState.LinkBrowsing
 	hw.BrowseAutoArmed = hw.BrowseActive
-	e.applyHelpWindowChrome(hw) // title bar + height per Quick Help vs. page role
+	e.applyHelpViewportChrome(hw) // title bar + height per Quick Help vs. page role
 	e.ensureCursorVisible(hw)
 	e.RequestRender()
 }
 
-// applyHelpWindowChrome sets the docked help window's chrome for its CURRENT
+// applyHelpViewportChrome sets the docked help viewport's chrome for its CURRENT
 // role, read from quickHelpMode. Quick Help is a dynamic, chromeless page: it
 // drops the top "Help" message bar entirely and sizes its max height to the
-// loaded file so the window fits its content. Regular help keeps the "Help"
-// title bar and the standard height envelope. Called whenever the window's role
+// loaded file so the viewport fits its content. Regular help keeps the "Help"
+// title bar and the standard height envelope. Called whenever the viewport's role
 // or loaded buffer changes — not per edit — so the message bar enables and
 // disables as the same slot flips between Quick Help and a help page.
-func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
+func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 	if hw == nil {
 		return
 	}
@@ -6940,7 +6940,7 @@ func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
 			hw.MinHeight = fit
 		}
 	} else {
-		hw.Class = helpWindowClass
+		hw.Class = helpViewportClass
 		hw.MessageTopCenter = "Help"
 		hw.CanFocus = true
 		hw.MinHeight = 4
@@ -6948,7 +6948,7 @@ func (e *Editor) applyHelpWindowChrome(hw *window.Window) {
 	}
 }
 
-// quickHelpFitHeight is the height Quick Help sizes its window to: the visible
+// quickHelpFitHeight is the height Quick Help sizes its viewport to: the visible
 // line count of buf, less the phantom empty line a trailing newline would add,
 // and at least 1.
 func quickHelpFitHeight(buf *buffer.Buffer) int {
@@ -6965,25 +6965,25 @@ func quickHelpFitHeight(buf *buffer.Buffer) int {
 	return n
 }
 
-// createHelpWindow creates the single docked help window (Tag "help") holding
+// createHelpViewport creates the single docked help viewport (Tag "help") holding
 // buf. focus moves the caret to it (help_open); help_toggle passes false so the
 // slot opens without stealing focus. Its chrome (title bar, height envelope) is
-// set immediately afterward by applyHelpWindowChrome per the window's role; the
+// set immediately afterward by applyHelpViewportChrome per the viewport's role; the
 // values here are the regular-help defaults.
-func (e *Editor) createHelpWindow(buf *buffer.Buffer, focus bool) *window.Window {
-	opts := e.docWindowOptions()
-	opts.Type = window.ToolWindow
-	opts.WindowSet = "help"
-	opts.Class = helpWindowClass // applyHelpWindowChrome flips this to quickHelpClass in Quick Help
-	opts.Tag = helpWindowTag
-	opts.Dock = window.DockTop
+func (e *Editor) createHelpViewport(buf *buffer.Buffer, focus bool) *viewport.Viewport {
+	opts := e.docViewportOptions()
+	opts.Type = viewport.ToolViewport
+	opts.ViewportSet = "help"
+	opts.Class = helpViewportClass // applyHelpViewportChrome flips this to quickHelpClass in Quick Help
+	opts.Tag = helpViewportTag
+	opts.Dock = viewport.DockTop
 	opts.Priority = 100
 	opts.MinHeight = 4
 	opts.MaxHeight = 20
 	opts.MessageTopCenter = "Help"
 	opts.Buffer = buf
 	opts.SetFocus = focus
-	return e.WindowManager.GetWindow(e.WindowManager.CreateWindow(opts))
+	return e.ViewportManager.GetViewport(e.ViewportManager.CreateViewport(opts))
 }
 
 // quickHelpDestination resolves the help wiki page for the current
@@ -7011,13 +7011,13 @@ func (e *Editor) quickHelpDestination() (buf *buffer.Buffer, root, wikiName stri
 	return nil, "", "", false, false
 }
 
-// refreshQuickHelp re-renders the docked Quick Help window for the current
+// refreshQuickHelp re-renders the docked Quick Help viewport for the current
 // quickHelpTopic, in place — no history entry, because Quick Help is a single
 // dynamic slot. Called from the key loop when the context topic changes while
 // Quick Help is open. When the new topic has no page it KEEPS the current help
 // showing (rather than replacing it with the no-help notice), only recording
 // the topic so it is not re-resolved every keystroke.
-func (e *Editor) refreshQuickHelp(hw *window.Window) {
+func (e *Editor) refreshQuickHelp(hw *viewport.Viewport) {
 	buf, root, wikiName, browse, ok := e.quickHelpDestination()
 	if !ok {
 		e.quickHelpShownTopic = e.quickHelpTopic // keep the current page; don't retry each key
@@ -7032,7 +7032,7 @@ func (e *Editor) refreshQuickHelp(hw *window.Window) {
 	hw.BrowseAutoArmed = hw.BrowseActive
 	e.quickHelpBuf = buf
 	e.quickHelpShownTopic = e.quickHelpTopic
-	e.applyHelpWindowChrome(hw) // re-fit height to the newly loaded page
+	e.applyHelpViewportChrome(hw) // re-fit height to the newly loaded page
 	e.ensureCursorVisible(hw)
 	e.RequestRender()
 }
@@ -7050,7 +7050,7 @@ func (e *Editor) updateQuickHelp() {
 	if e.quickHelpTopic == e.quickHelpShownTopic {
 		return // already showing this topic — don't reload on every keypress
 	}
-	if hw := e.helpWindow(); hw != nil {
+	if hw := e.helpViewport(); hw != nil {
 		e.refreshQuickHelp(hw)
 	}
 }
@@ -7067,20 +7067,20 @@ func (e *Editor) quickHelpBuffer() *buffer.Buffer {
 
 // toggleOptions shows the editor-options display, or dismisses it if a second
 // invocation arrives while it is already open (mirroring toggleHelp). The
-// window carries Class "options" so it can be found and removed.
+// viewport carries Class "options" so it can be found and removed.
 func (e *Editor) toggleOptions() bool {
-	// Dismiss an existing options window (top dock, Class "options").
-	for _, w := range e.WindowManager.GetWindowsByDock(window.DockTop) {
+	// Dismiss an existing options viewport (top dock, Class "options").
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.Class == "options" {
-			e.WindowManager.RemoveWindow(w.ID)
+			e.ViewportManager.RemoveViewport(w.ID)
 			e.RequestRender()
 			return true
 		}
 	}
 
 	// Build options display, showing the EFFECTIVE values for the last
-	// active editor window (per-window settings govern the window).
-	optWin := e.WindowManager.GetLastMainWindow()
+	// active editor viewport (per-viewport settings govern the viewport).
+	optWin := e.ViewportManager.GetLastMainViewport()
 	opt := func(name string) string {
 		v, _ := e.getOption(optWin, name)
 		return v
@@ -7147,11 +7147,11 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString("\nInvoke editor_options again to close...")
 
 	buf := e.lib.NewFromString(content.String())
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Type:             window.ToolWindow,
-		WindowSet:        "help",
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:             viewport.ToolViewport,
+		ViewportSet:      "help",
 		Class:            "options",
-		Dock:             window.DockTop,
+		Dock:             viewport.DockTop,
 		Priority:         100,
 		MinHeight:        8,
 		MaxHeight:        15,
@@ -7182,6 +7182,6 @@ func (e *Editor) Cleanup() {
 
 // PromptForInput creates an input prompt.
 func (e *Editor) PromptForInput(prompt, defaultValue string, callback func(string, bool)) {
-	e.WindowManager.CreatePromptWindow(prompt, defaultValue, callback)
+	e.ViewportManager.CreatePromptViewport(prompt, defaultValue, callback)
 	e.RequestRender()
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Decoration-only mutations must not advance the content change sequence:
@@ -126,7 +126,7 @@ func TestWatermarkBackwardJoin(t *testing.T) {
 
 	// Join line 1 into line 0 (backspace at start of line 1): "int b;"
 	// becomes part of the comment line.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	w.Caret.DeleteBackward(1)
 	c := e.ensureSynCache(b, 0)
 	if !strings.Contains(strings.Join(e.resolveLineColors(c, 0, "", "doc"), ""), sgrComment) {
@@ -142,7 +142,7 @@ func TestWatermarkBackwardJoin(t *testing.T) {
 // TEXT the caret was on, not on its old line number.
 func TestSetMarkPromptSlides(t *testing.T) {
 	e, w := newTestEditor(t, "alpha\ntarget\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2}) // inside "target"
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2}) // inside "target"
 
 	e.PawScript.ExecuteAsync("set_mark")
 	if focusedPrompt(e) == nil {

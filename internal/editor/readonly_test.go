@@ -3,10 +3,10 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// readOnly is a per-window boolean, default no.
+// readOnly is a per-viewport boolean, default no.
 func TestReadOnlyOption(t *testing.T) {
 	e, w := newTestEditor(t, "x\n")
 	if v, _ := e.getOption(w, "readOnly"); v != "no" {
@@ -14,23 +14,23 @@ func TestReadOnlyOption(t *testing.T) {
 	}
 	e.setOption(w, "readOnly", "yes")
 	if !w.ViewState.ReadOnly {
-		t.Fatal("setOption should set the window ReadOnly flag")
+		t.Fatal("setOption should set the viewport ReadOnly flag")
 	}
 	if v, _ := e.getOption(w, "readOnly"); v != "yes" {
 		t.Fatalf("readOnly after set = %q, want yes", v)
 	}
-	// Per window: the editor default is untouched.
+	// Per viewport: the editor default is untouched.
 	if e.Config.ReadOnly {
-		t.Fatal("a per-window override must not change the editor default")
+		t.Fatal("a per-viewport override must not change the editor default")
 	}
 }
 
-// A read-only window rejects content-mutating commands (typing, deleting,
+// A read-only viewport rejects content-mutating commands (typing, deleting,
 // pasting) with a warning and leaves the buffer unchanged.
 func TestReadOnlyBlocksEdits(t *testing.T) {
 	e, w := newTestEditor(t, "abc\n")
 	w.ViewState.ReadOnly = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 
 	for _, cmd := range []string{`insert "X"`, "del_char_next", "del_char_prior", "del_line", "find_replace"} {
 		e.executeCommand(cmd)
@@ -67,7 +67,7 @@ func TestReadOnlyAllowsNavAndMarksAndUnlock(t *testing.T) {
 	w.ViewState.ReadOnly = true
 
 	// Cursor movement works.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("go_char_next")
 	if w.CursorPos().Rune != 1 {
 		t.Fatalf("cursor should move under read-only, at %d", w.CursorPos().Rune)
@@ -80,7 +80,7 @@ func TestReadOnlyAllowsNavAndMarksAndUnlock(t *testing.T) {
 
 	// Turning read-only off restores editing.
 	e.setOption(w, "readOnly", "no")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand(`insert "Z"`)
 	if got := docContent(w); got != "Zhello world" {
 		t.Fatalf("editing after unlock failed, content = %q", got)

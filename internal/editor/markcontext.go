@@ -8,7 +8,7 @@ import (
 	"golang.org/x/text/unicode/runenames"
 
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // caretMarkContext describes the zero-width character backspace would delete
@@ -20,7 +20,7 @@ import (
 //
 //	◌́ U+0301 combining acute accent
 //	U+200F right-to-left mark
-func (e *Editor) caretMarkContext(w *window.Window) string {
+func (e *Editor) caretMarkContext(w *viewport.Viewport) string {
 	if w == nil || w.Buffer == nil {
 		return ""
 	}

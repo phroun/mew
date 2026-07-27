@@ -49,9 +49,9 @@ func TestPeekBindingValuesTrackKeymap(t *testing.T) {
 // engine), resolving through the live keymap on render.
 func TestModebarTemplateResolvesPeekCode(t *testing.T) {
 	e, _, out := newRenderedEditor(t, "hi\n")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	// The middle default template is driven from the base config (reconciled
-	// onto the modebar per the focused window's overlay).
+	// onto the modebar per the focused viewport's overlay).
 	e.Config.ModebarDefault = "peek=%PPU%"
 	e.invalidateFocusedOptions()
 	e.performRender() // settle focused options (loads the default mapping set)

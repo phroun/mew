@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Default systematic palette entries (from the config color defaults).
@@ -70,7 +70,7 @@ func expandSGR(raw string) string {
 
 // renderedEditorWithConfig is newRenderedEditor with a full custom config
 // text (for [syntax.*] sections and the syntax option).
-func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor, *window.Window, *bytes.Buffer) {
+func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor, *viewport.Viewport, *bytes.Buffer) {
 	t.Helper()
 	var out bytes.Buffer
 	cfg := DefaultConfig()
@@ -87,12 +87,12 @@ func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.DocWindow, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 		LinkBrowsing: e.Config.LinkBrowsing,
 	})
-	return e, e.WindowManager.GetWindow("doc"), &out
+	return e, e.ViewportManager.GetViewport("doc"), &out
 }
 
 // syntax=cpp colors keywords, types, comments and strings in the rendered
@@ -175,7 +175,7 @@ func TestSyntaxRecomputesAfterEdit(t *testing.T) {
 		t.Fatal("'retur' is not a keyword yet")
 	}
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.executeCommand("insert 'n'")
 	out.Reset()
 	e.performRender()
@@ -221,7 +221,7 @@ func TestSyntaxOption(t *testing.T) {
 	}
 }
 
-// Prompt windows never syntax-highlight (only main buffers do).
+// Prompt viewports never syntax-highlight (only main buffers do).
 func TestSyntaxSkipsPrompts(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t, "x\n", "[options]\nsyntax=cpp\n")
 	e.PromptForInput("Cmd: ", "", func(string, bool) {})
@@ -518,9 +518,9 @@ func TestFormatPathsUserRules(t *testing.T) {
 	}
 }
 
-// mainBuf returns the "doc" window's buffer.
+// mainBuf returns the "doc" viewport's buffer.
 func mainBuf(e *Editor) *buffer.Buffer {
-	return e.WindowManager.GetWindow("doc").Buffer
+	return e.ViewportManager.GetViewport("doc").Buffer
 }
 
 // The dokuwiki grammar colors the core constructs.

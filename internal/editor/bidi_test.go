@@ -10,7 +10,7 @@ import (
 
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // stripAnsi removes ANSI escape sequences so rendered content can be matched
@@ -57,17 +57,17 @@ func TestBidiRuneToVisualColumn(t *testing.T) {
 func TestRTLCommand(t *testing.T) {
 	e, w := newTestEditor(t, bidiLine+"\n")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1}) // 'b'
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1}) // 'b'
 	if res := e.PawScript.ExecuteAsync("rtl"); res != pawscript.BoolStatus(false) {
 		t.Fatalf("latin position should report false, got %v", res)
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the Hebrew word
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the Hebrew word
 	if res := e.PawScript.ExecuteAsync("rtl"); res != pawscript.BoolStatus(true) {
 		t.Fatalf("hebrew position should report true, got %v", res)
 	}
 }
 
-// The direction option is per-window: set_option targets the current window,
+// The direction option is per-viewport: set_option targets the current viewport,
 // round-trips through getOption, leaves the global base untouched, and rejects
 // junk values.
 func TestDirectionOption(t *testing.T) {
@@ -75,17 +75,17 @@ func TestDirectionOption(t *testing.T) {
 	if v, ok := e.getOption(w, "direction"); !ok || v != "ltr" {
 		t.Fatalf("default direction: %q ok=%v", v, ok)
 	}
-	// set_option targets the last main-buffer window.
+	// set_option targets the last main-buffer viewport.
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	if v, _ := e.getOption(w, "direction"); v != "rtl" {
-		t.Fatalf("window direction after set: %q", v)
+		t.Fatalf("viewport direction after set: %q", v)
 	}
 	if !e.winRTL(w) {
-		t.Fatal("winRTL should reflect the per-window option")
+		t.Fatal("winRTL should reflect the per-viewport option")
 	}
-	// The global base direction is unaffected by a per-window override.
+	// The global base direction is unaffected by a per-viewport override.
 	if e.baseRTL() {
-		t.Fatal("per-window direction must not change the global base")
+		t.Fatal("per-viewport direction must not change the global base")
 	}
 	if v, _ := e.getOption(nil, "direction"); v != "ltr" {
 		t.Fatalf("global direction should stay ltr: %q", v)
@@ -126,17 +126,17 @@ func TestBidiRenderedRTLBase(t *testing.T) {
 // to M_ on LTR text.
 func TestModebarLogoFlips(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
-	e.createPluginWindows() // the modebar window (normally made by run())
+	e.createPluginViewports() // the modebar viewport (normally made by run())
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1}) // latin
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1}) // latin
 	e.performRender()
 	plain := stripAnsi(out.String())
 	if !strings.Contains(plain, " M_ ") || strings.Contains(plain, " _M ") {
 		t.Fatal("LTR caret should show the M_ logo")
 	}
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // hebrew
-	e.Renderer.ForceRedraw()                          // inspect the whole modebar row, not just the diff
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // hebrew
+	e.Renderer.ForceRedraw()                            // inspect the whole modebar row, not just the diff
 	out.Reset()
 	e.performRender()
 	if !strings.Contains(stripAnsi(out.String()), " _M ") {
@@ -225,7 +225,7 @@ func TestBidiRTLGhostHoldsScreenColumn(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבגדהוזח\nאב\n") // 8 letters, then 2
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
@@ -248,7 +248,7 @@ func TestBidiRTLGhostReadingStartPreserved(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אב\nאבגדהוזח\n") // 2 letters, then 8
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // reading start
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
 	e.afterHorizontalMovement(w)
 	e.executeCommand("go_line_next")
 	if w.HasGhostCursor {
@@ -265,7 +265,7 @@ func TestBidiRTLGhostReadingStartPreserved(t *testing.T) {
 // letter, is painted at visual col 6 -> screen col 7 with no gutter).
 func TestBidiHardwareCursorSide(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the Hebrew word
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the Hebrew word
 	e.performRender()
 	_, col := lastCursor(out.Bytes())
 	if col != 7 { // visual col 6 + 1 (no gutter)
@@ -280,7 +280,7 @@ func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
 	want := map[int]int{4: 8, 5: 7, 6: 6, 7: 5}
 	for rune_, wantCol := range want {
-		w.SetCursorPos(window.Position{Line: 0, Rune: rune_})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: rune_})
 		e.afterHorizontalMovement(w)
 		out.Reset()
 		e.performRender()
@@ -295,7 +295,7 @@ func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 func TestBidiRTLRightAligned(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבג\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // reading start
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
 	out.Reset()
 	e.performRender()
 
@@ -310,7 +310,7 @@ func TestBidiRTLRightAligned(t *testing.T) {
 	}
 
 	// End of line (logical len) parks one cell LEFT of the content.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	out.Reset()
 	e.performRender()
 	_, col = lastCursor(out.Bytes())
@@ -331,7 +331,7 @@ func TestBidiRTLScrollTrimsReadingHead(t *testing.T) {
 	// cursor "@" indicator is not drawn over the left-edge truncation marker —
 	// the two share column 0, and under the back buffer the later "@" write
 	// composites over the marker (as it does on a real terminal).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 93})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 93})
 
 	out.Reset()
 	e.performRender()
@@ -362,7 +362,7 @@ func TestRTLScrolledShortLineShowsOffScreenIndicator(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "\n"+strings.Repeat("a", 120)+"\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	w.ViewState.ViewOffsetX = 80 // scrolled deep into the long line's tail
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.performRender()
 	offGlyph := config.DefaultIndicators().CursorOffScreen
 	if !strings.Contains(stripAnsi(out.String()), offGlyph) {
@@ -376,7 +376,7 @@ func TestRTLScrolledShortLineShowsOffScreenIndicator(t *testing.T) {
 func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	e, w, out := newRenderedEditor(t, strings.Repeat("k", 85)+"\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 85})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 85})
 
 	e.executeCommand("insert 'q'") // caret at EOL of an 86-col line
 	if w.ViewState.ViewOffsetX != 0 {
@@ -389,7 +389,7 @@ func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	}
 
 	// The line's logical start is 86 reading columns back: scrolls into view.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("go_line_beg")
 	if w.ViewState.ViewOffsetX != 7 {
 		t.Fatalf("reading-space scroll offset %d, want 7", w.ViewState.ViewOffsetX)
@@ -401,7 +401,7 @@ func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	}
 }
 
-// Prompt windows are pinned LTR regardless of the direction option.
+// Prompt viewports are pinned LTR regardless of the direction option.
 func TestPromptPinnedLTR(t *testing.T) {
 	e, _ := newTestEditor(t, "אבג\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
@@ -416,7 +416,7 @@ func TestPromptPinnedLTR(t *testing.T) {
 }
 
 // Under RTL the line-number gutter mirrors to the right side of the content,
-// and a window's left/right messages swap slots.
+// and a viewport's left/right messages swap slots.
 func TestBidiRTLGutterAndMessagesMirror(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבג\nxyz\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
@@ -503,23 +503,23 @@ func TestShowBidiExplicitControl(t *testing.T) {
 	}
 }
 
-// showBidi is an option like showInvisibles: config default plus per-window
+// showBidi is an option like showInvisibles: config default plus per-viewport
 // set_option.
 func TestShowBidiOption(t *testing.T) {
 	e, w := newTestEditor(t, "x\n", "showBidi=true")
-	// The [general] value lands in the editor config (windows created through
-	// the editor's own paths inherit it; the test harness window is created
+	// The [general] value lands in the editor config (viewports created through
+	// the editor's own paths inherit it; the test harness viewport is created
 	// directly, like showInvisibles).
 	if !e.Config.ShowBidi {
 		t.Fatal("config should parse showBidi=true")
 	}
 	e.PawScript.ExecuteAsync("set_option 'showBidi', 'true'")
 	if !w.ViewState.ShowBidi {
-		t.Fatal("set_option should enable the window's showBidi")
+		t.Fatal("set_option should enable the viewport's showBidi")
 	}
 	e.PawScript.ExecuteAsync("set_option 'showBidi', 'false'")
 	if w.ViewState.ShowBidi {
-		t.Fatal("set_option should clear the window's showBidi")
+		t.Fatal("set_option should clear the viewport's showBidi")
 	}
 	if v, _ := e.getOption(w, "showBidi"); v != "no" {
 		t.Fatalf("get_option showBidi: %q", v)
@@ -626,7 +626,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "[general]\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	w.ViewState.ShowBidi = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	out.Reset()
 	e.performRender()
 	// The back buffer paints the reversed cell with \x1b[7m in its style; the
@@ -639,7 +639,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	// Caret at pos 8 (rune 9, between l and the closing bracket): secondary
 	// one cell past the l in ITS (LTR) direction — again the "|" cell that
 	// ends the island.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 8})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8})
 	e.Renderer.ForceRedraw() // both carets' secondaries land on the same "|" cell
 	out.Reset()
 	e.performRender()
@@ -648,7 +648,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	}
 
 	// Mid-fragment: no secondary.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.Renderer.ForceRedraw()
 	out.Reset()
 	e.performRender()
@@ -663,7 +663,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 func TestShowBidiSecondaryCursorLTRBase(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
 	w.ViewState.ShowBidi = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
 	e.performRender()
 	if !strings.Contains(out.String(), "\x1b[7m|") {
 		t.Fatal("expected the fragment's | end-marker cell inverted")
@@ -677,7 +677,7 @@ func TestShowBidiSecondaryCursorSkipsControls(t *testing.T) {
 	e, w, out := newRenderedEditor(t, content+"\n")
 	w.ViewState.ShowBidi = true
 	// Caret between RLM and א: boundary runes include the control.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.performRender()
 	if strings.Contains(out.String(), "\x1b[7m") {
 		t.Fatal("no secondary cursor at a control-expressed boundary")
@@ -691,14 +691,14 @@ func TestSecondaryCursorWithoutShowBidi(t *testing.T) {
 	// showBidi OFF: unmarked layout (no <> marker cells). Caret entering the
 	// Hebrew word: secondary rests one cell past the preceding space in its
 	// LTR direction — the run's leftmost cell (ם).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
 	e.performRender()
 	if !strings.Contains(out.String(), "\x1b[7mם") {
 		t.Fatal("secondary cursor should render without showBidi")
 	}
 
 	// Still absent mid-fragment and on plain LTR lines.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	out.Reset()
 	e.performRender()
 	if strings.Contains(out.String(), "\x1b[7m") {
@@ -746,8 +746,8 @@ func TestLamAlefLigatureCell(t *testing.T) {
 	}
 
 	// Delete the alef: the ligature breaks; the lam re-shapes on its own.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3}) // after alef
-	e.executeCommand("del_char_prior")                // remove the alef
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // after alef
+	e.executeCommand("del_char_prior")                  // remove the alef
 	if got := docContent(w); got != "بل" {
 		t.Fatalf("after deleting alef: %q, want بل", got)
 	}

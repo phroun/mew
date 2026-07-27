@@ -1,5 +1,5 @@
-// Package window provides window management for the editor.
-package window
+// Package viewport provides viewport management for the editor.
+package viewport
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/phroun/mew/internal/textwidth"
 )
 
-// unixWisdom is sample context text used to populate each window's Context
+// unixWisdom is sample context text used to populate each viewport's Context
 // field on spawn, so the modebar shows varying placeholder text for now.
 var unixWisdom = []string{
 	"Do one thing and do it well.",
@@ -27,7 +27,7 @@ type Position struct {
 	Rune int
 }
 
-// FindState holds a window's most recent find-command parameters;
+// FindState holds a viewport's most recent find-command parameters;
 // find_next continues from it. Options holds the raw option letters and
 // digits (i=ignore case, b=backwards, a=all buffers, r=replace, x=standard
 // regex syntax, y=JOE regex syntax, v=verbose log, nnn=Nth occurrence /
@@ -41,14 +41,14 @@ type FindState struct {
 
 // RepeatState arms the next keybound command to run inside a PawScript
 // repeat(...) a fixed number of times. repeat_next sets it (from an argument or
-// a prompt) on the window; the editor's command dispatcher consumes it when the
+// a prompt) on the viewport; the editor's command dispatcher consumes it when the
 // next command runs, then clears it. Pending is false when nothing is armed.
 type RepeatState struct {
 	Pending bool
 	Count   int
 }
 
-// ViewState holds the viewport and display state for a window.
+// ViewState holds the viewport and display state for a viewport.
 type ViewState struct {
 	ViewOffsetX     int
 	ViewOffsetY     int
@@ -75,50 +75,50 @@ type ViewState struct {
 	// "yes" (user-visible marks), or "all" (also mew's internal, underscore-
 	// prefixed marks). "" is treated as "no".
 	ShowMarks string
-	// ShowRuler renders a column ruler on the window's top line, reducing the
-	// content area by one row. Ignored when the window is only one line tall.
+	// ShowRuler renders a column ruler on the viewport's top line, reducing the
+	// content area by one row. Ignored when the viewport is only one line tall.
 	ShowRuler bool
 	TabSize   int
-	// Direction overrides the editor's base text direction for this window:
+	// Direction overrides the editor's base text direction for this viewport:
 	// "ltr", "rtl", or "" to inherit the [general] direction option. Prompt
-	// windows are pinned "ltr" at creation.
+	// viewports are pinned "ltr" at creation.
 	Direction string
 	// OverwriteMode is the inverse of the insertMode option: false (zero value,
 	// the default) is insert mode; true makes typing replace the character under
 	// the caret (except at end of line, where it appends). Stored inverted so a
-	// zero-value window defaults to insert mode.
+	// zero-value viewport defaults to insert mode.
 	OverwriteMode bool
-	// ReadOnly rejects content edits made through this window; navigation,
-	// search, marks, and undo/redo remain available. Per window; default false.
+	// ReadOnly rejects content edits made through this viewport; navigation,
+	// search, marks, and undo/redo remain available. Per viewport; default false.
 	ReadOnly bool
-	// LinkBrowsing enables the hyperlink layer for this window: link
+	// LinkBrowsing enables the hyperlink layer for this viewport: link
 	// coloring, browse-mode buttons, and arming on caret entry. Off, links
 	// render exactly as the grammar colors them. Default true.
 	LinkBrowsing bool
-	// Syntax is the per-window default grammar name resolved from a
+	// Syntax is the per-viewport default grammar name resolved from a
 	// grammar-agnostic option overlay ([options/tool] syntax=dokuwiki,
 	// [<class>.options] syntax=...); "" inherits the global syntax option.
-	// It is the fallback grammar for the window's buffer when nothing is
+	// It is the fallback grammar for the viewport's buffer when nothing is
 	// detected from a shebang/modeline/filename.
 	Syntax string
 
 	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
 	// "go conf") whose highlighter should skip this document's project
 	// .mew/syntax folder and resolve from the user's own copy (mew:/syntax),
-	// the built-in set, or JOE instead. Per window; inherits the editor default.
+	// the built-in set, or JOE instead. Per viewport; inherits the editor default.
 	SyntaxOverrides string
 
 	// ScrollDetached parks the viewport free of the caret: while set, the
 	// per-frame caret follow leaves the view exactly where a mouse-wheel scroll
 	// or a scroll_* command placed it, even with the caret off-screen (the
 	// cursorOffScreen indicator marks where it went). A cursor-movement or edit
-	// command re-engages following and clears this. Transient per-window UI
+	// command re-engages following and clears this. Transient per-viewport UI
 	// state, not part of the buffer binding.
 	ScrollDetached bool
 }
 
 // MarksVisible reports whether showMarks draws any mark indicators for this
-// window (mode "yes" or "all"). "" and "no" are off.
+// viewport (mode "yes" or "all"). "" and "no" are off.
 func (vs ViewState) MarksVisible() bool {
 	return vs.ShowMarks == "yes" || vs.ShowMarks == "all"
 }
@@ -129,10 +129,10 @@ func (vs ViewState) MarksShowInternal() bool {
 	return vs.ShowMarks == "all"
 }
 
-// SetLinkAnchor plants (or moves) the window's link anchor at a line/rune
+// SetLinkAnchor plants (or moves) the viewport's link anchor at a line/rune
 // position — the start of the link span the caret now occupies. The anchor is
 // a tracking cursor: the recorded identity slides with edits.
-func (w *Window) SetLinkAnchor(line, runePos int) {
+func (w *Viewport) SetLinkAnchor(line, runePos int) {
 	if w.Buffer == nil {
 		return
 	}
@@ -144,7 +144,7 @@ func (w *Window) SetLinkAnchor(line, runePos int) {
 
 // LinkAnchorPos reports the link anchor's current (slid-with-edits) position,
 // or ok=false when no link anchor is set.
-func (w *Window) LinkAnchorPos() (line, runePos int, ok bool) {
+func (w *Viewport) LinkAnchorPos() (line, runePos int, ok bool) {
 	if w.linkAnchor == nil {
 		return 0, 0, false
 	}
@@ -153,95 +153,95 @@ func (w *Window) LinkAnchorPos() (line, runePos int, ok bool) {
 }
 
 // ClearLinkAnchor releases the link anchor (caret no longer inside a link).
-func (w *Window) ClearLinkAnchor() {
+func (w *Viewport) ClearLinkAnchor() {
 	if w.linkAnchor != nil {
 		w.linkAnchor.Release()
 		w.linkAnchor = nil
 	}
 }
 
-// MarkOptionOverridden records that a per-window option was set explicitly on
-// this window, so a grammar options overlay leaves it alone.
-func (w *Window) MarkOptionOverridden(name string) {
+// MarkOptionOverridden records that a per-viewport option was set explicitly on
+// this viewport, so a grammar options overlay leaves it alone.
+func (w *Viewport) MarkOptionOverridden(name string) {
 	if w.overriddenOptions == nil {
 		w.overriddenOptions = make(map[string]bool)
 	}
 	w.overriddenOptions[name] = true
 }
 
-// IsOptionOverridden reports whether a per-window option was set explicitly on
-// this window (and so must not be overwritten by a grammar overlay).
-func (w *Window) IsOptionOverridden(name string) bool {
+// IsOptionOverridden reports whether a per-viewport option was set explicitly on
+// this viewport (and so must not be overwritten by a grammar overlay).
+func (w *Viewport) IsOptionOverridden(name string) bool {
 	return w.overriddenOptions[name]
 }
 
-// ClearOptionOverridden drops the explicit-override flag for a per-window
+// ClearOptionOverridden drops the explicit-override flag for a per-viewport
 // option, so the grammar overlay (and clear_option) may restore it to the
 // resolved default. Harmless if it was not overridden.
-func (w *Window) ClearOptionOverridden(name string) {
+func (w *Viewport) ClearOptionOverridden(name string) {
 	delete(w.overriddenOptions, name)
 }
 
 // AppliedOptionSig returns the overlay signature (class/grammar/type) whose
-// resolved options were last applied to this window.
-func (w *Window) AppliedOptionSig() string { return w.appliedOptionSig }
+// resolved options were last applied to this viewport.
+func (w *Viewport) AppliedOptionSig() string { return w.appliedOptionSig }
 
 // SetAppliedOptionSig records the overlay signature now reflected in this
-// window's ViewState.
-func (w *Window) SetAppliedOptionSig(sig string) { w.appliedOptionSig = sig }
+// viewport's ViewState.
+func (w *Viewport) SetAppliedOptionSig(sig string) { w.appliedOptionSig = sig }
 
-// WindowType represents the kind of window. DocWindow and ToolWindow are
+// ViewportType represents the kind of viewport. DocViewport and ToolViewport are
 // PEER interactive surfaces — both focusable, both get the full feature set
-// (links/browse, outline, completion, per-window options); only PromptWindow
+// (links/browse, outline, completion, per-viewport options); only PromptViewport
 // (the modal input line) is special.
-type WindowType int
+type ViewportType int
 
 const (
-	DocWindow    WindowType = iota // A document (editable content)
-	ToolWindow                     // A tool surface (help, listings, readouts)
-	PromptWindow                   // Single-line modal input at screen bottom
+	DocViewport    ViewportType = iota // A document (editable content)
+	ToolViewport                       // A tool surface (help, listings, readouts)
+	PromptViewport                     // Single-line modal input at screen bottom
 )
 
 // Name returns the type's name as used in color/config lookups
 // ([colors.<name>] sections): "doc", "tool", "prompt".
-func (t WindowType) Name() string {
+func (t ViewportType) Name() string {
 	switch t {
-	case DocWindow:
+	case DocViewport:
 		return "doc"
-	case ToolWindow:
+	case ToolViewport:
 		return "tool"
-	case PromptWindow:
+	case PromptViewport:
 		return "prompt"
 	}
 	return ""
 }
 
-// Chrome WindowSets: windows in them never hold keyboard focus and never take
-// part in focus cycling, focus-target selection, or the content-window
+// Chrome ViewportSets: viewports in them never hold keyboard focus and never take
+// part in focus cycling, focus-target selection, or the content-viewport
 // enumerations (buffer cycling, save-all, DEADCAT, exit-on-last). The
 // modebar is persistent chrome; transient notification/warning/error toasts
 // are ephemeral chrome. Other sets ("" for documents, "help" for the help
 // system) are fully focus-eligible content groupings.
 const (
-	WindowSetModebar   = "modebar"
-	WindowSetTransient = "transient"
+	ViewportSetModebar   = "modebar"
+	ViewportSetTransient = "transient"
 )
 
-// isChromeSet reports whether a WindowSet is chrome (excluded from focus and
+// isChromeSet reports whether a ViewportSet is chrome (excluded from focus and
 // from content enumerations).
 func isChromeSet(set string) bool {
-	return set == WindowSetModebar || set == WindowSetTransient
+	return set == ViewportSetModebar || set == ViewportSetTransient
 }
 
-// FocusEligible reports whether the window can hold keyboard focus and take
-// part in focus cycling / focus-target selection: every window except a
-// PromptWindow (which focuses transiently, on its own path) and chrome (the
-// modebar). Doc and tool windows both qualify.
-func (w *Window) FocusEligible() bool {
-	return w != nil && w.Type != PromptWindow && !isChromeSet(w.WindowSet)
+// FocusEligible reports whether the viewport can hold keyboard focus and take
+// part in focus cycling / focus-target selection: every viewport except a
+// PromptViewport (which focuses transiently, on its own path) and chrome (the
+// modebar). Doc and tool viewports both qualify.
+func (w *Viewport) FocusEligible() bool {
+	return w != nil && w.Type != PromptViewport && !isChromeSet(w.ViewportSet)
 }
 
-// DockPosition represents where a window is docked.
+// DockPosition represents where a viewport is docked.
 type DockPosition int
 
 const (
@@ -250,35 +250,35 @@ const (
 	DockBottom                     // Docked to bottom (prompts)
 )
 
-// cursorRingSize is the number of remembered edit positions per window.
+// cursorRingSize is the number of remembered edit positions per viewport.
 const cursorRingSize = 10
 
-// Window represents an editor window with its buffer and display state.
-type Window struct {
+// Viewport represents an editor viewport with its buffer and display state.
+type Viewport struct {
 	ID    string
-	Type  WindowType
+	Type  ViewportType
 	Class string
-	// WindowSet groups windows into a named space orthogonal to Type: "" for
+	// ViewportSet groups viewports into a named space orthogonal to Type: "" for
 	// ordinary documents, "help" for the help system, "modebar" for the
-	// modebar (chrome). Each set has its own last-focused-window memory (see
+	// modebar (chrome). Each set has its own last-focused-viewport memory (see
 	// lastFocusedBySet), and the chrome set is excluded from focus.
-	WindowSet string
-	Dock      DockPosition
-	Priority  int
-	Visible   bool
+	ViewportSet string
+	Dock        DockPosition
+	Priority    int
+	Visible     bool
 
-	// CanFocus gates the focus SWITCHER (FocusNextWindow / FocusPrevWindow):
-	// a window with CanFocus=false is skipped when cycling focus, though it can
+	// CanFocus gates the focus SWITCHER (FocusNextViewport / FocusPrevViewport):
+	// a viewport with CanFocus=false is skipped when cycling focus, though it can
 	// still be focused explicitly (SetFocus, a mouse click, help_open). Defaults
-	// to true; the editor drops it to false for a window that should not be a
+	// to true; the editor drops it to false for a viewport that should not be a
 	// cycle stop (e.g. the auto-following Quick Help peek).
 	CanFocus bool
 
 	// Seq is a monotonically increasing creation sequence number, unique
-	// across all windows: each new window gets the previous number +1.
+	// across all viewports: each new viewport gets the previous number +1.
 	Seq int64
 
-	// Context is a per-window descriptor surfaced by the modebar
+	// Context is a per-viewport descriptor surfaced by the modebar
 	// when there is no active key-sequence autocompletion to display.
 	// The editor overwrites it with the syntax outline breadcrumb (the
 	// enclosing function/section chain) when one is available.
@@ -288,43 +288,43 @@ type Window struct {
 	// when no outline breadcrumb applies at the caret.
 	SpawnContext string
 
-	// SpawnedAt records when the window was created, used to expire transient
-	// notification/error/warning windows.
+	// SpawnedAt records when the viewport was created, used to expire transient
+	// notification/error/warning viewports.
 	SpawnedAt time.Time
 
-	// ParentWindow is the main-buffer window that (transitively) spawned this
-	// window. Set at creation for prompt buffers: inherited from the focused
-	// window's ParentWindow when present, else the last main buffer. Cleared if
-	// the parent window is removed.
-	ParentWindow *Window
+	// ParentViewport is the main-buffer viewport that (transitively) spawned this
+	// viewport. Set at creation for prompt buffers: inherited from the focused
+	// viewport's ParentViewport when present, else the last main buffer. Cleared if
+	// the parent viewport is removed.
+	ParentViewport *Viewport
 
 	Buffer *buffer.Buffer
 
 	ViewState ViewState
 
-	// overriddenOptions records per-window options the user (or a launch-time
+	// overriddenOptions records per-viewport options the user (or a launch-time
 	// per-file switch) set explicitly via set_option, so a grammar-driven
 	// options overlay does not clobber a deliberate choice. Nil until first use.
 	overriddenOptions map[string]bool
 
 	// appliedOptionSig is the overlay signature (class/grammar/type) whose
-	// resolved options were last written into this window's ViewState. "" (the
-	// initial value) matches a plain window with no grammar/class/type overlay,
-	// so such windows are left untouched.
+	// resolved options were last written into this viewport's ViewState. "" (the
+	// initial value) matches a plain viewport with no grammar/class/type overlay,
+	// so such viewports are left untouched.
 	appliedOptionSig string
 
 	// viewportAnchor tracks the first visible document line as a garland
 	// cursor, so the viewport stays pinned to the same logical line when the
 	// buffer is edited above it (see SetViewTop/RefreshViewTop). Created when
-	// the window is bound to a buffer, released when the window is removed.
+	// the viewport is bound to a buffer, released when the viewport is removed.
 	viewportAnchor *buffer.Anchor
 
-	// Caret is the window's own edit cursor — a garland cursor that garland
+	// Caret is the viewport's own edit cursor — a garland cursor that garland
 	// maintains across every edit. Editing goes through it, and it slides with
-	// edits made through another window on the same buffer, so CursorPos (its
+	// edits made through another viewport on the same buffer, so CursorPos (its
 	// cached line/rune) can be refreshed from it and never goes stale. It is
 	// parked at CursorPos on focus-out and read back on focus-in (see
-	// SetFocus). Created when the window is bound to a buffer, released on
+	// SetFocus). Created when the viewport is bound to a buffer, released on
 	// removal.
 	Caret *buffer.Caret
 
@@ -345,7 +345,7 @@ type Window struct {
 	ringCount     int // number of live entries (0..cursorRingSize)
 	ringNav       int // navigation index into history; -1 = not navigating
 
-	// Find is the window's own find state (see FindState). An all-buffers
+	// Find is the viewport's own find state (see FindState). An all-buffers
 	// search ("a" option) lives on the editor instead.
 	Find FindState
 
@@ -354,17 +354,17 @@ type Window struct {
 	// other cursor. findWrapped records that the search has wrapped past the
 	// end of the buffer since then — when a match then crosses back over the
 	// origin, the editor announces that the search has looped. Released in
-	// RemoveWindow.
+	// RemoveViewport.
 	findOrigin  *buffer.Anchor
 	findWrapped bool
 
 	// Link browse mode (link-as-button rendering). BrowseActive turns button
-	// rendering on for this window's links; it is set by the editor when the
+	// rendering on for this viewport's links; it is set by the editor when the
 	// caret enters a link span it was not previously inside, and cleared by
 	// nav_cancel. linkAnchor marks the START of the link span the caret last
 	// occupied — a tracking cursor, so the identity slides with edits like
 	// every other position (never a raw line number). nil = caret not in a
-	// link. Released in RemoveWindow.
+	// link. Released in RemoveViewport.
 	BrowseActive bool
 	linkAnchor   *buffer.Anchor
 
@@ -375,36 +375,36 @@ type Window struct {
 	// binding auto-arms anew).
 	BrowseAutoArmed bool
 
-	// WikiRoot confines this window's wiki-reference resolution to a subtree:
+	// WikiRoot confines this viewport's wiki-reference resolution to a subtree:
 	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
 	// When set, absolute wiki refs resolve from this root and relative climbs
 	// ("..") clamp at it — leaving the wiki requires a full scheme reference.
-	// A window's root NEVER changes: it is part of the window's identity, set
-	// by how the window came to be (a wiki-scheme open carries its registry
+	// A viewport's root NEVER changes: it is part of the viewport's identity, set
+	// by how the viewport came to be (a wiki-scheme open carries its registry
 	// root, a plain buffer_open carries none). Following a link that resolves
-	// under a DIFFERENT root surfaces a different window — possibly sharing
-	// the same underlying buffer (a Help window and an editor window can show
+	// under a DIFFERENT root surfaces a different viewport — possibly sharing
+	// the same underlying buffer (a Help viewport and an editor viewport can show
 	// one document with different roots, types, and colors). Because it is
-	// window identity, it deliberately does NOT travel with the buffer-swap
+	// viewport identity, it deliberately does NOT travel with the buffer-swap
 	// nav history.
 	WikiRoot string
 
-	// WikiName is the registry name of the wiki this window browses ("help";
-	// "" for every non-wiki window). Window identity like WikiRoot — set when
-	// the window is surfaced for a registered wiki, never changed after —
-	// so window-level behavior (chrome, colors, commands) can key off WHICH
+	// WikiName is the registry name of the wiki this viewport browses ("help";
+	// "" for every non-wiki viewport). Viewport identity like WikiRoot — set when
+	// the viewport is surfaced for a registered wiki, never changed after —
+	// so viewport-level behavior (chrome, colors, commands) can key off WHICH
 	// wiki this is, not just where its tree lives.
 	WikiName string
 
-	// Nav history: the buffer bindings this window navigated away from, in
+	// Nav history: the buffer bindings this viewport navigated away from, in
 	// browser back/forward form. SwapBuffer pushes the active binding onto
 	// navBack (and clears navFwd — a new departure invalidates the forward
 	// trail); NavHistoryPrior/NavHistoryNext shuffle bindings between the
-	// stacks and the window. Stacked bindings keep LIVE cursors on their
+	// stacks and the viewport. Stacked bindings keep LIVE cursors on their
 	// buffers (see viewBinding), so returning restores the exact caret,
 	// scroll, and trail. History is navigation, not ownership: a stacked
-	// binding references its buffer but closing the window simply drops the
-	// whole history (released in RemoveWindow) — buffer retirement is decided
+	// binding references its buffer but closing the viewport simply drops the
+	// whole history (released in RemoveViewport) — buffer retirement is decided
 	// by whoever still references it.
 	//
 	// navGrave is the GRAVEYARD: when history maintenance would drop the LAST
@@ -413,7 +413,7 @@ type Window struct {
 	// released, so the buffer stays reachable for the eventual "save its
 	// changes?" reckoning. That is the graveyard's only purpose — it takes no
 	// part in navigation. One binding per buffer (a duplicate burial releases
-	// the newcomer). All three are released in RemoveWindow.
+	// the newcomer). All three are released in RemoveViewport.
 	navBack  []viewBinding
 	navFwd   []viewBinding
 	navGrave []viewBinding
@@ -445,10 +445,10 @@ type Window struct {
 	NavIdealCol int
 	NavIdealSet bool
 
-	// Window chrome slots are named by READING side, like the inner and
+	// Viewport chrome slots are named by READING side, like the inner and
 	// outer margins of a book page: Inner is the reading-start side (left in
-	// an LTR window, right in RTL), Outer is the opposite edge. The renderer
-	// maps them to physical sides per the window's effective direction.
+	// an LTR viewport, right in RTL), Outer is the opposite edge. The renderer
+	// maps them to physical sides per the viewport's effective direction.
 	MessageTopInner     string
 	MessageTopCenter    string
 	MessageTopOuter     string
@@ -476,63 +476,63 @@ type Window struct {
 	CustomRenderer string
 
 	// CompletionCallback, when set, handles the `completion` command for this
-	// window (e.g. filename completion on a filename prompt). It returns true
+	// viewport (e.g. filename completion on a filename prompt). It returns true
 	// when it handled the completion; false lets the command's fallback run
 	// (the demo binds completion|insert '\t', so a plain buffer types a tab).
 	CompletionCallback func() bool
 
-	// Tag is a secondary label (beyond Class) grouping windows that should
+	// Tag is a secondary label (beyond Class) grouping viewports that should
 	// replace rather than stack — e.g. the filename-completion transient tags
 	// itself so a fresh completion first removes the previous one.
 	Tag string
 }
 
-// noteMainFocus records w as the last-focused main-area window and the
-// last-focused window within its WindowSet. Called (under m.mu) for a
-// focus-eligible window that just took focus, or a prompt's parent standing
+// noteMainFocus records w as the last-focused main-area viewport and the
+// last-focused viewport within its ViewportSet. Called (under m.mu) for a
+// focus-eligible viewport that just took focus, or a prompt's parent standing
 // in for it.
-func (m *Manager) noteMainFocus(w *Window) {
-	m.lastMainWindow = w
+func (m *Manager) noteMainFocus(w *Viewport) {
+	m.lastMainViewport = w
 	if m.lastFocusedBySet == nil {
-		m.lastFocusedBySet = make(map[string]*Window)
+		m.lastFocusedBySet = make(map[string]*Viewport)
 	}
-	m.lastFocusedBySet[w.WindowSet] = w
+	m.lastFocusedBySet[w.ViewportSet] = w
 }
 
-// LastMainWindow returns the last-focused main-area (focus-eligible) window
+// LastMainViewport returns the last-focused main-area (focus-eligible) viewport
 // occupying the main editing area (nil when none), validated against the
-// live window set.
-func (m *Manager) LastMainWindow() *Window {
+// live viewport set.
+func (m *Manager) LastMainViewport() *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.lastMainWindow != nil {
-		if _, ok := m.windows[m.lastMainWindow.ID]; ok {
-			return m.lastMainWindow
+	if m.lastMainViewport != nil {
+		if _, ok := m.viewports[m.lastMainViewport.ID]; ok {
+			return m.lastMainViewport
 		}
 	}
 	return nil
 }
 
-// LastFocusedInSet returns the window most recently focused within the named
-// WindowSet (nil when none is live), for set-scoped focus restoration.
-func (m *Manager) LastFocusedInSet(set string) *Window {
+// LastFocusedInSet returns the viewport most recently focused within the named
+// ViewportSet (nil when none is live), for set-scoped focus restoration.
+func (m *Manager) LastFocusedInSet(set string) *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if w := m.lastFocusedBySet[set]; w != nil {
-		if _, ok := m.windows[w.ID]; ok {
+		if _, ok := m.viewports[w.ID]; ok {
 			return w
 		}
 	}
 	return nil
 }
 
-// CursorPos returns the window's caret position, read straight from its
+// CursorPos returns the viewport's caret position, read straight from its
 // garland caret cursor — the single source of truth. Garland maintains the
-// cursor across every edit (including edits made through another window on the
+// cursor across every edit (including edits made through another viewport on the
 // same buffer), so this never goes stale and there is no cached copy to
 // reconcile. The read is O(1) amortized (garland resolves the line/column
 // lazily at most once per edit).
-func (w *Window) CursorPos() Position {
+func (w *Viewport) CursorPos() Position {
 	if w.Caret == nil {
 		return Position{}
 	}
@@ -542,7 +542,7 @@ func (w *Window) CursorPos() Position {
 
 // CaretByte returns the caret's absolute byte offset in the buffer (0 at the
 // start), for readouts like the modebar's %ABSBYTE%.
-func (w *Window) CaretByte() int64 {
+func (w *Viewport) CaretByte() int64 {
 	if w.Caret == nil {
 		return 0
 	}
@@ -553,7 +553,7 @@ func (w *Window) CaretByte() int64 {
 // range first: garland rejects a seek to a nonexistent line (leaving the
 // caret put), so callers that compute an out-of-range target — page up/down
 // past an edge, say — rely on this clamp to land at the edge instead.
-func (w *Window) SetCursorPos(p Position) {
+func (w *Viewport) SetCursorPos(p Position) {
 	if w.Caret != nil {
 		line := w.clampLine(p.Line)
 		w.Caret.Seek(line, w.clampRune(line, p.Rune))
@@ -562,7 +562,7 @@ func (w *Window) SetCursorPos(p Position) {
 
 // SetCursorLine moves the caret to a line (clamped into range), keeping its
 // rune column (itself clamped to the target line's length).
-func (w *Window) SetCursorLine(line int) {
+func (w *Viewport) SetCursorLine(line int) {
 	if w.Caret != nil {
 		_, r := w.Caret.Position()
 		line = w.clampLine(line)
@@ -571,7 +571,7 @@ func (w *Window) SetCursorLine(line int) {
 }
 
 // clampLine clamps a line index into [0, lineCount-1].
-func (w *Window) clampLine(line int) int {
+func (w *Viewport) clampLine(line int) int {
 	if line < 0 {
 		return 0
 	}
@@ -587,7 +587,7 @@ func (w *Window) clampLine(line int) int {
 // caret must never seek past a line's end: garland's SeekLine neither clamps nor
 // rejects an out-of-range rune-within-line, which leaves the cursor's byte
 // position and its reported line/rune disagreeing about which line it is on.
-func (w *Window) clampRune(line, runePos int) int {
+func (w *Viewport) clampRune(line, runePos int) int {
 	if runePos < 0 {
 		return 0
 	}
@@ -601,7 +601,7 @@ func (w *Window) clampRune(line, runePos int) int {
 
 // SetCursorRune moves the caret to a rune column (clamped to the current line's
 // length), keeping its line.
-func (w *Window) SetCursorRune(runePos int) {
+func (w *Viewport) SetCursorRune(runePos int) {
 	if w.Caret != nil {
 		l, _ := w.Caret.Position()
 		w.Caret.Seek(l, w.clampRune(l, runePos))
@@ -613,8 +613,8 @@ func (w *Window) SetCursorRune(runePos int) {
 // point is first pushed onto the ring (so a new distinct edit site starts a new
 // history entry). The last edit point is then advanced to the caret, and the
 // caret is — by definition — back on it, so hasMoved clears and any in-progress
-// ring navigation is abandoned. A no-op on windows without a ring (no buffer).
-func (w *Window) TrackEdit() {
+// ring navigation is abandoned. A no-op on viewports without a ring (no buffer).
+func (w *Viewport) TrackEdit() {
 	if w.lastEditPoint == nil || w.Caret == nil {
 		return
 	}
@@ -637,14 +637,14 @@ func (w *Window) TrackEdit() {
 // the last edit point since it was set (see TrackEdit/TrackMove). The kill
 // ring uses this to decide whether consecutive deletes belong to the same
 // edit and should share a kill entry.
-func (w *Window) HasMovedSinceEdit() bool {
+func (w *Viewport) HasMovedSinceEdit() bool {
 	return w.hasMoved
 }
 
 // SetFindOrigin parks the search-origin cursor at the caret (where a newly
 // committed search begins) and clears the wrapped flag. The origin is a live
 // garland cursor, so it stays on its logical position across edits.
-func (w *Window) SetFindOrigin() {
+func (w *Viewport) SetFindOrigin() {
 	if w.Buffer == nil || w.Caret == nil {
 		return
 	}
@@ -656,8 +656,8 @@ func (w *Window) SetFindOrigin() {
 }
 
 // FindOriginByte returns the byte position of the search origin, if one has
-// been set on this window.
-func (w *Window) FindOriginByte() (int64, bool) {
+// been set on this viewport.
+func (w *Viewport) FindOriginByte() (int64, bool) {
 	if w.findOrigin == nil {
 		return 0, false
 	}
@@ -666,14 +666,14 @@ func (w *Window) FindOriginByte() (int64, bool) {
 
 // FindWrapped reports whether the current search has wrapped past the end of
 // the buffer since its origin was set.
-func (w *Window) FindWrapped() bool { return w.findWrapped }
+func (w *Viewport) FindWrapped() bool { return w.findWrapped }
 
 // SetFindWrapped records or clears the wrapped state.
-func (w *Window) SetFindWrapped(v bool) { w.findWrapped = v }
+func (w *Viewport) SetFindWrapped(v bool) { w.findWrapped = v }
 
 // TrackMove records a deliberate caret movement: the caret has moved unless it
 // has landed back on the last edit point. Ends any in-progress ring navigation.
-func (w *Window) TrackMove() {
+func (w *Viewport) TrackMove() {
 	if w.lastEditPoint == nil || w.Caret == nil {
 		return
 	}
@@ -684,7 +684,7 @@ func (w *Window) TrackMove() {
 // ringAnchorAt returns the i-th navigable history position, ordered oldest to
 // newest: 0..ringCount-1 index the ring entries, and ringCount is the live
 // lastEditPoint (newer than every ring entry).
-func (w *Window) ringAnchorAt(i int) *buffer.Anchor {
+func (w *Viewport) ringAnchorAt(i int) *buffer.Anchor {
 	if i >= w.ringCount {
 		return w.lastEditPoint
 	}
@@ -697,7 +697,7 @@ func (w *Window) ringAnchorAt(i int) *buffer.Anchor {
 // depends on where the caret sits: if it is already on the last edit point, the
 // prior position is the newest ring entry; otherwise the prior position is the
 // last edit point itself (returning the caret to its most recent edit).
-func (w *Window) CursorRingPrior() (int64, bool) {
+func (w *Viewport) CursorRingPrior() (int64, bool) {
 	if w.lastEditPoint == nil {
 		return 0, false
 	}
@@ -721,7 +721,7 @@ func (w *Window) CursorRingPrior() (int64, bool) {
 // CursorRingNext returns the byte position one step newer in the caret's edit
 // history, or ok=false if navigation is not in progress or already at the
 // newest (the last edit point).
-func (w *Window) CursorRingNext() (int64, bool) {
+func (w *Viewport) CursorRingNext() (int64, bool) {
 	if w.lastEditPoint == nil || w.ringNav < 0 || w.ringNav >= w.ringCount {
 		return 0, false
 	}
@@ -731,7 +731,7 @@ func (w *Window) CursorRingNext() (int64, bool) {
 
 // SeekCaretByte moves the caret to a byte offset (used by ring navigation to
 // jump to a remembered position).
-func (w *Window) SeekCaretByte(pos int64) {
+func (w *Viewport) SeekCaretByte(pos int64) {
 	if w.Caret != nil {
 		w.Caret.SeekByte(pos)
 	}
@@ -740,7 +740,7 @@ func (w *Window) SeekCaretByte(pos int64) {
 // SetViewTop sets the first visible document line, updating both the painting
 // offset and the sliding viewport anchor so the view stays pinned to that
 // logical line when the buffer is edited above it.
-func (w *Window) SetViewTop(line int) {
+func (w *Viewport) SetViewTop(line int) {
 	if line < 0 {
 		line = 0
 	}
@@ -753,17 +753,17 @@ func (w *Window) SetViewTop(line int) {
 // RefreshViewTop re-derives the painting offset from the viewport anchor,
 // absorbing any slide the anchor took from edits since the last paint. A no-op
 // when there is no anchor (the offset stays as last set).
-func (w *Window) RefreshViewTop() {
+func (w *Viewport) RefreshViewTop() {
 	if w.viewportAnchor != nil {
 		w.ViewState.ViewOffsetY = w.viewportAnchor.Line()
 	}
 }
 
-// viewBinding is the complete bundle of state tying a window to ONE buffer:
+// viewBinding is the complete bundle of state tying a viewport to ONE buffer:
 // the garland cursors that slide with edits — caret, viewport anchor, the
 // edit-trail ring, find origin, link anchor — plus the scalar state that
 // travels with them (ring indices, browse flag, view offsets). The ACTIVE
-// binding lives inlined in the Window's own fields; detachBinding /
+// binding lives inlined in the Viewport's own fields; detachBinding /
 // attachBinding move the bundle wholesale in and out of a viewBinding record.
 // A detached record keeps its cursors LIVE on the old buffer (garland keeps
 // sliding them with edits), which is what makes a buffer-swap history stack
@@ -771,7 +771,7 @@ func (w *Window) RefreshViewTop() {
 // what happened to the buffer in between. release() retires a record whose
 // history is being dropped.
 //
-// The window's find TERM (Find) deliberately stays outside the binding —
+// The viewport's find TERM (Find) deliberately stays outside the binding —
 // searching again after a swap should reuse the term; only the positional
 // find state (origin cursor, wrap flag) is buffer-tied.
 type viewBinding struct {
@@ -795,8 +795,8 @@ type viewBinding struct {
 
 // release retires a detached binding: every garland cursor is released so the
 // buffer stops adjusting them on edits. Used when a stacked binding's history
-// is dropped (window removal, stack eviction); the ACTIVE binding is released
-// through Window.releaseBinding instead.
+// is dropped (viewport removal, stack eviction); the ACTIVE binding is released
+// through Viewport.releaseBinding instead.
 func (b *viewBinding) release() {
 	if b.caret != nil {
 		b.caret.Release()
@@ -828,10 +828,10 @@ func (b *viewBinding) release() {
 
 // bindBuffer attaches w to buf and mints its cursor bundle — the caret, the
 // viewport anchor, and the edit-trail ring — so every position slides with
-// edits. One bundle per window: two windows sharing a buffer edit and scroll
-// independently. The window must be unbound (fresh, or after detachBinding /
+// edits. One bundle per viewport: two viewports sharing a buffer edit and scroll
+// independently. The viewport must be unbound (fresh, or after detachBinding /
 // releaseBinding).
-func (w *Window) bindBuffer(buf *buffer.Buffer) {
+func (w *Viewport) bindBuffer(buf *buffer.Buffer) {
 	w.Buffer = buf
 	w.ringNav = -1
 	if buf == nil {
@@ -839,7 +839,7 @@ func (w *Window) bindBuffer(buf *buffer.Buffer) {
 	}
 	w.Caret = buf.NewCaret()
 	w.viewportAnchor = buf.NewAnchor()
-	// Every window with a buffer gets its own cursor ring — a caret moves and
+	// Every viewport with a buffer gets its own cursor ring — a caret moves and
 	// edits in a prompt buffer just as in a document, so its edit history is
 	// worth tracking too.
 	w.lastEditPoint = buf.NewAnchor()
@@ -848,13 +848,13 @@ func (w *Window) bindBuffer(buf *buffer.Buffer) {
 	}
 }
 
-// detachBinding moves the window's ACTIVE binding out into a record, leaving
-// the window unbound: no buffer, no cursors, view offsets zeroed. Nothing is
+// detachBinding moves the viewport's ACTIVE binding out into a record, leaving
+// the viewport unbound: no buffer, no cursors, view offsets zeroed. Nothing is
 // released — the record's cursors stay live on the old buffer and keep
 // sliding with edits, so a later attachBinding restores the exact caret,
 // scroll, and trail. The caller owns the record: stack it for a future
 // re-attach, or release() it.
-func (w *Window) detachBinding() viewBinding {
+func (w *Viewport) detachBinding() viewBinding {
 	b := viewBinding{
 		Buffer:         w.Buffer,
 		caret:          w.Caret,
@@ -890,12 +890,12 @@ func (w *Window) detachBinding() viewBinding {
 	return b
 }
 
-// attachBinding installs a previously detached record as the window's active
-// binding — the mirror of detachBinding. The window must be unbound. The
+// attachBinding installs a previously detached record as the viewport's active
+// binding — the mirror of detachBinding. The viewport must be unbound. The
 // vertical view offset re-derives from the viewport anchor (which slid with
 // any edits made while the binding was stacked); the horizontal offset is
 // restored as saved.
-func (w *Window) attachBinding(b viewBinding) {
+func (w *Viewport) attachBinding(b viewBinding) {
 	w.Buffer = b.Buffer
 	w.Caret = b.caret
 	w.viewportAnchor = b.viewportAnchor
@@ -913,12 +913,12 @@ func (w *Window) attachBinding(b viewBinding) {
 	w.RefreshViewTop()
 }
 
-// releaseBinding releases every garland cursor of the window's ACTIVE binding
+// releaseBinding releases every garland cursor of the viewport's ACTIVE binding
 // so the buffer stops adjusting them on edits. The Buffer reference, view
 // offsets, and browse flag are kept: removal paths inspect w.Buffer after the
-// window is gone (the shared-buffer close check), and the removal event
-// carries the window as it was.
-func (w *Window) releaseBinding() {
+// viewport is gone (the shared-buffer close check), and the removal event
+// carries the viewport as it was.
+func (w *Viewport) releaseBinding() {
 	buf := w.Buffer
 	offX, offY := w.ViewState.ViewOffsetX, w.ViewState.ViewOffsetY
 	browse := w.BrowseActive
@@ -929,18 +929,18 @@ func (w *Window) releaseBinding() {
 	w.BrowseActive = browse
 }
 
-// SwapBuffer replaces the window's buffer in place: the active binding is
+// SwapBuffer replaces the viewport's buffer in place: the active binding is
 // pushed (live, unreleased) onto the back history and a fresh binding is
 // minted on buf — caret at the start, view at the top. Any forward history is
 // dropped: departing to a new destination invalidates the re-advance trail,
 // exactly as in a browser — but never unconditionally: a forward binding
 // whose buffer would lose its LAST reference is buried in the graveyard
 // instead of released (referencedOutside must report whether a buffer is
-// held anywhere beyond this window's nav structures; the window accounts for
+// held anywhere beyond this viewport's nav structures; the viewport accounts for
 // its own active buffer, back stack, and the new destination itself). The
 // caller decides WHICH buffer (reusing an open one for the same file, or
-// loading it) — the window only manages bindings.
-func (w *Window) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
+// loading it) — the viewport only manages bindings.
+func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
 	inBack := func(b *buffer.Buffer) bool {
 		for i := range w.navBack {
 			if w.navBack[i].Buffer == b {
@@ -966,7 +966,7 @@ func (w *Window) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.B
 	w.bindBuffer(buf)
 }
 
-// ReplaceBuffer swaps the window's ACTIVE buffer for buf WITHOUT touching the
+// ReplaceBuffer swaps the viewport's ACTIVE buffer for buf WITHOUT touching the
 // navigation history: the back and forward stacks are left exactly as they are
 // and only the active binding is exchanged. It exists for an EPHEMERAL "dynamic
 // page" that re-renders in place (Quick Help following the key context), so
@@ -977,7 +977,7 @@ func (w *Window) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.B
 // only leave it lingering in the graveyard to resurface (e.g. at exit) as
 // though it were unsaved work. A buffer still referenced elsewhere survives the
 // release through that other binding, exactly as before.
-func (w *Window) ReplaceBuffer(buf *buffer.Buffer) {
+func (w *Viewport) ReplaceBuffer(buf *buffer.Buffer) {
 	old := w.detachBinding()
 	old.release()
 	w.bindBuffer(buf)
@@ -986,7 +986,7 @@ func (w *Window) ReplaceBuffer(buf *buffer.Buffer) {
 // bury moves a detached binding into the graveyard, keeping at most one
 // binding per buffer (a duplicate burial releases the newcomer — the buffer
 // is already safe).
-func (w *Window) bury(b viewBinding) {
+func (w *Viewport) bury(b viewBinding) {
 	for i := range w.navGrave {
 		if w.navGrave[i].Buffer == b.Buffer {
 			b.release()
@@ -996,9 +996,9 @@ func (w *Window) bury(b viewBinding) {
 	w.navGrave = append(w.navGrave, b)
 }
 
-// GraveyardBuffers returns the distinct buffers held only by the window's
+// GraveyardBuffers returns the distinct buffers held only by the viewport's
 // graveyard — parked awaiting the "save its changes?" reckoning.
-func (w *Window) GraveyardBuffers() []*buffer.Buffer {
+func (w *Viewport) GraveyardBuffers() []*buffer.Buffer {
 	out := make([]*buffer.Buffer, 0, len(w.navGrave))
 	for i := range w.navGrave {
 		if b := w.navGrave[i].Buffer; b != nil {
@@ -1008,11 +1008,11 @@ func (w *Window) GraveyardBuffers() []*buffer.Buffer {
 	return out
 }
 
-// ResurrectLastBuried replaces the window's ACTIVE binding with the most
+// ResurrectLastBuried replaces the viewport's ACTIVE binding with the most
 // recently buried one: the active binding is released (the caller decides
 // what becomes of its buffer) and the graveyard binding surfaces with its
 // full caret/scroll/trail state. False when the graveyard is empty.
-func (w *Window) ResurrectLastBuried() bool {
+func (w *Viewport) ResurrectLastBuried() bool {
 	if len(w.navGrave) == 0 {
 		return false
 	}
@@ -1027,7 +1027,7 @@ func (w *Window) ResurrectLastBuried() bool {
 // Unbury releases any graveyard binding of buf: the buffer has become
 // actively bound somewhere, so it is no longer at risk of orphaning and the
 // graveyard has no claim to it.
-func (w *Window) Unbury(buf *buffer.Buffer) {
+func (w *Viewport) Unbury(buf *buffer.Buffer) {
 	out := w.navGrave[:0]
 	for i := range w.navGrave {
 		if w.navGrave[i].Buffer == buf {
@@ -1039,11 +1039,11 @@ func (w *Window) Unbury(buf *buffer.Buffer) {
 	w.navGrave = out
 }
 
-// NavHistoryPrior returns to the binding the window most recently swapped
+// NavHistoryPrior returns to the binding the viewport most recently swapped
 // away from, moving the active binding onto the forward stack. Reports false
 // (no state change) when there is no back history, so command chains can
 // fall through.
-func (w *Window) NavHistoryPrior() bool {
+func (w *Viewport) NavHistoryPrior() bool {
 	if len(w.navBack) == 0 {
 		return false
 	}
@@ -1057,7 +1057,7 @@ func (w *Window) NavHistoryPrior() bool {
 // NavHistoryNext re-advances along the forward stack after a NavHistoryPrior
 // — the mirror operation. Reports false when there is nothing to re-advance
 // to.
-func (w *Window) NavHistoryNext() bool {
+func (w *Viewport) NavHistoryNext() bool {
 	if len(w.navFwd) == 0 {
 		return false
 	}
@@ -1070,17 +1070,17 @@ func (w *Window) NavHistoryNext() bool {
 
 // NavHistoryDepths reports how many entries the back and forward histories
 // hold (for readouts and command gating).
-func (w *Window) NavHistoryDepths() (prior, next int) {
+func (w *Viewport) NavHistoryDepths() (prior, next int) {
 	return len(w.navBack), len(w.navFwd)
 }
 
-// StackedBuffers returns the distinct buffers referenced by the window's nav
+// StackedBuffers returns the distinct buffers referenced by the viewport's nav
 // structures — back/forward history AND the graveyard — excluding its active
 // binding. Data-safety enumerations — close checks, save-all, crash dumps,
 // open-buffer reuse — must treat all of these as open: history entries are
 // one nav_history_prior away, and graveyard entries are being held precisely
 // for their unsaved state.
-func (w *Window) StackedBuffers() []*buffer.Buffer {
+func (w *Viewport) StackedBuffers() []*buffer.Buffer {
 	seen := map[*buffer.Buffer]bool{}
 	var out []*buffer.Buffer
 	for _, s := range [][]viewBinding{w.navBack, w.navFwd, w.navGrave} {
@@ -1095,9 +1095,9 @@ func (w *Window) StackedBuffers() []*buffer.Buffer {
 }
 
 // releaseNavHistory releases every stacked binding's cursors and drops the
-// back/forward stacks and the graveyard (window removal — the close path has
+// back/forward stacks and the graveyard (viewport removal — the close path has
 // already prompted for any at-risk buffers among them).
-func (w *Window) releaseNavHistory() {
+func (w *Viewport) releaseNavHistory() {
 	for _, s := range [][]viewBinding{w.navBack, w.navFwd, w.navGrave} {
 		for i := range s {
 			s[i].release()
@@ -1106,14 +1106,14 @@ func (w *Window) releaseNavHistory() {
 	w.navBack, w.navFwd, w.navGrave = nil, nil, nil
 }
 
-// ClearNavHistory empties the window's back/forward history entirely. Each
+// ClearNavHistory empties the viewport's back/forward history entirely. Each
 // stacked binding is released — EXCEPT a binding holding the LAST reference
 // to its buffer (per referencedOutside, which must report whether the buffer
-// is held anywhere beyond this window's nav structures; the active buffer is
+// is held anywhere beyond this viewport's nav structures; the active buffer is
 // accounted here), which is buried in the graveyard so the buffer stays
 // reachable for the eventual save decision. Reports how many bindings were
 // released and how many buried.
-func (w *Window) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (dropped, buried int) {
+func (w *Viewport) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (dropped, buried int) {
 	clear := func(s []viewBinding) {
 		for i := range s {
 			b := s[i].Buffer
@@ -1138,13 +1138,13 @@ func (w *Window) ClearNavHistory(referencedOutside func(*buffer.Buffer) bool) (d
 	return dropped, buried
 }
 
-// EventType represents the type of window event.
+// EventType represents the type of viewport event.
 type EventType int
 
 const (
-	EventWindowCreated EventType = iota
-	EventWindowRemoved
-	EventWindowUpdated
+	EventViewportCreated EventType = iota
+	EventViewportRemoved
+	EventViewportUpdated
 	EventFocusChanged
 	EventCursorPositioned
 	EventGhostCursorSet
@@ -1153,60 +1153,60 @@ const (
 	EventPromptPeekChanged
 )
 
-// Event represents a window manager event.
+// Event represents a viewport manager event.
 type Event struct {
-	Type     EventType
-	WindowID string
-	OldValue interface{}
-	NewValue interface{}
+	Type       EventType
+	ViewportID string
+	OldValue   interface{}
+	NewValue   interface{}
 }
 
-// EventHandler is a callback for window events.
+// EventHandler is a callback for viewport events.
 type EventHandler func(event Event)
 
-// Manager handles window lifecycle and focus management.
+// Manager handles viewport lifecycle and focus management.
 type Manager struct {
 	mu sync.RWMutex
 
-	windows         map[string]*Window
-	focusedWindowID string
+	viewports         map[string]*Viewport
+	focusedViewportID string
 
-	// Track the last-focused main-area (focus-eligible) window for
+	// Track the last-focused main-area (focus-eligible) viewport for
 	// system-wide access.
-	lastMainWindow *Window
+	lastMainViewport *Viewport
 
-	// lastFocusedBySet remembers the last-focused window WITHIN each
-	// WindowSet, keyed by set name (updated alongside lastMainWindow). Lets a
+	// lastFocusedBySet remembers the last-focused viewport WITHIN each
+	// ViewportSet, keyed by set name (updated alongside lastMainViewport). Lets a
 	// set — e.g. the "help" system — restore focus to where it last was,
 	// independent of the document set.
-	lastFocusedBySet map[string]*Window
+	lastFocusedBySet map[string]*Viewport
 
-	// Track the last focused non-docked (main-area) window, regardless of its
-	// buffer type. Currently the only non-docked window painted is this one
+	// Track the last focused non-docked (main-area) viewport, regardless of its
+	// buffer type. Currently the only non-docked viewport painted is this one
 	// (see the main layout). TODO: support additional tiling modes (split
 	// panes, side-by-side, etc.) instead of only showing the last-focused one.
-	lastNormalWindow *Window
+	lastNormalViewport *Viewport
 
-	// Peek offsets for viewing hidden windows
-	StatPeek   int // For top-docked windows
-	PromptPeek int // For bottom-docked windows
+	// Peek offsets for viewing hidden viewports
+	StatPeek   int // For top-docked viewports
+	PromptPeek int // For bottom-docked viewports
 
-	// Window type counters for auto-naming
+	// Viewport type counters for auto-naming
 	mainBufferCount   int
 	workBufferCount   int
 	promptBufferCount int
 
-	// Monotonic creation sequence counter (see Window.Seq)
+	// Monotonic creation sequence counter (see Viewport.Seq)
 	seqCounter int64
 
 	// Event handlers
 	eventHandlers map[EventType][]EventHandler
 }
 
-// NewManager creates a new window manager.
+// NewManager creates a new viewport manager.
 func NewManager() *Manager {
 	return &Manager{
-		windows:       make(map[string]*Window),
+		viewports:     make(map[string]*Viewport),
 		eventHandlers: make(map[EventType][]EventHandler),
 	}
 }
@@ -1229,12 +1229,12 @@ func (m *Manager) emit(event Event) {
 	}
 }
 
-// WindowOptions configures a new window.
-type WindowOptions struct {
+// ViewportOptions configures a new viewport.
+type ViewportOptions struct {
 	ID              string
-	Type            WindowType
+	Type            ViewportType
 	Class           string
-	WindowSet       string
+	ViewportSet     string
 	Tag             string
 	Buffer          *buffer.Buffer
 	Dock            DockPosition
@@ -1270,8 +1270,8 @@ type WindowOptions struct {
 	RowMessages []string
 }
 
-// CreateWindow creates a new window with the given options.
-func (m *Manager) CreateWindow(opts WindowOptions) string {
+// CreateViewport creates a new viewport with the given options.
+func (m *Manager) CreateViewport(opts ViewportOptions) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1279,24 +1279,24 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 	id := opts.ID
 	if id == "" {
 		switch opts.Type {
-		case DocWindow:
+		case DocViewport:
 			m.mainBufferCount++
 			id = fmt.Sprintf("main_%d", m.mainBufferCount)
-		case ToolWindow:
+		case ToolViewport:
 			m.workBufferCount++
 			id = fmt.Sprintf("work_%d", m.workBufferCount)
-		case PromptWindow:
+		case PromptViewport:
 			m.promptBufferCount++
 			id = fmt.Sprintf("prompt_%d", m.promptBufferCount)
 		default:
-			id = fmt.Sprintf("window_%d", len(m.windows)+1)
+			id = fmt.Sprintf("viewport_%d", len(m.viewports)+1)
 		}
 	}
 
 	// Set defaults
 	visible := opts.Visible
 	if !opts.Visible && opts.ID == "" {
-		visible = true // Default to visible for new windows
+		visible = true // Default to visible for new viewports
 	}
 
 	minHeight := opts.MinHeight
@@ -1318,12 +1318,12 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 
 	m.seqCounter++
 	wisdom := unixWisdom[rand.Intn(len(unixWisdom))]
-	w := &Window{
+	w := &Viewport{
 		ID:           id,
 		Seq:          m.seqCounter,
 		Type:         opts.Type,
 		Class:        opts.Class,
-		WindowSet:    opts.WindowSet,
+		ViewportSet:  opts.ViewportSet,
 		Tag:          opts.Tag,
 		Dock:         opts.Dock,
 		Priority:     opts.Priority,
@@ -1360,8 +1360,8 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 		RowMessages:         opts.RowMessages,
 		CustomRenderer:      opts.CustomRenderer,
 	}
-	// Windows are focus-cycle stops by default; a caller lowers CanFocus later
-	// for a window that explicit focus may still reach but the switcher skips.
+	// Viewports are focus-cycle stops by default; a caller lowers CanFocus later
+	// for a viewport that explicit focus may still reach but the switcher skips.
 	w.CanFocus = true
 
 	// Calculate line number width if showing line numbers
@@ -1381,152 +1381,152 @@ func (m *Manager) CreateWindow(opts WindowOptions) string {
 
 	// Prompt buffers always edit left-to-right regardless of the editor's
 	// base direction option.
-	if opts.Type == PromptWindow {
+	if opts.Type == PromptViewport {
 		w.ViewState.Direction = "ltr"
 	}
 
 	// Track which main buffer spawned a new prompt buffer: inherit the focused
-	// window's ParentWindow when it has one (e.g. a prompt spawning another
+	// viewport's ParentViewport when it has one (e.g. a prompt spawning another
 	// prompt), otherwise the last main buffer.
-	if opts.Type == PromptWindow {
-		if focused := m.windows[m.focusedWindowID]; focused != nil && focused.ParentWindow != nil {
-			w.ParentWindow = focused.ParentWindow
-		} else if m.lastMainWindow != nil {
-			if _, exists := m.windows[m.lastMainWindow.ID]; exists {
-				w.ParentWindow = m.lastMainWindow
+	if opts.Type == PromptViewport {
+		if focused := m.viewports[m.focusedViewportID]; focused != nil && focused.ParentViewport != nil {
+			w.ParentViewport = focused.ParentViewport
+		} else if m.lastMainViewport != nil {
+			if _, exists := m.viewports[m.lastMainViewport.ID]; exists {
+				w.ParentViewport = m.lastMainViewport
 			}
 		}
 	}
 
-	// Bind the window to its buffer: mint the caret, viewport anchor, and
-	// edit-trail cursors that slide with edits (released in RemoveWindow).
+	// Bind the viewport to its buffer: mint the caret, viewport anchor, and
+	// edit-trail cursors that slide with edits (released in RemoveViewport).
 	w.bindBuffer(opts.Buffer)
 
 	// A buffer becoming actively bound is no longer at risk of orphaning:
-	// purge it from every window's graveyard.
+	// purge it from every viewport's graveyard.
 	if opts.Buffer != nil {
-		for _, other := range m.windows {
+		for _, other := range m.viewports {
 			other.Unbury(opts.Buffer)
 		}
 	}
 
-	m.windows[id] = w
+	m.viewports[id] = w
 
-	// Set focus if requested or if this is the first window
-	if opts.SetFocus || m.focusedWindowID == "" {
-		m.focusedWindowID = id
+	// Set focus if requested or if this is the first viewport
+	if opts.SetFocus || m.focusedViewportID == "" {
+		m.focusedViewportID = id
 	}
 
-	// Update main buffer tracking. Only a window that actually took focus
-	// becomes the current one — a background window (e.g. the verbose log)
+	// Update main buffer tracking. Only a viewport that actually took focus
+	// becomes the current one — a background viewport (e.g. the verbose log)
 	// must not steal the painted main area or the modebar.
-	tookFocus := m.focusedWindowID == id
+	tookFocus := m.focusedViewportID == id
 	if tookFocus && w.FocusEligible() {
 		m.noteMainFocus(w)
-	} else if tookFocus && w.Type == PromptWindow && w.ParentWindow != nil {
-		// A focused prompt keeps its spawning window as the last main-area
-		// window (and the painted one) — see SetFocus.
-		m.noteMainFocus(w.ParentWindow)
-		if w.ParentWindow.Dock == DockNone {
-			m.lastNormalWindow = w.ParentWindow
+	} else if tookFocus && w.Type == PromptViewport && w.ParentViewport != nil {
+		// A focused prompt keeps its spawning viewport as the last main-area
+		// viewport (and the painted one) — see SetFocus.
+		m.noteMainFocus(w.ParentViewport)
+		if w.ParentViewport.Dock == DockNone {
+			m.lastNormalViewport = w.ParentViewport
 		}
 	}
-	// Update non-docked (main-area) window tracking, regardless of buffer type.
+	// Update non-docked (main-area) viewport tracking, regardless of buffer type.
 	if opts.Dock == DockNone && tookFocus {
-		m.lastNormalWindow = w
+		m.lastNormalViewport = w
 	}
 
 	// Emit event (outside lock)
 	go m.emit(Event{
-		Type:     EventWindowCreated,
-		WindowID: id,
-		NewValue: w,
+		Type:       EventViewportCreated,
+		ViewportID: id,
+		NewValue:   w,
 	})
 
 	return id
 }
 
-// GetWindow returns a window by ID.
-func (m *Manager) GetWindow(id string) *Window {
+// GetViewport returns a viewport by ID.
+func (m *Manager) GetViewport(id string) *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.windows[id]
+	return m.viewports[id]
 }
 
-// GetFocusedWindow returns the currently focused window.
-func (m *Manager) GetFocusedWindow() *Window {
+// GetFocusedViewport returns the currently focused viewport.
+func (m *Manager) GetFocusedViewport() *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.focusedWindowID == "" {
+	if m.focusedViewportID == "" {
 		return nil
 	}
-	return m.windows[m.focusedWindowID]
+	return m.viewports[m.focusedViewportID]
 }
 
-// SetFocus sets focus to a window.
+// SetFocus sets focus to a viewport.
 func (m *Manager) SetFocus(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	w, exists := m.windows[id]
+	w, exists := m.viewports[id]
 	if !exists {
 		return false
 	}
 
-	// Chrome (the modebar) cannot receive focus; doc/tool/prompt windows can.
-	if isChromeSet(w.WindowSet) {
+	// Chrome (the modebar) cannot receive focus; doc/tool/prompt viewports can.
+	if isChromeSet(w.ViewportSet) {
 		return false
 	}
 
-	oldFocusID := m.focusedWindowID
-	m.focusedWindowID = id
+	oldFocusID := m.focusedViewportID
+	m.focusedViewportID = id
 
-	// Update main-area window tracking
+	// Update main-area viewport tracking
 	if w.FocusEligible() {
 		m.noteMainFocus(w)
-	} else if w.Type == PromptWindow && w.ParentWindow != nil {
-		// Focusing a prompt restores its spawning window as the last
-		// main-area window — and as the painted one — so the parent becomes
+	} else if w.Type == PromptViewport && w.ParentViewport != nil {
+		// Focusing a prompt restores its spawning viewport as the last
+		// main-area viewport — and as the painted one — so the parent becomes
 		// visible behind the prompt.
-		m.noteMainFocus(w.ParentWindow)
-		if w.ParentWindow.Dock == DockNone {
-			m.lastNormalWindow = w.ParentWindow
+		m.noteMainFocus(w.ParentViewport)
+		if w.ParentViewport.Dock == DockNone {
+			m.lastNormalViewport = w.ParentViewport
 		}
 	}
-	// Update non-docked (main-area) window tracking, regardless of buffer type.
+	// Update non-docked (main-area) viewport tracking, regardless of buffer type.
 	if w.Dock == DockNone {
-		m.lastNormalWindow = w
+		m.lastNormalViewport = w
 	}
 
 	go m.emit(Event{
-		Type:     EventFocusChanged,
-		WindowID: id,
-		OldValue: oldFocusID,
-		NewValue: id,
+		Type:       EventFocusChanged,
+		ViewportID: id,
+		OldValue:   oldFocusID,
+		NewValue:   id,
 	})
 
 	return true
 }
 
-// RemoveWindow removes a window. If the removed window was focused, the focus
+// RemoveViewport removes a viewport. If the removed viewport was focused, the focus
 // handoff is routed through SetFocus so tracking, parent-main restoration, and
 // focus events behave like any other focus change.
-func (m *Manager) RemoveWindow(id string) bool {
+func (m *Manager) RemoveViewport(id string) bool {
 	m.mu.Lock()
 
-	w, exists := m.windows[id]
+	w, exists := m.viewports[id]
 	if !exists {
 		m.mu.Unlock()
 		return false
 	}
 
 	// Clear last main buffer tracking if this was it
-	if m.lastMainWindow != nil && m.lastMainWindow.ID == id {
-		m.lastMainWindow = nil
+	if m.lastMainViewport != nil && m.lastMainViewport.ID == id {
+		m.lastMainViewport = nil
 	}
-	// Clear last non-docked window tracking if this was it
-	if m.lastNormalWindow != nil && m.lastNormalWindow.ID == id {
-		m.lastNormalWindow = nil
+	// Clear last non-docked viewport tracking if this was it
+	if m.lastNormalViewport != nil && m.lastNormalViewport.ID == id {
+		m.lastNormalViewport = nil
 	}
 	// Clear per-set last-focused tracking if this was it
 	for set, fw := range m.lastFocusedBySet {
@@ -1534,24 +1534,24 @@ func (m *Manager) RemoveWindow(id string) bool {
 			delete(m.lastFocusedBySet, set)
 		}
 	}
-	// Clear any ParentWindow references to the removed window
-	for _, other := range m.windows {
-		if other.ParentWindow == w {
-			other.ParentWindow = nil
+	// Clear any ParentViewport references to the removed viewport
+	for _, other := range m.viewports {
+		if other.ParentViewport == w {
+			other.ParentViewport = nil
 		}
 	}
 
-	// Release the window's cursors so garland stops adjusting them on edits —
+	// Release the viewport's cursors so garland stops adjusting them on edits —
 	// the active binding and every binding stacked in its nav history.
 	w.releaseBinding()
 	w.releaseNavHistory()
 
-	delete(m.windows, id)
+	delete(m.viewports, id)
 
-	wasFocused := m.focusedWindowID == id
+	wasFocused := m.focusedViewportID == id
 	nextFocus := ""
 	if wasFocused {
-		m.focusedWindowID = ""
+		m.focusedViewportID = ""
 		nextFocus = m.removalFocusTargetLocked(w)
 	}
 
@@ -1562,40 +1562,40 @@ func (m *Manager) RemoveWindow(id string) bool {
 	}
 
 	go m.emit(Event{
-		Type:     EventWindowRemoved,
-		WindowID: id,
-		OldValue: w,
-		NewValue: wasFocused,
+		Type:       EventViewportRemoved,
+		ViewportID: id,
+		OldValue:   w,
+		NewValue:   wasFocused,
 	})
 
 	return true
 }
 
-// removalFocusTargetLocked chooses the window to focus after the focused
-// window `closed` was removed (which has already happened). Must be called
+// removalFocusTargetLocked chooses the viewport to focus after the focused
+// viewport `closed` was removed (which has already happened). Must be called
 // with the lock held.
 //
-// The anchor main buffer is the tracked lastMainWindow when it still
+// The anchor main buffer is the tracked lastMainViewport when it still
 // exists — for a closed prompt that is its spawning main, since focusing a
-// prompt restores its ParentWindow there. When the closed window WAS the last
+// prompt restores its ParentViewport there. When the closed viewport WAS the last
 // main buffer (tracking already cleared), the anchor falls back to the main
 // created next after it (the lowest Seq above closed.Seq), and failing that
 // the main with the highest remaining Seq. Focus then goes to the anchor's
 // newest (highest-Seq) prompt buffer if it has one — popping the anchor back
 // to the top via SetFocus — else the anchor itself.
-func (m *Manager) removalFocusTargetLocked(closed *Window) string {
+func (m *Manager) removalFocusTargetLocked(closed *Viewport) string {
 	// Validate the tracked last main buffer.
-	var anchor *Window
-	if m.lastMainWindow != nil {
-		if _, ok := m.windows[m.lastMainWindow.ID]; ok {
-			anchor = m.lastMainWindow
+	var anchor *Viewport
+	if m.lastMainViewport != nil {
+		if _, ok := m.viewports[m.lastMainViewport.ID]; ok {
+			anchor = m.lastMainViewport
 		}
 	}
 
 	// No usable last main buffer: next main by creation order, then highest.
 	if anchor == nil {
-		var nextHigher, highest *Window
-		for _, w := range m.windows {
+		var nextHigher, highest *Viewport
+		for _, w := range m.viewports {
 			if !w.FocusEligible() || !w.Visible {
 				continue
 			}
@@ -1614,9 +1614,9 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 
 	// No main buffers remain at all: fall back to the newest focusable prompt.
 	if anchor == nil {
-		var newest *Window
-		for _, w := range m.windows {
-			if w.Type == PromptWindow && w.Visible && (newest == nil || w.Seq > newest.Seq) {
+		var newest *Viewport
+		for _, w := range m.viewports {
+			if w.Type == PromptViewport && w.Visible && (newest == nil || w.Seq > newest.Seq) {
 				newest = w
 			}
 		}
@@ -1628,8 +1628,8 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 
 	// The anchor's newest prompt takes focus in its place, if it has one.
 	target := anchor
-	for _, w := range m.windows {
-		if w.Type == PromptWindow && w.Visible && w.ParentWindow == anchor {
+	for _, w := range m.viewports {
+		if w.Type == PromptViewport && w.Visible && w.ParentViewport == anchor {
 			if target == anchor || w.Seq > target.Seq {
 				target = w
 			}
@@ -1638,12 +1638,12 @@ func (m *Manager) removalFocusTargetLocked(closed *Window) string {
 	return target.ID
 }
 
-// focusCycleTarget returns the ID of the window to focus when cycling offset
+// focusCycleTarget returns the ID of the viewport to focus when cycling offset
 // steps (with wraparound), or "" when there is nowhere to go.
 //
 // The cycle runs over visible MAIN buffers only; prompt buffers are not cycle
 // stops of their own. The current position is the focused main buffer, or the
-// focused window's ParentWindow (a prompt counts as being "on" its spawning
+// focused viewport's ParentViewport (a prompt counts as being "on" its spawning
 // main). Once the target main is chosen, focus resolves to the newest
 // (highest-Seq) visible prompt buffer spawned from it, if any — landing the
 // user on that buffer's pending interaction — else the main itself.
@@ -1651,11 +1651,11 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Collect visible focus-eligible windows in deterministic (ID) order. A
-	// window with CanFocus=false (e.g. Quick Help) is skipped as a cycle stop,
+	// Collect visible focus-eligible viewports in deterministic (ID) order. A
+	// viewport with CanFocus=false (e.g. Quick Help) is skipped as a cycle stop,
 	// though explicit focus can still reach it.
-	var mains []*Window
-	for _, w := range m.windows {
+	var mains []*Viewport
+	for _, w := range m.viewports {
 		if w.FocusEligible() && w.Visible && w.CanFocus {
 			mains = append(mains, w)
 		}
@@ -1672,12 +1672,12 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	}
 
 	// Locate the current position in the main cycle.
-	currentMain := m.lastMainWindow
-	if current := m.windows[m.focusedWindowID]; current != nil {
+	currentMain := m.lastMainViewport
+	if current := m.viewports[m.focusedViewportID]; current != nil {
 		if current.FocusEligible() {
 			currentMain = current
-		} else if current.ParentWindow != nil {
-			currentMain = current.ParentWindow
+		} else if current.ParentViewport != nil {
+			currentMain = current.ParentViewport
 		}
 	}
 	currentIndex := -1
@@ -1695,9 +1695,9 @@ func (m *Manager) focusCycleTarget(offset int) string {
 
 	// Resolve to the target main's newest prompt buffer, if it has one.
 	target := targetMain
-	var newestPrompt *Window
-	for _, w := range m.windows {
-		if w.Type == PromptWindow && w.Visible && w.ParentWindow == targetMain {
+	var newestPrompt *Viewport
+	for _, w := range m.viewports {
+		if w.Type == PromptViewport && w.Visible && w.ParentViewport == targetMain {
 			if newestPrompt == nil || w.Seq > newestPrompt.Seq {
 				newestPrompt = w
 			}
@@ -1707,16 +1707,16 @@ func (m *Manager) focusCycleTarget(offset int) string {
 		target = newestPrompt
 	}
 
-	if target.ID == m.focusedWindowID {
+	if target.ID == m.focusedViewportID {
 		return ""
 	}
 	return target.ID
 }
 
-// FocusNextWindow cycles focus to the next focusable window. The switch is
+// FocusNextViewport cycles focus to the next focusable viewport. The switch is
 // routed through SetFocus so focus tracking and events behave identically to
 // any other focus change.
-func (m *Manager) FocusNextWindow() bool {
+func (m *Manager) FocusNextViewport() bool {
 	target := m.focusCycleTarget(1)
 	if target == "" {
 		return false
@@ -1724,10 +1724,10 @@ func (m *Manager) FocusNextWindow() bool {
 	return m.SetFocus(target)
 }
 
-// FocusPrevWindow cycles focus to the previous focusable window. The switch is
+// FocusPrevViewport cycles focus to the previous focusable viewport. The switch is
 // routed through SetFocus so focus tracking and events behave identically to
 // any other focus change.
-func (m *Manager) FocusPrevWindow() bool {
+func (m *Manager) FocusPrevViewport() bool {
 	target := m.focusCycleTarget(-1)
 	if target == "" {
 		return false
@@ -1735,15 +1735,15 @@ func (m *Manager) FocusPrevWindow() bool {
 	return m.SetFocus(target)
 }
 
-// GetWindowsByDock returns all visible windows in a dock position, sorted by priority.
+// GetViewportsByDock returns all visible viewports in a dock position, sorted by priority.
 // For top dock: sorted descending (higher priority renders first, at screen top).
 // For other docks: sorted ascending (lower priority renders first).
-func (m *Manager) GetWindowsByDock(dock DockPosition) []*Window {
+func (m *Manager) GetViewportsByDock(dock DockPosition) []*Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []*Window
-	for _, w := range m.windows {
+	var result []*Viewport
+	for _, w := range m.viewports {
 		if w.Dock == dock && w.Visible {
 			result = append(result, w)
 		}
@@ -1780,20 +1780,20 @@ func (m *Manager) GetWindowsByDock(dock DockPosition) []*Window {
 	return result
 }
 
-// GetLastMainWindow returns the last focused main buffer window.
-func (m *Manager) GetLastMainWindow() *Window {
+// GetLastMainViewport returns the last focused main buffer viewport.
+func (m *Manager) GetLastMainViewport() *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.lastMainWindow != nil {
-		if _, exists := m.windows[m.lastMainWindow.ID]; exists {
-			return m.lastMainWindow
+	if m.lastMainViewport != nil {
+		if _, exists := m.viewports[m.lastMainViewport.ID]; exists {
+			return m.lastMainViewport
 		}
-		m.lastMainWindow = nil
+		m.lastMainViewport = nil
 	}
 
-	// Find any focus-eligible window
-	for _, w := range m.windows {
+	// Find any focus-eligible viewport
+	for _, w := range m.viewports {
 		if w.FocusEligible() {
 			return w
 		}
@@ -1802,21 +1802,21 @@ func (m *Manager) GetLastMainWindow() *Window {
 	return nil
 }
 
-// GetLastNormalWindow returns the last focused non-docked (main-area) window,
-// regardless of buffer type. Modeled on GetLastMainWindow.
-func (m *Manager) GetLastNormalWindow() *Window {
+// GetLastNormalViewport returns the last focused non-docked (main-area) viewport,
+// regardless of buffer type. Modeled on GetLastMainViewport.
+func (m *Manager) GetLastNormalViewport() *Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.lastNormalWindow != nil {
-		if _, exists := m.windows[m.lastNormalWindow.ID]; exists {
-			return m.lastNormalWindow
+	if m.lastNormalViewport != nil {
+		if _, exists := m.viewports[m.lastNormalViewport.ID]; exists {
+			return m.lastNormalViewport
 		}
-		m.lastNormalWindow = nil
+		m.lastNormalViewport = nil
 	}
 
-	// Find any non-docked window
-	for _, w := range m.windows {
+	// Find any non-docked viewport
+	for _, w := range m.viewports {
 		if w.Dock == DockNone {
 			return w
 		}
@@ -1825,12 +1825,12 @@ func (m *Manager) GetLastNormalWindow() *Window {
 	return nil
 }
 
-// UpdateWindow updates a window's properties.
-func (m *Manager) UpdateWindow(id string, updates func(*Window)) bool {
+// UpdateViewport updates a viewport's properties.
+func (m *Manager) UpdateViewport(id string, updates func(*Viewport)) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	w, exists := m.windows[id]
+	w, exists := m.viewports[id]
 	if !exists {
 		return false
 	}
@@ -1838,22 +1838,22 @@ func (m *Manager) UpdateWindow(id string, updates func(*Window)) bool {
 	updates(w)
 
 	go m.emit(Event{
-		Type:     EventWindowUpdated,
-		WindowID: id,
-		NewValue: w,
+		Type:       EventViewportUpdated,
+		ViewportID: id,
+		NewValue:   w,
 	})
 
 	return true
 }
 
-// CreatePromptWindow creates a prompt buffer for user input.
-func (m *Manager) CreatePromptWindow(prompt, defaultValue string, callback func(string, bool)) string {
-	// Find highest priority bottom window. A bottom-located modebar is
+// CreatePromptViewport creates a prompt buffer for user input.
+func (m *Manager) CreatePromptViewport(prompt, defaultValue string, callback func(string, bool)) string {
+	// Find highest priority bottom viewport. A bottom-located modebar is
 	// excluded: its fixed priority pins it to the last screen line, and
 	// prompts must stack above it, not outbid it.
-	bottomWindows := m.GetWindowsByDock(DockBottom)
+	bottomViewports := m.GetViewportsByDock(DockBottom)
 	highestPriority := 0
-	for _, w := range bottomWindows {
+	for _, w := range bottomViewports {
 		if w.Class == "modebar" {
 			continue
 		}
@@ -1878,8 +1878,8 @@ func (m *Manager) CreatePromptWindow(prompt, defaultValue string, callback func(
 		buf.InsertLine(0, "")
 	}
 
-	id := m.CreateWindow(WindowOptions{
-		Type:        PromptWindow,
+	id := m.CreateViewport(ViewportOptions{
+		Type:        PromptViewport,
 		Dock:        DockBottom,
 		Priority:    highestPriority + 10,
 		MinHeight:   1,
@@ -1892,7 +1892,7 @@ func (m *Manager) CreatePromptWindow(prompt, defaultValue string, callback func(
 
 	// Set callback, position cursor, and ensure proper viewport
 	m.mu.Lock()
-	if w, exists := m.windows[id]; exists {
+	if w, exists := m.viewports[id]; exists {
 		w.Callback = callback
 		// Position cursor at end of default value (on line 0 for legacy prompts)
 		w.SetCursorPos(Position{Line: 0, Rune: len([]rune(defaultValue))})
@@ -1907,13 +1907,13 @@ func (m *Manager) CreatePromptWindow(prompt, defaultValue string, callback func(
 	return id
 }
 
-// StatPeekUp increases visibility of top dock windows.
+// StatPeekUp increases visibility of top dock viewports.
 func (m *Manager) StatPeekUp() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	topWindows := m.getWindowsByDockLocked(DockTop)
-	if m.StatPeek < len(topWindows)-1 {
+	topViewports := m.getViewportsByDockLocked(DockTop)
+	if m.StatPeek < len(topViewports)-1 {
 		m.StatPeek++
 		go m.emit(Event{
 			Type:     EventStatPeekChanged,
@@ -1924,7 +1924,7 @@ func (m *Manager) StatPeekUp() bool {
 	return false
 }
 
-// StatPeekDown decreases visibility of top dock windows.
+// StatPeekDown decreases visibility of top dock viewports.
 func (m *Manager) StatPeekDown() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1940,7 +1940,7 @@ func (m *Manager) StatPeekDown() bool {
 	return false
 }
 
-// PromptPeekUp increases visibility of bottom dock windows.
+// PromptPeekUp increases visibility of bottom dock viewports.
 func (m *Manager) PromptPeekUp() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1956,13 +1956,13 @@ func (m *Manager) PromptPeekUp() bool {
 	return false
 }
 
-// PromptPeekDown decreases visibility of bottom dock windows.
+// PromptPeekDown decreases visibility of bottom dock viewports.
 func (m *Manager) PromptPeekDown() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	bottomWindows := m.getWindowsByDockLocked(DockBottom)
-	if m.PromptPeek < len(bottomWindows)-1 {
+	bottomViewports := m.getViewportsByDockLocked(DockBottom)
+	if m.PromptPeek < len(bottomViewports)-1 {
 		m.PromptPeek++
 		go m.emit(Event{
 			Type:     EventPromptPeekChanged,
@@ -1973,10 +1973,10 @@ func (m *Manager) PromptPeekDown() bool {
 	return false
 }
 
-// getWindowsByDockLocked is the internal version without locking.
-func (m *Manager) getWindowsByDockLocked(dock DockPosition) []*Window {
-	var result []*Window
-	for _, w := range m.windows {
+// getViewportsByDockLocked is the internal version without locking.
+func (m *Manager) getViewportsByDockLocked(dock DockPosition) []*Viewport {
+	var result []*Viewport
+	for _, w := range m.viewports {
 		if w.Dock == dock && w.Visible {
 			result = append(result, w)
 		}
@@ -1984,13 +1984,13 @@ func (m *Manager) getWindowsByDockLocked(dock DockPosition) []*Window {
 	return result
 }
 
-// AllWindows returns all windows in deterministic order (sorted by ID).
-func (m *Manager) AllWindows() []*Window {
+// AllViewports returns all viewports in deterministic order (sorted by ID).
+func (m *Manager) AllViewports() []*Viewport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]*Window, 0, len(m.windows))
-	for _, w := range m.windows {
+	result := make([]*Viewport, 0, len(m.viewports))
+	for _, w := range m.viewports {
 		result = append(result, w)
 	}
 

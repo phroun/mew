@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // canonicalDocURL normalizes every accepted spelling to one identity:
@@ -54,7 +54,7 @@ func TestCanonicalDocURL(t *testing.T) {
 	}
 }
 
-// findOpenBuffer matches canonical identities across every window's active
+// findOpenBuffer matches canonical identities across every viewport's active
 // binding AND its nav-history stacks: a buffer parked behind a link follow is
 // still open and must be reused, not re-loaded.
 func TestFindOpenBufferAcrossStacks(t *testing.T) {
@@ -84,13 +84,13 @@ func TestFindOpenBufferAcrossStacks(t *testing.T) {
 		t.Fatal("an unopened file must not match")
 	}
 
-	// openDocWindows spans active + stacked (seed, bufA, bufB).
-	if got := len(e.openDocWindows()); got != 3 {
-		t.Fatalf("openDocWindows = %d buffers, want 3", got)
+	// openDocViewports spans active + stacked (seed, bufA, bufB).
+	if got := len(e.openDocViewports()); got != 3 {
+		t.Fatalf("openDocViewports = %d buffers, want 3", got)
 	}
 }
 
-// The nav_history commands walk the swap history on the focused window and
+// The nav_history commands walk the swap history on the focused viewport and
 // fail cleanly (for chain fallthrough) when there is nothing to walk.
 func TestNavHistoryCommands(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, "one\ntwo\n", "[options]\n")
@@ -100,7 +100,7 @@ func TestNavHistoryCommands(t *testing.T) {
 		t.Fatal("no history yet: both directions must fail")
 	}
 
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2})
 	bufB, err := buffer.NewFromBytes([]byte("dest\n"), "/tmp/canon-nav.txt")
 	if err != nil {
 		t.Fatal(err)

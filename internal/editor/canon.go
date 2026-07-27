@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Canonical document identity.
@@ -101,7 +101,7 @@ func (e *Editor) bufferCanonicalURL(b *buffer.Buffer) string {
 }
 
 // findOpenBuffer returns an already-open buffer whose canonical identity
-// matches url, or nil. "Open" spans every window's active binding AND its nav
+// matches url, or nil. "Open" spans every viewport's active binding AND its nav
 // history: a buffer parked one nav_history_prior away is still open, and
 // following a link to it must reuse it — two independent buffers on one file
 // is exactly the consistency hole the source-safety layer closed.
@@ -109,7 +109,7 @@ func (e *Editor) findOpenBuffer(url string) *buffer.Buffer {
 	if url == "" {
 		return nil
 	}
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer != nil && e.bufferCanonicalURL(w.Buffer) == url {
 			return w.Buffer
 		}
@@ -211,11 +211,11 @@ func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 }
 
 // bufferReferencedElsewhere reports whether b is held open — actively or
-// stacked in a nav history — by any main-buffer window other than exclude.
-// The close path uses it to decide whether dropping a window's history would
+// stacked in a nav history — by any main-buffer viewport other than exclude.
+// The close path uses it to decide whether dropping a viewport's history would
 // lose a modified buffer's last reference.
-func (e *Editor) bufferReferencedElsewhere(b *buffer.Buffer, exclude *window.Window) bool {
-	for _, w := range e.contentWindows() {
+func (e *Editor) bufferReferencedElsewhere(b *buffer.Buffer, exclude *viewport.Viewport) bool {
+	for _, w := range e.contentViewports() {
 		if w == exclude {
 			continue
 		}
@@ -231,11 +231,11 @@ func (e *Editor) bufferReferencedElsewhere(b *buffer.Buffer, exclude *window.Win
 	return false
 }
 
-// openDocWindows returns every distinct buffer a main-buffer window holds
+// openDocViewports returns every distinct buffer a main-buffer viewport holds
 // open — active bindings plus nav-history stacks. Data-safety paths (close
 // liveness, save-all, DEADCAT dumps) enumerate THIS set, so work stacked in a
-// window's history is never invisible to them.
-func (e *Editor) openDocWindows() []*buffer.Buffer {
+// viewport's history is never invisible to them.
+func (e *Editor) openDocViewports() []*buffer.Buffer {
 	seen := map[*buffer.Buffer]bool{}
 	var out []*buffer.Buffer
 	add := func(b *buffer.Buffer) {
@@ -244,7 +244,7 @@ func (e *Editor) openDocWindows() []*buffer.Buffer {
 			out = append(out, b)
 		}
 	}
-	for _, w := range e.contentWindows() {
+	for _, w := range e.contentViewports() {
 		add(w.Buffer)
 		for _, b := range w.StackedBuffers() {
 			add(b)

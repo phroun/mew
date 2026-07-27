@@ -126,7 +126,7 @@ func WithStateCallback(cb func(state map[string]interface{})) Option {
 
 // WithShowDesktop / WithHideDesktop wire the show_desktop / hide_desktop
 // commands to host functions that reveal or hide the host's desktop (e.g. a
-// KittyTK window-manager host). Unset, both commands are no-ops.
+// KittyTK viewport-manager host). Unset, both commands are no-ops.
 func WithShowDesktop(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.ShowDesktop = fn }
 }
@@ -151,7 +151,7 @@ func WithClipboard(write func(text string), read func(deliver func(text string))
 }
 
 // WithContextMenu is invoked when a right-click lands within the EDITING
-// AREA of the focused window (never the modebar, gutters, column ruler, or
+// AREA of the focused viewport (never the modebar, gutters, column ruler, or
 // title/message rows), with the click's 1-based terminal cell. The host pops
 // its context menu there, typically wiring the items back through a HostPort
 // (Cut → port.Execute("os_cut"), and so on).
@@ -175,7 +175,7 @@ func WithHostPort(p *HostPort) Option {
 	return func(cfg *editor.Config) { cfg.HostPort = p }
 }
 
-// WithEditState wires the focused window's read-only state to the host: fn
+// WithEditState wires the focused viewport's read-only state to the host: fn
 // is told whenever the focused buffer's read-only state changes (and once at
 // the first render), so the host can grey out mutating affordances — its
 // Edit-menu Cut, say. Called only on transitions.
@@ -190,7 +190,7 @@ type PointerArrowSpan = editor.PointerArrowSpan
 
 // WithPointerRegion wires the mouse-pointer affordance: fn is told the
 // rectangle where a graphical host should show the text I-beam — the focused
-// window's editable content area (its cells, including the blank rows below
+// viewport's editable content area (its cells, including the blank rows below
 // the document that still follow click-to-EOF), in 1-based terminal cells
 // (col, row, width, height); a zero width/height means "nowhere". Everything
 // outside it — the gutter, the modebar and other chrome, an unfocused pane,
@@ -206,10 +206,10 @@ func WithPointerRegion(fn func(col, row, width, height int, arrows []PointerArro
 	return func(cfg *editor.Config) { cfg.PointerRegion = fn }
 }
 
-// WithHelpState wires a callback told whether mew's built-in help window (the
+// WithHelpState wires a callback told whether mew's built-in help viewport (the
 // WordStar command reference toggled by help_toggle) is open — once at the
 // first render and thereafter on transitions. A host uses it to keep a "Quick
-// Help" menu checkmark in sync with the window.
+// Help" menu checkmark in sync with the viewport.
 func WithHelpState(fn func(open bool)) Option {
 	return func(cfg *editor.Config) { cfg.HelpState = fn }
 }
@@ -335,7 +335,7 @@ func WithTerminal(t Terminal) Option {
 // KeyFeed lets the host deliver parsed key input directly, replacing the
 // byte-stream input half entirely: instead of mew running its own
 // direct-key-handler over Terminal.Input, the host — which may already run
-// direct-key-handler or an equivalent, a window manager for instance —
+// direct-key-handler or an equivalent, a viewport manager for instance —
 // forwards exactly the surfaces that pipeline normally provides, and only
 // when it wants mew to have them (say, while a mew view is focused):
 //

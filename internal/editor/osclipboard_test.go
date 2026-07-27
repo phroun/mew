@@ -3,7 +3,7 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // stubClipboard wires Config.ClipboardWrite/ClipboardRead to an in-memory
@@ -17,7 +17,7 @@ func stubClipboard(e *Editor) *string {
 	return clip
 }
 
-func markBlock(w *window.Window, sl, sr, el, er int) {
+func markBlock(w *viewport.Viewport, sl, sr, el, er int) {
 	w.Buffer.SetMark("_block_begin", sl, sr)
 	w.Buffer.SetMark("_block_end", el, er)
 }
@@ -65,7 +65,7 @@ func TestOSCutBypassesKillRing(t *testing.T) {
 
 	// Prime the kill ring with a real kill (block_delete of "AAA\n").
 	markBlock(w, 0, 0, 1, 0)
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("block_delete")
 	if len(e.killRing) != 1 {
 		t.Fatalf("precondition: one kill entry, have %d", len(e.killRing))
@@ -106,7 +106,7 @@ func TestOSCutBypassesKillRing(t *testing.T) {
 func TestOSPasteReplacesEngagedBlock(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 	markBlock(w, 1, 0, 1, 3)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 
 	e.osPasteText("XY")
 	if got := docContent(w); got != "aaa\nXY\nccc" {
@@ -129,7 +129,7 @@ func TestOSPastePreservesMouseBlockFlag(t *testing.T) {
 	// Transient (mouse-made) block: flag survives the replace.
 	markBlock(w, 1, 0, 1, 3)
 	w.Buffer.SetMouseBlock(true)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 	e.osPasteText("XY")
 	if !w.Buffer.MouseBlock() {
 		t.Fatal("paste into a mouse-made block must keep it transient")
@@ -137,7 +137,7 @@ func TestOSPastePreservesMouseBlockFlag(t *testing.T) {
 
 	// Deliberate block: stays deliberate.
 	w.Buffer.SetMouseBlock(false)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 	e.osPasteText("Z")
 	if w.Buffer.MouseBlock() {
 		t.Fatal("paste into a deliberate block must keep it deliberate")
@@ -150,7 +150,7 @@ func TestOSPasteInsertsAtCaret(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\n")
 
 	// No block at all: plain insert.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.osPasteText("X\r\nY")
 	if got := docContent(w); got != "aaa\nX\nYbbb" {
 		t.Fatalf("no-block paste: %q", got)
@@ -162,7 +162,7 @@ func TestOSPasteInsertsAtCaret(t *testing.T) {
 
 	// Block marked but caret OUTSIDE it: still a plain insert, block kept.
 	markBlock(w, 0, 0, 0, 3)
-	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 3})
 	e.osPasteText("!")
 	if got := docContent(w); got != "aaa\nbbb!" {
 		t.Fatalf("caret-outside paste: %q", got)
@@ -188,7 +188,7 @@ func TestOSPasteInvokesHostRead(t *testing.T) {
 // os_select_all marks the whole buffer as the block without moving the caret.
 func TestOSSelectAll(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbb\n")
-	w.SetCursorPos(window.Position{Line: 1, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 1})
 
 	e.executeCommand("os_select_all")
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 0 {

@@ -165,7 +165,7 @@ func TestDeadcatLaunchNotice(t *testing.T) {
 
 	e.deadcatLaunchNotice()
 	found := false
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if strings.Contains(w.MessageTopInner, "DEADCAT") {
 			found = true
 		}

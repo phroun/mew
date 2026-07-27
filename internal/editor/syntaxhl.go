@@ -11,7 +11,7 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/jsf"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // mew's own MIT-licensed grammar pack (and its help manual) ship inside the
@@ -121,7 +121,7 @@ type synCache struct {
 	markup   [][]markupSpan
 	// refs holds each line's per-rune grammar color classes. Resolution to SGR
 	// is deferred to render time (syntaxLineColors), so the same buffer painted
-	// in windows of different classes gets each window's class/type-scoped syntax
+	// in viewports of different classes gets each viewport's class/type-scoped syntax
 	// colors (e.g. [quickhelp::colors] syntaxTable).
 	refs    [][]*jsf.ColorRef
 	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
@@ -129,7 +129,7 @@ type synCache struct {
 	next    jsf.LineState
 }
 
-// synColorKey memoizes a grammar color class resolved for a specific window
+// synColorKey memoizes a grammar color class resolved for a specific viewport
 // class/type (see syntaxColorFor).
 type synColorKey struct {
 	ref   *jsf.ColorRef
@@ -223,15 +223,15 @@ func (e *Editor) loaderFor(name string, overrides map[string]bool) *jsf.Loader {
 }
 
 // bufferSyntaxOverrides returns the effective syntaxOverrides set for buffer b:
-// the per-window value from a main-buffer window showing b (already resolved
+// the per-viewport value from a main-buffer viewport showing b (already resolved
 // through the option overlay into its ViewState), else the editor default. It
 // reads the stored ViewState value directly (not through the overlay) so it can
 // be called while the overlay is being resolved without recursing.
 func (e *Editor) bufferSyntaxOverrides(b *buffer.Buffer) map[string]bool {
 	raw := e.Config.SyntaxOverrides
-	if b != nil && e.WindowManager != nil {
-		for _, w := range e.WindowManager.AllWindows() {
-			if w.Type != window.PromptWindow && w.Buffer == b {
+	if b != nil && e.ViewportManager != nil {
+		for _, w := range e.ViewportManager.AllViewports() {
+			if w.Type != viewport.PromptViewport && w.Buffer == b {
 				raw = w.ViewState.SyntaxOverrides
 				break
 			}
@@ -326,7 +326,7 @@ func (e *Editor) syntaxColorFor(ref *jsf.ColorRef, winClass, winType string) str
 }
 
 // resolveSyntaxColor maps a grammar color class to an SGR, resolving the mapped
-// mew color name through the color scheme at the PAINTING window's class/type —
+// mew color name through the color scheme at the PAINTING viewport's class/type —
 // so [<class>::colors] and [colors/<type>] overlays reach syntax highlighting,
 // just as they do link/button/text colors. Falls back to the grammar file's own
 // "=Class attrs" color when nothing maps.
@@ -518,13 +518,13 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 			return in, ld
 		}
 	}
-	// Fallback grammar. A per-window default ([options/tool] syntax=dokuwiki,
-	// [<class>.options] syntax=...) resolved onto the window's ViewState wins
-	// — that is the explicit way to give a window kind a grammar. Otherwise
+	// Fallback grammar. A per-viewport default ([options/tool] syntax=dokuwiki,
+	// [<class>.options] syntax=...) resolved onto the viewport's ViewState wins
+	// — that is the explicit way to give a viewport kind a grammar. Otherwise
 	// the GLOBAL syntax option applies, but only to DOCUMENTS: a buffer shown
-	// solely in tool-window readouts (no filename, nothing detected) stays
+	// solely in tool-viewport readouts (no filename, nothing detected) stays
 	// plain rather than inheriting the document grammar.
-	if name := e.bufferWindowSyntax(b); name != "" {
+	if name := e.bufferViewportSyntax(b); name != "" {
 		if in, ld := e.detectName(name, overrides); in != nil {
 			return in, ld
 		}
@@ -536,14 +536,14 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 	return e.syntaxGrammar, e.syntaxGrammarLoader
 }
 
-// bufferWindowSyntax returns the per-window default grammar (ViewState.Syntax)
-// of the first window showing b that has one set, or "" — the grammar-
-// agnostic overlay's contribution (see reconcileWindowSyntax).
-func (e *Editor) bufferWindowSyntax(b *buffer.Buffer) string {
-	if b == nil || e.WindowManager == nil {
+// bufferViewportSyntax returns the per-viewport default grammar (ViewState.Syntax)
+// of the first viewport showing b that has one set, or "" — the grammar-
+// agnostic overlay's contribution (see reconcileViewportSyntax).
+func (e *Editor) bufferViewportSyntax(b *buffer.Buffer) string {
+	if b == nil || e.ViewportManager == nil {
 		return ""
 	}
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer == b && w.ViewState.Syntax != "" {
 			return w.ViewState.Syntax
 		}
@@ -552,22 +552,22 @@ func (e *Editor) bufferWindowSyntax(b *buffer.Buffer) string {
 }
 
 // bufferIsDocument reports whether the global syntax fallback should apply to
-// a buffer: true when a document window shows it (or no window shows it yet —
-// the permissive default for launch and tests), false when only tool windows
+// a buffer: true when a document viewport shows it (or no viewport shows it yet —
+// the permissive default for launch and tests), false when only tool viewports
 // do (a generated readout that should stay plain text).
 func (e *Editor) bufferIsDocument(b *buffer.Buffer) bool {
-	if b == nil || e.WindowManager == nil {
+	if b == nil || e.ViewportManager == nil {
 		return true
 	}
 	shownInTool := false
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer != b {
 			continue
 		}
-		if w.Type == window.DocWindow {
+		if w.Type == viewport.DocViewport {
 			return true
 		}
-		if w.Type == window.ToolWindow {
+		if w.Type == viewport.ToolViewport {
 			shownInTool = true
 		}
 	}
@@ -636,7 +636,7 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 			lineRunes := []rune(line)
 			c.entries = append(c.entries, c.next)
 			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, lineRunes)
-			// Keep the color CLASSES; resolve to SGR per painting window at
+			// Keep the color CLASSES; resolve to SGR per painting viewport at
 			// render time (syntaxLineColors). Copy, so a loader that reuses its
 			// attrs slice can't mutate the cache.
 			c.refs = append(c.refs, append([]*jsf.ColorRef(nil), attrs...))
@@ -847,15 +847,15 @@ func parseDokuLink(text string) (target, title string) {
 // syntaxLineColors returns per-rune SGR colors for one document line of w
 // ("" entries paint in the normal text color), or nil when highlighting does
 // not apply. This is the renderer's syntax colorizer callback.
-func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
-	if w == nil || w.Buffer == nil || w.Type == window.PromptWindow {
+func (e *Editor) syntaxLineColors(w *viewport.Viewport, docLine int) []string {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
 	if c == nil {
 		return nil
 	}
-	// Resolve this line's color classes to SGR for THIS window's class/type, so
+	// Resolve this line's color classes to SGR for THIS viewport's class/type, so
 	// [<class>::colors]/[colors/<type>] overlays reach syntax highlighting.
 	colors := e.resolveLineColors(c, docLine, w.Class, w.Type.Name())
 	// Caret mode (browse off): links paint in the "link" color over their
@@ -891,7 +891,7 @@ func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
 }
 
 // resolveLineColors resolves one cached line's grammar color classes to SGR for
-// a window class/type. Returns a fresh slice (the caller may overlay link
+// a viewport class/type. Returns a fresh slice (the caller may overlay link
 // colors onto it), or nil when the line is not cached.
 func (e *Editor) resolveLineColors(c *synCache, docLine int, winClass, winType string) []string {
 	if docLine < 0 || docLine >= len(c.refs) {
@@ -927,13 +927,13 @@ func (e *Editor) syntaxContextAt(b *buffer.Buffer, docLine, runePos int) (jsf.Co
 }
 
 // pruneSyntaxCaches drops cache entries for buffers no longer shown in any
-// window, so closed buffers do not pin their highlight state.
+// viewport, so closed buffers do not pin their highlight state.
 func (e *Editor) pruneSyntaxCaches() {
 	if len(e.synCaches) < 8 {
 		return
 	}
 	live := make(map[*buffer.Buffer]bool)
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer != nil {
 			live[w.Buffer] = true
 		}

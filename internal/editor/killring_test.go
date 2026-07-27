@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Consecutive forward deletes in the same edit accumulate into one kill entry
 // (appended in order), and kill_ring_yank re-inserts the whole entry.
 func TestKillRingForwardAccumulation(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("del_char_next")
 	e.executeCommand("del_char_next")
@@ -24,7 +24,7 @@ func TestKillRingForwardAccumulation(t *testing.T) {
 	}
 
 	// Yank at end of the remaining text.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "defabc" {
 		t.Fatalf("yank should insert %q appended in kill order, got %q", "abc", got)
@@ -34,7 +34,7 @@ func TestKillRingForwardAccumulation(t *testing.T) {
 // Consecutive backspaces prepend, preserving the original text order.
 func TestKillRingBackwardPrepends(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 
 	e.executeCommand("del_char_prior") // kills "c"
 	e.executeCommand("del_char_prior") // prepends "b"
@@ -45,7 +45,7 @@ func TestKillRingBackwardPrepends(t *testing.T) {
 	if len(e.killRing) != 1 {
 		t.Fatalf("backspace run should share one entry, ring has %d", len(e.killRing))
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "abcdef" {
 		t.Fatalf("prepend accumulation should reconstruct %q, got %q", "abcdef", got)
@@ -56,7 +56,7 @@ func TestKillRingBackwardPrepends(t *testing.T) {
 // non-kill edit (typing) also breaks the accumulation.
 func TestKillRingNewEntryOnMoveOrEdit(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\nxyz\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("del_char_next") // entry: "a"
 	e.executeCommand("go_line_next")  // deliberate move
@@ -78,10 +78,10 @@ func TestKillRingNewEntryOnMoveOrEdit(t *testing.T) {
 // identity per buffer, and the newest placement wins.
 func TestKillRingMarksCollapseAndRideYank(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\nxyz\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.executeCommand("set_mark '5'") // mark "5" at (0,3)
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("del_line") // kills "abcdef\n"; remnant collapses to (0,0)
 
 	line, runePos, exists := w.Buffer.GetMark("5")
@@ -92,7 +92,7 @@ func TestKillRingMarksCollapseAndRideYank(t *testing.T) {
 
 	// Yank onto the now-first line: the remnant moves into the placement,
 	// 3 runes in — one identity, no duplicate left at the collapse point.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "abcdef\nxyz" {
 		t.Fatalf("yank should restore the line: %q", got)
@@ -104,7 +104,7 @@ func TestKillRingMarksCollapseAndRideYank(t *testing.T) {
 
 	// Yanking the same entry again further down moves the mark again: the
 	// newest placement wins within a buffer.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 3})
 	e.executeCommand("kill_ring_yank")
 	line, runePos, exists = w.Buffer.GetMark("5")
 	if !exists || line != 1 || runePos != 6 {
@@ -117,19 +117,19 @@ func TestKillRingMarksCollapseAndRideYank(t *testing.T) {
 // share mark identities, so the source buffer's mark stays put.
 func TestKillRingMarksCrossBuffer(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\nxyz\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.executeCommand("set_mark '5'")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("del_line")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank") // source buffer's mark now at (0,3)
 
-	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc2", Type: window.DocWindow, Dock: window.DockNone,
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc2", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("second\n"), SetFocus: true,
 	})
-	w2 := e.WindowManager.GetWindow(id)
-	w2.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w2 := e.ViewportManager.GetViewport(id)
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 
 	if l, r, ok := w2.Buffer.GetMark("5"); !ok || l != 0 || r != 3 {
@@ -145,14 +145,14 @@ func TestKillRingMarksCrossBuffer(t *testing.T) {
 // passed-through entry's mark returns to wherever it was before the yank.
 func TestKillRingPopNoDroppings(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\nddd\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	e.executeCommand("set_mark '3'") // inside "aaa"
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("del_line")     // entry A: "aaa\n" + mark 3; remnant at (0,0)
 	e.executeCommand("go_line_next") // move: next kill is a new entry
 	e.executeCommand("del_line")     // entry B: "ccc\n" (ring: [B, A])
 
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.executeCommand("kill_ring_yank") // places B ("ccc\n")
 	e.executeCommand("kill_ring_pop")  // undo B's placement, place A with mark
 	if got := docContent(w); got != "bbb\naaa\nddd" {
@@ -178,7 +178,7 @@ func TestKillRingPopNoDroppings(t *testing.T) {
 func TestKillRingPop(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\nddd\n")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("del_line") // entry A: "aaa\n"
 	e.executeCommand("go_line_next")
 	e.executeCommand("del_line") // entry B: "ccc\n" (ring: [B, A])
@@ -216,9 +216,9 @@ func TestKillRingPop(t *testing.T) {
 // deleting anything.
 func TestBlockCopyKill(t *testing.T) {
 	e, w := newTestEditor(t, "hello world\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("set_block_begin")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.executeCommand("set_block_end")
 
 	e.executeCommand("block_copy_kill")
@@ -230,7 +230,7 @@ func TestBlockCopyKill(t *testing.T) {
 	}
 
 	// Yank onto the trailing empty line.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "hello world\nhello" {
 		t.Fatalf("yank of copied block: %q", got)
@@ -241,7 +241,7 @@ func TestBlockCopyKill(t *testing.T) {
 // even after the caret has moved away.
 func TestKillRingAppendNext(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("del_char_next") // entry: "a" (content "bcdef")
 	e.executeCommand("go_char_next")  // move away: would normally split
@@ -250,7 +250,7 @@ func TestKillRingAppendNext(t *testing.T) {
 	if len(e.killRing) != 1 {
 		t.Fatalf("kill_ring_append should merge into one entry, ring has %d", len(e.killRing))
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "acbdef" {
 		t.Fatalf("merged entry should yank %q first: got %q", "ac", got)
@@ -260,15 +260,15 @@ func TestKillRingAppendNext(t *testing.T) {
 // The kill ring is global: text killed in one buffer yanks into another.
 func TestKillRingCrossBuffer(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("del_word_end") // kills "abcdef"
 
-	id := e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc2", Type: window.DocWindow, Dock: window.DockNone,
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc2", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString("second\n"), SetFocus: true,
 	})
-	w2 := e.WindowManager.GetWindow(id)
-	w2.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w2 := e.ViewportManager.GetViewport(id)
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w2); got != "abcdefsecond" {
 		t.Fatalf("cross-buffer yank: %q", got)
@@ -278,7 +278,7 @@ func TestKillRingCrossBuffer(t *testing.T) {
 // The ring retains killRingEntries entries, evicting the oldest past that.
 func TestKillRingCapacity(t *testing.T) {
 	e, w := newTestEditor(t, "aa\nbb\ncc\ndd\nee\n", "killRingEntries=2")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	// Three separate line kills, split by a deliberate move between each.
 	e.executeCommand("del_line")     // entry: "aa\n"
@@ -308,7 +308,7 @@ func TestBlockMoveCarriesMarks(t *testing.T) {
 	w.Buffer.SetMark("_block_end", 1, 0) // block is "AAA\n"
 	w.Buffer.SetMark("4", 0, 2)          // user mark inside the block, on the last A
 
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0}) // start of CCC
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0}) // start of CCC
 	e.executeCommand("block_move")
 
 	if got := docContent(w); got != "BBB\nAAA\nCCC" {
@@ -338,7 +338,7 @@ func TestBlockMoveLeavesBoundaryMark(t *testing.T) {
 	w.Buffer.SetMark("_block_end", 1, 0)
 	w.Buffer.SetMark("9", 1, 1) // outside the block (inside BBB)
 
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.executeCommand("block_move")
 
 	// BBB slid up to line 0; the mark rode BBB, not the moved block.
@@ -357,7 +357,7 @@ func TestBlockDeleteKills(t *testing.T) {
 	w.Buffer.SetMark("_block_end", 1, 0) // block is "AAA\n"
 	w.Buffer.SetMark("6", 0, 1)          // user mark inside the block
 
-	w.SetCursorPos(window.Position{Line: 2, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 0})
 	e.executeCommand("block_delete")
 	if got := docContent(w); got != "BBB\nCCC" {
 		t.Fatalf("after block_delete: %q", got)
@@ -371,7 +371,7 @@ func TestBlockDeleteKills(t *testing.T) {
 
 	// Yank at the end restores the text and the user mark rides along; the
 	// block markers do not reappear.
-	w.SetCursorPos(window.Position{Line: 1, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 3})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "BBB\nCCCAAA" {
 		t.Fatalf("yank of killed block: %q", got)
@@ -389,7 +389,7 @@ func TestBlockDeleteKills(t *testing.T) {
 // prepend, all in the same entry while the edit stays put.
 func TestKillRingMixedDirections(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 
 	e.executeCommand("del_char_next")  // kills "d"        entry: "d"
 	e.executeCommand("del_char_prior") // prepends "c"     entry: "cd"
@@ -400,7 +400,7 @@ func TestKillRingMixedDirections(t *testing.T) {
 	if len(e.killRing) != 1 {
 		t.Fatalf("mixed-direction run should stay one entry, ring has %d", len(e.killRing))
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	e.executeCommand("kill_ring_yank")
 	if got := docContent(w); got != "abcdef" {
 		t.Fatalf("yank should reconstruct the original: %q", got)

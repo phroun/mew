@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // A right-click asks the host to pop its context menu ONLY within the
-// editing area of the focused window: content cells pop (with the clicked
-// cell passed through), the line-number gutter and other windows (the
+// editing area of the focused viewport: content cells pop (with the clicked
+// cell passed through), the line-number gutter and other viewports (the
 // modebar) do not, and the caret never moves.
 func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "hello\nworld\n")
@@ -30,7 +30,7 @@ func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 		}
 	}
 
-	w.SetCursorPos(window.Position{Line: 1, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2})
 	caretBefore := w.CursorPos()
 
 	// In the content area: pops, with the clicked cell.
@@ -50,9 +50,9 @@ func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 		t.Fatalf("gutter right-click must not pop: %v", popped)
 	}
 
-	// On the modebar (a different window than the focused doc): no pop.
+	// On the modebar (a different viewport than the focused doc): no pop.
 	modebarRow := 0
-	for _, mw := range e.WindowManager.AllWindows() {
+	for _, mw := range e.ViewportManager.AllViewports() {
 		if mw.Class == "modebar" {
 			modebarRow = mw.ContentY + 1
 		}
@@ -65,10 +65,10 @@ func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 		t.Fatalf("modebar right-click must not pop: %v", popped)
 	}
 
-	// Below every window (past the buffer's lines): no pop.
+	// Below every viewport (past the buffer's lines): no pop.
 	rightClick(contentX, w.ContentY+w.ContentHeight+1)
 	if len(popped) != 1 {
-		t.Fatalf("out-of-window right-click must not pop: %v", popped)
+		t.Fatalf("out-of-viewport right-click must not pop: %v", popped)
 	}
 }
 

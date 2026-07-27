@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // allEscRe strips every escape sequence, leaving only painted glyphs.
@@ -35,7 +35,7 @@ func TestRenderDiffSuppressesUnchangedFrames(t *testing.T) {
 	}
 
 	// Change one line; only that line's cells should be repainted.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 11})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 11})
 	e.executeCommand("insert '!'")
 	out.Reset()
 	e.performRender()
