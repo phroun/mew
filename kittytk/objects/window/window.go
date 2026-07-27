@@ -202,8 +202,16 @@ type Window struct {
 
 	// Button press tracking
 	pressedButton TitleButton // Currently pressed titlebar button
-	buttonHovered bool        // Whether mouse is still over the pressed button
-	hoveredButton TitleButton // Titlebar button under the pointer (plain hover)
+
+	// contentMousePressed records that a mouse press was routed to the
+	// CONTENT and its release has not arrived yet: the content has captured
+	// the gesture, so moves and the release keep flowing to it even when the
+	// pointer crosses the window's own chrome (menu bar, status bar). Without
+	// this, dragging a selection down onto the status bar froze the drag —
+	// the chrome-first routing swallowed every further move.
+	contentMousePressed bool
+	buttonHovered       bool        // Whether mouse is still over the pressed button
+	hoveredButton       TitleButton // Titlebar button under the pointer (plain hover)
 
 	// Title bar keyboard focus
 	titleFocus        TitleFocus    // Which title bar element has keyboard focus
@@ -3265,6 +3273,11 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 		localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
 		localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 		if content.HandleMousePress(localEvent) {
+			// The content owns this gesture until release: moves and the
+			// release route to it even over the window's own chrome.
+			w.mu.Lock()
+			w.contentMousePressed = true
+			w.mu.Unlock()
 			return true
 		}
 	}
@@ -3277,7 +3290,28 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 	w.mu.RLock()
 	content := w.content
 	pressedButton := w.pressedButton
+	contentCaptured := w.contentMousePressed
 	w.mu.RUnlock()
+
+	// A gesture the CONTENT captured (press landed there, release pending)
+	// keeps receiving every move — even with the pointer over the window's
+	// own chrome. Without this, dragging a selection down onto the status
+	// bar froze the drag (and its edge autoscroll) at the last content row,
+	// while dragging up past the title band kept working: the chrome-first
+	// routing below only swallowed the downward path.
+	if contentCaptured && content != nil {
+		if handler, ok := content.(interface {
+			HandleMouseMove(core.MouseMoveEvent) bool
+		}); ok {
+			contentBounds := w.contentBounds()
+			outer, interior := w.denominations()
+			localEvent := event
+			localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+			localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
+			handler.HandleMouseMove(localEvent)
+		}
+		return true
+	}
 
 	// If tracking a button press, update hover state
 	if pressedButton != TitleButtonNone {
@@ -3378,7 +3412,29 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	buttonHovered := w.buttonHovered
 	minHandler := w.onMinimizeRequest
 	maxHandler := w.onMaximizeRequest
+	contentCaptured := w.contentMousePressed
 	w.mu.RUnlock()
+
+	// The release ends a content-captured gesture and belongs to the
+	// content, wherever the pointer sits — the chrome must not intercept it.
+	if contentCaptured {
+		w.mu.Lock()
+		w.contentMousePressed = false
+		w.mu.Unlock()
+		if content != nil {
+			if h, ok := content.(interface {
+				HandleMouseRelease(core.MouseReleaseEvent) bool
+			}); ok {
+				contentBounds := w.contentBounds()
+				outer, interior := w.denominations()
+				localEvent := event
+				localEvent.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
+				localEvent.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
+				h.HandleMouseRelease(localEvent)
+			}
+		}
+		return true
+	}
 
 	// If tracking a button press, handle release
 	if pressedButton != TitleButtonNone {

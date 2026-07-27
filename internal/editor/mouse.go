@@ -841,6 +841,14 @@ type dragScrollState struct {
 // the far column too (the pointer cannot leave the terminal grid sideways,
 // so parking on the last column is the far-edge gesture). The gutter side
 // never scrolls — dragSelResolve pins it to the line start instead.
+//
+// The same pointer-cannot-leave rule applies VERTICALLY when the viewport's
+// content touches a grid edge: a host may never deliver drag coordinates
+// beyond its grid (an SDL surface, a torn-off window — motion clips at the
+// window edge), so when the content's last row IS the grid's last row,
+// parking ON that row is the down-edge gesture (and row 1, when content
+// starts there, the up-edge gesture). The engagement delay still guards
+// against accidental edge grazes.
 func (e *Editor) dragScrollTrack(w *viewport.Viewport, x, y int) {
 	top := w.ContentY + 1
 	bottom := w.ContentY + w.ContentHeight
@@ -849,6 +857,10 @@ func (e *Editor) dragScrollTrack(w *viewport.Viewport, x, y int) {
 		vert = y - top
 	} else if y > bottom {
 		vert = y - bottom
+	} else if gridBottom := e.Renderer.Height; y >= gridBottom && bottom >= gridBottom {
+		vert = 1 // pinned on the grid's last row, no rows beyond to report
+	} else if y <= 1 && top <= 1 {
+		vert = -1 // pinned on the grid's first row
 	}
 
 	first := w.ContentX + 1
@@ -870,6 +882,12 @@ func (e *Editor) dragScrollTrack(w *viewport.Viewport, x, y int) {
 		ds.since = time.Now()
 	}
 	if ds.stop == nil {
+		// A NEW gesture engaging autoscroll self-heals the tick throttle: if a
+		// previous gesture's posted tick was ever lost (leaving the pending
+		// flag stuck true), autoscroll would otherwise stay dead for the whole
+		// session. Clearing here at worst lets one stale in-flight tick pair
+		// with a fresh one — a single extra scroll step, harmless.
+		e.dragScrollPending.Store(false)
 		ds.stop = make(chan struct{})
 		go e.dragScrollLoop(ds.stop)
 	}
@@ -899,34 +917,50 @@ func (e *Editor) endDragTxn() {
 	e.dragTxnBuf = nil
 }
 
-// dragScrollStop ends the autoscroll ticker (mouse release).
+// dragScrollStop ends the autoscroll ticker (mouse release). The pending-tick
+// throttle resets with the gesture: a tick still in flight runs as a no-op
+// (dragSel is already inactive), and a tick that was LOST can no longer pin
+// the flag — the next gesture starts clean either way.
 func (e *Editor) dragScrollStop() {
 	if e.dragScroll.stop != nil {
 		close(e.dragScroll.stop)
 	}
 	e.dragScroll = dragScrollState{}
+	e.dragScrollPending.Store(false)
 }
 
 // dragScrollLoop is the ticker goroutine: it posts dragScrollTick onto the
 // editor main loop at the scroll cadence, one tick in flight at a time
 // (a tick that cannot be consumed — a torn-down session — just parks).
+// A watchdog guards the one-in-flight throttle: a posted tick that somehow
+// never runs (its Do event lost between host layers) would pin the pending
+// flag and silence autoscroll; after ~half a second of consecutive skipped
+// ticks the flag is force-cleared and posting resumes. A tick genuinely still
+// in flight that late just pairs with the next one — one extra scroll step.
 func (e *Editor) dragScrollLoop(stop chan struct{}) {
 	t := time.NewTicker(dragScrollInterval)
 	defer t.Stop()
+	skipped := 0
 	for {
 		select {
 		case <-stop:
 			return
 		case <-t.C:
-			if e.dragScrollPending.CompareAndSwap(false, true) {
-				posted := e.PostAction(func() {
+			if !e.dragScrollPending.CompareAndSwap(false, true) {
+				if skipped++; skipped >= 8 {
 					e.dragScrollPending.Store(false)
-					e.dragScrollTick()
-				})
-				if !posted {
-					e.dragScrollPending.Store(false)
-					return
+					skipped = 0
 				}
+				continue
+			}
+			skipped = 0
+			posted := e.PostAction(func() {
+				e.dragScrollPending.Store(false)
+				e.dragScrollTick()
+			})
+			if !posted {
+				e.dragScrollPending.Store(false)
+				return
 			}
 		}
 	}

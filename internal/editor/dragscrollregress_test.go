@@ -72,3 +72,72 @@ func TestVertAutoscrollSurvivesHorizScroll(t *testing.T) {
 			w.ViewState.ViewOffsetY, top2, e.dragScroll, e.dragSel)
 	}
 }
+
+// A host that cannot deliver drag coordinates beyond its grid (an SDL
+// surface, a torn-off window: motion clips at the window edge) pins the
+// pointer on the LAST grid row. When the viewport's content reaches that row,
+// parking there is the down-edge gesture — autoscroll must engage, exactly as
+// parking on the far column does horizontally. (Reported on the KittyTK SDL
+// host: selection kept updating but downward autoscroll never engaged.)
+func TestDragAutoscrollEngagesOnPinnedGridEdge(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 80; i++ {
+		fmt.Fprintf(&b, "line%02d\n", i)
+	}
+	e, w, send := dragHarness(t, b.String())
+
+	gridBottom := e.Renderer.Height
+	if w.ContentY+w.ContentHeight < gridBottom {
+		// Make the scene edge-touching: the harness may reserve a bottom row.
+		// Force the geometry the SDL/torn-off report describes.
+		w.ContentHeight = gridBottom - w.ContentY
+	}
+
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	// The pointer parks ON the last grid row — the host cannot report beyond.
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, gridBottom))
+	if e.dragScroll.vert != 1 {
+		t.Fatalf("parking on the grid's last row should read as +1 down overshoot; got %d", e.dragScroll.vert)
+	}
+	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
+	topBefore := w.ViewState.ViewOffsetY
+	e.dragScrollTick()
+	if w.ViewState.ViewOffsetY != topBefore+1 {
+		t.Fatalf("the pinned-edge gesture should scroll down; top %d, want %d",
+			w.ViewState.ViewOffsetY, topBefore+1)
+	}
+	// And it keeps scrolling on subsequent ticks.
+	e.dragScrollTick()
+	if w.ViewState.ViewOffsetY != topBefore+2 {
+		t.Fatalf("autoscroll should continue; top %d", w.ViewState.ViewOffsetY)
+	}
+	send("MouseLeftRelease")
+}
+
+// The pinned-edge rule stays DORMANT when rows exist beyond the viewport (a
+// bottom-docked modebar): parking on the viewport's own last row must not
+// autoscroll — only genuinely crossing its bottom edge does.
+func TestDragAutoscrollDormantWhenRowsExistBeyond(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 80; i++ {
+		fmt.Fprintf(&b, "line%02d\n", i)
+	}
+	e, w, send := dragHarness(t, b.String())
+	if w.ContentY+w.ContentHeight >= e.Renderer.Height {
+		// The harness scene must have a row beyond (it reserves one); if not,
+		// shrink the viewport to model the modebar-at-bottom layout.
+		w.ContentHeight = e.Renderer.Height - w.ContentY - 1
+	}
+
+	x, y := screenAt(w, 0, 1)
+	send(fmt.Sprintf("Mouse@%d,%d", x, y))
+	send("MouseLeftPress")
+	// Park on the viewport's LAST CONTENT row (not beyond it).
+	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, w.ContentY+w.ContentHeight))
+	if e.dragScroll.vert != 0 {
+		t.Fatalf("parking on the last content row with rows beyond must not engage; got %d", e.dragScroll.vert)
+	}
+	send("MouseLeftRelease")
+}
