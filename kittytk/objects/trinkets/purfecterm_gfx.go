@@ -786,6 +786,19 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 
 	frgb := pcRGBA(fg)
 	switch lineAttr {
+	case purfecterm.LineAttrDoubleWidth:
+		// Double width, single height. cellTextImage takes its point size from
+		// the box HEIGHT alone, so widening the box on its own only centres an
+		// ordinary glyph in it — which is what a DECDWL heading looked like.
+		// Ask for a 2x-TALL mask instead: that doubles the point size, and
+		// since the box is already the doubled cell width the bigger glyph
+		// fills it. Then average the mask back down to one row, keeping the
+		// full horizontal detail of the 2x rasterization.
+		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
+		if mask == nil {
+			return
+		}
+		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, squashRowsRGBA(mask, contentH), frgb.R, frgb.G, frgb.B)
 	case purfecterm.LineAttrDoubleTop, purfecterm.LineAttrDoubleBottom:
 		// Rendered at 2x height; only one half shows through the clip.
 		mask := t.cellTextImage(str, family, cell.Bold, cell.Italic, boxW, contentH*2, ppu, wide, cell.Char, kashL, kashR, actx)
@@ -807,6 +820,46 @@ func (t *PurfecTerm) drawCellText(p *core.Painter, cell *purfecterm.Cell, family
 		}
 		p.DrawImageMaskTintOffset(0, 0, xPx, yPx, mask, frgb.R, frgb.G, frgb.B)
 	}
+}
+
+// squashRowsRGBA box-filters an image down to dstH rows, averaging each output
+// row over the source rows it covers. Used to bring a 2x-tall glyph mask back
+// to one row for a double-width line: nearest-neighbour would drop every other
+// scanline and alias the stroke weights, which is exactly what a doubled
+// heading must not do.
+func squashRowsRGBA(src *image.RGBA, dstH int) *image.RGBA {
+	w, srcH := src.Rect.Dx(), src.Rect.Dy()
+	if w <= 0 || srcH <= 0 || dstH <= 0 || srcH == dstH {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, dstH))
+	for y := 0; y < dstH; y++ {
+		y0 := y * srcH / dstH
+		y1 := (y + 1) * srcH / dstH
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		if y1 > srcH {
+			y1 = srcH
+		}
+		n := y1 - y0
+		for x := 0; x < w; x++ {
+			var r, g, b, a int
+			for sy := y0; sy < y1; sy++ {
+				si := src.PixOffset(src.Rect.Min.X+x, src.Rect.Min.Y+sy)
+				r += int(src.Pix[si])
+				g += int(src.Pix[si+1])
+				b += int(src.Pix[si+2])
+				a += int(src.Pix[si+3])
+			}
+			o := dst.PixOffset(x, y)
+			dst.Pix[o] = uint8(r / n)
+			dst.Pix[o+1] = uint8(g / n)
+			dst.Pix[o+2] = uint8(b / n)
+			dst.Pix[o+3] = uint8(a / n)
+		}
+	}
+	return dst
 }
 
 // scaleRGBA nearest-neighbor scales an image (glyph stretch for
