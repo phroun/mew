@@ -50,6 +50,7 @@ type dwlKey struct {
 	fg        color.RGBA
 	mode      byte
 	cellH     int
+	boxPx     int // target box width: a squeezed glyph depends on it
 	scale     int
 	fontSize  int
 }
@@ -71,14 +72,31 @@ var dwlCache = struct {
 const dwlCacheMax = 512
 
 // DrawCellDWL implements core.DWLCellDrawer: one logical cell of a DEC
-// double-width or double-height line, occupying TWO cells on screen. Returns
-// the columns consumed (always 2), matching the interface's contract.
-func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+// double-width or double-height line, occupying twice its ordinary width on
+// screen. Returns the columns consumed.
+//
+// cellWidth is purfecterm's flex-width attribute (Cell.CellWidth: 0.5, 1.0,
+// 1.5, 2.0), authoritative when present — the same precedence the GTK and Qt
+// renderers give it via cellVisualWidth. Zero falls back to the rune's own
+// East Asian width, so a caller with no flex-width model still gets a wide
+// glyph its four columns.
+func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int {
 	fg, bg := b.styleColors(s)
 	cellH := b.metrics.CellHeight
-	adv := b.metrics.CellWidth * 2
-	if isWide(ch) {
-		adv *= 2 // a wide glyph doubles again: four cells on a doubled line
+
+	visual := cellWidth
+	if visual <= 0 {
+		visual = 1
+		if isWide(ch) {
+			visual = 2
+		}
+	}
+	// The box is the cell's visual width, doubled — cellVisualWidth * charWidth
+	// * 2.0, exactly as the GTK/Qt paths compute it.
+	adv := core.Unit(float64(b.metrics.CellWidth) * visual * 2)
+	cols := int(visual*2 + 0.5)
+	if cols < 1 {
+		cols = 1
 	}
 
 	// Cell-snap the box exactly as drawRune does, so a doubled row tiles
@@ -91,7 +109,7 @@ func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style
 	}
 
 	if ch != ' ' && ch != 0 {
-		if img := b.dwlGlyph(ch, combining, fg, mode, cellH); img != nil {
+		if img := b.dwlGlyph(ch, combining, fg, mode, cellH, advPx); img != nil {
 			pad := (advPx - img.Rect.Dx()) / 2
 			if pad < 0 {
 				pad = 0
@@ -102,15 +120,15 @@ func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style
 	if s.Attrs&style.StyleUnderline != 0 {
 		b.fillPx(xPx, b.pxY(y+cellH-2), xPx+advPx, b.pxY(y+cellH-1), fg)
 	}
-	return 2
+	return cols
 }
 
 // dwlGlyph returns the scaled glyph image for one mode, rasterizing and
 // caching on first use. nil when the glyph rasterizes empty.
-func (b *Backend) dwlGlyph(ch rune, combining string, fg color.RGBA, mode byte, cellH core.Unit) *image.RGBA {
+func (b *Backend) dwlGlyph(ch rune, combining string, fg color.RGBA, mode byte, cellH core.Unit, boxPx int) *image.RGBA {
 	key := dwlKey{
 		ch: ch, combining: combining, fg: fg, mode: mode,
-		cellH: int(cellH), scale: b.scale, fontSize: b.fontSize,
+		cellH: int(cellH), boxPx: boxPx, scale: b.scale, fontSize: b.fontSize,
 	}
 
 	dwlCache.Lock()
@@ -129,7 +147,7 @@ func (b *Backend) dwlGlyph(ch rune, combining string, fg color.RGBA, mode byte, 
 		}
 	}
 	if !ok {
-		img = b.renderDWLGlyph(ch, combining, fg, mode, cellH)
+		img = b.renderDWLGlyph(ch, combining, fg, mode, cellH, boxPx)
 		if len(dwlCache.cur) >= dwlCacheMax {
 			dwlCache.prev = dwlCache.cur
 			dwlCache.cur = map[dwlKey]*image.RGBA{}
@@ -143,7 +161,7 @@ func (b *Backend) dwlGlyph(ch rune, combining string, fg color.RGBA, mode byte, 
 // samples the half the mode asks for. The 2x image is transparent (alpha
 // only): DrawCellDWL has already filled the background across both cells, so
 // compositing preserves whatever sits beneath a transparent-background cell.
-func (b *Backend) renderDWLGlyph(ch rune, combining string, fg color.RGBA, mode byte, cellH core.Unit) *image.RGBA {
+func (b *Backend) renderDWLGlyph(ch rune, combining string, fg color.RGBA, mode byte, cellH core.Unit, boxPx int) *image.RGBA {
 	f := &core.Font{Name: cellFont.Name, Size: cellFontSize(cellH) * 2}
 	ti := b.cachedTextImage(f, string(ch)+combining, fg, color.RGBA{}, false, false)
 	if ti.img == nil {
@@ -162,6 +180,7 @@ func (b *Backend) renderDWLGlyph(ch rune, combining string, fg color.RGBA, mode 
 		rowPx = 1
 	}
 
+	var out *image.RGBA
 	switch mode {
 	case dwlModeTop, dwlModeBottom:
 		// Double height: take the matching half of the 2x raster at its own
@@ -170,12 +189,21 @@ func (b *Backend) renderDWLGlyph(ch rune, combining string, fg color.RGBA, mode 
 		if mode == dwlModeBottom {
 			y0 = h / 2
 		}
-		return cropRows(src, y0, y0+rowPx)
+		out = cropRows(src, y0, y0+rowPx)
 	default:
 		// DECDWL: full width, single height — average pairs of rows so the
 		// glyph keeps its 2x horizontal detail at ordinary height.
-		return squashRows(src, rowPx)
+		out = squashRows(src, rowPx)
 	}
+
+	// A glyph wider than its box is squeezed to fit rather than allowed to
+	// spill into the neighbouring cell — the same rule the GTK and Qt
+	// renderers apply (textScaleX *= targetCellWidth / actualWidth). Narrow
+	// glyphs are left alone and centred by the caller.
+	if out != nil && boxPx > 0 && out.Rect.Dx() > boxPx {
+		out = squashCols(out, boxPx)
+	}
+	return out
 }
 
 // cropRows copies rows [y0, y1) of src into a fresh image, clamping to src and
@@ -234,6 +262,43 @@ func squashRows(src *image.RGBA, dstH int) *image.RGBA {
 				a += int(src.Pix[si+3])
 			}
 			o := di + x*4
+			dst.Pix[o] = uint8(r / n)
+			dst.Pix[o+1] = uint8(g / n)
+			dst.Pix[o+2] = uint8(bl / n)
+			dst.Pix[o+3] = uint8(a / n)
+		}
+	}
+	return dst
+}
+
+// squashCols box-filters src down to exactly dstW columns, the horizontal twin
+// of squashRows: each output column averages the source columns it covers.
+func squashCols(src *image.RGBA, dstW int) *image.RGBA {
+	srcW, h := src.Rect.Dx(), src.Rect.Dy()
+	if srcW <= 0 || h <= 0 || dstW <= 0 || srcW <= dstW {
+		return src
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, h))
+	for x := 0; x < dstW; x++ {
+		x0 := x * srcW / dstW
+		x1 := (x + 1) * srcW / dstW
+		if x1 <= x0 {
+			x1 = x0 + 1
+		}
+		if x1 > srcW {
+			x1 = srcW
+		}
+		n := x1 - x0
+		for y := 0; y < h; y++ {
+			var r, g, bl, a int
+			for sx := x0; sx < x1; sx++ {
+				si := src.PixOffset(src.Rect.Min.X+sx, src.Rect.Min.Y+y)
+				r += int(src.Pix[si])
+				g += int(src.Pix[si+1])
+				bl += int(src.Pix[si+2])
+				a += int(src.Pix[si+3])
+			}
+			o := dst.PixOffset(x, y)
 			dst.Pix[o] = uint8(r / n)
 			dst.Pix[o+1] = uint8(g / n)
 			dst.Pix[o+2] = uint8(bl / n)

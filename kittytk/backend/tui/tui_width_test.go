@@ -89,7 +89,7 @@ func TestTUIDWLUniformRowRealMode(t *testing.T) {
 
 	b.BeginFrame()
 	for i, ch := range []rune{'A', 'B', ' ', ' '} {
-		b.DrawCellDWL(b.metrics.CellToUnitsX(2*i), 0, ch, "", s, '6')
+		b.DrawCellDWL(b.metrics.CellToUnitsX(2*i), 0, ch, "", s, '6', 0)
 	}
 	b.EndFrame()
 	got := out.String()
@@ -111,7 +111,7 @@ func TestTUIDWLWideGlyphGroup(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	if consumed := b.DrawCellDWL(0, 0, '日', "", s, '6'); consumed != 4 {
+	if consumed := b.DrawCellDWL(0, 0, '日', "", s, '6', 0); consumed != 4 {
 		t.Fatalf("a wide DWL cell should consume 4 columns, got %d", consumed)
 	}
 	b.EndFrame()
@@ -131,8 +131,8 @@ func TestTUIDWLMixedRowDoubleSpaced(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	b.DrawCellDWL(b.metrics.CellToUnitsX(0), 0, 'A', "", s, '6')
-	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6')
+	b.DrawCellDWL(b.metrics.CellToUnitsX(0), 0, 'A', "", s, '6', 0)
+	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6', 0)
 	b.DrawText(b.metrics.CellToUnitsX(4), 0, "zz", s, nil)
 	b.EndFrame()
 	got := out.String()
@@ -151,8 +151,8 @@ func TestTUIDWLReversion(t *testing.T) {
 	s := style.DefaultStyle()
 
 	b.BeginFrame()
-	b.DrawCellDWL(0, 0, 'A', "", s, '6')
-	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6')
+	b.DrawCellDWL(0, 0, 'A', "", s, '6', 0)
+	b.DrawCellDWL(b.metrics.CellToUnitsX(2), 0, 'B', "", s, '6', 0)
 	b.EndFrame()
 	if !strings.Contains(out.String(), "\033#6") {
 		t.Fatalf("precondition: DWL row should engage, got %q", out.String())

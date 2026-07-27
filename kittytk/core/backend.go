@@ -674,18 +674,23 @@ func (p *Painter) DrawCell(x, y Unit, ch rune, s style.CellStyle) {
 // emit real DECDWL rows implement it (the TUI backend); mode is the DEC line
 // selector ('6' DECDWL, '3'/'4' DECDHL halves). Returns columns consumed.
 type DWLCellDrawer interface {
-	DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte) int
+	DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int
 }
 
 // DrawCellDWL draws one logical cell of a DEC double-width line through the
 // backend's DWL capability. Backends without it get a literal fallback — the
 // glyph followed by a filler space (double-spaced, no DEC modes) — so content
 // still lands in the right columns. Returns the columns consumed.
-func (p *Painter) DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+//
+// cellWidth is the cell's VISUAL width in cell units — purfecterm's flex-width
+// attribute (0.5, 1.0, 1.5, 2.0; see its Cell.FlexWidth/CellWidth), which the
+// GTK and Qt renderers fold into their cell box as cellVisualWidth. Pass 0 or
+// 1 for an ordinary cell.
+func (p *Painter) DrawCellDWL(x, y Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int {
 	sx, sy := p.toScreen(x, y)
 	p.applyClip()
 	if d, ok := p.backend.(DWLCellDrawer); ok {
-		return d.DrawCellDWL(sx, sy, ch, combining, s, mode)
+		return d.DrawCellDWL(sx, sy, ch, combining, s, mode, cellWidth)
 	}
 	p.backend.DrawCell(sx, sy, ch, s)
 	p.backend.DrawCell(sx+p.metrics.CellToUnitsX(1), sy, ' ', s)

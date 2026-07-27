@@ -731,7 +731,7 @@ func (t *TUIBackend) appendCombining(x, row int, ch rune) {
 // DECDHL halves). Returns the columns consumed. EndFrame emits a row whose
 // cells all belong to one DWL mode as a real DEC line (carriers only); a
 // mixed row renders these cells literally, i.e. double-spaced.
-func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte) int {
+func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -740,7 +740,13 @@ func (t *TUIBackend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s st
 	if ch == 0 {
 		ch = ' '
 	}
+	// A terminal grid has whole columns only, so a flex width (which may be
+	// fractional) rounds to the columns the glyph actually occupies; the rune's
+	// own East Asian width is the fallback when no flex width was given.
 	w := cellRuneWidth(ch)
+	if cellWidth > 0 {
+		w = int(cellWidth + 0.5)
+	}
 	if w < 1 {
 		w = 1
 	}

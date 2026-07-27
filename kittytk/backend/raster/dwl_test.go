@@ -54,7 +54,7 @@ func TestDrawCellDWLDoublesGlyphWidth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := wide.DrawCellDWL(0, 0, 'M', "", s, dwlModeDouble); got != 2 {
+	if got := wide.DrawCellDWL(0, 0, 'M', "", s, dwlModeDouble, 0); got != 2 {
 		t.Fatalf("DrawCellDWL consumed %d columns, want 2", got)
 	}
 	wFirst, wLast, wCount := inkColumns(wide.Image(), 0, int(wide.metrics.CellHeight))
@@ -81,7 +81,7 @@ func TestDrawCellDWLCentresInTwoCells(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.DrawCellDWL(0, 0, 'M', "", style.DefaultStyle(), dwlModeDouble)
+	b.DrawCellDWL(0, 0, 'M', "", style.DefaultStyle(), dwlModeDouble, 0)
 
 	cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
 	boxW := 2 * cellW
@@ -108,7 +108,7 @@ func TestDrawCellDHLHalvesDiffer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b.DrawCellDWL(0, 0, 'M', "", s, mode)
+		b.DrawCellDWL(0, 0, 'M', "", s, mode, 0)
 		rows[mode] = b.Image()
 		if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight)); count == 0 {
 			t.Fatalf("DECDHL mode %q drew nothing", mode)
@@ -134,10 +134,82 @@ func TestDrawCellDWLSpaceIsBlank(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := b.DrawCellDWL(0, 0, ' ', "", style.DefaultStyle(), dwlModeDouble); got != 2 {
+	if got := b.DrawCellDWL(0, 0, ' ', "", style.DefaultStyle(), dwlModeDouble, 0); got != 2 {
 		t.Fatalf("a doubled space should still consume 2 columns, got %d", got)
 	}
 	if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight)); count != 0 {
 		t.Errorf("a doubled space painted %d columns of ink", count)
+	}
+}
+
+// purfecterm's flex-width attribute (Cell.CellWidth: 0.5, 1.0, 1.5, 2.0) is
+// authoritative for the cell's box, exactly as cellVisualWidth is in the GTK
+// and Qt renderers: the doubled box is cellVisualWidth * charWidth * 2.
+func TestDrawCellDWLHonoursFlexWidth(t *testing.T) {
+	s := style.DefaultStyle()
+	for _, c := range []struct {
+		flex float64
+		want int // columns consumed
+	}{
+		{0, 2},   // unset: falls back to the rune's own width (narrow -> 2)
+		{1.0, 2}, // one cell doubled
+		{1.5, 3},
+		{2.0, 4}, // a wide cell doubled: four columns
+	} {
+		b, err := New(400, 40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := b.DrawCellDWL(0, 0, 'M', "", s, dwlModeDouble, c.flex)
+		if got != c.want {
+			t.Errorf("flex %.1f: consumed %d columns, want %d", c.flex, got, c.want)
+		}
+		// The background fill spans the whole doubled box.
+		cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
+		flex := c.flex
+		if flex <= 0 {
+			flex = 1
+		}
+		wantPx := int(float64(cellW) * flex * 2)
+		if px := filledWidth(b.Image()); px != wantPx {
+			t.Errorf("flex %.1f: box painted %d px, want %d", c.flex, px, wantPx)
+		}
+	}
+}
+
+// filledWidth reports how many leading columns of row 0 carry a painted
+// (non-zero-alpha) background.
+func filledWidth(img *image.RGBA) int {
+	n := 0
+	for x := img.Rect.Min.X; x < img.Rect.Max.X; x++ {
+		if img.Pix[img.PixOffset(x, 2)+3] == 0 {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// A glyph wider than its doubled box is squeezed to fit rather than spilling
+// into the neighbouring cell — the rule GTK and Qt apply as
+// textScaleX *= targetCellWidth / actualWidth.
+func TestDrawCellDWLSqueezesOverWideGlyph(t *testing.T) {
+	b, err := New(400, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A wide CJK glyph in a box sized for a NARROW cell: at 2x it is wider
+	// than the two columns it is given, so it must be squeezed into them.
+	b.DrawCellDWL(0, 0, '日', "", style.DefaultStyle(), dwlModeDouble, 1.0)
+
+	cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
+	boxW := 2 * cellW
+	first, last, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight))
+	if count == 0 {
+		t.Fatal("nothing drawn")
+	}
+	if first < 0 || last >= boxW {
+		t.Errorf("glyph spans %d..%d, past its %d-px box: it was not squeezed to fit",
+			first, last, boxW)
 	}
 }

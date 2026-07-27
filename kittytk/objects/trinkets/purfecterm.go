@@ -513,7 +513,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			}
 
 			if mode != 0 {
-				p.DrawCellDWL(x, y, ch, cell.Combining, cellStyle, mode)
+				p.DrawCellDWL(x, y, ch, cell.Combining, cellStyle, mode, w)
 				acc += 2 * w
 				continue
 			}
