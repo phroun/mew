@@ -203,6 +203,18 @@ type SurfaceHandler interface {
 	Resized(size core.UnitSize)
 }
 
+// PixelAnchoredOnFontZoom is an optional SurfaceHandler refinement consulted
+// by a live host font zoom. A graphical platform re-applies its font size to
+// every open window: the main window keeps its PIXEL size (the unit grid
+// re-derives, as in a resize) while secondary windows normally keep their
+// UNIT size and re-size in pixels. A handler reporting true opts its surface
+// into the pixel-anchored treatment — a maximized torn-off window fills its
+// display's work area, and re-sizing it to preserve units would pull it away
+// from the edges it is snapped to.
+type PixelAnchoredOnFontZoom interface {
+	KeepPixelSizeOnFontZoom() bool
+}
+
 // --- Polling platform: any core.RenderBackend as a one-surface
 // Platform. This is the TUI reimplemented under the inverted loop
 // (G3); it is also the parity bridge - the backend keeps doing what

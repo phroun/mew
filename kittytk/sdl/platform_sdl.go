@@ -42,6 +42,13 @@ type Platform struct {
 
 	backend *raster.Backend // main window's framebuffer
 
+	// seed is the backend EnsureBackend created before Run. Embedders hold
+	// it beyond Run (Desktop.SetBackend reads its metrics and PxPerUnit for
+	// torn-surface geometry) while resizes replace the window backends, so
+	// a live font zoom must keep ITS font size current too or every
+	// unit<->pixel conversion made through it goes stale.
+	seed *raster.Backend
+
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
@@ -185,6 +192,7 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 		}
 		p.applyMetrics(b)
 		p.backend = b
+		p.seed = b
 	}
 	return p.backend, nil
 }
@@ -562,11 +570,14 @@ func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
 
 // applyFontSize changes the live font_size on every open window at once. The
 // MAIN window keeps its pixel size and its unit grid re-derives, exactly as
-// in a window resize. Secondary windows (torn-offs, native-mode windows)
-// instead keep their UNIT size and re-size in pixels — a torn-off dialog is a
-// fixed-unit scene with no resize border, so shrinking its grid would clip
-// its content with no way back. Backends created later (new windows, resize
-// framebuffers) pick the size up from p.fontSize via applyMetrics.
+// in a window resize; a handler opting in via PixelAnchoredOnFontZoom (a
+// maximized torn-off filling its display) is treated the same way. Other
+// secondary windows (torn-offs, native-mode windows) instead keep their UNIT
+// size and re-size in pixels — a torn-off dialog is a fixed-unit scene with
+// no resize border, so shrinking its grid would clip its content with no way
+// back. Backends created later (new windows, resize framebuffers) pick the
+// size up from p.fontSize via applyMetrics, and the pre-Run seed backend
+// (held by embedders for their unit<->pixel geometry) is kept current too.
 func (p *Platform) applyFontSize(size int) {
 	cur := p.fontSize
 	if cur < 1 {
@@ -576,11 +587,20 @@ func (p *Platform) applyFontSize(size int) {
 		return
 	}
 	p.fontSize = size
+	if p.seed != nil {
+		p.seed.SetFontSize(size)
+	}
 	for _, w := range p.wins {
 		if w.backend == nil {
 			continue
 		}
-		if w == p.main {
+		keepPx := w == p.main
+		if s := w.surface; !keepPx && s != nil && s.handler != nil {
+			if a, ok := s.handler.(platform.PixelAnchoredOnFontZoom); ok {
+				keepPx = a.KeepPixelSizeOnFontZoom()
+			}
+		}
+		if keepPx {
 			w.backend.SetFontSize(size)
 			if s := w.surface; s != nil && s.handler != nil {
 				s.handler.Resized(w.backend.Size())

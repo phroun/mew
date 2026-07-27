@@ -1179,7 +1179,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	// Host it on the primary surface. No redock: there is no desktop to
 	// dock back to.
 	var host *window.TearOffHost
-	host = window.NewTearOffHost(win, surf, d.pxPerUnit(), gp.GlobalPointerPx,
+	host = window.NewTearOffHost(win, surf, d.pxPerUnit, gp.GlobalPointerPx,
 		func(int, int, core.Unit, core.Unit) bool { return false })
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)

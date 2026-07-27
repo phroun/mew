@@ -205,7 +205,7 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// A detached window re-docks by dragging its '#' handle back over
 	// the desktop, or by clicking it. The host only calls this during
 	// a HANDLE drag - a plain title drag just moves the OS window.
-	host = window.NewTearOffHost(win, newSurf, d.pxPerUnit(), gp.GlobalPointerPx,
+	host = window.NewTearOffHost(win, newSurf, d.pxPerUnit, gp.GlobalPointerPx,
 		func(gx, gy int, grabX, grabY core.Unit) bool {
 			return d.redockAt(host, gx, gy, grabX, grabY)
 		})

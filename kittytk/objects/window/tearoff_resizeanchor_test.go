@@ -22,7 +22,7 @@ func TestTearOffResizeAnchorsToPixelSize(t *testing.T) {
 	}
 	gx, gy := 700, 380
 	win := NewWindow("torn")
-	h := NewTearOffHost(win, surf, 2, func() (int, int) { return gx, gy }, nil)
+	h := NewTearOffHost(win, surf, ppu2, func() (int, int) { return gx, gy }, nil)
 
 	// Press within the right-edge grip, then a zero-delta move (pointer
 	// unmoved). The window must not change size.
