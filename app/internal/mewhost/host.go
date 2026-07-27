@@ -463,22 +463,37 @@ func syncQuickHelpCheckmark(menus []*trinkets.Menu, application *app.Application
 		if m.WellKnownID() != "help" {
 			continue
 		}
-		var quickHelp *trinkets.MenuItem
+		var quickHelp, usingMew *trinkets.MenuItem
 		for _, it := range m.Items() {
-			if it.ID() == "mew.help.quickhelp" {
+			switch it.ID() {
+			case "mew.help.quickhelp":
 				quickHelp = it
-				break
+			case "mew.help.usingmew":
+				usingMew = it
 			}
 		}
 		if quickHelp == nil {
 			return
 		}
 		m.SetOnAboutToShow(func() {
-			open := false
-			if ed, ok := rootMewEditor(application); ok {
-				open = ed.QuickHelpOpen()
+			ed, ok := rootMewEditor(application)
+			if ok {
+				quickHelp.SetChecked(ed.QuickHelpOpen())
+			} else {
+				quickHelp.SetChecked(false)
 			}
-			quickHelp.SetChecked(open)
+			// These two keys are mew's, not the toolkit's: mew handles them
+			// itself, so KittyTK has no Shortcut to show. Advertise them as
+			// literal shortcut text instead, resolved against the LIVE keymap
+			// exactly as mew's own %keys#…% codes would — so a rebound key
+			// shows through here too. Refreshed on every menu open, which also
+			// covers the menu being built before the session binds its port.
+			if ok {
+				quickHelp.SetShortcutText(ed.KeyBinding("help_toggle", "^Q H"))
+				if usingMew != nil {
+					usingMew.SetShortcutText(ed.KeyBinding(`help_toggle "help:/"`, "^B H"))
+				}
+			}
 		})
 		return
 	}

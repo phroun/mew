@@ -192,8 +192,9 @@ func (e *Editor) SetHideDesktop(func()) {}
 // (-tags mew) for hosts that drive the editor from their own affordances. The
 // placeholder runs no mew session: Execute is accepted and ignored, and there
 // is no built-in help window, so QuickHelpOpen is always false.
-func (e *Editor) Execute(string)      {}
-func (e *Editor) QuickHelpOpen() bool { return false }
+func (e *Editor) Execute(string)                        {}
+func (e *Editor) KeyBinding(_, preferred string) string { return preferred }
+func (e *Editor) QuickHelpOpen() bool                   { return false }
 
 // --- Event-hook setters (bind) ---
 

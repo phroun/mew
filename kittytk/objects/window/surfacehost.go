@@ -51,22 +51,7 @@ func (h *SurfaceHost) Invalidate() {
 func (h *SurfaceHost) Frame(p *core.Painter) {
 	p.ResetTextCaretRequest()
 	h.win.Paint(p)
-	applyTextCaret(h.surface, p.TextCaretRequest())
-}
-
-// applyTextCaret pushes a frame's caret request to the surface. The shape goes
-// first so a caret about to be shown appears already wearing it.
-func applyTextCaret(surface platform.Surface, caret core.TextCaret) {
-	if surface == nil {
-		return
-	}
-	if !caret.Visible {
-		surface.SetCursorVisible(false)
-		return
-	}
-	surface.SetCursorStyle(caret.Style)
-	surface.SetCursorPosition(caret.X, caret.Y)
-	surface.SetCursorVisible(true)
+	platform.ApplyTextCaret(h.surface, p.TextCaretRequest())
 }
 
 // Event implements platform.SurfaceHandler: surface coordinates ARE

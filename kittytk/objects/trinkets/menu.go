@@ -52,11 +52,18 @@ type MenuItem struct {
 	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
 	acceleratorPos  int    // Position in display text where accelerator appears, -1 if none
 	Shortcut        core.Shortcut
-	Icon            *style.TextIcon
-	Enabled         bool
-	Checkable       bool
-	Checked         bool
-	Separator       bool // If true, this is a separator line
+	// ShortcutText is literal text for the item's shortcut column, printed
+	// exactly where a bound Shortcut would print. It exists for keys the
+	// TOOLKIT does not handle — a hosted application's own bindings, say —
+	// which still deserve to be advertised in the menu. With both set the
+	// column shows the bound shortcut, a space, then this text, so a command
+	// reachable either way advertises both. See MenuItem.ShortcutDisplay.
+	ShortcutText string
+	Icon         *style.TextIcon
+	Enabled      bool
+	Checkable    bool
+	Checked      bool
+	Separator    bool // If true, this is a separator line
 	// InPlace: activating this item performs its action but KEEPS the
 	// menu open, re-rendering the updated content in place (checkable
 	// toggles that users flip several times in a row - column choosers,
@@ -133,6 +140,35 @@ func (m *MenuItem) SetID(id string) *MenuItem {
 	if id != "" {
 		m.id = id
 	}
+	return m
+}
+
+// ShortcutDisplay is what prints in the item's shortcut column: the bound
+// shortcut, the literal ShortcutText, or — when both are set — the shortcut
+// followed by a space and the text. Empty when the item advertises neither.
+//
+// Every consumer goes through this (width measurement, painting, the
+// accessibility announcement), so the column can never render something the
+// menu did not make room for.
+func (m *MenuItem) ShortcutDisplay() string {
+	bound := ""
+	if m.Shortcut != "" {
+		bound = m.Shortcut.DisplayString()
+	}
+	switch {
+	case bound != "" && m.ShortcutText != "":
+		return bound + " " + m.ShortcutText
+	case bound != "":
+		return bound
+	default:
+		return m.ShortcutText
+	}
+}
+
+// SetShortcutText sets literal text for the item's shortcut column (see
+// ShortcutText).
+func (m *MenuItem) SetShortcutText(text string) *MenuItem {
+	m.ShortcutText = text
 	return m
 }
 
@@ -773,6 +809,9 @@ func (m *Menu) announceCurrentItem() {
 	if item.Shortcut != "" {
 		extras = append(extras, item.Shortcut.AccessibilityString())
 	}
+	if item.ShortcutText != "" {
+		extras = append(extras, item.ShortcutText)
+	}
 	if !item.Enabled {
 		extras = append(extras, "disabled")
 	}
@@ -799,9 +838,9 @@ func (m *Menu) calculateSize() core.UnitSize {
 		// Shortcut: spacing (3 cells) + shortcut text (font-based). Measure
 		// with the same font used to draw it (native mode swaps in Apple's
 		// face) so width and render never disagree.
-		if item.Shortcut != "" {
+		if sc := item.ShortcutDisplay(); sc != "" {
 			itemWidth += metrics.CellWidth * 3 // spacing before shortcut
-			itemWidth += shortcutFont(font).MeasureText(item.Shortcut.DisplayString())
+			itemWidth += shortcutFont(font).MeasureText(sc)
 		}
 
 		// Submenu arrow (3 cells) - decorative
@@ -1297,8 +1336,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		if item.SubMenu != nil {
 			arrowX := m.popupX + size.Width - metrics.CellWidth*2
 			p.DrawCell(arrowX, itemY, '▸', contentStyle)
-		} else if item.Shortcut != "" {
-			shortcutStr := item.Shortcut.DisplayString()
+		} else if shortcutStr := item.ShortcutDisplay(); shortcutStr != "" {
 			rightPad := metrics.CellWidth * 2
 			if p.Graphical() {
 				rightPad = graphicalMenuTrailingUnits(metrics)

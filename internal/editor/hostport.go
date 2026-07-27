@@ -16,14 +16,36 @@ type HostPort struct {
 	mu   sync.Mutex
 	post func(fn func()) bool
 	exec func(cmd string)
+	keys func(action, preferred string) string
 }
 
 // bind attaches the port to a session. Called once at editor construction;
 // Execute before bind (or when the input source cannot post) reports false.
-func (p *HostPort) bind(post func(fn func()) bool, exec func(cmd string)) {
+func (p *HostPort) bind(post func(fn func()) bool, exec func(cmd string), keys func(action, preferred string) string) {
 	p.mu.Lock()
-	p.post, p.exec = post, exec
+	p.post, p.exec, p.keys = post, exec, keys
 	p.mu.Unlock()
+}
+
+// KeyBinding resolves the key a mew command is bound to, for a host that wants
+// to ADVERTISE a mew binding in its own UI — a menu item's shortcut column,
+// say, for a key mew handles and the toolkit never sees. It answers exactly
+// what the %keys#action|preferred% modebar code would: the live keymap's best
+// match for action, choosing among several bindings by how closely each
+// resembles preferred, and falling back to preferred itself when nothing is
+// bound.
+//
+// Unlike Execute this is a synchronous READ, safe from any goroutine: it takes
+// the same lock the editor holds while rewriting the keymap. Empty before the
+// port is bound to a session.
+func (p *HostPort) KeyBinding(action, preferred string) string {
+	p.mu.Lock()
+	keys := p.keys
+	p.mu.Unlock()
+	if keys == nil {
+		return ""
+	}
+	return keys(action, preferred)
 }
 
 // Execute queues a mew command (e.g. "os_copy") to run on the editor's main

@@ -168,6 +168,27 @@ type Surface interface {
 	SetCursorStyle(style int)
 }
 
+// ApplyTextCaret pushes a frame's platform text-caret request to a surface
+// (see core.TextCaret). The shape goes first, so a caret about to be shown
+// appears already wearing it; no request hides the caret, which is what leaves
+// an unfocused terminal free to paint its own.
+//
+// Every surface handler that finishes a frame calls this — the native
+// one-window-per-surface host and the desktop compositing many windows into one
+// surface alike — so the caret behaves the same in both modes.
+func ApplyTextCaret(s Surface, caret core.TextCaret) {
+	if s == nil {
+		return
+	}
+	if !caret.Visible {
+		s.SetCursorVisible(false)
+		return
+	}
+	s.SetCursorStyle(caret.Style)
+	s.SetCursorPosition(caret.X, caret.Y)
+	s.SetCursorVisible(true)
+}
+
 // SurfaceHandler receives a surface's callbacks, always on the
 // platform thread.
 type SurfaceHandler interface {

@@ -23,6 +23,12 @@ type msSurface struct {
 	primary     bool // the loop-owning surface; like SDL, refuses Close
 	bordered    bool // OS title bar present (solo strips it, ExitSolo restores)
 	opts        platform.SurfaceOptions
+
+	// Platform text caret, as the desktop's frame last set it.
+	caretVisible bool
+	caretX       core.Unit
+	caretY       core.Unit
+	caretStyle   int
 }
 
 // SetBordered implements platform.BorderToggler.
@@ -32,9 +38,9 @@ func (s *msSurface) Size() core.UnitSize                  { return s.size }
 func (s *msSurface) Metrics() core.CellMetrics            { return core.DefaultCellMetrics() }
 func (s *msSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 func (s *msSurface) Invalidate(core.UnitRect)             { s.invalidated = true }
-func (s *msSurface) SetCursorVisible(bool)                {}
-func (s *msSurface) SetCursorPosition(x, y core.Unit)     {}
-func (s *msSurface) SetCursorStyle(int)                   {}
+func (s *msSurface) SetCursorVisible(v bool)              { s.caretVisible = v }
+func (s *msSurface) SetCursorPosition(x, y core.Unit)     { s.caretX, s.caretY = x, y }
+func (s *msSurface) SetCursorStyle(st int)                { s.caretStyle = st }
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }
 func (s *msSurface) SetScreenPositionPx(x, y int)         { s.x, s.y = x, y }
 func (s *msSurface) ScreenSizePx() (int, int)             { return int(s.size.Width), int(s.size.Height) }

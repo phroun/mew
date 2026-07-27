@@ -1037,7 +1037,14 @@ func New(cfg Config) (*Editor, error) {
 	// input source exists: Execute marshals through PostAction onto the main
 	// loop, so a host menu item runs its command with keystroke safety.
 	if cfg.HostPort != nil {
-		cfg.HostPort.bind(e.PostAction, e.executeCommand)
+		cfg.HostPort.bind(e.PostAction, e.executeCommand, func(action, preferred string) string {
+			// A synchronous read of the live keymap from a host thread: take
+			// renderMu, which is what guards the keymap rewrites
+			// (applyFocusedMappings) this would otherwise race.
+			e.renderMu.Lock()
+			defer e.renderMu.Unlock()
+			return e.keyBindingDisplay(action, preferred)
+		})
 	}
 
 	// Set up key mappings from config

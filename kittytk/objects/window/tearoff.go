@@ -529,7 +529,7 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 		return
 	}
 	p.ResetTextCaretRequest()
-	defer func() { applyTextCaret(h.Surface(), p.TextCaretRequest()) }()
+	defer func() { platform.ApplyTextCaret(h.Surface(), p.TextCaretRequest()) }()
 	h.win.Paint(p)
 	// A modally-blocked torn window is darkened, mirroring an in-surface
 	// window suppressed by a modal.

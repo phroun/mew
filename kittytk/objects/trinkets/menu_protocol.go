@@ -14,6 +14,7 @@ import (
 //	bar=new menubar children={
 //	    new menu caption="&File" children={
 //	        new menuitem caption="&Open..." action=file.open shortcut="^O"
+//	        new menuitem caption="&Help" action=help shortcuttext="^B H"
 //	        new menuitem separator
 //	        new menuitem caption="&Recent" children={
 //	            new menuitem caption="a.txt" action=file.recent.0
@@ -128,6 +129,14 @@ func init() {
 				m.SetShortcut(core.NewShortcut(s))
 				return nil
 			})).Tip("Keyboard shortcut (e.g. \"^N\")"),
+			"shortcuttext": protocol.NewProperty("string", wprop("shortcuttext", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("shortcuttext", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetShortcutText(s)
+				return nil
+			})).Tip("Literal text for the shortcut column, for keys the host handles itself (appended after any shortcut)"),
 			"checkable": protocol.NewProperty("flag", wprop("checkable", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
 				b, err := protocol.AsBool("checkable", v, f)
 				if err != nil {

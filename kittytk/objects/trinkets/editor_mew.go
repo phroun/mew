@@ -510,6 +510,18 @@ func (e *Editor) execMew(cmd string) {
 	}
 }
 
+// KeyBinding resolves the key a mew command is bound to, for advertising a mew
+// binding in host UI — a menu item's shortcut column, for a key mew handles and
+// the toolkit never sees. It answers what mew's own %keys#action|preferred%
+// code would; preferred picks among several bindings and is the fallback when
+// none is bound. Empty before the session starts.
+func (e *Editor) KeyBinding(action, preferred string) string {
+	if e.port == nil {
+		return ""
+	}
+	return e.port.KeyBinding(action, preferred)
+}
+
 // Execute injects a mew command from a UI thread — the generic seam a host
 // uses to drive this editor from its own affordances (a menu item running
 // buffer_open_file or help_toggle, say). Marshaled onto mew's main loop with
