@@ -313,6 +313,14 @@ func (e *Editor) run() {
 		// alias in the shared text engine — loading the font on demand — and
 		// repaint. The engine's epoch bump flushes the terminal's glyph caches
 		// on the next paint. No-op in the pure-TUI path (no shared engine).
+		// Per-face metric corrections ([fonts] "Noto Kufi Arabic = (baseline:
+		// -6)"): recorded on the shared engine, which bumps its epoch so any
+		// mask rasterized at the old placement is flushed.
+		mew.WithFontAdjust(func(family string, baselineUnits int) {
+			if eng := text.Shared(); eng != nil {
+				eng.SetBaselineAdjust(family, baselineUnits)
+			}
+		}),
 		mew.WithFontSink(func(alias string, names []string) bool {
 			eng := text.Shared()
 			if eng == nil {

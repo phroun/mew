@@ -797,6 +797,13 @@ func (t *PurfecTerm) baselineShiftPx(family string, pt int, fs core.FontStyle, s
 		return 0
 	}
 	shift := int(math.Round(float64(refSP.Lines[0].Baseline-sp.Lines[0].Baseline) * ppu))
+	// A configured per-face correction rides on top, for a face whose own
+	// metrics misplace it however faithfully they are followed. Cell units
+	// (1/16 of a row), positive down — so it survives the live font zoom,
+	// which the device-pixel conversion here applies.
+	if adj := eng.BaselineAdjust(family); adj != 0 {
+		shift += int(math.Round(float64(adj) * ppu))
+	}
 	// A correction larger than the cell is not an alignment, it is a bad
 	// metric; leave such a face where it is rather than launching it out of
 	// the row.

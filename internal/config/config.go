@@ -103,6 +103,15 @@ type Config struct {
 	// meaningful on a graphical host; a plain terminal owns its own fonts.
 	Fonts map[string]string
 
+	// FontAdjust holds per-FACE metric corrections from the [fonts] section:
+	// a value may carry a PSL group after (or instead of) its path, keyed by
+	// the family on the left of the equals sign — "Noto Kufi Arabic =
+	// fonts/kufi.ttf (baseline: -6)", or "(baseline: +1)" alone for a face
+	// that needs no path (the embedded ones). Keyed by CANONICAL family name,
+	// so a correction applies however the face is reached: through any alias
+	// in the ui tree, through per-glyph script fallback, or named directly.
+	FontAdjust map[string]FaceAdjust
+
 	// Window holds the [window] section: window-scoped display settings (the
 	// font search path and the ui-term font alias).
 	Window WindowConfig
@@ -550,6 +559,22 @@ type StorageConfig struct {
 	// a mac .app bundle's Contents/Resources). Below it, mew's embedded
 	// built-in tree is always the last resort.
 	Resources string
+}
+
+// FaceAdjust is a per-face metric correction. Baseline moves the face's
+// baseline within the cell, in CELL UNITS (the 16-unit cell denomination, so
+// one unit is 1/16 of the row) — never device pixels, so a correction survives
+// the live font zoom. Positive moves the face DOWN, matching the direction the
+// automatic alignment shift uses.
+//
+// It is a DELTA on top of the automatic baseline alignment, not a replacement:
+// the automatic pass already puts every face on the primary face's baseline,
+// and this nudges a face whose own metrics lie about where that should be.
+type FaceAdjust struct {
+	Baseline int
+	// HasBaseline distinguishes "baseline: 0" from "not specified", so a
+	// future second key does not resurrect a cleared correction.
+	HasBaseline bool
 }
 
 // WindowConfig holds the [window] section: window-scoped display settings.
@@ -1297,15 +1322,27 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 			if name == "" {
 				continue
 			}
-			v = stripQuotes(strings.TrimSpace(v))
-			if v == "" || keywordOf(v) != "" {
+			// A value is an optional path followed by an optional PSL group of
+			// per-face adjustments: "kufi.ttf (baseline: -6)", either half
+			// alone, or neither (which clears both).
+			path, adj, hasAdj := splitFacePath(v)
+			if hasAdj {
+				if config.FontAdjust == nil {
+					config.FontAdjust = make(map[string]FaceAdjust)
+				}
+				config.FontAdjust[canonicalFace(name)] = adj
+			} else {
+				delete(config.FontAdjust, canonicalFace(name))
+			}
+			path = stripQuotes(strings.TrimSpace(path))
+			if path == "" || keywordOf(path) != "" {
 				delete(config.Fonts, name)
 				continue
 			}
-			if base != "" && !filepath.IsAbs(v) {
-				v = filepath.Join(base, v)
+			if base != "" && !filepath.IsAbs(path) {
+				path = filepath.Join(base, path)
 			}
-			config.Fonts[name] = v
+			config.Fonts[name] = path
 		}
 	}
 
@@ -1796,6 +1833,65 @@ func normalizeUITargets(names []string) []string {
 		}
 	}
 	return names
+}
+
+// canonicalFace normalizes a family name for keyed lookup: lowercased with
+// spaces, hyphens and underscores removed, so "Noto Kufi Arabic",
+// "noto-kufi-arabic" and "NotoKufiArabic" name the same face. Mirrors the font
+// database's own alias canonicalization, so a correction cannot miss on
+// spelling alone.
+func canonicalFace(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// splitFacePath splits a [fonts] value into its path part and its trailing PSL
+// adjustment group. The group is recognised only as a trailing parenthesised
+// run, so a path containing parentheses (a directory named "Fonts (old)")
+// still parses as a path when nothing follows it.
+func splitFacePath(v string) (path string, adj FaceAdjust, hasAdj bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasSuffix(v, ")") {
+		return v, FaceAdjust{}, false
+	}
+	open := strings.LastIndex(v, "(")
+	if open < 0 {
+		return v, FaceAdjust{}, false
+	}
+	inner := v[open+1 : len(v)-1]
+	adj, hasAdj = parseFaceAdjust(inner)
+	if !hasAdj {
+		return v, FaceAdjust{}, false // not an adjustment group: leave it in the path
+	}
+	return strings.TrimSpace(v[:open]), adj, true
+}
+
+// parseFaceAdjust reads the inside of a face adjustment group: comma-separated
+// "key: value" pairs. Reports false when nothing recognisable was found, so an
+// unrelated parenthesised tail stays part of the path.
+func parseFaceAdjust(inner string) (adj FaceAdjust, ok bool) {
+	for _, part := range strings.Split(inner, ",") {
+		key, val, found := strings.Cut(part, ":")
+		if !found {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		val = stripQuotes(strings.TrimSpace(val))
+		switch key {
+		case "baseline":
+			n, err := strconv.Atoi(strings.TrimPrefix(val, "+"))
+			if err != nil {
+				continue
+			}
+			adj.Baseline, adj.HasBaseline, ok = n, true, true
+		}
+	}
+	return adj, ok
 }
 
 func splitFontList(v string) []string {

@@ -567,6 +567,13 @@ type Config struct {
 	// alias is applied through FontSink after this runs.
 	FontLoader func(files map[string]string, searchPaths []string)
 
+	// FontAdjustSink, when set, is invoked once at startup for each per-FACE
+	// metric correction in the [fonts] section (family -> baseline units).
+	// Keyed by family rather than alias so one entry corrects the face
+	// however it is reached. Wired by graphical hosts; nil on a plain
+	// terminal, whose faces are the terminal's own.
+	FontAdjustSink func(family string, baselineUnits int)
+
 	// PointerRegion, when set, publishes where a graphical host should show the
 	// text I-beam: the FOCUSED viewport's editable content area (its cells,
 	// including the blank rows below the document that still follow
@@ -6966,6 +6973,15 @@ func (e *Editor) applyFontConfig() {
 	paths := e.LoadedConfig.Window.FontsPath
 	if e.Config.FontLoader != nil && (len(files) > 0 || len(paths) > 0) {
 		e.Config.FontLoader(files, paths)
+	}
+	if e.Config.FontAdjustSink != nil {
+		// Before the aliases: a correction must be in place by the time any
+		// name resolves and the first mask is rasterized.
+		for family, adj := range e.LoadedConfig.FontAdjust {
+			if adj.HasBaseline {
+				e.Config.FontAdjustSink(family, adj.Baseline)
+			}
+		}
 	}
 	if e.Config.FontSink != nil {
 		for alias, names := range e.LoadedConfig.Window.FontAliases {

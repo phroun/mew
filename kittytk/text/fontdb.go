@@ -59,6 +59,13 @@ type fontDB struct {
 	aliases  map[string][]string // canonical alias -> ordered target families
 	def      string              // default family (canonical)
 
+	// baselineAdj holds per-FACE baseline corrections in cell units, keyed by
+	// a face-canonical name (spaces/hyphens/underscores stripped, see
+	// faceKey). Applied wherever a request RESOLVES to a concrete family, so
+	// one entry corrects the face through every route that reaches it — any
+	// alias in the ui tree, per-glyph script fallback, or a direct name.
+	baselineAdj map[string]int
+
 	// searchPaths are extra directories (beyond the OS defaults) scanned
 	// by RegisterFontByName; nameIndex is the lazily-built normalized
 	// family-name -> file paths map over searchPaths + OS font dirs, dropped
@@ -68,6 +75,64 @@ type fontDB struct {
 }
 
 func canonical(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+// faceKey normalizes a family name for the per-face adjustment map: canonical,
+// then with spaces, hyphens and underscores removed, so "Noto Kufi Arabic",
+// "noto-kufi-arabic" and "NotoKufiArabic" all name the same face and a
+// correction cannot miss on spelling alone.
+func faceKey(name string) string {
+	var b strings.Builder
+	for _, r := range canonical(name) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// SetBaselineAdjust records a per-face baseline correction in CELL UNITS
+// (1/16 of a row), positive moving the face DOWN. It is a delta applied on top
+// of automatic baseline alignment, for a face whose own metrics misplace it.
+// Zero removes the entry.
+func (e *Engine) SetBaselineAdjust(family string, units int) {
+	e.db.mu.Lock()
+	defer e.db.mu.Unlock()
+	k := faceKey(family)
+	if k == "" {
+		return
+	}
+	if units == 0 {
+		delete(e.db.baselineAdj, k)
+		return
+	}
+	if e.db.baselineAdj == nil {
+		e.db.baselineAdj = map[string]int{}
+	}
+	e.db.baselineAdj[k] = units
+	e.bumpEpoch() // cached masks were rasterized at the old placement
+}
+
+// BaselineAdjust reports the correction recorded for the family a NAME
+// resolves to — following the alias chain first, so ui-term-arabic-sans and
+// the concrete "Noto Kufi Arabic" both find the same entry.
+func (e *Engine) BaselineAdjust(name string) int {
+	e.db.mu.RLock()
+	defer e.db.mu.RUnlock()
+	if len(e.db.baselineAdj) == 0 {
+		return 0
+	}
+	// The name as written wins (a correction may be pinned to an alias), then
+	// the concrete family the alias chain lands on.
+	if v, ok := e.db.baselineAdj[faceKey(name)]; ok {
+		return v
+	}
+	if fam, ok := e.db.resolveFamily(canonical(name), 0); ok {
+		if v, ok := e.db.baselineAdj[faceKey(fam)]; ok {
+			return v
+		}
+	}
+	return 0
+}
 
 func newFontDB() *fontDB {
 	db := &fontDB{

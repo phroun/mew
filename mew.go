@@ -235,6 +235,15 @@ func WithFontConfig(fn func(files map[string]string, searchPaths []string)) Opti
 	return func(cfg *editor.Config) { cfg.FontLoader = fn }
 }
 
+// WithFontAdjust wires per-FACE metric corrections from the [fonts] section
+// (family -> baseline units, positive down, in the 16-unit cell denomination)
+// to a host that can apply them. Keyed by family rather than alias, so one
+// entry corrects a face through every route that reaches it. Only meaningful
+// on a graphical host; a plain terminal leaves it nil.
+func WithFontAdjust(fn func(family string, baselineUnits int)) Option {
+	return func(cfg *editor.Config) { cfg.FontAdjustSink = fn }
+}
+
 // WithFlexTerminal declares the host terminal a flex-width (logical-grid)
 // terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
 // so the editor addresses the cursor by logical column instead of visual

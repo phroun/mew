@@ -109,6 +109,33 @@ Same alias names, same fallback-list semantics — `set_font "ui-term-hebrew",
 "SBL Hebrew", "Noto Serif Hebrew"`. Bumping a face this way invalidates the
 glyph caches (the engine's epoch changes), so it takes effect on the next frame.
 
+## Per-face metric corrections
+
+Baseline placement is automatic: every terminal face is shifted so its baseline
+lands where the primary face puts its own (see `baselineShiftPx`). A face whose
+own metrics misplace it can be corrected in `[fonts]`, keyed by the FAMILY on
+the left of the equals sign:
+
+```ini
+[fonts]
+Noto Kufi Arabic  = fonts/NotoKufiArabic.ttf (baseline: -6)  ; path + correction
+Noto Serif Hebrew = (baseline: +1)                           ; correction alone
+```
+
+The path is optional, so an embedded face that needs no registration can still
+be nudged. Three things to know:
+
+- Keyed by **face, not alias** — one entry corrects the family through every
+  route that reaches it: any alias in the `ui` tree, per-glyph script fallback,
+  or a direct name. An alias-keyed override would only catch one route.
+- **Cell units** (1/16 of a row), positive **down**. Not device pixels, so a
+  correction survives the live font zoom.
+- A **delta** on top of the automatic alignment, not a replacement — if the
+  automatic pass already moved a face +4, `baseline: -6` nets to -2.
+
+The family is matched canonically, so `Noto Kufi Arabic`, `noto-kufi-arabic`
+and `NotoKufiArabic` are the same face.
+
 ## Three things that surprise people
 
 **Per-script defaults are not all sans.** Each script class carries its own
