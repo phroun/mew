@@ -238,7 +238,7 @@ func (e *Editor) linkButtonAt(w *viewport.Viewport, docLine, runePos int) *linkS
 // left edge of a link's source, even in ordinary edit mode — the link layer
 // (linkBrowsing) must still be enabled. always=false follows only the focused
 // button of navigation mode, and reports false otherwise so a
-// `nav_follow false|accept|insert` chain falls through to plain Enter.
+// `nav_follow false|accept|insert_newline` chain falls through to plain Enter.
 func (e *Editor) navFollow(always bool) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	var span *linkSpan

@@ -349,6 +349,7 @@ func (e *Editor) docViewportOptions() viewport.ViewportOptions {
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
+		AutoIndent:      e.Config.AutoIndent,
 		LinkBrowsing:    e.Config.LinkBrowsing,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SyntaxOverrides: e.Config.SyntaxOverrides,

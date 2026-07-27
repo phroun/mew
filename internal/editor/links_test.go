@@ -621,7 +621,7 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 		}
 	}
 	for k, prefix := range map[string]string{
-		"return": "nav_follow false|accept|insert ",
+		"return": "nav_follow false|accept|insert_newline",
 		"tab":    "nav_next|completion|insert ",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); !strings.HasPrefix(got, prefix) {

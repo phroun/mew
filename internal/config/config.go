@@ -357,6 +357,12 @@ type GeneralConfig struct {
 	// still work. Per window; false by default.
 	ReadOnly bool
 
+	// AutoIndent makes the insert_newline command (the default Enter binding)
+	// start each new line with the leading whitespace of the line it split,
+	// replicating the tabs and spaces exactly as they appear rather than
+	// recomputing them. Per window; off by default.
+	AutoIndent bool
+
 	// LinkBrowsing enables the hyperlink layer for grammar-recognized links
 	// (link coloring, browse-mode buttons, arming on caret entry). Off, links
 	// render exactly as their grammar colors them, with no interaction. Per
@@ -803,6 +809,7 @@ func DefaultConfig() Config {
 			ShowMarks:               "no",
 			OverwriteMode:           false, // insertMode=yes
 			ReadOnly:                false,
+			AutoIndent:              false,
 			LinkBrowsing:            true,
 			ProjectConfig:           true,
 			UseLocks:                true,
@@ -1070,6 +1077,9 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["readOnly"]; ok {
 			config.General.ReadOnly = parseBool(v, false)
+		}
+		if v, ok := opt["autoIndent"]; ok {
+			config.General.AutoIndent = parseBool(v, false)
 		}
 		if v, ok := opt["linkBrowsing"]; ok {
 			config.General.LinkBrowsing = parseBool(v, true)
@@ -2429,7 +2439,7 @@ esc Y   =kill_ring_pop
 
 tab     =nav_next|completion|insert '\t'
 S-tab   =nav_prior
-return  =nav_follow false|accept|insert '\n'
+return  =nav_follow false|accept|insert_newline
 ^C      =cancel|buffer_close
 ^R      =repeat_next
 

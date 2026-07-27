@@ -448,6 +448,7 @@ type Config struct {
 	ShowMarks        string // "no" | "yes" | "all"
 	OverwriteMode    bool   // inverse of insertMode; zero value = insert
 	ReadOnly         bool
+	AutoIndent       bool // insert_newline replicates the split line's indent
 	LinkBrowsing     bool // hyperlink layer (link colors, browse-mode buttons)
 	Syntax           string
 	SyntaxDetect     bool
@@ -830,6 +831,7 @@ func New(cfg Config) (*Editor, error) {
 	cfg.ShowMarks = loadedConfig.General.ShowMarks
 	cfg.OverwriteMode = loadedConfig.General.OverwriteMode
 	cfg.ReadOnly = loadedConfig.General.ReadOnly
+	cfg.AutoIndent = loadedConfig.General.AutoIndent
 	cfg.LinkBrowsing = loadedConfig.General.LinkBrowsing
 	cfg.Syntax = loadedConfig.General.Syntax
 	cfg.SyntaxDetect = loadedConfig.General.SyntaxDetect
@@ -1168,7 +1170,7 @@ func (e *Editor) registerCommands() {
 	// link's source, even in ordinary edit mode — so `^B F =nav_follow` jumps
 	// without entering navigation mode first. With "false" it follows only in
 	// navigation mode (a focused button); otherwise it fails, so a
-	// `nav_follow false|accept|insert` chain falls through to plain Enter.
+	// `nav_follow false|accept|insert_newline` chain falls through to plain Enter.
 	ps.RegisterCommand("nav_follow", func(ctx *pawscript.Context) pawscript.Result {
 		always := true
 		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "false") {
@@ -1761,6 +1763,19 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(true)
 		}
 		return pawscript.BoolStatus(false)
+	})
+
+	// insert_newline breaks the line like `insert '\n'`, then — when the
+	// autoIndent option is on for the viewport — repeats the split line's
+	// leading whitespace so the new line starts under its text. It is the tail
+	// of the default Enter binding (nav_follow false|accept|insert_newline).
+	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.insertNewline()
+		if ok {
+			e.trackEdit()
+			e.editCoalesced = true // a single-point edit: coalesce the undo run
+		}
+		return pawscript.BoolStatus(ok)
 	})
 
 	// insert_bidi_control inserts a Unicode bidi control by short name (lrm,
@@ -2799,6 +2814,12 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.ReadOnly
 		}
 		return boolText(v), true
+	case "autoindent":
+		v := e.Config.AutoIndent
+		if w != nil {
+			v = w.ViewState.AutoIndent
+		}
+		return boolText(v), true
 	case "linkbrowsing":
 		v := e.Config.LinkBrowsing
 		if w != nil {
@@ -3013,6 +3034,16 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			if !b {
 				e.ensureAllDeferredMewLocks()
 			}
+		}
+	case "autoindent":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.AutoIndent = b
+		} else {
+			e.Config.AutoIndent = b
 		}
 	case "linkbrowsing":
 		b, ok := parseBool()
@@ -4694,7 +4725,13 @@ func (e *Editor) insertBidiControl(name string) bool {
 }
 
 // insertText inserts text at the cursor position.
-func (e *Editor) insertText(text string) {
+func (e *Editor) insertText(text string) { e.insertTextMode(text, true) }
+
+// insertTextMode is insertText with control over whether overwrite mode applies.
+// honorOverwrite=false forces a true insert, for synthetic text that must never
+// consume what is already there — an auto-indent's whitespace, which would
+// otherwise overwrite the very characters the line break just moved down.
+func (e *Editor) insertTextMode(text string, honorOverwrite bool) {
 	if e.contentLocked() {
 		// The buffer's owning viewport is read-only, or a link button is
 		// focused: reject the mutation at its source (name-agnostic).
@@ -4708,7 +4745,7 @@ func (e *Editor) insertText(text string) {
 	// Ensure cursor is within valid bounds before insertion
 	e.clampCursorToBuffer(w)
 
-	if w.ViewState.OverwriteMode {
+	if honorOverwrite && w.ViewState.OverwriteMode {
 		// Overwrite mode: typing replaces the character under the caret.
 		e.overwriteText(w, text)
 	} else {
@@ -4723,6 +4760,70 @@ func (e *Editor) insertText(text string) {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	e.RequestRender()
+}
+
+// insertNewline is the insert_newline command — the default Enter binding's
+// last resort, after nav_follow and accept. It breaks the line exactly as
+// `insert '\n'` does and, when the autoIndent option is on for the viewport,
+// follows the break with the indent autoIndentPrefix computes, so the new line
+// starts under the text of the one it split.
+//
+// The whole thing is ONE insert (the break and the whitespace together), so it
+// is one undo step and one coalescible edit — except in overwrite mode, where
+// the break goes through the overwrite path (which appends it, as overwriting a
+// line break must) and the indent is force-inserted after it: overwriting with
+// the indent would consume the characters the break just moved down.
+func (e *Editor) insertNewline() bool {
+	if e.contentLocked() {
+		// Read-only viewport, or a focused link button: reject at the source,
+		// the same way insertText would, before any of the below runs.
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	indent := e.autoIndentPrefix(w)
+	if indent == "" {
+		e.insertText("\n")
+		return true
+	}
+	if w.ViewState.OverwriteMode {
+		e.insertText("\n")
+		e.insertTextMode(indent, false)
+		return true
+	}
+	e.insertTextMode("\n"+indent, false)
+	return true
+}
+
+// autoIndentPrefix returns the whitespace a new line should open with when the
+// autoIndent option is on for w: the leading whitespace of the line the caret
+// is about to split, replicated exactly — tabs stay tabs, spaces stay spaces,
+// and a mixed indent survives as it was written.
+//
+// The run is truncated at the caret, which is what keeps Enter from pushing
+// text rightward when it lands inside or before the indent: at column 0 of an
+// indented line nothing is replicated (the line moves down whole, keeping its
+// own indent), and from within the indent only the part already above the
+// caret repeats, so the split halves still line up under the original.
+func (e *Editor) autoIndentPrefix(w *viewport.Viewport) string {
+	if w == nil || w.Buffer == nil || !w.ViewState.AutoIndent {
+		return ""
+	}
+	pos := w.CursorPos()
+	if pos.Line < 0 || pos.Line >= w.Buffer.GetLineCount() {
+		return ""
+	}
+	line := []rune(strings.TrimRight(w.Buffer.GetLine(pos.Line), "\n\r"))
+	n := 0
+	for n < len(line) && (line[n] == ' ' || line[n] == '\t') {
+		n++
+	}
+	if pos.Rune < n {
+		n = pos.Rune
+	}
+	if n <= 0 {
+		return ""
+	}
+	return string(line[:n])
 }
 
 // overwriteText types text in overwrite mode: each rune replaces the character
@@ -5381,6 +5482,7 @@ func (e *Editor) createNewBuffer() {
 		ShowMarks:       e.Config.ShowMarks,
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
+		AutoIndent:      e.Config.AutoIndent,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		SetFocus:        true,
 	})
