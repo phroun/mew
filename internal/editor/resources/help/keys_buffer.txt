@@ -1,4 +1,3 @@
-#!/bin/wiki
 | __BUFFER QUICK HELP__   |---**BUFFERS**------------------------|
 |---------**HELP**--------| [[keys#buffer_new|^B E]] make a new empty buffer     |
 | [[keys#toggle_help|^B H]] toggle help    | [[keys#buffer_open|^B O]] open a new buffer           |
