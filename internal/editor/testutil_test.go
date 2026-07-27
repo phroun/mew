@@ -249,3 +249,13 @@ func findSettle(t *testing.T, e *Editor) {
 	}
 	e.findPump()
 }
+
+// blockCaret pins the caret to a steady-block shape (DECSCUSR 2) for tests that
+// assert the block/underline CELL geometry. The shipped insertCursor default is
+// a bar, which is addressed one cell further right on RTL text (see
+// barCursorOnRTL), so those tests must say which shape they mean.
+func blockCaret(e *Editor) {
+	e.Config.InsertCursor = 2
+	e.Config.OverwriteCursor = 2
+	e.Config.NavigationCursor = 2
+}

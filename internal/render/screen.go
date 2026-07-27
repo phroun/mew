@@ -1707,6 +1707,7 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 	rtl := sr.winRTL(w)
 	line := ""
 	visualColumn := w.CursorPos().Rune
+	caretRune := w.CursorPos().Rune
 	if w.Buffer != nil {
 		raw := strings.TrimRight(w.Buffer.GetLine(w.CursorPos().Line), "\n\r")
 		// Browse-mode buttons: measure against the substituted display line,
@@ -1714,6 +1715,7 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 		// button's first cell). Identity when no buttons apply.
 		var curRune int
 		line, curRune = sr.displayCaretLine(w, raw, w.CursorPos().Rune)
+		caretRune = curRune
 		visualColumn = sr.caretVisualColumn(line, curRune, w)
 	}
 	base, pad, viewOff, contentWidth, _ := sr.caretRowGeom(w, line)
@@ -1757,8 +1759,38 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 		return isRight
 	}
 
+	// A BAR cursor draws on the LEFT edge of the cell it is addressed to; a
+	// block or underline fills that cell. Every column computed above is the
+	// block/underline one — the cell holding the character the caret just
+	// passed — which for left-to-right text is also where a bar belongs (its
+	// left edge is that character's right edge). In an RTL run the character's
+	// right edge is the NEXT cell to the right, so a bar must be addressed one
+	// cell further right or it draws on the far side of the character.
+	if sr.barCursorOnRTL(w, line, caretRune) {
+		screenX++
+		if screenX > sr.Width {
+			screenX = sr.Width
+		}
+	}
+
 	sr.MoveCursor(screenX, screenY)
 	return false
+}
+
+// barCursorOnRTL reports whether the caret's shape is a bar (DECSCUSR 5 or 6)
+// AND it sits on a right-to-left character — the one combination whose cell
+// address differs from the block/underline geometry the caret math produces.
+// The direction test is bidi.RTLAt, the same predicate that flips the modebar
+// logo from M_ to _M, so the bar and the logo always agree about which side of
+// the text the caret is on.
+func (sr *ScreenRenderer) barCursorOnRTL(w *viewport.Viewport, line string, runePos int) bool {
+	if sr.cursorStyleFn == nil || w == nil {
+		return false
+	}
+	if s := sr.cursorStyleFn(w); s != 5 && s != 6 {
+		return false
+	}
+	return bidi.RTLAt([]rune(line), runePos, sr.winRTL(w))
 }
 
 // visualColIsWideTrail reports whether a left-based visual column on the

@@ -234,6 +234,7 @@ func TestShowMarksBidiColumnMath(t *testing.T) {
 // placed by the renderer's own caretVisualColumn — lands on the marked cell.
 func TestShowMarksBidiRendered(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	blockCaret(e) // asserts the block/underline cell geometry, not the bar
 	w.ViewState.ShowMarks = "yes"
 	if err := w.Buffer.SetMark("m", 0, 5); err != nil {
 		t.Fatalf("SetMark: %v", err)
