@@ -168,14 +168,22 @@ type conOpts struct {
 	// rather than taken on trust.
 	noConsole bool
 	// clearStd points this process's own standard handles at nothing for the
-	// duration of CreateProcess, and puts them back after.
+	// duration of CreateProcess, and puts them back after. THIS IS THE FIX,
+	// and it is on by default; the flag exists so its absence can be shown.
 	//
-	// AllocConsole does not only give this process a console; it also aims
-	// this process's std handles AT that console. A child with no
-	// STARTF_USESTDHANDLES takes its handles from the parent's, so it would
-	// read and write the hidden console rather than the pseudoconsole —
-	// alive, not exiting, and silent. Offering nothing leaves the console
-	// subsystem to supply the pseudoconsole's own.
+	// A child created with no STARTF_USESTDHANDLES takes its standard handles
+	// from its parent's. mew launched from Explorer has none, so the console
+	// subsystem gives the child the pseudoconsole's and everything works. mew
+	// launched by ANOTHER mew — which is exactly what Install does — was
+	// started by Go's exec, and Go opens NUL for every std handle a Cmd does
+	// not set and passes them with STARTF_USESTDHANDLES. Those handles are
+	// therefore REDIRECTED, AllocConsole documents that it fills in the
+	// console's handles only when they are not, so they stay NUL, and the
+	// child inherits NUL: stdin at end of file, exit 0, not one byte.
+	//
+	// Offering the child nothing leaves the console subsystem to supply the
+	// pseudoconsole's own handles, which is what it does when there is nothing
+	// to inherit. It costs nothing in the case that already worked.
 	clearStd bool
 	// freeAfter gives up this process's console again once the pseudoconsole
 	// exists, before the child is created — in case the console is needed to
@@ -201,15 +209,23 @@ var ensureConsole = sync.OnceValue(func() string {
 	if h, _, _ := procGetConsoleWindow.Call(); h != 0 {
 		return "this process already owns a console (nothing to do)"
 	}
+	// Worth recording, because it decides whether AllocConsole will hand this
+	// process the console's handles or leave what it was given: it fills them
+	// in ONLY IF they were not already redirected.
+	redirected := ""
+	if h, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE); err == nil && h != 0 {
+		redirected = " (std handles were already redirected at startup — " +
+			"AllocConsole will NOT replace them)"
+	}
 	if r, _, e := procAllocConsole.Call(); r == 0 {
 		return fmt.Sprintf("AllocConsole failed: %v — a pseudoconsole may not work", e)
 	}
 	h, _, _ := procGetConsoleWindow.Call()
 	if h != 0 {
 		procShowWindow.Call(h, 0 /* SW_HIDE */)
-		return "AllocConsole: ok, window hidden (a pseudoconsole needs its creator to own a console)"
+		return "AllocConsole: ok, window hidden" + redirected
 	}
-	return "AllocConsole: ok, but no window to hide"
+	return "AllocConsole: ok, but no window to hide" + redirected
 })
 
 // ptyMethods are the ways this host knows to make a terminal, selectable per
@@ -223,7 +239,8 @@ var ptyMethods = []struct {
 	Desc string
 	Opt  conOpts
 }{
-	{"1", "ConPTY — the real terminal (ensures this process owns a console)", conOpts{}},
+	{"1", "ConPTY — the real terminal (own console, std handles cleared across the spawn)",
+		conOpts{clearStd: true}},
 	{"2", "ConPTY, bInheritHandles=TRUE", conOpts{inherit: true}},
 	{"3", "ConPTY, console pipe ends kept open past CreateProcess", conOpts{keepEnds: true}},
 	{"4", "ConPTY, inherit=TRUE and ends kept", conOpts{inherit: true, keepEnds: true}},
@@ -235,7 +252,7 @@ var ptyMethods = []struct {
 	{"10", "ConPTY WITHOUT ensuring a console — what used to fail, kept to show the difference", conOpts{noConsole: true}},
 	{"11", "ConPTY, everything at once (inherit, ends held, no window)",
 		conOpts{inherit: true, keepEnds: true, noWindow: true}},
-	{"12", "ConPTY + this process's std handles cleared across CreateProcess", conOpts{clearStd: true}},
+	{"12", "ConPTY WITHOUT clearing std handles — what failed from an installed launch", conOpts{}},
 	{"13", "ConPTY + give up this process's console once the pseudoconsole exists", conOpts{freeAfter: true}},
 	{"14", "ConPTY + cleared std handles AND no window", conOpts{clearStd: true, noWindow: true}},
 }
