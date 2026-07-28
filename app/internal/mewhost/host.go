@@ -391,10 +391,35 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 		new menuitem caption="&New Window" action=mew.window.new
 	}`
 	}
+	// One placeholder item per menu for now: this is a shape check on the
+	// menu bar's well-known merge (canonical order app, file, edit, select,
+	// format, view, custom..., window, help) rather than a finished menu set.
+	// The captions are mew's own — a well-known tag declares a menu's ROLE, so
+	// "File Buffer" still merges as file and "Viewport" as view. Input, Search
+	// and History carry no tag and land in the custom bucket, in declared
+	// order, between view and window.
 	script := fmt.Sprintf(`
 bar=new menubar children={%s
-	new menu caption="Edit" wellknown="edit" children={
+	new menu caption="&File Buffer" wellknown="file" children={
+		new menuitem caption="&Save Current Buffer" action=mew.file.save
+	}
+	new menu caption="&Edit Block" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
+	}
+	new menu caption="F&ormat" wellknown="format" children={
+		new menuitem caption="Unindent Block" action=mew.format.unindent
+	}
+	new menu caption="&Viewport" wellknown="view" children={
+		new menuitem caption="&Clone Viewport" action=mew.view.clone
+	}
+	new menu caption="&Input" children={
+		new menuitem caption="&Insert Mode [Overwrite]" action=mew.input.insertmode
+	}
+	new menu caption="&Search" children={
+		new menuitem caption="&Find..." action=mew.search.find
+	}
+	new menu caption="Hi&story" children={
+		new menuitem caption="&Undo" action=mew.history.undo
 	}%s
 	new menu caption="Help" wellknown="help" children={
 		new menuitem caption="&Using mew" action=mew.help.usingmew
@@ -425,9 +450,27 @@ bar=new menubar children={%s
 	// help window each time the Help menu opens (help_toggle, or closing the
 	// window, can change it out from under the menu).
 	syncQuickHelpCheckmark(menus, application)
+	syncPlaceholderShortcuts(menus, application)
 	// Raw Key Input: pass the next keystroke straight to the focused trinket, so
 	// a control key mew binds (and the host would otherwise consume) reaches the
 	// editor. Same handler the demo wires.
+	// The placeholder items each fire their mew command on the root editor,
+	// so the bar is exercised end to end rather than being inert scenery.
+	for action, cmd := range map[string]string{
+		"mew.file.save":        "buffer_save",
+		"mew.format.unindent":  "block_unindent",
+		"mew.view.clone":       "viewport_clone",
+		"mew.input.insertmode": `set_option_next "insertMode"`,
+		"mew.search.find":      "find",
+		"mew.history.undo":     "buffer_undo",
+	} {
+		cmd := cmd // one binding per closure
+		commands.Register(action, func() {
+			if ed, ok := rootMewEditor(application); ok {
+				ed.Execute(cmd)
+			}
+		})
+	}
 	commands.Register("mew.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToTrinket()
 	})
@@ -453,6 +496,48 @@ func rootMewEditor(application *app.Application) (*trinkets.Editor, bool) {
 	}
 	ed, ok := w.Content().(*trinkets.Editor)
 	return ed, ok
+}
+
+// placeholderShortcuts maps each placeholder item to the mew action its
+// shortcut text should resolve from, and the spelling to prefer when several
+// sequences are bound (or to fall back on when none is).
+var placeholderShortcuts = map[string][2]string{
+	"mew.file.save":        {"buffer_save", "^B S"},
+	"mew.format.unindent":  {"block_unindent", "^ ,"},
+	"mew.view.clone":       {"viewport_clone", "^B 2"},
+	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
+	"mew.search.find":      {"find", "^Q F"},
+	"mew.history.undo":     {"buffer_undo", "^B -"},
+}
+
+// syncPlaceholderShortcuts advertises each placeholder item's key against the
+// LIVE keymap, the same way the Help items do: these are mew's keys, not the
+// toolkit's, so KittyTK has no Shortcut of its own to show and the text is
+// resolved per menu open — which both follows a rebind and covers the menu
+// being built before the session binds its port.
+func syncPlaceholderShortcuts(menus []*trinkets.Menu, application *app.Application) {
+	for _, m := range menus {
+		var items []*trinkets.MenuItem
+		for _, it := range m.Items() {
+			if _, ok := placeholderShortcuts[it.ID()]; ok {
+				items = append(items, it)
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		menuItems := items // captured per menu
+		m.SetOnAboutToShow(func() {
+			ed, ok := rootMewEditor(application)
+			if !ok {
+				return
+			}
+			for _, it := range menuItems {
+				spec := placeholderShortcuts[it.ID()]
+				it.SetShortcutText(ed.KeyBinding(spec[0], spec[1]))
+			}
+		})
+	}
 }
 
 // syncQuickHelpCheckmark wires the Help menu's about-to-show hook so the Quick
