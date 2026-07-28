@@ -11,6 +11,18 @@ package trinkets
 // a console WINDOW, appearing next to the editor and vanishing again when the
 // process dies.
 //
+// AND THE CREATOR OF A PSEUDOCONSOLE MUST OWN A CONSOLE ITSELF. This is the
+// one that cost days. A GUI-subsystem binary has no console, and from one
+// everything above succeeds and means nothing: CreatePseudoConsole returns a
+// handle, the attribute takes, CreateProcess returns a pid, conhost renders
+// and sets the window title from the child's own name — and the child is
+// handed nothing it can read or write, so it exits 0 without a word. Every
+// visible signal says the terminal was made correctly.
+//
+// It was found by elimination and then by accident: the same code in the
+// console-subsystem build of the same editor worked perfectly. Not a
+// difference in the call — a difference in the PROGRAM. See ensureConsole.
+//
 // The pipes are RAW Win32 handles, deliberately, and not os.Pipe. Go does not
 // hand out an inert handle: os.Pipe registers what it opens with the runtime's
 // I/O completion port and calls SetFileCompletionNotificationModes on it. That
@@ -150,12 +162,40 @@ type conOpts struct {
 	nullStd bool
 	// inheritCursor passes PSEUDOCONSOLE_INHERIT_CURSOR to CreatePseudoConsole.
 	inheritCursor bool
-	// allocConsole gives the PARENT a console (hidden) before spawning. This
-	// process is a GUI binary with no console at all, which is the one way it
-	// differs from every working example, and the difference a probe cannot
-	// rule out any other way.
-	allocConsole bool
+	// noConsole SKIPS ensuring this process owns a console — the behaviour
+	// that failed, kept selectable so the difference can be demonstrated
+	// rather than taken on trust.
+	noConsole bool
 }
+
+// ensureConsole gives THIS PROCESS a console if it has none, hidden, once.
+//
+// This is the fault, and it took a console-subsystem build of the same editor
+// to show it: mew.exe runs a pseudoconsole perfectly and mew-sdl.exe does not,
+// with identical code. A GUI binary has no console, and a pseudoconsole turns
+// out to need its creator to have one — the child attaches, conhost renders,
+// and the child is handed nothing it can read or write, so it exits 0 without
+// a word. Every other candidate was ruled out one at a time; this was the
+// difference nobody could see because it is a property of the PROGRAM rather
+// than of the call.
+//
+// The window is hidden the instant it exists. Doing this lazily, at the first
+// terminal rather than at startup, means an editor that never runs one never
+// acquires a console at all.
+var ensureConsole = sync.OnceValue(func() string {
+	if h, _, _ := procGetConsoleWindow.Call(); h != 0 {
+		return "this process already owns a console (nothing to do)"
+	}
+	if r, _, e := procAllocConsole.Call(); r == 0 {
+		return fmt.Sprintf("AllocConsole failed: %v — a pseudoconsole may not work", e)
+	}
+	h, _, _ := procGetConsoleWindow.Call()
+	if h != 0 {
+		procShowWindow.Call(h, 0 /* SW_HIDE */)
+		return "AllocConsole: ok, window hidden (a pseudoconsole needs its creator to own a console)"
+	}
+	return "AllocConsole: ok, but no window to hide"
+})
 
 // ptyMethods are the ways this host knows to make a terminal, selectable per
 // request (exec "cmd.exe" "3") and all of them run by the self-test.
@@ -168,39 +208,32 @@ var ptyMethods = []struct {
 	Desc string
 	Opt  conOpts
 }{
-	{"1", "default: ConPTY, bInheritHandles=FALSE, console ends closed early", conOpts{}},
+	{"1", "ConPTY — the real terminal (ensures this process owns a console)", conOpts{}},
 	{"2", "ConPTY, bInheritHandles=TRUE", conOpts{inherit: true}},
 	{"3", "ConPTY, console pipe ends kept open past CreateProcess", conOpts{keepEnds: true}},
 	{"4", "ConPTY, inherit=TRUE and ends kept", conOpts{inherit: true, keepEnds: true}},
 	{"5", "ConPTY, lpApplicationName=NULL (command line only)", conOpts{noAppName: true}},
-	{"6", "NO pseudoconsole: plain inherited pipes — WORKS on Windows 11, not a full terminal", conOpts{plainPipes: true}},
+	{"6", "no pseudoconsole: plain inherited pipes — a shell, but not a terminal", conOpts{plainPipes: true}},
 	{"7", "ConPTY + CREATE_NO_WINDOW", conOpts{noWindow: true}},
 	{"8", "ConPTY + STARTF_USESTDHANDLES, all three NULL", conOpts{nullStd: true}},
 	{"9", "ConPTY + PSEUDOCONSOLE_INHERIT_CURSOR", conOpts{inheritCursor: true}},
-	{"10", "ConPTY after giving THIS process a hidden console (AllocConsole)", conOpts{allocConsole: true}},
-	{"11", "ConPTY, hidden console + inherit + no window (everything at once)",
-		conOpts{allocConsole: true, inherit: true, noWindow: true}},
+	{"10", "ConPTY WITHOUT ensuring a console — what used to fail, kept to show the difference", conOpts{noConsole: true}},
+	{"11", "ConPTY, everything at once (inherit, ends held, no window)",
+		conOpts{inherit: true, keepEnds: true, noWindow: true}},
 }
 
-// defaultMethod is what a request that names none gets, and on Windows that
-// is method 6 — plain pipes — PROVISIONALLY.
-//
-// Not because pipes are the right way to make a terminal; they are not. There
-// is no resize, no console API, and a program that paints a full screen will
-// not. But on the machine this was found on, every pseudoconsole variant
-// fails identically — the child attaches, says nothing, exits 0 — while pipes
-// give a real shell with a banner, a prompt and working commands. A correct
-// terminal that produces nothing is worth less than a limited one that works,
-// and this is reversible the moment the pseudoconsole question is settled:
-// change this one line.
+// defaultMethod is what a request that names none gets: the real terminal,
+// now that ensureConsole has removed the reason it did not work.
 //
 // MEW_PTY_METHOD overrides it, so any method can be chosen for a whole
-// session without a rebuild by someone who has no Go toolchain to hand.
+// session without a rebuild by someone who has no Go toolchain to hand —
+// including method 6, the plain-pipe shell, if a machine turns up where the
+// pseudoconsole still will not go.
 func defaultMethod() string {
 	if m := strings.TrimSpace(os.Getenv("MEW_PTY_METHOD")); m != "" {
 		return m
 	}
-	return "6"
+	return "1"
 }
 
 // optsForMethod resolves a request's method name. An unknown one falls back
@@ -269,18 +302,10 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	}
 	p.note("CreatePipe: ok (raw handles, not os.Pipe)")
 
-	if opt.allocConsole {
-		// A console for THIS process, kept off screen. The pseudoconsole is
-		// supposed to make the parent's own console irrelevant; whether it
-		// does is the last thing this set has not asked.
-		if r, _, e := procAllocConsole.Call(); r == 0 {
-			p.note("AllocConsole: %v (already had one, or refused)", e)
-		} else {
-			p.note("AllocConsole: ok (hidden)")
-			if h, _, _ := procGetConsoleWindow.Call(); h != 0 {
-				procShowWindow.Call(h, 0 /* SW_HIDE */)
-			}
-		}
+	if opt.noConsole {
+		p.note("console for this process: NOT ensured (the configuration that failed)")
+	} else {
+		p.note("console for this process: %s", ensureConsole())
 	}
 
 	var pcFlags uint32
