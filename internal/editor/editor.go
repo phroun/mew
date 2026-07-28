@@ -1240,14 +1240,26 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.navFollow(always))
 	})
 
-	// nav_next / nav_prior: move to the next/previous link (cycling). Capture
-	// only when a button is focused, so a tab = nav_next|... chain yields to
-	// editing when the caret is not inside a link.
+	// nav_next / nav_prior: move to the next/previous link (cycling).
+	//
+	// Bare, they ALWAYS act: from the caret's own link, or into the first link
+	// from the caret when it is in none. With the argument "false" they are
+	// GATED on a focused button instead, capturing only in browse mode so a
+	// chain like tab = nav_next false|completion|insert '\t' yields to editing
+	// when the caret is not inside a link. Same shape as nav_follow, and for
+	// the same reason: a key bound alone wants the action, a key in a chain
+	// wants to fall through.
+	navArg := func(ctx *pawscript.Context) bool {
+		if arg, ok := argString(ctx, 0); ok && strings.EqualFold(strings.TrimSpace(arg), "false") {
+			return false
+		}
+		return true
+	}
 	ps.RegisterCommand("nav_next", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navLink(+1))
+		return pawscript.BoolStatus(e.navLink(+1, navArg(ctx)))
 	})
 	ps.RegisterCommand("nav_prior", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navLink(-1))
+		return pawscript.BoolStatus(e.navLink(-1, navArg(ctx)))
 	})
 
 	// nav_start: enter nav (browse) mode, focusing the first link at/after the

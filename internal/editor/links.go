@@ -554,11 +554,37 @@ func (e *Editor) linkTargetVisited(w *viewport.Viewport, target string) bool {
 // so in a fallthrough chain (tab = nav_next|completion|insert) it yields to
 // editing whenever the caret is not inside a link. The move keeps browse mode
 // active, landing the caret on the new button.
-func (e *Editor) navLink(dir int) bool {
+func (e *Editor) navLink(dir int, always bool) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	cur := e.focusedLinkButton(w)
 	if cur == nil {
-		return false
+		// Gated (always=false): only a FOCUSED button counts, so a chain like
+		// tab = nav_next false|completion|insert '\t' yields to editing when
+		// the caret is not on a link. This is the shape the tab/S-tab chains
+		// depend on and must keep.
+		if !always {
+			return false
+		}
+		// Ungated: work from the caret instead. The link layer still has to be
+		// on - the whole feature is off otherwise - but browse mode does not,
+		// which is what lets ^B tab step links straight out of edit mode.
+		if w == nil || w.Type == viewport.PromptViewport || !w.ViewState.LinkBrowsing || w.Buffer == nil {
+			return false
+		}
+		if cur = e.caretLinkSpan(w); cur == nil {
+			// Caret is not in a link at all: enter at the first one from here
+			// rather than reporting failure, so the command always moves when
+			// the document has any link to move to.
+			line, span, ok := e.firstLinkFromCaret(w)
+			if !ok {
+				return false
+			}
+			w.BrowseActive = true
+			e.setCursorForNav(w, line, span.Start+1)
+			e.RequestRender()
+			return true
+		}
+		w.BrowseActive = true
 	}
 	line, span, ok := e.siblingLink(w, cur, dir)
 	if !ok {
