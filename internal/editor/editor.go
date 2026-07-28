@@ -1906,7 +1906,7 @@ func (e *Editor) registerCommands() {
 			tokenTimeout(e.Config.PromptTimeout))
 		var ask func()
 		ask = func() {
-			e.PromptMgr.PromptForInput("Insert rune by code point [U+xxxx hex, #NNN decimal]: ", "",
+			e.PromptMgr.PromptForInput("Insert rune by code point [U+xxxx hex, #NNN decimal, \\uXXXX]: ", "",
 				func(accepted bool, _, input string) {
 					defer e.RequestRender()
 					if expired.Load() {
@@ -1948,7 +1948,7 @@ func (e *Editor) registerCommands() {
 			tokenTimeout(e.Config.PromptTimeout))
 		var ask func()
 		ask = func() {
-			e.PromptMgr.PromptForInput("Insert raw byte [x1b, o33, b11011, #27, ^[, ESC, ?]: ", "",
+			e.PromptMgr.PromptForInput("Insert raw byte [x1b, o33, b11011, #27, ^[, \\e, ESC, ?]: ", "",
 				func(accepted bool, _, input string) {
 					defer e.RequestRender()
 					if expired.Load() {
@@ -1962,7 +1962,7 @@ func (e *Editor) registerCommands() {
 					}
 					if in == "?" {
 						e.ShowNotification("x1b/1b=hex (default), o33=octal, b11011=binary, #27=decimal")
-						e.ShowNotification("^[=control (^@..^_, ^?=DEL), or a name: NUL BEL BS TAB LF VT FF CR ESC SP DEL")
+						e.ShowNotification("^[=control (^@..^_, ^?=DEL), \\n \\r \\t \\e \\0 \\xNN \\NNN, or a name: BEL BS TAB LF CR ESC DEL")
 						ask() // re-prompt, same as insert_bidi_control's "?"
 						return
 					}
@@ -5011,9 +5011,17 @@ func (e *Editor) insertBidiControl(name string) bool {
 // Surrogates (U+D800..U+DFFF) are rejected: they are not scalars, they only
 // exist inside UTF-16, and Go would silently substitute U+FFFD for one.
 func parseCodePoint(in string) (rune, bool) {
+	if r, ok := literalControl(in); ok {
+		return r, true
+	}
 	t := strings.TrimSpace(in)
 	if t == "" {
 		return 0, false
+	}
+	// \uNNNN is how a code point is written in source, so accept it (and the
+	// rest of the C escapes) here too.
+	if r, ok := parseCEscape(t); ok && r <= unicode.MaxRune && !(r >= 0xD800 && r <= 0xDFFF) {
+		return r, true
 	}
 	base := 16
 	switch {
@@ -5058,6 +5066,7 @@ var asciiControlNames = map[string]rune{
 //	b11011 0b11011   binary
 //	#27              decimal ("#", not "d": "d" is a hex digit)
 //	1b               bare, read as HEX - the convention for a byte
+//	\n \r \t \e \0    the C escape, plus \xNN hex and \NNN octal
 //
 // A leading "b" is binary only when everything after it is 0 or 1 ("b11011");
 // otherwise it is a hex digit as usual ("be" = 0xBE). Ambiguous only for
@@ -5071,10 +5080,86 @@ var asciiControlNames = map[string]rune{
 // text, so 0x80..0xFF become U+0080..U+00FF, the Latin-1 reading of that
 // number. Inserting a bare high byte would leave invalid UTF-8 in the line and
 // desync every rune-indexed column in the editor.
+// cEscapes are the single-letter backslash escapes a C, Go, Python or shell
+// programmer already has in their fingers. "\\e" is not ISO C, but every
+// toolchain worth using accepts it for ESC and it is the one people reach for.
+var cEscapes = map[byte]rune{
+	'a': 0x07, 'b': 0x08, 'e': 0x1B, 'f': 0x0C, 'n': 0x0A,
+	'r': 0x0D, 't': 0x09, 'v': 0x0B, '0': 0x00,
+	'\\': 0x5C, '\'': 0x27, '"': 0x22, '?': 0x3F,
+}
+
+// parseCEscape reads a backslash escape in its C spelling: \n \r \t \0 \e and
+// friends, \xNN hex, \NNN octal (1-3 digits), \uNNNN and \UNNNNNNNN. Returns
+// the scalar and whether the whole string was consumed by one escape - a
+// trailing anything makes it not an escape at all, so "\n\n" is rejected
+// rather than quietly inserting one of them.
+func parseCEscape(t string) (rune, bool) {
+	if len(t) < 2 || t[0] != '\\' {
+		return 0, false
+	}
+	body := t[1:]
+	switch body[0] {
+	case 'x', 'X':
+		n, err := strconv.ParseInt(body[1:], 16, 64)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return rune(n), true
+	case 'u', 'U':
+		n, err := strconv.ParseInt(body[1:], 16, 64)
+		if err != nil || n < 0 || n > unicode.MaxRune {
+			return 0, false
+		}
+		return rune(n), true
+	}
+	// Octal: \NNN, 1-3 digits. Checked before the single-letter table so \012
+	// is octal 12 rather than \0 with stray digits after it.
+	if body[0] >= '0' && body[0] <= '7' && len(body) > 1 {
+		if len(body) > 3 {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(body, 8, 64)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return rune(n), true
+	}
+	if len(body) != 1 {
+		return 0, false
+	}
+	r, ok := cEscapes[body[0]]
+	return r, ok
+}
+
+// literalControl accepts the input when it is ALREADY the character itself -
+// one control rune, untrimmed. A keymap or PawScript argument written "\n" has
+// its escape resolved by the parser before this command ever runs, so by the
+// time the value arrives it is a real newline. Only control characters qualify:
+// a printable single character like "a" stays a hex digit.
+func literalControl(in string) (rune, bool) {
+	rs := []rune(in)
+	if len(rs) != 1 {
+		return 0, false
+	}
+	if rs[0] < 0x20 || rs[0] == 0x7F {
+		return rs[0], true
+	}
+	return 0, false
+}
+
 func parseByteSpec(in string) (rune, bool) {
+	// Before trimming: TrimSpace would eat a literal tab or newline, and those
+	// are exactly the values someone is most likely to be inserting.
+	if r, ok := literalControl(in); ok {
+		return r, true
+	}
 	t := strings.TrimSpace(in)
 	if t == "" {
 		return 0, false
+	}
+	if r, ok := parseCEscape(t); ok && r <= 0xFF {
+		return r, true
 	}
 	// Caret notation: the key you would actually press.
 	if len(t) == 2 && t[0] == '^' {

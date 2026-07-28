@@ -118,3 +118,82 @@ func TestInsertRuneAndByteCommands(t *testing.T) {
 		t.Errorf("a rejected byte must not edit the buffer: %q", got)
 	}
 }
+
+// Backslash escapes, in the spelling a C, Go, Python or shell programmer
+// already has in their fingers. The whole reason to reach for this command is
+// that the character cannot be typed, so it should accept the form the user
+// already knows rather than making them convert it.
+func TestParseByteSpecAcceptsCEscapes(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want rune
+	}{
+		{`\n`, 0x0A}, {`\r`, 0x0D}, {`\t`, 0x09}, {`\0`, 0x00},
+		{`\a`, 0x07}, {`\b`, 0x08}, {`\f`, 0x0C}, {`\v`, 0x0B},
+		{`\e`, 0x1B}, // not ISO C, but universal and what people reach for
+		{`\\`, 0x5C}, {`\'`, 0x27}, {`\"`, 0x22}, {`\?`, 0x3F},
+		{`\x1b`, 0x1B}, {`\xff`, 0xFF}, {`\x0`, 0x00},
+		{`\033`, 0x1B}, {`\012`, 0x0A}, {`\177`, 0x7F}, // octal, 1-3 digits
+	} {
+		got, ok := parseByteSpec(tc.in)
+		if !ok {
+			t.Errorf("parseByteSpec(%q) rejected it", tc.in)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("parseByteSpec(%q) = %#x, want %#x", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A trailing anything makes it not a single escape, rather than quietly
+// inserting the first one and dropping the rest.
+func TestParseByteSpecRejectsMalformedEscapes(t *testing.T) {
+	for _, in := range []string{`\`, `\z`, `\nn`, `\n\n`, `\x`, `\xzz`, `\0777`, `\400`} {
+		if got, ok := parseByteSpec(in); ok {
+			t.Errorf("parseByteSpec(%q) = %#x, want rejection", in, got)
+		}
+	}
+}
+
+// A keymap or PawScript argument written "\n" has its escape resolved by the
+// parser before this command runs, so the value arrives as a real newline.
+// Only CONTROL characters are taken literally — "a" stays a hex digit.
+func TestParseByteSpecTakesAlreadyResolvedControlsLiterally(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want rune
+	}{{"\n", 0x0A}, {"\t", 0x09}, {"\x1b", 0x1B}, {"\x7f", 0x7F}} {
+		got, ok := parseByteSpec(tc.in)
+		if !ok || got != tc.want {
+			t.Errorf("parseByteSpec(%q) = %#x,%v want %#x", tc.in, got, ok, tc.want)
+		}
+	}
+	// Printable single characters keep their numeric reading.
+	if got, _ := parseByteSpec("a"); got != 0x0A {
+		t.Errorf(`parseByteSpec("a") = %#x, want 0x0A (hex digit, not the letter)`, got)
+	}
+}
+
+// \uNNNN is how a code point is written in source, so it works there too.
+func TestParseCodePointAcceptsUnicodeEscapes(t *testing.T) {
+	bs := string(rune(92)) // a literal backslash, built so no editor can eat it
+	for _, tc := range []struct {
+		in   string
+		want rune
+	}{
+		{bs + "u05D0", 0x5D0},
+		{bs + "u200E", 0x200E},
+		{bs + "U0001F600", 0x1F600},
+		{bs + "n", 0x0A},
+	} {
+		got, ok := parseCodePoint(tc.in)
+		if !ok || got != tc.want {
+			t.Errorf("parseCodePoint(%q) = %#x,%v want %#x", tc.in, got, ok, tc.want)
+		}
+	}
+	// A surrogate stays rejected however it is spelled.
+	if got, ok := parseCodePoint(bs + "uD800"); ok {
+		t.Errorf("parseCodePoint(%q) = %#x, want rejection", bs+"uD800", got)
+	}
+}
