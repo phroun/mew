@@ -1825,14 +1825,24 @@ type menuBuckets struct {
 	custom []*Menu
 	window *Menu
 	help   *Menu
+	// anchored holds untagged menus that asked to sit after a particular
+	// well-known SLOT rather than in the trailing custom block, keyed by that
+	// slot and preserving declared order within it. The slot need not be
+	// filled: anchoring after "file" in an app with no file menu still lands
+	// ahead of edit, so placement does not shift when a neighbour is added or
+	// removed.
+	anchored map[string][]*Menu
 }
 
 // declaredAny reports whether the app contributed any menu at all.
 func (b menuBuckets) declaredAny() bool {
 	return b.app != nil || b.file != nil || b.edit != nil || b.sel != nil ||
 		b.format != nil || b.view != nil || b.window != nil || b.help != nil ||
-		len(b.custom) > 0
+		len(b.custom) > 0 || len(b.anchored) > 0
 }
+
+// after returns the menus anchored to a well-known slot, in declared order.
+func (b menuBuckets) after(slot string) []*Menu { return b.anchored[slot] }
 
 // bucketMenus sorts an app's declared menus into their well-known roles so
 // the system can lay them out in the canonical order (app, file, edit,
@@ -1883,6 +1893,15 @@ func bucketMenus(menus []*Menu) menuBuckets {
 				continue
 			}
 		}
+		// Untagged (or a duplicate role): an anchor places it after a
+		// well-known slot, otherwise it joins the trailing custom block.
+		if a := m.Anchor(); a != "" && m.WellKnownID() == "" {
+			if b.anchored == nil {
+				b.anchored = map[string][]*Menu{}
+			}
+			b.anchored[a] = append(b.anchored[a], m)
+			continue
+		}
 		b.custom = append(b.custom, m)
 	}
 	return b
@@ -1894,21 +1913,36 @@ func bucketMenus(menus []*Menu) menuBuckets {
 // leading app menu and the trailing Window/Help menus are placed by the
 // caller (they differ between the docked and detached bars).
 func (d *Desktop) appendAppBody(add func(*Menu), app ApplicationProvider, b menuBuckets) {
+	// Each well-known slot is followed by whatever anchored itself there,
+	// whether or not the slot's own menu exists — the anchor names the SLOT,
+	// so an app's layout does not shift when a neighbouring menu comes or
+	// goes. Unanchored customs keep the trailing block, after view.
+	addAnchored := func(slot string) {
+		for _, m := range b.after(slot) {
+			add(m)
+		}
+	}
+	addAnchored(MenuIDApp)
 	if b.file != nil {
 		add(b.file)
 	}
+	addAnchored(MenuIDFile)
 	if em := d.systemEditMenu(app, b.edit); em != nil {
 		add(em)
 	}
+	addAnchored(MenuIDEdit)
 	if b.sel != nil {
 		add(b.sel)
 	}
+	addAnchored(MenuIDSelect)
 	if b.format != nil {
 		add(b.format)
 	}
+	addAnchored(MenuIDFormat)
 	if b.view != nil {
 		add(b.view)
 	}
+	addAnchored(MenuIDView)
 	for _, m := range b.custom {
 		add(m)
 	}

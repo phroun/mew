@@ -11,7 +11,11 @@ import (
 // custom..., window, help — driven by each menu's WELL-KNOWN tag, not by its
 // title. That is what lets mew call its file menu "File Buffer" and its view
 // menu "Viewport" and still merge correctly, and what puts the untagged
-// Input / Search / History between view and window in their declared order.
+// Input / Search / History anchored after the file and format SLOTS.
+//
+// This asserts what mew DECLARES; the desktop turns declarations into the bar's
+// final order (see TestAnchoredBarMatchesMewsWeaningOrder in KittyTK, which
+// runs this exact shape through the merge).
 //
 // Titles are exactly as mew declares them: these menus name the WordStar
 // command groups they wean users onto, so nothing here invents an accelerator
@@ -19,26 +23,39 @@ import (
 func TestMenuBarWellKnownOrder(t *testing.T) {
 	for _, c := range []struct {
 		multiWindow bool
-		want        []string // wellknown id, "" for an untagged (custom) menu
-		wantTitles  []string
+		want        [][3]string // title, well-known role, anchor slot
 	}{
-		{false,
-			[]string{"file", "edit", "format", "view", "", "", "", "help"},
-			[]string{"File Buffer", "Edit Block", "Format", "Viewport", "Input", "Search", "History", "Help"}},
-		{true,
-			[]string{"app", "file", "edit", "format", "view", "", "", "", "window", "help"},
-			[]string{"mew", "File Buffer", "Edit Block", "Format", "Viewport", "Input", "Search", "History", "Window", "Help"}},
+		{false, [][3]string{
+			{"File Buffer", "file", ""},
+			{"Edit Block", "edit", ""},
+			{"Format", "format", ""},
+			{"Viewport", "view", ""},
+			{"Input", "", "file"},
+			{"Search", "", "file"},
+			{"History", "", "format"},
+			{"Help", "help", ""},
+		}},
+		{true, [][3]string{
+			{"mew", "app", ""},
+			{"File Buffer", "file", ""},
+			{"Edit Block", "edit", ""},
+			{"Format", "format", ""},
+			{"Viewport", "view", ""},
+			{"Input", "", "file"},
+			{"Search", "", "file"},
+			{"History", "", "format"},
+			{"Window", "window", ""},
+			{"Help", "help", ""},
+		}},
 	} {
 		menus := buildMenus(trinkets.NewDesktop(), app.New(nil), c.multiWindow)
 		if len(menus) != len(c.want) {
 			t.Fatalf("multiWindow=%v: %d menus, want %d", c.multiWindow, len(menus), len(c.want))
 		}
 		for i, m := range menus {
-			if got := m.WellKnownID(); got != c.want[i] {
-				t.Errorf("multiWindow=%v menu %d: wellknown %q, want %q", c.multiWindow, i, got, c.want[i])
-			}
-			if got := m.Title(); got != c.wantTitles[i] {
-				t.Errorf("multiWindow=%v menu %d: title %q, want %q", c.multiWindow, i, got, c.wantTitles[i])
+			got := [3]string{m.Title(), m.WellKnownID(), m.Anchor()}
+			if got != c.want[i] {
+				t.Errorf("multiWindow=%v menu %d: %v, want %v", c.multiWindow, i, got, c.want[i])
 			}
 		}
 	}

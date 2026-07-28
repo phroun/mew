@@ -310,6 +310,7 @@ type Menu struct {
 	currentIndex    int
 	visible         bool
 	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
+	anchor          string // untagged menus: the well-known slot to sit after
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -501,6 +502,28 @@ func (m *Menu) SetWellKnownID(id string) *Menu {
 
 // WellKnownID returns the menu's system-level role tag, or "" if none.
 func (m *Menu) WellKnownID() string { return m.wellKnownID }
+
+// SetAnchor places an UNTAGGED menu immediately after a well-known slot
+// rather than in the trailing custom block — "after: file" puts it between
+// the file menu and the edit menu. Menus sharing an anchor keep their
+// declared order, and an anchor on a menu that already carries a well-known
+// tag is ignored (its role fixes its place).
+//
+// The anchor names a canonical SLOT, not a live menu, so placement is stable
+// whether or not the app declares the neighbour: anchoring after "file" in an
+// app with no file menu still lands ahead of edit rather than teleporting.
+//
+// This is how an app departs from the standard layout without leaving the
+// standard vocabulary — it can say "after the file menu", never "third" — so
+// the canonical roles stay the frame of reference even for a bar that is
+// deliberately ordered some other way.
+func (m *Menu) SetAnchor(id string) *Menu {
+	m.anchor = id
+	return m
+}
+
+// Anchor returns the well-known slot this menu is placed after, or "".
+func (m *Menu) Anchor() string { return m.anchor }
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {

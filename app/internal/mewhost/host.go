@@ -412,13 +412,13 @@ bar=new menubar children={%s
 	new menu caption="Viewport" wellknown="view" children={
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
 	}
-	new menu caption="Input" children={
+	new menu caption="Input" after="file" children={
 		new menuitem caption="&Insert Mode [Overwrite]" action=mew.input.insertmode
 	}
-	new menu caption="Search" children={
+	new menu caption="Search" after="file" children={
 		new menuitem caption="&Find..." action=mew.search.find
 	}
-	new menu caption="History" children={
+	new menu caption="History" after="format" children={
 		new menuitem caption="&Undo" action=mew.history.undo
 	}%s
 	new menu caption="Help" wellknown="help" children={

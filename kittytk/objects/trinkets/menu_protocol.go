@@ -72,6 +72,14 @@ func init() {
 				m.SetWellKnownID(s)
 				return nil
 			})).Tip("System role tag: app/file/edit/format/view/window/help"),
+			"after": protocol.NewProperty("string", wprop("after", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("after", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetAnchor(s)
+				return nil
+			})).Tip("Place this untagged menu after a well-known slot (e.g. after=file)"),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*Menu)
