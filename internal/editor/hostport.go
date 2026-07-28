@@ -17,14 +17,31 @@ type HostPort struct {
 	post func(fn func()) bool
 	exec func(cmd string)
 	keys func(action, preferred string) string
+	opt  func(name string) string
 }
 
 // bind attaches the port to a session. Called once at editor construction;
 // Execute before bind (or when the input source cannot post) reports false.
-func (p *HostPort) bind(post func(fn func()) bool, exec func(cmd string), keys func(action, preferred string) string) {
+func (p *HostPort) bind(post func(fn func()) bool, exec func(cmd string), keys func(action, preferred string) string, opt func(name string) string) {
 	p.mu.Lock()
-	p.post, p.exec, p.keys = post, exec, keys
+	p.post, p.exec, p.keys, p.opt = post, exec, keys, opt
 	p.mu.Unlock()
+}
+
+// Option reads an option's current effective value through the same cascade
+// get_option uses, for a host that wants to REFLECT editor state in its own UI
+// — a menu item's checkmark, or a caption that names the value it will change.
+//
+// Like KeyBinding this is a synchronous READ, safe from any goroutine, and
+// empty before the port is bound to a session (and for an unknown name).
+func (p *HostPort) Option(name string) string {
+	p.mu.Lock()
+	opt := p.opt
+	p.mu.Unlock()
+	if opt == nil {
+		return ""
+	}
+	return opt(name)
 }
 
 // KeyBinding resolves the key a mew command is bound to, for a host that wants

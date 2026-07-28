@@ -531,6 +531,17 @@ func (e *Editor) KeyBinding(action, preferred string) string {
 	return e.port.KeyBinding(action, preferred)
 }
 
+// Option reads a mew option's current effective value, for host UI that
+// REFLECTS editor state rather than only driving it — a menu item's checkmark,
+// or a caption naming the value it will change. It answers what mew's own
+// get_option would. Empty before the session starts, and for an unknown name.
+func (e *Editor) Option(name string) string {
+	if e.port == nil {
+		return ""
+	}
+	return e.port.Option(name)
+}
+
 // Execute injects a mew command from a UI thread — the generic seam a host
 // uses to drive this editor from its own affordances (a menu item running
 // buffer_open_file or help_toggle, say). Marshaled onto mew's main loop with

@@ -194,6 +194,7 @@ func (e *Editor) SetHideDesktop(func()) {}
 // is no built-in help window, so QuickHelpOpen is always false.
 func (e *Editor) Execute(string)                        {}
 func (e *Editor) KeyBinding(_, preferred string) string { return preferred }
+func (e *Editor) Option(string) string                  { return "" }
 func (e *Editor) QuickHelpOpen() bool                   { return false }
 
 // --- Event-hook setters (bind) ---

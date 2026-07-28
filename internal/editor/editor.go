@@ -1051,6 +1051,18 @@ func New(cfg Config) (*Editor, error) {
 			e.renderMu.Lock()
 			defer e.renderMu.Unlock()
 			return e.keyBindingDisplay(action, preferred)
+		}, func(name string) string {
+			// Same contract for an option read: the host asks what the editor
+			// currently holds so its own UI can reflect it. Unknown names
+			// answer "" rather than warning — a host reflecting state must not
+			// be able to spray notifications into the editor.
+			e.renderMu.Lock()
+			defer e.renderMu.Unlock()
+			value, ok := e.getOption(e.ViewportManager.GetLastMainViewport(), name)
+			if !ok {
+				return ""
+			}
+			return value
 		})
 	}
 
@@ -2169,6 +2181,12 @@ func (e *Editor) registerCommands() {
 	})
 	ps.RegisterCommand("os_select_all", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.osSelectAll())
+	})
+	// os_exchange swaps the block with the clipboard in one gesture. It is not
+	// os_copy + os_paste: after the copy the clipboard holds the block, so the
+	// outgoing text must be captured before the incoming text lands.
+	ps.RegisterCommand("os_exchange", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.osExchange())
 	})
 
 	ps.RegisterCommand("buffer_insert_file", func(ctx *pawscript.Context) pawscript.Result {
