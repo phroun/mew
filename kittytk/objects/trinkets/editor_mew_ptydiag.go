@@ -79,6 +79,10 @@ func ptyDiagnose() string {
 		}
 	}
 
+	if def := hostPTYDefaultNote(); def != "" {
+		fmt.Fprintf(&b, "  %s\n", def)
+	}
+
 	b.WriteString("\nprobes (each starts a real session through the same hostPTY exec uses):\n")
 	for _, r := range hostPTYProbe() {
 		writeProbe(&b, r)

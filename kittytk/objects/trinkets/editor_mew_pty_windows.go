@@ -51,6 +51,17 @@ import (
 var procUpdateProcThreadAttribute = windows.NewLazySystemDLL("kernel32.dll").
 	NewProc("UpdateProcThreadAttribute")
 
+// The console-ownership calls behind method 10: this process is a GUI binary
+// with no console of its own, which is the one way it differs from every
+// working ConPTY example there is.
+var (
+	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
+	user32               = windows.NewLazySystemDLL("user32.dll")
+	procAllocConsole     = kernel32.NewProc("AllocConsole")
+	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
+	procShowWindow       = user32.NewProc("ShowWindow")
+)
+
 // conPTY is one child bound to one pseudoconsole.
 type conPTY struct {
 	mu    sync.Mutex
@@ -124,9 +135,26 @@ type conOpts struct {
 	noAppName bool
 	// plainPipes skips the pseudoconsole entirely and gives the child
 	// ordinary inherited pipes as its standard handles. Not a terminal — no
-	// VT translation, no console API — but it answers whether the CHILD works
-	// at all, which nothing else here does.
+	// VT translation, no console API, no resize — but on a machine where the
+	// pseudoconsole does not work it is a real, usable shell, which is worth
+	// more than a correct one that says nothing.
 	plainPipes bool
+	// noWindow adds CREATE_NO_WINDOW. A GUI process creating a console child
+	// normally gets a console allocated for it; the pseudoconsole attribute
+	// is supposed to pre-empt that, and this asks whether it does.
+	noWindow bool
+	// nullStd sets STARTF_USESTDHANDLES with all three handles NULL, saying
+	// explicitly "the parent offers none" rather than leaving the child to
+	// inherit whatever a GUI process's std handles are — which is nothing
+	// useful, and may be exactly what it is receiving.
+	nullStd bool
+	// inheritCursor passes PSEUDOCONSOLE_INHERIT_CURSOR to CreatePseudoConsole.
+	inheritCursor bool
+	// allocConsole gives the PARENT a console (hidden) before spawning. This
+	// process is a GUI binary with no console at all, which is the one way it
+	// differs from every working example, and the difference a probe cannot
+	// rule out any other way.
+	allocConsole bool
 }
 
 // ptyMethods are the ways this host knows to make a terminal, selectable per
@@ -145,13 +173,43 @@ var ptyMethods = []struct {
 	{"3", "ConPTY, console pipe ends kept open past CreateProcess", conOpts{keepEnds: true}},
 	{"4", "ConPTY, inherit=TRUE and ends kept", conOpts{inherit: true, keepEnds: true}},
 	{"5", "ConPTY, lpApplicationName=NULL (command line only)", conOpts{noAppName: true}},
-	{"6", "NO pseudoconsole: plain inherited pipes (control, not a terminal)", conOpts{plainPipes: true}},
+	{"6", "NO pseudoconsole: plain inherited pipes — WORKS on Windows 11, not a full terminal", conOpts{plainPipes: true}},
+	{"7", "ConPTY + CREATE_NO_WINDOW", conOpts{noWindow: true}},
+	{"8", "ConPTY + STARTF_USESTDHANDLES, all three NULL", conOpts{nullStd: true}},
+	{"9", "ConPTY + PSEUDOCONSOLE_INHERIT_CURSOR", conOpts{inheritCursor: true}},
+	{"10", "ConPTY after giving THIS process a hidden console (AllocConsole)", conOpts{allocConsole: true}},
+	{"11", "ConPTY, hidden console + inherit + no window (everything at once)",
+		conOpts{allocConsole: true, inherit: true, noWindow: true}},
+}
+
+// defaultMethod is what a request that names none gets, and on Windows that
+// is method 6 — plain pipes — PROVISIONALLY.
+//
+// Not because pipes are the right way to make a terminal; they are not. There
+// is no resize, no console API, and a program that paints a full screen will
+// not. But on the machine this was found on, every pseudoconsole variant
+// fails identically — the child attaches, says nothing, exits 0 — while pipes
+// give a real shell with a banner, a prompt and working commands. A correct
+// terminal that produces nothing is worth less than a limited one that works,
+// and this is reversible the moment the pseudoconsole question is settled:
+// change this one line.
+//
+// MEW_PTY_METHOD overrides it, so any method can be chosen for a whole
+// session without a rebuild by someone who has no Go toolchain to hand.
+func defaultMethod() string {
+	if m := strings.TrimSpace(os.Getenv("MEW_PTY_METHOD")); m != "" {
+		return m
+	}
+	return "6"
 }
 
 // optsForMethod resolves a request's method name. An unknown one falls back
 // to the default rather than refusing: a mistyped method should still get a
 // terminal.
 func optsForMethod(name string) (conOpts, string) {
+	if name == "" {
+		name = defaultMethod()
+	}
 	for _, m := range ptyMethods {
 		if m.Name == name {
 			return m.Opt, m.Desc
@@ -211,9 +269,27 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	}
 	p.note("CreatePipe: ok (raw handles, not os.Pipe)")
 
+	if opt.allocConsole {
+		// A console for THIS process, kept off screen. The pseudoconsole is
+		// supposed to make the parent's own console irrelevant; whether it
+		// does is the last thing this set has not asked.
+		if r, _, e := procAllocConsole.Call(); r == 0 {
+			p.note("AllocConsole: %v (already had one, or refused)", e)
+		} else {
+			p.note("AllocConsole: ok (hidden)")
+			if h, _, _ := procGetConsoleWindow.Call(); h != 0 {
+				procShowWindow.Call(h, 0 /* SW_HIDE */)
+			}
+		}
+	}
+
+	var pcFlags uint32
+	if opt.inheritCursor {
+		pcFlags |= windows.PSEUDOCONSOLE_INHERIT_CURSOR
+	}
 	var hpc windows.Handle
 	err := windows.CreatePseudoConsole(
-		windows.Coord{X: int16(cols), Y: int16(rows)}, inRead, outWrite, 0, &hpc)
+		windows.Coord{X: int16(cols), Y: int16(rows)}, inRead, outWrite, pcFlags, &hpc)
 	// The console duplicated what it needs, so our copies of ITS ends can go
 	// now — holding them keeps both pipes alive past the child's exit, and the
 	// reader then waits for an EOF that has no writer left to come from. Some
@@ -279,6 +355,11 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string, opt
 		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
 		ProcThreadAttributeList: attrs.List(),
 	}
+	if opt.nullStd {
+		si.StartupInfo.Flags |= windows.STARTF_USESTDHANDLES
+		si.StartupInfo.StdInput, si.StartupInfo.StdOutput, si.StartupInfo.StdErr = 0, 0, 0
+		p.note("STARTF_USESTDHANDLES: set, all three NULL")
+	}
 
 	appName, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -305,10 +386,13 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string, opt
 	// attributes: the child reaches its console through the attribute, and
 	// inheriting anything else would only give it references it has no
 	// business holding.
-	p.note("bInheritHandles: %v", opt.inherit)
+	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT)
+	if opt.noWindow {
+		flags |= windows.CREATE_NO_WINDOW
+	}
+	p.note("bInheritHandles: %v, creation flags: 0x%x", opt.inherit, flags)
 	var pi windows.ProcessInformation
-	err = windows.CreateProcess(appName, cmdLine, nil, nil, opt.inherit,
-		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
+	err = windows.CreateProcess(appName, cmdLine, nil, nil, opt.inherit, flags,
 		envBlock(env), dirPtr, &si.StartupInfo, &pi)
 	if err != nil {
 		p.note("CreateProcess: %v", err)
@@ -530,7 +614,21 @@ func hostPTYProbe() []probeResult {
 }
 
 // pipeChild runs a process with ordinary inherited pipes for its standard
-// handles and no console of any kind — the control case for the probe set.
+// handles and no console of any kind.
+//
+// It began as the control case and became the working configuration on a
+// machine whose pseudoconsole a child cannot use. That promotion brings two
+// obligations a pseudoconsole would have discharged for us, and without them
+// the shell appears and cannot be typed at:
+//
+// A CONSOLE ECHOES. Nothing else does. A child reading a pipe never sees the
+// keystrokes as keystrokes and has nothing to echo back, so what is typed
+// must be put on screen here or the person types blind.
+//
+// AND A CONSOLE HAS A LINE DISCIPLINE. Enter at a terminal is a carriage
+// return, and the terminal turns it into the line ending the reader wants. A
+// pipe delivers exactly the bytes written, so a bare CR arrives as no line at
+// all: the shell waits forever for an end-of-line that was already sent.
 type pipeChild struct {
 	mu     sync.Mutex
 	out    windows.Handle
@@ -541,11 +639,18 @@ type pipeChild struct {
 	ended  bool
 	closed bool
 	reaped chan struct{}
+
+	// stream carries what the reader saw AND what was echoed, in the order it
+	// happened, so a typed line appears where it was typed rather than after
+	// whatever the child says next. rest holds a chunk part-way delivered.
+	stream chan []byte
+	rest   []byte
 }
 
 func newPipeChild(path string, args []string, dir string, env []string) (*pipeChild, error) {
-	p := &pipeChild{reaped: make(chan struct{})}
+	p := &pipeChild{reaped: make(chan struct{}), stream: make(chan []byte, 64)}
 	p.note("no CreatePseudoConsole: plain pipes as std handles")
+	p.note("local echo ON and CR translated to CRLF (a pipe has neither)")
 
 	sa := &windows.SecurityAttributes{InheritHandle: 1}
 	sa.Length = uint32(unsafe.Sizeof(*sa))
@@ -589,6 +694,20 @@ func newPipeChild(path string, args []string, dir string, env []string) (*pipeCh
 	windows.CloseHandle(pi.Thread)
 	p.in, p.out, p.proc = inWrite, outRead, pi.Process
 
+	// One goroutine owns the pipe read, so Read can take from the same queue
+	// the echo goes into and the two stay in order.
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			var n uint32
+			if err := windows.ReadFile(outRead, buf, &n, nil); err != nil || n == 0 {
+				break
+			}
+			p.emit(append([]byte(nil), buf[:n]...))
+		}
+		close(p.stream)
+	}()
+
 	go func() {
 		defer close(p.reaped)
 		windows.WaitForSingleObject(pi.Process, windows.INFINITE)
@@ -602,33 +721,37 @@ func newPipeChild(path string, args []string, dir string, env []string) (*pipeCh
 	return p, nil
 }
 
+// emit queues bytes for the reader, dropping them rather than blocking: a
+// display that has stopped consuming must not be able to wedge the child.
+func (p *pipeChild) emit(b []byte) {
+	defer func() { recover() }() // the stream may have closed under us
+	select {
+	case p.stream <- b:
+	default:
+	}
+}
+
 func (p *pipeChild) note(format string, a ...any) {
 	p.trace = append(p.trace, fmt.Sprintf(format, a...))
 }
 func (p *pipeChild) Diagnostics() []string { return p.trace }
 
 func (p *pipeChild) Read(b []byte) (int, error) {
-	p.mu.Lock()
-	closed, h := p.closed, p.out
-	p.mu.Unlock()
-	if closed || h == 0 {
-		return 0, io.EOF
-	}
-	var n uint32
-	if err := windows.ReadFile(h, b, &n, nil); err != nil {
-		if err == windows.ERROR_BROKEN_PIPE {
+	if len(p.rest) == 0 {
+		chunk, ok := <-p.stream
+		if !ok {
 			return 0, io.EOF
 		}
-		return 0, err
+		p.rest = chunk
 	}
-	if n == 0 {
-		return 0, io.EOF
-	}
-	return int(n), nil
+	n := copy(b, p.rest)
+	p.rest = p.rest[n:]
+	return n, nil
 }
 
-// Write sends to the child's stdin, and Resize is a courtesy: a plain pipe
-// has no size to set, and saying so is more honest than pretending.
+// Write sends to the child's stdin, doing the two things the absent console
+// would have done: turning Enter into a line ending the reader will accept,
+// and putting what was typed on screen.
 func (p *pipeChild) Write(b []byte) (int, error) {
 	p.mu.Lock()
 	closed, h := p.closed, p.in
@@ -636,13 +759,31 @@ func (p *pipeChild) Write(b []byte) (int, error) {
 	if closed || h == 0 {
 		return 0, io.ErrClosedPipe
 	}
-	var n uint32
-	if err := windows.WriteFile(h, b, &n, nil); err != nil {
-		return int(n), err
+
+	// CR -> CRLF, and a CR already followed by LF left alone.
+	var outb []byte
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\r' {
+			outb = append(outb, '\r', '\n')
+			if i+1 < len(b) && b[i+1] == '\n' {
+				i++
+			}
+			continue
+		}
+		outb = append(outb, b[i])
 	}
-	return int(n), nil
+
+	var n uint32
+	if err := windows.WriteFile(h, outb, &n, nil); err != nil {
+		return 0, err
+	}
+	p.emit(append([]byte(nil), outb...)) // the echo a console would have done
+	return len(b), nil
 }
 
+// Resize is a courtesy: a plain pipe has no size to set, and saying so is
+// more honest than pretending. It is also the clearest thing this
+// configuration gives up.
 func (p *pipeChild) Resize(cols, rows int) error { return nil }
 
 func (p *pipeChild) ExitStatus() (int, bool) {
@@ -681,4 +822,19 @@ func (p *pipeChild) Close() error {
 		windows.CloseHandle(in)
 	}
 	return nil
+}
+
+// hostPTYDefaultNote tells the report which way exec will make a terminal
+// when nothing asks for a particular one, and how to change it. A diagnostic
+// that does not say what the default IS leaves its reader guessing which of
+// its own probes matters.
+func hostPTYDefaultNote() string {
+	_, desc := optsForMethod("")
+	env := ""
+	if v := strings.TrimSpace(os.Getenv("MEW_PTY_METHOD")); v != "" {
+		env = " (from MEW_PTY_METHOD=" + v + ")"
+	}
+	return "exec default: method " + defaultMethod() + env + " — " + desc +
+		"\n  choose another for one session with MEW_PTY_METHOD, or per command:" +
+		" exec \"cmd.exe\", \"1\""
 }

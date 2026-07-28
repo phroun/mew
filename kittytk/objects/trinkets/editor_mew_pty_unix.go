@@ -153,3 +153,7 @@ func hostPTYProbe() []probeResult {
 	out = append(out, runProbe("sh (interactive, the shape exec uses)", s2, err2))
 	return out
 }
+
+// hostPTYDefaultNote: POSIX has one way to make a terminal, so there is
+// nothing to say about which one is in use.
+func hostPTYDefaultNote() string { return "" }
