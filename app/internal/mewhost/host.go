@@ -578,6 +578,9 @@ bar=new menubar children={%s
 	// advertised with a key it does not run, or run a command it does not
 	// advertise.
 	for action, spec := range menuActions {
+		if action == rawKeyAction {
+			continue // registered by hand below: it does more than run a command
+		}
 		cmd := spec.cmd // one binding per closure
 		commands.Register(action, func() {
 			if ed, ok := rootMewEditor(application); ok {
@@ -585,7 +588,7 @@ bar=new menubar children={%s
 			}
 		})
 	}
-	commands.Register("mew.edit.rawkey", func() {
+	commands.Register(rawKeyAction, func() {
 		desktop.ActivatePassNextKeyToTrinket()
 		// ...and one level deeper. Stopping the HOST from eating the key only
 		// gets it as far as mew, which then eats it as a mew binding — and a
@@ -594,7 +597,7 @@ bar=new menubar children={%s
 		// down when a terminal has the focus, and behaves exactly as before
 		// when one does not.
 		if ed, ok := rootMewEditor(application); ok {
-			ed.Execute("raw_key_input")
+			ed.Execute(menuActions[rawKeyAction].cmd)
 		}
 	})
 	// Viewport ▸ KittyTK Desktop toggles the HOST's desktop, not anything in
@@ -651,6 +654,11 @@ type menuAction struct {
 // synthesizes those itself against the FOCUSED trinket, with its own host
 // shortcuts and enable/disable logic (see appendStandardEditItems). Routing
 // them through the root editor here would quietly lose all three.
+// rawKeyAction is Raw Key Input's id, named because two places need to agree
+// about it: the table it takes its key from, and the hand-written handler that
+// replaces the one the table would have generated.
+const rawKeyAction = "mew.edit.rawkey"
+
 var menuActions = map[string]menuAction{
 	// File Buffer
 	"mew.buffer.new":       {"buffer_new", "^B E"},
@@ -730,6 +738,11 @@ var menuActions = map[string]menuAction{
 	"mew.input.pdi":       {`insert_bidi_control "pdi"`, ""},
 	"mew.input.rawbyte":   {"insert_raw_byte", `esc \`},
 	"mew.input.rune":      {"insert_rune", ""},
+	// Raw Key Input is in the table for its KEY: the item advertises whatever
+	// raw_key_input is bound to, live, like every other item. Its handler is
+	// registered by hand rather than generated from here, because it does one
+	// thing more than run the command (see the registration).
+	"mew.edit.rawkey": {"raw_key_input", `s-\`},
 	// History. The undo-TREE items from the template (Undo History, Rewind to
 	// Last Branch, Fast Forward to Leaf/Branch, Show Full History) are absent
 	// on purpose: garland has the fork model under it, but Buffer exposes only

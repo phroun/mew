@@ -192,3 +192,36 @@ func TestSplitArgs(t *testing.T) {
 		t.Errorf("launch = %v, want %v", launch, want)
 	}
 }
+
+// Raw Key Input advertises a key like every other item: it is in menuActions,
+// so syncPlaceholderShortcuts resolves it live at menu-open time. Its handler
+// is still the hand-written one — it arms the desktop AND mew — and it runs
+// the command the table names, so the item cannot advertise one key and run
+// something else.
+func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
+	spec, ok := menuActions[rawKeyAction]
+	if !ok {
+		t.Fatalf("%s is not in menuActions, so its menu item shows no key", rawKeyAction)
+	}
+	if spec.cmd != "raw_key_input" {
+		t.Errorf("cmd = %q, want raw_key_input", spec.cmd)
+	}
+	if spec.key != `s-\` {
+		t.Errorf("preferred key = %q, want the shipped s-\\", spec.key)
+	}
+
+	// And the item exists to carry it.
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+	found := false
+	for _, m := range buildMenus(desktop, application, true) {
+		for _, it := range m.Items() {
+			if it.ID() == rawKeyAction {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("no menu item carries the Raw Key Input action")
+	}
+}

@@ -693,3 +693,13 @@ func TestRawKeyInputWithoutATerminalIsOrdinary(t *testing.T) {
 		t.Errorf("buffer = %q, want the declined key to fall through to mew", got)
 	}
 }
+
+// The shipped default binds raw_key_input, and it resolves through the same
+// lookup a host menu uses to advertise a key — so the item in the Input menu
+// and the key that actually runs it cannot drift apart.
+func TestRawKeyInputHasAShippedBinding(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	if got := e.keyBindingDisplay("raw_key_input", `s-\`); got != `s-\` {
+		t.Errorf("raw_key_input resolves to %q, want the shipped s-\\", got)
+	}
+}
