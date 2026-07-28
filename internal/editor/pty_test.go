@@ -515,9 +515,9 @@ func TestPTYMouseForwarding(t *testing.T) {
 	var gotID string
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
-		Mouse: func(id string, ev TerminalMouse) []byte {
+		Mouse: func(id string, ev TerminalMouse) ([]byte, bool) {
 			gotID, got = id, ev
-			return []byte("\x1b[<0;1;1M")
+			return []byte("\x1b[<0;1;1M"), true
 		},
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
@@ -568,7 +568,7 @@ func TestPTYMouseEventShapes(t *testing.T) {
 		var got TerminalMouse
 		e.Config.TerminalSurfaces = TerminalHooks{
 			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
-			Mouse: func(_ string, ev TerminalMouse) []byte { got = ev; return []byte{'x'} },
+			Mouse: func(_ string, ev TerminalMouse) ([]byte, bool) { got = ev; return []byte{'x'}, true },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
 		if !e.execRequest("bash", "") {
@@ -596,7 +596,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 		asked := 0
 		e.Config.TerminalSurfaces = TerminalHooks{
 			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
-			Mouse: func(string, TerminalMouse) []byte { asked++; return reply },
+			Mouse: func(string, TerminalMouse) ([]byte, bool) { asked++; return reply, len(reply) > 0 },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
 		if !e.execRequest("bash", "") {
@@ -942,5 +942,37 @@ func TestExecCarriesTheMethod(t *testing.T) {
 	}
 	if !hasNotification(e2, "Started bash") || hasNotification(e2, "method") {
 		t.Error("a default-method start should not mention a method")
+	}
+}
+
+// A terminal whose application is NOT tracking the mouse still wants the
+// event: its own scrollbar, scrollback and selection are all worked by the
+// mouse. The host says handled with no bytes, and mew must consume it rather
+// than falling through to its own click handling.
+func TestPTYMouseHandledWithoutBytes(t *testing.T) {
+	e, w := newTestEditor(t, "hello\n")
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
+	stub := newStubPTY()
+	asked := 0
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		// The shape of a terminal using the event itself.
+		Mouse: func(string, TerminalMouse) ([]byte, bool) { asked++; return nil, true },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	e.handleMouseKey("Mouse@6,3")
+	e.handleMouseKey("MouseLeftPress")
+	if asked != 1 {
+		t.Fatalf("host asked %d times, want once", asked)
+	}
+	if e.dragSel.active {
+		t.Error("mew ran its own press handling for an event the terminal took")
+	}
+	if stub.sent() != "" {
+		t.Errorf("nothing should reach the child, sent %q", stub.sent())
 	}
 }

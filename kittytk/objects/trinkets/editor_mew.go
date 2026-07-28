@@ -762,6 +762,10 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	t := NewPurfecTerm()
 	t.Init(t)
 	t.SetEditorMode(false)
+	// It is a display, not a focus participant: its focus is DECLARED by this
+	// editor (SetEmbeddedFocus) rather than won from the toolkit. Saying so
+	// keeps a hosted mouse press from marking it focused behind our back.
+	t.SetFocusPolicy(core.NoFocus)
 	// The child measures ITS OWN font to size its grid, so it has to be the
 	// same font this editor measures for its columns. Different fonts mean
 	// two pitches: the rectangle would be placed correctly and the child
@@ -838,16 +842,21 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 //
 // The gating mirrors the trinket's own handlers: 1000 reports buttons only,
 // 1002 adds drags, 1003 adds bare motion.
-func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
+func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
 	e.termMu.Unlock()
 	if s == nil || s.term == nil {
-		return nil
+		return nil, false
 	}
 	mode, enc := s.term.mouseTracking()
 	if mode == 0 {
-		return nil // the application never asked for the mouse
+		// The application does not want the mouse, which does NOT mean nobody
+		// does: the terminal itself has a scrollbar, a scrollback and a
+		// selection, and every one of those is worked by the mouse. A hosted
+		// child receives no toolkit events at all — it is not in the tree —
+		// so if this does not hand them over, none of that exists.
+		return nil, s.hostedMouse(ev)
 	}
 
 	btn, press := 0, true
@@ -860,12 +869,12 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
 	case mew.TerminalMouseMotion:
 		if ev.Button == mew.TerminalMouseButtonNone {
 			if mode < 1003 {
-				return nil // only all-motion tracking reports a bare move
+				return nil, false // only all-motion tracking reports a bare move
 			}
 			btn = purfecterm.MouseButtonNone
 		} else {
 			if mode < 1002 {
-				return nil // 1000 reports no motion at all
+				return nil, false // 1000 reports no motion at all
 			}
 			btn, _ = purfMouseButton(termMouseButton(ev.Button))
 		}
@@ -879,7 +888,7 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
 	case mew.TerminalMouseScrollRight:
 		btn = mouseScrollRightBtn
 	default:
-		return nil
+		return nil, false
 	}
 
 	if ev.Shift {
@@ -891,7 +900,40 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
 	if ev.Ctrl {
 		btn |= purfecterm.MouseModControl
 	}
-	return purfecterm.EncodeMouseEvent(btn, ev.Col, ev.Row, press, enc)
+	return purfecterm.EncodeMouseEvent(btn, ev.Col, ev.Row, press, enc), true
+}
+
+// hostedMouse hands one event to the child terminal as the toolkit event it
+// would have received had it been in the tree, so its own handling runs: the
+// scrollbar's hover and drag, the wheel over scrollback, selection.
+//
+// The cell is turned back into units at the MIDDLE of the cell, because what
+// this feeds are hit tests — the scrollbar lane is a region in units, and an
+// event on a boundary is an event that lands on neither side of it.
+func (s *termSurface) hostedMouse(ev mew.TerminalMouse) bool {
+	t := s.term
+	cw, ch := t.cellDims()
+	x := core.Unit(ev.Col-1)*cw + cw/2
+	y := core.Unit(ev.Row-1)*ch + ch/2
+	btn := termMouseButton(ev.Button)
+
+	switch ev.Action {
+	case mew.TerminalMousePress:
+		return t.HandleMousePress(core.MousePressEvent{X: x, Y: y, Button: btn})
+	case mew.TerminalMouseRelease:
+		return t.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: y, Button: btn})
+	case mew.TerminalMouseMotion:
+		return t.HandleMouseMove(core.MouseMoveEvent{X: x, Y: y})
+	case mew.TerminalMouseScrollUp:
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaY: -1})
+	case mew.TerminalMouseScrollDown:
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaY: 1})
+	case mew.TerminalMouseScrollLeft:
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaX: -1})
+	case mew.TerminalMouseScrollRight:
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaX: 1})
+	}
+	return false
 }
 
 // terminalKey answers what one KEY means to a session's terminal: the bytes

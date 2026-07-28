@@ -229,16 +229,19 @@ type TerminalHooks struct {
 	Place func(surfaces []TerminalSurface)
 	Close func(id string)
 
-	// Mouse asks what one mouse event MEANS to the surface's terminal, and
-	// returns the bytes the child should receive — nil when that application
-	// is not tracking the mouse, or when this event is one its tracking mode
-	// does not report. mew writes what comes back to the session, so every
-	// byte a child receives still leaves through the one door, exactly as
-	// keystrokes do.
+	// Mouse offers one mouse event to the surface's terminal and reports what
+	// became of it: bytes for the child process, and whether the terminal
+	// took the event at all.
 	//
-	// A translation and not a delivery: the host owns the emulator and so
-	// knows the tracking mode, but the session belongs to mew.
-	Mouse func(id string, ev TerminalMouse) []byte
+	// Two answers rather than one, because there are three outcomes. An
+	// application TRACKING the mouse wants a report, so bytes come back and
+	// mew writes them to the session — every byte a child receives still
+	// leaves by the one door, exactly as keystrokes do. An application NOT
+	// tracking it leaves the mouse to the terminal itself, which has its own
+	// uses for it — a scrollbar, scrollback, selection — so the host handles
+	// it locally and says handled with no bytes. And an event the terminal
+	// wants nothing to do with reports neither, and falls through to mew.
+	Mouse func(id string, ev TerminalMouse) (data []byte, handled bool)
 
 	// Key asks what one KEY means to the surface's terminal — the bytes a
 	// child process would receive for it — and returns nil for a name that
@@ -761,12 +764,10 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 // before mew's own mouse semantics see it. Reports true when the child took
 // it — when the host answered with bytes and they went out on the session.
 //
-// A "no" is the ordinary case and falls straight through: an application that
-// never turned mouse tracking on has no opinion about the mouse, and mew's own
-// handling (which does nearly nothing over an empty terminal buffer) resumes.
-// That is also the seam where terminal-side selection and scrollback will hang
-// once the scrollback lands, because that is exactly the mouse a
-// non-tracking terminal owns.
+// A "no" falls straight through to mew's own handling. It means neither the
+// child nor the terminal wanted the event — not that the child was not
+// tracking the mouse, which is the case where the TERMINAL takes it for its
+// own scrollbar and scrollback.
 //
 // x and y are 1-based screen cells (e.mouseX/e.mouseY, already updated by the
 // caller). Only the FOCUSED viewport forwards, matching every other input rule
@@ -798,14 +799,19 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 		return false
 	}
 	ev.Col, ev.Row = col, row
-	data := e.Config.TerminalSurfaces.Mouse(st.id, ev)
-	if len(data) == 0 {
+	data, handled := e.Config.TerminalSurfaces.Mouse(st.id, ev)
+	if !handled {
 		return false
 	}
-	if _, err := st.sess.Write(data); err != nil {
-		e.ShowWarning("Session write failed: " + err.Error())
-		return false
+	if len(data) > 0 {
+		if _, err := st.sess.Write(data); err != nil {
+			e.ShowWarning("Session write failed: " + err.Error())
+			return false
+		}
 	}
+	// Handled with no bytes: the terminal used the event itself (its
+	// scrollbar, its scrollback) and there is nothing for the child.
+	e.RequestRender()
 	return true
 }
 
