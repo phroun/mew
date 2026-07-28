@@ -185,6 +185,14 @@ func init() {
 				m.Separator = b
 				return nil
 			})).Tip("Render as a separator line").Def("false"),
+			"wellknown": protocol.NewProperty("string", wprop("wellknown", func(_ *protocol.BindContext, m *MenuItem, v *protocol.Value, f protocol.FlagState) error {
+				s, err := protocol.AsString("wellknown", v, f)
+				if err != nil {
+					return err
+				}
+				m.SetWellKnownID(s)
+				return nil
+			})).Tip("System item role: cut/copy/paste/selectall - this item BECOMES the standard one"),
 		},
 		Append: func(parent, child any) error {
 			it := parent.(*MenuItem)

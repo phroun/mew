@@ -297,6 +297,35 @@ const (
 	MenuIDHelp   = "help"   // Help (kept last, after the Window menu)
 )
 
+// Well-known ITEM roles, for the standard items the system would otherwise
+// synthesize into an edit menu. An app that wants those items under its own
+// captions, or in its own position among its own items, declares them itself
+// and tags each with its role: the system then wires the standard BEHAVIOUR
+// onto the app's item - the focused-trinket handler, the host shortcut, and
+// the enable/disable rules - instead of prepending a second set.
+//
+// This is the item-level half of the well-known contract: a menu's tag says
+// what a MENU is for, an item's tag says what an ITEM is for, and in both
+// cases the app keeps naming and placement while the system keeps behaviour.
+// A role the app does not claim is synthesized as before, so claiming some
+// and not others is fine.
+const (
+	ItemIDCut       = "cut"       // Cut to the system clipboard
+	ItemIDCopy      = "copy"      // Copy to the system clipboard
+	ItemIDPaste     = "paste"     // Paste from the system clipboard
+	ItemIDSelectAll = "selectall" // Select the focused trinket's whole content
+)
+
+// standardEditItemRole reports whether id is a well-known edit-item role the
+// system supplies behaviour for.
+func standardEditItemRole(id string) bool {
+	switch id {
+	case ItemIDCut, ItemIDCopy, ItemIDPaste, ItemIDSelectAll:
+		return true
+	}
+	return false
+}
+
 // Menu represents a dropdown menu.
 type Menu struct {
 	core.TrinketBase

@@ -2020,14 +2020,33 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 // target reports CutEnabled()==false. Callers wire the closure to the menu's
 // OnAboutToShow so the state tracks focus (which rests on the previous active
 // window while the menu is open).
-func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
+//
+// adopted holds items the app declared with a well-known ITEM role (ItemIDCut
+// and friends). Those are wired in place and NOT added here: the app has said
+// "this item of mine IS the Cut item", so it keeps the app's caption and the
+// app's position among its own items, and only the behaviour - handler, host
+// shortcut, enable/disable - comes from here. A role the app did not claim is
+// still synthesized and prepended as usual, so claiming some and not others
+// works.
+func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuItem) func() {
 	shortcut := func(it *MenuItem, action string) {
 		if keys := core.DefaultKeyBindings.Keys(action); len(keys) > 0 {
 			it.SetShortcut(core.NewShortcut(keys[0]))
 		}
 	}
+	// claim returns the app's item for a role, or a fresh one marked for
+	// prepending in the standard block.
+	var synthesized []*MenuItem // in canonical order, minus any adopted
+	claim := func(role, caption string) *MenuItem {
+		if it := adopted[role]; it != nil {
+			return it
+		}
+		it := NewMenuItem(caption)
+		synthesized = append(synthesized, it)
+		return it
+	}
 
-	cut := NewMenuItem("Cu&t")
+	cut := claim(ItemIDCut, "Cu&t")
 	shortcut(cut, core.ActionCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
@@ -2038,9 +2057,8 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 			}
 		}
 	})
-	menu.AddItem(cut)
 
-	copyIt := NewMenuItem("&Copy")
+	copyIt := claim(ItemIDCopy, "&Copy")
 	shortcut(copyIt, core.ActionCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
@@ -2051,27 +2069,34 @@ func (d *Desktop) appendStandardEditItems(menu *Menu) func() {
 			}
 		}
 	})
-	menu.AddItem(copyIt)
 
-	pasteIt := NewMenuItem("&Paste")
+	pasteIt := claim(ItemIDPaste, "&Paste")
 	shortcut(pasteIt, core.ActionPaste)
 	pasteIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.Paste()
 		}
 	})
-	menu.AddItem(pasteIt)
 
-	menu.AddSeparator()
+	// The separator sits between the clipboard trio and Select All, so it
+	// belongs to the synthesized block only - and only when that block still
+	// holds items on both sides of it.
+	trio := len(synthesized)
 
-	selectAll := NewMenuItem("Select &All")
+	selectAll := claim(ItemIDSelectAll, "Select &All")
 	shortcut(selectAll, core.ActionSelectAll)
 	selectAll.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.SelectAll()
 		}
 	})
-	menu.AddItem(selectAll)
+
+	for i, it := range synthesized {
+		if i == trio && trio > 0 {
+			menu.AddSeparator()
+		}
+		menu.AddItem(it)
+	}
 
 	update := func() {
 		ea, editable := d.focusedEditActor()
@@ -2123,9 +2148,23 @@ func (d *Desktop) systemEditMenu(app ApplicationProvider, declared *Menu) *Menu 
 	}
 
 	if auto {
-		update := d.appendStandardEditItems(menu)
+		// Items the app tagged with a standard role are wired in place rather
+		// than duplicated: its caption and its position, the system's
+		// behaviour. First tag for a role wins, so a stray second one stays an
+		// ordinary item instead of silently stealing the binding.
+		adopted := map[string]*MenuItem{}
+		for _, it := range custom {
+			if role := it.WellKnownID(); standardEditItemRole(role) && adopted[role] == nil {
+				adopted[role] = it
+			}
+		}
+		update := d.appendStandardEditItems(menu, adopted)
 		if len(custom) > 0 {
-			menu.AddSeparator()
+			// No leading separator when the app claimed every role: there is
+			// no synthesized block above to separate from.
+			if len(menu.Items()) > 0 {
+				menu.AddSeparator()
+			}
 			for _, it := range custom {
 				menu.AddItem(it)
 			}
