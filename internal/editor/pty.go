@@ -225,8 +225,17 @@ type TerminalMouse struct {
 //
 // Every hook is called on mew's main loop.
 type TerminalHooks struct {
-	Open  func(id string, cols, rows int)
-	Feed  func(id string, p []byte)
+	Open func(id string, cols, rows int)
+
+	// Feed hands the session's output to the emulator and returns what the
+	// emulator ANSWERED — a terminal is not a one-way device. A program asks
+	// it questions in the output stream (DSR "where is the cursor", DA "what
+	// are you") and the emulator's replies are input the program then blocks
+	// waiting for. They return here, synchronously, and mew writes them to
+	// the session before anything else happens — not through the event queue,
+	// which is the main loop's own plumbing and must never be posted to FROM
+	// the main loop: a full queue there is the loop waiting on itself.
+	Feed  func(id string, p []byte) (reply []byte)
 	Place func(surfaces []TerminalSurface)
 	Close func(id string)
 
@@ -489,7 +498,13 @@ func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
 		st.head = append(st.head, chunk[:n]...)
 	}
 	e.ptyMu.Unlock()
-	e.Config.TerminalSurfaces.Feed(st.id, chunk)
+	if reply := e.Config.TerminalSurfaces.Feed(st.id, chunk); len(reply) > 0 {
+		// The emulator answered a query in this chunk. The child is blocked
+		// waiting for exactly these bytes.
+		if _, err := st.sess.Write(reply); err != nil {
+			e.ShowWarning("Session write failed: " + err.Error())
+		}
+	}
 }
 
 // notifyTerminalSurfaces republishes where every VISIBLE session should draw.

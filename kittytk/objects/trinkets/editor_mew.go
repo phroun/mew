@@ -839,17 +839,35 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	e.termMu.Unlock()
 }
 
-// terminalFeed hands a session's bytes to its child, verbatim. This is where
-// the emulation actually happens: PurfecTerm parses the escape stream.
-func (e *Editor) terminalFeed(id string, p []byte) {
+// terminalFeed hands a session's bytes to its child, verbatim — this is where
+// the emulation happens — and returns what the emulator ANSWERED. A terminal
+// is interrogated through its output stream (DSR, DA), and the replies its
+// parser produces arrive at the same input sink as everything else; collected
+// here and returned, they reach the child process synchronously through mew,
+// before the event queue is involved at all. Posting them to the queue from
+// this handler — which RUNS on the loop that drains the queue — is how a
+// guest's startup probe once wedged the whole editor.
+func (e *Editor) terminalFeed(id string, p []byte) []byte {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
-	e.termMu.Unlock()
 	if s == nil || s.term == nil {
-		return
+		e.termMu.Unlock()
+		return nil
 	}
-	s.term.Feed(p)
+	s.draining = true
+	s.pending = nil
+	t := s.term
+	e.termMu.Unlock()
+
+	t.Feed(p)
 	e.Update()
+
+	e.termMu.Lock()
+	reply := s.pending
+	s.pending = nil
+	s.draining = false
+	e.termMu.Unlock()
+	return reply
 }
 
 // terminalPlace receives the COMPLETE set of visible surfaces after each mew

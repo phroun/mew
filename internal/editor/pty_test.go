@@ -182,7 +182,7 @@ func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
 	var placed []TerminalSurface
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open:  func(string, int, int) {},
-		Feed:  func(string, []byte) {},
+		Feed:  func(string, []byte) []byte { return nil },
 		Place: func(s []TerminalSurface) { placed = s },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -224,7 +224,7 @@ func TestPTYOutputForwardsRawBytesToHost(t *testing.T) {
 	var openedID, fedID string
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open: func(id string, cols, rows int) { openedID = id },
-		Feed: func(id string, p []byte) { fedID = id; fed = append(fed, p...) },
+		Feed: func(id string, p []byte) []byte { fedID = id; fed = append(fed, p...); return nil },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
 	if !e.execRequest("bash", "") {
@@ -258,7 +258,7 @@ func TestTerminalSurfacesPublishTheVisibleSet(t *testing.T) {
 	var placed [][]TerminalSurface
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open:  func(string, int, int) {},
-		Feed:  func(string, []byte) {},
+		Feed:  func(string, []byte) []byte { return nil },
 		Place: func(s []TerminalSurface) { placed = append(placed, s) },
 		Close: func(string) {},
 	}
@@ -481,7 +481,7 @@ func TestTerminalSurfaceWithdrawnWhenViewportOffScreen(t *testing.T) {
 	var placed [][]TerminalSurface
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open:  func(string, int, int) {},
-		Feed:  func(string, []byte) {},
+		Feed:  func(string, []byte) []byte { return nil },
 		Place: func(s []TerminalSurface) { placed = append(placed, s) },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -514,7 +514,7 @@ func TestPTYMouseForwarding(t *testing.T) {
 	var got TerminalMouse
 	var gotID string
 	e.Config.TerminalSurfaces = TerminalHooks{
-		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 		Mouse: func(id string, ev TerminalMouse) ([]byte, bool) {
 			gotID, got = id, ev
 			return []byte("\x1b[<0;1;1M"), true
@@ -567,7 +567,7 @@ func TestPTYMouseEventShapes(t *testing.T) {
 		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
 		var got TerminalMouse
 		e.Config.TerminalSurfaces = TerminalHooks{
-			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+			Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 			Mouse: func(_ string, ev TerminalMouse) ([]byte, bool) { got = ev; return []byte{'x'}, true },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -595,7 +595,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
 		asked := 0
 		e.Config.TerminalSurfaces = TerminalHooks{
-			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+			Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 			Mouse: func(string, TerminalMouse) ([]byte, bool) { asked++; return reply, len(reply) > 0 },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -634,7 +634,7 @@ func TestRawKeyInputGoesToTheChild(t *testing.T) {
 	stub := newStubPTY()
 	var asked string
 	e.Config.TerminalSurfaces = TerminalHooks{
-		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 		Key: func(_ string, key string) []byte { asked = key; return []byte("\x1b[21~") },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
@@ -683,7 +683,7 @@ func TestRawKeyInputWithoutATerminalIsOrdinary(t *testing.T) {
 	e2, w2 := newTestEditor(t, "ab\n")
 	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	e2.Config.TerminalSurfaces = TerminalHooks{
-		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 		Key: func(string, string) []byte { return nil },
 	}
 	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -807,7 +807,7 @@ func TestSilentSessionRecordsItself(t *testing.T) {
 	defer os.Chdir(old)
 
 	sess := &stubTraced{stubPTY: newStubPTY(), trace: []string{"CreatePipe: ok", "CreateProcess: ok, pid 42"}}
-	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil }}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return sess, nil }
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
@@ -846,7 +846,7 @@ func TestTalkativeSessionRecordsNothing(t *testing.T) {
 	}
 	defer os.Chdir(old)
 
-	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil }}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
@@ -876,7 +876,7 @@ func TestShortSessionRecordsWhatItSaid(t *testing.T) {
 	}
 	defer os.Chdir(old)
 
-	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil }}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
@@ -955,7 +955,7 @@ func TestPTYMouseHandledWithoutBytes(t *testing.T) {
 	stub := newStubPTY()
 	asked := 0
 	e.Config.TerminalSurfaces = TerminalHooks{
-		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 		// The shape of a terminal using the event itself.
 		Mouse: func(string, TerminalMouse) ([]byte, bool) { asked++; return nil, true },
 	}
