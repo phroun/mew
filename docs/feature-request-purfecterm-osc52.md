@@ -1,5 +1,23 @@
 # Feature request: OSC 52 clipboard integration for PurfecTerm
 
+> **Implemented, as an applyable patch.** See
+> [`upstream/0002-purfecterm-osc52-clipboard.patch`](upstream/0002-purfecterm-osc52-clipboard.patch),
+> which applies to v0.2.27 **after**
+> [`upstream/0001-purfecterm-csi-equals-prefix.patch`](upstream/0001-purfecterm-csi-equals-prefix.patch)
+> (`git am 0001-*.patch 0002-*.patch`). It follows the design below with two
+> deliberate departures, both noted inline: `ClipboardWrite` is a `*bool` so
+> the zero `Options` keeps the safe default, and the parser gained a general
+> `SetResponseSink` rather than a private reply path — DSR and DA are stubbed
+> with *"would need to send response"* and want the same channel. The parser
+> bug at the end ("A parser bug worth fixing in the same visit") is fixed in
+> the same patch, because OSC 52 could not work without it. The GTK and Qt
+> widgets are **not** wired — each needs its own few-line bridge from the
+> callback to its platform clipboard.
+>
+> Verified against a clean v0.2.27: both patches apply, `go build`, and
+> `go test ./ ./cli` pass, with an end-to-end run through `cli.Terminal` in
+> embedded mode covering write, multi-selection, clear and query.
+
 *From the mew/KittyTK integration work, July 2026. Written for the PurfecTerm
 maintainers as a general-purpose feature request — the motivating case is a
 guest editor inside a hosted terminal, but the design below is for every

@@ -99,5 +99,13 @@ if b == '!' || (b >= 0x3C && b <= 0x3F) {
 
 The same "leaks the tail as text" shape appears in `handleOSCString`, which
 treats a bare ESC as the terminator and returns to ground without consuming
-the `\` of a real ST. Worth fixing in the same visit — see the OSC 52
-feature-request document.
+the `\` of a real ST.
+
+That one is **fixed in the follow-on patch**,
+[`0002-purfecterm-osc52-clipboard.patch`](0002-purfecterm-osc52-clipboard.patch),
+which applies on top of this one and also implements OSC 52 itself (it had to:
+the sequence cannot work while ST drops a byte). Apply them in order:
+
+```
+git am 0001-purfecterm-csi-equals-prefix.patch 0002-purfecterm-osc52-clipboard.patch
+```
