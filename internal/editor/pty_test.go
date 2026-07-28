@@ -21,6 +21,7 @@ type stubPTY struct {
 	written strings.Builder
 	cols    int
 	rows    int
+	resizes int
 	closed  bool
 }
 
@@ -39,7 +40,7 @@ func (s *stubPTY) Write(p []byte) (int, error) {
 	s.written.Write(p)
 	return len(p), nil
 }
-func (s *stubPTY) Resize(c, r int) error { s.cols, s.rows = c, r; return nil }
+func (s *stubPTY) Resize(c, r int) error { s.cols, s.rows, s.resizes = c, r, s.resizes+1; return nil }
 func (s *stubPTY) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -974,5 +975,103 @@ func TestPTYMouseHandledWithoutBytes(t *testing.T) {
 	}
 	if stub.sent() != "" {
 		t.Errorf("nothing should reach the child, sent %q", stub.sent())
+	}
+}
+
+// The rectangle mew places a surface in is not the grid the host renders
+// inside it: a graphical terminal spends some of that width on its scrollbar
+// lane and rounds the rest down to whole cells of its own font. Sizing the
+// child process to the rectangle tells a guest it has columns the display will
+// not show it, and every full-width line it draws then wraps and scrolls a
+// screenful into scrollback — per frame, without bound. So the host declares
+// what it really renders, and that wins.
+func TestDeclaredGridBeatsThePlacementRectangle(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	var opened string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(id string, _, _ int) { opened = id },
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
+	e.notifyTerminalSurfaces()
+	if stub.cols != 80 || stub.rows != 24 {
+		t.Fatalf("placement sized the child %dx%d, want 80x24", stub.cols, stub.rows)
+	}
+
+	// The host, having painted, reports the grid it actually renders.
+	if !e.SetTerminalGrid(opened, 78, 24) {
+		t.Fatal("no session by that id")
+	}
+	if stub.cols != 78 {
+		t.Errorf("child is %d cols, want the declared 78", stub.cols)
+	}
+
+	// A surface that only MOVES keeps its declaration: same size, same
+	// answer, and re-deriving it would resize the child for nothing.
+	w.ContentY = 1
+	e.notifyTerminalSurfaces()
+	if stub.cols != 78 {
+		t.Errorf("a move undid the declaration: child is %d cols, want 78", stub.cols)
+	}
+
+	// A RESIZE does drop it — the declaration described the old rectangle —
+	// and the child follows the new one until the host declares again.
+	w.ContentWidth = 100
+	e.notifyTerminalSurfaces()
+	if stub.cols != 100 {
+		t.Errorf("child is %d cols, want the new rectangle's 100 until redeclared", stub.cols)
+	}
+	if !e.SetTerminalGrid(opened, 98, 24) {
+		t.Fatal("no session by that id")
+	}
+	if stub.cols != 98 {
+		t.Errorf("child is %d cols, want the redeclared 98", stub.cols)
+	}
+}
+
+// An unchanged declaration does not resize the child again: a resize wakes the
+// guest, and waking it once a frame is its own runaway.
+func TestRedeclaringTheSameGridIsQuiet(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	var opened string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(id string, _, _ int) { opened = id },
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	w.ContentWidth, w.ContentHeight = 80, 24
+	e.notifyTerminalSurfaces()
+
+	e.SetTerminalGrid(opened, 78, 24)
+	before := stub.resizes
+	e.SetTerminalGrid(opened, 78, 24)
+	e.SetTerminalGrid(opened, 78, 24)
+	if stub.resizes != before {
+		t.Errorf("re-declaring an unchanged grid resized the child %d extra times", stub.resizes-before)
+	}
+}
+
+// A declaration for a session that does not exist is refused rather than
+// silently recorded — the host has no business inventing ids.
+func TestDeclaringAGridForNoSession(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	if e.SetTerminalGrid("pty404", 78, 24) {
+		t.Error("accepted a grid for a session that does not exist")
+	}
+	if e.SetTerminalGrid("pty1", 0, 24) {
+		t.Error("accepted a zero-width grid")
 	}
 }

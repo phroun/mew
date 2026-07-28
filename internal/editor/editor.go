@@ -1228,6 +1228,21 @@ func argString(ctx *pawscript.Context, i int) (string, bool) {
 	return fmt.Sprintf("%v", ctx.Args[i]), true
 }
 
+// argInt reads a whole-number argument. PawScript hands numbers over as
+// whichever numeric type the literal parsed to, so go through the string form
+// rather than type-switching every possibility.
+func argInt(ctx *pawscript.Context, i int) (int, bool) {
+	s, ok := argString(ctx, i)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 // registerCommands registers all editor commands with PawScript.
 func (e *Editor) registerCommands() {
 	ps := e.PawScript
@@ -2056,6 +2071,22 @@ func (e *Editor) registerCommands() {
 		}
 		text, _ := argString(ctx, 0)
 		return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+	})
+
+	// terminal_grid <id>, <cols>, <rows> — the host declaring how many cells
+	// of text its display actually renders for a session, which is not the
+	// same as the cell rectangle mew placed it in. See ptyState.gridCols.
+	ps.RegisterCommand("terminal_grid", func(ctx *pawscript.Context) pawscript.Result {
+		id, ok := argString(ctx, 0)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		cols, okc := argInt(ctx, 1)
+		rows, okr := argInt(ctx, 2)
+		if !okc || !okr {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.SetTerminalGrid(id, cols, rows))
 	})
 
 	ps.RegisterCommand("insert_rune", func(ctx *pawscript.Context) pawscript.Result {

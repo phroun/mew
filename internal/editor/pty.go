@@ -124,6 +124,25 @@ type ptyState struct {
 	bytes   int
 	head    []byte
 	started time.Time
+	// gridCols/gridRows are the surface's TRUE grid as declared by the host
+	// (terminal_grid), zero until it says. mew places a surface by its
+	// viewport's cell rectangle, but the host's display decides how many
+	// columns of text actually fit inside that rectangle — a graphical
+	// terminal spends some of its width on a scrollbar lane, and rounds the
+	// rest down to whole cells of its own font. Resizing the child process to
+	// the rectangle instead of to the grid tells the guest it has columns the
+	// display will not show it: every full-width line then WRAPS, a wrapped
+	// line SCROLLS, and a full-screen repaint that should have overwritten
+	// the screen in place pushes a screenful into scrollback instead — on
+	// every frame, without bound.
+	gridCols, gridRows int
+	// placedCols/placedRows are the rectangle the declaration was made
+	// against. A declaration describes one rectangle; when the viewport is
+	// RESIZED the old answer is stale, so it is dropped and the rectangle
+	// governs again until the host has repainted and declared afresh. A
+	// viewport that merely MOVED keeps its declaration — same size, same
+	// answer, and re-deriving it would resize the child for nothing.
+	placedCols, placedRows int
 }
 
 // ptyHeadMax is how much of a short session's output is kept for the record.
@@ -569,18 +588,74 @@ func (e *Editor) notifyTerminalSurfaces() {
 	e.terminalSurfacesSent = surfaces
 	e.Config.TerminalSurfaces.Place(surfaces)
 
-	// A visible surface's session is resized to match the cells it now owns.
+	// A visible surface's session is resized to match the cells it now owns —
+	// unless the host has DECLARED the grid it actually renders there, which
+	// wins. The rectangle is where the surface goes; the declaration is how
+	// much of it is text. See ptyState.gridCols.
+	type resizeTo struct {
+		sess       PTYSession
+		cols, rows int
+	}
 	e.ptyMu.Lock()
-	sessions := make(map[string]PTYSession, live)
+	want := make([]resizeTo, 0, live)
+	byID := make(map[string]*ptyState, live)
 	for _, st := range e.ptySessions {
-		sessions[st.id] = st.sess
+		byID[st.id] = st
+	}
+	for _, s := range surfaces {
+		st := byID[s.ID]
+		if st == nil || st.sess == nil {
+			continue
+		}
+		if st.placedCols != s.Width || st.placedRows != s.Height {
+			// A different rectangle than the one the host measured: its
+			// declaration described the old one. Fall back to the rectangle
+			// and let the host declare again after it repaints.
+			st.gridCols, st.gridRows = 0, 0
+			st.placedCols, st.placedRows = s.Width, s.Height
+		}
+		cols, rows := s.Width, s.Height
+		if st.gridCols > 0 && st.gridRows > 0 {
+			cols, rows = st.gridCols, st.gridRows
+		}
+		want = append(want, resizeTo{st.sess, cols, rows})
 	}
 	e.ptyMu.Unlock()
-	for _, s := range surfaces {
-		if sess := sessions[s.ID]; sess != nil {
-			_ = sess.Resize(s.Width, s.Height)
+	for _, w := range want {
+		_ = w.sess.Resize(w.cols, w.rows)
+	}
+}
+
+// SetTerminalGrid records the host's declaration of a surface's true grid and
+// resizes its child to it. The host calls this (through the terminal_grid
+// command) whenever its display settles on a grid size — which is the only
+// moment anyone knows the answer, since it depends on the host's font metrics
+// and its own chrome, neither of which mew can see.
+//
+// Reports whether the session exists.
+func (e *Editor) SetTerminalGrid(id string, cols, rows int) bool {
+	if cols <= 0 || rows <= 0 {
+		return false
+	}
+	e.ptyMu.Lock()
+	var sess PTYSession
+	for _, st := range e.ptySessions {
+		if st.id == id {
+			if st.gridCols == cols && st.gridRows == rows {
+				e.ptyMu.Unlock()
+				return true // already there; do not wake the child again
+			}
+			st.gridCols, st.gridRows = cols, rows
+			sess = st.sess
+			break
 		}
 	}
+	e.ptyMu.Unlock()
+	if sess == nil {
+		return false
+	}
+	_ = sess.Resize(cols, rows)
+	return true
 }
 
 func terminalSurfacesEqual(a, b []TerminalSurface) bool {

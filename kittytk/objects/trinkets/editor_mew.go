@@ -111,6 +111,14 @@ type Editor struct {
 	termOut     chan string
 	termOutOnce sync.Once
 
+	// termGridWant is the LATEST grid each hosted surface has settled on,
+	// waiting to be told to mew. A latch rather than a queue entry because a
+	// grid is a fact, not an event: superseded values are worthless and the
+	// current one must not be dropped under pressure the way input bytes may
+	// be — a dropped grid leaves the guest wrapping forever.
+	termGridWant map[string][2]int
+	termGridWake chan struct{}
+
 	// hostedKids are the child terminals parented to this editor (see
 	// AddChild): in the tree for parent-chain lookups, invisible to layout
 	// and hit testing.
@@ -827,6 +835,15 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	// relay, a pasted clipboard.
 	e.startTermOutPump()
 	t.SetInputSink(func(b []byte) { e.termInput(id, b) })
+	// And every grid size it SETTLES ON goes back to mew, which resizes the
+	// child process to it. This display is the only thing that knows the
+	// answer: mew places the surface as a cell rectangle, but how much of
+	// that rectangle is text depends on this terminal's own font metrics and
+	// on the scrollbar lane it reserves for itself. Left unsaid, the guest is
+	// told it has the rectangle's full width, and every line it draws to that
+	// width wraps and scrolls a screenful into scrollback — per frame,
+	// without bound.
+	t.SetResizeSink(func(cols, rows int) { e.termGrid(id, cols, rows) })
 	// It is a display, not a focus participant: its focus is DECLARED by this
 	// editor (SetEmbeddedFocus) rather than won from the toolkit. Saying so
 	// keeps a hosted mouse press from marking it focused behind our back.
@@ -995,14 +1012,95 @@ func (e *Editor) termInput(id string, b []byte) {
 func (e *Editor) startTermOutPump() {
 	e.termOutOnce.Do(func() {
 		e.termOut = make(chan string, 64)
+		// Under the lock termGrid reads it through: the sink that calls
+		// termGrid runs on the paint thread, not this one.
+		e.termMu.Lock()
+		e.termGridWake = make(chan struct{}, 1)
+		e.termMu.Unlock()
 		go func() {
-			for cmd := range e.termOut {
-				if p := e.port; p != nil {
-					p.Execute(cmd)
+			for {
+				select {
+				case cmd, ok := <-e.termOut:
+					if !ok {
+						return
+					}
+					if p := e.port; p != nil {
+						p.Execute(cmd)
+					}
+				case <-e.termGridWake:
+					// Only with somewhere to send it. Before the session's
+					// port exists the declaration STAYS latched rather than
+					// being drained into nothing; the next frame nudges it
+					// again (see nudgeTermGrids), so it lands as soon as
+					// there is a mew to tell.
+					if p := e.port; p != nil {
+						for _, cmd := range e.takeTermGrids() {
+							p.Execute(cmd)
+						}
+					}
 				}
 			}
 		}()
 	})
+}
+
+// termGrid latches a surface's newly settled grid for delivery to mew. Called
+// from the child's resize sink, which fires during paint — so it must not
+// block, and must not lose the value either.
+func (e *Editor) termGrid(id string, cols, rows int) {
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+	e.termMu.Lock()
+	if e.termGridWant == nil {
+		e.termGridWant = make(map[string][2]int)
+	}
+	if prev, ok := e.termGridWant[id]; ok && prev[0] == cols && prev[1] == rows {
+		e.termMu.Unlock()
+		return
+	}
+	e.termGridWant[id] = [2]int{cols, rows}
+	wake := e.termGridWake
+	e.termMu.Unlock()
+	if wake == nil {
+		return
+	}
+	select {
+	case wake <- struct{}{}:
+	default: // already awake; it will see the latch
+	}
+}
+
+// nudgeTermGrids re-wakes the pump if a declaration is still waiting. Called
+// once a frame, so a grid settled before the session's port existed is not
+// stranded: the retry costs a map length check.
+func (e *Editor) nudgeTermGrids() {
+	e.termMu.Lock()
+	pending := len(e.termGridWant) > 0
+	wake := e.termGridWake
+	e.termMu.Unlock()
+	if !pending || wake == nil {
+		return
+	}
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+}
+
+// takeTermGrids drains the latch into mew commands.
+func (e *Editor) takeTermGrids() []string {
+	e.termMu.Lock()
+	defer e.termMu.Unlock()
+	if len(e.termGridWant) == 0 {
+		return nil
+	}
+	cmds := make([]string, 0, len(e.termGridWant))
+	for id, g := range e.termGridWant {
+		cmds = append(cmds, fmt.Sprintf("terminal_grid %q, %d, %d", id, g[0], g[1]))
+	}
+	e.termGridWant = nil
+	return cmds
 }
 
 // pawBytesLiteral renders bytes as a PawScript {bytes ...} literal. The commas
@@ -1213,4 +1311,7 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		}
 		s.term.Paint(p.WithOffset(x, y).WithClip(clip))
 	}
+	// A child settles its grid during that paint. Make sure the declaration
+	// gets away even if the session's port was not up when it did.
+	e.nudgeTermGrids()
 }
