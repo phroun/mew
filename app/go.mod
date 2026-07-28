@@ -20,7 +20,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/argwild v0.0.1 // indirect
 	github.com/phroun/direct-key-handler v0.3.9 // indirect
-	github.com/phroun/garland v0.1.10 // indirect
+	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/pawscript v0.2.11-alpha // indirect
 	github.com/phroun/purfecterm v0.2.27 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect

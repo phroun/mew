@@ -4,6 +4,25 @@
 **Concerns:** `tree.go` — `insertIntoLeaf`; contrast with `garland.go` — `buildBalancedSubtree`
 **Type:** Performance / structural defect, with a proposed fix and a caller-side workaround
 
+> ## ✅ Fixed in garland v0.1.11
+>
+> Resolved upstream the same day. `tree.go` gains `buildEditSubtree`, an
+> edit-time counterpart to `buildBalancedSubtree` that stamps the current
+> fork/revision, passes `-1` for the leaf file offset, splits on rune
+> boundaries, and partitions decorations across the leaves it builds;
+> `insertIntoLeaf` calls it when `len(data) > maxLeafSize`. Upstream added
+> `large_insert_test.go`, which asserts the structural invariant directly
+> (no leaf over `maxLeafSize`) rather than timing it, and covers insert into
+> the middle, decoration partitioning, undo/redo, large overwrite, and UTF-8
+> boundaries.
+>
+> Re-running the repro below against v0.1.11, every case is **1×** the
+> loader baseline — see "After the fix" at the end. mew is on v0.1.11 and
+> carries a regression guard at
+> `internal/buffer/insert_structure_test.go`.
+>
+> The rest of this document is kept as filed, describing v0.1.10.
+
 ## Summary
 
 Content that arrives through **one large `InsertString`/`InsertBytes` call** is
@@ -167,3 +186,29 @@ rather the library get this right.
   57 ms for 12 MB) — unremarkable, and not what the report is about. The cost
   is entirely in what the document becomes.
 - **Cursor mode.** All measurements use `CursorModeHuman`.
+
+## After the fix (garland v0.1.11)
+
+The identical repro, same machine, no changes to the test file:
+
+| Case | v0.1.10 | v0.1.11 |
+|---|---|---|
+| **A** opened | 78 ms | 77 ms |
+| **B** empty + one big `InsertString` | 4.98 s *(64×)* | **80 ms** *(1.0×)* |
+| **C** seeded + one big `InsertString` | 5.00 s *(64×)* | **80 ms** *(1.1×)* |
+| **D** opened + 1000 single-rune inserts | 81 ms | 79 ms |
+| **E** empty + 4 KiB-chunked | 140 ms | 126 ms |
+
+Scaling is flat where it used to compound: 1× at 25k, 50k and 100k lines,
+against 29× / 63× / 123× before. Byte and line seeks both return to baseline
+(10.0 ms / 39.9 ms inserted, vs 10.9 ms / 37.9 ms opened).
+
+At mew's own `Buffer` level — the real `^B R` path, `New()` + one
+`Caret.Insert` of a 200,000-line file — scattered `GetLine` went from **242×**
+the `^B O` path to **1.06×**, with content round-tripping identically through
+both.
+
+Note that the **chunking workaround is now counterproductive**: case E is
+slower than case B on v0.1.11 (126 ms vs 80 ms), because many small inserts
+build more nodes than one balanced subtree does. We never shipped it, and
+integrators who did should drop it on upgrading.
