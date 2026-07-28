@@ -4141,7 +4141,22 @@ func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowMan
 		wm = d.windowManager
 	}
 	d.mu.RUnlock()
-	if activeApp == nil || !activeApp.PassNextKeyToTrinket() {
+	if activeApp == nil {
+		return false
+	}
+	// A DETACHED main window was armed on the window, not on the app:
+	// ActivatePassNextKeyToTrinket routes there because the key stream and
+	// the prompt both live on that window. So the window's one-shot is the
+	// flag that matters here, and the desktop must not claim F10 out from
+	// under it — the window manager sends F10 straight to the desktop for the
+	// menu bar, so the detached window never gets the chance to spend its own
+	// one-shot on it. Hand the key over and let the window's raw branch run,
+	// which also fires the done callback that restores its status bar.
+	if main := activeApp.MainWindow(); main != nil && main.IsDetached() && main.RawKeyInputPending() {
+		main.HandleKeyPress(event)
+		return true
+	}
+	if !activeApp.PassNextKeyToTrinket() {
 		return false
 	}
 	activeApp.ClearPassNextKeyToTrinket()

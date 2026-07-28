@@ -918,6 +918,19 @@ func (w *Window) BeginRawKeyInput(onDone func()) {
 	w.mu.Unlock()
 }
 
+// RawKeyInputPending reports whether this window is armed to pass its next
+// key straight to the focused trinket.
+//
+// The desktop needs to ask. Some keys never reach a window at all — the
+// window manager sends F10 to the desktop for the menu bar before any window
+// sees it — so a door that claims a key has to check this one-shot on the way
+// past, or it takes the key the mode exists to deliver.
+func (w *Window) RawKeyInputPending() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.passNextKeyRaw
+}
+
 // SetWindowStatusBar installs (or clears) the window's own status bar,
 // shown along the bottom edge while the window is detached.
 func (w *Window) SetWindowStatusBar(sb core.Trinket) {
