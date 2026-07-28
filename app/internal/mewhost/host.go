@@ -401,9 +401,40 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 	script := fmt.Sprintf(`
 bar=new menubar children={%s
 	new menu caption="File Buffer" wellknown="file" children={
-		new menuitem caption="&Save Current Buffer" action=mew.file.save
+		new menuitem caption="New &Empty Buffer" action=mew.buffer.new
+		new menuitem caption="&Open File Buffer..." action=mew.buffer.open
+		new menuitem caption="Inse&rt File at Cursor..." action=mew.buffer.read
+		new menuitem caption="Dupli&cate Buffer" action=mew.buffer.duplicate
+		new menuitem caption="Close Prompt/Viewport" action=mew.buffer.close
+		new menuitem separator
+		new menuitem caption="&Save Current Buffer" action=mew.buffer.save
+		new menuitem caption="Save &All Buffers" action=mew.buffer.saveall
+		new menuitem caption="Save As (&Write && Become)..." action=mew.buffer.write
+		new menuitem separator
+		new menuitem caption="Document &Direction [?]" action=mew.options.direction
+		new menuitem caption="Read Only" action=mew.options.readonly checkable=true
+		new menuitem caption="Automatic S&ynax" action=mew.options.syntaxdetect checkable=true
+		new menuitem caption="Document Synta&x [?]..." action=mew.options.syntax"
 	}
 	new menu caption="Edit Block" wellknown="edit" children={
+		new menuitem caption="Mark &Block Beginning" action=mew.block.setbegin
+		new menuitem caption="Mark Bloc&k Ending" action=mew.block.setend
+		new menuitem separator
+		new menuitem caption="&Move Block to Cursor" action=mew.block.move
+		new menuitem caption="&Copy Block to Cursor" action=mew.block.copy
+		new menuitem caption="E&xchange with OS Clipboard" action=mew.block.osexchange
+		new menuitem caption="Cut to OS Clipboard" action=mew.block.oscut
+		new menuitem caption="Copy to OS Clipboard" action=mew.block.oscopy
+		new menuitem caption="Paste from OS Clipboard" action=mew.block.ospaste
+		new menuitem separator
+		new menuitem caption="&Write Block to File..." action=mew.block.write
+		new menuitem caption="&Replace  Block with File..." action=mew.block.read
+		new menuitem separator
+		new menuitem caption="Delete to Kill Ring" action=mew.block.delete
+		new menuitem caption="Reclaim from Kill Ring (yank)" action=mew.nerd.yank
+		new menuitem caption="Cycle Kill Ring (yankpop)" action=mew.nerd.yankpop
+		new menuitem separator
+		new menuitem caption="Select All" action=mew.block.selectall
 		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
 	}
 	new menu caption="Format" wellknown="format" children={
@@ -671,3 +702,4 @@ func execProtocol(script string, ctx *protocol.BindContext) (map[uint64]any, *pr
 	}
 	return factory.byID, reply
 }
+
