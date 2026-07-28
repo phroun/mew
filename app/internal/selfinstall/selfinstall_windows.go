@@ -93,14 +93,28 @@ func Install() (string, error) {
 	// Copy the console binary and the graphical binary beside it. mew-sdl.exe may
 	// be absent if only `make windows` was run (the GUI build needs a Windows cgo
 	// toolchain) — warn and carry on with just the console binary.
+	// A running copy may be named anything, so "the file I am" counts as the
+	// binary it IS — but only as itself. Falling back to self for a MISSING
+	// mew.exe installed the graphical binary a second time under the console
+	// binary's name, which put a windowless GUI program on the PATH as `mew`:
+	// run from a console it printed nothing and returned at once.
 	var installedSDL, installedConsole string
+	var log []string
+	selfName := strings.ToLower(filepath.Base(self))
 	for _, name := range []string{"mew.exe", "mew-sdl.exe"} {
 		src := filepath.Join(srcDir, name)
 		if _, err := os.Stat(src); err != nil {
-			if name == "mew.exe" {
-				src = self // we might be invoked under a different name
+			if selfName == name {
+				src = self // running under this name from somewhere else
 			} else {
-				fmt.Fprintf(os.Stderr, "mew: %s not found beside me; skipping (build it with `make windows-sdl` on Windows)\n", name)
+				note := fmt.Sprintf("%s not found beside me; skipped", name)
+				if name == "mew-sdl.exe" {
+					note += " (build it with `make windows-sdl` on Windows)"
+				} else {
+					note += " (build it with `make windows`)"
+				}
+				fmt.Fprintln(os.Stderr, "mew: "+note)
+				log = append(log, note)
 				continue
 			}
 		}
@@ -115,6 +129,7 @@ func Install() (string, error) {
 			installedConsole = dst
 		}
 		fmt.Printf("installed %s\n", dst)
+		log = append(log, "installed "+dst+"  (from "+src+")")
 	}
 
 	// Start Menu shortcut → the graphical binary (embedded icon); fall back to
@@ -134,14 +149,23 @@ func Install() (string, error) {
 		return "", fmt.Errorf("create Start Menu shortcut: %w", err)
 	}
 	fmt.Printf("created Start Menu shortcut: %s\n", lnk)
+	log = append(log, "shortcut "+lnk+"  ->  "+guiExe+"  (starts in "+dir+")")
 
 	if added, err := addToUserPath(dir); err != nil {
 		return "", fmt.Errorf("update PATH: %w", err)
 	} else if added {
 		fmt.Printf("added %s to your PATH (open a new console to pick it up)\n", dir)
+		log = append(log, "added to PATH: "+dir)
 	} else {
 		fmt.Printf("%s already on your PATH\n", dir)
+		log = append(log, "already on PATH: "+dir)
 	}
+
+	// A record on disk, because none of the above is visible from the
+	// graphical build: it has no console, so every line printed here goes
+	// nowhere and "where did it actually put things" becomes unanswerable
+	// exactly when someone needs to ask it.
+	writeInstallLog(dir, log)
 
 	// No install flag to record: "installed" is decided from the binary's
 	// location (this dir is named "mew"), so copying it here is the whole record.
@@ -451,4 +475,17 @@ func broadcastEnvChange() {
 		5000,
 		uintptr(unsafe.Pointer(&result)),
 	)
+}
+
+// writeInstallLog leaves an account of the install beside the binaries. Purely
+// so the question can be answered later from the machine itself.
+func writeInstallLog(dir string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	body := "mew install\n"
+	for _, l := range lines {
+		body += "  " + l + "\n"
+	}
+	_ = os.WriteFile(filepath.Join(dir, "install.log"), []byte(body), 0o644)
 }
