@@ -1429,6 +1429,29 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(true)
 	})
 
+	// not_implemented is a placeholder for a command that is planned but not
+	// written yet: it warns, names what was asked for, and reports FALSE so a
+	// chain falls through it exactly as an unhandled command would.
+	//
+	// It exists so a planned feature can be advertised in one place instead of
+	// two. Wiring only the MENU item to a toast would leave the key it
+	// advertises doing nothing at all, which is the worse half of the lie -
+	// the user presses the key the menu just taught them and gets silence.
+	// Bind the key here too and both routes answer the same way.
+	ps.RegisterCommand("not_implemented", func(ctx *pawscript.Context) pawscript.Result {
+		what, _ := argString(ctx, 0)
+		msg := "Not yet implemented"
+		if strings.TrimSpace(what) != "" {
+			msg = what + ": not yet implemented"
+		}
+		// One tag for the whole family, so trying several planned items in a
+		// row REPLACES the toast rather than stacking a pile of them - they all
+		// say the same thing, and the newest is the only one that is about what
+		// the user just pressed.
+		e.ShowWarningTagged(msg, "not_implemented")
+		return pawscript.BoolStatus(false)
+	})
+
 	ps.RegisterCommand("mappings_show", func(ctx *pawscript.Context) pawscript.Result {
 		if len(ctx.Args) < 1 {
 			e.ShowWarning("Usage: mappings_show <key>")

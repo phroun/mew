@@ -440,6 +440,13 @@ bar=new menubar children={%s
 	}
 	new menu caption="Format" wellknown="format" children={
 		new menuitem caption="Unindent Block" action=mew.format.unindent
+		new menuitem caption="Indent Block" action=mew.format.indent
+		new menuitem caption="&Justify Block" action=mew.format.justify
+		new menuitem caption="Filter Block through Cmd" action=mew.format.filter
+		new menuitem caption="Convert to UPPERCASE" action=mew.format.upper
+		new menuitem caption="Convert to lowercase" action=mew.format.lower
+		new menuitem caption="Convert to Title Case" action=mew.format.title
+		new menuitem caption="Swap camelCase snake_case" action=mew.format.swapcase
 	}
 	new menu caption="Viewport" wellknown="view" children={
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
@@ -617,7 +624,19 @@ var menuActions = map[string]menuAction{
 	"mew.nerd.yankpop":     {"kill_ring_pop", "esc Y"},
 
 	// The remaining menus, still one placeholder each.
-	"mew.format.unindent":  {"block_unindent", "^ ,"},
+	// Format. Two real items; the rest are planned and run not_implemented,
+	// which warns and names what was asked for. Their keys are bound to the
+	// same thing in keys_block_menu.conf, so pressing ^K J answers exactly as
+	// clicking Justify Block does - an advertised key that did nothing would be
+	// the worse half of a placeholder.
+	"mew.format.unindent":  {"block_unindent", "^K ,"},
+	"mew.format.indent":    {"block_indent", "^K ."},
+	"mew.format.justify":   {`not_implemented "Justify Block"`, "^K J"},
+	"mew.format.filter":    {`not_implemented "Filter Block through Cmd"`, "^K /"},
+	"mew.format.upper":     {`not_implemented "Convert to UPPERCASE"`, "^K T"},
+	"mew.format.lower":     {`not_implemented "Convert to lowercase"`, ""},
+	"mew.format.title":     {`not_implemented "Convert to Title Case"`, ""},
+	"mew.format.swapcase":  {`not_implemented "Swap camelCase snake_case"`, "^K _"},
 	"mew.view.clone":       {"viewport_clone", "^B 2"},
 	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
 
