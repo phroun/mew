@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -84,6 +85,52 @@ func canonicalOSFileURL(p, home string) string {
 		p = "/" + p
 	}
 	return "file://" + p
+}
+
+// urlPathToOS turns the PATH PART of a canonical URL back into a path for the
+// operating system. It is the exact inverse of the normalization
+// canonicalOSFileURL applied, and it is the only place in mew that undoes it.
+//
+// Inside mew a path is always spelled with "/" — that is what makes two
+// spellings of one file compare equal — and it is only here, handing a name
+// to the OS, that the platform gets a say. On POSIX there is nothing to
+// return to: an absolute path already began with "/". On Windows the
+// canonical form put a slash in FRONT of the drive letter to root it, and
+// /C:/proj is not a path Windows will accept — it reads as a component named
+// "C:" on the current drive. So the slash comes back off, and the separators
+// go back to the platform's.
+//
+// A UNC path needs no repair: \\server\share was //server/share already and
+// keeps both of its leading slashes.
+func urlPathToOS(p string) string { return urlPathForOS(p, runtime.GOOS == "windows") }
+
+// urlPathForOS is urlPathToOS with the platform named, so both answers can be
+// tested from either. filepath.FromSlash cannot serve here for exactly that
+// reason: it converts to the separator of the machine RUNNING it, and so does
+// nothing at all when a Windows path is exercised from a POSIX build.
+func urlPathForOS(p string, windows bool) string {
+	if !windows {
+		return p
+	}
+	if len(p) >= 3 && p[0] == '/' && p[2] == ':' &&
+		((p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z')) {
+		p = p[1:]
+	}
+	return strings.ReplaceAll(p, "/", `\`)
+}
+
+// LocalPathFromURL turns a canonical file:// document URL into an OS path.
+// False for any other scheme — a mew:/// document may have no local path at
+// all. Exported because a HOST needs the same answer mew does: mew hands out
+// canonical URLs (a terminal session's working directory, for one) and a host
+// acting on one has to reach the same file, by the same rule, or the two
+// disagree about what a document is on exactly one platform.
+func LocalPathFromURL(url string) (string, bool) {
+	prefix, p, ok := urlSplit(url)
+	if !ok || prefix != "file://" {
+		return "", false
+	}
+	return urlPathToOS(p), true
 }
 
 // bufferCanonicalURL is the canonical identity of a buffer: the canonical URL
@@ -179,7 +226,7 @@ func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
 		}
 		return e.lib.NewFromBytes(data, url)
 	}
-	osPath := filepath.FromSlash(p)
+	osPath := urlPathToOS(p)
 	buf, err := e.loadBuffer(osPath)
 	if err != nil {
 		return nil, err
@@ -206,7 +253,7 @@ func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 		return e.lib.NewFromBytes([]byte(seed), url)
 	}
 	buf := e.lib.NewFromString(seed)
-	buf.SetFilename(filepath.FromSlash(p))
+	buf.SetFilename(urlPathToOS(p))
 	return buf, nil
 }
 

@@ -216,6 +216,18 @@ type TerminalSurface = editor.TerminalSurface
 // TerminalHooks is how a host renders mew's terminal sessions.
 type TerminalHooks = editor.TerminalHooks
 
+// LocalPathFromURL turns a canonical file:// document URL — the form mew
+// hands out for anything it identifies, including a terminal session's
+// working directory — into a path for the operating system. False for any
+// other scheme (a mew:/// document may have no local path at all).
+//
+// A host resolving one of mew's URLs must reach the same file mew would, and
+// on Windows that takes undoing something: the canonical form roots every
+// path with "/", which in front of a drive letter gives /C:/proj, a path
+// Windows reads as a component named "C:" on the current drive. mew's own
+// boundary does that already; this is the same door, opened outward.
+func LocalPathFromURL(url string) (string, bool) { return editor.LocalPathFromURL(url) }
+
 // TerminalMouse is one mouse event addressed to a terminal surface, in that
 // surface's own 1-based cells. See TerminalHooks.Mouse: mew reports what
 // happened and the host, which owns the emulator and so knows the tracking

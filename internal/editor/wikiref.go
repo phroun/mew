@@ -395,7 +395,7 @@ func (e *Editor) docStat(url string) (isDir, exists bool) {
 		info, ok := e.mew.Stat("mew://" + p)
 		return info.IsDir, ok
 	}
-	name := filepath.FromSlash(p)
+	name := urlPathToOS(p)
 	if st, ok := e.FS.(Statter); ok {
 		if info, err := st.Stat(name); err == nil {
 			return info.IsDir, true
@@ -433,7 +433,7 @@ func (e *Editor) docList(dirURL string) []string {
 		}
 		return out
 	}
-	dir := filepath.FromSlash(p)
+	dir := urlPathToOS(p)
 	matches, err := e.FS.Glob(filepath.Join(dir, "*"))
 	if err != nil {
 		return nil

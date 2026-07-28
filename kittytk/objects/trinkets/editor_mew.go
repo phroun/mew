@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -713,37 +712,12 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or
-// reports false for any other scheme. A host that grants only sandboxed
-// sessions would reject here instead.
-func localPathFromURL(u string) (string, bool) {
-	const p = "file://"
-	if !strings.HasPrefix(u, p) {
-		return "", false
-	}
-	return urlPathToLocal(strings.TrimPrefix(u, p), runtime.GOOS == "windows"), true
-}
-
-// urlPathToLocal undoes what mew did to make the URL: separators normalized to
-// "/", and a leading "/" added when the path did not already begin with one.
-// On POSIX that added nothing (an absolute path starts with "/" already), so
-// there is nothing to undo. On Windows it prefixed the drive letter —
-// C:\proj became /C:/proj — and a path handed back with that slash still on
-// the front is not a path any Windows API will accept. A UNC path needs no
-// such repair: \\server\share was already //server/share and keeps both
-// leading slashes.
-func urlPathToLocal(p string, windows bool) string {
-	if !windows {
-		return p
-	}
-	if len(p) >= 3 && p[0] == '/' && p[2] == ':' &&
-		((p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z')) {
-		p = p[1:]
-	}
-	// Spelled out rather than filepath.FromSlash, which converts to the
-	// separator of the machine RUNNING it — so it does nothing at all when
-	// this is exercised from a Linux build, which is where it gets tested.
-	return strings.ReplaceAll(p, "/", `\`)
-}
+// reports false for any other scheme. mew's own answer is used rather than a
+// second copy of the rule: the drive-letter repair a Windows path needs is
+// exactly the kind of thing two implementations drift on, and they would
+// drift on one platform only. A host that grants only sandboxed sessions
+// would reject here instead of resolving anything.
+func localPathFromURL(u string) (string, bool) { return mew.LocalPathFromURL(u) }
 
 // --- terminal surfaces: one child PurfecTerm per running session -----------
 //
