@@ -9,10 +9,17 @@ package trinkets
 // through a process-thread attribute list, and a child that is not bound to
 // one gets an ordinary console of its own instead — which on a desktop means
 // a console WINDOW, appearing next to the editor and vanishing again when the
-// process dies. That flash is the whole symptom of getting this wrong, and it
-// is why this file exists rather than a call into a cross-platform helper: the
-// pseudoconsole is created, and then it has to be handed over, and the handing
-// over is the part with no POSIX analogue.
+// process dies.
+//
+// The pipes are RAW Win32 handles, deliberately, and not os.Pipe. Go does not
+// hand out an inert handle: os.Pipe registers what it opens with the runtime's
+// I/O completion port and calls SetFileCompletionNotificationModes on it. That
+// is invisible and harmless while Go owns both ends — but these two ends are
+// given away to conhost, which does its own synchronous I/O on them, and a
+// handle whose completions have been re-pointed at another process's poller is
+// not a handle it can use. Nothing fails loudly: the console simply never
+// produces output. Every byte here goes through ReadFile/WriteFile for the
+// same reason.
 //
 // The shape mirrors the POSIX side exactly (Read, Write, Resize, Close), so
 // mew cannot tell which one it is holding — the same reason the PTYSession
@@ -20,7 +27,10 @@ package trinkets
 
 import (
 	"fmt"
-	"os"
+	"io"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -40,12 +50,18 @@ var procUpdateProcThreadAttribute = windows.NewLazySystemDLL("kernel32.dll").
 
 // conPTY is one child bound to one pseudoconsole.
 type conPTY struct {
-	mu     sync.Mutex
-	hpc    windows.Handle
-	proc   windows.Handle
-	in     *os.File // we write; the console reads
-	out    *os.File // the console writes; we read
-	closed bool
+	mu    sync.Mutex
+	hpc   windows.Handle
+	proc  windows.Handle
+	in    windows.Handle // we write; the console reads
+	out   windows.Handle // the console writes; we read
+	name  string
+	ended bool
+	// farewell is delivered to the reader after the child is gone, in place
+	// of the error that ends the stream. A terminal that simply stops is a
+	// terminal with nothing to say about why.
+	farewell []byte
+	closed   bool
 }
 
 func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, error) {
@@ -57,37 +73,35 @@ func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, er
 	}
 
 	// Two pipes, four ends. The console gets one end of each; we keep the
-	// others. Getting this backwards is the other classic way to end up with
-	// a child that starts and immediately dies.
-	inRead, inWrite, err := os.Pipe()
-	if err != nil {
+	// others. Nil security attributes, so nothing here is inheritable: the
+	// child reaches its console through the attribute list, not through an
+	// inherited handle.
+	var inRead, inWrite, outRead, outWrite windows.Handle
+	if err := windows.CreatePipe(&inRead, &inWrite, nil, 0); err != nil {
 		return nil, err
 	}
-	outRead, outWrite, err := os.Pipe()
-	if err != nil {
-		inRead.Close()
-		inWrite.Close()
+	if err := windows.CreatePipe(&outRead, &outWrite, nil, 0); err != nil {
+		windows.CloseHandle(inRead)
+		windows.CloseHandle(inWrite)
 		return nil, err
 	}
 
 	var hpc windows.Handle
-	err = windows.CreatePseudoConsole(
-		windows.Coord{X: int16(cols), Y: int16(rows)},
-		windows.Handle(inRead.Fd()), windows.Handle(outWrite.Fd()), 0, &hpc)
-	// The console duplicated what it needs, so our copies of ITS ends go now
-	// — while the child holds the only other reference, an unclosed end here
-	// would keep the pipe alive after the child exits and the reader would
-	// never see EOF.
-	inRead.Close()
-	outWrite.Close()
+	err := windows.CreatePseudoConsole(
+		windows.Coord{X: int16(cols), Y: int16(rows)}, inRead, outWrite, 0, &hpc)
+	// The console duplicated what it needs, so our copies of ITS ends go now.
+	// Holding them would keep both pipes alive past the child's exit, and the
+	// reader would wait forever for an EOF that no longer has a writer to
+	// come from.
+	windows.CloseHandle(inRead)
+	windows.CloseHandle(outWrite)
 	if err != nil {
-		inWrite.Close()
-		outRead.Close()
+		windows.CloseHandle(inWrite)
+		windows.CloseHandle(outRead)
 		return nil, fmt.Errorf("CreatePseudoConsole: %w", err)
 	}
 
-	p := &conPTY{hpc: hpc, in: inWrite, out: outRead}
-
+	p := &conPTY{hpc: hpc, in: inWrite, out: outRead, name: filepath.Base(path)}
 	if err := p.spawn(path, dir, env); err != nil {
 		_ = p.Close()
 		return nil, err
@@ -136,9 +150,10 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 		}
 	}
 
-	// Handle inheritance stays OFF: the child reaches its console through the
-	// attribute, not through an inherited handle, and inheriting anything else
-	// would only give it references it has no business holding.
+	// Handle inheritance stays OFF, matching the pipes' nil security
+	// attributes: the child reaches its console through the attribute, and
+	// inheriting anything else would only give it references it has no
+	// business holding.
 	var pi windows.ProcessInformation
 	err = windows.CreateProcess(appName, cmdLine, nil, nil, false,
 		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
@@ -154,10 +169,16 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 
 	// The reader only learns the child is gone when the console lets go of
 	// the pipe, and the console only does that when it is closed. So wait for
-	// the process here and tear the session down, which ends mew's read loop
-	// and closes the buffer's surface.
+	// the process here, leave a word about how it went, and tear the session
+	// down — which ends mew's read loop and closes the buffer's surface.
 	go func() {
 		windows.WaitForSingleObject(pi.Process, windows.INFINITE)
+		var code uint32
+		windows.GetExitCodeProcess(pi.Process, &code)
+		p.mu.Lock()
+		p.ended = true
+		p.farewell = []byte(fmt.Sprintf("\r\n[%s exited with code %d]\r\n", p.name, code))
+		p.mu.Unlock()
 		_ = p.Close()
 	}()
 	return nil
@@ -166,12 +187,26 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 // envBlock renders an environment as the double-NUL-terminated UTF-16 block
 // CreateProcess wants. nil means "inherit this process's environment", which
 // is what an empty list should mean too.
+//
+// The entries are SORTED: Windows documents an environment block as sorted
+// case-insensitively by name, and cmd.exe is one of the programs that reads
+// the block back rather than taking the API's word for it. Go's own
+// environment slice is in no particular order.
 func envBlock(env []string) *uint16 {
 	if len(env) == 0 {
 		return nil
 	}
+	sorted := append([]string(nil), env...)
+	// Sorting whole strings uppercased orders by name: a name is a prefix
+	// ending in "=", and "=" sorts below every character a name may contain,
+	// so FOO=1 precedes FOOBAR=2 the way the rule intends. Windows' own
+	// hidden per-drive entries (=C:=C:\...) sort to the front, where they
+	// belong.
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return strings.ToUpper(sorted[i]) < strings.ToUpper(sorted[j])
+	})
 	var b []uint16
-	for _, e := range env {
+	for _, e := range sorted {
 		u, err := windows.UTF16FromString(e)
 		if err != nil {
 			continue // an entry with an interior NUL is not one
@@ -185,8 +220,61 @@ func envBlock(env []string) *uint16 {
 	return &b[0]
 }
 
-func (p *conPTY) Read(b []byte) (int, error)  { return p.out.Read(b) }
-func (p *conPTY) Write(b []byte) (int, error) { return p.in.Write(b) }
+// Read delivers the console's output. When the stream ends it hands over the
+// farewell line first — so a session that died on its own says so in the
+// terminal, with the code, instead of leaving an empty rectangle.
+func (p *conPTY) Read(b []byte) (int, error) {
+	p.mu.Lock()
+	if n := copy(b, p.farewell); n > 0 {
+		p.farewell = p.farewell[n:]
+		p.mu.Unlock()
+		return n, nil
+	}
+	closed, h := p.closed, p.out
+	p.mu.Unlock()
+	if closed {
+		return 0, io.EOF
+	}
+
+	var n uint32
+	err := windows.ReadFile(h, b, &n, nil)
+	if err != nil {
+		// The read was ended by the child exiting or by Close; either way the
+		// farewell (if there is one) is the last thing the stream has to say.
+		p.mu.Lock()
+		if m := copy(b, p.farewell); m > 0 {
+			p.farewell = p.farewell[m:]
+			p.mu.Unlock()
+			return m, nil
+		}
+		p.mu.Unlock()
+		if err == windows.ERROR_BROKEN_PIPE {
+			return 0, io.EOF
+		}
+		return 0, err
+	}
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return int(n), nil
+}
+
+func (p *conPTY) Write(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, nil
+	}
+	p.mu.Lock()
+	closed, h := p.closed, p.in
+	p.mu.Unlock()
+	if closed {
+		return 0, io.ErrClosedPipe
+	}
+	var n uint32
+	if err := windows.WriteFile(h, b, &n, nil); err != nil {
+		return int(n), err
+	}
+	return int(n), nil
+}
 
 func (p *conPTY) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
@@ -210,28 +298,36 @@ func (p *conPTY) Close() error {
 		return nil
 	}
 	p.closed = true
-	hpc, proc, in, out := p.hpc, p.proc, p.in, p.out
+	hpc, proc, in, out, ended := p.hpc, p.proc, p.in, p.out, p.ended
 	p.hpc, p.proc = 0, 0
 	p.mu.Unlock()
 
 	if proc != 0 {
-		// Still running means mew asked, not the child: do not outlive the
-		// editor that asked for it.
-		if s, err := windows.WaitForSingleObject(proc, 0); err == nil && s == uint32(windows.WAIT_TIMEOUT) {
+		if !ended {
+			// mew asked, not the child: do not outlive the editor that asked
+			// for it.
 			windows.TerminateProcess(proc, 0)
 		}
 		windows.CloseHandle(proc)
 	}
 	if hpc != 0 {
-		// Closing the console releases the output pipe, which is what finally
-		// lets a blocked Read return.
+		// Closing the console releases its ends of the pipes, which is what
+		// finally lets a blocked ReadFile return.
 		windows.ClosePseudoConsole(hpc)
 	}
-	if in != nil {
-		in.Close()
+	// ...and if one is still sitting in the syscall, cancel it BEFORE the
+	// handle goes. Closing a handle out from under a blocked read is the
+	// usual way this is done and it usually works, but the handle value is
+	// free for reuse the moment it closes, and a read that resumes against a
+	// reused handle is reading someone else's file.
+	if out != 0 {
+		windows.CancelIoEx(out, nil)
 	}
-	if out != nil {
-		out.Close()
+	if in != 0 {
+		windows.CloseHandle(in)
+	}
+	if out != 0 {
+		windows.CloseHandle(out)
 	}
 	return nil
 }
