@@ -23,7 +23,11 @@ import (
 // forkpty there, and a pseudoconsole is not a file descriptor you hand to a
 // child but a handle you have to bind to it before it starts. See
 // editor_mew_pty_windows.go.
-func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, error) {
+// method is ignored here: a pty pair is the only way POSIX makes a terminal,
+// and there is nothing for a selector to choose between. It exists in the
+// request because Windows has several and no way to know which one a given
+// machine wants.
+func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew.PTYSession, error) {
 	s, err := newUnixPTY(path, nil, dir, env, cols, rows)
 	if err != nil {
 		return nil, err

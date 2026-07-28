@@ -1989,9 +1989,13 @@ func (e *Editor) registerCommands() {
 	// exactly that: a host replacing an internal with its own version so that
 	// client code reaches the sandboxed one. mew's exec cannot run anything by
 	// itself - it can only ask its host.
+	// A SECOND argument names the host's method — exec "cmd.exe" "2" — for a
+	// host that has more than one way to make a terminal and no way to know
+	// from here which one this machine wants. Blank is the host's default.
 	ps.RegisterCommand("exec", func(ctx *pawscript.Context) pawscript.Result {
+		method, _ := argString(ctx, 1)
 		if arg, ok := argString(ctx, 0); ok && strings.TrimSpace(arg) != "" {
-			return pawscript.BoolStatus(e.execRequest(arg))
+			return pawscript.BoolStatus(e.execRequest(arg, method))
 		}
 		expired := &atomic.Bool{}
 		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
@@ -2007,7 +2011,7 @@ func (e *Editor) registerCommands() {
 					ctx.ResumeToken(token, false)
 					return
 				}
-				ctx.ResumeToken(token, e.execRequest(input))
+				ctx.ResumeToken(token, e.execRequest(input, method))
 			}, "exec")
 		return pawscript.TokenResult(token)
 	})

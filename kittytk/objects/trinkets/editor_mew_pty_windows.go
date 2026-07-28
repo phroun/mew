@@ -103,8 +103,76 @@ func (p *conPTY) ExitStatus() (int, bool) {
 // not a pause anyone notices.
 const reapGrace = 200 * time.Millisecond
 
-func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, error) {
-	p, err := newConPTY(path, nil, dir, env, cols, rows)
+// conOpts varies the parts of the spawn that are candidates for the fault, so
+// the self-test can differ ONE of them at a time. Zero value is what exec
+// does, and what Microsoft's own sample does.
+type conOpts struct {
+	// inherit passes bInheritHandles=TRUE. Microsoft's sample passes FALSE,
+	// but the sample's parent is a console application and this one is a GUI
+	// process with no console of its own — the one variable a probe cannot
+	// rule out by reasoning.
+	inherit bool
+	// keepEnds holds the console's own ends of both pipes open until AFTER
+	// the child exists, instead of closing them the moment
+	// CreatePseudoConsole returns. The documentation says they may be closed
+	// at once because the console duplicated them; several working
+	// implementations keep them anyway.
+	keepEnds bool
+	// noAppName passes lpApplicationName=NULL and lets CreateProcess resolve
+	// the program from the command line, which is the more common spelling
+	// and occasionally the one that behaves.
+	noAppName bool
+	// plainPipes skips the pseudoconsole entirely and gives the child
+	// ordinary inherited pipes as its standard handles. Not a terminal — no
+	// VT translation, no console API — but it answers whether the CHILD works
+	// at all, which nothing else here does.
+	plainPipes bool
+}
+
+// ptyMethods are the ways this host knows to make a terminal, selectable per
+// request (exec "cmd.exe" "3") and all of them run by the self-test.
+//
+// They exist because the fault is on a machine that is not this one, and
+// because the round trip to test a guess is measured in half-hours. One
+// build that can try every way beats six builds that each try one.
+var ptyMethods = []struct {
+	Name string
+	Desc string
+	Opt  conOpts
+}{
+	{"1", "default: ConPTY, bInheritHandles=FALSE, console ends closed early", conOpts{}},
+	{"2", "ConPTY, bInheritHandles=TRUE", conOpts{inherit: true}},
+	{"3", "ConPTY, console pipe ends kept open past CreateProcess", conOpts{keepEnds: true}},
+	{"4", "ConPTY, inherit=TRUE and ends kept", conOpts{inherit: true, keepEnds: true}},
+	{"5", "ConPTY, lpApplicationName=NULL (command line only)", conOpts{noAppName: true}},
+	{"6", "NO pseudoconsole: plain inherited pipes (control, not a terminal)", conOpts{plainPipes: true}},
+}
+
+// optsForMethod resolves a request's method name. An unknown one falls back
+// to the default rather than refusing: a mistyped method should still get a
+// terminal.
+func optsForMethod(name string) (conOpts, string) {
+	for _, m := range ptyMethods {
+		if m.Name == name {
+			return m.Opt, m.Desc
+		}
+	}
+	return conOpts{}, ptyMethods[0].Desc
+}
+
+func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew.PTYSession, error) {
+	opt, desc := optsForMethod(method)
+	if opt.plainPipes {
+		p, err := newPipeChild(path, nil, dir, env)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
+	}
+	p, err := newConPTY(path, nil, dir, env, cols, rows, opt)
+	if p != nil {
+		p.note("method: %s", desc)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +182,7 @@ func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, er
 // newConPTY is hostPTY with the argument list exposed, so the self-test can
 // drive the SAME code with a child that says something and exits. A probe
 // through a second implementation would only prove things about itself.
-func newConPTY(path string, args []string, dir string, env []string, cols, rows int) (*conPTY, error) {
+func newConPTY(path string, args []string, dir string, env []string, cols, rows int, opt conOpts) (*conPTY, error) {
 	if cols <= 0 {
 		cols = 80
 	}
@@ -146,13 +214,23 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	var hpc windows.Handle
 	err := windows.CreatePseudoConsole(
 		windows.Coord{X: int16(cols), Y: int16(rows)}, inRead, outWrite, 0, &hpc)
-	// The console duplicated what it needs, so our copies of ITS ends go now.
-	// Holding them would keep both pipes alive past the child's exit, and the
-	// reader would wait forever for an EOF that no longer has a writer to
-	// come from.
-	windows.CloseHandle(inRead)
-	windows.CloseHandle(outWrite)
+	// The console duplicated what it needs, so our copies of ITS ends can go
+	// now — holding them keeps both pipes alive past the child's exit, and the
+	// reader then waits for an EOF that has no writer left to come from. Some
+	// implementations hold them anyway, so keepEnds defers this until after
+	// the child exists and then closes them regardless.
+	if !opt.keepEnds {
+		windows.CloseHandle(inRead)
+		windows.CloseHandle(outWrite)
+		p.note("console pipe ends: closed immediately after CreatePseudoConsole")
+	} else {
+		p.note("console pipe ends: HELD until after CreateProcess")
+	}
 	if err != nil {
+		if opt.keepEnds {
+			windows.CloseHandle(inRead)
+			windows.CloseHandle(outWrite)
+		}
 		p.note("CreatePseudoConsole: %v", err)
 		windows.CloseHandle(inWrite)
 		windows.CloseHandle(outRead)
@@ -161,15 +239,20 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	p.note("CreatePseudoConsole: ok, HPCON 0x%x", uintptr(hpc))
 
 	p.hpc, p.in, p.out = hpc, inWrite, outRead
-	if err := p.spawn(path, args, dir, env); err != nil {
+	spawnErr := p.spawn(path, args, dir, env, opt)
+	if opt.keepEnds {
+		windows.CloseHandle(inRead)
+		windows.CloseHandle(outWrite)
+	}
+	if spawnErr != nil {
 		_ = p.Close()
-		return p, err
+		return p, spawnErr
 	}
 	return p, nil
 }
 
 // spawn starts the child bound to the pseudoconsole.
-func (p *conPTY) spawn(path string, args []string, dir string, env []string) error {
+func (p *conPTY) spawn(path string, args []string, dir string, env []string, opt conOpts) error {
 	attrs, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
 		p.note("NewProcThreadAttributeList: %v", err)
@@ -201,6 +284,10 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string) err
 	if err != nil {
 		return err
 	}
+	if opt.noAppName {
+		appName = nil
+		p.note("lpApplicationName: NULL (resolved from the command line)")
+	}
 	line := windows.ComposeCommandLine(append([]string{path}, args...))
 	cmdLine, err := windows.UTF16PtrFromString(line)
 	if err != nil {
@@ -218,8 +305,9 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string) err
 	// attributes: the child reaches its console through the attribute, and
 	// inheriting anything else would only give it references it has no
 	// business holding.
+	p.note("bInheritHandles: %v", opt.inherit)
 	var pi windows.ProcessInformation
-	err = windows.CreateProcess(appName, cmdLine, nil, nil, false,
+	err = windows.CreateProcess(appName, cmdLine, nil, nil, opt.inherit,
 		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
 		envBlock(env), dirPtr, &si.StartupInfo, &pi)
 	if err != nil {
@@ -387,18 +475,20 @@ func diagShellNames() []string {
 	return []string{"cmd.exe", "powershell.exe", "pwsh.exe", "bash.exe", "wsl.exe"}
 }
 
-// hostPTYProbe runs the Windows self-test. Three sessions, differing one
-// variable at a time, so the report says WHICH thing is wrong rather than
-// that something is:
+// hostPTYProbe runs the Windows self-test as a DIFFERENTIAL: the same child,
+// the same code, EVERY method, so one report names the one that works instead
+// of leaving a rebuild-and-carry-it-over per guess.
 //
-//   - a child that speaks and exits, with everything exec passes;
-//   - the same child with no environment block and no working directory —
-//     the minimal shape Microsoft's own sample uses, so a difference here
-//     indicts one of those two;
-//   - an interactive cmd.exe, which is the case that actually fails.
+// What is already known when this runs: the pseudoconsole is created, the
+// child attaches to it (conhost sets the window title from the child's own
+// process name), conhost renders — and the child produces nothing and exits 0.
+// A cmd.exe that prints no banner and exits 0 at once is a cmd.exe whose stdin
+// is at end of file, which is to say not a console. So what these divide up is
+// which part of how the child is started decides whether it is given the
+// console's handles.
 //
-// All three go through newConPTY: the same code exec uses, so a probe cannot
-// pass while the real path fails.
+// Look for MEW-CONPTY-OK, or for a Microsoft copyright banner. Any method that
+// shows one is the answer, and exec can be told to use it by name.
 func hostPTYProbe() []probeResult {
 	dir, _ := os.UserHomeDir()
 	env := append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
@@ -409,13 +499,186 @@ func hostPTYProbe() []probeResult {
 	}
 
 	var out []probeResult
-	s1, e1 := newConPTY(shell, []string{"/c", "echo MEW-CONPTY-OK"}, dir, env, 80, 24)
-	out = append(out, runProbe("cmd.exe /c echo (full: our env + home dir)", s1, e1))
+	start := func(path string, args []string, opt conOpts) (probeSession, error) {
+		if opt.plainPipes {
+			return newPipeChild(path, args, dir, env)
+		}
+		return newConPTY(path, args, dir, env, 80, 24, opt)
+	}
 
-	s2, e2 := newConPTY(shell, []string{"/c", "echo MEW-CONPTY-OK"}, "", nil, 80, 24)
-	out = append(out, runProbe("cmd.exe /c echo (minimal: inherited env, no dir)", s2, e2))
+	// Every method, against the case that actually fails: an interactive
+	// cmd.exe, which should answer with a banner and a prompt.
+	for _, m := range ptyMethods {
+		sess, err := start(shell, nil, m.Opt)
+		out = append(out, runProbe(
+			fmt.Sprintf("METHOD %s — cmd.exe interactive — %s", m.Name, m.Desc), sess, err))
+	}
 
-	s3, e3 := newConPTY(shell, nil, dir, env, 80, 24)
-	out = append(out, runProbe("cmd.exe interactive (what exec does)", s3, e3))
+	// And a child that speaks and exits, down the default path: if the banner
+	// never appears but this text does, the console works and cmd.exe's own
+	// reading of stdin is what does not.
+	sess, err := start(shell, []string{"/c", "echo MEW-CONPTY-OK"}, conOpts{})
+	out = append(out, runProbe("cmd.exe /c echo — a child that speaks and exits", sess, err))
+
+	// A DIFFERENT child down the identical path. If PowerShell speaks where
+	// cmd.exe does not, the console is fine and the fault is cmd.exe's alone.
+	if ps, err := exec.LookPath("powershell.exe"); err == nil {
+		sess, err := start(ps, nil, conOpts{})
+		out = append(out, runProbe("powershell.exe interactive — a different child, default method", sess, err))
+	}
 	return out
+}
+
+// pipeChild runs a process with ordinary inherited pipes for its standard
+// handles and no console of any kind — the control case for the probe set.
+type pipeChild struct {
+	mu     sync.Mutex
+	out    windows.Handle
+	in     windows.Handle
+	proc   windows.Handle
+	trace  []string
+	code   int
+	ended  bool
+	closed bool
+	reaped chan struct{}
+}
+
+func newPipeChild(path string, args []string, dir string, env []string) (*pipeChild, error) {
+	p := &pipeChild{reaped: make(chan struct{})}
+	p.note("no CreatePseudoConsole: plain pipes as std handles")
+
+	sa := &windows.SecurityAttributes{InheritHandle: 1}
+	sa.Length = uint32(unsafe.Sizeof(*sa))
+	var inRead, inWrite, outRead, outWrite windows.Handle
+	if err := windows.CreatePipe(&inRead, &inWrite, sa, 0); err != nil {
+		p.note("CreatePipe(in): %v", err)
+		return p, err
+	}
+	if err := windows.CreatePipe(&outRead, &outWrite, sa, 0); err != nil {
+		p.note("CreatePipe(out): %v", err)
+		return p, err
+	}
+	// Only the child's ends may be inherited; ours must not leak into it.
+	windows.SetHandleInformation(inWrite, windows.HANDLE_FLAG_INHERIT, 0)
+	windows.SetHandleInformation(outRead, windows.HANDLE_FLAG_INHERIT, 0)
+
+	si := &windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{}))}
+	si.Flags = windows.STARTF_USESTDHANDLES
+	si.StdInput, si.StdOutput, si.StdErr = inRead, outWrite, outWrite
+
+	appName, _ := windows.UTF16PtrFromString(path)
+	line := windows.ComposeCommandLine(append([]string{path}, args...))
+	cmdLine, _ := windows.UTF16PtrFromString(line)
+	var dirPtr *uint16
+	if dir != "" {
+		dirPtr, _ = windows.UTF16PtrFromString(dir)
+	}
+	var pi windows.ProcessInformation
+	err := windows.CreateProcess(appName, cmdLine, nil, nil, true,
+		windows.CREATE_UNICODE_ENVIRONMENT|windows.CREATE_NO_WINDOW,
+		envBlock(env), dirPtr, si, &pi)
+	windows.CloseHandle(inRead)
+	windows.CloseHandle(outWrite)
+	if err != nil {
+		p.note("CreateProcess: %v", err)
+		windows.CloseHandle(inWrite)
+		windows.CloseHandle(outRead)
+		return p, err
+	}
+	p.note("CreateProcess: ok, pid %d (STARTF_USESTDHANDLES, inherit=TRUE, CREATE_NO_WINDOW)", pi.ProcessId)
+	windows.CloseHandle(pi.Thread)
+	p.in, p.out, p.proc = inWrite, outRead, pi.Process
+
+	go func() {
+		defer close(p.reaped)
+		windows.WaitForSingleObject(pi.Process, windows.INFINITE)
+		var code uint32
+		windows.GetExitCodeProcess(pi.Process, &code)
+		p.mu.Lock()
+		p.ended, p.code = true, int(code)
+		p.mu.Unlock()
+		p.Close()
+	}()
+	return p, nil
+}
+
+func (p *pipeChild) note(format string, a ...any) {
+	p.trace = append(p.trace, fmt.Sprintf(format, a...))
+}
+func (p *pipeChild) Diagnostics() []string { return p.trace }
+
+func (p *pipeChild) Read(b []byte) (int, error) {
+	p.mu.Lock()
+	closed, h := p.closed, p.out
+	p.mu.Unlock()
+	if closed || h == 0 {
+		return 0, io.EOF
+	}
+	var n uint32
+	if err := windows.ReadFile(h, b, &n, nil); err != nil {
+		if err == windows.ERROR_BROKEN_PIPE {
+			return 0, io.EOF
+		}
+		return 0, err
+	}
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return int(n), nil
+}
+
+// Write sends to the child's stdin, and Resize is a courtesy: a plain pipe
+// has no size to set, and saying so is more honest than pretending.
+func (p *pipeChild) Write(b []byte) (int, error) {
+	p.mu.Lock()
+	closed, h := p.closed, p.in
+	p.mu.Unlock()
+	if closed || h == 0 {
+		return 0, io.ErrClosedPipe
+	}
+	var n uint32
+	if err := windows.WriteFile(h, b, &n, nil); err != nil {
+		return int(n), err
+	}
+	return int(n), nil
+}
+
+func (p *pipeChild) Resize(cols, rows int) error { return nil }
+
+func (p *pipeChild) ExitStatus() (int, bool) {
+	if p.reaped != nil {
+		select {
+		case <-p.reaped:
+		case <-time.After(reapGrace):
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.code, p.ended
+}
+
+func (p *pipeChild) Close() error {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.closed = true
+	in, out, proc, ended := p.in, p.out, p.proc, p.ended
+	p.in, p.out, p.proc = 0, 0, 0
+	p.mu.Unlock()
+	if proc != 0 {
+		if !ended {
+			windows.TerminateProcess(proc, 0)
+		}
+		windows.CloseHandle(proc)
+	}
+	if out != 0 {
+		windows.CancelIoEx(out, nil)
+		windows.CloseHandle(out)
+	}
+	if in != 0 {
+		windows.CloseHandle(in)
+	}
+	return nil
 }

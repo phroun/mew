@@ -66,7 +66,7 @@ func TestExecRequestShape(t *testing.T) {
 	}
 	w.Buffer.SetFilename("/home/user/project/main.go")
 
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec should have succeeded")
 	}
 	if got.Command != "bash" {
@@ -90,7 +90,7 @@ func TestExecUnnamedBufferSendsBlankCWD(t *testing.T) {
 		got = r
 		return newStubPTY(), nil
 	}
-	if !e.execRequest("zsh") {
+	if !e.execRequest("zsh", "") {
 		t.Fatal("exec should have succeeded")
 	}
 	if got.CWD != "" {
@@ -105,7 +105,7 @@ func TestExecRefusalIsGraceful(t *testing.T) {
 		return nil, errors.New("not permitted here")
 	}
 	before := docContent(w)
-	if e.execRequest("bash") {
+	if e.execRequest("bash", "") {
 		t.Error("a refused request must report failure")
 	}
 	if !hasWarning(e, "not permitted here") {
@@ -122,7 +122,7 @@ func TestExecRefusalIsGraceful(t *testing.T) {
 // With no provider at all, exec says so rather than failing silently.
 func TestExecWithoutProvider(t *testing.T) {
 	e, _ := newTestEditor(t, "x\n")
-	if e.execRequest("bash") {
+	if e.execRequest("bash", "") {
 		t.Error("no provider: exec must report failure")
 	}
 	if !hasWarning(e, "does not grant sessions") {
@@ -139,7 +139,7 @@ func TestTinputRoutesToSessionElseFallsThrough(t *testing.T) {
 	}
 	stub := newStubPTY()
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	if !e.ptySendBytes([]byte("ls\n")) {
@@ -165,7 +165,7 @@ func TestTinputAcceptsStringsAndByteValues(t *testing.T) {
 		e, _ := newTestEditor(t, "x\n")
 		stub := newStubPTY()
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-		if !e.execRequest("bash") {
+		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
 		}
 		e.executeCommand(tc.script)
@@ -186,7 +186,7 @@ func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
 		Place: func(s []TerminalSurface) { placed = s },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
@@ -204,10 +204,10 @@ func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
 func TestExecRefusesSecondSessionOnSameBuffer(t *testing.T) {
 	e, _ := newTestEditor(t, "x\n")
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("first exec failed")
 	}
-	if e.execRequest("zsh") {
+	if e.execRequest("zsh", "") {
 		t.Error("a second session on one buffer must be refused")
 	}
 	if !hasWarning(e, "already has a session") {
@@ -227,7 +227,7 @@ func TestPTYOutputForwardsRawBytesToHost(t *testing.T) {
 		Feed: func(id string, p []byte) { fedID = id; fed = append(fed, p...) },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	if openedID == "" {
@@ -269,7 +269,7 @@ func TestTerminalSurfacesPublishTheVisibleSet(t *testing.T) {
 		t.Error("no sessions: nothing should be published")
 	}
 
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 1, 80, 24
@@ -305,7 +305,7 @@ func TestPTYEndedClosesTheSurface(t *testing.T) {
 		Close: func(id string) { closed = id },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e.ptyEnded(w.Buffer, nil)
@@ -335,7 +335,7 @@ func TestInsertDispatchesToTerminalOrBuffer(t *testing.T) {
 	e2, w2 := newTestEditor(t, "ab\n")
 	stub := newStubPTY()
 	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e2.execRequest("bash") {
+	if !e2.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e2.executeCommand("insert 'X'")
@@ -360,7 +360,7 @@ func TestInsertNewlineDispatches(t *testing.T) {
 	e2, w2 := newTestEditor(t, "ab\n")
 	stub := newStubPTY()
 	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e2.execRequest("bash") {
+	if !e2.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e2.executeCommand("insert_newline")
@@ -379,7 +379,7 @@ func TestBufferInsertIgnoresTheSession(t *testing.T) {
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	stub := newStubPTY()
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e.executeCommand("buffer_insert 'X'")
@@ -402,7 +402,7 @@ func TestTinputBytesListSyntax(t *testing.T) {
 		e, _ := newTestEditor(t, "x\n")
 		stub := newStubPTY()
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-		if !e.execRequest("bash") {
+		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
 		}
 		e.executeCommand(tc.script)
@@ -422,7 +422,7 @@ func TestPTYViewportClass(t *testing.T) {
 	}
 	stub := newStubPTY()
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	if got := e.viewportClass(w); got != "pty" {
@@ -446,7 +446,7 @@ func TestPTYClassKeyBindings(t *testing.T) {
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 		stub := newStubPTY()
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-		if !e.execRequest("bash") {
+		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
 		}
 		e.reconcileFocusedOptions() // adopt the pty class keymap
@@ -485,7 +485,7 @@ func TestTerminalSurfaceWithdrawnWhenViewportOffScreen(t *testing.T) {
 		Place: func(s []TerminalSurface) { placed = append(placed, s) },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
@@ -521,7 +521,7 @@ func TestPTYMouseForwarding(t *testing.T) {
 		},
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 
@@ -571,7 +571,7 @@ func TestPTYMouseEventShapes(t *testing.T) {
 			Mouse: func(_ string, ev TerminalMouse) []byte { got = ev; return []byte{'x'} },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-		if !e.execRequest("bash") {
+		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
 		}
 		e.handleMouseKey("Mouse@6,3")
@@ -599,7 +599,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 			Mouse: func(string, TerminalMouse) []byte { asked++; return reply },
 		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-		if !e.execRequest("bash") {
+		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
 		}
 		return e, w, &asked
@@ -638,7 +638,7 @@ func TestRawKeyInputGoesToTheChild(t *testing.T) {
 		Key: func(_ string, key string) []byte { asked = key; return []byte("\x1b[21~") },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 
@@ -687,7 +687,7 @@ func TestRawKeyInputWithoutATerminalIsOrdinary(t *testing.T) {
 		Key: func(string, string) []byte { return nil },
 	}
 	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e2.execRequest("bash") {
+	if !e2.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e2.executeCommand("raw_key_input")
@@ -809,7 +809,7 @@ func TestSilentSessionRecordsItself(t *testing.T) {
 	sess := &stubTraced{stubPTY: newStubPTY(), trace: []string{"CreatePipe: ok", "CreateProcess: ok, pid 42"}}
 	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return sess, nil }
-	if !e.execRequest("cmd.exe") {
+	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
 	e.ptyEnded(w.Buffer, io.EOF)
@@ -848,7 +848,7 @@ func TestTalkativeSessionRecordsNothing(t *testing.T) {
 
 	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("bash") {
+	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
 	e.ptyOutput(w.Buffer, []byte("$ "))
@@ -878,7 +878,7 @@ func TestShortSessionRecordsWhatItSaid(t *testing.T) {
 
 	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
-	if !e.execRequest("cmd.exe") {
+	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
 	e.ptyOutput(w.Buffer, []byte("\x1b[?9001h\x1b[?1004h"))
@@ -906,5 +906,41 @@ func TestQuoteBytes(t *testing.T) {
 	want := `"hi\e[0m\x07\r\n"`
 	if got != want {
 		t.Errorf("quoteBytes = %s, want %s", got, want)
+	}
+}
+
+// The method rides along as data. mew attaches no meaning to it — it is the
+// host's word, like the command name — and it reaches the provider verbatim
+// so a machine that needs an unusual one can be told without a rebuild.
+func TestExecCarriesTheMethod(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	var got PTYRequest
+	e.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got = r
+		return newStubPTY(), nil
+	}
+	// Comma-separated: without it PawScript concatenates the two into one
+	// argument, which is symbol concatenation and not a second argument.
+	e.executeCommand(`exec "cmd.exe", "3"`)
+	if got.Command != "cmd.exe" || got.Method != "3" {
+		t.Errorf("request = %+v, want cmd.exe via method 3", got)
+	}
+	if !hasNotification(e, "method 3") {
+		t.Error("the notification should name a non-default method")
+	}
+
+	// No method named is the host's default, and says nothing about it.
+	e2, _ := newTestEditor(t, "x\n")
+	var got2 PTYRequest
+	e2.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got2 = r
+		return newStubPTY(), nil
+	}
+	e2.executeCommand(`exec "bash"`)
+	if got2.Method != "" {
+		t.Errorf("method = %q, want empty for the host's default", got2.Method)
+	}
+	if !hasNotification(e2, "Started bash") || hasNotification(e2, "method") {
+		t.Error("a default-method start should not mention a method")
 	}
 }

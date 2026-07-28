@@ -48,6 +48,17 @@ type PTYRequest struct {
 	// Cols and Rows are the viewport's content size at the moment of the
 	// request. The session is resized again whenever the viewport changes.
 	Cols, Rows int
+
+	// Method names WHICH WAY the host should make the terminal, when a host
+	// has more than one and they do not all work everywhere. Empty means the
+	// host's default and is what everything asks for; anything else is data
+	// the host defines, exactly like Command. mew attaches no meaning to it.
+	//
+	// It exists because "the platform has several ways to start a terminal and
+	// the right one is not knowable from here" is a real situation, and the
+	// alternative is a rebuild per attempt on a machine that may not be the
+	// one being developed on.
+	Method string
 }
 
 // PTYSession is what the host hands back: purfecterm's PTY interface MINUS
@@ -103,6 +114,7 @@ type ptyState struct {
 	sess    PTYSession
 	command string
 	cwd     string // as asked for, for the record a failed session leaves
+	method  string // which way the host was asked to make it (blank = default)
 	// bytes counts what the child has produced, head keeps the beginning of
 	// it, and started is when it began. A session that ends almost at once is
 	// worth writing down whether or not it said anything, and WHAT it said is
@@ -353,7 +365,7 @@ func (e *Editor) appendPTYLog(entry string) (string, error) {
 // execRequest asks the host for a session and binds it to the focused
 // buffer. Denial is an ordinary outcome, reported and survivable: the buffer
 // stays exactly what it was.
-func (e *Editor) execRequest(command string) bool {
+func (e *Editor) execRequest(command, method string) bool {
 	if e.Config.PTYProvider == nil {
 		e.ShowWarning("No terminal provider: this host does not grant sessions")
 		return false
@@ -378,6 +390,7 @@ func (e *Editor) execRequest(command string) bool {
 	req := PTYRequest{
 		CWD:     e.bufferCWD(w.Buffer),
 		Command: strings.TrimSpace(command),
+		Method:  strings.TrimSpace(method),
 		Cols:    cols,
 		Rows:    rows,
 	}
@@ -392,13 +405,17 @@ func (e *Editor) execRequest(command string) bool {
 		return false
 	}
 
-	e.attachPTY(w.Buffer, sess, req.Command, req.CWD, cols, rows)
-	e.ShowNotification("Started " + req.Command)
+	e.attachPTY(w.Buffer, sess, req.Command, req.CWD, req.Method, cols, rows)
+	started := "Started " + req.Command
+	if req.Method != "" {
+		started += " (method " + req.Method + ")"
+	}
+	e.ShowNotification(started)
 	return true
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd string, cols, rows int) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int) {
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
 		e.ptySessions = make(map[*buffer.Buffer]*ptyState)
@@ -406,7 +423,8 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd strin
 	e.ptySeq++
 	id := fmt.Sprintf("pty%d", e.ptySeq)
 	e.ptySessions[b] = &ptyState{
-		id: id, sess: sess, command: command, cwd: cwd, started: time.Now(),
+		id: id, sess: sess, command: command, cwd: cwd, method: method,
+		started: time.Now(),
 	}
 	e.ptyMu.Unlock()
 
@@ -608,6 +626,9 @@ func ptySessionRecord(st *ptyState, msg string, cause error, lived time.Duration
 	}
 	fmt.Fprintf(&b, "  command: %s\n", st.command)
 	fmt.Fprintf(&b, "  cwd asked for: %q\n", st.cwd)
+	if st.method != "" {
+		fmt.Fprintf(&b, "  method: %s\n", st.method)
+	}
 	fmt.Fprintf(&b, "  lasted: %s\n", lived.Round(time.Millisecond))
 	fmt.Fprintf(&b, "  ending: %s\n", msg)
 	if cause != nil {

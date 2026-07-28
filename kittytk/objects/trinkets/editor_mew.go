@@ -711,7 +711,7 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
 	// before it starts on Windows. hostPTY is per-platform; everything above
 	// it, and mew entirely, is not.
-	return hostPTY(path, dir, env, req.Cols, req.Rows)
+	return hostPTY(path, dir, env, req.Cols, req.Rows, req.Method)
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or
