@@ -477,6 +477,13 @@ bar=new menubar children={%s
 	}
 	new menu caption="History" after="format" children={
 		new menuitem caption="&Undo" action=mew.history.undo
+		new menuitem caption="&Redo / Enter Branch" action=mew.history.redo
+		new menuitem caption="Rever&t to Last Save Point" action=mew.history.revert
+		new menuitem separator
+		new menuitem caption="Navigation History:" enabled=false
+		new menuitem caption="&Prior History Item" action=mew.history.navprior
+		new menuitem caption="&Next History Item" action=mew.history.navnext
+		new menuitem caption="&Clear Link Visit Status" action=mew.history.navclear
 	}%s
 	new menu caption="Help" wellknown="help" children={
 		new menuitem caption="&Using mew" action=mew.help.usingmew
@@ -629,7 +636,20 @@ var menuActions = map[string]menuAction{
 	"mew.input.pdi":       {`insert_bidi_control "pdi"`, ""},
 	"mew.input.rawbyte":   {"insert_raw_byte", `esc \`},
 	"mew.input.rune":      {"insert_rune", ""},
-	"mew.history.undo":    {"buffer_undo", "^B -"},
+	// History. The undo-TREE items from the template (Undo History, Rewind to
+	// Last Branch, Fast Forward to Leaf/Branch, Show Full History) are absent
+	// on purpose: garland has the fork model under it, but Buffer exposes only
+	// Undo and Redo, so there is nothing yet for them to run. An item that
+	// advertises a key and does nothing is worse than an item that is not there.
+	"mew.history.undo":     {"buffer_undo", "^B -"},
+	"mew.history.redo":     {"buffer_redo", "^B ="},
+	"mew.history.revert":   {"buffer_revert", "^B ~"},
+	"mew.history.navprior": {"nav_history_prior", "^B ["},
+	"mew.history.navnext":  {"nav_history_next", "^B ]"},
+	// nav_clear forgets which links have been VISITED (repainting them to the
+	// unvisited style). Not nav_history_clear, which empties the viewport's
+	// back/forward stack - a different thing with a confusingly close name.
+	"mew.history.navclear": {"nav_clear", ""},
 
 	// Search. The three actions, then the toggles. Every toggle is a
 	// set_option_next, so a click cycles the option exactly as its key does —

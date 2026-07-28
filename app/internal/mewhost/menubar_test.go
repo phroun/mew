@@ -78,6 +78,12 @@ func TestPlaceholderItemsAreWired(t *testing.T) {
 			if id == "" || it.Text == "" {
 				continue // separators carry an auto-generated id and no text
 			}
+			// A disabled item is a LABEL - a section heading inside a menu
+			// ("Navigation History:"), not something to run. It carries no
+			// action by design.
+			if !it.Enabled {
+				continue
+			}
 			// An item tagged with a well-known ROLE is deliberately actionless:
 			// the desktop wires the standard behaviour onto it (handler, host
 			// shortcut, enable/disable) when it merges the edit menu, so a mew
