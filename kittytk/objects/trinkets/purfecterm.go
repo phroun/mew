@@ -123,7 +123,53 @@ func NewPurfecTerm() *PurfecTerm {
 		return true
 	})
 
+	// OSC 52: the one channel a program running INSIDE this terminal has to
+	// the system clipboard. vim's "+y, tmux's set-clipboard, neovim, emacs
+	// and a mew hosted in an exec session all emit it, and without this they
+	// believe they copied while nothing anywhere changed.
+	//
+	// Writes act; reads are the emulator's decision and it denies them by
+	// default, because a query lets anything that can print to the terminal
+	// read the user's clipboard. We do not override that here — a front end
+	// that wants it should ask the user first, and there is nowhere to ask
+	// from inside this constructor.
+	t.terminal.SetOnClipboard(func(ev purfecterm.ClipboardEvent, reply func([]byte)) {
+		d := t.findDesktop()
+		if d == nil {
+			return // orphaned: no desktop, no clipboard
+		}
+		if ev.Query {
+			if reply != nil {
+				d.ReadClipboardAsync(func(s string) { reply([]byte(s)) })
+			}
+			return
+		}
+		// A clear arrives as nil Data, and setting the clipboard to "" is
+		// how this desktop expresses that.
+		d.SetClipboard(string(ev.Data))
+	})
+
 	return t
+}
+
+// SetClipboardReadAllowed opts this terminal in to ANSWERING OSC 52 clipboard
+// queries from the program running inside it. Off by default, and the default
+// is the right one for most apps: a query lets anything that can print to the
+// terminal — a cat'ed file, a script's output — read the user's clipboard,
+// which is regularly a password.
+//
+// Turning it off costs little. Pasting INTO a terminal program normally goes
+// the other way: the user's Paste sends the clipboard as bracketed input, and
+// the guest sees typed text. Only a guest asking for the clipboard ITSELF
+// (mew's own os_paste under a TUI, vim's "+p) is affected, and it gets an
+// empty answer rather than hanging.
+func (t *PurfecTerm) SetClipboardReadAllowed(allow bool) {
+	if t.terminal == nil {
+		return
+	}
+	pol := purfecterm.DefaultClipboardPolicy()
+	pol.AllowRead = allow
+	t.terminal.SetClipboardPolicy(pol)
 }
 
 // SetInputSink installs the callback that receives bytes destined for the

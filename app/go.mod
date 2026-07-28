@@ -22,7 +22,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.10 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/pawscript v0.2.11-alpha // indirect
-	github.com/phroun/purfecterm v0.2.27 // indirect
+	github.com/phroun/purfecterm v0.2.28 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/veandco/go-sdl2 v0.4.40 // indirect
