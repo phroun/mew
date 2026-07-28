@@ -410,7 +410,8 @@ bar=new menubar children={%s
 		new menuitem separator
 		new menuitem caption="&Save Current Buffer" action=mew.buffer.save
 		new menuitem caption="Save &All Buffers" action=mew.buffer.saveall
-		new menuitem caption="Save As (&Write && Become)..." action=mew.buffer.write
+		new menuitem caption="Save As (Write && &Become)..." action=mew.buffer.saveas
+		new menuitem caption="Export (&Write)..." action=mew.buffer.write
 		new menuitem separator
 		new menuitem caption="Document &Direction [?]" action=mew.options.direction
 		new menuitem caption="Read Only" action=mew.options.readonly checkable=true
@@ -558,10 +559,14 @@ var menuActions = map[string]menuAction{
 	"mew.buffer.close":     {"cancel|buffer_close", "^C"},
 	"mew.buffer.save":      {"buffer_save", "^B S"},
 	"mew.buffer.saveall":   {"buffer_save_all true", "^B A"},
-	// "Write & Become" is buffer_save_AS (re-homes the buffer). mew's
-	// buffer_write is the other thing entirely — an export that leaves the
-	// buffer's identity alone — so the caption, not the action id, decides.
-	"mew.buffer.write": {"buffer_save_as", "^K D"},
+	// Two different operations, two items. buffer_save_as re-homes the buffer:
+	// it writes to the new name and the buffer BECOMES that file, carrying its
+	// identity, modified flag and save history over. buffer_write exports a
+	// copy (SaveCopyTo) and the buffer keeps the file it had, so it prompts
+	// before overwriting anything at all — its own source included, since an
+	// export is never the buffer's own save.
+	"mew.buffer.saveas": {"buffer_save_as", "^B B"},
+	"mew.buffer.write":  {"buffer_write", "^B W"},
 
 	// File Buffer ▸ per-document options
 	"mew.options.direction":    {`set_option_next "direction"`, "^O D"},

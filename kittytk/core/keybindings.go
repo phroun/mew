@@ -116,7 +116,10 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionSelectDown] = []string{"S-Down"}
 	kb.bindings[ActionSelectHome] = []string{"S-Home"}
 	kb.bindings[ActionSelectEnd] = []string{"S-End"}
-	kb.bindings[ActionSelectAll] = []string{"M-a"} // Meta+A (not ^A which is Emacs home)
+	// Super+A, the OS-standard Select All: ⌘A on macOS, Super+A elsewhere. Not
+	// ^A, which is bound above as Emacs home, and not M-a, which is neither
+	// platform's convention.
+	kb.bindings[ActionSelectAll] = []string{"s-a"}
 
 	// Editing
 	kb.bindings[ActionBackspace] = []string{"Backspace", "^H"}
