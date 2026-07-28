@@ -1,5 +1,10 @@
 # Bug report + patch: a second ESC must restart the sequence
 
+> **Resolved upstream in direct-key-handler v0.3.10.** The release carries
+> this patch exactly — the fix and its test, nothing else. mew, KittyTK and
+> mew-app are all on v0.3.10. Kept here as the record of the diagnosis; the
+> patch file below is now only of historical interest.
+
 *For the direct-key-handler maintainers. Found in mew/KittyTK on macOS,
 v0.3.9. Affects every consumer that enables mouse reporting, and any that
 runs where two sequences can land in one read.*

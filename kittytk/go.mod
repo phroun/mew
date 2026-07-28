@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/go-text/render v0.2.1
 	github.com/go-text/typesetting v0.3.4
-	github.com/phroun/direct-key-handler v0.3.9
+	github.com/phroun/direct-key-handler v0.3.10
 	github.com/phroun/mew v0.3.1-alpha
 	github.com/phroun/purfecterm v0.2.27
 	github.com/veandco/go-sdl2 v0.4.40
