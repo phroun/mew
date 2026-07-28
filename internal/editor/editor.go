@@ -1965,18 +1965,28 @@ func (e *Editor) registerCommands() {
 		return pawscript.TokenResult(token)
 	})
 
-	// insert_raw_byte inserts a byte 0..255, written whichever way the value is
+	// insert_raw_byte inserts bytes verbatim. A PawScript {bytes ...} value goes
+	// in whole; otherwise a single byte 0..255, written whichever way the value is
 	// already in your head - see parseByteSpec for the full set: ^[ or ESC for
 	// the escape character, x1b, o33, b11011, #27. "?" in the prompt lists
 	// them.
 	ps.RegisterCommand("insert_raw_byte", func(ctx *pawscript.Context) pawscript.Result {
+		// A {bytes ...} value is the language's own way to say this, so take it
+		// first and take ALL of it: {bytes 0xDEADBEEF} inserts four bytes, not
+		// one. Every other spelling below carries a single byte because it is a
+		// way of NAMING one; this is a way of holding a sequence.
+		if len(ctx.Args) > 0 {
+			if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+				return pawscript.BoolStatus(e.insertRawBytesAt(sb.Data()))
+			}
+		}
 		if arg, ok := argString(ctx, 0); ok {
 			r, ok := parseByteSpec(arg)
 			if !ok {
 				e.ShowWarning("Not a byte value: " + arg)
 				return pawscript.BoolStatus(false)
 			}
-			return pawscript.BoolStatus(e.insertRuneAt(r))
+			return pawscript.BoolStatus(e.insertRawByteAt(byte(r)))
 		}
 		expired := &atomic.Bool{}
 		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
@@ -2007,7 +2017,7 @@ func (e *Editor) registerCommands() {
 						ask()
 						return
 					}
-					ctx.ResumeToken(token, e.insertRuneAt(r))
+					ctx.ResumeToken(token, e.insertRawByteAt(byte(r)))
 				}, "insbyte")
 		}
 		ask()
@@ -5111,10 +5121,10 @@ var asciiControlNames = map[string]rune{
 // feed) - the one name that is also a valid hex byte. Write "^L" or "x0c" for
 // that character.
 //
-// The value is returned as a SCALAR, not a loose byte: a mew buffer holds
-// text, so 0x80..0xFF become U+0080..U+00FF, the Latin-1 reading of that
-// number. Inserting a bare high byte would leave invalid UTF-8 in the line and
-// desync every rune-indexed column in the editor.
+// The value is returned as a rune only because that is a convenient carrier for
+// 0..255; it is a BYTE, and insertRawByteAt writes exactly that byte. High
+// bytes are not reinterpreted as Latin-1 scalars - see insertRawByteAt for why
+// the invalid-UTF-8 consequences are the caller's to own.
 // cEscapes are the single-letter backslash escapes a C, Go, Python or shell
 // programmer already has in their fingers. "\\e" is not ISO C, but every
 // toolchain worth using accepts it for ESC and it is the one people reach for.
@@ -5167,6 +5177,28 @@ func parseCEscape(t string) (rune, bool) {
 	return r, ok
 }
 
+// literalByteRune accepts the input when it is ALREADY the character itself and
+// names a byte. Wider than literalControl because PawScript resolves "\xfe" to
+// the SCALAR U+00FE before this command ever runs, so a high byte arrives as one
+// non-ASCII rune - and for a byte command that means the byte, not the scalar.
+//
+// Everything ASCII-printable is excluded, because that is where the numeric and
+// named spellings live: "a" has to stay hex 0x0A, "FF" has to stay 255, "ESC"
+// has to stay a name. What is left - controls, DEL, and U+0080..U+00FF - cannot
+// be written any of those ways, so taking it literally is unambiguous. A rune
+// past U+00FF is not a byte at all and is refused.
+func literalByteRune(in string) (rune, bool) {
+	rs := []rune(in)
+	if len(rs) != 1 {
+		return 0, false
+	}
+	r := rs[0]
+	if r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0xFF) {
+		return r, true
+	}
+	return 0, false
+}
+
 // literalControl accepts the input when it is ALREADY the character itself -
 // one control rune, untrimmed. A keymap or PawScript argument written "\n" has
 // its escape resolved by the parser before this command ever runs, so by the
@@ -5186,7 +5218,7 @@ func literalControl(in string) (rune, bool) {
 func parseByteSpec(in string) (rune, bool) {
 	// Before trimming: TrimSpace would eat a literal tab or newline, and those
 	// are exactly the values someone is most likely to be inserting.
-	if r, ok := literalControl(in); ok {
+	if r, ok := literalByteRune(in); ok {
 		return r, true
 	}
 	t := strings.TrimSpace(in)
@@ -5264,6 +5296,31 @@ func (e *Editor) insertRuneAt(r rune) bool {
 		return false
 	}
 	e.insertText(string(r))
+	e.trackEdit()
+	e.editCoalesced = true
+	return true
+}
+
+// insertRawByteAt inserts ONE byte, exactly the byte asked for. 0x80..0xFF go
+// in as that single byte and NOT as the Latin-1 scalar of the same number,
+// which would be two bytes of UTF-8 and a different file on disk.
+//
+// This does mean a line can hold a byte sequence that is not valid UTF-8, and
+// the editor's rune-indexed columns will read it as whatever Go's decoder makes
+// of it. That is the deal: a command called "insert raw byte" that quietly
+// inserted a different byte would be worthless for the job it exists to do -
+// patching a binary, embedding a control code, fixing an encoding by hand. The
+// consequences belong to the user who asked for the byte.
+func (e *Editor) insertRawByteAt(b byte) bool { return e.insertRawBytesAt([]byte{b}) }
+
+// insertRawBytesAt inserts a byte SEQUENCE verbatim, for a PawScript
+// {bytes ...} value. Garland stores bytes (insertStringAt is []byte(data) with
+// no re-encoding), so what reaches the buffer is exactly what was asked for.
+func (e *Editor) insertRawBytesAt(b []byte) bool {
+	if e.contentLocked() || len(b) == 0 {
+		return false
+	}
+	e.insertText(string(b))
 	e.trackEdit()
 	e.editCoalesced = true
 	return true

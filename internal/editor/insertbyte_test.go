@@ -225,3 +225,115 @@ func TestInsertRawByteSurvivesPawScriptQuoting(t *testing.T) {
 		}
 	}
 }
+
+// A high byte goes in as ONE byte, not as the Latin-1 scalar of the same
+// number. 0xFF must be the single byte 0xFF, not U+00FF, which UTF-8 would
+// write as 0xC3 0xBF - a different file on disk and the wrong answer for
+// every job this command exists to do.
+//
+// The line is then not valid UTF-8. That is intended: "insert raw byte" that
+// inserted a different byte would be worthless.
+func TestInsertRawByteIsLiteralNotLatin1(t *testing.T) {
+	for _, tc := range []struct {
+		spec string
+		want byte
+	}{
+		{"FF", 0xFF}, {"x80", 0x80}, {"#255", 0xFF}, {`\xfe`, 0xFE},
+	} {
+		e, w := newTestEditor(t, "ab\n")
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+		e.executeCommand(`insert_raw_byte "` + tc.spec + `"`)
+
+		got := []byte(docContent(w))
+		want := []byte{'a', tc.want, 'b'}
+		if len(got) != len(want) {
+			t.Errorf("%s inserted % x, want % x (one byte, not a UTF-8 pair)", tc.spec, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s inserted % x, want % x", tc.spec, got, want)
+				break
+			}
+		}
+	}
+}
+
+// Low bytes are unaffected — they are the same either way — and insert_rune is
+// deliberately NOT changed: a code point is a scalar and encodes as UTF-8.
+func TestInsertRuneStillEncodesUTF8(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	e.executeCommand(`insert_rune "00FF"`)
+	got := []byte(docContent(w))
+	want := []byte{'a', 0xC3, 0xBF, 'b'} // U+00FF as UTF-8
+	if len(got) != len(want) {
+		t.Fatalf("insert_rune produced % x, want % x", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("insert_rune produced % x, want % x", got, want)
+		}
+	}
+}
+
+// PawScript resolves "\xfe" to the SCALAR U+00FE before the command runs, so a
+// high byte arrives as one non-ASCII rune. For a byte command that means the
+// byte. Everything ASCII-printable is excluded from this rule, because that is
+// where the numeric and named spellings live.
+func TestParseByteSpecTakesResolvedHighBytesLiterally(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want rune
+	}{
+		{string(rune(0xFE)), 0xFE}, {string(rune(0xFF)), 0xFF}, {string(rune(0x80)), 0x80},
+		{"\n", 0x0A}, {"\x1b", 0x1B}, {"\x7f", 0x7F},
+	} {
+		got, ok := parseByteSpec(tc.in)
+		if !ok || got != tc.want {
+			t.Errorf("parseByteSpec(%q) = %#x,%v want %#x", tc.in, got, ok, tc.want)
+		}
+	}
+	// ASCII printables keep their numeric/named reading.
+	if got, _ := parseByteSpec("a"); got != 0x0A {
+		t.Errorf(`parseByteSpec("a") = %#x, want hex 0x0A`, got)
+	}
+	if got, _ := parseByteSpec("d"); got != 0x0D {
+		t.Errorf(`parseByteSpec("d") = %#x, want hex 0x0D`, got)
+	}
+	// Past a byte is not a byte, however it arrives.
+	if got, ok := parseByteSpec(string(rune(0x5D0))); ok {
+		t.Errorf("parseByteSpec(alef) = %#x, want rejection: not a byte", got)
+	}
+}
+
+// {bytes ...} is PawScript's own way to say this, so it is taken first and
+// taken WHOLE: {bytes 0xDEADBEEF} inserts four bytes. Every other spelling
+// names a single byte; this one holds a sequence.
+func TestInsertRawByteAcceptsPawScriptBytesValue(t *testing.T) {
+	for _, tc := range []struct {
+		script string
+		want   []byte
+	}{
+		{"insert_raw_byte {bytes 0xFE}", []byte{0xFE}},
+		{"insert_raw_byte {bytes 0xDEADBEEF}", []byte{0xDE, 0xAD, 0xBE, 0xEF}},
+		{"insert_raw_byte {bytes 254}", []byte{0xFE}},
+	} {
+		e, w := newTestEditor(t, "ab\n")
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+		e.executeCommand(tc.script)
+
+		want := append(append([]byte{'a'}, tc.want...), 'b')
+		got := []byte(docContent(w))
+		if len(got) != len(want) {
+			t.Errorf("%s -> % x, want % x", tc.script, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s -> % x, want % x", tc.script, got, want)
+				break
+			}
+		}
+	}
+}
