@@ -383,7 +383,7 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 	appMenu, windowMenu := "", ""
 	if multiWindow {
 		appMenu = `
-	new menu caption="&mew" wellknown="app" children={
+	new menu caption="mew" wellknown="app" children={
 		new menuitem caption="&New Window" action=mew.window.new
 	}`
 		windowMenu = `
