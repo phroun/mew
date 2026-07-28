@@ -116,6 +116,11 @@ type TUIBackend struct {
 	// Output writer
 	output io.Writer
 
+	// ttyOut, when set, receives the terminal MODE escapes instead of a freshly
+	// opened /dev/tty (see writeTTY). Tests set it so their result does not
+	// depend on whether the runner happens to have a controlling terminal.
+	ttyOut io.Writer
+
 	// Capabilities
 	colorDepth int
 	hasMouse   bool
@@ -246,31 +251,19 @@ func (t *TUIBackend) Init() error {
 	// Allocate buffers
 	t.allocateBuffers()
 
-	// Open /dev/tty directly to ensure escape sequences reach the terminal
-	// This bypasses any stdout redirection
-	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		tty = os.Stdout
-	}
-
 	// Enable Kitty keyboard protocol for better key detection
-	fmt.Fprint(tty, "\033[>1u")
+	t.writeTTY("\033[>1u")
 
 	// Enable mouse if requested
 	if t.hasMouse {
-		fmt.Fprint(tty, "\033[?1000h\033[?1002h\033[?1006h")
+		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
 	}
 
 	// Enter alternate screen
-	fmt.Fprint(tty, "\033[?1049h")
+	t.writeTTY("\033[?1049h")
 
 	// Hide cursor initially
-	fmt.Fprint(tty, "\033[?25l")
-
-	// Close tty if we opened it separately
-	if tty != os.Stdout {
-		tty.Close()
-	}
+	t.writeTTY("\033[?25l")
 
 	// Set up keyboard handler AFTER terminal modes are configured
 	kbOpts := keyboard.Options{
@@ -311,23 +304,33 @@ func (t *TUIBackend) Shutdown() {
 		t.keyboard.Stop()
 	}
 
-	// Disable Kitty keyboard protocol
-	t.write("\033[<u")
-
 	// Disable mouse
 	if t.hasMouse {
-		t.write("\033[?1006l\033[?1002l\033[?1000l")
+		t.writeTTY("\033[?1006l\033[?1002l\033[?1000l")
 	}
 
 	// Show cursor
-	t.write("\033[?25h")
+	t.writeTTY("\033[?25h")
 	t.cursorShown = true
 
 	// Leave alternate screen
-	t.write("\033[?1049l")
+	t.writeTTY("\033[?1049l")
+
+	// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
+	// because the flag stack is per-screen. Init pushes (\033[>1u) while still
+	// on the MAIN screen and only then switches to the alternate one, so a pop
+	// issued before switching back applies to the alternate screen's stack and
+	// leaves the main screen's push live. The shell inherits it and the first
+	// Ctrl+C prints an escape ("...9;5u") instead of interrupting.
+	//
+	// Popping an empty stack is a no-op, so this stays safe on a terminal that
+	// ignored the push. The explicit reset after it covers a terminal that
+	// honours the flags but not the stack.
+	t.writeTTY("\033[<u")
+	t.writeTTY("\033[=0;1u")
 
 	// Reset colors
-	t.write("\033[0m")
+	t.writeTTY("\033[0m")
 }
 
 // allocateBuffers creates the screen buffers.
@@ -1295,6 +1298,30 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	default:
 		// Queue full, drop event
 	}
+}
+
+// writeTTY sends a TERMINAL MODE escape - one that changes the terminal's state
+// rather than painting content - straight to /dev/tty, falling back to the
+// configured output when that cannot be opened.
+//
+// Mode changes have to reach somewhere they take effect, and they have to be
+// UNDONE through the same channel. Under `app > file` the enable would
+// otherwise reach the terminal (via /dev/tty) while the disable went into the
+// file, leaving raw/alt-screen/kitty-keys state set with nothing still running
+// to clear it. Content writes keep using write() and the configured output,
+// which is what redirection is for.
+func (t *TUIBackend) writeTTY(s string) {
+	if t.ttyOut != nil {
+		io.WriteString(t.ttyOut, s)
+		return
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		t.write(s)
+		return
+	}
+	defer tty.Close()
+	io.WriteString(tty, s)
 }
 
 // write outputs a string to the terminal.
