@@ -251,11 +251,12 @@ func defaultMethod() string {
 	if m := strings.TrimSpace(os.Getenv("MEW_PTY_METHOD")); m != "" {
 		return m
 	}
-	// Back to the plain-pipe shell until a pseudoconsole is known to work
-	// here. Method 1 with a console allocated flashes a window and then shows
-	// nothing, which is worse than a limited terminal that works — and the
-	// diagnostic runs every method, so the answer costs no rebuild.
-	return "6"
+	// The real terminal. It works with a console allocated — a full shell,
+	// resize, the console API — and was seen to fail once, on one launch, in a
+	// way that has not recurred. One unexplained event is not worth giving up
+	// resize and full-screen programs for; method 6 is a command away if it
+	// turns out to be more than that.
+	return "1"
 }
 
 // optsForMethod resolves a request's method name. An unknown one falls back
