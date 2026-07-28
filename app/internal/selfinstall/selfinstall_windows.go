@@ -18,6 +18,8 @@
 package selfinstall
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
@@ -102,23 +104,37 @@ func Install() (string, error) {
 	var log []string
 	selfName := strings.ToLower(filepath.Base(self))
 	for _, name := range []string{"mew.exe", "mew-sdl.exe"} {
+		dst := filepath.Join(dir, name)
 		src := filepath.Join(srcDir, name)
 		if _, err := os.Stat(src); err != nil {
-			if selfName == name {
+			switch {
+			case selfName == name:
 				src = self // running under this name from somewhere else
-			} else {
+			case name == "mew.exe" && len(embeddedConsole()) > 0:
+				// Carried inside this binary. A single downloaded
+				// mew-sdl.exe therefore installs both, which is the point of
+				// embedding it: the console build is the one that answers
+				// `mew --version` from a shell and the one on the PATH.
+				n, err := writeGzipped(dst, embeddedConsole())
+				if err != nil {
+					return "", fmt.Errorf("extract %s: %w", name, err)
+				}
+				installedConsole = dst
+				fmt.Printf("installed %s (extracted from this binary)\n", dst)
+				log = append(log, fmt.Sprintf("installed %s  (extracted from this binary, %d bytes)", dst, n))
+				continue
+			default:
 				note := fmt.Sprintf("%s not found beside me; skipped", name)
 				if name == "mew-sdl.exe" {
 					note += " (build it with `make windows-sdl` on Windows)"
 				} else {
-					note += " (build it with `make windows`)"
+					note += " (build it with `make windows`, or with the console binary embedded)"
 				}
 				fmt.Fprintln(os.Stderr, "mew: "+note)
 				log = append(log, note)
 				continue
 			}
 		}
-		dst := filepath.Join(dir, name)
 		if err := copyFile(src, dst); err != nil {
 			return "", fmt.Errorf("copy %s: %w", name, err)
 		}
@@ -488,4 +504,37 @@ func writeInstallLog(dir string, lines []string) {
 		body += "  " + l + "\n"
 	}
 	_ = os.WriteFile(filepath.Join(dir, "install.log"), []byte(body), 0o644)
+}
+
+// writeGzipped expands a gzipped payload to a path and returns the number of
+// bytes written. Written through a temporary and renamed so a half-extracted
+// binary never appears under the real name — the file being written is one
+// that something may be about to run.
+func writeGzipped(dst string, gz []byte) (int64, error) {
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		return 0, err
+	}
+	defer zr.Close()
+
+	tmp := dst + ".part"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(f, zr)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return 0, err
+	}
+	// Windows will not rename over an existing file.
+	os.Remove(dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return 0, err
+	}
+	return n, nil
 }

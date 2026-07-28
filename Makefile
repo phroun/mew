@@ -5,7 +5,9 @@
 #   make mew-sdl    build the graphical (SDL) host into bin/mew-sdl
 #   make mew-plain  build the bare terminal editor (no host) into bin/mew-plain
 #   make windows    cross-build the Windows console mew.exe into bin/
-#   make windows-sdl build the Windows GUI mew-sdl.exe (with icon) — run on Windows
+#   make windows-sdl build the Windows GUI mew-sdl.exe (with icon, and with
+#                   mew.exe carried inside it so one file installs both)
+#                   — run on Windows
 #                   Then scripts\install-windows.ps1 installs the binaries and
 #                   adds a Start Menu shortcut (see that script's header).
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
@@ -67,6 +69,10 @@ RSRC ?= go run github.com/akavel/rsrc@v0.10.2
 # than the console mew.exe. Arch-suffixed so the Go toolchain links it only for
 # the matching windows build and never for other platforms.
 WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
+
+# The console binary carried inside the graphical one, gzipped. A build
+# artefact, not checked in; see the windows-sdl target.
+CONSOLE_PAYLOAD := app/internal/selfinstall/payload/mew.exe.gz
 
 .PHONY: all build mew mew-sdl mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
 
@@ -155,8 +161,21 @@ endif
 # find (and optionally static-link) SDL2. Each part appears only when relevant.
 WINDOWS_SDL_ENV = $(if $(WINDOWS_CC),CC=$(WINDOWS_CC) )$(if $(strip $(WINDOWS_SDL_CFLAGS)),CGO_CFLAGS="$(WINDOWS_SDL_CFLAGS)" )$(if $(strip $(WINDOWS_SDL_LDFLAGS)),CGO_LDFLAGS="$(WINDOWS_SDL_LDFLAGS)" )
 
-windows-sdl: $(WINDOWS_SYSO)
-	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(WINDOWS_SDL_ENV)$(GO) build -tags "$(SDL_TAGS)" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+# The console binary, gzipped into the graphical one's package so a //go:embed
+# can carry it (see app/internal/selfinstall/payload/README.md). Compressed in
+# Go rather than through gzip(1): these targets are run ON Windows, where a
+# shell pipeline is not something to assume.
+#
+# The point is a SINGLE downloaded mew-sdl.exe that installs both: the console
+# build is what answers `mew --version` from a shell, and what belongs on the
+# PATH. Without this step the graphical binary still builds and simply has
+# nothing to extract.
+$(CONSOLE_PAYLOAD): windows
+	@mkdir -p $(dir $(CONSOLE_PAYLOAD))
+	$(GO) run ./app/tools/gzipfile $(BIN_DIR)/mew.exe $(CONSOLE_PAYLOAD)
+
+windows-sdl: $(WINDOWS_SYSO) $(CONSOLE_PAYLOAD)
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(WINDOWS_SDL_ENV)$(GO) build -tags "$(SDL_TAGS) embedconsole" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
 
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
 # the icon changes). It lives in the mew-sdl package, so the Go linker embeds it
@@ -288,6 +307,7 @@ test:
 clean:
 	rm -rf $(BIN_DIR)
 	rm -f app/cmd/mew/rsrc_windows_*.syso app/cmd/mew-sdl/rsrc_windows_*.syso
+	rm -f $(CONSOLE_PAYLOAD)
 
 # Bump the per-commit Build counter in internal/version/version.go. The file
 # holds Build on a single line of the form `const Build = N`; the awk script
