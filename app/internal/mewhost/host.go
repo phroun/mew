@@ -14,6 +14,7 @@ package mewhost
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
@@ -413,8 +414,8 @@ bar=new menubar children={%s
 		new menuitem separator
 		new menuitem caption="Document &Direction [?]" action=mew.options.direction
 		new menuitem caption="Read Only" action=mew.options.readonly checkable=true
-		new menuitem caption="Automatic S&ynax" action=mew.options.syntaxdetect checkable=true
-		new menuitem caption="Document Synta&x [?]..." action=mew.options.syntax"
+		new menuitem caption="Automatic S&yntax" action=mew.options.syntaxdetect checkable=true
+		new menuitem caption="Document Synta&x [?]..." action=mew.options.syntax
 	}
 	new menu caption="Edit Block" wellknown="edit" children={
 		new menuitem caption="Mark &Block Beginning" action=mew.block.setbegin
@@ -423,19 +424,20 @@ bar=new menubar children={%s
 		new menuitem caption="&Move Block to Cursor" action=mew.block.move
 		new menuitem caption="&Copy Block to Cursor" action=mew.block.copy
 		new menuitem caption="E&xchange with OS Clipboard" action=mew.block.osexchange
-		new menuitem caption="Cut to OS Clipboard" action=mew.block.oscut
-		new menuitem caption="Copy to OS Clipboard" action=mew.block.oscopy
-		new menuitem caption="Paste from OS Clipboard" action=mew.block.ospaste
+		new menuitem caption="Cut to OS Clipboard" wellknown="cut"
+		new menuitem caption="Copy to OS Clipboard" wellknown="copy"
+		new menuitem caption="Paste from OS Clipboard" wellknown="paste"
 		new menuitem separator
 		new menuitem caption="&Write Block to File..." action=mew.block.write
-		new menuitem caption="&Replace  Block with File..." action=mew.block.read
+		new menuitem caption="&Replace Block with File..." action=mew.block.read
 		new menuitem separator
 		new menuitem caption="Delete to Kill Ring" action=mew.block.delete
 		new menuitem caption="Reclaim from Kill Ring (yank)" action=mew.nerd.yank
 		new menuitem caption="Cycle Kill Ring (yankpop)" action=mew.nerd.yankpop
 		new menuitem separator
-		new menuitem caption="Select All" action=mew.block.selectall
-		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
+		new menuitem caption="Select All" wellknown="selectall"
+		new menuitem separator
+		new menuitem caption="Raw Key &Input" action=mew.edit.rawkey
 	}
 	new menu caption="Format" wellknown="format" children={
 		new menuitem caption="Unindent Block" action=mew.format.unindent
@@ -444,7 +446,7 @@ bar=new menubar children={%s
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
 	}
 	new menu caption="Input" after="file" children={
-		new menuitem caption="&Insert Mode [Overwrite]" action=mew.input.insertmode
+		new menuitem caption="&Insert Mode [?]" action=mew.input.insertmode
 	}
 	new menu caption="Search" after="file" children={
 		new menuitem caption="&Find..." action=mew.search.find
@@ -485,17 +487,13 @@ bar=new menubar children={%s
 	// Raw Key Input: pass the next keystroke straight to the focused trinket, so
 	// a control key mew binds (and the host would otherwise consume) reaches the
 	// editor. Same handler the demo wires.
-	// The placeholder items each fire their mew command on the root editor,
-	// so the bar is exercised end to end rather than being inert scenery.
-	for action, cmd := range map[string]string{
-		"mew.file.save":        "buffer_save",
-		"mew.format.unindent":  "block_unindent",
-		"mew.view.clone":       "viewport_clone",
-		"mew.input.insertmode": `set_option_next "insertMode"`,
-		"mew.search.find":      "find",
-		"mew.history.undo":     "buffer_undo",
-	} {
-		cmd := cmd // one binding per closure
+	// Every other item fires its mew command on the root editor, so the bar is
+	// exercised end to end rather than being inert scenery. One table drives
+	// both this and the shortcut column (menuActions), so an item can never be
+	// advertised with a key it does not run, or run a command it does not
+	// advertise.
+	for action, spec := range menuActions {
+		cmd := spec.cmd // one binding per closure
 		commands.Register(action, func() {
 			if ed, ok := rootMewEditor(application); ok {
 				ed.Execute(cmd)
@@ -529,11 +527,61 @@ func rootMewEditor(application *app.Application) (*trinkets.Editor, bool) {
 	return ed, ok
 }
 
-// placeholderShortcuts maps each placeholder item to the mew action its
-// shortcut text should resolve from, and the spelling to prefer when several
-// sequences are bound (or to fall back on when none is).
-var placeholderShortcuts = map[string][2]string{
-	"mew.file.save":        {"buffer_save", "^B S"},
+// menuAction is one bar item's binding: the mew command it runs, and the key
+// spelling to prefer when several sequences are bound to that command. A blank
+// key means "no canonical default" — the shortcut column then shows whatever
+// the live keymap has, or nothing at all.
+type menuAction struct {
+	cmd string
+	key string
+}
+
+// menuActions is the single source of truth for what each item DOES and what
+// key it ADVERTISES. Keeping both in one table is deliberate: an item can never
+// drift into advertising a key that runs something else.
+//
+// The keys are mew's own defaults (internal/editor/resources/defaults/*.conf),
+// not invention — but they are only a PREFERENCE. Everything is resolved
+// against the live keymap at menu-open time, so a rebind shows through and an
+// unbound command advertises nothing.
+//
+// Cut / Copy / Paste / Select All are deliberately absent: the desktop
+// synthesizes those itself against the FOCUSED trinket, with its own host
+// shortcuts and enable/disable logic (see appendStandardEditItems). Routing
+// them through the root editor here would quietly lose all three.
+var menuActions = map[string]menuAction{
+	// File Buffer
+	"mew.buffer.new":       {"buffer_new", "^B E"},
+	"mew.buffer.open":      {"buffer_open_file", "^B O"},
+	"mew.buffer.read":      {"buffer_insert_file", "^B R"},
+	"mew.buffer.duplicate": {"buffer_duplicate", "^B C"},
+	"mew.buffer.close":     {"cancel|buffer_close", "^C"},
+	"mew.buffer.save":      {"buffer_save", "^B S"},
+	"mew.buffer.saveall":   {"buffer_save_all true", "^B A"},
+	// "Write & Become" is buffer_save_AS (re-homes the buffer). mew's
+	// buffer_write is the other thing entirely — an export that leaves the
+	// buffer's identity alone — so the caption, not the action id, decides.
+	"mew.buffer.write": {"buffer_save_as", "^K D"},
+
+	// File Buffer ▸ per-document options
+	"mew.options.direction":    {`set_option_next "direction"`, "^O D"},
+	"mew.options.readonly":     {`set_option_next "readOnly"`, ""}, // no default key
+	"mew.options.syntaxdetect": {`set_option_next "syntaxDetect"`, "^O Y"},
+	"mew.options.syntax":       {`set_option "syntax"`, "^O X"}, // no value: prompts
+
+	// Edit Block
+	"mew.block.osexchange": {"os_exchange", ""}, // no default key
+	"mew.block.setbegin":   {"set_block_begin", "^K B"},
+	"mew.block.setend":     {"set_block_end", "^K K"},
+	"mew.block.move":       {"block_move", "^K M"},
+	"mew.block.copy":       {"block_copy", "^K C"},
+	"mew.block.write":      {"block_write", "^K W"},
+	"mew.block.read":       {"block_from_file", "^K R"},
+	"mew.block.delete":     {"block_delete", "^K Y"},
+	"mew.nerd.yank":        {"kill_ring_yank", "esc y"},
+	"mew.nerd.yankpop":     {"kill_ring_pop", "esc Y"},
+
+	// The remaining menus, still one placeholder each.
 	"mew.format.unindent":  {"block_unindent", "^ ,"},
 	"mew.view.clone":       {"viewport_clone", "^B 2"},
 	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
@@ -550,7 +598,7 @@ func syncPlaceholderShortcuts(menus []*trinkets.Menu, application *app.Applicati
 	for _, m := range menus {
 		var items []*trinkets.MenuItem
 		for _, it := range m.Items() {
-			if _, ok := placeholderShortcuts[it.ID()]; ok {
+			if _, ok := menuActions[it.ID()]; ok {
 				items = append(items, it)
 			}
 		}
@@ -564,11 +612,73 @@ func syncPlaceholderShortcuts(menus []*trinkets.Menu, application *app.Applicati
 				return
 			}
 			for _, it := range menuItems {
-				spec := placeholderShortcuts[it.ID()]
-				it.SetShortcutText(ed.KeyBinding(spec[0], spec[1]))
+				spec := menuActions[it.ID()]
+				it.SetShortcutText(liveKeyFor(ed, spec))
+				syncOptionItem(ed, it)
 			}
 		})
 	}
+}
+
+// optionItems are the items that READ an option as well as setting it: a
+// checkable reflects the option's current state, and a "[?]" caption is filled
+// in with the current value. The caption template keeps the "[?]" so a rebuilt
+// menu that has not been shown yet still reads as a placeholder rather than
+// asserting a value it has not looked up.
+var optionItems = map[string]struct {
+	option   string            // the option to read
+	template string            // caption with "[?]" where the value goes, "" for checkables
+	display  map[string]string // raw value -> bracket text, where they differ
+}{
+	"mew.options.direction": {"direction", "Document &Direction [?]",
+		map[string]string{"ltr": "LTR", "rtl": "RTL"}},
+	"mew.options.syntax": {"syntax", "Document Synta&x [?]...", nil},
+	// insertMode is a BOOLEAN, so its raw value is yes/no - but the bracket
+	// names the mode the editor is in, which is what the caption was written to
+	// say. Map it back to the words rather than showing "[yes]".
+	"mew.input.insertmode": {"insertMode", "&Insert Mode [?]",
+		map[string]string{"yes": "Insert", "true": "Insert", "no": "Overwrite", "false": "Overwrite"}},
+	"mew.options.readonly":     {"readOnly", "", nil},
+	"mew.options.syntaxdetect": {"syntaxDetect", "", nil},
+}
+
+// syncOptionItem refreshes one item's checkmark or "[?]" value from the live
+// option cascade, so what the menu shows is what the editor currently holds
+// rather than what it held when the bar was built.
+func syncOptionItem(ed *trinkets.Editor, it *trinkets.MenuItem) {
+	spec, ok := optionItems[it.ID()]
+	if !ok {
+		return
+	}
+	value := ed.Option(spec.option)
+	if spec.template == "" {
+		it.SetChecked(value == "true" || value == "on" || value == "yes")
+		return
+	}
+	if shown, ok := spec.display[value]; ok {
+		value = shown
+	} else if value == "" {
+		// Unset, or read before the session bound its port. "none" is honest
+		// for a blank syntax; it beats an empty pair of brackets.
+		value = "none"
+	}
+	it.SetText(strings.Replace(spec.template, "[?]", "["+value+"]", 1))
+}
+
+// liveKeyFor resolves an item's shortcut text against the live keymap, or ""
+// when the command is bound to nothing.
+//
+// KeyBinding falls back to the PREFERRED spelling when a command has no key,
+// and to the command NAME when there is no preference either — so a command
+// that is genuinely unbound would otherwise advertise either a key that does
+// nothing or the literal string "set_option_next \"readOnly\"". Both are worse
+// than an empty shortcut column, so an unresolved lookup is blanked.
+func liveKeyFor(ed *trinkets.Editor, spec menuAction) string {
+	key := ed.KeyBinding(spec.cmd, spec.key)
+	if key == spec.cmd {
+		return "" // nothing bound, and no preferred spelling to fall back on
+	}
+	return key
 }
 
 // syncQuickHelpCheckmark wires the Help menu's about-to-show hook so the Quick
@@ -702,4 +812,3 @@ func execProtocol(script string, ctx *protocol.BindContext) (map[uint64]any, *pr
 	}
 	return factory.byID, reply
 }
-
