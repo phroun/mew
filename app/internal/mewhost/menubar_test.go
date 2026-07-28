@@ -27,6 +27,10 @@ func TestMenuBarWellKnownOrder(t *testing.T) {
 		want        [][3]string // title, well-known role, anchor slot
 	}{
 		{false, [][3]string{
+			// The app menu is declared even single-window, empty of items. Left
+			// to the host to synthesize it came out titled "&mew", which put an
+			// accelerator on the product name that mew never asked for.
+			{"mew", "app", ""},
 			{"File Buffer", "file", ""},
 			{"Edit Block", "edit", ""},
 			{"Format", "format", ""},
@@ -158,6 +162,32 @@ func TestOptionItemsAreDeclaredForEveryReflectingItem(t *testing.T) {
 	for id := range optionItems {
 		if !seen[id] {
 			t.Errorf("optionItems names %q, which no menu item carries", id)
+		}
+	}
+}
+
+// The product name carries no accelerator. Leaving the app menu for the host to
+// synthesize gave it one: createStandardAppMenu titles it "&"+appName to make
+// the first letter an accelerator, so "mew" rendered with an underlined M that
+// mew never asked for. Declaring the menu — in BOTH window modes, empty of
+// items when there is nothing to put in it — is what keeps the title verbatim.
+func TestAppMenuTitleHasNoAccelerator(t *testing.T) {
+	for _, multi := range []bool{false, true} {
+		var appMenu *trinkets.Menu
+		for _, m := range buildMenus(trinkets.NewDesktop(), app.New(nil), multi) {
+			if m.WellKnownID() == "app" {
+				appMenu = m
+			}
+		}
+		if appMenu == nil {
+			t.Fatalf("multiWindow=%v: no app menu declared, so the host would synthesize "+
+				"one and title it \"&mew\"", multi)
+		}
+		if got := appMenu.AcceleratorChar(); got != 0 {
+			t.Errorf("multiWindow=%v: app menu accelerator = %q, want none", multi, string(got))
+		}
+		if appMenu.Title() != "mew" {
+			t.Errorf("multiWindow=%v: app menu title = %q, want %q", multi, appMenu.Title(), "mew")
 		}
 	}
 }

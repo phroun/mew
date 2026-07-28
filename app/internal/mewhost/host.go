@@ -409,10 +409,18 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 	//
 	// The app menu and Window menu carry New Window only in the multi-window
 	// (graphical) host; on the TUI both are dropped.
-	appMenu, windowMenu := "", ""
+	// The app menu is declared in BOTH modes, and carries New Window only in
+	// the multi-window one. Leaving it to the host to synthesize gave it the
+	// title "&mew" - createStandardAppMenu prepends an ampersand to make the
+	// first letter an accelerator - so the product name picked up an underlined
+	// M that mew never asked for. Declaring it, even with nothing in it, means
+	// our title is used verbatim; the desktop still appends its Hide and Quit
+	// sections either way.
+	appMenu := `
+	new menu caption="mew" wellknown="app"`
+	windowMenu := ""
 	if multiWindow {
-		appMenu = `
-	new menu caption="mew" wellknown="app" children={
+		appMenu += ` children={
 		new menuitem caption="&New Window" action=mew.window.new
 	}`
 		windowMenu = `
