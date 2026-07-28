@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/phroun/pawscript"
 
@@ -1882,6 +1883,97 @@ func (e *Editor) registerCommands() {
 					}
 					ctx.ResumeToken(token, e.insertBidiControl(name))
 				}, "bidictl")
+		}
+		ask()
+		return pawscript.TokenResult(token)
+	})
+
+	// insert_rune inserts one Unicode scalar by CODE POINT: insert_rune "05D0",
+	// or with no argument a prompt. Hex by default (U+xxxx, 0xxxxx or bare),
+	// "#" prefixes decimal. The companion to insert_bidi_control for
+	// every scalar that has no name of its own.
+	ps.RegisterCommand("insert_rune", func(ctx *pawscript.Context) pawscript.Result {
+		if arg, ok := argString(ctx, 0); ok {
+			r, ok := parseCodePoint(arg)
+			if !ok {
+				e.ShowWarning("Not a Unicode code point: " + arg)
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.insertRuneAt(r))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		var ask func()
+		ask = func() {
+			e.PromptMgr.PromptForInput("Insert rune by code point [U+xxxx hex, #NNN decimal]: ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					if !accepted || strings.TrimSpace(input) == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					r, ok := parseCodePoint(input)
+					if !ok {
+						e.ShowWarning("Not a Unicode code point: " + input)
+						ask() // stay in the loop rather than eat the keystroke
+						return
+					}
+					ctx.ResumeToken(token, e.insertRuneAt(r))
+				}, "insrune")
+		}
+		ask()
+		return pawscript.TokenResult(token)
+	})
+
+	// insert_raw_byte inserts a byte 0..255, written whichever way the value is
+	// already in your head - see parseByteSpec for the full set: ^[ or ESC for
+	// the escape character, x1b, o33, b11011, #27. "?" in the prompt lists
+	// them.
+	ps.RegisterCommand("insert_raw_byte", func(ctx *pawscript.Context) pawscript.Result {
+		if arg, ok := argString(ctx, 0); ok {
+			r, ok := parseByteSpec(arg)
+			if !ok {
+				e.ShowWarning("Not a byte value: " + arg)
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.insertRuneAt(r))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		var ask func()
+		ask = func() {
+			e.PromptMgr.PromptForInput("Insert raw byte [x1b, o33, b11011, #27, ^[, ESC, ?]: ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					in := strings.TrimSpace(input)
+					if !accepted || in == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					if in == "?" {
+						e.ShowNotification("x1b/1b=hex (default), o33=octal, b11011=binary, #27=decimal")
+						e.ShowNotification("^[=control (^@..^_, ^?=DEL), or a name: NUL BEL BS TAB LF VT FF CR ESC SP DEL")
+						ask() // re-prompt, same as insert_bidi_control's "?"
+						return
+					}
+					r, ok := parseByteSpec(in)
+					if !ok {
+						e.ShowWarning("Not a byte value: " + in)
+						ask()
+						return
+					}
+					ctx.ResumeToken(token, e.insertRuneAt(r))
+				}, "insbyte")
 		}
 		ask()
 		return pawscript.TokenResult(token)
@@ -4904,6 +4996,156 @@ func (e *Editor) insertBidiControl(name string) bool {
 	e.insertText(string(r))
 	e.trackEdit()
 	e.editCoalesced = true // a single-point edit: coalesce the undo run
+	return true
+}
+
+// parseCodePoint reads a Unicode scalar written the way a user writes one:
+// "U+05D0", "u+05d0", "05D0", "0x05D0" - hex by default, because that is how
+// code points are spelled everywhere they appear. "#" forces decimal for the
+// rare case someone has one in that form ("#1488").
+//
+// Decimal is "#" and NOT "d": "d" is a hex digit, so a "d" prefix would eat
+// the leading digit of "D800" and read the rest as decimal - quietly turning a
+// surrogate (which this rejects) into U+0320 (which it would not).
+//
+// Surrogates (U+D800..U+DFFF) are rejected: they are not scalars, they only
+// exist inside UTF-16, and Go would silently substitute U+FFFD for one.
+func parseCodePoint(in string) (rune, bool) {
+	t := strings.TrimSpace(in)
+	if t == "" {
+		return 0, false
+	}
+	base := 16
+	switch {
+	case len(t) > 2 && (strings.HasPrefix(t, "U+") || strings.HasPrefix(t, "u+")):
+		t = t[2:]
+	case len(t) > 2 && (strings.HasPrefix(t, "0x") || strings.HasPrefix(t, "0X")):
+		t = t[2:]
+	case len(t) > 1 && t[0] == '#':
+		t, base = t[1:], 10
+	}
+	n, err := strconv.ParseInt(t, base, 64)
+	if err != nil || n < 0 || n > unicode.MaxRune {
+		return 0, false
+	}
+	if n >= 0xD800 && n <= 0xDFFF {
+		return 0, false // surrogate half: not a scalar value
+	}
+	return rune(n), true
+}
+
+// asciiControlNames maps the conventional names of the C0 controls (plus SP and
+// DEL) to their values, so a byte can be asked for by the name it is known by
+// rather than by a number the user has to look up.
+var asciiControlNames = map[string]rune{
+	"NUL": 0x00, "SOH": 0x01, "STX": 0x02, "ETX": 0x03, "EOT": 0x04, "ENQ": 0x05,
+	"ACK": 0x06, "BEL": 0x07, "BS": 0x08, "HT": 0x09, "TAB": 0x09, "LF": 0x0A,
+	"NL": 0x0A, "VT": 0x0B, "FF": 0x0C, "CR": 0x0D, "SO": 0x0E, "SI": 0x0F,
+	"DLE": 0x10, "DC1": 0x11, "XON": 0x11, "DC2": 0x12, "DC3": 0x13, "XOFF": 0x13,
+	"DC4": 0x14, "NAK": 0x15, "SYN": 0x16, "ETB": 0x17, "CAN": 0x18, "EM": 0x19,
+	"SUB": 0x1A, "ESC": 0x1B, "FS": 0x1C, "GS": 0x1D, "RS": 0x1E, "US": 0x1F,
+	"SP": 0x20, "SPACE": 0x20, "DEL": 0x7F,
+}
+
+// parseByteSpec reads a byte 0..255 in whichever notation the value already
+// exists in the user's head, because the reason to reach for this command at
+// all is that the character cannot be typed:
+//
+//	^[  ^A  ^@  ^?   caret notation - the key you would press. ^? is DEL.
+//	ESC BEL TAB CR   the control's conventional name (see asciiControlNames)
+//	x1b 0x1b $1b     hex
+//	o33 0o33         octal
+//	b11011 0b11011   binary
+//	#27              decimal ("#", not "d": "d" is a hex digit)
+//	1b               bare, read as HEX - the convention for a byte
+//
+// A leading "b" is binary only when everything after it is 0 or 1 ("b11011");
+// otherwise it is a hex digit as usual ("be" = 0xBE). Ambiguous only for
+// values like "b0", which is read as binary - write "xb0" for the hex one.
+//
+// Hex is tried before the name table, so "ff" is 255 rather than FF (form
+// feed) - the one name that is also a valid hex byte. Write "^L" or "x0c" for
+// that character.
+//
+// The value is returned as a SCALAR, not a loose byte: a mew buffer holds
+// text, so 0x80..0xFF become U+0080..U+00FF, the Latin-1 reading of that
+// number. Inserting a bare high byte would leave invalid UTF-8 in the line and
+// desync every rune-indexed column in the editor.
+func parseByteSpec(in string) (rune, bool) {
+	t := strings.TrimSpace(in)
+	if t == "" {
+		return 0, false
+	}
+	// Caret notation: the key you would actually press.
+	if len(t) == 2 && t[0] == '^' {
+		c := t[1]
+		if c == '?' {
+			return 0x7F, true // ^? is DEL by convention, not 0x1F
+		}
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		if c >= '@' && c <= '_' { // @A-Z[\]^_ cover the whole C0 range
+			return rune(c & 0x1F), true
+		}
+		return 0, false
+	}
+
+	base := 16 // a byte is spelled in hex unless told otherwise
+	switch {
+	case len(t) > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X'):
+		t = t[2:]
+	case len(t) > 2 && t[0] == '0' && (t[1] == 'o' || t[1] == 'O'):
+		t, base = t[2:], 8
+	case len(t) > 2 && t[0] == '0' && (t[1] == 'b' || t[1] == 'B') && isBinaryDigits(t[2:]):
+		t, base = t[2:], 2
+	case len(t) > 1 && (t[0] == 'x' || t[0] == 'X' || t[0] == '$'):
+		t = t[1:]
+	case len(t) > 1 && (t[0] == 'o' || t[0] == 'O'):
+		t, base = t[1:], 8
+	case len(t) > 1 && (t[0] == 'b' || t[0] == 'B') && isBinaryDigits(t[1:]):
+		t, base = t[1:], 2
+	case len(t) > 1 && t[0] == '#':
+		t, base = t[1:], 10
+	}
+
+	// Bare input is hex, and hex is tried BEFORE the name table so "ff" is 255
+	// rather than FF (form feed) - the only name that is also valid hex.
+	if n, err := strconv.ParseInt(t, base, 64); err == nil && n >= 0 && n <= 0xFF {
+		return rune(n), true
+	}
+	// Names are tried on the ORIGINAL text, after any numeric reading failed:
+	// "XOFF" and "XON" begin with the hex prefix letter, so the switch above
+	// has already eaten their X by the time we get here.
+	if r, ok := asciiControlNames[strings.ToUpper(strings.TrimSpace(in))]; ok {
+		return r, true
+	}
+	return 0, false
+}
+
+// isBinaryDigits reports whether s is a non-empty run of 0s and 1s, which is
+// what distinguishes a "b" binary prefix from a "b" hex digit.
+func isBinaryDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '0' && s[i] != '1' {
+			return false
+		}
+	}
+	return true
+}
+
+// insertRuneAt inserts a single scalar, sharing insertBidiControl's edit
+// shape: refused on locked content, one coalesced undo step.
+func (e *Editor) insertRuneAt(r rune) bool {
+	if e.contentLocked() {
+		return false
+	}
+	e.insertText(string(r))
+	e.trackEdit()
+	e.editCoalesced = true
 	return true
 }
 

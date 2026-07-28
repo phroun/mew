@@ -437,8 +437,6 @@ bar=new menubar children={%s
 		new menuitem caption="Cycle Kill Ring (yankpop)" action=mew.nerd.yankpop
 		new menuitem separator
 		new menuitem caption="Select All" wellknown="selectall"
-		new menuitem separator
-		new menuitem caption="Raw Key &Input" action=mew.edit.rawkey
 	}
 	new menu caption="Format" wellknown="format" children={
 		new menuitem caption="Unindent Block" action=mew.format.unindent
@@ -447,7 +445,24 @@ bar=new menubar children={%s
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
 	}
 	new menu caption="Input" after="file" children={
-		new menuitem caption="&Insert Mode [?]" action=mew.input.insertmode
+		new menuitem caption="&Insert/Overwrite Mode" action=mew.input.insertmode checkable=true
+		new menuitem caption="&Mac-style Option Chars" action=mew.input.macoption checkable=true
+		new menuitem separator
+		new menuitem caption="Document &Direction [?]" action=mew.options.direction
+		new menuitem caption="Show Bidi Control Points" action=mew.input.showbidi checkable=true
+		new menuitem separator
+		new menuitem caption="Insert Unicode Left-to-Right Mark" action=mew.input.lrm
+		new menuitem caption="Insert Unicode Right-to-Left Mark" action=mew.input.rlm
+		new menuitem caption="Insert Unicode Arabic Letter Mark" action=mew.input.alm
+		new menuitem caption="Begin Unicode Isolated Phrase (Auto)" action=mew.input.fsi
+		new menuitem caption="Begin Unicode Isolated Phrase (LTR)" action=mew.input.lri
+		new menuitem caption="Begin Unicode Isolated Phrase (RTL)" action=mew.input.rli
+		new menuitem caption="End Unicode Isolated Phrase" action=mew.input.pdi
+		new menuitem separator
+		new menuitem caption="Insert Raw Byte..." action=mew.input.rawbyte
+		new menuitem caption="Insert Rune by Unicode Code Point..." action=mew.input.rune
+		new menuitem separator
+		new menuitem caption="Raw Key Input" action=mew.edit.rawkey
 	}
 	new menu caption="Search" after="file" children={
 		new menuitem caption="&Find..." action=mew.search.find
@@ -598,7 +613,23 @@ var menuActions = map[string]menuAction{
 	"mew.format.unindent":  {"block_unindent", "^ ,"},
 	"mew.view.clone":       {"viewport_clone", "^B 2"},
 	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
-	"mew.history.undo":     {"buffer_undo", "^B -"},
+
+	// Input. The toggles, then the bidi controls insert_bidi_control already
+	// knows by name, then the two "type what you cannot type" prompts. Raw Key
+	// Input is NOT here: it is a host command (pass the next key straight to
+	// the trinket), registered separately below.
+	"mew.input.macoption": {`set_option_next "macOptionKeys"`, "^O G M"},
+	"mew.input.showbidi":  {`set_option_next "showBidi"`, "^O B"},
+	"mew.input.lrm":       {`insert_bidi_control "lrm"`, ""},
+	"mew.input.rlm":       {`insert_bidi_control "rlm"`, ""},
+	"mew.input.alm":       {`insert_bidi_control "alm"`, ""},
+	"mew.input.fsi":       {`insert_bidi_control "fsi"`, ""},
+	"mew.input.lri":       {`insert_bidi_control "lri"`, ""},
+	"mew.input.rli":       {`insert_bidi_control "rli"`, ""},
+	"mew.input.pdi":       {`insert_bidi_control "pdi"`, ""},
+	"mew.input.rawbyte":   {"insert_raw_byte", `esc \`},
+	"mew.input.rune":      {"insert_rune", ""},
+	"mew.history.undo":    {"buffer_undo", "^B -"},
 
 	// Search. The three actions, then the toggles. Every toggle is a
 	// set_option_next, so a click cycles the option exactly as its key does —
@@ -674,6 +705,8 @@ var optionItems = map[string]struct {
 	"mew.search.backwards":     {"searchBackwards", "", nil},
 	"mew.search.wrap":          {"searchWrap", "", nil},
 	"mew.search.allbuffers":    {"searchAllBuffers", "", nil},
+	"mew.input.macoption":      {"macOptionKeys", "", nil},
+	"mew.input.showbidi":       {"showBidi", "", nil},
 }
 
 // syncOptionItem refreshes one item's checkmark or "[?]" value from the live
