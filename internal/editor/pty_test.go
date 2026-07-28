@@ -3,6 +3,8 @@ package editor
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -305,7 +307,7 @@ func TestPTYEndedClosesTheSurface(t *testing.T) {
 	if !e.execRequest("bash") {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer)
+	e.ptyEnded(w.Buffer, nil)
 	if closed == "" {
 		t.Error("Close was not called for the ended session")
 	}
@@ -425,7 +427,7 @@ func TestPTYViewportClass(t *testing.T) {
 	if got := e.viewportClass(w); got != "pty" {
 		t.Fatalf("class with a session = %q, want pty", got)
 	}
-	e.ptyEnded(w.Buffer)
+	e.ptyEnded(w.Buffer, nil)
 	if got := e.viewportClass(w); got != "" {
 		t.Fatalf("class after the child exited = %q, want empty again", got)
 	}
@@ -701,5 +703,82 @@ func TestRawKeyInputHasAShippedBinding(t *testing.T) {
 	e, _ := newTestEditor(t, "x\n")
 	if got := e.keyBindingDisplay("raw_key_input", `s-\`); got != `s-\` {
 		t.Errorf("raw_key_input resolves to %q, want the shipped s-\\", got)
+	}
+}
+
+// stubExit is a session that can also say how its child ended.
+type stubExit struct {
+	*stubPTY
+	code   int
+	exited bool
+}
+
+func (s *stubExit) ExitStatus() (int, bool) { return s.code, s.exited }
+
+// The notification is the only account of a session anyone gets — the surface
+// is destroyed in the same breath — so it says what is known: the exit code
+// when the host can tell, a stream that ended under a living child when it
+// can tell that instead, and the error when something broke.
+func TestSessionEndedMessage(t *testing.T) {
+	plain := newStubPTY()
+	for _, tc := range []struct {
+		name  string
+		sess  PTYSession
+		cause error
+		want  string
+	}{
+		{"host cannot tell", plain, nil, "bash exited"},
+		{"clean EOF is silent", plain, io.EOF, "bash exited"},
+		{"a broken stream says why", plain, errors.New("pipe is dead"), "bash exited: pipe is dead"},
+		{"the child exited", &stubExit{plain, 0, true}, io.EOF, "bash exited (code 0)"},
+		{"...unhappily", &stubExit{plain, 1, true}, io.EOF, "bash exited (code 1)"},
+		{"the stream died, not the child", &stubExit{plain, 0, false}, io.EOF,
+			"bash: session ended, child still running"},
+	} {
+		if got := sessionEndedMessage("bash", tc.sess, tc.cause); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// pty_diag writes the host's report BOTH into the buffer and to a log file in
+// the working directory — the person who most needs it is the one least able
+// to get it off the machine by hand.
+func TestPTYDiagWritesBufferAndLog(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.Config.PTYDiagnose = func() string { return "PROBE REPORT\n  it worked" }
+
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(old)
+
+	e.executeCommand("pty_diag")
+	if got := docContent(w); !strings.Contains(got, "PROBE REPORT") || !strings.Contains(got, "it worked") {
+		t.Errorf("buffer = %q, want the report inserted at the caret", got)
+	}
+	if !strings.Contains(docContent(w), "also saved to") {
+		t.Error("the buffer copy should name the log file")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
+	if err != nil {
+		t.Fatalf("no log file in the working directory: %v", err)
+	}
+	if !strings.Contains(string(data), "PROBE REPORT") {
+		t.Errorf("log = %q, want the report", data)
+	}
+}
+
+// A host with no diagnostics says so rather than writing an empty file.
+func TestPTYDiagWithoutAHostSeam(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand("pty_diag")
+	if !hasWarning(e, "no terminal diagnostics") {
+		t.Error("expected a warning naming the missing seam")
+	}
+	if docContent(w) != "" {
+		t.Errorf("buffer = %q, want it untouched", docContent(w))
 	}
 }

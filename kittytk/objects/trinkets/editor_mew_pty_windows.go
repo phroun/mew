@@ -28,6 +28,8 @@ package trinkets
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -57,14 +59,42 @@ type conPTY struct {
 	out   windows.Handle // the console writes; we read
 	name  string
 	ended bool
-	// farewell is delivered to the reader after the child is gone, in place
-	// of the error that ends the stream. A terminal that simply stops is a
-	// terminal with nothing to say about why.
-	farewell []byte
-	closed   bool
+	code  int
+	// trace is the account of how this session was built, for pty_diag: each
+	// platform call and what it said. Kept because a ConPTY that fails
+	// silently is otherwise unobservable from mew's side of the pipe.
+	trace  []string
+	closed bool
+}
+
+func (p *conPTY) note(format string, a ...any) {
+	p.trace = append(p.trace, fmt.Sprintf(format, a...))
+}
+
+// Diagnostics is the account of how this session was built, for pty_diag.
+func (p *conPTY) Diagnostics() []string { return p.trace }
+
+// ExitStatus implements mew.PTYExitStatus: it tells a child that ran and
+// exited from a stream that ended under one still running. Those two look
+// identical from mew's side of the pipe and want opposite debugging.
+func (p *conPTY) ExitStatus() (int, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.code, p.ended
 }
 
 func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, error) {
+	p, err := newConPTY(path, nil, dir, env, cols, rows)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// newConPTY is hostPTY with the argument list exposed, so the self-test can
+// drive the SAME code with a child that says something and exits. A probe
+// through a second implementation would only prove things about itself.
+func newConPTY(path string, args []string, dir string, env []string, cols, rows int) (*conPTY, error) {
 	if cols <= 0 {
 		cols = 80
 	}
@@ -76,15 +106,22 @@ func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, er
 	// others. Nil security attributes, so nothing here is inheritable: the
 	// child reaches its console through the attribute list, not through an
 	// inherited handle.
+	p := &conPTY{name: filepath.Base(path)}
+	p.note("CreateProcess target: %s %v (dir %q, %d env entries, %dx%d)",
+		path, args, dir, len(env), cols, rows)
+
 	var inRead, inWrite, outRead, outWrite windows.Handle
 	if err := windows.CreatePipe(&inRead, &inWrite, nil, 0); err != nil {
-		return nil, err
+		p.note("CreatePipe(in): %v", err)
+		return p, err
 	}
 	if err := windows.CreatePipe(&outRead, &outWrite, nil, 0); err != nil {
+		p.note("CreatePipe(out): %v", err)
 		windows.CloseHandle(inRead)
 		windows.CloseHandle(inWrite)
-		return nil, err
+		return p, err
 	}
+	p.note("CreatePipe: ok (raw handles, not os.Pipe)")
 
 	var hpc windows.Handle
 	err := windows.CreatePseudoConsole(
@@ -96,23 +133,26 @@ func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, er
 	windows.CloseHandle(inRead)
 	windows.CloseHandle(outWrite)
 	if err != nil {
+		p.note("CreatePseudoConsole: %v", err)
 		windows.CloseHandle(inWrite)
 		windows.CloseHandle(outRead)
-		return nil, fmt.Errorf("CreatePseudoConsole: %w", err)
+		return p, fmt.Errorf("CreatePseudoConsole: %w", err)
 	}
+	p.note("CreatePseudoConsole: ok, HPCON 0x%x", uintptr(hpc))
 
-	p := &conPTY{hpc: hpc, in: inWrite, out: outRead, name: filepath.Base(path)}
-	if err := p.spawn(path, dir, env); err != nil {
+	p.hpc, p.in, p.out = hpc, inWrite, outRead
+	if err := p.spawn(path, args, dir, env); err != nil {
 		_ = p.Close()
-		return nil, err
+		return p, err
 	}
 	return p, nil
 }
 
 // spawn starts the child bound to the pseudoconsole.
-func (p *conPTY) spawn(path, dir string, env []string) error {
+func (p *conPTY) spawn(path string, args []string, dir string, env []string) error {
 	attrs, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
+		p.note("NewProcThreadAttributeList: %v", err)
 		return fmt.Errorf("NewProcThreadAttributeList: %w", err)
 	}
 	defer attrs.Delete()
@@ -127,8 +167,10 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 		0,
 	)
 	if r == 0 {
+		p.note("UpdateProcThreadAttribute(PSEUDOCONSOLE): %v", e)
 		return fmt.Errorf("UpdateProcThreadAttribute: %w", e)
 	}
+	p.note("UpdateProcThreadAttribute(PSEUDOCONSOLE): ok")
 
 	si := &windows.StartupInfoEx{
 		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
@@ -139,10 +181,12 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 	if err != nil {
 		return err
 	}
-	cmdLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{path}))
+	line := windows.ComposeCommandLine(append([]string{path}, args...))
+	cmdLine, err := windows.UTF16PtrFromString(line)
 	if err != nil {
 		return err
 	}
+	p.note("command line: %s", line)
 	var dirPtr *uint16
 	if dir != "" {
 		if dirPtr, err = windows.UTF16PtrFromString(dir); err != nil {
@@ -159,8 +203,10 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
 		envBlock(env), dirPtr, &si.StartupInfo, &pi)
 	if err != nil {
+		p.note("CreateProcess: %v", err)
 		return fmt.Errorf("%s: %w", path, err)
 	}
+	p.note("CreateProcess: ok, pid %d", pi.ProcessId)
 	windows.CloseHandle(pi.Thread)
 
 	p.mu.Lock()
@@ -176,8 +222,7 @@ func (p *conPTY) spawn(path, dir string, env []string) error {
 		var code uint32
 		windows.GetExitCodeProcess(pi.Process, &code)
 		p.mu.Lock()
-		p.ended = true
-		p.farewell = []byte(fmt.Sprintf("\r\n[%s exited with code %d]\r\n", p.name, code))
+		p.ended, p.code = true, int(code)
 		p.mu.Unlock()
 		_ = p.Close()
 	}()
@@ -220,16 +265,9 @@ func envBlock(env []string) *uint16 {
 	return &b[0]
 }
 
-// Read delivers the console's output. When the stream ends it hands over the
-// farewell line first — so a session that died on its own says so in the
-// terminal, with the code, instead of leaving an empty rectangle.
+// Read delivers the console's output.
 func (p *conPTY) Read(b []byte) (int, error) {
 	p.mu.Lock()
-	if n := copy(b, p.farewell); n > 0 {
-		p.farewell = p.farewell[n:]
-		p.mu.Unlock()
-		return n, nil
-	}
 	closed, h := p.closed, p.out
 	p.mu.Unlock()
 	if closed {
@@ -239,15 +277,6 @@ func (p *conPTY) Read(b []byte) (int, error) {
 	var n uint32
 	err := windows.ReadFile(h, b, &n, nil)
 	if err != nil {
-		// The read was ended by the child exiting or by Close; either way the
-		// farewell (if there is one) is the last thing the stream has to say.
-		p.mu.Lock()
-		if m := copy(b, p.farewell); m > 0 {
-			p.farewell = p.farewell[m:]
-			p.mu.Unlock()
-			return m, nil
-		}
-		p.mu.Unlock()
 		if err == windows.ERROR_BROKEN_PIPE {
 			return 0, io.EOF
 		}
@@ -330,4 +359,42 @@ func (p *conPTY) Close() error {
 		windows.CloseHandle(out)
 	}
 	return nil
+}
+
+// diagShellNames are the shells worth looking for on this platform.
+func diagShellNames() []string {
+	return []string{"cmd.exe", "powershell.exe", "pwsh.exe", "bash.exe", "wsl.exe"}
+}
+
+// hostPTYProbe runs the Windows self-test. Three sessions, differing one
+// variable at a time, so the report says WHICH thing is wrong rather than
+// that something is:
+//
+//   - a child that speaks and exits, with everything exec passes;
+//   - the same child with no environment block and no working directory —
+//     the minimal shape Microsoft's own sample uses, so a difference here
+//     indicts one of those two;
+//   - an interactive cmd.exe, which is the case that actually fails.
+//
+// All three go through newConPTY: the same code exec uses, so a probe cannot
+// pass while the real path fails.
+func hostPTYProbe() []probeResult {
+	dir, _ := os.UserHomeDir()
+	env := append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+
+	shell, err := exec.LookPath("cmd.exe")
+	if err != nil {
+		return []probeResult{{Label: "cmd.exe", Err: err}}
+	}
+
+	var out []probeResult
+	s1, e1 := newConPTY(shell, []string{"/c", "echo MEW-CONPTY-OK"}, dir, env, 80, 24)
+	out = append(out, runProbe("cmd.exe /c echo (full: our env + home dir)", s1, e1))
+
+	s2, e2 := newConPTY(shell, []string{"/c", "echo MEW-CONPTY-OK"}, "", nil, 80, 24)
+	out = append(out, runProbe("cmd.exe /c echo (minimal: inherited env, no dir)", s2, e2))
+
+	s3, e3 := newConPTY(shell, nil, dir, env, 80, 24)
+	out = append(out, runProbe("cmd.exe interactive (what exec does)", s3, e3))
+	return out
 }

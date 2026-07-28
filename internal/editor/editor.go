@@ -679,6 +679,12 @@ type Config struct {
 	// nothing: it forwards raw bytes and says where to draw them. See pty.go.
 	TerminalSurfaces TerminalHooks
 
+	// PTYDiagnose, when set, tests the host's own terminal plumbing and
+	// returns a human-readable account of it, for the pty_diag command. mew
+	// asks rather than investigates: every fact worth having about a terminal
+	// that will not start is on the host's side of the pipe.
+	PTYDiagnose func() string
+
 	// RestoreHostTerminal, when set, hands the TERMINAL back to whatever put it
 	// into raw mode / the alternate screen. mew calls it on the emergency exit
 	// path, after the DEADCAT dump and before os.Exit.
@@ -2018,6 +2024,13 @@ func (e *Editor) registerCommands() {
 	// concatenation, not a byte list. A string sends its UTF-8 bytes, so
 	// tinput "ls\n" is what it looks like.
 	//
+	// pty_diag asks the host to test its terminal plumbing and writes the
+	// report into the buffer at the caret. For when exec produces a session
+	// that starts and stops with nothing to show for it.
+	ps.RegisterCommand("pty_diag", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.ptyDiagnose())
+	})
+
 	// raw_key_input hands the NEXT keystroke to a focused terminal's child
 	// instead of running mew's binding for it — the escape hatch for the keys
 	// mew itself claims. See armRawKey.

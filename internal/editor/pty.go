@@ -19,7 +19,10 @@ package editor
 // over the display protocol.
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -64,6 +67,23 @@ type PTYSession interface {
 // prompt's trick — a class carrying a keymap refinement — for the keys a child
 // process must receive as bytes rather than as edits.
 const ptyViewportClass = "pty"
+
+// PTYExitStatus is the OPTIONAL other half of a session: how the child ended.
+// A host implements it on the session it returns when it can answer; mew asks
+// by type assertion and says less when nobody can.
+//
+// It grants nothing — it is a readout, not a capability, and adding it does
+// not widen what mew can ask a host to DO. What it buys is the difference
+// between the two ways a terminal goes quiet: the child ran and exited (a
+// code, however unhappy), or the byte stream ended underneath a child that is
+// still alive (a broken session). Those look identical from mew's side of the
+// pipe and want completely different debugging.
+//
+// exited is false when the child is still running, or when this host tracks
+// no exit status at all.
+type PTYExitStatus interface {
+	ExitStatus() (code int, exited bool)
+}
 
 // ptyState is one buffer's live session.
 type ptyState struct {
@@ -225,6 +245,54 @@ func (e *Editor) ptySessionFor(b *buffer.Buffer) PTYSession {
 	return nil
 }
 
+// ptyDiagnose is the pty_diag command: ask the host to test its own terminal
+// plumbing and write the account into the buffer at the caret.
+//
+// A terminal that will not start is the hardest thing in this system to see
+// into, because everything mew can observe is on the far side of a pipe that
+// is not working. Every fact worth having — which shell was found, whether
+// the platform's console call succeeded, what it said if it did not, whether
+// a probe child's bytes ever came back — lives on the HOST, where the pipe is
+// made. So mew does not investigate. It asks, and puts the answer somewhere
+// the person debugging can read, scroll, and save.
+func (e *Editor) ptyDiagnose() bool {
+	if e.Config.PTYDiagnose == nil {
+		e.ShowWarning("This host offers no terminal diagnostics")
+		return false
+	}
+	report := e.Config.PTYDiagnose()
+	if strings.TrimSpace(report) == "" {
+		e.ShowWarning("The host's terminal diagnostics said nothing")
+		return false
+	}
+	if !strings.HasSuffix(report, "\n") {
+		report += "\n"
+	}
+	// Written to a FILE as well as into the buffer, and named in both. Reading
+	// it on screen means scrolling a terminal that may be the very thing
+	// misbehaving, and the person who most needs this report is the one least
+	// able to get it off the machine by hand.
+	const logName = "mew-pty-diag.log"
+	saved := ""
+	if err := e.FS.WriteFile(logName, []byte(report)); err == nil {
+		saved = logName
+		if wd, werr := os.Getwd(); werr == nil {
+			saved = filepath.Join(wd, logName)
+		}
+		report = "(also saved to " + saved + ")\n" + report
+	} else {
+		report = "(could not save a log file: " + err.Error() + ")\n" + report
+	}
+	e.insertText(report)
+	e.trackEdit()
+	if saved != "" {
+		e.ShowNotification("Terminal diagnostics written here and to " + saved)
+	} else {
+		e.ShowNotification("Terminal diagnostics written at the caret")
+	}
+	return true
+}
+
 // execRequest asks the host for a session and binds it to the focused
 // buffer. Denial is an ordinary outcome, reported and survivable: the buffer
 // stays exactly what it was.
@@ -292,6 +360,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string, co
 	// a keystroke. A read that returns nothing but an error ends the session.
 	go func() {
 		buf := make([]byte, 4096)
+		var last error
 		for {
 			n, err := sess.Read(buf)
 			if n > 0 {
@@ -299,10 +368,14 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string, co
 				e.PostAction(func() { e.ptyOutput(b, chunk) })
 			}
 			if err != nil {
+				last = err
 				break
 			}
 		}
-		e.PostAction(func() { e.ptyEnded(b) })
+		// The error that ended the stream travels with the ending: a session
+		// that stopped because something broke should say so, and only a
+		// clean end of file is silent.
+		e.PostAction(func() { e.ptyEnded(b, last) })
 	}()
 }
 
@@ -417,9 +490,15 @@ func terminalSurfacesEqual(a, b []TerminalSurface) bool {
 	return true
 }
 
-// ptyEnded fires when the child is gone. The host destroys the surface, and the
-// buffer becomes an ORDINARY editable buffer — not a read-only transcript.
-func (e *Editor) ptyEnded(b *buffer.Buffer) {
+// ptyEnded fires when a session's byte stream ends. The host destroys the
+// surface, and the buffer becomes an ORDINARY editable buffer — not a
+// read-only transcript.
+//
+// The notification is the only account of a session anyone gets, because the
+// surface is destroyed in the same breath: anything written INTO the terminal
+// at this point is painted over by its own removal. So whatever is known about
+// how it ended has to be said here.
+func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	e.ptyMu.Lock()
 	st := e.ptySessions[b]
 	delete(e.ptySessions, b)
@@ -430,8 +509,30 @@ func (e *Editor) ptyEnded(b *buffer.Buffer) {
 	if e.Config.TerminalSurfaces.Close != nil {
 		e.Config.TerminalSurfaces.Close(st.id)
 	}
-	e.ShowNotification(st.command + " exited")
+	e.ShowNotification(sessionEndedMessage(st.command, st.sess, cause))
 	e.RequestRender()
+}
+
+// sessionEndedMessage accounts for a finished session in one line: what ran,
+// how it went, and — when the stream broke rather than closing — why.
+//
+// A host that answers PTYExitStatus can tell the two endings apart, so the
+// message does too: a child that ran and exited names its code, and a stream
+// that ended under a child still running says that instead of quietly
+// implying the child died. A host that cannot answer says the plain thing.
+func sessionEndedMessage(command string, sess PTYSession, cause error) string {
+	msg := command + " exited"
+	if es, ok := sess.(PTYExitStatus); ok {
+		if code, exited := es.ExitStatus(); exited {
+			msg = fmt.Sprintf("%s exited (code %d)", command, code)
+		} else {
+			msg = command + ": session ended, child still running"
+		}
+	}
+	if cause != nil && !errors.Is(cause, io.EOF) {
+		msg += ": " + cause.Error()
+	}
+	return msg
 }
 
 // bufferInsertArgs is what buffer_insert does: insert the first argument at the

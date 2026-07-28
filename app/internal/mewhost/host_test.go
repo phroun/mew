@@ -105,8 +105,9 @@ func TestMenusBuildAndRegisterActions(t *testing.T) {
 	}
 }
 
-// The Help menu carries "Using mew" and a checkable "Quick Help", then a
-// separator, then "About" — in that order — and all three actions register.
+// The Help menu carries "Using mew" and a checkable "Quick Help", then
+// "Terminal Diagnostics", then "About" last — in that order — and every
+// action registers.
 func TestHelpMenuItems(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
@@ -128,8 +129,8 @@ func TestHelpMenuItems(t *testing.T) {
 		t.Fatal("no Help menu found")
 	}
 	items := help.Items()
-	if len(items) < 4 {
-		t.Fatalf("Help menu has %d items, want at least 4", len(items))
+	if len(items) < 6 {
+		t.Fatalf("Help menu has %d items, want at least 6", len(items))
 	}
 	if items[0].ID() != "mew.help.usingmew" {
 		t.Errorf("item 0 = %q, want mew.help.usingmew", items[0].ID())
@@ -138,10 +139,17 @@ func TestHelpMenuItems(t *testing.T) {
 		t.Errorf("item 1 should be the checkable Quick Help; got id=%q checkable=%v", items[1].ID(), items[1].Checkable)
 	}
 	if !items[2].Separator {
-		t.Error("item 2 should be a separator before About")
+		t.Error("item 2 should be a separator")
 	}
-	if items[3].ID() != "mew.help.about" {
-		t.Errorf("item 3 = %q, want mew.help.about", items[3].ID())
+	if items[3].ID() != "mew.help.ptydiag" {
+		t.Errorf("item 3 = %q, want mew.help.ptydiag", items[3].ID())
+	}
+	if !items[4].Separator {
+		t.Error("item 4 should be a separator before About")
+	}
+	// About stays last, where it is looked for.
+	if items[5].ID() != "mew.help.about" {
+		t.Errorf("item 5 = %q, want mew.help.about", items[5].ID())
 	}
 }
 

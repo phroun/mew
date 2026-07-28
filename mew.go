@@ -277,6 +277,25 @@ func WithPTYProvider(fn func(PTYRequest) (PTYSession, error)) Option {
 	return func(cfg *editor.Config) { cfg.PTYProvider = fn }
 }
 
+// WithPTYDiagnose supplies the host's terminal self-test, which mew's pty_diag
+// command runs and writes into the buffer at the caret.
+//
+// A terminal that will not start is the hardest thing here to see into: what
+// mew can observe is all on the far side of a pipe that is not working. Which
+// shell was found, whether the platform's console call succeeded and what it
+// said if not, whether a probe child's bytes ever came back — every one of
+// those facts lives on the host. So mew asks for them rather than guessing at
+// them from the outside.
+func WithPTYDiagnose(fn func() string) Option {
+	return func(cfg *editor.Config) { cfg.PTYDiagnose = fn }
+}
+
+// PTYExitStatus is the optional other half of a PTYSession: how the child
+// ended. A host implements it when it can tell a child that ran and exited
+// (with a code) from a byte stream that ended under a child still running —
+// two failures that look identical from mew's side of the pipe.
+type PTYExitStatus = editor.PTYExitStatus
+
 func WithRestoreHostTerminal(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
 }

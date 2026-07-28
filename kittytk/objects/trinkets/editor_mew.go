@@ -279,6 +279,9 @@ func (e *Editor) run() {
 		// see ptyProvider. A host that wants to sandbox or redirect a hosted
 		// mew simply supplies a different one - mew cannot tell.
 		mew.WithPTYProvider(e.ptyProvider),
+		// ...and a way to ask this host to test its own terminal plumbing,
+		// for when a session starts and stops with nothing to show for it.
+		mew.WithPTYDiagnose(ptyDiagnose),
 		// ...and how they are drawn: one real child PurfecTerm per session,
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.

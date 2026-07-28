@@ -543,6 +543,8 @@ bar=new menubar children={%s
 		new menuitem caption="&Using mew" action=mew.help.usingmew
 		new menuitem caption="&Quick Help" action=mew.help.quickhelp checkable=true
 		new menuitem separator
+		new menuitem caption="&Terminal Diagnostics" action=mew.help.ptydiag
+		new menuitem separator
 		new menuitem caption="&About" action=mew.help.about
 	}
 }
@@ -738,6 +740,11 @@ var menuActions = map[string]menuAction{
 	"mew.input.pdi":       {`insert_bidi_control "pdi"`, ""},
 	"mew.input.rawbyte":   {"insert_raw_byte", `esc \`},
 	"mew.input.rune":      {"insert_rune", ""},
+	// Terminal Diagnostics tests the host's own terminal plumbing and writes
+	// the account into the buffer AND a log file beside it. A menu item
+	// because the person who needs it is by definition on a machine where
+	// something does not work, and may not be at home on that machine.
+	"mew.help.ptydiag": {"pty_diag", ""},
 	// Raw Key Input is in the table for its KEY: the item advertises whatever
 	// raw_key_input is bound to, live, like every other item. Its handler is
 	// registered by hand rather than generated from here, because it does one
