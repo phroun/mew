@@ -105,6 +105,12 @@ type Editor struct {
 	// onto mew's main loop. Created with the session in run().
 	port *mew.HostPort
 
+	// termOut carries bytes bound for a child process that were produced
+	// OUTSIDE a hook call, drained by one worker. Bounded and lossy on
+	// purpose: see termInput.
+	termOut     chan string
+	termOutOnce sync.Once
+
 	// hostedKids are the child terminals parented to this editor (see
 	// AddChild): in the tree for parent-chain lookups, invisible to layout
 	// and hit testing.
@@ -819,6 +825,7 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	// Every byte the child produces for its process funnels here, whichever
 	// internal path made it: the gfx mouse reporter, the cli pseudo-key
 	// relay, a pasted clipboard.
+	e.startTermOutPump()
 	t.SetInputSink(func(b []byte) { e.termInput(id, b) })
 	// It is a display, not a focus participant: its focus is DECLARED by this
 	// editor (SetEmbeddedFocus) rather than won from the toolkit. Saying so
@@ -961,10 +968,41 @@ func (e *Editor) termInput(id string, b []byte) {
 		e.termMu.Unlock()
 		return
 	}
+	port := e.port
 	e.termMu.Unlock()
-	if e.port != nil {
-		e.port.Execute("tinput " + pawBytesLiteral(b))
+	if port == nil {
+		return
 	}
+	// Queued, never blocking and never unbounded. Execute posts to mew's
+	// event queue and that post BLOCKS when the queue is full; this is
+	// reached from whatever thread the child produced the bytes on — the
+	// desktop's paint thread among them — and a UI thread blocked on mew's
+	// queue is a frozen application. A goroutine per call would unblock it
+	// and replace the freeze with unbounded goroutines, which is worse: the
+	// same pressure, spent on memory instead.
+	//
+	// So: one worker, a small queue, and DROP when it is full. These are
+	// bytes for a child process and nothing waits on them; losing some under
+	// pressure is a far better failure than growing without limit.
+	select {
+	case e.termOut <- "tinput " + pawBytesLiteral(b):
+	default:
+	}
+}
+
+// termOutPump is the single consumer of termOut. Started with the first
+// hosted terminal; it ends with the session.
+func (e *Editor) startTermOutPump() {
+	e.termOutOnce.Do(func() {
+		e.termOut = make(chan string, 64)
+		go func() {
+			for cmd := range e.termOut {
+				if p := e.port; p != nil {
+					p.Execute(cmd)
+				}
+			}
+		}()
+	})
 }
 
 // pawBytesLiteral renders bytes as a PawScript {bytes ...} literal. The commas
