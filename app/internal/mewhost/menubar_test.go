@@ -12,6 +12,10 @@ import (
 // title. That is what lets mew call its file menu "File Buffer" and its view
 // menu "Viewport" and still merge correctly, and what puts the untagged
 // Input / Search / History between view and window in their declared order.
+//
+// Titles are exactly as mew declares them: these menus name the WordStar
+// command groups they wean users onto, so nothing here invents an accelerator
+// or renames toward a platform convention.
 func TestMenuBarWellKnownOrder(t *testing.T) {
 	for _, c := range []struct {
 		multiWindow bool

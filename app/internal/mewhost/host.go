@@ -400,25 +400,25 @@ func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWi
 	// order, between view and window.
 	script := fmt.Sprintf(`
 bar=new menubar children={%s
-	new menu caption="&File Buffer" wellknown="file" children={
+	new menu caption="File Buffer" wellknown="file" children={
 		new menuitem caption="&Save Current Buffer" action=mew.file.save
 	}
-	new menu caption="&Edit Block" wellknown="edit" children={
+	new menu caption="Edit Block" wellknown="edit" children={
 		new menuitem caption="&Raw Key Input" action=mew.edit.rawkey
 	}
-	new menu caption="F&ormat" wellknown="format" children={
+	new menu caption="Format" wellknown="format" children={
 		new menuitem caption="Unindent Block" action=mew.format.unindent
 	}
-	new menu caption="&Viewport" wellknown="view" children={
+	new menu caption="Viewport" wellknown="view" children={
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
 	}
-	new menu caption="&Input" children={
+	new menu caption="Input" children={
 		new menuitem caption="&Insert Mode [Overwrite]" action=mew.input.insertmode
 	}
-	new menu caption="&Search" children={
+	new menu caption="Search" children={
 		new menuitem caption="&Find..." action=mew.search.find
 	}
-	new menu caption="Hi&story" children={
+	new menu caption="History" children={
 		new menuitem caption="&Undo" action=mew.history.undo
 	}%s
 	new menu caption="Help" wellknown="help" children={
