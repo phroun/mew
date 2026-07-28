@@ -451,6 +451,14 @@ bar=new menubar children={%s
 	}
 	new menu caption="Search" after="file" children={
 		new menuitem caption="&Find..." action=mew.search.find
+		new menuitem caption="Find Next" action=mew.search.findnext
+		new menuitem caption="Incremental &Search" action=mew.search.incremental
+		new menuitem separator
+		new menuitem caption="Case &Insensitive" action=mew.search.ignorecase checkable=true
+		new menuitem caption="Search with &RegEx" action=mew.search.regex checkable=true
+		new menuitem caption="Search Backwards" action=mew.search.backwards checkable=true
+		new menuitem caption="&Wrap Search" action=mew.search.wrap checkable=true
+		new menuitem caption="Search All Buffers" action=mew.search.allbuffers checkable=true
 	}
 	new menu caption="History" after="format" children={
 		new menuitem caption="&Undo" action=mew.history.undo
@@ -590,8 +598,24 @@ var menuActions = map[string]menuAction{
 	"mew.format.unindent":  {"block_unindent", "^ ,"},
 	"mew.view.clone":       {"viewport_clone", "^B 2"},
 	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
-	"mew.search.find":      {"find", "^Q F"},
 	"mew.history.undo":     {"buffer_undo", "^B -"},
+
+	// Search. The three actions, then the toggles. Every toggle is a
+	// set_option_next, so a click cycles the option exactly as its key does —
+	// the menu and the keyboard drive one mechanism, not two.
+	//
+	// searchAllBuffers sits at ^O G (the GLOBAL group) rather than ^O S with
+	// the other three, and that is not a naming accident: it is about the SET
+	// of buffers a search reaches, not a property of any one document, so
+	// unlike ignoreCase/regex/backwards it takes no per-document overlay.
+	"mew.search.find":        {"find", "^Q F"},
+	"mew.search.findnext":    {"find_next", "^L"},
+	"mew.search.incremental": {"search", "^S"},
+	"mew.search.ignorecase":  {`set_option_next "searchIgnoreCase"`, "^O S I"},
+	"mew.search.regex":       {`set_option_next "searchRegex"`, "^O S R"},
+	"mew.search.backwards":   {`set_option_next "searchBackwards"`, "^O S B"},
+	"mew.search.wrap":        {`set_option_next "searchWrap"`, "^O S W"},
+	"mew.search.allbuffers":  {`set_option_next "searchAllBuffers"`, "^O G S"},
 }
 
 // syncPlaceholderShortcuts advertises each placeholder item's key against the
@@ -645,6 +669,11 @@ var optionItems = map[string]struct {
 		map[string]string{"yes": "Insert", "true": "Insert", "no": "Overwrite", "false": "Overwrite"}},
 	"mew.options.readonly":     {"readOnly", "", nil},
 	"mew.options.syntaxdetect": {"syntaxDetect", "", nil},
+	"mew.search.ignorecase":    {"searchIgnoreCase", "", nil},
+	"mew.search.regex":         {"searchRegex", "", nil},
+	"mew.search.backwards":     {"searchBackwards", "", nil},
+	"mew.search.wrap":          {"searchWrap", "", nil},
+	"mew.search.allbuffers":    {"searchAllBuffers", "", nil},
 }
 
 // syncOptionItem refreshes one item's checkmark or "[?]" value from the live

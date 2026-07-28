@@ -494,6 +494,11 @@ type Config struct {
 	SearchWrap       bool
 	SearchRegex      bool
 
+	// SearchBackwards / SearchAllBuffers are the persistent form of the find
+	// command's "b" and "a" letters (see config.GeneralConfig).
+	SearchBackwards  bool
+	SearchAllBuffers bool
+
 	// ModebarLocation places the modebar on the "top" (default) or
 	// "bottom" screen line. ModebarInner/Default/Outer are the base modebar
 	// templates; MappingsName is the base key-mapping set. All four are the
@@ -869,6 +874,8 @@ func New(cfg Config) (*Editor, error) {
 	cfg.SearchIgnoreCase = loadedConfig.General.SearchIgnoreCase
 	cfg.SearchWrap = loadedConfig.General.SearchWrap
 	cfg.SearchRegex = loadedConfig.General.SearchRegex
+	cfg.SearchBackwards = loadedConfig.General.SearchBackwards
+	cfg.SearchAllBuffers = loadedConfig.General.SearchAllBuffers
 	cfg.ModebarLocation = loadedConfig.General.ModebarLocation
 	if cfg.ModebarLocation == "" {
 		cfg.ModebarLocation = "top"
@@ -2911,6 +2918,10 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return boolText(e.Config.SearchWrap), true
 	case "searchregex":
 		return boolText(e.Config.SearchRegex), true
+	case "searchbackwards":
+		return boolText(e.Config.SearchBackwards), true
+	case "searchallbuffers":
+		return boolText(e.Config.SearchAllBuffers), true
 	case "modebarlocation":
 		return e.Config.ModebarLocation, true
 	case "modebarinner":
@@ -3215,6 +3226,18 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			return false
 		}
 		e.Config.SearchRegex = b
+	case "searchbackwards":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		e.Config.SearchBackwards = b
+	case "searchallbuffers":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		e.Config.SearchAllBuffers = b
 	case "modebarlocation":
 		loc := strings.ToLower(strings.TrimSpace(value))
 		if loc != "top" && loc != "bottom" {
@@ -7791,6 +7814,8 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Search Ignore Case: %s\n", opt("searchIgnoreCase")))
 	content.WriteString(fmt.Sprintf("  Search Wrap: %s\n", opt("searchWrap")))
 	content.WriteString(fmt.Sprintf("  Search Regex (standard syntax): %s\n", opt("searchRegex")))
+	content.WriteString(fmt.Sprintf("  Search Backwards: %s\n", opt("searchBackwards")))
+	content.WriteString(fmt.Sprintf("  Search All Buffers: %s\n", opt("searchAllBuffers")))
 	content.WriteString(fmt.Sprintf("  Modebar Location: %s\n", opt("modebarLocation")))
 	content.WriteString(fmt.Sprintf("  Page Size Optimal: %s\n", opt("pageSizeOptimal")))
 	content.WriteString(fmt.Sprintf("  Page Overlap Minimum: %s\n", opt("pageOverlapMinimum")))

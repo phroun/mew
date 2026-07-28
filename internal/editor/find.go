@@ -553,6 +553,19 @@ func (e *Editor) findStep(state viewport.FindState, count int, allowWrap bool) b
 		return false
 	}
 	opts.ignoreCase = opts.ignoreCase || e.optBool(w, "searchignorecase", e.Config.SearchIgnoreCase)
+	// The persistent defaults for direction and reach. An explicit option
+	// letter still wins: "b"/"a" turn the flag on for this one search, so
+	// ORing keeps a per-call letter from being cancelled by the option.
+	//
+	// searchBackwards takes the per-document overlay like the other search
+	// settings - a default direction is a coherent thing to vary by file
+	// class. searchAllBuffers deliberately does NOT: it is about the SET of
+	// buffers a search reaches, not about any one of them, so there is no
+	// principled answer to whose overlay would apply once the search leaves
+	// the document it started in. It stays editor-wide (bound at ^O G S, the
+	// global group, not ^O S with the per-document three).
+	opts.backwards = opts.backwards || e.optBool(w, "searchbackwards", e.Config.SearchBackwards)
+	opts.allBuffers = opts.allBuffers || e.Config.SearchAllBuffers
 	m, err := buildMatcher(state.Term, opts, e.optBool(w, "searchregex", e.Config.SearchRegex))
 	if err != nil {
 		e.ShowWarning(err.Error())
@@ -747,6 +760,9 @@ func (e *Editor) commitFind(term, options, replacement string, replaceMode bool)
 	tw := e.resolveTargetMain()
 	searchRegex := e.optBool(tw, "searchregex", e.Config.SearchRegex)
 	opts.ignoreCase = opts.ignoreCase || e.optBool(tw, "searchignorecase", e.Config.SearchIgnoreCase)
+	// See findStep: direction is per-document, reach is editor-wide.
+	opts.backwards = opts.backwards || e.optBool(tw, "searchbackwards", e.Config.SearchBackwards)
+	opts.allBuffers = opts.allBuffers || e.Config.SearchAllBuffers
 
 	m, err := buildMatcher(term, opts, searchRegex)
 	if err != nil {

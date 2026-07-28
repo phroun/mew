@@ -766,6 +766,13 @@ func (m *Menu) SetOnAboutToShow(handler func()) {
 	m.onAboutToShow = handler
 }
 
+// OnAboutToShow returns the about-to-show callback, or nil if none is set.
+// It exists so a menu REBUILT from a declared one (see systemEditMenu, which
+// moves an app's items into a menu of its own) can carry the app's callback
+// across instead of dropping it: the app uses that hook to refresh its items
+// against live state, and losing it silently blanks whatever it maintained.
+func (m *Menu) OnAboutToShow() func() { return m.onAboutToShow }
+
 // SetOnAboutToHide sets the about to hide callback.
 func (m *Menu) SetOnAboutToHide(handler func()) {
 	m.onAboutToHide = handler

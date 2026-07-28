@@ -137,3 +137,46 @@ func TestFirstClaimOfARoleWins(t *testing.T) {
 		t.Error("a duplicate claim must not also be wired")
 	}
 }
+
+// The desktop rebuilds a declared edit menu into a menu of its OWN, moving the
+// app's items across. Anything the app hung on the declared menu has to come
+// with them — above all the about-to-show hook, which is where an app refreshes
+// its items against live state. Dropping it does not blank the ITEMS, so the
+// menu still looks right while quietly showing nothing the hook maintained
+// (mew fills its whole shortcut column there, and lost it).
+func TestDeclaredEditMenuKeepsItsAboutToShowHook(t *testing.T) {
+	declared := mkEditMenu(NewMenuItem("Mark &Block Beginning"))
+	appRan := false
+	declared.SetOnAboutToShow(func() { appRan = true })
+
+	menu := editMenuAfterMerge(t, declared)
+	if menu.OnAboutToShow() == nil {
+		t.Fatal("the merged menu has no about-to-show hook at all")
+	}
+	menu.OnAboutToShow()()
+	if !appRan {
+		t.Error("the app's about-to-show hook did not survive the merge")
+	}
+}
+
+// The system's own hook still runs too — it is what enables/disables the
+// standard clipboard items — so the two compose rather than replace.
+func TestSystemAndAppAboutToShowBothRun(t *testing.T) {
+	cut := roleItem("Cut to OS Clipboard", ItemIDCut)
+	declared := mkEditMenu(cut)
+	appRan := false
+	declared.SetOnAboutToShow(func() { appRan = true })
+
+	menu := editMenuAfterMerge(t, declared)
+	cut.SetEnabled(true)
+	menu.OnAboutToShow()()
+
+	if !appRan {
+		t.Error("app hook did not run")
+	}
+	// The system pass disables Cut when no editActor holds focus; that it
+	// changed the item at all proves the system hook ran alongside the app's.
+	if cut.Enabled {
+		t.Error("system hook did not run: Cut should be disabled with no focused editor")
+	}
+}

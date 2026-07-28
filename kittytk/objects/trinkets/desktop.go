@@ -2142,6 +2142,18 @@ func (d *Desktop) systemEditMenu(app ApplicationProvider, declared *Menu) *Menu 
 	menu := NewMenu(title)
 	menu.SetWellKnownID(MenuIDEdit)
 
+	// The app's own about-to-show hook comes across with its items. This menu
+	// is a NEW object holding the declared menu's items, so anything the app
+	// hung on the declared menu would otherwise be dropped on the floor - and
+	// that hook is where an app refreshes its items against live state (mew
+	// fills in each item's shortcut column from the running keymap there). Lose
+	// it and the app's items still show, just stripped of everything the hook
+	// maintained.
+	var declaredShow func()
+	if declared != nil {
+		declaredShow = declared.OnAboutToShow()
+	}
+
 	var custom []*MenuItem
 	if declared != nil {
 		custom = declared.Items()
@@ -2169,11 +2181,21 @@ func (d *Desktop) systemEditMenu(app ApplicationProvider, declared *Menu) *Menu 
 				menu.AddItem(it)
 			}
 		}
-		menu.SetOnAboutToShow(update)
+		// Both hooks run: the system's enable/disable pass over the standard
+		// items, then the app's refresh over its own. Order matters only for an
+		// ADOPTED item, which both touch - the app's runs second so its view of
+		// its own item wins.
+		menu.SetOnAboutToShow(func() {
+			update()
+			if declaredShow != nil {
+				declaredShow()
+			}
+		})
 	} else {
 		for _, it := range custom {
 			menu.AddItem(it)
 		}
+		menu.SetOnAboutToShow(declaredShow)
 	}
 	return menu
 }

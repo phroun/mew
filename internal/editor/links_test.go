@@ -613,16 +613,20 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	// Exact for the no-escape bindings; prefix for the ones whose insert arg
 	// carries a control char (the parser unescapes \n/\t in mapping values).
 	for k, want := range map[string]string{
-		"^C":    "cancel|buffer_close",
-		"S-tab": "nav_prior",
+		"^C": "cancel|buffer_close",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); got != want {
 			t.Fatalf("%s = %q, want %q", k, got, want)
 		}
 	}
+	// Prefix, not exact: these carry a fallback chain after the nav command
+	// (S-tab falls through to smart_unindent), or an insert arg whose control
+	// char the mapping parser unescapes. What matters is the nav command is
+	// wired and comes FIRST, so it gets the key when it can act.
 	for k, prefix := range map[string]string{
 		"return": "nav_follow false|accept|insert_newline",
 		"tab":    "nav_next|completion|insert ",
+		"S-tab":  "nav_prior",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); !strings.HasPrefix(got, prefix) {
 			t.Fatalf("%s = %q, want prefix %q", k, got, prefix)

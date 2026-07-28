@@ -467,6 +467,14 @@ type GeneralConfig struct {
 	SearchWrap       bool
 	SearchRegex      bool
 
+	// SearchBackwards and SearchAllBuffers are the persistent form of the
+	// find command's "b" and "a" option letters: a default direction, and
+	// whether a search runs on past the end of this buffer into the other
+	// main buffers. Both remain overridable per search - an explicit letter
+	// still turns the flag on for that one call.
+	SearchBackwards  bool
+	SearchAllBuffers bool
+
 	// ModebarLocation places the modebar on the "top" (default) or
 	// "bottom" screen line.
 	ModebarLocation string
@@ -868,6 +876,8 @@ func DefaultConfig() Config {
 			SearchIgnoreCase:        false,
 			SearchWrap:              true,
 			SearchRegex:             false,
+			SearchBackwards:         false,
+			SearchAllBuffers:        false,
 			ModebarLocation:         "top",
 			ModebarInner:            "%FN%",
 			ModebarDefault:          "%FORTUNE%",
@@ -1181,6 +1191,12 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["searchRegex"]; ok {
 			config.General.SearchRegex = parseBool(v, false)
+		}
+		if v, ok := opt["searchBackwards"]; ok {
+			config.General.SearchBackwards = parseBool(v, false)
+		}
+		if v, ok := opt["searchAllBuffers"]; ok {
+			config.General.SearchAllBuffers = parseBool(v, false)
 		}
 		if v, ok := opt["modebarLocation"]; ok {
 			if loc := strings.ToLower(strings.TrimSpace(v)); loc == "top" || loc == "bottom" {
@@ -2575,6 +2591,7 @@ messages="\e[0;97;41m"                # bright white on red
 [mappings:mew]
 
 # -- first, include all the mew defaults --
+@include "defaults/keys_system.conf"
 @include "defaults/keys_cursor_movement.conf"
 @include "defaults/keys_editing.conf"
 @include "defaults/keys_quick_menu.conf"
@@ -2584,10 +2601,10 @@ messages="\e[0;97;41m"                # bright white on red
 @include "defaults/keys_backcompat.conf"
 
 # -- override as needed --
+# The system set (^C, ^R, ^S, ^L, tab/return, esc y/Y, the undo/redo row, …)
+# now comes from defaults/keys_system.conf, included above. Only the keys that
+# are NOT in it stay here.
 ^K H    =help_toggle
-esc X   =cmd
-esc y   =kill_ring_yank
-esc Y   =kill_ring_pop
 ^@ U    =stat_peek_up
 ^@ V    =stat_peek_down
 ^@ P    =prompt_peek_up
@@ -2595,27 +2612,6 @@ esc Y   =kill_ring_pop
 ^@ O    =editor_options
 ^@ ,    =viewport_prior
 ^@ .    =viewport_next
-
-tab     =nav_next|completion|insert '\t'
-S-tab   =nav_prior
-return  =nav_follow false|accept|insert_newline
-^C      =cancel|buffer_close
-^R      =repeat_next
-
-esc >   =scroll_right
-esc <   =scroll_left
-
-^L      =find_next
-^]      =go_match
-
-^_      =buffer_undo
-# ^/ is straight undo you can lean on (Emacs/JOE muscle memory, and its own
-# key under the kitty keyboard protocol where it no longer collapses onto ^_).
-# It sits at the right end of the bottom row, mirroring ^Z at the left end,
-# whose redo-first fallback ping-pongs undo/redo forever the way a Windows
-# user expects.
-^/      =buffer_undo
-^Z      =buffer_redo|buffer_undo
 
 # Inside the incremental-search prompt only (the search command's "I-search:"
 # prompt, viewport class "isearch"): the direction keys. ^R steps to the
