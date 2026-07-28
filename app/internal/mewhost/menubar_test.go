@@ -140,7 +140,14 @@ func TestOptionItemsAreDeclaredForEveryReflectingItem(t *testing.T) {
 			if strings.Contains(it.Text, "[?]") && !reflects {
 				t.Errorf("item %q shows a %q placeholder but is not in optionItems", it.Text, "[?]")
 			}
-			if it.Checkable && !reflects && id != "mew.help.quickhelp" {
+			// Checkables whose state is the HOST's, not a mew option's: synced
+			// from their own seam in the about-to-show hook rather than from
+			// optionItems. Anything else must declare a source.
+			hostState := map[string]bool{
+				"mew.help.quickhelp": true, // mew's built-in help window
+				"mew.view.desktop":   true, // the KittyTK desktop's visibility
+			}
+			if it.Checkable && !reflects && !hostState[id] {
 				t.Errorf("checkable item %q has nothing to sync its checkmark from", it.Text)
 			}
 			if reflects && spec.template != "" && !strings.Contains(spec.template, "[?]") {

@@ -145,6 +145,23 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		})
 	}
 
+	// The Viewport menu's desktop toggle. Reading "is it showing" differs per
+	// host - solo mode on the graphical one, forced multi-window on the TUI -
+	// so it is resolved here, where both facts are in scope.
+	desktopReveal.visible = func() bool {
+		if graphical {
+			return !desktop.IsSolo()
+		}
+		return forceMulti
+	}
+	desktopReveal.toggle = func() {
+		if desktopReveal.visible() {
+			hideDesktop()
+		} else {
+			showDesktop()
+		}
+	}
+
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
 		root = startRootWindow(desktop, application, launchArgs)
@@ -374,6 +391,17 @@ func ClearHostShortcuts() {
 // menu are omitted entirely - the app menu is left for the host to synthesize
 // (Hide/Quit), so the bar is just mew / Edit / Help. New windows only make sense
 // where they can be peers (the graphical host).
+// desktopReveal is the Viewport menu's "KittyTK Desktop" seam, filled in by
+// BuildHost. Only BuildHost knows which host this is and owns the state the
+// reveal turns on: the graphical host hides the desktop with solo mode, the TUI
+// with forced multi-window, and there is no single fact buildMenus could read
+// for both. Both halves stay nil until BuildHost runs (and in tests, which
+// build menus against a bare desktop), so both are nil-checked at use.
+var desktopReveal struct {
+	visible func() bool // is the desktop showing right now
+	toggle  func()      // show it if hidden, hide it if showing
+}
+
 func buildMenus(desktop *trinkets.Desktop, application *app.Application, multiWindow bool) []*trinkets.Menu {
 	// No shortcut= on these: like the host accelerators cleared in
 	// ClearHostShortcuts, New Window and Raw Key Input are menu-only for now so
@@ -450,6 +478,17 @@ bar=new menubar children={%s
 	}
 	new menu caption="Viewport" wellknown="view" children={
 		new menuitem caption="&Clone Viewport" action=mew.view.clone
+		new menuitem caption="&Prior Viewport" action=mew.view.prior
+		new menuitem caption="&Next Viewport" action=mew.view.next
+		new menuitem separator
+		new menuitem caption="Follow Link at Cursor" action=mew.view.follow
+		new menuitem caption="Link Navigation Mode" action=mew.view.navmode checkable=true
+		new menuitem caption="Pr&ior Link" action=mew.view.linkprior
+		new menuitem caption="N&ext Link" action=mew.view.linknext
+		new menuitem separator
+		new menuitem caption="Document &Direction [?]" action=mew.view.direction
+		new menuitem caption="Show Bidi Control Points" action=mew.view.showbidi checkable=true
+		new menuitem caption="KittyTK Desktop" action=mew.view.desktop checkable=true
 	}
 	new menu caption="Input" after="file" children={
 		new menuitem caption="&Insert/Overwrite Mode" action=mew.input.insertmode checkable=true
@@ -541,6 +580,14 @@ bar=new menubar children={%s
 	commands.Register("mew.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToTrinket()
 	})
+	// Viewport ▸ KittyTK Desktop toggles the HOST's desktop, not anything in
+	// mew, so it goes through the seam BuildHost filled in rather than the
+	// editor's command port. Nil before BuildHost has run (and in tests).
+	commands.Register("mew.view.desktop", func() {
+		if desktopReveal.toggle != nil {
+			desktopReveal.toggle()
+		}
+	})
 	if multiWindow {
 		// New Window opens another (scratch) mew editor - a sub-mew of the host.
 		commands.Register("mew.window.new", func() {
@@ -629,15 +676,26 @@ var menuActions = map[string]menuAction{
 	// same thing in keys_block_menu.conf, so pressing ^K J answers exactly as
 	// clicking Justify Block does - an advertised key that did nothing would be
 	// the worse half of a placeholder.
-	"mew.format.unindent":  {"block_unindent", "^K ,"},
-	"mew.format.indent":    {"block_indent", "^K ."},
-	"mew.format.justify":   {`not_implemented "Justify Block"`, "^K J"},
-	"mew.format.filter":    {`not_implemented "Filter Block through Cmd"`, "^K /"},
-	"mew.format.upper":     {`not_implemented "Convert to UPPERCASE"`, "^K T"},
-	"mew.format.lower":     {`not_implemented "Convert to lowercase"`, ""},
-	"mew.format.title":     {`not_implemented "Convert to Title Case"`, ""},
-	"mew.format.swapcase":  {`not_implemented "Swap camelCase snake_case"`, "^K _"},
+	"mew.format.unindent": {"block_unindent", "^K ,"},
+	"mew.format.indent":   {"block_indent", "^K ."},
+	"mew.format.justify":  {`not_implemented "Justify Block"`, "^K J"},
+	"mew.format.filter":   {`not_implemented "Filter Block through Cmd"`, "^K /"},
+	"mew.format.upper":    {`not_implemented "Convert to UPPERCASE"`, "^K T"},
+	"mew.format.lower":    {`not_implemented "Convert to lowercase"`, ""},
+	"mew.format.title":    {`not_implemented "Convert to Title Case"`, ""},
+	"mew.format.swapcase": {`not_implemented "Swap camelCase snake_case"`, "^K _"},
+	// Viewport. mew.view.desktop is absent on purpose: it toggles the HOST's
+	// desktop rather than running a mew command, and is registered separately
+	// (like Raw Key Input) against the desktopReveal seam.
 	"mew.view.clone":       {"viewport_clone", "^B 2"},
+	"mew.view.prior":       {"viewport_prior", "^B P"},
+	"mew.view.next":        {"viewport_next", "^B N"},
+	"mew.view.follow":      {"nav_follow", "^B F"},
+	"mew.view.navmode":     {`set_option_next "navigationMode"`, "^O N"},
+	"mew.view.linkprior":   {"nav_prior", "^B S-tab"},
+	"mew.view.linknext":    {"nav_next", "^B tab"},
+	"mew.view.direction":   {`set_option_next "direction"`, "^O D"},
+	"mew.view.showbidi":    {`set_option_next "showBidi"`, "^O B"},
 	"mew.input.insertmode": {`set_option_next "insertMode"`, "^O I"},
 
 	// Input. The toggles, then the bidi controls insert_bidi_control already
@@ -714,6 +772,11 @@ func syncPlaceholderShortcuts(menus []*trinkets.Menu, application *app.Applicati
 				spec := menuActions[it.ID()]
 				it.SetShortcutText(liveKeyFor(ed, spec))
 				syncOptionItem(ed, it)
+				// Not a mew option: the desktop's visibility is the HOST's
+				// state, so its checkmark comes from the reveal seam.
+				if it.ID() == "mew.view.desktop" && desktopReveal.visible != nil {
+					it.SetChecked(desktopReveal.visible())
+				}
 			}
 		})
 	}
@@ -746,6 +809,10 @@ var optionItems = map[string]struct {
 	"mew.search.allbuffers":    {"searchAllBuffers", "", nil},
 	"mew.input.macoption":      {"macOptionKeys", "", nil},
 	"mew.input.showbidi":       {"showBidi", "", nil},
+	"mew.view.navmode":         {"navigationMode", "", nil},
+	"mew.view.showbidi":        {"showBidi", "", nil},
+	"mew.view.direction": {"direction", "Document &Direction [?]",
+		map[string]string{"ltr": "LTR", "rtl": "RTL"}},
 }
 
 // syncOptionItem refreshes one item's checkmark or "[?]" value from the live
