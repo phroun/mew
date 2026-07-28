@@ -54,11 +54,12 @@ type Config struct {
 	OptionOverlays map[string]map[string]string
 
 	// MappingSets holds the key-mapping sets refined by window class, buffer
-	// type, and grammar: [<class>::]mappings:<set>[/<type>][.<grammar>] stored
+	// type, and grammar: [<class>::]mappings[:<set>][/<type>][.<grammar>] stored
 	// under a signature (see mappingSetKey). ResolveMappingSet merges the
 	// class/grammar/type cascade for one set name into an effective keymap. The
 	// active set name for a window comes from the "mappings" option (itself
-	// overlay-resolvable).
+	// overlay-resolvable). Naming no set ([pty::mappings]) refines EVERY set —
+	// see anyMappingSet — so class keymaps need not be repeated per set.
 	MappingSets map[string]map[string]string
 
 	// MappingOrigins records provenance for the base Mappings, keyed by key
@@ -940,15 +941,15 @@ func parseBuiltinMappings() {
 		builtinMappingSetsCache = map[string]map[string]string{}
 		for sectionName, section := range parsed {
 			h := parseSectionHeader(sectionName)
-			if h.family != "mappings" || h.set == "" ||
-				(h.class == "" && h.grammar == "" && h.bufType == "") {
-				continue
+			set, ok := mappingSetOf(h)
+			if !ok || (h.set != "" && h.class == "" && h.grammar == "" && h.bufType == "") {
+				continue // not a mapping section, or a set's own unqualified base
 			}
 			km := make(map[string]string, len(section))
 			for k, v := range section {
 				km[strings.TrimSpace(k)] = v
 			}
-			builtinMappingSetsCache[mappingSetKey(h.set, h.class, h.grammar, h.bufType)] = km
+			builtinMappingSetsCache[mappingSetKey(set, h.class, h.grammar, h.bufType)] = km
 		}
 	})
 }
@@ -1581,18 +1582,19 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 	}
 
-	// [<class>::]mappings:<set>[/<type>][.<grammar>] refine a key-mapping set by
+	// [<class>::]mappings[:<set>][/<type>][.<grammar>] refine a key-mapping set by
 	// window class, buffer type, and grammar. Each cleaned section is stored under
 	// its signature; the active set is merged across the cascade at focus time
 	// (ResolveMappingSet). The base [mappings:<set>] is applied to config.Mappings
 	// above (the default set); here we retain every set/refinement for per-window
-	// switching.
+	// switching. A section that names no set refines them all (anyMappingSet).
 	for sectionName, section := range parsed {
 		h := parseSectionHeader(sectionName)
-		if h.family != "mappings" || h.set == "" {
+		set, ok := mappingSetOf(h)
+		if !ok {
 			continue
 		}
-		set, class, grammar, bufType := h.set, h.class, h.grammar, h.bufType
+		class, grammar, bufType := h.class, h.grammar, h.bufType
 		if config.MappingSets == nil {
 			config.MappingSets = make(map[string]map[string]string)
 		}
@@ -2016,7 +2018,9 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 			// Record provenance for key mappings only. Precedence advances per
 			// mapping line so a key rebound later (in the same or a later layer)
 			// carries a higher ordinal than the one it shadows.
-			if strings.HasPrefix(currentSection, "mappings") {
+			// (Any mapping family, including a class-scoped one — the section
+			// name may lead with "<class>::", so ask the grammar, not the text.)
+			if parseSectionHeader(currentSection).family == "mappings" {
 				*prec++
 				if origins[currentSection] == nil {
 					origins[currentSection] = make(map[string]MappingOrigin)
@@ -2613,15 +2617,36 @@ messages="\e[0;97;41m"                # bright white on red
 ^@ ,    =viewport_prior
 ^@ .    =viewport_next
 
+# Class-scoped keys. A section that names no set — [isearch::mappings] rather
+# than [isearch::mappings:mew] — refines EVERY mapping set, so declaring a set
+# of your own does not mean copying these in behind it. Name the set to
+# override one for that set alone ([isearch::mappings:myset] ^R =nop).
+
 # Inside the incremental-search prompt only (the search command's "I-search:"
 # prompt, viewport class "isearch"): the direction keys. ^R steps to the
 # previous occurrence and turns the search around; ^F steps forward. The
 # direction is the same "b" option the find state stores, so find_next keeps
 # rotating the same way afterwards. Everywhere else ^R/^F keep their normal
 # meanings.
-[isearch::mappings:mew]
+[isearch::mappings]
 ^R      =search_reverse
 ^F      =search_forward
+
+# Inside a viewport running a terminal session (class "pty"): the keys whose
+# ordinary meaning is an EDIT, which a child process must receive as bytes
+# instead. Typing already reaches the child — insert and insert_newline route
+# themselves — but these three do not pass through insert, so they are spelled
+# out. tinput sends raw bytes; "\x08" is a backspace and "\x03" a Ctrl-C, and
+# the equivalent PawScript form is {bytes 0x08}.
+#
+# ^C here interrupts the child rather than closing the buffer; the buffer
+# closes normally again the moment the session ends. Each line keeps its
+# ordinary meaning after the "|", so a key still does the right thing in the
+# instant between the child exiting and the class going away.
+[pty::mappings]
+del     =tinput "\x08"|nav_history_prior|del_char_prior
+back    =tinput "\x08"|nav_history_prior|del_char_prior
+^C      =tinput "\x03"|cancel|buffer_close
 `
 }
 

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // [options.<grammar>] sections parse into OptionOverlays with the trichotomy:
 // a real value overrides, "default" resolves to the shipped default, and
@@ -163,5 +166,78 @@ func TestNoOptionOverlays(t *testing.T) {
 	c := m.LoadFromString("[options]\ntabSize=4\n")
 	if len(c.OptionOverlays) != 0 {
 		t.Errorf("expected no overlays, got %v", c.OptionOverlays)
+	}
+}
+
+// A mapping section that names no set refines EVERY set, so a class keymap
+// (the isearch prompt's keys, a terminal's control bytes) is written once and
+// inherited by any set someone declares. Naming the set overrides it for that
+// set alone, and the set's own base still outranks the set-less BASE.
+func TestSetLessMappingSectionRefinesEverySet(t *testing.T) {
+	m := NewManager()
+	c := m.LoadFromString("[mappings:mew]\nk\t=mew_base\n" +
+		"[mappings:mine]\nk\t=mine_base\n" +
+		"[mappings]\nk\t=universal_base\nu\t=universal_only\n" +
+		"[pty::mappings]\nb\t=pty_universal\nc\t=pty_universal\n" +
+		"[pty::mappings:mine]\nc\t=pty_mine\n")
+	get := func(set, class, key string) string {
+		km, _ := c.ResolveMappingSet(set, class, "", "", "", nil)
+		return km[key]
+	}
+	// The class binding reaches a set that never mentioned it...
+	if got := get("mew", "pty", "b"); got != "pty_universal" {
+		t.Errorf("mew in class pty: b = %q, want pty_universal", got)
+	}
+	if got := get("mine", "pty", "b"); got != "pty_universal" {
+		t.Errorf("mine in class pty: b = %q, want pty_universal", got)
+	}
+	// ...and stays out of every other class.
+	if got := get("mine", "", "b"); got != "" {
+		t.Errorf("mine outside class pty: b = %q, want unbound", got)
+	}
+	// Naming the set overrides that one key for that one set.
+	if got := get("mine", "pty", "c"); got != "pty_mine" {
+		t.Errorf("mine override: c = %q, want pty_mine", got)
+	}
+	if got := get("mew", "pty", "c"); got != "pty_universal" {
+		t.Errorf("mew is unaffected by mine's override: c = %q, want pty_universal", got)
+	}
+	// A set-less BASE section is the lowest layer of all: the set's own base
+	// wins for a key both supply, and supplies keys the set never had.
+	if got := get("mine", "", "k"); got != "mine_base" {
+		t.Errorf("set base should outrank the set-less base: k = %q, want mine_base", got)
+	}
+	if got := get("mine", "", "u"); got != "universal_only" {
+		t.Errorf("set-less base should supply u: got %q, want universal_only", got)
+	}
+	// [mappings:*] is the same slot, spelled explicitly.
+	c2 := m.LoadFromString("[mappings:mine]\nk\t=mine_base\n" + "[pty::mappings:*]\nb\t=star\n")
+	km, _ := c2.ResolveMappingSet("mine", "pty", "", "", "", nil)
+	if km["b"] != "star" {
+		t.Errorf("[mappings:*]: b = %q, want star", km["b"])
+	}
+}
+
+// The built-in class refinements survive a user config that never mentions
+// them: an editor.conf written before [pty::mappings] existed still gets the
+// terminal keys, because the user layer merges onto the built-in sets rather
+// than replacing them.
+func TestBuiltinClassRefinementsSurviveAUserConfig(t *testing.T) {
+	m := NewManager()
+	c := m.LoadFromString("[mappings:mew]\n^Q Q\t=buffer_close\n")
+	km, _ := c.ResolveMappingSet("mew", "pty", "", "", "mew", c.Mappings)
+	for _, tc := range []struct{ key, want string }{
+		{"back", "tinput \"\x08\"|nav_history_prior|del_char_prior"},
+		{"del", "tinput \"\x08\"|nav_history_prior|del_char_prior"},
+		{"^C", "tinput \"\x03\"|cancel|buffer_close"},
+	} {
+		if km[tc.key] != tc.want {
+			t.Errorf("pty class %s = %q, want %q", tc.key, km[tc.key], tc.want)
+		}
+	}
+	// Outside the class those keys keep whatever the base set says.
+	base, _ := c.ResolveMappingSet("mew", "", "", "", "mew", c.Mappings)
+	if strings.HasPrefix(base["^C"], "tinput") {
+		t.Errorf("^C outside a terminal = %q, want the ordinary binding", base["^C"])
 	}
 }

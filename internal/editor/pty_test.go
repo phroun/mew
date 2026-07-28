@@ -408,3 +408,63 @@ func TestTinputBytesListSyntax(t *testing.T) {
 		}
 	}
 }
+
+// A viewport running a session reports class "pty", which is how
+// [pty::mappings] finds it. The class is derived from the buffer, so it
+// appears when the session starts and is gone when it ends.
+func TestPTYViewportClass(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	if got := e.viewportClass(w); got != "" {
+		t.Fatalf("class before exec = %q, want empty", got)
+	}
+	stub := newStubPTY()
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	if got := e.viewportClass(w); got != "pty" {
+		t.Fatalf("class with a session = %q, want pty", got)
+	}
+	e.ptyEnded(w.Buffer)
+	if got := e.viewportClass(w); got != "" {
+		t.Fatalf("class after the child exited = %q, want empty again", got)
+	}
+}
+
+// The keys whose ordinary meaning is an edit reach the child as bytes instead,
+// through the [pty::mappings] defaults — and only while a session runs.
+func TestPTYClassKeyBindings(t *testing.T) {
+	for _, tc := range []struct{ key, want string }{
+		{"back", "\x08"},
+		{"del", "\x08"},
+		{"^C", "\x03"},
+	} {
+		e, w := newTestEditor(t, "ab\n")
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+		stub := newStubPTY()
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+		if !e.execRequest("bash") {
+			t.Fatal("exec failed")
+		}
+		e.reconcileFocusedOptions() // adopt the pty class keymap
+		e.dispatchKey(tc.key)
+		if stub.sent() != tc.want {
+			t.Errorf("%s sent %q, want %q", tc.key, stub.sent(), tc.want)
+		}
+		if got := docContent(w); got != "ab" {
+			t.Errorf("%s edited the buffer (%q); it belongs to the child", tc.key, got)
+		}
+	}
+}
+
+// Without a session those keys keep their ordinary meanings: the class is not
+// there, so neither is the refinement.
+func TestPTYClassKeysUnboundWithoutSession(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.reconcileFocusedOptions()
+	e.dispatchKey("back")
+	if got := docContent(w); got != "a" {
+		t.Errorf("back with no session = %q, want the character deleted", got)
+	}
+}

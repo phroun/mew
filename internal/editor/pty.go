@@ -59,6 +59,12 @@ type PTYSession interface {
 	Close() error
 }
 
+// ptyViewportClass is the window class a viewport reports while its buffer runs
+// a session, so [pty::mappings] and [pty::options] find it. It is the isearch
+// prompt's trick — a class carrying a keymap refinement — for the keys a child
+// process must receive as bytes rather than as edits.
+const ptyViewportClass = "pty"
+
 // ptyState is one buffer's live session.
 type ptyState struct {
 	id      string // stable for the session's life; names its child surface

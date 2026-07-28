@@ -48,6 +48,30 @@ func parseSectionHeader(name string) sectionHeader {
 	return h
 }
 
+// anyMappingSet is the set name a mapping section carries when it names no set
+// at all — [pty::mappings] rather than [pty::mappings:mew]. Such a section
+// refines EVERY set, so a class's keymap (the isearch prompt's direction keys,
+// a terminal's control bytes) does not have to be copied into each set someone
+// declares. It merges just BELOW the same-scope named-set section, so a set
+// that wants a different binding for one of those keys simply says so.
+//
+// "*" is also spellable directly ([mappings:*]) and lands in the same slot; a
+// real set may not be named "*" for that reason.
+const anyMappingSet = "*"
+
+// mappingSetOf returns the set a [<class>::]mappings[:<set>] section refines,
+// mapping the set-less form onto anyMappingSet. ok is false for a section that
+// is not a mapping section at all.
+func mappingSetOf(h sectionHeader) (string, bool) {
+	if h.family != "mappings" {
+		return "", false
+	}
+	if h.set == "" {
+		return anyMappingSet, true
+	}
+	return h.set, true
+}
+
 // optionOverlayKey is the storage signature for an option overlay section.
 func optionOverlayKey(class, grammar, bufType string) string {
 	return class + overlaySep + grammar + overlaySep + bufType
@@ -134,6 +158,11 @@ func (c *Config) HasOptionOverlay(class, grammar, bufType string) bool {
 // specific first so the most specific wins per key (class > grammar > type).
 // defaultSet/defaultMap carry the active set's fully-resolved map (including
 // built-ins) so it need not be rebuilt.
+//
+// At every scope the set-less section (anyMappingSet, written [<class>::mappings])
+// is merged first and the named set's section second, so a set inherits the
+// class's bindings without repeating them and can still override any one of
+// them by naming it.
 func (c *Config) ResolveMappingSet(set, class, grammar, bufType, defaultSet string, defaultMap map[string]string) (map[string]string, map[string]MappingOrigin) {
 	result := make(map[string]string)
 	origins := make(map[string]MappingOrigin)
@@ -151,19 +180,20 @@ func (c *Config) ResolveMappingSet(set, class, grammar, bufType, defaultSet stri
 			}
 		}
 	}
+	mergeSig := func(sig string) { merge(c.MappingSets[sig], c.MappingSetOrigins[sig]) }
+	mergeSig(mappingSetKey(anyMappingSet, "", "", ""))
 	if set == defaultSet {
 		merge(defaultMap, c.MappingOrigins)
 	} else {
-		sig := mappingSetKey(set, "", "", "")
-		merge(c.MappingSets[sig], c.MappingSetOrigins[sig])
+		mergeSig(mappingSetKey(set, "", "", ""))
 	}
 	// Merge the refinements least-specific first (reverse of the most-specific-
 	// first cascade), so a more specific section overrides per key.
 	tuples := qualCascade(class, grammar, bufType)
 	for i := len(tuples) - 1; i >= 0; i-- {
 		t := tuples[i]
-		sig := mappingSetKey(set, t[0], t[1], t[2])
-		merge(c.MappingSets[sig], c.MappingSetOrigins[sig])
+		mergeSig(mappingSetKey(anyMappingSet, t[0], t[1], t[2]))
+		mergeSig(mappingSetKey(set, t[0], t[1], t[2]))
 	}
 	return result, origins
 }
