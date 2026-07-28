@@ -162,21 +162,104 @@ func TestExecRefusesSecondSessionOnSameBuffer(t *testing.T) {
 	}
 }
 
-// The stand-in output path drops terminal control sequences and keeps text.
-// Provisional with ptyOutput, but pinned so a rewrite is a deliberate act.
-func TestStripTerminalControls(t *testing.T) {
-	esc := string(rune(27))
-	for _, tc := range []struct{ in, want string }{
-		{"plain", "plain"},
-		{esc + "[0mred" + esc + "[m", "red"},
-		{esc + "[1;32mgreen", "green"},
-		{esc + "]0;a title" + string(rune(7)) + "after", "after"},
-		{"line1\nline2", "line1\nline2"},
-		{"tab\there", "tab\there"},
-		{"carriage\rreturn", "carriagereturn"},
-	} {
-		if got := stripTerminalControls([]byte(tc.in)); got != tc.want {
-			t.Errorf("stripTerminalControls(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+// mew forwards session bytes VERBATIM — no stripping, no emulation. PurfecTerm
+// on the host side is the emulator, so anything filtered here would be a
+// capability the child surface then lacked.
+func TestPTYOutputForwardsRawBytesToHost(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var fed []byte
+	var openedID, fedID string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(id string, cols, rows int) { openedID = id },
+		Feed: func(id string, p []byte) { fedID = id; fed = append(fed, p...) },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	if openedID == "" {
+		t.Fatal("Open was not called")
+	}
+
+	// An escape sequence a stripping implementation would have eaten.
+	esc := []byte{27, '[', '2', 'J', 'h', 'i', 27, '[', '0', 'm'}
+	e.ptyOutput(w.Buffer, esc)
+
+	if fedID != openedID {
+		t.Errorf("fed id %q, want the opened id %q", fedID, openedID)
+	}
+	if string(fed) != string(esc) {
+		t.Errorf("host received % x, want % x — bytes must pass through untouched", fed, esc)
+	}
+	// The garland buffer stays empty while a session runs; scrollback folding
+	// is deliberate follow-up work.
+	if got := docContent(w); got != "x" {
+		t.Errorf("buffer = %q, want it untouched by session output", got)
+	}
+}
+
+// The surface set is republished per render with the FULL set, so a host never
+// has to reconcile deltas against mew's layout.
+func TestTerminalSurfacesPublishTheVisibleSet(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var placed [][]TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) {},
+		Place: func(s []TerminalSurface) { placed = append(placed, s) },
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+
+	e.notifyTerminalSurfaces()
+	if len(placed) != 0 {
+		t.Error("no sessions: nothing should be published")
+	}
+
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 1, 80, 24
+	e.notifyTerminalSurfaces()
+	if len(placed) != 1 || len(placed[0]) != 1 {
+		t.Fatalf("want one surface published, got %v", placed)
+	}
+	got := placed[0][0]
+	if got.Col != 1 || got.Row != 2 || got.Width != 80 || got.Height != 24 {
+		t.Errorf("surface = %+v, want 1-based cells of the viewport text area", got)
+	}
+	// Grid and clip are separate fields so a partially obscured viewport can
+	// narrow one without moving the other. They coincide today.
+	if got.ClipCol != got.Col || got.ClipRow != got.Row ||
+		got.ClipWidth != got.Width || got.ClipHeight != got.Height {
+		t.Errorf("clip %+v should match the grid rect until a viewport is obscured", got)
+	}
+
+	// An unchanged layout republishes nothing.
+	e.notifyTerminalSurfaces()
+	if len(placed) != 1 {
+		t.Errorf("an idle frame republished: %d pushes", len(placed))
+	}
+}
+
+// The session is closed out through the host so the surface is destroyed, and
+// the buffer is left an ordinary editable buffer.
+func TestPTYEndedClosesTheSurface(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var closed string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Close: func(id string) { closed = id },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e.ptyEnded(w.Buffer)
+	if closed == "" {
+		t.Error("Close was not called for the ended session")
+	}
+	if e.ptySessionFor(w.Buffer) != nil {
+		t.Error("the session should be unbound after it ends")
 	}
 }

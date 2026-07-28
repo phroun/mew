@@ -19,7 +19,9 @@ package editor
 // over the display protocol.
 
 import (
+	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -59,8 +61,56 @@ type PTYSession interface {
 
 // ptyState is one buffer's live session.
 type ptyState struct {
+	id      string // stable for the session's life; names its child surface
 	sess    PTYSession
 	command string
+}
+
+// TerminalSurface is one visible terminal: which session, and exactly where it
+// sits in mew's OWN surface, in 1-based terminal cells. The rectangle is the
+// viewport's text area — the same cells the document would have drawn into.
+//
+// Republished as a complete SET after every render. A session absent from the
+// set is not visible this frame (scrolled away, its viewport gone, another
+// buffer showing) and its surface should be hidden. Sending the whole set
+// rather than deltas is deliberate: there is no incremental bookkeeping on the
+// host to fall out of step with mew's layout.
+type TerminalSurface struct {
+	ID string
+
+	// Col, Row, Width, Height place the terminal's GRID: where its origin
+	// sits and how many cells it spans. 1-based cells.
+	Col, Row      int
+	Width, Height int
+
+	// ClipCol, ClipRow, ClipWidth, ClipHeight bound what is actually VISIBLE
+	// of that grid — normally the same rectangle, but smaller when the
+	// viewport is partially obscured, partially scrolled off, or narrower than
+	// the grid it hosts. Where they differ, the surface still draws at its own
+	// origin and only the intersection reaches the screen, so a terminal never
+	// bleeds over the chrome around it.
+	//
+	// A zero ClipWidth or ClipHeight means nothing of this surface is visible
+	// this frame.
+	ClipCol, ClipRow      int
+	ClipWidth, ClipHeight int
+}
+
+// TerminalHooks is how a host renders mew's terminal sessions. mew does not
+// emulate a terminal: it hands the raw bytes over and says where to draw.
+//
+// The host creates one real terminal surface per session — for the KittyTK
+// host, a child PurfecTerm trinket inside the editor trinket — feeds it, and
+// positions it from Place. mew keeps focus throughout, so the child needs no
+// input events: keystrokes go through mew's keymap to pty_send and out via the
+// session's Write. The child is a display only.
+//
+// Every hook is called on mew's main loop.
+type TerminalHooks struct {
+	Open  func(id string, cols, rows int)
+	Feed  func(id string, p []byte)
+	Place func(surfaces []TerminalSurface)
+	Close func(id string)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -136,19 +186,25 @@ func (e *Editor) execRequest(command string) bool {
 		return false
 	}
 
-	e.attachPTY(w.Buffer, sess, req.Command)
+	e.attachPTY(w.Buffer, sess, req.Command, cols, rows)
 	e.ShowNotification("Started " + req.Command)
 	return true
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string, cols, rows int) {
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
 		e.ptySessions = make(map[*buffer.Buffer]*ptyState)
 	}
-	e.ptySessions[b] = &ptyState{sess: sess, command: command}
+	e.ptySeq++
+	id := fmt.Sprintf("pty%d", e.ptySeq)
+	e.ptySessions[b] = &ptyState{id: id, sess: sess, command: command}
 	e.ptyMu.Unlock()
+
+	if e.Config.TerminalSurfaces.Open != nil {
+		e.Config.TerminalSurfaces.Open(id, cols, rows)
+	}
 
 	// The read loop is the session's own goroutine; every delivery marshals
 	// onto the editor main loop through PostAction, with exactly the safety of
@@ -169,43 +225,111 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string) {
 	}()
 }
 
-// ptyOutput receives one chunk of session output on the main loop.
+// ptyOutput hands one chunk of session output to the host, verbatim.
 //
-// PROVISIONAL. This appends the printable text to the buffer with terminal
-// control sequences dropped, which is enough to watch a build or read ls
-// output but is not terminal emulation: a full-screen program will not render
-// correctly. The real version drives a purfecterm Buffer+Parser and renders
-// its grid into the viewport, with lines scrolling off into garland as real
-// text — deliberately left until the tiling/ToolViewport work settles, since
-// that decides where the grid lives. Everything provisional is in this one
-// function and stripTerminalControls below.
+// mew does no terminal emulation and no filtering: PurfecTerm on the other side
+// IS an emulator, so raw bytes are exactly what it wants — full-screen cursor
+// motion, colour, alternate screen and all. Anything mew stripped here would be
+// a capability the child surface then lacked.
+//
+// The garland buffer stays EMPTY while a session runs. Folding scrollback into
+// it as real text is deliberate follow-up work, and doing it half-way now would
+// only have to be undone.
 func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
-	if b == nil || len(chunk) == 0 {
+	if b == nil || len(chunk) == 0 || e.Config.TerminalSurfaces.Feed == nil {
 		return
 	}
-	text := stripTerminalControls(chunk)
-	if text == "" {
-		return
+	e.ptyMu.Lock()
+	st := e.ptySessions[b]
+	e.ptyMu.Unlock()
+	if st == nil {
+		return // the session ended between the read and this delivery
 	}
-	last := b.GetLineCount() - 1
-	if last < 0 {
-		last = 0
-	}
-	endRune := len([]rune(strings.TrimRight(b.GetLine(last), "\n\r")))
-
-	b.BeginUserCommand("pty_output")
-	k := b.NewCaret()
-	if k != nil {
-		k.Seek(last, endRune)
-		k.Insert(text)
-	}
-	b.EndUserCommand()
-	e.RequestRender()
+	e.Config.TerminalSurfaces.Feed(st.id, chunk)
 }
 
-// ptyEnded fires when the child is gone. The buffer keeps everything the
-// session produced and becomes an ORDINARY editable buffer — not a read-only
-// transcript. Whatever was on screen is now just text you can edit and save.
+// notifyTerminalSurfaces republishes where every VISIBLE session should draw.
+//
+// Called after each render with the frame's geometry already set, like
+// notifyPointerRegion — but a set rather than one rectangle, because several
+// viewports can be running terminals at once. Pushed only when the set changes,
+// so an idle frame costs nothing.
+func (e *Editor) notifyTerminalSurfaces() {
+	if e.Config.TerminalSurfaces.Place == nil {
+		return
+	}
+	e.ptyMu.Lock()
+	live := len(e.ptySessions)
+	byBuffer := make(map[*buffer.Buffer]string, live)
+	for b, st := range e.ptySessions {
+		byBuffer[b] = st.id
+	}
+	e.ptyMu.Unlock()
+	if live == 0 && len(e.terminalSurfacesSent) == 0 {
+		return
+	}
+
+	var surfaces []TerminalSurface
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Buffer == nil || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
+			continue
+		}
+		id, ok := byBuffer[w.Buffer]
+		if !ok {
+			continue
+		}
+		// The grid fills the viewport's text area, and for now the clip is
+		// that same rectangle: mew's own layout already excludes the chrome.
+		// They are separate fields so a future partially-obscured or
+		// partially-scrolled viewport can narrow the clip without moving the
+		// grid, which is not expressible with one rectangle.
+		surfaces = append(surfaces, TerminalSurface{
+			ID:         id,
+			Col:        w.ContentX + 1,
+			Row:        w.ContentY + 1,
+			Width:      w.ContentWidth,
+			Height:     w.ContentHeight,
+			ClipCol:    w.ContentX + 1,
+			ClipRow:    w.ContentY + 1,
+			ClipWidth:  w.ContentWidth,
+			ClipHeight: w.ContentHeight,
+		})
+	}
+	sort.Slice(surfaces, func(i, j int) bool { return surfaces[i].ID < surfaces[j].ID })
+	if terminalSurfacesEqual(surfaces, e.terminalSurfacesSent) {
+		return
+	}
+	e.terminalSurfacesSent = surfaces
+	e.Config.TerminalSurfaces.Place(surfaces)
+
+	// A visible surface's session is resized to match the cells it now owns.
+	e.ptyMu.Lock()
+	sessions := make(map[string]PTYSession, live)
+	for _, st := range e.ptySessions {
+		sessions[st.id] = st.sess
+	}
+	e.ptyMu.Unlock()
+	for _, s := range surfaces {
+		if sess := sessions[s.ID]; sess != nil {
+			_ = sess.Resize(s.Width, s.Height)
+		}
+	}
+}
+
+func terminalSurfacesEqual(a, b []TerminalSurface) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// ptyEnded fires when the child is gone. The host destroys the surface, and the
+// buffer becomes an ORDINARY editable buffer — not a read-only transcript.
 func (e *Editor) ptyEnded(b *buffer.Buffer) {
 	e.ptyMu.Lock()
 	st := e.ptySessions[b]
@@ -213,6 +337,9 @@ func (e *Editor) ptyEnded(b *buffer.Buffer) {
 	e.ptyMu.Unlock()
 	if st == nil {
 		return
+	}
+	if e.Config.TerminalSurfaces.Close != nil {
+		e.Config.TerminalSurfaces.Close(st.id)
 	}
 	e.ShowNotification(st.command + " exited")
 	e.RequestRender()
@@ -236,32 +363,6 @@ func (e *Editor) ptySend(data string) bool {
 	return true
 }
 
-// ptyResizeAll matches every live session to its viewport's content size.
-// Called after layout; a session whose viewport is gone is left alone.
-func (e *Editor) ptyResizeAll() {
-	e.ptyMu.Lock()
-	if len(e.ptySessions) == 0 {
-		e.ptyMu.Unlock()
-		return
-	}
-	sizes := make(map[PTYSession][2]int)
-	for _, w := range e.ViewportManager.AllViewports() {
-		if w.Buffer == nil {
-			continue
-		}
-		if st := e.ptySessions[w.Buffer]; st != nil {
-			c, r := w.ContentWidth, w.ContentHeight
-			if c > 0 && r > 0 {
-				sizes[st.sess] = [2]int{c, r}
-			}
-		}
-	}
-	e.ptyMu.Unlock()
-	for sess, cr := range sizes {
-		_ = sess.Resize(cr[0], cr[1])
-	}
-}
-
 // closePTYSessions ends every live session. Called when the editor shuts down
 // so children do not outlive the editor that asked for them.
 func (e *Editor) closePTYSessions() {
@@ -275,67 +376,4 @@ func (e *Editor) closePTYSessions() {
 	for _, s := range sessions {
 		_ = s.Close()
 	}
-}
-
-// stripTerminalControls drops ANSI/DEC control sequences and keeps the text.
-//
-// PROVISIONAL, with ptyOutput: a stand-in until the emulator lands. It removes
-// CSI (ESC [ … final), OSC (ESC ] … BEL or ST), and two-character ESC
-// sequences, keeps newline and tab, and drops the remaining C0 controls. It is
-// not an emulator and does not pretend to be one — a full-screen program's
-// cursor motion is discarded rather than honoured.
-func stripTerminalControls(p []byte) string {
-	var out strings.Builder
-	out.Grow(len(p))
-	for i := 0; i < len(p); {
-		c := p[i]
-		if c == 0x1b { // ESC
-			i++
-			if i >= len(p) {
-				break
-			}
-			switch p[i] {
-			case '[': // CSI: params then a final byte in @..~
-				i++
-				for i < len(p) && (p[i] < 0x40 || p[i] > 0x7e) {
-					i++
-				}
-				if i < len(p) {
-					i++
-				}
-			case ']': // OSC: runs to BEL or ST (ESC \)
-				i++
-				for i < len(p) {
-					if p[i] == 0x07 {
-						i++
-						break
-					}
-					if p[i] == 0x1b && i+1 < len(p) && p[i+1] == '\\' {
-						i += 2
-						break
-					}
-					i++
-				}
-			default: // two-character escape
-				i++
-			}
-			continue
-		}
-		if c == '\n' || c == '\t' {
-			out.WriteByte(c)
-			i++
-			continue
-		}
-		if c == '\r' {
-			i++ // CR is cursor motion here, not content
-			continue
-		}
-		if c < 0x20 || c == 0x7f {
-			i++
-			continue
-		}
-		out.WriteByte(c)
-		i++
-	}
-	return out.String()
 }

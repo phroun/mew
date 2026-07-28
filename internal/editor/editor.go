@@ -242,6 +242,10 @@ type Editor struct {
 	// goroutine while commands touch the map from the main loop. See pty.go.
 	ptyMu       sync.Mutex
 	ptySessions map[*buffer.Buffer]*ptyState
+	ptySeq      int
+	// terminalSurfacesSent is the last set pushed to the host, so an idle
+	// frame republishes nothing.
+	terminalSurfacesSent []TerminalSurface
 
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
@@ -666,6 +670,10 @@ type Config struct {
 	// spawns a process itself and holds nothing that could. Left unset, the
 	// exec command reports that this host grants no sessions. See pty.go.
 	PTYProvider func(PTYRequest) (PTYSession, error)
+
+	// TerminalSurfaces is how the host RENDERS those sessions. mew emulates
+	// nothing: it forwards raw bytes and says where to draw them. See pty.go.
+	TerminalSurfaces TerminalHooks
 
 	// RestoreHostTerminal, when set, hands the TERMINAL back to whatever put it
 	// into raw mode / the alternate screen. mew calls it on the emergency exit
@@ -7084,6 +7092,7 @@ func (e *Editor) performRender() {
 	// over text and the arrow over chrome, resolved locally from the pointer
 	// cell (no per-motion round trip). Pushed only when the rectangle changes.
 	e.notifyPointerRegion()
+	e.notifyTerminalSurfaces()
 
 	e.lastRenderTime = time.Now()
 	e.renderRequested.Store(false)

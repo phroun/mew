@@ -119,6 +119,13 @@ type Editor struct {
 
 	done chan struct{}
 	err  error
+
+	// termSurfaces holds one child PurfecTerm per running mew terminal
+	// session, keyed by the session id mew assigns. Guarded because mew
+	// feeds and places them from its session goroutine while the desktop
+	// paints from its own.
+	termMu       sync.Mutex
+	termSurfaces map[string]*termSurface
 }
 
 // NewEditor creates a mew-backed editor trinket. The mew session does not start
@@ -181,6 +188,9 @@ func (e *Editor) Paint(p *core.Painter) {
 	if e.PurfecTerm != nil {
 		e.PurfecTerm.Paint(p)
 	}
+	// Terminal sessions draw OVER the document surface, in the cells the
+	// document would have used. Painted after it, so they layer on top.
+	e.paintTerminalSurfaces(p)
 }
 
 // ensureStarted wires the pipes and launches the mew session exactly once.
@@ -269,6 +279,15 @@ func (e *Editor) run() {
 		// see ptyProvider. A host that wants to sandbox or redirect a hosted
 		// mew simply supplies a different one - mew cannot tell.
 		mew.WithPTYProvider(e.ptyProvider),
+		// ...and how they are drawn: one real child PurfecTerm per session,
+		// laid over the viewport's text area. PurfecTerm is the emulator, so
+		// mew forwards raw bytes and never interprets them.
+		mew.WithTerminalSurfaces(mew.TerminalHooks{
+			Open:  e.terminalOpen,
+			Feed:  e.terminalFeed,
+			Place: e.terminalPlace,
+			Close: e.terminalClose,
+		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
 		// use, kept separate from mew's own kill ring. mew calls these on
@@ -711,4 +730,135 @@ func localPathFromURL(u string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimPrefix(u, p), true
+}
+
+// --- terminal surfaces: one child PurfecTerm per running session -----------
+//
+// mew does no terminal emulation. It forwards a session's raw bytes and, after
+// every render, republishes the complete set of rectangles where visible
+// sessions belong. Each session gets a REAL PurfecTerm here — the same trinket
+// that renders any other terminal — laid over exactly the cells the document
+// would have drawn into, inside this editor's own outer surface.
+//
+// Several can be live at once, one per viewport running a session, which is why
+// they are a map rather than a single overlay.
+//
+// They receive no input events. mew keeps keyboard focus, so a keystroke runs
+// through mew's own keymap and reaches the child process via pty_send; these
+// are displays and nothing else. That is also what keeps ^B N switching buffers
+// while a shell is running.
+
+// termSurface is one session's child terminal and where it currently sits, in
+// 1-based cells of this editor's surface. A zero width or height means it is
+// not visible this frame.
+type termSurface struct {
+	term *PurfecTerm
+	// Where the grid sits, and what part of it is visible. Usually identical;
+	// they differ when the viewport is partially obscured or scrolled, and the
+	// surface then draws at its own origin with only the intersection shown.
+	col, row              int
+	width, height         int
+	clipCol, clipRow      int
+	clipWidth, clipHeight int
+}
+
+// terminalOpen creates the child for a new session. Called on mew's main loop.
+func (e *Editor) terminalOpen(id string, cols, rows int) {
+	// The grid size follows SetBounds (updateTerminalSize divides the bounds
+	// by the cell size), so there is nothing to set here: cols/rows arrive
+	// again with the first Place.
+	t := NewPurfecTerm()
+	t.Init(t)
+	t.SetEditorMode(false)
+	e.termMu.Lock()
+	if e.termSurfaces == nil {
+		e.termSurfaces = make(map[string]*termSurface)
+	}
+	e.termSurfaces[id] = &termSurface{term: t}
+	e.termMu.Unlock()
+}
+
+// terminalFeed hands a session's bytes to its child, verbatim. This is where
+// the emulation actually happens: PurfecTerm parses the escape stream.
+func (e *Editor) terminalFeed(id string, p []byte) {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return
+	}
+	s.term.Feed(p)
+	e.Update()
+}
+
+// terminalPlace receives the COMPLETE set of visible surfaces after each mew
+// render. A child absent from the set is not visible this frame, so its
+// rectangle is zeroed and it simply is not painted — no incremental
+// bookkeeping here to drift out of step with mew's layout.
+func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
+	e.termMu.Lock()
+	for _, s := range e.termSurfaces {
+		s.width, s.height, s.clipWidth, s.clipHeight = 0, 0, 0, 0
+	}
+	for _, want := range surfaces {
+		s := e.termSurfaces[want.ID]
+		if s == nil {
+			continue
+		}
+		s.col, s.row = want.Col, want.Row
+		s.width, s.height = want.Width, want.Height
+		s.clipCol, s.clipRow = want.ClipCol, want.ClipRow
+		s.clipWidth, s.clipHeight = want.ClipWidth, want.ClipHeight
+	}
+	e.termMu.Unlock()
+	e.Update()
+}
+
+// terminalClose destroys a child once its session has ended.
+func (e *Editor) terminalClose(id string) {
+	e.termMu.Lock()
+	delete(e.termSurfaces, id)
+	e.termMu.Unlock()
+	e.Update()
+}
+
+// paintTerminalSurfaces draws every visible child OVER this editor's own
+// surface, offset to its rectangle and clipped to it. mew's coordinates are
+// 1-based cells; the painter works in units, so each cell scales by the
+// metrics.
+func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
+	e.termMu.Lock()
+	visible := make([]termSurface, 0, len(e.termSurfaces))
+	for _, s := range e.termSurfaces {
+		if s.term != nil && s.width > 0 && s.height > 0 && s.clipWidth > 0 && s.clipHeight > 0 {
+			visible = append(visible, *s)
+		}
+	}
+	e.termMu.Unlock()
+	if len(visible) == 0 {
+		return
+	}
+	m := p.Metrics()
+	cell := func(col, row int) (core.Unit, core.Unit) {
+		return core.Unit(col-1) * m.CellWidth, core.Unit(row-1) * m.CellHeight
+	}
+	for _, s := range visible {
+		x, y := cell(s.col, s.row)
+		w := core.Unit(s.width) * m.CellWidth
+		h := core.Unit(s.height) * m.CellHeight
+		s.term.SetBounds(core.UnitRect{X: x, Y: y, Width: w, Height: h})
+
+		// The painter is offset to the GRID's origin, so the terminal draws
+		// from its own 0,0 — but clipped to the visible rectangle expressed
+		// relative to that origin. When the two rectangles match (the ordinary
+		// case) this is just a clip to the surface's own bounds.
+		cx, cy := cell(s.clipCol, s.clipRow)
+		clip := core.UnitRect{
+			X:      cx - x,
+			Y:      cy - y,
+			Width:  core.Unit(s.clipWidth) * m.CellWidth,
+			Height: core.Unit(s.clipHeight) * m.CellHeight,
+		}
+		s.term.Paint(p.WithOffset(x, y).WithClip(clip))
+	}
 }

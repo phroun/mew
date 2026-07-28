@@ -209,6 +209,31 @@ type PTYSession = editor.PTYSession
 //
 // fn is called on mew's main loop. The session's methods are called from mew's
 // main loop and from the session's own reader goroutine.
+// TerminalSurface is one visible terminal session and the cells it occupies in
+// mew's own surface. See WithTerminalSurfaces.
+type TerminalSurface = editor.TerminalSurface
+
+// TerminalHooks is how a host renders mew's terminal sessions.
+type TerminalHooks = editor.TerminalHooks
+
+// WithTerminalSurfaces lets the host draw mew's terminal sessions. mew does NOT
+// emulate a terminal: it forwards the session's raw bytes and republishes, after
+// every render, the complete set of rectangles where visible sessions belong.
+//
+// The host creates one real terminal surface per session and positions it from
+// Place — for a KittyTK host, a child PurfecTerm trinket laid over exactly the
+// cells the document would have used. Several can be live at once, one per
+// viewport running a session.
+//
+// mew keeps keyboard focus throughout, so those surfaces need no input events:
+// keystrokes run through mew's own keymap and reach the child process through
+// pty_send. They are displays, nothing more.
+//
+// Without this, exec still starts a session but nothing renders it.
+func WithTerminalSurfaces(h TerminalHooks) Option {
+	return func(cfg *editor.Config) { cfg.TerminalSurfaces = h }
+}
+
 func WithPTYProvider(fn func(PTYRequest) (PTYSession, error)) Option {
 	return func(cfg *editor.Config) { cfg.PTYProvider = fn }
 }
