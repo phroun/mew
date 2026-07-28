@@ -2,5 +2,10 @@
 /mew
 bin/
 .#*
+# Built host binaries: `go build ./cmd/mew-sdl` from app/ drops its output
+# beside the source, and a 71 MB blob per build has no business in history.
+/app/mew
+/app/mew-sdl
+
 # Generated Windows icon resource object (make windows-sdl).
 app/cmd/*/*.syso
