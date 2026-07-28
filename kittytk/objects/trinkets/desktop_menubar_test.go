@@ -11,6 +11,7 @@ import (
 // mockApp is a minimal ApplicationProvider for exercising the desktop's
 // menu-bar composition.
 type mockApp struct {
+	passNextKey bool
 	name        string
 	objectID    core.ObjectID
 	menuName    string
@@ -40,9 +41,12 @@ func (a *mockApp) StatusBarContent() []StatusSection { return nil }
 func (a *mockApp) OnActivate()                       {}
 func (a *mockApp) OnDeactivate()                     {}
 func (a *mockApp) SetDesktop(core.Trinket)           {}
-func (a *mockApp) PassNextKeyToTrinket() bool        { return false }
-func (a *mockApp) ActivatePassNextKeyToTrinket()     {}
-func (a *mockApp) ClearPassNextKeyToTrinket()        {}
+
+// Pass-next-key is real state here, so the desktop's one-shot can be
+// exercised rather than only compiled against.
+func (a *mockApp) PassNextKeyToTrinket() bool    { return a.passNextKey }
+func (a *mockApp) ActivatePassNextKeyToTrinket() { a.passNextKey = true }
+func (a *mockApp) ClearPassNextKeyToTrinket()    { a.passNextKey = false }
 
 // The Ψ menu's About Desktop item opens the About KittyTK dialog, whose
 // text carries the recursive name, version, and copyright.

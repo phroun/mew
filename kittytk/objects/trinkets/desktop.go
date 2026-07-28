@@ -3029,18 +3029,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	// Check pass-next-key-to-trinket mode FIRST, before any event filters.
 	// This ensures the key goes directly to the trinket without any interception.
 	if keyEvent, isKey := event.(core.KeyPressEvent); isKey {
-		d.mu.RLock()
-		activeApp := d.activeApp
-		d.mu.RUnlock()
-		if activeApp != nil && activeApp.PassNextKeyToTrinket() {
-			activeApp.ClearPassNextKeyToTrinket()
-			// Skip ALL shortcut handling - send key directly to the active window's
-			// focused trinket, bypassing WindowManager's menu accelerator interception
-			if wm != nil {
-				if activeWin := wm.ActiveWindow(); activeWin != nil {
-					activeWin.HandleKeyPress(keyEvent)
-				}
-			}
+		if d.takePassNextKey(keyEvent, wm) {
 			return true
 		}
 	}
@@ -4137,8 +4126,43 @@ func (d *Desktop) Paint(p *core.Painter) {
 	}
 }
 
+// takePassNextKey consumes one keystroke for pass-next-key mode, handing it
+// straight to the active window's focused trinket. Reports whether it did.
+//
+// It is checked at EVERY door a key can arrive by, because "the next key
+// bypasses everything" is not true if one of the doors takes the key first.
+// F10 was such a door: the desktop claims it for the menu bar before any
+// shortcut handling, so arming raw key input and pressing F10 opened the menu
+// — which is precisely the key someone arms raw input to send onward.
+func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowManager) bool {
+	d.mu.RLock()
+	activeApp := d.activeApp
+	if wm == nil {
+		wm = d.windowManager
+	}
+	d.mu.RUnlock()
+	if activeApp == nil || !activeApp.PassNextKeyToTrinket() {
+		return false
+	}
+	activeApp.ClearPassNextKeyToTrinket()
+	// Skip ALL shortcut handling - send the key directly to the active
+	// window's focused trinket, bypassing menu accelerator interception.
+	if wm != nil {
+		if activeWin := wm.ActiveWindow(); activeWin != nil {
+			activeWin.HandleKeyPress(event)
+		}
+	}
+	return true
+}
+
 // HandleKeyPress handles keyboard input.
 func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Before the menu bar gets a look at it: a key claimed by pass-next-key
+	// mode belongs to the trinket, F10 included.
+	if d.takePassNextKey(event, nil) {
+		return true
+	}
+
 	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
 		// F10 toggles menu bar focus
