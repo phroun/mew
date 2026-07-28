@@ -1980,12 +1980,26 @@ func (e *Editor) registerCommands() {
 		return pawscript.TokenResult(token)
 	})
 
-	// pty_send writes to the focused buffer's session, and reports FALSE when
-	// there is none - so a chain like pty_send|insert falls through to ordinary
-	// editing in a buffer that is not running anything.
-	ps.RegisterCommand("pty_send", func(ctx *pawscript.Context) pawscript.Result {
+	// tinput sends input to the focused viewport's terminal session — the same
+	// direction the TUI host sends keystrokes into mew, and in the same
+	// currency: raw terminal bytes.
+	//
+	// The argument takes whichever form the value already has. A PawScript
+	// {bytes ...} value goes verbatim and whole, which is how a control byte or
+	// an escape sequence is written without quoting games: {bytes 0x03} is
+	// Ctrl-C, {bytes 0x1b 0x5b 0x41} is Up. A string sends its UTF-8 bytes, so
+	// tinput "ls\n" is what it looks like.
+	//
+	// Reports FALSE when the focused buffer runs nothing, so a chain like
+	// tinput|insert falls through to ordinary editing.
+	ps.RegisterCommand("tinput", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) > 0 {
+			if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+				return pawscript.BoolStatus(e.ptySendBytes(sb.Data()))
+			}
+		}
 		text, _ := argString(ctx, 0)
-		return pawscript.BoolStatus(e.ptySend(text))
+		return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
 	})
 
 	ps.RegisterCommand("insert_rune", func(ctx *pawscript.Context) pawscript.Result {

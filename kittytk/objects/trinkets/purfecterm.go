@@ -3,6 +3,7 @@ package trinkets
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -21,6 +22,11 @@ type PurfecTerm struct {
 
 	// Cached size in cells
 	cols, rows int
+
+	// caretActive makes this terminal own the platform caret without holding
+	// focus — a terminal hosted inside another focused trinket. See
+	// SetCaretActive.
+	caretActive atomic.Bool
 
 	// termFont sets the terminal's own font (graphical mode): the
 	// cell grid derives from ITS measured metrics (advance width and
@@ -201,6 +207,24 @@ func (t *PurfecTerm) emitResize(cols, rows int) {
 
 // CursorShape implements core.CursorProvider: the terminal shows the
 // text I-beam while hovered, like any text surface.
+// SetCaretActive makes this terminal own the platform's text caret — its
+// position AND its DECSCUSR shape — even though it does not hold focus.
+//
+// For a terminal HOSTED inside another focused trinket. mew's exec sessions
+// are the case: mew keeps keyboard focus so its own keymap still runs (^B N
+// still switches buffers), but while a terminal viewport is the focused one
+// the cursor the user sees must be the CHILD's, wearing the shape the child
+// process asked for. Without this the child takes the unfocused branch and
+// paints a static block instead.
+//
+// Exactly one child should have it at a time; the caret request is per frame
+// and the last one painted wins.
+func (t *PurfecTerm) SetCaretActive(b bool) { t.caretActive.Store(b) }
+
+// CaretActive reports whether this terminal owns the platform caret without
+// holding focus. See SetCaretActive.
+func (t *PurfecTerm) CaretActive() bool { return t.caretActive.Load() }
+
 func (t *PurfecTerm) CursorShape() core.CursorShape {
 	return core.CursorText
 }
@@ -556,7 +580,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
-				if t.HasFocus() {
+				if t.HasFocus() || t.CaretActive() {
 					// Hand the platform the caret, in the shape the terminal
 					// asked for. Nothing is painted here: the real cursor is
 					// drawn by the surface underneath us.

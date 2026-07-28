@@ -94,6 +94,14 @@ type TerminalSurface struct {
 	// this frame.
 	ClipCol, ClipRow      int
 	ClipWidth, ClipHeight int
+
+	// Focused marks the ONE surface whose viewport currently holds mew's
+	// focus. That surface owns the platform's text caret — its position and
+	// its DECSCUSR shape both come from the child process, not from mew's own
+	// caret, because while you are typing at a shell the cursor you are
+	// watching is the shell's. mew keeps keyboard focus regardless, so its
+	// keymap still runs; only the drawn caret is ceded.
+	Focused bool
 }
 
 // TerminalHooks is how a host renders mew's terminal sessions. mew does not
@@ -269,6 +277,7 @@ func (e *Editor) notifyTerminalSurfaces() {
 		return
 	}
 
+	focused := e.ViewportManager.GetFocusedViewport()
 	var surfaces []TerminalSurface
 	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer == nil || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
@@ -293,6 +302,7 @@ func (e *Editor) notifyTerminalSurfaces() {
 			ClipRow:    w.ContentY + 1,
 			ClipWidth:  w.ContentWidth,
 			ClipHeight: w.ContentHeight,
+			Focused:    w == focused,
 		})
 	}
 	sort.Slice(surfaces, func(i, j int) bool { return surfaces[i].ID < surfaces[j].ID })
@@ -345,9 +355,9 @@ func (e *Editor) ptyEnded(b *buffer.Buffer) {
 	e.RequestRender()
 }
 
-// ptySend writes bytes to the focused buffer's session. This is what the pty
+// ptySendBytes writes to the focused buffer's session. This is what the pty
 // keybinding context routes ordinary typing to instead of insert.
-func (e *Editor) ptySend(data string) bool {
+func (e *Editor) ptySendBytes(data []byte) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil {
 		return false
@@ -356,7 +366,10 @@ func (e *Editor) ptySend(data string) bool {
 	if sess == nil {
 		return false // no session: the chain falls through to normal editing
 	}
-	if _, err := sess.Write([]byte(data)); err != nil {
+	if len(data) == 0 {
+		return false
+	}
+	if _, err := sess.Write(data); err != nil {
 		e.ShowWarning("Session write failed: " + err.Error())
 		return false
 	}

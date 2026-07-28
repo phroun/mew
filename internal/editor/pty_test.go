@@ -127,23 +127,71 @@ func TestExecWithoutProvider(t *testing.T) {
 
 // pty_send writes to the bound session, and reports FALSE with no session so a
 // chain falls through to ordinary editing.
-func TestPTYSendRoutesToSessionElseFallsThrough(t *testing.T) {
-	e, w := newTestEditor(t, "x\n")
-	if e.ptySend("ls\n") {
-		t.Error("no session: pty_send must fall through")
+func TestTinputRoutesToSessionElseFallsThrough(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	if e.ptySendBytes([]byte("ls\n")) {
+		t.Error("no session: tinput must fall through")
 	}
 	stub := newStubPTY()
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
 	if !e.execRequest("bash") {
 		t.Fatal("exec failed")
 	}
-	if !e.ptySend("ls\n") {
-		t.Error("with a session, pty_send should succeed")
+	if !e.ptySendBytes([]byte("ls\n")) {
+		t.Error("with a session, tinput should succeed")
 	}
 	if stub.sent() != "ls\n" {
 		t.Errorf("session received %q, want %q", stub.sent(), "ls\n")
 	}
-	_ = w
+}
+
+// tinput takes whichever form the value already has: a string sends its UTF-8
+// bytes, a {bytes ...} value goes verbatim and whole. The second is how a
+// control byte or an escape sequence is written without quoting games.
+func TestTinputAcceptsStringsAndByteValues(t *testing.T) {
+	for _, tc := range []struct {
+		script string
+		want   string
+	}{
+		{`tinput "ls` + "\n" + `"`, "ls\n"},
+		{"tinput {bytes 0x03}", "\x03"},       // Ctrl-C
+		{"tinput {bytes 0x1b5b41}", "\x1b[A"}, // Up: ESC [ A as one value
+	} {
+		e, _ := newTestEditor(t, "x\n")
+		stub := newStubPTY()
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+		if !e.execRequest("bash") {
+			t.Fatal("exec failed")
+		}
+		e.executeCommand(tc.script)
+		if stub.sent() != tc.want {
+			t.Errorf("%s sent %q, want %q", tc.script, stub.sent(), tc.want)
+		}
+	}
+}
+
+// Exactly one surface is Focused, and it is the one whose viewport mew has
+// focused — that surface owns the platform caret.
+func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var placed []TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) {},
+		Place: func(s []TerminalSurface) { placed = s },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
+	e.notifyTerminalSurfaces()
+	if len(placed) != 1 {
+		t.Fatalf("want one surface, got %d", len(placed))
+	}
+	if !placed[0].Focused {
+		t.Error("the focused viewport's surface should own the caret")
+	}
 }
 
 // One session per buffer: a second exec on the same buffer is refused rather

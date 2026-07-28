@@ -760,6 +760,8 @@ type termSurface struct {
 	width, height         int
 	clipCol, clipRow      int
 	clipWidth, clipHeight int
+	// focused: this surface owns the platform caret this frame.
+	focused bool
 }
 
 // terminalOpen creates the child for a new session. Called on mew's main loop.
@@ -799,6 +801,7 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 	e.termMu.Lock()
 	for _, s := range e.termSurfaces {
 		s.width, s.height, s.clipWidth, s.clipHeight = 0, 0, 0, 0
+		s.focused = false
 	}
 	for _, want := range surfaces {
 		s := e.termSurfaces[want.ID]
@@ -809,6 +812,16 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 		s.width, s.height = want.Width, want.Height
 		s.clipCol, s.clipRow = want.ClipCol, want.ClipRow
 		s.clipWidth, s.clipHeight = want.ClipWidth, want.ClipHeight
+		s.focused = want.Focused
+	}
+	// Cede the platform caret — position AND DECSCUSR shape — to the focused
+	// session's child. mew keeps keyboard focus, so its keymap still runs; only
+	// the drawn cursor moves, because while you type at a shell the cursor you
+	// are watching is the shell's.
+	for _, s := range e.termSurfaces {
+		if s.term != nil {
+			s.term.SetCaretActive(s.focused && s.clipWidth > 0 && s.clipHeight > 0)
+		}
 	}
 	e.termMu.Unlock()
 	e.Update()
