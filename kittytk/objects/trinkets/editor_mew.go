@@ -288,6 +288,7 @@ func (e *Editor) run() {
 			Place: e.terminalPlace,
 			Close: e.terminalClose,
 			Mouse: e.terminalMouse,
+			Key:   e.terminalKey,
 		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
@@ -896,6 +897,83 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
 		btn |= purfecterm.MouseModControl
 	}
 	return purfecterm.EncodeMouseEvent(btn, ev.Col, ev.Row, press, enc)
+}
+
+// terminalKey answers what one KEY means to a session's terminal: the bytes
+// its child would receive, or nil for a name that encodes to nothing.
+//
+// The encoder is the emulator's own — the same keyToBytes that has always
+// turned key names into wire bytes for a PurfecTerm driving a real PTY — so a
+// terminal inside mew and a terminal on its own agree about what F5 is. It is
+// reached by feeding the name in and catching what comes out the input side,
+// which is where those bytes have always gone.
+//
+// mew names its keys its own way (esc, back, fdel, pgup, return); the emulator
+// speaks direct-key-handler's (Escape, Backspace, Delete, PageUp, Enter). The
+// two vocabularies meet here, at the boundary, and nowhere else.
+func (e *Editor) terminalKey(id string, key string) []byte {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil || s.term.terminal == nil {
+		return nil
+	}
+
+	var out []byte
+	s.term.SetInputSink(func(b []byte) { out = append(out, b...) })
+	defer s.term.SetInputSink(nil)
+
+	// HandleKeyString drops input while the emulator believes itself
+	// unfocused. The surface being keyed IS the focused one and Place has
+	// normally said so already, but a keystroke's correctness should not
+	// depend on a frame having gone by first.
+	tm := s.term.terminal
+	if !tm.IsFocused() {
+		tm.SetFocused(true)
+		defer tm.SetFocused(false)
+	}
+	tm.HandleKeyString(dkhKeyName(key))
+	return out
+}
+
+// mewToDKHKey renames mew's key vocabulary back to direct-key-handler's, which
+// is what the emulator's encoder was written against. It is the inverse of
+// mew's own normalizeKey; everything not listed (a character, ^C, F5) is
+// already the same in both.
+var mewToDKHKey = map[string]string{
+	"esc":    "Escape",
+	"space":  "Space",
+	"tab":    "Tab",
+	"return": "Enter",
+	"back":   "Backspace",
+	"up":     "Up",
+	"down":   "Down",
+	"left":   "Left",
+	"right":  "Right",
+	"home":   "Home",
+	"end":    "End",
+	"ins":    "Insert",
+	"fdel":   "Delete",
+	"del":    "Delete",
+	"pgup":   "PageUp",
+	"pgdn":   "PageDown",
+}
+
+// dkhKeyName renames one key, modifier prefixes and all ("S-tab" -> "S-Tab").
+func dkhKeyName(key string) string {
+	prefix, base := "", key
+	for {
+		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||
+			strings.HasPrefix(base, "M-") || strings.HasPrefix(base, "C-")) {
+			prefix, base = prefix+base[:2], base[2:]
+			continue
+		}
+		break
+	}
+	if name, ok := mewToDKHKey[base]; ok {
+		return prefix + name
+	}
+	return key
 }
 
 // termMouseButton maps mew's button to the toolkit's, so the one existing

@@ -587,6 +587,15 @@ bar=new menubar children={%s
 	}
 	commands.Register("mew.edit.rawkey", func() {
 		desktop.ActivatePassNextKeyToTrinket()
+		// ...and one level deeper. Stopping the HOST from eating the key only
+		// gets it as far as mew, which then eats it as a mew binding — and a
+		// shell running inside a mew viewport still never sees it. Arming
+		// mew's own one-shot too means the keystroke passes the whole way
+		// down when a terminal has the focus, and behaves exactly as before
+		// when one does not.
+		if ed, ok := rootMewEditor(application); ok {
+			ed.Execute("raw_key_input")
+		}
 	})
 	// Viewport ▸ KittyTK Desktop toggles the HOST's desktop, not anything in
 	// mew, so it goes through the seam BuildHost filled in rather than the

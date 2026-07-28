@@ -246,6 +246,10 @@ type Editor struct {
 	// terminalSurfacesSent is the last set pushed to the host, so an idle
 	// frame republishes nothing.
 	terminalSurfacesSent []TerminalSurface
+	// rawKeyArmed is the raw_key_input one-shot: the NEXT keystroke belongs to
+	// a focused terminal's child process rather than to mew's keymap. Cleared
+	// by that keystroke whether or not a terminal was there to take it.
+	rawKeyArmed bool
 
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
@@ -2014,6 +2018,13 @@ func (e *Editor) registerCommands() {
 	// concatenation, not a byte list. A string sends its UTF-8 bytes, so
 	// tinput "ls\n" is what it looks like.
 	//
+	// raw_key_input hands the NEXT keystroke to a focused terminal's child
+	// instead of running mew's binding for it — the escape hatch for the keys
+	// mew itself claims. See armRawKey.
+	ps.RegisterCommand("raw_key_input", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.armRawKey())
+	})
+
 	// Reports FALSE when the focused buffer runs nothing, so a chain like
 	// tinput|insert falls through to ordinary editing.
 	ps.RegisterCommand("tinput", func(ctx *pawscript.Context) pawscript.Result {
@@ -3637,6 +3648,18 @@ func (e *Editor) executeCommand(command string) {
 // displays. Runs under renderMu (the serve loop's key branch, or a test
 // standing in for it).
 func (e *Editor) dispatchKey(key string) {
+	// Raw key input: this one keystroke was claimed for the child process
+	// running in the focused viewport, so mew's keymap does not see it at all.
+	// The arm is spent either way — a raw key with no terminal under it is
+	// simply an ordinary key, not a key held in reserve.
+	if e.rawKeyArmed {
+		e.rawKeyArmed = false
+		if e.rawKeyToPTY(key) {
+			e.RequestRender()
+			return
+		}
+	}
+
 	// Arm the after-key pseudo-binding on the viewport that owns this key —
 	// the first command that completes during this dispatch fires it (see
 	// executeCommandResult): the bound command when a binding matches, or the

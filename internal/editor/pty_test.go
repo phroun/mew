@@ -621,3 +621,75 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 		t.Errorf("a click outside the surface asked the host %d times, want none", *asked2)
 	}
 }
+
+// raw_key_input claims the NEXT keystroke for the focused terminal's child:
+// mew's own binding for it does not run, and the bytes the host encodes go out
+// on the session.
+func TestRawKeyInputGoesToTheChild(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	var asked string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Key: func(_ string, key string) []byte { asked = key; return []byte("\x1b[21~") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+
+	e.executeCommand("raw_key_input")
+	// ^Y is del_line in mew's keymap — exactly the sort of key a terminal
+	// guest could never otherwise receive.
+	e.dispatchKey("^Y")
+	if asked != "^Y" {
+		t.Errorf("host asked about %q, want ^Y", asked)
+	}
+	if stub.sent() != "\x1b[21~" {
+		t.Errorf("session received %q, want the host's encoding", stub.sent())
+	}
+	if got := docContent(w); got != "ab" {
+		t.Errorf("buffer = %q; mew's own binding must not have run", got)
+	}
+
+	// One shot: the key after it is mew's again.
+	e.dispatchKey("^Y")
+	if got := docContent(w); got != "" {
+		t.Errorf("buffer = %q, want ^Y to delete the line normally again", got)
+	}
+}
+
+// The arm is spent by the next keystroke whether or not a terminal was there
+// to take it — a raw key with no child under it is just an ordinary key, not
+// one held in reserve. Likewise when the host declines to encode the name.
+func TestRawKeyInputWithoutATerminalIsOrdinary(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.executeCommand("raw_key_input")
+	e.dispatchKey("^Y")
+	if got := docContent(w); got != "" {
+		t.Errorf("buffer = %q, want ^Y to have run mew's del_line", got)
+	}
+	if e.rawKeyArmed {
+		t.Error("the one-shot should be spent even with no terminal to take it")
+	}
+
+	// A host that cannot encode the name declines, and the key takes its
+	// ordinary path rather than vanishing.
+	e2, w2 := newTestEditor(t, "ab\n")
+	w2.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e2.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Key: func(string, string) []byte { return nil },
+	}
+	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e2.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e2.executeCommand("raw_key_input")
+	e2.dispatchKey("^Y")
+	if got := docContent(w2); got != "" {
+		t.Errorf("buffer = %q, want the declined key to fall through to mew", got)
+	}
+}

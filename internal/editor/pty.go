@@ -178,6 +178,20 @@ type TerminalHooks struct {
 	// A translation and not a delivery: the host owns the emulator and so
 	// knows the tracking mode, but the session belongs to mew.
 	Mouse func(id string, ev TerminalMouse) []byte
+
+	// Key asks what one KEY means to the surface's terminal — the bytes a
+	// child process would receive for it — and returns nil for a name that
+	// encodes to nothing. The name is mew's own (see keyverbose.go): "^C",
+	// "esc", "back", "fdel", "pgup", "M-x", "S-tab", "F5", or the character
+	// itself.
+	//
+	// Same division as Mouse, for the same reason: what a key becomes on the
+	// wire is the terminal's business (application cursor keys, keypad mode,
+	// the encoding its front end has always used), and mew is not an emulator.
+	// It is used for raw_key_input, the escape hatch for keys mew binds and
+	// would otherwise swallow; ordinary typing needs none of it, because
+	// insert and insert_newline already route themselves.
+	Key func(id string, key string) []byte
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -518,6 +532,55 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	}
 	ev.Col, ev.Row = col, row
 	data := e.Config.TerminalSurfaces.Mouse(st.id, ev)
+	if len(data) == 0 {
+		return false
+	}
+	if _, err := st.sess.Write(data); err != nil {
+		e.ShowWarning("Session write failed: " + err.Error())
+		return false
+	}
+	return true
+}
+
+// armRawKey is raw_key_input: the NEXT keystroke goes to the focused
+// terminal's child process instead of through mew's keymap.
+//
+// This is the deeper half of the host's own Raw Key Input. That one stops the
+// HOST from eating a keystroke as a menu shortcut, so it reaches mew — which
+// then eats it as a mew binding, and a shell one level further in still never
+// sees it. Arming both means one keystroke passes the whole way down.
+//
+// It is a mew command and not a private channel from the host, so a plain TUI
+// mew has the same escape hatch: bind raw_key_input to a key and the one after
+// it belongs to whatever is running inside.
+func (e *Editor) armRawKey() bool {
+	e.rawKeyArmed = true
+	if e.focusedPTY() != nil {
+		e.ShowNotification("Raw key: the next key goes to the terminal")
+	}
+	return true
+}
+
+// rawKeyToPTY sends one key to the focused viewport's child as the bytes that
+// terminal would produce for it, and reports whether it went. False for
+// everything else — no session, no host translator, a name that encodes to
+// nothing — and the keystroke then takes its ordinary path, because a raw key
+// that vanished would be worse than one that was merely not raw.
+func (e *Editor) rawKeyToPTY(key string) bool {
+	if e.Config.TerminalSurfaces.Key == nil {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w.Buffer]
+	e.ptyMu.Unlock()
+	if st == nil {
+		return false
+	}
+	data := e.Config.TerminalSurfaces.Key(st.id, key)
 	if len(data) == 0 {
 		return false
 	}
