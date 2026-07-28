@@ -26,7 +26,6 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
-	"github.com/phroun/purfecterm"
 )
 
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
@@ -106,6 +105,11 @@ type Editor struct {
 	// onto mew's main loop. Created with the session in run().
 	port *mew.HostPort
 
+	// hostedKids are the child terminals parented to this editor (see
+	// AddChild): in the tree for parent-chain lookups, invisible to layout
+	// and hit testing.
+	hostedKids []core.Trinket
+
 	// Session plumbing.
 	inPipeR  *io.PipeReader
 	inPipeW  *io.PipeWriter
@@ -180,6 +184,40 @@ func (e *Editor) SetLaunchArgv(argv []string) { e.launchArgv = argv }
 // hide_desktop commands. The host wires them to reveal/hide its desktop.
 func (e *Editor) SetShowDesktop(fn func()) { e.showDesktop = fn }
 func (e *Editor) SetHideDesktop(fn func()) { e.hideDesktop = fn }
+
+// The Editor is a minimal core.Container so its hosted terminal children can
+// name it as their PARENT. The child list exists for the lookups that walk
+// parent chains — FindGraphicalFrames, the popup controller, findDesktop —
+// not for layout or event dispatch: this editor paints and feeds its children
+// itself, so Layout is a no-op and ChildAt hides them from hit testing.
+func (e *Editor) AddChild(child core.Trinket) {
+	e.mu.Lock()
+	e.hostedKids = append(e.hostedKids, child)
+	e.mu.Unlock()
+	child.SetParent(e)
+}
+
+func (e *Editor) RemoveChild(child core.Trinket) {
+	e.mu.Lock()
+	for i, c := range e.hostedKids {
+		if c == child {
+			e.hostedKids = append(e.hostedKids[:i], e.hostedKids[i+1:]...)
+			break
+		}
+	}
+	e.mu.Unlock()
+}
+
+func (e *Editor) Children() []core.Trinket {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]core.Trinket(nil), e.hostedKids...)
+}
+
+func (e *Editor) ChildAt(core.UnitPoint) core.Trinket { return nil }
+func (e *Editor) Layout()                             {}
+func (e *Editor) LayoutManager() core.LayoutManager   { return nil }
+func (e *Editor) SetLayoutManager(core.LayoutManager) {}
 
 // Paint starts the session on the first paint (once properties are applied),
 // then delegates to the terminal surface.
@@ -743,6 +781,14 @@ func localPathFromURL(u string) (string, bool) { return mew.LocalPathFromURL(u) 
 // not visible this frame.
 type termSurface struct {
 	term *PurfecTerm
+	// pending collects the bytes the child produces for its process while a
+	// hook call is being served (draining true): mouse reports, encoded keys.
+	// The hook returns them to mew, which writes them to the session — the
+	// one door. Bytes produced OUTSIDE a hook call (a context-menu Paste
+	// firing later, on the UI thread) go back to mew through its command
+	// port instead; see termInput.
+	pending  []byte
+	draining bool
 	// Where the grid sits, and what part of it is visible. Usually identical;
 	// they differ when the viewport is partially obscured or scrolled, and the
 	// surface then draws at its own origin with only the intersection shown.
@@ -762,6 +808,18 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	t := NewPurfecTerm()
 	t.Init(t)
 	t.SetEditorMode(false)
+	// PARENTED, though never added to any container: the child is painted and
+	// fed events by this editor alone. The parent link is for the lookups
+	// that walk it — FindGraphicalFrames (which turns on the whole graphical
+	// input path: the scrollbar, selection, the context menu), the popup
+	// controller the context menu opens on, and findDesktop for the
+	// clipboard. Without it the child behaves like a terminal on a host with
+	// none of those, because that is what an orphan is.
+	e.AddChild(t)
+	// Every byte the child produces for its process funnels here, whichever
+	// internal path made it: the gfx mouse reporter, the cli pseudo-key
+	// relay, a pasted clipboard.
+	t.SetInputSink(func(b []byte) { e.termInput(id, b) })
 	// It is a display, not a focus participant: its focus is DECLARED by this
 	// editor (SetEmbeddedFocus) rather than won from the toolkit. Saying so
 	// keeps a hosted mouse press from marking it focused behind our back.
@@ -830,108 +888,118 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 	e.Update()
 }
 
-// terminalMouse answers what one mouse event MEANS to a session's terminal:
-// the bytes its child should receive, or nil when the child has no claim on
-// the mouse.
+// terminalMouse hands one mouse event to the session's child terminal AS THE
+// TOOLKIT EVENT it would have received in the tree, and returns whatever
+// bytes the child produced for its process, plus whether it took the event.
 //
-// The claim is the tracking mode the application turned on, and it is the
-// emulator — this child PurfecTerm — that watched it go by in the output
-// stream. mew cannot know it, which is why the question comes here. The
-// answer goes back to mew and out through the session, so the one door every
-// other byte leaves by stays the only one.
+// The child decides everything itself, with the SAME code the standalone
+// trinket runs: the scrollbar wins over app tracking, shift bypasses tracking
+// for local selection, right-click opens the context menu (or reports, when
+// the app tracks), the wheel scrolls scrollback or reports, and the Mouse
+// Reporting checkbox on its own context menu is honored — it is the child's
+// own flag, consulted by the child's own handlers. Re-deciding any of that
+// here made the hosted terminal a worse terminal than the trinket it wraps,
+// one forgotten rule at a time; the tracking-mode gating that used to live
+// here is gone for exactly that reason.
 //
-// The gating mirrors the trinket's own handlers: 1000 reports buttons only,
-// 1002 adds drags, 1003 adds bare motion.
+// Bytes the handlers encode arrive through the child's input sink, which
+// collects them while draining is set; they return to mew, which writes them
+// to the session. One event in, bytes out, one door.
 func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
-	e.termMu.Unlock()
 	if s == nil || s.term == nil {
+		e.termMu.Unlock()
 		return nil, false
 	}
-	mode, enc := s.term.mouseTracking()
-	if mode == 0 {
-		// The application does not want the mouse, which does NOT mean nobody
-		// does: the terminal itself has a scrollbar, a scrollback and a
-		// selection, and every one of those is worked by the mouse. A hosted
-		// child receives no toolkit events at all — it is not in the tree —
-		// so if this does not hand them over, none of that exists.
-		return nil, s.hostedMouse(ev)
-	}
+	s.draining = true
+	s.pending = nil
+	t := s.term
+	e.termMu.Unlock()
 
-	btn, press := 0, true
-	switch ev.Action {
-	case mew.TerminalMousePress:
-		btn, _ = purfMouseButton(termMouseButton(ev.Button))
-	case mew.TerminalMouseRelease:
-		btn, _ = purfMouseButton(termMouseButton(ev.Button))
-		press = false
-	case mew.TerminalMouseMotion:
-		if ev.Button == mew.TerminalMouseButtonNone {
-			if mode < 1003 {
-				return nil, false // only all-motion tracking reports a bare move
-			}
-			btn = purfecterm.MouseButtonNone
-		} else {
-			if mode < 1002 {
-				return nil, false // 1000 reports no motion at all
-			}
-			btn, _ = purfMouseButton(termMouseButton(ev.Button))
-		}
-		btn |= purfecterm.MouseMotionFlag
-	case mew.TerminalMouseScrollUp:
-		btn = purfecterm.MouseScrollUp
-	case mew.TerminalMouseScrollDown:
-		btn = purfecterm.MouseScrollDown
-	case mew.TerminalMouseScrollLeft:
-		btn = mouseScrollLeftBtn
-	case mew.TerminalMouseScrollRight:
-		btn = mouseScrollRightBtn
-	default:
-		return nil, false
-	}
+	handled := dispatchHostedMouse(t, ev)
 
-	if ev.Shift {
-		btn |= purfecterm.MouseModShift
-	}
-	if ev.Alt {
-		btn |= purfecterm.MouseModAlt
-	}
-	if ev.Ctrl {
-		btn |= purfecterm.MouseModControl
-	}
-	return purfecterm.EncodeMouseEvent(btn, ev.Col, ev.Row, press, enc), true
+	e.termMu.Lock()
+	data := s.pending
+	s.pending = nil
+	s.draining = false
+	e.termMu.Unlock()
+	return data, handled || len(data) > 0
 }
 
-// hostedMouse hands one event to the child terminal as the toolkit event it
-// would have received had it been in the tree, so its own handling runs: the
-// scrollbar's hover and drag, the wheel over scrollback, selection.
-//
-// The cell is turned back into units at the MIDDLE of the cell, because what
-// this feeds are hit tests — the scrollbar lane is a region in units, and an
-// event on a boundary is an event that lands on neither side of it.
-func (s *termSurface) hostedMouse(ev mew.TerminalMouse) bool {
-	t := s.term
+// termInput receives everything the child produces for its process. In a hook
+// call it is collected for the hook's reply. Outside one — a context-menu
+// Paste firing on the UI thread — it goes to mew's command port as a tinput,
+// so the write still happens inside mew, on mew's loop. (tinput addresses the
+// FOCUSED session; the menu that produced the bytes was opened on it.)
+func (e *Editor) termInput(id string, b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	if s != nil && s.draining {
+		s.pending = append(s.pending, b...)
+		e.termMu.Unlock()
+		return
+	}
+	e.termMu.Unlock()
+	if e.port != nil {
+		e.port.Execute("tinput " + pawBytesLiteral(b))
+	}
+}
+
+// pawBytesLiteral renders bytes as a PawScript {bytes ...} literal. The commas
+// matter: without them the values concatenate as symbols.
+func pawBytesLiteral(b []byte) string {
+	var sb strings.Builder
+	sb.WriteString("{bytes ")
+	for i, c := range b {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		fmt.Fprintf(&sb, "0x%02x", c)
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// dispatchHostedMouse converts one of mew's terminal mouse events into the
+// toolkit event the child would have received and runs the child's own
+// handler. The cell becomes units at the MIDDLE of the cell — these feed hit
+// tests, and an event on a boundary lands on neither side of it. Screen
+// coordinates equal local ones, so the wheel latch's offsets come out zero.
+func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse) bool {
 	cw, ch := t.cellDims()
 	x := core.Unit(ev.Col-1)*cw + cw/2
 	y := core.Unit(ev.Row-1)*ch + ch/2
 	btn := termMouseButton(ev.Button)
+	var mods core.KeyModifiers
+	if ev.Shift {
+		mods |= core.ShiftModifier
+	}
+	if ev.Alt {
+		mods |= core.AltModifier
+	}
+	if ev.Ctrl {
+		mods |= core.ControlModifier
+	}
 
 	switch ev.Action {
 	case mew.TerminalMousePress:
-		return t.HandleMousePress(core.MousePressEvent{X: x, Y: y, Button: btn})
+		return t.HandleMousePress(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 	case mew.TerminalMouseRelease:
-		return t.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: y, Button: btn})
+		return t.HandleMouseRelease(core.MouseReleaseEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 	case mew.TerminalMouseMotion:
-		return t.HandleMouseMove(core.MouseMoveEvent{X: x, Y: y})
+		return t.HandleMouseMove(core.MouseMoveEvent{X: x, Y: y, Modifiers: mods})
 	case mew.TerminalMouseScrollUp:
-		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaY: -1})
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, ScreenX: x, ScreenY: y, DeltaY: -1, Modifiers: mods})
 	case mew.TerminalMouseScrollDown:
-		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaY: 1})
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, ScreenX: x, ScreenY: y, DeltaY: 1, Modifiers: mods})
 	case mew.TerminalMouseScrollLeft:
-		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaX: -1})
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, ScreenX: x, ScreenY: y, DeltaX: -1, Modifiers: mods})
 	case mew.TerminalMouseScrollRight:
-		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, DeltaX: 1})
+		return t.HandleMouseWheel(core.MouseWheelEvent{X: x, Y: y, ScreenX: x, ScreenY: y, DeltaX: 1, Modifiers: mods})
 	}
 	return false
 }
@@ -951,25 +1019,31 @@ func (s *termSurface) hostedMouse(ev mew.TerminalMouse) bool {
 func (e *Editor) terminalKey(id string, key string) []byte {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
-	e.termMu.Unlock()
 	if s == nil || s.term == nil || s.term.terminal == nil {
+		e.termMu.Unlock()
 		return nil
 	}
-
-	var out []byte
-	s.term.SetInputSink(func(b []byte) { out = append(out, b...) })
-	defer s.term.SetInputSink(nil)
+	s.draining = true
+	s.pending = nil
+	t := s.term
+	e.termMu.Unlock()
 
 	// HandleKeyString drops input while the emulator believes itself
 	// unfocused. The surface being keyed IS the focused one and Place has
 	// normally said so already, but a keystroke's correctness should not
 	// depend on a frame having gone by first.
-	tm := s.term.terminal
+	tm := t.terminal
 	if !tm.IsFocused() {
 		tm.SetFocused(true)
 		defer tm.SetFocused(false)
 	}
 	tm.HandleKeyString(dkhKeyName(key))
+
+	e.termMu.Lock()
+	out := s.pending
+	s.pending = nil
+	s.draining = false
+	e.termMu.Unlock()
 	return out
 }
 

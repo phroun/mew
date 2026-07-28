@@ -59,12 +59,20 @@ func TestTerminalKeyEncodesThroughTheEmulator(t *testing.T) {
 		t.Errorf("unknown surface returned %q, want nil", got)
 	}
 
-	// Capturing the bytes must not leave the sink installed, or the child's
-	// later output would be captured by a dead closure.
+	// The sink is PERSISTENT now (it is how a context-menu Paste reaches the
+	// session), so after the encode it must still be installed — and the
+	// drain must be off, or the child's later bytes would pile into a buffer
+	// nobody returns.
 	e.termMu.Lock()
 	s := e.termSurfaces["pty1"]
 	e.termMu.Unlock()
-	if s.term.inputSink != nil {
-		t.Error("the capture sink should be detached after the encode")
+	if s.term.inputSink == nil {
+		t.Error("the persistent sink should remain installed after the encode")
+	}
+	if s.draining {
+		t.Error("draining must be off between hook calls")
+	}
+	if len(s.pending) != 0 {
+		t.Errorf("pending should be empty between hook calls, has %d bytes", len(s.pending))
 	}
 }

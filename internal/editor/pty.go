@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // PTYRequest is what mew asks the host for. Every field is data the host is
@@ -592,6 +593,9 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	st := e.ptySessions[b]
 	delete(e.ptySessions, b)
 	e.ptyMu.Unlock()
+	if e.ptyMouseCapture == b {
+		e.ptyMouseCapture = nil
+	}
 	if st == nil {
 		return
 	}
@@ -776,6 +780,35 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	if e.Config.TerminalSurfaces.Mouse == nil {
 		return false
 	}
+	ev, ok := terminalMouseFromKey(base, shift, alt, ctrl)
+	if !ok {
+		return false
+	}
+
+	// A gesture in progress owns the WHOLE gesture. A press the terminal took
+	// captures the pointer for it — its scrollbar drag and its selection both
+	// keep tracking when the pointer leaves the rectangle, exactly as any
+	// trinket's would — and the release lets go. Coordinates may run past the
+	// grid's edges here, deliberately: a drag below the end of a scrollbar is
+	// something the scrollbar wants to know about.
+	if b := e.ptyMouseCapture; b != nil {
+		e.ptyMu.Lock()
+		st := e.ptySessions[b]
+		e.ptyMu.Unlock()
+		w := e.viewportShowing(b)
+		if st == nil || w == nil {
+			e.ptyMouseCapture = nil
+		} else {
+			ev.Col = x - w.ContentX
+			ev.Row = y - w.ContentY
+			e.deliverPTYMouse(st, ev)
+			if ev.Action == TerminalMouseRelease {
+				e.ptyMouseCapture = nil
+			}
+			return true
+		}
+	}
+
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
@@ -794,11 +827,17 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	if col < 1 || row < 1 || col > w.ContentWidth || row > w.ContentHeight {
 		return false
 	}
-	ev, ok := terminalMouseFromKey(base, shift, alt, ctrl)
-	if !ok {
-		return false
-	}
 	ev.Col, ev.Row = col, row
+	handled := e.deliverPTYMouse(st, ev)
+	if handled && ev.Action == TerminalMousePress {
+		e.ptyMouseCapture = w.Buffer
+	}
+	return handled
+}
+
+// deliverPTYMouse asks the host what one event means to a session's terminal
+// and writes whatever bytes come back. Reports whether the event was taken.
+func (e *Editor) deliverPTYMouse(st *ptyState, ev TerminalMouse) bool {
 	data, handled := e.Config.TerminalSurfaces.Mouse(st.id, ev)
 	if !handled {
 		return false
@@ -809,10 +848,18 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 			return false
 		}
 	}
-	// Handled with no bytes: the terminal used the event itself (its
-	// scrollbar, its scrollback) and there is nothing for the child.
 	e.RequestRender()
 	return true
+}
+
+// viewportShowing returns the on-screen viewport displaying a buffer, or nil.
+func (e *Editor) viewportShowing(b *buffer.Buffer) *viewport.Viewport {
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Buffer == b && e.viewportOnScreen(w) {
+			return w
+		}
+	}
+	return nil
 }
 
 // armRawKey is raw_key_input: the NEXT keystroke goes to the focused

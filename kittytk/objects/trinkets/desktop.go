@@ -4145,10 +4145,16 @@ func (d *Desktop) takePassNextKey(event core.KeyPressEvent, wm *window.WindowMan
 		return false
 	}
 	activeApp.ClearPassNextKeyToTrinket()
-	// Skip ALL shortcut handling - send the key directly to the active
-	// window's focused trinket, bypassing menu accelerator interception.
+	// Skip ALL shortcut handling — the desktop's above, and the WINDOW's too.
+	// Window.HandleKeyPress claims F10 for its menu bar and runs its own
+	// shortcut resolver before the focus manager sees anything, so handing the
+	// key to the window plainly loses exactly the keys this mode exists to
+	// deliver. The window already has a raw one-shot for its half of this
+	// (BeginRawKeyInput); arm it and the key drops straight to the focused
+	// trinket.
 	if wm != nil {
 		if activeWin := wm.ActiveWindow(); activeWin != nil {
+			activeWin.BeginRawKeyInput(nil)
 			activeWin.HandleKeyPress(event)
 		}
 	}
