@@ -70,6 +70,7 @@ var (
 	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
 	user32               = windows.NewLazySystemDLL("user32.dll")
 	procAllocConsole     = kernel32.NewProc("AllocConsole")
+	procFreeConsole      = kernel32.NewProc("FreeConsole")
 	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
 	procShowWindow       = user32.NewProc("ShowWindow")
 )
@@ -166,6 +167,20 @@ type conOpts struct {
 	// that failed, kept selectable so the difference can be demonstrated
 	// rather than taken on trust.
 	noConsole bool
+	// clearStd points this process's own standard handles at nothing for the
+	// duration of CreateProcess, and puts them back after.
+	//
+	// AllocConsole does not only give this process a console; it also aims
+	// this process's std handles AT that console. A child with no
+	// STARTF_USESTDHANDLES takes its handles from the parent's, so it would
+	// read and write the hidden console rather than the pseudoconsole —
+	// alive, not exiting, and silent. Offering nothing leaves the console
+	// subsystem to supply the pseudoconsole's own.
+	clearStd bool
+	// freeAfter gives up this process's console again once the pseudoconsole
+	// exists, before the child is created — in case the console is needed to
+	// MAKE one and unhelpful when spawning into it.
+	freeAfter bool
 }
 
 // ensureConsole gives THIS PROCESS a console if it has none, hidden, once.
@@ -220,6 +235,9 @@ var ptyMethods = []struct {
 	{"10", "ConPTY WITHOUT ensuring a console — what used to fail, kept to show the difference", conOpts{noConsole: true}},
 	{"11", "ConPTY, everything at once (inherit, ends held, no window)",
 		conOpts{inherit: true, keepEnds: true, noWindow: true}},
+	{"12", "ConPTY + this process's std handles cleared across CreateProcess", conOpts{clearStd: true}},
+	{"13", "ConPTY + give up this process's console once the pseudoconsole exists", conOpts{freeAfter: true}},
+	{"14", "ConPTY + cleared std handles AND no window", conOpts{clearStd: true, noWindow: true}},
 }
 
 // defaultMethod is what a request that names none gets: the real terminal,
@@ -233,7 +251,11 @@ func defaultMethod() string {
 	if m := strings.TrimSpace(os.Getenv("MEW_PTY_METHOD")); m != "" {
 		return m
 	}
-	return "1"
+	// Back to the plain-pipe shell until a pseudoconsole is known to work
+	// here. Method 1 with a console allocated flashes a window and then shows
+	// nothing, which is worse than a limited terminal that works — and the
+	// diagnostic runs every method, so the answer costs no rebuild.
+	return "6"
 }
 
 // optsForMethod resolves a request's method name. An unknown one falls back
@@ -339,6 +361,14 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	}
 	p.note("CreatePseudoConsole: ok, HPCON 0x%x", uintptr(hpc))
 
+	if opt.freeAfter {
+		if r, _, e := procFreeConsole.Call(); r == 0 {
+			p.note("FreeConsole: %v", e)
+		} else {
+			p.note("FreeConsole: ok (console given up before spawning)")
+		}
+	}
+
 	p.hpc, p.in, p.out = hpc, inWrite, outRead
 	spawnErr := p.spawn(path, args, dir, env, opt)
 	if opt.keepEnds {
@@ -411,6 +441,14 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string, opt
 	// attributes: the child reaches its console through the attribute, and
 	// inheriting anything else would only give it references it has no
 	// business holding.
+	// Offer the child nothing of ours to inherit, so the console subsystem
+	// gives it the pseudoconsole's own handles rather than this process's.
+	if opt.clearStd {
+		restore := clearStdHandles()
+		defer restore()
+		p.note("std handles: cleared for the duration of CreateProcess")
+	}
+
 	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT)
 	if opt.noWindow {
 		flags |= windows.CREATE_NO_WINDOW
@@ -862,4 +900,22 @@ func hostPTYDefaultNote() string {
 	return "exec default: method " + defaultMethod() + env + " — " + desc +
 		"\n  choose another for one session with MEW_PTY_METHOD, or per command:" +
 		" exec \"cmd.exe\", \"1\""
+}
+
+// clearStdHandles points this process's three standard handles at nothing and
+// returns the call that puts them back. A child created in between inherits
+// no handles from us, which is the difference between it talking to our
+// console and it talking to its own.
+func clearStdHandles() func() {
+	ids := []uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+	saved := make([]windows.Handle, len(ids))
+	for i, id := range ids {
+		saved[i], _ = windows.GetStdHandle(id)
+		windows.SetStdHandle(id, 0)
+	}
+	return func() {
+		for i, id := range ids {
+			windows.SetStdHandle(id, saved[i])
+		}
+	}
 }
