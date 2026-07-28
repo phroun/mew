@@ -38,7 +38,9 @@ func TestPTYDiagnoseRunsRealProbes(t *testing.T) {
 // being read in.
 func TestQuoteProbe(t *testing.T) {
 	got := quoteProbe([]byte("hi\x1b[0m\r\n\x00"), 100)
-	want := `"hi\e[0m\r\n\x0"`
+	// Two hex digits always: \x0 is not a byte, and a report that spells one
+	// is a report someone has to decode twice.
+	want := `"hi\e[0m\r\n\x00"`
 	if got != want {
 		t.Errorf("quoteProbe = %s, want %s", got, want)
 	}

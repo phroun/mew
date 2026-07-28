@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/phroun/mew"
@@ -65,6 +66,9 @@ type conPTY struct {
 	// silently is otherwise unobservable from mew's side of the pipe.
 	trace  []string
 	closed bool
+	// reaped closes once the watcher has the exit status, so ExitStatus can
+	// wait the moment out rather than answering before it knows.
+	reaped chan struct{}
 }
 
 func (p *conPTY) note(format string, a ...any) {
@@ -77,11 +81,27 @@ func (p *conPTY) Diagnostics() []string { return p.trace }
 // ExitStatus implements mew.PTYExitStatus: it tells a child that ran and
 // exited from a stream that ended under one still running. Those two look
 // identical from mew's side of the pipe and want opposite debugging.
+//
+// It allows the watcher a moment first, for the same reason the POSIX side
+// does: this is asked at exactly the instant the two race. The stream can end
+// before WaitForSingleObject has returned, and an immediate read then reports
+// a child that has just died as still running.
 func (p *conPTY) ExitStatus() (int, bool) {
+	if p.reaped != nil {
+		select {
+		case <-p.reaped:
+		case <-time.After(reapGrace):
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.code, p.ended
 }
+
+// reapGrace is how long ExitStatus waits for the watcher to land: long enough
+// for a process that has already died, short enough that a session ending is
+// not a pause anyone notices.
+const reapGrace = 200 * time.Millisecond
 
 func hostPTY(path, dir string, env []string, cols, rows int) (mew.PTYSession, error) {
 	p, err := newConPTY(path, nil, dir, env, cols, rows)
@@ -106,7 +126,7 @@ func newConPTY(path string, args []string, dir string, env []string, cols, rows 
 	// others. Nil security attributes, so nothing here is inheritable: the
 	// child reaches its console through the attribute list, not through an
 	// inherited handle.
-	p := &conPTY{name: filepath.Base(path)}
+	p := &conPTY{name: filepath.Base(path), reaped: make(chan struct{})}
 	p.note("CreateProcess target: %s %v (dir %q, %d env entries, %dx%d)",
 		path, args, dir, len(env), cols, rows)
 
@@ -218,6 +238,7 @@ func (p *conPTY) spawn(path string, args []string, dir string, env []string) err
 	// the process here, leave a word about how it went, and tear the session
 	// down — which ends mew's read loop and closes the buffer's surface.
 	go func() {
+		defer close(p.reaped)
 		windows.WaitForSingleObject(pi.Process, windows.INFINITE)
 		var code uint32
 		windows.GetExitCodeProcess(pi.Process, &code)

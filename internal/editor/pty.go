@@ -103,11 +103,23 @@ type ptyState struct {
 	sess    PTYSession
 	command string
 	cwd     string // as asked for, for the record a failed session leaves
-	// bytes counts what the child has produced. Zero at the end is the
-	// signature of the failure worth writing down: a session that started,
-	// stopped, and never said anything at all.
-	bytes int
+	// bytes counts what the child has produced, head keeps the beginning of
+	// it, and started is when it began. A session that ends almost at once is
+	// worth writing down whether or not it said anything, and WHAT it said is
+	// the evidence: a terminal's own preamble looks nothing like a shell's
+	// prompt, and telling those apart tells two faults apart.
+	bytes   int
+	head    []byte
+	started time.Time
 }
+
+// ptyHeadMax is how much of a short session's output is kept for the record.
+// Enough for a preamble and a prompt; not a transcript.
+const ptyHeadMax = 512
+
+// ptyShortLife is how quickly a session has to end to be worth a record. A
+// shell someone opened to work in does not finish in this long.
+const ptyShortLife = 3 * time.Second
 
 // TerminalSurface is one visible terminal: which session, and exactly where it
 // sits in mew's OWN surface, in 1-based terminal cells. The rectangle is the
@@ -393,7 +405,9 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd strin
 	}
 	e.ptySeq++
 	id := fmt.Sprintf("pty%d", e.ptySeq)
-	e.ptySessions[b] = &ptyState{id: id, sess: sess, command: command, cwd: cwd}
+	e.ptySessions[b] = &ptyState{
+		id: id, sess: sess, command: command, cwd: cwd, started: time.Now(),
+	}
 	e.ptyMu.Unlock()
 
 	if e.Config.TerminalSurfaces.Open != nil {
@@ -446,6 +460,12 @@ func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
 	}
 	e.ptyMu.Lock()
 	st.bytes += len(chunk)
+	if n := ptyHeadMax - len(st.head); n > 0 {
+		if n > len(chunk) {
+			n = len(chunk)
+		}
+		st.head = append(st.head, chunk[:n]...)
+	}
 	e.ptyMu.Unlock()
 	e.Config.TerminalSurfaces.Feed(st.id, chunk)
 }
@@ -564,26 +584,38 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	// the record writes itself, next to whatever pty_diag would write, and
 	// the notification says where. A session that said anything at all is not
 	// this failure and leaves nothing behind.
-	if st.bytes == 0 {
-		if path, err := e.appendPTYLog(ptySessionRecord(st, msg, cause)); err == nil {
-			msg += " — nothing was received; recorded in " + path
+	// Worth writing down when it produced NOTHING, and equally when it was
+	// over almost at once: a shell you meant to keep does not end in a couple
+	// of seconds, and if it did, what it managed to say first is the evidence.
+	if lived := time.Since(st.started); st.bytes == 0 || lived < ptyShortLife {
+		if path, err := e.appendPTYLog(ptySessionRecord(st, msg, cause, lived)); err == nil {
+			msg += " — recorded in " + path
 		}
 	}
 	e.ShowNotification(msg)
 	e.RequestRender()
 }
 
-// ptySessionRecord is what a silent session leaves behind: what was asked
-// for, how it ended, and — when the host keeps one — its own account of the
-// calls it made building the thing.
-func ptySessionRecord(st *ptyState, msg string, cause error) string {
+// ptySessionRecord is what a session worth noticing leaves behind: what was
+// asked for, how long it lasted, how it ended, what it managed to say, and —
+// when the host keeps one — its own account of the calls it made building it.
+func ptySessionRecord(st *ptyState, msg string, cause error, lived time.Duration) string {
 	var b strings.Builder
-	b.WriteString("session produced no output\n")
+	if st.bytes == 0 {
+		b.WriteString("session produced no output\n")
+	} else {
+		b.WriteString("session ended almost immediately\n")
+	}
 	fmt.Fprintf(&b, "  command: %s\n", st.command)
 	fmt.Fprintf(&b, "  cwd asked for: %q\n", st.cwd)
+	fmt.Fprintf(&b, "  lasted: %s\n", lived.Round(time.Millisecond))
 	fmt.Fprintf(&b, "  ending: %s\n", msg)
 	if cause != nil {
 		fmt.Fprintf(&b, "  read error: %v\n", cause)
+	}
+	fmt.Fprintf(&b, "  received: %d bytes\n", st.bytes)
+	if len(st.head) > 0 {
+		fmt.Fprintf(&b, "  first of it: %s\n", quoteBytes(st.head))
 	}
 	if d, ok := st.sess.(PTYDiagnostics); ok {
 		b.WriteString("  the host's account of building it:\n")
@@ -593,6 +625,36 @@ func ptySessionRecord(st *ptyState, msg string, cause error) string {
 	} else {
 		b.WriteString("  (this host keeps no account of how it built the session)\n")
 	}
+	return b.String()
+}
+
+// quoteBytes renders raw terminal output readably — escapes as \e, anything
+// unprintable as \xNN — so a record can be read, and so the escapes inside it
+// cannot steer whatever displays it.
+func quoteBytes(p []byte) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range p {
+		switch {
+		case c == '\\':
+			b.WriteString(`\\`)
+		case c == '"':
+			b.WriteString(`\"`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == 0x1b:
+			b.WriteString(`\e`)
+		case c < 0x20 || c >= 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
 	return b.String()
 }
 

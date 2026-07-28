@@ -17,24 +17,30 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// probeWait bounds one probe, and settle is how long a probe keeps listening
-// after the first bytes arrive.
+// probeWait bounds one probe; quiet is how long it must hear NOTHING NEW
+// before deciding the session has said its piece.
 //
-// An interactive shell never exits, so waiting for it to finish means waiting
-// the whole bound every time — three probes deep, on a main loop, that is a
-// visible freeze. But the first byte already answers the question this is
-// asking, so a probe that hears anything stops shortly after: a working
-// machine finishes in well under a second, and only genuine silence costs the
-// full wait.
+// Quiescence and not first-byte, which was wrong and quietly so. An
+// interactive shell never exits, so a probe cannot simply wait for the child
+// to finish — but stopping shortly after the first bytes assumed those bytes
+// were the CHILD's, which is true on a pty and false on a pseudoconsole:
+// conhost emits its own mode-setting preamble the moment the console exists,
+// before the child has run at all. A probe that stopped on that measured
+// Windows starting a terminal and called it the child saying nothing.
+//
+// Waiting for silence instead asks the question that was meant: has anything
+// arrived, and has it stopped arriving? A machine where this works answers in
+// well under a second, because the stream really does go quiet after the
+// prompt.
 const (
-	probeWait = 2 * time.Second
-	settle    = 250 * time.Millisecond
+	probeWait = 6 * time.Second
+	quiet     = 750 * time.Millisecond
+	poll      = 50 * time.Millisecond
 )
 
 // probeResult is one probe's outcome, in the terms that distinguish the
@@ -46,6 +52,7 @@ type probeResult struct {
 	TimedOut bool     // nothing more was coming
 	Exited   bool     // the child ended on its own
 	Code     int      // ...with this status
+	Stopped  bool     // WE ended it (it had gone quiet), not the other way round
 	Trace    []string // what the platform calls said on the way
 }
 
@@ -97,14 +104,21 @@ func writeProbe(b *strings.Builder, r probeResult) {
 	case len(r.Out) == 0 && r.TimedOut:
 		fmt.Fprintf(b, "      RESULT: started, then NOTHING in %s. The child is attached to\n", probeWait)
 		fmt.Fprintf(b, "              something that is not this pipe, or it is not running.\n")
+	case r.TimedOut:
+		fmt.Fprintf(b, "      RESULT: %d bytes, still arriving when the %s bound ran out.\n", len(r.Out), probeWait)
 	case len(r.Out) == 0:
 		fmt.Fprintf(b, "      RESULT: started, then the stream ended with no output at all.\n")
 	default:
 		fmt.Fprintf(b, "      RESULT: %d bytes came back — the plumbing WORKS.\n", len(r.Out))
 	}
-	if r.Exited {
+	switch {
+	case r.Exited:
 		fmt.Fprintf(b, "      child exited, code %d\n", r.Code)
-	} else if !r.TimedOut {
+	case r.Stopped:
+		// We ended a quiet session that was behaving. Expected for a shell,
+		// which waits forever by design, and not a fault.
+		fmt.Fprintf(b, "      still running when this probe stopped listening (normal for a shell)\n")
+	case !r.TimedOut:
 		fmt.Fprintf(b, "      the stream ended while the child was STILL RUNNING\n")
 	}
 	if len(r.Out) > 0 {
@@ -137,8 +151,9 @@ func quoteProbe(p []byte, max int) string {
 		case c == 0x1b:
 			b.WriteString(`\e`)
 		case c < 0x20 || c >= 0x7f:
-			b.WriteString(`\x`)
-			b.WriteString(strconv.FormatInt(int64(c), 16))
+			// Two digits always: \x7 is not a byte, and a report that spells
+			// one is a report someone has to decode twice.
+			fmt.Fprintf(&b, `\x%02x`, c)
 		default:
 			b.WriteByte(c)
 		}
@@ -170,38 +185,45 @@ func runProbe(label string, sess probeSession, err error) probeResult {
 
 	var mu sync.Mutex
 	var out []byte
+	lastAt := time.Now()
 	done := make(chan struct{})
-	spoke := make(chan struct{})
 	go func() {
 		defer close(done)
-		said := false
 		buf := make([]byte, 4096)
 		for {
 			n, err := sess.Read(buf)
 			if n > 0 {
 				mu.Lock()
 				out = append(out, buf[:n]...)
+				lastAt = time.Now()
 				mu.Unlock()
-				if !said {
-					said = true
-					close(spoke)
-				}
 			}
 			if err != nil {
 				return
 			}
 		}
 	}()
-	select {
-	case <-done:
-	case <-spoke:
-		// It answered. Give the rest of the banner a moment and stop.
+
+	start := time.Now()
+	for {
 		select {
 		case <-done:
-		case <-time.After(settle):
+			// The stream ended on its own: nothing more is coming.
+		case <-time.After(poll):
+			r.Stopped = true
+			mu.Lock()
+			n, idle := len(out), time.Since(lastAt)
+			mu.Unlock()
+			if n > 0 && idle >= quiet {
+				break // it spoke, and has stopped
+			}
+			if time.Since(start) < probeWait {
+				r.Stopped = false
+				continue
+			}
+			r.TimedOut = true
 		}
-	case <-time.After(probeWait):
-		r.TimedOut = true
+		break
 	}
 	sess.Close()
 

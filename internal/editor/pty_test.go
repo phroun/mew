@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/phroun/mew/internal/viewport"
 )
@@ -820,6 +821,8 @@ func TestSilentSessionRecordsItself(t *testing.T) {
 	for _, want := range []string{
 		"session produced no output",
 		"command: cmd.exe",
+		"lasted:",
+		"received: 0 bytes",
 		"CreateProcess: ok, pid 42",
 		"child still running",
 	} {
@@ -849,9 +852,59 @@ func TestTalkativeSessionRecordsNothing(t *testing.T) {
 		t.Fatal("exec failed")
 	}
 	e.ptyOutput(w.Buffer, []byte("$ "))
+	// Old enough not to count as "ended almost immediately".
+	e.ptyMu.Lock()
+	e.ptySessions[w.Buffer].started = time.Now().Add(-time.Minute)
+	e.ptyMu.Unlock()
 	e.ptyEnded(w.Buffer, io.EOF)
 
 	if _, err := os.Stat(filepath.Join(dir, "mew-pty-diag.log")); err == nil {
-		t.Error("a session that produced output should leave no log behind")
+		t.Error("a session that lived and produced output should leave no log behind")
+	}
+}
+
+// A session that ends almost at once is recorded even when it DID say
+// something, and what it said is kept — quoted, because it is escape
+// sequences. On Windows the difference between a terminal's own preamble and
+// a shell's prompt is the difference between two faults.
+func TestShortSessionRecordsWhatItSaid(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(old)
+
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("cmd.exe") {
+		t.Fatal("exec failed")
+	}
+	e.ptyOutput(w.Buffer, []byte("\x1b[?9001h\x1b[?1004h"))
+	e.ptyEnded(w.Buffer, io.EOF)
+
+	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
+	if err != nil {
+		t.Fatalf("a session that ended at once left no record: %v", err)
+	}
+	for _, want := range []string{
+		"session ended almost immediately",
+		"received: 16 bytes",
+		`first of it: "\e[?9001h\e[?1004h"`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("record is missing %q\n%s", want, data)
+		}
+	}
+}
+
+// Raw output is quoted, not pasted: two hex digits always, and escapes stay
+// visible rather than steering whatever displays the record.
+func TestQuoteBytes(t *testing.T) {
+	got := quoteBytes([]byte("hi\x1b[0m\x07\r\n"))
+	want := `"hi\e[0m\x07\r\n"`
+	if got != want {
+		t.Errorf("quoteBytes = %s, want %s", got, want)
 	}
 }
