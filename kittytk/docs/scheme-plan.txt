@@ -1,0 +1,169 @@
+Ok, now we are going to add support for color Schemes.
+Every trinket should have a Scheme set, which is an integer, and defaults to -1.
+If it is set to -1, it inherits the Scheme of its container.
+All windows inherit their scheme from their MDI parent.
+All popups inherit their scheme from the container that spawned them.
+The menubar, statusbar, and dock inherit their scheme from the Desktop.
+All regular windows on the desktop inherit their scheme from the Desktop itself.
+The Desktop's scheme defaults to 0.
+We will pre-initialize scheme 0 and set it up with default values.
+If an invalid/undefined scheme number (other than -1) is ever specified for any trinket, it shall use scheme 0 instead.
+
+Each of the colors in a scheme can be an entire ANSI sequence, or a nil/blank value.
+When it is nil, it has a special meaning, which is given in the list below.
+
+Unless "FG" or "BG" is specified, each of these includes both FG, BG, and any other attributes such as bold or dim:
+
+Any time i use the word "inherit" or "inherited" in the color descriptions below, it refers to the current behavior of inheriting the background color from the container, which will still be a concept in the new system.  Note that this has nothing to do with the Scheme inheritance spoken of above.
+
+Environment Related Colors:
+DesktopFill
+StatusBar
+StatusBarShortcut
+Dock
+DockItem
+FocusedDockItem
+
+Window Frame Related Colors:
+ActiveWindowBorder
+InactiveWindowBorder
+ActiveWindowTitle (currently bright and bold white on blue)
+InactiveWindowTitle
+ActiveTitleBarButton
+InactiveTitleBarButton
+FocusedTitleBarButton
+PressedTitleBarButton
+InactiveWindowFG
+ActiveWindowFG
+InactiveWindowBG
+ActiveWindowBG
+
+These three aren't actually assignable but I will use these below so I want to define them here:
+WindowBorder = either InactiveWindowBoder or ActiveWindowBorder depending on if the window is active
+WindowFG = either InactiveWindowFG or ActiveWindowFG depending on if the window is active
+WindowBG = either InactiveWindowBG or ActiveWindowBG depending on if the window is active
+
+State Related Colors:
+FocusBG = normal cyan (used as a default value for many other scheme values)
+FocusFG = normal black (used as a default value for many other scheme values)
+FocusTextFG = bright cyan (used as a default value for many other scheme values)
+DisabledTextFG = whatever the disabled button text is in our current theme
+Selection = bright white on blue (used as a default value for other scheme values)
+Normal (nil = WindowFG on WindowBG)
+
+Menu Related Colors:
+MenuBar
+MenuBarMeta (the accelerator keys on the menu bar itself)
+MenuBarInfo (the clock, for now)
+ActiveMenuBarItem
+ActiveMenuBarMeta (the accelerator keys on the menu bar's active menu)
+MenuGutter
+MenuCheckIcon
+MenuRadioIcon
+MenuItemText
+MenuAccelerator
+MenuShortcut
+MenuSeparator
+MenuSeparatorGutter
+MenuBarButton (for [<][>])
+DisabledMenuBarButton
+DisabledMenuGutter
+DisabledMenuItem (applies to Text, Shortcut and Accelerator)
+DisabledMenuIcon (applies to Check and Radio)
+FocusedMenuCheckIcon
+FocusedMenuRadioIcon
+FocusedMenuItemText
+FocusedMenuAccelerator
+FocusedMenuShortcut
+
+
+TrinketGroupFG (bright white, used as a default for other things)
+TrinketGroupBG (black, used as a default for other things)
+TrinketContentFG (regular white, used as a default for other things)
+TrinketContentBG (black, used as a default for other things)
+
+
+Basic Trinket Related Colors:
+LabelFG (nil = WindowFG)
+LabelBG (nil = inherit)
+DisabledLabelFG (nil = DisabledTextFG)
+DisabledLabelBG (nil = inherit)
+Button (black on regular white)
+DisabledButtonFG (nil = DisabledTextFG)
+DisabledButtonBG (nil = inherit)
+FocusedButton (nil = same as FocusBG + FocusFG)
+PressedButton (nil = WindowBG + WindowFG)
+DefaultPaneButtonShadowBG (dim blue button shadow, used when inherited BG is ansi 49, foreground only)
+DarkPaneButtonShadowFG (dark gray button shadow, used when inherited BG is black, foreground only)
+ButtonShadowFG (black button shadow, used in all other inherited BG cases, foreground only)
+EditBox (regular white on black)
+DefaultPaneEditBox (regular white on dark blue, used when inherited BG is ansi 49)
+DarkPaneEditBox (regular white on dark blue, used when inherited BG is black)
+EditBoxPlaceholder (whatever it is currently)
+DefaultPaneEditBoxPlaceholder (nil = EditBoxPlaceholder)
+DarkPaneEditBoxPlaceholder (nil = DarkPaneEditBoxPlaceholder)
+FocusedEditBoxText (black on dark cyan)
+FocusedEditBoxCursor (currently black on white)
+FocusedEditBoxFill (currently white on cyan)
+ComboBox (nil = same as editbox)
+ComboBoxArrow (nil = same as editbox)
+DisabledComboBoxFG (nil = same as DisabledButtonFG)
+DisabledComboBoxArrow (nil = same as DisabledComboBoxFG + DisabledComboBoxBG)
+DisabledComboBoxBG (nil = same as DisabledButtonBG)
+FocusedComboBox (nil = same as FocusedButton)
+FocusedComboBoxArrow (nil = same as FocusedComboBox)
+PressedComboBox (nil = same as PressedButton)
+PressedComboBoxArrow (nil = same as PressedComboBox)
+DropdownItemText (nil = same as MenuItemText)
+FocusedDropdownItemText (nil = same as FocusedMenuItemText)
+DropdownSeparator (nil = same as MenuSeparator)
+DisabledDropdownItem (nil = same as DisabledMenuItem)
+
+CheckBoxFG (nil = same as Label)
+CheckBoxBG (nil = inherit)
+CheckBoxLabelFG (nil = same as Label)
+RadioButtonFG (nil = same as Label)
+RadioButtonBG (nil = inherit)
+RadioButtonLabelFG (nil = same as Label)
+FocusedCheckBoxFG (same as FocusTextFG)
+FocusedCheckBoxBG (nil = inherit)
+FocusedCheckBoxLabelFG (nil = same as FocusTextFG)
+FocusedRadioButtonFG (nil = same as FocusTextFG)
+FocusedRadioButtonBG (nil = inherit)
+FocusedRadioButtonLabelFG (nil = same as FocusTextFG)
+
+Splitter Related Colors:
+Splitter (dark gray on black)
+SplitterHandle (nil = Splitter)
+SplitterTitle (nil = Splitter)
+FocusedSplitter (nil = FocusBG + FocusFG)
+FocusedSplitterHandle (nil = FocusedSplitter)
+FocusedSplitterTitle (nil = FocusedSplititer)
+
+Tab Trinket (Page Control) Related Colors:
+TabsFG (nil = WindowFG, but currently we are using bright white)
+TabsBG (nil = inherit)
+TabsButton (nil = same as TabsFG+TabsBG)
+PressedTabsButton (nil = black on white)
+DisabledTabsButton (nil = same as DisabledTextFG on TabsBG)
+ActiveTabFG (currently bright and bold yellow, but nil = TrinketGroupFG)
+ActiveTabBG (nil = TrinketGroupBG; but currently we are using 49 ansi default)
+FocusedTab (nil = same as FocusBG + FocusFG)
+
+List Related Colors:
+ListBG (nil = TrinketContentBG, used as background for treeview and listview)
+ListFG (nil = TrinketContentFG, used as foreground for treeview and listview)
+FocusedListBG (nil = ListBG)
+FocusedListFG (nil = ListFG)
+SelectedListItem (nil = same as Selection)
+FocusedListItem (nil = same as FocusBG + FocusFG)
+
+Scrollbar Colors: (applicable to all types of scrollbars - ScrollArea, ListView and TreeView)
+Scrollbar = currently dark gray on black
+ScrollbarThumb = currently regular white on black
+
+ProgresBar Colors:
+ProgressFull = bright green on dim green
+ProgressEmpty = dim green on black
+ProgressFullText = black on dim green
+ProgressEmptyText = bight yellow on black
