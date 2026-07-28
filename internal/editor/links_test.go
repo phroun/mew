@@ -374,11 +374,12 @@ func TestNavNextPrior(t *testing.T) {
 	// on line 2.
 	e, w, _ := linkEditor(t, "text [[a:b|Title]] mid [[b:c]] z\nplain line\ntail [[d:e]] end\n")
 
-	// Not inside a link: nav does not capture.
+	// Not inside a link: the GATED form does not capture, which is what lets
+	// tab = nav_next false|completion|insert '\t' fall through to editing.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	w.BrowseActive = true
-	if e.navLink(+1) {
-		t.Fatal("nav_next must not capture when no button is focused")
+	if e.navLink(+1, false) {
+		t.Fatal("gated nav_next must not capture when no button is focused")
 	}
 
 	// Enter link A, then nav_next walks A -> B -> C -> (wrap) A.
@@ -389,7 +390,7 @@ func TestNavNextPrior(t *testing.T) {
 	}
 	step := func(dir int, wantTarget string, wantLine int) {
 		t.Helper()
-		if !e.navLink(dir) {
+		if !e.navLink(dir, false) {
 			t.Fatalf("nav should capture while a button is focused")
 		}
 		w.BrowseActive = true
@@ -601,7 +602,8 @@ func TestNavGatedByOption(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, linkLine, "[options]\nsyntax=dokuwiki\nlinkBrowsing=no\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 10})
 	w.BrowseActive = true
-	if e.navLink(+1) || e.navFollow(true) {
+	// Even ungated: linkBrowsing=no turns the whole layer off.
+	if e.navLink(+1, true) || e.navFollow(true) {
 		t.Fatal("nav must not act when linkBrowsing is off")
 	}
 }
@@ -612,9 +614,13 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	e, w, _ := linkEditor(t, linkLine)
 	// Exact for the no-escape bindings; prefix for the ones whose insert arg
 	// carries a control char (the parser unescapes \n/\t in mapping values).
+	//
+	// The nav commands carry "false" here: that is the GATED form, which is
+	// what lets these chains fall through to editing when the caret is not on
+	// a link. Bare nav_next / nav_prior always act (^B tab / ^B S-tab).
 	for k, want := range map[string]string{
 		"^C":    "cancel|buffer_close",
-		"S-tab": "nav_prior|smart_unindent",
+		"S-tab": "nav_prior false|smart_unindent",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); got != want {
 			t.Fatalf("%s = %q, want %q", k, got, want)
@@ -622,7 +628,7 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	}
 	for k, prefix := range map[string]string{
 		"return": "nav_follow false|accept|insert_newline",
-		"tab":    "nav_next|completion|insert ",
+		"tab":    "nav_next false|completion|insert ",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); !strings.HasPrefix(got, prefix) {
 			t.Fatalf("%s = %q, want prefix %q", k, got, prefix)
@@ -757,5 +763,52 @@ func TestFollowMissingLinkVisitOnlyOnCreate(t *testing.T) {
 	}
 	if len(e.linkVisitLog) != 1 {
 		t.Fatalf("exactly one visit should be logged; log %+v", e.linkVisitLog)
+	}
+}
+
+// Bare nav_next / nav_prior ALWAYS act: from the caret's own link, or into the
+// first link from the caret when it is in none. The gated form (argument
+// "false") is the one that yields, so a key bound alone gets the action while
+// a key in a chain still falls through — the same split nav_follow uses.
+func TestNavLinkUngatedEntersFromPlainCaret(t *testing.T) {
+	e, w, _ := linkEditor(t, "text [[a:b|Title]] mid [[b:c]] z\nplain line\ntail [[d:e]] end\n")
+
+	// Caret on plain text, browse mode OFF: nothing is focused.
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
+	w.BrowseActive = false
+	if e.focusedLinkButton(w) != nil {
+		t.Fatal("precondition: no button should be focused")
+	}
+
+	if e.navLink(+1, false) {
+		t.Error("gated nav must not act with no focused button")
+	}
+	if !e.navLink(+1, true) {
+		t.Fatal("ungated nav should enter the first link from the caret")
+	}
+	if !w.BrowseActive {
+		t.Error("entering a link should arm browse mode")
+	}
+	b := e.focusedLinkButton(w)
+	if b == nil {
+		t.Fatal("ungated nav should leave a link focused")
+	}
+	if b.Target != "d:e" {
+		t.Errorf("focused %q, want the first link at/after the caret (d:e)", b.Target)
+	}
+}
+
+// With the caret already inside a link, ungated nav steps to the sibling
+// rather than re-entering the one it is on.
+func TestNavLinkUngatedStepsFromCaretLink(t *testing.T) {
+	e, w, _ := linkEditor(t, "text [[a:b|Title]] mid [[b:c]] z\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8}) // inside link A
+	w.BrowseActive = false
+
+	if !e.navLink(+1, true) {
+		t.Fatal("ungated nav should step from the caret's own link")
+	}
+	if b := e.focusedLinkButton(w); b == nil || b.Target != "b:c" {
+		t.Fatalf("focused %+v, want the sibling link b:c", b)
 	}
 }
