@@ -197,3 +197,31 @@ func TestParseCodePointAcceptsUnicodeEscapes(t *testing.T) {
 		t.Errorf("parseCodePoint(%q) = %#x, want rejection", bs+"uD800", got)
 	}
 }
+
+// How the value survives PawScript, verified rather than assumed. All three
+// spellings must reach the same byte, because all three are things a user will
+// reasonably write:
+//
+//	insert_raw_byte "\\n"   doubled - the backslash survives as text
+//	insert_raw_byte (\n)    parenthesised - held absolutely intact
+//	insert_raw_byte "\n"    single - PawScript resolves it to a real newline
+//	                        BEFORE the command sees it, which is why the
+//	                        already-resolved case has to be handled too
+//
+// Unquoted (insert_raw_byte \n) is lossy - the backslash is eaten and only "n"
+// arrives - so it is not a supported spelling.
+func TestInsertRawByteSurvivesPawScriptQuoting(t *testing.T) {
+	bs := string(rune(92))
+	for _, script := range []string{
+		`insert_raw_byte "` + bs + bs + `n"`,
+		`insert_raw_byte (` + bs + `n)`,
+		`insert_raw_byte "` + bs + `n"`,
+	} {
+		e, w := newTestEditor(t, "ab\n")
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+		e.executeCommand(script)
+		if got := docContent(w); got != "a\nb" {
+			t.Errorf("%s inserted %q, want a newline between a and b", script, got)
+		}
+	}
+}
