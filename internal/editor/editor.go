@@ -1878,28 +1878,50 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(trimmedStart || trimmedEnd)
 	})
 
+	// insert and insert_newline DISPATCH on what the focused viewport is.
+	//
+	// A viewport running a terminal session gets the input sent to the child
+	// process, exactly as tinput would; anything else gets the buffer edit that
+	// used to carry these names (now buffer_insert / buffer_insert_newline).
+	//
+	// This is why the keymaps need no pty variant. tab, return, and every
+	// self-inserting key already end in `insert` or `insert_newline`, so typing
+	// into a terminal viewport reaches the shell through the bindings that were
+	// already there — and the same keys keep editing text everywhere else. One
+	// name, two meanings, chosen by what is under the caret.
 	ps.RegisterCommand("insert", func(ctx *pawscript.Context) pawscript.Result {
-		if len(ctx.Args) > 0 {
-			text := fmt.Sprintf("%v", ctx.Args[0])
-			e.insertText(text)
-			e.trackEdit()
-			e.editCoalesced = true // a single-point edit: coalesce the undo run
-			return pawscript.BoolStatus(true)
+		if e.focusedPTY() != nil {
+			if len(ctx.Args) > 0 {
+				if sb, ok := ctx.Args[0].(pawscript.StoredBytes); ok {
+					return pawscript.BoolStatus(e.ptySendBytes(sb.Data()))
+				}
+				return pawscript.BoolStatus(e.ptySendBytes([]byte(fmt.Sprintf("%v", ctx.Args[0]))))
+			}
+			return pawscript.BoolStatus(false)
 		}
-		return pawscript.BoolStatus(false)
+		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
 	})
 
-	// insert_newline breaks the line like `insert '\n'`, then — when the
+	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
+		if e.focusedPTY() != nil {
+			// A shell wants CR for Enter, not LF: that is what a terminal
+			// sends and what line discipline turns back into a newline.
+			return pawscript.BoolStatus(e.ptySendBytes([]byte{'\r'}))
+		}
+		return pawscript.BoolStatus(e.bufferInsertNewline())
+	})
+
+	ps.RegisterCommand("buffer_insert", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
+	})
+
+	// buffer_insert_newline breaks the line like `buffer_insert '\n'`, then — when the
 	// autoIndent option is on for the viewport — repeats the split line's
 	// leading whitespace so the new line starts under its text. It is the tail
 	// of the default Enter binding (nav_follow false|accept|insert_newline).
-	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.insertNewline()
-		if ok {
-			e.trackEdit()
-			e.editCoalesced = true // a single-point edit: coalesce the undo run
-		}
-		return pawscript.BoolStatus(ok)
+	// The plain name now DISPATCHES — see the pair registered above.
+	ps.RegisterCommand("buffer_insert_newline", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.bufferInsertNewline())
 	})
 
 	// insert_bidi_control inserts a Unicode bidi control by short name (lrm,
@@ -1987,7 +2009,9 @@ func (e *Editor) registerCommands() {
 	// The argument takes whichever form the value already has. A PawScript
 	// {bytes ...} value goes verbatim and whole, which is how a control byte or
 	// an escape sequence is written without quoting games: {bytes 0x03} is
-	// Ctrl-C, {bytes 0x1b 0x5b 0x41} is Up. A string sends its UTF-8 bytes, so
+	// Ctrl-C, and Up is either {bytes 0x1b5b41} or the comma-separated list
+	// {bytes 0x1b, 0x5b, 0x41}. The commas matter - without them it is symbol
+	// concatenation, not a byte list. A string sends its UTF-8 bytes, so
 	// tinput "ls\n" is what it looks like.
 	//
 	// Reports FALSE when the focused buffer runs nothing, so a chain like

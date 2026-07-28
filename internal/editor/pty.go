@@ -355,6 +355,41 @@ func (e *Editor) ptyEnded(b *buffer.Buffer) {
 	e.RequestRender()
 }
 
+// bufferInsertArgs is what buffer_insert does: insert the first argument at the
+// caret as one coalesced edit. Shared with the dispatching insert, which calls
+// it when the focused viewport is NOT running a terminal.
+func (e *Editor) bufferInsertArgs(args []interface{}) bool {
+	if len(args) == 0 {
+		return false
+	}
+	e.insertText(fmt.Sprintf("%v", args[0]))
+	e.trackEdit()
+	e.editCoalesced = true // a single-point edit: coalesce the undo run
+	return true
+}
+
+// bufferInsertNewline is what buffer_insert_newline does. Shared with the
+// dispatching insert_newline for the non-terminal case.
+func (e *Editor) bufferInsertNewline() bool {
+	ok := e.insertNewline()
+	if ok {
+		e.trackEdit()
+		e.editCoalesced = true
+	}
+	return ok
+}
+
+// focusedPTY is the session bound to the focused viewport's buffer, or nil.
+// The dispatching insert / insert_newline ask this to decide whether a
+// keystroke belongs to a child process or to the document.
+func (e *Editor) focusedPTY() PTYSession {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil {
+		return nil
+	}
+	return e.ptySessionFor(w.Buffer)
+}
+
 // ptySendBytes writes to the focused buffer's session. This is what the pty
 // keybinding context routes ordinary typing to instead of insert.
 func (e *Editor) ptySendBytes(data []byte) bool {

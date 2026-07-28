@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // stubPTY is a host-provided session: the two halves of a pipe, so a test can
@@ -155,7 +157,7 @@ func TestTinputAcceptsStringsAndByteValues(t *testing.T) {
 	}{
 		{`tinput "ls` + "\n" + `"`, "ls\n"},
 		{"tinput {bytes 0x03}", "\x03"},       // Ctrl-C
-		{"tinput {bytes 0x1b5b41}", "\x1b[A"}, // Up: ESC [ A as one value
+		{"tinput {bytes 0x1b5b41}", "\x1b[A"}, // Up: ESC [ A as one value; see also the comma list
 	} {
 		e, _ := newTestEditor(t, "x\n")
 		stub := newStubPTY()
@@ -309,5 +311,100 @@ func TestPTYEndedClosesTheSurface(t *testing.T) {
 	}
 	if e.ptySessionFor(w.Buffer) != nil {
 		t.Error("the session should be unbound after it ends")
+	}
+}
+
+// The plain names DISPATCH on what the focused viewport is: a terminal session
+// gets the input, anything else gets the buffer edit. This is why the keymaps
+// need no pty variant — tab, return and every self-inserting key already end in
+// insert or insert_newline.
+func TestInsertDispatchesToTerminalOrBuffer(t *testing.T) {
+	// No session: insert edits the buffer, exactly as buffer_insert would.
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	e.executeCommand("insert 'X'")
+	if got := docContent(w); got != "aXb" {
+		t.Errorf("no session: insert = %q, want aXb", got)
+	}
+
+	// With a session: the same command reaches the child instead, and the
+	// buffer is untouched.
+	e2, w2 := newTestEditor(t, "ab\n")
+	stub := newStubPTY()
+	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e2.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e2.executeCommand("insert 'X'")
+	if stub.sent() != "X" {
+		t.Errorf("session received %q, want X", stub.sent())
+	}
+	if got := docContent(w2); got != "ab" {
+		t.Errorf("buffer = %q, want it untouched while a session runs", got)
+	}
+}
+
+// Enter sends CR to a shell — what a terminal actually transmits, and what the
+// line discipline turns back into a newline — but breaks the line in a buffer.
+func TestInsertNewlineDispatches(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	e.executeCommand("insert_newline")
+	if got := docContent(w); got != "a\nb" {
+		t.Errorf("no session: insert_newline = %q, want a broken line", got)
+	}
+
+	e2, w2 := newTestEditor(t, "ab\n")
+	stub := newStubPTY()
+	e2.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e2.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e2.executeCommand("insert_newline")
+	if stub.sent() != "\r" {
+		t.Errorf("session received %q, want CR", stub.sent())
+	}
+	if got := docContent(w2); got != "ab" {
+		t.Errorf("buffer = %q, want it untouched", got)
+	}
+}
+
+// The buffer_ names always edit the buffer, session or not — that is the point
+// of splitting them out.
+func TestBufferInsertIgnoresTheSession(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	stub := newStubPTY()
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e.executeCommand("buffer_insert 'X'")
+	if got := docContent(w); got != "aXb" {
+		t.Errorf("buffer_insert = %q, want aXb even with a session running", got)
+	}
+	if stub.sent() != "" {
+		t.Errorf("buffer_insert must not reach the child, sent %q", stub.sent())
+	}
+}
+
+// {bytes ...} takes a comma-separated LIST as well as one value. Without the
+// commas it is symbol concatenation, which evaluates to something else
+// entirely — a mistake worth pinning so the comment above tinput stays true.
+func TestTinputBytesListSyntax(t *testing.T) {
+	for _, tc := range []struct{ script, want string }{
+		{"tinput {bytes 0x1b, 0x5b, 0x41}", "\x1b[A"},
+		{"tinput {bytes 0x1b5b41}", "\x1b[A"},
+	} {
+		e, _ := newTestEditor(t, "x\n")
+		stub := newStubPTY()
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+		if !e.execRequest("bash") {
+			t.Fatal("exec failed")
+		}
+		e.executeCommand(tc.script)
+		if stub.sent() != tc.want {
+			t.Errorf("%s sent %q, want %q", tc.script, stub.sent(), tc.want)
+		}
 	}
 }
