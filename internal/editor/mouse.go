@@ -76,15 +76,26 @@ func (e *Editor) handleMouseKey(key string) bool {
 	// modifier (meta/alt, ctrl, super/hyper): any of those on a left-click
 	// stands in for a right-click, because which modified clicks a terminal
 	// actually lets through varies wildly.
+	// The individual modifiers are kept alongside mod because a child process
+	// running in a terminal viewport wants the event as it happened (see
+	// ptyMouseKey); mod is mew's own collapsed reading of the same thing.
 	base := key
-	shift, mod := false, false
+	shift, alt, ctrl, mod := false, false, false, false
 	for {
 		switch {
 		case strings.HasPrefix(base, "S-"):
 			shift = true
 			base = base[2:]
 			continue
-		case strings.HasPrefix(base, "M-"), strings.HasPrefix(base, "C-"), strings.HasPrefix(base, "H-"):
+		case strings.HasPrefix(base, "M-"):
+			alt, mod = true, true
+			base = base[2:]
+			continue
+		case strings.HasPrefix(base, "C-"):
+			ctrl, mod = true, true
+			base = base[2:]
+			continue
+		case strings.HasPrefix(base, "H-"):
 			mod = true
 			base = base[2:]
 			continue
@@ -98,11 +109,27 @@ func (e *Editor) handleMouseKey(key string) bool {
 	e.renderMu.Lock()
 	defer e.renderMu.Unlock()
 
-	switch {
-	case strings.HasPrefix(base, "Mouse@"):
-		if x, y, ok := parseMouseAt(base[len("Mouse@"):]); ok {
+	// Position rides on the "@" forms and is remembered for the action keys
+	// that follow it. Hoisted out of the switch so every path — mew's own and
+	// the terminal's — reads one already-current position.
+	atOK := true
+	if i := strings.IndexByte(base, '@'); i >= 0 {
+		x, y, ok := parseMouseAt(base[i+1:])
+		atOK = ok
+		if ok {
 			e.mouseX, e.mouseY = x, y
 		}
+	}
+
+	// A terminal running in the focused viewport gets the mouse first, when
+	// its application asked for it.
+	if atOK && e.ptyMouseKey(base, shift, alt, ctrl, e.mouseX, e.mouseY) {
+		return true
+	}
+
+	switch {
+	case strings.HasPrefix(base, "Mouse@"):
+		// Position only; already recorded above.
 	case base == "MouseLeftPress":
 		// Any modifier beyond shift on a left-click is a RIGHT-click
 		// alternative (some terminals never deliver a real right button —
@@ -117,12 +144,11 @@ func (e *Editor) handleMouseKey(key string) bool {
 			e.mousePress(e.mouseX, e.mouseY, shift)
 		}
 	case strings.HasPrefix(base, "MouseLeftDrag@"):
-		if x, y, ok := parseMouseAt(base[len("MouseLeftDrag@"):]); ok {
-			e.mouseX, e.mouseY = x, y
+		if atOK {
 			if e.modebarNavCapture != 0 {
-				e.modebarNavDrag(x, y)
+				e.modebarNavDrag(e.mouseX, e.mouseY)
 			} else {
-				e.mouseDrag(x, y)
+				e.mouseDrag(e.mouseX, e.mouseY)
 			}
 		}
 	case base == "MouseLeftRelease", base == "MouseRelease":

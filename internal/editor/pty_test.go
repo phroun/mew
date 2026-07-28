@@ -468,3 +468,156 @@ func TestPTYClassKeysUnboundWithoutSession(t *testing.T) {
 		t.Errorf("back with no session = %q, want the character deleted", got)
 	}
 }
+
+// A surface is published only for a viewport ON SCREEN THIS FRAME. Switching
+// the viewport to another buffer, or hiding it, withdraws the surface — the
+// stale layout of a viewport that is no longer showing would otherwise keep
+// the child painted over whatever replaced it.
+func TestTerminalSurfaceWithdrawnWhenViewportOffScreen(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var placed [][]TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) {},
+		Place: func(s []TerminalSurface) { placed = append(placed, s) },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
+	e.notifyTerminalSurfaces()
+	if len(placed) != 1 || len(placed[0]) != 1 {
+		t.Fatalf("want the surface published while on screen, got %v", placed)
+	}
+
+	w.Visible = false
+	e.notifyTerminalSurfaces()
+	if len(placed) != 2 {
+		t.Fatalf("hiding the viewport should republish, got %d pushes", len(placed))
+	}
+	if len(placed[1]) != 0 {
+		t.Errorf("off-screen viewport still publishes %+v; the surface must be withdrawn", placed[1])
+	}
+}
+
+// Mouse events land in the child when its application is tracking the mouse:
+// mew asks the host what the event means and writes the answer to the session,
+// so every byte a child receives still leaves by the one door.
+func TestPTYMouseForwarding(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
+	stub := newStubPTY()
+	var got TerminalMouse
+	var gotID string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+		Mouse: func(id string, ev TerminalMouse) []byte {
+			gotID, got = id, ev
+			return []byte("\x1b[<0;1;1M")
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+
+	e.handleMouseKey("Mouse@6,3")
+	e.handleMouseKey("C-MouseLeftPress")
+	if gotID == "" {
+		t.Fatal("the host was never asked about the event")
+	}
+	// Screen cell 6,3 inside a content area starting at 5,3 (1-based) is the
+	// child's own cell 2,1.
+	if got.Col != 2 || got.Row != 1 {
+		t.Errorf("event at %d,%d, want the surface-relative 2,1", got.Col, got.Row)
+	}
+	if got.Action != TerminalMousePress || got.Button != TerminalMouseButtonLeft {
+		t.Errorf("action/button = %v/%v, want a left press", got.Action, got.Button)
+	}
+	// mew reads ctrl+left as a right-click for its own purposes; the child
+	// gets what actually happened.
+	if !got.Ctrl || got.Shift || got.Alt {
+		t.Errorf("modifiers = ctrl:%v shift:%v alt:%v, want ctrl only", got.Ctrl, got.Shift, got.Alt)
+	}
+	if stub.sent() != "\x1b[<0;1;1M" {
+		t.Errorf("session received %q, want the host's report bytes", stub.sent())
+	}
+}
+
+// Wheel, drag and bare motion all reach the host with the shape the tracking
+// modes distinguish; a scroll is not a button and a drag carries its button.
+func TestPTYMouseEventShapes(t *testing.T) {
+	for _, tc := range []struct {
+		keys   []string
+		action TerminalMouseAction
+		button TerminalMouseButton
+	}{
+		{[]string{"MouseScrollUp"}, TerminalMouseScrollUp, TerminalMouseButtonNone},
+		{[]string{"MouseScrollDown"}, TerminalMouseScrollDown, TerminalMouseButtonNone},
+		{[]string{"MouseLeftDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
+		{[]string{"MouseDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
+		{[]string{"MouseRightPress"}, TerminalMousePress, TerminalMouseButtonRight},
+		{[]string{"MouseLeftRelease"}, TerminalMouseRelease, TerminalMouseButtonLeft},
+	} {
+		e, w := newTestEditor(t, "x\n")
+		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
+		var got TerminalMouse
+		e.Config.TerminalSurfaces = TerminalHooks{
+			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+			Mouse: func(_ string, ev TerminalMouse) []byte { got = ev; return []byte{'x'} },
+		}
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+		if !e.execRequest("bash") {
+			t.Fatal("exec failed")
+		}
+		e.handleMouseKey("Mouse@6,3")
+		got = TerminalMouse{}
+		for _, k := range tc.keys {
+			e.handleMouseKey(k)
+		}
+		if got.Action != tc.action || got.Button != tc.button {
+			t.Errorf("%v: action/button = %v/%v, want %v/%v", tc.keys, got.Action, got.Button, tc.action, tc.button)
+		}
+	}
+}
+
+// A "no" from the host is the ordinary case — the application never turned
+// mouse tracking on — and mew's own handling resumes. So does an event outside
+// the terminal's rectangle, and one in a viewport that is not focused.
+func TestPTYMouseFallsThrough(t *testing.T) {
+	newHostedEditor := func(t *testing.T, reply []byte) (*Editor, *viewport.Viewport, *int) {
+		t.Helper()
+		e, w := newTestEditor(t, "hello\n")
+		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
+		asked := 0
+		e.Config.TerminalSurfaces = TerminalHooks{
+			Open: func(string, int, int) {}, Feed: func(string, []byte) {},
+			Mouse: func(string, TerminalMouse) []byte { asked++; return reply },
+		}
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+		if !e.execRequest("bash") {
+			t.Fatal("exec failed")
+		}
+		return e, w, &asked
+	}
+
+	// Not tracking: asked, declined, and mew's own press ran.
+	e, _, asked := newHostedEditor(t, nil)
+	e.handleMouseKey("Mouse@6,3")
+	e.handleMouseKey("MouseLeftPress")
+	if *asked != 1 {
+		t.Errorf("host asked %d times, want once", *asked)
+	}
+	if !e.dragSel.active {
+		t.Error("a declined event should reach mew's own press handling")
+	}
+
+	// Outside the terminal's rectangle: never asked at all.
+	e2, _, asked2 := newHostedEditor(t, []byte{'x'})
+	e2.handleMouseKey("Mouse@2,3") // left of the content area
+	e2.handleMouseKey("MouseLeftPress")
+	if *asked2 != 0 {
+		t.Errorf("a click outside the surface asked the host %d times, want none", *asked2)
+	}
+}

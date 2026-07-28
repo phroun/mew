@@ -287,6 +287,7 @@ func (e *Editor) run() {
 			Feed:  e.terminalFeed,
 			Place: e.terminalPlace,
 			Close: e.terminalClose,
+			Mouse: e.terminalMouse,
 		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
@@ -814,17 +815,102 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 		s.clipWidth, s.clipHeight = want.ClipWidth, want.ClipHeight
 		s.focused = want.Focused
 	}
-	// Cede the platform caret — position AND DECSCUSR shape — to the focused
-	// session's child. mew keeps keyboard focus, so its keymap still runs; only
-	// the drawn cursor moves, because while you type at a shell the cursor you
-	// are watching is the shell's.
+	// Hand the focused session's child the whole notion of focus — the caret
+	// (position AND DECSCUSR shape), the focused cursor form, the blink, and
+	// the emulator's own focused flag. mew keeps keyboard focus, so its keymap
+	// still runs; but while you are typing at a shell, the shell is what you
+	// are attending to, and a terminal that believes itself unfocused draws a
+	// hollow box that does not blink.
 	for _, s := range e.termSurfaces {
 		if s.term != nil {
-			s.term.SetCaretActive(s.focused && s.clipWidth > 0 && s.clipHeight > 0)
+			s.term.SetEmbeddedFocus(s.focused && s.clipWidth > 0 && s.clipHeight > 0)
 		}
 	}
 	e.termMu.Unlock()
 	e.Update()
+}
+
+// terminalMouse answers what one mouse event MEANS to a session's terminal:
+// the bytes its child should receive, or nil when the child has no claim on
+// the mouse.
+//
+// The claim is the tracking mode the application turned on, and it is the
+// emulator — this child PurfecTerm — that watched it go by in the output
+// stream. mew cannot know it, which is why the question comes here. The
+// answer goes back to mew and out through the session, so the one door every
+// other byte leaves by stays the only one.
+//
+// The gating mirrors the trinket's own handlers: 1000 reports buttons only,
+// 1002 adds drags, 1003 adds bare motion.
+func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) []byte {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return nil
+	}
+	mode, enc := s.term.mouseTracking()
+	if mode == 0 {
+		return nil // the application never asked for the mouse
+	}
+
+	btn, press := 0, true
+	switch ev.Action {
+	case mew.TerminalMousePress:
+		btn, _ = purfMouseButton(termMouseButton(ev.Button))
+	case mew.TerminalMouseRelease:
+		btn, _ = purfMouseButton(termMouseButton(ev.Button))
+		press = false
+	case mew.TerminalMouseMotion:
+		if ev.Button == mew.TerminalMouseButtonNone {
+			if mode < 1003 {
+				return nil // only all-motion tracking reports a bare move
+			}
+			btn = purfecterm.MouseButtonNone
+		} else {
+			if mode < 1002 {
+				return nil // 1000 reports no motion at all
+			}
+			btn, _ = purfMouseButton(termMouseButton(ev.Button))
+		}
+		btn |= purfecterm.MouseMotionFlag
+	case mew.TerminalMouseScrollUp:
+		btn = purfecterm.MouseScrollUp
+	case mew.TerminalMouseScrollDown:
+		btn = purfecterm.MouseScrollDown
+	case mew.TerminalMouseScrollLeft:
+		btn = mouseScrollLeftBtn
+	case mew.TerminalMouseScrollRight:
+		btn = mouseScrollRightBtn
+	default:
+		return nil
+	}
+
+	if ev.Shift {
+		btn |= purfecterm.MouseModShift
+	}
+	if ev.Alt {
+		btn |= purfecterm.MouseModAlt
+	}
+	if ev.Ctrl {
+		btn |= purfecterm.MouseModControl
+	}
+	return purfecterm.EncodeMouseEvent(btn, ev.Col, ev.Row, press, enc)
+}
+
+// termMouseButton maps mew's button to the toolkit's, so the one existing
+// button table (purfMouseButton) stays the only place that knows purfecterm's
+// report numbering.
+func termMouseButton(b mew.TerminalMouseButton) core.MouseButton {
+	switch b {
+	case mew.TerminalMouseButtonLeft:
+		return core.LeftButton
+	case mew.TerminalMouseButtonMiddle:
+		return core.MiddleButton
+	case mew.TerminalMouseButtonRight:
+		return core.RightButton
+	}
+	return core.NoButton
 }
 
 // terminalClose destroys a child once its session has ended.

@@ -110,6 +110,48 @@ type TerminalSurface struct {
 	Focused bool
 }
 
+// TerminalMouseAction and TerminalMouseButton name one mouse event without
+// naming an encoding. Which bytes a terminal application actually receives —
+// whether it receives any at all — depends on the tracking and encoding modes
+// that application turned on, and that state lives in the emulator consuming
+// the output stream, not here. So mew reports WHAT HAPPENED and the host,
+// which owns the emulator, answers with the bytes.
+type TerminalMouseAction int
+
+const (
+	TerminalMousePress TerminalMouseAction = iota
+	TerminalMouseRelease
+	TerminalMouseMotion // a drag (Button set) or bare motion (ButtonNone)
+	TerminalMouseScrollUp
+	TerminalMouseScrollDown
+	TerminalMouseScrollLeft
+	TerminalMouseScrollRight
+)
+
+type TerminalMouseButton int
+
+const (
+	TerminalMouseButtonNone TerminalMouseButton = iota
+	TerminalMouseButtonLeft
+	TerminalMouseButtonMiddle
+	TerminalMouseButtonRight
+)
+
+// TerminalMouse is one mouse event addressed to a terminal surface, in that
+// surface's OWN 1-based cells — so the host never has to know where mew put
+// the grid, and mew never has to know how the child reads it.
+//
+// The modifiers are the real ones. mew's own handling folds ctrl/alt/super
+// onto a left click into a right click (terminals vary wildly in which
+// modified clicks they deliver at all), but a child process asked for the
+// mouse and gets it as it happened.
+type TerminalMouse struct {
+	Col, Row         int
+	Action           TerminalMouseAction
+	Button           TerminalMouseButton
+	Shift, Alt, Ctrl bool
+}
+
 // TerminalHooks is how a host renders mew's terminal sessions. mew does not
 // emulate a terminal: it hands the raw bytes over and says where to draw.
 //
@@ -125,6 +167,17 @@ type TerminalHooks struct {
 	Feed  func(id string, p []byte)
 	Place func(surfaces []TerminalSurface)
 	Close func(id string)
+
+	// Mouse asks what one mouse event MEANS to the surface's terminal, and
+	// returns the bytes the child should receive — nil when that application
+	// is not tracking the mouse, or when this event is one its tracking mode
+	// does not report. mew writes what comes back to the session, so every
+	// byte a child receives still leaves through the one door, exactly as
+	// keystrokes do.
+	//
+	// A translation and not a delivery: the host owns the emulator and so
+	// knows the tracking mode, but the session belongs to mew.
+	Mouse func(id string, ev TerminalMouse) []byte
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -286,7 +339,13 @@ func (e *Editor) notifyTerminalSurfaces() {
 	focused := e.ViewportManager.GetFocusedViewport()
 	var surfaces []TerminalSurface
 	for _, w := range e.ViewportManager.AllViewports() {
-		if w.Buffer == nil || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
+		// ON SCREEN THIS FRAME, not merely holding the buffer: a viewport that
+		// was swapped to another buffer, hidden, or stacked behind another
+		// keeps its last layout, and a surface published from that stale
+		// geometry goes on painting over whatever took its place. This is the
+		// same test viewportAtRow uses to keep a background viewport's stale
+		// rows from swallowing clicks.
+		if !e.viewportOnScreen(w) || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
 			continue
 		}
 		id, ok := byBuffer[w.Buffer]
@@ -415,6 +474,106 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 		return false
 	}
 	return true
+}
+
+// ptyMouseKey offers one mouse pseudo-key to the focused viewport's terminal
+// before mew's own mouse semantics see it. Reports true when the child took
+// it — when the host answered with bytes and they went out on the session.
+//
+// A "no" is the ordinary case and falls straight through: an application that
+// never turned mouse tracking on has no opinion about the mouse, and mew's own
+// handling (which does nearly nothing over an empty terminal buffer) resumes.
+// That is also the seam where terminal-side selection and scrollback will hang
+// once the scrollback lands, because that is exactly the mouse a
+// non-tracking terminal owns.
+//
+// x and y are 1-based screen cells (e.mouseX/e.mouseY, already updated by the
+// caller). Only the FOCUSED viewport forwards, matching every other input rule
+// here: a click in an unfocused viewport still focuses it instead.
+func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool {
+	if e.Config.TerminalSurfaces.Mouse == nil {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w.Buffer]
+	e.ptyMu.Unlock()
+	if st == nil {
+		return false
+	}
+	// The surface's grid is the viewport's content area — the same rectangle
+	// notifyTerminalSurfaces publishes — so the child's own 1-based cell is
+	// the offset from its origin.
+	col := x - w.ContentX
+	row := y - w.ContentY
+	if col < 1 || row < 1 || col > w.ContentWidth || row > w.ContentHeight {
+		return false
+	}
+	ev, ok := terminalMouseFromKey(base, shift, alt, ctrl)
+	if !ok {
+		return false
+	}
+	ev.Col, ev.Row = col, row
+	data := e.Config.TerminalSurfaces.Mouse(st.id, ev)
+	if len(data) == 0 {
+		return false
+	}
+	if _, err := st.sess.Write(data); err != nil {
+		e.ShowWarning("Session write failed: " + err.Error())
+		return false
+	}
+	return true
+}
+
+// terminalMouseFromKey reads one of mew's mouse pseudo-keys — the vocabulary
+// handleMouseKey dispatches on, with its modifier prefixes already stripped —
+// as a terminal mouse event. Col and Row are the caller's to fill in.
+//
+// A bare "Mouse@x,y" is position only: it precedes an action and is not one,
+// so it reports false and the action that follows carries the position.
+func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bool) {
+	ev := TerminalMouse{Shift: shift, Alt: alt, Ctrl: ctrl}
+	name := base
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		name = name[:i]
+	}
+	switch name {
+	case "MousePress", "MouseLeftPress":
+		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonLeft
+	case "MouseMiddlePress":
+		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonMiddle
+	case "MouseRightPress":
+		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonRight
+	case "MouseRelease", "MouseLeftRelease":
+		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonLeft
+	case "MouseMiddleRelease":
+		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonMiddle
+	case "MouseRightRelease":
+		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonRight
+	case "MouseLeftDrag":
+		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonLeft
+	case "MouseMiddleDrag":
+		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonMiddle
+	case "MouseRightDrag":
+		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonRight
+	case "MouseDrag":
+		// All-motion tracking: movement with no button held.
+		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonNone
+	case "MouseScrollUp":
+		ev.Action = TerminalMouseScrollUp
+	case "MouseScrollDown":
+		ev.Action = TerminalMouseScrollDown
+	case "MouseScrollLeft":
+		ev.Action = TerminalMouseScrollLeft
+	case "MouseScrollRight":
+		ev.Action = TerminalMouseScrollRight
+	default:
+		return TerminalMouse{}, false
+	}
+	return ev, true
 }
 
 // closePTYSessions ends every live session. Called when the editor shuts down

@@ -216,6 +216,33 @@ type TerminalSurface = editor.TerminalSurface
 // TerminalHooks is how a host renders mew's terminal sessions.
 type TerminalHooks = editor.TerminalHooks
 
+// TerminalMouse is one mouse event addressed to a terminal surface, in that
+// surface's own 1-based cells. See TerminalHooks.Mouse: mew reports what
+// happened and the host, which owns the emulator and so knows the tracking
+// mode, answers with the bytes the child should receive.
+type TerminalMouse = editor.TerminalMouse
+
+type TerminalMouseAction = editor.TerminalMouseAction
+
+const (
+	TerminalMousePress       = editor.TerminalMousePress
+	TerminalMouseRelease     = editor.TerminalMouseRelease
+	TerminalMouseMotion      = editor.TerminalMouseMotion
+	TerminalMouseScrollUp    = editor.TerminalMouseScrollUp
+	TerminalMouseScrollDown  = editor.TerminalMouseScrollDown
+	TerminalMouseScrollLeft  = editor.TerminalMouseScrollLeft
+	TerminalMouseScrollRight = editor.TerminalMouseScrollRight
+)
+
+type TerminalMouseButton = editor.TerminalMouseButton
+
+const (
+	TerminalMouseButtonNone   = editor.TerminalMouseButtonNone
+	TerminalMouseButtonLeft   = editor.TerminalMouseButtonLeft
+	TerminalMouseButtonMiddle = editor.TerminalMouseButtonMiddle
+	TerminalMouseButtonRight  = editor.TerminalMouseButtonRight
+)
+
 // WithTerminalSurfaces lets the host draw mew's terminal sessions. mew does NOT
 // emulate a terminal: it forwards the session's raw bytes and republishes, after
 // every render, the complete set of rectangles where visible sessions belong.
