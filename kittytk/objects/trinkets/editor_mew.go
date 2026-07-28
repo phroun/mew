@@ -17,6 +17,8 @@ package trinkets
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +26,7 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
+	"github.com/phroun/purfecterm"
 )
 
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
@@ -262,6 +265,10 @@ func (e *Editor) run() {
 		// renderer cleanup restores nothing the user can see. Without this the
 		// user keeps their unsaved work and loses their shell.
 		mew.WithRestoreHostTerminal(e.restoreHostTerminal),
+		// Terminal sessions. This trinket's host decides what a request means;
+		// see ptyProvider. A host that wants to sandbox or redirect a hosted
+		// mew simply supplies a different one - mew cannot tell.
+		mew.WithPTYProvider(e.ptyProvider),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
 		// use, kept separate from mew's own kill ring. mew calls these on
@@ -638,4 +645,70 @@ func (e *Editor) restoreHostTerminal() {
 	if r, ok := d.Backend().(terminalRestorer); ok {
 		r.RestoreTerminal()
 	}
+}
+
+// ptyProvider answers mew's exec: it grants a REAL shell in a real directory.
+//
+// That is the right answer for THIS host and only because of who is asking.
+// The root mew belongs to the person running it, on their own machine, so a
+// request for "bash" in their own project directory is a request they are
+// already entitled to make from any shell they own. A host embedding mew in
+// someone else's application supplies its own provider instead, and mew cannot
+// tell the difference: the session speaks only bytes.
+//
+// The provider is where the gate lives, so it is the one place a policy could
+// be added - a directory allowlist, a command allowlist, a prompt. There is
+// none here on purpose: adding one would be theatre when the same user can
+// open a terminal themselves.
+func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
+	cmdName := strings.TrimSpace(req.Command)
+	if cmdName == "" {
+		return nil, fmt.Errorf("no command given")
+	}
+	path, err := exec.LookPath(cmdName)
+	if err != nil {
+		return nil, fmt.Errorf("%s: not found", cmdName)
+	}
+
+	// A blank CWD means the buffer has no filename, and the host decides what
+	// that means. For the user's own mew, that is their home directory.
+	dir := ""
+	if req.CWD != "" {
+		if p, ok := localPathFromURL(req.CWD); ok {
+			dir = p
+		}
+	}
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+
+	pty, err := purfecterm.NewPTY()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(path)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	if err := pty.Start(cmd); err != nil {
+		_ = pty.Close()
+		return nil, err
+	}
+	if req.Cols > 0 && req.Rows > 0 {
+		_ = pty.Resize(req.Cols, req.Rows)
+	}
+	// purfecterm's PTY is mew's PTYSession plus Start, so it satisfies the
+	// narrower interface directly - and mew, holding only that interface,
+	// has no way to call Start on it.
+	return pty, nil
+}
+
+// localPathFromURL turns a canonical file:// URL back into an OS path, or
+// reports false for any other scheme. A host that grants only sandboxed
+// sessions would reject here instead.
+func localPathFromURL(u string) (string, bool) {
+	const p = "file://"
+	if !strings.HasPrefix(u, p) {
+		return "", false
+	}
+	return strings.TrimPrefix(u, p), true
 }

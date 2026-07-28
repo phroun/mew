@@ -186,6 +186,33 @@ func WithHostPort(p *HostPort) Option {
 // fn runs on the signal-handler goroutine, after the dump and before the exit.
 // It must be safe off the main loop, safe to call more than once, and must not
 // exit.
+// PTYRequest and PTYSession are the terminal-session seam: mew asks for a
+// session by naming a working directory and a command, and the host hands back
+// something it can only read, write, resize and close. See WithPTYProvider.
+type PTYRequest = editor.PTYRequest
+
+// PTYSession is a live terminal session. Deliberately NOT purfecterm's PTY
+// interface: that one also has Start(*exec.Cmd), and a mew embedded in someone
+// else's application must hold nothing that can name a local binary.
+type PTYSession = editor.PTYSession
+
+// WithPTYProvider lets the host grant terminal sessions to mew's exec command.
+// fn receives a working directory (a canonical URL, or "" for a buffer with no
+// filename - the host decides what that means) and a command NAME, and returns
+// a session or an error. Returning an error is an ordinary outcome: mew reports
+// it and carries on.
+//
+// The host owns the whole meaning. A root mew whose user owns the machine gets
+// a real shell in a real directory. A mew hosted inside another application can
+// be given a container, a remote box, a restricted menu, or nothing at all -
+// and cannot tell which, because the session speaks only bytes.
+//
+// fn is called on mew's main loop. The session's methods are called from mew's
+// main loop and from the session's own reader goroutine.
+func WithPTYProvider(fn func(PTYRequest) (PTYSession, error)) Option {
+	return func(cfg *editor.Config) { cfg.PTYProvider = fn }
+}
+
 func WithRestoreHostTerminal(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
 }

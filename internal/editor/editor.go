@@ -237,6 +237,12 @@ type Editor struct {
 	// processor, so an unchanged set is not rebuilt.
 	appliedMappingSet string
 
+	// ptySessions binds a buffer to the host-provided terminal session it is
+	// running, and ptyMu guards it: the read loop lives on the session's own
+	// goroutine while commands touch the map from the main loop. See pty.go.
+	ptyMu       sync.Mutex
+	ptySessions map[*buffer.Buffer]*ptyState
+
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
 	// undo revision by opening a command transaction on the first chunk and
@@ -653,6 +659,13 @@ type Config struct {
 	// inject editor commands (port.Execute("os_copy")) from its own threads:
 	// each command is marshaled onto the editor main loop. See HostPort.
 	HostPort *HostPort
+
+	// PTYProvider, when set, is how mew obtains a terminal session: it asks,
+	// naming a working directory and a command, and the host decides what
+	// those mean - a real shell, a container, a menu, or a refusal. mew never
+	// spawns a process itself and holds nothing that could. Left unset, the
+	// exec command reports that this host grants no sessions. See pty.go.
+	PTYProvider func(PTYRequest) (PTYSession, error)
 
 	// RestoreHostTerminal, when set, hands the TERMINAL back to whatever put it
 	// into raw mode / the alternate screen. mew calls it on the emergency exit
@@ -1927,6 +1940,46 @@ func (e *Editor) registerCommands() {
 	// or with no argument a prompt. Hex by default (U+xxxx, 0xxxxx or bare),
 	// "#" prefixes decimal. The companion to insert_bidi_control for
 	// every scalar that has no name of its own.
+	// exec turns the focused buffer into a terminal session. The working
+	// directory comes from the buffer itself (blank when it has no filename -
+	// the HOST decides what that means); the command is the argument, or a
+	// prompt when none is given.
+	//
+	// This deliberately shadows PawScript's own exec. PawScript is built for
+	// exactly that: a host replacing an internal with its own version so that
+	// client code reaches the sandboxed one. mew's exec cannot run anything by
+	// itself - it can only ask its host.
+	ps.RegisterCommand("exec", func(ctx *pawscript.Context) pawscript.Result {
+		if arg, ok := argString(ctx, 0); ok && strings.TrimSpace(arg) != "" {
+			return pawscript.BoolStatus(e.execRequest(arg))
+		}
+		expired := &atomic.Bool{}
+		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+			tokenTimeout(e.Config.PromptTimeout))
+		e.PromptMgr.PromptForInput("Execute what? ", "",
+			func(accepted bool, _, input string) {
+				defer e.RequestRender()
+				if expired.Load() {
+					e.ShowWarning("Prompt timed out")
+					return
+				}
+				if !accepted || strings.TrimSpace(input) == "" {
+					ctx.ResumeToken(token, false)
+					return
+				}
+				ctx.ResumeToken(token, e.execRequest(input))
+			}, "exec")
+		return pawscript.TokenResult(token)
+	})
+
+	// pty_send writes to the focused buffer's session, and reports FALSE when
+	// there is none - so a chain like pty_send|insert falls through to ordinary
+	// editing in a buffer that is not running anything.
+	ps.RegisterCommand("pty_send", func(ctx *pawscript.Context) pawscript.Result {
+		text, _ := argString(ctx, 0)
+		return pawscript.BoolStatus(e.ptySend(text))
+	})
+
 	ps.RegisterCommand("insert_rune", func(ctx *pawscript.Context) pawscript.Result {
 		if arg, ok := argString(ctx, 0); ok {
 			r, ok := parseCodePoint(arg)
