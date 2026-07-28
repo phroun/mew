@@ -766,10 +766,11 @@ func hostPTYProbe() []probeResult {
 // keystrokes as keystrokes and has nothing to echo back, so what is typed
 // must be put on screen here or the person types blind.
 //
-// AND A CONSOLE HAS A LINE DISCIPLINE. Enter at a terminal is a carriage
-// return, and the terminal turns it into the line ending the reader wants. A
-// pipe delivers exactly the bytes written, so a bare CR arrives as no line at
-// all: the shell waits forever for an end-of-line that was already sent.
+// AND A CONSOLE COLLECTS A LINE. It accumulates what is typed, erases on
+// backspace, and hands the reader the whole line at once when Enter is
+// pressed. A pipe delivers every write immediately, so a letter is a write of
+// one byte — and a reader that treats each read as a line's worth then sees a
+// command per keystroke. Both halves are in lineDisc.
 type pipeChild struct {
 	mu     sync.Mutex
 	out    windows.Handle
@@ -786,12 +787,16 @@ type pipeChild struct {
 	// whatever the child says next. rest holds a chunk part-way delivered.
 	stream chan []byte
 	rest   []byte
+	// disc is the line discipline the absent console would have been: it
+	// collects a line, echoes it, erases on backspace, and releases the whole
+	// line when Enter is pressed. See editor_mew_linedisc.go.
+	disc lineDisc
 }
 
 func newPipeChild(path string, args []string, dir string, env []string) (*pipeChild, error) {
 	p := &pipeChild{reaped: make(chan struct{}), stream: make(chan []byte, 64)}
 	p.note("no CreatePseudoConsole: plain pipes as std handles")
-	p.note("local echo ON and CR translated to CRLF (a pipe has neither)")
+	p.note("line discipline ON: echo, backspace, and one write per line")
 
 	sa := &windows.SecurityAttributes{InheritHandle: 1}
 	sa.Length = uint32(unsafe.Sizeof(*sa))
@@ -901,24 +906,16 @@ func (p *pipeChild) Write(b []byte) (int, error) {
 		return 0, io.ErrClosedPipe
 	}
 
-	// CR -> CRLF, and a CR already followed by LF left alone.
-	var outb []byte
-	for i := 0; i < len(b); i++ {
-		if b[i] == '\r' {
-			outb = append(outb, '\r', '\n')
-			if i+1 < len(b) && b[i+1] == '\n' {
-				i++
-			}
-			continue
+	toChild, echo := p.disc.Feed(b)
+	if len(echo) > 0 {
+		p.emit(echo) // what the absent console would have shown
+	}
+	if len(toChild) > 0 {
+		var n uint32
+		if err := windows.WriteFile(h, toChild, &n, nil); err != nil {
+			return 0, err
 		}
-		outb = append(outb, b[i])
 	}
-
-	var n uint32
-	if err := windows.WriteFile(h, outb, &n, nil); err != nil {
-		return 0, err
-	}
-	p.emit(append([]byte(nil), outb...)) // the echo a console would have done
 	return len(b), nil
 }
 
