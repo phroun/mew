@@ -274,6 +274,14 @@ func optsForMethod(name string) (conOpts, string) {
 	return conOpts{}, ptyMethods[0].Desc
 }
 
+// settleWait is how long a new pseudoconsole is watched before it is handed
+// over. Long enough to catch a child that dies on the spot; short enough that
+// opening a terminal still feels immediate.
+const settleWait = 400 * time.Millisecond
+
+// conAttempts is how many times a pseudoconsole is tried before falling back.
+const conAttempts = 3
+
 func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew.PTYSession, error) {
 	opt, desc := optsForMethod(method)
 	if opt.plainPipes {
@@ -283,14 +291,66 @@ func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew
 		}
 		return p, nil
 	}
-	p, err := newConPTY(path, nil, dir, env, cols, rows, opt)
-	if p != nil {
+
+	// The pseudoconsole is INTERMITTENT here: the same binary, the same
+	// command, the same machine, and one launch in several produces a child
+	// that attaches and exits 0 on the spot while the next works perfectly.
+	// The race behind that is not understood yet.
+	//
+	// It does not have to be understood to be survived. A child that is still
+	// alive a moment later is a child that started properly, and one that is
+	// not costs nothing to throw away and ask for again — nobody has seen it,
+	// because the session has not been handed over. Three tries, and then the
+	// plain-pipe shell, which always works and says so.
+	//
+	// This is a workaround and is labelled one. If the intermittency is ever
+	// explained, the retry goes and this comment goes with it.
+	var last error
+	for attempt := 1; attempt <= conAttempts; attempt++ {
+		p, err := newConPTY(path, nil, dir, env, cols, rows, opt)
+		if err != nil {
+			last = err
+			if p != nil {
+				_ = p.Close()
+			}
+			continue
+		}
 		p.note("method: %s", desc)
+		if !p.diedWithin(settleWait) {
+			if attempt > 1 {
+				p.note("started on attempt %d", attempt)
+			}
+			return p, nil
+		}
+		p.note("child exited immediately on attempt %d — discarding and retrying", attempt)
+		_ = p.Close()
 	}
+
+	// Every attempt died on the spot. A limited shell that works beats a
+	// correct one that does not, and the child says which it is.
+	pc, err := newPipeChild(path, nil, dir, env)
 	if err != nil {
+		if last != nil {
+			return nil, last
+		}
 		return nil, err
 	}
-	return p, nil
+	pc.note("fell back after %d pseudoconsole attempts all exited immediately", conAttempts)
+	pc.emit([]byte("\r\n[mew: the pseudoconsole would not start after " +
+		fmt.Sprint(conAttempts) + " tries; this is a plain-pipe shell —\r\n" +
+		" no resize, no console API, no full-screen programs]\r\n\r\n"))
+	return pc, nil
+}
+
+// diedWithin reports whether the child is already gone. False means it is
+// still running, which is all a shell has to do to have started properly.
+func (p *conPTY) diedWithin(d time.Duration) bool {
+	select {
+	case <-p.reaped:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 // newConPTY is hostPTY with the argument list exposed, so the self-test can
