@@ -4,6 +4,16 @@
 v0.3.9. Affects every consumer that enables mouse reporting, and any that
 runs where two sequences can land in one read.*
 
+**An applyable patch against v0.3.9 is next to this file:
+[`0001-dkh-esc-restart.patch`](0001-dkh-esc-restart.patch).** It is a
+`git format-patch` output — `git am < 0001-dkh-esc-restart.patch` from the
+repository root, or `git apply` / `patch -p1` if you would rather write your
+own commit message. It touches `keyboard/handler.go` (the fix, ~10 lines) and
+adds `keyboard/escrestart_test.go` (the table below, as a test). Verified
+against v0.3.9: `go build ./...` clean, `go test ./keyboard/` passes, and the
+reproduction below emits the right keys for all four inputs. The patch leaves
+the file's existing gofmt drift alone rather than reformatting around itself.
+
 ---
 
 ## Symptom
@@ -107,13 +117,17 @@ rather than a literal; if it does not, special-case that one length.
 fixes them together, so it is worth adding all four rows of the table as test
 cases.
 
-## Test suggestion
+## Test
+
+The patch adds `keyboard/escrestart_test.go`, built on the `feedKeys` helper
+already in `f1legacy_test.go`:
 
 ```go
 func TestEscRestartsTheSequence(t *testing.T) {
-    for _, tc := range []struct{ in string; want []string }{
+    for _, c := range []struct{ raw string; want []string }{
         {"\x1b",                 []string{"Escape"}},
         {"\x1b[<35;12;5M",       []string{"MouseDrag@12,5"}},
+        {"\x1b[A",               []string{"Up"}},
         {"\x1b\x1b[<35;12;5M",   []string{"Escape", "MouseDrag@12,5"}},
         {"\x1b\x1b[A",           []string{"Escape", "Up"}},
         {"\x1b\x1b",             []string{"Escape", "Escape"}},
@@ -121,5 +135,5 @@ func TestEscRestartsTheSequence(t *testing.T) {
 }
 ```
 
-The third row is the reported bug; the last covers a double-tap of Escape,
-which some editors bind and which today produces `Special`.
+The fourth row is the reported bug; the last covers a double-tap of Escape,
+which some editors bind and which before the fix produced `Special`.
