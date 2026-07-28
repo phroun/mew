@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -703,24 +704,12 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
-	pty, err := purfecterm.NewPTY()
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.Command(path)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	if err := pty.Start(cmd); err != nil {
-		_ = pty.Close()
-		return nil, err
-	}
-	if req.Cols > 0 && req.Rows > 0 {
-		_ = pty.Resize(req.Cols, req.Rows)
-	}
-	// purfecterm's PTY is mew's PTYSession plus Start, so it satisfies the
-	// narrower interface directly - and mew, holding only that interface,
-	// has no way to call Start on it.
-	return pty, nil
+	env := append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	// How a machine makes a terminal is the one part of this that is not the
+	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
+	// before it starts on Windows. hostPTY is per-platform; everything above
+	// it, and mew entirely, is not.
+	return hostPTY(path, dir, env, req.Cols, req.Rows)
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or
@@ -731,7 +720,29 @@ func localPathFromURL(u string) (string, bool) {
 	if !strings.HasPrefix(u, p) {
 		return "", false
 	}
-	return strings.TrimPrefix(u, p), true
+	return urlPathToLocal(strings.TrimPrefix(u, p), runtime.GOOS == "windows"), true
+}
+
+// urlPathToLocal undoes what mew did to make the URL: separators normalized to
+// "/", and a leading "/" added when the path did not already begin with one.
+// On POSIX that added nothing (an absolute path starts with "/" already), so
+// there is nothing to undo. On Windows it prefixed the drive letter —
+// C:\proj became /C:/proj — and a path handed back with that slash still on
+// the front is not a path any Windows API will accept. A UNC path needs no
+// such repair: \\server\share was already //server/share and keeps both
+// leading slashes.
+func urlPathToLocal(p string, windows bool) string {
+	if !windows {
+		return p
+	}
+	if len(p) >= 3 && p[0] == '/' && p[2] == ':' &&
+		((p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z')) {
+		p = p[1:]
+	}
+	// Spelled out rather than filepath.FromSlash, which converts to the
+	// separator of the machine RUNNING it — so it does nothing at all when
+	// this is exercised from a Linux build, which is where it gets tested.
+	return strings.ReplaceAll(p, "/", `\`)
 }
 
 // --- terminal surfaces: one child PurfecTerm per running session -----------

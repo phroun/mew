@@ -68,3 +68,27 @@ func TestTerminalKeyEncodesThroughTheEmulator(t *testing.T) {
 		t.Error("the capture sink should be detached after the encode")
 	}
 }
+
+// A canonical file:// URL has to survive the trip back to an OS path. mew
+// builds it by normalizing separators and rooting the result with "/", which
+// on POSIX changes nothing but on Windows puts a slash in front of the drive
+// letter — and /C:/proj is not a directory any Windows API will accept.
+func TestURLPathToLocal(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		windows bool
+		want    string
+	}{
+		{"/home/user/project", false, "/home/user/project"},
+		{"/C:/Users/me/proj", true, `C:\Users\me\proj`},
+		{"/c:/tmp", true, `c:\tmp`},
+		// A UNC path was already //server/share and keeps both slashes.
+		{"//server/share/dir", true, `\\server\share\dir`},
+		// Not a drive letter: left alone but for the separators.
+		{"/opt/thing", true, `\opt\thing`},
+	} {
+		if got := urlPathToLocal(tc.in, tc.windows); got != tc.want {
+			t.Errorf("urlPathToLocal(%q, windows=%v) = %q, want %q", tc.in, tc.windows, got, tc.want)
+		}
+	}
+}
