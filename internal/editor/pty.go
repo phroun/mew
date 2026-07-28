@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/phroun/mew/internal/buffer"
 )
@@ -85,11 +86,27 @@ type PTYExitStatus interface {
 	ExitStatus() (code int, exited bool)
 }
 
+// PTYDiagnostics is the other optional readout: what the host did to build
+// this session, step by step, in whatever terms its platform uses. Also a
+// readout and not a capability.
+//
+// mew asks for it when a session ends having produced NOTHING, because that
+// is the one failure mew can see and cannot explain: the account of which
+// call went wrong is on the host's side of a pipe that never worked.
+type PTYDiagnostics interface {
+	Diagnostics() []string
+}
+
 // ptyState is one buffer's live session.
 type ptyState struct {
 	id      string // stable for the session's life; names its child surface
 	sess    PTYSession
 	command string
+	cwd     string // as asked for, for the record a failed session leaves
+	// bytes counts what the child has produced. Zero at the end is the
+	// signature of the failure worth writing down: a session that started,
+	// stopped, and never said anything at all.
+	bytes int
 }
 
 // TerminalSurface is one visible terminal: which session, and exactly where it
@@ -272,15 +289,11 @@ func (e *Editor) ptyDiagnose() bool {
 	// it on screen means scrolling a terminal that may be the very thing
 	// misbehaving, and the person who most needs this report is the one least
 	// able to get it off the machine by hand.
-	const logName = "mew-pty-diag.log"
-	saved := ""
-	if err := e.FS.WriteFile(logName, []byte(report)); err == nil {
-		saved = logName
-		if wd, werr := os.Getwd(); werr == nil {
-			saved = filepath.Join(wd, logName)
-		}
+	saved, err := e.appendPTYLog(report)
+	if err == nil {
 		report = "(also saved to " + saved + ")\n" + report
 	} else {
+		saved = ""
 		report = "(could not save a log file: " + err.Error() + ")\n" + report
 	}
 	e.insertText(report)
@@ -291,6 +304,38 @@ func (e *Editor) ptyDiagnose() bool {
 		e.ShowNotification("Terminal diagnostics written at the caret")
 	}
 	return true
+}
+
+// ptyLogName is where terminal trouble is written down, in the working
+// directory — one file, whether the record wrote itself when a session came
+// up empty or pty_diag was asked for a full report.
+const ptyLogName = "mew-pty-diag.log"
+
+// appendPTYLog adds one entry to that file and returns the path it used.
+// APPENDS, because the interesting case is several attempts in a row: a
+// failed exec, then a diagnostic run, then another attempt, all wanting to
+// travel together as one thing to send.
+func (e *Editor) appendPTYLog(entry string) (string, error) {
+	prior, _ := e.FS.ReadFile(ptyLogName)
+	var b strings.Builder
+	b.Write(prior)
+	if len(prior) > 0 && !strings.HasSuffix(string(prior), "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("---- ")
+	b.WriteString(time.Now().Format("2006-01-02 15:04:05"))
+	b.WriteString(" ----\n")
+	b.WriteString(entry)
+	if !strings.HasSuffix(entry, "\n") {
+		b.WriteString("\n")
+	}
+	if err := e.FS.WriteFile(ptyLogName, []byte(b.String())); err != nil {
+		return "", err
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, ptyLogName), nil
+	}
+	return ptyLogName, nil
 }
 
 // execRequest asks the host for a session and binds it to the focused
@@ -335,20 +380,20 @@ func (e *Editor) execRequest(command string) bool {
 		return false
 	}
 
-	e.attachPTY(w.Buffer, sess, req.Command, cols, rows)
+	e.attachPTY(w.Buffer, sess, req.Command, req.CWD, cols, rows)
 	e.ShowNotification("Started " + req.Command)
 	return true
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command string, cols, rows int) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd string, cols, rows int) {
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
 		e.ptySessions = make(map[*buffer.Buffer]*ptyState)
 	}
 	e.ptySeq++
 	id := fmt.Sprintf("pty%d", e.ptySeq)
-	e.ptySessions[b] = &ptyState{id: id, sess: sess, command: command}
+	e.ptySessions[b] = &ptyState{id: id, sess: sess, command: command, cwd: cwd}
 	e.ptyMu.Unlock()
 
 	if e.Config.TerminalSurfaces.Open != nil {
@@ -399,6 +444,9 @@ func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
 	if st == nil {
 		return // the session ended between the read and this delivery
 	}
+	e.ptyMu.Lock()
+	st.bytes += len(chunk)
+	e.ptyMu.Unlock()
 	e.Config.TerminalSurfaces.Feed(st.id, chunk)
 }
 
@@ -509,8 +557,43 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	if e.Config.TerminalSurfaces.Close != nil {
 		e.Config.TerminalSurfaces.Close(st.id)
 	}
-	e.ShowNotification(sessionEndedMessage(st.command, st.sess, cause))
+	msg := sessionEndedMessage(st.command, st.sess, cause)
+	// A session that produced NOTHING is the failure worth writing down —
+	// there is no output to look at, the surface is already gone, and the
+	// person it happened to may be on a machine they cannot investigate. So
+	// the record writes itself, next to whatever pty_diag would write, and
+	// the notification says where. A session that said anything at all is not
+	// this failure and leaves nothing behind.
+	if st.bytes == 0 {
+		if path, err := e.appendPTYLog(ptySessionRecord(st, msg, cause)); err == nil {
+			msg += " — nothing was received; recorded in " + path
+		}
+	}
+	e.ShowNotification(msg)
 	e.RequestRender()
+}
+
+// ptySessionRecord is what a silent session leaves behind: what was asked
+// for, how it ended, and — when the host keeps one — its own account of the
+// calls it made building the thing.
+func ptySessionRecord(st *ptyState, msg string, cause error) string {
+	var b strings.Builder
+	b.WriteString("session produced no output\n")
+	fmt.Fprintf(&b, "  command: %s\n", st.command)
+	fmt.Fprintf(&b, "  cwd asked for: %q\n", st.cwd)
+	fmt.Fprintf(&b, "  ending: %s\n", msg)
+	if cause != nil {
+		fmt.Fprintf(&b, "  read error: %v\n", cause)
+	}
+	if d, ok := st.sess.(PTYDiagnostics); ok {
+		b.WriteString("  the host's account of building it:\n")
+		for _, line := range d.Diagnostics() {
+			fmt.Fprintf(&b, "    %s\n", line)
+		}
+	} else {
+		b.WriteString("  (this host keeps no account of how it built the session)\n")
+	}
+	return b.String()
 }
 
 // sessionEndedMessage accounts for a finished session in one line: what ran,

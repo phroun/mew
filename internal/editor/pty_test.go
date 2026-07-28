@@ -782,3 +782,76 @@ func TestPTYDiagWithoutAHostSeam(t *testing.T) {
 		t.Errorf("buffer = %q, want it untouched", docContent(w))
 	}
 }
+
+// stubTraced is a session that also keeps the host's account of building it.
+type stubTraced struct {
+	*stubPTY
+	trace []string
+}
+
+func (s *stubTraced) Diagnostics() []string   { return s.trace }
+func (s *stubTraced) ExitStatus() (int, bool) { return 0, false }
+
+// A session that produced NOTHING writes its own record: there is no output to
+// look at and the surface is already gone, so the account has to be kept. It
+// carries the host's step-by-step trace of the session that actually failed —
+// better evidence than any probe, because it is the real one.
+func TestSilentSessionRecordsItself(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(old)
+
+	sess := &stubTraced{stubPTY: newStubPTY(), trace: []string{"CreatePipe: ok", "CreateProcess: ok, pid 42"}}
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return sess, nil }
+	if !e.execRequest("cmd.exe") {
+		t.Fatal("exec failed")
+	}
+	e.ptyEnded(w.Buffer, io.EOF)
+
+	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
+	if err != nil {
+		t.Fatalf("a silent session left no record: %v", err)
+	}
+	for _, want := range []string{
+		"session produced no output",
+		"command: cmd.exe",
+		"CreateProcess: ok, pid 42",
+		"child still running",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("record is missing %q\n%s", want, data)
+		}
+	}
+	if !hasNotification(e, "recorded in") {
+		t.Error("the notification should say where the record went")
+	}
+}
+
+// A session that said anything at all is not that failure and leaves nothing
+// behind — the log is for trouble, not for every shell anyone ever ran.
+func TestTalkativeSessionRecordsNothing(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(old)
+
+	e.Config.TerminalSurfaces = TerminalHooks{Open: func(string, int, int) {}, Feed: func(string, []byte) {}}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash") {
+		t.Fatal("exec failed")
+	}
+	e.ptyOutput(w.Buffer, []byte("$ "))
+	e.ptyEnded(w.Buffer, io.EOF)
+
+	if _, err := os.Stat(filepath.Join(dir, "mew-pty-diag.log")); err == nil {
+		t.Error("a session that produced output should leave no log behind")
+	}
+}
