@@ -762,6 +762,13 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	t := NewPurfecTerm()
 	t.Init(t)
 	t.SetEditorMode(false)
+	// The child measures ITS OWN font to size its grid, so it has to be the
+	// same font this editor measures for its columns. Different fonts mean
+	// two pitches: the rectangle would be placed correctly and the child
+	// would draw at a different stride inside it.
+	if f := e.TerminalFont(); f != nil {
+		t.SetTerminalFont(f)
+	}
 	e.termMu.Lock()
 	if e.termSurfaces == nil {
 		e.termSurfaces = make(map[string]*termSurface)
@@ -1003,14 +1010,22 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 	if len(visible) == 0 {
 		return
 	}
-	m := p.Metrics()
+	// THIS editor's cell size, not the painter's. They are the same in a
+	// terminal, where a cell is a cell, and they are not on a graphical build:
+	// a terminal's grid derives from its own font's measured advance width and
+	// line height, deliberately independent of the toolkit's cell
+	// denomination. mew's columns are drawn at the former, so a rectangle
+	// placed with the latter lands beside the text it is meant to cover —
+	// by the difference times the column, which is why it shows as a fraction
+	// of a cell at the gutter's edge and grows across the row.
+	cw, ch := e.cellDims()
 	cell := func(col, row int) (core.Unit, core.Unit) {
-		return core.Unit(col-1) * m.CellWidth, core.Unit(row-1) * m.CellHeight
+		return core.Unit(col-1) * cw, core.Unit(row-1) * ch
 	}
 	for _, s := range visible {
 		x, y := cell(s.col, s.row)
-		w := core.Unit(s.width) * m.CellWidth
-		h := core.Unit(s.height) * m.CellHeight
+		w := core.Unit(s.width) * cw
+		h := core.Unit(s.height) * ch
 		s.term.SetBounds(core.UnitRect{X: x, Y: y, Width: w, Height: h})
 
 		// The painter is offset to the GRID's origin, so the terminal draws
@@ -1021,8 +1036,8 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		clip := core.UnitRect{
 			X:      cx - x,
 			Y:      cy - y,
-			Width:  core.Unit(s.clipWidth) * m.CellWidth,
-			Height: core.Unit(s.clipHeight) * m.CellHeight,
+			Width:  core.Unit(s.clipWidth) * cw,
+			Height: core.Unit(s.clipHeight) * ch,
 		}
 		s.term.Paint(p.WithOffset(x, y).WithClip(clip))
 	}
