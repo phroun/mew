@@ -153,12 +153,20 @@ func (e *Editor) installDeadcatSignals() func() {
 // cleanup, so this dumps DEADCAT, restores the terminal by hand, reports where
 // the dump landed, and exits.
 func (e *Editor) emergencyExit(reason string) {
+	// The dump comes FIRST: it is the only irreplaceable thing here. Terminal
+	// cosmetics are never worth risking the user's unsaved buffers.
 	name, _ := e.DumpDeadcat(reason)
 	if e.KeyHandler != nil {
 		e.KeyHandler.Stop()
 	}
 	if e.Renderer != nil {
 		e.Renderer.Cleanup()
+	}
+	// Embedded, the cleanup above only ever wrote into the host's surface and
+	// restored nothing real. Let the host hand the terminal back, so the
+	// message below lands on a usable screen and the shell survives.
+	if e.Config.RestoreHostTerminal != nil {
+		e.Config.RestoreHostTerminal()
 	}
 	if name != "" {
 		fmt.Fprintf(os.Stderr, "\nmew: aborted (%s); unsaved buffers written to %s\n", reason, name)

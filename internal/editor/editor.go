@@ -653,6 +653,21 @@ type Config struct {
 	// each command is marshaled onto the editor main loop. See HostPort.
 	HostPort *HostPort
 
+	// RestoreHostTerminal, when set, hands the TERMINAL back to whatever put it
+	// into raw mode / the alternate screen. mew calls it on the emergency exit
+	// path, after the DEADCAT dump and before os.Exit.
+	//
+	// An embedded mew does not own the terminal: its renderer writes into the
+	// host's surface, so Renderer.Cleanup restores nothing a user can see, and
+	// the shell is left in raw mode with the host's keyboard protocol still on.
+	// Only the host can undo that, and os.Exit runs none of its deferred
+	// teardown, so the host has to be reachable from here.
+	//
+	// Called from a signal-handler goroutine: it must be safe off the main
+	// loop, safe to call more than once, and must NOT exit - mew still has a
+	// message to print.
+	RestoreHostTerminal func()
+
 	// SkipUserConfig prevents loading ~/.mew/editor.conf (built-in defaults
 	// apply). For embedding hosts that must not touch the user's home dir.
 	SkipUserConfig bool

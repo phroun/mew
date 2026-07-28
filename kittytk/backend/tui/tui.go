@@ -69,10 +69,9 @@ type TUIBackend struct {
 	mu sync.Mutex
 
 	// Terminal state
-	fd       int
-	oldState *term.State
-	cols     int
-	rows     int
+	fd   int
+	cols int
+	rows int
 
 	// Cell metrics for unit conversion
 	metrics core.CellMetrics
@@ -120,6 +119,14 @@ type TUIBackend struct {
 	// opened /dev/tty (see writeTTY). Tests set it so their result does not
 	// depend on whether the runner happens to have a controlling terminal.
 	ttyOut io.Writer
+
+	// restored guards the terminal-mode restore so it runs exactly once no
+	// matter how many paths reach it - Shutdown, RestoreTerminal, an embedder's
+	// emergency handler, or all three.
+	restored sync.Once
+	// shutdown guards the rest of Shutdown. Without it a second call closes
+	// stopChan twice and panics, which is a poor way to end an emergency.
+	shutdownOnce sync.Once
 
 	// Capabilities
 	colorDepth int
@@ -265,6 +272,10 @@ func (t *TUIBackend) Init() error {
 	// Hide cursor initially
 	t.writeTTY("\033[?25l")
 
+	// The terminal is now ours. Join the set RestoreAll walks, so an exit path
+	// that never reaches Shutdown can still hand it back.
+	registerLive(t)
+
 	// Set up keyboard handler AFTER terminal modes are configured
 	kbOpts := keyboard.Options{
 		InputReader: os.Stdin,
@@ -291,46 +302,69 @@ func (t *TUIBackend) Init() error {
 	return nil
 }
 
-// Shutdown cleans up the terminal backend.
+// Shutdown cleans up the terminal backend. Safe to call more than once.
 func (t *TUIBackend) Shutdown() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.shutdownOnce.Do(func() {
+		t.mu.Lock()
+		close(t.stopChan)
+		kb := t.keyboard
+		t.mu.Unlock()
 
-	// Signal stop
-	close(t.stopChan)
+		// Outside the lock: Stop restores raw mode and joins the reader
+		// goroutine, and nothing it touches needs t.mu.
+		if kb != nil {
+			kb.Stop()
+		}
+	})
+	t.RestoreTerminal()
+}
 
-	// Stop keyboard handler
-	if t.keyboard != nil {
-		t.keyboard.Stop()
-	}
+// RestoreTerminal puts the terminal back the way it was found - mouse off,
+// cursor shown, alternate screen left, Kitty keyboard protocol popped, colours
+// reset - and does so at most once however many paths reach it.
+//
+// It is separate from Shutdown, and exported, because the terminal is PROCESS
+// state, not backend state: whoever ends the process is responsible for it,
+// and that is not always the code holding this backend. An embedder whose
+// fatal-signal path bypasses the normal teardown (mew dumps unsaved buffers
+// and calls os.Exit) must be able to hand the terminal back without owning a
+// reference here - see RestoreAll.
+//
+// Safe from any goroutine, including a signal handler: it takes no lock the
+// event loop holds and does nothing but write escapes.
+func (t *TUIBackend) RestoreTerminal() {
+	t.restored.Do(func() {
+		// Disable mouse
+		if t.hasMouse {
+			t.writeTTY("\033[?1006l\033[?1002l\033[?1000l")
+		}
 
-	// Disable mouse
-	if t.hasMouse {
-		t.writeTTY("\033[?1006l\033[?1002l\033[?1000l")
-	}
+		// Show cursor
+		t.writeTTY("\033[?25h")
+		t.cursorShown = true
 
-	// Show cursor
-	t.writeTTY("\033[?25h")
-	t.cursorShown = true
+		// Leave alternate screen
+		t.writeTTY("\033[?1049l")
 
-	// Leave alternate screen
-	t.writeTTY("\033[?1049l")
+		// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
+		// because the flag stack is per-screen. Init pushes (\033[>1u) while
+		// still on the MAIN screen and only then switches to the alternate one,
+		// so a pop issued before switching back applies to the alternate
+		// screen's stack and leaves the main screen's push live. The shell
+		// inherits it and the first Ctrl+C prints an escape ("...9;5u")
+		// instead of interrupting.
+		//
+		// Popping an empty stack is a no-op, so this stays safe on a terminal
+		// that ignored the push. The explicit reset after it covers a terminal
+		// that honours the flags but not the stack.
+		t.writeTTY("\033[<u")
+		t.writeTTY("\033[=0;1u")
 
-	// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
-	// because the flag stack is per-screen. Init pushes (\033[>1u) while still
-	// on the MAIN screen and only then switches to the alternate one, so a pop
-	// issued before switching back applies to the alternate screen's stack and
-	// leaves the main screen's push live. The shell inherits it and the first
-	// Ctrl+C prints an escape ("...9;5u") instead of interrupting.
-	//
-	// Popping an empty stack is a no-op, so this stays safe on a terminal that
-	// ignored the push. The explicit reset after it covers a terminal that
-	// honours the flags but not the stack.
-	t.writeTTY("\033[<u")
-	t.writeTTY("\033[=0;1u")
+		// Reset colors
+		t.writeTTY("\033[0m")
 
-	// Reset colors
-	t.writeTTY("\033[0m")
+		unregisterLive(t)
+	})
 }
 
 // allocateBuffers creates the screen buffers.

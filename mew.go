@@ -175,6 +175,21 @@ func WithHostPort(p *HostPort) Option {
 	return func(cfg *editor.Config) { cfg.HostPort = p }
 }
 
+// WithRestoreHostTerminal wires the host's terminal restore into mew's
+// emergency exit. A fatal signal skips every deferred teardown - mew's and the
+// host's alike - because the handler dumps DEADCAT and calls os.Exit. An
+// embedded mew renders into the HOST's surface, so its own renderer cleanup
+// restores nothing the user can see: only the host can leave the alternate
+// screen, drop raw mode and pop its keyboard protocol. Without this the user
+// keeps their unsaved work and loses their shell.
+//
+// fn runs on the signal-handler goroutine, after the dump and before the exit.
+// It must be safe off the main loop, safe to call more than once, and must not
+// exit.
+func WithRestoreHostTerminal(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
+}
+
 // WithEditState wires the focused viewport's read-only state to the host: fn
 // is told whenever the focused buffer's read-only state changes (and once at
 // the first render), so the host can grey out mutating affordances — its

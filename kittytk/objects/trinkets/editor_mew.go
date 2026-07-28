@@ -256,6 +256,12 @@ func (e *Editor) run() {
 		// mew commands (os_copy and friends), each marshaled onto mew's
 		// main loop with keystroke safety.
 		mew.WithHostPort(e.port),
+		// Hand the terminal back if mew has to abort. A fatal signal skips
+		// every deferred teardown on both sides - mew dumps DEADCAT and calls
+		// os.Exit - and an embedded mew renders into OUR surface, so its own
+		// renderer cleanup restores nothing the user can see. Without this the
+		// user keeps their unsaved work and loses their shell.
+		mew.WithRestoreHostTerminal(e.restoreHostTerminal),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
 		// use, kept separate from mew's own kill ring. mew calls these on
@@ -609,4 +615,27 @@ func (e *Editor) mewContextMenuItems() []termMenuItem {
 // (the TextInput / PurfecTerm popup style).
 func (e *Editor) showMewContextMenu(col, row int) {
 	e.showTermItemsMenu(e.cellToLocal(col, row), e.mewContextMenuItems())
+}
+
+// terminalRestorer is a backend that owns terminal state it must hand back
+// before the process ends. Backends that render to a window (SDL) do not
+// implement it, and need not: closing the process is enough there.
+type terminalRestorer interface{ RestoreTerminal() }
+
+// restoreHostTerminal asks whatever backend is driving this editor's desktop to
+// put the terminal back. Reached from mew's emergency-exit path, which runs on
+// a signal-handler goroutine after the DEADCAT dump, so it must not touch the
+// event loop, must tolerate a half-built desktop, and must not exit.
+//
+// The type assertion is how the trinket stays out of the backend's business: a
+// desktop rendering to a window has no terminal to restore and simply does not
+// satisfy the interface, so this is a no-op there rather than a special case.
+func (e *Editor) restoreHostTerminal() {
+	d := e.findDesktop()
+	if d == nil {
+		return
+	}
+	if r, ok := d.Backend().(terminalRestorer); ok {
+		r.RestoreTerminal()
+	}
 }
