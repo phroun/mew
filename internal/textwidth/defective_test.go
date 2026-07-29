@@ -29,10 +29,19 @@ func TestDefectiveMark(t *testing.T) {
 		{"harakat on arabic", 'ب', harakat, false},
 		{"dakuten on kana", 'か', dakuten, false},
 
-		// Ill-formed pairing but a mark mew HAS a glyph for: still
-		// zero-width, matching wcwidth (see the doc comment).
-		{"hebrew accent on cjk", '日', hebAccnt, false},
-		{"hebrew accent on latin", 'G', hebAccnt, false},
+		// Script-specific mark on a base of another script: ill-formed, and
+		// no shaper will compose it, so the terminal falls back to a spacing
+		// glyph. Defective regardless of whether a glyph for the mark exists.
+		{"hebrew accent on cjk", '日', hebAccnt, true},
+		{"hebrew accent on latin", 'G', hebAccnt, true},
+		{"niqqud on latin", 'x', niqqud, true},
+		{"hebrew accent on space", ' ', hebAccnt, true},
+
+		// The Arabic vowel marks are Script=Inherited in Unicode — shared
+		// with Syriac and others, script-neutral by definition — so the
+		// mixed-script rule does not reach them. They ride any base.
+		{"harakat on punctuation", '.', harakat, false},
+		{"harakat on latin", 'x', harakat, false},
 
 		// A mark from a script mew cannot render, anywhere.
 		{"nko tone on period", '.', nkoTone, true},

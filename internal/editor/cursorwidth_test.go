@@ -6,18 +6,23 @@ import (
 	"github.com/phroun/mew/internal/viewport"
 )
 
-// The painted hardware cursor must land on the terminal column that
-// wcwidth-style rendering produces: combining marks and zero-width
-// characters advance no columns, wide characters advance two, and the
-// viewport's column ruler offsets the row by one.
+// The painted hardware cursor must land on the terminal column the RENDERED
+// row actually produces: well-formed combining marks and zero-width
+// characters advance no columns, wide characters advance two, and a
+// DEFECTIVE mark advances the width of the substitute painted in its place.
 func TestRenderedCursorColumnComplexText(t *testing.T) {
-	const comb = "́" // combining acute
-	const dot = "֗"  // hebrew accent revia (combining)
+	const comb = "́" // combining acute (Inherited: rides any base)
+	const dot = "֗"  // hebrew accent revia (Hebrew: needs a Hebrew base)
 	const zw = "​"   // zero-width space
 	content := "e" + comb + "x" + zw + "日" + dot + "k\n"
 	// Prefix-sum columns per cursor rune position; both sides of a
 	// zero-width rune share a column (the mark overlays the base's cell).
-	wantCol := []int{0, 1, 1, 2, 2, 4, 4, 5}
+	// The Hebrew accent sits on a CJK ideograph — an ill-formed sequence no
+	// shaper composes — so it is classified like a control code and painted
+	// as "0597", four columns wide, rather than promised as zero-width and
+	// then rendered by the terminal as a spacing fallback that slides the
+	// rest of the row off the window. See textwidth.DefectiveMark.
+	wantCol := []int{0, 1, 1, 2, 2, 4, 8, 9}
 
 	for runePos, want := range wantCol {
 		e, w, out := newRenderedEditor(t, content)

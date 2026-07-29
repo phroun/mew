@@ -4,6 +4,7 @@
 package textwidth
 
 import (
+	"sync"
 	"unicode"
 
 	"github.com/mattn/go-runewidth"
@@ -64,28 +65,54 @@ func IsMark(r rune) bool {
 	return unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me)
 }
 
+// scriptCache memoizes scriptOf: a combining mark's script is fixed, and the
+// lookup below scans every script table, which is too much to repeat for each
+// mark of a fully pointed Hebrew or Arabic line.
+var scriptCache sync.Map // rune -> string
+
+// scriptOf names the Unicode script a rune belongs to ("Hebrew", "Han",
+// "Common", ...), or "" when no script claims it.
+func scriptOf(r rune) string {
+	if v, ok := scriptCache.Load(r); ok {
+		return v.(string)
+	}
+	name := ""
+	for n, table := range unicode.Scripts {
+		if unicode.Is(table, r) {
+			name = n
+			break
+		}
+	}
+	scriptCache.Store(r, name)
+	return name
+}
+
 // DefectiveMark reports whether the combining mark r is one mew must NOT paint
-// as zero-width after the base character prev. Two cases:
+// as zero-width after the base character prev. Three cases:
 //
 //   - No base at all (prev == 0): the mark opens the line with nothing to
 //     anchor onto.
 //   - The mark belongs to a script mew cannot render (see
 //     renderableMarkScripts) — NKo tone marks, for instance.
+//   - The mark is SCRIPT-SPECIFIC and the base belongs to a different script:
+//     a Hebrew accent over a CJK ideograph, niqqud on a Latin letter, harakat
+//     on punctuation. Unicode calls such a sequence ill-formed, and no shaper
+//     will compose it.
 //
 // Both mew and wcwidth call every combining mark zero-width, which is a
 // promise about what the terminal will do: paint the mark INTO the preceding
-// cell and advance nothing. When the terminal has no glyph for the mark, or
-// nothing to compose it onto, it breaks that promise and falls back to a
-// SPACING glyph — .notdef, or dotted-circle + mark. That glyph advances a
-// column mew never budgeted, so the rest of the row slides right, overruns
-// the window and bleeds past its edge. This is the class of corruption the
-// renderer already handles for control codes, so these marks are classified
-// the same way and painted as a definite-width visible substitute.
+// cell and advance nothing. A terminal that has no glyph for the mark, nothing
+// to compose it onto, or a base its shaper refuses to attach the mark to,
+// breaks that promise and falls back to a SPACING glyph — .notdef, or
+// dotted-circle + mark. That glyph advances a column mew never budgeted, so
+// the rest of the row slides right, overruns the window and bleeds past its
+// edge. This is the class of corruption the renderer already handles for
+// control codes, so these marks are classified the same way and painted as a
+// definite-width visible substitute.
 //
-// Deliberately NOT defective: a script-specific mark on a base of another
-// script (a Hebrew accent over a CJK ideograph, say). It is ill-formed text,
-// but the mark is one mew and the terminal both have a glyph for, so wcwidth's
-// zero-width answer still holds and mew keeps rendering it that way.
+// General diacritics (script=Inherited/Common — the U+0300..U+036F block, the
+// kana voicing marks) belong to no script and legitimately attach to any base,
+// so they are never defective on this rule.
 func DefectiveMark(prev, r rune) bool {
 	if !IsMark(r) {
 		return false
@@ -93,15 +120,23 @@ func DefectiveMark(prev, r rune) bool {
 	if prev == 0 {
 		return true // nothing to anchor onto
 	}
-	if unicode.In(r, unicode.Inherited, unicode.Common) {
-		return false // general diacritics attach to any base
+	markScript := scriptOf(r)
+	if markScript == "" || markScript == "Inherited" || markScript == "Common" {
+		return false // general diacritic: attaches to any base
 	}
+	renderable := false
 	for _, s := range renderableMarkScripts {
 		if unicode.Is(s, r) {
-			return false
+			renderable = true
+			break
 		}
 	}
-	return true // a mark from a script mew has no glyph for
+	if !renderable {
+		return true // a mark from a script mew has no glyph for
+	}
+	// Script-specific mark: it is well-formed only on a base of its own
+	// script.
+	return scriptOf(prev) != markScript
 }
 
 // isBidiControl mirrors bidi.IsDirectionControl. It is duplicated here rather
