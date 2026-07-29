@@ -1679,7 +1679,12 @@ func cursorShapeAtTrinket(trinket core.Trinket, pos core.UnitPoint) core.CursorS
 		// different cursor over its scrollbar) is safe to consult directly.
 		if cs, ok := cur.(core.CursorShaper); ok {
 			_, isContainer := cur.(core.Container)
-			if cur != trinket || !isContainer {
+			// A container that declares it answers for its whole subtree
+			// (core.CursorShapesSubtree) never re-enters this descent, so the
+			// entry-skip — which exists only to stop a delegating window
+			// recursing forever — must not silence it.
+			_, ownsSubtree := cur.(core.CursorShapesSubtree)
+			if cur != trinket || !isContainer || ownsSubtree {
 				return cs.CursorShapeAt(p.X, p.Y)
 			}
 		}

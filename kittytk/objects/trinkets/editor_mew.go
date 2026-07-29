@@ -560,6 +560,16 @@ func (e *Editor) CursorShape() core.CursorShape {
 	return core.CursorText
 }
 
+// CursorShapesSubtree marks this trinket as owning the cursor across its whole
+// surface (core.CursorShapesSubtree). The Editor is a Container, and the cursor
+// descent skips a container ENTRY to keep a delegating window from recursing —
+// which silently discarded every shape the editor resolved whenever it was a
+// window's own content: no arrow over the reserved scrollbar column, none over
+// the browse-mode link buttons, just the blanket I-beam from CursorShape.
+// CursorShapeAt answers from mew's published region alone and never re-enters
+// the descent, so consulting it is safe.
+func (e *Editor) CursorShapesSubtree() {}
+
 // pointerCell maps a local pointer coordinate to the 1-based terminal cell
 // mew addresses it by — the SAME trip a mouse event makes (screenToCellGfx).
 //

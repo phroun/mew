@@ -37,3 +37,19 @@ type CursorProvider interface {
 type CursorShaper interface {
 	CursorShapeAt(localX, localY Unit) CursorShape
 }
+
+// CursorShapesSubtree marks a CursorShaper that answers for its WHOLE
+// subtree and never re-enters the cursor descent — so it is safe to consult
+// even when it is the descent's entry trinket.
+//
+// The descent skips an entry that is a plain Container, because a window
+// delegating into its own content would otherwise recurse forever. That guard
+// is about re-entrancy, not about having an opinion: a container that resolves
+// the cursor from its own state (an embedded editor that owns the affordance
+// across its entire surface) must still be asked, or it silently loses every
+// cursor it wanted to set the moment it becomes a window's content.
+type CursorShapesSubtree interface {
+	CursorShaper
+	// CursorShapesSubtree is a marker; its body does nothing.
+	CursorShapesSubtree()
+}
