@@ -1,5 +1,13 @@
 # purfecterm: `IsCombiningMark` is wrong in both directions
 
+> **Resolved upstream in purfecterm v0.2.29.** The release makes the predicate
+> agree with Unicode in both directions: every Mn/Me codepoint is recognised
+> (0 missed, was 1345) and no Mc codepoint is claimed (0, was 11), while the
+> non-Mn/Me riders the explicit ranges exist for — ZWJ/ZWNJ, variation
+> selectors, Jamo fillers — still return `true`. KittyTK adopted it and
+> deleted its compensating category test; `cellRuneWidth` asks purfecterm
+> alone again. The patch below is kept for the record.
+
 **Patch:** `0003-purfecterm-combining-marks.patch` (against v0.2.28, `cell.go`)
 
 ## Symptom
@@ -91,9 +99,11 @@ Applied to v0.2.28, the root package builds and:
   (dotted circle), `U+05D0` (Hebrew alef), `U+0F40` (Tibetan KA) all still
   return `false`
 
-## Local workaround in the meantime
+## Local workaround (removed)
 
-`kittytk/backend/tui/tui.go`'s `cellRuneWidth` applies both halves of the same
-rule — Mc wins over anything the list claims, and Mn/Me are ORed in alongside
-it — so KittyTK is correct against the current release. That fallback can be
-dropped once this lands upstream.
+While this was outstanding, `kittytk/backend/tui/tui.go`'s `cellRuneWidth`
+applied both halves of the rule itself — Mc winning over anything the list
+claimed, with Mn/Me ORed in alongside it. v0.2.29 made that unnecessary and it
+was removed. KittyTK's `TestNonSpacingMarksAreZeroWidth` and
+`TestSpacingMarksKeepTheirCell` now sweep the whole range against the upstream
+predicate, so a regression there would fail KittyTK's own suite.

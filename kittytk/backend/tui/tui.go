@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -50,27 +49,19 @@ var invalidCell = Cell{Char: utf8.MaxRune + 1}
 // cellRuneWidth returns the terminal columns a base rune occupies (1 or 2),
 // from purfecterm's East Asian Width table — the same width authority the
 // PurfecTerm trinket's grid uses, so layout and emission agree end to end.
-// Ambiguous-width runes count as narrow (purfecterm's default); combining
-// marks are zero-width (they belong in Cell.Combining, not their own cell).
+// Ambiguous-width runes count as narrow (purfecterm's default).
+//
+// Non-spacing marks are zero-width: they belong in Cell.Combining, not in a
+// cell of their own. Spacing marks (category Mc — the visible Devanagari
+// matras and kin) do take a cell, and purfecterm's predicate distinguishes
+// the two as of v0.2.29. Before that it was wrong in both directions, and
+// KittyTK carried its own category test to compensate; see
+// docs/upstream/purfecterm-combining-marks.md.
 func cellRuneWidth(r rune) int {
 	if r == 0 {
 		return 1
 	}
-	// purfecterm's IsCombiningMark is a hand-written range list, and it is
-	// wrong in both directions. It misses the great majority of Unicode's
-	// non-spacing marks — NKo, Tibetan, Myanmar, Mongolian, Balinese and
-	// dozens of other scripts — each of which then gets a cell of its own, so
-	// every later cell on the row lands a column late. And its Devanagari
-	// ranges span eleven SPACING marks (the visible matras, category Mc),
-	// which it calls zero-width, drifting such rows the other way.
-	//
-	// Ask the Unicode categories, which are the authority the range list is
-	// approximating: Mn and Me are zero-width, Mc occupies a cell and wins
-	// over anything the list claims. (Fixed at the source in
-	// docs/upstream/0003-purfecterm-combining-marks.patch; this fallback can
-	// go once that lands.)
-	if !unicode.Is(unicode.Mc, r) &&
-		(purfecterm.IsCombiningMark(r) || unicode.In(r, unicode.Mn, unicode.Me)) {
+	if purfecterm.IsCombiningMark(r) {
 		return 0
 	}
 	if w := purfecterm.GetEastAsianWidth(r); w >= 1.5 {
