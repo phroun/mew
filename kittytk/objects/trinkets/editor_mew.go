@@ -125,6 +125,20 @@ type Editor struct {
 	// and hit testing.
 	hostedKids []core.Trinket
 
+	// ptrMu guards the last PRECISE pointer position seen by this editor, in
+	// its own units. mew's mouse wire speaks in CELLS — the pseudo-keys carry
+	// col,row and nothing finer — so when a hosted child's event is rebuilt
+	// from the wire it lands on cell centers, and a scrollbar scrub moves in
+	// cell-sized lurches. The precise position exists exactly once, HERE, as
+	// the event passes through on its way to being encoded; remember it, and
+	// when mew's round trip comes back for the SAME cell, use it instead of
+	// the center. Guarded because the desktop writes it and mew's loop reads
+	// it.
+	ptrMu    sync.Mutex
+	ptrX     core.Unit
+	ptrY     core.Unit
+	ptrValid bool
+
 	// lastSurfaceOffsetX/Y is the device-pixel residual the most recent
 	// paintTerminalSurfaces applied (see there), and lastClipFrame the clip
 	// it chose, in EDITOR-frame units. Recorded because the correction is
@@ -939,6 +953,50 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 	e.Update()
 }
 
+// notePointer records the precise pointer position on its way into mew.
+func (e *Editor) notePointer(x, y core.Unit) {
+	e.ptrMu.Lock()
+	e.ptrX, e.ptrY, e.ptrValid = x, y, true
+	e.ptrMu.Unlock()
+}
+
+// The mouse handlers remember the precise position, then behave exactly as
+// the embedded editor-mode terminal always has (encode for mew).
+func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
+	e.notePointer(ev.X, ev.Y)
+	return e.PurfecTerm.HandleMousePress(ev)
+}
+
+func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
+	e.notePointer(ev.X, ev.Y)
+	return e.PurfecTerm.HandleMouseMove(ev)
+}
+
+func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
+	e.notePointer(ev.X, ev.Y)
+	return e.PurfecTerm.HandleMouseRelease(ev)
+}
+
+// preciseHostedLocal converts the remembered pointer into the CHILD's local
+// units, provided it still agrees with the cell mew reported — the wire and
+// the memory are updated by the same gesture, but they travel different
+// paths, so the cell is the consistency check. Reports false when the
+// pointer is stale or elsewhere, and the caller falls back to cell centers.
+func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.Unit, ev mew.TerminalMouse) (core.Unit, core.Unit, bool) {
+	if !valid || cw <= 0 || ch <= 0 {
+		return 0, 0, false
+	}
+	lx := px - core.Unit(col-1)*cw
+	ly := py - core.Unit(row-1)*ch
+	if lx < 0 || ly < 0 {
+		return 0, 0, false
+	}
+	if int(lx/cw)+1 != ev.Col-col+1 || int(ly/ch)+1 != ev.Row-row+1 {
+		return 0, 0, false
+	}
+	return lx, ly, true
+}
+
 // terminalMouse hands one mouse event to the session's child terminal AS THE
 // TOOLKIT EVENT it would have received in the tree, and returns whatever
 // bytes the child produced for its process, plus whether it took the event.
@@ -966,9 +1024,18 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	s.draining = true
 	s.pending = nil
 	t := s.term
+	col, row := s.col, s.row
 	e.termMu.Unlock()
 
-	handled := dispatchHostedMouse(t, ev)
+	// The precise pointer, if it still agrees with the cell the wire
+	// carried — see preciseHostedLocal. Cell centers otherwise.
+	e.ptrMu.Lock()
+	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
+	e.ptrMu.Unlock()
+	cw, ch := e.cellDims()
+	lx, ly, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
+
+	handled := dispatchHostedMouse(t, ev, lx, ly, precise)
 
 	e.termMu.Lock()
 	data := s.pending
@@ -1132,10 +1199,16 @@ func pawBytesLiteral(b []byte) string {
 // handler. The cell becomes units at the MIDDLE of the cell — these feed hit
 // tests, and an event on a boundary lands on neither side of it. Screen
 // coordinates equal local ones, so the wheel latch's offsets come out zero.
-func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse) bool {
+func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseX, preciseY core.Unit, precise bool) bool {
 	cw, ch := t.cellDims()
 	x := core.Unit(ev.Col-1)*cw + cw/2
 	y := core.Unit(ev.Row-1)*ch + ch/2
+	// mew's wire carries CELLS; the host remembered the precise pointer as
+	// it passed through (see notePointer). Sub-cell position is what makes a
+	// scrollbar scrub track the hand instead of lurching a cell at a time.
+	if precise {
+		x, y = preciseX, preciseY
+	}
 	btn := termMouseButton(ev.Button)
 	var mods core.KeyModifiers
 	if ev.Shift {

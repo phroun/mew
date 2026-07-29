@@ -379,3 +379,39 @@ func TestSnapCoverFindsCoveringEdges(t *testing.T) {
 		t.Errorf("zero ppu -> %d, want the start 42", got)
 	}
 }
+
+// mew's mouse wire carries CELLS, so a hosted child's events used to land on
+// cell centers — a scrollbar scrub lurched a cell at a time while the SDL
+// pointer moved by pixels. The host is the one place the precise pointer
+// exists (it passes through on its way to being encoded), so it remembers,
+// and the round trip uses the memory when it still agrees with the cell the
+// wire carried.
+func TestPreciseHostedPointer(t *testing.T) {
+	cw, ch := core.Unit(7), core.Unit(14)
+
+	// Surface at col 3, row 2; wire reports cell (5, 4) — child-local cell
+	// (3, 3). A precise pointer inside that same cell is used verbatim.
+	ev := mew.TerminalMouse{Col: 5, Row: 4}
+	px := core.Unit(3-1)*cw + core.Unit(2-1)*0 + 2*cw + 3 // editor units: into child cell col 3
+	py := core.Unit(2-1)*ch + 2*ch + 5
+	lx, ly, ok := preciseHostedLocal(px, py, true, 3, 2, cw, ch, ev)
+	if !ok {
+		t.Fatal("a consistent precise pointer was rejected")
+	}
+	if int(lx/cw)+1 != 3 || int(ly/ch)+1 != 3 {
+		t.Errorf("precise local (%d,%d) is not inside child cell (3,3)", lx, ly)
+	}
+	// And it keeps its SUB-CELL part — the whole point.
+	if lx == core.Unit(2)*cw+cw/2 && ly == core.Unit(2)*ch+ch/2 {
+		t.Error("precise pointer collapsed to the cell center")
+	}
+
+	// A pointer in a DIFFERENT cell than the wire's is stale: fall back.
+	if _, _, ok := preciseHostedLocal(px+5*cw, py, true, 3, 2, cw, ch, ev); ok {
+		t.Error("a pointer disagreeing with the wire's cell must be rejected")
+	}
+	// No memory at all: fall back.
+	if _, _, ok := preciseHostedLocal(px, py, false, 3, 2, cw, ch, ev); ok {
+		t.Error("an invalid pointer must be rejected")
+	}
+}
