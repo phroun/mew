@@ -380,19 +380,20 @@ func TestSnapCoverFindsCoveringEdges(t *testing.T) {
 	}
 }
 
-// mew's mouse wire carries CELLS, so a hosted child's events used to land on
-// cell centers — a scrollbar scrub lurched a cell at a time while the SDL
-// pointer moved by pixels. The host is the one place the precise pointer
-// exists (it passes through on its way to being encoded), so it remembers,
-// and the round trip uses the memory when it still agrees with the cell the
-// wire carried.
+// mew's mouse wire carries CHILD-LOCAL cells (ptyMouseKey subtracts the
+// viewport origin before the hook), so the consistency check compares the
+// remembered pointer's child cell against ev.Col/Row DIRECTLY — treating
+// them as screen cells made the row check fail by the viewport's Y offset
+// every time, and precision never engaged. One cell of slack per axis
+// absorbs wire latency: the pointer keeps moving while the event crosses
+// mew's loop.
 func TestPreciseHostedPointer(t *testing.T) {
 	cw, ch := core.Unit(7), core.Unit(14)
 
-	// Surface at col 3, row 2; wire reports cell (5, 4) — child-local cell
-	// (3, 3). A precise pointer inside that same cell is used verbatim.
-	ev := mew.TerminalMouse{Col: 5, Row: 4}
-	px := core.Unit(3-1)*cw + core.Unit(2-1)*0 + 2*cw + 3 // editor units: into child cell col 3
+	// Surface at col 3, row 2. The pointer sits in child cell (3, 3), with
+	// a sub-cell remainder; the wire reports child-local (3, 3).
+	ev := mew.TerminalMouse{Col: 3, Row: 3}
+	px := core.Unit(3-1)*cw + 2*cw + 3
 	py := core.Unit(2-1)*ch + 2*ch + 5
 	lx, ly, ok := preciseHostedLocal(px, py, true, 3, 2, cw, ch, ev)
 	if !ok {
@@ -406,12 +407,148 @@ func TestPreciseHostedPointer(t *testing.T) {
 		t.Error("precise pointer collapsed to the cell center")
 	}
 
-	// A pointer in a DIFFERENT cell than the wire's is stale: fall back.
+	// One cell of staleness is tolerated (the pointer ran ahead of the
+	// wire); two means a different gesture and falls back.
+	if _, _, ok := preciseHostedLocal(px+cw, py, true, 3, 2, cw, ch, ev); !ok {
+		t.Error("one cell of wire staleness should still use the precise pointer")
+	}
 	if _, _, ok := preciseHostedLocal(px+5*cw, py, true, 3, 2, cw, ch, ev); ok {
-		t.Error("a pointer disagreeing with the wire's cell must be rejected")
+		t.Error("a pointer far from the wire's cell must be rejected")
 	}
 	// No memory at all: fall back.
 	if _, _, ok := preciseHostedLocal(px, py, false, 3, 2, cw, ch, ev); ok {
 		t.Error("an invalid pointer must be rejected")
+	}
+}
+
+// The hosted scrub, end to end at mew's real cadence: cell-crossing wire
+// events carrying child-local cells, with the precise pointer remembered by
+// the host riding along. The surface deliberately sits BELOW a title row
+// (Row 3) — the child-local/screen-cell confusion in the consistency check
+// only bit when the viewport was not at the origin, which is everywhere.
+func TestHostedScrubIsSmoothAndProportional(t *testing.T) {
+	b, err := raster.NewScaled(800, 600, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	b.SetFontSize(12)
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+
+	gp := &gfxFrameParent{}
+	gp.TrinketBase = *core.NewTrinketBase()
+	gp.Init(gp)
+	e := NewEditor()
+	e.SetParent(gp)
+	e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 700, Height: 500})
+
+	const col, row = 1, 3
+	e.terminalOpen("pty1", 80, 24)
+	e.terminalPlace([]mew.TerminalSurface{{
+		ID: "pty1", Col: col, Row: row, Width: 80, Height: 24,
+		ClipCol: col, ClipRow: row, ClipWidth: 80, ClipHeight: 24,
+	}})
+	// Deep scrollback: the regime where cell-quantized thumb motion means
+	// PAGES of content per step.
+	var big []byte
+	for i := 0; i < 800; i++ {
+		big = append(big, []byte(fmt.Sprintf("line %d\r\n", i))...)
+	}
+	e.terminalFeed("pty1", big)
+	e.paintTerminalSurfaces(p) // caches ppu and the hit scale
+
+	e.termMu.Lock()
+	child := e.termSurfaces["pty1"].term
+	e.termMu.Unlock()
+	child.ScrollUp(400) // start mid-history so the thumb has room both ways
+
+	track, thumb, upper, page, _, ok := child.vScrollGeometry()
+	if !ok {
+		t.Fatal("no vertical scrollbar on the child")
+	}
+	cw, ch := e.cellDims()
+	kyppu := child.gfx.hitKY * child.gfx.ppu
+	if kyppu <= 0 {
+		t.Fatal("no pointer scale cached")
+	}
+
+	// Press INSIDE the thumb. Child-local units for the pointer; the wire
+	// carries the enclosing child-local CELL, exactly as ptyMouseKey does.
+	pressLX := core.Unit((track.X + track.W/2) / (float64(cw) * 1))
+	_ = pressLX
+	px := core.Unit((track.X + track.W/2) / kyppu * kyppu) // keep in units domain
+	pxU := core.Unit(float64(px))
+	_ = pxU
+	pointerX := core.Unit((track.X + 1) / kyppu)
+	pointerY := core.Unit((thumb.Y + thumb.H/2) / kyppu)
+	cellCol := int(pointerX/cw) + 1
+	cellRow := int(pointerY/ch) + 1
+
+	// The host saw the precise pointer (in EDITOR units — surface origin
+	// offset applies) just before mew's wire event arrives.
+	e.notePointer(pointerX+core.Unit(col-1)*cw, pointerY+core.Unit(row-1)*ch)
+	e.terminalMouse("pty1", mew.TerminalMouse{
+		Col: cellCol, Row: cellRow, Action: mew.TerminalMousePress, Button: mew.TerminalMouseButtonLeft,
+	})
+	if !child.gfx.vDragging {
+		t.Fatal("press in the thumb did not start a scrollbar drag")
+	}
+	// No track-jump: the thumb stays where it was grabbed.
+	if got := child.gfx.vThumbPos; got != thumb.Y {
+		t.Fatalf("press jolted the thumb from %v to %v", thumb.Y, got)
+	}
+
+	// Scrub down one cell-crossing at a time, pointer precise. Each step's
+	// content movement must be proportional to the pointer's pixels — the
+	// page-jump bug moved the content by the TRACK-JUMP amount instead.
+	span := track.H - thumb.H
+	perPx := float64(upper-page) / span
+	prevVal := upper - page - (child.Terminal().Buffer().GetScrollOffset())
+	for step := 1; step <= 6; step++ {
+		py := pointerY + core.Unit(step)*ch // one cell down per event
+		e.notePointer(pointerX+core.Unit(col-1)*cw, py+core.Unit(row-1)*ch+3)
+		e.terminalMouse("pty1", mew.TerminalMouse{
+			Col: cellCol, Row: cellRow + step, Action: mew.TerminalMouseMotion,
+		})
+		val := upper - page - child.Terminal().Buffer().GetScrollOffset()
+		delta := val - prevVal
+		prevVal = val
+		// One cell of pointer = ch*kyppu px of thumb = that many lines
+		// scaled by perPx. Two cells of slack: the first event also carries
+		// the press's sub-cell offset. The bug this guards against — the
+		// track re-anchoring, or precision falling back with deep history —
+		// moves HUNDREDS of lines per step, far past this.
+		wantMax := int(2*float64(ch)*kyppu*perPx) + 4
+		if delta < 0 || delta > wantMax {
+			t.Fatalf("step %d: content moved %d lines, want 0..%d — a jump means precision fell back or the track re-anchored",
+				step, delta, wantMax)
+		}
+	}
+
+	// Off-bottom selection autoscroll: release the thumb, press in the
+	// content, then drag BELOW the grid (mew's capture delivers unclamped
+	// rows). The child must arm downward autoscroll.
+	e.terminalMouse("pty1", mew.TerminalMouse{Col: cellCol, Row: cellRow, Action: mew.TerminalMouseRelease, Button: mew.TerminalMouseButtonLeft})
+	e.notePointer(10*cw+core.Unit(col-1)*cw, 5*ch+core.Unit(row-1)*ch)
+	e.terminalMouse("pty1", mew.TerminalMouse{Col: 10, Row: 5, Action: mew.TerminalMousePress, Button: mew.TerminalMouseButtonLeft})
+	e.notePointer(10*cw+core.Unit(col-1)*cw, 27*ch+core.Unit(row-1)*ch)
+	e.terminalMouse("pty1", mew.TerminalMouse{Col: 10, Row: 27, Action: mew.TerminalMouseMotion})
+	if child.gfx.autoVert <= 0 {
+		t.Errorf("drag below the grid armed autoVert=%d, want > 0 (downward autoscroll)", child.gfx.autoVert)
+	}
+	e.terminalMouse("pty1", mew.TerminalMouse{Col: 10, Row: 27, Action: mew.TerminalMouseRelease, Button: mew.TerminalMouseButtonLeft})
+
+	// And the host clears a child's hover when the pointer leaves its
+	// surface — including the window-leave (-1,-1) form.
+	child.gfx.vHover = true
+	e.clearHostedHoverOutside(-1, -1)
+	if child.gfx.vHover {
+		t.Error("hover survived the pointer leaving the window")
 	}
 }

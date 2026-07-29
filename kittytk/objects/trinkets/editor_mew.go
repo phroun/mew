@@ -969,7 +969,40 @@ func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
 
 func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
 	e.notePointer(ev.X, ev.Y)
+	e.clearHostedHoverOutside(ev.X, ev.Y)
 	return e.PurfecTerm.HandleMouseMove(ev)
+}
+
+// clearHostedHoverOutside clears scrollbar hover on every hosted child whose
+// surface the pointer is NOT over. mew's wire only carries events over the
+// pty viewport, so a child whose thumb was hovered stays lit when the pointer
+// moves onto mew's chrome — or leaves the window by the bottom or right edge,
+// which arrives here as the toolkit's out-of-bounds (-1,-1) move. The host is
+// the one who still sees the pointer, so the host clears.
+func (e *Editor) clearHostedHoverOutside(x, y core.Unit) {
+	cw, ch := e.cellDims()
+	if cw <= 0 || ch <= 0 {
+		return
+	}
+	e.termMu.Lock()
+	type target struct{ t *PurfecTerm }
+	var clear []target
+	for _, s := range e.termSurfaces {
+		if s.term == nil || s.clipWidth <= 0 || s.clipHeight <= 0 {
+			continue
+		}
+		x0 := core.Unit(s.col-1) * cw
+		y0 := core.Unit(s.row-1) * ch
+		x1 := x0 + core.Unit(s.width)*cw
+		y1 := y0 + core.Unit(s.height)*ch
+		if x < x0 || x >= x1 || y < y0 || y >= y1 {
+			clear = append(clear, target{s.term})
+		}
+	}
+	e.termMu.Unlock()
+	for _, c := range clear {
+		c.t.updateScrollbarHoverGfx(-1, -1)
+	}
 }
 
 func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
@@ -988,10 +1021,26 @@ func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.
 	}
 	lx := px - core.Unit(col-1)*cw
 	ly := py - core.Unit(row-1)*ch
-	if lx < 0 || ly < 0 {
-		return 0, 0, false
+	// ev.Col/Row are CHILD-LOCAL 1-based cells — mew subtracts the viewport
+	// origin before the hook (ptyMouseKey: col := x - w.ContentX) — so the
+	// comparison is direct. Getting this wrong is expensive: comparing
+	// against screen cells made the row check fail by the viewport's Y
+	// offset every time, precision never engaged, and with a deep scrollback
+	// one cell of fallback quantization was PAGES of content per step.
+	//
+	// One cell of slack per axis: the wire travels through mew's loop while
+	// the pointer keeps moving, so by the time a cell-crossing event arrives
+	// the pointer is often a little past it. That staleness is exactly the
+	// precision worth keeping; two cells apart means a different gesture.
+	pcx, pcy := int(lx/cw)+1, int(ly/ch)+1
+	if lx < 0 {
+		pcx = int((lx-cw+1)/cw) + 1 // floor for negatives (capture runs past edges)
 	}
-	if int(lx/cw)+1 != ev.Col-col+1 || int(ly/ch)+1 != ev.Row-row+1 {
+	if ly < 0 {
+		pcy = int((ly-ch+1)/ch) + 1
+	}
+	dx, dy := pcx-ev.Col, pcy-ev.Row
+	if dx < -1 || dx > 1 || dy < -1 || dy > 1 {
 		return 0, 0, false
 	}
 	return lx, ly, true
