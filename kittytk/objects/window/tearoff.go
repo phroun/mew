@@ -51,6 +51,19 @@ type TearOffHost struct {
 	dragging bool
 	grabX    core.Unit
 	grabY    core.Unit
+	// grabPxX/Y is the SAME grab point in device pixels, captured at press
+	// time as (global pointer - window origin). The unit pair above is what
+	// the desktop needs to re-dock (it thinks in window units), but driving
+	// the OS window from it makes the window jolt: the pointer arrives in
+	// pixels, is divided into units by the surface, and px() multiplies it
+	// back, so the sub-unit part of the grab is lost and reappears as an
+	// offset of up to one pixels-per-unit. At the default zoom ppu is 2 and
+	// it hides; zoomed in it is 3 or more and the window visibly jumps on
+	// the first motion. beginResize already anchors in true pixels for the
+	// same reason — this is the drag half of that.
+	grabPxX     int
+	grabPxY     int
+	grabPxValid bool
 	// dragIsHandle marks a drag begun on the '#' tear handle: only such
 	// a drag re-docks (over the desktop); a plain title drag just moves
 	// the OS window. dragMoved distinguishes a handle CLICK (re-dock in
@@ -202,11 +215,55 @@ func (h *TearOffHost) SavedFlags() WindowFlags { return h.savedFlags }
 // title bar at the given window-unit grab point. The tear-off
 // choreography uses it so the gesture that tore the window continues
 // seamlessly in the new surface.
+// BeginDrag is PRESCRIPTIVE: the window will be placed so the pointer sits
+// at this unit offset, whatever the geometry is now — the tear-off
+// choreography re-anchors the just-torn window under the cursor with it, and
+// the offset re-reads the live pixels-per-unit so a mid-drag font zoom keeps
+// the grab proportionally placed. For a press that lands on THIS window's own
+// title bar use beginDragAt, which pins the exact pixels under the pointer.
 func (h *TearOffHost) BeginDrag(grabX, grabY core.Unit) {
 	h.dragging = true
 	h.dragIsHandle = false
 	h.dragMoved = false
 	h.grabX, h.grabY = grabX, grabY
+	h.grabPxValid = false
+}
+
+// beginDragAt is DESCRIPTIVE: the pointer is already at (x, y) — a real
+// press on this window's title bar — so the anchor is captured in device
+// pixels from the actual pointer and window positions, exactly. The unit
+// pair still records the grab for re-docking; it is just not what drives
+// the OS window, because the platform's px->unit division already dropped
+// the sub-unit part and multiplying it back jolts the window by up to one
+// pixels-per-unit on the first motion.
+func (h *TearOffHost) beginDragAt(x, y core.Unit) {
+	h.BeginDrag(x, y)
+	h.captureGrabPx()
+}
+
+// captureGrabPx records the grab point in device pixels: where the pointer is
+// now, less where the window is now. Exact by construction — no unit round
+// trip — so the point under the pointer stays under it. Silently leaves the
+// anchor invalid when the OS window is not placed yet (the tear-off
+// choreography arms a drag mid-flight); grabPx then falls back to the unit
+// conversion, which is what this code did before.
+func (h *TearOffHost) captureGrabPx() {
+	h.grabPxValid = false
+	if h.global == nil || h.native == nil {
+		return
+	}
+	gx, gy := h.global()
+	wx, wy := h.native.ScreenPositionPx()
+	h.grabPxX, h.grabPxY = gx-wx, gy-wy
+	h.grabPxValid = true
+}
+
+// grabPx is the grab offset to position the OS window by.
+func (h *TearOffHost) grabPx() (int, int) {
+	if h.grabPxValid {
+		return h.grabPxX, h.grabPxY
+	}
+	return h.px(h.grabX), h.px(h.grabY)
 }
 
 // Dragging reports whether a title drag is moving the OS window.
@@ -564,7 +621,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 				h.onBlockedPress()
 			}
 			if e.Button == core.LeftButton && h.blockedTitleDragStart(e.X, e.Y) {
-				h.BeginDrag(e.X, e.Y)
+				h.beginDragAt(e.X, e.Y)
 			}
 			return true
 		case core.MouseMoveEvent:
@@ -628,7 +685,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// desktop, a click re-docks in place. Grab it before the window
 		// tracks it as a button.
 		if e.Button == core.LeftButton && h.win.buttonAtPosition(e.X, e.Y) == TitleButtonTear {
-			h.BeginDrag(e.X, e.Y)
+			h.beginDragAt(e.X, e.Y)
 			h.dragIsHandle = true
 			handled = true
 			break
@@ -647,7 +704,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			} else {
 				h.lastClickAt = now
 				h.lastClickX, h.lastClickY = e.X, e.Y
-				h.BeginDrag(e.X, e.Y)
+				h.beginDragAt(e.X, e.Y)
 			}
 			handled = true
 		}
@@ -761,7 +818,8 @@ func (h *TearOffHost) dragMove() bool {
 		// A zoomed window doesn't slide; dragging its title below the
 		// work area's top restores it, with the grab point staying
 		// proportionally placed on the narrower title bar.
-		if gy-h.px(h.grabY) >= way {
+		_, gpy := h.grabPx()
+		if gy-gpy >= way {
 			if ww > 0 {
 				h.grabX = core.Unit(float64(h.grabX) * float64(h.zoomSaved[2]) / float64(ww))
 			}
@@ -769,7 +827,13 @@ func (h *TearOffHost) dragMove() bool {
 			h.dragRestored = true
 			h.win.Restore()
 			h.native.SetScreenSizePx(h.zoomSaved[2], h.zoomSaved[3])
-			h.native.SetScreenPositionPx(gx-h.px(h.grabX), gy-h.px(h.grabY))
+			// The window just changed size under the pointer, so the pixel
+			// anchor it was captured against is gone: re-derive it from the
+			// re-proportioned unit grab, which is the best answer available
+			// once the geometry it referred to no longer exists.
+			h.grabPxX, h.grabPxY = h.px(h.grabX), h.px(h.grabY)
+			h.grabPxValid = true
+			h.native.SetScreenPositionPx(gx-h.grabPxX, gy-h.grabPxY)
 		}
 		return true
 	}
@@ -786,7 +850,8 @@ func (h *TearOffHost) dragMove() bool {
 		h.zoomToWorkArea()
 		return true
 	}
-	h.native.SetScreenPositionPx(gx-h.px(h.grabX), gy-h.px(h.grabY))
+	gpx, gpy := h.grabPx()
+	h.native.SetScreenPositionPx(gx-gpx, gy-gpy)
 	return true
 }
 
