@@ -411,6 +411,17 @@ func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 	return rects
 }
 
+// refreshResizeHover re-derives the resize-edge highlight from the window's
+// CURRENT bounds, for use while a resize is in flight (the hover path that
+// normally builds them is skipped then). Keeps the armed edges: the pointer
+// may have wandered off them, but the gesture still owns them.
+func (h *TearOffHost) refreshResizeHover() {
+	if !h.resizing || h.resizeEdges == 0 {
+		return
+	}
+	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
+}
+
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
 // cursor for a plain (non-drag, non-resize) hover over the torn window.
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
@@ -730,6 +741,17 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			handled = h.win.HandleMouseMove(e)
 		} else if h.resizing {
 			handled = h.resizeMove()
+			// The highlight bands are window-LOCAL and sized from the
+			// window's bounds, so a live resize invalidates them: the right
+			// band sits at Width-grip and the bottom one at Height-grip, both
+			// of which just moved. Nothing else recomputes them mid-gesture —
+			// the hover path that built them is skipped while resizing — so
+			// they must be re-derived here or they hang where the drag
+			// started. A single edge hides this when its own band happens not
+			// to move (the left and top bands are anchored at 0), which is why
+			// dragging a CORNER, where at least one band always moves, is
+			// where it shows.
+			h.refreshResizeHover()
 		} else if h.dragging {
 			handled = h.dragMove()
 		} else if e.Buttons == 0 {

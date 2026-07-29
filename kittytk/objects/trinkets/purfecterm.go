@@ -194,6 +194,10 @@ func (t *PurfecTerm) toChild(b []byte) {
 	if len(b) == 0 {
 		return
 	}
+	// Input is input, whoever originated it: a tinput, a mouse report, a
+	// paste. The caret must not still be in its dark half when the user has
+	// just acted, so restart the phase the way a keystroke does.
+	t.resetCursorBlink()
 	if t.inputSink != nil {
 		t.inputSink(b)
 	}
@@ -857,6 +861,10 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	if t.terminal == nil {
 		return true
 	}
+	// A click is user action: show the caret at once. This is its own call
+	// because a press need not reach the child — a local selection sends
+	// nothing — so toChild's reset would never fire for it.
+	t.resetCursorBlink()
 	// Debug callback - extract cell info for the clicked cell.
 	if t.onCellClicked != nil {
 		t.reportCellDebug(event.X, event.Y)
@@ -973,6 +981,12 @@ func (t *PurfecTerm) Feed(data []byte) {
 		return
 	}
 	t.terminal.Feed(data)
+	// A HOSTED terminal never sees its own input: mew owns the session and
+	// feeds this trinket the resulting stream, so toChild above is never
+	// reached for it. Fed bytes are the only evidence here that something
+	// happened — a tinput's echo among them — and a caret in its dark half
+	// while the screen is changing reads as a hang.
+	t.resetCursorBlink()
 	t.Update()
 }
 
