@@ -38,27 +38,6 @@ func Rune(r rune) int {
 	return runewidth.RuneWidth(r)
 }
 
-// renderableMarkScripts are the scripts whose combining marks mew can
-// actually put on screen: it shapes them, ships or resolves faces for them,
-// and terminal fonts carry them. General diacritics (script=Inherited, the
-// U+0300..U+036F block and kin) are not listed — they belong to no script and
-// are handled as always-renderable.
-//
-// This mirrors mew's own font architecture (the ui-{text,term}-{script} face
-// tree: Latin, Hebrew, Arabic, CJK). A mark outside it is one mew has no
-// glyph for and no shaping rules about.
-var renderableMarkScripts = []*unicode.RangeTable{
-	unicode.Hebrew,
-	unicode.Arabic,
-	unicode.Han,
-	unicode.Hiragana,
-	unicode.Katakana,
-	unicode.Hangul,
-	unicode.Greek,
-	unicode.Cyrillic,
-	unicode.Latin,
-}
-
 // IsControl reports whether r is a control character that must never reach the
 // terminal as itself: the C0 set and DEL, and — just as important — the C1 set
 // U+0080..U+009F.
@@ -104,31 +83,36 @@ func scriptOf(r rune) string {
 }
 
 // DefectiveMark reports whether the combining mark r is one mew must NOT paint
-// as zero-width after the base character prev. Three cases:
+// as zero-width after the base character prev. Two cases:
 //
 //   - No base at all (prev == 0): the mark opens the line with nothing to
 //     anchor onto.
-//   - The mark belongs to a script mew cannot render (see
-//     renderableMarkScripts) — NKo tone marks, for instance.
 //   - The mark is SCRIPT-SPECIFIC and the base belongs to a different script:
-//     a Hebrew accent over a CJK ideograph, niqqud on a Latin letter, harakat
-//     on punctuation. Unicode calls such a sequence ill-formed, and no shaper
-//     will compose it.
+//     a Hebrew accent over a CJK ideograph, niqqud on a Latin letter, an NKo
+//     tone on punctuation. Unicode calls such a sequence ill-formed, and no
+//     shaper will compose it.
 //
 // Both mew and wcwidth call every combining mark zero-width, which is a
 // promise about what the terminal will do: paint the mark INTO the preceding
-// cell and advance nothing. A terminal that has no glyph for the mark, nothing
-// to compose it onto, or a base its shaper refuses to attach the mark to,
-// breaks that promise and falls back to a SPACING glyph — .notdef, or
-// dotted-circle + mark. That glyph advances a column mew never budgeted, so
-// the rest of the row slides right, overruns the window and bleeds past its
-// edge. This is the class of corruption the renderer already handles for
-// control codes, so these marks are classified the same way and painted as a
-// definite-width visible substitute.
+// cell and advance nothing. A mark with nothing to compose onto, or a base a
+// shaper refuses to attach it to, breaks that promise: the fallback is a
+// SPACING glyph — .notdef, or the shaper's own dotted-circle + mark. That
+// advances a column mew never budgeted, so the rest of the row slides right,
+// overruns the window and bleeds past its edge. This is the class of
+// corruption the renderer already handles for control codes, so these marks
+// are classified the same way and given a definite-width visible form.
+//
+// The test is about the SEQUENCE, never about which glyphs happen to be
+// installed. Font inventory is deliberately not consulted: in a terminal the
+// glyph comes from the host's font, and mew's own faces can be replaced by
+// user-configured ones, so any answer derived from the bundled set would be
+// about the wrong font. That also means legitimate text in a script mew ships
+// no face for — an NKo mark on an NKo letter — is left alone to render with
+// whatever font the user does have.
 //
 // General diacritics (script=Inherited/Common — the U+0300..U+036F block, the
-// kana voicing marks) belong to no script and legitimately attach to any base,
-// so they are never defective on this rule.
+// Arabic vowel marks, the kana voicing marks) belong to no script and
+// legitimately attach to any base, so they are never defective on this rule.
 func DefectiveMark(prev, r rune) bool {
 	if !IsMark(r) {
 		return false
@@ -140,52 +124,30 @@ func DefectiveMark(prev, r rune) bool {
 	if markScript == "" || markScript == "Inherited" || markScript == "Common" {
 		return false // general diacritic: attaches to any base
 	}
-	if !RenderableMark(r) {
-		return true // a mark from a script mew has no glyph for
-	}
-	// Script-specific mark: it is well-formed only on a base of its own
-	// script.
+	// Script-specific mark: well-formed only on a base of its own script.
 	return scriptOf(prev) != markScript
-}
-
-// RenderableMark reports whether mew can actually DRAW the combining mark r:
-// it is script-neutral (a general diacritic), or it belongs to a script in
-// mew's face tree. A mark outside that set has no glyph anywhere in reach, so
-// nothing can be composed from it.
-func RenderableMark(r rune) bool {
-	if !IsMark(r) {
-		return false
-	}
-	if s := scriptOf(r); s == "" || s == "Inherited" || s == "Common" {
-		return true
-	}
-	for _, s := range renderableMarkScripts {
-		if unicode.Is(s, r) {
-			return true
-		}
-	}
-	return false
 }
 
 // AnchorMark reports whether a defective mark should be shown ANCHORED on a
 // dotted circle (U+25CC) — the Unicode convention for displaying an isolated
 // combining mark — rather than reduced to a hex substitute.
 //
-// It applies to any defective mark mew can draw, whichever way it is
-// defective: no base at all, or a base of the wrong script. Either way the
-// mark has no legitimate carrier, so the dotted circle supplies one; the mark
-// composes onto it exactly as shapers already do for defective clusters, and
-// the pair occupies one cell that mew and the terminal agree on. The reader
-// sees the real mark instead of a number, and a mark stranded on a foreign
-// base is lifted onto a proper one rather than left to a shaper that would
-// refuse the pairing.
+// It applies to EVERY defective mark, however it is defective: no base at all,
+// a base of the wrong script, or a script mew has no face for. The mark has no
+// legitimate carrier, so the dotted circle supplies one; the mark composes
+// onto it exactly as shapers already do for defective clusters, and the pair
+// occupies one cell. The reader sees the real mark instead of a number.
 //
-// A mark mew CANNOT draw gets no anchor: composing onto the circle would still
-// leave the terminal drawing .notdef for the mark itself, which is a spacing
-// glyph, and the overrun this whole classification exists to prevent would be
-// back. Those keep the hex form.
+// Coverage is deliberately NOT consulted. On a graphical surface the renderer
+// draws into its own cell grid, so a mark with no glyph costs nothing — it
+// simply does not appear over the circle, and the circle still marks the spot.
+// On a cell surface the glyph belongs to the host terminal's font, which mew
+// cannot inspect at all, so gating on mew's own bundled faces would be
+// answering a question about the wrong font. What both surfaces do get is a
+// definite one-cell budget anchored by U+25CC, which every bundled face
+// carries and every terminal font in practice does too.
 func AnchorMark(prev, r rune) bool {
-	return DefectiveMark(prev, r) && RenderableMark(r)
+	return DefectiveMark(prev, r)
 }
 
 // MarkAnchor is the base character an anchored mark is composed onto.

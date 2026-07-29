@@ -1897,8 +1897,11 @@ func substituteWidth(s string) int { return len([]rune(s)) }
 // model call it, so they cannot drift.
 func defectiveMarkForm(prev, r rune) (string, int) {
 	if textwidth.AnchorMark(prev, r) {
-		// The circle takes the cell; the mark rides it at zero width.
-		return string(textwidth.MarkAnchor) + string(r), 1
+		// The circle takes a cell and the mark rides it — at ZERO width for a
+		// non-spacing mark (Mn/Me), but Mc marks are SPACING combining marks
+		// and take a cell of their own, so the pair's width is the circle plus
+		// whatever the mark itself advances.
+		return string(textwidth.MarkAnchor) + string(r), 1 + textwidth.Rune(r)
 	}
 	s := runeToHexOrCtrl(r)
 	return s, substituteWidth(s)

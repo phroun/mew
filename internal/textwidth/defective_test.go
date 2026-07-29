@@ -9,12 +9,16 @@ import "testing"
 // that promise with a spacing fallback and the row overruns its window.
 func TestDefectiveMark(t *testing.T) {
 	const (
-		acute    = '́' // combining acute (Inherited)
-		niqqud   = 'ְ' // hebrew point sheva
-		hebAccnt = '֗' // hebrew accent revia
-		harakat  = 'َ' // arabic fatha
-		nkoTone  = '߭' // NKo combining short rising tone
-		dakuten  = '゙' // combining katakana-hiragana voiced sound mark
+		acute     = '́'      // combining acute (Inherited)
+		niqqud    = 'ְ'      // hebrew point sheva
+		hebAccnt  = '֗'      // hebrew accent revia
+		harakat   = 'َ'      // arabic fatha
+		nkoTone   = '\u07ed' // NKo combining short rising tone
+		nkoLetter = '\u07ca' // NKo letter A
+		tibetanA  = '\u0f71' // Tibetan vowel sign AA
+		tibetanKa = '\u0f40' // Tibetan letter KA
+		thaiMark  = '\u0e31' // Thai character mai han-akat
+		dakuten   = '゙'      // combining katakana-hiragana voiced sound mark
 	)
 	cases := []struct {
 		name string
@@ -43,9 +47,18 @@ func TestDefectiveMark(t *testing.T) {
 		{"harakat on punctuation", '.', harakat, false},
 		{"harakat on latin", 'x', harakat, false},
 
-		// A mark from a script mew cannot render, anywhere.
+		// A script-specific mark on a foreign base, regardless of whether
+		// any installed font can draw it.
 		{"nko tone on period", '.', nkoTone, true},
 		{"nko tone on latin", 'x', nkoTone, true},
+		{"tibetan vowel on latin", 'x', tibetanA, true},
+		{"thai mark on latin", 'x', thaiMark, true},
+
+		// LEGITIMATE text in a script mew ships no face for: the sequence is
+		// well-formed, so it is left alone to render with whatever font the
+		// user has. Font inventory is never consulted (see DefectiveMark).
+		{"nko tone on nko letter", nkoLetter, nkoTone, false},
+		{"tibetan vowel on tibetan letter", tibetanKa, tibetanA, false},
 
 		// Nothing to anchor onto.
 		{"acute with no base", 0, acute, true},

@@ -25,23 +25,19 @@ func termCols(s string) int {
 	return total
 }
 
-// A mark mew cannot render is classified like a control code: painted as its
-// hex codepoint in the substitutes color, with a width both mew and the
-// terminal agree on — instead of being emitted raw as zero-width, which a
-// terminal answers with a spacing fallback glyph that pushes the rest of the
-// row off the window's edge.
+// A defective mark is never emitted raw as zero-width — a terminal answers
+// that with a spacing fallback glyph which pushes the rest of the row off the
+// window's edge. It is lifted onto a dotted circle in the substitutes color,
+// with a width both mew and the terminal agree on.
 func TestDefectiveMarkRendersAsSubstitute(t *testing.T) {
 	sr, w := testRenderer()
 	out := stripAnsi(sr.prepareLineForDisplay("a"+nkoTone+"b", "\n", 20, 0, w, 0, selectionRange{}, nil, nil))
-	if !strings.Contains(out, "07ED") {
-		t.Fatalf("defective mark should paint as its hex codepoint; got %q", out)
+	if !strings.ContainsRune(out, textwidth.MarkAnchor) {
+		t.Fatalf("defective mark should be lifted onto a dotted circle; got %q", out)
 	}
-	if strings.ContainsRune(out, '߭') {
-		t.Fatalf("the raw mark must not reach the terminal; got %q", out)
-	}
-	// It is measured, not free: "a" + "07ED" + "b" = 6 columns of content.
-	if got := termCols(strings.TrimRight(out, " ")); got != 6 {
-		t.Fatalf("substituted row measures %d columns, want 6 (out=%q)", got, out)
+	// It is measured, not free: "a" + (circle+mark) + "b" = 3 columns.
+	if got := termCols(strings.TrimRight(out, " ")); got != 3 {
+		t.Fatalf("anchored row measures %d columns, want 3 (out=%q)", got, out)
 	}
 }
 
@@ -53,8 +49,8 @@ func TestDefectiveMarkWidthMatchesPaint(t *testing.T) {
 	for i := range runes {
 		col += sr.runeWidthAt(runes, i, col, w)
 	}
-	if col != 6 {
-		t.Fatalf("width model says %d columns, paint produces 6", col)
+	if col != 3 {
+		t.Fatalf("width model says %d columns, paint produces 3", col)
 	}
 	// A well-formed mark still measures zero.
 	ok := []rune("é")
