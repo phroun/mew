@@ -933,14 +933,36 @@ func TestExecCarriesTheMethod(t *testing.T) {
 		got = r
 		return newStubPTY(), nil
 	}
-	// Comma-separated: without it PawScript concatenates the two into one
-	// argument, which is symbol concatenation and not a second argument.
-	e.executeCommand(`exec "cmd.exe", "3"`)
+	// The method is a SWITCH now, left of the program name, and the whole line
+	// is re-parsed by argwild — the same notation the host app boots with.
+	e.executeCommand(`exec "--pty=3 cmd.exe"`)
 	if got.Command != "cmd.exe" || got.Method != "3" {
 		t.Errorf("request = %+v, want cmd.exe via method 3", got)
 	}
+	if len(got.Args) != 0 {
+		t.Errorf("no arguments were given; got %q", got.Args)
+	}
 	if !hasNotification(e, "method 3") {
 		t.Error("the notification should name a non-default method")
+	}
+
+	// The arguments are composited across PawScript arguments too, so the
+	// caller may split the line wherever is convenient.
+	e3, _ := newTestEditor(t, "x\n")
+	var got3 PTYRequest
+	e3.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got3 = r
+		return newStubPTY(), nil
+	}
+	e3.executeCommand(`exec "--pty=pipe_only", "--", "bash", "-l"`)
+	if got3.Command != "bash" || got3.Method != "pipe_only" {
+		t.Errorf("request = %+v, want bash via pipe_only", got3)
+	}
+	if len(got3.Args) != 1 || got3.Args[0] != "-l" {
+		t.Errorf("args = %q, want [-l]", got3.Args)
+	}
+	if !hasNotification(e3, "Started bash -l") {
+		t.Error("the notification should show the child's arguments")
 	}
 
 	// No method named is the host's default, and says nothing about it.
@@ -1350,5 +1372,79 @@ func TestPTYViewportAsksForNoCaret(t *testing.T) {
 	}
 	if !e.caretHidden(w) {
 		t.Error("a viewport hosting a terminal must not ask for a caret too")
+	}
+}
+
+// The shell command asks the HOST to name the program: Shell is set and Command
+// is empty, because which shell a user logs in with belongs to the operating
+// system and to their account, and mew can see neither.
+func TestShellCommandAsksTheHostToNameIt(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	var got PTYRequest
+	e.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got = r
+		return newStubPTY(), nil
+	}
+	e.executeCommand(`shell`)
+	if !got.Shell {
+		t.Error("Shell should be set")
+	}
+	if got.Command != "" {
+		t.Errorf("Command = %q, want empty — the host names it", got.Command)
+	}
+	// The notification says what was ASKED for, not a shell name mew invented.
+	if !hasNotification(e, "the login shell") {
+		t.Error("the notification should say the login shell was asked for")
+	}
+}
+
+// Everything else about the line is exec's: --pty=, the phase rules, named
+// arguments. What differs is only that the first operand is an ARGUMENT.
+func TestShellCommandCarriesMethodAndArgs(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	var got PTYRequest
+	e.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got = r
+		return newStubPTY(), nil
+	}
+	e.executeCommand(`shell "--pty=pipe_only", "--", "-l", "-i"`)
+	if !got.Shell || got.Command != "" {
+		t.Errorf("request = %+v, want a shell request with no command", got)
+	}
+	if got.Method != "pipe_only" {
+		t.Errorf("Method = %q, want pipe_only", got.Method)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "-l" || got.Args[1] != "-i" {
+		t.Errorf("args = %q, want [-l -i]", got.Args)
+	}
+
+	// The named-argument spelling reaches the same request.
+	e2, _ := newTestEditor(t, "x\n")
+	var got2 PTYRequest
+	e2.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got2 = r
+		return newStubPTY(), nil
+	}
+	e2.executeCommand(`shell pty: pipe_only, "-- -c make"`)
+	if got2.Method != "pipe_only" || !got2.Shell {
+		t.Errorf("request = %+v, want a shell request via pipe_only", got2)
+	}
+	if len(got2.Args) != 2 || got2.Args[0] != "-c" || got2.Args[1] != "make" {
+		t.Errorf("args = %q, want [-c make]", got2.Args)
+	}
+}
+
+// A shell request must not also name a program: honouring one would make shell
+// into exec while still reading as though the host had chosen.
+func TestShellCommandRefusesAProgram(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	called := false
+	e.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		called = true
+		return newStubPTY(), nil
+	}
+	e.executeCommand(`shell program: bash`)
+	if called {
+		t.Error("the host should not have been asked for anything")
 	}
 }

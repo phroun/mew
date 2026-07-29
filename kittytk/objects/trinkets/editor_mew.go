@@ -854,6 +854,16 @@ func (e *Editor) restoreHostTerminal() {
 // open a terminal themselves.
 func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	cmdName := strings.TrimSpace(req.Command)
+	if req.Shell {
+		// mew's `shell` command asks for the user's LOGIN SHELL without naming
+		// one, because which shell that is belongs to the operating system and
+		// to this user's account — neither of which mew can see. Answering it is
+		// this host's job precisely because this host is the user's own machine.
+		if cmdName != "" {
+			return nil, fmt.Errorf("shell request also named %q", cmdName)
+		}
+		cmdName = hostLoginShell()
+	}
 	if cmdName == "" {
 		return nil, fmt.Errorf("no command given")
 	}
@@ -879,7 +889,7 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
 	// before it starts on Windows. hostPTY is per-platform; everything above
 	// it, and mew entirely, is not.
-	sess, err := hostPTY(path, dir, env, req.Cols, req.Rows, req.Method)
+	sess, err := hostPTY(path, dir, env, req.Args, req.Cols, req.Rows, req.Method)
 	if err != nil {
 		return nil, err
 	}

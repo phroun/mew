@@ -2142,29 +2142,83 @@ func (e *Editor) registerCommands() {
 	// A SECOND argument names the host's method — exec "cmd.exe" "2" — for a
 	// host that has more than one way to make a terminal and no way to know
 	// from here which one this machine wants. Blank is the host's default.
-	ps.RegisterCommand("exec", func(ctx *pawscript.Context) pawscript.Result {
-		method, _ := argString(ctx, 1)
-		if arg, ok := argString(ctx, 0); ok && strings.TrimSpace(arg) != "" {
-			return pawscript.BoolStatus(e.execRequest(arg, method))
+	// exec takes ANY NUMBER of arguments, joins them with single spaces, and
+	// runs the whole line back through argwild — the same parser the host app
+	// uses on its own command line at boot, so there is one notation to learn
+	// rather than two. mew's switches come first (--pty=NAME), then the
+	// program, then the program's own arguments; argwild's phase model does the
+	// separating. See execargs.go for the spellings.
+	//
+	// shell is exec with the program left to the HOST: it asks for the user's
+	// login shell rather than naming bash or cmd.exe, because which one that is
+	// depends on the operating system and on the user's own account and mew can
+	// see neither. Everything else — the compositing, --pty=, named arguments,
+	// the phase rules — is identical, so the two are registered from one body.
+	// Any further words are the shell's own arguments, which is also how a
+	// program gets run through it: `shell "-c make"`.
+	registerExecLike := func(name string, shell bool) {
+		parse := parseExecLineNamed
+		if shell {
+			parse = parseShellLineNamed
 		}
-		expired := &atomic.Bool{}
-		token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
-			tokenTimeout(e.Config.PromptTimeout))
-		e.PromptMgr.PromptForInput("Execute what? ", "",
-			func(accepted bool, _, input string) {
-				defer e.RequestRender()
-				if expired.Load() {
-					e.ShowWarning("Prompt timed out")
-					return
+		request := func(spec execSpec) bool {
+			if spec.Shell {
+				return e.execRequestShell(spec.Args, spec.Method)
+			}
+			return e.execRequestArgs(spec.Program, spec.Args, spec.Method)
+		}
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			var parts []string
+			for i := 0; ; i++ {
+				v, ok := argString(ctx, i)
+				if !ok {
+					break
 				}
-				if !accepted || strings.TrimSpace(input) == "" {
-					ctx.ResumeToken(token, false)
-					return
+				parts = append(parts, v)
+			}
+			run := func(line string) bool {
+				spec, err := parse(line, ctx.NamedArgs)
+				if err != nil {
+					e.ShowWarning(name + ": " + err.Error())
+					return false
 				}
-				ctx.ResumeToken(token, e.execRequest(input, method))
-			}, "exec")
-		return pawscript.TokenResult(token)
-	})
+				return request(spec)
+			}
+			if line := joinExecArgs(parts); strings.TrimSpace(line) != "" {
+				return pawscript.BoolStatus(run(line))
+			}
+			// Nothing positional still counts as a request when it can stand on
+			// its own: named arguments carrying a program, or shell, which needs
+			// no arguments at all to mean something.
+			spec, ok, err := namedOnlyRequest(ctx.NamedArgs, shell)
+			if err != nil {
+				e.ShowWarning(name + ": " + err.Error())
+				return pawscript.BoolStatus(false)
+			}
+			if ok {
+				return pawscript.BoolStatus(request(spec))
+			}
+			expired := &atomic.Bool{}
+			token := e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+				tokenTimeout(e.Config.PromptTimeout))
+			e.PromptMgr.PromptForInput("Execute what? ", "",
+				func(accepted bool, _, input string) {
+					defer e.RequestRender()
+					if expired.Load() {
+						e.ShowWarning("Prompt timed out")
+						return
+					}
+					if !accepted || strings.TrimSpace(input) == "" {
+						ctx.ResumeToken(token, false)
+						return
+					}
+					ctx.ResumeToken(token, run(input))
+				}, name)
+			return pawscript.TokenResult(token)
+		})
+	}
+	registerExecLike("exec", false)
+	registerExecLike("shell", true)
 
 	// tinput sends input to the focused viewport's terminal session — the same
 	// direction the TUI host sends keystrokes into mew, and in the same

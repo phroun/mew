@@ -276,6 +276,35 @@ func defaultMethod() string {
 	return "1"
 }
 
+// methodAliases give the methods worth asking for by name a NAME, so a user
+// writes what they mean rather than remembering a number:
+//
+//	exec "--pty=pipe_only bash"
+//	exec pty: pipe_only, bash
+//
+// The numbers all still work — the full table is a diagnostic surface, and
+// most of its entries exist to demonstrate a failure rather than to be chosen.
+// Only the ones a person has a reason to select are named.
+var methodAliases = map[string]string{
+	"terminal":   "1",  // the real terminal: a console of our own, std handles cleared
+	"conpty":     "1",  // the same thing under its Windows name
+	"default":    "1",  //
+	"inherit":    "2",  // ConPTY with bInheritHandles=TRUE
+	"pipe_only":  "6",  // no pseudoconsole at all: a shell, but not a terminal
+	"pipes":      "6",  //
+	"no_window":  "7",  // ConPTY + CREATE_NO_WINDOW
+	"no_console": "10", // ConPTY without ensuring a console — what used to fail
+}
+
+// resolveMethodName maps a named method to its number, leaving anything else
+// (including a bare number) alone.
+func resolveMethodName(name string) string {
+	if n, ok := methodAliases[strings.ToLower(strings.TrimSpace(name))]; ok {
+		return n
+	}
+	return name
+}
+
 // optsForMethod resolves a request's method name. An unknown one falls back
 // to the default rather than refusing: a mistyped method should still get a
 // terminal.
@@ -283,6 +312,7 @@ func optsForMethod(name string) (conOpts, string) {
 	if name == "" {
 		name = defaultMethod()
 	}
+	name = resolveMethodName(name)
 	for _, m := range ptyMethods {
 		if m.Name == name {
 			return m.Opt, m.Desc
@@ -299,10 +329,26 @@ const settleWait = 400 * time.Millisecond
 // conAttempts is how many times a pseudoconsole is tried before falling back.
 const conAttempts = 3
 
-func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew.PTYSession, error) {
+// hostLoginShell answers mew's `shell` command on Windows: the command
+// processor this system logs in with. %COMSPEC% is where Windows itself keeps
+// that answer — every batch file and every CreateProcess-a-shell call reads it —
+// and it is an absolute path, which LookPath accepts unchanged. cmd.exe is the
+// fallback, found on PATH, for a stripped environment that exports no COMSPEC.
+//
+// Deliberately NOT PowerShell. It may well be what the user prefers, but it is
+// not what the system calls its shell, and guessing a preference from here would
+// be exactly the sort of thing `exec` exists to spell out explicitly.
+func hostLoginShell() string {
+	if sh := strings.TrimSpace(os.Getenv("COMSPEC")); sh != "" {
+		return sh
+	}
+	return "cmd.exe"
+}
+
+func hostPTY(path, dir string, env []string, args []string, cols, rows int, method string) (mew.PTYSession, error) {
 	opt, desc := optsForMethod(method)
 	if opt.plainPipes {
-		p, err := newPipeChild(path, nil, dir, env)
+		p, err := newPipeChild(path, args, dir, env)
 		if err != nil {
 			return nil, err
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,9 +27,28 @@ import (
 // method is ignored here: a pty pair is the only way POSIX makes a terminal,
 // and there is nothing for a selector to choose between. It exists in the
 // request because Windows has several and no way to know which one a given
-// machine wants.
-func hostPTY(path, dir string, env []string, cols, rows int, method string) (mew.PTYSession, error) {
-	s, err := newUnixPTY(path, nil, dir, env, cols, rows)
+// machine wants — see methodAliases there for the names --pty= accepts.
+//
+// args are the child's own, already separated from mew's switches by the exec
+// command line's parse, and passed to the process verbatim.
+// hostLoginShell answers mew's `shell` command on POSIX: the shell this user
+// logs in with. $SHELL is the authoritative answer and the one every other tool
+// uses — it is set from the passwd entry at login, so it already accounts for a
+// user who changed theirs. /bin/sh is the fallback that POSIX guarantees
+// exists, for the odd environment (a bare cron, a stripped container) that
+// exports no SHELL at all.
+//
+// Deliberately not read from /etc/passwd directly: on a machine using LDAP or
+// SSSD the file has no entry for the user, and $SHELL does.
+func hostLoginShell() string {
+	if sh := strings.TrimSpace(os.Getenv("SHELL")); sh != "" {
+		return sh
+	}
+	return "/bin/sh"
+}
+
+func hostPTY(path, dir string, env []string, args []string, cols, rows int, method string) (mew.PTYSession, error) {
+	s, err := newUnixPTY(path, args, dir, env, cols, rows)
 	if err != nil {
 		return nil, err
 	}

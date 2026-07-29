@@ -50,6 +50,20 @@ type PTYRequest struct {
 	// request. The session is resized again whenever the viewport changes.
 	Cols, Rows int
 
+	// Shell asks the HOST for the user's login shell instead of naming a
+	// program: what that is depends on the operating system and the user's own
+	// account, and neither is knowable from here. Command is empty when it is
+	// set, and Args (if any) are the shell's own arguments — which is also how
+	// a program gets run through it, since `bash script.sh` is just bash with
+	// an argument.
+	Shell bool
+
+	// Args are the child's own arguments, already separated from mew's by the
+	// exec command line's parse (see execargs.go). Empty is the common case.
+	// They are passed to the program verbatim: no shell, no globbing, no word
+	// splitting — a host hands them straight to the process it starts.
+	Args []string
+
 	// Method names WHICH WAY the host should make the terminal, when a host
 	// has more than one and they do not all work everywhere. Empty means the
 	// host's default and is what everything asks for; anything else is data
@@ -398,6 +412,23 @@ func (e *Editor) appendPTYLog(entry string) (string, error) {
 // buffer. Denial is an ordinary outcome, reported and survivable: the buffer
 // stays exactly what it was.
 func (e *Editor) execRequest(command, method string) bool {
+	return e.execRequestArgs(command, nil, method)
+}
+
+// execRequestArgs is execRequest with the child's own arguments.
+func (e *Editor) execRequestArgs(command string, args []string, method string) bool {
+	return e.execRequestSpec(command, args, method, false)
+}
+
+// execRequestShell asks for the user's LOGIN SHELL, whatever that is: mew names
+// no program and the host resolves one. Args, if any, are the shell's own.
+func (e *Editor) execRequestShell(args []string, method string) bool {
+	return e.execRequestSpec("", args, method, true)
+}
+
+// execRequestSpec is execRequestArgs with the shell flag: when set, the host
+// names the program (the user's login shell) and command must be empty.
+func (e *Editor) execRequestSpec(command string, args []string, method string, shell bool) bool {
 	if e.Config.PTYProvider == nil {
 		e.ShowWarning("No terminal provider: this host does not grant sessions")
 		return false
@@ -422,9 +453,16 @@ func (e *Editor) execRequest(command, method string) bool {
 	req := PTYRequest{
 		CWD:     e.bufferCWD(w.Buffer),
 		Command: strings.TrimSpace(command),
+		Args:    args,
+		Shell:   shell,
 		Method:  strings.TrimSpace(method),
 		Cols:    cols,
 		Rows:    rows,
+	}
+	if req.Shell {
+		// The two are exclusive by construction: a host asked for the login
+		// shell must not also be handed a program name to prefer.
+		req.Command = ""
 	}
 
 	sess, err := e.Config.PTYProvider(req)
@@ -437,8 +475,18 @@ func (e *Editor) execRequest(command, method string) bool {
 		return false
 	}
 
-	e.attachPTY(w.Buffer, sess, req.Command, req.CWD, req.Method, cols, rows)
-	started := "Started " + req.Command
+	// The host chose the shell, so say what was ASKED for rather than guessing a
+	// name mew does not know — including in the session record, whose whole
+	// purpose is an honest account of the request.
+	name := req.Command
+	if req.Shell {
+		name = "the login shell"
+	}
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows)
+	started := "Started " + name
+	if len(req.Args) > 0 {
+		started += " " + strings.Join(req.Args, " ")
+	}
 	if req.Method != "" {
 		started += " (method " + req.Method + ")"
 	}
