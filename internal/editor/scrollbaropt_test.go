@@ -231,3 +231,31 @@ func TestScrollbarCornerShortensTrack(t *testing.T) {
 		t.Fatal("press on the corner row started a text selection")
 	}
 }
+
+// The I-beam region a graphical host receives must EXCLUDE the reserved
+// scrollbar column, so the pointer shows the ordinary arrow over the bar
+// rather than the text I-beam.
+func TestScrollbarExcludedFromPointerRegion(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 100))
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	var rect [4]int
+	e.Config.PointerRegion = func(col, row, width, height int, _ []PointerArrowSpan) {
+		rect = [4]int{col, row, width, height}
+	}
+	e.performRender()
+
+	if rect[2] <= 0 {
+		t.Skip("no region published (viewport not focused)")
+	}
+	// 1-based: the region's last column must stop before the bar's column.
+	lastCol := rect[0] + rect[2] - 1
+	barCol := w.ScrollbarX + 1
+	if barCol <= 0 {
+		t.Fatal("no scrollbar laid out")
+	}
+	if lastCol >= barCol {
+		t.Fatalf("I-beam region reaches column %d, but the scrollbar is at %d", lastCol, barCol)
+	}
+}

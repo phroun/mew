@@ -560,17 +560,41 @@ func (e *Editor) CursorShape() core.CursorShape {
 	return core.CursorText
 }
 
-// pointerInText reports whether the local point falls on the focused mew
-// window's editable text — inside the published I-beam rectangle and not on a
-// link-button exclusion span. The pointer coordinate arrives in the same space
-// as HandleMouseMove, so the terminal cell metrics map it to a 1-based cell.
-func (e *Editor) pointerInText(x, y core.Unit) bool {
+// pointerCell maps a local pointer coordinate to the 1-based terminal cell
+// mew addresses it by — the SAME trip a mouse event makes (screenToCellGfx).
+//
+// The scaling matters and is easy to lose: clicks arrive at the host's snapped
+// unit rate while the terminal lays its grid out at the renderer's ppu, so a
+// raw x/cellWidth drifts from the cell a click lands on the moment those two
+// rates diverge (any zoom away from the size where they coincide). Dividing
+// without it put the cursor query on a different cell than the mouse path,
+// which large targets survive and one-column ones do not: the reserved
+// scrollbar column and short link-button spans both stopped showing the arrow.
+func (e *Editor) pointerCell(x, y core.Unit) (col, row int, ok bool) {
 	cw, chh := e.cellDims()
 	if cw <= 0 || chh <= 0 {
+		return 0, 0, false
+	}
+	// hitK is 1 until a graphical paint computes it, so this needs no
+	// surface test — the guards below cover the unset case.
+	kx, ky := 1.0, 1.0
+	if e.gfx.hitKX > 0 {
+		kx = e.gfx.hitKX
+	}
+	if e.gfx.hitKY > 0 {
+		ky = e.gfx.hitKY
+	}
+	return int(float64(x)*kx/float64(cw)) + 1, int(float64(y)*ky/float64(chh)) + 1, true
+}
+
+// pointerInText reports whether the local point falls on the focused mew
+// window's editable text — inside the published I-beam rectangle and not on a
+// link-button exclusion span.
+func (e *Editor) pointerInText(x, y core.Unit) bool {
+	col, row, ok := e.pointerCell(x, y)
+	if !ok {
 		return false
 	}
-	col := int(x/cw) + 1 // 1-based cell, matching mew's coordinates
-	row := int(y/chh) + 1
 
 	e.pointerRegionMu.Lock()
 	r := e.pointerRegion
