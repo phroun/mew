@@ -47,6 +47,9 @@ func TestTerminalKeyEncodesThroughTheEmulator(t *testing.T) {
 		{"up", "\x1b[A"},
 		{"F5", "\x1b[15~"},
 		{"pgup", "\x1b[5~"},
+		// F10 is the key raw_key_input exists for: every layer above has its
+		// own claim on it.
+		{"F10", "\x1b[21~"},
 		{"a", "a"},
 	} {
 		if got := string(e.terminalKey("pty1", tc.key)); got != tc.want {
