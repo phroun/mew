@@ -9,3 +9,9 @@ bin/
 
 # Generated Windows icon resource object (make windows-sdl).
 app/cmd/*/*.syso
+
+# PTY session diagnostics: ptyLogName, written to the CWD wherever mew runs.
+# Running the editor tests leaves one in internal/editor/, and it had been
+# tracked -- growing by a few sessions with every commit that followed a test
+# run.
+mew-pty-diag.log
