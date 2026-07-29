@@ -1293,3 +1293,42 @@ func TestRawKeyInputSurvivesTheCaptureLayer(t *testing.T) {
 		t.Error("the armed key must not have opened a sequence")
 	}
 }
+
+// Escape reaches the child in a terminal viewport, which vim and every other
+// full-screen program needs. It cannot be had from the wildcard alone: esc X,
+// esc y and esc j make esc a PREFIX, and a chord in progress outranks any
+// single-key claim — so esc would be held while the terminal waited. Naming
+// esc in [pty::mappings] suppresses those chords for as long as a terminal
+// has the focus.
+func TestEscapeReachesTheChildInATerminal(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte { return []byte("<" + key + ">") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey("esc")
+	if got := e.KeyProcessor.GetActiveSequence(); got != "" {
+		t.Fatalf("esc was held as a prefix (%q); the terminal never gets it", got)
+	}
+	if got := stub.sent(); got != "<esc>" {
+		t.Errorf("child received %q, want %q", got, "<esc>")
+	}
+}
+
+// ...and outside a terminal the esc-chords are exactly as they were: the
+// suppression is scoped to the pty class, not global.
+func TestEscChordsSurviveOutsideATerminal(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	e.reconcileFocusedOptions()
+	e.dispatchKey("esc")
+	if got := e.KeyProcessor.GetActiveSequence(); got != "esc" {
+		t.Errorf("activeSequence = %q, want esc held as a prefix outside a terminal", got)
+	}
+}

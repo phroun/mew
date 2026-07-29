@@ -231,7 +231,58 @@ func (sp *SequenceProcessor) rebuild() {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sp.levelOrder)))
 
+	sp.applyNamedCaptureSuppression()
 	sp.updateSequenceStarters()
+}
+
+// applyNamedCaptureSuppression removes from allKeys every sequence whose
+// STARTER a higher level claims BY NAME, which is the one exception to rule 1.
+//
+// Naming a key at a capture level is a claim on the key itself, not on "the
+// key unless something below happens to build a chord out of it": `capture esc
+// = tinput_key` in a terminal's keymap means Escape belongs to the child, and
+// it would read very strangely for mew's esc-chords to quietly outrank it. So
+// a named single-key binding suppresses lower levels' sequences that start
+// with it, and Escape stops being a prefix in that scope entirely.
+//
+// The WILDCARD deliberately does not suppress. It is a level's answer for the
+// keys it did not name — the "everything else" net — and if it suppressed,
+// `capture *` would silently kill ^B N and every other chord the moment a
+// terminal took focus. Rule 1 keeps chords intact under the wildcard; only an
+// explicit name overrides them.
+//
+// Same level does not suppress: a level's own chords are its business, and
+// the pending-short-match machinery already handles a key that is both a
+// binding and a prefix.
+func (sp *SequenceProcessor) applyNamedCaptureSuppression() {
+	// The highest level at which each key is claimed by name as a single key.
+	named := make(map[string]int)
+	for level, lb := range sp.levels {
+		for seq := range lb.specific {
+			if strings.Contains(seq, " ") {
+				continue
+			}
+			if cur, ok := named[seq]; !ok || level > cur {
+				named[seq] = level
+			}
+		}
+	}
+	if len(named) == 0 {
+		return
+	}
+	// Rebuild rather than delete: the same sequence can be bound at several
+	// levels, and it survives if ANY of them outranks the claim.
+	sp.allKeys = make(map[string]bool, len(sp.allKeys))
+	for level, lb := range sp.levels {
+		for seq := range lb.specific {
+			if i := strings.IndexByte(seq, ' '); i >= 0 {
+				if claimed, ok := named[seq[:i]]; ok && level < claimed {
+					continue
+				}
+			}
+			sp.allKeys[seq] = true
+		}
+	}
 }
 
 // MapKey maps a key sequence to a command.

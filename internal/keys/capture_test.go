@@ -275,3 +275,83 @@ func TestRawSpellingsSurviveTheRoundTrip(t *testing.T) {
 		t.Errorf("after unmap, Command = %q, want the default insert", got)
 	}
 }
+
+// A NAMED single-key capture claims the key outright: lower levels' sequences
+// starting with it stop being live, so the key resolves as a single key
+// instead of being held as a prefix. Naming Escape at a terminal's level means
+// Escape belongs to the child, not that it does unless mew happens to have an
+// esc-chord.
+func TestNamedCaptureSuppressesLowerLevelSequences(t *testing.T) {
+	sp, h := newCaptureSP(map[string]string{
+		"esc X":       "cmd",
+		"esc y":       "kill_ring_yank",
+		"capture esc": "tinput_key",
+	})
+	sp.ProcessKey("esc")
+	if got := sp.GetActiveSequence(); got != "" {
+		t.Fatalf("esc was held as a prefix (%q); a named capture must claim it outright", got)
+	}
+	if want := []string{"esc→tinput_key"}; !reflect.DeepEqual(h.calls, want) {
+		t.Errorf("dispatched %v, want %v", h.calls, want)
+	}
+}
+
+// The WILDCARD does not suppress. It is the "everything else" net, and if it
+// suppressed, `capture * = tinput_key` would silently kill ^B N and every
+// other chord the moment a terminal took focus. This is the asymmetry that
+// makes named capture safe to have.
+func TestWildcardDoesNotSuppressSequences(t *testing.T) {
+	sp, h := newCaptureSP(map[string]string{
+		"^B N":      "buffer_next",
+		"capture *": "tinput_key",
+	})
+	sp.ProcessKey("^B")
+	if sp.GetActiveSequence() != "^B" {
+		t.Fatalf("the wildcard suppressed a chord: activeSeq=%q, want ^B held", sp.GetActiveSequence())
+	}
+	sp.ProcessKey("N")
+	if want := []string{"N→buffer_next"}; !reflect.DeepEqual(h.calls, want) {
+		t.Errorf("dispatched %v, want %v", h.calls, want)
+	}
+}
+
+// Suppression reaches only levels BELOW the claim: a level's own chords are
+// its business, and a chord ABOVE the claim outranks it.
+func TestSuppressionOnlyReachesLowerLevels(t *testing.T) {
+	// Same level: the chord survives, and rule 1 still holds the prefix.
+	sp, _ := newCaptureSP(map[string]string{
+		"capture esc":   "tinput_key",
+		"capture esc X": "still_mine",
+	})
+	sp.ProcessKey("esc")
+	if sp.GetActiveSequence() != "esc" {
+		t.Errorf("a level must not suppress its own chord: activeSeq=%q", sp.GetActiveSequence())
+	}
+
+	// Higher level: the chord outranks the claim below it.
+	sp2, _ := newCaptureSP(map[string]string{
+		"capture esc":           "tinput_key",
+		"capture capture esc X": "outranks",
+	})
+	sp2.ProcessKey("esc")
+	if sp2.GetActiveSequence() != "esc" {
+		t.Errorf("a chord above the claim must survive: activeSeq=%q", sp2.GetActiveSequence())
+	}
+}
+
+// With no capture anywhere, nothing changes: esc is a prefix exactly as it
+// always was.
+func TestEscStaysAPrefixWithoutACapture(t *testing.T) {
+	sp, h := newCaptureSP(map[string]string{
+		"esc X": "cmd",
+		"esc y": "kill_ring_yank",
+	})
+	sp.ProcessKey("esc")
+	if sp.GetActiveSequence() != "esc" {
+		t.Fatalf("activeSeq=%q, want esc held", sp.GetActiveSequence())
+	}
+	sp.ProcessKey("X")
+	if want := []string{"X→cmd"}; !reflect.DeepEqual(h.calls, want) {
+		t.Errorf("dispatched %v, want %v", h.calls, want)
+	}
+}

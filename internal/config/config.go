@@ -2657,8 +2657,17 @@ messages="\e[0;97;41m"                # bright white on red
 # to a shell) — and at level 0 the wildcard would swallow it, leaving no way
 # to reach those keys at all. Naming it here puts it beside the wildcard
 # rather than under it, where a named key wins.
+#
+# esc is named for a third reason: naming a key SUPPRESSES lower levels'
+# chords that start with it. The wildcard alone could never claim Escape,
+# because esc X / esc y / esc j make it a prefix and a chord in progress
+# outranks any single-key claim — so Escape would be held while a terminal
+# waited for it, and vim would be unusable. Naming it retires mew's esc-chords
+# for as long as a terminal has the focus; M-\ still passes any one of those
+# keys through, and outside a terminal they are untouched.
 [pty::mappings]
 capture *     =tinput_key
+capture esc   =tinput_key
 capture del   =tinput "\x08"
 capture back  =tinput "\x08"
 capture M-\\  =raw_key_input
