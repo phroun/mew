@@ -1332,3 +1332,23 @@ func TestEscChordsSurviveOutsideATerminal(t *testing.T) {
 		t.Errorf("activeSequence = %q, want esc held as a prefix outside a terminal", got)
 	}
 }
+
+// A viewport hosting a terminal does not ask for a caret. The CHILD's cursor
+// is the one that means anything there — it sits at the shell's insertion
+// point, in the shape the program asked for — while mew's own caret sits
+// wherever the document caret happens to be. Requesting both puts two
+// blinking cursors on a graphical host, one of them lying about where typing
+// goes.
+func TestPTYViewportAsksForNoCaret(t *testing.T) {
+	e, w := newTestEditor(t, "hello\n")
+	if e.caretHidden(w) {
+		t.Fatal("an ordinary viewport should own its caret")
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	if !e.caretHidden(w) {
+		t.Error("a viewport hosting a terminal must not ask for a caret too")
+	}
+}

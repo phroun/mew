@@ -1082,7 +1082,7 @@ func New(cfg Config) (*Editor, error) {
 	// paint/measure time (see links.go); nil results leave lines untouched.
 	renderer.SetDisplayProvider(e.lineDisplaySpans)
 	// Hide the hardware caret while it is inert inside a focused button.
-	renderer.SetCaretHiddenFn(func(w *viewport.Viewport) bool { return e.focusedLinkButton(w) != nil })
+	renderer.SetCaretHiddenFn(e.caretHidden)
 	renderer.SetCursorStyleFn(e.cursorStyleFor)
 
 	// Register editor commands with PawScript
@@ -1190,6 +1190,27 @@ func (e *Editor) peekBindingValues() map[string]string {
 		vals[code] = e.KeyForCommand(cmd)
 	}
 	return vals
+}
+
+// caretHidden reports whether the hardware caret should be withheld for a
+// viewport — the predicate the renderer consults each frame.
+//
+// A viewport hosting a TERMINAL does not own a caret: the child's cursor is
+// the one that means anything there. It sits at the shell's insertion point,
+// in the shape and blink the program asked for, and it is drawn by the child
+// itself. mew's own caret meanwhile sits wherever the document caret happens
+// to be, which is nowhere in particular. Asking for both puts two blinking
+// cursors on a graphical host, one of them pointing at the wrong place.
+//
+// This is true of EVERY pty viewport, focused or not. An unfocused one draws
+// its child's cursor in the unfocused form (see SetEmbeddedFocus in the
+// host's terminalPlace); mew adding a second caret over it would say the
+// opposite.
+func (e *Editor) caretHidden(w *viewport.Viewport) bool {
+	if w != nil && e.ptySessionFor(w.Buffer) != nil {
+		return true
+	}
+	return e.focusedLinkButton(w) != nil
 }
 
 // KeyForCommand returns the key sequence bound to command, in the spelling a
