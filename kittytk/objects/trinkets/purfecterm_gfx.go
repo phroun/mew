@@ -296,12 +296,20 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// space (updateTerminalSize's unit division undercounts at fractional
 	// ppu). The yellow scrollback line and text span this content width.
 	contentWpx := vpFullWpx
+	contentHpx := vpFullHpx
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
+		// The HORIZONTAL bar reserves its height too: unlike the vertical
+		// lane (a sliver off the right edge), it lies across the bottom
+		// text row and made it unreadable. One lane fewer of rows keeps the
+		// last line clear while the bar is present.
+		if t.hScrollActive() {
+			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
+		}
 	}
 	if baseCW > 0 && baseCH > 0 {
 		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
-		fitRows := int(float64(vpFullHpx) / (float64(baseCH) * ppu))
+		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
@@ -1771,6 +1779,19 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 	return math.Round(float64(b.Width) * ppu), math.Round(float64(b.Height) * ppu), ppu
 }
 
+// lanePx is the lane thickness per axis. On a graphical surface both axes
+// share one pixel width, so the corner where the bars meet is a square. On a
+// cell surface a lane cannot be thinner than a character, so it is one CELL
+// column wide and one CELL row tall — the ScrollArea idiom.
+func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
+	if t.gfxInputActive() {
+		lane := float64(gfxScrollbarLane) * ppu
+		return lane, lane
+	}
+	m := t.EffectiveCellMetrics()
+	return float64(m.CellWidth), float64(m.CellHeight)
+}
+
 // gfxPointerPx converts an incoming pointer position (outer units, at the
 // snapped rate) into render pixels: hitK rescales into render-unit space,
 // ppu into pixels — the same trip every cell hit test makes.
@@ -1799,7 +1820,12 @@ func (t *PurfecTerm) hScrollActive() bool {
 	if w := buf.GetSplitContentWidth(); w > maxContentWidth {
 		maxContentWidth = w
 	}
-	return maxContentWidth > cols
+	// A bar whose reason has gone but whose OFFSET remains stays: without
+	// it the view is stuck scrolled right with no way back — scrolling down
+	// past the wide line removed the bar while the columns stayed shifted.
+	// It lives on until the offset is worked back to zero, and from zero it
+	// cannot be dragged right again (span collapses with the offset).
+	return maxContentWidth > cols || buf.GetHorizOffset() > 0
 }
 
 // vScrollGeometry mirrors gtk updateScrollbar: upper = maxOffset+rows,
@@ -1815,16 +1841,16 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 		return
 	}
 	wPx, hPx, ppu := t.gfxPixelFrame()
-	lane := float64(gfxScrollbarLane) * ppu
+	laneX, laneY := t.lanePx(ppu)
 	_, rows := buf.GetSize()
 	upper = maxOffset + rows
 	page = rows
 	value = maxOffset - buf.GetScrollOffset()
 	trackH := hPx
 	if t.hScrollActive() {
-		trackH = hPx - lane
+		trackH = hPx - laneY
 	}
-	track = pxRect{X: wPx - lane, Y: 0, W: lane, H: trackH}
+	track = pxRect{X: wPx - laneX, Y: 0, W: laneX, H: trackH}
 	thumbLen := track.H * float64(page) / float64(upper)
 	if min := 8 * ppu; thumbLen < min {
 		thumbLen = min
@@ -1849,7 +1875,7 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 		}
 		thumbY = pos
 	}
-	thumb = pxRect{X: track.X, Y: thumbY, W: lane, H: thumbLen}
+	thumb = pxRect{X: track.X, Y: thumbY, W: laneX, H: thumbLen}
 	ok = true
 	return
 }
@@ -1871,10 +1897,16 @@ func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, val
 		maxContentWidth = w
 	}
 	wPx, hPx, ppu := t.gfxPixelFrame()
-	lane := float64(gfxScrollbarLane) * ppu
-	contentW = maxContentWidth
+	laneX, laneY := t.lanePx(ppu)
 	value = buf.GetHorizOffset()
-	track = pxRect{X: 0, Y: hPx - lane, W: wPx - lane, H: lane}
+	contentW = maxContentWidth
+	if min := cols + value; contentW < min {
+		// The offset outlived the wide content (see hScrollActive): the
+		// track's world is exactly the columns still reachable, so dragging
+		// left drains the offset and the right edge is already the wall.
+		contentW = min
+	}
+	track = pxRect{X: 0, Y: hPx - laneY, W: wPx - laneX, H: laneY}
 	thumbLen := track.W * float64(cols) / float64(contentW)
 	if min := 8 * ppu; thumbLen < min {
 		thumbLen = min
@@ -1899,7 +1931,7 @@ func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, val
 		}
 		thumbX = pos
 	}
-	thumb = pxRect{X: thumbX, Y: track.Y, W: thumbLen, H: lane}
+	thumb = pxRect{X: thumbX, Y: track.Y, W: thumbLen, H: laneY}
 	ok = true
 	return
 }
