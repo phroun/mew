@@ -2,6 +2,7 @@ package trinkets
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -203,11 +204,13 @@ func TestScrollBarSmoothDragOnPixelSurfaces(t *testing.T) {
 	}
 }
 
-// PurfecTerm graphical scrollbars: the thumb follows the pointer
-// smoothly with the grab point anchored, while the buffer's scroll
-// offset snaps to whole lines.
+// PurfecTerm graphical scrollbars: the thumb follows the pointer at PIXEL
+// granularity with the grab point anchored, while the buffer's scroll offset
+// snaps to whole lines. The geometry lives in render pixels — quantizing the
+// thumb to units (and the fill to host cells) is what made a drag lurch in
+// cell-sized steps while the wheel glided.
 func TestGfxScrollbarSmoothThumbSnappedContent(t *testing.T) {
-	_, _, term, _ := gfxHarness(t)
+	b, _, term, _ := gfxHarness(t)
 	buf := term.Terminal().Buffer()
 	for i := 0; i < 100; i++ {
 		term.Feed([]byte("line\r\n"))
@@ -215,44 +218,117 @@ func TestGfxScrollbarSmoothThumbSnappedContent(t *testing.T) {
 	if buf.GetMaxScrollOffset() <= 0 {
 		t.Skip("no scrollback accumulated")
 	}
+	paintTerm(b, term) // caches ppu and the hit scale for the input paths
 
-	bounds := term.Bounds()
-	track, thumb, upper, page, _, ok := term.vScrollGeometry(bounds)
+	track, thumb, upper, page, _, ok := term.vScrollGeometry()
 	if !ok {
 		t.Fatal("no vertical scrollbar")
 	}
-	span := float64(track.Height - thumb.Height)
+	span := track.H - thumb.H
 	if span <= 0 {
 		t.Fatal("harness: no scrollable track")
 	}
 
-	// Grab 3 units into the thumb (it starts at the track bottom:
-	// offset 0 = newest content), then drag 13 units up.
-	pressY := thumb.Y + 3
-	if !term.scrollbarPress(core.MousePressEvent{X: track.X + 1, Y: pressY, Button: core.LeftButton}) {
+	// The pointer arrives in OUTER units; the handlers convert to render px.
+	// Derive the outer positions from the px geometry with the same factors.
+	kyppu := term.gfx.hitKY * term.gfx.ppu
+	kxppu := term.gfx.hitKX * term.gfx.ppu
+	if kyppu <= 0 || kxppu <= 0 {
+		t.Fatal("no pointer scale cached")
+	}
+	pressUX := core.Unit((track.X + track.W/2) / kxppu)
+	pressUY := core.Unit((thumb.Y + thumb.H/2) / kyppu)
+	pressPx := float64(pressUY) * kyppu // where the handler will see the press
+
+	if !term.scrollbarPress(core.MousePressEvent{X: pressUX, Y: pressUY, Button: core.LeftButton}) {
 		t.Fatal("press in scrollbar lane not consumed")
 	}
-	term.scrollbarDragTo(track.X+1, pressY-13)
+	// A press INSIDE the thumb anchors the grab: the thumb must not jump.
+	if got := term.gfx.vThumbPos; got != thumb.Y {
+		t.Errorf("press inside the thumb moved it: pos %v, want %v", got, thumb.Y)
+	}
 
-	wantPos := float64(thumb.Y - 13)
-	if term.gfx.vThumbPos != wantPos {
-		t.Errorf("smooth thumb pos = %v, want %v (grab offset preserved)", term.gfx.vThumbPos, wantPos)
+	// Drag up 13 outer units = 13*kyppu render px: the thumb follows by
+	// exactly that many pixels, un-quantized.
+	term.scrollbarDragTo(pressUX, pressUY-13)
+	wantPos := thumb.Y - 13*kyppu
+	if wantPos < 0 {
+		wantPos = 0
+	}
+	if got := term.gfx.vThumbPos; got != wantPos {
+		t.Errorf("smooth thumb pos = %v, want %v (pixel-granular, grab anchored)", got, wantPos)
 	}
 	// The painted thumb uses the smooth position mid-drag.
-	_, thumbNow, _, _, _, _ := term.vScrollGeometry(bounds)
-	if thumbNow.Y != core.Unit(wantPos+0.5) {
-		t.Errorf("mid-drag thumb painted at %d, want smooth %d", thumbNow.Y, core.Unit(wantPos+0.5))
+	_, thumbNow, _, _, _, _ := term.vScrollGeometry()
+	if thumbNow.Y != wantPos {
+		t.Errorf("mid-drag thumb painted at %v, want smooth %v", thumbNow.Y, wantPos)
 	}
-	// The content offset snapped to the whole line nearest that
-	// position.
+	// The content offset snapped to the whole line nearest that position —
+	// the ONLY thing that quantizes.
 	wantValue := int(wantPos*float64(upper-page)/span + 0.5)
 	if got := buf.GetMaxScrollOffset() - buf.GetScrollOffset(); got != wantValue {
 		t.Errorf("content value = %d, want snapped %d", got, wantValue)
 	}
+	_ = pressPx
 
-	term.HandleMouseRelease(core.MouseReleaseEvent{X: track.X + 1, Y: pressY - 13, Button: core.LeftButton})
+	term.HandleMouseRelease(core.MouseReleaseEvent{X: pressUX, Y: pressUY - 13, Button: core.LeftButton})
 	if term.gfx.vDragging {
 		t.Error("release did not end the scrollbar drag")
+	}
+}
+
+// The two lanes are the SAME pixel thickness and meet at the corner in a
+// square: the vertical track stops nowhere, the horizontal track stops one
+// lane short, and both lanes hug the far edges of the pixel frame exactly —
+// un-quantized, whatever the zoom.
+func TestGfxScrollbarLanesSquareAndFlush(t *testing.T) {
+	b, _, term, _ := gfxHarness(t)
+	buf := term.Terminal().Buffer()
+	for i := 0; i < 100; i++ {
+		term.Feed([]byte("line\r\n"))
+	}
+	if buf.GetMaxScrollOffset() <= 0 {
+		t.Skip("no scrollback accumulated")
+	}
+	// A horizontal bar appears when scrolled-back content is wider than the
+	// grid: feed a long line into scrollback and scroll up over it.
+	term.Feed([]byte(strings.Repeat("x", 500) + "\r\n"))
+	for i := 0; i < 30; i++ {
+		term.Feed([]byte("line\r\n"))
+	}
+	buf.SetScrollOffset(10)
+
+	for _, size := range []int{10, 12, 13, 16} {
+		b.SetFontSize(size)
+		paintTerm(b, term)
+		wPx, hPx, ppu := term.gfxPixelFrame()
+		lane := float64(gfxScrollbarLane) * ppu
+
+		vTrack, _, _, _, _, ok := term.vScrollGeometry()
+		if !ok {
+			t.Fatalf("size %d: vertical bar missing", size)
+		}
+		if vTrack.X+vTrack.W != wPx {
+			t.Errorf("size %d: v lane right edge %v, want flush at %v", size, vTrack.X+vTrack.W, wPx)
+		}
+		if vTrack.W != lane {
+			t.Errorf("size %d: v lane width %v, want %v", size, vTrack.W, lane)
+		}
+		if vTrack.H != hPx {
+			t.Errorf("size %d: v lane height %v, want full %v", size, vTrack.H, hPx)
+		}
+
+		if hTrack, _, _, _, _, ok := term.hScrollGeometry(); ok {
+			if hTrack.Y+hTrack.H != hPx {
+				t.Errorf("size %d: h lane bottom edge %v, want flush at %v", size, hTrack.Y+hTrack.H, hPx)
+			}
+			if hTrack.H != lane {
+				t.Errorf("size %d: h lane thickness %v, want %v — the junction must be square", size, hTrack.H, lane)
+			}
+			if hTrack.X+hTrack.W != vTrack.X {
+				t.Errorf("size %d: h lane ends at %v, v lane begins at %v — they must meet", size, hTrack.X+hTrack.W, vTrack.X)
+			}
+		}
 	}
 }
 

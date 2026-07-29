@@ -66,6 +66,10 @@ type purfecTermGfx struct {
 	// the cell lookup or hits drift the further in the pointer is. 0/1 =
 	// identity (integer pixels-per-unit, the default 12pt).
 	hitKX, hitKY float64
+	// ppu is the renderer's pixels-per-unit, cached on each paint for the
+	// input paths (scrollbar hit tests run in render pixels and have no
+	// painter in hand). 0 = not painted yet; treat as 1.
+	ppu float64
 
 	// Local selection drag.
 	mouseDown      bool
@@ -81,16 +85,18 @@ type purfecTermGfx struct {
 	autoVert  int
 	autoHoriz int
 
-	// Scrollbar drag. The thumb follows the pointer smoothly (unit
-	// granularity) while the content offset snaps to whole lines and
-	// columns: grab offset is where the press landed within the
-	// thumb; thumb pos is the unsnapped thumb origin along the track.
+	// Scrollbar drag, all in RENDER PIXELS. The thumb follows the pointer
+	// at pixel granularity while the content offset snaps to whole lines
+	// and columns — quantizing the THUMB was what made a drag lurch in
+	// cell-sized steps while the wheel glided. Grab offset is where the
+	// press landed within the thumb; thumb pos is the unsnapped thumb
+	// origin along the track.
 	vDragging bool
 	hDragging bool
 	vHover    bool // pointer over the vertical thumb
 	hHover    bool // pointer over the horizontal thumb
-	vGrabOff  core.Unit
-	hGrabOff  core.Unit
+	vGrabOff  float64
+	hGrabOff  float64
 	vThumbPos float64
 	hThumbPos float64
 
@@ -276,6 +282,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// Mouse-hit scale: outer clicks arrive at the snapped rate, cells render
 	// at ppu, so scale a click by (snapped px-rate / ppu) into render-unit
 	// space or hits drift the deeper in the pointer is. 1 at integer ppu.
+	t.gfx.ppu = ppu
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
 		t.gfx.hitKX = float64(vpFullWpx) / (float64(bounds.Width) * ppu)
@@ -1737,50 +1744,98 @@ func (t *PurfecTerm) rotateGfxCaches() {
 // Scrollbars (overlay lanes)
 // ---------------------------------------------------------------
 
+// pxRect is a rectangle in RENDER PIXELS — the terminal's own device-pixel
+// space, ppu times its units, the same space its cells are laid out in. The
+// scrollbars live here so they can sit flush against the trinket's far
+// edges and move at pixel granularity: unit rectangles quantize to the
+// HOST's cell grid on the way to the screen, which is what marched a
+// dragged thumb in cell-sized lurches and, in a hosted terminal at some
+// zooms, snapped the vertical lane clean past the clip so no bar showed
+// at all.
+type pxRect struct{ X, Y, W, H float64 }
+
+func (r pxRect) contains(x, y float64) bool {
+	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
+}
+
+// gfxPixelFrame is the trinket's available space in render pixels — the
+// extent the terminal's own pitch reaches, which for a hosted surface is
+// exactly what the covering clip guarantees visible. The scrollbars anchor
+// to its far right and bottom, un-quantized, overlaying content.
+func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
+	ppu = t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	b := t.Bounds()
+	return math.Round(float64(b.Width) * ppu), math.Round(float64(b.Height) * ppu), ppu
+}
+
+// gfxPointerPx converts an incoming pointer position (outer units, at the
+// snapped rate) into render pixels: hitK rescales into render-unit space,
+// ppu into pixels — the same trip every cell hit test makes.
+func (t *PurfecTerm) gfxPointerPx(x, y core.Unit) (float64, float64) {
+	_, _, ppu := t.gfxPixelFrame()
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	return float64(x) * kx * ppu, float64(y) * ky * ppu
+}
+
 // vScrollGeometry mirrors gtk updateScrollbar: upper = maxOffset+rows,
-// page = rows, value = maxOffset-offset (top of track = oldest).
-func (t *PurfecTerm) vScrollGeometry(bounds core.UnitRect) (track, thumb core.UnitRect, upper, page, value int, ok bool) {
+// page = rows, value = maxOffset-offset (top of track = oldest). All
+// rectangles in render pixels; both lanes share one pixel width so their
+// junction forms a square.
+func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value int, ok bool) {
 	buf := t.terminal.Buffer()
 	maxOffset := buf.GetMaxScrollOffset()
 	if maxOffset <= 0 {
 		return
 	}
+	wPx, hPx, ppu := t.gfxPixelFrame()
+	lane := float64(gfxScrollbarLane) * ppu
 	_, rows := buf.GetSize()
 	upper = maxOffset + rows
 	page = rows
 	value = maxOffset - buf.GetScrollOffset()
-	track = core.UnitRect{X: bounds.Width - gfxScrollbarLane, Y: 0, Width: gfxScrollbarLane, Height: bounds.Height}
-	thumbLen := core.Unit(int(track.Height) * page / upper)
-	if thumbLen < 8 {
-		thumbLen = 8
+	track = pxRect{X: wPx - lane, Y: 0, W: lane, H: hPx}
+	thumbLen := track.H * float64(page) / float64(upper)
+	if min := 8 * ppu; thumbLen < min {
+		thumbLen = min
 	}
-	if thumbLen > track.Height {
-		thumbLen = track.Height
+	if thumbLen > track.H {
+		thumbLen = track.H
 	}
 	span := upper - page
-	thumbY := core.Unit(0)
+	thumbY := 0.0
 	if span > 0 {
-		thumbY = core.Unit(int(track.Height-thumbLen) * value / span)
+		thumbY = (track.H - thumbLen) * float64(value) / float64(span)
 	}
 	if t.gfx.vDragging {
-		// Mid-drag the thumb tracks the pointer smoothly; only the
-		// content offset above snapped to whole lines.
+		// Mid-drag the thumb tracks the pointer at pixel granularity; only
+		// the content offset snaps to whole lines.
 		pos := t.gfx.vThumbPos
-		if limit := float64(track.Height - thumbLen); pos > limit {
+		if limit := track.H - thumbLen; pos > limit {
 			pos = limit
 		}
 		if pos < 0 {
 			pos = 0
 		}
-		thumbY = core.Unit(pos + 0.5)
+		thumbY = pos
 	}
-	thumb = core.UnitRect{X: track.X, Y: thumbY, Width: gfxScrollbarLane, Height: thumbLen}
+	thumb = pxRect{X: track.X, Y: thumbY, W: lane, H: thumbLen}
 	ok = true
 	return
 }
 
-// hScrollGeometry mirrors gtk updateHorizScrollbar.
-func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.UnitRect, contentW, cols, value int, ok bool) {
+// hScrollGeometry mirrors gtk updateHorizScrollbar. Render pixels; its lane
+// is the same pixel width as the vertical one and stops where that one
+// begins, leaving a square between them.
+func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, value int, ok bool) {
 	buf := t.terminal.Buffer()
 	cols, _ = buf.GetSize()
 	maxContentWidth := 0
@@ -1793,73 +1848,96 @@ func (t *PurfecTerm) hScrollGeometry(bounds core.UnitRect) (track, thumb core.Un
 	if maxContentWidth <= cols {
 		return
 	}
+	wPx, hPx, ppu := t.gfxPixelFrame()
+	lane := float64(gfxScrollbarLane) * ppu
 	contentW = maxContentWidth
 	value = buf.GetHorizOffset()
-	track = core.UnitRect{X: 0, Y: bounds.Height - gfxScrollbarLane, Width: bounds.Width - gfxScrollbarLane, Height: gfxScrollbarLane}
-	thumbLen := core.Unit(int(track.Width) * cols / contentW)
-	if thumbLen < 8 {
-		thumbLen = 8
+	track = pxRect{X: 0, Y: hPx - lane, W: wPx - lane, H: lane}
+	thumbLen := track.W * float64(cols) / float64(contentW)
+	if min := 8 * ppu; thumbLen < min {
+		thumbLen = min
 	}
-	if thumbLen > track.Width {
-		thumbLen = track.Width
+	if thumbLen > track.W {
+		thumbLen = track.W
 	}
 	span := contentW - cols
-	thumbX := core.Unit(0)
+	thumbX := 0.0
 	if span > 0 {
-		thumbX = core.Unit(int(track.Width-thumbLen) * value / span)
+		thumbX = (track.W - thumbLen) * float64(value) / float64(span)
 	}
 	if t.gfx.hDragging {
-		// Mid-drag the thumb tracks the pointer smoothly; only the
-		// content offset above snapped to whole columns.
+		// Mid-drag the thumb tracks the pointer at pixel granularity; only
+		// the content offset snaps to whole columns.
 		pos := t.gfx.hThumbPos
-		if limit := float64(track.Width - thumbLen); pos > limit {
+		if limit := track.W - thumbLen; pos > limit {
 			pos = limit
 		}
 		if pos < 0 {
 			pos = 0
 		}
-		thumbX = core.Unit(pos + 0.5)
+		thumbX = pos
 	}
-	thumb = core.UnitRect{X: thumbX, Y: track.Y, Width: thumbLen, Height: gfxScrollbarLane}
+	thumb = pxRect{X: thumbX, Y: track.Y, W: thumbLen, H: lane}
 	ok = true
 	return
 }
 
 func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, buf *purfecterm.Buffer, chh float64) {
-	trackStyle := style.DefaultStyle().WithFg(style.RGB(128, 128, 128)).WithBg(style.ColorTransparent)
 	thumbStyle := style.DefaultStyle().WithBg(style.RGB(168, 168, 168))
 	// Hovered thumb uses the scheme hover colour (fill = its FG), matching
 	// the rest of the toolkit's scrollbars.
 	hs := t.GetScheme().GetHoveredScrollbarThumb()
 	hoverThumb := hs.WithBg(hs.Fg)
-	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
-		p.FillRect(track, '░', trackStyle)
+	// Pixel fills, not unit fills: the geometry is in render pixels so the
+	// lanes sit flush at the far edges and the thumb moves at pointer
+	// granularity — and FillRectPixels rides the painter's pixel residual,
+	// so a hosted terminal's bars shift with its content. The old rune-
+	// shaded track ('░' at cell granularity) has no pixel-space equivalent;
+	// a translucent grey wash reads the same.
+	fillPx := func(r pxRect, s style.CellStyle) {
+		x0, y0 := int(math.Round(r.X)), int(math.Round(r.Y))
+		x1, y1 := int(math.Round(r.X+r.W)), int(math.Round(r.Y+r.H))
+		if x1 > x0 && y1 > y0 {
+			p.FillRectPixels(0, 0, x0, y0, x1-x0, y1-y0, s)
+		}
+	}
+	trackWash := func(r pxRect) {
+		x0, y0 := int(math.Round(r.X)), int(math.Round(r.Y))
+		x1, y1 := int(math.Round(r.X+r.W)), int(math.Round(r.Y+r.H))
+		if x1 > x0 && y1 > y0 {
+			if !p.FillRectPixelsAlpha(0, 0, x0, y0, x1-x0, y1-y0, 128, 128, 128, 0.30) {
+				p.FillRectPixels(0, 0, x0, y0, x1-x0, y1-y0, style.DefaultStyle().WithBg(style.RGB(128, 128, 128)))
+			}
+		}
+	}
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		trackWash(track)
 		ts := thumbStyle
 		if t.gfx.vHover {
 			ts = hoverThumb
 		}
-		p.FillRect(thumb, ' ', ts)
+		fillPx(thumb, ts)
 	}
-	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
-		p.FillRect(track, '░', trackStyle)
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		trackWash(track)
 		ts := thumbStyle
 		if t.gfx.hHover {
 			ts = hoverThumb
 		}
-		p.FillRect(thumb, ' ', ts)
+		fillPx(thumb, ts)
 	}
 }
 
 // updateScrollbarHoverGfx tracks whether the pointer is over either
 // scrollbar thumb, repainting only on change.
 func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
-	bounds := t.Bounds()
+	px, py := t.gfxPointerPx(x, y)
 	vh, hh := false, false
-	if _, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok {
-		vh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	if _, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		vh = thumb.contains(px, py)
 	}
-	if _, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok {
-		hh = x >= thumb.X && x < thumb.X+thumb.Width && y >= thumb.Y && y < thumb.Y+thumb.Height
+	if _, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		hh = thumb.contains(px, py)
 	}
 	if vh != t.gfx.vHover || hh != t.gfx.hHover {
 		t.gfx.vHover = vh
@@ -1871,26 +1949,26 @@ func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
 // scrollbarPress starts a scrollbar drag if the press lands in a
 // lane. Returns true when consumed.
 func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
-	bounds := t.Bounds()
-	if track, thumb, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
-		event.X >= track.X && event.Y >= track.Y && event.Y < track.Y+track.Height {
+	px, py := t.gfxPointerPx(event.X, event.Y)
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok &&
+		px >= track.X && py >= track.Y && py < track.Y+track.H {
 		// Anchor the drag to the grab point within the thumb; a
 		// press on the track jumps the thumb center to the pointer.
-		if event.Y >= thumb.Y && event.Y < thumb.Y+thumb.Height {
-			t.gfx.vGrabOff = event.Y - thumb.Y
+		if py >= thumb.Y && py < thumb.Y+thumb.H {
+			t.gfx.vGrabOff = py - thumb.Y
 		} else {
-			t.gfx.vGrabOff = thumb.Height / 2
+			t.gfx.vGrabOff = thumb.H / 2
 		}
 		t.gfx.vDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
 		return true
 	}
-	if track, thumb, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
-		event.Y >= track.Y && event.X >= track.X && event.X < track.X+track.Width {
-		if event.X >= thumb.X && event.X < thumb.X+thumb.Width {
-			t.gfx.hGrabOff = event.X - thumb.X
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok &&
+		py >= track.Y && px >= track.X && px < track.X+track.W {
+		if px >= thumb.X && px < thumb.X+thumb.W {
+			t.gfx.hGrabOff = px - thumb.X
 		} else {
-			t.gfx.hGrabOff = thumb.Width / 2
+			t.gfx.hGrabOff = thumb.W / 2
 		}
 		t.gfx.hDragging = true
 		t.scrollbarDragTo(event.X, event.Y)
@@ -1900,13 +1978,13 @@ func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
 }
 
 func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
-	bounds := t.Bounds()
+	px, py := t.gfxPointerPx(x, y)
 	buf := t.terminal.Buffer()
 	if t.gfx.vDragging {
-		if track, thumb, upper, page, _, ok := t.vScrollGeometry(bounds); ok {
-			span := float64(track.Height - thumb.Height)
+		if track, thumb, upper, page, _, ok := t.vScrollGeometry(); ok {
+			span := track.H - thumb.H
 			if span > 0 {
-				pos := float64(y - track.Y - t.gfx.vGrabOff)
+				pos := py - track.Y - t.gfx.vGrabOff
 				if pos < 0 {
 					pos = 0
 				}
@@ -1914,6 +1992,8 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 					pos = span
 				}
 				t.gfx.vThumbPos = pos
+				// The THUMB is pixel-smooth; only the content offset
+				// quantizes, to the whole line nearest the thumb.
 				value := int(pos*float64(upper-page)/span + 0.5)
 				maxOffset := buf.GetMaxScrollOffset()
 				buf.SetScrollOffset(maxOffset - value)
@@ -1922,10 +2002,10 @@ func (t *PurfecTerm) scrollbarDragTo(x, y core.Unit) {
 		}
 	}
 	if t.gfx.hDragging {
-		if track, thumb, contentW, cols, _, ok := t.hScrollGeometry(bounds); ok {
-			span := float64(track.Width - thumb.Width)
+		if track, thumb, contentW, cols, _, ok := t.hScrollGeometry(); ok {
+			span := track.W - thumb.W
 			if span > 0 {
-				pos := float64(x - track.X - t.gfx.hGrabOff)
+				pos := px - track.X - t.gfx.hGrabOff
 				if pos < 0 {
 					pos = 0
 				}

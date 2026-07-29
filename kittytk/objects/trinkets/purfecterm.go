@@ -334,13 +334,13 @@ func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
 	if t.editorMode {
 		return false // no scrollbar lanes in editor mode
 	}
-	bounds := t.Bounds()
-	if track, _, _, _, _, ok := t.vScrollGeometry(bounds); ok &&
-		x >= track.X && y >= track.Y && y < track.Y+track.Height {
+	px, py := t.gfxPointerPx(x, y)
+	if track, _, _, _, _, ok := t.vScrollGeometry(); ok &&
+		px >= track.X && py >= track.Y && py < track.Y+track.H {
 		return true
 	}
-	if track, _, _, _, _, ok := t.hScrollGeometry(bounds); ok &&
-		y >= track.Y && x >= track.X && x < track.X+track.Width {
+	if track, _, _, _, _, ok := t.hScrollGeometry(); ok &&
+		py >= track.Y && px >= track.X && px < track.X+track.W {
 		return true
 	}
 	return false
