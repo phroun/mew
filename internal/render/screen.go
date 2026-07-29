@@ -1871,11 +1871,16 @@ func runeToHexOrCtrl(r rune) string {
 			return "^" + string(rune(value+64))
 		}
 	} else if value <= 0xFF {
+		// One byte of hex reads unambiguously on its own: FE.
 		return fmt.Sprintf("%02X", value)
 	}
-	// Beyond Latin-1 the codepoint needs its full hex form (a defective
-	// combining mark, see textwidth.DefectiveMark, is substituted this way).
-	return fmt.Sprintf("%04X", value)
+	// Past one byte the digits need a boundary, or a run of substituted
+	// codepoints reads as one long number: (0123). Wider planes keep whole
+	// byte pairs.
+	if value <= 0xFFFF {
+		return fmt.Sprintf("(%04X)", value)
+	}
+	return fmt.Sprintf("(%06X)", value)
 }
 
 // substituteWidth is the column count of a substitute string — always plain

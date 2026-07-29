@@ -5321,10 +5321,14 @@ func (e *Editor) runeWidthAt(runes []rune, i, currentColumn, tabSize int) int {
 // runeHexSubstitute mirrors the renderer's substitute text for a defective
 // combining mark: the codepoint's hex form, one ASCII column per character.
 func runeHexSubstitute(r rune) string {
-	if int(r) <= 0xFF {
-		return fmt.Sprintf("%02X", int(r))
+	v := int(r)
+	if v <= 0xFF {
+		return fmt.Sprintf("%02X", v) // one byte reads fine bare: FE
 	}
-	return fmt.Sprintf("%04X", int(r))
+	if v <= 0xFFFF {
+		return fmt.Sprintf("(%04X)", v) // past one byte, bracket it: (0123)
+	}
+	return fmt.Sprintf("(%06X)", v)
 }
 
 // bidiControlRune maps a short bidi-control name to its Unicode code point.

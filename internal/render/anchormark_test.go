@@ -143,3 +143,32 @@ func TestAnchoredSpacingMarkTakesTwoCells(t *testing.T) {
 		t.Fatalf("width model says %d columns, paint produces 4", col)
 	}
 }
+
+// Hex substitutes are bracketed once they exceed one byte, so a run of them
+// cannot read as a single long number. One byte stands bare.
+func TestHexSubstituteBracketing(t *testing.T) {
+	cases := []struct {
+		r    rune
+		want string
+	}{
+		{0x01, "^A"}, // C0 keeps the caret form
+		{0x00, "^@"}, // NUL
+		{0x1B, "^["}, // ESC
+		{0x7F, "7F"}, // DEL: one byte, bare
+		{0x94, "94"}, // C1: one byte, bare
+		{0x9D, "9D"}, // C1 OSC
+		{0x07ED, "(07ED)"},
+		{0x0F71, "(0F71)"},
+		{0x10FFF, "(010FFF)"},
+	}
+	for _, c := range cases {
+		if got := runeToHexOrCtrl(c.r); got != c.want {
+			t.Errorf("runeToHexOrCtrl(U+%04X) = %q, want %q", c.r, got, c.want)
+		}
+		// The width model measures the substitute by its own text, so the
+		// brackets are counted.
+		if got := substituteWidth(runeToHexOrCtrl(c.r)); got != len([]rune(c.want)) {
+			t.Errorf("width of U+%04X substitute = %d, want %d", c.r, got, len([]rune(c.want)))
+		}
+	}
+}
