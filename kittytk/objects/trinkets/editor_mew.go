@@ -1344,20 +1344,63 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		// from its own 0,0 — but clipped to the visible rectangle expressed
 		// relative to that origin. When the two rectangles match (the ordinary
 		// case) this is just a clip to the surface's own bounds.
+		// The clip has the SAME two-rates problem the origin had, and getting
+		// only the origin right is why a seam survived: its extent is a whole
+		// number of units, which the backend then snaps to ITS cell grid,
+		// while the content inside runs to round(cells*cell*ppu) pixels. Where
+		// the snapped edge falls short the child's last column is shaved —
+		// visible as a hairline of whatever is underneath — and the residual
+		// makes it worse by shifting the content further right than the clip.
+		//
+		// So round the clip OUTWARD: grow it until its pixel span covers the
+		// content's true extent plus the residual. Erring large is safe here
+		// and erring small is not — a child paints nothing beyond its own
+		// grid, so extra clip is unused, while too little cuts real pixels.
 		cx, cy := cell(s.clipCol, s.clipRow)
 		clip := core.UnitRect{
 			X:      cx - x,
 			Y:      cy - y,
-			Width:  core.Unit(s.clipWidth) * cw,
-			Height: core.Unit(s.clipHeight) * ch,
+			Width:  coverUnits(s.clipWidth, cw, offXPx, ppu, p.UnitSpanPxX),
+			Height: coverUnits(s.clipHeight, ch, offYPx, ppu, p.UnitSpanPxY),
 		}
-		// The clip is a UNIT rectangle and stays one: the residual is sub-cell,
-		// so it must not move the clip (which would shave a pixel column off
-		// one edge and reveal one at the other). Pixels for the content,
-		// units for the boundary.
 		s.term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
 	}
 	// A child settles its grid during that paint. Make sure the declaration
 	// gets away even if the session's port was not up when it did.
 	e.nudgeTermGrids()
+}
+
+// coverUnits returns a clip extent, in units, whose device-pixel span covers
+// cells worth of content at cellSize plus a pixel residual — the "round
+// outward" the two rates need (see paintTerminalSurfaces).
+//
+// span is the painter's own unit-to-pixel measure for the axis, so this asks
+// exactly the question the transform will answer. The loop is bounded: one
+// unit is normally enough (the shortfall is a fraction of a host cell), and a
+// few is the most any sane geometry needs.
+func coverUnits(cells int, cellSize core.Unit, residualPx int, ppu float64, span func(core.Unit, core.Unit) int) core.Unit {
+	base := core.Unit(cells) * cellSize
+	if cells <= 0 || cellSize <= 0 || ppu <= 0 {
+		return base
+	}
+	want := int(math.Round(float64(cells)*float64(cellSize)*ppu)) + residualPx
+	// Converge rather than cap. After a zoom the renderer's ppu and the
+	// backend's cell-snapped rate can differ by several percent, so the
+	// shortfall scales with the extent — a fixed few units of slack covers a
+	// small surface and leaves a wide one shaved. Step by the shortfall
+	// converted back to units, which lands in one or two passes; the counter
+	// is a runaway guard, not the mechanism.
+	w := base
+	for i := 0; i < 64; i++ {
+		have := span(0, w)
+		if have >= want {
+			return w
+		}
+		step := core.Unit(math.Ceil(float64(want-have) / math.Max(ppu, 1)))
+		if step < 1 {
+			step = 1
+		}
+		w += step
+	}
+	return w
 }

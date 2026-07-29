@@ -254,3 +254,85 @@ func TestHostedSurfaceLandsOnItsColumn(t *testing.T) {
 		t.Errorf("row %d anchors at %d px, want %d (off by %d)", row, gotY, wantY, gotY-wantY)
 	}
 }
+
+// The clip must COVER the content, not fall short of it. Its extent is a whole
+// number of units, which the backend snaps to ITS cell grid, while the content
+// inside runs to round(cells*cell*ppu) pixels — and the origin residual shifts
+// the content further right still. A clip snapped short shaves the child's last
+// column, which is a hairline of whatever is underneath: fixing the origin
+// alone left exactly that.
+func TestHostedSurfaceClipCoversItsContent(t *testing.T) {
+	b, err := raster.NewScaled(800, 400, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+	ppu := p.PxPerUnitF()
+	if ppu <= 0 {
+		t.Skip("no usable pixel rate")
+	}
+
+	// Across font sizes, so a size whose cell divides the host grid (residual
+	// zero, nothing to do) and one whose cell does not are both covered.
+	for _, size := range []int{11, 12, 13, 14, 16} {
+		b.SetFontSize(size)
+		e := NewEditor()
+		cw, ch := e.cellDims()
+		if cw <= 0 || ch <= 0 {
+			continue
+		}
+		for _, cells := range []int{1, 8, 40, 79} {
+			for _, resid := range []int{0, 1, 3} {
+				w := coverUnits(cells, cw, resid, ppu, p.UnitSpanPxX)
+				want := int(math.Round(float64(cells)*float64(cw)*ppu)) + resid
+				if got := p.UnitSpanPxX(0, w); got < want {
+					t.Errorf("size %d, %d cells, residual %d: clip spans %d px, content needs %d — the last column is shaved",
+						size, cells, resid, got, want)
+				}
+				// And bound what THIS function adds. The unit clip can
+				// already overshoot on its own — the backend's snapped rate
+				// and the renderer's ppu are not the same number, which is
+				// the whole reason any of this is needed — so assert only
+				// the growth coverUnits contributes.
+				// Growth must be non-negative and proportionate: covering
+				// the content, not swallowing the neighbours.
+				grew := w - core.Unit(cells)*cw
+				if grew < 0 {
+					t.Errorf("size %d, %d cells: clip SHRANK by %d units", size, cells, -grew)
+				}
+				if grew > core.Unit(cells)*cw/4+8 {
+					t.Errorf("size %d, %d cells, residual %d: grew the clip by %d units — disproportionate",
+						size, cells, resid, grew)
+				}
+				hgt := coverUnits(cells, ch, resid, ppu, p.UnitSpanPxY)
+				wantY := int(math.Round(float64(cells)*float64(ch)*ppu)) + resid
+				if got := p.UnitSpanPxY(0, hgt); got < wantY {
+					t.Errorf("size %d, %d rows, residual %d: clip spans %d px, content needs %d",
+						size, cells, resid, got, wantY)
+				}
+			}
+		}
+	}
+}
+
+// Degenerate inputs fall back to the plain extent rather than looping or
+// returning nonsense.
+func TestCoverUnitsDegenerateInputs(t *testing.T) {
+	span := func(a, bb core.Unit) int { return int(bb - a) }
+	if got := coverUnits(0, 8, 0, 2, span); got != 0 {
+		t.Errorf("zero cells -> %d, want 0", got)
+	}
+	if got := coverUnits(5, 0, 0, 2, span); got != 0 {
+		t.Errorf("zero cell size -> %d, want 0", got)
+	}
+	if got := coverUnits(5, 8, 0, 0, span); got != 40 {
+		t.Errorf("zero ppu -> %d, want the plain 40", got)
+	}
+}
