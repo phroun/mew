@@ -5309,6 +5309,9 @@ func (e *Editor) runeWidthAt(runes []rune, i, currentColumn, tabSize int) int {
 			}
 		}
 		if textwidth.DefectiveMark(base, r) {
+			if textwidth.AnchorMark(base, r) {
+				return 1 // dotted circle carries the mark in one cell
+			}
 			return len(runeHexSubstitute(r))
 		}
 	}

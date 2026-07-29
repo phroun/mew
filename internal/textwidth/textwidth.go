@@ -140,20 +140,53 @@ func DefectiveMark(prev, r rune) bool {
 	if markScript == "" || markScript == "Inherited" || markScript == "Common" {
 		return false // general diacritic: attaches to any base
 	}
-	renderable := false
-	for _, s := range renderableMarkScripts {
-		if unicode.Is(s, r) {
-			renderable = true
-			break
-		}
-	}
-	if !renderable {
+	if !RenderableMark(r) {
 		return true // a mark from a script mew has no glyph for
 	}
 	// Script-specific mark: it is well-formed only on a base of its own
 	// script.
 	return scriptOf(prev) != markScript
 }
+
+// RenderableMark reports whether mew can actually DRAW the combining mark r:
+// it is script-neutral (a general diacritic), or it belongs to a script in
+// mew's face tree. A mark outside that set has no glyph anywhere in reach, so
+// nothing can be composed from it.
+func RenderableMark(r rune) bool {
+	if !IsMark(r) {
+		return false
+	}
+	if s := scriptOf(r); s == "" || s == "Inherited" || s == "Common" {
+		return true
+	}
+	for _, s := range renderableMarkScripts {
+		if unicode.Is(s, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// AnchorMark reports whether a defective mark should be shown ANCHORED on a
+// dotted circle (U+25CC) — the Unicode convention for displaying an isolated
+// combining mark — rather than reduced to a hex substitute.
+//
+// It applies when the mark has no base of its own AND mew can draw it: the
+// dotted circle supplies the missing base, the mark composes onto it exactly
+// as shapers already do for defective clusters, and the pair occupies one
+// cell that both mew and the terminal agree on. The reader sees the real mark
+// instead of a number.
+//
+// A mark mew CANNOT draw gets no anchor: composing onto the circle would still
+// leave the terminal drawing .notdef for the mark itself, which is a spacing
+// glyph, and the overrun this whole classification exists to prevent would be
+// back. Those keep the hex form.
+func AnchorMark(prev, r rune) bool {
+	return prev == 0 && IsMark(r) && RenderableMark(r)
+}
+
+// MarkAnchor is the base character an anchored mark is composed onto.
+const MarkAnchor = '◌' // DOTTED CIRCLE
 
 // isBidiControl mirrors bidi.IsDirectionControl. It is duplicated here rather
 // than imported because the bidi package depends on this one for its cluster

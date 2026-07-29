@@ -1602,7 +1602,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// textwidth.IsControl).
 			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
 			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
-		} else if textwidth.DefectiveMark(prevBase(logicalIdx), r) {
+		} else if base := prevBase(logicalIdx); textwidth.DefectiveMark(base, r) {
 			// An ill-formed combining mark — no base to anchor onto, or a
 			// script-specific mark riding a base of another script. It is
 			// corruption, not text, and it CANNOT be painted as zero-width:
@@ -1613,8 +1613,9 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// a control code: a definite-width hex substitute, in the
 			// substitutes color, that both mew and the terminal measure the
 			// same. See textwidth.DefectiveMark.
-			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
-			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
+			form, fw := defectiveMarkForm(base, r)
+			runeDisplay = substitutesColor + form + baseColor
+			runeVisualWidth = fw
 		} else {
 			// Regular UTF-8 rune: terminal cell width (0 for combining and
 			// zero-width characters, 2 for wide CJK/emoji, 1 otherwise). A
@@ -1881,6 +1882,27 @@ func runeToHexOrCtrl(r rune) string {
 // ASCII, one column per rune. The renderer measures every substitute this way
 // so the width model and the painted glyphs can never disagree.
 func substituteWidth(s string) int { return len([]rune(s)) }
+
+// defectiveMarkForm returns the text and column width mew paints for a
+// combining mark it must not emit as zero-width (see textwidth.DefectiveMark),
+// given the cluster base the mark would have attached to.
+//
+// A mark with no base that mew can draw is ANCHORED: a dotted circle supplies
+// the missing base and the mark composes onto it — the Unicode convention for
+// showing an isolated mark — so the reader sees the actual mark in one cell.
+// Everything else falls back to the hex codepoint, which needs no glyph and no
+// shaping at all.
+//
+// This is the single place the decision is made; both the paint and the width
+// model call it, so they cannot drift.
+func defectiveMarkForm(prev, r rune) (string, int) {
+	if textwidth.AnchorMark(prev, r) {
+		// The circle takes the cell; the mark rides it at zero width.
+		return string(textwidth.MarkAnchor) + string(r), 1
+	}
+	s := runeToHexOrCtrl(r)
+	return s, substituteWidth(s)
+}
 
 // renderPeekIndicators renders peek indicators for scrolled dock viewports.
 // These hints live at the viewport-manager level, not inside any viewport, so
@@ -2755,7 +2777,8 @@ func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *vie
 			}
 		}
 		if textwidth.DefectiveMark(base, r) {
-			return substituteWidth(runeToHexOrCtrl(r))
+			_, fw := defectiveMarkForm(base, r)
+			return fw
 		}
 	}
 	return sr.getRuneVisualWidth(r, currentColumn, w)
