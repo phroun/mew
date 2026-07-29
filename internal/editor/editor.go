@@ -3722,9 +3722,24 @@ func (e *Editor) dispatchKey(key string) {
 		e.afterKeyArmed = w
 	}
 
+	// A key that is mid-sequence resolves to nothing YET; that is not the same
+	// as resolving to nothing at all, and only the latter falls through to a
+	// terminal below.
+	seqBefore := e.KeyProcessor.GetActiveSequence()
 	result := e.KeyProcessor.ProcessKey(key)
-	if result.Command != "" {
+	switch {
+	case result.Command != "":
 		e.executeCommand(result.Command)
+	case seqBefore == "" && e.KeyProcessor.GetActiveSequence() == "":
+		// Nothing here wanted it, and it was not a sequence step. If this
+		// viewport hosts a terminal, the child gets it rather than the floor:
+		// mew's defaults cover typed characters (insert, which routes to a
+		// terminal already) but a named key with no binding — F10, ins, pgup,
+		// the function keys — resolved to nothing and vanished. See
+		// unhandledKeyToPTY.
+		if e.unhandledKeyToPTY(key) {
+			e.RequestRender()
+		}
 	}
 	e.afterKeyArmed = nil
 

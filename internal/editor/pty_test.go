@@ -1075,3 +1075,95 @@ func TestDeclaringAGridForNoSession(t *testing.T) {
 		t.Error("accepted a zero-width grid")
 	}
 }
+
+// A NAMED key with no binding used to vanish. mew's defaults cover a typed
+// character (insert, which already routes to a terminal) and a handful of
+// named keys, but F10, ins, pgup and every function key resolved to no command
+// at all and were dropped on the floor.
+//
+// In an ordinary buffer that is right — there is nothing to do with F10. In a
+// viewport hosting a terminal it is wrong: there IS something to do with it,
+// one level in. This is why arming Raw Key Input and pressing F10 still did
+// nothing even once the host stopped eating it: mew took delivery and dropped
+// it.
+func TestUnhandledNamedKeyReachesTheChild(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			if key == "F10" {
+				return []byte("\x1b[21~")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	e.dispatchKey("F10")
+	if got := stub.sent(); got != "\x1b[21~" {
+		t.Errorf("child received %q, want the encoded F10 — an unbound named key must not vanish in a terminal", got)
+	}
+}
+
+// Only what mew DECLINED. A key with a binding still runs it, which is how
+// [pty::mappings] keeps ^C meaning cancel-then-close rather than becoming an
+// unconditional interrupt.
+func TestBoundKeysStillRunTheirBinding(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(string, string) []byte { return []byte("SHOULD-NOT-ARRIVE") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	// ^Y is bound to del_line; it must run, not be forwarded.
+	e.dispatchKey("^Y")
+	if strings.Contains(stub.sent(), "SHOULD-NOT-ARRIVE") {
+		t.Error("a bound key was forwarded to the child instead of running its binding")
+	}
+}
+
+// A sequence STARTER resolves to nothing YET, which is not the same as
+// resolving to nothing at all. Forwarding it would send the child a ^K it was
+// never meant to see AND break the sequence.
+func TestSequenceStepsAreNotForwarded(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte { return []byte("<" + key + ">") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	// ^K starts a sequence in the default keymap.
+	e.dispatchKey("^K")
+	if e.KeyProcessor.GetActiveSequence() == "" {
+		t.Skip("^K is not a sequence starter in this keymap")
+	}
+	if got := stub.sent(); got != "" {
+		t.Errorf("a mid-sequence key was forwarded: child received %q", got)
+	}
+}
+
+// Without a terminal, an unbound named key is dropped exactly as before —
+// this changes what happens in a pty viewport and nowhere else.
+func TestUnhandledNamedKeyWithoutATerminalIsStillDropped(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	before := docContent(w)
+	e.dispatchKey("F10")
+	if got := docContent(w); got != before {
+		t.Errorf("buffer = %q, want F10 to remain a no-op outside a terminal", got)
+	}
+}
