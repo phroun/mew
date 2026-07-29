@@ -1770,7 +1770,14 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			break
 		}
 		r := runes[li]
-		if r == '\t' || r < 0x20 || r == 0x7F || textwidth.Rune(r) != 0 ||
+		// Only a genuine zero-width RIDER may be appended here — this runs
+		// past the row's width budget, so anything that would take cells of
+		// its own stops the flush instead. That excludes controls (C1 included:
+		// its terminal width is 0, so the width test alone would wave a string
+		// introducer straight through onto the wire) and defective marks,
+		// which are painted as sized substitutes, not as riders.
+		if r == '\t' || textwidth.IsControl(r) || textwidth.Rune(r) != 0 ||
+			textwidth.DefectiveMark(prevBase(li), r) ||
 			(layout != nil && layout.Marked && bidi.IsDirectionControl(r)) {
 			break
 		}
