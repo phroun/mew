@@ -638,14 +638,14 @@ func (e *Editor) pointerCell(x, y core.Unit) (col, row int, ok bool) {
 	if cw <= 0 || chh <= 0 {
 		return 0, 0, false
 	}
-	// The same frame the grid is painted in: units times ppu, with each cell
-	// boundary rounded exactly as fillPixels rounds it. Walking the rounded
-	// boundaries is the only inverse that cannot drift across the row.
+	// The pointer scales onto the widget's snapped device frame (hitK) and the
+	// walk compares against boundaries rounded exactly as fillPixels rounds
+	// them — the same trip the terminal's own hit tests make.
 	ppu := e.gfx.ppu
 	if ppu <= 0 {
 		ppu = 1
 	}
-	px, py := float64(x)*ppu, float64(y)*ppu
+	px, py := e.gfxPointerPx(x, y)
 	col, row = 1, 1
 	for px >= cellBoundaryPx(float64(col)*float64(cw), ppu) {
 		col++
