@@ -75,6 +75,12 @@ type Editor struct {
 	pointerArrows   []mew.PointerArrowSpan
 	pointerRegionMu sync.Mutex
 
+	// bars holds the editor scrollbars mew publishes for this host to DRAW
+	// (see editor_mew_scrollbar.go). On a graphical target mew reserves each
+	// bar's column but paints nothing into it, so the thumb here is free of
+	// the cell grid: continuous length, pixel-smooth travel, whole-line result.
+	bars editorBars
+
 	// readOnlyFocused mirrors mew's focused-window read-only state
 	// (WithEditState), so CutEnabled greys the Edit menu's Cut while a
 	// read-only buffer holds focus.
@@ -266,6 +272,9 @@ func (e *Editor) Paint(p *core.Painter) {
 	// Terminal sessions draw OVER the document surface, in the cells the
 	// document would have used. Painted after it, so they layer on top.
 	e.paintTerminalSurfaces(p)
+	// ...and the editor's own scrollbars over everything, in the columns mew
+	// reserved and left empty for them.
+	e.paintEditorScrollbars(p)
 }
 
 // ensureStarted wires the pipes and launches the mew session exactly once.
@@ -357,6 +366,14 @@ func (e *Editor) run() {
 		// ...and a way to ask this host to test its own terminal plumbing,
 		// for when a session starts and stops with nothing to show for it.
 		mew.WithPTYDiagnose(ptyDiagnose),
+		// Draw the editor scrollbars ourselves. Setting this tells mew to
+		// reserve each bar's column but leave it empty and stop hit-testing
+		// it, handing us the geometry and scroll state to paint from.
+		mew.WithScrollbarRegions(func(regions []mew.ScrollbarRegion) {
+			if e.bars.set(regions) {
+				e.Update()
+			}
+		}),
 		// ...and how they are drawn: one real child PurfecTerm per session,
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.
@@ -554,6 +571,9 @@ func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
 	// child on its own — the delegation has to be explicit.
 	if t, lx, ly, ok := e.hostedTermAt(x, y); ok {
 		return t.CursorShapeAt(lx, ly)
+	}
+	if e.overEditorScrollbar(x, y) {
+		return core.CursorDefault // chrome, not text
 	}
 	if e.pointerInText(x, y) {
 		return core.CursorText
@@ -1031,12 +1051,23 @@ func (e *Editor) notePointer(x, y core.Unit) {
 // the embedded editor-mode terminal always has (encode for mew).
 func (e *Editor) HandleMousePress(ev core.MousePressEvent) bool {
 	e.notePointer(ev.X, ev.Y)
+	// The editor's own scrollbars are ours to drive: mew reserved their
+	// columns and stopped hit-testing them.
+	if ev.Button == core.LeftButton && e.scrollbarPressAt(ev.X, ev.Y) {
+		return true
+	}
 	return e.PurfecTerm.HandleMousePress(ev)
 }
 
 func (e *Editor) HandleMouseMove(ev core.MouseMoveEvent) bool {
 	e.notePointer(ev.X, ev.Y)
 	e.clearHostedHoverOutside(ev.X, ev.Y)
+	if e.scrollbarDragMove(ev.X, ev.Y) {
+		return true
+	}
+	if ev.Buttons == 0 {
+		e.updateScrollbarHover(ev.X, ev.Y)
+	}
 	return e.PurfecTerm.HandleMouseMove(ev)
 }
 
@@ -1074,6 +1105,9 @@ func (e *Editor) clearHostedHoverOutside(x, y core.Unit) {
 
 func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
 	e.notePointer(ev.X, ev.Y)
+	if e.scrollbarDragRelease() {
+		return true
+	}
 	return e.PurfecTerm.HandleMouseRelease(ev)
 }
 

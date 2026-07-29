@@ -331,6 +331,27 @@ func WithPointerRegion(fn func(col, row, width, height int, arrows []PointerArro
 	return func(cfg *editor.Config) { cfg.PointerRegion = fn }
 }
 
+// ScrollbarRegion is one visible editor scrollbar, handed to a graphical host
+// that draws the bars itself (see WithScrollbarRegions).
+type ScrollbarRegion = editor.ScrollbarRegion
+
+// WithScrollbarRegions hands a GRAPHICAL host the geometry and scroll state of
+// every visible editor scrollbar — and, by being set at all, declares that the
+// host will DRAW them.
+//
+// mew still reserves each bar's column, so a window lays out identically on
+// both targets, but leaves it blank rather than painting '░'/'█' into the cell
+// stream, and stops hit-testing it. The host paints the bar in its own pixel
+// space — where the thumb need not be a whole number of rows tall and can
+// follow the pointer smoothly — and scrolls with the scroll_viewport command,
+// which still lands on a whole line: mew never scrolls by a fraction of one.
+//
+// Pushed after a render and only when the set changes (a bar appearing,
+// moving, resizing, or its view scrolling), never per mouse motion.
+func WithScrollbarRegions(fn func([]ScrollbarRegion)) Option {
+	return func(cfg *editor.Config) { cfg.ScrollbarRegions = fn }
+}
+
 // WithHelpState wires a callback told whether mew's built-in help viewport (the
 // WordStar command reference toggled by help_toggle) is open — once at the
 // first render and thereafter on transitions. A host uses it to keep a "Quick

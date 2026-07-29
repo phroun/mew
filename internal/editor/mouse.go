@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -87,6 +88,9 @@ type scrollbarDragState struct {
 // snap-back, no sticky bottom). Like the wheel, it works on any on-screen
 // viewport without stealing focus. Returns true when consumed.
 func (e *Editor) scrollbarPressAt(x, y int) bool {
+	if e.hostDrawsScrollbars() {
+		return false // the host owns the bar, in pixels
+	}
 	w := e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil || w.ScrollbarX < 0 || x-1 != w.ScrollbarX {
 		return false
@@ -296,6 +300,61 @@ func (e *Editor) notifyPointerRegion() {
 		e.pointerArrowsSent = arrows
 		e.Config.PointerRegion(rect[0], rect[1], rect[2], rect[3], arrows)
 	}
+}
+
+// hostDrawsScrollbars reports whether a graphical host has taken over drawing
+// the editor scrollbars (Config.ScrollbarRegions set). mew then reserves the
+// column and publishes the geometry, but paints nothing into it and leaves the
+// hit-testing to the host, which owns the pointer in pixel space.
+func (e *Editor) hostDrawsScrollbars() bool { return e.Config.ScrollbarRegions != nil }
+
+// notifyScrollbarRegions publishes every visible editor scrollbar to a host
+// that draws them (see Config.ScrollbarRegions). Pushed after each render and
+// only when the set changes — a bar appearing, moving, resizing, or its view
+// scrolling — so a host repaints without polling. Runs under renderMu with the
+// frame's geometry already set by the renderer.
+func (e *Editor) notifyScrollbarRegions() {
+	if e.Config.ScrollbarRegions == nil {
+		return
+	}
+	var regions []ScrollbarRegion
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 || w.Buffer == nil {
+			continue
+		}
+		if !e.viewportOnScreen(w) {
+			continue
+		}
+		regions = append(regions, ScrollbarRegion{
+			ViewportID: w.ID,
+			Col:        w.ScrollbarX + 1,
+			Row:        w.ContentY + 1,
+			TrackH:     w.ScrollbarTrackH,
+			Top:        w.ViewState.ViewOffsetY,
+			Page:       w.ContentHeight,
+			LineCount:  w.Buffer.GetLineCount(),
+		})
+	}
+	sort.Slice(regions, func(i, j int) bool { return regions[i].ViewportID < regions[j].ViewportID })
+	if e.scrollbarRegionsPushed && scrollbarRegionsEqual(regions, e.scrollbarRegionsSent) {
+		return
+	}
+	e.scrollbarRegionsPushed = true
+	e.scrollbarRegionsSent = regions
+	e.Config.ScrollbarRegions(regions)
+}
+
+// scrollbarRegionsEqual reports whether two published sets are element-equal.
+func scrollbarRegionsEqual(a, b []ScrollbarRegion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // pointerArrowSpans returns the on-screen cell spans of the focused viewport's

@@ -323,9 +323,13 @@ type Editor struct {
 	// button-exclusion spans pushed through Config.PointerRegion (1-based
 	// cells); pointerRegionPushed records whether anything was pushed yet, so
 	// the first computed region is always sent even when it is the zero value.
-	pointerRegionSent   [4]int
-	pointerArrowsSent   []PointerArrowSpan
-	pointerRegionPushed bool
+	pointerRegionSent [4]int
+	pointerArrowsSent []PointerArrowSpan
+	// scrollbarRegionsSent is the last set published through
+	// Config.ScrollbarRegions, so an unchanged frame pushes nothing.
+	scrollbarRegionsSent   []ScrollbarRegion
+	scrollbarRegionsPushed bool
+	pointerRegionPushed    bool
 	// helpStateSent/helpStatePushed: the last built-in-help-viewport open state
 	// pushed through Config.HelpState (see notifyHelpState).
 	helpStateSent   bool
@@ -470,6 +474,28 @@ type Editor struct {
 // cells; the span covers columns [Col, Col+Width).
 type PointerArrowSpan struct {
 	Row, Col, Width int
+}
+
+// ScrollbarRegion is one visible editor scrollbar, published to a graphical
+// host that draws the bars itself (see Config.ScrollbarRegions).
+//
+// Col/Row are 1-based terminal cells: the reserved column, and the track's
+// first row. TrackH is the track's length in cells — usually Page, but one
+// short when the bar gave its bottom cell up to the screen's unwritable
+// corner. Everything needed to size and place a thumb is here, so the host
+// computes it in pixels without asking again:
+//
+//	thumb length  = TrackH * Page / (LineCount)   (clamped to a minimum)
+//	thumb travel  = Top / (LineCount - Page)
+//
+// ViewportID names the window the host scrolls with scroll_viewport.
+type ScrollbarRegion struct {
+	ViewportID string
+	Col, Row   int
+	TrackH     int
+	// Top is the first visible document line (0-based), Page the number of
+	// lines the window shows, LineCount the document's length.
+	Top, Page, LineCount int
 }
 
 // Config holds editor configuration options.
@@ -633,6 +659,23 @@ type Config struct {
 	// host answers per-pixel cursor queries locally, without every hover
 	// round-tripping through mew's input stream. Called from the render path.
 	PointerRegion func(col, row, width, height int, arrows []PointerArrowSpan)
+
+	// ScrollbarRegions, when set, hands a GRAPHICAL host the geometry and
+	// scroll state of every visible editor scrollbar, and by being set at all
+	// declares that the host will DRAW them itself.
+	//
+	// mew still reserves the bar's column — the layout is the same either way,
+	// so a window looks and measures identically on both targets — but leaves
+	// it blank instead of painting '░'/'█' into the cell stream, and stops
+	// hit-testing it. The host then paints the bar in its own pixel space
+	// (where a thumb need not be a whole number of rows tall, and can move
+	// smoothly under the pointer) and drives scrolling through
+	// scroll_viewport, which still lands on a whole line.
+	//
+	// Pushed after each render, only when the set CHANGES — a bar appearing,
+	// moving, resizing, or its view scrolling — never per mouse motion. Called
+	// from the render path.
+	ScrollbarRegions func([]ScrollbarRegion)
 
 	// HelpState, when set, is told whether the built-in help viewport (the
 	// WordStar command reference toggled by help_toggle) is open, once at the
@@ -1081,6 +1124,10 @@ func New(cfg Config) (*Editor, error) {
 	// session: the terminal draws its own scrollbar, and reserving the column
 	// would shrink its grid. Session-ness lives on the buffer, which only the
 	// editor can see — so the renderer asks.
+	// When the host draws the bars, mew reserves their column but paints
+	// nothing into it (see Config.ScrollbarRegions).
+	renderer.SetScrollbarHostDrawn(e.hostDrawsScrollbars)
+
 	renderer.SetScrollbarSuppressor(func(w *viewport.Viewport) bool {
 		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
 	})
@@ -1750,6 +1797,33 @@ func (e *Editor) registerCommands() {
 	// scroll_line parks a given 1-based line at the TOP of the view (the scroll
 	// analogue of go_line); it takes a line-number argument or, lacking one,
 	// prompts for it exactly as go_line does.
+	// scroll_viewport <id> <line>: park a NAMED viewport at a 0-based top
+	// line. The host's graphical scrollbar drives scrolling with this — it
+	// owns the bar in pixel space, so it computes the line itself and sends a
+	// whole number; mew never scrolls by a fraction of a line. Like the wheel
+	// and mew's own bar, it leaves the view detached and steals no focus, so a
+	// background pane can be scrolled without disturbing the caret.
+	ps.RegisterCommand("scroll_viewport", func(ctx *pawscript.Context) pawscript.Result {
+		id, ok := argString(ctx, 0)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		lineArg, ok := argString(ctx, 1)
+		if !ok {
+			return pawscript.BoolStatus(false)
+		}
+		top, err := strconv.Atoi(strings.TrimSpace(lineArg))
+		if err != nil {
+			return pawscript.BoolStatus(false)
+		}
+		w := e.ViewportManager.GetViewport(strings.TrimSpace(id))
+		if w == nil || w.Buffer == nil {
+			return pawscript.BoolStatus(false)
+		}
+		e.scrollViewTo(w, top)
+		return pawscript.BoolStatus(true)
+	})
+
 	ps.RegisterCommand("scroll_line", func(ctx *pawscript.Context) pawscript.Result {
 		scrollLine := func(input string) bool {
 			n, err := strconv.Atoi(strings.TrimSpace(input))
@@ -7365,6 +7439,7 @@ func (e *Editor) performRender() {
 	// over text and the arrow over chrome, resolved locally from the pointer
 	// cell (no per-motion round trip). Pushed only when the rectangle changes.
 	e.notifyPointerRegion()
+	e.notifyScrollbarRegions()
 	e.notifyTerminalSurfaces()
 
 	e.lastRenderTime = time.Now()

@@ -113,12 +113,29 @@ type ScreenRenderer struct {
 	frame    *backBuffer
 	renderMu sync.Mutex
 
+	// scrollbarHostDrawn, when set, reports that a GRAPHICAL host paints the
+	// scrollbars itself. The column is still reserved — the layout must be
+	// identical on both targets — but nothing is drawn into it, and the host
+	// overlays its own bar there. See Editor.Config.ScrollbarRegions.
+	scrollbarHostDrawn func() bool
+
 	// scrollbarSuppressed, when set, vetoes the scrollbar option for a
 	// viewport the renderer cannot judge itself — the editor supplies it to
 	// keep the bar off viewports whose buffer hosts a terminal session (the
 	// terminal has its own scrollbar, and reserving a column would shrink
 	// its grid).
 	scrollbarSuppressed func(*viewport.Viewport) bool
+}
+
+// SetScrollbarHostDrawn installs the predicate that reports whether a
+// graphical host paints the bars (see the scrollbarHostDrawn field).
+func (sr *ScreenRenderer) SetScrollbarHostDrawn(fn func() bool) {
+	sr.scrollbarHostDrawn = fn
+}
+
+// hostDrawsScrollbars reports whether the host paints the bars itself.
+func (sr *ScreenRenderer) hostDrawsScrollbars() bool {
+	return sr.scrollbarHostDrawn != nil && sr.scrollbarHostDrawn()
 }
 
 // SetScrollbarSuppressor installs the editor's veto for the per-viewport
@@ -939,17 +956,25 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// bottom-of-screen LTR bar gave up). Under RTL the bar is the
 		// leftmost column, emitted before everything else; under LTR it is
 		// the rightmost, emitted last.
+		// The host draws the bar itself: the column stays reserved (identical
+		// layout on both targets) but empty, and the host overlays its own
+		// pixel-space bar there.
 		sbGlyph, sbColor := "", ""
-		if sbw > 0 && row < sbTrackH {
+		if sbw > 0 && row < sbTrackH && !sr.hostDrawsScrollbars() {
 			if row >= sbPos && row < sbPos+sbLen {
 				sbGlyph, sbColor = sr.indicators.ScrollbarThumb, scrollbarThumbColor
 			} else {
 				sbGlyph, sbColor = sr.indicators.ScrollbarTrack, scrollbarTrackColor
 			}
 		}
-		if sbGlyph != "" && sr.winRTL(w) {
-			sr.Write(sbColor)
-			sr.Write(sbGlyph)
+		if sbw > 0 && sr.winRTL(w) {
+			if sbGlyph != "" {
+				sr.Write(sbColor)
+				sr.Write(sbGlyph)
+			} else {
+				sr.Write(textColor)
+				sr.Write(" ")
+			}
 		}
 
 		// Physical left margin. Row messages (prompt labels) belong to the
@@ -1076,7 +1101,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// the last whole doubled cell — and its glyph doubles with the row,
 		// which is the desired look. A row past the track (the given-up
 		// bottom-right corner) has no glyph and the corner stays blank.
-		if sbGlyph != "" && !rtl {
+		if sbw > 0 && !rtl && (sbGlyph != "" || (row < sbTrackH && sr.hostDrawsScrollbars())) {
 			if doubleWide {
 				lineWidth := contentWidth / 2
 				if lineWidth < 1 {
@@ -1088,8 +1113,13 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 					sr.Write(strings.Repeat(" ", pad))
 				}
 			}
-			sr.Write(sbColor)
-			sr.Write(sbGlyph)
+			if sbGlyph != "" {
+				sr.Write(sbColor)
+				sr.Write(sbGlyph)
+			} else {
+				sr.Write(textColor)
+				sr.Write(" ")
+			}
 		}
 
 		sr.Write(resetColor)

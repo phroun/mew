@@ -259,3 +259,61 @@ func TestScrollbarExcludedFromPointerRegion(t *testing.T) {
 		t.Fatalf("I-beam region reaches column %d, but the scrollbar is at %d", lastCol, barCol)
 	}
 }
+
+// With a graphical host drawing the bars, mew still RESERVES the column — the
+// layout must be identical on both targets — but paints nothing into it, stops
+// hit-testing it, and publishes its geometry and scroll state instead.
+func TestScrollbarHostDrawnPublishesAndYields(t *testing.T) {
+	e, w, out := newRenderedEditor(t, strings.Repeat("line\n", 300))
+	var got []ScrollbarRegion
+	e.Config.ScrollbarRegions = func(r []ScrollbarRegion) { got = r }
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.performRender()
+
+	// The column is still reserved.
+	if w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 {
+		t.Fatal("the column must still be reserved when the host draws")
+	}
+	// ...but nothing is painted into it.
+	if s := out.String(); strings.Contains(s, "░") || strings.Contains(s, "█") {
+		t.Fatal("mew must not paint bar glyphs when the host draws them")
+	}
+	// The geometry and scroll state are published.
+	var region *ScrollbarRegion
+	for i := range got {
+		if got[i].ViewportID == w.ID {
+			region = &got[i]
+		}
+	}
+	if region == nil {
+		t.Fatalf("no region published for %q; got %v", w.ID, got)
+	}
+	if region.Col != w.ScrollbarX+1 || region.TrackH != w.ScrollbarTrackH {
+		t.Errorf("region %+v does not match the reserved bar (col %d, track %d)",
+			*region, w.ScrollbarX+1, w.ScrollbarTrackH)
+	}
+	if region.Page != w.ContentHeight || region.LineCount != w.Buffer.GetLineCount() {
+		t.Errorf("region %+v does not match the view (page %d, lines %d)",
+			*region, w.ContentHeight, w.Buffer.GetLineCount())
+	}
+
+	// A press in the column is no longer mew's: the host owns it.
+	send := func(key string) { e.handleMouseKey(key) }
+	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+w.ContentHeight))
+	send("MouseLeftPress")
+	send("MouseLeftRelease")
+	if w.ViewState.ViewOffsetY != 0 {
+		t.Error("mew hit-tested a bar the host owns")
+	}
+
+	// scroll_viewport is how the host scrolls, and it lands on a whole line.
+	e.executeCommand(fmt.Sprintf("scroll_viewport %q, %q", w.ID, "42"))
+	if w.ViewState.ViewOffsetY != 42 {
+		t.Errorf("scroll_viewport left top line %d, want 42", w.ViewState.ViewOffsetY)
+	}
+	if !w.ViewState.ScrollDetached {
+		t.Error("scroll_viewport should park the view like the wheel does")
+	}
+}
