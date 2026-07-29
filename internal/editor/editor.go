@@ -1480,10 +1480,12 @@ func (e *Editor) registerCommands() {
 			}
 			return pawscript.BoolStatus(true)
 		}
-		// No prompt to dismiss: a background find still running is what a
-		// cancel means here, so call it off and report success — otherwise the
-		// ^C chain would fall through to buffer_close and ask about losing
-		// changes to a document the user was only searching.
+		// No prompt to dismiss. A find is not something to cancel: it has no
+		// prompt once its first search has begun, ^L just goes to the next
+		// match, and JOE has no such notion — so ^C falls through to whatever
+		// else it is bound to. The single exception is the search slow enough to
+		// have put a message on screen naming this very key; that message is a
+		// promise, and cancelFind is where it is kept.
 		if e.cancelFind() {
 			return pawscript.BoolStatus(true)
 		}

@@ -103,18 +103,33 @@ func TestFindAsyncNotFound(t *testing.T) {
 	}
 }
 
-// cancel stops a running find and reports success, so the ^C chain never falls
-// through to buffer_close and its LOSE CHANGES question.
-func TestCancelStopsRunningFind(t *testing.T) {
-	e, w := newTestEditor(t, "aa bb aa\n")
-	e.executeCommand("insert 'x'") // modified: buffer_close WOULD prompt
-	w.Find = viewport.FindState{Term: "aa"}
+// pretendSlowFind puts the find into the state a search still grinding away
+// presents to the main loop: a pass under way, past its grace period, with the
+// progress message up. A real one cannot be held open deterministically — the
+// scan of a test-sized document is over before the next line could assert
+// anything — and everything the cancel path reads is this state, never the
+// goroutine. armFindToast is the real one, so "the toast is up" is established
+// the way the editor establishes it.
+func pretendSlowFind(e *Editor) *findRun {
+	fr := &findRun{seq: 1, stop: &atomic.Bool{}, settled: &atomic.Bool{}}
+	e.findRun = fr
+	e.armFindToast(fr.seq, fr.stop, fr.settled)
+	if !fr.toasted {
+		panic("the progress toast should have gone up")
+	}
+	return fr
+}
 
-	e.executeCommand("find_next")
-	fr := e.findRun
-	e.armFindToast(fr.seq, fr.stop, &atomic.Bool{}) // a slow search: toast up
-	if !fr.running() {
-		t.Fatal("the find should be running")
+// cancel stops a find that is SHOWING the message naming the cancel key, and
+// reports success so the ^C chain never falls through to buffer_close and its
+// LOSE CHANGES question. That message is the whole warrant: the user was told
+// this key stops the search, so it must.
+func TestCancelStopsSearchOfferingTheKey(t *testing.T) {
+	e, _ := newTestEditor(t, "aa bb aa\n")
+	e.executeCommand("insert 'x'") // modified: buffer_close WOULD prompt
+	fr := pretendSlowFind(e)
+	if !fr.cancelable() {
+		t.Fatal("a search showing the cancel key should be cancelable")
 	}
 
 	e.dispatchKey("^C") // cancel|buffer_close
@@ -125,14 +140,93 @@ func TestCancelStopsRunningFind(t *testing.T) {
 	if hasTaggedTransient(e, findToastTag) {
 		t.Fatal("cancel should clear the progress toast")
 	}
+	if !hasNotification(e, "Search cancelled") {
+		t.Error("cancel should say the search was called off")
+	}
 	if focusedPrompt(e) != nil {
 		t.Fatal("cancel must not fall through to buffer_close's LOSE CHANGES prompt")
 	}
-	// The thread winds down on its own. Whether its answer still lands is a
-	// genuine race — a scan that had already finished cannot be un-found — so
-	// the deterministic claim is only that nothing hangs or panics here.
-	fr.done.Wait()
-	e.findPump()
+}
+
+// A find that has FINISHED is not something to cancel. It has no prompt, no
+// mode and nothing running; ^L simply goes to the next match. So ^C belongs to
+// whatever else it is bound to, exactly as it did before background find
+// existed — anything else would swallow the key forever after one search.
+func TestCompletedFindIsNotCancelable(t *testing.T) {
+	e, w := newTestEditor(t, "aa bb aa\n")
+	w.Find = viewport.FindState{Term: "aa"}
+	w.SetCursorPos(viewport.Position{})
+
+	e.executeCommand("find_next")
+	findSettle(t, e)
+
+	if e.findRun.cancelable() {
+		t.Fatal("a finished find should not be cancelable")
+	}
+	if e.cancelFind() {
+		t.Fatal("cancelFind should report false once the search is over")
+	}
+	if res := e.PawScript.ExecuteAsync("cancel"); res != pawscript.BoolStatus(false) {
+		t.Fatalf("cancel = %v, want false so the ^C chain reaches buffer_close", res)
+	}
+	if hasNotification(e, "Search cancelled") {
+		t.Error("nothing was cancelled, so nothing should say so")
+	}
+}
+
+// Nor is a search cancelable BEFORE its grace period is up: it has said nothing
+// yet, so there is no promise to keep, and nearly every search in a real
+// document lands inside that window. ^C during one is ^C in an ordinary buffer.
+func TestFindNotCancelableBeforeItsToast(t *testing.T) {
+	e, w := newTestEditor(t, "aa bb aa\n")
+	w.Find = viewport.FindState{Term: "aa"}
+
+	// A pass under way, its grace timer not yet fired.
+	fr := &findRun{seq: 1, stop: &atomic.Bool{}, settled: &atomic.Bool{}}
+	e.findRun = fr
+	if !fr.running() {
+		t.Fatal("the pass should read as running")
+	}
+	if fr.cancelable() {
+		t.Fatal("a silent search should not be cancelable")
+	}
+	if e.cancelFind() {
+		t.Fatal("cancelFind should report false before the toast is up")
+	}
+	findSettle(t, e)
+}
+
+// The promise ends with the message. Once the toast is down — the pass caught up,
+// or its answer applied — a later ^C is nobody's cancel.
+func TestFindToastDownEndsTheOffer(t *testing.T) {
+	e, _ := newTestEditor(t, "aa bb aa\n")
+	fr := pretendSlowFind(e)
+
+	e.dropFindToast()
+
+	if fr.cancelable() {
+		t.Fatal("with the message gone there is nothing to honour")
+	}
+	if e.cancelFind() {
+		t.Fatal("cancelFind should report false with the toast down")
+	}
+}
+
+// A new pass starts silent, whatever the previous one had shown: it has made no
+// promise of its own until its own grace period runs out.
+func TestNewFindPassStartsSilent(t *testing.T) {
+	e, w := newTestEditor(t, "aa bb aa\ncc\n")
+	pretendSlowFind(e)
+
+	w.Find = viewport.FindState{Term: "cc"}
+	e.executeCommand("find_next")
+	if e.findRun.toasted {
+		t.Fatal("a fresh pass should not inherit the previous one's toast")
+	}
+	if e.findRun.cancelable() {
+		t.Fatal("a fresh pass should not be cancelable")
+	}
+	findSettle(t, e)
 }
 
 // A pass that was cancelled has its answer discarded: findPump leaves the caret
