@@ -254,6 +254,13 @@ type Editor struct {
 	// a focused terminal's child process rather than to mew's keymap. Cleared
 	// by that keystroke whether or not a terminal was there to take it.
 	rawKeyArmed bool
+	// dispatchingKey is the key event whose bound command is currently
+	// executing — what tinput_key encodes when a capture forwards "this key"
+	// to a hosted terminal. Maintained as a save/restore stack by
+	// runBoundCommand, because a sequence unwind executes several keys'
+	// commands within one dispatch. Empty outside key dispatch (menu
+	// actions, scripts), where tinput_key without an argument declines.
+	dispatchingKey string
 
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
@@ -1082,7 +1089,7 @@ func New(cfg Config) (*Editor, error) {
 	e.registerCommands()
 
 	// Create key sequence processor with command executor
-	e.KeyProcessor = keys.NewSequenceProcessor(e.executeCommand)
+	e.KeyProcessor = keys.NewSequenceProcessor(e.runBoundCommand)
 
 	// Input source: a host-supplied event feed when one was given, else a
 	// keyboard handler parsing the (possibly virtual) terminal byte stream.
@@ -1185,13 +1192,23 @@ func (e *Editor) peekBindingValues() map[string]string {
 	return vals
 }
 
-// KeyForCommand returns the key sequence bound to command, in the exact
-// spelling it is stored under. When several keys map to it the
-// lexicographically-first is returned (stable); "" when the command is unbound.
+// KeyForCommand returns the key sequence bound to command, in the spelling a
+// user would press — capture/override level prefixes stripped, since the
+// physical keys are the same at every level, and wildcard bindings skipped,
+// since "*" is not a key anyone can be told to press. When several keys map
+// to it the lexicographically-first is returned (stable); "" when the command
+// is unbound.
 func (e *Editor) KeyForCommand(command string) string {
 	best := ""
-	for key, cmd := range e.KeyProcessor.GetAllMappings() {
-		if cmd == command && (best == "" || key < best) {
+	for raw, cmd := range e.KeyProcessor.GetAllMappings() {
+		if cmd != command {
+			continue
+		}
+		key, ok := keys.DisplayKey(raw)
+		if !ok {
+			continue
+		}
+		if best == "" || key < best {
 			best = key
 		}
 	}
@@ -2071,6 +2088,27 @@ func (e *Editor) registerCommands() {
 		}
 		text, _ := argString(ctx, 0)
 		return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+	})
+
+	// tinput_key forwards THE KEY BEING DISPATCHED to the focused viewport's
+	// child process, encoded by the host's emulator — so application cursor
+	// mode and its kin decide the bytes (\x1b[A vs \x1bOA for Up), not a
+	// table here. This is what `capture * = tinput_key` in [pty::mappings]
+	// runs: the terminal's first claim on every key. Reports FALSE — declining
+	// the key — when there is no session, no host encoder, or the name encodes
+	// to nothing, which drops resolution to the next level down. An explicit
+	// key name may be given as an argument for scripted use.
+	ps.RegisterCommand("tinput_key", func(ctx *pawscript.Context) pawscript.Result {
+		key := e.dispatchingKey
+		if len(ctx.Args) > 0 {
+			if s, ok := argString(ctx, 0); ok && s != "" {
+				key = s
+			}
+		}
+		if key == "" {
+			return pawscript.BoolStatus(false)
+		}
+		return pawscript.BoolStatus(e.sendKeyToPTY(key))
 	})
 
 	// terminal_grid <id>, <cols>, <rows> — the host declaring how many cells
@@ -3695,8 +3733,32 @@ func (e *Editor) executeCommand(command string) {
 	e.executeCommandResult(command)
 }
 
-// dispatchKey routes one keyboard key through the sequence processor and runs
-// whatever it resolves to, then refreshes the sequence/QuickHelp/modebar
+// runBoundCommand is the key processor's executor: it runs one bound command
+// on behalf of a key event and reports whether that key was HANDLED. Only a
+// clean false status says "not mine" — a binding's way of declining the key
+// (tinput_key with no session under it, an explicit `capture X = false`
+// reclaim) — which drops resolution to the next capture level down. Async
+// suspensions, errors, and every other result hold the key: a command that
+// merely went wrong must not hand its keystroke to a terminal below it.
+//
+// dispatchingKey is kept as a save/restore stack because a sequence unwind
+// runs several keys' commands within one dispatch, each needing its own
+// notion of "the key" for tinput_key to encode.
+func (e *Editor) runBoundCommand(key, command string) bool {
+	prev := e.dispatchingKey
+	e.dispatchingKey = key
+	defer func() { e.dispatchingKey = prev }()
+	res := e.executeCommandResult(command)
+	if b, ok := res.(pawscript.BoolStatus); ok && !bool(b) {
+		return false
+	}
+	return true
+}
+
+// dispatchKey routes one keyboard key through the sequence processor, which
+// resolves and RUNS its bindings (see keys.SequenceProcessor: capture levels
+// over the base set, wildcards under specifics, tried in precedence order
+// until one takes the key), then refreshes the sequence/QuickHelp/modebar
 // displays. Runs under renderMu (the serve loop's key branch, or a test
 // standing in for it).
 func (e *Editor) dispatchKey(key string) {
@@ -3722,25 +3784,13 @@ func (e *Editor) dispatchKey(key string) {
 		e.afterKeyArmed = w
 	}
 
-	// A key that is mid-sequence resolves to nothing YET; that is not the same
-	// as resolving to nothing at all, and only the latter falls through to a
-	// terminal below.
-	seqBefore := e.KeyProcessor.GetActiveSequence()
-	result := e.KeyProcessor.ProcessKey(key)
-	switch {
-	case result.Command != "":
-		e.executeCommand(result.Command)
-	case seqBefore == "" && e.KeyProcessor.GetActiveSequence() == "":
-		// Nothing here wanted it, and it was not a sequence step. If this
-		// viewport hosts a terminal, the child gets it rather than the floor:
-		// mew's defaults cover typed characters (insert, which routes to a
-		// terminal already) but a named key with no binding — F10, ins, pgup,
-		// the function keys — resolved to nothing and vanished. See
-		// unhandledKeyToPTY.
-		if e.unhandledKeyToPTY(key) {
-			e.RequestRender()
-		}
-	}
+	// The processor owns execution: a key can resolve to a stack of bindings
+	// across capture levels, run highest-first until one takes it, and a
+	// mid-sequence unwind runs several keys' worth — so there is no longer
+	// exactly one command per keystroke to hand back. Each one comes through
+	// runBoundCommand, so command semantics (afterKey, undo baking,
+	// repeat_next) are unchanged.
+	e.KeyProcessor.ProcessKey(key)
 	e.afterKeyArmed = nil
 
 	// Update active sequence display with possible completions

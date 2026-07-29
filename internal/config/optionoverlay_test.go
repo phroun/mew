@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -227,17 +226,17 @@ func TestBuiltinClassRefinementsSurviveAUserConfig(t *testing.T) {
 	c := m.LoadFromString("[mappings:mew]\n^Q Q\t=buffer_close\n")
 	km, _ := c.ResolveMappingSet("mew", "pty", "", "", "mew", c.Mappings)
 	for _, tc := range []struct{ key, want string }{
-		{"back", "tinput \"\x08\"|nav_history_prior|del_char_prior"},
-		{"del", "tinput \"\x08\"|nav_history_prior|del_char_prior"},
-		{"^C", "tinput \"\x03\"|cancel|buffer_close"},
+		{"capture *", "tinput_key"},
+		{"capture back", "tinput \"\x08\""},
+		{"capture del", "tinput \"\x08\""},
 	} {
 		if km[tc.key] != tc.want {
 			t.Errorf("pty class %s = %q, want %q", tc.key, km[tc.key], tc.want)
 		}
 	}
-	// Outside the class those keys keep whatever the base set says.
+	// Outside the class the capture layer is absent entirely.
 	base, _ := c.ResolveMappingSet("mew", "", "", "", "mew", c.Mappings)
-	if strings.HasPrefix(base["^C"], "tinput") {
-		t.Errorf("^C outside a terminal = %q, want the ordinary binding", base["^C"])
+	if base["capture *"] != "" {
+		t.Errorf("capture * outside a terminal = %q, want unbound", base["capture *"])
 	}
 }

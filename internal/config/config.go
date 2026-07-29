@@ -2632,21 +2632,29 @@ messages="\e[0;97;41m"                # bright white on red
 ^R      =search_reverse
 ^F      =search_forward
 
-# Inside a viewport running a terminal session (class "pty"): the keys whose
-# ordinary meaning is an EDIT, which a child process must receive as bytes
-# instead. Typing already reaches the child — insert and insert_newline route
-# themselves — but these three do not pass through insert, so they are spelled
-# out. tinput sends raw bytes; "\x08" is a backspace and "\x03" a Ctrl-C, and
-# the equivalent PawScript form is {bytes 0x08}.
+# Inside a viewport running a terminal session (class "pty"), the terminal
+# has FIRST CLAIM on every key. "capture" lifts a binding one precedence
+# level above the ordinary keymap ("override" lifts two; they compound), and
+# "*" is the wildcard for any single key that nothing names more
+# specifically. tinput_key encodes the pressed key through the host's own
+# emulator — so application cursor mode and its kin decide the bytes — and
+# declines (false) when there is no session to take it, dropping the key back
+# to its ordinary meaning.
 #
-# ^C here interrupts the child rather than closing the buffer; the buffer
-# closes normally again the moment the session ends. Each line keeps its
-# ordinary meaning after the "|", so a key still does the right thing in the
-# instant between the child exiting and the class going away.
+# The rules, briefly: a longer key sequence in progress (^B N) outranks any
+# single-key capture, and the held starter is passed to the child only if the
+# sequence comes to nothing; within a level a named key beats the wildcard;
+# and a capture bound to the false command RECLAIMS its key for the layers
+# below. So "capture ^C = false" here would give ^C back to mew while a
+# terminal is focused, and "capture capture X = ..." in a user config outbids
+# all of this.
+#
+# del and back are named so they beat the wildcard: mew's erase keys send a
+# plain backspace byte, not the encoder's forward-delete sequence.
 [pty::mappings]
-del     =tinput "\x08"|nav_history_prior|del_char_prior
-back    =tinput "\x08"|nav_history_prior|del_char_prior
-^C      =tinput "\x03"|cancel|buffer_close
+capture *    =tinput_key
+capture del  =tinput "\x08"
+capture back =tinput "\x08"
 `
 }
 

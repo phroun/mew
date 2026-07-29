@@ -12,21 +12,84 @@ import (
 // of key completions.
 const virtualHelpKey = "help"
 
+// wildcardKey is the mapping key that matches ANY single key event at its
+// level. It never participates in sequences and never appears in completions:
+// it is a level's answer for the keys the level does not name.
+const wildcardKey = "*"
+
 // ProcessResult represents the result of processing a key.
 type ProcessResult struct {
-	Command string // Command to execute (empty if none)
+	Command string // Command resolved (resolution-only mode; empty when the processor executed)
 	Handled bool   // Whether the key was handled
 }
 
-// CommandExecutor is a callback for executing commands.
-type CommandExecutor func(command string)
+// CommandExecutor executes one command on behalf of the processor and reports
+// whether it HANDLED the key. Only a clean false status means "not mine": that
+// is a binding's way of declining the key, dropping resolution to the next
+// level down. Anything else — success, an async suspension, an error — holds
+// the key, so a command that merely went wrong can never volunteer its
+// keystroke to a layer below it.
+//
+// key is the key event being resolved (the final key, for a sequence match).
+//
+// A nil executor puts the processor in resolution-only mode: ProcessKey
+// reports the top-precedence command in ProcessResult.Command instead of
+// executing, and never descends, because there is no status to descend on.
+type CommandExecutor func(key, command string) bool
+
+// levelBindings is one precedence level's slice of the keymap: its named
+// sequences, and its wildcard if it declared one.
+type levelBindings struct {
+	specific map[string]string // sequence -> command
+	wildcard string
+	hasWild  bool
+}
+
+// candidate is one level's claim on a key event.
+type candidate struct {
+	level           int
+	command         string
+	wildcard        bool
+	matchedSequence string // the spelling that matched (aliases; the pending machinery reads it)
+	isFallback      bool
+}
 
 // SequenceProcessor handles key sequence detection and processing.
 // It supports multi-key sequences like ^K X (Ctrl-K followed by X),
-// with disambiguation for sequences that could be prefixes of longer sequences.
+// with disambiguation for sequences that could be prefixes of longer
+// sequences.
+//
+// Bindings carry a precedence LEVEL, written as leading "capture" (+1) /
+// "override" (+2) words on the mapping key — `capture * = tinput_key` — and
+// resolution runs from the highest level down:
+//
+//  1. The longest live sequence possibility wins, across all levels: a key
+//     that could begin (or extend) a mapped sequence is held, wildcards
+//     notwithstanding. Nothing single-key outranks a chord in progress.
+//  2. Among matches of equal length, the highest level is considered first.
+//  3. Within a level, a specific binding SHADOWS the wildcard — each level
+//     contributes at most one candidate, so `capture ^C = false` really does
+//     drop ^C past the whole capture level, not into its own wildcard.
+//  4. A candidate declining (clean false status) drops consideration one
+//     level and re-runs. Exhausted candidates fall to the default handling
+//     floor — what an unbound key would have done all along.
+//  5. A sequence disqualified by an invalid continuation unwinds: the starter
+//     is RELEASED (offered to the wildcards, then its literal self), and the
+//     rest replay as ordinary keys.
 type SequenceProcessor struct {
-	keyMap   map[string]string // Key sequence -> command mapping
-	executor CommandExecutor   // Command executor callback
+	// rawMap holds bindings exactly as configured, level prefixes included.
+	// It is the API surface (MapKey/GetMapping/GetAllMappings) so config
+	// merging and provenance see the same spellings the user wrote; the
+	// parsed view below is derived from it.
+	rawMap   map[string]string
+	executor CommandExecutor
+
+	// Parsed view: per-level bindings, levels in descending order, and the
+	// union of every level's specific sequences (starter/prefix/completion
+	// checks care only that a sequence exists somewhere).
+	levels     map[int]*levelBindings
+	levelOrder []int
+	allKeys    map[string]bool
 
 	// Key alias mappings for fallbacks
 	keyAliases     map[string]string
@@ -53,7 +116,7 @@ type SequenceProcessor struct {
 // NewSequenceProcessor creates a new key sequence processor.
 func NewSequenceProcessor(executor CommandExecutor) *SequenceProcessor {
 	sp := &SequenceProcessor{
-		keyMap:                  make(map[string]string),
+		rawMap:                  make(map[string]string),
 		executor:                executor,
 		keyAliases:              make(map[string]string),
 		simpleControls:          make(map[string]string),
@@ -62,6 +125,7 @@ func NewSequenceProcessor(executor CommandExecutor) *SequenceProcessor {
 		keyBuffer:               make([]string, 0),
 	}
 	sp.initializeKeyAliases()
+	sp.rebuild()
 	return sp
 }
 
@@ -93,29 +157,108 @@ func (sp *SequenceProcessor) initializeKeyAliases() {
 	}
 }
 
+// parseRawKey splits a raw mapping key into its precedence level and the
+// physical key sequence. Each leading "capture" word adds 1 and each
+// "override" adds 2; they compound, so "capture capture ^C" sits at level 2
+// and a user can always outbid a layer by writing one more word. The
+// remainder is the sequence; a remainder of exactly "*" is that level's
+// single-key wildcard.
+func parseRawKey(raw string) (level int, seq string) {
+	tokens := strings.Fields(raw)
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i] {
+		case "capture":
+			level++
+			continue
+		case "override":
+			level += 2
+			continue
+		}
+		return level, strings.Join(tokens[i:], " ")
+	}
+	// Nothing but prefix words: someone bound the literal word. Treat the
+	// whole raw string as a level-0 key rather than losing it.
+	return 0, raw
+}
+
+// DisplayKey returns the physical key sequence a raw mapping key names, with
+// any capture/override level prefix stripped — the spelling to SHOW a user,
+// since the keys they press are the same at every level. Reports false for a
+// wildcard binding, which names no pressable key at all.
+func DisplayKey(raw string) (string, bool) {
+	_, seq := parseRawKey(raw)
+	if seq == wildcardKey {
+		return "", false
+	}
+	return seq, true
+}
+
+// rebuild derives the per-level view from rawMap. Called on every mutation;
+// keymaps are small and switches are rare (focus changes), so clarity wins
+// over incremental bookkeeping.
+func (sp *SequenceProcessor) rebuild() {
+	sp.levels = make(map[int]*levelBindings)
+	sp.allKeys = make(map[string]bool)
+
+	// Deterministic on duplicate (level, sequence) pairs spelled differently
+	// ("capture capture X" vs "override X"): process raw keys in sorted
+	// order, so the lexicographically-last spelling wins, every time.
+	raws := make([]string, 0, len(sp.rawMap))
+	for raw := range sp.rawMap {
+		raws = append(raws, raw)
+	}
+	sort.Strings(raws)
+
+	for _, raw := range raws {
+		level, seq := parseRawKey(raw)
+		lb := sp.levels[level]
+		if lb == nil {
+			lb = &levelBindings{specific: make(map[string]string)}
+			sp.levels[level] = lb
+		}
+		if seq == wildcardKey {
+			lb.wildcard = sp.rawMap[raw]
+			lb.hasWild = true
+			continue
+		}
+		lb.specific[seq] = sp.rawMap[raw]
+		sp.allKeys[seq] = true
+	}
+
+	sp.levelOrder = sp.levelOrder[:0]
+	for level := range sp.levels {
+		sp.levelOrder = append(sp.levelOrder, level)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sp.levelOrder)))
+
+	sp.updateSequenceStarters()
+}
+
 // MapKey maps a key sequence to a command.
 func (sp *SequenceProcessor) MapKey(keySequence, command string) {
-	sp.keyMap[keySequence] = command
-	sp.updateSequenceStarters()
+	sp.rawMap[keySequence] = command
+	sp.rebuild()
 }
 
 // UnmapKey removes a key mapping.
 func (sp *SequenceProcessor) UnmapKey(keySequence string) {
-	delete(sp.keyMap, keySequence)
-	sp.updateSequenceStarters()
+	delete(sp.rawMap, keySequence)
+	sp.rebuild()
 }
 
-// GetMapping returns the command mapped to a key sequence, or empty string if not found.
+// GetMapping returns the command mapped to a key sequence (in its raw
+// spelling, level prefix included), or empty string if not found.
 func (sp *SequenceProcessor) GetMapping(keySequence string) string {
-	return sp.keyMap[keySequence]
+	return sp.rawMap[keySequence]
 }
 
 // HelpTopic resolves the context-sensitive help topic for a key prefix: the
 // value of the deepest "help" virtual binding matching activeSequence. It walks
 // the prefix from full length down to the root, returning the first "<prefix>
-// help" mapping found ("help" at the root). Empty when no help binding applies.
-// The "help" pseudo-key never fires as a command — it exists only to be looked
-// up here — so it is excluded from completions.
+// help" mapping found ("help" at the root); levels are searched highest first.
+// Empty when no help binding applies. The "help" pseudo-key never fires as a
+// command — it exists only to be looked up here — so it is excluded from
+// completions.
 func (sp *SequenceProcessor) HelpTopic(activeSequence string) string {
 	var parts []string
 	if activeSequence != "" {
@@ -128,11 +271,24 @@ func (sp *SequenceProcessor) HelpTopic(activeSequence string) string {
 		} else {
 			key = strings.Join(parts[:i], " ") + " help"
 		}
-		if v := sp.keyMap[key]; v != "" {
+		if v, ok := sp.lookupSeqDirect(key); ok && v != "" {
 			return unquoteMapping(v)
 		}
 	}
 	return ""
+}
+
+// lookupSeqDirect finds a sequence's command by exact spelling, highest level
+// first.
+func (sp *SequenceProcessor) lookupSeqDirect(seq string) (string, bool) {
+	for _, level := range sp.levelOrder {
+		if lb := sp.levels[level]; lb != nil {
+			if v, ok := lb.specific[seq]; ok {
+				return v, true
+			}
+		}
+	}
+	return "", false
 }
 
 // unquoteMapping strips one layer of surrounding double quotes from a mapping
@@ -150,28 +306,32 @@ func unquoteMapping(v string) string {
 // SetMappings replaces the entire keymap with a copy of m (used to switch the
 // active mapping set when the focused window changes).
 func (sp *SequenceProcessor) SetMappings(m map[string]string) {
-	sp.keyMap = make(map[string]string, len(m))
+	sp.rawMap = make(map[string]string, len(m))
 	for k, v := range m {
-		sp.keyMap[k] = v
+		sp.rawMap[k] = v
 	}
-	sp.updateSequenceStarters()
+	sp.rebuild()
 }
 
-// GetAllMappings returns a copy of all key mappings.
+// GetAllMappings returns a copy of all key mappings, keyed by their raw
+// spellings (level prefixes included — see DisplayKey for the user-facing
+// form).
 func (sp *SequenceProcessor) GetAllMappings() map[string]string {
-	result := make(map[string]string, len(sp.keyMap))
-	for k, v := range sp.keyMap {
+	result := make(map[string]string, len(sp.rawMap))
+	for k, v := range sp.rawMap {
 		result[k] = v
 	}
 	return result
 }
 
-// updateSequenceStarters rebuilds the set of sequence starters from the key map.
+// updateSequenceStarters rebuilds the set of sequence starters from the
+// parsed keymap. Starters are drawn from every level: a "capture ^B N" makes
+// ^B a starter exactly as a level-0 "^B N" does.
 func (sp *SequenceProcessor) updateSequenceStarters() {
 	sp.sequenceStarters = make(map[string]bool)
 	sp.controlSequenceStarters = make(map[string]bool)
 
-	for key := range sp.keyMap {
+	for key := range sp.allKeys {
 		if strings.Contains(key, " ") {
 			parts := strings.Split(key, " ")
 			firstPart := parts[0]
@@ -197,6 +357,12 @@ func (sp *SequenceProcessor) ClearActiveSequence() {
 }
 
 // ProcessKey processes a key input and returns the result.
+//
+// With an executor installed, the processor RUNS the resolved bindings itself
+// — a key can resolve to a stack of candidates across levels, tried in
+// precedence order until one takes it — and ProcessResult.Command is empty.
+// With a nil executor it reports the top candidate instead (resolution-only
+// mode; there is no status to descend on).
 func (sp *SequenceProcessor) ProcessKey(key string) ProcessResult {
 	// Don't process empty keys (likely timeout signals)
 	if key == "" {
@@ -208,55 +374,105 @@ func (sp *SequenceProcessor) ProcessKey(key string) ProcessResult {
 		return sp.handleKeyWithActiveSequence(key)
 	}
 
-	// Check if this is a sequence starter
+	// Rule 1: a key that could begin a mapped sequence is HELD, at any level,
+	// wildcards notwithstanding — the chord in progress outranks every
+	// single-key claim, and the wildcard only sees the starter if the
+	// sequence later disqualifies (releaseKey).
 	if sp.isSequenceStarter(key) {
 		sp.activeSequence = key
 		return ProcessResult{Command: "", Handled: true}
 	}
 
-	// Direct mapping without a sequence
-	if result := sp.getCommand(key); result != nil {
-		return ProcessResult{Command: result.command, Handled: true}
+	return sp.resolveKeyEvent(key)
+}
+
+// resolveKeyEvent runs one ordinary key (no sequence in play) through the
+// level stack: candidates from the highest level down, then the default
+// handling floor. The floor is load-bearing for the reclaim idiom — a
+// `capture ^C = false` declines the capture so ^C falls through the levels
+// and lands exactly where an uncaptured ^C always landed.
+func (sp *SequenceProcessor) resolveKeyEvent(key string) ProcessResult {
+	cands := sp.getCandidates(key)
+
+	if sp.executor == nil {
+		if len(cands) > 0 {
+			return ProcessResult{Command: cands[0].command, Handled: true}
+		}
+		return ProcessResult{Command: sp.getDefaultHandling(key), Handled: true}
 	}
 
-	// Default handling for unmapped keys
-	command := sp.getDefaultHandling(key)
-	return ProcessResult{Command: command, Handled: true}
-}
-
-// commandMatch holds a matched command and metadata.
-type commandMatch struct {
-	command         string
-	matchedSequence string
-	isFallback      bool
-}
-
-// getCommand looks up a command for a key sequence, including fallbacks.
-func (sp *SequenceProcessor) getCommand(keySequence string) *commandMatch {
-	// Try direct match first
-	if cmd, ok := sp.keyMap[keySequence]; ok {
-		return &commandMatch{
-			command:         cmd,
-			matchedSequence: keySequence,
-			isFallback:      false,
+	if !sp.runCandidates(key, cands) {
+		if command := sp.getDefaultHandling(key); command != "" {
+			sp.executor(key, command)
 		}
 	}
+	return ProcessResult{Handled: true}
+}
 
-	// Try fallbacks
-	for _, fallback := range sp.getKeyFallbacks(keySequence) {
-		if fallback == keySequence {
+// getCandidates builds the precedence-ordered claims on a key event: one
+// candidate per level, highest level first. Within a level the specific
+// binding SHADOWS the wildcard — the wildcard is a level's answer only for
+// the keys that level does not name — so declining a specific `capture ^C`
+// drops past the capture level entirely rather than into its own net.
+// Wildcards claim single keys only; sequences are always named.
+func (sp *SequenceProcessor) getCandidates(seq string) []candidate {
+	var cands []candidate
+	single := !strings.Contains(seq, " ")
+
+	for _, level := range sp.levelOrder {
+		lb := sp.levels[level]
+		if lb == nil {
 			continue
 		}
-		if cmd, ok := sp.keyMap[fallback]; ok {
-			return &commandMatch{
-				command:         cmd,
-				matchedSequence: fallback,
-				isFallback:      true,
+		if cmd, ok := lb.specific[seq]; ok {
+			cands = append(cands, candidate{level: level, command: cmd, matchedSequence: seq})
+			continue
+		}
+		found := false
+		for _, fallback := range sp.getKeyFallbacks(seq) {
+			if fallback == seq {
+				continue
+			}
+			if cmd, ok := lb.specific[fallback]; ok {
+				cands = append(cands, candidate{level: level, command: cmd, matchedSequence: fallback, isFallback: true})
+				found = true
+				break
 			}
 		}
+		if found {
+			continue
+		}
+		if single && lb.hasWild {
+			cands = append(cands, candidate{level: level, command: lb.wildcard, wildcard: true, matchedSequence: seq})
+		}
 	}
+	return cands
+}
 
-	return nil
+// primaryCandidate returns the index of the first specific (non-wildcard)
+// candidate, or -1. The pending-match machinery keys on the specific match's
+// spelling; a wildcard can neither begin nor extend a sequence.
+func primaryCandidate(cands []candidate) int {
+	for i, c := range cands {
+		if !c.wildcard {
+			return i
+		}
+	}
+	return -1
+}
+
+// runCandidates executes candidates in order until one reports the key
+// handled. Reports whether any did. A nil executor handles nothing.
+func (sp *SequenceProcessor) runCandidates(key string, cands []candidate) bool {
+	if sp.executor == nil {
+		return false
+	}
+	for _, c := range cands {
+		if sp.executor(key, c.command) {
+			return true
+		}
+	}
+	return false
 }
 
 // getKeyFallbacks generates alternative sequences to try.
@@ -380,7 +596,7 @@ func (sp *SequenceProcessor) isSequenceStarter(key string) bool {
 
 	// Check if any mapped sequence starts with this key plus a space
 	searchPattern := key + " "
-	for mappedKey := range sp.keyMap {
+	for mappedKey := range sp.allKeys {
 		if strings.HasPrefix(mappedKey, searchPattern) {
 			sp.sequenceStarters[key] = true
 			return true
@@ -393,7 +609,7 @@ func (sp *SequenceProcessor) isSequenceStarter(key string) bool {
 // isPotentialSequenceMatch checks if a sequence could match a longer sequence.
 func (sp *SequenceProcessor) isPotentialSequenceMatch(sequence string) bool {
 	// Check direct prefix matches
-	for mappedKey := range sp.keyMap {
+	for mappedKey := range sp.allKeys {
 		if strings.HasPrefix(mappedKey, sequence) {
 			return true
 		}
@@ -404,7 +620,7 @@ func (sp *SequenceProcessor) isPotentialSequenceMatch(sequence string) bool {
 		if fallback == sequence {
 			continue
 		}
-		for mappedKey := range sp.keyMap {
+		for mappedKey := range sp.allKeys {
 			if strings.HasPrefix(mappedKey, fallback) {
 				return true
 			}
@@ -417,7 +633,7 @@ func (sp *SequenceProcessor) isPotentialSequenceMatch(sequence string) bool {
 // hasLongerPotentialMatches checks if there are longer matches possible.
 func (sp *SequenceProcessor) hasLongerPotentialMatches(sequence, matchedSequence string) bool {
 	searchPrefix := sequence + " "
-	for mappedKey := range sp.keyMap {
+	for mappedKey := range sp.allKeys {
 		if strings.HasPrefix(mappedKey, searchPrefix) {
 			return true
 		}
@@ -425,7 +641,7 @@ func (sp *SequenceProcessor) hasLongerPotentialMatches(sequence, matchedSequence
 
 	if matchedSequence != "" && matchedSequence != sequence {
 		fallbackPrefix := matchedSequence + " "
-		for mappedKey := range sp.keyMap {
+		for mappedKey := range sp.allKeys {
 			if strings.HasPrefix(mappedKey, fallbackPrefix) {
 				return true
 			}
@@ -437,7 +653,7 @@ func (sp *SequenceProcessor) hasLongerPotentialMatches(sequence, matchedSequence
 			continue
 		}
 		fallbackPrefix := fallback + " "
-		for mappedKey := range sp.keyMap {
+		for mappedKey := range sp.allKeys {
 			if strings.HasPrefix(mappedKey, fallbackPrefix) {
 				return true
 			}
@@ -470,12 +686,18 @@ func (sp *SequenceProcessor) handleKeyWithActiveSequence(key string) ProcessResu
 	fullSequence := sp.activeSequence + " " + key
 
 	// Check for command match
-	if result := sp.getCommand(fullSequence); result != nil {
-		if sp.hasLongerPotentialMatches(fullSequence, result.matchedSequence) {
+	if cands := sp.getCandidates(fullSequence); len(cands) > 0 {
+		matched := fullSequence
+		isFallback := false
+		if pi := primaryCandidate(cands); pi >= 0 {
+			matched = cands[pi].matchedSequence
+			isFallback = cands[pi].isFallback
+		}
+		if sp.hasLongerPotentialMatches(fullSequence, matched) {
 			// Store as pending and wait for more input
 			sp.pendingShortMatch = fullSequence
-			if result.isFallback {
-				sp.pendingFallbackMatch = result.matchedSequence
+			if isFallback {
+				sp.pendingFallbackMatch = matched
 			} else {
 				sp.pendingFallbackMatch = ""
 			}
@@ -484,9 +706,17 @@ func (sp *SequenceProcessor) handleKeyWithActiveSequence(key string) ProcessResu
 			return ProcessResult{Command: "", Handled: true}
 		}
 
-		// No longer matches, execute immediately
+		// No longer matches possible: resolve now.
 		sp.ClearActiveSequence()
-		return ProcessResult{Command: result.command, Handled: true}
+		if sp.executor == nil {
+			return ProcessResult{Command: cands[0].command, Handled: true}
+		}
+		// A MATCHED sequence is consumed whether or not a candidate takes it:
+		// declining descends through the levels, but a sequence every level
+		// declined does not unwind into the child or the buffer — ^B N
+		// failing must not type "N".
+		sp.runCandidates(key, cands)
+		return ProcessResult{Command: "", Handled: true}
 	}
 
 	// Check if this could be a prefix
@@ -501,30 +731,41 @@ func (sp *SequenceProcessor) handleKeyWithActiveSequence(key string) ProcessResu
 		return ProcessResult{Command: "", Handled: true}
 	}
 
-	// Sequence not recognized - handle fallback
+	// Invalid continuation: unwind. The starter is RELEASED — its sequence
+	// came to nothing, so the capture layers get it (this is how a held ^B
+	// reaches a hosted shell), else its literal self — and the middle keys
+	// plus this one replay as ordinary keys.
 	parts := strings.Split(sp.activeSequence, " ")
-	sequenceStarter := parts[0]
 	sp.ClearActiveSequence()
-
-	// For single-char starters, insert them as text
-	if len(sequenceStarter) == 1 {
-		starterCommand := "insert '" + escapeStringLiteral(sequenceStarter) + "'"
-		if sp.executor != nil {
-			sp.executor(starterCommand)
-		}
-
-		// Reprocess remaining parts
-		for i := 1; i < len(parts); i++ {
-			sp.handleSingleKey(parts[i])
-		}
-
-		sp.handleSingleKey(key)
-		return ProcessResult{Command: "", Handled: true}
+	sp.releaseKey(parts[0])
+	for i := 1; i < len(parts); i++ {
+		sp.handleSingleKey(parts[i])
 	}
-
-	// For control starters, just reprocess remaining parts
 	sp.handleSingleKey(key)
 	return ProcessResult{Command: "", Handled: true}
+}
+
+// releaseKey lets go of a sequence starter whose sequence disqualified. The
+// key was never an ordinary keystroke — it was held as a possible prefix — so
+// it does not re-enter sequence consideration and its own specific bindings
+// (which lost to the sequence the moment it was held) do not fire. The
+// wildcards get first refusal, highest level down: in a pty viewport that is
+// `capture * = tinput_key` sending the starter to the child as-is. Failing
+// those it falls back to its pre-capture behavior: a single character inserts
+// as text, a control or named key is simply dropped.
+func (sp *SequenceProcessor) releaseKey(key string) {
+	if sp.executor != nil {
+		for _, level := range sp.levelOrder {
+			if lb := sp.levels[level]; lb != nil && lb.hasWild {
+				if sp.executor(key, lb.wildcard) {
+					return
+				}
+			}
+		}
+	}
+	if len(key) == 1 && sp.executor != nil {
+		sp.executor(key, "insert '"+escapeStringLiteral(key)+"'")
+	}
 }
 
 // processPendingMatch executes a pending match and reprocesses buffered keys.
@@ -533,16 +774,18 @@ func (sp *SequenceProcessor) processPendingMatch() {
 		return
 	}
 
-	result := sp.getCommand(sp.pendingShortMatch)
+	cands := sp.getCandidates(sp.pendingShortMatch)
 	keysToReprocess := sp.keyBuffer
+	parts := strings.Split(sp.pendingShortMatch, " ")
+	lastKey := parts[len(parts)-1]
 
 	sp.pendingShortMatch = ""
 	sp.pendingFallbackMatch = ""
 	sp.keyBuffer = nil
 	sp.ClearActiveSequence()
 
-	if result != nil && sp.executor != nil {
-		sp.executor(result.command)
+	if len(cands) > 0 && sp.executor != nil {
+		sp.runCandidates(lastKey, cands)
 
 		sp.isReprocessing = true
 		for _, k := range keysToReprocess {
@@ -560,19 +803,7 @@ func (sp *SequenceProcessor) handleSingleKey(key string) {
 		return
 	}
 
-	// Check for direct command
-	if result := sp.getCommand(key); result != nil {
-		if sp.executor != nil {
-			sp.executor(result.command)
-		}
-		return
-	}
-
-	// Default handling
-	command := sp.getDefaultHandling(key)
-	if command != "" && sp.executor != nil {
-		sp.executor(command)
-	}
+	sp.resolveKeyEvent(key)
 }
 
 // getDefaultHandling returns the default command for unmapped keys.
@@ -623,7 +854,7 @@ func (sp *SequenceProcessor) GetPossibleCompletions() []string {
 	completions := make(map[string]bool)
 	prefix := sp.activeSequence + " "
 
-	for mappedKey := range sp.keyMap {
+	for mappedKey := range sp.allKeys {
 		if strings.HasPrefix(mappedKey, prefix) {
 			nextPart := strings.TrimPrefix(mappedKey, prefix)
 			nextKey := strings.Split(nextPart, " ")[0]
@@ -637,7 +868,7 @@ func (sp *SequenceProcessor) GetPossibleCompletions() []string {
 			continue
 		}
 		fallbackPrefix := fallback + " "
-		for mappedKey := range sp.keyMap {
+		for mappedKey := range sp.allKeys {
 			if strings.HasPrefix(mappedKey, fallbackPrefix) {
 				nextPart := strings.TrimPrefix(mappedKey, fallbackPrefix)
 				nextKey := strings.Split(nextPart, " ")[0]
@@ -666,7 +897,7 @@ func (sp *SequenceProcessor) GetPossibleCompletions() []string {
 func (sp *SequenceProcessor) DumpKeyMap() string {
 	var sb strings.Builder
 	sb.WriteString("Key Map:\n")
-	for k, v := range sp.keyMap {
+	for k, v := range sp.rawMap {
 		sb.WriteString("  ")
 		sb.WriteString(k)
 		sb.WriteString(" -> ")

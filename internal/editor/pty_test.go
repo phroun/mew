@@ -446,6 +446,19 @@ func TestPTYClassKeyBindings(t *testing.T) {
 		e, w := newTestEditor(t, "ab\n")
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 		stub := newStubPTY()
+		// ^C reaches the child through the wildcard (capture * = tinput_key),
+		// which asks the HOST to encode the key — supply the encoder the real
+		// host provides. back/del bypass it: their capture bindings send the
+		// \x08 byte directly, which is the point of naming them.
+		e.Config.TerminalSurfaces = TerminalHooks{
+			Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+			Key: func(_ string, key string) []byte {
+				if key == "^C" {
+					return []byte("\x03")
+				}
+				return nil
+			},
+		}
 		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
 		if !e.execRequest("bash", "") {
 			t.Fatal("exec failed")
@@ -1102,6 +1115,7 @@ func TestUnhandledNamedKeyReachesTheChild(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
+	e.reconcileFocusedOptions() // adopt the pty class keymap
 
 	e.dispatchKey("F10")
 	if got := stub.sent(); got != "\x1b[21~" {
@@ -1109,31 +1123,35 @@ func TestUnhandledNamedKeyReachesTheChild(t *testing.T) {
 	}
 }
 
-// Only what mew DECLINED. A key with a binding still runs it, which is how
-// [pty::mappings] keeps ^C meaning cancel-then-close rather than becoming an
-// unconditional interrupt.
-func TestBoundKeysStillRunTheirBinding(t *testing.T) {
+// The capture level takes BOUND keys too — that is what it is for. ^Y is
+// del_line at level 0; in a pty viewport the wildcard outranks it, the child
+// receives the encoded key, and the buffer is untouched.
+func TestCaptureTakesABoundKeyInAPTYViewport(t *testing.T) {
 	e, w := newTestEditor(t, "ab\n")
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	stub := newStubPTY()
 	e.Config.TerminalSurfaces = TerminalHooks{
 		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
-		Key: func(string, string) []byte { return []byte("SHOULD-NOT-ARRIVE") },
+		Key: func(_ string, key string) []byte { return []byte("<" + key + ">") },
 	}
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
-	// ^Y is bound to del_line; it must run, not be forwarded.
+	e.reconcileFocusedOptions()
 	e.dispatchKey("^Y")
-	if strings.Contains(stub.sent(), "SHOULD-NOT-ARRIVE") {
-		t.Error("a bound key was forwarded to the child instead of running its binding")
+	if got := stub.sent(); got != "<^Y>" {
+		t.Errorf("child received %q, want the encoded ^Y — the capture must win over del_line", got)
+	}
+	if got := docContent(w); got != "ab" {
+		t.Errorf("buffer = %q, want untouched — the key belonged to the child", got)
 	}
 }
 
 // A sequence STARTER resolves to nothing YET, which is not the same as
-// resolving to nothing at all. Forwarding it would send the child a ^K it was
-// never meant to see AND break the sequence.
+// resolving to nothing at all: the chord in progress outranks the wildcard
+// (rule 1), so ^K is held, not forwarded. Only if the sequence comes to
+// nothing is the starter released to the child.
 func TestSequenceStepsAreNotForwarded(t *testing.T) {
 	e, _ := newTestEditor(t, "x\n")
 	stub := newStubPTY()
@@ -1145,6 +1163,7 @@ func TestSequenceStepsAreNotForwarded(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
+	e.reconcileFocusedOptions() // the wildcard is live; the hold must still win
 
 	// ^K starts a sequence in the default keymap.
 	e.dispatchKey("^K")
@@ -1153,6 +1172,13 @@ func TestSequenceStepsAreNotForwarded(t *testing.T) {
 	}
 	if got := stub.sent(); got != "" {
 		t.Errorf("a mid-sequence key was forwarded: child received %q", got)
+	}
+
+	// An invalid continuation unwinds: the held ^K is released to the child,
+	// and the invalid key follows it — "pass them on individually".
+	e.dispatchKey("F9")
+	if got := stub.sent(); got != "<^K><F9>" {
+		t.Errorf("after the unwind the child received %q, want %q", got, "<^K><F9>")
 	}
 }
 
@@ -1165,5 +1191,68 @@ func TestUnhandledNamedKeyWithoutATerminalIsStillDropped(t *testing.T) {
 	e.dispatchKey("F10")
 	if got := docContent(w); got != before {
 		t.Errorf("buffer = %q, want F10 to remain a no-op outside a terminal", got)
+	}
+}
+
+// THE MOTIVATING CASE: arrow keys. Every one of them is bound at level 0
+// (cursor movement), and every one of them must reach a hosted terminal —
+// through the host's encoder, so application cursor mode decides the bytes.
+// This is the whole reason the capture level exists.
+func TestArrowKeysReachTheChildThroughTheCapture(t *testing.T) {
+	e, w := newTestEditor(t, "one\ntwo\n")
+	w.SetCursorPos(viewport.Position{Line: 1, Rune: 0})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte { return []byte("<" + key + ">") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	for _, key := range []string{"up", "down", "left", "right", "home", "end", "pgup", "pgdn"} {
+		e.dispatchKey(key)
+	}
+	want := "<up><down><left><right><home><end><pgup><pgdn>"
+	if got := stub.sent(); got != want {
+		t.Errorf("child received %q, want %q", stub.sent(), want)
+	}
+	if p := w.CursorPos(); p.Line != 1 || p.Rune != 0 {
+		t.Errorf("cursor moved to %+v; the keys belonged to the child", w.CursorPos())
+	}
+}
+
+// The reclaim idiom, end to end through real config and real PawScript:
+// "capture ^C = false" in a user's pty section gives ^C back to mew while a
+// terminal is focused — it skips the capture level (its own wildcard
+// included) and lands on ^C's classic floor, which closes the pty buffer.
+func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Close: func(string) {},
+		Key:   func(_ string, key string) []byte { return []byte("<" + key + ">") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	// The user's line, over the defaults: reclaim ^C from the capture layer.
+	// (Config-to-keymap resolution for the pty overlay is covered by
+	// TestPTYClassKeyBindings; here the reclaim is applied where it resolves
+	// to, so the test exercises the part that matters: pawscript's REAL false
+	// through the descent.) The level-0 binding is given an effect that lands
+	// in the stub, so one string proves both halves: no "<^C>" — the capture
+	// layer and its wildcard were skipped — and the level-0 binding ran.
+	e.reconcileFocusedOptions()
+	e.KeyProcessor.MapKey("capture ^C", "false")
+	e.KeyProcessor.MapKey("^C", "tinput \"RECLAIMED\"")
+
+	e.dispatchKey("^C")
+	if got := stub.sent(); got != "RECLAIMED" {
+		t.Errorf("child received %q, want %q — the reclaimed ^C belongs to mew's own level-0 binding", got, "RECLAIMED")
 	}
 }

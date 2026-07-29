@@ -10,7 +10,7 @@ import (
 // executor) plus the final active sequence.
 func aliasHarness(t *testing.T, mappings map[string]string, presses ...string) (fired []string, active string) {
 	t.Helper()
-	sp := NewSequenceProcessor(func(cmd string) { fired = append(fired, cmd) })
+	sp := NewSequenceProcessor(func(_, cmd string) bool { fired = append(fired, cmd); return true })
 	sp.SetMappings(mappings)
 	for _, k := range presses {
 		if r := sp.ProcessKey(k); r.Command != "" {

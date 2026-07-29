@@ -978,27 +978,15 @@ func (e *Editor) armRawKey() bool {
 // that vanished would be worse than one that was merely not raw.
 func (e *Editor) rawKeyToPTY(key string) bool { return e.sendKeyToPTY(key) }
 
-// unhandledKeyToPTY is the OTHER way a key reaches the child: not claimed in
-// advance, but simply not wanted by anything here.
-//
-// mew's keymap gives an unbound key a default (a typed character inserts, and
-// insert routes to a terminal), but a NAMED key with no binding — F10, ins,
-// pgup, every function key — resolves to nothing at all and used to be dropped
-// on the floor. In an ordinary buffer that is right: there is nothing to do
-// with F10. In a viewport hosting a terminal it is wrong, because there is
-// something to do with it, one level in. A terminal that swallows every key
-// its host has no opinion about is not a terminal.
-//
-// So: whatever mew declined, the child gets. Only what mew declined — a bound
-// key still runs its binding, which is how [pty::mappings] keeps ^C meaning
-// cancel-then-close rather than becoming an unconditional interrupt.
-func (e *Editor) unhandledKeyToPTY(key string) bool { return e.sendKeyToPTY(key) }
-
 // sendKeyToPTY sends one key to the focused viewport's child as the bytes that
 // terminal would produce for it, and reports whether it went. False for
 // everything else — no session, no host translator, a name that encodes to
 // nothing — and the keystroke then takes its ordinary path, because a key that
 // vanished would be worse than one that was merely not forwarded.
+//
+// Two callers: rawKeyToPTY (a key claimed in advance by raw_key_input) and
+// the tinput_key command (a key the capture layer claims as it arrives —
+// `capture * = tinput_key` in [pty::mappings], the ordinary route).
 func (e *Editor) sendKeyToPTY(key string) bool {
 	if e.Config.TerminalSurfaces.Key == nil {
 		return false
