@@ -2651,10 +2651,17 @@ messages="\e[0;97;41m"                # bright white on red
 #
 # del and back are named so they beat the wildcard: mew's erase keys send a
 # plain backspace byte, not the encoder's forward-delete sequence.
+#
+# raw_key_input is named for a sharper reason. It is THE ESCAPE HATCH — the
+# only way to send a child a key mew holds as a possible chord (a literal ^B
+# to a shell) — and at level 0 the wildcard would swallow it, leaving no way
+# to reach those keys at all. Naming it here puts it beside the wildcard
+# rather than under it, where a named key wins.
 [pty::mappings]
-capture *    =tinput_key
-capture del  =tinput "\x08"
-capture back =tinput "\x08"
+capture *     =tinput_key
+capture del   =tinput "\x08"
+capture back  =tinput "\x08"
+capture M-\\  =raw_key_input
 `
 }
 

@@ -63,15 +63,31 @@ func TestMacOptionKeysOff(t *testing.T) {
 }
 
 // The default is auto, and symbol combos round-trip through the escape
-// handling (M-' inserts æ, M-\ inserts «).
+// handling (M-' inserts æ, M-; inserts …).
 func TestMacOptionDefaults(t *testing.T) {
 	e, w := newTestEditor(t, "")
 	if v, _ := e.getOption(nil, "macOptionKeys"); v != "auto" {
 		t.Fatalf("default should be auto, got %q", v)
 	}
 	press(e, "M-'")
-	press(e, "M-\\")
-	if got := docContent(w); !strings.Contains(got, "æ") || !strings.Contains(got, "«") {
+	press(e, "M-;")
+	if got := docContent(w); !strings.Contains(got, "æ") || !strings.Contains(got, "…") {
 		t.Fatalf("symbol combos should insert, got %q", got)
+	}
+}
+
+// A BOUND M- combo runs its binding instead of inserting its Option
+// character — the deliberate trade the layer documents ("bindings steal
+// individual M- combos while the rest insert seamlessly"), which M-j, M-f,
+// M-a and M-e have always made. M-\ joined them when raw_key_input moved
+// there, so Option+backslash no longer types « on macOS.
+func TestBoundMetaComboBeatsTheOptionLayer(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	press(e, "M-\\")
+	if got := docContent(w); strings.Contains(got, "«") {
+		t.Errorf("M-\\ inserted %q; it is bound to raw_key_input", got)
+	}
+	if !e.rawKeyArmed {
+		t.Error("M-\\ should have armed raw key input")
 	}
 }

@@ -749,7 +749,7 @@ var menuActions = map[string]menuAction{
 	// raw_key_input is bound to, live, like every other item. Its handler is
 	// registered by hand rather than generated from here, because it does one
 	// thing more than run the command (see the registration).
-	"mew.edit.rawkey": {"raw_key_input", `s-\`},
+	"mew.edit.rawkey": {"raw_key_input", `M-\`},
 	// History. The undo-TREE items from the template (Undo History, Rewind to
 	// Last Branch, Fast Forward to Leaf/Branch, Show Full History) are absent
 	// on purpose: garland has the fork model under it, but Buffer exposes only

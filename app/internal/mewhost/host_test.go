@@ -214,8 +214,8 @@ func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
 	if spec.cmd != "raw_key_input" {
 		t.Errorf("cmd = %q, want raw_key_input", spec.cmd)
 	}
-	if spec.key != `s-\` {
-		t.Errorf("preferred key = %q, want the shipped s-\\", spec.key)
+	if spec.key != `M-\` {
+		t.Errorf("preferred key = %q, want the shipped M-\\", spec.key)
 	}
 
 	// And the item exists to carry it.

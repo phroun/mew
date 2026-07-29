@@ -716,8 +716,8 @@ func TestRawKeyInputWithoutATerminalIsOrdinary(t *testing.T) {
 // and the key that actually runs it cannot drift apart.
 func TestRawKeyInputHasAShippedBinding(t *testing.T) {
 	e, _ := newTestEditor(t, "x\n")
-	if got := e.keyBindingDisplay("raw_key_input", `s-\`); got != `s-\` {
-		t.Errorf("raw_key_input resolves to %q, want the shipped s-\\", got)
+	if got := e.keyBindingDisplay("raw_key_input", `M-\`); got != `M-\` {
+		t.Errorf("raw_key_input resolves to %q, want the shipped M-\\", got)
 	}
 }
 
@@ -1254,5 +1254,42 @@ func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
 	e.dispatchKey("^C")
 	if got := stub.sent(); got != "RECLAIMED" {
 		t.Errorf("child received %q, want %q — the reclaimed ^C belongs to mew's own level-0 binding", got, "RECLAIMED")
+	}
+}
+
+// THE ESCAPE HATCH must survive the capture layer. raw_key_input exists to
+// send a child the keys mew holds as possible chords (a literal ^B to a
+// shell); if the wildcard swallowed its own key there would be no way to
+// reach those keys at all. It is NAMED in [pty::mappings], so within the
+// capture level a named key beats the wildcard.
+func TestRawKeyInputSurvivesTheCaptureLayer(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte { return []byte("<" + key + ">") },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey(`M-\`)
+	if got := stub.sent(); got != "" {
+		t.Fatalf("the escape hatch went to the child as %q; it must arm mew", got)
+	}
+	if !e.rawKeyArmed {
+		t.Fatal("M-\\ should have armed raw key input, not been captured")
+	}
+
+	// And what it arms reaches the child even though mew would otherwise hold
+	// ^B as a sequence prefix — which is the entire point of the hatch.
+	e.dispatchKey("^B")
+	if got := stub.sent(); got != "<^B>" {
+		t.Errorf("child received %q, want %q — the armed key must bypass the sequence hold", got, "<^B>")
+	}
+	if e.KeyProcessor.GetActiveSequence() != "" {
+		t.Error("the armed key must not have opened a sequence")
 	}
 }
