@@ -411,15 +411,16 @@ func tornEdgeRects(b core.UnitRect, edges int, grip core.Unit) []core.UnitRect {
 	return rects
 }
 
-// refreshResizeHover re-derives the resize-edge highlight from the window's
-// CURRENT bounds, for use while a resize is in flight (the hover path that
-// normally builds them is skipped then). Keeps the armed edges: the pointer
-// may have wandered off them, but the gesture still owns them.
+// refreshResizeHover re-arms the resize-edge highlight while a resize is in
+// flight (the hover path that normally sets it is skipped then). It publishes
+// the armed EDGES, not rectangles: the window's new size arrives back from
+// the OS asynchronously, so anything measured here would be a frame behind,
+// and the paint resolves the mask against the bounds it actually has.
 func (h *TearOffHost) refreshResizeHover() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
+	h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -432,18 +433,18 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	for _, p := range h.popups {
 		b := p.Bounds
 		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-			h.win.SetResizeHoverRects(nil)
+			h.win.SetResizeHoverEdges(0, 0)
 			h.applyCursor(core.CursorDefault)
 			return
 		}
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), edges, h.resizeGrip))
+		h.win.SetResizeHoverEdges(edges, h.resizeGrip)
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
-	h.win.SetResizeHoverRects(nil)
+	h.win.SetResizeHoverEdges(0, 0)
 	h.applyCursor(h.win.CursorShapeAt(x, y))
 }
 
@@ -770,7 +771,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// A button is held (a drag begun elsewhere passing over the frame):
 			// forward it and drop any lingering edge band.
 			handled = h.win.HandleMouseMove(e)
-			h.win.SetResizeHoverRects(nil)
+			h.win.SetResizeHoverEdges(0, 0)
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
@@ -804,7 +805,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// reset the cursor. A live resize/drag keeps driving from the global
 		// pointer, so leave its highlight alone.
 		if !h.resizing && !h.dragging {
-			h.win.SetResizeHoverRects(nil)
+			h.win.SetResizeHoverEdges(0, 0)
 			h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 			h.applyCursor(core.CursorDefault)
 		}
@@ -1062,7 +1063,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverRects(tornEdgeRects(h.win.Bounds(), h.resizeEdges, h.resizeGrip))
+		h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }

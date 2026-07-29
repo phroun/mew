@@ -20,12 +20,29 @@ func TestCaretBlinkRestartsOnUserAction(t *testing.T) {
 	dark := func() { term.gfx.cursorBlinkOn = false; term.gfx.blinkTick = 7 }
 	lit := func() bool { return term.gfx.cursorBlinkOn && term.gfx.blinkTick == 0 }
 
-	// Input bound for the child — a tinput, a mouse report, a paste.
+	// Input bound for the child — a tinput, a paste, an encoded key.
 	dark()
 	term.SetInputSink(func([]byte) {})
 	term.toChild([]byte("x"))
 	if !lit() {
 		t.Error("input to the child should restart the blink")
+	}
+
+	// Mouse MOTION sent onward is NOT user action for this purpose. An
+	// editor surface encodes pointer movement and forwards it exactly as a
+	// terminal does, so waking here means the caret never blinks while the
+	// mouse is moving — which is the bug this filter exists for.
+	dark()
+	term.toChild([]byte("\x1b[<35;10;5M"))
+	if lit() {
+		t.Error("forwarded mouse motion must not restart the blink")
+	}
+
+	// A forwarded press still counts: that is a deliberate act.
+	dark()
+	term.toChild([]byte("\x1b[<0;10;5M"))
+	if !lit() {
+		t.Error("a forwarded mouse press should restart the blink")
 	}
 
 	// A click, which need not send the child anything at all.

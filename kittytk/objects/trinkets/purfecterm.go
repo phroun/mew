@@ -194,10 +194,16 @@ func (t *PurfecTerm) toChild(b []byte) {
 	if len(b) == 0 {
 		return
 	}
-	// Input is input, whoever originated it: a tinput, a mouse report, a
-	// paste. The caret must not still be in its dark half when the user has
-	// just acted, so restart the phase the way a keystroke does.
-	t.resetCursorBlink()
+	// Input is input, whoever originated it: a tinput, a paste, a click. The
+	// caret must not still be in its dark half when the user has just acted,
+	// so restart the phase the way a keystroke does.
+	//
+	// Except mouse MOTION. An editor surface encodes pointer movement and
+	// sends it on just as a terminal does, so a caret woken here would be
+	// re-woken by every pixel the mouse travels and would never blink at all.
+	if !isMouseMotionReport(b) {
+		t.resetCursorBlink()
+	}
 	if t.inputSink != nil {
 		t.inputSink(b)
 	}

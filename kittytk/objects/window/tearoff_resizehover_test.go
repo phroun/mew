@@ -57,27 +57,56 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 // the pointer may have wandered off them, but the gesture still owns them.
 func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 	w := NewWindow("t")
-	w.SetBounds(core.UnitRect{Width: 100, Height: 60})
+	small := core.UnitRect{Width: 100, Height: 60}
+	w.SetBounds(small)
 	h := &TearOffHost{win: w, resizeGrip: 4}
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
-	w.SetResizeHoverRects(nil)
+	w.SetResizeHoverEdges(0, 0)
 	h.refreshResizeHover()
-	if len(w.ResizeHoverRects()) != 0 {
+	if len(w.resizeHoverBands(small)) != 0 {
 		t.Fatal("no highlight should be set when no resize is in flight")
 	}
 
 	h.resizing = true
 	h.refreshResizeHover()
-	got := w.ResizeHoverRects()
-	if len(got) != 1 {
+	if got := w.resizeHoverBands(small); len(got) != 1 {
 		t.Fatalf("the armed edge should be highlighted; got %d bands", len(got))
 	}
-	// Grow the window: the band must follow on the next refresh.
-	w.SetBounds(core.UnitRect{Width: 200, Height: 60})
+}
+
+// The band must be resolved against the bounds the PAINT is using. The OS
+// reports a resize back asynchronously, so a rectangle measured when the
+// pointer moved carries the size the window had a frame ago — which is how
+// stretching a window to the right leaves its band stranded mid-frame.
+func TestResizeBandFollowsThePaintBounds(t *testing.T) {
+	w := NewWindow("t")
+	w.SetBounds(core.UnitRect{Width: 100, Height: 60})
+	h := &TearOffHost{win: w, resizeGrip: 4}
+	h.resizing = true
+	h.resizeEdges = resizeRight
 	h.refreshResizeHover()
-	if got = w.ResizeHoverRects(); len(got) != 1 || got[0].X != 200-4 {
-		t.Fatalf("band did not follow the resize: %+v", got)
+
+	// The window's own bounds are deliberately left STALE here: this is the
+	// state a live resize is in when the frame is painted.
+	grown := core.UnitRect{Width: 300, Height: 60}
+	got := w.resizeHoverBands(grown)
+	if len(got) != 1 {
+		t.Fatalf("want one band, got %d", len(got))
+	}
+	if got[0].X != grown.Width-4 {
+		t.Errorf("band at X=%v, want %v — it is pinned to the old width, not the painted one",
+			got[0].X, grown.Width-4)
+	}
+	if got[0].Height != grown.Height {
+		t.Errorf("band height %v, want the painted %v", got[0].Height, grown.Height)
+	}
+
+	// Explicit rectangles (the older setter) are still honoured verbatim.
+	w2 := NewWindow("t2")
+	w2.SetResizeHoverRects([]core.UnitRect{{X: 1, Y: 2, Width: 3, Height: 4}})
+	if got := w2.resizeHoverBands(grown); len(got) != 1 || got[0].X != 1 {
+		t.Errorf("explicit rects should pass through unchanged: %+v", got)
 	}
 }
