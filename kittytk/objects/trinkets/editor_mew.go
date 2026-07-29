@@ -126,10 +126,12 @@ type Editor struct {
 	hostedKids []core.Trinket
 
 	// lastSurfaceOffsetX/Y is the device-pixel residual the most recent
-	// paintTerminalSurfaces applied (see there). Recorded because the
-	// correction is invisible by construction — it exists to make a seam
-	// disappear — so this is what a test can measure instead of a screenshot.
+	// paintTerminalSurfaces applied (see there), and lastClipFrame the clip
+	// it chose, in EDITOR-frame units. Recorded because the correction is
+	// invisible by construction — it exists to make a seam disappear — so
+	// this is what a test can measure instead of a screenshot.
 	lastSurfaceOffsetX, lastSurfaceOffsetY int
+	lastClipFrame                          core.UnitRect
 
 	// Session plumbing.
 	inPipeR  *io.PipeReader
@@ -1342,26 +1344,37 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 
 		// The painter is offset to the GRID's origin, so the terminal draws
 		// from its own 0,0 — but clipped to the visible rectangle expressed
-		// relative to that origin. When the two rectangles match (the ordinary
-		// case) this is just a clip to the surface's own bounds.
-		// The clip has the SAME two-rates problem the origin had, and getting
-		// only the origin right is why a seam survived: its extent is a whole
-		// number of units, which the backend then snaps to ITS cell grid,
-		// while the content inside runs to round(cells*cell*ppu) pixels. Where
-		// the snapped edge falls short the child's last column is shaved —
-		// visible as a hairline of whatever is underneath — and the residual
-		// makes it worse by shifting the content further right than the clip.
+		// relative to that origin.
 		//
-		// So round the clip OUTWARD: grow it until its pixel span covers the
-		// content's true extent plus the residual. Erring large is safe here
-		// and erring small is not — a child paints nothing beyond its own
-		// grid, so extra clip is unused, while too little cuts real pixels.
-		cx, cy := cell(s.clipCol, s.clipRow)
+		// The clip has the SAME two-rates problem the origin had, on ALL FOUR
+		// edges. The clip is expressed in units and the backend snaps each
+		// edge to ITS cell grid, while the content runs at the terminal
+		// pitch, origin-corrected — so wherever the snapped rate exceeds the
+		// terminal rate the content sits LEFT of (and above) the snapped
+		// unit position, and a clip anchored on that position shaves the
+		// content's first column and first row. In the ordinary case, where
+		// the clip IS the surface rect, its top-left must never cut content
+		// at all.
+		//
+		// So each edge is chosen for where it SNAPS: left/top are the
+		// nearest unit positions whose snapped pixel lands at or before the
+		// content's pixel edge, right/bottom at or after. Out-rounding is
+		// safe on every side — a child paints nothing beyond its own grid,
+		// so spare clip goes unused, while a clip that falls short cuts real
+		// pixels. The pixel targets carry a one-pixel pad for the child's
+		// own per-edge rounding (it rounds each cell edge independently).
+		pxAtX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
+		pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
+		leftU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1)*cw, pxAtX(s.clipCol-1)-1, ppu, false)
+		rightU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1+s.clipWidth)*cw, pxAtX(s.clipCol-1+s.clipWidth)+1, ppu, true)
+		topU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1)*ch, pxAtY(s.clipRow-1)-1, ppu, false)
+		bottomU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1+s.clipHeight)*ch, pxAtY(s.clipRow-1+s.clipHeight)+1, ppu, true)
+		e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
 		clip := core.UnitRect{
-			X:      cx - x,
-			Y:      cy - y,
-			Width:  coverUnits(s.clipWidth, cw, offXPx, ppu, p.UnitSpanPxX),
-			Height: coverUnits(s.clipHeight, ch, offYPx, ppu, p.UnitSpanPxY),
+			X:      leftU - x,
+			Y:      topU - y,
+			Width:  rightU - leftU,
+			Height: bottomU - topU,
 		}
 		s.term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
 	}
@@ -1370,37 +1383,67 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 	e.nudgeTermGrids()
 }
 
-// coverUnits returns a clip extent, in units, whose device-pixel span covers
-// cells worth of content at cellSize plus a pixel residual — the "round
-// outward" the two rates need (see paintTerminalSurfaces).
+// snapCover finds a clip edge: the unit position, near startU, whose SNAPPED
+// device pixel covers targetPx — at or before it when up is false (a left or
+// top edge), at or after it when up is true (a right or bottom edge). This is
+// the whole trick of clipping content that runs at a different pitch than the
+// unit grid snaps to: the edge is chosen for where it lands, not for what it
+// is called.
 //
-// span is the painter's own unit-to-pixel measure for the axis, so this asks
-// exactly the question the transform will answer. The loop is bounded: one
-// unit is normally enough (the shortfall is a fraction of a host cell), and a
-// few is the most any sane geometry needs.
-func coverUnits(cells int, cellSize core.Unit, residualPx int, ppu float64, span func(core.Unit, core.Unit) int) core.Unit {
-	base := core.Unit(cells) * cellSize
-	if cells <= 0 || cellSize <= 0 || ppu <= 0 {
-		return base
+// It converges on the shortfall rather than stepping by ones: after a zoom
+// the two rates differ by several percent, so the gap scales with distance
+// from the origin, and a wide surface can be dozens of pixels out. span is
+// the painter's own unit-to-pixel measure, so this asks exactly the question
+// the transform will answer. The loop bound is a runaway guard, not the
+// mechanism.
+func snapCover(span func(core.Unit, core.Unit) int, startU core.Unit, targetPx int, ppu float64, up bool) core.Unit {
+	if ppu <= 0 {
+		return startU
 	}
-	want := int(math.Round(float64(cells)*float64(cellSize)*ppu)) + residualPx
-	// Converge rather than cap. After a zoom the renderer's ppu and the
-	// backend's cell-snapped rate can differ by several percent, so the
-	// shortfall scales with the extent — a fixed few units of slack covers a
-	// small surface and leaves a wide one shaved. Step by the shortfall
-	// converted back to units, which lands in one or two passes; the counter
-	// is a runaway guard, not the mechanism.
-	w := base
+	u := startU
 	for i := 0; i < 64; i++ {
-		have := span(0, w)
-		if have >= want {
-			return w
+		have := span(0, u)
+		var short int
+		if up {
+			short = targetPx - have // need snapped >= target
+		} else {
+			short = have - targetPx // need snapped <= target
 		}
-		step := core.Unit(math.Ceil(float64(want-have) / math.Max(ppu, 1)))
+		if short <= 0 {
+			return tighten(span, u, targetPx, up)
+		}
+		step := core.Unit(math.Ceil(float64(short) / math.Max(ppu, 1)))
 		if step < 1 {
 			step = 1
 		}
-		w += step
+		if up {
+			u += step
+		} else {
+			u -= step
+		}
 	}
-	return w
+	return u
+}
+
+// tighten walks a covering edge back toward its natural position one unit at
+// a time, keeping it covering — the convergence steps by the shortfall and
+// can overshoot, and a clip edge should reveal as little of the neighbours
+// as the snap quantization allows.
+func tighten(span func(core.Unit, core.Unit) int, u core.Unit, targetPx int, up bool) core.Unit {
+	for i := 0; i < 64; i++ {
+		var next core.Unit
+		if up {
+			next = u - 1
+			if span(0, next) < targetPx {
+				return u
+			}
+		} else {
+			next = u + 1
+			if span(0, next) > targetPx {
+				return u
+			}
+		}
+		u = next
+	}
+	return u
 }

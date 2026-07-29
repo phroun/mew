@@ -255,14 +255,20 @@ func TestHostedSurfaceLandsOnItsColumn(t *testing.T) {
 	}
 }
 
-// The clip must COVER the content, not fall short of it. Its extent is a whole
-// number of units, which the backend snaps to ITS cell grid, while the content
-// inside runs to round(cells*cell*ppu) pixels — and the origin residual shifts
-// the content further right still. A clip snapped short shaves the child's last
-// column, which is a hairline of whatever is underneath: fixing the origin
-// alone left exactly that.
-func TestHostedSurfaceClipCoversItsContent(t *testing.T) {
-	b, err := raster.NewScaled(800, 400, 2)
+// THE CLIP INVARIANT: no edge of the clip may cut the content, at any zoom.
+//
+// The clip snaps to the host's cell grid; the content runs at the terminal
+// pitch, origin-corrected. Wherever the snapped rate exceeds the terminal
+// rate the content sits LEFT of and ABOVE the snapped unit position — so a
+// clip anchored there shaves the first column and row ("-rw-r--" rendering
+// as "rw-r--"), and one whose extent merely matches in units shaves the
+// last. Every edge must be chosen for where it snaps: left/top at or before
+// the content's pixel edge, right/bottom at or after.
+//
+// Checked across the zoom range because the two rates agree only at the
+// default font size — the one place this bug cannot exist.
+func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
+	b, err := raster.NewScaled(1600, 800, 2)
 	if err != nil {
 		t.Skip("no raster backend:", err)
 	}
@@ -274,65 +280,102 @@ func TestHostedSurfaceClipCoversItsContent(t *testing.T) {
 	if !p.Graphical() {
 		t.Skip("painter not graphical")
 	}
-	ppu := p.PxPerUnitF()
-	if ppu <= 0 {
+	ppu0 := p.PxPerUnitF()
+	if ppu0 <= 0 {
 		t.Skip("no usable pixel rate")
 	}
 
-	// Across font sizes, so a size whose cell divides the host grid (residual
-	// zero, nothing to do) and one whose cell does not are both covered.
-	for _, size := range []int{11, 12, 13, 14, 16} {
+	for _, size := range []int{10, 11, 12, 13, 14, 16, 20} {
 		b.SetFontSize(size)
+		ppu := p.PxPerUnitF()
+
+		gp := &gfxFrameParent{}
+		gp.TrinketBase = *core.NewTrinketBase()
+		gp.Init(gp)
 		e := NewEditor()
+		e.SetParent(gp)
+		e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 700, Height: 300})
 		cw, ch := e.cellDims()
 		if cw <= 0 || ch <= 0 {
 			continue
 		}
-		for _, cells := range []int{1, 8, 40, 79} {
-			for _, resid := range []int{0, 1, 3} {
-				w := coverUnits(cells, cw, resid, ppu, p.UnitSpanPxX)
-				want := int(math.Round(float64(cells)*float64(cw)*ppu)) + resid
-				if got := p.UnitSpanPxX(0, w); got < want {
-					t.Errorf("size %d, %d cells, residual %d: clip spans %d px, content needs %d — the last column is shaved",
-						size, cells, resid, got, want)
-				}
-				// And bound what THIS function adds. The unit clip can
-				// already overshoot on its own — the backend's snapped rate
-				// and the renderer's ppu are not the same number, which is
-				// the whole reason any of this is needed — so assert only
-				// the growth coverUnits contributes.
-				// Growth must be non-negative and proportionate: covering
-				// the content, not swallowing the neighbours.
-				grew := w - core.Unit(cells)*cw
-				if grew < 0 {
-					t.Errorf("size %d, %d cells: clip SHRANK by %d units", size, cells, -grew)
-				}
-				if grew > core.Unit(cells)*cw/4+8 {
-					t.Errorf("size %d, %d cells, residual %d: grew the clip by %d units — disproportionate",
-						size, cells, resid, grew)
-				}
-				hgt := coverUnits(cells, ch, resid, ppu, p.UnitSpanPxY)
-				wantY := int(math.Round(float64(cells)*float64(ch)*ppu)) + resid
-				if got := p.UnitSpanPxY(0, hgt); got < wantY {
-					t.Errorf("size %d, %d rows, residual %d: clip spans %d px, content needs %d",
-						size, cells, resid, got, wantY)
-				}
+		pxX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
+		pxY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
+
+		for _, place := range []struct{ col, row, w, h int }{
+			{1, 1, 80, 24},  // at the origin: zero residual, nothing may move
+			{4, 2, 40, 10},  // the screenshot's shape: a gutter to the left
+			{37, 11, 20, 5}, // far out, where the drift has accumulated
+		} {
+			id := fmt.Sprintf("pty-%d-%d", place.col, place.row)
+			e.terminalOpen(id, place.w, place.h)
+			e.terminalPlace([]mew.TerminalSurface{{
+				ID: id, Col: place.col, Row: place.row, Width: place.w, Height: place.h,
+				ClipCol: place.col, ClipRow: place.row, ClipWidth: place.w, ClipHeight: place.h,
+			}})
+			e.paintTerminalSurfaces(p)
+			clip := e.lastClipFrame
+
+			// Where the content's pixel edges are (the same arithmetic the
+			// child paints by, from its corrected origin).
+			cLeft, cRight := pxX(place.col-1), pxX(place.col-1+place.w)
+			cTop, cBottom := pxY(place.row-1), pxY(place.row-1+place.h)
+			// Where the clip's edges SNAP.
+			kLeft := p.UnitSpanPxX(0, clip.X)
+			kRight := p.UnitSpanPxX(0, clip.X+clip.Width)
+			kTop := p.UnitSpanPxY(0, clip.Y)
+			kBottom := p.UnitSpanPxY(0, clip.Y+clip.Height)
+
+			if kLeft > cLeft {
+				t.Errorf("size %d %v: clip left %d px cuts content at %d — first column shaved", size, place, kLeft, cLeft)
+			}
+			if kTop > cTop {
+				t.Errorf("size %d %v: clip top %d px cuts content at %d — first row shaved", size, place, kTop, cTop)
+			}
+			if kRight < cRight {
+				t.Errorf("size %d %v: clip right %d px cuts content at %d — last column shaved", size, place, kRight, cRight)
+			}
+			if kBottom < cBottom {
+				t.Errorf("size %d %v: clip bottom %d px cuts content at %d — last row shaved", size, place, kBottom, cBottom)
+			}
+
+			// Over-reveal stays bounded: within one host cell + the pad on
+			// each side, not swallowing the neighbours.
+			cellPxX := p.UnitSpanPxX(0, core.Unit(core.DefaultCellMetrics().CellWidth))
+			slack := cellPxX + 4
+			if cLeft-kLeft > slack || kRight-cRight > slack {
+				t.Errorf("size %d %v: clip [%d,%d] overshoots content [%d,%d] by more than a host cell",
+					size, place, kLeft, kRight, cLeft, cRight)
 			}
 		}
 	}
 }
 
-// Degenerate inputs fall back to the plain extent rather than looping or
-// returning nonsense.
-func TestCoverUnitsDegenerateInputs(t *testing.T) {
-	span := func(a, bb core.Unit) int { return int(bb - a) }
-	if got := coverUnits(0, 8, 0, 2, span); got != 0 {
-		t.Errorf("zero cells -> %d, want 0", got)
+// snapCover's contract, both directions, on the real snapping.
+func TestSnapCoverFindsCoveringEdges(t *testing.T) {
+	b, err := raster.NewScaled(1600, 400, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
 	}
-	if got := coverUnits(5, 0, 0, 2, span); got != 0 {
-		t.Errorf("zero cell size -> %d, want 0", got)
+	p := core.NewPainter(b)
+	ppu := p.PxPerUnitF()
+	if ppu <= 0 {
+		t.Skip("no usable pixel rate")
 	}
-	if got := coverUnits(5, 8, 0, 0, span); got != 40 {
-		t.Errorf("zero ppu -> %d, want the plain 40", got)
+	for _, target := range []int{0, 33, 100, 517, 1201} {
+		for _, start := range []core.Unit{0, 10, 50, 300} {
+			lo := snapCover(p.UnitSpanPxX, start, target, ppu, false)
+			if got := p.UnitSpanPxX(0, lo); got > target {
+				t.Errorf("floor(start=%d, target=%d): snapped %d > target", start, target, got)
+			}
+			hi := snapCover(p.UnitSpanPxX, start, target, ppu, true)
+			if got := p.UnitSpanPxX(0, hi); got < target {
+				t.Errorf("ceil(start=%d, target=%d): snapped %d < target", start, target, got)
+			}
+		}
+	}
+	// Degenerate ppu: hands back the start rather than walking.
+	if got := snapCover(p.UnitSpanPxX, 42, 99, 0, true); got != 42 {
+		t.Errorf("zero ppu -> %d, want the start 42", got)
 	}
 }
