@@ -60,6 +60,7 @@ var optionSpecs = []optionSpec{
 	{"linkBrowsing", true, optBoolKind, boolValues},
 	{"navigationMode", true, optBoolKind, boolValues},
 	{"showColumnRuler", true, optBoolKind, boolValues},
+	{"scrollbar", true, optBoolKind, boolValues},
 	{"direction", true, optEnumKind, []string{"ltr", "rtl"}},
 	{"syntaxOverrides", true, optStrKind, nil},
 
@@ -163,6 +164,8 @@ func (e *Editor) applyResolvedOption(w *viewport.Viewport, key string) {
 		}
 	case "showcolumnruler":
 		w.ViewState.ShowRuler = e.optBool(w, "showcolumnruler", e.Config.ShowColumnRuler)
+	case "scrollbar":
+		w.ViewState.Scrollbar = e.optBool(w, "scrollbar", e.Config.Scrollbar)
 	case "direction":
 		w.ViewState.Direction = e.optDir(w, "direction", e.Config.Direction)
 	case "syntaxoverrides":

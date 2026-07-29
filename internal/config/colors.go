@@ -74,6 +74,11 @@ var defaultGlobalColors = map[string]string{
 	"rulermajor":              "\x1b[0;92;45m", // bright green on magenta ("|" and numbers)
 	"rulercursor":             "\x1b[0;30;47m", // black on silver (cursor columns, rulerShowsCursor)
 
+	// Vertical scrollbar (the scrollbar option): the '░' track and '█' thumb
+	// cells in the viewport's reserved outer column.
+	"scrollbartrack": "\x1b[0;90;40m", // dark gray on black
+	"scrollbarthumb": "\x1b[0;37;40m", // silver on black
+
 	// Hyperlinks (grammar-derived; see the editor's link browse mode).
 	// Caret mode paints link source text in "link" ("linkrecent" is reserved
 	// for recently-followed links once navigation lands); browse mode renders

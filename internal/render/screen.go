@@ -112,6 +112,34 @@ type ScreenRenderer struct {
 	// serializes a frame (begin..present) against a concurrent resize reshape.
 	frame    *backBuffer
 	renderMu sync.Mutex
+
+	// scrollbarSuppressed, when set, vetoes the scrollbar option for a
+	// viewport the renderer cannot judge itself — the editor supplies it to
+	// keep the bar off viewports whose buffer hosts a terminal session (the
+	// terminal has its own scrollbar, and reserving a column would shrink
+	// its grid).
+	scrollbarSuppressed func(*viewport.Viewport) bool
+}
+
+// SetScrollbarSuppressor installs the editor's veto for the per-viewport
+// scrollbar (see the scrollbarSuppressed field).
+func (sr *ScreenRenderer) SetScrollbarSuppressor(fn func(*viewport.Viewport) bool) {
+	sr.scrollbarSuppressed = fn
+}
+
+// showScrollbar reports whether this viewport reserves its outer column for
+// the vertical scrollbar this frame: the scrollbar option is on, the viewport
+// is ordinary buffer chrome (not a prompt, not custom-rendered), and the
+// editor's suppressor (terminal sessions) does not veto it.
+func (sr *ScreenRenderer) showScrollbar(w *viewport.Viewport) bool {
+	if w == nil || !w.ViewState.Scrollbar || w.Buffer == nil ||
+		w.CustomRenderer != "" || w.Type == viewport.PromptViewport {
+		return false
+	}
+	if sr.scrollbarSuppressed != nil && sr.scrollbarSuppressed(w) {
+		return false
+	}
+	return true
 }
 
 // SetIndicators sets the indicator glyphs used to draw editor chrome.
@@ -621,12 +649,24 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		if w.ViewState.ShowLineNumbers {
 			lineNumWidth = w.LineNumWidth
 		}
+		// The vertical scrollbar reserves the OUTER physical column — the
+		// rightmost in LTR, the leftmost in RTL — outside the margins.
+		w.ScrollbarX = -1
+		sbw := 0
+		if sr.showScrollbar(w) {
+			sbw = 1
+			if sr.winRTL(w) {
+				w.ScrollbarX = 0
+			} else {
+				w.ScrollbarX = sr.Width - 1
+			}
+		}
 		marginL, _ := sr.physMargins(w)
-		w.ContentWidth = sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter
+		w.ContentWidth = sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 		if sr.winRTL(w) {
 			// The gutter mirrors to the right side; content starts after the
-			// physical left margin.
-			w.ContentX = marginL
+			// scrollbar column and the physical left margin.
+			w.ContentX = marginL + sbw
 		} else {
 			w.ContentX = marginL + lineNumWidth
 		}
@@ -818,7 +858,22 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	}
 
 	marginL, marginR := sr.physMargins(w)
-	baseContentWidth := sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter
+	sbw := 0
+	var sbPos, sbLen int
+	if sr.showScrollbar(w) {
+		// One column narrower, and the thumb geometry is fixed for the whole
+		// frame: the track is this content area's rows, the document is the
+		// buffer's line count. Shared with the mouse path via ScrollbarThumb.
+		sbw = 1
+		lineCount := 0
+		if w.Buffer != nil {
+			lineCount = w.Buffer.GetLineCount()
+		}
+		sbPos, sbLen = viewport.ScrollbarThumb(height, lineCount, w.ViewState.ViewOffsetY)
+	}
+	scrollbarTrackColor := sr.col(w, "scrollbarTrack")
+	scrollbarThumbColor := sr.col(w, "scrollbarThumb")
+	baseContentWidth := sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 
 	// Get selection range once for all lines. A transient find/replace match
 	// highlight takes precedence: while a match is being offered, it is shown
@@ -856,8 +911,27 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// right-anchored bottom row left by one). The back buffer paints the
 		// corner cell's background without landing a glyph in it.
 		contentWidth := baseContentWidth
-		if screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) {
+		if screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
+			!(sbw > 0 && !sr.winRTL(w)) {
+			// An LTR scrollbar occupies the corner column itself (its glyph is
+			// simply skipped on that row, below), so the content stays full.
 			contentWidth--
+		}
+
+		// The scrollbar's cell for this row: thumb within [sbPos, sbPos+sbLen),
+		// track elsewhere. Under RTL the bar is the leftmost column, emitted
+		// before everything else; under LTR it is the rightmost, emitted last.
+		sbGlyph, sbColor := "", ""
+		if sbw > 0 {
+			if row >= sbPos && row < sbPos+sbLen {
+				sbGlyph, sbColor = sr.indicators.ScrollbarThumb, scrollbarThumbColor
+			} else {
+				sbGlyph, sbColor = sr.indicators.ScrollbarTrack, scrollbarTrackColor
+			}
+		}
+		if sbw > 0 && sr.winRTL(w) {
+			sr.Write(sbColor)
+			sr.Write(sbGlyph)
 		}
 
 		// Physical left margin. Row messages (prompt labels) belong to the
@@ -976,6 +1050,29 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 					sr.Write(" ")
 				}
 			}
+		}
+
+		// LTR scrollbar: the outermost (rightmost) physical column, past the
+		// outer margin. On a double-width (DECDWL) row every cell renders two
+		// columns wide, so the bar is placed by LOGICAL column — padded out to
+		// the last whole doubled cell — and its glyph doubles with the row,
+		// which is the desired look. The bottom-right screen cell can never be
+		// written (it scrolls the terminal), so on that row the bar cell is
+		// skipped and the corner stays blank.
+		if sbw > 0 && !rtl && screenY != sr.Height {
+			if doubleWide {
+				lineWidth := contentWidth / 2
+				if lineWidth < 1 {
+					lineWidth = 1
+				}
+				written := marginL + lineNumWidth/2 + lineWidth + marginR
+				if pad := sr.Width/2 - 1 - written; pad > 0 {
+					sr.Write(textColor)
+					sr.Write(strings.Repeat(" ", pad))
+				}
+			}
+			sr.Write(sbColor)
+			sr.Write(sbGlyph)
 		}
 
 		sr.Write(resetColor)
@@ -2532,8 +2629,12 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
 	}
+	sbw := 0
+	if sr.showScrollbar(w) {
+		sbw = 1 // the scrollbar column narrows the content like the gutter does
+	}
 	marginL, _ := sr.physMargins(w)
-	contentCells = sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth
+	contentCells = sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth - sbw
 	gutter := lineNumWidth
 	dw = sr.caretLineDoubleWide(w)
 	if dw {
@@ -2545,7 +2646,7 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 	}
 	base = 1 + marginL + gutter
 	if sr.winRTL(w) {
-		base = 1 + marginL // the gutter mirrors to the right side
+		base = 1 + marginL + sbw // the gutter mirrors right; the bar sits left of the margin
 	}
 	pad, viewOff = sr.rtlPadOffset(line, w, contentCells)
 	return

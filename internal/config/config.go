@@ -289,6 +289,10 @@ type Indicators struct {
 	VisibleNewline  string
 	VisibleReturn   string
 	GutterEmpty     string
+	// Vertical scrollbar cells (the reserved outer column of a viewport
+	// with the scrollbar option on): the track fill and the thumb.
+	ScrollbarTrack  string
+	ScrollbarThumb  string
 	CursorGhost     string
 	CursorOffScreen string
 	TruncationLeft  string
@@ -322,6 +326,8 @@ func DefaultIndicators() Indicators {
 		VisibleNewline:  "⮐",
 		VisibleReturn:   "M",
 		GutterEmpty:     "~",
+		ScrollbarTrack:  "░",
+		ScrollbarThumb:  "█",
 		CursorGhost:     "|",
 		CursorOffScreen: "@",
 		TruncationLeft:  "<",
@@ -342,8 +348,11 @@ func DefaultIndicators() Indicators {
 
 // GeneralConfig holds general editor settings.
 type GeneralConfig struct {
-	ShowLineNumbers  bool
-	ShowColumnRuler  bool
+	ShowLineNumbers bool
+	ShowColumnRuler bool
+	// Scrollbar reserves each doc/tool viewport's outer column (right in LTR,
+	// left in RTL) for a clickable vertical scrollbar. Default true.
+	Scrollbar        bool
 	RulerShowsCursor bool
 	TabSize          int
 	ShowInvisibles   bool
@@ -850,6 +859,7 @@ func DefaultConfig() Config {
 		General: GeneralConfig{
 			ShowLineNumbers:         true,
 			ShowColumnRuler:         true,
+			Scrollbar:               true,
 			RulerShowsCursor:        false,
 			TabSize:                 4,
 			ShowInvisibles:          false,
@@ -1103,6 +1113,9 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["showColumnRuler"]; ok {
 			config.General.ShowColumnRuler = parseBool(v, true)
+		}
+		if v, ok := opt["scrollbar"]; ok {
+			config.General.Scrollbar = parseBool(v, true)
 		}
 		if v, ok := opt["rulerShowsCursor"]; ok {
 			config.General.RulerShowsCursor = parseBool(v, false)
@@ -1424,6 +1437,8 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		set(&config.Indicators.VisibleNewline, "visibleNewline")
 		set(&config.Indicators.VisibleReturn, "visibleReturn")
 		set(&config.Indicators.GutterEmpty, "gutterEmpty")
+		set(&config.Indicators.ScrollbarTrack, "scrollbarTrack")
+		set(&config.Indicators.ScrollbarThumb, "scrollbarThumb")
 		set(&config.Indicators.CursorGhost, "cursorGhost")
 		set(&config.Indicators.CursorOffScreen, "cursorOffScreen")
 		set(&config.Indicators.TruncationLeft, "truncationLeft")
@@ -2280,6 +2295,10 @@ mappings=mew
 # showInvisibles=true
 showLineNumbers=true
 showColumnRuler=true
+# Reserve each window's outer column (right edge in LTR, left in RTL) for a
+# clickable vertical scrollbar. Per-window; never shown on prompts or on a
+# window hosting a terminal session (the terminal draws its own).
+scrollbar=true
 # Highlight the ruler cells under the cursor (and its ghost / bidi companion
 # cursor) with the rulerCursor color
 rulerShowsCursor=false
@@ -2448,6 +2467,8 @@ visibleTabEnd=">|"
 visibleNewline="⮐"
 visibleReturn="M"
 gutterEmpty="~"
+scrollbarTrack="░"
+scrollbarThumb="█"
 cursorGhost="|"
 cursorOffScreen="@"
 truncationLeft="<"

@@ -78,6 +78,11 @@ type ViewState struct {
 	// ShowRuler renders a column ruler on the viewport's top line, reducing the
 	// content area by one row. Ignored when the viewport is only one line tall.
 	ShowRuler bool
+	// Scrollbar reserves the viewport's outer column (physical right in LTR,
+	// left in RTL) for a vertical scrollbar — track and thumb cells the mouse
+	// can click and drag. Never rendered on prompt viewports or viewports whose
+	// buffer hosts a terminal session (the renderer's suppressor). Default on.
+	Scrollbar bool
 	TabSize   int
 	// Direction overrides the editor's base text direction for this viewport:
 	// "ltr", "rtl", or "" to inherit the [general] direction option. Prompt
@@ -441,6 +446,11 @@ type Viewport struct {
 	ContentWidth  int
 	ContentHeight int
 	LineNumWidth  int
+	// ScrollbarX is the 0-based physical screen column of this viewport's
+	// vertical scrollbar this frame, or -1 when no bar is shown. Set by the
+	// renderer alongside the Content* geometry (and like it, only meaningful
+	// while LayoutEpoch is current); the mouse path hit-tests against it.
+	ScrollbarX int
 
 	// LayoutEpoch is the renderer's frame counter as of the last frame that
 	// actually laid this viewport out. A viewport whose epoch matches the
@@ -1221,6 +1231,7 @@ type ViewportOptions struct {
 	AutoIndent      bool // replicate the split line's indent on insert_newline
 	LinkBrowsing    bool // hyperlink layer (link colors, browse-mode buttons)
 	ShowRuler       bool
+	Scrollbar       bool // reserve the outer column for a vertical scrollbar
 	TabSize         int
 	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
 	SetFocus        bool
@@ -1315,9 +1326,11 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 			AutoIndent:      opts.AutoIndent,
 			LinkBrowsing:    opts.LinkBrowsing,
 			ShowRuler:       opts.ShowRuler,
+			Scrollbar:       opts.Scrollbar,
 			TabSize:         opts.TabSize,
 			SyntaxOverrides: opts.SyntaxOverrides,
 		},
+		ScrollbarX:          -1, // no bar until the renderer lays one out
 		MinHeight:           minHeight,
 		MaxHeight:           opts.MaxHeight,
 		Height:              height,

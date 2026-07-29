@@ -352,6 +352,7 @@ func (e *Editor) docViewportOptions() viewport.ViewportOptions {
 		AutoIndent:      e.Config.AutoIndent,
 		LinkBrowsing:    e.Config.LinkBrowsing,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		Scrollbar:       e.Config.Scrollbar,
 		SyntaxOverrides: e.Config.SyntaxOverrides,
 	}
 }

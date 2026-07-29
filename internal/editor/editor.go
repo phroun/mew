@@ -365,6 +365,12 @@ type Editor struct {
 	modebarNavCapture int
 	modebarNavOn      bool
 	modebarNavHover   int
+	// Viewport scrollbar drag (mouse.go): a left press in a viewport's
+	// reserved scrollbar column captures the gesture — track press jumps the
+	// thumb center to the pointer, thumb press anchors the grab offset — and
+	// drags scroll through scrollViewTo until release. Like the wheel, a
+	// scrollbar click scrolls without stealing focus.
+	sbDrag scrollbarDragState
 	// readOnlySent/readOnlyPushed: the last focused-viewport read-only state
 	// pushed through Config.EditState (see notifyEditState), and whether an
 	// initial push has happened.
@@ -468,8 +474,11 @@ type PointerArrowSpan struct {
 
 // Config holds editor configuration options.
 type Config struct {
-	ShowLineNumbers  bool
-	ShowColumnRuler  bool
+	ShowLineNumbers bool
+	ShowColumnRuler bool
+	// Scrollbar reserves each doc/tool viewport's outer column for a
+	// clickable vertical scrollbar (per-viewport option; default on).
+	Scrollbar        bool
 	RulerShowsCursor bool
 	TabSize          int
 	ShowInvisibles   bool
@@ -787,6 +796,7 @@ func DefaultConfig() Config {
 	return Config{
 		ShowLineNumbers:  true,
 		ShowColumnRuler:  true,
+		Scrollbar:        true,
 		TabSize:          4,
 		ShowInvisibles:   false,
 		ShowBidi:         false,
@@ -891,6 +901,7 @@ func New(cfg Config) (*Editor, error) {
 	// Apply loaded config to editor config
 	cfg.ShowLineNumbers = loadedConfig.General.ShowLineNumbers
 	cfg.ShowColumnRuler = loadedConfig.General.ShowColumnRuler
+	cfg.Scrollbar = loadedConfig.General.Scrollbar
 	cfg.RulerShowsCursor = loadedConfig.General.RulerShowsCursor
 	cfg.TabSize = loadedConfig.General.TabSize
 	cfg.ShowInvisibles = loadedConfig.General.ShowInvisibles
@@ -1065,6 +1076,14 @@ func New(cfg Config) (*Editor, error) {
 	// The column ruler is not a viewport of its own: the renderer draws it on the
 	// top line of any viewport whose ShowRuler view option is enabled.
 	renderer.SetRulerRenderer(e.renderColumnRuler)
+
+	// The scrollbar option never applies to a viewport hosting a terminal
+	// session: the terminal draws its own scrollbar, and reserving the column
+	// would shrink its grid. Session-ness lives on the buffer, which only the
+	// editor can see — so the renderer asks.
+	renderer.SetScrollbarSuppressor(func(w *viewport.Viewport) bool {
+		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
+	})
 
 	// Peek-indicator labels run through the shared TFC engine so codes like
 	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
@@ -3262,6 +3281,12 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.ShowRuler
 		}
 		return boolText(v), true
+	case "scrollbar":
+		v := e.Config.Scrollbar
+		if w != nil {
+			v = w.ViewState.Scrollbar
+		}
+		return boolText(v), true
 	case "rulershowscursor":
 		return boolText(e.Config.RulerShowsCursor), true
 	case "syntax":
@@ -3530,6 +3555,16 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			w.ViewState.ShowRuler = b
 		} else {
 			e.Config.ShowColumnRuler = b
+		}
+	case "scrollbar":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.Scrollbar = b
+		} else {
+			e.Config.Scrollbar = b
 		}
 	case "rulershowscursor":
 		b, ok := parseBool()
@@ -6320,6 +6355,7 @@ func (e *Editor) openFile(filename string) bool {
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		Scrollbar:       e.Config.Scrollbar,
 		SetFocus:        true,
 	})
 
@@ -6346,6 +6382,7 @@ func (e *Editor) createNewBuffer() {
 		ReadOnly:        e.Config.ReadOnly,
 		AutoIndent:      e.Config.AutoIndent,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		Scrollbar:       e.Config.Scrollbar,
 		SetFocus:        true,
 	})
 
@@ -6376,6 +6413,7 @@ func (e *Editor) duplicateCurrentBuffer() bool {
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		Scrollbar:       e.Config.Scrollbar,
 		SetFocus:        true,
 	})
 
@@ -7483,6 +7521,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		OverwriteMode:   e.Config.OverwriteMode,
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
+		Scrollbar:       e.Config.Scrollbar,
 		LinkBrowsing:    e.Config.LinkBrowsing,
 		SyntaxOverrides: e.Config.SyntaxOverrides,
 	})
@@ -7686,6 +7725,7 @@ func (e *Editor) stateSnapshot() map[string]interface{} {
 	return map[string]interface{}{
 		"showLineNumbers": e.Config.ShowLineNumbers,
 		"showColumnRuler": e.Config.ShowColumnRuler,
+		"scrollbar":       e.Config.Scrollbar,
 		"tabSize":         e.Config.TabSize,
 		"showInvisibles":  e.Config.ShowInvisibles,
 		"wordWrap":        e.Config.WordWrap,
@@ -7744,6 +7784,9 @@ func applyInitialState(cfg *Config) {
 	}
 	if v, ok := stateBool(state, "showColumnRuler"); ok {
 		cfg.ShowColumnRuler = v
+	}
+	if v, ok := stateBool(state, "scrollbar"); ok {
+		cfg.Scrollbar = v
 	}
 	if v, ok := stateBool(state, "showInvisibles"); ok {
 		cfg.ShowInvisibles = v

@@ -67,6 +67,78 @@ type dragSelState struct {
 	lastRune   int
 }
 
+// scrollbarDragState is a viewport-scrollbar gesture held from press to
+// release: which viewport's bar is captured (by ID), and where within the
+// thumb the pointer grabbed it (a track press centers the thumb on the
+// pointer instead).
+type scrollbarDragState struct {
+	active  bool
+	winID   string
+	grabOff int
+}
+
+// scrollbarPressAt starts a scrollbar gesture when the press lands in a
+// viewport's reserved scrollbar column (ScrollbarX, laid out by the
+// renderer). A press on the thumb anchors the grab where the pointer sits in
+// it; a press on the track jumps the thumb center to the pointer and the drag
+// continues from that anchor — the same gesture the terminal scrollbars
+// implement. The thumb moves cell by cell; only the top line quantizes, and
+// the viewport is left scroll-detached exactly as the wheel leaves it (no
+// snap-back, no sticky bottom). Like the wheel, it works on any on-screen
+// viewport without stealing focus. Returns true when consumed.
+func (e *Editor) scrollbarPressAt(x, y int) bool {
+	w := e.viewportAtRow(y)
+	if w == nil || w.Buffer == nil || w.ScrollbarX < 0 || x-1 != w.ScrollbarX {
+		return false
+	}
+	r := y - 1 - w.ContentY
+	if r < 0 || r >= w.ContentHeight {
+		return false
+	}
+	pos, size := viewport.ScrollbarThumb(w.ContentHeight, w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
+	if r >= pos && r < pos+size {
+		e.sbDrag.grabOff = r - pos
+	} else {
+		e.sbDrag.grabOff = size / 2
+	}
+	e.sbDrag.active = true
+	e.sbDrag.winID = w.ID
+	e.scrollbarDragTo(w, r)
+	return true
+}
+
+// scrollbarDrag continues a captured scrollbar gesture: the pointer's row —
+// wherever it is now, on or off the bar — moves the thumb and the view
+// follows. Returns false when no gesture is captured.
+func (e *Editor) scrollbarDrag(y int) bool {
+	if !e.sbDrag.active {
+		return false
+	}
+	w := e.ViewportManager.GetViewport(e.sbDrag.winID)
+	if w == nil || w.Buffer == nil {
+		e.sbDrag.active = false
+		return true
+	}
+	e.scrollbarDragTo(w, y-1-w.ContentY)
+	return true
+}
+
+// scrollbarRelease ends a captured scrollbar gesture; false when none is.
+func (e *Editor) scrollbarRelease() bool {
+	if !e.sbDrag.active {
+		return false
+	}
+	e.sbDrag.active = false
+	return true
+}
+
+// scrollbarDragTo scrolls w so its thumb's top cell sits at track row r minus
+// the gesture's grab offset (ScrollbarTopForThumb clamps to the track).
+func (e *Editor) scrollbarDragTo(w *viewport.Viewport, r int) {
+	top := viewport.ScrollbarTopForThumb(r-e.sbDrag.grabOff, w.ContentHeight, w.Buffer.GetLineCount())
+	e.scrollViewTo(w, top)
+}
+
 // handleMouseKey consumes mouse pseudo-keys from the key stream. Reports
 // true when the key was a mouse event (handled or deliberately ignored), so
 // the caller skips keymap dispatch.
@@ -140,21 +212,29 @@ func (e *Editor) handleMouseKey(key string) bool {
 			e.mouseRightPress(e.mouseX, e.mouseY)
 		case e.modebarNavPressAt(e.mouseX, e.mouseY):
 			// Consumed by a modebar nav-history button (capture started).
+		case e.scrollbarPressAt(e.mouseX, e.mouseY):
+			// Consumed by a viewport scrollbar (capture started).
 		default:
 			e.mousePress(e.mouseX, e.mouseY, shift)
 		}
 	case strings.HasPrefix(base, "MouseLeftDrag@"):
 		if atOK {
-			if e.modebarNavCapture != 0 {
+			switch {
+			case e.modebarNavCapture != 0:
 				e.modebarNavDrag(e.mouseX, e.mouseY)
-			} else {
+			case e.scrollbarDrag(e.mouseY):
+				// Captured scrollbar gesture followed the pointer.
+			default:
 				e.mouseDrag(e.mouseX, e.mouseY)
 			}
 		}
 	case base == "MouseLeftRelease", base == "MouseRelease":
-		if e.modebarNavCapture != 0 {
+		switch {
+		case e.modebarNavCapture != 0:
 			e.modebarNavRelease(e.mouseX, e.mouseY)
-		} else {
+		case e.scrollbarRelease():
+			// Scrollbar gesture ended; the view stays where the drag left it.
+		default:
 			e.mouseRelease(e.mouseX, e.mouseY)
 		}
 	case base == "MouseRightPress":
