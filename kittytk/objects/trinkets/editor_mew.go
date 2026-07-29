@@ -879,7 +879,13 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
 	// before it starts on Windows. hostPTY is per-platform; everything above
 	// it, and mew entirely, is not.
-	return hostPTY(path, dir, env, req.Cols, req.Rows, req.Method)
+	sess, err := hostPTY(path, dir, env, req.Cols, req.Rows, req.Method)
+	if err != nil {
+		return nil, err
+	}
+	// Input written to the child wakes its caret: mew owns this session, so
+	// the trinket's own input path never sees it. See editor_mew_blink.go.
+	return e.wakeOnWrite(sess), nil
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or

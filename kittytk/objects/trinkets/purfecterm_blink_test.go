@@ -36,12 +36,13 @@ func TestCaretBlinkRestartsOnUserAction(t *testing.T) {
 	}
 	term.HandleMouseRelease(core.MouseReleaseEvent{X: 40, Y: 40, Button: core.LeftButton})
 
-	// A hosted terminal's caret is driven by what it is FED: its input never
-	// passes through toChild, so this is tinput's only route to the blink.
+	// Fed bytes are NOT user action. A host re-renders for its own reasons —
+	// a mouse move is enough — so waking the caret here would hold it
+	// permanently lit and it would never blink at all.
 	dark()
 	term.Feed([]byte("hello"))
-	if !lit() {
-		t.Error("fed output should restart the blink for a hosted terminal")
+	if lit() {
+		t.Error("fed output must not restart the blink; the caret would never blink")
 	}
 
 	// An untouched terminal keeps whatever phase it was in: the reset is for

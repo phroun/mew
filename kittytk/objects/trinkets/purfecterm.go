@@ -981,12 +981,11 @@ func (t *PurfecTerm) Feed(data []byte) {
 		return
 	}
 	t.terminal.Feed(data)
-	// A HOSTED terminal never sees its own input: mew owns the session and
-	// feeds this trinket the resulting stream, so toChild above is never
-	// reached for it. Fed bytes are the only evidence here that something
-	// happened — a tinput's echo among them — and a caret in its dark half
-	// while the screen is changing reads as a hang.
-	t.resetCursorBlink()
+	// Deliberately NOT a blink reset. Fed bytes are not user action: a host
+	// re-renders for its own reasons — a mouse MOVE is enough — and waking
+	// the caret here held it permanently lit, which is the opposite of the
+	// bug. A hosted terminal is woken by its session's input instead; see
+	// blinkWakingSession.
 	t.Update()
 }
 
