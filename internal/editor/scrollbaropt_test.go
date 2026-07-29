@@ -317,3 +317,29 @@ func TestScrollbarHostDrawnPublishesAndYields(t *testing.T) {
 		t.Error("scroll_viewport should park the view like the wheel does")
 	}
 }
+
+// The bottom-row corner cut is a TERMINAL concern: the screen's bottom-right
+// cell scrolls it. A graphical host drawing the bar in pixels has no such
+// cell, so its track keeps the full height rather than leaving a gap at the
+// bottom of every bar.
+func TestScrollbarHostDrawnKeepsTheBottomRow(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 300))
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.performRender()
+	if w.ContentY+w.ContentHeight != e.Renderer.Height {
+		t.Skip("layout does not reach the bottom row; the corner is not in play")
+	}
+	if w.ScrollbarTrackH != w.ContentHeight-1 {
+		t.Fatalf("terminal-drawn track = %d, want %d (the corner row given up)",
+			w.ScrollbarTrackH, w.ContentHeight-1)
+	}
+
+	// Hand the bars to a host: the corner row comes back.
+	e.Config.ScrollbarRegions = func([]ScrollbarRegion) {}
+	e.performRender()
+	if w.ScrollbarTrackH != w.ContentHeight {
+		t.Fatalf("host-drawn track = %d, want the full %d", w.ScrollbarTrackH, w.ContentHeight)
+	}
+}

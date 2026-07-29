@@ -678,12 +678,17 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 				w.ScrollbarX = 0
 			} else {
 				w.ScrollbarX = sr.Width - 1
-				// The screen's bottom-right cell can never be written (it
+				// The screen's bottom-right CELL can never be written (it
 				// scrolls the terminal), so an LTR bar reaching the bottom
 				// screen row gives that cell up as its corner: the track is
 				// one row shorter and the thumb bottoms out on the
 				// second-to-last row instead of clipping into the corner.
-				if w.ContentY+w.ContentHeight == sr.Height {
+				//
+				// That is a terminal's problem alone. A host drawing the bar
+				// in pixels has no such cell and no wrap to provoke, so its
+				// track runs the full height — giving up a row there would
+				// just be a gap at the bottom of every bar.
+				if w.ContentY+w.ContentHeight == sr.Height && !sr.hostDrawsScrollbars() {
 					w.ScrollbarTrackH--
 				}
 			}
