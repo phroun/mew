@@ -152,22 +152,82 @@ func TestScrollbarSuppressedOnPTYViewport(t *testing.T) {
 // The thumb geometry contract both the renderer and the mouse rely on.
 func TestScrollbarThumbGeometry(t *testing.T) {
 	// A document that fits fills the track.
-	if pos, size := viewport.ScrollbarThumb(20, 10, 0); pos != 0 || size != 20 {
+	if pos, size := viewport.ScrollbarThumb(20, 20, 10, 0); pos != 0 || size != 20 {
 		t.Fatalf("fitting doc: thumb (%d,%d), want (0,20)", pos, size)
 	}
 	// A long document: thumb proportional, endpoints exact.
-	pos, size := viewport.ScrollbarThumb(20, 1000, 0)
+	pos, size := viewport.ScrollbarThumb(20, 20, 1000, 0)
 	if pos != 0 || size < 1 || size >= 20 {
 		t.Fatalf("long doc at top: thumb (%d,%d)", pos, size)
 	}
-	if pos, _ := viewport.ScrollbarThumb(20, 1000, 1000-20); pos != 20-size {
+	if pos, _ := viewport.ScrollbarThumb(20, 20, 1000, 1000-20); pos != 20-size {
 		t.Fatalf("long doc at bottom: pos %d, want %d (track end)", pos, 20-size)
 	}
 	// The inverse round-trips the endpoints.
-	if top := viewport.ScrollbarTopForThumb(0, 20, 1000); top != 0 {
+	if top := viewport.ScrollbarTopForThumb(0, 20, 20, 1000); top != 0 {
 		t.Fatalf("inverse at track top: %d, want 0", top)
 	}
-	if top := viewport.ScrollbarTopForThumb(20-size, 20, 1000); top != 1000-20 {
+	if top := viewport.ScrollbarTopForThumb(20-size, 20, 20, 1000); top != 1000-20 {
 		t.Fatalf("inverse at track bottom: %d, want %d", top, 1000-20)
+	}
+
+	// A track one row shorter than the page (the given-up bottom-right
+	// corner): the thumb still bottoms out INSIDE the track at max scroll —
+	// on the second-to-last content row — and the endpoints still invert to
+	// the full scroll range.
+	pos19, size19 := viewport.ScrollbarThumb(19, 20, 1000, 1000-20)
+	if pos19+size19 != 19 {
+		t.Fatalf("corner track at bottom: thumb ends at %d, want 19 (never clipped)", pos19+size19)
+	}
+	if top := viewport.ScrollbarTopForThumb(19-size19, 19, 20, 1000); top != 1000-20 {
+		t.Fatalf("corner track inverse at bottom: %d, want %d", top, 1000-20)
+	}
+}
+
+// The bottom-most LTR window gives its bar's bottom cell up to the screen's
+// unwritable corner: the track is one row shorter than the content, and at
+// maximum scroll the thumb sits on the second-to-last row instead of being
+// clipped away with the corner.
+func TestScrollbarCornerShortensTrack(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 200))
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.performRender()
+
+	if w.ContentY+w.ContentHeight != e.Renderer.Height {
+		t.Skipf("layout does not reach the bottom row (ContentY=%d h=%d); corner not in play",
+			w.ContentY, w.ContentHeight)
+	}
+	if w.ScrollbarTrackH != w.ContentHeight-1 {
+		t.Fatalf("ScrollbarTrackH = %d, want %d (one row given to the corner)",
+			w.ScrollbarTrackH, w.ContentHeight-1)
+	}
+
+	// Scrolled to the very bottom, the thumb's last cell is the track's last
+	// cell — the second-to-last content row — never the corner row.
+	e.scrollViewTo(w, w.Buffer.GetLineCount()-w.ContentHeight)
+	pos, size := viewport.ScrollbarThumb(w.ScrollbarTrackH, w.ContentHeight,
+		w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
+	if pos+size != w.ScrollbarTrackH {
+		t.Fatalf("thumb ends at %d at max scroll, want %d", pos+size, w.ScrollbarTrackH)
+	}
+
+	// A press on the corner row itself still belongs to the bar: it acts as
+	// the bottom of the track (deep scroll), not a text click.
+	e.scrollViewTo(w, 0)
+	send := func(key string) {
+		if !e.handleMouseKey(key) {
+			t.Fatalf("pseudo-key %q should be consumed", key)
+		}
+	}
+	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+w.ContentHeight))
+	send("MouseLeftPress")
+	send("MouseLeftRelease")
+	if w.ViewState.ViewOffsetY == 0 {
+		t.Fatal("press on the corner row did not act as a track-bottom press")
+	}
+	if w.Buffer.HasBlockMarks() {
+		t.Fatal("press on the corner row started a text selection")
 	}
 }

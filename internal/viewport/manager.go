@@ -451,6 +451,13 @@ type Viewport struct {
 	// renderer alongside the Content* geometry (and like it, only meaningful
 	// while LayoutEpoch is current); the mouse path hit-tests against it.
 	ScrollbarX int
+	// ScrollbarTrackH is the bar's track height in cells this frame. Usually
+	// ContentHeight, but one row SHORTER when the bar's bottom cell would be
+	// the screen's unwritable bottom-right corner (an LTR bar on the
+	// bottom-most viewport) — the thumb then bottoms out on the second-to-last
+	// row instead of clipping into the corner. Renderer-set, mouse-read, like
+	// ScrollbarX.
+	ScrollbarTrackH int
 
 	// LayoutEpoch is the renderer's frame counter as of the last frame that
 	// actually laid this viewport out. A viewport whose epoch matches the

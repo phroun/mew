@@ -95,7 +95,12 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 	if r < 0 || r >= w.ContentHeight {
 		return false
 	}
-	pos, size := viewport.ScrollbarThumb(w.ContentHeight, w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
+	// A press on the given-up corner row (past the track) still belongs to
+	// the bar's column: treat it as the bottom of the track.
+	if r >= w.ScrollbarTrackH {
+		r = w.ScrollbarTrackH - 1
+	}
+	pos, size := viewport.ScrollbarThumb(w.ScrollbarTrackH, w.ContentHeight, w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
 	if r >= pos && r < pos+size {
 		e.sbDrag.grabOff = r - pos
 	} else {
@@ -135,7 +140,7 @@ func (e *Editor) scrollbarRelease() bool {
 // scrollbarDragTo scrolls w so its thumb's top cell sits at track row r minus
 // the gesture's grab offset (ScrollbarTopForThumb clamps to the track).
 func (e *Editor) scrollbarDragTo(w *viewport.Viewport, r int) {
-	top := viewport.ScrollbarTopForThumb(r-e.sbDrag.grabOff, w.ContentHeight, w.Buffer.GetLineCount())
+	top := viewport.ScrollbarTopForThumb(r-e.sbDrag.grabOff, w.ScrollbarTrackH, w.ContentHeight, w.Buffer.GetLineCount())
 	e.scrollViewTo(w, top)
 }
 

@@ -1857,6 +1857,13 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 	trackH := hPx
 	if t.hScrollActive() {
 		trackH = hPx - laneY
+	} else if !t.gfxInputActive() {
+		// CELL surface: give the bottom lane cell up as the corner even with
+		// no horizontal bar. The widget's bottom-right cell may be the host
+		// terminal's unwritable corner, and stopping one cell short matches
+		// the spacing the corner square leaves when both bars are present —
+		// the thumb bottoms out on the second-to-last row, never clipped.
+		trackH = hPx - laneY
 	}
 	track = pxRect{X: wPx - laneX, Y: 0, W: laneX, H: trackH}
 	thumbLen := track.H * float64(page) / float64(upper)

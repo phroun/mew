@@ -652,13 +652,23 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		// The vertical scrollbar reserves the OUTER physical column — the
 		// rightmost in LTR, the leftmost in RTL — outside the margins.
 		w.ScrollbarX = -1
+		w.ScrollbarTrackH = 0
 		sbw := 0
 		if sr.showScrollbar(w) {
 			sbw = 1
+			w.ScrollbarTrackH = w.ContentHeight
 			if sr.winRTL(w) {
 				w.ScrollbarX = 0
 			} else {
 				w.ScrollbarX = sr.Width - 1
+				// The screen's bottom-right cell can never be written (it
+				// scrolls the terminal), so an LTR bar reaching the bottom
+				// screen row gives that cell up as its corner: the track is
+				// one row shorter and the thumb bottoms out on the
+				// second-to-last row instead of clipping into the corner.
+				if w.ContentY+w.ContentHeight == sr.Height {
+					w.ScrollbarTrackH--
+				}
 			}
 		}
 		marginL, _ := sr.physMargins(w)
@@ -859,17 +869,23 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 
 	marginL, marginR := sr.physMargins(w)
 	sbw := 0
-	var sbPos, sbLen int
+	var sbPos, sbLen, sbTrackH int
 	if sr.showScrollbar(w) {
 		// One column narrower, and the thumb geometry is fixed for the whole
-		// frame: the track is this content area's rows, the document is the
-		// buffer's line count. Shared with the mouse path via ScrollbarThumb.
+		// frame: the track is ScrollbarTrackH (the content rows, minus the
+		// bottom-right corner when the layout gave it up — see
+		// updateViewportContentProperties), the scroll range comes from the
+		// full page. Shared with the mouse path via ScrollbarThumb.
 		sbw = 1
+		sbTrackH = w.ScrollbarTrackH
+		if sbTrackH > height {
+			sbTrackH = height
+		}
 		lineCount := 0
 		if w.Buffer != nil {
 			lineCount = w.Buffer.GetLineCount()
 		}
-		sbPos, sbLen = viewport.ScrollbarThumb(height, lineCount, w.ViewState.ViewOffsetY)
+		sbPos, sbLen = viewport.ScrollbarThumb(sbTrackH, height, lineCount, w.ViewState.ViewOffsetY)
 	}
 	scrollbarTrackColor := sr.col(w, "scrollbarTrack")
 	scrollbarThumbColor := sr.col(w, "scrollbarThumb")
@@ -919,17 +935,19 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// The scrollbar's cell for this row: thumb within [sbPos, sbPos+sbLen),
-		// track elsewhere. Under RTL the bar is the leftmost column, emitted
-		// before everything else; under LTR it is the rightmost, emitted last.
+		// track elsewhere, nothing past the track (the corner row a
+		// bottom-of-screen LTR bar gave up). Under RTL the bar is the
+		// leftmost column, emitted before everything else; under LTR it is
+		// the rightmost, emitted last.
 		sbGlyph, sbColor := "", ""
-		if sbw > 0 {
+		if sbw > 0 && row < sbTrackH {
 			if row >= sbPos && row < sbPos+sbLen {
 				sbGlyph, sbColor = sr.indicators.ScrollbarThumb, scrollbarThumbColor
 			} else {
 				sbGlyph, sbColor = sr.indicators.ScrollbarTrack, scrollbarTrackColor
 			}
 		}
-		if sbw > 0 && sr.winRTL(w) {
+		if sbGlyph != "" && sr.winRTL(w) {
 			sr.Write(sbColor)
 			sr.Write(sbGlyph)
 		}
@@ -1056,10 +1074,9 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// outer margin. On a double-width (DECDWL) row every cell renders two
 		// columns wide, so the bar is placed by LOGICAL column — padded out to
 		// the last whole doubled cell — and its glyph doubles with the row,
-		// which is the desired look. The bottom-right screen cell can never be
-		// written (it scrolls the terminal), so on that row the bar cell is
-		// skipped and the corner stays blank.
-		if sbw > 0 && !rtl && screenY != sr.Height {
+		// which is the desired look. A row past the track (the given-up
+		// bottom-right corner) has no glyph and the corner stays blank.
+		if sbGlyph != "" && !rtl {
 			if doubleWide {
 				lineWidth := contentWidth / 2
 				if lineWidth < 1 {

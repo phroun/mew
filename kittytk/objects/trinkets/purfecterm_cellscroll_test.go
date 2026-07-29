@@ -29,6 +29,21 @@ func TestCellSurfaceScrollbarInteracts(t *testing.T) {
 		t.Fatal("no scrollback accumulated; the lane under test never appears")
 	}
 
+	// On a cell surface the track gives its bottom cell up as the corner even
+	// with no horizontal bar — the widget's bottom-right may be the host
+	// terminal's unwritable corner, and the thumb bottoms out on the
+	// second-to-last row instead of clipping into it.
+	if track, thumb, _, _, _, ok := term.vScrollGeometry(); !ok {
+		t.Fatal("vertical scrollbar geometry should exist with scrollback")
+	} else {
+		if track.H != 192-16 {
+			t.Fatalf("cell track height %v, want %v (one cell short of the bottom)", track.H, 192-16)
+		}
+		if thumb.Y+thumb.H > track.H {
+			t.Fatalf("thumb (y=%v h=%v) extends past the shortened track (h=%v)", thumb.Y, thumb.H, track.H)
+		}
+	}
+
 	// The vertical lane is the rightmost cell column. A press near the TOP
 	// of its track jumps the view deep into history (thumb-center-to-pointer),
 	// and must be consumed by the scrollbar — not start a selection.
