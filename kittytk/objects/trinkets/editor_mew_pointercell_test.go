@@ -89,3 +89,76 @@ func TestCursorShapeHonoursRegionAndArrows(t *testing.T) {
 		t.Errorf("below the text region: cursor %v, want arrow", got)
 	}
 }
+
+// A hosted pty terminal owns the cursor over its own surface: it has its own
+// scrollbars and only it knows where their lanes fall. The Editor declares
+// CursorShapesSubtree, so the descent stops at the Editor and never reaches
+// the child — the delegation has to be explicit or the terminal's lanes show
+// mew's I-beam.
+func TestHostedTerminalOwnsItsCursor(t *testing.T) {
+	e := NewEditor()
+	defer e.Close()
+	if e.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	e.SetBounds(core.UnitRect{Width: 640, Height: 384})
+	cw, chh := e.cellDims()
+	if cw <= 0 || chh <= 0 {
+		t.Skip("no cell metrics")
+	}
+
+	// mew's text region covers the whole grid, so without delegation every
+	// point below would report the I-beam.
+	e.pointerRegionMu.Lock()
+	e.pointerRegion = [4]int{1, 1, 80, 24}
+	e.pointerRegionMu.Unlock()
+
+	// Place a hosted terminal over cells (col 11..50, row 3..14).
+	child := NewPurfecTerm()
+	defer child.Close()
+	child.SetBounds(core.UnitRect{Width: 40 * cw, Height: 12 * chh})
+	e.termMu.Lock()
+	e.termSurfaces = map[string]*termSurface{"pty1": {
+		term: child,
+		col:  11, row: 3, width: 40, height: 12,
+		clipCol: 11, clipRow: 3, clipWidth: 40, clipHeight: 12,
+	}}
+	e.termMu.Unlock()
+
+	at := func(col, row int) core.CursorShape {
+		x := core.Unit((float64(col) - 0.5) * float64(cw))
+		y := core.Unit((float64(row) - 0.5) * float64(chh))
+		return e.CursorShapeAt(x, y)
+	}
+
+	// Outside the hosted surface: mew answers, and its region says text.
+	if got := at(5, 5); got != core.CursorText {
+		t.Errorf("outside the hosted surface: cursor %v, want mew's I-beam", got)
+	}
+	// Inside it, the child answers. With no scrollback its lanes are absent,
+	// so it reports the text I-beam over its content — the point being that
+	// the CHILD decided, not mew.
+	tt, lx, ly, ok := e.hostedTermAt(
+		core.Unit(19.5*float64(cw)), core.Unit(7.5*float64(chh)))
+	if !ok {
+		t.Fatal("a point inside the hosted surface should resolve to its terminal")
+	}
+	if tt != child {
+		t.Fatal("resolved the wrong hosted terminal")
+	}
+	// The child-local coordinate is the point minus the surface origin.
+	if wantX := core.Unit(9.5 * float64(cw)); lx != wantX {
+		t.Errorf("child-local x = %v, want %v", lx, wantX)
+	}
+	if wantY := core.Unit(5.5 * float64(chh)); ly != wantY {
+		t.Errorf("child-local y = %v, want %v", ly, wantY)
+	}
+	// And a point just outside the surface must NOT resolve to it.
+	if _, _, _, ok := e.hostedTermAt(core.Unit(9.5*float64(cw)), core.Unit(7.5*float64(chh))); ok {
+		t.Error("a point left of the hosted surface must not resolve to it")
+	}
+	if _, _, _, ok := e.hostedTermAt(core.Unit(19.5*float64(cw)), core.Unit(1.5*float64(chh))); ok {
+		t.Error("a point above the hosted surface must not resolve to it")
+	}
+	_ = at
+}

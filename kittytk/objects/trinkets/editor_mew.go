@@ -548,10 +548,43 @@ func caretLine(caret string) string {
 // area while a prompt awaits input. Resolved locally from the pointer's cell,
 // so no mouse motion has to round-trip through mew.
 func (e *Editor) CursorShapeAt(x, y core.Unit) core.CursorShape {
+	// A hosted terminal answers for its own surface: it has scrollbars of its
+	// own, and only it knows where their lanes fall. The Editor declares
+	// CursorShapesSubtree, so the descent stops here and never reaches the
+	// child on its own — the delegation has to be explicit.
+	if t, lx, ly, ok := e.hostedTermAt(x, y); ok {
+		return t.CursorShapeAt(lx, ly)
+	}
 	if e.pointerInText(x, y) {
 		return core.CursorText
 	}
 	return core.CursorDefault
+}
+
+// hostedTermAt finds the hosted terminal whose placed surface contains the
+// local point, returning the point in that CHILD's own units. Mirrors the
+// rectangle test clearHostedHoverOutside uses, so hover and cursor agree on
+// which child owns a pixel.
+func (e *Editor) hostedTermAt(x, y core.Unit) (*PurfecTerm, core.Unit, core.Unit, bool) {
+	cw, ch := e.cellDims()
+	if cw <= 0 || ch <= 0 {
+		return nil, 0, 0, false
+	}
+	e.termMu.Lock()
+	defer e.termMu.Unlock()
+	for _, s := range e.termSurfaces {
+		if s.term == nil || s.clipWidth <= 0 || s.clipHeight <= 0 {
+			continue
+		}
+		x0 := core.Unit(s.col-1) * cw
+		y0 := core.Unit(s.row-1) * ch
+		x1 := x0 + core.Unit(s.width)*cw
+		y1 := y0 + core.Unit(s.height)*ch
+		if x >= x0 && x < x1 && y >= y0 && y < y1 {
+			return s.term, x - x0, y - y0, true
+		}
+	}
+	return nil, 0, 0, false
 }
 
 // CursorShape is the position-less fallback (used only if the cursor descent
