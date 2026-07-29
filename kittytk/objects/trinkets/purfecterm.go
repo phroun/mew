@@ -514,14 +514,21 @@ func (t *PurfecTerm) updateTerminalSize() {
 	cw, ch := t.cellDims()
 
 	width := bounds.Width
-	if t.gfxInputActive() && !t.editorMode {
-		// The vertical scrollbar lane is present on pixel surfaces
-		// (except in editor mode, where text owns the full width):
-		// reserve its width so it never covers text.
-		width -= gfxScrollbarLane
+	height := bounds.Height
+	if !t.editorMode {
+		// On a CELL surface the bars cannot overlay content — a character
+		// cell holds a bar OR a glyph — so an active bar RESERVES its whole
+		// column (vertical) or row (horizontal) and the grid shrinks around
+		// it. Overlay is a pixel-surface luxury.
+		if t.terminal != nil && t.terminal.Buffer().GetMaxScrollOffset() > 0 {
+			width -= cw
+		}
+		if t.terminal != nil && t.hScrollActive() {
+			height -= ch
+		}
 	}
 	newCols := int(width / cw)
-	newRows := int(bounds.Height / ch)
+	newRows := int(height / ch)
 
 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {
 		t.cols = newCols
@@ -549,6 +556,11 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		t.paintGraphical(p, bounds)
 		return
 	}
+
+	// The scrollbar reservation depends on live buffer state (scrollback
+	// appears without any resize), so re-derive the grid before painting;
+	// updateTerminalSize no-ops when nothing changed.
+	t.updateTerminalSize()
 
 	// Get terminal cells
 	cells := t.terminal.GetCells()
@@ -624,6 +636,10 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 		}
 	}
 
+	if !t.editorMode {
+		t.paintScrollbarsCell(p, bounds)
+	}
+
 	// The cursor. A FOCUSED terminal asks the platform for its real caret, so
 	// the outer terminal draws the shape DECSCUSR selected and blinks it
 	// natively — a bar stays a bar, which no cell grid can represent. An
@@ -631,7 +647,12 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// its caret sits. Either way, a terminal that hid its own cursor (vim,
 	// emacs, mew between frames) gets neither.
 	if buf.IsCursorVisible() {
-		cursorCol, cursorRow := buf.GetCursor()
+		// The VISIBLE position, not the logical one: scrolled back, the
+		// cursor's row is off-screen and the visible position reports -1 —
+		// exactly what the graphical path consults. Using GetCursor here
+		// left the caret painted at its logical row while the view showed
+		// scrollback, tracking nothing.
+		cursorCol, cursorRow := buf.GetCursorVisiblePosition()
 		if cursorRow >= 0 && cursorRow < len(cells) && cursorCol >= 0 && cursorCol < t.cols {
 			// The logical cursor column maps to a visual column through the
 			// accumulated widths of the cells before it (doubled on a DEC
@@ -993,4 +1014,42 @@ func (t *PurfecTerm) AccessibleInfo() core.AccessibleInfo {
 	info.Role = core.RoleTerminal
 	info.Name = "Terminal"
 	return info
+}
+
+// paintScrollbarsCell draws the scrollbars on a CELL surface, in the
+// ScrollArea idiom: a '░' track one cell wide (or tall), a '█' thumb, whole
+// cells only. The grid has already RESERVED this column/row (see
+// updateTerminalSize) — on a cell surface a bar cannot overlay content, a
+// cell holds a bar or a glyph.
+func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) {
+	m := t.EffectiveCellMetrics()
+	cw, ch := m.CellWidth, m.CellHeight
+	if cw <= 0 || ch <= 0 {
+		return
+	}
+	trackStyle := style.DefaultStyle().WithFg(style.RGB(128, 128, 128))
+	thumbStyle := style.DefaultStyle().WithFg(style.RGB(200, 200, 200))
+
+	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
+		// Geometry is in render px, which on a cell surface is units
+		// (ppu 1). Snap to whole cells.
+		x := core.Unit(track.X) / cw * cw
+		p.FillRect(core.UnitRect{X: x, Y: 0, Width: cw, Height: core.Unit(track.H)}, '░', trackStyle)
+		y0 := core.Unit(thumb.Y) / ch * ch
+		y1 := core.Unit(thumb.Y+thumb.H+float64(ch)-1) / ch * ch
+		if y1 <= y0 {
+			y1 = y0 + ch
+		}
+		p.FillRect(core.UnitRect{X: x, Y: y0, Width: cw, Height: y1 - y0}, '█', thumbStyle)
+	}
+	if track, thumb, _, _, _, ok := t.hScrollGeometry(); ok {
+		y := core.Unit(track.Y) / ch * ch
+		p.FillRect(core.UnitRect{X: 0, Y: y, Width: core.Unit(track.W), Height: ch}, '░', trackStyle)
+		x0 := core.Unit(thumb.X) / cw * cw
+		x1 := core.Unit(thumb.X+thumb.W+float64(cw)-1) / cw * cw
+		if x1 <= x0 {
+			x1 = x0 + cw
+		}
+		p.FillRect(core.UnitRect{X: x0, Y: y, Width: x1 - x0, Height: ch}, '█', thumbStyle)
+	}
 }
