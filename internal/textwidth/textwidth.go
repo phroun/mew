@@ -171,18 +171,21 @@ func RenderableMark(r rune) bool {
 // dotted circle (U+25CC) — the Unicode convention for displaying an isolated
 // combining mark — rather than reduced to a hex substitute.
 //
-// It applies when the mark has no base of its own AND mew can draw it: the
-// dotted circle supplies the missing base, the mark composes onto it exactly
-// as shapers already do for defective clusters, and the pair occupies one
-// cell that both mew and the terminal agree on. The reader sees the real mark
-// instead of a number.
+// It applies to any defective mark mew can draw, whichever way it is
+// defective: no base at all, or a base of the wrong script. Either way the
+// mark has no legitimate carrier, so the dotted circle supplies one; the mark
+// composes onto it exactly as shapers already do for defective clusters, and
+// the pair occupies one cell that mew and the terminal agree on. The reader
+// sees the real mark instead of a number, and a mark stranded on a foreign
+// base is lifted onto a proper one rather than left to a shaper that would
+// refuse the pairing.
 //
 // A mark mew CANNOT draw gets no anchor: composing onto the circle would still
 // leave the terminal drawing .notdef for the mark itself, which is a spacing
 // glyph, and the overrun this whole classification exists to prevent would be
 // back. Those keep the hex form.
 func AnchorMark(prev, r rune) bool {
-	return prev == 0 && IsMark(r) && RenderableMark(r)
+	return DefectiveMark(prev, r) && RenderableMark(r)
 }
 
 // MarkAnchor is the base character an anchored mark is composed onto.

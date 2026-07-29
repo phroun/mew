@@ -56,3 +56,38 @@ func TestAnchoredMarkWidth(t *testing.T) {
 		t.Fatalf("width model says %d columns, paint produces 4", col)
 	}
 }
+
+// A script-specific mark stranded on a base of another script is lifted onto
+// a dotted circle too: it has no legitimate carrier where it sits, and no
+// shaper would compose the pairing.
+func TestMixedScriptMarkAnchors(t *testing.T) {
+	sr, w := testRenderer()
+
+	// Hebrew accent on a CJK ideograph.
+	out := stripAnsi(sr.prepareLineForDisplay("\u65e5\u0597k", "\n", 20, 0, w, 0, selectionRange{}, nil, nil))
+	if !strings.ContainsRune(out, textwidth.MarkAnchor) {
+		t.Fatalf("a hebrew accent on a CJK base should anchor; got %q", out)
+	}
+	if strings.Contains(out, "0597") {
+		t.Fatalf("it should show the mark, not its codepoint; got %q", out)
+	}
+	// CJK (2) + anchored accent (1) + "k" (1) = 4 columns.
+	if got := termCols(strings.TrimRight(out, " ")); got != 4 {
+		t.Fatalf("row measures %d columns, want 4 (out=%q)", got, out)
+	}
+
+	// Niqqud on a Latin letter.
+	out = stripAnsi(sr.prepareLineForDisplay("x\u05b0y", "\n", 20, 0, w, 0, selectionRange{}, nil, nil))
+	if !strings.ContainsRune(out, textwidth.MarkAnchor) {
+		t.Fatalf("niqqud on a Latin base should anchor; got %q", out)
+	}
+
+	// Well-formed pointed Hebrew is untouched: same script on both sides.
+	out = stripAnsi(sr.prepareLineForDisplay("\u05d0\u05b0\u05d1", "\n", 20, 0, w, 0, selectionRange{}, nil, nil))
+	if strings.ContainsRune(out, textwidth.MarkAnchor) {
+		t.Fatalf("well-formed pointed hebrew must not be anchored; got %q", out)
+	}
+	if got := termCols(strings.TrimRight(out, " ")); got != 2 {
+		t.Fatalf("pointed hebrew measures %d columns, want 2 (out=%q)", got, out)
+	}
+}

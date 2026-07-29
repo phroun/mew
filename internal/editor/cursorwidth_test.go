@@ -18,11 +18,11 @@ func TestRenderedCursorColumnComplexText(t *testing.T) {
 	// Prefix-sum columns per cursor rune position; both sides of a
 	// zero-width rune share a column (the mark overlays the base's cell).
 	// The Hebrew accent sits on a CJK ideograph — an ill-formed sequence no
-	// shaper composes — so it is classified like a control code and painted
-	// as "0597", four columns wide, rather than promised as zero-width and
-	// then rendered by the terminal as a spacing fallback that slides the
-	// rest of the row off the window. See textwidth.DefectiveMark.
-	wantCol := []int{0, 1, 1, 2, 2, 4, 8, 9}
+	// shaper composes — so it is lifted onto a dotted circle of its own
+	// (U+25CC, one cell) rather than promised as zero-width and then rendered
+	// by the terminal as a spacing fallback that slides the rest of the row
+	// off the window. See textwidth.AnchorMark.
+	wantCol := []int{0, 1, 1, 2, 2, 4, 5, 6}
 
 	for runePos, want := range wantCol {
 		e, w, out := newRenderedEditor(t, content)
