@@ -3,6 +3,7 @@
 package trinkets
 
 import (
+	"math"
 	"testing"
 
 	"github.com/phroun/kittytk/core"
@@ -29,17 +30,24 @@ func TestPointerCellMatchesMousePath(t *testing.T) {
 		t.Skip("no cell metrics")
 	}
 
-	for _, k := range []float64{1.0, 1.07, 0.94, 1.25} {
-		e.gfx.hitKX, e.gfx.hitKY = k, k
+	// ppu is the widget's one rate. At every value — including the fractional
+	// ones a zoom produces — the cell the pointer resolves to must be the cell
+	// whose PAINTED pixel span contains it, boundaries rounded exactly as
+	// fillPixels rounds them. A pure division by the fractional advance drifts
+	// across the row and misses hardest at the right-hand edge.
+	for _, ppu := range []float64{1.0, 1.07, 0.94, 1.25, 1.6667} {
+		e.gfx.ppu = ppu
 		for _, cell := range []int{0, 1, 17, 40, 78, 79} {
-			// A point in the middle of cell `cell` at the OUTER rate.
-			x := core.Unit((float64(cell) + 0.5) * float64(cw) / k)
-			col, _, ok := e.pointerCell(x, core.Unit(float64(chh)/2/k))
+			// The middle of the cell's painted span, back in units.
+			lo := math.Round(float64(cell) * float64(cw) * ppu)
+			hi := math.Round(float64(cell+1) * float64(cw) * ppu)
+			x := core.Unit((lo + hi) / 2 / ppu)
+			col, _, ok := e.pointerCell(x, core.Unit(float64(chh)/2))
 			if !ok {
 				t.Fatal("pointerCell should resolve with valid metrics")
 			}
 			if want := cell + 1; col != want {
-				t.Errorf("hitK=%.2f cell %d: pointerCell col=%d, want %d", k, cell, col, want)
+				t.Errorf("ppu=%.4f cell %d: pointerCell col=%d, want %d", ppu, cell, col, want)
 			}
 		}
 	}

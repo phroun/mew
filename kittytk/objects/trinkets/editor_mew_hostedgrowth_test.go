@@ -473,7 +473,7 @@ func TestHostedScrubIsSmoothAndProportional(t *testing.T) {
 		t.Fatal("no vertical scrollbar on the child")
 	}
 	cw, ch := e.cellDims()
-	kyppu := child.gfx.hitKY * child.gfx.ppu
+	kyppu := child.gfx.ppu
 	if kyppu <= 0 {
 		t.Fatal("no pointer scale cached")
 	}

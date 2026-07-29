@@ -638,16 +638,22 @@ func (e *Editor) pointerCell(x, y core.Unit) (col, row int, ok bool) {
 	if cw <= 0 || chh <= 0 {
 		return 0, 0, false
 	}
-	// hitK is 1 until a graphical paint computes it, so this needs no
-	// surface test — the guards below cover the unset case.
-	kx, ky := 1.0, 1.0
-	if e.gfx.hitKX > 0 {
-		kx = e.gfx.hitKX
+	// The same frame the grid is painted in: units times ppu, with each cell
+	// boundary rounded exactly as fillPixels rounds it. Walking the rounded
+	// boundaries is the only inverse that cannot drift across the row.
+	ppu := e.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
 	}
-	if e.gfx.hitKY > 0 {
-		ky = e.gfx.hitKY
+	px, py := float64(x)*ppu, float64(y)*ppu
+	col, row = 1, 1
+	for px >= cellBoundaryPx(float64(col)*float64(cw), ppu) {
+		col++
 	}
-	return int(float64(x)*kx/float64(cw)) + 1, int(float64(y)*ky/float64(chh)) + 1, true
+	for py >= cellBoundaryPx(float64(row)*float64(chh), ppu) {
+		row++
+	}
+	return col, row, true
 }
 
 // pointerInText reports whether the local point falls on the focused mew

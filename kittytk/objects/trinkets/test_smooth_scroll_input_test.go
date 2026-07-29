@@ -231,8 +231,8 @@ func TestGfxScrollbarSmoothThumbSnappedContent(t *testing.T) {
 
 	// The pointer arrives in OUTER units; the handlers convert to render px.
 	// Derive the outer positions from the px geometry with the same factors.
-	kyppu := term.gfx.hitKY * term.gfx.ppu
-	kxppu := term.gfx.hitKX * term.gfx.ppu
+	kyppu := term.gfx.ppu
+	kxppu := term.gfx.ppu
 	if kyppu <= 0 || kxppu <= 0 {
 		t.Fatal("no pointer scale cached")
 	}
