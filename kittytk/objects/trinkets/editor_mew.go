@@ -17,6 +17,7 @@ package trinkets
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -123,6 +124,12 @@ type Editor struct {
 	// AddChild): in the tree for parent-chain lookups, invisible to layout
 	// and hit testing.
 	hostedKids []core.Trinket
+
+	// lastSurfaceOffsetX/Y is the device-pixel residual the most recent
+	// paintTerminalSurfaces applied (see there). Recorded because the
+	// correction is invisible by construction — it exists to make a seam
+	// disappear — so this is what a test can measure instead of a screenshot.
+	lastSurfaceOffsetX, lastSurfaceOffsetY int
 
 	// Session plumbing.
 	inPipeR  *io.PipeReader
@@ -1292,11 +1299,46 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 	cell := func(col, row int) (core.Unit, core.Unit) {
 		return core.Unit(col-1) * cw, core.Unit(row-1) * ch
 	}
+	// A unit offset SNAPS to the host's cell grid on the way to pixels
+	// (Painter.deviceAnchor -> the backend's cell-snapped UnitToPxX), and this
+	// editor lays its own text out at the TERMINAL font's pitch instead —
+	// pixel-precise, from its own origin: fillPixels rounds col*cw*ppu and
+	// passes it as a pixel offset from unit (0,0). The two rates are not
+	// multiples of each other, so placing a child by unit offset alone lands
+	// its origin up to a fraction of a host cell away from the column it is
+	// meant to cover, and the error is visible as a hairline seam that grows
+	// across the row.
+	//
+	// So measure both and correct the difference in pixels: where the unit
+	// offset actually lands (UnitSpanPxX, which asks the SAME snapping
+	// question the transform will), against where this editor's own cell math
+	// puts that column. When the two rates agree — an integer
+	// pixels-per-unit, or a terminal font on the host's pitch — the residual
+	// is zero and nothing moves.
+	ppu := p.PxPerUnitF()
+	residual := func(unitPos core.Unit, cells int, cellSize core.Unit) int {
+		if ppu <= 0 {
+			return 0
+		}
+		want := int(math.Round(float64(cells) * float64(cellSize) * ppu))
+		return want - p.UnitSpanPxX(0, unitPos)
+	}
+	residualY := func(unitPos core.Unit, cells int, cellSize core.Unit) int {
+		if ppu <= 0 {
+			return 0
+		}
+		want := int(math.Round(float64(cells) * float64(cellSize) * ppu))
+		return want - p.UnitSpanPxY(0, unitPos)
+	}
+
 	for _, s := range visible {
 		x, y := cell(s.col, s.row)
 		w := core.Unit(s.width) * cw
 		h := core.Unit(s.height) * ch
 		s.term.SetBounds(core.UnitRect{X: x, Y: y, Width: w, Height: h})
+		offXPx := residual(x, s.col-1, cw)
+		offYPx := residualY(y, s.row-1, ch)
+		e.lastSurfaceOffsetX, e.lastSurfaceOffsetY = offXPx, offYPx
 
 		// The painter is offset to the GRID's origin, so the terminal draws
 		// from its own 0,0 — but clipped to the visible rectangle expressed
@@ -1309,7 +1351,11 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 			Width:  core.Unit(s.clipWidth) * cw,
 			Height: core.Unit(s.clipHeight) * ch,
 		}
-		s.term.Paint(p.WithOffset(x, y).WithClip(clip))
+		// The clip is a UNIT rectangle and stays one: the residual is sub-cell,
+		// so it must not move the clip (which would shave a pixel column off
+		// one edge and reveal one at the other). Pixels for the content,
+		// units for the boundary.
+		s.term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
 	}
 	// A child settles its grid during that paint. Make sure the declaration
 	// gets away even if the session's port was not up when it did.

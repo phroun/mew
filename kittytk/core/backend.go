@@ -564,6 +564,20 @@ type Painter struct {
 	roundClip       UnitRect
 	roundClipRadius Unit
 
+	// offXPx/offYPx is a device-pixel RESIDUAL added to every pixel-precise
+	// anchor this painter resolves (see deviceAnchor). The unit transform
+	// snaps to the backend's cell grid, which is right for chrome and wrong
+	// for content laid out at a different pitch: a subtree whose interior
+	// steps by its own font's cell would be anchored on the host's grid and
+	// drift from the text around it by a fraction of a cell. The residual is
+	// how such a subtree says "and then this many pixels", exactly as the
+	// drawing primitives already take offXPx per call.
+	//
+	// It deliberately does NOT affect the unit transform: clipping, hit
+	// testing and whole-unit drawing are unchanged, and a span
+	// (UnitSpanPxX/Y) is a difference of two anchors, so it cancels.
+	offXPx, offYPx int
+
 	// caret is the frame's platform text-caret request slot, shared by every
 	// painter derived from this one (see textcaret.go).
 	caret *caretSink
@@ -911,11 +925,26 @@ func (p *Painter) UnitSpanPxY(fromY, toY Unit) int {
 // device-pixel fills line up with painted edges.
 func (p *Painter) deviceAnchor(sx, sy Unit) (int, int) {
 	if m, ok := p.backend.(UnitPixelMapper); ok {
-		return m.UnitToPxX(sx), m.UnitToPxY(sy)
+		return m.UnitToPxX(sx) + p.offXPx, m.UnitToPxY(sy) + p.offYPx
 	}
 	scale := p.DeviceScale()
-	return int(sx) * scale, int(sy) * scale
+	return int(sx)*scale + p.offXPx, int(sy)*scale + p.offYPx
 }
+
+// WithPixelOffset returns a painter whose pixel-precise anchors are shifted
+// by (dxPx, dyPx) device pixels, ADDED to any residual already in force so
+// nested subtrees compose. See Painter.offXPx for what this is for and what
+// it deliberately leaves alone.
+func (p *Painter) WithPixelOffset(dxPx, dyPx int) *Painter {
+	np := *p
+	np.offXPx += dxPx
+	np.offYPx += dyPx
+	return &np
+}
+
+// PixelOffset reports the residual in force, so a caller can measure its own
+// contribution against it.
+func (p *Painter) PixelOffset() (int, int) { return p.offXPx, p.offYPx }
 
 // SetSnapOrigin anchors the backend's cell snapping at unit (ux, uy) when
 // the backend supports it (graphical surfaces), returning the previous

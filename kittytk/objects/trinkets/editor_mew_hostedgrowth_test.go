@@ -4,6 +4,7 @@ package trinkets
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"testing"
 
@@ -186,5 +187,70 @@ func TestHostedTerminalDeclaresItsSettledGrid(t *testing.T) {
 	e.paintTerminalSurfaces(p)
 	if again := e.takeTermGrids(); len(again) != 0 {
 		t.Errorf("re-declared an unchanged grid: %v", again)
+	}
+}
+
+// The hosted child's origin must land where THIS EDITOR puts the column it
+// covers, not where the host's cell grid happens to snap.
+//
+// A unit offset resolves through the backend's cell-snapped UnitToPxX; this
+// editor lays its own text out at the terminal font's pitch, pixel-precise
+// from its own origin. Where the two rates disagree — the ordinary case, a
+// terminal font on a host grid — a child placed by unit offset alone sits a
+// fraction of a cell off the text it covers, and the error grows across the
+// row. paintTerminalSurfaces measures both and corrects the difference.
+func TestHostedSurfaceLandsOnItsColumn(t *testing.T) {
+	b, err := raster.NewScaled(800, 400, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	b.SetFontSize(13) // a size whose cell need not divide the host grid
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+
+	gp := &gfxFrameParent{}
+	gp.TrinketBase = *core.NewTrinketBase()
+	gp.Init(gp)
+	e := NewEditor()
+	e.SetParent(gp)
+	e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 300, Height: 80})
+
+	cw, ch := e.cellDims()
+	ppu := p.PxPerUnitF()
+	if cw <= 0 || ch <= 0 || ppu <= 0 {
+		t.Skip("no usable cell metrics")
+	}
+
+	// Place a surface well along the row and down the screen, where any
+	// per-cell drift has accumulated into something visible.
+	const col, row = 37, 11
+	e.terminalOpen("pty1", 20, 5)
+	e.terminalPlace([]mew.TerminalSurface{{
+		ID: "pty1", Col: col, Row: row, Width: 20, Height: 5,
+		ClipCol: col, ClipRow: row, ClipWidth: 20, ClipHeight: 5,
+	}})
+	e.paintTerminalSurfaces(p)
+
+	// Where this editor's own arithmetic puts that column/row...
+	wantX := int(math.Round(float64(col-1) * float64(cw) * ppu))
+	wantY := int(math.Round(float64(row-1) * float64(ch) * ppu))
+	// ...versus where the child's painter actually anchors: the snapped unit
+	// offset plus the residual paintTerminalSurfaces computed.
+	unitX := core.Unit(col-1) * cw
+	unitY := core.Unit(row-1) * ch
+	gotX := p.UnitSpanPxX(0, unitX) + e.lastSurfaceOffsetX
+	gotY := p.UnitSpanPxY(0, unitY) + e.lastSurfaceOffsetY
+
+	if gotX != wantX {
+		t.Errorf("column %d anchors at %d px, want %d (off by %d)", col, gotX, wantX, gotX-wantX)
+	}
+	if gotY != wantY {
+		t.Errorf("row %d anchors at %d px, want %d (off by %d)", row, gotY, wantY, gotY-wantY)
 	}
 }
