@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -55,7 +56,18 @@ func cellRuneWidth(r rune) int {
 	if r == 0 {
 		return 1
 	}
-	if purfecterm.IsCombiningMark(r) {
+	// purfecterm's IsCombiningMark is a hand-written range list. It covers the
+	// common diacritic blocks, Hebrew and Arabic, but misses the great majority
+	// of Unicode's non-spacing marks — NKo, Tibetan, Myanmar, Mongolian,
+	// Balinese and dozens of other scripts. A mark it misses is given a cell of
+	// its own here, so every later cell on the row lands one column late and
+	// the line drifts. Fall back to the Unicode categories, which are the
+	// authority the range list is approximating.
+	//
+	// Mn and Me only: category Mc marks are SPACING combining marks that do
+	// occupy a cell. (An upstream fix is proposed in
+	// docs/upstream/purfecterm-combining-marks.md.)
+	if purfecterm.IsCombiningMark(r) || unicode.In(r, unicode.Mn, unicode.Me) {
 		return 0
 	}
 	if w := purfecterm.GetEastAsianWidth(r); w >= 1.5 {

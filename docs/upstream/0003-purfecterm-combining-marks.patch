@@ -1,0 +1,48 @@
+--- a/cell.go
++++ b/cell.go
+@@ -1,5 +1,7 @@
+ package purfecterm
+ 
++import "unicode"
++
+ // UnderlineStyle represents different underline rendering styles
+ type UnderlineStyle int
+ 
+@@ -53,12 +55,23 @@
+ 	return string(c.Char) + c.Combining
+ }
+ 
+-// IsCombiningMark returns true if the rune is a Unicode combining character.
++// IsCombiningMark returns true if the rune is a Unicode combining character —
++// one that carries no cell of its own and paints into the preceding one.
+ // This includes:
+ // - Combining Diacritical Marks (0x0300-0x036F)
+ // - Hebrew vowel points and marks (0x0591-0x05C7)
+ // - Arabic marks (0x0610-0x065F, 0x0670, 0x06D6-0x06ED)
+-// - Other combining marks (Mn, Mc, Me categories)
++// - EVERY non-spacing mark in Unicode (categories Mn and Me)
++// - Format characters that ride a cluster: ZWJ/ZWNJ, variation selectors,
++//   and the Hangul Jamo filler range
++//
++// The explicit ranges below are kept because several of them are NOT Mn/Me
++// (the Jamo fillers are Lo, the joiners and variation selectors are Cf), and
++// because some callers rely on their exact membership. The category test at
++// the end covers everything else: the hand-written list reached only about a
++// quarter of Unicode's non-spacing marks, so scripts such as NKo, Tibetan,
++// Myanmar, Mongolian and Balinese were each given a cell of their own and
++// every later cell on the row landed one column late.
+ func IsCombiningMark(r rune) bool {
+ 	// Common combining diacritical marks
+ 	if r >= 0x0300 && r <= 0x036F {
+@@ -141,7 +154,10 @@
+ 	if r == 0x200C || r == 0x200D {
+ 		return true
+ 	}
+-	return false
++	// Everything else: ask Unicode. Mn (non-spacing) and Me (enclosing) marks
++	// advance no columns. Mc is deliberately excluded — those are SPACING
++	// combining marks and do occupy a cell.
++	return unicode.In(r, unicode.Mn, unicode.Me)
+ }
+ 
+ // EastAsianWidth represents the Unicode East Asian Width property
