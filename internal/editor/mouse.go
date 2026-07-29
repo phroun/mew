@@ -589,8 +589,8 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 	layout := e.layoutFor(w, runes)
 	if layout == nil {
 		col := 0
-		for i, r := range runes {
-			wd := e.getRuneVisualWidth(r, col, tabSize)
+		for i := range runes {
+			wd := e.runeWidthAt(runes, i, col, tabSize)
 			if target < col+wd {
 				return i
 			}

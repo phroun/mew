@@ -4821,7 +4821,7 @@ func (e *Editor) runeToVisualColumnMarked(runes []rune, marked map[int]bool, run
 		if i == runePos {
 			return col
 		}
-		col += e.getRuneVisualWidth(runes[i], col, tabSize)
+		col += e.runeWidthAt(runes, i, col, tabSize)
 	}
 	// runePos at/after end of line: include a trailing mark so the column agrees
 	// with the inverse walk (visualColumnToRuneMarked).
@@ -4867,8 +4867,7 @@ func (e *Editor) runeToVisualColumnBase(w *viewport.Viewport, line string, runeP
 
 	column := 0
 	for i := 0; i < maxRune; i++ {
-		r := runes[i]
-		runeWidth := e.getRuneVisualWidth(r, column, tabSize)
+		runeWidth := e.runeWidthAt(runes, i, column, tabSize)
 		column += runeWidth
 	}
 
@@ -5029,11 +5028,11 @@ func (e *Editor) lineVisualWidth(w *viewport.Viewport, line string, tabSize int)
 	layout := e.layoutFor(w, runes)
 	if layout == nil {
 		vw := 0
-		for i, r := range runes {
+		for i := range runes {
 			if marked[i] {
 				vw++
 			}
-			vw += e.getRuneVisualWidth(r, vw, tabSize)
+			vw += e.runeWidthAt(runes, i, vw, tabSize)
 		}
 		if marked[len(runes)] {
 			vw++
@@ -5164,8 +5163,7 @@ func (e *Editor) visualColumnToRune(w *viewport.Viewport, line string, targetCol
 	column := 0
 
 	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		runeWidth := e.getRuneVisualWidth(r, column, tabSize)
+		runeWidth := e.runeWidthAt(runes, i, column, tabSize)
 
 		// If adding this rune would go past the target, return current position
 		if column+runeWidth > targetColumn {
@@ -5220,7 +5218,7 @@ func (e *Editor) visualColumnToRuneMarked(runes []rune, marked map[int]bool, tar
 		if i == len(runes) {
 			break
 		}
-		rw := e.getRuneVisualWidth(runes[i], col, tabSize)
+		rw := e.runeWidthAt(runes, i, col, tabSize)
 		if targetColumn < col+rw {
 			return visualColumnToRuneResult{Rune: i, ActualColumn: col}
 		}
@@ -5261,8 +5259,7 @@ func (e *Editor) visualColumnToRuneWithActualBase(w *viewport.Viewport, line str
 	column := 0
 
 	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		runeWidth := e.getRuneVisualWidth(r, column, tabSize)
+		runeWidth := e.runeWidthAt(runes, i, column, tabSize)
 
 		// If adding this rune would go past the target, return current position
 		if column+runeWidth > targetColumn {
@@ -5293,6 +5290,37 @@ func (e *Editor) getRuneVisualWidth(r rune, currentColumn int, tabSize int) int 
 		return 2
 	}
 	return textwidth.Rune(r)
+}
+
+// runeWidthAt measures runes[i] with its cluster base in hand, so an
+// ill-formed combining mark (see textwidth.DefectiveMark) measures as the
+// hex substitute the renderer paints for it rather than the zero cells a
+// well-formed mark takes. Every caret/column walk goes through here, so the
+// editor's math and the screen agree on where a defective mark's cells are.
+func (e *Editor) runeWidthAt(runes []rune, i, currentColumn, tabSize int) int {
+	r := runes[i]
+	if textwidth.IsMark(r) {
+		var base rune
+		for j := i - 1; j >= 0; j-- {
+			if !textwidth.IsMark(runes[j]) {
+				base = runes[j]
+				break
+			}
+		}
+		if textwidth.DefectiveMark(base, r) {
+			return len(runeHexSubstitute(r))
+		}
+	}
+	return e.getRuneVisualWidth(r, currentColumn, tabSize)
+}
+
+// runeHexSubstitute mirrors the renderer's substitute text for a defective
+// combining mark: the codepoint's hex form, one ASCII column per character.
+func runeHexSubstitute(r rune) string {
+	if int(r) <= 0xFF {
+		return fmt.Sprintf("%02X", int(r))
+	}
+	return fmt.Sprintf("%04X", int(r))
 }
 
 // bidiControlRune maps a short bidi-control name to its Unicode code point.

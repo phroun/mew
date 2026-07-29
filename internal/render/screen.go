@@ -1256,6 +1256,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		return layout != nil && li >= 0 && li < len(layout.RTL) && layout.RTL[li]
 	}
 
+	// prevBase is the base character a combining mark at logical index li
+	// would attach to: the nearest preceding rune that is not itself a mark
+	// (a cluster may stack several marks on one base). 0 when the mark opens
+	// the line and has nothing to anchor onto. Feeds textwidth.DefectiveMark.
+	prevBase := func(li int) rune {
+		for j := li - 1; j >= 0; j-- {
+			if !textwidth.IsMark(runes[j]) {
+				return runes[j]
+			}
+		}
+		return 0
+	}
+
 	// Arabic cursive shaping lives on the layout (Layout.Glyph): each Arabic
 	// letter is substituted with its contextual presentation form (computed
 	// in LOGICAL order), and lam-alef pairs become one ligature glyph on the
@@ -1585,7 +1598,20 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		} else if r < 0x20 || r == 0x7F {
 			// Control characters as ^X format (including DEL)
 			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
-			runeVisualWidth = 2
+			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
+		} else if textwidth.DefectiveMark(prevBase(logicalIdx), r) {
+			// An ill-formed combining mark — no base to anchor onto, or a
+			// script-specific mark riding a base of another script. It is
+			// corruption, not text, and it CANNOT be painted as zero-width:
+			// a terminal whose shaper rejects the pairing falls back to a
+			// SPACING glyph (.notdef, or dotted-circle + mark) that advances
+			// a column mew never budgeted, sliding the rest of the row right
+			// and bleeding it past the window edge. So it is classified like
+			// a control code: a definite-width hex substitute, in the
+			// substitutes color, that both mew and the terminal measure the
+			// same. See textwidth.DefectiveMark.
+			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
+			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
 		} else {
 			// Regular UTF-8 rune: terminal cell width (0 for combining and
 			// zero-width characters, 2 for wide CJK/emoji, 1 otherwise). A
@@ -1833,10 +1859,18 @@ func runeToHexOrCtrl(r rune) string {
 		default:
 			return "^" + string(rune(value+64))
 		}
-	} else {
+	} else if value <= 0xFF {
 		return fmt.Sprintf("%02X", value)
 	}
+	// Beyond Latin-1 the codepoint needs its full hex form (a defective
+	// combining mark, see textwidth.DefectiveMark, is substituted this way).
+	return fmt.Sprintf("%04X", value)
 }
+
+// substituteWidth is the column count of a substitute string — always plain
+// ASCII, one column per rune. The renderer measures every substitute this way
+// so the width model and the painted glyphs can never disagree.
+func substituteWidth(s string) int { return len([]rune(s)) }
 
 // renderPeekIndicators renders peek indicators for scrolled dock viewports.
 // These hints live at the viewport-manager level, not inside any viewport, so
@@ -2380,8 +2414,7 @@ func (sr *ScreenRenderer) runeToVisualColumn(line string, runePos int, w *viewpo
 
 	column := 0
 	for i := 0; i < maxRune; i++ {
-		r := runes[i]
-		runeWidth := sr.getRuneVisualWidth(r, column, w)
+		runeWidth := sr.runeWidthAt(runes, i, column, w)
 		column += runeWidth
 	}
 
@@ -2462,7 +2495,7 @@ func (sr *ScreenRenderer) runeToVisualColumnMarked(runes []rune, marked map[int]
 		if i == runePos {
 			return col
 		}
-		col += sr.getRuneVisualWidth(runes[i], col, w)
+		col += sr.runeWidthAt(runes, i, col, w)
 	}
 	if marked[len(runes)] {
 		col++
@@ -2582,11 +2615,11 @@ func (sr *ScreenRenderer) lineVisualWidth(w *viewport.Viewport, line string) int
 		return total
 	}
 	vw := 0
-	for i, r := range runes {
+	for i := range runes {
 		if marked[i] {
 			vw++
 		}
-		vw += sr.getRuneVisualWidth(r, vw, w)
+		vw += sr.runeWidthAt(runes, i, vw, w)
 	}
 	if marked[len(runes)] {
 		vw++
@@ -2619,8 +2652,8 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *viewport.Viewport, width 
 			vw += sr.slotWidth(layout, runes, li, vw, w)
 		}
 	} else {
-		for _, r := range runes {
-			vw += sr.getRuneVisualWidth(r, vw, w)
+		for i := range runes {
+			vw += sr.runeWidthAt(runes, i, vw, w)
 		}
 	}
 	// Terminator markers are deliberately NOT counted: under rtl they paint
@@ -2690,9 +2723,32 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewp
 		return tabSize - (currentColumn % tabSize)
 	} else if r < 0x20 || r == 0x7F {
 		// Control characters displayed as ^X (2 characters wide)
-		return 2
+		return substituteWidth(runeToHexOrCtrl(r))
 	}
 	return textwidth.Rune(r)
+}
+
+// runeWidthAt measures runes[i] with its cluster base in hand, so an
+// ill-formed combining mark measures as the substitute prepareLineForDisplay
+// actually paints for it (see textwidth.DefectiveMark) instead of the zero
+// cells a well-formed mark would take. Every loop that walks a line for
+// column math goes through here; a bare getRuneVisualWidth call has no base
+// context and assumes a well-formed sequence.
+func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *viewport.Viewport) int {
+	r := runes[i]
+	if textwidth.IsMark(r) {
+		var base rune
+		for j := i - 1; j >= 0; j-- {
+			if !textwidth.IsMark(runes[j]) {
+				base = runes[j]
+				break
+			}
+		}
+		if textwidth.DefectiveMark(base, r) {
+			return substituteWidth(runeToHexOrCtrl(r))
+		}
+	}
+	return sr.getRuneVisualWidth(r, currentColumn, w)
 }
 
 // lineHasZeroWidth reports whether s contains any zero-width rune (a combining
