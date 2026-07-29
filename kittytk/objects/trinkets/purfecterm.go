@@ -330,7 +330,7 @@ func (t *PurfecTerm) EditorMode() bool { return t.editorMode }
 // overScrollLane reports whether a local point falls in either scrollbar
 // track, mirroring scrollbarPress's hit tests.
 func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
-	if t.editorMode || !t.gfxInputActive() {
+	if !t.scrollLanesActive() {
 		return false // lanes exist only where they are painted
 	}
 	px, py := t.gfxPointerPx(x, y)
@@ -1027,8 +1027,12 @@ func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) 
 	if cw <= 0 || ch <= 0 {
 		return
 	}
-	trackStyle := style.DefaultStyle().WithFg(style.RGB(128, 128, 128))
-	thumbStyle := style.DefaultStyle().WithFg(style.RGB(200, 200, 200))
+	// The same styles the ScrollBar trinket paints with (ScrollArea's
+	// bars), so terminal bars match the rest of the TUI. On a cell surface
+	// the hover state never paints (see ScrollBar.paintHorizontal).
+	scheme := t.GetScheme()
+	trackStyle := scheme.GetScrollbar()
+	thumbStyle := scheme.GetScrollbarThumbState(false)
 
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
 		// Geometry is in render px, which on a cell surface is units

@@ -193,6 +193,14 @@ func (t *PurfecTerm) gfxInputActive() bool {
 	return t.terminal != nil && core.FindGraphicalFrames(t)
 }
 
+// scrollLanesActive reports whether scrollbar lanes exist to interact
+// with. Both surfaces have them — the graphical one overlays pixel lanes,
+// the cell one reserves whole cells (see updateTerminalSize) — everywhere
+// but editor mode, which reclaims the lane for text.
+func (t *PurfecTerm) scrollLanesActive() bool {
+	return t.terminal != nil && !t.editorMode
+}
+
 // termColorScheme builds the terminal's color scheme from the app's
 // theme palettes: both the dark and light 16-color palettes (in ANSI
 // order, which purfecterm indexes by) plus each theme's default
@@ -1852,7 +1860,13 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 	}
 	track = pxRect{X: wPx - laneX, Y: 0, W: laneX, H: trackH}
 	thumbLen := track.H * float64(page) / float64(upper)
-	if min := 8 * ppu; thumbLen < min {
+	// Minimum grab target: 8 device px on a graphical surface, one whole
+	// cell on a cell surface (where 8*ppu would mean 8 rows).
+	min := 8 * ppu
+	if !t.gfxInputActive() {
+		min = laneY
+	}
+	if thumbLen < min {
 		thumbLen = min
 	}
 	if thumbLen > track.H {
@@ -1908,7 +1922,13 @@ func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, val
 	}
 	track = pxRect{X: 0, Y: hPx - laneY, W: wPx - laneX, H: laneY}
 	thumbLen := track.W * float64(cols) / float64(contentW)
-	if min := 8 * ppu; thumbLen < min {
+	// Same minimum rule as the vertical bar: 8 px graphical, one cell on
+	// a cell surface.
+	min := 8 * ppu
+	if !t.gfxInputActive() {
+		min = laneX
+	}
+	if thumbLen < min {
 		thumbLen = min
 	}
 	if thumbLen > track.W {
@@ -1985,7 +2005,7 @@ func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, b
 // updateScrollbarHoverGfx tracks whether the pointer is over either
 // scrollbar thumb, repainting only on change.
 func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
-	if !t.gfxInputActive() {
+	if !t.scrollLanesActive() {
 		return
 	}
 	px, py := t.gfxPointerPx(x, y)
@@ -2006,8 +2026,8 @@ func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
 // scrollbarPress starts a scrollbar drag if the press lands in a
 // lane. Returns true when consumed.
 func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
-	if !t.gfxInputActive() {
-		return false // no lanes are painted on the cell surface
+	if !t.scrollLanesActive() {
+		return false // no lanes to press (editor mode reclaims them)
 	}
 	px, py := t.gfxPointerPx(event.X, event.Y)
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok &&
