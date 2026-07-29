@@ -5285,9 +5285,10 @@ func (e *Editor) getRuneVisualWidth(r rune, currentColumn int, tabSize int) int 
 	if r == '\t' {
 		// Tab width to next tab stop
 		return tabSize - (currentColumn % tabSize)
-	} else if r < 0x20 || r == 0x7F {
-		// Control characters displayed as ^X (2 characters wide)
-		return 2
+	} else if textwidth.IsControl(r) {
+		// Control characters displayed as ^X / hex — C0, DEL, and the C1 set
+		// U+0080..U+009F (see textwidth.IsControl).
+		return len(runeHexSubstitute(r))
 	}
 	return textwidth.Rune(r)
 }

@@ -75,3 +75,26 @@ func TestIsMark(t *testing.T) {
 		}
 	}
 }
+
+// C1 controls (U+0080..U+009F) must be classified. They arrive as ordinary
+// two-byte UTF-8 and no width table calls them special, but a terminal
+// decoding UTF-8 honors them — and the range holds the string introducers
+// (DCS/SOS/CSI/ST/OSC/PM/APC), any of which makes the terminal swallow the
+// rest of the line.
+func TestIsControl(t *testing.T) {
+	for _, r := range []rune{0x00, 0x01, 0x0B, 0x1B, 0x1C, 0x1F, 0x7F} {
+		if !IsControl(r) {
+			t.Errorf("U+%04X (C0/DEL) should be a control", r)
+		}
+	}
+	for _, r := range []rune{0x80, 0x90, 0x94, 0x9B, 0x9C, 0x9D, 0x9F} {
+		if !IsControl(r) {
+			t.Errorf("U+%04X (C1) should be a control", r)
+		}
+	}
+	for _, r := range []rune{' ', 'a', 0x7E, 0xA0, 0xFF, 0x65E5, 0xFFFD} {
+		if IsControl(r) {
+			t.Errorf("U+%04X should not be a control", r)
+		}
+	}
+}

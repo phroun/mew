@@ -59,6 +59,22 @@ var renderableMarkScripts = []*unicode.RangeTable{
 	unicode.Latin,
 }
 
+// IsControl reports whether r is a control character that must never reach the
+// terminal as itself: the C0 set and DEL, and — just as important — the C1 set
+// U+0080..U+009F.
+//
+// C1 is easy to miss because those codepoints arrive as ordinary two-byte
+// UTF-8 (U+0094 is C2 94) and no width table calls them special. But a
+// terminal decoding UTF-8 honors them as controls, and the range contains the
+// STRING INTRODUCERS: DCS (U+0090), SOS (U+0098), CSI (U+009B), ST (U+009C),
+// OSC (U+009D), PM (U+009E), APC (U+009F). One of those emitted from a binary
+// file makes the terminal swallow everything after it as a control string —
+// the rest of the line vanishes — until a terminator that may never come.
+// mew renders every one of these as a visible substitute instead.
+func IsControl(r rune) bool {
+	return r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F)
+}
+
 // IsMark reports whether r is a combining mark — a codepoint that carries no
 // cell of its own and paints into the preceding one.
 func IsMark(r rune) bool {

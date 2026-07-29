@@ -10,6 +10,12 @@ import (
 
 const nkoTone = "߭" // NKo combining short rising tone
 
+// C1 controls, written as escapes — they are invisible in source otherwise.
+const (
+	c1CCH = "\u0094" // CANCEL CHARACTER
+	c1OSC = "\u009D" // OPERATING SYSTEM COMMAND — a string introducer
+)
+
 // termCols is what a real terminal advances for a rendered row.
 func termCols(s string) int {
 	total := 0
@@ -60,7 +66,7 @@ func TestDefectiveMarkWidthMatchesPaint(t *testing.T) {
 // Every row a viewport paints must occupy exactly the width it was given —
 // the invariant a spacing fallback glyph breaks.
 func TestDefectiveMarkRowsStayInBounds(t *testing.T) {
-	line := "9 ." + nkoTone + "Q$;& &=G֣;y"
+	line := "9 ." + nkoTone + "Q$;& &=G֗;y"
 	for _, cfg := range []struct {
 		name string
 		mut  func(w *viewport.Viewport)
@@ -80,5 +86,35 @@ func TestDefectiveMarkRowsStayInBounds(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A C1 control never reaches the terminal: it is substituted like any other
+// control code, and it is MEASURED (it was silently zero-width before, so it
+// also threw the row's column math off).
+func TestC1ControlSubstituted(t *testing.T) {
+	sr, w := testRenderer()
+	line := "a" + c1CCH + "b" + c1OSC + "c"
+	out := stripAnsi(sr.prepareLineForDisplay(line, "\n", 20, 0, w, 0, selectionRange{}, nil, nil))
+	for _, r := range out {
+		if r >= 0x80 && r <= 0x9F {
+			t.Fatalf("raw C1 control U+%04X reached the terminal: %q", r, out)
+		}
+	}
+	if !strings.Contains(out, "94") || !strings.Contains(out, "9D") {
+		t.Fatalf("C1 controls should paint as their hex codepoints; got %q", out)
+	}
+	// "a" + "94" + "b" + "9D" + "c" = 7 columns.
+	if got := termCols(strings.TrimRight(out, " ")); got != 7 {
+		t.Fatalf("row measures %d columns, want 7 (out=%q)", got, out)
+	}
+	// The width model agrees with the paint.
+	runes := []rune(line)
+	col := 0
+	for i := range runes {
+		col += sr.runeWidthAt(runes, i, col, w)
+	}
+	if col != 7 {
+		t.Fatalf("width model says %d columns, paint produces 7", col)
 	}
 }

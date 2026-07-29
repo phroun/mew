@@ -1595,8 +1595,11 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// Carriage return marker (appended terminator).
 			runeDisplay = invisiblesColor + sr.indicators.VisibleReturn + baseColor
 			runeVisualWidth = 1
-		} else if r < 0x20 || r == 0x7F {
-			// Control characters as ^X format (including DEL)
+		} else if textwidth.IsControl(r) {
+			// Control characters as ^X / hex format — the C0 set, DEL, and
+			// the C1 set U+0080..U+009F, which arrives as ordinary UTF-8 but
+			// carries the terminal's string introducers (see
+			// textwidth.IsControl).
 			runeDisplay = substitutesColor + runeToHexOrCtrl(r) + baseColor
 			runeVisualWidth = substituteWidth(runeToHexOrCtrl(r))
 		} else if textwidth.DefectiveMark(prevBase(logicalIdx), r) {
@@ -2721,8 +2724,8 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewp
 	if r == '\t' {
 		tabSize := sr.getTabSize(w)
 		return tabSize - (currentColumn % tabSize)
-	} else if r < 0x20 || r == 0x7F {
-		// Control characters displayed as ^X (2 characters wide)
+	} else if textwidth.IsControl(r) {
+		// Control characters displayed as ^X / hex (C0, DEL, and C1)
 		return substituteWidth(runeToHexOrCtrl(r))
 	}
 	return textwidth.Rune(r)
