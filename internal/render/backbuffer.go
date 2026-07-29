@@ -115,6 +115,10 @@ type bbCell struct {
 	style string // exact SGR bytes for this cell ("" == default)
 	width int8   // 1 or 2 for a base cell; 0 for a continuation; -1 == sentinel
 	cont  bool   // right half of a wide glyph
+	// reanchor marks a cell whose glyph advances the TERMINAL's cursor by an
+	// amount mew cannot predict, so the cursor is re-addressed after it rather
+	// than assumed. See putRune.
+	reanchor bool
 }
 
 const defaultStyleSeq = "\x1b[0m"
@@ -364,7 +368,15 @@ func (b *backBuffer) putRune(r rune) {
 		row[last+1] = bbCell{width: 1}
 	}
 
-	row[x] = bbCell{runes: []rune{r}, style: b.penStyle, width: int8(w)}
+	// The dotted circle mew anchors a defective combining mark on is East
+	// Asian AMBIGUOUS, and the mark riding it may be one the terminal has no
+	// glyph for and answers with a spacing .notdef. Either way the terminal
+	// may advance two columns where mew budgeted one — and every later cell in
+	// the span would then be misplaced, leaving the row's tail unpainted in
+	// the terminal's own background. Flag the cell so present() re-addresses
+	// the cursor after it instead of counting on the advance.
+	row[x] = bbCell{runes: []rune{r}, style: b.penStyle, width: int8(w),
+		reanchor: r == textwidth.MarkAnchor}
 	if w == 2 && x+1 < b.w {
 		row[x+1] = bbCell{style: b.penStyle, width: 0, cont: true}
 	}
@@ -565,6 +577,13 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 				}
 				x += wd
 				termRow, termCol = y, x
+				if nc.reanchor {
+					// Its advance is not ours to predict: forget where the
+					// terminal cursor is, so the next changed cell is placed
+					// with an explicit CUP.
+					termRow, termCol = -1, -1
+					break
+				}
 			}
 		}
 	}
