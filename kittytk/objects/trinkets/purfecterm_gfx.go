@@ -1786,10 +1786,28 @@ func (t *PurfecTerm) gfxPointerPx(x, y core.Unit) (float64, float64) {
 	return float64(x) * kx * ppu, float64(y) * ky * ppu
 }
 
+// hScrollActive reports whether the horizontal bar has anything to show —
+// the presence test hScrollGeometry applies, shared so the vertical lane can
+// stop where the horizontal one begins.
+func (t *PurfecTerm) hScrollActive() bool {
+	buf := t.terminal.Buffer()
+	cols, _ := buf.GetSize()
+	maxContentWidth := 0
+	if buf.GetScrollOffset() > 0 {
+		maxContentWidth = buf.GetLongestLineVisible()
+	}
+	if w := buf.GetSplitContentWidth(); w > maxContentWidth {
+		maxContentWidth = w
+	}
+	return maxContentWidth > cols
+}
+
 // vScrollGeometry mirrors gtk updateScrollbar: upper = maxOffset+rows,
 // page = rows, value = maxOffset-offset (top of track = oldest). All
-// rectangles in render pixels; both lanes share one pixel width so their
-// junction forms a square.
+// rectangles in render pixels; both lanes share one pixel width, and when
+// both bars are present the vertical lane STOPS at the horizontal lane's
+// top edge — each bar ends where the other begins, and the corner square
+// between them is left to the backdrop rather than fought over.
 func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value int, ok bool) {
 	buf := t.terminal.Buffer()
 	maxOffset := buf.GetMaxScrollOffset()
@@ -1802,7 +1820,11 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 	upper = maxOffset + rows
 	page = rows
 	value = maxOffset - buf.GetScrollOffset()
-	track = pxRect{X: wPx - lane, Y: 0, W: lane, H: hPx}
+	trackH := hPx
+	if t.hScrollActive() {
+		trackH = hPx - lane
+	}
+	track = pxRect{X: wPx - lane, Y: 0, W: lane, H: trackH}
 	thumbLen := track.H * float64(page) / float64(upper)
 	if min := 8 * ppu; thumbLen < min {
 		thumbLen = min
@@ -1838,15 +1860,15 @@ func (t *PurfecTerm) vScrollGeometry() (track, thumb pxRect, upper, page, value 
 func (t *PurfecTerm) hScrollGeometry() (track, thumb pxRect, contentW, cols, value int, ok bool) {
 	buf := t.terminal.Buffer()
 	cols, _ = buf.GetSize()
+	if !t.hScrollActive() {
+		return
+	}
 	maxContentWidth := 0
 	if buf.GetScrollOffset() > 0 {
 		maxContentWidth = buf.GetLongestLineVisible()
 	}
 	if w := buf.GetSplitContentWidth(); w > maxContentWidth {
 		maxContentWidth = w
-	}
-	if maxContentWidth <= cols {
-		return
 	}
 	wPx, hPx, ppu := t.gfxPixelFrame()
 	lane := float64(gfxScrollbarLane) * ppu
@@ -1931,6 +1953,9 @@ func (t *PurfecTerm) paintScrollbarsGfx(p *core.Painter, bounds core.UnitRect, b
 // updateScrollbarHoverGfx tracks whether the pointer is over either
 // scrollbar thumb, repainting only on change.
 func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
+	if !t.gfxInputActive() {
+		return
+	}
 	px, py := t.gfxPointerPx(x, y)
 	vh, hh := false, false
 	if _, thumb, _, _, _, ok := t.vScrollGeometry(); ok {
@@ -1949,6 +1974,9 @@ func (t *PurfecTerm) updateScrollbarHoverGfx(x, y core.Unit) {
 // scrollbarPress starts a scrollbar drag if the press lands in a
 // lane. Returns true when consumed.
 func (t *PurfecTerm) scrollbarPress(event core.MousePressEvent) bool {
+	if !t.gfxInputActive() {
+		return false // no lanes are painted on the cell surface
+	}
 	px, py := t.gfxPointerPx(event.X, event.Y)
 	if track, thumb, _, _, _, ok := t.vScrollGeometry(); ok &&
 		px >= track.X && py >= track.Y && py < track.Y+track.H {
