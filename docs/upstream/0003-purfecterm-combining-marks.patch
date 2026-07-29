@@ -8,14 +8,15 @@
  // UnderlineStyle represents different underline rendering styles
  type UnderlineStyle int
  
-@@ -53,12 +55,23 @@
+@@ -53,13 +55,34 @@
  	return string(c.Char) + c.Combining
  }
  
 -// IsCombiningMark returns true if the rune is a Unicode combining character.
-+// IsCombiningMark returns true if the rune is a Unicode combining character —
-+// one that carries no cell of its own and paints into the preceding one.
- // This includes:
+-// This includes:
++// IsCombiningMark returns true if the rune is a ZERO-WIDTH combining
++// character: one that carries no cell of its own and paints into the
++// preceding one. It covers:
  // - Combining Diacritical Marks (0x0300-0x036F)
  // - Hebrew vowel points and marks (0x0591-0x05C7)
  // - Arabic marks (0x0610-0x065F, 0x0670, 0x06D6-0x06ED)
@@ -24,24 +25,34 @@
 +// - Format characters that ride a cluster: ZWJ/ZWNJ, variation selectors,
 +//   and the Hangul Jamo filler range
 +//
-+// The explicit ranges below are kept because several of them are NOT Mn/Me
-+// (the Jamo fillers are Lo, the joiners and variation selectors are Cf), and
-+// because some callers rely on their exact membership. The category test at
-+// the end covers everything else: the hand-written list reached only about a
-+// quarter of Unicode's non-spacing marks, so scripts such as NKo, Tibetan,
-+// Myanmar, Mongolian and Balinese were each given a cell of their own and
-+// every later cell on the row landed one column late.
++// Category Mc is deliberately EXCLUDED. Those are SPACING combining marks —
++// the visible Devanagari matras and their kin — which do occupy a column, so
++// calling them zero-width drifts a row the opposite way.
++//
++// The explicit ranges are kept because several are not Mn/Me and no category
++// test would reach them (the Jamo fillers are Lo; the joiners and variation
++// selectors are Cf). The Mn/Me test at the end covers everything else: the
++// hand-written list reached only about a quarter of Unicode's non-spacing
++// marks, so scripts such as NKo, Tibetan, Myanmar, Mongolian and Balinese
++// were each given a cell of their own and every later cell on the row landed
++// one column late.
  func IsCombiningMark(r rune) bool {
++	// Spacing combining marks take a cell of their own, so they are never
++	// zero-width — checked first because some ranges below span them (the
++	// Devanagari block mixes Mn and Mc freely).
++	if unicode.Is(unicode.Mc, r) {
++		return false
++	}
  	// Common combining diacritical marks
  	if r >= 0x0300 && r <= 0x036F {
-@@ -141,7 +154,10 @@
+ 		return true
+@@ -141,7 +164,9 @@
  	if r == 0x200C || r == 0x200D {
  		return true
  	}
 -	return false
 +	// Everything else: ask Unicode. Mn (non-spacing) and Me (enclosing) marks
-+	// advance no columns. Mc is deliberately excluded — those are SPACING
-+	// combining marks and do occupy a cell.
++	// advance no columns.
 +	return unicode.In(r, unicode.Mn, unicode.Me)
  }
  

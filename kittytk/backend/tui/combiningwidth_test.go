@@ -58,3 +58,32 @@ func TestOrdinaryRunesKeepTheirWidth(t *testing.T) {
 		}
 	}
 }
+
+// SPACING combining marks (category Mc) DO occupy a cell. purfecterm's
+// Devanagari ranges span eleven of them — the visible matras — and call them
+// zero-width, which drifts a row the opposite way from a missed mark.
+func TestSpacingMarksKeepTheirCell(t *testing.T) {
+	for _, r := range []rune{
+		0x0903, // Devanagari sign visarga
+		0x093E, // vowel sign AA
+		0x093F, // vowel sign I
+		0x0940, // vowel sign II
+		0x094B, // vowel sign O
+		0x17B6, // Khmer vowel sign AA
+	} {
+		if got := cellRuneWidth(r); got == 0 {
+			t.Errorf("U+%04X is a SPACING mark but measures 0 columns", r)
+		}
+	}
+
+	// Exhaustively: no Mc codepoint may be treated as zero-width.
+	bad := 0
+	for r := rune(0); r <= 0x2FFFF; r++ {
+		if unicode.Is(unicode.Mc, r) && cellRuneWidth(r) == 0 {
+			bad++
+		}
+	}
+	if bad != 0 {
+		t.Errorf("%d spacing marks are treated as zero-width", bad)
+	}
+}

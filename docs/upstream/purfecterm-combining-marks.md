@@ -1,10 +1,12 @@
-# purfecterm: `IsCombiningMark` misses most of Unicode's non-spacing marks
+# purfecterm: `IsCombiningMark` is wrong in both directions
 
 **Patch:** `0003-purfecterm-combining-marks.patch` (against v0.2.28, `cell.go`)
 
 ## Symptom
 
-A line containing a combining mark from almost any script outside Latin,
+Two opposite drifts, both a column per mark.
+
+**Missed marks.** A line containing a combining mark from almost any script outside Latin,
 Hebrew, Arabic, Thai or Devanagari renders one column too wide *per mark*.
 Everything after the mark on that row is shifted right, and the row's tail is
 left unpainted — showing the terminal's own background rather than the app's.
@@ -14,6 +16,11 @@ whose depth varies line by line with the number of marks.
 It also renders *inconsistently*: an initial paint and a repaint after
 scrolling can disagree, because the two take different paths through the
 diffing back buffer.
+
+**Over-claimed marks.** In the other direction, the Devanagari ranges span
+eleven SPACING marks — the visible matras `U+0903 U+093B U+093E U+093F U+0940
+U+0949 U+094A U+094B U+094C U+094E U+094F` — and report them zero-width. Those
+occupy a column, so Hindi/Sanskrit text comes out a column SHORT per matra.
 
 ## Cause
 
@@ -51,34 +58,42 @@ stay explicit:
 - ZWJ / ZWNJ `U+200C`, `U+200D` and variation selectors `U+FE00–U+FE0F` are
   category **Cf**
 
-…and add a category test in place of the final `return false`:
+…add a category test in place of the final `return false`:
 
 ```go
 return unicode.In(r, unicode.Mn, unicode.Me)
 ```
 
-`Mc` is deliberately **excluded**: those are *spacing* combining marks and do
-occupy a cell, so treating them as zero-width would trade one drift for
-another. (Note the current explicit ranges do already claim a few Mc
-codepoints — e.g. `U+0903` via the `0x0901–0x0903` range. The patch leaves
-that pre-existing behaviour untouched rather than changing membership callers
-may depend on.)
+…and guard the whole function with an early `Mc` rejection, since the ranges
+below it mix Mn and Mc freely (the Devanagari block especially):
 
-The change is purely additive: no rune that returned `true` before returns
-`false` after.
+```go
+if unicode.Is(unicode.Mc, r) {
+    return false
+}
+```
+
+`Mc` is excluded because those are *spacing* combining marks: they occupy a
+cell. The guard has to come first — putting the category test only at the end
+would leave the eleven Devanagari matras claimed by the explicit ranges.
 
 ## Verification
 
 Applied to v0.2.28, the root package builds and:
 
 - no Mn/Me codepoint in `U+0000–U+2FFFF` is missed (was 1345)
+- no Mc codepoint is claimed (was 11)
 - `U+07ED`, `U+0F71`, `U+102E`, `U+1B34`, `U+1885`, `U+09BC` are recognised
+- the non-Mn/Me riders the explicit ranges exist for still return `true`:
+  ZWJ/ZWNJ `U+200C`/`U+200D`, variation selectors `U+FE00`/`U+FE0F`, Jamo
+  fillers `U+1160`/`U+11FF`
 - ordinary runes are unaffected: `a`, space, `9`, `U+65E5` (CJK), `U+25CC`
   (dotted circle), `U+05D0` (Hebrew alef), `U+0F40` (Tibetan KA) all still
   return `false`
 
 ## Local workaround in the meantime
 
-`kittytk/backend/tui/tui.go`'s `cellRuneWidth` ORs the same category test
-alongside `purfecterm.IsCombiningMark`, so KittyTK is correct against the
-current release. That fallback can be dropped once this lands upstream.
+`kittytk/backend/tui/tui.go`'s `cellRuneWidth` applies both halves of the same
+rule — Mc wins over anything the list claims, and Mn/Me are ORed in alongside
+it — so KittyTK is correct against the current release. That fallback can be
+dropped once this lands upstream.

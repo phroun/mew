@@ -56,18 +56,21 @@ func cellRuneWidth(r rune) int {
 	if r == 0 {
 		return 1
 	}
-	// purfecterm's IsCombiningMark is a hand-written range list. It covers the
-	// common diacritic blocks, Hebrew and Arabic, but misses the great majority
-	// of Unicode's non-spacing marks — NKo, Tibetan, Myanmar, Mongolian,
-	// Balinese and dozens of other scripts. A mark it misses is given a cell of
-	// its own here, so every later cell on the row lands one column late and
-	// the line drifts. Fall back to the Unicode categories, which are the
-	// authority the range list is approximating.
+	// purfecterm's IsCombiningMark is a hand-written range list, and it is
+	// wrong in both directions. It misses the great majority of Unicode's
+	// non-spacing marks — NKo, Tibetan, Myanmar, Mongolian, Balinese and
+	// dozens of other scripts — each of which then gets a cell of its own, so
+	// every later cell on the row lands a column late. And its Devanagari
+	// ranges span eleven SPACING marks (the visible matras, category Mc),
+	// which it calls zero-width, drifting such rows the other way.
 	//
-	// Mn and Me only: category Mc marks are SPACING combining marks that do
-	// occupy a cell. (An upstream fix is proposed in
-	// docs/upstream/purfecterm-combining-marks.md.)
-	if purfecterm.IsCombiningMark(r) || unicode.In(r, unicode.Mn, unicode.Me) {
+	// Ask the Unicode categories, which are the authority the range list is
+	// approximating: Mn and Me are zero-width, Mc occupies a cell and wins
+	// over anything the list claims. (Fixed at the source in
+	// docs/upstream/0003-purfecterm-combining-marks.patch; this fallback can
+	// go once that lands.)
+	if !unicode.Is(unicode.Mc, r) &&
+		(purfecterm.IsCombiningMark(r) || unicode.In(r, unicode.Mn, unicode.Me)) {
 		return 0
 	}
 	if w := purfecterm.GetEastAsianWidth(r); w >= 1.5 {
