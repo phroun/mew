@@ -2,7 +2,6 @@
 package trinkets
 
 import (
-	"fmt"
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
@@ -331,8 +330,8 @@ func (t *PurfecTerm) EditorMode() bool { return t.editorMode }
 // overScrollLane reports whether a local point falls in either scrollbar
 // track, mirroring scrollbarPress's hit tests.
 func (t *PurfecTerm) overScrollLane(x, y core.Unit) bool {
-	if t.editorMode {
-		return false // no scrollbar lanes in editor mode
+	if t.editorMode || !t.gfxInputActive() {
+		return false // lanes exist only where they are painted
 	}
 	px, py := t.gfxPointerPx(x, y)
 	if track, _, _, _, _, ok := t.vScrollGeometry(); ok &&
@@ -595,6 +594,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 
 			// Convert purfecterm cell to KittyTK style
 			cellStyle := t.cellToStyle(cell)
+			// Local selection, same source of truth as the graphical path
+			// (buf.IsInSelection): the scheme's selection colour as the
+			// background. The cell loop never showed it before — selection
+			// WORKED on the cell surface and was simply invisible.
+			if buf.IsInSelection(col, row) {
+				cellStyle = cellStyle.WithBg(t.convertColor(t.gfxScheme().Selection))
+			}
 
 			// Get the character (use space if empty)
 			ch := cell.Char
@@ -830,200 +836,78 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 	if t.terminal == nil {
 		return true
 	}
-	if t.gfxInputActive() {
-		// Graphical path: local selection, mouse reporting with the
-		// Shift bypass, scrollbars, and the right-click context menu.
-		return t.gfxMousePress(event)
-	}
-
-	// Track held button for drag events
-	t.heldButton = event.Button
-
-	// Convert unit coordinates to cell coordinates (terminal-font
-	// cells, which equal toolkit cells for the default font)
-	cw, chh := t.cellDims()
-	cellCol := int(event.X / cw)  // 0-based for internal use
-	cellRow := int(event.Y / chh) // 0-based for internal use
-
-	// Debug callback - extract cell info
+	// Debug callback - extract cell info for the clicked cell.
 	if t.onCellClicked != nil {
-		cells := t.terminal.GetCells()
-		if cellRow < len(cells) && cellCol < len(cells[cellRow]) {
-			cell := cells[cellRow][cellCol]
-			info := CellDebugInfo{
-				Col:       cellCol,
-				Row:       cellRow,
-				Char:      cell.Char,
-				Bold:      cell.Bold,
-				Underline: cell.Underline,
-				Reverse:   cell.Reverse,
-			}
-			// Extract foreground color info
-			switch cell.Fg.Type {
-			case purfecterm.ColorTypeTrueColor:
-				info.FgType = "RGB"
-				info.FgR, info.FgG, info.FgB = cell.Fg.R, cell.Fg.G, cell.Fg.B
-			case purfecterm.ColorTypePalette:
-				info.FgType = "256"
-				info.FgIndex = cell.Fg.Index
-			case purfecterm.ColorTypeStandard:
-				info.FgType = "Std"
-				info.FgIndex = cell.Fg.Index
-			default:
-				info.FgType = "Def"
-			}
-			// Extract background color info
-			switch cell.Bg.Type {
-			case purfecterm.ColorTypeTrueColor:
-				info.BgType = "RGB"
-				info.BgR, info.BgG, info.BgB = cell.Bg.R, cell.Bg.G, cell.Bg.B
-			case purfecterm.ColorTypePalette:
-				info.BgType = "256"
-				info.BgIndex = cell.Bg.Index
-			case purfecterm.ColorTypeStandard:
-				info.BgType = "Std"
-				info.BgIndex = cell.Bg.Index
-			default:
-				info.BgType = "Def"
-			}
-			t.onCellClicked(info)
-		}
+		t.reportCellDebug(event.X, event.Y)
 	}
-
-	// Convert to 1-based coordinates for CLI adapter
-	cellX := cellCol + 1
-	cellY := cellRow + 1
-
-	// App-owned mouse: relay the encoded press straight to the child.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if btn, ok := purfMouseButton(event.Button); ok {
-			// Carry the modifier bits (shift/alt/ctrl) so the app can see a
-			// shift+click — an editor guest extends its selection on it.
-			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send button press
-	var buttonStr string
-	switch event.Button {
-	case core.LeftButton:
-		buttonStr = "MouseLeftPress"
-	case core.MiddleButton:
-		buttonStr = "MouseMiddlePress"
-	case core.RightButton:
-		buttonStr = "MouseRightPress"
-	default:
-		return true
-	}
-	t.terminal.HandleKeyString(buttonStr)
-	t.Update()
-	return true
+	// ONE input path for both desktops. The full behavior set — local
+	// selection, mouse reporting with the Shift bypass, the right-click
+	// context menu — is buffer state and byte relay, none of it pixel-bound;
+	// only the scrollbar lanes are, and those gate themselves (they exist
+	// only where they are painted). The cell surface used to take a
+	// forward-to-child-only path here, which is why a hosted terminal on the
+	// TUI had no selection, no wheel scrollback and no context menu at all.
+	return t.gfxMousePress(event)
 }
 
-// HandleMouseRelease handles mouse button releases.
+// reportCellDebug extracts the clicked cell's contents for the debug hook.
+func (t *PurfecTerm) reportCellDebug(x, y core.Unit) {
+	cw, chh := t.cellDims()
+	cellCol := int(x / cw)
+	cellRow := int(y / chh)
+	cells := t.terminal.GetCells()
+	if cellRow >= len(cells) || cellCol >= len(cells[cellRow]) {
+		return
+	}
+	cell := cells[cellRow][cellCol]
+	info := CellDebugInfo{
+		Col:       cellCol,
+		Row:       cellRow,
+		Char:      cell.Char,
+		Bold:      cell.Bold,
+		Underline: cell.Underline,
+		Reverse:   cell.Reverse,
+	}
+	switch cell.Fg.Type {
+	case purfecterm.ColorTypeTrueColor:
+		info.FgType = "RGB"
+		info.FgR, info.FgG, info.FgB = cell.Fg.R, cell.Fg.G, cell.Fg.B
+	case purfecterm.ColorTypePalette:
+		info.FgType = "256"
+		info.FgIndex = cell.Fg.Index
+	case purfecterm.ColorTypeStandard:
+		info.FgType = "Std"
+		info.FgIndex = cell.Fg.Index
+	default:
+		info.FgType = "Def"
+	}
+	switch cell.Bg.Type {
+	case purfecterm.ColorTypeTrueColor:
+		info.BgType = "RGB"
+		info.BgR, info.BgG, info.BgB = cell.Bg.R, cell.Bg.G, cell.Bg.B
+	case purfecterm.ColorTypePalette:
+		info.BgType = "256"
+		info.BgIndex = cell.Bg.Index
+	case purfecterm.ColorTypeStandard:
+		info.BgType = "Std"
+		info.BgIndex = cell.Bg.Index
+	default:
+		info.BgType = "Def"
+	}
+	t.onCellClicked(info)
+}
 func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
-	if t.gfxInputActive() {
-		return t.gfxMouseRelease(event)
-	}
-
-	// Containers broadcast releases to every child; only act on a
-	// release whose press we actually saw, so sibling trinkets are not
-	// starved and the terminal never receives a release for a press
-	// that landed elsewhere.
-	if t.heldButton != event.Button {
-		return false
-	}
-	t.heldButton = core.NoButton
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay the encoded release straight to the child.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if btn, ok := purfMouseButton(event.Button); ok {
-			t.sendMouseReport(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send button release
-	var buttonStr string
-	switch event.Button {
-	case core.LeftButton:
-		buttonStr = "MouseLeftRelease"
-	case core.MiddleButton:
-		buttonStr = "MouseMiddleRelease"
-	case core.RightButton:
-		buttonStr = "MouseRightRelease"
-	default:
-		return false
-	}
-	t.terminal.HandleKeyString(buttonStr)
-	t.Update()
-	return true
+	return t.gfxMouseRelease(event)
 }
-
-// HandleMouseMove handles mouse movement/drag events.
 func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
-	if t.gfxInputActive() {
-		return t.gfxMouseMove(event)
-	}
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay motion per the tracking mode — drags from 1002
-	// up, plain motion only under all-motion (1003). Motion the mode does
-	// not report is swallowed (the app owns the mouse either way).
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		mods := gfxMouseModifiers(event.Modifiers)
-		if btn, ok := purfMouseButton(t.heldButton); ok {
-			if mode >= 1002 {
-				t.sendMouseReport(btn|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
-			}
-		} else if mode >= 1003 {
-			t.sendMouseReport(purfecterm.MouseButtonNone|purfecterm.MouseMotionFlag|mods, cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Use tracked button state for drag events (since event.Buttons may not be set)
-	switch t.heldButton {
-	case core.LeftButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseLeftDrag@%d,%d", cellX, cellY))
-	case core.MiddleButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseMiddleDrag@%d,%d", cellX, cellY))
-	case core.RightButton:
-		t.terminal.HandleKeyString(fmt.Sprintf("MouseRightDrag@%d,%d", cellX, cellY))
-	default:
-		// Plain movement (for mouse tracking modes)
-		t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-	}
-	t.Update()
-	return true
+	return t.gfxMouseMove(event)
 }
-
-// HandleMouseWheel handles scroll wheel events.
 func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	if t.terminal == nil {
 		return false
@@ -1031,50 +915,8 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	// Terminals consume every wheel over them; claim the gesture so
 	// pointer drift mid-scroll cannot re-target (core wheel latch).
 	core.ClaimWheelGesture(event, t.HandleMouseWheel)
-	if t.gfxInputActive() {
-		return t.gfxMouseWheel(event)
-	}
-
-	// Convert unit coordinates to 1-based cell coordinates
-	cw, chh := t.cellDims()
-	cellX := int(event.X/cw) + 1
-	cellY := int(event.Y/chh) + 1
-
-	// App-owned mouse: relay the wheel as scroll-button presses.
-	if mode, enc := t.mouseTracking(); mode != 0 {
-		if event.DeltaY < 0 {
-			t.sendMouseReport(purfecterm.MouseScrollUp, cellX, cellY, true, enc)
-		} else if event.DeltaY > 0 {
-			t.sendMouseReport(purfecterm.MouseScrollDown, cellX, cellY, true, enc)
-		}
-		if event.DeltaX < 0 {
-			t.sendMouseReport(mouseScrollLeftBtn, cellX, cellY, true, enc)
-		} else if event.DeltaX > 0 {
-			t.sendMouseReport(mouseScrollRightBtn, cellX, cellY, true, enc)
-		}
-		t.Update()
-		return true
-	}
-
-	// Send position update first
-	t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
-
-	// Send scroll event based on direction
-	if event.DeltaY < 0 {
-		t.terminal.HandleKeyString("MouseScrollUp")
-	} else if event.DeltaY > 0 {
-		t.terminal.HandleKeyString("MouseScrollDown")
-	}
-	if event.DeltaX < 0 {
-		t.terminal.HandleKeyString("MouseScrollLeft")
-	} else if event.DeltaX > 0 {
-		t.terminal.HandleKeyString("MouseScrollRight")
-	}
-	t.Update()
-	return true
+	return t.gfxMouseWheel(event)
 }
-
-// HandleFocusIn is called when the trinket gains focus.
 func (t *PurfecTerm) HandleFocusIn() {
 	t.TrinketBase.HandleFocusIn()
 	if t.terminal != nil {

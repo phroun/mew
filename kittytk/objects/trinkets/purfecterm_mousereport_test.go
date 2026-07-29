@@ -25,9 +25,17 @@ func TestMouseReportRelay(t *testing.T) {
 		t.Fatalf("tracking modes = %d/%d, want 1002/1006", mode, enc)
 	}
 
-	// A drag while the left button is held: SGR motion report at cell 1,1.
-	term.heldButton = core.LeftButton
-	term.HandleMouseMove(core.MouseMoveEvent{X: 0, Y: 0})
+	// A press at cell 1,1 relays an SGR press report — and marks the press
+	// as SEEN, which is what licenses the drag relay: the input path only
+	// reports drags for presses it witnessed (the implicit-grab rule), so a
+	// stray move with a button held from elsewhere is not the app's business.
+	term.HandleMousePress(core.MousePressEvent{X: 0, Y: 0, Button: core.LeftButton})
+	if !strings.Contains(got.String(), "\x1b[<0;1;1M") {
+		t.Fatalf("press should relay an SGR press report; got %q", got.String())
+	}
+
+	// The drag: SGR motion report at cell 1,1.
+	term.HandleMouseMove(core.MouseMoveEvent{X: 0, Y: 0, Buttons: core.LeftButton})
 	if !strings.Contains(got.String(), "\x1b[<32;1;1M") {
 		t.Fatalf("drag should relay an SGR motion report; got %q", got.String())
 	}
@@ -41,7 +49,7 @@ func TestMouseReportRelay(t *testing.T) {
 	// The app turns tracking off: nothing further reaches the sink.
 	term.Feed([]byte("\x1b[?1002l\x1b[?1000l"))
 	got.Reset()
-	term.heldButton = core.LeftButton
+	term.HandleMousePress(core.MousePressEvent{X: 0, Y: 0, Button: core.LeftButton})
 	term.HandleMouseRelease(core.MouseReleaseEvent{X: 0, Y: 0, Button: core.LeftButton})
 	if strings.Contains(got.String(), "\x1b[<") {
 		t.Fatalf("no reports with tracking off; got %q", got.String())
