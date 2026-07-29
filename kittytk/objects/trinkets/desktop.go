@@ -2727,24 +2727,33 @@ func (d *Desktop) ActivatePassNextKeyToTrinket() {
 	if activeApp == nil {
 		return
 	}
-	// When the app's main window is detached, the key stream and the
-	// status bar both live on that window, not the desktop. Arm raw-key
-	// mode there so the next key reaches the detached window's focused
-	// trinket and the prompt shows on its own status bar.
-	if main := activeApp.MainWindow(); main != nil && main.IsDetached() {
-		d.activateRawKeyOnDetached(main)
-		return
+	// ARM BOTH DOORS. A key does not always reach the desktop: a window on
+	// its OWN OS surface is driven by window.SurfaceHost, whose Event hands
+	// straight to Window.HandleKeyPress and never passes the desktop at all
+	// (see dispatchEvent, where takePassNextKey lives). That door only exists
+	// on a multi-surface backend, which is why arming the app alone worked on
+	// the single-surface TUI and lost F10 to the menu bar under SDL.
+	//
+	// So arm the app AND the main window's own one-shot, and let whichever
+	// door the key arrives by spend it. Window.HandleKeyPress checks its
+	// one-shot before its menu bar; takePassNextKey checks the app flag
+	// before the desktop's. The window's done callback clears the app flag so
+	// the pair is spent together and the key AFTER the raw one is ordinary
+	// again however it travelled.
+	if main := activeApp.MainWindow(); main != nil {
+		d.armRawKeyOnWindow(activeApp, main)
 	}
 	activeApp.ActivatePassNextKeyToTrinket()
 }
 
-// activateRawKeyOnDetached shows the raw-key prompt on the detached main
-// window's own status bar and arms the window to pass its next key
-// straight to the focused trinket, restoring the status bar afterwards.
-func (d *Desktop) activateRawKeyOnDetached(main *window.Window) {
+// armRawKeyOnWindow arms a window's own raw-key one-shot, showing the prompt
+// on its status bar when it has one (a detached window carries its own; an
+// in-surface window's prompt is the desktop's), and clearing the app-level
+// flag when the key is spent so the two cannot come apart.
+func (d *Desktop) armRawKeyOnWindow(app ApplicationProvider, main *window.Window) {
 	sb, _ := main.WindowStatusBar().(*StatusBar)
 	var saved []StatusSection
-	if sb != nil {
+	if sb != nil && main.IsDetached() {
 		saved = sb.Sections()
 		sb.SetSections([]StatusSection{
 			{Text: "Raw Key Input: The next key pressed will be passed directly to the focused trinket."},
@@ -2752,7 +2761,8 @@ func (d *Desktop) activateRawKeyOnDetached(main *window.Window) {
 		main.Update()
 	}
 	main.BeginRawKeyInput(func() {
-		if sb != nil {
+		app.ClearPassNextKeyToTrinket()
+		if sb != nil && saved != nil {
 			sb.SetSections(saved)
 			main.Update()
 		}

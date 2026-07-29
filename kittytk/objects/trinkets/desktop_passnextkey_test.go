@@ -124,3 +124,69 @@ func TestDockedWindowRawKeyDoesNotClaimKeys(t *testing.T) {
 		t.Error("a docked window's one-shot is not the desktop's business")
 	}
 }
+
+// THE SDL DOOR. A window on its own OS surface is driven by
+// window.SurfaceHost, whose Event hands straight to Window.HandleKeyPress —
+// the desktop, and with it takePassNextKey, is never on that path. That door
+// only exists on a multi-surface backend, which is exactly why arming the app
+// alone worked on the single-surface TUI and lost F10 to the menu bar under
+// SDL.
+//
+// So arming must reach the WINDOW's own one-shot too, whether or not the
+// window is detached.
+func TestArmingReachesAWindowOnItsOwnSurface(t *testing.T) {
+	for _, detached := range []bool{false, true} {
+		name := "in-surface"
+		if detached {
+			name = "detached"
+		}
+		t.Run(name, func(t *testing.T) {
+			d := NewDesktop()
+			d.windowManager = window.NewWindowManager()
+			win := window.NewWindow("mew")
+			win.SetDetached(detached)
+			a := &mockApp{name: "mew", main: win}
+			d.AddApplication(a)
+
+			d.ActivatePassNextKeyToTrinket()
+			if !win.RawKeyInputPending() {
+				t.Fatal("the window's own one-shot was not armed; a key arriving by its surface is lost to the menu bar")
+			}
+			if !a.PassNextKeyToTrinket() {
+				t.Error("the app flag must be armed too — the desktop door is still a door")
+			}
+
+			// Spending it at the WINDOW (the SurfaceHost path) must also clear
+			// the app flag, or the key after the raw one would be claimed
+			// again by the desktop.
+			win.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+			if win.RawKeyInputPending() {
+				t.Error("the window's one-shot survived the key that spent it")
+			}
+			if a.PassNextKeyToTrinket() {
+				t.Error("the app flag outlived the key: the NEXT key would be raw too")
+			}
+		})
+	}
+}
+
+// And spending it at the DESKTOP door leaves nothing armed either.
+func TestSpendingAtTheDesktopDoorClearsBoth(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+	win := window.NewWindow("mew")
+	d.windowManager.AddWindow(win)
+	a := &mockApp{name: "mew", main: win}
+	d.AddApplication(a)
+
+	d.ActivatePassNextKeyToTrinket()
+	if !d.takePassNextKey(core.KeyPressEvent{Key: "F10"}, nil) {
+		t.Fatal("the desktop door should have claimed the armed key")
+	}
+	if a.PassNextKeyToTrinket() {
+		t.Error("app flag still armed after the key was spent")
+	}
+	if win.RawKeyInputPending() {
+		t.Error("window one-shot still armed after the key was spent")
+	}
+}
