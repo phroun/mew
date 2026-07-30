@@ -702,6 +702,28 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		} else {
 			w.ContentX = marginL + lineNumWidth
 		}
+
+		// The scroll offset is only ever CHECKED against the page on its way in
+		// (scrollViewTo), and the page has just been decided here — so this is
+		// where an offset that used to be legal and no longer is has to be pulled
+		// back. It stops being legal without anyone scrolling:
+		//
+		//   - the viewport got TALLER. A window resize, a zoom out, a docked
+		//     readout closing: the page grows, the bottom of the scroll range
+		//     rises to meet it, and a view parked at the old bottom is suddenly
+		//     stranded in blank space with a screenful of "~".
+		//   - lines were DELETED below the view, or the buffer was reverted to a
+		//     shorter one.
+		//   - the offset was set before any layout existed, when ContentHeight
+		//     was 0 and there was no page to measure it against.
+		//
+		// Only ever downward, so a legal offset is never disturbed, and the
+		// document's own end is the only thing that moves it.
+		if w.Buffer != nil && w.ContentHeight > 0 {
+			if max := viewport.MaxScrollTop(w.ContentHeight, w.Buffer.GetLineCount()); w.ViewState.ViewOffsetY > max {
+				w.SetViewTop(max)
+			}
+		}
 	}
 }
 

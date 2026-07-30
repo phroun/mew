@@ -484,3 +484,64 @@ func TestMaxScrollLeavesExactlyOneGutterTilde(t *testing.T) {
 		t.Fatalf("%d gutter markers one line above maximum scroll, want 0", got)
 	}
 }
+
+// The scroll offset is only checked against the page on its way in, so an offset
+// that WAS legal has to be pulled back when the page changes under it. Growing
+// the viewport is the everyday way that happens — a window resize, a zoom out, a
+// docked readout closing — and it strands a view parked at the old bottom in a
+// screenful of "~" without anyone having scrolled.
+func TestGrowingTheViewportPullsTheViewBack(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 60))
+	e.performRender()
+	lines := w.Buffer.GetLineCount()
+
+	e.scrollViewTo(w, 1<<20) // as far down as it goes at this size
+	if got, want := w.ViewState.ViewOffsetY, viewport.MaxScrollTop(w.ContentHeight, lines); got != want {
+		t.Fatalf("top = %d at the bottom, want %d", got, want)
+	}
+
+	// The terminal grows until nearly the whole document fits. The bottom of the
+	// scroll range rises to meet it.
+	e.Renderer.Height = 60
+	e.performRender()
+
+	if past := (w.ViewState.ViewOffsetY + w.ContentHeight) - lines; past != 1 {
+		t.Fatalf("%d rows past the end of the document after growing, want exactly 1", past)
+	}
+	if got, want := w.ViewState.ViewOffsetY, viewport.MaxScrollTop(w.ContentHeight, lines); got != want {
+		t.Fatalf("top = %d after growing, want %d", got, want)
+	}
+}
+
+// An offset set before any layout existed is measured against no page at all
+// (ContentHeight 0), so it may be far out of range. The first render is where the
+// page becomes known, and where it gets corrected.
+func TestFirstRenderCorrectsAPreLayoutOffset(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 60))
+	if w.ContentHeight != 0 {
+		t.Skip("this harness laid the viewport out early; nothing to prove")
+	}
+	e.scrollViewTo(w, 1<<20)
+
+	e.performRender()
+
+	if past := (w.ViewState.ViewOffsetY + w.ContentHeight) - w.Buffer.GetLineCount(); past != 1 {
+		t.Fatalf("%d rows past the end after the first render, want exactly 1", past)
+	}
+}
+
+// The correction is one-directional: a legal offset is never disturbed, so
+// shrinking the viewport (a zoom in, a pane opening) leaves the view exactly
+// where the reader put it rather than snapping it anywhere.
+func TestShrinkingTheViewportLeavesTheViewAlone(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 200))
+	e.performRender()
+	e.scrollViewTo(w, 40)
+
+	e.Renderer.Height = 12
+	e.performRender()
+
+	if got := w.ViewState.ViewOffsetY; got != 40 {
+		t.Fatalf("top = %d after shrinking, want it left at 40", got)
+	}
+}
