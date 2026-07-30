@@ -853,7 +853,7 @@ const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 
 // emitCellText renders a cell's runes for the wire. It is runesOf, except that
 // on a PLAIN terminal (not a flex-width 2027 host) a shin-dot or sin-dot
-// anchored on a dotted circle is emitted as ZWSP · circle · point · circle.
+// anchored on a dotted circle is emitted as ZWSP · point · circle.
 //
 // Two things went wrong with the bare cluster. The dotted circle's width: U+25CC
 // is East Asian AMBIGUOUS, and a plain terminal that draws it at the wide
@@ -864,16 +864,20 @@ const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 //
 // The leading ZERO WIDTH SPACE breaks the join — a fresh zero-advance base
 // between the previous cell and this cluster, so the point can only belong to
-// this cluster, never the letter before. The point is then bracketed by a circle
-// on EACH side: whichever cell the terminal settles the mark into — composed on
-// its base, or shifted a cell right off the wide base — a dotted circle is drawn
-// there for it to sit on. The stored cell is untouched, so a flex-width host
-// (purfecterm, mew's own SDL surface) — which composes the cluster by grapheme
-// the way mew does — keeps the bare circle-then-point order.
+// this cluster, never the letter before. The point rides that ZWSP rather than
+// the wide circle, so it stays pinned at the cell's origin instead of shifting
+// off the circle's right edge. The stored cell is untouched, so a flex-width
+// host (purfecterm, mew's own SDL surface) — which composes the cluster by
+// grapheme the way mew does — keeps the bare circle-then-point order.
+//
+// KNOWN GAP: the dotted circle itself does not render on iTerm2 with this order
+// (it becomes a second base at the same cell and drops out); the point lands
+// correctly but bare. Making the circle visible too runs into U+25CC's ambiguous
+// width and mew's one-column budget — see the width-reconciliation options being
+// weighed for this case.
 func (b *backBuffer) emitCellText(c bbCell) string {
 	if !b.logicalCUP && isShinSinDotAnchor(c) {
-		circle, point := string(c.runes[0]), string(c.runes[1])
-		return string(zeroWidthSpace) + circle + point + circle
+		return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
 	}
 	return runesOf(c)
 }
