@@ -7,15 +7,18 @@ import (
 	"github.com/phroun/mew/internal/textwidth"
 )
 
-// An isolated shin dot or sin dot anchored on a dotted circle is emitted with
-// the point BEFORE the circle on a plain terminal. U+25CC is East Asian
-// ambiguous; a terminal that draws it at the wide advance hangs the point a
-// full cell to the right of the circle (iTerm2). Leading with the point pulls
-// it back over the circle. The cell mew stores is unchanged — only the wire
-// bytes reorder — so the flex-width host, which composes the cluster itself,
-// keeps the natural circle-then-point order.
+// An isolated shin dot or sin dot anchored on a dotted circle is emitted as
+// ZWSP · point · circle on a plain terminal. U+25CC is East Asian ambiguous; a
+// terminal that draws it at the wide advance hangs the point a full cell to the
+// right of the circle (iTerm2). The leading ZERO WIDTH SPACE is a zero-advance
+// base the point rides instead of the wide circle — pinning it at the cell's
+// origin and breaking the join that would otherwise let an abutting letter
+// steal the mark. The cell mew stores is unchanged — only the wire bytes
+// change — so the flex-width host, which composes the cluster itself, keeps the
+// natural circle-then-point order.
 func TestShinSinDotAnchorReversedOnPlainTerminal(t *testing.T) {
 	const circle = string(textwidth.MarkAnchor) // ◌
+	const zwsp = string(zeroWidthSpace)
 	cases := []struct {
 		name string
 		mark rune
@@ -26,15 +29,12 @@ func TestShinSinDotAnchorReversedOnPlainTerminal(t *testing.T) {
 	for _, c := range cases {
 		anchored := circle + string(c.mark)
 
-		// Plain terminal: point before circle.
+		// Plain terminal: ZWSP, then point, then circle.
 		b := newBackBuffer(10, 2)
 		out := plain(paint(b, mv(1, 1), wr("\x1b[33m"+anchored)))
-		wantPlain := string(c.mark) + circle
+		wantPlain := zwsp + string(c.mark) + circle
 		if !strings.Contains(out, wantPlain) {
-			t.Errorf("%s plain: wire %q, want the point before the circle (%q)", c.name, out, wantPlain)
-		}
-		if strings.Contains(out, anchored) {
-			t.Errorf("%s plain: wire kept circle-then-point %q", c.name, out)
+			t.Errorf("%s plain: wire %q, want ZWSP·point·circle (%q)", c.name, out, wantPlain)
 		}
 
 		// Flex-width host (2027): natural order, untouched.
@@ -43,6 +43,9 @@ func TestShinSinDotAnchorReversedOnPlainTerminal(t *testing.T) {
 		outf := plain(paint(bf, mv(1, 1), wr("\x1b[33m"+anchored)))
 		if !strings.Contains(outf, anchored) {
 			t.Errorf("%s flex: wire %q, want the natural circle-then-point (%q)", c.name, outf, anchored)
+		}
+		if strings.Contains(outf, zwsp) {
+			t.Errorf("%s flex: wire should carry no ZWSP, got %q", c.name, outf)
 		}
 	}
 }

@@ -847,22 +847,35 @@ func isShinSinDotAnchor(c bbCell) bool {
 		(c.runes[1] == 0x05C1 || c.runes[1] == 0x05C2)
 }
 
+// zeroWidthSpace is emitted as a zero-advance carrier for an anchored point on a
+// plain terminal — see emitCellText.
+const zeroWidthSpace = '​' // ZERO WIDTH SPACE
+
 // emitCellText renders a cell's runes for the wire. It is runesOf, except that
 // on a PLAIN terminal (not a flex-width 2027 host) a shin-dot or sin-dot
-// anchored on a dotted circle is emitted point-BEFORE-circle instead of the
-// natural circle-then-point.
+// anchored on a dotted circle is emitted as ZWSP · point · circle instead of
+// the natural circle-then-point.
 //
-// The reason is the dotted circle's width. U+25CC is East Asian AMBIGUOUS, and
+// The trouble is the dotted circle's width. U+25CC is East Asian AMBIGUOUS, and
 // a plain terminal that draws it at the wide advance positions the combining
-// point off the circle's right edge — a full cell to the right of the cell mew
+// point off the circle's right edge — a full cell over from the cell mew
 // budgeted (observed in iTerm2). The cell and its colour are right; only the
 // point's pen offset is wrong, because the terminal takes it from the wide base
-// glyph. Leading with the point lands it back over the circle. A flex-width
-// host (purfecterm, mew's own SDL surface) measures and composes the cluster by
-// grapheme the way mew does, so it is left with the natural order.
+// glyph it rides.
+//
+// So the point is given a base that is NOT the wide circle: a leading ZERO WIDTH
+// SPACE, which advances nothing and pins the point at the cell's own origin.
+// The point must come BEFORE the circle for that to hold — after it, the point
+// would ride the circle again and shift. The ZWSP also stops a real neighbour
+// from stealing the point: without it, leading with the point lets the terminal
+// attach the mark to whatever cell was emitted just before (the letter abutting
+// the circle when no space separates them), which is the "the alef stole the
+// dot" case. A flex-width host (purfecterm, mew's own SDL surface) measures and
+// composes the cluster by grapheme the way mew does, so it keeps the natural
+// order untouched.
 func (b *backBuffer) emitCellText(c bbCell) string {
 	if !b.logicalCUP && isShinSinDotAnchor(c) {
-		return string(c.runes[1]) + string(c.runes[0])
+		return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
 	}
 	return runesOf(c)
 }
