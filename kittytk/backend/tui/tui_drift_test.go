@@ -89,3 +89,43 @@ func TestTUIDriftNeighbourChangeReemitsTheCarrier(t *testing.T) {
 		t.Fatalf("bet is bare in both frames and must not re-emit (no cascade), got %q", got)
 	}
 }
+
+// The shin dot, sin dot, and dagesh/mappiq already sit correctly in the base
+// model, so they do NOT drift — they stay on their own column, keeping their
+// base's non-drifting marks while any RTL vowel still drifts in from the right.
+// An LTR mark of another script never drifts either.
+func TestTUIDriftKeepsDotsDageshAndLTR(t *testing.T) {
+	core.SetRtlMarkMode("drift")
+	defer core.SetRtlMarkMode("")
+	draw := func(s string) string {
+		b, out := newTestTUI(20, 2)
+		b.BeginFrame()
+		b.DrawText(0, 0, s, style.DefaultStyle(), nil)
+		b.EndFrame()
+		return out.String()
+	}
+
+	const shin, shinDot = 'ש', 'ׁ' // U+05E9, U+05C1
+	const dalet, dagesh = 'ד', 'ּ'  // U+05D3, U+05BC
+	const bet, sheva = 'ב', 'ְ'     // U+05D1, U+05B0
+	const acute = '́'               // U+0301, LTR/other-script mark
+
+	// shin keeps its dot on its own base, and still steals bet's sheva.
+	got := draw(string(shin) + string(shinDot) + string(bet) + string(sheva))
+	if !strings.Contains(got, string(shin)+string(shinDot)) {
+		t.Fatalf("shin dot must stay on its own base, got %q", got)
+	}
+	if !strings.Contains(got, string(shin)+string(shinDot)+string(sheva)) {
+		t.Fatalf("shin should keep its dot and steal bet's sheva, got %q", got)
+	}
+
+	// dagesh/mappiq stays too.
+	if got := draw(string(dalet) + string(dagesh) + string(bet) + string(sheva)); !strings.Contains(got, string(dalet)+string(dagesh)) {
+		t.Fatalf("dagesh must stay on its own base, got %q", got)
+	}
+
+	// an LTR combining mark on an RTL base does not drift.
+	if got := draw(string(shin) + string(acute) + string(bet) + string(sheva)); !strings.Contains(got, string(shin)+string(acute)) {
+		t.Fatalf("LTR mark must stay on its own base, got %q", got)
+	}
+}

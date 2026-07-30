@@ -764,27 +764,55 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 // driftCombining returns the combining marks to emit AFTER the base of the cell
 // at (x, y) — normally the cell's own marks.
 //
-// Under rtlMarkMode "drift" (experimental) an RTL cell instead carries the marks
-// of the cell immediately to its RIGHT, still emitted after its own base. A
-// cell's own marks therefore land on the cell to its left, and the rightmost
-// cell of a row shows no marks at all — a deliberate limitation of the model. A
-// few terminals (current Ghostty among them) place an RTL combining sequence
-// this way; drift reproduces it for them. The reorder is emit-only, so the
-// stored cell is unchanged.
+// Under rtlMarkMode "drift" (experimental) an RTL cell's DRIFTING marks are
+// carried by the cell to its LEFT: it keeps its own non-drifting marks and, from
+// the cell to its RIGHT, steals that cell's drifting marks, all emitted after
+// its own base. A few terminals (current Ghostty among them) place an RTL
+// combining sequence this way; drift reproduces it for them.
+//
+// Only RTL combining marks drift — an LTR mark of some other script rides its
+// own base as usual. The shin dot, sin dot, and dagesh/mappiq are excluded too:
+// they already sit correctly in the base model, so they stay on their own
+// column. The reorder is emit-only, so the stored cell is unchanged.
 func (t *TUIBackend) driftCombining(y, x int, cell Cell) string {
 	if core.RtlMarkMode() != "drift" || !isRTLBase(cell.Char) {
 		return cell.Combining // normal: the cell's own marks
 	}
-	if x+1 < t.cols {
-		if right := t.backBuffer[y][x+1]; isRTLBase(right.Char) {
-			return right.Combining // the RIGHT cell's marks drift onto this base
+	var b strings.Builder
+	// This base keeps every mark that does not drift (its dot/dagesh, any LTR
+	// mark), in their original order.
+	for _, r := range cell.Combining {
+		if !driftsLeft(r) {
+			b.WriteRune(r)
 		}
 	}
-	return "" // rightmost cell (or no RTL neighbour): its own marks moved left
+	// …then steals the drifting marks of the cell to its right.
+	if x+1 < t.cols {
+		if right := t.backBuffer[y][x+1]; isRTLBase(right.Char) {
+			for _, r := range right.Combining {
+				if driftsLeft(r) {
+					b.WriteRune(r)
+				}
+			}
+		}
+	}
+	return b.String()
 }
 
-// isRTLBase reports whether r is a right-to-left base letter (Hebrew or Arabic)
-// — enough to scope the drift reorder to RTL combining sequences.
+// driftsLeft reports whether a combining mark moves one cell left under drift:
+// an RTL-script mark that is NOT one of the marks already placed correctly by
+// the base model — the shin dot, the sin dot, and the dagesh/mappiq, which stay
+// on their own column.
+func driftsLeft(r rune) bool {
+	switch r {
+	case 0x05C1, 0x05C2, 0x05BC: // shin dot, sin dot, dagesh/mappiq
+		return false
+	}
+	return isRTLBase(r) // RTL-script marks drift; LTR/other-script marks stay
+}
+
+// isRTLBase reports whether r belongs to a right-to-left script (Hebrew or
+// Arabic) — used both for the cell's base letter and for classing its marks.
 func isRTLBase(r rune) bool {
 	switch purfecterm.ScriptClass(r) {
 	case "hebrew", "arabic":
