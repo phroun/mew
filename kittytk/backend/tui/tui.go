@@ -505,7 +505,8 @@ func (t *TUIBackend) EndFrame() {
 						sb.WriteString(code)
 						penStyle = code
 					}
-					writeCellRunes(&sb, c.Char, c.Combining)
+					sb.WriteRune(c.Char)
+					sb.WriteString(t.driftCombining(y, x, c))
 				}
 				t.frontLineAttr[y] = mode
 				termX, termY = -1, -1 // cursor position on a DEC line: treat as unknown
@@ -553,6 +554,13 @@ func (t *TUIBackend) EndFrame() {
 				}
 			}
 
+			// The marks emitted with this base are driftCombining's — the cell's
+			// own under normal mode, the LEFT neighbour's under drift. Fold them
+			// into the cell we diff and store, so the comparison reflects exactly
+			// what renders: a neighbour whose marks change makes THIS cell differ
+			// and re-emit on its own, with no cascade.
+			effectiveCell.Combining = t.driftCombining(y, x, effectiveCell)
+
 			if !lineCleared && effectiveCell == t.frontBuffer[y][x] {
 				x++
 				continue
@@ -570,7 +578,8 @@ func (t *TUIBackend) EndFrame() {
 			if effectiveCell.Char == 0 {
 				sb.WriteRune(' ') // stray placeholder with no wide base
 			} else {
-				writeCellRunes(&sb, effectiveCell.Char, effectiveCell.Combining)
+				sb.WriteRune(effectiveCell.Char)
+				sb.WriteString(effectiveCell.Combining)
 			}
 
 			t.frontBuffer[y][x] = effectiveCell
@@ -752,20 +761,26 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	return t.metrics.TextWidth(col - startCol)
 }
 
-// writeCellRunes emits a cell's base character followed by its combining marks
-// — except under rtlMarkMode "drift" (experimental), where an RTL base's marks
-// are emitted BEFORE the base. A few terminals (current Ghostty among them)
-// place an RTL combining sequence that way; this reproduces that order for them.
-// The reorder is emit-only — the stored cell is unchanged, so the diff is
-// unaffected.
-func writeCellRunes(sb *strings.Builder, ch rune, combining string) {
-	if combining != "" && core.RtlMarkMode() == "drift" && isRTLBase(ch) {
-		sb.WriteString(combining)
-		sb.WriteRune(ch)
-		return
+// driftCombining returns the combining marks to emit AFTER the base of the cell
+// at (x, y) — normally the cell's own marks.
+//
+// Under rtlMarkMode "drift" (experimental) an RTL cell instead carries the marks
+// of the cell immediately to its LEFT, still emitted after its own base. A cell's
+// own marks therefore land on the cell to its right, and the leftmost cell of a
+// row shows no marks at all — a deliberate limitation of the model. A few
+// terminals (current Ghostty among them) place an RTL combining sequence this
+// way; drift reproduces it for them. The reorder is emit-only, so the stored
+// cell is unchanged.
+func (t *TUIBackend) driftCombining(y, x int, cell Cell) string {
+	if core.RtlMarkMode() != "drift" || !isRTLBase(cell.Char) {
+		return cell.Combining // normal: the cell's own marks
 	}
-	sb.WriteRune(ch)
-	sb.WriteString(combining)
+	if x > 0 {
+		if left := t.backBuffer[y][x-1]; isRTLBase(left.Char) {
+			return left.Combining // the LEFT cell's marks drift onto this base
+		}
+	}
+	return "" // leftmost cell (or no RTL neighbour): its own marks moved right
 }
 
 // isRTLBase reports whether r is a right-to-left base letter (Hebrew or Arabic)
