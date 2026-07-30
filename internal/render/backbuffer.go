@@ -853,26 +853,27 @@ const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 
 // emitCellText renders a cell's runes for the wire. It is runesOf, except that
 // on a PLAIN terminal (not a flex-width 2027 host) a shin-dot or sin-dot
-// anchored on a dotted circle is emitted with a leading ZERO WIDTH SPACE:
-// ZWSP · circle · point.
+// anchored on a dotted circle is emitted as ZWSP · circle · point · circle.
 //
-// Two things went wrong without it. The dotted circle's width: U+25CC is East
-// Asian AMBIGUOUS, and a plain terminal that draws it at the wide advance hangs
-// the combining point off the circle's right edge, a full cell over from where
-// mew budgeted it (observed in iTerm2). And the join: a letter abutting the
-// circle with no space between could capture the point as its own mark ("the
-// alef stole the dot").
+// Two things went wrong with the bare cluster. The dotted circle's width: U+25CC
+// is East Asian AMBIGUOUS, and a plain terminal that draws it at the wide
+// advance hangs the combining point off the circle's right edge, a full cell
+// over from where mew budgeted it (observed in iTerm2). And the join: a letter
+// abutting the circle with no space between could capture the point as its own
+// mark ("the alef stole the dot").
 //
-// The leading ZWSP breaks the join — it is a fresh zero-advance base between the
-// previous cell and this cluster, so the point can only belong to the circle
-// that follows, never to the letter before. The circle stays the point's base
-// (natural order), so it is the visible glyph and the point composes onto it.
-// The stored cell is untouched, so a flex-width host (purfecterm, mew's own SDL
-// surface) — which composes the cluster by grapheme the way mew does — keeps the
-// bare circle-then-point order.
+// The leading ZERO WIDTH SPACE breaks the join — a fresh zero-advance base
+// between the previous cell and this cluster, so the point can only belong to
+// this cluster, never the letter before. The point is then bracketed by a circle
+// on EACH side: whichever cell the terminal settles the mark into — composed on
+// its base, or shifted a cell right off the wide base — a dotted circle is drawn
+// there for it to sit on. The stored cell is untouched, so a flex-width host
+// (purfecterm, mew's own SDL surface) — which composes the cluster by grapheme
+// the way mew does — keeps the bare circle-then-point order.
 func (b *backBuffer) emitCellText(c bbCell) string {
 	if !b.logicalCUP && isShinSinDotAnchor(c) {
-		return string(zeroWidthSpace) + string(c.runes[0]) + string(c.runes[1])
+		circle, point := string(c.runes[0]), string(c.runes[1])
+		return string(zeroWidthSpace) + circle + point + circle
 	}
 	return runesOf(c)
 }

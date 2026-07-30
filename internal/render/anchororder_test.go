@@ -8,7 +8,7 @@ import (
 )
 
 // An isolated shin dot or sin dot anchored on a dotted circle is emitted with a
-// leading ZERO WIDTH SPACE on a plain terminal: ZWSP · circle · point. U+25CC is
+// leading ZERO WIDTH SPACE on a plain terminal: ZWSP · circle · point · circle. U+25CC is
 // East Asian ambiguous; a terminal that draws it at the wide advance hangs the
 // point a full cell to the right of the circle (iTerm2), and a letter abutting
 // the circle could otherwise capture the mark. The ZWSP is a zero-advance base
@@ -29,12 +29,12 @@ func TestShinSinDotAnchorLeadsWithZWSPOnPlainTerminal(t *testing.T) {
 	for _, c := range cases {
 		anchored := circle + string(c.mark)
 
-		// Plain terminal: ZWSP, then circle, then point.
+		// Plain terminal: ZWSP, then circle, point, circle.
 		b := newBackBuffer(10, 2)
 		out := plain(paint(b, mv(1, 1), wr("\x1b[33m"+anchored)))
-		wantPlain := zwsp + anchored
+		wantPlain := zwsp + circle + string(c.mark) + circle
 		if !strings.Contains(out, wantPlain) {
-			t.Errorf("%s plain: wire %q, want ZWSP·circle·point (%q)", c.name, out, wantPlain)
+			t.Errorf("%s plain: wire %q, want ZWSP·circle·point·circle (%q)", c.name, out, wantPlain)
 		}
 
 		// Flex-width host (2027): no ZWSP, natural order.
