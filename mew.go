@@ -30,6 +30,7 @@ import (
 	"github.com/phroun/mew/internal/editor"
 	"github.com/phroun/mew/internal/input"
 	"github.com/phroun/mew/internal/version"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Version is the mew major.minor release number; Build is the per-commit
@@ -350,6 +351,27 @@ type ScrollbarRegion = editor.ScrollbarRegion
 // moving, resizing, or its view scrolling), never per mouse motion.
 func WithScrollbarRegions(fn func([]ScrollbarRegion)) Option {
 	return func(cfg *editor.Config) { cfg.ScrollbarRegions = fn }
+}
+
+// ScrollbarNeeded reports whether a region has anything to scroll, and so
+// whether its bar gets a THUMB at all: a document that fits its viewport shows
+// bare track, and a press on it does nothing.
+//
+// Exported for a host that draws the bars itself. mew's own cell bar asks the
+// same function, so the two targets cannot disagree about when a bar is inert.
+func ScrollbarNeeded(page, lineCount int) bool {
+	return viewport.ScrollbarNeeded(page, lineCount)
+}
+
+// MaxScrollTop is the highest first-visible line mew will park a viewport at:
+// the one that puts the document's LAST line on the bottom row, and no further.
+// A document shorter than its viewport does not scroll at all.
+//
+// Exported for the same reason as ScrollbarNeeded — a host-drawn thumb must
+// reach the bottom of its track exactly when the view reaches the bottom of this
+// range, and scroll_viewport clamps to it regardless of what a host asks for.
+func MaxScrollTop(page, lineCount int) int {
+	return viewport.MaxScrollTop(page, lineCount)
 }
 
 // WithHelpState wires a callback told whether mew's built-in help viewport (the

@@ -151,36 +151,137 @@ func TestScrollbarSuppressedOnPTYViewport(t *testing.T) {
 
 // The thumb geometry contract both the renderer and the mouse rely on.
 func TestScrollbarThumbGeometry(t *testing.T) {
-	// A document that fits fills the track.
-	if pos, size := viewport.ScrollbarThumb(20, 20, 10, 0); pos != 0 || size != 20 {
-		t.Fatalf("fitting doc: thumb (%d,%d), want (0,20)", pos, size)
+	// A document that FITS has no thumb at all: the whole bar is track, and
+	// there is nothing a drag could move. A full-length thumb would say "all of
+	// it is visible" in the same language a scrollable bar uses for "nearly all
+	// of it is visible", and would invite a gesture that cannot do anything.
+	if pos, size := viewport.ScrollbarThumb(20, 20, 10, 0); pos != 0 || size != 0 {
+		t.Fatalf("fitting doc: thumb (%d,%d), want no thumb (0,0)", pos, size)
 	}
-	// A long document: thumb proportional, endpoints exact.
+	// Exactly filling it is still not MORE than fits, so still no thumb.
+	if _, size := viewport.ScrollbarThumb(20, 20, 20, 0); size != 0 {
+		t.Fatalf("exactly-fitting doc: size %d, want no thumb", size)
+	}
+	// A long document: thumb proportional, endpoints exact. The bottom of the
+	// travel is the bottom of the SCROLL RANGE, which reaches one blank line
+	// past the end of the document.
+	maxTop := viewport.MaxScrollTop(20, 1000)
+	if maxTop != 1000-20 {
+		t.Fatalf("MaxScrollTop = %d, want %d (last line on the bottom row)", maxTop, 1000-20)
+	}
 	pos, size := viewport.ScrollbarThumb(20, 20, 1000, 0)
 	if pos != 0 || size < 1 || size >= 20 {
 		t.Fatalf("long doc at top: thumb (%d,%d)", pos, size)
 	}
-	if pos, _ := viewport.ScrollbarThumb(20, 20, 1000, 1000-20); pos != 20-size {
+	if pos, _ := viewport.ScrollbarThumb(20, 20, 1000, maxTop); pos != 20-size {
 		t.Fatalf("long doc at bottom: pos %d, want %d (track end)", pos, 20-size)
 	}
 	// The inverse round-trips the endpoints.
 	if top := viewport.ScrollbarTopForThumb(0, 20, 20, 1000); top != 0 {
 		t.Fatalf("inverse at track top: %d, want 0", top)
 	}
-	if top := viewport.ScrollbarTopForThumb(20-size, 20, 20, 1000); top != 1000-20 {
-		t.Fatalf("inverse at track bottom: %d, want %d", top, 1000-20)
+	if top := viewport.ScrollbarTopForThumb(20-size, 20, 20, 1000); top != maxTop {
+		t.Fatalf("inverse at track bottom: %d, want %d", top, maxTop)
 	}
 
 	// A track one row shorter than the page (the given-up bottom-right
 	// corner): the thumb still bottoms out INSIDE the track at max scroll —
 	// on the second-to-last content row — and the endpoints still invert to
 	// the full scroll range.
-	pos19, size19 := viewport.ScrollbarThumb(19, 20, 1000, 1000-20)
+	pos19, size19 := viewport.ScrollbarThumb(19, 20, 1000, maxTop)
 	if pos19+size19 != 19 {
 		t.Fatalf("corner track at bottom: thumb ends at %d, want 19 (never clipped)", pos19+size19)
 	}
-	if top := viewport.ScrollbarTopForThumb(19-size19, 19, 20, 1000); top != 1000-20 {
-		t.Fatalf("corner track inverse at bottom: %d, want %d", top, 1000-20)
+	if top := viewport.ScrollbarTopForThumb(19-size19, 19, 20, 1000); top != maxTop {
+		t.Fatalf("corner track inverse at bottom: %d, want %d", top, maxTop)
+	}
+}
+
+// How far down a viewport scrolls: far enough to put the document's LAST line on
+// the bottom row, never far enough to leave a mostly-empty window with a line or
+// two of text stranded at the top. For the ordinary newline-terminated file that
+// bottom row is the empty line after the final newline — the one blank line —
+// because mew counts it as a line of the document.
+func TestMaxScrollTop(t *testing.T) {
+	cases := []struct{ page, lines, want int }{
+		{24, 1000, 976}, // last line on the bottom row
+		{24, 25, 1},     // one line taller than the view
+		{24, 24, 0},     // exactly fills it: nothing hidden, nothing to scroll
+		{24, 10, 0},     // shorter than the view
+		{24, 0, 0},      // empty
+		{0, 1000, 999},  // no layout yet: the old widest-possible answer
+	}
+	for _, c := range cases {
+		if got := viewport.MaxScrollTop(c.page, c.lines); got != c.want {
+			t.Errorf("MaxScrollTop(page=%d, lines=%d) = %d, want %d", c.page, c.lines, got, c.want)
+		}
+	}
+}
+
+// The clamp is enforced where the scrolling happens, so the wheel, the
+// drag-autoscroll, mew's own bar, every scroll_* command and a host's
+// scroll_viewport all stop at the same place.
+func TestScrollViewToStopsWithTheLastLineOnTheBottomRow(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 200))
+	e.performRender()
+	page, lines := w.ContentHeight, w.Buffer.GetLineCount()
+	if page <= 0 {
+		t.Fatalf("ContentHeight = %d, want a laid-out viewport", page)
+	}
+	want := lines - page
+
+	e.scrollViewTo(w, 100000) // as far as anything could ask
+	if got := w.ViewState.ViewOffsetY; got != want {
+		t.Fatalf("top = %d after scrolling past the end, want %d", got, want)
+	}
+	// The bottom row is the document's last line — which for this content, ending
+	// in a newline, is the empty line after it: exactly the one blank row.
+	if lastVisible := want + page - 1; lastVisible != lines-1 {
+		t.Fatalf("bottom row shows line index %d, want the last line %d", lastVisible, lines-1)
+	}
+	if got := w.Buffer.GetLine(lines - 1); strings.TrimRight(got, "\r\n") != "" {
+		t.Fatalf("last line = %q, want the empty line after the final newline", got)
+	}
+
+	// A document shorter than the view does not scroll at all.
+	short, sw, _ := newRenderedEditor(t, "a\nb\nc\n")
+	short.performRender()
+	short.scrollViewTo(sw, 100000)
+	if got := sw.ViewState.ViewOffsetY; got != 0 {
+		t.Fatalf("short document scrolled to %d, want 0", got)
+	}
+}
+
+// A bar with no thumb still OWNS its column: a press on it is consumed so it
+// cannot start selecting text there, and it scrolls nothing.
+func TestScrollbarPressInertWhenDocumentFits(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "a\nb\nc\n")
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.performRender()
+	if w.ScrollbarX < 0 {
+		t.Skip("no scrollbar column in this layout")
+	}
+	if _, size := viewport.ScrollbarThumb(w.ScrollbarTrackH, w.ContentHeight,
+		w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY); size != 0 {
+		t.Fatalf("thumb size %d over a fitting document, want none", size)
+	}
+
+	send := func(key string) {
+		if !e.handleMouseKey(key) {
+			t.Fatalf("pseudo-key %q should be consumed", key)
+		}
+	}
+	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+1))
+	send("MouseLeftPress")
+	send("MouseLeftRelease")
+
+	if w.ViewState.ViewOffsetY != 0 {
+		t.Fatalf("top = %d, want 0: a bar with no thumb scrolls nothing", w.ViewState.ViewOffsetY)
+	}
+	if w.Buffer.HasBlockMarks() {
+		t.Fatal("press on an inert bar started a text selection")
 	}
 }
 
@@ -206,7 +307,7 @@ func TestScrollbarCornerShortensTrack(t *testing.T) {
 
 	// Scrolled to the very bottom, the thumb's last cell is the track's last
 	// cell — the second-to-last content row — never the corner row.
-	e.scrollViewTo(w, w.Buffer.GetLineCount()-w.ContentHeight)
+	e.scrollViewTo(w, viewport.MaxScrollTop(w.ContentHeight, w.Buffer.GetLineCount()))
 	pos, size := viewport.ScrollbarThumb(w.ScrollbarTrackH, w.ContentHeight,
 		w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
 	if pos+size != w.ScrollbarTrackH {

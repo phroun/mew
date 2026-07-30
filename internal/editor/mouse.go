@@ -105,6 +105,13 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 		r = w.ScrollbarTrackH - 1
 	}
 	pos, size := viewport.ScrollbarThumb(w.ScrollbarTrackH, w.ContentHeight, w.Buffer.GetLineCount(), w.ViewState.ViewOffsetY)
+	if size <= 0 {
+		// A document that fits has no thumb and nowhere to scroll to. The press
+		// is still CONSUMED — the column belongs to the bar, and a click there
+		// must not fall through and start selecting text in it — it simply does
+		// nothing, and starts no drag.
+		return true
+	}
 	if r >= pos && r < pos+size {
 		e.sbDrag.grabOff = r - pos
 	} else {

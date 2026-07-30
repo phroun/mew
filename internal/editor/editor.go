@@ -7151,14 +7151,20 @@ func (e *Editor) scrollViewByLines(w *viewport.Viewport, delta int) {
 	e.scrollViewTo(w, w.ViewState.ViewOffsetY+delta)
 }
 
-// scrollViewTo parks the viewport at an absolute top line (clamped to the
-// buffer), detaching it from caret-follow. Shared by the mouse wheel and every
-// scroll_* command.
+// scrollViewTo parks the viewport at an absolute top line, detaching it from
+// caret-follow. Shared by the mouse wheel, the drag-autoscroll, mew's own
+// scrollbar, every scroll_* command and a graphical host's scroll_viewport, so
+// the limit below is the ONE place the bottom of the scroll range is decided.
+//
+// That limit leaves exactly one blank line past the end of the document
+// (MaxScrollTop): the text does not get to drift off the top leaving an empty
+// window behind it, and more than one blank line appears only for a document
+// too short to scroll at all.
 func (e *Editor) scrollViewTo(w *viewport.Viewport, top int) {
 	if w == nil || w.Buffer == nil {
 		return
 	}
-	if max := w.Buffer.GetLineCount() - 1; top > max {
+	if max := viewport.MaxScrollTop(w.ContentHeight, w.Buffer.GetLineCount()); top > max {
 		top = max
 	}
 	if top < 0 {

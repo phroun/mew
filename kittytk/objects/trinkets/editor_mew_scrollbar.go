@@ -137,18 +137,37 @@ func (e *Editor) trackPx(r mew.ScrollbarRegion) (barRect, float64, bool) {
 	}, ppu, true
 }
 
+// scrollable reports whether a region has anything to scroll — which is also
+// whether it gets a thumb at all. mew's own answer, so the cell bar and this one
+// cannot disagree about when a bar is inert.
+func scrollable(r mew.ScrollbarRegion) bool {
+	return mew.ScrollbarNeeded(r.Page, r.LineCount)
+}
+
+// maxTopFor is the highest first-visible line the region may be parked at: the
+// one that puts the document's last line on the bottom row. mew's own limit, so
+// the thumb reaches the bottom of its track exactly when the view reaches the
+// bottom of its scroll range — asking mew for a line it would refuse leaves the
+// thumb parked somewhere the view is not.
+func maxTopFor(r mew.ScrollbarRegion) int {
+	return mew.MaxScrollTop(r.Page, r.LineCount)
+}
+
 // thumbSpan is the thumb's length and top edge within the track, in pixels.
 // Both are continuous: the length is the visible fraction of the document and
 // the position its scroll fraction, with only a minimum length imposed so the
 // thumb stays grabbable in a very long file.
+//
+// A length of 0 means there is NO thumb, which is what a document that fits its
+// viewport gets: the track wash paints alone and the bar does nothing.
 func thumbSpan(track barRect, r mew.ScrollbarRegion, ppu float64) (pos, length float64) {
-	if r.LineCount <= 0 || r.Page <= 0 {
-		return 0, track.h
+	if !scrollable(r) {
+		return 0, 0
 	}
-	if r.LineCount <= r.Page {
-		return 0, track.h // the whole document fits
-	}
-	length = track.h * float64(r.Page) / float64(r.LineCount)
+	maxTop := maxTopFor(r)
+	// Proportional against the range actually scrollable: page rows visible out
+	// of the page+maxTop the view can reach.
+	length = track.h * float64(r.Page) / float64(r.Page+maxTop)
 	if min := 8 * ppu; length < min {
 		length = min
 	}
@@ -156,9 +175,8 @@ func thumbSpan(track barRect, r mew.ScrollbarRegion, ppu float64) (pos, length f
 		length = track.h
 	}
 	span := track.h - length
-	maxTop := float64(r.LineCount - r.Page)
 	if maxTop > 0 && span > 0 {
-		f := float64(r.Top) / maxTop
+		f := float64(r.Top) / float64(maxTop)
 		if f < 0 {
 			f = 0
 		}
@@ -175,7 +193,7 @@ func thumbSpan(track barRect, r mew.ScrollbarRegion, ppu float64) (pos, length f
 // the discrete document — the pointer moved by pixels, the view moves by
 // lines, and the rounding happens exactly once, here.
 func topLineForThumb(pos float64, track barRect, r mew.ScrollbarRegion, ppu float64) int {
-	if r.LineCount <= r.Page || r.Page <= 0 {
+	if !scrollable(r) {
 		return 0
 	}
 	_, length := thumbSpan(track, r, ppu)
@@ -189,8 +207,7 @@ func topLineForThumb(pos float64, track barRect, r mew.ScrollbarRegion, ppu floa
 	if pos > span {
 		pos = span
 	}
-	maxTop := r.LineCount - r.Page
-	return int(math.Round(pos / span * float64(maxTop)))
+	return int(math.Round(pos / span * float64(maxTopFor(r))))
 }
 
 // paintEditorScrollbars draws every published bar, in the hosted terminals'
@@ -235,6 +252,9 @@ func (e *Editor) paintEditorScrollbars(p *core.Painter) {
 				fill(track.x, track.y, track.w, track.h,
 					style.DefaultStyle().WithBg(style.RGB(128, 128, 128)))
 			}
+		}
+		if length <= 0 {
+			return // nothing to scroll: the track wash is the whole bar
 		}
 		ts := thumbStyle
 		if bar.hover {
@@ -281,6 +301,11 @@ func (e *Editor) scrollbarPressAt(x, y core.Unit) bool {
 		return false
 	}
 	pos, length := thumbSpan(track, bar.region, ppu)
+	if length <= 0 {
+		// No thumb, nowhere to scroll. Still CONSUMED — the lane is chrome, and a
+		// click on it must not reach the text underneath — but no drag begins.
+		return true
+	}
 	local := py - track.y
 	e.bars.mu.Lock()
 	if local >= pos && local < pos+length {
@@ -361,7 +386,9 @@ func (e *Editor) updateScrollbarHover(x, y core.Unit) {
 	changed := false
 	e.bars.mu.Lock()
 	for _, bar := range e.bars.bars {
-		want := bar == hovered || bar.dragging
+		// A bar with no thumb has nothing to light up, so it never reads as
+		// hovered — the flag stays in step with what is actually on screen.
+		want := (bar == hovered || bar.dragging) && scrollable(bar.region)
 		if bar.hover != want {
 			bar.hover = want
 			changed = true

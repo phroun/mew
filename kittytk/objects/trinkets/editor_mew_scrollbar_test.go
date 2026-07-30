@@ -24,10 +24,11 @@ func TestThumbSpanIsContinuous(t *testing.T) {
 	r := testRegion()
 
 	pos, length := thumbSpan(track, r, 1)
-	// 24 of 1000 lines visible: 2.4% of 384px = 9.216px. A cell-locked thumb
-	// could only have been 0 or 16.
-	if math.Abs(length-9.216) > 0.01 {
-		t.Errorf("thumb length = %v, want ~9.216 (a fraction of a row)", length)
+	// 24 rows visible out of the 1000 the view can reach. 24/1000 of 384px =
+	// 9.216px; a cell-locked thumb could only have been 0 or 16.
+	want := track.h * 24 / 1000
+	if math.Abs(length-want) > 0.01 {
+		t.Errorf("thumb length = %v, want ~%v (a fraction of a row)", length, want)
 	}
 	if pos != 0 {
 		t.Errorf("at the top the thumb starts at 0, got %v", pos)
@@ -35,7 +36,7 @@ func TestThumbSpanIsContinuous(t *testing.T) {
 
 	// Halfway down the scroll range the thumb sits halfway down its travel —
 	// at a pixel offset no whole number of rows lands on.
-	r.Top = (r.LineCount - r.Page) / 2
+	r.Top = maxTopFor(r) / 2
 	pos, _ = thumbSpan(track, r, 1)
 	span := track.h - length
 	if math.Abs(pos-span/2) > 0.2 {
@@ -45,22 +46,48 @@ func TestThumbSpanIsContinuous(t *testing.T) {
 		t.Errorf("thumb landed exactly on a row boundary (%v); it is not row-locked", pos)
 	}
 
-	// At the bottom it ends flush with the track.
-	r.Top = r.LineCount - r.Page
+	// At the bottom of the scroll range — the document's last line on the bottom
+	// row — it ends flush with the track.
+	r.Top = maxTopFor(r)
 	pos, length = thumbSpan(track, r, 1)
 	if math.Abs((pos+length)-track.h) > 0.01 {
 		t.Errorf("at max scroll the thumb ends at %v, want the track end %v", pos+length, track.h)
 	}
 }
 
-// A document that fits has no scrolling to do: the thumb fills the track.
-func TestThumbFillsTrackWhenDocumentFits(t *testing.T) {
+// A document that FITS gets no thumb at all: the track wash is the whole bar,
+// and a press on it moves nothing. A track-length thumb would say "all of it is
+// visible" in the same language a scrollable bar uses for "nearly all of it",
+// and would invite a drag that cannot do anything.
+func TestNoThumbWhenDocumentFits(t *testing.T) {
 	track := barRect{w: 8, h: 384}
+	for _, lines := range []int{0, 1, 10, 24} { // 24 == the page: still not MORE
+		r := testRegion()
+		r.LineCount = lines
+		pos, length := thumbSpan(track, r, 1)
+		if pos != 0 || length != 0 {
+			t.Errorf("%d lines in a %d-row view: thumb (%v,%v), want none",
+				lines, r.Page, pos, length)
+		}
+		if scrollable(r) {
+			t.Errorf("%d lines in a %d-row view should not be scrollable", lines, r.Page)
+		}
+		if got := topLineForThumb(200, track, r, 1); got != 0 {
+			t.Errorf("%d lines: dragging yields line %d, want 0", lines, got)
+		}
+	}
+}
+
+// The host's limit is mew's own: the thumb must bottom out exactly when the view
+// does, or a full drag would leave the last line unreachable (or, worse, ask mew
+// for a line it will refuse and leave the thumb parked past the view).
+func TestHostMaxTopMatchesMew(t *testing.T) {
 	r := testRegion()
-	r.LineCount = 10 // fewer lines than the page
-	pos, length := thumbSpan(track, r, 1)
-	if pos != 0 || length != track.h {
-		t.Fatalf("fitting document: thumb (%v,%v), want (0,%v)", pos, length, track.h)
+	if got, want := maxTopFor(r), mew.MaxScrollTop(r.Page, r.LineCount); got != want {
+		t.Fatalf("maxTopFor = %d, want mew's %d", got, want)
+	}
+	if want := r.LineCount - r.Page; maxTopFor(r) != want {
+		t.Fatalf("maxTopFor = %d, want %d (last line on the bottom row)", maxTopFor(r), want)
 	}
 }
 
@@ -72,7 +99,7 @@ func TestThumbPositionAlwaysYieldsAWholeLine(t *testing.T) {
 	r := testRegion()
 	_, length := thumbSpan(track, r, 1)
 	span := track.h - length
-	maxTop := r.LineCount - r.Page
+	maxTop := maxTopFor(r)
 
 	if got := topLineForThumb(0, track, r, 1); got != 0 {
 		t.Errorf("thumb at the top yields line %d, want 0", got)
