@@ -444,7 +444,7 @@ func (e *Editor) execRequestSpec(command string, args []string, method string, s
 	// with it, and the most useful thing to be told: the alternative is the host
 	// failing later on a working directory the reader never chose and cannot see.
 	if why := wikiDeclineExec(w.WikiName); why != "" {
-		e.ShowWarning(why)
+		e.ShowWarning(degenerateToASCII(why))
 		return false
 	}
 	if e.ptySessionFor(w.Buffer) != nil {

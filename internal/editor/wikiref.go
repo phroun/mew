@@ -138,7 +138,12 @@ var wikiRegistry = map[string]wikiDef{
 		// helpful way available: an error naming the SHELL, because a pty child
 		// carries a SysProcAttr and so misses the runtime's friendlier
 		// missing-directory wording.
-		DeclineExec: "You can't spawn a terminal inside the mew help manual's viewport",
+		//
+		// Written with real apostrophes, as every user-facing string should be:
+		// whether they reach a given terminal is a display decision, made in
+		// degenerateToASCII, not something to concede in the source. See
+		// typography.go.
+		DeclineExec: "You can’t spawn a terminal inside the mew help manual’s viewport",
 		// Help pages surface as a top-docked tool readout above the document,
 		// not in the main editing area, and carry the "Help" title bar (the
 		// title-less form belongs to Quick Help alone).
