@@ -202,7 +202,11 @@ func (sr *ScreenRenderer) slotWidth(layout *bidi.Layout, runes []rune, entry, co
 	if layout != nil && layout.Marked && bidi.IsDirectionControl(r) {
 		return 1
 	}
-	return sr.getRuneVisualWidth(r, col, w)
+	// Base-aware, so an ill-formed mark measures the SPACING substitute painted
+	// for it rather than the zero cells a well-formed mark takes. Without that
+	// the caret walk would step over it as though it rode the previous cell,
+	// and the columns this feeds would disagree with the paint.
+	return sr.runeWidthAt(runes, entry, col, w)
 }
 
 // physMargins maps a viewport's logical margins (Inner = reading-start side,
@@ -2640,7 +2644,8 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *vie
 	rtlBase := sr.winRTL(w)
 
 	// Zero-width combining marks share their base's cell: step back to the
-	// cluster base so the caret rests on the side the base dictates.
+	// cluster base so the end-of-line boundary follows the side the base
+	// dictates.
 	clusterBase := func(i int) int {
 		for i > 0 && sr.slotWidth(layout, runes, i, cols[i], w) == 0 {
 			i--
@@ -2648,9 +2653,24 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *vie
 		return i
 	}
 
-	// The caret sits where the next character of the caret's own direction
-	// would land — independent of showBidi. Mirrors the editor's
+	// A caret PARTWAY THROUGH a cluster — between a base and its combining
+	// mark, or between two marks — is placed as though it followed the whole
+	// cluster. Those positions have no cell of their own (the marks ride the
+	// base), so the caret has to borrow one, and the cluster's trailing edge is
+	// the honest choice: the caret is logically past the base, and parking it at
+	// the LEADING edge would draw it on the far side of a character it has
+	// already gone by. In an RTL run that is the visible difference between the
+	// caret sitting before the letter and after it. Mirrors the editor's
 	// caretVisualColumn exactly.
+	if runePos < 0 {
+		runePos = 0
+	}
+	for runePos < len(runes) && sr.slotWidth(layout, runes, runePos, cols[runePos], w) == 0 {
+		runePos++
+	}
+
+	// The caret sits where the next character of the caret's own direction
+	// would land — independent of showBidi.
 	if runePos >= len(runes) {
 		last := clusterBase(len(runes) - 1)
 		if layout.RTL[last] {
@@ -2663,10 +2683,6 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *vie
 		}
 		return col
 	}
-	if runePos < 0 {
-		runePos = 0
-	}
-	runePos = clusterBase(runePos)
 	// The caret covers the cell of the rune it precedes — in either base
 	// direction, for both LTR and RTL runes (an RTL rune's cell is at
 	// cols[runePos], so a caret in an RTL fragment stays on the rune rather

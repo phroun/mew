@@ -5033,7 +5033,11 @@ func (e *Editor) slotWidth(layout *bidi.Layout, runes []rune, entry, col, tabSiz
 	if layout != nil && layout.Marked && bidi.IsDirectionControl(r) {
 		return 1
 	}
-	return e.getRuneVisualWidth(r, col, tabSize)
+	// Base-aware, so an ill-formed mark measures the SPACING substitute painted
+	// for it rather than the zero cells a well-formed mark takes. Without that
+	// the caret walk would step over it as though it rode the previous cell,
+	// and the columns this feeds would disagree with the paint.
+	return e.runeWidthAt(runes, entry, col, tabSize)
 }
 
 // winRTL is the EFFECTIVE direction for a viewport: its ViewState.Direction
@@ -5078,15 +5082,31 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 	rtlBase := e.winRTL(w)
 
 	// A zero-width combining mark shares its base character's cell, so the
-	// caret adjacent to one rests on the side the BASE character dictates:
-	// step back over zero-width runes to the cluster base before applying
-	// the placement rules. (Marked direction controls are one column wide
-	// and stop the walk.)
+	// END-OF-LINE boundary follows the side the BASE character dictates: step
+	// back over zero-width runes to the cluster base. (Marked direction
+	// controls are one column wide and stop the walk.)
 	clusterBase := func(i int) int {
 		for i > 0 && e.slotWidth(layout, runes, i, cols[i], tabSize) == 0 {
 			i--
 		}
 		return i
+	}
+
+	// A caret PARTWAY THROUGH a cluster — between a base and its combining
+	// mark, or between two marks — is placed as though it followed the whole
+	// cluster. Those positions have no cell of their own (the marks ride the
+	// base), so the caret has to borrow one, and the cluster's trailing edge is
+	// the honest choice: the caret is logically past the base, and parking it at
+	// the LEADING edge would draw it on the far side of a character it has
+	// already gone by. In an RTL run that is the visible difference between the
+	// caret sitting before the letter and after it — which is why this only ever
+	// showed up in right-to-left text: the left-to-right walk is a prefix sum,
+	// and a prefix sum already lands past the cluster.
+	if runePos < 0 {
+		runePos = 0
+	}
+	for runePos < len(runes) && e.slotWidth(layout, runes, runePos, cols[runePos], tabSize) == 0 {
+		runePos++
 	}
 
 	// The caret sits where the next character OF THE CARET'S OWN DIRECTION
@@ -5106,10 +5126,6 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 		}
 		return total
 	}
-	if runePos < 0 {
-		runePos = 0
-	}
-	runePos = clusterBase(runePos)
 	// The caret covers the cell of the rune it precedes — in either base
 	// direction, for both LTR and RTL runes. A block cursor sits ON that
 	// character, and an RTL rune's cell is painted at cols[runePos], so a

@@ -747,12 +747,21 @@ func TestLamAlefLigatureCell(t *testing.T) {
 	if got := e.lineVisualWidth(w, line, 4); got != 2 {
 		t.Fatalf("line width with ligature: %d, want 2", got)
 	}
-	// Caret between lam and alef (rune 2) and after the lam-before-alef... both
-	// the lam position (1) and the absorbed alef (2) resolve to the same cell.
-	c1 := e.caretVisualColumn(w, line, 1, 4)
-	c2 := e.caretVisualColumn(w, line, 2, 4)
-	if c1 != c2 {
-		t.Fatalf("lam (col %d) and absorbed alef (col %d) should share a cell", c1, c2)
+	// Three code points share two cells, so two caret positions must coincide —
+	// and WHICH two follows the cluster rule: a caret partway THROUGH a cluster
+	// displays as though it followed the whole cluster. Position 2 sits between
+	// the lam and the absorbed alef, i.e. inside the ligature, so it shows where
+	// position 3 does (past it) rather than where position 1 does (on it).
+	before := e.caretVisualColumn(w, line, 1, 4) // before the lam: ON the ligature
+	inside := e.caretVisualColumn(w, line, 2, 4) // between the halves
+	after := e.caretVisualColumn(w, line, 3, 4)  // past the whole thing
+	if inside != after {
+		t.Fatalf("caret inside the ligature (col %d) should show where past it does (col %d)",
+			inside, after)
+	}
+	if inside == before {
+		t.Fatalf("caret inside the ligature (col %d) should not show on its leading edge (col %d)",
+			inside, before)
 	}
 
 	// Delete the alef: the ligature breaks; the lam re-shapes on its own.
