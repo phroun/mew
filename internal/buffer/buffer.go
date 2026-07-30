@@ -4,6 +4,7 @@ package buffer
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,23 +29,23 @@ func enableEditingUndo(g *garland.Garland) {
 	}
 }
 
-var library *garland.Library
-
-// InitLibrary initializes the Garland library with default cold storage path.
-func InitLibrary() error {
-	return InitLibraryWithPath("")
+// Library owns one garland.Library (its own cold-storage tier). Each editor
+// instance holds its own Library so many mews can run in one process without
+// sharing garland state (see NewLibrary). The package-level constructors below
+// (New, NewFromString, OpenFile, ...) operate on a lazily-created process
+// default for callers and tests that don't manage their own.
+type Library struct {
+	g *garland.Library
 }
 
-// InitLibraryWithPath initializes the Garland library with a specific cold storage path.
-// If path is empty, it uses os.TempDir(), falling back to ~/.mew/cold-storage.
-func InitLibraryWithPath(path string) error {
-	coldStoragePath := path
-
+// NewLibrary creates an independent library backed by its own cold-storage
+// directory. An empty path uses the OS temp dir (falling back to
+// ~/.mew/cold-storage). Give each instance a DISTINCT directory so their cold
+// storage never collides.
+func NewLibrary(coldStoragePath string) (*Library, error) {
 	if coldStoragePath == "" {
-		// Try OS temp directory first
 		coldStoragePath = os.TempDir()
 		if coldStoragePath == "" {
-			// Fall back to ~/.mew/cold-storage
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
 				homeDir = "."
@@ -52,22 +53,62 @@ func InitLibraryWithPath(path string) error {
 			coldStoragePath = homeDir + "/.mew/cold-storage"
 		}
 	}
-
-	// Ensure the directory exists
 	os.MkdirAll(coldStoragePath, 0755)
-
-	var err error
-	library, err = garland.Init(garland.LibraryOptions{
-		ColdStoragePath: coldStoragePath,
-	})
-	return err
+	g, err := garland.Init(garland.LibraryOptions{ColdStoragePath: coldStoragePath})
+	if err != nil {
+		return nil, err
+	}
+	return &Library{g: g}, nil
 }
 
-// CloseLibrary closes the Garland library.
+// Close releases the library's garland resources. Safe on a nil or
+// already-closed library.
+func (lib *Library) Close() error {
+	if lib != nil && lib.g != nil {
+		err := lib.g.Close()
+		lib.g = nil
+		return err
+	}
+	return nil
+}
+
+// defaultLib backs the package-level constructors for callers that don't hold
+// their own Library (tests, simple embedders). Editors use their own.
+var defaultLib *Library
+
+// defaultLibrary lazily initializes the process default Library. If init fails
+// it returns a Library with a nil garland, and the constructors degrade the way
+// they always did (empty buffer / "not initialized" error).
+func defaultLibrary() *Library {
+	if defaultLib == nil {
+		_ = InitLibrary()
+	}
+	if defaultLib == nil {
+		return &Library{}
+	}
+	return defaultLib
+}
+
+// InitLibrary initializes the default Garland library with the default cold
+// storage path.
+func InitLibrary() error { return InitLibraryWithPath("") }
+
+// InitLibraryWithPath initializes the default Garland library with a specific
+// cold storage path (empty = OS temp, then ~/.mew/cold-storage).
+func InitLibraryWithPath(path string) error {
+	lib, err := NewLibrary(path)
+	if err != nil {
+		return err
+	}
+	defaultLib = lib
+	return nil
+}
+
+// CloseLibrary closes the default Garland library.
 func CloseLibrary() {
-	if library != nil {
-		library.Close()
-		library = nil
+	if defaultLib != nil {
+		_ = defaultLib.Close()
+		defaultLib = nil
 	}
 }
 
@@ -80,6 +121,10 @@ type Buffer struct {
 	// buffer independently.
 	modified bool
 	filename string
+
+	// mouseBlock: the current block selection was made by a plain mouse
+	// drag (transient — a plain click dissolves it). See SetMouseBlock.
+	mouseBlock bool
 
 	// Command-scoped transaction. Groups all mutations from a single user
 	// command into one named garland revision. Opened lazily on the first
@@ -130,71 +175,51 @@ func (b *Buffer) captureSavePoint() {
 	b.hasSaved = true
 }
 
-// New creates a new empty buffer.
-func New() *Buffer {
-	if library == nil {
-		err := InitLibrary()
-		if err != nil || library == nil {
-			return &Buffer{filename: ""}
-		}
-	}
+// New creates a new empty buffer using the default library.
+func New() *Buffer { return defaultLibrary().New() }
 
-	g, err := library.Open(garland.FileOptions{
+// New creates a new empty buffer in this library.
+func (lib *Library) New() *Buffer {
+	if lib == nil || lib.g == nil {
+		return &Buffer{filename: ""}
+	}
+	g, err := lib.g.Open(garland.FileOptions{
 		DataBytes: []byte{}, // Empty byte slice is not nil, so counts as data source
 	})
 	if err != nil {
-		return &Buffer{
-			filename: "",
-		}
+		return &Buffer{filename: ""}
 	}
 	enableEditingUndo(g)
 
-	// Create read cursor for reading operations
 	readCursor := g.NewCursor()
 	readCursor.SeekByte(0)
-
-	return &Buffer{
-		garland:    g,
-		readCursor: readCursor,
-	}
+	return &Buffer{garland: g, readCursor: readCursor}
 }
 
-// NewFromString creates a buffer from string content.
-func NewFromString(content string) *Buffer {
-	if library == nil {
-		err := InitLibrary()
-		if err != nil || library == nil {
-			return &Buffer{filename: ""}
-		}
-	}
+// NewFromString creates a buffer from string content using the default library.
+func NewFromString(content string) *Buffer { return defaultLibrary().NewFromString(content) }
 
-	// Use DataBytes for empty content since empty DataString doesn't count as data source
+// NewFromString creates a buffer from string content in this library.
+func (lib *Library) NewFromString(content string) *Buffer {
+	if lib == nil || lib.g == nil {
+		return &Buffer{filename: ""}
+	}
+	// Use DataBytes for empty content since empty DataString doesn't count as a data source.
 	var g *garland.Garland
 	var err error
 	if content == "" {
-		g, err = library.Open(garland.FileOptions{
-			DataBytes: []byte{},
-		})
+		g, err = lib.g.Open(garland.FileOptions{DataBytes: []byte{}})
 	} else {
-		g, err = library.Open(garland.FileOptions{
-			DataString: content,
-		})
+		g, err = lib.g.Open(garland.FileOptions{DataString: content})
 	}
 	if err != nil {
-		return &Buffer{
-			filename: "",
-		}
+		return &Buffer{filename: ""}
 	}
 	enableEditingUndo(g)
 
-	// Create read cursor for reading operations
 	readCursor := g.NewCursor()
 	readCursor.SeekByte(0)
-
-	return &Buffer{
-		garland:    g,
-		readCursor: readCursor,
-	}
+	return &Buffer{garland: g, readCursor: readCursor}
 }
 
 // NewFromFile opens a file through Garland's own lazy-loading path: the file
@@ -218,18 +243,17 @@ type OpenOptions struct {
 	LockOwner string
 }
 
-// OpenFile is NewFromFile with options.
+// OpenFile is NewFromFile with options, using the default library.
 func OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().OpenFile(filename, opts)
+}
+
+// OpenFile opens a file-backed buffer in this library.
+func (lib *Library) OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
-
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		FilePath:      filename,
 		UseEmacsLocks: opts.UseEmacsLocks,
 		LockOwner:     opts.LockOwner,
@@ -258,17 +282,17 @@ func OpenFile(filename string, opts OpenOptions) (*Buffer, error) {
 // points, revert) instead of the raw content writes NewFromBytes implies;
 // metadata-based change detection is off (the host volunteers none).
 func NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().NewFromHostFile(host, filename)
+}
+
+// NewFromHostFile opens a host-virtualized file in this library.
+func (lib *Library) NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
 
 	fs := BridgeFS(host)
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		FilePath:   filename,
 		FileSystem: fs,
 	})
@@ -296,16 +320,16 @@ func NewFromHostFile(host HostFS, filename string) (*Buffer, error) {
 // only spill tier); use NewFromFile for real files so Garland can page them
 // lazily. This is the path for host-virtualized file systems.
 func NewFromBytes(data []byte, filename string) (*Buffer, error) {
-	if library == nil {
-		if err := InitLibrary(); err != nil {
-			return nil, err
-		}
-	}
-	if library == nil {
+	return defaultLibrary().NewFromBytes(data, filename)
+}
+
+// NewFromBytes creates an in-memory buffer in this library.
+func (lib *Library) NewFromBytes(data []byte, filename string) (*Buffer, error) {
+	if lib == nil || lib.g == nil {
 		return nil, fmt.Errorf("buffer library not initialized")
 	}
 
-	g, err := library.Open(garland.FileOptions{
+	g, err := lib.g.Open(garland.FileOptions{
 		DataBytes: data,
 	})
 	if err != nil {
@@ -750,6 +774,23 @@ func (a *Anchor) SeekLine(line int) {
 	}
 }
 
+// SeekLineRune parks the anchor at a line/rune position.
+func (a *Anchor) SeekLineRune(line, runePos int) {
+	if a != nil && a.c != nil {
+		a.c.SeekLine(int64(line), int64(runePos))
+	}
+}
+
+// LineRune reports the anchor's current line and rune position; both slide as
+// the buffer is edited.
+func (a *Anchor) LineRune() (line, runePos int) {
+	if a == nil || a.c == nil {
+		return 0, 0
+	}
+	l, r := a.c.LinePos()
+	return int(l), int(r)
+}
+
 // Line reports the anchor's current line; it slides as the buffer is edited.
 func (a *Anchor) Line() int {
 	if a == nil || a.c == nil {
@@ -884,6 +925,23 @@ func (k *Caret) DeleteBackward(count int) {
 		k.b.touchContent(l - 1) // a join at line start damages the previous line
 	}
 	k.c.BackDeleteRunes(int64(count), false)
+	k.b.modified = true
+}
+
+// Overwrite replaces oldByteLen bytes at the caret with text (overwrite-mode
+// typing). Unlike a delete+insert pair, garland tags this as a single overwrite
+// mutation, so a run of overwrites coalesces into one undo step — and an
+// appending insert at the run's end continues that run (the one-way overtype ->
+// append transition). The caret is not moved; the caller advances it.
+func (k *Caret) Overwrite(oldByteLen int64, text string) {
+	if k == nil || k.c == nil {
+		return
+	}
+	k.b.beginMutation()
+	if l, _ := k.Position(); true {
+		k.b.touchContent(l)
+	}
+	k.c.OverwriteBytes(oldByteLen, []byte(text))
 	k.b.modified = true
 }
 
@@ -1261,6 +1319,20 @@ func (b *Buffer) SaveTo(filename string) (warnings []string, err error) {
 	return warnings, nil
 }
 
+// MarkCleanSavedTo records an EXTERNAL save — content written outside
+// garland (e.g. through the mew: VFS to a virtualized support tree): the
+// buffer is no longer modified and carries the given filename. Garland
+// source tracking is unchanged (these buffers have none).
+func (b *Buffer) MarkCleanSavedTo(filename string) {
+	if b == nil {
+		return
+	}
+	if filename != "" {
+		b.filename = filename
+	}
+	b.modified = false
+}
+
 // SetMark sets a named mark at a specific line and rune position.
 // Uses readCursor to avoid disturbing window carets.
 func (b *Buffer) SetMark(name string, line, runePos int) error {
@@ -1332,6 +1404,44 @@ func (b *Buffer) GetMarkDebug(name string) (line, runePos int, bytePos int64, ex
 	return int(lineNum), int(runeNum), addr.Byte, true
 }
 
+// MarksOnLine returns the sorted, de-duplicated rune (column) positions of the
+// marks (garland decorations) on the given document line. Internal marks — keys
+// beginning with "_", e.g. the block/match selection anchors — are skipped
+// unless includeInternal is set (the showMarks "all" mode). Used by the
+// renderer's showMarks indicator ("*" per mark position).
+func (b *Buffer) MarksOnLine(docLine int, includeInternal bool) []int {
+	if b.garland == nil || b.readCursor == nil {
+		return nil
+	}
+	entries, err := b.garland.GetDecorationsOnLine(int64(docLine))
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(entries))
+	var cols []int
+	for _, e := range entries {
+		if e.Address == nil {
+			continue
+		}
+		if !includeInternal && strings.HasPrefix(e.Key, "_") {
+			continue
+		}
+		b.readCursor.SeekByte(e.Address.Byte)
+		ln, rn := b.readCursor.LinePos()
+		if int(ln) != docLine {
+			continue
+		}
+		col := int(rn)
+		if _, dup := seen[col]; dup {
+			continue
+		}
+		seen[col] = struct{}{}
+		cols = append(cols, col)
+	}
+	sort.Ints(cols)
+	return cols
+}
+
 // ClearMark removes a named mark.
 func (b *Buffer) ClearMark(name string) error {
 	if b.garland == nil {
@@ -1385,16 +1495,100 @@ func (b *Buffer) markRange(beginName, endName string) (startLine, startRune, end
 	return beginLine, beginRune, endLine, endRune, true
 }
 
-// ClearBlockMarks removes both block marks.
+// ClearBlockMarks removes both block marks. The mouse-block flag clears with
+// them — no block, no provenance.
 func (b *Buffer) ClearBlockMarks() {
 	b.ClearMark("_block_begin")
 	b.ClearMark("_block_end")
+	b.mouseBlock = false
 }
+
+// SetMouseBlock records whether the current block selection was made (or
+// last adjusted) BY THE MOUSE. A mouse-made block is transient: a plain
+// click dissolves it (see editor mousePress), where a keyboard-made block
+// (set_block_begin / set_block_end) survives clicks. The keyboard commands
+// reset this to false; ClearBlockMarks clears it with the marks.
+func (b *Buffer) SetMouseBlock(on bool) { b.mouseBlock = on }
+
+// MouseBlock reports whether the current block selection is mouse-made.
+func (b *Buffer) MouseBlock() bool { return b.mouseBlock }
 
 // ClearMatchMarks removes both match-highlight marks.
 func (b *Buffer) ClearMatchMarks() {
 	b.ClearMark("_match_begin")
 	b.ClearMark("_match_end")
+}
+
+// LineReader reads lines through a garland cursor of its OWN, so a goroutine
+// that is not the editor's main loop can scan the document without disturbing
+// (or being disturbed by) the shared readCursor that every other Buffer read
+// seeks. Garland's public API is fully concurrent — that shared cursor is the
+// only hazard, and this sidesteps it.
+//
+// Release the reader when the scan ends, so garland stops adjusting its cursor
+// on every edit. A reader is NOT safe for use from two goroutines at once (it
+// has exactly one cursor); make one per scan.
+type LineReader struct {
+	b *Buffer
+	c *garland.Cursor
+}
+
+// NewLineReader opens an independent line reader over the buffer.
+func (b *Buffer) NewLineReader() *LineReader {
+	if b == nil || b.garland == nil {
+		return &LineReader{b: b}
+	}
+	// Ephemeral: a scan's position is not worth recording per revision.
+	return &LineReader{b: b, c: b.garland.NewEphemeralCursor()}
+}
+
+// GetLineCount reports the buffer's line count. It reads garland's counters
+// directly (no cursor), so it matches Buffer.GetLineCount exactly.
+func (r *LineReader) GetLineCount() int {
+	if r == nil || r.b == nil {
+		return 1
+	}
+	return r.b.GetLineCount()
+}
+
+// GetLine returns line's content (0-indexed) through this reader's own cursor.
+// It mirrors Buffer.GetLine, including its byte-seek handling of line 0, whose
+// SeekLine is unreliable for a partial first line.
+func (r *LineReader) GetLine(line int) string {
+	if r == nil || r.b == nil || r.b.garland == nil || r.c == nil {
+		return ""
+	}
+	if line == 0 {
+		r.c.SeekByte(0)
+		content, err := r.c.ReadLine()
+		if content != "" {
+			return content
+		}
+		if err != nil {
+			r.c.SeekByte(0)
+			byteCount := r.b.garland.ByteCount()
+			if byteCount.Value > 0 {
+				bytes, _ := r.c.ReadBytes(byteCount.Value)
+				return string(bytes)
+			}
+		}
+		return ""
+	}
+	if err := r.c.SeekLine(int64(line), 0); err != nil {
+		return ""
+	}
+	content, _ := r.c.ReadLine()
+	return content
+}
+
+// Release removes the reader's cursor from garland. Safe to call more than once.
+func (r *LineReader) Release() {
+	if r != nil && r.c != nil {
+		if r.b != nil && r.b.garland != nil {
+			r.b.garland.RemoveCursor(r.c)
+		}
+		r.c = nil
+	}
 }
 
 // Cursor provides a position-based interface to the buffer.

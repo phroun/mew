@@ -1,0 +1,206 @@
+--- a/parser.go	2026-07-14 06:18:56.875158147 +0000
++++ b/parser.go	2026-07-21 07:28:35.809979676 +0000
+@@ -151,7 +151,7 @@
+ 	case 0x08: // BS - backspace
+ 		p.buffer.Backspace()
+ 	case 0x09: // HT - horizontal tab
+-		p.buffer.Tab()
++		p.buffer.TabVisual()
+ 	case 0x0A: // LF - line feed
+ 		p.buffer.LineFeed()
+ 	case 0x0B, 0x0C: // VT, FF - treated as line feed
+@@ -353,10 +353,10 @@
+ 		p.buffer.MoveCursorDown(p.getParam(0, 1))
+ 
+ 	case 'C': // CUF - Cursor Forward
+-		p.buffer.MoveCursorForward(p.getParam(0, 1))
++		p.buffer.MoveCursorForwardVisual(p.getParam(0, 1))
+ 
+ 	case 'D': // CUB - Cursor Backward
+-		p.buffer.MoveCursorBackward(p.getParam(0, 1))
++		p.buffer.MoveCursorBackwardVisual(p.getParam(0, 1))
+ 
+ 	case 'E': // CNL - Cursor Next Line
+ 		p.buffer.MoveCursorDown(p.getParam(0, 1))
+@@ -369,12 +369,12 @@
+ 	case 'G': // CHA - Cursor Horizontal Absolute
+ 		x := p.getParam(0, 1) - 1 // 1-indexed to 0-indexed
+ 		_, y := p.buffer.GetCursor()
+-		p.buffer.SetCursor(x, y)
++		p.buffer.SetCursorVisual(x, y)
+ 
+ 	case 'H', 'f': // CUP/HVP - Cursor Position
+ 		row := p.getParam(0, 1) - 1
+ 		col := p.getParam(1, 1) - 1
+-		p.buffer.SetCursor(col, row)
++		p.buffer.SetCursorVisual(col, row)
+ 
+ 	case 'J': // ED - Erase in Display
+ 		switch p.getParam(0, 0) {
+--- a/buffer_output.go	2026-07-14 06:18:56.870017122 +0000
++++ b/buffer_output.go	2026-07-21 07:28:35.810342047 +0000
+@@ -127,15 +127,16 @@
+ 			}
+ 		}
+ 	} else {
+-		charWidth = 1.0
++		charWidth = b.standardCharWidth(ch)
+ 	}
+ 
+ 	// Handle line wrap (DECAWM mode 7)
+ 	// If visual width wrap is enabled, wrap based on accumulated visual width
+ 	// Otherwise, wrap based on cell count (traditional behavior)
+ 	shouldWrap := false
+-	if b.visualWidthWrap && b.currentFlexWidth {
+-		// Visual width wrap: wrap when adding this char would exceed column limit
++	if (b.visualWidthWrap && b.currentFlexWidth) || !b.currentFlexWidth {
++		// Visual width wrap: standard mode always wraps on accumulated visual
++		// width (the wcwidth contract); flex mode only under ?2028.
+ 		currentVisualWidth := b.getLineVisualWidth(b.cursorY, b.cursorX)
+ 		shouldWrap = (currentVisualWidth + charWidth) > float64(effectiveCols)
+ 	} else {
+@@ -271,6 +272,9 @@
+ 	// Use the calculated charWidth (already accounts for custom glyphs and ambiguous width mode)
+ 	cell.CellWidth = charWidth
+ 
++	if !b.currentFlexWidth {
++		b.standardOverwriteFixup(b.cursorY, b.cursorX, charWidth)
++	}
+ 	b.screen[b.cursorY][b.cursorX] = cell
+ 	// Only set direction to right if we didn't wrap (wrap already set it to left)
+ 	if !shouldWrap {
+@@ -397,7 +401,12 @@
+ 	defer b.mu.Unlock()
+ 	b.setHorizMoveDir(-1, false) // Moving left
+ 	if b.cursorX > 0 {
+-		b.cursorX--
++		if b.flexWidthMode {
++			b.cursorX--
++		} else {
++			v := b.logicalToVisualLocked(b.cursorY, b.cursorX)
++			b.cursorX = b.visualToLogicalLocked(b.cursorY, v-1)
++		}
+ 	}
+ 	b.markDirty()
+ }
+--- a/cli/renderer.go	2026-07-14 06:18:56.872540956 +0000
++++ b/cli/renderer.go	2026-07-21 07:45:50.501462648 +0000
+@@ -31,6 +31,7 @@
+ type renderedCell struct {
+ 	char          rune
+ 	combining     string
++	cellWidth     float64
+ 	fg            purfecterm.Color
+ 	bg            purfecterm.Color
+ 	bold          bool
+@@ -73,6 +74,17 @@
+ }
+ 
+ // NewRenderer creates a new renderer for the terminal
++// hostCellWidth returns the columns a cell occupies on the REAL terminal the
++// CLI renderer writes to — always visual: a wide cell (CellWidth >= 1.5)
++// takes two columns; fractional flex widths quantize to one (a host terminal
++// cannot render halves).
++func hostCellWidth(cell *purfecterm.Cell) int {
++	if cell.CellWidth >= 1.5 {
++		return 2
++	}
++	return 1
++}
++
+ func NewRenderer(term *Terminal) *Renderer {
+ 	r := &Renderer{
+ 		term:         term,
+@@ -172,15 +184,21 @@
+ 	currentStrikethrough := false
+ 	firstAttr := true
+ 
+-	// Render each cell
++	// Render each cell. vx tracks the VISUAL column where the cell lands on
++	// the host terminal (a wide cell advances it by two): cursor addressing
++	// into a real terminal must use visual columns, or everything after a
++	// wide glyph paints one column early and CUPs stomp glyph halves.
+ 	for y := 0; y < rows; y++ {
+ 		rowChanged := needsFullRender
+ 		if !needsFullRender && len(prevCells[y]) != cols {
+ 			rowChanged = true
+ 		}
+ 
++		vx := 0
+ 		for x := 0; x < cols; x++ {
+ 			cell := buffer.GetVisibleCell(x, y)
++			emitCol := vx
++			vx += hostCellWidth(&cell)
+ 
+ 			// Resolve colors based on theme
+ 			fg := opts.Scheme.ResolveColor(cell.Foreground, true, isDark)
+@@ -195,6 +213,7 @@
+ 			newCells[y][x] = renderedCell{
+ 				char:          cell.Char,
+ 				combining:     cell.Combining,
++				cellWidth:     cell.CellWidth,
+ 				fg:            fg,
+ 				bg:            bg,
+ 				bold:          cell.Bold,
+@@ -210,6 +229,7 @@
+ 				prev := prevCells[y][x]
+ 				if prev.char == cell.Char &&
+ 					prev.combining == cell.Combining &&
++					prev.cellWidth == cell.CellWidth &&
+ 					prev.fg == fg &&
+ 					prev.bg == bg &&
+ 					prev.bold == cell.Bold &&
+@@ -221,8 +241,8 @@
+ 				}
+ 			}
+ 
+-			// Move cursor to position
+-			r.output.WriteString(fmt.Sprintf("\033[%d;%dH", contentStartY+y+1, contentStartX+x+1))
++			// Move cursor to position (visual column)
++			r.output.WriteString(fmt.Sprintf("\033[%d;%dH", contentStartY+y+1, contentStartX+emitCol+1))
+ 
+ 			// Build SGR sequence for attributes
+ 			var sgr []string
+@@ -318,7 +338,8 @@
+ 	r.term.mu.Unlock()
+ 
+ 	if cursorVisible && scrollOffset == 0 && focused {
+-		r.output.WriteString(fmt.Sprintf("\033[%d;%dH", contentStartY+cursorY+1, contentStartX+cursorX+1))
++		visX := buffer.LogicalToVisualCol(cursorY, cursorX)
++		r.output.WriteString(fmt.Sprintf("\033[%d;%dH", contentStartY+cursorY+1, contentStartX+visX+1))
+ 		r.output.WriteString("\033[?25h")
+ 	}
+ 
+@@ -505,18 +526,19 @@
+ 	currentStrikethrough := false
+ 	firstAttr := true
+ 
+-	// Render each cell
++	// Render each cell (vx = visual column on the host terminal; see Render).
+ 	for y := 0; y < rows; y++ {
++		vx := 0
+ 		for x := 0; x < cols; x++ {
++			cell := buffer.GetVisibleCell(x, y)
+ 			// Check clipping - screen coordinates are 1-based for ANSI
+-			screenX := contentStartX + x + 1
++			screenX := contentStartX + vx + 1
+ 			screenY := contentStartY + y + 1
++			vx += hostCellWidth(&cell)
+ 			if clipEnabled && !clipRect.Contains(screenX-1, screenY-1) {
+ 				continue // Skip cells outside clip rectangle
+ 			}
+ 
+-			cell := buffer.GetVisibleCell(x, y)
+-
+ 			// Resolve colors based on theme
+ 			fg := opts.Scheme.ResolveColor(cell.Foreground, true, isDark)
+ 			bg := opts.Scheme.ResolveColor(cell.Background, false, isDark)
+@@ -626,7 +648,7 @@
+ 
+ 	// Position and show cursor if visible, not scrolled, focused, and within clip
+ 	if cursorVisible && scrollOffset == 0 && focused {
+-		cursorScreenX := contentStartX + cursorX
++		cursorScreenX := contentStartX + buffer.LogicalToVisualCol(cursorY, cursorX)
+ 		cursorScreenY := contentStartY + cursorY
+ 		if !clipEnabled || clipRect.Contains(cursorScreenX, cursorScreenY) {
+ 			output.WriteString(fmt.Sprintf("\033[%d;%dH", cursorScreenY+1, cursorScreenX+1))

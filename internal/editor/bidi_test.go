@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 	"testing"
@@ -8,9 +9,10 @@ import (
 
 	"github.com/phroun/pawscript"
 
+	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // stripAnsi removes ANSI escape sequences so rendered content can be matched
@@ -57,17 +59,17 @@ func TestBidiRuneToVisualColumn(t *testing.T) {
 func TestRTLCommand(t *testing.T) {
 	e, w := newTestEditor(t, bidiLine+"\n")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1}) // 'b'
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1}) // 'b'
 	if res := e.PawScript.ExecuteAsync("rtl"); res != pawscript.BoolStatus(false) {
 		t.Fatalf("latin position should report false, got %v", res)
 	}
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the Hebrew word
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the Hebrew word
 	if res := e.PawScript.ExecuteAsync("rtl"); res != pawscript.BoolStatus(true) {
 		t.Fatalf("hebrew position should report true, got %v", res)
 	}
 }
 
-// The direction option is per-window: set_option targets the current window,
+// The direction option is per-viewport: set_option targets the current viewport,
 // round-trips through getOption, leaves the global base untouched, and rejects
 // junk values.
 func TestDirectionOption(t *testing.T) {
@@ -75,17 +77,17 @@ func TestDirectionOption(t *testing.T) {
 	if v, ok := e.getOption(w, "direction"); !ok || v != "ltr" {
 		t.Fatalf("default direction: %q ok=%v", v, ok)
 	}
-	// set_option targets the last main-buffer window.
+	// set_option targets the last main-buffer viewport.
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	if v, _ := e.getOption(w, "direction"); v != "rtl" {
-		t.Fatalf("window direction after set: %q", v)
+		t.Fatalf("viewport direction after set: %q", v)
 	}
 	if !e.winRTL(w) {
-		t.Fatal("winRTL should reflect the per-window option")
+		t.Fatal("winRTL should reflect the per-viewport option")
 	}
-	// The global base direction is unaffected by a per-window override.
+	// The global base direction is unaffected by a per-viewport override.
 	if e.baseRTL() {
-		t.Fatal("per-window direction must not change the global base")
+		t.Fatal("per-viewport direction must not change the global base")
 	}
 	if v, _ := e.getOption(nil, "direction"); v != "ltr" {
 		t.Fatalf("global direction should stay ltr: %q", v)
@@ -126,17 +128,17 @@ func TestBidiRenderedRTLBase(t *testing.T) {
 // to M_ on LTR text.
 func TestModebarLogoFlips(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
-	e.createPluginWindows() // the modebar window (normally made by run())
+	e.createPluginViewports() // the modebar viewport (normally made by run())
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1}) // latin
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1}) // latin
 	e.performRender()
 	plain := stripAnsi(out.String())
 	if !strings.Contains(plain, " M_ ") || strings.Contains(plain, " _M ") {
 		t.Fatal("LTR caret should show the M_ logo")
 	}
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // hebrew
-	e.Renderer.ForceRedraw()                          // inspect the whole modebar row, not just the diff
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // hebrew
+	e.Renderer.ForceRedraw()                            // inspect the whole modebar row, not just the diff
 	out.Reset()
 	e.performRender()
 	if !strings.Contains(stripAnsi(out.String()), " _M ") {
@@ -223,9 +225,10 @@ func fmtSscan(s string, out *int) {
 // there while the real caret clamps to the shorter line's end.
 func TestBidiRTLGhostHoldsScreenColumn(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבגדהוזח\nאב\n") // 8 letters, then 2
+	blockCaret(e)                                       // these pin the block/underline cell geometry, not the bar
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
@@ -248,7 +251,7 @@ func TestBidiRTLGhostReadingStartPreserved(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אב\nאבגדהוזח\n") // 2 letters, then 8
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // reading start
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
 	e.afterHorizontalMovement(w)
 	e.executeCommand("go_line_next")
 	if w.HasGhostCursor {
@@ -265,7 +268,8 @@ func TestBidiRTLGhostReadingStartPreserved(t *testing.T) {
 // letter, is painted at visual col 6 -> screen col 7 with no gutter).
 func TestBidiHardwareCursorSide(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5}) // inside the Hebrew word
+	blockCaret(e)                                       // these pin the block/underline cell geometry, not the bar
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside the Hebrew word
 	e.performRender()
 	_, col := lastCursor(out.Bytes())
 	if col != 7 { // visual col 6 + 1 (no gutter)
@@ -278,9 +282,10 @@ func TestBidiHardwareCursorSide(t *testing.T) {
 // screen cols 5-8, so logical runes 4..7 (ש,ל,ו,ם) sit at cols 8,7,6,5.
 func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	blockCaret(e) // these pin the block/underline cell geometry, not the bar
 	want := map[int]int{4: 8, 5: 7, 6: 6, 7: 5}
 	for rune_, wantCol := range want {
-		w.SetCursorPos(window.Position{Line: 0, Rune: rune_})
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: rune_})
 		e.afterHorizontalMovement(w)
 		out.Reset()
 		e.performRender()
@@ -294,8 +299,9 @@ func TestBidiHardwareCursorWalksRTLFragmentOnCell(t *testing.T) {
 // edge with the padding on the left, and the hardware cursor follows.
 func TestBidiRTLRightAligned(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבג\n")
+	blockCaret(e) // these pin the block/underline cell geometry, not the bar
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0}) // reading start
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
 	out.Reset()
 	e.performRender()
 
@@ -310,7 +316,7 @@ func TestBidiRTLRightAligned(t *testing.T) {
 	}
 
 	// End of line (logical len) parks one cell LEFT of the content.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	out.Reset()
 	e.performRender()
 	_, col = lastCursor(out.Bytes())
@@ -331,7 +337,7 @@ func TestBidiRTLScrollTrimsReadingHead(t *testing.T) {
 	// cursor "@" indicator is not drawn over the left-edge truncation marker —
 	// the two share column 0, and under the back buffer the later "@" write
 	// composites over the marker (as it does on a real terminal).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 93})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 93})
 
 	out.Reset()
 	e.performRender()
@@ -362,7 +368,7 @@ func TestRTLScrolledShortLineShowsOffScreenIndicator(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "\n"+strings.Repeat("a", 120)+"\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	w.ViewState.ViewOffsetX = 80 // scrolled deep into the long line's tail
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.performRender()
 	offGlyph := config.DefaultIndicators().CursorOffScreen
 	if !strings.Contains(stripAnsi(out.String()), offGlyph) {
@@ -376,11 +382,15 @@ func TestRTLScrolledShortLineShowsOffScreenIndicator(t *testing.T) {
 func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	e, w, out := newRenderedEditor(t, strings.Repeat("k", 85)+"\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 85})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 85})
 
 	e.executeCommand("insert 'q'") // caret at EOL of an 86-col line
-	if w.ViewState.ViewOffsetX != 0 {
-		t.Fatalf("typing at the reading start must not scroll, offset %d", w.ViewState.ViewOffsetX)
+	// The caret's insertion point is one cell RIGHT of the reading start —
+	// past the content's edge — so the follow takes the phantom column:
+	// offset -1 shifts the line left one and opens an empty cell at the right
+	// edge for the caret to occupy, AFTER the q rather than on it.
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL past the reading start should take the phantom column, offset %d", w.ViewState.ViewOffsetX)
 	}
 	out.Reset()
 	e.performRender()
@@ -389,7 +399,7 @@ func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	}
 
 	// The line's logical start is 86 reading columns back: scrolls into view.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.executeCommand("go_line_beg")
 	if w.ViewState.ViewOffsetX != 7 {
 		t.Fatalf("reading-space scroll offset %d, want 7", w.ViewState.ViewOffsetX)
@@ -401,7 +411,7 @@ func TestBidiRTLTypingKeepsCaretVisible(t *testing.T) {
 	}
 }
 
-// Prompt windows are pinned LTR regardless of the direction option.
+// Prompt viewports are pinned LTR regardless of the direction option.
 func TestPromptPinnedLTR(t *testing.T) {
 	e, _ := newTestEditor(t, "אבג\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
@@ -416,7 +426,7 @@ func TestPromptPinnedLTR(t *testing.T) {
 }
 
 // Under RTL the line-number gutter mirrors to the right side of the content,
-// and a window's left/right messages swap slots.
+// and a viewport's left/right messages swap slots.
 func TestBidiRTLGutterAndMessagesMirror(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "אבג\nxyz\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
@@ -503,25 +513,25 @@ func TestShowBidiExplicitControl(t *testing.T) {
 	}
 }
 
-// showBidi is an option like showInvisibles: config default plus per-window
+// showBidi is an option like showInvisibles: config default plus per-viewport
 // set_option.
 func TestShowBidiOption(t *testing.T) {
 	e, w := newTestEditor(t, "x\n", "showBidi=true")
-	// The [general] value lands in the editor config (windows created through
-	// the editor's own paths inherit it; the test harness window is created
+	// The [general] value lands in the editor config (viewports created through
+	// the editor's own paths inherit it; the test harness viewport is created
 	// directly, like showInvisibles).
 	if !e.Config.ShowBidi {
 		t.Fatal("config should parse showBidi=true")
 	}
 	e.PawScript.ExecuteAsync("set_option 'showBidi', 'true'")
 	if !w.ViewState.ShowBidi {
-		t.Fatal("set_option should enable the window's showBidi")
+		t.Fatal("set_option should enable the viewport's showBidi")
 	}
 	e.PawScript.ExecuteAsync("set_option 'showBidi', 'false'")
 	if w.ViewState.ShowBidi {
-		t.Fatal("set_option should clear the window's showBidi")
+		t.Fatal("set_option should clear the viewport's showBidi")
 	}
-	if v, _ := e.getOption(w, "showBidi"); v != "false" {
+	if v, _ := e.getOption(w, "showBidi"); v != "no" {
 		t.Fatalf("get_option showBidi: %q", v)
 	}
 }
@@ -626,7 +636,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "[general]\n")
 	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
 	w.ViewState.ShowBidi = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	out.Reset()
 	e.performRender()
 	// The back buffer paints the reversed cell with \x1b[7m in its style; the
@@ -639,7 +649,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	// Caret at pos 8 (rune 9, between l and the closing bracket): secondary
 	// one cell past the l in ITS (LTR) direction — again the "|" cell that
 	// ends the island.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 8})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8})
 	e.Renderer.ForceRedraw() // both carets' secondaries land on the same "|" cell
 	out.Reset()
 	e.performRender()
@@ -648,7 +658,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 	}
 
 	// Mid-fragment: no secondary.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.Renderer.ForceRedraw()
 	out.Reset()
 	e.performRender()
@@ -663,7 +673,7 @@ func TestShowBidiSecondaryCursor(t *testing.T) {
 func TestShowBidiSecondaryCursorLTRBase(t *testing.T) {
 	e, w, out := newRenderedEditor(t, bidiLine+"\n")
 	w.ViewState.ShowBidi = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
 	e.performRender()
 	if !strings.Contains(out.String(), "\x1b[7m|") {
 		t.Fatal("expected the fragment's | end-marker cell inverted")
@@ -677,7 +687,7 @@ func TestShowBidiSecondaryCursorSkipsControls(t *testing.T) {
 	e, w, out := newRenderedEditor(t, content+"\n")
 	w.ViewState.ShowBidi = true
 	// Caret between RLM and א: boundary runes include the control.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.performRender()
 	if strings.Contains(out.String(), "\x1b[7m") {
 		t.Fatal("no secondary cursor at a control-expressed boundary")
@@ -691,14 +701,14 @@ func TestSecondaryCursorWithoutShowBidi(t *testing.T) {
 	// showBidi OFF: unmarked layout (no <> marker cells). Caret entering the
 	// Hebrew word: secondary rests one cell past the preceding space in its
 	// LTR direction — the run's leftmost cell (ם).
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
 	e.performRender()
 	if !strings.Contains(out.String(), "\x1b[7mם") {
 		t.Fatal("secondary cursor should render without showBidi")
 	}
 
 	// Still absent mid-fragment and on plain LTR lines.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 	out.Reset()
 	e.performRender()
 	if strings.Contains(out.String(), "\x1b[7m") {
@@ -737,22 +747,626 @@ func TestLamAlefLigatureCell(t *testing.T) {
 	if got := e.lineVisualWidth(w, line, 4); got != 2 {
 		t.Fatalf("line width with ligature: %d, want 2", got)
 	}
-	// Caret between lam and alef (rune 2) and after the lam-before-alef... both
-	// the lam position (1) and the absorbed alef (2) resolve to the same cell.
-	c1 := e.caretVisualColumn(w, line, 1, 4)
-	c2 := e.caretVisualColumn(w, line, 2, 4)
-	if c1 != c2 {
-		t.Fatalf("lam (col %d) and absorbed alef (col %d) should share a cell", c1, c2)
+	// Three code points share two cells, so two caret positions must coincide —
+	// and WHICH two follows the cluster rule: a caret partway THROUGH a cluster
+	// displays as though it followed the whole cluster. Position 2 sits between
+	// the lam and the absorbed alef, i.e. inside the ligature, so it shows where
+	// position 3 does (past it) rather than where position 1 does (on it).
+	before := e.caretVisualColumn(w, line, 1, 4) // before the lam: ON the ligature
+	inside := e.caretVisualColumn(w, line, 2, 4) // between the halves
+	after := e.caretVisualColumn(w, line, 3, 4)  // past the whole thing
+	if inside != after {
+		t.Fatalf("caret inside the ligature (col %d) should show where past it does (col %d)",
+			inside, after)
+	}
+	if inside == before {
+		t.Fatalf("caret inside the ligature (col %d) should not show on its leading edge (col %d)",
+			inside, before)
 	}
 
 	// Delete the alef: the ligature breaks; the lam re-shapes on its own.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3}) // after alef
-	e.executeCommand("del_char_prior")                // remove the alef
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // after alef
+	e.executeCommand("del_char_prior")                  // remove the alef
 	if got := docContent(w); got != "بل" {
 		t.Fatalf("after deleting alef: %q, want بل", got)
 	}
 	// Now "بل" is two cells (no ligature).
 	if got := e.lineVisualWidth(w, "بل", 4); got != 2 {
 		t.Fatalf("broken-apart width: %d, want 2", got)
+	}
+}
+
+// A BAR caret (DECSCUSR 5/6) draws on the LEFT edge of the cell it is
+// addressed to, so on an RTL character — whose insertion point is its RIGHT
+// edge — it is addressed one cell further right than a block would be.
+// Same line and caret as TestBidiHardwareCursorSide, which pins the block
+// column at 7.
+func TestBidiBarCaretNudgedRightOnRTL(t *testing.T) {
+	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	e.Config.InsertCursor = 5 // blinking bar (the shipped default)
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 8 {
+		t.Fatalf("bar caret col %d, want 8 (block's 7, one cell right)", col)
+	}
+
+	// Block and underline shapes keep the cell geometry.
+	for _, shape := range []int{1, 2, 3, 4} {
+		out.Reset()
+		e.Config.InsertCursor = shape
+		e.performRender()
+		if _, col := lastCursor(out.Bytes()); col != 7 {
+			t.Fatalf("shape %d: caret col %d, want the block column 7", shape, col)
+		}
+	}
+}
+
+// On LTR text the bar needs no nudge: the left edge of the cell after the last
+// character already IS that character's right edge.
+func TestBidiBarCaretUnchangedOnLTR(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abcdef\n")
+	e.Config.InsertCursor = 5
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.performRender()
+	_, barCol := lastCursor(out.Bytes())
+
+	out.Reset()
+	e.Config.InsertCursor = 2
+	e.performRender()
+	_, blockCol := lastCursor(out.Bytes())
+
+	if barCol != blockCol {
+		t.Fatalf("LTR bar col %d != block col %d; no nudge belongs here", barCol, blockCol)
+	}
+}
+
+// The nudge lands exactly where the modebar logo flips to its RTL form: both
+// consult bidi.RTLAt, so the caret shape and the logo never disagree about
+// which side of the text the caret is on.
+func TestBidiBarNudgeTracksLogoFlip(t *testing.T) {
+	e, w, out := newRenderedEditor(t, bidiLine+"\n")
+	line := strings.TrimRight(w.Buffer.GetLine(0), "\n\r")
+	for _, pos := range []int{0, 2, 5, 8, 11} {
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: pos})
+
+		out.Reset()
+		e.Config.InsertCursor = 2 // block
+		e.performRender()
+		_, blockCol := lastCursor(out.Bytes())
+
+		out.Reset()
+		e.Config.InsertCursor = 5 // bar
+		e.performRender()
+		_, barCol := lastCursor(out.Bytes())
+
+		wantNudge := 0
+		if bidi.RTLAt([]rune(line), pos, e.winRTL(w)) {
+			wantNudge = 1
+		}
+		if barCol-blockCol != wantNudge {
+			t.Fatalf("rune %d: bar %d - block %d = %d, want %d (logo RTL=%v)",
+				pos, barCol, blockCol, barCol-blockCol, wantNudge, wantNudge == 1)
+		}
+	}
+}
+
+// rtlGutterEditor is an RTL viewport WITH line numbers, so the gutter mirrors
+// to the right of the content and the caret has somewhere to dip.
+func rtlGutterEditor(t *testing.T, content string) (*Editor, *viewport.Viewport, *bytes.Buffer) {
+	t.Helper()
+	e, w, out := newRenderedEditor(t, content)
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = true
+	e.performRender() // settle LineNumWidth
+	return e, w, out
+}
+
+// The gutter dip is positionCursor's FALLBACK for a caret that computes one
+// column past the content's right edge while the view sits at offset 0 — the
+// state a ghost cursor still reaches, since the phantom declines it. (For an
+// ordinary caret the follow now takes the phantom first; see
+// TestBidiPhantomBeatsGutterDip.) Without the dip such a caret clamped back
+// onto the character, reading as if it sat BEFORE the text just typed.
+func TestBidiCaretDipsIntoGutterAfterLatin(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3}) // after 'c'
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight+1 {
+		t.Fatalf("caret col %d, want %d — one column into the gutter, after the text",
+			col, contentRight+1)
+	}
+}
+
+// Every cursor shape gets that fallback dip: it is a position, not a shape
+// correction.
+func TestBidiGutterDipAppliesToEveryShape(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	contentRight := e.Renderer.Width - w.LineNumWidth
+
+	for _, shape := range []int{1, 2, 3, 4, 5, 6} {
+		e.Config.InsertCursor = shape
+		out.Reset()
+		e.performRender()
+		if _, col := lastCursor(out.Bytes()); col != contentRight+1 {
+			t.Fatalf("shape %d: caret col %d, want %d", shape, col, contentRight+1)
+		}
+	}
+}
+
+// The RTL reading start is NOT an "after a character" position — it marks the
+// cell the next character will occupy — so it still clamps onto the edge cell,
+// exactly as before.
+func TestBidiRTLReadingStartStillClamps(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "אבג\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0}) // reading start
+	e.Config.InsertCursor = 2                           // block, so no bar nudge is in play
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight {
+		t.Fatalf("caret col %d, want the content edge %d (the reading start must not dip)",
+			col, contentRight)
+	}
+}
+
+// With no gutter to dip into, the clamp stands rather than addressing a column
+// outside the viewport — the pre-existing behavior, unchanged.
+func TestBidiNoGutterKeepsClamp(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != e.Renderer.Width {
+		t.Fatalf("caret col %d, want the screen edge %d with no gutter available",
+			col, e.Renderer.Width)
+	}
+}
+
+// An LTR viewport is untouched: its gutter is on the LEFT, so there is no slack
+// to the right and the caret geometry is exactly what it always was.
+func TestBidiLTRViewportUnaffected(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	w.ViewState.ShowLineNumbers = true
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	if col != w.LineNumWidth+4 { // gutter + "abc", caret after the 3rd char
+		t.Fatalf("caret col %d, want %d (LTR geometry unchanged)", col, w.LineNumWidth+4)
+	}
+}
+
+// phantomStripped removes every escape (including DECSCUSR's space-
+// intermediate form) from a rendered frame, leaving the painted text.
+func phantomStripped(out *bytes.Buffer) string {
+	esc := regexp.MustCompile("\x1b\\[[0-9;<>?]* ?[A-Za-z]|\x1b#[0-9]|\x1b[()][A-Z0-9]")
+	return esc.ReplaceAllString(out.String(), "")
+}
+
+// LTR viewport, wholly-RTL line, caret at EOL: its insertion point is one cell
+// LEFT of visual column 0 — the phantom column. The follow scrolls to -1, the
+// line paints shifted right one behind a leading space, and the caret occupies
+// that space.
+func TestBidiPhantomColumnLTR(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "אבגד\n")
+	e.Config.InsertCursor = 2                           // block: its column IS the phantom cell
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4}) // EOL
+	e.ensureCursorVisible(w)
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL after a line-starting RTL run should take the phantom column, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+	out.Reset()
+	e.performRender()
+	if _, col := lastCursor(out.Bytes()); col != 1 {
+		t.Fatalf("caret col %d, want the phantom cell at 1", col)
+	}
+	// The line paints shifted right one behind the phantom space: the visual
+	// form of the RTL word (דגבא) with a space ahead of it.
+	if !strings.Contains(phantomStripped(out), " דגבא") {
+		t.Fatal("content should follow a leading phantom space, shifted right one")
+	}
+}
+
+// Moving the caret somewhere that does not need the phantom does NOT snap it
+// away: this is caret visibility, not a snap, and a caret visible at offset 0
+// is equally visible at -1. Only a real scroll requirement gives it up (see
+// TestBidiPhantomReleasedByRealScroll) — releasing on mere want/don't-want
+// jerked the line by a column on every space typed.
+func TestBidiPhantomHoldsWhenNoLongerNeeded(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "אבגד\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatal("precondition: phantom taken")
+	}
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("the phantom should hold, offset %d", w.ViewState.ViewOffsetX)
+	}
+}
+
+// RTL viewport WITHOUT a gutter: the caret after a trailing LTR run takes the
+// phantom column at the RIGHT edge — the case the gutter dip could not cover.
+func TestBidiPhantomColumnRTLNoGutter(t *testing.T) {
+	e, w, out := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.ensureCursorVisible(w)
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("EOL past the reading start should take the phantom column, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+	e.Config.InsertCursor = 2 // block: its column IS the phantom cell
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	if col != e.Renderer.Width {
+		t.Fatalf("caret col %d, want the phantom at the right edge %d", col, e.Renderer.Width)
+	}
+	// The content shifted left one, opening the phantom cell the caret (col
+	// asserted above, at the screen edge) occupies; the pad math places abc
+	// one cell in from the edge, which the offset and caret column pin.
+	if !strings.Contains(phantomStripped(out), "abc") {
+		t.Fatal("the line should still paint")
+	}
+}
+
+// The phantom takes PRECEDENCE over the gutter dip: with a mirrored gutter
+// present the caret still scrolls to the phantom column and lands on the
+// content's own edge cell, rather than dipping onto a line-number digit.
+func TestBidiPhantomBeatsGutterDip(t *testing.T) {
+	e, w, out := rtlGutterEditor(t, "abc\n")
+	e.Config.InsertCursor = 2 // block: its column IS the caret cell
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
+	e.ensureCursorVisible(w)
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("the phantom should engage even with a gutter, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+	out.Reset()
+	e.performRender()
+	_, col := lastCursor(out.Bytes())
+	contentRight := e.Renderer.Width - w.LineNumWidth
+	if col != contentRight {
+		t.Fatalf("caret col %d, want the content edge %d — NOT the gutter at %d",
+			col, contentRight, contentRight+1)
+	}
+}
+
+// A caret ON an RTL rune at the reading start is not the phantom's case for a
+// cell-filling shape: it marks the cell the next character will occupy and the
+// offset stays put. (A BAR there is the one exception — see
+// TestBidiPhantomForBarAtReadingStart.)
+func TestBidiPhantomNotForRTLReadingStart(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "אבג\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.Config.InsertCursor = 2 // block
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("an RTL reading-start caret keeps the clamp, offset %d", w.ViewState.ViewOffsetX)
+	}
+}
+
+// Rune 0 never takes the phantom — there is no content the caret stands after.
+func TestBidiPhantomNeedsPositiveRune(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "abc\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	w.ViewState.ShowLineNumbers = false
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX != 0 {
+		t.Fatalf("rune 0 must not take the phantom, offset %d", w.ViewState.ViewOffsetX)
+	}
+}
+
+// The phantom is symmetric: an RTL run ending an LTR line pushes the caret one
+// cell LEFT of column 0, and an LTR run ending an RTL line pushes it one cell
+// RIGHT of the reading start. Both take the phantom column, with or without a
+// gutter, so neither ever lands on a character it stands after.
+func TestBidiPhantomSymmetricBothDirections(t *testing.T) {
+	cases := []struct {
+		name     string
+		content  string
+		rtl      bool
+		gutter   bool
+		caretCol func(e *Editor, w *viewport.Viewport) int
+	}{
+		{"ltr viewport, hebrew line", "אבגד\n", false, false,
+			func(e *Editor, w *viewport.Viewport) int { return 1 }},
+		{"rtl viewport, latin line, no gutter", "abc\n", true, false,
+			func(e *Editor, w *viewport.Viewport) int { return e.Renderer.Width }},
+		{"rtl viewport, latin line, with gutter", "abc\n", true, true,
+			func(e *Editor, w *viewport.Viewport) int { return e.Renderer.Width - w.LineNumWidth }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, w, out := newRenderedEditor(t, tc.content)
+			e.Config.InsertCursor = 2 // block: its column IS the caret cell
+			if tc.rtl {
+				e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+			}
+			w.ViewState.ShowLineNumbers = tc.gutter
+			e.performRender() // settle LineNumWidth
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: len([]rune(strings.TrimRight(tc.content, "\n")))})
+			e.ensureCursorVisible(w)
+
+			if w.ViewState.ViewOffsetX != -1 {
+				t.Fatalf("offset %d, want the phantom column -1", w.ViewState.ViewOffsetX)
+			}
+			out.Reset()
+			e.performRender()
+			if _, col := lastCursor(out.Bytes()); col != tc.caretCol(e, w) {
+				t.Fatalf("caret col %d, want %d", col, tc.caretCol(e, w))
+			}
+		})
+	}
+}
+
+// rtlPhantomEditor: an RTL viewport with line numbers on, a long first line
+// ending in Latin text and two shorter lines, for arrival-path tests.
+func rtlPhantomEditor(t *testing.T) (*Editor, *viewport.Viewport, *bytes.Buffer) {
+	t.Helper()
+	e, w, out := newRenderedEditor(t, "this is a test of it working. h\nsecond line here\nthird line here!\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.Config.InsertCursor = 2 // block: its column IS the caret cell
+	e.performRender()
+	return e, w, out
+}
+
+// The caret must reach the phantom column however it ARRIVES at a line's end.
+// Vertical movement deliberately does not scroll horizontally, so it once left
+// the caret dipped onto a line-number digit. (An arrival whose ideal exceeds
+// the line's reach GHOSTS instead, parking the caret adjacent to the ghost —
+// see TestRTLGhostFromPhantomEOLParksAdjacent.)
+func TestBidiPhantomOnEveryArrival(t *testing.T) {
+	arrivals := []struct {
+		name string
+		rune int
+		do   func(e *Editor, w *viewport.Viewport)
+	}{
+		{"go_line_end", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+			e.executeCommand("go_line_end")
+		}},
+		{"go_char_next", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 30})
+			e.executeCommand("go_char_next")
+		}},
+		{"arrow up to a longer line's end", 31, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 1, Rune: 16})
+			e.afterHorizontalMovement(w)
+			e.executeCommand("go_line_prior")
+		}},
+		{"arrow down to a shorter line's end", 16, func(e *Editor, w *viewport.Viewport) {
+			w.SetCursorPos(viewport.Position{Line: 0, Rune: 31})
+			e.afterHorizontalMovement(w)
+			e.executeCommand("go_line_next")
+		}},
+	}
+	for _, a := range arrivals {
+		t.Run(a.name, func(t *testing.T) {
+			e, w, out := rtlPhantomEditor(t)
+			a.do(e, w)
+			if got := w.CursorPos().Rune; got != a.rune {
+				t.Fatalf("caret at rune %d, want %d (test setup)", got, a.rune)
+			}
+			if w.ViewState.ViewOffsetX != -1 {
+				t.Fatalf("offset %d, want the phantom column -1", w.ViewState.ViewOffsetX)
+			}
+			out.Reset()
+			e.performRender()
+			_, col := lastCursor(out.Bytes())
+			contentRight := e.Renderer.Width - w.LineNumWidth
+			if col != contentRight {
+				t.Fatalf("caret col %d, want the content edge %d — NOT the gutter at %d",
+					col, contentRight, contentRight+1)
+			}
+		})
+	}
+}
+
+// showInvisibles appends terminator marker cells to the line's measured width
+// that the caret's own column never counts. Measuring the phantom against that
+// inflated width read as "one cell in from the edge" and withheld it.
+func TestBidiPhantomWithInvisibles(t *testing.T) {
+	e, w, _ := rtlPhantomEditor(t)
+	e.setOption(w, "showInvisibles", "yes")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.executeCommand("go_line_end")
+
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("offset %d, want the phantom column -1 with invisibles on",
+			w.ViewState.ViewOffsetX)
+	}
+}
+
+// A BAR at an RTL line's FIRST rune is the one case where a caret sitting ON a
+// character still needs the phantom: the bar draws on its cell's left edge, so
+// its insertion point is one cell further out, and with no gutter to supply
+// that cell it would clamp back onto the character — indistinguishable from the
+// caret one rune along. Block and underline shapes fill their cell and do not.
+func TestBidiPhantomForBarAtReadingStart(t *testing.T) {
+	for _, tc := range []struct {
+		shape int
+		want  int
+	}{{2, 0}, {4, 0}, {5, -1}, {6, -1}} {
+		e, w, _ := newRenderedEditor(t, "אבגד\n")
+		e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+		e.setOption(w, "showLineNumbers", "no")
+		e.Config.InsertCursor = tc.shape
+		e.performRender()
+		w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+		e.ensureCursorVisible(w)
+		if w.ViewState.ViewOffsetX != tc.want {
+			t.Fatalf("shape %d: offset %d, want %d", tc.shape, w.ViewState.ViewOffsetX, tc.want)
+		}
+	}
+}
+
+// The phantom is caret VISIBILITY, not a snap: once taken it is given up only
+// when some action genuinely requires a different scroll. Typing Latin in an
+// RTL line reclassifies the caret for exactly one keystroke every time a space
+// is typed — a trailing space is a neutral that resolves to the base direction
+// — and releasing the phantom on that jerked the whole line back and forth by
+// a column as the user typed.
+func TestBidiPhantomStickyWhileTyping(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+
+	sawNeutral := false
+	for _, ch := range strings.Split("hello world", "") {
+		e.executeCommand("insert '" + ch + "'")
+		if !e.caretWantsPhantom(w) {
+			sawNeutral = true // the space keystroke: classification flipped
+		}
+		if w.ViewState.ViewOffsetX != -1 {
+			t.Fatalf("after %q the offset moved to %d; the phantom must hold",
+				ch, w.ViewState.ViewOffsetX)
+		}
+	}
+	if !sawNeutral {
+		t.Fatal("expected a keystroke where the caret stops wanting the phantom")
+	}
+}
+
+// A genuine scroll requirement still releases it: moving the caret deep into a
+// long line's reading tail computes a real offset.
+func TestBidiPhantomReleasedByRealScroll(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("abcde ", 30)+"x\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.setOption(w, "showLineNumbers", "yes")
+	e.performRender()
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.executeCommand("go_line_end")
+	if w.ViewState.ViewOffsetX != -1 {
+		t.Fatalf("precondition: phantom taken, got offset %d", w.ViewState.ViewOffsetX)
+	}
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	e.ensureCursorVisible(w)
+	if w.ViewState.ViewOffsetX < 0 {
+		t.Fatalf("a real scroll requirement should release the phantom, offset %d",
+			w.ViewState.ViewOffsetX)
+	}
+}
+
+// Under direction=rtl the ghost-cursor range check must measure the line's
+// LEFTMOST caret position, not end-of-line: a right-anchored line ending in an
+// LTR fragment has its EOL caret at the reading-START side (reading column 0),
+// so measuring EOL read every such line as "too short" — arrowing down from an
+// LTR path onto "start_maximized=true" ghosted mid-word with the real caret
+// snapped to EOL, even though the line easily reaches the ideal column.
+func TestRTLGhostReachesIntoTrailingLTRLine(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, "/jeffd/projects/go/mew/resources\n\nstart_maximized=true\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	src := "/jeffd/projects/go/mew/resources"
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: strings.Index(src, "/mew")})
+	tabSize := e.tabSize(w)
+	ideal := e.idealColumn(w, src, w.CursorPos().Rune, tabSize)
+
+	e.executeCommand("go_line_next")
+	e.executeCommand("go_line_next")
+
+	if w.CursorPos().Line != 2 {
+		t.Fatalf("expected to land on line 2, got %d", w.CursorPos().Line)
+	}
+	if w.HasGhostCursor {
+		t.Fatalf("the line reaches reading column %d; ghosted anyway (rune %d, ghost %d)",
+			ideal, w.CursorPos().Rune, w.GhostCursorVisualColumn)
+	}
+	dst := "start_maximized=true"
+	if got := e.idealColumn(w, dst, w.CursorPos().Rune, tabSize); got != ideal {
+		t.Fatalf("caret should hold reading column %d, landed at %d (rune %d)",
+			ideal, got, w.CursorPos().Rune)
+	}
+}
+
+// When the ideal reading column genuinely exceeds the line's reach, the ghost
+// engages and the real caret parks at the reachable position NEAREST the ghost
+// — the line's leftmost caret. For a line ending in LTR text under rtl that is
+// the line's logical START, not EOL (which sits at the far right).
+func TestRTLGhostParksAtLeftmostCaret(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x", 40)+"\n\nshort=1\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // reading col 35
+	e.executeCommand("go_line_next")
+	e.executeCommand("go_line_next")
+
+	if !w.HasGhostCursor {
+		t.Fatal("ideal reading 35 is past a 7-cell line: the ghost must engage")
+	}
+	if got := w.CursorPos().Rune; got != 0 {
+		t.Fatalf("caret should park at the line's leftmost caret (rune 0), got %d", got)
+	}
+}
+
+// Pure-RTL lines keep the old contract: end-of-line IS the leftmost caret, so
+// a shorter Hebrew line still ghosts past its end with the caret at EOL.
+func TestRTLGhostStillEOLForRTLLines(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("א", 30)+"\nאבג\n")
+	e.PawScript.ExecuteAsync("set_option 'direction', 'rtl'")
+	e.performRender()
+
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 20})
+	e.executeCommand("go_line_next")
+
+	if !w.HasGhostCursor {
+		t.Fatal("a 3-cell Hebrew line cannot reach reading column 20: expected a ghost")
+	}
+	if got := w.CursorPos().Rune; got != 3 {
+		t.Fatalf("caret should park at EOL (rune 3, the leftmost caret of an RTL line), got %d", got)
+	}
+}
+
+// Arriving from a phantom EOL: "third line here!" ends in a bidi NEUTRAL that
+// takes the RTL base direction, so its EOL caret sits one cell past the line's
+// LEFT edge (the phantom, reading 17 on a 16-cell line). Arrowing up to
+// "second line here" (leftmost caret: rune 0 at reading 16) cannot reach 17 —
+// the ghost engages there and the real caret parks ADJACENT to it on rune 0,
+// exactly as an LTR ghost past EOL parks at EOL. It must NOT snap to this
+// line's EOL, which sits 17 cells away at the reading-start edge.
+func TestRTLGhostFromPhantomEOLParksAdjacent(t *testing.T) {
+	e, w, _ := rtlPhantomEditor(t)
+	w.SetCursorPos(viewport.Position{Line: 2, Rune: 16})
+	e.afterHorizontalMovement(w)
+	e.executeCommand("go_line_prior")
+
+	if !w.HasGhostCursor || w.GhostCursorVisualColumn != 17 {
+		t.Fatalf("expected a ghost at reading 17; ghost=%v col=%d",
+			w.HasGhostCursor, w.GhostCursorVisualColumn)
+	}
+	if got := w.CursorPos().Rune; got != 0 {
+		t.Fatalf("caret should park adjacent to the ghost (rune 0), got %d", got)
 	}
 }

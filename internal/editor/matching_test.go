@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-func atPos(t *testing.T, w *window.Window, line, r int) {
+func atPos(t *testing.T, w *viewport.Viewport, line, r int) {
 	t.Helper()
-	w.SetCursorPos(window.Position{Line: line, Rune: r})
+	w.SetCursorPos(viewport.Position{Line: line, Rune: r})
 }
 
-func expectMatch(t *testing.T, e *Editor, w *window.Window, line, r int) {
+func expectMatch(t *testing.T, e *Editor, w *viewport.Viewport, line, r int) {
 	t.Helper()
 	if !e.gotoMatchingBracket() {
 		t.Fatal("go_match failed")

@@ -1,0 +1,12 @@
+| __QUICK NAV HELP__ |**--------BLOCK MARKER NAVIGATION--------**|
+| [[keys#go_line|^Q L]] to line # | [[keys#set_block_begin|^K B]] set or [[keys#go_block_begin|^Q B]] go to bock beginning |
+| [[keys#go_match|^}]] match[]()<> | [[keys#set_block_begin|^K B]] set or [[keys#go_block_end|^Q K]] go to bock end       |
+| //by history://    |**----SET--&-GO TO-**|###|**----SET--&-GO TO-**|
+| [[keys#go_pos_prior|^Q P]] prior pos | [[keys#set_mark 1|^Q Q 1]]  1  [[keys#go_mark 1|^Q 1]] |   | [[keys#set_mark 6|^Q Q 6]]  6  [[keys#go_mark 6|^Q 6]] |
+| [[keys#go_pos_next|^Q N]] next pos  | [[keys#set_mark 2|^Q Q 2]]  2  [[keys#go_mark 2|^Q 2]] |   | [[keys#set_mark 7|^Q Q 7]]  7  [[keys#go_mark 7|^Q 7]] |
+| //of document://   | [[keys#set_mark 3|^Q Q 3]]  3  [[keys#go_mark 3|^Q 3]] |   | [[keys#set_mark 8|^Q Q 8]]  8  [[keys#go_mark 8|^Q 8]] |
+| [[keys#go_buffer_beg|^Q U]] to top    | [[keys#set_mark 4|^Q Q 4]]  4  [[keys#go_mark 4|^Q 4]] |   | [[keys#set_mark 9|^Q Q 9]]  9  [[keys#go_mark 9|^Q 9]] |
+| [[keys#go_buffer_end|^Q V]] to bottom | [[keys#set_mark 5|^Q Q 5]]  5  [[keys#go_mark 5|^Q 5]] |   | [[keys#set_mark 0|^Q Q 0]]  0  [[keys#go_mark 0|^Q 0]] |
+|**------SEARCH----**|**-----------USING NAMED MARKS-----------**|
+| [[keys#find|^Q F]] find      | [[keys#set_mark|^Q Q M]] set a named mark               |
+| [[keys#find_next|^L]] find next   | [[keys#go_mark M|^Q M]] go to named mark                 |

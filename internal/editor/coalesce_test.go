@@ -20,6 +20,28 @@ func TestUndoCoalescesTyping(t *testing.T) {
 	}
 }
 
+// The coalesce/bake decision follows what a command DID (the edit sets
+// editCoalesced), not its name — so typing reached through a fallthrough chain
+// (whose leading token is not "insert") still coalesces into one undo step,
+// where the old name-parsing logic would have baked after each keystroke.
+func TestUndoCoalescesTypingThroughChain(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	for _, ch := range []string{"h", "e", "y"} {
+		// nav_next/completion fail here, so the chain falls through to insert —
+		// exactly how the tab/return keys are bound.
+		e.executeCommand(`nav_next|completion|insert "` + ch + `"`)
+	}
+	if got := docContent(w); got != "hey" {
+		t.Fatalf("typed content = %q, want hey", got)
+	}
+	if !w.Buffer.Undo() {
+		t.Fatal("expected an undo step")
+	}
+	if got := docContent(w); got != "" {
+		t.Fatalf("chained typing should still coalesce to one undo, got %q", got)
+	}
+}
+
 // A cursor reposition between edits ends the run: the editor bakes the undo
 // history after any non-editing command, so the next keystroke starts fresh.
 func TestUndoBreaksOnCursorMove(t *testing.T) {

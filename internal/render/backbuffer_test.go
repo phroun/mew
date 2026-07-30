@@ -110,6 +110,81 @@ func TestBackBufferIdenticalFrameEmitsNoContent(t *testing.T) {
 	}
 }
 
+// present() coalesces SGR: a run of same-styled cells emits its style once and
+// keeps the glyphs contiguous (no escape injected between them, which a terminal
+// needs for Arabic shaping / grapheme joining); a style change re-emits.
+func TestBackBufferCoalescesRunSGR(t *testing.T) {
+	b := newBackBuffer(10, 2)
+	out := paint(b, mv(1, 1), wr("\x1b[0;37;40mabc"))
+	if n := strings.Count(out, "\x1b[0;37;40m"); n != 1 {
+		t.Errorf("same-style run should emit its SGR once, got %d: %q", n, out)
+	}
+	if !strings.Contains(out, "\x1b[0;37;40mabc") {
+		t.Errorf("same-style glyphs must stay contiguous after one SGR: %q", out)
+	}
+
+	// Arabic run: the two letters must be adjacent in the stream (one SGR ahead
+	// of both), so the terminal can join them.
+	b2 := newBackBuffer(10, 2)
+	out2 := paint(b2, mv(1, 1), wr("\x1b[0;37;40mلا"))
+	if !strings.Contains(out2, "\x1b[0;37;40mلا") {
+		t.Errorf("adjacent Arabic letters must not be split by an SGR: %q", out2)
+	}
+
+	// A color change still re-emits the style at the boundary.
+	b3 := newBackBuffer(10, 2)
+	out3 := paint(b3, mv(1, 1), wr("\x1b[0;37;40ma\x1b[0;91;40mb"))
+	if !strings.Contains(out3, "\x1b[0;37;40ma\x1b[0;91;40mb") {
+		t.Errorf("a color change must re-emit the SGR: %q", out3)
+	}
+}
+
+// Flex-terminal (logicalCUP) emission is ADAPTIVE: while a row's width
+// profile is stable, minimal span diffs apply with the CUP column mapped to
+// LOGICAL cells (characters, not visual columns). When the profile changes —
+// narrow chars over a wide cell, as when lines shift — a span write would
+// consume a different number of logical cells than it replaced, shifting
+// everything preserved to its right; such a row is rewritten whole from
+// column 1 and its logical remainder truncated with EL.
+func TestBackBufferLogicalCUPAdaptive(t *testing.T) {
+	b := newBackBuffer(10, 2)
+	b.logicalCUP = true
+	paint(b, mv(1, 1), wr("\x1b[0m日abc"))
+
+	// Same width profile ('X' over 'b'): a minimal span, addressed at the
+	// LOGICAL column — cell 3 (日,a,X), not visual column 4.
+	out := paint(b, mv(1, 1), wr("\x1b[0m日aXc"))
+	if !strings.Contains(out, "\x1b[1;3H") {
+		t.Errorf("stable profile should span-update at logical column 3, got %q", out)
+	}
+	if strings.Contains(out, "\x1b[1;4H") {
+		t.Errorf("visual column 4 must not be addressed under logical CUP, got %q", out)
+	}
+	if strings.Contains(out, "\x1b[0K") {
+		t.Errorf("a stable-profile span needs no EL truncation, got %q", out)
+	}
+
+	// Narrow content replacing the wide glyph (the line-shift case): profile
+	// changed, so the WHOLE row rewrites from column 1 — including the
+	// visually-unchanged tail, which would otherwise shift in the logical
+	// grid — and EL truncates the leftover logical cells.
+	out = paint(b, mv(1, 1), wr("\x1b[0mxxaXc"))
+	if !strings.Contains(out, "\x1b[1;1H") || !strings.Contains(out, "xxaXc") {
+		t.Errorf("profile change must rewrite the whole row, got %q", out)
+	}
+	if !strings.Contains(out, "\x1b[0K") {
+		t.Errorf("profile change should truncate the logical tail with EL, got %q", out)
+	}
+
+	// Logical addressing off: classic minimal span at the visual column.
+	b2 := newBackBuffer(10, 2)
+	paint(b2, mv(1, 1), wr("\x1b[0m日abc"))
+	out2 := paint(b2, mv(1, 1), wr("\x1b[0m日aXc"))
+	if !strings.Contains(out2, "\x1b[1;4H") {
+		t.Errorf("visual CUP should address visual column 4, got %q", out2)
+	}
+}
+
 func TestBackBufferWideRune(t *testing.T) {
 	b := newBackBuffer(10, 2)
 	out := paint(b, mv(1, 1), wr("\x1b[0m日x"))
@@ -261,6 +336,126 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 	p := plain(out)
 	if !strings.Contains(p, "א(ב)") {
 		t.Errorf("flip should restore logical order with unmirrored brackets: %q", p)
+	}
+}
+
+// Flip mode must address the hardware cursor by the STREAM column its
+// transform emitted the pen's cell at: the terminal stores the line in
+// stream order and its own bidi decides where each stored cell displays, so
+// a visual-column CUP lands the cursor on the wrong glyph inside any RTL
+// run. LTR content is identity (stream order IS visual order there).
+func TestFlipColForMapsRTLRunToStream(t *testing.T) {
+	b := newBackBuffer(30, 2)
+	b.flipBidi = true
+	paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
+
+	// Visual cells (0-based): a=0 b=1 c=2 sp=3 ם=4 ו=5 ל=6 ש=7 sp=8 x=9.
+	// The run [4..7] emits reversed, so its stream columns mirror.
+	cases := map[int]int{0: 0, 2: 2, 3: 3, 4: 7, 5: 6, 6: 5, 7: 4, 8: 8, 9: 9, 11: 11}
+	for vis, want := range cases {
+		if got := b.flipColFor(0, vis); got != want {
+			t.Errorf("flipColFor(%d) = %d, want %d", vis, got, want)
+		}
+	}
+
+	// Flip off: identity everywhere.
+	b2 := newBackBuffer(30, 2)
+	paint(b2, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
+	if got := b2.flipColFor(0, 5); got != 5 {
+		t.Errorf("no-flip flipColFor(5) = %d, want identity", got)
+	}
+}
+
+// Niqqud (combining marks riding their base cell) must not shift the cursor
+// mapping: a cell is one stream advance whether or not it carries marks —
+// the very drift a terminal shows when the caret walks a pointed Hebrew
+// line under flip mode.
+func TestFlipColForNiqqudNeutral(t *testing.T) {
+	bare := newBackBuffer(20, 2)
+	bare.flipBidi = true
+	paint(bare, mv(1, 1), wr("\x1b[0mשלום")) // visual order as painted
+
+	pointed := newBackBuffer(20, 2)
+	pointed.flipBidi = true
+	// The same four letters, each carrying a niqqud mark (qamats U+05B8).
+	paint(pointed, mv(1, 1), wr("\x1b[0mשָלָוָםָ"))
+
+	for vis := 0; vis < 6; vis++ {
+		if g1, g2 := bare.flipColFor(0, vis), pointed.flipColFor(0, vis); g1 != g2 {
+			t.Errorf("niqqud shifted the cursor mapping at col %d: bare %d, pointed %d", vis, g1, g2)
+		}
+	}
+}
+
+// End to end: the final hardware-cursor CUP present() appends uses the
+// flip-translated column when the pen rests inside an RTL run, and the
+// plain visual column on LTR content.
+func TestFlipCursorCUPTranslated(t *testing.T) {
+	lastCUP := func(out string) string {
+		all := cupRe.FindAllString(out, -1)
+		for i := len(all) - 1; i >= 0; i-- {
+			if strings.HasSuffix(all[i], "H") {
+				return all[i]
+			}
+		}
+		return ""
+	}
+
+	b := newBackBuffer(30, 2)
+	b.flipBidi = true
+	// Pen parks on ם (visual 0-based col 4 -> stream col 7 -> 1-based CUP 8).
+	out := paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(5, 1))
+	if got := lastCUP(out); got != "\x1b[1;8H" {
+		t.Errorf("flip cursor CUP = %q, want \\x1b[1;8H", got)
+	}
+
+	// LTR pen: untranslated.
+	out = paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(2, 1))
+	if got := lastCUP(out); got != "\x1b[1;2H" {
+		t.Errorf("LTR cursor CUP = %q, want \\x1b[1;2H", got)
+	}
+}
+
+// POINTED Hebrew under flip with a selection: every base glyph must be
+// immediately preceded by ITS OWN cell's SGR, with its niqqud marks
+// following the base BEFORE the next SGR — the selection styles landing on
+// exactly the selected logical cells. This pins OUR side of the wire for
+// the mixed-style pointed case (the bare-letters tests above cannot see a
+// combining-mark interaction), so a mis-rendered selection bar in a
+// flip-mode terminal can be attributed across the boundary with evidence.
+func TestFlipPointedHebrewSelectionWire(t *testing.T) {
+	const (
+		green = "\x1b[0;32;40m"
+		sel   = "\x1b[0;30;47m"
+	)
+	b := newBackBuffer(20, 2)
+	b.flipBidi = true
+	// Visual order (as the renderer paints, left to right): the logical text
+	// is  שָׁתָּה  (shin+shin-dot+qamats, tav+dagesh+qamats, he) — visually
+	// he, tav, shin. The MIDDLE cell (tav+dagesh+qamats) is selected.
+	out := paint(b, mv(1, 1), wr(green+"ה"+sel+"תָּ"+green+"שָׁ"))
+	p := plain(out)
+
+	// The flip restores logical order: shin(+marks), tav(+marks), he.
+	wantText := "שָׁתָּה"
+	if !strings.Contains(p, wantText) {
+		t.Fatalf("flip should emit logical pointed order %q, got %q", wantText, p)
+	}
+
+	// The wire around the tav: [sel SGR][ת][ּ dagesh][ָ qamats][green SGR][ה].
+	// Its marks stay inside its own SGR span; the next base opens its own.
+	if !strings.Contains(out, sel+"תָּ") {
+		t.Errorf("selected tav must carry its marks inside the selection SGR: %q", out)
+	}
+	if !strings.Contains(out, green+"ה") {
+		t.Errorf("the he after the selection must re-open its own SGR: %q", out)
+	}
+	if !strings.Contains(out, green+"שָׁ") {
+		t.Errorf("the shin must open with its own green SGR and carry its marks: %q", out)
+	}
+	// The selection SGR appears for exactly one cell on this row.
+	if n := strings.Count(out, sel); n != 1 {
+		t.Errorf("selection SGR should be emitted exactly once (one selected cell), got %d in %q", n, out)
 	}
 }
 

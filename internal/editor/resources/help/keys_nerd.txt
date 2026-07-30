@@ -1,0 +1,12 @@
+| __NERD MENU__
+|
+| //scrolling://                    | tools:
+| [[keys#scroll_left|esc <]] scroll left 8 columns   | [[keys#cmd|esc x]] editor command prompt
+| [[keys#scroll_page_prior|esc U]] scroll page up          | [[keys#math|esc m]] math prompt
+| [[keys#scroll_page_next|esc V]] scroll page down        |
+| [[keys#scroll_right|esc >]] scroll right 8 columns
+| //deletion and undeletion://
+| [[keys#del_line_beg|esc w]] delete cursor to beginning of line
+| [[keys#del_line_end]] delete cursor to end of line
+| [[keys#yank|esc y]] yank (conjures the most recent item from the killbuffer)
+| [[keys#yank_pop|esc Y]] pop (after yank, rotates through previous killbuffer entries)

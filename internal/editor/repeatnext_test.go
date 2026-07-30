@@ -3,14 +3,14 @@ package editor
 import (
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// repeat_next with a count arms the window; the next keybound command runs
+// repeat_next with a count arms the viewport; the next keybound command runs
 // wrapped in a PawScript repeat(...) that many times, then the arm clears.
 func TestRepeatNextWrapsNextCommand(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("repeat_next 3")
 	if !w.Repeat.Pending || w.Repeat.Count != 3 {
@@ -35,7 +35,7 @@ func TestRepeatNextWrapsNextCommand(t *testing.T) {
 // The count is clamped to the maxRepeat option.
 func TestRepeatNextClampsToMax(t *testing.T) {
 	e, w := newTestEditor(t, "abcdefghij\n", "maxRepeat=4")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("repeat_next 100")
 	if w.Repeat.Count != 4 {
@@ -50,7 +50,7 @@ func TestRepeatNextClampsToMax(t *testing.T) {
 // repeat_next with no argument prompts for the count, then arms.
 func TestRepeatNextPrompts(t *testing.T) {
 	e, w := newTestEditor(t, "abcdef\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("repeat_next")
 	if focusedPrompt(e) == nil {
@@ -70,7 +70,7 @@ func TestRepeatNextPrompts(t *testing.T) {
 // A repeat_next while one is already armed re-arms rather than wrapping itself.
 func TestRepeatNextReArms(t *testing.T) {
 	e, w := newTestEditor(t, "abcdefgh\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 
 	e.executeCommand("repeat_next 5")
 	e.executeCommand("repeat_next 2") // must not be wrapped; re-arms to 2

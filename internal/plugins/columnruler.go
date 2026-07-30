@@ -5,13 +5,13 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// ColumnRulerPlugin renders the column ruler line. The ruler is not a window
-// of its own: any window with ViewState.ShowRuler enabled gets a ruler drawn
+// ColumnRulerPlugin renders the column ruler line. The ruler is not a viewport
+// of its own: any viewport with ViewState.ShowRuler enabled gets a ruler drawn
 // on its own top line by the screen renderer, which calls RenderContent with
-// that window.
+// that viewport.
 type ColumnRulerPlugin struct {
 	colors     config.ColorScheme
 	indicators config.Indicators
@@ -52,9 +52,28 @@ func (c *ColumnRulerPlugin) SetIndicators(ind config.Indicators) {
 	c.indicators = ind
 }
 
-// SetRTL inverts the ruler for right-to-left base direction.
+// SetRTL sets the EDITOR-WIDE base direction the ruler falls back to.
 func (c *ColumnRulerPlugin) SetRTL(rtl bool) {
 	c.rtl = rtl
+}
+
+// rtlFor resolves the base direction of the viewport being rendered: its own
+// direction option when it has one, else the editor-wide default SetRTL
+// carries. The ruler draws per viewport, so a viewport whose direction option
+// alone is rtl (what set_option does whenever a viewport is focused) must get
+// an inverted ruler even though the editor default never changed. This is the
+// same resolution winRTL performs everywhere else; reading the global flag
+// alone left that ruler numbered left-to-right.
+func (c *ColumnRulerPlugin) rtlFor(w *viewport.Viewport) bool {
+	if w != nil {
+		switch w.ViewState.Direction {
+		case "ltr":
+			return false
+		case "rtl":
+			return true
+		}
+	}
+	return c.rtl
 }
 
 // firstRune returns the first rune of s, or fallback if s is empty.
@@ -65,17 +84,17 @@ func firstRune(s string, fallback rune) rune {
 	return fallback
 }
 
-// RenderContent renders the column ruler line for the given window, aligned
-// to that window's own margins, line-number gutter, and horizontal scroll.
+// RenderContent renders the column ruler line for the given viewport, aligned
+// to that viewport's own margins, line-number gutter, and horizontal scroll.
 // cursorCols are 1-based SCREEN columns to highlight with the rulerCursor
 // color (the caret and its ghost/secondary companions); nil when
 // rulerShowsCursor is off.
-func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cursorCols []int) string {
+func (c *ColumnRulerPlugin) RenderContent(w *viewport.Viewport, screenWidth int, cursorCols []int) string {
 	if w == nil {
 		return strings.Repeat(" ", screenWidth)
 	}
 
-	// Resolve ruler colors through the window's class/type cascade.
+	// Resolve ruler colors through the viewport's class/type cascade.
 	col := func(name string) string {
 		return c.colors.Resolve(w.Class, w.Type.Name(), name)
 	}
@@ -92,7 +111,7 @@ func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cur
 
 	viewOffsetX := w.ViewState.ViewOffsetX
 
-	// Calculate the effective left margin of the window
+	// Calculate the effective left margin of the viewport
 	lineNumberWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumberWidth = w.LineNumWidth
@@ -101,13 +120,14 @@ func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cur
 	// start). Under RTL the gutter mirrors to the right, so the editor area
 	// begins after the physical left margin and the gutter joins the right
 	// reservation.
+	rtl := c.rtlFor(w)
 	physLeft, physRight := w.MarginInner, w.MarginOuter
-	if c.rtl {
+	if rtl {
 		physLeft, physRight = w.MarginOuter, w.MarginInner
 	}
 	effectiveLeftMargin := physLeft + lineNumberWidth
 	rightReserved := physRight
-	if c.rtl {
+	if rtl {
 		effectiveLeftMargin = physLeft
 		rightReserved = physRight + lineNumberWidth
 	}
@@ -115,11 +135,11 @@ func (c *ColumnRulerPlugin) RenderContent(w *window.Window, screenWidth int, cur
 	// Calculate the actual editor area within the screen
 	editorAreaWidth := screenWidth - effectiveLeftMargin - rightReserved
 
-	return c.createColumnRuler(effectiveLeftMargin, editorAreaWidth, viewOffsetX, screenWidth, rc, cursorCols)
+	return c.createColumnRuler(effectiveLeftMargin, editorAreaWidth, viewOffsetX, screenWidth, rc, cursorCols, rtl)
 }
 
 // createColumnRuler creates the column ruler string.
-func (c *ColumnRulerPlugin) createColumnRuler(leftMargin, editorWidth, viewOffsetX, screenWidth int, rc rulerColors, cursorCols []int) string {
+func (c *ColumnRulerPlugin) createColumnRuler(leftMargin, editorWidth, viewOffsetX, screenWidth int, rc rulerColors, cursorCols []int, rtl bool) string {
 	// Configurable ruler glyphs (single rune each).
 	fillGlyph := firstRune(c.indicators.RulerFill, '░')
 	tickGlyph := firstRune(c.indicators.RulerTick, '.')
@@ -255,7 +275,7 @@ func (c *ColumnRulerPlugin) createColumnRuler(leftMargin, editorWidth, viewOffse
 	// the RIGHT edge (an RTL line's reading start). The cell mirror reverses
 	// digit sequences too, so each maximal digit run is re-reversed in place
 	// to stay readable at its mirrored position.
-	if c.rtl && editorWidth > 0 {
+	if rtl && editorWidth > 0 {
 		lo := leftMargin
 		hi := leftMargin + editorWidth
 		if hi > screenWidth {
@@ -290,7 +310,7 @@ func (c *ColumnRulerPlugin) createColumnRuler(leftMargin, editorWidth, viewOffse
 	// rightmost cell of the left fill area (just before the ruler/content
 	// begins), aligned with the content's left edge.
 	if viewOffsetX > 0 {
-		if c.rtl {
+		if rtl {
 			// Right-anchored view: the scrolled-past reading head is off the
 			// RIGHT edge, so the once-only indicator sits in the right fill.
 			ri := leftMargin + editorWidth

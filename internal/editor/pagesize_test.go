@@ -17,7 +17,7 @@ func TestPageSizeEval(t *testing.T) {
 		{"24", "0", 0, 50, 24},   // fixed
 		{"24", "0", 0, 10, 10},   // fixed capped to height (overlap 0)
 		{"24", "2", 0, 10, 8},    // fixed capped to height-overlap
-		{"100%", "5", 0, 3, 1},   // overlap larger than window: still moves 1
+		{"100%", "5", 0, 3, 1},   // overlap larger than viewport: still moves 1
 		// percentage overlap, CEILed so it never vanishes on a short screen:
 		{"100%", "10%", 0, 20, 18}, // ceil(2.0)=2 -> cap 18
 		{"100%", "10%", 0, 15, 13}, // ceil(1.5)=2 -> cap 13

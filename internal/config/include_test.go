@@ -21,9 +21,9 @@ func TestIncludeFromDisk(t *testing.T) {
 		}
 	}
 	write(filepath.Join(dir, "editor.conf"),
-		"#include \"sub/general.conf\"\n#include <shared.conf>\n")
+		"@include \"sub/general.conf\"\n@include <shared.conf>\n")
 	write(filepath.Join(sub, "general.conf"),
-		"[options]\ntabSize=6\n#include \"deep.conf\"\n")
+		"[options]\ntabSize=6\n@include \"deep.conf\"\n")
 	// deep.conf is quoted from sub/general.conf: relative to sub/.
 	write(filepath.Join(sub, "deep.conf"), "[options]\nshowLineNumbers=false\n")
 	// shared.conf is angle-included: found in the standard (config) dir.
@@ -62,7 +62,7 @@ func TestIncludeSandboxedReader(t *testing.T) {
 		return nil, os.ErrNotExist
 	})
 
-	cfg := m.LoadFromString("#include \"extra.conf\"\n#include <site.conf>\n")
+	cfg := m.LoadFromString("@include \"extra.conf\"\n@include <site.conf>\n")
 	if cfg.General.TabSize != 5 || !cfg.General.WordWrap {
 		t.Fatalf("includes not applied: %+v (requested %v)", cfg.General, requested)
 	}
@@ -77,13 +77,13 @@ func TestIncludeCycleAndMissing(t *testing.T) {
 	m.SetIncludeReader(func(path string) ([]byte, error) {
 		switch path {
 		case "a.conf":
-			return []byte("#include \"b.conf\"\n[options]\ntabSize=7\n"), nil
+			return []byte("@include \"b.conf\"\n[options]\ntabSize=7\n"), nil
 		case "b.conf":
-			return []byte("#include \"a.conf\"\n[options]\nwordWrap=true\n"), nil
+			return []byte("@include \"a.conf\"\n[options]\nwordWrap=true\n"), nil
 		}
 		return nil, os.ErrNotExist
 	})
-	cfg := m.LoadFromString("#include \"a.conf\"\n#include \"missing.conf\"\n[options]\nshowInvisibles=true\n")
+	cfg := m.LoadFromString("@include \"a.conf\"\n@include \"missing.conf\"\n[options]\nshowInvisibles=true\n")
 	if cfg.General.TabSize != 7 || !cfg.General.WordWrap {
 		t.Fatal("cyclic includes should each apply once")
 	}
@@ -92,12 +92,12 @@ func TestIncludeCycleAndMissing(t *testing.T) {
 	}
 }
 
-// Ordinary comments that merely start with #inc... are untouched, and a
-// non-directive #include-ish line stays a comment.
+// A "#" line is always a comment now — never an include — and a bare "@include"
+// without a quoted/angled path is not a directive either.
 func TestIncludeNonDirectiveLines(t *testing.T) {
 	m := &Manager{configDir: "/std"}
-	cfg := m.LoadFromString("# include notes about includes\n#includes are cool\n[options]\ntabSize=9\n")
+	cfg := m.LoadFromString("# include notes about includes\n@include\n[options]\ntabSize=9\n")
 	if cfg.General.TabSize != 9 {
-		t.Fatal("comment lines must parse as before")
+		t.Fatal("comment and malformed-directive lines must not disrupt parsing")
 	}
 }

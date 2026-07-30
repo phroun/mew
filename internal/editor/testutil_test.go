@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // newTestEditor builds a headless editor with a single focused main-buffer
-// window ("doc") holding content. Extra [general] config lines can be
+// viewport ("doc") holding content. Extra [general] config lines can be
 // passed as "key=value" strings.
-func newTestEditor(t *testing.T, content string, generalConfig ...string) (*Editor, *window.Window) {
+func newTestEditor(t *testing.T, content string, generalConfig ...string) (*Editor, *viewport.Viewport) {
 	t.Helper()
 	cfg := DefaultConfig()
 	cfg.SkipUserConfig = true
@@ -34,11 +34,11 @@ func newTestEditor(t *testing.T, content string, generalConfig ...string) (*Edit
 	// ("directory not empty"). Registered after the TempDir cleanups, so it
 	// runs first (cleanup is LIFO).
 	t.Cleanup(func() { settleBackups(e) })
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
-	return e, e.WindowManager.GetWindow("doc")
+	return e, e.ViewportManager.GetViewport("doc")
 }
 
 func ptrTo[T any](v T) *T { return &v }
@@ -74,7 +74,7 @@ func sectionizeConfig(lines []string) string {
 // finish streaming, so background writes don't outlive the test.
 func settleBackups(e *Editor) {
 	deadline := time.Now().Add(3 * time.Second)
-	for _, w := range e.getMainBuffers() {
+	for _, w := range e.contentViewports() {
 		if w.Buffer == nil {
 			continue
 		}
@@ -93,7 +93,7 @@ func settleBackups(e *Editor) {
 
 // newRenderedEditor is newTestEditor with a virtual terminal attached, for
 // tests that inspect the rendered ANSI stream. Returns the output buffer.
-func newRenderedEditor(t *testing.T, content string) (*Editor, *window.Window, *bytes.Buffer) {
+func newRenderedEditor(t *testing.T, content string) (*Editor, *viewport.Viewport, *bytes.Buffer) {
 	t.Helper()
 	var out bytes.Buffer
 	cfg := DefaultConfig()
@@ -109,20 +109,20 @@ func newRenderedEditor(t *testing.T, content string) (*Editor, *window.Window, *
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
 	})
-	return e, e.WindowManager.GetWindow("doc"), &out
+	return e, e.ViewportManager.GetViewport("doc"), &out
 }
 
 // answerPrompt types text into the focused prompt using the real insert
 // command and accepts it with the real accept command.
 func answerPrompt(t *testing.T, e *Editor, text string) {
 	t.Helper()
-	fw := e.WindowManager.GetFocusedWindow()
-	if fw == nil || fw.Type != window.PromptBuffer {
-		t.Fatalf("expected a focused prompt window")
+	fw := e.ViewportManager.GetFocusedViewport()
+	if fw == nil || fw.Type != viewport.PromptViewport {
+		t.Fatalf("expected a focused prompt viewport")
 	}
 	if text != "" {
 		e.PawScript.ExecuteAsync(fmt.Sprintf("insert %q", text))
@@ -136,18 +136,18 @@ func cancelPrompt(t *testing.T, e *Editor) {
 	e.PawScript.ExecuteAsync("cancel")
 }
 
-// focusedPrompt returns the focused prompt window, or nil.
-func focusedPrompt(e *Editor) *window.Window {
-	fw := e.WindowManager.GetFocusedWindow()
-	if fw != nil && fw.Type == window.PromptBuffer {
+// focusedPrompt returns the focused prompt viewport, or nil.
+func focusedPrompt(e *Editor) *viewport.Viewport {
+	fw := e.ViewportManager.GetFocusedViewport()
+	if fw != nil && fw.Type == viewport.PromptViewport {
 		return fw
 	}
 	return nil
 }
 
-// windowByClass returns the first window with the given class, or nil.
-func windowByClass(e *Editor, class string) *window.Window {
-	for _, w := range e.WindowManager.AllWindows() {
+// viewportByClass returns the first viewport with the given class, or nil.
+func viewportByClass(e *Editor, class string) *viewport.Viewport {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == class {
 			return w
 		}
@@ -155,17 +155,17 @@ func windowByClass(e *Editor, class string) *window.Window {
 	return nil
 }
 
-// verboseLogContent returns the verbose-log window's content ("" if none).
+// verboseLogContent returns the verbose-log viewport's content ("" if none).
 func verboseLogContent(e *Editor) string {
-	if w := windowByClass(e, "verboseLog"); w != nil {
+	if w := viewportByClass(e, "verboseLog"); w != nil {
 		return w.Buffer.GetContent()
 	}
 	return ""
 }
 
-// hasWarning reports whether a transient warning window contains text.
+// hasWarning reports whether a transient warning viewport contains text.
 func hasWarning(e *Editor, text string) bool {
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == "warning" && strings.Contains(w.MessageTopInner, text) {
 			return true
 		}
@@ -173,9 +173,9 @@ func hasWarning(e *Editor, text string) bool {
 	return false
 }
 
-// hasNotification reports whether a transient notification window contains text.
+// hasNotification reports whether a transient notification viewport contains text.
 func hasNotification(e *Editor, text string) bool {
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == "notification" && strings.Contains(w.MessageTopInner, text) {
 			return true
 		}
@@ -183,27 +183,27 @@ func hasNotification(e *Editor, text string) bool {
 	return false
 }
 
-// clearNotifications removes all transient notification windows, so a test
+// clearNotifications removes all transient notification viewports, so a test
 // can assert that a LATER step does (or does not) raise a fresh one.
 func clearNotifications(e *Editor) {
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Class == "notification" {
-			e.WindowManager.RemoveWindow(w.ID)
+			e.ViewportManager.RemoveViewport(w.ID)
 		}
 	}
 }
 
-// docContent returns the doc window's buffer content without the final
+// docContent returns the doc viewport's buffer content without the final
 // trailing newline.
-func docContent(w *window.Window) string {
+func docContent(w *viewport.Viewport) string {
 	return strings.TrimRight(w.Buffer.GetContent(), "\n")
 }
 
-// layoutByClass finds a window layout by class in a calculated layout.
-func layoutByClass(l window.Layout, class string) *window.WindowLayout {
-	for _, group := range [][]window.WindowLayout{l.TopLayout, l.MainLayout, l.BottomLayout} {
+// layoutByClass finds a viewport layout by class in a calculated layout.
+func layoutByClass(l viewport.Layout, class string) *viewport.ViewportLayout {
+	for _, group := range [][]viewport.ViewportLayout{l.TopLayout, l.MainLayout, l.BottomLayout} {
 		for i := range group {
-			if group[i].Window.Class == class {
+			if group[i].Viewport.Class == class {
 				return &group[i]
 			}
 		}
@@ -211,11 +211,11 @@ func layoutByClass(l window.Layout, class string) *window.WindowLayout {
 	return nil
 }
 
-// layoutByID finds a window layout by window ID in a calculated layout.
-func layoutByID(l window.Layout, id string) *window.WindowLayout {
-	for _, group := range [][]window.WindowLayout{l.TopLayout, l.MainLayout, l.BottomLayout} {
+// layoutByID finds a viewport layout by viewport ID in a calculated layout.
+func layoutByID(l viewport.Layout, id string) *viewport.ViewportLayout {
+	for _, group := range [][]viewport.ViewportLayout{l.TopLayout, l.MainLayout, l.BottomLayout} {
 		for i := range group {
-			if group[i].Window.ID == id {
+			if group[i].Viewport.ID == id {
 				return &group[i]
 			}
 		}
@@ -236,4 +236,26 @@ func lastCursor(out []byte) (row, col int) {
 	fmt.Sscanf(string(m[1]), "%d", &row)
 	fmt.Sscanf(string(m[2]), "%d", &col)
 	return row, col
+}
+
+// findSettle waits for the background find pass (find / find_next; see
+// findasync.go) to finish and applies its result the way the editor's action
+// port would on the main loop. The headless harness runs no event loop, so
+// tests pump it here instead.
+func findSettle(t *testing.T, e *Editor) {
+	t.Helper()
+	if fr := e.findRun; fr != nil {
+		fr.done.Wait()
+	}
+	e.findPump()
+}
+
+// blockCaret pins the caret to a steady-block shape (DECSCUSR 2) for tests that
+// assert the block/underline CELL geometry. The shipped insertCursor default is
+// a bar, which is addressed one cell further right on RTL text (see
+// barCursorOnRTL), so those tests must say which shape they mean.
+func blockCaret(e *Editor) {
+	e.Config.InsertCursor = 2
+	e.Config.OverwriteCursor = 2
+	e.Config.NavigationCursor = 2
 }

@@ -1,0 +1,186 @@
+--- a/buffer.go	2026-07-21 18:04:01.973088747 +0000
++++ b/buffer.go	2026-07-21 19:29:20.295274698 +0000
+@@ -1,6 +1,7 @@
+ package purfecterm
+ 
+ import (
++	"strings"
+ 	"sync"
+ 	"time"
+ )
+@@ -211,6 +212,13 @@
+ 	currentFont uint8
+ 	fontSlots   map[uint8]string
+ 
++	// Script-class fonts: a per-terminal map from a script class
++	// ("hebrew"/"arabic"/"cjk") to the family a renderer uses when the primary
++	// font can't cover a glyph of that script (see ScriptClass, OSC 7005). It
++	// is automatic — keyed by the glyph's script, not selected by the app per
++	// cell — and orthogonal to the font slots.
++	scriptFonts map[string]string
++
+ 	// Global palette and glyph storage (shared across all cells)
+ 	palettes     map[int]*Palette      // Palette number -> Palette
+ 	customGlyphs map[rune]*CustomGlyph // Rune -> CustomGlyph
+@@ -267,6 +275,7 @@
+ 		lineDensity:         25,            // Default line density
+ 		currentBGP:          -1,            // -1 = use foreground color code as palette
+ 		fontSlots:           map[uint8]string{},
++		scriptFonts:        map[string]string{},
+ 		palettes:     make(map[int]*Palette),
+ 		customGlyphs: make(map[rune]*CustomGlyph),
+ 		sprites:             make(map[int]*Sprite),
+@@ -945,6 +954,39 @@
+ 	return b.fontSlots[0]
+ }
+ 
++// SetScriptFont maps a script class ("hebrew"/"arabic"/"cjk") to a family for
++// THIS terminal — the face a renderer uses when the primary font can't cover a
++// glyph of that script (see ScriptClass). The class is lower-cased; an empty
++// family clears the mapping (the renderer falls back to its own default).
++func (b *Buffer) SetScriptFont(class, family string) {
++	class = strings.ToLower(strings.TrimSpace(class))
++	if class == "" {
++		return
++	}
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if family == "" {
++		delete(b.scriptFonts, class)
++		return
++	}
++	b.scriptFonts[class] = family
++}
++
++// GetScriptFont returns the family configured for a script class, or "" when
++// none is set (the renderer uses its own fallback for that script).
++func (b *Buffer) GetScriptFont(class string) string {
++	b.mu.RLock()
++	defer b.mu.RUnlock()
++	return b.scriptFonts[strings.ToLower(strings.TrimSpace(class))]
++}
++
++// ClearScriptFonts removes every script-class font mapping.
++func (b *Buffer) ClearScriptFonts() {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.scriptFonts = map[string]string{}
++}
++
+ // SetForeground sets the current foreground color
+ func (b *Buffer) SetForeground(c Color) {
+ 	b.mu.Lock()
+--- a/scriptclass.go	2026-07-21 13:39:50.869943616 +0000
++++ b/scriptclass.go	2026-07-21 19:26:59.375277921 +0000
+@@ -0,0 +1,34 @@
++package purfecterm
++
++// ScriptClass classifies a rune into a script class a renderer can map to a
++// configured font (see Buffer.SetScriptFont / OSC 7005): "hebrew", "arabic",
++// "cjk", or "" for Latin and everything else (which the primary font and the
++// renderer's own fallback handle). The ranges cover the letters plus the
++// Presentation Forms an Arabic/Hebrew shaper emits, and the full
++// CJK/Hangul/kana/fullwidth blocks.
++func ScriptClass(r rune) string {
++	switch {
++	case (r >= 0x0590 && r <= 0x05FF) || // Hebrew
++		(r >= 0xFB1D && r <= 0xFB4F): // Hebrew presentation forms
++		return "hebrew"
++	case (r >= 0x0600 && r <= 0x06FF) || // Arabic
++		(r >= 0x0750 && r <= 0x077F) || // Arabic Supplement
++		(r >= 0x08A0 && r <= 0x08FF) || // Arabic Extended-A
++		(r >= 0xFB50 && r <= 0xFDFF) || // Arabic Presentation Forms-A
++		(r >= 0xFE70 && r <= 0xFEFF): // Arabic Presentation Forms-B
++		return "arabic"
++	case (r >= 0x1100 && r <= 0x11FF) || // Hangul Jamo
++		(r >= 0x3040 && r <= 0x30FF) || // Hiragana + Katakana
++		(r >= 0x3100 && r <= 0x312F) || // Bopomofo
++		(r >= 0x3130 && r <= 0x318F) || // Hangul Compatibility Jamo
++		(r >= 0x3400 && r <= 0x4DBF) || // CJK Ext A
++		(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
++		(r >= 0xA960 && r <= 0xA97F) || // Hangul Jamo Extended-A
++		(r >= 0xAC00 && r <= 0xD7FF) || // Hangul Syllables + Jamo Ext-B
++		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
++		(r >= 0xFF00 && r <= 0xFFEF) || // Halfwidth/Fullwidth Forms
++		(r >= 0x20000 && r <= 0x2FA1F): // CJK Ext B..F + compat supplement
++		return "cjk"
++	}
++	return ""
++}
+--- a/parser.go	2026-07-21 18:04:01.980400689 +0000
++++ b/parser.go	2026-07-21 19:27:23.399277372 +0000
+@@ -906,6 +906,8 @@
+ 		p.executeOSCSprite(args)
+ 	case 7004: // Font-slot configuration
+ 		p.executeOSCFont(args)
++	case 7005: // Script-class font configuration
++		p.executeOSCScriptFont(args)
+ 	case 7003: // Screen crop and splits
+ 		p.executeOSCScreenCrop(args)
+ 	// Other OSC commands (title, etc.) could be added here
+@@ -1305,3 +1307,31 @@
+ 		}
+ 	}
+ }
++
++// executeOSCScriptFont handles OSC 7005 script-class font commands, configuring
++// the per-terminal script-class -> family map a renderer consults (via
++// ScriptClass) when the primary font can't cover a glyph.
++// Format: ESC ] 7005 ; cmd BEL
++// Commands:
++//
++//	s;CLASS;FAMILY - map script class CLASS (hebrew/arabic/cjk) to family FAMILY
++//	sd;CLASS       - clear class CLASS (renderer falls back to its default)
++//	sda            - clear all script-class mappings
++func (p *Parser) executeOSCScriptFont(args string) {
++	parts := strings.SplitN(args, ";", 3)
++	if len(parts) == 0 {
++		return
++	}
++	switch parts[0] {
++	case "sda": // clear all
++		p.buffer.ClearScriptFonts()
++	case "sd": // clear one
++		if len(parts) >= 2 {
++			p.buffer.SetScriptFont(parts[1], "")
++		}
++	case "s": // set class -> family
++		if len(parts) >= 3 {
++			p.buffer.SetScriptFont(parts[1], parts[2])
++		}
++	}
++}
+--- a/gtk/widget.go	2026-07-21 18:04:01.979151074 +0000
++++ b/gtk/widget.go	2026-07-21 19:27:47.151276828 +0000
+@@ -727,6 +727,14 @@
+ 		return mainFont
+ 	}
+ 
++	// Script-class font (OSC 7005): an app-chosen face for this rune's script
++	// (Hebrew/Arabic/CJK) takes precedence over the generic fallbacks below.
++	if cls := purfecterm.ScriptClass(r); cls != "" {
++		if fam := w.buffer.GetScriptFont(cls); fam != "" {
++			return fam
++		}
++	}
++
+ 	// Main font doesn't have the glyph - use fallback
+ 	w.mu.Lock()
+ 	unicodeFont := w.fontFamilyUnicode
+--- a/qt/widget.go	2026-07-21 18:04:01.983349803 +0000
++++ b/qt/widget.go	2026-07-21 19:27:58.607276566 +0000
+@@ -793,6 +793,14 @@
+ 		return mainFont
+ 	}
+ 
++	// Script-class font (OSC 7005): an app-chosen face for this rune's script
++	// (Hebrew/Arabic/CJK) takes precedence over the generic fallbacks below.
++	if cls := purfecterm.ScriptClass(r); cls != "" {
++		if fam := w.buffer.GetScriptFont(cls); fam != "" {
++			return fam
++		}
++	}
++
+ 	w.mu.Lock()
+ 	unicodeFont := w.fontFamilyUnicode
+ 	cjkFont := w.fontFamilyCJK

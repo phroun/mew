@@ -131,6 +131,103 @@ func TestEditArgsHostString(t *testing.T) {
 	}
 }
 
+// A --eval script runs through the live session (the real event loop) against
+// its file: the edit it makes and saves is on disk after the session ends.
+func TestEvalArgsFullSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	feed := NewKeyFeed()
+	var out syncWriter
+	done := make(chan struct{})
+	var err error
+	go func() {
+		defer close(done)
+		err = EditArgs(`--eval="(insert 'EVAL '; buffer_save)" `+path,
+			WithoutUserConfig(),
+			WithoutProfileScript(),
+			WithColdStoragePath(t.TempDir()),
+			WithKeyFeed(feed),
+			WithTerminal(Terminal{
+				Output: &out,
+				Size:   func() (int, int, error) { return 80, 24, nil },
+			}),
+		)
+	}()
+	feed.Close() // queued events (the eval) still run before the session ends
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("session did not end")
+	}
+	if err != nil {
+		t.Fatalf("EditArgs: %v", err)
+	}
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != "EVAL hello\n" {
+		t.Fatalf("file after session: %q, want %q", got, "EVAL hello\n")
+	}
+}
+
+// A --eval script that calls exit ends the session by itself, and the
+// captured #out lands on the real stdout once the session has unwound.
+func TestEvalExitFullSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Swap the process stdout for a pipe to observe the post-session dump.
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = saved }()
+
+	feed := NewKeyFeed() // never driven: the script itself must end the session
+	var out syncWriter
+	done := make(chan struct{})
+	var err error
+	go func() {
+		defer close(done)
+		err = EditArgs(`--eval="(echo \"bye\"; exit)" `+path,
+			WithoutUserConfig(),
+			WithoutProfileScript(),
+			WithColdStoragePath(t.TempDir()),
+			WithKeyFeed(feed),
+			WithTerminal(Terminal{
+				Output: &out,
+				Size:   func() (int, int, error) { return 80, 24, nil },
+			}),
+		)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		os.Stdout = saved
+		t.Fatal("session did not end on its own")
+	}
+	os.Stdout = saved
+	w.Close()
+	if err != nil {
+		t.Fatalf("EditArgs: %v", err)
+	}
+	buf := make([]byte, 64)
+	n, _ := r.Read(buf)
+	if got := string(buf[:n]); got != "bye\n" {
+		t.Fatalf("stdout after session: %q, want %q", got, "bye\n")
+	}
+}
+
 // Closing the feed ends the session cleanly, delivering queued events first.
 func TestKeyFeedClose(t *testing.T) {
 	got := runFeedSession(t, "\n", func(f *KeyFeed) {

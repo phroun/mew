@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // outlineWalkLimit bounds how far back the breadcrumb builder scans.
@@ -161,15 +161,15 @@ func (e *Editor) outlineDefOn(b *buffer.Buffer, patterns []*regexp.Regexp, docLi
 	return outlineDef{}, false
 }
 
-// outlineContext builds the enclosing-definition breadcrumb for the window's
+// outlineContext builds the enclosing-definition breadcrumb for the viewport's
 // caret. The nearest definition at or above the caret is always the chain's
 // innermost entry (sectioning formats — markdown headings, conf [sections] —
 // have flat bodies, so no indentation test can apply; for indented languages
 // this matches the classic which-function fallback). The chain then extends
 // outward through definitions at strictly shallower depths, outermost first:
 // "Manager·Load", "Intro·Setup·Deep".
-func (e *Editor) outlineContext(w *window.Window) string {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+func (e *Editor) outlineContext(w *viewport.Viewport) string {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return ""
 	}
 	b := w.Buffer

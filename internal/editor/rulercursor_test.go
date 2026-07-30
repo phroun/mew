@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // rulerCursorColor is the default rulerCursor color (black on silver).
@@ -85,13 +85,13 @@ func TestRulerShowsCursorHighlightsCaret(t *testing.T) {
 	w.ViewState.ShowRuler = true
 	e.PawScript.ExecuteAsync("set_option 'rulerShowsCursor', 'true'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
 
 	// Caret at rune 3 on an LTR line with no gutter -> screen column 4.
-	colors := rowCellColors(out.String(), 1) // ruler is the window's top row
+	colors := rowCellColors(out.String(), 1) // ruler is the viewport's top row
 	if colors[4] != rulerCursorColor {
 		t.Fatalf("ruler cell under caret (col 4) color = %q, want rulerCursor %q", colors[4], rulerCursorColor)
 	}
@@ -104,7 +104,7 @@ func TestRulerShowsCursorHighlightsCaret(t *testing.T) {
 func TestRulerShowsCursorOffByDefault(t *testing.T) {
 	e, w, out := newRenderedEditor(t, "hello world\n")
 	w.ViewState.ShowRuler = true
-	w.SetCursorPos(window.Position{Line: 0, Rune: 3})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 3})
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()
@@ -123,7 +123,7 @@ func TestRulerShowsCursorHighlightsGhost(t *testing.T) {
 	w.ViewState.ShowRuler = true
 	e.PawScript.ExecuteAsync("set_option 'rulerShowsCursor', 'true'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 8}) // col 8
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8}) // col 8
 	e.afterHorizontalMovement(w)
 	e.executeCommand("go_line_next") // onto "ab": ghost at col 8, caret at end
 	if !w.HasGhostCursor {
@@ -133,7 +133,7 @@ func TestRulerShowsCursorHighlightsGhost(t *testing.T) {
 	e.performRender()
 
 	// The ghost is on line 1 (buffer row 2). Its ruler is the same shared
-	// ruler? No — the ruler is per-window top line (row 1). The ghost column
+	// ruler? No — the ruler is per-viewport top line (row 1). The ghost column
 	// is still the caret line's column; highlight reflects the caret's line.
 	colors := rowCellColors(out.String(), 1)
 	// caret clamped to end of "ab" -> screen col 3; ghost at col 9 (rune 8 +1).
@@ -149,7 +149,7 @@ func TestRulerShowsCursorHighlightsSecondary(t *testing.T) {
 	w.ViewState.ShowRuler = true
 	e.PawScript.ExecuteAsync("set_option 'rulerShowsCursor', 'true'")
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 4}) // entering the Hebrew run
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 4}) // entering the Hebrew run
 	e.afterHorizontalMovement(w)
 	out.Reset()
 	e.performRender()

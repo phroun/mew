@@ -30,6 +30,7 @@ import (
 	"github.com/phroun/mew/internal/editor"
 	"github.com/phroun/mew/internal/input"
 	"github.com/phroun/mew/internal/version"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Version is the mew major.minor release number; Build is the per-commit
@@ -124,6 +125,305 @@ func WithStateCallback(cb func(state map[string]interface{})) Option {
 	return func(cfg *editor.Config) { cfg.StateCallback = cb }
 }
 
+// WithShowDesktop / WithHideDesktop wire the show_desktop / hide_desktop
+// commands to host functions that reveal or hide the host's desktop (e.g. a
+// KittyTK viewport-manager host). Unset, both commands are no-ops.
+func WithShowDesktop(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.ShowDesktop = fn }
+}
+
+// WithHideDesktop wires the hide_desktop command (see WithShowDesktop).
+func WithHideDesktop(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.HideDesktop = fn }
+}
+
+// WithClipboard bridges the HOST's system clipboard for the os_copy /
+// os_cut / os_paste commands — a channel deliberately separate from mew's
+// kill ring, so the two never interfere. write receives text mew places on
+// the host clipboard; read resolves the host clipboard and calls its deliver
+// callback exactly once (possibly asynchronously, on any thread — mew
+// marshals the delivery onto its own loop). Left unset, as on a plain
+// terminal, the os_* clipboard commands warn.
+func WithClipboard(write func(text string), read func(deliver func(text string))) Option {
+	return func(cfg *editor.Config) {
+		cfg.ClipboardWrite = write
+		cfg.ClipboardRead = read
+	}
+}
+
+// WithContextMenu is invoked when a right-click lands within the EDITING
+// AREA of the focused viewport (never the modebar, gutters, column ruler, or
+// title/message rows), with the click's 1-based terminal cell. The host pops
+// its context menu there, typically wiring the items back through a HostPort
+// (Cut → port.Execute("os_cut"), and so on).
+func WithContextMenu(fn func(col, row int)) Option {
+	return func(cfg *editor.Config) { cfg.ShowContextMenu = fn }
+}
+
+// HostPort lets the host inject editor commands into a running session from
+// its own threads (an Edit-menu item firing, a context-menu action): each
+// Execute is marshaled onto the editor's main loop and runs with exactly the
+// safety of a keystroke. Create one with NewHostPort, attach it with
+// WithHostPort, then call port.Execute("os_copy") and friends once the
+// session is running.
+type HostPort = editor.HostPort
+
+// NewHostPort creates a HostPort for WithHostPort.
+func NewHostPort() *HostPort { return &HostPort{} }
+
+// WithHostPort attaches a host command port to the session.
+func WithHostPort(p *HostPort) Option {
+	return func(cfg *editor.Config) { cfg.HostPort = p }
+}
+
+// WithRestoreHostTerminal wires the host's terminal restore into mew's
+// emergency exit. A fatal signal skips every deferred teardown - mew's and the
+// host's alike - because the handler dumps DEADCAT and calls os.Exit. An
+// embedded mew renders into the HOST's surface, so its own renderer cleanup
+// restores nothing the user can see: only the host can leave the alternate
+// screen, drop raw mode and pop its keyboard protocol. Without this the user
+// keeps their unsaved work and loses their shell.
+//
+// fn runs on the signal-handler goroutine, after the dump and before the exit.
+// It must be safe off the main loop, safe to call more than once, and must not
+// exit.
+// PTYRequest and PTYSession are the terminal-session seam: mew asks for a
+// session by naming a working directory and a command, and the host hands back
+// something it can only read, write, resize and close. See WithPTYProvider.
+type PTYRequest = editor.PTYRequest
+
+// PTYSession is a live terminal session. Deliberately NOT purfecterm's PTY
+// interface: that one also has Start(*exec.Cmd), and a mew embedded in someone
+// else's application must hold nothing that can name a local binary.
+type PTYSession = editor.PTYSession
+
+// WithPTYProvider lets the host grant terminal sessions to mew's exec command.
+// fn receives a working directory (a canonical URL, or "" for a buffer with no
+// filename - the host decides what that means) and a command NAME, and returns
+// a session or an error. Returning an error is an ordinary outcome: mew reports
+// it and carries on.
+//
+// The host owns the whole meaning. A root mew whose user owns the machine gets
+// a real shell in a real directory. A mew hosted inside another application can
+// be given a container, a remote box, a restricted menu, or nothing at all -
+// and cannot tell which, because the session speaks only bytes.
+//
+// fn is called on mew's main loop. The session's methods are called from mew's
+// main loop and from the session's own reader goroutine.
+// TerminalSurface is one visible terminal session and the cells it occupies in
+// mew's own surface. See WithTerminalSurfaces.
+type TerminalSurface = editor.TerminalSurface
+
+// TerminalHooks is how a host renders mew's terminal sessions.
+type TerminalHooks = editor.TerminalHooks
+
+// LocalPathFromURL turns a canonical file:// document URL — the form mew
+// hands out for anything it identifies, including a terminal session's
+// working directory — into a path for the operating system. False for any
+// other scheme (a mew:/// document may have no local path at all).
+//
+// A host resolving one of mew's URLs must reach the same file mew would, and
+// on Windows that takes undoing something: the canonical form roots every
+// path with "/", which in front of a drive letter gives /C:/proj, a path
+// Windows reads as a component named "C:" on the current drive. mew's own
+// boundary does that already; this is the same door, opened outward.
+func LocalPathFromURL(url string) (string, bool) { return editor.LocalPathFromURL(url) }
+
+// TerminalMouse is one mouse event addressed to a terminal surface, in that
+// surface's own 1-based cells. See TerminalHooks.Mouse: mew reports what
+// happened and the host, which owns the emulator and so knows the tracking
+// mode, answers with the bytes the child should receive.
+type TerminalMouse = editor.TerminalMouse
+
+type TerminalMouseAction = editor.TerminalMouseAction
+
+const (
+	TerminalMousePress       = editor.TerminalMousePress
+	TerminalMouseRelease     = editor.TerminalMouseRelease
+	TerminalMouseMotion      = editor.TerminalMouseMotion
+	TerminalMouseScrollUp    = editor.TerminalMouseScrollUp
+	TerminalMouseScrollDown  = editor.TerminalMouseScrollDown
+	TerminalMouseScrollLeft  = editor.TerminalMouseScrollLeft
+	TerminalMouseScrollRight = editor.TerminalMouseScrollRight
+)
+
+type TerminalMouseButton = editor.TerminalMouseButton
+
+const (
+	TerminalMouseButtonNone   = editor.TerminalMouseButtonNone
+	TerminalMouseButtonLeft   = editor.TerminalMouseButtonLeft
+	TerminalMouseButtonMiddle = editor.TerminalMouseButtonMiddle
+	TerminalMouseButtonRight  = editor.TerminalMouseButtonRight
+)
+
+// WithTerminalSurfaces lets the host draw mew's terminal sessions. mew does NOT
+// emulate a terminal: it forwards the session's raw bytes and republishes, after
+// every render, the complete set of rectangles where visible sessions belong.
+//
+// The host creates one real terminal surface per session and positions it from
+// Place — for a KittyTK host, a child PurfecTerm trinket laid over exactly the
+// cells the document would have used. Several can be live at once, one per
+// viewport running a session.
+//
+// mew keeps keyboard focus throughout, so those surfaces need no input events:
+// keystrokes run through mew's own keymap and reach the child process through
+// pty_send. They are displays, nothing more.
+//
+// Without this, exec still starts a session but nothing renders it.
+func WithTerminalSurfaces(h TerminalHooks) Option {
+	return func(cfg *editor.Config) { cfg.TerminalSurfaces = h }
+}
+
+func WithPTYProvider(fn func(PTYRequest) (PTYSession, error)) Option {
+	return func(cfg *editor.Config) { cfg.PTYProvider = fn }
+}
+
+// WithPTYDiagnose supplies the host's terminal self-test, which mew's pty_diag
+// command runs and writes into the buffer at the caret.
+//
+// A terminal that will not start is the hardest thing here to see into: what
+// mew can observe is all on the far side of a pipe that is not working. Which
+// shell was found, whether the platform's console call succeeded and what it
+// said if not, whether a probe child's bytes ever came back — every one of
+// those facts lives on the host. So mew asks for them rather than guessing at
+// them from the outside.
+func WithPTYDiagnose(fn func() string) Option {
+	return func(cfg *editor.Config) { cfg.PTYDiagnose = fn }
+}
+
+// PTYExitStatus is the optional other half of a PTYSession: how the child
+// ended. A host implements it when it can tell a child that ran and exited
+// (with a code) from a byte stream that ended under a child still running —
+// two failures that look identical from mew's side of the pipe.
+type PTYExitStatus = editor.PTYExitStatus
+
+func WithRestoreHostTerminal(fn func()) Option {
+	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
+}
+
+// WithEditState wires the focused viewport's read-only state to the host: fn
+// is told whenever the focused buffer's read-only state changes (and once at
+// the first render), so the host can grey out mutating affordances — its
+// Edit-menu Cut, say. Called only on transitions.
+func WithEditState(fn func(readOnly bool)) Option {
+	return func(cfg *editor.Config) { cfg.EditState = fn }
+}
+
+// PointerArrowSpan is one on-screen cell span that shows the arrow rather than
+// the I-beam even though it lies inside the I-beam rectangle — a browse-mode
+// link button (see WithPointerRegion).
+type PointerArrowSpan = editor.PointerArrowSpan
+
+// WithPointerRegion wires the mouse-pointer affordance: fn is told the
+// rectangle where a graphical host should show the text I-beam — the focused
+// viewport's editable content area (its cells, including the blank rows below
+// the document that still follow click-to-EOF), in 1-based terminal cells
+// (col, row, width, height); a zero width/height means "nowhere". Everything
+// outside it — the gutter, the modebar and other chrome, an unfocused pane,
+// and (when a prompt holds focus) the document area — is the ordinary arrow.
+// arrows are cell spans WITHIN the rectangle that still show the arrow (the
+// on-screen browse-mode link buttons).
+//
+// It is pushed after a render, only when the region changes (layout, focus,
+// scroll, on-screen buttons), NOT per mouse motion, so a graphical host
+// resolves the cursor for a given pointer pixel locally — no hover round-trips
+// through mew's input. Text hosts may ignore it.
+func WithPointerRegion(fn func(col, row, width, height int, arrows []PointerArrowSpan)) Option {
+	return func(cfg *editor.Config) { cfg.PointerRegion = fn }
+}
+
+// ScrollbarRegion is one visible editor scrollbar, handed to a graphical host
+// that draws the bars itself (see WithScrollbarRegions).
+type ScrollbarRegion = editor.ScrollbarRegion
+
+// WithScrollbarRegions hands a GRAPHICAL host the geometry and scroll state of
+// every visible editor scrollbar — and, by being set at all, declares that the
+// host will DRAW them.
+//
+// mew still reserves each bar's column, so a window lays out identically on
+// both targets, but leaves it blank rather than painting '░'/'█' into the cell
+// stream, and stops hit-testing it. The host paints the bar in its own pixel
+// space — where the thumb need not be a whole number of rows tall and can
+// follow the pointer smoothly — and scrolls with the scroll_viewport command,
+// which still lands on a whole line: mew never scrolls by a fraction of one.
+//
+// Pushed after a render and only when the set changes (a bar appearing,
+// moving, resizing, or its view scrolling), never per mouse motion.
+func WithScrollbarRegions(fn func([]ScrollbarRegion)) Option {
+	return func(cfg *editor.Config) { cfg.ScrollbarRegions = fn }
+}
+
+// ScrollbarNeeded reports whether a region has anything to scroll, and so
+// whether its bar gets a THUMB at all: a document that fits its viewport shows
+// bare track, and a press on it does nothing.
+//
+// Exported for a host that draws the bars itself. mew's own cell bar asks the
+// same function, so the two targets cannot disagree about when a bar is inert.
+func ScrollbarNeeded(page, lineCount int) bool {
+	return viewport.ScrollbarNeeded(page, lineCount)
+}
+
+// MaxScrollTop is the highest first-visible line mew will park a viewport at:
+// the one that leaves exactly one row past the end of the document on screen —
+// the row mew's line-number gutter marks "~" — and no further. A document
+// shorter than its viewport does not scroll at all.
+//
+// Exported for the same reason as ScrollbarNeeded — a host-drawn thumb must
+// reach the bottom of its track exactly when the view reaches the bottom of this
+// range, and scroll_viewport clamps to it regardless of what a host asks for.
+func MaxScrollTop(page, lineCount int) int {
+	return viewport.MaxScrollTop(page, lineCount)
+}
+
+// WithHelpState wires a callback told whether mew's built-in help viewport (the
+// WordStar command reference toggled by help_toggle) is open — once at the
+// first render and thereafter on transitions. A host uses it to keep a "Quick
+// Help" menu checkmark in sync with the viewport.
+func WithHelpState(fn func(open bool)) Option {
+	return func(cfg *editor.Config) { cfg.HelpState = fn }
+}
+
+// WithFontSink wires the set_font command to a host that can change fonts
+// live: fn re-points a font alias (e.g. "ui-term") at an ordered list of font
+// names — the KittyTK trinket loads them into its shared text engine and
+// repaints — returning whether the preferred name resolved. Only meaningful on
+// a graphical host; a plain terminal leaves it unset and set_font warns.
+func WithFontSink(fn func(alias string, names []string) bool) Option {
+	return func(cfg *editor.Config) { cfg.FontSink = fn }
+}
+
+// WithFontConfig wires the startup [fonts] / [window] fonts_path registration
+// to a host that owns a font engine: at editor startup fn is handed the
+// configured family-name -> file-path map and the extra font search
+// directories, so the host registers them before any font name resolves. The
+// KittyTK trinket loads the files and adds the search paths to its shared text
+// engine; the startup [window] ui_term alias is applied separately through the
+// FontSink. Only meaningful on a graphical host; a plain terminal leaves it
+// unset (it owns its own fonts).
+func WithFontConfig(fn func(files map[string]string, searchPaths []string)) Option {
+	return func(cfg *editor.Config) { cfg.FontLoader = fn }
+}
+
+// WithFontAdjust wires per-FACE metric corrections from the [fonts] section
+// (family -> baseline units, positive down, in the 16-unit cell denomination;
+// and an optical size multiplier, 1 for none)
+// to a host that can apply them. Keyed by family rather than alias, so one
+// entry corrects a face through every route that reaches it. Only meaningful
+// on a graphical host; a plain terminal leaves it nil.
+func WithFontAdjust(fn func(family string, baselineUnits int, sizeScale float64)) Option {
+	return func(cfg *editor.Config) { cfg.FontAdjustSink = fn }
+}
+
+// WithFlexTerminal declares the host terminal a flex-width (logical-grid)
+// terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
+// so the editor addresses the cursor by logical column instead of visual
+// column. Since purfecterm v0.2.23 its DEFAULT is the standard visual-column
+// contract, so ordinary hosts (including the KittyTK trinkets) must NOT set
+// this; it remains for a host that deliberately runs mew under ?7027.
+func WithFlexTerminal() Option {
+	return func(cfg *editor.Config) { cfg.LogicalColumnTerminal = true }
+}
+
 // WithoutUserConfig prevents loading ~/.mew/editor.conf; built-in defaults
 // apply. For hosts that must not read the user's home directory.
 func WithoutUserConfig() Option {
@@ -214,7 +514,7 @@ func WithTerminal(t Terminal) Option {
 // KeyFeed lets the host deliver parsed key input directly, replacing the
 // byte-stream input half entirely: instead of mew running its own
 // direct-key-handler over Terminal.Input, the host — which may already run
-// direct-key-handler or an equivalent, a window manager for instance —
+// direct-key-handler or an equivalent, a viewport manager for instance —
 // forwards exactly the surfaces that pipeline normally provides, and only
 // when it wants mew to have them (say, while a mew view is focused):
 //

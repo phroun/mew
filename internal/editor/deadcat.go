@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/phroun/mew/internal/buffer"
 )
 
 // DEADCAT is mew's DEADJOE: when the editor dies unexpectedly (a terminal
@@ -155,12 +153,20 @@ func (e *Editor) installDeadcatSignals() func() {
 // cleanup, so this dumps DEADCAT, restores the terminal by hand, reports where
 // the dump landed, and exits.
 func (e *Editor) emergencyExit(reason string) {
+	// The dump comes FIRST: it is the only irreplaceable thing here. Terminal
+	// cosmetics are never worth risking the user's unsaved buffers.
 	name, _ := e.DumpDeadcat(reason)
 	if e.KeyHandler != nil {
 		e.KeyHandler.Stop()
 	}
 	if e.Renderer != nil {
 		e.Renderer.Cleanup()
+	}
+	// Embedded, the cleanup above only ever wrote into the host's surface and
+	// restored nothing real. Let the host hand the terminal back, so the
+	// message below lands on a usable screen and the shell survives.
+	if e.Config.RestoreHostTerminal != nil {
+		e.Config.RestoreHostTerminal()
 	}
 	if name != "" {
 		fmt.Fprintf(os.Stderr, "\nmew: aborted (%s); unsaved buffers written to %s\n", reason, name)
@@ -181,16 +187,15 @@ func (e *Editor) deadcatCwdPath() string {
 type deadBuf struct{ name, content string }
 
 // modifiedBufferDump collects the content of every modified main buffer, each
-// buffer once (window_clone shares a buffer across windows).
+// buffer once (viewport_clone shares a buffer across viewports), including buffers
+// stacked in a viewport's nav history — unsaved work parked behind a link
+// follow must survive a crash like any other.
 func (e *Editor) modifiedBufferDump() []deadBuf {
-	seen := map[*buffer.Buffer]bool{}
 	var out []deadBuf
-	for _, w := range e.getMainBuffers() {
-		b := w.Buffer
-		if b == nil || seen[b] || !b.IsModified() {
+	for _, b := range e.openDocViewports() {
+		if !b.IsModified() {
 			continue
 		}
-		seen[b] = true
 		name := b.GetFilename()
 		if name == "" {
 			name = "(unnamed)"

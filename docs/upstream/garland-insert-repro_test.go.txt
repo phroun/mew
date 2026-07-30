@@ -1,0 +1,200 @@
+// Standalone reproduction for the large-InsertString structure issue.
+//
+//	go mod init garlandrepro && go get github.com/phroun/garland@v0.1.10
+//	go test -run TestLargeInsertStructure -v -timeout 30m
+//
+// No dependency on the reporting application: this is garland only.
+package garlandrepro
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/phroun/garland"
+)
+
+func corpus(lines int) string {
+	var sb strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&sb, "line %d: the quick brown fox jumps over the lazy dog %d\n", i, i)
+	}
+	return sb.String()
+}
+
+// seekBench measures the resulting document's random line-access speed, which
+// is what a viewport scrolling through a buffer actually does. Warmed first,
+// so this is steady-state cost and not a one-time index build.
+func seekBench(t *testing.T, name string, g *garland.Garland, n int) time.Duration {
+	t.Helper()
+	c := g.NewCursor()
+	c.SetMode(garland.CursorModeHuman)
+	lc := int64(g.LineCount().Value)
+	for i := int64(0); i < 100; i++ {
+		c.SeekLine((i*7919)%lc, 0)
+		c.ReadLine()
+	}
+	t0 := time.Now()
+	for i := 0; i < n; i++ {
+		c.SeekLine((int64(i)*7919)%lc, 0)
+		c.ReadLine()
+	}
+	d := time.Since(t0)
+	t.Logf("%-44s %6d lines  %d SeekLine+ReadLine = %v", name, lc, n, d)
+	return d
+}
+
+func mustOpen(t *testing.T, lib *garland.Library, s string) *garland.Garland {
+	t.Helper()
+	g, err := lib.Open(garland.FileOptions{DataString: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+func humanCursor(g *garland.Garland) *garland.Cursor {
+	c := g.NewCursor()
+	c.SetMode(garland.CursorModeHuman)
+	return c
+}
+
+// The same content, reached five ways, then the same read workload against
+// each. Only the cases that route the whole corpus through a SINGLE large
+// InsertString come out slow, and they stay slow.
+func TestLargeInsertStructure(t *testing.T) {
+	const n = 50000
+	content := corpus(n)
+	lib, err := garland.Init(garland.LibraryOptions{ColdStoragePath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("corpus: %d bytes / %d lines", len(content), n)
+
+	// A: the loader path. This is the baseline.
+	seekBench(t, "A: Open(DataString: content)", mustOpen(t, lib, content), 500)
+
+	// B: empty document, one big insert.
+	gB, err := lib.Open(garland.FileOptions{DataBytes: []byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cB := humanCursor(gB)
+	cB.SeekByte(0)
+	if _, err := cB.InsertString(content, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	seekBench(t, "B: empty + one big InsertString", gB, 500)
+
+	// C: already-populated document, one big insert. Rules out "the empty
+	// document is the special case".
+	gC := mustOpen(t, lib, "seed line one\nseed line two\n")
+	cC := humanCursor(gC)
+	cC.SeekLine(1, 0)
+	if _, err := cC.InsertString(content, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	seekBench(t, "C: seeded + one big InsertString", gC, 500)
+
+	// D: loader path, then ordinary typing-sized edits scattered through it.
+	// Rules out "any mutation degrades the structure".
+	gD := mustOpen(t, lib, content)
+	cD := humanCursor(gD)
+	for i := 0; i < 1000; i++ {
+		cD.SeekLine(int64((i*37)%n), 0)
+		cD.InsertString("x", nil, false)
+	}
+	seekBench(t, "D: Open + 1000 single-rune inserts", gD, 500)
+
+	// E: same call site as B, same total bytes, chunked at 4 KiB on line
+	// boundaries. This is the workaround, and it nearly recovers the baseline.
+	gE, err := lib.Open(garland.FileOptions{DataBytes: []byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cE := humanCursor(gE)
+	cE.SeekByte(0)
+	for r := content; r != ""; {
+		k := 4096
+		if k > len(r) {
+			k = len(r)
+		}
+		if nl := strings.IndexByte(r[k-1:], '\n'); nl >= 0 {
+			k += nl
+		}
+		cE.InsertString(r[:k], nil, false)
+		r = r[k:]
+	}
+	seekBench(t, "E: empty + 4KiB-chunked InsertString", gE, 500)
+}
+
+// The penalty grows faster than the content does, which is the part that makes
+// it a correctness-of-structure issue rather than a constant factor.
+func TestLargeInsertScaling(t *testing.T) {
+	lib, err := garland.Init(garland.LibraryOptions{ColdStoragePath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{25000, 50000, 100000} {
+		content := corpus(n)
+
+		open := seekBench(t, fmt.Sprintf("Open, %d lines", n), mustOpen(t, lib, content), 200)
+
+		g, err := lib.Open(garland.FileOptions{DataBytes: []byte{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := humanCursor(g)
+		c.SeekByte(0)
+		if _, err := c.InsertString(content, nil, false); err != nil {
+			t.Fatal(err)
+		}
+		ins := seekBench(t, fmt.Sprintf("InsertString, %d lines", n), g, 200)
+
+		t.Logf(">>> %6d lines: insert is %.0fx the open path\n", n, float64(ins)/float64(open))
+	}
+}
+
+// Which access degrades: byte-addressed or line-addressed? Both do, which
+// points at the leaf itself being oversized rather than at one index in
+// particular. Line seeks degrade the harder of the two.
+func TestByteVersusLineSeek(t *testing.T) {
+	const n = 50000
+	content := corpus(n)
+	lib, err := garland.Init(garland.LibraryOptions{ColdStoragePath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	measure := func(name string, g *garland.Garland) {
+		c := humanCursor(g)
+		total := g.ByteCount().Value
+		lc := int64(g.LineCount().Value)
+		for i := int64(0); i < 100; i++ { // warm
+			c.SeekByte((i * 7919) % total)
+		}
+		t0 := time.Now()
+		for i := int64(0); i < 500; i++ {
+			c.SeekByte((i * 7919) % total)
+		}
+		byteD := time.Since(t0)
+		t0 = time.Now()
+		for i := int64(0); i < 500; i++ {
+			c.SeekLine((i*7919)%lc, 0)
+		}
+		lineD := time.Since(t0)
+		t.Logf("%-38s 500 SeekByte = %-14v 500 SeekLine = %v", name, byteD, lineD)
+	}
+	measure("Open(DataString)", mustOpen(t, lib, content))
+
+	g, err := lib.Open(garland.FileOptions{DataBytes: []byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := humanCursor(g)
+	c.SeekByte(0)
+	if _, err := c.InsertString(content, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	measure("empty + one big InsertString", g)
+}

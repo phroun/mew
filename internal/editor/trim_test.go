@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 func TestTrimLineBeg(t *testing.T) {
 	e, w := newTestEditor(t, " \t  hello \t \nnext\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 6}) // on 'e' of hello
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 6}) // on 'e' of hello
 	e.PawScript.ExecuteAsync(`trim_line_beg & verbose_log "did"`)
 	if got := w.Buffer.GetLine(0); got != "hello \t \n" {
 		t.Fatalf("line: %q", got)
@@ -29,7 +29,7 @@ func TestTrimLineBeg(t *testing.T) {
 
 func TestTrimLineEndKeepsTerminator(t *testing.T) {
 	e, w := newTestEditor(t, "hello \t \nnext\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 8}) // past the whitespace
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 8}) // past the whitespace
 	e.PawScript.ExecuteAsync("trim_line_end")
 	if got := w.Buffer.GetLine(0); got != "hello\n" {
 		t.Fatalf("line must keep its terminator: %q", got)
@@ -44,7 +44,7 @@ func TestTrimLineEndKeepsTerminator(t *testing.T) {
 
 func TestTrimLineBoth(t *testing.T) {
 	e, w := newTestEditor(t, "\t mid \t\nnext\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	e.PawScript.ExecuteAsync(`trim_line & verbose_log "did"`)
 	if got := w.Buffer.GetLine(0); got != "mid\n" {
 		t.Fatalf("line: %q", got)
@@ -56,7 +56,7 @@ func TestTrimLineBoth(t *testing.T) {
 
 func TestTrimNeverDeletesLines(t *testing.T) {
 	e, w := newTestEditor(t, "   \nnext\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	before := w.Buffer.GetLineCount()
 	e.PawScript.ExecuteAsync("trim_line")
 	if w.Buffer.GetLineCount() != before {

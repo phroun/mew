@@ -6,9 +6,9 @@ import "strings"
 // the config file, plus built-in defaults. Colors are resolved by cascading
 // through four levels, from most to least specific:
 //
-//  1. Window class:   [<class>.colors] section, falling back to the built-in
+//  1. Window class:   [<class>::colors] section, falling back to the built-in
 //     class defaults when the key is absent from the config section.
-//  2. Buffer type:    [colors.<bufferType>] section, falling back to the
+//  2. Buffer type:    [colors/<bufferType>] section, falling back to the
 //     built-in buffer-type defaults when the key is absent.
 //  3. Global:         [colors] section.
 //  4. Global default: the built-in root defaults.
@@ -20,10 +20,10 @@ import "strings"
 type ColorScheme struct {
 	// Global holds [colors] from the config file. Keys are lowercased.
 	Global map[string]string
-	// ByType holds [colors.<bufferType>] sections, keyed by buffer type name
-	// ("main", "work", "prompt"). Keys within each map are lowercased.
+	// ByType holds [colors/<bufferType>] sections, keyed by buffer type name
+	// ("doc", "tool", "prompt"). Keys within each map are lowercased.
 	ByType map[string]map[string]string
-	// ByClass holds [<class>.colors] sections, keyed by window class name
+	// ByClass holds [<class>::colors] sections, keyed by window class name
 	// (lowercased). Keys within each map are lowercased.
 	ByClass map[string]map[string]string
 }
@@ -47,38 +47,102 @@ var defaultGlobalColors = map[string]string{
 	"cursorghost":         "\x1b[0;30;100m",  // black on dark gray
 	"cursoroffscreen":     "\x1b[0;30;42m",   // black on green
 	"truncation":          "\x1b[0;37;41m",   // silver on red
-	"hint":                "\x1b[1;37;44m",   // bright white on blue (peek hints)
+	"hint":                "\x1b[0;97;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
-	"marks":               "\x1b[1;32;40m",   // bright green on black
+	"marks":               "\x1b[0;91m",      // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
 	"selection":           "\x1b[0;30;47m",   // black text on silver
 	"selectioninvisibles": "\x1b[1;30;47m",   // dark gray on silver
-	"rulerends":           "\x1b[0;1;37;45m", // bright white on magenta (end numbers)
-	"rulerfill":           "\x1b[0;37;45m",   // silver on magenta (for the fill glyph)
-	"rulertick":           "\x1b[0;37;45m",   // silver on magenta (for ".")
-	"rulerminor":          "\x1b[1;33;45m",   // bright yellow on magenta (for ":")
-	"rulermajor":          "\x1b[1;32;45m",   // bright green on magenta ("|" and numbers)
-	"rulercursor":         "\x1b[0;30;47m",   // black on silver (cursor columns, rulerShowsCursor)
+	// Flip-safe selection: under flipBidiForHost (macOS Terminal.app etc.),
+	// a background/reverse selection FILL is misplaced on any line holding
+	// combining marks — the terminal's bidi engine counts codepoints where
+	// the grid counts cells, so a niqqud-pointed Hebrew selection drifts and
+	// half-vanishes. Foreground color and BOLD, by contrast, ride each glyph
+	// through the reorder intact. So on such lines the selection is drawn as
+	// bold + a distinct foreground instead of a bar: correctly positioned,
+	// unambiguous (its own weight+color), and using only glyph-riding
+	// channels — NO background, NO reverse, NO underline (underline drifts
+	// too). Lines without combining marks (English, and Arabic, which mew
+	// pre-shapes to single presentation-form codepoints) keep the real bar.
+	"selectionflip":           "\x1b[0;1;93m",  // bold bright-yellow (no bg)
+	"selectioninvisiblesflip": "\x1b[0;1;33m",  // bold yellow (no bg)
+	"rulerends":               "\x1b[0;97;45m", // bright white on magenta (end numbers)
+	"rulerfill":               "\x1b[0;37;45m", // silver on magenta (for the fill glyph)
+	"rulertick":               "\x1b[0;37;45m", // silver on magenta (for ".")
+	"rulerminor":              "\x1b[0;93;45m", // bright yellow on magenta (for ":")
+	"rulermajor":              "\x1b[0;92;45m", // bright green on magenta ("|" and numbers)
+	"rulercursor":             "\x1b[0;30;47m", // black on silver (cursor columns, rulerShowsCursor)
+
+	// Vertical scrollbar (the scrollbar option): the '░' track and '█' thumb
+	// cells in the viewport's reserved outer column.
+	"scrollbartrack": "\x1b[0;90;40m", // dark gray on black
+	"scrollbarthumb": "\x1b[0;37;40m", // silver on black
+
+	// Hyperlinks (grammar-derived; see the editor's link browse mode).
+	// Caret mode paints link source text in "link" ("linkrecent" is reserved
+	// for recently-followed links once navigation lands); browse mode renders
+	// links as buttons in the button* colors, with the *focused variants on
+	// the button the caret occupies. The shadow colors paint the trailing
+	// half/full-block shadow cell.
+	"link":       "\x1b[0;4;93;40m", // underlined bright yellow on black
+	"linkrecent": "\x1b[0;4;32;40m", // underlined green on black
+	"linkhover":  "\x1b[0;4;92;40m", // underlined bright green on black (pointer over)
+	// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
+	// browse mode can add bold/underline per level (see the editor). Bright
+	// cyan on black.
+	"heading": "\x1b[0;96;40m",
+	// Key badges: [[keys#action|alias]] references in help text render as a
+	// tight cap-less/shadow-less badge showing the live binding for the action.
+	"key":                 "\x1b[0;93;45m",   // bright yellow on purple
+	"keyfocused":          "\x1b[0;31;47m",   // red on silver (the focused badge)
+	"button":              "\x1b[0;1;30;47m", // bold black on silver
+	"buttonrecent":        "\x1b[0;30;47m",   // black on silver (a visited link)
+	"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+	"buttonshadowrecent":  "\x1b[0;34;47m",   // dark blue on silver
+	"buttonfocused":       "\x1b[0;30;46m",   // black on cyan
+	"buttonshadowfocused": "\x1b[0;90;46m",   // dark gray on cyan
+	"buttonpressed":       "\x1b[0;97;44m",   // bright white on blue (mouse held)
+	"buttonshadowpressed": "\x1b[0;37;44m",   // silver on blue
+	"buttonhover":         "\x1b[0;93;45m",   // bright yellow on purple (pointer over)
+	"buttonshadowhover":   "\x1b[0;90;45m",   // dark gray on purple
 
 	// Systematic syntax-highlighting palette. Grammar color classes map onto
-	// these names (built-in conventions plus the [colors.syntax] maps).
+	// these names (built-in conventions plus the [syntax] maps).
 	"syntaxcomment":  "\x1b[0;32;40m",   // green on black
 	"syntaxstring":   "\x1b[0;36;40m",   // cyan on black
-	"syntaxescape":   "\x1b[0;1;36;40m", // bright cyan on black
+	"syntaxescape":   "\x1b[0;96;40m",   // bright cyan on black
 	"syntaxconstant": "\x1b[0;91;40m",   // bright red on black (numbers, literals)
 	"syntaxkeyword":  "\x1b[0;1;97;40m", // bold bright white on black
 	"syntaxtype":     "\x1b[0;93;40m",   // bright yellow on black
 	"syntaxpreproc":  "\x1b[0;94;40m",   // bright blue on black
-	"syntaxbad":      "\x1b[0;1;37;41m", // bright white on red
+	"syntaxbad":      "\x1b[0;97;41m",   // bright white on red
 }
 
 // defaultTypeColors are the built-in per-buffer-type colors
-// ([colors.<bufferType>] defaults).
+// ([colors/<bufferType>] defaults).
 var defaultTypeColors = map[string]map[string]string{
-	"work": {
+	"tool": {
 		"text":     "\x1b[0;1;46;97m", // bright white on cyan
 		"messages": "\x1b[0;1;43;97m", // bright white on amber
+		// Dokuwiki headings in browse mode: a distinctive base color, non-bold so
+		// browse mode can add bold/underline per level (see the editor). Black
+		// on cyan.
+		"heading": "\x1b[0;30;46m",
+		// Key badges: [[keys#action|alias]] references in help text render as a
+		// tight cap-less/shadow-less badge showing the live binding for the action.
+		"key":                 "\x1b[0;93;45m",   // bright yellow on purple
+		"keyfocused":          "\x1b[0;31;47m",   // red on silver (the focused badge)
+		"button":              "\x1b[0;1;30;47m", // black on silver
+		"buttonrecent":        "\x1b[0;30;47m",   // dark red on silver (a visited link)
+		"buttonshadow":        "\x1b[0;90;47m",   // dark gray on silver
+		"buttonshadowrecent":  "\x1b[0;34;47m",   // dark blue on silver
+		"buttonfocused":       "\x1b[0;97;41m",   // white on red
+		"buttonshadowfocused": "\x1b[0;90;41m",   // dark gray on cyan
+		"buttonpressed":       "\x1b[0;97;44m",   // bright white on blue (mouse held)
+		"buttonshadowpressed": "\x1b[0;37;44m",   // silver on blue
+		"buttonhover":         "\x1b[0;93;45m",   // bright yellow on purple (pointer over)
+		"buttonshadowhover":   "\x1b[0;90;45m",   // dark gray on purple
 	},
 	"prompt": {
 		"messages": "\x1b[0;1;42;93m", // bright yellow on green
@@ -87,25 +151,37 @@ var defaultTypeColors = map[string]map[string]string{
 }
 
 // defaultClassColors are the built-in per-window-class colors
-// ([<class>.colors] defaults).
+// ([<class>::colors] defaults).
 var defaultClassColors = map[string]map[string]string{
+	"quickhelp": {
+		"key":         "\x1b[0;1;93;100m", // bright yellow on blue
+		"text":        "\x1b[0;1;97;100m", // silver on blue
+		"syntaxtable": "\x1b[0;37;100m",   // silver on blue
+	},
 	"modebar": {
 		"text":       "\x1b[0;44m",    // silver on blue - modebar fill
 		"messages":   "\x1b[1;96;44m", // aqua on blue - stats readout (Frag/Heap/Line/Rune)
 		"modifiers":  "\x1b[0;44m",    // silver on blue - active modifiers & surrounding space
-		"buffer":     "\x1b[1;33;44m", // bright yellow on blue - buffer name (filename)
+		"buffer":     "\x1b[0;93;44m", // bright yellow on blue - buffer name (filename)
 		"completion": "\x1b[0;44m",    // silver on blue - autocompletion & surrounding space
-		"context":    "\x1b[1;32;44m", // bright green on blue - context (when autocompletion isn't showing)
+		"context":    "\x1b[0;92;44m", // bright green on blue - context (when autocompletion isn't showing)
 		"logo":       "\x1b[1;97;41m", // bright white on red - M_ logo
 	},
 	"notification": {
-		"messages": "\x1b[0;37;43m",
+		"messages": "\x1b[0;30;47m",
+		"key":      "\x1b[0;1;30;47m", // bright bold white on silver
 	},
 	"warning": {
-		"messages": "\x1b[1;33;43m",
+		// Bright yellow on brown. Use 93 (bright yellow) rather than 1;33 (bold
+		// yellow): terminals that treat bold as weight-only, not "bold as bright"
+		// (macOS Terminal by default), render 33 as dark yellow — brown on the
+		// brown 43 background, i.e. invisible.
+		"messages": "\x1b[0;93;43m",
+		"key":      "\x1b[0;1;97;43m", // bright bold white on brown
 	},
 	"error": {
-		"messages": "\x1b[1;37;41m",
+		"messages": "\x1b[0;97;41m",   // bright white on red
+		"key":      "\x1b[0;1;93;41m", // bright bold yellow on red
 	},
 }
 
@@ -129,7 +205,7 @@ func lookupLevel(cfg, def map[string]string, name string) (string, bool) {
 }
 
 // Resolve returns the color escape sequence for the given window class,
-// buffer type ("main", "work", "prompt"), and color name, cascading
+// buffer type ("doc", "tool", "prompt"), and color name, cascading
 // class -> buffer type -> global -> built-in global defaults. Names, classes,
 // and types are case-insensitive. Returns "" for a name unknown at every
 // level.

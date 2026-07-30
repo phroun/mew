@@ -2,7 +2,7 @@ package editor
 
 import (
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // killRingCapacity returns how many kill entries the ring retains — the
@@ -30,13 +30,13 @@ func (e *Editor) trimKillRing() {
 // yankRecord remembers the extent of the most recent kill_ring_yank (or
 // kill_ring_pop) so kill_ring_pop can replace it with an older ring entry. It
 // is only honored while the caret still sits exactly at the yank's end in the
-// same window, and the command dispatcher invalidates it as soon as any other
+// same viewport, and the command dispatcher invalidates it as soon as any other
 // command runs — the emacs "previous command was not a yank" rule.
 type yankRecord struct {
-	windowID  string
-	startByte int64
-	endByte   int64
-	valid     bool
+	viewportID string
+	startByte  int64
+	endByte    int64
+	valid      bool
 }
 
 // killCapture feeds one delete's capture into the global kill ring. Deletes
@@ -46,7 +46,7 @@ type yankRecord struct {
 // point (hasMoved false) and the previous tracked edit was also a kill.
 // kill_ring_append forces the next capture to accumulate regardless. Anything
 // else starts a fresh entry at the head of the ring.
-func (e *Editor) killCapture(w *window.Window, cap buffer.Captured, forward bool) {
+func (e *Editor) killCapture(w *viewport.Viewport, cap buffer.Captured, forward bool) {
 	if cap.Empty() {
 		return
 	}
@@ -67,7 +67,7 @@ func (e *Editor) killCapture(w *window.Window, cap buffer.Captured, forward bool
 // pushKillEntry starts a new kill-ring entry at the head, evicting the oldest
 // past the killRingEntries capacity.
 func (e *Editor) pushKillEntry(cap buffer.Captured) {
-	kb := buffer.NewKillBuffer()
+	kb := e.lib.NewKillBuffer()
 	if kb == nil {
 		return
 	}
@@ -80,7 +80,15 @@ func (e *Editor) pushKillEntry(cap buffer.Captured) {
 // killRingYank inserts the most recent kill entry at the caret, marks and all,
 // like insert. Records the yanked extent so kill_ring_pop can replace it.
 func (e *Editor) killRingYank() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	if e.contentLocked() {
+		// The buffer's owning viewport is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
+	// A yank keeps lastYank valid for a following pop (the post-dispatch
+	// invalidation reads this instead of the command name).
+	e.yankedThisCommand = true
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil || w.Caret == nil {
 		return false
 	}
@@ -101,7 +109,7 @@ func (e *Editor) killRingYank() bool {
 	w.Caret.InsertCaptured(cap)
 	end := w.Caret.BytePos()
 
-	e.lastYank = yankRecord{windowID: w.ID, startByte: start, endByte: end, valid: true}
+	e.lastYank = yankRecord{viewportID: w.ID, startByte: start, endByte: end, valid: true}
 	e.killPopIdx = 0
 
 	e.afterHorizontalMovement(w)
@@ -120,11 +128,19 @@ func (e *Editor) killRingYank() bool {
 // to where it was — leaving no droppings from entries passed through while
 // cycling. The rotated entry is then placed as a fresh yank.
 func (e *Editor) killRingPop() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	if e.contentLocked() {
+		// The buffer's owning viewport is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
+	// A pop consumes the current lastYank and records a new one; keep it valid
+	// so a further pop can cycle (name-agnostic, mirrors killRingYank).
+	e.yankedThisCommand = true
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil || w.Caret == nil || len(e.killRing) == 0 {
 		return false
 	}
-	if !e.lastYank.valid || e.lastYank.windowID != w.ID || w.Caret.BytePos() != e.lastYank.endByte {
+	if !e.lastYank.valid || e.lastYank.viewportID != w.ID || w.Caret.BytePos() != e.lastYank.endByte {
 		e.ShowWarning("Previous command was not a yank")
 		return false
 	}
@@ -147,7 +163,7 @@ func (e *Editor) killRingPop() bool {
 	w.Caret.InsertCaptured(cap)
 	end := w.Caret.BytePos()
 
-	e.lastYank = yankRecord{windowID: w.ID, startByte: start, endByte: end, valid: true}
+	e.lastYank = yankRecord{viewportID: w.ID, startByte: start, endByte: end, valid: true}
 
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
@@ -159,7 +175,12 @@ func (e *Editor) killRingPop() bool {
 // deleting it (kill-ring-save). The copy is its own entry: it never merges
 // with a delete accumulation, and it breaks any accumulation in progress.
 func (e *Editor) blockCopyKill() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	if e.contentLocked() {
+		// The buffer's owning viewport is read-only, or a link button is
+		// focused: reject the mutation at its source (name-agnostic).
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		e.ShowWarning("No active buffer")
 		return false

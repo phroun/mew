@@ -1,6 +1,9 @@
 package bidi
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // visual renders the permutation as a string for easy comparison.
 func visual(s string, baseRTL bool) string {
@@ -199,6 +202,80 @@ func TestShapeRenderReplacesBase(t *testing.T) {
 		if r >= 0x0600 && r <= 0x064A {
 			// only a base letter would land here; all four should be FExx
 			t.Fatalf("shaped output still contains a base letter U+%04X", r)
+		}
+	}
+}
+
+// An ill-formed combining mark is painted as a SPACING substitute (a
+// dotted-circle anchor, or hex), so it is a cluster of its own — and the
+// reordering has to agree, or the mark gets dragged along with whatever happened
+// to precede it and lands on the wrong side of it.
+//
+// The reported case: a lamed, a space, then a hiriq with nothing to attach to.
+// Reading right to left that must be lamed, space, then the anchored mark;
+// gluing the mark to the space put it before the space instead.
+//
+// Asserted on the permutation rather than on a reversed string, because a
+// well-formed mark is emitted immediately AFTER its base in visual order (that
+// is how the terminal composes them into one cell) — reading a composed cluster
+// backwards rune by rune is not a meaningful order to compare.
+func TestDefectiveMarkIsItsOwnClusterInRTL(t *testing.T) {
+	const lamed, hiriq, alef = 'ל', 'ִ', 'א'
+	cases := []struct {
+		name  string
+		runes []rune
+		want  []int
+	}{
+		{
+			// A WELL-FORMED mark still rides its base: the cluster {lamed,hiriq}
+			// moves as one and keeps the mark straight after the letter.
+			"well-formed mark rides its base",
+			[]rune{lamed, hiriq, alef},
+			[]int{2, 0, 1},
+		},
+		{
+			// The bug. Its own cluster, so it reverses like any other cell and
+			// stays on the far side of the space in reading order.
+			"baseless mark stands alone",
+			[]rune{lamed, ' ', hiriq, alef},
+			[]int{3, 2, 1, 0},
+		},
+		{
+			"baseless mark at the end of the line",
+			[]rune{lamed, ' ', hiriq},
+			[]int{2, 1, 0},
+		},
+		{
+			// A mark on a base of the WRONG SCRIPT is equally ill-formed and
+			// equally spacing: a Devanagari sign cannot ride a Hebrew letter.
+			"mixed-script mark stands alone",
+			[]rune{alef, lamed, 'ँ', alef},
+			[]int{3, 2, 1, 0},
+		},
+	}
+	for _, c := range cases {
+		lay := Compute(c.runes, true)
+		if lay == nil {
+			t.Errorf("%s: no layout for an RTL line", c.name)
+			continue
+		}
+		if !reflect.DeepEqual(lay.Perm, c.want) {
+			t.Errorf("%s: perm %v, want %v", c.name, lay.Perm, c.want)
+		}
+	}
+}
+
+// An LTR base reorders nothing here, so the rule must not disturb it: the line
+// paints in logical order whether the mark is well formed or not.
+func TestDefectiveMarkLeavesAnLTRLineAlone(t *testing.T) {
+	runes := []rune{'a', ' ', 'ִ', 'b'}
+	lay := Compute(runes, false)
+	if lay == nil {
+		return // logical order, which is the claim
+	}
+	for i, p := range lay.Perm {
+		if p != i {
+			t.Fatalf("perm %v, want logical order on an LTR line", lay.Perm)
 		}
 	}
 }

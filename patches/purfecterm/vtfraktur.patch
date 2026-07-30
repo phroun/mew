@@ -1,0 +1,113 @@
+--- a/cell.go	2026-07-21 19:39:36.202272982 +0000
++++ b/cell.go	2026-07-21 20:27:31.285690360 +0000
+@@ -35,6 +35,16 @@
+ 	Font           uint8   // Font slot 0..10: 0 = primary (SGR 10), 1..9 = alternates (SGR 11..19), 10 = fraktur (SGR 20). A renderer maps the slot to a family; unset slots inherit slot 0.
+ }
+ 
++const (
++	// VTFrakturSlot is the font slot for SGR 20 (fraktur): the last alternate.
++	VTFrakturSlot = 10
++	// VTFrakturFont is the reserved family name GetFontSlot returns for the
++	// fraktur slot when the app hasn't mapped it — the well-known signal that a
++	// cell came from a VT100 fraktur (SGR 20) request. The CLI renderer emits
++	// real SGR 20 for such cells; other renderers may cipher or substitute.
++	VTFrakturFont = "VTFRAKTUR"
++)
++
+ // String returns the full character including any combining marks
+ func (c *Cell) String() string {
+ 	if c.Combining == "" {
+--- a/buffer.go	2026-07-21 19:39:36.198847976 +0000
++++ b/buffer.go	2026-07-21 20:27:12.389690792 +0000
+@@ -951,6 +951,13 @@
+ 	if fam, ok := b.fontSlots[uint8(slot)]; ok {
+ 		return fam
+ 	}
++	// Slot 10 is SGR 20 (fraktur): unless the app maps it, it resolves to the
++	// reserved VTFRAKTUR family name so a renderer can recognize the VT100
++	// fraktur request (real passthrough, a cipher, or its own choice) rather
++	// than silently inheriting the primary face.
++	if slot == VTFrakturSlot {
++		return VTFrakturFont
++	}
+ 	return b.fontSlots[0]
+ }
+ 
+--- a/cli/renderer.go	2026-07-21 19:39:36.203009934 +0000
++++ b/cli/renderer.go	2026-07-21 20:29:00.361688323 +0000
+@@ -182,6 +182,7 @@
+ 	currentReverse := false
+ 	currentBlink := false
+ 	currentStrikethrough := false
++	currentFraktur := false
+ 	firstAttr := true
+ 
+ 	// Render each cell. vx tracks the VISUAL column where the cell lands on
+@@ -255,7 +256,8 @@
+ 					(currentUnderline && !cell.Underline) ||
+ 					(currentReverse && !cell.Reverse) ||
+ 					(currentBlink && !cell.Blink) ||
+-					(currentStrikethrough && !cell.Strikethrough) {
++					(currentStrikethrough && !cell.Strikethrough) ||
++					(currentFraktur && cell.Font != purfecterm.VTFrakturSlot) {
+ 					needsReset = true
+ 				}
+ 			}
+@@ -268,6 +270,7 @@
+ 				currentReverse = false
+ 				currentBlink = false
+ 				currentStrikethrough = false
++				currentFraktur = false
+ 				currentFg = purfecterm.Color{}
+ 				currentBg = purfecterm.Color{}
+ 			}
+@@ -294,6 +297,11 @@
+ 				sgr = append(sgr, "9")
+ 				currentStrikethrough = true
+ 			}
++			// SGR 20 fraktur: a font-slot-10 (VTFRAKTUR) cell emits real fraktur.
++			if cell.Font == purfecterm.VTFrakturSlot && !currentFraktur {
++				sgr = append(sgr, "20")
++				currentFraktur = true
++			}
+ 
+ 			// Add colors
+ 			if fg != currentFg {
+@@ -524,6 +532,7 @@
+ 	currentReverse := false
+ 	currentBlink := false
+ 	currentStrikethrough := false
++	currentFraktur := false
+ 	firstAttr := true
+ 
+ 	// Render each cell (vx = visual column on the host terminal; see Render).
+@@ -562,7 +571,8 @@
+ 					(currentUnderline && !cell.Underline) ||
+ 					(currentReverse && !cell.Reverse) ||
+ 					(currentBlink && !cell.Blink) ||
+-					(currentStrikethrough && !cell.Strikethrough) {
++					(currentStrikethrough && !cell.Strikethrough) ||
++					(currentFraktur && cell.Font != purfecterm.VTFrakturSlot) {
+ 					needsReset = true
+ 				}
+ 			}
+@@ -575,6 +585,7 @@
+ 				currentReverse = false
+ 				currentBlink = false
+ 				currentStrikethrough = false
++				currentFraktur = false
+ 				currentFg = purfecterm.Color{}
+ 				currentBg = purfecterm.Color{}
+ 			}
+@@ -601,6 +612,11 @@
+ 				sgr = append(sgr, "9")
+ 				currentStrikethrough = true
+ 			}
++			// SGR 20 fraktur: a font-slot-10 (VTFRAKTUR) cell emits real fraktur.
++			if cell.Font == purfecterm.VTFrakturSlot && !currentFraktur {
++				sgr = append(sgr, "20")
++				currentFraktur = true
++			}
+ 
+ 			// Add colors
+ 			if fg != currentFg {

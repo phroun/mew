@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -46,9 +47,38 @@ type backBuffer struct {
 	lastVisible bool
 	haveVisible bool
 
+	// Desired hardware-cursor SHAPE (DECSCUSR "CSI Ps SP q": 0 default,
+	// 1/2 blinking/steady block, 3/4 underline, 5/6 bar), set via
+	// SetCursorStyle. Emitted only while the cursor is visible, so selecting a
+	// shape never reveals a caret the editor deliberately hid; the style is
+	// re-asserted when the cursor comes back. lastStyle/haveStyle keep an
+	// unchanged shape off the wire.
+	curStyle  int
+	lastStyle int
+	haveStyle bool
+
 	// pendingClear forces present() to emit a full clear (\x1b[2J) and repaint
 	// everything — set on resize and by ForceRedraw/screen_refresh.
 	pendingClear bool
+
+	// logicalCUP switches cursor addressing to LOGICAL columns for flex-width
+	// terminals (purfecterm under DECSET 2027): their grid stores one cell per
+	// character — a wide glyph occupies a single cell whose 2-column width is an
+	// attribute — so a CUP column must count characters, not visual cells.
+	// mew's grid is visual (wide = base + continuation), so the emitted column
+	// is the count of non-continuation cells left of the target. Off (default)
+	// emits visual columns, the classic terminal contract.
+	logicalCUP bool
+
+	// emitPen is the SGR currently in effect on the terminal during present():
+	// the last style putStyle emitted. Same-style cells then skip re-emitting the
+	// sequence, which both shrinks the byte stream and keeps adjacent glyphs
+	// contiguous — so a terminal's Arabic shaping / grapheme joining is not broken
+	// by an escape injected mid-run. The pen persists across cursor moves (CUP
+	// does not change SGR), so it is tracked across the whole present() frame and
+	// reset to emitPenUnknown at its top (the prior frame's trailing pen is not
+	// reliably known).
+	emitPen string
 
 	// flipBidi re-emits each RTL run of a row in reverse (logical) order, with
 	// mirrored glyphs restored, for host terminals that apply their own bidi
@@ -61,6 +91,19 @@ type backBuffer struct {
 	// one-time flipBidiForHost=auto terminal probe (RTL is the first point the
 	// setting matters).
 	sawRTL bool
+
+	// rowWide[y] draws that row double-width (DEC DECDWL, ESC#6): the terminal
+	// shows the row's left half at 2x and hides the right half, so the renderer
+	// lays content into the left half only. dispRowWide tracks what the terminal
+	// was last told, so the mode is (re)emitted only on change. A double-width
+	// row is always fully re-emitted (no cell diff) so no mid-row cursor address
+	// — which DECDWL would misplace — is ever used on it.
+	rowWide     []bool
+	dispRowWide []bool
+	// rowWideFill is the SGR the erase-to-end uses on a double-width row, so the
+	// cleared cells take the row's own background instead of whatever colour was
+	// last emitted.
+	rowWideFill []string
 }
 
 // bbCell is one terminal cell. A width-2 glyph occupies a base cell (width 2)
@@ -72,9 +115,34 @@ type bbCell struct {
 	style string // exact SGR bytes for this cell ("" == default)
 	width int8   // 1 or 2 for a base cell; 0 for a continuation; -1 == sentinel
 	cont  bool   // right half of a wide glyph
+	// reanchor marks a cell whose glyph advances the TERMINAL's cursor by an
+	// amount mew cannot predict, so the cursor is re-addressed after it rather
+	// than assumed. See putRune.
+	reanchor bool
 }
 
 const defaultStyleSeq = "\x1b[0m"
+
+// emitPenUnknown is the sentinel emitPen is reset to at the top of each
+// present(): no real style string equals it, so the first cell always emits its
+// SGR (the prior frame's trailing pen is not reliably known).
+const emitPenUnknown = "\x00"
+
+// putStyle emits style's SGR bytes only when they differ from the pen already in
+// effect on the terminal (emitPen), collapsing runs of same-styled cells. The
+// pen persists across cursor moves — CUP does not change SGR — so this is
+// tracked across the whole present() frame. An empty style is the terminal
+// default.
+func (b *backBuffer) putStyle(sb *strings.Builder, style string) {
+	if style == "" {
+		style = defaultStyleSeq
+	}
+	if style == b.emitPen {
+		return
+	}
+	sb.WriteString(style)
+	b.emitPen = style
+}
 
 func newBackBuffer(w, h int) *backBuffer {
 	b := &backBuffer{curVisible: true}
@@ -100,6 +168,9 @@ func (b *backBuffer) reshape(w, h int) {
 	b.w, b.h = w, h
 	b.cur = make([][]bbCell, h)
 	b.disp = make([][]bbCell, h)
+	b.rowWide = make([]bool, h)
+	b.dispRowWide = make([]bool, h)
+	b.rowWideFill = make([]string, h)
 	for y := 0; y < h; y++ {
 		b.cur[y] = make([]bbCell, w)
 		b.disp[y] = make([]bbCell, w)
@@ -122,6 +193,20 @@ func (b *backBuffer) begin() {
 		for x := 0; x < b.w; x++ {
 			row[x] = bbCell{width: 1}
 		}
+		if y < len(b.rowWide) {
+			b.rowWide[y] = false
+		}
+	}
+}
+
+// setRowWide marks the pen's current row double-width for this frame, with the
+// SGR its erase-to-end should use (the row's own background). The renderer
+// calls it after painting a double-width line; the content must already be
+// confined to the left half of the row.
+func (b *backBuffer) setRowWide(fill string) {
+	if b.penY >= 0 && b.penY < len(b.rowWide) {
+		b.rowWide[b.penY] = true
+		b.rowWideFill[b.penY] = fill
 	}
 }
 
@@ -132,7 +217,39 @@ func (b *backBuffer) forceRedraw() {
 		for x := 0; x < b.w; x++ {
 			b.disp[y][x] = bbCell{width: -1}
 		}
+		b.dispRowWide[y] = false // re-emit the line mode next present
 	}
+}
+
+// emitWideRow writes one double-width row in full: DECDWL, an erase-to-end (so
+// a terminal that mis-handles the right half shows no junk), then the row's
+// left-half cells (the only half DECDWL displays). No mid-row cursor
+// addressing is used. disp is synced so the normal diff skips this row.
+func (b *backBuffer) emitWideRow(sb *strings.Builder, y int) {
+	writeCUP(sb, y+1, 1)
+	sb.WriteString("\x1b#6") // DECDWL: double-width line
+	// Set the row's background BEFORE erasing, so the cleared cells take it
+	// rather than whatever colour was last emitted.
+	b.putStyle(sb, b.rowWideFill[y])
+	sb.WriteString("\x1b[0K") // erase to end of line
+	half := b.w / 2
+	for x := 0; x < half; x++ {
+		nc := b.cur[y][x]
+		if nc.cont {
+			b.disp[y][x] = nc
+			continue
+		}
+		b.putStyle(sb, nc.style)
+		sb.WriteString(runesOf(nc))
+		b.disp[y][x] = nc
+		if nc.width == 2 && x+1 < b.w {
+			b.disp[y][x+1] = b.cur[y][x+1]
+		}
+	}
+	for x := half; x < b.w; x++ {
+		b.disp[y][x] = b.cur[y][x] // synced (blank, off-screen right half)
+	}
+	b.dispRowWide[y] = true
 }
 
 // moveTo positions the pen (1-based, matching the terminal's CUP coordinates).
@@ -251,7 +368,15 @@ func (b *backBuffer) putRune(r rune) {
 		row[last+1] = bbCell{width: 1}
 	}
 
-	row[x] = bbCell{runes: []rune{r}, style: b.penStyle, width: int8(w)}
+	// The dotted circle mew anchors a defective combining mark on is East
+	// Asian AMBIGUOUS, and the mark riding it may be one the terminal has no
+	// glyph for and answers with a spacing .notdef. Either way the terminal
+	// may advance two columns where mew budgeted one — and every later cell in
+	// the span would then be misplaced, leaving the row's tail unpainted in
+	// the terminal's own background. Flag the cell so present() re-addresses
+	// the cursor after it instead of counting on the advance.
+	row[x] = bbCell{runes: []rune{r}, style: b.penStyle, width: int8(w),
+		reanchor: r == textwidth.MarkAnchor}
 	if w == 2 && x+1 < b.w {
 		row[x+1] = bbCell{style: b.penStyle, width: 0, cont: true}
 	}
@@ -288,12 +413,34 @@ func (b *backBuffer) attachCombining(r rune) {
 // mode.
 func (b *backBuffer) present(out io.Writer) {
 	var sb strings.Builder
+	b.emitPen = emitPenUnknown // the terminal's trailing pen from last frame is unknown
 
 	if b.pendingClear {
 		sb.WriteString("\x1b[2J\x1b[H")
 		b.pendingClear = false
 	}
 
+	// Double-width rows are emitted fully here (no cell diff, so no mid-row
+	// cursor addressing lands on a DECDWL line), then the normal diff below
+	// skips them (their disp is synced). A row that stopped being double-width
+	// is reset to single-width and handed back to the diff to repaint.
+	for y := 0; y < b.h; y++ {
+		if b.rowWide[y] {
+			b.emitWideRow(&sb, y)
+		} else if b.dispRowWide[y] {
+			writeCUP(&sb, y+1, 1)
+			sb.WriteString("\x1b#5") // DECSWL: back to single-width
+			b.dispRowWide[y] = false
+			for x := 0; x < b.w; x++ {
+				b.disp[y][x] = bbCell{width: -1} // force the diff to repaint it
+			}
+		}
+	}
+
+	// Emission granularity. flipBidi needs whole rows (the run-level flip).
+	// Under logicalCUP, presentSpans itself escalates to a whole row exactly
+	// when that row's width profile changed (see rowProfileChanged) — minimal
+	// spans whenever they are safe, the full rewrite only when necessary.
 	if b.flipBidi {
 		b.presentRows(&sb)
 	} else {
@@ -315,19 +462,30 @@ func (b *backBuffer) present(out io.Writer) {
 		}
 		fill := bbCell{style: style, width: 1}
 		if !cellsEqual(fill, b.disp[b.h-1][b.w-1]) {
-			writeCUP(&sb, b.h, b.w)
-			if style == "" {
-				style = defaultStyleSeq
-			}
-			sb.WriteString(style)
+			writeCUP(&sb, b.h, b.logicalColFor(b.h-1, b.w-1)+1)
+			b.putStyle(&sb, style)
 			sb.WriteString("\x1b[K")
 			b.disp[b.h-1][b.w-1] = fill
 		}
 	}
 
 	// Place the hardware cursor where the renderer left the pen, then apply
-	// visibility only when it changed.
-	writeCUP(&sb, b.penY+1, b.penX+1)
+	// visibility only when it changed. The pen is a visual column; a
+	// flex-width terminal is addressed by its logical column instead, and a
+	// flip-bidi terminal by the STREAM column its transform emitted the
+	// pen's cell at (flipColFor) — the terminal's grid stores the stream, so
+	// its displayed cursor lands wherever it drew that stored cell. The TEXT
+	// emission is untouched: this affects only the final cursor address.
+	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.flipColFor(b.penY, b.penX))+1)
+	// Shape before visibility: a terminal that is about to be told to show the
+	// cursor shows it already wearing the right shape, with no flicker through
+	// the previous one. Only while visible — DECSCUSR on a hidden cursor would
+	// be wasted, and re-asserting on the way back covers it.
+	if b.curVisible && (!b.haveStyle || b.curStyle != b.lastStyle) {
+		fmt.Fprintf(&sb, "\x1b[%d q", b.curStyle)
+		b.lastStyle = b.curStyle
+		b.haveStyle = true
+	}
 	if !b.haveVisible || b.curVisible != b.lastVisible {
 		if b.curVisible {
 			sb.WriteString("\x1b[?25h")
@@ -344,9 +502,41 @@ func (b *backBuffer) present(out io.Writer) {
 // presentSpans emits minimal cell-span diffs: a cursor move to each changed
 // span, then only its changed cells. The default mode for stream-order
 // terminals, which place every addressed cell exactly.
+// rowProfileChanged reports whether a row's WIDTH PROFILE — which cells are
+// wide-glyph continuations — differs between the new frame and what the
+// terminal shows. On a logical-grid terminal that means the row's logical
+// cell structure changed: a mid-row span write would then consume a different
+// number of logical cells than it replaces, silently shifting everything
+// preserved to its right. Such a row must be rewritten whole.
+func (b *backBuffer) rowProfileChanged(y int) bool {
+	for x := 0; x < b.w; x++ {
+		if b.cur[y][x].cont != b.disp[y][x].cont {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *backBuffer) presentSpans(sb *strings.Builder) {
 	termRow, termCol := -1, -1 // where the terminal cursor sits (unknown)
 	for y := 0; y < b.h; y++ {
+		// Flex-terminal escalation: minimal spans are safe only while the
+		// row's logical structure is stable. When the width profile changed,
+		// rewrite the row whole and truncate its logical remainder with EL
+		// (the old row may have held more logical cells than the new content
+		// writes; leftovers would resurface as stale fragments).
+		if b.logicalCUP && b.rowProfileChanged(y) {
+			writeCUP(sb, y+1, 1)
+			b.emitRow(sb, y)
+			sb.WriteString("\x1b[0K")
+			if y == b.h-1 && b.w >= 1 {
+				// The EL cleared the never-written corner cell: force the
+				// corner-fill pass below to repaint it.
+				b.disp[y][b.w-1] = bbCell{width: -1}
+			}
+			termRow, termCol = -1, -1
+			continue
+		}
 		x := 0
 		for x < b.w {
 			if b.isCornerCut(y, x) {
@@ -358,7 +548,7 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 			}
 			// Position the cursor at the start of this changed span.
 			if termRow != y || termCol != x {
-				writeCUP(sb, y+1, x+1)
+				writeCUP(sb, y+1, b.logicalColFor(y, x)+1)
 				termRow, termCol = y, x
 			}
 			for x < b.w && !b.isCornerCut(y, x) && !cellsEqual(b.cur[y][x], b.disp[y][x]) {
@@ -371,15 +561,11 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 					termCol = -1
 					break
 				}
-				// Emit the style before every cell — matching the direct
-				// renderer, which writes the active color ahead of each glyph —
-				// so a full repaint is byte-identical and callers that assert
-				// "<color><glyph>" mid-run keep working.
-				style := nc.style
-				if style == "" {
-					style = defaultStyleSeq
-				}
-				sb.WriteString(style)
+				// Emit the style only when it changes from the pen already in
+				// effect (putStyle), so a same-styled run stays a contiguous glyph
+				// stream — no SGR is injected between adjacent letters, which the
+				// terminal needs for Arabic shaping / grapheme joining.
+				b.putStyle(sb, nc.style)
 				sb.WriteString(runesOf(nc))
 				b.disp[y][x] = nc
 				wd := int(nc.width)
@@ -391,6 +577,13 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 				}
 				x += wd
 				termRow, termCol = y, x
+				if nc.reanchor {
+					// Its advance is not ours to predict: forget where the
+					// terminal cursor is, so the next changed cell is placed
+					// with an explicit CUP.
+					termRow, termCol = -1, -1
+					break
+				}
 			}
 		}
 	}
@@ -415,18 +608,34 @@ func (b *backBuffer) presentRows(sb *strings.Builder) {
 		}
 		writeCUP(sb, y+1, 1)
 		b.emitRow(sb, y)
+		if b.logicalCUP {
+			// Truncate the logical-grid row's remainder: the old row may have
+			// held MORE logical cells than we just wrote (each wide glyph in
+			// the new content is one cell there), and any leftover would
+			// resurface as stale fragments past the new content.
+			sb.WriteString("\x1b[0K")
+			if y == b.h-1 && b.w >= 1 {
+				// The EL cleared the never-written corner cell: force the
+				// corner-fill pass to repaint it.
+				b.disp[y][b.w-1] = bbCell{width: -1}
+			}
+		}
 	}
 }
 
-// emitRow writes one full row's cells into sb (left to right) and syncs disp.
-// With flipBidi, each RTL run's cells are emitted in reverse (logical) order
-// with mirrored glyphs restored — the host terminal's own bidi reorders the
-// run back to the visual layout the grid holds.
-func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
-	// Collect the row's visual cells (base cells only; a stray continuation
-	// with no base paints as a blank).
-	type vc struct{ cell bbCell }
-	cells := make([]vc, 0, b.w)
+// rowCell is one visual base cell of a row, with its 0-based start column
+// and cell width — the shared currency of the flip emission (emitRow) and
+// the flip cursor mapping (flipColFor), which must agree cell for cell.
+type rowCell struct {
+	cell  bbCell
+	col   int
+	width int
+}
+
+// rowVisualCells collects row y's base cells left to right (a stray
+// continuation with no base reads as a blank), stopping at the corner cut.
+func (b *backBuffer) rowVisualCells(y int) []rowCell {
+	cells := make([]rowCell, 0, b.w)
 	for x := 0; x < b.w; {
 		if b.isCornerCut(y, x) {
 			break
@@ -435,28 +644,126 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		if nc.cont {
 			nc = bbCell{width: 1}
 		}
-		cells = append(cells, vc{cell: nc})
-		b.disp[y][x] = b.cur[y][x]
 		wd := int(nc.width)
 		if wd < 1 {
 			wd = 1
 		}
-		if wd == 2 && x+1 < b.w {
-			b.disp[y][x+1] = b.cur[y][x+1]
-		}
+		cells = append(cells, rowCell{cell: nc, col: x, width: wd})
 		x += wd
+	}
+	return cells
+}
+
+// flipEmitPlan computes the flip transform over a row's visual cells: the
+// order the cells are emitted in (RTL runs — maximal segments bounded by
+// strong-RTL cells with no interior strong-LTR content — reversed into
+// logical order) and, per emission slot, whether the glyph mirrors back.
+// The host terminal's own bidi reorders each emitted run to the visual
+// layout the grid holds; the cursor mapping (flipColFor) reads the same
+// plan, so where a glyph is EMITTED and where the cursor ADDRESSES it can
+// never disagree.
+func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
+	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
+	isStrongLTR := func(c bbCell) bool {
+		if len(c.runes) == 0 {
+			return false
+		}
+		r := c.runes[0]
+		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
+	}
+	order = make([]int, 0, len(cells))
+	mirror = make([]bool, 0, len(cells))
+	for i := 0; i < len(cells); {
+		if !isRTL(cells[i].cell) {
+			order = append(order, i)
+			mirror = append(mirror, false)
+			i++
+			continue
+		}
+		// Extend the run: through further RTL cells, absorbing interior
+		// neutral cells only when another RTL cell follows before any strong
+		// LTR content.
+		end := i
+		for j := i + 1; j < len(cells); j++ {
+			if isRTL(cells[j].cell) {
+				end = j
+				continue
+			}
+			if isStrongLTR(cells[j].cell) {
+				break
+			}
+		}
+		for j := end; j >= i; j-- {
+			order = append(order, j)
+			mirror = append(mirror, true)
+		}
+		i = end + 1
+	}
+	return order, mirror
+}
+
+// flipColFor translates a 0-based visual column into the 0-based STREAM
+// column at which the covering cell is emitted under the flip transform.
+// The hardware cursor must address the stream column: a flip-mode terminal
+// stores the line in stream order (its own bidi maps stored cells to visual
+// positions at display time — the CPR probe confirms stream-order
+// advancement), so the displayed cursor lands wherever the terminal drew
+// the stored cell at that column. Identity when flip is off, for columns
+// past the row's content, and on LTR content (where stream order IS visual
+// order).
+func (b *backBuffer) flipColFor(y, x int) int {
+	if !b.flipBidi || y < 0 || y >= b.h {
+		return x
+	}
+	cells := b.rowVisualCells(y)
+	order, _ := flipEmitPlan(cells)
+	stream := make([]int, len(cells))
+	col := 0
+	for _, idx := range order {
+		stream[idx] = col
+		col += cells[idx].width
+	}
+	for i, rc := range cells {
+		if x >= rc.col && x < rc.col+rc.width {
+			return stream[i]
+		}
+	}
+	return x
+}
+
+// emitRow writes one full row's cells into sb (left to right) and syncs disp.
+// With flipBidi, each RTL run's cells are emitted in reverse (logical) order
+// with mirrored glyphs restored — the host terminal's own bidi reorders the
+// run back to the visual layout the grid holds.
+func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
+	cells := b.rowVisualCells(y)
+
+	// Sync disp for the visited cells (base + a wide glyph's continuation),
+	// exactly the span the emission below covers.
+	for _, rc := range cells {
+		b.disp[y][rc.col] = b.cur[y][rc.col]
+		if rc.width == 2 && rc.col+1 < b.w {
+			b.disp[y][rc.col+1] = b.cur[y][rc.col+1]
+		}
 	}
 
 	emit := func(c bbCell, mirror bool) {
-		// Emit the style before every cell — matching the direct renderer,
-		// which writes the active color ahead of each glyph — so a full repaint
-		// is byte-identical and callers that assert "<color><glyph>" mid-run
-		// keep working.
-		style := c.style
-		if style == "" {
-			style = defaultStyleSeq
+		// Style emission depends on the mode. flipBidi exists for Terminal.app,
+		// whose own bidi engine re-processes each parsed line: coalesced
+		// run-level SGR does not survive that reordering (colors vanish), while
+		// per-glyph attributes do — and since it shapes from parsed characters,
+		// per-glyph SGR cannot break its Arabic joining. Everywhere else
+		// (logicalCUP whole-row escalation) coalesce via the pen as usual.
+		if b.flipBidi {
+			style := c.style
+			if style == "" {
+				style = defaultStyleSeq
+			}
+			sb.WriteString(style)
+			b.emitPen = style
+		} else {
+			b.putStyle(sb, c.style)
 		}
-		sb.WriteString(style)
 		if len(c.runes) == 0 {
 			sb.WriteByte(' ')
 			return
@@ -478,40 +785,12 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		return
 	}
 
-	// Flip mode: find maximal RTL runs — segments bounded by strong-RTL cells
-	// whose interior holds no strong-LTR content — and emit each run's cells in
-	// reverse order with mirrored glyphs restored (Mirror is an involution).
-	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
-	isStrongLTR := func(c bbCell) bool {
-		if len(c.runes) == 0 {
-			return false
-		}
-		r := c.runes[0]
-		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
-	}
-	for i := 0; i < len(cells); {
-		if !isRTL(cells[i].cell) {
-			emit(cells[i].cell, false)
-			i++
-			continue
-		}
-		// Extend the run: through further RTL cells, absorbing interior
-		// neutral cells only when another RTL cell follows before any strong
-		// LTR content.
-		end := i
-		for j := i + 1; j < len(cells); j++ {
-			if isRTL(cells[j].cell) {
-				end = j
-				continue
-			}
-			if isStrongLTR(cells[j].cell) {
-				break
-			}
-		}
-		for j := end; j >= i; j-- {
-			emit(cells[j].cell, true)
-		}
-		i = end + 1
+	// Flip mode: emit per the shared plan (RTL runs reversed into logical
+	// order with mirrored glyphs restored — Mirror is an involution). The
+	// cursor mapping (flipColFor) reads the SAME plan.
+	order, mirror := flipEmitPlan(cells)
+	for k, idx := range order {
+		emit(cells[idx].cell, mirror[k])
 	}
 }
 
@@ -519,6 +798,26 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 // terminals scrolling when the last column of the last row is filled.
 func (b *backBuffer) isCornerCut(y, x int) bool {
 	return y == b.h-1 && x == b.w-1
+}
+
+// logicalColFor maps a 0-based visual grid column to the 0-based column to
+// address in CUP: identity normally; under logicalCUP, the count of
+// non-continuation cells to its left on the row (each wide glyph is ONE cell
+// in a flex-width terminal's logical grid). It reads cur, which is valid for
+// every present-path CUP: spans emit left-to-right within a row, so cells left
+// of the target are already reconciled (or were unchanged).
+func (b *backBuffer) logicalColFor(y, x int) int {
+	if !b.logicalCUP || y < 0 || y >= b.h {
+		return x
+	}
+	col := 0
+	row := b.cur[y]
+	for i := 0; i < x && i < b.w; i++ {
+		if !row[i].cont {
+			col++
+		}
+	}
+	return col
 }
 
 func writeCUP(sb *strings.Builder, row, col int) {

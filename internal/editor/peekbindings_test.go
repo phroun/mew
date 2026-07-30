@@ -33,13 +33,14 @@ func TestKeyForCommand(t *testing.T) {
 func TestPeekBindingValuesTrackKeymap(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "hi\n")
 
-	e.KeyProcessor.UnmapKey("^@ U") // clear the default mew binding
+	e.KeyProcessor.UnmapKey("^@ U") // clear the default mew bindings
+	e.KeyProcessor.UnmapKey("^B U")
 	e.KeyProcessor.MapKey("^K U", "stat_peek_up")
 	if got := e.peekBindingValues()["SPU"]; got != "^K U" {
 		t.Errorf("SPU should track the rebind, got %q", got)
 	}
 	// The label expands through the shared engine.
-	if got := plugins.ExpandModebar("[%SPU%]", e.peekBindingValues()); got != "[^K U]" {
+	if got := plugins.ExpandTFC("[%SPU%]", e.peekBindingValues(), nil); got != "[^K U]" {
 		t.Errorf("peek label = %q, want %q", got, "[^K U]")
 	}
 }
@@ -48,9 +49,9 @@ func TestPeekBindingValuesTrackKeymap(t *testing.T) {
 // engine), resolving through the live keymap on render.
 func TestModebarTemplateResolvesPeekCode(t *testing.T) {
 	e, _, out := newRenderedEditor(t, "hi\n")
-	e.createPluginWindows()
+	e.createPluginViewports()
 	// The middle default template is driven from the base config (reconciled
-	// onto the modebar per the focused window's overlay).
+	// onto the modebar per the focused viewport's overlay).
 	e.Config.ModebarDefault = "peek=%PPU%"
 	e.invalidateFocusedOptions()
 	e.performRender() // settle focused options (loads the default mapping set)

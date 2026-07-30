@@ -1,0 +1,235 @@
+package mewhost
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/objects/app"
+	"github.com/phroun/kittytk/objects/trinkets"
+)
+
+// The host builds its whole UI from protocol-style text, and those scripts'
+// reply names and type assertions only resolve at execution time. These tests
+// execute each script directly (no live desktop) so a typo in a script or a
+// wrong concrete type is caught here, not on first launch. They run in both
+// editor builds (plain `go test`, and `go test -tags mew`).
+
+func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	w := newEditorWindow(desktop, application, []string{"--syntax=go", "notes.txt"}, true)
+	if w == nil {
+		t.Fatal("newEditorWindow returned nil")
+	}
+	if got := w.Title(); !strings.Contains(got, "notes.txt") {
+		t.Errorf("window title = %q, want it to mention the file", got)
+	}
+	if w.Content() == nil {
+		t.Fatal("root window has no content trinket (the editor)")
+	}
+}
+
+// The host puts its root mew editor into solo mode: mew owns the whole display
+// rather than floating as a window on a desktop. EnterSoloMode records solo even
+// with no surface to reshape, so this holds headless.
+func TestRootWindowEntersSoloMode(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	root := startRootWindow(desktop, application, []string{"notes.txt"})
+	if root == nil {
+		t.Fatal("startRootWindow returned nil")
+	}
+	if !desktop.IsSolo() {
+		t.Error("desktop should be in solo mode after startRootWindow")
+	}
+	if application.MainWindow() != root {
+		t.Error("root window should be the app's main window")
+	}
+}
+
+func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	w := newEditorWindow(desktop, application, nil, false)
+	if w == nil || w.Content() == nil {
+		t.Fatal("scratch editor window did not build")
+	}
+}
+
+// firstOperand titles the window from the first file-looking argument, skipping
+// switches and +N. It is best-effort (cosmetic), but must at least skip leading
+// switches and the +N form.
+func TestFirstOperandSkipsSwitchesAndGoto(t *testing.T) {
+	cases := []struct {
+		argv []string
+		want string
+	}{
+		{[]string{"--wordWrap", "+42", "main.go"}, "main.go"},
+		{[]string{"a.txt", "b.txt"}, "a.txt"},
+		{[]string{"--wordWrap"}, ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := firstOperand(c.argv); got != c.want {
+			t.Errorf("firstOperand(%v) = %q, want %q", c.argv, got, c.want)
+		}
+	}
+}
+
+func TestStatusScriptExecutes(t *testing.T) {
+	sections := buildStatus(
+		`sb=new statusbar children={new section children={new span text="hello"}}`)
+	if len(sections) == 0 {
+		t.Fatal("buildStatus returned no sections")
+	}
+}
+
+func TestMenusBuildAndRegisterActions(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	menus := buildMenus(desktop, application, true)
+	if len(menus) == 0 {
+		t.Fatal("buildMenus returned no menus")
+	}
+	// The Raw Key Input action (and the others) must resolve to registered
+	// handlers, or the menu items would dispatch into nothing.
+	for _, action := range []string{"mew.edit.rawkey", "mew.window.new", "mew.help.about"} {
+		if !application.Commands().Has(action) {
+			t.Errorf("action %q was not registered", action)
+		}
+	}
+}
+
+// The Help menu carries "Using mew" and a checkable "Quick Help", then
+// "Terminal Diagnostics", then "About" last — in that order — and every
+// action registers.
+func TestHelpMenuItems(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	menus := buildMenus(desktop, application, true)
+	for _, action := range []string{"mew.help.usingmew", "mew.help.quickhelp", "mew.help.about"} {
+		if !application.Commands().Has(action) {
+			t.Errorf("action %q was not registered", action)
+		}
+	}
+
+	var help *trinkets.Menu
+	for _, m := range menus {
+		if m.WellKnownID() == "help" {
+			help = m
+		}
+	}
+	if help == nil {
+		t.Fatal("no Help menu found")
+	}
+	items := help.Items()
+	if len(items) < 6 {
+		t.Fatalf("Help menu has %d items, want at least 6", len(items))
+	}
+	if items[0].ID() != "mew.help.usingmew" {
+		t.Errorf("item 0 = %q, want mew.help.usingmew", items[0].ID())
+	}
+	if items[1].ID() != "mew.help.quickhelp" || !items[1].Checkable {
+		t.Errorf("item 1 should be the checkable Quick Help; got id=%q checkable=%v", items[1].ID(), items[1].Checkable)
+	}
+	if !items[2].Separator {
+		t.Error("item 2 should be a separator")
+	}
+	if items[3].ID() != "mew.help.ptydiag" {
+		t.Errorf("item 3 = %q, want mew.help.ptydiag", items[3].ID())
+	}
+	if !items[4].Separator {
+		t.Error("item 4 should be a separator before About")
+	}
+	// About stays last, where it is looked for.
+	if items[5].ID() != "mew.help.about" {
+		t.Errorf("item 5 = %q, want mew.help.about", items[5].ID())
+	}
+}
+
+// The single-window (TUI) host drops New Window entirely: no mew.window.new
+// handler, and one fewer menu than the multi-window build (no Window menu).
+func TestMenusSingleWindowOmitsNewWindow(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+
+	menus := buildMenus(desktop, application, false)
+	if len(menus) == 0 {
+		t.Fatal("buildMenus returned no menus")
+	}
+	if application.Commands().Has("mew.window.new") {
+		t.Error("mew.window.new should not be registered in the single-window build")
+	}
+	if application.Commands().Has("mew.edit.rawkey") == false {
+		t.Error("mew.edit.rawkey should still be registered")
+	}
+}
+
+// clearHostShortcuts frees the host accelerators (so the keys reach the mew
+// editor) while leaving the actions dispatchable from the menu.
+func TestClearHostShortcuts(t *testing.T) {
+	// Seed the shipped defaults so the test is meaningful regardless of order.
+	core.DefaultKeyBindings.SetDefaults()
+	ClearHostShortcuts()
+
+	for _, action := range []string{
+		core.ActionQuit, core.ActionAppHide, core.ActionAppHideOthers,
+		core.ActionExitDesktop, core.ActionCut, core.ActionCopy,
+		core.ActionPaste, core.ActionSelectAll,
+	} {
+		if keys := core.DefaultKeyBindings.Keys(action); len(keys) != 0 {
+			t.Errorf("action %q still bound to %v after clearHostShortcuts", action, keys)
+		}
+	}
+}
+
+// SplitArgs separates meta flags from the launch argv.
+func TestSplitArgs(t *testing.T) {
+	launch, wantV, wantH, wantW, wantD := SplitArgs([]string{"--syntax=go", "-v", "a.txt", "-h", "--window", "--detach", "+3"})
+	if !wantV || !wantH || !wantW || !wantD {
+		t.Errorf("version=%v help=%v window=%v detach=%v, want all true", wantV, wantH, wantW, wantD)
+	}
+	want := []string{"--syntax=go", "a.txt", "+3"}
+	if strings.Join(launch, " ") != strings.Join(want, " ") {
+		t.Errorf("launch = %v, want %v", launch, want)
+	}
+}
+
+// Raw Key Input advertises a key like every other item: it is in menuActions,
+// so syncPlaceholderShortcuts resolves it live at menu-open time. Its handler
+// is still the hand-written one — it arms the desktop AND mew — and it runs
+// the command the table names, so the item cannot advertise one key and run
+// something else.
+func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
+	spec, ok := menuActions[rawKeyAction]
+	if !ok {
+		t.Fatalf("%s is not in menuActions, so its menu item shows no key", rawKeyAction)
+	}
+	if spec.cmd != "raw_key_input" {
+		t.Errorf("cmd = %q, want raw_key_input", spec.cmd)
+	}
+	if spec.key != `M-\` {
+		t.Errorf("preferred key = %q, want the shipped M-\\", spec.key)
+	}
+
+	// And the item exists to carry it.
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+	found := false
+	for _, m := range buildMenus(desktop, application, true) {
+		for _, it := range m.Items() {
+			if it.ID() == rawKeyAction {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("no menu item carries the Raw Key Input action")
+	}
+}

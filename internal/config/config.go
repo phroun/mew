@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,6 +12,22 @@ import (
 	"strings"
 	"sync"
 )
+
+// embeddedResources is the shipped mew: resource tree (rooted so a name like
+// "defaults/keys_cursor_movement.conf" resolves), supplied by the caller via
+// SetEmbeddedResources. The config package does NOT embed its own copy: the
+// editor already embeds the whole resources/ tree (grammars, help, and the
+// modular default key-mapping sets), and injecting that single embed here keeps
+// the built-in mappings baseline resolvable — the generated editor.conf
+// @includes "defaults/…" — without a second, drift-prone copy. Nil in bare
+// library use, where the baseline mappings are simply empty until a config is
+// loaded through a FileIO.
+var embeddedResources fs.FS
+
+// SetEmbeddedResources injects the shipped resource tree the built-in config
+// @includes resolve against (see embeddedResources). The editor calls this from
+// package init, before any DefaultConfig()/builtinMappings() use.
+func SetEmbeddedResources(fsys fs.FS) { embeddedResources = fsys }
 
 // Config holds the editor configuration.
 type Config struct {
@@ -21,14 +38,14 @@ type Config struct {
 	Colors     ColorScheme
 
 	// SyntaxMaps maps jsf color-class names to mew color names, so grammar
-	// files plug into the systematic palette: [colors.syntax] is the global
-	// map (key ""), [colors.syntax.<grammar>] overrides per grammar. Class
-	// names are stored lowercased.
+	// files plug into the systematic palette: [syntax] is the global map
+	// (key ""), [syntax.<grammar>] overrides per grammar. Class names are
+	// stored lowercased.
 	SyntaxMaps map[string]map[string]string
 
 	// OptionOverlays overlays the base [options] along three dimensions: window
 	// class, syntax grammar, and buffer type. Sections are
-	// [<class>.]options[.<grammar>][.<type>]; each is stored under a signature
+	// [<class>::]options[/<type>][.<grammar>]; each is stored under a signature
 	// (see optionOverlayKey) and resolved most-specific-first by
 	// ResolveOptionOverlay with precedence class > grammar > type. syntax and
 	// syntaxDetect are excluded. "default" resolves to the shipped default,
@@ -36,19 +53,31 @@ type Config struct {
 	// stored lowercased.
 	OptionOverlays map[string]map[string]string
 
-	// MappingSets holds the key-mapping sets refined by window class and buffer
-	// type: [<class>.]mappings.<set>[.<type>] stored under a signature (see
-	// mappingSetKey). ResolveMappingSet merges the class/type cascade for one
-	// set name into an effective keymap. The active set name for a window comes
-	// from the "mappings" option (itself overlay-resolvable).
+	// MappingSets holds the key-mapping sets refined by window class, buffer
+	// type, and grammar: [<class>::]mappings[:<set>][/<type>][.<grammar>] stored
+	// under a signature (see mappingSetKey). ResolveMappingSet merges the
+	// class/grammar/type cascade for one set name into an effective keymap. The
+	// active set name for a window comes from the "mappings" option (itself
+	// overlay-resolvable). Naming no set ([pty::mappings]) refines EVERY set —
+	// see anyMappingSet — so class keymaps need not be repeated per set.
 	MappingSets map[string]map[string]string
+
+	// MappingOrigins records provenance for the base Mappings, keyed by key
+	// sequence: source file, line, load-order precedence, and @author. Kept
+	// parallel to Mappings so that map stays a plain map[string]string. A key
+	// absent here is a built-in (resolve as AuthorSystem, precedence 0).
+	MappingOrigins map[string]MappingOrigin
+
+	// MappingSetOrigins is MappingOrigins for each refined MappingSets entry,
+	// keyed by the same signature as MappingSets.
+	MappingSetOrigins map[string]map[string]MappingOrigin
 
 	// Formats maps short format names / file extensions to the grammar that
 	// covers them (the [formats] section), e.g. js = javascript. Built-in
 	// defaults are merged first; a blank value removes an entry.
 	Formats map[string]string
 
-	// FormatPaths refines Formats by location: [formats.<ext>] sections map
+	// FormatPaths refines Formats by location: [formats.<ext>] grammar sections map
 	// path patterns (see PathMatches) to grammars, consulted before the
 	// plain extension mapping — so a .txt inside a wiki tree can highlight
 	// as dokuwiki while other .txt files stay plain. Built-in defaults are
@@ -66,6 +95,27 @@ type Config struct {
 	// Outline holds per-grammar definition patterns ([outline.<grammar>])
 	// for the modebar context breadcrumb; see DefaultOutline.
 	Outline map[string]map[string]string
+
+	// Fonts maps a font family name to a font file path (the [fonts] section):
+	// explicit-path font registration (Decision B(i)), loaded into the host's
+	// font engine at startup so [window] ui_term and the set_font command can
+	// reference the family by name. A relative path resolves against the config
+	// layer's own directory (a project can ship fonts in its .mew folder). Only
+	// meaningful on a graphical host; a plain terminal owns its own fonts.
+	Fonts map[string]string
+
+	// FontAdjust holds per-FACE metric corrections from the [fonts] section:
+	// a value may carry a PSL group after (or instead of) its path, keyed by
+	// the family on the left of the equals sign — "Noto Kufi Arabic =
+	// fonts/kufi.ttf (baseline: -6)", or "(baseline: +1)" alone for a face
+	// that needs no path (the embedded ones). Keyed by CANONICAL family name,
+	// so a correction applies however the face is reached: through any alias
+	// in the ui tree, through per-glyph script fallback, or named directly.
+	FontAdjust map[string]FaceAdjust
+
+	// Window holds the [window] section: window-scoped display settings (the
+	// font search path and the ui-term font alias).
+	Window WindowConfig
 
 	// ProjectDirs lists the .mew project directories whose editor.conf
 	// layers were applied (outermost first) — git-style parents of the
@@ -239,6 +289,10 @@ type Indicators struct {
 	VisibleNewline  string
 	VisibleReturn   string
 	GutterEmpty     string
+	// Vertical scrollbar cells (the reserved outer column of a viewport
+	// with the scrollbar option on): the track fill and the thumb.
+	ScrollbarTrack  string
+	ScrollbarThumb  string
 	CursorGhost     string
 	CursorOffScreen string
 	TruncationLeft  string
@@ -247,6 +301,15 @@ type Indicators struct {
 	StatPeekDown    string
 	PromptPeekUp    string
 	PromptPeekDown  string
+	// Link-as-button chrome (browse mode): a button renders as
+	// ButtonLeft + title + ButtonRight + ButtonShadow, with the Focused*
+	// variants when the caret is inside the button.
+	ButtonLeft          string
+	ButtonRight         string
+	ButtonShadow        string
+	FocusedButtonLeft   string
+	FocusedButtonRight  string
+	FocusedButtonShadow string
 }
 
 // DefaultIndicators returns the built-in indicator glyphs.
@@ -263,6 +326,8 @@ func DefaultIndicators() Indicators {
 		VisibleNewline:  "⮐",
 		VisibleReturn:   "M",
 		GutterEmpty:     "~",
+		ScrollbarTrack:  "░",
+		ScrollbarThumb:  "█",
 		CursorGhost:     "|",
 		CursorOffScreen: "@",
 		TruncationLeft:  "<",
@@ -271,17 +336,65 @@ func DefaultIndicators() Indicators {
 		StatPeekDown:    "[%SPD%]",
 		PromptPeekUp:    "[%PPU%]",
 		PromptPeekDown:  "[%PPD%]",
+
+		ButtonLeft:          " ",
+		ButtonRight:         " ",
+		ButtonShadow:        "▐",
+		FocusedButtonLeft:   "<",
+		FocusedButtonRight:  ">",
+		FocusedButtonShadow: "█",
 	}
 }
 
 // GeneralConfig holds general editor settings.
 type GeneralConfig struct {
-	ShowLineNumbers  bool
-	ShowColumnRuler  bool
+	ShowLineNumbers bool
+	ShowColumnRuler bool
+	// Scrollbar reserves each doc/tool viewport's outer column (right in LTR,
+	// left in RTL) for a clickable vertical scrollbar. Default true.
+	Scrollbar        bool
 	RulerShowsCursor bool
 	TabSize          int
 	ShowInvisibles   bool
 	ShowBidi         bool
+	// RtlCombining shows combining marks on RTL letters (niqqud/harakat).
+	// Default true; off renders RTL scripts unpointed (see the option).
+	// RtlCombiningSet records whether the config set it EXPLICITLY, so an
+	// unset value can take an environment-aware default (off in a
+	// bidi-applying real terminal — macOS Terminal.app) while an explicit
+	// setting is always honored.
+	RtlCombining    bool
+	RtlCombiningSet bool
+	ShowMarks       string // "no" | "yes" | "all"
+	// OverwriteMode is the inverse of the user-facing insertMode option: false
+	// (the zero value, and the default) means insert mode; true means typing
+	// overwrites the character under the caret (except at end of line, where it
+	// appends). Stored inverted so the zero value is the intended default.
+	OverwriteMode bool
+	// ReadOnly rejects content-mutating edits made through a window (typing,
+	// deleting, replacing, pasting). Navigation, search, marks, and undo/redo
+	// still work. Per window; false by default.
+	ReadOnly bool
+
+	// InsertCursor, OverwriteCursor and NavigationCursor are the DECSCUSR
+	// cursor shapes (0 terminal default, 1/2 blinking/steady block, 3/4
+	// underline, 5/6 bar) mew selects for each editing mode whenever it is
+	// showing a cursor at all. Editor-wide.
+	InsertCursor     int
+	OverwriteCursor  int
+	NavigationCursor int
+
+	// AutoIndent makes the insert_newline command (the default Enter binding)
+	// start each new line with the leading whitespace of the line it split,
+	// replicating the tabs and spaces exactly as they appear rather than
+	// recomputing them. Per window; off by default.
+	AutoIndent bool
+
+	// LinkBrowsing enables the hyperlink layer for grammar-recognized links
+	// (link coloring, browse-mode buttons, arming on caret entry). Off, links
+	// render exactly as their grammar colors them, with no interaction. Per
+	// window; on by default.
+	LinkBrowsing bool
 
 	// Syntax names the syntax-highlighting grammar (a jsf file, looked up on
 	// the syntax search path). Empty disables highlighting.
@@ -292,6 +405,20 @@ type GeneralConfig struct {
 	// basename), both resolved through the [formats] table. Buffers that
 	// detect nothing fall back to the syntax option.
 	SyntaxDetect bool
+
+	// StartPath, when set, is where a session STARTS when its working
+	// directory cannot be derived any other way: GUI launches typically begin
+	// at the filesystem root, and the editor then falls back to the last main
+	// buffer's file location, this path, then the user's home (see the
+	// editor's start-directory resolution).
+	StartPath string
+
+	// SyntaxOverrides is a space-separated list of grammar flavors (e.g.
+	// "go conf") whose highlighter should ignore the document's own project
+	// .mew/syntax folder and resolve from the user's copy (mew:/syntax), the
+	// built-in set, or JOE instead. A per-window option: it descends through
+	// the option overlay and can be overridden for one window or buffer.
+	SyntaxOverrides string
 
 	// The matchIgnores* flags configure go_match's FALLBACK context scanner
 	// for buffers with no syntax grammar: enabled constructs read as
@@ -349,6 +476,14 @@ type GeneralConfig struct {
 	SearchIgnoreCase bool
 	SearchWrap       bool
 	SearchRegex      bool
+
+	// SearchBackwards and SearchAllBuffers are the persistent form of the
+	// find command's "b" and "a" option letters: a default direction, and
+	// whether a search runs on past the end of this buffer into the other
+	// main buffers. Both remain overridable per search - an explicit letter
+	// still turns the flag on for that one call.
+	SearchBackwards  bool
+	SearchAllBuffers bool
 
 	// ModebarLocation places the modebar on the "top" (default) or
 	// "bottom" screen line.
@@ -434,14 +569,65 @@ type StorageConfig struct {
 	// falls back to the launch directory (standalone) or the host's default
 	// (module mode).
 	Documents string
+
+	// Resources is the read-only system directory the mew: filesystem falls
+	// back to for shipped support files (grammars, the help manual, …) that
+	// the user has no ~/.mew copy of. Empty means the OS convention
+	// (/usr/share/mew, /usr/local/share/mew, %ProgramFiles%\mew\Resources, or
+	// a mac .app bundle's Contents/Resources). Below it, mew's embedded
+	// built-in tree is always the last resort.
+	Resources string
 }
 
-// FileIO is the file access the Manager uses for config, profile, and #include
-// files. A path beginning "mew:/" addresses mew's own config tree (editor.conf,
+// FaceAdjust is a per-face metric correction. Baseline moves the face's
+// baseline within the cell, in CELL UNITS (the 16-unit cell denomination, so
+// one unit is 1/16 of the row) — never device pixels, so a correction survives
+// the live font zoom. Positive moves the face DOWN, matching the direction the
+// automatic alignment shift uses.
+//
+// It is a DELTA on top of the automatic baseline alignment, not a replacement:
+// the automatic pass already puts every face on the primary face's baseline,
+// and this nudges a face whose own metrics lie about where that should be.
+type FaceAdjust struct {
+	Baseline int
+	// Scale is an optical size multiplier: 1.1 renders the face at 110% of
+	// the size its own metrics give it. On the terminal grid the glyph fills
+	// more or less of its fixed cell; on the proportional path the whole face
+	// renders larger or smaller. For balancing a face that reads small or
+	// large beside the base ui-term / ui-text faces.
+	Scale    float64
+	HasScale bool
+	// HasBaseline distinguishes "baseline: 0" from "not specified", so a
+	// future second key does not resurrect a cleared correction.
+	HasBaseline bool
+}
+
+// WindowConfig holds the [window] section: window-scoped display settings.
+type WindowConfig struct {
+	// FontsPath lists extra directories the host's font engine scans to resolve
+	// font families BY NAME (Decision B(ii)), beyond the OS font directories.
+	// Entries accumulate across config layers; a relative path resolves against
+	// its layer's own directory. Only meaningful on a graphical host.
+	FontsPath []string
+
+	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
+	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
+	// at an ordered fallback list. This is the whole systematic font tree,
+	// overridable at exactly the level wanted — a root (ui_term), a style
+	// (ui_text_serif), a script (ui_term_hebrew), or a single leaf
+	// (ui_term_hebrew_sans). Keyed by the hyphenated alias name. default /
+	// inherit / blank clears an entry. Only meaningful on a graphical host.
+	FontAliases map[string][]string
+}
+
+// FileIO is the file access the Manager uses for config, profile, and @include
+// files. A path beginning "mew:" addresses mew's own config tree (editor.conf,
 // profile.mew, angle-bracket includes); every other path is an ordinary
-// project/document file. A host injects a scheme-aware implementation
-// (SetFileIO); the default maps mew:/ to <UserHomeDir>/.mew and everything else
-// straight to the OS. Write creates parent directories.
+// project/document file. Paths handed to a FileIO always use the canonical
+// "mew:///rel" spelling (empty authority — the authority slot is reserved for
+// future instance selection). A host injects a scheme-aware implementation
+// (SetFileIO); the default maps mew:/// to <UserHomeDir>/.mew and everything
+// else straight to the OS. Write creates parent directories.
 type FileIO struct {
 	Read  func(path string) ([]byte, error)
 	Write func(path string, data []byte) error
@@ -450,25 +636,25 @@ type FileIO struct {
 
 // Manager handles configuration file operations.
 type Manager struct {
-	configDir  string // "mew:" — the mew config tree root
-	configPath string // "mew:/editor.conf"
+	configDir  string // "mew:///" — the mew config tree root
+	configPath string // "mew:///editor.conf"
 	fio        FileIO
 	// localMewDir, when set, is the real ~/.mew directory: excluded from
 	// project discovery so the user config layer is not also treated as a
 	// project layer when home is an ancestor of the working directory.
 	localMewDir string
 
-	// includeRead, when set (legacy SetIncludeReader), overrides #include reads
+	// includeRead, when set (legacy SetIncludeReader), overrides @include reads
 	// specifically; nil routes them through fio like everything else.
 	includeRead func(path string) ([]byte, error)
 }
 
 // NewManager creates a new config manager whose config tree is addressed with
-// the "mew:/" scheme (default: <UserHomeDir>/.mew on the real OS).
+// the "mew:///" scheme (default: <UserHomeDir>/.mew on the real OS).
 func NewManager() *Manager {
 	return &Manager{
-		configDir:  "mew:",
-		configPath: "mew:/editor.conf",
+		configDir:  "mew:///",
+		configPath: "mew:///editor.conf",
 		fio:        osFileIO(),
 	}
 }
@@ -489,14 +675,14 @@ func (m *Manager) io() FileIO {
 // discovery (local mode only).
 func (m *Manager) SetLocalMewDir(dir string) { m.localMewDir = dir }
 
-// SetIncludeReader (legacy) routes only #include reads through a host reader.
+// SetIncludeReader (legacy) routes only @include reads through a host reader.
 // Prefer SetFileIO. Retained for compatibility.
 func (m *Manager) SetIncludeReader(read func(path string) ([]byte, error)) {
 	m.includeRead = read
 }
 
-// osFileIO is the default file access: mew:/ maps to <UserHomeDir>/.mew, other
-// paths go straight to the OS.
+// osFileIO is the default file access: mew:/// maps to <UserHomeDir>/.mew,
+// other paths go straight to the OS.
 func osFileIO() FileIO {
 	return FileIO{
 		Read: func(p string) ([]byte, error) { return os.ReadFile(mewToLocal(p)) },
@@ -514,13 +700,13 @@ func osFileIO() FileIO {
 	}
 }
 
-// mewToLocal maps a "mew:/rel" path to <UserHomeDir>/.mew/rel; other paths pass
-// through unchanged.
+// mewToLocal maps a "mew:///rel" path to <UserHomeDir>/.mew/rel; other paths
+// pass through unchanged.
 func mewToLocal(p string) string {
 	if !strings.HasPrefix(p, "mew:") {
 		return p
 	}
-	rel := strings.TrimPrefix(strings.TrimPrefix(p, "mew:"), "/")
+	rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
@@ -535,37 +721,46 @@ func (m *Manager) readInclude(path string) ([]byte, error) {
 	return m.io().Read(path)
 }
 
-// includeRe matches the #include directive: an ordinary comment line to any
-// other reader, so configs using it stay loadable elsewhere. Quotes resolve
-// relative to the including file (through the same file system it came
-// from); angle brackets resolve in the standard mew config directory.
-var includeRe = regexp.MustCompile(`^\s*#include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
+// includeRe matches the "@include" directive — an at-rule (à la CSS/Sass),
+// visually distinct from "#" comments and carrying its own syntax-highlight
+// class. Quotes resolve relative to the including file (through the same file
+// system it came from); angle brackets resolve in the standard mew config
+// directory.
+var includeRe = regexp.MustCompile(`^\s*@include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
 
-// joinInclude resolves an #include reference against a base directory. When the
+// authorRe matches the "@author <name>" directive — an at-rule like @include.
+// It credits the bindings that FOLLOW it (within the same file) to <name>, and
+// can appear more than once to change author mid-file. It does not cross an
+// @include boundary: each included file starts with a blank author again and
+// must declare its own. A blank author defaults per load (Customized / System).
+var authorRe = regexp.MustCompile(`^\s*@author\s+(.+?)\s*$`)
+
+// joinInclude resolves an @include reference against a base directory. When the
 // base is a "mew:" path the result stays inside the mew tree: the reference is
 // joined as if rooted at the tree top, so any leading "../" is dropped and can
-// never rise above "mew:/" — the confinement a virtualizing host relies on.
+// never rise above "mew:///" — the confinement a virtualizing host relies on.
 // Other bases join with ordinary OS-path semantics.
 func joinInclude(base, ref string) string {
 	if strings.HasPrefix(base, "mew:") {
-		rel := strings.TrimPrefix(strings.TrimPrefix(base, "mew:"), "/")
+		rel := strings.TrimLeft(strings.TrimPrefix(base, "mew:"), "/")
 		clean := path.Clean("/" + rel + "/" + ref) // rooted: ".." cannot escape "/"
-		return "mew:" + clean
+		return "mew://" + clean
 	}
 	return filepath.Join(base, ref)
 }
 
-// includeDir is the directory of an include path, preserving the "mew:" scheme
-// so a nested quoted include resolves against its includer's mew: location.
+// includeDir is the directory of an include path, preserving the "mew:///"
+// scheme so a nested quoted include resolves against its includer's mew
+// location.
 func includeDir(p string) string {
 	if strings.HasPrefix(p, "mew:") {
-		rel := strings.TrimPrefix(strings.TrimPrefix(p, "mew:"), "/")
-		return "mew:" + path.Dir("/"+rel)
+		rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
+		return "mew://" + path.Dir("/"+rel)
 	}
 	return filepath.Dir(p)
 }
 
-// expandIncludes splices #include directives into the content, recursively.
+// expandIncludes splices @include directives into the content, recursively.
 // Each file is included at most once (repeats and cycles are dropped), and
 // nesting is bounded. A failed include becomes a comment noting the failure
 // so the rest of the configuration still parses.
@@ -597,12 +792,59 @@ func (m *Manager) expandIncludes(content, base string, depth int, visited map[st
 		visited[incPath] = true
 		data, err := m.readInclude(incPath)
 		if err != nil {
-			out = append(out, "# include failed: "+incPath)
+			out = append(out, "# @include failed: "+incPath)
 			continue
 		}
 		out = append(out, m.expandIncludes(string(data), nextBase, depth+1, visited))
 	}
 	return strings.Join(out, "\n")
+}
+
+// expandIncludesSourced is expandIncludes that preserves provenance: it returns
+// the flattened lines, each tagged with its source file, 1-based line number,
+// and the @author in effect. source labels the top-level content. @author sets
+// the current author for the lines that follow it in THIS file only; descending
+// into an @include starts the child with a blank author again, and returning
+// resumes this file's author. Directive lines (@author, @include) are consumed,
+// not emitted, but they still advance the line counter so emitted lines keep
+// their true source line.
+func (m *Manager) expandIncludesSourced(content, source, base string, depth int, visited map[string]bool) []SourcedLine {
+	if depth > 16 {
+		return nil
+	}
+	var out []SourcedLine
+	author := ""
+	for i, line := range strings.Split(content, "\n") {
+		raw := strings.TrimSuffix(line, "\r")
+		if sub := authorRe.FindStringSubmatch(raw); sub != nil {
+			author = strings.TrimSpace(sub[1])
+			continue
+		}
+		sub := includeRe.FindStringSubmatch(raw)
+		if sub == nil {
+			out = append(out, SourcedLine{Text: line, Source: source, Line: i + 1, Author: author})
+			continue
+		}
+		var incPath, nextBase string
+		if sub[1] != "" {
+			incPath = joinInclude(base, sub[1])
+			nextBase = includeDir(incPath)
+		} else {
+			incPath = joinInclude(m.configDir, sub[2])
+			nextBase = m.configDir
+		}
+		if visited[incPath] {
+			continue
+		}
+		visited[incPath] = true
+		data, err := m.readInclude(incPath)
+		if err != nil {
+			out = append(out, SourcedLine{Text: "# @include failed: " + incPath, Source: source, Line: i + 1, Author: author})
+			continue
+		}
+		out = append(out, m.expandIncludesSourced(string(data), incPath, nextBase, depth+1, visited)...)
+	}
+	return out
 }
 
 // DefaultConfig returns sensible default configuration, including the
@@ -617,10 +859,20 @@ func DefaultConfig() Config {
 		General: GeneralConfig{
 			ShowLineNumbers:         true,
 			ShowColumnRuler:         true,
+			Scrollbar:               true,
 			RulerShowsCursor:        false,
 			TabSize:                 4,
 			ShowInvisibles:          false,
 			ShowBidi:                false,
+			RtlCombining:            true,
+			ShowMarks:               "no",
+			OverwriteMode:           false, // insertMode=yes
+			ReadOnly:                false,
+			AutoIndent:              false,
+			InsertCursor:            5, // blinking bar
+			OverwriteCursor:         3, // blinking underline
+			NavigationCursor:        2, // steady block
+			LinkBrowsing:            true,
 			ProjectConfig:           true,
 			UseLocks:                true,
 			UseEmacsLocks:           true,
@@ -635,6 +887,8 @@ func DefaultConfig() Config {
 			SearchIgnoreCase:        false,
 			SearchWrap:              true,
 			SearchRegex:             false,
+			SearchBackwards:         false,
+			SearchAllBuffers:        false,
 			ModebarLocation:         "top",
 			ModebarInner:            "%FN%",
 			ModebarDefault:          "%FORTUNE%",
@@ -649,23 +903,17 @@ func DefaultConfig() Config {
 			Direction:               "ltr",
 			FlipBidiForHost:         "auto",
 		},
-		Mappings:   builtinMappings(),
-		Indicators: DefaultIndicators(),
-		Colors:     NewColorScheme(),
+		Mappings:    builtinMappings(),
+		MappingSets: builtinMappingSets(),
+		Indicators:  DefaultIndicators(),
+		Colors:      NewColorScheme(),
 	}
 }
 
 // builtinMappings returns a fresh copy of the default key mappings, parsed
 // once from the built-in config text.
 func builtinMappings() map[string]string {
-	builtinMappingsOnce.Do(func() {
-		m := &Manager{}
-		parsed := m.parseConfigFile(m.generateDefaultConfig())
-		builtinMappingsCache = parsed["mappings_mew"]
-		if builtinMappingsCache == nil {
-			builtinMappingsCache = map[string]string{}
-		}
-	})
+	parseBuiltinMappings()
 	out := make(map[string]string, len(builtinMappingsCache))
 	for k, v := range builtinMappingsCache {
 		out[k] = v
@@ -673,9 +921,53 @@ func builtinMappings() map[string]string {
 	return out
 }
 
+// builtinMappingSets returns a fresh copy of the default text's mapping-set
+// REFINEMENTS ([<class>::mappings:mew] and friends), keyed by their storage
+// signature, so class-scoped built-in bindings (the isearch prompt's ^R/^F)
+// exist even when no config file was loaded.
+func builtinMappingSets() map[string]map[string]string {
+	parseBuiltinMappings()
+	out := make(map[string]map[string]string, len(builtinMappingSetsCache))
+	for sig, km := range builtinMappingSetsCache {
+		c := make(map[string]string, len(km))
+		for k, v := range km {
+			c[k] = v
+		}
+		out[sig] = c
+	}
+	return out
+}
+
+func parseBuiltinMappings() {
+	builtinMappingsOnce.Do(func() {
+		m := &Manager{}
+		// The default config @includes the modular keymap files; expand them from
+		// the embedded copies so the baseline is complete without disk access.
+		parsed := m.parseConfigFile(expandEmbeddedIncludes(m.generateDefaultConfig()))
+		builtinMappingsCache = parsed["mappings:mew"]
+		if builtinMappingsCache == nil {
+			builtinMappingsCache = map[string]string{}
+		}
+		builtinMappingSetsCache = map[string]map[string]string{}
+		for sectionName, section := range parsed {
+			h := parseSectionHeader(sectionName)
+			set, ok := mappingSetOf(h)
+			if !ok || (h.set != "" && h.class == "" && h.grammar == "" && h.bufType == "") {
+				continue // not a mapping section, or a set's own unqualified base
+			}
+			km := make(map[string]string, len(section))
+			for k, v := range section {
+				km[strings.TrimSpace(k)] = v
+			}
+			builtinMappingSetsCache[mappingSetKey(set, h.class, h.grammar, h.bufType)] = km
+		}
+	})
+}
+
 var (
-	builtinMappingsOnce  sync.Once
-	builtinMappingsCache map[string]string
+	builtinMappingsOnce     sync.Once
+	builtinMappingsCache    map[string]string
+	builtinMappingSetsCache map[string]map[string]string
 )
 
 // Load loads configuration from file.
@@ -691,9 +983,14 @@ func (m *Manager) Load() (Config, error) {
 		content = []byte(m.generateDefaultConfig())
 	}
 
-	// The user layer: quoted #include directives resolve relative to the
+	// A single monotonic precedence counter across every layer of this load,
+	// so a project binding (applied later) outranks a user binding, which
+	// outranks nothing but the origin-less built-ins (precedence 0).
+	prec := 0
+
+	// The user layer: quoted @include directives resolve relative to the
 	// config file's own directory (the mew: tree root).
-	m.applyLayer(&config, string(content), m.configDir, false)
+	m.applyLayer(&config, string(content), m.configPath, m.configDir, false, &prec)
 
 	// Project layers: git-style .mew directories walking up from the
 	// working directory, outermost first, each editor.conf building on the
@@ -706,7 +1003,7 @@ func (m *Manager) Load() (Config, error) {
 			for _, mewDir := range m.projectMewDirs(cwd) {
 				config.ProjectDirs = append(config.ProjectDirs, mewDir)
 				if src, err := m.io().Read(filepath.Join(mewDir, "editor.conf")); err == nil {
-					m.applyLayer(&config, string(src), mewDir, true)
+					m.applyLayer(&config, string(src), filepath.Join(mewDir, "editor.conf"), mewDir, true, &prec)
 				}
 			}
 		}
@@ -749,7 +1046,7 @@ func (m *Manager) projectMewDirs(start string) []string {
 }
 
 // LoadFromString parses configuration from a string (a host-supplied
-// editor.conf equivalent). #include directives are honored: quoted paths are
+// editor.conf equivalent). @include directives are honored: quoted paths are
 // requested as-is (relative, through the include reader — the host's file
 // system when one is set), angle-bracket paths under the standard mew
 // directory.
@@ -759,7 +1056,12 @@ func (m *Manager) LoadFromString(content string) Config {
 
 func (m *Manager) loadExpanded(content, base string) Config {
 	config := DefaultConfig()
-	m.applyLayer(&config, content, base, false)
+	prec := 0
+	// A string-loaded config (host-supplied, or the generated default) has no
+	// mew: tree behind it to resolve `@include "defaults/…"` against, so inline
+	// the shipped resources from the binary first — the same source the built-in
+	// mappings baseline uses. Any remaining includes fall to disk expansion.
+	m.applyLayer(&config, expandEmbeddedIncludes(content), "<config>", base, false, &prec)
 	return config
 }
 
@@ -767,14 +1069,17 @@ func (m *Manager) loadExpanded(content, base string) Config {
 // present in the source override; everything else is inherited from the
 // layers already applied. This is the unit of the config cascade — built-in
 // defaults, then ~/.mew/editor.conf, then each project .mew/editor.conf from
-// the outermost tree down to the nearest. base resolves quoted #include
+// the outermost tree down to the nearest. base resolves quoted @include
 // directives and relative [storage] paths. project marks a project layer:
 // its key mappings merge per key instead of replacing the map (a project
 // adds bindings; it does not silently discard the user's keymap).
-func (m *Manager) applyLayer(config *Config, content, base string, project bool) {
-	// Splice #include directives, then parse.
-	content = m.expandIncludes(content, base, 0, map[string]bool{})
-	parsed := m.parseConfigFile(content)
+func (m *Manager) applyLayer(config *Config, content, source, base string, project bool, prec *int) {
+	// Splice @include directives (carrying source/line/@author provenance),
+	// then parse. A blank @author on a mapping in a config file defaults to
+	// AuthorCustomized; built-in mappings never reach here, so they stay
+	// origin-less and resolve as AuthorSystem.
+	sourced := m.expandIncludesSourced(content, source, base, 0, map[string]bool{})
+	parsed, mapOrigins := m.parseSourced(sourced, AuthorCustomized, prec)
 
 	// Value keywords for the scalar sections: "default" restores the shipped
 	// value, "inherit"/blank fall through to earlier layers (blank keeps its
@@ -809,6 +1114,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if v, ok := opt["showColumnRuler"]; ok {
 			config.General.ShowColumnRuler = parseBool(v, true)
 		}
+		if v, ok := opt["scrollbar"]; ok {
+			config.General.Scrollbar = parseBool(v, true)
+		}
 		if v, ok := opt["rulerShowsCursor"]; ok {
 			config.General.RulerShowsCursor = parseBool(v, false)
 		}
@@ -821,6 +1129,37 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if v, ok := opt["showBidi"]; ok {
 			config.General.ShowBidi = parseBool(v, false)
 		}
+		if v, ok := opt["rtlCombining"]; ok {
+			config.General.RtlCombining = parseBool(v, true)
+			config.General.RtlCombiningSet = true
+		}
+		if v, ok := opt["showMarks"]; ok {
+			if s, valid := ParseShowMarks(v); valid {
+				config.General.ShowMarks = s
+			}
+		}
+		if v, ok := opt["insertMode"]; ok {
+			// Stored inverted: insertMode=yes -> not overwrite.
+			config.General.OverwriteMode = !parseBool(v, true)
+		}
+		if v, ok := opt["readOnly"]; ok {
+			config.General.ReadOnly = parseBool(v, false)
+		}
+		if v, ok := opt["autoIndent"]; ok {
+			config.General.AutoIndent = parseBool(v, false)
+		}
+		if v, ok := opt["insertCursor"]; ok {
+			config.General.InsertCursor = parseCursorStyle(v, 5)
+		}
+		if v, ok := opt["overwriteCursor"]; ok {
+			config.General.OverwriteCursor = parseCursorStyle(v, 3)
+		}
+		if v, ok := opt["navigationCursor"]; ok {
+			config.General.NavigationCursor = parseCursorStyle(v, 2)
+		}
+		if v, ok := opt["linkBrowsing"]; ok {
+			config.General.LinkBrowsing = parseBool(v, true)
+		}
 		if v, ok := opt["syntax"]; ok {
 			v = stripQuotes(strings.TrimSpace(v))
 			if strings.EqualFold(v, "none") {
@@ -830,6 +1169,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 		if v, ok := opt["syntaxDetect"]; ok {
 			config.General.SyntaxDetect = parseBool(v, false)
+		}
+		if v, ok := opt["syntaxOverrides"]; ok {
+			config.General.SyntaxOverrides = stripQuotes(strings.TrimSpace(v))
 		}
 		if v, ok := opt["macOptionKeys"]; ok {
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
@@ -863,6 +1205,12 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 		if v, ok := opt["searchRegex"]; ok {
 			config.General.SearchRegex = parseBool(v, false)
+		}
+		if v, ok := opt["searchBackwards"]; ok {
+			config.General.SearchBackwards = parseBool(v, false)
+		}
+		if v, ok := opt["searchAllBuffers"]; ok {
+			config.General.SearchAllBuffers = parseBool(v, false)
 		}
 		if v, ok := opt["modebarLocation"]; ok {
 			if loc := strings.ToLower(strings.TrimSpace(v)); loc == "top" || loc == "bottom" {
@@ -936,6 +1284,9 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		if v, ok := general["projectConfig"]; ok {
 			config.General.ProjectConfig = parseBool(v, true)
 		}
+		if v, ok := general["startPath"]; ok {
+			config.General.StartPath = stripQuotes(strings.TrimSpace(v))
+		}
 		if v, ok := general["useLocks"]; ok {
 			config.General.UseLocks = parseBool(v, true)
 		}
@@ -985,6 +1336,87 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 			}
 			config.Storage.Documents = v
 		}
+		if v, ok := storage["resources"]; ok {
+			v = stripQuotes(v)
+			if v != "" && base != "" && !filepath.IsAbs(v) {
+				v = filepath.Join(base, v)
+			}
+			config.Storage.Resources = v
+		}
+	}
+
+	// [fonts]: family name -> font file path (Decision B(i), explicit paths),
+	// registered into the host's font engine at startup so [window] ui_term and
+	// the set_font command can reference the family by name. A relative path
+	// resolves against this layer's directory (a project can ship fonts in its
+	// .mew folder). default/inherit/blank clears the entry.
+	if fonts, ok := parsed["fonts"]; ok {
+		if config.Fonts == nil {
+			config.Fonts = make(map[string]string)
+		}
+		for k, v := range fonts {
+			name := strings.TrimSpace(k)
+			if name == "" {
+				continue
+			}
+			// A value is an optional path followed by an optional PSL group of
+			// per-face adjustments: "kufi.ttf (baseline: -6)", either half
+			// alone, or neither (which clears both).
+			path, adj, hasAdj := splitFacePath(v)
+			if hasAdj {
+				if config.FontAdjust == nil {
+					config.FontAdjust = make(map[string]FaceAdjust)
+				}
+				config.FontAdjust[canonicalFace(name)] = adj
+			} else {
+				delete(config.FontAdjust, canonicalFace(name))
+			}
+			path = stripQuotes(strings.TrimSpace(path))
+			if path == "" || keywordOf(path) != "" {
+				delete(config.Fonts, name)
+				continue
+			}
+			if base != "" && !filepath.IsAbs(path) {
+				path = filepath.Join(base, path)
+			}
+			config.Fonts[name] = path
+		}
+	}
+
+	// [window]: window-scoped display settings. fonts_path adds font search
+	// directories (Decision B(ii), name-based lookup); any ui_* key re-points
+	// the matching ui-* font alias at a fallback list (the whole font tree).
+	if win, ok := parsed["window"]; ok {
+		if v, ok := win["fonts_path"]; ok {
+			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+				config.Window.FontsPath = nil // default/inherit/blank clears
+			} else {
+				for _, dir := range splitFontList(v) {
+					if base != "" && !filepath.IsAbs(dir) {
+						dir = filepath.Join(base, dir)
+					}
+					config.Window.FontsPath = append(config.Window.FontsPath, dir)
+				}
+			}
+		}
+		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
+		// a fallback list; default/inherit/blank clears it (restoring the
+		// built-in). This covers the whole systematic tree at any level.
+		for k, v := range win {
+			lk := strings.ToLower(strings.TrimSpace(k))
+			if !strings.HasPrefix(lk, "ui_") {
+				continue
+			}
+			alias := strings.ReplaceAll(lk, "_", "-")
+			if config.Window.FontAliases == nil {
+				config.Window.FontAliases = map[string][]string{}
+			}
+			if keywordOf(strings.TrimSpace(v)) != "" || strings.TrimSpace(v) == "" {
+				delete(config.Window.FontAliases, alias)
+			} else {
+				config.Window.FontAliases[alias] = normalizeUITargets(splitFontList(v))
+			}
+		}
 	}
 
 	// Indicator glyphs
@@ -1005,6 +1437,8 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		set(&config.Indicators.VisibleNewline, "visibleNewline")
 		set(&config.Indicators.VisibleReturn, "visibleReturn")
 		set(&config.Indicators.GutterEmpty, "gutterEmpty")
+		set(&config.Indicators.ScrollbarTrack, "scrollbarTrack")
+		set(&config.Indicators.ScrollbarThumb, "scrollbarThumb")
 		set(&config.Indicators.CursorGhost, "cursorGhost")
 		set(&config.Indicators.CursorOffScreen, "cursorOffScreen")
 		set(&config.Indicators.TruncationLeft, "truncationLeft")
@@ -1013,19 +1447,36 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		set(&config.Indicators.StatPeekDown, "statPeekDown")
 		set(&config.Indicators.PromptPeekUp, "promptPeekUp")
 		set(&config.Indicators.PromptPeekDown, "promptPeekDown")
+		set(&config.Indicators.ButtonLeft, "buttonLeft")
+		set(&config.Indicators.ButtonRight, "buttonRight")
+		set(&config.Indicators.ButtonShadow, "buttonShadow")
+		set(&config.Indicators.FocusedButtonLeft, "focusedButtonLeft")
+		set(&config.Indicators.FocusedButtonRight, "focusedButtonRight")
+		set(&config.Indicators.FocusedButtonShadow, "focusedButtonShadow")
 	}
 
-	// Color sections. Key names are dynamic: [colors] is the root level,
-	// [colors.<bufferType>] the buffer-type level, and [<class>.colors] the
-	// window-class level. [colors.syntax] and [colors.syntax.<grammar>] are
-	// syntax-highlighting class maps (jsf class -> mew color name), claimed
-	// before the buffer-type rule. Section names arrive with "." mapped to "_".
+	// Color sections. [colors] is the root level, [colors/<type>] the
+	// buffer-type level, and [<class>::colors] the window-class level.
+	// [syntax] and [syntax.<grammar>] are the separate syntax-highlighting
+	// class maps (jsf class -> mew color name), handled in their own family.
 	for sectionName, section := range parsed {
-		switch {
-		case sectionName == "colors":
-			mergeStringMap(&config.Colors.Global, cleanColorSection(section))
-		case sectionName == "colors_syntax" || strings.HasPrefix(sectionName, "colors_syntax_"):
-			grammar := strings.TrimPrefix(strings.TrimPrefix(sectionName, "colors_syntax"), "_")
+		h := parseSectionHeader(sectionName)
+		switch h.family {
+		case "colors":
+			switch {
+			case h.class != "":
+				sub := config.Colors.ByClass[h.class]
+				mergeStringMap(&sub, cleanColorSection(section))
+				config.Colors.ByClass[h.class] = sub
+			case h.bufType != "":
+				sub := config.Colors.ByType[h.bufType]
+				mergeStringMap(&sub, cleanColorSection(section))
+				config.Colors.ByType[h.bufType] = sub
+			default:
+				mergeStringMap(&config.Colors.Global, cleanColorSection(section))
+			}
+		case "syntax":
+			grammar := h.grammar // "" is the global syntax map
 			if config.SyntaxMaps == nil {
 				config.SyntaxMaps = make(map[string]map[string]string)
 			}
@@ -1042,16 +1493,6 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 				}
 				config.SyntaxMaps[grammar][strings.ToLower(k)] = stripQuotes(strings.TrimSpace(v))
 			}
-		case strings.HasPrefix(sectionName, "colors_"):
-			bufType := strings.TrimPrefix(sectionName, "colors_")
-			sub := config.Colors.ByType[bufType]
-			mergeStringMap(&sub, cleanColorSection(section))
-			config.Colors.ByType[bufType] = sub
-		case strings.HasSuffix(sectionName, "_colors"):
-			class := strings.TrimSuffix(sectionName, "_colors")
-			sub := config.Colors.ByClass[class]
-			mergeStringMap(&sub, cleanColorSection(section))
-			config.Colors.ByClass[class] = sub
 		}
 	}
 
@@ -1060,16 +1501,20 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	// breadcrumb, and path-conditional format rules — each merged over the
 	// built-in defaults (blank value removes one).
 	for sectionName, section := range parsed {
+		h := parseSectionHeader(sectionName)
+		if h.grammar == "" {
+			continue // bare [formats] is the alias table (handled below)
+		}
 		var table map[string]map[string]string
 		var builtin map[string]map[string]string
-		var grammar string
-		switch {
-		case strings.HasPrefix(sectionName, "match_"):
-			table, builtin, grammar = config.MatchPairs, DefaultMatchPairs(), strings.TrimPrefix(sectionName, "match_")
-		case strings.HasPrefix(sectionName, "outline_"):
-			table, builtin, grammar = config.Outline, DefaultOutline(), strings.TrimPrefix(sectionName, "outline_")
-		case strings.HasPrefix(sectionName, "formats_"):
-			table, builtin, grammar = config.FormatPaths, DefaultFormatPaths(), strings.TrimPrefix(sectionName, "formats_")
+		grammar := h.grammar
+		switch h.family {
+		case "match":
+			table, builtin = config.MatchPairs, DefaultMatchPairs()
+		case "outline":
+			table, builtin = config.Outline, DefaultOutline()
+		case "formats":
+			table, builtin = config.FormatPaths, DefaultFormatPaths()
 		default:
 			continue
 		}
@@ -1099,17 +1544,18 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 	}
 
-	// [<class>.]options[.<grammar>][.<type>] overlays the base [options] along
+	// [<class>::]options[/<type>][.<grammar>] overlays the base [options] along
 	// the class/grammar/type cascade (resolved most-specific-first at apply time,
 	// like the color overlays). Trichotomy: "default" -> the shipped default;
 	// "inherit"/blank -> defer down the cascade; a real value wins.
 	// syntax/syntaxDetect are excluded (a grammar can't pick its own detection).
 	shippedOptions := defaultSectionValues("options")
 	for sectionName, section := range parsed {
-		class, grammar, bufType, isOpt := parseOptionsSection(sectionName)
-		if !isOpt || (class == "" && grammar == "" && bufType == "") {
+		h := parseSectionHeader(sectionName)
+		if h.family != "options" || (h.class == "" && h.grammar == "" && h.bufType == "") {
 			continue // not an overlay (the base [options] is applied above)
 		}
+		class, grammar, bufType := h.class, h.grammar, h.bufType
 		if config.OptionOverlays == nil {
 			config.OptionOverlays = make(map[string]map[string]string)
 		}
@@ -1122,8 +1568,13 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		for k, v := range section {
 			k = strings.TrimSpace(k)
 			lk := strings.ToLower(k)
-			if lk == "syntax" || lk == "syntaxdetect" {
-				continue // excluded from the cascade
+			// syntaxDetect never overlays. `syntax` overlays only in
+			// grammar-AGNOSTIC sections (base/class/type): a grammar-keyed
+			// overlay picking its own grammar would be circular, but
+			// [options/tool] / [<class>::options] setting the default grammar
+			// for a window kind is well-defined.
+			if lk == "syntaxdetect" || (lk == "syntax" && grammar != "") {
+				continue
 			}
 			switch keywordOf(v) {
 			case "inherit":
@@ -1146,18 +1597,24 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 		}
 	}
 
-	// [<class>.]mappings.<set>[.<type>] refine a key-mapping set by window class
-	// and buffer type. Each cleaned section is stored under its signature; the
-	// active set is merged across the cascade at focus time (ResolveMappingSet).
-	// The base [mappings.<set>] is applied to config.Mappings above (the default
-	// set); here we retain every set/refinement for per-window switching.
+	// [<class>::]mappings[:<set>][/<type>][.<grammar>] refine a key-mapping set by
+	// window class, buffer type, and grammar. Each cleaned section is stored under
+	// its signature; the active set is merged across the cascade at focus time
+	// (ResolveMappingSet). The base [mappings:<set>] is applied to config.Mappings
+	// above (the default set); here we retain every set/refinement for per-window
+	// switching. A section that names no set refines them all (anyMappingSet).
 	for sectionName, section := range parsed {
-		set, class, grammar, bufType, isMap := parseMappingsSection(sectionName)
-		if !isMap {
+		h := parseSectionHeader(sectionName)
+		set, ok := mappingSetOf(h)
+		if !ok {
 			continue
 		}
+		class, grammar, bufType := h.class, h.grammar, h.bufType
 		if config.MappingSets == nil {
 			config.MappingSets = make(map[string]map[string]string)
+		}
+		if config.MappingSetOrigins == nil {
+			config.MappingSetOrigins = make(map[string]map[string]MappingOrigin)
 		}
 		sig := mappingSetKey(set, class, grammar, bufType)
 		m := config.MappingSets[sig]
@@ -1165,13 +1622,23 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 			m = make(map[string]string)
 			config.MappingSets[sig] = m
 		}
+		mo := config.MappingSetOrigins[sig]
+		if mo == nil {
+			mo = make(map[string]MappingOrigin)
+			config.MappingSetOrigins[sig] = mo
+		}
+		secOrigins := mapOrigins[sectionName]
 		for k, v := range section {
 			k = strings.TrimSpace(k)
 			if keywordOf(v) != "" || strings.TrimSpace(stripQuotes(v)) == "" {
 				delete(m, k) // unbind / defer
+				delete(mo, k)
 				continue
 			}
 			m[k] = v
+			if o, ok := secOrigins[k]; ok {
+				mo[k] = o
+			}
 		}
 	}
 
@@ -1199,25 +1666,43 @@ func (m *Manager) applyLayer(config *Config, content, base string, project bool)
 	}
 
 	// Apply key mappings. The user layer replaces the keymap wholesale
-	// (removing a line from [mappings.X] really unbinds it); project layers
+	// (removing a line from [mappings:X] really unbinds it); project layers
 	// merge per key on top of the inherited map.
-	mappingsKey := "mappings_" + config.General.MappingsName
+	mappingsKey := "mappings:" + config.General.MappingsName
 	if mappings, ok := parsed[mappingsKey]; ok {
+		baseOrigins := mapOrigins[mappingsKey]
 		if project {
+			// A project layer merges per key: keep origins in lockstep so a
+			// project's binding carries the project file's provenance.
+			if config.MappingOrigins == nil {
+				config.MappingOrigins = make(map[string]MappingOrigin)
+			}
 			for k, v := range mappings {
 				if keywordOf(v) != "" || strings.TrimSpace(v) == "" {
 					// Unbind: the key falls back to its default handling.
 					// (Bind a key to the nop command to disable it instead.)
 					delete(config.Mappings, k)
+					delete(config.MappingOrigins, k)
 					continue
 				}
 				config.Mappings[k] = v
+				if o, ok := baseOrigins[k]; ok {
+					config.MappingOrigins[k] = o
+				}
 			}
 		} else {
+			// The user layer replaces the keymap wholesale; its origins replace
+			// too. Keys with no recorded origin (there should be none here) fall
+			// back to the built-in default when read.
 			config.Mappings = mappings
+			config.MappingOrigins = make(map[string]MappingOrigin)
 			for k, v := range config.Mappings {
 				if keywordOf(v) != "" || strings.TrimSpace(v) == "" {
 					delete(config.Mappings, k)
+					continue
+				}
+				if o, ok := baseOrigins[k]; ok {
+					config.MappingOrigins[k] = o
 				}
 			}
 		}
@@ -1300,7 +1785,7 @@ func mergeStringMap(dst *map[string]string, src map[string]string) {
 
 // ProfilePath returns the mew: path of the user's profile.mew startup script.
 func (m *Manager) ProfilePath() string {
-	return "mew:/profile.mew"
+	return "mew:///profile.mew"
 }
 
 // defaultProfileScript is written to profile.mew when it doesn't exist yet,
@@ -1371,15 +1856,134 @@ func stripQuotes(s string) string {
 	return s
 }
 
+// splitFontList parses a comma-separated list of font family names or paths
+// (e.g. ui_term = "JetBrainsMono, Monday" or fonts_path = /a, /b), stripping
+// surrounding quotes off the whole value and off each element, and dropping
+// empties. Returns nil for an empty or keyword value.
+// normalizeUITargets rewrites underscores to hyphens in any entry naming
+// another UI alias, so the underscored spelling works on BOTH sides of a
+// [window] ui_* line: ui_term_hebrew = ui_term_hebrew_sans reads naturally
+// even though the internal alias is ui-term-hebrew-sans. Only entries that
+// name the ui tree are touched — a real font family may contain underscores
+// and must survive verbatim.
+func normalizeUITargets(names []string) []string {
+	for i, n := range names {
+		if l := strings.ToLower(n); strings.HasPrefix(l, "ui_") || strings.HasPrefix(l, "ui-") {
+			names[i] = strings.ReplaceAll(n, "_", "-")
+		}
+	}
+	return names
+}
+
+// canonicalFace normalizes a family name for keyed lookup: lowercased with
+// spaces, hyphens and underscores removed, so "Noto Kufi Arabic",
+// "noto-kufi-arabic" and "NotoKufiArabic" name the same face. Mirrors the font
+// database's own alias canonicalization, so a correction cannot miss on
+// spelling alone.
+func canonicalFace(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if r != ' ' && r != '-' && r != '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// splitFacePath splits a [fonts] value into its path part and its trailing PSL
+// adjustment group. The group is recognised only as a trailing parenthesised
+// run, so a path containing parentheses (a directory named "Fonts (old)")
+// still parses as a path when nothing follows it.
+func splitFacePath(v string) (path string, adj FaceAdjust, hasAdj bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasSuffix(v, ")") {
+		return v, FaceAdjust{}, false
+	}
+	open := strings.LastIndex(v, "(")
+	if open < 0 {
+		return v, FaceAdjust{}, false
+	}
+	inner := v[open+1 : len(v)-1]
+	adj, hasAdj = parseFaceAdjust(inner)
+	if !hasAdj {
+		return v, FaceAdjust{}, false // not an adjustment group: leave it in the path
+	}
+	return strings.TrimSpace(v[:open]), adj, true
+}
+
+// parseFaceAdjust reads the inside of a face adjustment group: comma-separated
+// "key: value" pairs. Reports false when nothing recognisable was found, so an
+// unrelated parenthesised tail stays part of the path.
+func parseFaceAdjust(inner string) (adj FaceAdjust, ok bool) {
+	for _, part := range strings.Split(inner, ",") {
+		key, val, found := strings.Cut(part, ":")
+		if !found {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		val = stripQuotes(strings.TrimSpace(val))
+		switch key {
+		case "baseline":
+			n, err := strconv.Atoi(strings.TrimPrefix(val, "+"))
+			if err != nil {
+				continue
+			}
+			adj.Baseline, adj.HasBaseline, ok = n, true, true
+		case "size":
+			f, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(val, "+"), "%"), 64)
+			if err != nil || f <= 0 {
+				continue
+			}
+			if strings.HasSuffix(val, "%") {
+				f /= 100 // "110%" and "1.1" mean the same thing
+			}
+			adj.Scale, adj.HasScale, ok = f, true, true
+		}
+	}
+	return adj, ok
+}
+
+func splitFontList(v string) []string {
+	v = stripQuotes(strings.TrimSpace(v))
+	if v == "" || keywordOf(v) != "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		p = stripQuotes(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // parseConfigFile parses the config file content.
 func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
+	lines := strings.Split(content, "\n")
+	sourced := make([]SourcedLine, len(lines))
+	for i, line := range lines {
+		sourced[i] = SourcedLine{Text: line, Line: i + 1}
+	}
+	prec := 0
+	sections, _ := m.parseSourced(sourced, "", &prec)
+	return sections
+}
+
+// parseSourced parses sourced config lines into the section→key→value map, and
+// alongside it the provenance of every key in a [mappings…] section. prec is a
+// monotonic counter bumped per mapping key (so a later line outranks an earlier
+// one, giving "last configured wins"); defaultAuthor fills a blank @author.
+// Non-mapping sections carry no origins (only key mappings need provenance
+// today).
+func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *int) (map[string]map[string]string, map[string]map[string]MappingOrigin) {
 	result := make(map[string]map[string]string)
+	origins := make(map[string]map[string]MappingOrigin)
 	var currentSection string
 
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
+	for _, sl := range lines {
 		// Remove carriage returns for Windows line endings
-		line = strings.TrimSuffix(line, "\r")
+		line := strings.TrimSuffix(sl.Text, "\r")
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines and full-line comments
@@ -1403,7 +2007,10 @@ func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
 
 		// Check for section header
 		if strings.HasPrefix(trimmedLine, "[") && strings.HasSuffix(trimmedLine, "]") {
-			currentSection = strings.ToLower(strings.ReplaceAll(trimmedLine[1:len(trimmedLine)-1], ".", "_"))
+			// Section names keep their real separators (:: : / .); the unified
+			// grammar parser (parseSectionHeader) splits them. Only case and
+			// surrounding whitespace are normalized here.
+			currentSection = strings.ToLower(strings.TrimSpace(trimmedLine[1 : len(trimmedLine)-1]))
 			if _, ok := result[currentSection]; !ok {
 				result[currentSection] = make(map[string]string)
 			}
@@ -1422,10 +2029,28 @@ func (m *Manager) parseConfigFile(content string) map[string]map[string]string {
 			value := m.unescapeValue(strings.TrimSpace(processedLine[equalPos+1:]))
 
 			result[currentSection][key] = value
+
+			// Record provenance for key mappings only. Precedence advances per
+			// mapping line so a key rebound later (in the same or a later layer)
+			// carries a higher ordinal than the one it shadows.
+			// (Any mapping family, including a class-scoped one — the section
+			// name may lead with "<class>::", so ask the grammar, not the text.)
+			if parseSectionHeader(currentSection).family == "mappings" {
+				*prec++
+				if origins[currentSection] == nil {
+					origins[currentSection] = make(map[string]MappingOrigin)
+				}
+				origins[currentSection][key] = MappingOrigin{
+					Source:     sl.Source,
+					Line:       sl.Line,
+					Precedence: *prec,
+					Author:     resolveAuthor(sl.Author, defaultAuthor),
+				}
+			}
 		}
 	}
 
-	return result
+	return result, origins
 }
 
 // findUnescapedChar finds the position of an unescaped character outside of quoted strings.
@@ -1558,9 +2183,40 @@ func (m *Manager) unescapeValue(value string) string {
 	return result.String()
 }
 
-// WriteDefault writes the default configuration file.
+// WriteDefault writes the default configuration file. The shipped default
+// resource files it @includes (the modular keymap sets and layouts) are NOT
+// copied into ~/.mew: they resolve through the layered mew: filesystem straight
+// from the embedded resources, and the user's own ~/.mew/defaults/ copy — if
+// they choose to make one — shadows them. Pre-seeding would freeze a copy that
+// then silently shadows every future shipped update.
 func (m *Manager) WriteDefault() error {
 	return m.io().Write(m.configPath, []byte(m.generateDefaultConfig()))
+}
+
+// expandEmbeddedIncludes replaces each @include "defaults/…" line in text with
+// the injected embedded resource's contents, so the built-in config resolves
+// entirely from the binary. Non-embedded includes (and, when no embedded tree
+// was injected, all of them) are left for the normal disk-based expansion
+// during Load.
+func expandEmbeddedIncludes(text string) string {
+	if embeddedResources == nil {
+		return text
+	}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if sub := includeRe.FindStringSubmatch(strings.TrimSuffix(line, "\r")); sub != nil {
+			ref := sub[1]
+			if ref == "" {
+				ref = sub[2]
+			}
+			if data, err := fs.ReadFile(embeddedResources, ref); err == nil {
+				out = append(out, string(data))
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // generateDefaultConfig generates the default config file content.
@@ -1570,10 +2226,10 @@ func (m *Manager) generateDefaultConfig() string {
 # Lines starting with # or ; are comments
 # Hash can also be used for comments in the middle of a line
 
-# Other configuration files can be spliced in with an #include directive
-# (an ordinary comment to any other reader):
-#   #include "relative.conf"   - relative to THIS file, via its file system
-#   #include <shared.conf>     - from the standard mew config directory
+# Other configuration files can be spliced in with an @include directive (an
+# at-rule, so it reads distinctly from a # comment and highlights on its own):
+#   @include "relative.conf"   - relative to THIS file, via its file system
+#   @include <shared.conf>     - from the standard mew config directory
 # Each file is included at most once; nesting is bounded.
 #
 # Value keywords (in every section, at every layer): an unquoted
@@ -1583,7 +2239,7 @@ func (m *Manager) generateDefaultConfig() string {
 #               cascade level) show through
 # A blank value keeps its per-table meaning: it deletes [formats]/[match]/
 # [outline] entries, unbinds a key mapping (bind to nop to disable a key
-# instead), masks a [colors.syntax] class to the grammar's own colors, turns
+# instead), masks a [syntax] class to the grammar's own colors, turns
 # syntax="" off — and for other scalars simply inherits. Quote the word
 # ("default") to mean the literal text.
 #
@@ -1603,6 +2259,11 @@ func (m *Manager) generateDefaultConfig() string {
 # Layer project .mew/editor.conf files (found walking up from the working
 # directory) over this configuration
 projectConfig=true
+# Where a session starts when its working directory cannot be derived any
+# other way (GUI launches begin at the filesystem root). The editor prefers
+# the current document's own location, then this path, then your home.
+# startPath=~/projects
+
 # Editing locks: useLocks=false disables all locking. useEmacsLocks controls
 # the emacs-interoperable ".#<name>" lock files specifically (skipped
 # automatically inside git repos whose .gitignore does not cover them); when
@@ -1620,19 +2281,24 @@ mappings=mew
 # differ from buffer to buffer; the rest are editor-wide.
 #
 # [options.<grammar>] overlays these per-window options for buffers of a given
-# syntax grammar, the same way [colors.syntax.<grammar>] overlays colors — e.g.
-# [options.markdown] wordless prose settings, [options.go] tabSize=4. A value
-# overrides; "inherit" (or blank) defers to the base [options]; "default"
-# resolves to the shipped default. syntax and syntaxDetect are excluded (a
-# grammar cannot pick the detection that selected it). A value the user sets at
-# runtime (set_option) or per file on the command line is pinned and not
-# overwritten by the overlay.
+# syntax grammar, the same way [syntax.<grammar>] overlays colors — e.g.
+# [options.markdown] wordless prose settings, [options.go] tabSize=4. Add a
+# /<type> for a window kind ([options/tool]) or <class>:: for a window class
+# ([myclass::options]). A value overrides; "inherit" (or blank) defers to the
+# base [options]; "default" resolves to the shipped default. syntax and
+# syntaxDetect are excluded (a grammar cannot pick the detection that selected
+# it). A value the user sets at runtime (set_option) or per file on the command
+# line is pinned and not overwritten by the overlay.
 #
 # [options.go]
 # tabSize=4
 # showInvisibles=true
 showLineNumbers=true
 showColumnRuler=true
+# Reserve each window's outer column (right edge in LTR, left in RTL) for a
+# clickable vertical scrollbar. Per-window; never shown on prompts or on a
+# window hosting a terminal session (the terminal draws its own).
+scrollbar=true
 # Highlight the ruler cells under the cursor (and its ghost / bidi companion
 # cursor) with the rulerCursor color
 rulerShowsCursor=false
@@ -1642,6 +2308,40 @@ showInvisibles=false
 # ("<" entering RTL, ">" entering LTR); explicit direction controls render
 # as their own marker
 showBidi=false
+# Show combining marks (niqqud, harakat) on right-to-left letters. Default on,
+# EXCEPT it auto-defaults OFF in a bidi-applying real terminal (macOS
+# Terminal.app, TERM_PROGRAM=Apple_Terminal), where a pointed RTL selection bar
+# would otherwise be misplaced — there Hebrew renders unpointed, like mew's
+# pre-shaped Arabic. Setting it here (uncomment) overrides the auto-default.
+# Off renders RTL scripts UNPOINTED — one codepoint per cell; the marks stay in
+# the file and editable (the caret still walks them and the modebar names the
+# one under the caret), only display is affected.
+# rtlCombining=true
+# Show a "*" (in the "marks" color) at every mark/decoration position in the
+# text: no (off), yes (user marks), or all (also mew's internal marks). Boolean
+# aliases (on/off/true/false) are accepted as no/yes.
+showMarks=no
+# Insert mode: yes types text in (the default). no turns on overwrite mode,
+# where typing replaces the character under the caret — except at the end of a
+# line, where it still appends. Per window.
+insertMode=yes
+# Cursor shape per editing mode, as the DECSCUSR codes every modern terminal
+# understands: 0 the terminal's own default, 1/2 blinking/steady block, 3/4
+# blinking/steady underline, 5/6 blinking/steady bar. mew selects the shape
+# only while it is showing a cursor at all, so these never reveal a caret it is
+# deliberately hiding (say, inside a focused link button).
+insertCursor=5
+overwriteCursor=3
+navigationCursor=2
+# Read-only: yes rejects edits made through the window (typing, deleting,
+# replacing, pasting); movement, search, marks, and undo/redo still work. Per
+# window.
+readOnly=no
+# Hyperlink layer for grammar-recognized links (dokuwiki): links paint in the
+# link color and can be navigated as buttons in navigation mode (the
+# navigationMode option, ^O N; nav_cancel exits). no disables all of it: links
+# render exactly as the grammar colors them. Per viewport.
+linkBrowsing=yes
 # Syntax highlighting: the name of a jsf grammar file ("cpp", "go", ...),
 # searched in ~/.mew/syntax/, mew's built-in set, then any installed JOE
 # syntax directories. Empty (or "none") disables highlighting.
@@ -1651,6 +2351,13 @@ syntax=""
 # Makefile), both resolved through the [formats] table. Buffers that
 # detect nothing fall back to the syntax option above.
 syntaxDetect=false
+# Grammar flavors (space-separated) whose highlighter should ignore the
+# document's own project .mew/syntax folder and resolve from your copy in
+# ~/.mew/syntax, the built-in set, or JOE instead. Use this when a project
+# ships a grammar you would rather override with your own — e.g.
+# syntaxOverrides="go conf". Descends through the option overlay, so it can be
+# set for one window or buffer too.
+syntaxOverrides=""
 # go_match fallback context for buffers with NO syntax grammar: enabled
 # constructs read as strings/comments and are skipped when matching (a
 # grammar's real highlighter context supersedes these). Quotes do not span
@@ -1729,12 +2436,18 @@ row-2="^   M-      <       space       >      M- >>  left  down  right"
 # (normally ~/.mew), with a breadcrumb copy left in the working directory.
 # documents is the fallback directory filename completion globs for a buffer
 # with no file of its own; empty falls back to the launch directory.
+# resources is the read-only system directory the mew: filesystem falls back
+# to for shipped support files (grammars, the help manual) the user has no
+# ~/.mew copy of; empty means the OS convention (/usr/share/mew,
+# /usr/local/share/mew, %ProgramFiles%\mew\Resources, or a mac .app bundle's
+# Contents/Resources). mew's embedded built-in tree is always the last resort.
 # A relative path in a project layer resolves inside that project's .mew.
 # Only honored from this local config file, never from host-supplied config.
 scratch=
 backups=
 deadcat=
 documents=
+resources=
 
 [indicators]
 # Glyphs/labels used to draw editor chrome. Values are quoted.
@@ -1754,6 +2467,8 @@ visibleTabEnd=">|"
 visibleNewline="⮐"
 visibleReturn="M"
 gutterEmpty="~"
+scrollbarTrack="░"
+scrollbarThumb="█"
 cursorGhost="|"
 cursorOffScreen="@"
 truncationLeft="<"
@@ -1762,6 +2477,15 @@ statPeekUp="[%SPU%]"
 statPeekDown="[%SPD%]"
 promptPeekUp="[%PPU%]"
 promptPeekDown="[%PPD%]"
+# Link-as-button chrome (browse mode): a link renders as
+# buttonLeft + title + buttonRight + buttonShadow; the focused* variants
+# apply to the button the caret is inside.
+buttonLeft=" "
+buttonRight=" "
+buttonShadow="▐"
+focusedButtonLeft="<"
+focusedButtonRight=">"
+focusedButtonShadow="█"
 
 [colors]                          # root-level defaults
 reset="\e[0m"                     # reset to default
@@ -1771,33 +2495,56 @@ invisibles="\e[0;1;40;90m"        # bright black / dark gray on black
 cursorGhost="\e[0;30;100m"        # black on dark gray
 cursorOffScreen="\e[0;30;42m"     # black on green
 truncation="\e[0;37;41m"          # silver on red
-hint="\e[1;37;44m"                # bright white on blue - peek indicator hints
+hint="\e[0;97;44m"                # bright white on blue - peek indicator hints
 special="\e[33m"                  # yellow foreground - control code substitutes
-marks="\e[1;32;40m"               # bright green on black
+marks="\e[0;91m"                  # bright red
 notes="\e[0;36;40m"               # cyan on black
 lineNumbers="\e[1;96;44m"         # aqua on blue
 selection="\e[0;30;47m"           # black text on silver
 selectionInvisibles="\e[1;30;47m" # dark gray on silver
-rulerEnds="\e[0;1;37;45m"         # bright white on magenta (used for end numbers)
+rulerEnds="\e[0;97;45m"         # bright white on magenta (used for end numbers)
 rulerFill="\e[0;37;45m"           # silver on magenta (for the fill glyph)
 rulerTick="\e[0;37;45m"           # silver on magenta (for ".")
-rulerMinor="\e[1;33;45m"          # bright yellow on magenta (for ":")
-rulerMajor="\e[1;32;45m"          # bright green on magenta (for "|" or regular numbers)
+rulerMinor="\e[0;93;45m"          # bright yellow on magenta (for ":")
+rulerMajor="\e[0;92;45m"          # bright green on magenta (for "|" or regular numbers)
 rulerCursor="\e[0;30;47m"         # black on silver (cursor columns when rulerShowsCursor)
+# Hyperlinks (grammar-derived links, e.g. dokuwiki). Caret mode paints link
+# source text in "link"; browse mode renders links as buttons (button/
+# buttonShadow, with the *Focused variants on the button the caret occupies).
+# linkRecent is reserved for recently-followed links.
+link="\e[0;4;93;40m"              # underlined bright yellow on black
+linkRecent="\e[0;4;32;40m"        # underlined green on black
+linkHover="\e[0;4;92;40m"        # underlined bright green on black (pointer over)
+# Dokuwiki heading base color (browse mode adds bold/underline per level).
+heading="\e[0;96;40m"             # bright cyan on black
+button="\e[0;30;47m"              # black on silver
+buttonRecent="\e[0;30;42m"        # black on dark green (a visited link)
+buttonShadow="\e[0;90;47m"        # dark gray on silver
+buttonShadowRecent="\e[0;90;42m"  # dark gray on dark green
+buttonFocused="\e[0;30;46m"       # black on cyan
+buttonShadowFocused="\e[0;90;46m" # dark gray on cyan
+buttonPressed="\e[0;97;44m"       # bright white on blue (mouse held down)
+buttonShadowPressed="\e[0;37;44m" # silver on blue
+# A button inside a text selection. Defaults to the pressed look; only the
+# colour changes, never the caps or the shadow glyph.
+buttonSelected="\e[0;97;44m"       # bright white on blue
+buttonShadowSelected="\e[0;37;44m" # silver on blue
+buttonHover="\e[0;93;45m"         # bright yellow on purple (pointer over)
+buttonShadowHover="\e[0;90;45m"   # dark gray on purple
 syntaxComment="\e[0;32;40m"       # green on black
 syntaxString="\e[0;36;40m"        # cyan on black
-syntaxEscape="\e[0;1;36;40m"      # bright cyan on black
+syntaxEscape="\e[0;96;40m"      # bright cyan on black
 syntaxConstant="\e[0;91;40m"      # bright red on black (numbers, literals)
 syntaxKeyword="\e[0;1;97;40m"     # bold bright white on black
 syntaxType="\e[0;93;40m"          # bright yellow on black
 syntaxPreproc="\e[0;94;40m"       # bright blue on black
-syntaxBad="\e[0;1;37;41m"         # bright white on red
+syntaxBad="\e[0;97;41m"         # bright white on red
 
 # Syntax highlighting maps a grammar's color classes onto the systematic
-# syntax* colors above. [colors.syntax] adjusts the mapping for every
-# grammar; [colors.syntax.<name>] overrides it for one grammar, e.g.:
+# syntax* colors above. [syntax] adjusts the mapping for every grammar;
+# [syntax.<name>] overrides it for one grammar, e.g.:
 #
-# [colors.syntax.cpp]
+# [syntax.cpp]
 # Preproc = syntaxKeyword
 
 # [formats] maps short format names and file extensions onto grammar files
@@ -1840,178 +2587,111 @@ syntaxBad="\e[0;1;37;41m"         # bright white on red
 # [outline.python]
 # route = ^([ \t]*)@app\\.route.*def\\s+(\\w+)
 
-[colors.work]             # defaults for workbuffers
+[colors/tool]             # defaults for tool windows (help, listings)
 text="\e[0;1;46;97m"      # bright white on cyan
 messages="\e[0;1;43;97m"  # bright white on amber
 
-[colors.prompt]           # defaults for promptbuffers
+[colors/prompt]           # defaults for promptbuffers
 messages="\e[0;1;42;93m"  # bright yellow on green
 text="\e[0;1;42;97m"      # bright white on green
 
-[modebar.colors]       # the modebar class - a specific workbuffer type
+[modebar::colors]      # the modebar class - chrome, WindowSet "modebar"
 text="\e[0;44m"        # silver on blue - modebar fill
 messages="\e[1;96;44m" # aqua on blue - stats readout (Frag/Heap/Line/Rune)
 modifiers="\e[0;44m"   # silver on blue - active modifiers & space before & after
-buffer="\e[1;33;44m"   # bright yellow on blue - buffer name (filename)
+buffer="\e[0;93;44m"   # bright yellow on blue - buffer name (filename)
 completion="\e[0;44m"  # silver on blue - autocompletion (and space before and after)
-context="\e[1;32;44m"  # bright green on blue - context (when autocompletion isn't showing)
+context="\e[0;92;44m"  # bright green on blue - context (when autocompletion isn't showing)
 logo="\e[1;97;41m"     # bright white on red - M_ logo
 
-[notification.colors]
+[notification::colors]
 messages="\e[0;37;43m"
 
-[warning.colors]
-messages="\e[1;33;43m"
+[warning::colors]
+messages="\e[0;93;43m"                # bright yellow on brown
 
-[error.colors]
-messages="\e[1;37;41m"
+[error::colors]
+messages="\e[0;97;41m"                # bright white on red
 
-[mappings.mew]
-^K H	=help_toggle
-esc X	=cmd
-^@ U	=stat_peek_up
-^@ V	=stat_peek_down
-^@ P	=prompt_peek_up
-^@ N	=prompt_peek_down
-^@ O	=editor_options
-^@ ,	=window_prior
-^@ .	=window_next
+[mappings:mew]
 
-^I	=completion|insert '\t'
-^M	=accept|insert '\n'
-^C	=cancel|buffer_close
+# -- first, include all the mew defaults --
+@include "defaults/keys_system.conf"
+@include "defaults/keys_cursor_movement.conf"
+@include "defaults/keys_editing.conf"
+@include "defaults/keys_quick_menu.conf"
+@include "defaults/keys_block_menu.conf"
+@include "defaults/keys_buffer_and_save_menus.conf"
+@include "defaults/keys_options_menu.conf"
+@include "defaults/keys_backcompat.conf"
 
-esc >	=scroll_right
-esc <	=scroll_left
+# -- override as needed --
+# The system set (^C, ^R, ^S, ^L, tab/return, esc y/Y, the undo/redo row, …)
+# now comes from defaults/keys_system.conf, included above. Only the keys that
+# are NOT in it stay here.
+^K H    =help_toggle
+^@ U    =stat_peek_up
+^@ V    =stat_peek_down
+^@ P    =prompt_peek_up
+^@ N    =prompt_peek_down
+^@ O    =editor_options
+^@ ,    =viewport_prior
+^@ .    =viewport_next
 
-# ============= Cursor Nav ============
-^J	=go_char_prior
-left	=go_char_prior
-^F	=go_char_next
-right	=go_char_next
+# Class-scoped keys. A section that names no set — [isearch::mappings] rather
+# than [isearch::mappings:mew] — refines EVERY mapping set, so declaring a set
+# of your own does not mean copying these in behind it. Name the set to
+# override one for that set alone ([isearch::mappings:myset] ^R =nop).
 
-M-j	=go_word_prior
-esc j	=go_word_prior
-^left	=go_word_prior
+# Inside the incremental-search prompt only (the search command's "I-search:"
+# prompt, viewport class "isearch"): the direction keys. ^R steps to the
+# previous occurrence and turns the search around; ^F steps forward. The
+# direction is the same "b" option the find state stores, so find_next keeps
+# rotating the same way afterwards. Everywhere else ^R/^F keep their normal
+# meanings.
+[isearch::mappings]
+^R      =search_reverse
+^F      =search_forward
 
-esc f	=go_word_next
-M-f	=go_word_next
-^right	=go_word_next
-
-^A	=go_line_beg
-home	=go_line_beg
-^E	=go_line_end
-end	=go_line_end
-
-^P	=go_line_prior
-up	=go_line_prior
-^N	=go_line_next
-down	=go_line_next
-
-^U	=go_page_prior
-^Q U	=go_buffer_beg
-pgup	=go_page_prior
-^V	=go_page_next|go_line_end
-^Q V	=go_buffer_end
-pgdn	=go_page_next
-
-^]	=go_match
-
-^D	=del_char_next	# unix-style
-^G	=del_char_next  # wordstar-style
-#fdel	=del_char_next
-^W	=del_word_beg
-^T	=del_word_end
-esc w	=del_line_beg
-esc t	=del_line_end
-^\	=del_line_end|del_line
-^Y	=del_line
-
-^_	=buffer_undo
-^Z	=buffer_redo|buffer_undo
-
-# ---- Cursor Nav Backwards Compat ----
-^K U	=go_buffer_beg
-^K V	=go_buffer_end
-
-# ============= Quick Menu ============
-^Q F	=find
-^Q B	=go_block_begin
-^Q K	=go_block_end
-^Q L	=go_line
-^Q N	=go_pos_next
-^Q P	=go_pos_prior
-^Q M	=go_mark
-^Q 1	=go_mark '1'
-^Q 2	=go_mark '2'
-^Q 3	=go_mark '3'
-^Q 4	=go_mark '4'
-^Q 5	=go_mark '5'
-^Q 6	=go_mark '6'
-^Q 7	=go_mark '7'
-^Q 8	=go_mark '8'
-^Q 9	=go_mark '9'
-^Q 0	=go_mark '0'
-^Q return	=go_mark
-^Q Q M	=set_mark
-^Q Q 1	=set_mark '1'
-^Q Q 2	=set_mark '2'
-^Q Q 3	=set_mark '3'
-^Q Q 4	=set_mark '4'
-^Q Q 5	=set_mark '5'
-^Q Q 6	=set_mark '6'
-^Q Q 7	=set_mark '7'
-^Q Q 8	=set_mark '8'
-^Q Q 9	=set_mark '9'
-^Q Q 0	=set_mark '0'
-^Q Q return	=set_mark
-# --- Quick Backwards Compatibility ---
-^K 1	=set_mark '1'
-^K 2	=set_mark '2'
-^K 3	=set_mark '3'
-^K 4	=set_mark '4'
-^K 5	=set_mark '5'
-^K 6	=set_mark '6'
-^K 7	=set_mark '7'
-^K 8	=set_mark '8'
-^K 9	=set_mark '9'
-^K 0	=set_mark '0'
-^K F	=find
-
-# ============= Block Menu ============
-^K B	=set_block_begin
-^K K	=set_block_end
-^K L	=go_line
-^K C	=block_copy
-^K M	=block_move
-^K Y	=block_delete
-^K W	=block_write
-^K .	=block_indent
-^K ,	=block_unindent
-
-^L	=find_next
-
-# ============= Buffer Menu ============
-^B L	=buffer_list
-^B N	=buffer_new
-^B Z	=buffer_close
-^B 2	=buffer_clone
-^B O	=buffer_open_file
-^B R	=buffer_insert_file
-^B U	=buffer_undo
-
-# ============= Save Menu ============
-^S A	=buffer_save_all
-^S Q	=buffer_save_all&exit
-^S S	=buffer_save
-^S X	=buffer_save_all true & exit
-^S D	=buffer_save_as
-# --- Save Backwards Compatibility ---
-^K A	=buffer_save_all
-^K Q	=buffer_save_all&exit
-^K S	=buffer_save
-^K X	=buffer_save_all true & exit
-^K D	=buffer_save_as
+# Inside a viewport running a terminal session (class "pty"), the terminal
+# has FIRST CLAIM on every key. "capture" lifts a binding one precedence
+# level above the ordinary keymap ("override" lifts two; they compound), and
+# "*" is the wildcard for any single key that nothing names more
+# specifically. tinput_key encodes the pressed key through the host's own
+# emulator — so application cursor mode and its kin decide the bytes — and
+# declines (false) when there is no session to take it, dropping the key back
+# to its ordinary meaning.
+#
+# The rules, briefly: a longer key sequence in progress (^B N) outranks any
+# single-key capture, and the held starter is passed to the child only if the
+# sequence comes to nothing; within a level a named key beats the wildcard;
+# and a capture bound to the false command RECLAIMS its key for the layers
+# below. So "capture ^C = false" here would give ^C back to mew while a
+# terminal is focused, and "capture capture X = ..." in a user config outbids
+# all of this.
+#
+# del and back are named so they beat the wildcard: mew's erase keys send a
+# plain backspace byte, not the encoder's forward-delete sequence.
+#
+# raw_key_input is named for a sharper reason. It is THE ESCAPE HATCH — the
+# only way to send a child a key mew holds as a possible chord (a literal ^B
+# to a shell) — and at level 0 the wildcard would swallow it, leaving no way
+# to reach those keys at all. Naming it here puts it beside the wildcard
+# rather than under it, where a named key wins.
+#
+# esc is named for a third reason: naming a key SUPPRESSES lower levels'
+# chords that start with it. The wildcard alone could never claim Escape,
+# because esc X / esc y / esc j make it a prefix and a chord in progress
+# outranks any single-key claim — so Escape would be held while a terminal
+# waited for it, and vim would be unusable. Naming it retires mew's esc-chords
+# for as long as a terminal has the focus; M-\ still passes any one of those
+# keys through, and outside a terminal they are untouched.
+[pty::mappings]
+capture *     =tinput_key
+capture esc   =tinput_key
+capture del   =tinput "\x08"
+capture back  =tinput "\x08"
+capture M-\\  =raw_key_input
 `
 }
 
@@ -2025,6 +2705,32 @@ func parseBool(s string, defaultVal bool) bool {
 		return false
 	}
 	return defaultVal
+}
+
+// ParseShowMarks normalizes a showMarks value to its canonical enum form: "no"
+// (off), "yes" (user-visible marks), or "all" (also mew's internal, underscore-
+// prefixed marks). Boolean aliases are accepted so older configs keep working
+// (on/true/1 -> yes, off/false/0 -> no). ok is false for anything unrecognized.
+func ParseShowMarks(s string) (value string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "all":
+		return "all", true
+	case "yes", "on", "true", "1":
+		return "yes", true
+	case "no", "off", "false", "0":
+		return "no", true
+	}
+	return "", false
+}
+
+// parseCursorStyle parses a DECSCUSR cursor shape (0-6), falling back to
+// defaultVal for anything unparseable or out of range.
+func parseCursorStyle(s string, defaultVal int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 || n > 6 {
+		return defaultVal
+	}
+	return n
 }
 
 // parseInt parses a string as integer with a default.

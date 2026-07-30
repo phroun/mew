@@ -89,15 +89,16 @@ type KillBuffer struct {
 	c *garland.Cursor
 }
 
-// NewKillBuffer mints an empty kill buffer, or nil if the garland library is
-// unavailable.
-func NewKillBuffer() *KillBuffer {
-	if library == nil {
-		if err := InitLibrary(); err != nil || library == nil {
-			return nil
-		}
+// NewKillBuffer mints an empty kill buffer using the default library, or nil if
+// the garland library is unavailable.
+func NewKillBuffer() *KillBuffer { return defaultLibrary().NewKillBuffer() }
+
+// NewKillBuffer mints an empty kill buffer in this library.
+func (lib *Library) NewKillBuffer() *KillBuffer {
+	if lib == nil || lib.g == nil {
+		return nil
 	}
-	g, err := library.Open(garland.FileOptions{DataBytes: []byte{}})
+	g, err := lib.g.Open(garland.FileOptions{DataBytes: []byte{}})
 	if err != nil {
 		return nil
 	}

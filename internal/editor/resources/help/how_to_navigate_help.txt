@@ -1,0 +1,5 @@
+=== How to Navigate Help ===
+
+To return to the previous page, you can press the BACKSPACE key.
+
+[[start|Return to Help Index]]

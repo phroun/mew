@@ -58,11 +58,11 @@ func TestLoadLayeredProjects(t *testing.T) {
 	inner := filepath.Join(outer, "svc")
 
 	writeFile(t, filepath.Join(userDir, "editor.conf"),
-		"[options]\ntabSize=3\nsyntax=go\n\n[colors]\ntext=\"USER\"\n\n[mappings.mew]\n^Q\t=user_cmd\n")
+		"[options]\ntabSize=3\nsyntax=go\n\n[colors]\ntext=\"USER\"\n\n[mappings:mew]\n^Q\t=user_cmd\n")
 	writeFile(t, filepath.Join(outer, ".mew", "editor.conf"),
 		"[options]\ntabSize=5\n\n[colors]\nmessages=\"OUTER\"\n\n[formats]\nfoo = go\n")
 	writeFile(t, filepath.Join(inner, ".mew", "editor.conf"),
-		"[options]\nsyntax=cpp\n\n[storage]\nscratch=backups\n\n[mappings.mew]\n^W\t=proj_cmd\n")
+		"[options]\nsyntax=cpp\n\n[storage]\nscratch=backups\n\n[mappings:mew]\n^W\t=proj_cmd\n")
 
 	t.Chdir(inner)
 	m := &Manager{configDir: userDir, configPath: filepath.Join(userDir, "editor.conf")}

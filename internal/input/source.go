@@ -81,6 +81,17 @@ func (f *EventFeed) SendPaste(content []byte, final bool) bool {
 	return f.send(InputEvent{Paste: &PasteChunk{Content: c, IsFinal: final}})
 }
 
+// PostAction implements ActionPoster: fn is delivered in order with the key
+// and paste stream and runs on the editor's main loop. It blocks while the
+// editor is busy and the feed's buffer is full, and reports false once the
+// feed is closed.
+func (f *EventFeed) PostAction(fn func()) bool {
+	if fn == nil {
+		return false
+	}
+	return f.send(InputEvent{Do: fn})
+}
+
 // Close ends the feed. Events already sent are still delivered, then the
 // editor sees the source as closed. Safe to call more than once.
 func (f *EventFeed) Close() {

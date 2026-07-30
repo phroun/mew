@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // TestDeadcatSignalHelper is the child process for TestDeadcatSignalE2E. It
@@ -41,8 +41,8 @@ func TestDeadcatSignalHelper(t *testing.T) {
 		cwd:          os.Getenv("MEW_DEADCAT_CWD"),
 	}
 	buf := buffer.NewFromString("chapter one\n")
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buf, SetFocus: true,
 	})
 	e.insertText("UNSAVED ") // now the buffer is modified

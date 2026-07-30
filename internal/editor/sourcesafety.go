@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // This file wires garland's source-safety cluster into the editor: save
@@ -57,16 +58,35 @@ func (e *Editor) noteBuffer(buf *buffer.Buffer, kind, text string, warn bool) {
 // the destination as the buffer's new source (history preserved).
 
 // requestSave routes one buffer save through the safety prompts and performs
-// it. target must be non-empty; done (optional) receives the outcome.
-func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(bool)) {
-	finish := func(ok bool) {
+// it. target must be non-empty. done (optional) receives the outcome: ok is
+// true only on a completed write; cancelled is true when the user aborted a
+// prompt with ^C/escape (as opposed to answering "no"), which buffer_save_all
+// uses to bail the whole batch. A declined overwrite is (false, false).
+func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(ok, cancelled bool)) {
+	finish := func(ok, cancelled bool) {
 		if done != nil {
-			done(ok)
+			done(ok, cancelled)
 		}
 		e.RequestRender()
 	}
+	// confirmOverwrite runs the shared yes/no overwrite prompt: ^C bails
+	// (cancelled), "no" declines, "yes" proceeds to commitSave.
+	confirmOverwrite := func(message string) {
+		e.PromptMgr.PromptForConfirmation(message, false, func(accepted, confirmed bool) {
+			switch {
+			case !accepted:
+				e.ShowNotification("Save cancelled")
+				finish(false, true)
+			case confirmed:
+				e.commitSave(buf, target, finish)
+			default:
+				e.ShowNotification("Save cancelled")
+				finish(false, false)
+			}
+		})
+	}
 	if buf == nil || target == "" {
-		finish(false)
+		finish(false, false)
 		return
 	}
 
@@ -80,55 +100,258 @@ func (e *Editor) requestSave(buf *buffer.Buffer, target string, done func(bool))
 					msg += " locked by " + st.LockedBy
 				}
 				e.noteBuffer(buf, "source", "Source "+st.State+" on disk before save: "+target, false)
-				e.PromptMgr.PromptForConfirmation(msg+" — OVERWRITE?", false, func(accepted, confirmed bool) {
-					if accepted && confirmed {
-						finish(e.performSave(buf, target))
-					} else {
-						e.ShowNotification("Save cancelled")
-						finish(false)
-					}
-				})
+				confirmOverwrite(msg + " — OVERWRITE?")
 				return
 			}
-			finish(e.performSave(buf, target))
+			e.commitSave(buf, target, finish)
 			return
 		}
 		// No tracked source (new file, pasted content): if the path has
 		// appeared on disk since, it is someone else's file now — confirm.
 		if e.fileExists(target) {
-			e.PromptMgr.PromptForConfirmation(fmt.Sprintf("19: %s EXISTS ON DISK — OVERWRITE?", target), false, func(accepted, confirmed bool) {
-				if accepted && confirmed {
-					finish(e.performSave(buf, target))
-				} else {
-					e.ShowNotification("Save cancelled")
-					finish(false)
-				}
-			})
+			confirmOverwrite(fmt.Sprintf("19: %s EXISTS ON DISK — OVERWRITE?", target))
 			return
 		}
-		finish(e.performSave(buf, target))
+		e.commitSave(buf, target, finish)
 		return
 	}
 
 	// Different file than the buffer's known source.
 	if e.fileExists(target) {
-		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("13: OVERWRITE EXISTING FILE %s?", target), false, func(accepted, confirmed bool) {
-			if accepted && confirmed {
-				finish(e.performSave(buf, target))
+		confirmOverwrite(fmt.Sprintf("13: OVERWRITE EXISTING FILE %s?", target))
+		return
+	}
+	e.commitSave(buf, target, finish)
+}
+
+// commitSave performs the save once the overwrite question is settled, first
+// making sure the destination DIRECTORY exists: when it does not, it prompts to
+// create it (the same yes/no shape as the overwrite prompt) rather than letting
+// the write fail. done receives (ok, cancelled) — cancelled marks a ^C/escape
+// on the create-directory prompt so a batch save can bail.
+func (e *Editor) commitSave(buf *buffer.Buffer, target string, done func(ok, cancelled bool)) {
+	dir := e.missingSaveDir(target)
+	if dir == "" {
+		done(e.performSave(buf, target), false)
+		return
+	}
+	e.PromptMgr.PromptForConfirmation(fmt.Sprintf("Directory does not exist: %s — CREATE?", dir), false, func(accepted, confirmed bool) {
+		switch {
+		case !accepted:
+			e.ShowNotification("Save cancelled")
+			done(false, true) // ^C / escape
+		case !confirmed:
+			e.ShowNotification("Save cancelled")
+			done(false, false) // declined
+		default:
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				e.ShowError("Failed to create directory: " + err.Error())
+				e.noteBuffer(buf, "save", "Directory creation failed: "+err.Error(), false)
+				done(false, false)
+				return
+			}
+			done(e.performSave(buf, target), false)
+		}
+	})
+}
+
+// missingSaveDir returns the destination directory of a save target when it
+// does not yet exist and mew can create it — a real OS-filesystem path. It is
+// "" (nothing to prompt for) for mew:-scheme targets and host-virtualized
+// filesystems, which manage their own directories, and when the directory is
+// already present.
+func (e *Editor) missingSaveDir(target string) string {
+	if isMewPath(target) || !e.usingOSFS {
+		return ""
+	}
+	dir := filepath.Dir(e.normalizeDocPath(target))
+	if dir == "" || dir == "." {
+		return ""
+	}
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// saveAllTally accumulates buffer_save_all's per-buffer outcomes across the
+// asynchronous save sequence.
+type saveAllTally struct{ saved, failed, skipped int }
+
+// saveAllQuiet reports whether a buffer can be saved with NO question at all:
+// named, in-place over its own unchanged source, destination directory
+// present. These save first in both save-all modes, before any prompting.
+func (e *Editor) saveAllQuiet(b *buffer.Buffer) bool {
+	filename := b.GetFilename()
+	if filename == "" || !b.HasSource() {
+		return false
+	}
+	if st := b.SourceConsistency(); st.Changed() {
+		return false
+	}
+	return e.missingSaveDir(filename) == ""
+}
+
+// surfaceBuffer makes buf the VISIBLY painted buffer: the doc viewport showing
+// it becomes the focused (and thus laid-out) main, its caret scrolled into
+// view — so a save prompt about the buffer appears over the buffer itself,
+// never over some unrelated file.
+func (e *Editor) surfaceBuffer(buf *buffer.Buffer) {
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Type == viewport.DocViewport && w.Buffer == buf {
+			e.ViewportManager.SetFocus(w.ID)
+			e.ensureCursorVisible(w)
+			e.RequestRender()
+			return
+		}
+	}
+}
+
+// saveAllNonInteractive is the buffer_save_all "true" mode (also the
+// save-and-quit path): named buffers save without prompting — a source that
+// changed on disk is skipped with a notice (mew never blindly clobbers), a
+// write error fails. An UNNAMED buffer is no longer skipped with a toast: it
+// surfaces visibly and raises the same Save-as prompt as the interactive
+// mode; cancelling it abandons the remaining batch with false, so a chained
+// `& exit` does not run off leaving unsaved work.
+func (e *Editor) saveAllNonInteractive(pending []*buffer.Buffer, done func(success bool)) {
+	var tally saveAllTally
+	var prompting []*buffer.Buffer
+	for _, b := range pending {
+		filename := b.GetFilename()
+		if filename == "" {
+			prompting = append(prompting, b)
+			continue
+		}
+		if b.HasSource() {
+			if st := b.SourceConsistency(); st.Changed() {
+				tally.skipped++
+				e.noteBuffer(b, "source",
+					fmt.Sprintf("Skipped %s: %s on disk — save it individually", filename, st.State), true)
+				continue
+			}
+		}
+		if e.performSave(b, filename) {
+			tally.saved++
+		} else {
+			tally.failed++
+		}
+	}
+	e.saveAllPrompting(prompting, tally, done)
+}
+
+// saveAllInteractive is the interactive buffer_save_all. Everything that can
+// be saved WITHOUT any question — named, in-place, source unchanged,
+// directory present — saves first; only then does the prompting pass walk the
+// rest one at a time (the prompts are async and drive each other). done
+// receives the overall success (false on any failure, skip, or abort).
+func (e *Editor) saveAllInteractive(pending []*buffer.Buffer, done func(success bool)) {
+	var tally saveAllTally
+	var prompting []*buffer.Buffer
+	for _, b := range pending {
+		if e.saveAllQuiet(b) {
+			if e.performSave(b, b.GetFilename()) {
+				tally.saved++
 			} else {
-				e.ShowNotification("Save cancelled")
-				finish(false)
+				tally.failed++
+			}
+			continue
+		}
+		prompting = append(prompting, b)
+	}
+	e.saveAllPrompting(prompting, tally, done)
+}
+
+// saveAllPrompting walks the buffers that need a question, one at a time. Each
+// buffer SURFACES first (its viewport becomes the visible main), so the prompt
+// appears over the file it is about:
+//
+//   - a never-saved buffer (unnamed, or named with no source yet) raises a
+//     Save-as prompt seeded with just its current name — no history above it —
+//     and the entered name flows through requestSave, so a name that collides
+//     with an existing file gets the overwrite question next;
+//   - a named buffer with source questions (changed on disk, missing
+//     directory) goes through requestSave's own prompts as before.
+//
+// ANY ^C — at a name prompt or a save prompt — bails the entire remaining
+// batch with a false result.
+func (e *Editor) saveAllPrompting(pending []*buffer.Buffer, tally saveAllTally, done func(success bool)) {
+	if len(pending) == 0 {
+		e.reportSaveAll(tally)
+		done(tally.failed == 0 && tally.skipped == 0)
+		return
+	}
+	buf, rest := pending[0], pending[1:]
+	abort := func() {
+		e.ShowNotification("Save all cancelled")
+		e.RequestRender()
+		done(false)
+	}
+	outcome := func(ok, cancelled bool) {
+		if cancelled {
+			abort()
+			return
+		}
+		if ok {
+			tally.saved++
+		} else {
+			tally.failed++
+		}
+		e.saveAllPrompting(rest, tally, done)
+	}
+	e.surfaceBuffer(buf)
+	if buf.GetFilename() == "" || !buf.HasSource() {
+		// Never saved: confirm (or supply) the name with the buffer in view.
+		e.PromptMgr.PromptForFilenameFresh("Save as", buf.GetFilename(), func(accepted bool, _, name string) {
+			switch {
+			case !accepted:
+				abort() // ^C on the name prompt
+			case name == "":
+				tally.skipped++
+				e.saveAllPrompting(rest, tally, done)
+			default:
+				e.requestSave(buf, name, outcome)
 			}
 		})
 		return
 	}
-	finish(e.performSave(buf, target))
+	e.requestSave(buf, buf.GetFilename(), outcome)
+}
+
+// reportSaveAll shows the end-of-batch summary shared by both save-all modes.
+func (e *Editor) reportSaveAll(tally saveAllTally) {
+	switch {
+	case tally.failed > 0 || tally.skipped > 0:
+		e.ShowError(fmt.Sprintf("Saved %d files, %d failed, %d skipped", tally.saved, tally.failed, tally.skipped))
+	case tally.saved > 0:
+		e.ShowNotification(fmt.Sprintf("Saved %d files", tally.saved))
+	default:
+		e.ShowNotification("No modified files to save")
+	}
+	e.RequestRender()
 }
 
 // performSave executes the actual write: in place when target is the
 // buffer's tracked source, else a save-as that adopts target as the new
 // source. Scars and backup failures surface as notices.
 func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
+	// A mew:-scheme target (a virtualized support-tree page, e.g. the help
+	// wiki under a host) saves through the mew VFS: garland has no source
+	// for it and the document filesystem does not speak the scheme.
+	if isMewPath(target) {
+		if err := e.mew.WriteFile(target, []byte(buf.GetContent())); err != nil {
+			e.ShowError("Failed to save: " + err.Error())
+			e.noteBuffer(buf, "save", "Save failed: "+err.Error(), false)
+			return false
+		}
+		buf.MarkCleanSavedTo(target)
+		e.ShowNotification("Saved: " + target)
+		return true
+	}
+	// Tilde/relative targets normalize so garland's save (and its
+	// rename/backup dance) always sees a real absolute path.
+	target = e.normalizeDocPath(target)
+
 	var warnings []string
 	var err error
 	adopted := false
@@ -161,6 +384,10 @@ func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
 // buffer's world: a real stat on the OS, a read probe through the host FS
 // (hosts expose no stat; the read is the only honest signal).
 func (e *Editor) fileExists(path string) bool {
+	if isMewPath(path) {
+		_, ok := e.mew.Stat(path)
+		return ok
+	}
 	if e.usingOSFS {
 		_, err := os.Stat(path)
 		return err == nil
@@ -214,6 +441,24 @@ func pathHash(path string) string {
 	}
 	sum := sha256.Sum256([]byte(abs))
 	return hex.EncodeToString(sum[:4])
+}
+
+// canonicalPath resolves a file path to a stable, canonical absolute form so the
+// same file always maps to the same lock — no matter which working directory a
+// relative name (mew go.work) was typed from, nor symlinks/firmlinks along the
+// way (macOS routes /Users through a firmlink, so filepath.Abs alone can leave
+// two references to one file looking different). Symlink resolution needs the
+// file to exist; for a not-yet-created file it falls back to a plain absolute
+// path.
+func canonicalPath(path string) string {
+	abs := path
+	if a, err := filepath.Abs(path); err == nil {
+		abs = a
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }
 
 // ---------------------------------------------------------------------------
@@ -301,20 +546,23 @@ func gitignoreCoversLocks(path string) bool {
 // live foreign lock is respected: mew warns and proceeds without the lock
 // (advisory, like the emacs protocol); a stale lock from a dead process on
 // this host is replaced silently.
-func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) {
-	if !e.Config.UseLocks || !e.usingOSFS || buf == nil {
-		return
+// It works regardless of whether the buffer's CONTENT is virtualized through a
+// host FileSystem: the lock itself is an OS-level advisory file under ~/.mew (or
+// the project), keyed to the file's path, so it coordinates any mew instances
+// that share that lock directory. It returns "" on success (or when a live
+// foreign lock is respected, or when locking is disabled) and a human reason
+// when a lock was wanted but could not be taken, so the caller can warn.
+func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) (skipReason string) {
+	if !e.Config.UseLocks || buf == nil {
+		return "" // locking not requested — not a failure
 	}
-	dir := e.mewLockDir()
+	abs := canonicalPath(path) // stable key: same file -> same lock
+	dir := e.mewLockDir(abs)   // resolve the project relative to the FILE
 	if dir == "" {
-		return
+		return "no project or home directory to hold the lock"
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
-	abs := path
-	if a, err := filepath.Abs(path); err == nil {
-		abs = a
+		return "lock directory is not writable (" + err.Error() + ")"
 	}
 	lockPath := filepath.Join(dir, pathHash(abs)+".lock")
 	owner := e.lockOwnerString()
@@ -326,19 +574,62 @@ func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) {
 			if e.lockHolderAlive(holder) {
 				e.noteBuffer(buf, "lock", fmt.Sprintf("%s is being edited by %s (mew lock)", filepath.Base(abs), holder), true)
 				e.recordForeignLock(buf, foreignLockInfo{owner: holder, kind: "mew", path: lockPath})
-				return // respect the live lock; open stays advisory
+				return "" // respect the live lock; open stays advisory
 			}
 			// Stale lock from a dead process: fall through and take it.
 		}
 	}
 	content := owner + "\n" + abs + "\n"
 	if err := os.WriteFile(lockPath, []byte(content), 0o644); err != nil {
-		return
+		return "could not write the lock file (" + err.Error() + ")"
 	}
 	if e.mewLocks == nil {
 		e.mewLocks = make(map[*buffer.Buffer]string)
 	}
 	e.mewLocks[buf] = lockPath
+	return ""
+}
+
+// deferMewLock records that buf's mew-native lock was deliberately not taken
+// at open because the open was read-only: a viewer holds no editing lock (the
+// emacs school — garland's emacs locks are lazy the same way, appearing only
+// on the first content mutation). The lock is acquired post-hoc by
+// ensureDeferredMewLock the moment read-only is turned off for the buffer —
+// the intent-to-edit boundary — and the foreign-lock warning moves there too.
+func (e *Editor) deferMewLock(buf *buffer.Buffer, path string) {
+	if !e.Config.UseLocks || buf == nil {
+		return
+	}
+	if e.mewLockDeferred == nil {
+		e.mewLockDeferred = make(map[*buffer.Buffer]string)
+	}
+	e.mewLockDeferred[buf] = path
+}
+
+// ensureDeferredMewLock acquires the mew-native lock for a buffer whose
+// acquisition was deferred by a read-only open. Called when read-only turns
+// off (set_option, option overlay). No-op for buffers that were never
+// deferred — the common editable open acquired at load time. Once editing
+// intent is declared the lock stays for the session, matching emacs (lock
+// until save) and vim (swapfile until close): re-enabling read-only does not
+// release it.
+func (e *Editor) ensureDeferredMewLock(buf *buffer.Buffer) {
+	path, ok := e.mewLockDeferred[buf]
+	if !ok {
+		return
+	}
+	delete(e.mewLockDeferred, buf)
+	if reason := e.acquireMewLock(buf, path); reason != "" {
+		e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
+	}
+}
+
+// ensureAllDeferredMewLocks acquires every deferred lock — the global
+// read-only option was turned off, so every viewer became editable at once.
+func (e *Editor) ensureAllDeferredMewLocks() {
+	for buf := range e.mewLockDeferred {
+		e.ensureDeferredMewLock(buf)
+	}
 }
 
 // releaseMewLock drops the mew-native lock held for a buffer, if any.
@@ -357,17 +648,54 @@ func (e *Editor) releaseAllMewLocks() {
 	}
 }
 
-// mewLockDir returns the locks directory inside the nearest .mew folder:
-// the innermost project directory when a project cascade applies, else the
-// user's ~/.mew.
-func (e *Editor) mewLockDir() string {
-	if pd := e.LoadedConfig.ProjectDirs; len(pd) > 0 {
-		return filepath.Join(pd[len(pd)-1], "locks") // innermost project last
+// mewLockDir returns the locks directory for a file: inside the nearest .mew
+// project directory ABOVE THE FILE, else the user's ~/.mew. The project root is
+// resolved relative to the file being edited — not where mew was launched — so
+// two mew instances opening the same file (from any working directory) agree on
+// the same lock, which is what lets them see each other.
+func (e *Editor) mewLockDir(path string) string {
+	if mew := e.nearestProjectMewDir(path); mew != "" {
+		return filepath.Join(mew, "locks")
 	}
 	if e.home == "" {
 		return ""
 	}
 	return filepath.Join(e.home, ".mew", "locks")
+}
+
+// nearestProjectMewDir walks up from a file's directory to the filesystem root
+// and returns the nearest ".mew" project directory (a real directory), excluding
+// the user's own ~/.mew (which is config, not a project). Returns "" when the
+// file sits in no project or the project cascade is disabled. This is the
+// file-relative counterpart of the config manager's launch-time project walk.
+func (e *Editor) nearestProjectMewDir(path string) string {
+	if !e.LoadedConfig.General.ProjectConfig || path == "" {
+		return ""
+	}
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	dir = filepath.Dir(dir)
+	localMew := ""
+	if e.home != "" {
+		if a, err := filepath.Abs(filepath.Join(e.home, ".mew")); err == nil {
+			localMew = a
+		}
+	}
+	for {
+		mew := filepath.Join(dir, ".mew")
+		if mew != localMew {
+			if fi, err := os.Stat(mew); err == nil && fi.IsDir() {
+				return mew
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // lockOwnerString identifies this process in the emacs owner convention
@@ -502,6 +830,7 @@ func (e *Editor) bufferStatusText(buf *buffer.Buffer) string {
 // forgetBufferSafety clears safety state when a buffer leaves the editor.
 func (e *Editor) forgetBufferSafety(buf *buffer.Buffer) {
 	e.releaseMewLock(buf)
+	delete(e.mewLockDeferred, buf)
 	delete(e.bufNotices, buf)
 	e.clearBufferLockState(buf)
 }

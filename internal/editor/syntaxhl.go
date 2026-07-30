@@ -1,7 +1,6 @@
 package editor
 
 import (
-	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,17 +11,19 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/jsf"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
-// builtinSyntax carries mew's own MIT-licensed grammar files.
-//
-//go:embed syntax/*.jsf
-var builtinSyntax embed.FS
+// mew's own MIT-licensed grammar pack (and its help manual) ship inside the
+// binary and in the system resource directory as the read-only lower layers of
+// the mew: filesystem (see mewfs.go / resources.go). Grammar resolution reads
+// "mew:///syntax/<name>.jsf" through that layered tree, so the shipped
+// highlighters resolve on a fresh install without any copy into ~/.mew, while a
+// user's own ~/.mew/syntax/<name>.jsf still shadows them.
 
 // defaultSyntaxMap is the built-in mapping from conventional jsf color-class
-// names to mew's systematic syntax* color names. [colors.syntax] and
-// [colors.syntax.<grammar>] override it; classes that resolve nowhere fall
+// names to mew's systematic syntax* color names. [syntax] and
+// [syntax.<grammar>] override it; classes that resolve nowhere fall
 // back to the attributes in the grammar file itself. Keys are lowercase.
 var defaultSyntaxMap = map[string]string{
 	"comment":      "syntaxComment",
@@ -73,13 +74,67 @@ var defaultSyntaxMap = map[string]string{
 // the buffer (detected or global), per-line resolved colors, and the machine
 // state entering the next uncomputed line. Content edits (seen via ChangeSeq)
 // drop the cache; lines re-highlight lazily as rendered.
+// linkSpan is one hyperlink recognized by the buffer's grammar on a single
+// line: the doc-rune range of its full source text ([[target|Title]]), and
+// the parsed destination and display title. Link spans live in the syntax
+// cache alongside the colors — same lifecycle, same ChangeSeq invalidation —
+// so they are derived data, never stale across edits.
+type linkSpan struct {
+	Start, End    int // [Start, End) doc runes on the line
+	Target, Title string
+}
+
+// markupKind classifies a dokuwiki inline/heading run that browse mode renders
+// with its markers hidden and its text restyled.
+type markupKind uint8
+
+const (
+	markupBold markupKind = iota
+	markupItalic
+	markupUnderline
+	markupHeading
+)
+
+// markupSpan is one such run on a line: its full doc-rune source range
+// (markers included), the marker length on each side, its kind, and — for a
+// heading — its level 1..5 (====== is 1, == is 5). Lives in the syntax cache
+// beside links and colors, same ChangeSeq lifecycle.
+type markupSpan struct {
+	Start, End int
+	MarkLeft   int // marker runes hidden at the start
+	MarkRight  int // marker runes hidden at the end
+	Kind       markupKind
+	Level      int
+}
+
 type synCache struct {
 	seq     int64
 	grammar *jsf.Instance
-	colors  [][]string
+	// loader is the loader that produced grammar; highlighting runs through it so
+	// its interned frame/state pointers stay consistent across the buffer.
+	loader *jsf.Loader
+	// linkable notes that the grammar recognizes hyperlinks mew can navigate
+	// (currently the dokuwiki grammar); links/markup then hold per-line spans,
+	// truncated/extended in lockstep with colors.
+	linkable bool
+	links    [][]linkSpan
+	markup   [][]markupSpan
+	// refs holds each line's per-rune grammar color classes. Resolution to SGR
+	// is deferred to render time (syntaxLineColors), so the same buffer painted
+	// in viewports of different classes gets each viewport's class/type-scoped syntax
+	// colors (e.g. [quickhelp::colors] syntaxTable).
+	refs    [][]*jsf.ColorRef
 	ctx     [][]uint8       // per-line, per-rune CtxComment/CtxString flags
 	entries []jsf.LineState // entry state per computed line (for point queries)
 	next    jsf.LineState
+}
+
+// synColorKey memoizes a grammar color class resolved for a specific viewport
+// class/type (see syntaxColorFor).
+type synColorKey struct {
+	ref   *jsf.ColorRef
+	class string
+	typ   string
 }
 
 // joeSyntaxDirs are the installed JOE grammar collections, consulted only when
@@ -91,24 +146,28 @@ var joeSyntaxDirs = []string{
 }
 
 // resolveSyntaxFile finds a grammar file by name, in order: project .mew/syntax
-// directories (nearest project first, through the document FS), the user's
-// mew:/syntax tree (virtualizable), mew's built-in set, then — on a real OS —
-// installed JOE directories.
-func (e *Editor) resolveSyntaxFile(name string) ([]byte, error) {
+// directories (nearest project first, through the document FS), then the mew:
+// tree — which is itself layered (the user's ~/.mew/syntax, the system resource
+// directory, and mew's embedded built-in set, in that order) — then, on a real
+// OS, installed JOE directories. When skipProject is set — for a flavor named in
+// the syntaxOverrides option — the project layer is skipped, so the user's own
+// copy (or a shipped fallback) wins over whatever the document's project tree
+// ships.
+func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error) {
 	// A grammar name is a bare identifier, never a path.
 	if strings.ContainsAny(name, "/\\") || name == "" {
 		return nil, fmt.Errorf("invalid syntax name %q", name)
 	}
-	pd := e.LoadedConfig.ProjectDirs
-	for i := len(pd) - 1; i >= 0; i-- {
-		if src, err := e.FS.ReadFile(filepath.Join(pd[i], "syntax", name+".jsf")); err == nil {
-			return src, nil
+	if !skipProject {
+		pd := e.LoadedConfig.ProjectDirs
+		for i := len(pd) - 1; i >= 0; i-- {
+			if src, err := e.FS.ReadFile(filepath.Join(pd[i], "syntax", name+".jsf")); err == nil {
+				return src, nil
+			}
 		}
 	}
-	if src, err := e.mew.ReadFile("mew:/syntax/" + name + ".jsf"); err == nil {
-		return src, nil
-	}
-	if src, err := builtinSyntax.ReadFile("syntax/" + name + ".jsf"); err == nil {
+	// The mew: read is layered: ~/.mew/syntax -> system resources -> embedded.
+	if src, err := e.mew.ReadFile("mew:///syntax/" + name + ".jsf"); err == nil {
 		return src, nil
 	}
 	if e.usingOSFS {
@@ -123,30 +182,90 @@ func (e *Editor) resolveSyntaxFile(name string) ([]byte, error) {
 
 // canonicalSyntaxName maps [formats] aliases to their grammar BEFORE loading,
 // so the instance (and its color-class references, which key the
-// [colors.syntax.*] maps) carries the canonical name. An actual file with the
+// [syntax.*] maps) carries the canonical name. An actual file with the
 // alias's own name — a user's or JOE's js.jsf, say — wins over the alias.
 func (e *Editor) canonicalSyntaxName(name string) string {
 	alias, ok := e.LoadedConfig.Formats[strings.ToLower(name)]
 	if !ok || alias == "" {
 		return name
 	}
-	if _, err := e.resolveSyntaxFile(name); err == nil {
+	if _, err := e.resolveSyntaxFile(name, false); err == nil {
 		return name
 	}
 	return alias
+}
+
+// parseSyntaxOverrides splits a syntaxOverrides value ("go conf") into a set of
+// lowercased grammar flavors. Whitespace- and comma-separated names are both
+// accepted, so "go,conf" and "go conf" mean the same.
+func parseSyntaxOverrides(s string) map[string]bool {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == ',' || r == ';'
+	})
+	if len(fields) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		set[strings.ToLower(f)] = true
+	}
+	return set
+}
+
+// loaderFor returns the loader to resolve grammar name through: the project-
+// skipping loader when name is in the given syntaxOverrides set, else the normal
+// one.
+func (e *Editor) loaderFor(name string, overrides map[string]bool) *jsf.Loader {
+	if overrides[strings.ToLower(name)] {
+		return e.syntaxLoaderOverride
+	}
+	return e.syntaxLoader
+}
+
+// bufferSyntaxOverrides returns the effective syntaxOverrides set for buffer b:
+// the per-viewport value from a main-buffer viewport showing b (already resolved
+// through the option overlay into its ViewState), else the editor default. It
+// reads the stored ViewState value directly (not through the overlay) so it can
+// be called while the overlay is being resolved without recursing.
+func (e *Editor) bufferSyntaxOverrides(b *buffer.Buffer) map[string]bool {
+	raw := e.Config.SyntaxOverrides
+	if b != nil && e.ViewportManager != nil {
+		for _, w := range e.ViewportManager.AllViewports() {
+			if w.Type != viewport.PromptViewport && w.Buffer == b {
+				raw = w.ViewState.SyntaxOverrides
+				break
+			}
+		}
+	}
+	return parseSyntaxOverrides(raw)
 }
 
 // initSyntax prepares the highlighter and loads the configured grammar, if
 // any. Load problems surface as a transient error and leave highlighting off.
 func (e *Editor) initSyntax() {
 	e.synCaches = make(map[*buffer.Buffer]*synCache)
-	e.synSGR = make(map[*jsf.ColorRef]string)
-	e.syntaxLoader = jsf.NewLoader(e.resolveSyntaxFile)
+	e.synSGR = make(map[synColorKey]string)
+	e.syntaxLoader = jsf.NewLoader(func(name string) ([]byte, error) {
+		return e.resolveSyntaxFile(name, false)
+	})
+	e.syntaxLoaderOverride = jsf.NewLoader(func(name string) ([]byte, error) {
+		return e.resolveSyntaxFile(name, true)
+	})
+	e.reloadGlobalGrammar()
+}
+
+// reloadGlobalGrammar (re)loads the global fallback grammar from Config.Syntax
+// through the editor-wide syntaxOverrides, recording the loader that produced it.
+// Load problems surface as a transient error and leave highlighting off.
+func (e *Editor) reloadGlobalGrammar() {
+	e.syntaxGrammar = nil
+	e.syntaxGrammarLoader = nil
 	if e.Config.Syntax == "" {
 		return
 	}
 	name := e.canonicalSyntaxName(e.Config.Syntax)
-	in, err := e.syntaxLoader.Load(name)
+	ld := e.loaderFor(name, parseSyntaxOverrides(e.Config.SyntaxOverrides))
+	in, err := ld.Load(name)
 	if err != nil {
 		e.ShowError("Syntax: " + err.Error())
 		e.Config.Syntax = ""
@@ -154,6 +273,7 @@ func (e *Editor) initSyntax() {
 	}
 	e.Config.Syntax = name
 	e.syntaxGrammar = in
+	e.syntaxGrammarLoader = ld
 }
 
 // setSyntax switches the active grammar at runtime ("" or "none" disables).
@@ -164,44 +284,53 @@ func (e *Editor) setSyntax(name string) bool {
 	if name == "" {
 		e.Config.Syntax = ""
 		e.syntaxGrammar = nil
+		e.syntaxGrammarLoader = nil
 		e.resetSyntaxCaches()
 		return true
 	}
 	name = e.canonicalSyntaxName(name)
-	in, err := e.syntaxLoader.Load(name)
+	ld := e.loaderFor(name, parseSyntaxOverrides(e.Config.SyntaxOverrides))
+	in, err := ld.Load(name)
 	if err != nil {
 		e.ShowError("Syntax: " + err.Error())
 		return false
 	}
 	e.Config.Syntax = name
 	e.syntaxGrammar = in
+	e.syntaxGrammarLoader = ld
 	e.resetSyntaxCaches()
 	return true
 }
 
 func (e *Editor) resetSyntaxCaches() {
 	e.synCaches = make(map[*buffer.Buffer]*synCache)
-	e.synSGR = make(map[*jsf.ColorRef]string)
+	e.synSGR = make(map[synColorKey]string)
 }
 
 // syntaxColorFor resolves a grammar color class to the SGR string painted for
-// it, through the mapping chain: the per-grammar [colors.syntax.<name>] map,
-// the global [colors.syntax] map, then the built-in conventions — each naming
+// it, through the mapping chain: the per-grammar [syntax.<name>] map,
+// the global [syntax] map, then the built-in conventions — each naming
 // a mew color resolved through the color scheme. When no mapping resolves,
 // the grammar file's own "=Class attrs" colors apply.
-func (e *Editor) syntaxColorFor(ref *jsf.ColorRef) string {
+func (e *Editor) syntaxColorFor(ref *jsf.ColorRef, winClass, winType string) string {
 	if ref == nil {
 		return ""
 	}
-	if sgr, ok := e.synSGR[ref]; ok {
+	key := synColorKey{ref, winClass, winType}
+	if sgr, ok := e.synSGR[key]; ok {
 		return sgr
 	}
-	sgr := e.resolveSyntaxColor(ref)
-	e.synSGR[ref] = sgr
+	sgr := e.resolveSyntaxColor(ref, winClass, winType)
+	e.synSGR[key] = sgr
 	return sgr
 }
 
-func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef) string {
+// resolveSyntaxColor maps a grammar color class to an SGR, resolving the mapped
+// mew color name through the color scheme at the PAINTING viewport's class/type —
+// so [<class>::colors] and [colors/<type>] overlays reach syntax highlighting,
+// just as they do link/button/text colors. Falls back to the grammar file's own
+// "=Class attrs" color when nothing maps.
+func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef, winClass, winType string) string {
 	class := strings.ToLower(ref.Class)
 	lookup := func(name string) (string, bool) {
 		if m := e.LoadedConfig.SyntaxMaps[strings.ToLower(ref.Syntax)]; m != nil {
@@ -219,8 +348,11 @@ func (e *Editor) resolveSyntaxColor(ref *jsf.ColorRef) string {
 		}
 		return "", false
 	}
+	if winType == "" {
+		winType = "doc"
+	}
 	if mewName, ok := lookup(class); ok && mewName != "" {
-		if sgr := e.LoadedConfig.Colors.Resolve("", "main", mewName); sgr != "" {
+		if sgr := e.LoadedConfig.Colors.Resolve(winClass, winType, mewName); sgr != "" {
 			return sgr
 		}
 	}
@@ -258,16 +390,20 @@ func shebangName(line string) string {
 
 // detectName resolves a detected short name (interpreter or extension)
 // through the [formats] table and the grammar search path, returning the
-// loaded grammar or nil.
-func (e *Editor) detectName(name string) *jsf.Instance {
+// loaded grammar and the loader that produced it (or nil, nil). overrides is
+// the effective syntaxOverrides set: a flavor listed there resolves through the
+// project-skipping loader instead.
+func (e *Editor) detectName(name string, overrides map[string]bool) (*jsf.Instance, *jsf.Loader) {
 	if name == "" {
-		return nil
+		return nil, nil
 	}
-	in, err := e.syntaxLoader.Load(e.canonicalSyntaxName(name))
+	canon := e.canonicalSyntaxName(name)
+	ld := e.loaderFor(canon, overrides)
+	in, err := ld.Load(canon)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return in
+	return in, ld
 }
 
 // vimModelineRe matches vim/vi/ex modelines: "vim: set ft=python:" or
@@ -315,25 +451,42 @@ func (e *Editor) modelineScan(b *buffer.Buffer) string {
 	return ""
 }
 
-// bufferGrammar picks the grammar for one buffer. With syntaxDetect on, a
+// bufferGrammar picks the grammar for one buffer, returning it alongside the
+// loader that produced it (nil, nil when none applies). With syntaxDetect on, a
 // first-line shebang wins, then a vim/emacs modeline, then the filename's
 // extension (or extensionless basename, e.g. Makefile) — all resolved
 // through [formats]; a buffer that detects nothing falls back to the global
-// syntax option's grammar.
-func (e *Editor) bufferGrammar(b *buffer.Buffer) *jsf.Instance {
+// syntax option's grammar. Flavors named in the buffer's effective
+// syntaxOverrides resolve with the project .mew/syntax layer skipped.
+func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 	if !e.Config.SyntaxDetect {
-		return e.syntaxGrammar
+		return e.syntaxGrammar, e.syntaxGrammarLoader
 	}
+	overrides := e.bufferSyntaxOverrides(b)
 	if b.GetLineCount() > 0 {
 		first := strings.TrimRight(b.GetLine(0), "\n\r")
-		if in := e.detectName(shebangName(first)); in != nil {
-			return in
+		if in, ld := e.detectName(shebangName(first), overrides); in != nil {
+			return in, ld
 		}
 	}
-	if in := e.detectName(e.modelineScan(b)); in != nil {
-		return in
+	if in, ld := e.detectName(e.modelineScan(b), overrides); in != nil {
+		return in, ld
 	}
 	if fn := b.GetFilename(); fn != "" {
+		// A page inside a REGISTERED wiki's root highlights as that wiki's
+		// format (the help tree's .txt pages as dokuwiki) — the registry is
+		// the mew:-space analogue of the path-conditional [formats] rules
+		// below. Both sides canonicalize, so a local mew:/// root and the
+		// real ~/.mew path it names compare as one subtree.
+		if url := e.canonicalDocURL(fn); url != "" {
+			for _, def := range wikiRegistry {
+				if urlWithin(url, e.canonicalDocURL(def.Root)) {
+					if in, ld := e.detectName(def.Format, overrides); in != nil {
+						return in, ld
+					}
+				}
+			}
+		}
 		base := strings.ToLower(filepath.Base(fn))
 		name := strings.TrimPrefix(filepath.Ext(base), ".")
 		if name == "" {
@@ -355,17 +508,70 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) *jsf.Instance {
 			sort.Strings(pats)
 			for _, p := range pats {
 				if rules[p] != "" && config.PathMatches(p, abs) {
-					if in := e.detectName(rules[p]); in != nil {
-						return in
+					if in, ld := e.detectName(rules[p], overrides); in != nil {
+						return in, ld
 					}
 				}
 			}
 		}
-		if in := e.detectName(name); in != nil {
-			return in
+		if in, ld := e.detectName(name, overrides); in != nil {
+			return in, ld
 		}
 	}
-	return e.syntaxGrammar
+	// Fallback grammar. A per-viewport default ([options/tool] syntax=dokuwiki,
+	// [<class>.options] syntax=...) resolved onto the viewport's ViewState wins
+	// — that is the explicit way to give a viewport kind a grammar. Otherwise
+	// the GLOBAL syntax option applies, but only to DOCUMENTS: a buffer shown
+	// solely in tool-viewport readouts (no filename, nothing detected) stays
+	// plain rather than inheriting the document grammar.
+	if name := e.bufferViewportSyntax(b); name != "" {
+		if in, ld := e.detectName(name, overrides); in != nil {
+			return in, ld
+		}
+		return nil, nil
+	}
+	if !e.bufferIsDocument(b) {
+		return nil, nil
+	}
+	return e.syntaxGrammar, e.syntaxGrammarLoader
+}
+
+// bufferViewportSyntax returns the per-viewport default grammar (ViewState.Syntax)
+// of the first viewport showing b that has one set, or "" — the grammar-
+// agnostic overlay's contribution (see reconcileViewportSyntax).
+func (e *Editor) bufferViewportSyntax(b *buffer.Buffer) string {
+	if b == nil || e.ViewportManager == nil {
+		return ""
+	}
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Buffer == b && w.ViewState.Syntax != "" {
+			return w.ViewState.Syntax
+		}
+	}
+	return ""
+}
+
+// bufferIsDocument reports whether the global syntax fallback should apply to
+// a buffer: true when a document viewport shows it (or no viewport shows it yet —
+// the permissive default for launch and tests), false when only tool viewports
+// do (a generated readout that should stay plain text).
+func (e *Editor) bufferIsDocument(b *buffer.Buffer) bool {
+	if b == nil || e.ViewportManager == nil {
+		return true
+	}
+	shownInTool := false
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Buffer != b {
+			continue
+		}
+		if w.Type == viewport.DocViewport {
+			return true
+		}
+		if w.Type == viewport.ToolViewport {
+			shownInTool = true
+		}
+	}
+	return !shownInTool
 }
 
 // ensureSynCache returns the buffer's highlight cache extended through
@@ -384,7 +590,8 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 	case c == nil:
 		e.pruneSyntaxCaches()
 		b.TakeDirtyLow() // consume any pre-cache history
-		c = &synCache{seq: b.ChangeSeq(), grammar: e.bufferGrammar(b)}
+		g, ld := e.bufferGrammar(b)
+		c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld, linkable: grammarLinkable(g)}
 		e.synCaches[b] = c
 	case c.seq != b.ChangeSeq():
 		// Content changed: the dirty watermark says where the damage starts.
@@ -394,14 +601,23 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 		// shebang detection, so that (and a grammarless cache) rebuilds.
 		low := b.TakeDirtyLow()
 		if low <= 0 || c.grammar == nil {
-			c = &synCache{seq: b.ChangeSeq(), grammar: e.bufferGrammar(b)}
+			g, ld := e.bufferGrammar(b)
+			c = &synCache{seq: b.ChangeSeq(), grammar: g, loader: ld, linkable: grammarLinkable(g)}
 			e.synCaches[b] = c
 		} else {
-			if low < len(c.colors) {
+			if low < len(c.refs) {
 				c.next = c.entries[low]
-				c.colors = c.colors[:low]
+				c.refs = c.refs[:low]
 				c.ctx = c.ctx[:low]
 				c.entries = c.entries[:low]
+				if c.linkable {
+					if low < len(c.links) {
+						c.links = c.links[:low]
+					}
+					if low < len(c.markup) {
+						c.markup = c.markup[:low]
+					}
+				}
 			}
 			c.seq = b.ChangeSeq()
 		}
@@ -413,36 +629,280 @@ func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
 	// Per-line GetLine re-seeks to an absolute line (O(line)), so tokenizing a
 	// large prefix that way is O(n²) — the dominant cost on big files. A single
 	// GetLineRange is O(span).
-	if start := len(c.colors); start <= docLine {
+	if start := len(c.refs); start <= docLine {
 		lines := b.GetLineRange(start, docLine+1)
 		for _, raw := range lines {
 			line := strings.TrimRight(raw, "\n\r")
+			lineRunes := []rune(line)
 			c.entries = append(c.entries, c.next)
-			attrs, ctx, next := e.syntaxLoader.HighlightLineFull(c.grammar, c.next, []rune(line))
-			colors := make([]string, len(attrs))
-			for j, ref := range attrs {
-				colors[j] = e.syntaxColorFor(ref)
-			}
-			c.colors = append(c.colors, colors)
+			attrs, ctx, next := c.loader.HighlightLineFull(c.grammar, c.next, lineRunes)
+			// Keep the color CLASSES; resolve to SGR per painting viewport at
+			// render time (syntaxLineColors). Copy, so a loader that reuses its
+			// attrs slice can't mutate the cache.
+			c.refs = append(c.refs, append([]*jsf.ColorRef(nil), attrs...))
 			c.ctx = append(c.ctx, ctx)
+			if c.linkable {
+				c.links = append(c.links, extractLinkSpans(lineRunes, attrs))
+				c.markup = append(c.markup, extractMarkupSpans(lineRunes, attrs))
+			}
 			c.next = next
 		}
 	}
 	return c
 }
 
+// grammarLinkable reports whether a grammar's Link-class runs are hyperlinks
+// mew understands. Currently the dokuwiki grammar (which also covers plain
+// .txt files that the path-conditional [formats] rules route to it).
+func grammarLinkable(g *jsf.Instance) bool {
+	return g != nil && strings.EqualFold(g.Name, "dokuwiki")
+}
+
+// extractLinkSpans finds the runs the grammar colored with the "Link" class
+// and splits each into individual [[target|Title]] links. The dokuwiki grammar
+// colors the whole source — brackets included — as Link, and two adjacent
+// links (...]][[...) form one continuous Link run with no gap between them, so
+// a run is parsed into separate "[[" ... "]]" segments rather than taken whole.
+// A link never crosses a line (an unclosed [[ resets at the newline).
+func extractLinkSpans(runes []rune, attrs []*jsf.ColorRef) []linkSpan {
+	var spans []linkSpan
+	n := len(attrs)
+	if n > len(runes) {
+		n = len(runes)
+	}
+	isLink := func(i int) bool {
+		return i < n && attrs[i] != nil && strings.EqualFold(attrs[i].Class, "Link")
+	}
+	for i := 0; i < n; {
+		if !isLink(i) {
+			i++
+			continue
+		}
+		runStart := i
+		for isLink(i) {
+			i++
+		}
+		runEnd := i
+		// Split the Link run into individual links on the "[[ ... ]]" pattern.
+		for j := runStart; j < runEnd; {
+			// Advance to the next "[[".
+			for j < runEnd && !(runes[j] == '[' && j+1 < runEnd && runes[j+1] == '[') {
+				j++
+			}
+			if j >= runEnd {
+				break
+			}
+			ls := j
+			// Find the closing "]]" (dokuwiki titles never contain "]]").
+			le := runEnd
+			for k := ls + 2; k+1 < runEnd; k++ {
+				if runes[k] == ']' && runes[k+1] == ']' {
+					le = k + 2
+					break
+				}
+			}
+			target, title := parseDokuLink(string(runes[ls:le]))
+			spans = append(spans, linkSpan{Start: ls, End: le, Target: target, Title: title})
+			j = le
+		}
+	}
+	return spans
+}
+
+// markupKindFor classifies a grammar class as an inline-emphasis or heading
+// markup run, or reports false. The emphasis classes include the combined
+// forms (BoldItalic, …) the grammar emits for nested **//__ spans; the exact
+// inline kind is metadata only (browse mode keeps the grammar's own color for
+// inline runs), so a combined run reports markupBold.
+func markupKindFor(cl string) (markupKind, bool) {
+	switch {
+	case strings.EqualFold(cl, "Bold"):
+		return markupBold, true
+	case strings.EqualFold(cl, "Italic"):
+		return markupItalic, true
+	case strings.EqualFold(cl, "Underline"):
+		return markupUnderline, true
+	case strings.EqualFold(cl, "Heading"):
+		return markupHeading, true
+	case strings.EqualFold(cl, "BoldItalic"),
+		strings.EqualFold(cl, "BoldUnderline"),
+		strings.EqualFold(cl, "ItalicUnderline"),
+		strings.EqualFold(cl, "BoldItalicUnderline"):
+		return markupBold, true
+	}
+	return 0, false
+}
+
+// doubledMarkerAt reports whether runes[i:i+2] is a doubled inline emphasis
+// marker (**, //, __).
+func doubledMarkerAt(runes []rune, i int) bool {
+	if i < 0 || i+1 >= len(runes) {
+		return false
+	}
+	r := runes[i]
+	return r == runes[i+1] && (r == '*' || r == '/' || r == '_')
+}
+
+// extractMarkupSpans finds the Bold/Italic/Underline (including the combined
+// BoldItalic … classes) and Heading runs the grammar colored on a line and
+// records each with its marker widths so browse mode can hide the markers and
+// restyle the text. Inline markers are the doubled **, //, __. Because nesting
+// SPLITS an emphasis run at each inner toggle (//italic **bold** more// is an
+// Italic run, then a BoldItalic run, then another Italic run), a run may carry
+// a marker on only one side — or neither — so the sides are detected from the
+// runes rather than assumed. A Heading run is ...====== text ======...: the
+// leading/trailing "=" groups (with one adjacent space) are the markers, and
+// the leading "=" count gives the level (6→1 ... 2→5).
+func extractMarkupSpans(runes []rune, attrs []*jsf.ColorRef) []markupSpan {
+	class := func(i int) string {
+		if i < len(attrs) && i < len(runes) && attrs[i] != nil {
+			return attrs[i].Class
+		}
+		return ""
+	}
+	n := len(runes)
+	if len(attrs) < n {
+		n = len(attrs)
+	}
+	var spans []markupSpan
+	for i := 0; i < n; {
+		cl := class(i)
+		kind, ok := markupKindFor(cl)
+		if !ok {
+			i++
+			continue
+		}
+		start := i
+		for i < n && strings.EqualFold(class(i), cl) {
+			i++
+		}
+		end := i
+		s := markupSpan{Start: start, End: end, Kind: kind}
+		if kind == markupHeading {
+			// Count leading '=' (and one following space), trailing '=' (and one
+			// preceding space).
+			l := 0
+			for start+l < end && runes[start+l] == '=' {
+				l++
+			}
+			r := 0
+			for end-1-r >= start && runes[end-1-r] == '=' {
+				r++
+			}
+			s.Level = 7 - l
+			if s.Level < 1 {
+				s.Level = 1
+			}
+			if s.Level > 5 {
+				s.Level = 5
+			}
+			if start+l < end && runes[start+l] == ' ' {
+				l++
+			}
+			if end-1-r >= start && runes[end-1-r] == ' ' {
+				r++
+			}
+			s.MarkLeft, s.MarkRight = l, r
+		} else {
+			// Hide a doubled marker only on a side that actually has one: an
+			// opening marker was recolored into the run's start, a closing one
+			// kept at its end; an inner toggle boundary (where the run abuts a
+			// richer/poorer sibling) has none.
+			if doubledMarkerAt(runes, start) {
+				s.MarkLeft = 2
+			}
+			if end-2 >= start+s.MarkLeft && doubledMarkerAt(runes, end-2) {
+				s.MarkRight = 2
+			}
+		}
+		// Guard against a malformed run with no content left after the markers.
+		if s.MarkLeft+s.MarkRight >= end-start {
+			s.MarkLeft, s.MarkRight = 0, 0
+		}
+		spans = append(spans, s)
+	}
+	return spans
+}
+
+// parseDokuLink splits a raw [[target|Title]] source into its destination and
+// display title: the part before the first "|" is the target, the part after
+// it the title, defaulting to the target when absent ([[target]]). Lenient —
+// missing brackets leave the text as both.
+func parseDokuLink(text string) (target, title string) {
+	inner := strings.TrimSuffix(strings.TrimPrefix(text, "[["), "]]")
+	if t, rest, ok := strings.Cut(inner, "|"); ok {
+		target, title = strings.TrimSpace(t), strings.TrimSpace(rest)
+	} else {
+		target = strings.TrimSpace(inner)
+	}
+	if title == "" {
+		title = target
+	}
+	if title == "" {
+		title = text
+	}
+	return target, title
+}
+
 // syntaxLineColors returns per-rune SGR colors for one document line of w
 // ("" entries paint in the normal text color), or nil when highlighting does
 // not apply. This is the renderer's syntax colorizer callback.
-func (e *Editor) syntaxLineColors(w *window.Window, docLine int) []string {
-	if w == nil || w.Buffer == nil || w.Type != window.MainBuffer {
+func (e *Editor) syntaxLineColors(w *viewport.Viewport, docLine int) []string {
+	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return nil
 	}
 	c := e.ensureSynCache(w.Buffer, docLine)
 	if c == nil {
 		return nil
 	}
-	return c.colors[docLine]
+	// Resolve this line's color classes to SGR for THIS viewport's class/type, so
+	// [<class>::colors]/[colors/<type>] overlays reach syntax highlighting.
+	colors := e.resolveLineColors(c, docLine, w.Class, w.Type.Name())
+	// Caret mode (browse off): links paint in the "link" color over their
+	// syntax colors, marking them as followable. Browse mode replaces link text
+	// with buttons instead, so the overlay is skipped there — and
+	// linkBrowsing=no disables the whole layer (links render exactly as the
+	// grammar colors them).
+	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
+		linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link")
+		recentSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkRecent")
+		hoverSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkHover")
+		if linkSGR != "" || recentSGR != "" {
+			for _, s := range c.links[docLine] {
+				sgr := linkSGR
+				if recentSGR != "" && e.linkTargetVisited(w, s.Target) {
+					sgr = recentSGR // a visited link paints in the recent color
+				}
+				if hoverSGR != "" && e.mouseHovered.active && e.mouseHovered.winID == w.ID &&
+					e.mouseHovered.line == docLine && e.mouseHovered.start == s.Start {
+					sgr = hoverSGR // the pointer is over it (all-motion hosts)
+				}
+				if sgr == "" {
+					continue
+				}
+				for i := s.Start; i < s.End && i < len(colors); i++ {
+					colors[i] = sgr
+				}
+			}
+			return colors
+		}
+	}
+	return colors
+}
+
+// resolveLineColors resolves one cached line's grammar color classes to SGR for
+// a viewport class/type. Returns a fresh slice (the caller may overlay link
+// colors onto it), or nil when the line is not cached.
+func (e *Editor) resolveLineColors(c *synCache, docLine int, winClass, winType string) []string {
+	if docLine < 0 || docLine >= len(c.refs) {
+		return nil
+	}
+	refs := c.refs[docLine]
+	out := make([]string, len(refs))
+	for i, ref := range refs {
+		out[i] = e.syntaxColorFor(ref, winClass, winType)
+	}
+	return out
 }
 
 // syntaxCtxLine returns the context flags (CtxComment/CtxString per rune) for
@@ -463,19 +923,24 @@ func (e *Editor) syntaxContextAt(b *buffer.Buffer, docLine, runePos int) (jsf.Co
 		return jsf.Context{}, false
 	}
 	line := strings.TrimRight(b.GetLine(docLine), "\n\r")
-	return e.syntaxLoader.ContextAt(c.grammar, c.entries[docLine], []rune(line), runePos), true
+	return c.loader.ContextAt(c.grammar, c.entries[docLine], []rune(line), runePos), true
 }
 
 // pruneSyntaxCaches drops cache entries for buffers no longer shown in any
-// window, so closed buffers do not pin their highlight state.
+// viewport, so closed buffers do not pin their highlight state.
 func (e *Editor) pruneSyntaxCaches() {
 	if len(e.synCaches) < 8 {
 		return
 	}
 	live := make(map[*buffer.Buffer]bool)
-	for _, w := range e.WindowManager.AllWindows() {
+	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Buffer != nil {
 			live[w.Buffer] = true
+		}
+		// Buffers stacked in a nav history are one nav_history_prior away:
+		// keep their highlight state warm too.
+		for _, b := range w.StackedBuffers() {
+			live[b] = true
 		}
 	}
 	for b := range e.synCaches {

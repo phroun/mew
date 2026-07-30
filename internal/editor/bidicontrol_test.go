@@ -6,14 +6,14 @@ import (
 
 	"github.com/phroun/pawscript"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // insert_bidi_control with a name argument inserts the mapped code point at the
 // caret, just like insert.
 func TestInsertBidiControlArg(t *testing.T) {
 	e, w := newTestEditor(t, "ab\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 1})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
 	res := e.PawScript.ExecuteAsync("insert_bidi_control 'rlm'")
 	if res != pawscript.BoolStatus(true) {
 		t.Fatalf("insert_bidi_control rlm returned %v", res)
@@ -26,7 +26,7 @@ func TestInsertBidiControlArg(t *testing.T) {
 	// Case-insensitive, and each remaining name maps.
 	for name, cp := range map[string]rune{"LRM": 0x200E, "alm": 0x061C, "fsi": 0x2068, "lri": 0x2066, "rli": 0x2067, "pdi": 0x2069} {
 		e2, w2 := newTestEditor(t, "\n")
-		w2.SetCursorPos(window.Position{Line: 0, Rune: 0})
+		w2.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 		e2.PawScript.ExecuteAsync("insert_bidi_control '" + name + "'")
 		r := []rune(docContent(w2))
 		if len(r) != 1 || r[0] != cp {

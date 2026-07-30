@@ -9,27 +9,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // --- helpers ---------------------------------------------------------------
 
 // openInEditor opens a real file through the editor's full open path (locks,
-// backups, notices) and returns its window.
-func openInEditor(t *testing.T, e *Editor, path string) *window.Window {
+// backups, notices) and returns its viewport.
+func openInEditor(t *testing.T, e *Editor, path string) *viewport.Viewport {
 	t.Helper()
 	if !e.openFile(path) {
 		t.Fatalf("openFile(%s) failed", path)
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil || w.Buffer.GetFilename() != path {
-		t.Fatalf("focused window should hold %s", path)
+		t.Fatalf("focused viewport should hold %s", path)
 	}
 	return w
 }
 
-// promptText returns the visible message of a prompt window.
-func promptText(fw *window.Window) string {
+// promptText returns the visible message of a prompt viewport.
+func promptText(fw *viewport.Viewport) string {
 	if fw == nil || len(fw.RowMessages) == 0 {
 		return ""
 	}
@@ -90,7 +90,7 @@ func TestSaveOverDifferentExistingFilePrompts(t *testing.T) {
 
 	// Confirm: the file is replaced and the buffer adopts it.
 	done := false
-	e.requestSave(w.Buffer, victim, func(ok bool) { done = ok })
+	e.requestSave(w.Buffer, victim, func(ok, cancelled bool) { done = ok })
 	confirmPrompt(t, e, true)
 	if !done {
 		t.Fatal("confirmed save should succeed")
@@ -208,7 +208,7 @@ func TestBufferRevertOpenedButNeverSaved(t *testing.T) {
 	opened := w.Buffer.GetContent()
 
 	// Edit at the start of the buffer, no save.
-	w.SetCursorPos(window.Position{Line: 0, Rune: 0})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
 	typeText(t, e, "PREFIX ")
 	if w.Buffer.GetContent() == opened {
 		t.Fatal("edit should change content")
@@ -457,9 +457,9 @@ func TestHostBridgeOpenAndSave(t *testing.T) {
 	if !e.openFile("virt.txt") {
 		t.Fatal("openFile through host FS failed")
 	}
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
-		t.Fatal("no focused window")
+		t.Fatal("no focused viewport")
 	}
 	if !w.Buffer.HasSource() {
 		t.Fatal("host-opened buffer should have a garland-tracked source (bridged)")
@@ -501,7 +501,7 @@ func TestHostBridgeOpenAndSave(t *testing.T) {
 
 // --- buffer_status ----------------------------------------------------------
 
-func TestBufferStatusWindow(t *testing.T) {
+func TestBufferStatusViewport(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.txt")
@@ -512,14 +512,14 @@ func TestBufferStatusWindow(t *testing.T) {
 	e.noteBuffer(w.Buffer, "lock", "example captured notice", false)
 
 	e.executeCommand("buffer_status")
-	sw := windowByClass(e, "bufstatus")
+	sw := viewportByClass(e, "bufstatus")
 	if sw == nil {
-		t.Fatal("buffer_status should open a status window")
+		t.Fatal("buffer_status should open a status viewport")
 	}
 	content := sw.Buffer.GetContent()
 	for _, want := range []string{"Buffer: " + path, "Source: clean", "Backup:", "example captured notice"} {
 		if !strings.Contains(content, want) {
-			t.Fatalf("status window missing %q:\n%s", want, content)
+			t.Fatalf("status viewport missing %q:\n%s", want, content)
 		}
 	}
 }

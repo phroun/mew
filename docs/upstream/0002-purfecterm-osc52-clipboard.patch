@@ -1,0 +1,642 @@
+From 78a13508f6a49d9d1741edd3e55d5cade3b84fa4 Mon Sep 17 00:00:00 2001
+From: mew <phroun@gmail.com>
+Date: Tue, 28 Jul 2026 23:37:28 +0000
+Subject: [PATCH] parser: OSC 52 clipboard, and fix ST terminating an OSC one
+ byte early
+
+Two things, because the second blocks the first.
+
+ST. handleOSCString treated a bare ESC as the terminator and returned to
+ground WITHOUT consuming the '\' of a real ST, so the backslash was then
+processed from ground state and printed. Every ST-terminated OSC did
+this. It has gone unnoticed because the 7000-series are BEL-terminated in
+practice -- but OSC 52 traffic from real programs is overwhelmingly
+ST-terminated, so it would have surfaced the day OSC 52 landed. Fixed
+with a one-state detour (stateOSCEsc): on ESC inside an OSC string,
+expect one more byte; '\' executes, anything else abandons the OSC and
+reprocesses the byte as the escape sequence it actually began.
+
+OSC 52. The clipboard escape sequence -- the one channel a program
+running INSIDE a terminal has to the system clipboard, and what vim's
+"+y, tmux's set-clipboard, neovim, emacs and zellij all emit. Parsed and
+policy-checked at the shared layer, then handed to a callback the front
+end registers, because only the front end knows what the clipboard is on
+its platform (GTK's clipboard, Qt's QClipboard, a host's desktop, or --
+for a standalone PurfecTerm inside kitty or tmux -- re-emitting it
+outward so nested stacks work).
+
+  purfecterm.ClipboardEvent / ClipboardPolicy / DefaultClipboardPolicy
+  (*Parser).SetOnClipboard, SetClipboardPolicy, SetResponseSink
+  (*cli.Terminal).SetOnClipboard, SetClipboardPolicy, SendResponse
+  cli.Options.ClipboardWrite / ClipboardRead / ClipboardLimit
+
+Defaults follow xterm and kitty, and the two directions differ on
+purpose. WRITES act (default on): initiated by the user's own program,
+worst case is clipboard spam from something they chose to run. READS are
+denied (default off): a query lets any program that can print to the
+terminal -- a cat'ed file, a script's output -- silently exfiltrate
+whatever is on the clipboard, which is regularly a password. A denied
+query is answered with an EMPTY payload rather than silence, because
+programs block waiting for the reply. Payloads are capped (1 MiB
+default) and an oversized or non-base64 payload CLEARS rather than
+truncating: half a secret on the clipboard is worse than none.
+
+With no callback registered OSC 52 is consumed and dropped -- today's
+behaviour, and the right default for a consumer that has not opted in.
+
+SetResponseSink is the channel the terminal answers on. DSR and DA are
+stubbed in the CSI handler ("would need to send response - ignore") and
+want exactly this sink; that is the obvious next use.
+
+Not touched: the GTK and Qt widgets, which need their own three-line
+bridge from the callback to the platform clipboard. The shared layer is
+done and the cli adapter is wired.
+---
+ cli/terminal.go   |  66 ++++++++++++++++
+ clipboard.go      | 192 +++++++++++++++++++++++++++++++++++++++++++++
+ clipboard_test.go | 195 ++++++++++++++++++++++++++++++++++++++++++++++
+ parser.go         |  37 ++++++++-
+ 4 files changed, 488 insertions(+), 2 deletions(-)
+ create mode 100644 clipboard.go
+ create mode 100644 clipboard_test.go
+
+diff --git a/cli/terminal.go b/cli/terminal.go
+index 4a4858c..1542a12 100644
+--- a/cli/terminal.go
++++ b/cli/terminal.go
+@@ -112,6 +112,21 @@ type Options struct {
+ 	//   - Calling Render() or RenderToString() to display the terminal
+ 	Embedded bool
+ 
++	// ClipboardWrite enables acting on OSC 52 writes and clears -- a program
++	// inside the terminal setting the system clipboard, which is how vim's
++	// "+y, tmux's set-clipboard and every other TUI copy command work. This
++	// is a POINTER so the zero Options keeps the safe default (enabled);
++	// nil means "default", &false disables.
++	ClipboardWrite *bool
++
++	// ClipboardRead enables ANSWERING OSC 52 queries. Off unless set: a read
++	// lets any program that can print to the terminal exfiltrate whatever is
++	// on the clipboard. See purfecterm.ClipboardPolicy.
++	ClipboardRead bool
++
++	// ClipboardLimit caps one OSC 52 payload's decoded size. 0 = 1 MiB.
++	ClipboardLimit int
++
+ 	// DisableMouseReporting disables xterm-style mouse event reporting to the PTY.
+ 	// By default (false), mouse events are forwarded to the terminal application
+ 	// when it requests mouse tracking via escape sequences (e.g., CSI ?1000h).
+@@ -225,6 +240,17 @@ func New(opts Options) (*Terminal, error) {
+ 		focused:    !opts.Embedded, // Non-embedded terminals are always focused
+ 	}
+ 
++	// OSC 52 policy, and the channel the terminal answers a query on:
++	// responses go where keystrokes go, to the child's input.
++	pol := purfecterm.DefaultClipboardPolicy()
++	if opts.ClipboardWrite != nil {
++		pol.AllowWrite = *opts.ClipboardWrite
++	}
++	pol.AllowRead = opts.ClipboardRead
++	pol.Limit = opts.ClipboardLimit
++	parser.SetClipboardPolicy(pol)
++	parser.SetResponseSink(func(b []byte) { t.SendResponse(b) })
++
+ 	// Create renderer
+ 	t.renderer = NewRenderer(t)
+ 
+@@ -670,6 +696,46 @@ func (t *Terminal) SetOnFocus(fn func(focused bool)) {
+ 	t.onFocus = fn
+ }
+ 
++// SetOnClipboard registers this front end's clipboard bridge for OSC 52.
++// See purfecterm.Parser.SetOnClipboard for the contract; in short, act on a
++// write or clear, and answer a query by calling reply (or never, to deny).
++//
++// With no callback registered OSC 52 is consumed and dropped.
++func (t *Terminal) SetOnClipboard(fn func(ev purfecterm.ClipboardEvent, reply func([]byte))) {
++	t.parser.SetOnClipboard(fn)
++}
++
++// SetClipboardPolicy replaces the OSC 52 policy set from Options.
++func (t *Terminal) SetClipboardPolicy(pol purfecterm.ClipboardPolicy) {
++	t.parser.SetClipboardPolicy(pol)
++}
++
++// SendResponse delivers the terminal's own answer to the program running
++// inside it -- an OSC 52 query reply today, and DSR/DA once those are
++// implemented. It goes on the same wire as keystrokes, but it is NOT input:
++// it bypasses the focus test and the input callback, because a response is
++// owed to the program whether or not the user is looking at the window, and
++// a host intercepting keystrokes has no business intercepting it.
++func (t *Terminal) SendResponse(data []byte) {
++	if len(data) == 0 {
++		return
++	}
++	t.mu.Lock()
++	pty := t.pty
++	cb := t.inputCallback
++	t.mu.Unlock()
++	if pty != nil {
++		pty.Write(data)
++		return
++	}
++	// Embedded: no PTY of our own. The host's input callback is the door the
++	// terminal's keystrokes already leave by; a response leaves by the same
++	// one. Its "consumed" answer is moot here — there is nowhere else to go.
++	if cb != nil {
++		cb(data)
++	}
++}
++
+ // SetOnBell sets a callback for when the terminal bell is triggered.
+ // Useful for parent TUI to show visual notification when terminal needs attention.
+ func (t *Terminal) SetOnBell(fn func()) {
+diff --git a/clipboard.go b/clipboard.go
+new file mode 100644
+index 0000000..d7c6fea
+--- /dev/null
++++ b/clipboard.go
+@@ -0,0 +1,192 @@
++package purfecterm
++
++import (
++	"encoding/base64"
++	"strings"
++)
++
++// OSC 52 — the clipboard escape sequence.
++//
++//	OSC 52 ; Pc ; Pd ST     (ESC ] 5 2 ; Pc ; Pd ESC \)
++//	OSC 52 ; Pc ; Pd BEL    (the BEL-terminated form, equally common)
++//
++// Pc names the selection(s); Pd is either base64 data (a WRITE), "?" (a
++// QUERY), or anything that is not valid base64 (a CLEAR — xterm's rule, and
++// the safe reading of garbage: a malformed payload must not paste noise).
++//
++// This is the one channel a program running INSIDE a terminal has to the
++// system clipboard. vim, neovim, emacs, tmux and zellij all emit it; a
++// terminal without it is one where `vim "+y` silently does nothing.
++
++// ClipboardSelectionClipboard and ClipboardSelectionPrimary are the two
++// selections honored. The rest of xterm's set (q, s, cut buffers 0-7) is
++// accepted in Pc and filtered out — no real program depends on them.
++const (
++	ClipboardSelectionClipboard = 'c'
++	ClipboardSelectionPrimary   = 'p'
++)
++
++// ClipboardEvent is one OSC 52 operation, already decoded and policy-checked.
++type ClipboardEvent struct {
++	// Selections holds the supported selections named by Pc, in the order
++	// 'c' then 'p'. Never empty: an empty Pc defaults to clipboard.
++	Selections string
++
++	// Data is the decoded payload for a write, and nil for a clear or a
++	// query. A clear and a zero-length write are the same thing.
++	Data []byte
++
++	// Query is true for a read request. Data is nil; answer through the
++	// reply function the callback was handed.
++	Query bool
++}
++
++// ClipboardPolicy governs what OSC 52 is allowed to do. The zero value is
++// not the default — see DefaultClipboardPolicy, which is what a parser
++// starts with.
++type ClipboardPolicy struct {
++	// AllowWrite permits acting on writes and clears. Default TRUE: a write
++	// is initiated by the user's own program, the worst case is clipboard
++	// spam from something they chose to run, and this is the posture of
++	// kitty, foot and Windows Terminal.
++	AllowWrite bool
++
++	// AllowRead permits answering queries. Default FALSE, and deliberately
++	// so: a read lets ANY program that can print to the terminal — a `cat`ed
++	// file, a malicious script's output — silently exfiltrate whatever is on
++	// the clipboard, which is regularly a password. xterm and kitty both
++	// default this off. A front end that wants it can enable it and put a
++	// confirmation in its callback; the async reply makes that natural.
++	AllowRead bool
++
++	// Limit caps one payload's decoded size in bytes. Zero means the
++	// default. An oversized payload is treated as a CLEAR rather than
++	// truncated: half a secret on the clipboard is worse than none.
++	Limit int
++}
++
++// DefaultClipboardLimit is a generous cap for one OSC 52 payload. kitty
++// defaults to 8 MiB; xterm historically far less.
++const DefaultClipboardLimit = 1 << 20 // 1 MiB
++
++// DefaultClipboardPolicy is what a parser starts with: writes act, queries
++// do not, one payload is capped at 1 MiB.
++func DefaultClipboardPolicy() ClipboardPolicy {
++	return ClipboardPolicy{AllowWrite: true, AllowRead: false, Limit: DefaultClipboardLimit}
++}
++
++// SetClipboardPolicy replaces the OSC 52 policy. A zero Limit means the
++// default.
++func (p *Parser) SetClipboardPolicy(pol ClipboardPolicy) {
++	if pol.Limit <= 0 {
++		pol.Limit = DefaultClipboardLimit
++	}
++	p.clipboardPolicy = pol
++}
++
++// ClipboardPolicy returns the OSC 52 policy in force.
++func (p *Parser) ClipboardPolicy() ClipboardPolicy { return p.clipboardPolicy }
++
++// SetOnClipboard registers the front end's clipboard bridge. Only the front
++// end knows what "the clipboard" is on its platform:
++//
++//	GTK widget    gtk_clipboard_set_text (CLIPBOARD; PRIMARY for 'p')
++//	Qt widget     QClipboard::setText (Clipboard / Selection modes)
++//	embedded      hand it to the host (a KittyTK desktop, say)
++//	standalone    RE-EMIT the sequence outward, so a PurfecTerm inside kitty
++//	              or tmux forwards rather than handles, and nested stacks work
++//
++// For a write or a clear, act on ev. For a query, call reply once with the
++// current contents — or never, to deny; the querying program is answered
++// only when reply is called.
++//
++// Called on whatever goroutine is parsing. GTK and Qt both need to marshal
++// to their UI thread; do that yourself.
++//
++// With no callback registered OSC 52 is consumed and dropped, which is the
++// right default for a consumer that has not opted in.
++func (p *Parser) SetOnClipboard(fn func(ev ClipboardEvent, reply func([]byte))) {
++	p.onClipboard = fn
++}
++
++// SetResponseSink installs the channel by which the terminal answers the
++// program running inside it. Responses go where keystrokes go — to the
++// child's input — so a front end wires this to the same place.
++//
++// Used for OSC 52 query replies today. DSR and DA are stubbed in the CSI
++// handler ("would need to send response") and want exactly this sink.
++func (p *Parser) SetResponseSink(fn func([]byte)) { p.responseSink = fn }
++
++// executeOSCClipboard handles a complete OSC 52 payload: "Pc;Pd".
++func (p *Parser) executeOSCClipboard(args string) {
++	if p.onClipboard == nil {
++		return // consumed and dropped: nobody opted in
++	}
++	pc, pd, ok := strings.Cut(args, ";")
++	if !ok {
++		// No semicolon at all is malformed. Treat it as a clear of the
++		// default selection rather than guessing at a payload.
++		pd = ""
++	}
++	sel := supportedSelections(pc)
++
++	if pd == "?" {
++		if !p.clipboardPolicy.AllowRead {
++			// NOT silence: a program blocks waiting for the answer. Say
++			// "nothing" and let it get on with its life.
++			p.sendClipboardReply(sel, nil)
++			return
++		}
++		selCopy := sel
++		p.onClipboard(ClipboardEvent{Selections: sel, Query: true}, func(data []byte) {
++			p.sendClipboardReply(selCopy, data)
++		})
++		return
++	}
++
++	if !p.clipboardPolicy.AllowWrite {
++		return
++	}
++
++	// Anything that is not valid base64 CLEARS, per xterm. So does an empty
++	// payload, and so does one over the cap — a half-pasted secret is worse
++	// than nothing.
++	data, err := base64.StdEncoding.DecodeString(pd)
++	if err != nil || len(data) == 0 || len(data) > p.clipboardPolicy.Limit {
++		data = nil
++	}
++	p.onClipboard(ClipboardEvent{Selections: sel, Data: data}, nil)
++}
++
++// sendClipboardReply answers a query in the same shape it was asked.
++func (p *Parser) sendClipboardReply(sel string, data []byte) {
++	if p.responseSink == nil {
++		return
++	}
++	var sb strings.Builder
++	sb.WriteString("\x1b]52;")
++	sb.WriteString(sel)
++	sb.WriteByte(';')
++	sb.WriteString(base64.StdEncoding.EncodeToString(data))
++	sb.WriteString("\x1b\\")
++	p.responseSink([]byte(sb.String()))
++}
++
++// supportedSelections filters Pc down to the selections that are acted on,
++// in a stable order. An empty or wholly unsupported Pc means the clipboard:
++// xterm's spec says empty defaults to "s0", but in practice every program
++// that omits Pc means the clipboard, and answering a query with nothing
++// selected would be a non-answer.
++func supportedSelections(pc string) string {
++	var sb strings.Builder
++	if strings.ContainsRune(pc, ClipboardSelectionClipboard) {
++		sb.WriteRune(ClipboardSelectionClipboard)
++	}
++	if strings.ContainsRune(pc, ClipboardSelectionPrimary) {
++		sb.WriteRune(ClipboardSelectionPrimary)
++	}
++	if sb.Len() == 0 {
++		return string(ClipboardSelectionClipboard)
++	}
++	return sb.String()
++}
+diff --git a/clipboard_test.go b/clipboard_test.go
+new file mode 100644
+index 0000000..c68149c
+--- /dev/null
++++ b/clipboard_test.go
+@@ -0,0 +1,195 @@
++package purfecterm
++
++import (
++	"encoding/base64"
++	"strings"
++	"testing"
++)
++
++func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
++
++// osc52 collects what a parser reports for one fed sequence.
++func osc52(t *testing.T, seq string, tune func(*Parser)) (evs []ClipboardEvent, replies []string, scr string) {
++	t.Helper()
++	b := NewBuffer(40, 3, 100)
++	p := NewParser(b)
++	p.SetOnClipboard(func(ev ClipboardEvent, reply func([]byte)) {
++		evs = append(evs, ev)
++		if ev.Query && reply != nil {
++			reply([]byte("from the host"))
++		}
++	})
++	p.SetResponseSink(func(d []byte) { replies = append(replies, string(d)) })
++	if tune != nil {
++		tune(p)
++	}
++	p.Parse([]byte(seq))
++	return evs, replies, screen(b)
++}
++
++// A write carries the decoded payload through to the front end, in both
++// terminator forms. ST is the one real programs use, and the one that used to
++// leave a stray backslash behind.
++func TestOSC52Write(t *testing.T) {
++	for _, seq := range []string{
++		"\x1b]52;c;" + b64("hello") + "\x1b\\",
++		"\x1b]52;c;" + b64("hello") + "\x07",
++	} {
++		evs, _, scr := osc52(t, seq, nil)
++		if len(evs) != 1 {
++			t.Fatalf("%q produced %d events, want 1", seq, len(evs))
++		}
++		if string(evs[0].Data) != "hello" {
++			t.Errorf("%q decoded %q, want \"hello\"", seq, evs[0].Data)
++		}
++		if evs[0].Selections != "c" {
++			t.Errorf("%q selections %q, want \"c\"", seq, evs[0].Selections)
++		}
++		if scr != "" {
++			t.Errorf("%q left %q on the screen", seq, scr)
++		}
++	}
++}
++
++// THE ST BUG, on its own. handleOSCString ended the sequence on the ESC and
++// left the '\' to be printed from ground state. Every ST-terminated OSC did
++// this; it went unnoticed because the 7000-series are BEL-terminated in
++// practice.
++func TestSTTerminatedOSCLeavesNoBackslash(t *testing.T) {
++	for _, seq := range []string{
++		"\x1b]52;c;" + b64("x") + "\x1b\\", // a supported OSC
++		"\x1b]0;some window title\x1b\\",   // an UNsupported one: still consumed
++		"\x1b]7000;da\x1b\\",               // a PurfecTerm private one
++	} {
++		b := NewBuffer(40, 3, 100)
++		NewParser(b).Parse([]byte(seq))
++		if got := screen(b); got != "" {
++			t.Errorf("%q left %q on the screen", seq, got)
++		}
++	}
++}
++
++// An ESC inside an OSC that is NOT ST abandons the OSC and starts the
++// sequence it really began -- it must not be swallowed, and it must not
++// execute the half-collected OSC.
++func TestESCInsideOSCThatIsNotSTStartsANewSequence(t *testing.T) {
++	var evs []ClipboardEvent
++	b := NewBuffer(40, 3, 100)
++	p := NewParser(b)
++	p.SetOnClipboard(func(ev ClipboardEvent, _ func([]byte)) { evs = append(evs, ev) })
++	// An OSC 52 interrupted by a CSI, then ordinary text.
++	p.Parse([]byte("\x1b]52;c;" + b64("nope") + "\x1b[2Jok"))
++	if len(evs) != 0 {
++		t.Errorf("an interrupted OSC executed anyway: %+v", evs)
++	}
++	if got := screen(b); got != "ok" {
++		t.Errorf("screen = %q, want %q -- the CSI should have run and the text printed", got, "ok")
++	}
++}
++
++// Selections are filtered to the ones acted on, and an empty or unsupported
++// Pc means the clipboard.
++func TestOSC52Selections(t *testing.T) {
++	for _, tc := range []struct{ pc, want string }{
++		{"c", "c"},
++		{"p", "p"},
++		{"cp", "cp"},
++		{"pc", "cp"}, // stable order, not the order given
++		{"", "c"},
++		{"s0", "c"}, // cut buffers are not honored; fall back to clipboard
++		{"qc", "c"},
++	} {
++		evs, _, _ := osc52(t, "\x1b]52;"+tc.pc+";"+b64("x")+"\x1b\\", nil)
++		if len(evs) != 1 || evs[0].Selections != tc.want {
++			t.Errorf("Pc=%q -> %+v, want selections %q", tc.pc, evs, tc.want)
++		}
++	}
++}
++
++// Anything that is not valid base64 CLEARS rather than pasting noise, and so
++// does an empty payload. This is xterm's rule.
++func TestOSC52ClearsOnGarbage(t *testing.T) {
++	for _, pd := range []string{"", "!!!not base64!!!", "%%%%"} {
++		evs, _, _ := osc52(t, "\x1b]52;c;"+pd+"\x1b\\", nil)
++		if len(evs) != 1 {
++			t.Fatalf("Pd=%q produced %d events, want 1", pd, len(evs))
++		}
++		if evs[0].Data != nil {
++			t.Errorf("Pd=%q gave data %q, want a clear (nil)", pd, evs[0].Data)
++		}
++	}
++}
++
++// An oversized payload is a clear, not a truncation: half a secret on the
++// clipboard is worse than none.
++func TestOSC52OversizedPayloadClears(t *testing.T) {
++	big := b64(strings.Repeat("A", 5000))
++	evs, _, _ := osc52(t, "\x1b]52;c;"+big+"\x1b\\", func(p *Parser) {
++		p.SetClipboardPolicy(ClipboardPolicy{AllowWrite: true, Limit: 1024})
++	})
++	if len(evs) != 1 || evs[0].Data != nil {
++		t.Errorf("oversized payload -> %+v, want a clear", evs)
++	}
++}
++
++// Writes act by default; reads do not.
++func TestOSC52Defaults(t *testing.T) {
++	pol := DefaultClipboardPolicy()
++	if !pol.AllowWrite {
++		t.Error("writes should act by default")
++	}
++	if pol.AllowRead {
++		t.Error("reads must NOT be answered by default: any program that can print could exfiltrate the clipboard")
++	}
++	// And a fresh parser starts there, rather than at the zero value.
++	if got := NewParser(NewBuffer(10, 2, 10)).ClipboardPolicy(); !got.AllowWrite || got.AllowRead {
++		t.Errorf("NewParser policy = %+v, want the documented default", got)
++	}
++}
++
++// A query is answered from the front end, in the same shape it was asked.
++func TestOSC52QueryWhenAllowed(t *testing.T) {
++	evs, replies, _ := osc52(t, "\x1b]52;c;?\x1b\\", func(p *Parser) {
++		p.SetClipboardPolicy(ClipboardPolicy{AllowWrite: true, AllowRead: true})
++	})
++	if len(evs) != 1 || !evs[0].Query {
++		t.Fatalf("query produced %+v, want one query event", evs)
++	}
++	want := "\x1b]52;c;" + b64("from the host") + "\x1b\\"
++	if len(replies) != 1 || replies[0] != want {
++		t.Errorf("replied %q, want %q", replies, want)
++	}
++}
++
++// Denied, the query is answered with an EMPTY payload rather than silence:
++// programs block waiting for the reply.
++func TestOSC52QueryDeniedAnswersEmpty(t *testing.T) {
++	evs, replies, _ := osc52(t, "\x1b]52;c;?\x1b\\", nil) // read off by default
++	if len(evs) != 0 {
++		t.Errorf("a denied query should not reach the front end: %+v", evs)
++	}
++	want := "\x1b]52;c;\x1b\\"
++	if len(replies) != 1 || replies[0] != want {
++		t.Errorf("replied %q, want %q (empty, not silence)", replies, want)
++	}
++}
++
++// With writes disabled, a write is dropped -- and does not become a clear.
++func TestOSC52WriteDenied(t *testing.T) {
++	evs, _, _ := osc52(t, "\x1b]52;c;"+b64("x")+"\x1b\\", func(p *Parser) {
++		p.SetClipboardPolicy(ClipboardPolicy{AllowWrite: false})
++	})
++	if len(evs) != 0 {
++		t.Errorf("writes disabled, but the front end heard %+v", evs)
++	}
++}
++
++// No callback registered: consumed and dropped, nothing on screen. This is
++// the default for a consumer that has not opted in.
++func TestOSC52WithoutACallbackIsSilent(t *testing.T) {
++	b := NewBuffer(40, 3, 100)
++	NewParser(b).Parse([]byte("\x1b]52;c;" + b64("hello") + "\x1b\\"))
++	if got := screen(b); got != "" {
++		t.Errorf("left %q on the screen", got)
++	}
++}
+diff --git a/parser.go b/parser.go
+index 0547088..82dede2 100644
+--- a/parser.go
++++ b/parser.go
+@@ -15,6 +15,7 @@ const (
+ 	stateCSIParam                // Reading CSI parameters
+ 	stateOSC                     // After ESC ]
+ 	stateOSCString               // Reading OSC string
++	stateOSCEsc                  // ESC seen inside an OSC string (expecting the \ of ST)
+ 	stateCharset                 // After ESC ( or ESC )
+ 	stateDECLineAttr             // After ESC # (waiting for line attribute command)
+ )
+@@ -42,6 +43,11 @@ type Parser struct {
+ 	oscCmd int             // OSC command number (e.g., 7000 for palette, 7001 for glyph)
+ 	oscBuf strings.Builder // OSC command arguments
+ 
++	// OSC 52 clipboard (see clipboard.go)
++	onClipboard     func(ev ClipboardEvent, reply func([]byte))
++	clipboardPolicy ClipboardPolicy
++	responseSink    func([]byte)
++
+ 	// UTF-8 multi-byte handling
+ 	utf8Buf  []byte
+ 	utf8Need int
+@@ -53,6 +59,9 @@ func NewParser(buffer *Buffer) *Parser {
+ 		buffer:    buffer,
+ 		state:     stateGround,
+ 		csiParams: make([]int, 0, 16),
++		// Writes act, queries do not. The zero ClipboardPolicy would deny
++		// both, which is not the documented default.
++		clipboardPolicy: DefaultClipboardPolicy(),
+ 	}
+ }
+ 
+@@ -120,6 +129,8 @@ func (p *Parser) processByte(b byte) {
+ 		p.handleOSC(b)
+ 	case stateOSCString:
+ 		p.handleOSCString(b)
++	case stateOSCEsc:
++		p.handleOSCEsc(b)
+ 	case stateCharset:
+ 		// Consume one character and return to ground
+ 		p.state = stateGround
+@@ -898,12 +909,32 @@ func (p *Parser) handleOSCString(b byte) {
+ 		p.state = stateGround
+ 		return
+ 	}
+-	if b == 0x1B { // ESC might start ST (ESC \)
++	if b == 0x1B {
++		// ESC begins ST (ESC \), so wait for the second byte instead of
++		// ending here. Ending on the ESC left the '\' to be processed from
++		// ground state and PRINTED -- every ST-terminated OSC dropped a
++		// stray backslash on the screen. It went unnoticed because the
++		// 7000-series are BEL-terminated in practice; OSC 52 traffic from
++		// real programs is overwhelmingly ST-terminated.
++		p.state = stateOSCEsc
++		return
++	}
++	p.oscBuf.WriteByte(b)
++}
++
++// handleOSCEsc resolves the byte after an ESC inside an OSC string. '\'
++// completes ST and executes; anything else means the OSC was interrupted, so
++// abandon it and reprocess the byte from the escape state it actually
++// started.
++func (p *Parser) handleOSCEsc(b byte) {
++	if b == '\\' {
+ 		p.executeOSC()
+ 		p.state = stateGround
+ 		return
+ 	}
+-	p.oscBuf.WriteByte(b)
++	p.oscBuf.Reset()
++	p.state = stateEscape
++	p.handleEscape(b)
+ }
+ 
+ // executeOSC processes a complete OSC command
+@@ -911,6 +942,8 @@ func (p *Parser) executeOSC() {
+ 	args := p.oscBuf.String()
+ 
+ 	switch p.oscCmd {
++	case 52: // Clipboard (OSC 52)
++		p.executeOSCClipboard(args)
+ 	case 7000: // Palette management
+ 		p.executeOSCPalette(args)
+ 	case 7001: // Glyph management
+-- 
+2.43.0
+

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // --- go_line ---
@@ -38,7 +38,7 @@ func TestGoLineDirectArgInvalid(t *testing.T) {
 
 func TestGoLinePromptSuspendsAndResumes(t *testing.T) {
 	e, w := newTestEditor(t, "l1\nl2\nl3\nl4\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync(`go_line & verbose_log "went"`)
 	if strings.Contains(verboseLogContent(e), "went") {
 		t.Fatal("sequence must stay suspended while the prompt is open")
@@ -54,7 +54,7 @@ func TestGoLinePromptSuspendsAndResumes(t *testing.T) {
 
 func TestGoLinePromptInvalidEntry(t *testing.T) {
 	e, w := newTestEditor(t, "l1\nl2\nl3\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync(`go_line | verbose_log "fallback"`)
 	answerPrompt(t, e, "not-a-number")
 	if w.CursorPos().Line != 0 {
@@ -70,7 +70,7 @@ func TestGoLinePromptInvalidEntry(t *testing.T) {
 
 func TestGoLinePromptCancelAndBlank(t *testing.T) {
 	e, w := newTestEditor(t, "l1\nl2\nl3\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	// Cancel: resolves false, no warning.
 	e.PawScript.ExecuteAsync(`go_line | verbose_log "cancelled"`)
 	cancelPrompt(t, e)
@@ -118,7 +118,7 @@ func TestGoLineHistoryAccessibleNotDefaulted(t *testing.T) {
 
 func TestGoMatchFalseChains(t *testing.T) {
 	e, w := newTestEditor(t, "l1\nl2\n")
-	w.SetCursorPos(window.Position{}) // on 'l', not a bracket
+	w.SetCursorPos(viewport.Position{}) // on 'l', not a bracket
 	e.PawScript.ExecuteAsync(`go_match | verbose_log "nomatch"`)
 	if !hasWarning(e, "Nothing to match here") {
 		t.Fatal("expected nothing-to-match warning")
@@ -130,7 +130,7 @@ func TestGoMatchFalseChains(t *testing.T) {
 
 func TestGoMatchBracketJump(t *testing.T) {
 	e, w := newTestEditor(t, "a (b [c] d) e\n")
-	w.SetCursorPos(window.Position{Line: 0, Rune: 2}) // on '('
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2}) // on '('
 	e.PawScript.ExecuteAsync("go_match")
 	if w.CursorPos().Rune != 10 {
 		t.Fatalf("should jump to ')', got %v", w.CursorPos())
@@ -150,7 +150,7 @@ func TestCmdPromptNestedSuspension(t *testing.T) {
 	go func() {
 		defer close(done)
 		e, w := newTestEditor(t, "l1\nl2\nl3\nl4\n")
-		w.SetCursorPos(window.Position{})
+		w.SetCursorPos(viewport.Position{})
 		e.executeCommand("cmd") // Esc X
 		fw := focusedPrompt(e)
 		if fw == nil {
@@ -178,7 +178,7 @@ func TestCmdPromptNestedSuspension(t *testing.T) {
 // answering it performs no action and warns.
 func TestGoLinePromptTimeoutFailsSafe(t *testing.T) {
 	e, w := newTestEditor(t, "l1\nl2\nl3\nl4\n")
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync("go_line")
 
 	// Simulate the timeout: force-clean every plausible token ID
@@ -205,7 +205,7 @@ func TestPromptTimeoutConfigurable(t *testing.T) {
 	if e.Config.PromptTimeout != 1 {
 		t.Fatalf("promptTimeout not loaded: %d", e.Config.PromptTimeout)
 	}
-	w.SetCursorPos(window.Position{})
+	w.SetCursorPos(viewport.Position{})
 	e.PawScript.ExecuteAsync("go_line")
 	time.Sleep(1500 * time.Millisecond)
 	answerPrompt(t, e, "3")

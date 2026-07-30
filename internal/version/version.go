@@ -18,7 +18,7 @@ const Version = "0.3"
 // release number), it is bumped automatically by `make increment`, whose awk
 // script rewrites the single `const Build = N` line below - so keep it on its
 // own line in exactly that form.
-const Build = 1
+const Build = 4
 
 // FullVersion returns the complete version string, major.minor.build (e.g.
 // "0.3.1"), assembled from Version and Build.
@@ -34,9 +34,17 @@ const (
 	Tagline = "mew edits words"
 )
 
-// Banner is the launch greeting: product identity, version, and the two
-// keys a stranded user needs first.
+// Banner is the launch greeting: product identity, version, and the two keys a
+// stranded user needs first. The two keys are TFC codes (Text Format Control):
+// shown through the transient's TFC-expanding path they resolve to the LIVE
+// bindings, spelled out for beginners and colored; shown raw (or where TFC is
+// not expanded) they simply read as the codes. The %…% key references are
+// passed as %s arguments so fmt does not try to interpret them.
 func Banner() string {
-	return fmt.Sprintf("%s %s build %d ** Type Ctrl-C to close or Ctrl-K then H for help.",
-		Tagline, Version, Build)
+	const (
+		cancelKey = "%keys_verbose#cancel.buffer_close|^C%"
+		helpKey   = "%keys_verbose#help_toggle|^Q H%"
+	)
+	return fmt.Sprintf("%s %s build %d ** Type %s to close or %s for help.",
+		Tagline, Version, Build, cancelKey, helpKey)
 }

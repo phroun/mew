@@ -110,7 +110,7 @@ func TestCursorRingNoEntryWhenEditAtSamePoint(t *testing.T) {
 }
 
 // The ring holds a fixed number of entries; once full it overwrites the oldest,
-// so navigation can only reach back as far as the retained window of history.
+// so navigation can only reach back as far as the retained viewport of history.
 func TestCursorRingOverwritesOldest(t *testing.T) {
 	var sb strings.Builder
 	for i := 0; i < 16; i++ {
@@ -135,10 +135,10 @@ func TestCursorRingOverwritesOldest(t *testing.T) {
 	}
 }
 
-// Every buffer window has its own ring, prompts included: go_pos_* on a fresh
+// Every buffer viewport has its own ring, prompts included: go_pos_* on a fresh
 // prompt (no history yet) is a well-behaved no-op, and the prompt's ring is
 // independent of the document's.
-func TestCursorRingPerWindowIncludingPrompt(t *testing.T) {
+func TestCursorRingPerViewportIncludingPrompt(t *testing.T) {
 	e, w := newTestEditor(t, "aaa\nbbb\nccc\n")
 
 	// Give the document some edit history.

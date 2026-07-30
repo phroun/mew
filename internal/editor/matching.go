@@ -5,7 +5,7 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/jsf"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // gotoMatchingBracket (go_match) jumps the caret to the counterpart of the
@@ -29,7 +29,7 @@ import (
 //     the context filter confines candidates to the same comment/string
 //     region the caret is in.
 func (e *Editor) gotoMatchingBracket() bool {
-	w := e.WindowManager.GetFocusedWindow()
+	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Buffer == nil {
 		return false
 	}
@@ -108,8 +108,8 @@ func (e *Editor) gotoMatchingBracket() bool {
 	return false
 }
 
-func (e *Editor) jumpTo(w *window.Window, line, r int) bool {
-	w.SetCursorPos(window.Position{Line: line, Rune: r})
+func (e *Editor) jumpTo(w *viewport.Viewport, line, r int) bool {
+	w.SetCursorPos(viewport.Position{Line: line, Rune: r})
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
@@ -145,20 +145,20 @@ type matchScanner struct {
 	// Fallback pseudo-context for grammar-less buffers, per the
 	// matchIgnores* options: computed sequentially (block comments carry
 	// across lines) and memoized per operation. mi holds the flags resolved for
-	// the window (base overlaid by its class/grammar/type cascade).
+	// the viewport (base overlaid by its class/grammar/type cascade).
 	fallbackCtx bool
 	mi          matchIgnores
 	pctx        [][]uint8
 	pctxInBlock bool
 }
 
-// matchIgnores holds the resolved matchIgnores* fallback flags for a window:
-// the base [options] overlaid by the window's class/grammar/type cascade.
+// matchIgnores holds the resolved matchIgnores* fallback flags for a viewport:
+// the base [options] overlaid by the viewport's class/grammar/type cascade.
 type matchIgnores struct {
 	singleQuote, doubleQuote, slashStar, slashSlash, hash, doubleHyphen, semicolon, percent bool
 }
 
-func (e *Editor) resolvedMatchIgnores(w *window.Window) matchIgnores {
+func (e *Editor) resolvedMatchIgnores(w *viewport.Viewport) matchIgnores {
 	return matchIgnores{
 		singleQuote:  e.optBool(w, "matchignoressinglequote", e.Config.MatchIgnoresSingleQuote),
 		doubleQuote:  e.optBool(w, "matchignoresdoublequote", e.Config.MatchIgnoresDoubleQuote),
@@ -176,10 +176,10 @@ func (m matchIgnores) any() bool {
 		m.hash || m.doubleHyphen || m.semicolon || m.percent
 }
 
-// wantFallbackCtx reports whether the window's buffer needs the pseudo-context
+// wantFallbackCtx reports whether the viewport's buffer needs the pseudo-context
 // scanner: no grammar applies and at least one (resolved) matchIgnores flag is
 // on.
-func (e *Editor) wantFallbackCtx(w *window.Window) bool {
+func (e *Editor) wantFallbackCtx(w *viewport.Viewport) bool {
 	if c := e.ensureSynCache(w.Buffer, 0); c != nil && c.grammar != nil {
 		return false // the real highlighter context supersedes the flags
 	}

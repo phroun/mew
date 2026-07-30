@@ -21,22 +21,24 @@ func TestMacOptionInsertFallback(t *testing.T) {
 	if got := docContent(w); got != "ß" {
 		t.Fatalf("unmapped M-s should insert ß, got %q", got)
 	}
-	press(e, "M-p")
+	// M-d and M-5 are unbound in the shipped defaults (M-a/e/n/p/f/j drive
+	// scroll/word/page), so they fall through to the Option-character insert.
+	press(e, "M-d")
 	press(e, "M-5")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("letter and number combos should insert, got %q", got)
 	}
 
 	// A binding steals the combo: no insertion, the command runs instead.
 	e.PawScript.ExecuteAsync("map 'M-s', 'nop'")
 	press(e, "M-s")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("bound M-s must not insert, got %q", got)
 	}
 
 	// Unknown Meta combos still do nothing.
 	press(e, "M-F1")
-	if got := docContent(w); got != "ßπ∞" {
+	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("unknown meta keys stay ignored, got %q", got)
 	}
 }
@@ -61,15 +63,31 @@ func TestMacOptionKeysOff(t *testing.T) {
 }
 
 // The default is auto, and symbol combos round-trip through the escape
-// handling (M-' inserts æ, M-\ inserts «).
+// handling (M-' inserts æ, M-; inserts …).
 func TestMacOptionDefaults(t *testing.T) {
 	e, w := newTestEditor(t, "")
 	if v, _ := e.getOption(nil, "macOptionKeys"); v != "auto" {
 		t.Fatalf("default should be auto, got %q", v)
 	}
 	press(e, "M-'")
-	press(e, "M-\\")
-	if got := docContent(w); !strings.Contains(got, "æ") || !strings.Contains(got, "«") {
+	press(e, "M-;")
+	if got := docContent(w); !strings.Contains(got, "æ") || !strings.Contains(got, "…") {
 		t.Fatalf("symbol combos should insert, got %q", got)
+	}
+}
+
+// A BOUND M- combo runs its binding instead of inserting its Option
+// character — the deliberate trade the layer documents ("bindings steal
+// individual M- combos while the rest insert seamlessly"), which M-j, M-f,
+// M-a and M-e have always made. M-\ joined them when raw_key_input moved
+// there, so Option+backslash no longer types « on macOS.
+func TestBoundMetaComboBeatsTheOptionLayer(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	press(e, "M-\\")
+	if got := docContent(w); strings.Contains(got, "«") {
+		t.Errorf("M-\\ inserted %q; it is bound to raw_key_input", got)
+	}
+	if !e.rawKeyArmed {
+		t.Error("M-\\ should have armed raw key input")
 	}
 }

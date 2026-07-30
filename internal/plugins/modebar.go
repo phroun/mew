@@ -10,13 +10,13 @@ import (
 
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // ModebarPlugin renders the main modebar.
 type ModebarPlugin struct {
-	windowManager     *window.Manager
-	windowID          string
+	viewportManager   *viewport.Manager
+	viewportID        string
 	location          string // "top" (default) or "bottom" screen line
 	maxSequenceLength int
 	activeSequence    string
@@ -38,18 +38,123 @@ type ModebarPlugin struct {
 	// keymap (e.g. %SPU% -> the key bound to stat_peek_up). Merged into the
 	// substitution set so templates and the peek labels resolve them.
 	bindingValues map[string]string
+
+	// tfcResolve resolves dynamic TFC codes (e.g. %keys#save|^K S%) not present
+	// in the static value map, so the modebar's own templates can use them.
+	tfcResolve TFCResolver
+
+	// filenameFn, when set, supplies a display name for %FN% given the main
+	// buffer viewport — the editor uses it to show a wiki page's scheme form
+	// ("help:/start") instead of the underlying file base ("start.txt").
+	// Returning "" defers to the ordinary filename base.
+	filenameFn func(*viewport.Viewport) string
+
+	// Nav-history buttons ([<] / [>]) shown just before the filename when the
+	// context viewport has back/forward history. navStateFn supplies the live
+	// mouse state the editor tracks (the captured button, whether the pointer
+	// is over it, and the hovered button); the button column ranges are
+	// recorded each render (content-relative, 0-based, [start,end)) so the
+	// editor can hit-test a click against them. end<=start means absent.
+	navStateFn               func() (pressed int, pressedOn bool, hover int)
+	navBackStart, navBackEnd int
+	navFwdStart, navFwdEnd   int
+}
+
+// Modebar nav-button identities (also the editor's).
+const (
+	ModebarNavNone = 0
+	ModebarNavBack = 1
+	ModebarNavFwd  = 2
+)
+
+// SetFilenameFunc installs a display-name provider for %FN% (see filenameFn).
+func (s *ModebarPlugin) SetFilenameFunc(fn func(*viewport.Viewport) string) {
+	s.filenameFn = fn
+}
+
+// SetNavStateFunc installs the provider for the nav-history buttons' live
+// mouse state (captured button, pointer-over, hovered button).
+func (s *ModebarPlugin) SetNavStateFunc(fn func() (pressed int, pressedOn bool, hover int)) {
+	s.navStateFn = fn
+}
+
+// ViewportID returns the modebar viewport's id ("" before CreateViewport), so the
+// editor can locate the bar's screen row for nav-button hit-testing.
+func (s *ModebarPlugin) ViewportID() string { return s.viewportID }
+
+// NavButtonAtColumn reports which nav button ([<]=Back, [>]=Fwd) occupies the
+// content-relative column, from the ranges recorded by the last render, or
+// ModebarNavNone. The 3-space placeholder that holds the back button's width
+// when only forward history exists is inert (no button there).
+func (s *ModebarPlugin) NavButtonAtColumn(col int) int {
+	if col >= s.navBackStart && col < s.navBackEnd {
+		return ModebarNavBack
+	}
+	if col >= s.navFwdStart && col < s.navFwdEnd {
+		return ModebarNavFwd
+	}
+	return ModebarNavNone
+}
+
+// renderNav builds the nav-history button section shown just before the
+// filename and records the buttons' content-relative column ranges. It
+// collapses to "" when the context viewport has no history. Each button paints
+// its brackets in the button-SHADOW color and the "<"/">" glyph in the button
+// color, in one of three states — normal, pressed (mouse held over the
+// captured button), or hover (pointer over, graphical build only). When only
+// forward history exists, a 3-space placeholder holds the missing back
+// button's width so [>] stays put. startCol is the section's content column.
+func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctxViewport *viewport.Viewport, startCol int) string {
+	s.navBackStart, s.navBackEnd, s.navFwdStart, s.navFwdEnd = 0, 0, 0, 0
+	prior, next := 0, 0
+	if ctxViewport != nil {
+		prior, next = ctxViewport.NavHistoryDepths()
+	}
+	back, fwd := prior > 0, next > 0
+	if !back && !fwd {
+		return ""
+	}
+	pressed, pressedOn, hover := 0, false, 0
+	if s.navStateFn != nil {
+		pressed, pressedOn, hover = s.navStateFn()
+	}
+	// btn resolves the face + shadow colors for one button given its state.
+	btn := func(id int, glyph string) string {
+		faceName, shadowName := "button", "buttonShadow"
+		switch {
+		case pressed == id && pressedOn:
+			faceName, shadowName = "buttonPressed", "buttonShadowPressed"
+		case pressed == ModebarNavNone && hover == id:
+			faceName, shadowName = "buttonHover", "buttonShadowHover"
+		}
+		return col(shadowName) + "[" + col(faceName) + glyph + col(shadowName) + "]"
+	}
+
+	var b strings.Builder
+	if back {
+		b.WriteString(btn(ModebarNavBack, "<"))
+		s.navBackStart, s.navBackEnd = startCol, startCol+3
+	} else {
+		// Placeholder that keeps [>] in the same place a [<][>] pair would.
+		b.WriteString(fillColor + "   ")
+	}
+	if fwd {
+		b.WriteString(btn(ModebarNavFwd, ">"))
+		s.navFwdStart, s.navFwdEnd = startCol+3, startCol+6
+	}
+	return b.String()
 }
 
 // modebarBottomPriority keeps a bottom-located modebar on the very last
-// screen line: the bottom dock renders its highest-priority window at the
+// screen line: the bottom dock renders its highest-priority viewport at the
 // screen bottom, and prompt priorities (which exclude the modebar from
 // their scan) never climb anywhere near this.
 const modebarBottomPriority = 1 << 20
 
 // NewModebar creates a new modebar plugin.
-func NewModebar(wm *window.Manager) *ModebarPlugin {
+func NewModebar(wm *viewport.Manager) *ModebarPlugin {
 	return &ModebarPlugin{
-		windowManager:     wm,
+		viewportManager:   wm,
 		maxSequenceLength: 4,
 		colors:            config.NewColorScheme(),
 		tmplInner:         "%FN%",
@@ -83,12 +188,24 @@ func (s *ModebarPlugin) SetBindingValues(vals map[string]string) {
 	s.bindingValues = vals
 }
 
-// ExpandModebar substitutes %CODE% tokens in tmpl from vals (see the internal
-// engine): %% is a literal %, an unrecognized %CODE% is left verbatim. Exported
-// so other UI strings — the peek-indicator labels — run through the same engine
-// as the modebar templates.
-func ExpandModebar(tmpl string, vals map[string]string) string {
-	return expandModebar(tmpl, vals)
+// TFCResolver resolves a TFC (Text Format Control) %CODE% that is not a static
+// value in the substitution map — for instance a "keys#save|^K S" live-binding
+// reference. It returns the replacement text and true, or false to leave the
+// code verbatim. nil means "no dynamic codes".
+type TFCResolver func(code string) (string, bool)
+
+// ExpandTFC substitutes TFC %CODE% tokens in tmpl: %% is a literal %; a code
+// present in vals wins; else resolve (when non-nil) is tried; else the %CODE% is
+// left verbatim. This is the shared Text Format Control engine — the modebar
+// templates, the peek-indicator labels, and any other UI string run through it.
+func ExpandTFC(tmpl string, vals map[string]string, resolve TFCResolver) string {
+	return expandTFC(tmpl, vals, resolve)
+}
+
+// SetTFCResolver installs the dynamic-code resolver used when expanding the
+// modebar's own templates (so %keys#…% and the like resolve there too).
+func (s *ModebarPlugin) SetTFCResolver(resolve TFCResolver) {
+	s.tfcResolve = resolve
 }
 
 // SetColorScheme sets the layered color scheme used to resolve modebar colors.
@@ -97,51 +214,52 @@ func (s *ModebarPlugin) SetColorScheme(cs config.ColorScheme) {
 }
 
 // SetLocation places the modebar on the "top" (default) or "bottom" screen
-// line. When the window already exists it is relocated in place, so the
+// line. When the viewport already exists it is relocated in place, so the
 // option can be flipped at runtime via set_option.
 func (s *ModebarPlugin) SetLocation(location string) {
 	if location != "bottom" {
 		location = "top"
 	}
 	s.location = location
-	if s.windowID == "" {
+	if s.viewportID == "" {
 		return
 	}
 	dock, priority := s.dockAndPriority()
-	s.windowManager.UpdateWindow(s.windowID, func(w *window.Window) {
+	s.viewportManager.UpdateViewport(s.viewportID, func(w *viewport.Viewport) {
 		w.Dock = dock
 		w.Priority = priority
 	})
 }
 
 // dockAndPriority returns the dock placement for the configured location.
-// At the top the modebar outranks the other top windows; at the bottom it
+// At the top the modebar outranks the other top viewports; at the bottom it
 // takes the fixed always-last-line priority.
-func (s *ModebarPlugin) dockAndPriority() (window.DockPosition, int) {
+func (s *ModebarPlugin) dockAndPriority() (viewport.DockPosition, int) {
 	if s.location == "bottom" {
-		return window.DockBottom, modebarBottomPriority
+		return viewport.DockBottom, modebarBottomPriority
 	}
 	highestPriority := 0
-	for _, w := range s.windowManager.GetWindowsByDock(window.DockTop) {
+	for _, w := range s.viewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.Priority > highestPriority {
 			highestPriority = w.Priority
 		}
 	}
-	return window.DockTop, highestPriority + 100
+	return viewport.DockTop, highestPriority + 100
 }
 
-// CreateWindow creates the modebar window.
-func (s *ModebarPlugin) CreateWindow() string {
-	if s.windowID != "" {
-		return s.windowID
+// CreateViewport creates the modebar viewport.
+func (s *ModebarPlugin) CreateViewport() string {
+	if s.viewportID != "" {
+		return s.viewportID
 	}
 
 	dock, priority := s.dockAndPriority()
 
-	// Create the modebar window with custom rendering; colors resolve
+	// Create the modebar viewport with custom rendering; colors resolve
 	// dynamically through the "modebar" class.
-	s.windowID = s.windowManager.CreateWindow(window.WindowOptions{
-		Type:           window.WorkBuffer,
+	s.viewportID = s.viewportManager.CreateViewport(viewport.ViewportOptions{
+		Type:           viewport.ToolViewport,
+		ViewportSet:    viewport.ViewportSetModebar,
 		Class:          "modebar",
 		Dock:           dock,
 		Priority:       priority,
@@ -150,7 +268,7 @@ func (s *ModebarPlugin) CreateWindow() string {
 		CustomRenderer: "modebar",
 	})
 
-	return s.windowID
+	return s.viewportID
 }
 
 // SetActiveSequence sets the active key sequence for display.
@@ -162,7 +280,7 @@ func (s *ModebarPlugin) SetActiveSequence(seq string) {
 }
 
 // SetCompletions sets the key-sequence autocompletion text for display. When
-// non-empty it takes precedence over the focused window's context in the
+// non-empty it takes precedence over the focused viewport's context in the
 // modebar's middle section.
 func (s *ModebarPlugin) SetCompletions(completions string) {
 	s.completions = completions
@@ -174,16 +292,16 @@ func (s *ModebarPlugin) SetLogoRTL(rtl bool) {
 }
 
 // RenderContent renders the modebar content.
-func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string {
-	mainBufferWindow := s.windowManager.GetLastMainBufferWindow()
-	focusedWindow := s.windowManager.GetFocusedWindow()
+func (s *ModebarPlugin) RenderContent(w *viewport.Viewport, screenWidth int) string {
+	mainBufferViewport := s.viewportManager.GetLastMainViewport()
+	focusedViewport := s.viewportManager.GetFocusedViewport()
 
 	// Resolve colors dynamically through the modebar's class/type:
 	// - text:       modebar fill
 	// - modifiers:  active modifiers (key sequence) & surrounding space
 	// - buffer:     buffer name (filename)
 	// - completion: autocompletion (& surrounding space) when showing
-	// - context:    window context when autocompletion isn't showing
+	// - context:    viewport context when autocompletion isn't showing
 	// - messages:   Frag/Heap/Line/Rune stats readout
 	// - logo:       M_ logo
 	col := func(name string) string {
@@ -196,17 +314,22 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	logoColor := col("logo")
 	resetColor := col("reset")
 
-	if mainBufferWindow == nil {
+	if mainBufferViewport == nil {
 		return s.padToWidth(textColor+" Mew Editor "+resetColor, screenWidth)
 	}
 
-	// The context/position window is the focused window, unless a prompt is
+	// The context/position viewport is the focused viewport, unless a prompt is
 	// focused, in which case it is the last main buffer (the document).
-	ctxWindow := focusedWindow
-	if ctxWindow == nil || ctxWindow.Type == window.PromptBuffer {
-		ctxWindow = mainBufferWindow
+	ctxViewport := focusedViewport
+	if ctxViewport == nil || ctxViewport.Type == viewport.PromptViewport {
+		ctxViewport = mainBufferViewport
 	}
-	vals := modebarValues(mainBufferWindow, ctxWindow)
+	vals := modebarValues(mainBufferViewport, ctxViewport)
+	if s.filenameFn != nil {
+		if name := s.filenameFn(mainBufferViewport); name != "" {
+			vals["FN"] = name
+		}
+	}
 	for code, v := range s.bindingValues {
 		vals[code] = v
 	}
@@ -224,28 +347,36 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	}
 	logoStr := " " + logo + " "
 
+	// Nav-history buttons, inserted just BEFORE the filename and only as wide
+	// as needed (collapsing to nothing when the context viewport has no history).
+	// The section sits in the gap that already exists between the key-sequence
+	// area and the filename (each is space-padded), so when it collapses the
+	// layout is unchanged.
+	navStr := s.renderNav(col, modifiersColor, ctxViewport, calculateVisibleLength(leftText))
+	navWidth := calculateVisibleLength(navStr)
+
 	// Inner (filename) and outer (readout) come from templates.
-	innerStr := " " + expandModebar(s.tmplInner, vals) + " "
-	outerStr := " " + expandModebar(s.tmplOuter, vals) + " "
+	innerStr := " " + expandTFC(s.tmplInner, vals, s.tfcResolve) + " "
+	outerStr := " " + expandTFC(s.tmplOuter, vals, s.tfcResolve) + " "
 
 	// Middle: key-sequence completion, else a live outline breadcrumb, else the
 	// default template. Context is a live breadcrumb only when it differs from
-	// the window's spawn placeholder (the fortune).
+	// the viewport's spawn placeholder (the fortune).
 	middleColor := col("completion")
 	middle := s.completions
 	if middle == "" {
 		middleColor = col("context")
-		if ctx := ctxWindow.Context; ctx != "" && ctx != ctxWindow.SpawnContext {
+		if ctx := ctxViewport.Context; ctx != "" && ctx != ctxViewport.SpawnContext {
 			middle = ctx
 		} else {
-			middle = expandModebar(s.tmplDefault, vals)
+			middle = expandTFC(s.tmplDefault, vals, s.tfcResolve)
 		}
 	}
 
 	// Lay out the space between inner and the logo: the outer readout is
 	// right-aligned and ellipsized when it does not fit the remaining space;
 	// the middle fills the gap (truncated as needed). Inner and logo are kept.
-	remaining := screenWidth - calculateVisibleLength(leftText) - calculateVisibleLength(innerStr) - calculateVisibleLength(logoStr)
+	remaining := screenWidth - calculateVisibleLength(leftText) - navWidth - calculateVisibleLength(innerStr) - calculateVisibleLength(logoStr)
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -257,6 +388,7 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 	var modebar strings.Builder
 	modebar.WriteString(modifiersColor)
 	modebar.WriteString(leftText)
+	modebar.WriteString(navStr)
 	modebar.WriteString(bufferColor)
 	modebar.WriteString(innerStr)
 	modebar.WriteString(middleColor)
@@ -271,10 +403,10 @@ func (s *ModebarPlugin) RenderContent(w *window.Window, screenWidth int) string 
 }
 
 // modebarValues computes the %CODE% substitution values from the current
-// editor state: the document window drives file/fragment metrics; the context
-// window (focused, or the document when a prompt is focused) drives caret
+// editor state: the document viewport drives file/fragment metrics; the context
+// viewport (focused, or the document when a prompt is focused) drives caret
 // position.
-func modebarValues(mainWin, ctxWin *window.Window) map[string]string {
+func modebarValues(mainWin, ctxWin *viewport.Viewport) map[string]string {
 	filename := "[New File]"
 	fragStr := "0"
 	if mainWin != nil && mainWin.Buffer != nil {
@@ -320,10 +452,12 @@ func modebarValues(mainWin, ctxWin *window.Window) map[string]string {
 	}
 }
 
-// expandModebar substitutes %CODE% tokens from vals (case-insensitive keys),
-// turns %% into a literal %, and leaves an unrecognized %CODE% verbatim so a
-// not-yet-implemented code is visible rather than silently dropped.
-func expandModebar(tmpl string, vals map[string]string) string {
+// expandTFC substitutes TFC %CODE% tokens: a code found in vals (matched
+// case-insensitively) wins; else resolve (when non-nil) is offered the code in
+// its ORIGINAL case (keys#/keys_verbose# references are case-sensitive); else
+// the %CODE% is left verbatim so a not-yet-implemented code is visible rather
+// than silently dropped. %% is a literal %.
+func expandTFC(tmpl string, vals map[string]string, resolve TFCResolver) string {
 	var b strings.Builder
 	for i := 0; i < len(tmpl); {
 		if tmpl[i] != '%' {
@@ -344,12 +478,22 @@ func expandModebar(tmpl string, vals map[string]string) string {
 		code := tmpl[i+1 : i+1+j]
 		if v, ok := vals[strings.ToUpper(code)]; ok {
 			b.WriteString(v)
+		} else if v, ok := resolveTFC(resolve, code); ok {
+			b.WriteString(v)
 		} else {
 			b.WriteString("%" + code + "%")
 		}
 		i += 1 + j + 1
 	}
 	return b.String()
+}
+
+// resolveTFC offers code to a dynamic resolver, guarding a nil one.
+func resolveTFC(resolve TFCResolver, code string) (string, bool) {
+	if resolve == nil {
+		return "", false
+	}
+	return resolve(code)
 }
 
 // visualColumn returns the visual column (0-based) at rune index upto, tabs

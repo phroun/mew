@@ -1,0 +1,181 @@
+--- a/cell.go	2026-07-21 09:22:56.413160414 +0000
++++ b/cell.go	2026-07-21 11:36:30.970821813 +0000
+@@ -32,6 +32,7 @@
+ 	BGP            int     // Base Glyph Palette index (-1 = use foreground color code as palette)
+ 	XFlip          bool    // Horizontal flip for custom glyphs
+ 	YFlip          bool    // Vertical flip for custom glyphs
++	Font           uint8   // Font slot 0..10: 0 = primary (SGR 10), 1..9 = alternates (SGR 11..19), 10 = fraktur (SGR 20). A renderer maps the slot to a family; unset slots inherit slot 0.
+ }
+ 
+ // String returns the full character including any combining marks
+--- a/buffer.go	2026-07-21 09:22:56.411554129 +0000
++++ b/buffer.go	2026-07-21 11:36:30.971098767 +0000
+@@ -205,6 +205,12 @@
+ 	currentXFlip bool // Current horizontal flip attribute
+ 	currentYFlip bool // Current vertical flip attribute
+ 
++	// Font slots: the current slot (SGR 10..20) written into new cells, and
++	// the per-terminal slot -> family-name map a renderer resolves through its
++	// shared font engine. Unset slots (and slot 0) render in the primary face.
++	currentFont uint8
++	fontSlots   map[uint8]string
++
+ 	// Global palette and glyph storage (shared across all cells)
+ 	palettes     map[int]*Palette      // Palette number -> Palette
+ 	customGlyphs map[rune]*CustomGlyph // Rune -> CustomGlyph
+@@ -260,6 +266,7 @@
+ 		preferredDarkTheme:  true, // User preference defaults to dark
+ 		lineDensity:         25,            // Default line density
+ 		currentBGP:          -1,            // -1 = use foreground color code as palette
++		fontSlots:           map[uint8]string{},
+ 		palettes:     make(map[int]*Palette),
+ 		customGlyphs: make(map[rune]*CustomGlyph),
+ 		sprites:             make(map[int]*Sprite),
+@@ -884,6 +891,58 @@
+ 	b.currentReverse = false
+ 	b.currentBlink = false
+ 	b.currentStrikethrough = false
++	b.currentFont = 0
++}
++
++// SetFont sets the current font slot (0..10) written into subsequent cells.
++// Values are clamped to the valid range.
++func (b *Buffer) SetFont(slot int) {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if slot < 0 {
++		slot = 0
++	}
++	if slot > 10 {
++		slot = 10
++	}
++	b.currentFont = uint8(slot)
++}
++
++// GetFont returns the current font slot.
++func (b *Buffer) GetFont() int {
++	b.mu.RLock()
++	defer b.mu.RUnlock()
++	return int(b.currentFont)
++}
++
++// SetFontSlot maps a font slot (0..10) to a family name for THIS terminal; a
++// renderer resolves the name through its shared font engine. Empty family
++// clears the slot (it then inherits slot 0). Slot 0 is the primary face.
++func (b *Buffer) SetFontSlot(slot int, family string) {
++	if slot < 0 || slot > 10 {
++		return
++	}
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if family == "" {
++		delete(b.fontSlots, uint8(slot))
++		return
++	}
++	b.fontSlots[uint8(slot)] = family
++}
++
++// GetFontSlot returns the family configured for a slot, falling back to slot
++// 0's family, then "" (the renderer's default primary) when neither is set.
++func (b *Buffer) GetFontSlot(slot int) string {
++	if slot < 0 || slot > 10 {
++		return ""
++	}
++	b.mu.RLock()
++	defer b.mu.RUnlock()
++	if fam, ok := b.fontSlots[uint8(slot)]; ok {
++		return fam
++	}
++	return b.fontSlots[0]
+ }
+ 
+ // SetForeground sets the current foreground color
+--- a/buffer_output.go	2026-07-21 09:22:56.412483560 +0000
++++ b/buffer_output.go	2026-07-21 11:36:30.971305333 +0000
+@@ -267,6 +267,7 @@
+ 		BGP:               b.currentBGP,
+ 		XFlip:             b.currentXFlip,
+ 		YFlip:             b.currentYFlip,
++		Font:              b.currentFont,
+ 	}
+ 
+ 	// Use the calculated charWidth (already accounts for custom glyphs and ambiguous width mode)
+--- a/parser.go	2026-07-21 09:22:56.417246566 +0000
++++ b/parser.go	2026-07-21 11:36:47.977255345 +0000
+@@ -594,6 +594,12 @@
+ 			p.buffer.SetReverse(true)
+ 		case 9: // Strikethrough
+ 			p.buffer.SetStrikethrough(true)
++		case 10: // Primary font (font slot 0)
++			p.buffer.SetFont(0)
++		case 11, 12, 13, 14, 15, 16, 17, 18, 19: // Alternate fonts 1..9 (slots 1..9)
++			p.buffer.SetFont(int(param) - 10)
++		case 20: // Fraktur / gothic (font slot 10)
++			p.buffer.SetFont(10)
+ 		case 21: // Bold off (double underline in some terminals)
+ 			p.buffer.SetBold(false)
+ 		case 22: // Normal intensity
+@@ -898,6 +904,8 @@
+ 		p.executeOSCGlyph(args)
+ 	case 7002: // Sprite management
+ 		p.executeOSCSprite(args)
++	case 7004: // Font-slot configuration
++		p.executeOSCFont(args)
+ 	case 7003: // Screen crop and splits
+ 		p.executeOSCScreenCrop(args)
+ 	// Other OSC commands (title, etc.) could be added here
+@@ -1264,3 +1272,36 @@
+ 		}
+ 	}
+ }
++
++// executeOSCFont handles OSC 7004 font-slot commands, configuring the
++// per-terminal slot -> family map an app selects between with SGR 10-20.
++// Format: ESC ] 7004 ; cmd BEL
++// Commands:
++//
++//	f;SLOT;FAMILY  - map font slot SLOT (0..10) to family name FAMILY
++//	fd;SLOT        - clear slot SLOT (it then inherits slot 0)
++//	fda            - clear all slot mappings
++func (p *Parser) executeOSCFont(args string) {
++	parts := strings.SplitN(args, ";", 3)
++	if len(parts) == 0 {
++		return
++	}
++	switch parts[0] {
++	case "fda": // clear all
++		for s := 0; s <= 10; s++ {
++			p.buffer.SetFontSlot(s, "")
++		}
++	case "fd": // clear one
++		if len(parts) >= 2 {
++			if slot, err := strconv.Atoi(parts[1]); err == nil {
++				p.buffer.SetFontSlot(slot, "")
++			}
++		}
++	case "f": // set slot -> family
++		if len(parts) >= 3 {
++			if slot, err := strconv.Atoi(parts[1]); err == nil {
++				p.buffer.SetFontSlot(slot, parts[2])
++			}
++		}
++	}
++}
+--- a/cli/terminal.go	2026-07-21 09:22:56.414414738 +0000
++++ b/cli/terminal.go	2026-07-21 11:36:47.992878681 +0000
+@@ -59,6 +59,7 @@
+ type RenderedCell struct {
+ 	Char      rune
+ 	Combining string
++	Font      uint8 // Font slot 0..10 (SGR 10..20); a renderer maps it to a family
+ 	Fg, Bg    purfecterm.Color
+ 	Bold      bool
+ 	Italic    bool
+@@ -914,6 +915,7 @@
+ 
+ 			cells[y][x] = RenderedCell{
+ 				Char:      char,
++				Font:      cell.Font,
+ 				Combining: cell.Combining,
+ 				Fg:        fg,
+ 				Bg:        bg,

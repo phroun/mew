@@ -2,9 +2,59 @@ package editor
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// expandTilde resolves a leading ~ (current user) or ~name (a named user) path
+// segment to the matching home directory, cross-platform: "~" and "~/rest" use
+// currentHome (falling back to os.UserHomeDir when it is empty), while "~name"
+// and "~name/rest" resolve through os/user. It returns the path unchanged with
+// ok=false when there is no leading tilde or a named user cannot be resolved.
+// The tail is rejoined with filepath.Join so separators normalize per platform.
+func expandTilde(path, currentHome string) (string, bool) {
+	if path == "" || path[0] != '~' {
+		return path, false
+	}
+	// Split "~seg" from the "/rest" tail at the first separator (accept both /
+	// and \ so a Windows-style entry works too).
+	seg, rest := path[1:], ""
+	if i := strings.IndexAny(path, `/\`); i >= 0 {
+		seg, rest = path[1:i], path[i+1:]
+	}
+	var home string
+	if seg == "" {
+		home = currentHome
+		if home == "" {
+			h, err := os.UserHomeDir()
+			if err != nil || h == "" {
+				return path, false
+			}
+			home = h
+		}
+	} else {
+		u, err := user.Lookup(seg)
+		if err != nil || u.HomeDir == "" {
+			return path, false
+		}
+		home = u.HomeDir
+	}
+	if rest == "" {
+		return home, true
+	}
+	return filepath.Join(home, rest), true
+}
+
+// osExpand expands a leading ~ / ~user against the OS's own home resolution, for
+// the OS-backed FileSystem below. Non-tilde paths pass through unchanged.
+func osExpand(p string) string {
+	if e, ok := expandTilde(p, ""); ok {
+		return e
+	}
+	return p
+}
 
 // FileSystem is the minimal set of callbacks mew needs for its document file
 // scaffolding: loading files into buffers, saving buffers, inserting file
@@ -56,18 +106,19 @@ type DirGlobber interface {
 type osFileSystem struct{}
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name)
+	return os.ReadFile(osExpand(name))
 }
 
 func (osFileSystem) WriteFile(name string, data []byte) error {
-	return os.WriteFile(name, data, 0644)
+	return os.WriteFile(osExpand(name), data, 0644)
 }
 
 func (osFileSystem) Glob(pattern string) ([]string, error) {
-	return filepath.Glob(pattern)
+	return filepath.Glob(osExpand(pattern))
 }
 
 func (osFileSystem) Stat(name string) (FileInfo, error) {
+	name = osExpand(name)
 	fi, err := os.Stat(name)
 	if err != nil {
 		return FileInfo{}, err
@@ -76,7 +127,7 @@ func (osFileSystem) Stat(name string) (FileInfo, error) {
 }
 
 func (fs osFileSystem) GlobStat(pattern string) ([]FileInfo, error) {
-	matches, err := filepath.Glob(pattern)
+	matches, err := filepath.Glob(osExpand(pattern))
 	if err != nil {
 		return nil, err
 	}

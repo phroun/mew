@@ -66,6 +66,10 @@ mappings=mew
 # modebarInner=%FN% (prose)
 showLineNumbers=true
 showColumnRuler=true
+# Reserve each window's outer column (right edge in LTR, left in RTL) for a
+# clickable vertical scrollbar. Per-window; never shown on prompts or on a
+# window hosting a terminal session (the terminal draws its own).
+scrollbar=true
 # Highlight the ruler cells under the cursor (and its ghost / bidi companion
 # cursor) with the rulerCursor color (default black on silver)
 rulerShowsCursor=false
@@ -152,6 +156,8 @@ visibleTab=">"
 visibleNewline="⮐"
 visibleReturn="M"
 emptyGutter="~"
+scrollbarTrack="░"
+scrollbarThumb="█"
 moreRight=">"
 moreLeft="<"
 cursorGhost="|"
@@ -311,7 +317,7 @@ esc esc	=set_mark
 ^_	=buffer_undo
 ^+	=buffer_redo
 ^^	=buffer_redo
-^K 2	=buffer_clone
+^K 2	=buffer_duplicate
 ^K O	=buffer_open_file
 ^K R	=buffer_insert_file
 ^K A	=buffer_save_all

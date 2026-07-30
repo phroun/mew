@@ -5,9 +5,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/phroun/mew/internal/buffer"
-	"github.com/phroun/mew/internal/window"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // Default systematic palette entries (from the config color defaults).
@@ -19,9 +20,57 @@ const (
 	sgrType     = "\x1b[0;93;40m"
 )
 
+// escEnd returns the index just past the terminal escape sequence at s[i:]
+// (i points at ESC): a CSI (ESC [ … final) or a two/three-byte ESC form.
+func escEnd(s string, i int) int {
+	if i+1 >= len(s) {
+		return i + 1
+	}
+	switch s[i+1] {
+	case '[':
+		j := i + 2
+		for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+			j++
+		}
+		return j + 1 // include the final byte
+	case '#', '(', ')', '*', '+':
+		return i + 3
+	default:
+		return i + 2
+	}
+}
+
+// expandSGR rewrites a (now SGR-coalesced) terminal stream back into the
+// one-SGR-per-glyph form the highlight assertions were written against: it
+// tracks the pen (the last CSI '…m') and re-emits it before every printable
+// rune, dropping other escapes. So a "<sgr><glyph>" check verifies the glyph's
+// EFFECTIVE style regardless of whether present() actually repeated the SGR.
+func expandSGR(raw string) string {
+	var out strings.Builder
+	pen := ""
+	for i := 0; i < len(raw); {
+		if raw[i] == 0x1b {
+			j := escEnd(raw, i)
+			if seq := raw[i:j]; strings.HasPrefix(seq, "\x1b[") && strings.HasSuffix(seq, "m") {
+				pen = seq
+			}
+			i = j
+			continue
+		}
+		_, sz := utf8.DecodeRuneInString(raw[i:])
+		if sz == 0 {
+			sz = 1
+		}
+		out.WriteString(pen)
+		out.WriteString(raw[i : i+sz])
+		i += sz
+	}
+	return out.String()
+}
+
 // renderedEditorWithConfig is newRenderedEditor with a full custom config
-// text (for [colors.syntax.*] sections and the syntax option).
-func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor, *window.Window, *bytes.Buffer) {
+// text (for [syntax.*] sections and the syntax option).
+func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor, *viewport.Viewport, *bytes.Buffer) {
 	t.Helper()
 	var out bytes.Buffer
 	cfg := DefaultConfig()
@@ -38,11 +87,12 @@ func renderedEditorWithConfig(t *testing.T, content, configText string) (*Editor
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	e.WindowManager.CreateWindow(window.WindowOptions{
-		Visible: true, ID: "doc", Type: window.MainBuffer, Dock: window.DockNone,
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "doc", Type: viewport.DocViewport, Dock: viewport.DockNone,
 		Buffer: buffer.NewFromString(content), SetFocus: true,
+		LinkBrowsing: e.Config.LinkBrowsing,
 	})
-	return e, e.WindowManager.GetWindow("doc"), &out
+	return e, e.ViewportManager.GetViewport("doc"), &out
 }
 
 // syntax=cpp colors keywords, types, comments and strings in the rendered
@@ -83,11 +133,11 @@ func TestSyntaxMultilineComment(t *testing.T) {
 	}
 }
 
-// [colors.syntax.<grammar>] remaps a jsf class to another mew color name.
+// [syntax.<grammar>] remaps a jsf class to another mew color name.
 func TestSyntaxPerGrammarColorMap(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t,
 		"int x;\n",
-		"[options]\nsyntax=cpp\n\n[colors.syntax.cpp]\nType = syntaxConstant\n")
+		"[options]\nsyntax=cpp\n\n[syntax.cpp]\nType = syntaxConstant\n")
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -100,11 +150,11 @@ func TestSyntaxPerGrammarColorMap(t *testing.T) {
 	}
 }
 
-// [colors.syntax] (global) remaps a class for every grammar.
+// [syntax] (global) remaps a class for every grammar.
 func TestSyntaxGlobalColorMap(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t,
 		"// hey\n",
-		"[options]\nsyntax=cpp\n\n[colors.syntax]\nComment = syntaxString\n")
+		"[options]\nsyntax=cpp\n\n[syntax]\nComment = syntaxString\n")
 	out.Reset()
 	e.performRender()
 	raw := out.String()
@@ -125,7 +175,7 @@ func TestSyntaxRecomputesAfterEdit(t *testing.T) {
 		t.Fatal("'retur' is not a keyword yet")
 	}
 
-	w.SetCursorPos(window.Position{Line: 0, Rune: 5})
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5})
 	e.executeCommand("insert 'n'")
 	out.Reset()
 	e.performRender()
@@ -171,7 +221,7 @@ func TestSyntaxOption(t *testing.T) {
 	}
 }
 
-// Prompt windows never syntax-highlight (only main buffers do).
+// Prompt viewports never syntax-highlight (only main buffers do).
 func TestSyntaxSkipsPrompts(t *testing.T) {
 	e, _, out := renderedEditorWithConfig(t, "x\n", "[options]\nsyntax=cpp\n")
 	e.PromptForInput("Cmd: ", "", func(string, bool) {})
@@ -229,7 +279,7 @@ func TestBuiltinGrammarsSmoke(t *testing.T) {
 			}
 			out.Reset()
 			e.performRender()
-			if !strings.Contains(out.String(), c.wantSGR+c.before) {
+			if !strings.Contains(expandSGR(out.String()), c.wantSGR+c.before) {
 				t.Fatalf("expected %q before %q in rendered %s output",
 					c.wantSGR, c.before, c.grammar)
 			}
@@ -251,7 +301,7 @@ func TestUnmappedClassFallsBackToFileAttrs(t *testing.T) {
 }
 
 // [formats] aliases resolve to their builtin grammars (canonicalized before
-// loading, so [colors.syntax.<grammar>] maps key on the real grammar name).
+// loading, so [syntax.<grammar>] maps key on the real grammar name).
 func TestSyntaxFormatsAliases(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t, "x\n", "[general]\n")
 	for alias, want := range map[string]string{
@@ -334,8 +384,8 @@ func TestSyntaxDetectEnvPhp(t *testing.T) {
 	if !strings.Contains(raw, sgrKeyword+"e") {
 		t.Fatal("php 'echo' should color as a keyword via the shebang")
 	}
-	// $greeting: the Var class maps to syntaxEscape (bold cyan on black).
-	if !strings.Contains(raw, "\x1b[0;1;36;40m$") {
+	// $greeting: the Var class maps to syntaxEscape (bright cyan on black).
+	if !strings.Contains(raw, "\x1b[0;96;40m$") {
 		t.Fatal("php variables should color via the Var class")
 	}
 }
@@ -389,7 +439,7 @@ func TestSyntaxDetectBasenameAndFallback(t *testing.T) {
 // The syntaxDetect option round-trips and takes effect at runtime.
 func TestSyntaxDetectOption(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t, "#!/bin/bash\nif true; then\n", "[general]\n")
-	if v, _ := e.getOption(nil, "syntaxDetect"); v != "false" {
+	if v, _ := e.getOption(nil, "syntaxDetect"); v != "no" {
 		t.Fatalf("default syntaxDetect: %q", v)
 	}
 	out.Reset()
@@ -399,7 +449,7 @@ func TestSyntaxDetectOption(t *testing.T) {
 	}
 
 	e.PawScript.ExecuteAsync("set_option 'syntaxDetect', 'true'")
-	if v, _ := e.getOption(nil, "syntaxDetect"); v != "true" {
+	if v, _ := e.getOption(nil, "syntaxDetect"); v != "yes" {
 		t.Fatalf("syntaxDetect after set_option: %q", v)
 	}
 	_ = w
@@ -468,28 +518,33 @@ func TestFormatPathsUserRules(t *testing.T) {
 	}
 }
 
-// mainBuf returns the "doc" window's buffer.
+// mainBuf returns the "doc" viewport's buffer.
 func mainBuf(e *Editor) *buffer.Buffer {
-	return e.WindowManager.GetWindow("doc").Buffer
+	return e.ViewportManager.GetViewport("doc").Buffer
 }
 
 // The dokuwiki grammar colors the core constructs.
 func TestDokuwikiGrammar(t *testing.T) {
-	const sgrEscape = "\x1b[0;1;36;40m"
+	const sgrEscape = "\x1b[0;96;40m"
 	e, _, out := renderedEditorWithConfig(t,
 		"====== Head ======\n**bold** and [[wiki:page|x]]\n<code>\nraw < stuff\n</code>\nafter\n",
 		"[options]\nsyntax=dokuwiki\n")
 	out.Reset()
 	e.performRender()
-	raw := out.String()
+	raw := expandSGR(out.String()) // present() coalesces SGR; expand to check effective styles
 	if !strings.Contains(raw, sgrKeyword+"=") {
 		t.Fatal("headings should color via Heading -> syntaxKeyword")
 	}
-	if !strings.Contains(raw, "\x1b[0;1m*") && !strings.Contains(raw, "\x1b[0;1mb") {
-		t.Fatal("bold spans should use the grammar's bold attr")
+	// Bold asserts an absolute attribute state (bold on, other toggles off) and
+	// leaves color alone, so it keeps the surrounding pen rather than resetting.
+	const boldSGR = "\x1b[23;24;25;27;1m"
+	if !strings.Contains(raw, boldSGR+"*") && !strings.Contains(raw, boldSGR+"b") {
+		t.Fatal("bold spans should assert bold-on with other toggles off, no color reset")
 	}
-	if !strings.Contains(raw, sgrEscape+"[") && !strings.Contains(raw, sgrType+"[") {
-		t.Fatal("links should color via the Link class")
+	// Grammar-recognized links now paint in the "link" color (caret mode):
+	// the followable-link affordance overrides the Link class's syntax color.
+	if !strings.Contains(raw, "\x1b[0;4;93;40m[") {
+		t.Fatal("links should paint in the link color in caret mode")
 	}
 	if !strings.Contains(raw, sgrString+"r") {
 		t.Fatal("code block content should color via Code -> syntaxString")
@@ -497,6 +552,30 @@ func TestDokuwikiGrammar(t *testing.T) {
 	// The line after </code> is plain again (default text color).
 	if !strings.Contains(raw, "\x1b[0;37;40ma") {
 		t.Fatal("text after the code block should be plain")
+	}
+}
+
+// Nested inline emphasis composes: a **bold** word inside an //italic// phrase
+// renders bold+italic, and the closing "**" drops back to italic while the
+// color is untouched. The grammar emits combined classes (BoldItalic, …) and
+// absolute-state attrSGR turns exactly the one attribute off at each boundary.
+func TestDokuwikiNestedEmphasis(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // use the embedded grammar, not a dev ~/.mew shadow
+	e, _, out := renderedEditorWithConfig(t,
+		"//it **bo** more//\n", "[options]\nsyntax=dokuwiki\n")
+	out.Reset()
+	e.performRender()
+	raw := expandSGR(out.String())
+	// The bold word inside the italic phrase is bold AND italic (bold+italic on,
+	// underline/blink/inverse off), with no color reset.
+	const boldItalic = "\x1b[24;25;27;1;3m"
+	if !strings.Contains(raw, boldItalic+"b") {
+		t.Fatalf("nested bold-in-italic should render bold+italic; got %q", raw)
+	}
+	// After the closing "**", "more" is italic again: bold turned back OFF (22).
+	const italicOnly = "\x1b[22;24;25;27;3m"
+	if !strings.Contains(raw, italicOnly+"m") {
+		t.Fatalf("text after the nested ** should return to italic-only; got %q", raw)
 	}
 }
 
@@ -552,7 +631,7 @@ func TestJavascriptRegexLiterals(t *testing.T) {
 		e, _, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=javascript\n")
 		out.Reset()
 		e.performRender()
-		return out.String()
+		return expandSGR(out.String()) // coalesced SGR -> per-glyph, for effective-style checks
 	}
 
 	// Expression position: /ab+c/g is a regex (Regexp -> syntaxString).
@@ -601,14 +680,63 @@ func TestProjectSyntaxDir(t *testing.T) {
 	}
 }
 
+// parseSyntaxOverrides accepts space-, comma-, and semicolon-separated flavor
+// lists and lowercases them.
+func TestParseSyntaxOverrides(t *testing.T) {
+	for _, in := range []string{"go conf", "go,conf", "  Go ; CONF ", "go\tconf"} {
+		set := parseSyntaxOverrides(in)
+		if !set["go"] || !set["conf"] || len(set) != 2 {
+			t.Fatalf("parseSyntaxOverrides(%q) = %v", in, set)
+		}
+	}
+	if parseSyntaxOverrides("") != nil || parseSyntaxOverrides("   ") != nil {
+		t.Fatal("empty input should yield a nil set")
+	}
+}
+
+// syntaxOverrides makes a listed flavor skip the document's project .mew/syntax
+// folder, so a project-only grammar no longer resolves under that name.
+func TestSyntaxOverridesSkipsProjectDir(t *testing.T) {
+	proj := t.TempDir()
+	mew := proj + "/.mew"
+	if err := os.MkdirAll(mew+"/syntax", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grammar := "=Idle\n=Zap\tbold red\n:idle Idle\n\t*\tidle\n\t\"z\"\tzap\trecolor=-1\n:zap Zap\n\t*\tidle\tnoeat\n"
+	if err := os.WriteFile(mew+"/syntax/zzgrammar.jsf", []byte(grammar), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Baseline: the project grammar resolves through the normal cascade.
+	e, _, _ := renderedEditorWithConfig(t, "z\n", "[general]\n")
+	e.LoadedConfig.ProjectDirs = []string{mew}
+	if _, err := e.resolveSyntaxFile("zzgrammar", false); err != nil {
+		t.Fatalf("project grammar should resolve with the project layer: %v", err)
+	}
+	// Skipping the project layer removes the only source, so it no longer loads.
+	if _, err := e.resolveSyntaxFile("zzgrammar", true); err == nil {
+		t.Fatal("skipProject should bypass the project .mew/syntax dir")
+	}
+
+	// End to end through the override loader: with zzgrammar overridden, the
+	// grammar (project-only) no longer loads.
+	if !e.setSyntax("zzgrammar") {
+		t.Fatal("baseline: project grammar should load")
+	}
+	e.Config.SyntaxOverrides = "zzgrammar"
+	if e.setSyntax("zzgrammar") {
+		t.Fatal("an overridden project-only grammar should fail to resolve")
+	}
+}
+
 // The conf grammar follows mew's own editor.conf rules.
 func TestConfGrammarMewRules(t *testing.T) {
-	const sgrEscape = "\x1b[0;1;36;40m" // syntaxEscape
+	const sgrEscape = "\x1b[0;96;40m" // syntaxEscape
 	render := func(content string) string {
 		e, _, out := renderedEditorWithConfig(t, content, "[options]\nsyntax=conf\n")
 		out.Reset()
 		e.performRender()
-		return out.String()
+		return expandSGR(out.String()) // coalesced SGR -> per-glyph, for effective-style checks
 	}
 
 	// A mid-line ';' is value text (a mappings command separator), not a
@@ -659,6 +787,17 @@ func TestConfGrammarMewRules(t *testing.T) {
 	if !strings.Contains(raw, sgrComment+"#") {
 		t.Fatal("the tail comment should still be found after an escaped '='")
 	}
+
+	// An @include directive colors as a preprocessor at-rule — distinct from a
+	// '#' comment, so it stands out (and is never mistaken for one).
+	const sgrPreproc = "\x1b[0;94;40m" // syntaxPreproc
+	raw = render("# a comment\n@include \"team.conf\"\n")
+	if !strings.Contains(raw, sgrPreproc+"@") {
+		t.Fatal("@include should color as a preprocessor directive")
+	}
+	if strings.Contains(raw, sgrComment+"@") {
+		t.Fatal("@include must not color as a comment")
+	}
 }
 
 // fsMap is a virtual FileSystem for sandboxed-host tests.
@@ -673,7 +812,7 @@ func (f fsMap) ReadFile(name string) ([]byte, error) {
 func (f fsMap) WriteFile(name string, data []byte) error { f[name] = string(data); return nil }
 func (f fsMap) Glob(pattern string) ([]string, error)    { return nil, nil }
 
-// A sandboxed host's config text can #include further files, served back
+// A sandboxed host's config text can @include further files, served back
 // through the host's own FileSystem.
 func TestConfigIncludeThroughHostFS(t *testing.T) {
 	var out bytes.Buffer
@@ -681,7 +820,7 @@ func TestConfigIncludeThroughHostFS(t *testing.T) {
 	cfg.SkipUserConfig = true
 	cfg.SkipProfileScript = true
 	cfg.ColdStoragePath = t.TempDir()
-	text := "#include \"team.conf\"\n[options]\ntabSize=3\n"
+	text := "@include \"team.conf\"\n[options]\ntabSize=3\n"
 	cfg.ConfigText = &text
 	cfg.FS = fsMap{"team.conf": "[options]\nsyntax=go\n"}
 	cfg.Terminal = &TerminalIO{
