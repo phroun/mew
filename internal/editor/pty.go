@@ -438,6 +438,15 @@ func (e *Editor) execRequestSpec(command string, args []string, method string, s
 		e.ShowWarning("No active buffer")
 		return false
 	}
+	// A registered wiki may refuse to host a terminal, and says why (see
+	// wikiDef.DeclineExec). Asked BEFORE anything else about the buffer, because
+	// WHERE the request came from is the most specific thing that can be wrong
+	// with it, and the most useful thing to be told: the alternative is the host
+	// failing later on a working directory the reader never chose and cannot see.
+	if why := wikiDeclineExec(w.WikiName); why != "" {
+		e.ShowWarning(why)
+		return false
+	}
 	if e.ptySessionFor(w.Buffer) != nil {
 		e.ShowWarning("This buffer already has a session")
 		return false

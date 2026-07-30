@@ -87,6 +87,22 @@ type wikiDef struct {
 	// wikis say for themselves.
 	Writable bool
 
+	// DeclineExec refuses exec and shell in this wiki's viewports, with this
+	// message. Empty permits them.
+	//
+	// It is a MESSAGE rather than a flag because the interesting part is the
+	// reason: "no" without one leaves the reader guessing at which of a dozen
+	// things went wrong. See execRequestSpec.
+	//
+	// A wiki is a place, and a place is eventually what decides what a terminal
+	// there means — a project wiki might reasonably answer `shell` with an SSH
+	// session on the machine the project lives on, rather than a shell here.
+	// Declining is the degenerate case of that: the help manual is a place with
+	// no working directory of its own, so there is nowhere for a terminal in it
+	// to be. (The config-driven registry that replaces this map will spell the
+	// field decline_exec.)
+	DeclineExec string
+
 	// Viewport placement: the kind of viewport a page of this wiki opens in and
 	// where it docks. The zero value (DocViewport / DockNone) is an ordinary
 	// main-area document viewport; help declares a ToolViewport in the top dock,
@@ -115,6 +131,14 @@ var wikiRegistry = map[string]wikiDef{
 	"help": {
 		Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt",
 		Start: "start", Writable: true,
+		// The manual is a place to read, not a working directory. Its pages are
+		// named for a user tree (~/.mew/help/...) that need not exist, since the
+		// content ships embedded — so a terminal asked to start "here" would be
+		// asked to chdir somewhere that is not there, and would fail in the least
+		// helpful way available: an error naming the SHELL, because a pty child
+		// carries a SysProcAttr and so misses the runtime's friendlier
+		// missing-directory wording.
+		DeclineExec: "You can't spawn a terminal inside the mew help manual's viewport",
 		// Help pages surface as a top-docked tool readout above the document,
 		// not in the main editing area, and carry the "Help" title bar (the
 		// title-less form belongs to Quick Help alone).
@@ -133,6 +157,17 @@ func wikiWritable(wikiName string) bool {
 		return def.Writable
 	}
 	return true
+}
+
+// wikiDeclineExec returns the reason a wiki refuses exec and shell in its
+// viewports, or "" when it permits them. The unrooted document space ("" — no
+// wiki) and an unregistered rooted viewport permit them, exactly as they always
+// have: only a registered wiki that says otherwise declines.
+func wikiDeclineExec(wikiName string) string {
+	if def, ok := wikiRegistry[wikiName]; ok {
+		return def.DeclineExec
+	}
+	return ""
 }
 
 // wikiSchemeRef reports whether ref invokes a registered wiki scheme with a

@@ -1448,3 +1448,58 @@ func TestShellCommandRefusesAProgram(t *testing.T) {
 		t.Error("the host should not have been asked for anything")
 	}
 }
+
+// A registered wiki may refuse to host a terminal, and says why. The help
+// manual does: its pages are named for a user tree that need not exist (the
+// content ships embedded), so there is no working directory for a terminal
+// there to start in — and without this the failure surfaced from the host as
+// "fork/exec /bin/zsh: no such file or directory", an error naming the SHELL
+// when the missing thing was the DIRECTORY.
+func TestWikiDeclinesToHostATerminal(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	asked := false
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) {
+		asked = true
+		return newStubPTY(), nil
+	}
+	e.executeCommand("help_open")
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.WikiName != "help" {
+		t.Fatalf("focused viewport is not the help wiki (%+v)", w)
+	}
+
+	for _, cmd := range []string{"shell", `exec "bash"`} {
+		asked = false
+		e.executeCommand(cmd)
+		if asked {
+			t.Errorf("%s: the host was asked for a session inside the help manual", cmd)
+		}
+		if !hasWarning(e, "help manual") {
+			t.Errorf("%s: the refusal should say where it came from", cmd)
+		}
+	}
+}
+
+// The refusal is the WIKI's, not a blanket rule: an ordinary document viewport
+// is unaffected, and so is a rooted viewport belonging to no registered wiki.
+func TestOnlyADecliningWikiRefuses(t *testing.T) {
+	if why := wikiDeclineExec("help"); why == "" {
+		t.Error("the help wiki should decline")
+	}
+	for _, name := range []string{"", "notawiki"} {
+		if why := wikiDeclineExec(name); why != "" {
+			t.Errorf("wikiDeclineExec(%q) = %q, want no refusal", name, why)
+		}
+	}
+
+	e, _ := newTestEditor(t, "x\n")
+	var got PTYRequest
+	e.Config.PTYProvider = func(r PTYRequest) (PTYSession, error) {
+		got = r
+		return newStubPTY(), nil
+	}
+	e.executeCommand("shell")
+	if !got.Shell {
+		t.Fatal("an ordinary buffer should still get a shell")
+	}
+}
