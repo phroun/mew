@@ -566,7 +566,7 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 				// stream — no SGR is injected between adjacent letters, which the
 				// terminal needs for Arabic shaping / grapheme joining.
 				b.putStyle(sb, nc.style)
-				sb.WriteString(runesOf(nc))
+				sb.WriteString(b.emitCellText(nc))
 				b.disp[y][x] = nc
 				wd := int(nc.width)
 				if wd < 1 {
@@ -834,6 +834,37 @@ func runesOf(c bbCell) string {
 		return " "
 	}
 	return string(c.runes)
+}
+
+// isShinSinDotAnchor reports whether a cell is an isolated Hebrew shin dot or
+// sin dot anchored on a dotted circle — runes [◌, U+05C1|U+05C2]. These two
+// points sit at the TOP CORNERS of their base (shin dot upper-right, sin dot
+// upper-left), so any horizontal misplacement of the mark relative to the
+// circle is plainly visible; the vowel points that sit below a base do not
+// show it the same way, which is why the reversed emission is scoped here.
+func isShinSinDotAnchor(c bbCell) bool {
+	return len(c.runes) == 2 && c.runes[0] == textwidth.MarkAnchor &&
+		(c.runes[1] == 0x05C1 || c.runes[1] == 0x05C2)
+}
+
+// emitCellText renders a cell's runes for the wire. It is runesOf, except that
+// on a PLAIN terminal (not a flex-width 2027 host) a shin-dot or sin-dot
+// anchored on a dotted circle is emitted point-BEFORE-circle instead of the
+// natural circle-then-point.
+//
+// The reason is the dotted circle's width. U+25CC is East Asian AMBIGUOUS, and
+// a plain terminal that draws it at the wide advance positions the combining
+// point off the circle's right edge — a full cell to the right of the cell mew
+// budgeted (observed in iTerm2). The cell and its colour are right; only the
+// point's pen offset is wrong, because the terminal takes it from the wide base
+// glyph. Leading with the point lands it back over the circle. A flex-width
+// host (purfecterm, mew's own SDL surface) measures and composes the cluster by
+// grapheme the way mew does, so it is left with the natural order.
+func (b *backBuffer) emitCellText(c bbCell) string {
+	if !b.logicalCUP && isShinSinDotAnchor(c) {
+		return string(c.runes[1]) + string(c.runes[0])
+	}
+	return runesOf(c)
 }
 
 func cellsEqual(a, b bbCell) bool {
