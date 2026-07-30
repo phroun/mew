@@ -281,7 +281,7 @@ func TestCliOptionAlignment(t *testing.T) {
 		"scripttimeout": "300", "debouncems": "20", "maxrenderdelayms": "100",
 		"modebarinner": "%FN%", "modebardefault": "%FORTUNE%",
 		"modebarouter": "Line:%LINE%", "mappings": "mew",
-		"flipbidiforhost": "false",
+		"flipbidiforhost": "false", "rtlmarkmode": "normal",
 	}
 	e := newBareEditor(t)
 	for name := range cliKnownOptions {

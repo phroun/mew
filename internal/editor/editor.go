@@ -540,6 +540,11 @@ type Config struct {
 	// "true", or "false" (see config.GeneralConfig.FlipBidiForHost).
 	FlipBidiForHost string
 
+	// RtlMarkMode: "normal" (default) or "iterm2" — how an isolated RTL
+	// combining mark on a dotted circle is emitted (see
+	// config.GeneralConfig.RtlMarkMode). An enum; more modes are expected.
+	RtlMarkMode string
+
 	// Editing locks (see config.GeneralConfig): UseLocks gates all locking;
 	// UseEmacsLocks additionally gates the emacs-interoperable lock files.
 	UseLocks         bool
@@ -639,6 +644,11 @@ type Config struct {
 	// however it is reached. Wired by graphical hosts; nil on a plain
 	// terminal, whose faces are the terminal's own.
 	FontAdjustSink func(family string, baselineUnits int, sizeScale float64)
+
+	// RtlMarkModeSink, when set, is handed the rtlMarkMode value at startup and
+	// whenever it changes, so a graphical host can mirror it into its own text
+	// engine. Wired by graphical hosts; nil on a plain terminal.
+	RtlMarkModeSink func(mode string)
 
 	// PointerRegion, when set, publishes where a graphical host should show the
 	// text I-beam: the FOCUSED viewport's editable content area (its cells,
@@ -1012,6 +1022,15 @@ func New(cfg Config) (*Editor, error) {
 	// Explicit setting applies now; "auto" stays off until the probe decides
 	// (triggered by the first frame containing RTL content).
 	renderer.SetFlipBidiForHost(cfg.FlipBidiForHost == "true")
+
+	cfg.RtlMarkMode = loadedConfig.General.RtlMarkMode
+	if cfg.RtlMarkMode == "" {
+		cfg.RtlMarkMode = "normal"
+	}
+	renderer.SetRtlMarkMode(cfg.RtlMarkMode)
+	if cfg.RtlMarkModeSink != nil {
+		cfg.RtlMarkModeSink(cfg.RtlMarkMode)
+	}
 
 	// Restore a host-provided state snapshot over the loaded configuration.
 	applyInitialState(&cfg)
@@ -3481,6 +3500,8 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return "ltr", true
 	case "flipbidiforhost":
 		return e.Config.FlipBidiForHost, true
+	case "rtlmarkmode":
+		return e.Config.RtlMarkMode, true
 	case "prompttimeout":
 		return strconv.Itoa(e.Config.PromptTimeout), true
 	case "scripttimeout":
@@ -3865,6 +3886,18 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		} else {
 			e.bidiProbeState = bidiProbeDone // explicit choice wins
 			e.Renderer.SetFlipBidiForHost(v == "true")
+		}
+		e.RequestRender()
+	case "rtlmarkmode":
+		v := strings.ToLower(strings.TrimSpace(value))
+		if v != "normal" && v != "iterm2" {
+			e.ShowWarning("rtlMarkMode: normal or iterm2")
+			return false
+		}
+		e.Config.RtlMarkMode = v
+		e.Renderer.SetRtlMarkMode(v)
+		if e.Config.RtlMarkModeSink != nil {
+			e.Config.RtlMarkModeSink(v)
 		}
 		e.RequestRender()
 	case "prompttimeout":

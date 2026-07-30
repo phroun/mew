@@ -151,6 +151,12 @@ type Engine struct {
 	// for every visible string.
 	cache shapeCache
 	epoch uint64 // bumped when the font set changes
+
+	// rtlMarkMode is a host-supplied rendering hint ("normal", "iterm2", …) for
+	// how an isolated RTL combining mark should be drawn. The host pushes it;
+	// the engine only holds it for now — nothing consumes it yet. "" reads as
+	// the default "normal".
+	rtlMarkMode string
 }
 
 // NewEngine creates an engine with the embedded default fonts:
@@ -228,6 +234,22 @@ func (e *Engine) Epoch() uint64 {
 func (e *Engine) SetFontAlias(alias string, targets ...string) {
 	e.db.setAlias(alias, targets)
 	e.bumpEpoch()
+}
+
+// SetRtlMarkMode stores the RTL-mark rendering hint on the engine. The host
+// calls it when the setting loads or changes; the engine only holds the value
+// for now.
+func (e *Engine) SetRtlMarkMode(mode string) {
+	e.mu.Lock()
+	e.rtlMarkMode = mode
+	e.mu.Unlock()
+}
+
+// RtlMarkMode returns the stored rtlMarkMode ("" when unset, read as "normal").
+func (e *Engine) RtlMarkMode() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.rtlMarkMode
 }
 
 // sharedEngine is the process-wide engine a graphical backend publishes so

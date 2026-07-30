@@ -92,6 +92,12 @@ type backBuffer struct {
 	// setting matters).
 	sawRTL bool
 
+	// rtlMarkMode selects how an isolated RTL combining mark anchored on a
+	// dotted circle is emitted. "" and "normal" emit the bare cluster; "iterm2"
+	// leads the mark with a zero-width base to work around iTerm2's wide dotted
+	// circle. See the rtlMarkMode option and emitCellText.
+	rtlMarkMode string
+
 	// rowWide[y] draws that row double-width (DEC DECDWL, ESC#6): the terminal
 	// shows the row's left half at 2x and hides the right half, so the renderer
 	// lays content into the left half only. dispRowWide tracks what the terminal
@@ -851,16 +857,17 @@ func isShinSinDotAnchor(c bbCell) bool {
 // break the combining join — see emitCellText.
 const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 
-// emitCellText renders a cell's runes for the wire. It is runesOf, except that
-// on a PLAIN terminal (not a flex-width 2027 host) a shin-dot or sin-dot
-// anchored on a dotted circle is emitted as ZWSP · point · circle.
+// emitCellText renders a cell's runes for the wire. It is runesOf, except under
+// rtlMarkMode "iterm2" on a PLAIN terminal (not a flex-width 2027 host), where a
+// shin-dot or sin-dot anchored on a dotted circle is emitted as ZWSP · point ·
+// circle.
 //
-// Two things went wrong with the bare cluster. The dotted circle's width: U+25CC
-// is East Asian AMBIGUOUS, and a plain terminal that draws it at the wide
-// advance hangs the combining point off the circle's right edge, a full cell
-// over from where mew budgeted it (observed in iTerm2). And the join: a letter
-// abutting the circle with no space between could capture the point as its own
-// mark ("the alef stole the dot").
+// Two things go wrong with the bare cluster on iTerm2. The dotted circle's
+// width: U+25CC is East Asian AMBIGUOUS, and a terminal that draws it at the
+// wide advance hangs the combining point off the circle's right edge, a full
+// cell over from where mew budgeted it. And the join: a letter abutting the
+// circle with no space between could capture the point as its own mark ("the
+// alef stole the dot").
 //
 // The leading ZERO WIDTH SPACE breaks the join — a fresh zero-advance base
 // between the previous cell and this cluster, so the point can only belong to
@@ -868,15 +875,15 @@ const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 // the wide circle, so it stays pinned at the cell's origin instead of shifting
 // off the circle's right edge. The stored cell is untouched, so a flex-width
 // host (purfecterm, mew's own SDL surface) — which composes the cluster by
-// grapheme the way mew does — keeps the bare circle-then-point order.
+// grapheme the way mew does — is served the "normal" bare order regardless.
 //
 // KNOWN GAP: the dotted circle itself does not render on iTerm2 with this order
 // (it becomes a second base at the same cell and drops out); the point lands
 // correctly but bare. Making the circle visible too runs into U+25CC's ambiguous
-// width and mew's one-column budget — see the width-reconciliation options being
-// weighed for this case.
+// width and mew's one-column budget — a future rtlMarkMode is expected to
+// approach it differently.
 func (b *backBuffer) emitCellText(c bbCell) string {
-	if !b.logicalCUP && isShinSinDotAnchor(c) {
+	if b.rtlMarkMode == "iterm2" && !b.logicalCUP && isShinSinDotAnchor(c) {
 		return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
 	}
 	return runesOf(c)

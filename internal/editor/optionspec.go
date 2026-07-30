@@ -99,6 +99,7 @@ var optionSpecs = []optionSpec{
 	{"modebarOuter", false, optStrKind, nil},
 	{"mappings", false, optStrKind, nil},
 	{"flipBidiForHost", false, optEnumKind, []string{"auto", "true", "false"}},
+	{"rtlMarkMode", false, optEnumKind, []string{"normal", "iterm2"}},
 }
 
 // optionSpecByLower maps a lowercased option name to its spec. cliKnownOptions /

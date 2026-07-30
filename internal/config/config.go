@@ -543,6 +543,15 @@ type GeneralConfig struct {
 	// the terminal once, on the first frame that contains RTL content, and
 	// decides from its answer (falling back to the TERM_PROGRAM environment).
 	FlipBidiForHost string
+
+	// RtlMarkMode selects how an isolated RTL combining mark anchored on a
+	// dotted circle is emitted to the terminal. "normal" (the default) emits
+	// the bare circle-then-mark cluster. "iterm2" works around iTerm2 drawing
+	// the East-Asian-ambiguous dotted circle at the wide advance — which hangs
+	// a corner-sitting Hebrew point (shin dot, sin dot) a cell off the circle —
+	// by leading the mark with a zero-width base it rides instead. It is an
+	// enum, not a boolean: further modes are expected.
+	RtlMarkMode string
 }
 
 // StorageConfig holds local storage locations ([storage] section). These are
@@ -902,6 +911,7 @@ func DefaultConfig() Config {
 			KillRingEntries:         10,
 			Direction:               "ltr",
 			FlipBidiForHost:         "auto",
+			RtlMarkMode:             "normal",
 		},
 		Mappings:    builtinMappings(),
 		MappingSets: builtinMappingSets(),
@@ -1273,6 +1283,12 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
 			case "auto", "true", "false":
 				config.General.FlipBidiForHost = strings.ToLower(stripQuotes(strings.TrimSpace(v)))
+			}
+		}
+		if v, ok := opt["rtlMarkMode"]; ok {
+			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
+			case "normal", "iterm2":
+				config.General.RtlMarkMode = strings.ToLower(stripQuotes(strings.TrimSpace(v)))
 			}
 		}
 	}
@@ -2414,6 +2430,13 @@ direction=ltr
 # once, on the first frame containing RTL content, and decides from its answer
 # (falling back to the TERM_PROGRAM environment).
 flipBidiForHost=auto
+
+# rtlMarkMode: how an isolated RTL combining mark shown on a dotted circle is
+# emitted. "normal" (default) sends the bare circle-then-mark cluster. "iterm2"
+# works around iTerm2 drawing the ambiguous-width dotted circle wide, which
+# hangs a corner-sitting Hebrew point (shin dot / sin dot) a cell off the
+# circle; it leads the mark with a zero-width base so the point stays put.
+rtlMarkMode=normal
 
 [layout.qwerty]
 #

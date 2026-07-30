@@ -334,6 +334,20 @@ func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	}
 }
 
+// SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
+// circle is emitted: "normal" (bare cluster) or "iterm2" (a zero-width base
+// leads the mark, working around iTerm2's wide dotted circle). An enum — more
+// modes are expected. Forces a full repaint so anchored marks already on screen
+// switch convention at once.
+func (sr *ScreenRenderer) SetRtlMarkMode(mode string) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.rtlMarkMode != mode {
+		sr.frame.rtlMarkMode = mode
+		sr.frame.forceRedraw()
+	}
+}
+
 // SawRTLContent reports whether any presented frame has contained strong-RTL
 // text — the trigger point for the one-time flipBidiForHost=auto probe.
 func (sr *ScreenRenderer) SawRTLContent() bool {
