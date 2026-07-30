@@ -95,3 +95,53 @@ func TestGfxCellFamilyVTFraktur(t *testing.T) {
 		t.Errorf("fraktur cell should resolve to VTFRAKTUR, got %q", fam)
 	}
 }
+
+// A script-NEUTRAL base carrying a combining mark of some script belongs to the
+// MARK's script — the dotted circle mew anchors an isolated Hebrew point on,
+// above all. The two must resolve to ONE face or they cannot shape as a cluster:
+// split across faces, the shaper emits the mark as its own isolated run at the
+// pen position after the base instead of composed onto it, and a one-cell mask
+// clips it away. That is why the anchored mark showed as a bare circle on the
+// graphical surface while the terminal surface (host fallback) composed it.
+func TestGfxCellFamilyFollowsTheCombiningMarksScript(t *testing.T) {
+	term := NewPurfecTerm()
+	term.SetTerminalFontFamily("ui-term")
+	buf := term.Terminal().Buffer()
+
+	// ◌ + hiriq, ◌ + fatha, ◌ alone, and a Latin letter for contrast.
+	term.Feed([]byte("◌ִ◌ً◌A"))
+
+	cases := []struct {
+		col  int
+		name string
+		want string
+	}{
+		{0, "circle + Hebrew hiriq", "ui-term-hebrew"},
+		{1, "circle + Arabic fatha", "ui-term-arabic"},
+		{2, "bare circle", "ui-term"},
+		{3, "Latin letter", "ui-term"},
+	}
+	for _, c := range cases {
+		cell := buf.GetVisibleCell(c.col, 0)
+		if fam := term.cellFamily(buf, &cell); fam != c.want {
+			t.Errorf("%s: family = %q, want %q", c.name, fam, c.want)
+		}
+	}
+}
+
+// A base WITH a script of its own keeps it: a Hebrew letter carrying a Hebrew
+// point is already one script, and the mark must not be able to override a base
+// that has an opinion.
+func TestGfxCellFamilyKeepsTheBaseScript(t *testing.T) {
+	term := NewPurfecTerm()
+	term.SetTerminalFontFamily("ui-term")
+	buf := term.Terminal().Buffer()
+	term.Feed([]byte("לִ")) // lamed + hiriq
+
+	cell := buf.GetVisibleCell(0, 0)
+	// No OSC 7005 configured, so this resolves through the engine's own
+	// ui-term-<script> fallback tree from the primary, exactly as before.
+	if fam := term.cellFamily(buf, &cell); fam != "ui-term" {
+		t.Errorf("lamed + hiriq: family = %q, want the primary ui-term", fam)
+	}
+}

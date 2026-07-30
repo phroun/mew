@@ -577,18 +577,54 @@ func (t *PurfecTerm) primaryTermFamily() string {
 //
 // mew never sends OSC 7005, so step 2 is inert there (GetScriptFont == "") and
 // scripts resolve through the engine's ui-term-<script> tree as before.
+//
+// The script is the CELL's, not the base rune's. A script-neutral base carrying
+// a combining mark of some script — a dotted circle anchoring an isolated
+// Hebrew point, most of all — belongs to the MARK's script, because the two have
+// to shape as one cluster to compose at all. Resolve the base to the primary
+// face and the mark to its script face and the run splits between them: the
+// shaper then positions the mark as its own isolated run, at the pen position
+// AFTER the base rather than on top of it, which for a one-cell mask means
+// clipped away entirely. That is the whole difference between the terminal
+// surface (where the host's own fallback composes them) and this one.
 func (t *PurfecTerm) cellFamily(buf *purfecterm.Buffer, cell *purfecterm.Cell) string {
 	if cell.Font != 0 {
 		if fam := buf.GetFontSlot(int(cell.Font)); fam != "" {
 			return fam
 		}
 	}
-	if cls := purfecterm.ScriptClass(cell.Char); cls != "" {
+	cls := purfecterm.ScriptClass(cell.Char)
+	if cls == "" {
+		cls = combiningScriptClass(cell.Combining)
+		if cls != "" {
+			// The base has no script of its own, so nothing competes: name the
+			// mark's script face outright rather than leaving the cluster to
+			// per-rune fallback, which is what splits the run.
+			if fam := buf.GetScriptFont(cls); fam != "" {
+				return fam
+			}
+			return "ui-term-" + cls
+		}
+	}
+	if cls != "" {
 		if fam := buf.GetScriptFont(cls); fam != "" {
 			return fam
 		}
 	}
 	return t.primaryTermFamily()
+}
+
+// combiningScriptClass returns the script class of the first combining mark in
+// a cell that has one, or "" when the marks are all script-neutral (or there are
+// none). Marks of several scripts on one base is ill-formed text; the first one
+// decides, since some face has to.
+func combiningScriptClass(combining string) string {
+	for _, r := range combining {
+		if cls := purfecterm.ScriptClass(r); cls != "" {
+			return cls
+		}
+	}
+	return ""
 }
 
 // cellTextImage rasterizes one cell's glyph into a color-independent COVERAGE
