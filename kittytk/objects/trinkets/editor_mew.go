@@ -477,12 +477,10 @@ func (e *Editor) run() {
 				_ = eng.RegisterFontFile(family, path)
 			}
 		}),
-		// Mirror the RTL-mark rendering hint into the shared text engine so it
-		// is available to the engine's own rendering; nothing consumes it yet.
+		// Publish the RTL-mark rendering hint where the backends can read it
+		// (core, since the TUI backend has no font engine).
 		mew.WithRtlMarkModeSink(func(mode string) {
-			if eng := text.Shared(); eng != nil {
-				eng.SetRtlMarkMode(mode)
-			}
+			core.SetRtlMarkMode(mode)
 		}),
 	}
 	if e.mewFileSystem != nil {

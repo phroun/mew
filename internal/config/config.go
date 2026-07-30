@@ -1287,7 +1287,7 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["rtlMarkMode"]; ok {
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
-			case "normal", "iterm2":
+			case "normal", "iterm2", "drift":
 				config.General.RtlMarkMode = strings.ToLower(stripQuotes(strings.TrimSpace(v)))
 			}
 		}
@@ -2431,11 +2431,12 @@ direction=ltr
 # (falling back to the TERM_PROGRAM environment).
 flipBidiForHost=auto
 
-# rtlMarkMode: how an isolated RTL combining mark shown on a dotted circle is
-# emitted. "normal" (default) sends the bare circle-then-mark cluster. "iterm2"
-# works around iTerm2 drawing the ambiguous-width dotted circle wide, which
-# hangs a corner-sitting Hebrew point (shin dot / sin dot) a cell off the
-# circle; it leads the mark with a zero-width base so the point stays put.
+# rtlMarkMode: how RTL combining marks are emitted. "normal" (default) is the
+# usual base-then-mark order. "iterm2" works around iTerm2 drawing the
+# ambiguous-width dotted circle wide under an isolated shin/sin dot, leading that
+# mark with a zero-width base so it stays put. "drift" (experimental, graphical
+# KittyTK-TUI host) emits an RTL base's marks BEFORE the base, the order a few
+# terminals (current Ghostty) expect.
 rtlMarkMode=normal
 
 [layout.qwerty]

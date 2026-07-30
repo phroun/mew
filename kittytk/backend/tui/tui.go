@@ -505,8 +505,7 @@ func (t *TUIBackend) EndFrame() {
 						sb.WriteString(code)
 						penStyle = code
 					}
-					sb.WriteRune(c.Char)
-					sb.WriteString(c.Combining)
+					writeCellRunes(&sb, c.Char, c.Combining)
 				}
 				t.frontLineAttr[y] = mode
 				termX, termY = -1, -1 // cursor position on a DEC line: treat as unknown
@@ -571,8 +570,7 @@ func (t *TUIBackend) EndFrame() {
 			if effectiveCell.Char == 0 {
 				sb.WriteRune(' ') // stray placeholder with no wide base
 			} else {
-				sb.WriteRune(effectiveCell.Char)
-				sb.WriteString(effectiveCell.Combining)
+				writeCellRunes(&sb, effectiveCell.Char, effectiveCell.Combining)
 			}
 
 			t.frontBuffer[y][x] = effectiveCell
@@ -752,6 +750,32 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	}
 
 	return t.metrics.TextWidth(col - startCol)
+}
+
+// writeCellRunes emits a cell's base character followed by its combining marks
+// — except under rtlMarkMode "drift" (experimental), where an RTL base's marks
+// are emitted BEFORE the base. A few terminals (current Ghostty among them)
+// place an RTL combining sequence that way; this reproduces that order for them.
+// The reorder is emit-only — the stored cell is unchanged, so the diff is
+// unaffected.
+func writeCellRunes(sb *strings.Builder, ch rune, combining string) {
+	if combining != "" && core.RtlMarkMode() == "drift" && isRTLBase(ch) {
+		sb.WriteString(combining)
+		sb.WriteRune(ch)
+		return
+	}
+	sb.WriteRune(ch)
+	sb.WriteString(combining)
+}
+
+// isRTLBase reports whether r is a right-to-left base letter (Hebrew or Arabic)
+// — enough to scope the drift reorder to RTL combining sequences.
+func isRTLBase(r rune) bool {
+	switch purfecterm.ScriptClass(r) {
+	case "hebrew", "arabic":
+		return true
+	}
+	return false
 }
 
 // appendCombining attaches a zero-width mark to the base cell at (x, row),
