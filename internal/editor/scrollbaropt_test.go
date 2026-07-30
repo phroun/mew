@@ -166,8 +166,8 @@ func TestScrollbarThumbGeometry(t *testing.T) {
 	// travel is the bottom of the SCROLL RANGE, which reaches one blank line
 	// past the end of the document.
 	maxTop := viewport.MaxScrollTop(20, 1000)
-	if maxTop != 1000-20 {
-		t.Fatalf("MaxScrollTop = %d, want %d (last line on the bottom row)", maxTop, 1000-20)
+	if maxTop != 1000-20+1 {
+		t.Fatalf("MaxScrollTop = %d, want %d (one row past the end)", maxTop, 1000-20+1)
 	}
 	pos, size := viewport.ScrollbarThumb(20, 20, 1000, 0)
 	if pos != 0 || size < 1 || size >= 20 {
@@ -197,15 +197,13 @@ func TestScrollbarThumbGeometry(t *testing.T) {
 	}
 }
 
-// How far down a viewport scrolls: far enough to put the document's LAST line on
-// the bottom row, never far enough to leave a mostly-empty window with a line or
-// two of text stranded at the top. For the ordinary newline-terminated file that
-// bottom row is the empty line after the final newline — the one blank line —
-// because mew counts it as a line of the document.
+// How far down a viewport scrolls: far enough to reveal exactly one row past the
+// end of the document — the one the gutter marks "~" — never far enough to leave
+// a mostly-empty window with a line or two of text stranded at the top.
 func TestMaxScrollTop(t *testing.T) {
 	cases := []struct{ page, lines, want int }{
-		{24, 1000, 976}, // last line on the bottom row
-		{24, 25, 1},     // one line taller than the view
+		{24, 1000, 977}, // one "~" row on the bottom row
+		{24, 25, 2},     // one line taller than the view
 		{24, 24, 0},     // exactly fills it: nothing hidden, nothing to scroll
 		{24, 10, 0},     // shorter than the view
 		{24, 0, 0},      // empty
@@ -221,26 +219,22 @@ func TestMaxScrollTop(t *testing.T) {
 // The clamp is enforced where the scrolling happens, so the wheel, the
 // drag-autoscroll, mew's own bar, every scroll_* command and a host's
 // scroll_viewport all stop at the same place.
-func TestScrollViewToStopsWithTheLastLineOnTheBottomRow(t *testing.T) {
+func TestScrollViewToStopsOneRowPastTheEnd(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, strings.Repeat("line\n", 200))
 	e.performRender()
 	page, lines := w.ContentHeight, w.Buffer.GetLineCount()
 	if page <= 0 {
 		t.Fatalf("ContentHeight = %d, want a laid-out viewport", page)
 	}
-	want := lines - page
+	want := lines - page + 1
 
 	e.scrollViewTo(w, 100000) // as far as anything could ask
 	if got := w.ViewState.ViewOffsetY; got != want {
 		t.Fatalf("top = %d after scrolling past the end, want %d", got, want)
 	}
-	// The bottom row is the document's last line — which for this content, ending
-	// in a newline, is the empty line after it: exactly the one blank row.
-	if lastVisible := want + page - 1; lastVisible != lines-1 {
-		t.Fatalf("bottom row shows line index %d, want the last line %d", lastVisible, lines-1)
-	}
-	if got := w.Buffer.GetLine(lines - 1); strings.TrimRight(got, "\r\n") != "" {
-		t.Fatalf("last line = %q, want the empty line after the final newline", got)
+	// Exactly one row past the end of the document is on screen: the bottom one.
+	if past := (want + page) - lines; past != 1 {
+		t.Fatalf("%d rows past the end of the document, want exactly 1", past)
 	}
 
 	// A document shorter than the view does not scroll at all.
@@ -442,5 +436,51 @@ func TestScrollbarHostDrawnKeepsTheBottomRow(t *testing.T) {
 	e.performRender()
 	if w.ScrollbarTrackH != w.ContentHeight {
 		t.Fatalf("host-drawn track = %d, want the full %d", w.ScrollbarTrackH, w.ContentHeight)
+	}
+}
+
+// The rule stated the way it is seen: scrolled as far as it goes, the
+// line-number gutter shows exactly ONE "~" row — the single row past the end of
+// the document — and never a screenful of them with a line or two of text
+// stranded at the top.
+//
+// Counted from the PAINTED frame rather than from the arithmetic, because the
+// gutter's own idea of where the document ends is the thing being claimed: the
+// empty line after a file's final newline is numbered, not marked "~", so
+// stopping a line earlier would show none at all.
+func TestMaxScrollLeavesExactlyOneGutterTilde(t *testing.T) {
+	e, w, out := newRenderedEditor(t, strings.Repeat("line\n", 200))
+	w.ViewState.ShowLineNumbers = true
+	e.performRender()
+
+	marker := e.LoadedConfig.Indicators.GutterEmpty
+	if marker == "" {
+		t.Skip("no gutter-empty indicator configured")
+	}
+	countTildes := func() int { return strings.Count(out.String(), marker) }
+
+	// At the top of a document far taller than the view, no row is past its end.
+	out.Reset()
+	e.scrollViewTo(w, 0)
+	e.performRender()
+	if got := countTildes(); got != 0 {
+		t.Fatalf("%d gutter markers at the top of a long document, want 0", got)
+	}
+
+	// Scrolled as far as anything can ask: exactly one.
+	out.Reset()
+	e.scrollViewTo(w, 1000000)
+	e.performRender()
+	if got := countTildes(); got != 1 {
+		t.Fatalf("%d gutter markers at maximum scroll, want exactly 1", got)
+	}
+
+	// And one line back up there are none, which is what makes the limit the
+	// RIGHT one rather than merely a limit.
+	out.Reset()
+	e.scrollViewTo(w, w.ViewState.ViewOffsetY-1)
+	e.performRender()
+	if got := countTildes(); got != 0 {
+		t.Fatalf("%d gutter markers one line above maximum scroll, want 0", got)
 	}
 }

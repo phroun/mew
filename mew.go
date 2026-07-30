@@ -364,8 +364,9 @@ func ScrollbarNeeded(page, lineCount int) bool {
 }
 
 // MaxScrollTop is the highest first-visible line mew will park a viewport at:
-// the one that puts the document's LAST line on the bottom row, and no further.
-// A document shorter than its viewport does not scroll at all.
+// the one that leaves exactly one row past the end of the document on screen —
+// the row mew's line-number gutter marks "~" — and no further. A document
+// shorter than its viewport does not scroll at all.
 //
 // Exported for the same reason as ScrollbarNeeded — a host-drawn thumb must
 // reach the bottom of its track exactly when the view reaches the bottom of this

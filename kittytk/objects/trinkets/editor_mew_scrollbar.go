@@ -145,10 +145,10 @@ func scrollable(r mew.ScrollbarRegion) bool {
 }
 
 // maxTopFor is the highest first-visible line the region may be parked at: the
-// one that puts the document's last line on the bottom row. mew's own limit, so
-// the thumb reaches the bottom of its track exactly when the view reaches the
-// bottom of its scroll range — asking mew for a line it would refuse leaves the
-// thumb parked somewhere the view is not.
+// one leaving exactly one row past the end of the document on screen. mew's own
+// limit, so the thumb reaches the bottom of its track exactly when the view
+// reaches the bottom of its scroll range — asking mew for a line it would refuse
+// leaves the thumb parked somewhere the view is not.
 func maxTopFor(r mew.ScrollbarRegion) int {
 	return mew.MaxScrollTop(r.Page, r.LineCount)
 }

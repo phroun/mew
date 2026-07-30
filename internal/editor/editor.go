@@ -7156,10 +7156,10 @@ func (e *Editor) scrollViewByLines(w *viewport.Viewport, delta int) {
 // scrollbar, every scroll_* command and a graphical host's scroll_viewport, so
 // the limit below is the ONE place the bottom of the scroll range is decided.
 //
-// That limit leaves exactly one blank line past the end of the document
-// (MaxScrollTop): the text does not get to drift off the top leaving an empty
-// window behind it, and more than one blank line appears only for a document
-// too short to scroll at all.
+// That limit leaves exactly one row past the end of the document on screen — the
+// one the gutter marks "~" (MaxScrollTop): the text does not get to drift off the
+// top leaving an empty window behind it, and more than one such row appears only
+// for a document too short to scroll at all.
 func (e *Editor) scrollViewTo(w *viewport.Viewport, top int) {
 	if w == nil || w.Buffer == nil {
 		return

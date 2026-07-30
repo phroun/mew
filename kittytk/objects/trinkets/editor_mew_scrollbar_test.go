@@ -24,9 +24,10 @@ func TestThumbSpanIsContinuous(t *testing.T) {
 	r := testRegion()
 
 	pos, length := thumbSpan(track, r, 1)
-	// 24 rows visible out of the 1000 the view can reach. 24/1000 of 384px =
-	// 9.216px; a cell-locked thumb could only have been 0 or 16.
-	want := track.h * 24 / 1000
+	// 24 rows visible out of the 1001 the view can reach — 1000 lines plus the one
+	// "~" row past the end that scrolling stops at. 24/1001 of 384px = 9.207px; a
+	// cell-locked thumb could only have been 0 or 16.
+	want := track.h * 24 / 1001
 	if math.Abs(length-want) > 0.01 {
 		t.Errorf("thumb length = %v, want ~%v (a fraction of a row)", length, want)
 	}
@@ -46,8 +47,8 @@ func TestThumbSpanIsContinuous(t *testing.T) {
 		t.Errorf("thumb landed exactly on a row boundary (%v); it is not row-locked", pos)
 	}
 
-	// At the bottom of the scroll range — the document's last line on the bottom
-	// row — it ends flush with the track.
+	// At the bottom of the scroll range — one row past the end of the document on
+	// the bottom row — it ends flush with the track.
 	r.Top = maxTopFor(r)
 	pos, length = thumbSpan(track, r, 1)
 	if math.Abs((pos+length)-track.h) > 0.01 {
@@ -86,8 +87,8 @@ func TestHostMaxTopMatchesMew(t *testing.T) {
 	if got, want := maxTopFor(r), mew.MaxScrollTop(r.Page, r.LineCount); got != want {
 		t.Fatalf("maxTopFor = %d, want mew's %d", got, want)
 	}
-	if want := r.LineCount - r.Page; maxTopFor(r) != want {
-		t.Fatalf("maxTopFor = %d, want %d (last line on the bottom row)", maxTopFor(r), want)
+	if want := r.LineCount - r.Page + 1; maxTopFor(r) != want {
+		t.Fatalf("maxTopFor = %d, want %d (one row past the end)", maxTopFor(r), want)
 	}
 }
 

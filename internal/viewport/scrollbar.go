@@ -4,11 +4,11 @@ package viewport
 //
 // Two rules live here, and they answer to each other:
 //
-//   - How far down a viewport may scroll. Far enough to put the document's LAST
-//     line on the bottom row, and no further — a document does not get to drift
-//     off the top leaving an empty window behind it. More than one blank line is
-//     visible only when the document is shorter than the viewport, where there
-//     is nothing to scroll at all.
+//   - How far down a viewport may scroll. Far enough to reveal exactly ONE row
+//     past the end of the document — the one the gutter marks "~" — and no
+//     further. A document does not get to drift off the top leaving an empty
+//     window behind it. More than one such row is visible only when the document
+//     is shorter than the viewport, where there is nothing to scroll at all.
 //
 //   - Whether there is a thumb. Only when the document is taller than the
 //     viewport, which is exactly when the first rule permits any scrolling.
@@ -20,17 +20,17 @@ package viewport
 // shows up as a thumb that will not reach the end of its track.
 
 // MaxScrollTop is the highest first-visible line a viewport of page rows may be
-// parked at over a document of lineCount lines: the one that puts the document's
-// LAST line on the bottom row. A document that fits its viewport does not scroll
-// at all and gets 0 — the blank space below it is already visible, and scrolling
-// into it would only push the text off the top.
+// parked at over a document of lineCount lines: the one that leaves exactly one
+// row past the end of the document on screen. A document that fits its viewport
+// does not scroll at all and gets 0 — the space below it is already visible, and
+// scrolling into it would only push the text off the top.
 //
-// That is where "one blank line past the end" comes from, without needing a row
-// of slack added here: a text file ends with a newline, and mew counts the empty
-// line after it as a line of the document (the caret can sit there), so the
-// bottom row at maximum scroll IS that blank line. Adding one more would show
-// two. A file with no trailing newline shows none, which is the honest answer for
-// a document that genuinely has no empty last line.
+// "One row past the end" is meant literally, in the terms the gutter uses: the
+// bottom row is the first row the line-number gutter marks with its empty
+// indicator ("~"), and exactly one such row is reachable. Note that the empty
+// line after a file's final newline is a LINE of the document — mew numbers it
+// and the caret can sit there — so it is not that row; the "~" is the one below
+// it. Stopping a line earlier would leave no "~" reachable at all.
 //
 // page <= 0 means the layout has not run yet; there is no page to reason about,
 // so the answer is the widest that can never be wrong.
@@ -44,7 +44,9 @@ func MaxScrollTop(page, lineCount int) int {
 	if lineCount <= page {
 		return 0
 	}
-	return lineCount - page
+	// lineCount-page puts the last line on the bottom row; one more puts the
+	// first "~" row there.
+	return lineCount - page + 1
 }
 
 // ScrollbarNeeded reports whether a document of lineCount lines has anything to
