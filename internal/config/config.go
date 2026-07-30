@@ -2434,9 +2434,10 @@ flipBidiForHost=auto
 # rtlMarkMode: how RTL combining marks are emitted. "normal" (default) is the
 # usual base-then-mark order. "iterm2" works around iTerm2 drawing the
 # ambiguous-width dotted circle wide under an isolated shin/sin dot, leading that
-# mark with a zero-width base so it stays put. "drift" (experimental, graphical
-# KittyTK-TUI host) emits an RTL base's marks BEFORE the base, the order a few
-# terminals (current Ghostty) expect.
+# mark with a zero-width base so it stays put. "drift" (experimental, KittyTK-TUI
+# host) makes each RTL cell carry the marks of the cell to its RIGHT (its own
+# move left; the last column shows none), the placement a few terminals (current
+# Ghostty) expect.
 rtlMarkMode=normal
 
 [layout.qwerty]

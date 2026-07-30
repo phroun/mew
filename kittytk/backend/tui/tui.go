@@ -555,7 +555,7 @@ func (t *TUIBackend) EndFrame() {
 			}
 
 			// The marks emitted with this base are driftCombining's — the cell's
-			// own under normal mode, the LEFT neighbour's under drift. Fold them
+			// own under normal mode, the RIGHT neighbour's under drift. Fold them
 			// into the cell we diff and store, so the comparison reflects exactly
 			// what renders: a neighbour whose marks change makes THIS cell differ
 			// and re-emit on its own, with no cascade.
@@ -765,22 +765,22 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 // at (x, y) — normally the cell's own marks.
 //
 // Under rtlMarkMode "drift" (experimental) an RTL cell instead carries the marks
-// of the cell immediately to its LEFT, still emitted after its own base. A cell's
-// own marks therefore land on the cell to its right, and the leftmost cell of a
-// row shows no marks at all — a deliberate limitation of the model. A few
-// terminals (current Ghostty among them) place an RTL combining sequence this
-// way; drift reproduces it for them. The reorder is emit-only, so the stored
-// cell is unchanged.
+// of the cell immediately to its RIGHT, still emitted after its own base. A
+// cell's own marks therefore land on the cell to its left, and the rightmost
+// cell of a row shows no marks at all — a deliberate limitation of the model. A
+// few terminals (current Ghostty among them) place an RTL combining sequence
+// this way; drift reproduces it for them. The reorder is emit-only, so the
+// stored cell is unchanged.
 func (t *TUIBackend) driftCombining(y, x int, cell Cell) string {
 	if core.RtlMarkMode() != "drift" || !isRTLBase(cell.Char) {
 		return cell.Combining // normal: the cell's own marks
 	}
-	if x > 0 {
-		if left := t.backBuffer[y][x-1]; isRTLBase(left.Char) {
-			return left.Combining // the LEFT cell's marks drift onto this base
+	if x+1 < t.cols {
+		if right := t.backBuffer[y][x+1]; isRTLBase(right.Char) {
+			return right.Combining // the RIGHT cell's marks drift onto this base
 		}
 	}
-	return "" // leftmost cell (or no RTL neighbour): its own marks moved right
+	return "" // rightmost cell (or no RTL neighbour): its own marks moved left
 }
 
 // isRTLBase reports whether r is a right-to-left base letter (Hebrew or Arabic)
