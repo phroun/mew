@@ -179,6 +179,14 @@ func numericRun(runes []rune, rn run) bool {
 // contents reversed cluster-wise: a base rune keeps its zero-width followers
 // (combining marks, joiners) immediately after it, so the terminal still
 // composes them onto the right cell.
+//
+// What counts as a follower is textwidth's question, not this file's, because
+// the renderer measures cells with the same rule and the two pictures of a line
+// must be the same one. In particular an ILL-FORMED mark is painted as a spacing
+// substitute (a dotted-circle anchor, or hex), so it is a cluster of its own:
+// gluing it to whatever preceded it would drag it along in the reversal and land
+// it on the wrong side of a space — the mark reading after the space instead of
+// before it, in a right-to-left run.
 func appendReversed(perm []int, runes []rune, start, end int) []int {
 	// Split into clusters: each cluster is a rune plus its zero-width
 	// followers.
@@ -186,13 +194,8 @@ func appendReversed(perm []int, runes []rune, start, end int) []int {
 	clusters := make([]cluster, 0, end-start+1)
 	for i := start; i <= end; {
 		j := i + 1
-		for j <= end {
-			r := runes[j]
-			if r != '\t' && !(r < 0x20 || r == 0x7F) && textwidth.Rune(r) == 0 {
-				j++
-				continue
-			}
-			break
+		for j <= end && textwidth.RidesPreviousCell(runes, j) {
+			j++
 		}
 		clusters = append(clusters, cluster{s: i, e: j - 1})
 		i = j

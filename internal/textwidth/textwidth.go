@@ -153,6 +153,44 @@ func AnchorMark(prev, r rune) bool {
 // MarkAnchor is the base character an anchored mark is composed onto.
 const MarkAnchor = '◌' // DOTTED CIRCLE
 
+// PrevBase returns the cluster base for the rune at index i: the nearest
+// preceding rune that is not itself a combining mark, or 0 when there is none.
+// It is what DefectiveMark wants for prev — a mark rides the last real
+// character, not the mark in front of it.
+func PrevBase(runes []rune, i int) rune {
+	for j := i - 1; j >= 0; j-- {
+		if !IsMark(runes[j]) {
+			return runes[j]
+		}
+	}
+	return 0
+}
+
+// RidesPreviousCell reports whether runes[i] is drawn INTO the cell before it
+// rather than taking one of its own — a well-formed combining mark, a joiner, a
+// zero-width space.
+//
+// This is the CLUSTER rule, and it has to be the same question the renderer's
+// width model answers, because two answers means two disagreeing pictures of the
+// same line. The case that proves it: an ill-formed mark is painted as a spacing
+// substitute (the dotted-circle anchor, or a hex form), so it is NOT a rider —
+// and a bidi reordering that treated it as one would glue it to whatever
+// happened to precede it and carry it along, putting it on the wrong side of a
+// space inside a right-to-left run.
+//
+// Controls are excluded for the same reason: mew paints them as ^X or hex, which
+// takes cells, whatever their nominal width.
+func RidesPreviousCell(runes []rune, i int) bool {
+	if i < 0 || i >= len(runes) {
+		return false
+	}
+	r := runes[i]
+	if r == '\t' || IsControl(r) || Rune(r) != 0 {
+		return false
+	}
+	return !DefectiveMark(PrevBase(runes, i), r)
+}
+
 // isBidiControl mirrors bidi.IsDirectionControl. It is duplicated here rather
 // than imported because the bidi package depends on this one for its cluster
 // width math, and an import back would cycle.

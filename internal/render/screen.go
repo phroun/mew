@@ -1317,14 +1317,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// would attach to: the nearest preceding rune that is not itself a mark
 	// (a cluster may stack several marks on one base). 0 when the mark opens
 	// the line and has nothing to anchor onto. Feeds textwidth.DefectiveMark.
-	prevBase := func(li int) rune {
-		for j := li - 1; j >= 0; j-- {
-			if !textwidth.IsMark(runes[j]) {
-				return runes[j]
-			}
-		}
-		return 0
-	}
+	prevBase := func(li int) rune { return textwidth.PrevBase(runes, li) }
 
 	// Arabic cursive shaping lives on the layout (Layout.Glyph): each Arabic
 	// letter is substituted with its contextual presentation form (computed
@@ -2834,13 +2827,7 @@ func (sr *ScreenRenderer) getRuneVisualWidth(r rune, currentColumn int, w *viewp
 func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *viewport.Viewport) int {
 	r := runes[i]
 	if textwidth.IsMark(r) {
-		var base rune
-		for j := i - 1; j >= 0; j-- {
-			if !textwidth.IsMark(runes[j]) {
-				base = runes[j]
-				break
-			}
-		}
+		base := textwidth.PrevBase(runes, i)
 		if textwidth.DefectiveMark(base, r) {
 			_, fw := defectiveMarkForm(base, r)
 			return fw
