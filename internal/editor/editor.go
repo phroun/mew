@@ -3541,10 +3541,7 @@ func rtlMarkModeForTerminal(k hostterm.Kind) string {
 		return "iterm2"
 	case hostterm.TerminalAlacritty:
 		return "drift"
-	case hostterm.TerminalAppleTerminal, hostterm.TerminalKitty:
-		// Kitty shows its marks (rtlCombining stays on), and compose folds the
-		// anchored isolated forms — the bare holam-for-vav, shin/sin dot — into
-		// their presentation glyph instead of leaving a mark on a dotted circle.
+	case hostterm.TerminalAppleTerminal:
 		return "compose"
 	default:
 		return "normal"
@@ -3604,12 +3601,7 @@ func hostBidiProfileFor(k hostterm.Kind) hostBidiProfile {
 	case hostterm.TerminalAppleTerminal:
 		return hostBidiProfile{flip: true, wordwise: false, rideSafe: true, known: true}
 	case hostterm.TerminalKitty:
-		// Kitty reverses each word in place under its own bidi and — as a
-		// click-drag reveals — miscounts the background selection fill across
-		// that reversal, mirroring a partial selection within the word. So it
-		// needs the ride-safe (fg+bold) selection too, just with the broader
-		// word-wise gate (see the selection styling in screen.go).
-		return hostBidiProfile{flip: true, wordwise: true, rideSafe: true, known: true}
+		return hostBidiProfile{flip: true, wordwise: true, rideSafe: false, known: true}
 	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
 		return hostBidiProfile{known: true}
 	}

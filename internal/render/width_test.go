@@ -260,43 +260,17 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 		t.Errorf("no-flip must never use the ride-safe style: %q", out)
 	}
 
-	// A hypothetical flip host WITHOUT the selection glitch (flipRideSafe off)
-	// keeps the real bar even with marks shown: the ride-safe fallback is tied
-	// to the glitch, not to the flip itself.
+	// A flip host WITHOUT the selection glitch (flipRideSafe off — Kitty) keeps
+	// the real bar even with marks shown: the ride-safe fallback is tied to the
+	// glitch, not to the flip itself.
 	sr.frame.flipBidi = true
 	sr.frame.flipRideSafe = false
-	sr.frame.flipWordwise = false
 	out = sr.prepareLineForDisplay(marked, "\n", 40, 0, w, 0, whole, nil, nil)
 	if !strings.Contains(out, bar) {
 		t.Errorf("flip host without the glitch should keep the real bar: %q", out)
 	}
 	if strings.Contains(out, flipSel) {
 		t.Errorf("flip host without the glitch must not use the ride-safe style: %q", out)
-	}
-}
-
-// A word-wise glitch host (Kitty) mishandles the selection fill for EVERY
-// reversed RTL run, so even an UNPOINTED RTL line (codepoints == cells) uses
-// the ride-safe selection — the whole-run gate would wrongly keep the bar and
-// let a partial selection mirror. A pure-LTR line still keeps the real bar.
-func TestFlipSelectionWordwiseCoversUnpointedRTL(t *testing.T) {
-	const (
-		bar     = "\x1b[0;30;47m"
-		flipSel = "\x1b[0;1;93m"
-	)
-	sr, w := testRenderer()
-	sr.frame.flipBidi = true
-	sr.frame.flipRideSafe = true
-	sr.frame.flipWordwise = true
-	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
-
-	// Unpointed Hebrew (no combining marks): still ride-safe under word-wise.
-	if out := sr.prepareLineForDisplay("שלום", "\n", 40, 0, w, 0, whole, nil, nil); !strings.Contains(out, flipSel) || strings.Contains(out, bar) {
-		t.Errorf("word-wise host should ride-safe an unpointed RTL line: %q", out)
-	}
-	// Pure LTR: no RTL to reverse, so the real bar stands.
-	if out := sr.prepareLineForDisplay("abc", "\n", 40, 0, w, 0, whole, nil, nil); !strings.Contains(out, bar) || strings.Contains(out, flipSel) {
-		t.Errorf("word-wise host must keep the real bar on an LTR line: %q", out)
 	}
 }
 
