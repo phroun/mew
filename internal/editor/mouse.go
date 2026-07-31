@@ -7,6 +7,7 @@ import (
 
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
+	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
 )
 
@@ -640,10 +641,20 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 		}
 		rtl := right < idx || (haveLeft && left > idx)
 		switch {
-		case rtl && e.mouseSubX < 500 && haveLeft:
-			caretRune = left // RTL: left half advances past the character
+		case rtl && e.mouseSubX < 500:
+			// RTL: the LEFT half advances past the character to the next LOGICAL
+			// position — "insert after this Hebrew/Arabic letter" — skipping the
+			// cluster's combining marks. NOT the next VISUAL cell (resolve(
+			// target-1)), which at the run's left edge escapes into an adjacent
+			// LTR run.
+			rr := []rune(raw)
+			n := idx + 1
+			for n < len(rr) && textwidth.IsMark(rr[n]) {
+				n++
+			}
+			caretRune = n
 		case !rtl && e.mouseSubX >= 500:
-			caretRune = right // LTR: right half advances past the character
+			caretRune = right // LTR: right half advances to the next base cell
 		}
 	}
 	return w, docLine, idx, caretRune, true
