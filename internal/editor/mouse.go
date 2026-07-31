@@ -606,10 +606,10 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 		}
 	}
 
-	// resolve maps a visual column to a document rune (past the end → end of
-	// line, never inside a trailing button's span).
-	resolve := func(vt int) int {
-		i := e.runeAtVisualColumn(w, dispLine, vt)
+	// mapDisp turns a DISPLAY-rune index (over dispLine) into a document rune,
+	// through the button/substitution mapping (past the end → end of line, never
+	// inside a trailing button's span).
+	mapDisp := func(i int) int {
 		if dispToDoc != nil {
 			if i >= len(dispToDoc) {
 				return len([]rune(raw))
@@ -617,6 +617,10 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 			return displayToDoc(dispToDoc, i)
 		}
 		return i
+	}
+	// resolve maps a visual column to a document rune.
+	resolve := func(vt int) int {
+		return mapDisp(e.runeAtVisualColumn(w, dispLine, vt))
 	}
 	idx := resolve(target)
 	// caretRune is where a CARET should land: the containing rune normally, but
@@ -633,6 +637,13 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	// index falls as the visual column rises), robust on mixed lines. Overwrite
 	// mode and cell-resolution reports (subX < 0) keep idx.
 	caretRune = idx
+	// A click on a synthetic bidi direction marker (the "<" / ">" / "|" glyphs
+	// shown under showBidi) resolves to a specific caret boundary that is
+	// direction- and half-aware — not a character to overwrite — so it runs
+	// ahead of, and instead of, the nearest-edge logic below.
+	if mc, ok := e.markerCaretAt(w, dispLine, target, e.mouseSubX); ok {
+		return w, docLine, idx, mapDisp(mc), true
+	}
 	if e.mouseSubX >= 0 && w != nil && !w.ViewState.OverwriteMode {
 		right := resolve(target + 1)
 		haveLeft := target >= 1
@@ -749,6 +760,126 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 		col += wd
 	}
 	return len(runes)
+}
+
+// markerCaretAt resolves a click that landed on a synthetic bidi direction
+// marker — the one-column "<" (MarkerRTL), ">" (MarkerLTR) or "|" (MarkerEnd)
+// glyphs drawn under showBidi — to a DISPLAY-rune caret position. Returns
+// ok=false when the target column is a real cell, so the caller keeps its
+// normal cell logic. line is the display line; subX is the pointer's sub-cell
+// horizontal permille (<0 when unknown, treated as the left half).
+//
+// The marker's caret lands on a run BOUNDARY, chosen by the marker's meaning:
+//   - "<" points at the RTL cell to its LEFT (that run's leading edge); the
+//     caret goes BEFORE that character — its own logical index.
+//   - ">" points at the LTR cell to its RIGHT (that run's leading edge); the
+//     caret goes BEFORE that character — its own logical index.
+//   - "|" is a run's reading END, shared by the two cells it sits between; the
+//     caret takes the "after" side of the NEARER neighbor: the left half lands
+//     on the RIGHT edge of the cell visually to the left, the right half on the
+//     LEFT edge of the cell visually to the right. Whether an edge is a
+//     logical-before or logical-after boundary flips with that cell's own
+//     direction (RTL reads right-to-left, so its right edge is the before side).
+func (e *Editor) markerCaretAt(w *viewport.Viewport, line string, target, subX int) (caret int, ok bool) {
+	runes := []rune(line)
+	layout := e.layoutFor(w, runes)
+	if layout == nil {
+		return 0, false
+	}
+	tabSize := e.tabSize(w)
+	marked := e.lineMarkSet(w, runes)
+
+	// A base is a width-bearing cell; zero-width combining marks and the
+	// absorbed half of a ligature share their base's column and are stepped over
+	// so a marker's neighbor is the cell that actually occupies the column.
+	isBase := func(li int) bool {
+		return li >= 0 && e.slotWidth(layout, runes, li, 0, tabSize) > 0
+	}
+	prevBase := func(pi int) int {
+		for j := pi - 1; j >= 0; j-- {
+			if isBase(layout.Perm[j]) {
+				return layout.Perm[j]
+			}
+		}
+		return -1
+	}
+	nextBase := func(pi int) int {
+		for j := pi + 1; j < len(layout.Perm); j++ {
+			if isBase(layout.Perm[j]) {
+				return layout.Perm[j]
+			}
+		}
+		return -1
+	}
+	// afterCluster is the caret position just past a base and its trailing
+	// combining marks / absorbed ligature half (all logically after the base).
+	afterCluster := func(i int) int {
+		n := i + 1
+		for n < len(runes) {
+			if textwidth.IsMark(runes[n]) ||
+				(layout.Glyph != nil && n < len(layout.Glyph) && layout.Glyph[n] == bidi.LigatureAbsorbed) {
+				n++
+				continue
+			}
+			break
+		}
+		return n
+	}
+	rtl := func(i int) bool {
+		return i >= 0 && i < len(layout.RTL) && layout.RTL[i]
+	}
+	// rightEdge/leftEdge convert a base's SPATIAL edge to a caret boundary: for
+	// an LTR cell the right edge is its logical-after side and the left edge its
+	// logical-before side; an RTL cell reads the other way.
+	rightEdge := func(i int) int {
+		if i < 0 {
+			return 0 // no cell to the left → line start
+		}
+		if rtl(i) {
+			return i
+		}
+		return afterCluster(i)
+	}
+	leftEdge := func(i int) int {
+		if i < 0 {
+			return len(runes) // no cell to the right → line end
+		}
+		if rtl(i) {
+			return afterCluster(i)
+		}
+		return i
+	}
+
+	col := 0
+	for pi, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++ // the showMarks "*" cell before the rune
+		}
+		wd := e.slotWidth(layout, runes, li, col, tabSize)
+		if wd > 0 && target >= col && target < col+wd {
+			if li >= 0 {
+				return 0, false // a real cell — not a marker
+			}
+			switch li {
+			case bidi.MarkerRTL: // "<": before the RTL cell to its left
+				if p := prevBase(pi); p >= 0 {
+					return p, true
+				}
+			case bidi.MarkerLTR: // ">": before the LTR cell to its right
+				if n := nextBase(pi); n >= 0 {
+					return n, true
+				}
+			case bidi.MarkerEnd: // "|": the "after" side of the nearer neighbor
+				if subX < 500 {
+					return rightEdge(prevBase(pi)), true
+				}
+				return leftEdge(nextBase(pi)), true
+			}
+			return 0, false
+		}
+		col += wd
+	}
+	return 0, false
 }
 
 // displayToDoc maps a display index to a document rune through DispToDoc:
