@@ -842,56 +842,48 @@ func runesOf(c bbCell) string {
 	return string(c.runes)
 }
 
-// isShinSinDotAnchor reports whether a cell is an isolated Hebrew shin dot or
-// sin dot anchored on a dotted circle — runes [◌, U+05C1|U+05C2]. These two
-// points sit at the TOP CORNERS of their base (shin dot upper-right, sin dot
-// upper-left), so any horizontal misplacement of the mark relative to the
-// circle is plainly visible; the vowel points that sit below a base do not
-// show it the same way, which is why the reversed emission is scoped here.
-func isShinSinDotAnchor(c bbCell) bool {
-	return len(c.runes) == 2 && c.runes[0] == textwidth.MarkAnchor &&
-		(c.runes[1] == 0x05C1 || c.runes[1] == 0x05C2)
-}
-
-// zeroWidthSpace is emitted ahead of an anchored point on a plain terminal to
-// break the combining join — see emitCellText.
-const zeroWidthSpace = '​' // ZERO WIDTH SPACE
-
 // emitCellText renders a cell's runes for the wire. It is runesOf, except under
-// rtlMarkMode "iterm2" on a PLAIN terminal (not a flex-width 2027 host), where a
-// shin-dot or sin-dot anchored on a dotted circle is emitted as ZWSP · point ·
-// circle.
-//
-// Two things go wrong with the bare cluster on iTerm2. The dotted circle's
-// width: U+25CC is East Asian AMBIGUOUS, and a terminal that draws it at the
-// wide advance hangs the combining point off the circle's right edge, a full
-// cell over from where mew budgeted it. And the join: a letter abutting the
-// circle with no space between could capture the point as its own mark ("the
-// alef stole the dot").
-//
-// The leading ZERO WIDTH SPACE breaks the join — a fresh zero-advance base
-// between the previous cell and this cluster, so the point can only belong to
-// this cluster, never the letter before. The point rides that ZWSP rather than
-// the wide circle, so it stays pinned at the cell's origin instead of shifting
-// off the circle's right edge. The stored cell is untouched, so a flex-width
-// host (purfecterm, mew's own SDL surface) — which composes the cluster by
-// grapheme the way mew does — is served the "normal" bare order regardless.
-//
-// KNOWN GAP: the dotted circle itself does not render on iTerm2 with this order
-// (it becomes a second base at the same cell and drops out); the point lands
-// correctly but bare. Making the circle visible too runs into U+25CC's ambiguous
-// width and mew's one-column budget — a future rtlMarkMode is expected to
-// approach it differently.
+// rtlMarkMode "iterm2"/"compose" on a PLAIN terminal (not a flex-width 2027
+// host), where Hebrew points are folded into Alphabetic-Presentation-Form glyphs
+// so no free-standing point is left for the terminal to drift — see
+// precomposeCell.
 func (b *backBuffer) emitCellText(c bbCell) string {
-	if b.rtlMarkMode == "iterm2" && !b.logicalCUP {
-		if isShinSinDotAnchor(c) {
-			return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
-		}
-		if s, ok := precombineHebrewForITerm2(c.runes); ok {
+	if b.logicalCUP {
+		return runesOf(c) // flex-width host composes clusters itself
+	}
+	// "iterm2" and "compose" both fold Hebrew points into presentation forms.
+	// They are one behaviour today; the two names are kept so iterm2 can carry
+	// terminal-specific extras later without disturbing plain precomposition.
+	switch b.rtlMarkMode {
+	case "iterm2", "compose":
+		if s, ok := precomposeCell(c); ok {
 			return s
 		}
 	}
 	return runesOf(c)
+}
+
+// precomposeCell rewrites an anchored or well-formed Hebrew cell into a single
+// presentation-form glyph where one exists, so no free-standing point is left for
+// a terminal to drift. It covers well-formed clusters
+// (precombineHebrewForITerm2) and the anchored marks that have no good isolated
+// rendering on a dotted circle: an isolated shin dot, sin dot, or holam-haser is
+// shown on a "faux" base — the shin-with-dot or vav-with-holam presentation glyph
+// — instead of a circle, keeping whatever colour the cell already carries (the
+// substitutes colour for an anchored form). That also makes the isolated and
+// well-formed forms of those points render identically.
+func precomposeCell(c bbCell) (string, bool) {
+	if len(c.runes) == 2 && c.runes[0] == textwidth.MarkAnchor {
+		switch c.runes[1] {
+		case 0x05C1: // isolated shin dot -> shin with shin dot
+			return string(rune(0xFB2A)), true
+		case 0x05C2: // isolated sin dot -> shin with sin dot
+			return string(rune(0xFB2B)), true
+		case 0x05BA: // isolated holam haser for vav -> vav with holam
+			return string(rune(0xFB4B)), true
+		}
+	}
+	return precombineHebrewForITerm2(c.runes)
 }
 
 // Hebrew base letter + dagesh/mapiq -> the single Alphabetic-Presentation-Form

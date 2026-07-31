@@ -1287,7 +1287,7 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["rtlMarkMode"]; ok {
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
-			case "normal", "iterm2", "drift":
+			case "normal", "iterm2", "compose", "drift":
 				config.General.RtlMarkMode = strings.ToLower(stripQuotes(strings.TrimSpace(v)))
 			}
 		}
@@ -2432,11 +2432,12 @@ direction=ltr
 flipBidiForHost=auto
 
 # rtlMarkMode: how RTL combining marks are emitted. "normal" (default) is the
-# usual base-then-mark order. "iterm2" works around iTerm2 drawing the
-# ambiguous-width dotted circle wide under an isolated shin/sin dot, leading that
-# mark with a zero-width base so it stays put. "drift" (experimental, KittyTK-TUI
-# host) makes each RTL cell carry the marks of the cell to its RIGHT (its own
-# move left; the last column shows none), the placement a few terminals (current
+# usual base-then-mark order. "iterm2" folds a dagesh/mapiq, shin/sin dot, rafe
+# or holam-haser into its base via the Alphabetic Presentation Forms so iTerm2
+# does not drift them, AND leads an isolated shin/sin dot with a zero-width base.
+# "compose" does only the presentation-form folding, for terminals that need
+# that alone. "drift" (experimental, KittyTK-TUI host) makes each RTL cell carry
+# the marks of the cell to its RIGHT, the placement a few terminals (current
 # Ghostty) expect.
 rtlMarkMode=normal
 

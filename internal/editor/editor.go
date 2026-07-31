@@ -3890,8 +3890,8 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		e.RequestRender()
 	case "rtlmarkmode":
 		v := strings.ToLower(strings.TrimSpace(value))
-		if v != "normal" && v != "iterm2" && v != "drift" {
-			e.ShowWarning("rtlMarkMode: normal, iterm2, or drift")
+		if v != "normal" && v != "iterm2" && v != "compose" && v != "drift" {
+			e.ShowWarning("rtlMarkMode: normal, iterm2, compose, or drift")
 			return false
 		}
 		e.Config.RtlMarkMode = v
