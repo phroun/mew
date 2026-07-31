@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
 	"github.com/phroun/mew/internal/bidi"
@@ -1025,11 +1026,12 @@ func New(cfg Config) (*Editor, error) {
 
 	cfg.RtlMarkMode = loadedConfig.General.RtlMarkMode
 	if cfg.RtlMarkMode == "" {
-		cfg.RtlMarkMode = "normal"
+		cfg.RtlMarkMode = "auto"
 	}
-	renderer.SetRtlMarkMode(cfg.RtlMarkMode)
+	resolvedRtlMark := resolveRtlMarkMode(cfg.RtlMarkMode)
+	renderer.SetRtlMarkMode(resolvedRtlMark)
 	if cfg.RtlMarkModeSink != nil {
-		cfg.RtlMarkModeSink(cfg.RtlMarkMode)
+		cfg.RtlMarkModeSink(resolvedRtlMark)
 	}
 
 	// Restore a host-provided state snapshot over the loaded configuration.
@@ -3514,6 +3516,31 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 	return "", false
 }
 
+// resolveRtlMarkMode turns the "auto" sentinel into a concrete rtlMarkMode from
+// the detected host terminal; any explicit mode passes through unchanged. The
+// stored option keeps reading "auto"; only the value pushed to the renderer and
+// host is resolved. Terminals whose quirks are not yet handled resolve to
+// "normal".
+func resolveRtlMarkMode(mode string) string {
+	if mode != "auto" {
+		return mode
+	}
+	return rtlMarkModeForTerminal(hostterm.Detect())
+}
+
+// rtlMarkModeForTerminal maps a detected host terminal to the rtlMarkMode "auto"
+// selects for it. Terminals whose quirks are not yet handled map to "normal".
+func rtlMarkModeForTerminal(k hostterm.Kind) string {
+	switch k {
+	case hostterm.TerminalITerm2:
+		return "iterm2"
+	case hostterm.TerminalAlacritty:
+		return "drift"
+	default:
+		return "normal"
+	}
+}
+
 // setOption sets a named editor option. Per-viewport options (tabSize,
 // showLineNumbers, showInvisibles, showColumnRuler) are written to the given
 // viewport's own ViewState, so the change applies to that viewport and does not
@@ -3890,14 +3917,15 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		e.RequestRender()
 	case "rtlmarkmode":
 		v := strings.ToLower(strings.TrimSpace(value))
-		if v != "normal" && v != "iterm2" && v != "compose" && v != "drift" {
-			e.ShowWarning("rtlMarkMode: normal, iterm2, compose, or drift")
+		if v != "normal" && v != "iterm2" && v != "compose" && v != "drift" && v != "auto" {
+			e.ShowWarning("rtlMarkMode: auto, normal, iterm2, compose, or drift")
 			return false
 		}
 		e.Config.RtlMarkMode = v
-		e.Renderer.SetRtlMarkMode(v)
+		resolved := resolveRtlMarkMode(v)
+		e.Renderer.SetRtlMarkMode(resolved)
 		if e.Config.RtlMarkModeSink != nil {
-			e.Config.RtlMarkModeSink(v)
+			e.Config.RtlMarkModeSink(resolved)
 		}
 		e.RequestRender()
 	case "prompttimeout":

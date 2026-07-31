@@ -911,7 +911,7 @@ func DefaultConfig() Config {
 			KillRingEntries:         10,
 			Direction:               "ltr",
 			FlipBidiForHost:         "auto",
-			RtlMarkMode:             "normal",
+			RtlMarkMode:             "auto",
 		},
 		Mappings:    builtinMappings(),
 		MappingSets: builtinMappingSets(),
@@ -1287,7 +1287,7 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		}
 		if v, ok := opt["rtlMarkMode"]; ok {
 			switch strings.ToLower(stripQuotes(strings.TrimSpace(v))) {
-			case "normal", "iterm2", "compose", "drift":
+			case "auto", "normal", "iterm2", "compose", "drift":
 				config.General.RtlMarkMode = strings.ToLower(stripQuotes(strings.TrimSpace(v)))
 			}
 		}
@@ -2431,15 +2431,14 @@ direction=ltr
 # (falling back to the TERM_PROGRAM environment).
 flipBidiForHost=auto
 
-# rtlMarkMode: how RTL combining marks are emitted. "normal" (default) is the
-# usual base-then-mark order. "iterm2" folds a dagesh/mapiq, shin/sin dot, rafe
-# or holam-haser into its base via the Alphabetic Presentation Forms so iTerm2
-# does not drift them, AND leads an isolated shin/sin dot with a zero-width base.
-# "compose" does only the presentation-form folding, for terminals that need
-# that alone. "drift" (experimental, KittyTK-TUI host) makes each RTL cell carry
-# the marks of the cell to its RIGHT, the placement a few terminals (current
-# Ghostty) expect.
-rtlMarkMode=normal
+# rtlMarkMode: how RTL combining marks are emitted. "auto" (default) picks a mode
+# from the detected terminal (iTerm2 -> iterm2, Alacritty -> drift, else normal).
+# "normal" is the usual base-then-mark order. "iterm2"/"compose" fold a
+# dagesh/mapiq, shin/sin dot, rafe or holam-haser into their base via the
+# Alphabetic Presentation Forms so the terminal does not drift them. "drift"
+# (KittyTK-TUI host) makes each RTL cell carry the marks of the cell to its RIGHT,
+# the placement a few terminals (Ghostty, Alacritty) expect.
+rtlMarkMode=auto
 
 [layout.qwerty]
 #

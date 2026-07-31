@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
 )
@@ -889,7 +890,13 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
-	env := append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	// Advertise the embedded terminal's own identity to the child (last wins over
+	// any inherited TERM/TERM_PROGRAM), so a program inside it — including a
+	// nested instance — detects purfecterm rather than the outer terminal.
+	env := append(os.Environ(),
+		"TERM="+hostterm.PurfectermTerm,
+		"TERM_PROGRAM="+hostterm.PurfectermTermProgram,
+		"COLORTERM=truecolor")
 	// How a machine makes a terminal is the one part of this that is not the
 	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
 	// before it starts on Windows. hostPTY is per-platform; everything above
