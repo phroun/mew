@@ -923,17 +923,6 @@ func (e *Editor) dragSelUpdate(x, y int) {
 	if !ok {
 		return
 	}
-	// A word-wise host (Kitty) shows each RTL word's letters at the mirror of
-	// mew's visual columns, so the block's endpoints — carried in the cell
-	// stream — must be mirrored within their word to bound the letters actually
-	// under the pointer. The caret stays put (a DEC cursor at an absolute column
-	// the host does not reverse), so it and the block endpoint may differ here.
-	blockRune := func(dl, rp int) int {
-		if e.Renderer != nil && e.Renderer.FlipWordwise() {
-			return e.wordMirrorRune(w, dl, rp)
-		}
-		return rp
-	}
 	if !e.dragSel.begun {
 		if docLine == e.dragSel.originLine && runePos == e.dragSel.originRune {
 			return // still on the press cell: no selection yet
@@ -941,13 +930,13 @@ func (e *Editor) dragSelUpdate(x, y int) {
 		// The drag becomes a selection here: open the gesture's transaction so
 		// every mark movement until release lands in ONE undo step.
 		e.beginDragTxn(w.Buffer)
-		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, blockRune(e.dragSel.originLine, e.dragSel.originRune))
+		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, e.dragSel.originRune)
 		e.dragSel.begun = true
 	}
 	if docLine == e.dragSel.lastLine && runePos == e.dragSel.lastRune {
 		return // same cell as the last update
 	}
-	w.Buffer.SetMark("_block_end", docLine, blockRune(docLine, runePos))
+	w.Buffer.SetMark("_block_end", docLine, runePos)
 	// A plain drag marks a TRANSIENT mouse block (a later plain click
 	// dissolves it); a drag continuing a shift+click keeps that gesture's
 	// deliberate, persistent nature.
