@@ -618,12 +618,33 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	}
 	idx := resolve(target)
 	// caretRune is where a CARET should land: the containing rune normally, but
-	// the NEXT visual boundary (nearest edge) when an insert-mode click's pointer
-	// sits in the right half of the cell (sub-cell ≥ 500 — pixel reports only).
-	// Overwrite mode, and every cell-resolution report (subX < 0), keep idx.
+	// the NEAREST cell EDGE for an insert-mode click (pixel reports only). The
+	// click's nearest visual boundary is the cell's left edge (sub-cell < 500)
+	// or right edge (≥ 500). Which edge ADVANCES past the character, and how the
+	// boundary maps to a document position, both flip with the cell's direction:
+	//   - LTR: the screen-RIGHT half advances → resolve(target+1).
+	//   - RTL: screen-left is the logical-after side, so the screen-LEFT half
+	//     advances → resolve(target-1); the right half stays on the cell.
+	// resolve() maps through the bidi/display layout, so the advance lands on the
+	// next BASE cell — combining marks (niqqud/harakat) never split a caret.
+	// Direction is read from the local visual→logical gradient (an RTL run's
+	// index falls as the visual column rises), robust on mixed lines. Overwrite
+	// mode and cell-resolution reports (subX < 0) keep idx.
 	caretRune = idx
-	if e.mouseSubX >= 500 && w != nil && !w.ViewState.OverwriteMode {
-		caretRune = resolve(target + 1)
+	if e.mouseSubX >= 0 && w != nil && !w.ViewState.OverwriteMode {
+		right := resolve(target + 1)
+		haveLeft := target >= 1
+		left := idx
+		if haveLeft {
+			left = resolve(target - 1)
+		}
+		rtl := right < idx || (haveLeft && left > idx)
+		switch {
+		case rtl && e.mouseSubX < 500 && haveLeft:
+			caretRune = left // RTL: left half advances past the character
+		case !rtl && e.mouseSubX >= 500:
+			caretRune = right // LTR: right half advances past the character
+		}
 	}
 	return w, docLine, idx, caretRune, true
 }
