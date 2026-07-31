@@ -266,11 +266,13 @@ func (e *Editor) handleMouseKey(key string) bool {
 	case base == "MouseRightPress":
 		e.mouseRightPress(e.mouseX, e.mouseY)
 	case strings.HasPrefix(base, "MouseDrag@"):
-		// Plain motion, no button (all-motion tracking): hover.
-		if x, y, ok := parseMouseAt(base[len("MouseDrag@"):]); ok {
-			e.mouseX, e.mouseY = x, y
-			e.mouseHoverAt(x, y)
-			e.modebarNavHoverAt(x, y)
+		// Plain motion, no button (all-motion tracking): hover. The position was
+		// already parsed AND pixel-converted at the top (e.mouseX/e.mouseY);
+		// reuse it rather than re-parsing the raw report, which is in PIXELS
+		// under SGR-Pixels (?1016) and would put hover far off the grid.
+		if atOK {
+			e.mouseHoverAt(e.mouseX, e.mouseY)
+			e.modebarNavHoverAt(e.mouseX, e.mouseY)
 		}
 	case base == "MouseScrollUp":
 		e.hScrollReset() // a vertical tick re-arms the sideways barrier
