@@ -341,6 +341,10 @@ func (e *Editor) run() {
 			return c, r, nil
 		},
 		Resize: e.resizeCh,
+		// PurfecTerm is a genuine emulator surface: it answers DECRQM/XTWINOPS
+		// queries back through Input, so mew's terminal-probing features (pixel
+		// mouse, ?1016) engage exactly as on a real terminal.
+		Interactive: true,
 	}
 
 	fs := e.fileSystem

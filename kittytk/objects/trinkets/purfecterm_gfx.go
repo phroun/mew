@@ -293,6 +293,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
+	t.pushCellPixelSizeGfx(ppu) // keep CSI 16 t / ?1016 pixel space current
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -2273,9 +2274,28 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 	return col, row
 }
 
-// sendMouseEventGfx forwards an xterm-encoded mouse event to the PTY
-// when the application requested tracking.
-func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) bool {
+// pushCellPixelSizeGfx keeps the hosted app's notion of the cell's device-pixel
+// size current (reported via CSI 16 t), so SGR-Pixels (?1016) reports and the
+// size the app divides them by stay in the same space across a font zoom. The
+// device cell size is baseCell * scale * ppu — the same rate
+// screenToVisualCellGfx walks when it places a cell boundary.
+func (t *PurfecTerm) pushCellPixelSizeGfx(ppu float64) {
+	buf := t.terminal.Buffer()
+	baseCW, baseCH := t.cellDims()
+	cw := float64(baseCW) * buf.GetHorizontalScale() * ppu
+	chh := float64(baseCH) * buf.GetVerticalScale() * ppu
+	if cw > 0 && chh > 0 {
+		buf.SetCellPixelSize(int(math.Round(cw)), int(math.Round(chh)))
+	}
+}
+
+// reportMouseGfx forwards a mouse event to the hosted app, choosing the
+// coordinate space by the app's encoding mode. SGR-Pixels (?1016) reports the
+// pointer's device-pixel position (sub-cell precise, so a hosted editor can
+// land its caret on the nearest cell edge); every other mode reports the visual
+// cell. x,y are the event's trinket-unit coordinates. Pixels are 1-based to
+// match the cell path's +1 and the CSI 16 t space (pushCellPixelSizeGfx).
+func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool {
 	if t.gfx.reportingDisabled {
 		return false
 	}
@@ -2283,7 +2303,15 @@ func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) boo
 	if buf.GetMouseTrackingMode() == 0 {
 		return false
 	}
-	data := purfecterm.EncodeMouseEvent(button, cellX+1, cellY+1, press, buf.GetMouseEncodingMode())
+	var repX, repY int
+	if buf.GetMouseEncodingMode() == 1016 {
+		px, py := t.gfxPointerPx(x, y)
+		repX, repY = int(math.Round(px))+1, int(math.Round(py))+1
+	} else {
+		col, row := t.screenToVisualCellGfx(x, y)
+		repX, repY = col+1, row+1
+	}
+	data := purfecterm.EncodeMouseEvent(button, repX, repY, press, buf.GetMouseEncodingMode())
 	if data == nil {
 		return false
 	}
@@ -2321,8 +2349,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+			t.reportMouseGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 			return true
 		}
 		t.showContextMenu(event)
@@ -2335,8 +2362,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
-		repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		return true
 	}
 
@@ -2378,8 +2404,7 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 			if t.gfx.mouseDown {
 				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
 			}
-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
-			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
+			t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		}
 		return true
 	}
@@ -2453,7 +2478,6 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		btn := purfecterm.MouseButtonLeft
 		switch event.Button {
 		case core.MiddleButton:
@@ -2462,7 +2486,7 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
 			btn = purfecterm.MouseButtonRight
 		}
 		t.gfx.mouseDown = false
-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false)
+		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, false)
 		return true
 	}
 
@@ -2494,21 +2518,20 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
 	if forwardToPTY {
-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
 		mods := gfxMouseModifiers(event.Modifiers)
 		if event.DeltaY < 0 {
-			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
+			t.reportMouseGfx(purfecterm.MouseScrollUp|mods, event.X, event.Y, true)
 		} else if event.DeltaY > 0 {
-			t.sendMouseEventGfx(purfecterm.MouseScrollDown|mods, cellX, cellY, true)
+			t.reportMouseGfx(purfecterm.MouseScrollDown|mods, event.X, event.Y, true)
 		}
 		// Horizontal wheel: SGR buttons 66/67 continue purfecterm's scroll
 		// series (Up=64, Down=65). DeltaX>0 = scroll right. (An app whose input
 		// layer decodes 66/67 as left/right acts on it; older decoders that only
 		// know 64/65 ignore the extra buttons rather than mis-scroll vertically.)
 		if event.DeltaX < 0 {
-			t.sendMouseEventGfx(mouseScrollLeftBtn|mods, cellX, cellY, true)
+			t.reportMouseGfx(mouseScrollLeftBtn|mods, event.X, event.Y, true)
 		} else if event.DeltaX > 0 {
-			t.sendMouseEventGfx(mouseScrollRightBtn|mods, cellX, cellY, true)
+			t.reportMouseGfx(mouseScrollRightBtn|mods, event.X, event.Y, true)
 		}
 		return true
 	}
