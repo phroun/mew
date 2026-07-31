@@ -31,23 +31,25 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 	}
 }
 
-// flipBidiForHost="auto" flips only for a sniffed bidi host (Apple Terminal);
-// the stream-order terminals are known to NOT flip (and skip the probe), and an
-// unrecognised host is left to the probe. Explicit true/false pass through.
+// flipBidiForHost="auto": Apple Terminal flips whole-run, Kitty flips word-wise,
+// the stream-order terminals do not flip (all recognised, so all skip the
+// probe), and an unrecognised host is left to the probe. Explicit true/false
+// pass through.
 func TestFlipBidiForHostResolve(t *testing.T) {
-	cases := map[hostterm.Kind]struct{ flip, known bool }{
-		hostterm.TerminalAppleTerminal: {true, true},
-		hostterm.TerminalITerm2:        {false, true},
-		hostterm.TerminalAlacritty:     {false, true},
-		hostterm.TerminalGhostty:       {false, true},
-		hostterm.TerminalKitty:         {false, true},
-		hostterm.TerminalUnknown:       {false, false},
-		hostterm.TerminalPurfecterm:    {false, false},
+	cases := map[hostterm.Kind]struct{ flip, wordwise, known bool }{
+		hostterm.TerminalAppleTerminal: {true, false, true},
+		hostterm.TerminalKitty:         {true, true, true},
+		hostterm.TerminalITerm2:        {false, false, true},
+		hostterm.TerminalAlacritty:     {false, false, true},
+		hostterm.TerminalGhostty:       {false, false, true},
+		hostterm.TerminalUnknown:       {false, false, false},
+		hostterm.TerminalPurfecterm:    {false, false, false},
 	}
 	for k, w := range cases {
-		flip, known := hostFlipDecision(k)
-		if flip != w.flip || known != w.known {
-			t.Errorf("hostFlipDecision(%s) = (%v,%v), want (%v,%v)", k, flip, known, w.flip, w.known)
+		flip, wordwise, known := hostFlipDecision(k)
+		if flip != w.flip || wordwise != w.wordwise || known != w.known {
+			t.Errorf("hostFlipDecision(%s) = (%v,%v,%v), want (%v,%v,%v)",
+				k, flip, wordwise, known, w.flip, w.wordwise, w.known)
 		}
 	}
 	if !resolveFlipBidiForHost("true") {

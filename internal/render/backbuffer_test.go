@@ -339,6 +339,35 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 	}
 }
 
+// flipEmitPlan segmentation: two Hebrew words separated by a space. Whole-run
+// (Terminal.app) absorbs the space and reverses the whole span; word-wise
+// (Kitty) reverses each word in place, leaving the space — and thus the word
+// order — untouched.
+func TestFlipEmitPlanWordwise(t *testing.T) {
+	rtl := func(r rune) rowCell { return rowCell{cell: bbCell{runes: []rune{r}}, width: 1} }
+	// Visual cells [0..4]: word "דג", a space, word "בא".
+	cells := []rowCell{rtl('ד'), rtl('ג'), {cell: bbCell{runes: []rune{' '}}, width: 1}, rtl('ב'), rtl('א')}
+
+	eq := func(got, want []int) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	if order, _ := flipEmitPlan(cells, false); !eq(order, []int{4, 3, 2, 1, 0}) {
+		t.Errorf("whole-run order = %v, want [4 3 2 1 0] (space absorbed, whole span reversed)", order)
+	}
+	if order, _ := flipEmitPlan(cells, true); !eq(order, []int{1, 0, 2, 4, 3}) {
+		t.Errorf("word-wise order = %v, want [1 0 2 4 3] (each word reversed in place)", order)
+	}
+}
+
 // A folding rtlMarkMode must fold under flipBidi too: the flip path emits runes
 // directly (not through emitCellText), so without folding an isolated ◌-anchored
 // point reverts to the dotted circle and a pointed cluster spills its point back

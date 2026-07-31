@@ -89,6 +89,15 @@ type backBuffer struct {
 	// reorder (iTerm2, xterm, ...). See the flipBidiForHost option.
 	flipBidi bool
 
+	// flipWordwise selects the flip's run SEGMENTATION when flipBidi is on. Off
+	// (default, Terminal.app) treats a maximal RTL span — inter-word spaces
+	// absorbed — as one run and reverses it whole, matching a host whose bidi
+	// keeps neutrals between RTL words in the run. On (Kitty) reverses each
+	// whitespace-separated RTL word in place instead, matching a host that
+	// breaks its runs on the space and reverses each word without reordering
+	// them; absorbing there would swap the words. Only consulted under flipBidi.
+	flipWordwise bool
+
 	// sawRTL latches when any strong-RTL rune is painted — the trigger for the
 	// one-time flipBidiForHost=auto terminal probe (RTL is the first point the
 	// setting matters).
@@ -665,12 +674,18 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 }
 
 // flipEmitPlan computes the flip transform over a row's visual cells: the
-// order the cells are emitted in (RTL runs — maximal segments bounded by
-// strong-RTL cells with no interior strong-LTR content — reversed into
-// logical order) and, per emission slot, whether the glyph mirrors back.
-// The host terminal's own bidi reorders each emitted run to the visual
-// layout the grid holds.
-func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
+// order the cells are emitted in (RTL runs reversed into logical order) and,
+// per emission slot, whether the glyph mirrors back. The host terminal's own
+// bidi reorders each emitted run to the visual layout the grid holds.
+//
+// wordwise selects the run boundary, to match the host's own segmentation.
+// Off: a run is a maximal RTL span with interior neutrals (inter-word spaces)
+// absorbed as long as another RTL cell follows — the whole span reverses, for a
+// host (Terminal.app) whose bidi keeps those neutrals RTL. On: the space is a
+// boundary, so each whitespace-separated RTL word is its own run and reverses in
+// place, for a host (Kitty) that reverses each word without reordering the words
+// — absorbing there would flip the word order.
+func flipEmitPlan(cells []rowCell, wordwise bool) (order []int, mirror []bool) {
 	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
 	isStrongLTR := func(c bbCell) bool {
 		if len(c.runes) == 0 {
@@ -688,16 +703,16 @@ func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
 			i++
 			continue
 		}
-		// Extend the run: through further RTL cells, absorbing interior
-		// neutral cells only when another RTL cell follows before any strong
-		// LTR content.
+		// Extend the run. Word-wise stops at the first non-RTL cell (each word
+		// reverses in place); otherwise absorb interior neutrals as long as
+		// another RTL cell follows before any strong LTR content.
 		end := i
 		for j := i + 1; j < len(cells); j++ {
 			if isRTL(cells[j].cell) {
 				end = j
 				continue
 			}
-			if isStrongLTR(cells[j].cell) {
+			if wordwise || isStrongLTR(cells[j].cell) {
 				break
 			}
 		}
@@ -778,7 +793,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 
 	// Flip mode: emit per the plan (RTL runs reversed into logical order with
 	// mirrored glyphs restored — Mirror is an involution).
-	order, mirror := flipEmitPlan(cells)
+	order, mirror := flipEmitPlan(cells, b.flipWordwise)
 	for k, idx := range order {
 		emit(cells[idx].cell, mirror[k])
 	}

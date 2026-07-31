@@ -335,6 +335,19 @@ func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	}
 }
 
+// SetFlipWordwise selects the flip's run segmentation (see backBuffer.flipWordwise):
+// off treats a maximal RTL span as one run (Terminal.app), on reverses each
+// whitespace-separated RTL word in place (Kitty). Only takes effect under
+// flipBidiForHost. Forces a full repaint so the convention switches at once.
+func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.flipWordwise != wordwise {
+		sr.frame.flipWordwise = wordwise
+		sr.frame.forceRedraw()
+	}
+}
+
 // SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
 // circle is emitted: "normal" (bare cluster) or "iterm2" (a zero-width base
 // leads the mark, working around iTerm2's wide dotted circle). An enum — more
@@ -565,6 +578,7 @@ func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	saved := sr.frame
 	tmp := newBackBuffer(sr.Width, sr.Height)
 	tmp.flipBidi = saved.flipBidi
+	tmp.flipWordwise = saved.flipWordwise
 	tmp.pendingClear = true
 	sr.frame = tmp
 	tmp.begin()

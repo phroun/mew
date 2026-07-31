@@ -44,7 +44,7 @@ func (e *Editor) maybeSendBidiProbe() {
 	// flip value is set from startup and no probe is needed. Probing them risks
 	// a false positive: Kitty in particular does no bidi but answers the cursor
 	// query in a way that reads as "applies bidi", which would wrongly flip it.
-	if _, known := hostFlipDecision(hostterm.Detect()); known {
+	if _, _, known := hostFlipDecision(hostterm.Detect()); known {
 		e.bidiProbeState = bidiProbeDone
 		return
 	}

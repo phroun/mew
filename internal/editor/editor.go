@@ -1021,9 +1021,15 @@ func New(cfg Config) (*Editor, error) {
 		cfg.FlipBidiForHost = "auto"
 	}
 	// Explicit setting applies now; "auto" turns the flip on for a sniffed bidi
-	// host (Apple Terminal) and otherwise stays off until the probe decides
-	// (triggered by the first frame containing RTL content).
+	// host (Apple Terminal, Kitty) and otherwise stays off until the probe
+	// decides (triggered by the first frame containing RTL content). The
+	// word-wise segmentation rides the same sniff; an explicit true/false uses
+	// the whole-run default.
 	renderer.SetFlipBidiForHost(resolveFlipBidiForHost(cfg.FlipBidiForHost))
+	if cfg.FlipBidiForHost == "auto" {
+		_, wordwise, _ := hostFlipDecision(hostterm.Detect())
+		renderer.SetFlipWordwise(wordwise)
+	}
 
 	cfg.RtlMarkMode = loadedConfig.General.RtlMarkMode
 	if cfg.RtlMarkMode == "" {
@@ -3554,29 +3560,35 @@ func resolveFlipBidiForHost(mode string) bool {
 	case "true":
 		return true
 	case "auto":
-		flip, _ := hostFlipDecision(hostterm.Detect())
+		flip, _, _ := hostFlipDecision(hostterm.Detect())
 		return flip
 	}
 	return false
 }
 
-// hostFlipDecision reports the flipBidiForHost value sniffing knows for a host,
-// and whether it knows at all. Apple Terminal applies its own bidi reordering,
-// so mew emits RTL runs in logical order (flip ON) and the terminal lays them
-// out. The stream-order terminals we target (iTerm2, Alacritty, Ghostty, Kitty)
-// do NOT reorder — they render mew's already-visual output verbatim — so the
-// flip must stay OFF; emitting logical order there leaves each run reversed
-// within itself (Kitty, which does no bidi at all, shows exactly this). A host
-// sniffing does not recognise (known=false) falls to the runtime DSR probe.
-func hostFlipDecision(k hostterm.Kind) (flip, known bool) {
+// hostFlipDecision reports, for a sniffed host, whether mew should flip RTL
+// emission (flip), whether that flip is word-wise (wordwise), and whether
+// sniffing recognises the host at all (known). A host it does not recognise
+// (known=false) falls to the runtime DSR probe.
+//
+// Three families:
+//   - Apple Terminal applies its own bidi and keeps inter-word spaces inside the
+//     RTL run: flip ON, whole-run (wordwise=false).
+//   - Kitty reorders too, but reverses each whitespace-separated word in place
+//     without moving the words: flip ON, word-wise — a whole-run flip there
+//     leaves each word correct but swaps the word order.
+//   - iTerm2, Alacritty and Ghostty are stream-order: they render mew's visual
+//     output verbatim, so flip stays OFF.
+func hostFlipDecision(k hostterm.Kind) (flip, wordwise, known bool) {
 	switch k {
 	case hostterm.TerminalAppleTerminal:
-		return true, true
-	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty,
-		hostterm.TerminalGhostty, hostterm.TerminalKitty:
-		return false, true
+		return true, false, true
+	case hostterm.TerminalKitty:
+		return true, true, true
+	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
+		return false, false, true
 	}
-	return false, false
+	return false, false, false
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -3949,8 +3961,9 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if v == "auto" {
 			// Apply the sniffed default now; re-arm the probe only when sniffing
 			// is inconclusive (an unknown host).
-			flip, known := hostFlipDecision(hostterm.Detect())
+			flip, wordwise, known := hostFlipDecision(hostterm.Detect())
 			e.Renderer.SetFlipBidiForHost(flip)
+			e.Renderer.SetFlipWordwise(wordwise)
 			if known {
 				e.bidiProbeState = bidiProbeDone // sniffing settled it
 			} else {
@@ -3959,6 +3972,7 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		} else {
 			e.bidiProbeState = bidiProbeDone // explicit choice wins
 			e.Renderer.SetFlipBidiForHost(v == "true")
+			e.Renderer.SetFlipWordwise(false) // explicit flip uses whole-run
 		}
 		e.RequestRender()
 	case "rtlmarkmode":
