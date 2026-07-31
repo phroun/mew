@@ -367,14 +367,7 @@ func (e *Editor) run() {
 		// ...and a way to ask this host to test its own terminal plumbing,
 		// for when a session starts and stops with nothing to show for it.
 		mew.WithPTYDiagnose(ptyDiagnose),
-		// Draw the editor scrollbars ourselves. Setting this tells mew to
-		// reserve each bar's column but leave it empty and stop hit-testing
-		// it, handing us the geometry and scroll state to paint from.
-		mew.WithScrollbarRegions(func(regions []mew.ScrollbarRegion) {
-			if e.bars.set(regions) {
-				e.Update()
-			}
-		}),
+		// (The editor scrollbar hand-off is appended below, graphical host only.)
 		// ...and how they are drawn: one real child PurfecTerm per session,
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.
@@ -495,6 +488,19 @@ func (e *Editor) run() {
 	}
 	if e.hideDesktop != nil {
 		options = append(options, mew.WithHideDesktop(e.hideDesktop))
+	}
+	// Draw the editor scrollbars ourselves ONLY on the graphical (SDL) host,
+	// which paints a pixel-space bar (editor_mew_scrollbar.go). Setting this
+	// tells mew to reserve the bar's column, leave it empty, and stop
+	// hit-testing it. The TUI host has no pixel surface to draw on, so it must
+	// NOT suppress mew's own text scrollbar — otherwise a viewport that needs a
+	// bar shows none. (Hosted-terminal scrollbars are unaffected either way.)
+	if hostterm.Detect() == hostterm.TerminalSDL {
+		options = append(options, mew.WithScrollbarRegions(func(regions []mew.ScrollbarRegion) {
+			if e.bars.set(regions) {
+				e.Update()
+			}
+		}))
 	}
 
 	// Run the session. A host-injected argv wins (full mew command-line launch:
