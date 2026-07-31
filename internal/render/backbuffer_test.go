@@ -360,11 +360,19 @@ func TestFlipEmitPlanWordwise(t *testing.T) {
 		return true
 	}
 
-	if order, _ := flipEmitPlan(cells, false); !eq(order, []int{4, 3, 2, 1, 0}) {
-		t.Errorf("whole-run order = %v, want [4 3 2 1 0] (space absorbed, whole span reversed)", order)
+	// Whole-run: glyph and attribute orders match (the host reverses the cell
+	// whole).
+	if order, style, _ := flipEmitPlan(cells, false); !eq(order, []int{4, 3, 2, 1, 0}) || !eq(style, order) {
+		t.Errorf("whole-run order/style = %v/%v, want [4 3 2 1 0] for both", order, style)
 	}
-	if order, _ := flipEmitPlan(cells, true); !eq(order, []int{1, 0, 2, 4, 3}) {
-		t.Errorf("word-wise order = %v, want [1 0 2 4 3] (each word reversed in place)", order)
+	// Word-wise: glyphs reverse per word, but attributes stay in visual order so
+	// a positional-painting host lands them on the right letter.
+	order, style, _ := flipEmitPlan(cells, true)
+	if !eq(order, []int{1, 0, 2, 4, 3}) {
+		t.Errorf("word-wise glyph order = %v, want [1 0 2 4 3] (each word reversed)", order)
+	}
+	if !eq(style, []int{0, 1, 2, 3, 4}) {
+		t.Errorf("word-wise style order = %v, want [0 1 2 3 4] (attributes in visual order)", style)
 	}
 }
 

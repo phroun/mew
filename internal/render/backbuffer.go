@@ -682,19 +682,26 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 	return cells
 }
 
-// flipEmitPlan computes the flip transform over a row's visual cells: the
-// order the cells are emitted in (RTL runs reversed into logical order) and,
-// per emission slot, whether the glyph mirrors back. The host terminal's own
-// bidi reorders each emitted run to the visual layout the grid holds.
+// flipEmitPlan computes the flip transform over a row's visual cells: per
+// emission slot the cell whose GLYPH it carries (order, RTL runs reversed into
+// logical order), the cell whose ATTRIBUTES it carries (styleOrder), and whether
+// the glyph mirrors back. The host terminal's own bidi reorders each emitted run
+// to the visual layout the grid holds.
 //
-// wordwise selects the run boundary, to match the host's own segmentation.
-// Off: a run is a maximal RTL span with interior neutrals (inter-word spaces)
-// absorbed as long as another RTL cell follows — the whole span reverses, for a
-// host (Terminal.app) whose bidi keeps those neutrals RTL. On: the space is a
-// boundary, so each whitespace-separated RTL word is its own run and reverses in
-// place, for a host (Kitty) that reverses each word without reordering the words
-// — absorbing there would flip the word order.
-func flipEmitPlan(cells []rowCell, wordwise bool) (order []int, mirror []bool) {
+// wordwise selects the run boundary AND the attribute mapping, to match the
+// host's own bidi:
+//   - Off (Terminal.app): a run is a maximal RTL span with interior neutrals
+//     (inter-word spaces) absorbed as long as another RTL cell follows; the
+//     whole span reverses, glyph AND attributes together (styleOrder == order),
+//     because that host reverses the parsed cell — colour and all — as a unit.
+//   - On (Kitty): the space is a boundary, so each whitespace-separated RTL word
+//     is its own run and reverses in place. That host reverses the GLYPHS but
+//     paints cell attributes (the selection fill, a syntax colour) at the
+//     physical column, so the glyph order reverses while styleOrder stays in
+//     visual (forward) order — the attribute then lands on the letter the
+//     reversed glyph settles on, not its mirror. The block marks are untouched;
+//     only where the paint lands changes.
+func flipEmitPlan(cells []rowCell, wordwise bool) (order, styleOrder []int, mirror []bool) {
 	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
 	isStrongLTR := func(c bbCell) bool {
 		if len(c.runes) == 0 {
@@ -704,10 +711,12 @@ func flipEmitPlan(cells []rowCell, wordwise bool) (order []int, mirror []bool) {
 		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
 	}
 	order = make([]int, 0, len(cells))
+	styleOrder = make([]int, 0, len(cells))
 	mirror = make([]bool, 0, len(cells))
 	for i := 0; i < len(cells); {
 		if !isRTL(cells[i].cell) {
 			order = append(order, i)
+			styleOrder = append(styleOrder, i)
 			mirror = append(mirror, false)
 			i++
 			continue
@@ -729,9 +738,18 @@ func flipEmitPlan(cells []rowCell, wordwise bool) (order []int, mirror []bool) {
 			order = append(order, j)
 			mirror = append(mirror, true)
 		}
+		if wordwise {
+			for j := i; j <= end; j++ { // attributes at the physical column
+				styleOrder = append(styleOrder, j)
+			}
+		} else {
+			for j := end; j >= i; j-- { // attributes reverse with the glyph
+				styleOrder = append(styleOrder, j)
+			}
+		}
 		i = end + 1
 	}
-	return order, mirror
+	return order, styleOrder, mirror
 }
 
 // emitRow writes one full row's cells into sb (left to right) and syncs disp.
@@ -750,7 +768,11 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		}
 	}
 
-	emit := func(c bbCell, mirror bool) {
+	// emit writes one slot: the ATTRIBUTES from styleCell, then the GLYPH from
+	// glyphCell. The two are the same cell everywhere except a word-wise flip's
+	// RTL runs, where the glyph reverses but the attribute stays at the physical
+	// column so a positional-painting host lands it on the right letter.
+	emit := func(glyphCell, styleCell bbCell, mirror bool) {
 		// Style emission depends on the mode. flipBidi exists for Terminal.app,
 		// whose own bidi engine re-processes each parsed line: coalesced
 		// run-level SGR does not survive that reordering (colors vanish), while
@@ -758,16 +780,16 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		// per-glyph SGR cannot break its Arabic joining. Everywhere else
 		// (logicalCUP whole-row escalation) coalesce via the pen as usual.
 		if b.flipBidi {
-			style := c.style
+			style := styleCell.style
 			if style == "" {
 				style = defaultStyleSeq
 			}
 			sb.WriteString(style)
 			b.emitPen = style
 		} else {
-			b.putStyle(sb, c.style)
+			b.putStyle(sb, styleCell.style)
 		}
-		if len(c.runes) == 0 {
+		if len(glyphCell.runes) == 0 {
 			sb.WriteByte(' ')
 			return
 		}
@@ -777,7 +799,7 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		// the instant flipBidi turns on — an isolated ◌-anchored shin/sin dot or
 		// holam-vav reverts to the dotted circle, and a pointed cluster spills
 		// its point back out as a free-standing mark.
-		runes := c.runes
+		runes := glyphCell.runes
 		if modeFoldsMarks(b.rtlMarkMode) {
 			if folded, ok := hebrew.PrecomposeCluster(runes); ok {
 				runes = folded
@@ -795,16 +817,18 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 
 	if !b.flipBidi {
 		for _, c := range cells {
-			emit(c.cell, false)
+			emit(c.cell, c.cell, false)
 		}
 		return
 	}
 
 	// Flip mode: emit per the plan (RTL runs reversed into logical order with
-	// mirrored glyphs restored — Mirror is an involution).
-	order, mirror := flipEmitPlan(cells, b.flipWordwise)
+	// mirrored glyphs restored — Mirror is an involution). The glyph comes from
+	// order, the attributes from styleOrder — identical except in a word-wise
+	// host's RTL runs.
+	order, styleOrder, mirror := flipEmitPlan(cells, b.flipWordwise)
 	for k, idx := range order {
-		emit(cells[idx].cell, mirror[k])
+		emit(cells[idx].cell, cells[styleOrder[k]].cell, mirror[k])
 	}
 }
 
