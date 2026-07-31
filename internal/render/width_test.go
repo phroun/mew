@@ -226,6 +226,7 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 
 	render := func(line string, flip bool) string {
 		sr.frame.flipBidi = flip
+		sr.frame.flipRideSafe = flip // the ride-safe (Terminal.app) profile
 		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
 	}
 
@@ -257,6 +258,19 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 	}
 	if strings.Contains(out, flipSel) {
 		t.Errorf("no-flip must never use the ride-safe style: %q", out)
+	}
+
+	// A flip host WITHOUT the selection glitch (flipRideSafe off — Kitty) keeps
+	// the real bar even with marks shown: the ride-safe fallback is tied to the
+	// glitch, not to the flip itself.
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = false
+	out = sr.prepareLineForDisplay(marked, "\n", 40, 0, w, 0, whole, nil, nil)
+	if !strings.Contains(out, bar) {
+		t.Errorf("flip host without the glitch should keep the real bar: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("flip host without the glitch must not use the ride-safe style: %q", out)
 	}
 }
 
@@ -361,6 +375,7 @@ func TestFlipSelectionFoldAware(t *testing.T) {
 	)
 	sr, w := testRenderer()
 	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
 	sr.SetRtlMarkMode("compose")
 	w.ViewState.SuppressRTLCombining = false // marks shown
 	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
@@ -397,6 +412,7 @@ func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {
 	)
 	sr, w := testRenderer()
 	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
 	line := "שָם" // pointed Hebrew (has an RTL combining mark)
 	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
 

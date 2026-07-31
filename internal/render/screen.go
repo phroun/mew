@@ -348,6 +348,19 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 	}
 }
 
+// SetFlipRideSafeSelection marks a flip host whose background selection fill
+// drifts under its own bidi (Terminal.app), so pointed RTL lines use the
+// ride-safe foreground selection; off keeps the real bar (see
+// backBuffer.flipRideSafe). Forces a repaint so the selection style switches.
+func (sr *ScreenRenderer) SetFlipRideSafeSelection(rideSafe bool) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.flipRideSafe != rideSafe {
+		sr.frame.flipRideSafe = rideSafe
+		sr.frame.forceRedraw()
+	}
+}
+
 // SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
 // circle is emitted: "normal" (bare cluster) or "iterm2" (a zero-width base
 // leads the mark, working around iTerm2's wide dotted circle). An enum — more
@@ -579,6 +592,7 @@ func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	tmp := newBackBuffer(sr.Width, sr.Height)
 	tmp.flipBidi = saved.flipBidi
 	tmp.flipWordwise = saved.flipWordwise
+	tmp.flipRideSafe = saved.flipRideSafe
 	tmp.pendingClear = true
 	sr.frame = tmp
 	tmp.begin()
@@ -1245,13 +1259,14 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	}
 
 	textColor := sr.col(w, "text")
-	// Selection styling. Under flipBidiForHost a line carrying combining
-	// marks cannot use a background/reverse selection bar — the host
-	// terminal's bidi reorder miscounts the fill (codepoints vs cells) and
-	// the bar drifts and half-vanishes on pointed RTL. Foreground + bold
-	// ride each glyph intact, so those lines use the flip-safe selection
-	// (see the selectionFlip colors). Mark-free lines (English; Arabic,
-	// which mew pre-shapes to single presentation forms) keep the real bar.
+	// Selection styling. On a flip host whose bidi reorder miscounts a
+	// background/reverse selection fill (codepoints vs cells) — Terminal.app,
+	// flagged by flipRideSafe — a line carrying combining marks cannot use the
+	// real bar: it drifts and half-vanishes on pointed RTL. Foreground + bold
+	// ride each glyph intact, so those lines use the flip-safe selection (see
+	// the selectionFlip colors). Mark-free lines (English; Arabic, which mew
+	// pre-shapes to single presentation forms) keep the real bar, as do flip
+	// hosts whose fill tracks the glyphs (Kitty).
 	selName, selInvName := "selection", "selectionInvisibles"
 	// The ride-safe selection is only needed when a zero-width mark is actually
 	// EMITTED: with rtlCombining off they are suppressed below, so the line
@@ -1263,7 +1278,7 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// cells and keeps the real bar — only marks that survive the fold (vowels,
 	// accents) force the ride-safe fill.
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
-	if sr.frame.flipBidi && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
 		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
 	}
 	selectionColor := sr.col(w, selName)

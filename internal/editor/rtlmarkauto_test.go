@@ -31,25 +31,23 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 	}
 }
 
-// flipBidiForHost="auto": Apple Terminal flips whole-run, Kitty flips word-wise,
-// the stream-order terminals do not flip (all recognised, so all skip the
-// probe), and an unrecognised host is left to the probe. Explicit true/false
-// pass through.
+// flipBidiForHost="auto": Apple Terminal flips whole-run and needs the ride-safe
+// selection; Kitty flips word-wise and keeps the real bar; the stream-order
+// terminals do not flip (all recognised, so all skip the probe); an unrecognised
+// host is left to the probe. Explicit true/false pass through.
 func TestFlipBidiForHostResolve(t *testing.T) {
-	cases := map[hostterm.Kind]struct{ flip, wordwise, known bool }{
-		hostterm.TerminalAppleTerminal: {true, false, true},
-		hostterm.TerminalKitty:         {true, true, true},
-		hostterm.TerminalITerm2:        {false, false, true},
-		hostterm.TerminalAlacritty:     {false, false, true},
-		hostterm.TerminalGhostty:       {false, false, true},
-		hostterm.TerminalUnknown:       {false, false, false},
-		hostterm.TerminalPurfecterm:    {false, false, false},
+	cases := map[hostterm.Kind]hostBidiProfile{
+		hostterm.TerminalAppleTerminal: {flip: true, wordwise: false, rideSafe: true, known: true},
+		hostterm.TerminalKitty:         {flip: true, wordwise: true, rideSafe: false, known: true},
+		hostterm.TerminalITerm2:        {known: true},
+		hostterm.TerminalAlacritty:     {known: true},
+		hostterm.TerminalGhostty:       {known: true},
+		hostterm.TerminalUnknown:       {},
+		hostterm.TerminalPurfecterm:    {},
 	}
-	for k, w := range cases {
-		flip, wordwise, known := hostFlipDecision(k)
-		if flip != w.flip || wordwise != w.wordwise || known != w.known {
-			t.Errorf("hostFlipDecision(%s) = (%v,%v,%v), want (%v,%v,%v)",
-				k, flip, wordwise, known, w.flip, w.wordwise, w.known)
+	for k, want := range cases {
+		if got := hostBidiProfileFor(k); got != want {
+			t.Errorf("hostBidiProfileFor(%s) = %+v, want %+v", k, got, want)
 		}
 	}
 	if !resolveFlipBidiForHost("true") {

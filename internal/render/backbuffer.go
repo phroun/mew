@@ -98,6 +98,15 @@ type backBuffer struct {
 	// them; absorbing there would swap the words. Only consulted under flipBidi.
 	flipWordwise bool
 
+	// flipRideSafe marks a flip host whose bidi reorder miscounts a
+	// background/reverse selection fill (codepoints vs cells), so a pointed RTL
+	// selection bar drifts and half-vanishes — Terminal.app does this. On such a
+	// host a marked RTL line uses the foreground+bold "ride-safe" selection
+	// instead of the real bar (see screen.go). Off (default) keeps the real bar,
+	// for a flip host whose selection fill tracks the glyphs correctly (Kitty is
+	// assumed to, pending confirmation). Independent of flipWordwise.
+	flipRideSafe bool
+
 	// sawRTL latches when any strong-RTL rune is painted — the trigger for the
 	// one-time flipBidiForHost=auto terminal probe (RTL is the first point the
 	// setting matters).

@@ -44,7 +44,7 @@ func (e *Editor) maybeSendBidiProbe() {
 	// flip value is set from startup and no probe is needed. Probing them risks
 	// a false positive: Kitty in particular does no bidi but answers the cursor
 	// query in a way that reads as "applies bidi", which would wrongly flip it.
-	if _, _, known := hostFlipDecision(hostterm.Detect()); known {
+	if hostBidiProfileFor(hostterm.Detect()).known {
 		e.bidiProbeState = bidiProbeDone
 		return
 	}
@@ -99,9 +99,13 @@ func (e *Editor) handleBidiProbeReply(key string) bool {
 	return true
 }
 
-// applyBidiProbeResult applies the detected flip mode.
+// applyBidiProbeResult applies the detected flip mode. A probe-detected bidi
+// host is one sniffing did not recognise, so assume the conservative
+// Terminal.app profile: whole-run segmentation and the ride-safe selection bar.
 func (e *Editor) applyBidiProbeResult(flip bool, how string) {
 	e.Renderer.SetFlipBidiForHost(flip)
+	e.Renderer.SetFlipWordwise(false)
+	e.Renderer.SetFlipRideSafeSelection(flip)
 	if flip {
 		e.ShowNotification("Terminal applies its own bidi (" + how + "): RTL emission flipped")
 	}
