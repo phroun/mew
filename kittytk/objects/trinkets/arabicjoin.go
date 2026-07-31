@@ -85,7 +85,7 @@ type arabicCellShape struct {
 // GSUB forms the mandatory ligature; the alef half's cell is suppressed
 // upstream). Legacy presentation-form codepoints are never emitted — many
 // faces (notably the macOS system Arabic fonts) do not carry that block.
-func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR bool) *arabicCellShape {
+func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR bool, comb []rune) *arabicCellShape {
 	var seq []rune
 	switch form {
 	case 0xFEF5, 0xFEF6:
@@ -99,6 +99,13 @@ func arabicRenderContext(base, form rune, leftBase, rightBase rune, kashL, kashR
 	default:
 		seq = []rune{base}
 	}
+	// The cell's combining marks (harakat) ride WITH the base inside the kept
+	// segment — window shape tatweel + base+marks + tatweel — so the shaper does
+	// mark-to-base GPOS on the real letter and the crop (a cell-wide slice of the
+	// base's zero-advance span) keeps them. Without this the window is base-only
+	// and the vowels are dropped (drawCellText replaces the cell string with the
+	// window). Marks carry no advance, so seg0..seg1 stays the base's width.
+	seq = append(seq, comb...)
 	// Two tatweels per joining side: enough connecting stroke that a cell-width
 	// window centred on the letter always cuts mid-tatweel at the cell edges,
 	// never running out of stroke before the boundary.

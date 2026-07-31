@@ -43,7 +43,7 @@ func renderArabicCell(t *testing.T, term *PurfecTerm, visual []rune, i, boxW, bo
 	baseL := arabicBaseChar(leftCh)
 	baseR := arabicBaseChar(rightCh)
 	kashL, kashR := arabicKashida(baseC, baseL, baseR)
-	actx := arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+	actx := arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR, nil)
 	return term.cellTextImage(actx.s, "ui-term", false, false, boxW, boxH, ppu, false, baseC, kashL, kashR, actx)
 }
 

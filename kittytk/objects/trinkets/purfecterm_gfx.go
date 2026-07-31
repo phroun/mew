@@ -472,7 +472,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 						// Shape a five-piece window (neighbours + tatweels +
 						// letter) as one run so the font's GSUB joins for real;
 						// the renderer cuts this cell's piece out of it.
-						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR, []rune(cell.Combining))
 					} else {
 						dc.Char = shaped
 					}
@@ -1688,7 +1688,7 @@ func (t *PurfecTerm) renderSplitsGfx(p *core.Painter, buf *purfecterm.Buffer, sp
 					dc := cell
 					var actx *arabicCellShape
 					if purfecterm.ScriptClass(cell.Char) == "arabic" {
-						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR)
+						actx = arabicRenderContext(baseC, shaped, baseL, baseR, kashL, kashR, []rune(cell.Combining))
 					} else {
 						dc.Char = shaped
 					}
