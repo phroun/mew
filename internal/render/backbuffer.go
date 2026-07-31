@@ -805,13 +805,27 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 				runes = folded
 			}
 		}
+		base := runes[0]
 		if mirror {
-			sb.WriteRune(bidi.Mirror(runes[0]))
-		} else {
-			sb.WriteRune(runes[0])
+			base = bidi.Mirror(base)
 		}
-		for _, m := range runes[1:] {
-			sb.WriteRune(m)
+		if b.flipBidi && b.flipWordwise && len(runes) > 1 {
+			// A word-wise host (Kitty) reverses each word's CODEPOINTS, not its
+			// grapheme clusters — so base-then-mark order would strand every
+			// combining mark on the previous letter and leave the word's last
+			// base bare (the alef of אֲנִי losing its hataf). Emit the cluster
+			// reversed — marks first, base last — so that reversal lands each
+			// mark back on its own base. Base ORDER is unchanged: the words
+			// render exactly as before, only the marks reattach.
+			for i := len(runes) - 1; i >= 1; i-- {
+				sb.WriteRune(runes[i])
+			}
+			sb.WriteRune(base)
+		} else {
+			sb.WriteRune(base)
+			for _, m := range runes[1:] {
+				sb.WriteRune(m)
+			}
 		}
 	}
 

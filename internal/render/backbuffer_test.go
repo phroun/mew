@@ -412,6 +412,30 @@ func TestBackBufferFlipBidiFolds(t *testing.T) {
 	}
 }
 
+// A word-wise host reverses each word's CODEPOINTS, so a marked cluster must
+// be emitted marks-first, base-last — that reversal then restores base-then-mark
+// and the mark lands on its own letter (instead of stranding on the previous one
+// and leaving the last base bare). Whole-run hosts keep base-then-mark.
+func TestBackBufferFlipWordwiseClusterOrder(t *testing.T) {
+	const alef, hataf = 0x05D0, 0x05B2 // alef + hataf-patah (as in אֲנִי)
+	cluster := string(rune(alef)) + string(rune(hataf))
+
+	wide := newBackBuffer(30, 2)
+	wide.flipBidi = true // whole-run (Terminal.app): base then mark
+	got := plain(paint(wide, mv(1, 1), wr("\x1b[0m"+cluster)))
+	if i := strings.IndexRune(got, alef); i < 0 || !strings.ContainsRune(got[i:], hataf) {
+		t.Errorf("whole-run should keep base-then-mark: %q", got)
+	}
+
+	word := newBackBuffer(30, 2)
+	word.flipBidi = true
+	word.flipWordwise = true // Kitty: mark then base
+	got = plain(paint(word, mv(1, 1), wr("\x1b[0m"+cluster)))
+	if i := strings.IndexRune(got, hataf); i < 0 || !strings.ContainsRune(got[i:], alef) {
+		t.Errorf("word-wise should emit mark-then-base so codepoint reversal restores it: %q", got)
+	}
+}
+
 // The DEC hardware cursor addresses the plain VISUAL column even under flip.
 // A flip-mode terminal (Terminal.app) reorders the glyphs it displays but
 // draws the cursor at the raw physical column the CUP names — the cursor is
