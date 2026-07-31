@@ -900,11 +900,17 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
-	// Advertise the embedded terminal's own identity to the child (last wins over
-	// any inherited TERM/TERM_PROGRAM), so a program inside it — including a
-	// nested instance — detects purfecterm rather than the outer terminal.
+	// Advertise the embedded terminal's identity to the child (last wins over any
+	// inherited TERM/TERM_PROGRAM). TERM must name a terminfo entry that actually
+	// exists on the host: PurfectermTerm ("xterm-purfecterm") has none, so
+	// terminfo-strict programs (zsh's ZLE, `clear`, vim) break on it — zsh can't
+	// even find cub1 to move the cursor left, so backspace overwrites with a bare
+	// space (bash's readline tolerates the unknown TERM, which masked this). Name
+	// the universally-present xterm-256color, which PurfectermTerm is a superset
+	// of, and carry the purfecterm IDENTITY on TERM_PROGRAM — which is how
+	// hostterm.Detect classifies a nested instance anyway (TERM_PROGRAM or TERM).
 	env := append(os.Environ(),
-		"TERM="+hostterm.PurfectermTerm,
+		"TERM=xterm-256color",
 		"TERM_PROGRAM="+hostterm.PurfectermTermProgram,
 		"COLORTERM=truecolor")
 	// How a machine makes a terminal is the one part of this that is not the

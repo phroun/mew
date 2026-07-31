@@ -37,7 +37,7 @@ const (
 	TerminalAppleTerminal
 	TerminalCoolRetroTerm
 	TerminalAlacritty
-	TerminalPurfecterm // KittyTK's own embedded terminal (TERM=xterm-purfecterm)
+	TerminalPurfecterm // KittyTK's own embedded terminal (TERM_PROGRAM=purfecterm)
 	TerminalSDL        // the graphical SDL host: renders natively, not via a terminal
 )
 
@@ -112,8 +112,9 @@ func Detect() Kind {
 // process. The graphical SDL host uses it so it reports its own identity
 // (TerminalSDL) rather than the terminal it happened to be launched from —
 // whose flip/fold rendering quirks do not apply to native SDL drawing. Embedded
-// sub-terminals run as separate processes (TERM=xterm-purfecterm) and detect
-// normally. Safe before or after the first Detect(); the pinned value wins.
+// sub-terminals run as separate processes that advertise TERM_PROGRAM=purfecterm
+// (with a real TERM, xterm-256color, so terminfo-strict programs work) and
+// detect normally. Safe before or after the first Detect(); the pinned value wins.
 func Override(k Kind) {
 	once.Do(func() {}) // consume lazy init so a later Detect() cannot overwrite
 	detected = k

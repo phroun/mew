@@ -19,6 +19,10 @@ func TestDetectFrom(t *testing.T) {
 		{"alacritty by socket", map[string]string{"ALACRITTY_SOCKET": "/tmp/Alacritty.sock", "__CFBundleIdentifier": "org.alacritty"}, TerminalAlacritty},
 		{"alacritty by window id", map[string]string{"ALACRITTY_WINDOW_ID": "123"}, TerminalAlacritty},
 		{"purfecterm", map[string]string{"TERM": "xterm-purfecterm", "TERM_PROGRAM": "purfecterm"}, TerminalPurfecterm},
+		// Embedded sub-terminals advertise a REAL terminfo name so zsh/clear/vim
+		// work; the purfecterm identity rides on TERM_PROGRAM, which must still
+		// classify.
+		{"purfecterm by TERM_PROGRAM with real TERM", map[string]string{"TERM": "xterm-256color", "TERM_PROGRAM": "purfecterm"}, TerminalPurfecterm},
 		{"unknown", map[string]string{"TERM": "xterm-256color"}, TerminalUnknown},
 		{"empty", map[string]string{}, TerminalUnknown},
 	}
