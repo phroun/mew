@@ -273,12 +273,41 @@ func realTerminalSize() (int, int, error) {
 func (sr *ScreenRenderer) SetTerminal(out io.Writer, sizeFn func() (int, int, error), watchNativeResize bool) {
 	if out != nil {
 		sr.out = out
+		// Diagnostic: MEW_EMIT_LOG=/path tees every write that carries RTL text
+		// to that file as a Go-quoted line, so the exact bytes mew sends to the
+		// terminal for a Hebrew/Arabic line can be inspected. Off unless set.
+		if p := os.Getenv("MEW_EMIT_LOG"); p != "" {
+			if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+				sr.out = &rtlEmitLog{inner: sr.out, f: f}
+			}
+		}
 	}
 	if sizeFn != nil {
 		sr.sizeFn = sizeFn
 	}
 	sr.watchNativeResize = watchNativeResize
 	sr.updateSize()
+}
+
+// rtlEmitLog tees writes that carry RTL text (any rune >= U+0590) to a debug
+// file as Go-quoted lines. Diagnostic only, enabled by MEW_EMIT_LOG.
+type rtlEmitLog struct {
+	inner io.Writer
+	f     *os.File
+}
+
+func (r *rtlEmitLog) Write(p []byte) (int, error) {
+	hasRTL := false
+	for _, c := range string(p) {
+		if c >= 0x0590 && c <= 0x08FF {
+			hasRTL = true
+			break
+		}
+	}
+	if hasRTL {
+		fmt.Fprintf(r.f, "%q\n", string(p))
+	}
+	return r.inner.Write(p)
 }
 
 // TriggerResize signals a terminal size change manually: the renderer
