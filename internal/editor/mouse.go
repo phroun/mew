@@ -205,7 +205,15 @@ func (e *Editor) handleMouseKey(key string) bool {
 		x, y, ok := parseMouseAt(base[i+1:])
 		atOK = ok
 		if ok {
-			e.mouseX, e.mouseY = x, y
+			// Under SGR-Pixels (?1016) the report is in PIXELS: convert to a
+			// cell and keep the sub-cell offset for nearest-edge caret
+			// placement. Otherwise x,y are already cells and there is no
+			// sub-cell information.
+			if e.pixelMouseIsActive() {
+				e.mouseX, e.mouseY, e.mouseSubX = e.pixelToCell(x, y)
+			} else {
+				e.mouseX, e.mouseY, e.mouseSubX = x, y, -1
+			}
 		}
 	}
 
@@ -527,14 +535,14 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 // cellToPhysical.
 func physicalToCell(x int) int { return (x + 1) / 2 }
 
-func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
+func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, caretRune int, ok bool) {
 	w = e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 	docLine = w.ViewState.ViewOffsetY + (y - 1 - w.ContentY)
 	if docLine < 0 || docLine >= w.Buffer.GetLineCount() {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
@@ -573,7 +581,7 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 		cell = physicalToCell(x) - base
 	}
 	if cell < 0 || (cells > 0 && cell >= cells) {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 
 	target := cell + viewOff
@@ -596,19 +604,28 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 		}
 	}
 
-	idx := e.runeAtVisualColumn(w, dispLine, target)
-	if dispToDoc != nil {
-		if idx >= len(dispToDoc) {
-			// Past the end of the display line: the caret goes to the END of
-			// the document line — never inside a trailing button's span, so
-			// a click in the void after a button places the caret instead of
-			// following.
-			idx = len([]rune(raw))
-		} else {
-			idx = displayToDoc(dispToDoc, idx)
+	// resolve maps a visual column to a document rune (past the end → end of
+	// line, never inside a trailing button's span).
+	resolve := func(vt int) int {
+		i := e.runeAtVisualColumn(w, dispLine, vt)
+		if dispToDoc != nil {
+			if i >= len(dispToDoc) {
+				return len([]rune(raw))
+			}
+			return displayToDoc(dispToDoc, i)
 		}
+		return i
 	}
-	return w, docLine, idx, true
+	idx := resolve(target)
+	// caretRune is where a CARET should land: the containing rune normally, but
+	// the NEXT visual boundary (nearest edge) when an insert-mode click's pointer
+	// sits in the right half of the cell (sub-cell ≥ 500 — pixel reports only).
+	// Overwrite mode, and every cell-resolution report (subX < 0), keep idx.
+	caretRune = idx
+	if e.mouseSubX >= 500 && w != nil && !w.ViewState.OverwriteMode {
+		caretRune = resolve(target + 1)
+	}
+	return w, docLine, idx, caretRune, true
 }
 
 // viewportOnScreen reports whether w was laid out by the most recent frame —
@@ -728,12 +745,13 @@ func displayToDoc(dispToDoc []int, idx int) int {
 // tracks the button.
 func (e *Editor) mousePress(x, y int, shift bool) {
 	e.endDragTxn() // a lost release: never carry a stale gesture transaction
-	w, docLine, runePos, ok := e.mouseHit(x, y)
+	w, docLine, runePos, caretRune, ok := e.mouseHit(x, y)
 	if !ok {
 		// A press on the BLANK AREA below the document's last line (still
 		// inside the viewport's content area) means the END of the document:
 		// click below the doc and drag upward to select its tail.
 		w, docLine, runePos, ok = e.mouseHitBelowText(x, y)
+		caretRune = runePos // no sub-cell in the void below the text
 	}
 	if !ok {
 		return
@@ -772,14 +790,14 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		e.beginDragTxn(w.Buffer)
 		origin := w.CursorPos()
 		w.Buffer.SetMark("_block_begin", origin.Line, origin.Rune)
-		w.Buffer.SetMark("_block_end", docLine, runePos)
+		w.Buffer.SetMark("_block_end", docLine, caretRune)
 		w.Buffer.SetMouseBlock(false)
 		e.dragSel = dragSelState{
 			active: true, begun: true, shifted: true, winID: w.ID,
 			originLine: origin.Line, originRune: origin.Rune,
-			lastLine: docLine, lastRune: runePos,
+			lastLine: docLine, lastRune: caretRune,
 		}
-		w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
+		w.SetCursorPos(viewport.Position{Line: docLine, Rune: caretRune})
 		e.afterHorizontalMovement(w)
 		w.ViewState.ScrollDetached = false
 		e.RequestRender()
@@ -792,7 +810,7 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		w.Buffer.ClearBlockMarks() // clears the flag with the marks
 	}
 
-	w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
+	w.SetCursorPos(viewport.Position{Line: docLine, Rune: caretRune})
 	e.afterHorizontalMovement(w)
 	// A click is a cursor movement: re-engage caret following, cancelling any
 	// free scroll left by the wheel so the view tracks the caret again.
@@ -805,8 +823,8 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// when the drag reaches a different cell (dragSelUpdate).
 		e.dragSel = dragSelState{
 			active: true, winID: w.ID,
-			originLine: docLine, originRune: runePos,
-			lastLine: docLine, lastRune: runePos,
+			originLine: docLine, originRune: caretRune,
+			lastLine: docLine, lastRune: caretRune,
 		}
 	}
 	e.RequestRender()
@@ -824,7 +842,7 @@ func (e *Editor) mouseRightPress(x, y int) {
 	if e.Config.ShowContextMenu == nil {
 		return
 	}
-	w, _, _, ok := e.mouseHit(x, y)
+	w, _, _, _, ok := e.mouseHit(x, y)
 	if !ok {
 		// The blank area below the document's last line counts as the
 		// editing area too — same as a left press there.
@@ -1011,8 +1029,8 @@ func (e *Editor) dragSelResolve(w *viewport.Viewport, x, y int) (docLine, runePo
 	if x > last {
 		x = last
 	}
-	if hw, hl, hr, hok := e.mouseHit(x, y); hok && hw == w {
-		return hl, hr, true
+	if hw, hl, _, hcr, hok := e.mouseHit(x, y); hok && hw == w {
+		return hl, hcr, true // drag endpoint snaps to the nearest edge too
 	}
 	return 0, 0, false
 }
@@ -1267,7 +1285,7 @@ func (e *Editor) mouseRelease(x, y int) {
 // actually changes.
 func (e *Editor) mouseHoverAt(x, y int) {
 	nh := pressedLink{}
-	if w, docLine, runePos, ok := e.mouseHit(x, y); ok && w.ViewState.LinkBrowsing {
+	if w, docLine, runePos, _, ok := e.mouseHit(x, y); ok && w.ViewState.LinkBrowsing {
 		focused := e.ViewportManager.GetFocusedViewport() == w
 		// The focused viewport hovers links in either mode; an UNFOCUSED but
 		// truly visible viewport hovers only its browse-mode BUTTONS — the
@@ -1292,7 +1310,7 @@ func (e *Editor) mouseHoverAt(x, y int) {
 // hitOnPressedButton reports whether the coordinates land on the very button
 // the press CAPTURED (same viewport, same line, same span).
 func (e *Editor) hitOnPressedButton(x, y int) bool {
-	w, docLine, runePos, ok := e.mouseHit(x, y)
+	w, docLine, runePos, _, ok := e.mouseHit(x, y)
 	if !ok || w.ID != e.mousePressed.winID || docLine != e.mousePressed.line {
 		return false
 	}

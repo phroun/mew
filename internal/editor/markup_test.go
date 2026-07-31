@@ -255,7 +255,7 @@ func TestDoubleWidthMouseRoundTrip(t *testing.T) {
 			}
 			// Both physical columns of the cell resolve to the same rune.
 			for _, x := range []int{cols[0], cols[0] + 1} {
-				_, line, got, ok := e.mouseHit(x, w.ContentY+1)
+				_, line, got, _, ok := e.mouseHit(x, w.ContentY+1)
 				if !ok || line != 0 || got != rune_ {
 					t.Errorf("lineNumbers=%s: click x=%d (caret painted at %d) hit rune %d (line %d, ok=%v), want %d",
 						ln, x, cols[0], got, line, ok, rune_)
@@ -284,7 +284,7 @@ func TestDoubleWidthMouseRoundTripRTLScrolled(t *testing.T) {
 			if len(cols) == 0 {
 				continue // scrolled off screen at this offset
 			}
-			if _, _, got, ok := e.mouseHit(cols[0], w.ContentY+1); !ok || got != rune_ {
+			if _, _, got, _, ok := e.mouseHit(cols[0], w.ContentY+1); !ok || got != rune_ {
 				t.Errorf("rtl off=%d: click x=%d (caret painted there) hit rune %d (ok=%v), want %d",
 					off, cols[0], got, ok, rune_)
 			}
@@ -302,7 +302,7 @@ func TestDoubleWidthIdealColumnHoldsScreenX(t *testing.T) {
 	e, w := dwHeadingEditor(t, "====== Like This Heading ======", strings.Repeat("y", 60), "")
 
 	for _, clickX := range []int{11, 15, 21} {
-		_, _, r, ok := e.mouseHit(clickX, w.ContentY+1)
+		_, _, r, _, ok := e.mouseHit(clickX, w.ContentY+1)
 		if !ok {
 			t.Fatalf("click x=%d missed the heading", clickX)
 		}

@@ -431,6 +431,15 @@ func (sr *ScreenRenderer) FrameHasUncomposedNiqqud() bool {
 	return sr.frame.frameHasUncomposedNiqqud()
 }
 
+// EmitRaw writes a control sequence directly to the terminal, bypassing the
+// back buffer and dirtying nothing — for queries that paint no glyphs (the
+// ?1016 SGR-pixels handshake: DECRQM, CSI 16 t, the ?1016h enable).
+func (sr *ScreenRenderer) EmitRaw(seq string) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	fmt.Fprint(sr.out, seq)
+}
+
 // EmitProbe writes a control/probe sequence directly to the terminal,
 // bypassing the back buffer, and invalidates the given screen row (1-based) so
 // any glyphs the probe painted there are repainted on the next frame. Used by

@@ -328,7 +328,13 @@ type Editor struct {
 	// only by hosts with all-motion tracking, e.g. the graphical build). See
 	// mouse.go.
 	mouseX, mouseY int
-	mousePressed   pressedLink // the CAPTURED button (press-to-release)
+	// mouseSubX is the pointer's sub-cell horizontal offset in permille
+	// (0..999) from the last pixel-resolution mouse report, or -1 for a
+	// cell-resolution report. It lets an insert-mode click land the caret on
+	// the nearest cell edge. See pixelmouse.go.
+	mouseSubX    int
+	pixelMouse   pixelMouseState
+	mousePressed pressedLink // the CAPTURED button (press-to-release)
 	// mouseOnCaptured: the pointer is currently over the captured button
 	// (paints pressed); dragging off reverts to the focused style while the
 	// capture holds.
@@ -7987,6 +7993,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// button presses, drags, releases and the scroll wheel arrive through the
 	// key stream as Mouse* pseudo-keys.
 	e.Renderer.EnableMouseReporting()
+	// Probe for SGR-Pixels (?1016): if the terminal has it, mouse reports
+	// switch to pixels and an insert-mode click lands the caret on the nearest
+	// cell edge. Inert on terminals that ignore the handshake.
+	e.beginPixelMouseProbe()
 
 	// Request grapheme-cluster width (DEC mode 2027) so the terminal — mew's
 	// purfecterm, or any host that honors it — measures cell width the same way
@@ -8065,6 +8075,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// A terminal cursor-position report (the flipBidiForHost probe's
 			// reply) is consumed here, never typed.
 			if e.handleBidiProbeReply(event.Key) {
+				continue
+			}
+			// The ?1016 SGR-pixels handshake replies (DECRPM/WinOp) are
+			// consumed here too, never typed.
+			if e.handlePixelMouseReply(event.Key) {
 				continue
 			}
 			// Mouse pseudo-keys (position/press/drag/release/scroll) never
