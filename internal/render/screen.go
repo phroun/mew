@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/phroun/kittytk/hebrew"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
@@ -1718,6 +1719,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// (not mark categories) and LTR combining are never suppressed.
 			suppress := w.ViewState.SuppressRTLCombining && rtlCell(logicalIdx) &&
 				unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me)
+			// In a folding rtlMarkMode (compose, iterm2, drift) a point that
+			// folds into its base's presentation form is NOT dropped — it folds
+			// into the base glyph (backbuffer emitCellText) instead, so composable
+			// points render while the non-composable marks stay omitted.
+			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && hebrew.Folds(r) {
+				suppress = false
+			}
 			if !suppress && currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
 				displayLine.WriteString(runeDisplay)
 			}

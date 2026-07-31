@@ -313,6 +313,43 @@ func TestSuppressRTLCombining(t *testing.T) {
 	}
 }
 
+// In a folding rtlMarkMode (compose) the suppression is selective: a point
+// that folds into its base's presentation form survives (it folds into the
+// base at emit time, not dropped), while a non-composable vowel stays omitted.
+// This is the Apple Terminal default — composable points render, other marks
+// stay off — where the plain suppression would drop everything.
+func TestSuppressRTLCombiningKeepsFoldablePointInComposeMode(t *testing.T) {
+	sr, w := testRenderer()
+	const shinDot, qamats = "ׁ", "ָ" // foldable point; non-foldable vowel
+	line := "ש" + shinDot + qamats         // shin + shin dot + qamats
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+	w.ViewState.SuppressRTLCombining = true
+
+	render := func() string {
+		return stripAnsi(sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil))
+	}
+
+	// normal mode: suppression drops every RTL mark, foldable or not.
+	sr.SetRtlMarkMode("normal")
+	if out := render(); strings.Contains(out, shinDot) || strings.Contains(out, qamats) {
+		t.Errorf("normal mode should drop both marks: %q", out)
+	}
+
+	// compose mode: the shin dot survives (it folds into the base downstream),
+	// the qamats stays omitted.
+	sr.SetRtlMarkMode("compose")
+	out := render()
+	if !strings.Contains(out, shinDot) {
+		t.Errorf("compose mode must keep the foldable shin dot for folding: %q", out)
+	}
+	if strings.Contains(out, qamats) {
+		t.Errorf("compose mode must still omit the non-foldable qamats: %q", out)
+	}
+	if !strings.Contains(out, "ש") {
+		t.Errorf("the Hebrew base letter must remain: %q", out)
+	}
+}
+
 // With rtlCombining off, the flip-mode selection reverts to the real bar
 // (the marks are stripped, so no drift).
 func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {

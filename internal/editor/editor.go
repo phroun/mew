@@ -1020,9 +1020,10 @@ func New(cfg Config) (*Editor, error) {
 	if cfg.FlipBidiForHost == "" {
 		cfg.FlipBidiForHost = "auto"
 	}
-	// Explicit setting applies now; "auto" stays off until the probe decides
+	// Explicit setting applies now; "auto" turns the flip on for a sniffed bidi
+	// host (Apple Terminal) and otherwise stays off until the probe decides
 	// (triggered by the first frame containing RTL content).
-	renderer.SetFlipBidiForHost(cfg.FlipBidiForHost == "true")
+	renderer.SetFlipBidiForHost(resolveFlipBidiForHost(cfg.FlipBidiForHost))
 
 	cfg.RtlMarkMode = loadedConfig.General.RtlMarkMode
 	if cfg.RtlMarkMode == "" {
@@ -3536,9 +3537,34 @@ func rtlMarkModeForTerminal(k hostterm.Kind) string {
 		return "iterm2"
 	case hostterm.TerminalAlacritty:
 		return "drift"
+	case hostterm.TerminalAppleTerminal:
+		return "compose"
 	default:
 		return "normal"
 	}
+}
+
+// resolveFlipBidiForHost turns the flipBidiForHost setting into the boolean
+// pushed to the renderer at startup (or on a set_option). "true"/"false" pass
+// through; "auto" turns the flip ON for a host known by sniffing to apply its
+// own bidi reordering (see flipBidiForTerminal) and otherwise leaves it off for
+// the runtime probe to decide once RTL content appears.
+func resolveFlipBidiForHost(mode string) bool {
+	switch mode {
+	case "true":
+		return true
+	case "auto":
+		return flipBidiForTerminal(hostterm.Detect())
+	}
+	return false
+}
+
+// flipBidiForTerminal reports whether a detected host terminal is known to apply
+// its own bidi reordering, so flipBidiForHost="auto" should flip RTL emission
+// for it. Apple Terminal reorders the glyphs it displays; other sniffed
+// terminals do not, and unknown terminals fall to the runtime probe.
+func flipBidiForTerminal(k hostterm.Kind) bool {
+	return k == hostterm.TerminalAppleTerminal
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -3909,7 +3935,14 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		}
 		e.Config.FlipBidiForHost = v
 		if v == "auto" {
-			e.bidiProbeState = bidiProbeIdle // re-arm detection
+			// Apply the sniffed default now; re-arm the probe only when sniffing
+			// is inconclusive (an unknown host).
+			e.Renderer.SetFlipBidiForHost(resolveFlipBidiForHost(v))
+			if flipBidiForTerminal(hostterm.Detect()) {
+				e.bidiProbeState = bidiProbeDone // sniffing settled it
+			} else {
+				e.bidiProbeState = bidiProbeIdle // re-arm detection
+			}
 		} else {
 			e.bidiProbeState = bidiProbeDone // explicit choice wins
 			e.Renderer.SetFlipBidiForHost(v == "true")

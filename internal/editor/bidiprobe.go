@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/phroun/kittytk/hostterm"
 )
 
 // flipBidiForHost=auto: detect whether the host terminal applies its own bidi
@@ -35,6 +37,12 @@ const bidiProbeExpectCol = 3
 // armed and RTL content has appeared on screen. Called after each render.
 func (e *Editor) maybeSendBidiProbe() {
 	if e.bidiProbeState != bidiProbeIdle || e.Config.FlipBidiForHost != "auto" {
+		return
+	}
+	// Sniffing already settles a host known to apply its own bidi (Apple
+	// Terminal): the flip is on from startup and no probe is needed.
+	if flipBidiForTerminal(hostterm.Detect()) {
+		e.bidiProbeState = bidiProbeDone
 		return
 	}
 	if !e.realTerminal || !e.Renderer.SawRTLContent() {

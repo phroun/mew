@@ -2327,9 +2327,11 @@ showBidi=false
 # Show combining marks (niqqud, harakat) on right-to-left letters. Default on,
 # EXCEPT it auto-defaults OFF in a bidi-applying real terminal (macOS
 # Terminal.app, TERM_PROGRAM=Apple_Terminal), where a pointed RTL selection bar
-# would otherwise be misplaced — there Hebrew renders unpointed, like mew's
-# pre-shaped Arabic. Setting it here (uncomment) overrides the auto-default.
-# Off renders RTL scripts UNPOINTED — one codepoint per cell; the marks stay in
+# would otherwise be misplaced. There Hebrew renders one codepoint per cell —
+# but under that terminal's rtlMarkMode default ("compose") the composable
+# points (dagesh/mapiq, shin/sin dot, rafe, holam-haser) still fold into their
+# base's presentation form and render; only the non-composable marks stay off.
+# Setting it here (uncomment) overrides the auto-default. Off keeps the marks in
 # the file and editable (the caret still walks them and the modebar names the
 # one under the caret), only display is affected.
 # rtlCombining=true
@@ -2426,18 +2428,19 @@ direction=ltr
 # Terminals that apply their own bidi reordering (macOS Terminal.app) re-flip
 # mew's already-visual RTL output; "true" emits RTL runs in logical order so
 # such terminals lay them out correctly, "false" keeps visual order (correct
-# for stream-order terminals: iTerm2, xterm, most). "auto" probes the terminal
-# once, on the first frame containing RTL content, and decides from its answer
+# for stream-order terminals: iTerm2, xterm, most). "auto" turns the flip on
+# for a sniffed bidi host (Apple Terminal) and otherwise probes the terminal
+# once, on the first frame containing RTL content, deciding from its answer
 # (falling back to the TERM_PROGRAM environment).
 flipBidiForHost=auto
 
 # rtlMarkMode: how RTL combining marks are emitted. "auto" (default) picks a mode
-# from the detected terminal (iTerm2 -> iterm2, Alacritty -> drift, else normal).
-# "normal" is the usual base-then-mark order. "iterm2"/"compose" fold a
-# dagesh/mapiq, shin/sin dot, rafe or holam-haser into their base via the
-# Alphabetic Presentation Forms so the terminal does not drift them. "drift"
-# (KittyTK-TUI host) makes each RTL cell carry the marks of the cell to its RIGHT,
-# the placement a few terminals (Ghostty, Alacritty) expect.
+# from the detected terminal (iTerm2 -> iterm2, Alacritty -> drift, Apple
+# Terminal -> compose, else normal). "normal" is the usual base-then-mark order.
+# "iterm2"/"compose" fold a dagesh/mapiq, shin/sin dot, rafe or holam-haser into
+# their base via the Alphabetic Presentation Forms so the terminal does not drift
+# them. "drift" (KittyTK-TUI host) makes each RTL cell carry the marks of the cell
+# to its RIGHT, the placement a few terminals (Ghostty, Alacritty) expect.
 rtlMarkMode=auto
 
 [layout.qwerty]

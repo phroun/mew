@@ -823,18 +823,27 @@ func (b *backBuffer) emitCellText(c bbCell) string {
 	if b.logicalCUP {
 		return runesOf(c) // flex-width host composes clusters itself
 	}
-	// "iterm2", "compose" and "drift" all fold Hebrew points into presentation
-	// forms. They are one behaviour today for the base glyph; the names are kept
-	// so each can carry terminal-specific extras later without disturbing plain
-	// precomposition. Drift needs the fold too: a free-standing point is exactly
-	// what the drift terminal misplaces, so baking it into the base removes it.
-	switch b.rtlMarkMode {
-	case "iterm2", "compose", "drift":
+	if modeFoldsMarks(b.rtlMarkMode) {
 		if s, ok := precomposeCell(c); ok {
 			return s
 		}
 	}
 	return runesOf(c)
+}
+
+// modeFoldsMarks reports whether an rtlMarkMode folds Hebrew points into their
+// Alphabetic-Presentation-Form glyph. "iterm2", "compose" and "drift" all do:
+// one behaviour today for the base glyph, the names kept so each can carry
+// terminal-specific extras later. Drift needs the fold too — a free-standing
+// point is exactly what a drift terminal misplaces, so baking it into the base
+// removes it. The display layer reads this to keep a foldable point out of the
+// rtlCombining suppression (it folds into the base instead of being dropped).
+func modeFoldsMarks(mode string) bool {
+	switch mode {
+	case "iterm2", "compose", "drift":
+		return true
+	}
+	return false
 }
 
 // precomposeCell folds a Hebrew cell into a single presentation-form glyph where

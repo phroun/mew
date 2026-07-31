@@ -14,7 +14,7 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 		hostterm.TerminalAlacritty:     "drift",
 		hostterm.TerminalGhostty:       "normal", // quirks TBD
 		hostterm.TerminalKitty:         "normal", // quirks TBD
-		hostterm.TerminalAppleTerminal: "normal",
+		hostterm.TerminalAppleTerminal: "compose",
 		hostterm.TerminalCoolRetroTerm: "normal",
 		hostterm.TerminalPurfecterm:    "normal",
 		hostterm.TerminalUnknown:       "normal",
@@ -28,5 +28,28 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 		if got := resolveRtlMarkMode(m); got != m {
 			t.Errorf("explicit %q resolved to %q, want passthrough", m, got)
 		}
+	}
+}
+
+// flipBidiForHost="auto" flips only for a sniffed bidi host (Apple Terminal);
+// explicit true/false pass through.
+func TestFlipBidiForHostResolve(t *testing.T) {
+	flip := map[hostterm.Kind]bool{
+		hostterm.TerminalAppleTerminal: true,
+		hostterm.TerminalITerm2:        false,
+		hostterm.TerminalAlacritty:     false,
+		hostterm.TerminalGhostty:       false,
+		hostterm.TerminalUnknown:       false,
+	}
+	for k, w := range flip {
+		if got := flipBidiForTerminal(k); got != w {
+			t.Errorf("flipBidiForTerminal(%s) = %v, want %v", k, got, w)
+		}
+	}
+	if !resolveFlipBidiForHost("true") {
+		t.Errorf(`resolveFlipBidiForHost("true") = false, want true`)
+	}
+	if resolveFlipBidiForHost("false") {
+		t.Errorf(`resolveFlipBidiForHost("false") = true, want false`)
 	}
 }
