@@ -74,6 +74,22 @@ integration work:
    the `GetFontSlot(10)` default, and the CLI SGR-20 emit. Verified: patched
    v0.2.26 root + cli suites pass. **LANDED in v0.2.27.**
 
+7. **Pixel mouse — SGR-Pixels (?1016) + DECRQM + cell-size report** — the
+   emulator half of mew's pixel-precise mouse (nearest-edge caret in insert
+   mode). See the "Pixel mouse" section of `PROTOCOL.md`, `pixel-mouse.patch`
+   (buffer.go, buffer_mouse.go, parser.go **against v0.2.29**), and
+   `_src/pixelmouse_test.go` (drop-in test). Adds: DECSET **?1016** selecting a
+   pixel mouse encoding (a refinement of ?1006 — same SGR wire, pixel
+   coordinates; reset falls back to SGR cells); **DECRQM** (`CSI ? Ps $ p` →
+   `CSI ? Ps ; status $ y`) answering the mouse/encoding modes it implements
+   (0 for the rest), which is what lets an app DISCOVER ?1016; **XTWINOPS**
+   `CSI 16 t` / `14 t` / `18 t` cell-pixel / text-area reports; and
+   `Buffer.SetCellPixelSize/GetCellPixelSize` (a headless buffer has no
+   inherent pixel size, so a renderer pushes its cell geometry — the KittyTK
+   gfx trinket does, see `patches/kittytk/pixel-mouse.patch`). Verified: patched
+   v0.2.29 root + cli suites pass (`pixelmouse_test.go` locks the contract).
+   **PENDING upstream.**
+
 ---
 
 # PurfecTerm patch: Arabic contextual joining for the per-cell renderers
