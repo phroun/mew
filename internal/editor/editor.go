@@ -235,6 +235,14 @@ type Editor struct {
 	bidiProbeDeadline time.Time
 	realTerminal      bool
 
+	// probeCapable is whether the terminal answers escape-sequence queries back
+	// through Input: a real terminal (realTerminal) or a virtualized one the
+	// host marked Interactive (a genuine emulator surface). It gates features
+	// that handshake with the terminal — the pixel mouse (?1016) — on/off, so a
+	// dead capture buffer in a test is never probed. Distinct from realTerminal,
+	// which also governs raw-mode and other own-the-tty behaviors.
+	probeCapable bool
+
 	// kittyFlipActive is true when the host is Kitty AND mew is flipping RTL for
 	// it (force_ltr off — the path where Kitty may drop niqqud). It gates the
 	// force_ltr nudge; see updateNiqqudNudge / kittyconf.go.
@@ -863,6 +871,15 @@ type TerminalIO struct {
 	// host: each receive re-queries Size and re-renders, doing manually what
 	// SIGWINCH does on unix. (Editor.NotifyResize is the method equivalent.)
 	Resize <-chan struct{}
+
+	// Interactive marks a virtualized terminal that behaves like a real one:
+	// it is a live surface whose replies to queries (DECRQM, XTWINOPS reports,
+	// CPR) flow back through Input. A host that embeds mew in a genuine
+	// terminal emulator (e.g. the KittyTK PurfecTerm surface) sets this so
+	// terminal-probing features — pixel mouse (?1016) — engage exactly as they
+	// do on a real terminal. It stays false for test harnesses and one-way
+	// output sinks, which never answer and would only be polluted by the probe.
+	Interactive bool
 }
 
 // DefaultConfig returns sensible default configuration.
@@ -1075,6 +1092,7 @@ func New(cfg Config) (*Editor, error) {
 		FS:               docFS,
 		usingOSFS:        usingOSFS,
 		realTerminal:     cfg.Terminal == nil,
+		probeCapable:     cfg.Terminal == nil || cfg.Terminal.Interactive,
 		mew:              mewVFS,
 		home:             hostHome(&cfg),
 		lib:              lib,

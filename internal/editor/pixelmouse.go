@@ -40,7 +40,7 @@ type pixelMouseState struct {
 // beginPixelMouseProbe asks the terminal whether it speaks SGR-Pixels (?1016).
 // Called once, where mouse reporting is enabled.
 func (e *Editor) beginPixelMouseProbe() {
-	if !e.realTerminal || e.pixelMouse.phase != pixelMouseIdle {
+	if !e.probeCapable || e.pixelMouse.phase != pixelMouseIdle {
 		return
 	}
 	e.pixelMouse.phase = pixelMouseAwaitDECRPM
@@ -101,7 +101,7 @@ func (e *Editor) pixelMouseGoActive() {
 // terminals that report it via CSI 16 t but do not send the ?2048 in-band
 // notification. No-op unless the handshake is under way or active.
 func (e *Editor) refreshPixelMouseCellSize() {
-	if !e.realTerminal {
+	if !e.probeCapable {
 		return
 	}
 	switch e.pixelMouse.phase {

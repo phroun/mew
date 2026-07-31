@@ -75,3 +75,33 @@ func TestPixelMouseHandshake(t *testing.T) {
 			e4.pixelMouse.cellW, e4.pixelMouse.cellH)
 	}
 }
+
+// probeCapable — which gates the ?1016 handshake — follows the terminal:
+// a real terminal (no TerminalIO) and an Interactive virtualized one both
+// probe; a plain capture buffer (a test, a one-way sink) does not.
+func TestProbeCapableGate(t *testing.T) {
+	newWith := func(term *TerminalIO) *Editor {
+		cfg := DefaultConfig()
+		cfg.SkipUserConfig = true
+		cfg.SkipProfileScript = true
+		cfg.ColdStoragePath = t.TempDir()
+		cfg.Terminal = term
+		e, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		return e
+	}
+	sink := &TerminalIO{Output: &syncBuffer{}, Size: func() (int, int, error) { return 80, 24, nil }}
+	live := &TerminalIO{Output: &syncBuffer{}, Size: func() (int, int, error) { return 80, 24, nil }, Interactive: true}
+
+	if e := newWith(nil); !e.probeCapable {
+		t.Error("a real terminal (nil TerminalIO) should be probe-capable")
+	}
+	if e := newWith(sink); e.probeCapable {
+		t.Error("a non-interactive capture buffer should NOT be probe-capable")
+	}
+	if e := newWith(live); !e.probeCapable {
+		t.Error("an Interactive virtualized terminal should be probe-capable")
+	}
+}
