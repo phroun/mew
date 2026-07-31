@@ -3562,6 +3562,10 @@ func rtlMarkModeForTerminal(k hostterm.Kind) string {
 		return "drift"
 	case hostterm.TerminalAppleTerminal:
 		return "compose"
+	case hostterm.TerminalSDL:
+		// The graphical host shapes and positions marks natively; no terminal
+		// mark-drift workaround applies, so emit the plain cluster.
+		return "normal"
 	default:
 		return "normal"
 	}
@@ -3641,6 +3645,10 @@ func hostBidiProfileFor(k hostterm.Kind) hostBidiProfile {
 	case hostterm.TerminalKitty:
 		return hostBidiProfile{flip: true, wordwise: true, rideSafe: false, known: true}
 	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
+		return hostBidiProfile{known: true}
+	case hostterm.TerminalSDL:
+		// Native graphical rendering: mew emits visual order and the host draws
+		// it directly (its own shaper does the joining), so nothing flips.
 		return hostBidiProfile{known: true}
 	}
 	return hostBidiProfile{}

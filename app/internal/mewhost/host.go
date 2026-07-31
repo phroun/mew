@@ -19,6 +19,7 @@ import (
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/objects/window"
@@ -80,6 +81,15 @@ const (
 // application-menu About item (plat.SetAboutHandler) so "mew ▸ About mew" shows
 // the same dialog as Help ▸ About; the TUI main ignores it.
 func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []string, graphical bool) func() {
+	// The graphical (SDL) host renders natively — its own shaper joins Arabic and
+	// positions marks — so it must NOT inherit the flip/fold quirks of whatever
+	// terminal launched it (e.g. Apple Terminal). Pin its identity to SDL before
+	// any editor is built and reads hostterm. The TUI host renders to the real
+	// outer terminal, so it keeps detecting that terminal. Embedded sub-terminals
+	// are separate processes (TERM=xterm-purfecterm) and are unaffected.
+	if graphical {
+		hostterm.Override(hostterm.TerminalSDL)
+	}
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers

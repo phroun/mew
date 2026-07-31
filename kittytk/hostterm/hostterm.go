@@ -38,6 +38,7 @@ const (
 	TerminalCoolRetroTerm
 	TerminalAlacritty
 	TerminalPurfecterm // KittyTK's own embedded terminal (TERM=xterm-purfecterm)
+	TerminalSDL        // the graphical SDL host: renders natively, not via a terminal
 )
 
 // String is a short stable identifier, handy for logs and config display.
@@ -57,6 +58,8 @@ func (k Kind) String() string {
 		return "alacritty"
 	case TerminalPurfecterm:
 		return "purfecterm"
+	case TerminalSDL:
+		return "sdl"
 	default:
 		return "unknown"
 	}
@@ -103,6 +106,17 @@ var (
 func Detect() Kind {
 	once.Do(func() { detected = detect(os.Getenv) })
 	return detected
+}
+
+// Override pins the host kind, overriding environment detection for the whole
+// process. The graphical SDL host uses it so it reports its own identity
+// (TerminalSDL) rather than the terminal it happened to be launched from —
+// whose flip/fold rendering quirks do not apply to native SDL drawing. Embedded
+// sub-terminals run as separate processes (TERM=xterm-purfecterm) and detect
+// normally. Safe before or after the first Detect(); the pinned value wins.
+func Override(k Kind) {
+	once.Do(func() {}) // consume lazy init so a later Detect() cannot overwrite
+	detected = k
 }
 
 // DetectFrom classifies from an arbitrary environment lookup without caching —
