@@ -883,10 +883,119 @@ const zeroWidthSpace = '​' // ZERO WIDTH SPACE
 // width and mew's one-column budget — a future rtlMarkMode is expected to
 // approach it differently.
 func (b *backBuffer) emitCellText(c bbCell) string {
-	if b.rtlMarkMode == "iterm2" && !b.logicalCUP && isShinSinDotAnchor(c) {
-		return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
+	if b.rtlMarkMode == "iterm2" && !b.logicalCUP {
+		if isShinSinDotAnchor(c) {
+			return string(zeroWidthSpace) + string(c.runes[1]) + string(c.runes[0])
+		}
+		if s, ok := precombineHebrewForITerm2(c.runes); ok {
+			return s
+		}
 	}
 	return runesOf(c)
+}
+
+// Hebrew base letter + dagesh/mapiq -> the single Alphabetic-Presentation-Form
+// glyph that bakes the point in. Letters with no such form (het, ayin, the final
+// mem/nun/tsadi) are absent: their dagesh is dropped instead (see below).
+var hebrewDageshForm = map[rune]rune{
+	0x05D0: 0xFB30, // alef + mapiq
+	0x05D1: 0xFB31, // bet
+	0x05D2: 0xFB32, // gimel
+	0x05D3: 0xFB33, // dalet
+	0x05D4: 0xFB34, // he + mapiq
+	0x05D5: 0xFB35, // vav
+	0x05D6: 0xFB36, // zayin
+	0x05D8: 0xFB38, // tet
+	0x05D9: 0xFB39, // yod
+	0x05DA: 0xFB3A, // final kaf
+	0x05DB: 0xFB3B, // kaf
+	0x05DC: 0xFB3C, // lamed
+	0x05DE: 0xFB3E, // mem
+	0x05E0: 0xFB40, // nun
+	0x05E1: 0xFB41, // samekh
+	0x05E3: 0xFB43, // final pe
+	0x05E4: 0xFB44, // pe
+	0x05E6: 0xFB46, // tsadi
+	0x05E7: 0xFB47, // qof
+	0x05E8: 0xFB48, // resh
+	0x05E9: 0xFB49, // shin (bare dagesh, no dot)
+	0x05EA: 0xFB4A, // tav
+}
+
+// Hebrew base letter + rafe -> its presentation form (only bet, kaf, pe have one).
+var hebrewRafeForm = map[rune]rune{
+	0x05D1: 0xFB4C, // bet
+	0x05DB: 0xFB4D, // kaf
+	0x05E4: 0xFB4E, // pe
+}
+
+// precombineHebrewForITerm2 rewrites a well-formed Hebrew cluster for the iTerm2
+// plain-terminal wire. iTerm2 draws the dagesh/mapiq, shin dot, sin dot, and rafe
+// one cell to the RIGHT of their base (a spacing-like misplacement of a point
+// that is not a below-base vowel). The vowels it places correctly.
+//
+// So the point is folded INTO the base: the base letter plus that point is
+// emitted as the single Alphabetic-Presentation-Form glyph that already carries
+// it (U+FB2A..U+FB4E), leaving no free-standing point to drift. Any remaining
+// vowels ride the precomposed glyph the usual way. A dagesh whose letter has no
+// presentation form is dropped rather than left to drift.
+//
+// Returns ("", false) when nothing precombines (no such point, or a non-Hebrew
+// base), so the caller emits the cluster unchanged.
+func precombineHebrewForITerm2(runes []rune) (string, bool) {
+	if len(runes) < 2 {
+		return "", false
+	}
+	base := runes[0]
+	if base < 0x05D0 || base > 0x05EA {
+		return "", false // not a Hebrew base letter
+	}
+	var hasDagesh, hasShinDot, hasSinDot, hasRafe bool
+	vowels := make([]rune, 0, len(runes)-1)
+	for _, m := range runes[1:] {
+		switch m {
+		case 0x05BC: // dagesh / mapiq
+			hasDagesh = true
+		case 0x05C1: // shin dot
+			hasShinDot = true
+		case 0x05C2: // sin dot
+			hasSinDot = true
+		case 0x05BF: // rafe
+			hasRafe = true
+		default:
+			vowels = append(vowels, m) // a real vowel/accent — rides on top
+		}
+	}
+	if !hasDagesh && !hasShinDot && !hasSinDot && !hasRafe {
+		return "", false
+	}
+
+	pre := base // fall back to the bare letter, which drops an un-formable point
+	switch {
+	case base == 0x05E9 && hasDagesh && hasShinDot:
+		pre = 0xFB2C // shin with dagesh and shin dot
+	case base == 0x05E9 && hasDagesh && hasSinDot:
+		pre = 0xFB2D // shin with dagesh and sin dot
+	case base == 0x05E9 && hasShinDot:
+		pre = 0xFB2A // shin with shin dot
+	case base == 0x05E9 && hasSinDot:
+		pre = 0xFB2B // shin with sin dot
+	case hasDagesh:
+		if f, ok := hebrewDageshForm[base]; ok {
+			pre = f
+		} // else: no form — drop the dagesh (pre stays the bare letter)
+	case hasRafe:
+		if f, ok := hebrewRafeForm[base]; ok {
+			pre = f
+		} // else: drop the rafe
+	}
+
+	var sb strings.Builder
+	sb.WriteRune(pre)
+	for _, v := range vowels {
+		sb.WriteRune(v)
+	}
+	return sb.String(), true
 }
 
 func cellsEqual(a, b bbCell) bool {
