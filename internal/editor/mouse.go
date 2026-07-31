@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
@@ -713,15 +714,39 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 		}
 		return len(runes)
 	}
-	cols, total := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), tabSize)
-	if target >= total {
-		return len(runes)
-	}
-	for i := range runes {
-		wd := e.slotWidth(layout, runes, i, cols[i], tabSize)
-		if wd > 0 && target >= cols[i] && target < cols[i]+wd {
-			return i
+	// Walk the visual order (mirroring bidiColumns' column accounting) so a click
+	// on a synthetic slot — a bidi direction marker (the < / > arrow shown under
+	// showBidi) — resolves too, instead of matching no rune and falling through
+	// to end-of-line. A marker maps to its run's own adjacent real cell: a START
+	// marker (MarkerRTL/LTR) precedes its run, so the NEXT real cell in visual
+	// order; an END marker follows its run, so the PREVIOUS one.
+	marked := e.lineMarkSet(w, runes)
+	col := 0
+	for pi, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++ // the showMarks "*" cell before the rune
 		}
+		wd := e.slotWidth(layout, runes, li, col, tabSize)
+		if wd > 0 && target >= col && target < col+wd {
+			if li >= 0 {
+				return li
+			}
+			if li == bidi.MarkerEnd {
+				for j := pi - 1; j >= 0; j-- {
+					if layout.Perm[j] >= 0 {
+						return layout.Perm[j]
+					}
+				}
+			} else {
+				for j := pi + 1; j < len(layout.Perm); j++ {
+					if layout.Perm[j] >= 0 {
+						return layout.Perm[j]
+					}
+				}
+			}
+			return len(runes)
+		}
+		col += wd
 	}
 	return len(runes)
 }
