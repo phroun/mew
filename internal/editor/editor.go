@@ -3539,7 +3539,7 @@ func rtlMarkModeForTerminal(k hostterm.Kind) string {
 	switch k {
 	case hostterm.TerminalITerm2:
 		return "iterm2"
-	case hostterm.TerminalAlacritty:
+	case hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
 		return "drift"
 	case hostterm.TerminalAppleTerminal:
 		return "compose"

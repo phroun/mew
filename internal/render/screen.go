@@ -348,6 +348,16 @@ func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
 	}
 }
 
+// FlipWordwise reports whether the host reverses each RTL word in place (Kitty).
+// The mouse code consults it: a word-wise host displays each word's letters at
+// the mirror of mew's own visual columns, so a drag block's endpoints are
+// mirrored within their word to land on the letters actually under the pointer.
+func (sr *ScreenRenderer) FlipWordwise() bool {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	return sr.frame.flipWordwise
+}
+
 // SetFlipRideSafeSelection marks a flip host whose background selection fill
 // drifts under its own bidi (Terminal.app), so pointed RTL lines use the
 // ride-safe foreground selection; off keeps the real bar (see

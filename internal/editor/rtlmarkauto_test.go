@@ -12,7 +12,7 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 	want := map[hostterm.Kind]string{
 		hostterm.TerminalITerm2:        "iterm2",
 		hostterm.TerminalAlacritty:     "drift",
-		hostterm.TerminalGhostty:       "normal", // quirks TBD
+		hostterm.TerminalGhostty:       "drift",
 		hostterm.TerminalKitty:         "normal", // quirks TBD
 		hostterm.TerminalAppleTerminal: "compose",
 		hostterm.TerminalCoolRetroTerm: "normal",

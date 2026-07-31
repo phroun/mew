@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/viewport"
@@ -677,6 +678,53 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 	return len(runes)
 }
 
+// wordMirrorRune reflects a resolved rune position within the RTL word it sits
+// in, in VISUAL columns — the transform a word-wise host (Kitty) needs for a
+// drag block. That host reverses each word's glyphs IN PLACE, so the letter the
+// pointer is over sits at the mirror of the visual column mew laid it at; the
+// block endpoint must be the rune at that mirror column, or the selection spans
+// the wrong letters. Only RTL words mirror; an LTR word, a boundary, or a line
+// with no bidi returns the position unchanged. The caret is NOT mirrored (it is
+// a DEC cursor mew places at an absolute column, which the host does not
+// reverse) — only the in-stream block endpoints are.
+func (e *Editor) wordMirrorRune(w *viewport.Viewport, docLine, runePos int) int {
+	if w == nil || w.Buffer == nil {
+		return runePos
+	}
+	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
+	runes := []rune(raw)
+	if runePos < 0 || runePos >= len(runes) {
+		return runePos // end-of-line boundary: nothing to mirror onto
+	}
+	layout := e.layoutFor(w, runes)
+	if layout == nil {
+		return runePos // no bidi on this line
+	}
+	cols, total := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), e.tabSize(w))
+	if runePos >= len(cols) {
+		return runePos
+	}
+	isRTLCol := func(c int) bool {
+		if c < 0 || c >= total {
+			return false
+		}
+		idx := e.runeAtVisualColumn(w, raw, c)
+		return idx >= 0 && idx < len(runes) && bidi.IsStrongRTL(runes[idx])
+	}
+	vc := cols[runePos]
+	if !isRTLCol(vc) {
+		return runePos // pointer is not on an RTL letter
+	}
+	lo, hi := vc, vc
+	for isRTLCol(lo - 1) {
+		lo--
+	}
+	for isRTLCol(hi + 1) {
+		hi++
+	}
+	return e.runeAtVisualColumn(w, raw, lo+hi-vc)
+}
+
 // displayToDoc maps a display index to a document rune through DispToDoc:
 // chrome cells (-1, button caps/shadow/isolates) park INSIDE the button's
 // source span, so a click on any part of a button focuses it.
@@ -875,6 +923,17 @@ func (e *Editor) dragSelUpdate(x, y int) {
 	if !ok {
 		return
 	}
+	// A word-wise host (Kitty) shows each RTL word's letters at the mirror of
+	// mew's visual columns, so the block's endpoints — carried in the cell
+	// stream — must be mirrored within their word to bound the letters actually
+	// under the pointer. The caret stays put (a DEC cursor at an absolute column
+	// the host does not reverse), so it and the block endpoint may differ here.
+	blockRune := func(dl, rp int) int {
+		if e.Renderer != nil && e.Renderer.FlipWordwise() {
+			return e.wordMirrorRune(w, dl, rp)
+		}
+		return rp
+	}
 	if !e.dragSel.begun {
 		if docLine == e.dragSel.originLine && runePos == e.dragSel.originRune {
 			return // still on the press cell: no selection yet
@@ -882,13 +941,13 @@ func (e *Editor) dragSelUpdate(x, y int) {
 		// The drag becomes a selection here: open the gesture's transaction so
 		// every mark movement until release lands in ONE undo step.
 		e.beginDragTxn(w.Buffer)
-		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, e.dragSel.originRune)
+		w.Buffer.SetMark("_block_begin", e.dragSel.originLine, blockRune(e.dragSel.originLine, e.dragSel.originRune))
 		e.dragSel.begun = true
 	}
 	if docLine == e.dragSel.lastLine && runePos == e.dragSel.lastRune {
 		return // same cell as the last update
 	}
-	w.Buffer.SetMark("_block_end", docLine, runePos)
+	w.Buffer.SetMark("_block_end", docLine, blockRune(docLine, runePos))
 	// A plain drag marks a TRANSIENT mouse block (a later plain click
 	// dissolves it); a drag continuing a shift+click keeps that gesture's
 	// deliberate, persistent nature.
