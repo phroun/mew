@@ -545,7 +545,7 @@ func (sr *ScreenRenderer) EnableGraphemeWidth() {
 // to the terminal's own default (DECSCUSR 0) so the shell that follows does not
 // inherit whichever mode's cursor mew happened to leave selected.
 func (sr *ScreenRenderer) Cleanup() {
-	fmt.Fprintf(sr.out, "\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[0 q\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
+	fmt.Fprintf(sr.out, "\x1b[?2048l\x1b[?1016l\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[0 q\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
 }
 
 // ClearScreen forces a full clear-and-repaint on the next presented frame.

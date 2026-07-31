@@ -62,4 +62,16 @@ func TestPixelMouseHandshake(t *testing.T) {
 	if e3.handlePixelMouseReply("MouseLeftPress") {
 		t.Fatal("non-report key should not be consumed")
 	}
+
+	// A ?2048 in-band resize notification (WinOp:48;rows;cols;h;w) recomputes
+	// the cached cell size from pixels/grid — the font-zoom case.
+	e4 := &Editor{}
+	e4.pixelMouse = pixelMouseState{phase: pixelMouseActive, cellW: 10, cellH: 20}
+	if !e4.handlePixelMouseReply("WinOp:48;24;80;960;1600") {
+		t.Fatal("WinOp:48 should be consumed")
+	}
+	if e4.pixelMouse.cellW != 20 || e4.pixelMouse.cellH != 40 { // 1600/80, 960/24
+		t.Fatalf("resize should update cell size to 20x40, got %dx%d",
+			e4.pixelMouse.cellW, e4.pixelMouse.cellH)
+	}
 }

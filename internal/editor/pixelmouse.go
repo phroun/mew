@@ -58,24 +58,56 @@ func (e *Editor) handlePixelMouseReply(key string) bool {
 			// status 1=set, 2=reset → recognised; 0=not recognised.
 			if status == 1 || status == 2 {
 				e.pixelMouse.phase = pixelMouseAwaitCell
-				e.Renderer.EmitRaw("\x1b[16t") // ask for the cell pixel size
+				// Ask for the cell pixel size AND enable in-band resize
+				// notifications (?2048) so a font zoom that keeps the same grid
+				// still tells us the cell size changed. Both flow back as WinOp:.
+				e.Renderer.EmitRaw("\x1b[16t\x1b[?2048h")
 			} else {
 				e.pixelMouse.phase = pixelMouseUnsupported
 			}
 		}
 		return true
 	case strings.HasPrefix(key, "WinOp:"):
-		ps, a, b := splitReportTriple(strings.TrimPrefix(key, "WinOp:"))
-		if ps == 6 && a > 0 && b > 0 { // CSI 6 ; height ; width t
-			e.pixelMouse.cellH, e.pixelMouse.cellW = a, b
-			if e.pixelMouse.phase == pixelMouseAwaitCell {
-				e.pixelMouse.phase = pixelMouseActive
-				e.Renderer.EmitRaw("\x1b[?1016h") // switch reports to pixels
+		f := splitReportInts(strings.TrimPrefix(key, "WinOp:"))
+		switch {
+		case len(f) >= 3 && f[0] == 6: // CSI 6 ; height ; width t — cell pixel size
+			if f[1] > 0 && f[2] > 0 {
+				e.pixelMouse.cellH, e.pixelMouse.cellW = f[1], f[2]
+				e.pixelMouseGoActive()
+			}
+		case len(f) >= 5 && f[0] == 48: // CSI 48 ; rows ; cols ; h ; w t — ?2048 resize
+			rows, cols, h, w := f[1], f[2], f[3], f[4]
+			if rows > 0 && cols > 0 && h > 0 && w > 0 {
+				e.pixelMouse.cellH, e.pixelMouse.cellW = h/rows, w/cols
+				e.pixelMouseGoActive()
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// pixelMouseGoActive enables pixel reports once a cell size is known (from
+// either the CSI 16 t reply or a ?2048 notification, whichever arrives first).
+func (e *Editor) pixelMouseGoActive() {
+	if e.pixelMouse.phase == pixelMouseAwaitCell &&
+		e.pixelMouse.cellW > 0 && e.pixelMouse.cellH > 0 {
+		e.pixelMouse.phase = pixelMouseActive
+		e.Renderer.EmitRaw("\x1b[?1016h") // switch reports to pixels
+	}
+}
+
+// refreshPixelMouseCellSize re-queries the cell pixel size after a resize, for
+// terminals that report it via CSI 16 t but do not send the ?2048 in-band
+// notification. No-op unless the handshake is under way or active.
+func (e *Editor) refreshPixelMouseCellSize() {
+	if !e.realTerminal {
+		return
+	}
+	switch e.pixelMouse.phase {
+	case pixelMouseAwaitCell, pixelMouseActive:
+		e.Renderer.EmitRaw("\x1b[16t")
+	}
 }
 
 // pixelMouseIsActive reports whether mouse reports currently arrive in pixels.
@@ -113,16 +145,11 @@ func splitReportPair(s string) (a, b int) {
 	return
 }
 
-func splitReportTriple(s string) (a, b, c int) {
-	p := strings.SplitN(s, ";", 3)
-	if len(p) >= 1 {
-		a, _ = strconv.Atoi(strings.TrimSpace(p[0]))
+func splitReportInts(s string) []int {
+	parts := strings.Split(s, ";")
+	out := make([]int, len(parts))
+	for i, p := range parts {
+		out[i], _ = strconv.Atoi(strings.TrimSpace(p))
 	}
-	if len(p) >= 2 {
-		b, _ = strconv.Atoi(strings.TrimSpace(p[1]))
-	}
-	if len(p) >= 3 {
-		c, _ = strconv.Atoi(strings.TrimSpace(p[2]))
-	}
-	return
+	return out
 }

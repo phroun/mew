@@ -7944,6 +7944,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// Set up resize callback to trigger re-render
 	// Since the main loop blocks on GetKey(), we perform the render directly
 	e.Renderer.SetOnResize(func() {
+		// A resize may have changed the cell pixel size; re-query it so the
+		// pixel→cell mouse mapping stays accurate (belt-and-suspenders for
+		// terminals without the ?2048 in-band notification).
+		e.refreshPixelMouseCellSize()
 		e.performRender()
 	})
 
