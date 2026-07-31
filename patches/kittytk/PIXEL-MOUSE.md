@@ -30,15 +30,20 @@ The feature needs a coordinated chain across three repos:
 
 3. **kittytk** — `pixel-mouse.patch` here. The gfx trinket:
    - `editor_mew.go`: sets `Interactive: true` on the hosted mew's terminal.
-   - `purfecterm_gfx.go`: `pushCellPixelSizeGfx` keeps `SetCellPixelSize`
-     current each paint (device cell size = `baseCell * scale * ppu`, the rate
-     `screenToVisualCellGfx` walks), so `CSI 16 t` and the reported pixels
-     share one space across font zoom; `reportMouseGfx` replaces the
-     cell-only `sendMouseEventGfx`, reporting the pointer's **device-pixel**
-     position when the app selected `?1016` (`gfxPointerPx`, 1-based) and the
-     visual cell otherwise. mew's `pixelToCell` divides the report by the
-     reported cell size and recovers the same column the cell path would give,
-     plus the sub-cell fraction.
+   - `purfecterm_gfx.go`: `reportMouseGfx` replaces the cell-only
+     `sendMouseEventGfx`, reporting a position on a **synthetic pixel grid**
+     when the app selected `?1016` and the visual cell otherwise. Device pixels
+     can't be reported directly: a cell's painted advance is fractional and its
+     boundaries land at `round(col*advance)` (a per-cell rounding), so a hosted
+     app dividing by one integer cell size would drift up to a full cell by the
+     far edge of the screen. Instead each cell is a fixed `gfxCellSubUnits`
+     "pixels" wide (declared via `SetCellPixelSize`/`CSI 16 t`); the report
+     puts the exact cell index — from the SAME `cellBoundaryPx` walk the paint
+     and `screenToVisualCellGfx` use — in the high digits and the sub-cell
+     fraction in the low digits (`pixelReportAxis`). mew's `pixelToCell` then
+     divides by `gfxCellSubUnits` and recovers exactly the cell the paint drew,
+     drift-free, with the remainder as the sub-cell position. `TestPixelReport*`
+     lock the no-drift invariant.
 
 ### Apply order
 

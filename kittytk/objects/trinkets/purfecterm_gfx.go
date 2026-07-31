@@ -293,7 +293,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
-	t.pushCellPixelSizeGfx(ppu) // keep CSI 16 t / ?1016 pixel space current
+	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -2274,27 +2274,84 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 	return col, row
 }
 
-// pushCellPixelSizeGfx keeps the hosted app's notion of the cell's device-pixel
-// size current (reported via CSI 16 t), so SGR-Pixels (?1016) reports and the
-// size the app divides them by stay in the same space across a font zoom. The
-// device cell size is baseCell * scale * ppu — the same rate
-// screenToVisualCellGfx walks when it places a cell boundary.
-func (t *PurfecTerm) pushCellPixelSizeGfx(ppu float64) {
+// gfxCellSubUnits is the width AND height, in synthetic "pixels", of one cell
+// on the grid the hosted app reads under SGR-Pixels (?1016) — reported to it as
+// the cell size via CSI 16 t. Device pixels can't be used directly: a cell's
+// painted advance (baseCell*scale*ppu) is fractional, and its boundaries land
+// at round(col*advance) — a PER-cell rounding. Uniform division of a device
+// pixel by one integer cell size (col*round(advance)) diverges from that,
+// drifting up to a full cell by the far edge of a wide/tall screen. Instead the
+// report puts the exact cell index (from the same rounding walk the paint uses)
+// in the high digits and the sub-cell fraction in the low gfxCellSubUnits — so
+// the app's own uniform division recovers the cell with no drift and the
+// remainder is the sub-cell position.
+const gfxCellSubUnits = 1000
+
+// pushCellPixelSizeGfx tells the hosted app that a cell is gfxCellSubUnits
+// "pixels" square (CSI 16 t). It is a constant — the synthetic grid, unlike
+// device pixels, does not move with font zoom — but is (re)asserted each paint
+// so a buffer rebuild never leaves it unset.
+func (t *PurfecTerm) pushCellPixelSizeGfx() {
+	t.terminal.Buffer().SetCellPixelSize(gfxCellSubUnits, gfxCellSubUnits)
+}
+
+// screenToPixelReportGfx maps trinket-unit coordinates onto the synthetic pixel
+// grid the hosted app reads under ?1016. Each axis is located by the SAME
+// per-cell rounding walk the paint uses (cellBoundaryPx), so the integer cell
+// never drifts from the glyph; the pointer's fraction across that one cell rides
+// in the low gfxCellSubUnits digits. 0-based, matching screenToVisualCellGfx.
+func (t *PurfecTerm) screenToPixelReportGfx(x, y core.Unit) (px, py int) {
 	buf := t.terminal.Buffer()
 	baseCW, baseCH := t.cellDims()
-	cw := float64(baseCW) * buf.GetHorizontalScale() * ppu
-	chh := float64(baseCH) * buf.GetVerticalScale() * ppu
-	if cw > 0 && chh > 0 {
-		buf.SetCellPixelSize(int(math.Round(cw)), int(math.Round(chh)))
+	cw := float64(baseCW) * buf.GetHorizontalScale()
+	chh := float64(baseCH) * buf.GetVerticalScale()
+	if cw <= 0 || chh <= 0 {
+		return 0, 0
 	}
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	ptx, pty := t.gfxPointerPx(x, y)
+	cols, rows := buf.GetSize()
+	return pixelReportAxis(ptx, cw, ppu, cols), pixelReportAxis(pty, chh, ppu, rows)
+}
+
+// pixelReportAxis places a device-pixel coordinate pt on one axis of the
+// synthetic ?1016 grid. It walks to the cell containing pt exactly as
+// screenToVisualCellGfx does (boundaries rounded PER cell, cellBoundaryPx), then
+// measures pt's fraction across that cell's painted span. The result is
+// cell*gfxCellSubUnits + fraction, so dividing by gfxCellSubUnits recovers the
+// SAME cell the paint drew — no cumulative drift from a fractional advance —
+// while the remainder carries the sub-cell position. adv is the cell's unit
+// advance, ppu the pixels-per-unit, n the cell count on this axis.
+func pixelReportAxis(pt, adv, ppu float64, n int) int {
+	col := 0
+	for col+1 < n && pt >= cellBoundaryPx(float64(col+1)*adv, ppu) {
+		col++
+	}
+	left := cellBoundaryPx(float64(col)*adv, ppu)
+	right := cellBoundaryPx(float64(col+1)*adv, ppu)
+	frac := 0.0
+	if right > left {
+		frac = (pt - left) / (right - left)
+	}
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 0.999999 {
+		frac = 0.999999
+	}
+	return col*gfxCellSubUnits + int(frac*gfxCellSubUnits)
 }
 
 // reportMouseGfx forwards a mouse event to the hosted app, choosing the
-// coordinate space by the app's encoding mode. SGR-Pixels (?1016) reports the
-// pointer's device-pixel position (sub-cell precise, so a hosted editor can
-// land its caret on the nearest cell edge); every other mode reports the visual
-// cell. x,y are the event's trinket-unit coordinates. Pixels are 1-based to
-// match the cell path's +1 and the CSI 16 t space (pushCellPixelSizeGfx).
+// coordinate space by the app's encoding mode. SGR-Pixels (?1016) reports a
+// position on the synthetic pixel grid (screenToPixelReportGfx): the cell is
+// located drift-free by the paint's own rounding, and the sub-cell fraction
+// lets a hosted editor land its caret on the nearest cell edge. Every other
+// mode reports the visual cell. x,y are the event's trinket-unit coordinates;
+// both paths are 1-based (the report space CSI 16 t declares).
 func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool {
 	if t.gfx.reportingDisabled {
 		return false
@@ -2305,8 +2362,8 @@ func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool
 	}
 	var repX, repY int
 	if buf.GetMouseEncodingMode() == 1016 {
-		px, py := t.gfxPointerPx(x, y)
-		repX, repY = int(math.Round(px))+1, int(math.Round(py))+1
+		px, py := t.screenToPixelReportGfx(x, y)
+		repX, repY = px+1, py+1
 	} else {
 		col, row := t.screenToVisualCellGfx(x, y)
 		repX, repY = col+1, row+1
