@@ -339,6 +339,42 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 	}
 }
 
+// A folding rtlMarkMode must fold under flipBidi too: the flip path emits runes
+// directly (not through emitCellText), so without folding an isolated ◌-anchored
+// point reverts to the dotted circle and a pointed cluster spills its point back
+// out the instant flipBidi turns on. This is the Apple Terminal case (flip on +
+// compose): the composed forms survive the flip.
+func TestBackBufferFlipBidiFolds(t *testing.T) {
+	const (
+		anchor        = 0x25CC // mew's dotted-circle carrier
+		shinDot       = 0x05C1
+		shinWithDot   = 0xFB2A
+		bet, dagesh   = 0x05D1, 0x05BC
+		betWithDagesh = 0xFB31
+	)
+	b := newBackBuffer(30, 2)
+	b.flipBidi = true
+	b.rtlMarkMode = "compose"
+
+	// Isolated shin dot anchored on the dotted circle -> the FB2A glyph, no circle.
+	out := plain(paint(b, mv(1, 1), wr("\x1b[0m"+string(rune(anchor))+string(rune(shinDot)))))
+	if !strings.ContainsRune(out, shinWithDot) {
+		t.Errorf("flip+compose should fold the anchored shin dot to FB2A: %q", out)
+	}
+	if strings.ContainsRune(out, anchor) || strings.ContainsRune(out, shinDot) {
+		t.Errorf("neither the dotted circle nor the free-standing point may survive: %q", out)
+	}
+
+	// A well-formed cluster folds into its presentation form under flip as well.
+	b2 := newBackBuffer(30, 2)
+	b2.flipBidi = true
+	b2.rtlMarkMode = "compose"
+	out = plain(paint(b2, mv(1, 1), wr("\x1b[0m"+string(rune(bet))+string(rune(dagesh)))))
+	if !strings.ContainsRune(out, betWithDagesh) || strings.ContainsRune(out, dagesh) {
+		t.Errorf("flip+compose should fold bet+dagesh to FB31: %q", out)
+	}
+}
+
 // The DEC hardware cursor addresses the plain VISUAL column even under flip.
 // A flip-mode terminal (Terminal.app) reorders the glyphs it displays but
 // draws the cursor at the raw physical column the CUP names — the cursor is

@@ -747,12 +747,24 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 			sb.WriteByte(' ')
 			return
 		}
-		if mirror {
-			sb.WriteRune(bidi.Mirror(c.runes[0]))
-		} else {
-			sb.WriteRune(c.runes[0])
+		// A folding rtlMarkMode bakes the Hebrew points into their single
+		// presentation-form glyph here too. The flip path emits runes directly
+		// (it does not go through emitCellText), so without this the fold is lost
+		// the instant flipBidi turns on — an isolated ◌-anchored shin/sin dot or
+		// holam-vav reverts to the dotted circle, and a pointed cluster spills
+		// its point back out as a free-standing mark.
+		runes := c.runes
+		if modeFoldsMarks(b.rtlMarkMode) {
+			if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+				runes = folded
+			}
 		}
-		for _, m := range c.runes[1:] {
+		if mirror {
+			sb.WriteRune(bidi.Mirror(runes[0]))
+		} else {
+			sb.WriteRune(runes[0])
+		}
+		for _, m := range runes[1:] {
 			sb.WriteRune(m)
 		}
 	}
