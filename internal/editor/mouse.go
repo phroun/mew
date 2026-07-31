@@ -624,18 +624,16 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	}
 	idx := resolve(target)
 	// caretRune is where a CARET should land: the containing rune normally, but
-	// the NEAREST cell EDGE for an insert-mode click (pixel reports only). The
-	// click's nearest visual boundary is the cell's left edge (sub-cell < 500)
-	// or right edge (≥ 500). Which edge ADVANCES past the character, and how the
-	// boundary maps to a document position, both flip with the cell's direction:
-	//   - LTR: the screen-RIGHT half advances → resolve(target+1).
-	//   - RTL: screen-left is the logical-after side, so the screen-LEFT half
-	//     advances → resolve(target-1); the right half stays on the cell.
-	// resolve() maps through the bidi/display layout, so the advance lands on the
-	// next BASE cell — combining marks (niqqud/harakat) never split a caret.
-	// Direction is read from the local visual→logical gradient (an RTL run's
-	// index falls as the visual column rises), robust on mixed lines. Overwrite
-	// mode and cell-resolution reports (subX < 0) keep idx.
+	// the NEAREST reading edge of the clicked character for an insert-mode click.
+	// The decision is made across the character's FULL visual span, not one cell:
+	// a glyph wider than a cell (a wide CJK letter, a tab, a DEC-doubled cell)
+	// splits by which of its cells was clicked, so its trailing cell(s) advance
+	// the caret even on a terminal with no sub-cell (pixel) reporting; a
+	// single-cell glyph splits only when a pixel report supplies the sub-cell
+	// half. Which edge ADVANCES flips with the character's direction — LTR's
+	// trailing edge is on the right, RTL's on the left — and the advance skips
+	// the cluster's combining marks so niqqud/harakat never split a caret.
+	// Overwrite mode keeps idx (a click selects the character to type over).
 	caretRune = idx
 	// A click on a synthetic bidi direction marker (the "<" / ">" / "|" glyphs
 	// shown under showBidi) resolves to a specific caret boundary that is
@@ -644,29 +642,44 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	if mc, ok := e.markerCaretAt(w, dispLine, target, e.mouseSubX); ok {
 		return w, docLine, idx, mapDisp(mc), true
 	}
-	if e.mouseSubX >= 0 && w != nil && !w.ViewState.OverwriteMode {
-		right := resolve(target + 1)
-		haveLeft := target >= 1
-		left := idx
-		if haveLeft {
-			left = resolve(target - 1)
+	rr := []rune(raw)
+	if w != nil && !w.ViewState.OverwriteMode && idx < len(rr) {
+		// The clicked character's visual span [c0, cEnd]: widen left and right
+		// while the same DISPLAY rune covers the column (a multi-cell glyph maps
+		// every one of its cells to one index). Capped so a pathological layout
+		// can never spin.
+		di := e.runeAtVisualColumn(w, dispLine, target)
+		c0, cEnd := target, target
+		for c0 > 0 && cEnd-c0 < 64 && e.runeAtVisualColumn(w, dispLine, c0-1) == di {
+			c0--
 		}
-		rtl := right < idx || (haveLeft && left > idx)
-		switch {
-		case rtl && e.mouseSubX < 500:
-			// RTL: the LEFT half advances past the character to the next LOGICAL
-			// position — "insert after this Hebrew/Arabic letter" — skipping the
-			// cluster's combining marks. NOT the next VISUAL cell (resolve(
-			// target-1)), which at the run's left edge escapes into an adjacent
-			// LTR run.
-			rr := []rune(raw)
-			n := idx + 1
-			for n < len(rr) && textwidth.IsMark(rr[n]) {
-				n++
+		for cEnd-c0 < 64 && e.runeAtVisualColumn(w, dispLine, cEnd+1) == di {
+			cEnd++
+		}
+		wd := cEnd - c0 + 1
+		// Only meaningful with a sub-cell half (pixel report) or a multi-cell
+		// span; a lone cell in cell-resolution mode keeps the classic
+		// before-the-character landing.
+		if e.mouseSubX >= 0 || wd > 1 {
+			frac := 0.0
+			if e.mouseSubX >= 0 {
+				frac = float64(e.mouseSubX) / 1000
 			}
-			caretRune = n
-		case !rtl && e.mouseSubX >= 500:
-			caretRune = right // LTR: right half advances to the next base cell
+			vf := (float64(target-c0) + frac) / float64(wd) // 0..1 across the glyph
+			rtl := e.winRTL(w)
+			if layout := e.layoutFor(w, []rune(dispLine)); layout != nil && di >= 0 && di < len(layout.RTL) {
+				rtl = layout.RTL[di]
+			}
+			// The screen-RIGHT half is the trailing (after) side for an LTR
+			// glyph and the leading (before) side for an RTL one, so the advance
+			// condition inverts with direction.
+			if (vf >= 0.5) != rtl {
+				n := idx + 1
+				for n < len(rr) && textwidth.IsMark(rr[n]) {
+					n++
+				}
+				caretRune = n
+			}
 		}
 	}
 	return w, docLine, idx, caretRune, true
