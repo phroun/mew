@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/phroun/kittytk/hebrew"
+
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/textwidth"
 )
@@ -851,11 +853,13 @@ func (b *backBuffer) emitCellText(c bbCell) string {
 	if b.logicalCUP {
 		return runesOf(c) // flex-width host composes clusters itself
 	}
-	// "iterm2" and "compose" both fold Hebrew points into presentation forms.
-	// They are one behaviour today; the two names are kept so iterm2 can carry
-	// terminal-specific extras later without disturbing plain precomposition.
+	// "iterm2", "compose" and "drift" all fold Hebrew points into presentation
+	// forms. They are one behaviour today for the base glyph; the names are kept
+	// so each can carry terminal-specific extras later without disturbing plain
+	// precomposition. Drift needs the fold too: a free-standing point is exactly
+	// what the drift terminal misplaces, so baking it into the base removes it.
 	switch b.rtlMarkMode {
-	case "iterm2", "compose":
+	case "iterm2", "compose", "drift":
 		if s, ok := precomposeCell(c); ok {
 			return s
 		}
@@ -863,135 +867,17 @@ func (b *backBuffer) emitCellText(c bbCell) string {
 	return runesOf(c)
 }
 
-// precomposeCell rewrites an anchored or well-formed Hebrew cell into a single
-// presentation-form glyph where one exists, so no free-standing point is left for
-// a terminal to drift. It covers well-formed clusters
-// (precombineHebrewForITerm2) and the anchored marks that have no good isolated
-// rendering on a dotted circle: an isolated shin dot, sin dot, or holam-haser is
-// shown on a "faux" base — the shin-with-dot or vav-with-holam presentation glyph
-// — instead of a circle, keeping whatever colour the cell already carries (the
-// substitutes colour for an anchored form). That also makes the isolated and
-// well-formed forms of those points render identically.
+// precomposeCell folds a Hebrew cell into a single presentation-form glyph where
+// one exists (delegating to the shared kittytk/hebrew package), so no
+// free-standing point is left for a terminal to drift. It covers well-formed
+// clusters and the anchored points that render poorly on a dotted circle (an
+// isolated shin dot, sin dot, or holam-haser is shown on its faux base). The
+// cell keeps whatever colour it already carries.
 func precomposeCell(c bbCell) (string, bool) {
-	if len(c.runes) == 2 && c.runes[0] == textwidth.MarkAnchor {
-		switch c.runes[1] {
-		case 0x05C1: // isolated shin dot -> shin with shin dot
-			return string(rune(0xFB2A)), true
-		case 0x05C2: // isolated sin dot -> shin with sin dot
-			return string(rune(0xFB2B)), true
-		case 0x05BA: // isolated holam haser for vav -> vav with holam
-			return string(rune(0xFB4B)), true
-		}
+	if folded, ok := hebrew.PrecomposeCluster(c.runes); ok {
+		return string(folded), true
 	}
-	return precombineHebrewForITerm2(c.runes)
-}
-
-// Hebrew base letter + dagesh/mapiq -> the single Alphabetic-Presentation-Form
-// glyph that bakes the point in. Letters with no such form (het, ayin, the final
-// mem/nun/tsadi) are absent: their dagesh is dropped instead (see below).
-var hebrewDageshForm = map[rune]rune{
-	0x05D0: 0xFB30, // alef + mapiq
-	0x05D1: 0xFB31, // bet
-	0x05D2: 0xFB32, // gimel
-	0x05D3: 0xFB33, // dalet
-	0x05D4: 0xFB34, // he + mapiq
-	0x05D5: 0xFB35, // vav
-	0x05D6: 0xFB36, // zayin
-	0x05D8: 0xFB38, // tet
-	0x05D9: 0xFB39, // yod
-	0x05DA: 0xFB3A, // final kaf
-	0x05DB: 0xFB3B, // kaf
-	0x05DC: 0xFB3C, // lamed
-	0x05DE: 0xFB3E, // mem
-	0x05E0: 0xFB40, // nun
-	0x05E1: 0xFB41, // samekh
-	0x05E3: 0xFB43, // final pe
-	0x05E4: 0xFB44, // pe
-	0x05E6: 0xFB46, // tsadi
-	0x05E7: 0xFB47, // qof
-	0x05E8: 0xFB48, // resh
-	0x05E9: 0xFB49, // shin (bare dagesh, no dot)
-	0x05EA: 0xFB4A, // tav
-}
-
-// Hebrew base letter + rafe -> its presentation form (only bet, kaf, pe have one).
-var hebrewRafeForm = map[rune]rune{
-	0x05D1: 0xFB4C, // bet
-	0x05DB: 0xFB4D, // kaf
-	0x05E4: 0xFB4E, // pe
-}
-
-// precombineHebrewForITerm2 rewrites a well-formed Hebrew cluster for the iTerm2
-// plain-terminal wire. iTerm2 draws the dagesh/mapiq, shin dot, sin dot, and rafe
-// one cell to the RIGHT of their base (a spacing-like misplacement of a point
-// that is not a below-base vowel). The vowels it places correctly.
-//
-// So the point is folded INTO the base: the base letter plus that point is
-// emitted as the single Alphabetic-Presentation-Form glyph that already carries
-// it (U+FB2A..U+FB4E), leaving no free-standing point to drift. Any remaining
-// vowels ride the precomposed glyph the usual way. A dagesh whose letter has no
-// presentation form is dropped rather than left to drift.
-//
-// Returns ("", false) when nothing precombines (no such point, or a non-Hebrew
-// base), so the caller emits the cluster unchanged.
-func precombineHebrewForITerm2(runes []rune) (string, bool) {
-	if len(runes) < 2 {
-		return "", false
-	}
-	base := runes[0]
-	if base < 0x05D0 || base > 0x05EA {
-		return "", false // not a Hebrew base letter
-	}
-	var hasDagesh, hasShinDot, hasSinDot, hasRafe, hasHolamHaser bool
-	vowels := make([]rune, 0, len(runes)-1)
-	for _, m := range runes[1:] {
-		switch {
-		case m == 0x05BC: // dagesh / mapiq
-			hasDagesh = true
-		case m == 0x05C1: // shin dot
-			hasShinDot = true
-		case m == 0x05C2: // sin dot
-			hasSinDot = true
-		case m == 0x05BF: // rafe
-			hasRafe = true
-		case m == 0x05BA && base == 0x05D5: // holam haser, only meaningful on vav
-			hasHolamHaser = true
-		default:
-			vowels = append(vowels, m) // a real vowel/accent — rides on top
-		}
-	}
-	if !hasDagesh && !hasShinDot && !hasSinDot && !hasRafe && !hasHolamHaser {
-		return "", false
-	}
-
-	pre := base // fall back to the bare letter, which drops an un-formable point
-	switch {
-	case base == 0x05E9 && hasDagesh && hasShinDot:
-		pre = 0xFB2C // shin with dagesh and shin dot
-	case base == 0x05E9 && hasDagesh && hasSinDot:
-		pre = 0xFB2D // shin with dagesh and sin dot
-	case base == 0x05E9 && hasShinDot:
-		pre = 0xFB2A // shin with shin dot
-	case base == 0x05E9 && hasSinDot:
-		pre = 0xFB2B // shin with sin dot
-	case hasHolamHaser:
-		pre = 0xFB4B // vav with holam — the drawable glyph for holam-haser-for-vav
-	case hasDagesh:
-		if f, ok := hebrewDageshForm[base]; ok {
-			pre = f
-		} // else: no form — drop the dagesh (pre stays the bare letter)
-	case hasRafe:
-		if f, ok := hebrewRafeForm[base]; ok {
-			pre = f
-		} // else: drop the rafe
-	}
-
-	var sb strings.Builder
-	sb.WriteRune(pre)
-	for _, v := range vowels {
-		sb.WriteRune(v)
-	}
-	return sb.String(), true
+	return "", false
 }
 
 func cellsEqual(a, b bbCell) bool {

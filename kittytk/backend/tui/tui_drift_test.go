@@ -90,11 +90,12 @@ func TestTUIDriftNeighbourChangeReemitsTheCarrier(t *testing.T) {
 	}
 }
 
-// The shin dot, sin dot, and dagesh/mappiq already sit correctly in the base
-// model, so they do NOT drift — they stay on their own column, keeping their
-// base's non-drifting marks while any RTL vowel still drifts in from the right.
-// An LTR mark of another script never drifts either.
-func TestTUIDriftKeepsDotsDageshAndLTR(t *testing.T) {
+// The shin dot, sin dot, and dagesh/mappiq do NOT drift, but under drift they
+// are folded into the base's presentation form rather than left free-standing —
+// a drift terminal misplaces a loose point just as it does a vowel. The folded
+// base still steals any RTL vowel from the cell to its right. An LTR mark of
+// another script has no presentation form, so it neither folds nor drifts.
+func TestTUIDriftComposesDotsDageshKeepsLTR(t *testing.T) {
 	core.SetRtlMarkMode("drift")
 	defer core.SetRtlMarkMode("")
 	draw := func(s string) string {
@@ -105,26 +106,28 @@ func TestTUIDriftKeepsDotsDageshAndLTR(t *testing.T) {
 		return out.String()
 	}
 
-	const shin, shinDot = 'ש', 'ׁ' // U+05E9, U+05C1
-	const dalet, dagesh = 'ד', 'ּ'  // U+05D3, U+05BC
-	const bet, sheva = 'ב', 'ְ'     // U+05D1, U+05B0
-	const acute = '́'               // U+0301, LTR/other-script mark
+	const shin, shinDot = 'ש', 'ׁ'      // U+05E9, U+05C1
+	const shinWithDot = rune(0xFB2A)    // shin folded with its shin dot
+	const dalet, dagesh = 'ד', 'ּ'       // U+05D3, U+05BC
+	const daletWithDagesh = rune(0xFB33) // dalet folded with its dagesh
+	const bet, sheva = 'ב', 'ְ'          // U+05D1, U+05B0
+	const acute = '́'                    // U+0301, LTR/other-script mark
 
-	// shin keeps its dot on its own base, and still steals bet's sheva.
+	// shin folds its dot into FB2A, then still steals bet's sheva.
 	got := draw(string(shin) + string(shinDot) + string(bet) + string(sheva))
-	if !strings.Contains(got, string(shin)+string(shinDot)) {
-		t.Fatalf("shin dot must stay on its own base, got %q", got)
+	if strings.ContainsRune(got, shinDot) {
+		t.Fatalf("shin dot must be folded away, not free-standing, got %q", got)
 	}
-	if !strings.Contains(got, string(shin)+string(shinDot)+string(sheva)) {
-		t.Fatalf("shin should keep its dot and steal bet's sheva, got %q", got)
-	}
-
-	// dagesh/mappiq stays too.
-	if got := draw(string(dalet) + string(dagesh) + string(bet) + string(sheva)); !strings.Contains(got, string(dalet)+string(dagesh)) {
-		t.Fatalf("dagesh must stay on its own base, got %q", got)
+	if !strings.Contains(got, string(shinWithDot)+string(sheva)) {
+		t.Fatalf("shin should fold its dot and steal bet's sheva, got %q", got)
 	}
 
-	// an LTR combining mark on an RTL base does not drift.
+	// dagesh/mappiq folds into the letter's presentation form too.
+	if got := draw(string(dalet) + string(dagesh) + string(bet) + string(sheva)); !strings.Contains(got, string(daletWithDagesh)) || strings.ContainsRune(got, dagesh) {
+		t.Fatalf("dagesh must fold into FB33, not stay free-standing, got %q", got)
+	}
+
+	// an LTR combining mark on an RTL base has no fold and does not drift.
 	if got := draw(string(shin) + string(acute) + string(bet) + string(sheva)); !strings.Contains(got, string(shin)+string(acute)) {
 		t.Fatalf("LTR mark must stay on its own base, got %q", got)
 	}

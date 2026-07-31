@@ -48,7 +48,7 @@ func TestPrecombineHebrewForITerm2(t *testing.T) {
 		{"latin base", []rune{'a', dagesh}, "", false},
 	}
 	for _, c := range cases {
-		got, ok := precombineHebrewForITerm2(c.runes)
+		got, ok := precomposeCell(bbCell{runes: c.runes})
 		if ok != c.ok || (ok && got != c.want) {
 			t.Errorf("%s: got (%q,%v), want (%q,%v)", c.name, got, ok, c.want, c.ok)
 		}

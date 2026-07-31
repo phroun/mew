@@ -12,6 +12,7 @@ import (
 
 	"github.com/phroun/direct-key-handler/keyboard"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hebrew"
 	"github.com/phroun/kittytk/style"
 	"github.com/phroun/purfecterm"
 	"golang.org/x/term"
@@ -505,8 +506,9 @@ func (t *TUIBackend) EndFrame() {
 						sb.WriteString(code)
 						penStyle = code
 					}
-					sb.WriteRune(c.Char)
-					sb.WriteString(t.driftCombining(y, x, c))
+					base, comb := t.driftEmit(y, x, c)
+					sb.WriteRune(base)
+					sb.WriteString(comb)
 				}
 				t.frontLineAttr[y] = mode
 				termX, termY = -1, -1 // cursor position on a DEC line: treat as unknown
@@ -554,12 +556,13 @@ func (t *TUIBackend) EndFrame() {
 				}
 			}
 
-			// The marks emitted with this base are driftCombining's — the cell's
-			// own under normal mode, the RIGHT neighbour's under drift. Fold them
-			// into the cell we diff and store, so the comparison reflects exactly
-			// what renders: a neighbour whose marks change makes THIS cell differ
-			// and re-emit on its own, with no cascade.
-			effectiveCell.Combining = t.driftCombining(y, x, effectiveCell)
+			// The base and marks emitted here are driftEmit's — the cell's own
+			// under normal mode; under drift, the base with its points folded in
+			// and the RIGHT neighbour's drifting marks appended. Fold them into
+			// the cell we diff and store, so the comparison reflects exactly what
+			// renders: a neighbour whose marks change makes THIS cell differ and
+			// re-emit on its own, with no cascade.
+			effectiveCell.Char, effectiveCell.Combining = t.driftEmit(y, x, effectiveCell)
 
 			if !lineCleared && effectiveCell == t.frontBuffer[y][x] {
 				x++
@@ -761,32 +764,44 @@ func (t *TUIBackend) DrawText(x, y core.Unit, text string, s style.CellStyle, fo
 	return t.metrics.TextWidth(col - startCol)
 }
 
-// driftCombining returns the combining marks to emit AFTER the base of the cell
-// at (x, y) — normally the cell's own marks.
+// driftEmit returns the base rune and the combining marks to emit for the cell
+// at (x, y) — normally the cell's own char and marks unchanged.
 //
 // Under rtlMarkMode "drift" (experimental) an RTL cell's DRIFTING marks are
 // carried by the cell to its LEFT: it keeps its own non-drifting marks and, from
 // the cell to its RIGHT, steals that cell's drifting marks, all emitted after
-// its own base. A few terminals (current Ghostty among them) place an RTL
-// combining sequence this way; drift reproduces it for them.
+// its own base. A few terminals (current Ghostty and Alacritty among them) place
+// an RTL combining sequence this way; drift reproduces it for them.
 //
-// Only RTL combining marks drift — an LTR mark of some other script rides its
-// own base as usual. The shin dot, sin dot, and dagesh/mappiq are excluded too:
-// they already sit correctly in the base model, so they stay on their own
-// column. The reorder is emit-only, so the stored cell is unchanged.
-func (t *TUIBackend) driftCombining(y, x int, cell Cell) string {
+// The cell's own non-drifting POINTS (shin dot, sin dot, dagesh/mappiq, rafe,
+// holam-haser) are folded into the base's Alphabetic-Presentation-Form glyph
+// rather than emitted free-standing: a drift terminal misplaces a free-standing
+// point exactly as it does a vowel, and the presence of a drifting vowel drags
+// the point off with it. Baking the point into the base leaves nothing loose for
+// the terminal to move. Only RTL vowels/accents drift then; an LTR mark of some
+// other script rides its own base as usual. The transform is emit-only, so the
+// stored cell is unchanged.
+func (t *TUIBackend) driftEmit(y, x int, cell Cell) (rune, string) {
 	if core.RtlMarkMode() != "drift" || !isRTLBase(cell.Char) {
-		return cell.Combining // normal: the cell's own marks
+		return cell.Char, cell.Combining // normal: the cell's own char and marks
 	}
-	var b strings.Builder
-	// This base keeps every mark that does not drift (its dot/dagesh, any LTR
-	// mark), in their original order.
+	// This base keeps every mark that does not drift (its point, any LTR mark);
+	// fold the points into a presentation form so none is left free-standing.
+	own := []rune{cell.Char}
 	for _, r := range cell.Combining {
 		if !driftsLeft(r) {
-			b.WriteRune(r)
+			own = append(own, r)
 		}
 	}
-	// …then steals the drifting marks of the cell to its right.
+	base := cell.Char
+	var b strings.Builder
+	if folded, ok := hebrew.PrecomposeCluster(own); ok {
+		base = folded[0]
+		b.WriteString(string(folded[1:])) // non-folding non-drifting marks (LTR)
+	} else {
+		b.WriteString(string(own[1:])) // nothing folds: keep the marks as-is
+	}
+	// …then steal the drifting marks of the cell to its right.
 	if x+1 < t.cols {
 		if right := t.backBuffer[y][x+1]; isRTLBase(right.Char) {
 			for _, r := range right.Combining {
@@ -796,7 +811,7 @@ func (t *TUIBackend) driftCombining(y, x int, cell Cell) string {
 			}
 		}
 	}
-	return b.String()
+	return base, b.String()
 }
 
 // driftsLeft reports whether a combining mark moves one cell left under drift:
