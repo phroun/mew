@@ -1239,12 +1239,17 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// (see the selectionFlip colors). Mark-free lines (English; Arabic,
 	// which mew pre-shapes to single presentation forms) keep the real bar.
 	selName, selInvName := "selection", "selectionInvisibles"
-	// The ride-safe selection is only needed when the marks are actually
+	// The ride-safe selection is only needed when a zero-width mark is actually
 	// EMITTED: with rtlCombining off they are suppressed below, so the line
 	// carries codepoints == cells and the real bar works. (An LTR combining
 	// mark under flip is a rarer case that keeps the bar here; rtlCombining
-	// targets RTL scripts, whose marks are the ones this line strips.)
-	if sr.frame.flipBidi && !w.ViewState.SuppressRTLCombining && lineHasZeroWidth(line) {
+	// targets RTL scripts, whose marks are the ones this line strips.) In a
+	// folding rtlMarkMode a point folds into its base's presentation form, so a
+	// line of pointed consonants (shin+dot, bet+dagesh) also ends codepoints ==
+	// cells and keeps the real bar — only marks that survive the fold (vowels,
+	// accents) force the ride-safe fill.
+	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
+	if sr.frame.flipBidi && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
 		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
 	}
 	selectionColor := sr.col(w, selName)
@@ -2891,9 +2896,53 @@ func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *vie
 // cells) are excluded. s is plain display text (no ANSI).
 func lineHasZeroWidth(s string) bool {
 	for _, r := range s {
-		if r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0 {
+		if isZeroWidthMark(r) {
 			return true
 		}
+	}
+	return false
+}
+
+// isZeroWidthMark reports whether r renders in zero cells (a combining mark):
+// the unit that inflates codepoint count past cell count. Control characters
+// (rendered as ^X, two cells) are excluded.
+func isZeroWidthMark(r rune) bool {
+	return r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0
+}
+
+// lineHasZeroWidthAfterFold reports whether s still carries a zero-width mark
+// once a folding rtlMarkMode has folded each Hebrew cluster into its
+// presentation form. A point that folds into (or is dropped from) its base no
+// longer inflates the codepoint count, so a line of pointed consonants keeps the
+// real selection bar; only marks that survive the fold — vowels, accents,
+// un-formable points — force the ride-safe fill. With folding off it is exactly
+// lineHasZeroWidth.
+func lineHasZeroWidthAfterFold(s string, folding bool) bool {
+	if !folding {
+		return lineHasZeroWidth(s)
+	}
+	runes := []rune(s)
+	for i := 0; i < len(runes); {
+		base := runes[i]
+		// A leading zero-width mark with no base of its own still counts.
+		if isZeroWidthMark(base) {
+			return true
+		}
+		// Gather the zero-width marks riding this base into one cluster.
+		j := i + 1
+		for j < len(runes) && isZeroWidthMark(runes[j]) {
+			j++
+		}
+		folded, ok := hebrew.PrecomposeCluster(runes[i:j])
+		if !ok {
+			folded = runes[i:j] // nothing folds: the cluster stands as written
+		}
+		for _, fr := range folded[1:] { // marks that survive after the base
+			if isZeroWidthMark(fr) {
+				return true
+			}
+		}
+		i = j
 	}
 	return false
 }
