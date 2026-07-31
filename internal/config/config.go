@@ -2436,7 +2436,8 @@ flipBidiForHost=auto
 
 # rtlMarkMode: how RTL combining marks are emitted. "auto" (default) picks a mode
 # from the detected terminal (iTerm2 -> iterm2, Alacritty -> drift, Apple
-# Terminal -> compose, else normal). "normal" is the usual base-then-mark order.
+# Terminal and Kitty -> compose, else normal). "normal" is the usual
+# base-then-mark order.
 # "iterm2"/"compose" fold a dagesh/mapiq, shin/sin dot, rafe or holam-haser into
 # their base via the Alphabetic Presentation Forms so the terminal does not drift
 # them. "drift" (KittyTK-TUI host) makes each RTL cell carry the marks of the cell

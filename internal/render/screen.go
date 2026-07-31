@@ -1278,7 +1278,15 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// cells and keeps the real bar — only marks that survive the fold (vowels,
 	// accents) force the ride-safe fill.
 	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
-	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
+	rideSafeLine := lineHasZeroWidthAfterFold(line, folding)
+	if sr.frame.flipWordwise {
+		// A word-wise host (Kitty) miscounts the selection fill across its
+		// per-word reversal for EVERY reversed RTL run, not only marked lines:
+		// a partial selection mirrors within the word. So any line carrying RTL
+		// needs the ride-safe selection there, not just the pointed ones.
+		rideSafeLine = rideSafeLine || lineHasStrongRTL(line)
+	}
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && rideSafeLine {
 		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
 	}
 	selectionColor := sr.col(w, selName)
@@ -2937,6 +2945,18 @@ func lineHasZeroWidth(s string) bool {
 // (rendered as ^X, two cells) are excluded.
 func isZeroWidthMark(r rune) bool {
 	return r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0
+}
+
+// lineHasStrongRTL reports whether s contains a strong right-to-left rune — the
+// content a flip host reverses, and whose background selection fill a word-wise
+// host (Kitty) miscounts across that reversal.
+func lineHasStrongRTL(s string) bool {
+	for _, r := range s {
+		if bidi.IsStrongRTL(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // lineHasZeroWidthAfterFold reports whether s still carries a zero-width mark

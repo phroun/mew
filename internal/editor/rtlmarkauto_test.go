@@ -13,7 +13,7 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 		hostterm.TerminalITerm2:        "iterm2",
 		hostterm.TerminalAlacritty:     "drift",
 		hostterm.TerminalGhostty:       "normal", // quirks TBD
-		hostterm.TerminalKitty:         "normal", // quirks TBD
+		hostterm.TerminalKitty:         "compose",
 		hostterm.TerminalAppleTerminal: "compose",
 		hostterm.TerminalCoolRetroTerm: "normal",
 		hostterm.TerminalPurfecterm:    "normal",
@@ -38,7 +38,7 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 func TestFlipBidiForHostResolve(t *testing.T) {
 	cases := map[hostterm.Kind]hostBidiProfile{
 		hostterm.TerminalAppleTerminal: {flip: true, wordwise: false, rideSafe: true, known: true},
-		hostterm.TerminalKitty:         {flip: true, wordwise: true, rideSafe: false, known: true},
+		hostterm.TerminalKitty:         {flip: true, wordwise: true, rideSafe: true, known: true},
 		hostterm.TerminalITerm2:        {known: true},
 		hostterm.TerminalAlacritty:     {known: true},
 		hostterm.TerminalGhostty:       {known: true},
