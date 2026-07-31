@@ -39,9 +39,12 @@ func (e *Editor) maybeSendBidiProbe() {
 	if e.bidiProbeState != bidiProbeIdle || e.Config.FlipBidiForHost != "auto" {
 		return
 	}
-	// Sniffing already settles a host known to apply its own bidi (Apple
-	// Terminal): the flip is on from startup and no probe is needed.
-	if flipBidiForTerminal(hostterm.Detect()) {
+	// Sniffing already settles a recognised host — Apple Terminal flips, the
+	// stream-order terminals (iTerm2, Alacritty, Ghostty, Kitty) do not — so its
+	// flip value is set from startup and no probe is needed. Probing them risks
+	// a false positive: Kitty in particular does no bidi but answers the cursor
+	// query in a way that reads as "applies bidi", which would wrongly flip it.
+	if _, known := hostFlipDecision(hostterm.Detect()); known {
 		e.bidiProbeState = bidiProbeDone
 		return
 	}

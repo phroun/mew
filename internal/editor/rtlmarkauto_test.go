@@ -32,18 +32,22 @@ func TestRtlMarkModeForTerminal(t *testing.T) {
 }
 
 // flipBidiForHost="auto" flips only for a sniffed bidi host (Apple Terminal);
-// explicit true/false pass through.
+// the stream-order terminals are known to NOT flip (and skip the probe), and an
+// unrecognised host is left to the probe. Explicit true/false pass through.
 func TestFlipBidiForHostResolve(t *testing.T) {
-	flip := map[hostterm.Kind]bool{
-		hostterm.TerminalAppleTerminal: true,
-		hostterm.TerminalITerm2:        false,
-		hostterm.TerminalAlacritty:     false,
-		hostterm.TerminalGhostty:       false,
-		hostterm.TerminalUnknown:       false,
+	cases := map[hostterm.Kind]struct{ flip, known bool }{
+		hostterm.TerminalAppleTerminal: {true, true},
+		hostterm.TerminalITerm2:        {false, true},
+		hostterm.TerminalAlacritty:     {false, true},
+		hostterm.TerminalGhostty:       {false, true},
+		hostterm.TerminalKitty:         {false, true},
+		hostterm.TerminalUnknown:       {false, false},
+		hostterm.TerminalPurfecterm:    {false, false},
 	}
-	for k, w := range flip {
-		if got := flipBidiForTerminal(k); got != w {
-			t.Errorf("flipBidiForTerminal(%s) = %v, want %v", k, got, w)
+	for k, w := range cases {
+		flip, known := hostFlipDecision(k)
+		if flip != w.flip || known != w.known {
+			t.Errorf("hostFlipDecision(%s) = (%v,%v), want (%v,%v)", k, flip, known, w.flip, w.known)
 		}
 	}
 	if !resolveFlipBidiForHost("true") {

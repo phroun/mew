@@ -3554,17 +3554,29 @@ func resolveFlipBidiForHost(mode string) bool {
 	case "true":
 		return true
 	case "auto":
-		return flipBidiForTerminal(hostterm.Detect())
+		flip, _ := hostFlipDecision(hostterm.Detect())
+		return flip
 	}
 	return false
 }
 
-// flipBidiForTerminal reports whether a detected host terminal is known to apply
-// its own bidi reordering, so flipBidiForHost="auto" should flip RTL emission
-// for it. Apple Terminal reorders the glyphs it displays; other sniffed
-// terminals do not, and unknown terminals fall to the runtime probe.
-func flipBidiForTerminal(k hostterm.Kind) bool {
-	return k == hostterm.TerminalAppleTerminal
+// hostFlipDecision reports the flipBidiForHost value sniffing knows for a host,
+// and whether it knows at all. Apple Terminal applies its own bidi reordering,
+// so mew emits RTL runs in logical order (flip ON) and the terminal lays them
+// out. The stream-order terminals we target (iTerm2, Alacritty, Ghostty, Kitty)
+// do NOT reorder — they render mew's already-visual output verbatim — so the
+// flip must stay OFF; emitting logical order there leaves each run reversed
+// within itself (Kitty, which does no bidi at all, shows exactly this). A host
+// sniffing does not recognise (known=false) falls to the runtime DSR probe.
+func hostFlipDecision(k hostterm.Kind) (flip, known bool) {
+	switch k {
+	case hostterm.TerminalAppleTerminal:
+		return true, true
+	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty,
+		hostterm.TerminalGhostty, hostterm.TerminalKitty:
+		return false, true
+	}
+	return false, false
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -3937,8 +3949,9 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if v == "auto" {
 			// Apply the sniffed default now; re-arm the probe only when sniffing
 			// is inconclusive (an unknown host).
-			e.Renderer.SetFlipBidiForHost(resolveFlipBidiForHost(v))
-			if flipBidiForTerminal(hostterm.Detect()) {
+			flip, known := hostFlipDecision(hostterm.Detect())
+			e.Renderer.SetFlipBidiForHost(flip)
+			if known {
 				e.bidiProbeState = bidiProbeDone // sniffing settled it
 			} else {
 				e.bidiProbeState = bidiProbeIdle // re-arm detection
