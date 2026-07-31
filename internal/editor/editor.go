@@ -8484,10 +8484,12 @@ func (e *Editor) expireStaleNotifications() {
 // priority scan.
 const niqqudNudgeTag = "kitty_force_ltr_nudge"
 
-// niqqudNudgeMessage recommends the Kitty config that renders RTL niqqud
-// flawlessly. It sits pinned at the very bottom (just below the modebar) while a
+// niqqudNudgeMessage names the one Kitty config change that fixes RTL vowel
+// corruption. It sits pinned at the very bottom (just below the modebar) while a
 // Hebrew cluster with unfolded niqqud is on screen and mew is flipping for Kitty.
-const niqqudNudgeMessage = "Kitty is reordering RTL text and may drop niqqud — set  force_ltr yes  in kitty.conf (or run mew --flipbidiforhost false) for flawless Hebrew/Arabic."
+// (Turning mew's own flip off instead would only scramble the letter order —
+// force_ltr is the real fix, so the message points at that alone.)
+const niqqudNudgeMessage = "* kitty terminal needs force_ltr = yes to eliminate RTL vowel corruption.  Please fix and restart mew."
 
 // niqqudLayoutSig captures the layout facts that are independent of the nudge's
 // own one-row footprint, so the hysteresis latch (updateNiqqudNudge) releases
