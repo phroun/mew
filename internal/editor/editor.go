@@ -5138,6 +5138,7 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 	if runePos < 0 {
 		runePos = 0
 	}
+	startPos := runePos
 	for runePos < len(runes) && e.slotWidth(layout, runes, runePos, cols[runePos], tabSize) == 0 {
 		runePos++
 	}
@@ -5158,6 +5159,17 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 			return cols[last] + e.slotWidth(layout, runes, last, cols[last], tabSize)
 		}
 		return total
+	}
+	// When the caret advanced ACROSS a cluster (it skipped that cluster's marks)
+	// whose base is RTL, it followed the cluster to its reading-trailing edge,
+	// which in an RTL run is one cell LEFT of the base. Return that directly. For
+	// an RTL rune following the cluster this equals its column, but where a
+	// left-to-right run follows, that run's column is bidi-teleported to the far
+	// end of the line — the caret must stay by the cluster, not jump there.
+	if runePos > startPos {
+		if base := clusterBase(startPos); layout.RTL[base] {
+			return cols[base] - 1
+		}
 	}
 	// The caret covers the cell of the rune it precedes — in either base
 	// direction, for both LTR and RTL runes. A block cursor sits ON that
