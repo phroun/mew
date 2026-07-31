@@ -204,7 +204,10 @@ func (pm *PromptManager) createPromptViewport(prompt, initialContent string, cur
 	bottomViewports := wm.GetViewportsByDock(viewport.DockBottom)
 	highestPriority := 0
 	for _, w := range bottomViewports {
-		if w.Class == "modebar" {
+		// The modebar and the force_ltr nudge both pin themselves to the bottom
+		// with a fixed high priority; a prompt stacks ABOVE them, so neither
+		// should raise the bar the prompt outbids.
+		if w.Class == "modebar" || w.Tag == niqqudNudgeTag {
 			continue
 		}
 		if w.Priority > highestPriority {

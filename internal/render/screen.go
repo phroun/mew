@@ -420,6 +420,17 @@ func (sr *ScreenRenderer) SawRTLContent() bool {
 	return sr.frame.sawRTL
 }
 
+// FrameHasUncomposedNiqqud reports whether the last presented frame contains a
+// Hebrew cluster whose combining marks survive the active rtlMarkMode fold — the
+// content a word-wise-flipping host (Kitty with force_ltr off) may mis-render.
+// Condition-driven, not latched like SawRTLContent: it reflects the current
+// frame only, so the editor's force_ltr nudge comes down when the content does.
+func (sr *ScreenRenderer) FrameHasUncomposedNiqqud() bool {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	return sr.frame.frameHasUncomposedNiqqud()
+}
+
 // EmitProbe writes a control/probe sequence directly to the terminal,
 // bypassing the back buffer, and invalidates the given screen row (1-based) so
 // any glyphs the probe painted there are repainted on the next frame. Used by

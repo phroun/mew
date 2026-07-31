@@ -832,6 +832,44 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 	}
 }
 
+// isHebrewCombiningMark reports whether r is a Hebrew combining point or
+// cantillation mark (block 0591–05C7, all nonspacing). These are the marks a
+// host must render as real zero-width combining glyphs — the ones a word-wise
+// bidi host (Kitty with force_ltr off) can drop — as opposed to a mark folded
+// into a single presentation-form glyph.
+func isHebrewCombiningMark(r rune) bool {
+	return r >= 0x0591 && r <= 0x05C7 && unicode.Is(unicode.Mn, r)
+}
+
+// frameHasUncomposedNiqqud reports whether the CURRENT frame (b.cur) holds any
+// cluster that, AFTER the active rtlMarkMode fold, still carries a Hebrew
+// combining mark. Those clusters are exactly what a word-wise-flipping host can
+// mis-render, so the editor uses this to raise a one-line config nudge only
+// while such content is actually on screen. Unlike sawRTL it does not latch: it
+// scans the live frame, so the signal clears the moment the content scrolls off.
+func (b *backBuffer) frameHasUncomposedNiqqud() bool {
+	folds := modeFoldsMarks(b.rtlMarkMode)
+	for y := 0; y < b.h; y++ {
+		for x := 0; x < b.w; x++ {
+			runes := b.cur[y][x].runes
+			if len(runes) < 2 {
+				continue
+			}
+			if folds {
+				if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+					runes = folded
+				}
+			}
+			for _, r := range runes[1:] {
+				if isHebrewCombiningMark(r) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // isCornerCut reports the bottom-right cell, which is never written to avoid
 // terminals scrolling when the last column of the last row is filled.
 func (b *backBuffer) isCornerCut(y, x int) bool {

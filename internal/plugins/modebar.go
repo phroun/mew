@@ -145,11 +145,12 @@ func (s *ModebarPlugin) renderNav(col func(string) string, fillColor string, ctx
 	return b.String()
 }
 
-// modebarBottomPriority keeps a bottom-located modebar on the very last
+// ModebarBottomPriority keeps a bottom-located modebar on the very last
 // screen line: the bottom dock renders its highest-priority viewport at the
 // screen bottom, and prompt priorities (which exclude the modebar from
-// their scan) never climb anywhere near this.
-const modebarBottomPriority = 1 << 20
+// their scan) never climb anywhere near this. Exported so other bottom-dock
+// furniture (e.g. the force_ltr nudge) can pin itself just below the modebar.
+const ModebarBottomPriority = 1 << 20
 
 // NewModebar creates a new modebar plugin.
 func NewModebar(wm *viewport.Manager) *ModebarPlugin {
@@ -236,7 +237,7 @@ func (s *ModebarPlugin) SetLocation(location string) {
 // takes the fixed always-last-line priority.
 func (s *ModebarPlugin) dockAndPriority() (viewport.DockPosition, int) {
 	if s.location == "bottom" {
-		return viewport.DockBottom, modebarBottomPriority
+		return viewport.DockBottom, ModebarBottomPriority
 	}
 	highestPriority := 0
 	for _, w := range s.viewportManager.GetViewportsByDock(viewport.DockTop) {
