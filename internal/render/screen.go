@@ -253,6 +253,14 @@ func NewScreenRenderer(wm *viewport.Manager, lm *viewport.LayoutManager) *Screen
 		watchNativeResize: true,
 	}
 
+	// Diagnostic: MEW_EMIT_LOG tees RTL writes on the default stdout path too
+	// (mew-plain never calls SetTerminal). See rtlEmitLog. Inert unless set.
+	if p := os.Getenv("MEW_EMIT_LOG"); p != "" {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			sr.out = &rtlEmitLog{inner: sr.out, f: f}
+		}
+	}
+
 	// Get initial terminal size
 	sr.updateSize()
 
