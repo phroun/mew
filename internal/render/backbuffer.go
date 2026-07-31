@@ -950,23 +950,25 @@ func precombineHebrewForITerm2(runes []rune) (string, bool) {
 	if base < 0x05D0 || base > 0x05EA {
 		return "", false // not a Hebrew base letter
 	}
-	var hasDagesh, hasShinDot, hasSinDot, hasRafe bool
+	var hasDagesh, hasShinDot, hasSinDot, hasRafe, hasHolamHaser bool
 	vowels := make([]rune, 0, len(runes)-1)
 	for _, m := range runes[1:] {
-		switch m {
-		case 0x05BC: // dagesh / mapiq
+		switch {
+		case m == 0x05BC: // dagesh / mapiq
 			hasDagesh = true
-		case 0x05C1: // shin dot
+		case m == 0x05C1: // shin dot
 			hasShinDot = true
-		case 0x05C2: // sin dot
+		case m == 0x05C2: // sin dot
 			hasSinDot = true
-		case 0x05BF: // rafe
+		case m == 0x05BF: // rafe
 			hasRafe = true
+		case m == 0x05BA && base == 0x05D5: // holam haser, only meaningful on vav
+			hasHolamHaser = true
 		default:
 			vowels = append(vowels, m) // a real vowel/accent — rides on top
 		}
 	}
-	if !hasDagesh && !hasShinDot && !hasSinDot && !hasRafe {
+	if !hasDagesh && !hasShinDot && !hasSinDot && !hasRafe && !hasHolamHaser {
 		return "", false
 	}
 
@@ -980,6 +982,8 @@ func precombineHebrewForITerm2(runes []rune) (string, bool) {
 		pre = 0xFB2A // shin with shin dot
 	case base == 0x05E9 && hasSinDot:
 		pre = 0xFB2B // shin with sin dot
+	case hasHolamHaser:
+		pre = 0xFB4B // vav with holam — the drawable glyph for holam-haser-for-vav
 	case hasDagesh:
 		if f, ok := hebrewDageshForm[base]; ok {
 			pre = f

@@ -17,7 +17,7 @@ func TestPrecombineHebrewForITerm2(t *testing.T) {
 	const (
 		bet, shin, alef, he, vav, het = 0x05D1, 0x05E9, 0x05D0, 0x05D4, 0x05D5, 0x05D7
 		dagesh, shinDot, sinDot, rafe = 0x05BC, 0x05C1, 0x05C2, 0x05BF
-		qamats                        = 0x05B8
+		qamats, holamHaser            = 0x05B8, 0x05BA
 	)
 	cases := []struct {
 		name  string
@@ -36,6 +36,9 @@ func TestPrecombineHebrewForITerm2(t *testing.T) {
 		{"he+mapiq", []rune{he, dagesh}, s(0xFB34), true},
 		{"vav+dagesh(shuruk)", []rune{vav, dagesh}, s(0xFB35), true},
 		{"bet+rafe", []rune{bet, rafe}, s(0xFB4C), true},
+		{"vav+holam-haser", []rune{vav, holamHaser}, s(0xFB4B), true},
+		// holam haser is only meaningful on vav; elsewhere it rides as a vowel.
+		{"bet+holam-haser stays vowel", []rune{bet, holamHaser}, "", false},
 		// no presentation form for het+dagesh -> dagesh dropped, bare letter kept.
 		{"het+dagesh omits", []rune{het, dagesh}, s(het), true},
 		{"het+dagesh+qamats keeps vowel", []rune{het, dagesh, qamats}, s(het, qamats), true},
