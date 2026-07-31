@@ -623,6 +623,17 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 		return mapDisp(e.runeAtVisualColumn(w, dispLine, vt))
 	}
 	idx := resolve(target)
+	// subX is the pointer's sub-cell fraction (permille, -1 = none). On a DOUBLED
+	// row each cell spans two physical columns, but a pixel report's fraction is
+	// within ONE physical column, so fold the clicked column's parity in to
+	// recover the fraction across the whole double-width cell — otherwise both
+	// halves of the cell would read as a full 0..1 sweep and the split point
+	// would be unpredictable. (x is the physical column: (x+1)%2 is 0 for a
+	// cell's left column, 1 for its right; physicalToCell pairs them.)
+	subX := e.mouseSubX
+	if dw && subX >= 0 {
+		subX = (((x+1)%2)*1000 + subX) / 2
+	}
 	// caretRune is where a CARET should land: the containing rune normally, but
 	// the NEAREST reading edge of the clicked character for an insert-mode click.
 	// The decision is made across the character's FULL visual span, not one cell:
@@ -639,7 +650,7 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	// shown under showBidi) resolves to a specific caret boundary that is
 	// direction- and half-aware — not a character to overwrite — so it runs
 	// ahead of, and instead of, the nearest-edge logic below.
-	if mc, ok := e.markerCaretAt(w, dispLine, target, e.mouseSubX); ok {
+	if mc, ok := e.markerCaretAt(w, dispLine, target, subX); ok {
 		return w, docLine, idx, mapDisp(mc), true
 	}
 	rr := []rune(raw)
@@ -660,10 +671,10 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 		// Only meaningful with a sub-cell half (pixel report) or a multi-cell
 		// span; a lone cell in cell-resolution mode keeps the classic
 		// before-the-character landing.
-		if e.mouseSubX >= 0 || wd > 1 {
+		if subX >= 0 || wd > 1 {
 			frac := 0.0
-			if e.mouseSubX >= 0 {
-				frac = float64(e.mouseSubX) / 1000
+			if subX >= 0 {
+				frac = float64(subX) / 1000
 			}
 			vf := (float64(target-c0) + frac) / float64(wd) // 0..1 across the glyph
 			rtl := e.winRTL(w)
