@@ -163,12 +163,21 @@ func prevMeaningful(runes []rune, i int) joinType {
 }
 
 func nextMeaningful(runes []rune, i int) joinType {
-	for j := i + 1; j < len(runes); j++ {
-		if t := joiningTypeOf(runes[j]); t != joinTransparent {
-			return t
-		}
+	if j := nextMeaningfulIdx(runes, i); j >= 0 {
+		return joiningTypeOf(runes[j])
 	}
 	return joinNone
+}
+
+// nextMeaningfulIdx returns the index of the nearest following non-transparent
+// rune (skipping combining marks), or -1 when there is none.
+func nextMeaningfulIdx(runes []rune, i int) int {
+	for j := i + 1; j < len(runes); j++ {
+		if joiningTypeOf(runes[j]) != joinTransparent {
+			return j
+		}
+	}
+	return -1
 }
 
 // Shape returns a copy of runes with each Arabic letter replaced by its
@@ -194,19 +203,25 @@ func Shape(runes []rune) []rune {
 			continue // the alef of a lam-alef pair, already handled
 		}
 
-		// Mandatory lam-alef ligature: a lam immediately followed by an alef
-		// variant becomes a single ligature glyph on the lam, with the alef
-		// absorbed into the same cell. Its form is final when the lam joins a
-		// preceding letter, isolated otherwise (the alef terminates joining).
-		if r == 0x0644 && i+1 < len(runes) && isAlefVariant(runes[i+1]) {
-			iso, fin := lamAlefLigature(runes[i+1])
-			if prevMeaningful(runes, i) == joinDual || prevMeaningful(runes, i) == joinCausing {
-				out[i] = fin
-			} else {
-				out[i] = iso
+		// Mandatory lam-alef ligature: a lam followed by an alef variant becomes
+		// a single ligature glyph on the lam, with the alef absorbed into the
+		// same cell. Its form is final when the lam joins a preceding letter,
+		// isolated otherwise (the alef terminates joining). The alef need not be
+		// the immediate next rune — a harakat on the lam (the common vocalized
+		// case, lam·fatha·alef) sits between them and is skipped in the join
+		// context, exactly as it is for every other shaping decision; the mark
+		// stays put and rides the ligature cell.
+		if r == 0x0644 {
+			if a := nextMeaningfulIdx(runes, i); a >= 0 && isAlefVariant(runes[a]) {
+				iso, fin := lamAlefLigature(runes[a])
+				if p := prevMeaningful(runes, i); p == joinDual || p == joinCausing {
+					out[i] = fin
+				} else {
+					out[i] = iso
+				}
+				out[a] = LigatureAbsorbed
+				continue
 			}
-			out[i+1] = LigatureAbsorbed
-			continue
 		}
 
 		f, ok := arabicForms[r]

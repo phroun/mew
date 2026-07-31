@@ -48,6 +48,25 @@ func TestShapeLamAlefLigature(t *testing.T) {
 	}
 }
 
+// Vocalized lam-alef: a harakat on the lam sits between the lam and the alef
+// (lam·fatha·alef, the common case in pointed text), and the ligature must
+// still form — the mark is transparent to the pairing and rides the ligature
+// cell. Regression for the ligature failing to form on vocalized Arabic, which
+// left the lam and alef as separate presentation forms that non-reshaping
+// terminals (Alacritty, iTerm2) drew unligated.
+func TestShapeVocalizedLamAlef(t *testing.T) {
+	// "سَلَام" = seen fatha lam fatha alef meem.
+	in := []rune{0x0633, 0x064E, 0x0644, 0x064E, 0x0627, 0x0645}
+	g := Shape(in)
+	want := []rune{0xFEB3, 0x064E, 0xFEFC, 0x064E, LigatureAbsorbed, 0xFEE1}
+	for i := range want {
+		if g[i] != want[i] {
+			t.Fatalf("rune %d: U+%04X, want U+%04X (lam-alef must ligate to FEFC through the fatha)",
+				i, g[i], want[i])
+		}
+	}
+}
+
 // "الله" is alef-lam-lam-heh — the alef precedes the lam (not lam-alef), so
 // no ligature: standalone alef, then a connected لله. (The calligraphic
 // Allah ligature is a font feature we do not synthesize.)
