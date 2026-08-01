@@ -64,6 +64,13 @@ func TestDefectiveMark(t *testing.T) {
 		{"acute with no base", 0, acute, true},
 		{"niqqud with no base", 0, niqqud, true},
 
+		// A DOTTED CIRCLE the user typed is a legitimate base — it is the Unicode
+		// character for carrying an isolated mark — so a mark on it is well-formed
+		// and composes onto that circle rather than a second substitute one.
+		{"niqqud on explicit dotted circle", MarkAnchor, niqqud, false},
+		{"hebrew accent on explicit dotted circle", MarkAnchor, hebAccnt, false},
+		{"nko tone on explicit dotted circle", MarkAnchor, nkoTone, false},
+
 		// Not a mark at all.
 		{"plain letter", 'a', 'b', false},
 		{"wide char", 'a', '日', false},

@@ -120,6 +120,13 @@ func DefectiveMark(prev, r rune) bool {
 	if prev == 0 {
 		return true // nothing to anchor onto
 	}
+	if prev == MarkAnchor {
+		// A DOTTED CIRCLE the user actually typed is a legitimate base — it is the
+		// Unicode character for carrying an isolated mark. So a mark on it is
+		// well-formed: it composes onto that circle (in the normal text colour),
+		// rather than being lifted onto a second, substitute-coloured circle.
+		return false
+	}
 	markScript := scriptOf(r)
 	if markScript == "" || markScript == "Inherited" || markScript == "Common" {
 		return false // general diacritic: attaches to any base

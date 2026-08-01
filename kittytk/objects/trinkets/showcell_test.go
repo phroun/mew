@@ -29,7 +29,7 @@ func TestShowYehCell(t *testing.T) {
 	f := &core.Font{Name: "ui-term", Size: pt}
 
 	// yeh cell: visual left = ك (logical next), visual right = ل (logical prev)
-	actx := arabicRenderContext('ي', 0xFEF4, 'ك', 'ل', true, true)
+	actx := arabicRenderContext('ي', 0xFEF4, 'ك', 'ل', true, true, nil)
 	t.Logf("window=%q  seg=[%d,%d) rt=[%d,%d) lt=[%d,%d)", actx.s, actx.seg0, actx.seg1, actx.rt0, actx.rt1, actx.lt0, actx.lt1)
 
 	sp := eng.ShapeRun(f, actx.s)

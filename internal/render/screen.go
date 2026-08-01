@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/phroun/kittytk/hebrew"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/textwidth"
@@ -252,6 +253,14 @@ func NewScreenRenderer(wm *viewport.Manager, lm *viewport.LayoutManager) *Screen
 		watchNativeResize: true,
 	}
 
+	// Diagnostic: MEW_EMIT_LOG tees RTL writes on the default stdout path too
+	// (mew-plain never calls SetTerminal). See rtlEmitLog. Inert unless set.
+	if p := os.Getenv("MEW_EMIT_LOG"); p != "" {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			sr.out = &rtlEmitLog{inner: sr.out, f: f}
+		}
+	}
+
 	// Get initial terminal size
 	sr.updateSize()
 
@@ -272,12 +281,41 @@ func realTerminalSize() (int, int, error) {
 func (sr *ScreenRenderer) SetTerminal(out io.Writer, sizeFn func() (int, int, error), watchNativeResize bool) {
 	if out != nil {
 		sr.out = out
+		// Diagnostic: MEW_EMIT_LOG=/path tees every write that carries RTL text
+		// to that file as a Go-quoted line, so the exact bytes mew sends to the
+		// terminal for a Hebrew/Arabic line can be inspected. Off unless set.
+		if p := os.Getenv("MEW_EMIT_LOG"); p != "" {
+			if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+				sr.out = &rtlEmitLog{inner: sr.out, f: f}
+			}
+		}
 	}
 	if sizeFn != nil {
 		sr.sizeFn = sizeFn
 	}
 	sr.watchNativeResize = watchNativeResize
 	sr.updateSize()
+}
+
+// rtlEmitLog tees writes that carry RTL text (any rune >= U+0590) to a debug
+// file as Go-quoted lines. Diagnostic only, enabled by MEW_EMIT_LOG.
+type rtlEmitLog struct {
+	inner io.Writer
+	f     *os.File
+}
+
+func (r *rtlEmitLog) Write(p []byte) (int, error) {
+	hasRTL := false
+	for _, c := range string(p) {
+		if c >= 0x0590 && c <= 0x08FF {
+			hasRTL = true
+			break
+		}
+	}
+	if hasRTL {
+		fmt.Fprintf(r.f, "%q\n", string(p))
+	}
+	return r.inner.Write(p)
 }
 
 // TriggerResize signals a terminal size change manually: the renderer
@@ -334,12 +372,72 @@ func (sr *ScreenRenderer) SetFlipBidiForHost(flip bool) {
 	}
 }
 
+// SetFlipWordwise selects the flip's run segmentation (see backBuffer.flipWordwise):
+// off treats a maximal RTL span as one run (Terminal.app), on reverses each
+// whitespace-separated RTL word in place (Kitty). Only takes effect under
+// flipBidiForHost. Forces a full repaint so the convention switches at once.
+func (sr *ScreenRenderer) SetFlipWordwise(wordwise bool) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.flipWordwise != wordwise {
+		sr.frame.flipWordwise = wordwise
+		sr.frame.forceRedraw()
+	}
+}
+
+// SetFlipRideSafeSelection marks a flip host whose background selection fill
+// drifts under its own bidi (Terminal.app), so pointed RTL lines use the
+// ride-safe foreground selection; off keeps the real bar (see
+// backBuffer.flipRideSafe). Forces a repaint so the selection style switches.
+func (sr *ScreenRenderer) SetFlipRideSafeSelection(rideSafe bool) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.flipRideSafe != rideSafe {
+		sr.frame.flipRideSafe = rideSafe
+		sr.frame.forceRedraw()
+	}
+}
+
+// SetRtlMarkMode selects how an isolated RTL combining mark anchored on a dotted
+// circle is emitted: "normal" (bare cluster) or "iterm2" (a zero-width base
+// leads the mark, working around iTerm2's wide dotted circle). An enum — more
+// modes are expected. Forces a full repaint so anchored marks already on screen
+// switch convention at once.
+func (sr *ScreenRenderer) SetRtlMarkMode(mode string) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	if sr.frame.rtlMarkMode != mode {
+		sr.frame.rtlMarkMode = mode
+		sr.frame.forceRedraw()
+	}
+}
+
 // SawRTLContent reports whether any presented frame has contained strong-RTL
 // text — the trigger point for the one-time flipBidiForHost=auto probe.
 func (sr *ScreenRenderer) SawRTLContent() bool {
 	sr.renderMu.Lock()
 	defer sr.renderMu.Unlock()
 	return sr.frame.sawRTL
+}
+
+// FrameHasUncomposedNiqqud reports whether the last presented frame contains a
+// Hebrew cluster whose combining marks survive the active rtlMarkMode fold — the
+// content a word-wise-flipping host (Kitty with force_ltr off) may mis-render.
+// Condition-driven, not latched like SawRTLContent: it reflects the current
+// frame only, so the editor's force_ltr nudge comes down when the content does.
+func (sr *ScreenRenderer) FrameHasUncomposedNiqqud() bool {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	return sr.frame.frameHasUncomposedNiqqud()
+}
+
+// EmitRaw writes a control sequence directly to the terminal, bypassing the
+// back buffer and dirtying nothing — for queries that paint no glyphs (the
+// ?1016 SGR-pixels handshake: DECRQM, CSI 16 t, the ?1016h enable).
+func (sr *ScreenRenderer) EmitRaw(seq string) {
+	sr.renderMu.Lock()
+	defer sr.renderMu.Unlock()
+	fmt.Fprint(sr.out, seq)
 }
 
 // EmitProbe writes a control/probe sequence directly to the terminal,
@@ -447,7 +545,7 @@ func (sr *ScreenRenderer) EnableGraphemeWidth() {
 // to the terminal's own default (DECSCUSR 0) so the shell that follows does not
 // inherit whichever mode's cursor mew happened to leave selected.
 func (sr *ScreenRenderer) Cleanup() {
-	fmt.Fprintf(sr.out, "\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[0 q\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
+	fmt.Fprintf(sr.out, "\x1b[?2048l\x1b[?1016l\x1b[?2027l\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[0 q\x1b[%d;%dH\x1b[?25h\x1b[0m", sr.Height, 1)
 }
 
 // ClearScreen forces a full clear-and-repaint on the next presented frame.
@@ -550,6 +648,8 @@ func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	saved := sr.frame
 	tmp := newBackBuffer(sr.Width, sr.Height)
 	tmp.flipBidi = saved.flipBidi
+	tmp.flipWordwise = saved.flipWordwise
+	tmp.flipRideSafe = saved.flipRideSafe
 	tmp.pendingClear = true
 	sr.frame = tmp
 	tmp.begin()
@@ -1216,20 +1316,26 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	}
 
 	textColor := sr.col(w, "text")
-	// Selection styling. Under flipBidiForHost a line carrying combining
-	// marks cannot use a background/reverse selection bar — the host
-	// terminal's bidi reorder miscounts the fill (codepoints vs cells) and
-	// the bar drifts and half-vanishes on pointed RTL. Foreground + bold
-	// ride each glyph intact, so those lines use the flip-safe selection
-	// (see the selectionFlip colors). Mark-free lines (English; Arabic,
-	// which mew pre-shapes to single presentation forms) keep the real bar.
+	// Selection styling. On a flip host whose bidi reorder miscounts a
+	// background/reverse selection fill (codepoints vs cells) — Terminal.app,
+	// flagged by flipRideSafe — a line carrying combining marks cannot use the
+	// real bar: it drifts and half-vanishes on pointed RTL. Foreground + bold
+	// ride each glyph intact, so those lines use the flip-safe selection (see
+	// the selectionFlip colors). Mark-free lines (English; Arabic, which mew
+	// pre-shapes to single presentation forms) keep the real bar, as do flip
+	// hosts whose fill tracks the glyphs (Kitty).
 	selName, selInvName := "selection", "selectionInvisibles"
-	// The ride-safe selection is only needed when the marks are actually
+	// The ride-safe selection is only needed when a zero-width mark is actually
 	// EMITTED: with rtlCombining off they are suppressed below, so the line
 	// carries codepoints == cells and the real bar works. (An LTR combining
 	// mark under flip is a rarer case that keeps the bar here; rtlCombining
-	// targets RTL scripts, whose marks are the ones this line strips.)
-	if sr.frame.flipBidi && !w.ViewState.SuppressRTLCombining && lineHasZeroWidth(line) {
+	// targets RTL scripts, whose marks are the ones this line strips.) In a
+	// folding rtlMarkMode a point folds into its base's presentation form, so a
+	// line of pointed consonants (shin+dot, bet+dagesh) also ends codepoints ==
+	// cells and keeps the real bar — only marks that survive the fold (vowels,
+	// accents) force the ride-safe fill.
+	folding := modeFoldsMarks(sr.frame.rtlMarkMode)
+	if sr.frame.flipRideSafe && !w.ViewState.SuppressRTLCombining && lineHasZeroWidthAfterFold(line, folding) {
 		selName, selInvName = "selectionFlip", "selectionInvisiblesFlip"
 	}
 	selectionColor := sr.col(w, selName)
@@ -1704,6 +1810,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 			// (not mark categories) and LTR combining are never suppressed.
 			suppress := w.ViewState.SuppressRTLCombining && rtlCell(logicalIdx) &&
 				unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me)
+			// In a folding rtlMarkMode (compose, iterm2, drift) a point that
+			// folds into its base's presentation form is NOT dropped — it folds
+			// into the base glyph (backbuffer emitCellText) instead, so composable
+			// points render while the non-composable marks stay omitted.
+			if suppress && modeFoldsMarks(sr.frame.rtlMarkMode) && hebrew.Folds(r) {
+				suppress = false
+			}
 			if !suppress && currentVisualColumn > viewOffsetX && outputVisualColumn > 0 {
 				displayLine.WriteString(runeDisplay)
 			}
@@ -2665,6 +2778,7 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *vie
 	if runePos < 0 {
 		runePos = 0
 	}
+	startPos := runePos
 	for runePos < len(runes) && sr.slotWidth(layout, runes, runePos, cols[runePos], w) == 0 {
 		runePos++
 	}
@@ -2682,6 +2796,15 @@ func (sr *ScreenRenderer) caretVisualColumnBase(line string, runePos int, w *vie
 			return cols[last] + sr.slotWidth(layout, runes, last, cols[last], w)
 		}
 		return col
+	}
+	// Advanced across a cluster whose base is RTL: the caret followed it to its
+	// reading-trailing edge, one cell LEFT of the base. Return that rather than
+	// the landed rune's column, which where an LTR run follows is bidi-teleported
+	// to the far end of the line. Mirrors the editor's caretVisualColumn.
+	if runePos > startPos {
+		if base := clusterBase(startPos); layout.RTL[base] {
+			return cols[base] - 1
+		}
 	}
 	// The caret covers the cell of the rune it precedes — in either base
 	// direction, for both LTR and RTL runes (an RTL rune's cell is at
@@ -2859,9 +2982,53 @@ func (sr *ScreenRenderer) runeWidthAt(runes []rune, i, currentColumn int, w *vie
 // cells) are excluded. s is plain display text (no ANSI).
 func lineHasZeroWidth(s string) bool {
 	for _, r := range s {
-		if r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0 {
+		if isZeroWidthMark(r) {
 			return true
 		}
+	}
+	return false
+}
+
+// isZeroWidthMark reports whether r renders in zero cells (a combining mark):
+// the unit that inflates codepoint count past cell count. Control characters
+// (rendered as ^X, two cells) are excluded.
+func isZeroWidthMark(r rune) bool {
+	return r >= 0x20 && r != 0x7F && textwidth.Rune(r) == 0
+}
+
+// lineHasZeroWidthAfterFold reports whether s still carries a zero-width mark
+// once a folding rtlMarkMode has folded each Hebrew cluster into its
+// presentation form. A point that folds into (or is dropped from) its base no
+// longer inflates the codepoint count, so a line of pointed consonants keeps the
+// real selection bar; only marks that survive the fold — vowels, accents,
+// un-formable points — force the ride-safe fill. With folding off it is exactly
+// lineHasZeroWidth.
+func lineHasZeroWidthAfterFold(s string, folding bool) bool {
+	if !folding {
+		return lineHasZeroWidth(s)
+	}
+	runes := []rune(s)
+	for i := 0; i < len(runes); {
+		base := runes[i]
+		// A leading zero-width mark with no base of its own still counts.
+		if isZeroWidthMark(base) {
+			return true
+		}
+		// Gather the zero-width marks riding this base into one cluster.
+		j := i + 1
+		for j < len(runes) && isZeroWidthMark(runes[j]) {
+			j++
+		}
+		folded, ok := hebrew.PrecomposeCluster(runes[i:j])
+		if !ok {
+			folded = runes[i:j] // nothing folds: the cluster stands as written
+		}
+		for _, fr := range folded[1:] { // marks that survive after the base
+			if isZeroWidthMark(fr) {
+				return true
+			}
+		}
+		i = j
 	}
 	return false
 }

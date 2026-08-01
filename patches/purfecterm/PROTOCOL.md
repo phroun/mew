@@ -444,3 +444,63 @@ agree on the name with no extra wiring.
 slot 10, an explicit mapping wins, and clearing restores the default.
 `_src/cli_vtfraktur_test.go`: the CLI renderer emits SGR 20 for a fraktur cell
 and not for a plain one. Patched v0.2.26 root + cli suites pass.
+
+---
+
+## Pixel mouse — SGR-Pixels (?1016), DECRQM, and cell-size reports
+
+The contract for the emulator half of mew's pixel-precise mouse (the
+nearest-edge caret in insert mode). It is standard xterm surface — nothing
+PurfecTerm-private — so any app that speaks ?1016 benefits, and any host that
+never sets a cell pixel size degrades cleanly to cell resolution.
+
+### The idea
+
+`?1016` (SGR-Pixels) is a refinement of `?1006` (SGR): the **same** report wire
+shape, `CSI < btn ; a ; b M/m`, but `a;b` are **pixels**, not cells. That extra
+resolution is what lets a hosted editor decide which half of a cell the pointer
+is over and place the caret on the nearer edge.
+
+Three things have to hold for an app to use it:
+
+1. **Discovery.** The app must find out ?1016 exists before committing to it.
+   That is DECRQM: `CSI ? 1016 $ p` → `CSI ? 1016 ; status $ y`, status `1`
+   set / `2` reset (either means *recognized*) / `0` not recognized. PurfecTerm
+   answers DECRQM for the modes it implements (mouse tracking 1000/1002/1003,
+   encoding 1006/1016, and 2027 as permanently set); everything else reports
+   `0`. Without a DECRQM answer an app cannot tell ?1016 from an ignored
+   unknown mode, so this is the linchpin.
+
+2. **A pixel unit.** Pixels are meaningless without the size of a cell in the
+   same unit. `CSI 16 t` → `CSI 6 ; height ; width t` reports the cell's pixel
+   size; `CSI 14 t` / `18 t` report the text area in pixels / characters. A
+   headless buffer has no inherent pixel size, so a renderer that knows its
+   cell geometry sets it (`Buffer.SetCellPixelSize`); until it does, the report
+   is `0;0` and a well-behaved app stays at cell resolution.
+
+3. **The switch.** `CSI ? 1016 h` selects the pixel encoding; `CSI ? 1016 l`
+   falls back to SGR **cells** (?1006 semantics), the sane default since an app
+   that asked for pixels wanted SGR at least. `?1016` and `?1006` are
+   alternatives, last-writer-wins; a bare `?1006` reset does not clobber an
+   active `?1016`.
+
+PurfecTerm is agnostic to what the pixel numbers *mean*: `EncodeMouseEvent`
+emits identical bytes for 1006 and 1016 — the CALLER supplies cells or pixels
+to match the mode. In the KittyTK gfx host the caller is the trinket, which
+reports the pointer's device-pixel position and keeps `SetCellPixelSize` current
+across font zoom (see `patches/kittytk/pixel-mouse.patch`). Driving a real PTY,
+the caller would pass the real terminal's pixel coordinates through unchanged.
+
+### Wire summary
+
+| Query (app → term)        | Reply (term → app)          | Meaning                          |
+|---------------------------|-----------------------------|----------------------------------|
+| `CSI ? 1016 $ p`          | `CSI ? 1016 ; {0,1,2} $ y`  | DECRQM: is ?1016 recognized/set? |
+| `CSI 16 t`                | `CSI 6 ; h ; w t`           | cell size in pixels              |
+| `CSI 14 t`                | `CSI 4 ; h ; w t`           | text area in pixels              |
+| `CSI 18 t`                | `CSI 8 ; rows ; cols t`     | text area in characters          |
+| `CSI ? 1016 h` / `l`      | —                           | select pixel encoding / SGR cells|
+
+Responses travel the channel keystrokes already leave by (the parser's
+response sink → the host's input callback), so an embedded terminal answers its
+guest exactly as a PTY-backed one answers its child.

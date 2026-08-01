@@ -1,0 +1,282 @@
+diff --git a/objects/trinkets/purfecterm_gfx.go b/objects/trinkets/purfecterm_gfx.go
+index b07fb24..fb5af7f 100644
+--- a/objects/trinkets/purfecterm_gfx.go
++++ b/objects/trinkets/purfecterm_gfx.go
+@@ -293,6 +293,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
+ 	// scaled onto it, or the hit box drifts from the paint. hitK is that
+ 	// scale; it is 1 only when the two rates happen to coincide.
+ 	t.gfx.ppu = ppu
++	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
+ 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
+ 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
+ 	if bounds.Width > 0 && ppu > 0 {
+@@ -2273,9 +2274,85 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
+ 	return col, row
+ }
+ 
+-// sendMouseEventGfx forwards an xterm-encoded mouse event to the PTY
+-// when the application requested tracking.
+-func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) bool {
++// gfxCellSubUnits is the width AND height, in synthetic "pixels", of one cell
++// on the grid the hosted app reads under SGR-Pixels (?1016) — reported to it as
++// the cell size via CSI 16 t. Device pixels can't be used directly: a cell's
++// painted advance (baseCell*scale*ppu) is fractional, and its boundaries land
++// at round(col*advance) — a PER-cell rounding. Uniform division of a device
++// pixel by one integer cell size (col*round(advance)) diverges from that,
++// drifting up to a full cell by the far edge of a wide/tall screen. Instead the
++// report puts the exact cell index (from the same rounding walk the paint uses)
++// in the high digits and the sub-cell fraction in the low gfxCellSubUnits — so
++// the app's own uniform division recovers the cell with no drift and the
++// remainder is the sub-cell position.
++const gfxCellSubUnits = 1000
++
++// pushCellPixelSizeGfx tells the hosted app that a cell is gfxCellSubUnits
++// "pixels" square (CSI 16 t). It is a constant — the synthetic grid, unlike
++// device pixels, does not move with font zoom — but is (re)asserted each paint
++// so a buffer rebuild never leaves it unset.
++func (t *PurfecTerm) pushCellPixelSizeGfx() {
++	t.terminal.Buffer().SetCellPixelSize(gfxCellSubUnits, gfxCellSubUnits)
++}
++
++// screenToPixelReportGfx maps trinket-unit coordinates onto the synthetic pixel
++// grid the hosted app reads under ?1016. Each axis is located by the SAME
++// per-cell rounding walk the paint uses (cellBoundaryPx), so the integer cell
++// never drifts from the glyph; the pointer's fraction across that one cell rides
++// in the low gfxCellSubUnits digits. 0-based, matching screenToVisualCellGfx.
++func (t *PurfecTerm) screenToPixelReportGfx(x, y core.Unit) (px, py int) {
++	buf := t.terminal.Buffer()
++	baseCW, baseCH := t.cellDims()
++	cw := float64(baseCW) * buf.GetHorizontalScale()
++	chh := float64(baseCH) * buf.GetVerticalScale()
++	if cw <= 0 || chh <= 0 {
++		return 0, 0
++	}
++	ppu := t.gfx.ppu
++	if ppu <= 0 {
++		ppu = 1
++	}
++	ptx, pty := t.gfxPointerPx(x, y)
++	cols, rows := buf.GetSize()
++	return pixelReportAxis(ptx, cw, ppu, cols), pixelReportAxis(pty, chh, ppu, rows)
++}
++
++// pixelReportAxis places a device-pixel coordinate pt on one axis of the
++// synthetic ?1016 grid. It walks to the cell containing pt exactly as
++// screenToVisualCellGfx does (boundaries rounded PER cell, cellBoundaryPx), then
++// measures pt's fraction across that cell's painted span. The result is
++// cell*gfxCellSubUnits + fraction, so dividing by gfxCellSubUnits recovers the
++// SAME cell the paint drew — no cumulative drift from a fractional advance —
++// while the remainder carries the sub-cell position. adv is the cell's unit
++// advance, ppu the pixels-per-unit, n the cell count on this axis.
++func pixelReportAxis(pt, adv, ppu float64, n int) int {
++	col := 0
++	for col+1 < n && pt >= cellBoundaryPx(float64(col+1)*adv, ppu) {
++		col++
++	}
++	left := cellBoundaryPx(float64(col)*adv, ppu)
++	right := cellBoundaryPx(float64(col+1)*adv, ppu)
++	frac := 0.0
++	if right > left {
++		frac = (pt - left) / (right - left)
++	}
++	if frac < 0 {
++		frac = 0
++	}
++	if frac > 0.999999 {
++		frac = 0.999999
++	}
++	return col*gfxCellSubUnits + int(frac*gfxCellSubUnits)
++}
++
++// reportMouseGfx forwards a mouse event to the hosted app, choosing the
++// coordinate space by the app's encoding mode. SGR-Pixels (?1016) reports a
++// position on the synthetic pixel grid (screenToPixelReportGfx): the cell is
++// located drift-free by the paint's own rounding, and the sub-cell fraction
++// lets a hosted editor land its caret on the nearest cell edge. Every other
++// mode reports the visual cell. x,y are the event's trinket-unit coordinates;
++// both paths are 1-based (the report space CSI 16 t declares).
++func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool {
+ 	if t.gfx.reportingDisabled {
+ 		return false
+ 	}
+@@ -2283,7 +2360,15 @@ func (t *PurfecTerm) sendMouseEventGfx(button, cellX, cellY int, press bool) boo
+ 	if buf.GetMouseTrackingMode() == 0 {
+ 		return false
+ 	}
+-	data := purfecterm.EncodeMouseEvent(button, cellX+1, cellY+1, press, buf.GetMouseEncodingMode())
++	var repX, repY int
++	if buf.GetMouseEncodingMode() == 1016 {
++		px, py := t.screenToPixelReportGfx(x, y)
++		repX, repY = px+1, py+1
++	} else {
++		col, row := t.screenToVisualCellGfx(x, y)
++		repX, repY = col+1, row+1
++	}
++	data := purfecterm.EncodeMouseEvent(button, repX, repY, press, buf.GetMouseEncodingMode())
+ 	if data == nil {
+ 		return false
+ 	}
+@@ -2321,8 +2406,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
+ 	if event.Button == core.RightButton {
+ 		if forwardToPTY {
+ 			t.gfx.mouseDown = true
+-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+-			t.sendMouseEventGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), repX, repY, true)
++			t.reportMouseGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
+ 			return true
+ 		}
+ 		t.showContextMenu(event)
+@@ -2335,8 +2419,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
+ 			btn = purfecterm.MouseButtonMiddle
+ 		}
+ 		t.gfx.mouseDown = true
+-		repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
++		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
+ 		return true
+ 	}
+ 
+@@ -2378,8 +2461,7 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
+ 			if t.gfx.mouseDown {
+ 				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
+ 			}
+-			repX, repY := t.screenToVisualCellGfx(event.X, event.Y)
+-			t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), repX, repY, true)
++			t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
+ 		}
+ 		return true
+ 	}
+@@ -2453,7 +2535,6 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
+ 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
+ 
+ 	if forwardToPTY {
+-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
+ 		btn := purfecterm.MouseButtonLeft
+ 		switch event.Button {
+ 		case core.MiddleButton:
+@@ -2462,7 +2543,7 @@ func (t *PurfecTerm) gfxMouseRelease(event core.MouseReleaseEvent) bool {
+ 			btn = purfecterm.MouseButtonRight
+ 		}
+ 		t.gfx.mouseDown = false
+-		t.sendMouseEventGfx(btn|gfxMouseModifiers(event.Modifiers), cellX, cellY, false)
++		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, false)
+ 		return true
+ 	}
+ 
+@@ -2494,21 +2575,20 @@ func (t *PurfecTerm) gfxMouseWheel(event core.MouseWheelEvent) bool {
+ 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
+ 
+ 	if forwardToPTY {
+-		cellX, cellY := t.screenToVisualCellGfx(event.X, event.Y)
+ 		mods := gfxMouseModifiers(event.Modifiers)
+ 		if event.DeltaY < 0 {
+-			t.sendMouseEventGfx(purfecterm.MouseScrollUp|mods, cellX, cellY, true)
++			t.reportMouseGfx(purfecterm.MouseScrollUp|mods, event.X, event.Y, true)
+ 		} else if event.DeltaY > 0 {
+-			t.sendMouseEventGfx(purfecterm.MouseScrollDown|mods, cellX, cellY, true)
++			t.reportMouseGfx(purfecterm.MouseScrollDown|mods, event.X, event.Y, true)
+ 		}
+ 		// Horizontal wheel: SGR buttons 66/67 continue purfecterm's scroll
+ 		// series (Up=64, Down=65). DeltaX>0 = scroll right. (An app whose input
+ 		// layer decodes 66/67 as left/right acts on it; older decoders that only
+ 		// know 64/65 ignore the extra buttons rather than mis-scroll vertically.)
+ 		if event.DeltaX < 0 {
+-			t.sendMouseEventGfx(mouseScrollLeftBtn|mods, cellX, cellY, true)
++			t.reportMouseGfx(mouseScrollLeftBtn|mods, event.X, event.Y, true)
+ 		} else if event.DeltaX > 0 {
+-			t.sendMouseEventGfx(mouseScrollRightBtn|mods, cellX, cellY, true)
++			t.reportMouseGfx(mouseScrollRightBtn|mods, event.X, event.Y, true)
+ 		}
+ 		return true
+ 	}
+diff --git a/objects/trinkets/editor_mew.go b/objects/trinkets/editor_mew.go
+index a7f0394..567b192 100644
+--- a/objects/trinkets/editor_mew.go
++++ b/objects/trinkets/editor_mew.go
+@@ -341,6 +341,10 @@ func (e *Editor) run() {
+ 			return c, r, nil
+ 		},
+ 		Resize: e.resizeCh,
++		// PurfecTerm is a genuine emulator surface: it answers DECRQM/XTWINOPS
++		// queries back through Input, so mew's terminal-probing features (pixel
++		// mouse, ?1016) engage exactly as on a real terminal.
++		Interactive: true,
+ 	}
+ 
+ 	fs := e.fileSystem
+diff --git a/objects/trinkets/pixelreport_test.go b/objects/trinkets/pixelreport_test.go
+new file mode 100644
+index 0000000..57c19f5
+--- /dev/null
++++ b/objects/trinkets/pixelreport_test.go
+@@ -0,0 +1,70 @@
++package trinkets
++
++import (
++	"math"
++	"testing"
++)
++
++// The synthetic ?1016 report must recover the SAME cell the paint draws, at
++// every column, even when the cell's advance is fractional in device pixels —
++// the bug where the caret drifted up to a full cell by the far edge of the
++// screen. For each cell we drop the pointer at that cell's painted center and
++// its left edge and confirm the report divides back to the same cell (no
++// drift), with the fraction on the correct half.
++func TestPixelReportNoDrift(t *testing.T) {
++	// A deliberately awkward fractional advance: 9.4 device px per cell.
++	const (
++		adv = 9.4 // cell advance in units
++		ppu = 1.0 // 1 px per unit → advance*ppu = 9.4 px, non-integer
++		n   = 200 // wide screen, where uniform division would drift badly
++	)
++	for col := 0; col < n; col++ {
++		left := cellBoundaryPx(float64(col)*adv, ppu)
++		right := cellBoundaryPx(float64(col+1)*adv, ppu)
++		center := (left + right) / 2
++
++		for _, tc := range []struct {
++			pt       float64
++			wantHalf string // "left" (<500) or "right" (>=500)
++		}{
++			{left, "left"}, // painted left edge → left half
++			{center - 0.01, "left"},
++			{center + 0.01, "right"},
++			{right - 0.01, "right"}, // just inside the painted right edge
++		} {
++			rep := pixelReportAxis(tc.pt, adv, ppu, n)
++			gotCol := rep / gfxCellSubUnits
++			if gotCol != col {
++				t.Fatalf("col %d, pt %.2f: report %d → cell %d (drift of %d)",
++					col, tc.pt, rep, gotCol, gotCol-col)
++			}
++			sub := rep % gfxCellSubUnits
++			half := "left"
++			if sub >= 500 {
++				half = "right"
++			}
++			// The exact center can land on either side by a rounding hair; only
++			// assert the halves that are a hair off center or at an edge.
++			if math.Abs(tc.pt-center) > 0.005 && half != tc.wantHalf {
++				t.Errorf("col %d, pt %.2f: sub %d is %s half, want %s",
++					col, tc.pt, sub, half, tc.wantHalf)
++			}
++		}
++	}
++}
++
++// A pointer past the last cell clamps to it (never a phantom extra column), and
++// one before the first stays on cell 0 — the report is always a real cell.
++func TestPixelReportClamps(t *testing.T) {
++	const (
++		adv = 8.0
++		ppu = 2.0
++		n   = 10
++	)
++	if got := pixelReportAxis(-50, adv, ppu, n) / gfxCellSubUnits; got != 0 {
++		t.Errorf("far-left pointer → cell %d, want 0", got)
++	}
++	if got := pixelReportAxis(1e9, adv, ppu, n) / gfxCellSubUnits; got != n-1 {
++		t.Errorf("far-right pointer → cell %d, want %d", got, n-1)
++	}
++}

@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
 )
@@ -340,6 +341,10 @@ func (e *Editor) run() {
 			return c, r, nil
 		},
 		Resize: e.resizeCh,
+		// PurfecTerm is a genuine emulator surface: it answers DECRQM/XTWINOPS
+		// queries back through Input, so mew's terminal-probing features (pixel
+		// mouse, ?1016) engage exactly as on a real terminal.
+		Interactive: true,
 	}
 
 	fs := e.fileSystem
@@ -366,14 +371,7 @@ func (e *Editor) run() {
 		// ...and a way to ask this host to test its own terminal plumbing,
 		// for when a session starts and stops with nothing to show for it.
 		mew.WithPTYDiagnose(ptyDiagnose),
-		// Draw the editor scrollbars ourselves. Setting this tells mew to
-		// reserve each bar's column but leave it empty and stop hit-testing
-		// it, handing us the geometry and scroll state to paint from.
-		mew.WithScrollbarRegions(func(regions []mew.ScrollbarRegion) {
-			if e.bars.set(regions) {
-				e.Update()
-			}
-		}),
+		// (The editor scrollbar hand-off is appended below, graphical host only.)
 		// ...and how they are drawn: one real child PurfecTerm per session,
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.
@@ -477,6 +475,11 @@ func (e *Editor) run() {
 				_ = eng.RegisterFontFile(family, path)
 			}
 		}),
+		// Publish the RTL-mark rendering hint where the backends can read it
+		// (core, since the TUI backend has no font engine).
+		mew.WithRtlMarkModeSink(func(mode string) {
+			core.SetRtlMarkMode(mode)
+		}),
 	}
 	if e.mewFileSystem != nil {
 		options = append(options, mew.WithMewFileSystem(e.mewFileSystem))
@@ -489,6 +492,19 @@ func (e *Editor) run() {
 	}
 	if e.hideDesktop != nil {
 		options = append(options, mew.WithHideDesktop(e.hideDesktop))
+	}
+	// Draw the editor scrollbars ourselves ONLY on the graphical (SDL) host,
+	// which paints a pixel-space bar (editor_mew_scrollbar.go). Setting this
+	// tells mew to reserve the bar's column, leave it empty, and stop
+	// hit-testing it. The TUI host has no pixel surface to draw on, so it must
+	// NOT suppress mew's own text scrollbar — otherwise a viewport that needs a
+	// bar shows none. (Hosted-terminal scrollbars are unaffected either way.)
+	if hostterm.Detect() == hostterm.TerminalSDL {
+		options = append(options, mew.WithScrollbarRegions(func(regions []mew.ScrollbarRegion) {
+			if e.bars.set(regions) {
+				e.Update()
+			}
+		}))
 	}
 
 	// Run the session. A host-injected argv wins (full mew command-line launch:
@@ -884,7 +900,19 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
-	env := append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	// Advertise the embedded terminal's identity to the child (last wins over any
+	// inherited TERM/TERM_PROGRAM). TERM must name a terminfo entry that actually
+	// exists on the host: PurfectermTerm ("xterm-purfecterm") has none, so
+	// terminfo-strict programs (zsh's ZLE, `clear`, vim) break on it — zsh can't
+	// even find cub1 to move the cursor left, so backspace overwrites with a bare
+	// space (bash's readline tolerates the unknown TERM, which masked this). Name
+	// the universally-present xterm-256color, which PurfectermTerm is a superset
+	// of, and carry the purfecterm IDENTITY on TERM_PROGRAM — which is how
+	// hostterm.Detect classifies a nested instance anyway (TERM_PROGRAM or TERM).
+	env := append(os.Environ(),
+		"TERM=xterm-256color",
+		"TERM_PROGRAM="+hostterm.PurfectermTermProgram,
+		"COLORTERM=truecolor")
 	// How a machine makes a terminal is the one part of this that is not the
 	// same everywhere: a pty pair on POSIX, a pseudoconsole bound to the child
 	// before it starts on Windows. hostPTY is per-platform; everything above

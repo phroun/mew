@@ -5,8 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/render"
+	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
 )
 
@@ -205,7 +207,15 @@ func (e *Editor) handleMouseKey(key string) bool {
 		x, y, ok := parseMouseAt(base[i+1:])
 		atOK = ok
 		if ok {
-			e.mouseX, e.mouseY = x, y
+			// Under SGR-Pixels (?1016) the report is in PIXELS: convert to a
+			// cell and keep the sub-cell offset for nearest-edge caret
+			// placement. Otherwise x,y are already cells and there is no
+			// sub-cell information.
+			if e.pixelMouseIsActive() {
+				e.mouseX, e.mouseY, e.mouseSubX = e.pixelToCell(x, y)
+			} else {
+				e.mouseX, e.mouseY, e.mouseSubX = x, y, -1
+			}
 		}
 	}
 
@@ -256,11 +266,13 @@ func (e *Editor) handleMouseKey(key string) bool {
 	case base == "MouseRightPress":
 		e.mouseRightPress(e.mouseX, e.mouseY)
 	case strings.HasPrefix(base, "MouseDrag@"):
-		// Plain motion, no button (all-motion tracking): hover.
-		if x, y, ok := parseMouseAt(base[len("MouseDrag@"):]); ok {
-			e.mouseX, e.mouseY = x, y
-			e.mouseHoverAt(x, y)
-			e.modebarNavHoverAt(x, y)
+		// Plain motion, no button (all-motion tracking): hover. The position was
+		// already parsed AND pixel-converted at the top (e.mouseX/e.mouseY);
+		// reuse it rather than re-parsing the raw report, which is in PIXELS
+		// under SGR-Pixels (?1016) and would put hover far off the grid.
+		if atOK {
+			e.mouseHoverAt(e.mouseX, e.mouseY)
+			e.modebarNavHoverAt(e.mouseX, e.mouseY)
 		}
 	case base == "MouseScrollUp":
 		e.hScrollReset() // a vertical tick re-arms the sideways barrier
@@ -527,14 +539,14 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 // cellToPhysical.
 func physicalToCell(x int) int { return (x + 1) / 2 }
 
-func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
+func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, caretRune int, ok bool) {
 	w = e.viewportAtRow(y)
 	if w == nil || w.Buffer == nil {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 	docLine = w.ViewState.ViewOffsetY + (y - 1 - w.ContentY)
 	if docLine < 0 || docLine >= w.Buffer.GetLineCount() {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
@@ -573,7 +585,7 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 		cell = physicalToCell(x) - base
 	}
 	if cell < 0 || (cells > 0 && cell >= cells) {
-		return nil, 0, 0, false
+		return nil, 0, 0, 0, false
 	}
 
 	target := cell + viewOff
@@ -596,19 +608,94 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos int,
 		}
 	}
 
-	idx := e.runeAtVisualColumn(w, dispLine, target)
-	if dispToDoc != nil {
-		if idx >= len(dispToDoc) {
-			// Past the end of the display line: the caret goes to the END of
-			// the document line — never inside a trailing button's span, so
-			// a click in the void after a button places the caret instead of
-			// following.
-			idx = len([]rune(raw))
-		} else {
-			idx = displayToDoc(dispToDoc, idx)
+	// mapDisp turns a DISPLAY-rune index (over dispLine) into a document rune,
+	// through the button/substitution mapping (past the end → end of line, never
+	// inside a trailing button's span).
+	mapDisp := func(i int) int {
+		if dispToDoc != nil {
+			if i >= len(dispToDoc) {
+				return len([]rune(raw))
+			}
+			return displayToDoc(dispToDoc, i)
+		}
+		return i
+	}
+	// resolve maps a visual column to a document rune.
+	resolve := func(vt int) int {
+		return mapDisp(e.runeAtVisualColumn(w, dispLine, vt))
+	}
+	idx := resolve(target)
+	// subX is the pointer's sub-cell fraction (permille, -1 = none). On a DOUBLED
+	// row each cell spans two physical columns, but a pixel report's fraction is
+	// within ONE physical column, so fold the clicked column's parity in to
+	// recover the fraction across the whole double-width cell — otherwise both
+	// halves of the cell would read as a full 0..1 sweep and the split point
+	// would be unpredictable. (x is the physical column: (x+1)%2 is 0 for a
+	// cell's left column, 1 for its right; physicalToCell pairs them.)
+	subX := e.mouseSubX
+	if dw && subX >= 0 {
+		subX = (((x+1)%2)*1000 + subX) / 2
+	}
+	// caretRune is where a CARET should land: the containing rune normally, but
+	// the NEAREST reading edge of the clicked character for an insert-mode click.
+	// The decision is made across the character's FULL visual span, not one cell:
+	// a glyph wider than a cell (a wide CJK letter, a tab, a DEC-doubled cell)
+	// splits by which of its cells was clicked, so its trailing cell(s) advance
+	// the caret even on a terminal with no sub-cell (pixel) reporting; a
+	// single-cell glyph splits only when a pixel report supplies the sub-cell
+	// half. Which edge ADVANCES flips with the character's direction — LTR's
+	// trailing edge is on the right, RTL's on the left — and the advance skips
+	// the cluster's combining marks so niqqud/harakat never split a caret.
+	// Overwrite mode keeps idx (a click selects the character to type over).
+	caretRune = idx
+	// A click on a synthetic bidi direction marker (the "<" / ">" / "|" glyphs
+	// shown under showBidi) resolves to a specific caret boundary that is
+	// direction- and half-aware — not a character to overwrite — so it runs
+	// ahead of, and instead of, the nearest-edge logic below.
+	if mc, ok := e.markerCaretAt(w, dispLine, target, subX); ok {
+		return w, docLine, idx, mapDisp(mc), true
+	}
+	rr := []rune(raw)
+	if w != nil && !w.ViewState.OverwriteMode && idx < len(rr) {
+		// The clicked character's visual span [c0, cEnd]: widen left and right
+		// while the same DISPLAY rune covers the column (a multi-cell glyph maps
+		// every one of its cells to one index). Capped so a pathological layout
+		// can never spin.
+		di := e.runeAtVisualColumn(w, dispLine, target)
+		c0, cEnd := target, target
+		for c0 > 0 && cEnd-c0 < 64 && e.runeAtVisualColumn(w, dispLine, c0-1) == di {
+			c0--
+		}
+		for cEnd-c0 < 64 && e.runeAtVisualColumn(w, dispLine, cEnd+1) == di {
+			cEnd++
+		}
+		wd := cEnd - c0 + 1
+		// Only meaningful with a sub-cell half (pixel report) or a multi-cell
+		// span; a lone cell in cell-resolution mode keeps the classic
+		// before-the-character landing.
+		if subX >= 0 || wd > 1 {
+			frac := 0.0
+			if subX >= 0 {
+				frac = float64(subX) / 1000
+			}
+			vf := (float64(target-c0) + frac) / float64(wd) // 0..1 across the glyph
+			rtl := e.winRTL(w)
+			if layout := e.layoutFor(w, []rune(dispLine)); layout != nil && di >= 0 && di < len(layout.RTL) {
+				rtl = layout.RTL[di]
+			}
+			// The screen-RIGHT half is the trailing (after) side for an LTR
+			// glyph and the leading (before) side for an RTL one, so the advance
+			// condition inverts with direction.
+			if (vf >= 0.5) != rtl {
+				n := idx + 1
+				for n < len(rr) && textwidth.IsMark(rr[n]) {
+					n++
+				}
+				caretRune = n
+			}
 		}
 	}
-	return w, docLine, idx, true
+	return w, docLine, idx, caretRune, true
 }
 
 // viewportOnScreen reports whether w was laid out by the most recent frame —
@@ -664,17 +751,161 @@ func (e *Editor) runeAtVisualColumn(w *viewport.Viewport, line string, target in
 		}
 		return len(runes)
 	}
-	cols, total := e.bidiColumns(runes, layout, e.lineMarkSet(w, runes), tabSize)
-	if target >= total {
-		return len(runes)
-	}
-	for i := range runes {
-		wd := e.slotWidth(layout, runes, i, cols[i], tabSize)
-		if wd > 0 && target >= cols[i] && target < cols[i]+wd {
-			return i
+	// Walk the visual order (mirroring bidiColumns' column accounting) so a click
+	// on a synthetic slot — a bidi direction marker (the < / > arrow shown under
+	// showBidi) — resolves too, instead of matching no rune and falling through
+	// to end-of-line. A marker maps to its run's own adjacent real cell: a START
+	// marker (MarkerRTL/LTR) precedes its run, so the NEXT real cell in visual
+	// order; an END marker follows its run, so the PREVIOUS one.
+	marked := e.lineMarkSet(w, runes)
+	col := 0
+	for pi, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++ // the showMarks "*" cell before the rune
 		}
+		wd := e.slotWidth(layout, runes, li, col, tabSize)
+		if wd > 0 && target >= col && target < col+wd {
+			if li >= 0 {
+				return li
+			}
+			if li == bidi.MarkerEnd {
+				for j := pi - 1; j >= 0; j-- {
+					if layout.Perm[j] >= 0 {
+						return layout.Perm[j]
+					}
+				}
+			} else {
+				for j := pi + 1; j < len(layout.Perm); j++ {
+					if layout.Perm[j] >= 0 {
+						return layout.Perm[j]
+					}
+				}
+			}
+			return len(runes)
+		}
+		col += wd
 	}
 	return len(runes)
+}
+
+// markerCaretAt resolves a click that landed on a synthetic bidi direction
+// marker — the one-column "<" (MarkerRTL), ">" (MarkerLTR) or "|" (MarkerEnd)
+// glyphs drawn under showBidi — to a DISPLAY-rune caret position. Returns
+// ok=false when the target column is a real cell, so the caller keeps its
+// normal cell logic. line is the display line; subX is the pointer's sub-cell
+// horizontal permille (<0 when unknown, treated as the left half).
+//
+// The marker's caret lands on a run BOUNDARY, chosen by the marker's meaning:
+//   - "<" points at the RTL cell to its LEFT (that run's leading edge); the
+//     caret goes BEFORE that character — its own logical index.
+//   - ">" points at the LTR cell to its RIGHT (that run's leading edge); the
+//     caret goes BEFORE that character — its own logical index.
+//   - "|" is a run's reading END, shared by the two cells it sits between; the
+//     caret takes the "after" side of the NEARER neighbor: the left half lands
+//     on the RIGHT edge of the cell visually to the left, the right half on the
+//     LEFT edge of the cell visually to the right. Whether an edge is a
+//     logical-before or logical-after boundary flips with that cell's own
+//     direction (RTL reads right-to-left, so its right edge is the before side).
+func (e *Editor) markerCaretAt(w *viewport.Viewport, line string, target, subX int) (caret int, ok bool) {
+	runes := []rune(line)
+	layout := e.layoutFor(w, runes)
+	if layout == nil {
+		return 0, false
+	}
+	tabSize := e.tabSize(w)
+	marked := e.lineMarkSet(w, runes)
+
+	// A base is a width-bearing cell; zero-width combining marks and the
+	// absorbed half of a ligature share their base's column and are stepped over
+	// so a marker's neighbor is the cell that actually occupies the column.
+	isBase := func(li int) bool {
+		return li >= 0 && e.slotWidth(layout, runes, li, 0, tabSize) > 0
+	}
+	prevBase := func(pi int) int {
+		for j := pi - 1; j >= 0; j-- {
+			if isBase(layout.Perm[j]) {
+				return layout.Perm[j]
+			}
+		}
+		return -1
+	}
+	nextBase := func(pi int) int {
+		for j := pi + 1; j < len(layout.Perm); j++ {
+			if isBase(layout.Perm[j]) {
+				return layout.Perm[j]
+			}
+		}
+		return -1
+	}
+	// afterCluster is the caret position just past a base and its trailing
+	// combining marks / absorbed ligature half (all logically after the base).
+	afterCluster := func(i int) int {
+		n := i + 1
+		for n < len(runes) {
+			if textwidth.IsMark(runes[n]) ||
+				(layout.Glyph != nil && n < len(layout.Glyph) && layout.Glyph[n] == bidi.LigatureAbsorbed) {
+				n++
+				continue
+			}
+			break
+		}
+		return n
+	}
+	rtl := func(i int) bool {
+		return i >= 0 && i < len(layout.RTL) && layout.RTL[i]
+	}
+	// rightEdge/leftEdge convert a base's SPATIAL edge to a caret boundary: for
+	// an LTR cell the right edge is its logical-after side and the left edge its
+	// logical-before side; an RTL cell reads the other way.
+	rightEdge := func(i int) int {
+		if i < 0 {
+			return 0 // no cell to the left → line start
+		}
+		if rtl(i) {
+			return i
+		}
+		return afterCluster(i)
+	}
+	leftEdge := func(i int) int {
+		if i < 0 {
+			return len(runes) // no cell to the right → line end
+		}
+		if rtl(i) {
+			return afterCluster(i)
+		}
+		return i
+	}
+
+	col := 0
+	for pi, li := range layout.Perm {
+		if li >= 0 && marked[li] {
+			col++ // the showMarks "*" cell before the rune
+		}
+		wd := e.slotWidth(layout, runes, li, col, tabSize)
+		if wd > 0 && target >= col && target < col+wd {
+			if li >= 0 {
+				return 0, false // a real cell — not a marker
+			}
+			switch li {
+			case bidi.MarkerRTL: // "<": before the RTL cell to its left
+				if p := prevBase(pi); p >= 0 {
+					return p, true
+				}
+			case bidi.MarkerLTR: // ">": before the LTR cell to its right
+				if n := nextBase(pi); n >= 0 {
+					return n, true
+				}
+			case bidi.MarkerEnd: // "|": the "after" side of the nearer neighbor
+				if subX < 500 {
+					return rightEdge(prevBase(pi)), true
+				}
+				return leftEdge(nextBase(pi)), true
+			}
+			return 0, false
+		}
+		col += wd
+	}
+	return 0, false
 }
 
 // displayToDoc maps a display index to a document rune through DispToDoc:
@@ -728,12 +959,13 @@ func displayToDoc(dispToDoc []int, idx int) int {
 // tracks the button.
 func (e *Editor) mousePress(x, y int, shift bool) {
 	e.endDragTxn() // a lost release: never carry a stale gesture transaction
-	w, docLine, runePos, ok := e.mouseHit(x, y)
+	w, docLine, runePos, caretRune, ok := e.mouseHit(x, y)
 	if !ok {
 		// A press on the BLANK AREA below the document's last line (still
 		// inside the viewport's content area) means the END of the document:
 		// click below the doc and drag upward to select its tail.
 		w, docLine, runePos, ok = e.mouseHitBelowText(x, y)
+		caretRune = runePos // no sub-cell in the void below the text
 	}
 	if !ok {
 		return
@@ -772,14 +1004,14 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		e.beginDragTxn(w.Buffer)
 		origin := w.CursorPos()
 		w.Buffer.SetMark("_block_begin", origin.Line, origin.Rune)
-		w.Buffer.SetMark("_block_end", docLine, runePos)
+		w.Buffer.SetMark("_block_end", docLine, caretRune)
 		w.Buffer.SetMouseBlock(false)
 		e.dragSel = dragSelState{
 			active: true, begun: true, shifted: true, winID: w.ID,
 			originLine: origin.Line, originRune: origin.Rune,
-			lastLine: docLine, lastRune: runePos,
+			lastLine: docLine, lastRune: caretRune,
 		}
-		w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
+		w.SetCursorPos(viewport.Position{Line: docLine, Rune: caretRune})
 		e.afterHorizontalMovement(w)
 		w.ViewState.ScrollDetached = false
 		e.RequestRender()
@@ -792,7 +1024,7 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		w.Buffer.ClearBlockMarks() // clears the flag with the marks
 	}
 
-	w.SetCursorPos(viewport.Position{Line: docLine, Rune: runePos})
+	w.SetCursorPos(viewport.Position{Line: docLine, Rune: caretRune})
 	e.afterHorizontalMovement(w)
 	// A click is a cursor movement: re-engage caret following, cancelling any
 	// free scroll left by the wheel so the view tracks the caret again.
@@ -805,8 +1037,8 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// when the drag reaches a different cell (dragSelUpdate).
 		e.dragSel = dragSelState{
 			active: true, winID: w.ID,
-			originLine: docLine, originRune: runePos,
-			lastLine: docLine, lastRune: runePos,
+			originLine: docLine, originRune: caretRune,
+			lastLine: docLine, lastRune: caretRune,
 		}
 	}
 	e.RequestRender()
@@ -824,7 +1056,7 @@ func (e *Editor) mouseRightPress(x, y int) {
 	if e.Config.ShowContextMenu == nil {
 		return
 	}
-	w, _, _, ok := e.mouseHit(x, y)
+	w, _, _, _, ok := e.mouseHit(x, y)
 	if !ok {
 		// The blank area below the document's last line counts as the
 		// editing area too — same as a left press there.
@@ -1011,8 +1243,8 @@ func (e *Editor) dragSelResolve(w *viewport.Viewport, x, y int) (docLine, runePo
 	if x > last {
 		x = last
 	}
-	if hw, hl, hr, hok := e.mouseHit(x, y); hok && hw == w {
-		return hl, hr, true
+	if hw, hl, _, hcr, hok := e.mouseHit(x, y); hok && hw == w {
+		return hl, hcr, true // drag endpoint snaps to the nearest edge too
 	}
 	return 0, 0, false
 }
@@ -1267,7 +1499,7 @@ func (e *Editor) mouseRelease(x, y int) {
 // actually changes.
 func (e *Editor) mouseHoverAt(x, y int) {
 	nh := pressedLink{}
-	if w, docLine, runePos, ok := e.mouseHit(x, y); ok && w.ViewState.LinkBrowsing {
+	if w, docLine, runePos, _, ok := e.mouseHit(x, y); ok && w.ViewState.LinkBrowsing {
 		focused := e.ViewportManager.GetFocusedViewport() == w
 		// The focused viewport hovers links in either mode; an UNFOCUSED but
 		// truly visible viewport hovers only its browse-mode BUTTONS — the
@@ -1292,7 +1524,7 @@ func (e *Editor) mouseHoverAt(x, y int) {
 // hitOnPressedButton reports whether the coordinates land on the very button
 // the press CAPTURED (same viewport, same line, same span).
 func (e *Editor) hitOnPressedButton(x, y int) bool {
-	w, docLine, runePos, ok := e.mouseHit(x, y)
+	w, docLine, runePos, _, ok := e.mouseHit(x, y)
 	if !ok || w.ID != e.mousePressed.winID || docLine != e.mousePressed.line {
 		return false
 	}

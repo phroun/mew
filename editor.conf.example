@@ -122,6 +122,7 @@ wordWrap=false
 # mew's already-visual RTL output. "true" emits RTL runs in logical order so
 # such terminals lay them out correctly; "false" keeps visual order (correct
 # for stream-order terminals: iTerm2, xterm, most others). "auto" (default)
+# turns the flip on for a sniffed bidi host (Apple Terminal) and otherwise
 # probes the terminal once — at the first frame containing RTL content — by
 # printing a two-letter probe and asking where the cursor ended up (DSR),
 # falling back to TERM_PROGRAM when the answer is inconclusive.

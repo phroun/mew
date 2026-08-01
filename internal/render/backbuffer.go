@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/phroun/kittytk/hebrew"
+
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/textwidth"
 )
@@ -87,10 +89,34 @@ type backBuffer struct {
 	// reorder (iTerm2, xterm, ...). See the flipBidiForHost option.
 	flipBidi bool
 
+	// flipWordwise selects the flip's run SEGMENTATION when flipBidi is on. Off
+	// (default, Terminal.app) treats a maximal RTL span — inter-word spaces
+	// absorbed — as one run and reverses it whole, matching a host whose bidi
+	// keeps neutrals between RTL words in the run. On (Kitty) reverses each
+	// whitespace-separated RTL word in place instead, matching a host that
+	// breaks its runs on the space and reverses each word without reordering
+	// them; absorbing there would swap the words. Only consulted under flipBidi.
+	flipWordwise bool
+
+	// flipRideSafe marks a flip host whose bidi reorder miscounts a
+	// background/reverse selection fill (codepoints vs cells), so a pointed RTL
+	// selection bar drifts and half-vanishes — Terminal.app does this. On such a
+	// host a marked RTL line uses the foreground+bold "ride-safe" selection
+	// instead of the real bar (see screen.go). Off (default) keeps the real bar,
+	// for a flip host whose selection fill tracks the glyphs correctly (Kitty is
+	// assumed to, pending confirmation). Independent of flipWordwise.
+	flipRideSafe bool
+
 	// sawRTL latches when any strong-RTL rune is painted — the trigger for the
 	// one-time flipBidiForHost=auto terminal probe (RTL is the first point the
 	// setting matters).
 	sawRTL bool
+
+	// rtlMarkMode selects how an isolated RTL combining mark anchored on a
+	// dotted circle is emitted. "" and "normal" emit the bare cluster; "iterm2"
+	// leads the mark with a zero-width base to work around iTerm2's wide dotted
+	// circle. See the rtlMarkMode option and emitCellText.
+	rtlMarkMode string
 
 	// rowWide[y] draws that row double-width (DEC DECDWL, ESC#6): the terminal
 	// shows the row's left half at 2x and hides the right half, so the renderer
@@ -471,12 +497,15 @@ func (b *backBuffer) present(out io.Writer) {
 
 	// Place the hardware cursor where the renderer left the pen, then apply
 	// visibility only when it changed. The pen is a visual column; a
-	// flex-width terminal is addressed by its logical column instead, and a
-	// flip-bidi terminal by the STREAM column its transform emitted the
-	// pen's cell at (flipColFor) — the terminal's grid stores the stream, so
-	// its displayed cursor lands wherever it drew that stored cell. The TEXT
-	// emission is untouched: this affects only the final cursor address.
-	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.flipColFor(b.penY, b.penX))+1)
+	// flex-width terminal is addressed by its logical column instead.
+	//
+	// A flip-bidi terminal (Terminal.app) reorders the GLYPHS it displays but
+	// draws the DEC cursor at the raw physical column the CUP names — the
+	// cursor is not bidi-mapped the way the text is. So the caret's visual
+	// column IS its CUP column: addressing the stream column instead would land
+	// it at the mirror position within any RTL run. The TEXT emission (emitRow)
+	// still flips; only the cursor stays on the plain visual column.
+	writeCUP(&sb, b.penY+1, b.logicalColFor(b.penY, b.penX)+1)
 	// Shape before visibility: a terminal that is about to be told to show the
 	// cursor shows it already wearing the right shape, with no flicker through
 	// the previous one. Only while visible — DECSCUSR on a hidden cursor would
@@ -566,7 +595,7 @@ func (b *backBuffer) presentSpans(sb *strings.Builder) {
 				// stream — no SGR is injected between adjacent letters, which the
 				// terminal needs for Arabic shaping / grapheme joining.
 				b.putStyle(sb, nc.style)
-				sb.WriteString(runesOf(nc))
+				sb.WriteString(b.emitCellText(nc))
 				b.disp[y][x] = nc
 				wd := int(nc.width)
 				if wd < 1 {
@@ -624,8 +653,7 @@ func (b *backBuffer) presentRows(sb *strings.Builder) {
 }
 
 // rowCell is one visual base cell of a row, with its 0-based start column
-// and cell width — the shared currency of the flip emission (emitRow) and
-// the flip cursor mapping (flipColFor), which must agree cell for cell.
+// and cell width — the currency of the flip emission (emitRow/flipEmitPlan).
 type rowCell struct {
 	cell  bbCell
 	col   int
@@ -654,15 +682,26 @@ func (b *backBuffer) rowVisualCells(y int) []rowCell {
 	return cells
 }
 
-// flipEmitPlan computes the flip transform over a row's visual cells: the
-// order the cells are emitted in (RTL runs — maximal segments bounded by
-// strong-RTL cells with no interior strong-LTR content — reversed into
-// logical order) and, per emission slot, whether the glyph mirrors back.
-// The host terminal's own bidi reorders each emitted run to the visual
-// layout the grid holds; the cursor mapping (flipColFor) reads the same
-// plan, so where a glyph is EMITTED and where the cursor ADDRESSES it can
-// never disagree.
-func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
+// flipEmitPlan computes the flip transform over a row's visual cells: per
+// emission slot the cell whose GLYPH it carries (order, RTL runs reversed into
+// logical order), the cell whose ATTRIBUTES it carries (styleOrder), and whether
+// the glyph mirrors back. The host terminal's own bidi reorders each emitted run
+// to the visual layout the grid holds.
+//
+// wordwise selects the run boundary AND the attribute mapping, to match the
+// host's own bidi:
+//   - Off (Terminal.app): a run is a maximal RTL span with interior neutrals
+//     (inter-word spaces) absorbed as long as another RTL cell follows; the
+//     whole span reverses, glyph AND attributes together (styleOrder == order),
+//     because that host reverses the parsed cell — colour and all — as a unit.
+//   - On (Kitty): the space is a boundary, so each whitespace-separated RTL word
+//     is its own run and reverses in place. That host reverses the GLYPHS but
+//     paints cell attributes (the selection fill, a syntax colour) at the
+//     physical column, so the glyph order reverses while styleOrder stays in
+//     visual (forward) order — the attribute then lands on the letter the
+//     reversed glyph settles on, not its mirror. The block marks are untouched;
+//     only where the paint lands changes.
+func flipEmitPlan(cells []rowCell, wordwise bool) (order, styleOrder []int, mirror []bool) {
 	isRTL := func(c bbCell) bool { return len(c.runes) > 0 && bidi.IsStrongRTL(c.runes[0]) }
 	isStrongLTR := func(c bbCell) bool {
 		if len(c.runes) == 0 {
@@ -672,24 +711,26 @@ func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
 		return !bidi.IsStrongRTL(r) && (unicode.IsLetter(r) || unicode.IsDigit(r))
 	}
 	order = make([]int, 0, len(cells))
+	styleOrder = make([]int, 0, len(cells))
 	mirror = make([]bool, 0, len(cells))
 	for i := 0; i < len(cells); {
 		if !isRTL(cells[i].cell) {
 			order = append(order, i)
+			styleOrder = append(styleOrder, i)
 			mirror = append(mirror, false)
 			i++
 			continue
 		}
-		// Extend the run: through further RTL cells, absorbing interior
-		// neutral cells only when another RTL cell follows before any strong
-		// LTR content.
+		// Extend the run. Word-wise stops at the first non-RTL cell (each word
+		// reverses in place); otherwise absorb interior neutrals as long as
+		// another RTL cell follows before any strong LTR content.
 		end := i
 		for j := i + 1; j < len(cells); j++ {
 			if isRTL(cells[j].cell) {
 				end = j
 				continue
 			}
-			if isStrongLTR(cells[j].cell) {
+			if wordwise || isStrongLTR(cells[j].cell) {
 				break
 			}
 		}
@@ -697,38 +738,18 @@ func flipEmitPlan(cells []rowCell) (order []int, mirror []bool) {
 			order = append(order, j)
 			mirror = append(mirror, true)
 		}
+		if wordwise {
+			for j := i; j <= end; j++ { // attributes at the physical column
+				styleOrder = append(styleOrder, j)
+			}
+		} else {
+			for j := end; j >= i; j-- { // attributes reverse with the glyph
+				styleOrder = append(styleOrder, j)
+			}
+		}
 		i = end + 1
 	}
-	return order, mirror
-}
-
-// flipColFor translates a 0-based visual column into the 0-based STREAM
-// column at which the covering cell is emitted under the flip transform.
-// The hardware cursor must address the stream column: a flip-mode terminal
-// stores the line in stream order (its own bidi maps stored cells to visual
-// positions at display time — the CPR probe confirms stream-order
-// advancement), so the displayed cursor lands wherever the terminal drew
-// the stored cell at that column. Identity when flip is off, for columns
-// past the row's content, and on LTR content (where stream order IS visual
-// order).
-func (b *backBuffer) flipColFor(y, x int) int {
-	if !b.flipBidi || y < 0 || y >= b.h {
-		return x
-	}
-	cells := b.rowVisualCells(y)
-	order, _ := flipEmitPlan(cells)
-	stream := make([]int, len(cells))
-	col := 0
-	for _, idx := range order {
-		stream[idx] = col
-		col += cells[idx].width
-	}
-	for i, rc := range cells {
-		if x >= rc.col && x < rc.col+rc.width {
-			return stream[i]
-		}
-	}
-	return x
+	return order, styleOrder, mirror
 }
 
 // emitRow writes one full row's cells into sb (left to right) and syncs disp.
@@ -747,7 +768,11 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		}
 	}
 
-	emit := func(c bbCell, mirror bool) {
+	// emit writes one slot: the ATTRIBUTES from styleCell, then the GLYPH from
+	// glyphCell. The two are the same cell everywhere except a word-wise flip's
+	// RTL runs, where the glyph reverses but the attribute stays at the physical
+	// column so a positional-painting host lands it on the right letter.
+	emit := func(glyphCell, styleCell bbCell, mirror bool) {
 		// Style emission depends on the mode. flipBidi exists for Terminal.app,
 		// whose own bidi engine re-processes each parsed line: coalesced
 		// run-level SGR does not survive that reordering (colors vanish), while
@@ -755,43 +780,94 @@ func (b *backBuffer) emitRow(sb *strings.Builder, y int) {
 		// per-glyph SGR cannot break its Arabic joining. Everywhere else
 		// (logicalCUP whole-row escalation) coalesce via the pen as usual.
 		if b.flipBidi {
-			style := c.style
+			style := styleCell.style
 			if style == "" {
 				style = defaultStyleSeq
 			}
 			sb.WriteString(style)
 			b.emitPen = style
 		} else {
-			b.putStyle(sb, c.style)
+			b.putStyle(sb, styleCell.style)
 		}
-		if len(c.runes) == 0 {
+		if len(glyphCell.runes) == 0 {
 			sb.WriteByte(' ')
 			return
 		}
-		if mirror {
-			sb.WriteRune(bidi.Mirror(c.runes[0]))
-		} else {
-			sb.WriteRune(c.runes[0])
+		// A folding rtlMarkMode bakes the Hebrew points into their single
+		// presentation-form glyph here too. The flip path emits runes directly
+		// (it does not go through emitCellText), so without this the fold is lost
+		// the instant flipBidi turns on — an isolated ◌-anchored shin/sin dot or
+		// holam-vav reverts to the dotted circle, and a pointed cluster spills
+		// its point back out as a free-standing mark.
+		runes := glyphCell.runes
+		if modeFoldsMarks(b.rtlMarkMode) {
+			if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+				runes = folded
+			}
 		}
-		for _, m := range c.runes[1:] {
+		if mirror {
+			sb.WriteRune(bidi.Mirror(runes[0]))
+		} else {
+			sb.WriteRune(runes[0])
+		}
+		for _, m := range runes[1:] {
 			sb.WriteRune(m)
 		}
 	}
 
 	if !b.flipBidi {
 		for _, c := range cells {
-			emit(c.cell, false)
+			emit(c.cell, c.cell, false)
 		}
 		return
 	}
 
-	// Flip mode: emit per the shared plan (RTL runs reversed into logical
-	// order with mirrored glyphs restored — Mirror is an involution). The
-	// cursor mapping (flipColFor) reads the SAME plan.
-	order, mirror := flipEmitPlan(cells)
+	// Flip mode: emit per the plan (RTL runs reversed into logical order with
+	// mirrored glyphs restored — Mirror is an involution). The glyph comes from
+	// order, the attributes from styleOrder — identical except in a word-wise
+	// host's RTL runs.
+	order, styleOrder, mirror := flipEmitPlan(cells, b.flipWordwise)
 	for k, idx := range order {
-		emit(cells[idx].cell, mirror[k])
+		emit(cells[idx].cell, cells[styleOrder[k]].cell, mirror[k])
 	}
+}
+
+// isHebrewCombiningMark reports whether r is a Hebrew combining point or
+// cantillation mark (block 0591–05C7, all nonspacing). These are the marks a
+// host must render as real zero-width combining glyphs — the ones a word-wise
+// bidi host (Kitty with force_ltr off) can drop — as opposed to a mark folded
+// into a single presentation-form glyph.
+func isHebrewCombiningMark(r rune) bool {
+	return r >= 0x0591 && r <= 0x05C7 && unicode.Is(unicode.Mn, r)
+}
+
+// frameHasUncomposedNiqqud reports whether the CURRENT frame (b.cur) holds any
+// cluster that, AFTER the active rtlMarkMode fold, still carries a Hebrew
+// combining mark. Those clusters are exactly what a word-wise-flipping host can
+// mis-render, so the editor uses this to raise a one-line config nudge only
+// while such content is actually on screen. Unlike sawRTL it does not latch: it
+// scans the live frame, so the signal clears the moment the content scrolls off.
+func (b *backBuffer) frameHasUncomposedNiqqud() bool {
+	folds := modeFoldsMarks(b.rtlMarkMode)
+	for y := 0; y < b.h; y++ {
+		for x := 0; x < b.w; x++ {
+			runes := b.cur[y][x].runes
+			if len(runes) < 2 {
+				continue
+			}
+			if folds {
+				if folded, ok := hebrew.PrecomposeCluster(runes); ok {
+					runes = folded
+				}
+			}
+			for _, r := range runes[1:] {
+				if isHebrewCombiningMark(r) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // isCornerCut reports the bottom-right cell, which is never written to avoid
@@ -834,6 +910,51 @@ func runesOf(c bbCell) string {
 		return " "
 	}
 	return string(c.runes)
+}
+
+// emitCellText renders a cell's runes for the wire. It is runesOf, except under
+// rtlMarkMode "iterm2"/"compose" on a PLAIN terminal (not a flex-width 2027
+// host), where Hebrew points are folded into Alphabetic-Presentation-Form glyphs
+// so no free-standing point is left for the terminal to drift — see
+// precomposeCell.
+func (b *backBuffer) emitCellText(c bbCell) string {
+	if b.logicalCUP {
+		return runesOf(c) // flex-width host composes clusters itself
+	}
+	if modeFoldsMarks(b.rtlMarkMode) {
+		if s, ok := precomposeCell(c); ok {
+			return s
+		}
+	}
+	return runesOf(c)
+}
+
+// modeFoldsMarks reports whether an rtlMarkMode folds Hebrew points into their
+// Alphabetic-Presentation-Form glyph. "iterm2", "compose" and "drift" all do:
+// one behaviour today for the base glyph, the names kept so each can carry
+// terminal-specific extras later. Drift needs the fold too — a free-standing
+// point is exactly what a drift terminal misplaces, so baking it into the base
+// removes it. The display layer reads this to keep a foldable point out of the
+// rtlCombining suppression (it folds into the base instead of being dropped).
+func modeFoldsMarks(mode string) bool {
+	switch mode {
+	case "iterm2", "compose", "drift":
+		return true
+	}
+	return false
+}
+
+// precomposeCell folds a Hebrew cell into a single presentation-form glyph where
+// one exists (delegating to the shared kittytk/hebrew package), so no
+// free-standing point is left for a terminal to drift. It covers well-formed
+// clusters and the anchored points that render poorly on a dotted circle (an
+// isolated shin dot, sin dot, or holam-haser is shown on its faux base). The
+// cell keeps whatever colour it already carries.
+func precomposeCell(c bbCell) (string, bool) {
+	if folded, ok := hebrew.PrecomposeCluster(c.runes); ok {
+		return string(folded), true
+	}
+	return "", false
 }
 
 func cellsEqual(a, b bbCell) bool {

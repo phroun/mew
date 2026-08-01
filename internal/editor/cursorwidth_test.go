@@ -107,3 +107,26 @@ func TestCaretInsideAClusterFollowsItLTR(t *testing.T) {
 		t.Errorf("caret inside the cluster at col %d, want right of the base at col %d", inside, onE)
 	}
 }
+
+// The RENDERED column (not logical movement) of a caret partway through an RTL
+// cluster that is FOLLOWED BY a left-to-right run must stay by the cluster — one
+// column left of its base (the reading-trailing edge in an RTL run) — not jump to
+// the LTR run's column, which bidi teleports to the far end of the line. An LTR
+// base with LTR text on both sides makes the teleport visible.
+func TestCaretPastRTLClusterBeforeLTRStaysByTheCluster(t *testing.T) {
+	const lamed, hiriq = "ל", "ִ" // U+05DC + U+05B4 (an RTL base + its point)
+	e, w := newTestEditor(t, "x"+lamed+hiriq+"y\n")
+	line := "x" + lamed + hiriq + "y"
+
+	onLamed := e.caretVisualColumn(w, line, 1, 4) // on the lamed base
+	mid := e.caretVisualColumn(w, line, 2, 4)     // between lamed and its hiriq
+	beforeY := e.caretVisualColumn(w, line, 3, 4) // before the LTR 'y'
+
+	if mid != onLamed-1 {
+		t.Errorf("mid-cluster caret at col %d, want %d (one left of the base at %d)",
+			mid, onLamed-1, onLamed)
+	}
+	if mid == beforeY {
+		t.Errorf("mid-cluster caret must not teleport to the LTR run's column %d", beforeY)
+	}
+}

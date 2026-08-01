@@ -226,6 +226,7 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 
 	render := func(line string, flip bool) string {
 		sr.frame.flipBidi = flip
+		sr.frame.flipRideSafe = flip // the ride-safe (Terminal.app) profile
 		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
 	}
 
@@ -257,6 +258,19 @@ func TestFlipSelectionRideSafeOnMarkedLines(t *testing.T) {
 	}
 	if strings.Contains(out, flipSel) {
 		t.Errorf("no-flip must never use the ride-safe style: %q", out)
+	}
+
+	// A flip host WITHOUT the selection glitch (flipRideSafe off — Kitty) keeps
+	// the real bar even with marks shown: the ride-safe fallback is tied to the
+	// glitch, not to the flip itself.
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = false
+	out = sr.prepareLineForDisplay(marked, "\n", 40, 0, w, 0, whole, nil, nil)
+	if !strings.Contains(out, bar) {
+		t.Errorf("flip host without the glitch should keep the real bar: %q", out)
+	}
+	if strings.Contains(out, flipSel) {
+		t.Errorf("flip host without the glitch must not use the ride-safe style: %q", out)
 	}
 }
 
@@ -313,6 +327,82 @@ func TestSuppressRTLCombining(t *testing.T) {
 	}
 }
 
+// In a folding rtlMarkMode (compose) the suppression is selective: a point
+// that folds into its base's presentation form survives (it folds into the
+// base at emit time, not dropped), while a non-composable vowel stays omitted.
+// This is the Apple Terminal default — composable points render, other marks
+// stay off — where the plain suppression would drop everything.
+func TestSuppressRTLCombiningKeepsFoldablePointInComposeMode(t *testing.T) {
+	sr, w := testRenderer()
+	const shinDot, qamats = "ׁ", "ָ" // foldable point; non-foldable vowel
+	line := "ש" + shinDot + qamats         // shin + shin dot + qamats
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+	w.ViewState.SuppressRTLCombining = true
+
+	render := func() string {
+		return stripAnsi(sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil))
+	}
+
+	// normal mode: suppression drops every RTL mark, foldable or not.
+	sr.SetRtlMarkMode("normal")
+	if out := render(); strings.Contains(out, shinDot) || strings.Contains(out, qamats) {
+		t.Errorf("normal mode should drop both marks: %q", out)
+	}
+
+	// compose mode: the shin dot survives (it folds into the base downstream),
+	// the qamats stays omitted.
+	sr.SetRtlMarkMode("compose")
+	out := render()
+	if !strings.Contains(out, shinDot) {
+		t.Errorf("compose mode must keep the foldable shin dot for folding: %q", out)
+	}
+	if strings.Contains(out, qamats) {
+		t.Errorf("compose mode must still omit the non-foldable qamats: %q", out)
+	}
+	if !strings.Contains(out, "ש") {
+		t.Errorf("the Hebrew base letter must remain: %q", out)
+	}
+}
+
+// In a folding rtlMarkMode the selection decision is fold-aware: a line whose
+// only marks are foldable points (shin+dot, bet+dagesh) folds to codepoints ==
+// cells and keeps the REAL bar even with marks shown, while a surviving vowel
+// still forces the ride-safe fill.
+func TestFlipSelectionFoldAware(t *testing.T) {
+	const (
+		bar     = "\x1b[0;30;47m"
+		flipSel = "\x1b[0;1;93m"
+	)
+	sr, w := testRenderer()
+	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
+	sr.SetRtlMarkMode("compose")
+	w.ViewState.SuppressRTLCombining = false // marks shown
+	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
+	render := func(line string) string {
+		return sr.prepareLineForDisplay(line, "\n", 40, 0, w, 0, whole, nil, nil)
+	}
+
+	// Only a foldable point (shin + shin dot): folds to one cell -> real bar.
+	pointed := "ש" + "ׁ"
+	if out := render(pointed); !strings.Contains(out, bar) || strings.Contains(out, flipSel) {
+		t.Errorf("pointed consonant should keep the real bar under folding: %q", out)
+	}
+
+	// A surviving vowel (shin + qamats): stays zero-width -> ride-safe.
+	voweled := "ש" + "ָ"
+	if out := render(voweled); !strings.Contains(out, flipSel) {
+		t.Errorf("a surviving vowel should force the ride-safe selection: %q", out)
+	}
+
+	// Sanity: with folding off (normal mode) the point is not folded, so the
+	// same pointed line reverts to ride-safe.
+	sr.SetRtlMarkMode("normal")
+	if out := render(pointed); !strings.Contains(out, flipSel) {
+		t.Errorf("normal mode keeps the point, so ride-safe applies: %q", out)
+	}
+}
+
 // With rtlCombining off, the flip-mode selection reverts to the real bar
 // (the marks are stripped, so no drift).
 func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {
@@ -322,6 +412,7 @@ func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {
 	)
 	sr, w := testRenderer()
 	sr.frame.flipBidi = true
+	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
 	line := "שָם" // pointed Hebrew (has an RTL combining mark)
 	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
 

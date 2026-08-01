@@ -414,6 +414,14 @@ func WithFontAdjust(fn func(family string, baselineUnits int, sizeScale float64)
 	return func(cfg *editor.Config) { cfg.FontAdjustSink = fn }
 }
 
+// WithRtlMarkModeSink wires the rtlMarkMode option to a host that mirrors it
+// into its own rendering engine: fn is called with the value at startup and
+// whenever set_option changes it. Only meaningful on a graphical host; a plain
+// terminal leaves it unset.
+func WithRtlMarkModeSink(fn func(mode string)) Option {
+	return func(cfg *editor.Config) { cfg.RtlMarkModeSink = fn }
+}
+
 // WithFlexTerminal declares the host terminal a flex-width (logical-grid)
 // terminal — purfecterm's Contract B, DECSET ?7027, one cell per character —
 // so the editor addresses the cursor by logical column instead of visual

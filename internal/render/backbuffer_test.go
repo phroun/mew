@@ -339,58 +339,85 @@ func TestBackBufferFlipBidiUnmirrors(t *testing.T) {
 	}
 }
 
-// Flip mode must address the hardware cursor by the STREAM column its
-// transform emitted the pen's cell at: the terminal stores the line in
-// stream order and its own bidi decides where each stored cell displays, so
-// a visual-column CUP lands the cursor on the wrong glyph inside any RTL
-// run. LTR content is identity (stream order IS visual order there).
-func TestFlipColForMapsRTLRunToStream(t *testing.T) {
+// flipEmitPlan segmentation: two Hebrew words separated by a space. Whole-run
+// (Terminal.app) absorbs the space and reverses the whole span; word-wise
+// (Kitty) reverses each word in place, leaving the space — and thus the word
+// order — untouched.
+func TestFlipEmitPlanWordwise(t *testing.T) {
+	rtl := func(r rune) rowCell { return rowCell{cell: bbCell{runes: []rune{r}}, width: 1} }
+	// Visual cells [0..4]: word "דג", a space, word "בא".
+	cells := []rowCell{rtl('ד'), rtl('ג'), {cell: bbCell{runes: []rune{' '}}, width: 1}, rtl('ב'), rtl('א')}
+
+	eq := func(got, want []int) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Whole-run: glyph and attribute orders match (the host reverses the cell
+	// whole).
+	if order, style, _ := flipEmitPlan(cells, false); !eq(order, []int{4, 3, 2, 1, 0}) || !eq(style, order) {
+		t.Errorf("whole-run order/style = %v/%v, want [4 3 2 1 0] for both", order, style)
+	}
+	// Word-wise: glyphs reverse per word, but attributes stay in visual order so
+	// a positional-painting host lands them on the right letter.
+	order, style, _ := flipEmitPlan(cells, true)
+	if !eq(order, []int{1, 0, 2, 4, 3}) {
+		t.Errorf("word-wise glyph order = %v, want [1 0 2 4 3] (each word reversed)", order)
+	}
+	if !eq(style, []int{0, 1, 2, 3, 4}) {
+		t.Errorf("word-wise style order = %v, want [0 1 2 3 4] (attributes in visual order)", style)
+	}
+}
+
+// A folding rtlMarkMode must fold under flipBidi too: the flip path emits runes
+// directly (not through emitCellText), so without folding an isolated ◌-anchored
+// point reverts to the dotted circle and a pointed cluster spills its point back
+// out the instant flipBidi turns on. This is the Apple Terminal case (flip on +
+// compose): the composed forms survive the flip.
+func TestBackBufferFlipBidiFolds(t *testing.T) {
+	const (
+		anchor        = 0x25CC // mew's dotted-circle carrier
+		shinDot       = 0x05C1
+		shinWithDot   = 0xFB2A
+		bet, dagesh   = 0x05D1, 0x05BC
+		betWithDagesh = 0xFB31
+	)
 	b := newBackBuffer(30, 2)
 	b.flipBidi = true
-	paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
+	b.rtlMarkMode = "compose"
 
-	// Visual cells (0-based): a=0 b=1 c=2 sp=3 ם=4 ו=5 ל=6 ש=7 sp=8 x=9.
-	// The run [4..7] emits reversed, so its stream columns mirror.
-	cases := map[int]int{0: 0, 2: 2, 3: 3, 4: 7, 5: 6, 6: 5, 7: 4, 8: 8, 9: 9, 11: 11}
-	for vis, want := range cases {
-		if got := b.flipColFor(0, vis); got != want {
-			t.Errorf("flipColFor(%d) = %d, want %d", vis, got, want)
-		}
+	// Isolated shin dot anchored on the dotted circle -> the FB2A glyph, no circle.
+	out := plain(paint(b, mv(1, 1), wr("\x1b[0m"+string(rune(anchor))+string(rune(shinDot)))))
+	if !strings.ContainsRune(out, shinWithDot) {
+		t.Errorf("flip+compose should fold the anchored shin dot to FB2A: %q", out)
+	}
+	if strings.ContainsRune(out, anchor) || strings.ContainsRune(out, shinDot) {
+		t.Errorf("neither the dotted circle nor the free-standing point may survive: %q", out)
 	}
 
-	// Flip off: identity everywhere.
+	// A well-formed cluster folds into its presentation form under flip as well.
 	b2 := newBackBuffer(30, 2)
-	paint(b2, mv(1, 1), wr("\x1b[0mabc םולש xyz"))
-	if got := b2.flipColFor(0, 5); got != 5 {
-		t.Errorf("no-flip flipColFor(5) = %d, want identity", got)
+	b2.flipBidi = true
+	b2.rtlMarkMode = "compose"
+	out = plain(paint(b2, mv(1, 1), wr("\x1b[0m"+string(rune(bet))+string(rune(dagesh)))))
+	if !strings.ContainsRune(out, betWithDagesh) || strings.ContainsRune(out, dagesh) {
+		t.Errorf("flip+compose should fold bet+dagesh to FB31: %q", out)
 	}
 }
 
-// Niqqud (combining marks riding their base cell) must not shift the cursor
-// mapping: a cell is one stream advance whether or not it carries marks —
-// the very drift a terminal shows when the caret walks a pointed Hebrew
-// line under flip mode.
-func TestFlipColForNiqqudNeutral(t *testing.T) {
-	bare := newBackBuffer(20, 2)
-	bare.flipBidi = true
-	paint(bare, mv(1, 1), wr("\x1b[0mשלום")) // visual order as painted
-
-	pointed := newBackBuffer(20, 2)
-	pointed.flipBidi = true
-	// The same four letters, each carrying a niqqud mark (qamats U+05B8).
-	paint(pointed, mv(1, 1), wr("\x1b[0mשָלָוָםָ"))
-
-	for vis := 0; vis < 6; vis++ {
-		if g1, g2 := bare.flipColFor(0, vis), pointed.flipColFor(0, vis); g1 != g2 {
-			t.Errorf("niqqud shifted the cursor mapping at col %d: bare %d, pointed %d", vis, g1, g2)
-		}
-	}
-}
-
-// End to end: the final hardware-cursor CUP present() appends uses the
-// flip-translated column when the pen rests inside an RTL run, and the
-// plain visual column on LTR content.
-func TestFlipCursorCUPTranslated(t *testing.T) {
+// The DEC hardware cursor addresses the plain VISUAL column even under flip.
+// A flip-mode terminal (Terminal.app) reorders the glyphs it displays but
+// draws the cursor at the raw physical column the CUP names — the cursor is
+// not bidi-mapped like the text. So the caret's visual column IS its CUP
+// column inside an RTL run; stream-translating it would land it at the mirror.
+func TestFlipCursorCUPVisualColumn(t *testing.T) {
 	lastCUP := func(out string) string {
 		all := cupRe.FindAllString(out, -1)
 		for i := len(all) - 1; i >= 0; i-- {
@@ -403,13 +430,13 @@ func TestFlipCursorCUPTranslated(t *testing.T) {
 
 	b := newBackBuffer(30, 2)
 	b.flipBidi = true
-	// Pen parks on ם (visual 0-based col 4 -> stream col 7 -> 1-based CUP 8).
+	// Pen parks on ם, visual 0-based col 4 -> 1-based CUP 5 (NOT the mirror 8).
 	out := paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(5, 1))
-	if got := lastCUP(out); got != "\x1b[1;8H" {
-		t.Errorf("flip cursor CUP = %q, want \\x1b[1;8H", got)
+	if got := lastCUP(out); got != "\x1b[1;5H" {
+		t.Errorf("flip cursor CUP = %q, want the visual column \\x1b[1;5H", got)
 	}
 
-	// LTR pen: untranslated.
+	// LTR pen: also the visual column.
 	out = paint(b, mv(1, 1), wr("\x1b[0mabc םולש xyz"), mv(2, 1))
 	if got := lastCUP(out); got != "\x1b[1;2H" {
 		t.Errorf("LTR cursor CUP = %q, want \\x1b[1;2H", got)

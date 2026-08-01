@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/phroun/kittytk/hostterm"
 )
 
 // flipBidiForHost=auto: detect whether the host terminal applies its own bidi
@@ -35,6 +37,15 @@ const bidiProbeExpectCol = 3
 // armed and RTL content has appeared on screen. Called after each render.
 func (e *Editor) maybeSendBidiProbe() {
 	if e.bidiProbeState != bidiProbeIdle || e.Config.FlipBidiForHost != "auto" {
+		return
+	}
+	// Sniffing already settles a recognised host — Apple Terminal flips, the
+	// stream-order terminals (iTerm2, Alacritty, Ghostty, Kitty) do not — so its
+	// flip value is set from startup and no probe is needed. Probing them risks
+	// a false positive: Kitty in particular does no bidi but answers the cursor
+	// query in a way that reads as "applies bidi", which would wrongly flip it.
+	if hostBidiProfileFor(hostterm.Detect()).known {
+		e.bidiProbeState = bidiProbeDone
 		return
 	}
 	if !e.realTerminal || !e.Renderer.SawRTLContent() {
@@ -88,9 +99,13 @@ func (e *Editor) handleBidiProbeReply(key string) bool {
 	return true
 }
 
-// applyBidiProbeResult applies the detected flip mode.
+// applyBidiProbeResult applies the detected flip mode. A probe-detected bidi
+// host is one sniffing did not recognise, so assume the conservative
+// Terminal.app profile: whole-run segmentation and the ride-safe selection bar.
 func (e *Editor) applyBidiProbeResult(flip bool, how string) {
 	e.Renderer.SetFlipBidiForHost(flip)
+	e.Renderer.SetFlipWordwise(false)
+	e.Renderer.SetFlipRideSafeSelection(flip)
 	if flip {
 		e.ShowNotification("Terminal applies its own bidi (" + how + "): RTL emission flipped")
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
 	"github.com/phroun/mew/internal/bidi"
@@ -233,6 +234,28 @@ type Editor struct {
 	bidiProbeState    int
 	bidiProbeDeadline time.Time
 	realTerminal      bool
+
+	// probeCapable is whether the terminal answers escape-sequence queries back
+	// through Input: a real terminal (realTerminal) or a virtualized one the
+	// host marked Interactive (a genuine emulator surface). It gates features
+	// that handshake with the terminal — the pixel mouse (?1016) — on/off, so a
+	// dead capture buffer in a test is never probed. Distinct from realTerminal,
+	// which also governs raw-mode and other own-the-tty behaviors.
+	probeCapable bool
+
+	// kittyFlipActive is true when the host is Kitty AND mew is flipping RTL for
+	// it (force_ltr off — the path where Kitty may drop niqqud). It gates the
+	// force_ltr nudge; see updateNiqqudNudge / kittyconf.go.
+	kittyFlipActive bool
+	// force_ltr nudge hysteresis. The nudge occupies a screen row, so a niqqud
+	// line sitting exactly on the viewport's bottom boundary can oscillate
+	// (nudge on -> line scrolls off -> condition false -> nudge off -> line back).
+	// After a short run of frame-to-frame toggles we latch the nudge on until the
+	// layout genuinely changes (resize/scroll/edit/viewport set), tracked by sig.
+	niqqudNudgeWantPrev  bool
+	niqqudNudgeToggleRun int
+	niqqudNudgeLatched   bool
+	niqqudNudgeLatchSig  string
 	// appliedMappingSet is the mapping-set name currently loaded into the key
 	// processor, so an unchanged set is not rebuilt.
 	appliedMappingSet string
@@ -313,7 +336,13 @@ type Editor struct {
 	// only by hosts with all-motion tracking, e.g. the graphical build). See
 	// mouse.go.
 	mouseX, mouseY int
-	mousePressed   pressedLink // the CAPTURED button (press-to-release)
+	// mouseSubX is the pointer's sub-cell horizontal offset in permille
+	// (0..999) from the last pixel-resolution mouse report, or -1 for a
+	// cell-resolution report. It lets an insert-mode click land the caret on
+	// the nearest cell edge. See pixelmouse.go.
+	mouseSubX    int
+	pixelMouse   pixelMouseState
+	mousePressed pressedLink // the CAPTURED button (press-to-release)
 	// mouseOnCaptured: the pointer is currently over the captured button
 	// (paints pressed); dragging off reverts to the focused style while the
 	// capture holds.
@@ -540,6 +569,11 @@ type Config struct {
 	// "true", or "false" (see config.GeneralConfig.FlipBidiForHost).
 	FlipBidiForHost string
 
+	// RtlMarkMode: "normal" (default) or "iterm2" — how an isolated RTL
+	// combining mark on a dotted circle is emitted (see
+	// config.GeneralConfig.RtlMarkMode). An enum; more modes are expected.
+	RtlMarkMode string
+
 	// Editing locks (see config.GeneralConfig): UseLocks gates all locking;
 	// UseEmacsLocks additionally gates the emacs-interoperable lock files.
 	UseLocks         bool
@@ -639,6 +673,11 @@ type Config struct {
 	// however it is reached. Wired by graphical hosts; nil on a plain
 	// terminal, whose faces are the terminal's own.
 	FontAdjustSink func(family string, baselineUnits int, sizeScale float64)
+
+	// RtlMarkModeSink, when set, is handed the rtlMarkMode value at startup and
+	// whenever it changes, so a graphical host can mirror it into its own text
+	// engine. Wired by graphical hosts; nil on a plain terminal.
+	RtlMarkModeSink func(mode string)
 
 	// PointerRegion, when set, publishes where a graphical host should show the
 	// text I-beam: the FOCUSED viewport's editable content area (its cells,
@@ -832,6 +871,15 @@ type TerminalIO struct {
 	// host: each receive re-queries Size and re-renders, doing manually what
 	// SIGWINCH does on unix. (Editor.NotifyResize is the method equivalent.)
 	Resize <-chan struct{}
+
+	// Interactive marks a virtualized terminal that behaves like a real one:
+	// it is a live surface whose replies to queries (DECRQM, XTWINOPS reports,
+	// CPR) flow back through Input. A host that embeds mew in a genuine
+	// terminal emulator (e.g. the KittyTK PurfecTerm surface) sets this so
+	// terminal-probing features — pixel mouse (?1016) — engage exactly as they
+	// do on a real terminal. It stays false for test harnesses and one-way
+	// output sinks, which never answer and would only be polluted by the probe.
+	Interactive bool
 }
 
 // DefaultConfig returns sensible default configuration.
@@ -1009,9 +1057,28 @@ func New(cfg Config) (*Editor, error) {
 	if cfg.FlipBidiForHost == "" {
 		cfg.FlipBidiForHost = "auto"
 	}
-	// Explicit setting applies now; "auto" stays off until the probe decides
-	// (triggered by the first frame containing RTL content).
-	renderer.SetFlipBidiForHost(cfg.FlipBidiForHost == "true")
+	// Explicit setting applies now; "auto" turns the flip on for a sniffed bidi
+	// host (Apple Terminal, Kitty) and otherwise stays off until the probe
+	// decides (triggered by the first frame containing RTL content). The
+	// segmentation and ride-safe-selection axes ride the same sniff.
+	flip, wordwise, rideSafe, _ := flipSettings(cfg.FlipBidiForHost)
+	// Kitty applies its own bidi only while force_ltr is off; when the user has
+	// set force_ltr yes, mew must own the bidi and not flip. Sniff kitty.conf to
+	// pick the right path (there is no in-band way to detect force_ltr).
+	flip, wordwise, rideSafe, kittyFlipActive := adjustFlipForKitty(cfg.FlipBidiForHost, flip, wordwise, rideSafe)
+	renderer.SetFlipBidiForHost(flip)
+	renderer.SetFlipWordwise(wordwise)
+	renderer.SetFlipRideSafeSelection(rideSafe)
+
+	cfg.RtlMarkMode = loadedConfig.General.RtlMarkMode
+	if cfg.RtlMarkMode == "" {
+		cfg.RtlMarkMode = "auto"
+	}
+	resolvedRtlMark := resolveRtlMarkMode(cfg.RtlMarkMode)
+	renderer.SetRtlMarkMode(resolvedRtlMark)
+	if cfg.RtlMarkModeSink != nil {
+		cfg.RtlMarkModeSink(resolvedRtlMark)
+	}
 
 	// Restore a host-provided state snapshot over the loaded configuration.
 	applyInitialState(&cfg)
@@ -1025,6 +1092,7 @@ func New(cfg Config) (*Editor, error) {
 		FS:               docFS,
 		usingOSFS:        usingOSFS,
 		realTerminal:     cfg.Terminal == nil,
+		probeCapable:     cfg.Terminal == nil || cfg.Terminal.Interactive,
 		mew:              mewVFS,
 		home:             hostHome(&cfg),
 		lib:              lib,
@@ -1037,6 +1105,7 @@ func New(cfg Config) (*Editor, error) {
 		mewLockDeferred:  make(map[*buffer.Buffer]string),
 		linkVisitSeen:    make(map[string]bool),
 		linkResolveCache: make(map[string]string),
+		kittyFlipActive:  kittyFlipActive,
 	}
 
 	// Register configured fonts into the host font engine and apply the
@@ -3481,6 +3550,8 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return "ltr", true
 	case "flipbidiforhost":
 		return e.Config.FlipBidiForHost, true
+	case "rtlmarkmode":
+		return e.Config.RtlMarkMode, true
 	case "prompttimeout":
 		return strconv.Itoa(e.Config.PromptTimeout), true
 	case "scripttimeout":
@@ -3491,6 +3562,120 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return strconv.Itoa(e.Config.MaxRenderDelayMs), true
 	}
 	return "", false
+}
+
+// resolveRtlMarkMode turns the "auto" sentinel into a concrete rtlMarkMode from
+// the detected host terminal; any explicit mode passes through unchanged. The
+// stored option keeps reading "auto"; only the value pushed to the renderer and
+// host is resolved. Terminals whose quirks are not yet handled resolve to
+// "normal".
+func resolveRtlMarkMode(mode string) string {
+	if mode != "auto" {
+		return mode
+	}
+	return rtlMarkModeForTerminal(hostterm.Detect())
+}
+
+// rtlMarkModeForTerminal maps a detected host terminal to the rtlMarkMode "auto"
+// selects for it. Terminals whose quirks are not yet handled map to "normal".
+func rtlMarkModeForTerminal(k hostterm.Kind) string {
+	switch k {
+	case hostterm.TerminalITerm2:
+		return "iterm2"
+	case hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
+		return "drift"
+	case hostterm.TerminalAppleTerminal:
+		return "compose"
+	case hostterm.TerminalSDL:
+		// The graphical host shapes and positions marks natively; no terminal
+		// mark-drift workaround applies, so emit the plain cluster.
+		return "normal"
+	default:
+		return "normal"
+	}
+}
+
+// resolveFlipBidiForHost turns the flipBidiForHost setting into the boolean
+// pushed to the renderer at startup (or on a set_option). "true"/"false" pass
+// through; "auto" turns the flip ON for a host known by sniffing to apply its
+// own bidi reordering (see flipBidiForTerminal) and otherwise leaves it off for
+// the runtime probe to decide once RTL content appears.
+func resolveFlipBidiForHost(mode string) bool {
+	flip, _, _, _ := flipSettings(mode)
+	return flip
+}
+
+// flipSettings resolves the flipBidiForHost setting into the three renderer
+// axes: whether to flip, the run segmentation (wordwise), and whether the host
+// needs the ride-safe selection bar. Also reports whether sniffing recognised
+// the host (known), so "auto" can decide between trusting the sniff and arming
+// the probe. "true"/"false" are explicit; an explicit flip takes the
+// conservative Terminal.app profile (whole-run + ride-safe).
+func flipSettings(mode string) (flip, wordwise, rideSafe, known bool) {
+	switch mode {
+	case "true":
+		return true, false, true, true
+	case "false":
+		return false, false, false, true
+	case "auto":
+		p := hostBidiProfileFor(hostterm.Detect())
+		return p.flip, p.wordwise, p.rideSafe, p.known
+	}
+	return false, false, false, false
+}
+
+// adjustFlipForKitty overrides the flip axes when the host is Kitty and the
+// mode is "auto": Kitty applies its own bidi only while force_ltr is off, so if
+// the user's kitty.conf sets force_ltr yes, mew must own the bidi and NOT flip.
+// Nothing over the wire reveals force_ltr (see kittyconf.go), so this is the
+// one place the sniff feeds the renderer. Returns the (possibly adjusted) axes
+// and whether the flip is on afterwards (the imperfect path that the force_ltr
+// nudge watches for).
+func adjustFlipForKitty(mode string, flip, wordwise, rideSafe bool) (fl, ww, rs, flipOnKitty bool) {
+	if hostterm.Detect() != hostterm.TerminalKitty {
+		return flip, wordwise, rideSafe, false
+	}
+	if mode == "auto" {
+		if ltr, ok := kittyForceLTR(); ok && ltr {
+			flip, wordwise, rideSafe = false, false, false
+		}
+	}
+	return flip, wordwise, rideSafe, flip
+}
+
+// hostBidiProfile describes how a sniffed host handles RTL, so mew's emission
+// and selection match it.
+type hostBidiProfile struct {
+	flip     bool // emit RTL runs in logical order for the host's own bidi
+	wordwise bool // per-word run segmentation (Kitty) vs whole-run (Terminal.app)
+	rideSafe bool // host's bidi miscounts a background selection fill -> use fg+bold
+	known    bool // sniffing recognised the host (skip the DSR probe)
+}
+
+// hostBidiProfileFor classifies a sniffed host. A host it does not recognise
+// (known=false) falls to the runtime DSR probe.
+//
+//   - Apple Terminal applies its own bidi, keeps inter-word spaces inside the
+//     RTL run (whole-run), AND miscounts the selection fill (ride-safe).
+//   - Kitty reorders too but reverses each whitespace-separated word in place
+//     (word-wise); its selection fill is assumed to track the glyphs, so it
+//     keeps the real bar (ride-safe off) — pending confirmation.
+//   - iTerm2, Alacritty and Ghostty are stream-order: they render mew's visual
+//     output verbatim, so nothing flips.
+func hostBidiProfileFor(k hostterm.Kind) hostBidiProfile {
+	switch k {
+	case hostterm.TerminalAppleTerminal:
+		return hostBidiProfile{flip: true, wordwise: false, rideSafe: true, known: true}
+	case hostterm.TerminalKitty:
+		return hostBidiProfile{flip: true, wordwise: true, rideSafe: false, known: true}
+	case hostterm.TerminalITerm2, hostterm.TerminalAlacritty, hostterm.TerminalGhostty:
+		return hostBidiProfile{known: true}
+	case hostterm.TerminalSDL:
+		// Native graphical rendering: mew emits visual order and the host draws
+		// it directly (its own shaper does the joining), so nothing flips.
+		return hostBidiProfile{known: true}
+	}
+	return hostBidiProfile{}
 }
 
 // setOption sets a named editor option. Per-viewport options (tabSize,
@@ -3860,11 +4045,28 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			return false
 		}
 		e.Config.FlipBidiForHost = v
-		if v == "auto" {
-			e.bidiProbeState = bidiProbeIdle // re-arm detection
+		flip, wordwise, rideSafe, known := flipSettings(v)
+		flip, wordwise, rideSafe, e.kittyFlipActive = adjustFlipForKitty(v, flip, wordwise, rideSafe)
+		e.Renderer.SetFlipBidiForHost(flip)
+		e.Renderer.SetFlipWordwise(wordwise)
+		e.Renderer.SetFlipRideSafeSelection(rideSafe)
+		if v == "auto" && !known {
+			e.bidiProbeState = bidiProbeIdle // re-arm detection for an unknown host
 		} else {
-			e.bidiProbeState = bidiProbeDone // explicit choice wins
-			e.Renderer.SetFlipBidiForHost(v == "true")
+			e.bidiProbeState = bidiProbeDone // explicit choice or a recognised host
+		}
+		e.RequestRender()
+	case "rtlmarkmode":
+		v := strings.ToLower(strings.TrimSpace(value))
+		if v != "normal" && v != "iterm2" && v != "compose" && v != "drift" && v != "auto" {
+			e.ShowWarning("rtlMarkMode: auto, normal, iterm2, compose, or drift")
+			return false
+		}
+		e.Config.RtlMarkMode = v
+		resolved := resolveRtlMarkMode(v)
+		e.Renderer.SetRtlMarkMode(resolved)
+		if e.Config.RtlMarkModeSink != nil {
+			e.Config.RtlMarkModeSink(resolved)
 		}
 		e.RequestRender()
 	case "prompttimeout":
@@ -5105,6 +5307,7 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 	if runePos < 0 {
 		runePos = 0
 	}
+	startPos := runePos
 	for runePos < len(runes) && e.slotWidth(layout, runes, runePos, cols[runePos], tabSize) == 0 {
 		runePos++
 	}
@@ -5125,6 +5328,17 @@ func (e *Editor) caretVisualColumnBase(w *viewport.Viewport, line string, runePo
 			return cols[last] + e.slotWidth(layout, runes, last, cols[last], tabSize)
 		}
 		return total
+	}
+	// When the caret advanced ACROSS a cluster (it skipped that cluster's marks)
+	// whose base is RTL, it followed the cluster to its reading-trailing edge,
+	// which in an RTL run is one cell LEFT of the base. Return that directly. For
+	// an RTL rune following the cluster this equals its column, but where a
+	// left-to-right run follows, that run's column is bidi-teleported to the far
+	// end of the line — the caret must stay by the cluster, not jump there.
+	if runePos > startPos {
+		if base := clusterBase(startPos); layout.RTL[base] {
+			return cols[base] - 1
+		}
 	}
 	// The caret covers the cell of the rune it precedes — in either base
 	// direction, for both LTR and RTL runes. A block cursor sits ON that
@@ -7542,6 +7756,9 @@ func (e *Editor) performRender() {
 	// reaches the screen; resolve a probe whose reply never came.
 	e.maybeSendBidiProbe()
 	e.checkBidiProbeTimeout()
+
+	// Show/hide the Kitty force_ltr nudge based on what this frame painted.
+	e.updateNiqqudNudge()
 }
 
 // Run starts the editor with an optional filename.
@@ -7745,6 +7962,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// Set up resize callback to trigger re-render
 	// Since the main loop blocks on GetKey(), we perform the render directly
 	e.Renderer.SetOnResize(func() {
+		// A resize may have changed the cell pixel size; re-query it so the
+		// pixel→cell mouse mapping stays accurate (belt-and-suspenders for
+		// terminals without the ?2048 in-band notification).
+		e.refreshPixelMouseCellSize()
 		e.performRender()
 	})
 
@@ -7794,6 +8015,10 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// button presses, drags, releases and the scroll wheel arrive through the
 	// key stream as Mouse* pseudo-keys.
 	e.Renderer.EnableMouseReporting()
+	// Probe for SGR-Pixels (?1016): if the terminal has it, mouse reports
+	// switch to pixels and an insert-mode click lands the caret on the nearest
+	// cell edge. Inert on terminals that ignore the handshake.
+	e.beginPixelMouseProbe()
 
 	// Request grapheme-cluster width (DEC mode 2027) so the terminal — mew's
 	// purfecterm, or any host that honors it — measures cell width the same way
@@ -7872,6 +8097,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// A terminal cursor-position report (the flipBidiForHost probe's
 			// reply) is consumed here, never typed.
 			if e.handleBidiProbeReply(event.Key) {
+				continue
+			}
+			// The ?1016 SGR-pixels handshake replies (DECRPM/WinOp) are
+			// consumed here too, never typed.
+			if e.handlePixelMouseReply(event.Key) {
 				continue
 			}
 			// Mouse pseudo-keys (position/press/drag/release/scroll) never
@@ -8285,9 +8515,122 @@ func (e *Editor) ShowWarningTagged(message, tag string) {
 func (e *Editor) expireStaleNotifications() {
 	now := time.Now()
 	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
+		if w.Tag == niqqudNudgeTag {
+			continue // condition-driven; managed by updateNiqqudNudge, never aged out
+		}
 		if transientNotificationClasses[w.Class] && now.Sub(w.SpawnedAt) > 5*time.Second {
 			e.ViewportManager.RemoveViewport(w.ID)
 		}
+	}
+}
+
+// niqqudNudgeTag identifies the persistent force_ltr nudge viewport so it can be
+// found for replacement/removal and exempted from age-expiry and the prompt
+// priority scan.
+const niqqudNudgeTag = "kitty_force_ltr_nudge"
+
+// niqqudNudgeMessage names the one Kitty config change that fixes RTL vowel
+// corruption. It sits pinned at the very bottom (just below the modebar) while a
+// Hebrew cluster with unfolded niqqud is on screen and mew is flipping for Kitty.
+// (Turning mew's own flip off instead would only scramble the letter order —
+// force_ltr is the real fix, so the message points at that alone.)
+const niqqudNudgeMessage = "* kitty terminal needs force_ltr = yes to eliminate RTL vowel corruption.  Please fix and restart mew."
+
+// niqqudLayoutSig captures the layout facts that are independent of the nudge's
+// own one-row footprint, so the hysteresis latch (updateNiqqudNudge) releases
+// only on a genuine change — a resize, a scroll, an edit, or a change in the
+// viewport set — and not on the nudge's own appearance.
+func (e *Editor) niqqudLayoutSig() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%dx%d;", e.Renderer.Width, e.Renderer.Height)
+	// Count viewports other than the nudge itself: a docked prompt/help
+	// appearing or leaving is a real layout change worth re-evaluating.
+	n := 0
+	for _, w := range e.ViewportManager.AllViewports() {
+		if w.Tag != niqqudNudgeTag {
+			n++
+		}
+	}
+	fmt.Fprintf(&b, "n%d;", n)
+	if fw := e.ViewportManager.GetFocusedViewport(); fw != nil {
+		lines := 0
+		if fw.Buffer != nil {
+			lines = fw.Buffer.GetLineCount()
+		}
+		fmt.Fprintf(&b, "%s:o%d,%d:L%d", fw.ID, fw.ViewState.ViewOffsetY, fw.ViewState.ViewOffsetX, lines)
+	}
+	return b.String()
+}
+
+// updateNiqqudNudge shows or hides the persistent force_ltr nudge. It should
+// exist exactly while mew is flipping RTL for Kitty AND the current frame holds
+// a Hebrew cluster whose niqqud survive the active fold (the content Kitty may
+// mis-render), and come down otherwise. Called once per render, after the frame
+// is painted so the scan reads live cells.
+//
+// Because the nudge occupies a screen row, a niqqud line resting exactly on a
+// viewport's bottom boundary can oscillate: showing the nudge scrolls the line
+// off, which clears the condition, which hides the nudge, which brings the line
+// back. To avoid a per-frame flicker (and the render churn it drives), a short
+// run of frame-to-frame toggles latches the nudge on; the latch releases when
+// niqqudLayoutSig changes — i.e. when the user resizes, scrolls, edits, or the
+// viewport set changes — at which point the condition is re-evaluated fresh.
+func (e *Editor) updateNiqqudNudge() {
+	raw := e.kittyFlipActive && e.Renderer.FrameHasUncomposedNiqqud()
+
+	sig := e.niqqudLayoutSig()
+	if e.niqqudNudgeLatched && sig != e.niqqudNudgeLatchSig {
+		e.niqqudNudgeLatched = false
+		e.niqqudNudgeToggleRun = 0
+	}
+
+	want := raw
+	if e.niqqudNudgeLatched {
+		want = true
+	} else {
+		if raw != e.niqqudNudgeWantPrev {
+			e.niqqudNudgeToggleRun++
+		} else {
+			e.niqqudNudgeToggleRun = 0
+		}
+		// Three straight alternations (on/off/on) means the boundary feedback
+		// loop, not real content change: pin it on until the layout moves.
+		if e.niqqudNudgeToggleRun >= 3 {
+			e.niqqudNudgeLatched = true
+			e.niqqudNudgeLatchSig = sig
+			want = true
+		}
+	}
+	e.niqqudNudgeWantPrev = raw
+
+	var existing *viewport.Viewport
+	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
+		if w.Tag == niqqudNudgeTag {
+			existing = w
+			break
+		}
+	}
+	switch {
+	case want && existing == nil:
+		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type:        viewport.ToolViewport,
+			ViewportSet: viewport.ViewportSetTransient,
+			Class:       "warning",
+			Tag:         niqqudNudgeTag,
+			Dock:        viewport.DockBottom,
+			// Just below the modebar: pinned to the last screen line (or just
+			// above a bottom-docked modebar), under any prompt. The prompt
+			// priority scan and age-expiry both exempt this tag.
+			Priority:        plugins.ModebarBottomPriority - 1,
+			MinHeight:       1,
+			MaxHeight:       1,
+			MessageTopInner: niqqudNudgeMessage,
+			ShowLineNumbers: false,
+		})
+		e.RequestRender()
+	case !want && existing != nil:
+		e.ViewportManager.RemoveViewport(existing.ID)
+		e.RequestRender()
 	}
 }
 
