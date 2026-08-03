@@ -156,6 +156,32 @@ func (d *Desktop) tearOffInPlace(win *window.Window) {
 // position. Returns nil when the platform can't host it. Shared by
 // the drag and click detach paths.
 func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.Unit) *window.TearOffHost {
+	// Claim the window for the duration of this call. createTornHost latches
+	// its "claimed" state (RemoveWindow / SetDetached) only after CreateSurface
+	// below, and on SDL that surface creation re-enters the post queue - which
+	// can run a deferred soloAdoptWindow for THIS window before those latches,
+	// tearing it a second time onto a second surface. This claim makes the
+	// re-entrant call a no-op, so a window is never hosted twice. (The claim is
+	// released on return, so a later legitimate re-tear after re-docking is
+	// unaffected.)
+	if win != nil {
+		d.mu.Lock()
+		if d.tearing[win] {
+			d.mu.Unlock()
+			return nil
+		}
+		if d.tearing == nil {
+			d.tearing = make(map[*window.Window]bool)
+		}
+		d.tearing[win] = true
+		d.mu.Unlock()
+		defer func() {
+			d.mu.Lock()
+			delete(d.tearing, win)
+			d.mu.Unlock()
+		}()
+	}
+
 	d.mu.RLock()
 	plat := d.platform
 	surf := d.surface

@@ -1,0 +1,151 @@
+diff --git a/kittytk/objects/trinkets/desktop.go b/kittytk/objects/trinkets/desktop.go
+index f215bc5..7db88f4 100644
+--- a/kittytk/objects/trinkets/desktop.go
++++ b/kittytk/objects/trinkets/desktop.go
+@@ -223,6 +223,17 @@ type Desktop struct {
+ 	// repaint tick drives their animation alongside the desktop's.
+ 	tornHosts []*window.TearOffHost
+ 
++	// tearing marks windows whose createTornHost is in flight, so a
++	// re-entrant tear of the SAME window is a no-op. createTornHost only
++	// latches its "claimed" state (removed from the manager, SetDetached)
++	// AFTER platform.CreateSurface, and on the SDL backend creating that OS
++	// window fires a WindowResized event-watch that drains the post queue
++	// synchronously - re-running a deferred soloAdoptWindow for this very
++	// window while its guards still read "not yet torn". Without this the
++	// window would be hosted on two surfaces at once (a double/ghost dialog
++	// in solo mode). Guarded by d.mu.
++	tearing map[*window.Window]bool
++
+ 	// soloPrimaryHost is the tear-off host on the desktop's own OS
+ 	// surface in solo mode (the one window that can't just be closed,
+ 	// because that surface owns the event loop). When its window closes,
+diff --git a/kittytk/objects/trinkets/desktop_tearoff.go b/kittytk/objects/trinkets/desktop_tearoff.go
+index 87f353b..6d25827 100644
+--- a/kittytk/objects/trinkets/desktop_tearoff.go
++++ b/kittytk/objects/trinkets/desktop_tearoff.go
+@@ -156,6 +156,32 @@ func (d *Desktop) tearOffInPlace(win *window.Window) {
+ // position. Returns nil when the platform can't host it. Shared by
+ // the drag and click detach paths.
+ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.Unit) *window.TearOffHost {
++	// Claim the window for the duration of this call. createTornHost latches
++	// its "claimed" state (RemoveWindow / SetDetached) only after CreateSurface
++	// below, and on SDL that surface creation re-enters the post queue - which
++	// can run a deferred soloAdoptWindow for THIS window before those latches,
++	// tearing it a second time onto a second surface. This claim makes the
++	// re-entrant call a no-op, so a window is never hosted twice. (The claim is
++	// released on return, so a later legitimate re-tear after re-docking is
++	// unaffected.)
++	if win != nil {
++		d.mu.Lock()
++		if d.tearing[win] {
++			d.mu.Unlock()
++			return nil
++		}
++		if d.tearing == nil {
++			d.tearing = make(map[*window.Window]bool)
++		}
++		d.tearing[win] = true
++		d.mu.Unlock()
++		defer func() {
++			d.mu.Lock()
++			delete(d.tearing, win)
++			d.mu.Unlock()
++		}()
++	}
++
+ 	d.mu.RLock()
+ 	plat := d.platform
+ 	surf := d.surface
+diff --git a/kittytk/objects/trinkets/desktop_tearoff_reentrant_test.go b/kittytk/objects/trinkets/desktop_tearoff_reentrant_test.go
+new file mode 100644
+index 0000000..61ec0b9
+--- /dev/null
++++ b/kittytk/objects/trinkets/desktop_tearoff_reentrant_test.go
+@@ -0,0 +1,86 @@
++package trinkets
++
++import (
++	"testing"
++
++	"github.com/phroun/kittytk/backend/raster"
++	"github.com/phroun/kittytk/core"
++	"github.com/phroun/kittytk/objects/window"
++	"github.com/phroun/kittytk/platform"
++)
++
++// reentrantTearPlatform reproduces the SDL re-entrancy behind the solo-mode
++// double/ghost dialog: creating the torn OS surface fires an event-watch that
++// drains the post queue synchronously, re-running a deferred tear of the SAME
++// window while it is still mid-createTornHost (before that call removes it from
++// the manager / marks it detached). Its CreateSurface calls back into
++// createTornHost for that window exactly once, on the first torn surface.
++type reentrantTearPlatform struct {
++	*msPlatform
++	d         *Desktop
++	win       *window.Window
++	reentered bool
++}
++
++// Run passes the WRAPPER (not the embedded msPlatform) to init, so d.surface —
++// and every later plat.CreateSurface via d.platform — routes through the
++// re-entrant override below.
++func (p *reentrantTearPlatform) Run(init func(platform.Platform)) int {
++	init(p)
++	if p.msPlatform.script != nil {
++		p.msPlatform.script()
++	}
++	return 0
++}
++
++func (p *reentrantTearPlatform) CreateSurface(o platform.SurfaceOptions) (platform.Surface, error) {
++	s, err := p.msPlatform.CreateSurface(o)
++	// The first TORN surface (surfaces == primary + this one) is where SDL
++	// would re-enter: simulate the deferred tear of the same window firing now,
++	// before the outer createTornHost has latched its claimed state.
++	if err == nil && !p.reentered && len(p.msPlatform.surfaces) == 2 {
++		p.reentered = true
++		p.d.createTornHost(p.win, 10, 10)
++	}
++	return s, err
++}
++
++// TestTearOffReentrantDoesNotDoubleHost locks the fix for the solo-mode
++// double/ghost dialog. A window must never be hosted on two surfaces just
++// because a re-entrant tear fired before createTornHost latched its claimed
++// state — the tearing guard makes the re-entrant call a no-op.
++func TestTearOffReentrantDoesNotDoubleHost(t *testing.T) {
++	t.Cleanup(func() { core.SetTextMeasurer(nil) })
++	px, _ := raster.New(800, 480)
++	d := NewDesktop()
++	d.SetBackend(px)
++
++	win := window.NewWindow("dlg")
++	win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100})
++
++	plat := &reentrantTearPlatform{msPlatform: &msPlatform{}, d: d, win: win}
++	plat.msPlatform.script = func() {
++		d.WindowManager().AddWindow(win)
++		win.Layout()
++
++		// Outer tear. Its CreateSurface re-enters createTornHost(win); without
++		// the guard that would build a second host on a third surface.
++		host := d.createTornHost(win, 0, 0)
++		if host == nil {
++			t.Fatal("outer tear-off returned nil host")
++		}
++		if !plat.reentered {
++			t.Fatal("re-entrancy was not exercised (test would not catch the bug)")
++		}
++		// Exactly the primary desktop surface + one torn surface, and the
++		// window hosted exactly once.
++		if n := len(plat.msPlatform.surfaces); n != 2 {
++			t.Fatalf("re-entrant tear created an extra surface: %d total (want 2)", n)
++		}
++		if n := len(d.tornHosts); n != 1 {
++			t.Fatalf("window hosted %d times (want 1)", n)
++		}
++		d.QuitWithCode(0)
++	}
++	d.RunOn(plat)
++}

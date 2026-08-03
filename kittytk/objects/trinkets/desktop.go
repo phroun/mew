@@ -223,6 +223,17 @@ type Desktop struct {
 	// repaint tick drives their animation alongside the desktop's.
 	tornHosts []*window.TearOffHost
 
+	// tearing marks windows whose createTornHost is in flight, so a
+	// re-entrant tear of the SAME window is a no-op. createTornHost only
+	// latches its "claimed" state (removed from the manager, SetDetached)
+	// AFTER platform.CreateSurface, and on the SDL backend creating that OS
+	// window fires a WindowResized event-watch that drains the post queue
+	// synchronously - re-running a deferred soloAdoptWindow for this very
+	// window while its guards still read "not yet torn". Without this the
+	// window would be hosted on two surfaces at once (a double/ghost dialog
+	// in solo mode). Guarded by d.mu.
+	tearing map[*window.Window]bool
+
 	// soloPrimaryHost is the tear-off host on the desktop's own OS
 	// surface in solo mode (the one window that can't just be closed,
 	// because that surface owns the event loop). When its window closes,

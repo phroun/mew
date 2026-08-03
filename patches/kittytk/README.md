@@ -46,6 +46,23 @@ Applied to the vendored tree to unblock mew-sdl, then sent upstream as PR
 `sdl3.go` was already byte-identical, so the sync only bumped the build counter
 and the `go.mod` pins. This directory keeps the patch as the development record.
 
+**PENDING upstream — `solo-tearoff-reentrancy.patch`** (`objects/trinkets/
+desktop.go` + `desktop_tearoff.go` + a regression test, against v0.1.8): opening
+a dialog while the desktop is in **solo mode** (the mew default — the root
+window torn off onto its own OS surface) produced TWO window instances that
+both responded to hover. `Desktop.createTornHost` latches its "claimed" state
+(`wm.RemoveWindow` / `SetDetached`) only AFTER `platform.CreateSurface`, and on
+the SDL backend creating that OS window fires a `WindowResized` event-watch that
+**drains the post queue synchronously** — re-running the deferred
+`soloAdoptWindow` for the very window being torn, while its guards still read
+"not yet torn". The window was then hosted on two surfaces at once. Fix: a
+`tearing` claim set marked at the top of `createTornHost` (before
+`CreateSurface`), so a re-entrant tear of the same window is a no-op. This is a
+KittyTK-general window-management bug (any solo host, any dialog), not
+mew-specific. `desktop_tearoff_reentrant_test.go` reproduces the re-entrancy
+with a fake platform and asserts a single host (it fails without the guard —
+three surfaces).
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs
