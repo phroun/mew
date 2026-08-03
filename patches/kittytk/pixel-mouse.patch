@@ -1,3 +1,7 @@
+# STATUS: LANDED upstream in KittyTK v0.1.7-alpha (PR #16). Historical record
+# only — mew's ./kittytk is re-synced to v0.1.7, which already contains this.
+# Do not re-apply. (Leading '#' lines are ignored by git apply / patch.)
+#
 diff --git a/objects/trinkets/purfecterm_gfx.go b/objects/trinkets/purfecterm_gfx.go
 index b07fb24..fb5af7f 100644
 --- a/objects/trinkets/purfecterm_gfx.go

@@ -1,5 +1,15 @@
 # Pixel mouse in the KittyTK hosts (SGR-Pixels, ?1016)
 
+**STATUS: LANDED upstream in KittyTK `v0.1.7-alpha`** (PR
+[#16](https://github.com/phroun/kittytk/pull/16) "Graphical PurfecTerm:
+pixel-precise mouse (?1016), script-aware Arabic, embedded focus, OSC-52";
+the purfecterm half landed in `purfecterm v0.2.30`). mew's vendored `./kittytk`
+is re-synced to v0.1.7, so this note and `pixel-mouse.patch` are kept only as
+the development record — the code now lives upstream. The mew-side pieces
+(`internal/editor/pixelmouse.go`, the `?1016` gate, the trinket wiring) are in
+mew proper. The "further TUI outer-`?1016`" work described at the end remains a
+future item.
+
 mew's pixel-precise mouse — the nearest-edge caret in insert mode — works on
 any real terminal that speaks `?1016` (the plain build gets it for free). This
 brings it to the KittyTK **hosts**, where mew runs as the PurfecTerm-backed

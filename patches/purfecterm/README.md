@@ -88,7 +88,9 @@ integration work:
    inherent pixel size, so a renderer pushes its cell geometry — the KittyTK
    gfx trinket does, see `patches/kittytk/pixel-mouse.patch`). Verified: patched
    v0.2.29 root + cli suites pass (`pixelmouse_test.go` locks the contract).
-   **PENDING upstream.**
+   **LANDED in v0.2.30** (the ?1016 handshake, DECRQM, CSI 16 t reports, and
+   `Buffer.SetCellPixelSize`); the KittyTK gfx consumer landed in KittyTK
+   `v0.1.7-alpha` (PR #16). mew now consumes both from the released tags.
 
 ---
 

@@ -9,6 +9,24 @@ divergence is the mew boundary below. `app/go.mod` pins
 `github.com/phroun/kittytk v0.1.3-alpha`. This directory is kept as the
 development record.
 
+**UPDATE — LANDED upstream in KittyTK `v0.1.7-alpha`**: the next round of fork
+improvements went up as three themed PRs, all merged, and mew's `./kittytk` is
+re-synced to `v0.1.7-alpha` (`app/go.mod` + `go.mod` pins bumped):
+
+- [#15](https://github.com/phroun/kittytk/pull/15) — TUI backend: terminal
+  restore, RTL drift mode, Hebrew precompose (`hebrew` pkg), combining width.
+- [#16](https://github.com/phroun/kittytk/pull/16) — Graphical PurfecTerm:
+  pixel-precise mouse (`?1016`), script-aware Arabic, embedded focus, OSC-52.
+  See `PIXEL-MOUSE.md` + `pixel-mouse.patch` (both now historical).
+- [#17](https://github.com/phroun/kittytk/pull/17) — Window & menu chrome:
+  resize-hover, tear-off pixel drag, menu roles/anchors, pass-next-key/F10,
+  cursor subtree, host-terminal detection (`hostterm` pkg).
+
+Dependency bumps carried by those PRs: `purfecterm v0.2.27 → v0.2.30`,
+`direct-key-handler v0.3.9 → v0.3.11`. After this sync, the only
+vendored↔upstream divergence is the mew boundary (the 19 `//go:build mew`
+files + go.mod's mew require) — see `docs/kittytk-subtree.md`.
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs
