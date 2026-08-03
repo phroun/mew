@@ -88,7 +88,7 @@ in the SDL host.
   edge (sub-cell residual always 0), so nearest-edge was a silent no-op. The
   **TUI outer-`?1016`** work below lifts that ceiling.
 
-### TUI outer-`?1016` — IMPLEMENTED in the vendored tree (`tui-outer-pixel-mouse.patch`)
+### TUI outer-`?1016` — IMPLEMENTED; upstream PR [#20](https://github.com/phroun/kittytk/pull/20) (`tui-outer-pixel-mouse.patch`)
 
 To make the TUI host itself sub-cell precise, the outer terminal's own pixel
 resolution is carried through. The pleasant surprise on implementation: this
