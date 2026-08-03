@@ -38,7 +38,8 @@ is empty and the call is skipped; **mew-sdl is the first caller** (it sets
 `SetAppName("mew")`), which is what surfaced the latent bug. Fix: `SetHint`
 loads the library first (idempotent — it shares `Init`'s `libLoaded` guard), so
 a pre-`Init` hint works and `SDL_APP_NAME` still lands before `SDL_Init`.
-Applied to the vendored tree now to unblock mew-sdl; a future upstream PR.
+Applied to the vendored tree now to unblock mew-sdl; sent upstream as PR
+[#19](https://github.com/phroun/kittytk/pull/19) (build bumped 7 → 8 there).
 
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
