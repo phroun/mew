@@ -50,9 +50,11 @@ INSTALL_BIN := $(DESTDIR)$(PREFIX)/bin
 MACAPP_DIR ?= /Applications
 
 # Build tags: the KittyTK host (kittytk) with the real mew-backed editor (mew),
-# and the graphical SDL backend (sdl) for the windowed twin.
+# and the graphical SDL backend (sdl) for the windowed twin. The SDL host also
+# carries `webgpu`, since the default renderer (see LoadHostConfig) needs it;
+# software rendering still works when [window] renderer=software is set.
 TUI_TAGS := kittytk mew
-SDL_TAGS := sdl mew
+SDL_TAGS := sdl mew webgpu
 
 # The file holding the auto-incremented build counter (see `increment`).
 BUILD_FILE := internal/version/version.go

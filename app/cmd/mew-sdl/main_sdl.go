@@ -55,7 +55,13 @@ func main() {
 	// kittytk.ini; env vars still override. Same knobs as the kittytk-sdl host.
 	cfg := mewhost.LoadHostConfig()
 
-	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
+	// [window] renderer selects the software or WebGPU backend (mew defaults to
+	// webgpu; see LoadHostConfig). A GPU init failure surfaces here.
+	plat, err := sdlplat.New(cfg.Title, cfg.Width, cfg.Height, cfg.Renderer)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
+		os.Exit(1)
+	}
 	plat.SetAppName("mew")       // OS app name is "mew", not the binary's "mew-sdl"
 	plat.SetScale(cfg.Scale)     // device zoom: pixels per unit at the base font
 	plat.SetShowFPS(cfg.ShowFPS) // [window] fps overlays the frame rate
@@ -83,6 +89,22 @@ func main() {
 	// The UI font stays one cell tall in UNITS (12); font_size makes it render
 	// larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
+
+	// Wallpaper: [window] wallpaper names the image; a bad path is reported and
+	// the built-in pattern stays, so a typo cannot leave the desktop blank.
+	if path := cfg.ResolveWallpaper(); path != "" {
+		if err := desktop.SetWallpaperFile(path); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+		}
+	}
+	// How that image (or the built-in pattern) covers the desktop:
+	// wallpaper_mode/_scale/_align/_tile/_filter. A name that does not parse is
+	// reported and the default kept.
+	layout, layoutErrs := cfg.ResolveWallpaperLayout()
+	for _, err := range layoutErrs {
+		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+	}
+	desktop.SetWallpaperLayout(layout)
 
 	// Graphical host: show_desktop/hide_desktop toggle solo mode (graphical=true).
 	about := mewhost.BuildHost(desktop, cfg, launchArgs, true)
