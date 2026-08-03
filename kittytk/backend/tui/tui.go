@@ -115,9 +115,25 @@ type TUIBackend struct {
 	eventQueue chan core.Event
 	stopChan   chan struct{}
 
-	// Mouse state (for tracking position between Mouse@x,y and action events)
+	// Mouse state (for tracking position between Mouse@x,y and action events).
+	// These hold the RAW 1-based coordinate the terminal reported — a cell
+	// column in the default SGR mode, or an outer pixel when pixelMouse is on
+	// (outerToUnits* does the mode-dependent conversion).
 	pendingMouseX int
 	pendingMouseY int
+
+	// Outer-terminal pixel mouse (SGR-Pixels, ?1016). When the real terminal
+	// answers the startup probe — DECRQM says ?1016 is recognized AND CSI 16 t
+	// reports a cell pixel size — the backend enables ?1016 on it and reads
+	// mouse reports as PIXELS, so a click carries the sub-cell position mew's
+	// nearest-edge caret wants (the same sub-cell Unit the SDL host forwards).
+	// A terminal that ignores either probe simply keeps cell resolution, so
+	// this is a pure enhancement that degrades to today's behavior.
+	pixelMouse      bool // ?1016 enabled on the outer terminal; reports are pixels
+	outerCellW      int  // outer terminal cell width in pixels (from CSI 16 t)
+	outerCellH      int  // outer terminal cell height in pixels
+	outerPixelOK    bool // DECRQM: ?1016 is recognized (settable)
+	outerCellSizeOK bool // CSI 16 t gave a usable cell pixel size
 
 	// Output writer
 	output io.Writer
@@ -303,6 +319,17 @@ func (t *TUIBackend) Init() error {
 		return fmt.Errorf("failed to start keyboard handler: %w", err)
 	}
 
+	// Probe the outer terminal for pixel-precise mouse (SGR-Pixels, ?1016).
+	// The replies are asynchronous — they arrive as DECRPM:/WinOp: keys once
+	// the keyboard reader is running — so this must come AFTER Start(). A
+	// terminal that answers both (recognizes ?1016 and reports a cell pixel
+	// size) gets ?1016 enabled by maybeEnablePixelMouse; one that ignores
+	// either query stays on cell coordinates. See handleDECRPM/handleWinOp.
+	if t.hasMouse {
+		t.writeTTY("\033[?1016$p") // DECRQM: is SGR-Pixels mode recognized?
+		t.writeTTY("\033[16t")     // XTWINOPS: report the cell size in pixels
+	}
+
 	// Handle terminal resize
 	go t.handleResize()
 
@@ -341,9 +368,10 @@ func (t *TUIBackend) Shutdown() {
 // event loop holds and does nothing but write escapes.
 func (t *TUIBackend) RestoreTerminal() {
 	t.restored.Do(func() {
-		// Disable mouse
+		// Disable mouse. ?1016l first (harmless if it was never enabled) so the
+		// outer terminal drops back to cell reports before the rest go off.
 		if t.hasMouse {
-			t.writeTTY("\033[?1006l\033[?1002l\033[?1000l")
+			t.writeTTY("\033[?1016l\033[?1006l\033[?1002l\033[?1000l")
 		}
 
 		// Show cursor
@@ -1295,16 +1323,29 @@ func (t *TUIBackend) Beep() {
 
 // handleKey processes key events from the keyboard handler.
 func (t *TUIBackend) handleKey(key string) {
+	// Outer-terminal replies to our pixel-mouse probe (see Init). These are
+	// backend business, not app input, so consume them here — otherwise they
+	// would fall through and be misread as bogus keystrokes.
+	if strings.HasPrefix(key, "DECRPM:") {
+		t.handleDECRPM(key)
+		return
+	}
+	if strings.HasPrefix(key, "WinOp:") {
+		t.handleWinOp(key)
+		return
+	}
+
 	// Check for mouse events from direct-key-handler
 	// Mouse events come as two keys: "Mouse@x,y" (position) followed by action
 	if strings.HasPrefix(key, "Mouse@") {
-		// Parse position: Mouse@x,y
-		// Terminal mouse coordinates are 1-indexed, convert to 0-indexed
+		// Parse position: Mouse@x,y. Store the RAW 1-based coordinate — a cell
+		// column normally, an outer pixel under ?1016 — and let outerToUnits*
+		// resolve it to units at action time (it knows the current mode).
 		var x, y int
 		if _, err := fmt.Sscanf(key, "Mouse@%d,%d", &x, &y); err == nil {
 			t.mu.Lock()
-			t.pendingMouseX = x - 1
-			t.pendingMouseY = y - 1
+			t.pendingMouseX = x
+			t.pendingMouseY = y
 			t.mu.Unlock()
 		}
 		return // Position events don't generate UI events
@@ -1360,19 +1401,20 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	// its modifiers, not be dropped as unknown here.
 	mods, key := core.ParseKeyModifiers(key)
 
-	// Convert cell coordinates to units
-	unitX := t.metrics.CellToUnitsX(x)
-	unitY := t.metrics.CellToUnitsY(y)
+	// Convert the raw 1-based coordinate to units (cell- or pixel-based
+	// depending on whether ?1016 is active — see outerToUnitsX/Y).
+	unitX := t.outerToUnitsX(x)
+	unitY := t.outerToUnitsY(y)
 
-	// For drag events, position may be embedded: MouseLeftDrag@x,y
-	// Terminal coordinates are 1-indexed, convert to 0-indexed
+	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
+	// 1-based, same conversion).
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
-				unitX = t.metrics.CellToUnitsX(dragX - 1)
-				unitY = t.metrics.CellToUnitsY(dragY - 1)
+				unitX = t.outerToUnitsX(dragX)
+				unitY = t.outerToUnitsY(dragY)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
@@ -1419,6 +1461,92 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	case t.eventQueue <- event:
 	default:
 		// Queue full, drop event
+	}
+}
+
+// outerToUnitsX converts a raw 1-based mouse X coordinate to units. In the
+// default SGR mode the number is a 1-based cell column, so it maps to that
+// cell's left edge. Under ?1016 it is a 1-based OUTER PIXEL: the integer cell
+// index divides out, and the sub-cell remainder scales into a fraction of this
+// backend's cell width — the sub-cell position mew's nearest-edge caret uses.
+func (t *TUIBackend) outerToUnitsX(raw int) core.Unit {
+	if t.pixelMouse && t.outerCellW > 0 {
+		px := raw - 1
+		if px < 0 {
+			px = 0
+		}
+		cell := px / t.outerCellW
+		frac := px % t.outerCellW
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(t.outerCellW)
+	}
+	return t.metrics.CellToUnitsX(raw - 1)
+}
+
+// outerToUnitsY is the vertical twin of outerToUnitsX.
+func (t *TUIBackend) outerToUnitsY(raw int) core.Unit {
+	if t.pixelMouse && t.outerCellH > 0 {
+		px := raw - 1
+		if px < 0 {
+			px = 0
+		}
+		cell := px / t.outerCellH
+		frac := px % t.outerCellH
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(t.outerCellH)
+	}
+	return t.metrics.CellToUnitsY(raw - 1)
+}
+
+// handleDECRPM consumes a "DECRPM:Ps;Pm" reply to our DECRQM probe. For ?1016
+// (SGR-Pixels), Pm tells us whether the mode is settable: 0 = unrecognized,
+// 1 = set, 2 = reset, 3 = perm-set, 4 = perm-reset. Anything but "unrecognized"
+// or "permanently reset" means we can enable it.
+func (t *TUIBackend) handleDECRPM(key string) {
+	var ps, pm int
+	if _, err := fmt.Sscanf(key, "DECRPM:%d;%d", &ps, &pm); err != nil {
+		return
+	}
+	if ps != 1016 {
+		return
+	}
+	if pm == 1 || pm == 2 || pm == 3 {
+		t.mu.Lock()
+		t.outerPixelOK = true
+		t.mu.Unlock()
+		t.maybeEnablePixelMouse()
+	}
+}
+
+// handleWinOp consumes a "WinOp:Ps;..." XTWINOPS reply. Ps=6 is the CELL pixel
+// size, reported height-then-width; that is the divisor pixel reports need.
+func (t *TUIBackend) handleWinOp(key string) {
+	var ps, h, w int
+	if _, err := fmt.Sscanf(key, "WinOp:%d;%d;%d", &ps, &h, &w); err != nil {
+		return
+	}
+	if ps != 6 || w <= 0 || h <= 0 {
+		return
+	}
+	t.mu.Lock()
+	t.outerCellW = w
+	t.outerCellH = h
+	t.outerCellSizeOK = true
+	t.mu.Unlock()
+	t.maybeEnablePixelMouse()
+}
+
+// maybeEnablePixelMouse turns on ?1016 once BOTH probe replies have arrived —
+// the mode is settable AND we know the outer cell pixel size. The two replies
+// race (either order), so this is called after each and enables exactly once.
+// ?1006 stays on; ?1016 refines it to pixel coordinates on the same SGR wire.
+func (t *TUIBackend) maybeEnablePixelMouse() {
+	t.mu.Lock()
+	ready := t.hasMouse && t.outerPixelOK && t.outerCellSizeOK && !t.pixelMouse
+	if ready {
+		t.pixelMouse = true
+	}
+	t.mu.Unlock()
+	if ready {
+		t.writeTTY("\033[?1016h")
 	}
 }
 
