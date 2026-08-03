@@ -125,7 +125,18 @@ func libraryCandidates() []string {
 func Quit()           { csdl.Quit() }
 func Delay(ms uint32) { csdl.Delay(ms) }
 
-func SetHint(name, value string) error { return csdl.SetHint(name, value) }
+// SetHint sets an SDL hint. Some hints (SDL_APP_NAME in particular) must be set
+// BEFORE SDL_Init to take effect, so this cannot wait for Init to open the
+// library: like every entry point in this purego binding, csdl.SetHint
+// dereferences a function pointer that is nil until libSDL3 is loaded. Load it
+// here first (idempotent — Init's own loadLibrary shares the libLoaded guard),
+// so a pre-Init SetHint works instead of segfaulting on the unregistered call.
+func SetHint(name, value string) error {
+	if err := loadLibrary(); err != nil {
+		return err
+	}
+	return csdl.SetHint(name, value)
+}
 
 // --- windows ---
 

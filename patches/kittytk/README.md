@@ -27,6 +27,19 @@ Dependency bumps carried by those PRs: `purfecterm v0.2.27 → v0.2.30`,
 vendored↔upstream divergence is the mew boundary (the 19 `//go:build mew`
 files + go.mod's mew require) — see `docs/kittytk-subtree.md`.
 
+**PENDING upstream — `sdl-sethint-preload.patch`** (`sdl/sdl3/sdl3.go`, against
+v0.1.7): `Platform.Run` calls `sdl3.SetHint("SDL_APP_NAME", …)` BEFORE
+`sdl3.Init` when an app name is set (`SDL_APP_NAME` must precede `SDL_Init` to
+take effect). In the purego binding, every entry point — `SetHint` included —
+dereferences a function pointer that stays nil until `loadLibrary` opens
+libSDL3, which today happens only inside `Init`. So the pre-`Init` `SetHint`
+segfaults. The standalone `kittytk-sdl` never sets an app name, so `p.appName`
+is empty and the call is skipped; **mew-sdl is the first caller** (it sets
+`SetAppName("mew")`), which is what surfaced the latent bug. Fix: `SetHint`
+loads the library first (idempotent — it shares `Init`'s `libLoaded` guard), so
+a pre-`Init` hint works and `SDL_APP_NAME` still lands before `SDL_Init`.
+Applied to the vendored tree now to unblock mew-sdl; a future upstream PR.
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs
