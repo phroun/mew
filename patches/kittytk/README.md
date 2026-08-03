@@ -63,6 +63,22 @@ mew-specific. `desktop_tearoff_reentrant_test.go` reproduces the re-entrancy
 with a fake platform and asserts a single host (it fails without the guard —
 three surfaces).
 
+**PENDING upstream — `about-rotation-gate.patch`** (`sdl/platform_sdl.go` +
+`objects/trinkets/desktop.go` + a test, against v0.1.8): the WebGPU rotation
+easter egg was triggered by the **R key globally** — pressing `r` anywhere (in
+the editor!) toggled a full-window spin, and the key still fell through to be
+typed. It also auto-started from the macOS application-menu About item, which is
+the system menu, not the desktop's own About box. Gate it: the R-key toggle now
+fires only while a `rotationGate` predicate is true, and the desktop wires that
+to `aboutBoxFocused` — the built-in "About KittyTK" dialog being open and
+active — and the key is consumed when it fires. The stray auto-start on the
+mac About item is removed. So the egg is reachable only from the About KittyTK
+box, and `r` is an ordinary key everywhere else. The gate is offered to the
+platform through an anonymous interface, so the renderer-agnostic trinkets stay
+free of an SDL dependency. `desktop_aboutrotation_test.go` locks the gate
+(false with no dialog / after focus leaves / after close; true only while the
+box is open and active).
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs

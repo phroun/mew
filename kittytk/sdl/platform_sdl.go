@@ -71,6 +71,11 @@ type Platform struct {
 	rotationActivationTime      time.Time
 	rotationDeactivationTime    time.Time
 	rotationAngleAtDeactivation float64
+	// rotationGate, when set, must return true for the R-key rotation easter
+	// egg to fire. The desktop wires it to "the About box is focused", so the
+	// effect is reachable only from that dialog and R stays an ordinary key
+	// everywhere else. Nil means never (no host opted in).
+	rotationGate func() bool
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
@@ -197,17 +202,19 @@ func (p *Platform) SetAppName(name string) {
 var macAboutHandler func()
 
 func (p *Platform) SetAboutHandler(fn func()) {
-	macAboutHandler = func() {
-		// Enable rotation effect when About is clicked
-		if !p.rotationEnabled.Load() {
-			p.rotationEnabled.Store(true)
-			p.rotationStartTime = time.Now() // Reset start time
-		}
-		// Call the original handler
-		if fn != nil {
-			fn()
-		}
-	}
+	// This retargets the macOS application-menu About item; it just shows the
+	// host's About dialog. (It used to also start the rotation easter egg, but
+	// that fired on the system menu item rather than the desktop's own About
+	// box - the egg is now the R key gated to that box, see the key handler.)
+	macAboutHandler = fn
+}
+
+// SetRotationTriggerGate sets the predicate the R-key rotation easter egg is
+// gated on: R only toggles rotation while this returns true. The desktop wires
+// it to "the About box is focused" so the effect can't be triggered from
+// ordinary typing. A nil gate (the default) disables the egg entirely.
+func (p *Platform) SetRotationTriggerGate(fn func() bool) {
+	p.rotationGate = fn
 }
 
 func (p *Platform) SetScale(scale int) {
@@ -1223,7 +1230,11 @@ func (p *Platform) pumpEvents() bool {
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
 				// (WebGPU); works in plain-present AND compositor modes.
-				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) {
+				// Gated: it fires only while the rotationGate says so (the
+				// desktop points it at "the About box is focused"), so R stays
+				// an ordinary key in the editor and everywhere else.
+				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) &&
+					p.rotationGate != nil && p.rotationGate() {
 					enabled := !p.rotationEnabled.Load()
 					p.rotationEnabled.Store(enabled)
 
@@ -1252,6 +1263,7 @@ func (p *Platform) pumpEvents() bool {
 
 					// The animation needs frames even while input is idle.
 					s.Invalidate(core.UnitRect{})
+					continue // Consumed by the easter egg; don't also type "r".
 				}
 
 				if p.fontZoomKey(e.Keysym) {
