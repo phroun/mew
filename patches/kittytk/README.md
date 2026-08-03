@@ -46,7 +46,7 @@ Applied to the vendored tree to unblock mew-sdl, then sent upstream as PR
 `sdl3.go` was already byte-identical, so the sync only bumped the build counter
 and the `go.mod` pins. This directory keeps the patch as the development record.
 
-**PENDING upstream (PR [#21](https://github.com/phroun/kittytk/pull/21)) — `solo-tearoff-reentrancy.patch`** (`objects/trinkets/
+**LANDED upstream in KittyTK `v0.1.9-alpha`** (PR [#21](https://github.com/phroun/kittytk/pull/21)) — `solo-tearoff-reentrancy.patch` (`objects/trinkets/
 desktop.go` + `desktop_tearoff.go` + a regression test, against v0.1.8): opening
 a dialog while the desktop is in **solo mode** (the mew default — the root
 window torn off onto its own OS surface) produced TWO window instances that
@@ -63,7 +63,7 @@ mew-specific. `desktop_tearoff_reentrant_test.go` reproduces the re-entrancy
 with a fake platform and asserts a single host (it fails without the guard —
 three surfaces).
 
-**PENDING upstream (PR [#21](https://github.com/phroun/kittytk/pull/21)) — `about-rotation-gate.patch`** (`sdl/platform_sdl.go` +
+**LANDED upstream in KittyTK `v0.1.9-alpha`** (PR [#21](https://github.com/phroun/kittytk/pull/21)) — `about-rotation-gate.patch` (`sdl/platform_sdl.go` +
 `objects/trinkets/desktop.go` + a test, against v0.1.8): the WebGPU rotation
 easter egg was triggered by the **R key globally** — pressing `r` anywhere (in
 the editor!) toggled a full-window spin, and the key still fell through to be

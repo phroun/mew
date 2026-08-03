@@ -69,6 +69,26 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.9 sync (record)
+
+v0.1.8-alpha -> **v0.1.9-alpha** is three more fork fixes landing upstream and
+nothing else — the diff `v0.1.8-alpha..v0.1.9-alpha` is exactly the files those
+PRs touched (the other merges in the range, #22/#13, netted no file change):
+
+- [#20](https://github.com/phroun/kittytk/pull/20) — TUI backend: pixel-precise
+  mouse from the outer terminal (`?1016`) (`backend/tui/tui.go` + test).
+- [#21](https://github.com/phroun/kittytk/pull/21) — solo tear-off double-host
+  re-entrancy guard, and the WebGPU rotation easter egg gated to the About
+  KittyTK dialog (`objects/trinkets/desktop*.go` + `sdl/platform_sdl.go` +
+  tests).
+
+All three had already been applied to our vendored tree (that is where the PRs
+were cut from), so every changed file was byte-identical to the release; the
+sync only bumped `core/version.go`'s `Build` to 9 and the `go.mod` pins to
+v0.1.9-alpha. The fork boundary is unchanged (the 19 `//go:build mew` files +
+the mew require). See `patches/kittytk/{tui-outer-pixel-mouse,
+solo-tearoff-reentrancy,about-rotation-gate}.patch`.
+
 ### The v0.1.8 sync (record)
 
 v0.1.7-alpha -> **v0.1.8-alpha** is the SetHint pre-load fix and nothing else:
