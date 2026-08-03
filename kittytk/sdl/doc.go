@@ -7,9 +7,9 @@
 //
 //	go build -tags sdl ./...
 //
-// Requires SDL2 development libraries (libsdl2-dev) and cgo. Without
-// the tag this package contains no implementation, keeping TUI-only
-// builds cgo-free (D23/O3: backends are selected by choosing which
+// Requires libSDL3 at RUN time; nothing is linked at build time and no
+// SDL headers are needed. Without the tag this package contains no
+// implementation, keeping TUI-only builds cgo-free (D23/O3: backends are selected by choosing which
 // display-service binary to run, not by app-level switches).
 //
 // The host owns a live font zoom (a GUI-only affordance — the TUI has no

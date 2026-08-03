@@ -1976,6 +1976,23 @@ func (m *MenuBar) menusNeedScrolling() bool {
 	return m.calculateTotalMenusWidth() > availableWidth
 }
 
+// menusRightLimit returns the x coordinate where top-level menu hit areas
+// end. When the bar overflows, titles extend beneath the [<][>] scroll
+// buttons and the clock, and a press or hover there must reach the
+// buttons — never the hidden title — so the limit is the buttons' left
+// edge. In a bar too narrow to lay the buttons out at all (their origin
+// would be negative and painting clips them away) no limit applies.
+func (m *MenuBar) menusRightLimit() core.Unit {
+	bounds := m.Bounds()
+	if m.menusNeedScrolling() {
+		buttonsX := bounds.Width - m.dateTimeWidth() - m.scrollButtonWidth()*2
+		if buttonsX >= 0 {
+			return buttonsX
+		}
+	}
+	return bounds.Width
+}
+
 // canScrollLeft returns true if there are menus to the left.
 func (m *MenuBar) canScrollLeft() bool {
 	return m.scrollOffset > 0
@@ -2488,6 +2505,20 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	return metrics.CellWidth*2 + font.MeasureText(title)
 }
 
+// elidedTitlePrefix returns how many leading runes of a title fit within
+// budget, measured in the bar's font — proportional on graphical
+// surfaces, cell-width on terminals. The elided (last partially visible)
+// title must measure the same way it renders, or the prefix is cut at
+// the wrong glyph.
+func elidedTitlePrefix(font *core.Font, title []rune, budget core.Unit) int {
+	visible := 0
+	for visible < len(title) &&
+		font.MeasureText(string(title[:visible+1])) <= budget {
+		visible++
+	}
+	return visible
+}
+
 // ellipsisText is the overflow marker (three periods, not the unicode
 // glyph), and ellipsisWidth its width in the menu bar's proportional
 // font - so it measures and renders the same as the menu titles.
@@ -2669,29 +2700,40 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				// painter clips it to the bar's bounds.
 				m.drawEllipsis(p, x+menuWidth, menuBarStyle)
 			} else {
-				// Not selected, or not enough room for full menu - show partial with ellipsis
+				// Not selected, or not enough room for the full menu: show the
+				// longest title prefix that fits, then "...". Fit and paint
+				// both use the bar's proportional font — the old cell-by-cell
+				// path measured AND drew the elided title monospace, visibly
+				// different from every other title.
 				ellipsisWidth := m.ellipsisWidth() // "..."
+				titleRunes := []rune(menu.title)
 
-				// Calculate how many chars we can show: space + chars + "..."
-				// Need at least 4 chars width for " X..." (space, one char, ellipsis)
-				if remainingWidth >= 4*metrics.CellWidth {
+				// Budget for title characters: leading space + prefix + "..."
+				visible := elidedTitlePrefix(font, titleRunes,
+					remainingWidth-metrics.CellWidth-ellipsisWidth)
+
+				if visible > 0 {
 					// Draw space before text
 					p.DrawCell(x, 0, ' ', s)
 					textX := x + metrics.CellWidth
 
-					// Calculate how many title chars we can show
-					charsAvailable := int((remainingWidth - metrics.CellWidth - ellipsisWidth) / metrics.CellWidth)
-					titleRunes := []rune(menu.title)
-					for idx := 0; idx < charsAvailable && idx < len(titleRunes); idx++ {
-						charStyle := s
-						if showAccel && idx == menu.acceleratorPos {
-							charStyle = accelStyle
+					// Accelerator highlighting splits the prefix into segments.
+					var segs []textSegment
+					if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < visible {
+						if menu.acceleratorPos > 0 {
+							segs = append(segs, textSegment{string(titleRunes[:menu.acceleratorPos]), s})
 						}
-						p.DrawCell(textX, 0, titleRunes[idx], charStyle)
-						textX += metrics.CellWidth
+						segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos]), accelStyle})
+						if menu.acceleratorPos < visible-1 {
+							segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1 : visible]), s})
+						}
+					} else {
+						segs = []textSegment{{string(titleRunes[:visible]), s}}
 					}
+					advance := drawTextSegments(p, textX, 0, font, segs...)
+
 					// Draw ellipsis in the menu style (never accelerator color)
-					m.drawEllipsis(p, textX, s)
+					m.drawEllipsis(p, textX+advance, s)
 				} else if remainingWidth >= ellipsisWidth {
 					// Just show "..." to indicate more menus
 					m.drawEllipsis(p, x, menuBarStyle)
@@ -2812,6 +2854,22 @@ func (m *MenuBar) ActiveMenuBounds() core.UnitRect {
 		return core.UnitRect{}
 	}
 	return m.activeMenu.DropdownBounds()
+}
+
+// ActiveMenuTitleBounds returns the bar-row rect of the open menu's
+// title — the dropdown's anchor. The compositor unions it into the
+// dropdown's shadow so title and menu cast one shape. Zero rect when no
+// menu is open.
+func (m *MenuBar) ActiveMenuTitleBounds() core.UnitRect {
+	if m.activeMenu == nil || m.currentIndex < 0 || m.currentIndex >= len(m.menus) {
+		return core.UnitRect{}
+	}
+	return core.UnitRect{
+		X:      m.calculateMenuX(m.currentIndex),
+		Y:      0,
+		Width:  m.menuTitleWidth(m.menus[m.currentIndex].title),
+		Height: m.EffectiveCellMetrics().CellHeight,
+	}
 }
 
 // HandleKeyPress handles keyboard input.
@@ -2973,13 +3031,12 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		// Check for scroll button clicks if scrolling is needed
 		needsScrolling := m.menusNeedScrolling()
 		if needsScrolling {
-			dateTimeWidth := m.dateTimeWidth()
-			scrollButtonsWidth := m.scrollButtonWidth() * 2
-			dateTimeX := bounds.Width - dateTimeWidth
-			leftButtonX := dateTimeX - scrollButtonsWidth
+			buttonWidth := m.scrollButtonWidth()
+			dateTimeX := bounds.Width - m.dateTimeWidth()
+			leftButtonX := dateTimeX - buttonWidth*2
 
 			// Check [<] button
-			if event.X >= leftButtonX && event.X < leftButtonX+3*metrics.CellWidth {
+			if event.X >= leftButtonX && event.X < leftButtonX+buttonWidth {
 				if m.canScrollLeft() {
 					m.scrollOffset--
 					m.Update()
@@ -2988,8 +3045,8 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 			}
 
 			// Check [>] button
-			rightButtonX := leftButtonX + 3*metrics.CellWidth
-			if event.X >= rightButtonX && event.X < rightButtonX+3*metrics.CellWidth {
+			rightButtonX := leftButtonX + buttonWidth
+			if event.X >= rightButtonX && event.X < rightButtonX+buttonWidth {
 				if m.canScrollRight() {
 					m.scrollOffset++
 					m.Update()
@@ -3017,13 +3074,14 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 		}
 
 		// Find which menu was clicked (past the left indent, and the
-		// ellipsis when scrolled).
+		// ellipsis when scrolled). Titles overflowing beneath the scroll
+		// buttons or the clock are not clickable there.
 		x := m.leftInset()
 		if m.scrollOffset > 0 {
 			x += m.ellipsisWidth() // "..."
 		}
 
-		for i := m.scrollOffset; i < len(m.menus); i++ {
+		for i := m.scrollOffset; event.X < m.menusRightLimit() && i < len(m.menus); i++ {
 			menu := m.menus[i]
 			menuWidth := m.menuTitleWidth(menu.title)
 			// Fitts's law: with nothing scrolled off to its left, the first
@@ -3102,6 +3160,11 @@ func (m *MenuBar) menuItemAt(px, py core.Unit) int {
 	if py < 0 || py >= metrics.CellHeight {
 		return -1
 	}
+	if px >= m.menusRightLimit() {
+		// Over the scroll buttons or the clock, even if a title
+		// overflows beneath them.
+		return -1
+	}
 	x := m.leftInset()
 	if m.scrollOffset > 0 {
 		x += m.ellipsisWidth()
@@ -3134,13 +3197,14 @@ func (m *MenuBar) scrollButtonAt(px, py core.Unit) int {
 		return 0
 	}
 	bounds := m.Bounds()
+	buttonWidth := m.scrollButtonWidth()
 	dateTimeX := bounds.Width - m.dateTimeWidth()
-	leftButtonX := dateTimeX - m.scrollButtonWidth()*2
-	if px >= leftButtonX && px < leftButtonX+3*metrics.CellWidth {
+	leftButtonX := dateTimeX - buttonWidth*2
+	if px >= leftButtonX && px < leftButtonX+buttonWidth {
 		return -1
 	}
-	rightButtonX := leftButtonX + 3*metrics.CellWidth
-	if px >= rightButtonX && px < rightButtonX+3*metrics.CellWidth {
+	rightButtonX := leftButtonX + buttonWidth
+	if px >= rightButtonX && px < rightButtonX+buttonWidth {
 		return 1
 	}
 	return 0
@@ -3220,13 +3284,14 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		}
 
 		// Find which menu the mouse is over (past the left indent, and the
-		// ellipsis when scrolled).
+		// ellipsis when scrolled). A drag across the scroll buttons or the
+		// clock must not open the title hidden beneath them.
 		x := m.leftInset()
 		if m.scrollOffset > 0 {
 			x += m.ellipsisWidth() // "..."
 		}
 
-		for i := m.scrollOffset; i < len(m.menus); i++ {
+		for i := m.scrollOffset; event.X < m.menusRightLimit() && i < len(m.menus); i++ {
 			menu := m.menus[i]
 			menuWidth := m.menuTitleWidth(menu.title)
 			// Fitts's law: the first item's hit area reaches the left edge

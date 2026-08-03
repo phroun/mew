@@ -38,6 +38,11 @@ type TextInput struct {
 	caretTimer *DesktopTimer
 	caretOn    bool
 
+	// In-flight input method composition, painted at the caret but not
+	// part of text until the platform commits it (which arrives as
+	// ordinary typed characters). See core/preedit.go.
+	preedit core.Preedit
+
 	// Drag selection in progress (armed by a left press, extended by
 	// motion while the button is held).
 	selecting bool
@@ -283,6 +288,13 @@ func (t *TextInput) insert(text string) {
 		return
 	}
 
+	// Committed characters end whatever was being composed - this IS the
+	// commit, arriving as ordinary typed text. Clearing here rather than
+	// waiting for the empty TEXT_EDITING that usually follows means the
+	// preedit never briefly paints alongside the text it turned into,
+	// whichever order the platform sends the two events in.
+	t.preedit = core.Preedit{}
+
 	// Delete selection first
 	t.deleteSelection()
 
@@ -398,9 +410,11 @@ func (t *TextInput) ensureCursorVisible() {
 		t.scrollOffset = t.cursorPos
 	}
 
-	// Scroll right if cursor is after visible area
-	// Calculate width of text from scrollOffset to cursor using font metrics
-	displayText := t.getDisplayText()
+	// Scroll right if cursor is after visible area. Measured against the
+	// COMPOSED run, so a growing input-method composition pushes the view
+	// along instead of running off the right edge: the caret being chased
+	// is the one inside the composition.
+	displayText, _, _, caret := t.composedText()
 
 	// Room the caret needs to stay visible past the text before it. At the
 	// end of the text only the thin caret bar shows, so reserve a sliver,
@@ -408,8 +422,8 @@ func (t *TextInput) ensureCursorVisible() {
 	// character early, looking full while a cell of space still remained.
 	// Mid-text, keep the character the caret sits on visible.
 	var cursorWidth core.Unit
-	if t.cursorPos < len(displayText) {
-		cursorWidth = font.MeasureText(string(displayText[t.cursorPos]))
+	if caret < len(displayText) {
+		cursorWidth = font.MeasureText(string(displayText[caret]))
 	} else {
 		cursorWidth = metrics.CellWidth / 4
 		if cursorWidth < 1 {
@@ -417,10 +431,10 @@ func (t *TextInput) ensureCursorVisible() {
 		}
 	}
 
-	for t.cursorPos > t.scrollOffset {
-		// Calculate width from scrollOffset to cursorPos
+	for caret > t.scrollOffset {
+		// Calculate width from scrollOffset to the caret
 		start := t.scrollOffset
-		end := t.cursorPos
+		end := caret
 		if end > len(displayText) {
 			end = len(displayText)
 		}
@@ -490,15 +504,19 @@ func (t *TextInput) Paint(p *core.Painter) {
 	}
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, fillChar, fillStyle)
 
-	// Get display text
+	// Get display text. While an input method is composing, the run
+	// painted here is the committed text with the composition spliced in
+	// at the caret - one run, so the composition shapes with its
+	// neighbours the way it will once it commits.
 	var displayText []rune
 	isPlaceholder := false
+	preLo, preHi, caretIdx := 0, 0, 0
 	if len(t.text) == 0 && !focused && t.placeholder != "" {
 		displayText = []rune(t.placeholder)
 		s = s.WithAttrs(style.StyleDim)
 		isPlaceholder = true
 	} else {
-		displayText = t.getDisplayText()
+		displayText, preLo, preHi, caretIdx = t.composedText()
 	}
 
 	// Apply scroll offset
@@ -506,6 +524,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		displayText = displayText[t.scrollOffset:]
 	} else if t.scrollOffset >= len(displayText) {
 		displayText = nil
+	}
+	if t.scrollOffset > 0 {
+		preLo -= t.scrollOffset
+		preHi -= t.scrollOffset
+		caretIdx -= t.scrollOffset
 	}
 
 	// Truncate to visible width using font metrics
@@ -521,13 +544,18 @@ func (t *TextInput) Paint(p *core.Painter) {
 	n := len(displayText)
 	showCaret := focused && !t.readOnly && core.FocusChainActive(t.Self())
 
-	cursorDisp := t.cursorPos - t.scrollOffset
-	if cursorDisp < 0 {
-		cursorDisp = 0
+	clampIdx := func(d int) int {
+		if d < 0 {
+			return 0
+		}
+		if d > n {
+			return n
+		}
+		return d
 	}
-	if cursorDisp > n {
-		cursorDisp = n
-	}
+	cursorDisp := clampIdx(caretIdx)
+	preLo, preHi = clampIdx(preLo), clampIdx(preHi)
+	composing := t.preedit.Active() && preHi > preLo && !isPlaceholder
 
 	selStyle := scheme.GetEditBoxSelection(focused && t.IsEnabled(), paneType)
 
@@ -553,9 +581,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// Selection span (display indices) and the fixed anchor - the selection
 	// end opposite the caret (selStart is the anchor; the caret is selEnd).
+	// While composing there is no selection to draw: selStart/selEnd index
+	// the COMMITTED text, which the composition has displaced, and the
+	// selection is about to be replaced by whatever commits anyway.
 	selLo, selHi := -1, -1
 	anchorDisp := cursorDisp
-	if t.HasSelection() && !isPlaceholder {
+	if t.HasSelection() && !isPlaceholder && !composing {
 		anchorDisp = t.selStart - t.scrollOffset
 		if anchorDisp < 0 {
 			anchorDisp = 0
@@ -617,6 +648,69 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 	}
 
+	// 3. Mark the input method's composition. Two signals, because one is
+	// not enough: the underline is the convention every platform uses for
+	// "not committed yet", and the caret's own color says whose text this
+	// is - the input method is still holding it, the way it is still
+	// holding the caret. Drawn in the same overstrike style as the
+	// selection, re-coloring the SAME run through a pixel clip so the
+	// composed glyphs never shift as the composition grows.
+	if composing {
+		barStyle := scheme.GetFocusedEditBoxBarCursor()
+		// The bar caret is a FILLED rectangle, so its color is the
+		// style's background; as text that color has to become the
+		// foreground.
+		preStyle := s.WithFg(barStyle.Bg).WithBg(style.ColorTransparent)
+		loX, loPx := prefixWidth(preLo)
+		_, hiPx := prefixWidth(preHi)
+
+		// The active clause - the segment the input method is converting
+		// right now - is underscored twice as thick. Input methods that
+		// report no clause get one even underline across the whole
+		// composition, which is the common case.
+		clauseLo, clauseHi := preLo, preLo
+		if t.preedit.ClauseLen > 0 {
+			clauseLo = clampIdx(preLo + t.preedit.ClauseStart)
+			clauseHi = clampIdx(clauseLo + t.preedit.ClauseLen)
+		}
+
+		if usePx {
+			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), preStyle, font)
+			// Underline as an explicit rule rather than the font's own:
+			// it has to sit at a known offset below the line so the thick
+			// clause rule can share the same baseline, and a font
+			// underline gives no say in either.
+			thin := p.DeviceScale()
+			if thin < 1 {
+				thin = 1
+			}
+			lineH := p.UnitsToPx(font.LineHeight())
+			ruleY := lineH - thin
+			if ruleY < 0 {
+				ruleY = 0
+			}
+			p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin, barStyle)
+			if clauseHi > clauseLo {
+				_, cLoPx := prefixWidth(clauseLo)
+				_, cHiPx := prefixWidth(clauseHi)
+				if y := ruleY - thin; y >= 0 {
+					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, barStyle)
+				}
+			}
+		} else {
+			// Cell surfaces have no sub-cell rule to draw, so the
+			// underline is the attribute and the clause is what stands
+			// out - bold against the rest of the composition.
+			cellStyle := preStyle.WithAttrs(style.StyleUnderline)
+			p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+			if clauseHi > clauseLo {
+				cLoX, _ := prefixWidth(clauseLo)
+				p.DrawText(cLoX, 0, string(displayText[clauseLo:clauseHi]),
+					cellStyle.WithAttrs(style.StyleUnderline|style.StyleBold), font)
+			}
+		}
+	}
+
 	// Draw cursor - only in the active window chain: a trinket keeps local
 	// focus while its window is in the background, but showing the caret
 	// there would put two carets on screen.
@@ -632,6 +726,23 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if p.Graphical() {
 				t.ensureCaretTimer()
 			}
+			// Tell the platform where the insertion point is, without
+			// asking it to DRAW a caret — this trinket paints its own
+			// just below, and a platform caret on top would be a second
+			// one. What the OS does with it is place an input method's
+			// candidate window: the CJK candidate list, macOS's
+			// press-and-hold accent picker, the emoji picker. Reported
+			// every frame while focused, so the blink never withdraws it.
+			//
+			// While composing, report the START of the composition rather
+			// than the caret inside it: the candidate list belongs under
+			// the text it is offering candidates FOR, and anchoring it to
+			// the caret would walk it rightward with every keystroke.
+			areaX := caretX
+			if composing {
+				areaX, _ = prefixWidth(preLo)
+			}
+			p.RequestTextInputArea(areaX, 0)
 			if !p.Graphical() || t.caretVisible() {
 				drawn := false
 				if usePx {
@@ -644,9 +755,18 @@ func (t *TextInput) Paint(p *core.Painter) {
 				if !drawn {
 					// Cell surfaces fall back to the reverse-video block.
 					if !p.DrawCaret(caretX, 0, font.LineHeight(), barStyle) {
+						// The character under the block comes from the run
+						// actually on screen. Indexing the COMMITTED text
+						// by cursorPos agreed with this for as long as the
+						// two runs held the same characters - the scroll
+						// offset cancels, since caretX is measured over the
+						// scrolled run from that same character. A
+						// composition breaks that: it is spliced into the
+						// painted run and absent from the committed one, so
+						// cursorPos lands on the wrong side of it.
 						var cursorChar rune = ' '
-						if t.cursorPos < len(t.getDisplayText()) {
-							cursorChar = t.getDisplayText()[t.cursorPos]
+						if cursorDisp < len(displayText) {
+							cursorChar = displayText[cursorDisp]
 						}
 						p.DrawText(caretX, 0, string(cursorChar), cursorStyle, font)
 					}
@@ -735,9 +855,17 @@ func (t *TextInput) resetCaretBlink() {
 
 // getDisplayText returns the text with echo mode applied.
 func (t *TextInput) getDisplayText() []rune {
+	return t.echo(t.text)
+}
+
+// echo applies the echo mode to a run. Shared by the committed text and
+// by an in-flight composition: a password field that masked only what it
+// had already accepted would show the next word in the clear for as long
+// as it took to compose.
+func (t *TextInput) echo(src []rune) []rune {
 	switch t.echoMode {
 	case EchoPassword:
-		result := make([]rune, len(t.text))
+		result := make([]rune, len(src))
 		for i := range result {
 			result[i] = '•'
 		}
@@ -745,8 +873,43 @@ func (t *TextInput) getDisplayText() []rune {
 	case EchoNoEcho:
 		return nil
 	default:
-		return t.text
+		return src
 	}
+}
+
+// composedText returns the run the field actually paints: the committed
+// display text with any in-flight composition spliced in at the caret,
+// the composition's span within that run, and where the caret sits -
+// inside the composition while composing, since that is where the input
+// method's own cursor is.
+//
+// Indices below the caret mean the same thing in both spaces (the splice
+// happens AT the caret), which is what lets scrollOffset - kept in
+// committed indices - slice this run without translation.
+func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
+	display := t.getDisplayText()
+	at := t.cursorPos
+	if at < 0 {
+		at = 0
+	}
+	if at > len(display) {
+		at = len(display)
+	}
+	if !t.preedit.Active() {
+		return display, at, at, at
+	}
+
+	pre := t.echo(t.preedit.Text)
+	out := make([]rune, 0, len(display)+len(pre))
+	out = append(out, display[:at]...)
+	out = append(out, pre...)
+	out = append(out, display[at:]...)
+
+	inner := t.preedit.Caret
+	if inner > len(pre) {
+		inner = len(pre)
+	}
+	return out, at, at + len(pre), at + inner
 }
 
 // truncateToWidth truncates text to fit within the given width using font metrics.
@@ -1154,9 +1317,45 @@ func (t *TextInput) HandleFocusOut() {
 	t.stopCaretTimer()
 	t.stopAutoScroll()
 	t.selecting = false
+	// A composition belongs to the caret it was being typed at. Focus
+	// moving elsewhere abandons it: the input method will start a fresh
+	// one wherever typing resumes, and leaving these characters painted
+	// in a field nobody is typing into would show provisional text as
+	// though it were committed.
+	t.preedit = core.Preedit{}
 	// The selection survives - it shows in the resting selection
 	// colors until the box is edited again.
 	t.Update()
+}
+
+// HandleTextEditing implements core.TextEditingHandler: it takes one
+// update to the input method's in-flight composition. The characters do
+// NOT enter text - they are painted at the caret, underlined and in the
+// caret's color, until the platform commits them as ordinary typed
+// input (see insert) or ends the composition with an empty update.
+//
+// A read-only or disabled field declines, so the composition is dropped
+// rather than shown somewhere it could never land.
+func (t *TextInput) HandleTextEditing(event core.TextEditingEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+
+	next := core.PreeditFrom(event)
+	if !next.Active() && !t.preedit.Active() {
+		// Input methods send an empty update to end a composition, and
+		// some send one when nothing was composing at all. Repainting
+		// for that would wake the whole surface for no visible change.
+		return true
+	}
+	t.preedit = next
+
+	// Composing is typing: the caret should be solid and in view, the
+	// same as it is for a keystroke.
+	t.resetCaretBlink()
+	t.ensureCursorVisible()
+	t.Update()
+	return true
 }
 
 // AccessibleInfo returns accessibility information.
@@ -1384,6 +1583,12 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
 			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
 			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
+			// The 1-pixel outer frame every popup gets, in the padded
+			// margin just outside the bounds (graphical only).
+			if p.Graphical() {
+				lineStyle := style.DefaultStyle().WithBg(t.GetScheme().GetMenuSeparator().Fg)
+				paintPopupOuterStroke(p, menuBounds, p.DeviceScale(), lineStyle, 0, 0, false)
+			}
 			pos := menuBounds.Y + 2
 			for i, it := range items {
 				if it.separator {

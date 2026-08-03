@@ -3,7 +3,7 @@
 package sdl
 
 import (
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 )
 
 // platformPerPixelAlpha: no per-pixel window alpha off macOS; rounded
@@ -11,8 +11,8 @@ import (
 const platformPerPixelAlpha = false
 
 // makeWindowTransparent is the non-macOS stub.
-func makeWindowTransparent(*sdl2.Window) bool { return false }
+func makeWindowTransparent(*sdl3.Window) bool { return false }
 
 // makeWindowMiniaturizable is the non-macOS stub: SDL's plain
 // Minimize is the best available.
-func makeWindowMiniaturizable(*sdl2.Window) {}
+func makeWindowMiniaturizable(*sdl3.Window) {}

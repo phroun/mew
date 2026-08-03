@@ -686,7 +686,10 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 				if t.focused() {
 					// Hand the platform the caret, in the shape the terminal
 					// asked for. Nothing is painted here: the real cursor is
-					// drawn by the surface underneath us.
+					// drawn by the surface underneath us. (Only ever a CELL
+					// surface reaches this — Paint hands graphical targets to
+					// paintGraphical, which draws its own cursor and reports
+					// the insertion point itself.)
 					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
 				} else {
 					// Painted fallback for an unfocused terminal.

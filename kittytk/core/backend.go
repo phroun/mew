@@ -249,6 +249,33 @@ type GraphicalModer interface {
 	GraphicalMode() bool
 }
 
+// SurfaceClearer is an optional RenderBackend capability: reset pixels
+// to fully transparent, WITHIN THE CLIP. A compositing host uses it
+// before painting a layer meant to sit over something else — the
+// desktop's chrome layer clears this way so the GPU-tiled wallpaper
+// underneath shows through everywhere the chrome does not paint.
+//
+// Honoring the clip is the whole contract. A frame repainting only its
+// damaged region gets a clipped painter, and a clear that ignored that
+// would erase the chrome outside the region and then not repaint it —
+// the menu bar and status bar flickering out, with the wallpaper showing
+// through where they had been.
+//
+// Cell surfaces have no alpha and omit it.
+type SurfaceClearer interface {
+	ClearTransparent()
+}
+
+// ImageTiler is an optional RenderBackend capability: lay an image
+// across a rect as a WallpaperLayout describes — sized by its mode and
+// scale, anchored by its alignment, repeated along the axes it tiles.
+// It is the CPU counterpart of the compositor's repeat-sampled wallpaper
+// quad, for the software renderer and for any host that does not take
+// the wallpaper as a layer of its own.
+type ImageTiler interface {
+	TileImagePx(r UnitRect, tile *image.RGBA, layout WallpaperLayout)
+}
+
 // PatternFiller is an optional RenderBackend capability: tile an 8x8
 // two-color bitmap pattern across a rect (classic MacOS desktop
 // style). Each pattern bit covers chunkPx x chunkPx device pixels
@@ -971,6 +998,31 @@ func (p *Painter) Graphical() bool {
 // FillPattern tiles an 8x8 two-color bitmap across the rect when the
 // backend supports it (see PatternFiller). Returns false on cell
 // surfaces; the caller then falls back to its rune fill.
+// ClearTransparent resets the clipped region to fully transparent (see
+// SurfaceClearer). Returns false where the surface has no alpha to clear.
+func (p *Painter) ClearTransparent() bool {
+	sc, ok := p.backend.(SurfaceClearer)
+	if !ok {
+		return false
+	}
+	p.applyClip()
+	sc.ClearTransparent()
+	return true
+}
+
+// TileImage lays tile across r as the layout describes (see ImageTiler).
+// Returns false on backends that cannot draw images, where the caller
+// falls back to a pattern or cell fill.
+func (p *Painter) TileImage(r UnitRect, tile *image.RGBA, layout WallpaperLayout) bool {
+	it, ok := p.backend.(ImageTiler)
+	if !ok || tile == nil || tile.Bounds().Empty() {
+		return false
+	}
+	p.applyClip()
+	it.TileImagePx(p.transform.ApplyRect(r), tile, layout)
+	return true
+}
+
 func (p *Painter) FillPattern(r UnitRect, pattern [8]uint8, chunkPx int, s style.CellStyle) bool {
 	pf, ok := p.backend.(PatternFiller)
 	if !ok {

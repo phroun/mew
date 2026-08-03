@@ -485,6 +485,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 			if isCursor {
 				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
+
+				// Report where the text is, so an input method can put its
+				// candidate window under the cursor: the CJK candidate
+				// list, macOS's press-and-hold accent picker, the emoji
+				// picker. Without it they open at a corner of the window.
+				//
+				// Only the position — this path DRAWS its own cursor just
+				// above, so asking for a platform caret as well would be
+				// asking for a second one. (The cell path does ask, because
+				// there the outer terminal draws it and nothing here can.)
+				if focused {
+					painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
+				}
 			}
 		}
 
@@ -2922,6 +2935,12 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
 			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
 			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
+			// The 1-pixel outer frame every popup gets, in the padded
+			// margin just outside the bounds (graphical only).
+			if p.Graphical() {
+				lineStyle := style.DefaultStyle().WithBg(t.GetScheme().GetMenuSeparator().Fg)
+				paintPopupOuterStroke(p, menuBounds, p.DeviceScale(), lineStyle, 0, 0, false)
+			}
 			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {

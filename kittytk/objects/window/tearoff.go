@@ -106,6 +106,11 @@ type TearOffHost struct {
 	// trinkets inside the torn window: they belong to THIS surface.
 	popups []*PopupOverlay
 
+	// popupEpoch moves whenever a popup is registered or unregistered.
+	// Popups are not in the window's trinket subtree, so nothing else
+	// would tell a host caching this surface's pixels that one appeared.
+	popupEpoch uint64
+
 	// Clipboard bridge for trinkets that have no desktop in their
 	// ancestry while torn (the desktop wires the platform clipboard).
 	clipGet func() string
@@ -477,8 +482,12 @@ func (h *TearOffHost) SetClipboard(s string) {
 func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 	h.UnregisterPopup(request.ID)
 	h.popups = append(h.popups, &PopupOverlay{
-		ID:                 request.ID,
-		Bounds:             request.Bounds,
+		ID:     request.ID,
+		Bounds: request.Bounds,
+		// The opening control's rect travels with the popup so the two
+		// cast one drop shadow when composited (a combo box and its list
+		// read as one piece).
+		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
@@ -486,6 +495,7 @@ func (h *TearOffHost) RegisterPopup(request *core.PopupRequest) {
 		HandleMouseWheel:   request.HandleMouseWheel,
 		OnDismiss:          request.OnDismiss,
 	})
+	h.popupEpoch++
 	h.surf.Invalidate(core.UnitRect{})
 }
 
@@ -494,6 +504,7 @@ func (h *TearOffHost) UnregisterPopup(id string) {
 	for i, p := range h.popups {
 		if p.ID == id {
 			h.popups = append(h.popups[:i], h.popups[i+1:]...)
+			h.popupEpoch++
 			h.surf.Invalidate(core.UnitRect{})
 			return
 		}
@@ -616,6 +627,85 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 	}
 }
 
+// FrameBase implements platform.BaseLayerPainter: the torn window and
+// its chrome, with the overlays GetChildWindows handed to the compositor
+// left out. The menu bar itself stays on this surface — only its open
+// dropdown lifts onto a layer, so it can carry a drop shadow.
+func (h *TearOffHost) FrameBase(p *core.Painter) {
+	if h.ghost {
+		return
+	}
+	h.win.SetMenuDropdownComposited(true)
+	defer h.win.SetMenuDropdownComposited(false)
+
+	// The caret is not applied here: the popups this host handed to the
+	// compositor paint on layers above, and one of them may claim it.
+	// The host gathers every layer's request and applies the winner.
+	p.ResetTextCaretRequest()
+	h.win.Paint(p)
+	if h.isModalBlocked() {
+		b := h.win.Bounds()
+		h.win.PaintModalDim(p, core.UnitRect{Width: b.Width, Height: b.Height})
+	}
+}
+
+// RepaintRevision implements platform.RepaintRevisionProvider: what the
+// torn window would paint is its own subtree plus its popups.
+//
+// Dragging a torn window is why this exists. The move arrives as input,
+// Event invalidates the surface after every input event, and the host
+// would otherwise repaint the entire window and re-upload its pixels for
+// each mouse move — to produce the picture already on screen. The OS is
+// moving the window; its contents did not change.
+func (h *TearOffHost) RepaintRevision() uint64 {
+	rev := h.win.SubtreeRepaintRevision()
+	// Popups live on the host, not in the window's trinket subtree, so
+	// opening or closing one moves nothing above. Their CONTENT changes
+	// do bump the window (the trinket that changed is inside it).
+	return rev*31 + h.popupEpoch
+}
+
+// GetChildWindows implements platform.WindowProvider so a torn-off
+// window composites exactly as the desktop does: its own surface at the
+// bottom, then its open menu dropdown, then its popups — each over a
+// drop shadow of its own.
+//
+// It returns nil, keeping the plain single-surface present, whenever
+// there is nothing to lift onto a layer. A torn window with no menu open
+// and no popup gains nothing from the compositor, and the narrower the
+// path switches, the less there is to go wrong.
+func (h *TearOffHost) GetChildWindows() *platform.ChildWindowList {
+	if h.ghost {
+		return nil
+	}
+
+	popups := make([]interface{}, 0, len(h.popups))
+	for _, popup := range h.popups {
+		if popup.Paint != nil {
+			popups = append(popups, popup)
+		}
+	}
+
+	var menuDropdown interface{}
+	if bounds, anchor, paint, ok := h.win.MenuDropdownLayer(); ok {
+		menuDropdown = &struct {
+			Bounds core.UnitRect
+			Anchor core.UnitRect
+			Paint  func(*core.Painter)
+		}{Bounds: bounds, Anchor: anchor, Paint: paint}
+	}
+
+	if len(popups) == 0 && menuDropdown == nil {
+		return nil
+	}
+
+	// No ClientArea: the window IS the surface, so nothing clips it.
+	return &platform.ChildWindowList{
+		Popups:       popups,
+		MenuDropdown: menuDropdown,
+	}
+}
+
 // Event implements platform.SurfaceHandler: surface coordinates ARE
 // window coordinates. A title-bar press the window doesn't consume
 // starts an OS-window drag, mirroring the WindowManager's in-surface
@@ -672,6 +762,8 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		handled = h.win.HandleKeyPress(e)
 	case core.KeyReleaseEvent:
 		handled = h.win.HandleKeyRelease(e)
+	case core.TextEditingEvent:
+		handled = h.win.HandleTextEditing(e)
 	case core.MousePressEvent:
 		if !h.ghost && h.popupsHandleMouse(e) {
 			handled = true

@@ -11,6 +11,7 @@
 package platform
 
 import (
+	"image"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -168,6 +169,18 @@ type Surface interface {
 	SetCursorStyle(style int)
 }
 
+// TextInputAreaSetter is an optional Surface capability: report where
+// text is being typed, so an input method can place its candidate window
+// there. Distinct from the caret methods, which are about a caret the
+// PLATFORM draws — a graphical surface draws none (trinkets paint their
+// own) yet still has an input method to inform.
+//
+// visible false forgets the position, so the OS falls back to its own
+// placement rather than anchoring on a stale one.
+type TextInputAreaSetter interface {
+	SetTextInputArea(x, y core.Unit, visible bool)
+}
+
 // ApplyTextCaret pushes a frame's platform text-caret request to a surface
 // (see core.TextCaret). The shape goes first, so a caret about to be shown
 // appears already wearing it; no request hides the caret, which is what leaves
@@ -179,6 +192,12 @@ type Surface interface {
 func ApplyTextCaret(s Surface, caret core.TextCaret) {
 	if s == nil {
 		return
+	}
+	// The insertion point goes first and separately: a trinket that
+	// paints its own caret reports one without asking for a drawn caret
+	// at all, so this must not hang off Visible.
+	if setter, ok := s.(TextInputAreaSetter); ok {
+		setter.SetTextInputArea(caret.X, caret.Y, caret.Requested())
 	}
 	if !caret.Visible {
 		s.SetCursorVisible(false)
@@ -201,6 +220,95 @@ type SurfaceHandler interface {
 
 	// Resized reports a new surface size (already applied).
 	Resized(size core.UnitSize)
+}
+
+// ChildWindowList wraps a list of child windows for compositor enumeration.
+// Uses a concrete type to avoid []interface{} syntax issues across modules.
+type ChildWindowList struct {
+	Windows      []interface{}
+	Popups       []interface{} // Popup overlays to render on top of windows
+	MenuDropdown interface{}   // Active menu dropdown (nil if none)
+
+	// ClientArea is the region window content may occupy, in surface
+	// units — the surface minus menu bar, status bar, and dock. The
+	// compositor clips window layers to it so desktop chrome overlays
+	// windows exactly as the software path's client-area clip does.
+	// A zero rect means no clipping.
+	ClientArea core.UnitRect
+
+	// BaseRevision changes whenever anything the BASE layer paints
+	// changes — wallpaper, menu bar, status bar, dock, desktop content —
+	// and holds still while only the windows above it move or redraw. A
+	// compositor caching the base layer's texture repaints it only when
+	// this moves. HasBaseRevision is false for a provider that does not
+	// report one, which makes the base repaint every frame as before.
+	BaseRevision    uint64
+	HasBaseRevision bool
+
+	// Wallpaper is the desktop's background tile, for a host that can
+	// repeat a texture across the surface. Nil means the base layer
+	// painted its own background and there is nothing to draw under it.
+	Wallpaper *WallpaperLayer
+}
+
+// WallpaperLayer is one wallpaper tile, repeated from the surface origin
+// across the whole surface, underneath every other layer.
+//
+// The tile's size is its own business: repeating happens in the GPU's
+// sampler, so a 16x16 pattern and a 512x512 photograph cost the same one
+// quad. Only the size of the upload differs, and Revision means that
+// happens once rather than every frame.
+type WallpaperLayer struct {
+	Tile *image.RGBA
+
+	// Revision changes whenever Tile's pixels would. A host holding an
+	// uploaded copy re-uploads only when it moves. It does NOT cover
+	// Layout — that changes where the same pixels land, not what they
+	// are, so a host re-lays the tile without re-uploading it.
+	Revision uint64
+
+	// Layout is how the tile covers the surface: sized by its mode and
+	// scale, anchored by its alignment, repeated along the axes it tiles.
+	Layout core.WallpaperLayout
+}
+
+// WindowProvider is an optional Surface Handler interface that allows
+// the platform to enumerate UI child windows for GPU compositing.
+// Desktop implements this to expose its window manager's windows.
+type WindowProvider interface {
+	// GetChildWindows returns the list of child windows that should be
+	// composited together. Returns nil if no child windows exist or
+	// compositor should not be used.
+	GetChildWindows() *ChildWindowList
+}
+
+// RepaintRevisionProvider is an optional SurfaceHandler capability: a
+// counter that changes whenever the handler would paint something
+// different. A host holding the last frame's pixels — every graphical
+// host does, in a texture — repaints only when it moves.
+//
+// It exists for surfaces that DRAG. Moving an OS window changes nothing
+// about what the surface contains, but the move arrives as input, and a
+// handler that invalidates after input (most do, as a parity contract
+// with the terminal) asks for a full repaint of a picture identical to
+// the one already on screen. Reporting a revision lets the host notice.
+//
+// Only equality between two readings is meaningful, never the value.
+// A handler that does not implement this repaints every frame, which is
+// what every handler did before it existed.
+type RepaintRevisionProvider interface {
+	RepaintRevision() uint64
+}
+
+// BaseLayerPainter is an optional SurfaceHandler refinement for GPU
+// compositing. FrameBase paints only the surface's base layer (desktop
+// chrome: background, menu bar, dock, status bar) and leaves child
+// windows, menus, and popups to the compositor's separate texture
+// layers. Frame keeps its v1 contract — paint EVERYTHING — so a
+// non-compositing present (software renderer, or a GPU present outside
+// the compositor) always produces a complete picture.
+type BaseLayerPainter interface {
+	FrameBase(p *core.Painter)
 }
 
 // PixelAnchoredOnFontZoom is an optional SurfaceHandler refinement consulted

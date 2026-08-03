@@ -181,6 +181,8 @@ type PopupOverlay struct {
 	ID string
 	// Bounds in screen coordinates
 	Bounds core.UnitRect
+	// Anchor is the opening control's screen rect (see core.PopupRequest).
+	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
@@ -1727,6 +1729,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 	overlay := &PopupOverlay{
 		ID:                 request.ID,
 		Bounds:             request.Bounds,
+		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
@@ -2694,6 +2697,22 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// HandleTextEditing hands an input method's composition to the active
+// window. None of HandleKeyPress's routing applies: a composition is not
+// a key, so there are no cycle keys to intercept, no accelerators to
+// offer the desktop first, and nothing to fall back to when the active
+// window cannot hold one.
+func (m *WindowManager) HandleTextEditing(event core.TextEditingEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleTextEditing(event)
+}
+
 // HandleKeyPress processes keyboard events.
 func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
@@ -2909,6 +2928,7 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	m.mu.RLock()
 	desktop := m.desktop
 	windows := m.windows
+	screenBounds := m.screenBounds
 	m.mu.RUnlock()
 
 	// Paint desktop
@@ -2937,8 +2957,17 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			// left off-screen by a desktop shrink are nudged into view.
 			bounds := m.displayBounds(win)
 
-			// Calculate visible portion within client area
-			visibleBounds := bounds.Intersection(clientArea)
+			// The clip normally keeps windows out of chrome territory.
+			// While the tear-off affordance is active the window escapes
+			// it along with its halo — visually "lifting" over the menu
+			// and status bars, about to break out of the desktop.
+			windowArea := clientArea
+			if win.TearIndicatorActive() {
+				windowArea = screenBounds
+			}
+
+			// Calculate visible portion within the effective area
+			visibleBounds := bounds.Intersection(windowArea)
 			if visibleBounds.IsEmpty() {
 				continue
 			}
@@ -2994,6 +3023,32 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			popup.Paint(p)
 		}
 	}
+}
+
+// SetOnWindowAdded sets the window added callback.
+
+// PaintPopups paints only the registered popup overlays.
+// Used by compositor mode to render popups on the Desktop layer.
+func (m *WindowManager) PaintPopups(p *core.Painter) {
+	m.mu.RLock()
+	popups := m.popups
+	m.mu.RUnlock()
+	for _, popup := range popups {
+		if popup.Paint != nil {
+			popup.Paint(p)
+		}
+	}
+}
+
+// GetPopups returns the list of registered popup overlays for compositor rendering.
+func (m *WindowManager) GetPopups() []interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]interface{}, len(m.popups))
+	for i, p := range m.popups {
+		result[i] = p
+	}
+	return result
 }
 
 // SetOnWindowAdded sets the window added callback.

@@ -26,10 +26,9 @@ type ComboBox struct {
 
 	// Scroll state for drop-down
 	scrollOffset     int
-	maxVisible       int           // User-configured maximum (0 = auto-size to screen)
-	popupVisibleRows int           // Actual visible rows for current popup (calculated from screen space)
-	popupDropUp      bool          // popup opened above the box (drop-up) rather than below
-	popupControlRect core.UnitRect // the originating control's screen rect (for its outer stroke)
+	maxVisible       int  // User-configured maximum (0 = auto-size to screen)
+	popupVisibleRows int  // Actual visible rows for current popup (calculated from screen space)
+	popupDropUp      bool // popup opened above the box (drop-up) rather than below
 
 	// popupScreenMetrics is the screen/desktop denomination captured
 	// when the popup opens; popup-space geometry, painting, and input
@@ -624,14 +623,6 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 	}
 
 	c.popupDropUp = !popDown // stroke gaps the edge nearest the box
-	// Remember the originating control's screen rect so the popup overlay
-	// (which paints unclipped) can frame it with the same stroke.
-	c.popupControlRect = core.UnitRect{
-		X:      trinketTopPos.X,
-		Y:      trinketTopPos.Y,
-		Width:  core.ExchangeX(bounds.Width, metrics, screen),
-		Height: trinketBottomPos.Y - trinketTopPos.Y,
-	}
 
 	var popupY core.Unit
 	var maxRowsAvailable int
@@ -678,10 +669,17 @@ func (c *ComboBox) registerPopupOverlay(pc core.PopupController) {
 		Height: popupHeightUnits,
 	}
 
-	// Create popup request
+	// Create popup request. Anchor is the box's own screen rect so the
+	// compositor casts one shadow over control + list together.
 	request := &core.PopupRequest{
 		ID:     c.popupID(),
 		Bounds: popupBounds,
+		Anchor: core.UnitRect{
+			X:      trinketTopPos.X,
+			Y:      trinketTopPos.Y,
+			Width:  core.ExchangeX(bounds.Width, metrics, screen),
+			Height: trinketBottomPos.Y - trinketTopPos.Y,
+		},
 		Paint: func(p *core.Painter) {
 			c.paintPopupOverlay(p, popupBounds)
 		},
@@ -821,6 +819,18 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	arrowX := bounds.Width - arrowWidth
 	p.DrawText(arrowX, 0, " ▼", s, font)
 
+	// While the drop-down is open, frame the box with the same 1-pixel
+	// separator-color stroke as the popup. Painted by the trinket itself
+	// (not the popup overlay, whose texture cannot reach back to the
+	// control) so it lands on the window layer in every render path; the
+	// popup draws above and covers the edge they share, so control and
+	// list read as one outline. Graphical only.
+	if c.isOpen && p.Graphical() {
+		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
+		paintPopupOuterStroke(p, core.UnitRect{Width: bounds.Width, Height: bounds.Height},
+			p.DeviceScale(), lineStyle, 0, 0, false)
+	}
+
 	// Draw popup if open - only use fallback if no popup controller found
 	if c.isOpen && c.findPopupController() == nil {
 		c.paintPopup(p)
@@ -908,14 +918,9 @@ func (c *ComboBox) paintPopupOverlay(p *core.Painter, popupBounds core.UnitRect)
 	scheme := c.GetScheme()
 	metrics := c.screenMetrics()
 
-	// Frame the originating control with the same 1-pixel separator-color
-	// stroke, BEFORE the popup fills, so the popup covers the edge they
-	// share and control + popup read as one outline. Uses the unclipped
-	// overlay painter and screen-space rect. Graphical only.
-	if p.Graphical() && !c.popupControlRect.IsEmpty() {
-		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
-		paintPopupOuterStroke(p, c.popupControlRect, p.DeviceScale(), lineStyle, 0, 0, false)
-	}
+	// (The originating control frames ITSELF while open — see Paint — so
+	// the stroke survives render paths where this overlay painter cannot
+	// reach back to the control.)
 
 	// Use a painter offset to the popup position
 	popupPainter := p.WithOffset(popupBounds.X, popupBounds.Y)
