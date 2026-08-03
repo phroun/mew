@@ -69,6 +69,19 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.8 sync (record)
+
+v0.1.7-alpha -> **v0.1.8-alpha** is the SetHint pre-load fix and nothing else:
+`v0.1.8-alpha` = `v0.1.7-alpha` + PR
+[#19](https://github.com/phroun/kittytk/pull/19) (`sdl/sdl3/sdl3.go` loads
+libSDL3 before a pre-Init `SetHint`, so a host that sets an OS app name — as
+mew-sdl does — no longer segfaults on launch; build counter 7 -> 8). The fix
+had already been applied to our vendored tree to unblock mew-sdl, so its
+`sdl3.go` was byte-identical to the release; the sync was just bumping
+`core/version.go`'s `Build` to 8 and the `go.mod` pins to v0.1.8-alpha. The
+fork boundary is unchanged (still the 19 `//go:build mew` files + the mew
+require). See `patches/kittytk/sdl-sethint-preload.patch`.
+
 ## Cover note for a PR
 
 Upstream asks each sync to state: the tag diffed against, dependency bumps in
