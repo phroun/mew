@@ -9095,8 +9095,6 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Direction: %s\n", opt("direction")))
 	content.WriteString(fmt.Sprintf("  Prompt Timeout (s, 0=never): %s\n", opt("promptTimeout")))
 	content.WriteString(fmt.Sprintf("  Script Timeout (s, 0=never): %s\n", opt("scriptTimeout")))
-	content.WriteString(fmt.Sprintf("  Debounce (ms): %s\n", opt("debounceMs")))
-	content.WriteString(fmt.Sprintf("  Max Render Delay (ms): %s\n", opt("maxRenderDelayMs")))
 	content.WriteString(fmt.Sprintf("\n  Mappings: %s\n", e.LoadedConfig.General.MappingsName))
 	content.WriteString(fmt.Sprintf("  Layout: %s\n", e.LoadedConfig.General.Layout))
 	content.WriteString("\nInvoke editor_options again to close...")

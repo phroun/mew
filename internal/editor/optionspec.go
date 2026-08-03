@@ -92,8 +92,6 @@ var optionSpecs = []optionSpec{
 	{"killRingEntries", false, optIntKind, nil},
 	{"promptTimeout", false, optIntKind, nil},
 	{"scriptTimeout", false, optIntKind, nil},
-	{"debounceMs", false, optIntKind, nil},
-	{"maxRenderDelayMs", false, optIntKind, nil},
 	{"modebarInner", false, optStrKind, nil},
 	{"modebarDefault", false, optStrKind, nil},
 	{"modebarOuter", false, optStrKind, nil},
