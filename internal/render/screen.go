@@ -2945,6 +2945,12 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *viewport.Viewport, width 
 // physical position with cellToPhysical. `line` is the display
 // (button-substituted) caret line.
 func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base, pad, viewOff, contentCells int, dw bool) {
+	// The viewport's horizontal paint frame: the content starts at physical
+	// column 1+fx and is fw cells wide, not the whole screen. Caret / ghost /
+	// off-screen geometry must measure within the frame, or a viewport offset
+	// into the main area (a tile) places them off by fx and clips against the
+	// wrong width.
+	fx, fw, _ := sr.vpFrame(w)
 	lineNumWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
@@ -2954,7 +2960,7 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 		sbw = 1 // the scrollbar column narrows the content like the gutter does
 	}
 	marginL, _ := sr.physMargins(w)
-	contentCells = sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth - sbw
+	contentCells = fw - w.MarginInner - w.MarginOuter - lineNumWidth - sbw
 	gutter := lineNumWidth
 	dw = sr.caretLineDoubleWide(w)
 	if dw {
@@ -2964,9 +2970,9 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 			contentCells = 1
 		}
 	}
-	base = 1 + marginL + gutter
+	base = 1 + fx + marginL + gutter
 	if sr.winRTL(w) {
-		base = 1 + marginL + sbw // the gutter mirrors right; the bar sits left of the margin
+		base = 1 + fx + marginL + sbw // the gutter mirrors right; the bar sits left of the margin
 	}
 	pad, viewOff = sr.rtlPadOffset(line, w, contentCells)
 	return
