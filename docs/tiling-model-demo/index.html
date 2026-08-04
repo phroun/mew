@@ -721,6 +721,24 @@ let focusView=null;
 function nodeWithin(n,anc){while(n){if(n===anc)return true;n=n.parent;}return false;}
 function setFocus(node){ if(!node)return; selId=node.id;
   if(focusView){const X=findNode(focusView.nodeId); if(!X||!nodeWithin(node,X))focusView=null;} }
+// setFocus and setCaret are the host's TWO independent levers: setFocus changes
+// which tile is selected (and may dismiss a lens); setCaret moves only the nav
+// GOAL — the virtual point that steers which route a later direction-change takes
+// — WITHOUT changing focus. Keeping them separate is what lets an edge-press
+// reposition the goal in place.
+function setCaret(x,y){caret.x=x;caret.y=y;}
+// nav reads the TRUE pre-lens geometry (snapshotted each layout) so a direction
+// press always finds the real neighbor — that's how it breaks OUT of a monocle/
+// spectacle — and so edges are the real workspace edges.
+function navRect(n){return n._navRect||n._rect;}
+function navHidden(n){return n._navHidden!=null?n._navHidden:n._hidden;}
+// at a workspace edge (nothing that way) a nav/swap doesn't die: it slides the
+// caret goal to the current tile's far edge in `dir`, so a later perpendicular
+// move leaves from that side. This is what lets you jump to a band's end and then
+// walk back down the matching side.
+function caretToEdge(dir){const b=navRect(sel()||{}); if(!b)return;
+  if(dir==="left")caret.x=b.x; else if(dir==="right")caret.x=b.x+b.w;
+  else if(dir==="up")caret.y=b.y; else if(dir==="down")caret.y=b.y+b.h; render();}
 // the node a lens magnifies: negTarget once, or (group_ variants) climb one more
 // tiling level so the whole enclosing group is magnified instead of one tile.
 function lensTarget(twice){const t=negTarget(); if(!t)return null; return (twice&&t.parent)?climbTiling(t.parent):t;}
@@ -944,7 +962,13 @@ function loadJSON(str){
 // non-sizer click, drives directional nav, and otherwise rests at the selected
 // tile's center. Structural edits re-center it on the still-selected tile.
 function selCenter(){const s=sel();if(s&&s._rect&&!s._hidden)return{x:s._rect.x+s._rect.w/2,y:s._rect.y+s._rect.h/2};return null;}
-function setCaretToSel(){layout();const c=selCenter();if(c)caret=c;}
+// Re-home the caret on the selected tile, but PER AXIS: keep whichever axis still
+// falls inside the tile, and only re-center the axis that no longer does. So an
+// insert/split (which renegotiates just one axis) leaves the other axis's lane
+// intact instead of wiping both.
+function setCaretToSel(){layout();const s=sel();if(!s||!s._rect||s._hidden)return;const r=s._rect;
+  if(caret.x<r.x||caret.x>r.x+r.w)caret.x=r.x+r.w/2;
+  if(caret.y<r.y||caret.y>r.y+r.h)caret.y=r.y+r.h/2;}
 
 // ---------- measure (bottom-up min/natural bounding box) ----------
 function measure(n){
@@ -1047,6 +1071,9 @@ function layout(){
   syncStacksToSel(); // reveal the selected tile's tab before measuring/placing
   recordFocus();     // leave a focus trail so returning to a tab lands where it was
   measure(root); computeEff(root); allocate(root,0,0,wsW,wsH);
+  // snapshot the TRUE layout for navigation BEFORE any lens rewrites _rect/_hidden,
+  // so arrows always steer by real geometry (and can therefore break out of a lens).
+  walk(root,n=>{n._navRect=n._rect;n._navHidden=n._hidden;});
   // a lens re-expands one subtree over its scope AFTER the normal pass. The normal
   // pass still gives every node a real box (nav/hit-testing keep working underneath
   // and outside the lens); the lens just re-lays the magnified subtree and hides
@@ -1066,20 +1093,20 @@ function layout(){
 // level we take the child under the caret's goal coordinate. No perpendicular
 // distance is consulted for "which neighbor" — only for "where within it".
 function landingLeaf(node,dir){
-  const navH=(dir==="left"||dir==="right");
+  const navH=(dir==="left"||dir==="right"), R=navRect;
   while(node&&node.kind==="group"){
-    const kids=node.children.filter(c=>!c._hidden&&c._rect);
+    const kids=node.children.filter(c=>!navHidden(c)&&R(c));
     if(!kids.length)return null;
     if(isH(node.orientation)===navH){
       // same axis as travel: land on the child at the edge we enter from
-      if(dir==="right")node=kids.reduce((a,b)=>b._rect.x<a._rect.x?b:a);
-      else if(dir==="left")node=kids.reduce((a,b)=>(b._rect.x+b._rect.w)>(a._rect.x+a._rect.w)?b:a);
-      else if(dir==="down")node=kids.reduce((a,b)=>b._rect.y<a._rect.y?b:a);
-      else node=kids.reduce((a,b)=>(b._rect.y+b._rect.h)>(a._rect.y+a._rect.h)?b:a);
+      if(dir==="right")node=kids.reduce((a,b)=>R(b).x<R(a).x?b:a);
+      else if(dir==="left")node=kids.reduce((a,b)=>(R(b).x+R(b).w)>(R(a).x+R(a).w)?b:a);
+      else if(dir==="down")node=kids.reduce((a,b)=>R(b).y<R(a).y?b:a);
+      else node=kids.reduce((a,b)=>(R(b).y+R(b).h)>(R(a).y+R(a).h)?b:a);
     }else{
       // perpendicular level: land on the child under the caret's goal coordinate
       const g=navH?caret.y:caret.x;
-      const lo=c=>navH?c._rect.y:c._rect.x, hi=c=>navH?c._rect.y+c._rect.h:c._rect.x+c._rect.w;
+      const lo=c=>navH?R(c).y:R(c).x, hi=c=>navH?R(c).y+R(c).h:R(c).x+R(c).w;
       let pick=kids.find(c=>g>=lo(c)-0.5&&g<=hi(c)+0.5);
       if(!pick)pick=kids.reduce((a,b)=>{
         const da=Math.max(0,lo(a)-g,g-hi(a)),db=Math.max(0,lo(b)-g,g-hi(b));return db<da?b:a;});
@@ -1111,8 +1138,9 @@ function navTarget(dir,origin){
   return null;
 }
 function navSelect(dir){
-  const t=navTarget(dir); if(!t)return;
-  setFocus(t); const b=t._rect;
+  const t=navTarget(dir);
+  if(!t){ caretToEdge(dir); return; } // already at the edge -> slide the goal, don't move focus
+  setFocus(t); const b=navRect(t);
   // keep the perpendicular coordinate as the goal so repeated moves one way
   // don't drift; advance the along-axis coordinate into the new tile.
   if(dir==="left"||dir==="right")caret.x=b.x+b.w/2; else caret.y=b.y+b.h/2;
@@ -1128,7 +1156,7 @@ function swapNodes(a,b){
 }
 function cmdSwap(dir){
   const src=opTarget(); if(!src)return; // a stacked tab exchanges as its WHOLE box
-  const t=navTarget(dir,src); if(!t||t===src)return;
+  const t=navTarget(dir,src); if(!t||t===src){ caretToEdge(dir); return; } // at the edge: just move the goal
   const vert=(dir==="up"||dir==="down");
   const keep=vert?caret.x:caret.y; // preserve the caret's cross-travel coordinate
   swapNodes(src,t);
