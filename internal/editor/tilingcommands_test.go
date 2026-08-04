@@ -19,17 +19,19 @@ func TestTilingCommandsFire(t *testing.T) {
 		t.Fatal("tiler main handle unset")
 	}
 
-	// A query returns its value via the formal result.
-	if res := e.PawScript.ExecuteAsync(fmt.Sprintf("viewport_content %d", main)); res != pawscript.BoolStatus(true) {
-		t.Fatalf("viewport_content: %v", res)
-	}
-	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "main" {
-		t.Fatalf("viewport_content result = %q, want \"main\"", got)
+	// A query returns its value via the formal result — both with an explicit
+	// #tile and (the idiom's point) with the tile omitted, defaulting to #tile.
+	for _, cmd := range []string{"viewport_content #tile", "viewport_content"} {
+		if res := e.PawScript.ExecuteAsync(cmd); res != pawscript.BoolStatus(true) {
+			t.Fatalf("%q: %v", cmd, res)
+		}
+		if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "main" {
+			t.Fatalf("%q result = %q, want \"main\"", cmd, got)
+		}
 	}
 
-	// viewport_split uses the #-handle idiom: the tile comes from a leading
-	// #-symbol (here the seeded #tile default -> main) and it returns the new
-	// tile's handle (nonzero, distinct from the origin) via the formal result.
+	// A structural command fires the library method and returns the new tile's
+	// handle (nonzero, distinct from the origin) via the formal result.
 	if res := e.PawScript.ExecuteAsync("viewport_split #tile, right"); res != pawscript.BoolStatus(true) {
 		t.Fatalf("viewport_split #tile: %v", res)
 	}
@@ -40,26 +42,30 @@ func TestTilingCommandsFire(t *testing.T) {
 
 	// The renamed reading-order cycle commands exist (viewport_next/prior are
 	// mew's own; the tiler's are tile_next/tile_prior).
-	for _, cmd := range []string{"tile_next", "tile_prior"} {
-		if res := e.PawScript.ExecuteAsync(fmt.Sprintf("%s %d", cmd, main)); res != pawscript.BoolStatus(true) {
-			t.Fatalf("%s: %v", cmd, res)
+	for _, cmd := range []string{"tile_next #tile", "tile_prior #tile"} {
+		if res := e.PawScript.ExecuteAsync(cmd); res != pawscript.BoolStatus(true) {
+			t.Fatalf("%q: %v", cmd, res)
 		}
 	}
 
-	// A toggling command with the state omitted defaults to toggle (no error).
-	if res := e.PawScript.ExecuteAsync(fmt.Sprintf("viewport_zoom %d", main)); res != pawscript.BoolStatus(true) {
-		t.Fatalf("viewport_zoom <tile>: %v", res)
+	// With the idiom the tile defaults, so a toggling command needs no argument
+	// at all — it toggles #tile.
+	for _, cmd := range []string{"viewport_zoom #tile", "viewport_zoom"} {
+		if res := e.PawScript.ExecuteAsync(cmd); res != pawscript.BoolStatus(true) {
+			t.Fatalf("%q: %v", cmd, res)
+		}
 	}
 
-	// Missing REQUIRED arguments fail, like other commands.
-	if res := e.PawScript.ExecuteAsync("viewport_zoom"); res != pawscript.BoolStatus(false) {
-		t.Fatalf("viewport_zoom with no tile should fail, got %v", res)
-	}
-	if res := e.PawScript.ExecuteAsync(fmt.Sprintf("viewport_go %d", main)); res != pawscript.BoolStatus(false) {
+	// A genuinely required NON-tile argument still fails when missing.
+	if res := e.PawScript.ExecuteAsync("viewport_go #tile"); res != pawscript.BoolStatus(false) {
 		t.Fatalf("viewport_go with no direction should fail, got %v", res)
 	}
 	if res := e.PawScript.ExecuteAsync("viewport_set_caret"); res != pawscript.BoolStatus(false) {
-		t.Fatalf("viewport_set_caret with no args should fail, got %v", res)
+		t.Fatalf("viewport_set_caret with no x,y should fail, got %v", res)
+	}
+	// An explicit #-symbol that names an unset variable fails to resolve a tile.
+	if res := e.PawScript.ExecuteAsync("viewport_flip #nope"); res != pawscript.BoolStatus(false) {
+		t.Fatalf("viewport_flip #nope (unset var) should fail, got %v", res)
 	}
 }
 
