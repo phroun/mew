@@ -616,7 +616,7 @@ function clearPin(n){n.pin={amount:null,enforced:false};}
 // zoom/shrink mode drops back to normal (a pin is a normal-mode reservation).
 const RESIZE_STRIDE=48;
 function cmdResize(delta){
-  const t=opTarget(); if(!t||!t._rect||t._hidden)return; // a stack resizes as one box
+  const t=negTarget(); if(!t||!t._rect||t._hidden)return; // resizes as one box; climbs past only-child levels
   const horiz=t.parent&&isH(t.parent.orientation);
   const cur=horiz?t._rect.w:t._rect.h;
   manualPin(t,cur+delta);
@@ -667,13 +667,15 @@ function focusEntry(node){
 // while the selection is a DIRECT tab of a stack, mode/pin/resize operate on the
 // box (the stack shadows its tabs); deeper in a tab's sub-layout they're normal.
 function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.parent:s;}
-// zoom/shrink negotiate space among SIBLINGS in the parent's waterfall, so a mode
-// is inert wherever the target has none: a tab inside a stack (tabs share the body,
-// they don't tile) or a SOLE child (nobody to grow into or yield to). Climb past
-// every such level so a mode set on a nested tab-group that is an only child rides
-// up the chain to the first ancestor that actually has siblings to honour it —
-// otherwise the action is a silent no-op. Falls back to the root if nothing tiles.
-function modeTarget(){let n=sel(); if(!n)return null;
+// zoom/shrink AND pin/resize all negotiate space among SIBLINGS in the parent's
+// waterfall, so any of them is inert wherever the target has none: a tab inside a
+// stack (tabs share the body, they don't tile) or a SOLE child (nobody to grow
+// into or yield to). Climb past every such level so an emphasis/reservation set on
+// a nested tab-group that is an only child rides up the chain to the first ancestor
+// that actually has siblings to honour it — otherwise the action is a silent no-op.
+// Falls back to the root if nothing tiles. (Swap keeps opTarget: it must act on the
+// tab you're on, not climb.)
+function negTarget(){let n=sel(); if(!n)return null;
   while(n.parent&&(stackedG(n.parent)||n.parent.children.length===1))n=n.parent;
   return n;}
 // cycle the active tab; selection follows onto the tab that comes up. Nested
@@ -1349,10 +1351,10 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="reverse")cmdReverse();
     else if(c==="reverse-parent")cmdReverseParent();
     else if(c==="dismiss")cmdDismiss();
-    else if(c==="mode-normal"){const t=modeTarget();if(t)setMode(t,"normal");render();}
-    else if(c==="mode-zoom"){const t=modeTarget();if(t)setMode(t,"zoom");render();}
-    else if(c==="mode-shrink"){const t=modeTarget();if(t)setMode(t,"shrink");render();}
-    else if(c==="mode-cycle"){const t=modeTarget();if(t)cycleMode(t);render();}
+    else if(c==="mode-normal"){const t=negTarget();if(t)setMode(t,"normal");render();}
+    else if(c==="mode-zoom"){const t=negTarget();if(t)setMode(t,"zoom");render();}
+    else if(c==="mode-shrink"){const t=negTarget();if(t)setMode(t,"shrink");render();}
+    else if(c==="mode-cycle"){const t=negTarget();if(t)cycleMode(t);render();}
     else if(c.startsWith("nav-"))navSelect(c.slice(4));
     else if(c.startsWith("swap-"))cmdSwap(c.slice(5));
     else if(c.startsWith("merge-"))cmdMerge(c.slice(6));
@@ -1371,7 +1373,7 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
   $(k).oninput=()=>{const s=sel();if(!s)return;const v=Math.max(10,+$(k).value||10);
     if(k==="prio")s.priority=Math.round(+$("prio").value||0);else s[k]=v;render();};
 });
-$("clearpin").onclick=()=>{const s=sel();if(s){clearPin(s);render();}};
+$("clearpin").onclick=()=>{const t=negTarget();if(t){clearPin(t);render();}};
 $("wsW").oninput=()=>{wsW=+$("wsW").value;$("wsWv").textContent=wsW+"px";render();};
 $("wsH").oninput=()=>{wsH=+$("wsH").value;$("wsHv").textContent=wsH+"px";render();};
 $("fp").onchange=()=>{focusProtect=$("fp").checked;render();};
@@ -1417,9 +1419,9 @@ window.addEventListener("keydown",e=>{
   else if(k==="a"){e.shiftKey?cmdMerge("left"):cmdSwap("left");}
   else if(k==="s"){e.shiftKey?cmdMerge("down"):cmdSwap("down");}
   else if(k==="d"){e.shiftKey?cmdMerge("right"):cmdSwap("right");}
-  else if(k==="z"){const t=modeTarget();if(t){setMode(t,t.mode==="zoom"?"normal":"zoom");render();}}
-  else if(k==="x"){const t=modeTarget();if(t){setMode(t,t.mode==="shrink"?"normal":"shrink");render();}}
-  else if(k==="c"){const t=modeTarget();if(t){cycleMode(t);render();}}
+  else if(k==="z"){const t=negTarget();if(t){setMode(t,t.mode==="zoom"?"normal":"zoom");render();}}
+  else if(k==="x"){const t=negTarget();if(t){setMode(t,t.mode==="shrink"?"normal":"shrink");render();}}
+  else if(k==="c"){const t=negTarget();if(t){cycleMode(t);render();}}
   else if(k==="f")cmdFlip();
   else if(k==="g")cmdFlipParent();
   else if(k==="r")cmdReverse();
