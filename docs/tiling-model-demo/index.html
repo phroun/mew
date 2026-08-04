@@ -287,7 +287,7 @@
                 <button class="cmd" data-cmd="equalize">equalize <kbd>e</kbd></button>
                 <button class="cmd" data-cmd="balance">balance <kbd>b</kbd></button>
               </div>
-              <div class="t" style="margin-top:6px">lens · <kbd>m</kbd> monocle (screen) · <kbd>p</kbd> spectacle (group) · <kbd>⇧</kbd> = group_</div>
+              <div class="t" style="margin-top:6px">lens · <kbd>m</kbd> monocle (tile) · <kbd>p</kbd> spectacle (group) · <kbd>⇧</kbd> = fill group (else screen)</div>
               <div class="btns">
                 <button class="cmd" data-cmd="monocle">monocle <kbd>m</kbd></button>
                 <button class="cmd" data-cmd="spectacle">spectacle <kbd>p</kbd></button>
@@ -739,16 +739,18 @@ function navHidden(n){return n._navHidden!=null?n._navHidden:n._hidden;}
 function caretToEdge(dir){const b=navRect(sel()||{}); if(!b)return;
   if(dir==="left")caret.x=b.x; else if(dir==="right")caret.x=b.x+b.w;
   else if(dir==="up")caret.y=b.y; else if(dir==="down")caret.y=b.y+b.h; render();}
-// the node a lens magnifies: negTarget once, or (group_ variants) climb one more
-// tiling level so the whole enclosing group is magnified instead of one tile.
-function lensTarget(twice){const t=negTarget(); if(!t)return null; return (twice&&t.parent)?climbTiling(t.parent):t;}
-// monocle = fill the whole screen; spectacle = fill the magnified node's own group
-// box (its siblings there are suppressed, the rest of the workspace is untouched).
-// Re-invoking the same lens on the same node toggles it off.
-function cmdLens(mode,twice){
-  const X=lensTarget(twice); if(!X)return;
-  if(focusView&&focusView.mode===mode&&focusView.nodeId===X.id){focusView=null;render();return;}
-  focusView={mode,nodeId:X.id};
+// the node a lens magnifies. MONOCLE magnifies the focused tile (negTarget once);
+// SPECTACLE magnifies the enclosing group (negTarget twice — one more tiling level).
+function lensTarget(group){const t=negTarget(); if(!t)return null; return (group&&t.parent)?climbTiling(t.parent):t;}
+// A lens has two independent axes:
+//   group  false = monocle (the tile)      true = spectacle (its enclosing group)
+//   scope  "screen" = fill the whole workspace   "group" = fill the target's own group box
+// so m/M = monocle global/in-group, p/P = spectacle global/in-group. Re-invoking the
+// exact same lens toggles it off; any set_focus outside the magnified subtree dismisses.
+function cmdLens(group,scope){
+  const X=lensTarget(group); if(!X)return;
+  if(focusView&&focusView.group===group&&focusView.scope===scope&&focusView.nodeId===X.id){focusView=null;render();return;}
+  focusView={group,scope,nodeId:X.id};
   const l=focusEntry(X); if(l)selId=l.id;   // land focus inside the lens so it doesn't self-dismiss
   render();
 }
@@ -1080,7 +1082,7 @@ function layout(){
   // whatever it now covers, so stepping focus out is what dismisses it.
   const X=focusView&&findNode(focusView.nodeId);
   if(X){
-    if(focusView.mode==="monocle"){ markHidden(root,"lens"); allocate(X,0,0,wsW,wsH); }   // fill the screen
+    if(focusView.scope==="screen"){ markHidden(root,"lens"); allocate(X,0,0,wsW,wsH); }    // fill the workspace
     else { const A=X.parent||root, r=A._rect||{x:0,y:0,w:wsW,h:wsH};                        // fill its group box
       if(X.parent)X.parent.children.forEach(c=>{if(c!==X)markHidden(c,"lens");});
       allocate(X,r.x,r.y,r.w,r.h); }
@@ -1396,7 +1398,8 @@ function renderSidebar(){
   const s=sel();
   $("selid").textContent=s?s.ref:"";
   const lb=$("lensbadge"), lx=focusView&&findNode(focusView.nodeId);
-  if(lb){ if(lx){lb.style.display="";lb.textContent=`◉ ${focusView.mode} · ${lx.ref||"group"} — any tile outside dismisses`;} else lb.style.display="none"; }
+  if(lb){ if(lx){const nm=(focusView.group?"spectacle":"monocle")+(focusView.scope==="group"?" · in-group":" · global");
+    lb.style.display="";lb.textContent=`◉ ${nm} · ${lx.ref||"group"} — any tile outside dismisses`;} else lb.style.display="none"; }
   const rw=Math.ceil(root._minW),rh=Math.ceil(root._minH);
   $("req").textContent=`required ${rw}×${rh}`;
   const over=rw>wsW||rh>wsH;
@@ -1461,8 +1464,8 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="shrink-size")cmdResize(-RESIZE_STRIDE);
     else if(c==="equalize")cmdEqualize(ev.shiftKey);   // Shift+click = recursive
     else if(c==="balance")cmdBalance(ev.shiftKey);
-    else if(c==="monocle")cmdLens("monocle",ev.shiftKey);   // Shift+click = group_ (climb one more)
-    else if(c==="spectacle")cmdLens("spectacle",ev.shiftKey);
+    else if(c==="monocle")cmdLens(false,ev.shiftKey?"group":"screen");   // Shift+click = in-group (fill group)
+    else if(c==="spectacle")cmdLens(true,ev.shiftKey?"group":"screen");
     else if(c==="toggle-stack")cmdToggleStack();
     else if(c==="tab-prev")cmdTabCycle(-1);
     else if(c==="tab-next")cmdTabCycle(1);
@@ -1533,8 +1536,8 @@ window.addEventListener("keydown",e=>{
   else if(k==="="||k==="+")cmdResize(RESIZE_STRIDE);
   else if(k==="e")cmdEqualize(e.shiftKey);   // Shift = recursive (whole subtree)
   else if(k==="b")cmdBalance(e.shiftKey);     // Shift = recursive
-  else if(k==="m")cmdLens("monocle",e.shiftKey);   // fill screen; Shift = group_ (climb one more)
-  else if(k==="p")cmdLens("spectacle",e.shiftKey); // fill group; Shift = group_
+  else if(k==="m")cmdLens(false,e.shiftKey?"group":"screen"); // monocle (tile): m=global, M=in-group
+  else if(k==="p")cmdLens(true, e.shiftKey?"group":"screen"); // spectacle (group): p=global, P=in-group
   else if(k==="\\")cmdToggleStack();
   else if(k===",")cmdTabCycle(-1);
   else if(k===".")cmdTabCycle(1);
