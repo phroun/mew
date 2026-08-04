@@ -35,6 +35,12 @@ const (
 	newTileMinH = 2
 )
 
+// tileDefaultVar is the well-known hash-prefixed variable holding the default
+// tile handle. A tiling command given no explicit #handle acts on this tile.
+// Seeded once to the main window's tile by seedTileDefault (unless a script has
+// already assigned it).
+const tileDefaultVar = "#tile"
+
 // ensureTiler builds the tiler on first use (root tile "main" split right into
 // an empty "blank") and returns it. The render loop keeps the workspace size
 // current; a command that runs before the first render still gets a valid tiler
@@ -60,6 +66,65 @@ func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	e.tiler = vp
 	e.tilerMain = main
 	return e.tiler
+}
+
+// seedTileDefault publishes the main tile as the well-known #tile default, once,
+// so a tiling command invoked without an explicit #handle acts on it. It only
+// seeds when #tile is unset, so a script that reassigns #tile (e.g.
+// `#tile: {viewport_split …}`) is never clobbered. Uses Context.SetModuleObject
+// — the module object layer, which persists across top-level commands — rather
+// than the inherited layer (that one is for provisioning sub-module
+// environments). Requires a command context; the render loop cannot seed it.
+func (e *Editor) seedTileDefault(ctx *pawscript.Context) {
+	if ctx.ResolveHashArg(tileDefaultVar) == nil {
+		ctx.SetModuleObject(tileDefaultVar, uint64(e.tilerMain))
+	}
+}
+
+// tileHashToHandle converts a value resolved from a #-variable into a tile
+// handle. Handles arrive as numbers (or numeric strings) — a script assigns one
+// with `#tile: {viewport_split …}` capturing a command's returned handle, or the
+// host seeds #tile directly.
+func tileHashToHandle(v interface{}) (ifitfits.Handle, bool) {
+	switch t := v.(type) {
+	case nil:
+		return 0, false
+	case ifitfits.Handle:
+		return t, t != 0
+	case uint64:
+		return ifitfits.Handle(t), t != 0
+	case int:
+		return ifitfits.Handle(t), t > 0
+	case int64:
+		return ifitfits.Handle(t), t > 0
+	case float64:
+		return ifitfits.Handle(uint64(t)), t > 0
+	default:
+		f, err := strconv.ParseUint(strings.TrimSpace(fmt.Sprintf("%v", v)), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return ifitfits.Handle(f), f != 0
+	}
+}
+
+// resolveTileArg implements the #-handle idiom for the tile argument, following
+// the os.argc pattern. If the first positional argument is a bare #-prefixed
+// symbol (e.g. #tile, or any #-variable a script assigned a handle into), it
+// NAMES the tile handle — resolved through the module-object chain — and the
+// remaining positional arguments begin at index 1. Otherwise no handle was
+// given: the well-known #tile default is used and the remaining args begin at
+// index 0. Returns the handle, the index where the rest of the args start, and
+// whether a handle was resolved.
+func (e *Editor) resolveTileArg(ctx *pawscript.Context) (ifitfits.Handle, int, bool) {
+	if len(ctx.Args) > 0 {
+		if sym, ok := ctx.Args[0].(pawscript.Symbol); ok && strings.HasPrefix(string(sym), "#") {
+			h, ok := tileHashToHandle(ctx.ResolveHashArg(string(sym)))
+			return h, 1, ok
+		}
+	}
+	h, ok := tileHashToHandle(ctx.ResolveHashArg(tileDefaultVar))
+	return h, 0, ok
 }
 
 // ---- argument parsing ----
@@ -263,8 +328,32 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 		})
 	}
 	newSplit("viewport_new", "viewport_new <tile>, <direction>, [ref]", (*ifitfits.Viewport).New)
-	newSplit("viewport_split", "viewport_split <tile>, <direction>, [ref]", (*ifitfits.Viewport).Split)
 	tileRet("viewport_close", "viewport_close <tile>", (*ifitfits.Viewport).Close)
+
+	// viewport_split follows the #-handle idiom (the one command wired for it so
+	// far): the tile may be given as a leading #-symbol, or omitted to act on the
+	// well-known #tile default. Returns the new tile's handle.
+	ps.RegisterCommand("viewport_split", func(ctx *pawscript.Context) pawscript.Result {
+		vp := e.ensureTiler()
+		e.seedTileDefault(ctx) // set #tile -> main once, if not already set
+		t, rest, okT := e.resolveTileArg(ctx)
+		d, okD := tileArgDir(ctx, rest)
+		if !okT || !okD {
+			e.ShowWarning("Usage: viewport_split [#tile], <direction>, [ref]")
+			return pawscript.BoolStatus(false)
+		}
+		var h ifitfits.Handle
+		if ref, ok := tileArgStr(ctx, rest+1); ok {
+			h = vp.Split(t, d, ref)
+		} else {
+			h = vp.Split(t, d)
+		}
+		if h != 0 {
+			vp.SetMetrics(h, newTileMinW, newTileMinH, 0, 0)
+		}
+		ctx.SetResult(uint64(h))
+		return pawscript.BoolStatus(true)
+	})
 
 	// --- Navigation ---
 	// viewport_go returns the resolved destination tile.
