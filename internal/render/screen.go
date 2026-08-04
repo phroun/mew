@@ -220,6 +220,28 @@ func (sr *ScreenRenderer) physMargins(w *viewport.Viewport) (left, right int) {
 	return w.MarginInner, w.MarginOuter
 }
 
+// vpFrame returns the viewport's horizontal paint frame this present, in cells:
+// fx is the 0-based physical start column, fw the width. It honors the host-set
+// FrameX/FrameWidth (viewport.Viewport), clamped to the screen. The zero value
+// yields the full screen from the left edge (fx 0, fw sr.Width), so a viewport
+// that never sets a frame paints exactly as before. atRight reports whether the
+// frame reaches the screen's right edge — the only case in which the terminal's
+// unwritable bottom-right corner cell falls inside this viewport.
+func (sr *ScreenRenderer) vpFrame(w *viewport.Viewport) (fx, fw int, atRight bool) {
+	fx = w.FrameX
+	if fx < 0 {
+		fx = 0
+	}
+	if fx > sr.Width {
+		fx = sr.Width
+	}
+	fw = w.FrameWidth
+	if fw <= 0 || fx+fw > sr.Width {
+		fw = sr.Width - fx
+	}
+	return fx, fw, fx+fw == sr.Width
+}
+
 // SetBaseRTL sets the base text direction used for bidi line layout.
 func (sr *ScreenRenderer) SetBaseRTL(rtl bool) {
 	sr.baseRTL = rtl
@@ -770,6 +792,10 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		if w.ViewState.ShowLineNumbers {
 			lineNumWidth = w.LineNumWidth
 		}
+		// The viewport's horizontal paint frame (host-set; full screen by
+		// default). All physical columns below are measured within it.
+		fx, fw, atRight := sr.vpFrame(w)
+
 		// The vertical scrollbar reserves the OUTER physical column — the
 		// rightmost in LTR, the leftmost in RTL — outside the margins.
 		w.ScrollbarX = -1
@@ -779,32 +805,34 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 			sbw = 1
 			w.ScrollbarTrackH = w.ContentHeight
 			if sr.winRTL(w) {
-				w.ScrollbarX = 0
+				w.ScrollbarX = fx
 			} else {
-				w.ScrollbarX = sr.Width - 1
+				w.ScrollbarX = fx + fw - 1
 				// The screen's bottom-right CELL can never be written (it
 				// scrolls the terminal), so an LTR bar reaching the bottom
 				// screen row gives that cell up as its corner: the track is
 				// one row shorter and the thumb bottoms out on the
 				// second-to-last row instead of clipping into the corner.
+				// Only a frame that reaches the screen's right edge touches
+				// that corner cell; a narrower frame's bar never does.
 				//
 				// That is a terminal's problem alone. A host drawing the bar
 				// in pixels has no such cell and no wrap to provoke, so its
 				// track runs the full height — giving up a row there would
 				// just be a gap at the bottom of every bar.
-				if w.ContentY+w.ContentHeight == sr.Height && !sr.hostDrawsScrollbars() {
+				if atRight && w.ContentY+w.ContentHeight == sr.Height && !sr.hostDrawsScrollbars() {
 					w.ScrollbarTrackH--
 				}
 			}
 		}
 		marginL, _ := sr.physMargins(w)
-		w.ContentWidth = sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
+		w.ContentWidth = fw - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 		if sr.winRTL(w) {
 			// The gutter mirrors to the right side; content starts after the
 			// scrollbar column and the physical left margin.
-			w.ContentX = marginL + sbw
+			w.ContentX = fx + marginL + sbw
 		} else {
-			w.ContentX = marginL + lineNumWidth
+			w.ContentX = fx + marginL + lineNumWidth
 		}
 
 		// The scroll offset is only ever CHECKED against the page on its way in
@@ -843,18 +871,23 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 	messagesColor := sr.col(w, "messages")
 	resetColor := sr.col(w, "reset")
 
+	// The viewport's horizontal paint frame (host-set; full screen by default).
+	// Rows start at physical column 1+fx and are fw cells wide.
+	fx, fw, _ := sr.vpFrame(w)
+
 	// Check for custom renderer
 	if w.CustomRenderer != "" {
 		if renderer, ok := sr.customRenderers[w.CustomRenderer]; ok {
-			// Record the bar's screen geometry (it writes from column 1) so the
-			// editor can hit-test clicks on it — e.g. the modebar's nav-history
-			// buttons. A custom-rendered chrome viewport has no Buffer, so this
-			// never affects content hit-testing (viewportAtRow requires a buffer).
-			w.ContentX = 0
+			// Record the bar's screen geometry (it writes from column 1+fx) so
+			// the editor can hit-test clicks on it — e.g. the modebar's
+			// nav-history buttons. A custom-rendered chrome viewport has no
+			// Buffer, so this never affects content hit-testing (viewportAtRow
+			// requires a buffer).
+			w.ContentX = fx
 			w.ContentY = startY - 1
 			w.ContentHeight = height
-			sr.MoveCursor(1, startY)
-			content := renderer(w, sr.Width)
+			sr.MoveCursor(1+fx, startY)
+			content := renderer(w, fw)
 			sr.Write(content)
 			return
 		}
@@ -866,8 +899,8 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 
 	// Column ruler on the viewport's top line, above everything else
 	if rulerActive(w, height) && sr.rulerRenderer != nil {
-		sr.MoveCursor(1, y)
-		sr.Write(sr.rulerRenderer(w, sr.Width))
+		sr.MoveCursor(1+fx, y)
+		sr.Write(sr.rulerRenderer(w, fw))
 		y++
 		remainingHeight--
 	}
@@ -875,12 +908,12 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 	// Top message bar: the Inner slot renders on the reading-start side
 	// (left in LTR, right in RTL), Outer on the opposite edge.
 	if w.MessageTopInner != "" || w.MessageTopCenter != "" || w.MessageTopOuter != "" {
-		sr.MoveCursor(1, y)
+		sr.MoveCursor(1+fx, y)
 		sr.Write(messagesColor)
 		if sr.winRTL(w) {
-			sr.renderMessageBar(w.MessageTopOuter, w.MessageTopCenter, w.MessageTopInner, sr.Width)
+			sr.renderMessageBar(w.MessageTopOuter, w.MessageTopCenter, w.MessageTopInner, fw)
 		} else {
-			sr.renderMessageBar(w.MessageTopInner, w.MessageTopCenter, w.MessageTopOuter, sr.Width)
+			sr.renderMessageBar(w.MessageTopInner, w.MessageTopCenter, w.MessageTopOuter, fw)
 		}
 		sr.Write(resetColor)
 		y++
@@ -898,12 +931,12 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 
 	// Bottom message bar, Inner/Outer mapped like the top bar.
 	if w.MessageBottomInner != "" || w.MessageBottomCenter != "" || w.MessageBottomOuter != "" {
-		sr.MoveCursor(1, y)
+		sr.MoveCursor(1+fx, y)
 		sr.Write(messagesColor)
 		if sr.winRTL(w) {
-			sr.renderMessageBar(w.MessageBottomOuter, w.MessageBottomCenter, w.MessageBottomInner, sr.Width)
+			sr.renderMessageBar(w.MessageBottomOuter, w.MessageBottomCenter, w.MessageBottomInner, fw)
 		} else {
-			sr.renderMessageBar(w.MessageBottomInner, w.MessageBottomCenter, w.MessageBottomOuter, sr.Width)
+			sr.renderMessageBar(w.MessageBottomInner, w.MessageBottomCenter, w.MessageBottomOuter, fw)
 		}
 		sr.Write(resetColor)
 	}
@@ -1010,6 +1043,11 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	lineNumbersColor := sr.col(w, "lineNumbers")
 	resetColor := sr.col(w, "reset")
 
+	// The viewport's horizontal paint frame (host-set; full screen by default).
+	// Each row starts at physical column 1+fx and totals fw cells; atRight is
+	// true only when the frame reaches the screen's right edge.
+	fx, fw, atRight := sr.vpFrame(w)
+
 	lineNumWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
@@ -1037,7 +1075,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	}
 	scrollbarTrackColor := sr.col(w, "scrollbarTrack")
 	scrollbarThumbColor := sr.col(w, "scrollbarThumb")
-	baseContentWidth := sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
+	baseContentWidth := fw - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 
 	// Get selection range once for all lines. A transient find/replace match
 	// highlight takes precedence: while a match is being offered, it is shown
@@ -1065,17 +1103,20 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 
 	for row := 0; row < height; row++ {
 		screenY := startY + row
-		sr.MoveCursor(1, screenY)
+		sr.MoveCursor(1+fx, screenY)
 
 		// Corner cut: the bottom-right cell can never be written (it scrolls the
 		// terminal), so reserve it on the bottom row — but only when the content
-		// actually reaches that corner. Under direction=rtl with a line-number
-		// gutter, the gutter sits on the right and absorbs the corner, so the
-		// content stays full width (reducing it there would shift the whole
-		// right-anchored bottom row left by one). The back buffer paints the
-		// corner cell's background without landing a glyph in it.
+		// actually reaches that corner. Only a frame flush against the screen's
+		// right edge (atRight) reaches it; a narrower frame ends short of the
+		// corner column and stays full width. Under direction=rtl with a
+		// line-number gutter, the gutter sits on the right and absorbs the
+		// corner, so the content stays full width (reducing it there would
+		// shift the whole right-anchored bottom row left by one). The back
+		// buffer paints the corner cell's background without landing a glyph in
+		// it.
 		contentWidth := baseContentWidth
-		if screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
+		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
 			!(sbw > 0 && !sr.winRTL(w)) {
 			// An LTR scrollbar occupies the corner column itself (its glyph is
 			// simply skipped on that row, below), so the content stays full.
@@ -1239,7 +1280,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 					lineWidth = 1
 				}
 				written := marginL + lineNumWidth/2 + lineWidth + marginR
-				if pad := sr.Width/2 - 1 - written; pad > 0 {
+				if pad := fw/2 - 1 - written; pad > 0 {
 					sr.Write(textColor)
 					sr.Write(strings.Repeat(" ", pad))
 				}

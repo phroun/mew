@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/phroun/ifitfits"
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
@@ -120,6 +121,16 @@ type Editor struct {
 	// read at each host-level token request, so runtime option changes
 	// (set_option scriptTimeout) apply immediately.
 	pawConfig *pawscript.Config
+
+	// tiler is the ifitfits viewport-tiling engine, wired for a minimal
+	// geometry-only integration: the root tile ("main") stands for the main
+	// editing area, and a right split ("blank") leaves the other half empty, so
+	// the focused main document paints at half width. Only geometry is
+	// connected — focus, input, and the blank tile's content are not. Built
+	// lazily on first render; see applyTilerGeometry.
+	tiler       *ifitfits.Viewport
+	tilerMain   ifitfits.Handle
+	tilerFramed *viewport.Viewport // last main viewport we stamped a frame onto
 
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
@@ -7723,6 +7734,10 @@ func (e *Editor) performRender() {
 	// Calculate layout
 	layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
 
+	// Drive the main viewport's horizontal frame from the ifitfits tiler (a
+	// minimal geometry-only integration: the main document paints at half width).
+	e.applyTilerGeometry(layout)
+
 	// Render
 	e.Renderer.Render(layout)
 
@@ -7759,6 +7774,58 @@ func (e *Editor) performRender() {
 
 	// Show/hide the Kitty force_ltr nudge based on what this frame painted.
 	e.updateNiqqudNudge()
+}
+
+// applyTilerGeometry drives the painted main viewport's horizontal frame from
+// the ifitfits tiler. This is a deliberately minimal, geometry-only integration
+// test: the tiler holds a "main" tile split to the right against an empty
+// "blank" tile, so the main document is confined to the left half of the main
+// area — proving the tiler's cell geometry flows into mew's window painting.
+// Nothing else (focus, input, the blank tile's contents) is wired yet.
+//
+// The tiler works in the same cell units the main editor uses. Its workspace is
+// the full main-area rectangle (screen width × the negotiated main height); the
+// "main" tile's resolved rect becomes the viewport's FrameX/FrameWidth.
+func (e *Editor) applyTilerGeometry(layout viewport.Layout) {
+	if len(layout.MainLayout) == 0 {
+		return
+	}
+
+	// Build the tiler once: root tile "main", split right into "blank". Low
+	// minimums so the 50/50 split holds at any terminal size instead of the
+	// tiler omitting a tile that cannot meet a default minimum.
+	if e.tiler == nil {
+		vp, main := ifitfits.NewViewport(float64(e.Renderer.Width), float64(layout.MainHeight))
+		vp.Set(main, "main")
+		vp.SetMetrics(main, 1, 1, 0, 0)
+		blank := vp.Split(main, ifitfits.Right)
+		vp.Set(blank, "blank")
+		vp.SetMetrics(blank, 1, 1, 0, 0)
+		e.tiler = vp
+		e.tilerMain = main
+	}
+
+	e.tiler.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
+
+	// Resolve the "main" tile's rect and translate it into the viewport frame.
+	var fx, fw int
+	for _, b := range e.tiler.Tiles() {
+		if b.Tile == e.tilerMain {
+			fx, fw = int(b.Rect.X), int(b.Rect.W)
+		}
+	}
+	if fw <= 0 {
+		return
+	}
+
+	// Frame the painted main viewport; clear any frame we stamped on a previous
+	// main so a focus change does not leave a stale half-width window behind.
+	main := layout.MainLayout[0].Viewport
+	if e.tilerFramed != nil && e.tilerFramed != main {
+		e.tilerFramed.FrameX, e.tilerFramed.FrameWidth = 0, 0
+	}
+	main.FrameX, main.FrameWidth = fx, fw
+	e.tilerFramed = main
 }
 
 // Run starts the editor with an optional filename.

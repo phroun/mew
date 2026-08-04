@@ -441,6 +441,18 @@ type Viewport struct {
 	MarginOuter int
 	RowMessages []string
 
+	// FrameX and FrameWidth confine this viewport to a horizontal sub-range of
+	// the screen, in cells: the renderer paints it starting at physical column
+	// FrameX and spanning FrameWidth columns instead of the full screen width.
+	// The zero value (FrameX 0, FrameWidth 0) means "start at the left edge and
+	// fill the screen" — byte-identical to full-width painting, so viewports
+	// that never set these are unaffected. This is a general window-painting
+	// option (any host, any viewport); the ifitfits tiler is one such driver,
+	// but nothing here depends on it. Cells outside the frame are left to
+	// whatever else paints there (blank, or a neighboring viewport).
+	FrameX     int
+	FrameWidth int
+
 	ContentX      int
 	ContentY      int
 	ContentWidth  int
