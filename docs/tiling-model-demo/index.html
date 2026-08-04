@@ -666,15 +666,23 @@ function focusEntry(node){
 // while the selection is a DIRECT tab of a stack, mode/pin/resize operate on the
 // box (the stack shadows its tabs); deeper in a tab's sub-layout they're normal.
 function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.parent:s;}
-// cycle the active tab of the nearest stack; selection follows onto the tab that
-// comes up, so the newly shown tile is the focused one.
+// cycle the active tab; selection follows onto the tab that comes up. Nested
+// stacks read as one continuous tab order: step the INNERMOST enclosing stack
+// that can move in this direction without wrapping, escalating to the parent
+// stack (grandparent, …) at each boundary — so you can always get back OUT of a
+// nested stack. Only when every enclosing stack is at its boundary does the
+// innermost wrap around to its other end.
+function goTab(g,j){selectChild(g,g.children[j]);const l=focusEntry(g.children[j]);if(l)selId=l.id;rebuild();}
 function cmdTabCycle(step){
-  const g=enclosingStack(sel()); if(!g)return;
-  const n=g.children.length; if(n<2)return;
-  const i=g.children.indexOf(selectedChild(g)), nx=g.children[((i+step)%n+n)%n];
-  selectChild(g,nx);
-  const l=focusEntry(nx); if(l)selId=l.id; // restore where focus last was in that tab
-  rebuild();
+  const innermost=enclosingStack(sel()); let g=innermost;
+  while(g){
+    const i=g.children.indexOf(selectedChild(g)), j=i+step;
+    if(j>=0&&j<g.children.length){goTab(g,j);return;} // can step here without wrapping
+    g=enclosingStack(g);                              // at a boundary — try the parent stack
+  }
+  if(innermost){const n=innermost.children.length;if(n<2)return; // nothing above: wrap innermost
+    const i=innermost.children.indexOf(selectedChild(innermost));
+    goTab(innermost,((i+step)%n+n)%n);}
 }
 // pick a specific tab (header click).
 function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
