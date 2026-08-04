@@ -729,13 +729,18 @@ function cycleVisibleStack(step){
   // itself is the visible move). Parks visCursor on the deepest.
   const descend=S=>{let cur=S;for(;;){const ks=childStacks(cur);if(!ks.length){visCursor=cur.id;return;}
     const nx=step>0?ks[0]:ks[ks.length-1];set(nx,entry(nx));cur=nx;}};
-  // baton ENTERS S fresh (handoff / fresh-anchor / revealed by a wrap): reset each
-  // container level to its entry BRANCH, then the deepest fast-wheel to its entry
-  // tab — nudged one further only if it already sits there, so the press always
-  // moves SOMETHING, and it's the innermost wheel that moves (never the container).
-  const enter=S=>{let cur=S;for(;;){const orig=shown(cur), e=entry(cur);
-    set(cur,e); const ks=childStacks(cur);
-    if(!ks.length){if(orig===e)set(cur,e+step);visCursor=cur.id;return;}
+  // baton ENTERS S fresh (handoff / fresh-anchor / revealed by a wrap): descend the
+  // entry BRANCH, resetting each level to its entry tab, and park on the deepest.
+  // `moved` guarantees the press changes SOMETHING: if the whole entry branch was
+  // already at its start, nudge one tab further — and that nudge can itself flip a
+  // container onto a tab that holds a nested stack (walking back onto a non-final
+  // tab), so we RE-derive childStacks and keep descending rather than parking on
+  // the container. The innermost wheel is always the one that ends up moving.
+  const enter=S=>{let cur=S, moved=false;for(;;){const before=shown(cur), e=entry(cur);
+    if(before!==e){set(cur,e);moved=true;}
+    let ks=childStacks(cur);
+    if(!ks.length&&!moved){set(cur,e+step);moved=true;ks=childStacks(cur);}
+    if(!ks.length){visCursor=cur.id;return;}
     cur=step>0?ks[0]:ks[ks.length-1];}};
 
   const D=visCursor?vs.find(s=>s.id===visCursor):null;
