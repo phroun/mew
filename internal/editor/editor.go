@@ -1431,6 +1431,10 @@ func argInt(ctx *pawscript.Context, i int) (int, bool) {
 func (e *Editor) registerCommands() {
 	ps := e.PawScript
 
+	// ifitfits viewport-tiling commands (viewport_new, viewport_zoom, …) live in
+	// tilingcommands.go.
+	e.registerTilingCommands(ps)
+
 	// System commands
 	ps.RegisterCommand("exit", func(ctx *pawscript.Context) pawscript.Result {
 		e.Running = false
@@ -7791,20 +7795,7 @@ func (e *Editor) applyTilerGeometry(layout viewport.Layout) {
 		return
 	}
 
-	// Build the tiler once: root tile "main", split right into "blank". Low
-	// minimums so the 50/50 split holds at any terminal size instead of the
-	// tiler omitting a tile that cannot meet a default minimum.
-	if e.tiler == nil {
-		vp, main := ifitfits.NewViewport(float64(e.Renderer.Width), float64(layout.MainHeight))
-		vp.Set(main, "main")
-		vp.SetMetrics(main, 1, 1, 0, 0)
-		blank := vp.Split(main, ifitfits.Right)
-		vp.Set(blank, "blank")
-		vp.SetMetrics(blank, 1, 1, 0, 0)
-		e.tiler = vp
-		e.tilerMain = main
-	}
-
+	e.ensureTiler()
 	e.tiler.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
 	// Resolve the "main" tile's rect and translate it into the viewport frame.
