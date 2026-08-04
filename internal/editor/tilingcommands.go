@@ -24,11 +24,22 @@ import (
 // act on — the tile handle is always an explicit argument, as the library
 // requires.
 
+// Intrinsic minimums stamped on every tile we create — in the initialization
+// code below and on any tile returned by viewport_new / viewport_split — until
+// the host derives real per-content metrics. Without this a freshly-created
+// tile inherits the library's larger default minimum and can be omitted on a
+// modest workspace. Natural sizes are left at the library default (0 = unchanged
+// in SetMetrics), so equal tiles still split evenly.
+const (
+	newTileMinW = 10
+	newTileMinH = 2
+)
+
 // ensureTiler builds the tiler on first use (root tile "main" split right into
-// an empty "blank"; low minimums so the split holds at any workspace size) and
-// returns it. The render loop keeps the workspace size current; a command that
-// runs before the first render still gets a valid tiler sized from the current
-// terminal (or a sane default), corrected on the next frame.
+// an empty "blank") and returns it. The render loop keeps the workspace size
+// current; a command that runs before the first render still gets a valid tiler
+// sized from the current terminal (or a sane default), corrected on the next
+// frame.
 func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	if e.tiler != nil {
 		return e.tiler
@@ -42,10 +53,10 @@ func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	}
 	vp, main := ifitfits.NewViewport(w, h)
 	vp.Set(main, "main")
-	vp.SetMetrics(main, 1, 1, 0, 0)
+	vp.SetMetrics(main, newTileMinW, newTileMinH, 0, 0)
 	blank := vp.Split(main, ifitfits.Right)
 	vp.Set(blank, "blank")
-	vp.SetMetrics(blank, 1, 1, 0, 0)
+	vp.SetMetrics(blank, newTileMinW, newTileMinH, 0, 0)
 	e.tiler = vp
 	e.tilerMain = main
 	return e.tiler
@@ -241,6 +252,11 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 				h = fn(vp, t, d, ref)
 			} else {
 				h = fn(vp, t, d)
+			}
+			// Stamp our default minimums on the new tile so it does not inherit
+			// the library's larger default and get omitted on a modest workspace.
+			if h != 0 {
+				vp.SetMetrics(h, newTileMinW, newTileMinH, 0, 0)
 			}
 			ctx.SetResult(uint64(h))
 			return pawscript.BoolStatus(true)
