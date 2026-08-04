@@ -1032,6 +1032,11 @@ function mergeToEdge(s,dir,Ad){
   }
   if(s.kind==="leaf")selId=s.id; rebuild(); // a moved stack keeps selection on its visible tab
 }
+function isAncestorOf(a,n){let p=n&&n.parent;while(p){if(p===a)return true;p=p.parent;}return false;}
+// the front-most stack we'd be merging INTO: the outermost stack on the
+// destination leaf's ancestor chain that does NOT also contain the source (i.e.
+// a stack on the neighbour's side, the tabbed box you ran into).
+function destStack(D,src){let st=null,n=D;while(n){if(stackedG(n)&&!isAncestorOf(n,src))st=n;n=n.parent;}return st;}
 function cmdMerge(dir){
   // Unlike swap (which moves a whole tab-group via opTarget), merge moves the
   // SINGLE tile — so a lone tab can be extracted from its stack ("merged out")
@@ -1040,35 +1045,45 @@ function cmdMerge(dir){
   const Ad=(dir==="up"||dir==="down")?"V":"H"; // travel axis
   const Pd=Ad==="H"?"V":"H";                   // across-travel axis: source lands adjacent here
   const D=navTarget(dir);                       // from sel(): nav walks past the enclosing stack (Z)
-  if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
   if(D===src)return;
   // if we're pulling the visible tab out of a stack, make an adjacent tab active
   // first, so the stack keeps a selected child and stays a stack (or, if only one
-  // tab is left, normalization collapses it to a plain tile).
+  // tab is left, normalization collapses it to a plain tile). Do this BEFORE any
+  // extraction path — including the edge case below — so the source stack always
+  // survives.
   const g=src.parent;
   if(g&&stackedG(g)&&src.selected){
     const i=g.children.indexOf(src), nb=g.children[i+1]||g.children[i-1];
     if(nb)selectChild(g,nb); // next tab, or previous when we're at the end
   }
+  if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
+  const dst=destStack(D,src);                   // is the destination a stack? (computed before detach)
   detach(src);
-  // the caret dot picks which side of D along the ACROSS-travel axis, like
-  // clicking the near or far half of the destination to choose an insert point.
-  // <= so an exact tie on the midpoint resolves to the BEFORE side, not after.
-  const phys=(Pd==="H")
-    ?(caret.x <= D._rect.x+D._rect.w/2 ? "left" : "right")
-    :(caret.y <= D._rect.y+D._rect.h/2 ? "up" : "down");
-  const p=D.parent;
-  if(p&&!stackedG(p)&&axisOf(p.orientation)===Pd){
-    // D already lives in an across-travel group — slot source in beside it. No
-    // band is added in the travel direction (they share D's band).
-    insertSib(p,D,src,side(p.orientation,phys));
+  if(dst){
+    // merging INTO a stack just ADDS A TAB — the intuitive inverse of extracting
+    // one. It becomes the active tab (focus follows it via ensureVisible). No
+    // splitting the front tile.
+    dst.children.push(src);
   }else{
-    // split D into an across-travel pair; still no new band along travel — D's
-    // own cell is subdivided perpendicular to the merge.
-    const o=defOrient(Pd), sd=side(o,phys);
-    replaceNode(D,newGroup(o,sd==="before"?[src,D]:[D,src]));
+    // the caret dot picks which side of D along the ACROSS-travel axis, like
+    // clicking the near or far half of the destination to choose an insert point.
+    // <= so an exact tie on the midpoint resolves to the BEFORE side, not after.
+    const phys=(Pd==="H")
+      ?(caret.x <= D._rect.x+D._rect.w/2 ? "left" : "right")
+      :(caret.y <= D._rect.y+D._rect.h/2 ? "up" : "down");
+    const p=D.parent;
+    if(p&&!stackedG(p)&&axisOf(p.orientation)===Pd){
+      // D already lives in an across-travel group — slot source in beside it. No
+      // band is added in the travel direction (they share D's band).
+      insertSib(p,D,src,side(p.orientation,phys));
+    }else{
+      // split D into an across-travel pair; still no new band along travel — D's
+      // own cell is subdivided perpendicular to the merge.
+      const o=defOrient(Pd), sd=side(o,phys);
+      replaceNode(D,newGroup(o,sd==="before"?[src,D]:[D,src]));
+    }
   }
-  if(src.kind==="leaf")selId=src.id; rebuild(); // a moved stack keeps its visible-tab selection
+  selId=src.id; rebuild();
 }
 
 // ---------- rendering ----------

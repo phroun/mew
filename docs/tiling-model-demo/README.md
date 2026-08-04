@@ -76,8 +76,9 @@ group/parent. `[`/`]` cycle tiles (visible ones only — never inactive tabs).
 active tab. `Delete`/`Backspace` dismiss. On-screen buttons mirror all of these.
 
 Mode/pin/resize and **swap** on a stacked tab act on the whole tab-group (the box
-shadows its tabs). **merge** instead moves the single tile, so a lone tab can be
-extracted from its stack (the stack hands off to a neighbour and survives).
+shadows its tabs). **merge** instead moves the single tile: merging a tile *into*
+a stack adds it as a new tab, and merging a tab *out* extracts just that tile
+(the stack promotes a neighbour and survives) — the two are intuitive inverses.
 `split` nests into the active tab; `new` breaks out past *every* tab level to the
 nearest non-tab group. Returning to a tab restores focus to where it last was.
 
