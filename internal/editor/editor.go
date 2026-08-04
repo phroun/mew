@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -7831,12 +7832,21 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		if w == nil {
 			continue // empty/blank tile
 		}
-		w.FrameX = int(b.Rect.X)
-		w.FrameWidth = int(b.Rect.W)
+		// Snap each tile to integer cell edges by rounding its LEFT and RIGHT
+		// (and TOP/BOTTOM) edges, then taking the span. Rounding edges rather
+		// than truncating width keeps adjacent tiles flush and the rightmost/
+		// bottommost tile reaching the workspace edge, so a fractional split
+		// (e.g. an 81-column area halved) never leaves a one-cell gap.
+		x0 := int(math.Round(b.Rect.X))
+		x1 := int(math.Round(b.Rect.X + b.Rect.W))
+		y0 := int(math.Round(b.Rect.Y))
+		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		w.FrameX = x0
+		w.FrameWidth = x1 - x0
 		mains = append(mains, viewport.ViewportLayout{
 			Viewport: w,
-			Y:        mainTop + int(b.Rect.Y),
-			Height:   int(b.Rect.H),
+			Y:        mainTop + y0,
+			Height:   y1 - y0,
 		})
 	}
 	layout.MainLayout = mains

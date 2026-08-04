@@ -127,6 +127,43 @@ func TestRefocusingReusesExistingTile(t *testing.T) {
 	}
 }
 
+// TestTilesCoverWidthExactly guards the edge-rounding: at a fractional split
+// width, the tiles' frames must tile the full width with no gap or overlap
+// (truncating each tile's width independently used to leave a one-cell gap).
+func TestTilesCoverWidthExactly(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	focusMainViewport(e, "doc2", "two\n") // two side-by-side tiles
+
+	for _, W := range []int{80, 81, 83, 91} {
+		e.Renderer.Width = W
+		layout := viewport.Layout{MainHeight: 20, TopHeight: 0}
+		e.applyTilerGeometry(&layout)
+
+		type span struct{ x0, x1 int }
+		spans := make([]span, 0, len(layout.MainLayout))
+		for _, wl := range layout.MainLayout {
+			spans = append(spans, span{wl.Viewport.FrameX, wl.Viewport.FrameX + wl.Viewport.FrameWidth})
+		}
+		// sort by start
+		for i := 1; i < len(spans); i++ {
+			for j := i; j > 0 && spans[j].x0 < spans[j-1].x0; j-- {
+				spans[j], spans[j-1] = spans[j-1], spans[j]
+			}
+		}
+		if len(spans) == 0 || spans[0].x0 != 0 {
+			t.Fatalf("W=%d: main area does not start at column 0: %+v", W, spans)
+		}
+		for i := 1; i < len(spans); i++ {
+			if spans[i].x0 != spans[i-1].x1 {
+				t.Fatalf("W=%d: gap/overlap between tiles at %d vs %d: %+v", W, spans[i-1].x1, spans[i].x0, spans)
+			}
+		}
+		if last := spans[len(spans)-1].x1; last != W {
+			t.Fatalf("W=%d: tiles reach column %d, not the full width", W, last)
+		}
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")
