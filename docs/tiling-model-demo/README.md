@@ -87,7 +87,8 @@ tabs that are merely visible on screen — one group per press, **without moving
 your active focus**. It steps the innermost (deepest, reading order) visible
 group that can still move in that direction; a group at its end doesn't wrap, it
 hands off to the next group that can. Only when no visible group can advance does
-it reset one, chosen directionally (forward resets the first set, back the last).
+it reset one — a group at the innermost (deepest) level, with direction choosing
+first vs last within that level.
 
 A hosted copy of this same page is published as a Claude artifact for quick
 sharing, but this file is the source of record.

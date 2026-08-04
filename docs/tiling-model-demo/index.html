@@ -706,7 +706,11 @@ function cycleVisibleStack(step){
     .flatMap(d=>stacks.filter(s=>s.d===d).map(s=>s.g)); // deepest first, reading order within
   const pick=order.find(canStep);                       // first that can still step, non-wrapping
   if(pick){flipTab(pick,at(pick)+step);return;}
-  const g=step<0?order[order.length-1]:order[0], n=g.children.length; // last resort: reset one, directionally
+  // last resort: reset a group at the INNERMOST (deepest) level — the same level
+  // that steps first — with direction only choosing first vs last within it.
+  const deepest=Math.max(...stacks.map(s=>s.d));
+  const inner=stacks.filter(s=>s.d===deepest).map(s=>s.g); // reading order
+  const g=step<0?inner[inner.length-1]:inner[0], n=g.children.length;
   if(n>=2)flipTab(g,((at(g)+step)%n+n)%n);
 }
 // pick a specific tab (header click).
