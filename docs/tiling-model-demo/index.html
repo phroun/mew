@@ -683,7 +683,33 @@ function cmdTabCycle(step){
   }
   if(innermost){const n=innermost.children.length;if(n<2)return; // nothing above: wrap innermost
     const i=innermost.children.indexOf(selectedChild(innermost));
-    goTab(innermost,((i+step)%n+n)%n);}
+    goTab(innermost,((i+step)%n+n)%n);return;}
+  cycleVisibleStack(step); // not inside any stack: reach for the visible tabs on screen
+}
+// change a stack's visible tab WITHOUT moving focus (leaves selId alone) — for
+// flipping tabs you're not standing in; ensureVisible won't disturb it since our
+// focus isn't on this stack's path.
+function flipTab(g,j){selectChild(g,g.children[j]);render();}
+// Fallback when the selection sits under NO stack: cycle a stack that's merely
+// visible on screen — and keep our active focus where it is. Prefer the INNERMOST
+// (deepest) visible stacks; among a level take the first (reading order) that can
+// still step in this direction; if none at that depth can, rise a level and try
+// again. As a last resort (nothing can advance) wrap the deepest so the key is
+// never dead.
+function cycleVisibleStack(step){
+  const stacks=[];
+  (function walkD(n,d){ if(n.kind!=="group")return;
+    if(stackedG(n)&&isVisible(n))stacks.push({g:n,d});
+    n.children.forEach(c=>walkD(c,d+1)); })(root,0);
+  if(!stacks.length)return;
+  const at=g=>g.children.indexOf(selectedChild(g));
+  const canStep=g=>{const j=at(g)+step;return j>=0&&j<g.children.length;};
+  for(const d of [...new Set(stacks.map(s=>s.d))].sort((a,b)=>b-a)){ // deepest first
+    const pick=stacks.find(s=>s.d===d&&canStep(s.g));               // DFS-order first that can step
+    if(pick){flipTab(pick.g,at(pick.g)+step);return;}
+  }
+  const g=stacks.sort((a,b)=>b.d-a.d)[0].g, n=g.children.length;    // last resort: wrap the deepest
+  if(n>=2)flipTab(g,((at(g)+step)%n+n)%n);
 }
 // pick a specific tab (header click).
 function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
