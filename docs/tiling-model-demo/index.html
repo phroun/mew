@@ -733,12 +733,20 @@ function setCaret(x,y){caret.x=x;caret.y=y;}
 function navRect(n){return n._navRect||n._rect;}
 function navHidden(n){return n._navHidden!=null?n._navHidden:n._hidden;}
 // at a workspace edge (nothing that way) a nav/swap doesn't die: it slides the
-// caret goal to the current tile's far edge in `dir`, so a later perpendicular
-// move leaves from that side. This is what lets you jump to a band's end and then
-// walk back down the matching side.
+// caret goal WITHIN the current tile, along the pressed axis, so a later
+// perpendicular move leaves from that side. Normally it goes to the far (pressed-
+// direction) edge — but if the caret is already sitting near the OPPOSITE edge
+// (within that third of the tile), it goes to CENTER instead. So repeated presses
+// step opposite-edge -> center -> pressed-edge, letting the goal flip between the
+// two edges and center freely on a tile that spans a whole wall.
 function caretToEdge(dir){const b=navRect(sel()||{}); if(!b)return;
-  if(dir==="left")caret.x=b.x; else if(dir==="right")caret.x=b.x+b.w;
-  else if(dir==="up")caret.y=b.y; else if(dir==="down")caret.y=b.y+b.h; render();}
+  const horiz=(dir==="left"||dir==="right");
+  const lo=horiz?b.x:b.y, size=horiz?b.w:b.h, hi=lo+size, mid=lo+size/2, third=size/3;
+  const pos=horiz?caret.x:caret.y;
+  let np;
+  if(dir==="right"||dir==="down") np=(pos<=lo+third)?mid:hi;  // near the opposite (near/far) edge -> center, else pressed edge
+  else                            np=(pos>=hi-third)?mid:lo;
+  if(horiz)caret.x=np; else caret.y=np; render();}
 // the node a lens magnifies. MONOCLE magnifies the focused tile (negTarget once);
 // SPECTACLE magnifies the enclosing group (negTarget twice — one more tiling level).
 function lensTarget(group){const t=negTarget(); if(!t)return null; return (group&&t.parent)?climbTiling(t.parent):t;}
