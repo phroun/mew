@@ -1042,12 +1042,13 @@ function cmdMerge(dir){
   const D=navTarget(dir);                       // from sel(): nav walks past the enclosing stack (Z)
   if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
   if(D===src)return;
-  // if we're pulling the visible tab out of a stack, hand the stack to a
-  // neighbouring tab first so it stays a stack (or cleanly collapses if it had 2).
+  // if we're pulling the visible tab out of a stack, make an adjacent tab active
+  // first, so the stack keeps a selected child and stays a stack (or, if only one
+  // tab is left, normalization collapses it to a plain tile).
   const g=src.parent;
   if(g&&stackedG(g)&&src.selected){
     const i=g.children.indexOf(src), nb=g.children[i+1]||g.children[i-1];
-    if(nb)selectChild(g,nb);
+    if(nb)selectChild(g,nb); // next tab, or previous when we're at the end
   }
   detach(src);
   // the caret dot picks which side of D along the ACROSS-travel axis, like
