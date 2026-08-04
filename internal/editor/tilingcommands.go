@@ -70,6 +70,24 @@ func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	return e.tiler
 }
 
+// noteMainTileContent records mew's currently shown main-area viewport as the
+// content held by the tiler's main tile — i.e. viewport_set(mainTile, id) with
+// ref = the mew viewport id. The commands that swap what the main area displays
+// (viewport_next/prior, buffer_new/open_file/duplicate, viewport_clone) call it
+// after the swap so the tiler tracks what content is shown in the tile, where it
+// used to just replace the whole screen.
+//
+// It reads GetLastNormalViewport (the viewport actually painted in the main
+// area), so it is idempotent: a swap whose destination did not land in the main
+// area leaves that unchanged, and the tile keeps its current content. Only the
+// single painted main tile is tracked for now; which tile is *active* is the
+// separate #tile axis (viewport_go).
+func (e *Editor) noteMainTileContent() {
+	if w := e.ViewportManager.GetLastNormalViewport(); w != nil {
+		e.ensureTiler().Set(e.tilerMain, w.ID)
+	}
+}
+
 // seedTileDefault publishes the main tile as the well-known #tile default, once,
 // so a tiling command invoked without an explicit #handle acts on it. It only
 // seeds when #tile is unset, so a script that reassigns #tile (e.g.

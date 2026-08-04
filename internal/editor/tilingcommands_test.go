@@ -95,6 +95,41 @@ func TestViewportGoFollowsTileDefault(t *testing.T) {
 	}
 }
 
+// TestSwapCommandsUpdateMainTileContent checks that a command which swaps the
+// main-area content (here buffer_new) records the newly shown viewport as the
+// content the tiler's main tile holds (ref = the mew viewport id), replacing the
+// initial placeholder.
+func TestSwapCommandsUpdateMainTileContent(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "hi\n")
+	e.ensureTiler()
+
+	mainTileRef := func() string {
+		for _, b := range e.tiler.Tiles() {
+			if b.Tile == e.tilerMain {
+				return b.Ref
+			}
+		}
+		return "<none>"
+	}
+	if got := mainTileRef(); got != "main" {
+		t.Fatalf("initial main tile ref = %q, want placeholder \"main\"", got)
+	}
+
+	if res := e.PawScript.ExecuteAsync("buffer_new"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("buffer_new: %v", res)
+	}
+	shown := e.ViewportManager.GetLastNormalViewport()
+	if shown == nil {
+		t.Fatal("no shown main viewport after buffer_new")
+	}
+	if got := mainTileRef(); got != shown.ID {
+		t.Fatalf("after buffer_new, main tile ref = %q, want shown viewport id %q", got, shown.ID)
+	}
+	if got := mainTileRef(); got == "main" {
+		t.Fatal("main tile still holds the placeholder after buffer_new")
+	}
+}
+
 // TestTilingSplitHashIdiom exercises viewport_split's #-handle idiom: an explicit
 // leading #-symbol names the tile, an omitted handle falls back to the seeded
 // #tile default, a missing direction fails, and a script-assigned #tile is not

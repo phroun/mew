@@ -2821,6 +2821,7 @@ func (e *Editor) registerCommands() {
 			name := strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0]))
 			if name != "" {
 				ok := e.openFile(name)
+				e.noteMainTileContent() // idempotent unless the open landed in the main area
 				e.RequestRender()
 				return pawscript.BoolStatus(ok)
 			}
@@ -2828,6 +2829,7 @@ func (e *Editor) registerCommands() {
 		e.PromptMgr.PromptForFilename("Open", "", func(accepted bool, _, cursorLineText string) {
 			if accepted && cursorLineText != "" {
 				e.openFile(cursorLineText)
+				e.noteMainTileContent()
 			}
 			e.RequestRender()
 		})
@@ -2836,18 +2838,23 @@ func (e *Editor) registerCommands() {
 
 	ps.RegisterCommand("buffer_new", func(ctx *pawscript.Context) pawscript.Result {
 		e.createNewBuffer()
+		e.noteMainTileContent() // the focused tile now holds the new buffer's view
 		return pawscript.BoolStatus(true)
 	})
 
 	ps.RegisterCommand("buffer_duplicate", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.duplicateCurrentBuffer())
+		ok := e.duplicateCurrentBuffer()
+		e.noteMainTileContent()
+		return pawscript.BoolStatus(ok)
 	})
 
 	// viewport_clone opens a second viewport onto the SAME buffer (not a content
 	// copy like buffer_duplicate) so you can edit in two places at once and switch
 	// between them. Each viewport keeps its own caret and viewport.
 	ps.RegisterCommand("viewport_clone", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.cloneCurrentViewport())
+		ok := e.cloneCurrentViewport()
+		e.noteMainTileContent()
+		return pawscript.BoolStatus(ok)
 	})
 
 	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
@@ -3241,6 +3248,7 @@ func (e *Editor) registerCommands() {
 		ok := e.ViewportManager.FocusNextViewport()
 		if ok {
 			e.announceFocusedViewport()
+			e.noteMainTileContent() // the focused tile now holds the cycled-to view
 		}
 		return pawscript.BoolStatus(ok)
 	})
@@ -3249,6 +3257,7 @@ func (e *Editor) registerCommands() {
 		ok := e.ViewportManager.FocusPrevViewport()
 		if ok {
 			e.announceFocusedViewport()
+			e.noteMainTileContent() // the focused tile now holds the cycled-to view
 		}
 		return pawscript.BoolStatus(ok)
 	})
