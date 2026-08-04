@@ -695,19 +695,21 @@ function flipTab(g,j){selectChild(g,g.children[j]);render();}
 // (which keeps node identity); any op that rebuilds nodes drops it and we re-anchor.
 let visCursor=null;
 // Fallback when the selection sits under NO stack: cycling keys flip the visible
-// tab-groups WITHOUT moving our active focus, exhausting ONE group at a time in
-// reading order (left to right). A press steps the parked group's own tab; when
-// that group is already at the end for this direction, the press instead RESETS
-// the NEXT group (rightward, wrapping) to its far tab and parks there. So a group
-// is walked to its end, then the baton passes to a DIFFERENT group — a group only
-// ever loops on itself when it is the ONLY group. Direction flips just the within
-// -group tab order and which end a group resets to; the group order stays L->R.
+// tab-groups WITHOUT moving our active focus, exhausting ONE group at a time. A
+// press steps the parked group's own tab; when that group is already at the end
+// for this direction, the press instead RESETS the next group to its far tab and
+// parks there. So a group is walked to its end, then the baton passes to a
+// DIFFERENT group — a group only ever loops on itself when it is the ONLY group.
+// The whole thing MIRRORS by direction: forward (.) hands the baton rightward and
+// starts fresh at the leftmost group; backward (,) hands it leftward and starts
+// fresh at the rightmost — so pressing left retraces the exact reverse of right.
 function cycleVisibleStack(step){
   const groups=[];
   (function walkD(n){ if(n.kind!=="group")return;
     if(stackedG(n)&&isVisible(n)&&n.children.length>=2)groups.push(n);
     n.children.forEach(walkD); })(root);
   if(!groups.length)return;
+  const m=groups.length, dir=step>0?1:-1;
   const shown=g=>g.children.indexOf(selectedChild(g));
   // the tab a freshly-handed group starts cycling from: the far end for this
   // direction, nudged one in if it already shows it (so the press always moves).
@@ -716,8 +718,8 @@ function cycleVisibleStack(step){
   if(a>=0){
     const g=groups[a], j=shown(g)+step;
     if(j>=0&&j<g.children.length){flipTab(g,j);visCursor=g.id;return;} // step within parked group
-    a=(a+1)%groups.length;      // parked group is at its end -> hand the baton rightward
-  }else a=0;                    // fresh/stale -> begin at the first group
+    a=(a+dir+m)%m;              // parked group at its end -> hand the baton IN the press direction
+  }else a=step>0?0:m-1;         // fresh/stale -> leftmost group going right, rightmost going left
   const h=groups[a];flipTab(h,entry(h));visCursor=h.id;
 }
 // pick a specific tab (header click).
