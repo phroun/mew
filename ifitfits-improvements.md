@@ -49,17 +49,7 @@ to anchor from and on the root's current orientation. An explicit
 `SplitRoot(dir, ref)` / `AppendRoot(dir, ref)` (or an accessor for the root)
 would make the common "open another pane alongside" case unambiguous.
 
-## 5. Doc guidance: key host geometry per **tile handle**, not per ref
-
-Refs are intentionally non-unique — the same content can be mirrored into
-several tiles. A host that stores on-screen geometry **per ref** (which we did
-at first, via a per-viewport frame field) then can't represent the same content
-at two different rects. `Tiles()` already returns a unique handle per box, so
-the guidance is simply: hosts should key their per-region geometry on the tile
-**handle**, and treat the ref purely as content identity. A sentence to this
-effect in the model docs would save the mistake.
-
-## 6. Concurrency discipline
+## 5. Concurrency discipline
 
 The package documents "not safe for concurrent use." In a real host that is
 easy to violate accidentally: we drive the tiler from a focus hook *and* from
