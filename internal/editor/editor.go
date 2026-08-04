@@ -122,15 +122,13 @@ type Editor struct {
 	// (set_option scriptTimeout) apply immediately.
 	pawConfig *pawscript.Config
 
-	// tiler is the ifitfits viewport-tiling engine, wired for a minimal
-	// geometry-only integration: the root tile ("main") stands for the main
-	// editing area, and a right split ("blank") leaves the other half empty, so
-	// the focused main document paints at half width. Only geometry is
-	// connected — focus, input, and the blank tile's content are not. Built
-	// lazily on first render; see applyTilerGeometry.
-	tiler       *ifitfits.Viewport
-	tilerMain   ifitfits.Handle
-	tilerFramed *viewport.Viewport // last main viewport we stamped a frame onto
+	// tiler is the ifitfits viewport-tiling engine that arranges the main
+	// (non-docked) editing area. It holds tiles, each carrying a ref that is a
+	// mew viewport id (or empty → blank); the render path lays out each tile and
+	// draws the viewport its ref names. Focus is kept in sync through
+	// tilerFollowFocus (the manager's main-focus hook). Built lazily; see
+	// ensureTiler and applyTilerGeometry.
+	tiler *ifitfits.Viewport
 
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
@@ -1118,6 +1116,10 @@ func New(cfg Config) (*Editor, error) {
 		linkResolveCache: make(map[string]string),
 		kittyFlipActive:  kittyFlipActive,
 	}
+
+	// Keep the tiler in sync with focus: when mew focuses a main-area viewport,
+	// tilerFollowFocus finds/reveals/creates the tile that holds it.
+	e.ViewportManager.SetMainFocusHook(e.tilerFollowFocus)
 
 	// Register configured fonts into the host font engine and apply the
 	// startup ui-term alias, before any painting resolves font names.
@@ -2821,7 +2823,6 @@ func (e *Editor) registerCommands() {
 			name := strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0]))
 			if name != "" {
 				ok := e.openFile(name)
-				e.noteMainTileContent() // idempotent unless the open landed in the main area
 				e.RequestRender()
 				return pawscript.BoolStatus(ok)
 			}
@@ -2829,7 +2830,6 @@ func (e *Editor) registerCommands() {
 		e.PromptMgr.PromptForFilename("Open", "", func(accepted bool, _, cursorLineText string) {
 			if accepted && cursorLineText != "" {
 				e.openFile(cursorLineText)
-				e.noteMainTileContent()
 			}
 			e.RequestRender()
 		})
@@ -2838,23 +2838,18 @@ func (e *Editor) registerCommands() {
 
 	ps.RegisterCommand("buffer_new", func(ctx *pawscript.Context) pawscript.Result {
 		e.createNewBuffer()
-		e.noteMainTileContent() // the focused tile now holds the new buffer's view
 		return pawscript.BoolStatus(true)
 	})
 
 	ps.RegisterCommand("buffer_duplicate", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.duplicateCurrentBuffer()
-		e.noteMainTileContent()
-		return pawscript.BoolStatus(ok)
+		return pawscript.BoolStatus(e.duplicateCurrentBuffer())
 	})
 
 	// viewport_clone opens a second viewport onto the SAME buffer (not a content
 	// copy like buffer_duplicate) so you can edit in two places at once and switch
 	// between them. Each viewport keeps its own caret and viewport.
 	ps.RegisterCommand("viewport_clone", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.cloneCurrentViewport()
-		e.noteMainTileContent()
-		return pawscript.BoolStatus(ok)
+		return pawscript.BoolStatus(e.cloneCurrentViewport())
 	})
 
 	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
@@ -3248,7 +3243,6 @@ func (e *Editor) registerCommands() {
 		ok := e.ViewportManager.FocusNextViewport()
 		if ok {
 			e.announceFocusedViewport()
-			e.noteMainTileContent() // the focused tile now holds the cycled-to view
 		}
 		return pawscript.BoolStatus(ok)
 	})
@@ -3257,7 +3251,6 @@ func (e *Editor) registerCommands() {
 		ok := e.ViewportManager.FocusPrevViewport()
 		if ok {
 			e.announceFocusedViewport()
-			e.noteMainTileContent() // the focused tile now holds the cycled-to view
 		}
 		return pawscript.BoolStatus(ok)
 	})
@@ -7229,8 +7222,9 @@ func (e *Editor) finishCloseBuffer(viewportID string) bool {
 
 	closing := e.ViewportManager.GetViewport(viewportID)
 
-	// Remove the viewport
+	// Remove the viewport, and dismiss the tiler tile that held it.
 	e.ViewportManager.RemoveViewport(viewportID)
+	e.dismissTileFor(viewportID)
 
 	// Drop safety state (mew lock, notices) when no other viewport still holds
 	// this buffer open — actively or stacked in a nav history (viewport_clone
@@ -7808,38 +7802,44 @@ func (e *Editor) performRender() {
 //     render pass into ContentHeight, so paging/scroll/mouse all see the real
 //     window height — and because it is per-viewport, a prompt buffer (which
 //     sets its own ContentHeight) is unaffected.
+//
+// applyTilerGeometry replaces the layout's main-area entries with ones derived
+// from the ifitfits tiler: the tiler owns the arrangement of the non-docked area,
+// so its workspace is that area (screen width × the negotiated main height), and
+// each visible tile becomes a ViewportLayout drawing the mew viewport its ref
+// names. A tile whose ref names no live viewport (an empty tile) is skipped — the
+// freshly cleared back buffer shows through as blank. Chrome (docked viewports)
+// is untouched; the renderer paints tiles and docked viewports through the same
+// agnostic path.
+//
+// Horizontal extent rides on the viewport's FrameX/FrameWidth (ViewportLayout
+// carries no X/width); vertical extent rides on the entry's Y/Height, offset by
+// the main area's top. (This assumes one tile per viewport — the per-viewport
+// frame cannot represent the same viewport at two different rects.)
 func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
-	if len(layout.MainLayout) == 0 {
+	if layout.MainHeight <= 0 || e.Renderer.Width <= 0 {
+		layout.MainLayout = nil
 		return
 	}
+	vp := e.ensureTiler()
+	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
-	e.ensureTiler()
-	e.tiler.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
-
-	// Resolve the "main" tile's rect.
-	var fx, fy, fw, fh int
-	for _, b := range e.tiler.Tiles() {
-		if b.Tile == e.tilerMain {
-			fx, fy, fw, fh = int(b.Rect.X), int(b.Rect.Y), int(b.Rect.W), int(b.Rect.H)
+	mainTop := layout.TopHeight
+	mains := make([]viewport.ViewportLayout, 0, 4)
+	for _, b := range vp.Tiles() {
+		w := e.ViewportManager.GetViewport(b.Ref)
+		if w == nil {
+			continue // empty/blank tile
 		}
+		w.FrameX = int(b.Rect.X)
+		w.FrameWidth = int(b.Rect.W)
+		mains = append(mains, viewport.ViewportLayout{
+			Viewport: w,
+			Y:        mainTop + int(b.Rect.Y),
+			Height:   int(b.Rect.H),
+		})
 	}
-	if fw <= 0 || fh <= 0 {
-		return
-	}
-
-	main := layout.MainLayout[0].Viewport
-	// Horizontal frame on the viewport; clear any frame we stamped on a previous
-	// main so a focus change does not leave a stale narrow window behind.
-	if e.tilerFramed != nil && e.tilerFramed != main {
-		e.tilerFramed.FrameX, e.tilerFramed.FrameWidth = 0, 0
-	}
-	main.FrameX, main.FrameWidth = fx, fw
-	e.tilerFramed = main
-
-	// Vertical extent via the layout entry: the tile's Y is relative to the
-	// main area, whose top is this entry's current Y.
-	layout.MainLayout[0].Y += fy
-	layout.MainLayout[0].Height = fh
+	layout.MainLayout = mains
 }
 
 // Run starts the editor with an optional filename.

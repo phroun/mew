@@ -507,6 +507,11 @@ func (m *Manager) noteMainFocus(w *Viewport) {
 		m.lastFocusedBySet = make(map[string]*Viewport)
 	}
 	m.lastFocusedBySet[w.ViewportSet] = w
+	// Only non-docked (main-area) viewports live in tiles; docked chrome (the
+	// help system, etc.) is laid out by the dock engine and never tiled.
+	if m.mainFocusHook != nil && w.Dock == DockNone {
+		m.mainFocusHook(w.ID)
+	}
 }
 
 // LastMainViewport returns the last-focused main-area (focus-eligible) viewport
@@ -1199,6 +1204,22 @@ type Manager struct {
 
 	// Event handlers
 	eventHandlers map[EventType][]EventHandler
+
+	// mainFocusHook, when set, is called synchronously from noteMainFocus with
+	// the id of a main-area viewport that just gained focus. The editor uses it
+	// to keep the ifitfits tiler in sync (find/reveal/create the tile that holds
+	// the focused viewport). It runs while m.mu is held, so it must not call back
+	// into the Manager.
+	mainFocusHook func(id string)
+}
+
+// SetMainFocusHook registers a callback invoked (under the manager lock) whenever
+// a main-area viewport gains focus, with that viewport's id. Pass nil to clear.
+// The hook must not re-enter the Manager.
+func (m *Manager) SetMainFocusHook(fn func(id string)) {
+	m.mu.Lock()
+	m.mainFocusHook = fn
+	m.mu.Unlock()
 }
 
 // NewManager creates a new viewport manager.

@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/textwidth"
-	"github.com/phroun/pawscript"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // glyphCols returns, per 1-based screen row, the set of 1-based columns at which
@@ -47,80 +48,98 @@ func glyphCols(frame string, target rune) map[int][]int {
 	return out
 }
 
-// TestTilerSplitDownShrinksMainHeight verifies the vertical half of the geometry
-// wiring: splitting the main tile downward shrinks the painted main viewport's
-// height — and that height reaches ContentHeight (what paging/scroll read).
-func TestTilerSplitDownShrinksMainHeight(t *testing.T) {
-	e, doc, _ := newRenderedEditor(t, "hello\n")
-	e.performRender()
-	fullH := doc.ContentHeight
-	if fullH < 6 {
-		t.Fatalf("unexpected initial main ContentHeight %d", fullH)
+// tileRefs returns the refs of the tiler's current visible tiles.
+func tileRefs(e *Editor) []string {
+	var refs []string
+	if e.tiler == nil {
+		return refs
 	}
-
-	// Split the main tile (the seeded #tile default) downward.
-	if res := e.PawScript.ExecuteAsync("viewport_split down"); res != pawscript.BoolStatus(true) {
-		t.Fatalf("viewport_split down: %v", res)
+	for _, b := range e.tiler.Tiles() {
+		refs = append(refs, b.Ref)
 	}
-	e.performRender()
-	halfH := doc.ContentHeight
-
-	if halfH >= fullH {
-		t.Fatalf("split down did not shrink main height: %d -> %d", fullH, halfH)
-	}
-	// Roughly half (allow slack for ruler/message-bar rows and rounding).
-	if halfH < fullH/2-3 || halfH > fullH/2+3 {
-		t.Fatalf("split down: main ContentHeight %d, want ~half of %d", halfH, fullH)
-	}
+	return refs
 }
 
-// TestTilerFramesMainToHalfWidth is the minimal ifitfits geometry-integration
-// check: the tiler splits its "main" tile against an empty "blank" tile to the
-// right, so the painted main document is confined to the LEFT HALF of the
-// screen. On an 80-column terminal the document's glyphs must all fall in the
-// left ~40 columns, with nothing painted into the right half.
-func TestTilerFramesMainToHalfWidth(t *testing.T) {
-	// A line wider than the screen, so a full-width main would paint 'x' across
-	// all 80 columns; a half-width main stops near column 40.
+func focusMainViewport(e *Editor, id, content string) {
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		ID: id, Type: viewport.DocViewport, Dock: viewport.DockNone,
+		Buffer: buffer.NewFromString(content), SetFocus: true, Visible: true,
+	})
+}
+
+// TestFirstFocusFillsTheSingleTile: the tiler starts as one empty tile; mew's
+// initial focused viewport fills it, and it renders across the whole main area.
+func TestFirstFocusFillsTheSingleTile(t *testing.T) {
 	e, _, out := newRenderedEditor(t, strings.Repeat("x", 80)+"\n")
 	e.performRender()
 
-	cols := glyphCols(out.String(), 'x')
-	xs := cols[1] // the content row
-	if len(xs) == 0 {
-		t.Fatal("no document glyphs painted on the content row")
+	if refs := tileRefs(e); len(refs) != 1 || refs[0] != "doc" {
+		t.Fatalf("tiler tiles = %v; want a single tile holding \"doc\"", refs)
 	}
+
+	// One tile → full-width paint (contrast the retired half-width placeholder).
 	max := 0
-	for _, c := range xs {
+	for _, c := range glyphCols(out.String(), 'x')[1] {
 		if c > max {
 			max = c
 		}
 	}
-	if max > 42 {
-		t.Fatalf("document glyphs reach column %d; the main viewport should stop near column 40 (left half of 80)", max)
+	if max < 70 {
+		t.Fatalf("document glyphs reach only column %d; the single tile should fill the width", max)
 	}
-	if max < 30 {
-		t.Fatalf("document glyphs only reach column %d; expected the main viewport to fill most of the left half", max)
+}
+
+// TestFocusingSecondViewportMakesSecondTile: focusing another main viewport that
+// has no tile splits a new tile off to the right (the "additional ones" path).
+func TestFocusingSecondViewportMakesSecondTile(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	if refs := tileRefs(e); len(refs) != 1 || refs[0] != "doc" {
+		t.Fatalf("initial tiles = %v; want [doc]", refs)
 	}
 
-	// No 'x' anywhere in the right half, on any row.
-	for r, list := range cols {
-		for _, c := range list {
-			if c > 42 {
-				t.Fatalf("row %d painted a document glyph at column %d; the right (blank) half must stay empty", r, c)
-			}
+	focusMainViewport(e, "doc2", "two\n")
+
+	refs := tileRefs(e)
+	if len(refs) != 2 {
+		t.Fatalf("after focusing a second viewport, tiles = %v; want 2", refs)
+	}
+	var haveDoc, haveDoc2 bool
+	for _, r := range refs {
+		haveDoc = haveDoc || r == "doc"
+		haveDoc2 = haveDoc2 || r == "doc2"
+	}
+	if !haveDoc || !haveDoc2 {
+		t.Fatalf("tiles = %v; want both doc and doc2", refs)
+	}
+}
+
+// TestRefocusingReusesExistingTile: focusing back to a viewport that already has
+// a tile must NOT create another — the hook finds and activates the existing one.
+func TestRefocusingReusesExistingTile(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	focusMainViewport(e, "doc2", "two\n") // 2 tiles now
+	if got := len(tileRefs(e)); got != 2 {
+		t.Fatalf("want 2 tiles, got %d", got)
+	}
+	e.ViewportManager.SetFocus("doc") // back to the first
+	if got := len(tileRefs(e)); got != 2 {
+		t.Fatalf("refocusing an already-tiled viewport changed tile count to %d; want 2", got)
+	}
+}
+
+// TestBufferCloseDismissesTile: closing a viewport also removes its tile.
+func TestBufferCloseDismissesTile(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	focusMainViewport(e, "doc2", "two\n")
+	if got := len(tileRefs(e)); got != 2 {
+		t.Fatalf("want 2 tiles, got %d", got)
+	}
+
+	e.finishCloseBuffer("doc2")
+
+	for _, r := range tileRefs(e) {
+		if r == "doc2" {
+			t.Fatalf("doc2's tile survived buffer close: %v", tileRefs(e))
 		}
-	}
-
-	// Sanity: the tiler was built and reports exactly [main blank].
-	if e.tiler == nil {
-		t.Fatal("tiler was not instantiated during render")
-	}
-	var refs []string
-	for _, b := range e.tiler.Tiles() {
-		refs = append(refs, b.Ref)
-	}
-	if strings.Join(refs, ",") != "main,blank" {
-		t.Fatalf("tiler tiles = %v; want [main blank]", refs)
 	}
 }

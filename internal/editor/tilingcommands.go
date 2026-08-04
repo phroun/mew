@@ -43,11 +43,12 @@ const (
 // already assigned it).
 const tileDefaultVar = "#tile"
 
-// ensureTiler builds the tiler on first use (root tile "main" split right into
-// an empty "blank") and returns it. The render loop keeps the workspace size
-// current; a command that runs before the first render still gets a valid tiler
-// sized from the current terminal (or a sane default), corrected on the next
-// frame.
+// ensureTiler builds the tiler on first use and returns it. It starts as a
+// single empty tile (ifitfits gives one tile from NewViewport; it holds no ref,
+// so it renders blank) with the tiler's focus on it, so there is always a sane
+// "active tile" before mew focuses anything. mew's own initial viewport becomes
+// this first tile when it is focused (see tilerFollowFocus); further viewports
+// split off new tiles. The render loop keeps the workspace size current.
 func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	if e.tiler != nil {
 		return e.tiler
@@ -59,45 +60,87 @@ func (e *Editor) ensureTiler() *ifitfits.Viewport {
 	if h <= 0 {
 		h = 24
 	}
-	vp, main := ifitfits.NewViewport(w, h)
-	vp.Set(main, "main")
-	vp.SetMetrics(main, newTileMinW, newTileMinH, 0, 0)
-	blank := vp.Split(main, ifitfits.Right)
-	vp.Set(blank, "blank")
-	vp.SetMetrics(blank, newTileMinW, newTileMinH, 0, 0)
+	vp, first := ifitfits.NewViewport(w, h)
+	vp.SetMetrics(first, newTileMinW, newTileMinH, 0, 0)
+	vp.SetFocus(first) // a sane active tile before anything is focused
 	e.tiler = vp
-	e.tilerMain = main
 	return e.tiler
 }
 
-// noteMainTileContent records mew's currently shown main-area viewport as the
-// content held by the tiler's main tile — i.e. viewport_set(mainTile, id) with
-// ref = the mew viewport id. The commands that swap what the main area displays
-// (viewport_next/prior, buffer_new/open_file/duplicate, viewport_clone) call it
-// after the swap so the tiler tracks what content is shown in the tile, where it
-// used to just replace the whole screen.
-//
-// It reads GetLastNormalViewport (the viewport actually painted in the main
-// area), so it is idempotent: a swap whose destination did not land in the main
-// area leaves that unchanged, and the tile keeps its current content. Only the
-// single painted main tile is tracked for now; which tile is *active* is the
-// separate #tile axis (viewport_go).
-func (e *Editor) noteMainTileContent() {
-	if w := e.ViewportManager.GetLastNormalViewport(); w != nil {
-		e.ensureTiler().Set(e.tilerMain, w.ID)
+// tilerFollowFocus is the noteMainFocus hook: when mew focuses main-area viewport
+// `id`, make the tiler reflect it. If a tile already holds id, activate it
+// (revealing it first when it is hidden behind a tab). Otherwise the viewport has
+// no tile yet: fill an empty tile if one is free (the initial tile, on startup),
+// else split a new tile off to the right of the active tile and put id there.
+// Purely tiler-side — it runs under the manager lock and must not touch the
+// Manager.
+func (e *Editor) tilerFollowFocus(id string) {
+	if id == "" {
+		return
+	}
+	vp := e.ensureTiler()
+	if tiles := vp.Get(id, false); len(tiles) > 0 {
+		vp.SetFocus(tiles[0])
+		return
+	}
+	if tiles := vp.Get(id, true); len(tiles) > 0 {
+		vp.Reveal(tiles[0])
+		vp.SetFocus(tiles[0])
+		return
+	}
+	if empty := e.firstEmptyTile(); empty != 0 {
+		vp.Set(empty, id)
+		vp.SetFocus(empty)
+		return
+	}
+	cur := vp.GetFocus()
+	if cur == 0 {
+		if ts := vp.Tiles(); len(ts) > 0 {
+			cur = ts[0].Tile
+		}
+	}
+	if cur == 0 {
+		return
+	}
+	if nt := vp.New(cur, ifitfits.Right, id); nt != 0 {
+		vp.SetMetrics(nt, newTileMinW, newTileMinH, 0, 0)
+		vp.SetFocus(nt)
 	}
 }
 
-// seedTileDefault publishes the main tile as the well-known #tile default, once,
-// so a tiling command invoked without an explicit #handle acts on it. It only
-// seeds when #tile is unset, so a script that reassigns #tile (e.g.
-// `#tile: {viewport_split …}`) is never clobbered. Uses Context.SetModuleObject
-// — the module object layer, which persists across top-level commands — rather
-// than the inherited layer (that one is for provisioning sub-module
-// environments). Requires a command context; the render loop cannot seed it.
+// dismissTileFor closes any tiler tile whose ref is viewportID, so closing a mew
+// viewport (buffer_close) also removes the tile that held it. If the closed tile
+// was the active one, the follow-up focus change repopulates through
+// tilerFollowFocus.
+func (e *Editor) dismissTileFor(viewportID string) {
+	if e.tiler == nil || viewportID == "" {
+		return
+	}
+	for _, h := range e.tiler.Get(viewportID, true) {
+		e.tiler.Close(h)
+	}
+}
+
+// firstEmptyTile returns a visible tile that holds no content (ref ""), or 0.
+func (e *Editor) firstEmptyTile() ifitfits.Handle {
+	if e.tiler == nil {
+		return 0
+	}
+	for _, b := range e.tiler.Tiles() {
+		if b.Ref == "" {
+			return b.Tile
+		}
+	}
+	return 0
+}
+
+// seedTileDefault keeps the well-known #tile pointed at the tiler's active tile,
+// so an explicit `#tile` argument resolves to whatever currently has focus. Uses
+// Context.SetModuleObject — the module-object layer, which persists across
+// top-level commands. Requires a command context; the render loop cannot seed it.
 func (e *Editor) seedTileDefault(ctx *pawscript.Context) {
-	if ctx.ResolveHashArg(tileDefaultVar) == nil {
-		ctx.SetModuleObject(tileDefaultVar, uint64(e.tilerMain))
+	if f := e.ensureTiler().GetFocus(); f != 0 {
+		ctx.SetModuleObject(tileDefaultVar, uint64(f))
 	}
 }
 
@@ -143,8 +186,9 @@ func (e *Editor) resolveTileArg(ctx *pawscript.Context) (ifitfits.Handle, int, b
 			return h, 1, ok
 		}
 	}
-	h, ok := tileHashToHandle(ctx.ResolveHashArg(tileDefaultVar))
-	return h, 0, ok
+	// No explicit #handle: default to the tiler's active tile.
+	f := e.ensureTiler().GetFocus()
+	return f, 0, f != 0
 }
 
 // ---- argument parsing ----
@@ -386,6 +430,7 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			return pawscript.BoolStatus(false)
 		}
 		dest := vp.Go(t, d)
+		vp.SetFocus(dest)                                 // the destination is now the active tile
 		ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
 		if ref := vp.Content(dest); ref != "" {
 			if e.ViewportManager.GetViewport(ref) != nil {
