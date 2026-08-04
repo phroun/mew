@@ -671,19 +671,23 @@ function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.par
 // stacks read as one continuous tab order: step the INNERMOST enclosing stack
 // that can move in this direction without wrapping, escalating to the parent
 // stack (grandparent, …) at each boundary — so you can always get back OUT of a
-// nested stack. Only when every enclosing stack is at its boundary does the
-// innermost wrap around to its other end.
+// nested stack. Only when EVERY enclosing stack is at its boundary do we wrap,
+// and then it's the OUTERMOST (top) stack that wraps around — same principle as
+// the odometer, where only the top level loops. Wrapping the innermost instead
+// would just spin the deepest tab in place while all its parents stayed pinned
+// at their ends (the continuous order would never reach the global other end).
 function goTab(g,j){selectChild(g,g.children[j]);const l=focusEntry(g.children[j]);if(l)selId=l.id;rebuild();}
 function cmdTabCycle(step){
-  const innermost=enclosingStack(sel()); let g=innermost;
-  while(g){
+  const stacks=[]; for(let g=enclosingStack(sel()); g; g=enclosingStack(g)) stacks.push(g); // innermost -> outermost
+  for(const g of stacks){
     const i=g.children.indexOf(selectedChild(g)), j=i+step;
-    if(j>=0&&j<g.children.length){goTab(g,j);return;} // can step here without wrapping
-    g=enclosingStack(g);                              // at a boundary — try the parent stack
+    if(j>=0&&j<g.children.length){goTab(g,j);return;} // step the innermost that can move without wrapping
   }
-  if(innermost){const n=innermost.children.length;if(n<2)return; // nothing above: wrap innermost
-    const i=innermost.children.indexOf(selectedChild(innermost));
-    goTab(innermost,((i+step)%n+n)%n);return;}
+  if(stacks.length){ // every enclosing stack is at its boundary -> wrap the OUTERMOST (top) one
+    const top=stacks[stacks.length-1], n=top.children.length; if(n<2)return;
+    const i=top.children.indexOf(selectedChild(top));
+    goTab(top,((i+step)%n+n)%n);return;
+  }
   cycleVisibleStack(step); // not inside any stack: reach for the visible tabs on screen
 }
 // change a stack's visible tab WITHOUT moving focus (leaves selId alone).
