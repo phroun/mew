@@ -193,6 +193,7 @@
           <h2>Main area</h2>
           <div class="stage-meta">
             <span class="badge" id="splitarm" style="display:none;border-color:var(--accent);color:var(--accent)">/ split → press a direction</span>
+            <span class="badge" id="lensbadge" style="display:none;border-color:var(--zoom);color:var(--zoom)"></span>
             <span class="badge" id="req">required —</span>
             <span class="badge" id="fit">—</span>
           </div>
@@ -285,6 +286,11 @@
               <div class="btns">
                 <button class="cmd" data-cmd="equalize">equalize <kbd>e</kbd></button>
                 <button class="cmd" data-cmd="balance">balance <kbd>b</kbd></button>
+              </div>
+              <div class="t" style="margin-top:6px">lens · <kbd>m</kbd> monocle (screen) · <kbd>p</kbd> spectacle (group) · <kbd>⇧</kbd> = group_</div>
+              <div class="btns">
+                <button class="cmd" data-cmd="monocle">monocle <kbd>m</kbd></button>
+                <button class="cmd" data-cmd="spectacle">spectacle <kbd>p</kbd></button>
               </div>
               <div class="t" style="margin-top:6px">stack · <kbd>\</kbd> toggle · <kbd>,</kbd> <kbd>.</kbd> tabs · <kbd>{</kbd> <kbd>}</kbd> reorder</div>
               <div class="btns">
@@ -402,7 +408,7 @@ function freshTree(){
   _id=0; _ref=0;
   const a=newLeaf(),b=newLeaf(),c=newLeaf();
   root=newGroup("LTR",[a,b,c]);
-  selId=a.id;
+  focusView=null; selId=a.id;
   rebuild();
 }
 
@@ -585,7 +591,7 @@ function cmdDismiss(){
   const s=sel(); if(!s)return;
   const next=nextFocusAfterDismiss(s); // ask first, then dismiss
   s.parent.children.splice(s.parent.children.indexOf(s),1);
-  if(next)selId=next.id;
+  if(next)setFocus(next);
   rebuild();
   if(!findNode(selId)){const l=leaves()[0];if(l)selId=l.id;render();}
 }
@@ -702,9 +708,32 @@ function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.par
 // that actually has siblings to honour it — otherwise the action is a silent no-op.
 // Falls back to the root if nothing tiles. (Swap keeps opTarget: it must act on the
 // tab you're on, not climb.)
-function negTarget(){let n=sel(); if(!n)return null;
-  while(n.parent&&(stackedG(n.parent)||n.parent.children.length===1))n=n.parent;
-  return n;}
+function climbTiling(n){while(n&&n.parent&&(stackedG(n.parent)||n.parent.children.length===1))n=n.parent;return n;}
+function negTarget(){const s=sel();return s?climbTiling(s):null;}
+
+// ---------- focus API + monocle / spectacle lenses ----------
+// setFocus is the ONE chokepoint for "the host assigned focus to this tile".
+// Everything that moves the selection routes through it, so a single place knows
+// when to drop a lens: an active monocle/spectacle holds until focus lands on a
+// tile OUTSIDE the subtree it magnified. focusView remembers {mode, nodeId} — the
+// effect AND the root it impacts — so dismissal is unambiguous.
+let focusView=null;
+function nodeWithin(n,anc){while(n){if(n===anc)return true;n=n.parent;}return false;}
+function setFocus(node){ if(!node)return; selId=node.id;
+  if(focusView){const X=findNode(focusView.nodeId); if(!X||!nodeWithin(node,X))focusView=null;} }
+// the node a lens magnifies: negTarget once, or (group_ variants) climb one more
+// tiling level so the whole enclosing group is magnified instead of one tile.
+function lensTarget(twice){const t=negTarget(); if(!t)return null; return (twice&&t.parent)?climbTiling(t.parent):t;}
+// monocle = fill the whole screen; spectacle = fill the magnified node's own group
+// box (its siblings there are suppressed, the rest of the workspace is untouched).
+// Re-invoking the same lens on the same node toggles it off.
+function cmdLens(mode,twice){
+  const X=lensTarget(twice); if(!X)return;
+  if(focusView&&focusView.mode===mode&&focusView.nodeId===X.id){focusView=null;render();return;}
+  focusView={mode,nodeId:X.id};
+  const l=focusEntry(X); if(l)selId=l.id;   // land focus inside the lens so it doesn't self-dismiss
+  render();
+}
 // cycle the active tab; selection follows onto the tab that comes up. Nested
 // stacks read as one continuous tab order: step the INNERMOST enclosing stack
 // that can move in this direction without wrapping, escalating to the parent
@@ -714,7 +743,7 @@ function negTarget(){let n=sel(); if(!n)return null;
 // the odometer, where only the top level loops. Wrapping the innermost instead
 // would just spin the deepest tab in place while all its parents stayed pinned
 // at their ends (the continuous order would never reach the global other end).
-function goTab(g,j){selectChild(g,g.children[j]);const l=focusEntry(g.children[j]);if(l)selId=l.id;rebuild();}
+function goTab(g,j){selectChild(g,g.children[j]);const l=focusEntry(g.children[j]);if(l)setFocus(l);rebuild();}
 function cmdTabCycle(step){
   const stacks=[]; for(let g=enclosingStack(sel()); g; g=enclosingStack(g)) stacks.push(g); // innermost -> outermost
   for(const g of stacks){
@@ -803,7 +832,7 @@ function cycleVisibleStack(step){
   }
 }
 // pick a specific tab (header click).
-function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
+function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)setFocus(l); rebuild(); }
 // swap_tab_prior / swap_tab_next: REORDER the active tab within its stack (move
 // its slot left/right in the children order). The tab stays active and selected;
 // only its position among the tabs changes. No wrap at the ends.
@@ -907,7 +936,7 @@ function loadJSON(str){
   // keep future auto-refs from colliding with any winN we just loaded
   let mx=0; walk(root,n=>{if(n.kind==="leaf"){const m=/^win(\d+)$/.exec(n.ref||"");if(m)mx=Math.max(mx,+m[1]);}});
   _ref=Math.max(_ref,mx);
-  const fl=focusEntry(root)||firstLeaf(root); selId=fl?fl.id:null; // land on the restored focus
+  focusView=null; const fl=focusEntry(root)||firstLeaf(root); selId=fl?fl.id:null; // land on the restored focus
   rebuild(); return null;
 }
 
@@ -1018,6 +1047,17 @@ function layout(){
   syncStacksToSel(); // reveal the selected tile's tab before measuring/placing
   recordFocus();     // leave a focus trail so returning to a tab lands where it was
   measure(root); computeEff(root); allocate(root,0,0,wsW,wsH);
+  // a lens re-expands one subtree over its scope AFTER the normal pass. The normal
+  // pass still gives every node a real box (nav/hit-testing keep working underneath
+  // and outside the lens); the lens just re-lays the magnified subtree and hides
+  // whatever it now covers, so stepping focus out is what dismisses it.
+  const X=focusView&&findNode(focusView.nodeId);
+  if(X){
+    if(focusView.mode==="monocle"){ markHidden(root,"lens"); allocate(X,0,0,wsW,wsH); }   // fill the screen
+    else { const A=X.parent||root, r=A._rect||{x:0,y:0,w:wsW,h:wsH};                        // fill its group box
+      if(X.parent)X.parent.children.forEach(c=>{if(c!==X)markHidden(c,"lens");});
+      allocate(X,r.x,r.y,r.w,r.h); }
+  } else if(focusView){ focusView=null; } // the magnified node is gone -> drop the lens
 }
 
 // ---------- navigation (by position, with a sticky goal coordinate) ----------
@@ -1072,7 +1112,7 @@ function navTarget(dir,origin){
 }
 function navSelect(dir){
   const t=navTarget(dir); if(!t)return;
-  selId=t.id; const b=t._rect;
+  setFocus(t); const b=t._rect;
   // keep the perpendicular coordinate as the goal so repeated moves one way
   // don't drift; advance the along-axis coordinate into the new tile.
   if(dir==="left"||dir==="right")caret.x=b.x+b.w/2; else caret.y=b.y+b.h/2;
@@ -1116,7 +1156,7 @@ function cmdTileCycle(step){
   const ls=leaves().filter(l=>l._why!=="tab"); if(ls.length<2)return;
   const i=ls.findIndex(l=>l.id===selId); if(i<0)return;
   const t=ls[(i+step+ls.length)%ls.length];
-  selId=t.id; setCaretToSel(); render();
+  setFocus(t); setCaretToSel(); render();
 }
 // merge: like swap, but instead of exchanging it MOVES the source into a group
 // with the destination. The governing invariant: a merge must NEVER add a band
@@ -1226,7 +1266,7 @@ function render(){
     d.innerHTML=`<div class="lab"><span class="idnum">${l.ref}</span>${chips}</div>`+
       (r.w>78&&r.h>54?`<div class="dims">${Math.round(r.w)}×${Math.round(r.h)}</div>`:"");
     d.onclick=(e)=>{const rc=stage.getBoundingClientRect();
-      selId=l.id; caret={x:e.clientX-rc.left,y:e.clientY-rc.top}; render();};
+      setFocus(l); caret={x:e.clientX-rc.left,y:e.clientY-rc.top}; render();};
     stage.appendChild(d);
   });
   const vBars=[],hBars=[];  // draggable boundaries, for corner handles
@@ -1327,6 +1367,8 @@ function endDrag(){drag=null;
 function renderSidebar(){
   const s=sel();
   $("selid").textContent=s?s.ref:"";
+  const lb=$("lensbadge"), lx=focusView&&findNode(focusView.nodeId);
+  if(lb){ if(lx){lb.style.display="";lb.textContent=`◉ ${focusView.mode} · ${lx.ref||"group"} — any tile outside dismisses`;} else lb.style.display="none"; }
   const rw=Math.ceil(root._minW),rh=Math.ceil(root._minH);
   $("req").textContent=`required ${rw}×${rh}`;
   const over=rw>wsW||rh>wsH;
@@ -1349,7 +1391,7 @@ function renderSidebar(){
   const hid=leaves().filter(l=>l._hidden&&l._why==="omit"); // unselected tabs aren't omissions
   $("hidlist").textContent=hid.length?("omitted: "+hid.map(l=>l.ref).join(", ")+" — not enough room at their priority"):"";
   $("tree").innerHTML=treeHTML(root,0);
-  document.querySelectorAll("#tree .leaf").forEach(el=>el.onclick=()=>{selId=+el.dataset.id;setCaretToSel();render();});
+  document.querySelectorAll("#tree .leaf").forEach(el=>el.onclick=()=>{setFocus(findNode(+el.dataset.id));setCaretToSel();render();});
   // live JSON dump — but don't stomp what the user is currently editing.
   const ta=$("json"); if(ta&&document.activeElement!==ta)ta.value=dumpJSON();
 }
@@ -1391,6 +1433,8 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="shrink-size")cmdResize(-RESIZE_STRIDE);
     else if(c==="equalize")cmdEqualize(ev.shiftKey);   // Shift+click = recursive
     else if(c==="balance")cmdBalance(ev.shiftKey);
+    else if(c==="monocle")cmdLens("monocle",ev.shiftKey);   // Shift+click = group_ (climb one more)
+    else if(c==="spectacle")cmdLens("spectacle",ev.shiftKey);
     else if(c==="toggle-stack")cmdToggleStack();
     else if(c==="tab-prev")cmdTabCycle(-1);
     else if(c==="tab-next")cmdTabCycle(1);
@@ -1461,6 +1505,8 @@ window.addEventListener("keydown",e=>{
   else if(k==="="||k==="+")cmdResize(RESIZE_STRIDE);
   else if(k==="e")cmdEqualize(e.shiftKey);   // Shift = recursive (whole subtree)
   else if(k==="b")cmdBalance(e.shiftKey);     // Shift = recursive
+  else if(k==="m")cmdLens("monocle",e.shiftKey);   // fill screen; Shift = group_ (climb one more)
+  else if(k==="p")cmdLens("spectacle",e.shiftKey); // fill group; Shift = group_
   else if(k==="\\")cmdToggleStack();
   else if(k===",")cmdTabCycle(-1);
   else if(k===".")cmdTabCycle(1);
