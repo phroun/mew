@@ -615,33 +615,27 @@ function cmdResize(delta){
   render();
 }
 // toggle_stack: fold the selected tile's whole group into a stack (its siblings
-// become tabs) or unfold it. The group's structure is untouched while stacked;
-// unstacking re-orients it CONTRARY to its container so it lands as a genuine
-// nested group and can never flatten away. The tile you were on stays selected,
-// so stacking keeps it up front and unstacking leaves you looking at it.
-// toggle_stack carries the MODE through the visible tile so nothing jumps
-// (zoom/shrink are axis-agnostic), but NOT the pin. A pin is a size along the
-// node's MAIN axis, which is set by its parent's orientation — a tile's pin is a
-// width inside an ltr box, while that box's pin is measured along ITS parent's
-// (usually perpendicular) axis. Copying the number across would reinterpret a
-// width as a height, so each side keeps its own pin: the tile's pin lies dormant
-// while stacked (the visible tab just fills the body, its pin unconsulted), and
-// the box's pin is cleared on unstack (an unstacked group derives its box from
-// children and negotiates no pin of its own). priority likewise stays derived.
-function copyMode(dst,src){dst.mode=src.mode;}
+// become tabs) or unfold it. Unstacking re-orients the box CONTRARY to its
+// container so it lands as a genuine nested group and can't flatten away.
+//
+// State never crosses the box↔tile boundary, in EITHER direction:
+//  · A box's mode/pin are ITS OWN, on ITS main axis = the PARENT's axis. That
+//    axis is unchanged by (un)stacking — only the box's INTERNAL orientation
+//    flips — so the box keeps its size across the toggle. (Tabs on top of a bare
+//    tile: the stack's height pin is measured along the TTB parent; unstacking
+//    to an ltr box leaves that height pin intact.) So we retain them, never clear.
+//  · A tile's pin is on ITS main axis = the box's orientation axis — perpendicular
+//    to the box's own pin. Copying a number across would read a width as a height,
+//    so tiles keep their pins too (dormant while stacked: the visible tab just
+//    fills the body, its pin unconsulted). priority stays derived either way.
 function cmdToggleStack(){
   const s=sel(); if(!s)return;
   const g=s.parent; if(!g)return;
   if(stackedG(g)){
-    const vis=selectedChild(g);
-    copyMode(vis,g);                  // box mode → visible tile (seamless); pin does NOT carry
     g.children.forEach(c=>c.selected=false); // no selected child ⇒ not a stack
-    g.mode="normal"; g.pin={amount:null,enforced:false}; // box's own pin was axis-specific — drop it
-    g.orientation=contraryOrient(g);
+    g.orientation=contraryOrient(g);         // keeps the box's PARENT-axis pin valid
   }else{
     g.children.forEach(c=>c.selected=(c===s)); // s becomes the shown tab
-    copyMode(g,s);                    // selected tile mode → box; box starts unpinned
-    g.pin={amount:null,enforced:false};
   }
   rebuild();
 }
