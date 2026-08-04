@@ -619,25 +619,29 @@ function cmdResize(delta){
 // unstacking re-orients it CONTRARY to its container so it lands as a genuine
 // nested group and can never flatten away. The tile you were on stays selected,
 // so stacking keeps it up front and unstacking leaves you looking at it.
-// toggle_stack copies negotiation state THROUGH the visible tile so nothing
-// jumps: stacking lifts the selected tile's mode/pin up onto the box (which then
-// negotiates as one unit — tab-flip-invariant); unstacking drops the box's
-// mode/pin back onto the tile you were looking at (the others keep their own),
-// clears the box's dormant state, and re-orients contrary to the container so it
-// can't dissolve. priority is never copied — it derives from children either way.
-function copyState(dst,src){dst.mode=src.mode;dst.pin={amount:src.pin.amount,enforced:src.pin.enforced};}
+// toggle_stack carries the MODE through the visible tile so nothing jumps
+// (zoom/shrink are axis-agnostic), but NOT the pin. A pin is a size along the
+// node's MAIN axis, which is set by its parent's orientation — a tile's pin is a
+// width inside an ltr box, while that box's pin is measured along ITS parent's
+// (usually perpendicular) axis. Copying the number across would reinterpret a
+// width as a height, so each side keeps its own pin: the tile's pin lies dormant
+// while stacked (the visible tab just fills the body, its pin unconsulted), and
+// the box's pin is cleared on unstack (an unstacked group derives its box from
+// children and negotiates no pin of its own). priority likewise stays derived.
+function copyMode(dst,src){dst.mode=src.mode;}
 function cmdToggleStack(){
   const s=sel(); if(!s)return;
   const g=s.parent; if(!g)return;
   if(stackedG(g)){
     const vis=selectedChild(g);
-    copyState(vis,g);                 // box → visible tile (seamless)
+    copyMode(vis,g);                  // box mode → visible tile (seamless); pin does NOT carry
     g.children.forEach(c=>c.selected=false); // no selected child ⇒ not a stack
-    g.mode="normal"; g.pin={amount:null,enforced:false};
+    g.mode="normal"; g.pin={amount:null,enforced:false}; // box's own pin was axis-specific — drop it
     g.orientation=contraryOrient(g);
   }else{
     g.children.forEach(c=>c.selected=(c===s)); // s becomes the shown tab
-    copyState(g,s);                   // selected tile → box
+    copyMode(g,s);                    // selected tile mode → box; box starts unpinned
+    g.pin={amount:null,enforced:false};
   }
   rebuild();
 }
