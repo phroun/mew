@@ -688,30 +688,40 @@ function cmdTabCycle(step){
 }
 // change a stack's visible tab WITHOUT moving focus (leaves selId alone).
 function flipTab(g,j){selectChild(g,g.children[j]);render();}
-// Fallback when the selection sits under NO stack: cycle ONE visible tab-group
-// per press, WITHOUT moving our active focus. NON-WRAPPING — step the innermost
-// (deepest, first in reading order) visible group that can still move in this
-// direction; a group at its end doesn't wrap, it hands off to the next group that
-// can. Only when NO visible group can advance do we reset one, and pick which
-// directionally (ring: forward resets the first set, backward the last).
+// Persistent cursor for the no-stack fallback: which (group, tab) slot the ring
+// last landed on. Keyed by group id so it survives render() (which keeps node
+// identity); any op that rebuilds nodes invalidates it and we re-anchor.
+let visCursor=null;
+// Fallback when the selection sits under NO stack: cycling keys walk the visible
+// tab-groups as ONE continuous ring, WITHOUT moving our active focus. Every
+// multi-tab group on screen contributes its tabs, in reading order, to a single
+// flat sequence; one press advances a single cursor through that sequence. So a
+// group's last tab hands straight to the NEXT group's first, and a group's first
+// hands BACK to the previous group's last — a set only wraps on itself when it is
+// the only set, and the ring wraps globally only at its very ends. No set ever
+// hogs the input or dead-ends.
 function cycleVisibleStack(step){
-  const stacks=[];
-  (function walkD(n,d){ if(n.kind!=="group")return;
-    if(stackedG(n)&&isVisible(n))stacks.push({g:n,d});
-    n.children.forEach(c=>walkD(c,d+1)); })(root,0);
-  if(!stacks.length)return;
-  const at=g=>g.children.indexOf(selectedChild(g));
-  const canStep=g=>{const j=at(g)+step;return j>=0&&j<g.children.length;};
-  const order=[...new Set(stacks.map(s=>s.d))].sort((a,b)=>b-a)
-    .flatMap(d=>stacks.filter(s=>s.d===d).map(s=>s.g)); // deepest first, reading order within
-  const pick=order.find(canStep);                       // first that can still step, non-wrapping
-  if(pick){flipTab(pick,at(pick)+step);return;}
-  // last resort: reset a group at the INNERMOST (deepest) level — the same level
-  // that steps first — with direction only choosing first vs last within it.
-  const deepest=Math.max(...stacks.map(s=>s.d));
-  const inner=stacks.filter(s=>s.d===deepest).map(s=>s.g); // reading order
-  const g=step<0?inner[inner.length-1]:inner[0], n=g.children.length;
-  if(n>=2)flipTab(g,((at(g)+step)%n+n)%n);
+  // flat ring: every visible multi-tab group's slots, reading order (DFS).
+  const slots=[];
+  (function walkD(n){ if(n.kind!=="group")return;
+    if(stackedG(n)&&isVisible(n)&&n.children.length>=2)
+      n.children.forEach((_,i)=>slots.push({g:n,i}));
+    n.children.forEach(walkD); })(root);
+  if(!slots.length)return;
+  const selIdx=g=>g.children.indexOf(selectedChild(g));
+  const wrap=k=>(k%slots.length+slots.length)%slots.length;
+  // Find the cursor in the current ring; if stale/absent, anchor to the first
+  // group's currently shown tab so the first press steps from what's on screen.
+  let cur=visCursor&&slots.findIndex(s=>s.g.id===visCursor.gid&&s.i===visCursor.i);
+  if(cur==null||cur<0)cur=slots.findIndex(s=>s.i===selIdx(s.g));
+  let ni=wrap(cur+step);
+  // Crossing into a DIFFERENT set that already displays its entry tab would move
+  // nothing visible — step one more slot inward (still inside that set, since a
+  // ring set has >=2 tabs) so every press produces motion, never a dead seam.
+  if(slots[ni].g.id!==slots[cur].g.id&&slots[ni].i===selIdx(slots[ni].g))ni=wrap(ni+step);
+  const next=slots[ni];
+  flipTab(next.g,next.i);
+  visCursor={gid:next.g.id,i:next.i};
 }
 // pick a specific tab (header click).
 function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
