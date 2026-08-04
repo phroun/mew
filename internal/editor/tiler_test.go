@@ -127,6 +127,35 @@ func TestRefocusingReusesExistingTile(t *testing.T) {
 	}
 }
 
+// TestMouseHitDistinguishesSideBySideTiles: two tiles share the same rows, so
+// the click must resolve by column, not row alone.
+func TestMouseHitDistinguishesSideBySideTiles(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "left\n")
+	focusMainViewport(e, "doc2", "right\n") // doc (left) | doc2 (right)
+	e.performRender()                       // stamp per-viewport geometry
+
+	doc := e.ViewportManager.GetViewport("doc")
+	doc2 := e.ViewportManager.GetViewport("doc2")
+	if doc == nil || doc2 == nil {
+		t.Fatal("both viewports should exist")
+	}
+	row := doc.ContentY + 1 // 1-based; both tiles span these rows
+
+	if hit := e.viewportAt(doc.FrameX+2, row); hit != doc {
+		t.Fatalf("a click in the left tile resolved to %v, want doc", vpID(hit))
+	}
+	if hit := e.viewportAt(doc2.FrameX+2, row); hit != doc2 {
+		t.Fatalf("a click in the right tile resolved to %v, want doc2 (row-only match would wrongly pick doc)", vpID(hit))
+	}
+}
+
+func vpID(w *viewport.Viewport) string {
+	if w == nil {
+		return "<nil>"
+	}
+	return w.ID
+}
+
 // TestTilesCoverWidthExactly guards the edge-rounding: at a fractional split
 // width, the tiles' frames must tile the full width with no gap or overlap
 // (truncating each tile's width independently used to leave a one-cell gap).

@@ -93,7 +93,7 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 	if e.hostDrawsScrollbars() {
 		return false // the host owns the bar, in pixels
 	}
-	w := e.viewportAtRow(y)
+	w := e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil || w.ScrollbarX < 0 || x-1 != w.ScrollbarX {
 		return false
 	}
@@ -281,9 +281,9 @@ func (e *Editor) handleMouseKey(key string) bool {
 		e.hScrollReset()
 		e.mouseScroll(e.mouseX, e.mouseY, +3)
 	case base == "MouseScrollLeft":
-		e.mouseScrollHoriz(e.mouseY, -1)
+		e.mouseScrollHoriz(e.mouseX, e.mouseY, -1)
 	case base == "MouseScrollRight":
-		e.mouseScrollHoriz(e.mouseY, +1)
+		e.mouseScrollHoriz(e.mouseX, e.mouseY, +1)
 	}
 	// Every other Mouse* event (middle button, right release/drags) is
 	// swallowed so it never leaks into keymap dispatch.
@@ -540,7 +540,7 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 func physicalToCell(x int) int { return (x + 1) / 2 }
 
 func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, caretRune int, ok bool) {
-	w = e.viewportAtRow(y)
+	w = e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, 0, false
 	}
@@ -707,16 +707,28 @@ func (e *Editor) viewportOnScreen(w *viewport.Viewport) bool {
 		e.Renderer != nil && w.LayoutEpoch == e.Renderer.LayoutEpoch()
 }
 
-// viewportAtRow finds the on-screen viewport whose CONTENT area covers the
-// 1-based screen row (the renderer maintains ContentY/ContentHeight per
-// frame). Only viewports laid out by the CURRENT frame qualify — a background
-// main viewport's stale geometry can cover the same rows and must not win.
-// The focused viewport takes the row as a tiebreak when areas overlap.
-func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
+// viewportAt finds the on-screen viewport covering the 1-based screen column x
+// and row y: vertically its CONTENT rows (ContentY/ContentHeight), horizontally
+// its whole paint frame ([FrameX, FrameX+FrameWidth), the full tile including
+// gutter and scrollbar; FrameWidth 0 means full width from FrameX, as for docked
+// chrome). The column test is what distinguishes side-by-side tiles — without it,
+// two tiles sharing the same rows both matched. Only viewports laid out by the
+// CURRENT frame qualify — a background main viewport's stale geometry can cover
+// the same cells and must not win. The focused viewport wins as a tiebreak when
+// areas overlap.
+func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	row := y - 1 // ContentY is 0-based
+	col := x - 1 // FrameX is 0-based
 	covers := func(w *viewport.Viewport) bool {
-		return e.viewportOnScreen(w) &&
-			row >= w.ContentY && row < w.ContentY+w.ContentHeight
+		if !e.viewportOnScreen(w) ||
+			!(row >= w.ContentY && row < w.ContentY+w.ContentHeight) {
+			return false
+		}
+		width := w.FrameWidth
+		if width <= 0 {
+			width = e.Renderer.Width - w.FrameX
+		}
+		return col >= w.FrameX && col < w.FrameX+width
 	}
 	if fw := e.ViewportManager.GetFocusedViewport(); covers(fw) {
 		return fw
@@ -1147,7 +1159,7 @@ func (e *Editor) dragSelUpdate(x, y int) {
 // click below the doc parks the caret at EOF — and a drag upward from there
 // selects the document's tail.
 func (e *Editor) mouseHitBelowText(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
-	w = e.viewportAtRow(y)
+	w = e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, false
 	}
@@ -1555,8 +1567,8 @@ func (e *Editor) hScrollReset() {
 // qualifies; an UNFOCUSED one qualifies too — the wheel scrolls what the
 // pointer is over, without moving focus — except while a modal prompt holds
 // focus (then, as with every mouse action, only the prompt itself responds).
-func (e *Editor) wheelTarget(y int) *viewport.Viewport {
-	w := e.viewportAtRow(y)
+func (e *Editor) wheelTarget(x, y int) *viewport.Viewport {
+	w := e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil
 	}
@@ -1573,8 +1585,8 @@ func (e *Editor) wheelTarget(y int) *viewport.Viewport {
 // 8-column step (the same step and clamping as the scroll_left/scroll_right
 // commands), but only once the barrier is cleared. dir is -1 for left, +1 for
 // right. A direction reversal restarts the barrier.
-func (e *Editor) mouseScrollHoriz(y, dir int) {
-	w := e.wheelTarget(y)
+func (e *Editor) mouseScrollHoriz(x, y, dir int) {
+	w := e.wheelTarget(x, y)
 	if w == nil {
 		return
 	}
@@ -1604,7 +1616,7 @@ func (e *Editor) mouseScrollHoriz(y, dir int) {
 // focused one, or any truly visible viewport the pointer is over (the wheel
 // follows the pointer, not the focus; a modal prompt still blocks it).
 func (e *Editor) mouseScroll(x, y int, delta int) {
-	w := e.wheelTarget(y)
+	w := e.wheelTarget(x, y)
 	if w == nil {
 		return
 	}
