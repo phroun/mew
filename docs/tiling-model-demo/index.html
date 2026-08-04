@@ -784,9 +784,12 @@ function waterfill(items,pool,capFn){
   }
   return pool;
 }
-function markHidden(n){n._hidden=true;n._rect=null;if(n.kind==="group")n.children.forEach(markHidden);}
+// reason: "omit" = couldn't fit (a real omission the host may care about);
+// "tab" = simply not the active tab of a stack (invisible on purpose, not a
+// failure). Kept distinct so the two never get reported as the same thing.
+function markHidden(n,reason){n._hidden=true;n._rect=null;n._why=reason;if(n.kind==="group")n.children.forEach(c=>markHidden(c,reason));}
 function allocate(n,x,y,w,h){
-  n._hidden=false;n._rect={x,y,w,h};
+  n._hidden=false;n._rect={x,y,w,h};n._why=null;
   if(n.kind==="leaf")return;
   if(stackedG(n)){
     // one child fills the body below the header; the rest are hidden (not laid
@@ -795,7 +798,7 @@ function allocate(n,x,y,w,h){
     // per-tab escapes this boundary to perturb the negotiation.
     const res=n._headerH=stackReserve(n);
     const child=selectedChild(n);
-    n.children.forEach(c=>{if(c!==child)markHidden(c);});
+    n.children.forEach(c=>{if(c!==child)markHidden(c,"tab");}); // hidden as a tab, not omitted
     if(child)allocate(child,x,y+res,w,Math.max(0,h-res));
     return;
   }
@@ -842,7 +845,7 @@ function allocate(n,x,y,w,h){
     else{ch=k._main;cw=crossAvail;cx=x;cy=n.orientation==="TTB"?y+cur:y+(h-cur-ch);}
     cur+=k._main; allocate(k,cx,cy,cw,ch);
   });
-  kids.filter(k=>k._omit).forEach(markHidden);
+  kids.filter(k=>k._omit).forEach(k=>markHidden(k,"omit"));
 }
 
 function layout(){
@@ -1128,7 +1131,7 @@ function renderSidebar(){
   const rw=Math.ceil(root._minW),rh=Math.ceil(root._minH);
   $("req").textContent=`required ${rw}×${rh}`;
   const over=rw>wsW||rh>wsH;
-  const anyHidden=leaves().some(l=>l._hidden);
+  const anyHidden=leaves().some(l=>l._hidden&&l._why==="omit"); // tabs don't count
   const fit=$("fit");
   if(over){fit.textContent="workspace too small";fit.className="badge warn";}
   else if(anyHidden){fit.textContent="omitting on cross-axis";fit.className="badge warn";}
@@ -1144,7 +1147,7 @@ function renderSidebar(){
       `<div class="k">dismiss →</div><div class="v">${nf?("focus "+nf.ref):"empty"}</div>`;
     $("minW").value=s.minW;$("minH").value=s.minH;$("natW").value=s.natW;$("natH").value=s.natH;$("prio").value=s.priority;
   }
-  const hid=leaves().filter(l=>l._hidden);
+  const hid=leaves().filter(l=>l._hidden&&l._why==="omit"); // unselected tabs aren't omissions
   $("hidlist").textContent=hid.length?("omitted: "+hid.map(l=>l.ref).join(", ")+" — not enough room at their priority"):"";
   $("tree").innerHTML=treeHTML(root,0);
   document.querySelectorAll("#tree .leaf").forEach(el=>el.onclick=()=>{selId=+el.dataset.id;setCaretToSel();render();});
