@@ -704,11 +704,14 @@ function cycleVisibleStack(step){
   if(!stacks.length)return;
   const at=g=>g.children.indexOf(selectedChild(g));
   const canStep=g=>{const j=at(g)+step;return j>=0&&j<g.children.length;};
-  for(const d of [...new Set(stacks.map(s=>s.d))].sort((a,b)=>b-a)){ // deepest first
-    const pick=stacks.find(s=>s.d===d&&canStep(s.g));               // DFS-order first that can step
-    if(pick){flipTab(pick.g,at(pick.g)+step);return;}
-  }
-  const g=stacks.sort((a,b)=>b.d-a.d)[0].g, n=g.children.length;    // last resort: wrap the deepest
+  // the "encounter" order: deepest level first, DFS (reading order) within a level.
+  const order=[...new Set(stacks.map(s=>s.d))].sort((a,b)=>b-a)
+    .flatMap(d=>stacks.filter(s=>s.d===d).map(s=>s.g));
+  const pick=order.find(canStep);                        // first that can step in this direction
+  if(pick){flipTab(pick,at(pick)+step);return;}
+  // last resort: nothing can advance — wrap, mirroring direction. Treat the
+  // encounter order as a ring: forward wraps to its FIRST set, backward to its LAST.
+  const g=step<0?order[order.length-1]:order[0], n=g.children.length;
   if(n>=2)flipTab(g,((at(g)+step)%n+n)%n);
 }
 // pick a specific tab (header click).
