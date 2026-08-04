@@ -83,9 +83,11 @@ a stack adds it as a new tab, and merging a tab *out* extracts just that tile
 nearest non-tab group. Returning to a tab restores focus to where it last was.
 
 When you invoke tab-cycle (`,`/`.`) while *not* inside any stack, it flips the
-tabs that are merely visible on screen — deepest visible stack first, the first
-one that can still step in that direction, rising a level if none can — and does
-so **without moving your active focus**.
+tabs that are merely visible on screen — one group per press, **without moving
+your active focus**. It steps the innermost (deepest, reading order) visible
+group that can still move in that direction; a group at its end doesn't wrap, it
+hands off to the next group that can. Only when no visible group can advance does
+it reset one, chosen directionally (forward resets the first set, back the last).
 
 A hosted copy of this same page is published as a Claude artifact for quick
 sharing, but this file is the source of record.

@@ -686,16 +686,14 @@ function cmdTabCycle(step){
     goTab(innermost,((i+step)%n+n)%n);return;}
   cycleVisibleStack(step); // not inside any stack: reach for the visible tabs on screen
 }
-// change a stack's visible tab WITHOUT moving focus (leaves selId alone) — for
-// flipping tabs you're not standing in; ensureVisible won't disturb it since our
-// focus isn't on this stack's path.
+// change a stack's visible tab WITHOUT moving focus (leaves selId alone).
 function flipTab(g,j){selectChild(g,g.children[j]);render();}
-// Fallback when the selection sits under NO stack: cycle a stack that's merely
-// visible on screen — and keep our active focus where it is. Prefer the INNERMOST
-// (deepest) visible stacks; among a level take the first (reading order) that can
-// still step in this direction; if none at that depth can, rise a level and try
-// again. As a last resort (nothing can advance) wrap the deepest so the key is
-// never dead.
+// Fallback when the selection sits under NO stack: cycle ONE visible tab-group
+// per press, WITHOUT moving our active focus. NON-WRAPPING — step the innermost
+// (deepest, first in reading order) visible group that can still move in this
+// direction; a group at its end doesn't wrap, it hands off to the next group that
+// can. Only when NO visible group can advance do we reset one, and pick which
+// directionally (ring: forward resets the first set, backward the last).
 function cycleVisibleStack(step){
   const stacks=[];
   (function walkD(n,d){ if(n.kind!=="group")return;
@@ -704,14 +702,11 @@ function cycleVisibleStack(step){
   if(!stacks.length)return;
   const at=g=>g.children.indexOf(selectedChild(g));
   const canStep=g=>{const j=at(g)+step;return j>=0&&j<g.children.length;};
-  // the "encounter" order: deepest level first, DFS (reading order) within a level.
   const order=[...new Set(stacks.map(s=>s.d))].sort((a,b)=>b-a)
-    .flatMap(d=>stacks.filter(s=>s.d===d).map(s=>s.g));
-  const pick=order.find(canStep);                        // first that can step in this direction
+    .flatMap(d=>stacks.filter(s=>s.d===d).map(s=>s.g)); // deepest first, reading order within
+  const pick=order.find(canStep);                       // first that can still step, non-wrapping
   if(pick){flipTab(pick,at(pick)+step);return;}
-  // last resort: nothing can advance — wrap, mirroring direction. Treat the
-  // encounter order as a ring: forward wraps to its FIRST set, backward to its LAST.
-  const g=step<0?order[order.length-1]:order[0], n=g.children.length;
+  const g=step<0?order[order.length-1]:order[0], n=g.children.length; // last resort: reset one, directionally
   if(n>=2)flipTab(g,((at(g)+step)%n+n)%n);
 }
 // pick a specific tab (header click).
