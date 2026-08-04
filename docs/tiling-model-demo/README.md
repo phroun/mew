@@ -28,15 +28,39 @@ Go. Everything runs client-side; there is no server component.
   travel: the source lands adjacent to the destination *across* travel (insert
   into an existing across-travel group, else split the destination); only the
   very edge spawns a new outside band.
-- **Stacks (tabs)** — a group can be `stacked` (children layered on Z, one shown
-  at a time). A stack reports the element-wise **max** of all children's boxes
-  (plus a host-supplied header reserve) and carries **one** mode / **one** pin,
-  so flipping tabs is provably a repaint, never a relayout. `ensureVisible`
-  cycles whatever ancestor stacks are needed to reveal a tile; if it still can't
-  fit, it's omitted through the ordinary overflow path.
+- **Stacks (tabs)** — a box is a **stack** iff one of its children carries
+  `selected: true` (the shown one); there is no flag on the box. A stack reports
+  the element-wise **max** of all children's boxes (plus a host-supplied header
+  reserve) and carries **one** mode / **one** pin of its own (priority stays
+  derived), so flipping tabs is provably a repaint, never a relayout. Toggling
+  stack copies negotiation state *through* the visible tile so nothing jumps, and
+  unstacking re-orients contrary to its container so it can't dissolve.
+  `ensureVisible` cycles whatever ancestor stacks are needed to reveal a tile; if
+  it still can't fit, it's omitted through the ordinary overflow path.
 
 The module supplies mechanism; the host supplies orientation policy and owns
 focus (e.g. `nextFocusAfterDismiss` is a query the host answers).
+
+## Serialization
+
+The **Serialize** panel shows a live JSON dump and round-trips it back on
+**load**. The node shape mirrors what the Go module will emit as **PSL** (its
+primary format):
+
+- a **tile** is an object keyed by **`ref`** — the only identifier, an opaque
+  handle the *host* maps to its content — plus any non-default attributes;
+- a **box** is anonymous: `{ "box": "ltr", "children": [ … ] }`;
+- **`selected: true`** rides on a *child*; its presence is what makes the
+  enclosing box a stack (a stacked box also serializes its own `mode`/`pin`).
+
+Defaults are omitted on emit and refilled on load. In PSL the same object is one
+named param (`box:` / `ref:` + attrs) plus ordered children; JSON just moves the
+children into a `children` array. Example:
+
+```json
+{ "box": "ttb", "pin": 200, "enforced": true,
+  "children": [ { "ref": "win3", "selected": true }, { "ref": "win4" } ] }
+```
 
 ## Keys
 

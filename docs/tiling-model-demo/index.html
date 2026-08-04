@@ -344,7 +344,20 @@
       <div class="card">
         <div class="hd"><h2>Structure</h2></div>
         <div class="bd"><div class="tree" id="tree"></div>
-          <div class="note">Groups show orientation (<span style="font-family:var(--mono)">LTR ▸ · RTL ◂ · TTB ▾ · BTT ▴</span>). A group can never hold a child of its own exact orientation — those flatten.</div>
+          <div class="note">Groups show orientation (<span style="font-family:var(--mono)">LTR ▸ · RTL ◂ · TTB ▾ · BTT ▴</span>, stacks ▧). A group can never hold a child of its own exact orientation — those flatten.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Serialize <span style="font-family:var(--mono);font-size:11px;color:var(--ink-2)">JSON (Go: PSL)</span></h2></div>
+        <div class="bd">
+          <textarea id="json" spellcheck="false" style="width:100%;height:150px;font-family:var(--mono);font-size:11px;line-height:1.45;resize:vertical;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--ink);padding:8px"></textarea>
+          <div class="btns" style="margin-top:8px">
+            <button class="cmd" id="jsonload">load ⤒</button>
+            <button class="cmd" id="jsoncopy">copy</button>
+          </div>
+          <div class="note" id="jsonerr" style="min-height:14px"></div>
+          <div class="note">Live dump of the tree. A tile is <span style="font-family:var(--mono)">{"{"}ref, …{"}"}</span>; a box is <span style="font-family:var(--mono)">{"{"}box, children{"}"}</span>. <span style="font-family:var(--mono)">selected:true</span> on a child is what makes its box a stack. Edit and press <b>load</b> to round-trip.</div>
         </div>
       </div>
     </div>
@@ -358,16 +371,26 @@ const FOCUS=1e12;
 let _id=0; const nid=()=>++_id;
 
 // ---------- model ----------
-function newLeaf(){return {id:nid(),kind:"leaf",minW:90,minH:64,natW:240,natH:150,
-  priority:0,mode:"normal",pin:{amount:null,enforced:false}};}
+// Serialization shape (JSON here; PSL in the Go module). A TILE is an object
+// keyed by `ref` — the only identifier, an opaque handle the HOST maps to its
+// content; the module never interprets it. A BOX is anonymous: `{box:"ltr",
+// children:[…]}`. `selected:true` lives on a CHILD, and its presence is what
+// makes the enclosing box a STACK (the child bearing it is the shown one); no
+// `selected` on any child ⇒ not a stack. A stacked box carries its OWN mode/pin
+// (its negotiation identity as one box — see cmdToggleStack); priority stays
+// derived (max of children is already tab-invariant, so a stack needs no own
+// priority). `id` is an internal handle for the demo's own bookkeeping only.
+let _ref=0;
+function newLeaf(){const id=nid();return {id,kind:"leaf",ref:"win"+(++_ref),minW:90,minH:64,natW:240,natH:150,
+  priority:0,mode:"normal",pin:{amount:null,enforced:false},selected:false};}
 function newGroup(orient,children){return {id:nid(),kind:"group",orientation:orient,children:children||[],
-  mode:"normal",pin:{amount:null,enforced:false},priority:0,stacked:false,selected:0};}
+  mode:"normal",pin:{amount:null,enforced:false},priority:0,selected:false};}
 
 let root, selId, caret={x:0,y:0};
 let wsW=900, wsH=560, focusProtect=true;
 
 function freshTree(){
-  _id=0;
+  _id=0; _ref=0;
   const a=newLeaf(),b=newLeaf(),c=newLeaf();
   root=newGroup("LTR",[a,b,c]);
   selId=a.id;
@@ -378,17 +401,17 @@ const isH=o=>o==="LTR"||o==="RTL";
 const axisOf=o=>isH(o)?"H":"V";
 const defOrient=ax=>ax==="H"?"LTR":"TTB";
 
-// A group can be STACKED: its children are layered on a Z axis, one shown at a
-// time (its `selected` index), the rest collapsed to header chrome. Stacking is
-// a boolean overlay — the group's tree structure is untouched, so unstacking
-// just lays the same children back out. `stacked` is the node flag; `axOf` is
-// the node's EFFECTIVE axis ("Z" while stacked, else its orientation axis) —
-// that's what nav and structural ops read so arrows never wander between hidden
-// tabs. On unstack the group re-orients CONTRARY to its container (see
-// contraryOrient), which both matches how nested groups normally sit and
-// guarantees it can't flatten into the parent and dissolve.
-const stackedG=n=>n.kind==="group"&&!!n.stacked;
-const axOf=n=>n.kind==="leaf"?null:(n.stacked?"Z":axisOf(n.orientation));
+// A box is a STACK iff one of its children carries `selected:true` — its
+// children are layered on a Z axis, that one shown, the rest collapsed to header
+// chrome. There is no flag on the box; stack-ness is entirely "some child is
+// selected." `axOf` is the node's EFFECTIVE axis ("Z" while stacked, else its
+// orientation axis) — what nav and structural ops read so arrows never wander
+// between hidden tabs. On unstack the box re-orients CONTRARY to its container
+// (see contraryOrient), matching how nested groups normally sit and guaranteeing
+// it can't flatten into the parent and dissolve.
+const stackedG=n=>n.kind==="group"&&n.children.some(c=>c.selected);
+const selectedChild=n=>n.children.find(c=>c.selected)||n.children[0];
+const axOf=n=>n.kind==="leaf"?null:(stackedG(n)?"Z":axisOf(n.orientation));
 function contraryOrient(g){
   if(!g.parent)return g.orientation; // root has no container: keep as-is
   const pax=axisOf(g.parent.orientation);
@@ -402,7 +425,9 @@ function contraryOrient(g){
 let stackVariant="tabbed"; // "tabbed" | "stacked" — host policy, toggled in the demo
 const HEADER_H=24;
 function stackReserve(n){return (stackVariant==="tabbed"?1:Math.max(1,n.children.length))*HEADER_H;}
-function clampSel(n){const i=Math.min(Math.max(n.selected|0,0),Math.max(0,n.children.length-1));n.selected=i;return i;}
+// move a stack's `selected` flag onto `child` (clearing its siblings). Only ever
+// called on a box that is ALREADY a stack, so it preserves stack-ness.
+function selectChild(g,child){g.children.forEach(c=>c.selected=(c===child));}
 // ensureVisible: flip EVERY stacked ancestor of `t` to the branch that contains
 // it, so `t` is not hidden behind any tab at any depth. This is a module
 // primitive a host calls to reveal a tile it is about to focus or scroll to —
@@ -416,10 +441,8 @@ function clampSel(n){const i=Math.min(Math.max(n.selected|0,0),Math.max(0,n.chil
 function ensureVisible(t){
   let changed=false,n=t;
   while(n&&n.parent){
-    if(stackedG(n.parent)){
-      const i=n.parent.children.indexOf(n);
-      if(n.parent.selected!==i){n.parent.selected=i;changed=true;}
-    }
+    // only stacks get retargeted — never turn a plain box into a stack here.
+    if(stackedG(n.parent)&&!n.selected){selectChild(n.parent,n);changed=true;}
     n=n.parent;
   }
   return changed;
@@ -585,10 +608,10 @@ function clearPin(n){n.pin={amount:null,enforced:false};}
 // zoom/shrink mode drops back to normal (a pin is a normal-mode reservation).
 const RESIZE_STRIDE=48;
 function cmdResize(delta){
-  const s=sel(); if(!s||!s._rect||s._hidden)return;
-  const horiz=s.parent&&isH(s.parent.orientation);
-  const cur=horiz?s._rect.w:s._rect.h;
-  manualPin(s,cur+delta);
+  const t=opTarget(); if(!t||!t._rect||t._hidden)return; // a stack resizes as one box
+  const horiz=t.parent&&isH(t.parent.orientation);
+  const cur=horiz?t._rect.w:t._rect.h;
+  manualPin(t,cur+delta);
   render();
 }
 // toggle_stack: fold the selected tile's whole group into a stack (its siblings
@@ -596,26 +619,45 @@ function cmdResize(delta){
 // unstacking re-orients it CONTRARY to its container so it lands as a genuine
 // nested group and can never flatten away. The tile you were on stays selected,
 // so stacking keeps it up front and unstacking leaves you looking at it.
+// toggle_stack copies negotiation state THROUGH the visible tile so nothing
+// jumps: stacking lifts the selected tile's mode/pin up onto the box (which then
+// negotiates as one unit — tab-flip-invariant); unstacking drops the box's
+// mode/pin back onto the tile you were looking at (the others keep their own),
+// clears the box's dormant state, and re-orients contrary to the container so it
+// can't dissolve. priority is never copied — it derives from children either way.
+function copyState(dst,src){dst.mode=src.mode;dst.pin={amount:src.pin.amount,enforced:src.pin.enforced};}
 function cmdToggleStack(){
   const s=sel(); if(!s)return;
   const g=s.parent; if(!g)return;
-  if(g.stacked){ g.stacked=false; g.orientation=contraryOrient(g); }
-  else{ g.stacked=true; g.selected=g.children.indexOf(s); }
+  if(stackedG(g)){
+    const vis=selectedChild(g);
+    copyState(vis,g);                 // box → visible tile (seamless)
+    g.children.forEach(c=>c.selected=false); // no selected child ⇒ not a stack
+    g.mode="normal"; g.pin={amount:null,enforced:false};
+    g.orientation=contraryOrient(g);
+  }else{
+    g.children.forEach(c=>c.selected=(c===s)); // s becomes the shown tab
+    copyState(g,s);                   // selected tile → box
+  }
   rebuild();
 }
 // nearest stacked ancestor of the selection (or of a given node).
 function enclosingStack(n){let p=n&&n.parent;while(p){if(stackedG(p))return p;p=p.parent;}return null;}
+// while the selection is a DIRECT tab of a stack, mode/pin/resize operate on the
+// box (the stack shadows its tabs); deeper in a tab's sub-layout they're normal.
+function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.parent:s;}
 // cycle the active tab of the nearest stack; selection follows onto the tab that
 // comes up, so the newly shown tile is the focused one.
 function cmdTabCycle(step){
   const g=enclosingStack(sel()); if(!g)return;
   const n=g.children.length; if(n<2)return;
-  g.selected=((clampSel(g)+step)%n+n)%n;
-  const l=firstLeaf(g.children[g.selected]); if(l)selId=l.id;
+  const i=g.children.indexOf(selectedChild(g)), nx=g.children[((i+step)%n+n)%n];
+  selectChild(g,nx);
+  const l=firstLeaf(nx); if(l)selId=l.id;
   rebuild();
 }
 // pick a specific tab (header click).
-function selectTab(g,i){ if(!stackedG(g))return; g.selected=i; const l=firstLeaf(g.children[i]); if(l)selId=l.id; rebuild(); }
+function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=firstLeaf(c); if(l)selId=l.id; rebuild(); }
 
 // ---------- normalization ----------
 function normalize(n){
@@ -630,9 +672,12 @@ function normalize(n){
       // same-orientation flatten — but a stacked group is a hard boundary: never
       // flatten one into its parent, nor flatten children out of one. That is
       // what keeps an unstacked-then-restacked group from dissolving.
-      if(c.kind==="group"&&!c.stacked&&!n.stacked&&c.orientation===n.orientation){n.children.splice(i,1,...c.children);changed=true;i--;}}
+      if(c.kind==="group"&&!stackedG(c)&&!stackedG(n)&&c.orientation===n.orientation){n.children.splice(i,1,...c.children);changed=true;i--;}}
     for(let i=0;i<n.children.length;i++){const c=n.children[i];
-      if(c.kind==="group"&&c.children.length===1){n.children[i]=c.children[0];changed=true;}}
+      // single-child collapse: the promoted node inherits THIS slot's tab-state
+      // (was c the selected tab of n?), discarding the degenerate inner flag — so
+      // a stack whittled down to one tab quietly stops being a stack.
+      if(c.kind==="group"&&c.children.length===1){const only=c.children[0];only.selected=c.selected;n.children[i]=only;changed=true;}}
   }
 }
 function rebuild(){
@@ -640,9 +685,64 @@ function rebuild(){
   while(root.kind==="group"&&root.children.length===1&&root.children[0].kind==="group")root=root.children[0];
   if(root.kind==="group"&&root.children.length===0)root.children=[newLeaf()];
   if(root.kind==="leaf")root=newGroup("LTR",[root]);
+  root.selected=false; // the root is nobody's tab
   rebuildParents();
   setCaretToSel();
   render();
+}
+
+// ---------- serialization (JSON here; the Go module speaks PSL) ----------
+// A tile → {ref, …non-default attrs}. A box → {box:"ltr", children:[…]}, anonymous.
+// `selected:true` rides on the CHILD; its presence is what makes a box a stack,
+// and a stacked box also emits its own mode/pin (its negotiation identity).
+// Defaults are omitted on the way out and refilled on the way in. In PSL the
+// same object is one named param (`box:` / `ref:` + attrs) plus ordered children.
+const LEAF_DEF={minW:90,minH:64,natW:240,natH:150};
+function serialize(n){
+  const emitState=o=>{ if(n.mode!=="normal")o.mode=n.mode;
+    if(n.pin.amount!=null){o.pin=Math.round(n.pin.amount);o.enforced=!!n.pin.enforced;} };
+  if(n.kind==="leaf"){
+    const o={ref:n.ref};
+    for(const k in LEAF_DEF)if(n[k]!==LEAF_DEF[k])o[k]=n[k];
+    if(n.priority)o.priority=n.priority;
+    emitState(o);
+    if(n.selected)o.selected=true;
+    return o;
+  }
+  const o={box:n.orientation.toLowerCase()};
+  if(n.selected)o.selected=true;         // this box is the selected tab of its parent
+  if(stackedG(n))emitState(o);           // a stack carries its own mode/pin (priority derives)
+  o.children=n.children.map(serialize);
+  return o;
+}
+function deserialize(o){
+  if(o&&o.box!=null){
+    const orient=String(o.box).toUpperCase();
+    const g=newGroup(["LTR","RTL","TTB","BTT"].includes(orient)?orient:"LTR",(o.children||[]).map(deserialize));
+    if(o.selected)g.selected=true;
+    if(o.mode)g.mode=o.mode;
+    if(o.pin!=null)g.pin={amount:+o.pin,enforced:!!o.enforced};
+    return g;
+  }
+  const l=newLeaf();
+  if(o.ref!=null)l.ref=String(o.ref);
+  for(const k of ["minW","minH","natW","natH","priority"])if(o[k]!=null)l[k]=+o[k];
+  if(o.mode)l.mode=o.mode;
+  if(o.pin!=null)l.pin={amount:+o.pin,enforced:!!o.enforced};
+  if(o.selected)l.selected=true;
+  return l;
+}
+function dumpJSON(){return JSON.stringify(serialize(root),null,2);}
+function loadJSON(str){
+  let o; try{o=JSON.parse(str);}catch(e){return "JSON parse error: "+e.message;}
+  let tree; try{tree=deserialize(o);}catch(e){return "structure error: "+e.message;}
+  if(tree.kind==="leaf")tree=newGroup("LTR",[tree]);
+  root=tree;
+  // keep future auto-refs from colliding with any winN we just loaded
+  let mx=0; walk(root,n=>{if(n.kind==="leaf"){const m=/^win(\d+)$/.exec(n.ref||"");if(m)mx=Math.max(mx,+m[1]);}});
+  _ref=Math.max(_ref,mx);
+  const fl=firstLeaf(root); selId=fl?fl.id:null;
+  rebuild(); return null;
 }
 
 // caret: the navigation reference point (a bright dot). It jumps to the last
@@ -694,9 +794,8 @@ function allocate(n,x,y,w,h){
     // honoured by the parent's waterfall exactly like any single box — nothing
     // per-tab escapes this boundary to perturb the negotiation.
     const res=n._headerH=stackReserve(n);
-    const sel=clampSel(n);
-    n.children.forEach((c,i)=>{if(i!==sel)markHidden(c);});
-    const child=n.children[sel];
+    const child=selectedChild(n);
+    n.children.forEach(c=>{if(c!==child)markHidden(c);});
     if(child)allocate(child,x,y+res,w,Math.max(0,h-res));
     return;
   }
@@ -889,7 +988,7 @@ function cmdMerge(dir){
     ?(caret.x <= D._rect.x+D._rect.w/2 ? "left" : "right")
     :(caret.y <= D._rect.y+D._rect.h/2 ? "up" : "down");
   const p=D.parent;
-  if(p&&!p.stacked&&axisOf(p.orientation)===Pd){
+  if(p&&!stackedG(p)&&axisOf(p.orientation)===Pd){
     // D already lives in an across-travel group — slot source in beside it. No
     // band is added in the travel direction (they share D's band).
     insertSib(p,D,s,side(p.orientation,phys));
@@ -922,7 +1021,7 @@ function render(){
     if(l.mode==="shrink")chips+='<span class="chip s">SHRINK</span>';
     if(l.pin.amount!=null)chips+=`<span class="chip pin${l.pin.enforced?"":" off"}">PIN ${Math.round(l.pin.amount)}</span>`;
     if(l.priority)chips+=`<span class="chip pri">p${l.priority}</span>`;
-    d.innerHTML=`<div class="lab"><span class="idnum">${l.id}</span>${chips}</div>`+
+    d.innerHTML=`<div class="lab"><span class="idnum">${l.ref}</span>${chips}</div>`+
       (r.w>78&&r.h>54?`<div class="dims">${Math.round(r.w)}×${Math.round(r.h)}</div>`:"");
     d.onclick=(e)=>{const rc=stage.getBoundingClientRect();
       selId=l.id; caret={x:e.clientX-rc.left,y:e.clientY-rc.top}; render();};
@@ -975,8 +1074,8 @@ function render(){
     g.children.forEach((c,i)=>{
       const fl=firstLeaf(c); let lc=0; walk(c,x=>{if(x.kind==="leaf")lc++;});
       const t=document.createElement("div");
-      t.className="tab"+(i===g.selected?" on":"");
-      t.innerHTML=`<span class="tnum">${fl?fl.id:"?"}</span>`+(lc>1?`<span class="tag">+${lc-1}▦</span>`:"");
+      t.className="tab"+(c.selected?" on":"");
+      t.innerHTML=`<span class="tnum">${fl?fl.ref:"?"}</span>`+(lc>1?`<span class="tag">+${lc-1}▦</span>`:"");
       t.onclick=(e)=>{e.stopPropagation();selectTab(g,i);};
       hd.appendChild(t);
     });
@@ -1025,7 +1124,7 @@ function endDrag(){drag=null;
 
 function renderSidebar(){
   const s=sel();
-  $("selid").textContent=s?("#"+s.id):"";
+  $("selid").textContent=s?s.ref:"";
   const rw=Math.ceil(root._minW),rh=Math.ceil(root._minH);
   $("req").textContent=`required ${rw}×${rh}`;
   const over=rw>wsW||rh>wsH;
@@ -1042,22 +1141,26 @@ function renderSidebar(){
       `<div class="k">mode</div><div class="v">${s.mode}</div>`+
       `<div class="k">pin</div><div class="v">${s.pin.amount!=null?Math.round(s.pin.amount)+(s.pin.enforced?" (active)":" (inactive)"):"—"}</div>`+
       `<div class="k">on screen</div><div class="v">${s._rect&&!s._hidden?Math.round(s._rect.w)+"×"+Math.round(s._rect.h):"hidden"}</div>`+
-      `<div class="k">dismiss →</div><div class="v">${nf?("focus #"+nf.id):"empty"}</div>`;
+      `<div class="k">dismiss →</div><div class="v">${nf?("focus "+nf.ref):"empty"}</div>`;
     $("minW").value=s.minW;$("minH").value=s.minH;$("natW").value=s.natW;$("natH").value=s.natH;$("prio").value=s.priority;
   }
   const hid=leaves().filter(l=>l._hidden);
-  $("hidlist").textContent=hid.length?("omitted: "+hid.map(l=>"#"+l.id).join(", ")+" — not enough room at their priority"):"";
+  $("hidlist").textContent=hid.length?("omitted: "+hid.map(l=>l.ref).join(", ")+" — not enough room at their priority"):"";
   $("tree").innerHTML=treeHTML(root,0);
   document.querySelectorAll("#tree .leaf").forEach(el=>el.onclick=()=>{selId=+el.dataset.id;setCaretToSel();render();});
+  // live JSON dump — but don't stomp what the user is currently editing.
+  const ta=$("json"); if(ta&&document.activeElement!==ta)ta.value=dumpJSON();
 }
 function treeHTML(n,depth){
   const pad="&nbsp;&nbsp;".repeat(depth);
   if(n.kind==="leaf"){
-    const tags=[]; if(n.mode!=="normal")tags.push(n.mode); if(n.pin.amount!=null)tags.push("pin"+(n.pin.enforced?"":"·off")); if(n.priority)tags.push("p"+n.priority);
-    return `<div class="node leaf ${n.id===selId?"sel":""} ${n._hidden?"hid":""}" data-id="${n.id}">${pad}▪ #${n.id}${tags.length?" <span style='opacity:.6'>["+tags.join(" ")+"]</span>":""}</div>`;
+    const tags=[]; if(n.selected)tags.push("sel•tab"); if(n.mode!=="normal")tags.push(n.mode); if(n.pin.amount!=null)tags.push("pin"+(n.pin.enforced?"":"·off")); if(n.priority)tags.push("p"+n.priority);
+    return `<div class="node leaf ${n.id===selId?"sel":""} ${n._hidden?"hid":""}" data-id="${n.id}">${pad}▪ ${n.ref}${tags.length?" <span style='opacity:.6'>["+tags.join(" ")+"]</span>":""}</div>`;
   }
-  const arr={LTR:"▸",RTL:"◂",TTB:"▾",BTT:"▴"}[n.orientation];
-  let h=`<div class="node grp ${n._hidden?"hid":""}">${pad}<span class="arrow">${arr}</span> ${n.orientation}</div>`;
+  const stk=stackedG(n);
+  const arr=stk?"▧":{LTR:"▸",RTL:"◂",TTB:"▾",BTT:"▴"}[n.orientation];
+  const gtags=[]; if(stk){gtags.push("stack"); if(n.mode!=="normal")gtags.push(n.mode); if(n.pin.amount!=null)gtags.push("pin"+(n.pin.enforced?"":"·off"));}
+  let h=`<div class="node grp ${n._hidden?"hid":""}">${pad}<span class="arrow">${arr}</span> ${stk?"stack·":""}${n.orientation}${gtags.length?" <span style='opacity:.6'>["+gtags.join(" ")+"]</span>":""}</div>`;
   n.children.forEach(c=>h+=treeHTML(c,depth+1));
   return h;
 }
@@ -1073,10 +1176,10 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="reverse")cmdReverse();
     else if(c==="reverse-parent")cmdReverseParent();
     else if(c==="dismiss")cmdDismiss();
-    else if(c==="mode-normal"){if(s)setMode(s,"normal");render();}
-    else if(c==="mode-zoom"){if(s)setMode(s,"zoom");render();}
-    else if(c==="mode-shrink"){if(s)setMode(s,"shrink");render();}
-    else if(c==="mode-cycle"){if(s)cycleMode(s);render();}
+    else if(c==="mode-normal"){const t=opTarget();if(t)setMode(t,"normal");render();}
+    else if(c==="mode-zoom"){const t=opTarget();if(t)setMode(t,"zoom");render();}
+    else if(c==="mode-shrink"){const t=opTarget();if(t)setMode(t,"shrink");render();}
+    else if(c==="mode-cycle"){const t=opTarget();if(t)cycleMode(t);render();}
     else if(c.startsWith("nav-"))navSelect(c.slice(4));
     else if(c.startsWith("swap-"))cmdSwap(c.slice(5));
     else if(c.startsWith("merge-"))cmdMerge(c.slice(6));
@@ -1099,6 +1202,8 @@ $("wsH").oninput=()=>{wsH=+$("wsH").value;$("wsHv").textContent=wsH+"px";render(
 $("fp").onchange=()=>{focusProtect=$("fp").checked;render();};
 $("stkvar").onchange=()=>{stackVariant=$("stkvar").value;render();};
 $("reset").onclick=()=>{freshTree();};
+$("jsonload").onclick=()=>{const err=loadJSON($("json").value);const el=$("jsonerr");el.textContent=err||"loaded ✓";el.style.color=err?"var(--omit)":"var(--shrink)";};
+$("jsoncopy").onclick=()=>{$("json").value=dumpJSON();$("json").focus();$("json").select();try{document.execCommand("copy");}catch(e){}};
 $("theme").onclick=()=>{const r=document.documentElement;const cur=r.getAttribute("data-theme");
   const dark=cur?cur==="dark":matchMedia("(prefers-color-scheme: dark)").matches;
   r.setAttribute("data-theme",dark?"light":"dark");render();};
@@ -1116,7 +1221,7 @@ function dirKey(e){
   return null;
 }
 window.addEventListener("keydown",e=>{
-  if(e.target.tagName==="INPUT")return;
+  if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
   const dir=dirKey(e);
   if(dir){
     if(splitArmed){armSplit(false);cmdSplit(dir);}
@@ -1137,9 +1242,9 @@ window.addEventListener("keydown",e=>{
   else if(k==="a"){e.shiftKey?cmdMerge("left"):cmdSwap("left");}
   else if(k==="s"){e.shiftKey?cmdMerge("down"):cmdSwap("down");}
   else if(k==="d"){e.shiftKey?cmdMerge("right"):cmdSwap("right");}
-  else if(k==="z"){if(s){setMode(s,s.mode==="zoom"?"normal":"zoom");render();}}
-  else if(k==="x"){if(s){setMode(s,s.mode==="shrink"?"normal":"shrink");render();}}
-  else if(k==="c"){if(s){cycleMode(s);render();}}
+  else if(k==="z"){const t=opTarget();if(t){setMode(t,t.mode==="zoom"?"normal":"zoom");render();}}
+  else if(k==="x"){const t=opTarget();if(t){setMode(t,t.mode==="shrink"?"normal":"shrink");render();}}
+  else if(k==="c"){const t=opTarget();if(t){cycleMode(t);render();}}
   else if(k==="f")cmdFlip();
   else if(k==="g")cmdFlipParent();
   else if(k==="r")cmdReverse();
