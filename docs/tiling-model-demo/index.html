@@ -281,6 +281,11 @@
                 <button class="cmd" data-cmd="shrink-size">− smaller</button>
                 <button class="cmd" data-cmd="grow">larger =</button>
               </div>
+              <div class="t" style="margin-top:6px">un-rag · <kbd>e</kbd> equalize · <kbd>b</kbd> balance · <kbd>⇧</kbd> = recursive</div>
+              <div class="btns">
+                <button class="cmd" data-cmd="equalize">equalize <kbd>e</kbd></button>
+                <button class="cmd" data-cmd="balance">balance <kbd>b</kbd></button>
+              </div>
               <div class="t" style="margin-top:6px">stack · <kbd>\</kbd> toggle · <kbd>,</kbd> <kbd>.</kbd> tabs · <kbd>{</kbd> <kbd>}</kbd> reorder</div>
               <div class="btns">
                 <button class="cmd" data-cmd="toggle-stack">stack ⇄ <kbd>\</kbd></button>
@@ -622,6 +627,28 @@ function cmdResize(delta){
   manualPin(t,cur+delta);
   render();
 }
+// equalize / balance — two ways to un-rag a group's sizing, both anchored via
+// negTarget so they act on the first ancestor that actually tiles. equalize
+// IMPOSES uniformity: throw out every child's pin AND mode, then pin each child to
+// an identical share of the axis (ignoring naturals). balance RELEASES: clear pins
+// only and let the ordinary measure/allocate negotiation re-derive sizes from the
+// naturals + priority ("forget where I made it ragged, go back to what the
+// constraints want"). Each takes a recursive flag: false touches only the group
+// negTarget identifies; true walks its whole visible subtree, descending a stack
+// by its shown tab (hidden tabs and Z-stacked tabs don't tile, so they're skipped).
+function equalizeGroup(g){ if(stackedG(g)||!g._rect)return;              // tabs don't tile; need a laid-out box
+  const n=g.children.length; if(!n)return;
+  const share=(isH(g.orientation)?g._rect.w:g._rect.h)/n;               // equal main-axis slice (min-clamped in allocate)
+  g.children.forEach(c=>{c.mode="normal";c.pin={amount:share,enforced:true};});
+}
+function balanceGroup(g){ if(stackedG(g))return;
+  g.children.forEach(c=>{c.pin={amount:null,enforced:false};});         // clear pins only; naturals/priority decide
+}
+function eachTiling(g,recursive,fn){ fn(g);
+  if(recursive)(stackedG(g)?[selectedChild(g)]:g.children).forEach(c=>{if(c&&c.kind==="group")eachTiling(c,true,fn);});
+}
+function cmdEqualize(recursive){const t=negTarget();if(!t)return;eachTiling(t.parent||t,recursive,equalizeGroup);render();}
+function cmdBalance(recursive){const t=negTarget();if(!t)return;eachTiling(t.parent||t,recursive,balanceGroup);render();}
 // toggle_stack: fold the selected tile's whole group into a stack (its siblings
 // become tabs) or unfold it. Unstacking re-orients the box CONTRARY to its
 // container so it lands as a genuine nested group and can't flatten away.
@@ -1342,7 +1369,7 @@ function treeHTML(n,depth){
 
 // ---------- wiring ----------
 document.querySelectorAll("[data-cmd]").forEach(b=>{
-  b.onclick=()=>{
+  b.onclick=(ev)=>{
     const c=b.dataset.cmd, s=sel();
     if(c.startsWith("new-"))cmdNew(c.slice(4));
     else if(c.startsWith("split-"))cmdSplit(c.slice(6));
@@ -1362,6 +1389,8 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="tile-next")cmdTileCycle(1);
     else if(c==="grow")cmdResize(RESIZE_STRIDE);
     else if(c==="shrink-size")cmdResize(-RESIZE_STRIDE);
+    else if(c==="equalize")cmdEqualize(ev.shiftKey);   // Shift+click = recursive
+    else if(c==="balance")cmdBalance(ev.shiftKey);
     else if(c==="toggle-stack")cmdToggleStack();
     else if(c==="tab-prev")cmdTabCycle(-1);
     else if(c==="tab-next")cmdTabCycle(1);
@@ -1430,6 +1459,8 @@ window.addEventListener("keydown",e=>{
   else if(k==="]")cmdTileCycle(1);
   else if(k==="-")cmdResize(-RESIZE_STRIDE);
   else if(k==="="||k==="+")cmdResize(RESIZE_STRIDE);
+  else if(k==="e")cmdEqualize(e.shiftKey);   // Shift = recursive (whole subtree)
+  else if(k==="b")cmdBalance(e.shiftKey);     // Shift = recursive
   else if(k==="\\")cmdToggleStack();
   else if(k===",")cmdTabCycle(-1);
   else if(k===".")cmdTabCycle(1);
