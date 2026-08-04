@@ -51,7 +51,11 @@ primary format):
   handle the *host* maps to its content — plus any non-default attributes;
 - a **box** is anonymous: `{ "box": "ltr", "children": [ … ] }`;
 - **`selected: true`** rides on a *child*; its presence is what makes the
-  enclosing box a stack (a stacked box also serializes its own `mode`/`pin`).
+  enclosing box a stack (a stacked box also serializes its own `mode`/`pin`);
+- **`focused: true`** also rides on a *child* — a group's remembered last-focus
+  child (the focus trail). It can appear on any child of any box; following the
+  `selected`+`focused` chain from the root lands on the live focus, and each
+  inactive tab keeps its own so returning to a tab restores where you left it.
 
 Defaults are omitted on emit and refilled on load. In PSL the same object is one
 named param (`box:` / `ref:` + attrs) plus ordered children; JSON just moves the
@@ -67,9 +71,14 @@ children into a `children` array. Example:
 Arrows navigate; `Shift`+dir = new; `/` then a direction (arrows or WASD) =
 split; `'`/`Enter` = new before/after. `WASD` swap, `Shift`+`WASD` merge.
 `Z`/`X`/`C` zoom/shrink/cycle mode. `F`/`G` flip group/parent, `R`/`T` reverse
-group/parent. `[`/`]` cycle tiles. `−`/`=` grow/shrink. `\` toggle stack,
-`,`/`.` cycle tabs. `Delete`/`Backspace` dismiss. On-screen buttons mirror all
-of these.
+group/parent. `[`/`]` cycle tiles (visible ones only — never inactive tabs).
+`−`/`=` grow/shrink. `\` toggle stack, `,`/`.` cycle tabs, `{`/`}` reorder the
+active tab. `Delete`/`Backspace` dismiss. On-screen buttons mirror all of these.
+
+Mode/pin/resize, swap and merge on a stacked tab act on the whole tab-group (the
+box shadows its tabs); `split` nests into the active tab while `new` breaks out
+to a fresh sibling tab. Returning to a tab restores the focus to where it last
+was inside it.
 
 A hosted copy of this same page is published as a Claude artifact for quick
 sharing, but this file is the source of record.

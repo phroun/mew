@@ -281,11 +281,15 @@
                 <button class="cmd" data-cmd="shrink-size">− smaller</button>
                 <button class="cmd" data-cmd="grow">larger =</button>
               </div>
-              <div class="t" style="margin-top:6px">stack · <kbd>\</kbd> toggle · <kbd>,</kbd> <kbd>.</kbd> tabs</div>
+              <div class="t" style="margin-top:6px">stack · <kbd>\</kbd> toggle · <kbd>,</kbd> <kbd>.</kbd> tabs · <kbd>{</kbd> <kbd>}</kbd> reorder</div>
               <div class="btns">
                 <button class="cmd" data-cmd="toggle-stack">stack ⇄ <kbd>\</kbd></button>
                 <button class="cmd" data-cmd="tab-prev">◂ <kbd>,</kbd></button>
                 <button class="cmd" data-cmd="tab-next"><kbd>.</kbd> ▸</button>
+              </div>
+              <div class="btns">
+                <button class="cmd" data-cmd="tab-move-prev">move ◂ <kbd>{</kbd></button>
+                <button class="cmd" data-cmd="tab-move-next"><kbd>}</kbd> move ▸</button>
               </div>
               <div class="t" style="margin-top:6px">group &amp; life-cycle</div>
               <div class="btns nowrap">
@@ -471,7 +475,10 @@ function side(orient,phys){
   }
 }
 function insertSib(group,ref,node,s){const i=group.children.indexOf(ref);group.children.splice(s==="before"?i:i+1,0,node);}
-function replaceNode(oldN,neu){if(oldN===root){root=neu;}else{const p=oldN.parent;p.children[p.children.indexOf(oldN)]=neu;}}
+// the replacement takes over the old node's SLOT, so it inherits the slot's
+// tab-state (was this the selected tab of a stack?); the old node, now nested
+// inside `neu`, must not keep `selected` or it would mark `neu` a stack.
+function replaceNode(oldN,neu){neu.selected=oldN.selected;oldN.selected=false;if(oldN===root){root=neu;}else{const p=oldN.parent;p.children[p.children.indexOf(oldN)]=neu;}}
 
 // ---------- structural commands ----------
 // seekUpInsert breaks a new item OUT to a higher level: it walks up the parent
@@ -641,6 +648,21 @@ function cmdToggleStack(){
 }
 // nearest stacked ancestor of the selection (or of a given node).
 function enclosingStack(n){let p=n&&n.parent;while(p){if(stackedG(p))return p;p=p.parent;}return null;}
+// focus memory: every group remembers which child last held focus (`_lastChild`).
+// recordFocus stamps the whole path from the focused leaf up to the root each
+// layout, so leaving a tab leaves a trail. focusEntry replays it to pick the leaf
+// to land on when ENTERING a subtree — descending _lastChild through ordinary
+// groups, but deferring to a nested stack's OWN selected tab when it crosses one
+// (so restoration stops at each tab-group boundary and each stack restores
+// itself). Falls back to the first leaf when a remembered child is gone.
+function recordFocus(){let n=sel();while(n&&n.parent){n.parent._lastChild=n.id;n=n.parent;}}
+function focusEntry(node){
+  while(node&&node.kind==="group"){
+    node=stackedG(node)?selectedChild(node)
+        :(node.children.find(c=>c.id===node._lastChild)||node.children[0]);
+  }
+  return node;
+}
 // while the selection is a DIRECT tab of a stack, mode/pin/resize operate on the
 // box (the stack shadows its tabs); deeper in a tab's sub-layout they're normal.
 function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.parent:s;}
@@ -651,11 +673,21 @@ function cmdTabCycle(step){
   const n=g.children.length; if(n<2)return;
   const i=g.children.indexOf(selectedChild(g)), nx=g.children[((i+step)%n+n)%n];
   selectChild(g,nx);
-  const l=firstLeaf(nx); if(l)selId=l.id;
+  const l=focusEntry(nx); if(l)selId=l.id; // restore where focus last was in that tab
   rebuild();
 }
 // pick a specific tab (header click).
-function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=firstLeaf(c); if(l)selId=l.id; rebuild(); }
+function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
+// swap_tab_prior / swap_tab_next: REORDER the active tab within its stack (move
+// its slot left/right in the children order). The tab stays active and selected;
+// only its position among the tabs changes. No wrap at the ends.
+function cmdSwapTab(step){
+  const g=enclosingStack(sel()); if(!g)return;
+  const i=g.children.indexOf(selectedChild(g)), j=i+step;
+  if(j<0||j>=g.children.length)return;
+  const a=g.children; [a[i],a[j]]=[a[j],a[i]];
+  rebuild();
+}
 
 // ---------- normalization ----------
 function normalize(n){
@@ -693,6 +725,10 @@ function rebuild(){
 // A tile → {ref, …non-default attrs}. A box → {box:"ltr", children:[…]}, anonymous.
 // `selected:true` rides on the CHILD; its presence is what makes a box a stack,
 // and a stacked box also emits its own mode/pin (its negotiation identity).
+// `focused:true` also rides on a child: it is a group's remembered last-focus
+// child (`_lastChild`) — the focus trail. It can appear on ANY child of ANY box
+// (wherever focus has been), one per group; following the selected+focused chain
+// from the root lands on the live focus, and each inactive tab keeps its own.
 // Defaults are omitted on the way out and refilled on the way in. In PSL the
 // same object is one named param (`box:` / `ref:` + attrs) plus ordered children.
 const LEAF_DEF={minW:90,minH:64,natW:240,natH:150};
@@ -711,15 +747,21 @@ function serialize(n){
   if(n.selected)o.selected=true;         // this box is the selected tab of its parent
   if(stackedG(n))emitState(o);           // a stack carries its own mode/pin (priority derives)
   o.children=n.children.map(serialize);
+  // mark the focus-memory child — but not when it's already the selected tab (a
+  // stack's memory always IS its active tab, so `selected` already says it).
+  const li=n.children.findIndex(c=>c.id===n._lastChild);
+  if(li>=0&&!o.children[li].selected)o.children[li].focused=true;
   return o;
 }
 function deserialize(o){
   if(o&&o.box!=null){
     const orient=String(o.box).toUpperCase();
-    const g=newGroup(["LTR","RTL","TTB","BTT"].includes(orient)?orient:"LTR",(o.children||[]).map(deserialize));
+    const kids=(o.children||[]).map(deserialize);
+    const g=newGroup(["LTR","RTL","TTB","BTT"].includes(orient)?orient:"LTR",kids);
     if(o.selected)g.selected=true;
     if(o.mode)g.mode=o.mode;
     if(o.pin!=null)g.pin={amount:+o.pin,enforced:!!o.enforced};
+    (o.children||[]).forEach((co,i)=>{if(co&&co.focused)g._lastChild=kids[i].id;}); // restore focus trail
     return g;
   }
   const l=newLeaf();
@@ -739,7 +781,7 @@ function loadJSON(str){
   // keep future auto-refs from colliding with any winN we just loaded
   let mx=0; walk(root,n=>{if(n.kind==="leaf"){const m=/^win(\d+)$/.exec(n.ref||"");if(m)mx=Math.max(mx,+m[1]);}});
   _ref=Math.max(_ref,mx);
-  const fl=firstLeaf(root); selId=fl?fl.id:null;
+  const fl=focusEntry(root)||firstLeaf(root); selId=fl?fl.id:null; // land on the restored focus
   rebuild(); return null;
 }
 
@@ -848,6 +890,7 @@ function allocate(n,x,y,w,h){
 
 function layout(){
   syncStacksToSel(); // reveal the selected tile's tab before measuring/placing
+  recordFocus();     // leave a focus trail so returning to a tab lands where it was
   measure(root); computeEff(root); allocate(root,0,0,wsW,wsH);
 }
 
@@ -882,8 +925,8 @@ function landingLeaf(node,dir){
 // navTarget finds the leaf a directional move lands on — the STRUCTURAL next
 // neighbor (walk up to the nearest ancestor whose axis matches travel and take
 // its sibling in that direction), then descend to the spot under the caret.
-function navTarget(dir){
-  const s=sel(); if(!s)return null;
+function navTarget(dir,origin){
+  const s=origin||sel(); if(!s)return null;
   const navH=(dir==="left"||dir==="right");
   let node=s, parent=s.parent;
   while(parent){
@@ -918,17 +961,20 @@ function swapNodes(a,b){
   pa.children[ia]=b; pb.children[ib]=a; a.parent=pb; b.parent=pa;
 }
 function cmdSwap(dir){
-  const s=sel(); if(!s)return;
-  const t=navTarget(dir); if(!t||t===s)return;
+  const src=opTarget(); if(!src)return; // a stacked tab exchanges as its WHOLE box
+  const t=navTarget(dir,src); if(!t||t===src)return;
   const vert=(dir==="up"||dir==="down");
   const keep=vert?caret.x:caret.y; // preserve the caret's cross-travel coordinate
-  swapNodes(s,t);
-  const p=s.pin,m=s.mode; s.pin=t.pin; s.mode=t.mode; t.pin=p; t.mode=m;
-  rebuild(); // selection follows the moved tile (s), now at t's old spot
+  swapNodes(src,t);
+  // pin, mode AND the active-tab flag stay with the LOCATION, not the tile.
+  const p=src.pin,m=src.mode,sl=src.selected;
+  src.pin=t.pin; src.mode=t.mode; src.selected=t.selected;
+  t.pin=p; t.mode=m; t.selected=sl;
+  rebuild(); // selection stays on the moved content, now at t's old spot
   // land the caret at its old cross-travel position within the destination —
   // clamped just inside so it can't leave the tile (nearest edge if it would);
   // the travel direction is recentred.
-  const r=s._rect;
+  const r=(sel()||{})._rect;
   if(r){
     const ins=8;
     if(vert){caret.x=Math.min(Math.max(keep,r.x+ins),r.x+r.w-ins);caret.y=r.y+r.h/2;}
@@ -936,12 +982,12 @@ function cmdSwap(dir){
     render();
   }
 }
-// tile_next / tile_prior: a full cyclic sweep of every leaf in reading order
-// (the tree's logical DFS order), breaking out of groups at their ends and
-// wrapping around the whole tree. Unlike dismiss's next-focus, it does NOT
-// favour the current group — it just steps to the next/previous leaf overall.
+// tile_next / tile_prior: a cyclic sweep of the currently VISIBLE leaves in
+// reading order (DFS), wrapping around. Leaves hidden behind an inactive tab are
+// skipped — stepping between tabs is ,/. 's job, not this. (Omitted-for-fit tiles
+// stay in the cycle: landing on one brings it back via focus protection.)
 function cmdTileCycle(step){
-  const ls=leaves(); if(ls.length<2)return;
+  const ls=leaves().filter(l=>l._why!=="tab"); if(ls.length<2)return;
   const i=ls.findIndex(l=>l.id===selId); if(i<0)return;
   const t=ls[(i+step+ls.length)%ls.length];
   selId=t.id; setCaretToSel(); render();
@@ -956,7 +1002,10 @@ function cmdTileCycle(step){
 // is the very edge (no neighbor to land beside), where the source spawns a fresh
 // band on the outside (mergeToEdge). This single rule subsumes the old
 // with/against-grain cases. Normalization then dissolves any 1-child leftovers.
-function detach(n){const p=n.parent;if(p)p.children.splice(p.children.indexOf(n),1);}
+// detach also voids the tab-status: a node lifted out of its slot is no longer
+// anyone's selected tab until it's re-placed (else it could mark a new parent a
+// stack). Its INTERNAL selected child, if it's a stack, is untouched.
+function detach(n){const p=n.parent;if(p)p.children.splice(p.children.indexOf(n),1);n.selected=false;}
 // merging into the VOID (no neighbor in that direction) pushes the tile to the
 // extreme of the whole layout: promote it to a top-level child at that edge if
 // the root already runs the axis, else split the root (wrap it) with the tile
@@ -972,16 +1021,16 @@ function mergeToEdge(s,dir,Ad){
     const o=defOrient(Ad), sd=side(o,dir);
     root=newGroup(o, sd==="before"?[s,root]:[root,s]);
   }
-  selId=s.id; rebuild();
+  if(s.kind==="leaf")selId=s.id; rebuild(); // a moved stack keeps selection on its visible tab
 }
 function cmdMerge(dir){
-  const s=sel(); if(!s)return;
+  const src=opTarget(); if(!src)return;        // a stacked tab merges as its WHOLE box
   const Ad=(dir==="up"||dir==="down")?"V":"H"; // travel axis
   const Pd=Ad==="H"?"V":"H";                   // across-travel axis: source lands adjacent here
-  const D=navTarget(dir);
-  if(!D){mergeToEdge(s,dir,Ad);return;}         // very edge: spawn a new band outside
-  if(D===s)return;
-  detach(s);
+  const D=navTarget(dir,src);
+  if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
+  if(D===src)return;
+  detach(src);
   // the caret dot picks which side of D along the ACROSS-travel axis, like
   // clicking the near or far half of the destination to choose an insert point.
   // <= so an exact tie on the midpoint resolves to the BEFORE side, not after.
@@ -992,14 +1041,14 @@ function cmdMerge(dir){
   if(p&&!stackedG(p)&&axisOf(p.orientation)===Pd){
     // D already lives in an across-travel group — slot source in beside it. No
     // band is added in the travel direction (they share D's band).
-    insertSib(p,D,s,side(p.orientation,phys));
+    insertSib(p,D,src,side(p.orientation,phys));
   }else{
     // split D into an across-travel pair; still no new band along travel — D's
     // own cell is subdivided perpendicular to the merge.
     const o=defOrient(Pd), sd=side(o,phys);
-    replaceNode(D,newGroup(o,sd==="before"?[s,D]:[D,s]));
+    replaceNode(D,newGroup(o,sd==="before"?[src,D]:[D,src]));
   }
-  selId=s.id; rebuild();
+  if(src.kind==="leaf")selId=src.id; rebuild(); // a moved stack keeps its visible-tab selection
 }
 
 // ---------- rendering ----------
@@ -1191,6 +1240,8 @@ document.querySelectorAll("[data-cmd]").forEach(b=>{
     else if(c==="toggle-stack")cmdToggleStack();
     else if(c==="tab-prev")cmdTabCycle(-1);
     else if(c==="tab-next")cmdTabCycle(1);
+    else if(c==="tab-move-prev")cmdSwapTab(-1);
+    else if(c==="tab-move-next")cmdSwapTab(1);
   };
 });
 ["minW","minH","natW","natH","prio"].forEach(k=>{
@@ -1257,6 +1308,8 @@ window.addEventListener("keydown",e=>{
   else if(k==="\\")cmdToggleStack();
   else if(k===",")cmdTabCycle(-1);
   else if(k===".")cmdTabCycle(1);
+  else if(k==="{")cmdSwapTab(-1);
+  else if(k==="}")cmdSwapTab(1);
   else if(k==="delete"||k==="backspace")cmdDismiss();
   else return;
   e.preventDefault();
