@@ -688,39 +688,72 @@ function cmdTabCycle(step){
 }
 // change a stack's visible tab WITHOUT moving focus (leaves selId alone).
 function flipTab(g,j){selectChild(g,g.children[j]);render();}
-// Persistent cursor for the no-stack fallback: the id of the group we are PARKED
-// on. This is the extra piece of state the ring needs — "which tab shows" alone
-// can't tell whether a group sitting at its end should step again or hand off,
-// but "parked on G and G is at its end" can. Keyed by id so it survives render()
-// (which keeps node identity); any op that rebuilds nodes drops it and we re-anchor.
+// Persistent cursor for the no-stack fallback: the id of the DEEPEST stack the
+// baton is parked on. Its stacked ancestors are the baton at each level above it;
+// the peer to hand to at any level is derived from reading order + direction, so
+// this one id is all the state the odometer needs. Keyed by id so it survives
+// render() (node identity is stable); any op that rebuilds nodes re-anchors it.
 let visCursor=null;
-// Fallback when the selection sits under NO stack: cycling keys flip the visible
-// tab-groups WITHOUT moving our active focus, exhausting ONE group at a time. A
-// press steps the parked group's own tab; when that group is already at the end
-// for this direction, the press instead RESETS the next group to its far tab and
-// parks there. So a group is walked to its end, then the baton passes to a
-// DIFFERENT group — a group only ever loops on itself when it is the ONLY group.
-// The whole thing MIRRORS by direction: forward (.) hands the baton rightward and
-// starts fresh at the leftmost group; backward (,) hands it leftward and starts
-// fresh at the rightmost — so pressing left retraces the exact reverse of right.
+// The visible >=2-tab stacks form a containment FOREST. A baton lives at every
+// level that has ties (>1 simultaneously-visible peer stack); with no nesting
+// this is just the flat top row.
+function visStacks(){const a=[];(function w(n){ if(n.kind!=="group")return;
+  if(stackedG(n)&&isVisible(n)&&n.children.length>=2)a.push(n);
+  n.children.forEach(w); })(root);return a;}
+// nearest ancestor that is a >=2-tab stack (the level the baton rises to), or null at top.
+function parentStack(g){let p=g.parent;while(p){if(stackedG(p)&&p.children.length>=2)return p;p=p.parent;}return null;}
+// the >=2-tab stacks one level DOWN, under S's currently shown tab (nearest
+// enclosing stack === S), in reading order. Walks the shown branch only, so it
+// sees tabs we just flipped this press, before any re-layout re-derives isVisible.
+function childStacks(S){const a=[];(function w(n){ if(n.kind!=="group")return;
+  if(stackedG(n)&&n.children.length>=2){a.push(n);return;} // first stack on the branch; deeper is its own childStacks
+  n.children.forEach(w); })(selectedChild(S));return a;}
+// Fallback when the selection sits under NO stack: cycling keys run an ODOMETER
+// over that forest WITHOUT moving focus. The baton walks the deepest active
+// stack's tabs; off its end it hands to the next PEER at the same level (the
+// mirrored left/right handoff — non-wrapping when nested); once a whole level is
+// spent the baton RISES to the parent, whose container advances one tab, revealing
+// (and resetting to its start) the next sub-region. The TOP level is the only ring
+// that wraps — there is no parent to rise to. Inner wheels reset when an outer
+// clicks, and the whole thing mirrors by direction. With no nesting it reduces to
+// the flat left-to-right group-major cycling.
 function cycleVisibleStack(step){
-  const groups=[];
-  (function walkD(n){ if(n.kind!=="group")return;
-    if(stackedG(n)&&isVisible(n)&&n.children.length>=2)groups.push(n);
-    n.children.forEach(walkD); })(root);
-  if(!groups.length)return;
-  const m=groups.length, dir=step>0?1:-1;
+  const vs=visStacks(); if(!vs.length)return;
+  const dir=step>0?1:-1;
   const shown=g=>g.children.indexOf(selectedChild(g));
-  // the tab a freshly-handed group starts cycling from: the far end for this
-  // direction, nudged one in if it already shows it (so the press always moves).
-  const entry=h=>{let e=step>0?0:h.children.length-1;return shown(h)===e?e+step:e;};
-  let a=visCursor?groups.findIndex(g=>g.id===visCursor):-1;
-  if(a>=0){
-    const g=groups[a], j=shown(g)+step;
-    if(j>=0&&j<g.children.length){flipTab(g,j);visCursor=g.id;return;} // step within parked group
-    a=(a+dir+m)%m;              // parked group at its end -> hand the baton IN the press direction
-  }else a=step>0?0:m-1;         // fresh/stale -> leftmost group going right, rightmost going left
-  const h=groups[a];flipTab(h,entry(h));visCursor=h.id;
+  const set=(g,i)=>selectChild(g,g.children[i]);              // flip a shown tab, no render yet
+  // the far-start tab of h for this direction (first tab going right, last going left).
+  const entry=h=>step>0?0:h.children.length-1;
+  // after STEPPING a container: drop the baton to the deepest stack under its new
+  // tab, resetting each revealed inner level to its start (no nudge — the step
+  // itself is the visible move). Parks visCursor on the deepest.
+  const descend=S=>{let cur=S;for(;;){const ks=childStacks(cur);if(!ks.length){visCursor=cur.id;return;}
+    const nx=step>0?ks[0]:ks[ks.length-1];set(nx,entry(nx));cur=nx;}};
+  // baton ENTERS S fresh (handoff / fresh-anchor / revealed by a wrap): reset each
+  // container level to its entry BRANCH, then the deepest fast-wheel to its entry
+  // tab — nudged one further only if it already sits there, so the press always
+  // moves SOMETHING, and it's the innermost wheel that moves (never the container).
+  const enter=S=>{let cur=S;for(;;){const orig=shown(cur), e=entry(cur);
+    set(cur,e); const ks=childStacks(cur);
+    if(!ks.length){if(orig===e)set(cur,e+step);visCursor=cur.id;return;}
+    cur=step>0?ks[0]:ks[ks.length-1];}};
+
+  const D=visCursor?vs.find(s=>s.id===visCursor):null;
+  if(!D){const top=vs.filter(s=>parentStack(s)===null);enter(step>0?top[0]:top[top.length-1]);render();return;}
+
+  for(let g=D;;){
+    const j=shown(g)+step;
+    if(j>=0&&j<g.children.length){set(g,j);descend(g);render();return;}   // step g; reveal + reset deeper
+    const par=parentStack(g);
+    const peers=vs.filter(s=>parentStack(s)===par);                       // g's level-peers, reading order
+    const i=peers.indexOf(g);
+    if(par===null){                                                       // TOP level: circular ring (wraps)
+      enter(peers[((i+dir)%peers.length+peers.length)%peers.length]);render();return;
+    }
+    const ni=i+dir;                                                       // NESTED level: non-circular
+    if(ni>=0&&ni<peers.length){enter(peers[ni]);render();return;}         // hand to the next peer here
+    g=par;                                                                // off this level's end -> rise to parent
+  }
 }
 // pick a specific tab (header click).
 function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)selId=l.id; rebuild(); }
