@@ -7738,9 +7738,9 @@ func (e *Editor) performRender() {
 	// Calculate layout
 	layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
 
-	// Drive the main viewport's horizontal frame from the ifitfits tiler (a
-	// minimal geometry-only integration: the main document paints at half width).
-	e.applyTilerGeometry(layout)
+	// Drive the main viewport's geometry from the ifitfits tiler (a minimal
+	// geometry-only integration: the main document paints in its resolved tile).
+	e.applyTilerGeometry(&layout)
 
 	// Render
 	e.Renderer.Render(layout)
@@ -7780,17 +7780,26 @@ func (e *Editor) performRender() {
 	e.updateNiqqudNudge()
 }
 
-// applyTilerGeometry drives the painted main viewport's horizontal frame from
-// the ifitfits tiler. This is a deliberately minimal, geometry-only integration
-// test: the tiler holds a "main" tile split to the right against an empty
-// "blank" tile, so the main document is confined to the left half of the main
-// area — proving the tiler's cell geometry flows into mew's window painting.
-// Nothing else (focus, input, the blank tile's contents) is wired yet.
+// applyTilerGeometry drives the painted main viewport's geometry from the
+// ifitfits tiler. This is a deliberately minimal, geometry-only integration:
+// the tiler holds a "main" tile (split against a "blank" tile) whose resolved
+// cell rect becomes the main viewport's on-screen box, proving the tiler's
+// geometry flows into mew's window painting. Nothing else (focus, input, the
+// blank tile's contents) is wired yet.
 //
 // The tiler works in the same cell units the main editor uses. Its workspace is
-// the full main-area rectangle (screen width × the negotiated main height); the
-// "main" tile's resolved rect becomes the viewport's FrameX/FrameWidth.
-func (e *Editor) applyTilerGeometry(layout viewport.Layout) {
+// the full main-area rectangle (screen width × the negotiated main height). The
+// "main" tile's rect maps to the viewport two ways, because mew models the two
+// axes differently:
+//   - Horizontal: the ViewportLayout has no X/width, so the tile's X/width go on
+//     the viewport itself (FrameX/FrameWidth) and the renderer honors them.
+//   - Vertical: the ViewportLayout already carries per-viewport Y/height, and the
+//     layout's MainHeight is exactly the tiler's workspace height, so the tile's
+//     Y/height replace this entry's Y/height. That flows through the normal
+//     render pass into ContentHeight, so paging/scroll/mouse all see the real
+//     window height — and because it is per-viewport, a prompt buffer (which
+//     sets its own ContentHeight) is unaffected.
+func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	if len(layout.MainLayout) == 0 {
 		return
 	}
@@ -7798,25 +7807,30 @@ func (e *Editor) applyTilerGeometry(layout viewport.Layout) {
 	e.ensureTiler()
 	e.tiler.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
-	// Resolve the "main" tile's rect and translate it into the viewport frame.
-	var fx, fw int
+	// Resolve the "main" tile's rect.
+	var fx, fy, fw, fh int
 	for _, b := range e.tiler.Tiles() {
 		if b.Tile == e.tilerMain {
-			fx, fw = int(b.Rect.X), int(b.Rect.W)
+			fx, fy, fw, fh = int(b.Rect.X), int(b.Rect.Y), int(b.Rect.W), int(b.Rect.H)
 		}
 	}
-	if fw <= 0 {
+	if fw <= 0 || fh <= 0 {
 		return
 	}
 
-	// Frame the painted main viewport; clear any frame we stamped on a previous
-	// main so a focus change does not leave a stale half-width window behind.
 	main := layout.MainLayout[0].Viewport
+	// Horizontal frame on the viewport; clear any frame we stamped on a previous
+	// main so a focus change does not leave a stale narrow window behind.
 	if e.tilerFramed != nil && e.tilerFramed != main {
 		e.tilerFramed.FrameX, e.tilerFramed.FrameWidth = 0, 0
 	}
 	main.FrameX, main.FrameWidth = fx, fw
 	e.tilerFramed = main
+
+	// Vertical extent via the layout entry: the tile's Y is relative to the
+	// main area, whose top is this entry's current Y.
+	layout.MainLayout[0].Y += fy
+	layout.MainLayout[0].Height = fh
 }
 
 // Run starts the editor with an optional filename.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/phroun/mew/internal/textwidth"
+	"github.com/phroun/pawscript"
 )
 
 // glyphCols returns, per 1-based screen row, the set of 1-based columns at which
@@ -44,6 +45,33 @@ func glyphCols(frame string, target rune) map[int][]int {
 		}
 	}
 	return out
+}
+
+// TestTilerSplitDownShrinksMainHeight verifies the vertical half of the geometry
+// wiring: splitting the main tile downward shrinks the painted main viewport's
+// height — and that height reaches ContentHeight (what paging/scroll read).
+func TestTilerSplitDownShrinksMainHeight(t *testing.T) {
+	e, doc, _ := newRenderedEditor(t, "hello\n")
+	e.performRender()
+	fullH := doc.ContentHeight
+	if fullH < 6 {
+		t.Fatalf("unexpected initial main ContentHeight %d", fullH)
+	}
+
+	// Split the main tile (the seeded #tile default) downward.
+	if res := e.PawScript.ExecuteAsync("viewport_split down"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_split down: %v", res)
+	}
+	e.performRender()
+	halfH := doc.ContentHeight
+
+	if halfH >= fullH {
+		t.Fatalf("split down did not shrink main height: %d -> %d", fullH, halfH)
+	}
+	// Roughly half (allow slack for ruler/message-bar rows and rounding).
+	if halfH < fullH/2-3 || halfH > fullH/2+3 {
+		t.Fatalf("split down: main ContentHeight %d, want ~half of %d", halfH, fullH)
+	}
 }
 
 // TestTilerFramesMainToHalfWidth is the minimal ifitfits geometry-integration
