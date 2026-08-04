@@ -168,12 +168,13 @@ func (v *Viewport) newLeaf(ref string) *node {
 	return n
 }
 
+// newGroup builds a group over kids WITHOUT rewiring their parent pointers.
+// Callers that wrap an existing node (e.g. replaceNode(s, newGroup(o, s, nl)))
+// rely on that node's parent still pointing at its ORIGINAL enclosing group
+// until the structural op finishes; resolve() calls rebuildParents to make every
+// parent pointer consistent before any layout or navigation reads it.
 func (v *Viewport) newGroup(o Orient, kids ...*node) *node {
-	g := &node{kind: groupKind, orient: o, children: append([]*node(nil), kids...)}
-	for _, c := range kids {
-		c.parent = g
-	}
-	return g
+	return &node{kind: groupKind, orient: o, children: append([]*node(nil), kids...)}
 }
 
 // ---- tree helpers ----
@@ -332,6 +333,60 @@ func (v *Viewport) Tiles() []Box {
 		})
 	})
 	return out
+}
+
+// Tab is one entry of a stack's header, for the host to draw a tab strip. Tile is
+// the leaf revealing that tab (pass it to Reveal on a click).
+type Tab struct {
+	Tile     Handle
+	Ref      string
+	Selected bool
+}
+
+// Stack is a visible tabbed stack: its box, the header reserve, and its tabs.
+type Stack struct {
+	Rect    Rect
+	HeaderH float64
+	Tabs    []Tab
+}
+
+// Stacks returns the visible tabbed stacks so the host can draw their tab strips
+// (including tabs not currently shown — which Tiles omits).
+func (v *Viewport) Stacks() []Stack {
+	v.ensure()
+	var out []Stack
+	walk(v.root, func(n *node) {
+		if n.kind != groupKind || !stacked(n) || n.hidden {
+			return
+		}
+		tabs := make([]Tab, 0, len(n.children))
+		for _, c := range n.children {
+			var h Handle
+			var ref string
+			if l := focusEntry(c); l != nil {
+				h, ref = l.handle, l.ref
+			}
+			tabs = append(tabs, Tab{Tile: h, Ref: ref, Selected: c.selected})
+		}
+		out = append(out, Stack{Rect: n.rect, HeaderH: n.headerH, Tabs: tabs})
+	})
+	return out
+}
+
+// Reveal makes a tile the shown tab of every stacked ancestor, so it is no longer
+// hidden behind a tab. Returns the tile.
+func (v *Viewport) Reveal(tile Handle) Handle {
+	t := v.tile(tile)
+	if t == nil {
+		return 0
+	}
+	for n := t; n != nil && n.parent != nil; n = n.parent {
+		if stacked(n.parent) && !n.selected {
+			selectChild(n.parent, n)
+		}
+	}
+	v.touch()
+	return tile
 }
 
 // SetMetrics sets a tile's intrinsic minimum and natural sizes (host content

@@ -325,3 +325,27 @@ func TestTabCycleWrapsOutermost(t *testing.T) {
 		t.Fatalf("wrap landed on %q, want o0 (outermost wraps, not inner)", got)
 	}
 }
+
+// TestSplitAddsTileAndSubdivides guards a regression where newGroup eagerly
+// reparented its kids, so replaceNode(s, newGroup(o, s, nl)) read s's parent
+// AFTER it had been pointed at the new group — building a self-cycle that
+// dropped the new tile and later hung the parent-walk in New. Split must add a
+// real tile, and a follow-on directional New must subdivide without hanging.
+func TestSplitAddsTileAndSubdivides(t *testing.T) {
+	v, first := NewViewport(720, 420)
+	v.Set(first, "win1")
+	right := v.Split(first, Right)
+	if got := len(v.Tiles()); got != 2 {
+		t.Fatalf("Split(Right) should yield 2 tiles, got %d", got)
+	}
+	if v.Content(right) != "win1" {
+		t.Fatalf("Split should clone the origin ref, got %q", v.Content(right))
+	}
+	down := v.New(right, Down) // used to hang on the self-cycle
+	if got := len(v.Tiles()); got != 3 {
+		t.Fatalf("New(Down) after Split should yield 3 tiles, got %d", got)
+	}
+	if down == 0 || v.Content(down) != "win1" {
+		t.Fatalf("New should clone the origin ref, got handle=%d ref=%q", down, v.Content(down))
+	}
+}
