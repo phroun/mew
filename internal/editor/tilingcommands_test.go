@@ -69,6 +69,32 @@ func TestTilingCommandsFire(t *testing.T) {
 	}
 }
 
+// TestViewportGoFollowsTileDefault checks the seek/go split: viewport_seek is
+// the raw navigation (no side effects), while viewport_go additionally moves the
+// #tile default to the destination tile.
+func TestViewportGoFollowsTileDefault(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "hi\n")
+	e.ensureTiler() // main (left) | blank (right)
+
+	// seek right resolves the destination but must NOT move #tile.
+	if res := e.PawScript.ExecuteAsync("viewport_seek #tile, right"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_seek: %v", res)
+	}
+	e.PawScript.ExecuteAsync("viewport_content") // default #tile
+	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "main" {
+		t.Fatalf("after seek, #tile content = %q, want \"main\" (seek must not move #tile)", got)
+	}
+
+	// go right moves #tile to the destination tile (the right "blank" tile).
+	if res := e.PawScript.ExecuteAsync("viewport_go #tile, right"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_go: %v", res)
+	}
+	e.PawScript.ExecuteAsync("viewport_content") // default #tile, now the destination
+	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "blank" {
+		t.Fatalf("after go, #tile content = %q, want \"blank\" (go must move #tile to the destination)", got)
+	}
+}
+
 // TestTilingSplitHashIdiom exercises viewport_split's #-handle idiom: an explicit
 // leading #-symbol names the tile, an omitted handle falls back to the seeded
 // #tile default, a missing direction fails, and a script-assigned #tile is not

@@ -341,7 +341,25 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 	tileRet("viewport_close", "viewport_close [#tile]", (*ifitfits.Viewport).Close)
 
 	// --- Navigation ---
-	// viewport_go returns the resolved destination tile.
+	// viewport_seek is the raw ifitfits navigation: it moves the caret goal and
+	// returns the resolved destination tile, with no mew-side side effects.
+	ps.RegisterCommand("viewport_seek", func(ctx *pawscript.Context) pawscript.Result {
+		vp, t, rest, ok := e.tileFront(ctx)
+		d, okD := tileArgDir(ctx, rest)
+		if !ok || !okD {
+			e.ShowWarning("Usage: viewport_seek [#tile], <direction>")
+			return pawscript.BoolStatus(false)
+		}
+		ctx.SetResult(uint64(vp.Go(t, d)))
+		return pawscript.BoolStatus(true)
+	})
+	// viewport_go is mew's navigation wrapper around viewport_seek: it seeks,
+	// makes the destination the new #tile default, and switches mew's view to the
+	// destination tile's content — the tile's ref is a mew viewport id, so
+	// focusing it drives lastMainViewport and the modebar exactly as an ordinary
+	// focus change would. When the destination tile carries a ref that is not a
+	// live viewport (e.g. an as-yet-unpopulated tile), the view is left as-is; the
+	// #tile default still follows the move.
 	ps.RegisterCommand("viewport_go", func(ctx *pawscript.Context) pawscript.Result {
 		vp, t, rest, ok := e.tileFront(ctx)
 		d, okD := tileArgDir(ctx, rest)
@@ -349,7 +367,15 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			e.ShowWarning("Usage: viewport_go [#tile], <direction>")
 			return pawscript.BoolStatus(false)
 		}
-		ctx.SetResult(uint64(vp.Go(t, d)))
+		dest := vp.Go(t, d)
+		ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
+		if ref := vp.Content(dest); ref != "" {
+			if e.ViewportManager.GetViewport(ref) != nil {
+				e.ViewportManager.SetFocus(ref) // sets lastMainViewport, as a normal switch
+				e.announceFocusedViewport()
+			}
+		}
+		ctx.SetResult(uint64(dest))
 		return pawscript.BoolStatus(true)
 	})
 	tileRet("viewport_up", "viewport_up [#tile]", (*ifitfits.Viewport).Up)
