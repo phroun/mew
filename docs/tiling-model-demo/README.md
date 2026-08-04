@@ -75,10 +75,11 @@ group/parent. `[`/`]` cycle tiles (visible ones only — never inactive tabs).
 `−`/`=` grow/shrink. `\` toggle stack, `,`/`.` cycle tabs, `{`/`}` reorder the
 active tab. `Delete`/`Backspace` dismiss. On-screen buttons mirror all of these.
 
-Mode/pin/resize, swap and merge on a stacked tab act on the whole tab-group (the
-box shadows its tabs); `split` nests into the active tab while `new` breaks out
-to a fresh sibling tab. Returning to a tab restores the focus to where it last
-was inside it.
+Mode/pin/resize and **swap** on a stacked tab act on the whole tab-group (the box
+shadows its tabs). **merge** instead moves the single tile, so a lone tab can be
+extracted from its stack (the stack hands off to a neighbour and survives).
+`split` nests into the active tab; `new` breaks out past *every* tab level to the
+nearest non-tab group. Returning to a tab restores focus to where it last was.
 
 A hosted copy of this same page is published as a Claude artifact for quick
 sharing, but this file is the source of record.

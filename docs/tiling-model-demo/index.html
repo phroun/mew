@@ -483,13 +483,14 @@ function replaceNode(oldN,neu){neu.selected=oldN.selected;oldN.selected=false;if
 // ---------- structural commands ----------
 // seekUpInsert breaks a new item OUT to a higher level: it walks up the parent
 // chain to the nearest ancestor whose axis matches the travel direction and
-// inserts there; if none exists it encloses the current group in a new
-// same-axis parent. Shared by new's perpendicular case and its along-axis-at-
-// the-end case.
+// inserts there; if none exists it encloses the current group in a new same-axis
+// parent. It matches on axOf, so STACKS (effective axis Z) are transparent — a
+// new item busts out past every tab level until it reaches a real spatial (non-
+// tab) group. Shared by new's perpendicular case and its along-axis-at-the-end.
 function seekUpInsert(G,Ad,dir,nl){
   let cur=G, parent=G.parent;
   while(parent){
-    if(axisOf(parent.orientation)===Ad){ insertSib(parent,cur,nl,side(parent.orientation,dir)); return; }
+    if(axOf(parent)===Ad){ insertSib(parent,cur,nl,side(parent.orientation,dir)); return; }
     cur=parent; parent=parent.parent;
   }
   const o=defOrient(Ad), s2=side(o,dir);
@@ -500,7 +501,7 @@ function cmdNew(dir){
   const nl=newLeaf();
   if(dir==="before"||dir==="after"){ insertSib(G,s,nl,dir); rebuild(); return; }
   const Ad=(dir==="up"||dir==="down")?"V":"H";
-  if(axisOf(G.orientation)===Ad){
+  if(axOf(G)===Ad){ // axOf, so a stacked parent is skipped and we bust out past it
     // along the group's own axis: a plain sibling next to the item, UNLESS the
     // item sits at that end of the group — then break out to a higher level.
     const sd=side(G.orientation,dir), i=G.children.indexOf(s);
@@ -1032,12 +1033,22 @@ function mergeToEdge(s,dir,Ad){
   if(s.kind==="leaf")selId=s.id; rebuild(); // a moved stack keeps selection on its visible tab
 }
 function cmdMerge(dir){
-  const src=opTarget(); if(!src)return;        // a stacked tab merges as its WHOLE box
+  // Unlike swap (which moves a whole tab-group via opTarget), merge moves the
+  // SINGLE tile — so a lone tab can be extracted from its stack ("merged out")
+  // without dragging the rest of the group along.
+  const src=sel(); if(!src)return;
   const Ad=(dir==="up"||dir==="down")?"V":"H"; // travel axis
   const Pd=Ad==="H"?"V":"H";                   // across-travel axis: source lands adjacent here
-  const D=navTarget(dir,src);
+  const D=navTarget(dir);                       // from sel(): nav walks past the enclosing stack (Z)
   if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
   if(D===src)return;
+  // if we're pulling the visible tab out of a stack, hand the stack to a
+  // neighbouring tab first so it stays a stack (or cleanly collapses if it had 2).
+  const g=src.parent;
+  if(g&&stackedG(g)&&src.selected){
+    const i=g.children.indexOf(src), nb=g.children[i+1]||g.children[i-1];
+    if(nb)selectChild(g,nb);
+  }
   detach(src);
   // the caret dot picks which side of D along the ACROSS-travel axis, like
   // clicking the near or far half of the destination to choose an insert point.
