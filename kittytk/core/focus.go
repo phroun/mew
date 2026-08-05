@@ -536,6 +536,21 @@ func (fm *FocusManager) HandleTextEditing(event TextEditingEvent) bool {
 	return false
 }
 
+// HandlePaste hands pasted text to the focused trinket. Like HandleTextEditing,
+// and for the same reason, there is no navigation fallback: a paste belongs to
+// whatever has focus, and a focused trinket that cannot hold one leaves nothing
+// sensible to do with the text.
+func (fm *FocusManager) HandlePaste(event PasteEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(PasteHandler); ok {
+		return h.HandlePaste(event)
+	}
+	return false
+}
+
 // FocusScope represents a focus containment boundary.
 // Trinkets can have their own focus scope (like dialogs or tool windows).
 type FocusScope struct {
@@ -790,6 +805,19 @@ func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandlePaste routes pasted text to the active scope, the same way
+// HandleTextEditing routes a composition.
+func (gfm *GlobalFocusManager) HandlePaste(event PasteEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandlePaste(event)
 	}
 	return false
 }

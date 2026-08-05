@@ -292,6 +292,13 @@ func (t *TUIBackend) Init() error {
 	// Enter alternate screen
 	t.writeTTY("\033[?1049h")
 
+	// Enable bracketed paste. Without this the outer terminal ships a paste as
+	// a raw byte flood — indistinguishable from very fast typing — which
+	// direct-key-handler then surfaces one key at a time, overrunning the event
+	// queue and dropping characters on a large paste. With it on, a paste
+	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
+	t.writeTTY("\033[?2004h")
+
 	// Hide cursor initially
 	t.writeTTY("\033[?25l")
 
@@ -299,12 +306,20 @@ func (t *TUIBackend) Init() error {
 	// that never reaches Shutdown can still hand it back.
 	registerLive(t)
 
-	// Set up keyboard handler AFTER terminal modes are configured
+	// Set up keyboard handler AFTER terminal modes are configured. Take paste
+	// through OnPaste as one batched event, and turn OFF the per-character key
+	// echo (EmitPasteKeys): a paste is not typing, and re-emitting it as keys
+	// is exactly what overran the event queue.
+	noPasteKeys := false
 	kbOpts := keyboard.Options{
-		InputReader: os.Stdin,
+		InputReader:   os.Stdin,
+		EmitPasteKeys: &noPasteKeys,
 	}
 	t.keyboard = keyboard.New(kbOpts)
 	t.keyboard.OnKey = t.handleKey
+	t.keyboard.OnPaste = func(content []byte) {
+		t.deliverPaste(string(content))
+	}
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
 		// here, not as keystrokes: keep the internal copy in sync and notify the
@@ -377,6 +392,9 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Show cursor
 		t.writeTTY("\033[?25h")
 		t.cursorShown = true
+
+		// Disable bracketed paste (harmless if the terminal never enabled it).
+		t.writeTTY("\033[?2004l")
 
 		// Leave alternate screen
 		t.writeTTY("\033[?1049l")
@@ -1297,6 +1315,23 @@ func (t *TUIBackend) deliverClipboard(s string) {
 	t.mu.Unlock()
 	if h != nil {
 		h(s)
+	}
+}
+
+// deliverPaste queues a bracketed paste from the outer terminal as ONE
+// core.PasteEvent. Unlike handleKey's best-effort enqueue — whose full-queue
+// branch drops, which is what truncated large pastes forwarded as a key flood —
+// this blocks until the queue accepts the event (or the backend stops), so a
+// paste of any size arrives whole. One event per paste means it cannot fill the
+// queue by itself, and the running event loop drains it near-instantly; the
+// stopChan arm keeps a paste arriving during shutdown from wedging the reader.
+func (t *TUIBackend) deliverPaste(text string) {
+	if text == "" {
+		return
+	}
+	select {
+	case t.eventQueue <- core.PasteEvent{Text: text}:
+	case <-t.stopChan:
 	}
 }
 

@@ -1455,6 +1455,18 @@ func (t *TextInput) Paste() {
 	}
 }
 
+// HandlePaste inserts pasted text at the caret, the same way a clipboard paste
+// does (newlines flattened for the single-line flow, selection replaced, one
+// undo step). Satisfies core.PasteHandler so a bracketed paste the host
+// received reaches a focused input directly, with no clipboard round-trip.
+func (t *TextInput) HandlePaste(event core.PasteEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+	t.pasteText(event.Text)
+	return true
+}
+
 // pasteText inserts resolved clipboard text at the caret (newlines flattened to
 // spaces for the single-line flow).
 func (t *TextInput) pasteText(s string) {

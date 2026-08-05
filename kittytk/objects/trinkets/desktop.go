@@ -3363,6 +3363,20 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		return false
 
+	case core.PasteEvent:
+		// Pasted text goes to whatever is focused and nowhere else — like a
+		// composition, not a key: no shortcuts, no menu bar, no window-cycle
+		// keys. The focused trinket reshapes it as it sees fit (a terminal
+		// surface re-brackets it for its child; a text field inserts it). A
+		// paste nobody can hold is dropped rather than reinterpreted.
+		if fm != nil && fm.HandlePaste(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandlePaste(e)
+		}
+		return false
+
 	case core.KeyReleaseEvent:
 		// When every modifier has gone up, lock in an in-progress window-cycle
 		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical

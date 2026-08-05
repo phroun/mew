@@ -2761,6 +2761,22 @@ func normalizePasteNewlines(s string) string {
 	return s
 }
 
+// HandlePaste delivers pasted text (e.g. a bracketed paste the host received
+// from its outer terminal) to the child, re-bracketing it per the CHILD's own
+// paste mode — see sendPaste. This is what lets a paste into the outer terminal
+// reach the program inside a focused PurfecTerm — or a mew editor, which embeds
+// one — as a real paste rather than the flood of per-character keystrokes the
+// host would otherwise forward. The outer terminal's framing never travels this
+// far: the child's mode, not the host's, decides whether the body is bracketed.
+// Satisfies core.PasteHandler.
+func (t *PurfecTerm) HandlePaste(event core.PasteEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+	t.sendPaste(event.Text)
+	return true
+}
+
 // sendPaste writes resolved clipboard text to the child PTY, bracketing it when
 // the application enabled bracketed paste mode.
 func (t *PurfecTerm) sendPaste(s string) {

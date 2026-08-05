@@ -568,12 +568,28 @@ type QuitEvent struct{}
 
 func (QuitEvent) isEvent() {}
 
-// PasteEvent contains pasted text.
+// PasteEvent contains pasted text. It is DECODED text, not wire bytes: a
+// backend that receives a bracketed paste from its outer terminal strips the
+// \x1b[200~ … \x1b[201~ framing and delivers the body here as one event. What a
+// paste MEANS is then the focused trinket's call — a terminal surface
+// re-brackets it for its own child (per that child's paste mode), a text field
+// inserts it — which is why the framing does not travel on this event.
 type PasteEvent struct {
 	Text string
 }
 
 func (PasteEvent) isEvent() {}
+
+// PasteHandler is implemented by any trinket that can receive pasted text
+// directly: a terminal surface that re-brackets it for its child, a text field
+// that inserts it at the caret. A PasteEvent is routed to the focused trinket
+// the same way an input method's composition is (see FocusManager.HandlePaste);
+// a focused trinket that does not implement PasteHandler simply does not
+// receive pastes, and the event is dropped rather than reinterpreted.
+type PasteHandler interface {
+	// HandlePaste receives pasted text and reports whether it was consumed.
+	HandlePaste(PasteEvent) bool
+}
 
 // Painter provides drawing operations with automatic coordinate translation.
 // Trinkets receive a Painter configured with their local coordinate system.

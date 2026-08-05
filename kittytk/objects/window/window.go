@@ -3245,6 +3245,21 @@ func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
 	return fm.HandleTextEditing(event)
 }
 
+// HandlePaste forwards pasted text straight to the focused trinket, skipping
+// the window's own key policy for the same reason HandleTextEditing does:
+// none of the menu bar, shortcut resolver, or title-bar focus has anything to
+// say about text the user is dropping into whatever they are typing in.
+func (w *Window) HandlePaste(event core.PasteEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandlePaste(event)
+}
+
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager
