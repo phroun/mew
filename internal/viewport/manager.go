@@ -959,7 +959,15 @@ func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer
 		return false
 	}
 	old := w.Buffer
-	w.navBack = append(w.navBack, w.detachBinding())
+	// A transient departing buffer (e.g. a mew:/ generated surface) is not kept
+	// as a back destination: release its binding instead of stacking it, so it
+	// can never be navigated back to.
+	departing := w.detachBinding()
+	if old != nil && old.IsTransient() {
+		departing.release()
+	} else {
+		w.navBack = append(w.navBack, departing)
+	}
 	for i := range w.navFwd {
 		b := w.navFwd[i].Buffer
 		switch {
@@ -1058,7 +1066,15 @@ func (w *Viewport) NavHistoryPrior() bool {
 	}
 	b := w.navBack[len(w.navBack)-1]
 	w.navBack = w.navBack[:len(w.navBack)-1]
-	w.navFwd = append(w.navFwd, w.detachBinding())
+	cur := w.Buffer
+	leaving := w.detachBinding()
+	// A transient buffer is not parked for re-advance: release it instead of
+	// pushing onto the forward stack.
+	if cur != nil && cur.IsTransient() {
+		leaving.release()
+	} else {
+		w.navFwd = append(w.navFwd, leaving)
+	}
 	w.attachBinding(b)
 	return true
 }
@@ -1072,7 +1088,14 @@ func (w *Viewport) NavHistoryNext() bool {
 	}
 	b := w.navFwd[len(w.navFwd)-1]
 	w.navFwd = w.navFwd[:len(w.navFwd)-1]
-	w.navBack = append(w.navBack, w.detachBinding())
+	cur := w.Buffer
+	leaving := w.detachBinding()
+	// A transient buffer is not parked as a back destination: release it.
+	if cur != nil && cur.IsTransient() {
+		leaving.release()
+	} else {
+		w.navBack = append(w.navBack, leaving)
+	}
 	w.attachBinding(b)
 	return true
 }

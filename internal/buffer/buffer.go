@@ -27,6 +27,19 @@ func (b *Buffer) Handle() uint64 {
 	return b.handle
 }
 
+// SetTransient marks (or unmarks) this buffer as transient: a transient buffer
+// is not retained as a navigation destination, so navigating away from it
+// releases its binding instead of storing it in the back/forward history.
+func (b *Buffer) SetTransient(t bool) {
+	b.transient = t
+}
+
+// IsTransient reports whether this buffer resists being kept as a nav
+// destination (see SetTransient).
+func (b *Buffer) IsTransient() bool {
+	return b.transient
+}
+
 // undoCoalesceIdle is how long a typing/deleting pause before the next edit
 // forces a fresh undo step. Adjacent same-kind edits within this window
 // collapse into one revision (garland auto-bakes the run past it).
@@ -141,6 +154,13 @@ type Buffer struct {
 	// (unnamed buffers included) and never collides, so a generated listing can
 	// link to it and resolve the link back to this exact buffer.
 	handle uint64
+
+	// transient marks a buffer that must not be retained as a navigation
+	// destination: when a viewport navigates away from it, its nav binding is
+	// released rather than pushed onto the back/forward stacks (see
+	// viewport.Viewport nav history). Generated surfaces such as mew:/buffers and
+	// mew:/viewports set this so they resist becoming a backward or forward hop.
+	transient bool
 
 	// mouseBlock: the current block selection was made by a plain mouse
 	// drag (transient — a plain click dissolves it). See SetMouseBlock.

@@ -45,6 +45,34 @@ func TestBuffersSurfaceLinkStaleHandle(t *testing.T) {
 	}
 }
 
+// A generated surface is transient in the nav history: opening one over a
+// document and then navigating back returns to the document, and the surface
+// is not forward-reachable — it was released, never parked as a destination.
+func TestGeneratedSurfaceIsTransientInNav(t *testing.T) {
+	e, _ := newTestEditor(t, "the document\n")
+	w := e.ViewportManager.GetFocusedViewport()
+	doc := w.Buffer
+
+	if !e.openGeneratedSurface("buffers") {
+		t.Fatal("could not open buffers surface")
+	}
+	if !w.Buffer.IsTransient() {
+		t.Fatal("generated surface buffer should be transient")
+	}
+
+	// Back returns to the document...
+	if !w.NavHistoryPrior() {
+		t.Fatal("expected back history to the document")
+	}
+	if w.Buffer != doc {
+		t.Fatalf("back did not return to the document (got %q)", w.Buffer.GetFilename())
+	}
+	// ...and the surface is gone: nothing to re-advance to.
+	if w.NavHistoryNext() {
+		t.Fatalf("surface must not be a forward destination (got %q)", w.Buffer.GetFilename())
+	}
+}
+
 // A viewport entry links by the viewport id; following it dispatches to the
 // switch operation (which, with no tiler, focuses the target viewport).
 func TestViewportsSurfaceLinkFollows(t *testing.T) {

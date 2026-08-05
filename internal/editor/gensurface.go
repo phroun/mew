@@ -72,6 +72,9 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 	url := "mew:/" + name
 	buf := e.lib.NewFromString(s.render(e))
 	buf.SetFilename(url)
+	// These surfaces are transient nav-wise: navigating away from one releases
+	// it rather than parking it in back/forward, so it never becomes a hop.
+	buf.SetTransient(true)
 
 	// Refresh in place (no new history) when this surface is already the focused
 	// buffer; otherwise navigate there, so back returns to the document.
