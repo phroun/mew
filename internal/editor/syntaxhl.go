@@ -459,6 +459,15 @@ func (e *Editor) modelineScan(b *buffer.Buffer) string {
 // syntax option's grammar. Flavors named in the buffer's effective
 // syntaxOverrides resolve with the project .mew/syntax layer skipped.
 func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
+	// mew's generated surfaces (mew:/…) always render as dokuwiki, keyed on the
+	// buffer's own address so the grammar travels with the buffer and never
+	// sticks to a viewport the reader navigates back through — independent of
+	// the syntaxDetect setting or any per-viewport syntax option.
+	if fn := b.GetFilename(); isGenPath(fn) {
+		if in, ld := e.detectName("dokuwiki", e.bufferSyntaxOverrides(b)); in != nil {
+			return in, ld
+		}
+	}
 	if !e.Config.SyntaxDetect {
 		return e.syntaxGrammar, e.syntaxGrammarLoader
 	}

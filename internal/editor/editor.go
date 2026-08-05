@@ -2988,57 +2988,14 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_list", func(ctx *pawscript.Context) pawscript.Result {
-		// A second invocation while the list is showing dismisses it (like
-		// help_toggle / editor_options).
-		for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
-			if w.Class == "buffer_list" {
-				e.ViewportManager.RemoveViewport(w.ID)
-				e.RequestRender()
-				return pawscript.BoolStatus(true)
-			}
-		}
-		mainBuffers := e.contentViewports()
-		if len(mainBuffers) == 0 {
-			e.ShowWarning("No open buffers")
-			return pawscript.BoolStatus(false)
-		}
-		// Build list content
-		var content strings.Builder
-		content.WriteString("Open Buffers:\n")
-		for i, w := range mainBuffers {
-			filename := "[unnamed]"
-			if w.Buffer != nil {
-				fn := w.Buffer.GetFilename()
-				if fn != "" {
-					filename = fn
-				}
-			}
-			modified := ""
-			if w.Buffer != nil && w.Buffer.IsModified() {
-				modified = " [modified]"
-			}
-			focused := ""
-			if w == e.ViewportManager.GetFocusedViewport() {
-				focused = " *"
-			}
-			content.WriteString(fmt.Sprintf("  %d: %s%s%s\n", i+1, filename, modified, focused))
-		}
-		// Show in a work buffer viewport
-		buf := e.lib.NewFromString(content.String())
-		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
-			Type:             viewport.ToolViewport,
-			ViewportSet:      "help",
-			Class:            "buffer_list",
-			Dock:             viewport.DockTop,
-			Priority:         100,
-			MinHeight:        3,
-			MaxHeight:        10,
-			MessageTopCenter: "Buffers",
-			Buffer:           buf,
-			ShowLineNumbers:  false,
-		})
-		e.RequestRender()
-		return pawscript.BoolStatus(true)
+		// Navigate the focused document to the generated mew:/buffers surface:
+		// a dynamic, read-only dokuwiki list of open buffers, in navigation mode.
+		return pawscript.BoolStatus(e.openGeneratedSurface("buffers"))
+	})
+
+	ps.RegisterCommand("viewport_list", func(ctx *pawscript.Context) pawscript.Result {
+		// The mew:/viewports companion to buffer_list.
+		return pawscript.BoolStatus(e.openGeneratedSurface("viewports"))
 	})
 
 	// Search commands. find takes up to three optional arguments -
@@ -4336,7 +4293,9 @@ func (e *Editor) viewportEditLocked(w *viewport.Viewport) bool {
 	if w == nil {
 		return false
 	}
-	if w.ViewState.ReadOnly {
+	// A generated surface (mew:/…) is read-only by its address, not by viewport
+	// state — a hard guarantee independent of when options were last resolved.
+	if w.ViewState.ReadOnly || (w.Buffer != nil && isGenPath(w.Buffer.GetFilename())) {
 		// Tagged so a burst of rejected edits (holding a key) collapses to one
 		// warning instead of stacking a bar per keystroke.
 		e.ShowWarningTagged("Buffer is read-only", "readonly_warning")
@@ -6727,6 +6686,12 @@ func (e *Editor) openFile(filename string) bool {
 	// "help:/start", which found nothing and came up blank.
 	if _, handled := e.openWikiScheme(strings.TrimSpace(filename), true); handled {
 		return true
+	}
+
+	// A generated mew: surface ("mew:/buffers") is produced on demand and
+	// navigated to in place, not opened as a file in a new viewport.
+	if name := genSurfaceName(strings.TrimSpace(filename)); name != "" {
+		return e.openGeneratedSurface(name)
 	}
 
 	buf, err := e.loadBuffer(filename)

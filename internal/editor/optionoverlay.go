@@ -136,6 +136,15 @@ func (e *Editor) reconcileGrammarOptions(w *viewport.Viewport) {
 	if w == nil || w.Buffer == nil || w.Type == viewport.PromptViewport {
 		return
 	}
+	// A mew: generated surface takes its per-viewport options from a fixed spec
+	// (read-only, link-browsing), not the user's class/grammar/config overlay —
+	// so nothing the user has configured can break the feature. These are set on
+	// the viewport at open and travel with the buffer's nav binding (see
+	// detachBinding/attachBinding), so navigating away restores the document's
+	// own options with no leak; there is nothing to re-resolve here.
+	if isGenPath(w.Buffer.GetFilename()) {
+		return
+	}
 	// Per-viewport syntax first (grammar-agnostic: class + type, never grammar,
 	// which would be circular). Set before anything reads the viewport's
 	// grammar, so viewportGrammarName below reflects it.

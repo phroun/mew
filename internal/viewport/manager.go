@@ -802,6 +802,8 @@ type viewBinding struct {
 	findOrigin     *buffer.Anchor
 	findWrapped    bool
 	browseActive   bool
+	readOnly       bool // per-buffer view options travel with the binding, so a
+	linkBrowsing   bool // buffer's own read-only/link state returns on nav-back
 	viewOffsetX    int
 	viewOffsetY    int
 }
@@ -877,6 +879,8 @@ func (w *Viewport) detachBinding() viewBinding {
 		findOrigin:     w.findOrigin,
 		findWrapped:    w.findWrapped,
 		browseActive:   w.BrowseActive,
+		readOnly:       w.ViewState.ReadOnly,
+		linkBrowsing:   w.ViewState.LinkBrowsing,
 		viewOffsetX:    w.ViewState.ViewOffsetX,
 		viewOffsetY:    w.ViewState.ViewOffsetY,
 	}
@@ -911,6 +915,8 @@ func (w *Viewport) attachBinding(b viewBinding) {
 	w.findOrigin = b.findOrigin
 	w.findWrapped = b.findWrapped
 	w.BrowseActive = b.browseActive
+	w.ViewState.ReadOnly = b.readOnly
+	w.ViewState.LinkBrowsing = b.linkBrowsing
 	w.ViewState.ViewOffsetX = b.viewOffsetX
 	w.ViewState.ViewOffsetY = b.viewOffsetY
 	w.RefreshViewTop()
