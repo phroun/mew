@@ -55,7 +55,7 @@ Nine subsystems genuinely address `mew:`.
 | Editor config + includes | `mew:///editor.conf` | `config.go:664`, `984`, `999` |
 | Startup profile script | `mew:///profile.mew` | `config.go:1798-1824`; `editor.go:8340-8356` |
 | Syntax grammars | `mew:///syntax/<name>.jsf` | `syntaxhl.go:170` |
-| Help manual (wiki) | `mew:///help/…` | `wikiref.go:130-153` |
+| Help manual (wiki) — see [`help-scheme.md`](help-scheme.md) | `mew:///help/…` | `wikiref.go:130-153` |
 | Quick Help (synthetic) | `mew:///quickhelp` | `editor.go:8729` |
 | Screen-capture debug dumps | `mew:///<timestamp>.ans` | `editor.go:2928`, `7751` |
 | Embedded / system resources | (lowest read layers) | `resources.go:14-73` |
