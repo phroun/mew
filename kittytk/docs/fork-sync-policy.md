@@ -31,7 +31,7 @@ diverges in exactly these ways. A sync must respect all of them.
 | `garland/**` | Upstream vendors garland *in-repo* (a development mirror synced to garland releases). You consume garland as an **external module** and have no `garland/` dir — so a recursive diff reads its absence as "delete all 84 files." It is not a deletion; it's a boundary difference. |
 | `patches/**` | Upstream's own patch archive. Same story: absent in your tree, so a diff wants to delete it. |
 | `go.mod` / `go.sum` — the `github.com/phroun/mew` require and its mew-only transitive deps (`argwild`, `pawscript`, `garland` as a *direct* consumer, `uax29`, `go-runewidth`) | **mew must never appear in upstream's module graph.** mew's licence is more restrictive than the KittyTK base, so upstream is deliberately mew-free. Your `go.mod` naturally requires mew; that line is poison here. |
-| `core/version.go` (`const Build`, `const Version`) | Upstream's release counter, bumped by `make increment` on upstream's cadence. Don't carry your build number across. |
+| `core/version.go` — `const Version` (major.minor) | Upstream hand-sets the release number. Don't change it in a sync. `const Build` is the exception: it **does** move with an upstream improvement — see §2a. |
 
 ### Files that ARE yours — keep them on your side, never send them
 
@@ -64,6 +64,32 @@ your code needs are welcome — e.g. `direct-key-handler v0.3.7 → v0.3.9` in t
 last delivery was correct and I kept it. The rule is narrow: **bump shared
 third-party deps freely; never introduce `mew` or mew-only deps.** If you're
 unsure whether a dep is "mew-only," ask — don't guess.
+
+---
+
+## 2a. Always bump the build counter on an upstream improvement
+
+Every time we send a real change upstream (a PR to `phroun/kittytk`, not a
+pass-through resync), **bump `const Build` in `core/version.go` as part of that
+change.** The build counter is not a private mew number to be stripped — it is
+the third component of the KittyTK version, and it **always matches the third
+number of the release tag**:
+
+| Tag | `const Build` |
+|---|---|
+| `v0.1.9-alpha` | `9` |
+| `v0.1.10-alpha` | `10` |
+| `v0.1.11-alpha` | `11` |
+
+So an upstream PR that will land as `v0.1.10` sets `const Build = 10`. Bump it
+by one from upstream's current value (or run `make increment` on the upstream
+checkout, which does the same thing) — never carry mew's own local counter
+across; derive it from the tag the release will get. `const Version`
+(`0.1`) is still upstream's to hand-set for a major/minor bump; leave it alone.
+
+This is the one deliberate write to `core/version.go` that crosses the boundary
+— the §1 table forbids everything else in that file (the `const Version` line),
+not this.
 
 ---
 
@@ -188,10 +214,13 @@ boundary, not upstream's.
 ## TL;DR
 
 1. Never send changes to `README.md` funding/licence, `garland/**`,
-   `patches/**`, `core/version.go`, or anything importing/vendoring `mew`.
-2. Exclude build artifacts and `__pycache__` from the diff.
-3. For deps, send a *sentence* ("bump X to vN"), not a `go.mod` diff — and
+   `patches/**`, `core/version.go`'s `const Version`, or anything
+   importing/vendoring `mew`.
+2. **Do** bump `core/version.go`'s `const Build` on every upstream improvement,
+   to match the third number of the release tag (§2a).
+3. Exclude build artifacts and `__pycache__` from the diff.
+4. For deps, send a *sentence* ("bump X to vN"), not a `go.mod` diff — and
    never a mew require.
-4. Run the five self-audit `grep`s before sending.
-5. Long-term: adopt `git subtree` so the boundary is structural, not a set of
+5. Run the five self-audit `grep`s before sending.
+6. Long-term: adopt `git subtree` so the boundary is structural, not a set of
    `--exclude` flags you have to remember every time.
