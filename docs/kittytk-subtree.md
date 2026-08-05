@@ -69,6 +69,38 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.10 sync (record)
+
+v0.1.9-alpha -> **v0.1.10-alpha** is one fork PR landing upstream and nothing
+else — the diff `v0.1.9-alpha..v0.1.10-alpha` is exactly the files it touched:
+
+- [#23](https://github.com/phroun/kittytk/pull/23) — deliver a bracketed paste
+  as a whole `PasteEvent` instead of a dropped key-flood (new `core.PasteHandler`
+  routed through the focus/window/mdipane chain; `PurfecTerm`/`TextInput`
+  implement it), plus a `Button.animatingPress` data-race fix, plus the
+  fork-sync-policy build-counter rule.
+
+Cut from our vendored tree, so every changed file was byte-identical to the
+release; the sync bumped `core/version.go`'s `Build` to 10 and the `go.mod`
+pins to v0.1.10-alpha. Dependency bump (shared, never mew): `direct-key-handler`
+`v0.3.11 -> v0.3.12` (the `OnPaste` callback + `EmitPasteKeys` option the paste
+fix needs). The fork boundary grew by one to **20 `//go:build mew` files**
+(`editor_mew_paste_test.go` joins) + the mew require.
+
+Two things a naive `go work sync` gets wrong here, both handled:
+
+- It bumped the vendored `kittytk/go.mod`'s `garland` indirect (`v0.1.8 ->
+  v0.1.11`). Reverted: upstream has no garland require at all — the `garland/`
+  dir is just a co-development mirror nothing in kittytk imports. The indirect
+  is a mew-boundary artifact (kittytk trinkets -> mew -> mew/internal/buffer ->
+  garland), not a kittytk dep, so a kittytk resync must not touch it.
+- Upstream's `sdl/sdl3/sdl3.go` carries mojibake em-dashes (`â`) in comments
+  where our vendored copy has correct `—`. Left ours correct rather than
+  regressing to the corruption; it is comment-only and does not affect the
+  build. (Worth a trivial upstream fix later.)
+
+See `patches/kittytk/{bracketed-paste,button-animatingpress-race}.patch`.
+
 ### The v0.1.9 sync (record)
 
 v0.1.8-alpha -> **v0.1.9-alpha** is three more fork fixes landing upstream and

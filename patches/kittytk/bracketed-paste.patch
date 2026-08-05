@@ -1,0 +1,687 @@
+From 67074eb394d99ff7c280dbf1154082336cc6c867 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 5 Aug 2026 19:17:55 +0000
+Subject: [PATCH] kittytk: deliver bracketed paste as a whole PasteEvent, not a
+ key flood
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A paste into the TUI host (KittyTK running in a regular terminal) was lost or
+truncated: the host never enabled bracketed paste, never wired OnPaste, and had
+no route for a paste to reach a focused trinket. So the outer terminal shipped a
+paste as a raw byte flood, direct-key-handler surfaced it one key at a time, and
+those per-character events overran the 256-slot event queue — whose overflow
+branch silently drops. Large pastes lost their tail; nothing arrived as a paste.
+Not mew-specific: any focused trinket, a plain PurfecTerm included, saw it.
+
+Fix, every layer:
+
+- backend/tui: enable ?2004h (disable ?2004l on teardown); take paste via
+  OnPaste with EmitPasteKeys off so it is not re-echoed as keys; deliver one
+  core.PasteEvent per paste through a blocking enqueue that cannot be truncated.
+- core: PasteHandler interface, and FocusManager/GlobalFocusManager.HandlePaste
+  routing a paste to the focused trinket — mirroring the composition path.
+- desktop/window/mdipane: forward PasteEvent down the same container chain as a
+  composition (focused trinket only; no shortcut/menu/key fallback).
+- trinkets: PurfecTerm.HandlePaste re-brackets for the CHILD per the child's own
+  paste mode (raw otherwise), so a paste reaches the inner program — or the mew
+  editor, which embeds *PurfecTerm — as a real paste. TextInput.HandlePaste
+  inserts at the caret. Paste text on the wire, framing decided at the edge.
+
+Tests cover the backend (one intact PasteEvent, large paste not dropped), focus
+routing, and PurfecTerm re-bracketing per inner mode. Bumps the KittyTK build.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FSviWi6Z2uUeVwC6CKBApG
+---
+ kittytk/backend/tui/paste_test.go             | 114 ++++++++++++++++++
+ kittytk/backend/tui/tui.go                    |  39 +++++-
+ kittytk/core/backend.go                       |  18 ++-
+ kittytk/core/focus.go                         |  28 +++++
+ kittytk/core/paste_routing_test.go            |  80 ++++++++++++
+ kittytk/core/version.go                       |   2 +-
+ kittytk/objects/trinkets/desktop.go           |  14 +++
+ .../objects/trinkets/editor_mew_paste_test.go |  19 +++
+ kittytk/objects/trinkets/mdipane.go           |  14 +++
+ kittytk/objects/trinkets/purfecterm_gfx.go    |  16 +++
+ .../trinkets/purfecterm_handlepaste_test.go   |  70 +++++++++++
+ kittytk/objects/trinkets/textinput.go         |  12 ++
+ kittytk/objects/window/manager.go             |  14 +++
+ kittytk/objects/window/window.go              |  15 +++
+ 14 files changed, 451 insertions(+), 4 deletions(-)
+ create mode 100644 kittytk/backend/tui/paste_test.go
+ create mode 100644 kittytk/core/paste_routing_test.go
+ create mode 100644 kittytk/objects/trinkets/editor_mew_paste_test.go
+ create mode 100644 kittytk/objects/trinkets/purfecterm_handlepaste_test.go
+
+diff --git a/kittytk/backend/tui/paste_test.go b/kittytk/backend/tui/paste_test.go
+new file mode 100644
+index 0000000..54e3aea
+--- /dev/null
++++ b/kittytk/backend/tui/paste_test.go
+@@ -0,0 +1,114 @@
++package tui
++
++import (
++	"io"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/phroun/direct-key-handler/keyboard"
++	"github.com/phroun/kittytk/core"
++)
++
++// wireKeyboardLikeInit builds a keyboard.Handler wired the way
++// TUIBackend.Init wires it: OnKey -> handleKey, OnPaste -> deliverPaste, and
++// EmitPasteKeys off so paste is delivered whole rather than re-echoed as keys.
++// The InputReader is a pipe so the test can feed raw bytes; the returned writer
++// is the feed end.
++func wireKeyboardLikeInit(t *testing.T, b *TUIBackend) io.WriteCloser {
++	t.Helper()
++	pr, pw := io.Pipe()
++	noPasteKeys := false
++	h := keyboard.New(keyboard.Options{InputReader: pr, EmitPasteKeys: &noPasteKeys})
++	h.OnKey = b.handleKey
++	h.OnPaste = func(content []byte) { b.deliverPaste(string(content)) }
++	if err := h.Start(); err != nil {
++		t.Fatalf("keyboard start: %v", err)
++	}
++	t.Cleanup(func() { _ = h.Stop(); _ = pw.Close() })
++	return pw
++}
++
++// drainEvents polls the backend's event queue until it is quiet for a short
++// settle window, returning everything it produced.
++func drainEvents(b *TUIBackend) []core.Event {
++	var out []core.Event
++	idle := 0
++	for idle < 20 { // ~200ms of quiet ends the drain
++		if ev := b.PollEvent(); ev != nil {
++			out = append(out, ev)
++			idle = 0
++			continue
++		}
++		time.Sleep(10 * time.Millisecond)
++		idle++
++	}
++	return out
++}
++
++// A bracketed paste arriving from the outer terminal is delivered to the app as
++// exactly one core.PasteEvent carrying the whole body — NOT as a burst of
++// per-character key events. This is the fix for the paste-flood/drop bug: the
++// terminal host takes paste via OnPaste and does not re-echo it as keystrokes.
++func TestBracketedPasteIsOnePasteEvent(t *testing.T) {
++	opts := DefaultTUIOptions()
++	opts.Output = io.Discard
++	b := NewTUIBackend(opts)
++
++	pw := wireKeyboardLikeInit(t, b)
++
++	const body = "hello, this is a pasted line"
++	if _, err := io.WriteString(pw, "\x1b[200~"+body+"\x1b[201~"); err != nil {
++		t.Fatalf("feed paste: %v", err)
++	}
++
++	var pastes, keys int
++	var got strings.Builder
++	for _, ev := range drainEvents(b) {
++		switch e := ev.(type) {
++		case core.PasteEvent:
++			pastes++
++			got.WriteString(e.Text)
++		case core.KeyPressEvent:
++			keys++
++		}
++	}
++
++	if pastes != 1 {
++		t.Errorf("want exactly 1 PasteEvent, got %d", pastes)
++	}
++	if keys != 0 {
++		t.Errorf("paste must not be re-emitted as keys, got %d KeyPressEvent(s)", keys)
++	}
++	if got.String() != body {
++		t.Errorf("paste body = %q, want %q", got.String(), body)
++	}
++}
++
++// A paste far larger than the 256-slot event queue still arrives intact,
++// because deliverPaste enqueues one blocking event rather than 1000 droppable
++// ones. This is the regression guard for "if it's too long it starts dropping
++// pieces out."
++func TestLargePasteArrivesIntact(t *testing.T) {
++	opts := DefaultTUIOptions()
++	opts.Output = io.Discard
++	b := NewTUIBackend(opts)
++
++	pw := wireKeyboardLikeInit(t, b)
++
++	body := strings.Repeat("abcdefghij", 100) // 1000 chars, 4x the queue
++	if _, err := io.WriteString(pw, "\x1b[200~"+body+"\x1b[201~"); err != nil {
++		t.Fatalf("feed paste: %v", err)
++	}
++
++	var got strings.Builder
++	for _, ev := range drainEvents(b) {
++		if e, ok := ev.(core.PasteEvent); ok {
++			got.WriteString(e.Text)
++		}
++	}
++
++	if got.String() != body {
++		t.Errorf("large paste lost data: delivered %d of %d bytes", got.Len(), len(body))
++	}
++}
+diff --git a/kittytk/backend/tui/tui.go b/kittytk/backend/tui/tui.go
+index c44da78..c1ebd5c 100644
+--- a/kittytk/backend/tui/tui.go
++++ b/kittytk/backend/tui/tui.go
+@@ -292,6 +292,13 @@ func (t *TUIBackend) Init() error {
+ 	// Enter alternate screen
+ 	t.writeTTY("\033[?1049h")
+ 
++	// Enable bracketed paste. Without this the outer terminal ships a paste as
++	// a raw byte flood — indistinguishable from very fast typing — which
++	// direct-key-handler then surfaces one key at a time, overrunning the event
++	// queue and dropping characters on a large paste. With it on, a paste
++	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
++	t.writeTTY("\033[?2004h")
++
+ 	// Hide cursor initially
+ 	t.writeTTY("\033[?25l")
+ 
+@@ -299,12 +306,20 @@ func (t *TUIBackend) Init() error {
+ 	// that never reaches Shutdown can still hand it back.
+ 	registerLive(t)
+ 
+-	// Set up keyboard handler AFTER terminal modes are configured
++	// Set up keyboard handler AFTER terminal modes are configured. Take paste
++	// through OnPaste as one batched event, and turn OFF the per-character key
++	// echo (EmitPasteKeys): a paste is not typing, and re-emitting it as keys
++	// is exactly what overran the event queue.
++	noPasteKeys := false
+ 	kbOpts := keyboard.Options{
+-		InputReader: os.Stdin,
++		InputReader:   os.Stdin,
++		EmitPasteKeys: &noPasteKeys,
+ 	}
+ 	t.keyboard = keyboard.New(kbOpts)
+ 	t.keyboard.OnKey = t.handleKey
++	t.keyboard.OnPaste = func(content []byte) {
++		t.deliverPaste(string(content))
++	}
+ 	if t.osc52Paste {
+ 		// OSC 52 clipboard responses (replies to our read query) are delivered
+ 		// here, not as keystrokes: keep the internal copy in sync and notify the
+@@ -378,6 +393,9 @@ func (t *TUIBackend) RestoreTerminal() {
+ 		t.writeTTY("\033[?25h")
+ 		t.cursorShown = true
+ 
++		// Disable bracketed paste (harmless if the terminal never enabled it).
++		t.writeTTY("\033[?2004l")
++
+ 		// Leave alternate screen
+ 		t.writeTTY("\033[?1049l")
+ 
+@@ -1300,6 +1318,23 @@ func (t *TUIBackend) deliverClipboard(s string) {
+ 	}
+ }
+ 
++// deliverPaste queues a bracketed paste from the outer terminal as ONE
++// core.PasteEvent. Unlike handleKey's best-effort enqueue — whose full-queue
++// branch drops, which is what truncated large pastes forwarded as a key flood —
++// this blocks until the queue accepts the event (or the backend stops), so a
++// paste of any size arrives whole. One event per paste means it cannot fill the
++// queue by itself, and the running event loop drains it near-instantly; the
++// stopChan arm keeps a paste arriving during shutdown from wedging the reader.
++func (t *TUIBackend) deliverPaste(text string) {
++	if text == "" {
++		return
++	}
++	select {
++	case t.eventQueue <- core.PasteEvent{Text: text}:
++	case <-t.stopChan:
++	}
++}
++
+ // SetClipboard stores the text in the internal clipboard and, when OSC 52 is
+ // enabled, mirrors it to the terminal's clipboard so Copy/Cut reach other apps.
+ // OSC 52 set: ESC ] 52 ; c ; <base64> BEL.
+diff --git a/kittytk/core/backend.go b/kittytk/core/backend.go
+index 1260d23..73a1124 100644
+--- a/kittytk/core/backend.go
++++ b/kittytk/core/backend.go
+@@ -568,13 +568,29 @@ type QuitEvent struct{}
+ 
+ func (QuitEvent) isEvent() {}
+ 
+-// PasteEvent contains pasted text.
++// PasteEvent contains pasted text. It is DECODED text, not wire bytes: a
++// backend that receives a bracketed paste from its outer terminal strips the
++// \x1b[200~ … \x1b[201~ framing and delivers the body here as one event. What a
++// paste MEANS is then the focused trinket's call — a terminal surface
++// re-brackets it for its own child (per that child's paste mode), a text field
++// inserts it — which is why the framing does not travel on this event.
+ type PasteEvent struct {
+ 	Text string
+ }
+ 
+ func (PasteEvent) isEvent() {}
+ 
++// PasteHandler is implemented by any trinket that can receive pasted text
++// directly: a terminal surface that re-brackets it for its child, a text field
++// that inserts it at the caret. A PasteEvent is routed to the focused trinket
++// the same way an input method's composition is (see FocusManager.HandlePaste);
++// a focused trinket that does not implement PasteHandler simply does not
++// receive pastes, and the event is dropped rather than reinterpreted.
++type PasteHandler interface {
++	// HandlePaste receives pasted text and reports whether it was consumed.
++	HandlePaste(PasteEvent) bool
++}
++
+ // Painter provides drawing operations with automatic coordinate translation.
+ // Trinkets receive a Painter configured with their local coordinate system.
+ type Painter struct {
+diff --git a/kittytk/core/focus.go b/kittytk/core/focus.go
+index d1e2c82..1c66a75 100644
+--- a/kittytk/core/focus.go
++++ b/kittytk/core/focus.go
+@@ -536,6 +536,21 @@ func (fm *FocusManager) HandleTextEditing(event TextEditingEvent) bool {
+ 	return false
+ }
+ 
++// HandlePaste hands pasted text to the focused trinket. Like HandleTextEditing,
++// and for the same reason, there is no navigation fallback: a paste belongs to
++// whatever has focus, and a focused trinket that cannot hold one leaves nothing
++// sensible to do with the text.
++func (fm *FocusManager) HandlePaste(event PasteEvent) bool {
++	fm.mu.RLock()
++	focused := fm.focusedTrinket
++	fm.mu.RUnlock()
++
++	if h, ok := focused.(PasteHandler); ok {
++		return h.HandlePaste(event)
++	}
++	return false
++}
++
+ // FocusScope represents a focus containment boundary.
+ // Trinkets can have their own focus scope (like dialogs or tool windows).
+ type FocusScope struct {
+@@ -794,6 +809,19 @@ func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
+ 	return false
+ }
+ 
++// HandlePaste routes pasted text to the active scope, the same way
++// HandleTextEditing routes a composition.
++func (gfm *GlobalFocusManager) HandlePaste(event PasteEvent) bool {
++	gfm.mu.RLock()
++	activeScope := gfm.activeScope
++	gfm.mu.RUnlock()
++
++	if activeScope != nil {
++		return activeScope.Manager().HandlePaste(event)
++	}
++	return false
++}
++
+ // ActivityReporter is implemented by window-like containers that can
+ // be the active one among their siblings (top-level windows, MDI
+ // children). A trinket's focus indicators should only show when every
+diff --git a/kittytk/core/paste_routing_test.go b/kittytk/core/paste_routing_test.go
+new file mode 100644
+index 0000000..6c7d931
+--- /dev/null
++++ b/kittytk/core/paste_routing_test.go
+@@ -0,0 +1,80 @@
++package core
++
++import "testing"
++
++// pastingLeaf takes pasted text, the way a text field or terminal surface does.
++type pastingLeaf struct {
++	TrinketBase
++	got    []PasteEvent
++	accept bool
++}
++
++func newPastingLeaf() *pastingLeaf {
++	l := &pastingLeaf{accept: true}
++	l.TrinketBase = *NewTrinketBase()
++	l.Init(l)
++	l.SetFocusPolicy(StrongFocus)
++	return l
++}
++
++func (l *pastingLeaf) HandlePaste(ev PasteEvent) bool {
++	l.got = append(l.got, ev)
++	return l.accept
++}
++
++// A paste goes to whatever holds keyboard focus, and only there.
++func TestFocusManagerRoutesPasteToTheFocusedTrinket(t *testing.T) {
++	a, b := newPastingLeaf(), newPastingLeaf()
++	fm, _ := focusScopeWith(a, b)
++	if !fm.SetFocusedTrinket(b) {
++		t.Fatal("could not focus the second leaf")
++	}
++
++	ev := PasteEvent{Text: "pasted body"}
++	if !fm.HandlePaste(ev) {
++		t.Fatal("the focused trinket did not take the paste")
++	}
++	if len(a.got) != 0 {
++		t.Errorf("the unfocused trinket received %d pastes", len(a.got))
++	}
++	if len(b.got) != 1 || b.got[0] != ev {
++		t.Errorf("focused trinket got %+v, want exactly [%+v]", b.got, ev)
++	}
++}
++
++// A trinket that cannot hold a paste - a button, a list - declines rather than
++// swallowing it, so the caller can fall back (the window-manager path).
++func TestPasteToANonPastingTrinketIsDeclined(t *testing.T) {
++	leaf := newPlainLeaf()
++	leaf.SetFocusPolicy(StrongFocus)
++	fm, _ := focusScopeWith(leaf)
++	fm.SetFocusedTrinket(leaf)
++
++	if fm.HandlePaste(PasteEvent{Text: "a"}) {
++		t.Error("a trinket with no paste support reported it handled one")
++	}
++}
++
++// Nothing focused is not a crash, and not a claim to have handled it.
++func TestPasteWithNoFocusIsDeclined(t *testing.T) {
++	fm, _ := focusScopeWith()
++	if fm.HandlePaste(PasteEvent{Text: "a"}) {
++		t.Error("an empty focus manager claimed a paste")
++	}
++}
++
++// A field that declines - read-only, disabled - keeps its "no": the caller
++// decides what to do with a paste nobody wants.
++func TestADecliningFieldsPasteAnswerSurvivesRouting(t *testing.T) {
++	leaf := newPastingLeaf()
++	leaf.accept = false
++	fm, _ := focusScopeWith(leaf)
++	fm.SetFocusedTrinket(leaf)
++
++	if fm.HandlePaste(PasteEvent{Text: "a"}) {
++		t.Error("a declined paste was reported as handled")
++	}
++	if len(leaf.got) != 1 {
++		t.Errorf("the field was asked %d times, want once", len(leaf.got))
++	}
++}
+diff --git a/kittytk/core/version.go b/kittytk/core/version.go
+index 09ac50c..c5743b6 100644
+--- a/kittytk/core/version.go
++++ b/kittytk/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 9
++const Build = 10
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/kittytk/objects/trinkets/desktop.go b/kittytk/objects/trinkets/desktop.go
+index 858bdef..637b8aa 100644
+--- a/kittytk/objects/trinkets/desktop.go
++++ b/kittytk/objects/trinkets/desktop.go
+@@ -3363,6 +3363,20 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
+ 		}
+ 		return false
+ 
++	case core.PasteEvent:
++		// Pasted text goes to whatever is focused and nowhere else — like a
++		// composition, not a key: no shortcuts, no menu bar, no window-cycle
++		// keys. The focused trinket reshapes it as it sees fit (a terminal
++		// surface re-brackets it for its child; a text field inserts it). A
++		// paste nobody can hold is dropped rather than reinterpreted.
++		if fm != nil && fm.HandlePaste(e) {
++			return true
++		}
++		if wm != nil {
++			return wm.HandlePaste(e)
++		}
++		return false
++
+ 	case core.KeyReleaseEvent:
+ 		// When every modifier has gone up, lock in an in-progress window-cycle
+ 		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical
+diff --git a/kittytk/objects/trinkets/editor_mew_paste_test.go b/kittytk/objects/trinkets/editor_mew_paste_test.go
+new file mode 100644
+index 0000000..8328eb3
+--- /dev/null
++++ b/kittytk/objects/trinkets/editor_mew_paste_test.go
+@@ -0,0 +1,19 @@
++//go:build mew
++
++package trinkets
++
++import (
++	"testing"
++
++	"github.com/phroun/kittytk/core"
++)
++
++// The mew Editor is a paste target: it embeds *PurfecTerm, so a bracketed paste
++// the host received reaches inner mew through HandlePaste -> sendPaste, which
++// re-brackets per mew's own paste mode. This is the mew editor trinket the user
++// pastes into. The assertion is compile-time; the reference keeps vet quiet.
++var _ core.PasteHandler = (*Editor)(nil)
++
++func TestMewEditorIsPasteHandler(t *testing.T) {
++	var _ core.PasteHandler = (*Editor)(nil)
++}
+diff --git a/kittytk/objects/trinkets/mdipane.go b/kittytk/objects/trinkets/mdipane.go
+index f45c775..b281f68 100644
+--- a/kittytk/objects/trinkets/mdipane.go
++++ b/kittytk/objects/trinkets/mdipane.go
+@@ -1393,6 +1393,20 @@ func (m *MDIPane) HandleTextEditing(event core.TextEditingEvent) bool {
+ 	return active.HandleTextEditing(event)
+ }
+ 
++// HandlePaste forwards pasted text to the active child window. The pane is the
++// focused trinket in ITS window's focus manager, so without this the paste
++// would stop here — the same reason HandleTextEditing forwards.
++func (m *MDIPane) HandlePaste(event core.PasteEvent) bool {
++	m.mu.RLock()
++	active := m.activeWindow
++	m.mu.RUnlock()
++
++	if active == nil || active.IsMinimized() {
++		return false
++	}
++	return active.HandlePaste(event)
++}
++
+ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
+ 	m.mu.RLock()
+ 	active := m.activeWindow
+diff --git a/kittytk/objects/trinkets/purfecterm_gfx.go b/kittytk/objects/trinkets/purfecterm_gfx.go
+index 18ec5aa..1f61b18 100644
+--- a/kittytk/objects/trinkets/purfecterm_gfx.go
++++ b/kittytk/objects/trinkets/purfecterm_gfx.go
+@@ -2761,6 +2761,22 @@ func normalizePasteNewlines(s string) string {
+ 	return s
+ }
+ 
++// HandlePaste delivers pasted text (e.g. a bracketed paste the host received
++// from its outer terminal) to the child, re-bracketing it per the CHILD's own
++// paste mode — see sendPaste. This is what lets a paste into the outer terminal
++// reach the program inside a focused PurfecTerm — or a mew editor, which embeds
++// one — as a real paste rather than the flood of per-character keystrokes the
++// host would otherwise forward. The outer terminal's framing never travels this
++// far: the child's mode, not the host's, decides whether the body is bracketed.
++// Satisfies core.PasteHandler.
++func (t *PurfecTerm) HandlePaste(event core.PasteEvent) bool {
++	if t.terminal == nil {
++		return false
++	}
++	t.sendPaste(event.Text)
++	return true
++}
++
+ // sendPaste writes resolved clipboard text to the child PTY, bracketing it when
+ // the application enabled bracketed paste mode.
+ func (t *PurfecTerm) sendPaste(s string) {
+diff --git a/kittytk/objects/trinkets/purfecterm_handlepaste_test.go b/kittytk/objects/trinkets/purfecterm_handlepaste_test.go
+new file mode 100644
+index 0000000..5ecc616
+--- /dev/null
++++ b/kittytk/objects/trinkets/purfecterm_handlepaste_test.go
+@@ -0,0 +1,70 @@
++package trinkets
++
++import (
++	"testing"
++
++	"github.com/phroun/kittytk/core"
++)
++
++// The always-present paste targets implement core.PasteHandler, so the focus
++// manager routes a paste to them. (The mew Editor, which embeds *PurfecTerm, is
++// asserted in the -tags mew build; the stock !mew Editor is an external-editor
++// placeholder with no in-surface buffer to paste into.)
++var (
++	_ core.PasteHandler = (*PurfecTerm)(nil)
++	_ core.PasteHandler = (*TextInput)(nil)
++)
++
++// captureChild wires a PurfecTerm's input sink to collect the bytes it would
++// send to its child process.
++func captureChild(t *PurfecTerm) *[]byte {
++	buf := &[]byte{}
++	t.SetInputSink(func(b []byte) { *buf = append(*buf, b...) })
++	return buf
++}
++
++// HandlePaste forwards pasted text to the child RAW when the child has not
++// enabled bracketed paste. The host's own bracketing does not leak through: the
++// child's mode decides, and here it is off.
++func TestHandlePasteSendsRawWhenChildHasNoBracketedPaste(t *testing.T) {
++	term := NewPurfecTerm()
++	got := captureChild(term)
++
++	if !term.HandlePaste(core.PasteEvent{Text: "abc"}) {
++		t.Fatal("HandlePaste declined a paste the terminal can hold")
++	}
++	if string(*got) != "abc" {
++		t.Errorf("child received %q, want raw %q", string(*got), "abc")
++	}
++}
++
++// HandlePaste RE-BRACKETS for the child when the child enabled bracketed paste
++// (mew does exactly this). The child then sees a real paste, atomically, rather
++// than a run of keystrokes — which is the whole point of the fix.
++func TestHandlePasteReBracketsWhenChildEnabledBracketedPaste(t *testing.T) {
++	term := NewPurfecTerm()
++	// The child turns bracketed paste on by emitting DECSET 2004; the emulator
++	// records it in its buffer, exactly as an inner mew would.
++	term.Feed([]byte("\x1b[?2004h"))
++	got := captureChild(term)
++
++	if !term.HandlePaste(core.PasteEvent{Text: "abc"}) {
++		t.Fatal("HandlePaste declined a paste the terminal can hold")
++	}
++	want := "\x1b[200~abc\x1b[201~"
++	if string(*got) != want {
++		t.Errorf("child received %q, want re-bracketed %q", string(*got), want)
++	}
++}
++
++// Newlines are normalized to CR on the way to the child, so the child's line
++// discipline acts on them (LF alone would be swallowed).
++func TestHandlePasteNormalizesNewlines(t *testing.T) {
++	term := NewPurfecTerm()
++	got := captureChild(term)
++
++	term.HandlePaste(core.PasteEvent{Text: "a\nb"})
++	if string(*got) != "a\rb" {
++		t.Errorf("child received %q, want %q", string(*got), "a\rb")
++	}
++}
+diff --git a/kittytk/objects/trinkets/textinput.go b/kittytk/objects/trinkets/textinput.go
+index 43f3a14..fd95f66 100644
+--- a/kittytk/objects/trinkets/textinput.go
++++ b/kittytk/objects/trinkets/textinput.go
+@@ -1455,6 +1455,18 @@ func (t *TextInput) Paste() {
+ 	}
+ }
+ 
++// HandlePaste inserts pasted text at the caret, the same way a clipboard paste
++// does (newlines flattened for the single-line flow, selection replaced, one
++// undo step). Satisfies core.PasteHandler so a bracketed paste the host
++// received reaches a focused input directly, with no clipboard round-trip.
++func (t *TextInput) HandlePaste(event core.PasteEvent) bool {
++	if t.readOnly || !t.IsEnabled() {
++		return false
++	}
++	t.pasteText(event.Text)
++	return true
++}
++
+ // pasteText inserts resolved clipboard text at the caret (newlines flattened to
+ // spaces for the single-line flow).
+ func (t *TextInput) pasteText(s string) {
+diff --git a/kittytk/objects/window/manager.go b/kittytk/objects/window/manager.go
+index d73f32c..eb806b9 100644
+--- a/kittytk/objects/window/manager.go
++++ b/kittytk/objects/window/manager.go
+@@ -2713,6 +2713,20 @@ func (m *WindowManager) HandleTextEditing(event core.TextEditingEvent) bool {
+ 	return active.HandleTextEditing(event)
+ }
+ 
++// HandlePaste hands pasted text to the active window, the fallback path when
++// the focus manager's active scope did not claim it. Like HandleTextEditing it
++// has none of HandleKeyPress's routing: a paste is not a key.
++func (m *WindowManager) HandlePaste(event core.PasteEvent) bool {
++	m.mu.RLock()
++	active := m.activeWindow
++	m.mu.RUnlock()
++
++	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
++		return false
++	}
++	return active.HandlePaste(event)
++}
++
+ // HandleKeyPress processes keyboard events.
+ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
+ 	m.mu.RLock()
+diff --git a/kittytk/objects/window/window.go b/kittytk/objects/window/window.go
+index 6d14dcb..657c122 100644
+--- a/kittytk/objects/window/window.go
++++ b/kittytk/objects/window/window.go
+@@ -3245,6 +3245,21 @@ func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
+ 	return fm.HandleTextEditing(event)
+ }
+ 
++// HandlePaste forwards pasted text straight to the focused trinket, skipping
++// the window's own key policy for the same reason HandleTextEditing does:
++// none of the menu bar, shortcut resolver, or title-bar focus has anything to
++// say about text the user is dropping into whatever they are typing in.
++func (w *Window) HandlePaste(event core.PasteEvent) bool {
++	w.mu.RLock()
++	fm := w.focusManager
++	w.mu.RUnlock()
++
++	if fm == nil {
++		return false
++	}
++	return fm.HandlePaste(event)
++}
++
+ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
+ 	w.mu.RLock()
+ 	fm := w.focusManager
+-- 
+2.43.0
+
