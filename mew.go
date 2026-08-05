@@ -220,7 +220,7 @@ type TerminalHooks = editor.TerminalHooks
 // LocalPathFromURL turns a canonical file:// document URL — the form mew
 // hands out for anything it identifies, including a terminal session's
 // working directory — into a path for the operating system. False for any
-// other scheme (a mew:/// document may have no local path at all).
+// other scheme (a box:/// document may have no local path at all).
 //
 // A host resolving one of mew's URLs must reach the same file mew would, and
 // on Windows that takes undoing something: the canonical form roots every

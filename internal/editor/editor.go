@@ -162,7 +162,7 @@ type Editor struct {
 	// Garland's own lazy warm-storage path instead of reading whole files.
 	usingOSFS bool
 
-	// mew accesses the "mew:///" support tree (config, profile, syntax, native
+	// mew accesses the "box:///" storage tree (config, profile, syntax, native
 	// locks, crash dumps) — virtualized or mapped to <home>/.mew. home is the
 	// resolved home directory (host override or OS), used for "~" expansion.
 	mew  *mewVFS
@@ -226,7 +226,7 @@ type Editor struct {
 	// holds it and performRender never recurses, so a plain Lock is deadlock-free.
 	renderMu sync.Mutex
 
-	// pendingScreenCapture, when non-empty, is a mew:/// target the next
+	// pendingScreenCapture, when non-empty, is a box:/// target the next
 	// performRender writes a full-frame ANSI snapshot to (the debug_screen
 	// command). Set and read under renderMu, so the capture rides the natural
 	// render loop — snapshotting the exact frame just painted — rather than a
@@ -643,7 +643,7 @@ type Config struct {
 	// insert, block write, globbing). Nil means the real OS file system.
 	FS FileSystem
 
-	// MewFS, when set, virtualizes mew's own support tree (the "mew:///" scheme —
+	// MewFS, when set, virtualizes mew's own storage tree (the "box:///" scheme —
 	// editor.conf, profile.mew, syntax grammars, native locks, crash dumps):
 	// mew:/x paths are handed to it verbatim. Nil maps mew:/ to <home>/.mew on
 	// the real OS.
@@ -2919,13 +2919,13 @@ func (e *Editor) registerCommands() {
 	})
 
 	// debug_screen arms a full-frame ANSI snapshot of the screen, written to a
-	// timestamped ".ans" file in the mew:/// support tree (~/.mew locally) — a
+	// timestamped ".ans" file in the box:/// support tree (~/.mew locally) — a
 	// capture that reproduces the screen when cat'd to a terminal. The write
 	// rides the NEXT render (see performRender): the command only arms the target
 	// and forces a full repaint, so it never re-renders (or re-locks renderMu)
 	// itself — snapshotting the exact frame that gets painted.
 	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
-		e.pendingScreenCapture = "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
+		e.pendingScreenCapture = "box:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
 		e.Renderer.ForceRedraw()
 		e.RequestRender()
 		return pawscript.BoolStatus(true)
@@ -7741,7 +7741,7 @@ func (e *Editor) performRender() {
 	e.renderRequested.Store(false)
 
 	// debug_screen: snapshot the exact frame just painted (same layout) to its
-	// armed mew:/// target. CaptureFrame takes the renderer's own mutex (free
+	// armed box:/// target. CaptureFrame takes the renderer's own mutex (free
 	// now that Render has returned); we hold renderMu, which is fine. Done after
 	// clearing renderRequested so the "Wrote" toast's own RequestRender sticks
 	// and schedules the frame that shows it.
@@ -7864,7 +7864,7 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	// mode, the virtualized support tree otherwise. Everything else is
 	// normalized (tilde-expanded, absolutized) so the buffer's filename
 	// survives saves and working-directory changes.
-	if isMewPath(filename) {
+	if isBoxPath(filename) {
 		return e.loadBufferURL(filename)
 	}
 	filename = e.normalizeDocPath(filename)
@@ -8723,10 +8723,11 @@ const helpViewportTag = "help"
 const helpViewportClass = "help"
 const quickHelpClass = "quickhelp"
 
-// quickHelpDocURL is the synthetic identity of the Quick Help buffer. It sits
-// OUTSIDE the help wiki root (mew:///help) so it never resolves as, or displays
-// like, a wiki page; it just gives the location a stable URL to compare against.
-const quickHelpDocURL = "mew:///quickhelp"
+// quickHelpDocURL is the synthetic identity of the Quick Help buffer. It lives
+// in mew's GENERATED "mew:" scheme (not the box: storage tree), so it is never
+// read from disk, never resolves as a wiki page, and just gives the location a
+// stable URL to compare against.
+const quickHelpDocURL = "mew:/quickhelp"
 
 // helpViewport returns the single docked help viewport (Tag "help"), or nil.
 func (e *Editor) helpViewport() *viewport.Viewport {

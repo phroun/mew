@@ -11,7 +11,7 @@ import (
 
 // canonicalDocURL normalizes every accepted spelling to one identity:
 // scheme + empty authority + "/"-separated absolute path (file:///... or
-// mew:///...).
+// box:///...).
 func TestCanonicalDocURL(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t, "x\n", "[options]\n")
 	cases := map[string]string{
@@ -31,9 +31,9 @@ func TestCanonicalDocURL(t *testing.T) {
 	// ~/.mew — the same identity the plain path canonicalizes to, so the two
 	// routes to one file can never alias into two buffers.
 	mewCases := map[string]string{
-		"mew:syntax/x.jsf":  "syntax/x.jsf",
-		"mew:/syntax/x.jsf": "syntax/x.jsf",
-		"mew:///a/../../b":  "b", // confined: ".." cannot escape the mew root
+		"box:syntax/x.jsf":  "syntax/x.jsf",
+		"box:/syntax/x.jsf": "syntax/x.jsf",
+		"box:///a/../../b":  "b", // confined: ".." cannot escape the mew root
 	}
 	for in, rel := range mewCases {
 		want := e.canonicalDocURL(filepath.Join(e.home, ".mew", filepath.FromSlash(rel)))

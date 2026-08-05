@@ -355,7 +355,7 @@ type Viewport struct {
 	AfterKey string
 
 	// WikiRoot confines this viewport's wiki-reference resolution to a subtree:
-	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
+	// a canonical URL ("box:///docs", "file:///home/us/wiki"; "" = none).
 	// When set, absolute wiki refs resolve from this root and relative climbs
 	// ("..") clamp at it — leaving the wiki requires a full scheme reference.
 	// A viewport's root NEVER changes: it is part of the viewport's identity, set

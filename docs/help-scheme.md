@@ -1,21 +1,21 @@
 # The `help:` URL scheme
 
 `help:` is **not a standalone scheme** — it is mew's single **registered wiki**,
-and its backing store is the `mew:` tree. The registry entry `wikiRegistry["help"]`
-declares a DokuWiki-format wiki whose root is the `mew:` URL `mew:///help`, so
+and its backing store is the `box:` tree. The registry entry `wikiRegistry["help"]`
+declares a DokuWiki-format wiki whose root is the `box:` URL `box:///help`, so
 every `help:/…` reference rewrites into a document under that root. `help:` is,
-in effect, a user-facing alias for `mew:///help/…`.
+in effect, a user-facing alias for `box:///help/…`.
 
-See [`mew-scheme.md`](mew-scheme.md) for the backing `mew:` VFS; `help:` inherits
+See [`mew-scheme.md`](mew-scheme.md) for the backing `box:` VFS; `help:` inherits
 its three-layer overlay (a shipped help page backs `help:/start` even with no
 `~/.mew/help/start.txt` on disk).
 
 ## The mapping
 
 ```
-help:/<id>   →  mew:///help/<id>.txt   →  ~/.mew/help/<id>.txt   (local/OS mode)
-help:/       →  the "start" page       →  mew:///help/start.txt
-help:/a/b    →  mew:///help/a/b.txt
+help:/<id>   →  box:///help/<id>.txt   →  ~/.mew/help/<id>.txt   (local/OS mode)
+help:/       →  the "start" page       →  box:///help/start.txt
+help:/a/b    →  box:///help/a/b.txt
 ```
 
 - `.txt` is optional: `help:/start` and `help:/start.txt` are the same page.
@@ -24,7 +24,7 @@ help:/a/b    →  mew:///help/a/b.txt
   ordinary wiki namespace reference, not a `help:` link (`keybadge_test.go:27`
   rejects `help:keys#x`).
 - `help:` is deliberately **absent** from the generic `linkSchemes` table
-  (`http/https/ftp/file/mew`, `wikiref.go:50-56`). A registered wiki name is
+  (`http/https/ftp/file/box/mew`, `wikiref.go:50-56`). A registered wiki name is
   recognized *before*, and separately from, generic external schemes.
 
 ## Subsystems that use the scheme
@@ -33,11 +33,11 @@ Roughly seven subsystems touch `help:`.
 
 | # | Subsystem | Role | Key anchors |
 |---|---|---|---|
-| 1 | Registry / definition — `internal/editor/wikiref.go` | `wikiRegistry["help"]`: `Root: mew:///help`, `Ext: .txt`, `Start: start`, `Writable: true`, docked-top ToolViewport titled "Help", `DeclineExec`; the `wikiDef` type | `wikiref.go:130-154`, `79-124` |
-| 2 | Parse → resolve → map — `wikiref.go` + `internal/editor/canon.go` | `wikiSchemeRef` recognizes `help:/…`; `resolveFollow` → `resolveInWiki` canonicalizes `mew:///help` and runs the DokuWiki id pipeline to `mew:///help/<id>.txt` | `wikiref.go:184-194`, `532-553`, `659-671`; `canon.go:216-236` |
+| 1 | Registry / definition — `internal/editor/wikiref.go` | `wikiRegistry["help"]`: `Root: box:///help`, `Ext: .txt`, `Start: start`, `Writable: true`, docked-top ToolViewport titled "Help", `DeclineExec`; the `wikiDef` type | `wikiref.go:130-154`, `79-124` |
+| 2 | Parse → resolve → map — `wikiref.go` + `internal/editor/canon.go` | `wikiSchemeRef` recognizes `help:/…`; `resolveFollow` → `resolveInWiki` canonicalizes `box:///help` and runs the DokuWiki id pipeline to `box:///help/<id>.txt` | `wikiref.go:184-194`, `532-553`, `659-671`; `canon.go:216-236` |
 | 3 | Link-follow & docked help navigation — `internal/editor/links.go` + `internal/editor/editor.go` | Following `help:` links; the single docked help slot; Quick-Help-vs-manual; back/forward history | `links.go:295-347`, `374-444`; `editor.go:8708-9037` |
 | 4 | CLI / launch / Open / keybinding — `cli.go`, `editor.go`, conf, app `host.go` | `mew help:/start`; `buffer_open_file "help:/"`; `^B H = help_toggle "help:/"`; the "Using mew" menu item | `cli.go:314-327`, `editor.go:6722-6730`; `resources/defaults/keys_buffer_and_save_menus.conf:9`; `app/internal/mewhost/host.go:571` |
-| 5 | Syntax-format tie-in — `internal/editor/syntaxhl.go` | A buffer whose URL lies within a wiki's root highlights as that wiki's `Format`, so pages under `mew:///help` render as **dokuwiki** | `syntaxhl.go:476-489` |
+| 5 | Syntax-format tie-in — `internal/editor/syntaxhl.go` | A buffer whose URL lies within a wiki's root highlights as that wiki's `Format`, so pages under `box:///help` render as **dokuwiki** | `syntaxhl.go:476-489` |
 | 6 | Modebar display + exec policy — `internal/plugins/modebar.go`, `wikiref.go` | Reverse-maps a help buffer URL back to the `help:/start` form for the modebar; `DeclineExec` refuses a terminal inside a help viewport | `modebar.go:48`, `links.go:349-372`; `wikiref.go:146`, `171-176` |
 | 7 | Prose specs — `docs/` | The `help:` / `goto:` / `mark:` / `url:` / `cmd:` link vocabulary + the rule that content-derived links may carry only navigation schemes | `docs/hyperlink-ideas.md:43-57`, `docs/dokuwiki-ids.md:74-76` |
 
@@ -51,14 +51,14 @@ declares:
 |---|---|
 | `Name` | `help` (the scheme name) |
 | `Format` | `dokuwiki` |
-| `Root` | `mew:///help` |
+| `Root` | `box:///help` |
 | `Ext` | `.txt` |
 | `Start` | `start` (so `help:/` = `help:/start`) |
 | `Writable` | `true` (create-on-miss via `wikiCreateURL`, `wikiref.go:677-686`) |
 | `DeclineExec` | refuses spawning a terminal in the help viewport |
 | viewport | `ToolViewport`, `DockTop`, `ViewportSet: help`, `Title: Help`, height 4–20 |
 
-A wiki viewport carries `WikiRoot` (canonicalized `mew:///help`) and `WikiName`
+A wiki viewport carries `WikiRoot` (canonicalized `box:///help`) and `WikiName`
 (`help`) fields (`links.go:323-324`, `410-412`).
 
 ## Navigation: Quick Help vs the manual
@@ -67,9 +67,9 @@ The docked help slot (`helpViewportTag = "help"`, top dock,
 `editor.go:8708-8724`) carries **two classes**:
 
 - **Manual** (`helpViewportClass = "help"`) — a real `help:/…` wiki page under
-  `mew:///help`.
+  `box:///help`.
 - **Quick Help** (`quickHelpClass = "quickhelp"`) — a *synthetic* buffer at
-  **`mew:///quickhelp`**, placed deliberately **outside** `mew:///help` so it
+  **`mew:/quickhelp`**, placed deliberately **outside** `box:///help` so it
   never resolves as a wiki page. It is the WordStar-style context reference, and
   is **not** the `help:` scheme (`editor.go:8726-8729`).
 
@@ -111,6 +111,6 @@ URLs: the `help_toggle` / `help_open` command names, `helpViewportTag="help"`,
 `mew.help.*` dotted app-command IDs (`host.go:569-576`); and CLI `--help`,
 `printUsage`, `showHelp`, and help-text prose.
 
-**Quick Help** (`mew:///quickhelp`, `[quickhelp::colors]`) is a near-match: it is
+**Quick Help** (`mew:/quickhelp`, `[quickhelp::colors]`) is a near-match: it is
 its own `mew:` buffer, not the `help:` scheme — it becomes scheme-relevant only
 when it forwards to a `help:/<topic>` page.

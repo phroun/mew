@@ -18,7 +18,7 @@ import (
 // with "/" separators regardless of platform or input notation:
 //
 //	file:///home/us/wiki/page.txt    the document filesystem, from its root
-//	mew:///syntax/dokuwiki.jsf       mew's own support tree, from its root
+//	box:///syntax/dokuwiki.jsf       mew's own support tree, from its root
 //
 // Three slashes because the authority is ours (empty = this instance); other
 // schemes and real authorities stay open for later. Navigation-facing
@@ -28,31 +28,38 @@ import (
 // equal and buffer reuse is exact.
 
 // canonicalDocURL resolves a document name (an OS path, a host-FS name, a
-// mew: path, or an already-canonical URL) to its canonical URL. Empty in,
+// box: path, or an already-canonical URL) to its canonical URL. Empty in,
 // empty out.
 //
-// In fully-LOCAL mode (real OS document FS, real ~/.mew tree) a mew: name
-// canonicalizes to the REAL file it names: mew:///help/start.txt and
+// In fully-LOCAL mode (real OS document FS, real ~/.mew tree) a box: name
+// canonicalizes to the REAL file it names: box:///help/start.txt and
 // ~/.mew/help/start.txt are one physical file, so they must be ONE identity
-// (one buffer) — and the real-path identity means mew: documents load
+// (one buffer) — and the real-path identity means box: documents load
 // through the full file open path (source tracking, saves, locks, backups)
 // instead of as sourceless memory buffers. Under a virtualized mew tree (or
-// a virtual document FS) no real path exists, so the mew:/// spelling IS the
+// a virtual document FS) no real path exists, so the box:/// spelling IS the
 // identity.
 func (e *Editor) canonicalDocURL(name string) string {
 	if name == "" {
 		return ""
 	}
-	if isMewPath(name) {
+	if isBoxPath(name) {
 		if e.osBackedFS() {
 			if p, ok := e.mew.LocalPath(name); ok {
 				return canonicalOSFileURL(p, e.home)
 			}
 		}
-		// confine collapses dot segments and can never escape the mew root,
-		// normalizing every accepted spelling (mew:x, mew:/x, mew://x,
-		// mew:///x) to the same identity.
-		return "mew:///" + confine(name)
+		// confine collapses dot segments and can never escape the box root,
+		// normalizing every accepted spelling (box:x, box:/x, box://x,
+		// box:///x) to the same identity.
+		return "box:///" + confine(name)
+	}
+	if isGenPath(name) {
+		// mew's generated (synthetic) scheme: content produced on demand
+		// (Quick Help, …), with no filesystem backing and no real path. Return
+		// a stable, confined identity so the buffer keeps a constant URL to
+		// compare against; it is never absolutized or read from disk.
+		return "mew:/" + strings.TrimLeft(strings.TrimPrefix(name, "mew:"), "/")
 	}
 	if strings.HasPrefix(name, "file://") {
 		// Already URL-form: re-clean the path part so hand-built URLs
@@ -120,7 +127,7 @@ func urlPathForOS(p string, windows bool) string {
 }
 
 // LocalPathFromURL turns a canonical file:// document URL into an OS path.
-// False for any other scheme — a mew:/// document may have no local path at
+// False for any other scheme — a box:/// document may have no local path at
 // all. Exported because a HOST needs the same answer mew does: mew hands out
 // canonical URLs (a terminal session's working directory, for one) and a host
 // acting on one has to reach the same file, by the same rule, or the two
@@ -192,7 +199,7 @@ func (e *Editor) osBackedFS() bool {
 // e.g. "help:/start.txt" became "<cwd>/help:/start.txt", which then surfaced
 // as a bogus Save-as default.
 func (e *Editor) normalizeDocPath(p string) string {
-	if p == "" || isMewPath(p) || hasScheme(p) || !e.osBackedFS() {
+	if p == "" || isBoxPath(p) || hasScheme(p) || !e.osBackedFS() {
 		return p
 	}
 	if ex, ok := expandTilde(p, e.home); ok {
@@ -207,10 +214,10 @@ func (e *Editor) normalizeDocPath(p string) string {
 }
 
 // loadBufferURL loads the document a canonical URL names: file:/// through
-// the full document open path (locks, backups, notices); mew:/// by reading
-// mew's support tree. The URL is re-canonicalized first, so in local mode a
-// mew:/// name translates to its real file and loads with full source
-// tracking; only under a VIRTUALIZED mew tree does the mew:/// branch run,
+// the full document open path (locks, backups, notices); box:/// by reading
+// mew's storage tree. The URL is re-canonicalized first, so in local mode a
+// box:/// name translates to its real file and loads with full source
+// tracking; only under a VIRTUALIZED box tree does the box:/// branch run,
 // producing a memory buffer whose filename is the canonical URL itself (its
 // identity round-trips through bufferCanonicalURL).
 func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
@@ -219,8 +226,8 @@ func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
 	if !ok {
 		return nil, fmt.Errorf("not a document URL: %s", url)
 	}
-	if prefix == "mew://" {
-		data, err := e.mew.ReadFile("mew://" + p)
+	if prefix == "box://" {
+		data, err := e.mew.ReadFile("box://" + p)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +245,7 @@ func (e *Editor) loadBufferURL(url string) (*buffer.Buffer, error) {
 // createBufferURL mints a buffer named for a canonical URL that does not
 // exist yet, holding the given seed content — the file itself only appears
 // when the buffer is first saved. file:/// buffers carry the real path; a
-// virtualized mew:/// buffer carries the canonical URL as its filename
+// virtualized box:/// buffer carries the canonical URL as its filename
 // (identity round-trips either way).
 func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 	url = e.canonicalDocURL(url)
@@ -246,7 +253,7 @@ func (e *Editor) createBufferURL(url, seed string) (*buffer.Buffer, error) {
 	if !ok {
 		return nil, fmt.Errorf("not a document URL: %s", url)
 	}
-	if prefix == "mew://" {
+	if prefix == "box://" {
 		// []byte(seed) is non-nil even when empty: garland treats a nil
 		// DataBytes as "no data source provided" rather than as empty
 		// content.

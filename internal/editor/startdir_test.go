@@ -111,7 +111,7 @@ func TestTildeFilenameNormalizesAndSaves(t *testing.T) {
 func TestSaveMewTargetVirtual(t *testing.T) {
 	fs := &recFS{}
 	e := mewFSEditor(t, fs)
-	buf, err := e.createBufferURL("mew:///help/start.txt", "start page\n")
+	buf, err := e.createBufferURL("box:///help/start.txt", "start page\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,9 +120,9 @@ func TestSaveMewTargetVirtual(t *testing.T) {
 		t.Fatal("edit should modify")
 	}
 	if !e.performSave(buf, buf.GetFilename()) {
-		t.Fatal("mew:-target save should succeed")
+		t.Fatal("box:-target save should succeed")
 	}
-	if got := string(fs.files["mew:///help/start.txt"]); got != "==start page\n" {
+	if got := string(fs.files["box:///help/start.txt"]); got != "==start page\n" {
 		t.Fatalf("VFS received %q", got)
 	}
 	if buf.IsModified() {

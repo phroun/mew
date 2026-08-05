@@ -7,22 +7,22 @@ import (
 	"testing"
 )
 
-// confine must reduce any "mew:" path to a clean, root-relative name that can
+// confine must reduce any "box:" path to a clean, root-relative name that can
 // never point above the tree root — a "../" is dropped, not honored.
 func TestMewConfineNeverEscapes(t *testing.T) {
 	cases := map[string]string{
-		"mew:/editor.conf":            "editor.conf",
-		"mew:/syntax/go.jsf":          "syntax/go.jsf",
-		"mew:editor.conf":             "editor.conf", // scheme without a slash
-		"mew:/":                       "",
-		"mew:":                        "",
-		"mew:/./x":                    "x",
-		"mew:/a/../b":                 "b",
-		"mew:/../etc/passwd":          "etc/passwd",
-		"mew:/../../../../etc/passwd": "etc/passwd",
-		"mew:/a/../../../b":           "b",
-		"mew:/..":                     "",
-		"mew:/../..":                  "",
+		"box:/editor.conf":            "editor.conf",
+		"box:/syntax/go.jsf":          "syntax/go.jsf",
+		"box:editor.conf":             "editor.conf", // scheme without a slash
+		"box:/":                       "",
+		"box:":                        "",
+		"box:/./x":                    "x",
+		"box:/a/../b":                 "b",
+		"box:/../etc/passwd":          "etc/passwd",
+		"box:/../../../../etc/passwd": "etc/passwd",
+		"box:/a/../../../b":           "b",
+		"box:/..":                     "",
+		"box:/../..":                  "",
 	}
 	for in, want := range cases {
 		if got := confine(in); got != want {
@@ -39,9 +39,9 @@ func TestMewVFSLocalNameConfined(t *testing.T) {
 	mewRoot := filepath.Join(root, ".mew")
 
 	for _, p := range []string{
-		"mew:/editor.conf",
-		"mew:/../../../etc/passwd",
-		"mew:/a/../../../../b",
+		"box:/editor.conf",
+		"box:/../../../etc/passwd",
+		"box:/a/../../../../b",
 	} {
 		got, ok := v.name(p)
 		if !ok {
@@ -63,7 +63,7 @@ func TestMewVFSLocalRoundTrip(t *testing.T) {
 		t.Fatal("no MewFS supplied: expected local mode")
 	}
 
-	if err := v.WriteFile("mew:/syntax/x.jsf", []byte("body")); err != nil {
+	if err := v.WriteFile("box:/syntax/x.jsf", []byte("body")); err != nil {
 		t.Fatal(err)
 	}
 	// Landed under <home>/.mew, and WriteFile created the parent directory.
@@ -71,13 +71,13 @@ func TestMewVFSLocalRoundTrip(t *testing.T) {
 	if b, err := os.ReadFile(onDisk); err != nil || string(b) != "body" {
 		t.Fatalf("write did not land at %q: %v / %q", onDisk, err, b)
 	}
-	if b, err := v.ReadFile("mew:/syntax/x.jsf"); err != nil || string(b) != "body" {
+	if b, err := v.ReadFile("box:/syntax/x.jsf"); err != nil || string(b) != "body" {
 		t.Fatalf("round-trip read failed: %v / %q", err, b)
 	}
 
 	// A climbing path is confined: it must not create /etc-style files, only a
 	// file inside <home>/.mew.
-	if err := v.WriteFile("mew:/../../escapee", []byte("z")); err != nil {
+	if err := v.WriteFile("box:/../../escapee", []byte("z")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".mew", "escapee")); err != nil {
@@ -108,7 +108,7 @@ func (r *recFS) WriteFile(name string, data []byte) error {
 }
 func (r *recFS) Glob(string) ([]string, error) { return nil, nil }
 
-// In virtual mode the host receives the canonical "mew:///rel" spelling
+// In virtual mode the host receives the canonical "box:///rel" spelling
 // (empty authority — the slot reserved for future instance selection) and
 // always confined — never a real filesystem path and never with a surviving
 // "..". Input spellings still normalize (the one-slash form is valid user
@@ -120,19 +120,19 @@ func TestMewVFSVirtualRouting(t *testing.T) {
 		t.Fatal("MewFS supplied: expected virtual mode")
 	}
 
-	_ = v.WriteFile("mew:///editor.conf", []byte("x"))
-	_, _ = v.ReadFile("mew:/../../../etc/passwd")
+	_ = v.WriteFile("box:///editor.conf", []byte("x"))
+	_, _ = v.ReadFile("box:/../../../etc/passwd")
 
 	for _, n := range fs.names {
-		if !strings.HasPrefix(n, "mew:///") {
+		if !strings.HasPrefix(n, "box:///") {
 			t.Errorf("host was handed a non-canonical name: %q", n)
 		}
 		if strings.Contains(n, "..") {
 			t.Errorf("host was handed an unconfined name: %q", n)
 		}
 	}
-	if got := fs.names[len(fs.names)-1]; got != "mew:///etc/passwd" {
-		t.Errorf("climbing read = %q, want mew:///etc/passwd", got)
+	if got := fs.names[len(fs.names)-1]; got != "box:///etc/passwd" {
+		t.Errorf("climbing read = %q, want box:///etc/passwd", got)
 	}
 }
 

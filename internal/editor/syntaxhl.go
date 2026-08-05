@@ -16,8 +16,8 @@ import (
 
 // mew's own MIT-licensed grammar pack (and its help manual) ship inside the
 // binary and in the system resource directory as the read-only lower layers of
-// the mew: filesystem (see mewfs.go / resources.go). Grammar resolution reads
-// "mew:///syntax/<name>.jsf" through that layered tree, so the shipped
+// the box: filesystem (see mewfs.go / resources.go). Grammar resolution reads
+// "box:///syntax/<name>.jsf" through that layered tree, so the shipped
 // highlighters resolve on a fresh install without any copy into ~/.mew, while a
 // user's own ~/.mew/syntax/<name>.jsf still shadows them.
 
@@ -138,7 +138,7 @@ type synColorKey struct {
 }
 
 // joeSyntaxDirs are the installed JOE grammar collections, consulted only when
-// running on a real OS (a virtualized host supplies grammars through mew:/ or
+// running on a real OS (a virtualized host supplies grammars through box:/ or
 // its document FS instead).
 var joeSyntaxDirs = []string{
 	"/usr/share/joe/syntax",
@@ -146,7 +146,7 @@ var joeSyntaxDirs = []string{
 }
 
 // resolveSyntaxFile finds a grammar file by name, in order: project .mew/syntax
-// directories (nearest project first, through the document FS), then the mew:
+// directories (nearest project first, through the document FS), then the box:
 // tree — which is itself layered (the user's ~/.mew/syntax, the system resource
 // directory, and mew's embedded built-in set, in that order) — then, on a real
 // OS, installed JOE directories. When skipProject is set — for a flavor named in
@@ -166,8 +166,8 @@ func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error
 			}
 		}
 	}
-	// The mew: read is layered: ~/.mew/syntax -> system resources -> embedded.
-	if src, err := e.mew.ReadFile("mew:///syntax/" + name + ".jsf"); err == nil {
+	// The box: read is layered: ~/.mew/syntax -> system resources -> embedded.
+	if src, err := e.mew.ReadFile("box:///syntax/" + name + ".jsf"); err == nil {
 		return src, nil
 	}
 	if e.usingOSFS {
@@ -476,7 +476,7 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 		// A page inside a REGISTERED wiki's root highlights as that wiki's
 		// format (the help tree's .txt pages as dokuwiki) — the registry is
 		// the mew:-space analogue of the path-conditional [formats] rules
-		// below. Both sides canonicalize, so a local mew:/// root and the
+		// below. Both sides canonicalize, so a local box:/// root and the
 		// real ~/.mew path it names compare as one subtree.
 		if url := e.canonicalDocURL(fn); url != "" {
 			for _, def := range wikiRegistry {

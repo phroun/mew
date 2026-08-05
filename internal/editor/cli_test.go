@@ -114,7 +114,7 @@ func TestLaunchWikiScheme(t *testing.T) {
 	}
 
 	// The help page opened in a top-docked ToolViewport rooted at the wiki.
-	startURL := e.canonicalDocURL("mew:///help/start.txt")
+	startURL := e.canonicalDocURL("box:///help/start.txt")
 	var help *viewport.Viewport
 	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.WikiName == "help" {
