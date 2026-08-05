@@ -278,8 +278,8 @@ func TestCliOptionAlignment(t *testing.T) {
 		"searchregex": "true", "modebarlocation": "top", "pagesizeoptimal": "100%",
 		"pageoverlapminimum": "1", "pagesizestep": "0", "maxrepeat": "100",
 		"killringentries": "10", "direction": "ltr", "prompttimeout": "300",
-		"scripttimeout": "300", "debouncems": "20", "maxrenderdelayms": "100",
-		"modebarinner": "%FN%", "modebardefault": "%FORTUNE%",
+		"scripttimeout": "300",
+		"modebarinner":  "%FN%", "modebardefault": "%FORTUNE%",
 		"modebarouter": "Line:%LINE%", "mappings": "mew",
 		"flipbidiforhost": "false", "rtlmarkmode": "normal",
 	}

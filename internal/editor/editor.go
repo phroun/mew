@@ -586,11 +586,9 @@ type Config struct {
 
 	// Editing locks (see config.GeneralConfig): UseLocks gates all locking;
 	// UseEmacsLocks additionally gates the emacs-interoperable lock files.
-	UseLocks         bool
-	UseEmacsLocks    bool
-	WordWrap         bool
-	DebounceMs       int
-	MaxRenderDelayMs int
+	UseLocks      bool
+	UseEmacsLocks bool
+	WordWrap      bool
 
 	// Search defaults (JOE-compatible): SearchIgnoreCase mirrors -icase,
 	// SearchWrap mirrors -wrap, SearchRegex mirrors -regex (standard regex
@@ -895,20 +893,18 @@ type TerminalIO struct {
 // DefaultConfig returns sensible default configuration.
 func DefaultConfig() Config {
 	return Config{
-		ShowLineNumbers:  true,
-		ShowColumnRuler:  true,
-		Scrollbar:        true,
-		TabSize:          4,
-		ShowInvisibles:   false,
-		ShowBidi:         false,
-		RtlCombining:     true,
-		ShowMarks:        "no",
-		OverwriteMode:    false, // insertMode=yes
-		ReadOnly:         false,
-		WordWrap:         false,
-		DebounceMs:       20,
-		MaxRenderDelayMs: 100,
-		SearchWrap:       true,
+		ShowLineNumbers: true,
+		ShowColumnRuler: true,
+		Scrollbar:       true,
+		TabSize:         4,
+		ShowInvisibles:  false,
+		ShowBidi:        false,
+		RtlCombining:    true,
+		ShowMarks:       "no",
+		OverwriteMode:   false, // insertMode=yes
+		ReadOnly:        false,
+		WordWrap:        false,
+		SearchWrap:      true,
 	}
 }
 
@@ -3574,10 +3570,6 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return strconv.Itoa(e.Config.PromptTimeout), true
 	case "scripttimeout":
 		return strconv.Itoa(e.Config.ScriptTimeout), true
-	case "debouncems":
-		return strconv.Itoa(e.Config.DebounceMs), true
-	case "maxrenderdelayms":
-		return strconv.Itoa(e.Config.MaxRenderDelayMs), true
 	}
 	return "", false
 }
@@ -4102,18 +4094,6 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if e.pawConfig != nil {
 			e.pawConfig.DefaultTokenTimeout = tokenTimeout(n)
 		}
-	case "debouncems":
-		n, ok := parseInt(0)
-		if !ok {
-			return false
-		}
-		e.Config.DebounceMs = n
-	case "maxrenderdelayms":
-		n, ok := parseInt(0)
-		if !ok {
-			return false
-		}
-		e.Config.MaxRenderDelayMs = n
 	default:
 		e.ShowWarning("Unknown option: " + name)
 		return false

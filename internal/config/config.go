@@ -462,13 +462,11 @@ type GeneralConfig struct {
 	// found walking up from the working directory contribute their
 	// editor.conf as layers over the user configuration (set it false in
 	// ~/.mew/editor.conf to ignore project configs entirely).
-	ProjectConfig    bool
-	WordWrap         bool
-	Layout           string
-	MappingsName     string
-	SequenceLength   int
-	DebounceMs       int
-	MaxRenderDelayMs int
+	ProjectConfig  bool
+	WordWrap       bool
+	Layout         string
+	MappingsName   string
+	SequenceLength int
 
 	// Search defaults (JOE-compatible rc options): SearchIgnoreCase mirrors
 	// -icase, SearchWrap mirrors -wrap, SearchRegex mirrors -regex (standard
@@ -891,8 +889,6 @@ func DefaultConfig() Config {
 			Layout:                  "qwerty",
 			MappingsName:            "mew",
 			SequenceLength:          4,
-			DebounceMs:              20,
-			MaxRenderDelayMs:        100,
 			SearchIgnoreCase:        false,
 			SearchWrap:              true,
 			SearchRegex:             false,
