@@ -289,10 +289,11 @@ func (e *Editor) followViewport(target string) bool {
 // surface (fall back to the document it replaced) and repoint the tile that was
 // showing the surface so it now shows dest instead.
 //
-// NOTE (first cut): the exact tiling semantics — whether dest is a hidden
-// viewport being brought into the slot, and what becomes of the reverted
-// surface viewport — may want refinement. It degrades to a plain focus switch
-// when there is no active tiler (headless / tests).
+// Tiles-to-viewports is many-to-many by design: dest may already be shown in
+// other tiles (it stays shown there too), and the reverted surface viewport
+// simply becomes an untiled background viewport that a later viewports listing
+// can pull into any tile. With no active tiler (headless / tests) this reduces
+// to a focus switch.
 func (e *Editor) switchTileViewport(dest *viewport.Viewport) {
 	sw := e.surfaceTargetViewport() // the viewport currently showing the surface
 	if dest == nil {
