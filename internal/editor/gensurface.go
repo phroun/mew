@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
@@ -15,17 +16,30 @@ import (
 // (so back/forward returns to what was there), read-only, and switched into
 // link-browse (navigation) mode on open.
 //
-// Their whole behavior is keyed on the buffer's ADDRESS, not on viewport state:
-// bufferGrammar forces the dokuwiki grammar for a mew: buffer, and
-// reconcileGrammarOptions applies a fixed option spec (read-only, link-browsing)
-// for one — so user config can't pollute the feature and nothing sticks to the
-// viewport when the reader navigates away.
+// Their behavior is keyed on the buffer's ADDRESS, not on viewport state:
+// bufferGrammar forces the dokuwiki grammar for a mew: buffer, and the edit
+// guard enforces read-only for one — so user config can't pollute the feature
+// and nothing sticks to the viewport when the reader navigates away.
+//
+// Each list entry is a dokuwiki link "[[<target>|<title>]]" whose TARGET is a
+// STABLE handle for the item — a buffer handle (buffer.Handle), or a viewport
+// id. Following one does NOT go through ordinary wiki/link resolution: the
+// surface's follow handler resolves the target back to the exact buffer or
+// viewport and turns it into an operation. The follow handler is the one place
+// that decides what following an entry DOES.
 
-// genSurfaces maps a mew: surface name to its content generator. Each generator
-// returns dokuwiki source. Add a new surface by registering it here.
-var genSurfaces = map[string]func(*Editor) string{
-	"buffers":   (*Editor).genBuffersDoc,
-	"viewports": (*Editor).genViewportsDoc,
+// genSurface is a registered generated surface: how to render it, and what
+// following one of its entries (by stable target) means.
+type genSurface struct {
+	render func(*Editor) string
+	follow func(e *Editor, target string) bool
+}
+
+// genSurfaces is the registry. Add a surface by registering a render/follow
+// pair here.
+var genSurfaces = map[string]genSurface{
+	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer},
+	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport},
 }
 
 // genSurfaceName returns the surface name for a mew: URL ("mew:/buffers" ->
@@ -42,11 +56,10 @@ func genSurfaceName(url string) string {
 }
 
 // openGeneratedSurface renders the named surface and navigates the focused
-// document viewport to it, in place. Returns false when the name is unknown or
-// there is no document viewport to navigate. Re-opening the surface that is
-// already showing refreshes it in place without growing the nav history.
+// document viewport to it, in place. Re-opening the surface already shown
+// refreshes it without growing the nav history.
 func (e *Editor) openGeneratedSurface(name string) bool {
-	gen, ok := genSurfaces[name]
+	s, ok := genSurfaces[name]
 	if !ok {
 		return false
 	}
@@ -57,27 +70,40 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 	}
 
 	url := "mew:/" + name
-	buf := e.lib.NewFromString(gen(e))
+	buf := e.lib.NewFromString(s.render(e))
 	buf.SetFilename(url)
 
-	// Refresh in place (no new history) when this surface is already the
-	// focused buffer; otherwise navigate there, so back returns to the document.
+	// Refresh in place (no new history) when this surface is already the focused
+	// buffer; otherwise navigate there, so back returns to the document.
 	if w.Buffer != nil && w.Buffer.GetFilename() == url {
 		e.replaceBuffer(w, buf)
 	} else {
 		e.swapBuffer(w, buf)
 	}
 	// Fixed generated-surface options: read-only and link-browsing on, then
-	// navigation mode. These sit on the viewport but travel with this buffer's
-	// nav binding, so returning to the document restores its own options.
-	// (bufferGrammar renders it as dokuwiki, keyed on the address; the edit
-	// guard also enforces read-only by address, independent of this state.)
+	// navigation mode. These travel with this buffer's nav binding, so returning
+	// to the document restores its own options with no leak.
 	w.ViewState.ReadOnly = true
 	w.ViewState.LinkBrowsing = true
 	w.BrowseActive = true
 	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
+}
+
+// followGeneratedSurfaceLink dispatches a followed link inside a generated
+// surface to that surface's follow handler. Reports (handled, isSurface):
+// isSurface is false when w's buffer is not a generated surface, so the caller
+// falls through to ordinary link resolution.
+func (e *Editor) followGeneratedSurfaceLink(w *viewport.Viewport, target string) (handled, isSurface bool) {
+	if w == nil || w.Buffer == nil {
+		return false, false
+	}
+	name := genSurfaceName(w.Buffer.GetFilename())
+	if name == "" {
+		return false, false
+	}
+	return genSurfaces[name].follow(e, target), true
 }
 
 // surfaceTargetViewport is the document viewport a generated surface navigates:
@@ -95,18 +121,6 @@ func (e *Editor) surfaceTargetViewport() *viewport.Viewport {
 	return nil
 }
 
-// bufferLink renders a dokuwiki link to a buffer by its canonical URL, or plain
-// text when the buffer has no followable identity (an unnamed buffer).
-func (e *Editor) bufferLink(b *buffer.Buffer, display string) string {
-	if b == nil {
-		return display
-	}
-	if url := e.bufferCanonicalURL(b); url != "" {
-		return "[[" + url + "|" + display + "]]"
-	}
-	return display
-}
-
 // surfaceBufferLabel is a short, human label for a buffer in a generated list:
 // a scheme URL shown whole (it carries its own context), else the base
 // filename, else "[unnamed]".
@@ -122,6 +136,21 @@ func surfaceBufferLabel(b *buffer.Buffer) string {
 		return fn
 	}
 	return filepath.Base(fn)
+}
+
+// linkItem writes one dokuwiki list entry: a link with the given target and
+// title, plus any trailing marks after the link.
+func linkItem(b *strings.Builder, target, title, marks string) {
+	fmt.Fprintf(b, "  - [[%s|%s]]%s\n", target, linkTitle(title), marks)
+}
+
+// linkTitle keeps a display string safe as a dokuwiki link title: a "]]" would
+// close the link early, so soften any bracket.
+func linkTitle(s string) string {
+	if strings.ContainsAny(s, "]|") {
+		s = strings.NewReplacer("]", ")", "|", "/").Replace(s)
+	}
+	return s
 }
 
 // openBuffers is the distinct set of buffers currently open across content
@@ -149,19 +178,31 @@ func (e *Editor) openBuffers() []*buffer.Buffer {
 	return out
 }
 
-// genBuffersDoc renders the open-buffer list as dokuwiki. Each named buffer is a
-// link to its canonical URL, so following it (in navigation mode) reuses the
-// already-open buffer.
-func (e *Editor) genBuffersDoc() string {
+// bufferByHandle finds the open buffer with the given handle, or nil.
+func (e *Editor) bufferByHandle(h uint64) *buffer.Buffer {
+	if h == 0 {
+		return nil
+	}
+	for _, b := range e.openBuffers() {
+		if b.Handle() == h {
+			return b
+		}
+	}
+	return nil
+}
+
+// renderBuffers renders the open-buffer list as dokuwiki; each entry links to
+// its buffer by handle.
+func (e *Editor) renderBuffers() string {
 	focused := e.ViewportManager.GetFocusedViewport()
 	var focusedBuf *buffer.Buffer
 	if focused != nil {
 		focusedBuf = focused.Buffer
 	}
 
+	bufs := e.openBuffers()
 	var b strings.Builder
 	b.WriteString("====== Open Buffers ======\n\n")
-	bufs := e.openBuffers()
 	if len(bufs) == 0 {
 		b.WriteString("//No open buffers.//\n")
 		return b.String()
@@ -174,14 +215,36 @@ func (e *Editor) genBuffersDoc() string {
 		if buf == focusedBuf {
 			marks += " //(current)//"
 		}
-		fmt.Fprintf(&b, "  - %s%s\n", e.bufferLink(buf, surfaceBufferLabel(buf)), marks)
+		linkItem(&b, strconv.FormatUint(buf.Handle(), 10), surfaceBufferLabel(buf), marks)
 	}
 	return b.String()
 }
 
-// genViewportsDoc renders the open-viewport list as dokuwiki: each viewport's
-// id, kind, and dock, with a link to the buffer it holds.
-func (e *Editor) genViewportsDoc() string {
+// followBuffer navigates the focused document viewport to the buffer the entry
+// names — the same in-place navigation opening the surface itself performs, so
+// back returns to the list.
+func (e *Editor) followBuffer(target string) bool {
+	h, err := strconv.ParseUint(strings.TrimSpace(target), 10, 64)
+	if err != nil {
+		return false
+	}
+	buf := e.bufferByHandle(h)
+	if buf == nil {
+		e.ShowNotification("That buffer is no longer open")
+		return true
+	}
+	w := e.surfaceTargetViewport()
+	if w == nil {
+		return false
+	}
+	e.swapBuffer(w, buf)
+	e.ensureCursorVisible(w)
+	return true
+}
+
+// renderViewports renders the open-viewport list as dokuwiki; each entry links
+// to its viewport by id.
+func (e *Editor) renderViewports() string {
 	focused := e.ViewportManager.GetFocusedViewport()
 
 	var b strings.Builder
@@ -192,21 +255,61 @@ func (e *Editor) genViewportsDoc() string {
 			continue
 		}
 		rows++
-		current := ""
+		label := surfaceBufferLabel(w.Buffer)
+		if w.Buffer == nil {
+			label = "[no buffer]"
+		}
+		marks := fmt.Sprintf(" — %s / %s", viewportTypeName(w.Type), viewportDockName(w.Dock))
 		if w == focused {
-			current = " //(focused)//"
+			marks += " //(focused)//"
 		}
-		bufPart := "[no buffer]"
-		if w.Buffer != nil {
-			bufPart = e.bufferLink(w.Buffer, surfaceBufferLabel(w.Buffer))
-		}
-		fmt.Fprintf(&b, "  - %s — %s / %s%s\n",
-			bufPart, viewportTypeName(w.Type), viewportDockName(w.Dock), current)
+		linkItem(&b, w.ID, label, marks)
 	}
 	if rows == 0 {
 		b.WriteString("//No open viewports.//\n")
 	}
 	return b.String()
+}
+
+// followViewport switches which viewport the surface's tile shows: it closes
+// the surface (falling back to the document it replaced and dropping itself
+// from the nav chain), then repoints the tile to the chosen viewport.
+func (e *Editor) followViewport(target string) bool {
+	target = strings.TrimSpace(target)
+	dest := e.ViewportManager.GetViewport(target)
+	if dest == nil {
+		e.ShowNotification("That viewport is no longer open")
+		return true
+	}
+	e.switchTileViewport(dest)
+	return true
+}
+
+// switchTileViewport carries out the viewports-surface operation: close the
+// surface (fall back to the document it replaced) and repoint the tile that was
+// showing the surface so it now shows dest instead.
+//
+// NOTE (first cut): the exact tiling semantics — whether dest is a hidden
+// viewport being brought into the slot, and what becomes of the reverted
+// surface viewport — may want refinement. It degrades to a plain focus switch
+// when there is no active tiler (headless / tests).
+func (e *Editor) switchTileViewport(dest *viewport.Viewport) {
+	sw := e.surfaceTargetViewport() // the viewport currently showing the surface
+	if dest == nil {
+		return
+	}
+	// Close the surface: revert its viewport to the document it navigated from.
+	if sw != nil && sw != dest {
+		sw.NavHistoryPrior()
+	}
+	// Repoint the surface's tile to dest, so the tile shows dest now.
+	if e.tiler != nil && sw != nil && sw.ID != dest.ID {
+		for _, h := range e.tiler.Get(sw.ID, false) {
+			e.tiler.Set(h, dest.ID)
+		}
+	}
+	e.ViewportManager.SetFocus(dest.ID)
+	e.RequestRender()
 }
 
 // viewportTypeName / viewportDockName give short human labels for a viewport's

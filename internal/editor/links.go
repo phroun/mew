@@ -276,6 +276,13 @@ func (e *Editor) recordLinkVisit(srcBuf *buffer.Buffer, target string, res follo
 // on an UNFOCUSED (but visible) viewport. w navigates in place (or spawns per
 // the resolution), never gaining or losing focus here.
 func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
+	// A link inside a generated mew: surface is not an ordinary document
+	// reference: hand its target to the surface's follow handler, which turns it
+	// into an operation (go to a buffer, switch a tile's viewport, …).
+	if handled, isSurface := e.followGeneratedSurfaceLink(w, span.Target); isSurface {
+		e.RequestRender()
+		return handled
+	}
 	res := e.resolveFollow(w, span.Target)
 
 	if res.url == "" {

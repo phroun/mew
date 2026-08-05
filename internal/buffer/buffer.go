@@ -6,11 +6,26 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/phroun/garland"
 	"github.com/phroun/mew/internal/textwidth"
 )
+
+// bufferHandleSeq issues process-unique buffer handles. Starts at 1 so a
+// zero-value handle always reads as "not yet assigned".
+var bufferHandleSeq atomic.Uint64
+
+// Handle returns this buffer's process-unique, stable handle, assigning one on
+// first use. It never returns 0. Buffers live on the editor's single goroutine,
+// so the lazy assignment needs no further locking.
+func (b *Buffer) Handle() uint64 {
+	if b.handle == 0 {
+		b.handle = bufferHandleSeq.Add(1)
+	}
+	return b.handle
+}
 
 // undoCoalesceIdle is how long a typing/deleting pause before the next edit
 // forces a fresh undo step. Adjacent same-kind edits within this window
@@ -121,6 +136,11 @@ type Buffer struct {
 	// buffer independently.
 	modified bool
 	filename string
+	// handle is a process-unique, stable identity assigned on first use (see
+	// Handle) — an addressable name for a buffer that outlives its filename
+	// (unnamed buffers included) and never collides, so a generated listing can
+	// link to it and resolve the link back to this exact buffer.
+	handle uint64
 
 	// mouseBlock: the current block selection was made by a plain mouse
 	// drag (transient — a plain click dissolves it). See SetMouseBlock.
