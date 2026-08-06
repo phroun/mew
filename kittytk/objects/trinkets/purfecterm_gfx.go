@@ -578,6 +578,21 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 
 	if !t.editorMode {
+		if os.Getenv("KITTYTK_SBDBG") != "" && t.gfxInputActive() {
+			// TEMPORARY: trace scrollbar-lane geometry against the painter's real
+			// visible clip, to pin the fractional-zoom mis-position. Remove once fixed.
+			clip := p.Clip()
+			offXPx, offYPx := p.PixelOffset()
+			visRightPx := p.UnitSpanPxX(0, clip.X+clip.Width)
+			visBottomPx := p.UnitSpanPxY(0, clip.Y+clip.Height)
+			vt, _, _, _, _, vok := t.vScrollGeometry()
+			ht, _, _, _, _, hok := t.hScrollGeometry()
+			fmt.Fprintf(os.Stderr,
+				"SBDBG ppu=%.4f bounds=%dx%d vp=%.1fx%.1f content=%.1f clip=X%d,Y%d,W%d,H%d pxOff=%d,%d visR=%d visB=%d | vlane[ok=%v X=%.1f..%.1f] hlane[ok=%v Y=%.1f..%.1f]\n",
+				t.gfx.ppu, int(bounds.Width), int(bounds.Height), t.gfx.vpWpx, t.gfx.vpHpx, contentWpx,
+				int(clip.X), int(clip.Y), int(clip.Width), int(clip.Height), offXPx, offYPx, visRightPx, visBottomPx,
+				vok, vt.X, vt.X+vt.W, hok, ht.Y, ht.Y+ht.H)
+		}
 		t.paintScrollbarsGfx(p, bounds, buf, chh)
 	}
 	t.ensureBlinkTimer()
