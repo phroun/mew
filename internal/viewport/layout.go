@@ -1,11 +1,21 @@
 // Package viewport provides viewport management for the editor.
 package viewport
 
-// ViewportLayout holds the calculated position and size for a viewport.
+// ViewportLayout holds the calculated position and size for one TILE showing a
+// viewport. Geometry lives here, with the tile — not on the viewport — because a
+// viewport can be shown in several tiles at once (tiles↔viewports is
+// many-to-many). The renderer applies each entry's frame to the viewport just
+// before painting that tile, so the same viewport paints correctly at every
+// tile that references it.
 type ViewportLayout struct {
 	Viewport *Viewport
 	Y        int // Top position (0-indexed)
 	Height   int
+	// FrameX/FrameWidth are this tile's horizontal paint frame (0-based start
+	// column, width). The zero value (0, 0) means "full width from the left
+	// edge", as for docked chrome that fills the row.
+	FrameX     int
+	FrameWidth int
 }
 
 // Layout holds the complete calculated layout for all viewports.

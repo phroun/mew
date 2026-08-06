@@ -193,6 +193,33 @@ func TestTilesCoverWidthExactly(t *testing.T) {
 	}
 }
 
+// TestSplitClonedRefPaintsBothTiles: viewport_split clones the origin tile's
+// ref, so two tiles show the SAME viewport (tiles↔viewports is many-to-many).
+// Geometry lives with the tile, so the viewport must paint in each tile at its
+// own frame — not just the last one, which used to leave the other tile blank.
+func TestSplitClonedRefPaintsBothTiles(t *testing.T) {
+	e, _, out := newRenderedEditor(t, "HELLO\n")
+	e.ensureTiler()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+
+	out.Reset()
+	e.performRender()
+
+	var left, right bool
+	for _, cols := range glyphCols(out.String(), 'H') {
+		for _, c := range cols {
+			if c <= e.Renderer.Width/2 {
+				left = true
+			} else {
+				right = true
+			}
+		}
+	}
+	if !left || !right {
+		t.Fatalf("a cloned-ref split must paint content in BOTH tiles; left=%v right=%v", left, right)
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")

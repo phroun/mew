@@ -7758,10 +7758,11 @@ func (e *Editor) performRender() {
 // is untouched; the renderer paints tiles and docked viewports through the same
 // agnostic path.
 //
-// Horizontal extent rides on the viewport's FrameX/FrameWidth (ViewportLayout
-// carries no X/width); vertical extent rides on the entry's Y/Height, offset by
-// the main area's top. (This assumes one tile per viewport — the per-viewport
-// frame cannot represent the same viewport at two different rects.)
+// Horizontal and vertical extent both ride on the layout ENTRY (the tile):
+// FrameX/FrameWidth and Y/Height are per-tile, so a viewport referenced by
+// several tiles (tiles↔viewports is many-to-many, e.g. after viewport_split
+// clones a ref) gets a distinct frame in each. The renderer applies each tile's
+// frame to the viewport just before painting it.
 func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	if layout.MainHeight <= 0 || e.Renderer.Width <= 0 {
 		layout.MainLayout = nil
@@ -7786,12 +7787,18 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		x1 := int(math.Round(b.Rect.X + b.Rect.W))
 		y0 := int(math.Round(b.Rect.Y))
 		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		// Geometry rides on the tile (this layout entry): a viewport shown in
+		// several tiles gets a distinct frame per tile, and the renderer applies
+		// each just before painting it. The viewport's own FrameX/FrameWidth are
+		// also set (last tile wins) for the single-tile mouse hit-test path.
 		w.FrameX = x0
 		w.FrameWidth = x1 - x0
 		mains = append(mains, viewport.ViewportLayout{
-			Viewport: w,
-			Y:        mainTop + y0,
-			Height:   y1 - y0,
+			Viewport:   w,
+			Y:          mainTop + y0,
+			Height:     y1 - y0,
+			FrameX:     x0,
+			FrameWidth: x1 - x0,
 		})
 	}
 	layout.MainLayout = mains

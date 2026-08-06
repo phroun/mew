@@ -749,6 +749,13 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 	for _, wl := range allLayouts {
 		w := wl.Viewport
 
+		// Content properties derive from THIS tile's frame (geometry lives with
+		// the tile). Apply it before anything below reads vpFrame(w). For a
+		// viewport shown in several tiles the last tile wins the stamped values,
+		// which the mouse hit-test then reads for the single-tile case.
+		w.FrameX = wl.FrameX
+		w.FrameWidth = wl.FrameWidth
+
 		w.LayoutEpoch = sr.layoutEpoch
 		w.ContentY = wl.Y
 		w.ContentHeight = wl.Height
@@ -862,6 +869,12 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 // renderViewportGroup renders a group of viewports.
 func (sr *ScreenRenderer) renderViewportGroup(layouts []viewport.ViewportLayout) {
 	for _, wl := range layouts {
+		// Apply this tile's horizontal frame to the viewport before painting it.
+		// Geometry lives with the tile, so a viewport shown in several tiles paints
+		// each at its own frame; rendering is sequential, so the viewport's frame
+		// is always the tile currently being drawn.
+		wl.Viewport.FrameX = wl.FrameX
+		wl.Viewport.FrameWidth = wl.FrameWidth
 		sr.renderViewport(wl.Viewport, wl.Y+1, wl.Height)
 	}
 }
