@@ -414,6 +414,56 @@ func TestPressFocusesPressedTile(t *testing.T) {
 	}
 }
 
+// TestScrollbarDragUsesGrabbedTile: grabbing a NON-focused tile's scrollbar and
+// dragging must compute the thumb against THAT tile's geometry, not the
+// viewport's canonical (focused) tile — the press doesn't steal focus.
+func TestScrollbarDragUsesGrabbedTile(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&b, "line %03d\n", i)
+	}
+	e, w0, _ := newRenderedEditor(t, b.String())
+	if !e.setOption(w0, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	topY, botY := 1<<30, -1
+	var botSbX, botSbRow, botContentY int
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport != doc {
+			continue
+		}
+		cy := e.mainTiles[i].ContentY
+		if cy < topY {
+			topY = cy
+		}
+		if cy > botY {
+			botY, botSbX, botSbRow, botContentY = cy, e.mainTiles[i].ScrollbarX, cy+1, cy
+		}
+	}
+	if topY == botY || botSbX < 0 {
+		t.Skip("need two stacked tiles with scrollbars")
+	}
+
+	// Grab the BOTTOM tile's bar (does not steal focus; canonical stays the top).
+	if !e.scrollbarPressAt(botSbX+1, botSbRow) {
+		t.Fatal("press on the bottom tile's scrollbar was not consumed")
+	}
+	if e.sbDrag.tileHandle == 0 {
+		t.Fatal("the drag did not capture the grabbed tile")
+	}
+	e.scrollbarDrag(botSbRow + 2)
+	if doc.ContentY != botContentY {
+		t.Fatalf("scrollbar drag geometry ContentY=%d, want the grabbed bottom tile's %d (top is %d)",
+			doc.ContentY, botContentY, topY)
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")

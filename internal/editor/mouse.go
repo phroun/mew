@@ -78,6 +78,11 @@ type scrollbarDragState struct {
 	active  bool
 	winID   string
 	grabOff int
+	// tileHandle is the tile whose bar was grabbed (0 for docked chrome). The
+	// press does not steal focus, so the grabbed tile may not be the viewport's
+	// canonical one; the drag re-applies this tile's geometry each motion so the
+	// thumb math uses the grabbed bar's track, not the tallest tile's.
+	tileHandle uint64
 }
 
 // scrollbarPressAt starts a scrollbar gesture when the press lands in a
@@ -121,8 +126,28 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 	}
 	e.sbDrag.active = true
 	e.sbDrag.winID = w.ID
+	e.sbDrag.tileHandle = 0
+	if t := e.mainTileAt(x, y); t != nil {
+		e.sbDrag.tileHandle = t.TileHandle // re-applied each drag motion
+	}
 	e.scrollbarDragTo(w, r)
 	return true
+}
+
+// applyGrabbedScrollbarTile re-applies the geometry of the tile whose bar the
+// scrollbar gesture grabbed, so the thumb math (track height, content page,
+// content top) uses that specific bar — not the viewport's canonical tile,
+// which the press did not move focus to.
+func (e *Editor) applyGrabbedScrollbarTile(w *viewport.Viewport) {
+	if e.sbDrag.tileHandle == 0 {
+		return
+	}
+	for i := range e.mainTiles {
+		if e.mainTiles[i].TileHandle == e.sbDrag.tileHandle && e.mainTiles[i].Viewport == w {
+			e.mainTiles[i].StampGeometry()
+			return
+		}
+	}
 }
 
 // scrollbarDrag continues a captured scrollbar gesture: the pointer's row —
@@ -137,6 +162,7 @@ func (e *Editor) scrollbarDrag(y int) bool {
 		e.sbDrag.active = false
 		return true
 	}
+	e.applyGrabbedScrollbarTile(w) // thumb math against the grabbed bar's tile
 	e.scrollbarDragTo(w, y-1-w.ContentY)
 	return true
 }
