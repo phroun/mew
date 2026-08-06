@@ -83,8 +83,12 @@ was a **pin-only** resync: root `go.mod` + `app/go.mod` kittytk pin
 v0.1.14-alpha -> v0.1.15-alpha, go.sum updated per module via `GOWORK=off go mod
 tidy` (garland untouched, no revert). purfecterm stays at v0.2.31. The only
 remaining vendored↔upstream divergence is the mew boundary (the 20 `//go:build
-mew` files + go.mod's mew require; `editor_mew.go` still carries the temporary
-`MEW_FITLOG` trace and fixed-`SizeHint` break, both slated for removal).
+mew` files + go.mod's mew require). The resize-runaway scaffolding that briefly
+lived in `editor_mew.go` (the `MEW_FITLOG` trace and the fixed-`SizeHint`
+feedback break) has since been removed: with the real fixes shipping —
+purfecterm v0.2.31 (smart-wrap) + kittytk v0.1.14 (geometry-only fit) — the
+`SizeHint` override proved redundant (the harness stays bounded without it) and
+the trace had done its job. The grid cap stays as the degenerate-fit backstop.
 
 ### The v0.1.14 sync (record)
 
@@ -136,11 +140,12 @@ the last actual release, v0.1.14-alpha. When v0.1.15 is cut, the follow-up
 resync confirms byte-identity and bumps only the pins.
 
 The fork boundary is otherwise unchanged (the **20 `//go:build mew` files** +
-the mew require; `editor_mew.go` additionally carries the temporary `MEW_FITLOG`
-trace and the fixed-`SizeHint` feedback break, both mew-only and both slated for
-removal once the release build is re-confirmed). This sync updated `go.sum` per
-module via `GOWORK=off go mod tidy` (not `go work sync`), so the `garland`
-indirect was **not** disturbed this time — no revert needed.
+the mew require). At the time of this sync `editor_mew.go` additionally carried
+temporary resize-runaway scaffolding — the `MEW_FITLOG` trace and the
+fixed-`SizeHint` feedback break — both since removed once the release build was
+re-confirmed (see the v0.1.15 record). This sync updated `go.sum` per module via
+`GOWORK=off go mod tidy` (not `go work sync`), so the `garland` indirect was
+**not** disturbed this time — no revert needed.
 
 ### The v0.1.13 sync (record)
 
