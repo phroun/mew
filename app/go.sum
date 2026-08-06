@@ -32,8 +32,8 @@ github.com/phroun/direct-key-handler v0.3.12 h1:quKi1qkE/JFGft6u0CYLrp6nZBepL7BY
 github.com/phroun/direct-key-handler v0.3.12/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4=
 github.com/phroun/garland v0.1.11/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
-github.com/phroun/kittytk v0.1.15-alpha h1:pWu7a2nAWLL7/saV6uhI1e3sw+4T37+P3xYRU0dK0K8=
-github.com/phroun/kittytk v0.1.15-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
+github.com/phroun/kittytk v0.1.16-alpha h1:bzo0Uq13p299DWPKRB83VOuf/M+7trpQ/WA4b8Fd4AU=
+github.com/phroun/kittytk v0.1.16-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
 github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4E=
 github.com/phroun/mew v0.3.1-alpha/go.mod h1:PHVb21QCVxAAySalmb9lzu4BGCKG6mrlnVOAg+9Ju5g=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=

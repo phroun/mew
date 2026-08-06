@@ -69,6 +69,24 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.16 sync (record)
+
+v0.1.15-alpha -> **v0.1.16-alpha** is three graphical-host fixes plus the
+SDL3-migration cleanup, all in one PR
+([#30](https://github.com/phroun/kittytk/pull/30)): the solo maximize->restore
+swapchain reconfigure (`SetScreenSizePx` clears an OS `MAXIMIZED` flag and
+reconfigures from the window's real pixel size; adds `sdl3.WINDOW_MAXIMIZED` +
+`Window.SizeInPixels()`), a divide-by-zero guard so compositing a child/overlay
+onto a host dragged to ~0 area no longer panics `NewRGBA`, and dropping the
+straggling SDL2 references (`buildwin.sh` rewritten to a purego `GOOS=windows go
+build`, comments corrected). Cut from our vendored tree, so every shared file is
+byte-identical to the tag; `Build` was already **16** (bumped ahead in that
+work), so this was a **pin-only** resync: root `go.mod` + `app/go.mod` kittytk
+pin v0.1.15-alpha -> v0.1.16-alpha, go.sum updated per module via `GOWORK=off go
+mod tidy` (garland untouched). purfecterm stays v0.2.31. The only remaining
+vendored<->upstream divergence is the mew boundary (the 20 `//go:build mew`
+files + go.mod's mew require).
+
 ### The v0.1.15 sync (record)
 
 v0.1.14-alpha -> **v0.1.15-alpha** is the grid cap and nothing else:

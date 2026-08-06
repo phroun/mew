@@ -95,8 +95,8 @@ locks the boundaries. (The newer subtree records — #25/#26/#27/#28 and this on
 live in full in `docs/kittytk-subtree.md`; this log's detailed narrative predates
 them.)
 
-**OPEN upstream in PR [#30](https://github.com/phroun/kittytk/pull/30)** (ahead
-of `v0.1.16`) — `solo-restore-zerosize-sdl2.patch` (against v0.1.15): three
+**LANDED upstream in KittyTK `v0.1.16-alpha`** (PR
+[#30](https://github.com/phroun/kittytk/pull/30)) — `solo-restore-zerosize-sdl2.patch` (against v0.1.15): three
 graphical-host fixes plus the SDL3-migration cleanup, all shared files.
 (1) **Solo maximize→restore** reconfigures the swapchain: in solo mode the app
 IS the primary OS window (RESIZABLE, border stripped at runtime), and restoring
@@ -115,7 +115,7 @@ divisor (the frame-level scale already did). (3) **SDL2 stragglers** dropped:
 plain purego `GOOS=windows go build` with `sdlembed`, and comments that still
 called the running system SDL2 corrected to SDL3 (`compositing-handoff.md` kept
 — it narrates the migration itself). `Build 16`. Verified on macOS (webgpu) +
-standalone build/vet/tests with no mew module. **OPEN in PR #30.**
+standalone build/vet/tests with no mew module. **LANDED in v0.1.16.**
 
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed

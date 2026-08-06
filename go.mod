@@ -8,7 +8,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.12
 	github.com/phroun/garland v0.1.11
 	github.com/phroun/ifitfits v0.1.0
-	github.com/phroun/kittytk v0.1.15-alpha
+	github.com/phroun/kittytk v0.1.16-alpha
 	github.com/phroun/pawscript v0.2.12-alpha
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
