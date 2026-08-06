@@ -286,10 +286,14 @@ type Editor struct {
 	// terminalSurfacesSent is the last set pushed to the host, so an idle
 	// frame republishes nothing.
 	terminalSurfacesSent []TerminalSurface
-	// ptyMouseCapture is the buffer whose terminal took a mouse press and now
-	// owns the gesture until release (its scrollbar drag, its selection).
-	// Touched only on the main loop under renderMu.
-	ptyMouseCapture *buffer.Buffer
+	// ptyMouseCapture is the terminal gesture (a scrollbar drag, a selection)
+	// held from press to release: which buffer's terminal took it, and the
+	// content rectangle of the exact tile the press landed in. A viewport can be
+	// shown in several tiles of different sizes, so the gesture pins its geometry
+	// to the pressed tile rather than re-reading the viewport's canonical one,
+	// which would drift a drag that began in a mirror. Touched only on the main
+	// loop under renderMu.
+	ptyMouseCapture *ptyMouseGesture
 	// rawKeyArmed is the raw_key_input one-shot: the NEXT keystroke belongs to
 	// a focused terminal's child process rather than to mew's keymap. Cleared
 	// by that keystroke whether or not a terminal was there to take it.

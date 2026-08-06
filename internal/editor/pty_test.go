@@ -2,6 +2,7 @@ package editor
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -247,6 +248,62 @@ func TestTerminalSurfaceMirrorsAcrossTiles(t *testing.T) {
 	}
 	if placed[0].Col == placed[1].Col && placed[0].Row == placed[1].Row {
 		t.Fatal("the two tile surfaces should sit at different positions")
+	}
+}
+
+// A press in ANY tile of a terminal viewport routes to the terminal against
+// THAT tile's geometry. A viewport shown in several tiles has one live terminal
+// (the primary) and read-only mirrors; a press in a mirror must reach the
+// terminal too — mapping it against the canonical (primary) geometry would send
+// the offset off-grid and drop the press into the buffer behind, so a scrollbar
+// drag begun in a mirror never started.
+func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "x\n")
+	var got TerminalMouse
+	asked := 0
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Mouse: func(_ string, ev TerminalMouse) ([]byte, bool) { asked++; got = ev; return nil, true },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	if len(e.mainTiles) != 2 {
+		t.Fatalf("want two tiles after the split, got %d", len(e.mainTiles))
+	}
+
+	// Every tile maps its OWN first content cell to the child's cell 1,1 — the
+	// mirror against its own origin, not the canonical viewport geometry. Before
+	// the release the gesture is captured; release it before pressing the next.
+	for i := range e.mainTiles {
+		tile := e.mainTiles[i]
+		if tile.Viewport == nil || tile.ContentWidth <= 0 || tile.ContentHeight <= 0 {
+			t.Fatalf("tile %d has no usable geometry: %+v", i, tile)
+		}
+		asked, got = 0, TerminalMouse{}
+		e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
+		e.handleMouseKey("MouseLeftPress")
+		if asked == 0 {
+			t.Fatalf("tile %d: the press never reached the terminal (it fell through)", i)
+		}
+		if got.Col != 1 || got.Row != 1 {
+			t.Errorf("tile %d origin press: child cell %d,%d, want the tile-relative 1,1", i, got.Col, got.Row)
+		}
+		if e.ptyMouseCapture == nil {
+			t.Errorf("tile %d: a terminal press should capture the gesture", i)
+		}
+		e.handleMouseKey("MouseLeftRelease")
+		if e.ptyMouseCapture != nil {
+			t.Errorf("tile %d: the release should let the gesture go", i)
+		}
 	}
 }
 

@@ -806,7 +806,7 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	st := e.ptySessions[b]
 	delete(e.ptySessions, b)
 	e.ptyMu.Unlock()
-	if e.ptyMouseCapture == b {
+	if e.ptyMouseCapture != nil && e.ptyMouseCapture.buf == b {
 		e.ptyMouseCapture = nil
 	}
 	if st == nil {
@@ -977,9 +977,22 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 	return true
 }
 
-// ptyMouseKey offers one mouse pseudo-key to the focused viewport's terminal
-// before mew's own mouse semantics see it. Reports true when the child took
-// it — when the host answered with bytes and they went out on the session.
+// ptyMouseGesture holds a terminal mouse gesture from press to release: the
+// buffer whose terminal took the press, and the content rectangle (1-based
+// origin cx,cy just left/above the first cell; cw,ch cells) of the exact tile
+// the press landed in. A viewport can be shown in several tiles of different
+// sizes — a primary hosting the live terminal plus read-only mirrors — so the
+// gesture maps every later coordinate against the pressed tile instead of the
+// viewport's canonical geometry, which would drift a drag begun in a mirror.
+type ptyMouseGesture struct {
+	buf            *buffer.Buffer
+	cx, cy, cw, ch int
+}
+
+// ptyMouseKey offers one mouse pseudo-key to the terminal under the pointer
+// before mew's own mouse semantics see it. Reports true when the terminal (or
+// its child) took it — when the host answered with bytes and they went out on
+// the session.
 //
 // A "no" falls straight through to mew's own handling. It means neither the
 // child nor the terminal wanted the event — not that the child was not
@@ -987,8 +1000,11 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 // own scrollbar and scrollback.
 //
 // x and y are 1-based screen cells (e.mouseX/e.mouseY, already updated by the
-// caller). Only the FOCUSED viewport forwards, matching every other input rule
-// here: a click in an unfocused viewport still focuses it instead.
+// caller). The event routes to the tile the pointer is IN — a viewport shown in
+// several tiles has one live terminal (the primary) and read-only mirrors, but
+// its scrollbar and scrollback are the emulator's own, so a press in a mirror
+// must reach the terminal too. The press also focuses that tile, so the live
+// trinket materializes where the user clicked.
 func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool {
 	if e.Config.TerminalSurfaces.Mouse == nil {
 		return false
@@ -1001,19 +1017,19 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	// A gesture in progress owns the WHOLE gesture. A press the terminal took
 	// captures the pointer for it — its scrollbar drag and its selection both
 	// keep tracking when the pointer leaves the rectangle, exactly as any
-	// trinket's would — and the release lets go. Coordinates may run past the
-	// grid's edges here, deliberately: a drag below the end of a scrollbar is
-	// something the scrollbar wants to know about.
-	if b := e.ptyMouseCapture; b != nil {
+	// trinket's would — and the release lets go. Coordinates map against the
+	// tile the press landed in and may run past its edges here, deliberately: a
+	// drag below the end of a scrollbar is something the scrollbar wants to know
+	// about.
+	if g := e.ptyMouseCapture; g != nil {
 		e.ptyMu.Lock()
-		st := e.ptySessions[b]
+		st := e.ptySessions[g.buf]
 		e.ptyMu.Unlock()
-		w := e.viewportShowing(b)
-		if st == nil || w == nil {
+		if st == nil {
 			e.ptyMouseCapture = nil
 		} else {
-			ev.Col = x - w.ContentX
-			ev.Row = y - w.ContentY
+			ev.Col = x - g.cx
+			ev.Row = y - g.cy
 			e.deliverPTYMouse(st, ev)
 			if ev.Action == TerminalMouseRelease {
 				e.ptyMouseCapture = nil
@@ -1022,28 +1038,50 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 		}
 	}
 
-	w := e.ViewportManager.GetFocusedViewport()
-	if w == nil || w.Buffer == nil {
+	// Resolve the tile under the pointer and route to its terminal. A click in a
+	// mirror must map against the mirror's rectangle, not the focused viewport's
+	// canonical one — otherwise the offset lands off-grid and the press falls
+	// through to the buffer behind. The focused viewport is the fallback for a
+	// terminal that is not a tiled main pane (e.g. hosted in a prompt).
+	var (
+		buf            *buffer.Buffer
+		cx, cy, cw, ch int
+		tile           *viewport.ViewportLayout
+	)
+	if t := e.mainTileAt(x, y); t != nil && t.Viewport != nil && t.Viewport.Buffer != nil {
+		tile = t
+		buf = t.Viewport.Buffer
+		cx, cy, cw, ch = t.ContentX, t.ContentY, t.ContentWidth, t.ContentHeight
+	} else if w := e.ViewportManager.GetFocusedViewport(); w != nil && w.Buffer != nil {
+		buf = w.Buffer
+		cx, cy, cw, ch = w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight
+	} else {
 		return false
 	}
 	e.ptyMu.Lock()
-	st := e.ptySessions[w.Buffer]
+	st := e.ptySessions[buf]
 	e.ptyMu.Unlock()
 	if st == nil {
 		return false
 	}
-	// The surface's grid is the viewport's content area — the same rectangle
-	// notifyTerminalSurfaces publishes — so the child's own 1-based cell is
-	// the offset from its origin.
-	col := x - w.ContentX
-	row := y - w.ContentY
-	if col < 1 || row < 1 || col > w.ContentWidth || row > w.ContentHeight {
+	// The surface's grid is the tile's content area — the same rectangle
+	// notifyTerminalSurfaces publishes for the primary — so the child's own
+	// 1-based cell is the offset from its origin.
+	col := x - cx
+	row := y - cy
+	if col < 1 || row < 1 || col > cw || row > ch {
 		return false
 	}
 	ev.Col, ev.Row = col, row
 	handled := e.deliverPTYMouse(st, ev)
 	if handled && ev.Action == TerminalMousePress {
-		e.ptyMouseCapture = w.Buffer
+		e.ptyMouseCapture = &ptyMouseGesture{buf: buf, cx: cx, cy: cy, cw: cw, ch: ch}
+		// The press belongs to this tile: focus it so the live terminal
+		// materializes here (a clicked mirror becomes the primary) and later
+		// frames paint the caret and trinket at this location.
+		if tile != nil {
+			e.focusTilerTile(tile.TileHandle)
+		}
 	}
 	return handled
 }
@@ -1063,16 +1101,6 @@ func (e *Editor) deliverPTYMouse(st *ptyState, ev TerminalMouse) bool {
 	}
 	e.RequestRender()
 	return true
-}
-
-// viewportShowing returns the on-screen viewport displaying a buffer, or nil.
-func (e *Editor) viewportShowing(b *buffer.Buffer) *viewport.Viewport {
-	for _, w := range e.ViewportManager.AllViewports() {
-		if w.Buffer == b && e.viewportOnScreen(w) {
-			return w
-		}
-	}
-	return nil
 }
 
 // armRawKey is raw_key_input: the NEXT keystroke goes to the focused
