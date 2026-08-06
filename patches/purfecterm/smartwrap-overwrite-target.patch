@@ -1,0 +1,164 @@
+From 0af732a118cd746fee8fe41b59c021e7746c2394 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 6 Aug 2026 21:34:17 +0000
+Subject: [PATCH] smart word wrap: overwrite the wrap target instead of
+ prepending
+
+Smart word wrap (mode 7702) moves the indent, and any word carried past
+the wrap point, to the head of the row below. That row is a real grid row
+an application may already have painted with absolute cursor positioning.
+The wrap prepended the indent to whatever was already there and never
+truncated the surplus, so a full-screen program that re-wraps the same
+region every frame (an animation redrawn while its host terminal is
+resized narrower than the content) grew a single line's backing slice by
+the indent on every wrap. The line width, the memory behind it, and the
+quadratic visual-width scan all grew without bound until the process was
+OOM-killed.
+
+Overwrite the wrap target's leading cells in place instead, extending the
+row only when it is shorter than the cells being written and never beyond
+them. When the target is empty, the intended reflow case where a program
+emits a long unwrapped line, indent+moved land exactly as before, so that
+behaviour is unchanged; only the pathological prepend-onto-painted-row
+growth is removed.
+
+Adds a regression test asserting a row's backing slice does not grow with
+the number of times the same region re-wraps.
+---
+ buffer_output.go         | 39 ++++++++++++++++++++++---
+ smartwrap_growth_test.go | 62 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 97 insertions(+), 4 deletions(-)
+ create mode 100644 smartwrap_growth_test.go
+
+diff --git a/buffer_output.go b/buffer_output.go
+index 7796c91..99b51b7 100644
+--- a/buffer_output.go
++++ b/buffer_output.go
+@@ -204,17 +204,30 @@ func (b *Buffer) writeCharInternal(ch rune) {
+ 					// Trim the current line (keep the boundary char)
+ 					b.screen[b.cursorY-1] = line[:wrapPoint+1]
+ 
+-					// Place indent + moved cells at the start of the new line
++					// Place indent + moved cells at the START of the wrap
++					// target, OVERWRITING its leading cells rather than
++					// prepending to whatever is already there. The target is a
++					// real grid row an application may already have painted via
++					// absolute cursor positioning; an unconditional prepend grew
++					// the row by the indent on every wrap and nothing ever
++					// truncated the surplus, so a full-screen app that re-wraps
++					// each frame drove the line width — and memory — without
++					// bound. When the target is empty (the intended reflow case,
++					// e.g. a program that emits a long unwrapped line) the
++					// leading cells become exactly indent+moved either way, so
++					// behaviour there is unchanged.
+ 					newLine := append(indentCells, cellsToMove...)
+-					b.screen[b.cursorY] = append(newLine, b.screen[b.cursorY]...)
++					b.overwriteLineStart(b.cursorY, newLine)
+ 
+ 					// Position cursor after the indent and moved cells
+ 					b.cursorX = leadingSpaces + len(cellsToMove)
+ 				} else {
+ 					// No valid word boundary (single word or no break after indent)
+-					// Just wrap with indent, no cells moved
++					// Just wrap with indent, no cells moved - overwrite the
++					// leading indent cells in place (see above; an unconditional
++					// prepend grew the row without bound).
+ 					if leadingSpaces > 0 {
+-						b.screen[b.cursorY] = append(indentCells, b.screen[b.cursorY]...)
++						b.overwriteLineStart(b.cursorY, indentCells)
+ 					}
+ 					b.cursorX = leadingSpaces
+ 				}
+@@ -742,3 +755,21 @@ func (b *Buffer) EraseChars(n int) {
+ 	}
+ 	b.markDirty()
+ }
++
++// overwriteLineStart writes cells into the START of the given row, extending the
++// row only when it is shorter than cells and never beyond len(cells). Smart word
++// wrap uses it to place indent (and any moved word) at the head of the wrap
++// target: overwriting in place cannot grow a grid row without bound, whereas the
++// prepend it replaced grew the row by the indent on every wrap when the target
++// was already painted.
++func (b *Buffer) overwriteLineStart(row int, cells []Cell) {
++	if row < 0 || row >= len(b.screen) {
++		return
++	}
++	line := b.screen[row]
++	for len(line) < len(cells) {
++		line = append(line, EmptyCell())
++	}
++	copy(line, cells)
++	b.screen[row] = line
++}
+diff --git a/smartwrap_growth_test.go b/smartwrap_growth_test.go
+new file mode 100644
+index 0000000..ae72b8c
+--- /dev/null
++++ b/smartwrap_growth_test.go
+@@ -0,0 +1,62 @@
++package purfecterm
++
++import "testing"
++
++// Smart word wrap (mode 7702) moves the indent — and any word carried past the
++// wrap point — to the head of the row below. That row is a real grid row an
++// application may already have painted with absolute cursor positioning. The
++// original implementation PREPENDED the indent to whatever was already there,
++// and nothing truncated the surplus, so a full-screen program that re-wraps the
++// same region every frame (e.g. an animation redrawn while its host terminal is
++// being resized narrower than the content) grew a single line's backing slice by
++// the indent on every wrap — an unbounded row that drove memory and the
++// quadratic visual-width scan without limit.
++//
++// The invariant the fix restores: repeatedly wrapping onto an already-painted
++// row must not make that row's backing slice grow with the number of wraps. The
++// leading cells are OVERWRITTEN in place, so the width is bounded by the content,
++// independent of how many times the region re-wraps.
++func TestSmartWrapDoesNotGrowRowUnbounded(t *testing.T) {
++	const cols, rows = 20, 6
++
++	// widest backing slice across the whole screen after `iters` frames, each
++	// frame repainting the same over-wide indented line from the top-left via
++	// absolute positioning — exactly what a redrawing full-screen app does.
++	widestAfter := func(iters int) int {
++		b := NewBuffer(cols, rows, 100)
++		if !b.IsSmartWordWrapEnabled() {
++			t.Fatal("smart word wrap should be enabled by default")
++		}
++		p := NewParser(b)
++		for i := 0; i < iters; i++ {
++			// CUP to row 1, col 1 (1-based), then a line far wider than `cols`
++			// with a leading indent and word boundaries so the smart-wrap path
++			// (not the plain auto-wrap path) handles it.
++			p.Parse([]byte("\x1b[1;1H   the quick brown fox jumps over the lazy dog"))
++		}
++		widest := 0
++		for _, line := range b.screen {
++			if len(line) > widest {
++				widest = len(line)
++			}
++		}
++		return widest
++	}
++
++	few := widestAfter(20)
++	many := widestAfter(400)
++
++	// With the fix the width is content-bound and identical regardless of how
++	// many frames were drawn. With the prepend bug, `many` grows roughly in
++	// proportion to the extra iterations and dwarfs `few`.
++	if many > few {
++		t.Errorf("row backing slice grew with iteration count: 20 frames -> %d cells, 400 frames -> %d cells; "+
++			"smart wrap must overwrite the wrap target in place, not prepend to it", few, many)
++	}
++
++	// A hard ceiling too, independent of the comparison above: no single row may
++	// exceed a small multiple of the terminal width.
++	if many > 8*cols {
++		t.Errorf("widest row is %d cells for a %d-column terminal; a wrapped line must stay bounded", many, cols)
++	}
++}
+-- 
+2.43.0
+

@@ -92,6 +92,29 @@ integration work:
    `Buffer.SetCellPixelSize`); the KittyTK gfx consumer landed in KittyTK
    `v0.1.7-alpha` (PR #16). mew now consumes both from the released tags.
 
+8. **Smart word wrap — overwrite the wrap target, don't prepend** — smart word
+   wrap (mode 7702) moves the indent (and any word carried past the wrap point)
+   to the head of the row below, but that row is a real grid row an application
+   may already have painted via absolute cursor positioning. The wrap *prepended*
+   the indent to whatever was there and never truncated the surplus, so a
+   full-screen program re-wrapping the same region every frame (an animation
+   redrawn while its host terminal is resized narrower than the content) grew a
+   single line's backing slice by the indent on **every** wrap — an unbounded
+   line that drove memory and the quadratic `getLineVisualWidth` scan until the
+   process was OOM-killed. Surfaced in the nested KittyTK/mew host: mid-resize the
+   inner content transiently exceeds the outer emulator width, the outer autowraps
+   each frame, and the prepend accumulates. `smartwrap-overwrite-target.patch`
+   (buffer_output.go **against v0.2.30**) replaces both prepends with a new
+   `overwriteLineStart(row, cells)` helper that writes the leading cells in place,
+   extending the row only when shorter than `cells` and never beyond — so the
+   empty-target reflow case (the intended use, a program emitting a long unwrapped
+   line) is bit-for-bit unchanged, and only the prepend-onto-painted-row growth is
+   removed. Includes `smartwrap_growth_test.go` (drop-in test: 20 frames → 94
+   cells, 400 frames → 1614 cells before the fix; bounded and frame-count-
+   independent after). Verified: patched v0.2.30 root suite passes; end-to-end in
+   the resize stress harness RSS stays bounded (heap `inuse_space` in the wrap path
+   drops from ~6.2 GB to ~2.6 MB) with smart wrap **enabled**. **OPEN in PR #20.**
+
 ---
 
 # PurfecTerm patch: Arabic contextual joining for the per-cell renderers
