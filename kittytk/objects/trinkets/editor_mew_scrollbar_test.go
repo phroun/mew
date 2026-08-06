@@ -177,3 +177,73 @@ func TestEditorBarsTrackPublications(t *testing.T) {
 	}
 	b.each(func(*editorBar) { t.Fatal("no bars should remain") })
 }
+
+// A viewport shown in SEVERAL tiles publishes a region per tile — same
+// ViewportID, distinct position — and each keeps its own bar. Keying by
+// viewport alone collapsed them into one, so a split pane (both side-by-side
+// and stacked) showed a single scrollbar on the graphical host.
+func TestEditorBarsKeepOneBarPerTile(t *testing.T) {
+	// Side-by-side: same viewport, two columns.
+	left := testRegion()
+	left.Col = 40
+	right := testRegion()
+	right.Col = 80
+	var b editorBars
+	b.set([]mew.ScrollbarRegion{left, right})
+	cols := map[int]bool{}
+	seen := 0
+	b.each(func(bar *editorBar) {
+		seen++
+		cols[bar.region.Col] = true
+	})
+	if seen != 2 {
+		t.Fatalf("side-by-side split: saw %d bars, want 2 (one per tile)", seen)
+	}
+	if !cols[40] || !cols[80] {
+		t.Errorf("both tile columns should have a bar, got %v", cols)
+	}
+
+	// Stacked: same viewport, same column, two rows.
+	top := testRegion()
+	top.Row = 1
+	bottom := testRegion()
+	bottom.Row = 13
+	var b2 editorBars
+	b2.set([]mew.ScrollbarRegion{top, bottom})
+	rows := map[int]bool{}
+	seen = 0
+	b2.each(func(bar *editorBar) {
+		seen++
+		rows[bar.region.Row] = true
+	})
+	if seen != 2 {
+		t.Fatalf("stacked split: saw %d bars, want 2 (one per tile)", seen)
+	}
+	if !rows[1] || !rows[13] {
+		t.Errorf("both tile rows should have a bar, got %v", rows)
+	}
+}
+
+// Distinct viewports — the ordinary un-split case, and docked chrome like the
+// help system — each keep their own bar. A single viewport publishes exactly
+// one region, and it must still draw.
+func TestEditorBarsKeepDistinctViewports(t *testing.T) {
+	doc := testRegion() // "doc"
+	help := testRegion()
+	help.ViewportID = "help"
+	help.Row = 1
+	var b editorBars
+	b.set([]mew.ScrollbarRegion{doc, help})
+	ids := map[string]bool{}
+	seen := 0
+	b.each(func(bar *editorBar) {
+		seen++
+		ids[bar.region.ViewportID] = true
+	})
+	if seen != 2 {
+		t.Fatalf("saw %d bars, want 2 (doc + help)", seen)
+	}
+	if !ids["doc"] || !ids["help"] {
+		t.Errorf("both viewports should have a bar, got %v", ids)
+	}
+}

@@ -47,7 +47,17 @@ type editorBar struct {
 	hover    bool
 }
 
-// editorBars holds the published bars, keyed by viewport ID.
+// barKey identifies a bar by the TILE it belongs to, not just its viewport. A
+// viewport shown in several tiles (many-to-many) publishes one region per tile
+// with the SAME ViewportID at distinct positions, so keying by viewport alone
+// would collapse them to one bar — the second overwriting the first, leaving a
+// split pane with a single scrollbar. Column and row together pin the tile: a
+// side-by-side split differs by column, a stacked one by row.
+func barKey(r mew.ScrollbarRegion) string {
+	return fmt.Sprintf("%s#%d,%d", r.ViewportID, r.Col, r.Row)
+}
+
+// editorBars holds the published bars, keyed per tile (see barKey).
 type editorBars struct {
 	mu   sync.Mutex
 	bars map[string]*editorBar
@@ -64,16 +74,17 @@ func (b *editorBars) set(regions []mew.ScrollbarRegion) (changed bool) {
 	seen := make(map[string]bool, len(regions))
 	b.order = b.order[:0]
 	for _, r := range regions {
-		seen[r.ViewportID] = true
-		b.order = append(b.order, r.ViewportID)
-		if cur, ok := b.bars[r.ViewportID]; ok {
+		key := barKey(r)
+		seen[key] = true
+		b.order = append(b.order, key)
+		if cur, ok := b.bars[key]; ok {
 			if cur.region != r {
 				cur.region = r
 				changed = true
 			}
 			continue
 		}
-		b.bars[r.ViewportID] = &editorBar{region: r}
+		b.bars[key] = &editorBar{region: r}
 		changed = true
 	}
 	for id := range b.bars {
