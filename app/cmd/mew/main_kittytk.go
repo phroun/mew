@@ -54,8 +54,6 @@ Build the standalone terminal editor without -tags kittytk.
 `
 
 func main() {
-	installDebugDump() // temporary: SIGUSR1 -> heap + goroutine dump
-
 	// Windows self-installer (--install / --uninstall). Handled before anything
 	// else so the flags never reach the editor as file operands; a no-op that
 	// returns (…, false) on other platforms and other flags.

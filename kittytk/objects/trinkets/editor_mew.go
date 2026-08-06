@@ -30,10 +30,6 @@ import (
 	"github.com/phroun/mew"
 )
 
-// fitLog gates the TEMPORARY resize-runaway trace (MEW_FITLOG=1). Remove with
-// the FITLOG lines once the runaway is fixed.
-var fitLog = os.Getenv("MEW_FITLOG") != ""
-
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
 // so focus, input routing, and painting are the terminal surface's, and adds
 // the mew session lifecycle plus the contract property/event surface.
@@ -267,20 +263,6 @@ func (e *Editor) Layout()                             {}
 func (e *Editor) LayoutManager() core.LayoutManager   { return nil }
 func (e *Editor) SetLayoutManager(core.LayoutManager) {}
 
-// SizeHint reports a FIXED, modest preferred size — deliberately decoupled from
-// this host's own terminal grid. PurfecTerm.SizeHint reports
-// TextWidth(cols)/TextHeight(rows); when a container sizes the editor to its
-// content, that feeds back: a bigger grid asks for a bigger box, which enlarges
-// the bounds, which enlarges the grid, which asks for more. Under a resize storm
-// with a continuously-drawing child the grid ran away to hundreds of thousands
-// of rows and a multi-gigabyte emulator buffer. A full-window host takes
-// whatever it is given (the root window maximizes it; a dock sizes it), so it
-// must never ask for more than a sane minimum — breaking the loop at the source.
-func (e *Editor) SizeHint() core.UnitSize {
-	m := e.EffectiveCellMetrics()
-	return core.UnitSize{Width: m.TextWidth(80), Height: m.TextHeight(24)}
-}
-
 // Paint starts the session on the first paint (once properties are applied),
 // then delegates to the terminal surface.
 func (e *Editor) Paint(p *core.Painter) {
@@ -326,16 +308,6 @@ func (e *Editor) ensureStarted() {
 
 	// Grid-size changes wake mew's resize path (it re-reads Size()).
 	e.SetResizeSink(func(cols, rows int) {
-		// TEMPORARY diagnostic (MEW_FITLOG): trace the outer terminal's emitted
-		// grid against its bounds and cell size, to find what drives the
-		// resize-runaway — a growing bounds (layout feedback) or a collapsing
-		// cell height (measurement). Remove once the runaway is fixed.
-		if fitLog {
-			b := e.Bounds()
-			cw, ch := e.cellDims()
-			fmt.Fprintf(os.Stderr, "FITLOG emitResize cols=%d rows=%d bounds=%gx%g cell=%gx%g gfx=%v\n",
-				cols, rows, float64(b.Width), float64(b.Height), float64(cw), float64(ch), core.FindGraphicalFrames(e))
-		}
 		e.mu.Lock()
 		e.curCols, e.curRows = cols, rows
 		e.mu.Unlock()
