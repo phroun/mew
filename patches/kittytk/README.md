@@ -79,8 +79,8 @@ free of an SDL dependency. `desktop_aboutrotation_test.go` locks the gate
 (false with no dialog / after focus leaves / after close; true only while the
 box is open and active).
 
-**OPEN upstream in PR [#29](https://github.com/phroun/kittytk/pull/29)** (ahead
-of `v0.1.15`) — `purfecterm-grid-cap.patch` (`objects/trinkets/purfecterm.go` +
+**LANDED upstream in KittyTK `v0.1.15-alpha`** (PR
+[#29](https://github.com/phroun/kittytk/pull/29)) — `purfecterm-grid-cap.patch` (`objects/trinkets/purfecterm.go` +
 `purfecterm_gfx.go` + `purfecterm_gridcap_test.go`, against v0.1.14): a
 `clampGridDim`/`maxTermGridDim` (2000) backstop on both fit paths
 (`updateTerminalSize`, `paintGraphical`). A degenerate fit — a near-zero cell

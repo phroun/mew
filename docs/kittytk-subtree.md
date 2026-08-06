@@ -69,6 +69,23 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.15 sync (record)
+
+v0.1.14-alpha -> **v0.1.15-alpha** is the grid cap and nothing else:
+`v0.1.14-alpha..v0.1.15-alpha` = PR
+[#29](https://github.com/phroun/kittytk/pull/29) (`clampGridDim`/`maxTermGridDim`
+in `purfecterm.go` + `purfecterm_gfx.go` + `purfecterm_gridcap_test.go`) — the
+degenerate-fit backstop the vendored tree had been carrying **ahead** of release
+since the v0.1.14 record. It was cut from our tree, so those three files are now
+byte-identical to the tag and the ahead-of-release divergence is retired. The
+vendored `Build` was already **15** (bumped ahead in the v0.1.14 sync), so this
+was a **pin-only** resync: root `go.mod` + `app/go.mod` kittytk pin
+v0.1.14-alpha -> v0.1.15-alpha, go.sum updated per module via `GOWORK=off go mod
+tidy` (garland untouched, no revert). purfecterm stays at v0.2.31. The only
+remaining vendored↔upstream divergence is the mew boundary (the 20 `//go:build
+mew` files + go.mod's mew require; `editor_mew.go` still carries the temporary
+`MEW_FITLOG` trace and fixed-`SizeHint` break, both slated for removal).
+
 ### The v0.1.14 sync (record)
 
 v0.1.13-alpha -> **v0.1.14-alpha** landing one fork PR, plus a purfecterm
