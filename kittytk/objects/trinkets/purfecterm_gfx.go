@@ -67,6 +67,12 @@ type purfecTermGfx struct {
 	// it, and hitKX/hitKY the scale from a unit coordinate onto it.
 	vpWpx, vpHpx float64
 	hitKX, hitKY float64
+	// barRightPx/barBottomPx are the VISIBLE right and bottom edges in render
+	// pixels — the painter's clip, which a hosted terminal shrinks below the
+	// full widget extent. The scrollbar lanes anchor to THESE, not vpWpx/vpHpx:
+	// a lane pinned to the full extent lands past the clip and paints skinny or
+	// clean off-screen. 0 = not painted yet (fall back to vpWpx/vpHpx).
+	barRightPx, barBottomPx float64
 
 	// Local selection drag.
 	mouseDown      bool
@@ -301,6 +307,23 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 	if bounds.Height > 0 && ppu > 0 {
 		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
+	}
+	// The scrollbar lanes anchor to the VISIBLE right/bottom, not the full
+	// widget extent: a hosted terminal is painted into a clip narrower than its
+	// bounds (its far columns/rows run off the mew viewport), and a lane pinned
+	// to bounds' edge lands in that clipped-off strip — skinny or gone. The
+	// clip's far edge, measured from the terminal origin, is where the lane must
+	// sit; because UnitSpanPxX/Y snap the same way applyClip does, the residual
+	// cancels and the lane's drawn edge falls exactly on the clip boundary. A
+	// clip wider than the widget (the unhosted case) clamps back to vpFull.
+	clip := p.Clip()
+	t.gfx.barRightPx = float64(p.UnitSpanPxX(0, clip.X+clip.Width))
+	t.gfx.barBottomPx = float64(p.UnitSpanPxY(0, clip.Y+clip.Height))
+	if t.gfx.barRightPx <= 0 || t.gfx.barRightPx > float64(vpFullWpx) {
+		t.gfx.barRightPx = float64(vpFullWpx)
+	}
+	if t.gfx.barBottomPx <= 0 || t.gfx.barBottomPx > float64(vpFullHpx) {
+		t.gfx.barBottomPx = float64(vpFullHpx)
 	}
 
 	// Content pixel width (viewport minus the vertical scrollbar lane) drives
@@ -578,21 +601,6 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 
 	if !t.editorMode {
-		if os.Getenv("KITTYTK_SBDBG") != "" && t.gfxInputActive() {
-			// TEMPORARY: trace scrollbar-lane geometry against the painter's real
-			// visible clip, to pin the fractional-zoom mis-position. Remove once fixed.
-			clip := p.Clip()
-			offXPx, offYPx := p.PixelOffset()
-			visRightPx := p.UnitSpanPxX(0, clip.X+clip.Width)
-			visBottomPx := p.UnitSpanPxY(0, clip.Y+clip.Height)
-			vt, _, _, _, _, vok := t.vScrollGeometry()
-			ht, _, _, _, _, hok := t.hScrollGeometry()
-			fmt.Fprintf(os.Stderr,
-				"SBDBG ppu=%.4f bounds=%dx%d vp=%.1fx%.1f content=%.1f clip=X%d,Y%d,W%d,H%d pxOff=%d,%d visR=%d visB=%d | vlane[ok=%v X=%.1f..%.1f] hlane[ok=%v Y=%.1f..%.1f]\n",
-				t.gfx.ppu, int(bounds.Width), int(bounds.Height), t.gfx.vpWpx, t.gfx.vpHpx, contentWpx,
-				int(clip.X), int(clip.Y), int(clip.Width), int(clip.Height), offXPx, offYPx, visRightPx, visBottomPx,
-				vok, vt.X, vt.X+vt.W, hok, ht.Y, ht.Y+ht.H)
-		}
 		t.paintScrollbarsGfx(p, bounds, buf, chh)
 	}
 	t.ensureBlinkTimer()
@@ -1858,20 +1866,22 @@ func (r pxRect) contains(x, y float64) bool {
 	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
 }
 
-// gfxPixelFrame is the trinket's available space in render pixels — the
-// extent the terminal's own pitch reaches, which for a hosted surface is
-// exactly what the covering clip guarantees visible. The scrollbars anchor
-// to its far right and bottom, un-quantized, overlaying content.
+// gfxPixelFrame is the trinket's VISIBLE space in render pixels — the extent
+// the scrollbar lanes anchor their far right and bottom to. For a hosted
+// surface that is the covering clip, which is narrower than the full widget:
+// pinning a lane to the widget edge (vpWpx/vpHpx) drops it in the clipped-off
+// strip, so the lanes use barRightPx/barBottomPx (the clip, clamped to the
+// widget) instead. Falls back to the full extent, then to bounds*ppu, before
+// either is painted.
 func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 	ppu = t.gfx.ppu
 	if ppu <= 0 {
 		ppu = 1
 	}
+	if t.gfx.barRightPx > 0 && t.gfx.barBottomPx > 0 {
+		return t.gfx.barRightPx, t.gfx.barBottomPx, ppu
+	}
 	if t.gfx.vpWpx > 0 && t.gfx.vpHpx > 0 {
-		// The widget's real device extent. A bar pinned to the right or bottom
-		// edge must be pinned to THIS, not to bounds*ppu — those differ by the
-		// outer system's snapping, and the pointer arrives in the snapped
-		// space.
 		return t.gfx.vpWpx, t.gfx.vpHpx, ppu
 	}
 	b := t.Bounds()
