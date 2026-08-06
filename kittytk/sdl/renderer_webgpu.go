@@ -476,6 +476,13 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
 	if cubeCleanup != nil {
 		cubeCleanup()
 	}
+	// Finish() transferred the native command encoder to this command buffer;
+	// Release() recycles it into the device's encoder pool. Skipping it leaks
+	// one native encoder PER PRESENT — and the pool allocates a fresh one every
+	// frame — so a session that presents a lot (a live window resize forces a
+	// present per resize event) inflates native memory without bound until the
+	// OS kills it. Release is nil-safe, so a failed Finish (nil buffer) is fine.
+	cmdBuffer.Release()
 	surfaceView.Release()
 
 	if err != nil {
