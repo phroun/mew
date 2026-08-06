@@ -281,6 +281,17 @@ func (t *TUIBackend) Init() error {
 	// Allocate buffers
 	t.allocateBuffers()
 
+	// Assert a known single-width baseline on the first frame. frontLineAttr was
+	// just allocated as all-zeros ("every row is normal"), but entering the
+	// alternate screen below does NOT reset DEC line attributes: DECDWL/DECDHL
+	// survive a screen switch and an erase — only DECSWL (ESC#5), RIS, or a soft
+	// reset retires them. So a row a PREVIOUS session left doubled comes back
+	// doubled, while our fresh record says "normal" and the reversion path (which
+	// fires only on a non-zero record) never rescues it — the row stays double-
+	// width every launch. Arming the line clear makes EndFrame emit DECSWL for
+	// every row on the first present, exactly as it does after a resize.
+	t.needsLineClear = true
+
 	// Enable Kitty keyboard protocol for better key detection
 	t.writeTTY("\033[>1u")
 

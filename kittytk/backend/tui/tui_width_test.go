@@ -210,3 +210,25 @@ func TestTUIDWLRetiredByLineClear(t *testing.T) {
 		t.Errorf("a settled normal row should emit no DEC line mode, got %q", out.String())
 	}
 }
+
+// A fresh backend must assert a single-width baseline on its FIRST present.
+// Entering the alternate screen does not reset DEC line attributes, so a row a
+// previous session left doubled survives into a new launch while the freshly
+// allocated frontLineAttr record (all-zero) says "normal" — and the reversion
+// path fires only on a non-zero record, so the stale doubling would persist
+// every launch. Init arms needsLineClear for exactly this; the first frame must
+// then emit DECSWL (ESC#5) for every row regardless of content.
+func TestTUIFirstFrameAssertsSingleWidthBaseline(t *testing.T) {
+	b, out := newTestTUI(6, 3)
+	b.needsLineClear = true // what Init() now arms at startup.
+
+	b.BeginFrame()
+	b.DrawText(0, 0, "hi", style.DefaultStyle(), nil)
+	b.EndFrame()
+
+	// One ESC#5 per row: a stale doubled row on any line is retired sight unseen.
+	if n := strings.Count(out.String(), "\033#5"); n < b.rows {
+		t.Fatalf("first frame must emit DECSWL (ESC#5) for every row (%d), got %d: %q",
+			b.rows, n, out.String())
+	}
+}
