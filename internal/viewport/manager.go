@@ -949,6 +949,11 @@ func (w *Viewport) releaseBinding() {
 // its own active buffer, back stack, and the new destination itself). The
 // caller decides WHICH buffer (reusing an open one for the same file, or
 // loading it) — the viewport only manages bindings.
+//
+// Same-buffer transitions never duplicate a history slot: swapping to the buffer
+// already shown is a no-op, and swapping to the buffer on top of the back stack
+// reuses that binding (restoring its caret) rather than stacking the same buffer
+// back-to-back.
 func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
 	inBack := func(b *buffer.Buffer) bool {
 		for i := range w.navBack {
@@ -959,6 +964,11 @@ func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer
 		return false
 	}
 	old := w.Buffer
+	if old == buf {
+		// Already showing this buffer: not a navigation. Leave the binding, the
+		// caret, and the history untouched rather than stacking a duplicate.
+		return
+	}
 	// A transient departing buffer (e.g. a mew:/ generated surface) is not kept
 	// as a back destination: release its binding instead of stacking it, so it
 	// can never be navigated back to.
@@ -980,6 +990,18 @@ func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer
 		}
 	}
 	w.navFwd = nil
+	// Collapse a back-to-back repeat: if the destination is the binding we would
+	// step back to (its buffer sits on top of navBack — e.g. after a transient
+	// surface between two visits to the same document was released), REUSE that
+	// binding instead of minting a fresh duplicate. The caret/scroll it saved are
+	// restored, so following the entry for the document you just came from returns
+	// you exactly where you were, and the buffer never sits twice in a row.
+	if n := len(w.navBack); n > 0 && w.navBack[n-1].Buffer == buf {
+		reuse := w.navBack[n-1]
+		w.navBack = w.navBack[:n-1]
+		w.attachBinding(reuse)
+		return
+	}
 	w.bindBuffer(buf)
 }
 

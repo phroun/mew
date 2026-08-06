@@ -269,7 +269,7 @@ func (e *Editor) renderBuffers() string {
 
 	bufs := e.openBuffers()
 	var b strings.Builder
-	b.WriteString("====== Open Buffers ======\n\n")
+	b.WriteString("==== Open Buffers ====\n\n")
 	if len(bufs) == 0 {
 		b.WriteString("//No open buffers.//\n")
 		return b.String()
@@ -315,7 +315,7 @@ func (e *Editor) renderViewports() string {
 	focused := e.ViewportManager.GetFocusedViewport()
 
 	var b strings.Builder
-	b.WriteString("====== Open Viewports ======\n\n")
+	b.WriteString("==== Open Viewports ====\n\n")
 	var rows int
 	for _, w := range e.ViewportManager.AllViewports() {
 		if w.Type == viewport.PromptViewport {
@@ -366,11 +366,17 @@ func (e *Editor) switchTileViewport(dest *viewport.Viewport) {
 	if dest == nil {
 		return
 	}
-	// Close the surface: revert its viewport to the document it navigated from.
-	if sw != nil && sw != dest {
+	// Close the surface first, always: revert its viewport to the document it
+	// navigated from (the surface is transient, so NavHistoryPrior releases it).
+	// This is what "removes itself" — and when the reader picks the surface's OWN
+	// viewport, reverting is the whole operation: it just goes back to what was
+	// there before, with no tile change.
+	if sw != nil {
 		sw.NavHistoryPrior()
 	}
-	// Repoint the surface's tile to dest, so the tile shows dest now.
+	// Repoint the surface's tile to dest so the tile shows dest now — skipped for a
+	// self-selection (dest IS the surface's viewport), where the revert above
+	// already restored what the tile should show.
 	if e.tiler != nil && sw != nil && sw.ID != dest.ID {
 		for _, h := range e.tiler.Get(sw.ID, false) {
 			e.tiler.Set(h, dest.ID)

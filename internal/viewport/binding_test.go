@@ -158,3 +158,57 @@ func TestRemoveViewportKeepsBufferReference(t *testing.T) {
 		t.Fatal("removed viewport must release its cursors")
 	}
 }
+
+// Swapping to the buffer already shown is a no-op: no history slot is added and
+// the caret is left exactly where it was.
+func TestSwapBufferToCurrentIsNoop(t *testing.T) {
+	m := NewManager()
+	bufA := buffer.NewFromString("aaa\naaa\n")
+	id := m.CreateViewport(ViewportOptions{
+		Type: DocViewport, Dock: DockNone, Buffer: bufA, Visible: true, SetFocus: true,
+	})
+	w := m.GetViewport(id)
+	w.SetCursorPos(Position{Line: 1, Rune: 2})
+
+	w.SwapBuffer(bufA, nothingOutside)
+	if w.Buffer != bufA {
+		t.Fatal("swap to the current buffer must keep it bound")
+	}
+	if p, n := w.NavHistoryDepths(); p != 0 || n != 0 {
+		t.Fatalf("swap to the current buffer must not grow history; depths = (%d,%d)", p, n)
+	}
+	if got := w.CursorPos(); got.Line != 1 || got.Rune != 2 {
+		t.Fatalf("no-op swap must keep the caret; got %+v", got)
+	}
+}
+
+// A transient buffer between two visits to the same document collapses: opening
+// a transient surface over A stacks A, and swapping back to A reuses that back
+// binding (restoring A's caret) instead of stacking A back-to-back with itself.
+func TestSwapBufferCollapsesAcrossTransient(t *testing.T) {
+	m := NewManager()
+	bufA := buffer.NewFromString("aaa\naaa\n")
+	id := m.CreateViewport(ViewportOptions{
+		Type: DocViewport, Dock: DockNone, Buffer: bufA, Visible: true, SetFocus: true,
+	})
+	w := m.GetViewport(id)
+	w.SetCursorPos(Position{Line: 1, Rune: 2})
+
+	surface := buffer.NewFromString("== list ==\n")
+	surface.SetTransient(true)
+	w.SwapBuffer(surface, nothingOutside) // navBack=[A@(1,2)], active=surface
+	if p, _ := w.NavHistoryDepths(); p != 1 {
+		t.Fatalf("opening the surface should stack A; back depth = %d", p)
+	}
+
+	w.SwapBuffer(bufA, nothingOutside) // transient released; A is the back top -> reuse
+	if w.Buffer != bufA {
+		t.Fatal("should be back on A")
+	}
+	if p, n := w.NavHistoryDepths(); p != 0 || n != 0 {
+		t.Fatalf("A must not sit back-to-back; depths = (%d,%d), want (0,0)", p, n)
+	}
+	if got := w.CursorPos(); got.Line != 1 || got.Rune != 2 {
+		t.Fatalf("the reused binding must restore A's caret; got %+v", got)
+	}
+}

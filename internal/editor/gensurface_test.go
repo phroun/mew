@@ -82,6 +82,30 @@ func TestViewportsSurfaceCaretOnCurrentEntry(t *testing.T) {
 	}
 }
 
+// Following an entry out of the buffers surface must not leave the read-only
+// the surface imposed stuck on the ordinary buffer navigated to.
+func TestBuffersSurfaceFollowClearsReadOnly(t *testing.T) {
+	e, _ := newTestEditor(t, "the document\n")
+	w := e.ViewportManager.GetFocusedViewport()
+	doc := w.Buffer
+	handle := strconv.FormatUint(doc.Handle(), 10)
+
+	if !e.openGeneratedSurface("buffers") {
+		t.Fatal("could not open buffers surface")
+	}
+	if !w.ViewState.ReadOnly {
+		t.Fatal("the surface should present as read-only")
+	}
+
+	e.followGeneratedSurfaceLink(w, handle)
+	if w.Buffer != doc {
+		t.Fatalf("following the entry did not return to the document")
+	}
+	if w.ViewState.ReadOnly || e.viewportEditLocked(w) {
+		t.Error("read-only leaked onto the document after following from the surface")
+	}
+}
+
 // A generated surface is transient in the nav history: opening one over a
 // document and then navigating back returns to the document, and the surface
 // is not forward-reachable — it was released, never parked as a destination.
@@ -107,6 +131,26 @@ func TestGeneratedSurfaceIsTransientInNav(t *testing.T) {
 	// ...and the surface is gone: nothing to re-advance to.
 	if w.NavHistoryNext() {
 		t.Fatalf("surface must not be a forward destination (got %q)", w.Buffer.GetFilename())
+	}
+}
+
+// Selecting the surface's OWN viewport in the viewports list closes the surface
+// and reverts that viewport to what it was showing before — no tile change.
+func TestViewportsSurfaceSelfSelectReverts(t *testing.T) {
+	e, _ := newTestEditor(t, "the document\n")
+	w := e.ViewportManager.GetFocusedViewport()
+	doc := w.Buffer
+
+	if !e.openGeneratedSurface("viewports") {
+		t.Fatal("could not open viewports surface")
+	}
+	if w.Buffer == doc {
+		t.Fatal("surface should have replaced the document")
+	}
+	// Pick this viewport's own id: it should just go back to the document.
+	e.followGeneratedSurfaceLink(w, w.ID)
+	if w.Buffer != doc {
+		t.Fatalf("self-select should revert to the document, got %q", w.Buffer.GetFilename())
 	}
 }
 

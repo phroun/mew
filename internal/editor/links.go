@@ -104,6 +104,16 @@ func (e *Editor) swapBuffer(w *viewport.Viewport, buf *buffer.Buffer) {
 		return e.bufferReferencedElsewhere(b, w)
 	})
 	e.unburyEverywhere(buf)
+	// SwapBuffer mints a fresh binding but leaves ViewState as the departed buffer
+	// left it. Re-resolve read-only for the new buffer (unless the viewport has an
+	// explicit override) so a mew:/ surface's read-only — which it sets on the
+	// viewport for the indicator, editing itself being blocked by address — can't
+	// stick to an ordinary, editable buffer the reader follows to. Global
+	// read-only mode and any class/grammar/overlay read-only re-resolve to true,
+	// so this only clears a value nothing configured.
+	if w != nil && !w.IsOptionOverridden("readonly") {
+		e.applyResolvedOption(w, "readonly")
+	}
 }
 
 // replaceBuffer swaps w to buf in place WITHOUT growing the nav history (see
