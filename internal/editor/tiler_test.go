@@ -306,6 +306,70 @@ func TestSplitScrollbarPressGrabsThePane(t *testing.T) {
 	}
 }
 
+// TestViewportAtStrictTileBounds: a tiled viewport is hit ONLY within a tile's
+// actual rectangle. Even when its canonical (focused-tile) geometry is large, a
+// click outside a short/narrow tile must not route to it — no bleed.
+func TestViewportAtStrictTileBounds(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "hi\n")
+	e.performRender()
+	doc := e.ViewportManager.GetFocusedViewport()
+
+	// Model a short tile whose viewport's canonical geometry (from a taller tile
+	// it also appears in) is large.
+	e.mainTiles = []viewport.ViewportLayout{{
+		Viewport: doc, FrameX: 0, FrameWidth: e.Renderer.Width,
+		ContentX: 0, ContentY: 0, ContentWidth: e.Renderer.Width, ContentHeight: 3,
+	}}
+	doc.ContentY, doc.ContentHeight = 0, 100 // canonical says "tall"
+	doc.FrameX, doc.FrameWidth = 0, e.Renderer.Width
+
+	if hit := e.viewportAt(1, 2); hit != doc { // inside the short tile
+		t.Fatalf("click inside the tile should route to it, got %v", vpID(hit))
+	}
+	if hit := e.viewportAt(1, 50); hit != nil { // below the short tile
+		t.Fatalf("click below the short tile must not bleed to it, got %v", vpID(hit))
+	}
+	// And narrow: shrink the tile's width, click past its right edge.
+	e.mainTiles[0].FrameWidth = 10
+	if hit := e.viewportAt(40, 2); hit != nil {
+		t.Fatalf("click past the narrow tile's right edge must not bleed, got %v", vpID(hit))
+	}
+}
+
+// TestSplitDownFocusedTileCanonical: with a viewport stacked in two tiles, the
+// viewport rests on the FOCUSED tile's geometry after render (not whichever tile
+// painted last), so the caret and paging use the focused pane.
+func TestSplitDownFocusedTileCanonical(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 60))
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	var focused, other *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport != doc {
+			continue
+		}
+		if e.mainTiles[i].Focused {
+			focused = &e.mainTiles[i]
+		} else {
+			other = &e.mainTiles[i]
+		}
+	}
+	if focused == nil || other == nil {
+		t.Fatalf("want one focused + one non-focused tile of doc; focused=%v other=%v", focused != nil, other != nil)
+	}
+	if focused.ContentY == other.ContentY {
+		t.Skip("tiles share a row — cannot distinguish canonical")
+	}
+	if doc.ContentY != focused.ContentY {
+		t.Fatalf("viewport ContentY=%d is not the FOCUSED tile's %d (other tile's is %d) — canonical not applied",
+			doc.ContentY, focused.ContentY, other.ContentY)
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")

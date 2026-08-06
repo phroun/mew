@@ -31,6 +31,30 @@ type ViewportLayout struct {
 	// on the bar is grabbed against the correct tile's bar.
 	ScrollbarX      int
 	ScrollbarTrackH int
+	// Focused marks the tile that currently holds focus. When a viewport is shown
+	// in several tiles, this is the one whose geometry becomes the viewport's
+	// canonical resting state — so the caret and keyboard paging use the pane the
+	// user is in, not whichever tile happened to paint last.
+	Focused bool
+}
+
+// StampGeometry copies this tile's recorded frame and content rectangle onto its
+// viewport, so the viewport's single-valued geometry reflects this specific
+// tile. Used to make the focused tile canonical (render) and to map a click into
+// the tile it hit (mouse).
+func (l *ViewportLayout) StampGeometry() {
+	w := l.Viewport
+	if w == nil {
+		return
+	}
+	w.FrameX = l.FrameX
+	w.FrameWidth = l.FrameWidth
+	w.ContentX = l.ContentX
+	w.ContentY = l.ContentY
+	w.ContentWidth = l.ContentWidth
+	w.ContentHeight = l.ContentHeight
+	w.ScrollbarX = l.ScrollbarX
+	w.ScrollbarTrackH = l.ScrollbarTrackH
 }
 
 // Layout holds the complete calculated layout for all viewports.
@@ -496,10 +520,21 @@ func (l *Layout) FindViewportLayout(viewportID string) *ViewportLayout {
 			return &l.TopLayout[i]
 		}
 	}
+	// Prefer the focused tile when a viewport is shown in several: the caret and
+	// cursor belong in the pane the user is in.
+	var firstMain *ViewportLayout
 	for i := range l.MainLayout {
 		if l.MainLayout[i].Viewport.ID == viewportID {
-			return &l.MainLayout[i]
+			if l.MainLayout[i].Focused {
+				return &l.MainLayout[i]
+			}
+			if firstMain == nil {
+				firstMain = &l.MainLayout[i]
+			}
 		}
+	}
+	if firstMain != nil {
+		return firstMain
 	}
 	for i := range l.BottomLayout {
 		if l.BottomLayout[i].Viewport.ID == viewportID {

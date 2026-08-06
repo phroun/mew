@@ -765,19 +765,32 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 		return col >= t.FrameX && col < t.FrameX+width
 	}
 	focused := e.ViewportManager.GetFocusedViewport()
-	var bestTile *viewport.ViewportLayout
+
+	// A tiled viewport is hit ONLY within a tile's ACTUAL rectangle — both axes.
+	// It is never matched by its own (single-valued, focused-tile) geometry, so a
+	// short OR narrow tile holding a larger viewport cannot claim cells past its
+	// own edge. inMain records every tiled viewport so the docked fallback below
+	// can't re-match one that way. The whole tile list is scanned (no early exit)
+	// so inMain is complete even once a hit is found.
+	inMain := map[string]bool{}
+	var focusedTile, bestTile *viewport.ViewportLayout
 	for i := range e.mainTiles {
 		t := &e.mainTiles[i]
+		if t.Viewport != nil {
+			inMain[t.Viewport.ID] = true
+		}
 		if !inTile(t) {
 			continue
 		}
-		if t.Viewport == focused {
-			bestTile = t
-			break
+		if t.Viewport == focused && focusedTile == nil {
+			focusedTile = t
 		}
 		if bestTile == nil || (!bestTile.Viewport.FocusEligible() && t.Viewport.FocusEligible()) {
 			bestTile = t
 		}
+	}
+	if hit := focusedTile; hit != nil {
+		bestTile = hit // the focused tile wins when it covers the cell
 	}
 	if bestTile != nil {
 		// Apply the hit tile's geometry to the viewport so the caller's cell→
@@ -788,9 +801,10 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	}
 
 	// Docked chrome (top/bottom bars) is single-tile, so its geometry lives
-	// correctly on the viewport: fall back to the per-viewport test for it.
+	// correctly on the viewport: fall back to the per-viewport test for it. A
+	// tiled viewport is skipped here — it is strictly tile-bounded above.
 	covers := func(w *viewport.Viewport) bool {
-		if !e.viewportOnScreen(w) ||
+		if w == nil || inMain[w.ID] || !e.viewportOnScreen(w) ||
 			!(row >= w.ContentY && row < w.ContentY+w.ContentHeight) {
 			return false
 		}
@@ -821,15 +835,7 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 // (tiles↔viewports is many-to-many); the render pass re-stamps it every frame,
 // so this application lasts only until the next render.
 func (e *Editor) applyTileGeometry(t *viewport.ViewportLayout) {
-	w := t.Viewport
-	w.FrameX = t.FrameX
-	w.FrameWidth = t.FrameWidth
-	w.ContentX = t.ContentX
-	w.ContentY = t.ContentY
-	w.ContentWidth = t.ContentWidth
-	w.ContentHeight = t.ContentHeight
-	w.ScrollbarX = t.ScrollbarX
-	w.ScrollbarTrackH = t.ScrollbarTrackH
+	t.StampGeometry()
 }
 
 // runeAtVisualColumn is the inverse of the caret-column math: the logical

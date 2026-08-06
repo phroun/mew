@@ -7783,6 +7783,7 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	vp := e.ensureTiler()
 	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
+	focusedTile := vp.GetFocus()
 	mainTop := layout.TopHeight
 	mains := make([]viewport.ViewportLayout, 0, 4)
 	for _, b := range vp.Tiles() {
@@ -7811,6 +7812,7 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 			Height:     y1 - y0,
 			FrameX:     x0,
 			FrameWidth: x1 - x0,
+			Focused:    b.Tile == focusedTile,
 		})
 	}
 	layout.MainLayout = mains

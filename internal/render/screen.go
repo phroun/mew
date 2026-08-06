@@ -701,6 +701,17 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 	sr.renderViewportGroup(layout.MainLayout)
 	sr.renderViewportGroup(layout.BottomLayout)
 
+	// Make the FOCUSED tile canonical: painting leaves each viewport's geometry
+	// as whatever tile drew last, but a viewport shown in several tiles must rest
+	// on the FOCUSED tile's geometry — so the caret places correctly and keyboard
+	// paging (which reads the viewport's own ContentHeight after render) uses the
+	// pane the user is in. Done after painting, before the cursor is placed.
+	for i := range layout.MainLayout {
+		if layout.MainLayout[i].Focused {
+			layout.MainLayout[i].StampGeometry()
+		}
+	}
+
 	// Render peek indicators
 	sr.renderPeekIndicators(layout)
 
