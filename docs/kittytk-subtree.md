@@ -69,6 +69,44 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.13 sync (record)
+
+v0.1.11-alpha -> **v0.1.13-alpha** in one step — the v0.1.12 pin bump was
+folded in here rather than recorded on its own — landing three fork PRs and
+nothing else. The combined diff `v0.1.11-alpha..v0.1.13-alpha` is exactly the
+files those PRs touched:
+
+- [#25](https://github.com/phroun/kittytk/pull/25) (v0.1.12) — WebGPU renderer
+  leaked one native command encoder **per presented frame**: both present paths
+  (`Present` and the desktop compositor `RenderFrameWithChildWindows`) ran
+  `encoder.Finish()` → `queue.Submit()` but never `cmdBuffer.Release()`, which
+  is what recycles the HAL encoder into the device pool. A live window resize
+  forces a present per resize event, so rapid resizing inflated native memory
+  without bound until the OS killed the process (`sdl/renderer_webgpu.go`).
+- [#26](https://github.com/phroun/kittytk/pull/26) (v0.1.13) — `PurfecTerm`
+  read-only mirror paint: `PaintMirror` renders one live terminal in several
+  places, the extras drawn UNFOCUSED (hollow cursor, no platform caret) and
+  sizing/scrolling nothing (`mirrorPaint` gates `updateTerminalSize`, the gfx
+  fit-resize, and the `CheckCursorAutoScroll`/`ClearDirty` side effects;
+  `paintFocused()` is the new render-focus predicate). `objects/trinkets/
+  purfecterm.go` + `purfecterm_gfx.go` + `purfecterm_embeddedfocus_test.go`.
+- [#27](https://github.com/phroun/kittytk/pull/27) (v0.1.13) — the
+  `profile://`/`box://` scheme-architecture design doc, plus the `sdl3.go`
+  comment mojibake fix (see below). Docs/comment only, so **no build-counter
+  bump** (docs-only changes don't move `Build`).
+
+Cut from our vendored tree, so every changed file was byte-identical to the
+release; the sync bumped `core/version.go`'s `Build` to 13 and the `go.mod`
+pins to v0.1.13-alpha. No dependency bumps; no shared-interface change. The
+fork boundary is unchanged (**20 `//go:build mew` files** + the mew require).
+`sdl/sdl3/sdl3.go`'s comment em-dashes now match upstream both ways — #27
+fixed the mojibake upstream, so the long-standing divergence is retired.
+
+`go work sync` again wrongly bumped the vendored `kittytk/go.mod`'s `garland`
+indirect (`v0.1.8 -> v0.1.11`); reverted, as in the v0.1.10 record — upstream
+carries no `garland` require, and the indirect is a mew-boundary artifact a
+kittytk resync must not touch.
+
 ### The v0.1.11 sync (record)
 
 v0.1.10-alpha -> **v0.1.11-alpha** is one fork PR landing upstream and nothing

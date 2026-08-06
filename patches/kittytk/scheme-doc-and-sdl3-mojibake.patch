@@ -1,0 +1,250 @@
+From e6669ed78f977343d4518aaf05632d53f0603d2c Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 18:58:18 +0000
+Subject: [PATCH] docs: scheme-architecture design; fix mojibake em-dashes in
+ sdl3 comments
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add docs/scheme-architecture.md — the design for KittyTK Applications'
+profile:// and box:// storage schemes: the URL grammar (meaning rides on the
+authority slot), the Desktop-as-resolver/broker model, the two orthogonal
+permission axes, canonical identity, and the multiuser cross-product left open
+for later. Design-status; written down so the grammar and permission rules are
+settled before code depends on them.
+
+Also fix UTF-8 mojibake in sdl/sdl3/sdl3.go comments, where em-dashes had been
+mangled to "â". Comment-only; no code change.
+
+No build-counter bump: docs and comment cosmetics only, no behavioral change.
+---
+ docs/scheme-architecture.md | 139 ++++++++++++++++++++++++++++++++++++
+ sdl/sdl3/sdl3.go            |  16 ++---
+ 2 files changed, 147 insertions(+), 8 deletions(-)
+ create mode 100644 docs/scheme-architecture.md
+
+diff --git a/docs/scheme-architecture.md b/docs/scheme-architecture.md
+new file mode 100644
+index 0000000..69ca693
+--- /dev/null
++++ b/docs/scheme-architecture.md
+@@ -0,0 +1,139 @@
++# Resource scheme architecture: `profile://` and `box://`
++
++> **Status: design.** This describes the intended addressing and capability
++> model for Application storage under the Desktop. It is not yet implemented;
++> it is written down so the URL grammar and permission rules are settled before
++> code depends on them.
++
++KittyTK Applications need a uniform way to name stored resources — their own,
++the ones they share with sibling Applications, and (in time) resources that
++belong to another user — without hard-coding real filesystem paths and without
++being able to reach outside what the user has allowed. Two schemes cover it:
++
++- **`profile://`** — the user's profile: the shared space that spans all of
++  that user's Applications.
++- **`box://`** — a single Application's private sandbox (its *box*; plural
++  *boxen*).
++
++**The Desktop owns the profile.** It is the single authority for both schemes —
++the resolver that maps a URL to storage and the capability broker that mediates
++every access crossing a boundary. Applications hold no profile state of their
++own; they address resources and the Desktop decides what that means and whether
++it is allowed.
++
++## The grammar
++
++Every distinction rides on the **authority slot**, exactly as `file://` uses it
++for the host. Nothing depends on counting slashes.
++
++| URL | Authority | Resolves to | Default permission |
++|---|---|---|---|
++| `box:///path` | empty | **the calling Application's own** sandbox | auto-granted |
++| `box://name/path` | `name` | another Application's sandbox | brokered |
++| `profile:///path` | empty | **the current user's** profile root (shared space) | see below |
++| `profile://user/path` | `user` | another user's profile *(future — see Multiuser)* | brokered |
++
++The single rule that governs it:
++
++> **Empty authority = "mine"; a named authority = "someone else's" → broker it.**
++
++For `box://`, "someone else" is another Application. For `profile://`, it is
++another user. One bit — is the authority empty? — drives the permission reflex
++in both schemes.
++
++Because meaning lives in the authority, these URLs parse correctly under any
++RFC 3986 parser; there is no reliance on the non-standard distinction between
++"no authority" (`scheme:/x`) and "empty authority" (`scheme:///x`). Do **not**
++assign the single-slash form (`box:/x`) a separate meaning — it collapses to the
++empty-authority form in stock parsers, so treat it as an alias of `box:///x`, or
++reject it.
++
++## Disjoint namespaces
++
++An Application's sandbox is, by convention, stored *inside* the user's profile
++(e.g. under a per-Application folder at the profile root). That is a **physical
++storage** fact, not a second public address:
++
++- `box://name/…` is the **canonical** way to name any sandbox — your own or a
++  sibling's.
++- `profile:///…` names the **shared** area of the profile and is **not** a back
++  door into an Application's sandbox, even though the bytes live under the
++  profile root on disk.
++
++Keeping the two address spaces logically disjoint means every resource has one
++canonical identity, which the identity/canonicalization layer relies on for
++buffer de-duplication and caching. Co-locate on disk; keep the addresses apart.
++
++## Resolution and the host boundary
++
++The Desktop resolves `profile://` and `box://`; Applications never do their own
++path math and never receive a real filesystem path back. The scheme is
++**opaque** by design: an Application addresses `box:///config` and the Desktop
++decides where that physically lives ("wherever the profile is"), so storage can
++be relocated — or backed by something other than a local filesystem — without
++the Application caring.
++
++Confinement is intrinsic: a sandbox root clamps `..`, so no path can escape the
++folder it is scoped to. The same clamp mechanism, parameterized by which root,
++serves every sandbox.
++
++## Permission model
++
++Access control is **two independent axes**, each keyed by the empty-vs-named
++test on its own scheme:
++
++1. **Application capability** — governs whether an Application may leave its own
++   sandbox: `box:///…` (its own) is auto-granted; `box://sibling/…` and
++   `profile:///…` (the shared area, i.e. stepping outside the sandbox) are
++   brokered as a per-Application grant.
++2. **User access** — governs whether one may reach *another user's* profile:
++   `profile://user/…` is brokered against the user-access layer.
++
++A grant can be scoped **once**, **for the session**, or **always**, recorded by
++the Desktop. The two axes are orthogonal: `profile:///shared.db` is *yours*
++(no user-access prompt), yet reaching it *from inside an Application* is still an
++Application-capability crossing (the app is stepping outside its sandbox). Same
++URL; which gate fires depends on who is asking.
++
++## Application-registered schemes (the overlay point)
++
++`profile://` and `box://` address **stored** resources. An Application may also
++register **its own schemes** with the Desktop, routed to a handler the
++Application provides, for content that is not file storage — for example a
++dynamically generated view assembled on demand rather than read from disk. Such
++a scheme is the Application's own concern; it overlays the base model rather than
++replacing it, and it is private to the Application that registered it. Other
++Applications never address it — inter-Application access always goes through
++`box://name/…`, never through another Application's private scheme.
++
++This keeps a clean separation:
++
++- **stored, file-backed, user-overridable** → `profile://` / `box://` (Desktop-owned);
++- **generated, handler-backed** → an Application's own registered scheme.
++
++## Canonical identity
++
++Each resource has exactly one canonical URL. Where a physical location is
++reachable by more than one route (e.g. the storage path underlying a sandbox),
++the resolver folds them to the single canonical form so that two addresses for
++the same bytes do not become two independent identities.
++
++## Future: multiuser
++
++Each scheme's authority is a **single axis** — `box://` names an Application,
++`profile://` names a user. When KittyTK becomes multi-user, `profile://user/…`
++reaches another user's profile, brokered by the user-access layer.
++
++The **cross-product** — a *named Application's* sandbox belonging to a *named
++user* — is deliberately left open rather than answered by pathing through
++`profile://user/‹app-folder›/…` (which would re-break the disjoint-namespace
++rule across the user boundary). Two provisions keep it uncornered:
++
++- `box://` is **implicitly current-user** for now (it always means this user's
++  Applications); and
++- RFC 3986's authority is `userinfo@host:port` — richer than one token — so the
++  cross-product has structural room (`box://name@user/…` or similar) if and when
++  it is needed, with no grammar change.
++
++Build the two single-axis schemes; treat the Application×user composition as a
++named later.
+diff --git a/sdl/sdl3/sdl3.go b/sdl/sdl3/sdl3.go
+index 91d16da..2336871 100644
+--- a/sdl/sdl3/sdl3.go
++++ b/sdl/sdl3/sdl3.go
+@@ -18,7 +18,7 @@
+ //     to properties, and the renderer is chosen by driver name.
+ //
+ // Names here are SDL3's where SDL3 has one. Where this package invents
+-// something â the event kinds especially â the name is deliberately
++// something — the event kinds especially — the name is deliberately
+ // unlike an SDL constant, so it cannot be mistaken for one.
+ package sdl3
+ 
+@@ -41,7 +41,7 @@ const (
+ 
+ // Init loads libSDL3 and initializes the requested subsystems. The
+ // binding is purego-based: nothing is linked at build time, so the
+-// library has to be opened before any SDL call â otherwise the first
++// library has to be opened before any SDL call — otherwise the first
+ // one dereferences an unregistered function pointer. Doing it here
+ // keeps that requirement from leaking into the platform layer.
+ func Init(flags csdl.InitFlags) error {
+@@ -189,7 +189,7 @@ func CreateWindow(title string, x, y int32, width, height int, flags WindowFlags
+ }
+ 
+ // CreateTransparentWindow creates a window whose framebuffer alpha
+-// composites â SDL3's replacement for SDL2's shaped windows, and the
++// composites — SDL3's replacement for SDL2's shaped windows, and the
+ // mechanism rounded corners now rely on.
+ func CreateTransparentWindow(title string, x, y int32, width, height int, flags WindowFlags) (*Window, error) {
+ 	return CreateWindow(title, x, y, width, height, flags|WINDOW_TRANSPARENT)
+@@ -261,7 +261,7 @@ const (
+ 	PIXELFORMAT_ABGR8888 = csdl.PIXELFORMAT_ABGR8888
+ )
+ 
+-// CreateSurface allocates an off-screen surface â the host uses one as
++// CreateSurface allocates an off-screen surface — the host uses one as
+ // a window shape mask.
+ func CreateSurface(width, height int32, format csdl.PixelFormat) (*Surface, error) {
+ 	return csdl.CreateSurface(int(width), int(height), format)
+@@ -383,7 +383,7 @@ const (
+ )
+ 
+ // StartTextInput enables text events. SDL3 scopes it to a window, and
+-// leaves it OFF until asked â unlike SDL2, whose global
++// leaves it OFF until asked — unlike SDL2, whose global
+ // SDL_StartTextInput() was on by default. Every window needs its own
+ // call or it receives key events but no typed text.
+ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
+@@ -427,7 +427,7 @@ func GetClipboardText() (string, error)  { return csdl.GetClipboardText() }
+ // Event kinds. These are this package's own values, NOT SDL constants:
+ // SDL3 encodes them in its event type, which PollEvent has already
+ // consumed by the time a caller sees a typed event. They are spelled
+-// unlike SDL's names on purpose â an invented constant wearing SDL's
++// unlike SDL's names on purpose — an invented constant wearing SDL's
+ // spelling is how clicks were once silently dropped, by being compared
+ // against SDL's raw event number.
+ const (
+@@ -527,7 +527,7 @@ func PollEvent() Event {
+ 
+ // translate maps one SDL3 event onto the SDL2-shaped value the platform
+ // layer switches on. Unhandled event types return nil, which the caller
+-// treats as "nothing for me" rather than "queue empty" â PollEvent's
++// treats as "nothing for me" rather than "queue empty" — PollEvent's
+ // contract is preserved because the platform loop drains until nil and
+ // SDL3 delivers many more event types than SDL2 did.
+ func translate(ev *csdl.Event) Event {
+@@ -687,7 +687,7 @@ func (r *Renderer) SetDrawColor(red, g, b, a uint8) error {
+ func (r *Renderer) Clear() error   { return r.r.Clear() }
+ func (r *Renderer) Present() error { return r.r.Present() }
+ 
+-// Copy blits a whole texture over the whole render target â the only
++// Copy blits a whole texture over the whole render target — the only
+ // form the host uses. SDL3's rects are floats.
+ func (r *Renderer) Copy(t *Texture, src, dst *Rect) error {
+ 	return r.r.RenderTexture(t.t, nil, nil)
+-- 
+2.43.0
+
