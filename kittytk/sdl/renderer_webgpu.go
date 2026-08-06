@@ -1162,6 +1162,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		metrics := osWindow.backend.Metrics()
 
 		backendBounds := backendImg.Bounds()
+		// The host's unit size is the divisor for the per-unit pixel scale. When
+		// the OS window is dragged to a near-zero height (or width) its unit
+		// extent rounds to 0, and float64(n)/0 is +Inf — which math.Round carries
+		// into int() as MaxInt64, blowing up NewScaled ("huge or negative
+		// dimensions") on the next child window. There is nothing to composite a
+		// child onto when the host has collapsed to zero area, so skip it.
+		if backendSize.Width <= 0 || backendSize.Height <= 0 {
+			continue
+		}
 		pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 		pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 
@@ -2364,6 +2373,13 @@ func (r *WebGPURenderer) drawOverlay(
 	metrics := osWindow.backend.Metrics()
 
 	backendBounds := backendImg.Bounds()
+	// A host dragged to near-zero height (or width) has a unit extent that
+	// rounds to 0; float64(n)/0 is +Inf, which math.Round carries into int() as
+	// MaxInt64 and blows up the overlay texture. Nothing to draw an overlay onto
+	// at zero area — bail so the caller skips it this frame.
+	if backendSize.Width <= 0 || backendSize.Height <= 0 {
+		return nil, core.TextCaret{}, fmt.Errorf("host backend has zero unit area %dx%d", backendSize.Width, backendSize.Height)
+	}
 	pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
 	pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
 
