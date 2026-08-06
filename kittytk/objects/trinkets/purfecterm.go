@@ -314,12 +314,18 @@ func (t *PurfecTerm) paintFocused() bool { return t.focused() && !t.mirrorPaint.
 // PaintMirror paints this terminal at the painter's position exactly as Paint
 // does, but as a read-only MIRROR: rendered unfocused (hollow cursor, no blink)
 // and WITHOUT requesting the platform caret, so a host can show one live
-// terminal in several places while only its primary owns the cursor. It sizes
-// nothing — the grid keeps whatever SetBounds the primary gave it — and leaves
-// the emulator's focus state untouched.
-func (t *PurfecTerm) PaintMirror(p *core.Painter) {
+// terminal in several places while only its primary owns the cursor.
+//
+// bounds is the mirror's OWN rectangle. It is set under the mirror flag, so
+// updateTerminalSize early-returns and the grid keeps whatever size the primary
+// gave it — but the paint still BOUNDS its row/column loop to this rectangle, so
+// a mirror smaller than the grid stops at its own edge instead of running the
+// full grid past it (which spilled extra rows below a short pane). The
+// emulator's focus and size state are untouched.
+func (t *PurfecTerm) PaintMirror(p *core.Painter, bounds core.UnitRect) {
 	t.mirrorPaint.Store(true)
 	defer t.mirrorPaint.Store(false)
+	t.SetBounds(bounds) // flag set first, so this bounds the paint but never resizes
 	t.Paint(p)
 }
 

@@ -1637,10 +1637,11 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 	pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
 
 	// paintRect draws one placement of a session's grid. primary=true SIZES the
-	// grid (SetBounds) and records the surface's hit-test frame; primary=false is
-	// a MIRROR — the same grid drawn at another tile with NO SetBounds, so its
-	// size never changes the grid. A mirror smaller than the grid clips; larger,
-	// it letterboxes (the child paints nothing past its own grid).
+	// grid (SetBounds resizes) and records the surface's hit-test frame;
+	// primary=false is a MIRROR — the same grid drawn at another tile, bounded to
+	// that tile's rectangle but WITHOUT resizing the grid (PaintMirror sets the
+	// bounds under the mirror flag). A mirror smaller than the grid clips at its
+	// own edge; larger, it letterboxes (the child paints nothing past its grid).
 	//
 	// The painter is offset to the GRID's origin so the terminal draws from its
 	// own 0,0, clipped to the visible rectangle relative to that origin. The clip
@@ -1651,8 +1652,9 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 	// child paints nothing beyond its grid).
 	paintRect := func(term *PurfecTerm, col, row, width, height, clipCol, clipRow, clipWidth, clipHeight int, primary bool) {
 		x, y := cell(col, row)
+		bnds := core.UnitRect{X: x, Y: y, Width: core.Unit(width) * cw, Height: core.Unit(height) * ch}
 		if primary {
-			term.SetBounds(core.UnitRect{X: x, Y: y, Width: core.Unit(width) * cw, Height: core.Unit(height) * ch})
+			term.SetBounds(bnds)
 		}
 		offXPx := residual(x, col-1, cw)
 		offYPx := residualY(y, row-1, ch)
@@ -1671,9 +1673,10 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		if primary {
 			term.Paint(pp)
 		} else {
-			// A mirror renders read-only and never claims the platform caret —
-			// only the primary owns the cursor.
-			term.PaintMirror(pp)
+			// A mirror renders read-only, never claims the platform caret, and is
+			// bounded to ITS OWN rectangle so a short pane stops at its edge
+			// instead of running the (larger) primary grid past it.
+			term.PaintMirror(pp, bnds)
 		}
 	}
 
