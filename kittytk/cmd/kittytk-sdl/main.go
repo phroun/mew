@@ -132,7 +132,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Bridge Copy/Cut/Paste to the OS clipboard. SDL2's clipboard covers
+	// Bridge Copy/Cut/Paste to the OS clipboard. SDL3's clipboard covers
 	// macOS, Windows and X11/Wayland, so this is the whole cross-platform
 	// integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)

@@ -1,5 +1,5 @@
 // Package sdl is the first graphical substrate (D23/O1): a
-// platform.Platform that opens an SDL2 window, blits the raster
+// platform.Platform that opens an SDL3 window, blits the raster
 // package's framebuffer each frame, and translates SDL input into
 // KittyTK events using the D3 key nomenclature.
 //

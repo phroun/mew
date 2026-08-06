@@ -21,7 +21,7 @@ import (
 	"github.com/phroun/kittytk/platform"
 )
 
-// Platform runs KittyTK over SDL2 windows with pluggable renderer backend.
+// Platform runs KittyTK over SDL3 windows with pluggable renderer backend.
 // All callbacks execute on the OS-locked main thread.
 type Platform struct {
 	title    string
@@ -456,9 +456,9 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 
 	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
 		// SDL's own shaped window: created shaped, masked in applyShape.
-		// SDL3: a window whose framebuffer alpha composites. This is
-		// what SDL2's shaped windows were standing in for, and unlike
-		// them it must be requested at creation.
+		// SDL3: a window whose framebuffer alpha composites — the real
+		// per-pixel-alpha replacement for a masked shaped window, and
+		// unlike a shaped window it must be requested at creation.
 		w.window, err = sdl3.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
 		if err != nil {
 			w.shapeRadiusPx = 0

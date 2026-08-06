@@ -16,7 +16,7 @@ import (
 // EVERY window must have text input started, not just the first.
 //
 // SDL3 scopes text input to a window and leaves it off until asked;
-// SDL2's SDL_StartTextInput() was global and on by default. The port
+// the older model started it globally and on by default. The port
 // carried one call for the main window, so every window created
 // afterwards — every torn-off window — received key events but no
 // SDL_EVENT_TEXT_INPUT. Tab and the arrows kept working (a separate

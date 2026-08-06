@@ -716,7 +716,7 @@ milestone for whole windows.
    primitives (real TTF glyphs at Monday-matching advance, real
    lines for borders, shade-rune alpha blends; cgo-free, headless-
    testable, PNG-provable). The `sdl` package (build tag `sdl`)
-   wraps it: SDL2 window, streaming-texture blit, D21 loop, D3 key
+   wraps it: SDL3 window, streaming-texture blit, D21 loop, D3 key
    translation; `cmd/kittytk-sdl` is the graphical display
    service serving the same socket (selection-by-binary per O3).
    Verified headless via SDL's dummy driver incl. a full-stack smoke

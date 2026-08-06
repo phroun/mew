@@ -1,6 +1,7 @@
 //go:build !sdl
 
-// Command kittytk-sdl requires the sdl build tag (and libsdl2-dev). For a
+// Command kittytk-sdl requires the sdl build tag (SDL3 is bound through
+// purego and opened at run time — no build-time SDL dependency). For a
 // terminal desktop with no such requirement, use kittytk-tui instead:
 //
 //	go run -tags sdl ./cmd/kittytk-sdl   (graphical)

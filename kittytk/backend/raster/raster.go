@@ -87,7 +87,7 @@ type Backend struct {
 	wpSmooth bool
 
 	// sysClipGet/sysClipSet bridge to the host's system clipboard when the
-	// substrate provides one (the SDL platform wires these to SDL2's
+	// substrate provides one (the SDL platform wires these to SDL3's
 	// SDL_GetClipboardText/SDL_SetClipboardText, which cover macOS, Windows
 	// and X11/Wayland). nil in headless use, where the local string is used.
 	sysClipGet func() string
@@ -95,7 +95,7 @@ type Backend struct {
 }
 
 // SetSystemClipboard bridges this backend's clipboard to the host's system
-// clipboard. The SDL host wires get/set to the platform's SDL2-backed
+// clipboard. The SDL host wires get/set to the platform's SDL3-backed
 // clipboard, so Copy/Cut/Paste cross the process boundary to other apps.
 // Passing nils reverts to the internal (headless) clipboard.
 func (b *Backend) SetSystemClipboard(get func() string, set func(string)) {

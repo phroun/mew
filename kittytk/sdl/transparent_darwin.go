@@ -77,7 +77,7 @@ static void kittytk_layer_nonopaque(id layer) {
 	}
 }
 
-// kittytk_noop_drawrect replaces SDL's content-view drawRect:. SDL2's
+// kittytk_noop_drawrect replaces SDL's content-view drawRect:. SDL's
 // SDLView fills every dirty rect with opaque BLACK (its white-flash
 // guard) - and that fill sits BENEATH the Metal layer, so a transparent
 // framebuffer composites against SDL's black instead of the desktop
@@ -169,8 +169,8 @@ static void kittytk_debug_window_alpha(void *nswindow, int phase) {
 // layer under its content view - SDL's Metal/GL surface lives on a
 // SUBVIEW, not a sublayer) to non-opaque with a clear background so
 // the framebuffer's alpha channel composites against whatever is
-// behind the window. SDL2 has no portable per-pixel window alpha;
-// this is the standard Cocoa-side arrangement for it.
+// behind the window. SDL provides no portable per-pixel window alpha;
+// this is the Cocoa-side arrangement behind the transparent window on macOS.
 static void kittytk_make_window_transparent(void *nswindow) {
 	id win = (id)nswindow;
 	if (!win) {
