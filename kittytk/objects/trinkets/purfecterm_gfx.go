@@ -327,8 +327,8 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
 	// smaller) rect would resize the child under a read-only copy.
 	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
-		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
-		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
+		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
+		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)

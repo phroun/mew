@@ -573,8 +573,8 @@ func (t *PurfecTerm) updateTerminalSize() {
 			height -= ch
 		}
 	}
-	newCols := int(width / cw)
-	newRows := int(height / ch)
+	newCols := clampGridDim(int(width / cw))
+	newRows := clampGridDim(int(height / ch))
 
 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {
 		t.cols = newCols
@@ -582,6 +582,27 @@ func (t *PurfecTerm) updateTerminalSize() {
 		t.terminal.Resize(t.cols, t.rows)
 		t.emitResize(t.cols, t.rows)
 	}
+}
+
+// maxTermGridDim caps a terminal grid's columns and rows. No real display comes
+// anywhere near this; the cap is a safety net against a degenerate fit — a
+// near-zero cell size mid-resize, or a size-feedback runaway between a hosted
+// terminal and its host — resizing the grid to hundreds of thousands of cells,
+// which the emulator faithfully allocated (one makeEmptyLine per row) into a
+// multi-gigabyte buffer that wedged and then OOM-killed the process.
+const maxTermGridDim = 2000
+
+// clampGridDim bounds one grid dimension to [0, maxTermGridDim]. A negative or
+// otherwise degenerate value collapses to 0, which the caller treats as "no
+// usable size" and skips the resize.
+func clampGridDim(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxTermGridDim {
+		return maxTermGridDim
+	}
+	return n
 }
 
 // Paint renders the terminal content.
