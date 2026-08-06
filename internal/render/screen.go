@@ -126,6 +126,14 @@ type ScreenRenderer struct {
 	// terminal has its own scrollbar, and reserving a column would shrink
 	// its grid).
 	scrollbarSuppressed func(*viewport.Viewport) bool
+
+	// contentSuppressed, when set, reports a viewport whose DOCUMENT text must
+	// not paint — a terminal session's viewport. The host draws the terminal grid
+	// over the text area, but a grid too short or narrow to fill it would let the
+	// buffer behind show through; so mew paints the content area blank (in the
+	// text background) while keeping the gutter, ruler and scrollbar. The editor
+	// supplies it because session-ness lives on the buffer.
+	contentSuppressed func(*viewport.Viewport) bool
 }
 
 // SetScrollbarHostDrawn installs the predicate that reports whether a
@@ -143,6 +151,18 @@ func (sr *ScreenRenderer) hostDrawsScrollbars() bool {
 // scrollbar (see the scrollbarSuppressed field).
 func (sr *ScreenRenderer) SetScrollbarSuppressor(fn func(*viewport.Viewport) bool) {
 	sr.scrollbarSuppressed = fn
+}
+
+// SetContentSuppressor installs the predicate that blanks a viewport's document
+// text (see the contentSuppressed field) — a terminal session's viewport.
+func (sr *ScreenRenderer) SetContentSuppressor(fn func(*viewport.Viewport) bool) {
+	sr.contentSuppressed = fn
+}
+
+// contentBlanked reports whether w's document text must be painted blank this
+// frame (a terminal viewport).
+func (sr *ScreenRenderer) contentBlanked(w *viewport.Viewport) bool {
+	return sr.contentSuppressed != nil && sr.contentSuppressed(w)
 }
 
 // showScrollbar reports whether this viewport reserves its outer column for
@@ -1116,6 +1136,12 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	lineNumbersColor := sr.col(w, "lineNumbers")
 	resetColor := sr.col(w, "reset")
 
+	// A terminal viewport paints no document text: the host draws the terminal
+	// grid over this area, and a grid too small to fill it must reveal the text
+	// background, not the buffer behind. The gutter, ruler and scrollbar still
+	// render (line numbers stay), and every row's content area is blanked.
+	blankContent := sr.contentBlanked(w)
+
 	// The viewport's horizontal paint frame (host-set; full screen by default).
 	// Each row starts at physical column 1+fx and totals fw cells; atRight is
 	// true only when the frame reaches the screen's right edge.
@@ -1278,7 +1304,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// Content
-		if haveContent {
+		if haveContent && !blankContent {
 			// A double-width (heading) line: the terminal shows only the left
 			// half at 2x, so lay the content into half the columns, interpret the
 			// horizontal scroll at one cell per two scrolled positions, and mark

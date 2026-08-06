@@ -1218,6 +1218,14 @@ func New(cfg Config) (*Editor, error) {
 		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
 	})
 
+	// A terminal viewport's document text is not painted: the host draws the
+	// terminal grid over it, and a grid too short/narrow to fill the area must
+	// show the editor background, not the buffer behind. The gutter and ruler
+	// still render. Session-ness lives on the buffer, so the renderer asks.
+	renderer.SetContentSuppressor(func(w *viewport.Viewport) bool {
+		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
+	})
+
 	// Peek-indicator labels run through the shared TFC engine so codes like
 	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
 	// resolve to live bindings too).
