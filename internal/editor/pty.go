@@ -196,12 +196,21 @@ type TerminalSurface struct {
 	ClipCol, ClipRow      int
 	ClipWidth, ClipHeight int
 
+	// Primary marks the ONE surface per session that OWNS the emulator: its
+	// rectangle sizes the grid (the child's cols/rows follow it) and the host
+	// hosts the live child there. A session can be shown in several tiles
+	// (tiles↔viewports is many-to-many); the others are MIRRORS — the same grid
+	// painted read-only into their rectangle, never resizing it. The primary is
+	// the session's canonical/focused tile, so its sizing is locked to the pane
+	// the user works in, independent of a mirror's size.
+	Primary bool
+
 	// Focused marks the ONE surface whose viewport currently holds mew's
-	// focus. That surface owns the platform's text caret — its position and
-	// its DECSCUSR shape both come from the child process, not from mew's own
-	// caret, because while you are typing at a shell the cursor you are
-	// watching is the shell's. mew keeps keyboard focus regardless, so its
-	// keymap still runs; only the drawn caret is ceded.
+	// focus (always also the Primary). That surface owns the platform's text
+	// caret — its position and its DECSCUSR shape both come from the child
+	// process, not from mew's own caret, because while you are typing at a shell
+	// the cursor you are watching is the shell's. mew keeps keyboard focus
+	// regardless, so its keymap still runs; only the drawn caret is ceded.
 	Focused bool
 }
 
@@ -605,40 +614,91 @@ func (e *Editor) notifyTerminalSurfaces() {
 	}
 
 	focused := e.ViewportManager.GetFocusedViewport()
-	var surfaces []TerminalSurface
+
+	// One surface PER TILE of a PTY viewport: a session shown in several tiles
+	// (tiles↔viewports is many-to-many) draws in each. Exactly one is the PRIMARY
+	// — the canonical/focused tile — which owns the emulator and its sizing; the
+	// rest are read-only mirrors. rectFor reads THIS tile's geometry (not the
+	// viewport's single-valued fields, which hold only the canonical tile).
+	type place struct {
+		id                    string
+		vp                    *viewport.Viewport
+		col, row, w, h        int
+		focusedTile           bool
+	}
+	var places []place
+	// primaryIdx[id] is the index into places of that session's primary surface:
+	// the focused tile when it has one, else the last on-screen tile.
+	primaryIdx := map[string]int{}
+	seen := map[string]bool{}
+	consider := func(id string, vp *viewport.Viewport, col, row, w, h int, focusedTile bool) {
+		idx := len(places)
+		places = append(places, place{id, vp, col, row, w, h, focusedTile})
+		if _, ok := primaryIdx[id]; !ok || focusedTile {
+			primaryIdx[id] = idx
+		}
+	}
+
+	// ON SCREEN THIS FRAME, not merely holding the buffer: a viewport swapped to
+	// another buffer, hidden, or stacked behind another keeps its last layout,
+	// and a surface from that stale geometry paints over whatever took its place.
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		w := t.Viewport
+		if w == nil || !e.viewportOnScreen(w) || t.ContentWidth <= 0 || t.ContentHeight <= 0 {
+			continue
+		}
+		if id, ok := byBuffer[w.Buffer]; ok {
+			seen[id] = true
+			consider(id, w, t.ContentX+1, t.ContentY+1, t.ContentWidth, t.ContentHeight, t.Focused)
+		}
+	}
+	// A PTY viewport not in the tiled main area (docked chrome) is single-tile:
+	// publish it from its own geometry.
 	for _, w := range e.ViewportManager.AllViewports() {
-		// ON SCREEN THIS FRAME, not merely holding the buffer: a viewport that
-		// was swapped to another buffer, hidden, or stacked behind another
-		// keeps its last layout, and a surface published from that stale
-		// geometry goes on painting over whatever took its place. This is the
-		// same test viewportAtRow uses to keep a background viewport's stale
-		// rows from swallowing clicks.
 		if !e.viewportOnScreen(w) || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
 			continue
 		}
 		id, ok := byBuffer[w.Buffer]
-		if !ok {
+		if !ok || seen[id] {
 			continue
 		}
-		// The grid fills the viewport's text area, and for now the clip is
-		// that same rectangle: mew's own layout already excludes the chrome.
-		// They are separate fields so a future partially-obscured or
-		// partially-scrolled viewport can narrow the clip without moving the
-		// grid, which is not expressible with one rectangle.
+		seen[id] = true
+		consider(id, w, w.ContentX+1, w.ContentY+1, w.ContentWidth, w.ContentHeight, w == focused)
+	}
+
+	var surfaces []TerminalSurface
+	for idx, pl := range places {
+		primary := primaryIdx[pl.id] == idx
+		// The grid fills the tile's text area, and for now the clip is that same
+		// rectangle: mew's own layout already excludes the chrome. Separate fields
+		// so a future partially-obscured tile can narrow the clip without moving
+		// the grid.
 		surfaces = append(surfaces, TerminalSurface{
-			ID:         id,
-			Col:        w.ContentX + 1,
-			Row:        w.ContentY + 1,
-			Width:      w.ContentWidth,
-			Height:     w.ContentHeight,
-			ClipCol:    w.ContentX + 1,
-			ClipRow:    w.ContentY + 1,
-			ClipWidth:  w.ContentWidth,
-			ClipHeight: w.ContentHeight,
-			Focused:    w == focused,
+			ID:         pl.id,
+			Col:        pl.col,
+			Row:        pl.row,
+			Width:      pl.w,
+			Height:     pl.h,
+			ClipCol:    pl.col,
+			ClipRow:    pl.row,
+			ClipWidth:  pl.w,
+			ClipHeight: pl.h,
+			Primary:    primary,
+			Focused:    primary && pl.vp == focused,
 		})
 	}
-	sort.Slice(surfaces, func(i, j int) bool { return surfaces[i].ID < surfaces[j].ID })
+	// Stable order (id, then position) so the change check and the host's set
+	// handling are deterministic across frames.
+	sort.Slice(surfaces, func(i, j int) bool {
+		if surfaces[i].ID != surfaces[j].ID {
+			return surfaces[i].ID < surfaces[j].ID
+		}
+		if surfaces[i].Row != surfaces[j].Row {
+			return surfaces[i].Row < surfaces[j].Row
+		}
+		return surfaces[i].Col < surfaces[j].Col
+	})
 	if terminalSurfacesEqual(surfaces, e.terminalSurfacesSent) {
 		return
 	}
@@ -660,6 +720,12 @@ func (e *Editor) notifyTerminalSurfaces() {
 		byID[st.id] = st
 	}
 	for _, s := range surfaces {
+		// Only the PRIMARY surface sizes the grid — a mirror's rectangle never
+		// resizes the child, so the terminal's cols/rows stay locked to the
+		// canonical/focused tile no matter how big the other tiles are.
+		if !s.Primary {
+			continue
+		}
 		st := byID[s.ID]
 		if st == nil || st.sess == nil {
 			continue

@@ -966,12 +966,26 @@ type termSurface struct {
 	// Where the grid sits, and what part of it is visible. Usually identical;
 	// they differ when the viewport is partially obscured or scrolled, and the
 	// surface then draws at its own origin with only the intersection shown.
+	// This is the PRIMARY placement — the canonical/focused tile, which sizes the
+	// grid (SetBounds) and hosts the live child.
 	col, row              int
 	width, height         int
 	clipCol, clipRow      int
 	clipWidth, clipHeight int
 	// focused: this surface owns the platform caret this frame.
 	focused bool
+	// mirrors are the session's OTHER tiles (tiles↔viewports is many-to-many):
+	// the same child grid painted read-only into each, clipped/letterboxed, with
+	// no SetBounds — so a mirror's size never resizes the grid.
+	mirrors []termRect
+}
+
+// termRect is one mirror placement of a session's grid, in 1-based cells.
+type termRect struct {
+	col, row              int
+	width, height         int
+	clipCol, clipRow      int
+	clipWidth, clipHeight int
 }
 
 // terminalOpen creates the child for a new session. Called on mew's main loop.
@@ -1063,12 +1077,25 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 	for _, s := range e.termSurfaces {
 		s.width, s.height, s.clipWidth, s.clipHeight = 0, 0, 0, 0
 		s.focused = false
+		s.mirrors = s.mirrors[:0]
 	}
 	for _, want := range surfaces {
 		s := e.termSurfaces[want.ID]
 		if s == nil {
 			continue
 		}
+		if !want.Primary {
+			// A mirror: the same grid drawn read-only into another tile. Recorded
+			// for the paint, but never sizes the child (no SetBounds).
+			s.mirrors = append(s.mirrors, termRect{
+				col: want.Col, row: want.Row, width: want.Width, height: want.Height,
+				clipCol: want.ClipCol, clipRow: want.ClipRow,
+				clipWidth: want.ClipWidth, clipHeight: want.ClipHeight,
+			})
+			continue
+		}
+		// The primary owns the emulator: its rectangle sizes the grid and hosts
+		// the live child.
 		s.col, s.row = want.Col, want.Row
 		s.width, s.height = want.Width, want.Height
 		s.clipCol, s.clipRow = want.ClipCol, want.ClipRow
@@ -1606,50 +1633,51 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		return want - p.UnitSpanPxY(0, unitPos)
 	}
 
-	for _, s := range visible {
-		x, y := cell(s.col, s.row)
-		w := core.Unit(s.width) * cw
-		h := core.Unit(s.height) * ch
-		s.term.SetBounds(core.UnitRect{X: x, Y: y, Width: w, Height: h})
-		offXPx := residual(x, s.col-1, cw)
-		offYPx := residualY(y, s.row-1, ch)
-		e.lastSurfaceOffsetX, e.lastSurfaceOffsetY = offXPx, offYPx
+	pxAtX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
+	pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
 
-		// The painter is offset to the GRID's origin, so the terminal draws
-		// from its own 0,0 — but clipped to the visible rectangle expressed
-		// relative to that origin.
-		//
-		// The clip has the SAME two-rates problem the origin had, on ALL FOUR
-		// edges. The clip is expressed in units and the backend snaps each
-		// edge to ITS cell grid, while the content runs at the terminal
-		// pitch, origin-corrected — so wherever the snapped rate exceeds the
-		// terminal rate the content sits LEFT of (and above) the snapped
-		// unit position, and a clip anchored on that position shaves the
-		// content's first column and first row. In the ordinary case, where
-		// the clip IS the surface rect, its top-left must never cut content
-		// at all.
-		//
-		// So each edge is chosen for where it SNAPS: left/top are the
-		// nearest unit positions whose snapped pixel lands at or before the
-		// content's pixel edge, right/bottom at or after. Out-rounding is
-		// safe on every side — a child paints nothing beyond its own grid,
-		// so spare clip goes unused, while a clip that falls short cuts real
-		// pixels. The pixel targets carry a one-pixel pad for the child's
-		// own per-edge rounding (it rounds each cell edge independently).
-		pxAtX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
-		pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
-		leftU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1)*cw, pxAtX(s.clipCol-1)-1, ppu, false)
-		rightU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1+s.clipWidth)*cw, pxAtX(s.clipCol-1+s.clipWidth)+1, ppu, true)
-		topU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1)*ch, pxAtY(s.clipRow-1)-1, ppu, false)
-		bottomU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1+s.clipHeight)*ch, pxAtY(s.clipRow-1+s.clipHeight)+1, ppu, true)
-		e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
-		clip := core.UnitRect{
-			X:      leftU - x,
-			Y:      topU - y,
-			Width:  rightU - leftU,
-			Height: bottomU - topU,
+	// paintRect draws one placement of a session's grid. primary=true SIZES the
+	// grid (SetBounds) and records the surface's hit-test frame; primary=false is
+	// a MIRROR — the same grid drawn at another tile with NO SetBounds, so its
+	// size never changes the grid. A mirror smaller than the grid clips; larger,
+	// it letterboxes (the child paints nothing past its own grid).
+	//
+	// The painter is offset to the GRID's origin so the terminal draws from its
+	// own 0,0, clipped to the visible rectangle relative to that origin. The clip
+	// has a two-rates problem on all four edges — it is expressed in units the
+	// backend snaps to ITS cell grid, while the content runs at the terminal
+	// pitch — so each edge is chosen for where it SNAPS: left/top at or before the
+	// content's pixel edge, right/bottom at or after (out-rounding is safe; a
+	// child paints nothing beyond its grid).
+	paintRect := func(term *PurfecTerm, col, row, width, height, clipCol, clipRow, clipWidth, clipHeight int, primary bool) {
+		x, y := cell(col, row)
+		if primary {
+			term.SetBounds(core.UnitRect{X: x, Y: y, Width: core.Unit(width) * cw, Height: core.Unit(height) * ch})
 		}
-		s.term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
+		offXPx := residual(x, col-1, cw)
+		offYPx := residualY(y, row-1, ch)
+		leftU := snapCover(p.UnitSpanPxX, core.Unit(clipCol-1)*cw, pxAtX(clipCol-1)-1, ppu, false)
+		rightU := snapCover(p.UnitSpanPxX, core.Unit(clipCol-1+clipWidth)*cw, pxAtX(clipCol-1+clipWidth)+1, ppu, true)
+		topU := snapCover(p.UnitSpanPxY, core.Unit(clipRow-1)*ch, pxAtY(clipRow-1)-1, ppu, false)
+		bottomU := snapCover(p.UnitSpanPxY, core.Unit(clipRow-1+clipHeight)*ch, pxAtY(clipRow-1+clipHeight)+1, ppu, true)
+		if primary {
+			// Only the primary records where the live terminal sits — mouse
+			// hit-testing routes to it; a mirror is display-only.
+			e.lastSurfaceOffsetX, e.lastSurfaceOffsetY = offXPx, offYPx
+			e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
+		}
+		clip := core.UnitRect{X: leftU - x, Y: topU - y, Width: rightU - leftU, Height: bottomU - topU}
+		term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
+	}
+
+	for _, s := range visible {
+		paintRect(s.term, s.col, s.row, s.width, s.height, s.clipCol, s.clipRow, s.clipWidth, s.clipHeight, true)
+		for _, m := range s.mirrors {
+			if m.clipWidth <= 0 || m.clipHeight <= 0 {
+				continue
+			}
+			paintRect(s.term, m.col, m.row, m.width, m.height, m.clipCol, m.clipRow, m.clipWidth, m.clipHeight, false)
+		}
 	}
 	// A child settles its grid during that paint. Make sure the declaration
 	// gets away even if the session's port was not up when it did.

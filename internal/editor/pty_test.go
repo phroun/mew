@@ -200,6 +200,56 @@ func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
 	}
 }
 
+// A PTY viewport shown in several tiles publishes one surface PER TILE: exactly
+// one PRIMARY (the focused/canonical tile, which owns the emulator and its
+// sizing) and the rest mirrors. All share the session id and sit at distinct
+// positions.
+func TestTerminalSurfaceMirrorsAcrossTiles(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "x\n")
+	var placed []TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func(s []TerminalSurface) { placed = s },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	if len(placed) != 2 {
+		t.Fatalf("want two surfaces (one per tile), got %d", len(placed))
+	}
+	var primaries, focused int
+	for _, s := range placed {
+		if s.Primary {
+			primaries++
+		}
+		if s.Focused {
+			focused++
+		}
+		if !s.Primary && s.Focused {
+			t.Error("a mirror surface must not be focused")
+		}
+	}
+	if primaries != 1 {
+		t.Fatalf("want exactly one primary surface, got %d", primaries)
+	}
+	if focused != 1 {
+		t.Fatalf("want exactly one focused surface, got %d", focused)
+	}
+	if placed[0].ID != placed[1].ID {
+		t.Fatalf("both tile surfaces should be the same session (%q vs %q)", placed[0].ID, placed[1].ID)
+	}
+	if placed[0].Col == placed[1].Col && placed[0].Row == placed[1].Row {
+		t.Fatal("the two tile surfaces should sit at different positions")
+	}
+}
+
 // One session per buffer: a second exec on the same buffer is refused rather
 // than orphaning the first child.
 func TestExecRefusesSecondSessionOnSameBuffer(t *testing.T) {
