@@ -95,6 +95,28 @@ locks the boundaries. (The newer subtree records — #25/#26/#27/#28 and this on
 live in full in `docs/kittytk-subtree.md`; this log's detailed narrative predates
 them.)
 
+**OPEN upstream in PR [#30](https://github.com/phroun/kittytk/pull/30)** (ahead
+of `v0.1.16`) — `solo-restore-zerosize-sdl2.patch` (against v0.1.15): three
+graphical-host fixes plus the SDL3-migration cleanup, all shared files.
+(1) **Solo maximize→restore** reconfigures the swapchain: in solo mode the app
+IS the primary OS window (RESIZABLE, border stripped at runtime), and restoring
+it from zoom-to-fill left the GPU swapchain at the maximized size — restored
+content painted into the top-left corner until a manual edge-drag.
+`sdlSurface.SetScreenSizePx` now clears an OS `MAXIMIZED` flag before resizing
+and drives the framebuffer reconfigure from the window's real pixel size
+(`Window.SizeInPixels()`) rather than waiting on a `WINDOW_RESIZED` a
+programmatic resize didn't deliver; adds `sdl3.WINDOW_MAXIMIZED`. (2)
+**Zero-size compositing** no longer panics (`NewRGBA … huge or negative
+dimensions`): dragging the desktop to ~0 height with a child/overlay open made
+`hostPixels/hostUnits` divide by a unit extent that rounds to 0 → `+Inf` →
+`MaxInt64`; `RenderFrameWithChildWindows` and `drawOverlay` now guard the
+divisor (the frame-level scale already did). (3) **SDL2 stragglers** dropped:
+`buildwin.sh` rewritten from the SDL2/CGO/MinGW static-link cross-build to a
+plain purego `GOOS=windows go build` with `sdlembed`, and comments that still
+called the running system SDL2 corrected to SDL3 (`compositing-handoff.md` kept
+— it narrates the migration itself). `Build 16`. Verified on macOS (webgpu) +
+standalone build/vet/tests with no mew module. **OPEN in PR #30.**
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs
