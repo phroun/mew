@@ -69,6 +69,62 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.14 sync (record)
+
+v0.1.13-alpha -> **v0.1.14-alpha** landing one fork PR, plus a purfecterm
+dependency bump, plus one shared-file delta carried **ahead** of its upstream
+release:
+
+- [#28](https://github.com/phroun/kittytk/pull/28) (v0.1.14) — size the child
+  terminal grid from geometry only. `paintGraphical` reserved a grid *row* for
+  the horizontal scrollbar whenever `hScrollActive()` was true, but that
+  predicate is content-dependent and the fitted grid is emitted to the child
+  from inside `Paint` — so the child's row count fed back on its own output and
+  self-sustained a `Resize -> redraw -> re-fit` loop at a fixed window size. The
+  fit is now a pure function of geometry (columns from width minus the
+  content-*independent* vertical lane, rows from full height); the horizontal
+  bar overlays the bottom row instead of stealing one. `objects/trinkets/
+  purfecterm.go` + `purfecterm_gfx.go` + `purfecterm_gridfit_test.go`. Cut from
+  our vendored tree (`a1b85c6`, local-ahead of the release), so those files were
+  byte-identical to the tag.
+
+**Dependency bump — purfecterm v0.2.30 -> v0.2.31.** The nested host feeds the
+inner mew's output into the outer PurfecTerm emulator; during a host resize the
+inner content transiently exceeds the outer grid width and the outer autowraps
+each animation frame. purfecterm's smart word wrap (mode 7702) *prepended* the
+indent to the wrap-target row on every wrap, and because that target is a real
+grid row an app has already painted, nothing truncated the surplus — an
+unbounded line that drove memory and a quadratic visual-width scan until the
+process was OOM-killed (the htop/`sl`-while-resizing freeze). Fixed upstream as
+[purfecterm#20](https://github.com/phroun/purfecterm/pull/20) (released v0.2.31)
+by overwriting the wrap target in place instead of prepending; the feature stays
+enabled and the intended empty-target reflow case is unchanged. Pins bumped in
+`kittytk/go.mod` and `app/go.mod`; see `patches/purfecterm/
+smartwrap-overwrite-target.patch`. Validated end-to-end against the **released**
+v0.2.31 (no workspace replace): the resize stress harness that reliably ran RSS
+past 600 MB -> GBs now stays bounded and returns to baseline.
+
+**Shared-file delta ahead of v0.1.15 — the grid cap.** The vendored tree also
+carries a `clampGridDim`/`maxTermGridDim` (2000) backstop in both fit paths
+(`purfecterm.go` `updateTerminalSize`, `purfecterm_gfx.go` `paintGraphical`) +
+`purfecterm_gridcap_test.go`, guarding a *different* failure mode from #28's
+churn: a degenerate fit (near-zero cell size, or a size-feedback runaway) sizing
+the grid to hundreds of thousands of cells and OOM-allocating. It is **not** in
+v0.1.14 — it is upstreamed as
+[#29](https://github.com/phroun/kittytk/pull/29) and destined for v0.1.15, so
+`purfecterm.go`/`purfecterm_gfx.go` diverge from the v0.1.14 tag by exactly the
+cap. Following the `a1b85c6` precedent, `core/version.go`'s `Build` runs ahead
+at **15** (the release that will contain the cap) while the `go.mod` pins track
+the last actual release, v0.1.14-alpha. When v0.1.15 is cut, the follow-up
+resync confirms byte-identity and bumps only the pins.
+
+The fork boundary is otherwise unchanged (the **20 `//go:build mew` files** +
+the mew require; `editor_mew.go` additionally carries the temporary `MEW_FITLOG`
+trace and the fixed-`SizeHint` feedback break, both mew-only and both slated for
+removal once the release build is re-confirmed). This sync updated `go.sum` per
+module via `GOWORK=off go mod tidy` (not `go work sync`), so the `garland`
+indirect was **not** disturbed this time — no revert needed.
+
 ### The v0.1.13 sync (record)
 
 v0.1.11-alpha -> **v0.1.13-alpha** in one step — the v0.1.12 pin bump was

@@ -65,6 +65,9 @@ github.com/phroun/direct-key-handler v0.3.3/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDK
 github.com/phroun/kittytk v0.1.7-alpha/go.mod h1:iX3lsfUrYSEVI6OA27ihBjEUozmKYpifVf728nXwAuc=
 github.com/phroun/kittytk v0.1.8-alpha/go.mod h1:iX3lsfUrYSEVI6OA27ihBjEUozmKYpifVf728nXwAuc=
 github.com/phroun/kittytk v0.1.13-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
+github.com/phroun/kittytk v0.1.14-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
+github.com/phroun/purfecterm v0.2.31 h1:75PhDkuEMWKhMs5KM0Xg9S2F6h9VzeoWiRg3ngjPAZY=
+github.com/phroun/purfecterm v0.2.31/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rymdport/portal v0.4.2 h1:7jKRSemwlTyVHHrTGgQg7gmNPJs88xkbKcIL3NlcmSU=

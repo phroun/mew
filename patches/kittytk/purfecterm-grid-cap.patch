@@ -1,0 +1,140 @@
+From 365dcc85f886e23c142eefb4088c0832129350f7 Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 21:47:03 +0000
+Subject: [PATCH] purfecterm: cap the terminal grid dimensions (degenerate-fit
+ safety net)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Both fit paths derive the child grid from a pixel rectangle divided by a
+cell size: updateTerminalSize (cell surface) and paintGraphical (pixel
+surface). A degenerate input — a near-zero cell size mid-resize, or a
+size-feedback runaway between a hosted terminal and its host — drove those
+divisions to hundreds of thousands of columns or rows, which the emulator
+faithfully allocated one makeEmptyLine per row into a multi-gigabyte
+buffer that wedged and then OOM-killed the process.
+
+Clamp each computed dimension through clampGridDim to [0, maxTermGridDim]
+(2000). No real display approaches 2000 cells in a dimension, so the cap
+never touches a legitimate fit; a negative or otherwise degenerate value
+collapses to 0, which the callers already treat as "no usable size" and
+skip the resize. This is a backstop independent of any single runaway's
+root cause.
+
+Adds TestClampGridDim.
+---
+ core/version.go                             |  2 +-
+ objects/trinkets/purfecterm.go              | 25 +++++++++++++++++--
+ objects/trinkets/purfecterm_gfx.go          |  4 +--
+ objects/trinkets/purfecterm_gridcap_test.go | 27 +++++++++++++++++++++
+ 4 files changed, 53 insertions(+), 5 deletions(-)
+ create mode 100644 objects/trinkets/purfecterm_gridcap_test.go
+
+diff --git a/core/version.go b/core/version.go
+index c233ed3..49f9b51 100644
+--- a/core/version.go
++++ b/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 14
++const Build = 15
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/objects/trinkets/purfecterm.go b/objects/trinkets/purfecterm.go
+index 9df7b22..b9dbe13 100644
+--- a/objects/trinkets/purfecterm.go
++++ b/objects/trinkets/purfecterm.go
+@@ -573,8 +573,8 @@ func (t *PurfecTerm) updateTerminalSize() {
+ 			height -= ch
+ 		}
+ 	}
+-	newCols := int(width / cw)
+-	newRows := int(height / ch)
++	newCols := clampGridDim(int(width / cw))
++	newRows := clampGridDim(int(height / ch))
+ 
+ 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {
+ 		t.cols = newCols
+@@ -584,6 +584,27 @@ func (t *PurfecTerm) updateTerminalSize() {
+ 	}
+ }
+ 
++// maxTermGridDim caps a terminal grid's columns and rows. No real display comes
++// anywhere near this; the cap is a safety net against a degenerate fit — a
++// near-zero cell size mid-resize, or a size-feedback runaway between a hosted
++// terminal and its host — resizing the grid to hundreds of thousands of cells,
++// which the emulator faithfully allocated (one makeEmptyLine per row) into a
++// multi-gigabyte buffer that wedged and then OOM-killed the process.
++const maxTermGridDim = 2000
++
++// clampGridDim bounds one grid dimension to [0, maxTermGridDim]. A negative or
++// otherwise degenerate value collapses to 0, which the caller treats as "no
++// usable size" and skips the resize.
++func clampGridDim(n int) int {
++	if n < 0 {
++		return 0
++	}
++	if n > maxTermGridDim {
++		return maxTermGridDim
++	}
++	return n
++}
++
+ // Paint renders the terminal content.
+ func (t *PurfecTerm) Paint(p *core.Painter) {
+ 	bounds := t.Bounds()
+diff --git a/objects/trinkets/purfecterm_gfx.go b/objects/trinkets/purfecterm_gfx.go
+index 19903f7..bb5b629 100644
+--- a/objects/trinkets/purfecterm_gfx.go
++++ b/objects/trinkets/purfecterm_gfx.go
+@@ -327,8 +327,8 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
+ 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
+ 	// smaller) rect would resize the child under a read-only copy.
+ 	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
+-		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
+-		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
++		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
++		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
+ 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
+ 			t.cols, t.rows = fitCols, fitRows
+ 			t.terminal.Resize(fitCols, fitRows)
+diff --git a/objects/trinkets/purfecterm_gridcap_test.go b/objects/trinkets/purfecterm_gridcap_test.go
+new file mode 100644
+index 0000000..9453d51
+--- /dev/null
++++ b/objects/trinkets/purfecterm_gridcap_test.go
+@@ -0,0 +1,27 @@
++package trinkets
++
++import "testing"
++
++// A terminal grid dimension is capped. A degenerate fit — a near-zero cell size
++// mid-resize, or a size-feedback runaway between a hosted terminal and its host
++// — used to resize the grid to hundreds of thousands of cells, which the
++// emulator allocated (one makeEmptyLine per row) into a multi-gigabyte buffer
++// that OOM-killed the process. clampGridDim is the safety net both fit paths
++// (updateTerminalSize and paintGraphical) pass their computed dimensions
++// through.
++func TestClampGridDim(t *testing.T) {
++	cases := []struct{ in, want int }{
++		{0, 0},
++		{80, 80},
++		{maxTermGridDim, maxTermGridDim},
++		{maxTermGridDim + 1, maxTermGridDim},
++		{600000, maxTermGridDim}, // the observed runaway row count
++		{-1, 0},
++		{-600000, 0},
++	}
++	for _, c := range cases {
++		if got := clampGridDim(c.in); got != c.want {
++			t.Errorf("clampGridDim(%d) = %d, want %d", c.in, got, c.want)
++		}
++	}
++}
+-- 
+2.43.0
+

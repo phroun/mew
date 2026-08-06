@@ -79,6 +79,22 @@ free of an SDL dependency. `desktop_aboutrotation_test.go` locks the gate
 (false with no dialog / after focus leaves / after close; true only while the
 box is open and active).
 
+**OPEN upstream in PR [#29](https://github.com/phroun/kittytk/pull/29)** (ahead
+of `v0.1.15`) — `purfecterm-grid-cap.patch` (`objects/trinkets/purfecterm.go` +
+`purfecterm_gfx.go` + `purfecterm_gridcap_test.go`, against v0.1.14): a
+`clampGridDim`/`maxTermGridDim` (2000) backstop on both fit paths
+(`updateTerminalSize`, `paintGraphical`). A degenerate fit — a near-zero cell
+size mid-resize, or a size-feedback runaway between a hosted terminal and its
+host — drove the grid to hundreds of thousands of cells, which the emulator
+allocated (one `makeEmptyLine` per row) into a multi-gigabyte buffer that
+OOM-killed the process. The cap collapses a negative/degenerate value to 0
+(callers skip the resize) and never touches a legitimate fit. Independent of any
+single runaway's root cause; carried in the vendored tree at `Build 15` ahead of
+release, so the resync bumps only the pins when v0.1.15 is cut. `TestClampGridDim`
+locks the boundaries. (The newer subtree records — #25/#26/#27/#28 and this one —
+live in full in `docs/kittytk-subtree.md`; this log's detailed narrative predates
+them.)
+
 `kittytk-sync.patch` brought upstream KittyTK (`github.com/phroun/kittytk`,
 developed against main @ `27e64de`) up to date with the improvements developed
 in mew's vendored fork (`mew/kittytk`), minus everything that properly belongs

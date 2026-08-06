@@ -10,8 +10,8 @@ github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4
 github.com/phroun/garland v0.1.11/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
 github.com/phroun/ifitfits v0.1.0 h1:oPkXS2svsun4piJ+xSvY3bK5ujuKpeLuK3x3OwR5d5M=
 github.com/phroun/ifitfits v0.1.0/go.mod h1:UZJQJxEM6tiM0PY0tjmHlyq7kFOSzG1IgJDUtxwIXS4=
-github.com/phroun/kittytk v0.1.11-alpha h1:n6JMjf9yWev/gqxybi/pxdzOqqb3Mi3iSyWjV4B9YaA=
-github.com/phroun/kittytk v0.1.11-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
+github.com/phroun/kittytk v0.1.14-alpha h1:dTnMubVZCY6ESWWMvk5+vBQqx7KwK9LtUXSnwB73aPw=
+github.com/phroun/kittytk v0.1.14-alpha/go.mod h1:/Ph1SZNrdupl8kW0E4sfWm2oJpb0NCKETjEoWXTWpRk=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
