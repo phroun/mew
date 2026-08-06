@@ -750,59 +750,30 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	// The main editing area is tiled, and tiles↔viewports is many-to-many: a
 	// viewport can be shown in several tiles, so a click is resolved against the
 	// PER-TILE frames retained from the last render, not the viewport's own
-	// single-valued geometry (which holds only its last tile). The focused
-	// viewport still wins when its tile covers the cell.
-	inTile := func(t *viewport.ViewportLayout) bool {
-		w := t.Viewport
-		if w == nil || !e.viewportOnScreen(w) ||
-			!(row >= t.ContentY && row < t.ContentY+t.ContentHeight) {
-			return false
-		}
-		width := t.FrameWidth
-		if width <= 0 {
-			width = e.Renderer.Width - t.FrameX
-		}
-		return col >= t.FrameX && col < t.FrameX+width
-	}
-	focused := e.ViewportManager.GetFocusedViewport()
-
-	// A tiled viewport is hit ONLY within a tile's ACTUAL rectangle — both axes.
-	// It is never matched by its own (single-valued, focused-tile) geometry, so a
-	// short OR narrow tile holding a larger viewport cannot claim cells past its
-	// own edge. inMain records every tiled viewport so the docked fallback below
-	// can't re-match one that way. The whole tile list is scanned (no early exit)
-	// so inMain is complete even once a hit is found.
+	// single-valued geometry (which holds only its last tile).
+	//
+	// A tiled viewport is hit ONLY within a tile's ACTUAL rectangle — both axes —
+	// never by its own geometry, so a short OR narrow tile holding a larger
+	// viewport cannot claim cells past its own edge. inMain records every tiled
+	// viewport so the docked fallback below can't re-match one that way.
 	inMain := map[string]bool{}
-	var focusedTile, bestTile *viewport.ViewportLayout
 	for i := range e.mainTiles {
-		t := &e.mainTiles[i]
-		if t.Viewport != nil {
-			inMain[t.Viewport.ID] = true
-		}
-		if !inTile(t) {
-			continue
-		}
-		if t.Viewport == focused && focusedTile == nil {
-			focusedTile = t
-		}
-		if bestTile == nil || (!bestTile.Viewport.FocusEligible() && t.Viewport.FocusEligible()) {
-			bestTile = t
+		if w := e.mainTiles[i].Viewport; w != nil {
+			inMain[w.ID] = true
 		}
 	}
-	if hit := focusedTile; hit != nil {
-		bestTile = hit // the focused tile wins when it covers the cell
-	}
-	if bestTile != nil {
+	if t := e.mainTileAt(x, y); t != nil {
 		// Apply the hit tile's geometry to the viewport so the caller's cell→
 		// document mapping uses THIS tile's offset, not whichever tile happened to
 		// paint last. The next render re-stamps geometry, so this is transient.
-		e.applyTileGeometry(bestTile)
-		return bestTile.Viewport
+		e.applyTileGeometry(t)
+		return t.Viewport
 	}
 
 	// Docked chrome (top/bottom bars) is single-tile, so its geometry lives
 	// correctly on the viewport: fall back to the per-viewport test for it. A
 	// tiled viewport is skipped here — it is strictly tile-bounded above.
+	focused := e.ViewportManager.GetFocusedViewport()
 	covers := func(w *viewport.Viewport) bool {
 		if w == nil || inMain[w.ID] || !e.viewportOnScreen(w) ||
 			!(row >= w.ContentY && row < w.ContentY+w.ContentHeight) {
@@ -829,6 +800,40 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	return best
 }
 
+// cellInTile reports whether the 0-based cell (row, col) lies within tile t's
+// actual rectangle — its content rows and its paint frame, both axes.
+func (e *Editor) cellInTile(t *viewport.ViewportLayout, row, col int) bool {
+	w := t.Viewport
+	if w == nil || !e.viewportOnScreen(w) ||
+		!(row >= t.ContentY && row < t.ContentY+t.ContentHeight) {
+		return false
+	}
+	width := t.FrameWidth
+	if width <= 0 {
+		width = e.Renderer.Width - t.FrameX
+	}
+	return col >= t.FrameX && col < t.FrameX+width
+}
+
+// mainTileAt returns the main-area tile whose actual rectangle covers the 1-based
+// cell (x, y), or nil. Tiles never overlap, so at most one matches; a
+// focus-eligible viewport's tile is preferred when a rare boundary coincidence
+// makes two match.
+func (e *Editor) mainTileAt(x, y int) *viewport.ViewportLayout {
+	row, col := y-1, x-1
+	var best *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		if !e.cellInTile(t, row, col) {
+			continue
+		}
+		if best == nil || (!best.Viewport.FocusEligible() && t.Viewport.FocusEligible()) {
+			best = t
+		}
+	}
+	return best
+}
+
 // applyTileGeometry stamps a tile's recorded paint frame and content rectangle
 // onto its viewport, so mouse math that reads the viewport's geometry operates
 // on the specific tile under the cursor. Geometry lives with the tile
@@ -836,6 +841,17 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 // so this application lasts only until the next render.
 func (e *Editor) applyTileGeometry(t *viewport.ViewportLayout) {
 	t.StampGeometry()
+}
+
+// focusPressedTile makes the tile a press landed in the tiler's focused tile, so
+// it becomes the viewport's canonical pane: the caret, keyboard paging, the
+// scroll clamp, and a drag's autoscroll edges then all follow the tile the user
+// is actually working in — not whichever other tile of the same viewport last
+// held focus.
+func (e *Editor) focusPressedTile(x, y int) {
+	if t := e.mainTileAt(x, y); t != nil {
+		e.focusTilerTile(t.TileHandle)
+	}
 }
 
 // runeAtVisualColumn is the inverse of the caret-column math: the logical
@@ -1100,6 +1116,11 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		}
 		return
 	}
+
+	// The press is in the focused viewport: make the TILE it landed in the
+	// canonical one, so the caret, paging, scroll clamp, and any drag autoscroll
+	// track the pane the user pressed in (a viewport can span several tiles).
+	e.focusPressedTile(x, y)
 
 	if shift {
 		// Extend from the caret's current document position to the click.

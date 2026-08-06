@@ -370,6 +370,50 @@ func TestSplitDownFocusedTileCanonical(t *testing.T) {
 	}
 }
 
+// TestPressFocusesPressedTile: with a viewport stacked in two tiles, pressing in
+// a tile makes IT canonical — so the caret, paging, scroll clamp, and any drag
+// autoscroll follow the pane pressed in, not whichever tile last held focus.
+func TestPressFocusesPressedTile(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 60))
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	// Capture the top and bottom tiles' press coordinates and content rows.
+	topY, botY := 1<<30, -1
+	var topX, topRow, botX, botRow int
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport != doc {
+			continue
+		}
+		cy := e.mainTiles[i].ContentY
+		if cy < topY {
+			topY, topX, topRow = cy, e.mainTiles[i].ContentX+1, cy+1
+		}
+		if cy > botY {
+			botY, botX, botRow = cy, e.mainTiles[i].ContentX+1, cy+1
+		}
+	}
+	if topY == botY {
+		t.Skip("tiles share a row — cannot distinguish")
+	}
+
+	// Press in the TOP tile → top becomes canonical.
+	e.mousePress(topX, topRow, false)
+	e.performRender()
+	if doc.ContentY != topY {
+		t.Fatalf("press in top tile: canonical ContentY=%d, want top %d (bottom %d)", doc.ContentY, topY, botY)
+	}
+	// Press in the BOTTOM tile → bottom becomes canonical.
+	e.mousePress(botX, botRow, false)
+	e.performRender()
+	if doc.ContentY != botY {
+		t.Fatalf("press in bottom tile: canonical ContentY=%d, want bottom %d (top %d)", doc.ContentY, botY, topY)
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")

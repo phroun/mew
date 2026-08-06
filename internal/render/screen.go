@@ -763,6 +763,32 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 			sr.updateTileContentProperties(&group[i])
 		}
 	}
+
+	// Clamp each viewport's scroll offset ONCE, against its GOVERNING tile — the
+	// focused one when it has focus, else its last-laid-out tile. The "show at
+	// most one ~ line past the end" rule then follows the current pane: a
+	// viewport shown in a tall tile and a short one lets the SHORT (focused) pane
+	// scroll to its own bottom instead of being pinned by the tall one. Clamping
+	// per-tile in the loop above would let the tallest tile win.
+	governing := map[*viewport.Viewport]*viewport.ViewportLayout{}
+	for _, group := range [][]viewport.ViewportLayout{layout.TopLayout, layout.MainLayout, layout.BottomLayout} {
+		for i := range group {
+			w := group[i].Viewport
+			if w == nil {
+				continue
+			}
+			if governing[w] == nil || group[i].Focused {
+				governing[w] = &group[i]
+			}
+		}
+	}
+	for w, g := range governing {
+		if w.Buffer != nil && g.ContentHeight > 0 {
+			if max := viewport.MaxScrollTop(g.ContentHeight, w.Buffer.GetLineCount()); w.ViewState.ViewOffsetY > max {
+				w.SetViewTop(max)
+			}
+		}
+	}
 }
 
 // updateTileContentProperties resolves one tile's content geometry: it applies
@@ -881,13 +907,10 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 		//   - the offset was set before any layout existed, when ContentHeight
 		//     was 0 and there was no page to measure it against.
 		//
-		// Only ever downward, so a legal offset is never disturbed, and the
-		// document's own end is the only thing that moves it.
-		if w.Buffer != nil && w.ContentHeight > 0 {
-			if max := viewport.MaxScrollTop(w.ContentHeight, w.Buffer.GetLineCount()); w.ViewState.ViewOffsetY > max {
-				w.SetViewTop(max)
-			}
-		}
+		// The scroll offset is clamped once per viewport below, against its
+		// GOVERNING (focused) tile — not here per-tile, where the tallest of a
+		// viewport's tiles would win and pull the view back so the shortest pane
+		// can't reach its own bottom.
 
 		// Record the resolved content rectangle and scrollbar column onto the tile
 		// entry, so mouse handling can tell which tile a click hit — and map the

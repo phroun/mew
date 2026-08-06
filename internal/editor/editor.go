@@ -7813,6 +7813,7 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 			FrameX:     x0,
 			FrameWidth: x1 - x0,
 			Focused:    b.Tile == focusedTile,
+			TileHandle: uint64(b.Tile),
 		})
 	}
 	layout.MainLayout = mains

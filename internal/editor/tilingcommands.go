@@ -121,6 +121,19 @@ func (e *Editor) dismissTileFor(viewportID string) {
 	}
 }
 
+// focusTilerTile moves the tiler's focus to the given tile handle (no-op for a
+// zero handle, no tiler, or a handle already focused). Used when a press lands in
+// a tile, so that specific pane becomes the viewport's canonical tile.
+func (e *Editor) focusTilerTile(handle uint64) {
+	if e.tiler == nil || handle == 0 {
+		return
+	}
+	h := ifitfits.Handle(handle)
+	if e.tiler.GetFocus() != h {
+		e.tiler.SetFocus(h)
+	}
+}
+
 // firstEmptyTile returns a visible tile that holds no content (ref ""), or 0.
 func (e *Editor) firstEmptyTile() ifitfits.Handle {
 	if e.tiler == nil {

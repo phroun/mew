@@ -36,6 +36,10 @@ type ViewportLayout struct {
 	// canonical resting state — so the caret and keyboard paging use the pane the
 	// user is in, not whichever tile happened to paint last.
 	Focused bool
+	// TileHandle is the tiler's opaque handle for this tile (0 for docked chrome,
+	// which the tiler does not manage). A press uses it to focus the exact tile it
+	// landed in, so that tile becomes canonical.
+	TileHandle uint64
 }
 
 // StampGeometry copies this tile's recorded frame and content rectangle onto its
