@@ -131,6 +131,13 @@ type Editor struct {
 	// ensureTiler and applyTilerGeometry.
 	tiler *ifitfits.Viewport
 
+	// mainTiles is the last frame's laid-out main-area tiles, retained for mouse
+	// hit-testing: geometry lives with the tile (a viewport can appear in several
+	// tiles, many-to-many), so a click is resolved against these per-tile frames
+	// rather than the viewport's own single-valued geometry. Written by
+	// performRender, read by viewportAt — both on the editor goroutine.
+	mainTiles []viewport.ViewportLayout
+
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
 	pageSizeSpec pageSizeSpec
@@ -7693,6 +7700,11 @@ func (e *Editor) performRender() {
 
 	// Render
 	e.Renderer.Render(layout)
+
+	// Retain the main-area tiles for mouse hit-testing. Render filled each
+	// entry's per-tile content bounds, so a click can be resolved to the exact
+	// tile — necessary when one viewport is shown in several tiles.
+	e.mainTiles = layout.MainLayout
 
 	// The frame's viewport geometry is now set: publish the focused viewport's
 	// editable rectangle to the host so a graphical pointer shows the I-beam

@@ -719,6 +719,49 @@ func (e *Editor) viewportOnScreen(w *viewport.Viewport) bool {
 func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	row := y - 1 // ContentY is 0-based
 	col := x - 1 // FrameX is 0-based
+
+	// The main editing area is tiled, and tiles↔viewports is many-to-many: a
+	// viewport can be shown in several tiles, so a click is resolved against the
+	// PER-TILE frames retained from the last render, not the viewport's own
+	// single-valued geometry (which holds only its last tile). The focused
+	// viewport still wins when its tile covers the cell.
+	inTile := func(t *viewport.ViewportLayout) bool {
+		w := t.Viewport
+		if w == nil || !e.viewportOnScreen(w) ||
+			!(row >= t.ContentY && row < t.ContentY+t.ContentHeight) {
+			return false
+		}
+		width := t.FrameWidth
+		if width <= 0 {
+			width = e.Renderer.Width - t.FrameX
+		}
+		return col >= t.FrameX && col < t.FrameX+width
+	}
+	focused := e.ViewportManager.GetFocusedViewport()
+	var bestTile *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		if !inTile(t) {
+			continue
+		}
+		if t.Viewport == focused {
+			bestTile = t
+			break
+		}
+		if bestTile == nil || (!bestTile.Viewport.FocusEligible() && t.Viewport.FocusEligible()) {
+			bestTile = t
+		}
+	}
+	if bestTile != nil {
+		// Apply the hit tile's geometry to the viewport so the caller's cell→
+		// document mapping uses THIS tile's offset, not whichever tile happened to
+		// paint last. The next render re-stamps geometry, so this is transient.
+		e.applyTileGeometry(bestTile)
+		return bestTile.Viewport
+	}
+
+	// Docked chrome (top/bottom bars) is single-tile, so its geometry lives
+	// correctly on the viewport: fall back to the per-viewport test for it.
 	covers := func(w *viewport.Viewport) bool {
 		if !e.viewportOnScreen(w) ||
 			!(row >= w.ContentY && row < w.ContentY+w.ContentHeight) {
@@ -730,8 +773,8 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 		}
 		return col >= w.FrameX && col < w.FrameX+width
 	}
-	if fw := e.ViewportManager.GetFocusedViewport(); covers(fw) {
-		return fw
+	if covers(focused) {
+		return focused
 	}
 	var best *viewport.Viewport
 	for _, w := range e.ViewportManager.AllViewports() {
@@ -743,6 +786,21 @@ func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 		}
 	}
 	return best
+}
+
+// applyTileGeometry stamps a tile's recorded paint frame and content rectangle
+// onto its viewport, so mouse math that reads the viewport's geometry operates
+// on the specific tile under the cursor. Geometry lives with the tile
+// (tiles↔viewports is many-to-many); the render pass re-stamps it every frame,
+// so this application lasts only until the next render.
+func (e *Editor) applyTileGeometry(t *viewport.ViewportLayout) {
+	w := t.Viewport
+	w.FrameX = t.FrameX
+	w.FrameWidth = t.FrameWidth
+	w.ContentX = t.ContentX
+	w.ContentY = t.ContentY
+	w.ContentWidth = t.ContentWidth
+	w.ContentHeight = t.ContentHeight
 }
 
 // runeAtVisualColumn is the inverse of the caret-column math: the logical

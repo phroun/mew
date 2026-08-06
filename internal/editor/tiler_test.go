@@ -220,6 +220,46 @@ func TestSplitClonedRefPaintsBothTiles(t *testing.T) {
 	}
 }
 
+// TestSplitClonedRefHitTestsBothTiles: a click in either tile of a cloned-ref
+// split resolves to the viewport, and the hit tile's content offset is applied
+// so the cell→document mapping uses that tile's geometry (not the last-painted
+// tile's).
+func TestSplitClonedRefHitTestsBothTiles(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "HELLO WORLD\n")
+	e.ensureTiler()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	leftX, rightX := -1, -1
+	for _, tl := range e.mainTiles {
+		if tl.Viewport == doc {
+			if tl.FrameX == 0 {
+				leftX = tl.ContentX
+			} else {
+				rightX = tl.ContentX
+			}
+		}
+	}
+	if leftX < 0 || rightX <= leftX {
+		t.Fatalf("expected two side-by-side tiles for doc; leftX=%d rightX=%d", leftX, rightX)
+	}
+	row := doc.ContentY + 1
+
+	if hit := e.viewportAt(leftX+1, row); hit != doc {
+		t.Fatalf("left-tile click resolved to %v, want doc", vpID(hit))
+	}
+	if doc.ContentX != leftX {
+		t.Fatalf("left click must apply the left tile offset; ContentX=%d want %d", doc.ContentX, leftX)
+	}
+	if hit := e.viewportAt(rightX+1, row); hit != doc {
+		t.Fatalf("right-tile click resolved to %v, want doc", vpID(hit))
+	}
+	if doc.ContentX != rightX {
+		t.Fatalf("right click must apply the right tile offset; ContentX=%d want %d", doc.ContentX, rightX)
+	}
+}
+
 // TestBufferCloseDismissesTile: closing a viewport also removes its tile.
 func TestBufferCloseDismissesTile(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "one\n")

@@ -128,9 +128,17 @@ func TestDragAutoscrollDormantWhenRowsExistBeyond(t *testing.T) {
 	}
 	e, w, send := dragHarness(t, b.String())
 	if w.ContentY+w.ContentHeight >= e.Renderer.Height {
-		// The harness scene must have a row beyond (it reserves one); if not,
-		// shrink the viewport to model the modebar-at-bottom layout.
-		w.ContentHeight = e.Renderer.Height - w.ContentY - 1
+		// The harness scene fills the screen; model a modebar-at-bottom layout by
+		// reserving a row beyond. Geometry lives with the TILE now, so shrink the
+		// tile entry (the press re-applies it to the viewport) as well as the
+		// viewport field.
+		reduced := e.Renderer.Height - w.ContentY - 1
+		w.ContentHeight = reduced
+		for i := range e.mainTiles {
+			if e.mainTiles[i].Viewport == w {
+				e.mainTiles[i].ContentHeight = reduced
+			}
+		}
 	}
 
 	x, y := screenAt(w, 0, 1)

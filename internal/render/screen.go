@@ -743,10 +743,24 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 // viewport whose stamp is older belongs to an earlier frame (a background main
 // not shown now) and mouse hit-testing must ignore it.
 func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout) {
-	allLayouts := append(append(layout.TopLayout, layout.MainLayout...), layout.BottomLayout...)
 	sr.layoutEpoch++
 
-	for _, wl := range allLayouts {
+	// Iterate the real layout slices by index (not a merged copy) so each tile's
+	// resolved content bounds can be written back onto its entry for the mouse.
+	for _, group := range [][]viewport.ViewportLayout{layout.TopLayout, layout.MainLayout, layout.BottomLayout} {
+		for i := range group {
+			sr.updateTileContentProperties(&group[i])
+		}
+	}
+}
+
+// updateTileContentProperties resolves one tile's content geometry: it applies
+// the tile's frame to the viewport, derives the content rectangle (frame minus
+// ruler and message bars, gutter and scrollbar), and records the content rows
+// back onto the tile entry so a viewport shown in several tiles is hit-testable
+// in each.
+func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayout) {
+	{
 		w := wl.Viewport
 
 		// Content properties derive from THIS tile's frame (geometry lives with
@@ -863,6 +877,15 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 				w.SetViewTop(max)
 			}
 		}
+
+		// Record the resolved content rectangle onto the tile entry, so mouse
+		// handling can tell which tile a click hit — and map the cell with that
+		// tile's offset — even when one viewport is shown in several tiles (its
+		// own fields hold only the last tile's).
+		wl.ContentX = w.ContentX
+		wl.ContentY = w.ContentY
+		wl.ContentWidth = w.ContentWidth
+		wl.ContentHeight = w.ContentHeight
 	}
 }
 

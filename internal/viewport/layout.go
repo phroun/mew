@@ -16,6 +16,16 @@ type ViewportLayout struct {
 	// edge", as for docked chrome that fills the row.
 	FrameX     int
 	FrameWidth int
+	// ContentX/ContentY/ContentWidth/ContentHeight are this tile's content
+	// rectangle (the paint frame minus ruler, message bars, gutter and
+	// scrollbar), recorded during rendering so mouse handling can resolve which
+	// tile a click landed in and map the cell to a document position with THAT
+	// tile's offset — necessary because a viewport shown in several tiles cannot
+	// hold each tile's rectangle in its own single-valued fields.
+	ContentX      int
+	ContentY      int
+	ContentWidth  int
+	ContentHeight int
 }
 
 // Layout holds the complete calculated layout for all viewports.
