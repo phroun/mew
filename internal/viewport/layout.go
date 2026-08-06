@@ -26,6 +26,11 @@ type ViewportLayout struct {
 	ContentY      int
 	ContentWidth  int
 	ContentHeight int
+	// ScrollbarX/ScrollbarTrackH are this tile's vertical scrollbar column
+	// (-1 when the tile shows no bar) and its track height, recorded so a press
+	// on the bar is grabbed against the correct tile's bar.
+	ScrollbarX      int
+	ScrollbarTrackH int
 }
 
 // Layout holds the complete calculated layout for all viewports.

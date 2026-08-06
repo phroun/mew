@@ -878,14 +878,17 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 			}
 		}
 
-		// Record the resolved content rectangle onto the tile entry, so mouse
-		// handling can tell which tile a click hit — and map the cell with that
-		// tile's offset — even when one viewport is shown in several tiles (its
-		// own fields hold only the last tile's).
+		// Record the resolved content rectangle and scrollbar column onto the tile
+		// entry, so mouse handling can tell which tile a click hit — and map the
+		// cell (or grab the scrollbar) with that tile's geometry — even when one
+		// viewport is shown in several tiles (its own fields hold only the last
+		// tile's).
 		wl.ContentX = w.ContentX
 		wl.ContentY = w.ContentY
 		wl.ContentWidth = w.ContentWidth
 		wl.ContentHeight = w.ContentHeight
+		wl.ScrollbarX = w.ScrollbarX
+		wl.ScrollbarTrackH = w.ScrollbarTrackH
 	}
 }
 

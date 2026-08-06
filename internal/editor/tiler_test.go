@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -257,6 +258,51 @@ func TestSplitClonedRefHitTestsBothTiles(t *testing.T) {
 	}
 	if doc.ContentX != rightX {
 		t.Fatalf("right click must apply the right tile offset; ContentX=%d want %d", doc.ContentX, rightX)
+	}
+}
+
+// TestSplitScrollbarPressGrabsThePane: each tile of a cloned-ref split has its
+// own scrollbar; pressing the LEFT tile's bar column must grab that bar and
+// scroll, not fall through to a text selection (which happened when the
+// scrollbar column was read from the last-painted tile only).
+func TestSplitScrollbarPressGrabsThePane(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "line %02d\n", i)
+	}
+	e, w, _ := newRenderedEditor(t, b.String())
+	if !e.setOption(w, "scrollbar", "true") {
+		t.Fatal("set scrollbar=true failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	leftSb := -1
+	for _, tl := range e.mainTiles {
+		if tl.Viewport == doc && tl.FrameX == 0 {
+			leftSb = tl.ScrollbarX
+		}
+	}
+	if leftSb < 0 {
+		t.Fatalf("left tile has no scrollbar column; tiles=%d", len(e.mainTiles))
+	}
+
+	send := func(key string) {
+		if !e.handleMouseKey(key) {
+			t.Fatalf("pseudo-key %q should be consumed", key)
+		}
+	}
+	bottomY := doc.ContentY + doc.ContentHeight // near the track bottom
+	send(fmt.Sprintf("Mouse@%d,%d", leftSb+1, bottomY))
+	send("MouseLeftPress")
+	if doc.ViewState.ViewOffsetY == 0 {
+		t.Fatal("press on the LEFT tile's scrollbar did not scroll")
+	}
+	if doc.Buffer.HasBlockMarks() {
+		t.Fatal("press on the LEFT tile's scrollbar started a text selection")
 	}
 }
 

@@ -337,8 +337,30 @@ func (e *Editor) notifyScrollbarRegions() {
 		return
 	}
 	var regions []ScrollbarRegion
+	// Main-area tiles publish a region each, from per-tile geometry: a viewport
+	// shown in several tiles (many-to-many) has a bar in each, so the host can
+	// draw and drag every one.
+	inMain := map[string]bool{}
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		w := t.Viewport
+		if w == nil || t.ScrollbarX < 0 || t.ScrollbarTrackH <= 0 || w.Buffer == nil || !e.viewportOnScreen(w) {
+			continue
+		}
+		inMain[w.ID] = true
+		regions = append(regions, ScrollbarRegion{
+			ViewportID: w.ID,
+			Col:        t.ScrollbarX + 1,
+			Row:        t.ContentY + 1,
+			TrackH:     t.ScrollbarTrackH,
+			Top:        w.ViewState.ViewOffsetY,
+			Page:       t.ContentHeight,
+			LineCount:  w.Buffer.GetLineCount(),
+		})
+	}
+	// Docked chrome is single-tile: its geometry lives correctly on the viewport.
 	for _, w := range e.ViewportManager.AllViewports() {
-		if w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 || w.Buffer == nil {
+		if inMain[w.ID] || w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 || w.Buffer == nil {
 			continue
 		}
 		if !e.viewportOnScreen(w) {
@@ -354,7 +376,12 @@ func (e *Editor) notifyScrollbarRegions() {
 			LineCount:  w.Buffer.GetLineCount(),
 		})
 	}
-	sort.Slice(regions, func(i, j int) bool { return regions[i].ViewportID < regions[j].ViewportID })
+	sort.Slice(regions, func(i, j int) bool {
+		if regions[i].ViewportID != regions[j].ViewportID {
+			return regions[i].ViewportID < regions[j].ViewportID
+		}
+		return regions[i].Col < regions[j].Col
+	})
 	if e.scrollbarRegionsPushed && scrollbarRegionsEqual(regions, e.scrollbarRegionsSent) {
 		return
 	}
@@ -801,6 +828,8 @@ func (e *Editor) applyTileGeometry(t *viewport.ViewportLayout) {
 	w.ContentY = t.ContentY
 	w.ContentWidth = t.ContentWidth
 	w.ContentHeight = t.ContentHeight
+	w.ScrollbarX = t.ScrollbarX
+	w.ScrollbarTrackH = t.ScrollbarTrackH
 }
 
 // runeAtVisualColumn is the inverse of the caret-column math: the logical
