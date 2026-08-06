@@ -53,7 +53,7 @@ func hostedGrowthProbeWidth(t *testing.T, parented bool, iters, guestCols int) (
 
 	e.terminalOpen("pty1", 80, 24)
 	e.terminalPlace([]mew.TerminalSurface{{
-		ID: "pty1", Col: 1, Row: 1, Width: 80, Height: 24,
+		ID: "pty1", Primary: true, Col: 1, Row: 1, Width: 80, Height: 24,
 		ClipCol: 1, ClipRow: 1, ClipWidth: 80, ClipHeight: 24,
 	}})
 
@@ -166,7 +166,7 @@ func TestHostedTerminalDeclaresItsSettledGrid(t *testing.T) {
 
 	e.terminalOpen("pty1", 80, 24)
 	e.terminalPlace([]mew.TerminalSurface{{
-		ID: "pty1", Col: 1, Row: 1, Width: 80, Height: 24,
+		ID: "pty1", Primary: true, Col: 1, Row: 1, Width: 80, Height: 24,
 		ClipCol: 1, ClipRow: 1, ClipWidth: 80, ClipHeight: 24,
 	}})
 	e.paintTerminalSurfaces(p)
@@ -232,7 +232,7 @@ func TestHostedSurfaceLandsOnItsColumn(t *testing.T) {
 	const col, row = 37, 11
 	e.terminalOpen("pty1", 20, 5)
 	e.terminalPlace([]mew.TerminalSurface{{
-		ID: "pty1", Col: col, Row: row, Width: 20, Height: 5,
+		ID: "pty1", Primary: true, Col: col, Row: row, Width: 20, Height: 5,
 		ClipCol: col, ClipRow: row, ClipWidth: 20, ClipHeight: 5,
 	}})
 	e.paintTerminalSurfaces(p)
@@ -310,7 +310,7 @@ func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
 			id := fmt.Sprintf("pty-%d-%d", place.col, place.row)
 			e.terminalOpen(id, place.w, place.h)
 			e.terminalPlace([]mew.TerminalSurface{{
-				ID: id, Col: place.col, Row: place.row, Width: place.w, Height: place.h,
+				ID: id, Primary: true, Col: place.col, Row: place.row, Width: place.w, Height: place.h,
 				ClipCol: place.col, ClipRow: place.row, ClipWidth: place.w, ClipHeight: place.h,
 			}})
 			e.paintTerminalSurfaces(p)
@@ -451,7 +451,7 @@ func TestHostedScrubIsSmoothAndProportional(t *testing.T) {
 	const col, row = 1, 3
 	e.terminalOpen("pty1", 80, 24)
 	e.terminalPlace([]mew.TerminalSurface{{
-		ID: "pty1", Col: col, Row: row, Width: 80, Height: 24,
+		ID: "pty1", Primary: true, Col: col, Row: row, Width: 80, Height: 24,
 		ClipCol: col, ClipRow: row, ClipWidth: 80, ClipHeight: 24,
 	}})
 	// Deep scrollback: the regime where cell-quantized thumb motion means
