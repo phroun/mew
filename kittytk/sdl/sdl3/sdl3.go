@@ -153,6 +153,7 @@ const (
 	WINDOW_RESIZABLE              = csdl.WINDOW_RESIZABLE
 	WINDOW_BORDERLESS             = csdl.WINDOW_BORDERLESS
 	WINDOW_MINIMIZED              = csdl.WINDOW_MINIMIZED
+	WINDOW_MAXIMIZED              = csdl.WINDOW_MAXIMIZED
 	WINDOW_METAL                  = csdl.WINDOW_METAL
 
 	// WINDOW_TRANSPARENT is the SDL3-only flag this whole migration was
@@ -216,6 +217,17 @@ func (w *Window) Size() (int32, int32) {
 }
 
 func (w *Window) SetSize(width, height int32) { _ = w.w.SetSize(width, height) }
+
+// SizeInPixels returns the client area in real device pixels (SDL screen
+// coordinates are points on a HiDPI display; the framebuffer/swapchain is sized
+// in pixels). Falls back to Size() if the pixel query fails.
+func (w *Window) SizeInPixels() (int32, int32) {
+	width, height, err := w.w.SizeInPixels()
+	if err != nil {
+		return w.Size()
+	}
+	return width, height
+}
 
 func (w *Window) ID() (uint32, error) {
 	id, err := w.w.ID()

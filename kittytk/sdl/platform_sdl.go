@@ -2044,14 +2044,34 @@ func (s *sdlSurface) ScreenSizePx() (int, int) {
 	return int(w), int(h)
 }
 
-// SetScreenSizePx implements platform.NativeSurface: the size change
-// reports back through the WINDOWEVENT_SIZE_CHANGED path (framebuffer
-// recreate, shape reapply, handler.Resized).
+// SetScreenSizePx implements platform.NativeSurface: the size change normally
+// reports back through the WINDOW_RESIZED path (framebuffer recreate, shape
+// reapply, handler.Resized).
+//
+// Two hazards, both seen only on the solo primary window (created RESIZABLE with
+// a title bar, its border stripped at runtime) and not on a torn window
+// (borderless from birth): a shrink back from zoom-to-fill could leave the GPU
+// swapchain at the maximized size, so the restored content painted into its
+// top-left corner and the stale maximized frame stayed on screen until a manual
+// edge-drag. First, some window managers flag a filled window MAXIMIZED, and
+// SetWindowSize is a no-op on a maximized window — clear it first. Second, a
+// programmatic resize did not always deliver a WINDOW_RESIZED for this window,
+// so drive the framebuffer reconfigure here from the window's ACTUAL pixel size
+// (read back after the resize, so HiDPI points-vs-pixels can't skew it). Both
+// are idempotent: liveResize no-ops when the backend already matches, and a real
+// resize event that does arrive later costs nothing.
 func (s *sdlSurface) SetScreenSizePx(w, h int) {
 	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
 		return
 	}
+	if s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0 {
+		s.win.window.Restore()
+	}
 	s.win.window.SetSize(int32(w), int32(h))
+	pxW, pxH := s.win.window.SizeInPixels()
+	if pxW > 0 && pxH > 0 {
+		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
+	}
 }
 
 // WorkAreaPx implements platform.NativeSurface: the usable bounds of
