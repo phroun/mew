@@ -1076,10 +1076,19 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	handled := e.deliverPTYMouse(st, ev)
 	if handled && ev.Action == TerminalMousePress {
 		e.ptyMouseCapture = &ptyMouseGesture{buf: buf, cx: cx, cy: cy, cw: cw, ch: ch}
-		// The press belongs to this tile: focus it so the live terminal
-		// materializes here (a clicked mirror becomes the primary) and later
-		// frames paint the caret and trinket at this location.
+		// The press belongs to this tile. A press the terminal takes is consumed
+		// here, so mew's own click handling (which would focus the pane) never
+		// runs — focus the pane ourselves. First the VIEWPORT, so keys and the
+		// caret follow the child the user clicked when it is a DIFFERENT pane;
+		// that runs tilerFollowFocus, which lands on the ref's first tile, so the
+		// exact clicked tile is (re)applied after. A press in the already-focused
+		// viewport (including a mirror of it) only re-homes the tile.
 		if tile != nil {
+			if w := tile.Viewport; w != nil && e.ViewportManager.GetFocusedViewport() != w {
+				e.ViewportManager.FocusViewportAsCycle(w)
+				e.announceFocusedViewport()
+				e.RequestRender()
+			}
 			e.focusTilerTile(tile.TileHandle)
 		}
 	}

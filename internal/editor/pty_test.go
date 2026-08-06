@@ -307,6 +307,67 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 	}
 }
 
+// Clicking the terminal of a DIFFERENT viewport (not a mirror of the focused
+// one) focuses that viewport. A press the terminal takes is consumed by the pty
+// path, so mew's own click-to-focus never runs — the pty path has to focus the
+// pane itself, or keyboard input keeps going to the viewport that was focused
+// before the click.
+func TestPTYClickFocusesTheOtherViewport(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		// The terminal takes the press (a mouse-tracking child or its own
+		// scrollbar): handled, so the pty path consumes it.
+		Mouse: func(string, TerminalMouse) ([]byte, bool) { return nil, true },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	e.ensureTiler()
+	e.performRender()
+
+	// A second viewport in its own tile, running its own terminal session.
+	focusMainViewport(e, "doc2", strings.Repeat("y\n", 40))
+	e.performRender()
+	if !e.execRequest("bash", "") { // exec binds to the focused viewport (doc2)
+		t.Fatal("exec on doc2 failed")
+	}
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	doc2 := e.ViewportManager.GetViewport("doc2")
+	if doc == nil || doc2 == nil {
+		t.Fatal("both viewports should exist")
+	}
+	if e.ptySessionFor(doc2.Buffer) == nil {
+		t.Fatal("doc2 should have a session")
+	}
+
+	// Focus the OTHER viewport, then click doc2's terminal.
+	e.ViewportManager.SetFocus("doc")
+	e.performRender()
+	if e.ViewportManager.GetFocusedViewport() != doc {
+		t.Fatal("setup: doc should be focused before the click")
+	}
+
+	var tile *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport == doc2 {
+			tile = &e.mainTiles[i]
+			break
+		}
+	}
+	if tile == nil {
+		t.Fatal("doc2 has no tile on screen")
+	}
+	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
+	e.handleMouseKey("MouseLeftPress")
+
+	if got := e.ViewportManager.GetFocusedViewport(); got != doc2 {
+		t.Fatalf("clicking doc2's terminal focused %s, want doc2", vpID(got))
+	}
+}
+
 // One session per buffer: a second exec on the same buffer is refused rather
 // than orphaning the first child.
 func TestExecRefusesSecondSessionOnSameBuffer(t *testing.T) {
