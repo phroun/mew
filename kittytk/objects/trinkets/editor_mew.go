@@ -30,6 +30,10 @@ import (
 	"github.com/phroun/mew"
 )
 
+// fitLog gates the TEMPORARY resize-runaway trace (MEW_FITLOG=1). Remove with
+// the FITLOG lines once the runaway is fixed.
+var fitLog = os.Getenv("MEW_FITLOG") != ""
+
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
 // so focus, input routing, and painting are the terminal surface's, and adds
 // the mew session lifecycle plus the contract property/event surface.
@@ -308,6 +312,16 @@ func (e *Editor) ensureStarted() {
 
 	// Grid-size changes wake mew's resize path (it re-reads Size()).
 	e.SetResizeSink(func(cols, rows int) {
+		// TEMPORARY diagnostic (MEW_FITLOG): trace the outer terminal's emitted
+		// grid against its bounds and cell size, to find what drives the
+		// resize-runaway — a growing bounds (layout feedback) or a collapsing
+		// cell height (measurement). Remove once the runaway is fixed.
+		if fitLog {
+			b := e.Bounds()
+			cw, ch := e.cellDims()
+			fmt.Fprintf(os.Stderr, "FITLOG emitResize cols=%d rows=%d bounds=%gx%g cell=%gx%g gfx=%v\n",
+				cols, rows, float64(b.Width), float64(b.Height), float64(cw), float64(ch), core.FindGraphicalFrames(e))
+		}
 		e.mu.Lock()
 		e.curCols, e.curRows = cols, rows
 		e.mu.Unlock()
