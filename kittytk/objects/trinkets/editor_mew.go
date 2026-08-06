@@ -267,6 +267,20 @@ func (e *Editor) Layout()                             {}
 func (e *Editor) LayoutManager() core.LayoutManager   { return nil }
 func (e *Editor) SetLayoutManager(core.LayoutManager) {}
 
+// SizeHint reports a FIXED, modest preferred size — deliberately decoupled from
+// this host's own terminal grid. PurfecTerm.SizeHint reports
+// TextWidth(cols)/TextHeight(rows); when a container sizes the editor to its
+// content, that feeds back: a bigger grid asks for a bigger box, which enlarges
+// the bounds, which enlarges the grid, which asks for more. Under a resize storm
+// with a continuously-drawing child the grid ran away to hundreds of thousands
+// of rows and a multi-gigabyte emulator buffer. A full-window host takes
+// whatever it is given (the root window maximizes it; a dock sizes it), so it
+// must never ask for more than a sane minimum — breaking the loop at the source.
+func (e *Editor) SizeHint() core.UnitSize {
+	m := e.EffectiveCellMetrics()
+	return core.UnitSize{Width: m.TextWidth(80), Height: m.TextHeight(24)}
+}
+
 // Paint starts the session on the first paint (once properties are applied),
 // then delegates to the terminal surface.
 func (e *Editor) Paint(p *core.Painter) {
