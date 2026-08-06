@@ -69,6 +69,29 @@ KittyTK TUI host, and the -tags mew trinket incl. editor_mew_*_test.go).
 Because our shared changes were already upstream, there was nothing to
 re-apply — only WebGPU + upstream's own work to adopt.
 
+### The v0.1.11 sync (record)
+
+v0.1.10-alpha -> **v0.1.11-alpha** is one fork PR landing upstream and nothing
+else — the diff `v0.1.10-alpha..v0.1.11-alpha` is exactly the three files it
+touched:
+
+- [#24](https://github.com/phroun/kittytk/pull/24) — TUI backend asserts a
+  single-width DEC line baseline on startup: `Init` arms the per-line `DECSWL`
+  (`ESC#5`) sweep so the first present clears any stale `DECDWL` a previous
+  session left in the alternate screen (which survives the `?1049h` switch and
+  an erase — only `DECSWL`/`RIS`/soft-reset retire it). A per-line sweep is used
+  rather than `DECSTR`/`RIS`, which would also tear down the alt-screen, mouse,
+  and keyboard state `Init` just set up (`backend/tui/tui.go` + test).
+
+Cut from our vendored tree, so every changed file was byte-identical to the
+release; the sync bumped `core/version.go`'s `Build` to 11 and the `go.mod`
+pins to v0.1.11-alpha. No dependency bumps; no shared-interface change. The
+fork boundary is unchanged (**20 `//go:build mew` files** + the mew require).
+`sdl/sdl3/sdl3.go`'s comment em-dashes stay correct on our side (upstream still
+carries the mojibake — a trivial upstream fix for later).
+
+See `patches/kittytk/tui-startup-dwl-baseline.patch`.
+
 ### The v0.1.10 sync (record)
 
 v0.1.9-alpha -> **v0.1.10-alpha** is one fork PR landing upstream and nothing
