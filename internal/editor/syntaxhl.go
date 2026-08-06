@@ -588,7 +588,14 @@ func (e *Editor) bufferIsDocument(b *buffer.Buffer) bool {
 // holds per-line resolved colors, context flags, and entry states; each
 // line's entry state is the exit state of the line before.
 func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
-	if b == nil || (e.syntaxGrammar == nil && !e.Config.SyntaxDetect) {
+	if b == nil {
+		return nil
+	}
+	// Generated surfaces (mew:/…) always render as dokuwiki — their grammar is
+	// keyed on the address (see bufferGrammar), and their whole point is browsable
+	// links. So they build a cache even when syntax highlighting/detection is
+	// off; only ordinary buffers respect the disabled state.
+	if e.syntaxGrammar == nil && !e.Config.SyntaxDetect && !isGenPath(b.GetFilename()) {
 		return nil
 	}
 	if docLine < 0 || docLine >= b.GetLineCount() {

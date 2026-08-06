@@ -28,18 +28,24 @@ import (
 // viewport and turns it into an operation. The follow handler is the one place
 // that decides what following an entry DOES.
 
-// genSurface is a registered generated surface: how to render it, and what
-// following one of its entries (by stable target) means.
+// genSurface is a registered generated surface: how to render it, what
+// following one of its entries (by stable target) means, and — for the initial
+// caret — which entry corresponds to the content being navigated away from.
 type genSurface struct {
 	render func(*Editor) string
 	follow func(e *Editor, target string) bool
+	// current returns the link TARGET of the entry for the content the reader is
+	// leaving as they open the surface (the focused document's handle, the
+	// focused viewport's id), so the caret can land on it. "" when there is no
+	// such entry — the caret then falls back to the first link.
+	current func(e *Editor, w *viewport.Viewport) string
 }
 
 // genSurfaces is the registry. Add a surface by registering a render/follow
 // pair here.
 var genSurfaces = map[string]genSurface{
-	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer},
-	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport},
+	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget},
+	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget},
 }
 
 // genSurfaceName returns the surface name for a mew: URL ("mew:/buffers" ->
@@ -69,6 +75,13 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 		return false
 	}
 
+	// The entry to land the caret on: the one for the content being left behind,
+	// captured BEFORE the swap replaces w's buffer with the surface.
+	target := ""
+	if s.current != nil {
+		target = s.current(e, w)
+	}
+
 	url := "mew:/" + name
 	buf := e.lib.NewFromString(s.render(e))
 	buf.SetFilename(url)
@@ -89,9 +102,60 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 	w.ViewState.ReadOnly = true
 	w.ViewState.LinkBrowsing = true
 	w.BrowseActive = true
+	// Land on the entry for the content we came from, else the first link, so the
+	// list opens with a sensible button already focused.
+	e.focusSurfaceEntry(w, target)
 	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
+}
+
+// currentBufferTarget is the buffers-surface entry for the document being left:
+// its stable handle. "" when there is no ordinary document to return to (an
+// unbound viewport, or one already showing a generated surface).
+func (e *Editor) currentBufferTarget(w *viewport.Viewport) string {
+	if w == nil || w.Buffer == nil || isGenPath(w.Buffer.GetFilename()) {
+		return ""
+	}
+	return strconv.FormatUint(w.Buffer.Handle(), 10)
+}
+
+// currentViewportTarget is the viewports-surface entry for the viewport the
+// surface is opening in — the one whose content the reader is looking at.
+func (e *Editor) currentViewportTarget(w *viewport.Viewport) string {
+	if w == nil {
+		return ""
+	}
+	return w.ID
+}
+
+// focusSurfaceEntry lands the caret inside the surface link whose target is
+// `target` (the entry for the content just navigated away from), so browse mode
+// opens with that button focused. When target is empty or has no matching entry
+// it falls back to the first link. A surface with no links leaves the caret at
+// the top.
+func (e *Editor) focusSurfaceEntry(w *viewport.Viewport, target string) {
+	if w == nil || w.Buffer == nil {
+		return
+	}
+	n := w.Buffer.GetLineCount()
+	firstLine, firstStart, haveFirst := 0, 0, false
+	for L := 0; L < n; L++ {
+		for _, s := range e.linkSpansOnLine(w, L) {
+			if !haveFirst {
+				firstLine, firstStart, haveFirst = L, s.Start, true
+			}
+			if target != "" && s.Target == target {
+				// Start+1 lands strictly inside the link so it focuses (spans are
+				// always >= 4 runes), matching the sibling-link navigation.
+				e.setCursorForNav(w, L, s.Start+1)
+				return
+			}
+		}
+	}
+	if haveFirst {
+		e.setCursorForNav(w, firstLine, firstStart+1)
+	}
 }
 
 // followGeneratedSurfaceLink dispatches a followed link inside a generated

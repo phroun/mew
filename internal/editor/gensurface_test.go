@@ -45,6 +45,43 @@ func TestBuffersSurfaceLinkStaleHandle(t *testing.T) {
 	}
 }
 
+// Opening the buffers surface lands the caret on the entry for the document
+// being navigated away from — its stable handle — not merely at the top.
+func TestBuffersSurfaceCaretOnCurrentEntry(t *testing.T) {
+	e, _ := newTestEditor(t, "the document\n")
+	w := e.ViewportManager.GetFocusedViewport()
+	handle := strconv.FormatUint(w.Buffer.Handle(), 10)
+
+	if !e.openGeneratedSurface("buffers") {
+		t.Fatal("could not open buffers surface")
+	}
+	cur := e.caretLinkSpan(w)
+	if cur == nil {
+		t.Fatalf("caret did not land inside a link; pos=%+v", w.CursorPos())
+	}
+	if cur.Target != handle {
+		t.Fatalf("caret on entry %q, want the current document %q", cur.Target, handle)
+	}
+}
+
+// Opening the viewports surface lands the caret on the entry for the viewport
+// it opened in.
+func TestViewportsSurfaceCaretOnCurrentEntry(t *testing.T) {
+	e, _ := newTestEditor(t, "x\n")
+	w := e.ViewportManager.GetFocusedViewport()
+
+	if !e.openGeneratedSurface("viewports") {
+		t.Fatal("could not open viewports surface")
+	}
+	cur := e.caretLinkSpan(w)
+	if cur == nil {
+		t.Fatalf("caret did not land inside a link; pos=%+v", w.CursorPos())
+	}
+	if cur.Target != w.ID {
+		t.Fatalf("caret on entry %q, want the current viewport %q", cur.Target, w.ID)
+	}
+}
+
 // A generated surface is transient in the nav history: opening one over a
 // document and then navigating back returns to the document, and the surface
 // is not forward-reachable — it was released, never parked as a destination.
