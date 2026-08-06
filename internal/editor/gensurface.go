@@ -212,10 +212,12 @@ func linkItem(b *strings.Builder, target, title, marks string) {
 }
 
 // linkTitle keeps a display string safe as a dokuwiki link title: a "]]" would
-// close the link early, so soften any bracket.
+// close the link early and a "|" would split target from title, so soften every
+// bracket to a parenthesis (both ends, so "[unnamed]" reads "(unnamed)") and any
+// pipe to a slash.
 func linkTitle(s string) string {
-	if strings.ContainsAny(s, "]|") {
-		s = strings.NewReplacer("]", ")", "|", "/").Replace(s)
+	if strings.ContainsAny(s, "[]|") {
+		s = strings.NewReplacer("[", "(", "]", ")", "|", "/").Replace(s)
 	}
 	return s
 }
