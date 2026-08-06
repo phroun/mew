@@ -1667,7 +1667,14 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 			e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
 		}
 		clip := core.UnitRect{X: leftU - x, Y: topU - y, Width: rightU - leftU, Height: bottomU - topU}
-		term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
+		pp := p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx)
+		if primary {
+			term.Paint(pp)
+		} else {
+			// A mirror renders read-only and never claims the platform caret —
+			// only the primary owns the cursor.
+			term.PaintMirror(pp)
+		}
 	}
 
 	for _, s := range visible {

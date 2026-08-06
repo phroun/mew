@@ -181,7 +181,7 @@ func (t *PurfecTerm) gfxEngine() *text.Engine {
 // terminal has no focus of its own to hold (see SetEmbeddedFocus): its
 // host declares it, and it is still subject to the window chain.
 func (t *PurfecTerm) gfxFocused() bool {
-	return t.focused() && core.FocusChainActive(t.Self())
+	return t.paintFocused() && core.FocusChainActive(t.Self())
 }
 
 // gfxInputActive reports whether input events take the graphical
