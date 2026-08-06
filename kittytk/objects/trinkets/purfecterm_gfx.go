@@ -303,22 +303,26 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
 	}
 
-	// Content pixel width (viewport minus the scrollbar lane) drives how
-	// many whole cells fit; size the terminal to that so the grid fills its
-	// space (updateTerminalSize's unit division undercounts at fractional
-	// ppu). The yellow scrollback line and text span this content width.
+	// Content pixel width (viewport minus the vertical scrollbar lane) drives
+	// how many whole COLUMNS fit; size the terminal to that so the grid fills its
+	// space (updateTerminalSize's unit division undercounts at fractional ppu).
+	// The yellow scrollback line and text span this content width. The lane's
+	// reservation is content-INDEPENDENT (gfxInputActive is the frame's state,
+	// not the child's), so folding it into the grid the child is sized to is safe.
 	contentWpx := vpFullWpx
-	contentHpx := vpFullHpx
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
-		// The HORIZONTAL bar reserves its height too: unlike the vertical
-		// lane (a sliver off the right edge), it lies across the bottom
-		// text row and made it unreadable. One lane fewer of rows keeps the
-		// last line clear while the bar is present.
-		if t.hScrollActive() {
-			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
-		}
 	}
+	// ROWS fit the FULL height. The child's grid must be a pure function of its
+	// rectangle and font — never of its own content — or it oscillates. Reserving
+	// a row for the horizontal bar (which shows only when a VISIBLE line overflows
+	// the grid) would shrink the grid by a row, which changes which lines are
+	// visible, which flips the bar's presence, which regrows the grid: a
+	// self-sustaining Resize -> emitResize -> child SIGWINCH -> full redraw ->
+	// repaint -> re-fit loop at a FIXED window size, spinning the emulator and
+	// thrashing allocation. So the horizontal bar OVERLAYS the bottom row (it is a
+	// thin lane, present only while a line overflows) instead of stealing a row.
+	contentHpx := vpFullHpx
 	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
 	// smaller) rect would resize the child under a read-only copy.
