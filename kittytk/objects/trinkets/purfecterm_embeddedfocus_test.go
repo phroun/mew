@@ -69,3 +69,28 @@ func TestMirrorPaintRendersUnfocusedWithoutLosingFocus(t *testing.T) {
 		t.Error("clearing the mirror flag restores focused rendering")
 	}
 }
+
+// A mirror paint must not resize the child: it draws the grid the primary
+// settled, so updateTerminalSize early-returns under the mirror flag and emits
+// no resize from the mirror's own rectangle. (Re-fitting from a smaller mirror
+// is what scrolled the shared buffer and wrapped at the wrong column.)
+func TestMirrorPaintSuppressesResize(t *testing.T) {
+	term := NewPurfecTerm()
+	term.Init(term)
+	if term.Terminal() == nil {
+		t.Skip("no term")
+	}
+	resizes := 0
+	term.SetResizeSink(func(cols, rows int) { resizes++ })
+
+	term.SetBounds(term.Bounds())
+	term.updateTerminalSize()
+	base := resizes
+
+	term.mirrorPaint.Store(true)
+	term.updateTerminalSize()
+	term.mirrorPaint.Store(false)
+	if resizes != base {
+		t.Fatalf("a mirror paint emitted a resize (%d -> %d)", base, resizes)
+	}
+}

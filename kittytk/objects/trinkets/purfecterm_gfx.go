@@ -319,7 +319,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
 		}
 	}
-	if baseCW > 0 && baseCH > 0 {
+	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
+	// clipped to its own rectangle. Re-fitting here from the mirror's (often
+	// smaller) rect would resize the child under a read-only copy.
+	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
 		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
 		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
@@ -552,14 +555,23 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		}
 	}
 
-	buf.SetCursorDrawn(cursorLineWasRendered)
-	if buf.CheckCursorAutoScroll() {
-		t.Update()
+	// These are the PRIMARY paint's alone. CheckCursorAutoScroll{,Horiz} scroll
+	// the shared buffer to keep the cursor visible — measured against THIS paint's
+	// clipped region. Run from a mirror (a different, often smaller rectangle),
+	// they scroll the buffer to fit the mirror, and the primary then shows the
+	// scrolled result: the terminal jumps a row before repainting, or a full line
+	// chases horizontally to show only its tail. A mirror is read-only, so it must
+	// touch none of this — it just draws the grid the primary settled.
+	if !t.mirrorPaint.Load() {
+		buf.SetCursorDrawn(cursorLineWasRendered)
+		if buf.CheckCursorAutoScroll() {
+			t.Update()
+		}
+		if buf.CheckCursorAutoScrollHoriz() {
+			t.Update()
+		}
+		buf.ClearDirty()
 	}
-	if buf.CheckCursorAutoScrollHoriz() {
-		t.Update()
-	}
-	buf.ClearDirty()
 
 	if !t.editorMode {
 		t.paintScrollbarsGfx(p, bounds, buf, chh)

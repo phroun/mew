@@ -542,6 +542,11 @@ func (t *PurfecTerm) updateTerminalSize() {
 	if t.terminal == nil {
 		return
 	}
+	// A mirror paint never resizes: it draws the grid the primary settled, so it
+	// must not re-derive (and emit) a size from its own rectangle.
+	if t.mirrorPaint.Load() {
+		return
+	}
 	if core.FindGraphicalFrames(t) {
 		return
 	}
