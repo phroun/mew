@@ -1137,6 +1137,11 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// newest-prompt resolution included. The click only switches focus;
 		// it does not also place the caret.
 		if e.ViewportManager.FocusViewportAsCycle(w) {
+			// Focusing the viewport ran tilerFollowFocus, which lands on the
+			// FIRST tile that holds it. Override that to the tile actually under
+			// the pointer, so switching INTO a viewport shown in several tiles
+			// focuses the pane the user clicked, not its first mirror.
+			e.focusPressedTile(x, y)
 			e.announceFocusedViewport()
 			e.RequestRender()
 		}

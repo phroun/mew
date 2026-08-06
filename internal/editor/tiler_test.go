@@ -414,6 +414,58 @@ func TestPressFocusesPressedTile(t *testing.T) {
 	}
 }
 
+// TestSwitchIntoMirroredViewportFocusesClickedTile: switching focus by clicking
+// a tile that shows an UNFOCUSED viewport shown in several tiles must land on
+// the tile under the pointer, not the first mirror. FocusViewportAsCycle runs
+// tilerFollowFocus (which picks the first tile of the ref); the press then has
+// to override that to the clicked tile.
+func TestSwitchIntoMirroredViewportFocusesClickedTile(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 60))
+	e.ensureTiler()
+	e.performRender()
+	// doc2 becomes the focused viewport in its own tile, then splits into two
+	// tiles (a mirror): doc2 now appears twice.
+	focusMainViewport(e, "doc2", strings.Repeat("y\n", 60))
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.performRender()
+
+	doc2 := e.ViewportManager.GetViewport("doc2")
+	// Collect doc2's two tiles (distinct rows from a down-split).
+	var tiles []viewport.ViewportLayout
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport == doc2 {
+			tiles = append(tiles, e.mainTiles[i])
+		}
+	}
+	if len(tiles) != 2 {
+		t.Fatalf("want doc2 shown in two tiles, got %d", len(tiles))
+	}
+	if tiles[0].ContentY == tiles[1].ContentY {
+		t.Skip("tiles share a row — cannot distinguish the clicked pane")
+	}
+
+	// Click each of doc2's tiles in turn, each time FROM the other viewport
+	// (doc), so the press is always the unfocused-switch path. Focus must land
+	// on the tile clicked — including the one tilerFollowFocus would not pick.
+	for _, want := range tiles {
+		e.ViewportManager.SetFocus("doc") // doc2 is unfocused again
+		e.performRender()
+		if e.ViewportManager.GetFocusedViewport().ID != "doc" {
+			t.Fatalf("setup: expected doc focused before the click")
+		}
+		e.mousePress(want.ContentX+1, want.ContentY+1, false)
+		e.performRender()
+		if e.ViewportManager.GetFocusedViewport() != doc2 {
+			t.Fatalf("click did not switch focus to doc2")
+		}
+		if got := uint64(e.tiler.GetFocus()); got != want.TileHandle {
+			t.Errorf("clicked tile at row %d (handle %d): tiler focus is handle %d — landed on a different tile of the same ref",
+				want.ContentY, want.TileHandle, got)
+		}
+	}
+}
+
 // TestScrollbarDragUsesGrabbedTile: grabbing a NON-focused tile's scrollbar and
 // dragging must compute the thumb against THAT tile's geometry, not the
 // viewport's canonical (focused) tile — the press doesn't steal focus.
