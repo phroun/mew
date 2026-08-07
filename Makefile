@@ -85,7 +85,7 @@ WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 # artefact, not checked in; see the windows-sdl target.
 CONSOLE_PAYLOAD := app/internal/selfinstall/payload/mew.exe.gz
 
-.PHONY: all build mew mew-sdl mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
+.PHONY: all build mew mew-sdl sdl3 mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -172,13 +172,25 @@ uninstall:
 CODESIGN_ID ?=
 
 # MACAPP_SDL3: path to a libSDL3.dylib to embed in the bundle so the .app is a
-# self-contained installer (see the macapp-universal note). macapp.sh copies it
-# to Contents/Frameworks/libSDL3.dylib, which the host's loader prefers over any
-# system SDL3. Use a universal (lipo'd arm64+x86_64) dylib for a portable bundle;
-# for a quick local single-arch bundle, your Homebrew copy works
-# (MACAPP_SDL3=$$(brew --prefix sdl3)/lib/libSDL3.dylib). Unset = embed nothing,
-# fall back to a system SDL3 at runtime.
+# self-contained installer. macapp.sh copies it to Contents/Frameworks/
+# libSDL3.dylib, which the host's loader prefers over any system SDL3. Leave it
+# UNSET and macapp-universal fetches an official universal SDL3 itself (see the
+# sdl3 target); set it to override with your own dylib, or to "" via the recipe
+# to embed nothing and fall back to a system SDL3.
 MACAPP_SDL3 ?=
+
+# The official SDL3 runtime to bundle, fetched (not committed) into a gitignored
+# cache by scripts/fetch-sdl3.sh. Pin a different release with SDL3_VERSION; the
+# default tracks a known-good libsdl.org release. SDL3_URL overrides the asset
+# URL outright if the naming ever changes.
+SDL3_VERSION ?= 3.4.12
+SDL3_CACHE ?= build/sdl3
+SDL3_DYLIB := $(SDL3_CACHE)/libSDL3.dylib
+
+# Fetch the universal SDL3 runtime into the cache (macOS). Idempotent — a cached
+# copy is reused; delete $(SDL3_CACHE) to refresh.
+sdl3:
+	./scripts/fetch-sdl3.sh "$(SDL3_VERSION)" "$(SDL3_CACHE)"
 macapp: mew-sdl
 	CODESIGN_ID="$(CODESIGN_ID)" MACAPP_SDL3="$(MACAPP_SDL3)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
@@ -210,19 +222,27 @@ mew-sdl-universal:
 	@codesign --force --sign - "$(BIN_DIR)/mew-sdl" 2>/dev/null || echo "note: codesign unavailable; arm64 may refuse to run unsigned"
 	@lipo -info "$(BIN_DIR)/mew-sdl"
 
-# Wrap the universal binary in a .app. macapp.sh adds the icon, Info.plist, an
-# ad-hoc signature, and — when MACAPP_SDL3 is set — the bundled SDL3 runtime.
+# Wrap the universal binary in a self-contained .app: it fetches an official
+# universal SDL3 (the sdl3 target) and embeds it at Contents/Frameworks/
+# libSDL3.dylib, which the host's loader prefers over any system SDL3 — so the
+# bundle carries its own runtime and does not collide with a Homebrew SDL3 on
+# the target machine. (-tags sdlembed is NOT used: it extracts a temp copy that
+# gapfill still loads a system SDL3 alongside — duplicate Obj-C classes, and the
+# Metal layer lookup fails.)
 #
-# For a self-contained installer, pass a UNIVERSAL libSDL3.dylib:
-#   make macapp-universal MACAPP_SDL3=/path/to/universal/libSDL3.dylib
-# The host's loader prefers Contents/Frameworks/libSDL3.dylib over any system
-# SDL3, so the bundle carries its own runtime and does not collide with a
-# Homebrew SDL3 on the target machine. (-tags sdlembed is NOT used: it extracts a
-# temp copy that gapfill still loads a system SDL3 alongside — duplicate Obj-C
-# classes, and the Metal layer lookup fails.) Left unset, the bundle falls back
-# to a system SDL3 at runtime (needs brew install sdl3 on the target).
+# Set MACAPP_SDL3=/path/to/libSDL3.dylib to bundle your own instead of fetching.
+# If the fetch fails (e.g. an unreachable release), the app is still built but
+# WITHOUT a bundled runtime, so it then needs a system SDL3 (brew install sdl3).
 macapp-universal: mew-sdl-universal
-	CODESIGN_ID="$(CODESIGN_ID)" MACAPP_SDL3="$(MACAPP_SDL3)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
+	@sdl3="$(MACAPP_SDL3)"; \
+	if [ -z "$$sdl3" ]; then \
+	  if ./scripts/fetch-sdl3.sh "$(SDL3_VERSION)" "$(SDL3_CACHE)"; then \
+	    sdl3="$(SDL3_DYLIB)"; \
+	  else \
+	    echo "macapp-universal: SDL3 fetch failed — building WITHOUT a bundled runtime (the .app will need a system SDL3)"; \
+	  fi; \
+	fi; \
+	CODESIGN_ID="$(CODESIGN_ID)" MACAPP_SDL3="$$sdl3" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
 # Notarize and staple bin/mew.app for distribution. Run AFTER building it signed
 # with a Developer ID (make macapp-universal CODESIGN_ID="Developer ID Application: …").

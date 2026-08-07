@@ -15,3 +15,6 @@ app/cmd/*/*.syso
 # tracked -- growing by a few sessions with every commit that followed a test
 # run.
 mew-pty-diag.log
+
+# Fetched SDL3 runtime cache (scripts/fetch-sdl3.sh); not committed.
+build/
