@@ -46,9 +46,17 @@ Darwin)
 	hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mnt"
 	# The framework's Mach-O binary IS the universal dylib; copy it out under the
 	# plain name the host's loader looks for (Contents/Frameworks/libSDL3.dylib).
-	# Locate it wherever the dmg puts the framework (the real binary is a regular
-	# file at Versions/<v>/SDL3, so -type f finds it, not the symlinks).
-	fw="$(find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null | head -n1)"
+	# A dmg can carry more than one SDL3 (the framework itself plus a bundled
+	# test/demo app with its own thin copy), so pick the FATTEST — the real
+	# framework binary is universal; the strays are single-arch. The real binary
+	# is a regular file at Versions/<v>/SDL3, so -type f skips the symlinks.
+	fw=""; fwn=0
+	while IFS= read -r cand; do
+		[ -n "$cand" ] || continue
+		n=$(lipo -archs "$cand" 2>/dev/null | wc -w | tr -d ' ')
+		echo "fetch-sdl3:   candidate $cand [$(lipo -archs "$cand" 2>/dev/null)]"
+		if [ "${n:-0}" -gt "$fwn" ]; then fw="$cand"; fwn="$n"; fi
+	done < <(find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null)
 	if [ -z "$fw" ]; then
 		echo "fetch-sdl3: SDL3.framework binary not found inside the dmg — its layout is:" >&2
 		find "$mnt" -maxdepth 3 2>/dev/null | sed 's/^/  /' >&2
@@ -62,8 +70,14 @@ Darwin)
 		install_name_tool -id "libSDL3.dylib" "$out" 2>/dev/null || true
 	fi
 	hdiutil detach "$mnt" -quiet 2>/dev/null || true
-	echo "fetch-sdl3: extracted universal SDL3 $ver -> $out"
-	[ -x "$(command -v lipo)" ] && echo "fetch-sdl3: arches: $(lipo -archs "$out" 2>/dev/null)"
+	arches="$(lipo -archs "$out" 2>/dev/null || echo '?')"
+	echo "fetch-sdl3: extracted SDL3 $ver -> $out (arches: $arches)"
+	if ! printf ' %s ' "$arches" | grep -q ' arm64 ' || ! printf ' %s ' "$arches" | grep -q ' x86_64 '; then
+		echo "fetch-sdl3: WARNING: the extracted SDL3 is $arches-only, not universal." >&2
+		echo "  The bundled .app will run on $arches Macs only. If the candidate list above" >&2
+		echo "  showed no fat SDL3, that release's dmg framework is not universal — pin a" >&2
+		echo "  different SDL3_VERSION, or supply a universal dylib via MACAPP_SDL3." >&2
+	fi
 	;;
 *)
 	echo "fetch-sdl3: only macOS is wired up here (got $os)." >&2
