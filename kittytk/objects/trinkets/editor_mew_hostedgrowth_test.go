@@ -351,6 +351,156 @@ func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
 	}
 }
 
+// THE INNER-CELL INVARIANT: mew resolves a click to the correct OUTER cell and
+// hands the child that cell on the wire (ptyMouseKey: col = x - ContentX). The
+// hosted child must then land its own selection on that SAME cell — at every
+// zoom. dispatchHostedMouse turns the wire cell back into a child-local pointer
+// and the child's screenToCellGfx re-derives the cell; if that round trip scales
+// the pointer by anything other than the rate the cells paint at, the inner cell
+// drifts from the outer one (click the "ck" of one word, select five columns
+// left) even though the outer cell was right. Checked across the zoom range,
+// where the child's snapped extent parts company with bounds*ppu.
+func TestHostedPtyClickLandsOnWireCell(t *testing.T) {
+	b, err := raster.NewScaled(1600, 800, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+
+	for _, size := range []int{10, 11, 12, 13, 14, 20, 25} {
+		b.SetFontSize(size)
+		gp := &gfxFrameParent{}
+		gp.TrinketBase = *core.NewTrinketBase()
+		gp.Init(gp)
+		e := NewEditor()
+		e.SetParent(gp)
+		e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 700, Height: 300})
+		if cw, ch := e.cellDims(); cw <= 0 || ch <= 0 {
+			continue
+		}
+		e.terminalOpen("pty1", 40, 10)
+		e.terminalPlace([]mew.TerminalSurface{{
+			ID: "pty1", Primary: true, Col: 4, Row: 2, Width: 40, Height: 10,
+			ClipCol: 4, ClipRow: 2, ClipWidth: 40, ClipHeight: 10,
+		}})
+		e.paintTerminalSurfaces(p)
+
+		e.termMu.Lock()
+		st := e.termSurfaces["pty1"]
+		e.termMu.Unlock()
+		if st == nil || st.term == nil {
+			t.Fatalf("size %d: no child terminal", size)
+		}
+		child := st.term
+		cols, _ := child.terminal.Buffer().GetSize()
+		for _, n := range []int{0, cols / 2, cols - 1} {
+			if n < 0 {
+				continue
+			}
+			// No precise pointer: dispatchHostedMouse uses the wire cell's own
+			// center — the purest test of the cell<->pointer round trip.
+			e.ptrMu.Lock()
+			e.ptrValid = false
+			e.ptrMu.Unlock()
+			dispatchHostedMouse(child, mew.TerminalMouse{
+				Col: n + 1, Row: 1, Button: mew.TerminalMouseButtonLeft, Action: mew.TerminalMousePress,
+			}, 0, 0, false)
+			got := child.gfx.mouseDownX
+			dispatchHostedMouse(child, mew.TerminalMouse{
+				Col: n + 1, Row: 1, Button: mew.TerminalMouseButtonLeft, Action: mew.TerminalMouseRelease,
+			}, 0, 0, false)
+			if got != n {
+				t.Errorf("size %d: wire cell %d landed the child selection on cell %d", size, n, got)
+			}
+		}
+	}
+}
+
+// THE INNER-CELL INVARIANT, PRECISE PATH: the same round trip as above, but
+// driven end to end through terminalMouse with a remembered precise pointer —
+// the real click path. mew resolves the correct OUTER cell and sends it on the
+// wire; the host remembers where the pointer actually was (notePointer). The
+// precise pointer lives in the host's frame, the child paints in its own, and
+// feeding one straight into the other walked the inner selection whole columns
+// off at fractional zoom ("click the ck of lock, select the rn of yarn"). The
+// fix carries only the sub-cell FRACTION across — the wire cell decides which
+// cell — so the pointer's quarter-cell offset here must still land on the wire
+// cell, at every zoom.
+func TestHostedPtyPreciseClickLandsOnWireCell(t *testing.T) {
+	b, err := raster.NewScaled(1600, 800, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+
+	for _, size := range []int{10, 11, 12, 13, 14, 20, 25} {
+		b.SetFontSize(size)
+		gp := &gfxFrameParent{}
+		gp.TrinketBase = *core.NewTrinketBase()
+		gp.Init(gp)
+		e := NewEditor()
+		e.SetParent(gp)
+		e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 700, Height: 300})
+		cw, ch := e.cellDims()
+		if cw <= 0 || ch <= 0 {
+			continue
+		}
+		const col, row = 4, 2
+		e.terminalOpen("pty1", 40, 10)
+		e.terminalPlace([]mew.TerminalSurface{{
+			ID: "pty1", Primary: true, Col: col, Row: row, Width: 40, Height: 10,
+			ClipCol: col, ClipRow: row, ClipWidth: 40, ClipHeight: 10,
+		}})
+		e.paintTerminalSurfaces(p)
+
+		e.termMu.Lock()
+		st := e.termSurfaces["pty1"]
+		e.termMu.Unlock()
+		if st == nil || st.term == nil {
+			t.Fatalf("size %d: no child terminal", size)
+		}
+		child := st.term
+		cols, _ := child.terminal.Buffer().GetSize()
+		for _, n := range []int{0, cols / 2, cols - 1} {
+			if n < 0 {
+				continue
+			}
+			// The pointer a QUARTER cell into wire cell n+1, first row, in the
+			// host's own units (cellDims) — where notePointer would have stored
+			// the outer MousePressEvent. A non-central offset so the test bites
+			// on more than the cell center.
+			px := core.Unit(col-1)*cw + core.Unit(n)*cw + cw/4
+			py := core.Unit(row-1)*ch + ch/4
+			e.notePointer(px, py)
+			e.terminalMouse("pty1", mew.TerminalMouse{
+				Col: n + 1, Row: 1, Button: mew.TerminalMouseButtonLeft, Action: mew.TerminalMousePress,
+			})
+			got := child.gfx.mouseDownX
+			e.notePointer(px, py)
+			e.terminalMouse("pty1", mew.TerminalMouse{
+				Col: n + 1, Row: 1, Button: mew.TerminalMouseButtonLeft, Action: mew.TerminalMouseRelease,
+			})
+			if got != n {
+				t.Errorf("size %d: precise click on wire cell %d landed the child selection on cell %d", size, n, got)
+			}
+		}
+	}
+}
+
 // snapCover's contract, both directions, on the real snapping.
 func TestSnapCoverFindsCoveringEdges(t *testing.T) {
 	b, err := raster.NewScaled(1600, 400, 2)
@@ -390,21 +540,21 @@ func TestSnapCoverFindsCoveringEdges(t *testing.T) {
 func TestPreciseHostedPointer(t *testing.T) {
 	cw, ch := core.Unit(7), core.Unit(14)
 
-	// Surface at col 3, row 2. The pointer sits in child cell (3, 3), with
-	// a sub-cell remainder; the wire reports child-local (3, 3).
+	// Surface at col 3, row 2. The pointer sits in child cell (3, 3), 3px into
+	// the cell across and 5px down; the wire reports child-local (3, 3).
 	ev := mew.TerminalMouse{Col: 3, Row: 3}
 	px := core.Unit(3-1)*cw + 2*cw + 3
 	py := core.Unit(2-1)*ch + 2*ch + 5
-	lx, ly, ok := preciseHostedLocal(px, py, true, 3, 2, cw, ch, ev)
+	fx, fy, ok := preciseHostedLocal(px, py, true, 3, 2, cw, ch, ev)
 	if !ok {
 		t.Fatal("a consistent precise pointer was rejected")
 	}
-	if int(lx/cw)+1 != 3 || int(ly/ch)+1 != 3 {
-		t.Errorf("precise local (%d,%d) is not inside child cell (3,3)", lx, ly)
-	}
-	// And it keeps its SUB-CELL part — the whole point.
-	if lx == core.Unit(2)*cw+cw/2 && ly == core.Unit(2)*ch+ch/2 {
-		t.Error("precise pointer collapsed to the cell center")
+	// The result is the sub-cell FRACTION within the wire cell (3px/cw across,
+	// 5px/ch down) — the offset the child reprojects into its own frame, not
+	// the cell center (0.5), and not collapsed to zero.
+	wantFx, wantFy := 3.0/float64(cw), 5.0/float64(ch)
+	if math.Abs(fx-wantFx) > 1e-9 || math.Abs(fy-wantFy) > 1e-9 {
+		t.Errorf("precise fraction (%v,%v), want (%v,%v)", fx, fy, wantFx, wantFy)
 	}
 
 	// One cell of staleness is tolerated (the pointer ran ahead of the

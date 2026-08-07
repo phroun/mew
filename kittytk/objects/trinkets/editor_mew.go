@@ -1188,12 +1188,21 @@ func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
 	return e.PurfecTerm.HandleMouseRelease(ev)
 }
 
-// preciseHostedLocal converts the remembered pointer into the CHILD's local
-// units, provided it still agrees with the cell mew reported — the wire and
-// the memory are updated by the same gesture, but they travel different
-// paths, so the cell is the consistency check. Reports false when the
-// pointer is stale or elsewhere, and the caller falls back to cell centers.
-func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.Unit, ev mew.TerminalMouse) (core.Unit, core.Unit, bool) {
+// preciseHostedLocal reduces the remembered pointer to its SUB-CELL FRACTION
+// within the cell mew reported, provided the two still agree — the wire and
+// the memory are updated by the same gesture but travel different paths, so
+// the cell is the consistency check. Reports false when the pointer is stale
+// or elsewhere, and the caller falls back to cell centers.
+//
+// It returns a fraction, not a coordinate, on purpose. The remembered pointer
+// lives in the HOST's frame (outer editor units); the child paints in its OWN
+// frame (its ppu, its hitKX at fractional zoom). Feeding the host-frame pointer
+// straight into the child's hit test scaled it by the wrong rate and drifted
+// the inner selection whole columns to the right — the outer cell was right,
+// the inner one landed off. The cell mew resolved is authoritative; all the
+// precise pointer adds is WHERE INSIDE that cell the hand sits, which the child
+// then reproduces in its own frame via cellToLocal.
+func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.Unit, ev mew.TerminalMouse) (fracX, fracY float64, ok bool) {
 	if !valid || cw <= 0 || ch <= 0 {
 		return 0, 0, false
 	}
@@ -1221,7 +1230,25 @@ func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.
 	if dx < -1 || dx > 1 || dy < -1 || dy > 1 {
 		return 0, 0, false
 	}
-	return lx, ly, true
+	// The offset within the WIRE cell, as a fraction of a cell. Clamped to the
+	// cell: a pointer that ran a little past the wire (the ±1 slack above)
+	// contributes its edge, not a leak into the neighbour — the wire cell, not
+	// the stale pointer, decides which cell.
+	fracX = clampUnitFrac(float64(lx)/float64(cw) - float64(ev.Col-1))
+	fracY = clampUnitFrac(float64(ly)/float64(ch) - float64(ev.Row-1))
+	return fracX, fracY, true
+}
+
+// clampUnitFrac holds a sub-cell fraction inside [0,1). The upper bound is
+// exclusive so the fraction never reaches the next cell's origin.
+func clampUnitFrac(f float64) float64 {
+	if f < 0 {
+		return 0
+	}
+	if f > 0.999 {
+		return 0.999
+	}
+	return f
 }
 
 // terminalMouse hands one mouse event to the session's child terminal AS THE
@@ -1260,9 +1287,9 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
 	e.ptrMu.Unlock()
 	cw, ch := e.cellDims()
-	lx, ly, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
+	fracX, fracY, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
 
-	handled := dispatchHostedMouse(t, ev, lx, ly, precise)
+	handled := dispatchHostedMouse(t, ev, fracX, fracY, precise)
 
 	e.termMu.Lock()
 	data := s.pending
@@ -1426,15 +1453,28 @@ func pawBytesLiteral(b []byte) string {
 // handler. The cell becomes units at the MIDDLE of the cell — these feed hit
 // tests, and an event on a boundary lands on neither side of it. Screen
 // coordinates equal local ones, so the wheel latch's offsets come out zero.
-func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseX, preciseY core.Unit, precise bool) bool {
-	cw, ch := t.cellDims()
-	x := core.Unit(ev.Col-1)*cw + cw/2
-	y := core.Unit(ev.Row-1)*ch + ch/2
-	// mew's wire carries CELLS; the host remembered the precise pointer as
-	// it passed through (see notePointer). Sub-cell position is what makes a
-	// scrollbar scrub track the hand instead of lurching a cell at a time.
+func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseFracX, preciseFracY float64, precise bool) bool {
+	// mew's wire carries a CHILD cell. Place the synthetic pointer at that cell's
+	// CENTER in the child's OWN hit-test frame — cellToLocal is the documented
+	// inverse of screenToCellGfx, so it carries the child's unit->pixel scale
+	// (its ppu, and hitKX at fractional zoom). Computing the center as
+	// (col-1)*cw + cw/2 in raw cell units skipped that scale, so the child's hit
+	// test re-derived a cell one or more columns to the RIGHT of the wire cell:
+	// the outer cell was right, the inner selection landed off.
+	o := t.cellToLocal(ev.Col, ev.Row)
+	o2 := t.cellToLocal(ev.Col+1, ev.Row+1)
+	x := (o.X + o2.X) / 2
+	y := (o.Y + o2.Y) / 2
+	// The host remembered the precise pointer as it passed through (see
+	// notePointer / preciseHostedLocal). It arrives here as a SUB-CELL FRACTION
+	// within this same wire cell — placed against the cell's own span in the
+	// CHILD's frame, so the sub-cell offset that makes a scrollbar scrub track
+	// the hand survives while the cell stays the one mew resolved. Feeding the
+	// host-frame pointer straight in scaled it by the wrong rate and walked the
+	// inner selection columns off at fractional zoom.
 	if precise {
-		x, y = preciseX, preciseY
+		x = o.X + core.Unit(math.Round(preciseFracX*float64(o2.X-o.X)))
+		y = o.Y + core.Unit(math.Round(preciseFracY*float64(o2.Y-o.Y)))
 	}
 	btn := termMouseButton(ev.Button)
 	var mods core.KeyModifiers
