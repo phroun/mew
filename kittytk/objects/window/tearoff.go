@@ -411,15 +411,40 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	b := h.win.Bounds()
 	grip := h.effectiveGrip()
 	edges := 0
-	if x < grip {
+
+	// On a window small enough (or a border wide enough) that opposite grips
+	// overlap, a pointer sits in BOTH the left and right zone, or BOTH the top
+	// and bottom. Rather than letting one side always win, the pointer's half
+	// decides: past the 50% line the far edge (right / bottom) takes it, before
+	// it the near edge (left / top) does — so both handles stay reachable.
+	leftZone := x < grip
+	rightZone := x >= b.Width-grip
+	if leftZone && rightZone {
+		if 2*x >= b.Width {
+			leftZone = false
+		} else {
+			rightZone = false
+		}
+	}
+	if leftZone {
 		edges |= resizeLeft
 	}
-	if x >= b.Width-grip {
+	if rightZone {
 		edges |= resizeRight
 	}
-	if y < grip {
+
+	topZone := y < grip
+	bottomZone := y >= b.Height-grip
+	if topZone && bottomZone {
+		if 2*y >= b.Height {
+			topZone = false
+		} else {
+			bottomZone = false
+		}
+	}
+	if topZone {
 		edges |= resizeTop
-	} else if y >= b.Height-grip {
+	} else if bottomZone {
 		edges |= resizeBottom
 	} else if y < core.DefaultCellMetrics().CellHeight {
 		// Title row below the top grip: drag, not resize.

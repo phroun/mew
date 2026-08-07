@@ -114,3 +114,41 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 		t.Errorf("explicit rects should pass through unchanged: %+v", got)
 	}
 }
+
+// When a torn window is small enough (or its border wide enough) that the
+// opposite resize grips overlap, a pointer in the overlap must not let one
+// side always win. The pointer's half decides: before the 50% line the near
+// edge (left/top) takes it, at or past it the far edge (right/bottom) does —
+// so every handle stays reachable.
+func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
+	w := NewWindow("t")
+	// 60x60 window with a grip (40) far larger than half the window, so the
+	// left grip (x<42) and right grip (x>=18) overlap across most of it.
+	// effectiveGrip = resizeGrip + frameBorderUnits() (2 at ppu 1) = 42.
+	w.SetBounds(core.UnitRect{Width: 60, Height: 60})
+	h := &TearOffHost{win: w, resizeGrip: 40}
+
+	cases := []struct {
+		name      string
+		x, y      core.Unit
+		wantHas   int
+		wantHasnt int
+	}{
+		// Horizontal overlap: midpoint is x=30.
+		{"left half -> left, not right", 20, 30, resizeLeft, resizeRight},
+		{"right half -> right, not left", 40, 30, resizeRight, resizeLeft},
+		// Vertical overlap: midpoint is y=30. Use x in the horizontal overlap
+		// so only the vertical resolution is under test.
+		{"top half -> top, not bottom", 30, 20, resizeTop, resizeBottom},
+		{"bottom half -> bottom, not top", 30, 40, resizeBottom, resizeTop},
+	}
+	for _, c := range cases {
+		e := h.edgeAt(c.x, c.y)
+		if e&c.wantHas == 0 {
+			t.Errorf("%s: edgeAt(%d,%d)=%b missing expected edge %b", c.name, c.x, c.y, e, c.wantHas)
+		}
+		if e&c.wantHasnt != 0 {
+			t.Errorf("%s: edgeAt(%d,%d)=%b should not include %b", c.name, c.x, c.y, e, c.wantHasnt)
+		}
+	}
+}
