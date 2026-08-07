@@ -7,7 +7,7 @@
 #   make windows    cross-build the Windows console mew.exe into bin/
 #   make windows-sdl build the Windows GUI mew-sdl.exe (with icon, and with
 #                   mew.exe carried inside it so one file installs both)
-#                   — run on Windows
+#                   — pure Go, cross-builds from any host (no mingw/cgo)
 #                   Then scripts\install-windows.ps1 installs the binaries and
 #                   adds a Start Menu shortcut (see that script's header).
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
@@ -115,64 +115,13 @@ mew-plain:
 windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
 
-# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. It uses
-# SDL2 + cgo, so it needs a WINDOWS C toolchain AND SDL2's Windows/mingw
-# development headers+libs — the plain host gcc (and the host's Linux SDL2) can't
-# produce it. go-sdl2 links Windows SDL2 with a plain `-lSDL2` and includes
-# <SDL2/SDL.h>, so it just needs those on the compiler's search path (it does NOT
-# use pkg-config on Windows). Two ways to satisfy that:
-#
-# DEFAULT here is a cross build from macOS/Linux that STATIC-links SDL2, so the
-# only prerequisites are the mingw-w64 cross toolchain and the SDL2 mingw dev
-# package unpacked under $(SDL2_DIR) — `make windows-sdl` then produces a single
-# self-contained mew-sdl.exe with no SDL2.dll to ship. Override the variables
-# below to point at your SDL2, pick a version, or change linkage; clear them for
-# a native Windows build (see the examples under the variables).
-#
-# Static link details: it links libSDL2.a plus the Windows system libs it needs,
-# using `-static` (a global link MODE, immune to flag ordering — otherwise
-# go-sdl2's own bare `-lSDL2` can grab the dynamic import lib first) inside a
-# --start-group/--end-group so SDL2 and its deps resolve regardless of order, and
-# drops -lSDL2main since the Go runtime owns the entry point. The exe is fully
-# static (libgcc/winpthread baked in too). SDL2_STATIC= (empty) instead links
-# dynamically, and then mew-sdl.exe needs SDL2.dll beside it at runtime.
-#
-# go-sdl2 links Windows SDL2 with a plain `-lSDL2` and includes <SDL2/SDL.h> (no
-# pkg-config on Windows), so it just needs those on the compiler search path;
-# SDL2_MINGW is turned into CGO_CFLAGS/CGO_LDFLAGS below. The syso prerequisite
-# carries the icon (the Go linker embeds it); -H windowsgui detaches the console
-# (this is a windowed app, not a terminal one).
-#
-# Native Windows build (mingw gcc + SDL2 already in the sysroot), dynamic:
-#     make windows-sdl WINDOWS_CC= SDL2_MINGW= SDL2_STATIC=
-# Cross build with a different SDL2 location:
-#     make windows-sdl SDL2_DIR=/path/to/SDL2-2.32.10/x86_64-w64-mingw32/..  # or
-#     make windows-sdl SDL2_MINGW=/abs/path/x86_64-w64-mingw32
-WINDOWS_CC ?= x86_64-w64-mingw32-gcc
-SDL2_STATIC ?= 1
-
-# Where the SDL2 mingw dev package (SDL2-devel-<ver>-mingw from libsdl.org) is
-# unpacked. SDL2_MINGW is its amd64 arch subdir — the directory holding
-# include/SDL2/SDL.h and lib/libSDL2.a. Point SDL2_DIR (or SDL2_VERSION, or
-# SDL2_MINGW itself) at your copy; SDL2_DIR defaults under $(HOME).
-SDL2_VERSION ?= 2.32.10
-SDL2_DIR ?= $(HOME)/projects/vendor/SDL2-$(SDL2_VERSION)
-SDL2_MINGW ?= $(SDL2_DIR)/x86_64-w64-mingw32
-
-# Windows system libs SDL2's static archive pulls in (mirrors
-# `sdl2-config --static-libs`, minus -lSDL2main). Only used for a static link.
-SDL2_WIN_SYSLIBS := -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid
-
-# Assemble the cgo flags for the cross build from SDL2_MINGW (+ SDL2_STATIC).
-WINDOWS_SDL_CFLAGS  := $(if $(SDL2_MINGW),-I$(SDL2_MINGW)/include)
-WINDOWS_SDL_LDFLAGS := $(if $(SDL2_MINGW),-L$(SDL2_MINGW)/lib)
-ifneq ($(SDL2_STATIC),)
-WINDOWS_SDL_LDFLAGS += -static -Wl,--start-group -lSDL2 $(SDL2_WIN_SYSLIBS) -Wl,--end-group
-endif
-
-# The env prefix for `go build`: CC to cross-compile, CGO_CFLAGS/CGO_LDFLAGS to
-# find (and optionally static-link) SDL2. Each part appears only when relevant.
-WINDOWS_SDL_ENV = $(if $(WINDOWS_CC),CC=$(WINDOWS_CC) )$(if $(strip $(WINDOWS_SDL_CFLAGS)),CGO_CFLAGS="$(WINDOWS_SDL_CFLAGS)" )$(if $(strip $(WINDOWS_SDL_LDFLAGS)),CGO_LDFLAGS="$(WINDOWS_SDL_LDFLAGS)" )
+# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. Pure Go,
+# no cgo, no C toolchain: SDL3 is embedded (sdlembed) and loaded through purego,
+# wgpu-native loads at runtime, and the Windows PTY is ConPTY via syscall — none
+# of it uses cgo (unlike the Unix PTY). So this cross-builds from any host with
+# just the Go toolchain — no mingw, no SDL2 dev package, no SDL2.dll to ship.
+# The syso prerequisite carries the icon (the Go linker embeds it); -H windowsgui
+# detaches the console (this is a windowed app, not a terminal one).
 
 # The console binary, gzipped into the graphical one's package so a //go:embed
 # can carry it (see app/internal/selfinstall/payload/README.md). Compressed in
@@ -188,7 +137,7 @@ $(CONSOLE_PAYLOAD): windows
 	$(GO) run ./app/tools/gzipfile $(BIN_DIR)/mew.exe $(CONSOLE_PAYLOAD)
 
 windows-sdl: $(WINDOWS_SYSO) $(CONSOLE_PAYLOAD)
-	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=1 $(WINDOWS_SDL_ENV)$(GO) build -tags "$(SDL_TAGS) embedconsole" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(SDL_TAGS) embedconsole" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
 
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
 # the icon changes). It lives in the mew-sdl package, so the Go linker embeds it
