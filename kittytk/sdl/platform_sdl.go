@@ -123,6 +123,14 @@ type nativeWin struct {
 	// shapeRadiusPx > 0 shapes the OS window with rounded corners
 	shapeRadiusPx int
 
+	// wantRadiusPx is the corner radius this window should have when it is
+	// floating (borderless and not maximized), in device pixels at the
+	// current font size. It is the source of truth that survives maximize
+	// (which squares the corners) and font zoom (which rescales the radius);
+	// applyWindowShape reads it to (re)apply the shape. 0 means the window is
+	// never rounded (a plain bordered window).
+	wantRadiusPx int
+
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 
@@ -354,9 +362,14 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 	// TODO: Remove this once full extraction is complete
 	p.exposeWebGPUObjects()
 
-	// 2. Create Master System UI Window Viewport Surface
+	// 2. Create Master System UI Window Viewport Surface. It is created
+	// transparent-capable and RESIZABLE with a border; solo mode strips the
+	// border at runtime (SetBordered), and that is when it actually gets
+	// shaped and shadowed — a bordered window cannot be shaped, and its OS
+	// title bar owns the corners. The radius here only marks it shapeable and
+	// requests the transparent surface (which must be asked for at creation).
 	win, err := p.createWindow(p.title, sdl3.WINDOWPOS_CENTERED, sdl3.WINDOWPOS_CENTERED,
-		p.wPx, p.hPx, sdl3.WINDOW_SHOWN|sdl3.WINDOW_RESIZABLE, 0)
+		p.wPx, p.hPx, sdl3.WINDOW_SHOWN|sdl3.WINDOW_RESIZABLE, p.shapeRadiusPx())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to create window: %v\n", err)
 		return 1
@@ -451,7 +464,12 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 
 // createWindow builds one OS window with its presentation chain.
 func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sdl3.WindowFlags, shapeRadiusPx int) (*nativeWin, error) {
-	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
+	// wantRadiusPx is the radius this window keeps as its source of truth; the
+	// live shapeRadiusPx tracks what is currently applied (0 while bordered or
+	// maximized). A window born borderless is shaped here; the main window is
+	// born bordered and gets shaped by SetBordered once solo mode strips it.
+	w := &nativeWin{shapeRadiusPx: shapeRadiusPx, wantRadiusPx: shapeRadiusPx}
+	bornBorderless := flags&sdl3.WINDOW_BORDERLESS != 0
 	var err error
 
 	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
@@ -573,7 +591,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 			shapeRadiusPx, p.roundedCornerMechanism(), platformPerPixelAlpha, w.shapeRadiusPx > 0)
 	}
 
-	if w.shapeRadiusPx > 0 && platformPerPixelAlpha {
+	if bornBorderless && w.shapeRadiusPx > 0 && platformPerPixelAlpha {
 		switch p.roundedCornerMechanism() {
 		case "layer":
 			// Core Animation clips the Metal layer itself. The window
@@ -617,6 +635,13 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	// known-good SDL shaped-window sequence (create shaped window,
 	// create renderer, then SetShape).
 	w.applyShape()
+
+	// A window born borderless and shaped gets its OS drop shadow now (the
+	// main window, born bordered, gets its shadow later via SetBordered). The
+	// shadow follows the shape and is click-through.
+	if bornBorderless && w.wantRadiusPx > 0 {
+		setWindowShadow(w.window, true)
+	}
 
 	// Text input is PER WINDOW in SDL3, and off until asked for. SDL2's
 	// SDL_StartTextInput() was global and on by default, so the port
@@ -1034,7 +1059,11 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
 		return false
 	}
-	w.applyShape()
+	// Reshape on every size change: a maximize (which sets WINDOW_MAXIMIZED)
+	// squares the corners and drops the shadow, a restore rounds them back.
+	// applyWindowShape reads the live flags, so the transition needs no
+	// separate maximize/restore event hook.
+	p.applyWindowShape(w)
 	s := w.surface
 	if s == nil || s.handler == nil {
 		return false
@@ -1111,6 +1140,9 @@ func (p *Platform) applyFontSize(size int) {
 		}
 		if keepPx {
 			w.backend.SetFontSize(size)
+			// The corner radius is font-scaled, so it changes on zoom even
+			// though this window keeps its pixel size — re-shape it.
+			p.applyWindowShape(w)
 			if s := w.surface; s != nil && s.handler != nil {
 				s.handler.Resized(w.backend.Size())
 				p.presentWindow(w, true)
@@ -1128,7 +1160,9 @@ func (p *Platform) applyFontSize(size int) {
 		if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
 			continue
 		}
-		w.applyShape()
+		// Recompute the font-scaled radius and re-shape (also re-squares a
+		// maximized window and refreshes its shadow).
+		p.applyWindowShape(w)
 		if s := w.surface; s != nil && s.handler != nil {
 			s.handler.Resized(w.backend.Size())
 			p.presentWindow(w, true)
@@ -1368,6 +1402,59 @@ func (p *Platform) cellPx(denom int) int {
 		n = 1
 	}
 	return n * p.scale
+}
+
+// windowShapeRadiusUnits is the rounded window-frame corner radius in cell
+// units. It matches objects/window.FrameCornerRadius() (6), kept as a local
+// constant so the platform package need not import objects/window.
+const windowShapeRadiusUnits = 6
+
+// shapeRadiusPx is the window corner radius in device pixels at the current
+// font size, so a shaped window's corners track font zoom instead of being
+// frozen at the size they had when the window was created.
+func (p *Platform) shapeRadiusPx() int { return p.cellPx(windowShapeRadiusUnits) }
+
+// applyWindowShape (re)applies a window's rounded shape and OS drop shadow to
+// match its current state. It is the ONE place that decides a shaped window's
+// live geometry, so creation, SetBordered, font zoom, resize and
+// maximize/restore all funnel through it and can never disagree.
+//
+// A window is rounded only when it is floating: borderless (a bordered window
+// cannot be shaped, and its OS title bar draws the corners) AND not maximized
+// (a maximized window fills its display, so it is squared with no shadow, the
+// same convention native windows follow). The radius is recomputed from the
+// live font size every call, which is what keeps it correct across zoom.
+func (p *Platform) applyWindowShape(w *nativeWin) {
+	if w == nil || w.window == nil || w.wantRadiusPx <= 0 {
+		return // a plain window that is never rounded
+	}
+	flags := w.window.Flags()
+	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0
+	r := 0
+	if round {
+		r = p.shapeRadiusPx()
+	}
+	if platformPerPixelAlpha {
+		// macOS: Core Animation clips the layer, and the framebuffer punch
+		// (cornerRadiusPx, consumed every present) cuts the corner pixels. The
+		// window must be non-opaque for the clipped corners to show through;
+		// the main window defers this to here (its first borderless shaping).
+		if r > 0 && !w.transparent {
+			if makeWindowTransparent(w.window) {
+				w.transparent = true
+			}
+		}
+		w.cornerRadiusPx = r
+		roundWindowLayer(w.window, r) // r == 0 squares the layer
+	} else {
+		// Windows / X11: SDL shaped window. shapeRadiusPx drives applyShape,
+		// which clears the shape (square) at 0.
+		w.shapeRadiusPx = r
+		w.applyShape()
+	}
+	// The OS drop shadow follows the shape and is click-through; drop it when
+	// squared/maximized so a full-screen window casts none.
+	setWindowShadow(w.window, r > 0)
 }
 
 // pxToUnitAxis inverts the backend's cell-snapped forward mapping on one
@@ -2031,6 +2118,11 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 		return
 	}
 	s.win.window.SetBordered(bordered)
+	// Shaping follows the border: a borderless window rounds + gains its OS
+	// shadow, a re-bordered one squares and drops both (the OS chrome takes
+	// over). This is how the main window becomes rounded — it is born bordered
+	// and only shapeable once solo mode strips its border.
+	s.platform.applyWindowShape(s.win)
 }
 
 // ScreenSizePx implements platform.NativeSurface: the OS window's current
@@ -2094,7 +2186,22 @@ func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
 // applyShape rounds the OS window's corners with a binary alpha mask
 // so the pixels outside the drawn roundrect frame are not opaque black.
 func (w *nativeWin) applyShape() {
-	if w.shapeRadiusPx <= 0 || w.window == nil {
+	if w.window == nil {
+		return
+	}
+	// A bordered window cannot be shaped (SetShape returns NONSHAPEABLE, and the
+	// OS title bar owns the corners). The main window is created bordered and
+	// only becomes shapeable once solo mode strips its border, at which point
+	// SetBordered re-runs the shape.
+	if w.window.Flags()&sdl3.WINDOW_BORDERLESS == 0 {
+		return
+	}
+	if w.shapeRadiusPx <= 0 {
+		// Squared (maximized, or a shapeable window asked to go square): clear
+		// any shape so the corners are not rounded. Harmless if none was set.
+		if w.wantRadiusPx > 0 {
+			_ = w.window.SetShape(nil)
+		}
 		return
 	}
 	wPx, hPx := w.window.Size()

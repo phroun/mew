@@ -304,6 +304,25 @@ static void kittytk_reassert_layer_alpha(void *metalLayer, void *nswindow) {
 	}
 }
 
+// kittytk_set_window_shadow toggles the NSWindow's OS-drawn drop shadow.
+// A borderless/transparent window comes up with hasShadow either off or
+// stale, and the shadow is computed from the window's non-transparent
+// shape — so after the rounded Metal layer is in place we turn it on and
+// invalidate it so AppKit recomputes it around the rounded corners. The
+// OS owns this shadow, so it is click-through and follows the shape for
+// free (unlike a shadow we would paint into the window's own pixels).
+static void kittytk_set_window_shadow(void *nswindow, int on) {
+	id win = (id)nswindow;
+	if (!win) {
+		return;
+	}
+	((void (*)(id, SEL, signed char))objc_msgSend)(
+		win, sel_registerName("setHasShadow:"), (signed char)(on ? 1 : 0));
+	// Recompute the shadow against the current (rounded, or squared) shape.
+	((void (*)(id, SEL))objc_msgSend)(
+		win, sel_registerName("invalidateShadow"));
+}
+
 // kittytk_enable_miniaturize adds NSWindowStyleMaskMiniaturizable
 // (1 << 2) to a borderless window's style mask: without it Cocoa
 // silently refuses to miniaturize borderless windows, so torn-off
@@ -353,11 +372,31 @@ func makeWindowTransparent(win *sdl3.Window) bool {
 	return true
 }
 
+// setWindowShadow toggles the OS-drawn drop shadow on the NSWindow. The
+// shadow follows the window's non-transparent (rounded) shape and is
+// click-through because the window server, not our pixels, draws it.
+func setWindowShadow(win *sdl3.Window, on bool) {
+	if win == nil {
+		return
+	}
+	if cocoa := cocoaWindow(win); cocoa != nil {
+		C.kittytk_set_window_shadow(cocoa, boolToCInt(on))
+	}
+}
+
+func boolToCInt(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // roundWindowLayer rounds the window's Metal layer with Core Animation
 // (see kittytk_round_metal_layer) and reports whether a layer was
-// found. radiusPx is in device pixels.
+// found. radiusPx is in device pixels; 0 squares the corners (used when a
+// window maximizes to fill its display).
 func roundWindowLayer(win *sdl3.Window, radiusPx int) bool {
-	if win == nil || radiusPx <= 0 {
+	if win == nil || radiusPx < 0 {
 		return false
 	}
 	cocoa := cocoaWindow(win)
