@@ -45,13 +45,23 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/$name"
 chmod +x "$app/Contents/MacOS/$name"
 
-# mew-sdl loads SDL3 (and wgpu-native) from the system at runtime via purego, so
-# nothing is embedded here yet. The old SDL2.framework embedding + @rpath
-# rewiring is gone with the SDL3 migration — it bundled the wrong library (the
-# app is SDL3), so the bundle already depended on a system SDL3. Making this a
-# true self-contained installer means embedding a universal SDL3 and pointing the
-# loader at it (see the macapp-universal note in the Makefile); until then the
-# target Mac needs SDL3 installed (brew install sdl3).
+# Embed the SDL3 runtime so the bundle is a self-contained installer. mew-sdl
+# loads SDL3 through purego at runtime, and its loader tries a bundled copy at
+# Contents/Frameworks/libSDL3.dylib BEFORE any system SDL3 (see sdl3.go
+# libraryCandidates) — so no dyld @rpath rewriting is needed, and a machine with
+# its own Homebrew SDL3 still uses THIS copy, avoiding the duplicate-Obj-C-class
+# crash that loading both would cause. Point MACAPP_SDL3 at a universal
+# libSDL3.dylib (lipo'd arm64+x86_64) for a portable bundle. Left unset, nothing
+# is embedded and the app falls back to a system SDL3 at runtime.
+if [ -n "${MACAPP_SDL3:-}" ]; then
+	[ -f "$MACAPP_SDL3" ] || { echo "macapp: MACAPP_SDL3 set but not a file: $MACAPP_SDL3" >&2; exit 1; }
+	mkdir -p "$app/Contents/Frameworks"
+	cp "$MACAPP_SDL3" "$app/Contents/Frameworks/libSDL3.dylib"
+	echo "macapp: embedded SDL3 runtime from $MACAPP_SDL3"
+	if command -v lipo >/dev/null 2>&1; then
+		echo "macapp: bundled SDL3 arches: $(lipo -archs "$app/Contents/Frameworks/libSDL3.dylib" 2>/dev/null)"
+	fi
+fi
 
 icontag=""
 if [ -f "$icns" ]; then
@@ -108,10 +118,14 @@ PLIST
 if command -v codesign >/dev/null 2>&1; then
 	if [ -n "${CODESIGN_ID:-}" ]; then
 		# Distribution signing with a Developer ID Application identity: hardened
-		# runtime (required for notarization) + a secure timestamp. No nested
-		# framework to sign (nothing bundled yet), and no entitlements are needed
-		# for a plain SDL app. Notarize + staple after (make notarize). Failures
-		# here are fatal — you want to know.
+		# runtime (required for notarization) + a secure timestamp. A bundled
+		# libSDL3.dylib is nested code and must be signed BEFORE the app that
+		# contains it (library validation then accepts it); no entitlements are
+		# needed for a plain SDL app. Notarize + staple after (make notarize).
+		# Failures here are fatal — you want to know.
+		if [ -f "$app/Contents/Frameworks/libSDL3.dylib" ]; then
+			codesign --force --options runtime --timestamp --sign "$CODESIGN_ID" "$app/Contents/Frameworks/libSDL3.dylib"
+		fi
 		codesign --force --options runtime --timestamp --sign "$CODESIGN_ID" "$app"
 		codesign --verify --deep --strict "$app"
 		echo "macapp: signed $app with '$CODESIGN_ID' (hardened runtime); notarize next"
