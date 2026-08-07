@@ -351,6 +351,76 @@ func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
 	}
 }
 
+// THE MOUSE INVARIANT (companion to the CLIP INVARIANT above): a pointer over
+// the painted cell must REPORT that cell, at any zoom — the same round(cell*cw*
+// ppu) arithmetic the display is validated against, run backwards. The editor's
+// own text hit-testing gets this right; the hosted PTY's did not, because its
+// pointer->cell walk scaled the pointer by hitKX (the snapped widget rate)
+// while the cells are painted at ppu. The two rates agree only at the default
+// font size, so this is checked across the zoom range.
+func TestHostedPtyPointerReportsPaintedCell(t *testing.T) {
+	b, err := raster.NewScaled(1600, 800, 2)
+	if err != nil {
+		t.Skip("no raster backend:", err)
+	}
+	if tm, ok := interface{}(b).(core.TextMeasurer); ok {
+		core.SetTextMeasurer(tm)
+		defer core.SetTextMeasurer(nil)
+	}
+	p := core.NewPainter(b)
+	if !p.Graphical() {
+		t.Skip("painter not graphical")
+	}
+
+	for _, size := range []int{10, 11, 13, 20, 25} {
+		b.SetFontSize(size)
+		ppu := p.PxPerUnitF()
+		if ppu <= 0 {
+			continue
+		}
+		gp := &gfxFrameParent{}
+		gp.TrinketBase = *core.NewTrinketBase()
+		gp.Init(gp)
+		e := NewEditor()
+		e.SetParent(gp)
+		e.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 700, Height: 300})
+		if cw, ch := e.cellDims(); cw <= 0 || ch <= 0 {
+			continue
+		}
+		// A surface out along the row, where per-cell drift accumulates.
+		e.terminalOpen("pty1", 40, 10)
+		e.terminalPlace([]mew.TerminalSurface{{
+			ID: "pty1", Primary: true, Col: 4, Row: 2, Width: 40, Height: 10,
+			ClipCol: 4, ClipRow: 2, ClipWidth: 40, ClipHeight: 10,
+		}})
+		e.paintTerminalSurfaces(p)
+
+		e.termMu.Lock()
+		st := e.termSurfaces["pty1"]
+		e.termMu.Unlock()
+		if st == nil || st.term == nil {
+			t.Fatalf("size %d: no child terminal", size)
+		}
+		child := st.term
+		bcw, _ := child.cellDims()
+		cols, _ := child.terminal.Buffer().GetSize()
+		for _, n := range []int{0, cols / 2, cols - 1} {
+			left := cellBoundaryPx(float64(n)*float64(bcw), ppu)
+			right := cellBoundaryPx(float64(n+1)*float64(bcw), ppu)
+			center := (left + right) / 2
+			// Deliver the pointer in the editor's ppu frame — the frame the
+			// display arithmetic and the host's cell routing use — not the
+			// child's snapped widget frame.
+			ux := core.Unit(math.Round(center / ppu))
+			got, _ := child.screenToVisualCellGfx(ux, 0)
+			if got != n {
+				t.Errorf("size %d (ppu %.3f): child column %d painted at %.1fpx reports as %d",
+					size, ppu, n, center, got)
+			}
+		}
+	}
+}
+
 // snapCover's contract, both directions, on the real snapping.
 func TestSnapCoverFindsCoveringEdges(t *testing.T) {
 	b, err := raster.NewScaled(1600, 400, 2)

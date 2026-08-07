@@ -118,13 +118,13 @@ func zoomCases() []zoomCase {
 	return out
 }
 
-// applyZoom sets the cached paint state exactly as paintGraphical would.
+// applyZoom sets the cached paint state exactly as paintGraphical would. The
+// lanes and pointer share ONE frame — bounds*ppu, the rate the cells paint at —
+// so only ppu and the bounds are needed; the old snapped-extent/hitK scaling is
+// gone (its divergence from ppu was the drift this test guards).
 func applyZoom(t *PurfecTerm, c zoomCase) {
 	t.SetBounds(core.UnitRect{Width: c.boundsW, Height: c.boundsH})
 	t.gfx.ppu = c.ppu
-	t.gfx.vpWpx, t.gfx.vpHpx = c.vpWpx, c.vpHpx
-	t.gfx.hitKX = c.vpWpx / (float64(c.boundsW) * c.ppu)
-	t.gfx.hitKY = c.vpHpx / (float64(c.boundsH) * c.ppu)
 }
 
 // gfxUnitForPx / gfxUnitsForPx invert gfxPointerPx, so a test can ask about a
@@ -136,12 +136,10 @@ func (t *PurfecTerm) gfxUnitForPx(px float64) core.Unit {
 
 func (t *PurfecTerm) gfxUnitsForPx(px, py float64) (core.Unit, core.Unit) {
 	_, _, ppu := t.gfxPixelFrame()
-	kx, ky := t.gfx.hitKX, t.gfx.hitKY
-	if kx <= 0 {
-		kx = 1
+	if ppu <= 0 {
+		ppu = 1
 	}
-	if ky <= 0 {
-		ky = 1
-	}
-	return core.Unit(px / (kx * ppu)), core.Unit(py / (ky * ppu))
+	// Inverse of gfxPointerPx, which now maps at ppu (the content rate) with no
+	// hitKX — see the frame invariant the pointer/lane/paint all share.
+	return core.Unit(px / ppu), core.Unit(py / ppu)
 }
