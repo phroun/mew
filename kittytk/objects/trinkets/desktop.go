@@ -825,11 +825,16 @@ func (d *Desktop) WindowFrameBorderUnits() core.Unit {
 	if !graphical {
 		return 0
 	}
+	// Reserve the SAME physical border every window paints: the zoom-scaled
+	// device-pixel thickness (border law (a)), divided by this surface's
+	// pixels-per-unit. ppu is denomination-independent (fontSize/12 × scale),
+	// so this unit count is physically uniform across windows regardless of
+	// their denomination. Ceil so the content always clears the drawn stroke.
 	ppu := d.pxPerUnit()
 	if ppu <= 0 {
 		ppu = 1
 	}
-	return core.Unit(math.Ceil(float64(core.WindowFrameBorderPx()) / ppu))
+	return core.Unit(math.Ceil(float64(core.ScaledWindowFrameBorderPx(ppu)) / ppu))
 }
 
 // Backend returns the render backend.
@@ -1407,6 +1412,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	var host *window.TearOffHost
 	host = window.NewTearOffHost(win, surf, d.pxPerUnit, gp.GlobalPointerPx,
 		func(int, int, core.Unit, core.Unit) bool { return false })
+	host.SetTornGeometry(d)
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
 	if cc, ok := plat.(platform.CursorController); ok {

@@ -136,6 +136,26 @@ type TearOffHost struct {
 	// the platform's CursorController). nil when the platform can't set
 	// cursors.
 	setCursor func(core.CursorShape)
+
+	// geom converts unit sizes to device pixels on the HARDENED cell pitch —
+	// the same grid the window frame paints on — so the OS surface is sized
+	// and read back exactly as wide/tall as the frame draws
+	// (geometry-cells-units-pixels.md). nil falls back to the raw px()/ppu
+	// ratio, which coincides at the base zoom; the desktop wires the real one
+	// via SetTornGeometry.
+	geom TornGeometry
+}
+
+// TornGeometry is the hardened cell-pitch unit<->pixel conversion a torn
+// host uses to size and place its OS surface so it lines up with the frame
+// paint. The desktop supplies it (its backend's cell-snapped mapping); a
+// host without one falls back to the raw pixels-per-unit ratio, which
+// coincides at the base zoom. See geometry-cells-units-pixels.md.
+type TornGeometry interface {
+	HardUnitToPxX(core.Unit) int
+	HardUnitToPxY(core.Unit) int
+	HardPxToUnitX(int) core.Unit
+	HardPxToUnitY(int) core.Unit
 }
 
 // Resize edge bits. The top edge is the title bar (drag handle), so
@@ -358,27 +378,28 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // EffectiveResizeGrip = sliver + frame border. FindFrameBorderUnits needs the
 // desktop in the parent chain, which a detached window lacks, so derive the
 // border straight from the live pixels-per-unit exactly as the desktop's
-// WindowFrameBorderUnits does (ceil(border px / ppu)).
+// WindowFrameBorderUnits does (ceil(scaled border px / ppu)).
 func (h *TearOffHost) effectiveGrip() core.Unit {
 	return h.resizeGrip + h.frameBorderUnits()
 }
 
 // frameBorderUnits is the painted frame-border thickness in units, derived from
 // the live pixels-per-unit exactly as the desktop's WindowFrameBorderUnits does
-// (ceil(border px / ppu)). A detached window has no desktop in its parent chain
+// (ceil(scaled border px / ppu), the zoom-scaled border law (a)). A detached
+// window has no desktop in its parent chain
 // for FindFrameBorderUnits, so it is computed here. It offsets both the resize
 // grip and the title-bar zone so torn windows match docked ones under a wide
 // border_width.
 func (h *TearOffHost) frameBorderUnits() core.Unit {
-	b := core.WindowFrameBorderPx()
-	if b <= 0 {
-		return 0
-	}
 	ppu := 1.0
 	if h.ppu != nil {
 		if v := h.ppu(); v > 0 {
 			ppu = v
 		}
+	}
+	b := core.ScaledWindowFrameBorderPx(ppu)
+	if b <= 0 {
+		return 0
 	}
 	return core.Unit(math.Ceil(float64(b) / ppu))
 }
@@ -1045,12 +1066,64 @@ func (h *TearOffHost) px(u core.Unit) int {
 	return int(math.Round(float64(u) * ppu))
 }
 
+// SetTornGeometry wires the hardened cell-pitch conversions (the desktop's
+// backend mapping) so the OS surface is sized/read on the frame's own grid.
+func (h *TearOffHost) SetTornGeometry(g TornGeometry) { h.geom = g }
+
+// pxHardX / pxHardY convert a unit LENGTH to device pixels on the hardened
+// cell pitch (the frame's paint grid); size geometry uses these so the OS
+// surface matches what the frame draws. They fall back to the raw px()
+// ratio when no TornGeometry is wired (it coincides at the base zoom).
+func (h *TearOffHost) pxHardX(u core.Unit) int {
+	if h.geom != nil {
+		return h.geom.HardUnitToPxX(u)
+	}
+	return h.px(u)
+}
+
+func (h *TearOffHost) pxHardY(u core.Unit) int {
+	if h.geom != nil {
+		return h.geom.HardUnitToPxY(u)
+	}
+	return h.px(u)
+}
+
+// unitHardX / unitHardY invert pxHardX/pxHardY: they read a device-pixel
+// extent back to whole units on the hardened cell pitch, rounding to
+// nearest so a surface sized to pxHardX(W) reports exactly W (no drift).
+// Falls back to round(px / ppu) with no TornGeometry.
+func (h *TearOffHost) unitHardX(px int) core.Unit {
+	if h.geom != nil {
+		return h.geom.HardPxToUnitX(px)
+	}
+	return h.unitFromPxRaw(px)
+}
+
+func (h *TearOffHost) unitHardY(px int) core.Unit {
+	if h.geom != nil {
+		return h.geom.HardPxToUnitY(px)
+	}
+	return h.unitFromPxRaw(px)
+}
+
+// unitFromPxRaw is the raw-ratio px->unit fallback used when no hardened
+// TornGeometry is wired.
+func (h *TearOffHost) unitFromPxRaw(px int) core.Unit {
+	ppu := 1.0
+	if h.ppu != nil {
+		if v := h.ppu(); v > 0 {
+			ppu = v
+		}
+	}
+	return core.Unit(math.Round(float64(px) / ppu))
+}
+
 func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	minW := h.px(metrics.CellWidth * 12)
-	minH := h.px(metrics.CellHeight * 4)
+	minW := h.pxHardX(metrics.CellWidth * 12)
+	minH := h.pxHardY(metrics.CellHeight * 4)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
@@ -1133,8 +1206,12 @@ func (h *TearOffHost) zoomToWorkArea() {
 		return
 	}
 	x, y := h.native.ScreenPositionPx()
-	size := h.surf.Size()
-	h.zoomSaved = [4]int{x, y, h.px(size.Width), h.px(size.Height)}
+	// Save the ACTUAL device-pixel size to restore, not a units->px
+	// reconversion: the surface is already sized on the hardened pitch, so
+	// reconverting would round-trip through the ratio and could restore a
+	// hair off. ScreenSizePx is the exact rect to put back.
+	pw, ph := h.native.ScreenSizePx()
+	h.zoomSaved = [4]int{x, y, pw, ph}
 	h.zoomed = true
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
@@ -1151,17 +1228,21 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 		return h.zoomed // zoomed: swallow, geometry is the work area's
 	}
 	cur := h.win.Bounds()
-	dx := h.px(b.X - cur.X)
-	dy := h.px(b.Y - cur.Y)
-	dw := h.px(b.Width - cur.Width)
-	dh := h.px(b.Height - cur.Height)
+	// Everything converts on the hardened cell pitch (the frame's grid).
+	// Position is applied as a DELTA off the OS window's current screen px
+	// (its screen origin isn't the desktop-relative b.X); size is set to the
+	// TARGET width/height ABSOLUTELY, so it lands exactly where the frame
+	// paints with no current-px round-trip.
+	dx := h.pxHardX(b.X - cur.X)
+	dy := h.pxHardY(b.Y - cur.Y)
+	dw := b.Width - cur.Width
+	dh := b.Height - cur.Height
 	if dx != 0 || dy != 0 {
 		x, y := h.native.ScreenPositionPx()
 		h.native.SetScreenPositionPx(x+dx, y+dy)
 	}
 	if (dw != 0 || dh != 0) && h.win.Flags()&WindowFlagNoResize == 0 {
-		size := h.surf.Size()
-		h.native.SetScreenSizePx(h.px(size.Width)+dw, h.px(size.Height)+dh)
+		h.native.SetScreenSizePx(h.pxHardX(b.Width), h.pxHardY(b.Height))
 	}
 	return true
 }
@@ -1184,20 +1265,20 @@ func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 // Resized implements platform.SurfaceHandler: the window tracks the
 // surface.
 func (h *TearOffHost) Resized(size core.UnitSize) {
-	// Track the window's size in FRACTIONAL denomination units, from the
-	// authoritative device-pixel size, not the backend's cell-snapped Size().
-	// Snapping floored width/height to whole cells and shed ~a cell (tens of
-	// device pixels) off the window on every undock — and it stuck, so each
-	// dock/undock cycle shrank it again. Graphical window geometry is
-	// denomination-fine; cells are a TUI/content-placement concern. A couple
-	// pixels of rounding drift is fine, a cell is not.
-	if h.native != nil && h.ppu != nil {
+	// Derive the window's unit size from the actual device-pixel size on the
+	// HARDENED cell pitch — the same grid the frame paints on — so the bounds
+	// round-trip is exact: a surface sized to pxHardX(W) reads back as exactly
+	// W. This is what keeps a torn window from drifting on undock/zoom (the
+	// backend's cell-snapped Size() FLOORS, shedding up to a unit each cycle
+	// so it accumulated) without going the other way and sizing bounds off the
+	// raw ratio (which the frame does NOT paint on, so the frame's right/bottom
+	// edge fell outside the surface — the "lost right edge"). With no hardened
+	// geometry wired it falls back to the platform-reported size.
+	if h.native != nil {
 		if pw, ph := h.native.ScreenSizePx(); pw > 0 && ph > 0 {
-			if ppu := h.ppu(); ppu > 0 {
-				size = core.UnitSize{
-					Width:  core.Unit(math.Round(float64(pw) / ppu)),
-					Height: core.Unit(math.Round(float64(ph) / ppu)),
-				}
+			size = core.UnitSize{
+				Width:  h.unitHardX(pw),
+				Height: h.unitHardY(ph),
 			}
 		}
 	}

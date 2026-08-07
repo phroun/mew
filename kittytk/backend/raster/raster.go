@@ -334,6 +334,47 @@ func (b *Backend) Size() core.UnitSize {
 	}
 }
 
+// unSnapAxisNearest inverts snapAxis by rounding the sub-cell remainder to
+// the NEAREST unit rather than flooring it (as unSnapAxisFloor does). It is
+// the round-trip-exact inverse: a length W mapped to px via snapAxis reads
+// back as exactly W. A caller that OWNS the surface size (a torn window
+// sized to UnitToPxX(W)) uses this so its unit size never drifts on
+// re-sizing; the floor inverse is for a surface whose px is dictated from
+// outside and whose content must stay WITHIN the true edge.
+func unSnapAxisNearest(px, denom, cellPx int) int {
+	if cellPx < 1 {
+		cellPx = 1
+	}
+	cells := px / cellPx
+	rem := px - cells*cellPx
+	return cells*denom + int(math.Round(float64(rem)*float64(denom)/float64(cellPx)))
+}
+
+// SizeRounded reports the surface extent in units on the hardened cell
+// pitch, rounding to nearest (unlike Size, which floors). A caller that
+// re-sizes a surface it OWNS (the font-zoom path re-deriving a torn
+// window's pixel size from its unit size) snapshots through this so the
+// unit size round-trips exactly instead of shedding up to a unit per zoom.
+func (b *Backend) SizeRounded() core.UnitSize {
+	return core.UnitSize{
+		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.CellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+	}
+}
+
+// PxToUnitX / PxToUnitY invert the hardened cell-pitch axis conversions
+// (UnitToPxX/Y) to whole units, rounding to nearest so the round-trip is
+// exact (see unSnapAxisNearest). Torn-window geometry reads its OS
+// surface's device-pixel size back to units through these, so a surface
+// sized to UnitToPxX(W) reports exactly W. Implements core.UnitPixelUnmapper.
+func (b *Backend) PxToUnitX(px int) core.Unit {
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellWidth), b.cellWPx()))
+}
+
+func (b *Backend) PxToUnitY(px int) core.Unit {
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellHeight), b.cellHPx()))
+}
+
 func (b *Backend) BeginFrame() {}
 func (b *Backend) EndFrame()   {}
 
@@ -1229,14 +1270,16 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	}
 }
 
-// strokePx maps a border style to a stroke weight in device pixels:
+// strokeWeightPx maps a border style to a stroke weight in device pixels:
 // double/heavy is the window-frame border, whose width is the configured
-// (or default) value from core.WindowFrameBorderPx; single stays a 1px
-// hairline. Rounded strokes are used only for window frames, so honoring
-// the configured frame width here is safe.
-func strokePx(bs style.BorderStyle) int {
+// (or default) base-zoom value scaled to the current zoom (border law (a),
+// geometry-cells-units-pixels.md), so the frame keeps a constant fraction
+// of the content as the font zooms; single stays a 1px hairline. Rounded
+// strokes are used only for window frames, so honoring the configured frame
+// width here is safe.
+func (b *Backend) strokeWeightPx(bs style.BorderStyle) int {
 	if bs == style.BorderDouble || bs == style.BorderHeavy {
-		return core.WindowFrameBorderPx()
+		return core.ScaledWindowFrameBorderPx(b.pxPerUnit())
 	}
 	return 1
 }
@@ -1347,7 +1390,7 @@ func (b *Backend) StrokeRoundedRectWeight(r core.UnitRect, radius core.Unit, str
 }
 
 func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle, fill bool) {
-	b.roundedRectTh(r, radius, strokePx(bs), s, fill)
+	b.roundedRectTh(r, radius, b.strokeWeightPx(bs), s, fill)
 }
 
 func (b *Backend) roundedRectTh(r core.UnitRect, radius core.Unit, th int, s style.CellStyle, fill bool) {

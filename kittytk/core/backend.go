@@ -240,6 +240,18 @@ type UnitPixelMapper interface {
 	UnitToPxY(Unit) int
 }
 
+// UnitPixelUnmapper is the inverse of UnitToPxX/Y: it converts a device
+// pixel extent back to whole units on the SAME hardened cell pitch,
+// rounding to nearest so the round-trip is exact. Geometry that OWNS a
+// surface's pixel size (a torn window sized to UnitToPxX(W)) reads it back
+// through this so the unit size never drifts on re-sizing. The raster
+// backend implements it; callers fall back to round(px / PxPerUnit) when a
+// backend does not.
+type UnitPixelUnmapper interface {
+	PxToUnitX(int) Unit
+	PxToUnitY(int) Unit
+}
+
 // GraphicalModer is the D1 mode query: a backend reports true when
 // it paints pixels rather than character cells. Trinkets branch their
 // rendering on Painter.Graphical() - e.g. label-type text passes
@@ -368,13 +380,38 @@ func SetWindowFrameBorderPx(px int) {
 	windowFrameBorderPx = px
 }
 
-// WindowFrameBorderPx returns the effective frame border width in device
+// WindowFrameBorderPx returns the configured frame border width at the
+// BASE zoom (pixels-per-unit == 1, i.e. font 12 / scale 1) in device
 // pixels - the configured value, or the built-in default (2) when unset.
+// This is the thickness before zoom scaling; consumers that paint or
+// reserve the border use ScaledWindowFrameBorderPx to apply the zoom.
 func WindowFrameBorderPx() int {
 	if windowFrameBorderPx > 0 {
 		return windowFrameBorderPx
 	}
 	return defaultWindowFrameBorderPx
+}
+
+// ScaledWindowFrameBorderPx is the frame border's effective device-pixel
+// thickness at the given pixels-per-unit: the base-zoom width scaled by
+// zoom, per the geometry model's border law (a) —
+//
+//	border_px = round(border_width × pixels-per-unit)
+//
+// (geometry-cells-units-pixels.md). A fixed pixel count would look
+// proportionally thinner as the font zooms in; scaling keeps the border a
+// constant fraction of the content. The single desktop ppu makes this one
+// value physically uniform on every window, hardened once per zoom. Never
+// below 1px so the stroke is always visible.
+func ScaledWindowFrameBorderPx(ppu float64) int {
+	if ppu <= 0 {
+		ppu = 1
+	}
+	n := int(math.Round(float64(WindowFrameBorderPx()) * ppu))
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // defaultWindowFrameBorderPx is the built-in frame stroke weight.

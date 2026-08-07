@@ -1157,7 +1157,15 @@ func (p *Platform) applyFontSize(size int) {
 			}
 			continue
 		}
+		// Snapshot the surface's unit size on the hardened cell pitch by
+		// ROUNDING the current pixels, not flooring (backend.Size()): this
+		// window keeps its UNIT size across the zoom and is re-sized to the
+		// new font's pixels, so a floor here would shed up to a unit every
+		// zoom and the window would creep smaller. Round-trips exactly.
 		units := w.backend.Size()
+		if sr, ok := w.backend.(interface{ SizeRounded() core.UnitSize }); ok {
+			units = sr.SizeRounded()
+		}
 		w.backend.SetFontSize(size)
 		wPx := w.backend.UnitToPxX(units.Width)
 		hPx := w.backend.UnitToPxY(units.Height)
