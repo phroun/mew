@@ -996,6 +996,13 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	t := NewPurfecTerm()
 	t.Init(t)
 	t.SetEditorMode(false)
+	// This child paints its own cell pitch into a clip this editor cuts at that
+	// same pitch (paintTerminalSurfaces measures the clip with the terminal
+	// font's stride, not the host cell grid). Left to measure its width against
+	// the host grid it would overshoot the pitch at fractional zoom — gaining
+	// phantom columns and snapping its scrollbar lane clean past the clip, so no
+	// bar shows. Lockstep it to its own pitch, which is what the clip guarantees.
+	t.SetLockstepPitch(true)
 	// PARENTED, though never added to any container: the child is painted and
 	// fed events by this editor alone. The parent link is for the lookups
 	// that walk it — FindGraphicalFrames (which turns on the whole graphical
