@@ -1419,7 +1419,20 @@ const windowShapeRadiusUnits = 6
 // shapeRadiusPx is the window corner radius in device pixels at the current
 // font size, so a shaped window's corners track font zoom instead of being
 // frozen at the size they had when the window was created.
-func (p *Platform) shapeRadiusPx() int { return p.cellPx(windowShapeRadiusUnits) }
+//
+// It uses the backend's FRACTIONAL pixels-per-unit (scale * fontSize/12), the
+// same mapping the window frame's round-rect is DRAWN with — not the ceil'd,
+// cell-snapped cellPx. At odd font sizes cellPx overshoots by up to a device
+// pixel, which made the layer/mask clip miss the drawn round-rect (the corner
+// "cut off" at certain zooms). Rounding the exact unit length lands the clip on
+// the frame.
+func (p *Platform) shapeRadiusPx() int {
+	fs := p.fontSize
+	if fs < 1 {
+		fs = 12
+	}
+	return int(math.Round(float64(windowShapeRadiusUnits) * float64(p.scale) * float64(fs) / 12))
+}
 
 // applyWindowShape (re)applies a window's rounded shape and OS drop shadow to
 // match its current state. It is the ONE place that decides a shaped window's
@@ -1440,6 +1453,19 @@ func (p *Platform) applyWindowShape(w *nativeWin) {
 	r := 0
 	if round {
 		r = p.shapeRadiusPx()
+		// Never over-round: a radius past half the smaller side eats the whole
+		// corner (a small window zoomed way out lost its corners entirely). The
+		// SDL shaped-mask path clamps too, but the macOS layer/punch path did
+		// not — clamp here so every mechanism agrees. Sizes are device pixels.
+		if wPx, hPx := w.window.SizeInPixels(); wPx > 0 && hPx > 0 {
+			m := int(wPx)
+			if int(hPx) < m {
+				m = int(hPx)
+			}
+			if r > m/2 {
+				r = m / 2
+			}
+		}
 	}
 	// Skip when nothing changed: an ordinary resize keeps the same radius and
 	// state, so re-rounding then only thrashes the window's layer (and drifted
