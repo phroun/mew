@@ -1162,10 +1162,7 @@ func (p *Platform) applyFontSize(size int) {
 		// window keeps its UNIT size across the zoom and is re-sized to the
 		// new font's pixels, so a floor here would shed up to a unit every
 		// zoom and the window would creep smaller. Round-trips exactly.
-		units := w.backend.Size()
-		if sr, ok := w.backend.(interface{ SizeRounded() core.UnitSize }); ok {
-			units = sr.SizeRounded()
-		}
+		units := w.backend.SizeRounded()
 		w.backend.SetFontSize(size)
 		wPx := w.backend.UnitToPxX(units.Width)
 		hPx := w.backend.UnitToPxY(units.Height)
