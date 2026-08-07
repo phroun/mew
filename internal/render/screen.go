@@ -949,13 +949,25 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 // renderViewportGroup renders a group of viewports.
 func (sr *ScreenRenderer) renderViewportGroup(layouts []viewport.ViewportLayout) {
 	for _, wl := range layouts {
-		// Apply this tile's horizontal frame to the viewport before painting it.
-		// Geometry lives with the tile, so a viewport shown in several tiles paints
-		// each at its own frame; rendering is sequential, so the viewport's frame
-		// is always the tile currently being drawn.
-		wl.Viewport.FrameX = wl.FrameX
-		wl.Viewport.FrameWidth = wl.FrameWidth
-		sr.renderViewport(wl.Viewport, wl.Y+1, wl.Height)
+		// Apply this tile's geometry to the viewport before painting it. Geometry
+		// lives with the tile (updateTileContentProperties stamps it onto wl), so a
+		// viewport shown in several tiles paints each at its own frame; rendering is
+		// sequential, so the viewport's fields are always the tile currently being
+		// drawn. The frame alone is not enough: the scrollbar draw reads
+		// ScrollbarTrackH/ContentHeight, and left at the last tile's values a tall
+		// tile drew the short tile's bar (its lower half unrendered) and the drag,
+		// which resolves per tile, disagreed with the paint. Restore the per-tile
+		// content and scrollbar geometry too.
+		w := wl.Viewport
+		w.FrameX = wl.FrameX
+		w.FrameWidth = wl.FrameWidth
+		w.ContentX = wl.ContentX
+		w.ContentY = wl.ContentY
+		w.ContentWidth = wl.ContentWidth
+		w.ContentHeight = wl.ContentHeight
+		w.ScrollbarX = wl.ScrollbarX
+		w.ScrollbarTrackH = wl.ScrollbarTrackH
+		sr.renderViewport(w, wl.Y+1, wl.Height)
 	}
 }
 
