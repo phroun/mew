@@ -290,35 +290,57 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 		bottomBand = grip
 	}
 
+	lx := x - bounds.X
+	ly := y - bounds.Y
+	if lx < 0 || lx >= bounds.Width || ly < 0 || ly >= bounds.Height {
+		return ResizeEdgeNone
+	}
+
+	// Vertical grips. The top edge is only grabbable with a graphical grip
+	// (grip>0); with the cell frame the top row is the titlebar.
+	atTop := grip > 0 && ly < grip
+	atBottom := ly >= bounds.Height-bottomBand
+	// When the window is short enough (or its grip wide enough) that the top
+	// and bottom grips overlap, letting one always win strands the other
+	// handle. The pointer's half decides instead: at or past the 50% line the
+	// bottom edge takes it, before it the top — so both stay reachable.
+	if atTop && atBottom {
+		if 2*ly >= bounds.Height {
+			atTop = false
+		} else {
+			atBottom = false
+		}
+	}
+
+	// Horizontal grips widen to the corner threshold along a grabbable top or
+	// bottom edge so the diagonal is easy to hit.
+	hThresh := edgeThreshold
+	if atTop || atBottom {
+		hThresh = cornerThreshold
+	}
+	atLeft := lx < hThresh
+	atRight := lx >= bounds.Width-hThresh
+	// Same 50% split when the left and right grips overlap.
+	if atLeft && atRight {
+		if 2*lx >= bounds.Width {
+			atLeft = false
+		} else {
+			atRight = false
+		}
+	}
+
 	edge := ResizeEdgeNone
-
-	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
-	atTop := grip > 0 && y >= bounds.Y && y < bounds.Y+grip
-
-	if x >= bounds.X && x < bounds.X+edgeThreshold {
+	if atLeft {
 		edge |= ResizeEdgeLeft
-	} else if x >= bounds.X+bounds.Width-edgeThreshold && x < bounds.X+bounds.Width {
+	} else if atRight {
 		edge |= ResizeEdgeRight
 	}
-
-	if atBottom {
-		edge |= ResizeEdgeBottom
-		if x >= bounds.X && x < bounds.X+cornerThreshold {
-			edge |= ResizeEdgeLeft
-		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
-			edge |= ResizeEdgeRight
-		}
-	}
-
 	if atTop {
 		edge |= ResizeEdgeTop
-		if x >= bounds.X && x < bounds.X+cornerThreshold {
-			edge |= ResizeEdgeLeft
-		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
-			edge |= ResizeEdgeRight
-		}
 	}
-
+	if atBottom {
+		edge |= ResizeEdgeBottom
+	}
 	return edge
 }
 
