@@ -360,17 +360,27 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // border straight from the live pixels-per-unit exactly as the desktop's
 // WindowFrameBorderUnits does (ceil(border px / ppu)).
 func (h *TearOffHost) effectiveGrip() core.Unit {
-	grip := h.resizeGrip
-	if b := core.WindowFrameBorderPx(); b > 0 {
-		ppu := 1.0
-		if h.ppu != nil {
-			if v := h.ppu(); v > 0 {
-				ppu = v
-			}
-		}
-		grip += core.Unit(math.Ceil(float64(b) / ppu))
+	return h.resizeGrip + h.frameBorderUnits()
+}
+
+// frameBorderUnits is the painted frame-border thickness in units, derived from
+// the live pixels-per-unit exactly as the desktop's WindowFrameBorderUnits does
+// (ceil(border px / ppu)). A detached window has no desktop in its parent chain
+// for FindFrameBorderUnits, so it is computed here. It offsets both the resize
+// grip and the title-bar zone so torn windows match docked ones under a wide
+// border_width.
+func (h *TearOffHost) frameBorderUnits() core.Unit {
+	b := core.WindowFrameBorderPx()
+	if b <= 0 {
+		return 0
 	}
-	return grip
+	ppu := 1.0
+	if h.ppu != nil {
+		if v := h.ppu(); v > 0 {
+			ppu = v
+		}
+	}
+	return core.Unit(math.Ceil(float64(b) / ppu))
 }
 
 func (h *TearOffHost) edgeAt(x, y core.Unit) int {
@@ -1162,7 +1172,12 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 // offered to the window and declined.
 func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 	b := h.win.Bounds()
-	th := core.DefaultCellMetrics().CellHeight
+	// The title bar is painted BELOW the top frame border, so its zone runs to
+	// frameBorder + CellHeight — matching the WindowManager (titleTop +
+	// CellHeight). Without the border term a wide border_width left only a thin
+	// draggable/double-click strip. The top resize grip (checked before this)
+	// owns the overlap at the very top.
+	th := core.DefaultCellMetrics().CellHeight + h.frameBorderUnits()
 	return x >= 0 && x < b.Width && y >= 0 && y < th
 }
 
