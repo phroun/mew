@@ -45,10 +45,13 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/$name"
 chmod +x "$app/Contents/MacOS/$name"
 
-# No SDL framework to embed: mew-sdl bakes libSDL3 into the binary (-tags
-# sdlembed) and loads it through purego at startup, so the bundle is already
-# self-contained. wgpu-native is likewise loaded at runtime by go-webgpu. The
-# old SDL2.framework embedding + @rpath rewiring is gone with the SDL3 migration.
+# mew-sdl loads SDL3 (and wgpu-native) from the system at runtime via purego, so
+# nothing is embedded here yet. The old SDL2.framework embedding + @rpath
+# rewiring is gone with the SDL3 migration — it bundled the wrong library (the
+# app is SDL3), so the bundle already depended on a system SDL3. Making this a
+# true self-contained installer means embedding a universal SDL3 and pointing the
+# loader at it (see the macapp-universal note in the Makefile); until then the
+# target Mac needs SDL3 installed (brew install sdl3).
 
 icontag=""
 if [ -f "$icns" ]; then
@@ -105,10 +108,10 @@ PLIST
 if command -v codesign >/dev/null 2>&1; then
 	if [ -n "${CODESIGN_ID:-}" ]; then
 		# Distribution signing with a Developer ID Application identity: hardened
-		# runtime (required for notarization) + a secure timestamp. With SDL3
-		# embedded there is no nested framework to sign separately, and no
-		# entitlements are needed for a plain SDL app. Notarize + staple after
-		# (make notarize). Failures here are fatal — you want to know.
+		# runtime (required for notarization) + a secure timestamp. No nested
+		# framework to sign (nothing bundled yet), and no entitlements are needed
+		# for a plain SDL app. Notarize + staple after (make notarize). Failures
+		# here are fatal — you want to know.
 		codesign --force --options runtime --timestamp --sign "$CODESIGN_ID" "$app"
 		codesign --verify --deep --strict "$app"
 		echo "macapp: signed $app with '$CODESIGN_ID' (hardened runtime); notarize next"

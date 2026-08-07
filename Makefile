@@ -13,8 +13,8 @@
 #   make install    build and install mew + mew-sdl into $(PREFIX)/bin
 #   make uninstall  remove the installed binaries
 #   make macapp     wrap the graphical binary in bin/mew.app (macOS icon + name)
-#   make mew-sdl-universal  fat arm64+x86_64 mew-sdl (SDL3 embedded, no framework)
-#   make macapp-universal   universal, self-contained bin/mew.app (no external SDL)
+#   make mew-sdl-universal  fat arm64+x86_64 mew-sdl (loads system SDL3)
+#   make macapp-universal   universal bin/mew.app (loads system SDL3 at runtime)
 #   make install-macapp    install mew.app into $(MACAPP_DIR) (default /Applications)
 #   make notarize   notarize + staple bin/mew.app for distribution (needs a
 #                   Developer ID signature via CODESIGN_ID and NOTARY_PROFILE)
@@ -30,13 +30,11 @@
 # the same but returns the shell immediately (the window outlives it). Keep the
 # two binaries in the same directory for the handoff to find mew-sdl.
 #
-# mew-sdl's graphical stack is pure Go: it loads SDL3 and wgpu-native through
-# purego at runtime (no cgo for the window or the GPU), and with -tags sdlembed
-# the SDL3 library is baked INTO the binary (Zyko0/go-sdl3's binsdl, one gzipped
-# dylib/dll per GOOS/GOARCH), so the app ships self-contained with no framework
-# to install. cgo is needed only for the Unix PTY (purfecterm's openpty); the
-# Windows PTY is pure Go (ConPTY). There is no SDL2 anywhere — the old
-# SDL2.framework/mingw machinery predated the SDL3 migration.
+# mew-sdl's graphical stack is pure Go: it loads the platform's installed SDL3
+# and wgpu-native through purego at runtime (no cgo for the window or the GPU).
+# cgo is needed only for the Unix PTY (purfecterm's openpty); the Windows PTY is
+# pure Go (ConPTY). There is no SDL2 anywhere — the old SDL2.framework/mingw
+# machinery predated the SDL3 migration.
 
 GO ?= go
 
@@ -60,10 +58,12 @@ MACAPP_DIR ?= /Applications
 # carries `webgpu`, since the default renderer (see LoadHostConfig) needs it;
 # software rendering still works when [window] renderer=software is set.
 TUI_TAGS := kittytk mew
-# sdlembed bakes libSDL3 into the binary (binsdl), so the graphical host ships
-# as one self-contained file with no SDL to install — the same choice kittytk's
-# own SDL host makes.
-SDL_TAGS := sdl mew webgpu sdlembed
+# The SDL host loads the platform's installed SDL3 at runtime (purego dlopen).
+# NOT sdlembed: embedding a second libSDL3 alongside a system one (Homebrew on
+# macOS) loads BOTH — duplicate Obj-C classes, and the Metal layer lookup fails.
+# Self-contained bundling is a separate, per-platform effort (a signed
+# SDL3.framework on macOS), not the embed-and-extract path.
+SDL_TAGS := sdl mew webgpu
 
 # The file holding the auto-incremented build counter (see `increment`).
 BUILD_FILE := internal/version/version.go
@@ -97,8 +97,8 @@ mew:
 	$(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew ./app/cmd/mew
 
 # The graphical host: the same mew editor in an SDL window. SDL3 + wgpu load
-# through purego at runtime (SDL3 embedded via sdlembed); cgo is used only for
-# the Unix PTY, so a C compiler is required on macOS/Linux but no SDL headers.
+# through purego at runtime from the system install; cgo is used only for the
+# Unix PTY, so a C compiler is required on macOS/Linux but no SDL headers.
 mew-sdl:
 	$(GO) build -tags "$(SDL_TAGS)" -o $(BIN_DIR)/mew-sdl ./app/cmd/mew-sdl
 
@@ -116,10 +116,11 @@ windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
 
 # Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. Pure Go,
-# no cgo, no C toolchain: SDL3 is embedded (sdlembed) and loaded through purego,
-# wgpu-native loads at runtime, and the Windows PTY is ConPTY via syscall — none
-# of it uses cgo (unlike the Unix PTY). So this cross-builds from any host with
-# just the Go toolchain — no mingw, no SDL2 dev package, no SDL2.dll to ship.
+# no cgo, no C toolchain: SDL3 and wgpu-native load through purego at runtime and
+# the Windows PTY is ConPTY via syscall — none of it uses cgo (unlike the Unix
+# PTY). So this cross-builds from any host with just the Go toolchain — no mingw,
+# no SDL2 dev package. SDL3.dll is loaded from the system at runtime (ship it
+# beside the exe, or install it, as the old SDL2 build likewise expected).
 # The syso prerequisite carries the icon (the Go linker embeds it); -H windowsgui
 # detaches the console (this is a windowed app, not a terminal one).
 
@@ -162,7 +163,7 @@ uninstall:
 # Wrap the graphical binary in a macOS .app bundle (bin/mew.app) so it gets a
 # real application name and a Dock / task-switcher icon. Drop assets/mew.icns
 # (or a 1024x1024 assets/mew.png, converted on macOS) for the icon. This wraps
-# the native single-arch binary (SDL3 embedded, nothing to install); for a
+# the native single-arch binary (loads system SDL3 at runtime); for a
 # portable universal bundle use macapp-universal below.
 # CODESIGN_ID: a "Developer ID Application: Name (TEAMID)" identity to sign the
 # bundle for distribution (hardened runtime + timestamp; see macapp.sh). Empty
@@ -173,10 +174,10 @@ macapp: mew-sdl
 	CODESIGN_ID="$(CODESIGN_ID)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
 # --- macOS universal build (Intel + Apple Silicon) --------------------------
-# SDL3 is embedded per-arch (binsdl carries a darwin arm64 AND a darwin amd64
-# libSDL3), so a universal build needs no external framework at all — each arch
-# slice bakes in its own SDL3, and lipo joins them. Override MAC_UNIVERSAL_ARCHS
-# to build a subset.
+# Builds a fat arm64+x86_64 mew-sdl. It loads the platform's SDL3 at runtime
+# (purego dlopen) — so the bundle is NOT self-contained yet; see the note on
+# macapp-universal about bundling the SDL3 runtime for a true installer.
+# Override MAC_UNIVERSAL_ARCHS to build a subset.
 MAC_UNIVERSAL_ARCHS ?= arm64 amd64
 
 # Build mew-sdl for each arch and lipo them into one fat binary at bin/mew-sdl.
@@ -200,9 +201,17 @@ mew-sdl-universal:
 	@codesign --force --sign - "$(BIN_DIR)/mew-sdl" 2>/dev/null || echo "note: codesign unavailable; arm64 may refuse to run unsigned"
 	@lipo -info "$(BIN_DIR)/mew-sdl"
 
-# Wrap the universal binary in a .app. With SDL3 embedded the bundle is already
-# self-contained and runs on Intel and Apple Silicon with nothing to install —
-# macapp.sh just adds the icon, Info.plist, and an ad-hoc signature.
+# Wrap the universal binary in a .app. macapp.sh adds the icon, Info.plist, and
+# an ad-hoc signature.
+#
+# NOTE: this bundle is NOT yet a self-contained installer — mew-sdl loads SDL3
+# from the system (Homebrew) at runtime, so a machine without SDL3 installed
+# cannot run it. Bundling the SDL3 runtime the way the pre-SDL3 build bundled
+# SDL2.framework needs a universal SDL3 embedded in the bundle AND the purego
+# loader taught to prefer that bundled copy over any system one (otherwise BOTH
+# load and their duplicate Obj-C classes break the Metal layer). That is a
+# separate, macOS-tested change; -tags sdlembed is NOT the answer (it extracts a
+# temp copy that still collides with a system SDL3).
 macapp-universal: mew-sdl-universal
 	CODESIGN_ID="$(CODESIGN_ID)" ./scripts/macapp.sh "$(BIN_DIR)/mew-sdl" assets "$(BIN_DIR)"
 
