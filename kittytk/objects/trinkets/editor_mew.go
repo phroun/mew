@@ -978,6 +978,21 @@ type termSurface struct {
 	// the same child grid painted read-only into each, clipped/letterboxed, with
 	// no SetBounds — so a mirror's size never resizes the grid.
 	mirrors []termRect
+	// pinnedTile is the tile a scrollbar drag began in. The child caches ONE
+	// gfx frame (the last tile painted), so a drag/hover has to restore the
+	// frame of the tile it is happening in before the child hit-tests — and a
+	// drag keeps the tile it started in even as the pointer wanders out of it.
+	pinnedTile tileGeom
+}
+
+// tileGeom is a tile's placement in this editor's 1-based cells — enough to
+// recompute the child's paint frame for that tile at mouse time (a lockstep
+// child's frame is pure pitch, so no painter is needed). The zero value is
+// invalid.
+type tileGeom struct {
+	col, row      int
+	width, height int
+	valid         bool
 }
 
 // termRect is one mirror placement of a session's grid, in 1-based cells.
@@ -1258,6 +1273,55 @@ func clampUnitFrac(f float64) float64 {
 	return f
 }
 
+// hostedTileAt returns the tile of surface s that the pointer (px,py, this
+// editor's units) sits in — the primary or one of its mirrors. The child is
+// shown in each at a different size, and the scrollbar's track height is the
+// TILE's, so an interaction has to know which one. Falls back to the primary
+// when the pointer is invalid or over no tile (a wheel with no motion, say).
+// Caller holds termMu.
+func (e *Editor) hostedTileAt(s *termSurface, px, py core.Unit, pvalid bool, cw, ch core.Unit) tileGeom {
+	primary := tileGeom{s.col, s.row, s.width, s.height, s.clipWidth > 0 && s.clipHeight > 0}
+	if !pvalid || cw <= 0 || ch <= 0 {
+		return primary
+	}
+	in := func(col, row, w, h int) bool {
+		if w <= 0 || h <= 0 {
+			return false
+		}
+		x0 := core.Unit(col-1) * cw
+		y0 := core.Unit(row-1) * ch
+		return px >= x0 && px < x0+core.Unit(w)*cw && py >= y0 && py < y0+core.Unit(h)*ch
+	}
+	if primary.valid && in(s.col, s.row, s.width, s.height) {
+		return primary
+	}
+	for _, m := range s.mirrors {
+		if m.clipWidth > 0 && m.clipHeight > 0 && in(m.col, m.row, m.width, m.height) {
+			return tileGeom{m.col, m.row, m.width, m.height, true}
+		}
+	}
+	return primary
+}
+
+// applyHostedTileFrame restores the child's cached paint frame to a given tile,
+// so the scrollbar hit test and track height come out as that tile's — not the
+// last tile that happened to paint. A hosted child locksteps to its own pitch,
+// so the frame is exactly round(units*ppu) with no host-grid snap (hitK = 1);
+// that is what paintGraphical computed for this tile, reproduced here without a
+// painter. ppu is cached from the last paint and is the same for every tile.
+func (e *Editor) applyHostedTileFrame(t *PurfecTerm, g tileGeom, cw, ch core.Unit) {
+	if !g.valid || !t.gfx.lockstepPitch {
+		return // non-lockstep: leave the cached frame (never the hosted case)
+	}
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		return
+	}
+	t.gfx.vpWpx = math.Round(float64(core.Unit(g.width)*cw) * ppu)
+	t.gfx.vpHpx = math.Round(float64(core.Unit(g.height)*ch) * ppu)
+	t.gfx.hitKX, t.gfx.hitKY = 1, 1
+}
+
 // terminalMouse hands one mouse event to the session's child terminal AS THE
 // TOOLKIT EVENT it would have received in the tree, and returns whatever
 // bytes the child produced for its process, plus whether it took the event.
@@ -1276,6 +1340,11 @@ func clampUnitFrac(f float64) float64 {
 // collects them while draining is set; they return to mew, which writes them
 // to the session. One event in, bytes out, one door.
 func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
+	cw, ch := e.cellDims()
+	e.ptrMu.Lock()
+	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
+	e.ptrMu.Unlock()
+
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
 	if s == nil || s.term == nil {
@@ -1285,20 +1354,35 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	s.draining = true
 	s.pending = nil
 	t := s.term
-	col, row := s.col, s.row
+	// Which tile is this event in? A scrollbar drag already under way keeps the
+	// tile it began in (the pointer may have wandered out); otherwise it is the
+	// tile the remembered pointer sits in. The child caches ONE gfx frame, so
+	// without this the scrollbar's track height and lane column are whichever
+	// tile painted last, not the one being used.
+	g := s.pinnedTile
+	if !((t.gfx.vDragging || t.gfx.hDragging) && g.valid) {
+		g = e.hostedTileAt(s, px, py, pvalid, cw, ch)
+	}
+	col, row := g.col, g.row
 	e.termMu.Unlock()
 
-	// The precise pointer, if it still agrees with the cell the wire
-	// carried — see preciseHostedLocal. Cell centers otherwise.
-	e.ptrMu.Lock()
-	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
-	e.ptrMu.Unlock()
-	cw, ch := e.cellDims()
+	// Restore this tile's frame before the child hit-tests, then hand it the
+	// precise pointer (in this tile's local units) or the wire cell's center.
+	e.applyHostedTileFrame(t, g, cw, ch)
 	fracX, fracY, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
 
 	handled := dispatchHostedMouse(t, ev, fracX, fracY, precise)
 
 	e.termMu.Lock()
+	// Pin the tile for the life of a scrollbar drag it just started; drop the
+	// pin once the drag ends, so a later hover re-resolves the tile.
+	if t.gfx.vDragging || t.gfx.hDragging {
+		if !s.pinnedTile.valid {
+			s.pinnedTile = g
+		}
+	} else {
+		s.pinnedTile = tileGeom{}
+	}
 	data := s.pending
 	s.pending = nil
 	s.draining = false
