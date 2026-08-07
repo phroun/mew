@@ -352,21 +352,43 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // edgeAt returns the resize-edge bitmask for a window-local point, or 0
 // when the point starts no resize - mirroring beginResize (no resize in
 // the title row, on a non-resizable or zoomed window).
+// effectiveGrip is the resize-edge grab thickness INCLUDING the painted frame
+// border, so the torn window's grab zone (and its hover affordance) is as wide
+// as the border it draws — matching docked windows, whose grip is
+// EffectiveResizeGrip = sliver + frame border. FindFrameBorderUnits needs the
+// desktop in the parent chain, which a detached window lacks, so derive the
+// border straight from the live pixels-per-unit exactly as the desktop's
+// WindowFrameBorderUnits does (ceil(border px / ppu)).
+func (h *TearOffHost) effectiveGrip() core.Unit {
+	grip := h.resizeGrip
+	if b := core.WindowFrameBorderPx(); b > 0 {
+		ppu := 1.0
+		if h.ppu != nil {
+			if v := h.ppu(); v > 0 {
+				ppu = v
+			}
+		}
+		grip += core.Unit(math.Ceil(float64(b) / ppu))
+	}
+	return grip
+}
+
 func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	if h.win.Flags()&WindowFlagNoResize != 0 || h.zoomed {
 		return 0
 	}
 	b := h.win.Bounds()
+	grip := h.effectiveGrip()
 	edges := 0
-	if x < h.resizeGrip {
+	if x < grip {
 		edges |= resizeLeft
 	}
-	if x >= b.Width-h.resizeGrip {
+	if x >= b.Width-grip {
 		edges |= resizeRight
 	}
-	if y < h.resizeGrip {
+	if y < grip {
 		edges |= resizeTop
-	} else if y >= b.Height-h.resizeGrip {
+	} else if y >= b.Height-grip {
 		edges |= resizeBottom
 	} else if y < core.DefaultCellMetrics().CellHeight {
 		// Title row below the top grip: drag, not resize.
@@ -425,7 +447,7 @@ func (h *TearOffHost) refreshResizeHover() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
+	h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -445,7 +467,7 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverEdges(edges, h.resizeGrip)
+		h.win.SetResizeHoverEdges(edges, h.effectiveGrip())
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
@@ -1155,7 +1177,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverEdges(h.resizeEdges, h.resizeGrip)
+		h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }

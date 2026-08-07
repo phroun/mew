@@ -95,9 +95,13 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want one band, got %d", len(got))
 	}
-	if got[0].X != grown.Width-4 {
+	// The band spans the effective grip (the resize sliver plus the painted
+	// frame border), the same width the grab zone uses — so it is measured from
+	// the painted width, not the stale bounds.
+	wantX := grown.Width - h.effectiveGrip()
+	if got[0].X != wantX {
 		t.Errorf("band at X=%v, want %v — it is pinned to the old width, not the painted one",
-			got[0].X, grown.Width-4)
+			got[0].X, wantX)
 	}
 	if got[0].Height != grown.Height {
 		t.Errorf("band height %v, want the painted %v", got[0].Height, grown.Height)
