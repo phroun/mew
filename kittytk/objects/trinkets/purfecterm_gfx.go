@@ -345,7 +345,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
 		if t.gfx.lockstepPitch {
-			contentWpx = int(math.Round(float64(bounds.Width-gfxScrollbarLane) * ppu))
+			// Reserve exactly one of THIS terminal's columns for the lane (see
+			// lanePx), at the pitch — so the grid fills right up to a lane that
+			// is its own last column, with no blank sliver between them.
+			contentWpx = int(math.Round(float64(bounds.Width-baseCW) * ppu))
 		}
 	}
 	// ROWS fit the FULL height. The child's grid must be a pure function of its
@@ -1902,8 +1905,20 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 // share one pixel width, so the corner where the bars meet is a square. On a
 // cell surface a lane cannot be thinner than a character, so it is one CELL
 // column wide and one CELL row tall — the ScrollArea idiom.
+//
+// A lockstep (hosted) surface is the exception on the graphical path: its lane
+// is one of ITS OWN columns, not the toolkit's fixed layout column. The two
+// differ (a terminal cell is not the toolkit's cell), and a lane that is not a
+// whole child column leaves a sliver of blank between the last content column
+// and the bar, and straddles two child columns so a cell-quantized pointer
+// misses it. One own column makes the bar the child's last column exactly:
+// content meets it, and the wire cell that lands on it is unambiguous.
 func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 	if t.gfxInputActive() {
+		if t.gfx.lockstepPitch {
+			cw, ch := t.cellDims()
+			return float64(cw) * ppu, float64(ch) * ppu
+		}
 		lane := float64(gfxScrollbarLane) * ppu
 		return lane, lane
 	}
