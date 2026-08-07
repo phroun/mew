@@ -25,6 +25,7 @@ package sdl3
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -106,6 +107,18 @@ func libraryCandidates() []string {
 	c = append(c, csdl.Path())
 	switch runtime.GOOS {
 	case "darwin":
+		// A copy bundled inside a .app, next to the executable
+		// (Contents/MacOS/<bin> -> Contents/Frameworks/libSDL3.dylib). Tried
+		// BEFORE any system SDL3 so a self-contained bundle loads ITS OWN copy:
+		// loading both a bundled and a Homebrew SDL3 registers SDL's Obj-C
+		// classes twice, and the Metal layer lookup then fails ("implemented in
+		// both …"). Every SDL3 consumer here — the binding's initial load and
+		// gapfill's symbol rebind alike — walks this list, so putting the bundle
+		// first makes them all agree on one library. A bare binary has no such
+		// sibling; the path simply won't exist and the search falls through.
+		if exe, err := os.Executable(); err == nil {
+			c = append(c, filepath.Join(filepath.Dir(exe), "..", "Frameworks", "libSDL3.dylib"))
+		}
 		c = append(c,
 			"/opt/homebrew/lib/libSDL3.dylib", // Homebrew, Apple Silicon
 			"/opt/homebrew/opt/sdl3/lib/libSDL3.dylib",
