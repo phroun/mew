@@ -60,17 +60,19 @@ func LoadHostConfig() hostcfg.Config {
 	// mew's graphical host defaults to the WebGPU renderer (upstream KittyTK
 	// defaults to "software"); [window] renderer= in editor.conf overrides.
 	cfg.Renderer = "webgpu"
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return cfg
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".mew", "editor.conf")
+		if data, err := os.ReadFile(path); err == nil {
+			applyHostConf(parseHostConfSections(data), &cfg)
+			cfg.Source = path
+		}
 	}
-	path := filepath.Join(home, ".mew", "editor.conf")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg
+	// MEW_RENDERER=software|webgpu overrides config and default — a quick way to
+	// switch backends without editing editor.conf, useful where one backend's
+	// native library (wgpu_native for webgpu) is not installed.
+	if r := strings.ToLower(strings.TrimSpace(os.Getenv("MEW_RENDERER"))); r == "software" || r == "webgpu" {
+		cfg.Renderer = r
 	}
-	applyHostConf(parseHostConfSections(data), &cfg)
-	cfg.Source = path
 	return cfg
 }
 

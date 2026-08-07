@@ -18,3 +18,6 @@ mew-pty-diag.log
 
 # Fetched SDL3 runtime cache (scripts/fetch-sdl3.sh); not committed.
 build/
+
+# Fetched wgpu-native runtime, embedded into the Windows build (scripts/fetch-wgpu.sh).
+app/internal/wgpuembed/wgpu_native.dll

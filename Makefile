@@ -85,7 +85,7 @@ WINDOWS_SYSO := app/cmd/mew-sdl/rsrc_windows_$(WINDOWS_ARCH).syso
 # artefact, not checked in; see the windows-sdl target.
 CONSOLE_PAYLOAD := app/internal/selfinstall/payload/mew.exe.gz
 
-.PHONY: all build mew mew-sdl sdl3 mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
+.PHONY: all build mew mew-sdl sdl3 windows-sdl-console mew-sdl-universal mew-plain windows windows-sdl install uninstall macapp macapp-universal install-macapp uninstall-macapp notarize check vet test clean increment
 
 # Default: build both shipped binaries.
 all: build
@@ -115,14 +115,30 @@ mew-plain:
 windows:
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(TUI_TAGS)" -o $(BIN_DIR)/mew.exe ./app/cmd/mew
 
-# Build the Windows GUI host (mew-sdl.exe) with the embedded app icon. Pure Go,
-# no cgo, no C toolchain: SDL3 and wgpu-native load through purego at runtime and
-# the Windows PTY is ConPTY via syscall — none of it uses cgo (unlike the Unix
-# PTY). So this cross-builds from any host with just the Go toolchain — no mingw,
-# no SDL2 dev package. SDL3.dll is loaded from the system at runtime (ship it
-# beside the exe, or install it, as the old SDL2 build likewise expected).
-# The syso prerequisite carries the icon (the Go linker embeds it); -H windowsgui
-# detaches the console (this is a windowed app, not a terminal one).
+# Build the Windows GUI host (mew-sdl.exe), a SELF-CONTAINED single file. Pure Go,
+# no cgo, no C toolchain: the Windows PTY is ConPTY via syscall, and both native
+# libraries are EMBEDDED — SDL3 via -tags sdlembed (binsdl), wgpu-native via
+# -tags wgpuembed (app/internal/wgpuembed, fetched by scripts/fetch-wgpu.sh) —
+# and unpacked at startup, so nothing has to be installed or shipped beside the
+# exe. Cross-builds from any host with just the Go toolchain. The syso carries
+# the icon; -H windowsgui detaches the console (a windowed app, not a terminal).
+#
+# Windows has no system SDL3 to collide with (unlike macOS/Homebrew), so
+# embedding is the right choice here; that is also what kittytk's buildwin.sh does.
+WGPU_VERSION ?= v29.0.0.0
+WGPU_EMBED_DLL := app/internal/wgpuembed/wgpu_native.dll
+
+# Fetch the wgpu-native runtime into the embed package (cached; gitignored).
+$(WGPU_EMBED_DLL):
+	./scripts/fetch-wgpu.sh "$(WGPU_VERSION)" windows $(WINDOWS_ARCH) "$(WGPU_EMBED_DLL)"
+
+# Diagnostic build: the SAME self-contained exe (SDL3 + wgpu embedded) but on the
+# CONSOLE subsystem (no -H windowsgui) and without embedconsole, so a startup
+# failure — a missing symbol, a panic, a renderer init error — prints to the
+# console instead of vanishing. Run it from cmd. MEW_RENDERER=software forces the
+# non-GPU backend to isolate wgpu from SDL3.
+windows-sdl-console: $(WINDOWS_SYSO) $(WGPU_EMBED_DLL)
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(SDL_TAGS) sdlembed wgpuembed" -o $(BIN_DIR)/mew-sdl-console.exe ./app/cmd/mew-sdl
 
 # The console binary, gzipped into the graphical one's package so a //go:embed
 # can carry it (see app/internal/selfinstall/payload/README.md). Compressed in
@@ -137,8 +153,8 @@ $(CONSOLE_PAYLOAD): windows
 	@mkdir -p $(dir $(CONSOLE_PAYLOAD))
 	$(GO) run ./app/tools/gzipfile $(BIN_DIR)/mew.exe $(CONSOLE_PAYLOAD)
 
-windows-sdl: $(WINDOWS_SYSO) $(CONSOLE_PAYLOAD)
-	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(SDL_TAGS) embedconsole" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
+windows-sdl: $(WINDOWS_SYSO) $(CONSOLE_PAYLOAD) $(WGPU_EMBED_DLL)
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 $(GO) build -tags "$(SDL_TAGS) sdlembed wgpuembed embedconsole" -ldflags "-H windowsgui" -o $(BIN_DIR)/mew-sdl.exe ./app/cmd/mew-sdl
 
 # Build the Windows icon resource object from assets/mew.ico (regenerated when
 # the icon changes). It lives in the mew-sdl package, so the Go linker embeds it

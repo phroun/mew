@@ -22,6 +22,10 @@ import (
 	sdlplat "github.com/phroun/kittytk/sdl"
 	"github.com/phroun/mew"
 	"github.com/phroun/mew-app/internal/mewhost"
+	// Embeds and unpacks wgpu-native at startup on a Windows -tags wgpuembed
+	// build (a no-op otherwise), so the self-contained .exe carries its GPU
+	// runtime like sdlembed carries SDL3.
+	_ "github.com/phroun/mew-app/internal/wgpuembed"
 )
 
 const usage = `mew — a programmable cross-platform text, prose, and code editor
