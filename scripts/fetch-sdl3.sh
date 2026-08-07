@@ -46,11 +46,13 @@ Darwin)
 	hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mnt"
 	# The framework's Mach-O binary IS the universal dylib; copy it out under the
 	# plain name the host's loader looks for (Contents/Frameworks/libSDL3.dylib).
-	fw="$mnt/SDL3.framework/Versions/A/SDL3"
-	[ -f "$fw" ] || fw="$mnt/SDL3.framework/SDL3"
-	if [ ! -f "$fw" ]; then
+	# Locate it wherever the dmg puts the framework (the real binary is a regular
+	# file at Versions/<v>/SDL3, so -type f finds it, not the symlinks).
+	fw="$(find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null | head -n1)"
+	if [ -z "$fw" ]; then
+		echo "fetch-sdl3: SDL3.framework binary not found inside the dmg — its layout is:" >&2
+		find "$mnt" -maxdepth 3 2>/dev/null | sed 's/^/  /' >&2
 		hdiutil detach "$mnt" -quiet 2>/dev/null || true
-		echo "fetch-sdl3: SDL3.framework binary not found inside the dmg" >&2
 		exit 1
 	fi
 	cp "$fw" "$out"
