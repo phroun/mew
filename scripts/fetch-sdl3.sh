@@ -46,23 +46,28 @@ Darwin)
 	hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mnt"
 	# The framework's Mach-O binary IS the universal dylib; copy it out under the
 	# plain name the host's loader looks for (Contents/Frameworks/libSDL3.dylib).
-	# A dmg can carry more than one SDL3 (the framework itself plus a bundled
-	# test/demo app with its own thin copy), so pick the FATTEST — the real
-	# framework binary is universal; the strays are single-arch. The real binary
-	# is a regular file at Versions/<v>/SDL3, so -type f skips the symlinks.
-	fw=""; fwn=0
-	while IFS= read -r cand; do
-		[ -n "$cand" ] || continue
-		n=$(lipo -archs "$cand" 2>/dev/null | wc -w | tr -d ' ')
+	# The dmg is an SDL3.xcframework with a slice per Apple platform — ios, tvos,
+	# their -simulator variants (also arm64+x86_64!), and macos — so picking by
+	# "fattest" is not enough; an iOS-simulator slice would match but never run on
+	# macOS. Take the macOS slice specifically (macos-arm64_x86_64/…), falling
+	# back to a plain SDL3.framework that is not an iOS/tvOS/simulator slice for
+	# older, non-xcframework dmgs. The real binary is a regular file under
+	# Versions/, so -type f skips the symlinks.
+	find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null | while IFS= read -r cand; do
 		echo "fetch-sdl3:   candidate $cand [$(lipo -archs "$cand" 2>/dev/null)]"
-		if [ "${n:-0}" -gt "$fwn" ]; then fw="$cand"; fwn="$n"; fi
-	done < <(find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null)
+	done
+	fw="$(find "$mnt" -type f -path '*/macos-*/SDL3.framework/*' -name SDL3 2>/dev/null | head -n1)"
 	if [ -z "$fw" ]; then
-		echo "fetch-sdl3: SDL3.framework binary not found inside the dmg — its layout is:" >&2
-		find "$mnt" -maxdepth 3 2>/dev/null | sed 's/^/  /' >&2
+		fw="$(find "$mnt" -type f -path '*SDL3.framework/*' -name SDL3 2>/dev/null \
+			| grep -vE '/(ios|tvos|watchos|xros)[/-]|-simulator/' | head -n1)"
+	fi
+	if [ -z "$fw" ]; then
+		echo "fetch-sdl3: no macOS SDL3.framework binary found inside the dmg — its layout is:" >&2
+		find "$mnt" -maxdepth 4 2>/dev/null | sed 's/^/  /' >&2
 		hdiutil detach "$mnt" -quiet 2>/dev/null || true
 		exit 1
 	fi
+	echo "fetch-sdl3: selected macOS slice $fw"
 	cp "$fw" "$out"
 	# The framework binary records an @rpath/framework install name; rewrite it
 	# to a plain name so a dlopen by our explicit bundle path is unambiguous.
