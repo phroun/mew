@@ -2203,6 +2203,14 @@ func (w *nativeWin) applyShape() {
 	if w.window == nil {
 		return
 	}
+	// applyShape is the SDL shaped-window mechanism (a binary alpha mask), used
+	// only where there is no per-pixel window alpha (Windows/X11). macOS rounds
+	// through the Core Animation layer instead and must NEVER be handed to
+	// SetShape — doing so reshaped torn-off windows off their intended size
+	// (a ~20px shrink after a zoom). On macOS this is a no-op, as it was before.
+	if platformPerPixelAlpha {
+		return
+	}
 	// A bordered window cannot be shaped (SetShape returns NONSHAPEABLE, and the
 	// OS title bar owns the corners). The main window is created bordered and
 	// only becomes shapeable once solo mode strips its border, at which point
