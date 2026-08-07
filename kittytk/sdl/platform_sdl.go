@@ -131,6 +131,13 @@ type nativeWin struct {
 	// never rounded (a plain bordered window).
 	wantRadiusPx int
 
+	// appliedShapePx is the radius applyWindowShape last applied (-1 before its
+	// first call), so an ordinary resize — which changes neither the radius nor
+	// the maximized/borderless state — doesn't needlessly re-round the window
+	// and thrash the layer. Zoom (radius changes) and maximize/restore (radius
+	// flips to/from 0) still re-apply.
+	appliedShapePx int
+
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 
@@ -468,7 +475,7 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	// live shapeRadiusPx tracks what is currently applied (0 while bordered or
 	// maximized). A window born borderless is shaped here; the main window is
 	// born bordered and gets shaped by SetBordered once solo mode strips it.
-	w := &nativeWin{shapeRadiusPx: shapeRadiusPx, wantRadiusPx: shapeRadiusPx}
+	w := &nativeWin{shapeRadiusPx: shapeRadiusPx, wantRadiusPx: shapeRadiusPx, appliedShapePx: -1}
 	bornBorderless := flags&sdl3.WINDOW_BORDERLESS != 0
 	var err error
 
@@ -1434,6 +1441,13 @@ func (p *Platform) applyWindowShape(w *nativeWin) {
 	if round {
 		r = p.shapeRadiusPx()
 	}
+	// Skip when nothing changed: an ordinary resize keeps the same radius and
+	// state, so re-rounding then only thrashes the window's layer (and drifted
+	// the corners on macOS). Zoom and maximize/restore change r and fall through.
+	if r == w.appliedShapePx {
+		return
+	}
+	w.appliedShapePx = r
 	if platformPerPixelAlpha {
 		// macOS: Core Animation clips the layer, and the framebuffer punch
 		// (cornerRadiusPx, consumed every present) cuts the corner pixels. The

@@ -3,15 +3,12 @@
 package sdl
 
 import (
-	"unsafe"
-
 	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
-	"golang.org/x/sys/windows"
 )
 
 // platformPerPixelAlpha: Windows has no per-pixel window alpha through this
 // path; rounded borderless surfaces use SDL shaped windows (SetShape), like
-// X11. The OS drop shadow is added separately via DWM (setWindowShadow).
+// X11.
 const platformPerPixelAlpha = false
 
 // makeWindowTransparent is the Windows stub: the shaped-window path (SetShape
@@ -22,41 +19,11 @@ func makeWindowTransparent(*sdl3.Window) bool { return false }
 // makeWindowMiniaturizable is the Windows stub: SDL's plain Minimize works.
 func makeWindowMiniaturizable(*sdl3.Window) {}
 
-var (
-	dwmapi                           = windows.NewLazySystemDLL("dwmapi.dll")
-	procDwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
-)
-
-// margins mirrors the Win32 MARGINS struct passed to DwmExtendFrameIntoClientArea.
-type margins struct {
-	left, right, top, bottom int32
-}
-
-// setWindowShadow turns the DWM drop shadow on (or off) for a borderless
-// window by extending the desktop-window-manager frame a hair into the client
-// area. DWM then draws its standard drop shadow around the window's region —
-// which mew has already shaped with SetShape — and because the window server
-// owns that shadow it is click-through: a click over the shadow reaches
-// whatever window sits beneath, never this one. Turning it off retracts the
-// frame to nothing.
-//
-// This is the low-risk form of the effect: it changes no window styles and
-// installs no window-procedure hook, so it cannot disturb SDL's own event
-// handling. If a borderless window ever needs the shadow without the faint
-// 1px frame line the extension can leave, the follow-up is a WM_NCCALCSIZE
-// subclass — deliberately avoided here.
-func setWindowShadow(win *sdl3.Window, on bool) {
-	if win == nil {
-		return
-	}
-	hwnd := win.Win32HWND()
-	if hwnd == 0 {
-		return
-	}
-	m := margins{}
-	if on {
-		m = margins{1, 1, 1, 1}
-	}
-	// Ignore the HRESULT: a failure just means no shadow, never a broken window.
-	procDwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&m)))
-}
+// setWindowShadow is a no-op on Windows for now. The obvious low-risk form —
+// DwmExtendFrameIntoClientArea to make DWM cast a shadow — pulls the window
+// frame a pixel into the client area, which visibly shrank the content on
+// undock. A borderless window that keeps its exact size AND gets a DWM shadow
+// needs a WM_NCCALCSIZE window-procedure subclass (reclaim the non-client area
+// while leaving the extended frame for the shadow); that is the deliberate
+// follow-up. Doing nothing keeps the window's size exact in the meantime.
+func setWindowShadow(*sdl3.Window, bool) {}
