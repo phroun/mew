@@ -1184,6 +1184,23 @@ func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 // Resized implements platform.SurfaceHandler: the window tracks the
 // surface.
 func (h *TearOffHost) Resized(size core.UnitSize) {
+	// Track the window's size in FRACTIONAL denomination units, from the
+	// authoritative device-pixel size, not the backend's cell-snapped Size().
+	// Snapping floored width/height to whole cells and shed ~a cell (tens of
+	// device pixels) off the window on every undock — and it stuck, so each
+	// dock/undock cycle shrank it again. Graphical window geometry is
+	// denomination-fine; cells are a TUI/content-placement concern. A couple
+	// pixels of rounding drift is fine, a cell is not.
+	if h.native != nil && h.ppu != nil {
+		if pw, ph := h.native.ScreenSizePx(); pw > 0 && ph > 0 {
+			if ppu := h.ppu(); ppu > 0 {
+				size = core.UnitSize{
+					Width:  core.Unit(math.Round(float64(pw) / ppu)),
+					Height: core.Unit(math.Round(float64(ph) / ppu)),
+				}
+			}
+		}
+	}
 	h.win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 	h.win.Layout()
 	// While an edge-resize is in progress, keep the resize-edge highlight rects
