@@ -65,7 +65,7 @@ func TestHostedLaneLandsInsideClip(t *testing.T) {
 		st := e.termSurfaces["pty1"]
 		e.termMu.Unlock()
 		child := st.term
-		track, _, _, _, _, ok := child.vScrollGeometry()
+		track, thumb, _, _, _, ok := child.vScrollGeometry()
 		if !ok {
 			t.Errorf("size %d: no vertical geometry — the scrollback lane vanished", size)
 			continue
@@ -86,12 +86,43 @@ func TestHostedLaneLandsInsideClip(t *testing.T) {
 				size, track.X, clipWidthPx)
 		}
 		// The grid is a pure function of geometry — no phantom columns from an
-		// overshot viewport. 60 placed minus the reserved lane is a stable count
-		// across zoom, not a climbing one.
+		// overshot viewport. 60 placed minus the one-column lane is a stable
+		// count across zoom, not a climbing one.
+		ppu := p.PxPerUnitF()
 		settledCols, _ := child.terminal.Buffer().GetSize()
 		if settledCols > w {
 			t.Errorf("size %d: grid settled at %d columns, wider than the %d it was placed in — phantom columns",
 				size, settledCols, w)
 		}
+		// NO BLANK COLUMN: the content's right edge meets the lane's left edge.
+		// The lane is the child's own last column, so the gap is zero, not the
+		// near-full column a fixed-width lane against a foreign grid left behind.
+		contentRightPx := float64(settledCols) * float64(cw) * ppu
+		if gap := track.X - contentRightPx; gap > 1 || gap < -1 {
+			t.Errorf("size %d: %.1fpx (%.2f cols) between content right %.1f and lane left %.1f — blank column",
+				size, gap, gap/(float64(cw)*ppu), contentRightPx, track.X)
+		}
+
+		// THE HOVER/PRESS HIT: a pointer over the painted thumb, routed the real
+		// way (the wire cell mew sends for that pixel, plus the remembered precise
+		// pointer), must register as hover and start a drag. A lane misaligned
+		// from the child's column grid straddled two cells and the cell-quantized
+		// pointer missed it.
+		tcx, tcy := thumb.X+thumb.W/2, thumb.Y+thumb.H/2
+		cellCol := int(tcx/(float64(cw)*ppu)) + 1
+		cellRow := int(tcy/(float64(ch)*ppu)) + 1
+		pxU := core.Unit(tcx/ppu) + core.Unit(col-1)*cw
+		pyU := core.Unit(tcy/ppu) + core.Unit(row-1)*ch
+		e.notePointer(pxU, pyU)
+		e.terminalMouse("pty1", mew.TerminalMouse{Col: cellCol, Row: cellRow, Action: mew.TerminalMouseMotion})
+		if !child.gfx.vHover {
+			t.Errorf("size %d: pointer over the thumb (wire cell %d,%d) did not register hover", size, cellCol, cellRow)
+		}
+		e.notePointer(pxU, pyU)
+		e.terminalMouse("pty1", mew.TerminalMouse{Col: cellCol, Row: cellRow, Action: mew.TerminalMousePress, Button: mew.TerminalMouseButtonLeft})
+		if !child.gfx.vDragging {
+			t.Errorf("size %d: press on the thumb (wire cell %d,%d) did not start a drag", size, cellCol, cellRow)
+		}
+		e.terminalMouse("pty1", mew.TerminalMouse{Col: cellCol, Row: cellRow, Action: mew.TerminalMouseRelease, Button: mew.TerminalMouseButtonLeft})
 	}
 }
