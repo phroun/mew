@@ -1810,6 +1810,16 @@ func (r *WebGPURenderer) releaseWindowSurface(surf *WindowSurface) {
 // still land on the texture: 2 device pixels per side.
 const overlayStrokeOffset = core.Unit(2)
 
+// minOverlayTexPx is the smallest overlay-layer texture, in device pixels per
+// axis, that composites reliably. WebGPU requires a buffer-to-texture copy's
+// bytesPerRow to be a multiple of 256, and narrow overlay textures (a short
+// ≡/Help dropdown, or any dropdown once the font is shrunk) blitted fully
+// transparent on the Windows/DX12 backend — the shadow showed but the body did
+// not. Padding every overlay texture up to at least this size in each axis
+// keeps the row stride comfortably above that boundary; the extra pixels are
+// transparent and the quad grows to match, so nothing is distorted or moved.
+const minOverlayTexPx = 256
+
 // overlayBoundsAndPaint extracts the Bounds rect and Paint function from
 // an overlay value (window.PopupOverlay, or the anonymous menu dropdown
 // struct) by field name — reflection sidesteps the import cycle between
@@ -2391,7 +2401,24 @@ func (r *WebGPURenderer) drawOverlay(
 		return nil, core.TextCaret{}, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
 	}
 
-	overlayBackend, err := raster.NewScaled(widthPx, heightPx, scale)
+	// Some GPU backends (Windows/DX12 in particular) blit a too-small overlay
+	// texture as fully transparent: a narrow dropdown — the ≡ system menu, a
+	// Help menu, or ANY menu once the font is shrunk — showed its drop shadow
+	// but no body, while wider menus painted fine. Pad the texture up to a safe
+	// minimum in each axis. The content still paints at the top-left (the offset
+	// below is unchanged), so the extra pixels are transparent and fall to the
+	// bottom-right, OFF the menu; the on-screen quad grows to match so the
+	// texture maps 1:1 and nothing distorts. The shadow uses the real bounds, so
+	// the visible menu keeps its exact position and size.
+	texW, texH := widthPx, heightPx
+	if texW < minOverlayTexPx {
+		texW = minOverlayTexPx
+	}
+	if texH < minOverlayTexPx {
+		texH = minOverlayTexPx
+	}
+
+	overlayBackend, err := raster.NewScaled(texW, texH, scale)
 	if err != nil {
 		return nil, core.TextCaret{}, err
 	}
@@ -2421,13 +2448,23 @@ func (r *WebGPURenderer) drawOverlay(
 		return nil, core.TextCaret{}, err
 	}
 
-	// The on-screen quad grows by the same padding the texture gained.
+	// The on-screen quad grows by the same padding the texture gained. When the
+	// texture was padded up to the minimum above, grow the quad's unit extent to
+	// the padded pixel size too, so the texture still maps 1:1 (no stretch) and
+	// the transparent padding simply extends off the bottom-right of the menu.
 	aspect := float32(1)
 	if backendBounds.Dy() > 0 {
 		aspect = float32(backendBounds.Dx()) / float32(backendBounds.Dy())
 	}
+	quad := outsetBounds(bounds, overlayStrokeOffset)
+	if texW != widthPx {
+		quad.Width = core.Unit(math.Round(float64(texW) / pixelsPerUnitW))
+	}
+	if texH != heightPx {
+		quad.Height = core.Unit(math.Round(float64(texH) / pixelsPerUnitH))
+	}
 	uniformBuffer, uniformBindGroup, err := r.createWindowUniformBuffer(
-		outsetBounds(bounds, overlayStrokeOffset), backendSize, aspect)
+		quad, backendSize, aspect)
 	if err != nil {
 		bindGroup.Release()
 		textureView.Release()
