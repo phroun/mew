@@ -85,6 +85,14 @@ func loadLibrary() error {
 			continue
 		}
 		if err := csdl.LoadLibrary(path); err == nil {
+			// Record EXACTLY what loaded. gapfill must reopen this same file,
+			// not re-search: csdl.Path() hands back a bare "libSDL3.dylib", and
+			// resolving that afresh can land on a different SDL3 than this one
+			// (a system copy beside a bundled one), whereupon both load and
+			// SDL's Obj-C classes register twice — the Metal layer lookup then
+			// fails. An explicit path is refcounted, so gapfill's reopen is the
+			// same handle.
+			loadedSDLPath = path
 			libLoaded = true
 			return nil
 		} else if firstErr == nil {
@@ -96,6 +104,12 @@ func loadLibrary() error {
 		candidates, firstErr)
 }
 
+// loadedSDLPath is the exact candidate loadLibrary succeeded with, so gapfill
+// can bind its extra symbols against the very same file (see gapfill.go). Empty
+// for an embedded build (loadEmbedded owns the handle) and before the first
+// load.
+var loadedSDLPath string
+
 // libraryCandidates lists where libSDL3 might live, most specific
 // first. dyld and ld.so search neither Homebrew prefix by default, so
 // a correctly installed SDL3 is invisible to a bare library name.
@@ -104,21 +118,22 @@ func libraryCandidates() []string {
 	if custom := os.Getenv("KITTYTK_SDL3"); custom != "" {
 		c = append(c, custom)
 	}
-	c = append(c, csdl.Path())
-	switch runtime.GOOS {
-	case "darwin":
-		// A copy bundled inside a .app, next to the executable
-		// (Contents/MacOS/<bin> -> Contents/Frameworks/libSDL3.dylib). Tried
-		// BEFORE any system SDL3 so a self-contained bundle loads ITS OWN copy:
-		// loading both a bundled and a Homebrew SDL3 registers SDL's Obj-C
-		// classes twice, and the Metal layer lookup then fails ("implemented in
-		// both …"). Every SDL3 consumer here — the binding's initial load and
-		// gapfill's symbol rebind alike — walks this list, so putting the bundle
-		// first makes them all agree on one library. A bare binary has no such
-		// sibling; the path simply won't exist and the search falls through.
+	// A copy bundled inside a .app, next to the executable
+	// (Contents/MacOS/<bin> -> Contents/Frameworks/libSDL3.dylib), on darwin.
+	// It leads the list — ahead even of csdl.Path()'s bare "libSDL3.dylib" —
+	// so a self-contained bundle loads ITS OWN copy: an explicit path is
+	// unambiguous, where the bare name may resolve to a system SDL3 and, loaded
+	// alongside the bundled one, register SDL's Obj-C classes twice (the Metal
+	// layer lookup then fails, "implemented in both …"). A bare binary has no
+	// such sibling; the path won't exist and the search falls through.
+	if runtime.GOOS == "darwin" {
 		if exe, err := os.Executable(); err == nil {
 			c = append(c, filepath.Join(filepath.Dir(exe), "..", "Frameworks", "libSDL3.dylib"))
 		}
+	}
+	c = append(c, csdl.Path())
+	switch runtime.GOOS {
+	case "darwin":
 		c = append(c,
 			"/opt/homebrew/lib/libSDL3.dylib", // Homebrew, Apple Silicon
 			"/opt/homebrew/opt/sdl3/lib/libSDL3.dylib",

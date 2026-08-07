@@ -28,6 +28,20 @@ var (
 	gapfillOnce sync.Once
 )
 
+// gapCandidates is the search list gapfill reopens SDL3 through. It leads with
+// the EXACT path the binding loaded (loadedSDLPath), so the reopen lands on the
+// same file — refcounted, the same handle — rather than re-resolving a bare
+// name to a different SDL3 and loading a second copy (see loadedSDLPath). The
+// rest of libraryCandidates follows only as a fallback for an embedded build,
+// where no path was recorded.
+func gapCandidates() []string {
+	c := libraryCandidates()
+	if loadedSDLPath != "" {
+		c = append([]string{loadedSDLPath}, c...)
+	}
+	return c
+}
+
 // bindGaps runs lazily, after Init has opened libSDL3.
 func bindGaps() {
 	// Reopen the library the binding already loaded — the open is refcounted

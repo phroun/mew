@@ -9,7 +9,10 @@ import "github.com/ebitengine/purego"
 // has to find the file by the same widened search, since Homebrew's prefixes
 // are not on dyld's default path.
 func openSDLForGaps() uintptr {
-	for _, name := range libraryCandidates() {
+	for _, name := range gapCandidates() {
+		if name == "" {
+			continue
+		}
 		if h, err := purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL); err == nil {
 			return h
 		}

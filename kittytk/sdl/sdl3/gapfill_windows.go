@@ -10,7 +10,10 @@ import "golang.org/x/sys/windows"
 // extracted and loaded) hands back that module rather than a second copy. The
 // handle is held for the process lifetime, as dlopen's is on Unix.
 func openSDLForGaps() uintptr {
-	for _, name := range libraryCandidates() {
+	for _, name := range gapCandidates() {
+		if name == "" {
+			continue
+		}
 		if h, err := windows.LoadLibrary(name); err == nil && h != 0 {
 			return uintptr(h)
 		}
