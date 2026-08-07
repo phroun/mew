@@ -6827,7 +6827,10 @@ func (e *Editor) cloneCurrentViewport() bool {
 		OverwriteMode:   w.ViewState.OverwriteMode,
 		ReadOnly:        w.ViewState.ReadOnly,
 		ShowRuler:       w.ViewState.ShowRuler,
-		SetFocus:        true,
+		// Inherit the scrollbar setting too, or the clone reserves no bar column
+		// and comes up with no scrollbar beside the original that has one.
+		Scrollbar: w.ViewState.Scrollbar,
+		SetFocus:  true,
 	})
 
 	// Start the clone at the source's caret and viewport.
