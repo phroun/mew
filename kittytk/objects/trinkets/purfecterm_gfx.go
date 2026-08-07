@@ -1916,8 +1916,14 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 	if t.gfxInputActive() {
 		if t.gfx.lockstepPitch {
-			cw, ch := t.cellDims()
-			return float64(cw) * ppu, float64(ch) * ppu
+			// One of this terminal's own COLUMNS thick on BOTH axes — the
+			// vertical bar is one column wide, and the horizontal bar matches
+			// that width rather than standing a whole row tall (a row is far
+			// taller than a column, so ch here made the bottom bar a fat slab
+			// over the last row). Equal thickness keeps the corner a square.
+			cw, _ := t.cellDims()
+			lane := float64(cw) * ppu
+			return lane, lane
 		}
 		lane := float64(gfxScrollbarLane) * ppu
 		return lane, lane
