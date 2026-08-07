@@ -63,6 +63,10 @@ type purfecTermGfx struct {
 	// input paths (scrollbar hit tests run in render pixels and have no
 	// painter in hand). 0 = not painted yet; treat as 1.
 	ppu float64
+	// vpWpx/vpHpx are the widget's DEVICE extent as the outer system snapped
+	// it, and hitKX/hitKY the scale from a unit coordinate onto it.
+	vpWpx, vpHpx float64
+	hitKX, hitKY float64
 
 	// Local selection drag.
 	mouseDown      bool
@@ -280,28 +284,34 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	vpFullWpx := p.UnitSpanPxX(0, bounds.Width)
 	vpFullHpx := p.UnitSpanPxY(0, bounds.Height)
 
-	// ONE frame governs everything inside the widget: units * ppu, rounded per
-	// edge (cellBoundaryPx). The cells paint at it, the lanes anchor to it
-	// (gfxPixelFrame = bounds*ppu), the grid is fit to it, and the pointer maps
-	// at it (gfxPointerPx). vpFull*px is the toolkit's SEPARATE cell-snapped
-	// device extent (deviceAnchor), which diverges from ppu at fractional zoom;
-	// it is used ONLY for the backdrop fill below — pinning the lanes or the
-	// pointer to it (the old hitKX scaling) split the hit test from the paint and
-	// drifted a cell across the row, and pushed the lane past the content.
+	// Two rates meet here and BOTH matter. ppu is the renderer's font-aware
+	// pixels-per-unit, which the cell grid is laid out and painted with.
+	// vpFull*px is the widget's true device extent, which the outer system
+	// SNAPS — so it is not W*ppu, and the gap between them grows with the
+	// distance from the origin. Anything anchored to the widget's EDGE (the
+	// scrollbar lanes) must use the snapped extent, and any pointer must be
+	// scaled onto it, or the hit box drifts from the paint. hitK is that
+	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
 	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
+	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
+	t.gfx.hitKX, t.gfx.hitKY = 1, 1
+	if bounds.Width > 0 && ppu > 0 {
+		t.gfx.hitKX = float64(vpFullWpx) / (float64(bounds.Width) * ppu)
+	}
+	if bounds.Height > 0 && ppu > 0 {
+		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
+	}
 
 	// Content pixel width (viewport minus the vertical scrollbar lane) drives
 	// how many whole COLUMNS fit; size the terminal to that so the grid fills its
-	// space. Measured at ppu — the SAME rate the cells paint at and the lane and
-	// pointer now map at — so the fitted grid ends exactly where the reserved
-	// lane begins (no column painted under the bar) and every column the pointer
-	// can reach is a real column. The lane's reservation is content-INDEPENDENT
-	// (gfxInputActive is the frame's state, not the child's), so folding it into
-	// the grid the child is sized to is safe.
-	contentWpx := math.Round(float64(bounds.Width) * ppu)
+	// space (updateTerminalSize's unit division undercounts at fractional ppu).
+	// The yellow scrollback line and text span this content width. The lane's
+	// reservation is content-INDEPENDENT (gfxInputActive is the frame's state,
+	// not the child's), so folding it into the grid the child is sized to is safe.
+	contentWpx := vpFullWpx
 	if t.gfxInputActive() && !t.editorMode {
-		contentWpx = math.Round(float64(bounds.Width-gfxScrollbarLane) * ppu)
+		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
 	}
 	// ROWS fit the FULL height. The child's grid must be a pure function of its
 	// rectangle and font — never of its own content — or it oscillates. Reserving
@@ -312,7 +322,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// repaint -> re-fit loop at a FIXED window size, spinning the emulator and
 	// thrashing allocation. So the horizontal bar OVERLAYS the bottom row (it is a
 	// thin lane, present only while a line overflows) instead of stealing a row.
-	contentHpx := math.Round(float64(bounds.Height) * ppu)
+	contentHpx := vpFullHpx
 	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
 	// smaller) rect would resize the child under a read-only copy.
@@ -1842,12 +1852,13 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 	if ppu <= 0 {
 		ppu = 1
 	}
-	// bounds*ppu — the SAME rate the content cells are painted at
-	// (cellBoundaryPx = round(units*ppu)). The lanes ride the frame's far edges,
-	// so pinning them here keeps them flush with the content and with the pointer
-	// (gfxPointerPx), which also maps at ppu. Using the toolkit's snapped
-	// deviceAnchor extent instead (vpWpx) put the lane a fraction of a cell past
-	// the content — skinny/clipped — and split the hit test from the paint.
+	if t.gfx.vpWpx > 0 && t.gfx.vpHpx > 0 {
+		// The widget's real device extent. A bar pinned to the right or bottom
+		// edge must be pinned to THIS, not to bounds*ppu — those differ by the
+		// outer system's snapping, and the pointer arrives in the snapped
+		// space.
+		return t.gfx.vpWpx, t.gfx.vpHpx, ppu
+	}
 	b := t.Bounds()
 	return math.Round(float64(b.Width) * ppu), math.Round(float64(b.Height) * ppu), ppu
 }
@@ -1874,13 +1885,14 @@ func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 // origin: the vertical lane, furthest right, misses worst.
 func (t *PurfecTerm) gfxPointerPx(x, y core.Unit) (float64, float64) {
 	_, _, ppu := t.gfxPixelFrame()
-	// units * ppu, exactly as fillPixels/cellBoundaryPx place the cells and the
-	// lanes. The pointer arrives in the SAME unit frame the content is painted
-	// from (the host corrects a hosted child's origin with a pixel residual, not
-	// a rate change), so any extra scale — the old hitKX, which rode the toolkit's
-	// cell-snapped deviceAnchor rate rather than the font-aware ppu — put the hit
-	// test in a different space than the paint and drifted by a cell across the row.
-	return float64(x) * ppu, float64(y) * ppu
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
+	return float64(x) * kx * ppu, float64(y) * ky * ppu
 }
 
 // cellBoundaryPx is where a cell edge lands, in painted pixels: fillPixels
@@ -3037,15 +3049,21 @@ func (t *PurfecTerm) cellToLocal(col, row int) core.UnitPoint {
 	}
 	// The inverse of the hit path, and it must share its frame: cells are
 	// placed at rounded pixel boundaries, so a cell's origin in units is that
-	// boundary divided back by ppu — the same rate gfxPointerPx maps forward at
-	// (no hitKX; see the frame invariant there).
+	// boundary divided back by ppu.
 	ppu := t.gfx.ppu
 	if ppu <= 0 {
 		ppu = 1
 	}
+	kx, ky := t.gfx.hitKX, t.gfx.hitKY
+	if kx <= 0 {
+		kx = 1
+	}
+	if ky <= 0 {
+		ky = 1
+	}
 	return core.UnitPoint{
-		X: core.Unit(cellBoundaryPx(float64(col-1)*cw, ppu) / ppu),
-		Y: core.Unit(cellBoundaryPx(float64(row-1)*chh, ppu) / ppu),
+		X: core.Unit(cellBoundaryPx(float64(col-1)*cw, ppu) / (kx * ppu)),
+		Y: core.Unit(cellBoundaryPx(float64(row-1)*chh, ppu) / (ky * ppu)),
 	}
 }
 
