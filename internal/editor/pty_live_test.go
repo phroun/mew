@@ -92,16 +92,37 @@ func TestLivePadsToColumn(t *testing.T) {
 	}
 }
 
-// One colour held across a write run and a newline emits exactly one SGR at the
-// start: the pen carried into each row suppresses a redundant repeat.
-func TestLiveMonochromeSingleSGR(t *testing.T) {
+// Each colour run within a row is anchored at that row's start rather than
+// relying on carry across the newline — every row is self-contained, so a colour
+// can never bleed from one row into the next regardless of paint order.
+func TestLivePerRowColorAnchor(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
 	sink.LiveWrite(0, 0, "ab", "\x1b[0;31m")
 	sink.LiveNewline(0, 1)
-	sink.LiveWrite(0, 1, "cd", "\x1b[0;31m") // same pen: no new SGR
+	sink.LiveWrite(0, 1, "cd", "\x1b[0;31m") // same pen, but re-anchored on its own row
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mab\ncd"); got != want {
-		t.Fatalf("buffer = %q, want %q (one SGR, carried across the newline)", got, want)
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mab\n\x1b[0;31mcd"); got != want {
+		t.Fatalf("buffer = %q, want %q (each row anchors its own colour)", got, want)
+	}
+}
+
+// A default write at the start of a row that was previously painted a colour
+// re-anchors to default — the earlier colour does not bleed into the new,
+// independently-painted content (the post-exit shell-prompt case).
+func TestLiveNoColorBleedOnRepaint(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ROW0", "\x1b[0;31m") // red row 0
+	sink.LiveNewline(0, 1)
+	sink.LiveWrite(0, 1, "ROW1", "\x1b[0;35m") // magenta row 1
+	// Now overwrite row 1's start with default content, as a returning shell
+	// prompt would after a full-screen app exits.
+	sink.LiveCursorMove(0, 1)
+	sink.LiveWrite(0, 1, "sh", "") // default — must NOT inherit magenta
+	e.ptyEnded(w.Buffer, nil)
+	// Row 1 begins with a reset, so "sh" is default; the trailing "OW1" restores
+	// magenta. Row 0 is untouched red.
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mROW0\n\x1b[0msh\x1b[0;35mW1"); got != want {
+		t.Fatalf("buffer = %q, want %q (default repaint must not inherit the row's old colour)", got, want)
 	}
 }
 

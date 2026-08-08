@@ -149,18 +149,23 @@ func (m *liveMirror) frontierRow() int {
 // terminal (and the editing caret parked on it) ride forward and the new row
 // lands inside the region. The scratch cursor does the insert so the write caret
 // is untouched.
-func (m *liveMirror) grow() {
+// grow appends one blank row, seeding its stored start pen with pen. A newline
+// or cursor-move materialization seeds the screen default (the row is untouched
+// until an insert/overwrite recolours it); a scroll seeds the current pen,
+// because the terminal fills the newly-exposed bottom line with the current
+// background (background-colour erase).
+func (m *liveMirror) grow(pen string) {
 	el, _ := m.bottom.GetPosition()
 	m.peek.SeekLineRune(el-1, 0)
 	m.peek.SeekLineEnd()
 	m.peek.InsertString("\n", nil, false)
-	m.rowStartPen = append(m.rowStartPen, m.screenPen)
+	m.rowStartPen = append(m.rowStartPen, pen)
 }
 
-// growTo materializes rows up to and including row y.
+// growTo materializes rows up to and including row y at the screen default.
 func (m *liveMirror) growTo(y int) {
 	for m.frontierRow() < y {
-		m.grow()
+		m.grow(m.screenPen)
 	}
 }
 
@@ -266,13 +271,21 @@ func (m *liveMirror) Write(x, y int, text, sgr string) {
 	midBytes, endRune, boundarySGR, _ := spanForward(rs, off, w)
 	hasTrailing := hasVisibleAfter(rs, endRune)
 
-	// Begin correction: make the run's pen take effect. Emit only on a real
-	// change; when an SGR sits immediately before the caret, replace it (extend
-	// the overwrite back over it) rather than stacking a second one.
+	// Begin correction: make the run's pen take effect. At the line-initial
+	// position the authority is the row's STORED start pen, not the carried pen:
+	// a fresh write there re-anchors the row's colour, so a stale pen bled from
+	// the row above (SGR persists across the newline) cannot leak in — every row
+	// is self-anchored, like the terminal's own per-row SGRs. Elsewhere the
+	// carried pen is the reference. Emit only on a real change; when an SGR sits
+	// immediately before the caret, replace it rather than stacking.
+	base := m.curPen
+	if x == 0 {
+		base = m.rowPen(y)
+	}
 	begin := ""
 	startOff, delLead := off, 0
-	if writePen != m.curPen {
-		begin = sgr
+	if writePen != base {
+		begin = writePen
 		if begin == "" {
 			begin = sgrReset // reverting to default needs an explicit reset
 		}
@@ -460,9 +473,11 @@ func (m *liveMirror) Newline(x, y int) {
 	m.caret.SeekRelativeRunes(1) // over the newline, to next line's column 0
 	m.curY++
 	m.curX = 0
-	if m.format == captureFull {
-		m.setRowPen(m.curY, m.curPen) // SGR persists across the newline
-	}
+	// Do NOT stamp rowStartPen here: a freshly grown row already recorded the
+	// carried pen (grow), and a newline that lands back on an ALREADY-painted row
+	// must not overwrite that row's real start pen — otherwise the col-0 anchor
+	// check loses its authority and colour bleeds across independently-painted
+	// rows. The pen still carries in the document across the newline.
 	if x != 0 || y != m.curY {
 		m.seekTo(x, y)
 	}
@@ -497,6 +512,11 @@ func (m *liveMirror) ScrollLineOff(n int) {
 		if m.curY > 0 {
 			m.curY--
 		}
+		// The scroll exposes a blank line at the bottom, filled with the current
+		// background (background-colour erase). Materialize it now, seeded with the
+		// current pen — so the window keeps its height and the new line's default
+		// is the scroll's background, not the plain screen default.
+		m.grow(m.curPen)
 	}
 }
 
@@ -508,7 +528,7 @@ func (m *liveMirror) ScrollLineOff(n int) {
 // which every default cell painted afterwards resolves to.
 func (m *liveMirror) ClearScreen(sgr string) {
 	m.screenPen = normalizePen(sgr)
-	m.grow() // a fresh blank row just above end of terminal
+	m.grow(m.screenPen) // a fresh blank row just above end of terminal
 	el, _ := m.bottom.GetPosition()
 	// The new blank row is line el-1; start of terminal moves to just before the
 	// EOL of the line above it — so every prior row stays above as history.
