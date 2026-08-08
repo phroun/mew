@@ -67,6 +67,38 @@ func TestZoomTargetChords(t *testing.T) {
 	}
 }
 
+// The zoom chord is platform-specific: Command/Meta elsewhere, Ctrl+Shift on
+// Windows. zoomChordActiveFor is checked on both branches from any host.
+func TestZoomChordActiveByPlatform(t *testing.T) {
+	const (
+		ctrlShift = sdl3.KMOD_CTRL | sdl3.KMOD_SHIFT
+	)
+	cases := []struct {
+		name    string
+		mod     uint16
+		windows bool
+		want    bool
+	}{
+		// Non-Windows: the Command/Meta (GUI) key, Shift free, Ctrl/Alt break it.
+		{"other: gui", sdl3.KMOD_GUI, false, true},
+		{"other: gui+shift", sdl3.KMOD_GUI | sdl3.KMOD_SHIFT, false, true},
+		{"other: ctrl+shift is NOT the chord", ctrlShift, false, false},
+		{"other: no mods", 0, false, false},
+		// Windows: Ctrl+Shift, and the GUI/Meta chord no longer zooms.
+		{"win: ctrl+shift", ctrlShift, true, true},
+		{"win: ctrl alone", sdl3.KMOD_CTRL, true, false},
+		{"win: shift alone", sdl3.KMOD_SHIFT, true, false},
+		{"win: gui is NOT the chord", sdl3.KMOD_GUI, true, false},
+		{"win: ctrl+shift+alt broken", ctrlShift | sdl3.KMOD_ALT, true, false},
+	}
+	for _, c := range cases {
+		if got := zoomChordActiveFor(c.mod, c.windows); got != c.want {
+			t.Errorf("%s: zoomChordActiveFor(%#x, windows=%v) = %v, want %v",
+				c.name, c.mod, c.windows, got, c.want)
+		}
+	}
+}
+
 // The dynamic size is capped to 4..100pt — stepping past either end holds,
 // and a default outside the range restores to the nearest bound.
 func TestZoomTargetCaps(t *testing.T) {

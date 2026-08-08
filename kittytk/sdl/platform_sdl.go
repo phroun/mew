@@ -1081,13 +1081,31 @@ func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 	return true
 }
 
-// zoomTarget resolves a Command/Meta zoom chord to the font size it asks
-// for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns to
-// the configured default; the keypad's +/-/0 count too. ok is false for any
-// other key: Ctrl or Alt in the chord makes it an ordinary key combination,
-// but Shift rides along freely — "+" IS Shift+"=" on common layouts.
+// zoomChordActive reports whether the modifiers held are the platform's
+// font-zoom chord. On Windows that is Ctrl+Shift — Windows keyboards seldom have
+// a Command/Super key, and plain Ctrl+/- is commonly an app's own binding — so
+// zoom is Ctrl+Shift with "-", "=" and "0". Everywhere else it is the
+// Command/Meta (GUI) key, Shift free (Cmd++ is Cmd+Shift+= on common layouts).
+func zoomChordActive(mod uint16) bool {
+	return zoomChordActiveFor(mod, runtime.GOOS == "windows")
+}
+
+// zoomChordActiveFor is zoomChordActive with the platform decision passed in, so
+// both branches are testable on any host.
+func zoomChordActiveFor(mod uint16, windows bool) bool {
+	if windows {
+		return mod&sdl3.KMOD_CTRL != 0 && mod&sdl3.KMOD_SHIFT != 0 &&
+			mod&(sdl3.KMOD_GUI|sdl3.KMOD_ALT) == 0
+	}
+	return mod&sdl3.KMOD_GUI != 0 && mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) == 0
+}
+
+// zoomTarget resolves a font-zoom chord (see zoomChordActive) to the font size
+// it asks for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns
+// to the configured default; the keypad's +/-/0 count too. ok is false for any
+// other key or when the chord's modifiers are not held.
 func zoomTarget(sym sdl3.Keysym, cur, def int) (int, bool) {
-	if sym.Mod&sdl3.KMOD_GUI == 0 || sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) != 0 {
+	if !zoomChordActive(sym.Mod) {
 		return 0, false
 	}
 	switch sym.Sym {
