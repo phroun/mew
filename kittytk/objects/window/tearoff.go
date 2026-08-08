@@ -509,7 +509,7 @@ func (h *TearOffHost) refreshResizeHover() {
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
 // cursor for a plain (non-drag, non-resize) hover over the torn window.
 func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
-	// A popup (dropdown menu, context menu) composited on the torn surface
+	// A popup (combobox dropdown, context menu) composited on the torn surface
 	// floats above the content: over it, no trinket cursor from underneath
 	// shows through — just the arrow. Mirrors the desktop's CursorAt rule, so
 	// a torn-off window never shows an I-beam THROUGH an open menu.
@@ -520,6 +520,16 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 			h.applyCursor(core.CursorDefault)
 			return
 		}
+	}
+	// The open menu-bar dropdown is a SEPARATE compositor layer, not one of
+	// h.popups, so it needs its own check — otherwise the I-beam shows through
+	// where the dropdown overlaps the editor's text (the docked window gets this
+	// for free from CursorAt's ActiveMenuBounds test).
+	if b, _, _, ok := h.win.MenuDropdownLayer(); ok &&
+		x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
+		h.win.SetResizeHoverEdges(0, 0)
+		h.applyCursor(core.CursorDefault)
+		return
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {

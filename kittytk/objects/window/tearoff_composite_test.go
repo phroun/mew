@@ -273,3 +273,52 @@ func TestTearOffHostContentChangeMovesRepaintRevision(t *testing.T) {
 		t.Error("a change inside the torn window did not move its repaint revision")
 	}
 }
+
+// A torn-off window must not show the content's I-beam THROUGH its open
+// menu-bar dropdown: the dropdown is a compositor layer of its own (not one of
+// the popups), so updateHoverAndCursor has to check it too. The docked window
+// gets this from CursorAt's ActiveMenuBounds test; this is the solo-window
+// parity.
+func TestTearOffHostMenuDropdownSuppressesIBeam(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	surf := &nativeFakeSurface{size: core.UnitSize{Width: 200, Height: 100}}
+	win := NewWindow("torn")
+	mb := newFakeMenuBar(
+		core.UnitRect{X: 4, Y: 16, Width: 60, Height: 60}, // dropdown reaching well into content
+		core.UnitRect{X: 4, Y: 0, Width: 24, Height: 16})
+	win.SetWindowMenuBar(mb)
+	win.SetMenuBarVisible(true)
+	win.SetDetached(true)
+	content := &ibeamContent{} // the content under the dropdown wants the I-beam
+	content.TrinketBase = *core.NewTrinketBase()
+	content.Init(content)
+	win.SetContent(content)
+	win.SetBounds(core.UnitRect{Width: 200, Height: 100})
+	win.Layout()
+	h := NewTearOffHost(win, surf, ppu1, func() (int, int) { return 0, 0 }, nil)
+
+	var applied core.CursorShape = -1
+	h.SetCursorSetter(func(s core.CursorShape) { applied = s })
+
+	b, _, _, ok := win.MenuDropdownLayer()
+	if !ok {
+		t.Fatal("expected an open menu dropdown layer")
+	}
+	// Find a point inside the dropdown where the content genuinely wants the
+	// I-beam — otherwise the test proves nothing about suppression.
+	var x, y core.Unit
+	found := false
+	for yy := b.Y; yy < b.Y+b.Height && !found; yy++ {
+		if win.CursorShapeAt(b.X+b.Width/2, yy) == core.CursorText {
+			x, y, found = b.X+b.Width/2, yy, true
+		}
+	}
+	if !found {
+		t.Fatal("setup: no I-beam point found inside the dropdown; test can't distinguish the fix")
+	}
+	// The host must show the plain arrow over the dropdown, not that I-beam.
+	h.updateHoverAndCursor(x, y)
+	if applied != core.CursorDefault {
+		t.Fatalf("over the menu dropdown (%d,%d), applied cursor = %v, want CursorDefault (arrow)", x, y, applied)
+	}
+}
