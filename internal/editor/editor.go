@@ -2097,12 +2097,18 @@ func (e *Editor) registerCommands() {
 
 	// Editing commands (using TypeScript naming convention)
 	ps.RegisterCommand("del_char_prior", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A backspace over a read-only buffer declines (false, no edit) but —
+		// unlike every other mutation — WITHOUT the "Buffer is read-only" toast: a
+		// key as ordinary as backspace should not nag. Other commands still warn.
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
 		// When deleteNewlineAsChar is off for this viewport, a backspace at the
 		// start of a line declines rather than joining it with the line above.
 		// Fail with false and no visible error; no edit, so the undo coalescing run
 		// is untouched.
-		if w := e.ViewportManager.GetFocusedViewport(); w != nil &&
-			w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, false) {
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, false) {
 			return pawscript.BoolStatus(false)
 		}
 		e.deleteCharBefore()
@@ -2112,10 +2118,15 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("del_char_next", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A forward-delete over a read-only buffer declines silently too — no
+		// "Buffer is read-only" toast (see del_char_prior).
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
 		// Same guard forward: a forward-delete at end of line declines rather than
 		// pulling the next line up. No edit → coalescing untouched.
-		if w := e.ViewportManager.GetFocusedViewport(); w != nil &&
-			w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, true) {
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, true) {
 			return pawscript.BoolStatus(false)
 		}
 		e.deleteCharAt()
@@ -4420,7 +4431,10 @@ func (e *Editor) viewportEditLocked(w *viewport.Viewport) bool {
 	}
 	// A generated surface (mew:/…) is read-only by its address, not by viewport
 	// state — a hard guarantee independent of when options were last resolved.
-	if w.ViewState.ReadOnly || (w.Buffer != nil && isGenPath(w.Buffer.GetFilename())) {
+	// viewportReadOnly is the SILENT predicate; keeping this branch on it means
+	// the delete commands' silent read-only decline can never drift from what
+	// warns here.
+	if e.viewportReadOnly(w) {
 		// Tagged so a burst of rejected edits (holding a key) collapses to one
 		// warning instead of stacking a bar per keystroke.
 		e.ShowWarningTagged("Buffer is read-only", "readonly_warning")
