@@ -180,6 +180,29 @@ func TestDetachedWindowFirstMenuQuitOnly(t *testing.T) {
 	}
 }
 
+// A detached window's ≡ menu that carried no items of its own must not open
+// with a stray separator above Quit; a menu that did have items keeps the
+// separator between them and Quit.
+func TestDetachedQuitOnlyNoLeadingSeparator(t *testing.T) {
+	d := NewDesktop()
+
+	empty := NewMenu("≡")
+	m := d.createAppMenuWithQuitOnly(empty, "≡", "Demo")
+	if items := m.Items(); len(items) == 0 || items[0].Separator {
+		t.Errorf("empty ≡ menu opens with a separator: %v", itemTexts(m))
+	}
+	if !menuHasItem(m, "Quit Demo") {
+		t.Error("empty ≡ menu missing Quit")
+	}
+
+	withItems := NewMenu("≡")
+	withItems.AddItem(NewMenuItem("Copy"))
+	m2 := d.createAppMenuWithQuitOnly(withItems, "≡", "Demo")
+	if its := m2.Items(); len(its) < 3 || !its[1].Separator {
+		t.Errorf("a non-empty ≡ menu should separate its items from Quit: %v", itemTexts(m2))
+	}
+}
+
 // The desktop-hosted Window menu keeps its own custom entries, then lists
 // the app's own windows, a separator, and the other in-surface desktop
 // windows (belonging to other apps). Torn windows of other apps live on

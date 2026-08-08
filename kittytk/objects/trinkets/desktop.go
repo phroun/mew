@@ -1796,8 +1796,14 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 
 // appendQuitSection adds a separator and the app's Quit item. This is
 // the part that stays on a detached main window's own menu bar.
+//
+// The separator is only added when there is already something above it: an app
+// that declared no app-menu items (the synthesized "≡" menu) would otherwise
+// open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
-	menu.AddSeparator()
+	if len(menu.Items()) > 0 {
+		menu.AddSeparator()
+	}
 
 	quitItem := NewMenuItem("&Quit " + appName)
 	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
