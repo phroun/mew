@@ -822,7 +822,6 @@ func (e *Editor) navVert(dir int) bool {
 	// The page can turn. Paging clears NavIdealSet (via afterVerticalMovement),
 	// so save/restore it — a page is part of the same vertical run.
 	oldTop, oldBottom := top, bottom
-	startLine := w.CursorPos().Line
 	saved, wasSet := w.NavIdealCol, w.NavIdealSet
 	if dir > 0 {
 		e.pageDown()
@@ -855,19 +854,16 @@ func (e *Editor) navVert(dir int) bool {
 		boundary = 0
 	}
 
-	// Prefer a link on the newly revealed page — scan the WHOLE new page in the
-	// travel direction (top to bottom going down, bottom to top going up, so
-	// nothing on the page is skipped) and land on the first link line by the run's
-	// ideal column, so vertical nav continues from a focused button. With no link
-	// on the new page, land on the first revealed line itself rather than wherever
-	// a full page scroll would otherwise drop the caret. target is the run's ideal
-	// column, established at the top of navVert.
+	// Prefer a link on the newly revealed content — scan in the travel direction
+	// starting from the FIRST line that was not visible before the turn
+	// (inclusive), so a partial page turn (overlap) never backtracks to a button
+	// above the previous caret. Land on the first link line by the run's ideal
+	// column, so vertical nav continues from a focused button. With no link in
+	// the revealed content, land on that first revealed line itself. target is
+	// the run's ideal column, established at the top of navVert.
 	land, landRune := boundary, 0
 	if dir > 0 {
-		for L := newTop; L <= newBottom; L++ {
-			if L == startLine {
-				continue // never land back on the link we are leaving
-			}
+		for L := boundary; L <= newBottom; L++ {
 			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
 				land = L
 				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
@@ -875,10 +871,7 @@ func (e *Editor) navVert(dir int) bool {
 			}
 		}
 	} else {
-		for L := newBottom; L >= newTop; L-- {
-			if L == startLine {
-				continue // never land back on the link we are leaving
-			}
+		for L := boundary; L >= newTop; L-- {
 			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
 				land = L
 				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
