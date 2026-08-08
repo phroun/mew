@@ -277,11 +277,16 @@ type Editor struct {
 	// processor, so an unchanged set is not rebuilt.
 	appliedMappingSet string
 
-	// ptySessions binds a buffer to the host-provided terminal session it is
+	// ptySessions binds a VIEWPORT to the host-provided terminal session it is
 	// running, and ptyMu guards it: the read loop lives on the session's own
-	// goroutine while commands touch the map from the main loop. See pty.go.
+	// goroutine while commands touch the map from the main loop. Keying on the
+	// viewport (not the buffer) is what lets a cloned viewport show plain buffer
+	// text in one tile while the terminal draws in the origin, and lets two
+	// sessions run against one buffer from two viewports; each ptyState still
+	// remembers the buffer it launched in (ptyState.buf) for where its capture
+	// lands. See pty.go.
 	ptyMu       sync.Mutex
-	ptySessions map[*buffer.Buffer]*ptyState
+	ptySessions map[*viewport.Viewport]*ptyState
 	ptySeq      int
 	// terminalSurfacesSent is the last set pushed to the host, so an idle
 	// frame republishes nothing.
@@ -1219,7 +1224,7 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetScrollbarHostDrawn(e.hostDrawsScrollbars)
 
 	renderer.SetScrollbarSuppressor(func(w *viewport.Viewport) bool {
-		return w.Buffer != nil && e.visibleSessionFor(w.Buffer) != nil
+		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
 	// A terminal viewport's document text is not painted: the host draws the
@@ -1227,7 +1232,7 @@ func New(cfg Config) (*Editor, error) {
 	// show the editor background, not the buffer behind. The gutter and ruler
 	// still render. Session-ness lives on the buffer, so the renderer asks.
 	renderer.SetContentSuppressor(func(w *viewport.Viewport) bool {
-		return w.Buffer != nil && e.visibleSessionFor(w.Buffer) != nil
+		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
 	// Peek-indicator labels run through the shared TFC engine so codes like
@@ -1307,6 +1312,18 @@ func New(cfg Config) (*Editor, error) {
 	// (a signal, a panic, or a host's sudden shutdown) never has to decide.
 	e.resolveDeadcat()
 
+	// A terminal is bound to the viewport it launched in (ptySessions is keyed by
+	// viewport): when that viewport is truly removed, its session goes with it.
+	// The event fires on its own goroutine, so marshal the close onto the main
+	// loop where the pty map lives. OldValue carries the removed *Viewport.
+	e.ViewportManager.On(viewport.EventViewportRemoved, func(ev viewport.Event) {
+		w, _ := ev.OldValue.(*viewport.Viewport)
+		if w == nil {
+			return
+		}
+		e.PostAction(func() { e.endSessionForRemovedViewport(w) })
+	})
+
 	return e, nil
 }
 
@@ -1371,7 +1388,7 @@ func (e *Editor) peekBindingValues() map[string]string {
 // host's terminalPlace); mew adding a second caret over it would say the
 // opposite.
 func (e *Editor) caretHidden(w *viewport.Viewport) bool {
-	if w != nil && e.visibleSessionFor(w.Buffer) != nil {
+	if w != nil && e.visibleSessionFor(w) != nil {
 		return true
 	}
 	return e.focusedLinkButton(w) != nil

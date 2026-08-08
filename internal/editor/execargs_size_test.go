@@ -286,7 +286,7 @@ func TestCaptureOnDieFillsBuffer(t *testing.T) {
 			if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, rung, format) {
 				t.Fatal("exec failed")
 			}
-			e.ptyEnded(w.Buffer, nil)
+			e.ptyEnded(w, nil)
 			if got := w.Buffer.GetContent(); got != want {
 				t.Errorf("buffer = %q, want %q", got, want)
 			}
@@ -322,7 +322,7 @@ func TestCaptureOnDieLandsAtCaret(t *testing.T) {
 	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureFinal, captureFull) {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), "one\nCAP\ntwo\n"; got != want {
 		t.Fatalf("buffer = %q, want %q (transcript should land at the caret)", got, want)
 	}
@@ -373,7 +373,7 @@ func TestCaptureRawStreamsAtCaret(t *testing.T) {
 	}
 	sink.Output([]byte("A"))
 	sink.Output([]byte("B\x1b[31mC\x1b[0m")) // full keeps the escapes verbatim
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), "one\nAB\x1b[31mC\x1b[0mtwo\n"; got != want {
 		t.Fatalf("buffer = %q, want %q", got, want)
 	}
@@ -400,7 +400,7 @@ func TestCaptureRawFilters(t *testing.T) {
 			for _, f := range c.feed {
 				sink.Output([]byte(f))
 			}
-			e.ptyEnded(w.Buffer, nil)
+			e.ptyEnded(w, nil)
 			if got := w.Buffer.GetContent(); got != c.want {
 				t.Fatalf("buffer = %q, want %q", got, c.want)
 			}
@@ -437,7 +437,7 @@ func TestCaptureLinesFold(t *testing.T) {
 		sink.Output([]byte("ignored on the lines rung"))
 		sink.LineOff("L1")
 		sink.LineOff("\x1b[31mL2\x1b[0m")
-		e.ptyEnded(w.Buffer, nil)
+		e.ptyEnded(w, nil)
 		if got, want := w.Buffer.GetContent(), "L1\n\x1b[31mL2\x1b[0m\n"; got != want {
 			t.Fatalf("buffer = %q, want %q", got, want)
 		}
@@ -445,7 +445,7 @@ func TestCaptureLinesFold(t *testing.T) {
 	t.Run("text strips the line's escapes", func(t *testing.T) {
 		e, w, sink := newLinesSession(t, captureText)
 		sink.LineOff("\x1b[31mred\x1b[0m")
-		e.ptyEnded(w.Buffer, nil)
+		e.ptyEnded(w, nil)
 		if got, want := w.Buffer.GetContent(), "red\n"; got != want {
 			t.Fatalf("buffer = %q, want %q", got, want)
 		}
@@ -471,10 +471,10 @@ func TestPtyHiddenSurfaceAndVisibility(t *testing.T) {
 	if !e.execRequestArgsPolicy("bash", nil, "", pol, captureOff, captureFull) {
 		t.Fatal("exec failed")
 	}
-	if e.ptySessionFor(w.Buffer) == nil {
+	if e.ptySessionFor(w) == nil {
 		t.Error("ptySessionFor should see a hidden session (existence)")
 	}
-	if e.visibleSessionFor(w.Buffer) != nil {
+	if e.visibleSessionFor(w) != nil {
 		t.Error("visibleSessionFor should be nil for a hidden session")
 	}
 	e.notifyTerminalSurfaces()
@@ -486,7 +486,7 @@ func TestPtyHiddenSurfaceAndVisibility(t *testing.T) {
 	if !e.setViewportPTYHidden(-1, "viewport_pty_show") {
 		t.Fatal("show failed")
 	}
-	if e.visibleSessionFor(w.Buffer) == nil {
+	if e.visibleSessionFor(w) == nil {
 		t.Error("after show, visibleSessionFor should be non-nil")
 	}
 	e.notifyTerminalSurfaces()

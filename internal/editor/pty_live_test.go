@@ -43,7 +43,7 @@ func TestLiveStreamsRows(t *testing.T) {
 	sink.LiveWrite(0, 0, "hello", "")
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "world", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("hello\nworld"); got != want {
 		t.Fatalf("buffer = %q, want %q", got, want)
 	}
@@ -56,7 +56,7 @@ func TestLiveOvertypeInPlace(t *testing.T) {
 	sink.LiveWrite(0, 0, "XXXX", "")
 	sink.LiveCursorMove(1, 0)
 	sink.LiveWrite(1, 0, "ab", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("XabX"); got != want {
 		t.Fatalf("buffer = %q, want %q (overtype, not insert)", got, want)
 	}
@@ -73,7 +73,7 @@ func TestLiveNewlineSkipsEOL(t *testing.T) {
 	sink.LiveCursorMove(0, 0) // back up to row 0
 	sink.LiveNewline(0, 1)    // must land on the existing row 1, inserting nothing
 	sink.LiveWrite(0, 1, "XX", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("AA\nXX"); got != want {
 		t.Fatalf("buffer = %q, want %q (newline must not push a line down)", got, want)
 	}
@@ -86,7 +86,7 @@ func TestLivePadsToColumn(t *testing.T) {
 	sink.LiveWrite(0, 0, "ab", "")
 	sink.LiveCursorMove(5, 0) // three cells past end of "ab"
 	sink.LiveWrite(5, 0, "Z", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("ab   Z"); got != want {
 		t.Fatalf("buffer = %q, want %q (pad short line with spaces)", got, want)
 	}
@@ -100,7 +100,7 @@ func TestLivePerRowColorAnchor(t *testing.T) {
 	sink.LiveWrite(0, 0, "ab", "\x1b[0;31m")
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "cd", "\x1b[0;31m") // same pen, but re-anchored on its own row
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mab\n\x1b[0;31mcd"); got != want {
 		t.Fatalf("buffer = %q, want %q (each row anchors its own colour)", got, want)
 	}
@@ -118,7 +118,7 @@ func TestLiveNoColorBleedOnRepaint(t *testing.T) {
 	// prompt would after a full-screen app exits.
 	sink.LiveCursorMove(0, 1)
 	sink.LiveWrite(0, 1, "sh", "") // default — must NOT inherit magenta
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	// Row 1 begins with a reset, so "sh" is default; the trailing "OW1" restores
 	// magenta. Row 0 is untouched red.
 	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mROW0\n\x1b[0msh\x1b[0;35mW1"); got != want {
@@ -131,7 +131,7 @@ func TestLiveColorChange(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
 	sink.LiveWrite(0, 0, "a", "")
 	sink.LiveWrite(1, 0, "b", "\x1b[0;31m")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("a\x1b[0;31mb"); got != want {
 		t.Fatalf("buffer = %q, want %q (SGR only at the change)", got, want)
 	}
@@ -143,7 +143,7 @@ func TestLivePlainDropsColor(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, capturePlain)
 	sink.LiveWrite(0, 0, "ab", "\x1b[0;31m")
 	sink.LiveWrite(2, 0, "cd", "\x1b[0;32m")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("abcd"); got != want {
 		t.Fatalf("buffer = %q, want %q (plain keeps no SGR)", got, want)
 	}
@@ -159,7 +159,7 @@ func TestLiveJumpRecolorRestoresTrailing(t *testing.T) {
 	// Jump back to column 0 and overtype the first three in green.
 	sink.LiveCursorMove(0, 0)
 	sink.LiveWrite(0, 0, "XXX", "\x1b[0;32m")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	// green XXX, then red restored for the trailing bbb.
 	if got, want := w.Buffer.GetContent(), region("\x1b[0;32mXXX\x1b[0;31mbbb"); got != want {
 		t.Fatalf("buffer = %q, want %q (trailing colour restored)", got, want)
@@ -174,7 +174,7 @@ func TestLiveJumpReplacesSGRNoStacking(t *testing.T) {
 	// Jump to column 0 (which sits right after the red SGR) and rewrite it green.
 	sink.LiveCursorMove(0, 0)
 	sink.LiveWrite(0, 0, "a", "\x1b[0;32m")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	// The green SGR replaces the red one; the trailing "b" is restored to red.
 	if got, want := w.Buffer.GetContent(), region("\x1b[0;32ma\x1b[0;31mb"); got != want {
 		t.Fatalf("buffer = %q, want %q (replace SGR, no back-to-back stack)", got, want)
@@ -187,7 +187,7 @@ func TestLiveOvertypeSamePenNoSGR(t *testing.T) {
 	sink.LiveWrite(0, 0, "aaabbb", "\x1b[0;31m")
 	sink.LiveCursorMove(0, 0)
 	sink.LiveWrite(0, 0, "XXX", "\x1b[0;31m") // same red: just overtype
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mXXXbbb"); got != want {
 		t.Fatalf("buffer = %q, want %q (same pen: no extra SGR)", got, want)
 	}
@@ -205,7 +205,7 @@ func TestLiveScrollPreservesHistory(t *testing.T) {
 	sink.LiveScrollLineOff(1)
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "L2", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("L0\nL1\nL2"); got != want {
 		t.Fatalf("buffer = %q, want %q (history preserved, nothing deleted)", got, want)
 	}
@@ -217,7 +217,7 @@ func TestLiveClearKeepsHistory(t *testing.T) {
 	sink.LiveWrite(0, 0, "old", "")
 	sink.LiveClearScreen("")
 	sink.LiveWrite(0, 0, "new", "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("old\nnew"); got != want {
 		t.Fatalf("buffer = %q, want %q (clear keeps the old screen above)", got, want)
 	}
@@ -231,7 +231,7 @@ func TestLiveClearSetsScreenBackground(t *testing.T) {
 	sink.LiveWrite(0, 0, "old", "")
 	sink.LiveClearScreen(blue)
 	sink.LiveWrite(0, 0, "hi", "") // default pen → should carry the blue screen bg
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	// "old" stays above as history; the fresh region anchors the blue screen bg.
 	if got, want := w.Buffer.GetContent(), "\nold\n"+blue+"hi\n"; got != want {
 		t.Fatalf("buffer = %q, want %q (default write carries screen bg)", got, want)
@@ -244,7 +244,7 @@ func TestLiveClearEndOfLineTruncates(t *testing.T) {
 	sink.LiveWrite(0, 0, "STALEcontent", "")
 	sink.LiveCursorMove(5, 0)
 	sink.LiveClearEndOfLine(5, 0, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("STALE"); got != want {
 		t.Fatalf("buffer = %q, want %q (tail erased at column 5)", got, want)
 	}
@@ -256,7 +256,7 @@ func TestLiveClearBeginOfLine(t *testing.T) {
 	sink.LiveWrite(0, 0, "ABCDEF", "")
 	sink.LiveCursorMove(2, 0)
 	sink.LiveClearBeginOfLine(2, 0, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("   DEF"); got != want {
 		t.Fatalf("buffer = %q, want %q (cols 0-2 blanked)", got, want)
 	}
@@ -272,7 +272,7 @@ func TestLiveClearEndOfScreen(t *testing.T) {
 	sink.LiveWrite(0, 2, "ROW2", "")
 	sink.LiveCursorMove(2, 0)
 	sink.LiveClearEndOfScreen(2, 0, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	// Row 0 truncated at col 2, rows 1 and 2 emptied.
 	if got, want := w.Buffer.GetContent(), region("RO\n\n"); got != want {
 		t.Fatalf("buffer = %q, want %q (row 0 truncated, rows below blanked)", got, want)
@@ -286,7 +286,7 @@ func TestLiveDeleteChars(t *testing.T) {
 	sink.LiveWrite(0, 0, "ABCDEF", "")
 	sink.LiveCursorMove(0, 0)
 	sink.LiveDeleteChars(0, 0, 2, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("CDEF"); got != want {
 		t.Fatalf("buffer = %q, want %q (2 cells deleted, row shifted left)", got, want)
 	}
@@ -298,7 +298,7 @@ func TestLiveInsertChars(t *testing.T) {
 	sink.LiveWrite(0, 0, "ABCD", "")
 	sink.LiveCursorMove(1, 0)
 	sink.LiveInsertChars(1, 0, 2, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("A  BCD"); got != want {
 		t.Fatalf("buffer = %q, want %q (2 blanks inserted at col 1)", got, want)
 	}
@@ -310,7 +310,7 @@ func TestLiveEraseChars(t *testing.T) {
 	sink.LiveWrite(0, 0, "ABCDEF", "")
 	sink.LiveCursorMove(2, 0)
 	sink.LiveEraseChars(2, 0, 2, "")
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got, want := w.Buffer.GetContent(), region("AB  EF"); got != want {
 		t.Fatalf("buffer = %q, want %q (cols 2-3 blanked in place)", got, want)
 	}
@@ -335,7 +335,7 @@ func TestLiveWritesCoalesce(t *testing.T) {
 	if got, want := w.Buffer.GetContent(), "\n\n"; got != want {
 		t.Fatalf("after one Undo buffer = %q, want %q (row writes are one coalesced step)", got, want)
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 }
 
 // The editing caret, parked on "end of terminal" at setup, rides forward as
@@ -350,7 +350,7 @@ func TestLiveEditingCaretRidesTail(t *testing.T) {
 	if got := w.CursorPos(); got.Line != 3 || got.Rune != 0 {
 		t.Fatalf("editing caret at %v, want line 3 rune 0 (the output tail)", got)
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 }
 
 // Content folded in by the live mirror is a real edit: the workspace setup and
@@ -361,5 +361,5 @@ func TestLiveMarksModified(t *testing.T) {
 	if !w.Buffer.IsModified() {
 		t.Fatal("live output did not mark the buffer modified")
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 }

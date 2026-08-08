@@ -121,7 +121,7 @@ func TestExecRefusalIsGraceful(t *testing.T) {
 	if docContent(w) != before {
 		t.Error("a refused request must not touch the buffer")
 	}
-	if e.ptySessionFor(w.Buffer) != nil {
+	if e.ptySessionFor(w) != nil {
 		t.Error("a refused request must leave no session bound")
 	}
 }
@@ -344,7 +344,7 @@ func TestPTYClickFocusesTheOtherViewport(t *testing.T) {
 	if doc == nil || doc2 == nil {
 		t.Fatal("both viewports should exist")
 	}
-	if e.ptySessionFor(doc2.Buffer) == nil {
+	if e.ptySessionFor(doc2) == nil {
 		t.Fatal("doc2 should have a session")
 	}
 
@@ -410,7 +410,7 @@ func TestPTYOutputForwardsRawBytesToHost(t *testing.T) {
 
 	// An escape sequence a stripping implementation would have eaten.
 	esc := []byte{27, '[', '2', 'J', 'h', 'i', 27, '[', '0', 'm'}
-	e.ptyOutput(w.Buffer, esc)
+	e.ptyOutput(w, esc)
 
 	if fedID != openedID {
 		t.Errorf("fed id %q, want the opened id %q", fedID, openedID)
@@ -482,11 +482,11 @@ func TestPTYEndedClosesTheSurface(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if closed == "" {
 		t.Error("Close was not called for the ended session")
 	}
-	if e.ptySessionFor(w.Buffer) != nil {
+	if e.ptySessionFor(w) != nil {
 		t.Error("the session should be unbound after it ends")
 	}
 }
@@ -602,7 +602,7 @@ func TestPTYViewportClass(t *testing.T) {
 	if got := e.viewportClass(w); got != "pty" {
 		t.Fatalf("class with a session = %q, want pty", got)
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got := e.viewportClass(w); got != "" {
 		t.Fatalf("class after the child exited = %q, want empty again", got)
 	}
@@ -999,7 +999,7 @@ func TestSilentSessionRecordsItself(t *testing.T) {
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyEnded(w, io.EOF)
 
 	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
 	if err != nil {
@@ -1038,12 +1038,12 @@ func TestTalkativeSessionRecordsNothing(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyOutput(w.Buffer, []byte("$ "))
+	e.ptyOutput(w, []byte("$ "))
 	// Old enough not to count as "ended almost immediately".
 	e.ptyMu.Lock()
-	e.ptySessions[w.Buffer].started = time.Now().Add(-time.Minute)
+	e.ptySessions[w].started = time.Now().Add(-time.Minute)
 	e.ptyMu.Unlock()
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyEnded(w, io.EOF)
 
 	if _, err := os.Stat(filepath.Join(dir, "mew-pty-diag.log")); err == nil {
 		t.Error("a session that lived and produced output should leave no log behind")
@@ -1068,8 +1068,8 @@ func TestShortSessionRecordsWhatItSaid(t *testing.T) {
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyOutput(w.Buffer, []byte("\x1b[?9001h\x1b[?1004h"))
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyOutput(w, []byte("\x1b[?9001h\x1b[?1004h"))
+	e.ptyEnded(w, io.EOF)
 
 	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
 	if err != nil {
@@ -1674,5 +1674,107 @@ func TestOnlyADecliningWikiRefuses(t *testing.T) {
 	e.executeCommand("shell")
 	if !got.Shell {
 		t.Fatal("an ordinary buffer should still get a shell")
+	}
+}
+
+// A terminal is bound to the VIEWPORT it launched in, not to its buffer. A
+// cloned viewport (a new viewport over the same buffer) shows plain document
+// text — the origin keeps the terminal — and may run its OWN session against
+// that shared buffer, because the one-session guard is per-viewport now.
+func TestPTYBoundToViewportNotBuffer(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	e.ensureTiler()
+	e.performRender()
+
+	// A session in the origin viewport.
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec on the origin viewport failed")
+	}
+	if e.ptySessionFor(w) == nil {
+		t.Fatal("the origin viewport should have a session")
+	}
+
+	// Clone it: a NEW viewport over the SAME buffer, now focused.
+	if !e.cloneCurrentViewport() {
+		t.Fatal("cloneCurrentViewport failed")
+	}
+	clone := e.ViewportManager.GetFocusedViewport()
+	if clone == w {
+		t.Fatal("the clone should be a distinct viewport from the origin")
+	}
+	if clone.Buffer != w.Buffer {
+		t.Fatal("the clone should share the origin's buffer")
+	}
+
+	// The clone shows the buffer's text: no visible session is bound to it even
+	// though its buffer is running one in the origin. The origin still shows its
+	// terminal.
+	if e.visibleSessionFor(clone) != nil {
+		t.Error("the clone must not inherit the origin's terminal (it shows buffer text)")
+	}
+	if e.visibleSessionFor(w) == nil {
+		t.Error("the origin viewport should still show its terminal")
+	}
+
+	// A SECOND session may run against the same buffer from the clone: the guard
+	// is per-viewport, not per-buffer.
+	e.performRender()
+	if !e.execRequest("bash", "") {
+		t.Fatal("a second session on the same buffer, from a different viewport, must be allowed")
+	}
+	origin, cloneSess := e.ptySessionFor(w), e.ptySessionFor(clone)
+	if origin == nil || cloneSess == nil {
+		t.Fatal("both viewports should now hold their own session")
+	}
+	if origin == cloneSess {
+		t.Fatal("the two viewports must hold DISTINCT sessions")
+	}
+}
+
+// When a viewport is truly removed, its terminal goes with it: the session is
+// closed (which drives the read loop to end and ptyEnded to tear the surface
+// down), never re-homed to another viewport over the same buffer.
+func TestPTYKilledWhenViewportRemoved(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	var closedID string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(id string) { closedID = id },
+	}
+	stub := newStubPTY()
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	e.ensureTiler()
+	e.performRender()
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	if e.ptySessionFor(w) == nil {
+		t.Fatal("the session should exist before removal")
+	}
+
+	// Removing the viewport closes its session — the same call the async
+	// EventViewportRemoved handler makes once marshalled onto the main loop.
+	e.endSessionForRemovedViewport(w)
+	if !stub.isClosed() {
+		t.Fatal("removing the viewport must close its session")
+	}
+
+	// The read loop, seeing its stream end, lands ptyEnded: the surface is torn
+	// down and the map entry cleared.
+	e.ptyEnded(w, io.EOF)
+	if closedID == "" {
+		t.Error("ptyEnded should close the host surface")
+	}
+	if e.ptySessionFor(w) != nil {
+		t.Error("the session must be gone from the map after teardown")
 	}
 }

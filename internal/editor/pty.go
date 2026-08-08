@@ -345,9 +345,14 @@ type PTYDiagnostics interface {
 	Diagnostics() []string
 }
 
-// ptyState is one buffer's live session.
+// ptyState is one viewport's live session. It is keyed in ptySessions by the
+// viewport it was launched in and draws its surface there; buf is the buffer
+// that viewport held at launch, kept for the session's life because that is
+// where its capture lands — insertion points stay tied to the buffer even
+// though the terminal itself is bound to the viewport.
 type ptyState struct {
-	id      string // stable for the session's life; names its child surface
+	id      string         // stable for the session's life; names its child surface
+	buf     *buffer.Buffer // the buffer it launched in; where captured output folds
 	sess    PTYSession
 	command string
 	cwd     string // as asked for, for the record a failed session leaves
@@ -698,16 +703,16 @@ func (e *Editor) bufferCWD(b *buffer.Buffer) string {
 	return e.canonicalDocURL(dir)
 }
 
-// ptySessionFor returns the live session bound to a buffer, or nil. It sees a
+// ptySessionFor returns the live session bound to a viewport, or nil. It sees a
 // hidden session too: this is the EXISTENCE check (the start guard, cleanup, the
 // hide/show commands' target).
-func (e *Editor) ptySessionFor(b *buffer.Buffer) PTYSession {
-	if b == nil {
+func (e *Editor) ptySessionFor(w *viewport.Viewport) PTYSession {
+	if w == nil {
 		return nil
 	}
 	e.ptyMu.Lock()
 	defer e.ptyMu.Unlock()
-	if st := e.ptySessions[b]; st != nil {
+	if st := e.ptySessions[w]; st != nil {
 		return st.sess
 	}
 	return nil
@@ -716,16 +721,16 @@ func (e *Editor) ptySessionFor(b *buffer.Buffer) PTYSession {
 // visibleSessionFor is ptySessionFor restricted to a session the user is
 // INTERACTING with: a hidden session (terminal under the hood, buffer an
 // ordinary editable document) reports nil, so painting, input routing, the pty
-// keymap and the caret all treat that buffer as normal. Existence checks that
+// keymap and the caret all treat that viewport as normal. Existence checks that
 // must see a hidden session — the start guard, cleanup, the hide/show commands —
 // use ptySessionFor instead.
-func (e *Editor) visibleSessionFor(b *buffer.Buffer) PTYSession {
-	if b == nil {
+func (e *Editor) visibleSessionFor(w *viewport.Viewport) PTYSession {
+	if w == nil {
 		return nil
 	}
 	e.ptyMu.Lock()
 	defer e.ptyMu.Unlock()
-	if st := e.ptySessions[b]; st != nil && !st.hidden {
+	if st := e.ptySessions[w]; st != nil && !st.hidden {
 		return st.sess
 	}
 	return nil
@@ -744,10 +749,10 @@ func (e *Editor) setViewportPTYHidden(mode int, cmd string) bool {
 		return false
 	}
 	e.ptyMu.Lock()
-	st := e.ptySessions[w.Buffer]
+	st := e.ptySessions[w]
 	if st == nil {
 		e.ptyMu.Unlock()
-		e.ShowWarning(cmd + ": this buffer has no terminal session")
+		e.ShowWarning(cmd + ": this viewport has no terminal session")
 		return false
 	}
 	switch {
@@ -787,13 +792,36 @@ func (e *Editor) killViewportPTY() bool {
 		e.ShowWarning("viewport_pty_kill: no active buffer")
 		return false
 	}
-	sess := e.ptySessionFor(w.Buffer) // existence: a hidden session can be killed too
+	sess := e.ptySessionFor(w) // existence: a hidden session can be killed too
 	if sess == nil {
-		e.ShowWarning("viewport_pty_kill: this buffer has no terminal session")
+		e.ShowWarning("viewport_pty_kill: this viewport has no terminal session")
 		return false
 	}
 	_ = sess.Close()
 	return true
+}
+
+// endSessionForRemovedViewport closes the session bound to a viewport that has
+// been TRULY removed (its tile torn off / closed, not merely re-tiled), so the
+// read loop ends and ptyEnded folds any final capture and tears the surface
+// down through the one teardown path. A removed viewport takes its terminal
+// with it: the session is not re-homed to another viewport over the same
+// buffer, even when one exists — killing is the accepted behaviour.
+//
+// The map entry is left for ptyEnded to delete, so a session ending on its own
+// at the same moment cannot be torn down twice. Called from the
+// EventViewportRemoved handler, already marshalled onto the main loop.
+func (e *Editor) endSessionForRemovedViewport(w *viewport.Viewport) {
+	if w == nil {
+		return
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w]
+	e.ptyMu.Unlock()
+	if st == nil {
+		return // no session here, or it already ended
+	}
+	_ = st.sess.Close()
 }
 
 // ptyDiagnose is the pty_diag command: ask the host to test its own terminal
@@ -945,8 +973,11 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 		e.ShowWarning(degenerateToASCII(why))
 		return false
 	}
-	if e.ptySessionFor(w.Buffer) != nil {
-		e.ShowWarning("This buffer already has a session")
+	// One session per VIEWPORT, not per buffer: a second viewport over the same
+	// buffer (a clone, a split showing a different ref) may run its own terminal,
+	// and its capture still folds into the shared buffer at its own launch caret.
+	if e.ptySessionFor(w) != nil {
+		e.ShowWarning("This viewport already has a session")
 		return false
 	}
 
@@ -1007,7 +1038,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 	}
 	// The editing caret is handed to the live rung so its Method 4 setup can park
 	// it on "end of terminal" and let it ride the output tail.
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, format, outCursor, w.Caret)
+	e.attachPTY(w, sess, name, req.CWD, req.Method, cols, rows, pol, capture, format, outCursor)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -1019,8 +1050,13 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 	return true
 }
 
-// attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureRung, format captureFormat, outCursor *buffer.Cursor, editCaret *buffer.Caret) {
+// attachPTY binds a session to a VIEWPORT and starts pumping its output. The
+// session draws its surface wherever that viewport is tiled; its capture folds
+// into the viewport's buffer (w.Buffer, remembered as ptyState.buf) at the
+// launch caret. The live rung is handed w.Caret so its Method 4 setup can park
+// the editing caret on "end of terminal" and let it ride the output tail.
+func (e *Editor) attachPTY(w *viewport.Viewport, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureRung, format captureFormat, outCursor *buffer.Cursor) {
+	b := w.Buffer
 	// The initial logical size the host is told, taken straight from the policy so
 	// a pinned or floored terminal renders correctly from its first frame while a
 	// follow policy — or a free axis of an 80x0/x24 pin — is spelled as 0 for the
@@ -1029,7 +1065,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	lc, lr := pol.hostLogical(cols, rows)
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
-		e.ptySessions = make(map[*buffer.Buffer]*ptyState)
+		e.ptySessions = make(map[*viewport.Viewport]*ptyState)
 	}
 	e.ptySeq++
 	id := fmt.Sprintf("pty%d", e.ptySeq)
@@ -1038,11 +1074,11 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	if capture.streams() && outCursor != nil {
 		stream = &captureStream{rung: capture, cursor: outCursor, format: format}
 		if capture == captureLive {
-			stream.mirror = newLiveMirror(b, outCursor, format, editCaret)
+			stream.mirror = newLiveMirror(b, outCursor, format, w.Caret)
 		}
 	}
-	e.ptySessions[b] = &ptyState{
-		id: id, sess: sess, command: command, cwd: cwd, method: method,
+	e.ptySessions[w] = &ptyState{
+		id: id, buf: b, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
 		capture: capture, format: format, outCursor: outCursor, stream: stream,
 		hidden: pol.hidden,
@@ -1071,7 +1107,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 			n, err := sess.Read(buf)
 			if n > 0 {
 				chunk := append([]byte(nil), buf[:n]...)
-				e.PostAction(func() { e.ptyOutput(b, chunk) })
+				e.PostAction(func() { e.ptyOutput(w, chunk) })
 			}
 			if err != nil {
 				last = err
@@ -1081,7 +1117,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 		// The error that ended the stream travels with the ending: a session
 		// that stopped because something broke should say so, and only a
 		// clean end of file is silent.
-		e.PostAction(func() { e.ptyEnded(b, last) })
+		e.PostAction(func() { e.ptyEnded(w, last) })
 	}()
 }
 
@@ -1098,12 +1134,12 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 // untouched here; capture-on-die (Method 2) folds the session's transcript into
 // it at the output cursor when it ends, and live per-line tracking is the
 // follow-up. Neither happens on this hot path.
-func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
-	if b == nil || len(chunk) == 0 || e.Config.TerminalSurfaces.Feed == nil {
+func (e *Editor) ptyOutput(w *viewport.Viewport, chunk []byte) {
+	if w == nil || len(chunk) == 0 || e.Config.TerminalSurfaces.Feed == nil {
 		return
 	}
 	e.ptyMu.Lock()
-	st := e.ptySessions[b]
+	st := e.ptySessions[w]
 	e.ptyMu.Unlock()
 	if st == nil {
 		return // the session ended between the read and this delivery
@@ -1138,12 +1174,12 @@ func (e *Editor) notifyTerminalSurfaces() {
 	}
 	e.ptyMu.Lock()
 	live := len(e.ptySessions)
-	byBuffer := make(map[*buffer.Buffer]string, live)
-	for b, st := range e.ptySessions {
+	byVP := make(map[*viewport.Viewport]string, live)
+	for vp, st := range e.ptySessions {
 		if st.hidden {
 			continue // running under the hood: no visible surface to publish
 		}
-		byBuffer[b] = st.id
+		byVP[vp] = st.id
 	}
 	e.ptyMu.Unlock()
 	if live == 0 && len(e.terminalSurfacesSent) == 0 {
@@ -1176,16 +1212,19 @@ func (e *Editor) notifyTerminalSurfaces() {
 		}
 	}
 
-	// ON SCREEN THIS FRAME, not merely holding the buffer: a viewport swapped to
-	// another buffer, hidden, or stacked behind another keeps its last layout,
-	// and a surface from that stale geometry paints over whatever took its place.
+	// ON SCREEN THIS FRAME, and the session's OWN viewport: a session draws only
+	// where the viewport it was launched in is tiled — a tile-split (same viewport
+	// ref) mirrors it, but a cloned viewport over the same buffer is a different
+	// pointer and shows plain document text. A viewport swapped to another buffer,
+	// hidden, or stacked behind another keeps its last layout, and a surface from
+	// that stale geometry paints over whatever took its place.
 	for i := range e.mainTiles {
 		t := &e.mainTiles[i]
 		w := t.Viewport
 		if w == nil || !e.viewportOnScreen(w) || t.ContentWidth <= 0 || t.ContentHeight <= 0 {
 			continue
 		}
-		if id, ok := byBuffer[w.Buffer]; ok {
+		if id, ok := byVP[w]; ok {
 			seen[id] = true
 			consider(id, w, t.ContentX+1, t.ContentY+1, t.ContentWidth, t.ContentHeight, t.Focused)
 		}
@@ -1196,7 +1235,7 @@ func (e *Editor) notifyTerminalSurfaces() {
 		if !e.viewportOnScreen(w) || w.ContentWidth <= 0 || w.ContentHeight <= 0 {
 			continue
 		}
-		id, ok := byBuffer[w.Buffer]
+		id, ok := byVP[w]
 		if !ok || seen[id] {
 			continue
 		}
@@ -1363,12 +1402,12 @@ func terminalSurfacesEqual(a, b []TerminalSurface) bool {
 // surface is destroyed in the same breath: anything written INTO the terminal
 // at this point is painted over by its own removal. So whatever is known about
 // how it ended has to be said here.
-func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
+func (e *Editor) ptyEnded(w *viewport.Viewport, cause error) {
 	e.ptyMu.Lock()
-	st := e.ptySessions[b]
-	delete(e.ptySessions, b)
+	st := e.ptySessions[w]
+	delete(e.ptySessions, w)
 	e.ptyMu.Unlock()
-	if e.ptyMouseCapture != nil && e.ptyMouseCapture.buf == b {
+	if e.ptyMouseCapture != nil && e.ptyMouseCapture.vp == w {
 		e.ptyMouseCapture = nil
 	}
 	if st == nil {
@@ -1390,8 +1429,8 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 			}
 			if st.outCursor != nil {
 				st.outCursor.InsertString(text, nil, false)
-			} else {
-				b.InsertText(0, 0, text)
+			} else if st.buf != nil {
+				st.buf.InsertText(0, 0, text)
 			}
 		}
 	}
@@ -1554,7 +1593,7 @@ func (e *Editor) focusedPTY() PTYSession {
 	}
 	// visible, not merely existing: a hidden session leaves typing to the
 	// document, so insert / insert_newline fall through to normal editing.
-	return e.visibleSessionFor(w.Buffer)
+	return e.visibleSessionFor(w)
 }
 
 // ptySendBytes writes to the focused buffer's session. This is what the pty
@@ -1564,7 +1603,7 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 	if w == nil {
 		return false
 	}
-	sess := e.visibleSessionFor(w.Buffer)
+	sess := e.visibleSessionFor(w)
 	if sess == nil {
 		return false // no visible session: the chain falls through to normal editing
 	}
@@ -1579,14 +1618,14 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 }
 
 // ptyMouseGesture holds a terminal mouse gesture from press to release: the
-// buffer whose terminal took the press, and the content rectangle (1-based
+// viewport whose terminal took the press, and the content rectangle (1-based
 // origin cx,cy just left/above the first cell; cw,ch cells) of the exact tile
 // the press landed in. A viewport can be shown in several tiles of different
 // sizes — a primary hosting the live terminal plus read-only mirrors — so the
 // gesture maps every later coordinate against the pressed tile instead of the
 // viewport's canonical geometry, which would drift a drag begun in a mirror.
 type ptyMouseGesture struct {
-	buf            *buffer.Buffer
+	vp             *viewport.Viewport
 	cx, cy, cw, ch int
 }
 
@@ -1624,7 +1663,7 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	// about.
 	if g := e.ptyMouseCapture; g != nil {
 		e.ptyMu.Lock()
-		st := e.ptySessions[g.buf]
+		st := e.ptySessions[g.vp]
 		e.ptyMu.Unlock()
 		if st == nil || st.hidden {
 			e.ptyMouseCapture = nil // session gone or hidden mid-gesture: let go
@@ -1645,22 +1684,22 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	// through to the buffer behind. The focused viewport is the fallback for a
 	// terminal that is not a tiled main pane (e.g. hosted in a prompt).
 	var (
-		buf            *buffer.Buffer
+		vp             *viewport.Viewport
 		cx, cy, cw, ch int
 		tile           *viewport.ViewportLayout
 	)
 	if t := e.mainTileAt(x, y); t != nil && t.Viewport != nil && t.Viewport.Buffer != nil {
 		tile = t
-		buf = t.Viewport.Buffer
+		vp = t.Viewport
 		cx, cy, cw, ch = t.ContentX, t.ContentY, t.ContentWidth, t.ContentHeight
 	} else if w := e.ViewportManager.GetFocusedViewport(); w != nil && w.Buffer != nil {
-		buf = w.Buffer
+		vp = w
 		cx, cy, cw, ch = w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight
 	} else {
 		return false
 	}
 	e.ptyMu.Lock()
-	st := e.ptySessions[buf]
+	st := e.ptySessions[vp]
 	e.ptyMu.Unlock()
 	if st == nil || st.hidden {
 		return false // hidden: the mouse selects text in the document as usual
@@ -1676,7 +1715,7 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	ev.Col, ev.Row = col, row
 	handled := e.deliverPTYMouse(st, ev)
 	if handled && ev.Action == TerminalMousePress {
-		e.ptyMouseCapture = &ptyMouseGesture{buf: buf, cx: cx, cy: cy, cw: cw, ch: ch}
+		e.ptyMouseCapture = &ptyMouseGesture{vp: vp, cx: cx, cy: cy, cw: cw, ch: ch}
 		// The press belongs to this tile. A press the terminal takes is consumed
 		// here, so mew's own click handling (which would focus the pane) never
 		// runs — focus the pane ourselves. First the VIEWPORT, so keys and the
@@ -1757,7 +1796,7 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 		return false
 	}
 	e.ptyMu.Lock()
-	st := e.ptySessions[w.Buffer]
+	st := e.ptySessions[w]
 	e.ptyMu.Unlock()
 	if st == nil || st.hidden {
 		return false // hidden: the key edits the document as usual

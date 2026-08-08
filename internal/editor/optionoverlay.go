@@ -13,15 +13,15 @@ import (
 // dimensions. A viewport's syntax is its buffer's syntax, so every option can be
 // resolved for a viewport through the class/grammar/type cascade.
 // The class of a viewport running a terminal is "pty", DERIVED rather than
-// stored: a buffer becomes a terminal and stops being one again without the
-// viewport ever changing, and the same viewport shows an ordinary document
-// either side of that. An explicit Class still wins — a prompt that happens to
-// display a terminal buffer is still that prompt.
+// stored: a viewport gains a terminal and loses it again while staying the same
+// viewport, and shows an ordinary document either side of that. An explicit
+// Class still wins — a prompt that happens to host a terminal is still that
+// prompt.
 func (e *Editor) viewportClass(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
 	}
-	if w.Class == "" && e.visibleSessionFor(w.Buffer) != nil {
+	if w.Class == "" && e.visibleSessionFor(w) != nil {
 		return ptyViewportClass
 	}
 	return w.Class
