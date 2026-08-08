@@ -25,8 +25,18 @@ func (s *stubCaptureSink) LiveLineWrap(x, y int)                { s.live = appen
 func (s *stubCaptureSink) LiveBackspace(x, y int)               { s.live = append(s.live, "backspace") }
 func (s *stubCaptureSink) LiveScrollLineOff(n int)              { s.live = append(s.live, "scrolloff") }
 func (s *stubCaptureSink) LiveClearScreen(sgr string)           { s.live = append(s.live, "clear") }
-func (s *stubCaptureSink) LiveClearToEndOfLine(x, y int, sgr string) {
+func (s *stubCaptureSink) LiveClearEndOfLine(x, y int, sgr string) {
 	s.live = append(s.live, "eol")
+}
+func (s *stubCaptureSink) LiveClearBeginOfLine(x, y int, sgr string) {
+	s.live = append(s.live, "bol")
+}
+func (s *stubCaptureSink) LiveClearLine(y int, sgr string) { s.live = append(s.live, "line") }
+func (s *stubCaptureSink) LiveClearEndOfScreen(x, y int, sgr string) {
+	s.live = append(s.live, "eos")
+}
+func (s *stubCaptureSink) LiveClearBeginOfScreen(x, y int, sgr string) {
+	s.live = append(s.live, "bos")
 }
 
 // The relay forwards each OnOutput chunk to the sink verbatim, and forwards
@@ -61,7 +71,11 @@ func TestCaptureRelayLiveGating(t *testing.T) {
 		r.OnLineWrap(0, 2)
 		r.OnBackspace(1, 2)
 		r.OnScrollLineOff(1)
-		r.OnClearToEndOfLine(3, 2, "")
+		r.OnClearEndOfLine(3, 2, "")
+		r.OnClearBeginOfLine(3, 2, "")
+		r.OnClearLine(2, "")
+		r.OnClearEndOfScreen(3, 2, "")
+		r.OnClearBeginOfScreen(3, 2, "")
 		r.OnClearScreen("")
 	}
 
@@ -73,7 +87,7 @@ func TestCaptureRelayLiveGating(t *testing.T) {
 
 	on := &stubCaptureSink{}
 	drive(captureRelay{sink: on, wantsLive: true})
-	want := []string{"write", "cursor", "newline", "wrap", "backspace", "scrolloff", "eol", "clear"}
+	want := []string{"write", "cursor", "newline", "wrap", "backspace", "scrolloff", "eol", "bol", "line", "eos", "bos", "clear"}
 	if len(on.live) != len(want) {
 		t.Fatalf("live events = %v, want %v", on.live, want)
 	}

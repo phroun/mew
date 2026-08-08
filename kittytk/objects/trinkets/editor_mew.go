@@ -1175,9 +1175,29 @@ func (r captureRelay) OnClearScreen(sgr string) {
 		r.sink.LiveClearScreen(sgr)
 	}
 }
-func (r captureRelay) OnClearToEndOfLine(x, y int, sgr string) {
+func (r captureRelay) OnClearEndOfLine(x, y int, sgr string) {
 	if r.wantsLive {
-		r.sink.LiveClearToEndOfLine(x, y, sgr)
+		r.sink.LiveClearEndOfLine(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearBeginOfLine(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearBeginOfLine(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearLine(y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearLine(y, sgr)
+	}
+}
+func (r captureRelay) OnClearEndOfScreen(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearEndOfScreen(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearBeginOfScreen(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearBeginOfScreen(x, y, sgr)
 	}
 }
 

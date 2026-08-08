@@ -141,9 +141,29 @@ func (c *captureStream) LiveClearScreen(sgr string) {
 		c.mirror.ClearScreen(sgr)
 	}
 }
-func (c *captureStream) LiveClearToEndOfLine(x, y int, sgr string) {
+func (c *captureStream) LiveClearEndOfLine(x, y int, sgr string) {
 	if c.mirror != nil {
-		c.mirror.ClearToEndOfLine(x, y, sgr)
+		c.mirror.ClearEndOfLine(x, y, sgr)
+	}
+}
+func (c *captureStream) LiveClearBeginOfLine(x, y int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.ClearBeginOfLine(x, y, sgr)
+	}
+}
+func (c *captureStream) LiveClearLine(y int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.ClearLine(y, sgr)
+	}
+}
+func (c *captureStream) LiveClearEndOfScreen(x, y int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.ClearEndOfScreen(x, y, sgr)
+	}
+}
+func (c *captureStream) LiveClearBeginOfScreen(x, y int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.ClearBeginOfScreen(x, y, sgr)
 	}
 }
 
@@ -631,10 +651,14 @@ type CaptureSink interface {
 	LiveLineWrap(x, y int)
 	LiveBackspace(x, y int)
 	LiveScrollLineOff(n int)
-	// LiveClearScreen carries the pen the screen was cleared with (the screen
-	// background); LiveClearToEndOfLine the erase-to-margin at (x,y) and its pen.
-	LiveClearScreen(sgr string)
-	LiveClearToEndOfLine(x, y int, sgr string)
+	// The erase events, each carrying the current pen whose background fills the
+	// erased cells; the directional ones carry the cursor position.
+	LiveClearScreen(sgr string)                  // whole screen
+	LiveClearEndOfLine(x, y int, sgr string)     // (x,y) to right margin
+	LiveClearBeginOfLine(x, y int, sgr string)   // line start through (x,y)
+	LiveClearLine(y int, sgr string)             // the whole line
+	LiveClearEndOfScreen(x, y int, sgr string)   // (x,y) to end of screen
+	LiveClearBeginOfScreen(x, y int, sgr string) // screen start through (x,y)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a

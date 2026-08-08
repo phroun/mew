@@ -98,10 +98,13 @@ construction) rather than a regex strip.
   single-colour run emits one SGR and nothing after. The engine stores no screen
   height and simply follows the event stream, which makes it correct across a
   resize.
-  - Erases carry their pen (v0.2.37): a clear establishes the screen background
-    (ED fills with the current pen), which every default cell afterwards resolves
-    to instead of a bare reset, and a clear-to-end-of-line truncates a row's stale
-    tail. The remaining erases (EL1/EL2/ED0) are a fast follow.
+  - Erases carry their pen (v0.2.37–v0.2.38): each erase event carries the pen
+    whose background fills the cleared cells. A clear establishes the screen
+    background (ED fills with the current pen), which every default cell
+    afterwards resolves to instead of a bare reset; the full line/screen erase
+    family (`OnClearEndOfLine`/`BeginOfLine`/`Line`/`EndOfScreen`/`BeginOfScreen`)
+    truncates or blanks the affected cells so a full-screen app's stale frame is
+    removed rather than left behind.
   - Follow-up: the begin/end colour correction for a caret that jumps back into
     already-coloured cells (emit the landing pen, restore the prior pen after the
     overtyped chunk, replace rather than stack an SGR it lands on). Until then,

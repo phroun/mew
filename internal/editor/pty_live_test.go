@@ -239,14 +239,43 @@ func TestLiveClearSetsScreenBackground(t *testing.T) {
 }
 
 // Clear-to-end-of-line truncates the row's stale tail at the cursor column.
-func TestLiveClearToEndOfLineTruncates(t *testing.T) {
+func TestLiveClearEndOfLineTruncates(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
 	sink.LiveWrite(0, 0, "STALEcontent", "")
 	sink.LiveCursorMove(5, 0)
-	sink.LiveClearToEndOfLine(5, 0, "")
+	sink.LiveClearEndOfLine(5, 0, "")
 	e.ptyEnded(w.Buffer, nil)
 	if got, want := w.Buffer.GetContent(), region("STALE"); got != want {
 		t.Fatalf("buffer = %q, want %q (tail erased at column 5)", got, want)
+	}
+}
+
+// Clear-to-begin-of-line blanks cells 0..x with spaces, leaving the rest.
+func TestLiveClearBeginOfLine(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ABCDEF", "")
+	sink.LiveCursorMove(2, 0)
+	sink.LiveClearBeginOfLine(2, 0, "")
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), region("   DEF"); got != want {
+		t.Fatalf("buffer = %q, want %q (cols 0-2 blanked)", got, want)
+	}
+}
+
+// Clear-to-end-of-screen truncates the cursor row and blanks every row below.
+func TestLiveClearEndOfScreen(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ROW0", "")
+	sink.LiveNewline(0, 1)
+	sink.LiveWrite(0, 1, "ROW1", "")
+	sink.LiveNewline(0, 2)
+	sink.LiveWrite(0, 2, "ROW2", "")
+	sink.LiveCursorMove(2, 0)
+	sink.LiveClearEndOfScreen(2, 0, "")
+	e.ptyEnded(w.Buffer, nil)
+	// Row 0 truncated at col 2, rows 1 and 2 emptied.
+	if got, want := w.Buffer.GetContent(), region("RO\n\n"); got != want {
+		t.Fatalf("buffer = %q, want %q (row 0 truncated, rows below blanked)", got, want)
 	}
 }
 

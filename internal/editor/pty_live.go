@@ -549,30 +549,86 @@ func (m *liveMirror) ClearScreen(sgr string) {
 	}
 }
 
-// ClearToEndOfLine erases from cell (x, y) to the right margin (OnClearToEndOfLine)
-// by truncating the row's content at column x — so a full-screen app's stale line
-// tail from a previous frame is removed rather than left behind. The erase pen's
-// background becomes the pen in effect at the truncation point.
-func (m *liveMirror) ClearToEndOfLine(x, y int, sgr string) {
-	m.growTo(y)
+// truncateRowTail deletes row y's content from visual column fromCol to the end
+// of the line, removing a stale tail. Reads go through the scratch cursor; the
+// write caret is left at the truncation point.
+func (m *liveMirror) truncateRowTail(y, fromCol int) {
 	line := m.rowLine(y)
 	text := m.readRow(y)
 	rs := []rune(text)
-	runeOff, pad := visualColToRune(text, x)
+	runeOff, pad := visualColToRune(text, fromCol)
 	end := visibleRuneCount(text)
 	if pad == 0 && runeOff < end {
-		delBytes := len(string(rs[runeOff:end]))
 		m.caret.SeekLineRune(line, runeOff)
-		m.caret.Overwrite(delBytes, "") // delete the tail in one op
+		m.caret.Overwrite(len(string(rs[runeOff:end])), "")
 	} else {
 		m.caret.SeekLineRune(line, end)
 	}
-	m.curX, m.curY = x, y
+}
+
+// afterErase restores the caret to the cursor position (an erase does not move
+// the cursor) and makes the erase pen the current one, so following default
+// content in the erased region needs no correction.
+func (m *liveMirror) afterErase(x, y int, sgr string) {
+	m.seekTo(x, y)
 	if m.format == captureFull {
-		// The erased tail now sits on the erase pen's background; a following
-		// write in that pen needs no correction.
 		m.curPen = m.resolvePen(sgr)
 	}
+}
+
+// ClearEndOfLine erases from (x, y) to the right margin (EL0): truncate the row
+// at x, so a full-screen app's stale line tail from a previous frame is removed.
+func (m *liveMirror) ClearEndOfLine(x, y int, sgr string) {
+	m.growTo(y)
+	m.truncateRowTail(y, x)
+	m.afterErase(x, y, sgr)
+}
+
+// ClearBeginOfLine erases the line start through (x, y) (EL1): blank cells 0..x
+// with the erase background — a run of spaces anchored to the erase pen —
+// leaving the rest of the row intact.
+func (m *liveMirror) ClearBeginOfLine(x, y int, sgr string) {
+	m.growTo(y)
+	m.Write(0, y, spaces(x+1), sgr) // overtypes 0..x as blank in the erase pen
+	m.afterErase(x, y, sgr)
+}
+
+// ClearLine erases the whole row y (EL2).
+func (m *liveMirror) ClearLine(y int, sgr string) {
+	m.growTo(y)
+	m.truncateRowTail(y, 0)
+	if m.format == captureFull {
+		m.setRowPen(y, m.resolvePen(sgr))
+	}
+	m.afterErase(m.curX, y, sgr)
+}
+
+// ClearEndOfScreen erases from (x, y) to the end of the screen (ED0): truncate
+// row y at x and blank every row below it.
+func (m *liveMirror) ClearEndOfScreen(x, y int, sgr string) {
+	m.growTo(y)
+	m.truncateRowTail(y, x)
+	for r := y + 1; r <= m.frontierRow(); r++ {
+		m.truncateRowTail(r, 0)
+		if m.format == captureFull {
+			m.setRowPen(r, m.resolvePen(sgr))
+		}
+	}
+	m.afterErase(x, y, sgr)
+}
+
+// ClearBeginOfScreen erases from the screen start through (x, y) (ED1): blank
+// every row above y, and cells 0..x on row y.
+func (m *liveMirror) ClearBeginOfScreen(x, y int, sgr string) {
+	m.growTo(y)
+	for r := 0; r < y; r++ {
+		m.truncateRowTail(r, 0)
+		if m.format == captureFull {
+			m.setRowPen(r, m.resolvePen(sgr))
+		}
+	}
+	m.Write(0, y, spaces(x+1), sgr)
+	m.afterErase(x, y, sgr)
 }
 
 // --- small pure helpers ---
