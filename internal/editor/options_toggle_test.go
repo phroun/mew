@@ -75,7 +75,7 @@ func TestBufferListNavigatesInPlace(t *testing.T) {
 	}
 
 	// Back to the document: options must NOT leak (re-resolved per buffer).
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("back should return to the original document")
 	}
 	if w.Buffer != orig {

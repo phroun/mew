@@ -1567,11 +1567,18 @@ func (e *Editor) registerCommands() {
 	// stacking the departed binding — see Viewport.SwapBuffer). Prior returns
 	// to where you were; next re-advances. Both fail when there is no history
 	// in that direction, so chains fall through.
+	//
+	// nav_history_prior takes the same [always] first argument as nav_follow.
+	// Bare (or "true") it always acts. With "false" it is GATED like
+	// nav_follow false — only the actively focused link button of the focused
+	// viewport lets it act — EXCEPT that a read-only document already in
+	// navigation mode passes even off a link (nothing there is editable, so the
+	// key is free to mean "go back"). See navHistoryGatePasses.
 	ps.RegisterCommand("nav_history_prior", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navHistory(-1))
+		return pawscript.BoolStatus(e.navHistory(-1, navArg(ctx)))
 	})
 	ps.RegisterCommand("nav_history_next", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navHistory(+1))
+		return pawscript.BoolStatus(e.navHistory(+1, true))
 	})
 
 	// nav_clear forgets every visited link (editor-wide repaint to the

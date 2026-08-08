@@ -75,9 +75,9 @@ func (e *Editor) modebarNavRelease(x, y int) {
 		if hit, ok := e.modebarNavHit(x, y); ok && hit == button {
 			switch button {
 			case plugins.ModebarNavBack:
-				e.navHistory(-1)
+				e.navHistory(-1, true)
 			case plugins.ModebarNavFwd:
-				e.navHistory(+1)
+				e.navHistory(+1, true)
 			}
 		}
 	}

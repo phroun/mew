@@ -372,7 +372,7 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	if w.WikiRoot != rootURL {
 		t.Fatal("the viewport's root must survive an in-wiki swap")
 	}
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("history should return")
 	}
 	if w.WikiRoot != rootURL {
@@ -537,7 +537,7 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 	}
 
 	// Back: the source binding restores with its caret.
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("nav_history_prior should return")
 	}
 	if w.Buffer != src {
@@ -607,7 +607,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	if _, err := os.Stat(wantPath); !os.IsNotExist(err) {
 		t.Fatal("the file must not exist until the buffer is saved")
 	}
-	if !e.navHistory(-1) || w.Buffer != src {
+	if !e.navHistory(-1, true) || w.Buffer != src {
 		t.Fatal("history should return to the source page")
 	}
 
@@ -666,7 +666,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		t.Fatal("follow should navigate")
 	}
 	otherBuf := w.Buffer
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("history should return")
 	}
 	if !e.linkTargetVisited(w, "other") {
@@ -717,7 +717,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	if w.Buffer != otherBuf {
 		t.Fatal("re-follow must resurrect the graveyard buffer, not re-load")
 	}
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("prior should restore src again")
 	}
 
@@ -775,7 +775,7 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 			t.Fatal("follow should navigate")
 		}
 		other := w.Buffer
-		if !e.navHistory(-1) {
+		if !e.navHistory(-1, true) {
 			t.Fatal("prior should return")
 		}
 		third, err := buffer.NewFromBytes([]byte("third\n"), filepath.Join(root, "w", "third.txt"))

@@ -141,9 +141,12 @@ func (e *Editor) unburyEverywhere(buf *buffer.Buffer) {
 // to the binding the viewport last swapped away from (nav_history_prior),
 // dir > 0 re-advances (nav_history_next). Reports false when there is no
 // history in that direction, so command chains fall through.
-func (e *Editor) navHistory(dir int) bool {
+func (e *Editor) navHistory(dir int, always bool) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Type == viewport.PromptViewport {
+		return false
+	}
+	if !always && !e.navHistoryGatePasses(w) {
 		return false
 	}
 	var ok bool
@@ -164,6 +167,31 @@ func (e *Editor) navHistory(dir int) bool {
 	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
+}
+
+// navHistoryGatePasses is the always=false gate for nav_history_prior. It mirrors
+// nav_follow's focused-button gate — only the actively focused link button of the
+// FOCUSED viewport lets it act, so a fallthrough chain yields to editing — with
+// one relaxation: a READ-ONLY document already in navigation mode passes even when
+// the caret is not on a link. There is nothing to edit in a read-only document,
+// so the key is free to mean "go back" without first landing on a button.
+//
+// The focused-button check is focusedLinkButton, which itself requires w to BE
+// the focused viewport (plus browse mode and the caret on a link), so a focused
+// link in some other open document can never satisfy this.
+func (e *Editor) navHistoryGatePasses(w *viewport.Viewport) bool {
+	if w.BrowseActive && e.viewportReadOnly(w) {
+		return true
+	}
+	return e.focusedLinkButton(w) != nil
+}
+
+// viewportReadOnly reports whether edits through w are refused — its ReadOnly
+// state or a generated (mew:/) surface that is read-only by address. Silent,
+// unlike viewportEditLocked, so it can gate without emitting a warning.
+func (e *Editor) viewportReadOnly(w *viewport.Viewport) bool {
+	return w != nil && (w.ViewState.ReadOnly ||
+		(w.Buffer != nil && isGenPath(w.Buffer.GetFilename())))
 }
 
 // navClearVisited (the nav_clear command) forgets every visited link,
