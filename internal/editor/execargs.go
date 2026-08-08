@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/argwild"
@@ -63,6 +64,18 @@ import (
 //	shell                                  — the login shell, bare
 //	shell "--pty=pipe_only -- -l -i"       — a login, interactive shell
 //	shell "-c \"make test\""               — one command through it
+// sizeMode governs how a session's LOGICAL size is chosen — the size the child
+// process is told it has, independent of how large the visible tile is. The
+// zero value follows the focused tile, which is what every session did before
+// these switches existed.
+type sizeMode int
+
+const (
+	sizeFollow  sizeMode = iota // default: logical size tracks the focused tile
+	sizeExact                   // --size / --hidden: pin the logical size
+	sizeMinimum                 // --minimum: logical = max(tile, floor)
+)
+
 type execSpec struct {
 	// Method is --pty=NAME: which way the host should make the terminal. mew
 	// attaches no meaning to it and forwards the string (see PTYRequest).
@@ -75,6 +88,17 @@ type execSpec struct {
 	// program. Set by the `shell` command, and it changes the parse: no
 	// operand becomes the program, so every one of them is an argument.
 	Shell bool
+
+	// SizeMode and SizeCols/SizeRows carry the --size / --minimum / --hidden
+	// switches: how the session's logical size is governed and, for the two
+	// that pin or floor it, to what. sizeFollow (the zero value) leaves the
+	// size to the focused tile, exactly as before. Hidden additionally asks
+	// for a session with no visible surface — a full terminal that simply is
+	// not painted; it implies an exact size, there being no tile to take one
+	// from.
+	SizeMode           sizeMode
+	SizeCols, SizeRows int
+	Hidden             bool
 }
 
 // parseExecLine parses a composited exec command line.
@@ -200,12 +224,27 @@ func (spec *execSpec) applyNamed(named map[string]interface{}) error {
 func (spec *execSpec) applyOwnSwitch(sw argwild.Switch) error {
 	v, ok := sw.First()
 	if !ok {
-		return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", sw.Name)
+		// A valueless switch (--hidden). Options that mean something on their
+		// own take it; the rest still say they need a value, preserving the old
+		// refusal for a mistyped --pty.
+		if err := spec.setBareOption(sw.Name); err != nil {
+			return fmt.Errorf("%v (put the child's own switches after --)", err)
+		}
+		return nil
 	}
 	if err := spec.setOption(sw.Name, v.AsString()); err != nil {
 		return fmt.Errorf("%v (put the child's own switches after --)", err)
 	}
 	return nil
+}
+
+// setBareOption consumes a switch written with no value.
+func (spec *execSpec) setBareOption(name string) error {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "hidden":
+		return spec.setOption("hidden", "")
+	}
+	return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", name)
 }
 
 // setOption is the ONE place an option name is understood, so the switch form
@@ -226,11 +265,71 @@ func (spec *execSpec) setOption(name, value string) error {
 		// program is simply the first operand.
 		spec.Program = strings.TrimSpace(value)
 		return nil
+	case "size":
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		return spec.setSizePolicy(sizeExact, c, r, false)
+	case "minimum":
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		return spec.setSizePolicy(sizeMinimum, c, r, false)
+	case "hidden":
+		// A bare --hidden (or hidden: true) takes the default 80x25; a value
+		// pins an exact size AND hides; an explicit falsehood is a no-op, so a
+		// script can pass hidden: false to mean "not hidden".
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "", "true", "on", "yes", "1":
+			return spec.setSizePolicy(sizeExact, 80, 25, true)
+		case "false", "off", "no", "0":
+			return nil
+		}
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		return spec.setSizePolicy(sizeExact, c, r, true)
 	}
 	if spec.Shell {
 		return fmt.Errorf("unknown shell option %q", name)
 	}
 	return fmt.Errorf("unknown exec option %q", name)
+}
+
+// setSizePolicy records one of the --size/--minimum/--hidden switches, refusing
+// a second: they all govern the same single logical size, so two of them on one
+// line is a contradiction to be told about, not a silent last-one-wins.
+func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int, hidden bool) error {
+	if spec.SizeMode != sizeFollow || spec.Hidden {
+		return fmt.Errorf("only one of --size, --minimum, --hidden may be given")
+	}
+	spec.SizeMode = mode
+	spec.SizeCols, spec.SizeRows = cols, rows
+	spec.Hidden = hidden
+	return nil
+}
+
+// parseWxH reads a COLSxROWS size like "80x25". Both parts are required and
+// must be positive: a terminal with zero rows or columns is not a smaller
+// terminal, it is a broken one, and the mistake is worth naming at the switch.
+func parseWxH(value string) (cols, rows int, err error) {
+	v := strings.TrimSpace(value)
+	i := strings.IndexAny(v, "xX")
+	if i < 0 {
+		return 0, 0, fmt.Errorf("size must look like COLSxROWS, e.g. 80x25")
+	}
+	cols, err = strconv.Atoi(strings.TrimSpace(v[:i]))
+	if err != nil || cols <= 0 {
+		return 0, 0, fmt.Errorf("size width must be a positive number, e.g. 80x25")
+	}
+	rows, err = strconv.Atoi(strings.TrimSpace(v[i+1:]))
+	if err != nil || rows <= 0 {
+		return 0, 0, fmt.Errorf("size height must be a positive number, e.g. 80x25")
+	}
+	return cols, rows, nil
 }
 
 // operandArgs turns one operand into child arguments.
