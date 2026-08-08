@@ -51,6 +51,11 @@ func (s *stubPTY) Close() error {
 	}
 	return nil
 }
+func (s *stubPTY) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
 func (s *stubPTY) sent() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

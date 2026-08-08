@@ -2358,6 +2358,13 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.setViewportPTYHidden(0, "viewport_pty_toggle"))
 	})
 
+	// viewport_pty_kill ends the focused viewport's session; a `final` capture
+	// then folds everything it produced up to that point. Warns and does nothing
+	// when the focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_kill", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.killViewportPTY())
+	})
+
 	// raw_key_input hands the NEXT keystroke to a focused terminal's child
 	// instead of running mew's binding for it — the escape hatch for the keys
 	// mew itself claims. See armRawKey.

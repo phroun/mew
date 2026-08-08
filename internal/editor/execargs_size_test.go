@@ -454,6 +454,33 @@ func TestPtyHiddenSurfaceAndVisibility(t *testing.T) {
 	}
 }
 
+// viewport_pty_kill closes the focused session (the read loop then ends and
+// ptyEnded folds a final capture — that fold is covered by
+// TestCaptureOnDieFillsBuffer). Here: it closes a live session and warns on none.
+func TestViewportPTYKill(t *testing.T) {
+	e, _ := newTestEditor(t, "doc\n")
+	var pty *stubPTY
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { pty = newStubPTY(); return pty, nil }
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {}, Close: func(string) {},
+	}
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureOff, captureFull) {
+		t.Fatal("exec failed")
+	}
+	if !e.killViewportPTY() {
+		t.Fatal("kill should report true for a live session")
+	}
+	if pty == nil || !pty.isClosed() {
+		t.Error("kill should close the session")
+	}
+	// No session: warns and reports false.
+	e2, _ := newTestEditor(t, "plain\n")
+	if e2.killViewportPTY() {
+		t.Error("kill with no session should return false")
+	}
+}
+
 func TestParseSizeSwitchErrors(t *testing.T) {
 	bad := []string{
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict

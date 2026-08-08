@@ -631,6 +631,31 @@ func (e *Editor) setViewportPTYHidden(mode int, cmd string) bool {
 	return true
 }
 
+// killViewportPTY ends the focused viewport's session by CLOSING it — the read
+// loop then stops and ptyEnded runs, so a `final` capture folds everything the
+// session produced up to this point. Backs viewport_pty_kill.
+//
+// Closing the PTY is the same cross-platform teardown the editor uses at
+// shutdown (closePTYSessions): the host's Close drops the forkpty master (a
+// SIGHUP to the child on unix) or the conPTY handle on Windows. mew holds no
+// process handle to signal, by design, so this is the kill it has — and it is
+// enough for the shells and programs a terminal runs. Works on a hidden session
+// too; warns and reports false when the focused buffer has no session.
+func (e *Editor) killViewportPTY() bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		e.ShowWarning("viewport_pty_kill: no active buffer")
+		return false
+	}
+	sess := e.ptySessionFor(w.Buffer) // existence: a hidden session can be killed too
+	if sess == nil {
+		e.ShowWarning("viewport_pty_kill: this buffer has no terminal session")
+		return false
+	}
+	_ = sess.Close()
+	return true
+}
+
 // ptyDiagnose is the pty_diag command: ask the host to test its own terminal
 // plumbing and write the account into the buffer at the caret.
 //
