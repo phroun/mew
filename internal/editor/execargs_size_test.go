@@ -138,7 +138,7 @@ func TestExecSizePinsChildAndLogical(t *testing.T) {
 		Feed:           func(string, []byte) []byte { return nil },
 		Place:          func([]TerminalSurface) {},
 	}
-	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}) {
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}, captureOff) {
 		t.Fatal("exec failed")
 	}
 	// The host is told the pinned logical size up front.
@@ -187,6 +187,77 @@ func TestExecFollowSizesToTile(t *testing.T) {
 	if logs != 1 {
 		t.Errorf("follow SetLogicalSize called %d times, want 1 (0,0 at attach)", logs)
 	}
+}
+
+func TestParseCaptureSwitch(t *testing.T) {
+	cases := []struct {
+		line string
+		want captureMode
+	}{
+		{"--capture bash", captureText},
+		{"--capture=text bash", captureText},
+		{"--capture=ansi bash", captureANSI},
+		{"--capture=raw bash", captureANSI},
+		{"--capture=off bash", captureOff},
+		{"bash", captureOff},
+	}
+	for _, c := range cases {
+		s, err := parseExecLine(c.line)
+		if err != nil {
+			t.Errorf("parseExecLine(%q) error: %v", c.line, err)
+			continue
+		}
+		if s.Capture != c.want {
+			t.Errorf("parseExecLine(%q) capture = %d, want %d", c.line, s.Capture, c.want)
+		}
+	}
+	if s, err := parseExecLineNamed("bash", map[string]interface{}{"capture": "ansi"}); err != nil || s.Capture != captureANSI {
+		t.Errorf("named capture: got %d err %v, want ansi", s.Capture, err)
+	}
+	if _, err := parseExecLine("--capture=nonsense bash"); err == nil {
+		t.Error("--capture=nonsense should error")
+	}
+}
+
+// Capture-on-die folds the session's final scrollback into its buffer when it
+// ends — text with escapes stripped, ansi with them kept — and off leaves the
+// buffer empty and never asks for a snapshot.
+func TestCaptureOnDieFillsBuffer(t *testing.T) {
+	run := func(name string, mode captureMode, wantANSI bool, snap, want string) {
+		t.Run(name, func(t *testing.T) {
+			e, w := newTestEditor(t, "")
+			e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+			var askedANSI *bool
+			e.Config.TerminalSurfaces = TerminalHooks{
+				Open:  func(string, int, int) {},
+				Feed:  func(string, []byte) []byte { return nil },
+				Place: func([]TerminalSurface) {},
+				Close: func(string) {},
+				Snapshot: func(_ string, a bool) string {
+					askedANSI = &a
+					return snap
+				},
+			}
+			if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, mode) {
+				t.Fatal("exec failed")
+			}
+			e.ptyEnded(w.Buffer, nil)
+			if got := w.Buffer.GetContent(); got != want {
+				t.Errorf("buffer = %q, want %q", got, want)
+			}
+			switch {
+			case mode == captureOff && askedANSI != nil:
+				t.Error("capture off should not ask for a snapshot")
+			case mode != captureOff && askedANSI == nil:
+				t.Error("capture on should ask for a snapshot")
+			case mode != captureOff && *askedANSI != wantANSI:
+				t.Errorf("snapshot ansi = %v, want %v", *askedANSI, wantANSI)
+			}
+		})
+	}
+	run("text strips", captureText, false, "plain transcript\n", "plain transcript\n")
+	run("ansi keeps", captureANSI, true, "\x1b[31mred\x1b[0m\n", "\x1b[31mred\x1b[0m\n")
+	run("off is empty", captureOff, false, "should not appear\n", "")
 }
 
 func TestParseSizeSwitchErrors(t *testing.T) {

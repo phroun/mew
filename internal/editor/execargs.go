@@ -76,6 +76,17 @@ const (
 	sizeMinimum                 // --minimum: logical = max(tile, floor)
 )
 
+// captureMode selects whether a session's output is folded into its buffer when
+// it ends, and in what form: nothing (the default), plain text with escape
+// sequences stripped, or the full ANSI stream with colour and layout preserved.
+type captureMode int
+
+const (
+	captureOff captureMode = iota
+	captureText
+	captureANSI
+)
+
 type execSpec struct {
 	// Method is --pty=NAME: which way the host should make the terminal. mew
 	// attaches no meaning to it and forwards the string (see PTYRequest).
@@ -99,6 +110,10 @@ type execSpec struct {
 	SizeMode           sizeMode
 	SizeCols, SizeRows int
 	Hidden             bool
+
+	// Capture folds the session's output into its buffer when it ends
+	// (--capture=text|ansi); captureOff by default.
+	Capture captureMode
 }
 
 // parseExecLine parses a composited exec command line.
@@ -243,6 +258,8 @@ func (spec *execSpec) setBareOption(name string) error {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "hidden":
 		return spec.setOption("hidden", "")
+	case "capture":
+		return spec.setOption("capture", "")
 	}
 	return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", name)
 }
@@ -292,6 +309,21 @@ func (spec *execSpec) setOption(name, value string) error {
 			return err
 		}
 		return spec.setSizePolicy(sizeExact, c, r, true)
+	case "capture":
+		// Whether the session's output is folded into its buffer when it ends,
+		// and how: text (escapes stripped) or ansi (the full stream). A bare
+		// --capture, or capture: true, means text.
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "", "text", "on", "true", "yes", "1":
+			spec.Capture = captureText
+		case "ansi", "ans", "raw", "color":
+			spec.Capture = captureANSI
+		case "off", "false", "no", "0", "none":
+			spec.Capture = captureOff
+		default:
+			return fmt.Errorf("--capture must be text, ansi, or off")
+		}
+		return nil
 	}
 	if spec.Shell {
 		return fmt.Errorf("unknown shell option %q", name)

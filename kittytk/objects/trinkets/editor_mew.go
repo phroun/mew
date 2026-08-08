@@ -378,6 +378,7 @@ func (e *Editor) run() {
 		mew.WithTerminalSurfaces(mew.TerminalHooks{
 			Open:           e.terminalOpen,
 			SetLogicalSize: e.terminalSetLogicalSize,
+			Snapshot:       e.terminalSnapshot,
 			Feed:           e.terminalFeed,
 			Place:          e.terminalPlace,
 			Close:          e.terminalClose,
@@ -1083,6 +1084,28 @@ func (e *Editor) terminalSetLogicalSize(id string, cols, rows int) {
 	if buf := t.Buffer(); buf != nil {
 		buf.SetLogicalSize(rows, cols)
 	}
+}
+
+// terminalSnapshot backs mew's Snapshot hook: the session's scrollback as text,
+// folded into the buffer when the session ends. ansi keeps the full escape/SGR
+// stream (colour, layout); otherwise it is plain text with the sequences
+// stripped. purfecterm already serializes both forms — SaveScrollbackANS keeps
+// the stream, SaveScrollbackText strips it — so this is just the choice.
+func (e *Editor) terminalSnapshot(id string, ansi bool) string {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return ""
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return ""
+	}
+	if ansi {
+		return t.SaveScrollbackANS()
+	}
+	return t.SaveScrollbackText()
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where

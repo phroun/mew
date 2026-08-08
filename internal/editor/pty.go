@@ -163,6 +163,9 @@ type ptyState struct {
 	// SetLogicalSize is pushed only when it actually changes.
 	policy                   ptySizePolicy
 	logSentCols, logSentRows int
+	// capture folds the session's output into its buffer when it ends (Method 2,
+	// capture-on-die); captureOff (the default) leaves the buffer empty as before.
+	capture captureMode
 }
 
 // ptySizePolicy is how a session's LOGICAL size is chosen — the size the child
@@ -319,6 +322,12 @@ type TerminalHooks struct {
 	// shows scrollbars rather than reflowing the child; it is also how a session
 	// with no visible surface keeps a definite size.
 	SetLogicalSize func(id string, cols, rows int)
+
+	// Snapshot returns the session's scrollback as text, for folding it into the
+	// buffer when the session ends (capture-on-die). ansi keeps the full
+	// escape/SGR stream (colour, layout); otherwise it is plain text with the
+	// sequences stripped. Optional: a nil hook simply means no capture.
+	Snapshot func(id string, ansi bool) string
 
 	// Feed hands the session's output to the emulator and returns what the
 	// emulator ANSWERED — a terminal is not a one-way device. A program asks
@@ -490,25 +499,27 @@ func (e *Editor) execRequestShell(args []string, method string) bool {
 // execRequestShell carrying a LOGICAL-size policy from the parse. The plain
 // forms stay as the zero-policy (follow-the-tile) entry points every existing
 // caller uses, delegating here.
-func (e *Editor) execRequestArgsPolicy(command string, args []string, method string, pol ptySizePolicy) bool {
-	return e.execRequestSpecPolicy(command, args, method, false, pol)
+func (e *Editor) execRequestArgsPolicy(command string, args []string, method string, pol ptySizePolicy, capture captureMode) bool {
+	return e.execRequestSpecPolicy(command, args, method, false, pol, capture)
 }
 
-func (e *Editor) execRequestShellPolicy(args []string, method string, pol ptySizePolicy) bool {
-	return e.execRequestSpecPolicy("", args, method, true, pol)
+func (e *Editor) execRequestShellPolicy(args []string, method string, pol ptySizePolicy, capture captureMode) bool {
+	return e.execRequestSpecPolicy("", args, method, true, pol, capture)
 }
 
-// execRequestSpec is the zero-policy form of execRequestSpecPolicy: the child's
-// logical size follows the visible tile, exactly as before these switches.
+// execRequestSpec is the zero-option form of execRequestSpecPolicy: the child's
+// logical size follows the visible tile and nothing is captured, exactly as
+// before these switches.
 func (e *Editor) execRequestSpec(command string, args []string, method string, shell bool) bool {
-	return e.execRequestSpecPolicy(command, args, method, shell, ptySizePolicy{})
+	return e.execRequestSpecPolicy(command, args, method, shell, ptySizePolicy{}, captureOff)
 }
 
-// execRequestSpecPolicy is execRequestArgs with the shell flag and a logical-
-// size policy: when shell is set, the host names the program (the user's login
-// shell) and command must be empty. pol governs the size the child is told it
-// has (see ptySizePolicy).
-func (e *Editor) execRequestSpecPolicy(command string, args []string, method string, shell bool, pol ptySizePolicy) bool {
+// execRequestSpecPolicy is execRequestArgs with the shell flag, a logical-size
+// policy, and a capture mode: when shell is set, the host names the program
+// (the user's login shell) and command must be empty. pol governs the size the
+// child is told it has (see ptySizePolicy); capture whether its output is
+// folded into the buffer when it ends.
+func (e *Editor) execRequestSpecPolicy(command string, args []string, method string, shell bool, pol ptySizePolicy, capture captureMode) bool {
 	if e.Config.PTYProvider == nil {
 		e.ShowWarning("No terminal provider: this host does not grant sessions")
 		return false
@@ -576,7 +587,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 	if req.Shell {
 		name = "the login shell"
 	}
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol)
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -589,7 +600,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureMode) {
 	// The initial logical size the host is told: 0,0 for a follow policy (track
 	// the visible surface, as before), else the resolved size so a pinned or
 	// floored terminal renders correctly from its first frame. Recorded as
@@ -607,6 +618,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
+		capture: capture,
 	}
 	e.ptyMu.Unlock()
 
@@ -923,6 +935,15 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	}
 	if st == nil {
 		return
+	}
+	// Method 2 (capture-on-die): fold the session's final scrollback into its
+	// buffer BEFORE the surface is torn down — the snapshot has to be taken
+	// while the emulator still exists. The buffer is an ordinary editable buffer
+	// again now, so the transcript lands as its content.
+	if st.capture != captureOff && e.Config.TerminalSurfaces.Snapshot != nil {
+		if text := e.Config.TerminalSurfaces.Snapshot(st.id, st.capture == captureANSI); text != "" {
+			b.InsertText(0, 0, text)
+		}
 	}
 	if e.Config.TerminalSurfaces.Close != nil {
 		e.Config.TerminalSurfaces.Close(st.id)
