@@ -142,8 +142,8 @@ func TestParseFilterRoutes(t *testing.T) {
 	}
 }
 
-// block_filter is the JOE-style front door: with an inline command it pipes the
-// marked block through the shell and replaces the block with the result.
+// block_filter is the front door: with an inline command it pipes the marked
+// block through the shell and replaces the block with the result.
 func TestBlockFilterReplacesBlock(t *testing.T) {
 	e, w := newTestEditor(t, "abc\n")
 	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) {

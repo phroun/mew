@@ -716,7 +716,7 @@ var menuActions = map[string]menuAction{
 	"mew.format.unindent": {"block_unindent", "^K ,"},
 	"mew.format.indent":   {"block_indent", "^K ."},
 	"mew.format.justify":  {`not_implemented "Justify Block"`, "^K J"},
-	"mew.format.filter":   {`not_implemented "Filter Block through Cmd"`, "^K /"},
+	"mew.format.filter":   {"block_filter", "^K /"},
 	"mew.format.upper":    {`not_implemented "Convert to UPPERCASE"`, "^K T"},
 	"mew.format.lower":    {`not_implemented "Convert to lowercase"`, ""},
 	"mew.format.title":    {`not_implemented "Convert to Title Case"`, ""},

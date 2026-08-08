@@ -8,7 +8,7 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 )
 
-// filter.go runs a command as a FILTER — JOE's "filter block through command":
+// filter.go runs a command as a FILTER — piping the marked block through it:
 // the child runs headless on pipes (not a terminal, not purfecterm), so mew can
 // feed its stdin and read its stdout/stderr itself and route each stream where
 // the user asked (--inblock/--outblock, --stdin/--stdout/--stderr). See
@@ -112,7 +112,7 @@ func (e *Editor) runFilter(spec execSpec) bool {
 	return true
 }
 
-// blockFilter is the ergonomic JOE-style front door (the block_filter command):
+// blockFilter is the ergonomic front door (the block_filter command):
 // pipe the marked block through a shell command and replace it with the result
 // — equivalent to exec --stdin=block --stdout=block --stderr=block, so stdout
 // and stderr both land back in the block. With no command it prompts, recalling
