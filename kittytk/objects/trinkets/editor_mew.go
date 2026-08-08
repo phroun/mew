@@ -904,6 +904,23 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
+	// A request that wires any standard stream to a pipe is a FILTER, not a
+	// terminal: the child runs headless on ordinary pipes so mew can feed its
+	// stdin and read its stdout/stderr apart. This host handles the two pure
+	// cases — all-terminal (below) and all-pipe — and refuses a mix for now
+	// rather than half-wire it; the mixed pty+pipe case (a colourful stdout with
+	// a piped stderr) is representable in the request and a later host can add it.
+	if !stdioAllTerminal(req) {
+		if !stdioAllPipe(req) {
+			return nil, fmt.Errorf("this host cannot yet mix pty and pipe stdio")
+		}
+		// A filter child sees pipes, not a terminal: inherit the ambient
+		// environment unchanged. No TERM advertisement — isatty is false, so it
+		// will not colour anyway, and a bogus TERM would only mislead a program
+		// that checks it.
+		return newFilterSession(path, dir, os.Environ(), req.Args)
+	}
+
 	// Advertise the embedded terminal's identity to the child (last wins over any
 	// inherited TERM/TERM_PROGRAM). TERM must name a terminfo entry that actually
 	// exists on the host: PurfectermTerm ("xterm-purfecterm") has none, so
@@ -928,6 +945,22 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// Input written to the child wakes its caret: mew owns this session, so
 	// the trinket's own input path never sees it. See editor_mew_blink.go.
 	return e.wakeOnWrite(sess), nil
+}
+
+// stdioAllTerminal reports whether every standard stream is wired to the
+// session's pseudo-terminal — the historical terminal session and the zero value.
+func stdioAllTerminal(req mew.PTYRequest) bool {
+	return req.Stdin == mew.StreamTerminal &&
+		req.Stdout == mew.StreamTerminal &&
+		req.Stderr == mew.StreamTerminal
+}
+
+// stdioAllPipe reports whether every standard stream is wired to its own pipe —
+// a headless filter child.
+func stdioAllPipe(req mew.PTYRequest) bool {
+	return req.Stdin == mew.StreamPipe &&
+		req.Stdout == mew.StreamPipe &&
+		req.Stderr == mew.StreamPipe
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or

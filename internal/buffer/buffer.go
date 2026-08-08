@@ -3,6 +3,7 @@ package buffer
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -1231,6 +1232,18 @@ func (b *Buffer) BakeUndo() {
 	}
 }
 
+// PruneUndo discards this buffer's undo history up to the current revision,
+// freeing the cold/undo blocks it held. It is for a transient conveyor buffer —
+// a filter's stdin snapshot whose consumed head is deleted as it streams — where
+// the deletions pile up undo nobody will ever replay; pruning periodically keeps
+// its footprint flat. Not for a document the user might undo: it makes the state
+// before the current revision unreachable.
+func (b *Buffer) PruneUndo() {
+	if b.garland != nil {
+		_ = b.garland.Prune(b.garland.CurrentRevision())
+	}
+}
+
 // beginMutation lazily opens the command's transaction on the first mutation
 // within a user command, so all of the command's mutations collapse into one
 // named revision. Called at the top of every mutating buffer method. Outside a
@@ -1631,6 +1644,70 @@ func (r *LineReader) Release() {
 	}
 }
 
+// RangeReader streams a byte range of the buffer as an io.Reader over its own
+// ephemeral cursor, so a possibly-huge block drains chunk by chunk instead of
+// being materialized into one string the way GetTextRange would. The bounds are
+// captured at construction as absolute bytes; edits inside the range during the
+// read are not tracked (take a stable snapshot first if that matters). Release
+// when done — Read releases itself at EOF.
+type RangeReader struct {
+	b         *Buffer
+	c         *garland.Cursor
+	remaining int64
+}
+
+// NewRangeReader opens a streaming reader over [start, end) given as line/rune
+// positions. An empty or inverted range yields an immediately-EOF reader.
+func (b *Buffer) NewRangeReader(startLine, startRune, endLine, endRune int) *RangeReader {
+	if b == nil || b.garland == nil {
+		return &RangeReader{}
+	}
+	startByte, ok1 := b.lineRuneToByte(startLine, startRune)
+	endByte, ok2 := b.lineRuneToByte(endLine, endRune)
+	if !ok1 || !ok2 || endByte <= startByte {
+		return &RangeReader{}
+	}
+	c := b.garland.NewEphemeralCursor()
+	if err := c.SeekByte(startByte); err != nil {
+		b.garland.RemoveCursor(c)
+		return &RangeReader{}
+	}
+	return &RangeReader{b: b, c: c, remaining: endByte - startByte}
+}
+
+// Read fills p with the next bytes of the range and returns io.EOF once the
+// range is drained. It advances the reader's own cursor, disturbing no caret.
+func (r *RangeReader) Read(p []byte) (int, error) {
+	if r == nil || r.c == nil || r.remaining <= 0 || len(p) == 0 {
+		r.Release()
+		return 0, io.EOF
+	}
+	n := int64(len(p))
+	if n > r.remaining {
+		n = r.remaining
+	}
+	data, err := r.c.ReadBytes(n)
+	copied := copy(p, data)
+	r.remaining -= int64(copied)
+	if err != nil || r.remaining <= 0 || copied == 0 {
+		r.Release() // EOF surfaces on the next call when copied > 0
+	}
+	if copied == 0 {
+		return 0, io.EOF
+	}
+	return copied, nil
+}
+
+// Release removes the reader's cursor from garland. Safe to call repeatedly.
+func (r *RangeReader) Release() {
+	if r != nil && r.c != nil {
+		if r.b != nil && r.b.garland != nil {
+			r.b.garland.RemoveCursor(r.c)
+		}
+		r.c = nil
+	}
+}
+
 // Cursor provides a position-based interface to the buffer.
 type Cursor struct {
 	buffer        *Buffer
@@ -1709,6 +1786,20 @@ func (c *Cursor) InsertString(text string, _ interface{}, _ bool) {
 	}
 	c.markEdited()
 	c.garlandCursor.InsertString(text, nil, false)
+}
+
+// InsertStringBefore is InsertString with garland's insertBefore=true: any
+// cursor or mark sitting exactly at the insertion point SLIDES forward past the
+// inserted text instead of staying at its start. A filter streaming a command's
+// stdout in place of a block inserts this way, so the _block_end mark parked at
+// the tail rides forward with each chunk on its own — the block stays wrapped
+// around the growing output without the mark being re-set per chunk.
+func (c *Cursor) InsertStringBefore(text string) {
+	if c.garlandCursor == nil || text == "" {
+		return
+	}
+	c.markEdited()
+	c.garlandCursor.InsertString(text, nil, true)
 }
 
 // markEdited records that the cursor is about to mutate content: it lowers the

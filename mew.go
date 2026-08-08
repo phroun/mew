@@ -301,6 +301,25 @@ func WithPTYDiagnose(fn func() string) Option {
 // two failures that look identical from mew's side of the pipe.
 type PTYExitStatus = editor.PTYExitStatus
 
+// StreamWiring, StreamTerminal and StreamPipe describe how each of a child's
+// standard streams is connected (PTYRequest.Stdin/Stdout/Stderr): to the
+// session's pseudo-terminal, or to its own pipe. The zero value is the terminal
+// default. Piping a stream is what lets a host use a command as a filter.
+type StreamWiring = editor.StreamWiring
+
+const (
+	StreamTerminal = editor.StreamTerminal
+	StreamPipe     = editor.StreamPipe
+)
+
+// PTYStderr and PTYStdinCloser are the optional capabilities a piped session
+// gains: a separate stderr stream (ReadStderr) when stderr is its own pipe, and
+// a stdin half-close (CloseStdin) to signal EOF when stdin is a pipe. A host
+// implements them on the session it returns for such a request; mew discovers
+// them by type assertion, exactly as it does PTYExitStatus.
+type PTYStderr = editor.PTYStderr
+type PTYStdinCloser = editor.PTYStdinCloser
+
 func WithRestoreHostTerminal(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }
 }

@@ -296,7 +296,42 @@ type PTYRequest struct {
 	// alternative is a rebuild per attempt on a machine that may not be the
 	// one being developed on.
 	Method string
+
+	// Stdin, Stdout, Stderr wire each of the child's three standard streams
+	// INDEPENDENTLY, because a pty slave is just a file and each descriptor points
+	// at one on its own — they are not all-or-nothing. The zero value
+	// (StreamTerminal for all three) is the historical terminal session: one
+	// pseudo-terminal carrying all three, Read draining it and Write reaching
+	// stdin through the master. Setting a stream to StreamPipe gives that one its
+	// own pipe instead, and they mix: a child can keep a pty STDOUT (so isatty is
+	// true and it emits colour and honours termcaps) while its STDERR rides a
+	// separate pipe mew can tee, and its STDIN is a pipe mew feeds and half-closes.
+	//
+	// This is the single process-spawning surface — the pipe flavors ride the same
+	// PTYProvider and PTYSession; the capabilities a given wiring adds are the
+	// optional interfaces below (PTYStderr when stderr is its own pipe,
+	// PTYStdinCloser when stdin is a pipe), discovered by type assertion.
+	Stdin, Stdout, Stderr StreamWiring
 }
+
+// StreamWiring says how ONE of a child's standard streams is connected
+// (PTYRequest.Stdin/Stdout/Stderr). It is per-stream on purpose: keeping a pty
+// on one descriptor while piping another is an ordinary, useful thing (a
+// colourful stdout with a separately-captured stderr), not a special case.
+type StreamWiring int
+
+const (
+	// StreamTerminal binds the stream to the session's pseudo-terminal — the
+	// historical default. A child with all three on StreamTerminal is an ordinary
+	// terminal session, stdout and stderr merged on the pty.
+	StreamTerminal StreamWiring = iota
+	// StreamPipe gives the stream its own ordinary pipe. A piped stdin can be
+	// half-closed to signal EOF (PTYStdinCloser); a piped stdout is drained by
+	// Read; a piped stderr, when stdout is not also on that same pipe, is drained
+	// by ReadStderr (PTYStderr). A child with all three piped is a headless
+	// filter — no pty, no VT translation, Resize a no-op.
+	StreamPipe
+)
 
 // PTYSession is what the host hands back: purfecterm's PTY interface MINUS
 // Start(*exec.Cmd). See the file comment for why that omission is the whole
@@ -343,6 +378,30 @@ type PTYExitStatus interface {
 // call went wrong is on the host's side of a pipe that never worked.
 type PTYDiagnostics interface {
 	Diagnostics() []string
+}
+
+// PTYStderr is the OPTIONAL separate-error-stream capability. A session whose
+// stderr was wired to its own pipe (PTYRequest.Stderr == StreamPipe, and not
+// sharing stdout's stream) implements it: ReadStderr drains the child's stderr
+// independently of Read, so a filter's diagnostics can be told apart from its
+// output. A session with stderr on the pseudo-terminal does NOT implement it —
+// there stderr is inseparably merged into Read.
+//
+// Like the readouts above it is discovered by type assertion, so the base
+// PTYSession is unchanged and no terminal host has to grow a method.
+type PTYStderr interface {
+	ReadStderr(p []byte) (n int, err error)
+}
+
+// PTYStdinCloser is the OPTIONAL stdin half-close. A session whose stdin was
+// wired to a pipe (PTYRequest.Stdin == StreamPipe) implements it: CloseStdin
+// closes just the child's input, signalling EOF so a filter that reads stdin to
+// completion can flush and exit — WITHOUT the full teardown that Close performs
+// (SIGHUP / TerminateProcess), which would kill the child before it finished. A
+// stdin on the pseudo-terminal has no separable end to close and does not
+// implement it.
+type PTYStdinCloser interface {
+	CloseStdin() error
 }
 
 // ptyState is one viewport's live session. It is keyed in ptySessions by the
