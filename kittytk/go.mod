@@ -12,7 +12,7 @@ require (
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.12
 	github.com/phroun/mew v0.3.1-alpha
-	github.com/phroun/purfecterm v0.2.36
+	github.com/phroun/purfecterm v0.2.37
 	golang.org/x/image v0.44.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0

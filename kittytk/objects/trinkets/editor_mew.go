@@ -1170,9 +1170,14 @@ func (r captureRelay) OnScrollLineOff(n int) {
 		r.sink.LiveScrollLineOff(n)
 	}
 }
-func (r captureRelay) OnClearScreen() {
+func (r captureRelay) OnClearScreen(sgr string) {
 	if r.wantsLive {
-		r.sink.LiveClearScreen()
+		r.sink.LiveClearScreen(sgr)
+	}
+}
+func (r captureRelay) OnClearToEndOfLine(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearToEndOfLine(x, y, sgr)
 	}
 }
 

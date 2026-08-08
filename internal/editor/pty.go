@@ -136,9 +136,14 @@ func (c *captureStream) LiveScrollLineOff(n int) {
 		c.mirror.ScrollLineOff(n)
 	}
 }
-func (c *captureStream) LiveClearScreen() {
+func (c *captureStream) LiveClearScreen(sgr string) {
 	if c.mirror != nil {
-		c.mirror.ClearScreen()
+		c.mirror.ClearScreen(sgr)
+	}
+}
+func (c *captureStream) LiveClearToEndOfLine(x, y int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.ClearToEndOfLine(x, y, sgr)
 	}
 }
 
@@ -626,7 +631,10 @@ type CaptureSink interface {
 	LiveLineWrap(x, y int)
 	LiveBackspace(x, y int)
 	LiveScrollLineOff(n int)
-	LiveClearScreen()
+	// LiveClearScreen carries the pen the screen was cleared with (the screen
+	// background); LiveClearToEndOfLine the erase-to-margin at (x,y) and its pen.
+	LiveClearScreen(sgr string)
+	LiveClearToEndOfLine(x, y int, sgr string)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a

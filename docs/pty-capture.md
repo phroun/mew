@@ -98,6 +98,10 @@ construction) rather than a regex strip.
   single-colour run emits one SGR and nothing after. The engine stores no screen
   height and simply follows the event stream, which makes it correct across a
   resize.
+  - Erases carry their pen (v0.2.37): a clear establishes the screen background
+    (ED fills with the current pen), which every default cell afterwards resolves
+    to instead of a bare reset, and a clear-to-end-of-line truncates a row's stale
+    tail. The remaining erases (EL1/EL2/ED0) are a fast follow.
   - Follow-up: the begin/end colour correction for a caret that jumps back into
     already-coloured cells (emit the landing pen, restore the prior pen after the
     overtyped chunk, replace rather than stack an SGR it lands on). Until then,

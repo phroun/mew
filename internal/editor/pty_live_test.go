@@ -194,11 +194,38 @@ func TestLiveScrollPreservesHistory(t *testing.T) {
 func TestLiveClearKeepsHistory(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
 	sink.LiveWrite(0, 0, "old", "")
-	sink.LiveClearScreen()
+	sink.LiveClearScreen("")
 	sink.LiveWrite(0, 0, "new", "")
 	e.ptyEnded(w.Buffer, nil)
 	if got, want := w.Buffer.GetContent(), region("old\nnew"); got != want {
 		t.Fatalf("buffer = %q, want %q (clear keeps the old screen above)", got, want)
+	}
+}
+
+// A clear sets the screen background: a default-pen write afterwards resolves to
+// that background rather than a bare reset, so no ESC[0m leaks in.
+func TestLiveClearSetsScreenBackground(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	blue := "\x1b[0;48;2;24;70;200m"
+	sink.LiveWrite(0, 0, "old", "")
+	sink.LiveClearScreen(blue)
+	sink.LiveWrite(0, 0, "hi", "") // default pen → should carry the blue screen bg
+	e.ptyEnded(w.Buffer, nil)
+	// "old" stays above as history; the fresh region anchors the blue screen bg.
+	if got, want := w.Buffer.GetContent(), "\nold\n"+blue+"hi\n"; got != want {
+		t.Fatalf("buffer = %q, want %q (default write carries screen bg)", got, want)
+	}
+}
+
+// Clear-to-end-of-line truncates the row's stale tail at the cursor column.
+func TestLiveClearToEndOfLineTruncates(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "STALEcontent", "")
+	sink.LiveCursorMove(5, 0)
+	sink.LiveClearToEndOfLine(5, 0, "")
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), region("STALE"); got != want {
+		t.Fatalf("buffer = %q, want %q (tail erased at column 5)", got, want)
 	}
 }
 

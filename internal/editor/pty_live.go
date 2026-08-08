@@ -62,6 +62,13 @@ type liveMirror struct {
 	// into row y's column 0, so a pen unchanged across a newline emits nothing.
 	curPen      string
 	rowStartPen []string
+
+	// screenPen is the pen the screen was last cleared with — the background a
+	// blank/default cell actually sits on (background-colour erase). A "default"
+	// pen from the terminal resolves to this, so an erased region is painted in
+	// the screen background rather than a bare reset. "" means the terminal
+	// default (a real, viewer-defined colour we express as ESC[0m).
+	screenPen string
 }
 
 // newLiveMirror builds the Method 4 workspace around the caret's launch point.
@@ -147,7 +154,7 @@ func (m *liveMirror) grow() {
 	m.peek.SeekLineRune(el-1, 0)
 	m.peek.SeekLineEnd()
 	m.peek.InsertString("\n", nil, false)
-	m.rowStartPen = append(m.rowStartPen, "")
+	m.rowStartPen = append(m.rowStartPen, m.screenPen)
 }
 
 // growTo materializes rows up to and including row y.
@@ -254,7 +261,7 @@ func (m *liveMirror) Write(x, y int, text, sgr string) {
 	if off > len(rs) {
 		off = len(rs)
 	}
-	writePen := normalizePen(sgr)
+	writePen := m.resolvePen(sgr)
 
 	midBytes, endRune, boundarySGR, _ := spanForward(rs, off, w)
 	hasTrailing := hasVisibleAfter(rs, endRune)
@@ -397,7 +404,7 @@ func (m *liveMirror) penAt(y, col int) string {
 		}
 		if rs[i] == 0x1b {
 			if n := sgrRunLen(string(rs[i:])); n > 0 {
-				pen = normalizePen(string(rs[i : i+n]))
+				pen = m.resolvePen(string(rs[i : i+n]))
 				i += n
 				continue
 			}
@@ -427,6 +434,18 @@ func normalizePen(sgr string) string {
 		return ""
 	}
 	return sgr
+}
+
+// resolvePen maps a terminal pen to the concrete pen the mirror emits. A default
+// pen (empty, or an explicit reset) resolves to the screen background set at the
+// last clear, so a blank/erased cell sits on the real screen colour rather than
+// a bare reset. With no non-default screen background it stays "" — the terminal
+// default, expressed as ESC[0m at emit time.
+func (m *liveMirror) resolvePen(sgr string) string {
+	if p := normalizePen(sgr); p != "" {
+		return p
+	}
+	return m.screenPen
 }
 
 // Newline moves the caret to column 0 of the next row (OnNewline / OnLineWrap):
@@ -485,17 +504,55 @@ func (m *liveMirror) ScrollLineOff(n int) {
 // row below it (OnClearScreen), consistent with the scroll model: nothing is
 // deleted. A blank row is grown at the bottom, then "start of terminal" advances
 // so that blank row becomes the new row 0 and every prior row is history above.
-func (m *liveMirror) ClearScreen() {
+// sgr is the pen the clear was performed with — the new screen background,
+// which every default cell painted afterwards resolves to.
+func (m *liveMirror) ClearScreen(sgr string) {
+	m.screenPen = normalizePen(sgr)
 	m.grow() // a fresh blank row just above end of terminal
 	el, _ := m.bottom.GetPosition()
 	// The new blank row is line el-1; start of terminal moves to just before the
-	// EOL of the line above it.
+	// EOL of the line above it — so every prior row stays above as history.
 	m.top.SeekLineRune(el-2, 0)
 	m.top.SeekLineEnd()
 	m.caret.SeekLineRune(el-1, 0)
 	m.curX, m.curY = 0, 0
-	m.curPen = ""
-	m.rowStartPen = []string{""}
+	if m.format == captureFull && m.screenPen != "" {
+		// Anchor the screen background at row 0: the fresh region carries no pen
+		// yet, so emit the clear's pen once so default cells sit on it (and it
+		// carries down as rows grow).
+		m.caret.InsertString(m.screenPen, nil, false)
+		m.curPen = m.screenPen
+		m.rowStartPen = []string{m.screenPen}
+	} else {
+		m.curPen = ""
+		m.rowStartPen = []string{""}
+	}
+}
+
+// ClearToEndOfLine erases from cell (x, y) to the right margin (OnClearToEndOfLine)
+// by truncating the row's content at column x — so a full-screen app's stale line
+// tail from a previous frame is removed rather than left behind. The erase pen's
+// background becomes the pen in effect at the truncation point.
+func (m *liveMirror) ClearToEndOfLine(x, y int, sgr string) {
+	m.growTo(y)
+	line := m.rowLine(y)
+	text := m.readRow(y)
+	rs := []rune(text)
+	runeOff, pad := visualColToRune(text, x)
+	end := visibleRuneCount(text)
+	if pad == 0 && runeOff < end {
+		delBytes := len(string(rs[runeOff:end]))
+		m.caret.SeekLineRune(line, runeOff)
+		m.caret.Overwrite(delBytes, "") // delete the tail in one op
+	} else {
+		m.caret.SeekLineRune(line, end)
+	}
+	m.curX, m.curY = x, y
+	if m.format == captureFull {
+		// The erased tail now sits on the erase pen's background; a following
+		// write in that pen needs no correction.
+		m.curPen = m.resolvePen(sgr)
+	}
 }
 
 // --- small pure helpers ---
