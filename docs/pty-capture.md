@@ -12,14 +12,21 @@ single ordered axis, from cheapest/least to richest/most:
 | Value   | Rung | Captures                                   | When                     | Cost / boundary                         |
 |---------|------|--------------------------------------------|--------------------------|-----------------------------------------|
 | `off`   | —    | nothing                                     | —                        | explicit disable (overrides a default)  |
-| `raw`   | M1   | the raw byte stream, verbatim               | live, as bytes arrive    | mew-only (tap the output pump)          |
-| `final` | M2   | final scrollback + used screen              | once, at session death   | mew-only — **implemented**              |
-| `lines` | M3   | ordered transcript, each line as it scrolls off | live                | needs a purfecterm scroll-off callback  |
+| `raw`   | M1   | the raw byte stream, verbatim               | live, as bytes arrive    | **implemented** (v0.2.34 tee)           |
+| `final` | M2   | final scrollback + used screen              | once, at session death   | **implemented**                         |
+| `lines` | M3   | ordered transcript, each line as it scrolls off | live                | **implemented** (v0.2.35 OnLineOff)     |
 | `live`  | M4   | live screen mirror                          | live, on every change    | needs a purfecterm event stream         |
 
 `raw`/`final` sit above the purfecterm module boundary (mew-only). `lines`/`live`
-require new upstream events and carry the same upstream cost as any purfecterm
-change.
+ride purfecterm's `CaptureObserver` seam: `raw` is `OnOutput` (v0.2.34), `lines`
+is `OnLineOff` (v0.2.35); `live` will add the screen-mutation events.
+
+`lines` is the resolved, ordered transcript — each line as the emulator
+finalized it when it left the screen, captured live and so **unbounded by
+purfecterm's scrollback cap**. A line rewritten in place before it scrolls off
+contributes once; a wrapped logical line contributes one transcript line per
+screen row (the on-screen view — `raw` preserves the original breaks); the
+final on-screen tail is flushed at session end.
 
 ## Resolution is tri-state
 
@@ -70,8 +77,13 @@ construction) rather than a regex strip.
 
 ## Status
 
-- Implemented: the `off` / `final` rungs, tri-state resolution, and the
-  `--plain` / `--text` formats (full / plain / text) via `SaveScrollback*Opts`
-  and the ephemeral-cursor fold.
-- Reserved but not implemented: rungs `raw`, `lines`, `live` (parsing them is a
-  clear "not implemented yet" error, so the vocabulary is stable).
+- Implemented: the `off` / `raw` / `final` / `lines` rungs, tri-state
+  resolution, and the `--plain` / `--text` formats. `final` folds via
+  `SaveScrollback*Opts` at death; `raw` and `lines` stream live through the
+  `CaptureSink` seam into the ephemeral cursor (`raw` = the byte tee, `lines` =
+  serialized transcript lines), plus the runtime commands `viewport_pty_hide` /
+  `_show` / `_toggle` / `_kill` and the `--hidden` flag.
+- Reserved but not implemented: `live` (M4) — parsing it is a clear "not
+  implemented yet" error, so the vocabulary is stable. It will add the
+  screen-mutation events to `CaptureObserver` and a `CaptureSink` method,
+  reusing the same relay + fold machinery.
