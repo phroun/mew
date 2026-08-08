@@ -349,7 +349,12 @@ func DefaultIndicators() Indicators {
 // GeneralConfig holds general editor settings.
 type GeneralConfig struct {
 	ShowLineNumbers bool
-	ShowColumnRuler bool
+	// DeleteNewlineAsChar lets del_char_prior / del_char_next remove a line
+	// terminator (joining two lines) like any other character. Default true; when
+	// false those commands decline at a line boundary rather than joining lines.
+	// Prompt viewports pin it false at creation.
+	DeleteNewlineAsChar bool
+	ShowColumnRuler     bool
 	// Scrollbar reserves each doc/tool viewport's outer column (right in LTR,
 	// left in RTL) for a clickable vertical scrollbar. Default true.
 	Scrollbar        bool
@@ -865,6 +870,7 @@ func DefaultConfig() Config {
 		Outline:     DefaultOutline(),
 		General: GeneralConfig{
 			ShowLineNumbers:         true,
+			DeleteNewlineAsChar:     true,
 			ShowColumnRuler:         true,
 			Scrollbar:               true,
 			RulerShowsCursor:        false,
@@ -1116,6 +1122,9 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 	if opt, ok := parsed["options"]; ok {
 		if v, ok := opt["showLineNumbers"]; ok {
 			config.General.ShowLineNumbers = parseBool(v, true)
+		}
+		if v, ok := opt["deleteNewlineAsChar"]; ok {
+			config.General.DeleteNewlineAsChar = parseBool(v, true)
 		}
 		if v, ok := opt["showColumnRuler"]; ok {
 			config.General.ShowColumnRuler = parseBool(v, true)

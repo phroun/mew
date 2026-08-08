@@ -343,6 +343,7 @@ func (e *Editor) openLaunchFile(filename string, winOpts map[string]string, focu
 func (e *Editor) docViewportOptions() viewport.ViewportOptions {
 	return viewport.ViewportOptions{
 		ShowLineNumbers: e.Config.ShowLineNumbers,
+		ProtectNewlines: !e.Config.DeleteNewlineAsChar,
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,

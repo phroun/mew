@@ -53,6 +53,12 @@ type ViewState struct {
 	ViewOffsetX     int
 	ViewOffsetY     int
 	ShowLineNumbers bool
+	// ProtectNewlines makes del_char_prior/del_char_next DECLINE to remove a line
+	// terminator (join two lines). It is the inverse of the deleteNewlineAsChar
+	// option, stored inverted so the zero value keeps the default — deleting a
+	// newline like any other character. Forced true for prompt viewports at
+	// creation.
+	ProtectNewlines bool
 	ShowInvisibles  bool
 	// ShowBidi renders a one-column direction marker at the leading edge of
 	// every directional fragment (except a line-initial fragment in the
@@ -1314,6 +1320,7 @@ type ViewportOptions struct {
 	MaxHeight       int
 	Height          int
 	ShowLineNumbers bool
+	ProtectNewlines bool
 	ShowInvisibles  bool
 	ShowBidi        bool
 	ShowMarks       string // "no" | "yes" | "all"
@@ -1409,6 +1416,11 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 			ViewOffsetX:     0,
 			ViewOffsetY:     0,
 			ShowLineNumbers: opts.ShowLineNumbers,
+			// Prompt viewports never delete a newline as a character: a prompt is a
+			// single line and joining it with a neighbour is never wanted. Forced
+			// here so no prompt creation site has to remember it; the zero value
+			// (not forced) keeps the default of deleting newlines for documents.
+			ProtectNewlines: opts.ProtectNewlines || opts.Type == PromptViewport,
 			ShowInvisibles:  opts.ShowInvisibles,
 			ShowBidi:        opts.ShowBidi,
 			ShowMarks:       opts.ShowMarks,

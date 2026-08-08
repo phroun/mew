@@ -556,7 +556,11 @@ type ScrollbarRegion struct {
 // Config holds editor configuration options.
 type Config struct {
 	ShowLineNumbers bool
-	ShowColumnRuler bool
+	// DeleteNewlineAsChar lets del_char_prior/del_char_next remove a line
+	// terminator (join lines) like any other character. Default true; false makes
+	// them decline at a line boundary. Per-viewport; prompt viewports pin it false.
+	DeleteNewlineAsChar bool
+	ShowColumnRuler     bool
 	// Scrollbar reserves each doc/tool viewport's outer column for a
 	// clickable vertical scrollbar (per-viewport option; default on).
 	Scrollbar        bool
@@ -909,18 +913,19 @@ type TerminalIO struct {
 // DefaultConfig returns sensible default configuration.
 func DefaultConfig() Config {
 	return Config{
-		ShowLineNumbers: true,
-		ShowColumnRuler: true,
-		Scrollbar:       true,
-		TabSize:         4,
-		ShowInvisibles:  false,
-		ShowBidi:        false,
-		RtlCombining:    true,
-		ShowMarks:       "no",
-		OverwriteMode:   false, // insertMode=yes
-		ReadOnly:        false,
-		WordWrap:        false,
-		SearchWrap:      true,
+		ShowLineNumbers:     true,
+		DeleteNewlineAsChar: true,
+		ShowColumnRuler:     true,
+		Scrollbar:           true,
+		TabSize:             4,
+		ShowInvisibles:      false,
+		ShowBidi:            false,
+		RtlCombining:        true,
+		ShowMarks:           "no",
+		OverwriteMode:       false, // insertMode=yes
+		ReadOnly:            false,
+		WordWrap:            false,
+		SearchWrap:          true,
 	}
 }
 
@@ -1013,6 +1018,7 @@ func New(cfg Config) (*Editor, error) {
 
 	// Apply loaded config to editor config
 	cfg.ShowLineNumbers = loadedConfig.General.ShowLineNumbers
+	cfg.DeleteNewlineAsChar = loadedConfig.General.DeleteNewlineAsChar
 	cfg.ShowColumnRuler = loadedConfig.General.ShowColumnRuler
 	cfg.Scrollbar = loadedConfig.General.Scrollbar
 	cfg.RulerShowsCursor = loadedConfig.General.RulerShowsCursor
@@ -2084,6 +2090,14 @@ func (e *Editor) registerCommands() {
 
 	// Editing commands (using TypeScript naming convention)
 	ps.RegisterCommand("del_char_prior", func(ctx *pawscript.Context) pawscript.Result {
+		// When deleteNewlineAsChar is off for this viewport, a backspace at the
+		// start of a line declines rather than joining it with the line above.
+		// Fail with false and no visible error; no edit, so the undo coalescing run
+		// is untouched.
+		if w := e.ViewportManager.GetFocusedViewport(); w != nil &&
+			w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, false) {
+			return pawscript.BoolStatus(false)
+		}
 		e.deleteCharBefore()
 		e.trackEdit()
 		e.editCoalesced = true // a single-point edit: coalesce the undo run
@@ -2091,6 +2105,12 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("del_char_next", func(ctx *pawscript.Context) pawscript.Result {
+		// Same guard forward: a forward-delete at end of line declines rather than
+		// pulling the next line up. No edit → coalescing untouched.
+		if w := e.ViewportManager.GetFocusedViewport(); w != nil &&
+			w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, true) {
+			return pawscript.BoolStatus(false)
+		}
 		e.deleteCharAt()
 		e.trackEdit()
 		e.editCoalesced = true // a single-point edit: coalesce the undo run
@@ -3459,6 +3479,13 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.ShowLineNumbers
 		}
 		return boolText(v), true
+	case "deletenewlineaschar":
+		// Stored inverted (ProtectNewlines); report the on/off sense.
+		v := e.Config.DeleteNewlineAsChar
+		if w != nil {
+			v = !w.ViewState.ProtectNewlines
+		}
+		return boolText(v), true
 	case "showinvisibles":
 		v := e.Config.ShowInvisibles
 		if w != nil {
@@ -3777,6 +3804,16 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			w.ViewState.ShowLineNumbers = b
 		} else {
 			e.Config.ShowLineNumbers = b
+		}
+	case "deletenewlineaschar":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.ProtectNewlines = !b // stored inverted
+		} else {
+			e.Config.DeleteNewlineAsChar = b
 		}
 	case "showinvisibles":
 		b, ok := parseBool()
@@ -4972,6 +5009,25 @@ func (e *Editor) cursorRingGo(next bool) bool {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
+}
+
+// deleteWouldRemoveNewline reports whether a delete at the caret would remove a
+// line terminator (join two lines) rather than an in-line rune. forward is the
+// del_char_next direction; !forward is del_char_prior (backspace). It reads only
+// the caret POSITION and line lengths — never moving the editing caret — so it
+// cannot disturb the undo coalescing run. In-line deletes never target a
+// newline; only the line-boundary branches of deleteCharBefore/deleteCharAt do,
+// which this mirrors exactly.
+func (e *Editor) deleteWouldRemoveNewline(w *viewport.Viewport, forward bool) bool {
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	pos := w.CursorPos()
+	if forward {
+		lineLen := e.getEffectiveLineLen(w.Buffer, pos.Line)
+		return pos.Rune >= lineLen && pos.Line < w.Buffer.GetLineCount()-1
+	}
+	return pos.Rune == 0 && pos.Line > 0
 }
 
 // deleteCharBefore deletes the character before the cursor.
@@ -6882,6 +6938,7 @@ func (e *Editor) cloneCurrentViewport() bool {
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: w.ViewState.ShowLineNumbers,
+		ProtectNewlines: w.ViewState.ProtectNewlines,
 		TabSize:         w.ViewState.TabSize,
 		ShowInvisibles:  w.ViewState.ShowInvisibles,
 		ShowBidi:        w.ViewState.ShowBidi,
@@ -8055,6 +8112,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		Priority:        0,
 		SetFocus:        true,
 		ShowLineNumbers: e.Config.ShowLineNumbers,
+		ProtectNewlines: !e.Config.DeleteNewlineAsChar,
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
@@ -8589,6 +8647,7 @@ func (e *Editor) appendVerboseLog(lines ...string) {
 			Priority:        0,
 			Buffer:          e.lib.New(),
 			ShowLineNumbers: true,
+			ProtectNewlines: !e.Config.DeleteNewlineAsChar,
 			TabSize:         e.Config.TabSize,
 			Visible:         true,
 		})

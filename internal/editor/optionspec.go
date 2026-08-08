@@ -50,6 +50,7 @@ var optionSpecs = []optionSpec{
 	// Per-viewport view options (set_option targets a viewport's ViewState).
 	{"tabSize", true, optIntKind, nil},
 	{"showLineNumbers", true, optBoolKind, boolValues},
+	{"deleteNewlineAsChar", true, optBoolKind, boolValues},
 	{"showInvisibles", true, optBoolKind, boolValues},
 	{"showBidi", true, optBoolKind, boolValues},
 	{"rtlCombining", true, optBoolKind, boolValues},
@@ -134,6 +135,12 @@ func (e *Editor) applyResolvedOption(w *viewport.Viewport, key string) {
 		w.ViewState.TabSize = e.optInt(w, "tabsize", e.Config.TabSize, 1)
 	case "showlinenumbers":
 		w.ViewState.ShowLineNumbers = e.optBool(w, "showlinenumbers", e.Config.ShowLineNumbers)
+	case "deletenewlineaschar":
+		// Resolve the on/off sense through the overlay, then store inverted. A
+		// prompt viewport stays protected regardless: it is a single line, so
+		// joining is never wanted.
+		w.ViewState.ProtectNewlines = !e.optBool(w, "deletenewlineaschar", e.Config.DeleteNewlineAsChar) ||
+			w.Type == viewport.PromptViewport
 	case "showinvisibles":
 		w.ViewState.ShowInvisibles = e.optBool(w, "showinvisibles", e.Config.ShowInvisibles)
 	case "showbidi":
