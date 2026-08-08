@@ -370,7 +370,7 @@ func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 		if res.root != "" {
 			nw.BrowseActive = nw.ViewState.LinkBrowsing
 		}
-		e.ShowNotification("→ " + displayPath(res.url))
+		e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 		e.RequestRender()
 		return true
 	}
@@ -386,7 +386,7 @@ func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 	// tabbing onward in the destination page.
 	w.BrowseActive = true
 	e.ensureCursorVisible(w)
-	e.ShowNotification("→ " + displayPath(res.url))
+	e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 	e.RequestRender()
 	return true
 }
@@ -456,7 +456,7 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*viewport.Viewport, boo
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.BrowseActive = nw.ViewState.LinkBrowsing
-		e.ShowNotification("→ " + displayPath(res.url))
+		e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 		e.RequestRender()
 		return nw, true
 	}
