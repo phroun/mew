@@ -38,6 +38,8 @@ github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 github.com/phroun/purfecterm v0.2.35 h1:1quOYegWOfzjrPWM6mqDHyRjQlM5xE7zAFPSQSbAO+g=
 github.com/phroun/purfecterm v0.2.35/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
+github.com/phroun/purfecterm v0.2.36 h1:gvsHlDRE6jYiHqkHyWOUQJqriaL/FBmbHSIdJa/Z1jA=
+github.com/phroun/purfecterm v0.2.36/go.mod h1:9tZ5sV6a8trOv+AZ9syWw4o6EREti1gxrLW9E7eyeVA=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=
