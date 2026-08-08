@@ -64,6 +64,7 @@ import (
 //	shell                                  — the login shell, bare
 //	shell "--pty=pipe_only -- -l -i"       — a login, interactive shell
 //	shell "-c \"make test\""               — one command through it
+//
 // sizeMode governs how a session's LOGICAL size is chosen — the size the child
 // process is told it has, independent of how large the visible tile is. The
 // zero value follows the focused tile, which is what every session did before
@@ -102,6 +103,34 @@ const (
 	captureText                       // strip all escapes → plain text
 )
 
+// streamRoute is where one of a child's standard streams is sourced from or
+// sent to — the user-facing --stdin/--stdout/--stderr surface (and the --inblock
+// / --outblock shorthands). Any route other than routeUnset/routePTY makes the
+// request a FILTER: the child runs on pipes so mew can feed and read the streams
+// itself, rather than a terminal.
+type streamRoute int
+
+const (
+	routeUnset     streamRoute = iota // not given → resolved from the other routes
+	routePTY                          // the terminal surface (a normal terminal stream)
+	routeNull                         // discarded (output) / empty, immediate EOF (stdin)
+	routeBlock                        // the marked block: fed from it (stdin) or replacing it (stdout/stderr)
+	routeOutBuffer                    // a new "output" document buffer
+	routeErrBuffer                    // a new "error" document buffer
+)
+
+// filtering reports whether any stream is routed somewhere other than the
+// terminal — the signal that this request is a filter (pipes), not a terminal.
+func (spec execSpec) filtering() bool {
+	for _, r := range []streamRoute{spec.Stdin, spec.Stdout, spec.Stderr} {
+		switch r {
+		case routeNull, routeBlock, routeOutBuffer, routeErrBuffer:
+			return true
+		}
+	}
+	return false
+}
+
 type execSpec struct {
 	// Method is --pty=NAME: which way the host should make the terminal. mew
 	// attaches no meaning to it and forwards the string (see PTYRequest).
@@ -132,6 +161,16 @@ type execSpec struct {
 	// default at request time — kept distinct from an explicit off.
 	Capture       captureRung
 	CaptureFormat captureFormat
+
+	// Stdin/Stdout/Stderr route the child's standard streams (--stdin / --stdout
+	// / --stderr, plus the --inblock / --outblock shorthands). routeUnset (the
+	// zero value) leaves the stream to its default: a terminal when nothing is
+	// routed, or the filter defaults (empty stdin, an output/error document) when
+	// something is. Any non-terminal route turns the request into a filter —
+	// see filtering() and resolveRoutes.
+	Stdin  streamRoute
+	Stdout streamRoute
+	Stderr streamRoute
 }
 
 // parseExecLine parses a composited exec command line.
@@ -282,6 +321,13 @@ func (spec *execSpec) setBareOption(name string) error {
 		return spec.setOption("plain", "")
 	case "text":
 		return spec.setOption("text", "")
+	case "inblock":
+		// Shorthand for --stdin=block: feed the marked block to the child's stdin.
+		return spec.setOption("stdin", "block")
+	case "outblock":
+		// Shorthand for --stdout=block: replace the marked block with the child's
+		// stdout, streamed in place.
+		return spec.setOption("stdout", "block")
 	}
 	return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", name)
 }
@@ -359,6 +405,27 @@ func (spec *execSpec) setOption(name, value string) error {
 		return spec.setCaptureFormat(capturePlain, value)
 	case "text":
 		return spec.setCaptureFormat(captureText, value)
+	case "stdin":
+		r, err := parseStreamRoute("stdin", value, false)
+		if err != nil {
+			return err
+		}
+		spec.Stdin = r
+		return nil
+	case "stdout":
+		r, err := parseStreamRoute("stdout", value, true)
+		if err != nil {
+			return err
+		}
+		spec.Stdout = r
+		return nil
+	case "stderr":
+		r, err := parseStreamRoute("stderr", value, true)
+		if err != nil {
+			return err
+		}
+		spec.Stderr = r
+		return nil
 	}
 	if spec.Shell {
 		return fmt.Errorf("unknown shell option %q", name)
@@ -397,6 +464,59 @@ func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int) error {
 	}
 	spec.SizeMode = mode
 	spec.SizeCols, spec.SizeRows = cols, rows
+	return nil
+}
+
+// parseStreamRoute reads a --stdin/--stdout/--stderr value. output marks the
+// output streams (stdout/stderr), which accept the new-buffer sinks; stdin is a
+// source only (block, pty, or null).
+func parseStreamRoute(name, value string, output bool) (streamRoute, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pty", "terminal", "tty":
+		return routePTY, nil
+	case "null", "none", "discard":
+		return routeNull, nil
+	case "block":
+		return routeBlock, nil
+	case "outbuffer", "out":
+		if output {
+			return routeOutBuffer, nil
+		}
+	case "errbuffer", "err":
+		if output {
+			return routeErrBuffer, nil
+		}
+	}
+	if output {
+		return routeUnset, fmt.Errorf("--%s must be block, outbuffer, errbuffer, pty, or null", name)
+	}
+	return routeUnset, fmt.Errorf("--%s must be block, pty, or null", name)
+}
+
+// resolveRoutes fills a filter's default routing and refuses the combinations it
+// cannot honor. Called only when spec.filtering(). Unspecified streams take the
+// filter defaults — empty stdin, a new output document for stdout, a new error
+// document for stderr. A stream left on the terminal cannot be blended with
+// piped ones yet (the host wires all one way), and the single marked block can
+// be replaced by only one output stream.
+func (spec *execSpec) resolveRoutes() error {
+	if spec.Stdin == routeUnset {
+		spec.Stdin = routeNull
+	}
+	if spec.Stdout == routeUnset {
+		spec.Stdout = routeOutBuffer
+	}
+	if spec.Stderr == routeUnset {
+		spec.Stderr = routeErrBuffer
+	}
+	for _, r := range []streamRoute{spec.Stdin, spec.Stdout, spec.Stderr} {
+		if r == routePTY {
+			return fmt.Errorf("a stream set to pty cannot be mixed with filter streams yet")
+		}
+	}
+	if spec.Stdout == routeBlock && spec.Stderr == routeBlock {
+		return fmt.Errorf("stdout and stderr cannot both replace the block")
+	}
 	return nil
 }
 

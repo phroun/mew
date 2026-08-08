@@ -2283,6 +2283,12 @@ func (e *Editor) registerCommands() {
 			parse = parseShellLineNamed
 		}
 		request := func(spec execSpec) bool {
+			// A routed stream (--inblock/--outblock or --stdin/--stdout/--stderr)
+			// makes this a FILTER, not a terminal: the child runs on pipes and mew
+			// feeds/reads its streams itself. Handled on its own path.
+			if spec.filtering() {
+				return e.runFilter(spec)
+			}
 			pol := spec.sizePolicy()
 			if spec.Shell {
 				return e.execRequestShellPolicy(spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)

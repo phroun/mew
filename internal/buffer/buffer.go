@@ -1106,6 +1106,41 @@ func (b *Buffer) DeleteTextRange(startLine, startRune, endLine, endRune int) {
 	b.modified = true
 }
 
+// ReadDropFront reads up to max bytes from the FRONT of the buffer, deletes
+// them, and returns them — so a transient conveyor buffer streamed out to a pipe
+// frees its consumed head as it goes rather than holding the whole payload. It
+// uses its own cursor and garland's byte delete directly (no line/rune
+// conversion, no shared readCursor), so it is self-contained and safe on a
+// buffer no other goroutine is touching, which is exactly a filter's private
+// stdin snapshot. Returns (nil, false) when the buffer is empty.
+func (b *Buffer) ReadDropFront(max int) ([]byte, bool) {
+	if b.garland == nil || max <= 0 {
+		return nil, false
+	}
+	total := b.garland.ByteCount().Value
+	if total <= 0 {
+		return nil, false
+	}
+	n := int64(max)
+	if n > total {
+		n = total
+	}
+	c := b.garland.NewEphemeralCursor()
+	defer b.garland.RemoveCursor(c)
+	if err := c.SeekByte(0); err != nil {
+		return nil, false
+	}
+	data, _ := c.ReadBytes(n)
+	if len(data) == 0 {
+		return nil, false
+	}
+	if err := c.SeekByte(0); err == nil {
+		c.DeleteBytes(int64(len(data)), true)
+		b.modified = true
+	}
+	return data, true
+}
+
 // IsModified returns whether the buffer has been modified.
 func (b *Buffer) IsModified() bool {
 	return b.modified

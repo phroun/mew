@@ -28,8 +28,11 @@ import (
 // wrote, which is the whole point of a filter. mew's own security argument is
 // unchanged — process creation still happens only here, in the host.
 type filterSession struct {
-	cmd    *exec.Cmd
-	stdin  interface{ Write([]byte) (int, error); Close() error }
+	cmd   *exec.Cmd
+	stdin interface {
+		Write([]byte) (int, error)
+		Close() error
+	}
 	stdout interface{ Read([]byte) (int, error) }
 	stderr interface{ Read([]byte) (int, error) }
 
