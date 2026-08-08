@@ -344,24 +344,42 @@ func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int, hidden bool) 
 	return nil
 }
 
-// parseWxH reads a COLSxROWS size like "80x25". Both parts are required and
-// must be positive: a terminal with zero rows or columns is not a smaller
-// terminal, it is a broken one, and the mistake is worth naming at the switch.
+// parseWxH reads a COLSxROWS size like "80x25". Either axis may be 0 or omitted
+// — "80x", "x24", "0x24", "80x0" — which pins the given axis and lets the other
+// follow the tile: purfecterm reads a logical 0 on an axis as "use the physical
+// dimension", so the free axis tracks the surface while the pinned one holds.
+// At least one axis must be positive, though: a terminal with zero of BOTH is
+// not a smaller terminal, it is a broken one, and the mistake is worth naming.
 func parseWxH(value string) (cols, rows int, err error) {
 	v := strings.TrimSpace(value)
 	i := strings.IndexAny(v, "xX")
 	if i < 0 {
-		return 0, 0, fmt.Errorf("size must look like COLSxROWS, e.g. 80x25")
+		return 0, 0, fmt.Errorf("size must look like COLSxROWS, e.g. 80x25 (either axis may be 0 to follow the tile)")
 	}
-	cols, err = strconv.Atoi(strings.TrimSpace(v[:i]))
-	if err != nil || cols <= 0 {
-		return 0, 0, fmt.Errorf("size width must be a positive number, e.g. 80x25")
+	if cols, err = parseSizeAxis(v[:i]); err != nil {
+		return 0, 0, fmt.Errorf("size width must be a non-negative number, e.g. 80x25")
 	}
-	rows, err = strconv.Atoi(strings.TrimSpace(v[i+1:]))
-	if err != nil || rows <= 0 {
-		return 0, 0, fmt.Errorf("size height must be a positive number, e.g. 80x25")
+	if rows, err = parseSizeAxis(v[i+1:]); err != nil {
+		return 0, 0, fmt.Errorf("size height must be a non-negative number, e.g. 80x25")
+	}
+	if cols == 0 && rows == 0 {
+		return 0, 0, fmt.Errorf("size needs at least one axis, e.g. 80x25, 80x0, or x24")
 	}
 	return cols, rows, nil
+}
+
+// parseSizeAxis reads one axis of a size: an empty string is 0 ("follow the tile
+// on this axis"), and any explicit value must be a non-negative integer.
+func parseSizeAxis(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("not a non-negative number")
+	}
+	return n, nil
 }
 
 // sizePolicy carries the parsed --size/--minimum/--hidden decision onto the

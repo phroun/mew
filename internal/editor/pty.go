@@ -185,7 +185,17 @@ type ptySizePolicy struct {
 func (p ptySizePolicy) resolveLogical(visCols, visRows int) (cols, rows int) {
 	switch p.mode {
 	case sizeExact:
-		return p.cols, p.rows
+		// A pinned axis of 0 means "follow the tile on this axis" (e.g. 80x0 pins
+		// width, height tracks the surface). The child still needs a concrete
+		// number, so substitute the visible size where the pin is 0.
+		c, r := p.cols, p.rows
+		if c == 0 {
+			c = visCols
+		}
+		if r == 0 {
+			r = visRows
+		}
+		return c, r
 	case sizeMinimum:
 		return max(visCols, p.cols), max(visRows, p.rows)
 	default:
@@ -198,10 +208,18 @@ func (p ptySizePolicy) resolveLogical(visCols, visRows int) (cols, rows int) {
 // otherwise. The child always needs a concrete size, while the host wants
 // "follow" spelled as zero — so the two are computed distinctly.
 func (p ptySizePolicy) hostLogical(visCols, visRows int) (cols, rows int) {
-	if p.mode == sizeFollow {
+	switch p.mode {
+	case sizeFollow:
 		return 0, 0
+	case sizeExact:
+		// Hand purfecterm the pinned axes verbatim, 0s intact: it reads a logical 0
+		// as "follow the physical dimension", so an 80x0/x24 tracks the tile on the
+		// free axis dynamically rather than freezing a snapshot of it. (The child,
+		// by contrast, got a concrete size from resolveLogical.)
+		return p.cols, p.rows
+	default: // sizeMinimum: both axes are concrete floors already
+		return p.resolveLogical(visCols, visRows)
 	}
-	return p.resolveLogical(visCols, visRows)
 }
 
 // ptyHeadMax is how much of a short session's output is kept for the record.
@@ -601,14 +619,12 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 
 // attachPTY binds a session to a buffer and starts pumping its output.
 func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureMode) {
-	// The initial logical size the host is told: 0,0 for a follow policy (track
-	// the visible surface, as before), else the resolved size so a pinned or
-	// floored terminal renders correctly from its first frame. Recorded as
-	// logSent so the steady-state resize loop only re-sends it on a change.
-	lc, lr := cols, rows
-	if pol.mode == sizeFollow {
-		lc, lr = 0, 0
-	}
+	// The initial logical size the host is told, taken straight from the policy so
+	// a pinned or floored terminal renders correctly from its first frame while a
+	// follow policy — or a free axis of an 80x0/x24 pin — is spelled as 0 for the
+	// host to track. Recorded as logSent so the steady-state resize loop only
+	// re-sends it on a change.
+	lc, lr := pol.hostLogical(cols, rows)
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
 		e.ptySessions = make(map[*buffer.Buffer]*ptyState)

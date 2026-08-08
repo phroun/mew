@@ -265,8 +265,9 @@ func TestParseSizeSwitchErrors(t *testing.T) {
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict
 		"--size=80x25 --hidden bash",         // size + hidden conflict
 		"--size=80 bash",                     // missing 'x'
-		"--size=0x25 bash",                   // zero width
-		"--size=80x0 bash",                   // zero height
+		"--size=0x0 bash",                    // both axes zero is broken, not small
+		"--size=x bash",                      // both axes omitted, same thing
+		"--size=-5x10 bash",                  // negative axis
 		"--size=axb bash",                    // non-numeric
 	}
 	for _, line := range bad {
@@ -274,4 +275,53 @@ func TestParseSizeSwitchErrors(t *testing.T) {
 			t.Errorf("parseExecLine(%q) = nil error, want an error", line)
 		}
 	}
+}
+
+// A 0 or omitted axis pins the other and lets this one follow the tile.
+func TestParseSizeSwitchPerAxis(t *testing.T) {
+	cases := []struct {
+		line       string
+		cols, rows int
+	}{
+		{"--size=80x0 bash", 80, 0},
+		{"--size=80x bash", 80, 0},
+		{"--size=0x24 bash", 0, 24},
+		{"--size=x24 bash", 0, 24},
+	}
+	for _, c := range cases {
+		s, err := parseExecLine(c.line)
+		if err != nil {
+			t.Errorf("parseExecLine(%q) error: %v", c.line, err)
+			continue
+		}
+		if s.SizeMode != sizeExact || s.SizeCols != c.cols || s.SizeRows != c.rows {
+			t.Errorf("parseExecLine(%q) = mode %d %dx%d, want exact %dx%d",
+				c.line, s.SizeMode, s.SizeCols, s.SizeRows, c.cols, c.rows)
+		}
+	}
+}
+
+// A pinned axis of 0 resolves to the tile for the child (a concrete winsize)
+// but stays 0 for the host, so purfecterm follows physical on that axis.
+func TestPtySizePolicyPerAxisZero(t *testing.T) {
+	check := func(name string, gotC, gotR, wantC, wantR int) {
+		t.Helper()
+		if gotC != wantC || gotR != wantR {
+			t.Errorf("%s = %dx%d, want %dx%d", name, gotC, gotR, wantC, wantR)
+		}
+	}
+	// 80x0: width pinned, height follows the tile.
+	wide := ptySizePolicy{mode: sizeExact, cols: 80, rows: 0}
+	c, r := wide.resolveLogical(50, 20)
+	check("80x0.resolveLogical(50,20)", c, r, 80, 20)
+	c, r = wide.resolveLogical(200, 60)
+	check("80x0.resolveLogical(200,60)", c, r, 80, 60)
+	c, r = wide.hostLogical(200, 60)
+	check("80x0.hostLogical", c, r, 80, 0)
+	// x24: height pinned, width follows the tile.
+	tall := ptySizePolicy{mode: sizeExact, cols: 0, rows: 24}
+	c, r = tall.resolveLogical(50, 20)
+	check("x24.resolveLogical(50,20)", c, r, 50, 24)
+	c, r = tall.hostLogical(50, 20)
+	check("x24.hostLogical", c, r, 0, 24)
 }
