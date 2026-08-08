@@ -791,9 +791,38 @@ func (e *Editor) navVert(dir int) bool {
 		e.RequestRender()
 		return true
 	}
-	// No further link on the current screen: page, and treat that as success.
-	// Paging clears NavIdealSet (via afterVerticalMovement), so save/restore it
-	// — a page is part of the same vertical run.
+	// No further link on the current screen. If the page can turn — there is
+	// content beyond the visible window in the travel direction — turn it and land
+	// on the newly revealed content. If it cannot (at the document edge, or the
+	// whole buffer fits on screen), just nudge the caret ONE line in the travel
+	// direction from where it is, off any link: a single opposite press then
+	// brings it straight back to the button it left, instead of flinging it into a
+	// void that takes many presses to climb out of.
+	lastLine := w.Buffer.GetLineCount() - 1
+	if canTurn := (dir > 0 && bottom < lastLine) || (dir < 0 && top > 0); !canTurn {
+		cur := w.CursorPos()
+		nl := cur.Line + dir
+		if nl < 0 {
+			nl = 0
+		}
+		if nl > lastLine {
+			nl = lastLine
+		}
+		nr := cur.Rune
+		if ll := e.getEffectiveLineLen(w.Buffer, nl); nr > ll {
+			nr = ll
+		}
+		w.SetCursorPos(viewport.Position{Line: nl, Rune: nr})
+		w.HasGhostCursor = false
+		e.ensureCursorVisible(w)
+		e.RequestRender()
+		return true
+	}
+
+	// The page can turn. Paging clears NavIdealSet (via afterVerticalMovement),
+	// so save/restore it — a page is part of the same vertical run.
+	oldTop, oldBottom := top, bottom
+	startLine := w.CursorPos().Line
 	saved, wasSet := w.NavIdealCol, w.NavIdealSet
 	if dir > 0 {
 		e.pageDown()
@@ -802,6 +831,64 @@ func (e *Editor) navVert(dir int) bool {
 	}
 	e.trackMove()
 	w.NavIdealCol, w.NavIdealSet = saved, wasSet
+
+	// The visible window after the page turn.
+	newTop := w.ViewState.ViewOffsetY
+	newBottom := newTop + w.ContentHeight - 1
+	if newBottom > lastLine {
+		newBottom = lastLine
+	}
+	// The first line that was NOT visible before the page turn: just past the old
+	// bottom going down, just before the old top going up. Clamped into the new
+	// window (a page that could not scroll — already at an end — pins it there).
+	boundary := oldBottom + 1
+	if dir < 0 {
+		boundary = oldTop - 1
+	}
+	if boundary < newTop {
+		boundary = newTop
+	}
+	if boundary > newBottom {
+		boundary = newBottom
+	}
+	if boundary < 0 {
+		boundary = 0
+	}
+
+	// Prefer a link on the newly revealed page — scan the WHOLE new page in the
+	// travel direction (top to bottom going down, bottom to top going up, so
+	// nothing on the page is skipped) and land on the first link line by the run's
+	// ideal column, so vertical nav continues from a focused button. With no link
+	// on the new page, land on the first revealed line itself rather than wherever
+	// a full page scroll would otherwise drop the caret. target is the run's ideal
+	// column, established at the top of navVert.
+	land, landRune := boundary, 0
+	if dir > 0 {
+		for L := newTop; L <= newBottom; L++ {
+			if L == startLine {
+				continue // never land back on the link we are leaving
+			}
+			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+				land = L
+				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
+				break
+			}
+		}
+	} else {
+		for L := newBottom; L >= newTop; L-- {
+			if L == startLine {
+				continue // never land back on the link we are leaving
+			}
+			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+				land = L
+				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
+				break
+			}
+		}
+	}
+	w.SetCursorPos(viewport.Position{Line: land, Rune: landRune})
+	w.HasGhostCursor = false
+	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
 }

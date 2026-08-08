@@ -559,8 +559,9 @@ func TestNavVerticalConsistentIdeal(t *testing.T) {
 	}
 }
 
-// nav_down with no link line left on screen pages instead, and still reports
-// success (staying in nav mode).
+// nav_down with no link line left AND no page to turn (the whole buffer fits on
+// screen) nudges the caret one line off the link, still reporting success. A
+// further nav_down then stalls on the focused-link gate.
 func TestNavVerticalPages(t *testing.T) {
 	e, w, out := renderedEditorWithConfig(t,
 		"top [[a]] here\nplain\nplain\nplain\n", "[options]\nsyntax=dokuwiki\n")
@@ -569,18 +570,43 @@ func TestNavVerticalPages(t *testing.T) {
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside [[a]]
 	w.BrowseActive = true
 	if !e.navVert(+1) {
-		t.Fatal("nav_down should succeed (page) when no link line remains")
+		t.Fatal("nav_down should succeed when there is no further link line")
 	}
 	if !w.BrowseActive {
-		t.Fatal("paging must not leave nav mode")
+		t.Fatal("the fallback must not leave nav mode")
+	}
+	if w.CursorPos().Line != 1 {
+		t.Fatalf("a page that cannot turn must nudge one line down; got line %d", w.CursorPos().Line)
 	}
 	if e.focusedLinkButton(w) != nil {
-		t.Fatal("after paging past the only link, nothing should be focused")
+		t.Fatal("the one-line nudge lands off any link")
 	}
-	// With no button focused (the caret paged off the link), a further nav_down
+	// With no button focused (the caret nudged off the link), a further nav_down
 	// does nothing: nav_up/down act only when a button is focused at activation.
 	if e.navVert(+1) {
 		t.Fatal("nav_down must not act once no button is focused")
+	}
+}
+
+// When nav_down runs out of on-screen links but the page CAN turn, it pages and
+// lands on a link on the newly revealed page (scanning it top to bottom).
+func TestNavVerticalPageTurnLandsOnLink(t *testing.T) {
+	body := "top [[a]] here\n" + strings.Repeat("plain\n", 4) +
+		"far [[b]] link\n" + strings.Repeat("plain\n", 6)
+	e, w, _ := renderedEditorWithConfig(t, body, "[options]\nsyntax=dokuwiki\n")
+	e.performRender()
+	w.ContentHeight = 5 // lines 0..4 visible; [[b]] on line 5 is below the fold
+	w.ViewState.ViewOffsetY = 0
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 5}) // inside [[a]]
+	w.BrowseActive = true
+	if !e.navVert(+1) {
+		t.Fatal("nav_down should page and succeed")
+	}
+	if w.CursorPos().Line != 5 {
+		t.Fatalf("should land on the link on the newly revealed page (line 5); got %d", w.CursorPos().Line)
+	}
+	if e.focusedLinkButton(w) == nil {
+		t.Fatal("landing on the new page's link should focus it")
 	}
 }
 
