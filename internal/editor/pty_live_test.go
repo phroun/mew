@@ -279,6 +279,43 @@ func TestLiveClearEndOfScreen(t *testing.T) {
 	}
 }
 
+// Delete-characters shifts the row left and shrinks it (DCH) — the op a curses
+// animation like sl uses, so the vacated cells clear instead of streaking.
+func TestLiveDeleteChars(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ABCDEF", "")
+	sink.LiveCursorMove(0, 0)
+	sink.LiveDeleteChars(0, 0, 2, "")
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), region("CDEF"); got != want {
+		t.Fatalf("buffer = %q, want %q (2 cells deleted, row shifted left)", got, want)
+	}
+}
+
+// Insert-characters opens n blank cells and shifts the rest right (ICH).
+func TestLiveInsertChars(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ABCD", "")
+	sink.LiveCursorMove(1, 0)
+	sink.LiveInsertChars(1, 0, 2, "")
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), region("A  BCD"); got != want {
+		t.Fatalf("buffer = %q, want %q (2 blanks inserted at col 1)", got, want)
+	}
+}
+
+// Erase-characters blanks n cells in place without shifting (ECH).
+func TestLiveEraseChars(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ABCDEF", "")
+	sink.LiveCursorMove(2, 0)
+	sink.LiveEraseChars(2, 0, 2, "")
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), region("AB  EF"); got != want {
+		t.Fatalf("buffer = %q, want %q (cols 2-3 blanked in place)", got, want)
+	}
+}
+
 // Adjacent write runs on one row fold in as same-kind, adjacent garland inserts,
 // so with coalescing on they collapse to a SINGLE undo step — the write caret is
 // never perturbed by the mirror's peeking. One Undo reverts the whole run back to

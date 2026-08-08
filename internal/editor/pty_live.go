@@ -631,6 +631,65 @@ func (m *liveMirror) ClearBeginOfScreen(x, y int, sgr string) {
 	m.afterErase(x, y, sgr)
 }
 
+// DeleteChars deletes n cells at (x, y), shifting the rest of the row left and
+// shrinking it (DCH) — the primitive a curses app scrolls a row leftward with,
+// so the vacated cells actually clear instead of streaking.
+func (m *liveMirror) DeleteChars(x, y, n int, sgr string) {
+	m.growTo(y)
+	line := m.rowLine(y)
+	text := m.readRow(y)
+	rs := []rune(text)
+	startOff, pad := visualColToRune(text, x)
+	if pad == 0 {
+		midBytes, _, _, _ := spanForward(rs, startOff, n)
+		if midBytes > 0 {
+			m.caret.SeekLineRune(line, startOff)
+			m.caret.Overwrite(midBytes, "") // delete n cells, shifting the rest left
+		}
+	}
+	m.seekTo(x, y)
+}
+
+// InsertChars inserts n blank cells at (x, y), shifting the rest of the row right
+// (ICH). The blanks take the erase background; the shifted content keeps its own.
+func (m *liveMirror) InsertChars(x, y, n int, sgr string) {
+	m.growTo(y)
+	m.seekTo(x, y)
+	line := m.rowLine(y)
+	_, off := m.caret.GetPosition()
+	payload := spaces(n)
+	if m.format == captureFull {
+		erase := m.resolvePen(sgr)
+		ambient := m.penAt(y, x)
+		if erase != ambient {
+			lead, restore := erase, ambient
+			if lead == "" {
+				lead = sgrReset
+			}
+			if restore == "" {
+				restore = sgrReset
+			}
+			payload = lead + spaces(n) + restore
+		}
+	}
+	m.caret.SeekLineRune(line, off)
+	m.caret.InsertString(payload, nil, false)
+	m.seekTo(x, y) // ICH leaves the cursor at x
+}
+
+// EraseChars blanks n cells at (x, y) in place — no shift, no line growth (ECH).
+func (m *liveMirror) EraseChars(x, y, n int, sgr string) {
+	m.growTo(y)
+	avail := visibleWidth(m.readRow(y)) - x
+	if avail > n {
+		avail = n
+	}
+	if avail > 0 {
+		m.Write(x, y, spaces(avail), sgr) // overtype existing cells only
+	}
+	m.afterErase(x, y, sgr)
+}
+
 // --- small pure helpers ---
 
 // visualColToRune maps a target visual column to a rune offset within line,
@@ -665,6 +724,27 @@ func runsWidth(text string) int {
 	w := 0
 	for _, r := range text {
 		w += textwidth.Rune(r)
+	}
+	return w
+}
+
+// visibleWidth is the total visible width of a document line in cells, skipping
+// inline SGR runs and the trailing newline.
+func visibleWidth(line string) int {
+	rs := []rune(line)
+	w, i := 0, 0
+	for i < len(rs) {
+		if rs[i] == '\n' {
+			break
+		}
+		if rs[i] == 0x1b {
+			if n := sgrRunLen(string(rs[i:])); n > 0 {
+				i += n
+				continue
+			}
+		}
+		w += textwidth.Rune(rs[i])
+		i++
 	}
 	return w
 }

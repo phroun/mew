@@ -166,6 +166,21 @@ func (c *captureStream) LiveClearBeginOfScreen(x, y int, sgr string) {
 		c.mirror.ClearBeginOfScreen(x, y, sgr)
 	}
 }
+func (c *captureStream) LiveDeleteChars(x, y, n int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.DeleteChars(x, y, n, sgr)
+	}
+}
+func (c *captureStream) LiveInsertChars(x, y, n int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.InsertChars(x, y, n, sgr)
+	}
+}
+func (c *captureStream) LiveEraseChars(x, y, n int, sgr string) {
+	if c.mirror != nil {
+		c.mirror.EraseChars(x, y, n, sgr)
+	}
+}
 
 // flush emits whatever escape-carry remains — called once at session end so a
 // trailing partial sequence is not lost.
@@ -659,6 +674,10 @@ type CaptureSink interface {
 	LiveClearLine(y int, sgr string)             // the whole line
 	LiveClearEndOfScreen(x, y int, sgr string)   // (x,y) to end of screen
 	LiveClearBeginOfScreen(x, y int, sgr string) // screen start through (x,y)
+	// The in-line character ops: delete/insert/erase n cells at (x,y).
+	LiveDeleteChars(x, y, n int, sgr string)
+	LiveInsertChars(x, y, n int, sgr string)
+	LiveEraseChars(x, y, n int, sgr string)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a

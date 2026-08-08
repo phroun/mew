@@ -1200,6 +1200,21 @@ func (r captureRelay) OnClearBeginOfScreen(x, y int, sgr string) {
 		r.sink.LiveClearBeginOfScreen(x, y, sgr)
 	}
 }
+func (r captureRelay) OnDeleteChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveDeleteChars(x, y, n, sgr)
+	}
+}
+func (r captureRelay) OnInsertChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveInsertChars(x, y, n, sgr)
+	}
+}
+func (r captureRelay) OnEraseChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveEraseChars(x, y, n, sgr)
+	}
+}
 
 // terminalSetCaptureSink backs mew's SetCaptureSink hook: point a session's
 // purfecterm CaptureObserver at the mew sink so the terminal's output is relayed
