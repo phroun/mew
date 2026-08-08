@@ -1117,20 +1117,28 @@ func (e *Editor) terminalSnapshot(id string, ansi bool) string {
 }
 
 // captureRelay forwards a session's purfecterm capture events across the
-// embedded seam to a mew CaptureSink. It embeds NopCaptureObserver so the
-// line-scrolled-off and live-screen events added to CaptureObserver later stay
-// no-ops here until this relay forwards them too.
+// embedded seam to a mew CaptureSink. It embeds NopCaptureObserver so events
+// added to CaptureObserver later stay no-ops here until this relay forwards
+// them too. wantsLines gates the per-line serialization so a raw session never
+// pays for it.
 type captureRelay struct {
 	purfecterm.NopCaptureObserver
-	sink mew.CaptureSink
+	sink       mew.CaptureSink
+	wantsLines bool
 }
 
 func (r captureRelay) OnOutput(data []byte) { r.sink.Output(data) }
 
+func (r captureRelay) OnLineOff(line []purfecterm.Cell, info purfecterm.LineInfo) {
+	if r.wantsLines {
+		r.sink.LineOff(purfecterm.SerializeLineANS(line, info))
+	}
+}
+
 // terminalSetCaptureSink backs mew's SetCaptureSink hook: point a session's
-// purfecterm CaptureObserver at the mew sink so the terminal's raw output is
-// relayed across the seam, or clear it when sink is nil. Runs on the same loop
-// as terminalFeed, so the OnOutput calls land on mew's main loop in feed order.
+// purfecterm CaptureObserver at the mew sink so the terminal's output is relayed
+// across the seam, or clear it when sink is nil. Runs on the same loop as
+// terminalFeed, so the events land on mew's main loop in feed order.
 func (e *Editor) terminalSetCaptureSink(id string, sink mew.CaptureSink) {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
@@ -1143,10 +1151,18 @@ func (e *Editor) terminalSetCaptureSink(id string, sink mew.CaptureSink) {
 		return
 	}
 	if sink == nil {
+		// End of session: flush the on-screen tail (content that never scrolled
+		// off) as OnLineOff events to the still-registered relay, then clear.
+		// Harmless for a raw relay, which ignores line events.
+		t.EmitRemainingCaptureLines()
 		t.SetCaptureObserver(nil)
 		return
 	}
-	t.SetCaptureObserver(captureRelay{sink: sink})
+	wantsLines := false
+	if lc, ok := sink.(interface{ WantsLines() bool }); ok {
+		wantsLines = lc.WantsLines()
+	}
+	t.SetCaptureObserver(captureRelay{sink: sink, wantsLines: wantsLines})
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where
