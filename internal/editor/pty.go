@@ -763,16 +763,10 @@ func (e *Editor) setViewportPTYHidden(mode int, cmd string) bool {
 	default:
 		st.hidden = !st.hidden
 	}
-	hidden := st.hidden
 	e.ptyMu.Unlock()
 	// The render path republishes surfaces (a now-hidden session drops out of
 	// the set, a now-shown one returns) and re-asks the content-suppressor.
 	e.RequestRender()
-	if hidden {
-		e.ShowNotification("Terminal hidden — buffer is editable; output still captures")
-	} else {
-		e.ShowNotification("Terminal shown")
-	}
 	return true
 }
 
