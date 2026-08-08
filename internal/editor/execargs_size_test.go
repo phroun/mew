@@ -84,6 +84,43 @@ func TestParseSizeSwitches(t *testing.T) {
 	})
 }
 
+func TestPtySizePolicyResolve(t *testing.T) {
+	follow := ptySizePolicy{mode: sizeFollow}
+	exact := ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}
+	minimum := ptySizePolicy{mode: sizeMinimum, cols: 80, rows: 25}
+
+	check := func(name string, gotC, gotR, wantC, wantR int) {
+		t.Helper()
+		if gotC != wantC || gotR != wantR {
+			t.Errorf("%s = %dx%d, want %dx%d", name, gotC, gotR, wantC, wantR)
+		}
+	}
+
+	// follow: the visible size is the logical size; the host is told 0,0.
+	c, r := follow.resolveLogical(50, 20)
+	check("follow.resolveLogical(50,20)", c, r, 50, 20)
+	c, r = follow.hostLogical(50, 20)
+	check("follow.hostLogical(50,20)", c, r, 0, 0)
+
+	// exact: the pinned size regardless of the tile, both to child and host.
+	c, r = exact.resolveLogical(50, 20)
+	check("exact.resolveLogical(small)", c, r, 80, 25)
+	c, r = exact.resolveLogical(200, 60)
+	check("exact.resolveLogical(large)", c, r, 80, 25)
+	c, r = exact.hostLogical(200, 60)
+	check("exact.hostLogical", c, r, 80, 25)
+
+	// minimum: a per-axis floor that still grows with the tile.
+	c, r = minimum.resolveLogical(50, 20)
+	check("minimum below floor", c, r, 80, 25)
+	c, r = minimum.resolveLogical(200, 60)
+	check("minimum above floor", c, r, 200, 60)
+	c, r = minimum.resolveLogical(100, 10) // wide enough, too short
+	check("minimum per-axis", c, r, 100, 25)
+	c, r = minimum.hostLogical(50, 20)
+	check("minimum.hostLogical", c, r, 80, 25)
+}
+
 func TestParseSizeSwitchErrors(t *testing.T) {
 	bad := []string{
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict

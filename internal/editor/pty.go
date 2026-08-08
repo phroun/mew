@@ -157,6 +157,48 @@ type ptyState struct {
 	// viewport that merely MOVED keeps its declaration — same size, same
 	// answer, and re-deriving it would resize the child for nothing.
 	placedCols, placedRows int
+	// policy is how this session's LOGICAL size is governed (--size/--minimum/
+	// --hidden); the zero value follows the visible tile, exactly as before.
+	// logSentCols/logSentRows are the last logical size handed to the host, so
+	// SetLogicalSize is pushed only when it actually changes.
+	policy                   ptySizePolicy
+	logSentCols, logSentRows int
+}
+
+// ptySizePolicy is how a session's LOGICAL size is chosen — the size the child
+// is told it has, which the --size/--minimum/--hidden switches set and which is
+// otherwise the visible tile's. It rides from the exec/shell parse (execSpec)
+// onto the session's ptyState, where the resize path consults it every frame.
+type ptySizePolicy struct {
+	mode       sizeMode
+	cols, rows int
+	hidden     bool
+}
+
+// resolveLogical is the concrete logical size for a session shown at visCols x
+// visRows: the visible size for a follow policy, the pinned size for --size, and
+// the larger of the two per axis for --minimum (a floor that still grows with
+// the tile).
+func (p ptySizePolicy) resolveLogical(visCols, visRows int) (cols, rows int) {
+	switch p.mode {
+	case sizeExact:
+		return p.cols, p.rows
+	case sizeMinimum:
+		return max(visCols, p.cols), max(visRows, p.rows)
+	default:
+		return visCols, visRows
+	}
+}
+
+// hostLogical is what SetLogicalSize is told: 0,0 for a follow policy (the host
+// tracks the visible surface, as before) and the resolved logical size
+// otherwise. The child always needs a concrete size, while the host wants
+// "follow" spelled as zero — so the two are computed distinctly.
+func (p ptySizePolicy) hostLogical(visCols, visRows int) (cols, rows int) {
+	if p.mode == sizeFollow {
+		return 0, 0
+	}
+	return p.resolveLogical(visCols, visRows)
 }
 
 // ptyHeadMax is how much of a short session's output is kept for the record.
@@ -268,6 +310,15 @@ type TerminalMouse struct {
 // Every hook is called on mew's main loop.
 type TerminalHooks struct {
 	Open func(id string, cols, rows int)
+
+	// SetLogicalSize tells the host a session's LOGICAL size: the size the
+	// child is told it has, independent of the visible tile. cols,rows of 0
+	// mean "follow the visible surface" — what every session did before the
+	// --size/--minimum/--hidden switches, so a host that leaves this hook nil
+	// still works. When the logical size exceeds the visible grid the terminal
+	// shows scrollbars rather than reflowing the child; it is also how a session
+	// with no visible surface keeps a definite size.
+	SetLogicalSize func(id string, cols, rows int)
 
 	// Feed hands the session's output to the emulator and returns what the
 	// emulator ANSWERED — a terminal is not a one-way device. A program asks
@@ -435,9 +486,29 @@ func (e *Editor) execRequestShell(args []string, method string) bool {
 	return e.execRequestSpec("", args, method, true)
 }
 
-// execRequestSpec is execRequestArgs with the shell flag: when set, the host
-// names the program (the user's login shell) and command must be empty.
+// execRequestArgsPolicy and execRequestShellPolicy are execRequestArgs and
+// execRequestShell carrying a LOGICAL-size policy from the parse. The plain
+// forms stay as the zero-policy (follow-the-tile) entry points every existing
+// caller uses, delegating here.
+func (e *Editor) execRequestArgsPolicy(command string, args []string, method string, pol ptySizePolicy) bool {
+	return e.execRequestSpecPolicy(command, args, method, false, pol)
+}
+
+func (e *Editor) execRequestShellPolicy(args []string, method string, pol ptySizePolicy) bool {
+	return e.execRequestSpecPolicy("", args, method, true, pol)
+}
+
+// execRequestSpec is the zero-policy form of execRequestSpecPolicy: the child's
+// logical size follows the visible tile, exactly as before these switches.
 func (e *Editor) execRequestSpec(command string, args []string, method string, shell bool) bool {
+	return e.execRequestSpecPolicy(command, args, method, shell, ptySizePolicy{})
+}
+
+// execRequestSpecPolicy is execRequestArgs with the shell flag and a logical-
+// size policy: when shell is set, the host names the program (the user's login
+// shell) and command must be empty. pol governs the size the child is told it
+// has (see ptySizePolicy).
+func (e *Editor) execRequestSpecPolicy(command string, args []string, method string, shell bool, pol ptySizePolicy) bool {
 	if e.Config.PTYProvider == nil {
 		e.ShowWarning("No terminal provider: this host does not grant sessions")
 		return false
@@ -461,13 +532,18 @@ func (e *Editor) execRequestSpec(command string, args []string, method string, s
 		return false
 	}
 
-	cols, rows := w.ContentWidth, w.ContentHeight
-	if cols <= 0 {
-		cols = 80
+	visCols, visRows := w.ContentWidth, w.ContentHeight
+	if visCols <= 0 {
+		visCols = 80
 	}
-	if rows <= 0 {
-		rows = 24
+	if visRows <= 0 {
+		visRows = 24
 	}
+	// The child is told its LOGICAL size from the outset: the visible grid for a
+	// follow policy (unchanged), the pinned size for --size, a floored size for
+	// --minimum. attachPTY's SetLogicalSize then tells the host to render that
+	// many cells, with scrollbars when they exceed the tile.
+	cols, rows := pol.resolveLogical(visCols, visRows)
 	req := PTYRequest{
 		CWD:     e.bufferCWD(w.Buffer),
 		Command: strings.TrimSpace(command),
@@ -500,7 +576,7 @@ func (e *Editor) execRequestSpec(command string, args []string, method string, s
 	if req.Shell {
 		name = "the login shell"
 	}
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows)
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -513,7 +589,15 @@ func (e *Editor) execRequestSpec(command string, args []string, method string, s
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy) {
+	// The initial logical size the host is told: 0,0 for a follow policy (track
+	// the visible surface, as before), else the resolved size so a pinned or
+	// floored terminal renders correctly from its first frame. Recorded as
+	// logSent so the steady-state resize loop only re-sends it on a change.
+	lc, lr := cols, rows
+	if pol.mode == sizeFollow {
+		lc, lr = 0, 0
+	}
 	e.ptyMu.Lock()
 	if e.ptySessions == nil {
 		e.ptySessions = make(map[*buffer.Buffer]*ptyState)
@@ -522,12 +606,15 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	id := fmt.Sprintf("pty%d", e.ptySeq)
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
-		started: time.Now(),
+		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
 	}
 	e.ptyMu.Unlock()
 
 	if e.Config.TerminalSurfaces.Open != nil {
 		e.Config.TerminalSurfaces.Open(id, cols, rows)
+	}
+	if e.Config.TerminalSurfaces.SetLogicalSize != nil {
+		e.Config.TerminalSurfaces.SetLogicalSize(id, lc, lr)
 	}
 
 	// The read loop is the session's own goroutine; every delivery marshals
@@ -713,8 +800,13 @@ func (e *Editor) notifyTerminalSurfaces() {
 		sess       PTYSession
 		cols, rows int
 	}
+	type logicalTo struct {
+		id         string
+		cols, rows int
+	}
 	e.ptyMu.Lock()
 	want := make([]resizeTo, 0, live)
+	var logic []logicalTo
 	byID := make(map[string]*ptyState, live)
 	for _, st := range e.ptySessions {
 		byID[st.id] = st
@@ -737,15 +829,35 @@ func (e *Editor) notifyTerminalSurfaces() {
 			st.gridCols, st.gridRows = 0, 0
 			st.placedCols, st.placedRows = s.Width, s.Height
 		}
-		cols, rows := s.Width, s.Height
+		// The VISIBLE grid is the host's declared grid when it has one, else the
+		// tile rectangle. The child is sized to the session's LOGICAL size —
+		// the visible grid for a follow policy (unchanged), a pinned or floored
+		// size otherwise — so a --size child keeps its columns however large the
+		// tile is.
+		visCols, visRows := s.Width, s.Height
 		if st.gridCols > 0 && st.gridRows > 0 {
-			cols, rows = st.gridCols, st.gridRows
+			visCols, visRows = st.gridCols, st.gridRows
 		}
+		cols, rows := st.policy.resolveLogical(visCols, visRows)
 		want = append(want, resizeTo{st.sess, cols, rows})
+
+		// Tell the host the logical size only when it changes, so it renders the
+		// right number of cells (and a scrollbar when they exceed the tile). A
+		// follow policy resolves to 0,0 and, set once at attach, never re-sends.
+		lc, lr := st.policy.hostLogical(visCols, visRows)
+		if lc != st.logSentCols || lr != st.logSentRows {
+			st.logSentCols, st.logSentRows = lc, lr
+			logic = append(logic, logicalTo{st.id, lc, lr})
+		}
 	}
 	e.ptyMu.Unlock()
 	for _, w := range want {
 		_ = w.sess.Resize(w.cols, w.rows)
+	}
+	if e.Config.TerminalSurfaces.SetLogicalSize != nil {
+		for _, l := range logic {
+			e.Config.TerminalSurfaces.SetLogicalSize(l.id, l.cols, l.rows)
+		}
 	}
 }
 

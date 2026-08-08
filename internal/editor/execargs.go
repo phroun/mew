@@ -332,6 +332,12 @@ func parseWxH(value string) (cols, rows int, err error) {
 	return cols, rows, nil
 }
 
+// sizePolicy carries the parsed --size/--minimum/--hidden decision onto the
+// request path (see ptySizePolicy in pty.go).
+func (spec execSpec) sizePolicy() ptySizePolicy {
+	return ptySizePolicy{mode: spec.SizeMode, cols: spec.SizeCols, rows: spec.SizeRows, hidden: spec.Hidden}
+}
+
 // operandArgs turns one operand into child arguments.
 //
 //   - A PSL list contributes each element verbatim, which is the only way to
