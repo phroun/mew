@@ -138,7 +138,7 @@ func TestExecSizePinsChildAndLogical(t *testing.T) {
 		Feed:           func(string, []byte) []byte { return nil },
 		Place:          func([]TerminalSurface) {},
 	}
-	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}, captureOff) {
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}, captureOff, captureFull) {
 		t.Fatal("exec failed")
 	}
 	// The host is told the pinned logical size up front.
@@ -190,18 +190,16 @@ func TestExecFollowSizesToTile(t *testing.T) {
 }
 
 func TestParseCaptureSwitch(t *testing.T) {
-	cases := []struct {
+	rungs := []struct {
 		line string
-		want captureMode
+		want captureRung
 	}{
-		{"--capture bash", captureText},
-		{"--capture=text bash", captureText},
-		{"--capture=ansi bash", captureANSI},
-		{"--capture=raw bash", captureANSI},
+		{"--capture bash", captureFinal}, // bare = final
+		{"--capture=final bash", captureFinal},
 		{"--capture=off bash", captureOff},
-		{"bash", captureOff},
+		{"bash", captureUnset}, // unspecified stays distinct from off
 	}
-	for _, c := range cases {
+	for _, c := range rungs {
 		s, err := parseExecLine(c.line)
 		if err != nil {
 			t.Errorf("parseExecLine(%q) error: %v", c.line, err)
@@ -211,19 +209,51 @@ func TestParseCaptureSwitch(t *testing.T) {
 			t.Errorf("parseExecLine(%q) capture = %d, want %d", c.line, s.Capture, c.want)
 		}
 	}
-	if s, err := parseExecLineNamed("bash", map[string]interface{}{"capture": "ansi"}); err != nil || s.Capture != captureANSI {
-		t.Errorf("named capture: got %d err %v, want ansi", s.Capture, err)
+
+	formats := []struct {
+		line string
+		want captureFormat
+	}{
+		{"--capture=final bash", captureFull}, // default keeps everything
+		{"--capture=final --plain bash", capturePlain},
+		{"--capture=final --text bash", captureText},
 	}
-	if _, err := parseExecLine("--capture=nonsense bash"); err == nil {
-		t.Error("--capture=nonsense should error")
+	for _, c := range formats {
+		s, err := parseExecLine(c.line)
+		if err != nil {
+			t.Errorf("parseExecLine(%q) error: %v", c.line, err)
+			continue
+		}
+		if s.CaptureFormat != c.want {
+			t.Errorf("parseExecLine(%q) format = %d, want %d", c.line, s.CaptureFormat, c.want)
+		}
+	}
+
+	// The named-argument form maps the same way.
+	if s, err := parseExecLineNamed("bash", map[string]interface{}{"capture": "final"}); err != nil || s.Capture != captureFinal {
+		t.Errorf("named capture: got %d err %v, want final", s.Capture, err)
+	}
+
+	// Reserved-but-unimplemented rungs, an unknown rung, and two conflicting
+	// formats each error rather than silently doing the wrong thing.
+	for _, bad := range []string{
+		"--capture=raw bash",
+		"--capture=lines bash",
+		"--capture=live bash",
+		"--capture=nonsense bash",
+		"--capture=final --plain --text bash",
+	} {
+		if _, err := parseExecLine(bad); err == nil {
+			t.Errorf("parseExecLine(%q) = nil error, want an error", bad)
+		}
 	}
 }
 
-// Capture-on-die folds the session's final scrollback into its buffer when it
-// ends — text with escapes stripped, ansi with them kept — and off leaves the
-// buffer empty and never asks for a snapshot.
+// Capture-on-die (the final rung) folds the session's transcript into its buffer
+// when it ends: full keeps the escape stream, plain drops the SGR styling on our
+// side, text asks the host for the stripped form. off never asks for a snapshot.
 func TestCaptureOnDieFillsBuffer(t *testing.T) {
-	run := func(name string, mode captureMode, wantANSI bool, snap, want string) {
+	run := func(name string, rung captureRung, format captureFormat, wantANSI bool, snap, want string) {
 		t.Run(name, func(t *testing.T) {
 			e, w := newTestEditor(t, "")
 			e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
@@ -238,7 +268,7 @@ func TestCaptureOnDieFillsBuffer(t *testing.T) {
 					return snap
 				},
 			}
-			if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, mode) {
+			if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, rung, format) {
 				t.Fatal("exec failed")
 			}
 			e.ptyEnded(w.Buffer, nil)
@@ -246,18 +276,19 @@ func TestCaptureOnDieFillsBuffer(t *testing.T) {
 				t.Errorf("buffer = %q, want %q", got, want)
 			}
 			switch {
-			case mode == captureOff && askedANSI != nil:
+			case rung == captureOff && askedANSI != nil:
 				t.Error("capture off should not ask for a snapshot")
-			case mode != captureOff && askedANSI == nil:
+			case rung != captureOff && askedANSI == nil:
 				t.Error("capture on should ask for a snapshot")
-			case mode != captureOff && *askedANSI != wantANSI:
+			case rung != captureOff && *askedANSI != wantANSI:
 				t.Errorf("snapshot ansi = %v, want %v", *askedANSI, wantANSI)
 			}
 		})
 	}
-	run("text strips", captureText, false, "plain transcript\n", "plain transcript\n")
-	run("ansi keeps", captureANSI, true, "\x1b[31mred\x1b[0m\n", "\x1b[31mred\x1b[0m\n")
-	run("off is empty", captureOff, false, "should not appear\n", "")
+	run("full keeps", captureFinal, captureFull, true, "\x1b[31mred\x1b[0m\n", "\x1b[31mred\x1b[0m\n")
+	run("text strips", captureFinal, captureText, false, "plain transcript\n", "plain transcript\n")
+	run("plain drops SGR", captureFinal, capturePlain, true, "\x1b[31mred\x1b[0m\n", "red\n")
+	run("off is empty", captureOff, captureFull, false, "should not appear\n", "")
 }
 
 // Capture-on-die lands the transcript at the caret the session was launched
@@ -273,7 +304,7 @@ func TestCaptureOnDieLandsAtCaret(t *testing.T) {
 		Snapshot: func(string, bool) string { return "CAP\n" },
 	}
 	w.Caret.Seek(1, 0) // start of the second line, not the top of the buffer
-	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureText) {
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureFinal, captureFull) {
 		t.Fatal("exec failed")
 	}
 	e.ptyEnded(w.Buffer, nil)

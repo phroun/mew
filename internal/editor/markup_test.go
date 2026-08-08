@@ -16,7 +16,7 @@ func TestBrowseMarkupMarkersHidden(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	plain := stripSGR(out.String())
+	plain := stripANSI(out.String())
 	for _, marker := range []string{"**", "//", "__"} {
 		if strings.Contains(plain, marker) {
 			t.Fatalf("browse mode should hide %q markers; got %q", marker, plain)
@@ -40,7 +40,7 @@ func TestBrowseNestedMarkupMarkersHidden(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	plain := stripSGR(out.String())
+	plain := stripANSI(out.String())
 	for _, marker := range []string{"**", "//"} {
 		if strings.Contains(plain, marker) {
 			t.Fatalf("browse mode should hide %q even when nested; got %q", marker, plain)
@@ -65,7 +65,7 @@ func TestBrowseHeadingLevels(t *testing.T) {
 	out.Reset()
 	e.performRender()
 	full := out.String()
-	plain := stripSGR(full)
+	plain := stripANSI(full)
 	if strings.Contains(plain, "=") {
 		t.Fatalf("heading '=' markers should be hidden; got %q", plain)
 	}
@@ -124,7 +124,7 @@ func TestBrowseHeadingGutter(t *testing.T) {
 	e.performRender()
 	// Strip SGR and the DEC line-mode sequences (ESC#6 / ESC#5, whose "6"/"5"
 	// are not content).
-	plain := strings.NewReplacer("\x1b#6", "", "\x1b#5", "").Replace(stripSGR(out.String()))
+	plain := strings.NewReplacer("\x1b#6", "", "\x1b#5", "").Replace(stripANSI(out.String()))
 	// The doubled heading is on doc line 1 (number "1"); the normal line 2
 	// keeps its "2". So "2" appears but the heading's "1" gutter is gone.
 	if !strings.Contains(plain, "2") {

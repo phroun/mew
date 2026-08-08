@@ -76,15 +76,30 @@ const (
 	sizeMinimum                 // --minimum: logical = max(tile, floor)
 )
 
-// captureMode selects whether a session's output is folded into its buffer when
-// it ends, and in what form: nothing (the default), plain text with escape
-// sequences stripped, or the full ANSI stream with colour and layout preserved.
-type captureMode int
+// captureRung selects a session's capture fidelity — WHEN and HOW MUCH of its
+// output is folded into its buffer (see docs/pty-capture.md). The zero value is
+// "unspecified" so a future config default can be told apart from an explicit
+// off; today unspecified resolves to off (Editor.resolveCapture).
+type captureRung int
 
 const (
-	captureOff captureMode = iota
-	captureText
-	captureANSI
+	captureUnset captureRung = iota // not given → inherit the default (today: off)
+	captureOff                      // explicitly disabled, overrides a default
+	captureRaw                      // M1: the raw byte stream (not implemented yet)
+	captureFinal                    // M2: final scrollback + used screen, at death
+	captureLines                    // M3: transcript as lines scroll off (not yet)
+	captureLive                     // M4: live screen mirror (not implemented yet)
+)
+
+// captureFormat selects how much escape detail a capture keeps. The default
+// keeps everything; --plain drops visual styling (SGR); --text drops all VT
+// escapes. Meaningful only alongside a rung.
+type captureFormat int
+
+const (
+	captureFull  captureFormat = iota // keep everything (default)
+	capturePlain                      // strip SGR (CSI-m), keep positioning
+	captureText                       // strip all escapes → plain text
 )
 
 type execSpec struct {
@@ -111,9 +126,12 @@ type execSpec struct {
 	SizeCols, SizeRows int
 	Hidden             bool
 
-	// Capture folds the session's output into its buffer when it ends
-	// (--capture=text|ansi); captureOff by default.
-	Capture captureMode
+	// Capture is the fidelity rung (--capture=off|raw|final|lines|live), and
+	// CaptureFormat how much escape detail it keeps (--plain / --text; full by
+	// default). captureUnset (the zero value) means "not given" — resolved to the
+	// default at request time — kept distinct from an explicit off.
+	Capture       captureRung
+	CaptureFormat captureFormat
 }
 
 // parseExecLine parses a composited exec command line.
@@ -260,6 +278,10 @@ func (spec *execSpec) setBareOption(name string) error {
 		return spec.setOption("hidden", "")
 	case "capture":
 		return spec.setOption("capture", "")
+	case "plain":
+		return spec.setOption("plain", "")
+	case "text":
+		return spec.setOption("text", "")
 	}
 	return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", name)
 }
@@ -310,25 +332,53 @@ func (spec *execSpec) setOption(name, value string) error {
 		}
 		return spec.setSizePolicy(sizeExact, c, r, true)
 	case "capture":
-		// Whether the session's output is folded into its buffer when it ends,
-		// and how: text (escapes stripped) or ansi (the full stream). A bare
-		// --capture, or capture: true, means text.
+		// The capture RUNG: how much of the session's output is folded into its
+		// buffer, and when (docs/pty-capture.md). A bare --capture, or
+		// capture: true, means final; --plain / --text pick the format.
 		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "", "text", "on", "true", "yes", "1":
-			spec.Capture = captureText
-		case "ansi", "ans", "raw", "color":
-			spec.Capture = captureANSI
-		case "off", "false", "no", "0", "none":
+		case "", "final", "on", "true", "yes", "1":
+			spec.Capture = captureFinal
+		case "off", "none", "false", "no", "0":
 			spec.Capture = captureOff
+		case "raw":
+			return fmt.Errorf("--capture=raw (live byte log) is not implemented yet")
+		case "lines":
+			return fmt.Errorf("--capture=lines (scroll-off transcript) is not implemented yet")
+		case "live":
+			return fmt.Errorf("--capture=live (screen mirror) is not implemented yet")
 		default:
-			return fmt.Errorf("--capture must be text, ansi, or off")
+			return fmt.Errorf("--capture must be off, raw, final, lines, or live")
 		}
 		return nil
+	case "plain":
+		return spec.setCaptureFormat(capturePlain, value)
+	case "text":
+		return spec.setCaptureFormat(captureText, value)
 	}
 	if spec.Shell {
 		return fmt.Errorf("unknown shell option %q", name)
 	}
 	return fmt.Errorf("unknown exec option %q", name)
+}
+
+// setCaptureFormat records --plain or --text, refusing a second: they are two
+// points on one strip scale, so giving both is a contradiction, not a silent
+// last-one-wins. They take no value; an explicit falsehood (text: false) is a
+// no-op so a script can pass it through.
+func (spec *execSpec) setCaptureFormat(f captureFormat, value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "false", "off", "no", "0":
+		return nil
+	case "", "true", "on", "yes", "1":
+		// a plain flag
+	default:
+		return fmt.Errorf("--plain/--text take no value")
+	}
+	if spec.CaptureFormat != captureFull && spec.CaptureFormat != f {
+		return fmt.Errorf("only one of --plain, --text may be given")
+	}
+	spec.CaptureFormat = f
+	return nil
 }
 
 // setSizePolicy records one of the --size/--minimum/--hidden switches, refusing

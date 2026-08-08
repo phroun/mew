@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,16 @@ import (
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/viewport"
 )
+
+// sgrRE matches CSI-m sequences — SGR colour/style plus purfecterm's BGP
+// (…;158m/159m) and flip (150–153m) extensions, all of which end in 'm'. No
+// positioning or layout escape uses that final byte, so stripping these is
+// exactly --plain: drop the styling, keep the shape.
+var sgrRE = regexp.MustCompile("\x1b\\[[0-9;:]*m")
+
+// stripSGR removes the styling escapes from a captured ANS stream, leaving
+// positioning and layout intact. This is the mew-side realization of --plain.
+func stripSGR(s string) string { return sgrRE.ReplaceAllString(s, "") }
 
 // PTYRequest is what mew asks the host for. Every field is data the host is
 // free to reinterpret; none of it is a handle to anything.
@@ -163,13 +174,16 @@ type ptyState struct {
 	// SetLogicalSize is pushed only when it actually changes.
 	policy                   ptySizePolicy
 	logSentCols, logSentRows int
-	// capture folds the session's output into its buffer when it ends (Method 2,
-	// capture-on-die); captureOff (the default) folds nothing.
-	capture captureMode
+	// capture is the resolved fidelity rung (never captureUnset here — the
+	// default is applied before attach); format is how much escape detail it
+	// keeps. captureFinal folds the transcript in ptyEnded; captureOff folds
+	// nothing.
+	capture captureRung
+	format  captureFormat
 	// outCursor is where a captured transcript lands: an ephemeral cursor pinned
 	// at the caret the session was launched from, created only when capturing.
 	// Held for the session's life (garland keeps it valid across any edits made
-	// to the buffer meanwhile) and released in ptyEnded. nil when captureOff.
+	// to the buffer meanwhile) and released in ptyEnded. nil when not capturing.
 	outCursor *buffer.Cursor
 }
 
@@ -522,27 +536,39 @@ func (e *Editor) execRequestShell(args []string, method string) bool {
 // execRequestShell carrying a LOGICAL-size policy from the parse. The plain
 // forms stay as the zero-policy (follow-the-tile) entry points every existing
 // caller uses, delegating here.
-func (e *Editor) execRequestArgsPolicy(command string, args []string, method string, pol ptySizePolicy, capture captureMode) bool {
-	return e.execRequestSpecPolicy(command, args, method, false, pol, capture)
+func (e *Editor) execRequestArgsPolicy(command string, args []string, method string, pol ptySizePolicy, capture captureRung, format captureFormat) bool {
+	return e.execRequestSpecPolicy(command, args, method, false, pol, capture, format)
 }
 
-func (e *Editor) execRequestShellPolicy(args []string, method string, pol ptySizePolicy, capture captureMode) bool {
-	return e.execRequestSpecPolicy("", args, method, true, pol, capture)
+func (e *Editor) execRequestShellPolicy(args []string, method string, pol ptySizePolicy, capture captureRung, format captureFormat) bool {
+	return e.execRequestSpecPolicy("", args, method, true, pol, capture, format)
 }
 
 // execRequestSpec is the zero-option form of execRequestSpecPolicy: the child's
 // logical size follows the visible tile and nothing is captured, exactly as
-// before these switches.
+// before these switches. It passes an explicit captureOff (not unset): these
+// internal entry points opt out of any future default.
 func (e *Editor) execRequestSpec(command string, args []string, method string, shell bool) bool {
-	return e.execRequestSpecPolicy(command, args, method, shell, ptySizePolicy{}, captureOff)
+	return e.execRequestSpecPolicy(command, args, method, shell, ptySizePolicy{}, captureOff, captureFull)
+}
+
+// resolveCapture maps an unspecified rung to the configured default. There is no
+// default today, so unset means off; this is the one seam a future
+// [options] capture=... would change.
+func (e *Editor) resolveCapture(r captureRung) captureRung {
+	if r == captureUnset {
+		return captureOff
+	}
+	return r
 }
 
 // execRequestSpecPolicy is execRequestArgs with the shell flag, a logical-size
-// policy, and a capture mode: when shell is set, the host names the program
-// (the user's login shell) and command must be empty. pol governs the size the
-// child is told it has (see ptySizePolicy); capture whether its output is
-// folded into the buffer when it ends.
-func (e *Editor) execRequestSpecPolicy(command string, args []string, method string, shell bool, pol ptySizePolicy, capture captureMode) bool {
+// policy, a capture rung and format: when shell is set, the host names the
+// program (the user's login shell) and command must be empty. pol governs the
+// size the child is told it has (see ptySizePolicy); capture/format govern
+// whether and how its output is folded into the buffer.
+func (e *Editor) execRequestSpecPolicy(command string, args []string, method string, shell bool, pol ptySizePolicy, capture captureRung, format captureFormat) bool {
+	capture = e.resolveCapture(capture)
 	if e.Config.PTYProvider == nil {
 		e.ShowWarning("No terminal provider: this host does not grant sessions")
 		return false
@@ -621,7 +647,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 		outCursor = w.Buffer.NewEphemeralCursor()
 		outCursor.SeekLineRune(pos.Line, pos.Rune)
 	}
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, outCursor)
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, format, outCursor)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -634,7 +660,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureMode, outCursor *buffer.Cursor) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureRung, format captureFormat, outCursor *buffer.Cursor) {
 	// The initial logical size the host is told, taken straight from the policy so
 	// a pinned or floored terminal renders correctly from its first frame while a
 	// follow policy — or a free axis of an 80x0/x24 pin — is spelled as 0 for the
@@ -650,7 +676,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
-		capture: capture, outCursor: outCursor,
+		capture: capture, format: format, outCursor: outCursor,
 	}
 	e.ptyMu.Unlock()
 
@@ -976,8 +1002,15 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	// the emulator still exists. It lands at the output cursor, the caret the
 	// session was launched from (garland has carried it to wherever that text now
 	// is), not at 0,0; the buffer is an ordinary editable document again.
-	if st.capture != captureOff && e.Config.TerminalSurfaces.Snapshot != nil {
-		if text := e.Config.TerminalSurfaces.Snapshot(st.id, st.capture == captureANSI); text != "" {
+	if st.capture == captureFinal && e.Config.TerminalSurfaces.Snapshot != nil {
+		// full and plain both need the escape-carrying ANS stream (plain then
+		// strips the styling on our side); text uses the host's cell serializer,
+		// which emits no escapes by construction.
+		ansi := st.format != captureText
+		if text := e.Config.TerminalSurfaces.Snapshot(st.id, ansi); text != "" {
+			if st.format == capturePlain {
+				text = stripSGR(text)
+			}
 			if st.outCursor != nil {
 				st.outCursor.InsertString(text, nil, false)
 			} else {

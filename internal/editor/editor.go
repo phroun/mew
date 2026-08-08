@@ -2268,9 +2268,9 @@ func (e *Editor) registerCommands() {
 		request := func(spec execSpec) bool {
 			pol := spec.sizePolicy()
 			if spec.Shell {
-				return e.execRequestShellPolicy(spec.Args, spec.Method, pol, spec.Capture)
+				return e.execRequestShellPolicy(spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
 			}
-			return e.execRequestArgsPolicy(spec.Program, spec.Args, spec.Method, pol, spec.Capture)
+			return e.execRequestArgsPolicy(spec.Program, spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
 		}
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
 			var parts []string

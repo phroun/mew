@@ -16,7 +16,7 @@ const linkLine = "text [[a:b|Title]] more\n"
 
 var linkAnsiRe = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 
-func stripSGR(s string) string { return linkAnsiRe.ReplaceAllString(s, "") }
+func stripANSI(s string) string { return linkAnsiRe.ReplaceAllString(s, "") }
 
 func linkEditor(t *testing.T, content string) (*Editor, *viewport.Viewport, *strings.Builder) {
 	t.Helper()
@@ -199,7 +199,7 @@ func TestLinkRenderStyles(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	plain := stripSGR(out.String())
+	plain := stripANSI(out.String())
 	if !strings.Contains(plain, " Title ▐") {
 		t.Fatalf("browse mode: want ' Title ▐' button, got: %q", plain)
 	}
@@ -215,7 +215,7 @@ func TestLinkRenderStyles(t *testing.T) {
 	w.BrowseActive = true
 	out.Reset()
 	e.performRender()
-	plain = stripSGR(out.String())
+	plain = stripANSI(out.String())
 	if !strings.Contains(plain, "<Title>█") {
 		t.Fatalf("focused button: want '<Title>█', got: %q", plain)
 	}
@@ -313,7 +313,7 @@ func TestLinkButtonRTLTitle(t *testing.T) {
 	}
 	out.Reset()
 	e.performRender()
-	plain := stripSGR(out.String())
+	plain := stripANSI(out.String())
 	for _, r := range "שלום" {
 		if !strings.ContainsRune(plain, r) {
 			t.Fatalf("RTL title rune %c missing from button", r)
@@ -362,7 +362,7 @@ func TestLinkBrowsingGate(t *testing.T) {
 	}
 	out2.Reset()
 	e2.performRender()
-	if strings.Contains(stripSGR(out2.String()), "▐") {
+	if strings.Contains(stripANSI(out2.String()), "▐") {
 		t.Fatal("no button chrome after disabling linkBrowsing")
 	}
 }
@@ -724,7 +724,7 @@ func TestNoDirectionControlsEmitted(t *testing.T) {
 			t.Fatal("document direction controls must not be emitted raw")
 		}
 	}
-	plain := stripSGR(out2.String())
+	plain := stripANSI(out2.String())
 	for _, want := range []string{"a", "b", "c"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("content %q should still render; got %q", want, plain)
