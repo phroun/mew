@@ -250,7 +250,6 @@ func TestParseCaptureSwitch(t *testing.T) {
 	// Reserved-but-unimplemented rungs, an unknown rung, and two conflicting
 	// formats each error rather than silently doing the wrong thing.
 	for _, bad := range []string{
-		"--capture=lines bash",
 		"--capture=live bash",
 		"--capture=nonsense bash",
 		"--capture=final --plain --text bash",
@@ -403,6 +402,50 @@ func TestCaptureRawFilters(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The lines rung folds each transcript line the host relays via LineOff in at
+// the cursor with a newline (honoring the format), and ignores raw Output.
+func TestCaptureLinesFold(t *testing.T) {
+	newLinesSession := func(t *testing.T, format captureFormat) (*Editor, *viewport.Viewport, CaptureSink) {
+		t.Helper()
+		e, w := newTestEditor(t, "")
+		e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+		var sink CaptureSink
+		e.Config.TerminalSurfaces = TerminalHooks{
+			Open:           func(string, int, int) {},
+			Feed:           func(string, []byte) []byte { return nil },
+			Place:          func([]TerminalSurface) {},
+			Close:          func(string) {},
+			SetCaptureSink: func(_ string, s CaptureSink) { sink = s },
+		}
+		if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureLines, format) {
+			t.Fatal("exec failed")
+		}
+		if sink == nil {
+			t.Fatal("lines rung did not register a capture sink")
+		}
+		return e, w, sink
+	}
+
+	t.Run("full keeps SGR, ignores raw Output", func(t *testing.T) {
+		e, w, sink := newLinesSession(t, captureFull)
+		sink.Output([]byte("ignored on the lines rung"))
+		sink.LineOff("L1")
+		sink.LineOff("\x1b[31mL2\x1b[0m")
+		e.ptyEnded(w.Buffer, nil)
+		if got, want := w.Buffer.GetContent(), "L1\n\x1b[31mL2\x1b[0m\n"; got != want {
+			t.Fatalf("buffer = %q, want %q", got, want)
+		}
+	})
+	t.Run("text strips the line's escapes", func(t *testing.T) {
+		e, w, sink := newLinesSession(t, captureText)
+		sink.LineOff("\x1b[31mred\x1b[0m")
+		e.ptyEnded(w.Buffer, nil)
+		if got, want := w.Buffer.GetContent(), "red\n"; got != want {
+			t.Fatalf("buffer = %q, want %q", got, want)
+		}
+	})
 }
 
 // A hidden session runs under the hood: it EXISTS (ptySessionFor) but is not

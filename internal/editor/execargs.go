@@ -348,7 +348,7 @@ func (spec *execSpec) setOption(name, value string) error {
 		case "raw":
 			spec.Capture = captureRaw
 		case "lines":
-			return fmt.Errorf("--capture=lines (scroll-off transcript) is not implemented yet")
+			spec.Capture = captureLines
 		case "live":
 			return fmt.Errorf("--capture=live (screen mirror) is not implemented yet")
 		default:

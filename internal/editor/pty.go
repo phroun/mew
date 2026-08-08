@@ -59,17 +59,43 @@ var allEscRE = regexp.MustCompile(
 // here; the only state is the escape-carry the filters need so a sequence split
 // across two chunks is not half-stripped.
 type captureStream struct {
+	rung   captureRung
 	cursor *buffer.Cursor
 	format captureFormat
 	carry  []byte // an incomplete trailing escape held back from the last chunk
 }
 
 // Output folds one chunk of raw output in at the cursor, filtered per format.
+// Only the raw rung consumes it; a lines session ignores it (it folds via
+// LineOff instead).
 func (c *captureStream) Output(data []byte) {
+	if c.rung != captureRaw {
+		return
+	}
 	if s := c.filter(data, false); s != "" {
 		c.cursor.InsertString(s, nil, false)
 	}
 }
+
+// LineOff folds one transcript line in at the cursor with a newline. Only the
+// lines rung consumes it. The line is a complete self-contained ANSI string, so
+// no escape can straddle a boundary — the format filters apply directly.
+func (c *captureStream) LineOff(ansLine string) {
+	if c.rung != captureLines {
+		return
+	}
+	switch c.format {
+	case capturePlain:
+		ansLine = stripSGR(ansLine)
+	case captureText:
+		ansLine = allEscRE.ReplaceAllString(ansLine, "")
+	}
+	c.cursor.InsertString(ansLine+"\n", nil, false)
+}
+
+// WantsLines lets the host skip the per-line serialization for a session that is
+// not on the lines rung. Checked by the trinket via an anonymous interface.
+func (c *captureStream) WantsLines() bool { return c.rung == captureLines }
 
 // flush emits whatever escape-carry remains — called once at session end so a
 // trailing partial sequence is not lost.
@@ -538,6 +564,11 @@ type CaptureSink interface {
 	// Output is a chunk of the session's raw output (the `raw` rung), verbatim
 	// as purfecterm received it. The slice may be reused after the call.
 	Output(data []byte)
+
+	// LineOff is one line of the ordered transcript (the `lines` rung), already
+	// serialized to a self-contained ANSI string by the host (no trailing
+	// newline).
+	LineOff(ansLine string)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -894,7 +925,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	// A streaming rung folds output in live through a sink; final and off do not.
 	var stream *captureStream
 	if capture.streams() && outCursor != nil {
-		stream = &captureStream{cursor: outCursor, format: format}
+		stream = &captureStream{rung: capture, cursor: outCursor, format: format}
 	}
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
