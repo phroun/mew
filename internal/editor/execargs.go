@@ -88,7 +88,7 @@ const (
 	captureRaw                      // M1: the raw byte stream (not implemented yet)
 	captureFinal                    // M2: final scrollback + used screen, at death
 	captureLines                    // M3: transcript as lines scroll off (not yet)
-	captureLive                     // M4: live screen mirror (not implemented yet)
+	captureLive                     // M4: live in-place screen mirror
 )
 
 // captureFormat selects how much escape detail a capture keeps. The default
@@ -350,7 +350,7 @@ func (spec *execSpec) setOption(name, value string) error {
 		case "lines":
 			spec.Capture = captureLines
 		case "live":
-			return fmt.Errorf("--capture=live (screen mirror) is not implemented yet")
+			spec.Capture = captureLive
 		default:
 			return fmt.Errorf("--capture must be off, raw, final, lines, or live")
 		}

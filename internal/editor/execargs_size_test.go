@@ -247,10 +247,14 @@ func TestParseCaptureSwitch(t *testing.T) {
 		t.Errorf("named capture: got %d err %v, want final", s.Capture, err)
 	}
 
-	// Reserved-but-unimplemented rungs, an unknown rung, and two conflicting
-	// formats each error rather than silently doing the wrong thing.
+	// live is the highest rung and now parses to captureLive.
+	if s, err := parseExecLine("--capture=live bash"); err != nil || s.Capture != captureLive {
+		t.Errorf("parseExecLine(--capture=live) = %d err %v, want live", s.Capture, err)
+	}
+
+	// An unknown rung and two conflicting formats each error rather than
+	// silently doing the wrong thing.
 	for _, bad := range []string{
-		"--capture=live bash",
 		"--capture=nonsense bash",
 		"--capture=final --plain --text bash",
 	} {

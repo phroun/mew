@@ -1125,6 +1125,7 @@ type captureRelay struct {
 	purfecterm.NopCaptureObserver
 	sink       mew.CaptureSink
 	wantsLines bool
+	wantsLive  bool
 }
 
 func (r captureRelay) OnOutput(data []byte) { r.sink.Output(data) }
@@ -1132,6 +1133,46 @@ func (r captureRelay) OnOutput(data []byte) { r.sink.Output(data) }
 func (r captureRelay) OnLineOff(line []purfecterm.Cell, info purfecterm.LineInfo) {
 	if r.wantsLines {
 		r.sink.LineOff(purfecterm.SerializeLineANS(line, info))
+	}
+}
+
+// The live-rung structural events, forwarded to the sink only for a live
+// session. purfecterm already flushes any pending write-run before each
+// structural event and at end of feed, so the order the sink sees matches the
+// screen's.
+func (r captureRelay) OnWrite(x, y int, text, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveWrite(x, y, text, sgr)
+	}
+}
+func (r captureRelay) OnCursorMove(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveCursorMove(x, y)
+	}
+}
+func (r captureRelay) OnNewline(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveNewline(x, y)
+	}
+}
+func (r captureRelay) OnLineWrap(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveLineWrap(x, y)
+	}
+}
+func (r captureRelay) OnBackspace(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveBackspace(x, y)
+	}
+}
+func (r captureRelay) OnScrollLineOff(n int) {
+	if r.wantsLive {
+		r.sink.LiveScrollLineOff(n)
+	}
+}
+func (r captureRelay) OnClearScreen() {
+	if r.wantsLive {
+		r.sink.LiveClearScreen()
 	}
 }
 
@@ -1153,16 +1194,23 @@ func (e *Editor) terminalSetCaptureSink(id string, sink mew.CaptureSink) {
 	if sink == nil {
 		// End of session: flush the on-screen tail (content that never scrolled
 		// off) as OnLineOff events to the still-registered relay, then clear.
-		// Harmless for a raw relay, which ignores line events.
+		// Harmless for a raw relay, which ignores line events. The live mirror
+		// already reflects the final screen in place, so it needs no flush.
 		t.EmitRemainingCaptureLines()
 		t.SetCaptureObserver(nil)
+		t.SetCaptureLive(false)
 		return
 	}
 	wantsLines := false
 	if lc, ok := sink.(interface{ WantsLines() bool }); ok {
 		wantsLines = lc.WantsLines()
 	}
-	t.SetCaptureObserver(captureRelay{sink: sink, wantsLines: wantsLines})
+	wantsLive := false
+	if lc, ok := sink.(interface{ WantsLive() bool }); ok {
+		wantsLive = lc.WantsLive()
+	}
+	t.SetCaptureObserver(captureRelay{sink: sink, wantsLines: wantsLines, wantsLive: wantsLive})
+	t.SetCaptureLive(wantsLive)
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where

@@ -62,7 +62,8 @@ type captureStream struct {
 	rung   captureRung
 	cursor *buffer.Cursor
 	format captureFormat
-	carry  []byte // an incomplete trailing escape held back from the last chunk
+	carry  []byte      // an incomplete trailing escape held back from the last chunk
+	mirror *liveMirror // the 2-D screen mirror; set only for the live rung
 }
 
 // Output folds one chunk of raw output in at the cursor, filtered per format.
@@ -96,6 +97,50 @@ func (c *captureStream) LineOff(ansLine string) {
 // WantsLines lets the host skip the per-line serialization for a session that is
 // not on the lines rung. Checked by the trinket via an anonymous interface.
 func (c *captureStream) WantsLines() bool { return c.rung == captureLines }
+
+// WantsLive lets the host enable the structural live events (and skip them
+// otherwise). Checked by the trinket via an anonymous interface.
+func (c *captureStream) WantsLive() bool { return c.rung == captureLive }
+
+// The live-rung events, relayed from purfecterm's CaptureObserver and delegated
+// to the screen mirror. Each is a no-op unless this is a live session; the
+// format (full/plain/text) is applied inside the mirror. The Write text arrives
+// verbatim; plain/text drop the colour by carrying no SGR into the document.
+func (c *captureStream) LiveWrite(x, y int, text, sgr string) {
+	if c.mirror != nil {
+		c.mirror.Write(x, y, text, sgr)
+	}
+}
+func (c *captureStream) LiveCursorMove(x, y int) {
+	if c.mirror != nil {
+		c.mirror.CursorMove(x, y)
+	}
+}
+func (c *captureStream) LiveNewline(x, y int) {
+	if c.mirror != nil {
+		c.mirror.Newline(x, y)
+	}
+}
+func (c *captureStream) LiveLineWrap(x, y int) {
+	if c.mirror != nil {
+		c.mirror.Newline(x, y) // a wrap advances a row exactly as a newline does
+	}
+}
+func (c *captureStream) LiveBackspace(x, y int) {
+	if c.mirror != nil {
+		c.mirror.Backspace(x, y)
+	}
+}
+func (c *captureStream) LiveScrollLineOff(n int) {
+	if c.mirror != nil {
+		c.mirror.ScrollLineOff(n)
+	}
+}
+func (c *captureStream) LiveClearScreen() {
+	if c.mirror != nil {
+		c.mirror.ClearScreen()
+	}
+}
 
 // flush emits whatever escape-carry remains — called once at session end so a
 // trailing partial sequence is not lost.
@@ -569,6 +614,19 @@ type CaptureSink interface {
 	// serialized to a self-contained ANSI string by the host (no trailing
 	// newline).
 	LineOff(ansLine string)
+
+	// The live rung's structural screen events, relayed from purfecterm's
+	// CaptureObserver. Coordinates are cells in the terminal's live geometry,
+	// already clamped by the emulator. LiveWrite's sgr is an absolute
+	// 0;-prefixed SGR (or "" for the default pen); the other events carry the
+	// post-move caret position. A non-live sink ignores them.
+	LiveWrite(x, y int, text, sgr string)
+	LiveCursorMove(x, y int)
+	LiveNewline(x, y int)
+	LiveLineWrap(x, y int)
+	LiveBackspace(x, y int)
+	LiveScrollLineOff(n int)
+	LiveClearScreen()
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -926,6 +984,9 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	var stream *captureStream
 	if capture.streams() && outCursor != nil {
 		stream = &captureStream{rung: capture, cursor: outCursor, format: format}
+		if capture == captureLive {
+			stream.mirror = newLiveMirror(b, outCursor, format)
+		}
 	}
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
@@ -1288,6 +1349,9 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 			e.Config.TerminalSurfaces.SetCaptureSink(st.id, nil)
 		}
 		st.stream.flush()
+		if st.stream.mirror != nil {
+			st.stream.mirror.release()
+		}
 		st.stream = nil
 	}
 	if st.outCursor != nil {

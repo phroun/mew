@@ -15,11 +15,13 @@ single ordered axis, from cheapest/least to richest/most:
 | `raw`   | M1   | the raw byte stream, verbatim               | live, as bytes arrive    | **implemented** (v0.2.34 tee)           |
 | `final` | M2   | final scrollback + used screen              | once, at session death   | **implemented**                         |
 | `lines` | M3   | ordered transcript, each line as it scrolls off | live                | **implemented** (v0.2.35 OnLineOff)     |
-| `live`  | M4   | live screen mirror                          | live, on every change    | needs a purfecterm event stream         |
+| `live`  | M4   | live in-place screen mirror                 | live, on every change    | **implemented** (v0.2.36 event stream)  |
 
 `raw`/`final` sit above the purfecterm module boundary (mew-only). `lines`/`live`
 ride purfecterm's `CaptureObserver` seam: `raw` is `OnOutput` (v0.2.34), `lines`
-is `OnLineOff` (v0.2.35); `live` will add the screen-mutation events.
+is `OnLineOff` (v0.2.35); `live` adds the structural screen events (v0.2.36:
+`OnWrite`/`OnCursorMove`/`OnNewline`/`OnLineWrap`/`OnBackspace`/`OnScrollLineOff`/
+`OnClearScreen`).
 
 `lines` is the resolved, ordered transcript — each line as the emulator
 finalized it when it left the screen, captured live and so **unbounded by
@@ -77,13 +79,28 @@ construction) rather than a regex strip.
 
 ## Status
 
-- Implemented: the `off` / `raw` / `final` / `lines` rungs, tri-state
+- Implemented: the `off` / `raw` / `final` / `lines` / `live` rungs, tri-state
   resolution, and the `--plain` / `--text` formats. `final` folds via
   `SaveScrollback*Opts` at death; `raw` and `lines` stream live through the
   `CaptureSink` seam into the ephemeral cursor (`raw` = the byte tee, `lines` =
   serialized transcript lines), plus the runtime commands `viewport_pty_hide` /
   `_show` / `_toggle` / `_kill` and the `--hidden` flag.
-- Reserved but not implemented: `live` (M4) — parsing it is a clear "not
-  implemented yet" error, so the vocabulary is stable. It will add the
-  screen-mutation events to `CaptureObserver` and a `CaptureSink` method,
-  reusing the same relay + fold machinery.
+- `live` (M4) folds a two-dimensional, in-place mirror of the screen through the
+  same `CaptureSink` seam, driven by purfecterm's structural events (v0.2.36).
+  Three ephemeral cursors bound the region — "start of terminal" (row 0),
+  "terminal caret" (the write point), and "end of terminal" (the frontier). The
+  region grows a row per newline until the screen is full, then a scroll
+  advances "start of terminal" so the departed row stays above as history (O(1),
+  nothing deleted). A newline steps past the current line's EOL rather than
+  inserting one, so a row's remainder is never pushed down; overtypes replace
+  cells in place; short lines pad with spaces. Colour (full format) rides inline
+  as absolute `0;`-prefixed SGRs with a per-row start-pen array, so a
+  single-colour run emits one SGR and nothing after. The engine stores no screen
+  height and simply follows the event stream, which makes it correct across a
+  resize.
+  - Follow-up: the begin/end colour correction for a caret that jumps back into
+    already-coloured cells (emit the landing pen, restore the prior pen after the
+    overtyped chunk, replace rather than stack an SGR it lands on). Until then,
+    colour is exact for streaming and sequential output; a mid-line recolour
+    after a jump can leave a stale pen. `--plain` / `--text` are unaffected
+    (no SGR in the document).

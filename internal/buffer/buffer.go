@@ -1699,12 +1699,80 @@ func (c *Cursor) ReadLine() (string, error) {
 	return c.garlandCursor.ReadLine()
 }
 
-// InsertString inserts text at the cursor position.
+// InsertString inserts text at the cursor position. Inserting content is a real
+// edit: it lowers the buffer's dirty-line watermark and marks it modified, so a
+// capture folding output into a buffer counts as unsaved work (the raw/lines/
+// live rungs all reach the document through here). Pure cursor moves do not.
 func (c *Cursor) InsertString(text string, _ interface{}, _ bool) {
+	if c.garlandCursor == nil || text == "" {
+		return
+	}
+	c.markEdited()
+	c.garlandCursor.InsertString(text, nil, false)
+}
+
+// markEdited records that the cursor is about to mutate content: it lowers the
+// buffer's dirty-line watermark at the cursor's current line and sets modified.
+// Called by the content-mutating methods (InsertString, Overwrite); never by the
+// pure seeks.
+func (c *Cursor) markEdited() {
+	if c.buffer == nil {
+		return
+	}
+	line, _ := c.garlandCursor.LinePos()
+	c.buffer.touchContent(int(line))
+	c.buffer.modified = true
+}
+
+// Overwrite replaces oldByteLen bytes at the cursor with text in a single
+// coalesced garland mutation (delete+insert would be two), leaving the cursor
+// where it started — the caller advances it. This is the live mirror's overtype
+// primitive and its SGR chunk-swap. Overwriting content marks the buffer edited.
+func (c *Cursor) Overwrite(oldByteLen int, text string) {
 	if c.garlandCursor == nil {
 		return
 	}
-	c.garlandCursor.InsertString(text, nil, false)
+	c.markEdited()
+	c.garlandCursor.OverwriteBytes(int64(oldByteLen), []byte(text))
+}
+
+// SeekLineStart moves the cursor to the beginning of its current line. A pure
+// move: no bookkeeping.
+func (c *Cursor) SeekLineStart() {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekLineStart()
+	}
+}
+
+// SeekLineEnd moves the cursor to the end of its current line (before the
+// newline, or at EOF). A pure move: no bookkeeping.
+func (c *Cursor) SeekLineEnd() {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekLineEnd()
+	}
+}
+
+// SeekRelativeRunes moves the cursor by delta runes (clamped to the document),
+// crossing line boundaries. The live mirror steps +1 past a line's EOL to reach
+// the next row without inserting, and -1 for a backspace. A pure move: no
+// bookkeeping.
+func (c *Cursor) SeekRelativeRunes(delta int) {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekRelativeRunes(int64(delta))
+	}
+}
+
+// ReadRunes peeks up to n runes at the cursor without moving it — used to
+// measure the byte length of the cells an overtype will replace and to scan a
+// line's interleaved SGR/visible runes when resolving a jumped-to column.
+func (c *Cursor) ReadRunes(n int) string {
+	if c.garlandCursor == nil || n <= 0 {
+		return ""
+	}
+	at := c.garlandCursor.RunePos()
+	s, _ := c.garlandCursor.ReadString(int64(n))
+	c.garlandCursor.SeekRune(at)
+	return s
 }
 
 // GetPosition returns the current cursor position.
