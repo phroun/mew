@@ -52,9 +52,18 @@ func TestParseSizeSwitches(t *testing.T) {
 		s, err := parseExecLine("--hidden=90x30 bash")
 		run(t, s, err, want{mode: sizeExact, cols: 90, rows: 30, hidden: true, program: "bash"})
 	})
-	t.Run("hidden bare takes the default", func(t *testing.T) {
+	t.Run("hidden bare is a flag; size defaults at policy time", func(t *testing.T) {
 		s, err := parseExecLine("--hidden bash")
-		run(t, s, err, want{mode: sizeExact, cols: 80, rows: 25, hidden: true, program: "bash"})
+		run(t, s, err, want{mode: sizeFollow, hidden: true, program: "bash"})
+		// No visible tile to follow, so the resolved policy takes a definite 80x25.
+		if p := s.sizePolicy(); p.mode != sizeExact || p.cols != 80 || p.rows != 25 || !p.hidden {
+			t.Errorf("hidden sizePolicy = %+v, want exact 80x25 hidden", p)
+		}
+	})
+	t.Run("hidden composes with an explicit size", func(t *testing.T) {
+		// Orthogonal now: --size sets the size, --hidden sets visibility.
+		s, err := parseExecLine("--size=100x40 --hidden bash")
+		run(t, s, err, want{mode: sizeExact, cols: 100, rows: 40, hidden: true, program: "bash"})
 	})
 	t.Run("default follows the tile", func(t *testing.T) {
 		s, err := parseExecLine("bash")
@@ -396,10 +405,59 @@ func TestCaptureRawFilters(t *testing.T) {
 	}
 }
 
+// A hidden session runs under the hood: it EXISTS (ptySessionFor) but is not
+// interactive (visibleSessionFor is nil) and publishes no surface. Showing it
+// reverses all three.
+func TestPtyHiddenSurfaceAndVisibility(t *testing.T) {
+	e, w := newTestEditor(t, "doc\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	var lastPlaced []TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func(s []TerminalSurface) { lastPlaced = s },
+		Close: func(string) {},
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 25
+
+	pol := ptySizePolicy{mode: sizeExact, cols: 80, rows: 25, hidden: true}
+	if !e.execRequestArgsPolicy("bash", nil, "", pol, captureOff, captureFull) {
+		t.Fatal("exec failed")
+	}
+	if e.ptySessionFor(w.Buffer) == nil {
+		t.Error("ptySessionFor should see a hidden session (existence)")
+	}
+	if e.visibleSessionFor(w.Buffer) != nil {
+		t.Error("visibleSessionFor should be nil for a hidden session")
+	}
+	e.notifyTerminalSurfaces()
+	if len(lastPlaced) != 0 {
+		t.Errorf("hidden session published %d surfaces, want 0", len(lastPlaced))
+	}
+
+	// Show it mid-session: now interactive and published.
+	if !e.setViewportPTYHidden(-1, "viewport_pty_show") {
+		t.Fatal("show failed")
+	}
+	if e.visibleSessionFor(w.Buffer) == nil {
+		t.Error("after show, visibleSessionFor should be non-nil")
+	}
+	e.notifyTerminalSurfaces()
+	if len(lastPlaced) != 1 {
+		t.Fatalf("after show, published %d surfaces, want 1", len(lastPlaced))
+	}
+
+	// The commands warn and report false on a buffer with no session.
+	e2, _ := newTestEditor(t, "plain\n")
+	if e2.setViewportPTYHidden(0, "viewport_pty_toggle") {
+		t.Error("toggle with no session should return false")
+	}
+}
+
 func TestParseSizeSwitchErrors(t *testing.T) {
 	bad := []string{
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict
-		"--size=80x25 --hidden bash",         // size + hidden conflict
+		"--size=80x25 --hidden=100x40 bash",  // two explicit sizes conflict
 		"--size=80 bash",                     // missing 'x'
 		"--size=0x0 bash",                    // both axes zero is broken, not small
 		"--size=x bash",                      // both axes omitted, same thing

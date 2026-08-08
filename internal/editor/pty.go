@@ -289,6 +289,12 @@ type ptyState struct {
 	// outCursor; nil for off and for final (which folds once at death). Its
 	// SetCaptureSink registration is cleared, and its carry flushed, in ptyEnded.
 	stream *captureStream
+	// hidden runs the terminal under the hood: no visible surface is published
+	// and the buffer is an ordinary editable document (its paint is NOT
+	// suppressed, input edits it, not the child). Output still reaches it via
+	// capture. Set from the --hidden switch and toggled at runtime by
+	// viewport_pty_hide / _show / _toggle.
+	hidden bool
 }
 
 // streams reports whether a rung captures live through the CaptureSink seam
@@ -552,7 +558,9 @@ func (e *Editor) bufferCWD(b *buffer.Buffer) string {
 	return e.canonicalDocURL(dir)
 }
 
-// ptySessionFor returns the live session bound to a buffer, or nil.
+// ptySessionFor returns the live session bound to a buffer, or nil. It sees a
+// hidden session too: this is the EXISTENCE check (the start guard, cleanup, the
+// hide/show commands' target).
 func (e *Editor) ptySessionFor(b *buffer.Buffer) PTYSession {
 	if b == nil {
 		return nil
@@ -563,6 +571,64 @@ func (e *Editor) ptySessionFor(b *buffer.Buffer) PTYSession {
 		return st.sess
 	}
 	return nil
+}
+
+// visibleSessionFor is ptySessionFor restricted to a session the user is
+// INTERACTING with: a hidden session (terminal under the hood, buffer an
+// ordinary editable document) reports nil, so painting, input routing, the pty
+// keymap and the caret all treat that buffer as normal. Existence checks that
+// must see a hidden session — the start guard, cleanup, the hide/show commands —
+// use ptySessionFor instead.
+func (e *Editor) visibleSessionFor(b *buffer.Buffer) PTYSession {
+	if b == nil {
+		return nil
+	}
+	e.ptyMu.Lock()
+	defer e.ptyMu.Unlock()
+	if st := e.ptySessions[b]; st != nil && !st.hidden {
+		return st.sess
+	}
+	return nil
+}
+
+// setViewportPTYHidden sets the focused session's hidden flag — mode > 0 hide,
+// < 0 show, 0 toggle — and repaints. Backs viewport_pty_hide / _show / _toggle,
+// so a hidden terminal can be revealed part-way through its task or a visible
+// one tucked under the hood. Reports false with a warning when the focused
+// buffer has no session, so a key bound to one of these says so rather than
+// doing nothing silently.
+func (e *Editor) setViewportPTYHidden(mode int, cmd string) bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		e.ShowWarning(cmd + ": no active buffer")
+		return false
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w.Buffer]
+	if st == nil {
+		e.ptyMu.Unlock()
+		e.ShowWarning(cmd + ": this buffer has no terminal session")
+		return false
+	}
+	switch {
+	case mode > 0:
+		st.hidden = true
+	case mode < 0:
+		st.hidden = false
+	default:
+		st.hidden = !st.hidden
+	}
+	hidden := st.hidden
+	e.ptyMu.Unlock()
+	// The render path republishes surfaces (a now-hidden session drops out of
+	// the set, a now-shown one returns) and re-asks the content-suppressor.
+	e.RequestRender()
+	if hidden {
+		e.ShowNotification("Terminal hidden — buffer is editable; output still captures")
+	} else {
+		e.ShowNotification("Terminal shown")
+	}
+	return true
 }
 
 // ptyDiagnose is the pty_diag command: ask the host to test its own terminal
@@ -809,6 +875,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
 		capture: capture, format: format, outCursor: outCursor, stream: stream,
+		hidden: pol.hidden,
 	}
 	e.ptyMu.Unlock()
 
@@ -903,6 +970,9 @@ func (e *Editor) notifyTerminalSurfaces() {
 	live := len(e.ptySessions)
 	byBuffer := make(map[*buffer.Buffer]string, live)
 	for b, st := range e.ptySessions {
+		if st.hidden {
+			continue // running under the hood: no visible surface to publish
+		}
 		byBuffer[b] = st.id
 	}
 	e.ptyMu.Unlock()
@@ -1309,7 +1379,9 @@ func (e *Editor) focusedPTY() PTYSession {
 	if w == nil {
 		return nil
 	}
-	return e.ptySessionFor(w.Buffer)
+	// visible, not merely existing: a hidden session leaves typing to the
+	// document, so insert / insert_newline fall through to normal editing.
+	return e.visibleSessionFor(w.Buffer)
 }
 
 // ptySendBytes writes to the focused buffer's session. This is what the pty
@@ -1319,9 +1391,9 @@ func (e *Editor) ptySendBytes(data []byte) bool {
 	if w == nil {
 		return false
 	}
-	sess := e.ptySessionFor(w.Buffer)
+	sess := e.visibleSessionFor(w.Buffer)
 	if sess == nil {
-		return false // no session: the chain falls through to normal editing
+		return false // no visible session: the chain falls through to normal editing
 	}
 	if len(data) == 0 {
 		return false
@@ -1381,8 +1453,8 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 		e.ptyMu.Lock()
 		st := e.ptySessions[g.buf]
 		e.ptyMu.Unlock()
-		if st == nil {
-			e.ptyMouseCapture = nil
+		if st == nil || st.hidden {
+			e.ptyMouseCapture = nil // session gone or hidden mid-gesture: let go
 		} else {
 			ev.Col = x - g.cx
 			ev.Row = y - g.cy
@@ -1417,8 +1489,8 @@ func (e *Editor) ptyMouseKey(base string, shift, alt, ctrl bool, x, y int) bool 
 	e.ptyMu.Lock()
 	st := e.ptySessions[buf]
 	e.ptyMu.Unlock()
-	if st == nil {
-		return false
+	if st == nil || st.hidden {
+		return false // hidden: the mouse selects text in the document as usual
 	}
 	// The surface's grid is the tile's content area — the same rectangle
 	// notifyTerminalSurfaces publishes for the primary — so the child's own
@@ -1514,8 +1586,8 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 	e.ptyMu.Lock()
 	st := e.ptySessions[w.Buffer]
 	e.ptyMu.Unlock()
-	if st == nil {
-		return false
+	if st == nil || st.hidden {
+		return false // hidden: the key edits the document as usual
 	}
 	data := e.Config.TerminalSurfaces.Key(st.id, key)
 	if len(data) == 0 {

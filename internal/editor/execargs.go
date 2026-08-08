@@ -309,28 +309,33 @@ func (spec *execSpec) setOption(name, value string) error {
 		if err != nil {
 			return err
 		}
-		return spec.setSizePolicy(sizeExact, c, r, false)
+		return spec.setSizePolicy(sizeExact, c, r)
 	case "minimum":
 		c, r, err := parseWxH(value)
 		if err != nil {
 			return err
 		}
-		return spec.setSizePolicy(sizeMinimum, c, r, false)
+		return spec.setSizePolicy(sizeMinimum, c, r)
 	case "hidden":
-		// A bare --hidden (or hidden: true) takes the default 80x25; a value
-		// pins an exact size AND hides; an explicit falsehood is a no-op, so a
+		// Hidden is a visibility flag, orthogonal to size. Bare --hidden (or
+		// hidden: true) turns it on and, with no size of its own, implies 80x25
+		// (see sizePolicy); a WxH value turns it on AND pins that exact size,
+		// composing with the size machinery; an explicit falsehood is off, so a
 		// script can pass hidden: false to mean "not hidden".
 		switch strings.ToLower(strings.TrimSpace(value)) {
 		case "", "true", "on", "yes", "1":
-			return spec.setSizePolicy(sizeExact, 80, 25, true)
+			spec.Hidden = true
+			return nil
 		case "false", "off", "no", "0":
+			spec.Hidden = false
 			return nil
 		}
 		c, r, err := parseWxH(value)
 		if err != nil {
 			return err
 		}
-		return spec.setSizePolicy(sizeExact, c, r, true)
+		spec.Hidden = true
+		return spec.setSizePolicy(sizeExact, c, r)
 	case "capture":
 		// The capture RUNG: how much of the session's output is folded into its
 		// buffer, and when (docs/pty-capture.md). A bare --capture, or
@@ -381,16 +386,17 @@ func (spec *execSpec) setCaptureFormat(f captureFormat, value string) error {
 	return nil
 }
 
-// setSizePolicy records one of the --size/--minimum/--hidden switches, refusing
-// a second: they all govern the same single logical size, so two of them on one
-// line is a contradiction to be told about, not a silent last-one-wins.
-func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int, hidden bool) error {
-	if spec.SizeMode != sizeFollow || spec.Hidden {
-		return fmt.Errorf("only one of --size, --minimum, --hidden may be given")
+// setSizePolicy records a logical-size decision — --size, --minimum, or the
+// size carried by --hidden=WxH — refusing a second: they all govern the same
+// single logical size, so two on one line is a contradiction to be told about,
+// not a silent last-one-wins. Hidden is orthogonal (a visibility flag) and is
+// set separately, so it composes with any of these.
+func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int) error {
+	if spec.SizeMode != sizeFollow {
+		return fmt.Errorf("only one logical size may be given (--size, --minimum, or --hidden=WxH)")
 	}
 	spec.SizeMode = mode
 	spec.SizeCols, spec.SizeRows = cols, rows
-	spec.Hidden = hidden
 	return nil
 }
 
@@ -432,10 +438,15 @@ func parseSizeAxis(s string) (int, error) {
 	return n, nil
 }
 
-// sizePolicy carries the parsed --size/--minimum/--hidden decision onto the
-// request path (see ptySizePolicy in pty.go).
+// sizePolicy carries the parsed size + hidden decision onto the request path
+// (see ptySizePolicy in pty.go). A hidden session with no size of its own has no
+// visible tile to follow, so it takes a definite default of 80x25.
 func (spec execSpec) sizePolicy() ptySizePolicy {
-	return ptySizePolicy{mode: spec.SizeMode, cols: spec.SizeCols, rows: spec.SizeRows, hidden: spec.Hidden}
+	mode, cols, rows := spec.SizeMode, spec.SizeCols, spec.SizeRows
+	if spec.Hidden && mode == sizeFollow {
+		mode, cols, rows = sizeExact, 80, 25
+	}
+	return ptySizePolicy{mode: mode, cols: cols, rows: rows, hidden: spec.Hidden}
 }
 
 // operandArgs turns one operand into child arguments.

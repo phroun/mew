@@ -1219,7 +1219,7 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetScrollbarHostDrawn(e.hostDrawsScrollbars)
 
 	renderer.SetScrollbarSuppressor(func(w *viewport.Viewport) bool {
-		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
+		return w.Buffer != nil && e.visibleSessionFor(w.Buffer) != nil
 	})
 
 	// A terminal viewport's document text is not painted: the host draws the
@@ -1227,7 +1227,7 @@ func New(cfg Config) (*Editor, error) {
 	// show the editor background, not the buffer behind. The gutter and ruler
 	// still render. Session-ness lives on the buffer, so the renderer asks.
 	renderer.SetContentSuppressor(func(w *viewport.Viewport) bool {
-		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
+		return w.Buffer != nil && e.visibleSessionFor(w.Buffer) != nil
 	})
 
 	// Peek-indicator labels run through the shared TFC engine so codes like
@@ -1371,7 +1371,7 @@ func (e *Editor) peekBindingValues() map[string]string {
 // host's terminalPlace); mew adding a second caret over it would say the
 // opposite.
 func (e *Editor) caretHidden(w *viewport.Viewport) bool {
-	if w != nil && e.ptySessionFor(w.Buffer) != nil {
+	if w != nil && e.visibleSessionFor(w.Buffer) != nil {
 		return true
 	}
 	return e.focusedLinkButton(w) != nil
@@ -2342,6 +2342,20 @@ func (e *Editor) registerCommands() {
 	// that starts and stops with nothing to show for it.
 	ps.RegisterCommand("pty_diag", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.ptyDiagnose())
+	})
+
+	// viewport_pty_hide / _show / _toggle run the focused viewport's terminal
+	// under the hood or bring it back — bindable so a running session can be
+	// hidden or revealed part-way through. Each warns and does nothing when the
+	// focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_hide", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(1, "viewport_pty_hide"))
+	})
+	ps.RegisterCommand("viewport_pty_show", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(-1, "viewport_pty_show"))
+	})
+	ps.RegisterCommand("viewport_pty_toggle", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(0, "viewport_pty_toggle"))
 	})
 
 	// raw_key_input hands the NEXT keystroke to a focused terminal's child

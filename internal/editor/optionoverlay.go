@@ -21,7 +21,7 @@ func (e *Editor) viewportClass(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
 	}
-	if w.Class == "" && e.ptySessionFor(w.Buffer) != nil {
+	if w.Class == "" && e.visibleSessionFor(w.Buffer) != nil {
 		return ptyViewportClass
 	}
 	return w.Class
