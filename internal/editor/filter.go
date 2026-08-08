@@ -158,6 +158,17 @@ func (e *Editor) runBlockFilterCommand(line string) bool {
 	})
 }
 
+// repaint asks for a redraw from a filter goroutine. RequestRender only sets a
+// flag, which the main loop checks when it is already awake — parked waiting for
+// input, it never sees it, so a background filter's edits would not appear until
+// the next keypress. PostAction both sets up the render and WAKES the loop; with
+// no poster (unit tests) it falls back to the bare flag.
+func (fr *filterRun) repaint() {
+	if !fr.e.PostAction(func() { fr.e.RequestRender() }) {
+		fr.e.RequestRender()
+	}
+}
+
 // filterRun holds one filter's shared state across its goroutines.
 type filterRun struct {
 	e    *Editor
@@ -341,7 +352,7 @@ func (fr *filterRun) writeBlock(chunk []byte) {
 		fr.buf.SetMark("_block_begin", fr.blockBegLine, fr.blockBegRune)
 		fr.blockFirst = false
 	}
-	fr.e.RequestRender()
+	fr.repaint()
 }
 
 // writeDoc streams an output stream into a new document buffer, created lazily on
@@ -365,7 +376,7 @@ func (fr *filterRun) writeDoc(r streamRoute, chunk []byte) {
 	d.mu.Lock()
 	d.cursor.InsertString(string(chunk), nil, false)
 	d.mu.Unlock()
-	fr.e.RequestRender()
+	fr.repaint()
 }
 
 // docTitle names a new-buffer sink so the user can tell stdout from stderr.
@@ -390,7 +401,7 @@ func (fr *filterRun) finish(code int, exited bool) {
 		msg = fmt.Sprintf("Filter command exited with status %d", code)
 	}
 	fr.e.ShowNotification(msg)
-	fr.e.RequestRender()
+	fr.repaint()
 }
 
 // releaseAnchors drops the block-anchor cursors. Safe to call more than once.
