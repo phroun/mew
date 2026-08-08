@@ -121,6 +121,74 @@ func TestPtySizePolicyResolve(t *testing.T) {
 	check("minimum.hostLogical", c, r, 80, 25)
 }
 
+// End to end: --size pins the child's size to the logical size no matter how
+// large or small the tile is, and tells the host that logical size once.
+func TestExecSizePinsChildAndLogical(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var pty *stubPTY
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { pty = newStubPTY(); return pty, nil }
+	type logCall struct {
+		id         string
+		cols, rows int
+	}
+	var logs []logCall
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:           func(string, int, int) {},
+		SetLogicalSize: func(id string, c, r int) { logs = append(logs, logCall{id, c, r}) },
+		Feed:           func(string, []byte) []byte { return nil },
+		Place:          func([]TerminalSurface) {},
+	}
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{mode: sizeExact, cols: 80, rows: 25}) {
+		t.Fatal("exec failed")
+	}
+	// The host is told the pinned logical size up front.
+	if len(logs) != 1 || logs[0].cols != 80 || logs[0].rows != 25 {
+		t.Fatalf("initial SetLogicalSize = %+v, want one call of 80x25", logs)
+	}
+	// A tile SMALLER than the pinned size: the child is still sized to 80x25,
+	// not the 50x20 tile, and the logical size (unchanged) is not re-sent.
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 50, 20
+	e.notifyTerminalSurfaces()
+	if pty == nil {
+		t.Fatal("no session pty captured")
+	}
+	if pty.cols != 80 || pty.rows != 25 {
+		t.Errorf("child resized to %dx%d, want 80x25 (pinned, not the 50x20 tile)", pty.cols, pty.rows)
+	}
+	if len(logs) != 1 {
+		t.Errorf("logical size re-sent %d times, want 1 (unchanged)", len(logs))
+	}
+}
+
+// The default follow policy is behavior-neutral: the child is sized to the tile
+// and the host is told logical 0,0 exactly once (at attach), never again.
+func TestExecFollowSizesToTile(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	var pty *stubPTY
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { pty = newStubPTY(); return pty, nil }
+	logs := 0
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:           func(string, int, int) {},
+		SetLogicalSize: func(string, int, int) { logs++ },
+		Feed:           func(string, []byte) []byte { return nil },
+		Place:          func([]TerminalSurface) {},
+	}
+	if !e.execRequest("bash", "") { // follow policy (zero ptySizePolicy)
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 50, 20
+	e.notifyTerminalSurfaces()
+	if pty == nil {
+		t.Fatal("no session pty captured")
+	}
+	if pty.cols != 50 || pty.rows != 20 {
+		t.Errorf("follow child resized to %dx%d, want 50x20 (the tile)", pty.cols, pty.rows)
+	}
+	if logs != 1 {
+		t.Errorf("follow SetLogicalSize called %d times, want 1 (0,0 at attach)", logs)
+	}
+}
+
 func TestParseSizeSwitchErrors(t *testing.T) {
 	bad := []string{
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict

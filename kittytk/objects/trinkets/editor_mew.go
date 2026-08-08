@@ -376,12 +376,13 @@ func (e *Editor) run() {
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.
 		mew.WithTerminalSurfaces(mew.TerminalHooks{
-			Open:  e.terminalOpen,
-			Feed:  e.terminalFeed,
-			Place: e.terminalPlace,
-			Close: e.terminalClose,
-			Mouse: e.terminalMouse,
-			Key:   e.terminalKey,
+			Open:           e.terminalOpen,
+			SetLogicalSize: e.terminalSetLogicalSize,
+			Feed:           e.terminalFeed,
+			Place:          e.terminalPlace,
+			Close:          e.terminalClose,
+			Mouse:          e.terminalMouse,
+			Key:            e.terminalKey,
 		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
@@ -1057,6 +1058,31 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	}
 	e.termSurfaces[id] = &termSurface{term: t}
 	e.termMu.Unlock()
+}
+
+// terminalSetLogicalSize backs mew's SetLogicalSize hook. It pins the child
+// terminal's LOGICAL size — the size the child is told it has, independent of
+// the visible tile — so a --size or --minimum session renders that many cells
+// and scrolls, rather than reflowing to the pane. cols,rows of 0 mean "follow
+// the visible surface", which is exactly purfecterm's own "use physical" (0)
+// convention, so it maps straight through. purfecterm names the size as
+// (rows, cols); mew's hook gives (cols, rows). The per-frame physical fit
+// (updateTerminalSize) leaves the logical size alone, so this holds until mew
+// changes it.
+func (e *Editor) terminalSetLogicalSize(id string, cols, rows int) {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return
+	}
+	if buf := t.Buffer(); buf != nil {
+		buf.SetLogicalSize(rows, cols)
+	}
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where
