@@ -385,6 +385,7 @@ func (e *Editor) run() {
 			Close:          e.terminalClose,
 			Mouse:          e.terminalMouse,
 			Key:            e.terminalKey,
+			SetCaptureSink: e.terminalSetCaptureSink,
 		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
@@ -1113,6 +1114,39 @@ func (e *Editor) terminalSnapshot(id string, ansi bool) string {
 		return t.SaveScrollbackANSOpts(opts)
 	}
 	return t.SaveScrollbackTextOpts(opts)
+}
+
+// captureRelay forwards a session's purfecterm capture events across the
+// embedded seam to a mew CaptureSink. It embeds NopCaptureObserver so the
+// line-scrolled-off and live-screen events added to CaptureObserver later stay
+// no-ops here until this relay forwards them too.
+type captureRelay struct {
+	purfecterm.NopCaptureObserver
+	sink mew.CaptureSink
+}
+
+func (r captureRelay) OnOutput(data []byte) { r.sink.Output(data) }
+
+// terminalSetCaptureSink backs mew's SetCaptureSink hook: point a session's
+// purfecterm CaptureObserver at the mew sink so the terminal's raw output is
+// relayed across the seam, or clear it when sink is nil. Runs on the same loop
+// as terminalFeed, so the OnOutput calls land on mew's main loop in feed order.
+func (e *Editor) terminalSetCaptureSink(id string, sink mew.CaptureSink) {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return
+	}
+	if sink == nil {
+		t.SetCaptureObserver(nil)
+		return
+	}
+	t.SetCaptureObserver(captureRelay{sink: sink})
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where

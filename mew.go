@@ -217,6 +217,10 @@ type TerminalSurface = editor.TerminalSurface
 // TerminalHooks is how a host renders mew's terminal sessions.
 type TerminalHooks = editor.TerminalHooks
 
+// CaptureSink receives a capturing session's live output events, which a host
+// relays from purfecterm's CaptureObserver. See TerminalHooks.SetCaptureSink.
+type CaptureSink = editor.CaptureSink
+
 // LocalPathFromURL turns a canonical file:// document URL — the form mew
 // hands out for anything it identifies, including a terminal session's
 // working directory — into a path for the operating system. False for any
