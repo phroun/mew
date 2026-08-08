@@ -376,7 +376,7 @@ func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 	}
 	if buf == w.Buffer {
 		// Self-link: nothing to swap (and no history entry to create).
-		e.ShowNotification("Already here: " + span.Target)
+		e.ShowNotificationTagged("Already here: "+span.Target, "navigate")
 		e.RequestRender()
 		return true
 	}
