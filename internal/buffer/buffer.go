@@ -1762,19 +1762,6 @@ func (c *Cursor) SeekRelativeRunes(delta int) {
 	}
 }
 
-// ReadRunes peeks up to n runes at the cursor without moving it — used to
-// measure the byte length of the cells an overtype will replace and to scan a
-// line's interleaved SGR/visible runes when resolving a jumped-to column.
-func (c *Cursor) ReadRunes(n int) string {
-	if c.garlandCursor == nil || n <= 0 {
-		return ""
-	}
-	at := c.garlandCursor.RunePos()
-	s, _ := c.garlandCursor.ReadString(int64(n))
-	c.garlandCursor.SeekRune(at)
-	return s
-}
-
 // GetPosition returns the current cursor position.
 func (c *Cursor) GetPosition() (line, runePos int) {
 	if c.garlandCursor == nil {

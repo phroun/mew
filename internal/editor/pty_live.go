@@ -49,6 +49,7 @@ type liveMirror struct {
 	caret  *buffer.Cursor // write position ("terminal caret")
 	top    *buffer.Cursor // row 0 line start ("start of terminal")
 	bottom *buffer.Cursor // frontier line ("end of terminal")
+	peek   *buffer.Cursor // read-only scratch: never perturbs the write caret
 	format captureFormat
 
 	// curX, curY is the caret's believed cell position in the terminal. Every
@@ -78,13 +79,14 @@ func newLiveMirror(b *buffer.Buffer, caret *buffer.Cursor, format captureFormat)
 		caret:       caret,
 		top:         top,
 		bottom:      bottom,
+		peek:        b.NewEphemeralCursor(),
 		format:      format,
 		rowStartPen: []string{""},
 	}
 }
 
-// release drops the top/bottom cursors. The caret is the session's out-cursor,
-// released by the session teardown, not here.
+// release drops the top/bottom/peek cursors. The caret is the session's
+// out-cursor, released by the session teardown, not here.
 func (m *liveMirror) release() {
 	if m.top != nil {
 		m.top.Release()
@@ -93,6 +95,10 @@ func (m *liveMirror) release() {
 	if m.bottom != nil {
 		m.bottom.Release()
 		m.bottom = nil
+	}
+	if m.peek != nil {
+		m.peek.Release()
+		m.peek = nil
 	}
 }
 
@@ -136,9 +142,20 @@ func (m *liveMirror) rowPen(y int) string {
 	return m.rowStartPen[y]
 }
 
+// lineFromCaret reads the caret's current line and its rune offset within it,
+// using the scratch cursor so the write caret is never moved. Returns the line
+// text (which may include a trailing newline) and the caret's rune offset.
+func (m *liveMirror) lineFromCaret() (text string, off int) {
+	line, roff := m.caret.GetPosition()
+	m.peek.SeekLineRune(line, 0)
+	text, _ = m.peek.ReadLine()
+	return text, roff
+}
+
 // seekTo positions the caret at cell (x, y): the document line for row y, at
 // visual column x, padding a short line with spaces so the column exists. It
-// materializes intervening rows if y is beyond the frontier.
+// materializes intervening rows if y is beyond the frontier. Reads go through
+// the scratch cursor; only the pad insert and the final seek touch the caret.
 func (m *liveMirror) seekTo(x, y int) {
 	if y < 0 {
 		y = 0
@@ -146,15 +163,16 @@ func (m *liveMirror) seekTo(x, y int) {
 	m.growTo(y)
 	tl, _ := m.top.GetPosition()
 	line := tl + y
-	m.caret.SeekLineRune(line, 0)
-	text, _ := m.caret.ReadLine()
+	m.peek.SeekLineRune(line, 0)
+	text, _ := m.peek.ReadLine()
 	runeOff, pad := visualColToRune(text, x)
 	if pad > 0 {
 		// Extend the line to reach column x. Padding is plain (default pen); it
 		// stands in for cells the child never wrote.
-		m.caret.SeekLineRune(line, visibleRuneCount(text))
+		end := visibleRuneCount(text)
+		m.caret.SeekLineRune(line, end)
 		m.caret.InsertString(spaces(pad), nil, false)
-		m.caret.SeekLineRune(line, visibleRuneCount(text)+pad)
+		m.caret.SeekLineRune(line, end+pad)
 	} else {
 		m.caret.SeekLineRune(line, runeOff)
 	}
@@ -164,58 +182,69 @@ func (m *liveMirror) seekTo(x, y int) {
 	}
 }
 
-// Write overtypes text at (x, y), the mirror's realization of OnWrite.
+// Write folds an OnWrite run into the mirror at (x, y) as a SINGLE garland
+// mutation — the caret is left pinned on the frontier so a stream of adjacent
+// runs coalesces into one undo step, exactly as the raw rung's chunk inserts do.
+// A pen change (full format) is prepended to the same chunk as an absolute SGR.
 func (m *liveMirror) Write(x, y int, text, sgr string) {
 	if x != m.curX || y != m.curY {
 		m.seekTo(x, y)
 	}
+	payload := text
 	if m.format == captureFull && sgr != m.curPen {
-		// Pen change: emit one absolute SGR inline, then the run. At the frontier
-		// there is nothing to the right to restore; a jump-back recolour (restore
+		// One absolute SGR rides at the head of the chunk. At the frontier there
+		// is nothing to the right to restore; the jump-back recolour (restore
 		// after the chunk) is the 2b refinement.
-		m.caret.InsertString(sgr, nil, false)
+		payload = sgr + text
 		m.curPen = sgr
 		if x == 0 {
 			m.setRowPen(y, sgr)
 		}
 	}
-	for _, r := range text {
-		m.overtypeRune(r)
-	}
-}
-
-// overtypeRune writes one visible rune at the caret: it replaces the cell there
-// (overtype) or appends past end of line, then advances one cell. Inline SGR
-// runs already in the line are stepped over, never clobbered.
-func (m *liveMirror) overtypeRune(r rune) {
-	m.skipInlineSGR()
-	peek := m.caret.ReadRunes(1)
-	if peek == "" || peek == "\n" {
-		m.caret.InsertString(string(r), nil, false) // append; caret advances
+	w := runsWidth(text)
+	del := m.spanBytes(w) // bytes of the existing cells this run overtypes (0 at EOL)
+	if del == 0 {
+		m.caret.InsertString(payload, nil, false) // append/insert; caret advances past it
 	} else {
-		m.caret.Overwrite(len(peek), string(r))
-		m.caret.SeekRelativeRunes(1)
+		// OverwriteBytes replaces the del bytes and, when payload is longer,
+		// grows in place — so a run that overtypes and then spills past the old
+		// EOL is still one op. The caret does not move, so advance it past what we
+		// wrote to stay on the frontier.
+		m.caret.Overwrite(del, payload)
+		m.caret.SeekRelativeRunes(len([]rune(payload)))
 	}
-	m.curX += textwidth.Rune(r)
+	m.curX += w
 }
 
-// skipInlineSGR advances the caret past a zero-width SGR sequence sitting under
-// it, so an overtype lands on the next visible cell and leaves the colour run
-// intact.
-func (m *liveMirror) skipInlineSGR() {
-	for {
-		peek := m.caret.ReadRunes(2)
-		if len(peek) < 2 || peek[0] != 0x1b || peek[1] != '[' {
-			return
-		}
-		// Read enough to span a short SGR, find its final byte, step past it.
-		run := m.caret.ReadRunes(24)
-		n := sgrRunLen(run)
-		if n == 0 {
-			return
-		}
-		m.caret.SeekRelativeRunes(n)
+// spanBytes returns the byte length of the existing cells at the caret spanning
+// w visible columns — what an overtype of width w must replace — reading through
+// the scratch cursor. Inline SGR runs in the span count toward the bytes (they
+// are replaced) but not the width. It stops at end of line, returning fewer
+// (0 at EOL): the caller's OverwriteBytes then grows past it.
+func (m *liveMirror) spanBytes(w int) int {
+	text, off := m.lineFromCaret()
+	rs := []rune(text)
+	if off > len(rs) {
+		off = len(rs)
 	}
+	rs = rs[off:]
+	vis, bytes, i := 0, 0, 0
+	for i < len(rs) && vis < w {
+		if rs[i] == '\n' {
+			break
+		}
+		if rs[i] == 0x1b {
+			if n := sgrRunLen(string(rs[i:])); n > 0 {
+				bytes += len(string(rs[i : i+n]))
+				i += n
+				continue
+			}
+		}
+		bytes += len(string(rs[i]))
+		vis += textwidth.Rune(rs[i])
+		i++
+	}
+	return bytes
 }
 
 // Newline moves the caret to column 0 of the next row (OnNewline / OnLineWrap):
@@ -313,6 +342,15 @@ func visualColToRune(line string, targetVis int) (runeOff, pad int) {
 		return i, targetVis - vis
 	}
 	return i, 0
+}
+
+// runsWidth is the total visible width of text in cells.
+func runsWidth(text string) int {
+	w := 0
+	for _, r := range text {
+		w += textwidth.Rune(r)
+	}
+	return w
 }
 
 // visibleRuneCount returns the number of runes in line up to (not counting a

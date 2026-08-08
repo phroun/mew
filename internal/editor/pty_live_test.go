@@ -153,6 +153,31 @@ func TestLiveClearKeepsHistory(t *testing.T) {
 	}
 }
 
+// A stream of frontier writes and newlines folds in as adjacent, same-kind
+// garland mutations, so with coalescing on it collapses to a SINGLE undo step —
+// the write caret is never perturbed by the mirror's peeking. One Undo reverts
+// the whole stream.
+func TestLiveWritesCoalesce(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	w.Buffer.SetUndoCoalescing(true, 0) // 0 autoBake: no time-based break in a tight test
+	for i := 0; i < 4; i++ {
+		sink.LiveWrite(0, i, "row", "")
+		if i < 3 {
+			sink.LiveNewline(0, i+1)
+		}
+	}
+	if got := w.Buffer.GetContent(); got != "row\nrow\nrow\nrow" {
+		t.Fatalf("buffer = %q before undo, want four rows", got)
+	}
+	if !w.Buffer.Undo() {
+		t.Fatal("Undo returned false")
+	}
+	if got := w.Buffer.GetContent(); got != "" {
+		t.Fatalf("after one Undo buffer = %q, want empty (stream should be one coalesced step)", got)
+	}
+	e.ptyEnded(w.Buffer, nil)
+}
+
 // Content folded in by the live mirror marks the buffer modified — captured
 // output is a real edit, not a free ride.
 func TestLiveMarksModified(t *testing.T) {
