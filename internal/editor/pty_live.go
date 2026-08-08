@@ -65,8 +65,8 @@ type liveMirror struct {
 }
 
 // newLiveMirror builds a mirror whose row 0 is the caret's current line. caret
-// is the session's ephemeral out-cursor (already seeked to the launch point);
-// top and bottom are freshly created around it and released with the mirror.
+// is the session's ephemeral out-cursor (seeked to the launch point); top and
+// bottom are freshly created around it and released with the mirror.
 func newLiveMirror(b *buffer.Buffer, caret *buffer.Cursor, format captureFormat) *liveMirror {
 	line, _ := caret.GetPosition()
 	top := b.NewEphemeralCursor()
@@ -178,73 +178,222 @@ func (m *liveMirror) seekTo(x, y int) {
 	}
 	m.curX, m.curY = x, y
 	if m.format == captureFull {
-		m.curPen = m.rowPen(y)
+		// The ambient pen at the LANDING column, resolved from the row's inline
+		// SGRs — so a write that jumps into coloured content knows what pen is
+		// already in effect there and whether it must correct it.
+		m.curPen = m.penAt(y, x)
 	}
 }
 
 // Write folds an OnWrite run into the mirror at (x, y) as a SINGLE garland
 // mutation — the caret is left pinned on the frontier so a stream of adjacent
 // runs coalesces into one undo step, exactly as the raw rung's chunk inserts do.
-// A pen change (full format) is prepended to the same chunk as an absolute SGR.
+//
+// In full format the run carries a begin/end colour correction so a jump back
+// into already-coloured cells stays exact: an absolute SGR at the head sets the
+// run's pen (replacing an adjacent wrong SGR rather than stacking), and — when
+// the run overtypes cells that have differently-coloured content to their right
+// — a restore SGR at the tail returns the trailing cells to their own pen. All
+// of it rides in one overwrite.
 func (m *liveMirror) Write(x, y int, text, sgr string) {
 	if x != m.curX || y != m.curY {
 		m.seekTo(x, y)
 	}
-	payload := text
-	if m.format == captureFull && sgr != m.curPen {
-		// One absolute SGR rides at the head of the chunk. At the frontier there
-		// is nothing to the right to restore; the jump-back recolour (restore
-		// after the chunk) is the 2b refinement.
-		payload = sgr + text
-		m.curPen = sgr
-		if x == 0 {
-			m.setRowPen(y, sgr)
+	w := runsWidth(text)
+
+	if m.format != captureFull {
+		// No colour: geometry only, one op.
+		line, off := m.lineFromCaret()
+		_, mid, _, _ := spanForward([]rune(line), off, w)
+		if mid == 0 {
+			m.caret.InsertString(text, nil, false)
+		} else {
+			m.caret.Overwrite(mid, text)
+			m.caret.SeekRelativeRunes(len([]rune(text)))
+		}
+		m.curX += w
+		return
+	}
+
+	line, off := m.lineFromCaret()
+	rs := []rune(line)
+	if off > len(rs) {
+		off = len(rs)
+	}
+	writePen := normalizePen(sgr)
+
+	midBytes, endRune, boundarySGR, _ := spanForward(rs, off, w)
+	hasTrailing := hasVisibleAfter(rs, endRune)
+
+	// Begin correction: make the run's pen take effect. Emit only on a real
+	// change; when an SGR sits immediately before the caret, replace it (extend
+	// the overwrite back over it) rather than stacking a second one.
+	begin := ""
+	startOff, delLead := off, 0
+	if writePen != m.curPen {
+		begin = sgr
+		if begin == "" {
+			begin = sgrReset // reverting to default needs an explicit reset
+		}
+		if p := sgrEndingAt(rs, off); p > 0 {
+			startOff = off - p
+			delLead = len(string(rs[startOff:off]))
 		}
 	}
-	w := runsWidth(text)
-	del := m.spanBytes(w) // bytes of the existing cells this run overtypes (0 at EOL)
+
+	// End correction: if the overtyped cells have differently-coloured content
+	// to their right, restore that pen after the run. Replace an SGR sitting at
+	// the boundary rather than stacking.
+	end, delBoundary := "", 0
+	if hasTrailing {
+		if restore := m.penAt(y, x+w); restore != writePen {
+			end = restore
+			if end == "" {
+				end = sgrReset
+			}
+			if boundarySGR > 0 {
+				delBoundary = len(string(rs[endRune : endRune+boundarySGR]))
+			}
+		}
+	}
+
+	del := delLead + midBytes + delBoundary
+	payload := begin + text + end
 	if del == 0 {
-		m.caret.InsertString(payload, nil, false) // append/insert; caret advances past it
+		// Frontier append (end is empty here): the insert advances the caret past
+		// begin+text, leaving it on the frontier.
+		m.caret.InsertString(payload, nil, false)
 	} else {
-		// OverwriteBytes replaces the del bytes and, when payload is longer,
-		// grows in place — so a run that overtypes and then spills past the old
-		// EOL is still one op. The caret does not move, so advance it past what we
-		// wrote to stay on the frontier.
+		if startOff != off {
+			m.caret.SeekRelativeRunes(startOff - off) // back over the replaced leading SGR
+		}
 		m.caret.Overwrite(del, payload)
-		m.caret.SeekRelativeRunes(len([]rune(payload)))
+		// Land the caret right after begin+text — before any restore SGR — so an
+		// adjacent continuation writes at the correct column.
+		m.caret.SeekRelativeRunes(len([]rune(begin)) + len([]rune(text)))
+	}
+
+	m.curPen = writePen
+	if x == 0 {
+		m.setRowPen(y, writePen)
 	}
 	m.curX += w
 }
 
-// spanBytes returns the byte length of the existing cells at the caret spanning
-// w visible columns — what an overtype of width w must replace — reading through
-// the scratch cursor. Inline SGR runs in the span count toward the bytes (they
-// are replaced) but not the width. It stops at end of line, returning fewer
-// (0 at EOL): the caller's OverwriteBytes then grows past it.
-func (m *liveMirror) spanBytes(w int) int {
-	text, off := m.lineFromCaret()
-	rs := []rune(text)
-	if off > len(rs) {
-		off = len(rs)
-	}
-	rs = rs[off:]
-	vis, bytes, i := 0, 0, 0
+// spanForward walks rs from rune offset off across w visible columns, treating
+// inline SGR runs as zero-width. It returns the byte length of the spanned cells
+// (including any interleaved SGR bytes, which an overtype replaces), the rune
+// offset just past them, the rune length of an SGR sitting exactly at that
+// boundary (0 if none), and whether the line ran out before w columns (an append
+// past EOL). It stops at end of line.
+func spanForward(rs []rune, off, w int) (midBytes, endRune, boundarySGR int, atEOL bool) {
+	vis, i := 0, off
 	for i < len(rs) && vis < w {
 		if rs[i] == '\n' {
 			break
 		}
 		if rs[i] == 0x1b {
 			if n := sgrRunLen(string(rs[i:])); n > 0 {
-				bytes += len(string(rs[i : i+n]))
+				midBytes += len(string(rs[i : i+n]))
 				i += n
 				continue
 			}
 		}
-		bytes += len(string(rs[i]))
+		midBytes += len(string(rs[i]))
 		vis += textwidth.Rune(rs[i])
 		i++
 	}
-	return bytes
+	endRune = i
+	atEOL = vis < w
+	if i < len(rs) && rs[i] == 0x1b {
+		if n := sgrRunLen(string(rs[i:])); n > 0 {
+			boundarySGR = n
+		}
+	}
+	return
+}
+
+// hasVisibleAfter reports whether any visible cell (non-SGR, before the newline)
+// remains in rs at or after rune offset off.
+func hasVisibleAfter(rs []rune, off int) bool {
+	for i := off; i < len(rs); i++ {
+		if rs[i] == '\n' {
+			return false
+		}
+		if rs[i] == 0x1b {
+			if n := sgrRunLen(string(rs[i:])); n > 0 {
+				i += n - 1
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// sgrEndingAt returns the rune length of an SGR run that ends exactly at rune
+// offset off (so it sits immediately before the caret), or 0 if none does.
+func sgrEndingAt(rs []rune, off int) int {
+	i := 0
+	for i < off {
+		if rs[i] == 0x1b {
+			if n := sgrRunLen(string(rs[i:])); n > 0 {
+				if i+n == off {
+					return n
+				}
+				i += n
+				continue
+			}
+		}
+		i++
+	}
+	return 0
+}
+
+// penAt returns the absolute pen in effect at visual column col of row y,
+// resolved by walking the row's inline SGRs from its recorded start pen. A reset
+// resolves to the default ("").
+func (m *liveMirror) penAt(y, col int) string {
+	pen := m.rowPen(y)
+	rs := []rune(m.readRow(y))
+	vis, i := 0, 0
+	for i < len(rs) && vis < col {
+		if rs[i] == '\n' {
+			break
+		}
+		if rs[i] == 0x1b {
+			if n := sgrRunLen(string(rs[i:])); n > 0 {
+				pen = normalizePen(string(rs[i : i+n]))
+				i += n
+				continue
+			}
+		}
+		vis += textwidth.Rune(rs[i])
+		i++
+	}
+	return pen
+}
+
+// readRow reads row y's document line text through the scratch cursor.
+func (m *liveMirror) readRow(y int) string {
+	tl, _ := m.top.GetPosition()
+	m.peek.SeekLineRune(tl+y, 0)
+	s, _ := m.peek.ReadLine()
+	return s
+}
+
+// sgrReset is the explicit "back to default pen" sequence, emitted only when a
+// correction reverts to the default (which otherwise carries no SGR).
+const sgrReset = "\x1b[0m"
+
+// normalizePen maps the reset forms to the default ("") so a scanned pen and an
+// absent pen compare equal.
+func normalizePen(sgr string) string {
+	switch sgr {
+	case "", sgrReset, "\x1b[m", "\x1b[0;m":
+		return ""
+	}
+	return sgr
 }
 
 // Newline moves the caret to column 0 of the next row (OnNewline / OnLineWrap):

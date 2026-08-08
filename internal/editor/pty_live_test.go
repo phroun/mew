@@ -123,6 +123,50 @@ func TestLivePlainDropsColor(t *testing.T) {
 	}
 }
 
+// Jumping back into differently-coloured content and overtyping keeps the
+// trailing cells their own colour: the run gets a leading pen and a restore SGR
+// at its tail, both in one op.
+func TestLiveJumpRecolorRestoresTrailing(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	// A red row of six cells.
+	sink.LiveWrite(0, 0, "aaabbb", "\x1b[0;31m")
+	// Jump back to column 0 and overtype the first three in green.
+	sink.LiveCursorMove(0, 0)
+	sink.LiveWrite(0, 0, "XXX", "\x1b[0;32m")
+	e.ptyEnded(w.Buffer, nil)
+	// green XXX, then red restored for the trailing bbb.
+	if got, want := w.Buffer.GetContent(), "\x1b[0;32mXXX\x1b[0;31mbbb"; got != want {
+		t.Fatalf("buffer = %q, want %q (trailing colour restored)", got, want)
+	}
+}
+
+// Landing on an existing SGR and correcting it replaces that SGR rather than
+// stacking a second one beside it.
+func TestLiveJumpReplacesSGRNoStacking(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "ab", "\x1b[0;31m") // red "ab"
+	// Jump to column 0 (which sits right after the red SGR) and rewrite it green.
+	sink.LiveCursorMove(0, 0)
+	sink.LiveWrite(0, 0, "a", "\x1b[0;32m")
+	e.ptyEnded(w.Buffer, nil)
+	// The green SGR replaces the red one; the trailing "b" is restored to red.
+	if got, want := w.Buffer.GetContent(), "\x1b[0;32ma\x1b[0;31mb"; got != want {
+		t.Fatalf("buffer = %q, want %q (replace SGR, no back-to-back stack)", got, want)
+	}
+}
+
+// Overtyping into trailing content with the SAME pen needs no correction at all.
+func TestLiveOvertypeSamePenNoSGR(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "aaabbb", "\x1b[0;31m")
+	sink.LiveCursorMove(0, 0)
+	sink.LiveWrite(0, 0, "XXX", "\x1b[0;31m") // same red: just overtype
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), "\x1b[0;31mXXXbbb"; got != want {
+		t.Fatalf("buffer = %q, want %q (same pen: no extra SGR)", got, want)
+	}
+}
+
 // A scroll preserves every prior line — the departed row stays above the window
 // as history, nothing is deleted — and writing continues below it.
 func TestLiveScrollPreservesHistory(t *testing.T) {
