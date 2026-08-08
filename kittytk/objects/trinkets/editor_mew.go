@@ -28,6 +28,7 @@ import (
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
+	"github.com/phroun/purfecterm"
 )
 
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
@@ -1089,8 +1090,13 @@ func (e *Editor) terminalSetLogicalSize(id string, cols, rows int) {
 // terminalSnapshot backs mew's Snapshot hook: the session's scrollback as text,
 // folded into the buffer when the session ends. ansi keeps the full escape/SGR
 // stream (colour, layout); otherwise it is plain text with the sequences
-// stripped. purfecterm already serializes both forms — SaveScrollbackANS keeps
-// the stream, SaveScrollbackText strips it — so this is just the choice.
+// stripped. purfecterm serializes both forms — SaveScrollbackANS keeps the
+// stream, SaveScrollbackText strips it — so ansi is just that choice.
+//
+// A capture always trims the empty tail of the screen grid: a session that used
+// only the top rows should not fold the blank rest of the screen in as empty
+// lines. (The ANS form still carries its full reload payload; only the blank
+// content lines drop.)
 func (e *Editor) terminalSnapshot(id string, ansi bool) string {
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
@@ -1102,10 +1108,11 @@ func (e *Editor) terminalSnapshot(id string, ansi bool) string {
 	if t == nil {
 		return ""
 	}
+	opts := purfecterm.ScrollbackSaveOptions{TrimTrailingBlankLines: true}
 	if ansi {
-		return t.SaveScrollbackANS()
+		return t.SaveScrollbackANSOpts(opts)
 	}
-	return t.SaveScrollbackText()
+	return t.SaveScrollbackTextOpts(opts)
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where
