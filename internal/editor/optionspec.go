@@ -202,7 +202,7 @@ func (e *Editor) clearOption(w *viewport.Viewport, name string) bool {
 	// Re-derive unconditionally (not via the overlay-gated reconcile) so a plain
 	// viewport with no overlay also reverts to the editor default.
 	e.applyResolvedOption(w, key)
-	e.ShowNotification("Option '" + spec.Name + "' cleared")
+	e.ShowNotificationTagged("Option '"+spec.Name+"' cleared", "optionset")
 	e.RequestRender()
 	return true
 }

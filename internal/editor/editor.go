@@ -4192,7 +4192,7 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		return false
 	}
 
-	e.ShowNotification("Option '" + name + "' set to " + value)
+	e.ShowNotificationTagged("Option '"+name+"' set to "+value, "optionset")
 	e.RequestRender()
 	return true
 }
