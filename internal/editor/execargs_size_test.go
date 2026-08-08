@@ -1,6 +1,10 @@
 package editor
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/phroun/mew/internal/viewport"
+)
 
 // The --size / --minimum / --hidden switches govern a session's logical size.
 // They are parsed by the same setOption path as every other exec/shell option,
@@ -237,7 +241,6 @@ func TestParseCaptureSwitch(t *testing.T) {
 	// Reserved-but-unimplemented rungs, an unknown rung, and two conflicting
 	// formats each error rather than silently doing the wrong thing.
 	for _, bad := range []string{
-		"--capture=raw bash",
 		"--capture=lines bash",
 		"--capture=live bash",
 		"--capture=nonsense bash",
@@ -310,6 +313,86 @@ func TestCaptureOnDieLandsAtCaret(t *testing.T) {
 	e.ptyEnded(w.Buffer, nil)
 	if got, want := w.Buffer.GetContent(), "one\nCAP\ntwo\n"; got != want {
 		t.Fatalf("buffer = %q, want %q (transcript should land at the caret)", got, want)
+	}
+}
+
+// rawEditor wires an editor whose capture sink is captured, and starts a raw
+// session, returning the sink the host would relay purfecterm's OnOutput to.
+func rawEditor(t *testing.T, content string, format captureFormat) (*Editor, *viewport.Viewport, CaptureSink) {
+	t.Helper()
+	e, w := newTestEditor(t, content)
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	var sink CaptureSink
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:           func(string, int, int) {},
+		Feed:           func(string, []byte) []byte { return nil },
+		Place:          func([]TerminalSurface) {},
+		Close:          func(string) {},
+		SetCaptureSink: func(_ string, s CaptureSink) { sink = s },
+	}
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureRaw, format) {
+		t.Fatal("exec failed")
+	}
+	if sink == nil {
+		t.Fatal("raw rung did not register a capture sink")
+	}
+	return e, w, sink
+}
+
+// The raw rung folds live output in at the launch caret as it arrives, and full
+// fidelity keeps the escape stream verbatim.
+func TestCaptureRawStreamsAtCaret(t *testing.T) {
+	e, w := newTestEditor(t, "one\ntwo\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	var sink CaptureSink
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:           func(string, int, int) {},
+		Feed:           func(string, []byte) []byte { return nil },
+		Place:          func([]TerminalSurface) {},
+		Close:          func(string) {},
+		SetCaptureSink: func(_ string, s CaptureSink) { sink = s },
+	}
+	w.Caret.Seek(1, 0) // launch at the start of the second line
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureRaw, captureFull) {
+		t.Fatal("exec failed")
+	}
+	if sink == nil {
+		t.Fatal("raw rung did not register a capture sink")
+	}
+	sink.Output([]byte("A"))
+	sink.Output([]byte("B\x1b[31mC\x1b[0m")) // full keeps the escapes verbatim
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), "one\nAB\x1b[31mC\x1b[0mtwo\n"; got != want {
+		t.Fatalf("buffer = %q, want %q", got, want)
+	}
+}
+
+// The format filters run over the live stream, carrying an escape split across a
+// chunk boundary so it is classified whole: plain drops SGR but keeps
+// positioning; text drops every escape.
+func TestCaptureRawFilters(t *testing.T) {
+	cases := []struct {
+		name   string
+		format captureFormat
+		feed   []string
+		want   string
+	}{
+		{"plain keeps positioning, drops SGR", capturePlain,
+			[]string{"a\x1b[31", "mb\x1b[2Kc"}, "ab\x1b[2Kc"},
+		{"text drops all escapes", captureText,
+			[]string{"a\x1b[31", "mb\x1b[2Kc"}, "abc"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, w, sink := rawEditor(t, "", c.format)
+			for _, f := range c.feed {
+				sink.Output([]byte(f))
+			}
+			e.ptyEnded(w.Buffer, nil)
+			if got := w.Buffer.GetContent(); got != c.want {
+				t.Fatalf("buffer = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

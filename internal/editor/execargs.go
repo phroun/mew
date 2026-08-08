@@ -341,7 +341,7 @@ func (spec *execSpec) setOption(name, value string) error {
 		case "off", "none", "false", "no", "0":
 			spec.Capture = captureOff
 		case "raw":
-			return fmt.Errorf("--capture=raw (live byte log) is not implemented yet")
+			spec.Capture = captureRaw
 		case "lines":
 			return fmt.Errorf("--capture=lines (scroll-off transcript) is not implemented yet")
 		case "live":

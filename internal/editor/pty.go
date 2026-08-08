@@ -19,6 +19,7 @@ package editor
 // over the display protocol.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,105 @@ var sgrRE = regexp.MustCompile("\x1b\\[[0-9;:]*m")
 // stripSGR removes the styling escapes from a captured ANS stream, leaving
 // positioning and layout intact. This is the mew-side realization of --plain.
 func stripSGR(s string) string { return sgrRE.ReplaceAllString(s, "") }
+
+// allEscRE matches VT escape sequences: OSC (BEL- or ST-terminated), CSI, and
+// the shorter ESC-intermediate / 2-byte forms. It strips everything for the
+// --text format on a byte stream, where there is no cell serializer to walk.
+var allEscRE = regexp.MustCompile(
+	"\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)" + // OSC … BEL | ST
+		"|\x1b\\[[0-9;:?<=>]*[ -/]*[@-~]" + // CSI
+		"|\x1b[ -/]+[0-~]" + // ESC intermediates + final (e.g. ESC ( B)
+		"|\x1b[@-_]") // 2-byte C1
+
+// captureStream folds a session's live output into its buffer at the output
+// cursor as it arrives — the mew end of the raw rung (and the future
+// lines/live rungs). Garland coalesces the inserts, so there is no batching
+// here; the only state is the escape-carry the filters need so a sequence split
+// across two chunks is not half-stripped.
+type captureStream struct {
+	cursor *buffer.Cursor
+	format captureFormat
+	carry  []byte // an incomplete trailing escape held back from the last chunk
+}
+
+// Output folds one chunk of raw output in at the cursor, filtered per format.
+func (c *captureStream) Output(data []byte) {
+	if s := c.filter(data, false); s != "" {
+		c.cursor.InsertString(s, nil, false)
+	}
+}
+
+// flush emits whatever escape-carry remains — called once at session end so a
+// trailing partial sequence is not lost.
+func (c *captureStream) flush() {
+	if len(c.carry) > 0 {
+		if s := c.filter(nil, true); s != "" {
+			c.cursor.InsertString(s, nil, false)
+		}
+	}
+}
+
+// filter applies the capture format to one chunk, carrying any incomplete
+// trailing escape to the next call (unless atEnd). full keeps everything (no
+// carry); plain drops SGR; text drops all escapes.
+func (c *captureStream) filter(data []byte, atEnd bool) string {
+	buf := data
+	if len(c.carry) > 0 {
+		buf = append(c.carry, data...)
+		c.carry = nil
+	}
+	if c.format == captureFull {
+		return string(buf) // nothing stripped, so nothing can straddle a boundary
+	}
+	if !atEnd {
+		var carry []byte
+		buf, carry = splitTrailingIncompleteEscape(buf)
+		c.carry = carry
+	}
+	s := string(buf)
+	if c.format == capturePlain {
+		return sgrRE.ReplaceAllString(s, "")
+	}
+	return allEscRE.ReplaceAllString(s, "") // captureText
+}
+
+// splitTrailingIncompleteEscape returns b with any trailing partial escape
+// sequence (one begun but not terminated within b) held back as carry, so the
+// filters only ever see whole sequences.
+func splitTrailingIncompleteEscape(b []byte) (complete, carry []byte) {
+	i := bytes.LastIndexByte(b, 0x1b)
+	if i < 0 || escapeComplete(b[i:]) {
+		return b, nil
+	}
+	return b[:i], append([]byte(nil), b[i:]...)
+}
+
+// escapeComplete reports whether seq (which starts with ESC) is a terminated
+// sequence. A lone ESC or an unterminated CSI/OSC is not; shorter forms are
+// complete once their second byte has arrived.
+func escapeComplete(seq []byte) bool {
+	if len(seq) < 2 {
+		return false // a lone trailing ESC
+	}
+	switch seq[1] {
+	case '[': // CSI: ESC [ params … final in @–~
+		for _, c := range seq[2:] {
+			if c >= 0x40 && c <= 0x7e {
+				return true
+			}
+		}
+		return false
+	case ']': // OSC: terminated by BEL or ST (ESC \)
+		for j := 2; j < len(seq); j++ {
+			if seq[j] == 0x07 || (seq[j] == 0x1b && j+1 < len(seq) && seq[j+1] == '\\') {
+				return true
+			}
+		}
+		return false
+	default: // 2-byte C1 / ESC-intermediate: complete once the 2nd byte is here
+		return true
+	}
+}
 
 // PTYRequest is what mew asks the host for. Every field is data the host is
 // free to reinterpret; none of it is a handle to anything.
@@ -185,6 +285,16 @@ type ptyState struct {
 	// Held for the session's life (garland keeps it valid across any edits made
 	// to the buffer meanwhile) and released in ptyEnded. nil when not capturing.
 	outCursor *buffer.Cursor
+	// stream folds a streaming rung's (raw/lines/live) live output in at
+	// outCursor; nil for off and for final (which folds once at death). Its
+	// SetCaptureSink registration is cleared, and its carry flushed, in ptyEnded.
+	stream *captureStream
+}
+
+// streams reports whether a rung captures live through the CaptureSink seam
+// (raw/lines/live), as opposed to off or the final at-death snapshot.
+func (r captureRung) streams() bool {
+	return r == captureRaw || r == captureLines || r == captureLive
 }
 
 // ptySizePolicy is how a session's LOGICAL size is chosen — the size the child
@@ -405,6 +515,23 @@ type TerminalHooks struct {
 	// would otherwise swallow; ordinary typing needs none of it, because
 	// insert and insert_newline already route themselves.
 	Key func(id string, key string) []byte
+
+	// SetCaptureSink registers where a session's live output events are
+	// delivered, or nil to stop. mew calls it when a session on a streaming
+	// capture rung (raw today; lines/live later) starts and ends; the host
+	// relays purfecterm's CaptureObserver to the sink. Calls arrive on the main
+	// loop (synchronously inside Feed), so a sink may edit its buffer directly.
+	// Optional: a nil hook means the streaming rungs produce nothing.
+	SetCaptureSink func(id string, sink CaptureSink)
+}
+
+// CaptureSink receives a capturing session's output events, relayed by the host
+// from purfecterm's CaptureObserver in mew-native terms. See
+// TerminalHooks.SetCaptureSink.
+type CaptureSink interface {
+	// Output is a chunk of the session's raw output (the `raw` rung), verbatim
+	// as purfecterm received it. The slice may be reused after the call.
+	Output(data []byte)
 }
 
 // bufferCWD is the directory a session for this buffer should start in, as a
@@ -673,10 +800,15 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	}
 	e.ptySeq++
 	id := fmt.Sprintf("pty%d", e.ptySeq)
+	// A streaming rung folds output in live through a sink; final and off do not.
+	var stream *captureStream
+	if capture.streams() && outCursor != nil {
+		stream = &captureStream{cursor: outCursor, format: format}
+	}
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
-		capture: capture, format: format, outCursor: outCursor,
+		capture: capture, format: format, outCursor: outCursor, stream: stream,
 	}
 	e.ptyMu.Unlock()
 
@@ -685,6 +817,11 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	}
 	if e.Config.TerminalSurfaces.SetLogicalSize != nil {
 		e.Config.TerminalSurfaces.SetLogicalSize(id, lc, lr)
+	}
+	// Register the sink before the read loop starts, so the first byte the host
+	// relays has somewhere to land.
+	if stream != nil && e.Config.TerminalSurfaces.SetCaptureSink != nil {
+		e.Config.TerminalSurfaces.SetCaptureSink(id, stream)
 	}
 
 	// The read loop is the session's own goroutine; every delivery marshals
@@ -1017,6 +1154,15 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 				b.InsertText(0, 0, text)
 			}
 		}
+	}
+	// A streaming rung has been folding output in live; stop the host relaying
+	// to it and emit whatever escape-carry the filter still holds.
+	if st.stream != nil {
+		if e.Config.TerminalSurfaces.SetCaptureSink != nil {
+			e.Config.TerminalSurfaces.SetCaptureSink(st.id, nil)
+		}
+		st.stream.flush()
+		st.stream = nil
 	}
 	if st.outCursor != nil {
 		st.outCursor.Release()
