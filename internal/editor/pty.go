@@ -954,7 +954,9 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 		outCursor = w.Buffer.NewEphemeralCursor()
 		outCursor.SeekLineRune(pos.Line, pos.Rune)
 	}
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, format, outCursor)
+	// The editing caret is handed to the live rung so its Method 4 setup can park
+	// it on "end of terminal" and let it ride the output tail.
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, format, outCursor, w.Caret)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -967,7 +969,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureRung, format captureFormat, outCursor *buffer.Cursor) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureRung, format captureFormat, outCursor *buffer.Cursor, editCaret *buffer.Caret) {
 	// The initial logical size the host is told, taken straight from the policy so
 	// a pinned or floored terminal renders correctly from its first frame while a
 	// follow policy — or a free axis of an 80x0/x24 pin — is spelled as 0 for the
@@ -985,7 +987,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	if capture.streams() && outCursor != nil {
 		stream = &captureStream{rung: capture, cursor: outCursor, format: format}
 		if capture == captureLive {
-			stream.mirror = newLiveMirror(b, outCursor, format)
+			stream.mirror = newLiveMirror(b, outCursor, format, editCaret)
 		}
 	}
 	e.ptySessions[b] = &ptyState{

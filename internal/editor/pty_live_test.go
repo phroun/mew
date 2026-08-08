@@ -31,6 +31,11 @@ func liveEditor(t *testing.T, content string, line int, format captureFormat) (*
 	return e, w, sink
 }
 
+// region wraps the expected terminal rows in the Method 4 scaffold: an empty
+// "start of terminal" line above and an empty "end of terminal" line below, the
+// bracket the setup lays down on a fresh line.
+func region(rows string) string { return "\n" + rows + "\n" }
+
 // A row of text, a newline, and a second row mirror straight down the buffer:
 // the newline steps to the next line rather than pushing anything down.
 func TestLiveStreamsRows(t *testing.T) {
@@ -39,7 +44,7 @@ func TestLiveStreamsRows(t *testing.T) {
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "world", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "hello\nworld"; got != want {
+	if got, want := w.Buffer.GetContent(), region("hello\nworld"); got != want {
 		t.Fatalf("buffer = %q, want %q", got, want)
 	}
 }
@@ -52,7 +57,7 @@ func TestLiveOvertypeInPlace(t *testing.T) {
 	sink.LiveCursorMove(1, 0)
 	sink.LiveWrite(1, 0, "ab", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "XabX"; got != want {
+	if got, want := w.Buffer.GetContent(), region("XabX"); got != want {
 		t.Fatalf("buffer = %q, want %q (overtype, not insert)", got, want)
 	}
 }
@@ -69,7 +74,7 @@ func TestLiveNewlineSkipsEOL(t *testing.T) {
 	sink.LiveNewline(0, 1)    // must land on the existing row 1, inserting nothing
 	sink.LiveWrite(0, 1, "XX", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "AA\nXX"; got != want {
+	if got, want := w.Buffer.GetContent(), region("AA\nXX"); got != want {
 		t.Fatalf("buffer = %q, want %q (newline must not push a line down)", got, want)
 	}
 }
@@ -82,7 +87,7 @@ func TestLivePadsToColumn(t *testing.T) {
 	sink.LiveCursorMove(5, 0) // three cells past end of "ab"
 	sink.LiveWrite(5, 0, "Z", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "ab   Z"; got != want {
+	if got, want := w.Buffer.GetContent(), region("ab   Z"); got != want {
 		t.Fatalf("buffer = %q, want %q (pad short line with spaces)", got, want)
 	}
 }
@@ -95,7 +100,7 @@ func TestLiveMonochromeSingleSGR(t *testing.T) {
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "cd", "\x1b[0;31m") // same pen: no new SGR
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "\x1b[0;31mab\ncd"; got != want {
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mab\ncd"); got != want {
 		t.Fatalf("buffer = %q, want %q (one SGR, carried across the newline)", got, want)
 	}
 }
@@ -106,7 +111,7 @@ func TestLiveColorChange(t *testing.T) {
 	sink.LiveWrite(0, 0, "a", "")
 	sink.LiveWrite(1, 0, "b", "\x1b[0;31m")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "a\x1b[0;31mb"; got != want {
+	if got, want := w.Buffer.GetContent(), region("a\x1b[0;31mb"); got != want {
 		t.Fatalf("buffer = %q, want %q (SGR only at the change)", got, want)
 	}
 }
@@ -118,7 +123,7 @@ func TestLivePlainDropsColor(t *testing.T) {
 	sink.LiveWrite(0, 0, "ab", "\x1b[0;31m")
 	sink.LiveWrite(2, 0, "cd", "\x1b[0;32m")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "abcd"; got != want {
+	if got, want := w.Buffer.GetContent(), region("abcd"); got != want {
 		t.Fatalf("buffer = %q, want %q (plain keeps no SGR)", got, want)
 	}
 }
@@ -135,7 +140,7 @@ func TestLiveJumpRecolorRestoresTrailing(t *testing.T) {
 	sink.LiveWrite(0, 0, "XXX", "\x1b[0;32m")
 	e.ptyEnded(w.Buffer, nil)
 	// green XXX, then red restored for the trailing bbb.
-	if got, want := w.Buffer.GetContent(), "\x1b[0;32mXXX\x1b[0;31mbbb"; got != want {
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;32mXXX\x1b[0;31mbbb"); got != want {
 		t.Fatalf("buffer = %q, want %q (trailing colour restored)", got, want)
 	}
 }
@@ -150,7 +155,7 @@ func TestLiveJumpReplacesSGRNoStacking(t *testing.T) {
 	sink.LiveWrite(0, 0, "a", "\x1b[0;32m")
 	e.ptyEnded(w.Buffer, nil)
 	// The green SGR replaces the red one; the trailing "b" is restored to red.
-	if got, want := w.Buffer.GetContent(), "\x1b[0;32ma\x1b[0;31mb"; got != want {
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;32ma\x1b[0;31mb"); got != want {
 		t.Fatalf("buffer = %q, want %q (replace SGR, no back-to-back stack)", got, want)
 	}
 }
@@ -162,7 +167,7 @@ func TestLiveOvertypeSamePenNoSGR(t *testing.T) {
 	sink.LiveCursorMove(0, 0)
 	sink.LiveWrite(0, 0, "XXX", "\x1b[0;31m") // same red: just overtype
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "\x1b[0;31mXXXbbb"; got != want {
+	if got, want := w.Buffer.GetContent(), region("\x1b[0;31mXXXbbb"); got != want {
 		t.Fatalf("buffer = %q, want %q (same pen: no extra SGR)", got, want)
 	}
 }
@@ -180,7 +185,7 @@ func TestLiveScrollPreservesHistory(t *testing.T) {
 	sink.LiveNewline(0, 1)
 	sink.LiveWrite(0, 1, "L2", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "L0\nL1\nL2"; got != want {
+	if got, want := w.Buffer.GetContent(), region("L0\nL1\nL2"); got != want {
 		t.Fatalf("buffer = %q, want %q (history preserved, nothing deleted)", got, want)
 	}
 }
@@ -192,46 +197,55 @@ func TestLiveClearKeepsHistory(t *testing.T) {
 	sink.LiveClearScreen()
 	sink.LiveWrite(0, 0, "new", "")
 	e.ptyEnded(w.Buffer, nil)
-	if got, want := w.Buffer.GetContent(), "old\nnew"; got != want {
+	if got, want := w.Buffer.GetContent(), region("old\nnew"); got != want {
 		t.Fatalf("buffer = %q, want %q (clear keeps the old screen above)", got, want)
 	}
 }
 
-// A stream of frontier writes and newlines folds in as adjacent, same-kind
-// garland mutations, so with coalescing on it collapses to a SINGLE undo step —
-// the write caret is never perturbed by the mirror's peeking. One Undo reverts
-// the whole stream.
+// Adjacent write runs on one row fold in as same-kind, adjacent garland inserts,
+// so with coalescing on they collapse to a SINGLE undo step — the write caret is
+// never perturbed by the mirror's peeking. One Undo reverts the whole run back to
+// the bare scaffold.
 func TestLiveWritesCoalesce(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
 	w.Buffer.SetUndoCoalescing(true, 0) // 0 autoBake: no time-based break in a tight test
-	for i := 0; i < 4; i++ {
-		sink.LiveWrite(0, i, "row", "")
-		if i < 3 {
-			sink.LiveNewline(0, i+1)
-		}
-	}
-	if got := w.Buffer.GetContent(); got != "row\nrow\nrow\nrow" {
-		t.Fatalf("buffer = %q before undo, want four rows", got)
+	sink.LiveWrite(0, 0, "aaa", "")
+	sink.LiveWrite(3, 0, "bbb", "")
+	sink.LiveWrite(6, 0, "ccc", "")
+	if got, want := w.Buffer.GetContent(), region("aaabbbccc"); got != want {
+		t.Fatalf("buffer = %q before undo, want %q", got, want)
 	}
 	if !w.Buffer.Undo() {
 		t.Fatal("Undo returned false")
 	}
-	if got := w.Buffer.GetContent(); got != "" {
-		t.Fatalf("after one Undo buffer = %q, want empty (stream should be one coalesced step)", got)
+	if got, want := w.Buffer.GetContent(), "\n\n"; got != want {
+		t.Fatalf("after one Undo buffer = %q, want %q (row writes are one coalesced step)", got, want)
 	}
 	e.ptyEnded(w.Buffer, nil)
 }
 
-// Content folded in by the live mirror marks the buffer modified — captured
-// output is a real edit, not a free ride.
+// The editing caret, parked on "end of terminal" at setup, rides forward as
+// output is inserted above it — so it stays at the tail (the empty end-of-
+// terminal line below the last row).
+func TestLiveEditingCaretRidesTail(t *testing.T) {
+	e, w, sink := liveEditor(t, "", 0, captureFull)
+	sink.LiveWrite(0, 0, "hello", "")
+	sink.LiveNewline(0, 1)
+	sink.LiveWrite(0, 1, "world", "")
+	// Lines: 0="" (start), 1="hello", 2="world", 3="" (end of terminal).
+	if got := w.CursorPos(); got.Line != 3 || got.Rune != 0 {
+		t.Fatalf("editing caret at %v, want line 3 rune 0 (the output tail)", got)
+	}
+	e.ptyEnded(w.Buffer, nil)
+}
+
+// Content folded in by the live mirror is a real edit: the workspace setup and
+// the writes both mark the buffer modified.
 func TestLiveMarksModified(t *testing.T) {
 	e, w, sink := liveEditor(t, "", 0, captureFull)
-	if w.Buffer.IsModified() {
-		t.Fatal("buffer modified before any capture")
-	}
 	sink.LiveWrite(0, 0, "x", "")
 	if !w.Buffer.IsModified() {
-		t.Fatal("live write did not mark the buffer modified")
+		t.Fatal("live output did not mark the buffer modified")
 	}
 	e.ptyEnded(w.Buffer, nil)
 }

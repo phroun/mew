@@ -46,9 +46,9 @@ import (
 // loop (synchronously inside a feed), so it needs no locking of its own.
 type liveMirror struct {
 	buf    *buffer.Buffer
-	caret  *buffer.Cursor // write position ("terminal caret")
-	top    *buffer.Cursor // row 0 line start ("start of terminal")
-	bottom *buffer.Cursor // frontier line ("end of terminal")
+	caret  *buffer.Cursor // "terminal caret": the write position
+	top    *buffer.Cursor // "start of terminal": just before the EOL of the line above row 0
+	bottom *buffer.Cursor // "end of terminal": the frontier boundary, below the last row
 	peek   *buffer.Cursor // read-only scratch: never perturbs the write caret
 	format captureFormat
 
@@ -64,16 +64,35 @@ type liveMirror struct {
 	rowStartPen []string
 }
 
-// newLiveMirror builds a mirror whose row 0 is the caret's current line. caret
-// is the session's ephemeral out-cursor (seeked to the launch point); top and
-// bottom are freshly created around it and released with the mirror.
-func newLiveMirror(b *buffer.Buffer, caret *buffer.Cursor, format captureFormat) *liveMirror {
-	line, _ := caret.GetPosition()
+// newLiveMirror builds the Method 4 workspace around the caret's launch point.
+// caret is the session's ephemeral out-cursor (seeked to the launch point);
+// editCaret is the viewport's editing caret, parked on "end of terminal" so the
+// tail rides with the output (nil when there is none).
+//
+// If the caret is not at the start of a line, a newline first breaks the
+// terminal onto its own line. Then a two-newline scaffold creates three lines:
+// the line above row 0 (holding "start of terminal", just before its EOL), row 0
+// itself ("terminal caret"), and the line below (holding "end of terminal").
+// Every terminal mutation lands strictly ABOVE end of terminal, so garland
+// carries end of terminal — and the editing caret on it — forward for free.
+func newLiveMirror(b *buffer.Buffer, caret *buffer.Cursor, format captureFormat, editCaret *buffer.Caret) *liveMirror {
+	line, roff := caret.GetPosition()
+	if roff != 0 {
+		caret.InsertString("\n", nil, false) // break onto a fresh line
+		line, _ = caret.GetPosition()
+	}
+	caret.SeekLineRune(line, 0)
+	caret.InsertString("\n\n", nil, false) // the region scaffold
+
 	top := b.NewEphemeralCursor()
 	top.SeekLineRune(line, 0)
+	top.SeekLineEnd() // just before the EOL of the line above row 0
+	caret.SeekLineRune(line+1, 0)
 	bottom := b.NewEphemeralCursor()
-	bottom.SeekLineRune(line, 0)
-	bottom.SeekLineEnd()
+	bottom.SeekLineRune(line+2, 0)
+	if editCaret != nil {
+		editCaret.Seek(line+2, 0) // park on end of terminal so it rides the tail
+	}
 	return &liveMirror{
 		buf:         b,
 		caret:       caret,
@@ -102,23 +121,39 @@ func (m *liveMirror) release() {
 	}
 }
 
-// frontierRow is the highest materialized row index (0-based): bottom sits on
-// its line, top on row 0's, so the count of materialized rows is their line
-// delta plus one.
-func (m *liveMirror) frontierRow() int {
-	tl, _ := m.top.GetPosition()
-	bl, _ := m.bottom.GetPosition()
-	return bl - tl
+// rowLine returns the document line number of terminal row y: one past the line
+// "start of terminal" sits on, then down y more.
+func (m *liveMirror) rowLine(y int) int {
+	sl, _ := m.top.GetPosition()
+	return sl + 1 + y
 }
 
-// growTo materializes rows up to and including row y by inserting blank lines at
-// the frontier. Newly grown rows start at the default pen; a caller that grows
-// by carrying a pen across a newline fixes rowStartPen[y] afterwards.
+// frontierRow is the highest materialized row index (0-based). Rows occupy the
+// lines strictly between "start of terminal" (line S) and "end of terminal"
+// (line E): S+1 .. E-1, so the highest index is E-S-2.
+func (m *liveMirror) frontierRow() int {
+	sl, _ := m.top.GetPosition()
+	el, _ := m.bottom.GetPosition()
+	return el - sl - 2
+}
+
+// grow appends one blank row at the bottom of the region by inserting a newline
+// at the END of the last row — strictly BEFORE "end of terminal", so end of
+// terminal (and the editing caret parked on it) ride forward and the new row
+// lands inside the region. The scratch cursor does the insert so the write caret
+// is untouched.
+func (m *liveMirror) grow() {
+	el, _ := m.bottom.GetPosition()
+	m.peek.SeekLineRune(el-1, 0)
+	m.peek.SeekLineEnd()
+	m.peek.InsertString("\n", nil, false)
+	m.rowStartPen = append(m.rowStartPen, "")
+}
+
+// growTo materializes rows up to and including row y.
 func (m *liveMirror) growTo(y int) {
 	for m.frontierRow() < y {
-		m.bottom.SeekLineEnd()
-		m.bottom.InsertString("\n", nil, false)
-		m.rowStartPen = append(m.rowStartPen, "")
+		m.grow()
 	}
 }
 
@@ -161,8 +196,7 @@ func (m *liveMirror) seekTo(x, y int) {
 		y = 0
 	}
 	m.growTo(y)
-	tl, _ := m.top.GetPosition()
-	line := tl + y
+	line := m.rowLine(y)
 	m.peek.SeekLineRune(line, 0)
 	text, _ := m.peek.ReadLine()
 	runeOff, pad := visualColToRune(text, x)
@@ -204,11 +238,11 @@ func (m *liveMirror) Write(x, y int, text, sgr string) {
 	if m.format != captureFull {
 		// No colour: geometry only, one op.
 		line, off := m.lineFromCaret()
-		_, mid, _, _ := spanForward([]rune(line), off, w)
-		if mid == 0 {
+		midBytes, _, _, _ := spanForward([]rune(line), off, w)
+		if midBytes == 0 {
 			m.caret.InsertString(text, nil, false)
 		} else {
-			m.caret.Overwrite(mid, text)
+			m.caret.Overwrite(midBytes, text)
 			m.caret.SeekRelativeRunes(len([]rune(text)))
 		}
 		m.curX += w
@@ -376,8 +410,7 @@ func (m *liveMirror) penAt(y, col int) string {
 
 // readRow reads row y's document line text through the scratch cursor.
 func (m *liveMirror) readRow(y int) string {
-	tl, _ := m.top.GetPosition()
-	m.peek.SeekLineRune(tl+y, 0)
+	m.peek.SeekLineRune(m.rowLine(y), 0)
 	s, _ := m.peek.ReadLine()
 	return s
 }
@@ -431,13 +464,14 @@ func (m *liveMirror) CursorMove(x, y int) {
 	m.seekTo(x, y)
 }
 
-// ScrollLineOff slides the window down n rows: top advances so the departed rows
-// become history above, and the per-row pen array drops them. The frontier is
-// regrown by the newline that follows the scroll.
+// ScrollLineOff slides the window down n rows: "start of terminal" advances to
+// just before the next line's EOL, so each departed row stays above the window
+// as history (nothing is deleted), and the per-row pen array drops them. The
+// frontier is regrown by the newline that follows the scroll.
 func (m *liveMirror) ScrollLineOff(n int) {
 	for i := 0; i < n; i++ {
-		m.top.SeekLineEnd()
-		m.top.SeekRelativeRunes(1)
+		m.top.SeekRelativeRunes(1) // over the current EOL, onto the next line
+		m.top.SeekLineEnd()        // to just before that line's EOL
 		if len(m.rowStartPen) > 1 {
 			m.rowStartPen = m.rowStartPen[1:]
 		}
@@ -447,18 +481,18 @@ func (m *liveMirror) ScrollLineOff(n int) {
 	}
 }
 
-// ClearScreen preserves the current screen as history and starts a fresh region
-// below it (OnClearScreen), consistent with the scroll model: nothing is
-// deleted. A new blank row 0 is opened past the frontier and the region resets
-// onto it.
+// ClearScreen preserves the current screen as history and starts a fresh single
+// row below it (OnClearScreen), consistent with the scroll model: nothing is
+// deleted. A blank row is grown at the bottom, then "start of terminal" advances
+// so that blank row becomes the new row 0 and every prior row is history above.
 func (m *liveMirror) ClearScreen() {
-	m.bottom.SeekLineEnd()
-	m.bottom.InsertString("\n", nil, false)
-	line, _ := m.bottom.GetPosition()
-	m.top.SeekLineRune(line, 0)
-	m.bottom.SeekLineRune(line, 0)
-	m.bottom.SeekLineEnd()
-	m.caret.SeekLineRune(line, 0)
+	m.grow() // a fresh blank row just above end of terminal
+	el, _ := m.bottom.GetPosition()
+	// The new blank row is line el-1; start of terminal moves to just before the
+	// EOL of the line above it.
+	m.top.SeekLineRune(el-2, 0)
+	m.top.SeekLineEnd()
+	m.caret.SeekLineRune(el-1, 0)
 	m.curX, m.curY = 0, 0
 	m.curPen = ""
 	m.rowStartPen = []string{""}
