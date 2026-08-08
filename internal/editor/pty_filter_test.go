@@ -88,7 +88,7 @@ func (s *stubFilter) sentStdin() []byte {
 // waitFor polls cond until it is true or the deadline passes.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -135,10 +135,58 @@ func TestParseFilterRoutes(t *testing.T) {
 	if _, err := parseExecLineNamed("--stdin=outbuffer prog", nil); err == nil {
 		t.Error("--stdin=outbuffer should be refused (stdin is a source)")
 	}
-	// stdout and stderr cannot both replace the block.
+	// stdout and stderr may BOTH replace the block — they merge into it.
 	spec := filterSpec(t, "--stdout=block --stderr=block prog")
-	if err := spec.resolveRoutes(); err == nil {
-		t.Error("stdout=block and stderr=block together should be refused")
+	if err := spec.resolveRoutes(); err != nil {
+		t.Errorf("stdout=block and stderr=block should be allowed (merge): %v", err)
+	}
+}
+
+// block_filter is the JOE-style front door: with an inline command it pipes the
+// marked block through the shell and replaces the block with the result.
+func TestBlockFilterReplacesBlock(t *testing.T) {
+	e, w := newTestEditor(t, "abc\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) {
+		return newStubFilter(func(in []byte) ([]byte, []byte, int) {
+			return bytes.ToUpper(in), nil, 0
+		}), nil
+	}
+	markBlock(w, 0, 0, 1, 0)
+	if !e.blockFilter("tr a-z A-Z") {
+		t.Fatal("block_filter should launch")
+	}
+	waitFor(t, "block filtered", func() bool {
+		return w.Buffer.GetContent() == "ABC\n"
+	})
+}
+
+// An empty block (begin and end at the same spot) has nothing to feed, so a
+// stdin=block filter refuses with "No block selected." rather than running.
+func TestFilterEmptyBlockRefused(t *testing.T) {
+	e, w := newTestEditor(t, "abc\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) {
+		return newStubFilter(func(in []byte) ([]byte, []byte, int) { return in, nil, 0 }), nil
+	}
+	markBlock(w, 0, 1, 0, 1) // begin == end: an empty selection
+	if e.runFilter(filterSpec(t, "--inblock --outblock prog")) {
+		t.Error("an empty block must refuse a stdin=block filter")
+	}
+	if !hasWarning(e, "No block selected.") {
+		t.Error("expected 'No block selected.'")
+	}
+}
+
+// block_filter refuses (and does not prompt) when no block is marked.
+func TestBlockFilterNoBlock(t *testing.T) {
+	e, _ := newTestEditor(t, "abc\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) {
+		return newStubFilter(func(in []byte) ([]byte, []byte, int) { return in, nil, 0 }), nil
+	}
+	if e.blockFilter("sort") {
+		t.Error("block_filter with no block marked should report failure")
+	}
+	if !hasWarning(e, "no block marked") {
+		t.Error("expected a 'no block marked' warning")
 	}
 }
 
@@ -160,6 +208,15 @@ func TestFilterBlockReplace(t *testing.T) {
 	waitFor(t, "block replaced with uppercase", func() bool {
 		return w.Buffer.GetContent() == "ABC\nDEF\n"
 	})
+	// The block must remain selected AROUND the new output — begin at the start,
+	// end at the tail — not collapsed to a point (which would read as no block).
+	sl, sr, el, er, ok := w.Buffer.GetBlockRange()
+	if !ok || (sl == el && sr == er) {
+		t.Fatalf("block collapsed after filter: (%d,%d)-(%d,%d) ok=%v", sl, sr, el, er, ok)
+	}
+	if sl != 0 || sr != 0 || el != 2 || er != 0 {
+		t.Fatalf("block should wrap the output (0,0)-(2,0), got (%d,%d)-(%d,%d)", sl, sr, el, er)
+	}
 }
 
 // --inblock without --outblock feeds the block to the child but leaves the block

@@ -2844,6 +2844,23 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.promptBlockFromFile())
 	})
 
+	// block_filter pipes the marked block through a shell command and replaces it
+	// with the result (JOE's filter-block). The command may be given inline
+	// (block_filter sort -r); with none it prompts, recalling prior filter
+	// commands. It is the ergonomic spelling of exec --stdin=block --stdout=block
+	// --stderr=block, so stdout and stderr both flow back into the block.
+	ps.RegisterCommand("block_filter", func(ctx *pawscript.Context) pawscript.Result {
+		var parts []string
+		for i := 0; ; i++ {
+			v, ok := argString(ctx, i)
+			if !ok {
+				break
+			}
+			parts = append(parts, v)
+		}
+		return pawscript.BoolStatus(e.blockFilter(strings.Join(parts, " ")))
+	})
+
 	// OS-clipboard commands: the host system-clipboard bridge (see
 	// osclipboard.go). A channel deliberately separate from the kill ring.
 	ps.RegisterCommand("os_copy", func(ctx *pawscript.Context) pawscript.Result {

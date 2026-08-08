@@ -63,6 +63,12 @@ func (e *Editor) runFilter(spec execSpec) bool {
 			e.ShowWarning("exec: no block marked")
 			return false
 		}
+		// Reading the block as stdin needs a non-empty block: begin and end at the
+		// same spot is an empty selection with nothing to feed.
+		if spec.Stdin == routeBlock && sl == el && sr == er {
+			e.ShowWarning("No block selected.")
+			return false
+		}
 		// Anchor the block with edit-riding ephemeral cursors, not fixed
 		// coordinates: garland carries them across any concurrent edit, so a
 		// snapshot taken now and a replace done later both act on the right region
@@ -106,6 +112,52 @@ func (e *Editor) runFilter(spec execSpec) bool {
 	return true
 }
 
+// blockFilter is the ergonomic JOE-style front door (the block_filter command):
+// pipe the marked block through a shell command and replace it with the result
+// — equivalent to exec --stdin=block --stdout=block --stderr=block, so stdout
+// and stderr both land back in the block. With no command it prompts, recalling
+// prior filter commands from the "filter" history (the same mechanism Find uses
+// for search terms). Requires a marked block up front, so it never asks for a
+// command it could not run.
+func (e *Editor) blockFilter(line string) bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		e.ShowWarning("block_filter: no active buffer")
+		return false
+	}
+	if !w.Buffer.HasBlockMarks() {
+		e.ShowWarning("block_filter: no block marked")
+		return false
+	}
+	if strings.TrimSpace(line) != "" {
+		return e.runBlockFilterCommand(line)
+	}
+	e.PromptMgr.PromptForInput("Command to filter block through: ", "",
+		func(accepted bool, _, text string) {
+			defer e.RequestRender()
+			if !accepted {
+				return
+			}
+			if strings.TrimSpace(text) != "" {
+				e.runBlockFilterCommand(text)
+			}
+		}, "filter")
+	return true
+}
+
+// runBlockFilterCommand runs one filter command line through the user's shell
+// (shell -c), so pipelines, redirects and shell builtins all work, with the
+// block routed to every standard stream.
+func (e *Editor) runBlockFilterCommand(line string) bool {
+	return e.runFilter(execSpec{
+		Shell:  true,
+		Args:   []string{"-c", strings.TrimSpace(line)},
+		Stdin:  routeBlock,
+		Stdout: routeBlock,
+		Stderr: routeBlock,
+	})
+}
+
 // filterRun holds one filter's shared state across its goroutines.
 type filterRun struct {
 	e    *Editor
@@ -119,12 +171,14 @@ type filterRun struct {
 	blockStart, blockEnd *buffer.Cursor
 	snapshotDone         chan struct{}
 
-	// The in-place block replace (--outblock) state, touched by the single output
-	// goroutine routed to the block.
-	blockMu      sync.Mutex
-	blockStarted bool
-	blockFirst   bool
-	blockWrite   *buffer.Cursor
+	// The in-place block replace (--outblock) state, touched by the output
+	// goroutines routed to the block (both merge through it). blockBegLine/Rune is
+	// the start captured at the delete, before any insert moved things.
+	blockMu                    sync.Mutex
+	blockStarted               bool
+	blockFirst                 bool
+	blockWrite                 *buffer.Cursor
+	blockBegLine, blockBegRune int
 
 	// docs are the lazily-created new-buffer sinks, keyed by route so stdout and
 	// stderr aimed at the same sink (both outbuffer, say) merge into one document.
@@ -269,6 +323,12 @@ func (fr *filterRun) writeBlock(chunk []byte) {
 		sl, sr := fr.blockStart.GetPosition()
 		el, er := fr.blockEnd.GetPosition()
 		fr.buf.DeleteTextRange(sl, sr, el, er)
+		// Remember the true start NOW: the first insertBefore=true insert slides
+		// everything at this point — the blockStart cursor included — forward past
+		// the chunk, so reading the cursor back afterward would give the chunk's
+		// END, not its start. The line/rune captured here still names the start of
+		// the inserted text (nothing before it changes).
+		fr.blockBegLine, fr.blockBegRune = sl, sr
 		fr.blockWrite = fr.buf.NewEphemeralCursor()
 		fr.blockWrite.SeekLineRune(sl, sr)
 		fr.blockStarted = true
@@ -276,8 +336,9 @@ func (fr *filterRun) writeBlock(chunk []byte) {
 	}
 	fr.blockWrite.InsertStringBefore(string(chunk))
 	if fr.blockFirst {
-		sl, sr := fr.blockStart.GetPosition()
-		fr.buf.SetMark("_block_begin", sl, sr)
+		// Re-pin _block_begin to the captured start (the first insert slid the mark
+		// to the chunk's end); _block_end keeps riding the tail from here.
+		fr.buf.SetMark("_block_begin", fr.blockBegLine, fr.blockBegRune)
 		fr.blockFirst = false
 	}
 	fr.e.RequestRender()

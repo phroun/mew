@@ -514,9 +514,9 @@ func (spec *execSpec) resolveRoutes() error {
 			return fmt.Errorf("a stream set to pty cannot be mixed with filter streams yet")
 		}
 	}
-	if spec.Stdout == routeBlock && spec.Stderr == routeBlock {
-		return fmt.Errorf("stdout and stderr cannot both replace the block")
-	}
+	// stdout and stderr may BOTH replace the block: they funnel through one
+	// shared, serialized write cursor, so they merge into the block by arrival
+	// order (block_filter's stdin=stdout=stderr=block does exactly this).
 	return nil
 }
 
