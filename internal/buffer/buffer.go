@@ -1648,6 +1648,33 @@ func (b *Buffer) NewCursor() *Cursor {
 	}
 }
 
+// NewEphemeralCursor creates an ephemeral cursor for the buffer: garland
+// maintains its position across edits (so it rides insertions like any cursor)
+// but does not record it per revision. Callers that hold a transient insertion
+// anchor — a terminal session's output point, a one-off scan — want this, and
+// must Release it when done.
+func (b *Buffer) NewEphemeralCursor() *Cursor {
+	if b.garland == nil {
+		return &Cursor{buffer: b}
+	}
+	return &Cursor{
+		buffer:        b,
+		garlandCursor: b.garland.NewEphemeralCursor(),
+	}
+}
+
+// Release removes the cursor from garland. Safe to call more than once and on a
+// cursor with no garland backing.
+func (c *Cursor) Release() {
+	if c == nil || c.garlandCursor == nil {
+		return
+	}
+	if c.buffer != nil && c.buffer.garland != nil {
+		c.buffer.garland.RemoveCursor(c.garlandCursor)
+	}
+	c.garlandCursor = nil
+}
+
 // SeekLine moves the cursor to a specific line.
 func (c *Cursor) SeekLine(line int) {
 	if c.garlandCursor == nil {

@@ -164,8 +164,13 @@ type ptyState struct {
 	policy                   ptySizePolicy
 	logSentCols, logSentRows int
 	// capture folds the session's output into its buffer when it ends (Method 2,
-	// capture-on-die); captureOff (the default) leaves the buffer empty as before.
+	// capture-on-die); captureOff (the default) folds nothing.
 	capture captureMode
+	// outCursor is where a captured transcript lands: an ephemeral cursor pinned
+	// at the caret the session was launched from, created only when capturing.
+	// Held for the session's life (garland keeps it valid across any edits made
+	// to the buffer meanwhile) and released in ptyEnded. nil when captureOff.
+	outCursor *buffer.Cursor
 }
 
 // ptySizePolicy is how a session's LOGICAL size is chosen — the size the child
@@ -605,7 +610,18 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 	if req.Shell {
 		name = "the login shell"
 	}
-	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture)
+	// A capturing session lands its transcript where the user launched it: pin an
+	// ephemeral cursor at the current caret now, while the viewport is known and
+	// its caret is where they meant. garland keeps it valid until ptyEnded folds
+	// there — surviving the surface teardown and any edit made to the buffer in
+	// between — which reading the caret back at death could not promise.
+	var outCursor *buffer.Cursor
+	if capture != captureOff {
+		pos := w.CursorPos()
+		outCursor = w.Buffer.NewEphemeralCursor()
+		outCursor.SeekLineRune(pos.Line, pos.Rune)
+	}
+	e.attachPTY(w.Buffer, sess, name, req.CWD, req.Method, cols, rows, pol, capture, outCursor)
 	started := "Started " + name
 	if len(req.Args) > 0 {
 		started += " " + strings.Join(req.Args, " ")
@@ -618,7 +634,7 @@ func (e *Editor) execRequestSpecPolicy(command string, args []string, method str
 }
 
 // attachPTY binds a session to a buffer and starts pumping its output.
-func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureMode) {
+func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, method string, cols, rows int, pol ptySizePolicy, capture captureMode, outCursor *buffer.Cursor) {
 	// The initial logical size the host is told, taken straight from the policy so
 	// a pinned or floored terminal renders correctly from its first frame while a
 	// follow policy — or a free axis of an 80x0/x24 pin — is spelled as 0 for the
@@ -634,7 +650,7 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 	e.ptySessions[b] = &ptyState{
 		id: id, sess: sess, command: command, cwd: cwd, method: method,
 		started: time.Now(), policy: pol, logSentCols: lc, logSentRows: lr,
-		capture: capture,
+		capture: capture, outCursor: outCursor,
 	}
 	e.ptyMu.Unlock()
 
@@ -676,9 +692,12 @@ func (e *Editor) attachPTY(b *buffer.Buffer, sess PTYSession, command, cwd, meth
 // motion, colour, alternate screen and all. Anything mew stripped here would be
 // a capability the child surface then lacked.
 //
-// The garland buffer stays EMPTY while a session runs. Folding scrollback into
-// it as real text is deliberate follow-up work, and doing it half-way now would
-// only have to be undone.
+// The buffer behind a running session is an ordinary garland document whose own
+// text PAINTING is suppressed while the terminal surface overlays it (the
+// content-suppressor predicate the renderer asks about). Its content is left
+// untouched here; capture-on-die (Method 2) folds the session's transcript into
+// it at the output cursor when it ends, and live per-line tracking is the
+// follow-up. Neither happens on this hot path.
 func (e *Editor) ptyOutput(b *buffer.Buffer, chunk []byte) {
 	if b == nil || len(chunk) == 0 || e.Config.TerminalSurfaces.Feed == nil {
 		return
@@ -952,14 +971,23 @@ func (e *Editor) ptyEnded(b *buffer.Buffer, cause error) {
 	if st == nil {
 		return
 	}
-	// Method 2 (capture-on-die): fold the session's final scrollback into its
-	// buffer BEFORE the surface is torn down — the snapshot has to be taken
-	// while the emulator still exists. The buffer is an ordinary editable buffer
-	// again now, so the transcript lands as its content.
+	// Method 2 (capture-on-die): fold the session's final transcript into its
+	// buffer BEFORE the surface is torn down — the snapshot has to be taken while
+	// the emulator still exists. It lands at the output cursor, the caret the
+	// session was launched from (garland has carried it to wherever that text now
+	// is), not at 0,0; the buffer is an ordinary editable document again.
 	if st.capture != captureOff && e.Config.TerminalSurfaces.Snapshot != nil {
 		if text := e.Config.TerminalSurfaces.Snapshot(st.id, st.capture == captureANSI); text != "" {
-			b.InsertText(0, 0, text)
+			if st.outCursor != nil {
+				st.outCursor.InsertString(text, nil, false)
+			} else {
+				b.InsertText(0, 0, text)
+			}
 		}
+	}
+	if st.outCursor != nil {
+		st.outCursor.Release()
+		st.outCursor = nil
 	}
 	if e.Config.TerminalSurfaces.Close != nil {
 		e.Config.TerminalSurfaces.Close(st.id)

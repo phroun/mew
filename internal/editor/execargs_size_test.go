@@ -260,6 +260,28 @@ func TestCaptureOnDieFillsBuffer(t *testing.T) {
 	run("off is empty", captureOff, false, "should not appear\n", "")
 }
 
+// Capture-on-die lands the transcript at the caret the session was launched
+// from — folding into the existing document there — not at 0,0.
+func TestCaptureOnDieLandsAtCaret(t *testing.T) {
+	e, w := newTestEditor(t, "one\ntwo\n")
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:     func(string, int, int) {},
+		Feed:     func(string, []byte) []byte { return nil },
+		Place:    func([]TerminalSurface) {},
+		Close:    func(string) {},
+		Snapshot: func(string, bool) string { return "CAP\n" },
+	}
+	w.Caret.Seek(1, 0) // start of the second line, not the top of the buffer
+	if !e.execRequestArgsPolicy("bash", nil, "", ptySizePolicy{}, captureText) {
+		t.Fatal("exec failed")
+	}
+	e.ptyEnded(w.Buffer, nil)
+	if got, want := w.Buffer.GetContent(), "one\nCAP\ntwo\n"; got != want {
+		t.Fatalf("buffer = %q, want %q (transcript should land at the caret)", got, want)
+	}
+}
+
 func TestParseSizeSwitchErrors(t *testing.T) {
 	bad := []string{
 		"--size=80x25 --minimum=100x40 bash", // two size policies conflict
