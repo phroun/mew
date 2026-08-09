@@ -873,16 +873,16 @@ func (e *Editor) syntaxLineColors(w *viewport.Viewport, docLine int) []string {
 	}
 	// Resolve this line's color classes to SGR for THIS viewport's class/type, so
 	// [<class>::colors]/[colors/<type>] overlays reach syntax highlighting.
-	colors := e.resolveLineColors(c, docLine, w.Class, w.Type.Name())
+	colors := e.resolveLineColors(c, docLine, w.EffectiveClass(), w.Type.Name())
 	// Caret mode (browse off): links paint in the "link" color over their
 	// syntax colors, marking them as followable. Browse mode replaces link text
 	// with buttons instead, so the overlay is skipped there — and
 	// linkBrowsing=no disables the whole layer (links render exactly as the
 	// grammar colors them).
 	if c.linkable && w.ViewState.LinkBrowsing && !w.BrowseActive && docLine < len(c.links) && len(c.links[docLine]) > 0 {
-		linkSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "link")
-		recentSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkRecent")
-		hoverSGR := e.LoadedConfig.Colors.Resolve(w.Class, w.Type.Name(), "linkHover")
+		linkSGR := e.LoadedConfig.Colors.Resolve(w.EffectiveClass(), w.Type.Name(), "link")
+		recentSGR := e.LoadedConfig.Colors.Resolve(w.EffectiveClass(), w.Type.Name(), "linkRecent")
+		hoverSGR := e.LoadedConfig.Colors.Resolve(w.EffectiveClass(), w.Type.Name(), "linkHover")
 		if linkSGR != "" || recentSGR != "" {
 			for _, s := range c.links[docLine] {
 				sgr := linkSGR

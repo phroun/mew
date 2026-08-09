@@ -1044,7 +1044,7 @@ func (e *Editor) lineDisplaySpans(w *viewport.Viewport, docLine int) ([]render.D
 	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type == viewport.PromptViewport || w.Buffer == nil {
 		return nil, false
 	}
-	cls, typ := w.Class, w.Type.Name()
+	cls, typ := w.EffectiveClass(), w.Type.Name()
 	col := func(name string) string { return e.LoadedConfig.Colors.Resolve(cls, typ, name) }
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
 	runes := []rune(raw)

@@ -614,7 +614,7 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	// gutter (LTR); a double-width row shows half as many gutter cells and
 	// each content cell spans two physical columns.
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 	base := w.ContentX + 1 // first content CELL, 1-based

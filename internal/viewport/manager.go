@@ -4,6 +4,7 @@ package viewport
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -223,6 +224,54 @@ func isChromeSet(set string) bool {
 // modebar). Doc and tool viewports both qualify.
 func (w *Viewport) FocusEligible() bool {
 	return w != nil && w.Type != PromptViewport && !isChromeSet(w.ViewportSet)
+}
+
+// GenSurfacePrefix is the URL scheme prefix of mew's generated ("mew:")
+// surfaces — the buffers/viewports/closed listings produced on demand rather
+// than read from disk. The editor owns the scheme (see isGenPath and
+// gensurface.go); the viewport package recognizes it only by ADDRESS, so a
+// surface's display traits derive from the buffer it shows and never stick to
+// the viewport when the reader navigates back to a document.
+const GenSurfacePrefix = "mew:"
+
+// SurfaceClass is the styling class a viewport reports for a generated mew:
+// surface, letting a user theme these chrome-like listings ([surface.color.*],
+// [surface.*]) apart from ordinary document buffers. It is derived from the
+// buffer's address each frame, never stored, so navigating back to a document
+// reports that document's own class again.
+const SurfaceClass = "surface"
+
+// showsGenSurface reports whether the viewport currently shows a generated mew:
+// surface, keyed on the buffer's address alone so nothing sticks to the viewport.
+func (w *Viewport) showsGenSurface() bool {
+	return w != nil && w.Buffer != nil && strings.HasPrefix(w.Buffer.GetFilename(), GenSurfacePrefix)
+}
+
+// EffectiveClass is the viewport's styling/theming class: its explicit Class,
+// except a generated mew: surface (with no explicit class of its own) reports
+// SurfaceClass so it themes separately from documents. Color and focused-chrome
+// resolution reads this rather than Class directly; the editor layers the
+// pty-derived class on top for the option cascade (see viewportClass).
+func (w *Viewport) EffectiveClass() string {
+	if w == nil {
+		return ""
+	}
+	if w.Class == "" && w.showsGenSurface() {
+		return SurfaceClass
+	}
+	return w.Class
+}
+
+// LineNumbersVisible reports whether the line-number gutter should paint for
+// this viewport: its ShowLineNumbers view option, except that generated mew:
+// surfaces never show a gutter — they are chrome-like listings. Both the
+// renderer's gutter geometry and the editor's matching hit-test read this, so
+// paint and click agree.
+func (w *Viewport) LineNumbersVisible() bool {
+	if w == nil || !w.ViewState.ShowLineNumbers {
+		return false
+	}
+	return !w.showsGenSurface()
 }
 
 // DockPosition represents where a viewport is docked.

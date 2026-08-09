@@ -96,7 +96,7 @@ func (c *ColumnRulerPlugin) RenderContent(w *viewport.Viewport, screenWidth int,
 
 	// Resolve ruler colors through the viewport's class/type cascade.
 	col := func(name string) string {
-		return c.colors.Resolve(w.Class, w.Type.Name(), name)
+		return c.colors.Resolve(w.EffectiveClass(), w.Type.Name(), name)
 	}
 	rc := rulerColors{
 		fill:       col("rulerFill"),
@@ -113,7 +113,7 @@ func (c *ColumnRulerPlugin) RenderContent(w *viewport.Viewport, screenWidth int,
 
 	// Calculate the effective left margin of the viewport
 	lineNumberWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumberWidth = w.LineNumWidth
 	}
 	// Logical margins map to physical sides by direction (Inner = reading

@@ -61,6 +61,23 @@ wiki resolver would not treat it as a file. Under the split, generated content
 simply lives in a different scheme (`mew:/quickhelp`) from stored content
 (`box:///…`), and the "sits outside" hack disappears.
 
+### Surface display traits (keyed by address)
+
+A generated surface's chrome is derived from the buffer's `mew:` address, never
+stored on the viewport — so it applies while the surface is shown and reverts
+the moment the viewport navigates back to a document, with no per-viewport state
+to reset (`Viewport.EffectiveClass` / `Viewport.LineNumbersVisible`):
+
+- **No line-number gutter.** These are listings, not editable documents; the
+  gutter is suppressed regardless of the `showLineNumbers` option.
+- **A `surface` styling class.** Colors and focused chrome resolve under the
+  class `surface`, so a user can theme the generated listings apart from their
+  documents — e.g. `[surface.color.background]`, `[surface.color.link]` — without
+  those rules leaking onto ordinary buffers. With no `[surface.*]` rules present,
+  resolution falls through to the buffer type / global defaults exactly as
+  before, so the default look is unchanged. (Behavioral options — read-only,
+  link-browsing — stay fixed by address and are not part of this class overlay.)
+
 ## The help wiki → `help:/` over `box:///help/`
 
 `help:/` stays exactly as `help-scheme.md` describes it — the registered wiki

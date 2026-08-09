@@ -275,7 +275,7 @@ func (sr *ScreenRenderer) SetColorScheme(cs config.ColorScheme) {
 // col resolves a named color for a viewport, cascading viewport class ->
 // buffer type -> global -> built-in defaults.
 func (sr *ScreenRenderer) col(w *viewport.Viewport, name string) string {
-	return sr.colorScheme.Resolve(w.Class, w.Type.Name(), name)
+	return sr.colorScheme.Resolve(w.EffectiveClass(), w.Type.Name(), name)
 }
 
 // NewScreenRenderer creates a new screen renderer targeting the real
@@ -847,7 +847,7 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 		}
 
 		// Update line number width
-		if w.ViewState.ShowLineNumbers && w.Buffer != nil {
+		if w.LineNumbersVisible() && w.Buffer != nil {
 			lineCount := w.Buffer.GetLineCount()
 			if lineCount < 10 {
 				lineCount = 10
@@ -867,7 +867,7 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 		// baseContentWidth used in renderContent); otherwise horizontal-scroll
 		// decisions that key off ContentWidth let the cursor run off the edge.
 		lineNumWidth := 0
-		if w.ViewState.ShowLineNumbers {
+		if w.LineNumbersVisible() {
 			lineNumWidth = w.LineNumWidth
 		}
 		// The viewport's horizontal paint frame (host-set; full screen by
@@ -1160,7 +1160,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	fx, fw, atRight := sr.vpFrame(w)
 
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 
@@ -1227,7 +1227,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// buffer paints the corner cell's background without landing a glyph in
 		// it.
 		contentWidth := baseContentWidth
-		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
+		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.LineNumbersVisible()) &&
 			!(sbw > 0 && !sr.winRTL(w)) {
 			// An LTR scrollbar occupies the corner column itself (its glyph is
 			// simply skipped on that row, below), so the content stays full.
@@ -1303,7 +1303,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// oversized and misaligned. The gutter width is rounded even in browse
 		// mode, so half as many cells (each drawn 2x) match the normal gutter
 		// exactly and still leave room for a marker.
-		if w.ViewState.ShowLineNumbers && !rtl {
+		if w.LineNumbersVisible() && !rtl {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
@@ -1346,7 +1346,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// RTL: the mirrored line-number gutter, between content and right margin.
-		if w.ViewState.ShowLineNumbers && rtl {
+		if w.LineNumbersVisible() && rtl {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
@@ -2448,7 +2448,7 @@ func (sr *ScreenRenderer) barCursorOnRTL(w *viewport.Viewport, line string, rune
 // It is the room the caret has to sit ONE column past the content's right edge,
 // which is where an insertion point after the rightmost character belongs.
 func (sr *ScreenRenderer) caretGutterSlack(w *viewport.Viewport) int {
-	if w == nil || !sr.winRTL(w) || !w.ViewState.ShowLineNumbers {
+	if w == nil || !sr.winRTL(w) || !w.LineNumbersVisible() {
 		return 0
 	}
 	gutter := w.LineNumWidth
@@ -3063,7 +3063,7 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 	// wrong width.
 	fx, fw, _ := sr.vpFrame(w)
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 	sbw := 0

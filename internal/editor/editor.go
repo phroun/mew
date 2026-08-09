@@ -7777,7 +7777,7 @@ func (e *Editor) caretWantsPhantom(w *viewport.Viewport) bool {
 	// with line numbers off there is nothing past the content, and the bar
 	// clamps back onto the character, landing exactly where the caret one rune
 	// along would. The phantom gives it a cell of its own.
-	if caretRTL && col == vwContent-1 && !w.ViewState.ShowLineNumbers {
+	if caretRTL && col == vwContent-1 && !w.LineNumbersVisible() {
 		if shape := e.cursorStyleFor(w); shape == 5 || shape == 6 {
 			return true
 		}

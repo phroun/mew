@@ -306,7 +306,7 @@ func (s *ModebarPlugin) RenderContent(w *viewport.Viewport, screenWidth int) str
 	// - messages:   Frag/Heap/Line/Rune stats readout
 	// - logo:       M_ logo
 	col := func(name string) string {
-		return s.colors.Resolve(w.Class, w.Type.Name(), name)
+		return s.colors.Resolve(w.EffectiveClass(), w.Type.Name(), name)
 	}
 	textColor := col("text")
 	modifiersColor := col("modifiers")
