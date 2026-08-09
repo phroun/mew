@@ -70,12 +70,6 @@ type Layout struct {
 	TopHeight    int
 	MainHeight   int
 	BottomHeight int
-
-	// Peek indicators
-	NeedsStatPeekUp     bool
-	NeedsStatPeekDown   bool
-	NeedsPromptPeekUp   bool
-	NeedsPromptPeekDown bool
 }
 
 // LayoutManager calculates viewport layouts based on screen dimensions.
@@ -100,7 +94,7 @@ func NewLayoutManager(wm *Manager) *LayoutManager {
 //  1. Shrink non-essential docked viewports toward their MinHeight.
 //  2. Omit whole viewports from the docks, lowest priority first (top dock,
 //     then bottom), never touching the modebar (wherever it is located) or
-//     the active prompt. Omitted viewports are surfaced via peek indicators.
+//     the active prompt.
 //  3. Last resort: force the active prompt down to one row, and finally omit
 //     even the modebar.
 //
@@ -186,9 +180,10 @@ func (lm *LayoutManager) CalculateLayout(screenWidth, screenHeight int) Layout {
 		}
 	}
 
-	// Apply peek adjustments.
-	effectiveTop := lm.effectiveTopViewports(topViewports, topPriorityViewport)
-	effectiveBottom := lm.effectiveBottomViewports(bottomViewports, activePrompt)
+	// Working copies of each dock's viewports; the space-negotiation stages
+	// below may drop entries from these without touching the manager's lists.
+	effectiveTop := append([]*Viewport(nil), topViewports...)
+	effectiveBottom := append([]*Viewport(nil), bottomViewports...)
 
 	// Negotiated heights for this pass, starting from each docked viewport's
 	// preferred height clamped into [MinHeight, MaxHeight]. Viewport state is
@@ -295,100 +290,14 @@ func (lm *LayoutManager) CalculateLayout(screenWidth, screenHeight int) Layout {
 		})
 	}
 
-	// Determine peek indicators. Viewports omitted for space also surface here
-	// (effective < all), not just explicit peeking.
-	needsStatPeekUp := len(topViewports) > len(effectiveTop) || wm.StatPeek > 0
-	needsStatPeekDown := len(topViewports) > 1 && wm.StatPeek > 0
-	needsPromptPeekUp := len(bottomViewports) > 1 && wm.PromptPeek > 0
-	needsPromptPeekDown := len(bottomViewports) > len(effectiveBottom) || wm.PromptPeek > 0
-
 	return Layout{
-		TopLayout:           topLayout,
-		MainLayout:          mainLayout,
-		BottomLayout:        bottomLayout,
-		TopHeight:           topHeight,
-		MainHeight:          mainHeight,
-		BottomHeight:        bottomHeight,
-		NeedsStatPeekUp:     needsStatPeekUp,
-		NeedsStatPeekDown:   needsStatPeekDown,
-		NeedsPromptPeekUp:   needsPromptPeekUp,
-		NeedsPromptPeekDown: needsPromptPeekDown,
+		TopLayout:    topLayout,
+		MainLayout:   mainLayout,
+		BottomLayout: bottomLayout,
+		TopHeight:    topHeight,
+		MainHeight:   mainHeight,
+		BottomHeight: bottomHeight,
 	}
-}
-
-// effectiveTopViewports applies statPeek to the top dock. Peeking hides the
-// next-highest-priority viewports below the top-priority one, revealing
-// lower-priority viewports that may be buried (or omitted for space) beneath
-// them. Input and output are in descending priority order.
-func (lm *LayoutManager) effectiveTopViewports(sortedTop []*Viewport, topPriorityViewport *Viewport) []*Viewport {
-	wm := lm.viewportManager
-	effective := append([]*Viewport(nil), sortedTop...)
-
-	if wm.StatPeek > 0 && len(sortedTop) > 1 {
-		peekCount := wm.StatPeek
-		if peekCount > len(sortedTop)-1 {
-			peekCount = len(sortedTop) - 1
-		}
-		// Hide the viewports just below the top-priority one (index 0).
-		hidden := make(map[*Viewport]bool, peekCount)
-		for _, w := range sortedTop[1 : peekCount+1] {
-			hidden[w] = true
-		}
-		effective = effective[:0]
-		for _, w := range sortedTop {
-			if !hidden[w] {
-				effective = append(effective, w)
-			}
-		}
-	}
-
-	// Ensure the top-priority viewport is always included.
-	if topPriorityViewport != nil && !containsViewport(effective, topPriorityViewport) {
-		effective = append([]*Viewport{topPriorityViewport}, effective...)
-	}
-
-	return effective
-}
-
-// effectiveBottomViewports applies promptPeek to the bottom dock. Peeking hides
-// the highest-priority non-prompt viewports, revealing buried lower-priority
-// ones; the active prompt is never hidden. Input and output are in descending
-// priority order.
-func (lm *LayoutManager) effectiveBottomViewports(sortedBottom []*Viewport, activePrompt *Viewport) []*Viewport {
-	wm := lm.viewportManager
-	effective := append([]*Viewport(nil), sortedBottom...)
-
-	if wm.PromptPeek > 0 && len(sortedBottom) > 1 {
-		peekCount := wm.PromptPeek
-		if peekCount > len(sortedBottom)-1 {
-			peekCount = len(sortedBottom) - 1
-		}
-		hidden := make(map[*Viewport]bool, peekCount)
-		for _, w := range sortedBottom {
-			if len(hidden) >= peekCount {
-				break
-			}
-			// A bottom-located modebar is furniture, not a peekable
-			// overlay: peeking hides the viewports stacked above the
-			// buried prompts, never the modebar itself.
-			if w != activePrompt && w.Class != "modebar" {
-				hidden[w] = true
-			}
-		}
-		effective = effective[:0]
-		for _, w := range sortedBottom {
-			if !hidden[w] {
-				effective = append(effective, w)
-			}
-		}
-	}
-
-	// Ensure the active prompt is always included.
-	if activePrompt != nil && !containsViewport(effective, activePrompt) {
-		effective = append(effective, activePrompt)
-	}
-
-	return effective
 }
 
 // reduceNonEssentialViewports shrinks non-essential docked viewports toward their

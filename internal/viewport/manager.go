@@ -1315,8 +1315,6 @@ const (
 	EventCursorPositioned
 	EventGhostCursorSet
 	EventGhostCursorCleared
-	EventStatPeekChanged
-	EventPromptPeekChanged
 )
 
 // Event represents a viewport manager event.
@@ -1352,10 +1350,6 @@ type Manager struct {
 	// (see the main layout). TODO: support additional tiling modes (split
 	// panes, side-by-side, etc.) instead of only showing the last-focused one.
 	lastNormalViewport *Viewport
-
-	// Peek offsets for viewing hidden viewports
-	StatPeek   int // For top-docked viewports
-	PromptPeek int // For bottom-docked viewports
 
 	// Viewport type counters for auto-naming
 	mainBufferCount   int
@@ -2155,72 +2149,6 @@ func (m *Manager) CreatePromptViewport(prompt, defaultValue string, callback fun
 	m.mu.Unlock()
 
 	return id
-}
-
-// StatPeekUp increases visibility of top dock viewports.
-func (m *Manager) StatPeekUp() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	topViewports := m.getViewportsByDockLocked(DockTop)
-	if m.StatPeek < len(topViewports)-1 {
-		m.StatPeek++
-		go m.emit(Event{
-			Type:     EventStatPeekChanged,
-			NewValue: m.StatPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// StatPeekDown decreases visibility of top dock viewports.
-func (m *Manager) StatPeekDown() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.StatPeek > 0 {
-		m.StatPeek--
-		go m.emit(Event{
-			Type:     EventStatPeekChanged,
-			NewValue: m.StatPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// PromptPeekUp increases visibility of bottom dock viewports.
-func (m *Manager) PromptPeekUp() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.PromptPeek > 0 {
-		m.PromptPeek--
-		go m.emit(Event{
-			Type:     EventPromptPeekChanged,
-			NewValue: m.PromptPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// PromptPeekDown decreases visibility of bottom dock viewports.
-func (m *Manager) PromptPeekDown() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	bottomViewports := m.getViewportsByDockLocked(DockBottom)
-	if m.PromptPeek < len(bottomViewports)-1 {
-		m.PromptPeek++
-		go m.emit(Event{
-			Type:     EventPromptPeekChanged,
-			NewValue: m.PromptPeek,
-		})
-		return true
-	}
-	return false
 }
 
 // getViewportsByDockLocked is the internal version without locking.

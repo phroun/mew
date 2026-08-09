@@ -147,6 +147,12 @@ type Editor struct {
 	// performRender, read by viewportAt — both on the editor goroutine.
 	mainTiles []viewport.ViewportLayout
 
+	// stackTabCounters maps a viewport id to the "[i/n]" stack-tab counter
+	// applyTilerGeometry stamped into its top-left message last frame, so the
+	// next frame can clear a stale counter (a tab that was unstacked or is no
+	// longer the shown one) without disturbing a message set by anything else.
+	stackTabCounters map[string]string
+
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
 	pageSizeSpec pageSizeSpec
@@ -1258,13 +1264,6 @@ func New(cfg Config) (*Editor, error) {
 		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
-	// Peek-indicator labels run through the shared TFC engine so codes like
-	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
-	// resolve to live bindings too).
-	renderer.SetPeekLabelResolver(func(raw string) string {
-		return plugins.ExpandTFC(raw, e.peekBindingValues(), e.tfcKeyResolver("", ""))
-	})
-
 	// The shipped grammar pack resolves through the mew: tree's read-only
 	// system/embedded layers (no copy into ~/.mew), then load the configured
 	// grammar and give the renderer its per-line colorizer.
@@ -1370,30 +1369,7 @@ func (e *Editor) applyMacOptionKeys() {
 func (e *Editor) renderModebar(w *viewport.Viewport, screenWidth int) string {
 	e.Modebar.SetActiveSequence(e.ActiveSequence)
 	e.Modebar.SetCompletions(e.activeCompletions)
-	e.Modebar.SetBindingValues(e.peekBindingValues())
 	return e.Modebar.RenderContent(w, screenWidth)
-}
-
-// peekBindingCommands maps the modebar engine's peek codes to the commands
-// whose live key binding they display.
-var peekBindingCommands = map[string]string{
-	"SPU": "stat_peek_up",
-	"SPD": "stat_peek_down",
-	"PPU": "prompt_peek_up",
-	"PPD": "prompt_peek_down",
-}
-
-// peekBindingValues resolves the peek %CODE%s (SPU/SPD/PPU/PPD) to the key
-// currently bound to each peek command, for the modebar substitution engine and
-// the peek-indicator labels. Mappings are editor-global today; the resolver
-// runs at render time, so if per-viewport keymaps are ever added the focused
-// viewport's map is the natural source.
-func (e *Editor) peekBindingValues() map[string]string {
-	vals := make(map[string]string, len(peekBindingCommands))
-	for code, cmd := range peekBindingCommands {
-		vals[code] = e.KeyForCommand(cmd)
-	}
-	return vals
 }
 
 // caretHidden reports whether the hardware caret should be withheld for a
@@ -3353,23 +3329,6 @@ func (e *Editor) registerCommands() {
 			e.announceFocusedViewport()
 		}
 		return pawscript.BoolStatus(ok)
-	})
-
-	// Peek commands
-	ps.RegisterCommand("stat_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekUp())
-	})
-
-	ps.RegisterCommand("stat_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekDown())
-	})
-
-	ps.RegisterCommand("prompt_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekUp())
-	})
-
-	ps.RegisterCommand("prompt_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekDown())
 	})
 
 	// Help toggle command
@@ -8014,23 +7973,48 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	vp := e.ensureTiler()
 	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
+	tiles := vp.Tiles()
+	stackSel := e.stackSelectedTabs(vp, tiles)
+
+	// Clear last frame's stack-tab counters that no longer apply, leaving any
+	// message some other feature owns untouched (only clear our own text).
+	for id, msg := range e.stackTabCounters {
+		if w := e.ViewportManager.GetViewport(id); w != nil && w.MessageTopInner == msg {
+			w.MessageTopInner = ""
+		}
+	}
+	e.stackTabCounters = nil
+
 	focusedTile := vp.GetFocus()
 	mainTop := layout.TopHeight
 	mains := make([]viewport.ViewportLayout, 0, 4)
-	for _, b := range vp.Tiles() {
+	for _, b := range tiles {
 		w := e.ViewportManager.GetViewport(b.Ref)
 		if w == nil {
 			continue // empty/blank tile
+		}
+		// mew draws no tab strip yet, so a stacked group reserves nothing
+		// (SetStackReserve defaults to 0) and the shown tab already fills its box.
+		// Until there's a real strip, put a "[i/n]" counter in the viewport's
+		// top-left message so a flat stack is at least legible.
+		rect := b.Rect
+		if st, ok := stackSel[b.Tile]; ok {
+			msg := fmt.Sprintf("[%d/%d]", st.index+1, st.count)
+			w.MessageTopInner = msg
+			if e.stackTabCounters == nil {
+				e.stackTabCounters = make(map[string]string)
+			}
+			e.stackTabCounters[w.ID] = msg
 		}
 		// Snap each tile to integer cell edges by rounding its LEFT and RIGHT
 		// (and TOP/BOTTOM) edges, then taking the span. Rounding edges rather
 		// than truncating width keeps adjacent tiles flush and the rightmost/
 		// bottommost tile reaching the workspace edge, so a fractional split
 		// (e.g. an 81-column area halved) never leaves a one-cell gap.
-		x0 := int(math.Round(b.Rect.X))
-		x1 := int(math.Round(b.Rect.X + b.Rect.W))
-		y0 := int(math.Round(b.Rect.Y))
-		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		x0 := int(math.Round(rect.X))
+		x1 := int(math.Round(rect.X + rect.W))
+		y0 := int(math.Round(rect.Y))
+		y1 := int(math.Round(rect.Y + rect.H))
 		// Geometry rides on the tile (this layout entry): a viewport shown in
 		// several tiles gets a distinct frame per tile, and the renderer applies
 		// each just before painting it. The viewport's own FrameX/FrameWidth are
@@ -8048,6 +8032,53 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		})
 	}
 	layout.MainLayout = mains
+}
+
+// stackTabInfo is a shown stack tab's position within its stack (0-based index
+// and total tab count), used to stamp the "[i/n]" counter.
+type stackTabInfo struct {
+	index, count int
+}
+
+// stackSelectedTabs maps the leaf handle of each FLAT stack's shown tab to its
+// tab position. Only flat stacks (every tab a single leaf) are annotated: a tab
+// that is itself a split shows more than one leaf in the box and its selected
+// handle isn't a leaf tile, so it wouldn't match anyway — those wait for a real
+// tab strip. A stack's shown tab is flat when exactly one visible tile falls
+// inside the stack's box (its buried tabs are hidden, so Tiles omits them).
+func (e *Editor) stackSelectedTabs(vp *ifitfits.Viewport, tiles []ifitfits.Box) map[ifitfits.Handle]stackTabInfo {
+	stacks := vp.Stacks()
+	if len(stacks) == 0 {
+		return nil
+	}
+	inside := func(r ifitfits.Rect, b ifitfits.Box) bool {
+		cx := b.Rect.X + b.Rect.W/2
+		cy := b.Rect.Y + b.Rect.H/2
+		return cx >= r.X && cx <= r.X+r.W && cy >= r.Y && cy <= r.Y+r.H
+	}
+	out := map[ifitfits.Handle]stackTabInfo{}
+	for _, s := range stacks {
+		sel := -1
+		for i, tb := range s.Tabs {
+			if tb.Selected {
+				sel = i
+			}
+		}
+		if sel < 0 {
+			continue
+		}
+		n := 0
+		for _, b := range tiles {
+			if inside(s.Rect, b) {
+				n++
+			}
+		}
+		if n != 1 {
+			continue // the shown tab is a split, not a single leaf
+		}
+		out[s.Tabs[sel].Tile] = stackTabInfo{index: sel, count: len(s.Tabs)}
+	}
+	return out
 }
 
 // Run starts the editor with an optional filename.

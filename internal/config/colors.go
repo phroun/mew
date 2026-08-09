@@ -47,7 +47,6 @@ var defaultGlobalColors = map[string]string{
 	"cursorghost":         "\x1b[0;30;100m",  // black on dark gray
 	"cursoroffscreen":     "\x1b[0;30;42m",   // black on green
 	"truncation":          "\x1b[0;37;41m",   // silver on red
-	"hint":                "\x1b[0;97;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
 	"marks":               "\x1b[0;91m",      // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
