@@ -3110,7 +3110,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.cycleBuffer(1))
 	})
 
-	ps.RegisterCommand("buffer_prev", func(ctx *pawscript.Context) pawscript.Result {
+	ps.RegisterCommand("buffer_prior", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.cycleBuffer(-1))
 	})
 
