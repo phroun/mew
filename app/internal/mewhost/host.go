@@ -450,6 +450,7 @@ bar=new menubar children={%s
 	new menu caption="File Buffer" wellknown="file" children={
 		new menuitem caption="New &Empty Buffer" action=mew.buffer.new
 		new menuitem caption="&Open File Buffer..." action=mew.buffer.open
+		new menuitem caption="&List Buffers..." action=mew.buffer.list
 		new menuitem caption="Inse&rt File at Cursor..." action=mew.buffer.read
 		new menuitem caption="Dupli&cate Buffer" action=mew.buffer.duplicate
 		new menuitem caption="Close Prompt/Viewport" action=mew.buffer.close
@@ -675,6 +676,7 @@ var menuActions = map[string]menuAction{
 	// File Buffer
 	"mew.buffer.new":       {"buffer_new", "^B E"},
 	"mew.buffer.open":      {"buffer_open_file", "^B O"},
+	"mew.buffer.list":      {"buffer_list", "^B L"},
 	"mew.buffer.read":      {"buffer_insert_file", "^B R"},
 	"mew.buffer.duplicate": {"buffer_duplicate", "^B C"},
 	"mew.buffer.close":     {"cancel|viewport_close", "^C"},
