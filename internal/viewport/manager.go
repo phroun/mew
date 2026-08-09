@@ -1109,31 +1109,35 @@ func newBinding(buf *buffer.Buffer) viewBinding {
 	return b
 }
 
-// ReplaceHistoryTombstone replaces every nav-history binding (back, forward, and
-// graveyard) whose buffer is `old` with a fresh binding on `tomb`, releasing the
-// replaced binding's cursors so `old` stops tracking them. The tombstone binding
-// carries read-only + link-browse view state, so navigating back to it shows the
-// "closed" placeholder with its Re-open link as a focusable button. The ACTIVE
-// binding is left untouched — callers handle the active view separately. Reports
-// how many entries were replaced.
-func (w *Viewport) ReplaceHistoryTombstone(old, tomb *buffer.Buffer) int {
+// ReplaceHistoryBuffer replaces every nav-history binding (back, forward, and
+// graveyard) whose buffer is `old` with a fresh binding on `repl`, releasing the
+// replaced binding's cursors so `old` stops tracking them, and stamping the given
+// view state (read-only / link-browse / browse-active) onto each new binding so
+// navigating back to it restores that state. The ACTIVE binding is left untouched
+// — callers handle the active view separately. Reports how many entries were
+// replaced.
+//
+// It drives both directions of the buffer_close tombstone feature: planting
+// mew:/closed tombstones over a closed buffer (read-only, link-browse), and
+// restoring the reopened buffer over those tombstones (its resolved doc state).
+func (w *Viewport) ReplaceHistoryBuffer(old, repl *buffer.Buffer, readOnly, linkBrowsing, browse bool) int {
 	n := 0
-	repl := func(stack []viewBinding) {
+	do := func(stack []viewBinding) {
 		for i := range stack {
 			if stack[i].Buffer == old {
 				stack[i].release()
-				b := newBinding(tomb)
-				b.readOnly = true
-				b.linkBrowsing = true
-				b.browseActive = true
+				b := newBinding(repl)
+				b.readOnly = readOnly
+				b.linkBrowsing = linkBrowsing
+				b.browseActive = browse
 				stack[i] = b
 				n++
 			}
 		}
 	}
-	repl(w.navBack)
-	repl(w.navFwd)
-	repl(w.navGrave)
+	do(w.navBack)
+	do(w.navFwd)
+	do(w.navGrave)
 	return n
 }
 

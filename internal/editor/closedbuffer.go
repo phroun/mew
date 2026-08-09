@@ -62,6 +62,7 @@ func (e *Editor) followClosedReopen(target string) bool {
 	if w == nil || target == "" {
 		return false
 	}
+	tomb := w.Buffer // the tombstone we are re-opening from
 	buf := e.findOpenBuffer(target)
 	if buf == nil {
 		loaded, err := e.loadBuffer(target)
@@ -72,11 +73,41 @@ func (e *Editor) followClosedReopen(target string) bool {
 		}
 		buf = loaded
 	}
-	e.swapBuffer(w, buf)
+	// Replace the tombstone with the reopened buffer in this viewport in place —
+	// no history hop, the tombstone is being undone, not navigated away from —
+	// then re-resolve view state for an ordinary document (replaceBuffer, unlike
+	// swapBuffer, leaves the tombstone's read-only/browse state behind).
+	e.replaceBuffer(w, buf)
+	w.BrowseActive = false
+	if !w.IsOptionOverridden("readonly") {
+		e.applyResolvedOption(w, "readonly")
+	}
+	if !w.IsOptionOverridden("linkbrowsing") {
+		e.applyResolvedOption(w, "linkbrowsing")
+	}
+	// Un-tombstone every OTHER slot that was this same tombstone (one tombstone is
+	// shared across all of a name's closed references), so re-opening restores the
+	// buffer everywhere it used to be, not only where the reader clicked.
+	if tomb != nil && isGenPath(tomb.GetFilename()) {
+		e.reopenTombstoneEverywhere(tomb, buf, w.ViewState.ReadOnly, w.ViewState.LinkBrowsing, w.BrowseActive)
+	}
 	e.ensureCursorVisible(w)
 	e.ShowNotificationTagged("→ "+displayPath(target), "navigate")
 	e.RequestRender()
 	return true
+}
+
+// reopenTombstoneEverywhere restores buf over every nav-history slot still
+// holding the shared tombstone, across all viewports, then unburies buf (the
+// sweep may have planted a graveyard binding on it). Reports how many slots were
+// restored.
+func (e *Editor) reopenTombstoneEverywhere(tomb, buf *buffer.Buffer, readOnly, linkBrowsing, browse bool) int {
+	n := 0
+	for _, v := range e.ViewportManager.AllViewports() {
+		n += v.ReplaceHistoryBuffer(tomb, buf, readOnly, linkBrowsing, browse)
+	}
+	e.unburyEverywhere(buf)
+	return n
 }
 
 // closeBufferEverywhere is the buffer_close command: close the focused viewport's
@@ -144,7 +175,9 @@ func (e *Editor) doCloseBufferEverywhere(target *buffer.Buffer) bool {
 	tomb := e.newClosedPlaceholder(name)
 	planted := 0
 	for _, v := range e.ViewportManager.AllViewports() {
-		planted += v.ReplaceHistoryTombstone(target, tomb)
+		// Tombstone bindings open read-only in link-browse mode, so the Re-open
+		// link is a focusable button when navigated back to.
+		planted += v.ReplaceHistoryBuffer(target, tomb, true, true, true)
 	}
 
 	// 3. Nothing references the buffer now (its active views closed, its history

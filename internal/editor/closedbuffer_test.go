@@ -88,3 +88,54 @@ func TestBufferCloseTombstonesHistory(t *testing.T) {
 		t.Error("fileA's history slot should have become a mew:/closed tombstone")
 	}
 }
+
+// Re-opening a closed buffer restores it over EVERY history slot that held its
+// (shared) tombstone, not just the one the reader clicked.
+func TestReopenRestoresAllTombstones(t *testing.T) {
+	e, w1 := newTestEditor(t, "A\n")
+	fileA := w1.Buffer
+
+	pick := func(v *viewport.Viewport, pred func(*buffer.Buffer) bool) *buffer.Buffer {
+		for _, b := range v.StackedBuffers() {
+			if pred(b) {
+				return b
+			}
+		}
+		return nil
+	}
+	isTomb := func(b *buffer.Buffer) bool { return b.GetFilename() == closedPlaceholderURL }
+
+	mk := func() *viewport.Viewport {
+		id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+			Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, Buffer: fileA,
+		})
+		v := e.ViewportManager.GetViewport(id)
+		e.swapBuffer(v, buffer.NewFromString("other\n")) // fileA -> v's back history
+		return v
+	}
+	w2, w3 := mk(), mk()
+
+	e.ViewportManager.SetFocus(w1.ID)
+	e.executeCommand("buffer_close")
+
+	tomb := pick(w2, isTomb)
+	if tomb == nil {
+		t.Fatal("w2 should hold a tombstone after close")
+	}
+	if pick(w3, isTomb) != tomb {
+		t.Fatal("both viewports should share the one tombstone for the name")
+	}
+
+	buf := buffer.NewFromString("reopened\n")
+	if n := e.reopenTombstoneEverywhere(tomb, buf, false, false, false); n != 2 {
+		t.Errorf("re-open should restore both slots, got %d", n)
+	}
+	for _, v := range []*viewport.Viewport{w2, w3} {
+		if pick(v, func(b *buffer.Buffer) bool { return b == tomb }) != nil {
+			t.Error("no tombstone should remain in history after re-open")
+		}
+		if pick(v, func(b *buffer.Buffer) bool { return b == buf }) == nil {
+			t.Error("the re-opened buffer should be restored in history")
+		}
+	}
+}
