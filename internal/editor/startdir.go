@@ -36,7 +36,7 @@ func (e *Editor) ensureUsefulStartDir() {
 		return os.Chdir(dir) == nil
 	}
 	if w := e.ViewportManager.LastMainViewport(); w != nil && w.Buffer != nil {
-		if fn := e.normalizeDocPath(w.Buffer.GetFilename()); fn != "" && !isMewPath(fn) {
+		if fn := e.normalizeDocPath(w.Buffer.GetFilename()); fn != "" && !isBoxPath(fn) {
 			if _, err := os.Stat(fn); err == nil && chdir(filepath.Dir(fn)) {
 				return
 			}

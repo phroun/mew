@@ -54,10 +54,10 @@ func TestCanonicalURLRoundTripsToTheSamePath(t *testing.T) {
 	}
 }
 
-// A mew:/// document may have no local path at all, so the scheme is checked
+// A box:/// document may have no local path at all, so the scheme is checked
 // rather than assumed.
 func TestLocalPathFromURLRejectsOtherSchemes(t *testing.T) {
-	for _, url := range []string{"mew:///help/start.txt", "help:/start.txt", "", "notes.txt"} {
+	for _, url := range []string{"box:///help/start.txt", "help:/start.txt", "", "notes.txt"} {
 		if p, ok := LocalPathFromURL(url); ok {
 			t.Errorf("LocalPathFromURL(%q) = %q, true; want false", url, p)
 		}

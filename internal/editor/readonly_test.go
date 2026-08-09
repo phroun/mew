@@ -60,6 +60,31 @@ func TestReadOnlyBlocksEdits(t *testing.T) {
 	}
 }
 
+// del_char_prior / del_char_next decline on a read-only buffer (no edit) but,
+// unlike every other mutation, WITHOUT the "Buffer is read-only" toast — a key
+// as ordinary as backspace should not nag. Other edits still warn.
+func TestDeleteCharSilentOnReadOnly(t *testing.T) {
+	e, w := newTestEditor(t, "abc\n")
+	w.ViewState.ReadOnly = true
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
+
+	for _, cmd := range []string{"del_char_prior", "del_char_next"} {
+		e.executeCommand(cmd)
+		if got := docContent(w); got != "abc" {
+			t.Fatalf("%q edited a read-only buffer: %q", cmd, got)
+		}
+		if hasWarning(e, "read-only") {
+			t.Fatalf("%q must NOT show the read-only toast", cmd)
+		}
+	}
+
+	// A different edit on the same read-only buffer still warns.
+	e.executeCommand(`insert "X"`)
+	if !hasWarning(e, "read-only") {
+		t.Fatal("other edits must still warn on a read-only buffer")
+	}
+}
+
 // Read-only allows navigation, marks, and search; only edits are blocked. And
 // clearing readOnly restores editing.
 func TestReadOnlyAllowsNavAndMarksAndUnlock(t *testing.T) {

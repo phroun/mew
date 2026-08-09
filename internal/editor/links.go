@@ -104,6 +104,16 @@ func (e *Editor) swapBuffer(w *viewport.Viewport, buf *buffer.Buffer) {
 		return e.bufferReferencedElsewhere(b, w)
 	})
 	e.unburyEverywhere(buf)
+	// SwapBuffer mints a fresh binding but leaves ViewState as the departed buffer
+	// left it. Re-resolve read-only for the new buffer (unless the viewport has an
+	// explicit override) so a mew:/ surface's read-only — which it sets on the
+	// viewport for the indicator, editing itself being blocked by address — can't
+	// stick to an ordinary, editable buffer the reader follows to. Global
+	// read-only mode and any class/grammar/overlay read-only re-resolve to true,
+	// so this only clears a value nothing configured.
+	if w != nil && !w.IsOptionOverridden("readonly") {
+		e.applyResolvedOption(w, "readonly")
+	}
 }
 
 // replaceBuffer swaps w to buf in place WITHOUT growing the nav history (see
@@ -131,9 +141,12 @@ func (e *Editor) unburyEverywhere(buf *buffer.Buffer) {
 // to the binding the viewport last swapped away from (nav_history_prior),
 // dir > 0 re-advances (nav_history_next). Reports false when there is no
 // history in that direction, so command chains fall through.
-func (e *Editor) navHistory(dir int) bool {
+func (e *Editor) navHistory(dir int, always bool) bool {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Type == viewport.PromptViewport {
+		return false
+	}
+	if !always && !e.navHistoryGatePasses(w) {
 		return false
 	}
 	var ok bool
@@ -154,6 +167,31 @@ func (e *Editor) navHistory(dir int) bool {
 	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
+}
+
+// navHistoryGatePasses is the always=false gate for nav_history_prior. It mirrors
+// nav_follow's focused-button gate — only the actively focused link button of the
+// FOCUSED viewport lets it act, so a fallthrough chain yields to editing — with
+// one relaxation: a READ-ONLY document already in navigation mode passes even when
+// the caret is not on a link. There is nothing to edit in a read-only document,
+// so the key is free to mean "go back" without first landing on a button.
+//
+// The focused-button check is focusedLinkButton, which itself requires w to BE
+// the focused viewport (plus browse mode and the caret on a link), so a focused
+// link in some other open document can never satisfy this.
+func (e *Editor) navHistoryGatePasses(w *viewport.Viewport) bool {
+	if w.BrowseActive && e.viewportReadOnly(w) {
+		return true
+	}
+	return e.focusedLinkButton(w) != nil
+}
+
+// viewportReadOnly reports whether edits through w are refused — its ReadOnly
+// state or a generated (mew:/) surface that is read-only by address. Silent,
+// unlike viewportEditLocked, so it can gate without emitting a warning.
+func (e *Editor) viewportReadOnly(w *viewport.Viewport) bool {
+	return w != nil && (w.ViewState.ReadOnly ||
+		(w.Buffer != nil && isGenPath(w.Buffer.GetFilename())))
 }
 
 // navClearVisited (the nav_clear command) forgets every visited link,
@@ -276,6 +314,13 @@ func (e *Editor) recordLinkVisit(srcBuf *buffer.Buffer, target string, res follo
 // on an UNFOCUSED (but visible) viewport. w navigates in place (or spawns per
 // the resolution), never gaining or losing focus here.
 func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
+	// A link inside a generated mew: surface is not an ordinary document
+	// reference: hand its target to the surface's follow handler, which turns it
+	// into an operation (go to a buffer, switch a tile's viewport, …).
+	if handled, isSurface := e.followGeneratedSurfaceLink(w, span.Target); isSurface {
+		e.RequestRender()
+		return handled
+	}
 	res := e.resolveFollow(w, span.Target)
 
 	if res.url == "" {
@@ -325,13 +370,13 @@ func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 		if res.root != "" {
 			nw.BrowseActive = nw.ViewState.LinkBrowsing
 		}
-		e.ShowNotification("→ " + displayPath(res.url))
+		e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 		e.RequestRender()
 		return true
 	}
 	if buf == w.Buffer {
 		// Self-link: nothing to swap (and no history entry to create).
-		e.ShowNotification("Already here: " + span.Target)
+		e.ShowNotificationTagged("Already here: "+span.Target, "navigate")
 		e.RequestRender()
 		return true
 	}
@@ -341,7 +386,7 @@ func (e *Editor) followLinkSpan(w *viewport.Viewport, span *linkSpan) bool {
 	// tabbing onward in the destination page.
 	w.BrowseActive = true
 	e.ensureCursorVisible(w)
-	e.ShowNotification("→ " + displayPath(res.url))
+	e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 	e.RequestRender()
 	return true
 }
@@ -411,7 +456,7 @@ func (e *Editor) openWikiScheme(ref string, focus bool) (*viewport.Viewport, boo
 		nw.WikiRoot = res.root
 		nw.WikiName = res.wikiName
 		nw.BrowseActive = nw.ViewState.LinkBrowsing
-		e.ShowNotification("→ " + displayPath(res.url))
+		e.ShowNotificationTagged("→ "+displayPath(res.url), "navigate")
 		e.RequestRender()
 		return nw, true
 	}
@@ -746,9 +791,37 @@ func (e *Editor) navVert(dir int) bool {
 		e.RequestRender()
 		return true
 	}
-	// No further link on the current screen: page, and treat that as success.
-	// Paging clears NavIdealSet (via afterVerticalMovement), so save/restore it
-	// — a page is part of the same vertical run.
+	// No further link on the current screen. If the page can turn — there is
+	// content beyond the visible window in the travel direction — turn it and land
+	// on the newly revealed content. If it cannot (at the document edge, or the
+	// whole buffer fits on screen), just nudge the caret ONE line in the travel
+	// direction from where it is, off any link: a single opposite press then
+	// brings it straight back to the button it left, instead of flinging it into a
+	// void that takes many presses to climb out of.
+	lastLine := w.Buffer.GetLineCount() - 1
+	if canTurn := (dir > 0 && bottom < lastLine) || (dir < 0 && top > 0); !canTurn {
+		cur := w.CursorPos()
+		nl := cur.Line + dir
+		if nl < 0 {
+			nl = 0
+		}
+		if nl > lastLine {
+			nl = lastLine
+		}
+		nr := cur.Rune
+		if ll := e.getEffectiveLineLen(w.Buffer, nl); nr > ll {
+			nr = ll
+		}
+		w.SetCursorPos(viewport.Position{Line: nl, Rune: nr})
+		w.HasGhostCursor = false
+		e.ensureCursorVisible(w)
+		e.RequestRender()
+		return true
+	}
+
+	// The page can turn. Paging clears NavIdealSet (via afterVerticalMovement),
+	// so save/restore it — a page is part of the same vertical run.
+	oldTop, oldBottom := top, bottom
 	saved, wasSet := w.NavIdealCol, w.NavIdealSet
 	if dir > 0 {
 		e.pageDown()
@@ -757,6 +830,58 @@ func (e *Editor) navVert(dir int) bool {
 	}
 	e.trackMove()
 	w.NavIdealCol, w.NavIdealSet = saved, wasSet
+
+	// The visible window after the page turn.
+	newTop := w.ViewState.ViewOffsetY
+	newBottom := newTop + w.ContentHeight - 1
+	if newBottom > lastLine {
+		newBottom = lastLine
+	}
+	// The first line that was NOT visible before the page turn: just past the old
+	// bottom going down, just before the old top going up. Clamped into the new
+	// window (a page that could not scroll — already at an end — pins it there).
+	boundary := oldBottom + 1
+	if dir < 0 {
+		boundary = oldTop - 1
+	}
+	if boundary < newTop {
+		boundary = newTop
+	}
+	if boundary > newBottom {
+		boundary = newBottom
+	}
+	if boundary < 0 {
+		boundary = 0
+	}
+
+	// Prefer a link on the newly revealed content — scan in the travel direction
+	// starting from the FIRST line that was not visible before the turn
+	// (inclusive), so a partial page turn (overlap) never backtracks to a button
+	// above the previous caret. Land on the first link line by the run's ideal
+	// column, so vertical nav continues from a focused button. With no link in
+	// the revealed content, land on that first revealed line itself. target is
+	// the run's ideal column, established at the top of navVert.
+	land, landRune := boundary, 0
+	if dir > 0 {
+		for L := boundary; L <= newBottom; L++ {
+			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+				land = L
+				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
+				break
+			}
+		}
+	} else {
+		for L := boundary; L >= newTop; L-- {
+			if spans := e.linkSpansOnLine(w, L); len(spans) > 0 {
+				land = L
+				landRune = e.pickLinkByDisplayColumn(w, L, spans, target, dir, tabSize).Start + 1
+				break
+			}
+		}
+	}
+	w.SetCursorPos(viewport.Position{Line: land, Rune: landRune})
+	w.HasGhostCursor = false
+	e.ensureCursorVisible(w)
 	e.RequestRender()
 	return true
 }

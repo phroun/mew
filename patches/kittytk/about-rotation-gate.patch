@@ -1,0 +1,217 @@
+diff --git a/kittytk/objects/trinkets/desktop.go b/kittytk/objects/trinkets/desktop.go
+index 7db88f4..858bdef 100644
+--- a/kittytk/objects/trinkets/desktop.go
++++ b/kittytk/objects/trinkets/desktop.go
+@@ -240,6 +240,12 @@ type Desktop struct {
+ 	// a remaining window is promoted onto the primary surface.
+ 	soloPrimaryHost *window.TearOffHost
+ 
++	// aboutBox is the built-in About KittyTK dialog while it is open, so the
++	// R-key rotation easter egg can be gated to its focus (see
++	// aboutBoxFocused, wired onto the platform in RunOn). Cleared when the
++	// dialog closes. Guarded by d.mu.
++	aboutBox *window.Window
++
+ 	// soloHosting is true while a window is being lifted onto the primary
+ 	// surface. The lift removes the window from the manager, which fires
+ 	// the removed-hook; this flag stops that internal removal from being
+@@ -445,6 +451,30 @@ func (d *Desktop) showAboutDesktop() {
+ 		y = metrics.RoundDownToCellY(y)
+ 	}
+ 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
++
++	// Track it while open so the R-key rotation easter egg can be gated to its
++	// focus (aboutBoxFocused). Clear the reference when it closes.
++	d.mu.Lock()
++	d.aboutBox = &mb.Window
++	d.mu.Unlock()
++	mb.Window.AddOnClosed(func() {
++		d.mu.Lock()
++		if d.aboutBox == &mb.Window {
++			d.aboutBox = nil
++		}
++		d.mu.Unlock()
++	})
++}
++
++// aboutBoxFocused reports whether the built-in About KittyTK dialog is open and
++// is the active window. It is the gate for the R-key rotation easter egg (wired
++// onto the platform in RunOn), so the effect is reachable only from that dialog
++// and R stays an ordinary key everywhere else.
++func (d *Desktop) aboutBoxFocused() bool {
++	d.mu.RLock()
++	ab := d.aboutBox
++	d.mu.RUnlock()
++	return ab != nil && ab.IsActive()
+ }
+ 
+ // SetBackend sets the render backend and initializes related components.
+@@ -3025,6 +3055,14 @@ func (d *Desktop) RunOn(p platform.Platform) int {
+ 		surface.SetHandler(&desktopSurfaceHandler{d: d})
+ 		d.setupTearOff(pf, surface)
+ 
++		// Offer the rotation easter egg's focus gate to any platform that has
++		// one (the SDL/WebGPU host). The anonymous interface keeps trinkets
++		// free of an sdl-specific dependency; a platform without rotation
++		// simply doesn't implement it.
++		if rg, ok := pf.(interface{ SetRotationTriggerGate(func() bool) }); ok {
++			rg.SetRotationTriggerGate(d.aboutBoxFocused)
++		}
++
+ 		size := surface.Size()
+ 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+ 
+diff --git a/kittytk/objects/trinkets/desktop_aboutrotation_test.go b/kittytk/objects/trinkets/desktop_aboutrotation_test.go
+new file mode 100644
+index 0000000..74731a3
+--- /dev/null
++++ b/kittytk/objects/trinkets/desktop_aboutrotation_test.go
+@@ -0,0 +1,80 @@
++package trinkets
++
++import (
++	"testing"
++
++	"github.com/phroun/kittytk/backend/raster"
++	"github.com/phroun/kittytk/core"
++	"github.com/phroun/kittytk/platform"
++)
++
++// rotGatePlatform records the rotation-trigger gate the desktop wires onto the
++// platform, standing in for the SDL/WebGPU host's SetRotationTriggerGate.
++type rotGatePlatform struct {
++	*msPlatform
++	gate func() bool
++}
++
++func (p *rotGatePlatform) Run(init func(platform.Platform)) int {
++	init(p)
++	if p.msPlatform.script != nil {
++		p.msPlatform.script()
++	}
++	return 0
++}
++
++func (p *rotGatePlatform) SetRotationTriggerGate(fn func() bool) { p.gate = fn }
++
++// The R-key rotation easter egg must be gated to the About KittyTK dialog: the
++// desktop wires aboutBoxFocused onto the platform, and that predicate is true
++// only while the About box is open AND the active window — so R does nothing in
++// the editor, and stops rotating the moment focus leaves the dialog.
++func TestAboutBoxRotationGate(t *testing.T) {
++	t.Cleanup(func() { core.SetTextMeasurer(nil) })
++	px, _ := raster.New(800, 480)
++	d := NewDesktop()
++	d.SetBackend(px)
++
++	plat := &rotGatePlatform{msPlatform: &msPlatform{}}
++	plat.msPlatform.script = func() {
++		if plat.gate == nil {
++			t.Fatal("desktop did not wire the rotation gate onto the platform")
++		}
++		if plat.gate() {
++			t.Fatal("gate is true with no About box open")
++		}
++
++		d.showAboutDesktop()
++		if !plat.gate() {
++			t.Fatal("gate is false while the About box is open and active")
++		}
++
++		// Focus moving off the dialog closes the gate (R must not keep the
++		// screen spinning from another window).
++		d.WindowManager().DeactivateActiveWindow()
++		if plat.gate() {
++			t.Fatal("gate stayed true after the About box lost focus")
++		}
++
++		// Closing the dialog clears the tracked reference.
++		d.mu.RLock()
++		ab := d.aboutBox
++		d.mu.RUnlock()
++		if ab == nil {
++			t.Fatal("About box reference was dropped before close")
++		}
++		ab.Close()
++		d.mu.RLock()
++		cleared := d.aboutBox == nil
++		d.mu.RUnlock()
++		if !cleared {
++			t.Fatal("About box reference not cleared on close")
++		}
++		if plat.gate() {
++			t.Fatal("gate is true after the About box closed")
++		}
++
++		d.QuitWithCode(0)
++	}
++	d.RunOn(plat)
++}
+diff --git a/kittytk/sdl/platform_sdl.go b/kittytk/sdl/platform_sdl.go
+index 178b9dc..0ce617d 100644
+--- a/kittytk/sdl/platform_sdl.go
++++ b/kittytk/sdl/platform_sdl.go
+@@ -71,6 +71,11 @@ type Platform struct {
+ 	rotationActivationTime      time.Time
+ 	rotationDeactivationTime    time.Time
+ 	rotationAngleAtDeactivation float64
++	// rotationGate, when set, must return true for the R-key rotation easter
++	// egg to fire. The desktop wires it to "the About box is focused", so the
++	// effect is reachable only from that dialog and R stays an ordinary key
++	// everywhere else. Nil means never (no host opted in).
++	rotationGate func() bool
+ 
+ 	main *nativeWin
+ 	wins map[uint32]*nativeWin // by SDL window ID, main included
+@@ -197,17 +202,19 @@ func (p *Platform) SetAppName(name string) {
+ var macAboutHandler func()
+ 
+ func (p *Platform) SetAboutHandler(fn func()) {
+-	macAboutHandler = func() {
+-		// Enable rotation effect when About is clicked
+-		if !p.rotationEnabled.Load() {
+-			p.rotationEnabled.Store(true)
+-			p.rotationStartTime = time.Now() // Reset start time
+-		}
+-		// Call the original handler
+-		if fn != nil {
+-			fn()
+-		}
+-	}
++	// This retargets the macOS application-menu About item; it just shows the
++	// host's About dialog. (It used to also start the rotation easter egg, but
++	// that fired on the system menu item rather than the desktop's own About
++	// box - the egg is now the R key gated to that box, see the key handler.)
++	macAboutHandler = fn
++}
++
++// SetRotationTriggerGate sets the predicate the R-key rotation easter egg is
++// gated on: R only toggles rotation while this returns true. The desktop wires
++// it to "the About box is focused" so the effect can't be triggered from
++// ordinary typing. A nil gate (the default) disables the egg entirely.
++func (p *Platform) SetRotationTriggerGate(fn func() bool) {
++	p.rotationGate = fn
+ }
+ 
+ func (p *Platform) SetScale(scale int) {
+@@ -1223,7 +1230,11 @@ func (p *Platform) pumpEvents() bool {
+ 				// Check for rotation trigger (R key) - toggles on/off.
+ 				// Only supported by renderers with rotation capability
+ 				// (WebGPU); works in plain-present AND compositor modes.
+-				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) {
++				// Gated: it fires only while the rotationGate says so (the
++				// desktop points it at "the About box is focused"), so R stays
++				// an ordinary key in the editor and everywhere else.
++				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) &&
++					p.rotationGate != nil && p.rotationGate() {
+ 					enabled := !p.rotationEnabled.Load()
+ 					p.rotationEnabled.Store(enabled)
+ 
+@@ -1252,6 +1263,7 @@ func (p *Platform) pumpEvents() bool {
+ 
+ 					// The animation needs frames even while input is idle.
+ 					s.Invalidate(core.UnitRect{})
++					continue // Consumed by the easter egg; don't also type "r".
+ 				}
+ 
+ 				if p.fontZoomKey(e.Keysym) {

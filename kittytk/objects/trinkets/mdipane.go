@@ -1354,6 +1354,19 @@ func (m *MDIPane) Paint(p *core.Painter) {
 				Height: visibleBounds.Height,
 			}
 
+			// Drop shadow first, then the window over it. An MDI child
+			// paints into its ancestor surface — inside the compositor
+			// layer its parent window occupies — so it has no layer of
+			// its own for the compositor to shadow. Painting it here,
+			// interleaved in z-order, is also what makes a stack of
+			// children shade each other correctly: each shadow lands on
+			// everything below it and is covered by everything above.
+			//
+			// Clipped to the pane, like the window itself: a shadow may
+			// spill past a child at the pane's edge, never past the pane.
+			shadowPainter := ip.WithClip(clientArea)
+			shadowPainter.DropShadow(winBounds, core.WindowDropShadow)
+
 			windowPainter := ip.WithOffset(winBounds.X, winBounds.Y).
 				WithClip(localClip)
 			win.Paint(windowPainter)
@@ -1365,6 +1378,35 @@ func (m *MDIPane) Paint(p *core.Painter) {
 // When an MDI child window is active, MDIPane forwards ALL keyboard events
 // to that window, including Tab and Shift+Tab. This ensures focus stays
 // within the active window until the user clicks elsewhere or closes it.
+// HandleTextEditing forwards an input method's composition to the active
+// child window. The pane is the focused trinket in ITS window's focus
+// manager, so without this the composition would stop here - the same
+// reason HandleKeyPress forwards.
+func (m *MDIPane) HandleTextEditing(event core.TextEditingEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextEditing(event)
+}
+
+// HandlePaste forwards pasted text to the active child window. The pane is the
+// focused trinket in ITS window's focus manager, so without this the paste
+// would stop here — the same reason HandleTextEditing forwards.
+func (m *MDIPane) HandlePaste(event core.PasteEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandlePaste(event)
+}
+
 func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
 	active := m.activeWindow

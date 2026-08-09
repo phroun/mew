@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/phroun/argwild"
@@ -63,6 +64,73 @@ import (
 //	shell                                  — the login shell, bare
 //	shell "--pty=pipe_only -- -l -i"       — a login, interactive shell
 //	shell "-c \"make test\""               — one command through it
+//
+// sizeMode governs how a session's LOGICAL size is chosen — the size the child
+// process is told it has, independent of how large the visible tile is. The
+// zero value follows the focused tile, which is what every session did before
+// these switches existed.
+type sizeMode int
+
+const (
+	sizeFollow  sizeMode = iota // default: logical size tracks the focused tile
+	sizeExact                   // --size / --hidden: pin the logical size
+	sizeMinimum                 // --minimum: logical = max(tile, floor)
+)
+
+// captureRung selects a session's capture fidelity — WHEN and HOW MUCH of its
+// output is folded into its buffer (see docs/pty-capture.md). The zero value is
+// "unspecified" so a future config default can be told apart from an explicit
+// off; today unspecified resolves to off (Editor.resolveCapture).
+type captureRung int
+
+const (
+	captureUnset captureRung = iota // not given → inherit the default (today: off)
+	captureOff                      // explicitly disabled, overrides a default
+	captureRaw                      // M1: the raw byte stream (not implemented yet)
+	captureFinal                    // M2: final scrollback + used screen, at death
+	captureLines                    // M3: transcript as lines scroll off (not yet)
+	captureLive                     // M4: live in-place screen mirror
+)
+
+// captureFormat selects how much escape detail a capture keeps. The default
+// keeps everything; --plain drops visual styling (SGR); --text drops all VT
+// escapes. Meaningful only alongside a rung.
+type captureFormat int
+
+const (
+	captureFull  captureFormat = iota // keep everything (default)
+	capturePlain                      // strip SGR (CSI-m), keep positioning
+	captureText                       // strip all escapes → plain text
+)
+
+// streamRoute is where one of a child's standard streams is sourced from or
+// sent to — the user-facing --stdin/--stdout/--stderr surface (and the --inblock
+// / --outblock shorthands). Any route other than routeUnset/routePTY makes the
+// request a FILTER: the child runs on pipes so mew can feed and read the streams
+// itself, rather than a terminal.
+type streamRoute int
+
+const (
+	routeUnset     streamRoute = iota // not given → resolved from the other routes
+	routePTY                          // the terminal surface (a normal terminal stream)
+	routeNull                         // discarded (output) / empty, immediate EOF (stdin)
+	routeBlock                        // the marked block: fed from it (stdin) or replacing it (stdout/stderr)
+	routeOutBuffer                    // a new "output" document buffer
+	routeErrBuffer                    // a new "error" document buffer
+)
+
+// filtering reports whether any stream is routed somewhere other than the
+// terminal — the signal that this request is a filter (pipes), not a terminal.
+func (spec execSpec) filtering() bool {
+	for _, r := range []streamRoute{spec.Stdin, spec.Stdout, spec.Stderr} {
+		switch r {
+		case routeNull, routeBlock, routeOutBuffer, routeErrBuffer:
+			return true
+		}
+	}
+	return false
+}
+
 type execSpec struct {
 	// Method is --pty=NAME: which way the host should make the terminal. mew
 	// attaches no meaning to it and forwards the string (see PTYRequest).
@@ -75,6 +143,34 @@ type execSpec struct {
 	// program. Set by the `shell` command, and it changes the parse: no
 	// operand becomes the program, so every one of them is an argument.
 	Shell bool
+
+	// SizeMode and SizeCols/SizeRows carry the --size / --minimum / --hidden
+	// switches: how the session's logical size is governed and, for the two
+	// that pin or floor it, to what. sizeFollow (the zero value) leaves the
+	// size to the focused tile, exactly as before. Hidden additionally asks
+	// for a session with no visible surface — a full terminal that simply is
+	// not painted; it implies an exact size, there being no tile to take one
+	// from.
+	SizeMode           sizeMode
+	SizeCols, SizeRows int
+	Hidden             bool
+
+	// Capture is the fidelity rung (--capture=off|raw|final|lines|live), and
+	// CaptureFormat how much escape detail it keeps (--plain / --text; full by
+	// default). captureUnset (the zero value) means "not given" — resolved to the
+	// default at request time — kept distinct from an explicit off.
+	Capture       captureRung
+	CaptureFormat captureFormat
+
+	// Stdin/Stdout/Stderr route the child's standard streams (--stdin / --stdout
+	// / --stderr, plus the --inblock / --outblock shorthands). routeUnset (the
+	// zero value) leaves the stream to its default: a terminal when nothing is
+	// routed, or the filter defaults (empty stdin, an output/error document) when
+	// something is. Any non-terminal route turns the request into a filter —
+	// see filtering() and resolveRoutes.
+	Stdin  streamRoute
+	Stdout streamRoute
+	Stderr streamRoute
 }
 
 // parseExecLine parses a composited exec command line.
@@ -200,12 +296,40 @@ func (spec *execSpec) applyNamed(named map[string]interface{}) error {
 func (spec *execSpec) applyOwnSwitch(sw argwild.Switch) error {
 	v, ok := sw.First()
 	if !ok {
-		return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", sw.Name)
+		// A valueless switch (--hidden). Options that mean something on their
+		// own take it; the rest still say they need a value, preserving the old
+		// refusal for a mistyped --pty.
+		if err := spec.setBareOption(sw.Name); err != nil {
+			return fmt.Errorf("%v (put the child's own switches after --)", err)
+		}
+		return nil
 	}
 	if err := spec.setOption(sw.Name, v.AsString()); err != nil {
 		return fmt.Errorf("%v (put the child's own switches after --)", err)
 	}
 	return nil
+}
+
+// setBareOption consumes a switch written with no value.
+func (spec *execSpec) setBareOption(name string) error {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "hidden":
+		return spec.setOption("hidden", "")
+	case "capture":
+		return spec.setOption("capture", "")
+	case "plain":
+		return spec.setOption("plain", "")
+	case "text":
+		return spec.setOption("text", "")
+	case "inblock":
+		// Shorthand for --stdin=block: feed the marked block to the child's stdin.
+		return spec.setOption("stdin", "block")
+	case "outblock":
+		// Shorthand for --stdout=block: replace the marked block with the child's
+		// stdout, streamed in place.
+		return spec.setOption("stdout", "block")
+	}
+	return fmt.Errorf("--%s needs a value, e.g. --pty=pipe_only", name)
 }
 
 // setOption is the ONE place an option name is understood, so the switch form
@@ -226,11 +350,223 @@ func (spec *execSpec) setOption(name, value string) error {
 		// program is simply the first operand.
 		spec.Program = strings.TrimSpace(value)
 		return nil
+	case "size":
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		return spec.setSizePolicy(sizeExact, c, r)
+	case "minimum":
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		return spec.setSizePolicy(sizeMinimum, c, r)
+	case "hidden":
+		// Hidden is a visibility flag, orthogonal to size. Bare --hidden (or
+		// hidden: true) turns it on and, with no size of its own, implies 80x25
+		// (see sizePolicy); a WxH value turns it on AND pins that exact size,
+		// composing with the size machinery; an explicit falsehood is off, so a
+		// script can pass hidden: false to mean "not hidden".
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "", "true", "on", "yes", "1":
+			spec.Hidden = true
+			return nil
+		case "false", "off", "no", "0":
+			spec.Hidden = false
+			return nil
+		}
+		c, r, err := parseWxH(value)
+		if err != nil {
+			return err
+		}
+		spec.Hidden = true
+		return spec.setSizePolicy(sizeExact, c, r)
+	case "capture":
+		// The capture RUNG: how much of the session's output is folded into its
+		// buffer, and when (docs/pty-capture.md). A bare --capture, or
+		// capture: true, means final; --plain / --text pick the format.
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "", "final", "on", "true", "yes", "1":
+			spec.Capture = captureFinal
+		case "off", "none", "false", "no", "0":
+			spec.Capture = captureOff
+		case "raw":
+			spec.Capture = captureRaw
+		case "lines":
+			spec.Capture = captureLines
+		case "live":
+			spec.Capture = captureLive
+		default:
+			return fmt.Errorf("--capture must be off, raw, final, lines, or live")
+		}
+		return nil
+	case "plain":
+		return spec.setCaptureFormat(capturePlain, value)
+	case "text":
+		return spec.setCaptureFormat(captureText, value)
+	case "stdin":
+		r, err := parseStreamRoute("stdin", value, false)
+		if err != nil {
+			return err
+		}
+		spec.Stdin = r
+		return nil
+	case "stdout":
+		r, err := parseStreamRoute("stdout", value, true)
+		if err != nil {
+			return err
+		}
+		spec.Stdout = r
+		return nil
+	case "stderr":
+		r, err := parseStreamRoute("stderr", value, true)
+		if err != nil {
+			return err
+		}
+		spec.Stderr = r
+		return nil
 	}
 	if spec.Shell {
 		return fmt.Errorf("unknown shell option %q", name)
 	}
 	return fmt.Errorf("unknown exec option %q", name)
+}
+
+// setCaptureFormat records --plain or --text, refusing a second: they are two
+// points on one strip scale, so giving both is a contradiction, not a silent
+// last-one-wins. They take no value; an explicit falsehood (text: false) is a
+// no-op so a script can pass it through.
+func (spec *execSpec) setCaptureFormat(f captureFormat, value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "false", "off", "no", "0":
+		return nil
+	case "", "true", "on", "yes", "1":
+		// a plain flag
+	default:
+		return fmt.Errorf("--plain/--text take no value")
+	}
+	if spec.CaptureFormat != captureFull && spec.CaptureFormat != f {
+		return fmt.Errorf("only one of --plain, --text may be given")
+	}
+	spec.CaptureFormat = f
+	return nil
+}
+
+// setSizePolicy records a logical-size decision — --size, --minimum, or the
+// size carried by --hidden=WxH — refusing a second: they all govern the same
+// single logical size, so two on one line is a contradiction to be told about,
+// not a silent last-one-wins. Hidden is orthogonal (a visibility flag) and is
+// set separately, so it composes with any of these.
+func (spec *execSpec) setSizePolicy(mode sizeMode, cols, rows int) error {
+	if spec.SizeMode != sizeFollow {
+		return fmt.Errorf("only one logical size may be given (--size, --minimum, or --hidden=WxH)")
+	}
+	spec.SizeMode = mode
+	spec.SizeCols, spec.SizeRows = cols, rows
+	return nil
+}
+
+// parseStreamRoute reads a --stdin/--stdout/--stderr value. output marks the
+// output streams (stdout/stderr), which accept the new-buffer sinks; stdin is a
+// source only (block, pty, or null).
+func parseStreamRoute(name, value string, output bool) (streamRoute, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pty", "terminal", "tty":
+		return routePTY, nil
+	case "null", "none", "discard":
+		return routeNull, nil
+	case "block":
+		return routeBlock, nil
+	case "outbuffer", "out":
+		if output {
+			return routeOutBuffer, nil
+		}
+	case "errbuffer", "err":
+		if output {
+			return routeErrBuffer, nil
+		}
+	}
+	if output {
+		return routeUnset, fmt.Errorf("--%s must be block, outbuffer, errbuffer, pty, or null", name)
+	}
+	return routeUnset, fmt.Errorf("--%s must be block, pty, or null", name)
+}
+
+// resolveRoutes fills a filter's default routing and refuses the combinations it
+// cannot honor. Called only when spec.filtering(). Unspecified streams take the
+// filter defaults — empty stdin, a new output document for stdout, a new error
+// document for stderr. A stream left on the terminal cannot be blended with
+// piped ones yet (the host wires all one way), and the single marked block can
+// be replaced by only one output stream.
+func (spec *execSpec) resolveRoutes() error {
+	if spec.Stdin == routeUnset {
+		spec.Stdin = routeNull
+	}
+	if spec.Stdout == routeUnset {
+		spec.Stdout = routeOutBuffer
+	}
+	if spec.Stderr == routeUnset {
+		spec.Stderr = routeErrBuffer
+	}
+	for _, r := range []streamRoute{spec.Stdin, spec.Stdout, spec.Stderr} {
+		if r == routePTY {
+			return fmt.Errorf("a stream set to pty cannot be mixed with filter streams yet")
+		}
+	}
+	// stdout and stderr may BOTH replace the block: they funnel through one
+	// shared, serialized write cursor, so they merge into the block by arrival
+	// order (block_filter's stdin=stdout=stderr=block does exactly this).
+	return nil
+}
+
+// parseWxH reads a COLSxROWS size like "80x25". Either axis may be 0 or omitted
+// — "80x", "x24", "0x24", "80x0" — which pins the given axis and lets the other
+// follow the tile: purfecterm reads a logical 0 on an axis as "use the physical
+// dimension", so the free axis tracks the surface while the pinned one holds.
+// At least one axis must be positive, though: a terminal with zero of BOTH is
+// not a smaller terminal, it is a broken one, and the mistake is worth naming.
+func parseWxH(value string) (cols, rows int, err error) {
+	v := strings.TrimSpace(value)
+	i := strings.IndexAny(v, "xX")
+	if i < 0 {
+		return 0, 0, fmt.Errorf("size must look like COLSxROWS, e.g. 80x25 (either axis may be 0 to follow the tile)")
+	}
+	if cols, err = parseSizeAxis(v[:i]); err != nil {
+		return 0, 0, fmt.Errorf("size width must be a non-negative number, e.g. 80x25")
+	}
+	if rows, err = parseSizeAxis(v[i+1:]); err != nil {
+		return 0, 0, fmt.Errorf("size height must be a non-negative number, e.g. 80x25")
+	}
+	if cols == 0 && rows == 0 {
+		return 0, 0, fmt.Errorf("size needs at least one axis, e.g. 80x25, 80x0, or x24")
+	}
+	return cols, rows, nil
+}
+
+// parseSizeAxis reads one axis of a size: an empty string is 0 ("follow the tile
+// on this axis"), and any explicit value must be a non-negative integer.
+func parseSizeAxis(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("not a non-negative number")
+	}
+	return n, nil
+}
+
+// sizePolicy carries the parsed size + hidden decision onto the request path
+// (see ptySizePolicy in pty.go). A hidden session with no size of its own has no
+// visible tile to follow, so it takes a definite default of 80x25.
+func (spec execSpec) sizePolicy() ptySizePolicy {
+	mode, cols, rows := spec.SizeMode, spec.SizeCols, spec.SizeRows
+	if spec.Hidden && mode == sizeFollow {
+		mode, cols, rows = sizeExact, 80, 25
+	}
+	return ptySizePolicy{mode: mode, cols: cols, rows: rows, hidden: spec.Hidden}
 }
 
 // operandArgs turns one operand into child arguments.

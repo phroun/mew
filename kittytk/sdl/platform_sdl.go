@@ -4,22 +4,25 @@ package sdl
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	sdl2 "github.com/veandco/go-sdl2/sdl"
+	gputypes "github.com/gogpu/gputypes"
+	wgpu "github.com/gogpu/wgpu" // Native, zero-cgo WebGPU dependency
+	_ "github.com/gogpu/wgpu/hal/allbackends"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/platform"
 )
 
-// Platform runs KittyTK over SDL2 windows: each surface is an OS
-// window with its own raster backend, SDL presents and feeds input.
-// All callbacks on the OS-locked main thread per D21.
+// Platform runs KittyTK over SDL3 windows with pluggable renderer backend.
+// All callbacks execute on the OS-locked main thread.
 type Platform struct {
 	title    string
 	appName  string // OS application name (macOS menu bar / task switcher); "" = SDL default
@@ -28,9 +31,7 @@ type Platform struct {
 	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
 	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
-	// defaultFontSize is the CONFIGURED font size (the SetFontSize value):
-	// the target the Command/Meta+0 zoom chord restores, however far the
-	// live fontSize has been zoomed from it.
+	// defaultFontSize is the CONFIGURED font size (the SetFontSize value)
 	defaultFontSize int
 
 	mu     sync.Mutex
@@ -41,61 +42,144 @@ type Platform struct {
 	exitCode atomic.Int32
 
 	backend *raster.Backend // main window's framebuffer
+	seed    *raster.Backend
 
-	// seed is the backend EnsureBackend created before Run. Embedders hold
-	// it beyond Run (Desktop.SetBackend reads its metrics and PxPerUnit for
-	// torn-surface geometry) while resizes replace the window backends, so
-	// a live font zoom must keep ITS font size current too or every
-	// unit<->pixel conversion made through it goes stale.
-	seed *raster.Backend
+	// Rendering backend (software or WebGPU)
+	renderer Renderer
+
+	// WebGPU-specific fields (only used when renderer is WebGPURenderer)
+	// These will eventually be moved entirely into WebGPURenderer
+	gpuInstance                 *wgpu.Instance
+	gpuAdapter                  *wgpu.Adapter
+	gpuDevice                   *wgpu.Device
+	gpuQueue                    *wgpu.Queue
+	blitPipeline                *wgpu.RenderPipeline
+	blitSampler                 *wgpu.Sampler
+	blitLayout                  *wgpu.BindGroupLayout
+	blitUniformBuffer           *wgpu.Buffer
+	blitUniformLayout           *wgpu.BindGroupLayout
+	blitUniformBindGroup        *wgpu.BindGroup
+	cubePipeline                *wgpu.RenderPipeline
+	cubeVertexBuffer            *wgpu.Buffer
+	cubeIndexBuffer             *wgpu.Buffer
+	cubeUniformBuffer           *wgpu.Buffer
+	cubeUniformLayout           *wgpu.BindGroupLayout
+	cubeUniformBindGroup        *wgpu.BindGroup
+	cubeLayout                  *wgpu.BindGroupLayout
+	rotationStartTime           time.Time
+	rotationEnabled             atomic.Bool
+	rotationActivationTime      time.Time
+	rotationDeactivationTime    time.Time
+	rotationAngleAtDeactivation float64
+	// rotationGate, when set, must return true for the R-key rotation easter
+	// egg to fire. The desktop wires it to "the About box is focused", so the
+	// effect is reachable only from that dialog and R stays an ordinary key
+	// everywhere else. Nil means never (no host opted in).
+	rotationGate func() bool
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
-	// System mouse cursors, created on demand and cached by shape. cursorSet
-	// gates reassertCursor: only re-apply once a cursor has actually been set.
-	cursors   map[core.CursorShape]*sdl2.Cursor
+	// System mouse cursors, created on demand and cached by shape.
+	cursors   map[core.CursorShape]*sdl3.Cursor
 	cursorSet bool
 
-	// FPS overlay in the OS title bar (kittytk-sdl [window] fps=true): count
-	// presented frames and, once a second, rewrite the main window's title to
-	// "<title> - N fps". main-thread only, so no locking.
+	// FPS overlay in the OS title bar
 	showFPS   bool
 	fpsFrames int
 	fpsSince  time.Time
 
-	// vsync selects whether presents sync to the display refresh. On by
-	// default; turning it off uncaps the burn loop (see SetShowFPS) so fps can
-	// read the raw render throughput.
+	// vsync selects whether presents sync to the display refresh.
 	vsync bool
 }
 
-// SetShowFPS enables the render frame-rate readout in the main window's OS
-// title bar. Off by default. Call before Run.
+// SetShowFPS enables the render frame-rate readout in the main window's OS title bar.
 func (p *Platform) SetShowFPS(on bool) { p.showFPS = on }
 
-// SetVSync selects whether presents sync to the display refresh. On by
-// default; call before Run/EnsureBackend. Off lets fps=true read uncapped
-// throughput (and removes the refresh-rate cap generally).
+// SetVSync selects whether presents sync to the display refresh.
 func (p *Platform) SetVSync(on bool) { p.vsync = on }
 
-// nativeWin bundles one OS window with its presentation chain.
+// nativeWin bundles one OS window with its GoGPU hardware presentation chain.
 type nativeWin struct {
-	window   *sdl2.Window
-	renderer *sdl2.Renderer
-	texture  *sdl2.Texture
+	window *sdl3.Window
+
+	// WebGPU rendering (when using webgpu renderer)
+	gpuSurface   *wgpu.Surface
+	config       *wgpu.SurfaceConfiguration
+	uiTexture    *wgpu.Texture     // VRAM container matching your framebuffer dimensions
+	depthTexture *wgpu.Texture     // Depth buffer for 3D rendering
+	depthView    *wgpu.TextureView // View for depth texture
+
+	// Software rendering (when using software renderer)
+	renderer *sdl3.Renderer
+	texture  *sdl3.Texture
+
+	// Common fields
 	backend  *raster.Backend
+	uiBuffer *wgpu.Buffer // Staging buffer (WebGPU only, unused now)
 	surface  *sdlSurface
 	id       uint32
 
 	// shapeRadiusPx > 0 shapes the OS window with rounded corners
-	// (borderless torn-off windows); reapplied on every resize.
 	shapeRadiusPx int
 
-	// transparent marks a window with real per-pixel alpha (macOS):
-	// the framebuffer's alpha-0 corners composite through, so no
-	// shape mask is needed and the frame's antialiasing survives.
+	// wantRadiusPx is the corner radius this window should have when it is
+	// floating (borderless and not maximized), in device pixels at the
+	// current font size. It is the source of truth that survives maximize
+	// (which squares the corners) and font zoom (which rescales the radius);
+	// applyWindowShape reads it to (re)apply the shape. 0 means the window is
+	// never rounded (a plain bordered window).
+	wantRadiusPx int
+
+	// appliedShapePx is the radius applyWindowShape last applied (-1 before its
+	// first call), so an ordinary resize — which changes neither the radius nor
+	// the maximized/borderless state — doesn't needlessly re-round the window
+	// and thrash the layer. Zoom (radius changes) and maximize/restore (radius
+	// flips to/from 0) still re-apply.
+	appliedShapePx int
+
+	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
+
+	// layerRadiusPx > 0 asks Core Animation to keep this window's layer
+	// non-opaque (and rounds it, where that has any effect);
+	// re-applied per present because surface configuration can reset
+	// layer state.
+	layerRadiusPx int
+
+	// cornerRadiusPx > 0 rounds the window by clearing the corner
+	// pixels of every painted frame — the mechanism that actually
+	// shapes the window, independent of renderer and platform.
+	cornerRadiusPx int
+
+	// painted tracks what the backend's pixels currently show, so a
+	// frame can tell "nothing about this surface changed" from "repaint
+	// it". pixelsDirty says those pixels have not reached the GPU yet.
+	//
+	// This is what makes dragging a torn-off window cheap. The move
+	// arrives as input, the handler invalidates after every input event,
+	// and without this the whole window repainted and re-uploaded per
+	// mouse move to produce the picture already on screen.
+	// frameCaret is the platform-caret request the COMPOSITOR gathered
+	// this frame. Child windows and overlays paint into textures of
+	// their own, so their requests never reach the painter the base
+	// layer applies; the compositor collects them and the platform
+	// applies the winner to the surface. frameCaretSet distinguishes
+	// "no layer asked for it" (hide) from "the compositor did not run".
+	frameCaret    core.TextCaret
+	frameCaretSet bool
+
+	// baseCaret is the caret request from the BASE layer's own paint —
+	// desktop chrome, or a torn window's frame. The compositor seeds the
+	// frame's caret from it so chrome can hold the caret when no layer
+	// above asks for it.
+	baseCaret core.TextCaret
+
+	painted        paintSignature
+	paintedAt      time.Time
+	paintedBackend *raster.Backend
+	pixelsDirty    bool
+	paintedValid   bool
 }
 
 type timerEntry struct {
@@ -103,38 +187,51 @@ type timerEntry struct {
 	fn  func()
 }
 
-// New creates an SDL platform; the main window has the given pixel size.
-func New(title string, widthPx, heightPx int) *Platform {
-	return &Platform{title: title, wPx: widthPx, hPx: heightPx, scale: 1, vsync: true, wins: map[uint32]*nativeWin{}}
+// New creates an SDL + WebGPU composite platform.
+// New creates an SDL platform with the specified renderer backend.
+// rendererType should be "software" or "webgpu".
+func New(title string, widthPx, heightPx int, rendererType string) (*Platform, error) {
+	// Create renderer
+	renderer, err := NewRenderer(rendererType, true) // vsync default true
+	if err != nil {
+		return nil, fmt.Errorf("failed to create %s renderer: %w", rendererType, err)
+	}
+
+	return &Platform{
+		title:             title,
+		wPx:               widthPx,
+		hPx:               heightPx,
+		scale:             1,
+		vsync:             true,
+		renderer:          renderer,
+		wins:              map[uint32]*nativeWin{},
+		cursors:           map[core.CursorShape]*sdl3.Cursor{},
+		rotationStartTime: time.Now(),
+	}, nil
 }
 
-// SetAppName sets the OS application name - on macOS the name shown in the
-// application (first) menu of the system menu bar and, where the OS uses it, the
-// task switcher. Empty leaves SDL's default (the executable/process name). Call
-// before Run.
 func (p *Platform) SetAppName(name string) {
 	p.appName = name
 }
 
-// macAboutHandler backs the macOS application-menu "About" item (see
-// SetAboutHandler). Package-level because the Cocoa menu-action callback
-// (kittytkAboutClicked) reaches it from C with no receiver.
 var macAboutHandler func()
 
-// SetAboutHandler wires the native macOS application menu's "About <app>" item to
-// fn, replacing the standard Cocoa about panel; fn runs on the main (platform)
-// thread when the item is chosen. No-op on other platforms and when fn is nil.
-// Call before Run — Run installs it once the menu exists. fn should schedule its
-// work via the platform/desktop post queue rather than touch UI state directly,
-// since it fires from AppKit's menu-tracking loop.
 func (p *Platform) SetAboutHandler(fn func()) {
+	// This retargets the macOS application-menu About item; it just shows the
+	// host's About dialog. (It used to also start the rotation easter egg, but
+	// that fired on the system menu item rather than the desktop's own About
+	// box - the egg is now the R key gated to that box, see the key handler.)
 	macAboutHandler = fn
 }
 
-// SetScale sets how many window pixels one abstract unit covers.
-// The raster backend renders glyphs at the scaled size (crisp, not
-// upsampled) and input coordinates are converted back to units. Call
-// before Run/EnsureBackend. Stopgap until DPI-derived scaling lands.
+// SetRotationTriggerGate sets the predicate the R-key rotation easter egg is
+// gated on: R only toggles rotation while this returns true. The desktop wires
+// it to "the About box is focused" so the effect can't be triggered from
+// ordinary typing. A nil gate (the default) disables the egg entirely.
+func (p *Platform) SetRotationTriggerGate(fn func() bool) {
+	p.rotationGate = fn
+}
+
 func (p *Platform) SetScale(scale int) {
 	if scale < 1 {
 		scale = 1
@@ -142,22 +239,10 @@ func (p *Platform) SetScale(scale int) {
 	p.scale = scale
 }
 
-// SetCellMetrics sets the root cell denomination applied to EVERY
-// surface's backend - the main window (including after a resize, which
-// recreates the framebuffer) and every torn-off/secondary window. Call
-// before EnsureBackend/Run. A zero value keeps the raster default 8x16.
-// font_size does NOT go through here (it scales the cell's pixel size,
-// not the denomination); see SetFontSize.
 func (p *Platform) SetCellMetrics(m core.CellMetrics) {
 	p.metrics = m
 }
 
-// SetFontSize sets the UI point size that fixes the cell's pixel size on
-// EVERY surface's backend (12pt = the base 8x16-pixel cell at zoom 1). It
-// scales pixels-per-unit, so layout is unchanged in units and only the
-// pixel size of every cell grows. Call before EnsureBackend/Run. The value
-// also becomes the CONFIGURED default the Command/Meta+0 zoom chord returns
-// to (see fontZoomKey); positive values are bounded to the zoom range.
 func (p *Platform) SetFontSize(size int) {
 	if size > 0 {
 		size = clampFontPt(size)
@@ -166,8 +251,6 @@ func (p *Platform) SetFontSize(size int) {
 	p.defaultFontSize = size
 }
 
-// applyMetrics re-seeds a freshly created backend with the platform's
-// denomination and font_size so its geometry matches every other surface.
 func (p *Platform) applyMetrics(b *raster.Backend) {
 	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
 		b.SetCellMetrics(p.metrics)
@@ -177,13 +260,8 @@ func (p *Platform) applyMetrics(b *raster.Backend) {
 	}
 }
 
-// Backend returns the main window's raster backend (valid after Run
-// starts; used by embedders that must seed desktop metrics before
-// RunOn).
 func (p *Platform) Backend() *raster.Backend { return p.backend }
 
-// EnsureBackend creates the main framebuffer early (before Run) so
-// Desktop.SetBackend can seed metrics from it.
 func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	if p.backend == nil {
 		b, err := raster.NewScaled(p.wPx, p.hPx, p.scale)
@@ -197,33 +275,110 @@ func (p *Platform) EnsureBackend() (*raster.Backend, error) {
 	return p.backend, nil
 }
 
+// The dynamic size is bounded to 4..100pt.
+const (
+	minFontPt = 4
+	maxFontPt = 100
+)
+
+// alphaPresentTest (KITTYTK_ALPHA_TEST=1) is a diagnostic: transparent
+// (per-pixel alpha) windows present a bare alpha-0 clear with no
+// content. A torn-off window that still shows as a black rectangle
+// proves the compositing chain below the renderer (CAMetalLayer / SDL
+// content view / NSWindow) is discarding alpha; a window that vanishes
+// entirely proves the chain honors alpha and any remaining opacity
+// comes from painted content.
+var alphaPresentTest = os.Getenv("KITTYTK_ALPHA_TEST") != ""
+
+// roundedCornerMechanism selects how a rounded borderless window gets
+// its corners cut, via KITTYTK_WINDOW_SHAPE:
+//
+//	"layer"    Core Animation clips the Metal layer itself with
+//	           cornerRadius + masksToBounds. The corner pixels are
+//	           never composited, so this does not depend on the
+//	           framebuffer's alpha surviving the swapchain - and CA
+//	           antialiases the curve. Requires a Metal layer, so it
+//	           applies to the WebGPU renderer only.
+//	"shape"    SDL's shaped-window alpha mask. SDL masks the window's
+//	           CONTENT VIEW, which is where SDL's OWN renderer draws -
+//	           so this is the mechanism for the software renderer. A
+//	           Metal-rendered window draws through a separate subview
+//	           layer on top of that view, which the mask cannot clip.
+//	"perpixel" the Cocoa route alone: a non-opaque NSWindow
+//	           compositing the framebuffer's alpha channel, with no
+//	           geometric clipping. Kept for experimentation; it has
+//	           never produced transparent corners here.
+//
+// The default follows the renderer: "layer" when a GPU device gives us
+// a Metal layer, else "shape". Off macOS there is no per-pixel window
+// alpha and no Metal layer, so the shaped window is the only mechanism.
+func (p *Platform) roundedCornerMechanism() string {
+	switch os.Getenv("KITTYTK_WINDOW_SHAPE") {
+	case "perpixel":
+		return "perpixel"
+	case "shape":
+		return "shape"
+	case "layer":
+		return "layer"
+	}
+	if platformPerPixelAlpha {
+		// macOS: the window/layer alpha arrangement. SDL's shaped-window
+		// API is gone in SDL3 (SetShape reports NONSHAPEABLE), so it is
+		// not a fallback here for either renderer.
+		return "layer"
+	}
+	return "shape"
+}
+
+// clampFontPt bounds a point size to the dynamic zoom range.
+func clampFontPt(size int) int {
+	if size < minFontPt {
+		return minFontPt
+	}
+	if size > maxFontPt {
+		return maxFontPt
+	}
+	return size
+}
+
 // Run implements platform.Platform.
 func (p *Platform) Run(init func(platform.Platform)) int {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	// The application name (macOS menu bar / task switcher) must be set before
-	// SDL initializes video, when it builds the Cocoa application menu. SDL
-	// otherwise falls back to the process name (here "mew-sdl").
 	if p.appName != "" {
-		_ = sdl2.SetHint("SDL_APP_NAME", p.appName)
+		_ = sdl3.SetHint("SDL_APP_NAME", p.appName)
 	}
 
-	if err := sdl2.Init(sdl2.INIT_VIDEO | sdl2.INIT_EVENTS); err != nil {
+	if err := sdl3.Init(sdl3.INIT_VIDEO | sdl3.INIT_EVENTS); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: SDL init failed: %v\n", err)
 		return 1
 	}
-	defer sdl2.Quit()
+	defer sdl3.Quit()
 
-	// Deliver the click that activates a background window to the app, so a
-	// press on a non-focused SDL window (a torn-off window or the desktop
-	// window, brought forward from another of ours or from another macOS
-	// app) still hits the control under the pointer instead of only raising
-	// the window. Off by default on macOS; read live at event time.
-	_ = sdl2.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
+	_ = sdl3.SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
 
-	win, err := p.createWindow(p.title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
-		p.wPx, p.hPx, sdl2.WINDOW_SHOWN|sdl2.WINDOW_RESIZABLE, 0)
+	// Initialize the renderer (WebGPU setup or software renderer setup)
+	if err := p.renderer.Initialize(); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to initialize renderer: %v\n", err)
+		return 1
+	}
+	defer p.renderer.Shutdown()
+
+	// For WebGPU renderer, expose GPU objects to Platform temporarily
+	// TODO: Remove this once full extraction is complete
+	p.exposeWebGPUObjects()
+
+	// 2. Create Master System UI Window Viewport Surface. It is created
+	// transparent-capable and RESIZABLE with a border; solo mode strips the
+	// border at runtime (SetBordered), and that is when it actually gets
+	// shaped and shadowed — a bordered window cannot be shaped, and its OS
+	// title bar owns the corners. The radius here only marks it shapeable and
+	// requests the transparent surface (which must be asked for at creation).
+	win, err := p.createWindow(p.title, sdl3.WINDOWPOS_CENTERED, sdl3.WINDOWPOS_CENTERED,
+		p.wPx, p.hPx, sdl3.WINDOW_SHOWN|sdl3.WINDOW_RESIZABLE, p.shapeRadiusPx())
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Failed to create window: %v\n", err)
 		return 1
 	}
 	p.main = win
@@ -234,33 +389,23 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		}
 	}()
 
-	// Retarget the macOS app menu's "About <app>" item now that SDL has built
-	// the menu (during Init/window creation), if a handler was set. No-op off
-	// macOS and when no handler was set.
 	if macAboutHandler != nil {
 		installAboutMenuHandler()
 	}
 
-	sdl2.StartTextInput()
+	// (Text input is started per window in createWindow — SDL3 scopes it
+	// to a window rather than the process.)
 
-	// Interactive resize runs a modal loop (macOS): PollEvent stalls
-	// until release and SDL stretches the stale texture meanwhile. An
-	// event WATCH fires from inside that loop, so the framebuffer can
-	// re-lay out and present live at every size change.
-	sdl2.AddEventWatchFunc(func(ev sdl2.Event, _ interface{}) bool {
-		if e, ok := ev.(*sdl2.WindowEvent); ok && e.Event == sdl2.WINDOWEVENT_SIZE_CHANGED {
-			// The main loop is frozen inside that modal loop, so its post-queue
-			// drain is stalled too - posted work can't land, and a live terminal
-			// (whose feed batches apply through Post) would sit on its last frame
-			// until release while the chrome around it reflows. Drain the queue
-			// on the main thread first (safe: the watch runs on the same, but
-			// blocked, main thread, and feed-applies push no SDL events) so that
-			// work lands, then resize. If the drain dirtied the surface at an
-			// unchanged size, liveResize won't have presented it - so do.
+	// Event watch hooks handle continuous redraw requests during active modal resize loops
+	sdl3.AddEventWatchFunc(func(ev sdl3.Event, _ interface{}) bool {
+		if e, ok := ev.(*sdl3.WindowEvent); ok && e.Event == sdl3.WindowResized {
 			p.drainPosts()
-			p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
-			if w, ok := p.wins[e.WindowID]; ok && w.surface != nil && w.surface.dirty.Swap(false) {
-				p.paintAndPresent(w, true)
+			if !p.liveResize(e.WindowID, int(e.Data1), int(e.Data2)) {
+				// Same-size event: liveResize didn't present, so keep the
+				// modal loop fed with a fresh frame ourselves.
+				if w, ok := p.wins[e.WindowID]; ok && w.window != nil {
+					p.presentWindow(w, true)
+				}
 			}
 		}
 		return true
@@ -270,6 +415,7 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		init(p)
 	}
 
+	// Main Display Server Loop Execution Pipeline
 	for !p.quitting.Load() {
 		p.drainPosts()
 		p.fireDueTimers()
@@ -280,19 +426,30 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 		delivered := p.pumpEvents()
 		p.reassertCursor()
 
+		// Check if any windows need rendering
+		anyDirty := false
 		for _, w := range p.wins {
 			s := w.surface
 			if s == nil {
 				continue
 			}
-			dirty := s.dirty.Swap(false)
-			// fps=true runs a continuous repaint (burn) loop on the main
-			// window so the reading reflects a steady render rate; otherwise
-			// only dirty surfaces repaint (on-demand). The burn loop always
-			// repaints in full.
-			burn := p.showFPS && w == p.main
-			if dirty || burn {
-				p.paintAndPresent(w, burn)
+			if s.dirty.Load() || (p.showFPS && w == p.main) {
+				anyDirty = true
+				break
+			}
+		}
+
+		if anyDirty {
+			for _, w := range p.wins {
+				s := w.surface
+				if s == nil {
+					continue
+				}
+				dirty := s.dirty.Swap(false)
+				burn := p.showFPS && w == p.main
+				if dirty || burn {
+					p.presentWindow(w, burn)
+				}
 			}
 		}
 
@@ -300,70 +457,218 @@ func (p *Platform) Run(init func(platform.Platform)) int {
 			p.updateFPSTitle()
 		}
 
-		// The burn loop must not sleep - vsync in the present chain paces it.
-		// On-demand mode idles at 5ms when nothing was delivered.
-		if !delivered && !p.showFPS {
-			sdl2.Delay(5)
+		// Always add a small delay to prevent event loop starvation
+		// Even when continuously rendering (rotation effects), we need to process events
+		if !delivered {
+			sdl3.Delay(5)
+		} else {
+			// Yield briefly even when events are flowing to prevent UI freeze
+			sdl3.Delay(1)
 		}
 	}
 	return int(p.exitCode.Load())
 }
 
 // createWindow builds one OS window with its presentation chain.
-// shapeRadiusPx > 0 creates a shapeable window and rounds its corners.
-func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags uint32, shapeRadiusPx int) (*nativeWin, error) {
-	w := &nativeWin{shapeRadiusPx: shapeRadiusPx}
+func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sdl3.WindowFlags, shapeRadiusPx int) (*nativeWin, error) {
+	// wantRadiusPx is the radius this window keeps as its source of truth; the
+	// live shapeRadiusPx tracks what is currently applied (0 while bordered or
+	// maximized). A window born borderless is shaped here; the main window is
+	// born bordered and gets shaped by SetBordered once solo mode strips it.
+	w := &nativeWin{shapeRadiusPx: shapeRadiusPx, wantRadiusPx: shapeRadiusPx, appliedShapePx: -1}
+	bornBorderless := flags&sdl3.WINDOW_BORDERLESS != 0
 	var err error
-	if shapeRadiusPx > 0 && !platformPerPixelAlpha {
-		// Shaped windows must be born shaped. Position is applied
-		// after creation (SDL's shaped-window position args are
-		// unreliable). Fall back to a plain window if shaping is
-		// unavailable on this video driver.
-		w.window, err = sdl2.CreateShapedWindow(title, 0, 0, uint32(wPx), uint32(hPx), flags)
-		if err == nil {
-			w.window.SetPosition(x, y)
-		} else {
+
+	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
+		// SDL's own shaped window: created shaped, masked in applyShape.
+		// SDL3: a window whose framebuffer alpha composites — the real
+		// per-pixel-alpha replacement for a masked shaped window, and
+		// unlike a shaped window it must be requested at creation.
+		w.window, err = sdl3.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
+		if err != nil {
 			w.shapeRadiusPx = 0
 		}
 	}
+
 	if w.window == nil {
-		w.window, err = sdl2.CreateWindow(title, x, y, int32(wPx), int32(hPx), flags)
+		winFlags := flags
+		if p.gpuDevice != nil && runtime.GOOS == "darwin" {
+			winFlags |= sdl3.WINDOW_METAL
+		}
+		// A rounded window needs its alpha to composite even when it is
+		// not created through the transparent path above.
+		if shapeRadiusPx > 0 {
+			winFlags |= sdl3.WINDOW_TRANSPARENT
+		}
+		w.window, err = sdl3.CreateWindow(title, x, y, wPx, hPx, winFlags)
 	}
+
 	if err != nil {
 		return nil, err
 	}
-	rendererFlags := uint32(sdl2.RENDERER_ACCELERATED)
-	if p.vsync {
-		rendererFlags |= sdl2.RENDERER_PRESENTVSYNC
-	}
-	w.renderer, err = sdl2.CreateRenderer(w.window, -1, rendererFlags)
-	if err != nil {
-		w.renderer, err = sdl2.CreateRenderer(w.window, -1, 0)
+
+	// The WebGPU presentation chain binds directly to the native window.
+	// The software renderer presents through SDL textures instead
+	// (Renderer.CreateWindowRenderer below) and skips all of this.
+	if p.gpuDevice != nil {
+		// 1. Native Surface Integration: Map the raw SDL window handle directly to WebGPU
+		// macOS hands over the CAMetalLayer; X11/Windows hand over display/window handles.
+		displayHandle, windowHandle, err := nativeSurfaceHandles(w.window)
 		if err != nil {
 			w.window.Destroy()
 			return nil, err
 		}
+
+		w.gpuSurface, err = p.gpuInstance.CreateSurface(displayHandle, windowHandle)
+		if err != nil || w.gpuSurface == nil {
+			w.window.Destroy()
+			return nil, fmt.Errorf("failed to bind WebGPU hardware surface to window context: %w", err)
+		}
+
+		// The standard format supported natively by both macOS Metal and Windows 11
+		surfaceFormat := wgpu.TextureFormatBGRA8Unorm
+
+		presentMode := wgpu.PresentModeFifo
+		if !p.vsync {
+			presentMode = wgpu.PresentModeImmediate
+		}
+
+		// A shaped window on a per-pixel-alpha platform (macOS) will be
+		// made transparent below; its surface must publish the alpha
+		// channel or the rounded corners composite as opaque black.
+		alphaMode := gputypes.CompositeAlphaModeOpaque
+		if w.shapeRadiusPx > 0 && platformPerPixelAlpha {
+			alphaMode = gputypes.CompositeAlphaModePremultiplied
+		}
+
+		w.config = &wgpu.SurfaceConfiguration{
+			Format:      surfaceFormat,
+			Usage:       wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageCopyDst,
+			AlphaMode:   alphaMode,
+			Width:       uint32(wPx),
+			Height:      uint32(hPx),
+			PresentMode: presentMode,
+		}
+
+		err = w.gpuSurface.Configure(p.gpuDevice, w.config)
+		if err != nil {
+			w.gpuSurface.Release()
+			w.window.Destroy()
+			return nil, fmt.Errorf("failed to configure surface: %w", err)
+		}
+
+		// 2. Initialize offscreen VRAM texture buffers for software framebuffer blitting
+		// Use BGRA format to match the surface format for direct copying
+		w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+			Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+			MipLevelCount: 1,
+			SampleCount:   1,
+			Dimension:     wgpu.TextureDimension2D,
+			Format:        wgpu.TextureFormatBGRA8Unorm,
+			Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+		})
+		if err != nil {
+			w.gpuSurface.Release()
+			w.window.Destroy()
+			return nil, err
+		}
+
+		// Size staging buffers to transfer raw pixel arrays from the raster framework to VRAM
+		paddedBytesPerRow := (wPx * 4) // RGBA format pixel scaling
+		w.uiBuffer, err = p.gpuDevice.CreateBuffer(&wgpu.BufferDescriptor{
+			Size:  uint64(paddedBytesPerRow * hPx),
+			Usage: wgpu.BufferUsageCopySrc | wgpu.BufferUsageMapWrite,
+		})
 	}
+
 	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
-		w.renderer.Destroy()
+		if w.uiTexture != nil {
+			w.uiTexture.Release()
+		}
+		if w.gpuSurface != nil {
+			w.gpuSurface.Release()
+		}
 		w.window.Destroy()
 		return nil, err
 	}
-	// Rounded corners, best mechanism first: per-pixel window alpha
-	// (macOS - antialiased, plain borderless window), else the binary
-	// shape mask on the shaped window created above.
-	if w.shapeRadiusPx > 0 && platformPerPixelAlpha && makeWindowTransparent(w.window) {
-		w.transparent = true
-		w.shapeRadiusPx = 0
+
+	if shapeRadiusPx > 0 && os.Getenv("KITTYTK_ALPHA_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr,
+			"kittytk-alpha: rounding request: radius=%dpx mechanism=%q perPixelAlpha=%v shapedWindow=%v\n",
+			shapeRadiusPx, p.roundedCornerMechanism(), platformPerPixelAlpha, w.shapeRadiusPx > 0)
 	}
-	w.applyShape()
-	w.id, _ = w.window.GetID()
+
+	if bornBorderless && w.shapeRadiusPx > 0 && platformPerPixelAlpha {
+		switch p.roundedCornerMechanism() {
+		case "layer":
+			// Core Animation clips the Metal layer itself. The window
+			// must still be non-opaque for the clipped-away corners to
+			// show what is behind them.
+			transparent := makeWindowTransparent(w.window)
+			rounded := roundWindowLayer(w.window, w.shapeRadiusPx)
+			if os.Getenv("KITTYTK_ALPHA_DEBUG") != "" {
+				fmt.Fprintf(os.Stderr,
+					"kittytk-alpha: layer rounding: transparent=%v layerFound=%v\n",
+					transparent, rounded)
+			}
+			if transparent {
+				w.transparent = true
+				w.cornerRadiusPx = w.shapeRadiusPx
+				if rounded {
+					w.layerRadiusPx = w.shapeRadiusPx
+				}
+				w.shapeRadiusPx = 0 // the frame's own pixels carry the shape
+			}
+		case "perpixel":
+			// The drawn frame's own alpha cuts the corners, with no
+			// Core Animation involvement at all.
+			if makeWindowTransparent(w.window) {
+				w.transparent = true
+				w.cornerRadiusPx = w.shapeRadiusPx
+				w.shapeRadiusPx = 0
+			}
+		}
+	}
+	w.id, _ = w.window.ID()
 	p.wins[w.id] = w
+
+	// Create renderer resources for this window (compositor texture)
+	if err := p.renderer.CreateWindowRenderer(w, wPx, hPx); err != nil {
+		// Non-fatal for software renderer, but log it
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to create window renderer resources: %v\n", err)
+	}
+
+	// Shape AFTER the renderer exists, matching the order in the
+	// known-good SDL shaped-window sequence (create shaped window,
+	// create renderer, then SetShape).
+	w.applyShape()
+
+	// A window born borderless and shaped gets its OS drop shadow now (the
+	// main window, born bordered, gets its shadow later via SetBordered). The
+	// shadow follows the shape and is click-through.
+	if bornBorderless && w.wantRadiusPx > 0 {
+		setWindowShadow(w.window, true)
+	}
+
+	// Text input is PER WINDOW in SDL3, and off until asked for. SDL2's
+	// SDL_StartTextInput() was global and on by default, so the port
+	// carried a single call for the main window — and every window made
+	// afterwards, every torn-off window, silently received no
+	// SDL_EVENT_TEXT_INPUT at all. Key events are a separate stream that
+	// is always on, which is why Tab and the arrows kept working and
+	// only typing was lost.
+	if err := sdl3.StartTextInput(w.window); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: text input unavailable for window %d: %v\n", w.id, err)
+	}
+
 	return w, nil
 }
 
-// destroy tears down one window's chain.
+// destroy tears down one window's hardware presentation chain.
 func (w *nativeWin) destroy() {
+	// Note: We can't call p.renderer.DestroyWindowRenderer here because we don't have access to Platform
+	// The renderer cleanup will happen when Platform shuts down
+
 	if w.texture != nil {
 		w.texture.Destroy()
 		w.texture = nil
@@ -372,14 +677,25 @@ func (w *nativeWin) destroy() {
 		w.renderer.Destroy()
 		w.renderer = nil
 	}
+	if w.uiTexture != nil {
+		w.uiTexture.Release()
+		w.uiTexture = nil
+	}
+	if w.uiBuffer != nil {
+		w.uiBuffer.Release()
+		w.uiBuffer = nil
+	}
+	if w.gpuSurface != nil {
+		w.gpuSurface.Release()
+		w.gpuSurface = nil
+	}
 	if w.window != nil {
 		w.window.Destroy()
 		w.window = nil
 	}
 }
 
-// sizeFramebuffer sizes one window's raster backend and streaming
-// texture.
+// sizeFramebuffer sizes one window's raster backend and streaming WebGPU textures.
 func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 	b, err := raster.NewScaled(wPx, hPx, p.scale)
 	if err != nil {
@@ -392,24 +708,106 @@ func (p *Platform) sizeFramebuffer(w *nativeWin, wPx, hPx int) error {
 		p.wPx, p.hPx = wPx, hPx
 	}
 
-	if w.texture != nil {
-		w.texture.Destroy()
+	// The fresh backend starts zero-filled, so the surface's damage
+	// tracking must be reset: without this the handler repaints only what
+	// it thinks changed, and the untouched area presents as black.
+	if w.surface != nil {
+		w.surface.Invalidate(core.UnitRect{}) // Empty rect = invalidate all
 	}
-	// Go's image.RGBA stores bytes R,G,B,A; on little-endian that is
-	// SDL's ABGR8888 packed format.
-	w.texture, err = w.renderer.CreateTexture(
-		sdl2.PIXELFORMAT_ABGR8888, sdl2.TEXTUREACCESS_STREAMING,
-		int32(wPx), int32(hPx))
-	return err
+
+	if w.gpuSurface == nil {
+		// Software renderer: re-size the SDL streaming texture instead of
+		// the WebGPU chain.
+		return p.renderer.ResizeWindowRenderer(w, wPx, hPx)
+	}
+
+	// Clean up old WebGPU texture if this is a resize event
+	if w.uiTexture != nil {
+		w.uiTexture.Release()
+	}
+	if w.depthTexture != nil {
+		w.depthTexture.Release()
+	}
+	if w.depthView != nil {
+		w.depthView.Release()
+	}
+
+	// 1. Re-configure the physical Window Surface Swapchain size limits
+	w.config.Width = uint32(wPx)
+	w.config.Height = uint32(hPx)
+	w.gpuSurface.Configure(p.gpuDevice, w.config)
+
+	// 2. Re-allocate the intermediate GPU backing texture layout
+	w.uiTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatBGRA8Unorm,
+		Usage:         wgpu.TextureUsageCopySrc | wgpu.TextureUsageCopyDst | wgpu.TextureUsageRenderAttachment | wgpu.TextureUsageTextureBinding,
+	})
+	if err != nil {
+		return err
+	}
+
+	// 3. Create depth texture for 3D rendering
+	w.depthTexture, err = p.gpuDevice.CreateTexture(&wgpu.TextureDescriptor{
+		Size:          wgpu.Extent3D{Width: uint32(wPx), Height: uint32(hPx), DepthOrArrayLayers: 1},
+		MipLevelCount: 1,
+		SampleCount:   1,
+		Dimension:     wgpu.TextureDimension2D,
+		Format:        wgpu.TextureFormatDepth24Plus,
+		Usage:         wgpu.TextureUsageRenderAttachment,
+	})
+	if err != nil {
+		return err
+	}
+
+	w.depthView, err = p.gpuDevice.CreateTextureView(w.depthTexture, nil)
+	if err != nil {
+		return err
+	}
+
+	// Note: We'll create a transient view for each frame since textures don't have permanent views
+	// The bind group will be created per-frame with the texture
+
+	return nil
 }
 
-// paintAndPresent runs the handler frame into the window's raster
-// backend and blits it.
-func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
+// createMVPMatrix creates a model-view-projection matrix for 3D cube rendering
+func createMVPMatrix(aspectRatio float32, rotationAngle float32, scale float32, floatY float32) [16]float32 {
+	// Simple rotation matrices
+	sinY := float32(math.Sin(float64(rotationAngle)))
+	cosY := float32(math.Cos(float64(rotationAngle)))
+	sinX := float32(math.Sin(float64(rotationAngle * 0.7)))
+	cosX := float32(math.Cos(float64(rotationAngle * 0.7)))
+
+	// Use passed-in scale (will be eased from 0 to 1.5)
+	translateZ := float32(0.5) // Move it forward so it's in front of clip plane
+
+	return [16]float32{
+		// Column 0 (X axis after transform)
+		scale * cosY / aspectRatio, scale * sinX * sinY / aspectRatio, scale * cosX * sinY / aspectRatio, 0,
+		// Column 1 (Y axis after transform)
+		0, scale * cosX, -scale * sinX, 0,
+		// Column 2 (Z axis after transform)
+		-scale * sinY / aspectRatio, scale * sinX * cosY / aspectRatio, scale * cosX * cosY / aspectRatio, 0,
+		// Column 3 (translation with floating Y motion)
+		0, floatY, translateZ, 1,
+	}
+}
+
+// paintBackend runs the handler frame into the window's raster backend,
+// honoring the surface's damage region unless forceFull demands a
+// complete repaint. baseOnly selects the handler's chrome-only base
+// layer (BaseLayerPainter) when the compositor renders child windows,
+// menus, and popups on their own layers.
+func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 	s := w.surface
-	if s == nil || s.handler == nil || w.texture == nil {
+	if s == nil || s.handler == nil || w.backend == nil {
 		return
 	}
+
 	full, dmg := s.takeDamage()
 	if forceFull {
 		full = true
@@ -419,43 +817,214 @@ func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
 		full = true
 	}
 
+	frame := s.handler.Frame
+	if baseOnly {
+		if base, ok := s.handler.(platform.BaseLayerPainter); ok {
+			frame = base.FrameBase
+		}
+	}
+
 	w.backend.BeginFrame()
+	painter := core.NewPainter(w.backend)
+	painter.ResetTextCaretRequest()
 	if full {
-		s.handler.Frame(core.NewPainter(w.backend))
+		frame(painter)
 	} else {
-		// Clip the whole tree to the damaged region: the persistent
-		// framebuffer keeps everything outside it, off-clip draws are rejected,
-		// and only this rectangle is re-uploaded below.
-		s.handler.Frame(core.NewPainter(w.backend).WithClip(dmg))
+		// Clip the whole tree to the damaged region
+		frame(painter.WithClip(dmg))
 	}
 	w.backend.EndFrame()
 
-	img := w.backend.Image()
-	if x0, y0, x1, y1, ok := damageDevicePx(w.backend, full, dmg); ok {
-		off := img.PixOffset(x0, y0)
-		_ = w.texture.Update(
-			&sdl2.Rect{X: int32(x0), Y: int32(y0), W: int32(x1 - x0), H: int32(y1 - y0)},
-			unsafe.Pointer(&img.Pix[off]), img.Stride)
-	} else {
-		_ = w.texture.Update(nil, unsafe.Pointer(&img.Pix[0]), img.Stride)
+	// Keep the base layer's own caret request. When compositing, the
+	// handler must NOT apply it — layers painted above may claim the
+	// caret instead, and the platform applies the single winner after
+	// the compositor has seen them all.
+	if baseOnly {
+		w.baseCaret = painter.TextCaretRequest()
 	}
-	if w.transparent {
-		// Alpha-0 clear so unpainted pixels (the frame's corner
-		// cutouts) stay transparent through the composite.
-		_ = w.renderer.SetDrawColor(0, 0, 0, 0)
+
+	// A rounded window carries its shape in its own pixels: clear the
+	// corners so they composite as nothing. Must run after EVERY frame,
+	// including damage-clipped ones, since the handler repaints over
+	// them whenever the damage reaches a corner.
+	if w.cornerRadiusPx > 0 {
+		punchRoundedCorners(w.backend.Image(), w.cornerRadiusPx)
 	}
-	_ = w.renderer.Clear()
-	_ = w.renderer.Copy(w.texture, nil, nil)
-	w.renderer.Present()
+}
+
+// presentWindow is the ONE way a window reaches the screen: it paints the
+// backend and presents through the active renderer, compositing child
+// windows when the renderer and the surface handler both support it.
+// Every present path — main loop, live resize, font zoom — funnels here so
+// resize frames cannot diverge from steady-state frames.
+func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return
+	}
+
+	if p.renderer.SupportsFeature(FeatureCompositing) {
+		if provider, ok := s.handler.(platform.WindowProvider); ok {
+			if childWindowList := provider.GetChildWindows(); childWindowList != nil {
+				w.frameCaretSet = false
+				err := p.renderer.RenderFrameWithChildWindows(w, childWindowList, p.scale, func(win *nativeWin) {
+					p.paintBackend(win, forceFull, true)
+				})
+				if err == nil {
+					// The compositor gathered the frame's caret from the
+					// layers; the surface is the platform's to talk to.
+					if w.frameCaretSet {
+						platform.ApplyTextCaret(s, w.frameCaret)
+					}
+					p.scheduleAnimationFrame(s)
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Child window compositor error on window %d: %v\n", w.id, err)
+				// Fall through to the plain present so the frame still lands.
+			}
+		}
+	}
+
+	p.paintAndPresent(w, forceFull)
+}
+
+// scheduleAnimationFrame keeps frames coming while the rotation demo is
+// running (or easing out) — the animation must not stall waiting for
+// input events.
+func (p *Platform) scheduleAnimationFrame(s *sdlSurface) {
+	if s == nil {
+		return
+	}
+	animating := p.rotationEnabled.Load()
+	if !animating {
+		animating = time.Since(p.rotationDeactivationTime).Seconds() < 0.5
+	}
+	if animating {
+		s.Invalidate(core.UnitRect{})
+	}
+}
+
+// frameDebug reports slow presents under KITTYTK_FRAME_DEBUG. It used to
+// print unconditionally to stdout, which on a genuinely slow frame added
+// a synchronous write to the terminal to the cost of the frame.
+var frameDebug = os.Getenv("KITTYTK_FRAME_DEBUG") != ""
+
+// surfaceNeedsRepaint reports whether a window's backend pixels are
+// stale. A handler that reports no repaint revision repaints every
+// frame, which is what every handler did before revisions existed.
+//
+// The backend's identity is part of it: a resize or font zoom replaces
+// the backend with a fresh zero-filled one, and a check that compared
+// only sizes could keep serving a black surface when the new one
+// happened to match the old one's dimensions.
+func (p *Platform) surfaceNeedsRepaint(w *nativeWin, forceFull bool) bool {
+	if forceFull || compositorAlwaysRepaint || w.backend == nil {
+		return true
+	}
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return true
+	}
+	provider, ok := s.handler.(platform.RepaintRevisionProvider)
+	if !ok {
+		return true
+	}
+
+	sig := paintSignature{
+		revision:    provider.RepaintRevision(),
+		hasRevision: true,
+		fontSize:    w.backend.FontSize(),
+		metrics:     w.backend.Metrics(),
+	}
+	if img := w.backend.Image(); img != nil {
+		sig.widthPx, sig.heightPx = img.Bounds().Dx(), img.Bounds().Dy()
+	}
+
+	now := time.Now()
+	stale := !w.paintedValid || w.paintedBackend != w.backend ||
+		needsRepaint(w.painted, sig, now.Sub(w.paintedAt), heartbeatInterval(w.id), false, false)
+	if !stale {
+		return false
+	}
+	w.painted = sig
+	w.paintedAt = now
+	w.paintedBackend = w.backend
+	w.paintedValid = true
+	return true
+}
+
+// paintAndPresent runs the handler frame into the window's raster backend and
+// presents it as a single surface (no child window compositing).
+func (p *Platform) paintAndPresent(w *nativeWin, forceFull bool) {
+	frameStart := time.Now()
+
+	s := w.surface
+	if s == nil || s.handler == nil || w.backend == nil {
+		return
+	}
+
+	// Repaint only when the surface would look different. The renderer
+	// still presents every frame from the pixels it already holds, so
+	// the present cadence is unchanged and nothing can go stale on an
+	// expose — only the CPU paint, the pixel conversion and the upload
+	// are skipped.
+	repainted := p.surfaceNeedsRepaint(w, forceFull)
+	if repainted {
+		p.paintBackend(w, forceFull, false)
+		w.pixelsDirty = true
+	}
+
+	// Nothing changed, so present nothing: the window still shows the
+	// frame it last presented. Worth skipping because a present WAITS
+	// for vsync, and the desktop's tick invalidates every torn-off host
+	// whenever anything at all wants a repaint — so an idle torn window
+	// was paying a refresh-rate stall per tick to redisplay a picture
+	// identical to the one on screen.
+	//
+	// The rotation demo is the exception: it animates through the
+	// uniform buffer rather than the pixels, so its frames have nothing
+	// dirty and must present anyway.
+	animating := p.rotationEnabled.Load() ||
+		time.Since(p.rotationDeactivationTime).Seconds() < 0.5
+	if !repainted && !w.pixelsDirty && !forceFull && !animating {
+		p.scheduleAnimationFrame(s)
+		return
+	}
+
+	// The GPU blit, the effects, and the rounded-corner punch-out all
+	// live in the renderer, so there is exactly ONE implementation of
+	// them — this path used to carry a second, drifting copy.
+	if err := p.renderer.Present(w, w.backend); err != nil {
+		fmt.Fprintf(os.Stderr, "Present error on window %d: %v\n", w.id, err)
+	}
+
+	// No frame-rate floor here. This used to sleep out the remainder of
+	// 16ms "to prevent event starvation", which the main loop already
+	// guards with its own Delay every iteration — and it slept on the
+	// PLATFORM THREAD, so it stalled event handling and every other
+	// window along with this one.
+	//
+	// It was also asymmetric: the compositing present returns before
+	// reaching this function, so the desktop never paid it and only
+	// torn-off windows did. That is most of why they felt slower to
+	// move and update. Caching the repaint made it worse, not better —
+	// with the paint skipped there was nothing left to fill the budget,
+	// so it slept nearly the whole 16ms every frame.
+	if frameDebug {
+		if d := time.Since(frameStart); d > 30*time.Millisecond {
+			fmt.Fprintf(os.Stderr, "kittytk-frame: window %d took %v\n", w.id, d)
+		}
+	}
+
+	// Continuous rotation requires continuous repaints
+	p.scheduleAnimationFrame(s)
 
 	if p.showFPS && w == p.main {
 		p.fpsFrames++
 	}
 }
 
-// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a
-// bounded repaint; ok=false means upload the whole texture (full repaint or a
-// degenerate region).
+// damageDevicePx returns the device-pixel sub-rectangle to re-upload for a bounded repaint.
 func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1, y1 int, ok bool) {
 	if full {
 		return 0, 0, 0, 0, false
@@ -463,10 +1032,7 @@ func damageDevicePx(b *raster.Backend, full bool, dmg core.UnitRect) (x0, y0, x1
 	return b.DevicePxRect(dmg)
 }
 
-// updateFPSTitle rewrites the main window's OS title with the measured frame
-// rate about once a second. fps=true drives a continuous repaint of the main
-// window, so this reads the sustained render rate (vsync-paced - typically the
-// monitor refresh) rather than the sporadic on-demand present rate.
+// updateFPSTitle rewrites the main window's OS title with the measured frame rate.
 func (p *Platform) updateFPSTitle() {
 	now := time.Now()
 	if p.fpsSince.IsZero() {
@@ -485,66 +1051,69 @@ func (p *Platform) updateFPSTitle() {
 	p.fpsSince = now
 }
 
-// liveResize re-sizes one window's framebuffer, re-lays out its
-// handler, and presents immediately. Idempotent: a size the
-// framebuffer already has is a no-op, so the event-watch call (live,
-// inside the modal resize loop) and the queued WindowEvent don't do
-// the work twice.
-func (p *Platform) liveResize(id uint32, wPx, hPx int) {
+// liveResize re-sizes one window's framebuffer, re-lays out its handler, and
+// presents immediately. It reports whether it presented a frame, so the
+// caller knows if a same-size event still needs a present of its own.
+func (p *Platform) liveResize(id uint32, wPx, hPx int) bool {
 	w, ok := p.wins[id]
 	if !ok || wPx <= 0 || hPx <= 0 {
-		return
+		return false
 	}
 	if img := w.backend.Image(); img != nil &&
 		img.Bounds().Dx() == wPx && img.Bounds().Dy() == hPx {
-		return
+		return false
 	}
 	if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
-		return
+		return false
 	}
-	w.applyShape()
-	if s := w.surface; s != nil && s.handler != nil {
-		s.handler.Resized(w.backend.Size())
-		p.paintAndPresent(w, true) // a resize repaints the whole surface
-		s.dirty.Store(false)
+	// Reshape on every size change: a maximize (which sets WINDOW_MAXIMIZED)
+	// squares the corners and drops the shadow, a restore rounds them back.
+	// applyWindowShape reads the live flags, so the transition needs no
+	// separate maximize/restore event hook.
+	p.applyWindowShape(w)
+	s := w.surface
+	if s == nil || s.handler == nil {
+		return false
 	}
+	s.handler.Resized(w.backend.Size())
+	p.presentWindow(w, true)
+	s.dirty.Store(false)
+	return true
 }
 
-// Host-level font zoom (this GUI host only — a TUI has no say over its
-// terminal's font): Command on macOS, the Meta/Windows key elsewhere, with
-// "+"/"=" to grow, "-" to shrink, "0" to return to the configured
-// [window] font_size. The dynamic size is bounded to 4..100pt.
-const (
-	minFontPt = 4
-	maxFontPt = 100
-)
-
-// clampFontPt bounds a point size to the dynamic zoom range.
-func clampFontPt(size int) int {
-	if size < minFontPt {
-		return minFontPt
-	}
-	if size > maxFontPt {
-		return maxFontPt
-	}
-	return size
+// zoomChordActive reports whether the modifiers held are the platform's
+// font-zoom chord. On Windows that is Ctrl+Shift — Windows keyboards seldom have
+// a Command/Super key, and plain Ctrl+/- is commonly an app's own binding — so
+// zoom is Ctrl+Shift with "-", "=" and "0". Everywhere else it is the
+// Command/Meta (GUI) key, Shift free (Cmd++ is Cmd+Shift+= on common layouts).
+func zoomChordActive(mod uint16) bool {
+	return zoomChordActiveFor(mod, runtime.GOOS == "windows")
 }
 
-// zoomTarget resolves a Command/Meta zoom chord to the font size it asks
-// for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns to
-// the configured default; the keypad's +/-/0 count too. ok is false for any
-// other key: Ctrl or Alt in the chord makes it an ordinary key combination,
-// but Shift rides along freely — "+" IS Shift+"=" on common layouts.
-func zoomTarget(sym sdl2.Keysym, cur, def int) (int, bool) {
-	if sym.Mod&sdl2.KMOD_GUI == 0 || sym.Mod&(sdl2.KMOD_CTRL|sdl2.KMOD_ALT) != 0 {
+// zoomChordActiveFor is zoomChordActive with the platform decision passed in, so
+// both branches are testable on any host.
+func zoomChordActiveFor(mod uint16, windows bool) bool {
+	if windows {
+		return mod&sdl3.KMOD_CTRL != 0 && mod&sdl3.KMOD_SHIFT != 0 &&
+			mod&(sdl3.KMOD_GUI|sdl3.KMOD_ALT) == 0
+	}
+	return mod&sdl3.KMOD_GUI != 0 && mod&(sdl3.KMOD_CTRL|sdl3.KMOD_ALT) == 0
+}
+
+// zoomTarget resolves a font-zoom chord (see zoomChordActive) to the font size
+// it asks for: "+"/"=" (same key) steps up a point, "-" steps down, "0" returns
+// to the configured default; the keypad's +/-/0 count too. ok is false for any
+// other key or when the chord's modifiers are not held.
+func zoomTarget(sym sdl3.Keysym, cur, def int) (int, bool) {
+	if !zoomChordActive(sym.Mod) {
 		return 0, false
 	}
 	switch sym.Sym {
-	case sdl2.K_EQUALS, sdl2.K_PLUS, sdl2.K_KP_PLUS:
+	case sdl3.K_EQUALS, sdl3.K_PLUS, sdl3.K_KP_PLUS:
 		return clampFontPt(cur + 1), true
-	case sdl2.K_MINUS, sdl2.K_KP_MINUS:
+	case sdl3.K_MINUS, sdl3.K_KP_MINUS:
 		return clampFontPt(cur - 1), true
-	case sdl2.K_0, sdl2.K_KP_0:
+	case sdl3.K_0, sdl3.K_KP_0:
 		return clampFontPt(def), true
 	}
 	return 0, false
@@ -552,7 +1121,7 @@ func zoomTarget(sym sdl2.Keysym, cur, def int) (int, bool) {
 
 // fontZoomKey consumes a KEYDOWN when it is one of the zoom chords, applying
 // the resulting size live; the key never reaches the surface handler.
-func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
+func (p *Platform) fontZoomKey(sym sdl3.Keysym) bool {
 	cur, def := p.fontSize, p.defaultFontSize
 	if cur < 1 {
 		cur = 12 // the raster base when no size was ever configured
@@ -568,16 +1137,10 @@ func (p *Platform) fontZoomKey(sym sdl2.Keysym) bool {
 	return true
 }
 
-// applyFontSize changes the live font_size on every open window at once. The
-// MAIN window keeps its pixel size and its unit grid re-derives, exactly as
-// in a window resize; a handler opting in via PixelAnchoredOnFontZoom (a
-// maximized torn-off filling its display) is treated the same way. Other
-// secondary windows (torn-offs, native-mode windows) instead keep their UNIT
-// size and re-size in pixels — a torn-off dialog is a fixed-unit scene with
-// no resize border, so shrinking its grid would clip its content with no way
-// back. Backends created later (new windows, resize framebuffers) pick the
-// size up from p.fontSize via applyMetrics, and the pre-Run seed backend
-// (held by embedders for their unit<->pixel geometry) is kept current too.
+// applyFontSize changes the live font_size on every open window at once.
+// When w.window.SetSize executes, it triggers an OS window resize event.
+// Because Part 2 wires the watch function to catch this size shift, our refactored
+// WebGPU swapchain code adapts dynamically with zero structural friction.
 func (p *Platform) applyFontSize(size int) {
 	cur := p.fontSize
 	if cur < 1 {
@@ -602,14 +1165,22 @@ func (p *Platform) applyFontSize(size int) {
 		}
 		if keepPx {
 			w.backend.SetFontSize(size)
+			// The corner radius is font-scaled, so it changes on zoom even
+			// though this window keeps its pixel size — re-shape it.
+			p.applyWindowShape(w)
 			if s := w.surface; s != nil && s.handler != nil {
 				s.handler.Resized(w.backend.Size())
-				p.paintAndPresent(w, true)
+				p.presentWindow(w, true)
 				s.dirty.Store(false)
 			}
 			continue
 		}
-		units := w.backend.Size()
+		// Snapshot the surface's unit size on the hardened cell pitch by
+		// ROUNDING the current pixels, not flooring (backend.Size()): this
+		// window keeps its UNIT size across the zoom and is re-sized to the
+		// new font's pixels, so a floor here would shed up to a unit every
+		// zoom and the window would creep smaller. Round-trips exactly.
+		units := w.backend.SizeRounded()
 		w.backend.SetFontSize(size)
 		wPx := w.backend.UnitToPxX(units.Width)
 		hPx := w.backend.UnitToPxY(units.Height)
@@ -619,16 +1190,18 @@ func (p *Platform) applyFontSize(size int) {
 		if err := p.sizeFramebuffer(w, wPx, hPx); err != nil {
 			continue
 		}
-		w.applyShape()
+		// Recompute the font-scaled radius and re-shape (also re-squares a
+		// maximized window and refreshes its shadow).
+		p.applyWindowShape(w)
 		if s := w.surface; s != nil && s.handler != nil {
 			s.handler.Resized(w.backend.Size())
-			p.paintAndPresent(w, true)
+			p.presentWindow(w, true)
 			s.dirty.Store(false)
 		}
 	}
 }
 
-// surfaceFor routes an event's window ID to its surface.
+// surfaceFor routes an event's window ID to its surface mapping wrapper.
 func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	if w, ok := p.wins[id]; ok {
 		return w.surface
@@ -636,53 +1209,51 @@ func (p *Platform) surfaceFor(id uint32) *sdlSurface {
 	return nil
 }
 
-// pumpEvents drains SDL's queue into the per-window surface handlers.
+// pumpEvents drains SDL's hardware queue into the per-window surface handlers.
+// It maps system pixel dimensions to abstract core toolkit units dynamically.
 func (p *Platform) pumpEvents() bool {
 	delivered := false
 	for {
-		ev := sdl2.PollEvent()
+		ev := sdl3.PollEvent()
 		if ev == nil {
 			return delivered
 		}
 		delivered = true
 		switch e := ev.(type) {
-		case *sdl2.QuitEvent:
+		case *sdl3.QuitEvent:
 			if s := p.mainSurface(); s != nil && s.handler != nil {
 				s.handler.Event(core.QuitEvent{})
 			}
-		case *sdl2.WindowEvent:
+		case *sdl3.WindowEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			switch e.Event {
-			case sdl2.WINDOWEVENT_SIZE_CHANGED:
-				// The event watch usually handled this live; this is
-				// the no-op-if-current backstop.
+			case sdl3.WindowResized:
+				// Handled automatically via our event watch hook in Part 2.
+				// This acts as a reliable, idempotent backstop fallback.
 				p.liveResize(e.WindowID, int(e.Data1), int(e.Data2))
-			case sdl2.WINDOWEVENT_FOCUS_GAINED:
+			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
-			case sdl2.WINDOWEVENT_FOCUS_LOST:
+			case sdl3.WindowFocusLost:
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
-			case sdl2.WINDOWEVENT_LEAVE:
-				// Pointer left the window: clear hover-only affordances.
+			case sdl3.WindowMouseLeave:
+				// Pointer left the active boundary box: clear hover affordances.
 				s.handler.Event(core.MouseLeaveEvent{})
 				s.Invalidate(core.UnitRect{})
 			}
-		case *sdl2.TextInputEvent:
+		case *sdl3.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			text := e.GetText()
 			for _, ch := range text {
-				// On macOS the Option key composes text (Option+a -> "å"),
-				// so meta shortcuts arrive here as accented characters rather
-				// than as KEYDOWN modifier combos. Decode them back to their
-				// "M-key" notation - matching the TUI backend - and dispatch
-				// as a key event instead of typing the composed character.
+				// On macOS, handle native Option key shortcuts by mapping them
+				// back into clear "M-key" syntax to ensure uniformity across environments.
 				if runtime.GOOS == "darwin" {
 					if decoded, ok := decodeMacOSOptionChar(ch); ok {
 						mods, name := core.ParseKeyModifiers(decoded)
@@ -699,14 +1270,68 @@ func (p *Platform) pumpEvents() bool {
 					Text: string(ch),
 				})
 			}
-		case *sdl2.KeyboardEvent:
+		case *sdl3.TextEditingEvent:
+			// The input method's in-flight composition. It goes to the
+			// focused trinket UNTRANSLATED - no key names, no shortcut
+			// gauntlet: these characters are not keys, they are a
+			// picture of what the IME currently holds, replaced whole on
+			// every update and ended by an empty one.
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
-			if e.Type == sdl2.KEYDOWN {
+			s.handler.Event(core.TextEditingEvent{
+				Text:   e.GetText(),
+				Start:  int(e.Start),
+				Length: int(e.Length),
+			})
+		case *sdl3.KeyboardEvent:
+			s := p.surfaceFor(e.WindowID)
+			if s == nil || s.handler == nil {
+				continue
+			}
+			if e.Type == sdl3.KeyDown {
+				// Check for rotation trigger (R key) - toggles on/off.
+				// Only supported by renderers with rotation capability
+				// (WebGPU); works in plain-present AND compositor modes.
+				// Gated: it fires only while the rotationGate says so (the
+				// desktop points it at "the About box is focused"), so R stays
+				// an ordinary key in the editor and everywhere else.
+				if e.Keysym.Sym == sdl3.K_r && p.renderer.SupportsFeature(FeatureRotation) &&
+					p.rotationGate != nil && p.rotationGate() {
+					enabled := !p.rotationEnabled.Load()
+					p.rotationEnabled.Store(enabled)
+
+					// The Platform keeps its own copy of the animation clock
+					// for mouse-coordinate rotation compensation.
+					if enabled {
+						p.rotationActivationTime = time.Now()
+						p.rotationStartTime = time.Now()
+					} else {
+						// Store current angle for smooth ease-out
+						elapsed := time.Since(p.rotationStartTime).Seconds()
+						timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+						if timeSinceActivation > 1.0 { // After ease-in completes
+							easeOutCubic := func(t float64) float64 {
+								t = math.Min(t, 1.0)
+								return 1.0 - math.Pow(1.0-t, 3.0)
+							}
+							rotationProgress := timeSinceActivation / 1.0
+							rotationEased := easeOutCubic(rotationProgress)
+							p.rotationAngleAtDeactivation = elapsed * 0.1 * rotationEased
+						}
+						p.rotationDeactivationTime = time.Now()
+					}
+
+					p.renderer.SetRotationEnabled(enabled)
+
+					// The animation needs frames even while input is idle.
+					s.Invalidate(core.UnitRect{})
+					continue // Consumed by the easter egg; don't also type "r".
+				}
+
 				if p.fontZoomKey(e.Keysym) {
-					continue // a host zoom chord, never an app key
+					continue // Consumed by host zoom controller, skip dispatching
 				}
 				if key := translateKey(e.Keysym); key != "" {
 					mods, name := core.ParseKeyModifiers(key)
@@ -716,56 +1341,52 @@ func (p *Platform) pumpEvents() bool {
 					}
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
-			} else if e.Type == sdl2.KEYUP {
-				// Report releases with the modifier state AFTER this key rose
-				// (SDL's live keymap), so the desktop can commit a window-cycle
-				// run once every modifier is up. Emitted even for a bare
-				// modifier key (translateKey == "") so that release is seen.
+			} else if e.Type == sdl3.KeyUp {
+				// Report release actions back to tracking vectors using the modifier
+				// states parsed immediately AFTER the key release event completes.
 				s.handler.Event(core.KeyReleaseEvent{
 					Key:       translateKey(e.Keysym),
 					Modifiers: currentKeyModifiers(),
 				})
 			}
-		case *sdl2.MouseButtonEvent:
+		case *sdl3.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			btn := mapButton(e.Button)
-			x, y := p.toUnits(e.X, e.Y)
+			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			mods := currentKeyModifiers()
-			if e.Type == sdl2.MOUSEBUTTONDOWN {
-				// Capture so a drag keeps reporting past the window
-				// edge (coordinates go negative/out of bounds) - the
-				// tear-off choreography depends on it.
-				_ = sdl2.CaptureMouse(true)
+			if e.Type == sdl3.MouseDown {
+				// Enable pointer capturing so dragging actions extend beyond window borders
+				// to allow continuous, lag-free native widget tear-out gestures.
+				_ = sdl3.CaptureMouse(true)
 				s.handler.Event(core.MousePressEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			} else {
-				_ = sdl2.CaptureMouse(false)
+				_ = sdl3.CaptureMouse(false)
 				s.handler.Event(core.MouseReleaseEvent{X: x, Y: y, Button: btn, Modifiers: mods})
 			}
-		case *sdl2.MouseMotionEvent:
+		case *sdl3.MouseMotionEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
 			var held core.MouseButton
-			if e.State&sdl2.ButtonLMask() != 0 {
+			if e.State&sdl3.ButtonLeftMask != 0 {
 				held = core.LeftButton
 			}
-			x, y := p.toUnits(e.X, e.Y)
+			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			s.handler.Event(core.MouseMoveEvent{X: x, Y: y, Buttons: held, Modifiers: currentKeyModifiers()})
-		case *sdl2.MouseWheelEvent:
+		case *sdl3.MouseWheelEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
 				continue
 			}
-			mx, my, _ := sdl2.GetMouseState()
-			x, y := p.toUnits(mx, my)
+			mx, my, _ := sdl3.GetMouseState()
+			x, y := p.toUnits(mx, my, e.WindowID)
 			s.handler.Event(core.MouseWheelEvent{
 				X: x, Y: y,
-				// Toolkit convention: negative DeltaY = scroll up
-				// (matches the TUI backend); SDL reports the inverse.
+				// Invert raw SDL wheel vectors to match standard toolkit scroll conventions
 				DeltaX: int(e.X), DeltaY: -int(e.Y),
 				PreciseX:  float64(e.PreciseX),
 				PreciseY:  -float64(e.PreciseY),
@@ -775,6 +1396,7 @@ func (p *Platform) pumpEvents() bool {
 	}
 }
 
+// mainSurface retrieves the abstract surface binding associated with the primary workspace window.
 func (p *Platform) mainSurface() *sdlSurface {
 	if p.main != nil {
 		return p.main.surface
@@ -812,6 +1434,92 @@ func (p *Platform) cellPx(denom int) int {
 	return n * p.scale
 }
 
+// windowShapeRadiusUnits is the rounded window-frame corner radius in cell
+// units. It matches objects/window.FrameCornerRadius() (6), kept as a local
+// constant so the platform package need not import objects/window.
+const windowShapeRadiusUnits = 6
+
+// shapeRadiusPx is the window corner radius in device pixels at the current
+// font size, so a shaped window's corners track font zoom instead of being
+// frozen at the size they had when the window was created.
+//
+// It uses the backend's FRACTIONAL pixels-per-unit (scale * fontSize/12), the
+// same mapping the window frame's round-rect is DRAWN with — not the ceil'd,
+// cell-snapped cellPx. At odd font sizes cellPx overshoots by up to a device
+// pixel, which made the layer/mask clip miss the drawn round-rect (the corner
+// "cut off" at certain zooms). Rounding the exact unit length lands the clip on
+// the frame.
+func (p *Platform) shapeRadiusPx() int {
+	fs := p.fontSize
+	if fs < 1 {
+		fs = 12
+	}
+	return int(math.Round(float64(windowShapeRadiusUnits) * float64(p.scale) * float64(fs) / 12))
+}
+
+// applyWindowShape (re)applies a window's rounded shape and OS drop shadow to
+// match its current state. It is the ONE place that decides a shaped window's
+// live geometry, so creation, SetBordered, font zoom, resize and
+// maximize/restore all funnel through it and can never disagree.
+//
+// A window is rounded only when it is floating: borderless (a bordered window
+// cannot be shaped, and its OS title bar draws the corners) AND not maximized
+// (a maximized window fills its display, so it is squared with no shadow, the
+// same convention native windows follow). The radius is recomputed from the
+// live font size every call, which is what keeps it correct across zoom.
+func (p *Platform) applyWindowShape(w *nativeWin) {
+	if w == nil || w.window == nil || w.wantRadiusPx <= 0 {
+		return // a plain window that is never rounded
+	}
+	flags := w.window.Flags()
+	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0
+	r := 0
+	if round {
+		r = p.shapeRadiusPx()
+		// Never over-round: a radius past half the smaller side eats the whole
+		// corner (a small window zoomed way out lost its corners entirely). The
+		// SDL shaped-mask path clamps too, but the macOS layer/punch path did
+		// not — clamp here so every mechanism agrees. Sizes are device pixels.
+		if wPx, hPx := w.window.SizeInPixels(); wPx > 0 && hPx > 0 {
+			m := int(wPx)
+			if int(hPx) < m {
+				m = int(hPx)
+			}
+			if r > m/2 {
+				r = m / 2
+			}
+		}
+	}
+	// Skip when nothing changed: an ordinary resize keeps the same radius and
+	// state, so re-rounding then only thrashes the window's layer (and drifted
+	// the corners on macOS). Zoom and maximize/restore change r and fall through.
+	if r == w.appliedShapePx {
+		return
+	}
+	w.appliedShapePx = r
+	if platformPerPixelAlpha {
+		// macOS: Core Animation clips the layer, and the framebuffer punch
+		// (cornerRadiusPx, consumed every present) cuts the corner pixels. The
+		// window must be non-opaque for the clipped corners to show through;
+		// the main window defers this to here (its first borderless shaping).
+		if r > 0 && !w.transparent {
+			if makeWindowTransparent(w.window) {
+				w.transparent = true
+			}
+		}
+		w.cornerRadiusPx = r
+		roundWindowLayer(w.window, r) // r == 0 squares the layer
+	} else {
+		// Windows / X11: SDL shaped window. shapeRadiusPx drives applyShape,
+		// which clears the shape (square) at 0.
+		w.shapeRadiusPx = r
+		w.applyShape()
+	}
+	// The OS drop shadow follows the shape and is click-through; drop it when
+	// squared/maximized so a full-screen window casts none.
+	setWindowShadow(w.window, r > 0)
+}
+
 // pxToUnitAxis inverts the backend's cell-snapped forward mapping on one
 // axis: whole cells map back from exact cellPx multiples, the sub-cell
 // remainder from its rounded fraction. Floors toward negative infinity so
@@ -833,10 +1541,120 @@ func pxToUnitAxis(px, denom, cellPx int) int {
 // toUnits converts window-pixel mouse coordinates to abstract units,
 // inverting the backend's font_size-aware, cell-snapped pixel mapping so
 // hit-testing lands on the same grid the UI paints on at any font_size.
-func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
+func (p *Platform) toUnits(x, y int32, windowID uint32) (core.Unit, core.Unit) {
+	// Check if rotation effects are active (either easing in or easing out)
+	isActive := p.rotationEnabled.Load()
+	isEasingOut := false
+
+	if !isActive {
+		// Check if we're still in ease-out phase
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		if timeSinceDeactivation < 0.5 {
+			isEasingOut = true
+			isActive = true // Treat as active for transformation purposes
+		}
+	}
+
+	// Only apply rotation/scaling if enabled or easing out
+	if !isActive {
+		// Normal path - no transformation
+		denomW, denomH := p.rootDenomination()
+		ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+		return core.Unit(ux), core.Unit(uy)
+	}
+
+	// Get window for rotation pivot (needed for display rotation compensation)
+	win, ok := p.wins[windowID]
+	if !ok || win.window == nil {
+		denomW, denomH := p.rootDenomination()
+		ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
+		uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+		return core.Unit(ux), core.Unit(uy)
+	}
+
+	w, h := win.window.Size()
+	centerX := float64(w) / 2.0
+	centerY := float64(h) / 2.0
+
+	// Translate to center
+	fx := float64(x) - centerX
+	fy := float64(y) - centerY
+
+	easeOutCubic := func(t float64) float64 {
+		t = math.Min(t, 1.0)
+		return 1.0 - math.Pow(1.0-t, 3.0)
+	}
+
+	easeInOutCubic := func(t float64) float64 {
+		if t < 0.5 {
+			return 4.0 * t * t * t
+		}
+		return 1.0 - math.Pow(-2.0*t+2.0, 3.0)/2.0
+	}
+
+	var currentScale float64
+	var angle float64
+
+	if isEasingOut {
+		// Easing out - continue forward with speedup
+		timeSinceDeactivation := time.Since(p.rotationDeactivationTime).Seconds()
+		scaleProgress := timeSinceDeactivation / 0.5
+		scaleEased := easeOutCubic(scaleProgress)
+		currentScale = 2.0 - scaleEased*1.0 // 2.0 -> 1.0
+
+		// Match shader: continue forward with accelerated catch-up, capped at target
+		currentAngle := p.rotationAngleAtDeactivation
+		twoPi := 2.0 * math.Pi
+		normalizedAngle := math.Mod(currentAngle, twoPi)
+		if normalizedAngle < 0 {
+			normalizedAngle += twoPi
+		}
+		angleRemaining := twoPi - normalizedAngle
+
+		normalRotation := timeSinceDeactivation * 0.1
+		catchUpProgress := math.Min(timeSinceDeactivation/0.5, 1.0)
+		catchUpEased := easeInOutCubic(catchUpProgress)
+		catchUpRotation := angleRemaining * catchUpEased
+
+		targetAngle := currentAngle + angleRemaining
+		currentRotatedAngle := currentAngle + normalRotation + catchUpRotation
+		if currentRotatedAngle > targetAngle {
+			currentRotatedAngle = targetAngle
+		}
+
+		angle = -currentRotatedAngle // Negative to match shader
+	} else {
+		// Easing in / active
+		timeSinceActivation := time.Since(p.rotationActivationTime).Seconds()
+		scaleProgress := timeSinceActivation / 0.5
+		scaleEased := easeOutCubic(scaleProgress)
+		currentScale = 1.0 + scaleEased*1.0 // 1.0 -> 2.0
+
+		rotationProgress := timeSinceActivation / 1.0
+		rotationEased := easeOutCubic(rotationProgress)
+		elapsed := time.Since(p.rotationStartTime).Seconds()
+		angle = -(elapsed * 0.1 * rotationEased) // Negative to match shader
+	}
+
+	// Scale by current scale to match the content scale
+	fx *= currentScale
+	fy *= currentScale
+
+	// Rotate
+	cosA := math.Cos(angle)
+	sinA := math.Sin(angle)
+
+	rotatedX := fx*cosA - fy*sinA
+	rotatedY := fx*sinA + fy*cosA
+
+	// Translate back
+	finalX := rotatedX + centerX
+	finalY := rotatedY + centerY
+
 	denomW, denomH := p.rootDenomination()
-	ux := pxToUnitAxis(int(x), denomW, p.cellPx(denomW))
-	uy := pxToUnitAxis(int(y), denomH, p.cellPx(denomH))
+	ux := pxToUnitAxis(int(finalX), denomW, p.cellPx(denomW))
+	uy := pxToUnitAxis(int(finalY), denomH, p.cellPx(denomH))
 	return core.Unit(ux), core.Unit(uy)
 }
 
@@ -845,17 +1663,17 @@ func (p *Platform) toUnits(x, y int32) (core.Unit, core.Unit) {
 // scrolls horizontally).
 func currentKeyModifiers() core.KeyModifiers {
 	var mods core.KeyModifiers
-	state := sdl2.GetModState()
-	if state&sdl2.KMOD_SHIFT != 0 {
+	state := sdl3.GetModState()
+	if state&sdl3.KMOD_SHIFT != 0 {
 		mods |= core.ShiftModifier
 	}
-	if state&sdl2.KMOD_CTRL != 0 {
+	if state&sdl3.KMOD_CTRL != 0 {
 		mods |= core.ControlModifier
 	}
-	if state&sdl2.KMOD_ALT != 0 {
+	if state&sdl3.KMOD_ALT != 0 {
 		mods |= core.AltModifier
 	}
-	if state&sdl2.KMOD_GUI != 0 {
+	if state&sdl3.KMOD_GUI != 0 {
 		mods |= core.MetaModifier
 	}
 	return mods
@@ -863,11 +1681,11 @@ func currentKeyModifiers() core.KeyModifiers {
 
 func mapButton(b uint8) core.MouseButton {
 	switch b {
-	case sdl2.BUTTON_LEFT:
+	case sdl3.BUTTON_LEFT:
 		return core.LeftButton
-	case sdl2.BUTTON_MIDDLE:
+	case sdl3.BUTTON_MIDDLE:
 		return core.MiddleButton
-	case sdl2.BUTTON_RIGHT:
+	case sdl3.BUTTON_RIGHT:
 		return core.RightButton
 	}
 	return core.NoButton
@@ -875,43 +1693,43 @@ func mapButton(b uint8) core.MouseButton {
 
 // specialKeys maps SDL keycodes to D3 key names (spellings match
 // core/keybindings.go).
-var specialKeys = map[sdl2.Keycode]string{
-	sdl2.K_RETURN:    "Enter",
-	sdl2.K_KP_ENTER:  "Enter",
-	sdl2.K_TAB:       "Tab",
-	sdl2.K_ESCAPE:    "Escape",
-	sdl2.K_BACKSPACE: "Backspace",
-	sdl2.K_DELETE:    "Delete",
-	sdl2.K_INSERT:    "Insert",
-	sdl2.K_HOME:      "Home",
-	sdl2.K_END:       "End",
-	sdl2.K_PAGEUP:    "PageUp",
-	sdl2.K_PAGEDOWN:  "PageDown",
-	sdl2.K_UP:        "Up",
-	sdl2.K_DOWN:      "Down",
-	sdl2.K_LEFT:      "Left",
-	sdl2.K_RIGHT:     "Right",
-	sdl2.K_F1:        "F1",
-	sdl2.K_F2:        "F2",
-	sdl2.K_F3:        "F3",
-	sdl2.K_F4:        "F4",
-	sdl2.K_F5:        "F5",
-	sdl2.K_F6:        "F6",
-	sdl2.K_F7:        "F7",
-	sdl2.K_F8:        "F8",
-	sdl2.K_F9:        "F9",
-	sdl2.K_F10:       "F10",
-	sdl2.K_F11:       "F11",
-	sdl2.K_F12:       "F12",
+var specialKeys = map[sdl3.Keycode]string{
+	sdl3.K_RETURN:    "Enter",
+	sdl3.K_KP_ENTER:  "Enter",
+	sdl3.K_TAB:       "Tab",
+	sdl3.K_ESCAPE:    "Escape",
+	sdl3.K_BACKSPACE: "Backspace",
+	sdl3.K_DELETE:    "Delete",
+	sdl3.K_INSERT:    "Insert",
+	sdl3.K_HOME:      "Home",
+	sdl3.K_END:       "End",
+	sdl3.K_PAGEUP:    "PageUp",
+	sdl3.K_PAGEDOWN:  "PageDown",
+	sdl3.K_UP:        "Up",
+	sdl3.K_DOWN:      "Down",
+	sdl3.K_LEFT:      "Left",
+	sdl3.K_RIGHT:     "Right",
+	sdl3.K_F1:        "F1",
+	sdl3.K_F2:        "F2",
+	sdl3.K_F3:        "F3",
+	sdl3.K_F4:        "F4",
+	sdl3.K_F5:        "F5",
+	sdl3.K_F6:        "F6",
+	sdl3.K_F7:        "F7",
+	sdl3.K_F8:        "F8",
+	sdl3.K_F9:        "F9",
+	sdl3.K_F10:       "F10",
+	sdl3.K_F11:       "F11",
+	sdl3.K_F12:       "F12",
 }
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
-func translateKey(sym sdl2.Keysym) string {
-	ctrl := sym.Mod&sdl2.KMOD_CTRL != 0
-	alt := sym.Mod&sdl2.KMOD_ALT != 0
-	shift := sym.Mod&sdl2.KMOD_SHIFT != 0
-	gui := sym.Mod&sdl2.KMOD_GUI != 0
+func translateKey(sym sdl3.Keysym) string {
+	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
+	alt := sym.Mod&sdl3.KMOD_ALT != 0
+	shift := sym.Mod&sdl3.KMOD_SHIFT != 0
+	gui := sym.Mod&sdl3.KMOD_GUI != 0
 
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
@@ -1077,7 +1895,7 @@ func (p *Platform) SupportsMultipleSurfaces() bool { return true }
 
 // GlobalPointerPx implements platform.GlobalPointerPlatform.
 func (p *Platform) GlobalPointerPx() (int, int) {
-	x, y, _ := sdl2.GetGlobalMouseState()
+	x, y, _ := sdl3.GetGlobalMouseState()
 	return int(x), int(y)
 }
 
@@ -1102,31 +1920,29 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 	}
 	x, y := int32(opts.XPx), int32(opts.YPx)
 	if opts.XPx == 0 && opts.YPx == 0 {
-		x, y = sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED
+		x, y = sdl3.WINDOWPOS_CENTERED, sdl3.WINDOWPOS_CENTERED
 	}
-	flags := uint32(sdl2.WINDOW_SHOWN)
+	flags := sdl3.WINDOW_SHOWN
 	if opts.Borderless {
-		flags |= sdl2.WINDOW_BORDERLESS
+		flags |= sdl3.WINDOW_BORDERLESS
 	} else {
-		flags |= sdl2.WINDOW_RESIZABLE
+		flags |= sdl3.WINDOW_RESIZABLE
 	}
 	radius := 0
 	if opts.Borderless {
 		radius = opts.CornerRadiusPx
 	}
-	// Never activate extra windows on show: a torn-off window appears
-	// under a HELD pointer, and stealing key status from the desktop
-	// window kills its live mouse session (the drag dies and SDL's
-	// button state wedges). Click-to-focus still works.
-	_ = sdl2.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
+
+	// Prevent secondary torn-out windows from stealing active focus mid-drag sessions
+	_ = sdl3.SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1")
+
+	// Spawns a native window and sets up its independent WebGPU surface swapchain contexts
 	w, err := p.createWindow(opts.Title, x, y, wPx, hPx, flags, radius)
 	if err != nil {
 		return nil, err
 	}
 	w.surface = &sdlSurface{platform: p, win: w}
 	if opts.Borderless {
-		// Borderless windows can't miniaturize without help (Cocoa
-		// requires the miniaturizable style-mask bit).
 		makeWindowMiniaturizable(w.window)
 	}
 	reassertCapture()
@@ -1138,19 +1954,19 @@ func (p *Platform) CreateSurface(opts platform.SurfaceOptions) (platform.Surface
 // mid-gesture, after which it CLAMPS motion coordinates to the window
 // rect - the tear-off drag would fence itself in.
 func reassertCapture() {
-	if _, _, state := sdl2.GetGlobalMouseState(); state&sdl2.ButtonLMask() != 0 {
-		_ = sdl2.CaptureMouse(true)
+	if _, _, state := sdl3.GetGlobalMouseState(); state&sdl3.ButtonLeftMask != 0 {
+		_ = sdl3.CaptureMouse(true)
 	}
 }
 
 // Clipboard implements platform.Platform.
 func (p *Platform) Clipboard() string {
-	s, _ := sdl2.GetClipboardText()
+	s, _ := sdl3.GetClipboardText()
 	return s
 }
 
 // SetClipboard implements platform.Platform.
-func (p *Platform) SetClipboard(text string) { _ = sdl2.SetClipboardText(text) }
+func (p *Platform) SetClipboard(text string) { _ = sdl3.SetClipboardText(text) }
 
 // Beep implements platform.Platform.
 func (p *Platform) Beep() {}
@@ -1160,61 +1976,47 @@ func (p *Platform) Beep() {}
 // redundant sets (same shape) are skipped.
 func (p *Platform) SetCursor(shape core.CursorShape) {
 	if p.cursors == nil {
-		p.cursors = map[core.CursorShape]*sdl2.Cursor{}
+		p.cursors = map[core.CursorShape]*sdl3.Cursor{}
 	}
 	cur, ok := p.cursors[shape]
 	if !ok {
-		cur = sdl2.CreateSystemCursor(systemCursorID(shape))
+		// SDL3 reports creation failure; a nil cursor is cached so the
+		// lookup is not retried every frame.
+		cur, _ = sdl3.CreateSystemCursor(systemCursorID(shape))
 		p.cursors[shape] = cur
 	}
 	if cur == nil {
 		return
 	}
-	// RE-ASSERT on every call, even when the shape is unchanged: macOS resets
-	// the window's cursor to the arrow on every mouse-move event unless the app
-	// re-sets it, so short-circuiting an "unchanged" shape lets that reset win —
-	// the cursor flips back to the arrow the moment the pointer moves (a real
-	// resize keeps its cursor only because the held button suppresses the OS
-	// reset). Re-setting the cached cursor object is cheap and idempotent
-	// elsewhere. The cache above still avoids re-creating cursor objects.
-	sdl2.SetCursor(cur)
+	_ = sdl3.SetCursor(cur)
 	p.cursorSet = true
 }
 
-// reassertCursor re-applies the current cursor once, AFTER the event pump.
-// macOS resets a window's cursor to the arrow while processing mouse-move
-// events, and SDL_SetCursor no-ops when its cached cur_cursor is unchanged, so
-// the shape we set during motion handling gets stomped by the OS reset.
-// Re-applying per motion event fights the OS on every move and flickers;
-// doing it ONCE per frame, after all of the batch's move events (and their
-// resets) have been drained, makes our shape the final one the WindowServer
-// composites — steady, not flickering. SDL_SetCursor(NULL) re-applies the
-// current cursor through the backend, bypassing SDL's no-op cache.
 func (p *Platform) reassertCursor() {
 	if p.cursorSet {
-		sdl2.SetCursor(nil)
+		sdl3.SetCursor(nil)
 	}
 }
 
 // systemCursorID maps a core cursor shape to its SDL system cursor.
-func systemCursorID(shape core.CursorShape) sdl2.SystemCursor {
+func systemCursorID(shape core.CursorShape) sdl3.SystemCursor {
 	switch shape {
 	case core.CursorText:
-		return sdl2.SYSTEM_CURSOR_IBEAM
+		return sdl3.SYSTEM_CURSOR_TEXT
 	case core.CursorResizeH:
-		return sdl2.SYSTEM_CURSOR_SIZEWE
+		return sdl3.SYSTEM_CURSOR_EW_RESIZE
 	case core.CursorResizeV:
-		return sdl2.SYSTEM_CURSOR_SIZENS
+		return sdl3.SYSTEM_CURSOR_NS_RESIZE
 	case core.CursorResizeNWSE:
-		return sdl2.SYSTEM_CURSOR_SIZENWSE
+		return sdl3.SYSTEM_CURSOR_NWSE_RESIZE
 	case core.CursorResizeNESW:
-		return sdl2.SYSTEM_CURSOR_SIZENESW
+		return sdl3.SYSTEM_CURSOR_NESW_RESIZE
 	default:
-		return sdl2.SYSTEM_CURSOR_ARROW
+		return sdl3.SYSTEM_CURSOR_DEFAULT
 	}
 }
 
-// sdlSurface is one SDL window as a platform.Surface.
+// sdlSurface is one SDL window mapped onto a hardware GoGPU/WebGPU presentation layout.
 type sdlSurface struct {
 	platform *Platform
 	win      *nativeWin
@@ -1228,6 +2030,15 @@ type sdlSurface struct {
 	damageMu   sync.Mutex
 	damageFull bool
 	damageRect core.UnitRect
+
+	// caretVisible/caretX/caretY are the last caret this surface reported
+	// to the OS, so an unchanged caret costs no SDL call. There is no
+	// OS-drawn caret on a graphical surface — trinkets paint their own —
+	// so the position exists purely to place an input method's candidate
+	// window. See SetCursorPosition.
+	caretVisible bool
+	caretX       core.Unit
+	caretY       core.Unit
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -1238,9 +2049,7 @@ func (s *sdlSurface) Metrics() core.CellMetrics {
 }
 func (s *sdlSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 
-// Invalidate marks the surface dirty and accumulates damage: an empty rect
-// (the common case) means the whole surface; a bounded rect unions into the
-// pending region so a partial repaint touches only what changed.
+// Invalidate marks the surface dirty and accumulates damage regions for optimized sub-texture streaming.
 func (s *sdlSurface) Invalidate(r core.UnitRect) {
 	s.damageMu.Lock()
 	if r.Width <= 0 || r.Height <= 0 {
@@ -1287,16 +2096,72 @@ func unionUnitRect(a, b core.UnitRect) core.UnitRect {
 	}
 	return core.UnitRect{X: x0, Y: y0, Width: x1 - x0, Height: y1 - y0}
 }
+
+// The caret methods are no-ops: a graphical surface has no OS-drawn
+// caret to show, move or shape — trinkets paint their own. Where text is
+// being typed is a different question, answered by SetTextInputArea.
 func (s *sdlSurface) SetCursorVisible(bool)            {}
 func (s *sdlSurface) SetCursorPosition(x, y core.Unit) {}
 func (s *sdlSurface) SetCursorStyle(int)               {}
+
+// SetTextInputArea implements platform.TextInputAreaSetter: it tells the
+// OS where text is being typed, which is what anchors an input method's
+// candidate window — the CJK candidate list, macOS's press-and-hold
+// accent picker, the emoji picker. With no area set they appear at
+// whatever corner the OS last used.
+//
+// visible false forgets the position, so the OS falls back to its own
+// placement rather than anchoring on a stale rectangle.
+func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	if s.caretVisible == visible && (!visible || (s.caretX == x && s.caretY == y)) {
+		return // unchanged: no need to tell the OS again
+	}
+	s.caretVisible, s.caretX, s.caretY = visible, x, y
+
+	if !visible {
+		if err := sdl3.ClearTextInputArea(s.win.window); err != nil && imeDebug {
+			fmt.Fprintf(os.Stderr, "kittytk-ime: clear failed: %v\n", err)
+		}
+		return
+	}
+
+	b := s.win.backend
+	if b == nil {
+		return
+	}
+	m := b.Metrics()
+	x0, y0 := b.UnitToPxX(x), b.UnitToPxY(y)
+	wPx := b.UnitToPxX(x+m.CellWidth) - x0
+	hPx := b.UnitToPxY(y+m.CellHeight) - y0
+	if wPx <= 0 {
+		wPx = 1
+	}
+	if hPx <= 0 {
+		hPx = 1
+	}
+	err := sdl3.SetTextInputArea(s.win.window, x0, y0, wPx, hPx, 0)
+	if imeDebug {
+		fmt.Fprintf(os.Stderr,
+			"kittytk-ime: window %d area unit=(%v,%v) px=(%d,%d %dx%d) active=%v err=%v\n",
+			s.win.id, x, y, x0, y0, wPx, hPx, sdl3.TextInputActive(s.win.window), err)
+	}
+}
+
+// imeDebug reports every text-input-area update under KITTYTK_IME_DEBUG.
+// An input method that ignores the area and a host that never sets one
+// look identical on screen — both put the candidate window in a corner —
+// so the only way to tell them apart is to watch the calls.
+var imeDebug = os.Getenv("KITTYTK_IME_DEBUG") != ""
 
 // ScreenPositionPx implements platform.NativeSurface.
 func (s *sdlSurface) ScreenPositionPx() (int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0
 	}
-	x, y := s.win.window.GetPosition()
+	x, y := s.win.window.Position()
 	return int(x), int(y)
 }
 
@@ -1316,6 +2181,11 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 		return
 	}
 	s.win.window.SetBordered(bordered)
+	// Shaping follows the border: a borderless window rounds + gains its OS
+	// shadow, a re-bordered one squares and drops both (the OS chrome takes
+	// over). This is how the main window becomes rounded — it is born bordered
+	// and only shapeable once solo mode strips its border.
+	s.platform.applyWindowShape(s.win)
 }
 
 // ScreenSizePx implements platform.NativeSurface: the OS window's current
@@ -1325,18 +2195,38 @@ func (s *sdlSurface) ScreenSizePx() (int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0
 	}
-	w, h := s.win.window.GetSize()
+	w, h := s.win.window.Size()
 	return int(w), int(h)
 }
 
-// SetScreenSizePx implements platform.NativeSurface: the size change
-// reports back through the WINDOWEVENT_SIZE_CHANGED path (framebuffer
-// recreate, shape reapply, handler.Resized).
+// SetScreenSizePx implements platform.NativeSurface: the size change normally
+// reports back through the WINDOW_RESIZED path (framebuffer recreate, shape
+// reapply, handler.Resized).
+//
+// Two hazards, both seen only on the solo primary window (created RESIZABLE with
+// a title bar, its border stripped at runtime) and not on a torn window
+// (borderless from birth): a shrink back from zoom-to-fill could leave the GPU
+// swapchain at the maximized size, so the restored content painted into its
+// top-left corner and the stale maximized frame stayed on screen until a manual
+// edge-drag. First, some window managers flag a filled window MAXIMIZED, and
+// SetWindowSize is a no-op on a maximized window — clear it first. Second, a
+// programmatic resize did not always deliver a WINDOW_RESIZED for this window,
+// so drive the framebuffer reconfigure here from the window's ACTUAL pixel size
+// (read back after the resize, so HiDPI points-vs-pixels can't skew it). Both
+// are idempotent: liveResize no-ops when the backend already matches, and a real
+// resize event that does arrive later costs nothing.
 func (s *sdlSurface) SetScreenSizePx(w, h int) {
 	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
 		return
 	}
+	if s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0 {
+		s.win.window.Restore()
+	}
 	s.win.window.SetSize(int32(w), int32(h))
+	pxW, pxH := s.win.window.SizeInPixels()
+	if pxW > 0 && pxH > 0 {
+		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
+	}
 }
 
 // WorkAreaPx implements platform.NativeSurface: the usable bounds of
@@ -1345,11 +2235,11 @@ func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
 	if s.closed || s.win.window == nil {
 		return 0, 0, 0, 0
 	}
-	idx, err := s.win.window.GetDisplayIndex()
+	idx, err := s.win.window.Display()
 	if err != nil {
 		idx = 0
 	}
-	r, err := sdl2.GetDisplayUsableBounds(idx)
+	r, err := sdl3.GetDisplayUsableBounds(idx)
 	if err != nil {
 		return 0, 0, 0, 0
 	}
@@ -1357,22 +2247,43 @@ func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {
 }
 
 // applyShape rounds the OS window's corners with a binary alpha mask
-// so the pixels outside the drawn roundrect frame are not opaque
-// black. Best effort: video drivers without shape support just keep
-// square corners.
+// so the pixels outside the drawn roundrect frame are not opaque black.
 func (w *nativeWin) applyShape() {
-	if w.shapeRadiusPx <= 0 || w.window == nil {
+	if w.window == nil {
 		return
 	}
-	wPx, hPx := w.window.GetSize()
+	// applyShape is the SDL shaped-window mechanism (a binary alpha mask), used
+	// only where there is no per-pixel window alpha (Windows/X11). macOS rounds
+	// through the Core Animation layer instead and must NEVER be handed to
+	// SetShape — doing so reshaped torn-off windows off their intended size
+	// (a ~20px shrink after a zoom). On macOS this is a no-op, as it was before.
+	if platformPerPixelAlpha {
+		return
+	}
+	// A bordered window cannot be shaped (SetShape returns NONSHAPEABLE, and the
+	// OS title bar owns the corners). The main window is created bordered and
+	// only becomes shapeable once solo mode strips its border, at which point
+	// SetBordered re-runs the shape.
+	if w.window.Flags()&sdl3.WINDOW_BORDERLESS == 0 {
+		return
+	}
+	if w.shapeRadiusPx <= 0 {
+		// Squared (maximized, or a shapeable window asked to go square): clear
+		// any shape so the corners are not rounded. Harmless if none was set.
+		if w.wantRadiusPx > 0 {
+			_ = w.window.SetShape(nil)
+		}
+		return
+	}
+	wPx, hPx := w.window.Size()
 	if wPx <= 0 || hPx <= 0 {
 		return
 	}
-	mask, err := sdl2.CreateRGBSurfaceWithFormat(0, wPx, hPx, 32, uint32(sdl2.PIXELFORMAT_ARGB8888))
+	mask, err := sdl3.CreateSurface(wPx, hPx, sdl3.PIXELFORMAT_ARGB8888)
 	if err != nil {
 		return
 	}
-	defer mask.Free()
+	defer sdl3.FreeSurface(mask)
 	_ = mask.FillRect(nil, 0xffffffff)
 	pix := mask.Pixels()
 	pitch := int(mask.Pitch)
@@ -1397,7 +2308,15 @@ func (w *nativeWin) applyShape() {
 			}
 		}
 	}
-	_ = w.window.SetShape(mask, sdl2.ShapeModeDefault{})
+	// BinarizeAlpha with a mid cutoff, matching the known-good SDL
+	// shaped-window configuration (the mask is fully opaque inside and
+	// fully clear outside, so the exact cutoff only needs to sit
+	// between them).
+	// A non-zero result is one of SDL's shape errors (most likely
+	// NONSHAPEABLE_WINDOW: the window was not created shaped).
+	if err := w.window.SetShape(mask); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: SetShape failed (window not transparent?): %v\n", err)
+	}
 }
 
 func min32(a, b int32) int32 {
@@ -1429,8 +2348,8 @@ func (s *sdlSurface) Minimized() bool {
 	if s.closed || s.win.window == nil {
 		return true
 	}
-	flags := s.win.window.GetFlags()
-	return flags&sdl2.WINDOW_MINIMIZED != 0 || flags&sdl2.WINDOW_HIDDEN != 0
+	flags := s.win.window.Flags()
+	return flags&sdl3.WINDOW_MINIMIZED != 0 || flags&sdl3.WINDOW_HIDDEN != 0
 }
 
 // SetOpacity implements platform.NativeSurface.
@@ -1438,7 +2357,7 @@ func (s *sdlSurface) SetOpacity(opacity float64) {
 	if s.closed || s.win.window == nil {
 		return
 	}
-	_ = s.win.window.SetWindowOpacity(float32(opacity))
+	_ = s.win.window.SetOpacity(float32(opacity))
 }
 
 // Raise implements platform.NativeSurface: brings the OS window to the
@@ -1451,19 +2370,10 @@ func (s *sdlSurface) Raise() {
 }
 
 // Close implements platform.NativeSurface: destroys the OS window.
-// The main window ignores it (quitting the app is Platform.Quit).
-//
-// The SDL window/renderer/texture teardown — and the wins map, which the event
-// pump reads — are only safe on the platform's main loop thread (macOS requires
-// SDL video calls there, and touching wins off the pump's thread is a data
-// race). Close is reachable from other goroutines: a torn window closing from an
-// app's own session goroutine (mew's commit handler), a timer-driven dialog
-// dismissal, and so on. So marshal the whole teardown onto the main loop via
-// Post rather than destroying inline. The s.closed guard (and re-checking the
-// wins entry) makes it idempotent and safe against a reused window id.
+// It marshals the destruction onto the main thread via Post to avoid data races.
 func (s *sdlSurface) Close() {
 	if s.win == s.platform.main {
-		return // never destroy the loop-owning window here
+		return // Never destroy the primary manager shell layout
 	}
 	p := s.platform
 	p.Post(func() {
@@ -1475,7 +2385,7 @@ func (s *sdlSurface) Close() {
 		if cur, ok := p.wins[s.win.id]; ok && cur == s.win {
 			delete(p.wins, s.win.id)
 		}
-		s.win.destroy()
+		s.win.destroy() // Calls our updated WebGPU FFI surface teardown macro smoothly
 		reassertCapture()
 	})
 }

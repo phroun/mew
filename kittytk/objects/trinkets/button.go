@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -13,16 +14,19 @@ type Button struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	text           string
-	icon           *style.Icon
-	iconSize       style.IconSize
-	checkable      bool
-	checked        bool
-	pressed        bool
-	hovered        bool // Mouse is over button while pressed
-	mouseOver      bool // Pointer is hovering over the button (not pressed)
-	spacePressed   bool // Space key is being held down
-	animatingPress bool // Showing press animation (250ms visual feedback)
+	text         string
+	icon         *style.Icon
+	iconSize     style.IconSize
+	checkable    bool
+	checked      bool
+	pressed      bool
+	hovered      bool // Mouse is over button while pressed
+	mouseOver    bool // Pointer is hovering over the button (not pressed)
+	spacePressed bool // Space key is being held down
+	// animatingPress shows the 250ms press-feedback animation. It is atomic
+	// because the headless activation path (no desktop timer) clears it from a
+	// timer goroutine while the paint path reads it — see AnimatePress.
+	animatingPress atomic.Bool
 	flat           bool // No border when not focused/hovered
 	isDefault      bool // Default button (shown bold when not focused)
 	isCancel       bool // Cancel button (activated by Escape)
@@ -147,7 +151,7 @@ func (b *Button) SetCancel(isCancel bool) {
 // AnimatePress shows the pressed state briefly (250ms) then triggers click.
 // This provides visual feedback for keyboard-triggered button presses.
 func (b *Button) AnimatePress() {
-	if !b.IsEnabled() || b.animatingPress {
+	if !b.IsEnabled() || b.animatingPress.Load() {
 		return
 	}
 
@@ -158,7 +162,7 @@ func (b *Button) AnimatePress() {
 	}
 
 	// Show pressed state
-	b.animatingPress = true
+	b.animatingPress.Store(true)
 	b.Update()
 
 	// After 250ms, clear the animation and fire the click — ON THE MAIN THREAD,
@@ -174,7 +178,7 @@ func (b *Button) AnimatePress() {
 			if timer != nil {
 				timer.Stop() // one-shot: stop the repeating timer after the first fire
 			}
-			b.animatingPress = false
+			b.animatingPress.Store(false)
 			b.Update()
 			b.Click()
 		})
@@ -186,7 +190,7 @@ func (b *Button) AnimatePress() {
 	// keeps the animation working outside a running desktop.
 	go func() {
 		time.Sleep(250 * time.Millisecond)
-		b.animatingPress = false
+		b.animatingPress.Store(false)
 		b.Update()
 		b.Click()
 	}()
@@ -287,7 +291,7 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Determine if showing pressed visual (pressed and hovering, space held, animating, or checked)
 	// Disabled buttons should never show pressed state
-	showPressed := b.IsEnabled() && ((b.pressed && b.hovered) || b.spacePressed || b.animatingPress || b.checked)
+	showPressed := b.IsEnabled() && ((b.pressed && b.hovered) || b.spacePressed || b.animatingPress.Load() || b.checked)
 
 	// Get inherited background color for all styles
 	inheritedBg := b.EffectiveBackgroundColor()
@@ -630,7 +634,7 @@ func (b *Button) HandleFocusOut() {
 	b.hovered = false
 	b.mouseOver = false
 	b.spacePressed = false
-	b.animatingPress = false
+	b.animatingPress.Store(false)
 	b.Update()
 }
 

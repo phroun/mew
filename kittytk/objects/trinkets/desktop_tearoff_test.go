@@ -29,6 +29,7 @@ type msSurface struct {
 	caretX       core.Unit
 	caretY       core.Unit
 	caretStyle   int
+	caretCalls   int // how many times the frame touched the caret at all
 }
 
 // SetBordered implements platform.BorderToggler.
@@ -38,7 +39,7 @@ func (s *msSurface) Size() core.UnitSize                  { return s.size }
 func (s *msSurface) Metrics() core.CellMetrics            { return core.DefaultCellMetrics() }
 func (s *msSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 func (s *msSurface) Invalidate(core.UnitRect)             { s.invalidated = true }
-func (s *msSurface) SetCursorVisible(v bool)              { s.caretVisible = v }
+func (s *msSurface) SetCursorVisible(v bool)              { s.caretVisible = v; s.caretCalls++ }
 func (s *msSurface) SetCursorPosition(x, y core.Unit)     { s.caretX, s.caretY = x, y }
 func (s *msSurface) SetCursorStyle(st int)                { s.caretStyle = st }
 func (s *msSurface) ScreenPositionPx() (int, int)         { return s.x, s.y }

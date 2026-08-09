@@ -24,9 +24,10 @@ func (h *recordingHandler) Resized(core.UnitSize) { h.resizes++ }
 // renderer, texture, frame paint into the raster framebuffer, posts,
 // timers, clean exit.
 func TestSDLPlatformHeadless(t *testing.T) {
+	requireSDL(t)
 	os.Setenv("SDL_VIDEODRIVER", "dummy")
 
-	p := New("test", 320, 200)
+	p := newTestPlatform(t)
 	handler := &recordingHandler{}
 	posts := 0
 

@@ -53,6 +53,12 @@ type ViewState struct {
 	ViewOffsetX     int
 	ViewOffsetY     int
 	ShowLineNumbers bool
+	// ProtectNewlines makes del_char_prior/del_char_next DECLINE to remove a line
+	// terminator (join two lines). It is the inverse of the deleteNewlineAsChar
+	// option, stored inverted so the zero value keeps the default — deleting a
+	// newline like any other character. Forced true for prompt viewports at
+	// creation.
+	ProtectNewlines bool
 	ShowInvisibles  bool
 	// ShowBidi renders a one-column direction marker at the leading edge of
 	// every directional fragment (except a line-initial fragment in the
@@ -355,7 +361,7 @@ type Viewport struct {
 	AfterKey string
 
 	// WikiRoot confines this viewport's wiki-reference resolution to a subtree:
-	// a canonical URL ("mew:///docs", "file:///home/us/wiki"; "" = none).
+	// a canonical URL ("box:///docs", "file:///home/us/wiki"; "" = none).
 	// When set, absolute wiki refs resolve from this root and relative climbs
 	// ("..") clamp at it — leaving the wiki requires a full scheme reference.
 	// A viewport's root NEVER changes: it is part of the viewport's identity, set
@@ -441,6 +447,18 @@ type Viewport struct {
 	MarginOuter int
 	RowMessages []string
 
+	// FrameX and FrameWidth confine this viewport to a horizontal sub-range of
+	// the screen, in cells: the renderer paints it starting at physical column
+	// FrameX and spanning FrameWidth columns instead of the full screen width.
+	// The zero value (FrameX 0, FrameWidth 0) means "start at the left edge and
+	// fill the screen" — byte-identical to full-width painting, so viewports
+	// that never set these are unaffected. This is a general window-painting
+	// option (any host, any viewport); the ifitfits tiler is one such driver,
+	// but nothing here depends on it. Cells outside the frame are left to
+	// whatever else paints there (blank, or a neighboring viewport).
+	FrameX     int
+	FrameWidth int
+
 	ContentX      int
 	ContentY      int
 	ContentWidth  int
@@ -495,6 +513,11 @@ func (m *Manager) noteMainFocus(w *Viewport) {
 		m.lastFocusedBySet = make(map[string]*Viewport)
 	}
 	m.lastFocusedBySet[w.ViewportSet] = w
+	// Only non-docked (main-area) viewports live in tiles; docked chrome (the
+	// help system, etc.) is laid out by the dock engine and never tiled.
+	if m.mainFocusHook != nil && w.Dock == DockNone {
+		m.mainFocusHook(w.ID)
+	}
 }
 
 // LastMainViewport returns the last-focused main-area (focus-eligible) viewport
@@ -785,6 +808,8 @@ type viewBinding struct {
 	findOrigin     *buffer.Anchor
 	findWrapped    bool
 	browseActive   bool
+	readOnly       bool // per-buffer view options travel with the binding, so a
+	linkBrowsing   bool // buffer's own read-only/link state returns on nav-back
 	viewOffsetX    int
 	viewOffsetY    int
 }
@@ -860,6 +885,8 @@ func (w *Viewport) detachBinding() viewBinding {
 		findOrigin:     w.findOrigin,
 		findWrapped:    w.findWrapped,
 		browseActive:   w.BrowseActive,
+		readOnly:       w.ViewState.ReadOnly,
+		linkBrowsing:   w.ViewState.LinkBrowsing,
 		viewOffsetX:    w.ViewState.ViewOffsetX,
 		viewOffsetY:    w.ViewState.ViewOffsetY,
 	}
@@ -894,6 +921,8 @@ func (w *Viewport) attachBinding(b viewBinding) {
 	w.findOrigin = b.findOrigin
 	w.findWrapped = b.findWrapped
 	w.BrowseActive = b.browseActive
+	w.ViewState.ReadOnly = b.readOnly
+	w.ViewState.LinkBrowsing = b.linkBrowsing
 	w.ViewState.ViewOffsetX = b.viewOffsetX
 	w.ViewState.ViewOffsetY = b.viewOffsetY
 	w.RefreshViewTop()
@@ -926,6 +955,11 @@ func (w *Viewport) releaseBinding() {
 // its own active buffer, back stack, and the new destination itself). The
 // caller decides WHICH buffer (reusing an open one for the same file, or
 // loading it) — the viewport only manages bindings.
+//
+// Same-buffer transitions never duplicate a history slot: swapping to the buffer
+// already shown is a no-op, and swapping to the buffer on top of the back stack
+// reuses that binding (restoring its caret) rather than stacking the same buffer
+// back-to-back.
 func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer.Buffer) bool) {
 	inBack := func(b *buffer.Buffer) bool {
 		for i := range w.navBack {
@@ -936,7 +970,20 @@ func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer
 		return false
 	}
 	old := w.Buffer
-	w.navBack = append(w.navBack, w.detachBinding())
+	if old == buf {
+		// Already showing this buffer: not a navigation. Leave the binding, the
+		// caret, and the history untouched rather than stacking a duplicate.
+		return
+	}
+	// A transient departing buffer (e.g. a mew:/ generated surface) is not kept
+	// as a back destination: release its binding instead of stacking it, so it
+	// can never be navigated back to.
+	departing := w.detachBinding()
+	if old != nil && old.IsTransient() {
+		departing.release()
+	} else {
+		w.navBack = append(w.navBack, departing)
+	}
 	for i := range w.navFwd {
 		b := w.navFwd[i].Buffer
 		switch {
@@ -949,6 +996,18 @@ func (w *Viewport) SwapBuffer(buf *buffer.Buffer, referencedOutside func(*buffer
 		}
 	}
 	w.navFwd = nil
+	// Collapse a back-to-back repeat: if the destination is the binding we would
+	// step back to (its buffer sits on top of navBack — e.g. after a transient
+	// surface between two visits to the same document was released), REUSE that
+	// binding instead of minting a fresh duplicate. The caret/scroll it saved are
+	// restored, so following the entry for the document you just came from returns
+	// you exactly where you were, and the buffer never sits twice in a row.
+	if n := len(w.navBack); n > 0 && w.navBack[n-1].Buffer == buf {
+		reuse := w.navBack[n-1]
+		w.navBack = w.navBack[:n-1]
+		w.attachBinding(reuse)
+		return
+	}
 	w.bindBuffer(buf)
 }
 
@@ -1035,7 +1094,15 @@ func (w *Viewport) NavHistoryPrior() bool {
 	}
 	b := w.navBack[len(w.navBack)-1]
 	w.navBack = w.navBack[:len(w.navBack)-1]
-	w.navFwd = append(w.navFwd, w.detachBinding())
+	cur := w.Buffer
+	leaving := w.detachBinding()
+	// A transient buffer is not parked for re-advance: release it instead of
+	// pushing onto the forward stack.
+	if cur != nil && cur.IsTransient() {
+		leaving.release()
+	} else {
+		w.navFwd = append(w.navFwd, leaving)
+	}
 	w.attachBinding(b)
 	return true
 }
@@ -1049,7 +1116,14 @@ func (w *Viewport) NavHistoryNext() bool {
 	}
 	b := w.navFwd[len(w.navFwd)-1]
 	w.navFwd = w.navFwd[:len(w.navFwd)-1]
-	w.navBack = append(w.navBack, w.detachBinding())
+	cur := w.Buffer
+	leaving := w.detachBinding()
+	// A transient buffer is not parked as a back destination: release it.
+	if cur != nil && cur.IsTransient() {
+		leaving.release()
+	} else {
+		w.navBack = append(w.navBack, leaving)
+	}
 	w.attachBinding(b)
 	return true
 }
@@ -1187,6 +1261,22 @@ type Manager struct {
 
 	// Event handlers
 	eventHandlers map[EventType][]EventHandler
+
+	// mainFocusHook, when set, is called synchronously from noteMainFocus with
+	// the id of a main-area viewport that just gained focus. The editor uses it
+	// to keep the ifitfits tiler in sync (find/reveal/create the tile that holds
+	// the focused viewport). It runs while m.mu is held, so it must not call back
+	// into the Manager.
+	mainFocusHook func(id string)
+}
+
+// SetMainFocusHook registers a callback invoked (under the manager lock) whenever
+// a main-area viewport gains focus, with that viewport's id. Pass nil to clear.
+// The hook must not re-enter the Manager.
+func (m *Manager) SetMainFocusHook(fn func(id string)) {
+	m.mu.Lock()
+	m.mainFocusHook = fn
+	m.mu.Unlock()
 }
 
 // NewManager creates a new viewport manager.
@@ -1230,6 +1320,7 @@ type ViewportOptions struct {
 	MaxHeight       int
 	Height          int
 	ShowLineNumbers bool
+	ProtectNewlines bool
 	ShowInvisibles  bool
 	ShowBidi        bool
 	ShowMarks       string // "no" | "yes" | "all"
@@ -1325,6 +1416,11 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 			ViewOffsetX:     0,
 			ViewOffsetY:     0,
 			ShowLineNumbers: opts.ShowLineNumbers,
+			// Prompt viewports never delete a newline as a character: a prompt is a
+			// single line and joining it with a neighbour is never wanted. Forced
+			// here so no prompt creation site has to remember it; the zero value
+			// (not forced) keeps the default of deleting newlines for documents.
+			ProtectNewlines: opts.ProtectNewlines || opts.Type == PromptViewport,
 			ShowInvisibles:  opts.ShowInvisibles,
 			ShowBidi:        opts.ShowBidi,
 			ShowMarks:       opts.ShowMarks,

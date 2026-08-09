@@ -17,7 +17,7 @@ func TestNormalizeDocPathSchemesPassThrough(t *testing.T) {
 		"help:/start.txt",
 		"file:///Users/x/y.txt",
 		"http://example.com/a",
-		"mew:///editor.conf",
+		"box:///editor.conf",
 		"s3://bucket/key",
 		"/already/absolute.txt",
 	}

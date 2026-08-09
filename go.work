@@ -3,6 +3,9 @@
 // (./app), and the vendored KittyTK fork (./kittytk). External consumers of
 // github.com/phroun/mew ignore this file — it only affects builds inside the
 // workspace.
+//
+// The ifitfits viewport tiling engine now lives in its own repository
+// (github.com/phroun/ifitfits); consume it as a normal versioned dependency.
 go 1.25.0
 
 use (

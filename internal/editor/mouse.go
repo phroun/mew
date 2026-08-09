@@ -78,6 +78,11 @@ type scrollbarDragState struct {
 	active  bool
 	winID   string
 	grabOff int
+	// tileHandle is the tile whose bar was grabbed (0 for docked chrome). The
+	// press does not steal focus, so the grabbed tile may not be the viewport's
+	// canonical one; the drag re-applies this tile's geometry each motion so the
+	// thumb math uses the grabbed bar's track, not the tallest tile's.
+	tileHandle uint64
 }
 
 // scrollbarPressAt starts a scrollbar gesture when the press lands in a
@@ -93,7 +98,7 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 	if e.hostDrawsScrollbars() {
 		return false // the host owns the bar, in pixels
 	}
-	w := e.viewportAtRow(y)
+	w := e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil || w.ScrollbarX < 0 || x-1 != w.ScrollbarX {
 		return false
 	}
@@ -121,8 +126,28 @@ func (e *Editor) scrollbarPressAt(x, y int) bool {
 	}
 	e.sbDrag.active = true
 	e.sbDrag.winID = w.ID
+	e.sbDrag.tileHandle = 0
+	if t := e.mainTileAt(x, y); t != nil {
+		e.sbDrag.tileHandle = t.TileHandle // re-applied each drag motion
+	}
 	e.scrollbarDragTo(w, r)
 	return true
+}
+
+// applyGrabbedScrollbarTile re-applies the geometry of the tile whose bar the
+// scrollbar gesture grabbed, so the thumb math (track height, content page,
+// content top) uses that specific bar — not the viewport's canonical tile,
+// which the press did not move focus to.
+func (e *Editor) applyGrabbedScrollbarTile(w *viewport.Viewport) {
+	if e.sbDrag.tileHandle == 0 {
+		return
+	}
+	for i := range e.mainTiles {
+		if e.mainTiles[i].TileHandle == e.sbDrag.tileHandle && e.mainTiles[i].Viewport == w {
+			e.mainTiles[i].StampGeometry()
+			return
+		}
+	}
 }
 
 // scrollbarDrag continues a captured scrollbar gesture: the pointer's row —
@@ -137,6 +162,7 @@ func (e *Editor) scrollbarDrag(y int) bool {
 		e.sbDrag.active = false
 		return true
 	}
+	e.applyGrabbedScrollbarTile(w) // thumb math against the grabbed bar's tile
 	e.scrollbarDragTo(w, y-1-w.ContentY)
 	return true
 }
@@ -281,9 +307,9 @@ func (e *Editor) handleMouseKey(key string) bool {
 		e.hScrollReset()
 		e.mouseScroll(e.mouseX, e.mouseY, +3)
 	case base == "MouseScrollLeft":
-		e.mouseScrollHoriz(e.mouseY, -1)
+		e.mouseScrollHoriz(e.mouseX, e.mouseY, -1)
 	case base == "MouseScrollRight":
-		e.mouseScrollHoriz(e.mouseY, +1)
+		e.mouseScrollHoriz(e.mouseX, e.mouseY, +1)
 	}
 	// Every other Mouse* event (middle button, right release/drags) is
 	// swallowed so it never leaks into keymap dispatch.
@@ -337,8 +363,30 @@ func (e *Editor) notifyScrollbarRegions() {
 		return
 	}
 	var regions []ScrollbarRegion
+	// Main-area tiles publish a region each, from per-tile geometry: a viewport
+	// shown in several tiles (many-to-many) has a bar in each, so the host can
+	// draw and drag every one.
+	inMain := map[string]bool{}
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		w := t.Viewport
+		if w == nil || t.ScrollbarX < 0 || t.ScrollbarTrackH <= 0 || w.Buffer == nil || !e.viewportOnScreen(w) {
+			continue
+		}
+		inMain[w.ID] = true
+		regions = append(regions, ScrollbarRegion{
+			ViewportID: w.ID,
+			Col:        t.ScrollbarX + 1,
+			Row:        t.ContentY + 1,
+			TrackH:     t.ScrollbarTrackH,
+			Top:        w.ViewState.ViewOffsetY,
+			Page:       t.ContentHeight,
+			LineCount:  w.Buffer.GetLineCount(),
+		})
+	}
+	// Docked chrome is single-tile: its geometry lives correctly on the viewport.
 	for _, w := range e.ViewportManager.AllViewports() {
-		if w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 || w.Buffer == nil {
+		if inMain[w.ID] || w.ScrollbarX < 0 || w.ScrollbarTrackH <= 0 || w.Buffer == nil {
 			continue
 		}
 		if !e.viewportOnScreen(w) {
@@ -354,7 +402,12 @@ func (e *Editor) notifyScrollbarRegions() {
 			LineCount:  w.Buffer.GetLineCount(),
 		})
 	}
-	sort.Slice(regions, func(i, j int) bool { return regions[i].ViewportID < regions[j].ViewportID })
+	sort.Slice(regions, func(i, j int) bool {
+		if regions[i].ViewportID != regions[j].ViewportID {
+			return regions[i].ViewportID < regions[j].ViewportID
+		}
+		return regions[i].Col < regions[j].Col
+	})
 	if e.scrollbarRegionsPushed && scrollbarRegionsEqual(regions, e.scrollbarRegionsSent) {
 		return
 	}
@@ -540,7 +593,7 @@ func parseMouseAt(s string) (x, y int, ok bool) {
 func physicalToCell(x int) int { return (x + 1) / 2 }
 
 func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, caretRune int, ok bool) {
-	w = e.viewportAtRow(y)
+	w = e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, 0, false
 	}
@@ -707,19 +760,59 @@ func (e *Editor) viewportOnScreen(w *viewport.Viewport) bool {
 		e.Renderer != nil && w.LayoutEpoch == e.Renderer.LayoutEpoch()
 }
 
-// viewportAtRow finds the on-screen viewport whose CONTENT area covers the
-// 1-based screen row (the renderer maintains ContentY/ContentHeight per
-// frame). Only viewports laid out by the CURRENT frame qualify — a background
-// main viewport's stale geometry can cover the same rows and must not win.
-// The focused viewport takes the row as a tiebreak when areas overlap.
-func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
+// viewportAt finds the on-screen viewport covering the 1-based screen column x
+// and row y: vertically its CONTENT rows (ContentY/ContentHeight), horizontally
+// its whole paint frame ([FrameX, FrameX+FrameWidth), the full tile including
+// gutter and scrollbar; FrameWidth 0 means full width from FrameX, as for docked
+// chrome). The column test is what distinguishes side-by-side tiles — without it,
+// two tiles sharing the same rows both matched. Only viewports laid out by the
+// CURRENT frame qualify — a background main viewport's stale geometry can cover
+// the same cells and must not win. The focused viewport wins as a tiebreak when
+// areas overlap.
+func (e *Editor) viewportAt(x, y int) *viewport.Viewport {
 	row := y - 1 // ContentY is 0-based
-	covers := func(w *viewport.Viewport) bool {
-		return e.viewportOnScreen(w) &&
-			row >= w.ContentY && row < w.ContentY+w.ContentHeight
+	col := x - 1 // FrameX is 0-based
+
+	// The main editing area is tiled, and tiles↔viewports is many-to-many: a
+	// viewport can be shown in several tiles, so a click is resolved against the
+	// PER-TILE frames retained from the last render, not the viewport's own
+	// single-valued geometry (which holds only its last tile).
+	//
+	// A tiled viewport is hit ONLY within a tile's ACTUAL rectangle — both axes —
+	// never by its own geometry, so a short OR narrow tile holding a larger
+	// viewport cannot claim cells past its own edge. inMain records every tiled
+	// viewport so the docked fallback below can't re-match one that way.
+	inMain := map[string]bool{}
+	for i := range e.mainTiles {
+		if w := e.mainTiles[i].Viewport; w != nil {
+			inMain[w.ID] = true
+		}
 	}
-	if fw := e.ViewportManager.GetFocusedViewport(); covers(fw) {
-		return fw
+	if t := e.mainTileAt(x, y); t != nil {
+		// Apply the hit tile's geometry to the viewport so the caller's cell→
+		// document mapping uses THIS tile's offset, not whichever tile happened to
+		// paint last. The next render re-stamps geometry, so this is transient.
+		e.applyTileGeometry(t)
+		return t.Viewport
+	}
+
+	// Docked chrome (top/bottom bars) is single-tile, so its geometry lives
+	// correctly on the viewport: fall back to the per-viewport test for it. A
+	// tiled viewport is skipped here — it is strictly tile-bounded above.
+	focused := e.ViewportManager.GetFocusedViewport()
+	covers := func(w *viewport.Viewport) bool {
+		if w == nil || inMain[w.ID] || !e.viewportOnScreen(w) ||
+			!(row >= w.ContentY && row < w.ContentY+w.ContentHeight) {
+			return false
+		}
+		width := w.FrameWidth
+		if width <= 0 {
+			width = e.Renderer.Width - w.FrameX
+		}
+		return col >= w.FrameX && col < w.FrameX+width
+	}
+	if covers(focused) {
+		return focused
 	}
 	var best *viewport.Viewport
 	for _, w := range e.ViewportManager.AllViewports() {
@@ -731,6 +824,60 @@ func (e *Editor) viewportAtRow(y int) *viewport.Viewport {
 		}
 	}
 	return best
+}
+
+// cellInTile reports whether the 0-based cell (row, col) lies within tile t's
+// actual rectangle — its content rows and its paint frame, both axes.
+func (e *Editor) cellInTile(t *viewport.ViewportLayout, row, col int) bool {
+	w := t.Viewport
+	if w == nil || !e.viewportOnScreen(w) ||
+		!(row >= t.ContentY && row < t.ContentY+t.ContentHeight) {
+		return false
+	}
+	width := t.FrameWidth
+	if width <= 0 {
+		width = e.Renderer.Width - t.FrameX
+	}
+	return col >= t.FrameX && col < t.FrameX+width
+}
+
+// mainTileAt returns the main-area tile whose actual rectangle covers the 1-based
+// cell (x, y), or nil. Tiles never overlap, so at most one matches; a
+// focus-eligible viewport's tile is preferred when a rare boundary coincidence
+// makes two match.
+func (e *Editor) mainTileAt(x, y int) *viewport.ViewportLayout {
+	row, col := y-1, x-1
+	var best *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		t := &e.mainTiles[i]
+		if !e.cellInTile(t, row, col) {
+			continue
+		}
+		if best == nil || (!best.Viewport.FocusEligible() && t.Viewport.FocusEligible()) {
+			best = t
+		}
+	}
+	return best
+}
+
+// applyTileGeometry stamps a tile's recorded paint frame and content rectangle
+// onto its viewport, so mouse math that reads the viewport's geometry operates
+// on the specific tile under the cursor. Geometry lives with the tile
+// (tiles↔viewports is many-to-many); the render pass re-stamps it every frame,
+// so this application lasts only until the next render.
+func (e *Editor) applyTileGeometry(t *viewport.ViewportLayout) {
+	t.StampGeometry()
+}
+
+// focusPressedTile makes the tile a press landed in the tiler's focused tile, so
+// it becomes the viewport's canonical pane: the caret, keyboard paging, the
+// scroll clamp, and a drag's autoscroll edges then all follow the tile the user
+// is actually working in — not whichever other tile of the same viewport last
+// held focus.
+func (e *Editor) focusPressedTile(x, y int) {
+	if t := e.mainTileAt(x, y); t != nil {
+		e.focusTilerTile(t.TileHandle)
+	}
 }
 
 // runeAtVisualColumn is the inverse of the caret-column math: the logical
@@ -990,11 +1137,21 @@ func (e *Editor) mousePress(x, y int, shift bool) {
 		// newest-prompt resolution included. The click only switches focus;
 		// it does not also place the caret.
 		if e.ViewportManager.FocusViewportAsCycle(w) {
+			// Focusing the viewport ran tilerFollowFocus, which lands on the
+			// FIRST tile that holds it. Override that to the tile actually under
+			// the pointer, so switching INTO a viewport shown in several tiles
+			// focuses the pane the user clicked, not its first mirror.
+			e.focusPressedTile(x, y)
 			e.announceFocusedViewport()
 			e.RequestRender()
 		}
 		return
 	}
+
+	// The press is in the focused viewport: make the TILE it landed in the
+	// canonical one, so the caret, paging, scroll clamp, and any drag autoscroll
+	// track the pane the user pressed in (a viewport can span several tiles).
+	e.focusPressedTile(x, y)
 
 	if shift {
 		// Extend from the caret's current document position to the click.
@@ -1147,7 +1304,7 @@ func (e *Editor) dragSelUpdate(x, y int) {
 // click below the doc parks the caret at EOF — and a drag upward from there
 // selects the document's tail.
 func (e *Editor) mouseHitBelowText(x, y int) (w *viewport.Viewport, docLine, runePos int, ok bool) {
-	w = e.viewportAtRow(y)
+	w = e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil, 0, 0, false
 	}
@@ -1555,8 +1712,8 @@ func (e *Editor) hScrollReset() {
 // qualifies; an UNFOCUSED one qualifies too — the wheel scrolls what the
 // pointer is over, without moving focus — except while a modal prompt holds
 // focus (then, as with every mouse action, only the prompt itself responds).
-func (e *Editor) wheelTarget(y int) *viewport.Viewport {
-	w := e.viewportAtRow(y)
+func (e *Editor) wheelTarget(x, y int) *viewport.Viewport {
+	w := e.viewportAt(x, y)
 	if w == nil || w.Buffer == nil {
 		return nil
 	}
@@ -1573,8 +1730,8 @@ func (e *Editor) wheelTarget(y int) *viewport.Viewport {
 // 8-column step (the same step and clamping as the scroll_left/scroll_right
 // commands), but only once the barrier is cleared. dir is -1 for left, +1 for
 // right. A direction reversal restarts the barrier.
-func (e *Editor) mouseScrollHoriz(y, dir int) {
-	w := e.wheelTarget(y)
+func (e *Editor) mouseScrollHoriz(x, y, dir int) {
+	w := e.wheelTarget(x, y)
 	if w == nil {
 		return
 	}
@@ -1604,7 +1761,7 @@ func (e *Editor) mouseScrollHoriz(y, dir int) {
 // focused one, or any truly visible viewport the pointer is over (the wheel
 // follows the pointer, not the focus; a modal prompt still blocks it).
 func (e *Editor) mouseScroll(x, y int, delta int) {
-	w := e.wheelTarget(y)
+	w := e.wheelTarget(x, y)
 	if w == nil {
 		return
 	}

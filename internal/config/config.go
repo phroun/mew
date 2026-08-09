@@ -349,7 +349,12 @@ func DefaultIndicators() Indicators {
 // GeneralConfig holds general editor settings.
 type GeneralConfig struct {
 	ShowLineNumbers bool
-	ShowColumnRuler bool
+	// DeleteNewlineAsChar lets del_char_prior / del_char_next remove a line
+	// terminator (joining two lines) like any other character. Default true; when
+	// false those commands decline at a line boundary rather than joining lines.
+	// Prompt viewports pin it false at creation.
+	DeleteNewlineAsChar bool
+	ShowColumnRuler     bool
 	// Scrollbar reserves each doc/tool viewport's outer column (right in LTR,
 	// left in RTL) for a clickable vertical scrollbar. Default true.
 	Scrollbar        bool
@@ -462,13 +467,11 @@ type GeneralConfig struct {
 	// found walking up from the working directory contribute their
 	// editor.conf as layers over the user configuration (set it false in
 	// ~/.mew/editor.conf to ignore project configs entirely).
-	ProjectConfig    bool
-	WordWrap         bool
-	Layout           string
-	MappingsName     string
-	SequenceLength   int
-	DebounceMs       int
-	MaxRenderDelayMs int
+	ProjectConfig  bool
+	WordWrap       bool
+	Layout         string
+	MappingsName   string
+	SequenceLength int
 
 	// Search defaults (JOE-compatible rc options): SearchIgnoreCase mirrors
 	// -icase, SearchWrap mirrors -wrap, SearchRegex mirrors -regex (standard
@@ -630,13 +633,13 @@ type WindowConfig struct {
 }
 
 // FileIO is the file access the Manager uses for config, profile, and @include
-// files. A path beginning "mew:" addresses mew's own config tree (editor.conf,
+// files. A path beginning "box:" addresses mew's own storage box (editor.conf,
 // profile.mew, angle-bracket includes); every other path is an ordinary
 // project/document file. Paths handed to a FileIO always use the canonical
-// "mew:///rel" spelling (empty authority — the authority slot is reserved for
-// future instance selection). A host injects a scheme-aware implementation
-// (SetFileIO); the default maps mew:/// to <UserHomeDir>/.mew and everything
-// else straight to the OS. Write creates parent directories.
+// "box:///rel" spelling (empty authority — "this app's own box"). A host injects
+// a scheme-aware implementation (SetFileIO); the default maps box:/// to
+// <UserHomeDir>/.mew and everything else straight to the OS. Write creates
+// parent directories.
 type FileIO struct {
 	Read  func(path string) ([]byte, error)
 	Write func(path string, data []byte) error
@@ -645,8 +648,8 @@ type FileIO struct {
 
 // Manager handles configuration file operations.
 type Manager struct {
-	configDir  string // "mew:///" — the mew config tree root
-	configPath string // "mew:///editor.conf"
+	configDir  string // "box:///" — the mew config tree root (mew's own box)
+	configPath string // "box:///editor.conf"
 	fio        FileIO
 	// localMewDir, when set, is the real ~/.mew directory: excluded from
 	// project discovery so the user config layer is not also treated as a
@@ -659,11 +662,11 @@ type Manager struct {
 }
 
 // NewManager creates a new config manager whose config tree is addressed with
-// the "mew:///" scheme (default: <UserHomeDir>/.mew on the real OS).
+// the "box:///" scheme (default: <UserHomeDir>/.mew on the real OS).
 func NewManager() *Manager {
 	return &Manager{
-		configDir:  "mew:///",
-		configPath: "mew:///editor.conf",
+		configDir:  "box:///",
+		configPath: "box:///editor.conf",
 		fio:        osFileIO(),
 	}
 }
@@ -690,32 +693,32 @@ func (m *Manager) SetIncludeReader(read func(path string) ([]byte, error)) {
 	m.includeRead = read
 }
 
-// osFileIO is the default file access: mew:/// maps to <UserHomeDir>/.mew,
+// osFileIO is the default file access: box:/// maps to <UserHomeDir>/.mew,
 // other paths go straight to the OS.
 func osFileIO() FileIO {
 	return FileIO{
-		Read: func(p string) ([]byte, error) { return os.ReadFile(mewToLocal(p)) },
+		Read: func(p string) ([]byte, error) { return os.ReadFile(boxToLocal(p)) },
 		Write: func(p string, data []byte) error {
-			lp := mewToLocal(p)
+			lp := boxToLocal(p)
 			if err := os.MkdirAll(filepath.Dir(lp), 0o755); err != nil {
 				return err
 			}
 			return os.WriteFile(lp, data, 0o644)
 		},
 		IsDir: func(p string) bool {
-			fi, err := os.Stat(mewToLocal(p))
+			fi, err := os.Stat(boxToLocal(p))
 			return err == nil && fi.IsDir()
 		},
 	}
 }
 
-// mewToLocal maps a "mew:///rel" path to <UserHomeDir>/.mew/rel; other paths
+// boxToLocal maps a "box:///rel" path to <UserHomeDir>/.mew/rel; other paths
 // pass through unchanged.
-func mewToLocal(p string) string {
-	if !strings.HasPrefix(p, "mew:") {
+func boxToLocal(p string) string {
+	if !strings.HasPrefix(p, "box:") {
 		return p
 	}
-	rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
+	rel := strings.TrimLeft(strings.TrimPrefix(p, "box:"), "/")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
@@ -745,26 +748,26 @@ var includeRe = regexp.MustCompile(`^\s*@include\s+(?:"([^"]+)"|<([^>]+)>)\s*$`)
 var authorRe = regexp.MustCompile(`^\s*@author\s+(.+?)\s*$`)
 
 // joinInclude resolves an @include reference against a base directory. When the
-// base is a "mew:" path the result stays inside the mew tree: the reference is
+// base is a "box:" path the result stays inside the box tree: the reference is
 // joined as if rooted at the tree top, so any leading "../" is dropped and can
-// never rise above "mew:///" — the confinement a virtualizing host relies on.
+// never rise above "box:///" — the confinement a virtualizing host relies on.
 // Other bases join with ordinary OS-path semantics.
 func joinInclude(base, ref string) string {
-	if strings.HasPrefix(base, "mew:") {
-		rel := strings.TrimLeft(strings.TrimPrefix(base, "mew:"), "/")
+	if strings.HasPrefix(base, "box:") {
+		rel := strings.TrimLeft(strings.TrimPrefix(base, "box:"), "/")
 		clean := path.Clean("/" + rel + "/" + ref) // rooted: ".." cannot escape "/"
-		return "mew://" + clean
+		return "box://" + clean
 	}
 	return filepath.Join(base, ref)
 }
 
-// includeDir is the directory of an include path, preserving the "mew:///"
-// scheme so a nested quoted include resolves against its includer's mew
+// includeDir is the directory of an include path, preserving the "box:///"
+// scheme so a nested quoted include resolves against its includer's box
 // location.
 func includeDir(p string) string {
-	if strings.HasPrefix(p, "mew:") {
-		rel := strings.TrimLeft(strings.TrimPrefix(p, "mew:"), "/")
-		return "mew://" + path.Dir("/"+rel)
+	if strings.HasPrefix(p, "box:") {
+		rel := strings.TrimLeft(strings.TrimPrefix(p, "box:"), "/")
+		return "box://" + path.Dir("/"+rel)
 	}
 	return filepath.Dir(p)
 }
@@ -867,6 +870,7 @@ func DefaultConfig() Config {
 		Outline:     DefaultOutline(),
 		General: GeneralConfig{
 			ShowLineNumbers:         true,
+			DeleteNewlineAsChar:     true,
 			ShowColumnRuler:         true,
 			Scrollbar:               true,
 			RulerShowsCursor:        false,
@@ -891,8 +895,6 @@ func DefaultConfig() Config {
 			Layout:                  "qwerty",
 			MappingsName:            "mew",
 			SequenceLength:          4,
-			DebounceMs:              20,
-			MaxRenderDelayMs:        100,
 			SearchIgnoreCase:        false,
 			SearchWrap:              true,
 			SearchRegex:             false,
@@ -1120,6 +1122,9 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 	if opt, ok := parsed["options"]; ok {
 		if v, ok := opt["showLineNumbers"]; ok {
 			config.General.ShowLineNumbers = parseBool(v, true)
+		}
+		if v, ok := opt["deleteNewlineAsChar"]; ok {
+			config.General.DeleteNewlineAsChar = parseBool(v, true)
 		}
 		if v, ok := opt["showColumnRuler"]; ok {
 			config.General.ShowColumnRuler = parseBool(v, true)
@@ -1801,7 +1806,7 @@ func mergeStringMap(dst *map[string]string, src map[string]string) {
 
 // ProfilePath returns the mew: path of the user's profile.mew startup script.
 func (m *Manager) ProfilePath() string {
-	return "mew:///profile.mew"
+	return "box:///profile.mew"
 }
 
 // defaultProfileScript is written to profile.mew when it doesn't exist yet,

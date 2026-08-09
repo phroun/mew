@@ -40,3 +40,57 @@ func TestEmbeddedFocusIsTheWholeNotionOfFocus(t *testing.T) {
 		t.Error("the emulator's flag should clear with it")
 	}
 }
+
+// A mirror paint renders the terminal UNFOCUSED (hollow cursor, no platform
+// caret) without disturbing the real focus or the emulator's own focus flag —
+// so a host can paint one live terminal in several places while only its
+// primary owns the caret.
+func TestMirrorPaintRendersUnfocusedWithoutLosingFocus(t *testing.T) {
+	term := NewPurfecTerm()
+	term.Init(term)
+	term.SetEmbeddedFocus(true)
+	if !term.paintFocused() || !term.gfxFocused() {
+		t.Fatal("an embedded-focused terminal should render focused")
+	}
+
+	term.mirrorPaint.Store(true)
+	if term.paintFocused() || term.gfxFocused() {
+		t.Error("a mirror paint must render unfocused (no focused cursor, no caret)")
+	}
+	if !term.focused() {
+		t.Error("a mirror paint must NOT disturb the real focus")
+	}
+	if term.terminal != nil && !term.terminal.IsFocused() {
+		t.Error("a mirror paint must NOT disturb the emulator's focus reporting")
+	}
+
+	term.mirrorPaint.Store(false)
+	if !term.paintFocused() || !term.gfxFocused() {
+		t.Error("clearing the mirror flag restores focused rendering")
+	}
+}
+
+// A mirror paint must not resize the child: it draws the grid the primary
+// settled, so updateTerminalSize early-returns under the mirror flag and emits
+// no resize from the mirror's own rectangle. (Re-fitting from a smaller mirror
+// is what scrolled the shared buffer and wrapped at the wrong column.)
+func TestMirrorPaintSuppressesResize(t *testing.T) {
+	term := NewPurfecTerm()
+	term.Init(term)
+	if term.Terminal() == nil {
+		t.Skip("no term")
+	}
+	resizes := 0
+	term.SetResizeSink(func(cols, rows int) { resizes++ })
+
+	term.SetBounds(term.Bounds())
+	term.updateTerminalSize()
+	base := resizes
+
+	term.mirrorPaint.Store(true)
+	term.updateTerminalSize()
+	term.mirrorPaint.Store(false)
+	if resizes != base {
+		t.Fatalf("a mirror paint emitted a resize (%d -> %d)", base, resizes)
+	}
+}

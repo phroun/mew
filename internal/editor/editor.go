@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/phroun/ifitfits"
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
@@ -121,6 +123,21 @@ type Editor struct {
 	// (set_option scriptTimeout) apply immediately.
 	pawConfig *pawscript.Config
 
+	// tiler is the ifitfits viewport-tiling engine that arranges the main
+	// (non-docked) editing area. It holds tiles, each carrying a ref that is a
+	// mew viewport id (or empty → blank); the render path lays out each tile and
+	// draws the viewport its ref names. Focus is kept in sync through
+	// tilerFollowFocus (the manager's main-focus hook). Built lazily; see
+	// ensureTiler and applyTilerGeometry.
+	tiler *ifitfits.Viewport
+
+	// mainTiles is the last frame's laid-out main-area tiles, retained for mouse
+	// hit-testing: geometry lives with the tile (a viewport can appear in several
+	// tiles, many-to-many), so a click is resolved against these per-tile frames
+	// rather than the viewport's own single-valued geometry. Written by
+	// performRender, read by viewportAt — both on the editor goroutine.
+	mainTiles []viewport.ViewportLayout
+
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
 	pageSizeSpec pageSizeSpec
@@ -152,7 +169,7 @@ type Editor struct {
 	// Garland's own lazy warm-storage path instead of reading whole files.
 	usingOSFS bool
 
-	// mew accesses the "mew:///" support tree (config, profile, syntax, native
+	// mew accesses the "box:///" storage tree (config, profile, syntax, native
 	// locks, crash dumps) — virtualized or mapped to <home>/.mew. home is the
 	// resolved home directory (host override or OS), used for "~" expansion.
 	mew  *mewVFS
@@ -216,7 +233,7 @@ type Editor struct {
 	// holds it and performRender never recurses, so a plain Lock is deadlock-free.
 	renderMu sync.Mutex
 
-	// pendingScreenCapture, when non-empty, is a mew:/// target the next
+	// pendingScreenCapture, when non-empty, is a box:/// target the next
 	// performRender writes a full-frame ANSI snapshot to (the debug_screen
 	// command). Set and read under renderMu, so the capture rides the natural
 	// render loop — snapshotting the exact frame just painted — rather than a
@@ -260,19 +277,28 @@ type Editor struct {
 	// processor, so an unchanged set is not rebuilt.
 	appliedMappingSet string
 
-	// ptySessions binds a buffer to the host-provided terminal session it is
+	// ptySessions binds a VIEWPORT to the host-provided terminal session it is
 	// running, and ptyMu guards it: the read loop lives on the session's own
-	// goroutine while commands touch the map from the main loop. See pty.go.
+	// goroutine while commands touch the map from the main loop. Keying on the
+	// viewport (not the buffer) is what lets a cloned viewport show plain buffer
+	// text in one tile while the terminal draws in the origin, and lets two
+	// sessions run against one buffer from two viewports; each ptyState still
+	// remembers the buffer it launched in (ptyState.buf) for where its capture
+	// lands. See pty.go.
 	ptyMu       sync.Mutex
-	ptySessions map[*buffer.Buffer]*ptyState
+	ptySessions map[*viewport.Viewport]*ptyState
 	ptySeq      int
 	// terminalSurfacesSent is the last set pushed to the host, so an idle
 	// frame republishes nothing.
 	terminalSurfacesSent []TerminalSurface
-	// ptyMouseCapture is the buffer whose terminal took a mouse press and now
-	// owns the gesture until release (its scrollbar drag, its selection).
-	// Touched only on the main loop under renderMu.
-	ptyMouseCapture *buffer.Buffer
+	// ptyMouseCapture is the terminal gesture (a scrollbar drag, a selection)
+	// held from press to release: which buffer's terminal took it, and the
+	// content rectangle of the exact tile the press landed in. A viewport can be
+	// shown in several tiles of different sizes, so the gesture pins its geometry
+	// to the pressed tile rather than re-reading the viewport's canonical one,
+	// which would drift a drag that began in a mirror. Touched only on the main
+	// loop under renderMu.
+	ptyMouseCapture *ptyMouseGesture
 	// rawKeyArmed is the raw_key_input one-shot: the NEXT keystroke belongs to
 	// a focused terminal's child process rather than to mew's keymap. Cleared
 	// by that keystroke whether or not a terminal was there to take it.
@@ -530,7 +556,11 @@ type ScrollbarRegion struct {
 // Config holds editor configuration options.
 type Config struct {
 	ShowLineNumbers bool
-	ShowColumnRuler bool
+	// DeleteNewlineAsChar lets del_char_prior/del_char_next remove a line
+	// terminator (join lines) like any other character. Default true; false makes
+	// them decline at a line boundary. Per-viewport; prompt viewports pin it false.
+	DeleteNewlineAsChar bool
+	ShowColumnRuler     bool
 	// Scrollbar reserves each doc/tool viewport's outer column for a
 	// clickable vertical scrollbar (per-viewport option; default on).
 	Scrollbar        bool
@@ -576,11 +606,9 @@ type Config struct {
 
 	// Editing locks (see config.GeneralConfig): UseLocks gates all locking;
 	// UseEmacsLocks additionally gates the emacs-interoperable lock files.
-	UseLocks         bool
-	UseEmacsLocks    bool
-	WordWrap         bool
-	DebounceMs       int
-	MaxRenderDelayMs int
+	UseLocks      bool
+	UseEmacsLocks bool
+	WordWrap      bool
 
 	// Search defaults (JOE-compatible): SearchIgnoreCase mirrors -icase,
 	// SearchWrap mirrors -wrap, SearchRegex mirrors -regex (standard regex
@@ -635,7 +663,7 @@ type Config struct {
 	// insert, block write, globbing). Nil means the real OS file system.
 	FS FileSystem
 
-	// MewFS, when set, virtualizes mew's own support tree (the "mew:///" scheme —
+	// MewFS, when set, virtualizes mew's own storage tree (the "box:///" scheme —
 	// editor.conf, profile.mew, syntax grammars, native locks, crash dumps):
 	// mew:/x paths are handed to it verbatim. Nil maps mew:/ to <home>/.mew on
 	// the real OS.
@@ -885,20 +913,19 @@ type TerminalIO struct {
 // DefaultConfig returns sensible default configuration.
 func DefaultConfig() Config {
 	return Config{
-		ShowLineNumbers:  true,
-		ShowColumnRuler:  true,
-		Scrollbar:        true,
-		TabSize:          4,
-		ShowInvisibles:   false,
-		ShowBidi:         false,
-		RtlCombining:     true,
-		ShowMarks:        "no",
-		OverwriteMode:    false, // insertMode=yes
-		ReadOnly:         false,
-		WordWrap:         false,
-		DebounceMs:       20,
-		MaxRenderDelayMs: 100,
-		SearchWrap:       true,
+		ShowLineNumbers:     true,
+		DeleteNewlineAsChar: true,
+		ShowColumnRuler:     true,
+		Scrollbar:           true,
+		TabSize:             4,
+		ShowInvisibles:      false,
+		ShowBidi:            false,
+		RtlCombining:        true,
+		ShowMarks:           "no",
+		OverwriteMode:       false, // insertMode=yes
+		ReadOnly:            false,
+		WordWrap:            false,
+		SearchWrap:          true,
 	}
 }
 
@@ -991,6 +1018,7 @@ func New(cfg Config) (*Editor, error) {
 
 	// Apply loaded config to editor config
 	cfg.ShowLineNumbers = loadedConfig.General.ShowLineNumbers
+	cfg.DeleteNewlineAsChar = loadedConfig.General.DeleteNewlineAsChar
 	cfg.ShowColumnRuler = loadedConfig.General.ShowColumnRuler
 	cfg.Scrollbar = loadedConfig.General.Scrollbar
 	cfg.RulerShowsCursor = loadedConfig.General.RulerShowsCursor
@@ -1108,6 +1136,10 @@ func New(cfg Config) (*Editor, error) {
 		kittyFlipActive:  kittyFlipActive,
 	}
 
+	// Keep the tiler in sync with focus: when mew focuses a main-area viewport,
+	// tilerFollowFocus finds/reveals/creates the tile that holds it.
+	e.ViewportManager.SetMainFocusHook(e.tilerFollowFocus)
+
 	// Register configured fonts into the host font engine and apply the
 	// startup ui-term alias, before any painting resolves font names.
 	e.applyFontConfig()
@@ -1198,7 +1230,15 @@ func New(cfg Config) (*Editor, error) {
 	renderer.SetScrollbarHostDrawn(e.hostDrawsScrollbars)
 
 	renderer.SetScrollbarSuppressor(func(w *viewport.Viewport) bool {
-		return w.Buffer != nil && e.ptySessionFor(w.Buffer) != nil
+		return w.Buffer != nil && e.visibleSessionFor(w) != nil
+	})
+
+	// A terminal viewport's document text is not painted: the host draws the
+	// terminal grid over it, and a grid too short/narrow to fill the area must
+	// show the editor background, not the buffer behind. The gutter and ruler
+	// still render. Session-ness lives on the buffer, so the renderer asks.
+	renderer.SetContentSuppressor(func(w *viewport.Viewport) bool {
+		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
 	// Peek-indicator labels run through the shared TFC engine so codes like
@@ -1278,6 +1318,18 @@ func New(cfg Config) (*Editor, error) {
 	// (a signal, a panic, or a host's sudden shutdown) never has to decide.
 	e.resolveDeadcat()
 
+	// A terminal is bound to the viewport it launched in (ptySessions is keyed by
+	// viewport): when that viewport is truly removed, its session goes with it.
+	// The event fires on its own goroutine, so marshal the close onto the main
+	// loop where the pty map lives. OldValue carries the removed *Viewport.
+	e.ViewportManager.On(viewport.EventViewportRemoved, func(ev viewport.Event) {
+		w, _ := ev.OldValue.(*viewport.Viewport)
+		if w == nil {
+			return
+		}
+		e.PostAction(func() { e.endSessionForRemovedViewport(w) })
+	})
+
 	return e, nil
 }
 
@@ -1342,7 +1394,7 @@ func (e *Editor) peekBindingValues() map[string]string {
 // host's terminalPlace); mew adding a second caret over it would say the
 // opposite.
 func (e *Editor) caretHidden(w *viewport.Viewport) bool {
-	if w != nil && e.ptySessionFor(w.Buffer) != nil {
+	if w != nil && e.visibleSessionFor(w) != nil {
 		return true
 	}
 	return e.focusedLinkButton(w) != nil
@@ -1419,6 +1471,10 @@ func argInt(ctx *pawscript.Context, i int) (int, bool) {
 // registerCommands registers all editor commands with PawScript.
 func (e *Editor) registerCommands() {
 	ps := e.PawScript
+
+	// ifitfits viewport-tiling commands (viewport_new, viewport_zoom, …) live in
+	// tilingcommands.go.
+	e.registerTilingCommands(ps)
 
 	// System commands
 	ps.RegisterCommand("exit", func(ctx *pawscript.Context) pawscript.Result {
@@ -1511,11 +1567,18 @@ func (e *Editor) registerCommands() {
 	// stacking the departed binding — see Viewport.SwapBuffer). Prior returns
 	// to where you were; next re-advances. Both fail when there is no history
 	// in that direction, so chains fall through.
+	//
+	// nav_history_prior takes the same [always] first argument as nav_follow.
+	// Bare (or "true") it always acts. With "false" it is GATED like
+	// nav_follow false — only the actively focused link button of the focused
+	// viewport lets it act — EXCEPT that a read-only document already in
+	// navigation mode passes even off a link (nothing there is editable, so the
+	// key is free to mean "go back"). See navHistoryGatePasses.
 	ps.RegisterCommand("nav_history_prior", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navHistory(-1))
+		return pawscript.BoolStatus(e.navHistory(-1, navArg(ctx)))
 	})
 	ps.RegisterCommand("nav_history_next", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.navHistory(+1))
+		return pawscript.BoolStatus(e.navHistory(+1, true))
 	})
 
 	// nav_clear forgets every visited link (editor-wide repaint to the
@@ -2034,6 +2097,20 @@ func (e *Editor) registerCommands() {
 
 	// Editing commands (using TypeScript naming convention)
 	ps.RegisterCommand("del_char_prior", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A backspace over a read-only buffer declines (false, no edit) but —
+		// unlike every other mutation — WITHOUT the "Buffer is read-only" toast: a
+		// key as ordinary as backspace should not nag. Other commands still warn.
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
+		// When deleteNewlineAsChar is off for this viewport, a backspace at the
+		// start of a line declines rather than joining it with the line above.
+		// Fail with false and no visible error; no edit, so the undo coalescing run
+		// is untouched.
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, false) {
+			return pawscript.BoolStatus(false)
+		}
 		e.deleteCharBefore()
 		e.trackEdit()
 		e.editCoalesced = true // a single-point edit: coalesce the undo run
@@ -2041,6 +2118,17 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("del_char_next", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		// A forward-delete over a read-only buffer declines silently too — no
+		// "Buffer is read-only" toast (see del_char_prior).
+		if w != nil && e.viewportReadOnly(w) {
+			return pawscript.BoolStatus(false)
+		}
+		// Same guard forward: a forward-delete at end of line declines rather than
+		// pulling the next line up. No edit → coalescing untouched.
+		if w != nil && w.ViewState.ProtectNewlines && e.deleteWouldRemoveNewline(w, true) {
+			return pawscript.BoolStatus(false)
+		}
 		e.deleteCharAt()
 		e.trackEdit()
 		e.editCoalesced = true // a single-point edit: coalesce the undo run
@@ -2233,10 +2321,17 @@ func (e *Editor) registerCommands() {
 			parse = parseShellLineNamed
 		}
 		request := func(spec execSpec) bool {
-			if spec.Shell {
-				return e.execRequestShell(spec.Args, spec.Method)
+			// A routed stream (--inblock/--outblock or --stdin/--stdout/--stderr)
+			// makes this a FILTER, not a terminal: the child runs on pipes and mew
+			// feeds/reads its streams itself. Handled on its own path.
+			if spec.filtering() {
+				return e.runFilter(spec)
 			}
-			return e.execRequestArgs(spec.Program, spec.Args, spec.Method)
+			pol := spec.sizePolicy()
+			if spec.Shell {
+				return e.execRequestShellPolicy(spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
+			}
+			return e.execRequestArgsPolicy(spec.Program, spec.Args, spec.Method, pol, spec.Capture, spec.CaptureFormat)
 		}
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
 			var parts []string
@@ -2308,6 +2403,27 @@ func (e *Editor) registerCommands() {
 	// that starts and stops with nothing to show for it.
 	ps.RegisterCommand("pty_diag", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.ptyDiagnose())
+	})
+
+	// viewport_pty_hide / _show / _toggle run the focused viewport's terminal
+	// under the hood or bring it back — bindable so a running session can be
+	// hidden or revealed part-way through. Each warns and does nothing when the
+	// focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_hide", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(1, "viewport_pty_hide"))
+	})
+	ps.RegisterCommand("viewport_pty_show", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(-1, "viewport_pty_show"))
+	})
+	ps.RegisterCommand("viewport_pty_toggle", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.setViewportPTYHidden(0, "viewport_pty_toggle"))
+	})
+
+	// viewport_pty_kill ends the focused viewport's session; a `final` capture
+	// then folds everything it produced up to that point. Warns and does nothing
+	// when the focused buffer has no session.
+	ps.RegisterCommand("viewport_pty_kill", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.killViewportPTY())
 	})
 
 	// raw_key_input hands the NEXT keystroke to a focused terminal's child
@@ -2766,6 +2882,23 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.promptBlockFromFile())
 	})
 
+	// block_filter pipes the marked block through a shell command and replaces it
+	// with the result (JOE's filter-block). The command may be given inline
+	// (block_filter sort -r); with none it prompts, recalling prior filter
+	// commands. It is the ergonomic spelling of exec --stdin=block --stdout=block
+	// --stderr=block, so stdout and stderr both flow back into the block.
+	ps.RegisterCommand("block_filter", func(ctx *pawscript.Context) pawscript.Result {
+		var parts []string
+		for i := 0; ; i++ {
+			v, ok := argString(ctx, i)
+			if !ok {
+				break
+			}
+			parts = append(parts, v)
+		}
+		return pawscript.BoolStatus(e.blockFilter(strings.Join(parts, " ")))
+	})
+
 	// OS-clipboard commands: the host system-clipboard bridge (see
 	// osclipboard.go). A channel deliberately separate from the kill ring.
 	ps.RegisterCommand("os_copy", func(ctx *pawscript.Context) pawscript.Result {
@@ -2905,13 +3038,13 @@ func (e *Editor) registerCommands() {
 	})
 
 	// debug_screen arms a full-frame ANSI snapshot of the screen, written to a
-	// timestamped ".ans" file in the mew:/// support tree (~/.mew locally) — a
+	// timestamped ".ans" file in the box:/// support tree (~/.mew locally) — a
 	// capture that reproduces the screen when cat'd to a terminal. The write
 	// rides the NEXT render (see performRender): the command only arms the target
 	// and forces a full repaint, so it never re-renders (or re-locks renderMu)
 	// itself — snapshotting the exact frame that gets painted.
 	ps.RegisterCommand("debug_screen", func(ctx *pawscript.Context) pawscript.Result {
-		e.pendingScreenCapture = "mew:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
+		e.pendingScreenCapture = "box:///" + time.Now().Format("2006-01-02 15.04.05") + ".ans"
 		e.Renderer.ForceRedraw()
 		e.RequestRender()
 		return pawscript.BoolStatus(true)
@@ -2974,57 +3107,14 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("buffer_list", func(ctx *pawscript.Context) pawscript.Result {
-		// A second invocation while the list is showing dismisses it (like
-		// help_toggle / editor_options).
-		for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
-			if w.Class == "buffer_list" {
-				e.ViewportManager.RemoveViewport(w.ID)
-				e.RequestRender()
-				return pawscript.BoolStatus(true)
-			}
-		}
-		mainBuffers := e.contentViewports()
-		if len(mainBuffers) == 0 {
-			e.ShowWarning("No open buffers")
-			return pawscript.BoolStatus(false)
-		}
-		// Build list content
-		var content strings.Builder
-		content.WriteString("Open Buffers:\n")
-		for i, w := range mainBuffers {
-			filename := "[unnamed]"
-			if w.Buffer != nil {
-				fn := w.Buffer.GetFilename()
-				if fn != "" {
-					filename = fn
-				}
-			}
-			modified := ""
-			if w.Buffer != nil && w.Buffer.IsModified() {
-				modified = " [modified]"
-			}
-			focused := ""
-			if w == e.ViewportManager.GetFocusedViewport() {
-				focused = " *"
-			}
-			content.WriteString(fmt.Sprintf("  %d: %s%s%s\n", i+1, filename, modified, focused))
-		}
-		// Show in a work buffer viewport
-		buf := e.lib.NewFromString(content.String())
-		e.ViewportManager.CreateViewport(viewport.ViewportOptions{
-			Type:             viewport.ToolViewport,
-			ViewportSet:      "help",
-			Class:            "buffer_list",
-			Dock:             viewport.DockTop,
-			Priority:         100,
-			MinHeight:        3,
-			MaxHeight:        10,
-			MessageTopCenter: "Buffers",
-			Buffer:           buf,
-			ShowLineNumbers:  false,
-		})
-		e.RequestRender()
-		return pawscript.BoolStatus(true)
+		// Navigate the focused document to the generated mew:/buffers surface:
+		// a dynamic, read-only dokuwiki list of open buffers, in navigation mode.
+		return pawscript.BoolStatus(e.openGeneratedSurface("buffers"))
+	})
+
+	ps.RegisterCommand("viewport_list", func(ctx *pawscript.Context) pawscript.Result {
+		// The mew:/viewports companion to buffer_list.
+		return pawscript.BoolStatus(e.openGeneratedSurface("viewports"))
 	})
 
 	// Search commands. find takes up to three optional arguments -
@@ -3407,6 +3497,13 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 			v = w.ViewState.ShowLineNumbers
 		}
 		return boolText(v), true
+	case "deletenewlineaschar":
+		// Stored inverted (ProtectNewlines); report the on/off sense.
+		v := e.Config.DeleteNewlineAsChar
+		if w != nil {
+			v = !w.ViewState.ProtectNewlines
+		}
+		return boolText(v), true
 	case "showinvisibles":
 		v := e.Config.ShowInvisibles
 		if w != nil {
@@ -3556,10 +3653,6 @@ func (e *Editor) getOption(w *viewport.Viewport, name string) (string, bool) {
 		return strconv.Itoa(e.Config.PromptTimeout), true
 	case "scripttimeout":
 		return strconv.Itoa(e.Config.ScriptTimeout), true
-	case "debouncems":
-		return strconv.Itoa(e.Config.DebounceMs), true
-	case "maxrenderdelayms":
-		return strconv.Itoa(e.Config.MaxRenderDelayMs), true
 	}
 	return "", false
 }
@@ -3729,6 +3822,16 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 			w.ViewState.ShowLineNumbers = b
 		} else {
 			e.Config.ShowLineNumbers = b
+		}
+	case "deletenewlineaschar":
+		b, ok := parseBool()
+		if !ok {
+			return false
+		}
+		if w != nil {
+			w.ViewState.ProtectNewlines = !b // stored inverted
+		} else {
+			e.Config.DeleteNewlineAsChar = b
 		}
 	case "showinvisibles":
 		b, ok := parseBool()
@@ -4084,24 +4187,12 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if e.pawConfig != nil {
 			e.pawConfig.DefaultTokenTimeout = tokenTimeout(n)
 		}
-	case "debouncems":
-		n, ok := parseInt(0)
-		if !ok {
-			return false
-		}
-		e.Config.DebounceMs = n
-	case "maxrenderdelayms":
-		n, ok := parseInt(0)
-		if !ok {
-			return false
-		}
-		e.Config.MaxRenderDelayMs = n
 	default:
 		e.ShowWarning("Unknown option: " + name)
 		return false
 	}
 
-	e.ShowNotification("Option '" + name + "' set to " + value)
+	e.ShowNotificationTagged("Option '"+name+"' set to "+value, "optionset")
 	e.RequestRender()
 	return true
 }
@@ -4338,7 +4429,12 @@ func (e *Editor) viewportEditLocked(w *viewport.Viewport) bool {
 	if w == nil {
 		return false
 	}
-	if w.ViewState.ReadOnly {
+	// A generated surface (mew:/…) is read-only by its address, not by viewport
+	// state — a hard guarantee independent of when options were last resolved.
+	// viewportReadOnly is the SILENT predicate; keeping this branch on it means
+	// the delete commands' silent read-only decline can never drift from what
+	// warns here.
+	if e.viewportReadOnly(w) {
 		// Tagged so a burst of rejected edits (holding a key) collapses to one
 		// warning instead of stacking a bar per keystroke.
 		e.ShowWarningTagged("Buffer is read-only", "readonly_warning")
@@ -4934,6 +5030,25 @@ func (e *Editor) cursorRingGo(next bool) bool {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
+}
+
+// deleteWouldRemoveNewline reports whether a delete at the caret would remove a
+// line terminator (join two lines) rather than an in-line rune. forward is the
+// del_char_next direction; !forward is del_char_prior (backspace). It reads only
+// the caret POSITION and line lengths — never moving the editing caret — so it
+// cannot disturb the undo coalescing run. In-line deletes never target a
+// newline; only the line-boundary branches of deleteCharBefore/deleteCharAt do,
+// which this mirrors exactly.
+func (e *Editor) deleteWouldRemoveNewline(w *viewport.Viewport, forward bool) bool {
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	pos := w.CursorPos()
+	if forward {
+		lineLen := e.getEffectiveLineLen(w.Buffer, pos.Line)
+		return pos.Rune >= lineLen && pos.Line < w.Buffer.GetLineCount()-1
+	}
+	return pos.Rune == 0 && pos.Line > 0
 }
 
 // deleteCharBefore deletes the character before the cursor.
@@ -6731,6 +6846,12 @@ func (e *Editor) openFile(filename string) bool {
 		return true
 	}
 
+	// A generated mew: surface ("mew:/buffers") is produced on demand and
+	// navigated to in place, not opened as a file in a new viewport.
+	if name := genSurfaceName(strings.TrimSpace(filename)); name != "" {
+		return e.openGeneratedSurface(name)
+	}
+
 	buf, err := e.loadBuffer(filename)
 	if err != nil {
 		return false
@@ -6838,6 +6959,7 @@ func (e *Editor) cloneCurrentViewport() bool {
 		Priority:        0,
 		MinHeight:       1,
 		ShowLineNumbers: w.ViewState.ShowLineNumbers,
+		ProtectNewlines: w.ViewState.ProtectNewlines,
 		TabSize:         w.ViewState.TabSize,
 		ShowInvisibles:  w.ViewState.ShowInvisibles,
 		ShowBidi:        w.ViewState.ShowBidi,
@@ -6845,7 +6967,10 @@ func (e *Editor) cloneCurrentViewport() bool {
 		OverwriteMode:   w.ViewState.OverwriteMode,
 		ReadOnly:        w.ViewState.ReadOnly,
 		ShowRuler:       w.ViewState.ShowRuler,
-		SetFocus:        true,
+		// Inherit the scrollbar setting too, or the clone reserves no bar column
+		// and comes up with no scrollbar beside the original that has one.
+		Scrollbar: w.ViewState.Scrollbar,
+		SetFocus:  true,
 	})
 
 	// Start the clone at the source's caret and viewport.
@@ -7205,8 +7330,9 @@ func (e *Editor) finishCloseBuffer(viewportID string) bool {
 
 	closing := e.ViewportManager.GetViewport(viewportID)
 
-	// Remove the viewport
+	// Remove the viewport, and dismiss the tiler tile that held it.
 	e.ViewportManager.RemoveViewport(viewportID)
+	e.dismissTileFor(viewportID)
 
 	// Drop safety state (mew lock, notices) when no other viewport still holds
 	// this buffer open — actively or stacked in a nav history (viewport_clone
@@ -7723,8 +7849,17 @@ func (e *Editor) performRender() {
 	// Calculate layout
 	layout := e.LayoutManager.CalculateLayout(e.Renderer.Width, e.Renderer.Height)
 
+	// Drive the main viewport's geometry from the ifitfits tiler (a minimal
+	// geometry-only integration: the main document paints in its resolved tile).
+	e.applyTilerGeometry(&layout)
+
 	// Render
 	e.Renderer.Render(layout)
+
+	// Retain the main-area tiles for mouse hit-testing. Render filled each
+	// entry's per-tile content bounds, so a click can be resolved to the exact
+	// tile — necessary when one viewport is shown in several tiles.
+	e.mainTiles = layout.MainLayout
 
 	// The frame's viewport geometry is now set: publish the focused viewport's
 	// editable rectangle to the host so a graphical pointer shows the I-beam
@@ -7738,7 +7873,7 @@ func (e *Editor) performRender() {
 	e.renderRequested.Store(false)
 
 	// debug_screen: snapshot the exact frame just painted (same layout) to its
-	// armed mew:/// target. CaptureFrame takes the renderer's own mutex (free
+	// armed box:/// target. CaptureFrame takes the renderer's own mutex (free
 	// now that Render has returned); we hold renderMu, which is fine. Done after
 	// clearing renderRequested so the "Wrote" toast's own RequestRender sticks
 	// and schedules the frame that shows it.
@@ -7759,6 +7894,84 @@ func (e *Editor) performRender() {
 
 	// Show/hide the Kitty force_ltr nudge based on what this frame painted.
 	e.updateNiqqudNudge()
+}
+
+// applyTilerGeometry drives the painted main viewport's geometry from the
+// ifitfits tiler. This is a deliberately minimal, geometry-only integration:
+// the tiler holds a "main" tile (split against a "blank" tile) whose resolved
+// cell rect becomes the main viewport's on-screen box, proving the tiler's
+// geometry flows into mew's window painting. Nothing else (focus, input, the
+// blank tile's contents) is wired yet.
+//
+// The tiler works in the same cell units the main editor uses. Its workspace is
+// the full main-area rectangle (screen width × the negotiated main height). The
+// "main" tile's rect maps to the viewport two ways, because mew models the two
+// axes differently:
+//   - Horizontal: the ViewportLayout has no X/width, so the tile's X/width go on
+//     the viewport itself (FrameX/FrameWidth) and the renderer honors them.
+//   - Vertical: the ViewportLayout already carries per-viewport Y/height, and the
+//     layout's MainHeight is exactly the tiler's workspace height, so the tile's
+//     Y/height replace this entry's Y/height. That flows through the normal
+//     render pass into ContentHeight, so paging/scroll/mouse all see the real
+//     window height — and because it is per-viewport, a prompt buffer (which
+//     sets its own ContentHeight) is unaffected.
+//
+// applyTilerGeometry replaces the layout's main-area entries with ones derived
+// from the ifitfits tiler: the tiler owns the arrangement of the non-docked area,
+// so its workspace is that area (screen width × the negotiated main height), and
+// each visible tile becomes a ViewportLayout drawing the mew viewport its ref
+// names. A tile whose ref names no live viewport (an empty tile) is skipped — the
+// freshly cleared back buffer shows through as blank. Chrome (docked viewports)
+// is untouched; the renderer paints tiles and docked viewports through the same
+// agnostic path.
+//
+// Horizontal and vertical extent both ride on the layout ENTRY (the tile):
+// FrameX/FrameWidth and Y/Height are per-tile, so a viewport referenced by
+// several tiles (tiles↔viewports is many-to-many, e.g. after viewport_split
+// clones a ref) gets a distinct frame in each. The renderer applies each tile's
+// frame to the viewport just before painting it.
+func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
+	if layout.MainHeight <= 0 || e.Renderer.Width <= 0 {
+		layout.MainLayout = nil
+		return
+	}
+	vp := e.ensureTiler()
+	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
+
+	focusedTile := vp.GetFocus()
+	mainTop := layout.TopHeight
+	mains := make([]viewport.ViewportLayout, 0, 4)
+	for _, b := range vp.Tiles() {
+		w := e.ViewportManager.GetViewport(b.Ref)
+		if w == nil {
+			continue // empty/blank tile
+		}
+		// Snap each tile to integer cell edges by rounding its LEFT and RIGHT
+		// (and TOP/BOTTOM) edges, then taking the span. Rounding edges rather
+		// than truncating width keeps adjacent tiles flush and the rightmost/
+		// bottommost tile reaching the workspace edge, so a fractional split
+		// (e.g. an 81-column area halved) never leaves a one-cell gap.
+		x0 := int(math.Round(b.Rect.X))
+		x1 := int(math.Round(b.Rect.X + b.Rect.W))
+		y0 := int(math.Round(b.Rect.Y))
+		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		// Geometry rides on the tile (this layout entry): a viewport shown in
+		// several tiles gets a distinct frame per tile, and the renderer applies
+		// each just before painting it. The viewport's own FrameX/FrameWidth are
+		// also set (last tile wins) for the single-tile mouse hit-test path.
+		w.FrameX = x0
+		w.FrameWidth = x1 - x0
+		mains = append(mains, viewport.ViewportLayout{
+			Viewport:   w,
+			Y:          mainTop + y0,
+			Height:     y1 - y0,
+			FrameX:     x0,
+			FrameWidth: x1 - x0,
+			Focused:    b.Tile == focusedTile,
+			TileHandle: uint64(b.Tile),
+		})
+	}
+	layout.MainLayout = mains
 }
 
 // Run starts the editor with an optional filename.
@@ -7793,7 +8006,7 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	// mode, the virtualized support tree otherwise. Everything else is
 	// normalized (tilde-expanded, absolutized) so the buffer's filename
 	// survives saves and working-directory changes.
-	if isMewPath(filename) {
+	if isBoxPath(filename) {
 		return e.loadBufferURL(filename)
 	}
 	filename = e.normalizeDocPath(filename)
@@ -7920,6 +8133,7 @@ func (e *Editor) run(buf *buffer.Buffer) (string, error) {
 		Priority:        0,
 		SetFocus:        true,
 		ShowLineNumbers: e.Config.ShowLineNumbers,
+		ProtectNewlines: !e.Config.DeleteNewlineAsChar,
 		TabSize:         e.Config.TabSize,
 		ShowInvisibles:  e.Config.ShowInvisibles,
 		ShowBidi:        e.Config.ShowBidi,
@@ -8454,6 +8668,7 @@ func (e *Editor) appendVerboseLog(lines ...string) {
 			Priority:        0,
 			Buffer:          e.lib.New(),
 			ShowLineNumbers: true,
+			ProtectNewlines: !e.Config.DeleteNewlineAsChar,
 			TabSize:         e.Config.TabSize,
 			Visible:         true,
 		})
@@ -8652,10 +8867,11 @@ const helpViewportTag = "help"
 const helpViewportClass = "help"
 const quickHelpClass = "quickhelp"
 
-// quickHelpDocURL is the synthetic identity of the Quick Help buffer. It sits
-// OUTSIDE the help wiki root (mew:///help) so it never resolves as, or displays
-// like, a wiki page; it just gives the location a stable URL to compare against.
-const quickHelpDocURL = "mew:///quickhelp"
+// quickHelpDocURL is the synthetic identity of the Quick Help buffer. It lives
+// in mew's GENERATED "mew:" scheme (not the box: storage tree), so it is never
+// read from disk, never resolves as a wiki page, and just gives the location a
+// stable URL to compare against.
+const quickHelpDocURL = "mew:/quickhelp"
 
 // helpViewport returns the single docked help viewport (Tag "help"), or nil.
 func (e *Editor) helpViewport() *viewport.Viewport {
@@ -9095,8 +9311,6 @@ func (e *Editor) toggleOptions() bool {
 	content.WriteString(fmt.Sprintf("  Direction: %s\n", opt("direction")))
 	content.WriteString(fmt.Sprintf("  Prompt Timeout (s, 0=never): %s\n", opt("promptTimeout")))
 	content.WriteString(fmt.Sprintf("  Script Timeout (s, 0=never): %s\n", opt("scriptTimeout")))
-	content.WriteString(fmt.Sprintf("  Debounce (ms): %s\n", opt("debounceMs")))
-	content.WriteString(fmt.Sprintf("  Max Render Delay (ms): %s\n", opt("maxRenderDelayMs")))
 	content.WriteString(fmt.Sprintf("\n  Mappings: %s\n", e.LoadedConfig.General.MappingsName))
 	content.WriteString(fmt.Sprintf("  Layout: %s\n", e.LoadedConfig.General.Layout))
 	content.WriteString("\nInvoke editor_options again to close...")

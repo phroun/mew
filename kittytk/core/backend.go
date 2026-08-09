@@ -240,6 +240,18 @@ type UnitPixelMapper interface {
 	UnitToPxY(Unit) int
 }
 
+// UnitPixelUnmapper is the inverse of UnitToPxX/Y: it converts a device
+// pixel extent back to whole units on the SAME hardened cell pitch,
+// rounding to nearest so the round-trip is exact. Geometry that OWNS a
+// surface's pixel size (a torn window sized to UnitToPxX(W)) reads it back
+// through this so the unit size never drifts on re-sizing. The raster
+// backend implements it; callers fall back to round(px / PxPerUnit) when a
+// backend does not.
+type UnitPixelUnmapper interface {
+	PxToUnitX(int) Unit
+	PxToUnitY(int) Unit
+}
+
 // GraphicalModer is the D1 mode query: a backend reports true when
 // it paints pixels rather than character cells. Trinkets branch their
 // rendering on Painter.Graphical() - e.g. label-type text passes
@@ -247,6 +259,33 @@ type UnitPixelMapper interface {
 // where glyphs can blend over existing pixels.
 type GraphicalModer interface {
 	GraphicalMode() bool
+}
+
+// SurfaceClearer is an optional RenderBackend capability: reset pixels
+// to fully transparent, WITHIN THE CLIP. A compositing host uses it
+// before painting a layer meant to sit over something else — the
+// desktop's chrome layer clears this way so the GPU-tiled wallpaper
+// underneath shows through everywhere the chrome does not paint.
+//
+// Honoring the clip is the whole contract. A frame repainting only its
+// damaged region gets a clipped painter, and a clear that ignored that
+// would erase the chrome outside the region and then not repaint it —
+// the menu bar and status bar flickering out, with the wallpaper showing
+// through where they had been.
+//
+// Cell surfaces have no alpha and omit it.
+type SurfaceClearer interface {
+	ClearTransparent()
+}
+
+// ImageTiler is an optional RenderBackend capability: lay an image
+// across a rect as a WallpaperLayout describes — sized by its mode and
+// scale, anchored by its alignment, repeated along the axes it tiles.
+// It is the CPU counterpart of the compositor's repeat-sampled wallpaper
+// quad, for the software renderer and for any host that does not take
+// the wallpaper as a layer of its own.
+type ImageTiler interface {
+	TileImagePx(r UnitRect, tile *image.RGBA, layout WallpaperLayout)
 }
 
 // PatternFiller is an optional RenderBackend capability: tile an 8x8
@@ -341,13 +380,38 @@ func SetWindowFrameBorderPx(px int) {
 	windowFrameBorderPx = px
 }
 
-// WindowFrameBorderPx returns the effective frame border width in device
+// WindowFrameBorderPx returns the configured frame border width at the
+// BASE zoom (pixels-per-unit == 1, i.e. font 12 / scale 1) in device
 // pixels - the configured value, or the built-in default (2) when unset.
+// This is the thickness before zoom scaling; consumers that paint or
+// reserve the border use ScaledWindowFrameBorderPx to apply the zoom.
 func WindowFrameBorderPx() int {
 	if windowFrameBorderPx > 0 {
 		return windowFrameBorderPx
 	}
 	return defaultWindowFrameBorderPx
+}
+
+// ScaledWindowFrameBorderPx is the frame border's effective device-pixel
+// thickness at the given pixels-per-unit: the base-zoom width scaled by
+// zoom, per the geometry model's border law (a) —
+//
+//	border_px = round(border_width × pixels-per-unit)
+//
+// (geometry-cells-units-pixels.md). A fixed pixel count would look
+// proportionally thinner as the font zooms in; scaling keeps the border a
+// constant fraction of the content. The single desktop ppu makes this one
+// value physically uniform on every window, hardened once per zoom. Never
+// below 1px so the stroke is always visible.
+func ScaledWindowFrameBorderPx(ppu float64) int {
+	if ppu <= 0 {
+		ppu = 1
+	}
+	n := int(math.Round(float64(WindowFrameBorderPx()) * ppu))
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // defaultWindowFrameBorderPx is the built-in frame stroke weight.
@@ -541,12 +605,28 @@ type QuitEvent struct{}
 
 func (QuitEvent) isEvent() {}
 
-// PasteEvent contains pasted text.
+// PasteEvent contains pasted text. It is DECODED text, not wire bytes: a
+// backend that receives a bracketed paste from its outer terminal strips the
+// \x1b[200~ … \x1b[201~ framing and delivers the body here as one event. What a
+// paste MEANS is then the focused trinket's call — a terminal surface
+// re-brackets it for its own child (per that child's paste mode), a text field
+// inserts it — which is why the framing does not travel on this event.
 type PasteEvent struct {
 	Text string
 }
 
 func (PasteEvent) isEvent() {}
+
+// PasteHandler is implemented by any trinket that can receive pasted text
+// directly: a terminal surface that re-brackets it for its child, a text field
+// that inserts it at the caret. A PasteEvent is routed to the focused trinket
+// the same way an input method's composition is (see FocusManager.HandlePaste);
+// a focused trinket that does not implement PasteHandler simply does not
+// receive pastes, and the event is dropped rather than reinterpreted.
+type PasteHandler interface {
+	// HandlePaste receives pasted text and reports whether it was consumed.
+	HandlePaste(PasteEvent) bool
+}
 
 // Painter provides drawing operations with automatic coordinate translation.
 // Trinkets receive a Painter configured with their local coordinate system.
@@ -971,6 +1051,31 @@ func (p *Painter) Graphical() bool {
 // FillPattern tiles an 8x8 two-color bitmap across the rect when the
 // backend supports it (see PatternFiller). Returns false on cell
 // surfaces; the caller then falls back to its rune fill.
+// ClearTransparent resets the clipped region to fully transparent (see
+// SurfaceClearer). Returns false where the surface has no alpha to clear.
+func (p *Painter) ClearTransparent() bool {
+	sc, ok := p.backend.(SurfaceClearer)
+	if !ok {
+		return false
+	}
+	p.applyClip()
+	sc.ClearTransparent()
+	return true
+}
+
+// TileImage lays tile across r as the layout describes (see ImageTiler).
+// Returns false on backends that cannot draw images, where the caller
+// falls back to a pattern or cell fill.
+func (p *Painter) TileImage(r UnitRect, tile *image.RGBA, layout WallpaperLayout) bool {
+	it, ok := p.backend.(ImageTiler)
+	if !ok || tile == nil || tile.Bounds().Empty() {
+		return false
+	}
+	p.applyClip()
+	it.TileImagePx(p.transform.ApplyRect(r), tile, layout)
+	return true
+}
+
 func (p *Painter) FillPattern(r UnitRect, pattern [8]uint8, chunkPx int, s style.CellStyle) bool {
 	pf, ok := p.backend.(PatternFiller)
 	if !ok {

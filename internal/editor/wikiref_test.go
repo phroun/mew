@@ -100,8 +100,8 @@ func TestSchemeGate(t *testing.T) {
 	if _, ok := schemeRef("http://example.com/x"); !ok {
 		t.Error("http:// must gate as a scheme")
 	}
-	if _, ok := schemeRef("mew:/syntax/x.jsf"); !ok {
-		t.Error("mew:/ must gate as a scheme")
+	if _, ok := schemeRef("box:/syntax/x.jsf"); !ok {
+		t.Error("box:/ must gate as a scheme")
 	}
 	if _, _, ok := interwikiRef("wp>Main Page"); !ok {
 		t.Error("shortcut>rest must gate as interwiki")
@@ -271,15 +271,15 @@ func TestSchemeRefOpensNewViewport(t *testing.T) {
 	}
 }
 
-// A wiki hosted inside mew's own support tree (mew:///docs) resolves through
+// A wiki hosted inside mew's own support tree (box:///docs) resolves through
 // the mew VFS: in-wiki ids match under the root, climbs clamp at it (the
-// tree above stays unreachable), and a full mew:/// reference is the
+// tree above stays unreachable), and a full box:/// reference is the
 // explicit way out.
 func TestMewSpaceWikiRoot(t *testing.T) {
 	home := t.TempDir()
 	mewDir := filepath.Join(home, ".mew")
 	for rel, content := range map[string]string{
-		"docs/start.txt":         "[[sample:widget]] [[..:editor.conf]] [[mew:///editor.conf]]\n",
+		"docs/start.txt":         "[[sample:widget]] [[..:editor.conf]] [[box:///editor.conf]]\n",
 		"docs/sample/widget.txt": "widget page\n",
 		"editor.conf":            "# config\n",
 	} {
@@ -310,12 +310,12 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// LOCAL mode: a mew:/// name canonicalizes to the REAL file it names, so
+	// LOCAL mode: a box:/// name canonicalizes to the REAL file it names, so
 	// the mew spelling and the ~/.mew path are ONE identity (one buffer),
 	// and the buffer loads with a real filename (full source tracking).
-	rootURL := e.canonicalDocURL("mew:///docs")
-	startURL := e.canonicalDocURL("mew:///docs/start.txt")
-	widgetURL := e.canonicalDocURL("mew:///docs/sample/widget.txt")
+	rootURL := e.canonicalDocURL("box:///docs")
+	startURL := e.canonicalDocURL("box:///docs/start.txt")
+	widgetURL := e.canonicalDocURL("box:///docs/sample/widget.txt")
 	if !strings.HasPrefix(startURL, "file://") {
 		t.Fatalf("local mew identity should be the real file; got %q", startURL)
 	}
@@ -323,7 +323,7 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 		t.Fatal("the mew spelling and the real path must be one identity")
 	}
 
-	buf, err := e.loadBufferURL("mew:///docs/start.txt")
+	buf, err := e.loadBufferURL("box:///docs/start.txt")
 	if err != nil {
 		t.Fatalf("loadBufferURL: %v", err)
 	}
@@ -354,9 +354,9 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 
 	// The full-scheme reference IS the way out: a new-viewport, rootless
 	// destination (canonicalized to its real-file identity).
-	res = e.resolveFollow(w, "mew:///editor.conf")
+	res = e.resolveFollow(w, "box:///editor.conf")
 	if res.url != e.canonicalDocURL(filepath.Join(mewDir, "editor.conf")) || !res.newViewport || res.root != "" {
-		t.Fatalf("mew:///editor.conf = %+v", res)
+		t.Fatalf("box:///editor.conf = %+v", res)
 	}
 
 	// In-place follow keeps the viewport's root (root is viewport identity, not
@@ -372,7 +372,7 @@ func TestMewSpaceWikiRoot(t *testing.T) {
 	if w.WikiRoot != rootURL {
 		t.Fatal("the viewport's root must survive an in-wiki swap")
 	}
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("history should return")
 	}
 	if w.WikiRoot != rootURL {
@@ -414,7 +414,7 @@ func mewHomeEditor(t *testing.T, configText string, files map[string]string) *Ed
 	return e
 }
 
-// The hardcoded help wiki: "help:/..." resolves within mew:///help with the
+// The hardcoded help wiki: "help:/..." resolves within box:///help with the
 // dokuwiki format, ".txt" pages, and a "start" start page; following it
 // surfaces a NEW viewport rooted at the wiki (in browse mode), unless the
 // current viewport already carries that root.
@@ -430,11 +430,11 @@ func TestHelpWikiScheme(t *testing.T) {
 	})
 	w := e.ViewportManager.GetViewport("doc")
 
-	// Canonical identities (in local mode the mew:/// spellings translate to
+	// Canonical identities (in local mode the box:/// spellings translate to
 	// the real ~/.mew files — one identity either way).
-	helpRoot := e.canonicalDocURL("mew:///help")
-	startURL := e.canonicalDocURL("mew:///help/start.txt")
-	widgetURL := e.canonicalDocURL("mew:///help/sample/widget.txt")
+	helpRoot := e.canonicalDocURL("box:///help")
+	startURL := e.canonicalDocURL("box:///help/start.txt")
+	widgetURL := e.canonicalDocURL("box:///help/sample/widget.txt")
 
 	// Resolution: the scheme opens pages from the registered root; "/" and
 	// ":" both separate in the URL-flavored scheme form; the bare scheme is
@@ -495,7 +495,7 @@ func TestHelpWikiGrammarFromRegistry(t *testing.T) {
 	e := mewHomeEditor(t, "[options]\nsyntaxDetect=yes\n", map[string]string{
 		"help/start.txt": "[[sample:widget]]\n",
 	})
-	buf, err := e.loadBufferURL("mew:///help/start.txt")
+	buf, err := e.loadBufferURL("box:///help/start.txt")
 	if err != nil {
 		t.Fatalf("loadBufferURL: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestNavFollowSwapsAndReuses(t *testing.T) {
 	}
 
 	// Back: the source binding restores with its caret.
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("nav_history_prior should return")
 	}
 	if w.Buffer != src {
@@ -607,7 +607,7 @@ func TestCreatePagePrompt(t *testing.T) {
 	if _, err := os.Stat(wantPath); !os.IsNotExist(err) {
 		t.Fatal("the file must not exist until the buffer is saved")
 	}
-	if !e.navHistory(-1) || w.Buffer != src {
+	if !e.navHistory(-1, true) || w.Buffer != src {
 		t.Fatal("history should return to the source page")
 	}
 
@@ -666,7 +666,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 		t.Fatal("follow should navigate")
 	}
 	otherBuf := w.Buffer
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("history should return")
 	}
 	if !e.linkTargetVisited(w, "other") {
@@ -717,7 +717,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	if w.Buffer != otherBuf {
 		t.Fatal("re-follow must resurrect the graveyard buffer, not re-load")
 	}
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("prior should restore src again")
 	}
 
@@ -775,7 +775,7 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 			t.Fatal("follow should navigate")
 		}
 		other := w.Buffer
-		if !e.navHistory(-1) {
+		if !e.navHistory(-1, true) {
 			t.Fatal("prior should return")
 		}
 		third, err := buffer.NewFromBytes([]byte("third\n"), filepath.Join(root, "w", "third.txt"))
@@ -861,17 +861,17 @@ func TestCreateBufferURLVirtualMew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	buf, err := e.createBufferURL("mew:///help/newpage.txt", "")
+	buf, err := e.createBufferURL("box:///help/newpage.txt", "")
 	if err != nil {
 		t.Fatalf("createBufferURL: %v", err)
 	}
-	if buf.GetFilename() != "mew:///help/newpage.txt" {
+	if buf.GetFilename() != "box:///help/newpage.txt" {
 		t.Fatalf("virtual mew buffer filename = %q", buf.GetFilename())
 	}
 	if got := buf.GetContent(); got != "" {
 		t.Fatalf("created page should be empty; got %q", got)
 	}
-	seeded, err := e.createBufferURL("mew:///help/seeded.txt", "=== T ===\n\n")
+	seeded, err := e.createBufferURL("box:///help/seeded.txt", "=== T ===\n\n")
 	if err != nil {
 		t.Fatalf("seeded create: %v", err)
 	}
@@ -895,19 +895,19 @@ func TestOpenFileWikiScheme(t *testing.T) {
 			"help/start.txt": "the start page body\n",
 		})
 		if startURL == "" {
-			startURL = e.canonicalDocURL("mew:///help/start.txt")
+			startURL = e.canonicalDocURL("box:///help/start.txt")
 		}
 		if !e.openFile(ref) {
 			t.Fatalf("openFile(%q) should succeed", ref)
 		}
 		w := newFocused(e)
-		if got := e.bufferCanonicalURL(w.Buffer); got != e.canonicalDocURL("mew:///help/start.txt") {
+		if got := e.bufferCanonicalURL(w.Buffer); got != e.canonicalDocURL("box:///help/start.txt") {
 			t.Fatalf("openFile(%q): buffer %q, want the help start page", ref, got)
 		}
 		if !strings.Contains(w.Buffer.GetContent(), "the start page body") {
 			t.Fatalf("openFile(%q): page content not loaded: %q", ref, w.Buffer.GetContent())
 		}
-		if w.WikiName != "help" || w.WikiRoot != e.canonicalDocURL("mew:///help") {
+		if w.WikiName != "help" || w.WikiRoot != e.canonicalDocURL("box:///help") {
 			t.Fatalf("openFile(%q): viewport not rooted in the wiki (name %q root %q)", ref, w.WikiName, w.WikiRoot)
 		}
 	}

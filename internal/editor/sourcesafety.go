@@ -161,7 +161,7 @@ func (e *Editor) commitSave(buf *buffer.Buffer, target string, done func(ok, can
 // filesystems, which manage their own directories, and when the directory is
 // already present.
 func (e *Editor) missingSaveDir(target string) string {
-	if isMewPath(target) || !e.usingOSFS {
+	if isBoxPath(target) || !e.usingOSFS {
 		return ""
 	}
 	dir := filepath.Dir(e.normalizeDocPath(target))
@@ -338,7 +338,7 @@ func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
 	// A mew:-scheme target (a virtualized support-tree page, e.g. the help
 	// wiki under a host) saves through the mew VFS: garland has no source
 	// for it and the document filesystem does not speak the scheme.
-	if isMewPath(target) {
+	if isBoxPath(target) {
 		if err := e.mew.WriteFile(target, []byte(buf.GetContent())); err != nil {
 			e.ShowError("Failed to save: " + err.Error())
 			e.noteBuffer(buf, "save", "Save failed: "+err.Error(), false)
@@ -384,7 +384,7 @@ func (e *Editor) performSave(buf *buffer.Buffer, target string) bool {
 // buffer's world: a real stat on the OS, a read probe through the host FS
 // (hosts expose no stat; the read is the only honest signal).
 func (e *Editor) fileExists(path string) bool {
-	if isMewPath(path) {
+	if isBoxPath(path) {
 		_, ok := e.mew.Stat(path)
 		return ok
 	}

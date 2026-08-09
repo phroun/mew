@@ -217,10 +217,14 @@ type TerminalSurface = editor.TerminalSurface
 // TerminalHooks is how a host renders mew's terminal sessions.
 type TerminalHooks = editor.TerminalHooks
 
+// CaptureSink receives a capturing session's live output events, which a host
+// relays from purfecterm's CaptureObserver. See TerminalHooks.SetCaptureSink.
+type CaptureSink = editor.CaptureSink
+
 // LocalPathFromURL turns a canonical file:// document URL — the form mew
 // hands out for anything it identifies, including a terminal session's
 // working directory — into a path for the operating system. False for any
-// other scheme (a mew:/// document may have no local path at all).
+// other scheme (a box:/// document may have no local path at all).
 //
 // A host resolving one of mew's URLs must reach the same file mew would, and
 // on Windows that takes undoing something: the canonical form roots every
@@ -296,6 +300,25 @@ func WithPTYDiagnose(fn func() string) Option {
 // (with a code) from a byte stream that ended under a child still running —
 // two failures that look identical from mew's side of the pipe.
 type PTYExitStatus = editor.PTYExitStatus
+
+// StreamWiring, StreamTerminal and StreamPipe describe how each of a child's
+// standard streams is connected (PTYRequest.Stdin/Stdout/Stderr): to the
+// session's pseudo-terminal, or to its own pipe. The zero value is the terminal
+// default. Piping a stream is what lets a host use a command as a filter.
+type StreamWiring = editor.StreamWiring
+
+const (
+	StreamTerminal = editor.StreamTerminal
+	StreamPipe     = editor.StreamPipe
+)
+
+// PTYStderr and PTYStdinCloser are the optional capabilities a piped session
+// gains: a separate stderr stream (ReadStderr) when stderr is its own pipe, and
+// a stdin half-close (CloseStdin) to signal EOF when stdin is a pipe. A host
+// implements them on the session it returns for such a request; mew discovers
+// them by type assertion, exactly as it does PTYExitStatus.
+type PTYStderr = editor.PTYStderr
+type PTYStdinCloser = editor.PTYStdinCloser
 
 func WithRestoreHostTerminal(fn func()) Option {
 	return func(cfg *editor.Config) { cfg.RestoreHostTerminal = fn }

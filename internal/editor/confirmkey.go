@@ -38,6 +38,12 @@ func (pm *PromptManager) armConfirmKeys() {
 		return
 	}
 	w.AfterKey = "confirm_key"
+	// The classifier reads a cancel from the buffer SHRINKING, and a backspace at
+	// the start of the option list shrinks by joining lines — a newline delete.
+	// Prompt viewports protect newlines by default, which would block that and
+	// leave the buffer unchanged (read as "keep waiting"). This prompt is a
+	// keystroke mechanism, not editable text, so it opts out.
+	w.ViewState.ProtectNewlines = false
 	if e.confirmKey == nil {
 		e.confirmKey = make(map[string]confirmKeyBase)
 	}

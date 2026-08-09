@@ -1,0 +1,1564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mew viewport tiler — interactive model demo</title>
+<style>*{box-sizing:border-box}html,body{margin:0}</style>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#eef1f5; --panel:#ffffff; --panel-2:#f6f8fb; --ink:#1a2330; --ink-2:#5a6676;
+    --line:#d8dee7; --line-2:#e7ecf2;
+    --accent:#2f6bf0; --accent-ink:#ffffff; --accent-soft:#e3ecfe;
+    --pin:#c07c14; --pin-soft:#f7ecd4;
+    --zoom:#7c53d6; --zoom-soft:#ece3fb;
+    --shrink:#3f7d74; --shrink-soft:#dcefeb;
+    --omit:#c0392b; --omit-soft:#f6dbd6;
+    --radius:9px; --mono:ui-monospace,SFMono-Regular,Menlo,"Cascadia Code",Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e131b; --panel:#161d27; --panel-2:#121924; --ink:#e6ecf4; --ink-2:#98a4b4;
+      --line:#28313e; --line-2:#1e2732;
+      --accent:#5b8dff; --accent-ink:#0b1220; --accent-soft:#1a2740;
+      --pin:#e0a54a; --pin-soft:#33270f;
+      --zoom:#a586ec; --zoom-soft:#241a3a;
+      --shrink:#5fb3a6; --shrink-soft:#0f2a27;
+      --omit:#ee6a5b; --omit-soft:#331815;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f5; --panel:#ffffff; --panel-2:#f6f8fb; --ink:#1a2330; --ink-2:#5a6676;
+    --line:#d8dee7; --line-2:#e7ecf2; --accent:#2f6bf0; --accent-ink:#ffffff; --accent-soft:#e3ecfe;
+    --pin:#c07c14; --pin-soft:#f7ecd4; --zoom:#7c53d6; --zoom-soft:#ece3fb;
+    --shrink:#3f7d74; --shrink-soft:#dcefeb; --omit:#c0392b; --omit-soft:#f6dbd6;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e131b; --panel:#161d27; --panel-2:#121924; --ink:#e6ecf4; --ink-2:#98a4b4;
+    --line:#28313e; --line-2:#1e2732; --accent:#5b8dff; --accent-ink:#0b1220; --accent-soft:#1a2740;
+    --pin:#e0a54a; --pin-soft:#33270f; --zoom:#a586ec; --zoom-soft:#241a3a;
+    --shrink:#5fb3a6; --shrink-soft:#0f2a27; --omit:#ee6a5b; --omit-soft:#331815;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1440px;margin:0 auto;padding:20px}
+  header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+    padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
+  header.top h1{font-size:19px;margin:0;letter-spacing:-.01em;font-weight:650}
+  header.top h1 span{color:var(--ink-2);font-weight:450}
+  header.top .sub{font-size:12.5px;color:var(--ink-2);max-width:62ch}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:16px;align-items:start}
+  @media (max-width:1040px){.layout{grid-template-columns:1fr}}
+  .leftcol{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+  .card>.hd{padding:9px 13px;border-bottom:1px solid var(--line-2);display:flex;
+    align-items:center;justify-content:space-between;gap:10px}
+  .card>.hd h2{margin:0;font-size:11px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+  .card>.bd{padding:13px}
+
+  /* workspace */
+  .stage-meta{display:flex;gap:8px;align-items:center;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .badge{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:20px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--ink-2);white-space:nowrap}
+  .badge.warn{color:var(--omit);border-color:var(--omit);background:var(--omit-soft)}
+  .badge.ok{color:var(--shrink);border-color:var(--shrink)}
+  .stage-scroll{overflow:auto;padding:13px;background:
+    repeating-linear-gradient(45deg,transparent,transparent 9px,var(--line-2) 9px,var(--line-2) 10px);
+    border-radius:var(--radius);border:1px solid var(--line-2)}
+  .stage{position:relative;background:var(--panel-2);border:1px solid var(--line);border-radius:6px}
+  .pane{position:absolute;border-radius:6px;border:1.5px solid var(--pane-line,var(--line));
+    background:var(--pane-bg,var(--panel));overflow:hidden;cursor:pointer;
+    display:flex;flex-direction:column;transition:box-shadow .08s}
+  .pane:hover{box-shadow:inset 0 0 0 1px var(--accent)}
+  .pane.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent),0 4px 14px -6px var(--accent)}
+  .pane .lab{font-family:var(--mono);font-size:12px;font-weight:600;padding:5px 7px;
+    display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+  .pane .idnum{background:var(--ink);color:var(--panel);border-radius:4px;padding:0 5px;font-size:11px}
+  .pane.sel .idnum{background:var(--accent);color:var(--accent-ink)}
+  .pane .dims{margin-top:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-2);padding:5px 7px}
+  .chip{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;font-weight:600;letter-spacing:.02em}
+  .chip.z{background:var(--zoom-soft);color:var(--zoom)}
+  .chip.s{background:var(--shrink-soft);color:var(--shrink)}
+  .chip.pin{background:var(--pin-soft);color:var(--pin)}
+  .chip.pin.off{opacity:.55;text-decoration:line-through}
+  .chip.pri{background:var(--accent-soft);color:var(--accent)}
+  .gutter{position:absolute;z-index:5}
+  .gutter.h{cursor:ew-resize}
+  .gutter.v{cursor:ns-resize}
+  .gutter::after{content:"";position:absolute;inset:0;margin:auto;background:transparent}
+  .gutter.h::after{width:2px;height:100%}
+  .gutter.v::after{height:2px;width:100%}
+  .gutter:hover::after,.gutter.drag::after{background:var(--accent)}
+  .caret{position:absolute;width:14px;height:14px;border-radius:50%;z-index:12;pointer-events:none;
+    background:#fff;border:2px solid rgba(0,0,0,.5);
+    box-shadow:0 0 0 2px rgba(255,255,255,.35),0 0 11px 2px rgba(255,255,255,.6)}
+  .corner{position:absolute;width:16px;height:16px;z-index:8;cursor:nwse-resize;border-radius:3px}
+  .corner:hover{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
+  /* stack header chrome (tabbed = one strip; stacked = one bar per child) */
+  .stkhdr{position:absolute;z-index:9;display:flex;box-sizing:border-box;pointer-events:none;
+    border:1.5px solid var(--accent);border-radius:6px 6px 0 0;overflow:hidden;
+    background:var(--panel-2)}
+  .stkhdr.col{flex-direction:column}
+  .tab{pointer-events:auto;flex:1 1 0;min-width:0;display:flex;align-items:center;gap:5px;
+    padding:0 8px;font-family:var(--mono);font-size:11px;font-weight:600;cursor:pointer;
+    color:var(--ink-2);background:var(--panel-2);border-right:1px solid var(--line-2);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stkhdr.col .tab{border-right:none;border-bottom:1px solid var(--line-2)}
+  .tab:last-child{border-right:none;border-bottom:none}
+  .tab:hover{background:var(--accent-soft)}
+  .tab.on{color:var(--accent-ink);background:var(--accent)}
+  .tab .tnum{background:var(--ink);color:var(--panel);border-radius:4px;padding:0 5px;font-size:10px}
+  .tab.on .tnum{background:var(--accent-ink);color:var(--accent)}
+  .tab .tag{font-size:9.5px;opacity:.8}
+
+  /* commands strip */
+  .cmdrow{display:flex;flex-wrap:nowrap;gap:0;align-items:flex-start;overflow-x:auto;padding-bottom:2px}
+  .cmdcol{flex:0 0 auto;display:flex;flex-direction:column;gap:7px;padding:0 18px;
+    border-right:1px solid var(--line-2)}
+  .cmdcol:first-child{padding-left:0}
+  .cmdcol:last-child{border-right:none;padding-right:0}
+  .cmdcol.mode{max-width:250px}
+  .btns.nowrap{flex-wrap:nowrap}
+  button.cmd.keyed{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  button.cmd kbd{margin:0;background:var(--panel-2)}
+  button.cmd:hover kbd{border-color:var(--accent)}
+  .btns.stack{flex-direction:column;width:140px}
+  .btns.stack .cmd{width:100%}
+  .t{font-family:var(--mono);font-size:10.5px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em}
+  .btns{display:flex;flex-wrap:wrap;gap:6px}
+  button.cmd{font-family:var(--mono);font-size:12px;padding:6px 9px;border:1px solid var(--line);
+    border-radius:6px;background:var(--panel);color:var(--ink);cursor:pointer;transition:.08s}
+  button.cmd:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+  button.cmd:active{transform:translateY(1px)}
+  button.cmd:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button.cmd.dz{border-color:var(--zoom)}button.cmd.dz:hover{color:var(--zoom);background:var(--zoom-soft)}
+  button.cmd.ds{border-color:var(--shrink)}button.cmd.ds:hover{color:var(--shrink);background:var(--shrink-soft)}
+  button.cmd.dd{border-color:var(--omit)}button.cmd.dd:hover{color:var(--omit);background:var(--omit-soft)}
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;width:140px}
+  .pad button{padding:6px 0}
+  .pad .sp{visibility:hidden}
+  .pad .midlab{display:flex;align-items:center;justify-content:center;font-family:var(--mono);
+    font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+
+  /* right rail */
+  .rail{display:flex;flex-direction:column;gap:14px}
+  .insp{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:12.5px;align-items:center}
+  .insp .k{color:var(--ink-2);font-family:var(--mono);font-size:11px}
+  .insp .v{font-family:var(--mono);font-weight:600}
+  .grid4{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin-top:11px}
+  .fld{display:flex;flex-direction:column;gap:3px}
+  .fld label{font-family:var(--mono);font-size:10.5px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.05em}
+  .fld input{width:100%;font-family:var(--mono);font-size:12.5px;padding:5px 7px;border:1px solid var(--line);
+    border-radius:6px;background:var(--panel-2);color:var(--ink)}
+  .fld input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+  .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .row input[type=range]{flex:1;accent-color:var(--accent)}
+  .row .val{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);min-width:42px;text-align:right}
+  .toggle{display:flex;align-items:center;gap:7px;font-size:12.5px;cursor:pointer}
+  .tree{font-family:var(--mono);font-size:12px;line-height:1.7}
+  .tree .node{padding:1px 5px;border-radius:4px;cursor:default;white-space:nowrap}
+  .tree .leaf{cursor:pointer}
+  .tree .leaf:hover{background:var(--accent-soft)}
+  .tree .sel{background:var(--accent-soft);color:var(--accent);font-weight:650}
+  .tree .grp{color:var(--ink-2)}
+  .tree .hid{opacity:.4;text-decoration:line-through}
+  .tree .arrow{color:var(--accent);font-weight:700}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:11px;color:var(--ink-2);font-family:var(--mono)}
+  .legend b{width:10px;height:10px;border-radius:3px;display:inline-block;vertical-align:-1px;margin-right:3px}
+  .hidlist{font-family:var(--mono);font-size:11.5px;color:var(--omit)}
+  .note{font-size:11.5px;color:var(--ink-2);margin-top:9px}
+  .themebtn{font-family:var(--mono);font-size:11px;padding:4px 9px;border:1px solid var(--line);border-radius:20px;
+    background:var(--panel);color:var(--ink-2);cursor:pointer}
+  kbd{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:1px solid var(--line);
+    border-bottom-width:2px;border-radius:4px;padding:0 5px;margin:0 1px}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Viewport Tiler <span>· algorithm sandbox</span></h1>
+      <div class="sub">A live model of the tile tree: oriented groups, normalization (flatten + collapse + cascade), and the two-pass measure/allocate waterfall — minimums → pins → zoom → normal → shrink → mop-up. Click a pane to select it; drive it with the commands. Drag any boundary to pin the earlier tile.</div>
+    </div>
+    <button class="themebtn" id="theme">◐ theme</button>
+  </header>
+
+  <div class="layout">
+    <div class="leftcol">
+      <div class="card">
+        <div class="hd">
+          <h2>Main area</h2>
+          <div class="stage-meta">
+            <span class="badge" id="splitarm" style="display:none;border-color:var(--accent);color:var(--accent)">/ split → press a direction</span>
+            <span class="badge" id="lensbadge" style="display:none;border-color:var(--zoom);color:var(--zoom)"></span>
+            <span class="badge" id="req">required —</span>
+            <span class="badge" id="fit">—</span>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="stage-scroll">
+            <div class="stage" id="stage"></div>
+          </div>
+          <div class="legend" style="margin-top:11px">
+            <span><b style="background:var(--accent)"></b>selected / focused</span>
+            <span><b style="background:var(--zoom)"></b>zoom</span>
+            <span><b style="background:var(--shrink)"></b>shrink</span>
+            <span><b style="background:var(--pin)"></b>pinned</span>
+            <span><b style="background:var(--omit)"></b>omitted</span>
+          </div>
+          <div class="hidlist" id="hidlist" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Commands</h2></div>
+        <div class="bd">
+          <div class="cmdrow">
+            <div class="cmdcol">
+              <div class="t">new · sibling / directional</div>
+              <div class="btns stack">
+                <button class="cmd keyed" data-cmd="new-before">new_before <kbd>'</kbd></button>
+                <button class="cmd keyed" data-cmd="new-after">new_after <kbd>⏎</kbd></button>
+              </div>
+              <div class="pad">
+                <span class="sp"></span><button class="cmd" data-cmd="new-up">up</button><span class="sp"></span>
+                <button class="cmd" data-cmd="new-left">left</button><span class="midlab"><kbd>⇧</kbd></span><button class="cmd" data-cmd="new-right">right</button>
+                <span class="sp"></span><button class="cmd" data-cmd="new-down">down</button><span class="sp"></span>
+              </div>
+            </div>
+
+            <div class="cmdcol">
+              <div class="t">split · nest in place (never seeks up)</div>
+              <div class="btns stack">
+                <button class="cmd" data-cmd="split-before">split_before</button>
+                <button class="cmd" data-cmd="split-after">split_after</button>
+              </div>
+              <div class="pad">
+                <span class="sp"></span><button class="cmd" data-cmd="split-up">up</button><span class="sp"></span>
+                <button class="cmd" data-cmd="split-left">left</button><span class="midlab"><kbd>/</kbd></span><button class="cmd" data-cmd="split-right">right</button>
+                <span class="sp"></span><button class="cmd" data-cmd="split-down">down</button><span class="sp"></span>
+              </div>
+            </div>
+
+            <div class="cmdcol">
+              <div class="t">navigate · arrow keys</div>
+              <div class="pad" style="margin-top:1px">
+                <span class="sp"></span><button class="cmd" data-cmd="nav-up">↑</button><span class="sp"></span>
+                <button class="cmd" data-cmd="nav-left">←</button><span class="sp"></span><button class="cmd" data-cmd="nav-right">→</button>
+                <span class="sp"></span><button class="cmd" data-cmd="nav-down">↓</button><span class="sp"></span>
+              </div>
+              <div class="t" style="margin-top:8px">swap · W A S D</div>
+              <div class="pad">
+                <span class="sp"></span><button class="cmd" data-cmd="swap-up">W</button><span class="sp"></span>
+                <button class="cmd" data-cmd="swap-left">A</button><span class="sp"></span><button class="cmd" data-cmd="swap-right">D</button>
+                <span class="sp"></span><button class="cmd" data-cmd="swap-down">S</button><span class="sp"></span>
+              </div>
+              <div class="t" style="margin-top:8px">merge · <kbd>⇧</kbd>W A S D</div>
+              <div class="pad">
+                <span class="sp"></span><button class="cmd" data-cmd="merge-up">W</button><span class="sp"></span>
+                <button class="cmd" data-cmd="merge-left">A</button><span class="sp"></span><button class="cmd" data-cmd="merge-right">D</button>
+                <span class="sp"></span><button class="cmd" data-cmd="merge-down">S</button><span class="sp"></span>
+              </div>
+              <div class="t" style="margin-top:8px">cycle tiles · <kbd>[</kbd> <kbd>]</kbd></div>
+              <div class="btns">
+                <button class="cmd" data-cmd="tile-prior">[ prev</button>
+                <button class="cmd" data-cmd="tile-next">next ]</button>
+              </div>
+            </div>
+
+            <div class="cmdcol mode">
+              <div class="t">mode · <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd></div>
+              <div class="btns">
+                <button class="cmd" data-cmd="mode-normal">normal</button>
+                <button class="cmd dz" data-cmd="mode-zoom">zoom</button>
+                <button class="cmd ds" data-cmd="mode-shrink">shrink</button>
+                <button class="cmd" data-cmd="mode-cycle">cycle ⤾</button>
+              </div>
+              <div class="t" style="margin-top:6px">size · <kbd>−</kbd> <kbd>=</kbd> <span style="color:var(--ink-2);font-weight:400">(pin from resolved)</span></div>
+              <div class="btns">
+                <button class="cmd" data-cmd="shrink-size">− smaller</button>
+                <button class="cmd" data-cmd="grow">larger =</button>
+              </div>
+              <div class="t" style="margin-top:6px">un-rag · <kbd>e</kbd> equalize · <kbd>b</kbd> balance · <kbd>⇧</kbd> = recursive</div>
+              <div class="btns">
+                <button class="cmd" data-cmd="equalize">equalize <kbd>e</kbd></button>
+                <button class="cmd" data-cmd="balance">balance <kbd>b</kbd></button>
+              </div>
+              <div class="t" style="margin-top:6px">lens · <kbd>m</kbd> monocle (tile) · <kbd>p</kbd> spectacle (group) · <kbd>⇧</kbd> = fill group (else screen)</div>
+              <div class="btns">
+                <button class="cmd" data-cmd="monocle">monocle <kbd>m</kbd></button>
+                <button class="cmd" data-cmd="spectacle">spectacle <kbd>p</kbd></button>
+              </div>
+              <div class="t" style="margin-top:6px">stack · <kbd>\</kbd> toggle · <kbd>,</kbd> <kbd>.</kbd> tabs · <kbd>{</kbd> <kbd>}</kbd> reorder</div>
+              <div class="btns">
+                <button class="cmd" data-cmd="toggle-stack">stack ⇄ <kbd>\</kbd></button>
+                <button class="cmd" data-cmd="tab-prev">◂ <kbd>,</kbd></button>
+                <button class="cmd" data-cmd="tab-next"><kbd>.</kbd> ▸</button>
+              </div>
+              <div class="btns">
+                <button class="cmd" data-cmd="tab-move-prev">move ◂ <kbd>{</kbd></button>
+                <button class="cmd" data-cmd="tab-move-next"><kbd>}</kbd> move ▸</button>
+              </div>
+              <div class="t" style="margin-top:6px">group &amp; life-cycle</div>
+              <div class="btns nowrap">
+                <button class="cmd" data-cmd="flip">flip group <kbd>f</kbd></button>
+                <button class="cmd" data-cmd="flip-parent">flip parent <kbd>g</kbd></button>
+              </div>
+              <div class="btns nowrap">
+                <button class="cmd" data-cmd="reverse">reverse <kbd>r</kbd></button>
+                <button class="cmd" data-cmd="reverse-parent">rev parent <kbd>t</kbd></button>
+              </div>
+              <div class="btns">
+                <button class="cmd dd" data-cmd="dismiss">dismiss</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail">
+      <div class="card">
+        <div class="hd"><h2>Selected tile <span id="selid" style="font-family:var(--mono);color:var(--accent)"></span></h2></div>
+        <div class="bd">
+          <div class="insp" id="insp"></div>
+          <div class="grid4">
+            <div class="fld"><label>min width</label><input id="minW" type="number" min="10" step="10"></div>
+            <div class="fld"><label>min height</label><input id="minH" type="number" min="10" step="10"></div>
+            <div class="fld"><label>natural width</label><input id="natW" type="number" min="10" step="10"></div>
+            <div class="fld"><label>natural height</label><input id="natH" type="number" min="10" step="10"></div>
+            <div class="fld"><label>priority</label><input id="prio" type="number" step="1"></div>
+            <div class="fld" style="justify-content:flex-end">
+              <label>&nbsp;</label>
+              <button class="cmd" id="clearpin" style="width:100%">clear pin</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Workspace</h2></div>
+        <div class="bd">
+          <div class="row"><span style="font-family:var(--mono);font-size:11px;color:var(--ink-2)">width</span>
+            <input type="range" id="wsW" min="320" max="1240" step="10"><span class="val" id="wsWv"></span></div>
+          <div class="row" style="margin-top:8px"><span style="font-family:var(--mono);font-size:11px;color:var(--ink-2)">height</span>
+            <input type="range" id="wsH" min="220" max="800" step="10"><span class="val" id="wsHv"></span></div>
+          <label class="toggle" style="margin-top:11px"><input type="checkbox" id="fp" checked> Focus protects the selected tile from omission</label>
+          <div class="row" style="margin-top:11px"><span style="font-family:var(--mono);font-size:11px;color:var(--ink-2)">stack chrome (host)</span>
+            <select id="stkvar" style="flex:1;font-family:var(--mono);font-size:11px">
+              <option value="tabbed">tabbed — 1 header row</option>
+              <option value="stacked">stacked — 1 bar per tab</option>
+            </select></div>
+          <button class="cmd" id="reset" style="margin-top:11px">reset tree</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Structure</h2></div>
+        <div class="bd"><div class="tree" id="tree"></div>
+          <div class="note">Groups show orientation (<span style="font-family:var(--mono)">LTR ▸ · RTL ◂ · TTB ▾ · BTT ▴</span>, stacks ▧). A group can never hold a child of its own exact orientation — those flatten.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Serialize <span style="font-family:var(--mono);font-size:11px;color:var(--ink-2)">JSON (Go: PSL)</span></h2></div>
+        <div class="bd">
+          <textarea id="json" spellcheck="false" style="width:100%;height:150px;font-family:var(--mono);font-size:11px;line-height:1.45;resize:vertical;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--ink);padding:8px"></textarea>
+          <div class="btns" style="margin-top:8px">
+            <button class="cmd" id="jsonload">load ⤒</button>
+            <button class="cmd" id="jsoncopy">copy</button>
+          </div>
+          <div class="note" id="jsonerr" style="min-height:14px"></div>
+          <div class="note">Live dump of the tree. A tile is <span style="font-family:var(--mono)">{"{"}ref, …{"}"}</span>; a box is <span style="font-family:var(--mono)">{"{"}box, children{"}"}</span>. <span style="font-family:var(--mono)">selected:true</span> on a child is what makes its box a stack. Edit and press <b>load</b> to round-trip.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(()=>{
+"use strict";
+const FOCUS=1e12;
+let _id=0; const nid=()=>++_id;
+
+// ---------- model ----------
+// Serialization shape (JSON here; PSL in the Go module). A TILE is an object
+// keyed by `ref` — the only identifier, an opaque handle the HOST maps to its
+// content; the module never interprets it. A BOX is anonymous: `{box:"ltr",
+// children:[…]}`. `selected:true` lives on a CHILD, and its presence is what
+// makes the enclosing box a STACK (the child bearing it is the shown one); no
+// `selected` on any child ⇒ not a stack. A stacked box carries its OWN mode/pin
+// (its negotiation identity as one box — see cmdToggleStack); priority stays
+// derived (max of children is already tab-invariant, so a stack needs no own
+// priority). `id` is an internal handle for the demo's own bookkeeping only.
+let _ref=0;
+function newLeaf(){const id=nid();return {id,kind:"leaf",ref:"win"+(++_ref),minW:90,minH:64,natW:240,natH:150,
+  priority:0,mode:"normal",pin:{amount:null,enforced:false},selected:false};}
+function newGroup(orient,children){return {id:nid(),kind:"group",orientation:orient,children:children||[],
+  mode:"normal",pin:{amount:null,enforced:false},priority:0,selected:false};}
+
+let root, selId, caret={x:0,y:0};
+let wsW=900, wsH=560, focusProtect=true;
+
+function freshTree(){
+  _id=0; _ref=0;
+  const a=newLeaf(),b=newLeaf(),c=newLeaf();
+  root=newGroup("LTR",[a,b,c]);
+  focusView=null; selId=a.id;
+  rebuild();
+}
+
+const isH=o=>o==="LTR"||o==="RTL";
+const axisOf=o=>isH(o)?"H":"V";
+const defOrient=ax=>ax==="H"?"LTR":"TTB";
+
+// A box is a STACK iff one of its children carries `selected:true` — its
+// children are layered on a Z axis, that one shown, the rest collapsed to header
+// chrome. There is no flag on the box; stack-ness is entirely "some child is
+// selected." `axOf` is the node's EFFECTIVE axis ("Z" while stacked, else its
+// orientation axis) — what nav and structural ops read so arrows never wander
+// between hidden tabs. On unstack the box re-orients CONTRARY to its container
+// (see contraryOrient), matching how nested groups normally sit and guaranteeing
+// it can't flatten into the parent and dissolve.
+const stackedG=n=>n.kind==="group"&&n.children.some(c=>c.selected);
+const selectedChild=n=>n.children.find(c=>c.selected)||n.children[0];
+const axOf=n=>n.kind==="leaf"?null:(stackedG(n)?"Z":axisOf(n.orientation));
+function contraryOrient(g){
+  if(!g.parent)return g.orientation; // root has no container: keep as-is
+  const pax=axisOf(g.parent.orientation);
+  return defOrient(pax==="H"?"V":"H");
+}
+
+// The header lives at the top and eats HEIGHT; how much depends on the host's
+// display variant — one tab strip ("tabbed") or one title bar per child
+// ("stacked", i3-style). That reserve is the ONLY thing the module needs from
+// the host's chrome; everything else about a stack is generic-group.
+let stackVariant="tabbed"; // "tabbed" | "stacked" — host policy, toggled in the demo
+const HEADER_H=24;
+function stackReserve(n){return (stackVariant==="tabbed"?1:Math.max(1,n.children.length))*HEADER_H;}
+// move a stack's `selected` flag onto `child` (clearing its siblings). Only ever
+// called on a box that is ALREADY a stack, so it preserves stack-ness.
+function selectChild(g,child){g.children.forEach(c=>c.selected=(c===child));}
+// ensureVisible: flip EVERY stacked ancestor of `t` to the branch that contains
+// it, so `t` is not hidden behind any tab at any depth. This is a module
+// primitive a host calls to reveal a tile it is about to focus or scroll to —
+// the module supplies the mechanism (which tabs to cycle), the host owns the
+// policy (which tile, and why). It only arranges the tabs; it does NOT promise
+// the tile will paint. If the layout still can't fit it (its stack's min box
+// loses the minimums-by-priority pass), it is omitted through the ORDINARY
+// overflow path — markHidden cascades and the tile ends up `_hidden` with no
+// rect, reported exactly like any other tile that couldn't fit. No special
+// failure code: after layout the host reads the same visibility it always does.
+function ensureVisible(t){
+  let changed=false,n=t;
+  while(n&&n.parent){
+    // only stacks get retargeted — never turn a plain box into a stack here.
+    if(stackedG(n.parent)&&!n.selected){selectChild(n.parent,n);changed=true;}
+    n=n.parent;
+  }
+  return changed;
+}
+// what the host reads after layout to know whether a tile actually painted —
+// the same signal that reports any omission, stack or not.
+function isVisible(n){return !!(n&&n._rect&&!n._hidden);}
+// selecting a tile always reveals it — the focused tile is never behind a tab.
+function syncStacksToSel(){const s=sel();if(s)ensureVisible(s);}
+
+function walk(n,f){f(n); if(n.kind==="group")n.children.forEach(c=>walk(c,f));}
+function findNode(id){let r=null;walk(root,n=>{if(n.id===id)r=n;});return r;}
+function leaves(){const a=[];walk(root,n=>{if(n.kind==="leaf")a.push(n);});return a;}
+function sel(){return findNode(selId);}
+
+function rebuildParents(){root.parent=null;walk(root,n=>{if(n.kind==="group")n.children.forEach(c=>c.parent=n);});}
+
+// physical direction -> before/after within a same-axis group
+function side(orient,phys){
+  if(phys==="before"||phys==="after")return phys;
+  switch(orient){
+    case"LTR":return phys==="left"?"before":"after";
+    case"RTL":return phys==="left"?"after":"before";
+    case"TTB":return phys==="up"?"before":"after";
+    case"BTT":return phys==="up"?"after":"before";
+  }
+}
+function insertSib(group,ref,node,s){const i=group.children.indexOf(ref);group.children.splice(s==="before"?i:i+1,0,node);}
+// the replacement takes over the old node's SLOT, so it inherits the slot's
+// tab-state (was this the selected tab of a stack?); the old node, now nested
+// inside `neu`, must not keep `selected` or it would mark `neu` a stack.
+function replaceNode(oldN,neu){neu.selected=oldN.selected;oldN.selected=false;if(oldN===root){root=neu;}else{const p=oldN.parent;p.children[p.children.indexOf(oldN)]=neu;}}
+
+// ---------- structural commands ----------
+// seekUpInsert breaks a new item OUT to a higher level: it walks up the parent
+// chain to the nearest ancestor whose axis matches the travel direction and
+// inserts there; if none exists it encloses the current group in a new same-axis
+// parent. It matches on axOf, so STACKS (effective axis Z) are transparent — a
+// new item busts out past every tab level until it reaches a real spatial (non-
+// tab) group. Shared by new's perpendicular case and its along-axis-at-the-end.
+function seekUpInsert(G,Ad,dir,nl){
+  let cur=G, parent=G.parent;
+  while(parent){
+    if(axOf(parent)===Ad){ insertSib(parent,cur,nl,side(parent.orientation,dir)); return; }
+    cur=parent; parent=parent.parent;
+  }
+  const o=defOrient(Ad), s2=side(o,dir);
+  replaceNode(G,newGroup(o, s2==="before"?[nl,G]:[G,nl]));
+}
+function cmdNew(dir){
+  const s=sel(); if(!s)return; const G=s.parent;
+  const nl=newLeaf();
+  if(dir==="before"||dir==="after"){ insertSib(G,s,nl,dir); rebuild(); return; }
+  const Ad=(dir==="up"||dir==="down")?"V":"H";
+  if(axOf(G)===Ad){ // axOf, so a stacked parent is skipped and we bust out past it
+    // along the group's own axis: a plain sibling next to the item, UNLESS the
+    // item sits at that end of the group — then break out to a higher level.
+    const sd=side(G.orientation,dir), i=G.children.indexOf(s);
+    const atEnd=(sd==="before"&&i===0)||(sd==="after"&&i===G.children.length-1);
+    if(!atEnd){ insertSib(G,s,nl,sd); rebuild(); return; }
+  }
+  // perpendicular, or along-axis at the end: break out (see seekUpInsert).
+  seekUpInsert(G,Ad,dir,nl);
+  rebuild(); // selection stays on s
+}
+function cmdSplit(dir){
+  const s=sel(); if(!s)return; const G=s.parent;
+  // split never seeks up: it wraps the selected leaf in a new group in place.
+  let o,s2;
+  if(dir==="before"||dir==="after"){
+    // CROSS-split: always perpendicular to the parent's flow, so it always
+    // nests (never flattens). before = the new pane earlier in the new group.
+    o=defOrient(axisOf(G.orientation)==="H"?"V":"H");
+    s2=dir;
+  }else{
+    // absolute-direction split; if it matches the parent's axis it flattens to
+    // a plain sibling, otherwise it persists as real perpendicular nesting.
+    const ax=(dir==="up"||dir==="down")?"V":"H";
+    o=(ax===axisOf(G.orientation))?G.orientation:defOrient(ax);
+    s2=side(o,dir);
+  }
+  const nl=newLeaf();
+  replaceNode(s,newGroup(o, s2==="before"?[nl,s]:[s,nl]));
+  rebuild();
+}
+const FLIP={LTR:"RTL",RTL:"LTR",TTB:"BTT",BTT:"TTB"};
+function cmdFlip(){
+  const s=sel(); if(!s)return; const G=s.parent;
+  G.orientation=FLIP[G.orientation];
+  rebuild();
+}
+// flip the group ONE level up (the selected leaf's grandparent) — the way to
+// flip a group that contains only other groups, so no leaf sits directly in it.
+function cmdFlipParent(){
+  const s=sel(); if(!s)return; const G=s.parent; if(!G)return; const P=G.parent; if(!P)return;
+  P.orientation=FLIP[P.orientation];
+  rebuild();
+}
+// true reverse: reverse the LOGICAL child order (unlike flip, which toggles the
+// polarity flag). Both reverse the visual arrangement, but flip keeps
+// reading/tab order (index 0 stays first) while reverse actually reorders the
+// children — so reading order, new_before/after and tile_next/prior all flip.
+function cmdReverse(){
+  const s=sel(); if(!s)return; s.parent.children.reverse(); rebuild();
+}
+function cmdReverseParent(){
+  const s=sel(); if(!s)return; const P=s.parent.parent; if(!P)return; P.children.reverse(); rebuild();
+}
+function firstLeaf(n){let r=null;walk(n,x=>{if(!r&&x.kind==="leaf")r=x;});return r;}
+function lastLeaf(n){let r=null;walk(n,x=>{if(x.kind==="leaf")r=x;});return r;}
+
+// nextFocusAfterDismiss — a QUERY the host can call BEFORE dismissing `t` to
+// learn which tile should take focus, so the host owns focus (rather than the
+// tiler auto-focusing). Caret-like, on logical (reading-direction) order: the
+// next sibling in the group, else the previous sibling (favouring the same
+// group); if `t` is the group's only child the group dissolves, so recurse on
+// the group's slot in its parent. Descends into a chosen sibling from the side
+// nearest `t`. Returns the leaf to focus, or null if dismissing empties the
+// whole tree. Pure — it does not mutate.
+function nextFocusAfterDismiss(t){
+  let cur=t;
+  while(cur.parent){
+    const kids=cur.parent.children, i=kids.indexOf(cur);
+    if(i+1<kids.length)return firstLeaf(kids[i+1]); // next in reading order
+    if(i-1>=0)return lastLeaf(kids[i-1]);            // was last → previous
+    cur=cur.parent;                                  // only child → dissolve, go up
+  }
+  return null;
+}
+function cmdDismiss(){
+  const s=sel(); if(!s)return;
+  const next=nextFocusAfterDismiss(s); // ask first, then dismiss
+  s.parent.children.splice(s.parent.children.indexOf(s),1);
+  if(next)setFocus(next);
+  rebuild();
+  if(!findNode(selId)){const l=leaves()[0];if(l)selId=l.id;render();}
+}
+
+// ---------- mode / pin state machine ----------
+const groupHasZoom=g=>!!g&&g.children.some(c=>c.mode==="zoom");
+function enterZoom(n){const g=n.parent; if(g)g.children.forEach(c=>{if(c.pin.amount!=null&&c.pin.enforced)c.pin.enforced=false;}); n.mode="zoom";}
+// Revive stashed pins when a group's zoom clears — but only for tiles that are
+// back in NORMAL mode. A tile now in shrink (or still zoom) keeps its own pin
+// inactive, else leaving zoom would wrongly re-pin a tile you just shrank.
+function restoreInactive(g){g.children.forEach(c=>{if(c.pin.amount!=null&&!c.pin.enforced&&c.mode==="normal")c.pin.enforced=true;});}
+function setMode(n,mode){
+  if(mode==="zoom"){enterZoom(n);}
+  else{
+    const wasZoom=n.mode==="zoom"; n.mode=mode;
+    if(mode==="shrink"&&n.pin.amount!=null)n.pin.enforced=false;
+    if(mode==="normal"&&n.pin.amount!=null&&!groupHasZoom(n.parent))n.pin.enforced=true;
+    if(wasZoom&&n.parent&&!groupHasZoom(n.parent))restoreInactive(n.parent);
+  }
+}
+function cycleMode(n){const o=["normal","zoom","shrink"];setMode(n,o[(o.indexOf(n.mode)+1)%3]);}
+function manualPin(n,size){
+  const wasZoom=n.mode==="zoom";
+  const minMain=n.parent&&isH(n.parent.orientation)?n._minW:n._minH;
+  n.pin={amount:Math.max(size,minMain||10),enforced:true}; n.mode="normal";
+  if(wasZoom&&n.parent&&!groupHasZoom(n.parent))restoreInactive(n.parent);
+}
+function clearPin(n){n.pin={amount:null,enforced:false};}
+// grow / shrink the tile by a stride along its parent's flow axis. It reads the
+// tile's CURRENTLY RESOLVED main-axis size straight off the last layout and pins
+// (resolved ± stride) — so the caller never has to know or precompute the size,
+// and repeated presses walk relative to wherever the layout put it. A tile in
+// zoom/shrink mode drops back to normal (a pin is a normal-mode reservation).
+const RESIZE_STRIDE=48;
+function cmdResize(delta){
+  const t=negTarget(); if(!t||!t._rect||t._hidden)return; // resizes as one box; climbs past only-child levels
+  const horiz=t.parent&&isH(t.parent.orientation);
+  const cur=horiz?t._rect.w:t._rect.h;
+  manualPin(t,cur+delta);
+  render();
+}
+// equalize / balance — two ways to un-rag a group's sizing, both anchored via
+// negTarget so they act on the first ancestor that actually tiles. equalize
+// IMPOSES uniformity: throw out every child's pin AND mode, then pin each child to
+// an identical share of the axis (ignoring naturals). balance RELEASES: clear pins
+// only and let the ordinary measure/allocate negotiation re-derive sizes from the
+// naturals + priority ("forget where I made it ragged, go back to what the
+// constraints want"). Each takes a recursive flag: false touches only the group
+// negTarget identifies; true walks its whole visible subtree, descending a stack
+// by its shown tab (hidden tabs and Z-stacked tabs don't tile, so they're skipped).
+function equalizeGroup(g){ if(stackedG(g)||!g._rect)return;              // tabs don't tile; need a laid-out box
+  const n=g.children.length; if(!n)return;
+  const share=(isH(g.orientation)?g._rect.w:g._rect.h)/n;               // equal main-axis slice (min-clamped in allocate)
+  g.children.forEach(c=>{c.mode="normal";c.pin={amount:share,enforced:true};});
+}
+function balanceGroup(g){ if(stackedG(g))return;
+  g.children.forEach(c=>{c.pin={amount:null,enforced:false};});         // clear pins only; naturals/priority decide
+}
+function eachTiling(g,recursive,fn){ fn(g);
+  if(recursive)(stackedG(g)?[selectedChild(g)]:g.children).forEach(c=>{if(c&&c.kind==="group")eachTiling(c,true,fn);});
+}
+function cmdEqualize(recursive){const t=negTarget();if(!t)return;eachTiling(t.parent||t,recursive,equalizeGroup);render();}
+function cmdBalance(recursive){const t=negTarget();if(!t)return;eachTiling(t.parent||t,recursive,balanceGroup);render();}
+// toggle_stack: fold the selected tile's whole group into a stack (its siblings
+// become tabs) or unfold it. Unstacking re-orients the box CONTRARY to its
+// container so it lands as a genuine nested group and can't flatten away.
+//
+// State never crosses the box↔tile boundary, in EITHER direction:
+//  · A box's mode/pin are ITS OWN, on ITS main axis = the PARENT's axis. That
+//    axis is unchanged by (un)stacking — only the box's INTERNAL orientation
+//    flips — so the box keeps its size across the toggle. (Tabs on top of a bare
+//    tile: the stack's height pin is measured along the TTB parent; unstacking
+//    to an ltr box leaves that height pin intact.) So we retain them, never clear.
+//  · A tile's pin is on ITS main axis = the box's orientation axis — perpendicular
+//    to the box's own pin. Copying a number across would read a width as a height,
+//    so tiles keep their pins too (dormant while stacked: the visible tab just
+//    fills the body, its pin unconsulted). priority stays derived either way.
+function cmdToggleStack(){
+  const s=sel(); if(!s)return;
+  const g=s.parent; if(!g)return;
+  if(stackedG(g)){
+    g.children.forEach(c=>c.selected=false); // no selected child ⇒ not a stack
+    g.orientation=contraryOrient(g);         // keeps the box's PARENT-axis pin valid
+  }else{
+    g.children.forEach(c=>c.selected=(c===s)); // s becomes the shown tab
+  }
+  rebuild();
+}
+// nearest stacked ancestor of the selection (or of a given node).
+function enclosingStack(n){let p=n&&n.parent;while(p){if(stackedG(p))return p;p=p.parent;}return null;}
+// focus memory: every group remembers which child last held focus (`_lastChild`).
+// recordFocus stamps the whole path from the focused leaf up to the root each
+// layout, so leaving a tab leaves a trail. focusEntry replays it to pick the leaf
+// to land on when ENTERING a subtree — descending _lastChild through ordinary
+// groups, but deferring to a nested stack's OWN selected tab when it crosses one
+// (so restoration stops at each tab-group boundary and each stack restores
+// itself). Falls back to the first leaf when a remembered child is gone.
+function recordFocus(){let n=sel();while(n&&n.parent){n.parent._lastChild=n.id;n=n.parent;}}
+function focusEntry(node){
+  while(node&&node.kind==="group"){
+    node=stackedG(node)?selectedChild(node)
+        :(node.children.find(c=>c.id===node._lastChild)||node.children[0]);
+  }
+  return node;
+}
+// while the selection is a DIRECT tab of a stack, mode/pin/resize operate on the
+// box (the stack shadows its tabs); deeper in a tab's sub-layout they're normal.
+function opTarget(){const s=sel();return (s&&s.parent&&stackedG(s.parent))?s.parent:s;}
+// zoom/shrink AND pin/resize all negotiate space among SIBLINGS in the parent's
+// waterfall, so any of them is inert wherever the target has none: a tab inside a
+// stack (tabs share the body, they don't tile) or a SOLE child (nobody to grow
+// into or yield to). Climb past every such level so an emphasis/reservation set on
+// a nested tab-group that is an only child rides up the chain to the first ancestor
+// that actually has siblings to honour it — otherwise the action is a silent no-op.
+// Falls back to the root if nothing tiles. (Swap keeps opTarget: it must act on the
+// tab you're on, not climb.)
+function climbTiling(n){while(n&&n.parent&&(stackedG(n.parent)||n.parent.children.length===1))n=n.parent;return n;}
+function negTarget(){const s=sel();return s?climbTiling(s):null;}
+
+// ---------- focus API + monocle / spectacle lenses ----------
+// setFocus is the ONE chokepoint for "the host assigned focus to this tile".
+// Everything that moves the selection routes through it, so a single place knows
+// when to drop a lens: an active monocle/spectacle holds until focus lands on a
+// tile OUTSIDE the subtree it magnified. focusView remembers {mode, nodeId} — the
+// effect AND the root it impacts — so dismissal is unambiguous.
+let focusView=null;
+function nodeWithin(n,anc){while(n){if(n===anc)return true;n=n.parent;}return false;}
+function setFocus(node){ if(!node)return; selId=node.id;
+  if(focusView){const X=findNode(focusView.nodeId); if(!X||!nodeWithin(node,X))focusView=null;} }
+// setFocus and setCaret are the host's TWO independent levers: setFocus changes
+// which tile is selected (and may dismiss a lens); setCaret moves only the nav
+// GOAL — the virtual point that steers which route a later direction-change takes
+// — WITHOUT changing focus. Keeping them separate is what lets an edge-press
+// reposition the goal in place.
+function setCaret(x,y){caret.x=x;caret.y=y;}
+// nav reads the TRUE pre-lens geometry (snapshotted each layout) so a direction
+// press always finds the real neighbor — that's how it breaks OUT of a monocle/
+// spectacle — and so edges are the real workspace edges.
+function navRect(n){return n._navRect||n._rect;}
+function navHidden(n){return n._navHidden!=null?n._navHidden:n._hidden;}
+// at a workspace edge (nothing that way) a nav/swap doesn't die: it slides the
+// caret goal WITHIN the current tile, along the pressed axis, so a later
+// perpendicular move leaves from that side. Normally it goes to the far (pressed-
+// direction) edge — but if the caret is already sitting near the OPPOSITE edge
+// (within that third of the tile), it goes to CENTER instead. So repeated presses
+// step opposite-edge -> center -> pressed-edge, letting the goal flip between the
+// two edges and center freely on a tile that spans a whole wall.
+function caretToEdge(dir){const b=navRect(sel()||{}); if(!b)return;
+  const horiz=(dir==="left"||dir==="right");
+  const lo=horiz?b.x:b.y, size=horiz?b.w:b.h, hi=lo+size, mid=lo+size/2, third=size/3;
+  const pos=horiz?caret.x:caret.y;
+  let np;
+  if(dir==="right"||dir==="down") np=(pos<=lo+third)?mid:hi;  // near the opposite (near/far) edge -> center, else pressed edge
+  else                            np=(pos>=hi-third)?mid:lo;
+  if(horiz)caret.x=np; else caret.y=np; render();}
+// the node a lens magnifies. MONOCLE magnifies the focused tile (negTarget once);
+// SPECTACLE magnifies the enclosing group (negTarget twice — one more tiling level).
+function lensTarget(group){const t=negTarget(); if(!t)return null; return (group&&t.parent)?climbTiling(t.parent):t;}
+// A lens has two independent axes:
+//   group  false = monocle (the tile)      true = spectacle (its enclosing group)
+//   scope  "screen" = fill the whole workspace   "group" = fill the target's own group box
+// so m/M = monocle global/in-group, p/P = spectacle global/in-group. Re-invoking the
+// exact same lens toggles it off; any set_focus outside the magnified subtree dismisses.
+function cmdLens(group,scope){
+  const X=lensTarget(group); if(!X)return;
+  if(focusView&&focusView.group===group&&focusView.scope===scope&&focusView.nodeId===X.id){focusView=null;render();return;}
+  focusView={group,scope,nodeId:X.id};
+  const l=focusEntry(X); if(l)selId=l.id;   // land focus inside the lens so it doesn't self-dismiss
+  render();
+}
+// cycle the active tab; selection follows onto the tab that comes up. Nested
+// stacks read as one continuous tab order: step the INNERMOST enclosing stack
+// that can move in this direction without wrapping, escalating to the parent
+// stack (grandparent, …) at each boundary — so you can always get back OUT of a
+// nested stack. Only when EVERY enclosing stack is at its boundary do we wrap,
+// and then it's the OUTERMOST (top) stack that wraps around — same principle as
+// the odometer, where only the top level loops. Wrapping the innermost instead
+// would just spin the deepest tab in place while all its parents stayed pinned
+// at their ends (the continuous order would never reach the global other end).
+function goTab(g,j){selectChild(g,g.children[j]);const l=focusEntry(g.children[j]);if(l)setFocus(l);rebuild();}
+function cmdTabCycle(step){
+  const stacks=[]; for(let g=enclosingStack(sel()); g; g=enclosingStack(g)) stacks.push(g); // innermost -> outermost
+  for(const g of stacks){
+    const i=g.children.indexOf(selectedChild(g)), j=i+step;
+    if(j>=0&&j<g.children.length){goTab(g,j);return;} // step the innermost that can move without wrapping
+  }
+  if(stacks.length){ // every enclosing stack is at its boundary -> wrap the OUTERMOST (top) one
+    const top=stacks[stacks.length-1], n=top.children.length; if(n<2)return;
+    const i=top.children.indexOf(selectedChild(top));
+    goTab(top,((i+step)%n+n)%n);return;
+  }
+  cycleVisibleStack(step); // not inside any stack: reach for the visible tabs on screen
+}
+// change a stack's visible tab WITHOUT moving focus (leaves selId alone).
+function flipTab(g,j){selectChild(g,g.children[j]);render();}
+// Persistent cursor for the no-stack fallback: the id of the DEEPEST stack the
+// baton is parked on. Its stacked ancestors are the baton at each level above it;
+// the peer to hand to at any level is derived from reading order + direction, so
+// this one id is all the state the odometer needs. Keyed by id so it survives
+// render() (node identity is stable); any op that rebuilds nodes re-anchors it.
+let visCursor=null;
+// The visible >=2-tab stacks form a containment FOREST. A baton lives at every
+// level that has ties (>1 simultaneously-visible peer stack); with no nesting
+// this is just the flat top row.
+function visStacks(){const a=[];(function w(n){ if(n.kind!=="group")return;
+  if(stackedG(n)&&isVisible(n)&&n.children.length>=2)a.push(n);
+  n.children.forEach(w); })(root);return a;}
+// nearest ancestor that is a >=2-tab stack (the level the baton rises to), or null at top.
+function parentStack(g){let p=g.parent;while(p){if(stackedG(p)&&p.children.length>=2)return p;p=p.parent;}return null;}
+// the >=2-tab stacks one level DOWN, under S's currently shown tab (nearest
+// enclosing stack === S), in reading order. Walks the shown branch only, so it
+// sees tabs we just flipped this press, before any re-layout re-derives isVisible.
+function childStacks(S){const a=[];(function w(n){ if(n.kind!=="group")return;
+  if(stackedG(n)&&n.children.length>=2){a.push(n);return;} // first stack on the branch; deeper is its own childStacks
+  n.children.forEach(w); })(selectedChild(S));return a;}
+// Fallback when the selection sits under NO stack: cycling keys run an ODOMETER
+// over that forest WITHOUT moving focus. The baton walks the deepest active
+// stack's tabs; off its end it hands to the next PEER at the same level (the
+// mirrored left/right handoff — non-wrapping when nested); once a whole level is
+// spent the baton RISES to the parent, whose container advances one tab, revealing
+// (and resetting to its start) the next sub-region. The TOP level is the only ring
+// that wraps — there is no parent to rise to. Inner wheels reset when an outer
+// clicks, and the whole thing mirrors by direction. With no nesting it reduces to
+// the flat left-to-right group-major cycling.
+function cycleVisibleStack(step){
+  const vs=visStacks(); if(!vs.length)return;
+  const dir=step>0?1:-1;
+  const shown=g=>g.children.indexOf(selectedChild(g));
+  const set=(g,i)=>selectChild(g,g.children[i]);              // flip a shown tab, no render yet
+  // the far-start tab of h for this direction (first tab going right, last going left).
+  const entry=h=>step>0?0:h.children.length-1;
+  // after STEPPING a container: drop the baton to the deepest stack under its new
+  // tab, resetting each revealed inner level to its start (no nudge — the step
+  // itself is the visible move). Parks visCursor on the deepest.
+  const descend=S=>{let cur=S;for(;;){const ks=childStacks(cur);if(!ks.length){visCursor=cur.id;return;}
+    const nx=step>0?ks[0]:ks[ks.length-1];set(nx,entry(nx));cur=nx;}};
+  // baton ENTERS S fresh (handoff / fresh-anchor / revealed by a wrap): descend the
+  // entry BRANCH, resetting each level to its entry tab, and park on the deepest.
+  // `moved` guarantees the press changes SOMETHING: if the whole entry branch was
+  // already at its start, nudge one tab further — and that nudge can itself flip a
+  // container onto a tab that holds a nested stack (walking back onto a non-final
+  // tab), so we RE-derive childStacks and keep descending rather than parking on
+  // the container. The innermost wheel is always the one that ends up moving.
+  const enter=S=>{let cur=S, moved=false;for(;;){const before=shown(cur), e=entry(cur);
+    if(before!==e){set(cur,e);moved=true;}
+    let ks=childStacks(cur);
+    if(!ks.length&&!moved){set(cur,e+step);moved=true;ks=childStacks(cur);}
+    if(!ks.length){visCursor=cur.id;return;}
+    cur=step>0?ks[0]:ks[ks.length-1];}};
+
+  const D=visCursor?vs.find(s=>s.id===visCursor):null;
+  if(!D){const top=vs.filter(s=>parentStack(s)===null);enter(step>0?top[0]:top[top.length-1]);render();return;}
+
+  for(let g=D;;){
+    const j=shown(g)+step;
+    if(j>=0&&j<g.children.length){set(g,j);descend(g);render();return;}   // step g; reveal + reset deeper
+    const par=parentStack(g);
+    const peers=vs.filter(s=>parentStack(s)===par);                       // g's level-peers, reading order
+    const i=peers.indexOf(g);
+    if(par===null){                                                       // TOP level: circular ring (wraps)
+      enter(peers[((i+dir)%peers.length+peers.length)%peers.length]);render();return;
+    }
+    const ni=i+dir;                                                       // NESTED level: non-circular
+    if(ni>=0&&ni<peers.length){enter(peers[ni]);render();return;}         // hand to the next peer here
+    g=par;                                                                // off this level's end -> rise to parent
+  }
+}
+// pick a specific tab (header click).
+function selectTab(g,i){ const c=g.children[i]; if(!c)return; selectChild(g,c); const l=focusEntry(c); if(l)setFocus(l); rebuild(); }
+// swap_tab_prior / swap_tab_next: REORDER the active tab within its stack (move
+// its slot left/right in the children order). The tab stays active and selected;
+// only its position among the tabs changes. No wrap at the ends.
+function cmdSwapTab(step){
+  const g=enclosingStack(sel()); if(!g)return;
+  const i=g.children.indexOf(selectedChild(g)), j=i+step;
+  if(j<0||j>=g.children.length)return;
+  const a=g.children; [a[i],a[j]]=[a[j],a[i]];
+  rebuild();
+}
+
+// ---------- normalization ----------
+function normalize(n){
+  if(n.kind!=="group")return;
+  n.children.forEach(normalize);
+  let changed=true,guard=0;
+  while(changed&&guard++<2000){
+    changed=false;
+    for(let i=n.children.length-1;i>=0;i--){const c=n.children[i];
+      if(c.kind==="group"&&c.children.length===0){n.children.splice(i,1);changed=true;}}
+    for(let i=0;i<n.children.length;i++){const c=n.children[i];
+      // same-orientation flatten — but a stacked group is a hard boundary: never
+      // flatten one into its parent, nor flatten children out of one. That is
+      // what keeps an unstacked-then-restacked group from dissolving.
+      if(c.kind==="group"&&!stackedG(c)&&!stackedG(n)&&c.orientation===n.orientation){n.children.splice(i,1,...c.children);changed=true;i--;}}
+    for(let i=0;i<n.children.length;i++){const c=n.children[i];
+      // single-child collapse: the promoted node inherits THIS slot's tab-state
+      // (was c the selected tab of n?), discarding the degenerate inner flag — so
+      // a stack whittled down to one tab quietly stops being a stack.
+      if(c.kind==="group"&&c.children.length===1){const only=c.children[0];only.selected=c.selected;n.children[i]=only;changed=true;}}
+  }
+}
+function rebuild(){
+  normalize(root);
+  while(root.kind==="group"&&root.children.length===1&&root.children[0].kind==="group")root=root.children[0];
+  if(root.kind==="group"&&root.children.length===0)root.children=[newLeaf()];
+  if(root.kind==="leaf")root=newGroup("LTR",[root]);
+  root.selected=false; // the root is nobody's tab
+  rebuildParents();
+  setCaretToSel();
+  render();
+}
+
+// ---------- serialization (JSON here; the Go module speaks PSL) ----------
+// A tile → {ref, …non-default attrs}. A box → {box:"ltr", children:[…]}, anonymous.
+// `selected:true` rides on the CHILD; its presence is what makes a box a stack,
+// and a stacked box also emits its own mode/pin (its negotiation identity).
+// `focused:true` also rides on a child: it is a group's remembered last-focus
+// child (`_lastChild`) — the focus trail. It can appear on ANY child of ANY box
+// (wherever focus has been), one per group; following the selected+focused chain
+// from the root lands on the live focus, and each inactive tab keeps its own.
+// Defaults are omitted on the way out and refilled on the way in. In PSL the
+// same object is one named param (`box:` / `ref:` + attrs) plus ordered children.
+const LEAF_DEF={minW:90,minH:64,natW:240,natH:150};
+function serialize(n){
+  const emitState=o=>{ if(n.mode!=="normal")o.mode=n.mode;
+    if(n.pin.amount!=null){o.pin=Math.round(n.pin.amount);o.enforced=!!n.pin.enforced;} };
+  if(n.kind==="leaf"){
+    const o={ref:n.ref};
+    for(const k in LEAF_DEF)if(n[k]!==LEAF_DEF[k])o[k]=n[k];
+    if(n.priority)o.priority=n.priority;
+    emitState(o);
+    if(n.selected)o.selected=true;
+    return o;
+  }
+  const o={box:n.orientation.toLowerCase()};
+  if(n.selected)o.selected=true;         // this box is the selected tab of its parent
+  if(stackedG(n))emitState(o);           // a stack carries its own mode/pin (priority derives)
+  o.children=n.children.map(serialize);
+  // mark the focus-memory child — but not when it's already the selected tab (a
+  // stack's memory always IS its active tab, so `selected` already says it).
+  const li=n.children.findIndex(c=>c.id===n._lastChild);
+  if(li>=0&&!o.children[li].selected)o.children[li].focused=true;
+  return o;
+}
+function deserialize(o){
+  if(o&&o.box!=null){
+    const orient=String(o.box).toUpperCase();
+    const kids=(o.children||[]).map(deserialize);
+    const g=newGroup(["LTR","RTL","TTB","BTT"].includes(orient)?orient:"LTR",kids);
+    if(o.selected)g.selected=true;
+    if(o.mode)g.mode=o.mode;
+    if(o.pin!=null)g.pin={amount:+o.pin,enforced:!!o.enforced};
+    (o.children||[]).forEach((co,i)=>{if(co&&co.focused)g._lastChild=kids[i].id;}); // restore focus trail
+    return g;
+  }
+  const l=newLeaf();
+  if(o.ref!=null)l.ref=String(o.ref);
+  for(const k of ["minW","minH","natW","natH","priority"])if(o[k]!=null)l[k]=+o[k];
+  if(o.mode)l.mode=o.mode;
+  if(o.pin!=null)l.pin={amount:+o.pin,enforced:!!o.enforced};
+  if(o.selected)l.selected=true;
+  return l;
+}
+function dumpJSON(){return JSON.stringify(serialize(root),null,2);}
+function loadJSON(str){
+  let o; try{o=JSON.parse(str);}catch(e){return "JSON parse error: "+e.message;}
+  let tree; try{tree=deserialize(o);}catch(e){return "structure error: "+e.message;}
+  if(tree.kind==="leaf")tree=newGroup("LTR",[tree]);
+  root=tree;
+  // keep future auto-refs from colliding with any winN we just loaded
+  let mx=0; walk(root,n=>{if(n.kind==="leaf"){const m=/^win(\d+)$/.exec(n.ref||"");if(m)mx=Math.max(mx,+m[1]);}});
+  _ref=Math.max(_ref,mx);
+  focusView=null; const fl=focusEntry(root)||firstLeaf(root); selId=fl?fl.id:null; // land on the restored focus
+  rebuild(); return null;
+}
+
+// caret: the navigation reference point (a bright dot). It jumps to the last
+// non-sizer click, drives directional nav, and otherwise rests at the selected
+// tile's center. Structural edits re-center it on the still-selected tile.
+function selCenter(){const s=sel();if(s&&s._rect&&!s._hidden)return{x:s._rect.x+s._rect.w/2,y:s._rect.y+s._rect.h/2};return null;}
+// Re-home the caret on the selected tile, but PER AXIS: keep whichever axis still
+// falls inside the tile, and only re-center the axis that no longer does. So an
+// insert/split (which renegotiates just one axis) leaves the other axis's lane
+// intact instead of wiping both.
+function setCaretToSel(){layout();const s=sel();if(!s||!s._rect||s._hidden)return;const r=s._rect;
+  if(caret.x<r.x||caret.x>r.x+r.w)caret.x=r.x+r.w/2;
+  if(caret.y<r.y||caret.y>r.y+r.h)caret.y=r.y+r.h/2;}
+
+// ---------- measure (bottom-up min/natural bounding box) ----------
+function measure(n){
+  if(n.kind==="leaf"){n._minW=n.minW;n._minH=n.minH;n._natW=n.natW;n._natH=n.natH;return;}
+  n.children.forEach(measure);
+  const s=(k)=>n.children.reduce((a,c)=>a+c[k],0), mx=(k)=>Math.max(...n.children.map(c=>c[k]));
+  if(stackedG(n)){
+    // A stack reports the MAX of every child's box (both axes), NOT the selected
+    // child's and NOT a sum — so its footprint is invariant to which tab is up.
+    // Flipping tabs can never change the stack's outer size, so it can never
+    // trigger a relayout: switching is always a pure repaint. Header chrome adds
+    // a fixed reserve on the height axis.
+    const res=stackReserve(n);
+    n._minW=mx("_minW"); n._natW=mx("_natW");
+    n._minH=mx("_minH")+res; n._natH=mx("_natH")+res;
+  }else if(isH(n.orientation)){n._minW=s("_minW");n._natW=s("_natW");n._minH=mx("_minH");n._natH=mx("_natH");}
+  else{n._minH=s("_minH");n._natH=s("_natH");n._minW=mx("_minW");n._natW=mx("_natW");}
+}
+function computeEff(n){
+  if(n.kind==="leaf"){n._eff=(n.priority||0)+((focusProtect&&n.id===selId)?FOCUS:0);return n._eff;}
+  let m=-Infinity;n.children.forEach(c=>m=Math.max(m,computeEff(c)));n._eff=m;return m;
+}
+
+// ---------- allocate (top-down waterfall) ----------
+function waterfill(items,pool,capFn){
+  let active=items.filter(k=>capFn(k)-k._main>0.5),g=0;
+  while(pool>0.5&&active.length&&g++<500){
+    const share=pool/active.length; let prog=false;
+    active.forEach(k=>{const give=Math.min(share,capFn(k)-k._main);if(give>0){k._main+=give;pool-=give;prog=true;}});
+    active=active.filter(k=>capFn(k)-k._main>0.5);
+    if(!prog)break;
+  }
+  return pool;
+}
+// reason: "omit" = couldn't fit (a real omission the host may care about);
+// "tab" = simply not the active tab of a stack (invisible on purpose, not a
+// failure). Kept distinct so the two never get reported as the same thing.
+function markHidden(n,reason){n._hidden=true;n._rect=null;n._why=reason;if(n.kind==="group")n.children.forEach(c=>markHidden(c,reason));}
+function allocate(n,x,y,w,h){
+  n._hidden=false;n._rect={x,y,w,h};n._why=null;
+  if(n.kind==="leaf")return;
+  if(stackedG(n)){
+    // one child fills the body below the header; the rest are hidden (not laid
+    // out at all). ONE mode / ONE pin live on the stack node itself, so they are
+    // honoured by the parent's waterfall exactly like any single box — nothing
+    // per-tab escapes this boundary to perturb the negotiation.
+    const res=n._headerH=stackReserve(n);
+    const child=selectedChild(n);
+    n.children.forEach(c=>{if(c!==child)markHidden(c,"tab");}); // hidden as a tab, not omitted
+    if(child)allocate(child,x,y+res,w,Math.max(0,h-res));
+    return;
+  }
+  const horiz=isH(n.orientation), mainAvail=horiz?w:h, crossAvail=horiz?h:w;
+  const kids=n.children; kids.forEach(k=>k._omit=false);
+  // cross-axis (breadth) overflow: cannot fit the group's cross extent
+  kids.forEach(k=>{const cmin=horiz?k._minH:k._minW; if(cmin>crossAvail+0.5)k._omit=true;});
+  const active=kids.filter(k=>!k._omit);
+  active.forEach(k=>{k._mainMin=horiz?k._minW:k._minH;k._mainNat=horiz?k._natW:k._natH;k._main=0;});
+  const idx=k=>kids.indexOf(k);
+  const byPri=active.slice().sort((a,b)=>(b._eff-a._eff)||(idx(a)-idx(b)));
+  // 1 · minimums by priority (omit what can't fit; keep descending)
+  let used=0;
+  byPri.forEach(k=>{if(used+k._mainMin<=mainAvail+0.5){k._main=k._mainMin;used+=k._mainMin;}else{k._omit=true;}});
+  let surplus=Math.max(0,mainAvail-used);
+  let vis=active.filter(k=>!k._omit);
+  // 2 · pins (reservations, by priority)
+  byPri.filter(k=>!k._omit&&k.pin.amount!=null&&k.pin.enforced).forEach(k=>{
+    const give=Math.min(Math.max(k._mainMin,k.pin.amount)-k._main,surplus);
+    if(give>0){k._main+=give;surplus-=give;}
+  });
+  // 3 · zoom (unbounded, even split of remaining surplus)
+  const zoom=vis.filter(k=>k.mode==="zoom");
+  if(zoom.length&&surplus>0.5){const share=surplus/zoom.length;zoom.forEach(k=>k._main+=share);surplus=0;}
+  // 4 · normal toward natural
+  if(surplus>0.5){
+    const normals=vis.filter(k=>k.mode==="normal"&&!(k.pin.amount!=null&&k.pin.enforced));
+    surplus=waterfill(normals,surplus,k=>Math.max(k._mainNat,k._main));
+  }
+  // 6 · mop-up remainder -> last (in order) non-shrink, non-pinned survivor
+  if(surplus>0.5){
+    let cand=vis.filter(k=>k.mode!=="shrink"&&!(k.pin.amount!=null&&k.pin.enforced));
+    if(!cand.length)cand=vis.slice();
+    cand.sort((a,b)=>idx(a)-idx(b));
+    const last=cand[cand.length-1]; if(last)last._main+=surplus;
+    surplus=0;
+  }
+  // position along the axis in orientation order
+  const ordered=vis.slice().sort((a,b)=>idx(a)-idx(b));
+  let cur=0;
+  ordered.forEach(k=>{
+    let cx,cy,cw,ch;
+    if(horiz){cw=k._main;ch=crossAvail;cy=y;cx=n.orientation==="LTR"?x+cur:x+(w-cur-cw);}
+    else{ch=k._main;cw=crossAvail;cx=x;cy=n.orientation==="TTB"?y+cur:y+(h-cur-ch);}
+    cur+=k._main; allocate(k,cx,cy,cw,ch);
+  });
+  kids.filter(k=>k._omit).forEach(k=>markHidden(k,"omit"));
+}
+
+function layout(){
+  syncStacksToSel(); // reveal the selected tile's tab before measuring/placing
+  recordFocus();     // leave a focus trail so returning to a tab lands where it was
+  measure(root); computeEff(root); allocate(root,0,0,wsW,wsH);
+  // snapshot the TRUE layout for navigation BEFORE any lens rewrites _rect/_hidden,
+  // so arrows always steer by real geometry (and can therefore break out of a lens).
+  walk(root,n=>{n._navRect=n._rect;n._navHidden=n._hidden;});
+  // a lens re-expands one subtree over its scope AFTER the normal pass. The normal
+  // pass still gives every node a real box (nav/hit-testing keep working underneath
+  // and outside the lens); the lens just re-lays the magnified subtree and hides
+  // whatever it now covers, so stepping focus out is what dismisses it.
+  const X=focusView&&findNode(focusView.nodeId);
+  if(X){
+    if(focusView.scope==="screen"){ markHidden(root,"lens"); allocate(X,0,0,wsW,wsH); }    // fill the workspace
+    else { const A=X.parent||root, r=A._rect||{x:0,y:0,w:wsW,h:wsH};                        // fill its group box
+      if(X.parent)X.parent.children.forEach(c=>{if(c!==X)markHidden(c,"lens");});
+      allocate(X,r.x,r.y,r.w,r.h); }
+  } else if(focusView){ focusView=null; } // the magnified node is gone -> drop the lens
+}
+
+// ---------- navigation (by position, with a sticky goal coordinate) ----------
+// Descend into a neighbor subtree to pick the landing leaf. At a level whose
+// axis matches travel we take the edge we ENTERED from; at a perpendicular
+// level we take the child under the caret's goal coordinate. No perpendicular
+// distance is consulted for "which neighbor" — only for "where within it".
+function landingLeaf(node,dir){
+  const navH=(dir==="left"||dir==="right"), R=navRect;
+  while(node&&node.kind==="group"){
+    const kids=node.children.filter(c=>!navHidden(c)&&R(c));
+    if(!kids.length)return null;
+    if(isH(node.orientation)===navH){
+      // same axis as travel: land on the child at the edge we enter from
+      if(dir==="right")node=kids.reduce((a,b)=>R(b).x<R(a).x?b:a);
+      else if(dir==="left")node=kids.reduce((a,b)=>(R(b).x+R(b).w)>(R(a).x+R(a).w)?b:a);
+      else if(dir==="down")node=kids.reduce((a,b)=>R(b).y<R(a).y?b:a);
+      else node=kids.reduce((a,b)=>(R(b).y+R(b).h)>(R(a).y+R(a).h)?b:a);
+    }else{
+      // perpendicular level: land on the child under the caret's goal coordinate
+      const g=navH?caret.y:caret.x;
+      const lo=c=>navH?R(c).y:R(c).x, hi=c=>navH?R(c).y+R(c).h:R(c).x+R(c).w;
+      let pick=kids.find(c=>g>=lo(c)-0.5&&g<=hi(c)+0.5);
+      if(!pick)pick=kids.reduce((a,b)=>{
+        const da=Math.max(0,lo(a)-g,g-hi(a)),db=Math.max(0,lo(b)-g,g-hi(b));return db<da?b:a;});
+      node=pick;
+    }
+  }
+  return node;
+}
+// navTarget finds the leaf a directional move lands on — the STRUCTURAL next
+// neighbor (walk up to the nearest ancestor whose axis matches travel and take
+// its sibling in that direction), then descend to the spot under the caret.
+function navTarget(dir,origin){
+  const s=origin||sel(); if(!s)return null;
+  const navH=(dir==="left"||dir==="right");
+  let node=s, parent=s.parent;
+  while(parent){
+    // a stacked ancestor has effective axis Z, so directional travel walks
+    // straight past it — arrows never step between hidden tabs (that's ,/.).
+    if(axOf(parent)===(navH?"H":"V")){
+      const i=parent.children.indexOf(node);
+      const step=side(parent.orientation,dir)==="before"?-1:1;
+      for(let ni=i+step; ni>=0&&ni<parent.children.length; ni+=step){
+        const cand=landingLeaf(parent.children[ni],dir);
+        if(cand)return cand;
+      }
+    }
+    node=parent; parent=parent.parent;
+  }
+  return null;
+}
+function navSelect(dir){
+  const t=navTarget(dir);
+  if(!t){ caretToEdge(dir); return; } // already at the edge -> slide the goal, don't move focus
+  setFocus(t); const b=navRect(t);
+  // keep the perpendicular coordinate as the goal so repeated moves one way
+  // don't drift; advance the along-axis coordinate into the new tile.
+  if(dir==="left"||dir==="right")caret.x=b.x+b.w/2; else caret.y=b.y+b.h/2;
+  render();
+}
+// swap moves the SELECTED tile to where nav would go, trading places with the
+// tile there. min/nat dimensions and priority travel with each tile (its
+// identity); pin and mode stay with the LOCATION (each tile takes on the
+// pin/mode of the slot it moved into).
+function swapNodes(a,b){
+  const pa=a.parent,pb=b.parent, ia=pa.children.indexOf(a), ib=pb.children.indexOf(b);
+  pa.children[ia]=b; pb.children[ib]=a; a.parent=pb; b.parent=pa;
+}
+function cmdSwap(dir){
+  const src=opTarget(); if(!src)return; // a stacked tab exchanges as its WHOLE box
+  const t=navTarget(dir,src); if(!t||t===src){ caretToEdge(dir); return; } // at the edge: just move the goal
+  const vert=(dir==="up"||dir==="down");
+  const keep=vert?caret.x:caret.y; // preserve the caret's cross-travel coordinate
+  swapNodes(src,t);
+  // pin, mode AND the active-tab flag stay with the LOCATION, not the tile.
+  const p=src.pin,m=src.mode,sl=src.selected;
+  src.pin=t.pin; src.mode=t.mode; src.selected=t.selected;
+  t.pin=p; t.mode=m; t.selected=sl;
+  rebuild(); // selection stays on the moved content, now at t's old spot
+  // land the caret at its old cross-travel position within the destination —
+  // clamped just inside so it can't leave the tile (nearest edge if it would);
+  // the travel direction is recentred.
+  const r=(sel()||{})._rect;
+  if(r){
+    const ins=8;
+    if(vert){caret.x=Math.min(Math.max(keep,r.x+ins),r.x+r.w-ins);caret.y=r.y+r.h/2;}
+    else{caret.y=Math.min(Math.max(keep,r.y+ins),r.y+r.h-ins);caret.x=r.x+r.w/2;}
+    render();
+  }
+}
+// tile_next / tile_prior: a cyclic sweep of the currently VISIBLE leaves in
+// reading order (DFS), wrapping around. Leaves hidden behind an inactive tab are
+// skipped — stepping between tabs is ,/. 's job, not this. (Omitted-for-fit tiles
+// stay in the cycle: landing on one brings it back via focus protection.)
+function cmdTileCycle(step){
+  const ls=leaves().filter(l=>l._why!=="tab"); if(ls.length<2)return;
+  const i=ls.findIndex(l=>l.id===selId); if(i<0)return;
+  const t=ls[(i+step+ls.length)%ls.length];
+  setFocus(t); setCaretToSel(); render();
+}
+// merge: like swap, but instead of exchanging it MOVES the source into a group
+// with the destination. The governing invariant: a merge must NEVER add a band
+// in the direction of travel — the source lands ADJACENT TO THE DESTINATION
+// ACROSS that direction (the perpendicular axis), never in front of/behind it
+// along it. So: if D already sits in a group running the across-travel axis,
+// slot the source in beside it (INSERT); otherwise SPLIT D into an across-travel
+// pair. Both keep the travel-direction band count unchanged. The one exception
+// is the very edge (no neighbor to land beside), where the source spawns a fresh
+// band on the outside (mergeToEdge). This single rule subsumes the old
+// with/against-grain cases. Normalization then dissolves any 1-child leftovers.
+// detach also voids the tab-status: a node lifted out of its slot is no longer
+// anyone's selected tab until it's re-placed (else it could mark a new parent a
+// stack). Its INTERNAL selected child, if it's a stack, is untouched.
+function detach(n){const p=n.parent;if(p)p.children.splice(p.children.indexOf(n),1);n.selected=false;}
+// merging into the VOID (no neighbor in that direction) pushes the tile to the
+// extreme of the whole layout: promote it to a top-level child at that edge if
+// the root already runs the axis, else split the root (wrap it) with the tile
+// on that side. Here it lands on the DIRECTION side — the wall — since there is
+// no destination to sit beside.
+function mergeToEdge(s,dir,Ad){
+  if(leaves().length<2)return;
+  detach(s);
+  if(axisOf(root.orientation)===Ad){
+    if(side(root.orientation,dir)==="before")root.children.unshift(s); else root.children.push(s);
+    s.parent=root;
+  }else{
+    const o=defOrient(Ad), sd=side(o,dir);
+    root=newGroup(o, sd==="before"?[s,root]:[root,s]);
+  }
+  if(s.kind==="leaf")selId=s.id; rebuild(); // a moved stack keeps selection on its visible tab
+}
+function isAncestorOf(a,n){let p=n&&n.parent;while(p){if(p===a)return true;p=p.parent;}return false;}
+// the front-most stack we'd be merging INTO: the outermost stack on the
+// destination leaf's ancestor chain that does NOT also contain the source (i.e.
+// a stack on the neighbour's side, the tabbed box you ran into).
+function destStack(D,src){let st=null,n=D;while(n){if(stackedG(n)&&!isAncestorOf(n,src))st=n;n=n.parent;}return st;}
+function cmdMerge(dir){
+  // Unlike swap (which moves a whole tab-group via opTarget), merge moves the
+  // SINGLE tile — so a lone tab can be extracted from its stack ("merged out")
+  // without dragging the rest of the group along.
+  const src=sel(); if(!src)return;
+  const Ad=(dir==="up"||dir==="down")?"V":"H"; // travel axis
+  const Pd=Ad==="H"?"V":"H";                   // across-travel axis: source lands adjacent here
+  const D=navTarget(dir);                       // from sel(): nav walks past the enclosing stack (Z)
+  if(D===src)return;
+  // if we're pulling the visible tab out of a stack, make an adjacent tab active
+  // first, so the stack keeps a selected child and stays a stack (or, if only one
+  // tab is left, normalization collapses it to a plain tile). Do this BEFORE any
+  // extraction path — including the edge case below — so the source stack always
+  // survives.
+  const g=src.parent;
+  if(g&&stackedG(g)&&src.selected){
+    const i=g.children.indexOf(src), nb=g.children[i+1]||g.children[i-1];
+    if(nb)selectChild(g,nb); // next tab, or previous when we're at the end
+  }
+  if(!D){mergeToEdge(src,dir,Ad);return;}       // very edge: spawn a new band outside
+  const dst=destStack(D,src);                   // is the destination a stack? (computed before detach)
+  detach(src);
+  if(dst){
+    // merging INTO a stack just ADDS A TAB — the intuitive inverse of extracting
+    // one. It becomes the active tab (focus follows it via ensureVisible). No
+    // splitting the front tile.
+    dst.children.push(src);
+  }else{
+    // the caret dot picks which side of D along the ACROSS-travel axis, like
+    // clicking the near or far half of the destination to choose an insert point.
+    // <= so an exact tie on the midpoint resolves to the BEFORE side, not after.
+    const phys=(Pd==="H")
+      ?(caret.x <= D._rect.x+D._rect.w/2 ? "left" : "right")
+      :(caret.y <= D._rect.y+D._rect.h/2 ? "up" : "down");
+    const p=D.parent;
+    if(p&&!stackedG(p)&&axisOf(p.orientation)===Pd){
+      // D already lives in an across-travel group — slot source in beside it. No
+      // band is added in the travel direction (they share D's band).
+      insertSib(p,D,src,side(p.orientation,phys));
+    }else{
+      // split D into an across-travel pair; still no new band along travel — D's
+      // own cell is subdivided perpendicular to the merge.
+      const o=defOrient(Pd), sd=side(o,phys);
+      replaceNode(D,newGroup(o,sd==="before"?[src,D]:[D,src]));
+    }
+  }
+  selId=src.id; rebuild();
+}
+
+// ---------- rendering ----------
+const $=id=>document.getElementById(id);
+const stage=$("stage");
+function hue(id){return (id*61)%360;}
+function paneColors(id){const h=hue(id);const dark=document.documentElement.getAttribute("data-theme")==="dark"||(matchMedia("(prefers-color-scheme: dark)").matches&&document.documentElement.getAttribute("data-theme")!=="light");
+  return dark?{bg:`hsl(${h} 32% 20%)`,line:`hsl(${h} 30% 34%)`}:{bg:`hsl(${h} 62% 95%)`,line:`hsl(${h} 45% 78%)`};}
+
+function render(){
+  layout();
+  stage.style.width=wsW+"px"; stage.style.height=wsH+"px"; stage.innerHTML="";
+  leaves().forEach(l=>{
+    if(!l._rect||l._hidden)return; const r=l._rect;
+    const d=document.createElement("div"); d.className="pane"+(l.id===selId?" sel":"");
+    const col=paneColors(l.id); d.style.setProperty("--pane-bg",col.bg); d.style.setProperty("--pane-line",col.line);
+    d.style.left=r.x+"px";d.style.top=r.y+"px";d.style.width=r.w+"px";d.style.height=r.h+"px";
+    let chips="";
+    if(l.mode==="zoom")chips+='<span class="chip z">ZOOM</span>';
+    if(l.mode==="shrink")chips+='<span class="chip s">SHRINK</span>';
+    if(l.pin.amount!=null)chips+=`<span class="chip pin${l.pin.enforced?"":" off"}">PIN ${Math.round(l.pin.amount)}</span>`;
+    if(l.priority)chips+=`<span class="chip pri">p${l.priority}</span>`;
+    d.innerHTML=`<div class="lab"><span class="idnum">${l.ref}</span>${chips}</div>`+
+      (r.w>78&&r.h>54?`<div class="dims">${Math.round(r.w)}×${Math.round(r.h)}</div>`:"");
+    d.onclick=(e)=>{const rc=stage.getBoundingClientRect();
+      setFocus(l); caret={x:e.clientX-rc.left,y:e.clientY-rc.top}; render();};
+    stage.appendChild(d);
+  });
+  const vBars=[],hBars=[];  // draggable boundaries, for corner handles
+  walk(root,g=>{
+    if(g.kind!=="group")return;
+    const horiz=isH(g.orientation);
+    for(let i=0;i<g.children.length-1;i++){
+      const a=g.children[i],b=g.children[i+1];
+      if(!a._rect||!b._rect||a._hidden||b._hidden)continue;
+      const gt=document.createElement("div");
+      gt.className="gutter "+(horiz?"h":"v");
+      const ax=a._rect,bx=b._rect;
+      if(horiz){
+        const edge=(Math.min(ax.x+ax.w,bx.x+bx.w)+Math.max(ax.x,bx.x))/2;
+        const top=Math.min(ax.y,bx.y),bot=Math.max(ax.y+ax.h,bx.y+bx.h);
+        gt.style.left=(edge-4)+"px";gt.style.top=top+"px";gt.style.width="8px";gt.style.height=(bot-top)+"px";
+        vBars.push({x:edge,y0:top,y1:bot,a,b});
+      }else{
+        const edge=(Math.min(ax.y+ax.h,bx.y+bx.h)+Math.max(ax.y,bx.y))/2;
+        const lft=Math.min(ax.x,bx.x),rgt=Math.max(ax.x+ax.w,bx.x+bx.w);
+        gt.style.top=(edge-4)+"px";gt.style.left=lft+"px";gt.style.height="8px";gt.style.width=(rgt-lft)+"px";
+        hBars.push({y:edge,x0:lft,x1:rgt,a,b});
+      }
+      gt.onmousedown=(e)=>beginDrag(e,[{node:a,horiz,sib:b}]);
+      stage.appendChild(gt);
+    }
+  });
+  // Corner handles where a vertical and horizontal boundary cross: grabbing one
+  // resizes BOTH — the near tile (pin) along one axis and its parent's edge
+  // along the other, from the 2-D mouse movement.
+  vBars.forEach(V=>hBars.forEach(H=>{
+    if(V.x<H.x0-1||V.x>H.x1+1||H.y<V.y0-1||H.y>V.y1+1)return;
+    const ch=document.createElement("div"); ch.className="corner";
+    ch.style.left=(V.x-8)+"px"; ch.style.top=(H.y-8)+"px";
+    ch.onmousedown=(e)=>{e.stopPropagation();
+      beginDrag(e,[{node:V.a,horiz:true,sib:V.b},{node:H.a,horiz:false,sib:H.b}]);};
+    stage.appendChild(ch);
+  }));
+  // stack headers — the collapsed tabs, drawn over the top reserve of every
+  // visible stack. tabbed = one strip of tabs; stacked = a column of title bars.
+  walk(root,g=>{
+    if(!stackedG(g)||!g._rect||g._hidden)return;
+    const r=g._rect, res=g._headerH||HEADER_H, col=(stackVariant==="stacked");
+    const hd=document.createElement("div");
+    hd.className="stkhdr"+(col?" col":"");
+    hd.style.left=r.x+"px";hd.style.top=r.y+"px";hd.style.width=r.w+"px";hd.style.height=res+"px";
+    g.children.forEach((c,i)=>{
+      const fl=firstLeaf(c); let lc=0; walk(c,x=>{if(x.kind==="leaf")lc++;});
+      const t=document.createElement("div");
+      t.className="tab"+(c.selected?" on":"");
+      t.innerHTML=`<span class="tnum">${fl?fl.ref:"?"}</span>`+(lc>1?`<span class="tag">+${lc-1}▦</span>`:"");
+      t.onclick=(e)=>{e.stopPropagation();selectTab(g,i);};
+      hd.appendChild(t);
+    });
+    stage.appendChild(hd);
+  });
+  // navigation caret — a bright dot, clamped inside the selected tile
+  const st=sel();
+  if(st&&st._rect&&!st._hidden){
+    const r=st._rect,ins=8;
+    const cx=Math.min(Math.max(caret.x,r.x+ins),r.x+r.w-ins);
+    const cy=Math.min(Math.max(caret.y,r.y+ins),r.y+r.h-ins);
+    const dot=document.createElement("div");dot.className="caret";
+    dot.style.left=(cx-7)+"px";dot.style.top=(cy-7)+"px";
+    stage.appendChild(dot);
+  }
+  renderSidebar();
+}
+
+let drag=null;
+// beginDrag pins one node (edge gutter) or two (corner handle) at once. Each
+// spec is {node, horiz, sib}: horiz picks the mouse axis, sib gives the grow
+// direction. Sizes/starts are captured up front so re-render mid-drag is safe.
+function beginDrag(e,specs){
+  e.preventDefault();
+  const rect=stage.getBoundingClientRect();
+  drag={rect, items:specs.map(sp=>{
+    const startMouse=sp.horiz?(e.clientX-rect.left):(e.clientY-rect.top);
+    const startSize=sp.horiz?sp.node._rect.w:sp.node._rect.h;
+    const nc=sp.horiz?sp.node._rect.x+sp.node._rect.w/2:sp.node._rect.y+sp.node._rect.h/2;
+    const sc=sp.horiz?sp.sib._rect.x+sp.sib._rect.w/2:sp.sib._rect.y+sp.sib._rect.h/2;
+    return {node:sp.node,horiz:sp.horiz,startMouse,startSize,dir:Math.sign(sc-nc)||1};
+  })};
+  window.addEventListener("mousemove",onDrag);
+  window.addEventListener("mouseup",endDrag);
+}
+function onDrag(e){
+  if(!drag)return;
+  drag.items.forEach(it=>{
+    const pos=it.horiz?(e.clientX-drag.rect.left):(e.clientY-drag.rect.top);
+    manualPin(it.node,it.startSize+(pos-it.startMouse)*it.dir);
+  });
+  render();
+}
+function endDrag(){drag=null;
+  window.removeEventListener("mousemove",onDrag);window.removeEventListener("mouseup",endDrag);}
+
+function renderSidebar(){
+  const s=sel();
+  $("selid").textContent=s?s.ref:"";
+  const lb=$("lensbadge"), lx=focusView&&findNode(focusView.nodeId);
+  if(lb){ if(lx){const nm=(focusView.group?"spectacle":"monocle")+(focusView.scope==="group"?" · in-group":" · global");
+    lb.style.display="";lb.textContent=`◉ ${nm} · ${lx.ref||"group"} — any tile outside dismisses`;} else lb.style.display="none"; }
+  const rw=Math.ceil(root._minW),rh=Math.ceil(root._minH);
+  $("req").textContent=`required ${rw}×${rh}`;
+  const over=rw>wsW||rh>wsH;
+  const anyHidden=leaves().some(l=>l._hidden&&l._why==="omit"); // tabs don't count
+  const fit=$("fit");
+  if(over){fit.textContent="workspace too small";fit.className="badge warn";}
+  else if(anyHidden){fit.textContent="omitting on cross-axis";fit.className="badge warn";}
+  else{fit.textContent="everything fits";fit.className="badge ok";}
+  if(s){
+    const g=s.parent;
+    const nf=nextFocusAfterDismiss(s);
+    $("insp").innerHTML=
+      `<div class="k">parent</div><div class="v">${g?g.orientation:"—"}</div>`+
+      `<div class="k">mode</div><div class="v">${s.mode}</div>`+
+      `<div class="k">pin</div><div class="v">${s.pin.amount!=null?Math.round(s.pin.amount)+(s.pin.enforced?" (active)":" (inactive)"):"—"}</div>`+
+      `<div class="k">on screen</div><div class="v">${s._rect&&!s._hidden?Math.round(s._rect.w)+"×"+Math.round(s._rect.h):"hidden"}</div>`+
+      `<div class="k">dismiss →</div><div class="v">${nf?("focus "+nf.ref):"empty"}</div>`;
+    $("minW").value=s.minW;$("minH").value=s.minH;$("natW").value=s.natW;$("natH").value=s.natH;$("prio").value=s.priority;
+  }
+  const hid=leaves().filter(l=>l._hidden&&l._why==="omit"); // unselected tabs aren't omissions
+  $("hidlist").textContent=hid.length?("omitted: "+hid.map(l=>l.ref).join(", ")+" — not enough room at their priority"):"";
+  $("tree").innerHTML=treeHTML(root,0);
+  document.querySelectorAll("#tree .leaf").forEach(el=>el.onclick=()=>{setFocus(findNode(+el.dataset.id));setCaretToSel();render();});
+  // live JSON dump — but don't stomp what the user is currently editing.
+  const ta=$("json"); if(ta&&document.activeElement!==ta)ta.value=dumpJSON();
+}
+function treeHTML(n,depth){
+  const pad="&nbsp;&nbsp;".repeat(depth);
+  if(n.kind==="leaf"){
+    const tags=[]; if(n.selected)tags.push("sel•tab"); if(n.mode!=="normal")tags.push(n.mode); if(n.pin.amount!=null)tags.push("pin"+(n.pin.enforced?"":"·off")); if(n.priority)tags.push("p"+n.priority);
+    return `<div class="node leaf ${n.id===selId?"sel":""} ${n._hidden?"hid":""}" data-id="${n.id}">${pad}▪ ${n.ref}${tags.length?" <span style='opacity:.6'>["+tags.join(" ")+"]</span>":""}</div>`;
+  }
+  const stk=stackedG(n);
+  const arr=stk?"▧":{LTR:"▸",RTL:"◂",TTB:"▾",BTT:"▴"}[n.orientation];
+  const gtags=[]; if(stk){gtags.push("stack"); if(n.mode!=="normal")gtags.push(n.mode); if(n.pin.amount!=null)gtags.push("pin"+(n.pin.enforced?"":"·off"));}
+  let h=`<div class="node grp ${n._hidden?"hid":""}">${pad}<span class="arrow">${arr}</span> ${stk?"stack·":""}${n.orientation}${gtags.length?" <span style='opacity:.6'>["+gtags.join(" ")+"]</span>":""}</div>`;
+  n.children.forEach(c=>h+=treeHTML(c,depth+1));
+  return h;
+}
+
+// ---------- wiring ----------
+document.querySelectorAll("[data-cmd]").forEach(b=>{
+  b.onclick=(ev)=>{
+    const c=b.dataset.cmd, s=sel();
+    if(c.startsWith("new-"))cmdNew(c.slice(4));
+    else if(c.startsWith("split-"))cmdSplit(c.slice(6));
+    else if(c==="flip")cmdFlip();
+    else if(c==="flip-parent")cmdFlipParent();
+    else if(c==="reverse")cmdReverse();
+    else if(c==="reverse-parent")cmdReverseParent();
+    else if(c==="dismiss")cmdDismiss();
+    else if(c==="mode-normal"){const t=negTarget();if(t)setMode(t,"normal");render();}
+    else if(c==="mode-zoom"){const t=negTarget();if(t)setMode(t,"zoom");render();}
+    else if(c==="mode-shrink"){const t=negTarget();if(t)setMode(t,"shrink");render();}
+    else if(c==="mode-cycle"){const t=negTarget();if(t)cycleMode(t);render();}
+    else if(c.startsWith("nav-"))navSelect(c.slice(4));
+    else if(c.startsWith("swap-"))cmdSwap(c.slice(5));
+    else if(c.startsWith("merge-"))cmdMerge(c.slice(6));
+    else if(c==="tile-prior")cmdTileCycle(-1);
+    else if(c==="tile-next")cmdTileCycle(1);
+    else if(c==="grow")cmdResize(RESIZE_STRIDE);
+    else if(c==="shrink-size")cmdResize(-RESIZE_STRIDE);
+    else if(c==="equalize")cmdEqualize(ev.shiftKey);   // Shift+click = recursive
+    else if(c==="balance")cmdBalance(ev.shiftKey);
+    else if(c==="monocle")cmdLens(false,ev.shiftKey?"group":"screen");   // Shift+click = in-group (fill group)
+    else if(c==="spectacle")cmdLens(true,ev.shiftKey?"group":"screen");
+    else if(c==="toggle-stack")cmdToggleStack();
+    else if(c==="tab-prev")cmdTabCycle(-1);
+    else if(c==="tab-next")cmdTabCycle(1);
+    else if(c==="tab-move-prev")cmdSwapTab(-1);
+    else if(c==="tab-move-next")cmdSwapTab(1);
+  };
+});
+["minW","minH","natW","natH","prio"].forEach(k=>{
+  $(k).oninput=()=>{const s=sel();if(!s)return;const v=Math.max(10,+$(k).value||10);
+    if(k==="prio")s.priority=Math.round(+$("prio").value||0);else s[k]=v;render();};
+});
+$("clearpin").onclick=()=>{const t=negTarget();if(t){clearPin(t);render();}};
+$("wsW").oninput=()=>{wsW=+$("wsW").value;$("wsWv").textContent=wsW+"px";render();};
+$("wsH").oninput=()=>{wsH=+$("wsH").value;$("wsHv").textContent=wsH+"px";render();};
+$("fp").onchange=()=>{focusProtect=$("fp").checked;render();};
+$("stkvar").onchange=()=>{stackVariant=$("stkvar").value;render();};
+$("reset").onclick=()=>{freshTree();};
+$("jsonload").onclick=()=>{const err=loadJSON($("json").value);const el=$("jsonerr");el.textContent=err||"loaded ✓";el.style.color=err?"var(--omit)":"var(--shrink)";};
+$("jsoncopy").onclick=()=>{$("json").value=dumpJSON();$("json").focus();$("json").select();try{document.execCommand("copy");}catch(e){}};
+$("theme").onclick=()=>{const r=document.documentElement;const cur=r.getAttribute("data-theme");
+  const dark=cur?cur==="dark":matchMedia("(prefers-color-scheme: dark)").matches;
+  r.setAttribute("data-theme",dark?"light":"dark");render();};
+// Keyboard scheme (ergonomics test). A "direction" is an arrow, Enter (after),
+// or ' (before). Plain direction navigates; Shift+direction = new; "/" arms a
+// one-shot split so the next direction = split. Letters drive mode/flip/swap.
+let splitArmed=false;
+function armSplit(on){splitArmed=on;const el=$("splitarm");if(el)el.style.display=on?"":"none";}
+function dirKey(e){
+  switch(e.key){
+    case"ArrowLeft":return"left"; case"ArrowRight":return"right";
+    case"ArrowUp":return"up"; case"ArrowDown":return"down";
+    case"Enter":return"after"; case"'":case'"':return"before";
+  }
+  return null;
+}
+window.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
+  const dir=dirKey(e);
+  if(dir){
+    if(splitArmed){armSplit(false);cmdSplit(dir);}
+    else if(e.shiftKey)cmdNew(dir);
+    else if(dir!=="before"&&dir!=="after")navSelect(dir); // plain before/after: no-op
+    e.preventDefault(); return;
+  }
+  const k=e.key.toLowerCase();
+  if(k==="/"){armSplit(!splitArmed);e.preventDefault();return;}
+  if(splitArmed){
+    // armed split takes a direction from WASD too, not just the arrows above
+    const wd={w:"up",a:"left",s:"down",d:"right"}[k];
+    if(wd){armSplit(false);cmdSplit(wd);e.preventDefault();return;}
+  }
+  armSplit(false); // any other key cancels a pending split
+  const s=sel();
+  if(k==="w"){e.shiftKey?cmdMerge("up"):cmdSwap("up");}
+  else if(k==="a"){e.shiftKey?cmdMerge("left"):cmdSwap("left");}
+  else if(k==="s"){e.shiftKey?cmdMerge("down"):cmdSwap("down");}
+  else if(k==="d"){e.shiftKey?cmdMerge("right"):cmdSwap("right");}
+  else if(k==="z"){const t=negTarget();if(t){setMode(t,t.mode==="zoom"?"normal":"zoom");render();}}
+  else if(k==="x"){const t=negTarget();if(t){setMode(t,t.mode==="shrink"?"normal":"shrink");render();}}
+  else if(k==="c"){const t=negTarget();if(t){cycleMode(t);render();}}
+  else if(k==="f")cmdFlip();
+  else if(k==="g")cmdFlipParent();
+  else if(k==="r")cmdReverse();
+  else if(k==="t")cmdReverseParent();
+  else if(k==="[")cmdTileCycle(-1);
+  else if(k==="]")cmdTileCycle(1);
+  else if(k==="-")cmdResize(-RESIZE_STRIDE);
+  else if(k==="="||k==="+")cmdResize(RESIZE_STRIDE);
+  else if(k==="e")cmdEqualize(e.shiftKey);   // Shift = recursive (whole subtree)
+  else if(k==="b")cmdBalance(e.shiftKey);     // Shift = recursive
+  else if(k==="m")cmdLens(false,e.shiftKey?"group":"screen"); // monocle (tile): m=global, M=in-group
+  else if(k==="p")cmdLens(true, e.shiftKey?"group":"screen"); // spectacle (group): p=global, P=in-group
+  else if(k==="\\")cmdToggleStack();
+  else if(k===",")cmdTabCycle(-1);
+  else if(k===".")cmdTabCycle(1);
+  else if(k==="{")cmdSwapTab(-1);
+  else if(k==="}")cmdSwapTab(1);
+  else if(k==="delete"||k==="backspace")cmdDismiss();
+  else return;
+  e.preventDefault();
+});
+
+$("wsW").value=wsW;$("wsH").value=wsH;$("wsWv").textContent=wsW+"px";$("wsHv").textContent=wsH+"px";
+freshTree();
+})();
+</script>
+</body>
+</html>

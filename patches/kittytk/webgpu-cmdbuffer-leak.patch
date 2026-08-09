@@ -1,0 +1,77 @@
+From 46fd9a8b522780283da5697c93ed0a6bbcec1662 Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 18:42:13 +0000
+Subject: [PATCH] sdl/webgpu: release the per-frame command buffer after
+ present
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Both WebGPU present paths — Present (per-window) and
+RenderFrameWithChildWindows (the desktop compositor) — ran
+encoder.Finish() → queue.Submit() but never called cmdBuffer.Release().
+Finish() transfers ownership of the native HAL command encoder to the
+command buffer, and Release() is what recycles it into the device's encoder
+pool; without it the pool allocates a fresh native encoder on every present
+and the old one is never reclaimed — a native-memory leak of one command
+encoder per presented frame.
+
+Idle windows skip presenting, so the leak stays slow in normal use, but a
+live window resize forces a present per resize event: rapid resizing (e.g.
+zooming a window while a full-screen TUI repaints) leaks fast and without
+bound, inflating system memory until the OS kills the process — and stalling
+under the memory pressure first. The leak scales with the number of presents,
+not the window size.
+
+Release the command buffer after Submit in both paths, alongside the surface
+view. Release is nil-safe, so a failed Finish (nil buffer) is harmless. Bump
+Build to 12.
+---
+ core/version.go        |  2 +-
+ sdl/renderer_webgpu.go | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/core/version.go b/core/version.go
+index 7ca8c93..ce99f73 100644
+--- a/core/version.go
++++ b/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 11
++const Build = 12
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/sdl/renderer_webgpu.go b/sdl/renderer_webgpu.go
+index 77d9319..440d0a9 100644
+--- a/sdl/renderer_webgpu.go
++++ b/sdl/renderer_webgpu.go
+@@ -476,6 +476,12 @@ func (r *WebGPURenderer) Present(w *nativeWin, backend *raster.Backend) error {
+ 	if cubeCleanup != nil {
+ 		cubeCleanup()
+ 	}
++	// Finish() transferred the native command encoder to this command buffer;
++	// Release() recycles it into the device's encoder pool. Skipping it leaks
++	// one native encoder PER PRESENT — the pool allocates a fresh one every
++	// frame — so a session that presents a lot inflates native memory without
++	// bound. Release is nil-safe, so a failed Finish (nil buffer) is fine.
++	cmdBuffer.Release()
+ 	surfaceView.Release()
+ 
+ 	if err != nil {
+@@ -1619,6 +1625,10 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
+ 
+ 	// Release temporary resources after GPU has the commands. The base
+ 	// layer's texture is NOT among them — it is cached across frames.
++	// Finish() transferred the native command encoder to this command buffer;
++	// Release() recycles it into the device's encoder pool. Skipping it leaks
++	// one native encoder per composited frame (see Present). Release is nil-safe.
++	cmdBuffer.Release()
+ 	surfaceView.Release()
+ 
+ 	if err != nil {
+-- 
+2.43.0
+

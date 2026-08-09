@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/phroun/argwild"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/hostcfg"
@@ -24,13 +26,81 @@ import (
 	sdlplat "github.com/phroun/kittytk/sdl"
 )
 
+// wallpaperFromArgs applies --wallpaper=PATH on top of the configured
+// image. Last one on the line wins; "--wallpaper-" turns it off and goes
+// back to the built-in pattern.
+func wallpaperFromArgs(r *argwild.Result, configured string) string {
+	wallpaper := configured
+	if r == nil {
+		return wallpaper
+	}
+	for _, set := range r.ArgSets() {
+		for _, sw := range set.Switches {
+			if sw.Name != "wallpaper" {
+				continue
+			}
+			if sw.IsOff() {
+				wallpaper = ""
+				continue
+			}
+			if v, ok := sw.First(); ok {
+				wallpaper = v.AsString()
+			}
+		}
+	}
+	return wallpaper
+}
+
+// rendererFromArgs applies command-line renderer switches on top of the
+// configured engine: --webgpu and --software (alias --sdl) pick one
+// directly, --renderer=NAME passes a name through (validated by the
+// platform). The last switch on the line wins; an explicitly disabled
+// switch ("--webgpu-") is ignored.
+func rendererFromArgs(r *argwild.Result, configured string) string {
+	renderer := configured
+	if r == nil {
+		return renderer
+	}
+	for _, set := range r.ArgSets() {
+		for _, sw := range set.Switches {
+			if sw.IsOff() {
+				continue
+			}
+			switch sw.Name {
+			case "webgpu":
+				renderer = "webgpu"
+			case "software", "sdl":
+				renderer = "software"
+			case "renderer":
+				if v, ok := sw.First(); ok {
+					renderer = v.AsString()
+				}
+			}
+		}
+	}
+	return renderer
+}
+
 func main() {
 	// Launch options come from kittytk.ini (current dir, then the exe's
 	// folder, then the user config dir), so a non-technical user can
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
-	plat := sdlplat.New(cfg.Title, cfg.Width, cfg.Height)
+	// Command-line switches beat the file for this launch:
+	// --webgpu | --software | --renderer=NAME.
+	if parsed, err := argwild.Parse(); err == nil {
+		cfg.Renderer = rendererFromArgs(parsed, cfg.Renderer)
+		cfg.Wallpaper = wallpaperFromArgs(parsed, cfg.Wallpaper)
+	}
+
+	// Create platform with configured renderer (software or webgpu)
+	plat, err := sdlplat.New(cfg.Title, cfg.Width, cfg.Height, cfg.Renderer)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
+		os.Exit(1)
+	}
+
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
 
 	// [window] fps=true overlays the render frame rate on the OS title bar;
@@ -62,7 +132,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Bridge Copy/Cut/Paste to the OS clipboard. SDL2's clipboard covers
+	// Bridge Copy/Cut/Paste to the OS clipboard. SDL3's clipboard covers
 	// macOS, Windows and X11/Wayland, so this is the whole cross-platform
 	// integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
@@ -91,6 +161,28 @@ func main() {
 	// render larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})
 
+	// Wallpaper: KITTYTK_WALLPAPER, then --wallpaper=PATH, then the ini's
+	// [window] wallpaper. Any size — it is repeated from the surface
+	// origin, by the GPU's sampler under the compositor. A bad path is
+	// reported and the built-in pattern stays, so a typo cannot leave the
+	// desktop blank.
+	if path := cfg.ResolveWallpaper(); path != "" {
+		if err := desktop.SetWallpaperFile(path); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+		}
+	}
+
+	// How that image (or the built-in pattern) covers the desktop:
+	// wallpaper_mode, _scale, _align, _tile and _filter. A name that
+	// does not parse is reported and the default kept — silently
+	// papering the desktop the old way would leave no way to tell a
+	// typo from a setting that does not do what it sounds like.
+	layout, layoutErrs := cfg.ResolveWallpaperLayout()
+	for _, err := range layoutErrs {
+		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+	}
+	desktop.SetWallpaperLayout(layout)
+
 	// The desktop's own (windowless) application owns the base menu bar
 	// until a client dials in. It is context-only: the host has no editing
 	// surface of its own, so no automatic Edit menu is added for it.
@@ -118,5 +210,6 @@ func main() {
 		}
 	})
 
-	os.Exit(desktop.RunOn(plat))
+	exitCode := desktop.RunOn(plat)
+	os.Exit(exitCode)
 }

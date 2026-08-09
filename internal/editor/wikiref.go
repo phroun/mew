@@ -52,7 +52,8 @@ var linkSchemes = map[string]bool{
 	"https": true,
 	"ftp":   true,
 	"file":  true,
-	"mew":   true,
+	"box":   true, // mew's storage tree
+	"mew":   true, // mew's generated surfaces
 }
 
 // schemeRef reports whether ref invokes a registered scheme (Layer 1): a
@@ -75,7 +76,7 @@ func schemeRef(ref string) (scheme string, ok bool) {
 // its pages, and its start page. Registered wiki names act as schemes in
 // Layer 1 — "help:/start" opens the page "start" within the help wiki — and
 // a page inside a registered root highlights as the wiki's format (the
-// mew:-space analogue of the path-conditional [formats] rules).
+// box:-space analogue of the path-conditional [formats] rules).
 type wikiDef struct {
 	Name   string // registry name — the scheme that opens this wiki ("help")
 	Format string // reference/grammar format ("dokuwiki")
@@ -129,7 +130,7 @@ type wikiDef struct {
 // content ships.)
 var wikiRegistry = map[string]wikiDef{
 	"help": {
-		Name: "help", Format: "dokuwiki", Root: "mew:///help", Ext: ".txt",
+		Name: "help", Format: "dokuwiki", Root: "box:///help", Ext: ".txt",
 		Start: "start", Writable: true,
 		// The manual is a place to read, not a working directory. Its pages are
 		// named for a user tree (~/.mew/help/...) that need not exist, since the
@@ -380,15 +381,15 @@ func foldAccents(s string) string {
 //
 // Resolution-time matching works entirely in canonical-URL space, so a wiki
 // can live on the document filesystem (file:///...) or inside mew's own
-// support tree (mew:///docs/...) with identical behavior. urlSplit/urlDir/
+// support tree (box:///docs/...) with identical behavior. urlSplit/urlDir/
 // urlJoin are the path algebra; docStat/docList dispatch to the right backing
 // store per scheme.
 
 // urlSplit splits a canonical document URL into its scheme prefix ("file://",
-// "mew://") and rooted "/"-path. ok=false for anything else (unnamed buffers,
+// "box://") and rooted "/"-path. ok=false for anything else (unnamed buffers,
 // foreign schemes).
 func urlSplit(url string) (prefix, p string, ok bool) {
-	for _, pre := range []string{"file://", "mew://"} {
+	for _, pre := range []string{"file://", "box://"} {
 		if strings.HasPrefix(url, pre) {
 			p = url[len(pre):]
 			if !strings.HasPrefix(p, "/") {
@@ -401,7 +402,7 @@ func urlSplit(url string) (prefix, p string, ok bool) {
 }
 
 // urlDir is the parent of a canonical URL, clamped at the scheme root
-// ("file:///", "mew:///").
+// ("file:///", "box:///").
 func urlDir(url string) string {
 	prefix, p, ok := urlSplit(url)
 	if !ok {
@@ -425,14 +426,14 @@ func urlWithin(url, root string) bool {
 }
 
 // docStat reports existence and directory-ness for a canonical URL, through
-// the document FileSystem (file://) or the mew support tree (mew://).
+// the document FileSystem (file://) or the mew storage tree (box://).
 func (e *Editor) docStat(url string) (isDir, exists bool) {
 	prefix, p, ok := urlSplit(url)
 	if !ok {
 		return false, false
 	}
-	if prefix == "mew://" {
-		info, ok := e.mew.Stat("mew://" + p)
+	if prefix == "box://" {
+		info, ok := e.mew.Stat("box://" + p)
 		return info.IsDir, ok
 	}
 	name := urlPathToOS(p)
@@ -462,8 +463,8 @@ func (e *Editor) docList(dirURL string) []string {
 	if !ok {
 		return nil
 	}
-	if prefix == "mew://" {
-		matches, err := e.mew.Glob("mew://" + path.Join(p, "*"))
+	if prefix == "box://" {
+		matches, err := e.mew.Glob("box://" + path.Join(p, "*"))
 		if err != nil {
 			return nil
 		}
@@ -524,7 +525,7 @@ type followResolution struct {
 
 // resolveFollow resolves a link target against the viewport's current document
 // into the canonical URL of an EXISTING file, per the three layers plus
-// resolution-time matching. Document schemes (mew:///, file:///) resolve as
+// resolution-time matching. Document schemes (box:///, file:///) resolve as
 // new-viewport destinations; other schemes and interwiki are gated out; wiki
 // ids resolve within the viewport's root when it has one — absolute ids from
 // the root, relative climbs clamped at it, no escape — and by nearest-
@@ -537,7 +538,7 @@ func (e *Editor) resolveFollow(w *viewport.Viewport, target string) followResolu
 	// viewport unless the current viewport already carries that exact root (a
 	// viewport's root never changes).
 	if def, rest, ok := wikiSchemeRef(ref); ok {
-		// The registered root canonicalizes per mode (a local mew:/// root
+		// The registered root canonicalizes per mode (a local box:/// root
 		// becomes its real file:/// subtree), so roots compare in the same
 		// identity space as every document URL.
 		rootURL := e.canonicalDocURL(def.Root)
@@ -553,7 +554,7 @@ func (e *Editor) resolveFollow(w *viewport.Viewport, target string) followResolu
 	}
 
 	if scheme, ok := schemeRef(ref); ok {
-		if scheme == "mew" || scheme == "file" {
+		if scheme == "box" || scheme == "file" {
 			url := e.canonicalDocURL(ref)
 			if isDir, exists := e.docStat(url); exists && !isDir {
 				return followResolution{url: url, newViewport: true}

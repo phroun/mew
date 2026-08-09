@@ -3,14 +3,43 @@ package buffer
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/phroun/garland"
 	"github.com/phroun/mew/internal/textwidth"
 )
+
+// bufferHandleSeq issues process-unique buffer handles. Starts at 1 so a
+// zero-value handle always reads as "not yet assigned".
+var bufferHandleSeq atomic.Uint64
+
+// Handle returns this buffer's process-unique, stable handle, assigning one on
+// first use. It never returns 0. Buffers live on the editor's single goroutine,
+// so the lazy assignment needs no further locking.
+func (b *Buffer) Handle() uint64 {
+	if b.handle == 0 {
+		b.handle = bufferHandleSeq.Add(1)
+	}
+	return b.handle
+}
+
+// SetTransient marks (or unmarks) this buffer as transient: a transient buffer
+// is not retained as a navigation destination, so navigating away from it
+// releases its binding instead of storing it in the back/forward history.
+func (b *Buffer) SetTransient(t bool) {
+	b.transient = t
+}
+
+// IsTransient reports whether this buffer resists being kept as a nav
+// destination (see SetTransient).
+func (b *Buffer) IsTransient() bool {
+	return b.transient
+}
 
 // undoCoalesceIdle is how long a typing/deleting pause before the next edit
 // forces a fresh undo step. Adjacent same-kind edits within this window
@@ -121,6 +150,18 @@ type Buffer struct {
 	// buffer independently.
 	modified bool
 	filename string
+	// handle is a process-unique, stable identity assigned on first use (see
+	// Handle) — an addressable name for a buffer that outlives its filename
+	// (unnamed buffers included) and never collides, so a generated listing can
+	// link to it and resolve the link back to this exact buffer.
+	handle uint64
+
+	// transient marks a buffer that must not be retained as a navigation
+	// destination: when a viewport navigates away from it, its nav binding is
+	// released rather than pushed onto the back/forward stacks (see
+	// viewport.Viewport nav history). Generated surfaces such as mew:/buffers and
+	// mew:/viewports set this so they resist becoming a backward or forward hop.
+	transient bool
 
 	// mouseBlock: the current block selection was made by a plain mouse
 	// drag (transient — a plain click dissolves it). See SetMouseBlock.
@@ -1065,6 +1106,41 @@ func (b *Buffer) DeleteTextRange(startLine, startRune, endLine, endRune int) {
 	b.modified = true
 }
 
+// ReadDropFront reads up to max bytes from the FRONT of the buffer, deletes
+// them, and returns them — so a transient conveyor buffer streamed out to a pipe
+// frees its consumed head as it goes rather than holding the whole payload. It
+// uses its own cursor and garland's byte delete directly (no line/rune
+// conversion, no shared readCursor), so it is self-contained and safe on a
+// buffer no other goroutine is touching, which is exactly a filter's private
+// stdin snapshot. Returns (nil, false) when the buffer is empty.
+func (b *Buffer) ReadDropFront(max int) ([]byte, bool) {
+	if b.garland == nil || max <= 0 {
+		return nil, false
+	}
+	total := b.garland.ByteCount().Value
+	if total <= 0 {
+		return nil, false
+	}
+	n := int64(max)
+	if n > total {
+		n = total
+	}
+	c := b.garland.NewEphemeralCursor()
+	defer b.garland.RemoveCursor(c)
+	if err := c.SeekByte(0); err != nil {
+		return nil, false
+	}
+	data, _ := c.ReadBytes(n)
+	if len(data) == 0 {
+		return nil, false
+	}
+	if err := c.SeekByte(0); err == nil {
+		c.DeleteBytes(int64(len(data)), true)
+		b.modified = true
+	}
+	return data, true
+}
+
 // IsModified returns whether the buffer has been modified.
 func (b *Buffer) IsModified() bool {
 	return b.modified
@@ -1188,6 +1264,18 @@ func (b *Buffer) SetUndoCoalescing(enabled bool, autoBake time.Duration) {
 func (b *Buffer) BakeUndo() {
 	if b.garland != nil {
 		b.garland.Bake()
+	}
+}
+
+// PruneUndo discards this buffer's undo history up to the current revision,
+// freeing the cold/undo blocks it held. It is for a transient conveyor buffer —
+// a filter's stdin snapshot whose consumed head is deleted as it streams — where
+// the deletions pile up undo nobody will ever replay; pruning periodically keeps
+// its footprint flat. Not for a document the user might undo: it makes the state
+// before the current revision unreachable.
+func (b *Buffer) PruneUndo() {
+	if b.garland != nil {
+		_ = b.garland.Prune(b.garland.CurrentRevision())
 	}
 }
 
@@ -1591,6 +1679,70 @@ func (r *LineReader) Release() {
 	}
 }
 
+// RangeReader streams a byte range of the buffer as an io.Reader over its own
+// ephemeral cursor, so a possibly-huge block drains chunk by chunk instead of
+// being materialized into one string the way GetTextRange would. The bounds are
+// captured at construction as absolute bytes; edits inside the range during the
+// read are not tracked (take a stable snapshot first if that matters). Release
+// when done — Read releases itself at EOF.
+type RangeReader struct {
+	b         *Buffer
+	c         *garland.Cursor
+	remaining int64
+}
+
+// NewRangeReader opens a streaming reader over [start, end) given as line/rune
+// positions. An empty or inverted range yields an immediately-EOF reader.
+func (b *Buffer) NewRangeReader(startLine, startRune, endLine, endRune int) *RangeReader {
+	if b == nil || b.garland == nil {
+		return &RangeReader{}
+	}
+	startByte, ok1 := b.lineRuneToByte(startLine, startRune)
+	endByte, ok2 := b.lineRuneToByte(endLine, endRune)
+	if !ok1 || !ok2 || endByte <= startByte {
+		return &RangeReader{}
+	}
+	c := b.garland.NewEphemeralCursor()
+	if err := c.SeekByte(startByte); err != nil {
+		b.garland.RemoveCursor(c)
+		return &RangeReader{}
+	}
+	return &RangeReader{b: b, c: c, remaining: endByte - startByte}
+}
+
+// Read fills p with the next bytes of the range and returns io.EOF once the
+// range is drained. It advances the reader's own cursor, disturbing no caret.
+func (r *RangeReader) Read(p []byte) (int, error) {
+	if r == nil || r.c == nil || r.remaining <= 0 || len(p) == 0 {
+		r.Release()
+		return 0, io.EOF
+	}
+	n := int64(len(p))
+	if n > r.remaining {
+		n = r.remaining
+	}
+	data, err := r.c.ReadBytes(n)
+	copied := copy(p, data)
+	r.remaining -= int64(copied)
+	if err != nil || r.remaining <= 0 || copied == 0 {
+		r.Release() // EOF surfaces on the next call when copied > 0
+	}
+	if copied == 0 {
+		return 0, io.EOF
+	}
+	return copied, nil
+}
+
+// Release removes the reader's cursor from garland. Safe to call repeatedly.
+func (r *RangeReader) Release() {
+	if r != nil && r.c != nil {
+		if r.b != nil && r.b.garland != nil {
+			r.b.garland.RemoveCursor(r.c)
+		}
+		r.c = nil
+	}
+}
+
 // Cursor provides a position-based interface to the buffer.
 type Cursor struct {
 	buffer        *Buffer
@@ -1606,6 +1758,33 @@ func (b *Buffer) NewCursor() *Cursor {
 		buffer:        b,
 		garlandCursor: b.garland.NewCursor(),
 	}
+}
+
+// NewEphemeralCursor creates an ephemeral cursor for the buffer: garland
+// maintains its position across edits (so it rides insertions like any cursor)
+// but does not record it per revision. Callers that hold a transient insertion
+// anchor — a terminal session's output point, a one-off scan — want this, and
+// must Release it when done.
+func (b *Buffer) NewEphemeralCursor() *Cursor {
+	if b.garland == nil {
+		return &Cursor{buffer: b}
+	}
+	return &Cursor{
+		buffer:        b,
+		garlandCursor: b.garland.NewEphemeralCursor(),
+	}
+}
+
+// Release removes the cursor from garland. Safe to call more than once and on a
+// cursor with no garland backing.
+func (c *Cursor) Release() {
+	if c == nil || c.garlandCursor == nil {
+		return
+	}
+	if c.buffer != nil && c.buffer.garland != nil {
+		c.buffer.garland.RemoveCursor(c.garlandCursor)
+	}
+	c.garlandCursor = nil
 }
 
 // SeekLine moves the cursor to a specific line.
@@ -1632,12 +1811,81 @@ func (c *Cursor) ReadLine() (string, error) {
 	return c.garlandCursor.ReadLine()
 }
 
-// InsertString inserts text at the cursor position.
+// InsertString inserts text at the cursor position. Inserting content is a real
+// edit: it lowers the buffer's dirty-line watermark and marks it modified, so a
+// capture folding output into a buffer counts as unsaved work (the raw/lines/
+// live rungs all reach the document through here). Pure cursor moves do not.
 func (c *Cursor) InsertString(text string, _ interface{}, _ bool) {
+	if c.garlandCursor == nil || text == "" {
+		return
+	}
+	c.markEdited()
+	c.garlandCursor.InsertString(text, nil, false)
+}
+
+// InsertStringBefore is InsertString with garland's insertBefore=true: any
+// cursor or mark sitting exactly at the insertion point SLIDES forward past the
+// inserted text instead of staying at its start. A filter streaming a command's
+// stdout in place of a block inserts this way, so the _block_end mark parked at
+// the tail rides forward with each chunk on its own — the block stays wrapped
+// around the growing output without the mark being re-set per chunk.
+func (c *Cursor) InsertStringBefore(text string) {
+	if c.garlandCursor == nil || text == "" {
+		return
+	}
+	c.markEdited()
+	c.garlandCursor.InsertString(text, nil, true)
+}
+
+// markEdited records that the cursor is about to mutate content: it lowers the
+// buffer's dirty-line watermark at the cursor's current line and sets modified.
+// Called by the content-mutating methods (InsertString, Overwrite); never by the
+// pure seeks.
+func (c *Cursor) markEdited() {
+	if c.buffer == nil {
+		return
+	}
+	line, _ := c.garlandCursor.LinePos()
+	c.buffer.touchContent(int(line))
+	c.buffer.modified = true
+}
+
+// Overwrite replaces oldByteLen bytes at the cursor with text in a single
+// coalesced garland mutation (delete+insert would be two), leaving the cursor
+// where it started — the caller advances it. This is the live mirror's overtype
+// primitive and its SGR chunk-swap. Overwriting content marks the buffer edited.
+func (c *Cursor) Overwrite(oldByteLen int, text string) {
 	if c.garlandCursor == nil {
 		return
 	}
-	c.garlandCursor.InsertString(text, nil, false)
+	c.markEdited()
+	c.garlandCursor.OverwriteBytes(int64(oldByteLen), []byte(text))
+}
+
+// SeekLineStart moves the cursor to the beginning of its current line. A pure
+// move: no bookkeeping.
+func (c *Cursor) SeekLineStart() {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekLineStart()
+	}
+}
+
+// SeekLineEnd moves the cursor to the end of its current line (before the
+// newline, or at EOF). A pure move: no bookkeeping.
+func (c *Cursor) SeekLineEnd() {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekLineEnd()
+	}
+}
+
+// SeekRelativeRunes moves the cursor by delta runes (clamped to the document),
+// crossing line boundaries. The live mirror steps +1 past a line's EOL to reach
+// the next row without inserting, and -1 for a backspace. A pure move: no
+// bookkeeping.
+func (c *Cursor) SeekRelativeRunes(delta int) {
+	if c.garlandCursor != nil {
+		c.garlandCursor.SeekRelativeRunes(int64(delta))
+	}
 }
 
 // GetPosition returns the current cursor position.

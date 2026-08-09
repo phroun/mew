@@ -658,12 +658,15 @@ func (sp *SequenceProcessor) isSequenceStarter(key string) bool {
 }
 
 // isPotentialSequenceMatch checks if a sequence could match a longer sequence.
+// The prefix is matched as WHOLE KEYS, never as a substring: a mapped key
+// extends `sequence` only when it equals it or continues with a space and
+// another key. Without the token boundary the letter "r" would match the key
+// name "return" (and "t" would match "tab"), holding the key for a chord that
+// can never arrive.
 func (sp *SequenceProcessor) isPotentialSequenceMatch(sequence string) bool {
 	// Check direct prefix matches
-	for mappedKey := range sp.allKeys {
-		if strings.HasPrefix(mappedKey, sequence) {
-			return true
-		}
+	if sp.hasTokenPrefix(sequence) {
+		return true
 	}
 
 	// Check fallback prefixes
@@ -671,13 +674,23 @@ func (sp *SequenceProcessor) isPotentialSequenceMatch(sequence string) bool {
 		if fallback == sequence {
 			continue
 		}
-		for mappedKey := range sp.allKeys {
-			if strings.HasPrefix(mappedKey, fallback) {
-				return true
-			}
+		if sp.hasTokenPrefix(fallback) {
+			return true
 		}
 	}
 
+	return false
+}
+
+// hasTokenPrefix reports whether any mapped key equals `seq` or continues it
+// with another whole key (`seq` + " " + ...). Whole-token, never a substring.
+func (sp *SequenceProcessor) hasTokenPrefix(seq string) bool {
+	withSep := seq + " "
+	for mappedKey := range sp.allKeys {
+		if mappedKey == seq || strings.HasPrefix(mappedKey, withSep) {
+			return true
+		}
+	}
 	return false
 }
 

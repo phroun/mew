@@ -3,7 +3,13 @@ package trinkets
 
 import (
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/gif"  // wallpaper files
+	_ "image/jpeg" // wallpaper files
+	_ "image/png"  // wallpaper files
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -107,6 +113,26 @@ type Desktop struct {
 	wallpaperPattern [8]uint8
 	wallpaperChunkPx int
 
+	// wallpaperImage is an arbitrary-size tile that replaces the 8x8
+	// pattern when set (SetWallpaperImage); wallpaperRev moves whenever
+	// either is swapped. patternTile caches the image rendered FROM the
+	// pattern, so the default wallpaper takes the same one-small-texture
+	// path a custom image does — see WallpaperTile.
+	wallpaperImage *image.RGBA
+	wallpaperRev   uint64
+	patternTile    *image.RGBA
+	patternTileRev uint64
+
+	// wallpaperLayout is how the tile covers the desktop: sized by its
+	// mode and scale, anchored by its alignment, repeated along the axes
+	// it tiles. See core.WallpaperLayout.
+	wallpaperLayout core.WallpaperLayout
+
+	// wallpaperComposited is set while the host paints the wallpaper
+	// itself, as a repeat-sampled layer under this one. Paint then leaves
+	// the background alone instead of filling every pixel.
+	wallpaperComposited bool
+
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
 
@@ -197,11 +223,28 @@ type Desktop struct {
 	// repaint tick drives their animation alongside the desktop's.
 	tornHosts []*window.TearOffHost
 
+	// tearing marks windows whose createTornHost is in flight, so a
+	// re-entrant tear of the SAME window is a no-op. createTornHost only
+	// latches its "claimed" state (removed from the manager, SetDetached)
+	// AFTER platform.CreateSurface, and on the SDL backend creating that OS
+	// window fires a WindowResized event-watch that drains the post queue
+	// synchronously - re-running a deferred soloAdoptWindow for this very
+	// window while its guards still read "not yet torn". Without this the
+	// window would be hosted on two surfaces at once (a double/ghost dialog
+	// in solo mode). Guarded by d.mu.
+	tearing map[*window.Window]bool
+
 	// soloPrimaryHost is the tear-off host on the desktop's own OS
 	// surface in solo mode (the one window that can't just be closed,
 	// because that surface owns the event loop). When its window closes,
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
+
+	// aboutBox is the built-in About KittyTK dialog while it is open, so the
+	// R-key rotation easter egg can be gated to its focus (see
+	// aboutBoxFocused, wired onto the platform in RunOn). Cleared when the
+	// dialog closes. Guarded by d.mu.
+	aboutBox *window.Window
 
 	// soloHosting is true while a window is being lifted onto the primary
 	// surface. The lift removes the window from the manager, which fires
@@ -211,6 +254,13 @@ type Desktop struct {
 
 	// Running state
 	running atomic.Bool
+
+	// subtreeRev counts repaint requests from anywhere below the desktop
+	// (see core.SubtreeRepaintTracker). Windows are the desktop's own
+	// trinket children, so this counts THEIR changes too — see
+	// GetChildWindows, which subtracts them back out to get a revision
+	// that tracks the base layer alone.
+	subtreeRev atomic.Uint64
 
 	// needsFrame is set by the core repaint hook (Update()) between ticks; the
 	// periodic tick only invalidates the surface when it is set, so an idle
@@ -297,6 +347,7 @@ func NewDesktop() *Desktop {
 		// Classic MacOS-style wallpaper: 50% checkerboard dither,
 		// each pattern bit 2x2 device pixels.
 		wallpaperPattern: [8]uint8{0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55},
+		wallpaperLayout:  core.DefaultWallpaperLayout,
 		wallpaperChunkPx: 2,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
@@ -400,6 +451,30 @@ func (d *Desktop) showAboutDesktop() {
 		y = metrics.RoundDownToCellY(y)
 	}
 	mb.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+
+	// Track it while open so the R-key rotation easter egg can be gated to its
+	// focus (aboutBoxFocused). Clear the reference when it closes.
+	d.mu.Lock()
+	d.aboutBox = &mb.Window
+	d.mu.Unlock()
+	mb.Window.AddOnClosed(func() {
+		d.mu.Lock()
+		if d.aboutBox == &mb.Window {
+			d.aboutBox = nil
+		}
+		d.mu.Unlock()
+	})
+}
+
+// aboutBoxFocused reports whether the built-in About KittyTK dialog is open and
+// is the active window. It is the gate for the R-key rotation easter egg (wired
+// onto the platform in RunOn), so the effect is reachable only from that dialog
+// and R stays an ordinary key everywhere else.
+func (d *Desktop) aboutBoxFocused() bool {
+	d.mu.RLock()
+	ab := d.aboutBox
+	d.mu.RUnlock()
+	return ab != nil && ab.IsActive()
 }
 
 // SetBackend sets the render backend and initializes related components.
@@ -554,8 +629,159 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 func (d *Desktop) SetWallpaperPattern(pattern [8]uint8) {
 	d.mu.Lock()
 	d.wallpaperPattern = pattern
+	d.wallpaperImage = nil
+	d.wallpaperRev++
 	d.mu.Unlock()
 	d.RequestUpdate()
+}
+
+// SetWallpaperImage sets an arbitrary-size wallpaper tile, repeated
+// across the desktop from the surface origin. It replaces the 8x8
+// two-color pattern; pass nil to go back to that.
+//
+// The tile is REPEATED, not stretched, so its size is its own business:
+// a 16x16 texture and a 512x512 one cost the compositor exactly the
+// same, one quad, because the GPU's sampler does the repeating. Only
+// the software renderer walks it across the surface.
+func (d *Desktop) SetWallpaperImage(tile *image.RGBA) {
+	d.mu.Lock()
+	d.wallpaperImage = tile
+	d.wallpaperRev++
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// SetWallpaperFile papers the desktop with an image file (PNG, JPEG or
+// GIF), decoded once and then repeated from the surface origin. Any size
+// works — the GPU compositor repeats it in its sampler, so a 32x32
+// weave and a 1024x1024 photograph both cost one quad.
+//
+// A non-image or unreadable path is reported and the current wallpaper
+// is left alone, so a bad path in a config file cannot blank the desktop.
+func (d *Desktop) SetWallpaperFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("wallpaper %q: %w", path, err)
+	}
+	defer f.Close()
+
+	src, _, err := image.Decode(f)
+	if err != nil {
+		return fmt.Errorf("wallpaper %q: %w", path, err)
+	}
+
+	// Normalize to RGBA: the tile is uploaded verbatim, and every other
+	// image format would need converting at upload time instead.
+	b := src.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return fmt.Errorf("wallpaper %q: image is empty", path)
+	}
+	tile, ok := src.(*image.RGBA)
+	if !ok || tile.Bounds().Min != (image.Point{}) {
+		converted := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+		draw.Draw(converted, converted.Bounds(), src, b.Min, draw.Src)
+		tile = converted
+	}
+
+	d.SetWallpaperImage(tile)
+	return nil
+}
+
+// SetWallpaperLayout sets how the tile covers the desktop — its mode,
+// scale, alignment, tiling axes and filter. See core.WallpaperLayout.
+func (d *Desktop) SetWallpaperLayout(l core.WallpaperLayout) {
+	if l.Scale <= 0 {
+		l.Scale = 1
+	}
+	d.mu.Lock()
+	d.wallpaperLayout = l
+	d.mu.Unlock()
+	d.RequestUpdate()
+}
+
+// WallpaperLayout returns the current layout.
+func (d *Desktop) WallpaperLayout() core.WallpaperLayout {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.wallpaperLayout
+}
+
+// WallpaperTile returns the tile the desktop is currently papered with,
+// together with a revision that changes whenever its pixels would: an
+// explicitly set image, or one rendered from the 8x8 pattern at the
+// current chunk size and desktop fill colors.
+//
+// Rendering the pattern into a tile is what lets the default wallpaper
+// take the same GPU path as a custom image — one small texture, repeated
+// by the sampler, instead of a CPU fill over every pixel of the desktop
+// every frame.
+func (d *Desktop) WallpaperTile() (tile *image.RGBA, revision uint64) {
+	d.mu.RLock()
+	img := d.wallpaperImage
+	pattern := d.wallpaperPattern
+	chunk := d.wallpaperChunkPx
+	rev := d.wallpaperRev
+	d.mu.RUnlock()
+
+	if img != nil {
+		return img, rev
+	}
+
+	fill := d.GetScheme().GetDesktopFill()
+	fg, bg := fill.Fg, fill.Bg
+	if chunk < 1 {
+		chunk = 1
+	}
+
+	// The revision has to move when the COLORS change too — a theme
+	// switch repaints the wallpaper without touching the pattern. Fold
+	// the inputs in rather than trying to hook every setter.
+	revision = rev
+	for _, row := range pattern {
+		revision = revision*1099511628211 ^ uint64(row)
+	}
+	revision = revision*1099511628211 ^ uint64(chunk)
+	revision = revision*1099511628211 ^ uint64(fg)
+	revision = revision*1099511628211 ^ uint64(bg)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.patternTile != nil && d.patternTileRev == revision {
+		return d.patternTile, revision
+	}
+	d.patternTile = renderPatternTile(pattern, chunk, fg, bg)
+	d.patternTileRev = revision
+	return d.patternTile, revision
+}
+
+// renderPatternTile draws one period of the 8x8 wallpaper pattern at
+// chunkPx per bit — the smallest image that tiles to the same result the
+// CPU fill produces.
+func renderPatternTile(pattern [8]uint8, chunkPx int, fg, bg style.Color) *image.RGBA {
+	side := 8 * chunkPx
+	tile := image.NewRGBA(image.Rect(0, 0, side, side))
+	fr, fgn, fb := fg.RGBComponents()
+	br, bgn, bb := bg.RGBComponents()
+	for by := 0; by < 8; by++ {
+		row := pattern[by]
+		for bx := 0; bx < 8; bx++ {
+			r, g, b := br, bgn, bb
+			if row&(0x80>>uint(bx)) != 0 {
+				r, g, b = fr, fgn, fb
+			}
+			for y := by * chunkPx; y < (by+1)*chunkPx; y++ {
+				o := tile.PixOffset(bx*chunkPx, y)
+				for x := 0; x < chunkPx; x++ {
+					tile.Pix[o+0] = r
+					tile.Pix[o+1] = g
+					tile.Pix[o+2] = b
+					tile.Pix[o+3] = 255
+					o += 4
+				}
+			}
+		}
+	}
+	return tile
 }
 
 // SetWallpaperChunk sets how many device pixels each wallpaper
@@ -599,11 +825,16 @@ func (d *Desktop) WindowFrameBorderUnits() core.Unit {
 	if !graphical {
 		return 0
 	}
+	// Reserve the SAME physical border every window paints: the zoom-scaled
+	// device-pixel thickness (border law (a)), divided by this surface's
+	// pixels-per-unit. ppu is denomination-independent (fontSize/12 × scale),
+	// so this unit count is physically uniform across windows regardless of
+	// their denomination. Ceil so the content always clears the drawn stroke.
 	ppu := d.pxPerUnit()
 	if ppu <= 0 {
 		ppu = 1
 	}
-	return core.Unit(math.Ceil(float64(core.WindowFrameBorderPx()) / ppu))
+	return core.Unit(math.Ceil(float64(core.ScaledWindowFrameBorderPx(ppu)) / ppu))
 }
 
 // Backend returns the render backend.
@@ -1181,6 +1412,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	var host *window.TearOffHost
 	host = window.NewTearOffHost(win, surf, d.pxPerUnit, gp.GlobalPointerPx,
 		func(int, int, core.Unit, core.Unit) bool { return false })
+	host.SetTornGeometry(d)
 	host.SetOnClosed(func() { d.dropTornHost(host) })
 	host.SetClipboardAccess(d.Clipboard, d.SetClipboard)
 	if cc, ok := plat.(platform.CursorController); ok {
@@ -1564,8 +1796,14 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 
 // appendQuitSection adds a separator and the app's Quit item. This is
 // the part that stays on a detached main window's own menu bar.
+//
+// The separator is only added when there is already something above it: an app
+// that declared no app-menu items (the synthesized "≡" menu) would otherwise
+// open with a stray separator as its first row, with nothing but Quit below.
 func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
-	menu.AddSeparator()
+	if len(menu.Items()) > 0 {
+		menu.AddSeparator()
+	}
 
 	quitItem := NewMenuItem("&Quit " + appName)
 	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
@@ -2829,6 +3067,14 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		surface.SetHandler(&desktopSurfaceHandler{d: d})
 		d.setupTearOff(pf, surface)
 
+		// Offer the rotation easter egg's focus gate to any platform that has
+		// one (the SDL/WebGPU host). The anonymous interface keeps trinkets
+		// free of an sdl-specific dependency; a platform without rotation
+		// simply doesn't implement it.
+		if rg, ok := pf.(interface{ SetRotationTriggerGate(func() bool) }); ok {
+			rg.SetRotationTriggerGate(d.aboutBoxFocused)
+		}
+
 		size := surface.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
 
@@ -2864,6 +3110,13 @@ const tickHeartbeatTicks = 20
 // full repaint was also requested. A degenerate rect escalates to a full
 // repaint. Only ever called with main-surface rects (see IsMainSurfaceController).
 func (d *Desktop) InvalidateRect(r core.UnitRect) {
+	// A repaint request like any other, and it reaches no trinket's
+	// Update(), so nothing else moves the counter a base-layer cache
+	// keys on. Without this a bounded animation on the main surface — a
+	// ticking clock in the status bar, a blinking caret — would freeze
+	// until the compositor's heartbeat came round.
+	d.NoteSubtreeRepaint()
+
 	if r.Width <= 0 || r.Height <= 0 {
 		d.needsFrame.Store(true)
 		return
@@ -2994,6 +3247,42 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 	platform.ApplyTextCaret(s, painter.TextCaretRequest())
 }
 
+// FrameBase implements platform.BaseLayerPainter: it paints ONLY the
+// desktop chrome (background, menu bar, dock, status bar). The GPU
+// compositor calls this for the base layer and renders windows, menu
+// dropdowns, and popups to their own textures on top. Frame keeps
+// painting the complete scene for every non-compositing present.
+func (h *desktopSurfaceHandler) FrameBase(painter *core.Painter) {
+	d := h.d
+	d.mu.RLock()
+	theme := d.theme
+	s := d.surface
+	d.mu.RUnlock()
+
+	size := s.Size()
+
+	// This layer sits OVER the compositor's wallpaper quad, so it starts
+	// fully transparent and the wallpaper shows through everywhere the
+	// chrome does not paint. A surface with no alpha to clear (or a host
+	// that cannot repeat a texture) falls back to the opaque clear and
+	// the CPU-tiled wallpaper below.
+	composited := painter.ClearTransparent()
+	if !composited {
+		painter.Clear(core.UnitRect{Width: size.Width, Height: size.Height}, theme.Normal)
+	}
+	d.setWallpaperComposited(composited)
+	defer d.setWallpaperComposited(false)
+
+	painter.ResetTextCaretRequest()
+	d.Paint(painter)
+	// The caret is deliberately NOT applied here. Child windows, menus
+	// and popups paint on compositor layers of their own, and any of
+	// them may claim the caret; the host gathers every layer's request
+	// (this one included) and applies the single winner. Applying the
+	// chrome-only request here would hide a focused window's caret for
+	// the rest of the frame.
+}
+
 // Resized reports the terminal/window size change.
 func (h *desktopSurfaceHandler) Resized(size core.UnitSize) {
 	d := h.d
@@ -3005,6 +3294,11 @@ func (h *desktopSurfaceHandler) Resized(size core.UnitSize) {
 	if s != nil {
 		s.Invalidate(core.UnitRect{})
 	}
+}
+
+// GetChildWindows forwards to Desktop to implement platform.WindowProvider
+func (h *desktopSurfaceHandler) GetChildWindows() *platform.ChildWindowList {
+	return h.d.GetChildWindows()
 }
 
 // Event dispatches one input event, then requests a frame (parity
@@ -3067,6 +3361,33 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		// Pass to window manager
 		return wm.HandleKeyPress(e)
+
+	case core.TextEditingEvent:
+		// An input method's composition goes to whatever is being typed
+		// into and nowhere else: no shortcuts, no menu bar, no window
+		// manager fallback. A composition nobody can hold is dropped
+		// rather than reinterpreted as something else.
+		if fm != nil && fm.HandleTextEditing(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleTextEditing(e)
+		}
+		return false
+
+	case core.PasteEvent:
+		// Pasted text goes to whatever is focused and nowhere else — like a
+		// composition, not a key: no shortcuts, no menu bar, no window-cycle
+		// keys. The focused trinket reshapes it as it sees fit (a terminal
+		// surface re-brackets it for its child; a text field inserts it). A
+		// paste nobody can hold is dropped rather than reinterpreted.
+		if fm != nil && fm.HandlePaste(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandlePaste(e)
+		}
+		return false
 
 	case core.KeyReleaseEvent:
 		// When every modifier has gone up, lock in an in-progress window-cycle
@@ -3310,6 +3631,12 @@ func (d *Desktop) Post(fn func()) {
 // RequestUpdate requests a screen update (damage-driven: invalidates
 // the surface; the platform schedules the frame).
 func (d *Desktop) RequestUpdate() {
+	// The desktop's own "something about me changed" signal, and it
+	// bypasses the trinket Update() path entirely — the wallpaper and
+	// theme setters call it directly. Bump the subtree counter here or a
+	// compositor caching the base layer's texture never learns of them.
+	d.NoteSubtreeRepaint()
+
 	d.mu.RLock()
 	s := d.surface
 	d.mu.RUnlock()
@@ -4072,15 +4399,28 @@ func (d *Desktop) Paint(p *core.Painter) {
 	scheme := d.GetScheme()
 	metrics := d.EffectiveCellMetrics()
 
-	// Draw background pattern. Graphical targets tile the classic
-	// 8x8 two-color bitmap wallpaper (chunked to WallpaperChunkPx);
-	// cell targets keep the rune fill.
+	// The wallpaper. A compositing host draws it as a repeat-sampled
+	// layer UNDER this one — one quad whatever the tile's size — and
+	// tells us so; then there is nothing to do here, and the pixels this
+	// layer leaves untouched are the ones it shows through.
+	//
+	// Otherwise it is tiled on the CPU: an explicit image if one is set,
+	// else the classic 8x8 two-color bitmap chunked to WallpaperChunkPx.
+	// Cell targets have neither and keep the rune fill.
+	d.mu.RLock()
+	composited := d.wallpaperComposited
+	d.mu.RUnlock()
+
 	bgStyle := scheme.GetDesktopFill()
-	if !p.FillPattern(core.UnitRect{Width: bounds.Width, Height: bounds.Height},
-		d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
-		for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
-			for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
-				p.DrawCell(x, y, d.bgChar, bgStyle)
+	full := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
+	if !composited {
+		tile, _ := d.WallpaperTile()
+		if !p.TileImage(full, tile, d.WallpaperLayout()) &&
+			!p.FillPattern(full, d.wallpaperPattern, d.wallpaperChunkPx, bgStyle) {
+			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+				for x := core.Unit(0); x < bounds.Width; x += metrics.CellWidth {
+					p.DrawCell(x, y, d.bgChar, bgStyle)
+				}
 			}
 		}
 	}
@@ -4134,6 +4474,10 @@ func (d *Desktop) Paint(p *core.Painter) {
 		statusPainter := p.WithOffset(0, y)
 		d.statusBar.Paint(statusPainter)
 	}
+
+	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
+	// They must be rendered AFTER windows as separate layers for drop shadows.
+	// The compositor handles menu dropdown and popup rendering separately.
 }
 
 // takePassNextKey consumes one keystroke for pass-next-key mode, handing it
@@ -4243,6 +4587,110 @@ func (d *Desktop) PaintMenuDropdown(p *core.Painter) {
 		d.menuBar.PaintDropdown(p)
 	}
 }
+
+// GetChildWindows implements platform.WindowProvider to enable GPU compositing
+// of child windows. Returns the list of managed windows for the compositor.
+func (d *Desktop) GetChildWindows() *platform.ChildWindowList {
+	if d.windowManager == nil {
+		return nil
+	}
+	// An empty desktop is still composited: menu dropdowns and popups
+	// are compositor layers of their own, and they need their shadows
+	// (and correct z-order) whether or not any window happens to be
+	// open. Only a desktop with no window manager at all opts out.
+	//
+	// Hidden and minimized windows are skipped, the same filter the
+	// software paint loop applies. A compositor layer paints itself, so
+	// a minimized window left in this list keeps drawing (and casting a
+	// shadow) over the desktop after it was sent to the dock.
+	var result []interface{}
+	for _, w := range d.windowManager.Windows() {
+		if !w.IsVisible() || w.IsMinimized() {
+			continue
+		}
+		result = append(result, w)
+	}
+	// The base layer's revision: everything below the desktop, minus the
+	// windows the compositor is about to draw on layers of their own.
+	//
+	// Windows are the desktop's trinket children, so a keystroke in a
+	// window walks up and bumps BOTH that window and the desktop by one.
+	// Subtracting the windows' revisions cancels exactly those, leaving a
+	// number that moves only for what FrameBase actually paints — the
+	// wallpaper, menu bar, status bar, dock and desktop content. Without
+	// the subtraction the base layer would repaint on every keystroke in
+	// any window, which is the whole cost this is meant to avoid.
+	//
+	// It works for nesting too: a change in an MDI child bumps the child,
+	// its parent window and the desktop, and the parent's term cancels
+	// the desktop's. Unsigned wraparound is fine — only equality between
+	// two readings ever matters.
+	baseRevision := d.subtreeRev.Load()
+	for _, w := range result {
+		baseRevision -= w.(*window.Window).SubtreeRepaintRevision()
+	}
+
+	popups := d.windowManager.GetPopups()
+
+	// An open menu bar dropdown becomes its own compositor layer; its
+	// Anchor (the title on the bar) joins it under one drop shadow.
+	var menuDropdown interface{}
+	if d.menuBar != nil && d.menuBar.ActiveMenu() != nil {
+		menuBounds := d.menuBar.ActiveMenuBounds()
+		if !menuBounds.IsEmpty() {
+			menuDropdown = &struct {
+				Bounds core.UnitRect
+				Anchor core.UnitRect
+				Paint  func(*core.Painter)
+			}{
+				Bounds: menuBounds,
+				Anchor: d.menuBar.ActiveMenuTitleBounds(),
+				Paint: func(p *core.Painter) {
+					d.menuBar.PaintDropdown(p)
+				},
+			}
+		}
+	}
+
+	// The wallpaper goes to the compositor as ONE tile plus a revision,
+	// however big it is: repeating happens in the sampler, so the layer
+	// costs a quad rather than a fill over every pixel of the desktop.
+	var wallpaper *platform.WallpaperLayer
+	if tile, rev := d.WallpaperTile(); tile != nil {
+		wallpaper = &platform.WallpaperLayer{
+			Tile:     tile,
+			Revision: rev,
+			Layout:   d.WallpaperLayout(),
+		}
+	}
+
+	return &platform.ChildWindowList{
+		Windows:         result,
+		Popups:          popups,
+		MenuDropdown:    menuDropdown,
+		ClientArea:      d.windowManager.ClientArea(),
+		BaseRevision:    baseRevision,
+		HasBaseRevision: true,
+		Wallpaper:       wallpaper,
+	}
+}
+
+// setWallpaperComposited records whether the host is painting the
+// wallpaper as a layer of its own for the duration of one base-layer
+// frame; Paint consults it.
+func (d *Desktop) setWallpaperComposited(on bool) {
+	d.mu.Lock()
+	d.wallpaperComposited = on
+	d.mu.Unlock()
+}
+
+// NoteSubtreeRepaint implements core.SubtreeRepaintTracker.
+func (d *Desktop) NoteSubtreeRepaint() { d.subtreeRev.Add(1) }
+
+// SubtreeRepaintRevision implements core.SubtreeRepaintTracker. Callers
+// wanting the BASE layer's revision want ChildWindowList.BaseRevision,
+// which nets out the windows composited on their own layers.
+func (d *Desktop) SubtreeRepaintRevision() uint64 { return d.subtreeRev.Load() }
 
 // HandleMousePress handles mouse clicks.
 func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {

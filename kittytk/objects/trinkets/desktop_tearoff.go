@@ -98,7 +98,10 @@ func (d *Desktop) pxPerUnit() float64 {
 }
 
 // unitToPx / pxToUnit convert between unit lengths and device pixels at
-// the desktop surface's font_size-aware scale.
+// the desktop surface's font_size-aware scale. These use the raw ratio and
+// are for pointer coordinate mapping, not layout geometry; a torn surface's
+// SIZE goes through the hardened cell pitch below so it matches the frame
+// paint (geometry-cells-units-pixels.md).
 func (d *Desktop) unitToPx(u core.Unit) int {
 	return int(math.Round(float64(u) * d.pxPerUnit()))
 }
@@ -109,6 +112,56 @@ func (d *Desktop) pxToUnit(px int) core.Unit {
 		ppu = 1
 	}
 	return core.Unit(math.Round(float64(px) / ppu))
+}
+
+// HardUnitToPxX / HardUnitToPxY convert a unit LENGTH to device pixels on
+// the hardened cell pitch — the SAME conversion the window frame paints
+// with (the backend's UnitToPxX/Y from origin 0) — so a torn surface is
+// sized exactly as wide/tall as its frame draws. They fall back to the raw
+// ratio when the backend exposes no mapper (they coincide at the base
+// zoom). Together with HardPxToUnitX/Y they implement window.TornGeometry.
+func (d *Desktop) HardUnitToPxX(u core.Unit) int {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if m, ok := backend.(core.UnitPixelMapper); ok {
+		return m.UnitToPxX(u)
+	}
+	return d.unitToPx(u)
+}
+
+func (d *Desktop) HardUnitToPxY(u core.Unit) int {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if m, ok := backend.(core.UnitPixelMapper); ok {
+		return m.UnitToPxY(u)
+	}
+	return d.unitToPx(u)
+}
+
+// HardPxToUnitX / HardPxToUnitY invert HardUnitToPxX/Y, rounding to nearest
+// so a surface sized to HardUnitToPxX(W) reads back as exactly W (no torn
+// window drift). They fall back to round(px / pxPerUnit) when the backend
+// exposes no unmapper (coincides at the base zoom).
+func (d *Desktop) HardPxToUnitX(px int) core.Unit {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if m, ok := backend.(core.UnitPixelUnmapper); ok {
+		return m.PxToUnitX(px)
+	}
+	return d.pxToUnit(px)
+}
+
+func (d *Desktop) HardPxToUnitY(px int) core.Unit {
+	d.mu.RLock()
+	backend := d.backend
+	d.mu.RUnlock()
+	if m, ok := backend.(core.UnitPixelUnmapper); ok {
+		return m.PxToUnitY(px)
+	}
+	return d.pxToUnit(px)
 }
 
 // tearOffWindow implements the WindowManager tear-off policy: lift
@@ -156,6 +209,32 @@ func (d *Desktop) tearOffInPlace(win *window.Window) {
 // position. Returns nil when the platform can't host it. Shared by
 // the drag and click detach paths.
 func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.Unit) *window.TearOffHost {
+	// Claim the window for the duration of this call. createTornHost latches
+	// its "claimed" state (RemoveWindow / SetDetached) only after CreateSurface
+	// below, and on SDL that surface creation re-enters the post queue - which
+	// can run a deferred soloAdoptWindow for THIS window before those latches,
+	// tearing it a second time onto a second surface. This claim makes the
+	// re-entrant call a no-op, so a window is never hosted twice. (The claim is
+	// released on return, so a later legitimate re-tear after re-docking is
+	// unaffected.)
+	if win != nil {
+		d.mu.Lock()
+		if d.tearing[win] {
+			d.mu.Unlock()
+			return nil
+		}
+		if d.tearing == nil {
+			d.tearing = make(map[*window.Window]bool)
+		}
+		d.tearing[win] = true
+		d.mu.Unlock()
+		defer func() {
+			d.mu.Lock()
+			delete(d.tearing, win)
+			d.mu.Unlock()
+		}()
+	}
+
 	d.mu.RLock()
 	plat := d.platform
 	surf := d.surface
@@ -176,13 +255,18 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	deskX, deskY := native.ScreenPositionPx()
 	b := win.Bounds()
 	newSurf, err := plat.CreateSurface(platform.SurfaceOptions{
-		Title:          win.Title(),
-		Borderless:     true,
+		Title:      win.Title(),
+		Borderless: true,
+		// The corner radius is decorative, so it grows on the pure ratio;
+		// the surface SIZE goes through the hardened cell pitch so the
+		// surface is exactly as wide/tall as the frame paints into it
+		// (geometry-cells-units-pixels.md — mixing the two is the "lost
+		// right edge" bug).
 		CornerRadiusPx: d.unitToPx(window.FrameCornerRadius()),
 		XPx:            deskX + d.unitToPx(deskUnitX),
 		YPx:            deskY + d.unitToPx(deskUnitY),
-		WidthPx:        d.unitToPx(b.Width),
-		HeightPx:       d.unitToPx(b.Height),
+		WidthPx:        d.HardUnitToPxX(b.Width),
+		HeightPx:       d.HardUnitToPxY(b.Height),
 	})
 	if err != nil {
 		return nil
@@ -209,6 +293,9 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 		func(gx, gy int, grabX, grabY core.Unit) bool {
 			return d.redockAt(host, gx, gy, grabX, grabY)
 		})
+	// Size/place the OS surface on the hardened cell pitch (the frame's own
+	// grid) rather than the raw ratio, so it never drifts or clips the frame.
+	host.SetTornGeometry(d)
 	host.SetGhostRelay(
 		func(gx, gy int) {
 			ux, uy := d.globalToDesktopUnits(gx, gy)

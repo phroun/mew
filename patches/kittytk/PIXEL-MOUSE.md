@@ -1,5 +1,15 @@
 # Pixel mouse in the KittyTK hosts (SGR-Pixels, ?1016)
 
+**STATUS: LANDED upstream in KittyTK `v0.1.7-alpha`** (PR
+[#16](https://github.com/phroun/kittytk/pull/16) "Graphical PurfecTerm:
+pixel-precise mouse (?1016), script-aware Arabic, embedded focus, OSC-52";
+the purfecterm half landed in `purfecterm v0.2.30`). mew's vendored `./kittytk`
+is re-synced to v0.1.7, so this note and `pixel-mouse.patch` are kept only as
+the development record — the code now lives upstream. The mew-side pieces
+(`internal/editor/pixelmouse.go`, the `?1016` gate, the trinket wiring) are in
+mew proper. The "further TUI outer-`?1016`" work described at the end remains a
+future item.
+
 mew's pixel-precise mouse — the nearest-edge caret in insert mode — works on
 any real terminal that speaks `?1016` (the plain build gets it for free). This
 brings it to the KittyTK **hosts**, where mew runs as the PurfecTerm-backed
@@ -72,35 +82,44 @@ in the SDL host.
 - **SDL host** — the window delivers true sub-cell `Unit` coordinates, so the
   above gives full nearest-edge precision. This is the main event.
 
-- **TUI host** — mew's mouse still routes through PurfecTerm, so the handshake
-  succeeds and behaves correctly, but the *source* is the outer real terminal,
-  which the tui backend reads via `?1006` (cells): `handleMouseAction` maps
-  cell → `Unit` with `CellToUnitsX(col) = col * CellWidth` — the cell's left
-  edge, sub-cell residual always 0. So `reportMouseGfx` emits pixels that are
-  always the cell's leading edge, and nearest-edge is a silent no-op (harmless).
+- **TUI host** — mew's mouse routes through PurfecTerm, so the handshake
+  succeeds; the *source* is the outer real terminal. Originally the tui backend
+  read it via `?1006` (cells) only, mapping cell → `Unit` at the cell's left
+  edge (sub-cell residual always 0), so nearest-edge was a silent no-op. The
+  **TUI outer-`?1016`** work below lifts that ceiling.
 
-### TUI outer-`?1016` (a further, separable change — NOT in this patch)
+### TUI outer-`?1016` — LANDED upstream in `v0.1.9-alpha`, PR [#20](https://github.com/phroun/kittytk/pull/20) (`tui-outer-pixel-mouse.patch`)
 
 To make the TUI host itself sub-cell precise, the outer terminal's own pixel
-resolution has to be carried through. On inspection this reaches past the tui
-backend into **direct-key-handler** (the SGR mouse decoder), because a `?1016`
-report is byte-identical to a `?1006` one — only the enabled mode says whether
-`CSI < b ; x ; y M` carries cells or pixels. The work:
+resolution is carried through. The pleasant surprise on implementation: this
+needs NO direct-key-handler change. dkh **v0.3.11** already surfaces the two
+probe replies as distinct pseudo-keys — `DECRPM:Ps;Pm` (the DECRQM answer) and
+`WinOp:Ps;…` (the XTWINOPS answer) — and already passes SGR mouse coordinates
+through **unclamped** (`parseMouseSGR` → `Mouse@%d,%d` straight from the decoded
+integers), so a `?1016` report's pixel-magnitude numbers arrive intact. A
+`?1016` report is byte-identical to a `?1006` one; only the enabled mode says
+whether the numbers are cells or pixels, and the backend is what enabled the
+mode, so the backend alone knows how to read them.
 
-1. **kittytk tui backend** (`backend/tui/tui.go`): at startup, if the outer
-   terminal answers `CSI 16 t`, enable `?1016` on it (alongside the existing
-   `?1000/1002/1006`) and remember the outer cell pixel size. In
-   `handleMouseAction`, when pixel mode is active, treat the decoded numbers as
-   pixels: `col = px / outerCellW`, and the sub-cell residual becomes the `Unit`
-   fraction `(px % outerCellW) * CellWidth / outerCellW` — the finer coordinate
-   the gfx path already knows how to forward.
+So the whole feature is one file, `backend/tui/tui.go`:
 
-2. **direct-key-handler**: surface `?1016` reports distinctly from `?1006`
-   (either a pixel-mode flag on the decoded mouse action, or a raw pass-through
-   the backend scales), and do not clamp pixel-magnitude coordinates to the
-   cell grid. Ship as a tagged release, bump, then wire the backend.
+1. **Probe** (in `Init`, after the keyboard reader starts, since the replies
+   are asynchronous): send DECRQM `CSI ? 1016 $ p` and XTWINOPS `CSI 16 t`.
+2. **Consume the replies** in `handleKey`: `handleDECRPM` records that `?1016`
+   is settable (Pm ∈ {1,2,3}); `handleWinOp` records the outer cell pixel size
+   (Ps=6, height;width). `maybeEnablePixelMouse` enables `?1016` on the outer
+   terminal once BOTH have arrived (they race in either order) and flips the
+   backend to pixel interpretation.
+3. **Convert** in `outerToUnitsX/Y`: the raw 1-based report is a cell column in
+   the default mode (→ left edge, unchanged) or an outer pixel under `?1016` —
+   `cell = (px-1) / outerCellW`, and the remainder scales into a fraction of
+   this backend's cell width, `(px-1) % outerCellW * CellWidth / outerCellW`:
+   the finer coordinate the gfx/PurfecTerm path already forwards. The pending
+   position and the drag-embedded position share the helper.
+4. **Cleanup**: `?1016l` leads the mouse-mode reset in `RestoreTerminal`.
 
-It degrades gracefully — a terminal that ignores the outer `CSI 16 t` / `?1016`
-simply keeps cell resolution, exactly as the plain build does today — and only
-benefits users whose outer terminal supports pixel mouse. Lower priority than
-the SDL path, and independent of it.
+It degrades gracefully — a terminal that ignores either probe keeps cell
+resolution, exactly as before — and `pixelmouse_test.go` locks the probe gate
+(enable only when both replies land; refuse on Pm 0/4), the pixel↔unit
+conversion, and the cell-mode fallback. Independent of the SDL path and mew-free
+(pure KittyTK tui backend), so it is a clean upstream candidate.

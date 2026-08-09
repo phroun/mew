@@ -250,6 +250,11 @@ type PopupRequest struct {
 	ID string
 	// Bounds in screen coordinates
 	Bounds UnitRect
+	// Anchor is the screen rect of the control the popup opened from
+	// (combo box, menu title), or the zero rect when the popup is
+	// free-standing (context menus). The compositor unions it into the
+	// popup's drop shadow so control and popup cast one shape.
+	Anchor UnitRect
 	// Paint function to render the popup
 	Paint func(p *Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
@@ -460,6 +465,13 @@ func (w *TrinketBase) SetBounds(bounds UnitRect) {
 	app := w.app
 	w.mu.Unlock()
 
+	// A resize changes what this trinket draws; a pure move does not.
+	if oldSize != newSize {
+		w.notifyAncestorsOfRepaint()
+	} else {
+		w.notifyAncestorsOfMove()
+	}
+
 	if oldSize != newSize {
 		w.HandleResize(oldSize, newSize)
 	}
@@ -486,6 +498,9 @@ func (w *TrinketBase) SetPos(pos UnitPoint) {
 	app := w.app
 	w.mu.Unlock()
 
+	// Position only: this trinket draws the same pixels somewhere else.
+	w.notifyAncestorsOfMove()
+
 	// Notify app to repaint
 	if app != nil {
 		app.requestRepaint()
@@ -507,6 +522,8 @@ func (w *TrinketBase) SetSize(size UnitSize) {
 	w.bounds.Height = size.Height
 	w.needsRepaint = true
 	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 
 	if oldSize != size {
 		w.HandleResize(oldSize, size)
@@ -607,9 +624,11 @@ func (w *TrinketBase) Margins() UnitMargins {
 // SetMargins sets the margins.
 func (w *TrinketBase) SetMargins(margins UnitMargins) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.margins = margins
 	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // IsVisible returns whether the trinket is visible.
@@ -622,9 +641,11 @@ func (w *TrinketBase) IsVisible() bool {
 // SetVisible sets visibility.
 func (w *TrinketBase) SetVisible(visible bool) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.visible = visible
 	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // Show makes the trinket visible.
@@ -647,9 +668,11 @@ func (w *TrinketBase) IsEnabled() bool {
 // SetEnabled sets the enabled state.
 func (w *TrinketBase) SetEnabled(enabled bool) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.enabled = enabled
 	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // FocusPolicy returns the focus policy.
@@ -936,9 +959,11 @@ func (w *TrinketBase) Style() *style.CellStyle {
 // SetStyle sets a custom style.
 func (w *TrinketBase) SetStyle(s *style.CellStyle) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.style = s
 	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // BackgroundColor returns the explicitly set background color, or nil if inherited.
@@ -952,9 +977,11 @@ func (w *TrinketBase) BackgroundColor() *style.Color {
 // Pass nil to inherit from parent.
 func (w *TrinketBase) SetBackgroundColor(c *style.Color) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.backgroundColor = c
 	w.needsRepaint = true
+	w.mu.Unlock()
+
+	w.notifyAncestorsOfRepaint()
 }
 
 // EffectiveBackgroundColor returns the background color to use for this trinket.
@@ -1175,7 +1202,16 @@ func (w *TrinketBase) Update() {
 	w.mu.Lock()
 	w.needsRepaint = true
 	app := w.app
+	self := w.self
 	w.mu.Unlock()
+
+	// Tell the containers above which subtree changed. Walked with no
+	// lock held: the trackers only bump a counter, but Parent() takes
+	// its own locks on the way up.
+	if self == nil {
+		self = w
+	}
+	noteSubtreeRepaint(self)
 
 	if app != nil {
 		app.requestRepaint()

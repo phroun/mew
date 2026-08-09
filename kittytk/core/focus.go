@@ -520,6 +520,37 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 	return false
 }
 
+// HandleTextEditing hands an input method's in-flight composition to the
+// focused trinket. Unlike HandleKeyPress there is no navigation fallback:
+// a composition belongs to whatever is being typed into, and if that
+// cannot hold one there is nothing sensible to do with it. Tab does not
+// arrive this way.
+func (fm *FocusManager) HandleTextEditing(event TextEditingEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(TextEditingHandler); ok {
+		return h.HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandlePaste hands pasted text to the focused trinket. Like HandleTextEditing,
+// and for the same reason, there is no navigation fallback: a paste belongs to
+// whatever has focus, and a focused trinket that cannot hold one leaves nothing
+// sensible to do with the text.
+func (fm *FocusManager) HandlePaste(event PasteEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(PasteHandler); ok {
+		return h.HandlePaste(event)
+	}
+	return false
+}
+
 // FocusScope represents a focus containment boundary.
 // Trinkets can have their own focus scope (like dialogs or tool windows).
 type FocusScope struct {
@@ -761,6 +792,32 @@ func (gfm *GlobalFocusManager) HandleKeyPress(event KeyPressEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleKeyPress(event)
+	}
+	return false
+}
+
+// HandleTextEditing routes an input method's composition to the active
+// scope, the same way HandleKeyPress routes a key.
+func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandlePaste routes pasted text to the active scope, the same way
+// HandleTextEditing routes a composition.
+func (gfm *GlobalFocusManager) HandlePaste(event PasteEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandlePaste(event)
 	}
 	return false
 }

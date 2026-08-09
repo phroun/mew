@@ -103,7 +103,7 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 		t.Fatalf("press+release on a button should follow; got %q", w.Buffer.GetFilename())
 	}
 	// And history returns, as with any follow.
-	if !e.navHistory(-1) || w.Buffer != src {
+	if !e.navHistory(-1, true) || w.Buffer != src {
 		t.Fatal("a mouse follow is a normal follow: history returns")
 	}
 }
@@ -418,7 +418,7 @@ func TestMouseWorksInSpawnedViewport(t *testing.T) {
 	// though the old viewport's stale geometry covers the same rows.
 	row := nw.ContentY + 1
 	col := nw.ContentX + 1 + 2 // the 'i' of "click"
-	if hit := e.viewportAtRow(row); hit != nw {
+	if hit := e.viewportAt(col, row); hit != nw {
 		t.Fatalf("hit testing must prefer the focused viewport; got %v", hit.ID)
 	}
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))

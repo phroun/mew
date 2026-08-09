@@ -11,7 +11,7 @@ import (
 
 // canonicalDocURL normalizes every accepted spelling to one identity:
 // scheme + empty authority + "/"-separated absolute path (file:///... or
-// mew:///...).
+// box:///...).
 func TestCanonicalDocURL(t *testing.T) {
 	e, _, _ := renderedEditorWithConfig(t, "x\n", "[options]\n")
 	cases := map[string]string{
@@ -31,9 +31,9 @@ func TestCanonicalDocURL(t *testing.T) {
 	// ~/.mew — the same identity the plain path canonicalizes to, so the two
 	// routes to one file can never alias into two buffers.
 	mewCases := map[string]string{
-		"mew:syntax/x.jsf":  "syntax/x.jsf",
-		"mew:/syntax/x.jsf": "syntax/x.jsf",
-		"mew:///a/../../b":  "b", // confined: ".." cannot escape the mew root
+		"box:syntax/x.jsf":  "syntax/x.jsf",
+		"box:/syntax/x.jsf": "syntax/x.jsf",
+		"box:///a/../../b":  "b", // confined: ".." cannot escape the mew root
 	}
 	for in, rel := range mewCases {
 		want := e.canonicalDocURL(filepath.Join(e.home, ".mew", filepath.FromSlash(rel)))
@@ -96,7 +96,7 @@ func TestNavHistoryCommands(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, "one\ntwo\n", "[options]\n")
 	orig := w.Buffer
 
-	if e.navHistory(-1) || e.navHistory(+1) {
+	if e.navHistory(-1, true) || e.navHistory(+1, true) {
 		t.Fatal("no history yet: both directions must fail")
 	}
 
@@ -107,7 +107,7 @@ func TestNavHistoryCommands(t *testing.T) {
 	}
 	e.swapBuffer(w, bufB)
 
-	if !e.navHistory(-1) {
+	if !e.navHistory(-1, true) {
 		t.Fatal("prior should succeed after a swap")
 	}
 	if w.Buffer != orig {
@@ -116,13 +116,46 @@ func TestNavHistoryCommands(t *testing.T) {
 	if got := w.CursorPos(); got.Line != 1 || got.Rune != 2 {
 		t.Fatalf("prior must restore the caret; got %+v", got)
 	}
-	if !e.navHistory(+1) {
+	if !e.navHistory(+1, true) {
 		t.Fatal("next should re-advance")
 	}
 	if w.Buffer != bufB {
 		t.Fatal("next must re-bind the destination")
 	}
-	if e.navHistory(+1) {
+	if e.navHistory(+1, true) {
 		t.Fatal("no further forward history: next must fail")
+	}
+}
+
+// nav_history_prior's always=false gate: in an editable document, off a focused
+// link, it fails so a chain falls through. A read-only document already in
+// navigation mode passes even off a link — nothing there is editable, so the key
+// is free to mean "go back".
+func TestNavHistoryPriorGate(t *testing.T) {
+	e, w, _ := renderedEditorWithConfig(t, "one\ntwo\n", "[options]\n")
+	orig := w.Buffer
+	bufB, err := buffer.NewFromBytes([]byte("dest\n"), "/tmp/canon-navgate.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.swapBuffer(w, bufB) // orig is now behind bufB in history
+
+	// Editable, not on a focused link, not in nav mode: the gate blocks it even
+	// though history exists, and nothing is consumed.
+	if e.navHistory(-1, false) {
+		t.Fatal("gated prior must fail when not on a focused link")
+	}
+	if w.Buffer != bufB {
+		t.Fatal("a blocked gate must not navigate")
+	}
+
+	// Read-only + navigation mode: the gate passes off a link.
+	w.ViewState.ReadOnly = true
+	w.BrowseActive = true
+	if !e.navHistory(-1, false) {
+		t.Fatal("read-only + nav mode must pass the gate")
+	}
+	if w.Buffer != orig {
+		t.Fatal("passing the gate must navigate back")
 	}
 }

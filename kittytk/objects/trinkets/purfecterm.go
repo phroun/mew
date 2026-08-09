@@ -28,6 +28,13 @@ type PurfecTerm struct {
 	// See SetEmbeddedFocus.
 	embeddedFocus atomic.Bool
 
+	// mirrorPaint forces a single paint to render as UNFOCUSED — a hollow cursor
+	// and, above all, no platform-caret request — without disturbing the real
+	// focus state (which drives the emulator's focus reporting to the child). A
+	// host showing the same live terminal in several places paints the extras
+	// through PaintMirror so only the primary owns the caret. See PaintMirror.
+	mirrorPaint atomic.Bool
+
 	// termFont sets the terminal's own font (graphical mode): the
 	// cell grid derives from ITS measured metrics (advance width and
 	// line height at its point size), independent of the toolkit's
@@ -298,6 +305,30 @@ func (t *PurfecTerm) EmbeddedFocus() bool { return t.embeddedFocus.Load() }
 // declaration on its behalf. Every focus-dependent behaviour asks this.
 func (t *PurfecTerm) focused() bool { return t.HasFocus() || t.embeddedFocus.Load() }
 
+// paintFocused is the effective focus FOR RENDERING: the real focus, forced off
+// during a mirror paint so a read-only copy draws a hollow cursor and never
+// claims the platform caret. Distinct from focused(), which governs input and
+// the emulator's own focus reporting — a mirror must not disturb either.
+func (t *PurfecTerm) paintFocused() bool { return t.focused() && !t.mirrorPaint.Load() }
+
+// PaintMirror paints this terminal at the painter's position exactly as Paint
+// does, but as a read-only MIRROR: rendered unfocused (hollow cursor, no blink)
+// and WITHOUT requesting the platform caret, so a host can show one live
+// terminal in several places while only its primary owns the cursor.
+//
+// bounds is the mirror's OWN rectangle. It is set under the mirror flag, so
+// updateTerminalSize early-returns and the grid keeps whatever size the primary
+// gave it — but the paint still BOUNDS its row/column loop to this rectangle, so
+// a mirror smaller than the grid stops at its own edge instead of running the
+// full grid past it (which spilled extra rows below a short pane). The
+// emulator's focus and size state are untouched.
+func (t *PurfecTerm) PaintMirror(p *core.Painter, bounds core.UnitRect) {
+	t.mirrorPaint.Store(true)
+	defer t.mirrorPaint.Store(false)
+	t.SetBounds(bounds) // flag set first, so this bounds the paint but never resizes
+	t.Paint(p)
+}
+
 // CursorShape implements core.CursorProvider: the terminal shows the
 // text I-beam while hovered, like any text surface.
 func (t *PurfecTerm) CursorShape() core.CursorShape {
@@ -517,6 +548,11 @@ func (t *PurfecTerm) updateTerminalSize() {
 	if t.terminal == nil {
 		return
 	}
+	// A mirror paint never resizes: it draws the grid the primary settled, so it
+	// must not re-derive (and emit) a size from its own rectangle.
+	if t.mirrorPaint.Load() {
+		return
+	}
 	if core.FindGraphicalFrames(t) {
 		return
 	}
@@ -537,8 +573,8 @@ func (t *PurfecTerm) updateTerminalSize() {
 			height -= ch
 		}
 	}
-	newCols := int(width / cw)
-	newRows := int(height / ch)
+	newCols := clampGridDim(int(width / cw))
+	newRows := clampGridDim(int(height / ch))
 
 	if newCols > 0 && newRows > 0 && (newCols != t.cols || newRows != t.rows) {
 		t.cols = newCols
@@ -546,6 +582,27 @@ func (t *PurfecTerm) updateTerminalSize() {
 		t.terminal.Resize(t.cols, t.rows)
 		t.emitResize(t.cols, t.rows)
 	}
+}
+
+// maxTermGridDim caps a terminal grid's columns and rows. No real display comes
+// anywhere near this; the cap is a safety net against a degenerate fit — a
+// near-zero cell size mid-resize, or a size-feedback runaway between a hosted
+// terminal and its host — resizing the grid to hundreds of thousands of cells,
+// which the emulator faithfully allocated (one makeEmptyLine per row) into a
+// multi-gigabyte buffer that wedged and then OOM-killed the process.
+const maxTermGridDim = 2000
+
+// clampGridDim bounds one grid dimension to [0, maxTermGridDim]. A negative or
+// otherwise degenerate value collapses to 0, which the caller treats as "no
+// usable size" and skips the resize.
+func clampGridDim(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxTermGridDim {
+		return maxTermGridDim
+	}
+	return n
 }
 
 // Paint renders the terminal content.
@@ -683,10 +740,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 			cursorX := metrics.CellToUnitsX(int(acc))
 			cursorY := metrics.CellToUnitsY(cursorRow)
 			if cursorX < bounds.Width && cursorY < bounds.Height {
-				if t.focused() {
+				if t.paintFocused() {
 					// Hand the platform the caret, in the shape the terminal
 					// asked for. Nothing is painted here: the real cursor is
-					// drawn by the surface underneath us.
+					// drawn by the surface underneath us. (Only ever a CELL
+					// surface reaches this — Paint hands graphical targets to
+					// paintGraphical, which draws its own cursor and reports
+					// the insertion point itself.)
 					p.RequestTextCaret(cursorX, cursorY, t.decscusrStyle())
 				} else {
 					// Painted fallback for an unfocused terminal.

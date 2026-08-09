@@ -9,17 +9,23 @@ import (
 	"github.com/phroun/mew/internal/config"
 )
 
-// The "mew:" scheme addresses mew's own support tree — what used to be spelled
-// "~/.mew/": editor.conf, profile.mew, the syntax/ grammars, the help manual,
-// native lock files, crash dumps. A host chooses where the WRITABLE tree lives:
+// The "box:" scheme addresses mew's own storage — its stored, file-backed,
+// user-overridable support tree, what used to be spelled "~/.mew/": editor.conf,
+// profile.mew, the syntax/ grammars, the help manual, native lock files, crash
+// dumps. It is mew's own sandbox in the KittyTK profile model (empty authority =
+// "this app"; see docs/scheme-architecture.md). A host chooses where the
+// WRITABLE tree lives:
 //
-//   - default (local): "mew:///x" maps to <home>/.mew/x on the real OS, where
+//   - default (local): "box:///x" maps to <home>/.mew/x on the real OS, where
 //     <home> is the host-overridable home directory (WithHomeDir, else the OS
 //     UserHomeDir).
-//   - virtualized: with WithMewFileSystem, "mew:///x" is handed to the host's
+//   - virtualized: with WithMewFileSystem, "box:///x" is handed to the host's
 //     FileSystem (scheme intact), so the host owns the tree.
 //
-// LAYERED READS. The mew: tree is an overlay: a read (ReadFile/Stat/IsDir/Glob)
+// (Storage lives on box:; mew's GENERATED, non-file surfaces — Quick Help and
+// the like — are the separate "mew:" scheme, handled in canon.go, not here.)
+//
+// LAYERED READS. The box: tree is an overlay: a read (ReadFile/Stat/IsDir/Glob)
 // falls through three layers in order —
 //
 //	1. the USER layer (writable): <home>/.mew (local) or the host FS (virtual)
@@ -34,18 +40,17 @@ import (
 // only ever touch the user layer, so saving a shipped page creates a private
 // ~/.mew copy (a shadow) rather than trying to overwrite a read-only original.
 //
-// Either way a mew: path is confined to its root: a ".." can never walk above
-// <home>/.mew (local) or above "mew:///" (virtual). Confinement happens by
+// Either way a box: path is confined to its root: a ".." can never walk above
+// <home>/.mew (local) or above "box:///" (virtual). Confinement happens by
 // cleaning the path as if rooted at "/", which drops any leading "..".
 //
 // Spelling: everything mew PRODUCES — host FileSystem calls, config paths,
-// listings, canonical identities — uses "mew:///x", the empty-authority form,
-// so the authority slot stays open for addressing other instances later
-// (mew://<authority>/x). On INPUT, confine() accepts the user-notation
-// spellings the reference spec allows ("mew:/x" is the rooted-no-authority
+// listings, canonical identities — uses "box:///x", the empty-authority form
+// ("this app's own box"). On INPUT, confine() accepts the user-notation
+// spellings the reference spec allows ("box:/x" is the rooted-no-authority
 // form) and normalizes them all to the same confined path.
 
-// mewVFS resolves and accesses the mew: tree.
+// mewVFS resolves and accesses the box: tree (mew's own storage box).
 type mewVFS struct {
 	fs        FileSystem // USER layer: host FS (virtual) or the OS-backed FS (local)
 	virtual   bool
@@ -90,26 +95,31 @@ func hostHome(cfg *Config) string {
 	return home
 }
 
-// isMewPath reports whether a path addresses the mew: tree.
-func isMewPath(p string) bool { return strings.HasPrefix(p, "mew:") }
+// isBoxPath reports whether a path addresses the box: storage tree.
+func isBoxPath(p string) bool { return strings.HasPrefix(p, "box:") }
 
-// confine reduces the part after "mew:" to a clean, root-relative path that can
+// isGenPath reports whether a path addresses mew's generated (synthetic) "mew:"
+// scheme — content produced on demand (Quick Help, …), never file-backed and
+// never resolved through this VFS. Identity handling lives in canon.go.
+func isGenPath(p string) bool { return strings.HasPrefix(p, "mew:") }
+
+// confine reduces the part after "box:" to a clean, root-relative path that can
 // never escape upward: cleaning as an absolute path collapses "." and drops any
 // ".." that would rise above the root.
-func confine(mewPath string) string {
-	rel := strings.TrimPrefix(mewPath, "mew:")
+func confine(boxPath string) string {
+	rel := strings.TrimPrefix(boxPath, "box:")
 	rel = strings.TrimPrefix(rel, "/")
 	clean := path.Clean("/" + rel) // "/a/../../b" -> "/b"; "/.." -> "/"
 	return strings.TrimPrefix(clean, "/")
 }
 
-// name returns the concrete name to hand the underlying FileSystem for a mew:
-// path: the confined "mew:///rel" (virtual) or <localRoot>/rel (local).
+// name returns the concrete name to hand the underlying FileSystem for a box:
+// path: the confined "box:///rel" (virtual) or <localRoot>/rel (local).
 // Returns ("", false) in local mode when the home root is unknown.
-func (v *mewVFS) name(mewPath string) (string, bool) {
-	rel := confine(mewPath)
+func (v *mewVFS) name(boxPath string) (string, bool) {
+	rel := confine(boxPath)
 	if v.virtual {
-		return "mew:///" + rel, true
+		return "box:///" + rel, true
 	}
 	if v.localRoot == "" {
 		return "", false
@@ -168,7 +178,7 @@ func (v *mewVFS) LocalPath(mewPath string) (string, bool) {
 }
 
 // Glob lists mew: entries matching a confined pattern across ALL layers,
-// returned as "mew:///rel" paths and de-duplicated by rel (a user-layer entry
+// returned as "box:///rel" paths and de-duplicated by rel (a user-layer entry
 // shadows a shipped one of the same name). Used by the wiki resolver to match
 // page ids against the files actually present in a mew:-hosted wiki tree, so a
 // shipped help page lists exactly as a user's own would.
@@ -181,7 +191,7 @@ func (v *mewVFS) Glob(mewPattern string) ([]string, error) {
 			return
 		}
 		seen[rel] = true
-		out = append(out, "mew:///"+rel)
+		out = append(out, "box:///"+rel)
 	}
 
 	// User layer.
@@ -358,26 +368,26 @@ func (v *mewVFS) listFallbackForLocal(realDir string) []string {
 	return v.listFallback(rel)
 }
 
-// makeConfigFileIO builds the config.Manager's file access: mew:/ paths (user
-// editor.conf, profile, angle-bracket includes) go through the mew tree;
+// makeConfigFileIO builds the config.Manager's file access: box:/ paths (user
+// editor.conf, profile, angle-bracket includes) go through the box tree;
 // everything else (project .mew files, relative includes) through the document
 // FS. Directory tests use the document FS's Statter when it has one.
 func makeConfigFileIO(docFS FileSystem, mew *mewVFS) config.FileIO {
 	return config.FileIO{
 		Read: func(p string) ([]byte, error) {
-			if isMewPath(p) {
+			if isBoxPath(p) {
 				return mew.ReadFile(p)
 			}
 			return docFS.ReadFile(p)
 		},
 		Write: func(p string, data []byte) error {
-			if isMewPath(p) {
+			if isBoxPath(p) {
 				return mew.WriteFile(p, data)
 			}
 			return docFS.WriteFile(p, data)
 		},
 		IsDir: func(p string) bool {
-			if isMewPath(p) {
+			if isBoxPath(p) {
 				return mew.IsDir(p)
 			}
 			if st, ok := docFS.(Statter); ok {

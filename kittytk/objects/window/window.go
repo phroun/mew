@@ -4,6 +4,7 @@ package window
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -155,6 +156,20 @@ type Window struct {
 	// tearHighlight is set while the tear handle is pressed or dragged
 	// so the frame draws its black tear-off halo (see TearIndicatorActive).
 	tearHighlight bool
+
+	// menuDropdownComposited is set by a host that draws the menu bar's
+	// open dropdown as its own compositor layer; paintChrome then leaves
+	// it out of the window's surface. See MenuDropdownLayer.
+	menuDropdownComposited bool
+
+	// repaintRev counts repaint requests from anywhere in this window's
+	// subtree (see core.SubtreeRepaintTracker). The GPU compositor
+	// caches a texture per window and compares this against the value it
+	// last painted, so a window nobody has touched costs no repaint, no
+	// pixel conversion and no upload. Atomic, not under mu: Update()
+	// bumps it from whatever goroutine changed something, and it must
+	// never be in the way of a lock the caller already holds.
+	repaintRev atomic.Uint64
 
 	// resizeHoverRects are window-local rectangles (one per hovered resize
 	// edge, two for a corner) that the frame highlights while the pointer
@@ -552,6 +567,11 @@ func (w *Window) Restore() {
 	// return-to-maximized is resized to the client area by the manager.
 	if restoreTo == WindowStateNormal {
 		w.SetBounds(bounds)
+	} else {
+		// The return-to-maximized path sets no bounds, so nothing else
+		// here announces that the state (and with it the title buttons)
+		// changed.
+		w.Update()
 	}
 
 	if handler != nil {
@@ -1623,11 +1643,19 @@ const resizeHoverAlpha = 0.25
 // window resizes under the gesture that is drawing them.
 func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if sameRects(w.resizeHoverRects, rects) {
+		w.mu.Unlock()
 		return false
 	}
 	w.resizeHoverRects = rects
+	w.mu.Unlock()
+
+	// This changes what the window paints, and unlike most such setters
+	// it reports the change to its caller instead of announcing it —
+	// callers pair it with the manager's RequestRepaint, which says "a
+	// frame is needed" without saying whose pixels went stale. The GPU
+	// compositor caches a texture per window and needs to be told.
+	w.NoteSubtreeRepaint()
 	return true
 }
 
@@ -1781,6 +1809,77 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 	}
 }
 
+// NoteSubtreeRepaint implements core.SubtreeRepaintTracker: something
+// in this window (or the window itself) asked to be repainted.
+func (w *Window) NoteSubtreeRepaint() { w.repaintRev.Add(1) }
+
+// SubtreeRepaintRevision implements core.SubtreeRepaintTracker. Only
+// equality between two reads means anything; the value does not.
+func (w *Window) SubtreeRepaintRevision() uint64 { return w.repaintRev.Load() }
+
+// SetMenuDropdownComposited tells the window that its host draws the
+// menu bar's open dropdown as a compositor layer of its own (so it can
+// carry a drop shadow). paintChrome then leaves the dropdown out of the
+// window's own surface instead of painting it twice.
+func (w *Window) SetMenuDropdownComposited(on bool) {
+	w.mu.Lock()
+	w.menuDropdownComposited = on
+	w.mu.Unlock()
+}
+
+// menuBarDropdown returns the menu bar together with the exchange from
+// its interior denomination to window-local units, or ok=false when
+// there is no bar or no open menu.
+type menuBarDropdown interface {
+	PaintDropdown(*core.Painter)
+	ActiveMenuBounds() core.UnitRect
+	ActiveMenuTitleBounds() core.UnitRect
+}
+
+// MenuDropdownLayer returns the open menu bar dropdown as a compositor
+// layer: its bounds and the bounds of the title it drops from, both in
+// WINDOW-local units, plus a paint function that draws it through a
+// painter at the window's origin. ok is false when nothing is open.
+//
+// A host that draws this layer itself must also call
+// SetMenuDropdownComposited, or the dropdown paints twice.
+func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*core.Painter), ok bool) {
+	w.mu.RLock()
+	mb := w.menuBar
+	w.mu.RUnlock()
+
+	dd, isDropdown := mb.(menuBarDropdown)
+	barRect := w.menuBarRect()
+	if !isDropdown || barRect.IsEmpty() {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
+	}
+	menuBounds := dd.ActiveMenuBounds()
+	if menuBounds.IsEmpty() {
+		return core.UnitRect{}, core.UnitRect{}, nil, false
+	}
+
+	// The bar paints in the window's INTERIOR denomination, offset to the
+	// bar's row; the compositor works in window-local units, so exchange
+	// back out and translate.
+	outer, interior := w.denominations()
+	toLocal := func(r core.UnitRect) core.UnitRect {
+		if r.IsEmpty() {
+			return core.UnitRect{}
+		}
+		return core.UnitRect{
+			X:      barRect.X + core.ExchangeX(r.X, interior, outer),
+			Y:      barRect.Y + core.ExchangeY(r.Y, interior, outer),
+			Width:  core.ExchangeX(r.Width, interior, outer),
+			Height: core.ExchangeY(r.Height, interior, outer),
+		}
+	}
+
+	paint = func(p *core.Painter) {
+		dd.PaintDropdown(p.WithOffset(barRect.X, barRect.Y).WithDenomination(outer, interior))
+	}
+	return toLocal(menuBounds), toLocal(dd.ActiveMenuTitleBounds()), paint, true
+}
+
 // resizeHoverBands is the highlight resolved for a given window-local
 // bounds. An edge MASK is resolved here, against the bounds the caller is
 // actually painting — that is the whole point of storing a mask: a rectangle
@@ -1803,6 +1902,7 @@ func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
 func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) {
 	w.mu.RLock()
 	mb, sb := w.menuBar, w.statusBar
+	dropdownComposited := w.menuDropdownComposited
 	w.mu.RUnlock()
 
 	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
@@ -1820,8 +1920,9 @@ func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) 
 		sb.Paint(sp)
 	}
 	// The menu bar's dropdown paints last, unclipped, so it overlays the
-	// window content below the bar.
-	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
+	// window content below the bar — unless the host lifted it onto a
+	// compositor layer of its own (see MenuDropdownLayer).
+	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() && !dropdownComposited {
 		if dp, ok := mb.(interface{ PaintDropdown(*core.Painter) }); ok {
 			dp.PaintDropdown(p.WithOffset(r.X, r.Y).WithDenomination(outer, interior))
 		}
@@ -3128,6 +3229,37 @@ func (w *Window) prevTitleFocus(current TitleFocus) TitleFocus {
 }
 
 // HandleKeyPress handles keyboard input.
+// HandleTextEditing forwards an input method's composition straight to
+// the focused trinket. The window's own key policy - the menu bar, the
+// shortcut resolver, title-bar focus, Alt+F4 - is deliberately skipped:
+// none of it has anything to say about characters that are still being
+// composed, and a composition containing "m" is not Cmd+M.
+func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextEditing(event)
+}
+
+// HandlePaste forwards pasted text straight to the focused trinket, skipping
+// the window's own key policy for the same reason HandleTextEditing does:
+// none of the menu bar, shortcut resolver, or title-bar focus has anything to
+// say about text the user is dropping into whatever they are typing in.
+func (w *Window) HandlePaste(event core.PasteEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandlePaste(event)
+}
+
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager

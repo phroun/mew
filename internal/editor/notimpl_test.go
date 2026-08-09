@@ -34,11 +34,11 @@ func TestNotImplementedToastsReplaceEachOther(t *testing.T) {
 	e.executeCommand(`not_implemented "Justify Block"`)
 	first := count()
 	e.executeCommand(`not_implemented "Convert to Title Case"`)
-	e.executeCommand(`not_implemented "Filter Block through Cmd"`)
+	e.executeCommand(`not_implemented "Swap camelCase snake_case"`)
 	if got := count(); got != first {
 		t.Errorf("%d warning transients after three placeholders, want %d — they share a tag and must replace", got, first)
 	}
-	if !hasWarning(e, "Filter Block through Cmd: not yet implemented") {
+	if !hasWarning(e, "Swap camelCase snake_case: not yet implemented") {
 		t.Error("the surviving toast should be the most recent one")
 	}
 }

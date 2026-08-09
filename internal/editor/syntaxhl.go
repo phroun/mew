@@ -16,8 +16,8 @@ import (
 
 // mew's own MIT-licensed grammar pack (and its help manual) ship inside the
 // binary and in the system resource directory as the read-only lower layers of
-// the mew: filesystem (see mewfs.go / resources.go). Grammar resolution reads
-// "mew:///syntax/<name>.jsf" through that layered tree, so the shipped
+// the box: filesystem (see mewfs.go / resources.go). Grammar resolution reads
+// "box:///syntax/<name>.jsf" through that layered tree, so the shipped
 // highlighters resolve on a fresh install without any copy into ~/.mew, while a
 // user's own ~/.mew/syntax/<name>.jsf still shadows them.
 
@@ -138,7 +138,7 @@ type synColorKey struct {
 }
 
 // joeSyntaxDirs are the installed JOE grammar collections, consulted only when
-// running on a real OS (a virtualized host supplies grammars through mew:/ or
+// running on a real OS (a virtualized host supplies grammars through box:/ or
 // its document FS instead).
 var joeSyntaxDirs = []string{
 	"/usr/share/joe/syntax",
@@ -146,7 +146,7 @@ var joeSyntaxDirs = []string{
 }
 
 // resolveSyntaxFile finds a grammar file by name, in order: project .mew/syntax
-// directories (nearest project first, through the document FS), then the mew:
+// directories (nearest project first, through the document FS), then the box:
 // tree — which is itself layered (the user's ~/.mew/syntax, the system resource
 // directory, and mew's embedded built-in set, in that order) — then, on a real
 // OS, installed JOE directories. When skipProject is set — for a flavor named in
@@ -166,8 +166,8 @@ func (e *Editor) resolveSyntaxFile(name string, skipProject bool) ([]byte, error
 			}
 		}
 	}
-	// The mew: read is layered: ~/.mew/syntax -> system resources -> embedded.
-	if src, err := e.mew.ReadFile("mew:///syntax/" + name + ".jsf"); err == nil {
+	// The box: read is layered: ~/.mew/syntax -> system resources -> embedded.
+	if src, err := e.mew.ReadFile("box:///syntax/" + name + ".jsf"); err == nil {
 		return src, nil
 	}
 	if e.usingOSFS {
@@ -459,6 +459,15 @@ func (e *Editor) modelineScan(b *buffer.Buffer) string {
 // syntax option's grammar. Flavors named in the buffer's effective
 // syntaxOverrides resolve with the project .mew/syntax layer skipped.
 func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
+	// mew's generated surfaces (mew:/…) always render as dokuwiki, keyed on the
+	// buffer's own address so the grammar travels with the buffer and never
+	// sticks to a viewport the reader navigates back through — independent of
+	// the syntaxDetect setting or any per-viewport syntax option.
+	if fn := b.GetFilename(); isGenPath(fn) {
+		if in, ld := e.detectName("dokuwiki", e.bufferSyntaxOverrides(b)); in != nil {
+			return in, ld
+		}
+	}
 	if !e.Config.SyntaxDetect {
 		return e.syntaxGrammar, e.syntaxGrammarLoader
 	}
@@ -476,7 +485,7 @@ func (e *Editor) bufferGrammar(b *buffer.Buffer) (*jsf.Instance, *jsf.Loader) {
 		// A page inside a REGISTERED wiki's root highlights as that wiki's
 		// format (the help tree's .txt pages as dokuwiki) — the registry is
 		// the mew:-space analogue of the path-conditional [formats] rules
-		// below. Both sides canonicalize, so a local mew:/// root and the
+		// below. Both sides canonicalize, so a local box:/// root and the
 		// real ~/.mew path it names compare as one subtree.
 		if url := e.canonicalDocURL(fn); url != "" {
 			for _, def := range wikiRegistry {
@@ -579,7 +588,14 @@ func (e *Editor) bufferIsDocument(b *buffer.Buffer) bool {
 // holds per-line resolved colors, context flags, and entry states; each
 // line's entry state is the exit state of the line before.
 func (e *Editor) ensureSynCache(b *buffer.Buffer, docLine int) *synCache {
-	if b == nil || (e.syntaxGrammar == nil && !e.Config.SyntaxDetect) {
+	if b == nil {
+		return nil
+	}
+	// Generated surfaces (mew:/…) always render as dokuwiki — their grammar is
+	// keyed on the address (see bufferGrammar), and their whole point is browsable
+	// links. So they build a cache even when syntax highlighting/detection is
+	// off; only ordinary buffers respect the disabled state.
+	if e.syntaxGrammar == nil && !e.Config.SyntaxDetect && !isGenPath(b.GetFilename()) {
 		return nil
 	}
 	if docLine < 0 || docLine >= b.GetLineCount() {

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,6 +50,11 @@ func (s *stubPTY) Close() error {
 		close(s.out)
 	}
 	return nil
+}
+func (s *stubPTY) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }
 func (s *stubPTY) sent() string {
 	s.mu.Lock()
@@ -115,7 +121,7 @@ func TestExecRefusalIsGraceful(t *testing.T) {
 	if docContent(w) != before {
 		t.Error("a refused request must not touch the buffer")
 	}
-	if e.ptySessionFor(w.Buffer) != nil {
+	if e.ptySessionFor(w) != nil {
 		t.Error("a refused request must leave no session bound")
 	}
 }
@@ -200,6 +206,173 @@ func TestTerminalSurfaceMarksTheFocusedOne(t *testing.T) {
 	}
 }
 
+// A PTY viewport shown in several tiles publishes one surface PER TILE: exactly
+// one PRIMARY (the focused/canonical tile, which owns the emulator and its
+// sizing) and the rest mirrors. All share the session id and sit at distinct
+// positions.
+func TestTerminalSurfaceMirrorsAcrossTiles(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "x\n")
+	var placed []TerminalSurface
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func(s []TerminalSurface) { placed = s },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	if len(placed) != 2 {
+		t.Fatalf("want two surfaces (one per tile), got %d", len(placed))
+	}
+	var primaries, focused int
+	for _, s := range placed {
+		if s.Primary {
+			primaries++
+		}
+		if s.Focused {
+			focused++
+		}
+		if !s.Primary && s.Focused {
+			t.Error("a mirror surface must not be focused")
+		}
+	}
+	if primaries != 1 {
+		t.Fatalf("want exactly one primary surface, got %d", primaries)
+	}
+	if focused != 1 {
+		t.Fatalf("want exactly one focused surface, got %d", focused)
+	}
+	if placed[0].ID != placed[1].ID {
+		t.Fatalf("both tile surfaces should be the same session (%q vs %q)", placed[0].ID, placed[1].ID)
+	}
+	if placed[0].Col == placed[1].Col && placed[0].Row == placed[1].Row {
+		t.Fatal("the two tile surfaces should sit at different positions")
+	}
+}
+
+// A press in ANY tile of a terminal viewport routes to the terminal against
+// THAT tile's geometry. A viewport shown in several tiles has one live terminal
+// (the primary) and read-only mirrors; a press in a mirror must reach the
+// terminal too — mapping it against the canonical (primary) geometry would send
+// the offset off-grid and drop the press into the buffer behind, so a scrollbar
+// drag begun in a mirror never started.
+func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "x\n")
+	var got TerminalMouse
+	asked := 0
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Mouse: func(_ string, ev TerminalMouse) ([]byte, bool) { asked++; got = ev; return nil, true },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.ensureTiler()
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.performRender()
+
+	if len(e.mainTiles) != 2 {
+		t.Fatalf("want two tiles after the split, got %d", len(e.mainTiles))
+	}
+
+	// Every tile maps its OWN first content cell to the child's cell 1,1 — the
+	// mirror against its own origin, not the canonical viewport geometry. Before
+	// the release the gesture is captured; release it before pressing the next.
+	for i := range e.mainTiles {
+		tile := e.mainTiles[i]
+		if tile.Viewport == nil || tile.ContentWidth <= 0 || tile.ContentHeight <= 0 {
+			t.Fatalf("tile %d has no usable geometry: %+v", i, tile)
+		}
+		asked, got = 0, TerminalMouse{}
+		e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
+		e.handleMouseKey("MouseLeftPress")
+		if asked == 0 {
+			t.Fatalf("tile %d: the press never reached the terminal (it fell through)", i)
+		}
+		if got.Col != 1 || got.Row != 1 {
+			t.Errorf("tile %d origin press: child cell %d,%d, want the tile-relative 1,1", i, got.Col, got.Row)
+		}
+		if e.ptyMouseCapture == nil {
+			t.Errorf("tile %d: a terminal press should capture the gesture", i)
+		}
+		e.handleMouseKey("MouseLeftRelease")
+		if e.ptyMouseCapture != nil {
+			t.Errorf("tile %d: the release should let the gesture go", i)
+		}
+	}
+}
+
+// Clicking the terminal of a DIFFERENT viewport (not a mirror of the focused
+// one) focuses that viewport. A press the terminal takes is consumed by the pty
+// path, so mew's own click-to-focus never runs — the pty path has to focus the
+// pane itself, or keyboard input keeps going to the viewport that was focused
+// before the click.
+func TestPTYClickFocusesTheOtherViewport(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		// The terminal takes the press (a mouse-tracking child or its own
+		// scrollbar): handled, so the pty path consumes it.
+		Mouse: func(string, TerminalMouse) ([]byte, bool) { return nil, true },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	e.ensureTiler()
+	e.performRender()
+
+	// A second viewport in its own tile, running its own terminal session.
+	focusMainViewport(e, "doc2", strings.Repeat("y\n", 40))
+	e.performRender()
+	if !e.execRequest("bash", "") { // exec binds to the focused viewport (doc2)
+		t.Fatal("exec on doc2 failed")
+	}
+	e.performRender()
+
+	doc := e.ViewportManager.GetViewport("doc")
+	doc2 := e.ViewportManager.GetViewport("doc2")
+	if doc == nil || doc2 == nil {
+		t.Fatal("both viewports should exist")
+	}
+	if e.ptySessionFor(doc2) == nil {
+		t.Fatal("doc2 should have a session")
+	}
+
+	// Focus the OTHER viewport, then click doc2's terminal.
+	e.ViewportManager.SetFocus("doc")
+	e.performRender()
+	if e.ViewportManager.GetFocusedViewport() != doc {
+		t.Fatal("setup: doc should be focused before the click")
+	}
+
+	var tile *viewport.ViewportLayout
+	for i := range e.mainTiles {
+		if e.mainTiles[i].Viewport == doc2 {
+			tile = &e.mainTiles[i]
+			break
+		}
+	}
+	if tile == nil {
+		t.Fatal("doc2 has no tile on screen")
+	}
+	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
+	e.handleMouseKey("MouseLeftPress")
+
+	if got := e.ViewportManager.GetFocusedViewport(); got != doc2 {
+		t.Fatalf("clicking doc2's terminal focused %s, want doc2", vpID(got))
+	}
+}
+
 // One session per buffer: a second exec on the same buffer is refused rather
 // than orphaning the first child.
 func TestExecRefusesSecondSessionOnSameBuffer(t *testing.T) {
@@ -237,7 +410,7 @@ func TestPTYOutputForwardsRawBytesToHost(t *testing.T) {
 
 	// An escape sequence a stripping implementation would have eaten.
 	esc := []byte{27, '[', '2', 'J', 'h', 'i', 27, '[', '0', 'm'}
-	e.ptyOutput(w.Buffer, esc)
+	e.ptyOutput(w, esc)
 
 	if fedID != openedID {
 		t.Errorf("fed id %q, want the opened id %q", fedID, openedID)
@@ -309,11 +482,11 @@ func TestPTYEndedClosesTheSurface(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if closed == "" {
 		t.Error("Close was not called for the ended session")
 	}
-	if e.ptySessionFor(w.Buffer) != nil {
+	if e.ptySessionFor(w) != nil {
 		t.Error("the session should be unbound after it ends")
 	}
 }
@@ -429,7 +602,7 @@ func TestPTYViewportClass(t *testing.T) {
 	if got := e.viewportClass(w); got != "pty" {
 		t.Fatalf("class with a session = %q, want pty", got)
 	}
-	e.ptyEnded(w.Buffer, nil)
+	e.ptyEnded(w, nil)
 	if got := e.viewportClass(w); got != "" {
 		t.Fatalf("class after the child exited = %q, want empty again", got)
 	}
@@ -826,7 +999,7 @@ func TestSilentSessionRecordsItself(t *testing.T) {
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyEnded(w, io.EOF)
 
 	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
 	if err != nil {
@@ -865,12 +1038,12 @@ func TestTalkativeSessionRecordsNothing(t *testing.T) {
 	if !e.execRequest("bash", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyOutput(w.Buffer, []byte("$ "))
+	e.ptyOutput(w, []byte("$ "))
 	// Old enough not to count as "ended almost immediately".
 	e.ptyMu.Lock()
-	e.ptySessions[w.Buffer].started = time.Now().Add(-time.Minute)
+	e.ptySessions[w].started = time.Now().Add(-time.Minute)
 	e.ptyMu.Unlock()
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyEnded(w, io.EOF)
 
 	if _, err := os.Stat(filepath.Join(dir, "mew-pty-diag.log")); err == nil {
 		t.Error("a session that lived and produced output should leave no log behind")
@@ -895,8 +1068,8 @@ func TestShortSessionRecordsWhatItSaid(t *testing.T) {
 	if !e.execRequest("cmd.exe", "") {
 		t.Fatal("exec failed")
 	}
-	e.ptyOutput(w.Buffer, []byte("\x1b[?9001h\x1b[?1004h"))
-	e.ptyEnded(w.Buffer, io.EOF)
+	e.ptyOutput(w, []byte("\x1b[?9001h\x1b[?1004h"))
+	e.ptyEnded(w, io.EOF)
 
 	data, err := os.ReadFile(filepath.Join(dir, "mew-pty-diag.log"))
 	if err != nil {
@@ -1501,5 +1674,107 @@ func TestOnlyADecliningWikiRefuses(t *testing.T) {
 	e.executeCommand("shell")
 	if !got.Shell {
 		t.Fatal("an ordinary buffer should still get a shell")
+	}
+}
+
+// A terminal is bound to the VIEWPORT it launched in, not to its buffer. A
+// cloned viewport (a new viewport over the same buffer) shows plain document
+// text — the origin keeps the terminal — and may run its OWN session against
+// that shared buffer, because the one-session guard is per-viewport now.
+func TestPTYBoundToViewportNotBuffer(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return newStubPTY(), nil }
+	e.ensureTiler()
+	e.performRender()
+
+	// A session in the origin viewport.
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec on the origin viewport failed")
+	}
+	if e.ptySessionFor(w) == nil {
+		t.Fatal("the origin viewport should have a session")
+	}
+
+	// Clone it: a NEW viewport over the SAME buffer, now focused.
+	if !e.cloneCurrentViewport() {
+		t.Fatal("cloneCurrentViewport failed")
+	}
+	clone := e.ViewportManager.GetFocusedViewport()
+	if clone == w {
+		t.Fatal("the clone should be a distinct viewport from the origin")
+	}
+	if clone.Buffer != w.Buffer {
+		t.Fatal("the clone should share the origin's buffer")
+	}
+
+	// The clone shows the buffer's text: no visible session is bound to it even
+	// though its buffer is running one in the origin. The origin still shows its
+	// terminal.
+	if e.visibleSessionFor(clone) != nil {
+		t.Error("the clone must not inherit the origin's terminal (it shows buffer text)")
+	}
+	if e.visibleSessionFor(w) == nil {
+		t.Error("the origin viewport should still show its terminal")
+	}
+
+	// A SECOND session may run against the same buffer from the clone: the guard
+	// is per-viewport, not per-buffer.
+	e.performRender()
+	if !e.execRequest("bash", "") {
+		t.Fatal("a second session on the same buffer, from a different viewport, must be allowed")
+	}
+	origin, cloneSess := e.ptySessionFor(w), e.ptySessionFor(clone)
+	if origin == nil || cloneSess == nil {
+		t.Fatal("both viewports should now hold their own session")
+	}
+	if origin == cloneSess {
+		t.Fatal("the two viewports must hold DISTINCT sessions")
+	}
+}
+
+// When a viewport is truly removed, its terminal goes with it: the session is
+// closed (which drives the read loop to end and ptyEnded to tear the surface
+// down), never re-homed to another viewport over the same buffer.
+func TestPTYKilledWhenViewportRemoved(t *testing.T) {
+	e, w, _ := newRenderedEditor(t, strings.Repeat("x\n", 40))
+	var closedID string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(string, int, int) {},
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(id string) { closedID = id },
+	}
+	stub := newStubPTY()
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	e.ensureTiler()
+	e.performRender()
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	if e.ptySessionFor(w) == nil {
+		t.Fatal("the session should exist before removal")
+	}
+
+	// Removing the viewport closes its session — the same call the async
+	// EventViewportRemoved handler makes once marshalled onto the main loop.
+	e.endSessionForRemovedViewport(w)
+	if !stub.isClosed() {
+		t.Fatal("removing the viewport must close its session")
+	}
+
+	// The read loop, seeing its stream end, lands ptyEnded: the surface is torn
+	// down and the map entry cleared.
+	e.ptyEnded(w, io.EOF)
+	if closedID == "" {
+		t.Error("ptyEnded should close the host surface")
+	}
+	if e.ptySessionFor(w) != nil {
+		t.Error("the session must be gone from the map after teardown")
 	}
 }

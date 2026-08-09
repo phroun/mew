@@ -68,6 +68,18 @@ type purfecTermGfx struct {
 	vpWpx, vpHpx float64
 	hitKX, hitKY float64
 
+	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
+	// (round(units*ppu)) instead of the painter's cell-snapped UnitSpanPx. A
+	// terminal hosted inside another one of a different denomination (a PTY in
+	// mew) paints its cells at its own pitch and is clipped to that pitch by
+	// its host, but UnitSpanPx would measure its width against the HOST's cell
+	// grid — which, at fractional zoom, overshoots the pitch by a few percent
+	// that grows across the width. Sized to the overshoot the grid gains phantom
+	// columns and the scrollbar lane snaps clean past the clip, so no bar shows.
+	// Set by the host (SetLockstepPitch); off by default, so a standalone
+	// terminal keeps measuring against the true device surface it fills.
+	lockstepPitch bool
+
 	// Local selection drag.
 	mouseDown      bool
 	mouseDownX     int
@@ -151,6 +163,15 @@ func (t *PurfecTerm) SetMouseReportingEnabled(enabled bool) {
 	t.gfx.reportingDisabled = !enabled
 }
 
+// SetLockstepPitch makes this terminal size its grid and place its scrollbar
+// lanes against its OWN pixel pitch rather than the host painter's cell-snapped
+// span — see purfecTermGfx.lockstepPitch. A host that paints a terminal into a
+// clip of a different cell denomination (mew hosting a PTY) sets this; a
+// standalone terminal filling its own device surface leaves it off.
+func (t *PurfecTerm) SetLockstepPitch(on bool) {
+	t.gfx.lockstepPitch = on
+}
+
 func (t *PurfecTerm) gfxScheme() purfecterm.ColorScheme {
 	if t.gfx.schemeSet {
 		return t.gfx.scheme
@@ -181,7 +202,7 @@ func (t *PurfecTerm) gfxEngine() *text.Engine {
 // terminal has no focus of its own to hold (see SetEmbeddedFocus): its
 // host declares it, and it is still subject to the window chain.
 func (t *PurfecTerm) gfxFocused() bool {
-	return t.focused() && core.FocusChainActive(t.Self())
+	return t.paintFocused() && core.FocusChainActive(t.Self())
 }
 
 // gfxInputActive reports whether input events take the graphical
@@ -281,8 +302,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// extent (snapped, as the outer system places it). Everything inside is
 	// laid out in these pixels. Using bounds.Width*ppu instead would fall
 	// short of the widget edge at fractional ppu, leaving a strip unpainted.
+	//
+	// A hosted terminal is the exception (lockstepPitch): it does not fill a
+	// device surface of its own, it paints its own pitch into a clip its host
+	// cut at that same pitch. Measured against the HOST's cell grid, its width
+	// overshoots the pitch by a fraction that grows across the row — the grid
+	// gains phantom columns and the lane snaps past the clip. So it measures at
+	// its own pitch, which is exactly what the clip guarantees visible.
 	vpFullWpx := p.UnitSpanPxX(0, bounds.Width)
 	vpFullHpx := p.UnitSpanPxY(0, bounds.Height)
+	if t.gfx.lockstepPitch {
+		vpFullWpx = int(math.Round(float64(bounds.Width) * ppu))
+		vpFullHpx = int(math.Round(float64(bounds.Height) * ppu))
+	}
 
 	// Two rates meet here and BOTH matter. ppu is the renderer's font-aware
 	// pixels-per-unit, which the cell grid is laid out and painted with.
@@ -303,25 +335,38 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
 	}
 
-	// Content pixel width (viewport minus the scrollbar lane) drives how
-	// many whole cells fit; size the terminal to that so the grid fills its
-	// space (updateTerminalSize's unit division undercounts at fractional
-	// ppu). The yellow scrollback line and text span this content width.
+	// Content pixel width (viewport minus the vertical scrollbar lane) drives
+	// how many whole COLUMNS fit; size the terminal to that so the grid fills its
+	// space (updateTerminalSize's unit division undercounts at fractional ppu).
+	// The yellow scrollback line and text span this content width. The lane's
+	// reservation is content-INDEPENDENT (gfxInputActive is the frame's state,
+	// not the child's), so folding it into the grid the child is sized to is safe.
 	contentWpx := vpFullWpx
-	contentHpx := vpFullHpx
 	if t.gfxInputActive() && !t.editorMode {
 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
-		// The HORIZONTAL bar reserves its height too: unlike the vertical
-		// lane (a sliver off the right edge), it lies across the bottom
-		// text row and made it unreadable. One lane fewer of rows keeps the
-		// last line clear while the bar is present.
-		if t.hScrollActive() {
-			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
+		if t.gfx.lockstepPitch {
+			// Reserve exactly one of THIS terminal's columns for the lane (see
+			// lanePx), at the pitch — so the grid fills right up to a lane that
+			// is its own last column, with no blank sliver between them.
+			contentWpx = int(math.Round(float64(bounds.Width-baseCW) * ppu))
 		}
 	}
-	if baseCW > 0 && baseCH > 0 {
-		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
-		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
+	// ROWS fit the FULL height. The child's grid must be a pure function of its
+	// rectangle and font — never of its own content — or it oscillates. Reserving
+	// a row for the horizontal bar (which shows only when a VISIBLE line overflows
+	// the grid) would shrink the grid by a row, which changes which lines are
+	// visible, which flips the bar's presence, which regrows the grid: a
+	// self-sustaining Resize -> emitResize -> child SIGWINCH -> full redraw ->
+	// repaint -> re-fit loop at a FIXED window size, spinning the emulator and
+	// thrashing allocation. So the horizontal bar OVERLAYS the bottom row (it is a
+	// thin lane, present only while a line overflows) instead of stealing a row.
+	contentHpx := vpFullHpx
+	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
+	// clipped to its own rectangle. Re-fitting here from the mirror's (often
+	// smaller) rect would resize the child under a read-only copy.
+	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
+		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
+		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
@@ -485,6 +530,19 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 			if isCursor {
 				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
+
+				// Report where the text is, so an input method can put its
+				// candidate window under the cursor: the CJK candidate
+				// list, macOS's press-and-hold accent picker, the emoji
+				// picker. Without it they open at a corner of the window.
+				//
+				// Only the position — this path DRAWS its own cursor just
+				// above, so asking for a platform caret as well would be
+				// asking for a second one. (The cell path does ask, because
+				// there the outer terminal draws it and nothing here can.)
+				if focused {
+					painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
+				}
 			}
 		}
 
@@ -539,14 +597,23 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		}
 	}
 
-	buf.SetCursorDrawn(cursorLineWasRendered)
-	if buf.CheckCursorAutoScroll() {
-		t.Update()
+	// These are the PRIMARY paint's alone. CheckCursorAutoScroll{,Horiz} scroll
+	// the shared buffer to keep the cursor visible — measured against THIS paint's
+	// clipped region. Run from a mirror (a different, often smaller rectangle),
+	// they scroll the buffer to fit the mirror, and the primary then shows the
+	// scrolled result: the terminal jumps a row before repainting, or a full line
+	// chases horizontally to show only its tail. A mirror is read-only, so it must
+	// touch none of this — it just draws the grid the primary settled.
+	if !t.mirrorPaint.Load() {
+		buf.SetCursorDrawn(cursorLineWasRendered)
+		if buf.CheckCursorAutoScroll() {
+			t.Update()
+		}
+		if buf.CheckCursorAutoScrollHoriz() {
+			t.Update()
+		}
+		buf.ClearDirty()
 	}
-	if buf.CheckCursorAutoScrollHoriz() {
-		t.Update()
-	}
-	buf.ClearDirty()
 
 	if !t.editorMode {
 		t.paintScrollbarsGfx(p, bounds, buf, chh)
@@ -1838,8 +1905,26 @@ func (t *PurfecTerm) gfxPixelFrame() (wPx, hPx, ppu float64) {
 // share one pixel width, so the corner where the bars meet is a square. On a
 // cell surface a lane cannot be thinner than a character, so it is one CELL
 // column wide and one CELL row tall — the ScrollArea idiom.
+//
+// A lockstep (hosted) surface is the exception on the graphical path: its lane
+// is one of ITS OWN columns, not the toolkit's fixed layout column. The two
+// differ (a terminal cell is not the toolkit's cell), and a lane that is not a
+// whole child column leaves a sliver of blank between the last content column
+// and the bar, and straddles two child columns so a cell-quantized pointer
+// misses it. One own column makes the bar the child's last column exactly:
+// content meets it, and the wire cell that lands on it is unambiguous.
 func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 	if t.gfxInputActive() {
+		if t.gfx.lockstepPitch {
+			// One of this terminal's own COLUMNS thick on BOTH axes — the
+			// vertical bar is one column wide, and the horizontal bar matches
+			// that width rather than standing a whole row tall (a row is far
+			// taller than a column, so ch here made the bottom bar a fat slab
+			// over the last row). Equal thickness keeps the corner a square.
+			cw, _ := t.cellDims()
+			lane := float64(cw) * ppu
+			return lane, lane
+		}
 		lane := float64(gfxScrollbarLane) * ppu
 		return lane, lane
 	}
@@ -2748,6 +2833,22 @@ func normalizePasteNewlines(s string) string {
 	return s
 }
 
+// HandlePaste delivers pasted text (e.g. a bracketed paste the host received
+// from its outer terminal) to the child, re-bracketing it per the CHILD's own
+// paste mode — see sendPaste. This is what lets a paste into the outer terminal
+// reach the program inside a focused PurfecTerm — or a mew editor, which embeds
+// one — as a real paste rather than the flood of per-character keystrokes the
+// host would otherwise forward. The outer terminal's framing never travels this
+// far: the child's mode, not the host's, decides whether the body is bracketed.
+// Satisfies core.PasteHandler.
+func (t *PurfecTerm) HandlePaste(event core.PasteEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+	t.sendPaste(event.Text)
+	return true
+}
+
 // sendPaste writes resolved clipboard text to the child PTY, bracketing it when
 // the application enabled bracketed paste mode.
 func (t *PurfecTerm) sendPaste(s string) {
@@ -2922,6 +3023,12 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			bg := style.DefaultStyle().WithFg(style.RGB(32, 32, 32)).WithBg(style.RGB(238, 238, 238))
 			hover := style.DefaultStyle().WithFg(style.RGB(255, 255, 255)).WithBg(style.RGB(56, 120, 220))
 			p.FillRect(core.UnitRect{X: menuBounds.X, Y: menuBounds.Y, Width: menuBounds.Width, Height: menuBounds.Height}, ' ', bg)
+			// The 1-pixel outer frame every popup gets, in the padded
+			// margin just outside the bounds (graphical only).
+			if p.Graphical() {
+				lineStyle := style.DefaultStyle().WithBg(t.GetScheme().GetMenuSeparator().Fg)
+				paintPopupOuterStroke(p, menuBounds, p.DeviceScale(), lineStyle, 0, 0, false)
+			}
 			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {

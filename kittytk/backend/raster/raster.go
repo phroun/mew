@@ -77,8 +77,17 @@ type Backend struct {
 	// other substrates may sync it with the system clipboard.
 	clipboard string
 
+	// Scaled wallpaper cache. Resampling is the expensive part of laying
+	// a wallpaper, and it only changes when the image, the drawn size or
+	// the filter does — not once per frame.
+	wpCache  *image.RGBA
+	wpSrc    *image.RGBA
+	wpW      int
+	wpH      int
+	wpSmooth bool
+
 	// sysClipGet/sysClipSet bridge to the host's system clipboard when the
-	// substrate provides one (the SDL platform wires these to SDL2's
+	// substrate provides one (the SDL platform wires these to SDL3's
 	// SDL_GetClipboardText/SDL_SetClipboardText, which cover macOS, Windows
 	// and X11/Wayland). nil in headless use, where the local string is used.
 	sysClipGet func() string
@@ -86,7 +95,7 @@ type Backend struct {
 }
 
 // SetSystemClipboard bridges this backend's clipboard to the host's system
-// clipboard. The SDL host wires get/set to the platform's SDL2-backed
+// clipboard. The SDL host wires get/set to the platform's SDL3-backed
 // clipboard, so Copy/Cut/Paste cross the process boundary to other apps.
 // Passing nils reverts to the internal (headless) clipboard.
 func (b *Backend) SetSystemClipboard(get func() string, set func(string)) {
@@ -230,6 +239,11 @@ func (b *Backend) SetFontSize(size int) {
 	b.fontSize = size
 }
 
+// FontSize reports the UI point size (see SetFontSize). A compositor
+// creating per-window backends copies it from the parent backend so
+// child content maps units to pixels at the same density.
+func (b *Backend) FontSize() int { return b.fontSize }
+
 // Image exposes the framebuffer (substrates blit it; tests read it).
 func (b *Backend) Image() *image.RGBA { return b.img }
 
@@ -318,6 +332,47 @@ func (b *Backend) Size() core.UnitSize {
 		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.CellWidth), b.cellWPx())),
 		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.CellHeight), b.cellHPx())),
 	}
+}
+
+// unSnapAxisNearest inverts snapAxis by rounding the sub-cell remainder to
+// the NEAREST unit rather than flooring it (as unSnapAxisFloor does). It is
+// the round-trip-exact inverse: a length W mapped to px via snapAxis reads
+// back as exactly W. A caller that OWNS the surface size (a torn window
+// sized to UnitToPxX(W)) uses this so its unit size never drifts on
+// re-sizing; the floor inverse is for a surface whose px is dictated from
+// outside and whose content must stay WITHIN the true edge.
+func unSnapAxisNearest(px, denom, cellPx int) int {
+	if cellPx < 1 {
+		cellPx = 1
+	}
+	cells := px / cellPx
+	rem := px - cells*cellPx
+	return cells*denom + int(math.Round(float64(rem)*float64(denom)/float64(cellPx)))
+}
+
+// SizeRounded reports the surface extent in units on the hardened cell
+// pitch, rounding to nearest (unlike Size, which floors). A caller that
+// re-sizes a surface it OWNS (the font-zoom path re-deriving a torn
+// window's pixel size from its unit size) snapshots through this so the
+// unit size round-trips exactly instead of shedding up to a unit per zoom.
+func (b *Backend) SizeRounded() core.UnitSize {
+	return core.UnitSize{
+		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.CellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+	}
+}
+
+// PxToUnitX / PxToUnitY invert the hardened cell-pitch axis conversions
+// (UnitToPxX/Y) to whole units, rounding to nearest so the round-trip is
+// exact (see unSnapAxisNearest). Torn-window geometry reads its OS
+// surface's device-pixel size back to units through these, so a surface
+// sized to UnitToPxX(W) reports exactly W. Implements core.UnitPixelUnmapper.
+func (b *Backend) PxToUnitX(px int) core.Unit {
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellWidth), b.cellWPx()))
+}
+
+func (b *Backend) PxToUnitY(px int) core.Unit {
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellHeight), b.cellHPx()))
 }
 
 func (b *Backend) BeginFrame() {}
@@ -1215,14 +1270,16 @@ func (b *Backend) DrawRect(r core.UnitRect, bs style.BorderStyle, s style.CellSt
 	}
 }
 
-// strokePx maps a border style to a stroke weight in device pixels:
+// strokeWeightPx maps a border style to a stroke weight in device pixels:
 // double/heavy is the window-frame border, whose width is the configured
-// (or default) value from core.WindowFrameBorderPx; single stays a 1px
-// hairline. Rounded strokes are used only for window frames, so honoring
-// the configured frame width here is safe.
-func strokePx(bs style.BorderStyle) int {
+// (or default) base-zoom value scaled to the current zoom (border law (a),
+// geometry-cells-units-pixels.md), so the frame keeps a constant fraction
+// of the content as the font zooms; single stays a 1px hairline. Rounded
+// strokes are used only for window frames, so honoring the configured frame
+// width here is safe.
+func (b *Backend) strokeWeightPx(bs style.BorderStyle) int {
 	if bs == style.BorderDouble || bs == style.BorderHeavy {
-		return core.WindowFrameBorderPx()
+		return core.ScaledWindowFrameBorderPx(b.pxPerUnit())
 	}
 	return 1
 }
@@ -1333,7 +1390,7 @@ func (b *Backend) StrokeRoundedRectWeight(r core.UnitRect, radius core.Unit, str
 }
 
 func (b *Backend) roundedRect(r core.UnitRect, radius core.Unit, bs style.BorderStyle, s style.CellStyle, fill bool) {
-	b.roundedRectTh(r, radius, strokePx(bs), s, fill)
+	b.roundedRectTh(r, radius, b.strokeWeightPx(bs), s, fill)
 }
 
 func (b *Backend) roundedRectTh(r core.UnitRect, radius core.Unit, th int, s style.CellStyle, fill bool) {
@@ -1532,6 +1589,174 @@ func (b *Backend) FillPattern(r core.UnitRect, pattern [8]uint8, chunkPx int, s 
 	}
 }
 
+// ClearTransparent implements core.SurfaceClearer: the clipped region
+// back to (0,0,0,0). The GPU compositor's base layer starts this way so
+// the wallpaper quad underneath shows through wherever the desktop
+// chrome does not paint.
+//
+// Clipped, not wholesale: a frame repainting only its damaged region
+// passes a clipped painter, and clearing outside it would wipe chrome
+// that this frame is not going to redraw.
+func (b *Backend) ClearTransparent() {
+	x0, y0, x1, y1 := 0, 0, b.w, b.h
+	if b.hasClip {
+		x0, y0 = max(x0, b.clipPxX0), max(y0, b.clipPxY0)
+		x1, y1 = min(x1, b.clipPxX1), min(y1, b.clipPxY1)
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+	if x0 == 0 && y0 == 0 && x1 == b.w && y1 == b.h {
+		clear(b.img.Pix)
+		return
+	}
+	for y := y0; y < y1; y++ {
+		o := b.img.PixOffset(x0, y)
+		clear(b.img.Pix[o : o+(x1-x0)*4])
+	}
+}
+
+// TileImagePx implements core.ImageTiler: one copy of the tile sized
+// and anchored by the layout, repeated along the axes it tiles.
+//
+// The image is resampled ONCE into a cached scaled copy, then laid down
+// with row-length memmoves. Doing it the other way — sampling per
+// destination pixel — would resample the whole desktop every frame
+// instead of only when the size or the image changes.
+func (b *Backend) TileImagePx(r core.UnitRect, tile *image.RGBA, layout core.WallpaperLayout) {
+	tb := tile.Bounds()
+	if tb.Dx() <= 0 || tb.Dy() <= 0 {
+		return
+	}
+
+	x0, y0 := b.pxX(r.X), b.pxY(r.Y)
+	x1, y1 := b.pxX(r.X+r.Width), b.pxY(r.Y+r.Height)
+	spanW, spanH := x1-x0, y1-y0
+	if spanW <= 0 || spanH <= 0 {
+		return
+	}
+
+	drawW, drawH, offX, offY := layout.Resolve(tb.Dx(), tb.Dy(), spanW, spanH)
+	if drawW <= 0 || drawH <= 0 {
+		return
+	}
+	src := b.scaledWallpaper(tile, drawW, drawH, layout.Smooth)
+
+	if b.hasClip {
+		x0, y0 = max(x0, b.clipPxX0), max(y0, b.clipPxY0)
+		x1, y1 = min(x1, b.clipPxX1), min(y1, b.clipPxY1)
+	}
+	x0, y0 = max(x0, 0), max(y0, 0)
+	x1, y1 = min(x1, b.w), min(y1, b.h)
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+
+	tileX, tileY := layout.Tiling.Axes()
+	// Origin of the reference copy in surface pixels.
+	baseX, baseY := b.pxX(r.X)+offX, b.pxY(r.Y)+offY
+
+	for y := y0; y < y1; y++ {
+		sy := y - baseY
+		if tileY {
+			sy = mod(sy, drawH)
+		} else if sy < 0 || sy >= drawH {
+			continue // outside the single copy: leave what is there
+		}
+		srcRow := src.Pix[sy*src.Stride:]
+		dstRow := b.img.Pix[b.img.PixOffset(x0, y):]
+
+		for x, done := x0, 0; x < x1; {
+			sx := x - baseX
+			if tileX {
+				sx = mod(sx, drawW)
+			} else if sx < 0 {
+				// Skip the gap before the copy in one step.
+				step := min(-sx, x1-x)
+				x += step
+				done += step
+				continue
+			} else if sx >= drawW {
+				break // past the copy: nothing further on this row
+			}
+			run := min(drawW-sx, x1-x)
+			copy(dstRow[done*4:(done+run)*4], srcRow[sx*4:(sx+run)*4])
+			x += run
+			done += run
+		}
+	}
+}
+
+// scaledWallpaper returns the tile resampled to drawW x drawH, cached
+// until the request changes. At natural size the original is handed back
+// untouched, so the common case allocates nothing.
+func (b *Backend) scaledWallpaper(tile *image.RGBA, drawW, drawH int, smooth bool) *image.RGBA {
+	tb := tile.Bounds()
+	if drawW == tb.Dx() && drawH == tb.Dy() {
+		return tile
+	}
+	if b.wpCache != nil && b.wpSrc == tile && b.wpW == drawW && b.wpH == drawH && b.wpSmooth == smooth {
+		return b.wpCache
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, drawW, drawH))
+	sw, sh := tb.Dx(), tb.Dy()
+	for y := 0; y < drawH; y++ {
+		// Sample at pixel CENTRES, so the scaled copy is symmetric
+		// rather than biased toward the top-left by half a texel.
+		fy := (float64(y) + 0.5) * float64(sh) / float64(drawH)
+		for x := 0; x < drawW; x++ {
+			fx := (float64(x) + 0.5) * float64(sw) / float64(drawW)
+			o := dst.PixOffset(x, y)
+			if smooth {
+				r, g, bl, a := bilinearSample(tile, fx-0.5, fy-0.5)
+				dst.Pix[o+0], dst.Pix[o+1], dst.Pix[o+2], dst.Pix[o+3] = r, g, bl, a
+				continue
+			}
+			sx := min(max(int(fx), 0), sw-1)
+			sy := min(max(int(fy), 0), sh-1)
+			so := tile.PixOffset(tb.Min.X+sx, tb.Min.Y+sy)
+			copy(dst.Pix[o:o+4], tile.Pix[so:so+4])
+		}
+	}
+
+	b.wpCache, b.wpSrc, b.wpW, b.wpH, b.wpSmooth = dst, tile, drawW, drawH, smooth
+	return dst
+}
+
+// bilinearSample reads tile at a fractional position, clamping at the
+// edges. Coordinates are in source pixels with (0,0) the first pixel's
+// centre.
+func bilinearSample(tile *image.RGBA, fx, fy float64) (r, g, bl, a uint8) {
+	tb := tile.Bounds()
+	sw, sh := tb.Dx(), tb.Dy()
+	x0 := int(math.Floor(fx))
+	y0 := int(math.Floor(fy))
+	tx := fx - float64(x0)
+	ty := fy - float64(y0)
+
+	at := func(x, y int) (float64, float64, float64, float64) {
+		x = min(max(x, 0), sw-1)
+		y = min(max(y, 0), sh-1)
+		o := tile.PixOffset(tb.Min.X+x, tb.Min.Y+y)
+		return float64(tile.Pix[o]), float64(tile.Pix[o+1]),
+			float64(tile.Pix[o+2]), float64(tile.Pix[o+3])
+	}
+	r00, g00, b00, a00 := at(x0, y0)
+	r10, g10, b10, a10 := at(x0+1, y0)
+	r01, g01, b01, a01 := at(x0, y0+1)
+	r11, g11, b11, a11 := at(x0+1, y0+1)
+
+	lerp := func(p, q float64) float64 { return p + (q-p)*tx }
+	mix := func(top, bottom float64) uint8 {
+		return uint8(top + (bottom-top)*ty + 0.5)
+	}
+	return mix(lerp(r00, r10), lerp(r01, r11)),
+		mix(lerp(g00, g10), lerp(g01, g11)),
+		mix(lerp(b00, b10), lerp(b01, b11)),
+		mix(lerp(a00, a10), lerp(a01, a11))
+}
+
 func mod(a, m int) int {
 	r := a % m
 	if r < 0 {
@@ -1563,6 +1788,102 @@ func (b *Backend) FillRectPx(xPx, yPx, wPx, hPx int, s style.CellStyle) {
 // core.TranslucentPixelFiller.
 func (b *Backend) FillRectPxAlpha(xPx, yPx, wPx, hPx int, r, g, bl uint8, alpha float64) {
 	b.blendRectPx(xPx, yPx, xPx+wPx, yPx+hPx, color.RGBA{R: r, G: g, B: bl, A: 255}, alpha)
+}
+
+// DrawDropShadowPx lays a soft drop shadow for a rounded rectangle,
+// implementing core.DropShadowDrawer. The rect is the caster already
+// shifted by the cast offset; alpha falls off across blurPx on the
+// signed distance to the rounded rect, which is the same field the GPU
+// compositor's shader evaluates for the layers IT shadows — so a shadow
+// painted into a surface and one composited over it look alike.
+//
+// Only the band the falloff can reach is visited, and rows are clipped
+// to the surface, so the cost tracks the shadow's own perimeter.
+func (b *Backend) DrawDropShadowPx(xPx, yPx, wPx, hPx int, radiusPx, blurPx, alpha float64) {
+	if wPx <= 0 || hPx <= 0 || alpha <= 0 {
+		return
+	}
+	if blurPx < 0 {
+		blurPx = 0
+	}
+	if radiusPx < 0 {
+		radiusPx = 0
+	}
+
+	// Half-extents of the rounded rect's straight core, and its center:
+	// the standard rounded-box distance field.
+	cx := float64(xPx) + float64(wPx)/2
+	cy := float64(yPx) + float64(hPx)/2
+	hx := math.Max(float64(wPx)/2-radiusPx, 0)
+	hy := math.Max(float64(hPx)/2-radiusPx, 0)
+
+	pad := int(math.Ceil(blurPx)) + 1
+	x0, y0 := xPx-pad, yPx-pad
+	x1, y1 := xPx+wPx+pad, yPx+hPx+pad
+
+	if b.hasClip {
+		cx0, cy0 := b.pxX(b.clip.X), b.pxY(b.clip.Y)
+		cx1, cy1 := b.pxX(b.clip.X+b.clip.Width), b.pxY(b.clip.Y+b.clip.Height)
+		x0, y0 = max(x0, cx0), max(y0, cy0)
+		x1, y1 = min(x1, cx1), min(y1, cy1)
+	}
+	x0, y0 = max(x0, 0), max(y0, 0)
+	x1, y1 = min(x1, b.w), min(y1, b.h)
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+
+	pix := b.img.Pix
+	for y := y0; y < y1; y++ {
+		dy := math.Abs(float64(y)+0.5-cy) - hy
+		o := b.img.PixOffset(x0, y)
+		for x := x0; x < x1; x++ {
+			if b.hasRoundClip && !b.pointVisible(x, y) {
+				o += 4
+				continue
+			}
+			dx := math.Abs(float64(x)+0.5-cx) - hx
+			// Distance to the rounded rect: outside the core, the length
+			// of the positive part; inside, the larger (negative) axis.
+			d := math.Hypot(math.Max(dx, 0), math.Max(dy, 0)) +
+				math.Min(math.Max(dx, dy), 0) - radiusPx
+
+			cov := 1.0
+			if blurPx > 0 {
+				t := (d + blurPx) / (2 * blurPx)
+				switch {
+				case t <= 0:
+					cov = 1
+				case t >= 1:
+					o += 4
+					continue
+				default:
+					cov = 1 - t*t*(3-2*t) // smoothstep, as in the shader
+				}
+			} else if d > 0 {
+				o += 4
+				continue
+			}
+
+			a := uint32(alpha*cov*256 + 0.5)
+			if a == 0 {
+				o += 4
+				continue
+			}
+			if a > 256 {
+				a = 256
+			}
+			inv := 256 - a
+			// Shadow colour is black, so only the destination survives in
+			// RGB; alpha still climbs toward opaque, which is what keeps a
+			// shadow visible over a transparent (torn-window) surface.
+			pix[o] = uint8((uint32(pix[o]) * inv) >> 8)
+			pix[o+1] = uint8((uint32(pix[o+1]) * inv) >> 8)
+			pix[o+2] = uint8((uint32(pix[o+2]) * inv) >> 8)
+			pix[o+3] = uint8((255*a + uint32(pix[o+3])*inv) >> 8)
+			o += 4
+		}
+	}
 }
 
 func (b *Backend) PollEvent() core.Event                  { return nil }

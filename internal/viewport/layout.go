@@ -1,11 +1,64 @@
 // Package viewport provides viewport management for the editor.
 package viewport
 
-// ViewportLayout holds the calculated position and size for a viewport.
+// ViewportLayout holds the calculated position and size for one TILE showing a
+// viewport. Geometry lives here, with the tile — not on the viewport — because a
+// viewport can be shown in several tiles at once (tiles↔viewports is
+// many-to-many). The renderer applies each entry's frame to the viewport just
+// before painting that tile, so the same viewport paints correctly at every
+// tile that references it.
 type ViewportLayout struct {
 	Viewport *Viewport
 	Y        int // Top position (0-indexed)
 	Height   int
+	// FrameX/FrameWidth are this tile's horizontal paint frame (0-based start
+	// column, width). The zero value (0, 0) means "full width from the left
+	// edge", as for docked chrome that fills the row.
+	FrameX     int
+	FrameWidth int
+	// ContentX/ContentY/ContentWidth/ContentHeight are this tile's content
+	// rectangle (the paint frame minus ruler, message bars, gutter and
+	// scrollbar), recorded during rendering so mouse handling can resolve which
+	// tile a click landed in and map the cell to a document position with THAT
+	// tile's offset — necessary because a viewport shown in several tiles cannot
+	// hold each tile's rectangle in its own single-valued fields.
+	ContentX      int
+	ContentY      int
+	ContentWidth  int
+	ContentHeight int
+	// ScrollbarX/ScrollbarTrackH are this tile's vertical scrollbar column
+	// (-1 when the tile shows no bar) and its track height, recorded so a press
+	// on the bar is grabbed against the correct tile's bar.
+	ScrollbarX      int
+	ScrollbarTrackH int
+	// Focused marks the tile that currently holds focus. When a viewport is shown
+	// in several tiles, this is the one whose geometry becomes the viewport's
+	// canonical resting state — so the caret and keyboard paging use the pane the
+	// user is in, not whichever tile happened to paint last.
+	Focused bool
+	// TileHandle is the tiler's opaque handle for this tile (0 for docked chrome,
+	// which the tiler does not manage). A press uses it to focus the exact tile it
+	// landed in, so that tile becomes canonical.
+	TileHandle uint64
+}
+
+// StampGeometry copies this tile's recorded frame and content rectangle onto its
+// viewport, so the viewport's single-valued geometry reflects this specific
+// tile. Used to make the focused tile canonical (render) and to map a click into
+// the tile it hit (mouse).
+func (l *ViewportLayout) StampGeometry() {
+	w := l.Viewport
+	if w == nil {
+		return
+	}
+	w.FrameX = l.FrameX
+	w.FrameWidth = l.FrameWidth
+	w.ContentX = l.ContentX
+	w.ContentY = l.ContentY
+	w.ContentWidth = l.ContentWidth
+	w.ContentHeight = l.ContentHeight
+	w.ScrollbarX = l.ScrollbarX
+	w.ScrollbarTrackH = l.ScrollbarTrackH
 }
 
 // Layout holds the complete calculated layout for all viewports.
@@ -471,10 +524,21 @@ func (l *Layout) FindViewportLayout(viewportID string) *ViewportLayout {
 			return &l.TopLayout[i]
 		}
 	}
+	// Prefer the focused tile when a viewport is shown in several: the caret and
+	// cursor belong in the pane the user is in.
+	var firstMain *ViewportLayout
 	for i := range l.MainLayout {
 		if l.MainLayout[i].Viewport.ID == viewportID {
-			return &l.MainLayout[i]
+			if l.MainLayout[i].Focused {
+				return &l.MainLayout[i]
+			}
+			if firstMain == nil {
+				firstMain = &l.MainLayout[i]
+			}
 		}
+	}
+	if firstMain != nil {
+		return firstMain
 	}
 	for i := range l.BottomLayout {
 		if l.BottomLayout[i].Viewport.ID == viewportID {

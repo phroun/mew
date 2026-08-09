@@ -146,7 +146,7 @@ func TestSaveAllInteractiveCancelBailsEntireBatch(t *testing.T) {
 }
 
 // debug_screen writes a timestamped .ans capture of the current screen into the
-// mew:/// support tree (~/.mew), reproducing the visible text — and must do so
+// box:/// support tree (~/.mew), reproducing the visible text — and must do so
 // WITHOUT re-locking renderMu, which the key loop holds across command
 // execution (calling performRender there is a hard lock).
 func TestDebugScreenWritesAnsFile(t *testing.T) {

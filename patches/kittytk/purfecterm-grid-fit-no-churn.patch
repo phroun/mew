@@ -1,0 +1,164 @@
+From 2baa4e0704135591b05d947e809022c2769305d0 Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 19:16:53 +0000
+Subject: [PATCH] purfecterm: size the child grid from geometry only (stop
+ resize churn)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The graphical fit reserved a grid ROW for the horizontal scrollbar whenever
+hScrollActive() reported true — but that predicate is content-dependent (a
+visible line wider than the grid, or a nonzero horizontal offset). Emitting the
+resulting grid to the child from inside Paint coupled the child's row count to
+its own output: shrinking the grid changed which lines were visible, which
+flipped the bar's presence, which regrew the grid. At a fixed window size that
+is a self-sustaining loop — Resize -> emitResize -> child SIGWINCH -> full
+redraw -> repaint -> re-fit — that spins the emulator and thrashes allocation
+(a beachball under a resize storm, where each re-fit is also a fresh present).
+
+Size the grid from the rectangle and font only: columns from the width minus
+the vertical lane (a content-INDEPENDENT reservation), rows from the full
+height. The horizontal bar now overlays the bottom row (it is a thin lane,
+present only while a line overflows) instead of stealing a row. With the fit a
+pure function of geometry it cannot oscillate: at a fixed size the fitted grid
+is constant, so no resize is emitted and the child is left alone; during a live
+resize the child is still sized once per genuine bounds change.
+
+Adds TestGridRowsIndependentOfHorizontalScrollbar (drives the graphical paint
+under a graphical-frame parent, toggles the horizontal bar via a nonzero
+horizontal offset, and asserts the fitted row count does not change). Bump
+Build to 14.
+---
+ core/version.go                             |  2 +-
+ objects/trinkets/purfecterm_gfx.go          | 28 ++++++----
+ objects/trinkets/purfecterm_gridfit_test.go | 61 +++++++++++++++++++++
+ 3 files changed, 78 insertions(+), 13 deletions(-)
+ create mode 100644 objects/trinkets/purfecterm_gridfit_test.go
+
+diff --git a/core/version.go b/core/version.go
+index 9ed4d72..c233ed3 100644
+--- a/core/version.go
++++ b/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 13
++const Build = 14
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/objects/trinkets/purfecterm_gfx.go b/objects/trinkets/purfecterm_gfx.go
+index 3a933fc..19903f7 100644
+--- a/objects/trinkets/purfecterm_gfx.go
++++ b/objects/trinkets/purfecterm_gfx.go
+@@ -303,22 +303,26 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
+ 		t.gfx.hitKY = float64(vpFullHpx) / (float64(bounds.Height) * ppu)
+ 	}
+ 
+-	// Content pixel width (viewport minus the scrollbar lane) drives how
+-	// many whole cells fit; size the terminal to that so the grid fills its
+-	// space (updateTerminalSize's unit division undercounts at fractional
+-	// ppu). The yellow scrollback line and text span this content width.
++	// Content pixel width (viewport minus the vertical scrollbar lane) drives
++	// how many whole COLUMNS fit; size the terminal to that so the grid fills its
++	// space (updateTerminalSize's unit division undercounts at fractional ppu).
++	// The yellow scrollback line and text span this content width. The lane's
++	// reservation is content-INDEPENDENT (gfxInputActive is the frame's state,
++	// not the child's), so folding it into the grid the child is sized to is safe.
+ 	contentWpx := vpFullWpx
+-	contentHpx := vpFullHpx
+ 	if t.gfxInputActive() && !t.editorMode {
+ 		contentWpx = p.UnitSpanPxX(0, bounds.Width-gfxScrollbarLane)
+-		// The HORIZONTAL bar reserves its height too: unlike the vertical
+-		// lane (a sliver off the right edge), it lies across the bottom
+-		// text row and made it unreadable. One lane fewer of rows keeps the
+-		// last line clear while the bar is present.
+-		if t.hScrollActive() {
+-			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
+-		}
+ 	}
++	// ROWS fit the FULL height. The child's grid must be a pure function of its
++	// rectangle and font — never of its own content — or it oscillates. Reserving
++	// a row for the horizontal bar (which shows only when a VISIBLE line overflows
++	// the grid) would shrink the grid by a row, which changes which lines are
++	// visible, which flips the bar's presence, which regrows the grid: a
++	// self-sustaining Resize -> emitResize -> child SIGWINCH -> full redraw ->
++	// repaint -> re-fit loop at a FIXED window size, spinning the emulator and
++	// thrashing allocation. So the horizontal bar OVERLAYS the bottom row (it is a
++	// thin lane, present only while a line overflows) instead of stealing a row.
++	contentHpx := vpFullHpx
+ 	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
+ 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
+ 	// smaller) rect would resize the child under a read-only copy.
+diff --git a/objects/trinkets/purfecterm_gridfit_test.go b/objects/trinkets/purfecterm_gridfit_test.go
+new file mode 100644
+index 0000000..7ce2f32
+--- /dev/null
++++ b/objects/trinkets/purfecterm_gridfit_test.go
+@@ -0,0 +1,61 @@
++package trinkets
++
++import (
++	"testing"
++
++	"github.com/phroun/kittytk/backend/raster"
++	"github.com/phroun/kittytk/core"
++)
++
++// The child terminal's grid must be a pure function of its rectangle and font —
++// never of its own content. Reserving a grid row for the horizontal scrollbar
++// (which appears only when a visible line overflows the grid) coupled the row
++// count to the content: shrinking the grid changed which lines were visible,
++// which flipped the bar, which regrew the grid — a self-sustaining
++// resize/redraw loop at a fixed window size. So a horizontal scrollbar being
++// active must NOT change the fitted row count; the bar overlays the bottom row
++// instead.
++func TestGridRowsIndependentOfHorizontalScrollbar(t *testing.T) {
++	t.Cleanup(func() { core.SetTextMeasurer(nil) })
++	b, err := raster.New(640, 400)
++	if err != nil {
++		t.Fatal(err)
++	}
++	core.SetTextMeasurer(b)
++
++	// A graphical-frame parent so gfxInputActive() (FindGraphicalFrames) is true
++	// and the scrollbar-lane reservations run at all.
++	stub := &graphicalFrameStub{Panel: NewPanel()}
++	term := NewPurfecTerm()
++	term.Init(term)
++	if term.Terminal() == nil {
++		t.Skip("terminal unavailable")
++	}
++	term.SetEditorMode(false)
++	term.SetParent(stub)
++	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
++
++	p := core.NewPainter(b)
++
++	// Baseline: no horizontal scroll, so no horizontal bar.
++	term.Paint(p)
++	_, baseRows := term.Terminal().GetSize()
++	if baseRows <= 0 {
++		t.Skip("no usable grid in this environment")
++	}
++
++	// Force the horizontal scrollbar on (a nonzero horizontal offset makes
++	// hScrollActive report true), then repaint at the SAME bounds.
++	term.Terminal().Buffer().SetHorizOffset(1)
++	if term.Terminal().Buffer().GetHorizOffset() == 0 {
++		t.Skip("could not force a horizontal offset")
++	}
++	term.Paint(p)
++	_, rows2 := term.Terminal().GetSize()
++
++	if rows2 != baseRows {
++		t.Errorf("grid rows changed when the horizontal scrollbar became active: %d -> %d; "+
++			"the fitted grid must not depend on content (see the churn note in paintGraphical)",
++			baseRows, rows2)
++	}
++}
+-- 
+2.43.0
+

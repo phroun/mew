@@ -28,6 +28,7 @@ import (
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/kittytk/text"
 	"github.com/phroun/mew"
+	"github.com/phroun/purfecterm"
 )
 
 // Editor is the mew-backed editor trinket. It embeds *PurfecTerm (editor mode)
@@ -376,12 +377,15 @@ func (e *Editor) run() {
 		// laid over the viewport's text area. PurfecTerm is the emulator, so
 		// mew forwards raw bytes and never interprets them.
 		mew.WithTerminalSurfaces(mew.TerminalHooks{
-			Open:  e.terminalOpen,
-			Feed:  e.terminalFeed,
-			Place: e.terminalPlace,
-			Close: e.terminalClose,
-			Mouse: e.terminalMouse,
-			Key:   e.terminalKey,
+			Open:           e.terminalOpen,
+			SetLogicalSize: e.terminalSetLogicalSize,
+			Snapshot:       e.terminalSnapshot,
+			Feed:           e.terminalFeed,
+			Place:          e.terminalPlace,
+			Close:          e.terminalClose,
+			Mouse:          e.terminalMouse,
+			Key:            e.terminalKey,
+			SetCaptureSink: e.terminalSetCaptureSink,
 		}),
 		// The system-clipboard bridge behind mew's os_copy/os_cut/os_paste
 		// — the same desktop clipboard TextInput and the classic PurfecTerm
@@ -900,6 +904,23 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 		dir, _ = os.UserHomeDir()
 	}
 
+	// A request that wires any standard stream to a pipe is a FILTER, not a
+	// terminal: the child runs headless on ordinary pipes so mew can feed its
+	// stdin and read its stdout/stderr apart. This host handles the two pure
+	// cases — all-terminal (below) and all-pipe — and refuses a mix for now
+	// rather than half-wire it; the mixed pty+pipe case (a colourful stdout with
+	// a piped stderr) is representable in the request and a later host can add it.
+	if !stdioAllTerminal(req) {
+		if !stdioAllPipe(req) {
+			return nil, fmt.Errorf("this host cannot yet mix pty and pipe stdio")
+		}
+		// A filter child sees pipes, not a terminal: inherit the ambient
+		// environment unchanged. No TERM advertisement — isatty is false, so it
+		// will not colour anyway, and a bogus TERM would only mislead a program
+		// that checks it.
+		return newFilterSession(path, dir, os.Environ(), req.Args)
+	}
+
 	// Advertise the embedded terminal's identity to the child (last wins over any
 	// inherited TERM/TERM_PROGRAM). TERM must name a terminfo entry that actually
 	// exists on the host: PurfectermTerm ("xterm-purfecterm") has none, so
@@ -924,6 +945,22 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// Input written to the child wakes its caret: mew owns this session, so
 	// the trinket's own input path never sees it. See editor_mew_blink.go.
 	return e.wakeOnWrite(sess), nil
+}
+
+// stdioAllTerminal reports whether every standard stream is wired to the
+// session's pseudo-terminal — the historical terminal session and the zero value.
+func stdioAllTerminal(req mew.PTYRequest) bool {
+	return req.Stdin == mew.StreamTerminal &&
+		req.Stdout == mew.StreamTerminal &&
+		req.Stderr == mew.StreamTerminal
+}
+
+// stdioAllPipe reports whether every standard stream is wired to its own pipe —
+// a headless filter child.
+func stdioAllPipe(req mew.PTYRequest) bool {
+	return req.Stdin == mew.StreamPipe &&
+		req.Stdout == mew.StreamPipe &&
+		req.Stderr == mew.StreamPipe
 }
 
 // localPathFromURL turns a canonical file:// URL back into an OS path, or
@@ -966,12 +1003,41 @@ type termSurface struct {
 	// Where the grid sits, and what part of it is visible. Usually identical;
 	// they differ when the viewport is partially obscured or scrolled, and the
 	// surface then draws at its own origin with only the intersection shown.
+	// This is the PRIMARY placement — the canonical/focused tile, which sizes the
+	// grid (SetBounds) and hosts the live child.
 	col, row              int
 	width, height         int
 	clipCol, clipRow      int
 	clipWidth, clipHeight int
 	// focused: this surface owns the platform caret this frame.
 	focused bool
+	// mirrors are the session's OTHER tiles (tiles↔viewports is many-to-many):
+	// the same child grid painted read-only into each, clipped/letterboxed, with
+	// no SetBounds — so a mirror's size never resizes the grid.
+	mirrors []termRect
+	// pinnedTile is the tile a scrollbar drag began in. The child caches ONE
+	// gfx frame (the last tile painted), so a drag/hover has to restore the
+	// frame of the tile it is happening in before the child hit-tests — and a
+	// drag keeps the tile it started in even as the pointer wanders out of it.
+	pinnedTile tileGeom
+}
+
+// tileGeom is a tile's placement in this editor's 1-based cells — enough to
+// recompute the child's paint frame for that tile at mouse time (a lockstep
+// child's frame is pure pitch, so no painter is needed). The zero value is
+// invalid.
+type tileGeom struct {
+	col, row      int
+	width, height int
+	valid         bool
+}
+
+// termRect is one mirror placement of a session's grid, in 1-based cells.
+type termRect struct {
+	col, row              int
+	width, height         int
+	clipCol, clipRow      int
+	clipWidth, clipHeight int
 }
 
 // terminalOpen creates the child for a new session. Called on mew's main loop.
@@ -982,6 +1048,13 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	t := NewPurfecTerm()
 	t.Init(t)
 	t.SetEditorMode(false)
+	// This child paints its own cell pitch into a clip this editor cuts at that
+	// same pitch (paintTerminalSurfaces measures the clip with the terminal
+	// font's stride, not the host cell grid). Left to measure its width against
+	// the host grid it would overshoot the pitch at fractional zoom — gaining
+	// phantom columns and snapping its scrollbar lane clean past the clip, so no
+	// bar shows. Lockstep it to its own pitch, which is what the clip guarantees.
+	t.SetLockstepPitch(true)
 	// PARENTED, though never added to any container: the child is painted and
 	// fed events by this editor alone. The parent link is for the lookups
 	// that walk it — FindGraphicalFrames (which turns on the whole graphical
@@ -1021,6 +1094,196 @@ func (e *Editor) terminalOpen(id string, cols, rows int) {
 	}
 	e.termSurfaces[id] = &termSurface{term: t}
 	e.termMu.Unlock()
+}
+
+// terminalSetLogicalSize backs mew's SetLogicalSize hook. It pins the child
+// terminal's LOGICAL size — the size the child is told it has, independent of
+// the visible tile — so a --size or --minimum session renders that many cells
+// and scrolls, rather than reflowing to the pane. cols,rows of 0 mean "follow
+// the visible surface", which is exactly purfecterm's own "use physical" (0)
+// convention, so it maps straight through. purfecterm names the size as
+// (rows, cols); mew's hook gives (cols, rows). The per-frame physical fit
+// (updateTerminalSize) leaves the logical size alone, so this holds until mew
+// changes it.
+func (e *Editor) terminalSetLogicalSize(id string, cols, rows int) {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return
+	}
+	if buf := t.Buffer(); buf != nil {
+		buf.SetLogicalSize(rows, cols)
+	}
+}
+
+// terminalSnapshot backs mew's Snapshot hook: the session's scrollback as text,
+// folded into the buffer when the session ends. ansi keeps the full escape/SGR
+// stream (colour, layout); otherwise it is plain text with the sequences
+// stripped. purfecterm serializes both forms — SaveScrollbackANS keeps the
+// stream, SaveScrollbackText strips it — so ansi is just that choice.
+//
+// A capture always trims the empty tail of the screen grid: a session that used
+// only the top rows should not fold the blank rest of the screen in as empty
+// lines. (The ANS form still carries its full reload payload; only the blank
+// content lines drop.)
+func (e *Editor) terminalSnapshot(id string, ansi bool) string {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return ""
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return ""
+	}
+	opts := purfecterm.ScrollbackSaveOptions{TrimTrailingBlankLines: true}
+	if ansi {
+		return t.SaveScrollbackANSOpts(opts)
+	}
+	return t.SaveScrollbackTextOpts(opts)
+}
+
+// captureRelay forwards a session's purfecterm capture events across the
+// embedded seam to a mew CaptureSink. It embeds NopCaptureObserver so events
+// added to CaptureObserver later stay no-ops here until this relay forwards
+// them too. wantsLines gates the per-line serialization so a raw session never
+// pays for it.
+type captureRelay struct {
+	purfecterm.NopCaptureObserver
+	sink       mew.CaptureSink
+	wantsLines bool
+	wantsLive  bool
+}
+
+func (r captureRelay) OnOutput(data []byte) { r.sink.Output(data) }
+
+func (r captureRelay) OnLineOff(line []purfecterm.Cell, info purfecterm.LineInfo) {
+	if r.wantsLines {
+		r.sink.LineOff(purfecterm.SerializeLineANS(line, info))
+	}
+}
+
+// The live-rung structural events, forwarded to the sink only for a live
+// session. purfecterm already flushes any pending write-run before each
+// structural event and at end of feed, so the order the sink sees matches the
+// screen's.
+func (r captureRelay) OnWrite(x, y int, text, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveWrite(x, y, text, sgr)
+	}
+}
+func (r captureRelay) OnCursorMove(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveCursorMove(x, y)
+	}
+}
+func (r captureRelay) OnNewline(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveNewline(x, y)
+	}
+}
+func (r captureRelay) OnLineWrap(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveLineWrap(x, y)
+	}
+}
+func (r captureRelay) OnBackspace(x, y int) {
+	if r.wantsLive {
+		r.sink.LiveBackspace(x, y)
+	}
+}
+func (r captureRelay) OnScrollLineOff(n int) {
+	if r.wantsLive {
+		r.sink.LiveScrollLineOff(n)
+	}
+}
+func (r captureRelay) OnClearScreen(sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearScreen(sgr)
+	}
+}
+func (r captureRelay) OnClearEndOfLine(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearEndOfLine(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearBeginOfLine(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearBeginOfLine(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearLine(y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearLine(y, sgr)
+	}
+}
+func (r captureRelay) OnClearEndOfScreen(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearEndOfScreen(x, y, sgr)
+	}
+}
+func (r captureRelay) OnClearBeginOfScreen(x, y int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveClearBeginOfScreen(x, y, sgr)
+	}
+}
+func (r captureRelay) OnDeleteChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveDeleteChars(x, y, n, sgr)
+	}
+}
+func (r captureRelay) OnInsertChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveInsertChars(x, y, n, sgr)
+	}
+}
+func (r captureRelay) OnEraseChars(x, y, n int, sgr string) {
+	if r.wantsLive {
+		r.sink.LiveEraseChars(x, y, n, sgr)
+	}
+}
+
+// terminalSetCaptureSink backs mew's SetCaptureSink hook: point a session's
+// purfecterm CaptureObserver at the mew sink so the terminal's output is relayed
+// across the seam, or clear it when sink is nil. Runs on the same loop as
+// terminalFeed, so the events land on mew's main loop in feed order.
+func (e *Editor) terminalSetCaptureSink(id string, sink mew.CaptureSink) {
+	e.termMu.Lock()
+	s := e.termSurfaces[id]
+	e.termMu.Unlock()
+	if s == nil || s.term == nil {
+		return
+	}
+	t := s.term.Terminal()
+	if t == nil {
+		return
+	}
+	if sink == nil {
+		// End of session: flush the on-screen tail (content that never scrolled
+		// off) as OnLineOff events to the still-registered relay, then clear.
+		// Harmless for a raw relay, which ignores line events. The live mirror
+		// already reflects the final screen in place, so it needs no flush.
+		t.EmitRemainingCaptureLines()
+		t.SetCaptureObserver(nil)
+		t.SetCaptureLive(false)
+		return
+	}
+	wantsLines := false
+	if lc, ok := sink.(interface{ WantsLines() bool }); ok {
+		wantsLines = lc.WantsLines()
+	}
+	wantsLive := false
+	if lc, ok := sink.(interface{ WantsLive() bool }); ok {
+		wantsLive = lc.WantsLive()
+	}
+	t.SetCaptureObserver(captureRelay{sink: sink, wantsLines: wantsLines, wantsLive: wantsLive})
+	t.SetCaptureLive(wantsLive)
 }
 
 // terminalFeed hands a session's bytes to its child, verbatim — this is where
@@ -1063,12 +1326,25 @@ func (e *Editor) terminalPlace(surfaces []mew.TerminalSurface) {
 	for _, s := range e.termSurfaces {
 		s.width, s.height, s.clipWidth, s.clipHeight = 0, 0, 0, 0
 		s.focused = false
+		s.mirrors = s.mirrors[:0]
 	}
 	for _, want := range surfaces {
 		s := e.termSurfaces[want.ID]
 		if s == nil {
 			continue
 		}
+		if !want.Primary {
+			// A mirror: the same grid drawn read-only into another tile. Recorded
+			// for the paint, but never sizes the child (no SetBounds).
+			s.mirrors = append(s.mirrors, termRect{
+				col: want.Col, row: want.Row, width: want.Width, height: want.Height,
+				clipCol: want.ClipCol, clipRow: want.ClipRow,
+				clipWidth: want.ClipWidth, clipHeight: want.ClipHeight,
+			})
+			continue
+		}
+		// The primary owns the emulator: its rectangle sizes the grid and hosts
+		// the live child.
 		s.col, s.row = want.Col, want.Row
 		s.width, s.height = want.Width, want.Height
 		s.clipCol, s.clipRow = want.ClipCol, want.ClipRow
@@ -1161,12 +1437,21 @@ func (e *Editor) HandleMouseRelease(ev core.MouseReleaseEvent) bool {
 	return e.PurfecTerm.HandleMouseRelease(ev)
 }
 
-// preciseHostedLocal converts the remembered pointer into the CHILD's local
-// units, provided it still agrees with the cell mew reported — the wire and
-// the memory are updated by the same gesture, but they travel different
-// paths, so the cell is the consistency check. Reports false when the
-// pointer is stale or elsewhere, and the caller falls back to cell centers.
-func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.Unit, ev mew.TerminalMouse) (core.Unit, core.Unit, bool) {
+// preciseHostedLocal reduces the remembered pointer to its SUB-CELL FRACTION
+// within the cell mew reported, provided the two still agree — the wire and
+// the memory are updated by the same gesture but travel different paths, so
+// the cell is the consistency check. Reports false when the pointer is stale
+// or elsewhere, and the caller falls back to cell centers.
+//
+// It returns a fraction, not a coordinate, on purpose. The remembered pointer
+// lives in the HOST's frame (outer editor units); the child paints in its OWN
+// frame (its ppu, its hitKX at fractional zoom). Feeding the host-frame pointer
+// straight into the child's hit test scaled it by the wrong rate and drifted
+// the inner selection whole columns to the right — the outer cell was right,
+// the inner one landed off. The cell mew resolved is authoritative; all the
+// precise pointer adds is WHERE INSIDE that cell the hand sits, which the child
+// then reproduces in its own frame via cellToLocal.
+func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.Unit, ev mew.TerminalMouse) (fracX, fracY float64, ok bool) {
 	if !valid || cw <= 0 || ch <= 0 {
 		return 0, 0, false
 	}
@@ -1194,7 +1479,74 @@ func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.
 	if dx < -1 || dx > 1 || dy < -1 || dy > 1 {
 		return 0, 0, false
 	}
-	return lx, ly, true
+	// The offset within the WIRE cell, as a fraction of a cell. Clamped to the
+	// cell: a pointer that ran a little past the wire (the ±1 slack above)
+	// contributes its edge, not a leak into the neighbour — the wire cell, not
+	// the stale pointer, decides which cell.
+	fracX = clampUnitFrac(float64(lx)/float64(cw) - float64(ev.Col-1))
+	fracY = clampUnitFrac(float64(ly)/float64(ch) - float64(ev.Row-1))
+	return fracX, fracY, true
+}
+
+// clampUnitFrac holds a sub-cell fraction inside [0,1). The upper bound is
+// exclusive so the fraction never reaches the next cell's origin.
+func clampUnitFrac(f float64) float64 {
+	if f < 0 {
+		return 0
+	}
+	if f > 0.999 {
+		return 0.999
+	}
+	return f
+}
+
+// hostedTileAt returns the tile of surface s that the pointer (px,py, this
+// editor's units) sits in — the primary or one of its mirrors. The child is
+// shown in each at a different size, and the scrollbar's track height is the
+// TILE's, so an interaction has to know which one. Falls back to the primary
+// when the pointer is invalid or over no tile (a wheel with no motion, say).
+// Caller holds termMu.
+func (e *Editor) hostedTileAt(s *termSurface, px, py core.Unit, pvalid bool, cw, ch core.Unit) tileGeom {
+	primary := tileGeom{s.col, s.row, s.width, s.height, s.clipWidth > 0 && s.clipHeight > 0}
+	if !pvalid || cw <= 0 || ch <= 0 {
+		return primary
+	}
+	in := func(col, row, w, h int) bool {
+		if w <= 0 || h <= 0 {
+			return false
+		}
+		x0 := core.Unit(col-1) * cw
+		y0 := core.Unit(row-1) * ch
+		return px >= x0 && px < x0+core.Unit(w)*cw && py >= y0 && py < y0+core.Unit(h)*ch
+	}
+	if primary.valid && in(s.col, s.row, s.width, s.height) {
+		return primary
+	}
+	for _, m := range s.mirrors {
+		if m.clipWidth > 0 && m.clipHeight > 0 && in(m.col, m.row, m.width, m.height) {
+			return tileGeom{m.col, m.row, m.width, m.height, true}
+		}
+	}
+	return primary
+}
+
+// applyHostedTileFrame restores the child's cached paint frame to a given tile,
+// so the scrollbar hit test and track height come out as that tile's — not the
+// last tile that happened to paint. A hosted child locksteps to its own pitch,
+// so the frame is exactly round(units*ppu) with no host-grid snap (hitK = 1);
+// that is what paintGraphical computed for this tile, reproduced here without a
+// painter. ppu is cached from the last paint and is the same for every tile.
+func (e *Editor) applyHostedTileFrame(t *PurfecTerm, g tileGeom, cw, ch core.Unit) {
+	if !g.valid || !t.gfx.lockstepPitch {
+		return // non-lockstep: leave the cached frame (never the hosted case)
+	}
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		return
+	}
+	t.gfx.vpWpx = math.Round(float64(core.Unit(g.width)*cw) * ppu)
+	t.gfx.vpHpx = math.Round(float64(core.Unit(g.height)*ch) * ppu)
+	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 }
 
 // terminalMouse hands one mouse event to the session's child terminal AS THE
@@ -1215,6 +1567,11 @@ func preciseHostedLocal(px, py core.Unit, valid bool, col, row int, cw, ch core.
 // collects them while draining is set; they return to mew, which writes them
 // to the session. One event in, bytes out, one door.
 func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
+	cw, ch := e.cellDims()
+	e.ptrMu.Lock()
+	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
+	e.ptrMu.Unlock()
+
 	e.termMu.Lock()
 	s := e.termSurfaces[id]
 	if s == nil || s.term == nil {
@@ -1224,20 +1581,35 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	s.draining = true
 	s.pending = nil
 	t := s.term
-	col, row := s.col, s.row
+	// Which tile is this event in? A scrollbar drag already under way keeps the
+	// tile it began in (the pointer may have wandered out); otherwise it is the
+	// tile the remembered pointer sits in. The child caches ONE gfx frame, so
+	// without this the scrollbar's track height and lane column are whichever
+	// tile painted last, not the one being used.
+	g := s.pinnedTile
+	if !((t.gfx.vDragging || t.gfx.hDragging) && g.valid) {
+		g = e.hostedTileAt(s, px, py, pvalid, cw, ch)
+	}
+	col, row := g.col, g.row
 	e.termMu.Unlock()
 
-	// The precise pointer, if it still agrees with the cell the wire
-	// carried — see preciseHostedLocal. Cell centers otherwise.
-	e.ptrMu.Lock()
-	px, py, pvalid := e.ptrX, e.ptrY, e.ptrValid
-	e.ptrMu.Unlock()
-	cw, ch := e.cellDims()
-	lx, ly, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
+	// Restore this tile's frame before the child hit-tests, then hand it the
+	// precise pointer (in this tile's local units) or the wire cell's center.
+	e.applyHostedTileFrame(t, g, cw, ch)
+	fracX, fracY, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
 
-	handled := dispatchHostedMouse(t, ev, lx, ly, precise)
+	handled := dispatchHostedMouse(t, ev, fracX, fracY, precise)
 
 	e.termMu.Lock()
+	// Pin the tile for the life of a scrollbar drag it just started; drop the
+	// pin once the drag ends, so a later hover re-resolves the tile.
+	if t.gfx.vDragging || t.gfx.hDragging {
+		if !s.pinnedTile.valid {
+			s.pinnedTile = g
+		}
+	} else {
+		s.pinnedTile = tileGeom{}
+	}
 	data := s.pending
 	s.pending = nil
 	s.draining = false
@@ -1399,15 +1771,28 @@ func pawBytesLiteral(b []byte) string {
 // handler. The cell becomes units at the MIDDLE of the cell — these feed hit
 // tests, and an event on a boundary lands on neither side of it. Screen
 // coordinates equal local ones, so the wheel latch's offsets come out zero.
-func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseX, preciseY core.Unit, precise bool) bool {
-	cw, ch := t.cellDims()
-	x := core.Unit(ev.Col-1)*cw + cw/2
-	y := core.Unit(ev.Row-1)*ch + ch/2
-	// mew's wire carries CELLS; the host remembered the precise pointer as
-	// it passed through (see notePointer). Sub-cell position is what makes a
-	// scrollbar scrub track the hand instead of lurching a cell at a time.
+func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseFracX, preciseFracY float64, precise bool) bool {
+	// mew's wire carries a CHILD cell. Place the synthetic pointer at that cell's
+	// CENTER in the child's OWN hit-test frame — cellToLocal is the documented
+	// inverse of screenToCellGfx, so it carries the child's unit->pixel scale
+	// (its ppu, and hitKX at fractional zoom). Computing the center as
+	// (col-1)*cw + cw/2 in raw cell units skipped that scale, so the child's hit
+	// test re-derived a cell one or more columns to the RIGHT of the wire cell:
+	// the outer cell was right, the inner selection landed off.
+	o := t.cellToLocal(ev.Col, ev.Row)
+	o2 := t.cellToLocal(ev.Col+1, ev.Row+1)
+	x := (o.X + o2.X) / 2
+	y := (o.Y + o2.Y) / 2
+	// The host remembered the precise pointer as it passed through (see
+	// notePointer / preciseHostedLocal). It arrives here as a SUB-CELL FRACTION
+	// within this same wire cell — placed against the cell's own span in the
+	// CHILD's frame, so the sub-cell offset that makes a scrollbar scrub track
+	// the hand survives while the cell stays the one mew resolved. Feeding the
+	// host-frame pointer straight in scaled it by the wrong rate and walked the
+	// inner selection columns off at fractional zoom.
 	if precise {
-		x, y = preciseX, preciseY
+		x = o.X + core.Unit(math.Round(preciseFracX*float64(o2.X-o.X)))
+		y = o.Y + core.Unit(math.Round(preciseFracY*float64(o2.Y-o.Y)))
 	}
 	btn := termMouseButton(ev.Button)
 	var mods core.KeyModifiers
@@ -1606,50 +1991,61 @@ func (e *Editor) paintTerminalSurfaces(p *core.Painter) {
 		return want - p.UnitSpanPxY(0, unitPos)
 	}
 
-	for _, s := range visible {
-		x, y := cell(s.col, s.row)
-		w := core.Unit(s.width) * cw
-		h := core.Unit(s.height) * ch
-		s.term.SetBounds(core.UnitRect{X: x, Y: y, Width: w, Height: h})
-		offXPx := residual(x, s.col-1, cw)
-		offYPx := residualY(y, s.row-1, ch)
-		e.lastSurfaceOffsetX, e.lastSurfaceOffsetY = offXPx, offYPx
+	pxAtX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
+	pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
 
-		// The painter is offset to the GRID's origin, so the terminal draws
-		// from its own 0,0 — but clipped to the visible rectangle expressed
-		// relative to that origin.
-		//
-		// The clip has the SAME two-rates problem the origin had, on ALL FOUR
-		// edges. The clip is expressed in units and the backend snaps each
-		// edge to ITS cell grid, while the content runs at the terminal
-		// pitch, origin-corrected — so wherever the snapped rate exceeds the
-		// terminal rate the content sits LEFT of (and above) the snapped
-		// unit position, and a clip anchored on that position shaves the
-		// content's first column and first row. In the ordinary case, where
-		// the clip IS the surface rect, its top-left must never cut content
-		// at all.
-		//
-		// So each edge is chosen for where it SNAPS: left/top are the
-		// nearest unit positions whose snapped pixel lands at or before the
-		// content's pixel edge, right/bottom at or after. Out-rounding is
-		// safe on every side — a child paints nothing beyond its own grid,
-		// so spare clip goes unused, while a clip that falls short cuts real
-		// pixels. The pixel targets carry a one-pixel pad for the child's
-		// own per-edge rounding (it rounds each cell edge independently).
-		pxAtX := func(cells int) int { return int(math.Round(float64(cells) * float64(cw) * ppu)) }
-		pxAtY := func(cells int) int { return int(math.Round(float64(cells) * float64(ch) * ppu)) }
-		leftU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1)*cw, pxAtX(s.clipCol-1)-1, ppu, false)
-		rightU := snapCover(p.UnitSpanPxX, core.Unit(s.clipCol-1+s.clipWidth)*cw, pxAtX(s.clipCol-1+s.clipWidth)+1, ppu, true)
-		topU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1)*ch, pxAtY(s.clipRow-1)-1, ppu, false)
-		bottomU := snapCover(p.UnitSpanPxY, core.Unit(s.clipRow-1+s.clipHeight)*ch, pxAtY(s.clipRow-1+s.clipHeight)+1, ppu, true)
-		e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
-		clip := core.UnitRect{
-			X:      leftU - x,
-			Y:      topU - y,
-			Width:  rightU - leftU,
-			Height: bottomU - topU,
+	// paintRect draws one placement of a session's grid. primary=true SIZES the
+	// grid (SetBounds resizes) and records the surface's hit-test frame;
+	// primary=false is a MIRROR — the same grid drawn at another tile, bounded to
+	// that tile's rectangle but WITHOUT resizing the grid (PaintMirror sets the
+	// bounds under the mirror flag). A mirror smaller than the grid clips at its
+	// own edge; larger, it letterboxes (the child paints nothing past its grid).
+	//
+	// The painter is offset to the GRID's origin so the terminal draws from its
+	// own 0,0, clipped to the visible rectangle relative to that origin. The clip
+	// has a two-rates problem on all four edges — it is expressed in units the
+	// backend snaps to ITS cell grid, while the content runs at the terminal
+	// pitch — so each edge is chosen for where it SNAPS: left/top at or before the
+	// content's pixel edge, right/bottom at or after (out-rounding is safe; a
+	// child paints nothing beyond its grid).
+	paintRect := func(term *PurfecTerm, col, row, width, height, clipCol, clipRow, clipWidth, clipHeight int, primary bool) {
+		x, y := cell(col, row)
+		bnds := core.UnitRect{X: x, Y: y, Width: core.Unit(width) * cw, Height: core.Unit(height) * ch}
+		if primary {
+			term.SetBounds(bnds)
 		}
-		s.term.Paint(p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx))
+		offXPx := residual(x, col-1, cw)
+		offYPx := residualY(y, row-1, ch)
+		leftU := snapCover(p.UnitSpanPxX, core.Unit(clipCol-1)*cw, pxAtX(clipCol-1)-1, ppu, false)
+		rightU := snapCover(p.UnitSpanPxX, core.Unit(clipCol-1+clipWidth)*cw, pxAtX(clipCol-1+clipWidth)+1, ppu, true)
+		topU := snapCover(p.UnitSpanPxY, core.Unit(clipRow-1)*ch, pxAtY(clipRow-1)-1, ppu, false)
+		bottomU := snapCover(p.UnitSpanPxY, core.Unit(clipRow-1+clipHeight)*ch, pxAtY(clipRow-1+clipHeight)+1, ppu, true)
+		if primary {
+			// Only the primary records where the live terminal sits — mouse
+			// hit-testing routes to it; a mirror is display-only.
+			e.lastSurfaceOffsetX, e.lastSurfaceOffsetY = offXPx, offYPx
+			e.lastClipFrame = core.UnitRect{X: leftU, Y: topU, Width: rightU - leftU, Height: bottomU - topU}
+		}
+		clip := core.UnitRect{X: leftU - x, Y: topU - y, Width: rightU - leftU, Height: bottomU - topU}
+		pp := p.WithOffset(x, y).WithClip(clip).WithPixelOffset(offXPx, offYPx)
+		if primary {
+			term.Paint(pp)
+		} else {
+			// A mirror renders read-only, never claims the platform caret, and is
+			// bounded to ITS OWN rectangle so a short pane stops at its edge
+			// instead of running the (larger) primary grid past it.
+			term.PaintMirror(pp, bnds)
+		}
+	}
+
+	for _, s := range visible {
+		paintRect(s.term, s.col, s.row, s.width, s.height, s.clipCol, s.clipRow, s.clipWidth, s.clipHeight, true)
+		for _, m := range s.mirrors {
+			if m.clipWidth <= 0 || m.clipHeight <= 0 {
+				continue
+			}
+			paintRect(s.term, m.col, m.row, m.width, m.height, m.clipCol, m.clipRow, m.clipWidth, m.clipHeight, false)
+		}
 	}
 	// A child settles its grid during that paint. Make sure the declaration
 	// gets away even if the session's port was not up when it did.

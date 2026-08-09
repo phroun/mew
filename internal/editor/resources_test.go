@@ -22,30 +22,30 @@ func TestMewVFSLayeredReads(t *testing.T) {
 	v := &mewVFS{fs: osFileSystem{}, localRoot: userRoot, sysDirs: []string{sysDir}}
 
 	// Absent from user + system: served from the embedded tree.
-	if data, err := v.ReadFile("mew:///help/start.txt"); err != nil ||
+	if data, err := v.ReadFile("box:///help/start.txt"); err != nil ||
 		!strings.Contains(string(data), "mew Help") {
 		t.Fatalf("embedded help/start.txt not served: %v", err)
 	}
 	// Present in system only: served from the system layer.
-	if data, err := v.ReadFile("mew:///help/sys.txt"); err != nil ||
+	if data, err := v.ReadFile("box:///help/sys.txt"); err != nil ||
 		strings.TrimSpace(string(data)) != "from system" {
 		t.Fatalf("system help/sys.txt not served: %v %q", err, data)
 	}
 	// The real go.jsf (embedded) is shadowed by the system copy.
-	if data, err := v.ReadFile("mew:///syntax/go.jsf"); err != nil ||
+	if data, err := v.ReadFile("box:///syntax/go.jsf"); err != nil ||
 		!strings.Contains(string(data), "SYSTEM GO GRAMMAR") {
 		t.Fatalf("system syntax/go.jsf should shadow embedded: %v", err)
 	}
 
 	// The user layer shadows both system and embedded.
 	mustWrite(t, filepath.Join(userRoot, "help", "start.txt"), "MY START\n")
-	if data, err := v.ReadFile("mew:///help/start.txt"); err != nil ||
+	if data, err := v.ReadFile("box:///help/start.txt"); err != nil ||
 		strings.TrimSpace(string(data)) != "MY START" {
 		t.Fatalf("user layer should shadow: %v %q", err, data)
 	}
 
 	// A write only ever touches the user layer.
-	if err := v.WriteFile("mew:///help/sys.txt", []byte("shadowed now\n")); err != nil {
+	if err := v.WriteFile("box:///help/sys.txt", []byte("shadowed now\n")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(userRoot, "help", "sys.txt")); err != nil {
@@ -66,14 +66,14 @@ func TestMewVFSGlobUnions(t *testing.T) {
 
 	v := &mewVFS{fs: osFileSystem{}, localRoot: userRoot, sysDirs: []string{sysDir}}
 	got := map[string]bool{}
-	matches, err := v.Glob("mew:///help/*")
+	matches, err := v.Glob("box:///help/*")
 	if err != nil {
 		t.Fatalf("Glob: %v", err)
 	}
 	for _, m := range matches {
 		got[m] = true
 	}
-	for _, want := range []string{"mew:///help/mine.txt", "mew:///help/sys.txt", "mew:///help/start.txt"} {
+	for _, want := range []string{"box:///help/mine.txt", "box:///help/sys.txt", "box:///help/start.txt"} {
 		if !got[want] {
 			t.Fatalf("Glob missing %s; got %v", want, matches)
 		}

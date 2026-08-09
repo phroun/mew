@@ -126,6 +126,14 @@ type ScreenRenderer struct {
 	// terminal has its own scrollbar, and reserving a column would shrink
 	// its grid).
 	scrollbarSuppressed func(*viewport.Viewport) bool
+
+	// contentSuppressed, when set, reports a viewport whose DOCUMENT text must
+	// not paint — a terminal session's viewport. The host draws the terminal grid
+	// over the text area, but a grid too short or narrow to fill it would let the
+	// buffer behind show through; so mew paints the content area blank (in the
+	// text background) while keeping the gutter, ruler and scrollbar. The editor
+	// supplies it because session-ness lives on the buffer.
+	contentSuppressed func(*viewport.Viewport) bool
 }
 
 // SetScrollbarHostDrawn installs the predicate that reports whether a
@@ -143,6 +151,18 @@ func (sr *ScreenRenderer) hostDrawsScrollbars() bool {
 // scrollbar (see the scrollbarSuppressed field).
 func (sr *ScreenRenderer) SetScrollbarSuppressor(fn func(*viewport.Viewport) bool) {
 	sr.scrollbarSuppressed = fn
+}
+
+// SetContentSuppressor installs the predicate that blanks a viewport's document
+// text (see the contentSuppressed field) — a terminal session's viewport.
+func (sr *ScreenRenderer) SetContentSuppressor(fn func(*viewport.Viewport) bool) {
+	sr.contentSuppressed = fn
+}
+
+// contentBlanked reports whether w's document text must be painted blank this
+// frame (a terminal viewport).
+func (sr *ScreenRenderer) contentBlanked(w *viewport.Viewport) bool {
+	return sr.contentSuppressed != nil && sr.contentSuppressed(w)
 }
 
 // showScrollbar reports whether this viewport reserves its outer column for
@@ -218,6 +238,28 @@ func (sr *ScreenRenderer) physMargins(w *viewport.Viewport) (left, right int) {
 		return w.MarginOuter, w.MarginInner
 	}
 	return w.MarginInner, w.MarginOuter
+}
+
+// vpFrame returns the viewport's horizontal paint frame this present, in cells:
+// fx is the 0-based physical start column, fw the width. It honors the host-set
+// FrameX/FrameWidth (viewport.Viewport), clamped to the screen. The zero value
+// yields the full screen from the left edge (fx 0, fw sr.Width), so a viewport
+// that never sets a frame paints exactly as before. atRight reports whether the
+// frame reaches the screen's right edge — the only case in which the terminal's
+// unwritable bottom-right corner cell falls inside this viewport.
+func (sr *ScreenRenderer) vpFrame(w *viewport.Viewport) (fx, fw int, atRight bool) {
+	fx = w.FrameX
+	if fx < 0 {
+		fx = 0
+	}
+	if fx > sr.Width {
+		fx = sr.Width
+	}
+	fw = w.FrameWidth
+	if fw <= 0 || fx+fw > sr.Width {
+		fw = sr.Width - fx
+	}
+	return fx, fw, fx+fw == sr.Width
 }
 
 // SetBaseRTL sets the base text direction used for bidi line layout.
@@ -679,6 +721,17 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 	sr.renderViewportGroup(layout.MainLayout)
 	sr.renderViewportGroup(layout.BottomLayout)
 
+	// Make the FOCUSED tile canonical: painting leaves each viewport's geometry
+	// as whatever tile drew last, but a viewport shown in several tiles must rest
+	// on the FOCUSED tile's geometry — so the caret places correctly and keyboard
+	// paging (which reads the viewport's own ContentHeight after render) uses the
+	// pane the user is in. Done after painting, before the cursor is placed.
+	for i := range layout.MainLayout {
+		if layout.MainLayout[i].Focused {
+			layout.MainLayout[i].StampGeometry()
+		}
+	}
+
 	// Render peek indicators
 	sr.renderPeekIndicators(layout)
 
@@ -721,11 +774,58 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 // viewport whose stamp is older belongs to an earlier frame (a background main
 // not shown now) and mouse hit-testing must ignore it.
 func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout) {
-	allLayouts := append(append(layout.TopLayout, layout.MainLayout...), layout.BottomLayout...)
 	sr.layoutEpoch++
 
-	for _, wl := range allLayouts {
+	// Iterate the real layout slices by index (not a merged copy) so each tile's
+	// resolved content bounds can be written back onto its entry for the mouse.
+	for _, group := range [][]viewport.ViewportLayout{layout.TopLayout, layout.MainLayout, layout.BottomLayout} {
+		for i := range group {
+			sr.updateTileContentProperties(&group[i])
+		}
+	}
+
+	// Clamp each viewport's scroll offset ONCE, against its GOVERNING tile — the
+	// focused one when it has focus, else its last-laid-out tile. The "show at
+	// most one ~ line past the end" rule then follows the current pane: a
+	// viewport shown in a tall tile and a short one lets the SHORT (focused) pane
+	// scroll to its own bottom instead of being pinned by the tall one. Clamping
+	// per-tile in the loop above would let the tallest tile win.
+	governing := map[*viewport.Viewport]*viewport.ViewportLayout{}
+	for _, group := range [][]viewport.ViewportLayout{layout.TopLayout, layout.MainLayout, layout.BottomLayout} {
+		for i := range group {
+			w := group[i].Viewport
+			if w == nil {
+				continue
+			}
+			if governing[w] == nil || group[i].Focused {
+				governing[w] = &group[i]
+			}
+		}
+	}
+	for w, g := range governing {
+		if w.Buffer != nil && g.ContentHeight > 0 {
+			if max := viewport.MaxScrollTop(g.ContentHeight, w.Buffer.GetLineCount()); w.ViewState.ViewOffsetY > max {
+				w.SetViewTop(max)
+			}
+		}
+	}
+}
+
+// updateTileContentProperties resolves one tile's content geometry: it applies
+// the tile's frame to the viewport, derives the content rectangle (frame minus
+// ruler and message bars, gutter and scrollbar), and records the content rows
+// back onto the tile entry so a viewport shown in several tiles is hit-testable
+// in each.
+func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayout) {
+	{
 		w := wl.Viewport
+
+		// Content properties derive from THIS tile's frame (geometry lives with
+		// the tile). Apply it before anything below reads vpFrame(w). For a
+		// viewport shown in several tiles the last tile wins the stamped values,
+		// which the mouse hit-test then reads for the single-tile case.
+		w.FrameX = wl.FrameX
+		w.FrameWidth = wl.FrameWidth
 
 		w.LayoutEpoch = sr.layoutEpoch
 		w.ContentY = wl.Y
@@ -770,6 +870,10 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		if w.ViewState.ShowLineNumbers {
 			lineNumWidth = w.LineNumWidth
 		}
+		// The viewport's horizontal paint frame (host-set; full screen by
+		// default). All physical columns below are measured within it.
+		fx, fw, atRight := sr.vpFrame(w)
+
 		// The vertical scrollbar reserves the OUTER physical column — the
 		// rightmost in LTR, the leftmost in RTL — outside the margins.
 		w.ScrollbarX = -1
@@ -779,32 +883,34 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 			sbw = 1
 			w.ScrollbarTrackH = w.ContentHeight
 			if sr.winRTL(w) {
-				w.ScrollbarX = 0
+				w.ScrollbarX = fx
 			} else {
-				w.ScrollbarX = sr.Width - 1
+				w.ScrollbarX = fx + fw - 1
 				// The screen's bottom-right CELL can never be written (it
 				// scrolls the terminal), so an LTR bar reaching the bottom
 				// screen row gives that cell up as its corner: the track is
 				// one row shorter and the thumb bottoms out on the
 				// second-to-last row instead of clipping into the corner.
+				// Only a frame that reaches the screen's right edge touches
+				// that corner cell; a narrower frame's bar never does.
 				//
 				// That is a terminal's problem alone. A host drawing the bar
 				// in pixels has no such cell and no wrap to provoke, so its
 				// track runs the full height — giving up a row there would
 				// just be a gap at the bottom of every bar.
-				if w.ContentY+w.ContentHeight == sr.Height && !sr.hostDrawsScrollbars() {
+				if atRight && w.ContentY+w.ContentHeight == sr.Height && !sr.hostDrawsScrollbars() {
 					w.ScrollbarTrackH--
 				}
 			}
 		}
 		marginL, _ := sr.physMargins(w)
-		w.ContentWidth = sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
+		w.ContentWidth = fw - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 		if sr.winRTL(w) {
 			// The gutter mirrors to the right side; content starts after the
 			// scrollbar column and the physical left margin.
-			w.ContentX = marginL + sbw
+			w.ContentX = fx + marginL + sbw
 		} else {
-			w.ContentX = marginL + lineNumWidth
+			w.ContentX = fx + marginL + lineNumWidth
 		}
 
 		// The scroll offset is only ever CHECKED against the page on its way in
@@ -821,20 +927,47 @@ func (sr *ScreenRenderer) updateViewportContentProperties(layout viewport.Layout
 		//   - the offset was set before any layout existed, when ContentHeight
 		//     was 0 and there was no page to measure it against.
 		//
-		// Only ever downward, so a legal offset is never disturbed, and the
-		// document's own end is the only thing that moves it.
-		if w.Buffer != nil && w.ContentHeight > 0 {
-			if max := viewport.MaxScrollTop(w.ContentHeight, w.Buffer.GetLineCount()); w.ViewState.ViewOffsetY > max {
-				w.SetViewTop(max)
-			}
-		}
+		// The scroll offset is clamped once per viewport below, against its
+		// GOVERNING (focused) tile — not here per-tile, where the tallest of a
+		// viewport's tiles would win and pull the view back so the shortest pane
+		// can't reach its own bottom.
+
+		// Record the resolved content rectangle and scrollbar column onto the tile
+		// entry, so mouse handling can tell which tile a click hit — and map the
+		// cell (or grab the scrollbar) with that tile's geometry — even when one
+		// viewport is shown in several tiles (its own fields hold only the last
+		// tile's).
+		wl.ContentX = w.ContentX
+		wl.ContentY = w.ContentY
+		wl.ContentWidth = w.ContentWidth
+		wl.ContentHeight = w.ContentHeight
+		wl.ScrollbarX = w.ScrollbarX
+		wl.ScrollbarTrackH = w.ScrollbarTrackH
 	}
 }
 
 // renderViewportGroup renders a group of viewports.
 func (sr *ScreenRenderer) renderViewportGroup(layouts []viewport.ViewportLayout) {
 	for _, wl := range layouts {
-		sr.renderViewport(wl.Viewport, wl.Y+1, wl.Height)
+		// Apply this tile's geometry to the viewport before painting it. Geometry
+		// lives with the tile (updateTileContentProperties stamps it onto wl), so a
+		// viewport shown in several tiles paints each at its own frame; rendering is
+		// sequential, so the viewport's fields are always the tile currently being
+		// drawn. The frame alone is not enough: the scrollbar draw reads
+		// ScrollbarTrackH/ContentHeight, and left at the last tile's values a tall
+		// tile drew the short tile's bar (its lower half unrendered) and the drag,
+		// which resolves per tile, disagreed with the paint. Restore the per-tile
+		// content and scrollbar geometry too.
+		w := wl.Viewport
+		w.FrameX = wl.FrameX
+		w.FrameWidth = wl.FrameWidth
+		w.ContentX = wl.ContentX
+		w.ContentY = wl.ContentY
+		w.ContentWidth = wl.ContentWidth
+		w.ContentHeight = wl.ContentHeight
+		w.ScrollbarX = wl.ScrollbarX
+		w.ScrollbarTrackH = wl.ScrollbarTrackH
+		sr.renderViewport(w, wl.Y+1, wl.Height)
 	}
 }
 
@@ -843,18 +976,23 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 	messagesColor := sr.col(w, "messages")
 	resetColor := sr.col(w, "reset")
 
+	// The viewport's horizontal paint frame (host-set; full screen by default).
+	// Rows start at physical column 1+fx and are fw cells wide.
+	fx, fw, _ := sr.vpFrame(w)
+
 	// Check for custom renderer
 	if w.CustomRenderer != "" {
 		if renderer, ok := sr.customRenderers[w.CustomRenderer]; ok {
-			// Record the bar's screen geometry (it writes from column 1) so the
-			// editor can hit-test clicks on it — e.g. the modebar's nav-history
-			// buttons. A custom-rendered chrome viewport has no Buffer, so this
-			// never affects content hit-testing (viewportAtRow requires a buffer).
-			w.ContentX = 0
+			// Record the bar's screen geometry (it writes from column 1+fx) so
+			// the editor can hit-test clicks on it — e.g. the modebar's
+			// nav-history buttons. A custom-rendered chrome viewport has no
+			// Buffer, so this never affects content hit-testing (viewportAtRow
+			// requires a buffer).
+			w.ContentX = fx
 			w.ContentY = startY - 1
 			w.ContentHeight = height
-			sr.MoveCursor(1, startY)
-			content := renderer(w, sr.Width)
+			sr.MoveCursor(1+fx, startY)
+			content := renderer(w, fw)
 			sr.Write(content)
 			return
 		}
@@ -866,8 +1004,8 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 
 	// Column ruler on the viewport's top line, above everything else
 	if rulerActive(w, height) && sr.rulerRenderer != nil {
-		sr.MoveCursor(1, y)
-		sr.Write(sr.rulerRenderer(w, sr.Width))
+		sr.MoveCursor(1+fx, y)
+		sr.Write(sr.rulerRenderer(w, fw))
 		y++
 		remainingHeight--
 	}
@@ -875,12 +1013,12 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 	// Top message bar: the Inner slot renders on the reading-start side
 	// (left in LTR, right in RTL), Outer on the opposite edge.
 	if w.MessageTopInner != "" || w.MessageTopCenter != "" || w.MessageTopOuter != "" {
-		sr.MoveCursor(1, y)
+		sr.MoveCursor(1+fx, y)
 		sr.Write(messagesColor)
 		if sr.winRTL(w) {
-			sr.renderMessageBar(w.MessageTopOuter, w.MessageTopCenter, w.MessageTopInner, sr.Width)
+			sr.renderMessageBar(w.MessageTopOuter, w.MessageTopCenter, w.MessageTopInner, fw)
 		} else {
-			sr.renderMessageBar(w.MessageTopInner, w.MessageTopCenter, w.MessageTopOuter, sr.Width)
+			sr.renderMessageBar(w.MessageTopInner, w.MessageTopCenter, w.MessageTopOuter, fw)
 		}
 		sr.Write(resetColor)
 		y++
@@ -898,12 +1036,12 @@ func (sr *ScreenRenderer) renderViewport(w *viewport.Viewport, startY, height in
 
 	// Bottom message bar, Inner/Outer mapped like the top bar.
 	if w.MessageBottomInner != "" || w.MessageBottomCenter != "" || w.MessageBottomOuter != "" {
-		sr.MoveCursor(1, y)
+		sr.MoveCursor(1+fx, y)
 		sr.Write(messagesColor)
 		if sr.winRTL(w) {
-			sr.renderMessageBar(w.MessageBottomOuter, w.MessageBottomCenter, w.MessageBottomInner, sr.Width)
+			sr.renderMessageBar(w.MessageBottomOuter, w.MessageBottomCenter, w.MessageBottomInner, fw)
 		} else {
-			sr.renderMessageBar(w.MessageBottomInner, w.MessageBottomCenter, w.MessageBottomOuter, sr.Width)
+			sr.renderMessageBar(w.MessageBottomInner, w.MessageBottomCenter, w.MessageBottomOuter, fw)
 		}
 		sr.Write(resetColor)
 	}
@@ -1010,6 +1148,17 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	lineNumbersColor := sr.col(w, "lineNumbers")
 	resetColor := sr.col(w, "reset")
 
+	// A terminal viewport paints no document text: the host draws the terminal
+	// grid over this area, and a grid too small to fill it must reveal the text
+	// background, not the buffer behind. The gutter, ruler and scrollbar still
+	// render (line numbers stay), and every row's content area is blanked.
+	blankContent := sr.contentBlanked(w)
+
+	// The viewport's horizontal paint frame (host-set; full screen by default).
+	// Each row starts at physical column 1+fx and totals fw cells; atRight is
+	// true only when the frame reaches the screen's right edge.
+	fx, fw, atRight := sr.vpFrame(w)
+
 	lineNumWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
@@ -1037,7 +1186,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	}
 	scrollbarTrackColor := sr.col(w, "scrollbarTrack")
 	scrollbarThumbColor := sr.col(w, "scrollbarThumb")
-	baseContentWidth := sr.Width - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
+	baseContentWidth := fw - w.MarginInner - lineNumWidth - w.MarginOuter - sbw
 
 	// Get selection range once for all lines. A transient find/replace match
 	// highlight takes precedence: while a match is being offered, it is shown
@@ -1065,17 +1214,20 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 
 	for row := 0; row < height; row++ {
 		screenY := startY + row
-		sr.MoveCursor(1, screenY)
+		sr.MoveCursor(1+fx, screenY)
 
 		// Corner cut: the bottom-right cell can never be written (it scrolls the
 		// terminal), so reserve it on the bottom row — but only when the content
-		// actually reaches that corner. Under direction=rtl with a line-number
-		// gutter, the gutter sits on the right and absorbs the corner, so the
-		// content stays full width (reducing it there would shift the whole
-		// right-anchored bottom row left by one). The back buffer paints the
-		// corner cell's background without landing a glyph in it.
+		// actually reaches that corner. Only a frame flush against the screen's
+		// right edge (atRight) reaches it; a narrower frame ends short of the
+		// corner column and stays full width. Under direction=rtl with a
+		// line-number gutter, the gutter sits on the right and absorbs the
+		// corner, so the content stays full width (reducing it there would
+		// shift the whole right-anchored bottom row left by one). The back
+		// buffer paints the corner cell's background without landing a glyph in
+		// it.
 		contentWidth := baseContentWidth
-		if screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
+		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
 			!(sbw > 0 && !sr.winRTL(w)) {
 			// An LTR scrollbar occupies the corner column itself (its glyph is
 			// simply skipped on that row, below), so the content stays full.
@@ -1164,7 +1316,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// Content
-		if haveContent {
+		if haveContent && !blankContent {
 			// A double-width (heading) line: the terminal shows only the left
 			// half at 2x, so lay the content into half the columns, interpret the
 			// horizontal scroll at one cell per two scrolled positions, and mark
@@ -1239,7 +1391,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 					lineWidth = 1
 				}
 				written := marginL + lineNumWidth/2 + lineWidth + marginR
-				if pad := sr.Width/2 - 1 - written; pad > 0 {
+				if pad := fw/2 - 1 - written; pad > 0 {
 					sr.Write(textColor)
 					sr.Write(strings.Repeat(" ", pad))
 				}
@@ -2904,6 +3056,12 @@ func (sr *ScreenRenderer) rtlPadOffset(line string, w *viewport.Viewport, width 
 // physical position with cellToPhysical. `line` is the display
 // (button-substituted) caret line.
 func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base, pad, viewOff, contentCells int, dw bool) {
+	// The viewport's horizontal paint frame: the content starts at physical
+	// column 1+fx and is fw cells wide, not the whole screen. Caret / ghost /
+	// off-screen geometry must measure within the frame, or a viewport offset
+	// into the main area (a tile) places them off by fx and clips against the
+	// wrong width.
+	fx, fw, _ := sr.vpFrame(w)
 	lineNumWidth := 0
 	if w.ViewState.ShowLineNumbers {
 		lineNumWidth = w.LineNumWidth
@@ -2913,7 +3071,7 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 		sbw = 1 // the scrollbar column narrows the content like the gutter does
 	}
 	marginL, _ := sr.physMargins(w)
-	contentCells = sr.Width - w.MarginInner - w.MarginOuter - lineNumWidth - sbw
+	contentCells = fw - w.MarginInner - w.MarginOuter - lineNumWidth - sbw
 	gutter := lineNumWidth
 	dw = sr.caretLineDoubleWide(w)
 	if dw {
@@ -2923,9 +3081,9 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 			contentCells = 1
 		}
 	}
-	base = 1 + marginL + gutter
+	base = 1 + fx + marginL + gutter
 	if sr.winRTL(w) {
-		base = 1 + marginL + sbw // the gutter mirrors right; the bar sits left of the margin
+		base = 1 + fx + marginL + sbw // the gutter mirrors right; the bar sits left of the margin
 	}
 	pad, viewOff = sr.rtlPadOffset(line, w, contentCells)
 	return

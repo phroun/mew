@@ -1,0 +1,352 @@
+From b1a4b45b754f4c4fe9679891c0cf962fb6c74f11 Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 23:10:24 +0000
+Subject: [PATCH] SDL host: fix solo restore, harden zero-size compositing,
+ drop SDL2 stragglers
+
+Three graphical-host fixes, plus a cleanup left from the SDL3 migration.
+
+1. Solo maximize -> restore reconfigures the swapchain. In solo mode the app
+   is the primary OS window (created RESIZABLE, its border stripped at
+   runtime); a torn window is borderless from birth. Restoring the solo
+   window from zoom-to-fill left the GPU swapchain at the maximized size, so
+   the restored content painted into its top-left corner and the stale frame
+   stayed on screen until a manual edge-drag. SetScreenSizePx now clears an
+   OS MAXIMIZED flag before resizing (SetWindowSize no-ops on a maximized
+   window) and drives the framebuffer reconfigure from the window's actual
+   pixel size instead of waiting on a WINDOW_RESIZED that a programmatic
+   resize did not reliably deliver. Both are idempotent (liveResize no-ops
+   when the backend already matches) and reuse the same
+   Resized -> SetBounds -> onResize chain every OS resize already runs, so
+   no new recursion. Adds sdl3.WINDOW_MAXIMIZED and Window.SizeInPixels().
+
+2. Compositing tolerates a collapsed host. Dragging the desktop window to a
+   near-zero height with a child window or overlay open panicked:
+   "image: NewRGBA Rectangle has huge or negative dimensions". The compositor
+   derives a per-unit pixel scale as hostPixels/hostUnits; core.Unit is an
+   int, so a far-enough shrink rounds the host unit extent to 0, float64(n)/0
+   is +Inf, and int(math.Round(+Inf)) is MaxInt64, which NewScaled rejects.
+   The existing guards checked the (huge, positive) result. Guard the divisor
+   instead in RenderFrameWithChildWindows and drawOverlay, matching the
+   frame-level scale that was already guarded; there is nothing to composite
+   onto at zero area, so the child is skipped and the overlay bails (its
+   callers already skip on error).
+
+3. Drop straggling SDL2 references. buildwin.sh still cross-built for Windows
+   the SDL2 way (CGO, MinGW, a vendored SDL2 statically linked). SDL3 and the
+   WebGPU native library are bound through purego/goffi and opened at run
+   time, so the Windows build is a plain CGO-free `GOOS=windows go build`
+   with the sdlembed tag bundling SDL3; the script is rewritten to that. Code
+   comments that still called the running system SDL2 are corrected to SDL3
+   or version-neutral wording. compositing-handoff.md is left as-is: it
+   accurately narrates the SDL2 -> SDL3 migration itself.
+
+Build 16. Builds and vets standalone (plain and -tags "sdl webgpu"); the
+sdl and raster suites pass with no mew module in the graph.
+---
+ backend/raster/raster.go     |  4 ++--
+ buildwin.sh                  | 31 ++++++++++++++++---------------
+ cmd/kittytk-sdl/main.go      |  2 +-
+ cmd/kittytk-sdl/main_stub.go |  3 ++-
+ core/version.go              |  2 +-
+ docs/graphical-mode-plan.md  |  2 +-
+ sdl/doc.go                   |  2 +-
+ sdl/platform_sdl.go          | 34 +++++++++++++++++++++++++++-------
+ sdl/renderer_webgpu.go       | 16 ++++++++++++++++
+ sdl/sdl3/sdl3.go             | 12 ++++++++++++
+ sdl/textinput_test.go        |  2 +-
+ sdl/transparent_darwin.go    |  6 +++---
+ 12 files changed, 83 insertions(+), 33 deletions(-)
+
+diff --git a/backend/raster/raster.go b/backend/raster/raster.go
+index 271824c..f9b4f8c 100644
+--- a/backend/raster/raster.go
++++ b/backend/raster/raster.go
+@@ -87,7 +87,7 @@ type Backend struct {
+ 	wpSmooth bool
+ 
+ 	// sysClipGet/sysClipSet bridge to the host's system clipboard when the
+-	// substrate provides one (the SDL platform wires these to SDL2's
++	// substrate provides one (the SDL platform wires these to SDL3's
+ 	// SDL_GetClipboardText/SDL_SetClipboardText, which cover macOS, Windows
+ 	// and X11/Wayland). nil in headless use, where the local string is used.
+ 	sysClipGet func() string
+@@ -95,7 +95,7 @@ type Backend struct {
+ }
+ 
+ // SetSystemClipboard bridges this backend's clipboard to the host's system
+-// clipboard. The SDL host wires get/set to the platform's SDL2-backed
++// clipboard. The SDL host wires get/set to the platform's SDL3-backed
+ // clipboard, so Copy/Cut/Paste cross the process boundary to other apps.
+ // Passing nils reverts to the internal (headless) clipboard.
+ func (b *Backend) SetSystemClipboard(get func() string, set func(string)) {
+diff --git a/buildwin.sh b/buildwin.sh
+index b7490e9..c186409 100755
+--- a/buildwin.sh
++++ b/buildwin.sh
+@@ -1,18 +1,19 @@
+ #!/bin/bash
+-# CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
+-#  CC=x86_64-w64-mingw32-gcc \
+-#  CGO_CFLAGS="-I$HOME/projects/vendor/SDL2-2.32.10/x86_64-w64-mingw32/include" \
+-#  CGO_LDFLAGS="-L$HOME/projects/vendor/SDL2-2.32.10/x86_64-w64-mingw32/lib" \
+-#  go build -tags sdl -o kittytk-sdl.exe ./cmd/kittytk-sdl
++# Cross-build the graphical (SDL) KittyTK host as a Windows executable.
++#
++# SDL3 and the WebGPU renderer's native library are both bound through
++# purego/goffi and opened at RUN time, so NOTHING is linked at build time:
++# no CGO, no MinGW toolchain, no SDL import libraries or dev headers. This is
++# a plain Go cross-compile — the SDL2 + CGO static-link dance the previous
++# version of this script did is obsolete since the SDL3 migration.
++#
++# The `sdlembed` tag bundles SDL3 into the .exe (unpacked at startup) so it
++# runs on a machine with nothing installed; drop it to load a system
++# SDL3.dll from the PATH instead. See the Makefile for the native targets.
++set -euo pipefail
+ 
+-SDL=$HOME/projects/vendor/SDL2-2.32.10/x86_64-w64-mingw32
+-CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
+-  CC=x86_64-w64-mingw32-gcc \
+-  CGO_CFLAGS="-I$SDL/include -DSDL_STATIC" \
+-  CGO_LDFLAGS="-L$SDL/lib -lSDL2 -lSDL2main \
+-    -lmingw32 -mwindows \
+-    -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 \
+-    -lole32 -loleaut32 -lshell32 -lsetupapi -lversion -luuid \
+-    -lhid -lsetupapi -static-libgcc -static" \
+-  go build -tags "sdl static" -ldflags "-H windowsgui" \
++GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
++  go build -tags "sdl webgpu sdlembed" -ldflags "-H windowsgui" \
+   -o dist/kittytk-sdl.exe ./cmd/kittytk-sdl
++
++echo "built dist/kittytk-sdl.exe"
+diff --git a/cmd/kittytk-sdl/main.go b/cmd/kittytk-sdl/main.go
+index 2c98881..9f471d5 100644
+--- a/cmd/kittytk-sdl/main.go
++++ b/cmd/kittytk-sdl/main.go
+@@ -132,7 +132,7 @@ func main() {
+ 		os.Exit(1)
+ 	}
+ 
+-	// Bridge Copy/Cut/Paste to the OS clipboard. SDL2's clipboard covers
++	// Bridge Copy/Cut/Paste to the OS clipboard. SDL3's clipboard covers
+ 	// macOS, Windows and X11/Wayland, so this is the whole cross-platform
+ 	// integration for the graphical host.
+ 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
+diff --git a/cmd/kittytk-sdl/main_stub.go b/cmd/kittytk-sdl/main_stub.go
+index 39bf654..007b88d 100644
+--- a/cmd/kittytk-sdl/main_stub.go
++++ b/cmd/kittytk-sdl/main_stub.go
+@@ -1,6 +1,7 @@
+ //go:build !sdl
+ 
+-// Command kittytk-sdl requires the sdl build tag (and libsdl2-dev). For a
++// Command kittytk-sdl requires the sdl build tag (SDL3 is bound through
++// purego and opened at run time — no build-time SDL dependency). For a
+ // terminal desktop with no such requirement, use kittytk-tui instead:
+ //
+ //	go run -tags sdl ./cmd/kittytk-sdl   (graphical)
+diff --git a/core/version.go b/core/version.go
+index 49f9b51..f7f3cb7 100644
+--- a/core/version.go
++++ b/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 15
++const Build = 16
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/docs/graphical-mode-plan.md b/docs/graphical-mode-plan.md
+index 6670c7a..74975e3 100644
+--- a/docs/graphical-mode-plan.md
++++ b/docs/graphical-mode-plan.md
+@@ -716,7 +716,7 @@ milestone for whole windows.
+    primitives (real TTF glyphs at Monday-matching advance, real
+    lines for borders, shade-rune alpha blends; cgo-free, headless-
+    testable, PNG-provable). The `sdl` package (build tag `sdl`)
+-   wraps it: SDL2 window, streaming-texture blit, D21 loop, D3 key
++   wraps it: SDL3 window, streaming-texture blit, D21 loop, D3 key
+    translation; `cmd/kittytk-sdl` is the graphical display
+    service serving the same socket (selection-by-binary per O3).
+    Verified headless via SDL's dummy driver incl. a full-stack smoke
+diff --git a/sdl/doc.go b/sdl/doc.go
+index 8854222..c2f6623 100644
+--- a/sdl/doc.go
++++ b/sdl/doc.go
+@@ -1,5 +1,5 @@
+ // Package sdl is the first graphical substrate (D23/O1): a
+-// platform.Platform that opens an SDL2 window, blits the raster
++// platform.Platform that opens an SDL3 window, blits the raster
+ // package's framebuffer each frame, and translates SDL input into
+ // KittyTK events using the D3 key nomenclature.
+ //
+diff --git a/sdl/platform_sdl.go b/sdl/platform_sdl.go
+index 0ce617d..5cbdc4f 100644
+--- a/sdl/platform_sdl.go
++++ b/sdl/platform_sdl.go
+@@ -21,7 +21,7 @@ import (
+ 	"github.com/phroun/kittytk/platform"
+ )
+ 
+-// Platform runs KittyTK over SDL2 windows with pluggable renderer backend.
++// Platform runs KittyTK over SDL3 windows with pluggable renderer backend.
+ // All callbacks execute on the OS-locked main thread.
+ type Platform struct {
+ 	title    string
+@@ -456,9 +456,9 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
+ 
+ 	if shapeRadiusPx > 0 && (!platformPerPixelAlpha || p.roundedCornerMechanism() == "shape") {
+ 		// SDL's own shaped window: created shaped, masked in applyShape.
+-		// SDL3: a window whose framebuffer alpha composites. This is
+-		// what SDL2's shaped windows were standing in for, and unlike
+-		// them it must be requested at creation.
++		// SDL3: a window whose framebuffer alpha composites — the real
++		// per-pixel-alpha replacement for a masked shaped window, and
++		// unlike a shaped window it must be requested at creation.
+ 		w.window, err = sdl3.CreateTransparentWindow(title, x, y, wPx, hPx, flags)
+ 		if err != nil {
+ 			w.shapeRadiusPx = 0
+@@ -2044,14 +2044,34 @@ func (s *sdlSurface) ScreenSizePx() (int, int) {
+ 	return int(w), int(h)
+ }
+ 
+-// SetScreenSizePx implements platform.NativeSurface: the size change
+-// reports back through the WINDOWEVENT_SIZE_CHANGED path (framebuffer
+-// recreate, shape reapply, handler.Resized).
++// SetScreenSizePx implements platform.NativeSurface: the size change normally
++// reports back through the WINDOW_RESIZED path (framebuffer recreate, shape
++// reapply, handler.Resized).
++//
++// Two hazards, both seen only on the solo primary window (created RESIZABLE with
++// a title bar, its border stripped at runtime) and not on a torn window
++// (borderless from birth): a shrink back from zoom-to-fill could leave the GPU
++// swapchain at the maximized size, so the restored content painted into its
++// top-left corner and the stale maximized frame stayed on screen until a manual
++// edge-drag. First, some window managers flag a filled window MAXIMIZED, and
++// SetWindowSize is a no-op on a maximized window — clear it first. Second, a
++// programmatic resize did not always deliver a WINDOW_RESIZED for this window,
++// so drive the framebuffer reconfigure here from the window's ACTUAL pixel size
++// (read back after the resize, so HiDPI points-vs-pixels can't skew it). Both
++// are idempotent: liveResize no-ops when the backend already matches, and a real
++// resize event that does arrive later costs nothing.
+ func (s *sdlSurface) SetScreenSizePx(w, h int) {
+ 	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
+ 		return
+ 	}
++	if s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0 {
++		s.win.window.Restore()
++	}
+ 	s.win.window.SetSize(int32(w), int32(h))
++	pxW, pxH := s.win.window.SizeInPixels()
++	if pxW > 0 && pxH > 0 {
++		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
++	}
+ }
+ 
+ // WorkAreaPx implements platform.NativeSurface: the usable bounds of
+diff --git a/sdl/renderer_webgpu.go b/sdl/renderer_webgpu.go
+index 440d0a9..c75a47c 100644
+--- a/sdl/renderer_webgpu.go
++++ b/sdl/renderer_webgpu.go
+@@ -1162,6 +1162,15 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
+ 		metrics := osWindow.backend.Metrics()
+ 
+ 		backendBounds := backendImg.Bounds()
++		// The host's unit size is the divisor for the per-unit pixel scale. When
++		// the OS window is dragged to a near-zero height (or width) its unit
++		// extent rounds to 0, and float64(n)/0 is +Inf — which math.Round carries
++		// into int() as MaxInt64, blowing up NewScaled ("huge or negative
++		// dimensions") on the next child window. There is nothing to composite a
++		// child onto when the host has collapsed to zero area, so skip it.
++		if backendSize.Width <= 0 || backendSize.Height <= 0 {
++			continue
++		}
+ 		pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
+ 		pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
+ 
+@@ -2364,6 +2373,13 @@ func (r *WebGPURenderer) drawOverlay(
+ 	metrics := osWindow.backend.Metrics()
+ 
+ 	backendBounds := backendImg.Bounds()
++	// A host dragged to near-zero height (or width) has a unit extent that
++	// rounds to 0; float64(n)/0 is +Inf, which math.Round carries into int() as
++	// MaxInt64 and blows up the overlay texture. Nothing to draw an overlay onto
++	// at zero area — bail so the caller skips it this frame.
++	if backendSize.Width <= 0 || backendSize.Height <= 0 {
++		return nil, core.TextCaret{}, fmt.Errorf("host backend has zero unit area %dx%d", backendSize.Width, backendSize.Height)
++	}
+ 	pixelsPerUnitW := float64(backendBounds.Dx()) / float64(backendSize.Width)
+ 	pixelsPerUnitH := float64(backendBounds.Dy()) / float64(backendSize.Height)
+ 
+diff --git a/sdl/sdl3/sdl3.go b/sdl/sdl3/sdl3.go
+index 2336871..0e829aa 100644
+--- a/sdl/sdl3/sdl3.go
++++ b/sdl/sdl3/sdl3.go
+@@ -153,6 +153,7 @@ const (
+ 	WINDOW_RESIZABLE              = csdl.WINDOW_RESIZABLE
+ 	WINDOW_BORDERLESS             = csdl.WINDOW_BORDERLESS
+ 	WINDOW_MINIMIZED              = csdl.WINDOW_MINIMIZED
++	WINDOW_MAXIMIZED              = csdl.WINDOW_MAXIMIZED
+ 	WINDOW_METAL                  = csdl.WINDOW_METAL
+ 
+ 	// WINDOW_TRANSPARENT is the SDL3-only flag this whole migration was
+@@ -217,6 +218,17 @@ func (w *Window) Size() (int32, int32) {
+ 
+ func (w *Window) SetSize(width, height int32) { _ = w.w.SetSize(width, height) }
+ 
++// SizeInPixels returns the client area in real device pixels (SDL screen
++// coordinates are points on a HiDPI display; the framebuffer/swapchain is sized
++// in pixels). Falls back to Size() if the pixel query fails.
++func (w *Window) SizeInPixels() (int32, int32) {
++	width, height, err := w.w.SizeInPixels()
++	if err != nil {
++		return w.Size()
++	}
++	return width, height
++}
++
+ func (w *Window) ID() (uint32, error) {
+ 	id, err := w.w.ID()
+ 	return uint32(id), err
+diff --git a/sdl/textinput_test.go b/sdl/textinput_test.go
+index 91dc989..6030a5b 100644
+--- a/sdl/textinput_test.go
++++ b/sdl/textinput_test.go
+@@ -16,7 +16,7 @@ import (
+ // EVERY window must have text input started, not just the first.
+ //
+ // SDL3 scopes text input to a window and leaves it off until asked;
+-// SDL2's SDL_StartTextInput() was global and on by default. The port
++// the older model started it globally and on by default. The port
+ // carried one call for the main window, so every window created
+ // afterwards — every torn-off window — received key events but no
+ // SDL_EVENT_TEXT_INPUT. Tab and the arrows kept working (a separate
+diff --git a/sdl/transparent_darwin.go b/sdl/transparent_darwin.go
+index 9029408..56f9197 100644
+--- a/sdl/transparent_darwin.go
++++ b/sdl/transparent_darwin.go
+@@ -77,7 +77,7 @@ static void kittytk_layer_nonopaque(id layer) {
+ 	}
+ }
+ 
+-// kittytk_noop_drawrect replaces SDL's content-view drawRect:. SDL2's
++// kittytk_noop_drawrect replaces SDL's content-view drawRect:. SDL's
+ // SDLView fills every dirty rect with opaque BLACK (its white-flash
+ // guard) - and that fill sits BENEATH the Metal layer, so a transparent
+ // framebuffer composites against SDL's black instead of the desktop
+@@ -169,8 +169,8 @@ static void kittytk_debug_window_alpha(void *nswindow, int phase) {
+ // layer under its content view - SDL's Metal/GL surface lives on a
+ // SUBVIEW, not a sublayer) to non-opaque with a clear background so
+ // the framebuffer's alpha channel composites against whatever is
+-// behind the window. SDL2 has no portable per-pixel window alpha;
+-// this is the standard Cocoa-side arrangement for it.
++// behind the window. SDL provides no portable per-pixel window alpha;
++// this is the Cocoa-side arrangement behind the transparent window on macOS.
+ static void kittytk_make_window_transparent(void *nswindow) {
+ 	id win = (id)nswindow;
+ 	if (!win) {
+-- 
+2.43.0
+

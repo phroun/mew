@@ -28,7 +28,23 @@ type TextCaret struct {
 	// Style is the DECSCUSR shape: 0 the terminal's own default, 1/2
 	// blinking/steady block, 3/4 underline, 5/6 bar.
 	Style int
+
+	// InputArea marks (X, Y) as the INSERTION POINT for an input method,
+	// whether or not the platform draws a caret there.
+	//
+	// The two are not the same question. A terminal wants the platform's
+	// caret AND is the insertion point, so RequestTextCaret sets both. A
+	// text field draws its own caret — a blinking bar, or a reverse-video
+	// block on a cell surface — and asking for the platform's would paint
+	// two; it wants only this, so an input method can put its candidate
+	// window under the text being typed instead of at a default corner.
+	InputArea bool
 }
+
+// Requested reports whether this frame asked for anything at all. A
+// surface with neither a caret to draw nor an insertion point to report
+// forgets both.
+func (c TextCaret) Requested() bool { return c.Visible || c.InputArea }
 
 // caretSink is the per-frame request slot. Painters derived with
 // WithTransform/WithClip copy the POINTER, so a request made deep in the tree
@@ -49,7 +65,26 @@ func (p *Painter) RequestTextCaret(x, y Unit, style int) {
 		style = 0
 	}
 	sx, sy := p.toScreen(x, y)
-	p.caret.caret = TextCaret{Visible: true, X: sx, Y: sy, Style: style}
+	// A drawn caret is also where typing goes, so this is an insertion
+	// point too and an input method can anchor on it.
+	p.caret.caret = TextCaret{Visible: true, InputArea: true, X: sx, Y: sy, Style: style}
+}
+
+// RequestTextInputArea marks local (x, y) as the insertion point for an
+// input method WITHOUT asking the platform to draw a caret there. A
+// trinket that paints its own caret uses this: it still needs the OS to
+// know where the text is, or the CJK candidate list, the macOS
+// press-and-hold accent picker and the emoji picker all appear at
+// whatever corner the OS last used.
+//
+// Same last-request-wins rule as RequestTextCaret, and they share the
+// slot: whichever paints on top owns both answers.
+func (p *Painter) RequestTextInputArea(x, y Unit) {
+	if p.caret == nil {
+		return
+	}
+	sx, sy := p.toScreen(x, y)
+	p.caret.caret = TextCaret{InputArea: true, X: sx, Y: sy}
 }
 
 // TextCaretRequest returns the caret requested during this frame (Visible false

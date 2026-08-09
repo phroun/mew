@@ -17,7 +17,11 @@ import (
 //
 //	go run -tags sdl ./examples/demo
 func main() {
-	plat := sdlplat.New("KittyTK demo", 1280, 800)
+	plat, err := sdlplat.New("KittyTK demo", 1280, 800, "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	plat.SetScale(2) // 2x font/cell size for now (per owner request)
 	pixelBackend, err := plat.EnsureBackend()
 	if err != nil {

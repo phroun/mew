@@ -114,7 +114,7 @@ func TestLaunchWikiScheme(t *testing.T) {
 	}
 
 	// The help page opened in a top-docked ToolViewport rooted at the wiki.
-	startURL := e.canonicalDocURL("mew:///help/start.txt")
+	startURL := e.canonicalDocURL("box:///help/start.txt")
 	var help *viewport.Viewport
 	for _, w := range e.ViewportManager.GetViewportsByDock(viewport.DockTop) {
 		if w.WikiName == "help" {
@@ -266,7 +266,7 @@ func TestCliOptionAlignment(t *testing.T) {
 		}
 	}
 	valid := map[string]string{
-		"tabsize": "4", "showlinenumbers": "true", "showinvisibles": "true",
+		"tabsize": "4", "showlinenumbers": "true", "deletenewlineaschar": "true", "showinvisibles": "true",
 		"showbidi": "true", "rtlcombining": "true", "showmarks": "yes", "insertmode": "yes", "autoindent": "yes", "readonly": "true", "linkbrowsing": "yes", "navigationmode": "no", "showcolumnruler": "true", "scrollbar": "true", "rulershowscursor": "true",
 		"syntax": "", "syntaxdetect": "true", "syntaxoverrides": "go conf", "macoptionkeys": "auto",
 		"matchignoressinglequote": "true", "matchignoresdoublequote": "true",
@@ -278,8 +278,8 @@ func TestCliOptionAlignment(t *testing.T) {
 		"searchregex": "true", "modebarlocation": "top", "pagesizeoptimal": "100%",
 		"pageoverlapminimum": "1", "pagesizestep": "0", "maxrepeat": "100",
 		"killringentries": "10", "direction": "ltr", "prompttimeout": "300",
-		"scripttimeout": "300", "debouncems": "20", "maxrenderdelayms": "100",
-		"modebarinner": "%FN%", "modebardefault": "%FORTUNE%",
+		"scripttimeout": "300",
+		"modebarinner":  "%FN%", "modebardefault": "%FORTUNE%",
 		"modebarouter": "Line:%LINE%", "mappings": "mew",
 		"flipbidiforhost": "false", "rtlmarkmode": "normal",
 	}

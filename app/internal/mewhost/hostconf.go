@@ -22,14 +22,21 @@ import (
 // [general] / [storage] sections in the same file. Example:
 //
 //	[window]           ; graphical host (mew-sdl) only
-//	title        = mew
-//	width        = 1200
-//	height       = 800
-//	scale        = 2
-//	font_size    = 14
-//	border_width =         ; device px, blank/0 = default
-//	fps          =         ; true shows the render frame rate
-//	vsync        =         ; blank keeps the default (on); false uncaps fps
+//	title          = mew
+//	width          = 1200
+//	height         = 800
+//	scale          = 2
+//	font_size      = 14
+//	border_width   =       ; device px, blank/0 = default
+//	fps            =       ; true shows the render frame rate
+//	vsync          =       ; blank keeps the default (on); false uncaps fps
+//	renderer       =       ; software or webgpu (mew defaults to webgpu)
+//	wallpaper      =       ; image path; blank keeps the built-in pattern
+//	wallpaper_mode =       ; natural / fit / cover / fill / stretch
+//	wallpaper_tile =       ; both / none / horizontal / vertical
+//	wallpaper_align =      ; center / left / right / top / bottom (combinable)
+//	wallpaper_filter =     ; crisp (nearest) / smooth (linear)
+//	wallpaper_scale =      ; float multiplier; blank/0 keeps the default
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -50,17 +57,22 @@ import (
 // A missing file or home directory just yields the defaults.
 func LoadHostConfig() hostcfg.Config {
 	cfg := hostcfg.Defaults()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return cfg
+	// mew's graphical host defaults to the WebGPU renderer (upstream KittyTK
+	// defaults to "software"); [window] renderer= in editor.conf overrides.
+	cfg.Renderer = "webgpu"
+	if home, err := os.UserHomeDir(); err == nil {
+		path := filepath.Join(home, ".mew", "editor.conf")
+		if data, err := os.ReadFile(path); err == nil {
+			applyHostConf(parseHostConfSections(data), &cfg)
+			cfg.Source = path
+		}
 	}
-	path := filepath.Join(home, ".mew", "editor.conf")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg
+	// MEW_RENDERER=software|webgpu overrides config and default — a quick way to
+	// switch backends without editing editor.conf, useful where one backend's
+	// native library (wgpu_native for webgpu) is not installed.
+	if r := strings.ToLower(strings.TrimSpace(os.Getenv("MEW_RENDERER"))); r == "software" || r == "webgpu" {
+		cfg.Renderer = r
 	}
-	applyHostConf(parseHostConfSections(data), &cfg)
-	cfg.Source = path
 	return cfg
 }
 
@@ -128,6 +140,27 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 	// vsync is default-on: only an explicit falsey value disables it.
 	if v, ok := window["vsync"]; ok {
 		cfg.VSync = !falsey(v)
+	}
+	// renderer: "software" or "webgpu" (validated like upstream; a typo keeps
+	// the default rather than failing platform creation).
+	if v, ok := window["renderer"]; ok {
+		switch strings.ToLower(v) {
+		case "software", "webgpu":
+			cfg.Renderer = strings.ToLower(v)
+		}
+	}
+	// wallpaper: the image path plus its layout (mode / tile / align / filter /
+	// scale). Empty strings and a zero scale keep the built-in pattern and the
+	// layout defaults, so a partial [window] section need not restate them.
+	setStr(window, "wallpaper", &cfg.Wallpaper)
+	setStr(window, "wallpaper_mode", &cfg.WallpaperMode)
+	setStr(window, "wallpaper_tile", &cfg.WallpaperTiling)
+	setStr(window, "wallpaper_align", &cfg.WallpaperAlign)
+	setStr(window, "wallpaper_filter", &cfg.WallpaperFilter)
+	if v, ok := window["wallpaper_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.WallpaperScale = f
+		}
 	}
 
 	// [service] - the display endpoint and shared secret (both hosts).

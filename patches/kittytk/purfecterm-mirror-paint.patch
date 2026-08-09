@@ -1,0 +1,246 @@
+From c5db115a21732a1df7c8dc36c1ae6d594a3c497b Mon Sep 17 00:00:00 2001
+From: "Jeff R. Day" <phroun@gmail.com>
+Date: Thu, 6 Aug 2026 18:49:38 +0000
+Subject: [PATCH] purfecterm: read-only mirror paint (one live terminal, many
+ places)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add PaintMirror so a host can show ONE live terminal in several places at
+once — a primary that owns the emulator, plus read-only mirrors — without the
+mirrors disturbing focus, the caret, or the grid.
+
+A mirror paint sets a per-paint mirrorPaint flag and renders the terminal as
+UNFOCUSED: hollow cursor, no blink, and (above all) no platform-caret request,
+so only the primary owns the cursor. paintFocused() is the effective focus for
+rendering — the real focus() forced off under the flag — and is now what the
+cell caret gate and gfxFocused() consult; focused() itself is unchanged, so
+input routing and the emulator's own focus reporting to the child are
+untouched.
+
+A mirror also touches none of the shared buffer's write-side state, because it
+draws a DIFFERENT (often smaller) rectangle than the primary:
+
+  - updateTerminalSize early-returns under the flag, and the graphical
+    fit-resize is skipped, so a mirror never resizes the child from its own
+    rect (which would fight the primary and thrash the child process).
+  - SetBounds under the flag still BOUNDS the mirror's row/column loop to its
+    own rectangle (a mirror smaller than the grid stops at its edge instead of
+    spilling rows past it) but emits no resize.
+  - CheckCursorAutoScroll{,Horiz} and ClearDirty run only on the primary paint;
+    from a mirror they would scroll the shared buffer to fit the mirror and the
+    primary would then show the scrolled result.
+
+No API removed; PaintMirror and paintFocused are additive. Bump Build to 13.
+---
+ core/version.go                               |  2 +-
+ objects/trinkets/purfecterm.go                | 38 ++++++++++++-
+ .../trinkets/purfecterm_embeddedfocus_test.go | 54 +++++++++++++++++++
+ objects/trinkets/purfecterm_gfx.go            | 30 +++++++----
+ 4 files changed, 113 insertions(+), 11 deletions(-)
+
+diff --git a/core/version.go b/core/version.go
+index ce99f73..9ed4d72 100644
+--- a/core/version.go
++++ b/core/version.go
+@@ -15,7 +15,7 @@ const Version = "0.1"
+ // release number), it is bumped automatically by `make increment`, whose awk
+ // script rewrites the single `const Build = N` line below - so keep it on its
+ // own line in exactly that form.
+-const Build = 12
++const Build = 13
+ 
+ // FullVersion returns the complete version string, major.minor.build (e.g.
+ // "0.1.1"), assembled from Version and Build.
+diff --git a/objects/trinkets/purfecterm.go b/objects/trinkets/purfecterm.go
+index 60096e7..9df7b22 100644
+--- a/objects/trinkets/purfecterm.go
++++ b/objects/trinkets/purfecterm.go
+@@ -28,6 +28,13 @@ type PurfecTerm struct {
+ 	// See SetEmbeddedFocus.
+ 	embeddedFocus atomic.Bool
+ 
++	// mirrorPaint forces a single paint to render as UNFOCUSED — a hollow cursor
++	// and, above all, no platform-caret request — without disturbing the real
++	// focus state (which drives the emulator's focus reporting to the child). A
++	// host showing the same live terminal in several places paints the extras
++	// through PaintMirror so only the primary owns the caret. See PaintMirror.
++	mirrorPaint atomic.Bool
++
+ 	// termFont sets the terminal's own font (graphical mode): the
+ 	// cell grid derives from ITS measured metrics (advance width and
+ 	// line height at its point size), independent of the toolkit's
+@@ -298,6 +305,30 @@ func (t *PurfecTerm) EmbeddedFocus() bool { return t.embeddedFocus.Load() }
+ // declaration on its behalf. Every focus-dependent behaviour asks this.
+ func (t *PurfecTerm) focused() bool { return t.HasFocus() || t.embeddedFocus.Load() }
+ 
++// paintFocused is the effective focus FOR RENDERING: the real focus, forced off
++// during a mirror paint so a read-only copy draws a hollow cursor and never
++// claims the platform caret. Distinct from focused(), which governs input and
++// the emulator's own focus reporting — a mirror must not disturb either.
++func (t *PurfecTerm) paintFocused() bool { return t.focused() && !t.mirrorPaint.Load() }
++
++// PaintMirror paints this terminal at the painter's position exactly as Paint
++// does, but as a read-only MIRROR: rendered unfocused (hollow cursor, no blink)
++// and WITHOUT requesting the platform caret, so a host can show one live
++// terminal in several places while only its primary owns the cursor.
++//
++// bounds is the mirror's OWN rectangle. It is set under the mirror flag, so
++// updateTerminalSize early-returns and the grid keeps whatever size the primary
++// gave it — but the paint still BOUNDS its row/column loop to this rectangle, so
++// a mirror smaller than the grid stops at its own edge instead of running the
++// full grid past it (which spilled extra rows below a short pane). The
++// emulator's focus and size state are untouched.
++func (t *PurfecTerm) PaintMirror(p *core.Painter, bounds core.UnitRect) {
++	t.mirrorPaint.Store(true)
++	defer t.mirrorPaint.Store(false)
++	t.SetBounds(bounds) // flag set first, so this bounds the paint but never resizes
++	t.Paint(p)
++}
++
+ // CursorShape implements core.CursorProvider: the terminal shows the
+ // text I-beam while hovered, like any text surface.
+ func (t *PurfecTerm) CursorShape() core.CursorShape {
+@@ -517,6 +548,11 @@ func (t *PurfecTerm) updateTerminalSize() {
+ 	if t.terminal == nil {
+ 		return
+ 	}
++	// A mirror paint never resizes: it draws the grid the primary settled, so it
++	// must not re-derive (and emit) a size from its own rectangle.
++	if t.mirrorPaint.Load() {
++		return
++	}
+ 	if core.FindGraphicalFrames(t) {
+ 		return
+ 	}
+@@ -683,7 +719,7 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
+ 			cursorX := metrics.CellToUnitsX(int(acc))
+ 			cursorY := metrics.CellToUnitsY(cursorRow)
+ 			if cursorX < bounds.Width && cursorY < bounds.Height {
+-				if t.focused() {
++				if t.paintFocused() {
+ 					// Hand the platform the caret, in the shape the terminal
+ 					// asked for. Nothing is painted here: the real cursor is
+ 					// drawn by the surface underneath us. (Only ever a CELL
+diff --git a/objects/trinkets/purfecterm_embeddedfocus_test.go b/objects/trinkets/purfecterm_embeddedfocus_test.go
+index 0c9a60b..6f4deff 100644
+--- a/objects/trinkets/purfecterm_embeddedfocus_test.go
++++ b/objects/trinkets/purfecterm_embeddedfocus_test.go
+@@ -40,3 +40,57 @@ func TestEmbeddedFocusIsTheWholeNotionOfFocus(t *testing.T) {
+ 		t.Error("the emulator's flag should clear with it")
+ 	}
+ }
++
++// A mirror paint renders the terminal UNFOCUSED (hollow cursor, no platform
++// caret) without disturbing the real focus or the emulator's own focus flag —
++// so a host can paint one live terminal in several places while only its
++// primary owns the caret.
++func TestMirrorPaintRendersUnfocusedWithoutLosingFocus(t *testing.T) {
++	term := NewPurfecTerm()
++	term.Init(term)
++	term.SetEmbeddedFocus(true)
++	if !term.paintFocused() || !term.gfxFocused() {
++		t.Fatal("an embedded-focused terminal should render focused")
++	}
++
++	term.mirrorPaint.Store(true)
++	if term.paintFocused() || term.gfxFocused() {
++		t.Error("a mirror paint must render unfocused (no focused cursor, no caret)")
++	}
++	if !term.focused() {
++		t.Error("a mirror paint must NOT disturb the real focus")
++	}
++	if term.terminal != nil && !term.terminal.IsFocused() {
++		t.Error("a mirror paint must NOT disturb the emulator's focus reporting")
++	}
++
++	term.mirrorPaint.Store(false)
++	if !term.paintFocused() || !term.gfxFocused() {
++		t.Error("clearing the mirror flag restores focused rendering")
++	}
++}
++
++// A mirror paint must not resize the child: it draws the grid the primary
++// settled, so updateTerminalSize early-returns under the mirror flag and emits
++// no resize from the mirror's own rectangle. (Re-fitting from a smaller mirror
++// is what scrolled the shared buffer and wrapped at the wrong column.)
++func TestMirrorPaintSuppressesResize(t *testing.T) {
++	term := NewPurfecTerm()
++	term.Init(term)
++	if term.Terminal() == nil {
++		t.Skip("no term")
++	}
++	resizes := 0
++	term.SetResizeSink(func(cols, rows int) { resizes++ })
++
++	term.SetBounds(term.Bounds())
++	term.updateTerminalSize()
++	base := resizes
++
++	term.mirrorPaint.Store(true)
++	term.updateTerminalSize()
++	term.mirrorPaint.Store(false)
++	if resizes != base {
++		t.Fatalf("a mirror paint emitted a resize (%d -> %d)", base, resizes)
++	}
++}
+diff --git a/objects/trinkets/purfecterm_gfx.go b/objects/trinkets/purfecterm_gfx.go
+index 1f61b18..3a933fc 100644
+--- a/objects/trinkets/purfecterm_gfx.go
++++ b/objects/trinkets/purfecterm_gfx.go
+@@ -181,7 +181,7 @@ func (t *PurfecTerm) gfxEngine() *text.Engine {
+ // terminal has no focus of its own to hold (see SetEmbeddedFocus): its
+ // host declares it, and it is still subject to the window chain.
+ func (t *PurfecTerm) gfxFocused() bool {
+-	return t.focused() && core.FocusChainActive(t.Self())
++	return t.paintFocused() && core.FocusChainActive(t.Self())
+ }
+ 
+ // gfxInputActive reports whether input events take the graphical
+@@ -319,7 +319,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
+ 			contentHpx -= int(math.Round(float64(gfxScrollbarLane) * ppu))
+ 		}
+ 	}
+-	if baseCW > 0 && baseCH > 0 {
++	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
++	// clipped to its own rectangle. Re-fitting here from the mirror's (often
++	// smaller) rect would resize the child under a read-only copy.
++	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
+ 		fitCols := int(float64(contentWpx) / (float64(baseCW) * ppu))
+ 		fitRows := int(float64(contentHpx) / (float64(baseCH) * ppu))
+ 		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
+@@ -552,14 +555,23 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
+ 		}
+ 	}
+ 
+-	buf.SetCursorDrawn(cursorLineWasRendered)
+-	if buf.CheckCursorAutoScroll() {
+-		t.Update()
+-	}
+-	if buf.CheckCursorAutoScrollHoriz() {
+-		t.Update()
++	// These are the PRIMARY paint's alone. CheckCursorAutoScroll{,Horiz} scroll
++	// the shared buffer to keep the cursor visible — measured against THIS paint's
++	// clipped region. Run from a mirror (a different, often smaller rectangle),
++	// they scroll the buffer to fit the mirror, and the primary then shows the
++	// scrolled result: the terminal jumps a row before repainting, or a full line
++	// chases horizontally to show only its tail. A mirror is read-only, so it must
++	// touch none of this — it just draws the grid the primary settled.
++	if !t.mirrorPaint.Load() {
++		buf.SetCursorDrawn(cursorLineWasRendered)
++		if buf.CheckCursorAutoScroll() {
++			t.Update()
++		}
++		if buf.CheckCursorAutoScrollHoriz() {
++			t.Update()
++		}
++		buf.ClearDirty()
+ 	}
+-	buf.ClearDirty()
+ 
+ 	if !t.editorMode {
+ 		t.paintScrollbarsGfx(p, bounds, buf, chh)
+-- 
+2.43.0
+

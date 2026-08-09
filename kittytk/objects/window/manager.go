@@ -181,6 +181,8 @@ type PopupOverlay struct {
 	ID string
 	// Bounds in screen coordinates
 	Bounds core.UnitRect
+	// Anchor is the opening control's screen rect (see core.PopupRequest).
+	Anchor core.UnitRect
 	// Paint function to render the popup
 	Paint func(p *core.Painter)
 	// HandleMousePress function to handle clicks (returns true if handled)
@@ -288,35 +290,57 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 		bottomBand = grip
 	}
 
+	lx := x - bounds.X
+	ly := y - bounds.Y
+	if lx < 0 || lx >= bounds.Width || ly < 0 || ly >= bounds.Height {
+		return ResizeEdgeNone
+	}
+
+	// Vertical grips. The top edge is only grabbable with a graphical grip
+	// (grip>0); with the cell frame the top row is the titlebar.
+	atTop := grip > 0 && ly < grip
+	atBottom := ly >= bounds.Height-bottomBand
+	// When the window is short enough (or its grip wide enough) that the top
+	// and bottom grips overlap, letting one always win strands the other
+	// handle. The pointer's half decides instead: at or past the 50% line the
+	// bottom edge takes it, before it the top — so both stay reachable.
+	if atTop && atBottom {
+		if 2*ly >= bounds.Height {
+			atTop = false
+		} else {
+			atBottom = false
+		}
+	}
+
+	// Horizontal grips widen to the corner threshold along a grabbable top or
+	// bottom edge so the diagonal is easy to hit.
+	hThresh := edgeThreshold
+	if atTop || atBottom {
+		hThresh = cornerThreshold
+	}
+	atLeft := lx < hThresh
+	atRight := lx >= bounds.Width-hThresh
+	// Same 50% split when the left and right grips overlap.
+	if atLeft && atRight {
+		if 2*lx >= bounds.Width {
+			atLeft = false
+		} else {
+			atRight = false
+		}
+	}
+
 	edge := ResizeEdgeNone
-
-	atBottom := y >= bounds.Y+bounds.Height-bottomBand && y < bounds.Y+bounds.Height
-	atTop := grip > 0 && y >= bounds.Y && y < bounds.Y+grip
-
-	if x >= bounds.X && x < bounds.X+edgeThreshold {
+	if atLeft {
 		edge |= ResizeEdgeLeft
-	} else if x >= bounds.X+bounds.Width-edgeThreshold && x < bounds.X+bounds.Width {
+	} else if atRight {
 		edge |= ResizeEdgeRight
 	}
-
-	if atBottom {
-		edge |= ResizeEdgeBottom
-		if x >= bounds.X && x < bounds.X+cornerThreshold {
-			edge |= ResizeEdgeLeft
-		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
-			edge |= ResizeEdgeRight
-		}
-	}
-
 	if atTop {
 		edge |= ResizeEdgeTop
-		if x >= bounds.X && x < bounds.X+cornerThreshold {
-			edge |= ResizeEdgeLeft
-		} else if x >= bounds.X+bounds.Width-cornerThreshold && x < bounds.X+bounds.Width {
-			edge |= ResizeEdgeRight
-		}
 	}
-
+	if atBottom {
+		edge |= ResizeEdgeBottom
+	}
 	return edge
 }
 
@@ -1727,6 +1751,7 @@ func (m *WindowManager) RegisterPopup(request *core.PopupRequest) {
 	overlay := &PopupOverlay{
 		ID:                 request.ID,
 		Bounds:             request.Bounds,
+		Anchor:             request.Anchor,
 		Paint:              request.Paint,
 		HandleMousePress:   request.HandleMousePress,
 		HandleMouseMove:    request.HandleMouseMove,
@@ -2694,6 +2719,36 @@ func (m *WindowManager) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	return false
 }
 
+// HandleTextEditing hands an input method's composition to the active
+// window. None of HandleKeyPress's routing applies: a composition is not
+// a key, so there are no cycle keys to intercept, no accelerators to
+// offer the desktop first, and nothing to fall back to when the active
+// window cannot hold one.
+func (m *WindowManager) HandleTextEditing(event core.TextEditingEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleTextEditing(event)
+}
+
+// HandlePaste hands pasted text to the active window, the fallback path when
+// the focus manager's active scope did not claim it. Like HandleTextEditing it
+// has none of HandleKeyPress's routing: a paste is not a key.
+func (m *WindowManager) HandlePaste(event core.PasteEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandlePaste(event)
+}
+
 // HandleKeyPress processes keyboard events.
 func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()
@@ -2909,6 +2964,7 @@ func (m *WindowManager) Paint(p *core.Painter) {
 	m.mu.RLock()
 	desktop := m.desktop
 	windows := m.windows
+	screenBounds := m.screenBounds
 	m.mu.RUnlock()
 
 	// Paint desktop
@@ -2937,8 +2993,17 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			// left off-screen by a desktop shrink are nudged into view.
 			bounds := m.displayBounds(win)
 
-			// Calculate visible portion within client area
-			visibleBounds := bounds.Intersection(clientArea)
+			// The clip normally keeps windows out of chrome territory.
+			// While the tear-off affordance is active the window escapes
+			// it along with its halo — visually "lifting" over the menu
+			// and status bars, about to break out of the desktop.
+			windowArea := clientArea
+			if win.TearIndicatorActive() {
+				windowArea = screenBounds
+			}
+
+			// Calculate visible portion within the effective area
+			visibleBounds := bounds.Intersection(windowArea)
 			if visibleBounds.IsEmpty() {
 				continue
 			}
@@ -2994,6 +3059,32 @@ func (m *WindowManager) Paint(p *core.Painter) {
 			popup.Paint(p)
 		}
 	}
+}
+
+// SetOnWindowAdded sets the window added callback.
+
+// PaintPopups paints only the registered popup overlays.
+// Used by compositor mode to render popups on the Desktop layer.
+func (m *WindowManager) PaintPopups(p *core.Painter) {
+	m.mu.RLock()
+	popups := m.popups
+	m.mu.RUnlock()
+	for _, popup := range popups {
+		if popup.Paint != nil {
+			popup.Paint(p)
+		}
+	}
+}
+
+// GetPopups returns the list of registered popup overlays for compositor rendering.
+func (m *WindowManager) GetPopups() []interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]interface{}, len(m.popups))
+	for i, p := range m.popups {
+		result[i] = p
+	}
+	return result
 }
 
 // SetOnWindowAdded sets the window added callback.
