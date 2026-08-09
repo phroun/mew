@@ -46,6 +46,10 @@ type genSurface struct {
 var genSurfaces = map[string]genSurface{
 	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget},
 	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget},
+	// closed: the buffer_close tombstone. Baked per-buffer by newClosedPlaceholder
+	// (its Re-open link names the closed file); registered here so that link
+	// dispatches to followClosedReopen. render is the generic fallback only.
+	"closed": {render: (*Editor).renderClosed, follow: (*Editor).followClosedReopen},
 }
 
 // genSurfaceName returns the surface name for a mew: URL ("mew:/buffers" ->
