@@ -320,7 +320,10 @@ func (e *Editor) renderViewports() string {
 	b.WriteString("==== Open Viewports ====\n\n")
 	var rows int
 	for _, w := range e.ViewportManager.AllViewports() {
-		if w.Type == viewport.PromptViewport {
+		// Only focusable surfaces belong in the list: FocusEligible drops
+		// prompts and chrome (the modebar, transient toasts) — the viewports a
+		// reader can never navigate to anyway.
+		if !w.FocusEligible() {
 			continue
 		}
 		rows++
