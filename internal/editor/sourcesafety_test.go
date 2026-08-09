@@ -315,7 +315,7 @@ func TestMewLockLifecycle(t *testing.T) {
 
 	// Closing the buffer releases the lock (a second buffer keeps the
 	// editor alive through the close).
-	e.executeCommand("buffer_close")
+	e.executeCommand("viewport_close")
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("lock file should be removed on close, err=%v", err)
 	}

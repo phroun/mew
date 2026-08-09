@@ -49,7 +49,7 @@ const isearchToastTag = "isearch_progress"
 
 // isearchToastMessage is the progress toast; its TFC code resolves to whatever
 // key is bound to cancel (the prompt's own ^C).
-const isearchToastMessage = "Searching (%keys#cancel.buffer_close% to cancel)..."
+const isearchToastMessage = "Searching (%keys#cancel.viewport_close% to cancel)..."
 
 // isearchFrame records the match-start position that was current while the
 // pattern had patLen runes — the position backspace returns to.

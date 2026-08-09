@@ -109,7 +109,7 @@ func (e *Editor) tilerFollowFocus(id string) {
 }
 
 // dismissTileFor closes any tiler tile whose ref is viewportID, so closing a mew
-// viewport (buffer_close) also removes the tile that held it. If the closed tile
+// viewport (viewport_close) also removes the tile that held it. If the closed tile
 // was the active one, the follow-up focus change repopulates through
 // tilerFollowFocus.
 func (e *Editor) dismissTileFor(viewportID string) {

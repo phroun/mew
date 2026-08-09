@@ -757,7 +757,7 @@ func TestNavClearAndHistoryClear(t *testing.T) {
 	}
 }
 
-// buffer_close with a non-empty graveyard resurrects the most recent burial
+// viewport_close with a non-empty graveyard resurrects the most recent burial
 // into the SAME viewport instead of closing it; and a buffer becoming actively
 // bound anywhere (viewport creation, swap) leaves every graveyard — it is no
 // longer at risk of orphaning.
@@ -795,7 +795,7 @@ func TestBufferCloseResurrectsAndUnbury(t *testing.T) {
 	other := buryOther()
 	mains := len(e.contentViewports())
 	if !e.closeCurrentBuffer() {
-		t.Fatal("buffer_close should act")
+		t.Fatal("viewport_close should act")
 	}
 	if e.ViewportManager.GetViewport("wiki") != w {
 		t.Fatal("the viewport must survive a resurrecting close")

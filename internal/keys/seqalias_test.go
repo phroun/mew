@@ -61,7 +61,7 @@ func TestSequenceContinuationAliases(t *testing.T) {
 func TestSequenceAliasBeatsNewSequence(t *testing.T) {
 	m := map[string]string{
 		"^B c":    "buffer_duplicate",
-		"^C":      "nav_cancel|cancel|buffer_close",
+		"^C":      "nav_cancel|cancel|viewport_close",
 		"^C X":    "some_c_sequence",
 		"^B P":    "window_prior",
 		"^B help": `"keys_buffer"`,

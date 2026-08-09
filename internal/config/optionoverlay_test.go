@@ -223,7 +223,7 @@ func TestSetLessMappingSectionRefinesEverySet(t *testing.T) {
 // than replacing them.
 func TestBuiltinClassRefinementsSurviveAUserConfig(t *testing.T) {
 	m := NewManager()
-	c := m.LoadFromString("[mappings:mew]\n^Q Q\t=buffer_close\n")
+	c := m.LoadFromString("[mappings:mew]\n^Q Q\t=viewport_close\n")
 	km, _ := c.ResolveMappingSet("mew", "pty", "", "", "mew", c.Mappings)
 	for _, tc := range []struct{ key, want string }{
 		{"capture *", "tinput_key"},

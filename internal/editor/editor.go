@@ -2968,7 +2968,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.cloneCurrentViewport())
 	})
 
-	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
+	ps.RegisterCommand("viewport_close", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.closeCurrentBuffer())
 	})
 
@@ -7235,7 +7235,7 @@ func (e *Editor) closeCurrentBuffer() bool {
 
 	// Check for changes that would be lost. The viewport's active buffer is
 	// always at stake. Its stacked buffers are only at stake when the WINDOW
-	// itself will close — with a non-empty graveyard, buffer_close instead
+	// itself will close — with a non-empty graveyard, viewport_close instead
 	// resurrects the most recent burial into this viewport, so the history and
 	// graveyard survive intact.
 	resurrecting := len(w.GraveyardBuffers()) > 0

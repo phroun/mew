@@ -78,10 +78,10 @@ func TestReclaimSkipsTheCapturingLevelEntirely(t *testing.T) {
 	sp, h := newCaptureSP(map[string]string{
 		"capture ^C": "false",
 		"capture *":  "tinput_key",
-		"^C":         "buffer_close",
+		"^C":         "viewport_close",
 	}, "false")
 	sp.ProcessKey("^C")
-	want := []string{"^C→false", "^C→buffer_close"}
+	want := []string{"^C→false", "^C→viewport_close"}
 	if !reflect.DeepEqual(h.calls, want) {
 		t.Errorf("dispatched %v, want %v — the reclaim must not fall into its own level's wildcard", h.calls, want)
 	}
@@ -92,7 +92,7 @@ func TestReclaimSkipsTheCapturingLevelEntirely(t *testing.T) {
 func TestCaptureTrueSquelchesTheLevelsBelow(t *testing.T) {
 	sp, h := newCaptureSP(map[string]string{
 		"capture ^C": "true",
-		"^C":         "buffer_close",
+		"^C":         "viewport_close",
 	})
 	sp.ProcessKey("^C")
 	if want := []string{"^C→true"}; !reflect.DeepEqual(h.calls, want) {
@@ -165,7 +165,7 @@ func TestADeclinedSequenceDoesNotUnwind(t *testing.T) {
 
 // When every level declines a single key, the default-handling floor runs —
 // what an unbound key would have done all along. This is load-bearing for
-// reclaim: a declined ^C must land on its classic cancel|buffer_close.
+// reclaim: a declined ^C must land on its classic cancel|viewport_close.
 func TestTheFloorRunsWhenEveryLevelDeclines(t *testing.T) {
 	sp, h := newCaptureSP(map[string]string{
 		"capture *": "tinput_key",

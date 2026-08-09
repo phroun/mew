@@ -135,7 +135,7 @@ func TestCloseDropsDeferredLock(t *testing.T) {
 	if e.mewLockDeferred[buf] == "" {
 		t.Fatal("deferral should be recorded")
 	}
-	e.executeCommand("buffer_close")
+	e.executeCommand("viewport_close")
 	if _, still := e.mewLockDeferred[buf]; still {
 		t.Fatal("closing the buffer should drop the deferral record")
 	}

@@ -880,7 +880,7 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 	case "return":
 		return "nav_follow false|accept|insert_newline"
 	case "^C":
-		return "cancel|buffer_close"
+		return "cancel|viewport_close"
 	case "esc":
 		return "cmd"
 	default:

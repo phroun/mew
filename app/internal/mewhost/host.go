@@ -677,7 +677,7 @@ var menuActions = map[string]menuAction{
 	"mew.buffer.open":      {"buffer_open_file", "^B O"},
 	"mew.buffer.read":      {"buffer_insert_file", "^B R"},
 	"mew.buffer.duplicate": {"buffer_duplicate", "^B C"},
-	"mew.buffer.close":     {"cancel|buffer_close", "^C"},
+	"mew.buffer.close":     {"cancel|viewport_close", "^C"},
 	"mew.buffer.save":      {"buffer_save", "^B S"},
 	"mew.buffer.saveall":   {"buffer_save_all true", "^B A"},
 	// Two different operations, two items. buffer_save_as re-homes the buffer:
