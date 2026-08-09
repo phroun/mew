@@ -195,10 +195,10 @@ func (lm *LayoutManager) CalculateLayout(screenWidth, screenHeight int) Layout {
 	// never written back, so squeezed viewports re-expand when space returns.
 	negotiated := make(map[*Viewport]int, len(effectiveTop)+len(effectiveBottom))
 	for _, w := range effectiveTop {
-		negotiated[w] = clampHeight(w)
+		negotiated[w] = clampHeight(w, screenHeight)
 	}
 	for _, w := range effectiveBottom {
-		negotiated[w] = clampHeight(w)
+		negotiated[w] = clampHeight(w, screenHeight)
 	}
 
 	// Space requirements: the main area gets at least a third of the screen,
@@ -448,9 +448,30 @@ func (lm *LayoutManager) omitLowerPriorityViewports(topViewports, bottomViewport
 	return filteredTop, filteredBottom, remaining
 }
 
-// clampHeight returns the viewport's preferred height clamped into
-// [MinHeight, MaxHeight] (MaxHeight 0 means unbounded).
-func clampHeight(w *Viewport) int {
+// clampHeight returns the viewport's preferred height for a mew area of
+// areaHeight rows. A viewport with MaxHeightFraction > 0 sizes to a proportion
+// of the area less the 2 rows reserved for chrome — floor((areaHeight-2) *
+// fraction) — and that cap IS its preferred height, so it opens as tall as
+// allowed and layout negotiation shrinks it toward MinHeight under pressure. A
+// literal MaxHeight given alongside the fraction is the hard ceiling ("max
+// max"): the effective cap is the smaller of the two. Without a fraction, the
+// preferred Height is clamped into [MinHeight, MaxHeight] (MaxHeight 0 means
+// unbounded). MinHeight is the hard floor in every case.
+func clampHeight(w *Viewport, areaHeight int) int {
+	if w.MaxHeightFraction > 0 {
+		avail := areaHeight - 2
+		if avail < 1 {
+			avail = 1
+		}
+		h := int(float64(avail) * w.MaxHeightFraction)
+		if w.MaxHeight > 0 && h > w.MaxHeight {
+			h = w.MaxHeight // a literal max is the hard ceiling over the proportion
+		}
+		if h < w.MinHeight {
+			h = w.MinHeight
+		}
+		return h
+	}
 	h := w.Height
 	if h < w.MinHeight {
 		h = w.MinHeight

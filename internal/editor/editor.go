@@ -8867,6 +8867,12 @@ const helpViewportTag = "help"
 const helpViewportClass = "help"
 const quickHelpClass = "quickhelp"
 
+// helpMaxHeightFraction caps a regular (non-Quick) help page at half the mew
+// area height (less the 2 rows reserved for chrome): the layout resolves it live
+// as floor((mewHeight-2) * 0.5), so the cap tracks the terminal size instead of a
+// fixed row count. Quick Help ignores it and fits its content instead.
+const helpMaxHeightFraction = 0.5
+
 // quickHelpDocURL is the synthetic identity of the Quick Help buffer. It lives
 // in mew's GENERATED "mew:" scheme (not the box: storage tree), so it is never
 // read from disk, never resolves as a wiki page, and just gives the location a
@@ -9104,6 +9110,7 @@ func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 		hw.Class = quickHelpClass // distinct class for per-class config
 		hw.MessageTopCenter = ""  // no title bar: all MessageTop* empty hides the row
 		hw.CanFocus = false       // the focus switcher (^B N/^B P) skips the peek
+		hw.MaxHeightFraction = 0  // Quick Help fits its content, not a proportion
 		fit := quickHelpFitHeight(hw.Buffer)
 		hw.MaxHeight = fit
 		if hw.MinHeight > fit {
@@ -9114,7 +9121,8 @@ func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 		hw.MessageTopCenter = "Help"
 		hw.CanFocus = true
 		hw.MinHeight = 4
-		hw.MaxHeight = 20
+		hw.MaxHeight = 0 // no literal ceiling; the proportional cap governs
+		hw.MaxHeightFraction = helpMaxHeightFraction
 	}
 }
 
@@ -9149,7 +9157,7 @@ func (e *Editor) createHelpViewport(buf *buffer.Buffer, focus bool) *viewport.Vi
 	opts.Dock = viewport.DockTop
 	opts.Priority = 100
 	opts.MinHeight = 4
-	opts.MaxHeight = 20
+	opts.MaxHeightFraction = helpMaxHeightFraction // proportional cap; no literal ceiling
 	opts.MessageTopCenter = "Help"
 	opts.Buffer = buf
 	opts.SetFocus = focus

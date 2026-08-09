@@ -415,6 +415,14 @@ type Viewport struct {
 	MinHeight int
 	MaxHeight int
 	Height    int
+	// MaxHeightFraction, when > 0, caps a docked viewport at a proportion of the
+	// mew area height (less 2 rows reserved for chrome): the effective max is
+	// floor((areaHeight-2) * MaxHeightFraction), recomputed by the layout each
+	// frame so it tracks resizes. Its preferred height IS that cap (it opens as
+	// tall as allowed, then negotiates down under pressure). A literal MaxHeight
+	// set alongside it is the hard ceiling — the effective cap is the smaller of
+	// the two.
+	MaxHeightFraction float64
 
 	IdealVisualColumn       int
 	GhostCursorVisualColumn int
@@ -1307,34 +1315,38 @@ func (m *Manager) emit(event Event) {
 
 // ViewportOptions configures a new viewport.
 type ViewportOptions struct {
-	ID              string
-	Type            ViewportType
-	Class           string
-	ViewportSet     string
-	Tag             string
-	Buffer          *buffer.Buffer
-	Dock            DockPosition
-	Priority        int
-	Visible         bool
-	MinHeight       int
-	MaxHeight       int
-	Height          int
-	ShowLineNumbers bool
-	ProtectNewlines bool
-	ShowInvisibles  bool
-	ShowBidi        bool
-	ShowMarks       string // "no" | "yes" | "all"
-	OverwriteMode   bool   // inverse of insertMode; zero value = insert
-	ReadOnly        bool
-	AutoIndent      bool // replicate the split line's indent on insert_newline
-	LinkBrowsing    bool // hyperlink layer (link colors, browse-mode buttons)
-	ShowRuler       bool
-	Scrollbar       bool // reserve the outer column for a vertical scrollbar
-	TabSize         int
-	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
-	SetFocus        bool
-	CustomRenderer  string
-	AfterKey        string // after-key pseudo-binding (see Viewport.AfterKey)
+	ID          string
+	Type        ViewportType
+	Class       string
+	ViewportSet string
+	Tag         string
+	Buffer      *buffer.Buffer
+	Dock        DockPosition
+	Priority    int
+	Visible     bool
+	MinHeight   int
+	MaxHeight   int
+	Height      int
+	// MaxHeightFraction caps this viewport at a proportion of the mew area
+	// height (less 2 chrome rows) rather than a fixed MaxHeight; see the field of
+	// the same name on ViewportOptions.
+	MaxHeightFraction float64
+	ShowLineNumbers   bool
+	ProtectNewlines   bool
+	ShowInvisibles    bool
+	ShowBidi          bool
+	ShowMarks         string // "no" | "yes" | "all"
+	OverwriteMode     bool   // inverse of insertMode; zero value = insert
+	ReadOnly          bool
+	AutoIndent        bool // replicate the split line's indent on insert_newline
+	LinkBrowsing      bool // hyperlink layer (link colors, browse-mode buttons)
+	ShowRuler         bool
+	Scrollbar         bool // reserve the outer column for a vertical scrollbar
+	TabSize           int
+	SyntaxOverrides   string // space-separated grammar flavors that skip the project folder
+	SetFocus          bool
+	CustomRenderer    string
+	AfterKey          string // after-key pseudo-binding (see Viewport.AfterKey)
 
 	// Message bars
 	MessageTopInner     string
@@ -1436,6 +1448,7 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 		ScrollbarX:          -1, // no bar until the renderer lays one out
 		MinHeight:           minHeight,
 		MaxHeight:           opts.MaxHeight,
+		MaxHeightFraction:   opts.MaxHeightFraction,
 		Height:              height,
 		MessageTopInner:     opts.MessageTopInner,
 		MessageTopCenter:    opts.MessageTopCenter,

@@ -117,6 +117,10 @@ type wikiDef struct {
 	Priority    int
 	MinHeight   int
 	MaxHeight   int
+	// MaxHeightFraction caps a docked page at a proportion of the mew area
+	// height (less 2 chrome rows) rather than a fixed line count; a literal
+	// MaxHeight set too is the hard ceiling. See viewport.ViewportOptions.
+	MaxHeightFraction float64
 	// Title is the docked viewport's title-bar text (MessageTopCenter). A
 	// docked wiki page ALWAYS shows its title bar — the chromeless, title-less
 	// form is reserved for Quick Help. Empty leaves a docked page title-less
@@ -149,7 +153,7 @@ var wikiRegistry = map[string]wikiDef{
 		// not in the main editing area, and carry the "Help" title bar (the
 		// title-less form belongs to Quick Help alone).
 		WinType: viewport.ToolViewport, Dock: viewport.DockTop,
-		ViewportSet: "help", Priority: 100, MinHeight: 4, MaxHeight: 20,
+		ViewportSet: "help", Priority: 100, MinHeight: 4, MaxHeightFraction: helpMaxHeightFraction,
 		Title: "Help",
 	},
 }

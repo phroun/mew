@@ -320,8 +320,8 @@ func TestQuickHelpChromeAndFit(t *testing.T) {
 	if hw.MessageTopCenter != "Help" {
 		t.Errorf("a help page must show the Help title bar, got %q", hw.MessageTopCenter)
 	}
-	if hw.MaxHeight != 20 {
-		t.Errorf("a help page uses the standard height envelope, got MaxHeight %d", hw.MaxHeight)
+	if hw.MaxHeightFraction != 0.5 || hw.MaxHeight != 0 {
+		t.Errorf("a help page caps at a proportion of the area, got fraction %v maxH %d", hw.MaxHeightFraction, hw.MaxHeight)
 	}
 }
 
@@ -341,9 +341,9 @@ func TestQuickHelpChromeRestoredOnBrowseAway(t *testing.T) {
 	if e.quickHelpViewportOpen() {
 		t.Fatal("browsing away should leave quick mode")
 	}
-	if hw.MessageTopCenter != "Help" || hw.MaxHeight != 20 {
-		t.Errorf("browsing away should restore page chrome, got title %q maxH %d",
-			hw.MessageTopCenter, hw.MaxHeight)
+	if hw.MessageTopCenter != "Help" || hw.MaxHeightFraction != 0.5 {
+		t.Errorf("browsing away should restore page chrome, got title %q fraction %v",
+			hw.MessageTopCenter, hw.MaxHeightFraction)
 	}
 }
 
