@@ -431,9 +431,7 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 	newSplit("viewport_new", "viewport_new [#tile], <direction>, [ref]", (*ifitfits.Viewport).New)
 	newSplit("viewport_split", "viewport_split [#tile], <direction>, [ref]", (*ifitfits.Viewport).Split)
 	// tile_close closes a TILE (not the mew viewport it holds — that is
-	// viewport_close). It was named viewport_close, which collided with the mew
-	// close-viewport command; renamed so both survive. (tile_prior / tile_next,
-	// the reading-order cycle, are registered with the navigation group below.)
+	// viewport_close).
 	tileRet("tile_close", "tile_close [#tile]", (*ifitfits.Viewport).Close)
 
 	// --- Navigation ---
