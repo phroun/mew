@@ -3,6 +3,9 @@ package editor
 import (
 	"strings"
 	"testing"
+
+	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // The tombstone names the closed buffer and offers a Re-open link back to a real
@@ -39,5 +42,49 @@ func TestClosedPlaceholderContent(t *testing.T) {
 	}
 	if !reopenableName("/tmp/x.txt") {
 		t.Error("a real path should be reopenable")
+	}
+}
+
+// buffer_close retires the buffer everywhere: the active view mirrors
+// viewport_close (removed here, since a sibling viewport keeps mew running), and
+// a reference parked in another viewport's back-history becomes a mew:/closed
+// tombstone rather than lingering or vanishing.
+func TestBufferCloseTombstonesHistory(t *testing.T) {
+	e, w1 := newTestEditor(t, "A\n")
+	fileA := w1.Buffer
+
+	// A second document viewport with fileA parked in its back-history: it shows
+	// fileB now, having swapped away from fileA.
+	w2id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, Buffer: fileA,
+	})
+	w2 := e.ViewportManager.GetViewport(w2id)
+	e.swapBuffer(w2, buffer.NewFromString("B\n"))
+
+	stacked := func() []*buffer.Buffer { return w2.StackedBuffers() }
+	found := func(bufs []*buffer.Buffer, pred func(*buffer.Buffer) bool) bool {
+		for _, b := range bufs {
+			if pred(b) {
+				return true
+			}
+		}
+		return false
+	}
+	if !found(stacked(), func(b *buffer.Buffer) bool { return b == fileA }) {
+		t.Fatal("precondition: fileA should be parked in w2's history")
+	}
+
+	// Close fileA everywhere, from its focused active view.
+	e.ViewportManager.SetFocus(w1.ID)
+	e.executeCommand("buffer_close")
+
+	if e.ViewportManager.GetViewport(w1.ID) != nil {
+		t.Error("the active view of the closed buffer should have closed (mirror viewport_close)")
+	}
+	if found(stacked(), func(b *buffer.Buffer) bool { return b == fileA }) {
+		t.Error("fileA must not remain referenced in history after buffer_close")
+	}
+	if !found(stacked(), func(b *buffer.Buffer) bool { return b.GetFilename() == closedPlaceholderURL }) {
+		t.Error("fileA's history slot should have become a mew:/closed tombstone")
 	}
 }

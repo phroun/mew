@@ -2972,6 +2972,14 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.closeCurrentBuffer())
 	})
 
+	// buffer_close closes the focused viewport's buffer from EVERYWHERE it is
+	// referenced (viewport_close closes just the one viewport): active views
+	// mirror viewport_close and nav-history references become mew:/closed
+	// tombstones. Modified buffers prompt once first.
+	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
+		return pawscript.BoolStatus(e.closeBufferEverywhere())
+	})
+
 	// buffer_revert seeks the buffer's history back to its last save point.
 	// A pure history move: redo still reaches the abandoned edits.
 	ps.RegisterCommand("buffer_revert", func(ctx *pawscript.Context) pawscript.Result {

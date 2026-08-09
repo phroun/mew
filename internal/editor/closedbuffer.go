@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // The closed-buffer tombstone. When buffer_close closes a buffer everywhere it
@@ -76,4 +77,92 @@ func (e *Editor) followClosedReopen(target string) bool {
 	e.ShowNotificationTagged("→ "+displayPath(target), "navigate")
 	e.RequestRender()
 	return true
+}
+
+// closeBufferEverywhere is the buffer_close command: close the focused viewport's
+// buffer from EVERY place it is referenced. Unlike viewport_close (which closes
+// one viewport), this retires the buffer itself — the active views showing it
+// mirror viewport_close, and its nav-history references everywhere become
+// mew:/closed tombstones. A modified buffer prompts once before anything is torn
+// down; the whole thing is one buffer, so one prompt covers it.
+func (e *Editor) closeBufferEverywhere() bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Type == viewport.PromptViewport || w.Buffer == nil {
+		return false
+	}
+	target := w.Buffer
+	// A generated surface (a buffers list, a tombstone) is not a document to
+	// retire everywhere — leave those to viewport_close.
+	if isGenPath(target.GetFilename()) {
+		return false
+	}
+	if target.IsModified() {
+		name := target.GetFilename()
+		if name == "" {
+			name = "Untitled"
+		}
+		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("04: LOSE CHANGES TO %s?", name), true, func(accepted, confirmed bool) {
+			if accepted && confirmed {
+				e.doCloseBufferEverywhere(target)
+			} else {
+				e.ShowNotification("Close cancelled")
+			}
+			e.RequestRender()
+		})
+		return true
+	}
+	return e.doCloseBufferEverywhere(target)
+}
+
+// doCloseBufferEverywhere carries out the global close after any prompt: active
+// views mirror viewport_close, then every remaining nav-history reference to the
+// buffer becomes a mew:/closed tombstone, then its safety state is dropped.
+func (e *Editor) doCloseBufferEverywhere(target *buffer.Buffer) bool {
+	name := target.GetFilename()
+
+	// 1. Active views: mirror viewport_close for every viewport whose active
+	// buffer is the target (the focused one, plus any clone). Snapshot the ids
+	// first — finishCloseBuffer removes viewports as it goes.
+	var activeIDs []string
+	for _, v := range e.ViewportManager.AllViewports() {
+		if v.Buffer == target {
+			activeIDs = append(activeIDs, v.ID)
+		}
+	}
+	for _, id := range activeIDs {
+		if v := e.ViewportManager.GetViewport(id); v != nil && v.Buffer == target {
+			// Mirror viewport_close for this active view. It may resurrect the
+			// viewport's graveyard, remove the viewport, or — closing the last
+			// content viewport — set the editor to exit; planting tombstones after
+			// that is harmless, so there is nothing to bail out for.
+			e.finishCloseBuffer(id)
+		}
+	}
+
+	// 2. History references anywhere → a single shared tombstone. Built after the
+	// active pass so a viewport_close resurrection never surfaces the placeholder.
+	tomb := e.newClosedPlaceholder(name)
+	planted := 0
+	for _, v := range e.ViewportManager.AllViewports() {
+		planted += v.ReplaceHistoryTombstone(target, tomb)
+	}
+
+	// 3. Nothing references the buffer now (its active views closed, its history
+	// slots are tombstones) — drop its lock and captured notices.
+	if !e.bufferStillReferenced(target) {
+		e.forgetBufferSafety(target)
+	}
+	e.RequestRender()
+	return true
+}
+
+// bufferStillReferenced reports whether any content viewport still holds b, as
+// its active buffer or stacked in a nav history.
+func (e *Editor) bufferStillReferenced(b *buffer.Buffer) bool {
+	for _, ob := range e.openBuffers() {
+		if ob == b {
+			return true
+		}
+	}
+	return false
 }

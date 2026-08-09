@@ -1092,6 +1092,51 @@ func (w *Viewport) Unbury(buf *buffer.Buffer) {
 	w.navGrave = out
 }
 
+// newBinding mints a fresh viewBinding on buf with its own garland cursors and
+// an empty ring — the stack (parked) form of bindBuffer, for a binding placed in
+// history rather than made active.
+func newBinding(buf *buffer.Buffer) viewBinding {
+	b := viewBinding{Buffer: buf, ringNav: -1}
+	if buf == nil {
+		return b
+	}
+	b.caret = buf.NewCaret()
+	b.viewportAnchor = buf.NewAnchor()
+	b.lastEditPoint = buf.NewAnchor()
+	for i := range b.cursorRing {
+		b.cursorRing[i] = buf.NewAnchor()
+	}
+	return b
+}
+
+// ReplaceHistoryTombstone replaces every nav-history binding (back, forward, and
+// graveyard) whose buffer is `old` with a fresh binding on `tomb`, releasing the
+// replaced binding's cursors so `old` stops tracking them. The tombstone binding
+// carries read-only + link-browse view state, so navigating back to it shows the
+// "closed" placeholder with its Re-open link as a focusable button. The ACTIVE
+// binding is left untouched — callers handle the active view separately. Reports
+// how many entries were replaced.
+func (w *Viewport) ReplaceHistoryTombstone(old, tomb *buffer.Buffer) int {
+	n := 0
+	repl := func(stack []viewBinding) {
+		for i := range stack {
+			if stack[i].Buffer == old {
+				stack[i].release()
+				b := newBinding(tomb)
+				b.readOnly = true
+				b.linkBrowsing = true
+				b.browseActive = true
+				stack[i] = b
+				n++
+			}
+		}
+	}
+	repl(w.navBack)
+	repl(w.navFwd)
+	repl(w.navGrave)
+	return n
+}
+
 // NavHistoryPrior returns to the binding the viewport most recently swapped
 // away from, moving the active binding onto the forward stack. Reports false
 // (no state change) when there is no back history, so command chains can
