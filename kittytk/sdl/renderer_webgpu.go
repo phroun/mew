@@ -2436,7 +2436,7 @@ func (r *WebGPURenderer) drawOverlay(
 	// Pad the texture so outer strokes drawn just outside the nominal
 	// bounds survive, with the padding converted at the surface density
 	// so texture pixels match the outset on-screen quad exactly.
-	widthPx, heightPx, padPxW, padPxH := overlayTexturePx(bounds, pixelsPerUnitW, pixelsPerUnitH, overlayStrokeOffset)
+	widthPx, heightPx, _, _ := overlayTexturePx(bounds, pixelsPerUnitW, pixelsPerUnitH, overlayStrokeOffset)
 	if widthPx <= 0 || heightPx <= 0 {
 		return nil, core.TextCaret{}, fmt.Errorf("overlay pixel size %dx%d invalid", widthPx, heightPx)
 	}
@@ -2493,19 +2493,31 @@ func (r *WebGPURenderer) drawOverlay(
 	// edges on fractional pixels at fractional pixels-per-unit, and the
 	// surface's NDC centre falls on a half-pixel when the drawable width is
 	// odd — which sampled the centre source column twice, the faint doubled
-	// column that showed up mid-menu. The body's top-left pixel is the
-	// bounds rounded at the surface density; the texture starts one padding
-	// band up and to the left of it. The texture is texW×texH pixels
-	// (already grown past the DX12 minimum when needed), and the transparent
-	// padding simply extends off the bottom-right of the menu.
+	// column that showed up mid-menu.
+	//
+	// The texture's top-left pixel comes from the backend's OWN cell-snapped
+	// unit→pixel mapping (UnitToPxX/Y), NOT bounds×pixels-per-unit. Deriving
+	// it from the density made the menu jitter a pixel sideways as the parent
+	// window was resized: the reported unit size floors the drawable to whole
+	// sub-cells (Backend.Size), so backendPx/backendUnits wobbles by a
+	// fraction with every 1px resize and round() flips. UnitToPxX is the exact
+	// mapping the window paints its own content with — deterministic per unit
+	// position, independent of the drawable's width — so the overlay lands on
+	// the same pixel as the control it drops from and stays put.
+	//
+	// The paint offset (-bounds.X+overlayStrokeOffset) places surface unit
+	// (bounds.X-overlayStrokeOffset, bounds.Y-overlayStrokeOffset) at the
+	// texture's origin, so snap THAT corner — using the same padding-band
+	// unit as the paint keeps the derivation free of any density term. The
+	// texture is texW×texH pixels (already grown past the DX12 minimum when
+	// needed), and the transparent padding simply extends off the
+	// bottom-right of the menu.
 	aspect := float32(1)
 	if backendBounds.Dy() > 0 {
 		aspect = float32(backendBounds.Dx()) / float32(backendBounds.Dy())
 	}
-	bodyLeftPx := int(math.Round(float64(bounds.X) * pixelsPerUnitW))
-	bodyTopPx := int(math.Round(float64(bounds.Y) * pixelsPerUnitH))
-	leftPx := bodyLeftPx - padPxW
-	topPx := bodyTopPx - padPxH
+	leftPx := osWindow.backend.UnitToPxX(bounds.X - overlayStrokeOffset)
+	topPx := osWindow.backend.UnitToPxY(bounds.Y - overlayStrokeOffset)
 	qx, qy, qw, qh := overlayNDC(leftPx, topPx, texW, texH, backendBounds.Dx(), backendBounds.Dy())
 	uniformBuffer, uniformBindGroup, err := r.createOverlayUniformBuffer(
 		qx, qy, qw, qh, aspect)
