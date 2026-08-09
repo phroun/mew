@@ -131,6 +131,15 @@ type Editor struct {
 	// ensureTiler and applyTilerGeometry.
 	tiler *ifitfits.Viewport
 
+	// adoptFocusInPlace makes tilerFollowFocus reseat the FOCUSED tile onto a
+	// newly-focused untiled viewport instead of splitting a new tile for it. Set
+	// only for the brief span of a cycle to an existing viewport (buffer_next/
+	// prior, viewport_next/prior), so cycling onto an untiled background buffer
+	// shows it in the current pane rather than growing the tiling — while the
+	// commands that CREATE a viewport (buffer_duplicate, viewport_clone, an eval
+	// or cross-root wiki page, startup) keep splitting a fresh tile as before.
+	adoptFocusInPlace bool
+
 	// mainTiles is the last frame's laid-out main-area tiles, retained for mouse
 	// hit-testing: geometry lives with the tile (a viewport can appear in several
 	// tiles, many-to-many), so a click is resolved against these per-tile frames
@@ -3319,9 +3328,12 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), +1))
 	})
 
-	// Viewport navigation commands
+	// Viewport navigation commands. adoptFocusInPlace so cycling onto an UNtiled
+	// viewport reseats the current pane rather than splitting a new tile.
 	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
+		e.adoptFocusInPlace = true
 		ok := e.ViewportManager.FocusNextViewport()
+		e.adoptFocusInPlace = false
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -3329,7 +3341,9 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
+		e.adoptFocusInPlace = true
 		ok := e.ViewportManager.FocusPrevViewport()
+		e.adoptFocusInPlace = false
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -7416,8 +7430,11 @@ func (e *Editor) cycleBuffer(direction int) bool {
 	// Calculate new index with wrap-around
 	newIndex := (currentIndex + direction + len(mainBuffers)) % len(mainBuffers)
 
-	// Focus the new buffer
+	// Focus the new buffer. adoptFocusInPlace so cycling onto an UNtiled buffer
+	// shows it in the current pane rather than splitting a new tile.
+	e.adoptFocusInPlace = true
 	e.ViewportManager.SetFocus(mainBuffers[newIndex].ID)
+	e.adoptFocusInPlace = false
 	e.RequestRender()
 	return true
 }

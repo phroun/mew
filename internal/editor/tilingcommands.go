@@ -102,6 +102,14 @@ func (e *Editor) tilerFollowFocus(id string) {
 	if cur == 0 {
 		return
 	}
+	// Cycling onto an existing untiled viewport (adoptFocusInPlace) reseats the
+	// focused tile onto it, showing it in the current pane; otherwise — a command
+	// that just CREATED a viewport — split a fresh tile beside it, as before.
+	if e.adoptFocusInPlace {
+		vp.Set(cur, id)
+		vp.SetFocus(cur)
+		return
+	}
 	if nt := vp.New(cur, ifitfits.Right, id); nt != 0 {
 		vp.SetMetrics(nt, newTileMinW, newTileMinH, 0, 0)
 		vp.SetFocus(nt)
