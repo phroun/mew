@@ -9189,6 +9189,11 @@ func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 		hw.CanFocus = false       // the focus switcher (^B N/^B P) skips the peek
 		hw.MaxHeightFraction = 0  // Quick Help fits its content, not a proportion
 		fit := quickHelpFitHeight(hw.Buffer)
+		// Height is the PREFERRED height and clampHeight only caps it DOWN to
+		// MaxHeight — it never grows a short preferred up to the max. So set the
+		// preferred to the fit itself (not just the ceiling), or Quick Help sits at
+		// its created default height instead of fitting its content.
+		hw.Height = fit
 		hw.MaxHeight = fit
 		if hw.MinHeight > fit {
 			hw.MinHeight = fit
