@@ -876,7 +876,7 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 	case "space":
 		return "insert ' '"
 	case "del", "back":
-		return "nav_history_prior|del_char_prior"
+		return "nav_history_prior false|del_char_prior"
 	case "return":
 		return "nav_follow false|accept|insert_newline"
 	case "^C":
