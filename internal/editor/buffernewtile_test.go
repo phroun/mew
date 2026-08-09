@@ -3,6 +3,9 @@ package editor
 import (
 	"strings"
 	"testing"
+
+	"github.com/phroun/mew/internal/buffer"
+	"github.com/phroun/mew/internal/viewport"
 )
 
 // buffer_new opens the fresh buffer in the focused tile (replacing it), not in a
@@ -100,5 +103,37 @@ func TestViewportNextSkipsUntiledViewport(t *testing.T) {
 	}
 	if e.ViewportManager.GetFocusedViewport() != doc {
 		t.Error("buffer_next should have focused the untiled doc")
+	}
+}
+
+// buffer_next brings in only NON-VISIBLE buffers: a buffer shown in another tile
+// is skipped (that's viewport_next's job); it lands on the truly hidden one.
+func TestBufferNextSkipsVisibleBuffers(t *testing.T) {
+	e, doc, _ := newRenderedEditor(t, "A\n") // doc = A, tiled
+	e.ensureTiler()
+	e.performRender()
+
+	bID := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, Buffer: buffer.NewFromString("B\n"),
+	})
+	cID := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Type: viewport.DocViewport, Dock: viewport.DockNone, Visible: true, Buffer: buffer.NewFromString("C\n"),
+	})
+
+	// Put B in a second tile beside A (explicit ref). C stays untiled/hidden.
+	e.ViewportManager.SetFocus(doc.ID)
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, " + bID)
+	e.performRender()
+	if !e.viewportTiled(bID) || e.viewportTiled(cID) {
+		t.Fatalf("precondition: B tiled=%v C tiled=%v (want true, false)", e.viewportTiled(bID), e.viewportTiled(cID))
+	}
+
+	// From A, buffer_next must skip the visible B and land on the hidden C.
+	e.ViewportManager.SetFocus(doc.ID)
+	if !e.cycleBuffer(1) {
+		t.Fatal("buffer_next should find the hidden C")
+	}
+	if got := e.ViewportManager.GetFocusedViewport().ID; got != cID {
+		t.Errorf("buffer_next should skip the visible B and reach hidden C; landed on %q", got)
 	}
 }

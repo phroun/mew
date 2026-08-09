@@ -1154,18 +1154,7 @@ func New(cfg Config) (*Editor, error) {
 	// viewport counts only while a tile shows it — so the switcher never lands on
 	// an untiled background buffer (buffer_next / buffer_prior still reach those).
 	e.ViewportManager.SetCycleVisibleFilter(func(w *viewport.Viewport) bool {
-		if w.Dock != viewport.DockNone {
-			return true
-		}
-		if e.tiler == nil {
-			return true
-		}
-		for _, b := range e.tiler.Tiles() {
-			if b.Ref == w.ID {
-				return true
-			}
-		}
-		return false
+		return w.Dock != viewport.DockNone || e.tiler == nil || e.viewportTiled(w.ID)
 	})
 
 	// Register configured fonts into the host font engine and apply the
@@ -7418,41 +7407,60 @@ func (e *Editor) finishCloseBuffer(viewportID string) bool {
 	return true
 }
 
-// cycleBuffer switches to the next or previous buffer.
+// viewportTiled reports whether a main-area tile currently references the
+// viewport id — i.e. it is shown on screen. False when there is no tiler.
+func (e *Editor) viewportTiled(id string) bool {
+	if e.tiler == nil {
+		return false
+	}
+	for _, b := range e.tiler.Tiles() {
+		if b.Ref == id {
+			return true
+		}
+	}
+	return false
+}
+
+// cycleBuffer brings a NON-VISIBLE buffer into the focused pane. buffer_next /
+// buffer_prior walk the content viewports in `direction` and land on the first
+// one NOT currently shown in any tile — a buffer visible in a pane is reached
+// with viewport_next/prior instead, so the two commands partition the set with
+// no overlap. adoptFocusInPlace reseats the focused tile onto the buffer, rather
+// than splitting a new one. Reports false when nothing is hidden to bring in.
 func (e *Editor) cycleBuffer(direction int) bool {
-	mainBuffers := e.contentViewports()
-	if len(mainBuffers) <= 1 {
+	mains := e.contentViewports()
+	if len(mains) <= 1 {
 		return false
 	}
 
-	// Find current buffer index
 	currentID := ""
 	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		currentID = w.ID
 	}
-
 	currentIndex := -1
-	for i, w := range mainBuffers {
+	for i, w := range mains {
 		if w.ID == currentID {
 			currentIndex = i
 			break
 		}
 	}
-
 	if currentIndex == -1 {
 		currentIndex = 0
 	}
 
-	// Calculate new index with wrap-around
-	newIndex := (currentIndex + direction + len(mainBuffers)) % len(mainBuffers)
-
-	// Focus the new buffer. adoptFocusInPlace so cycling onto an UNtiled buffer
-	// shows it in the current pane rather than splitting a new tile.
-	e.adoptFocusInPlace = true
-	e.ViewportManager.SetFocus(mainBuffers[newIndex].ID)
-	e.adoptFocusInPlace = false
-	e.RequestRender()
-	return true
+	n := len(mains)
+	for step := 1; step <= n; step++ {
+		w := mains[((currentIndex+direction*step)%n+n)%n]
+		if w.ID == currentID || e.viewportTiled(w.ID) {
+			continue // self or an on-screen pane — skip
+		}
+		e.adoptFocusInPlace = true
+		e.ViewportManager.SetFocus(w.ID)
+		e.adoptFocusInPlace = false
+		e.RequestRender()
+		return true
+	}
+	return false
 }
 
 // contentViewports returns every content viewport — documents and tool surfaces
