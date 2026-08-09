@@ -147,6 +147,12 @@ type Editor struct {
 	// performRender, read by viewportAt — both on the editor goroutine.
 	mainTiles []viewport.ViewportLayout
 
+	// stackTabCounters maps a viewport id to the "[i/n]" stack-tab counter
+	// applyTilerGeometry stamped into its top-left message last frame, so the
+	// next frame can clear a stale counter (a tab that was unstacked or is no
+	// longer the shown one) without disturbing a message set by anything else.
+	stackTabCounters map[string]string
+
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
 	pageSizeSpec pageSizeSpec
@@ -7967,23 +7973,51 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	vp := e.ensureTiler()
 	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
+	tiles := vp.Tiles()
+	stackSel := e.stackSelectedTabs(vp, tiles)
+
+	// Clear last frame's stack-tab counters that no longer apply, leaving any
+	// message some other feature owns untouched (only clear our own text).
+	for id, msg := range e.stackTabCounters {
+		if w := e.ViewportManager.GetViewport(id); w != nil && w.MessageTopInner == msg {
+			w.MessageTopInner = ""
+		}
+	}
+	e.stackTabCounters = nil
+
 	focusedTile := vp.GetFocus()
 	mainTop := layout.TopHeight
 	mains := make([]viewport.ViewportLayout, 0, 4)
-	for _, b := range vp.Tiles() {
+	for _, b := range tiles {
 		w := e.ViewportManager.GetViewport(b.Ref)
 		if w == nil {
 			continue // empty/blank tile
+		}
+		// A stacked group reserves a header band off the top of its box and
+		// places the shown tab BELOW it (ifitfits Stacks/allocate). mew draws no
+		// tab strip yet, so that band would just render blank — and on a short
+		// main area the shown tab is squeezed to nothing. Reclaim it: paint the
+		// shown tab across the stack's WHOLE box, and put a "[i/n]" counter in the
+		// viewport's top-left message so the stack is at least legible for now.
+		rect := b.Rect
+		if st, ok := stackSel[b.Tile]; ok {
+			rect = st.rect
+			msg := fmt.Sprintf("[%d/%d]", st.index+1, st.count)
+			w.MessageTopInner = msg
+			if e.stackTabCounters == nil {
+				e.stackTabCounters = make(map[string]string)
+			}
+			e.stackTabCounters[w.ID] = msg
 		}
 		// Snap each tile to integer cell edges by rounding its LEFT and RIGHT
 		// (and TOP/BOTTOM) edges, then taking the span. Rounding edges rather
 		// than truncating width keeps adjacent tiles flush and the rightmost/
 		// bottommost tile reaching the workspace edge, so a fractional split
 		// (e.g. an 81-column area halved) never leaves a one-cell gap.
-		x0 := int(math.Round(b.Rect.X))
-		x1 := int(math.Round(b.Rect.X + b.Rect.W))
-		y0 := int(math.Round(b.Rect.Y))
-		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		x0 := int(math.Round(rect.X))
+		x1 := int(math.Round(rect.X + rect.W))
+		y0 := int(math.Round(rect.Y))
+		y1 := int(math.Round(rect.Y + rect.H))
 		// Geometry rides on the tile (this layout entry): a viewport shown in
 		// several tiles gets a distinct frame per tile, and the renderer applies
 		// each just before painting it. The viewport's own FrameX/FrameWidth are
@@ -8001,6 +8035,55 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		})
 	}
 	layout.MainLayout = mains
+}
+
+// stackTabInfo is where a shown stack tab sits: the stack's whole box (used in
+// place of the tab's header-inset rect) and the tab's 1-based position within
+// the stack.
+type stackTabInfo struct {
+	rect         ifitfits.Rect
+	index, count int
+}
+
+// stackSelectedTabs maps the leaf handle of each FLAT stack's shown tab to its
+// stack box and tab position. Only flat stacks (every tab a single leaf) are
+// handled for now: a tab that is itself a split shows more than one leaf in the
+// box, which the whole-box reclaim would overlap — those wait for a real tab
+// strip. A stack's shown tab is flat when exactly one visible tile falls inside
+// the stack's box (its buried tabs are hidden, so Tiles omits them).
+func (e *Editor) stackSelectedTabs(vp *ifitfits.Viewport, tiles []ifitfits.Box) map[ifitfits.Handle]stackTabInfo {
+	stacks := vp.Stacks()
+	if len(stacks) == 0 {
+		return nil
+	}
+	inside := func(r ifitfits.Rect, b ifitfits.Box) bool {
+		cx := b.Rect.X + b.Rect.W/2
+		cy := b.Rect.Y + b.Rect.H/2
+		return cx >= r.X && cx <= r.X+r.W && cy >= r.Y && cy <= r.Y+r.H
+	}
+	out := map[ifitfits.Handle]stackTabInfo{}
+	for _, s := range stacks {
+		sel := -1
+		for i, tb := range s.Tabs {
+			if tb.Selected {
+				sel = i
+			}
+		}
+		if sel < 0 {
+			continue
+		}
+		n := 0
+		for _, b := range tiles {
+			if inside(s.Rect, b) {
+				n++
+			}
+		}
+		if n != 1 {
+			continue // the shown tab is a split, not a single leaf
+		}
+		out[s.Tabs[sel].Tile] = stackTabInfo{rect: s.Rect, index: sel, count: len(s.Tabs)}
+	}
+	return out
 }
 
 // Run starts the editor with an optional filename.
