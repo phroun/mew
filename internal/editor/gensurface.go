@@ -320,10 +320,12 @@ func (e *Editor) renderViewports() string {
 	b.WriteString("==== Open Viewports ====\n\n")
 	var rows int
 	for _, w := range e.ViewportManager.AllViewports() {
-		// Only focusable surfaces belong in the list: FocusEligible drops
-		// prompts and chrome (the modebar, transient toasts) — the viewports a
-		// reader can never navigate to anyway.
-		if !w.FocusEligible() {
+		// Only surfaces the focus cycle actually stops on belong in the list:
+		// FocusEligible drops prompts and chrome (the modebar, transient
+		// toasts), and CanFocus drops the peek surfaces the ^B switcher skips
+		// (Quick Help) while keeping regular help — neither is somewhere a
+		// reader navigates to from this listing.
+		if !w.FocusEligible() || !w.CanFocus {
 			continue
 		}
 		rows++
