@@ -527,8 +527,24 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 
 	// --- Stacks & tabs ---
 	tileState("viewport_stack", "viewport_stack [#tile], [true|false|toggle]", (*ifitfits.Viewport).Stack)
-	tileRet("viewport_tab_next", "viewport_tab_next [#tile]", (*ifitfits.Viewport).TabNext)
-	tileRet("viewport_tab_prior", "viewport_tab_prior [#tile]", (*ifitfits.Viewport).TabPrior)
+	// viewport_tab_next / viewport_tab_prior raise the next/prior tab in the stack
+	// and GO to it: TabNext/TabPrior return the newly-shown tab's focus entry (the
+	// leaf to land on), so — like tile_prior/next and viewport_go — focus follows
+	// there, driving lastMainViewport and the modebar. Without this the tab was
+	// raised but mew stayed focused on the old tab's viewport.
+	tabGo := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle) ifitfits.Handle) {
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			vp, t, _, ok := e.tileFront(ctx)
+			if !ok {
+				e.ShowWarning("Usage: " + usage)
+				return pawscript.BoolStatus(false)
+			}
+			e.goToTile(ctx, vp, fn(vp, t))
+			return pawscript.BoolStatus(true)
+		})
+	}
+	tabGo("viewport_tab_next", "viewport_tab_next [#tile]", (*ifitfits.Viewport).TabNext)
+	tabGo("viewport_tab_prior", "viewport_tab_prior [#tile]", (*ifitfits.Viewport).TabPrior)
 	tileOnly("viewport_move_tab_next", "viewport_move_tab_next [#tile]", (*ifitfits.Viewport).MoveTabNext)
 	tileOnly("viewport_move_tab_prior", "viewport_move_tab_prior [#tile]", (*ifitfits.Viewport).MoveTabPrior)
 
