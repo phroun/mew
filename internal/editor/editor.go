@@ -6865,8 +6865,9 @@ func (e *Editor) openFile(filename string) bool {
 		return false
 	}
 
-	// Create new main buffer viewport
-	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+	// Create the main buffer viewport UNfocused, then show it in the focused tile
+	// (replacing it) rather than spawning a new tile beside it.
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
 		Type:            viewport.DocViewport,
 		Buffer:          buf,
 		Dock:            viewport.DockNone,
@@ -6881,18 +6882,44 @@ func (e *Editor) openFile(filename string) bool {
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		Scrollbar:       e.Config.Scrollbar,
-		SetFocus:        true,
 	})
+	e.showInFocusedTile(e.ViewportManager.GetViewport(id))
 
 	e.RequestRender()
 	return true
 }
 
-// createNewBuffer creates a new empty buffer viewport.
+// showInFocusedTile makes w the content of the currently- (or most recently-)
+// focused main tile, replacing what was there, instead of letting the main-focus
+// hook (tilerFollowFocus) spawn a NEW tile beside it. This is what buffer_new /
+// buffer_open_file want: open in the current pane, not add one. With nothing
+// tiled yet it falls back to a plain focus, letting the hook seat the first tile
+// as usual. The viewport formerly in the tile stays open (in the buffer list),
+// just untiled.
+func (e *Editor) showInFocusedTile(w *viewport.Viewport) {
+	if w == nil {
+		return
+	}
+	vp := e.ensureTiler()
+	tile := vp.GetFocus()
+	if tile == 0 {
+		if ts := vp.Tiles(); len(ts) > 0 {
+			tile = ts[0].Tile
+		}
+	}
+	if tile != 0 {
+		vp.Set(tile, w.ID) // the focused tile now shows the new viewport
+	}
+	e.ViewportManager.SetFocus(w.ID) // the hook finds the reseated tile — no split
+}
+
+// createNewBuffer creates a new empty buffer, shown in the focused tile.
 func (e *Editor) createNewBuffer() {
 	buf := e.lib.New()
 
-	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+	// Created UNfocused: showInFocusedTile reseats the focused tile to it, so
+	// focusing it finds that tile rather than spawning a new one.
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
 		Type:            viewport.DocViewport,
 		Buffer:          buf,
 		Dock:            viewport.DockNone,
@@ -6908,8 +6935,8 @@ func (e *Editor) createNewBuffer() {
 		AutoIndent:      e.Config.AutoIndent,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		Scrollbar:       e.Config.Scrollbar,
-		SetFocus:        true,
 	})
+	e.showInFocusedTile(e.ViewportManager.GetViewport(id))
 
 	e.RequestRender()
 }
