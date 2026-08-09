@@ -65,7 +65,7 @@ func TestFocusAndReadOnlyToastsCollapse(t *testing.T) {
 	e.announceFocusedViewport()
 	switched := 0
 	for _, v := range e.ViewportManager.GetViewportsByDock(viewport.DockBottom) {
-		if v.Tag == "switched_viewport" {
+		if v.Tag == "navigate" {
 			switched++
 		}
 	}

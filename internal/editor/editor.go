@@ -8703,9 +8703,10 @@ func (e *Editor) announceFocusedViewport() {
 	if name == "" {
 		name = w.ID
 	}
-	// Tagged so a rapid cycle (^B N / mouse focus) collapses to the latest
-	// "Switched to …" rather than stacking one per step.
-	e.ShowNotificationTagged("Switched to "+name, "switched_viewport")
+	// Tagged "navigate" so a rapid cycle (^B N / mouse focus) collapses to the
+	// latest "Switched to …", and so it shares the navigation family — a switch
+	// followed by a link jump replaces rather than stacks.
+	e.ShowNotificationTagged("Switched to "+name, "navigate")
 }
 
 // ShowError shows a transient error viewport at the bottom of the screen.
