@@ -201,7 +201,9 @@ func TestTilesCoverWidthExactly(t *testing.T) {
 func TestSplitClonedRefPaintsBothTiles(t *testing.T) {
 	e, _, out := newRenderedEditor(t, "HELLO\n")
 	e.ensureTiler()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	// Explicit ref = the origin viewport, so both tiles show it (a mirror);
+	// without a ref the split opens a fresh mew:/buffers pane instead.
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, doc")
 
 	out.Reset()
 	e.performRender()
@@ -228,7 +230,7 @@ func TestSplitClonedRefPaintsBothTiles(t *testing.T) {
 func TestSplitClonedRefHitTestsBothTiles(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, "HELLO WORLD\n")
 	e.ensureTiler()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, doc") // explicit ref → mirror
 	e.performRender()
 
 	doc := e.ViewportManager.GetViewport("doc")
@@ -343,7 +345,7 @@ func TestSplitDownFocusedTileCanonical(t *testing.T) {
 	e, _, _ := newRenderedEditor(t, strings.Repeat("x\n", 60))
 	e.ensureTiler()
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.PawScript.ExecuteAsync("viewport_split #tile, down, doc") // explicit ref → mirror
 	e.performRender()
 
 	doc := e.ViewportManager.GetViewport("doc")
@@ -427,7 +429,7 @@ func TestSwitchIntoMirroredViewportFocusesClickedTile(t *testing.T) {
 	// tiles (a mirror): doc2 now appears twice.
 	focusMainViewport(e, "doc2", strings.Repeat("y\n", 60))
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, down")
+	e.PawScript.ExecuteAsync("viewport_split #tile, down, doc2") // explicit ref → mirror
 	e.performRender()
 
 	doc2 := e.ViewportManager.GetViewport("doc2")

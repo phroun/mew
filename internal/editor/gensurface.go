@@ -114,6 +114,28 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 	return true
 }
 
+// newSurfaceViewport creates a fresh main-area document viewport already showing
+// the named generated surface (read-only, link-browse, caret on its first link),
+// and returns it — nil for an unregistered surface. Used to give a freshly
+// split/created tile its own pane (a buffers list to pick from) instead of
+// cloning the origin tile's content.
+func (e *Editor) newSurfaceViewport(name string) *viewport.Viewport {
+	s, ok := genSurfaces[name]
+	if !ok {
+		return nil
+	}
+	buf := e.lib.NewFromString(s.render(e))
+	buf.SetFilename("mew:/" + name)
+	buf.SetTransient(true) // navigating away from it releases it, as for any surface
+	w := e.createMainViewport(buf, nil, false)
+	w.ViewState.ReadOnly = true
+	w.ViewState.LinkBrowsing = true
+	w.BrowseActive = true
+	e.focusSurfaceEntry(w, "") // land on the first link so it opens ready to pick
+	e.ensureCursorVisible(w)
+	return w
+}
+
 // currentBufferTarget is the buffers-surface entry for the document being left:
 // its stable handle. "" when there is no ordinary document to return to (an
 // unbound viewport, or one already showing a generated surface).

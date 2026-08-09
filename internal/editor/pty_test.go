@@ -224,7 +224,9 @@ func TestTerminalSurfaceMirrorsAcrossTiles(t *testing.T) {
 	}
 	e.ensureTiler()
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	// Explicit ref = the terminal viewport, so the split mirrors it across two
+	// tiles (without a ref the split opens a fresh mew:/buffers pane instead).
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, " + e.ViewportManager.GetFocusedViewport().ID)
 	e.performRender()
 
 	if len(placed) != 2 {
@@ -278,7 +280,9 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 	}
 	e.ensureTiler()
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	// Explicit ref = the terminal viewport, so the split mirrors it across two
+	// tiles (without a ref the split opens a fresh mew:/buffers pane instead).
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, " + e.ViewportManager.GetFocusedViewport().ID)
 	e.performRender()
 
 	if len(e.mainTiles) != 2 {

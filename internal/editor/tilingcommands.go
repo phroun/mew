@@ -404,9 +404,11 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 
 	// --- Structure ---
 	// viewport_new / viewport_split: tile (idiom) + a required direction, with an
-	// optional ref that otherwise clones the origin tile's ref. Both return the
-	// new tile, stamped with our default minimums so it is not omitted on a
-	// modest workspace.
+	// optional ref. Given a ref, the new tile shows that existing viewport;
+	// without one, a FRESH main viewport is created showing the mew:/buffers list,
+	// so the new pane opens on a place to pick what to show rather than cloning the
+	// origin tile's content. Both return the new tile, stamped with our default
+	// minimums so it is not omitted on a modest workspace.
 	newSplit := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle) {
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
 			vp, t, rest, ok := e.tileFront(ctx)
@@ -418,6 +420,11 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			var h ifitfits.Handle
 			if ref, okR := tileArgStr(ctx, rest+1); okR {
 				h = fn(vp, t, d, ref)
+			} else if nw := e.newSurfaceViewport("buffers"); nw != nil {
+				h = fn(vp, t, d, nw.ID)
+				if h == 0 {
+					e.ViewportManager.RemoveViewport(nw.ID) // split failed: don't orphan the pane
+				}
 			} else {
 				h = fn(vp, t, d)
 			}
