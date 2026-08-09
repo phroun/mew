@@ -2,6 +2,7 @@ package sdl
 
 import (
 	"image"
+	"math"
 	"testing"
 	"time"
 
@@ -101,6 +102,55 @@ func TestOverlayTexturePxMatchesOutsetQuad(t *testing.T) {
 		if padPxW != wantPad || padPxH != wantPad {
 			t.Errorf("ppu=%v: padPx = (%d,%d), want %d", ppu, padPxW, padPxH, wantPad)
 		}
+	}
+}
+
+// overlayNDC must pin an overlay quad to WHOLE pixels: the left edge maps
+// back through the GPU's NDC→viewport transform to exactly leftPx, and the
+// span is exactly wPx — regardless of whether the drawable width is odd (a
+// half-pixel NDC centre) or the density fractional. This is the 1:1 blit
+// that killed the doubled centre column in composited menus.
+func TestOverlayNDCIsPixelExact(t *testing.T) {
+	// The GPU maps NDC x in [-1,1] to pixel [0,drawW]: px = (x+1)/2 * drawW.
+	toPx := func(ndcX float32, drawW int) float64 {
+		return (float64(ndcX) + 1.0) / 2.0 * float64(drawW)
+	}
+
+	// Odd drawable width is the parity that put the surface centre on a
+	// half-pixel; check a couple of placements including one straddling it.
+	cases := []struct {
+		leftPx, topPx, wPx, hPx, drawW, drawH int
+	}{
+		{leftPx: 0, topPx: 0, wPx: 200, hPx: 100, drawW: 1365, drawH: 767},
+		{leftPx: 640, topPx: 300, wPx: 181, hPx: 240, drawW: 1365, drawH: 767},
+		{leftPx: 683, topPx: 1, wPx: 2, hPx: 2, drawW: 1365, drawH: 767}, // straddles centre
+		{leftPx: 12, topPx: 34, wPx: 300, hPx: 260, drawW: 800, drawH: 600},
+	}
+	for _, c := range cases {
+		x, y, w, h := overlayNDC(c.leftPx, c.topPx, c.wPx, c.hPx, c.drawW, c.drawH)
+
+		gotLeft := toPx(x, c.drawW)
+		gotRight := toPx(x+w, c.drawW)
+		if math.Abs(gotLeft-float64(c.leftPx)) > 1e-3 {
+			t.Errorf("%+v: left edge maps to %v px, want %d", c, gotLeft, c.leftPx)
+		}
+		if math.Abs((gotRight-gotLeft)-float64(c.wPx)) > 1e-3 {
+			t.Errorf("%+v: width spans %v px, want %d", c, gotRight-gotLeft, c.wPx)
+		}
+		// Top edge: NDC y in [-1,1] maps to pixel [drawH,0] (y flipped).
+		gotTop := (1.0 - float64(y+h)) / 2.0 * float64(c.drawH)
+		gotBot := (1.0 - float64(y)) / 2.0 * float64(c.drawH)
+		if math.Abs(gotTop-float64(c.topPx)) > 1e-3 {
+			t.Errorf("%+v: top edge maps to %v px, want %d", c, gotTop, c.topPx)
+		}
+		if math.Abs((gotBot-gotTop)-float64(c.hPx)) > 1e-3 {
+			t.Errorf("%+v: height spans %v px, want %d", c, gotBot-gotTop, c.hPx)
+		}
+	}
+
+	// Degenerate drawable: no divide-by-zero, just a zero quad.
+	if x, y, w, h := overlayNDC(0, 0, 10, 10, 0, 0); x != 0 || y != 0 || w != 0 || h != 0 {
+		t.Errorf("zero drawable = (%v,%v,%v,%v), want all zero", x, y, w, h)
 	}
 }
 

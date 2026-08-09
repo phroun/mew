@@ -30,6 +30,26 @@ func windowNDC(bounds core.UnitRect, surfaceSize core.UnitSize) (x, y, w, h floa
 	return x, y, w, h
 }
 
+// overlayNDC maps an INTEGER pixel rectangle (leftPx, topPx, wPx, hPx) on a
+// drawable of drawPxW×drawPxH pixels to the clip-space quad the blit shader
+// wants. Unlike windowNDC — which derives the quad from integer UNIT bounds and
+// so lands the edges on fractional pixels at fractional pixels-per-unit — this
+// pins the edges to whole pixels: leftPx maps back through the GPU's NDC→viewport
+// transform to exactly leftPx, and the span is exactly wPx. An overlay texture of
+// wPx×hPx then blits 1:1, so no source column is sampled twice (the doubled
+// column that appeared at the surface's centre when its pixel width was odd).
+func overlayNDC(leftPx, topPx, wPx, hPx, drawPxW, drawPxH int) (x, y, w, h float32) {
+	if drawPxW <= 0 || drawPxH <= 0 {
+		return 0, 0, 0, 0
+	}
+	x = float32(leftPx)/float32(drawPxW)*2.0 - 1.0
+	top := 1.0 - float32(topPx)/float32(drawPxH)*2.0
+	w = float32(wPx) / float32(drawPxW) * 2.0
+	h = float32(hPx) / float32(drawPxH) * 2.0
+	y = top - h
+	return x, y, w, h
+}
+
 // outsetBounds grows a rect by the stroke offset on every side — the
 // overlay texture is padded so outer strokes drawn just outside the
 // nominal bounds still land on it.
