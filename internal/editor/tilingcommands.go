@@ -326,6 +326,23 @@ func (e *Editor) tileFront(ctx *pawscript.Context) (*ifitfits.Viewport, ifitfits
 	return vp, h, rest, ok
 }
 
+// goToTile makes dest the active tile after a navigation: it becomes the #tile
+// default, and when the tile carries a live mew viewport ref, focus follows there
+// (driving lastMainViewport and the modebar) with the usual switch announcement.
+// Publishes dest as the command result. Shared by viewport_go and the focusing
+// tile_prior / tile_next cycle.
+func (e *Editor) goToTile(ctx *pawscript.Context, vp *ifitfits.Viewport, dest ifitfits.Handle) {
+	vp.SetFocus(dest)                                 // the destination is now the active tile
+	ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
+	if ref := vp.Content(dest); ref != "" {
+		if e.ViewportManager.GetViewport(ref) != nil {
+			e.ViewportManager.SetFocus(ref) // sets lastMainViewport, as a normal switch
+			e.announceFocusedViewport()
+		}
+	}
+	ctx.SetResult(uint64(dest))
+}
+
 // ---- registration ----
 
 func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
@@ -446,26 +463,36 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			e.ShowWarning("Usage: viewport_go [#tile], <direction>")
 			return pawscript.BoolStatus(false)
 		}
-		dest := vp.Go(t, d)
-		vp.SetFocus(dest)                                 // the destination is now the active tile
-		ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
-		if ref := vp.Content(dest); ref != "" {
-			if e.ViewportManager.GetViewport(ref) != nil {
-				e.ViewportManager.SetFocus(ref) // sets lastMainViewport, as a normal switch
-				e.announceFocusedViewport()
-			}
-		}
-		ctx.SetResult(uint64(dest))
+		e.goToTile(ctx, vp, vp.Go(t, d))
 		return pawscript.BoolStatus(true)
 	})
 	tileRet("viewport_up", "viewport_up [#tile]", (*ifitfits.Viewport).Up)
 	tileRet("viewport_down", "viewport_down [#tile]", (*ifitfits.Viewport).Down)
 	tileRet("viewport_left", "viewport_left [#tile]", (*ifitfits.Viewport).Left)
 	tileRet("viewport_right", "viewport_right [#tile]", (*ifitfits.Viewport).Right)
-	// viewport_prior / viewport_next are already mew commands (main-viewport
-	// focus cycling); the tiler's reading-order cycle is tile_prior / tile_next.
-	tileRet("tile_prior", "tile_prior [#tile]", (*ifitfits.Viewport).Prior)
-	tileRet("tile_next", "tile_next [#tile]", (*ifitfits.Viewport).Next)
+	// tile_prior / tile_next cycle the tiles in reading order and GO there —
+	// updating the #tile default, focusing the destination tile's viewport, and
+	// announcing the switch — the reading-order analog of viewport_go (not a raw
+	// seek; viewport_seek prior/next is that). viewport_prior / viewport_next are
+	// the separate main-viewport focus-cycling commands.
+	ps.RegisterCommand("tile_prior", func(ctx *pawscript.Context) pawscript.Result {
+		vp, t, _, ok := e.tileFront(ctx)
+		if !ok {
+			e.ShowWarning("Usage: tile_prior [#tile]")
+			return pawscript.BoolStatus(false)
+		}
+		e.goToTile(ctx, vp, vp.Prior(t))
+		return pawscript.BoolStatus(true)
+	})
+	ps.RegisterCommand("tile_next", func(ctx *pawscript.Context) pawscript.Result {
+		vp, t, _, ok := e.tileFront(ctx)
+		if !ok {
+			e.ShowWarning("Usage: tile_next [#tile]")
+			return pawscript.BoolStatus(false)
+		}
+		e.goToTile(ctx, vp, vp.Next(t))
+		return pawscript.BoolStatus(true)
+	})
 
 	// --- Move & reorder ---
 	tileDir("viewport_swap", "viewport_swap [#tile], <direction>", (*ifitfits.Viewport).Swap)
