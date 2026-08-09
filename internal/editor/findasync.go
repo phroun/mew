@@ -25,7 +25,7 @@ import (
 // ^C reaches this through the cancel command, but ONLY while the progress toast
 // is up. A find has no prompt and no visible mode once its first search has
 // begun — ^L simply goes to the next match — so there is nothing for a cancel to
-// mean, and JOE has no such notion either. The one exception is the search that
+// mean. The one exception is the search that
 // outran its grace period and put a message on screen saying which key stops it:
 // that message is a promise, and it is the whole reason cancel looks here at all
 // (see cancelFind).
@@ -360,9 +360,9 @@ func (e *Editor) dropFindToast() {
 // and its "LOSE CHANGES" question.
 //
 // The condition is narrow on purpose. A find is not a mode: it has no prompt
-// once the first search has begun, ^L simply goes to the next match, and JOE has
-// no notion of an ongoing find to abandon — so ^C there should fall through to
-// whatever else it is bound to, exactly as it did before background find existed.
+// once the first search has begun and ^L simply goes to the next match, so there
+// is no ongoing find to abandon — ^C there should fall through to whatever else
+// it is bound to, exactly as it did before background find existed.
 // The single exception is the search slow enough to have put a message on screen
 // naming the cancel key. That message is a promise to the user, and honouring it
 // is the entire reason this function exists.

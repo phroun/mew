@@ -1613,9 +1613,9 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(true)
 		}
 		// No prompt to dismiss. A find is not something to cancel: it has no
-		// prompt once its first search has begun, ^L just goes to the next
-		// match, and JOE has no such notion — so ^C falls through to whatever
-		// else it is bound to. The single exception is the search slow enough to
+		// prompt once its first search has begun and ^L just goes to the next
+		// match, so ^C falls through to whatever else it is bound to. The
+		// single exception is the search slow enough to
 		// have put a message on screen naming this very key; that message is a
 		// promise, and cancelFind is where it is kept.
 		if e.cancelFind() {
@@ -2883,8 +2883,8 @@ func (e *Editor) registerCommands() {
 	})
 
 	// block_filter pipes the marked block through a shell command and replaces it
-	// with the result (JOE's filter-block). The command may be given inline
-	// (block_filter sort -r); with none it prompts, recalling prior filter
+	// with the result. The command may be given inline (block_filter sort -r);
+	// with none it prompts, recalling prior filter
 	// commands. It is the ergonomic spelling of exec --stdin=block --stdout=block
 	// --stderr=block, so stdout and stderr both flow back into the block.
 	ps.RegisterCommand("block_filter", func(ctx *pawscript.Context) pawscript.Result {
