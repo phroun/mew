@@ -1149,6 +1149,25 @@ func New(cfg Config) (*Editor, error) {
 	// tilerFollowFocus finds/reveals/creates the tile that holds it.
 	e.ViewportManager.SetMainFocusHook(e.tilerFollowFocus)
 
+	// The focus switcher (viewport_next / viewport_prior) cycles only viewports
+	// currently ON SCREEN: docked ones keep their own Visible flag, but a main
+	// viewport counts only while a tile shows it — so the switcher never lands on
+	// an untiled background buffer (buffer_next / buffer_prior still reach those).
+	e.ViewportManager.SetCycleVisibleFilter(func(w *viewport.Viewport) bool {
+		if w.Dock != viewport.DockNone {
+			return true
+		}
+		if e.tiler == nil {
+			return true
+		}
+		for _, b := range e.tiler.Tiles() {
+			if b.Ref == w.ID {
+				return true
+			}
+		}
+		return false
+	})
+
 	// Register configured fonts into the host font engine and apply the
 	// startup ui-term alias, before any painting resolves font names.
 	e.applyFontConfig()
@@ -3328,12 +3347,11 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), +1))
 	})
 
-	// Viewport navigation commands. adoptFocusInPlace so cycling onto an UNtiled
-	// viewport reseats the current pane rather than splitting a new tile.
+	// Viewport navigation commands. These cycle only viewports currently on
+	// screen (SetCycleVisibleFilter), so they always land on an already-tiled
+	// pane — no adoptFocusInPlace needed.
 	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
-		e.adoptFocusInPlace = true
 		ok := e.ViewportManager.FocusNextViewport()
-		e.adoptFocusInPlace = false
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -3341,9 +3359,7 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
-		e.adoptFocusInPlace = true
 		ok := e.ViewportManager.FocusPrevViewport()
-		e.adoptFocusInPlace = false
 		if ok {
 			e.announceFocusedViewport()
 		}

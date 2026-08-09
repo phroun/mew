@@ -70,3 +70,35 @@ func TestCycleOntoUntiledViewportReseatsTile(t *testing.T) {
 		t.Error("the focused tile should now show doc")
 	}
 }
+
+// viewport_next / viewport_prior cycle only ON-SCREEN viewports: they skip an
+// untiled background viewport that buffer_next would still reach.
+func TestViewportNextSkipsUntiledViewport(t *testing.T) {
+	e, doc, _ := newRenderedEditor(t, "orig\n")
+	e.ensureTiler()
+	e.performRender()
+
+	e.createNewBuffer() // newBuf tiled, doc untiled
+	e.performRender()
+	newBuf := e.ViewportManager.GetFocusedViewport()
+	if newBuf == nil || newBuf == doc {
+		t.Fatal("precondition: buffer_new should focus a new viewport")
+	}
+
+	// Only newBuf is on screen, so the switcher has nowhere to go — it must NOT
+	// reach the untiled doc.
+	if e.ViewportManager.FocusNextViewport() {
+		t.Error("viewport_next should not cycle onto an untiled viewport")
+	}
+	if e.ViewportManager.GetFocusedViewport() != newBuf {
+		t.Error("focus should be unchanged after a no-op viewport_next")
+	}
+
+	// buffer_next, by contrast, still reaches the untiled doc.
+	if !e.cycleBuffer(1) {
+		t.Fatal("buffer_next should reach the untiled viewport")
+	}
+	if e.ViewportManager.GetFocusedViewport() != doc {
+		t.Error("buffer_next should have focused the untiled doc")
+	}
+}

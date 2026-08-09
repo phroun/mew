@@ -1325,6 +1325,15 @@ type Manager struct {
 	// the focused viewport). It runs while m.mu is held, so it must not call back
 	// into the Manager.
 	mainFocusHook func(id string)
+
+	// cycleVisible, when set, further gates which focus-eligible viewports the
+	// focus SWITCHER (FocusNextViewport / FocusPrevViewport) stops on: it must
+	// return true for a viewport to be a cycle stop. The editor uses it to keep
+	// the switcher to viewports currently ON SCREEN (a main viewport only when a
+	// tile shows it), so cycling never lands on an untiled background buffer.
+	// Called with m.mu held from focusCycleTarget, so it must read only the
+	// passed viewport's fields and editor-side state — never re-enter the Manager.
+	cycleVisible func(w *Viewport) bool
 }
 
 // SetMainFocusHook registers a callback invoked (under the manager lock) whenever
@@ -1333,6 +1342,16 @@ type Manager struct {
 func (m *Manager) SetMainFocusHook(fn func(id string)) {
 	m.mu.Lock()
 	m.mainFocusHook = fn
+	m.mu.Unlock()
+}
+
+// SetCycleVisibleFilter registers the predicate that decides whether a
+// focus-eligible viewport is an on-screen cycle stop for the focus switcher.
+// Pass nil to clear (every focus-eligible viewport cycles). The predicate must
+// not re-enter the Manager (it runs under the lock).
+func (m *Manager) SetCycleVisibleFilter(fn func(w *Viewport) bool) {
+	m.mu.Lock()
+	m.cycleVisible = fn
 	m.mu.Unlock()
 }
 
@@ -1807,7 +1826,7 @@ func (m *Manager) focusCycleTarget(offset int) string {
 	// though explicit focus can still reach it.
 	var mains []*Viewport
 	for _, w := range m.viewports {
-		if w.FocusEligible() && w.Visible && w.CanFocus {
+		if w.FocusEligible() && w.Visible && w.CanFocus && (m.cycleVisible == nil || m.cycleVisible(w)) {
 			mains = append(mains, w)
 		}
 	}
