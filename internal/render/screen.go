@@ -72,19 +72,6 @@ type ScreenRenderer struct {
 	// consulted on frames that show the cursor. nil leaves the shape alone.
 	cursorStyleFn func(w *viewport.Viewport) int
 
-	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
-	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
-	// nil leaves the configured label verbatim.
-	peekLabelFn func(raw string) string
-
-	// Peek indicators state
-	peekIndicators struct {
-		StatPeekUp     bool
-		StatPeekDown   bool
-		PromptPeekUp   bool
-		PromptPeekDown bool
-	}
-
 	// Terminal output and size query; virtualizable by hosts.
 	out    io.Writer
 	sizeFn func() (width, height int, err error)
@@ -97,7 +84,7 @@ type ScreenRenderer struct {
 	nativeStop        func() // uninstalls the native watcher, if installed
 
 	// Indicator glyphs/labels used to draw chrome (whitespace markers, gutter,
-	// cursor indicators, peek tab labels).
+	// cursor indicators).
 	indicators config.Indicators
 
 	// Layered color scheme; colors are resolved per viewport by class, buffer
@@ -392,13 +379,6 @@ func (sr *ScreenRenderer) LayoutEpoch() uint64 {
 
 func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport, docLine int) []string) {
 	sr.syntaxColorizer = colorizer
-}
-
-// SetPeekLabelResolver sets the function that expands a peek-indicator label
-// through the modebar %CODE% engine (resolving codes like %SPU% to live key
-// bindings). nil leaves labels verbatim.
-func (sr *ScreenRenderer) SetPeekLabelResolver(fn func(raw string) string) {
-	sr.peekLabelFn = fn
 }
 
 // SetFlipBidiForHost re-emits RTL runs in logical order for host terminals
@@ -702,17 +682,11 @@ func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	return sb.String()
 }
 
-// paintFrame paints the whole layout into sr.frame — peek indicators, viewport
-// groups, ghost/secondary/real cursors — and applies the hardware-cursor
+// paintFrame paints the whole layout into sr.frame — viewport groups,
+// ghost/secondary/real cursors — and applies the hardware-cursor
 // visibility. The caller must hold renderMu and have called sr.frame.begin();
 // it presents the frame afterward. Shared by Render and CaptureFrame.
 func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
-	// Save peek indicator state
-	sr.peekIndicators.StatPeekUp = layout.NeedsStatPeekUp
-	sr.peekIndicators.StatPeekDown = layout.NeedsStatPeekDown
-	sr.peekIndicators.PromptPeekUp = layout.NeedsPromptPeekUp
-	sr.peekIndicators.PromptPeekDown = layout.NeedsPromptPeekDown
-
 	// Update viewport content properties
 	sr.updateViewportContentProperties(layout)
 
@@ -731,9 +705,6 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 			layout.MainLayout[i].StampGeometry()
 		}
 	}
-
-	// Render peek indicators
-	sr.renderPeekIndicators(layout)
 
 	// Render ghost cursor if present, then position real cursor
 	hideCursor := false
@@ -2229,57 +2200,6 @@ func defectiveMarkForm(prev, r rune) (string, int) {
 	}
 	s := runeToHexOrCtrl(r)
 	return s, substituteWidth(s)
-}
-
-// renderPeekIndicators renders peek indicators for scrolled dock viewports.
-// These hints live at the viewport-manager level, not inside any viewport, so
-// their colors resolve at the global level only (no class/type cascade).
-func (sr *ScreenRenderer) renderPeekIndicators(layout viewport.Layout) {
-	hintColor := sr.colorScheme.Resolve("", "", "hint")
-	resetColor := sr.colorScheme.Resolve("", "", "reset")
-	// Right-align the (configurable, variable-width) label near the right edge.
-	// Labels run through the modebar %CODE% engine first (e.g. "[%SPU%]" ->
-	// the live stat_peek_up binding).
-	draw := func(label string, y int) {
-		if sr.peekLabelFn != nil {
-			label = sr.peekLabelFn(label)
-		}
-		if label == "" {
-			return
-		}
-		sr.MoveCursor(sr.Width-len([]rune(label)), y)
-		sr.Write(hintColor + label + resetColor)
-	}
-
-	// Top pair: Esc U one line below the top edge (so it doesn't cover the
-	// modebar), Esc V on the last row of the top dock. When both are active
-	// and would land on the same row, Esc V takes priority.
-	if len(layout.TopLayout) > 0 {
-		upY := 2
-		lastTop := layout.TopLayout[len(layout.TopLayout)-1]
-		downY := lastTop.Y + lastTop.Height
-		if sr.peekIndicators.StatPeekUp && !(sr.peekIndicators.StatPeekDown && downY <= upY) {
-			draw(sr.indicators.StatPeekUp, upY)
-		}
-		if sr.peekIndicators.StatPeekDown {
-			draw(sr.indicators.StatPeekDown, downY)
-		}
-	}
-
-	// Bottom pair: Esc P on the first row of the bottom dock, Esc N on the
-	// last screen row. When both are active and would land on the same row,
-	// Esc P takes priority.
-	if len(layout.BottomLayout) > 0 {
-		firstBottom := layout.BottomLayout[0]
-		upY := firstBottom.Y + 1
-		downY := sr.Height
-		if sr.peekIndicators.PromptPeekDown && !(sr.peekIndicators.PromptPeekUp && upY >= downY) {
-			draw(sr.indicators.PromptPeekDown, downY)
-		}
-		if sr.peekIndicators.PromptPeekUp {
-			draw(sr.indicators.PromptPeekUp, upY)
-		}
-	}
 }
 
 // positionCursor positions the terminal cursor within a viewport. It returns true

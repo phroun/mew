@@ -1258,13 +1258,6 @@ func New(cfg Config) (*Editor, error) {
 		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
-	// Peek-indicator labels run through the shared TFC engine so codes like
-	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
-	// resolve to live bindings too).
-	renderer.SetPeekLabelResolver(func(raw string) string {
-		return plugins.ExpandTFC(raw, e.peekBindingValues(), e.tfcKeyResolver("", ""))
-	})
-
 	// The shipped grammar pack resolves through the mew: tree's read-only
 	// system/embedded layers (no copy into ~/.mew), then load the configured
 	// grammar and give the renderer its per-line colorizer.
@@ -1370,30 +1363,7 @@ func (e *Editor) applyMacOptionKeys() {
 func (e *Editor) renderModebar(w *viewport.Viewport, screenWidth int) string {
 	e.Modebar.SetActiveSequence(e.ActiveSequence)
 	e.Modebar.SetCompletions(e.activeCompletions)
-	e.Modebar.SetBindingValues(e.peekBindingValues())
 	return e.Modebar.RenderContent(w, screenWidth)
-}
-
-// peekBindingCommands maps the modebar engine's peek codes to the commands
-// whose live key binding they display.
-var peekBindingCommands = map[string]string{
-	"SPU": "stat_peek_up",
-	"SPD": "stat_peek_down",
-	"PPU": "prompt_peek_up",
-	"PPD": "prompt_peek_down",
-}
-
-// peekBindingValues resolves the peek %CODE%s (SPU/SPD/PPU/PPD) to the key
-// currently bound to each peek command, for the modebar substitution engine and
-// the peek-indicator labels. Mappings are editor-global today; the resolver
-// runs at render time, so if per-viewport keymaps are ever added the focused
-// viewport's map is the natural source.
-func (e *Editor) peekBindingValues() map[string]string {
-	vals := make(map[string]string, len(peekBindingCommands))
-	for code, cmd := range peekBindingCommands {
-		vals[code] = e.KeyForCommand(cmd)
-	}
-	return vals
 }
 
 // caretHidden reports whether the hardware caret should be withheld for a
@@ -3353,23 +3323,6 @@ func (e *Editor) registerCommands() {
 			e.announceFocusedViewport()
 		}
 		return pawscript.BoolStatus(ok)
-	})
-
-	// Peek commands
-	ps.RegisterCommand("stat_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekUp())
-	})
-
-	ps.RegisterCommand("stat_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekDown())
-	})
-
-	ps.RegisterCommand("prompt_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekUp())
-	})
-
-	ps.RegisterCommand("prompt_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekDown())
 	})
 
 	// Help toggle command

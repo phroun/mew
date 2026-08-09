@@ -19,13 +19,11 @@ These are foundational - errors here cascade everywhere.
    - Dock positions (top, bottom, none)
    - Priority handling
    - Event system
-   - Peek offsets (statPeek, promptPeek)
 
 3. [ ] **core/layout-manager.js** → internal/window/layout.go
    - Top dock: sort descending (highest priority at screen top)
    - Bottom dock: sort ascending (highest priority at screen bottom)
    - Main area calculation
-   - Peek indicator logic
 
 4. [ ] **core/buffer-manager.js** → internal/buffer/buffer.go
    - Line operations (get, set, insert, delete)
@@ -187,13 +185,11 @@ These are foundational - errors here cascade everywhere.
   - TypeScript has event system (on/off/emit) - Go doesn't need this
   - TypeScript has preference manager integration - Go has color functions
   - Both have lastMainBufferWindow tracking
-  - Both have peek offset support (statPeek/promptPeek)
   - Both have ghost cursor handling
 
 - Audited layout-manager.js:
   - TypeScript createTopLayout sorts descending (highest priority at top) - Go matches
   - TypeScript createBottomLayout sorts ascending (lowest priority at top of bottom section) - Go matches
-  - Peek offset handling similar in both
 
 - Audited commands:
 
@@ -203,7 +199,6 @@ These are foundational - errors here cascade everywhere.
   - Editing: del_char_prior, delete_char, delete_line, del_word_beg, del_word_end ✓
   - File: file_save, file_open, file_new, buffer_close ✓
   - Undo/redo: undo, redo ✓
-  - Peek: stat_peek_up/down, prompt_peek_up/down ✓
   - Help: help_toggle ✓
   - Find: find, find_next ✓ (basic implementation)
 

@@ -34,11 +34,6 @@ type ModebarPlugin struct {
 	// right-to-left segment, signalling which way the next keypress moves.
 	logoRTL bool
 
-	// bindingValues holds dynamic %CODE% values sourced from the editor's live
-	// keymap (e.g. %SPU% -> the key bound to stat_peek_up). Merged into the
-	// substitution set so templates and the peek labels resolve them.
-	bindingValues map[string]string
-
 	// tfcResolve resolves dynamic TFC codes (e.g. %keys#save|^K S%) not present
 	// in the static value map, so the modebar's own templates can use them.
 	tfcResolve TFCResolver
@@ -183,12 +178,6 @@ func (s *ModebarPlugin) Templates() (inner, def, outer string) {
 	return s.tmplInner, s.tmplDefault, s.tmplOuter
 }
 
-// SetBindingValues sets the dynamic keymap-sourced %CODE% values (e.g. %SPU%)
-// merged into the modebar's substitution set.
-func (s *ModebarPlugin) SetBindingValues(vals map[string]string) {
-	s.bindingValues = vals
-}
-
 // TFCResolver resolves a TFC (Text Format Control) %CODE% that is not a static
 // value in the substitution map — for instance a "keys#save|^K S" live-binding
 // reference. It returns the replacement text and true, or false to leave the
@@ -198,7 +187,7 @@ type TFCResolver func(code string) (string, bool)
 // ExpandTFC substitutes TFC %CODE% tokens in tmpl: %% is a literal %; a code
 // present in vals wins; else resolve (when non-nil) is tried; else the %CODE% is
 // left verbatim. This is the shared Text Format Control engine — the modebar
-// templates, the peek-indicator labels, and any other UI string run through it.
+// templates and any other UI string run through it.
 func ExpandTFC(tmpl string, vals map[string]string, resolve TFCResolver) string {
 	return expandTFC(tmpl, vals, resolve)
 }
@@ -330,9 +319,6 @@ func (s *ModebarPlugin) RenderContent(w *viewport.Viewport, screenWidth int) str
 		if name := s.filenameFn(mainBufferViewport); name != "" {
 			vals["FN"] = name
 		}
-	}
-	for code, v := range s.bindingValues {
-		vals[code] = v
 	}
 
 	// Left: active key sequence.

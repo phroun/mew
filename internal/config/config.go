@@ -275,7 +275,7 @@ func DefaultFormatPaths() map[string]map[string]string {
 }
 
 // Indicators holds the glyphs/labels used to draw editor chrome (ruler ticks,
-// whitespace markers, gutter/cursor indicators, peek tab labels). Configured via
+// whitespace markers, gutter/cursor indicators). Configured via
 // the [indicators] section.
 type Indicators struct {
 	RulerFill       string
@@ -297,10 +297,6 @@ type Indicators struct {
 	CursorOffScreen string
 	TruncationLeft  string
 	TruncationRight string
-	StatPeekUp      string
-	StatPeekDown    string
-	PromptPeekUp    string
-	PromptPeekDown  string
 	// Link-as-button chrome (browse mode): a button renders as
 	// ButtonLeft + title + ButtonRight + ButtonShadow, with the Focused*
 	// variants when the caret is inside the button.
@@ -332,10 +328,6 @@ func DefaultIndicators() Indicators {
 		CursorOffScreen: "@",
 		TruncationLeft:  "<",
 		TruncationRight: ">",
-		StatPeekUp:      "[%SPU%]",
-		StatPeekDown:    "[%SPD%]",
-		PromptPeekUp:    "[%PPU%]",
-		PromptPeekDown:  "[%PPD%]",
 
 		ButtonLeft:          " ",
 		ButtonRight:         " ",
@@ -1464,10 +1456,6 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		set(&config.Indicators.CursorOffScreen, "cursorOffScreen")
 		set(&config.Indicators.TruncationLeft, "truncationLeft")
 		set(&config.Indicators.TruncationRight, "truncationRight")
-		set(&config.Indicators.StatPeekUp, "statPeekUp")
-		set(&config.Indicators.StatPeekDown, "statPeekDown")
-		set(&config.Indicators.PromptPeekUp, "promptPeekUp")
-		set(&config.Indicators.PromptPeekDown, "promptPeekDown")
 		set(&config.Indicators.ButtonLeft, "buttonLeft")
 		set(&config.Indicators.ButtonRight, "buttonRight")
 		set(&config.Indicators.ButtonShadow, "buttonShadow")
@@ -2484,11 +2472,6 @@ resources=
 
 [indicators]
 # Glyphs/labels used to draw editor chrome. Values are quoted.
-# The peek labels (statPeek*/promptPeek*) run through the same %CODE%
-# substitution engine as the modebar templates: %SPU% %SPD% %PPU% %PPD%
-# resolve to the key currently bound to stat_peek_up / stat_peek_down /
-# prompt_peek_up / prompt_peek_down, in the spelling the binding is stored
-# under, so the hint always matches the live keymap.
 rulerFill="░"
 rulerTick="."
 rulerMinor=":"
@@ -2506,10 +2489,6 @@ cursorGhost="|"
 cursorOffScreen="@"
 truncationLeft="<"
 truncationRight=">"
-statPeekUp="[%SPU%]"
-statPeekDown="[%SPD%]"
-promptPeekUp="[%PPU%]"
-promptPeekDown="[%PPD%]"
 # Link-as-button chrome (browse mode): a link renders as
 # buttonLeft + title + buttonRight + buttonShadow; the focused* variants
 # apply to the button the caret is inside.
@@ -2528,7 +2507,6 @@ invisibles="\e[0;1;40;90m"        # bright black / dark gray on black
 cursorGhost="\e[0;30;100m"        # black on dark gray
 cursorOffScreen="\e[0;30;42m"     # black on green
 truncation="\e[0;37;41m"          # silver on red
-hint="\e[0;97;44m"                # bright white on blue - peek indicator hints
 special="\e[33m"                  # yellow foreground - control code substitutes
 marks="\e[0;91m"                  # bright red
 notes="\e[0;36;40m"               # cyan on black
@@ -2663,10 +2641,6 @@ messages="\e[0;97;41m"                # bright white on red
 # now comes from defaults/keys_system.conf, included above. Only the keys that
 # are NOT in it stay here.
 ^K H    =help_toggle
-^@ U    =stat_peek_up
-^@ V    =stat_peek_down
-^@ P    =prompt_peek_up
-^@ N    =prompt_peek_down
 ^@ O    =editor_options
 ^@ ,    =viewport_prior
 ^@ .    =viewport_next
