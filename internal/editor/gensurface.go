@@ -39,17 +39,24 @@ type genSurface struct {
 	// focused viewport's id), so the caret can land on it. "" when there is no
 	// such entry — the caret then falls back to the first link.
 	current func(e *Editor, w *viewport.Viewport) string
+	// focusPane makes following one of this surface's links focus the pane the
+	// surface is shown in FIRST. Set only for surfaces whose follow resolves its
+	// destination against the focused document viewport (surfaceTargetViewport) —
+	// the buffers and viewports lists — so a link activated in an unfocused pane
+	// acts on that pane, not on whatever else held focus. A mouse press on a link
+	// does not itself take focus, so without this the choice would land elsewhere.
+	focusPane bool
 }
 
 // genSurfaces is the registry. Add a surface by registering a render/follow
 // pair here.
 var genSurfaces = map[string]genSurface{
-	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget},
-	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget},
+	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget, focusPane: true},
+	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget, focusPane: true},
 	// closed: the buffer_close tombstone. Baked per-buffer by newClosedPlaceholder
 	// (its Re-open link names the closed file); registered here so that link
 	// dispatches to followClosedReopen. render is the generic fallback only.
-	"closed": {render: (*Editor).renderClosed, follow: (*Editor).followClosedReopen},
+	"closed": {render: (*Editor).renderClosed, follow: (*Editor).followClosedReopen, focusPane: true},
 }
 
 // genSurfaceName returns the surface name for a mew: URL ("mew:/buffers" ->
@@ -196,7 +203,17 @@ func (e *Editor) followGeneratedSurfaceLink(w *viewport.Viewport, target string)
 	if name == "" {
 		return false, false
 	}
-	return genSurfaces[name].follow(e, target), true
+	s := genSurfaces[name]
+	// Most surface follows resolve their destination against the focused document
+	// viewport (surfaceTargetViewport), and a mouse press on a link does not take
+	// focus — so focus the surface's own pane first, making the choice land there
+	// rather than in whatever else held focus. Ordinary document/help links never
+	// reach here; they follow in place without moving focus. A future surface may
+	// opt out by leaving focusPane false.
+	if s.focusPane {
+		e.ViewportManager.SetFocus(w.ID)
+	}
+	return s.follow(e, target), true
 }
 
 // surfaceTargetViewport is the document viewport a generated surface navigates:
