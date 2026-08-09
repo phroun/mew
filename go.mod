@@ -7,7 +7,7 @@ require (
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.12
 	github.com/phroun/garland v0.1.11
-	github.com/phroun/ifitfits v0.1.0
+	github.com/phroun/ifitfits v0.1.1
 	github.com/phroun/kittytk v0.1.17-alpha
 	github.com/phroun/pawscript v0.2.12-alpha
 	golang.org/x/term v0.45.0

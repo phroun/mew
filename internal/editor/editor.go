@@ -7993,15 +7993,12 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		if w == nil {
 			continue // empty/blank tile
 		}
-		// A stacked group reserves a header band off the top of its box and
-		// places the shown tab BELOW it (ifitfits Stacks/allocate). mew draws no
-		// tab strip yet, so that band would just render blank — and on a short
-		// main area the shown tab is squeezed to nothing. Reclaim it: paint the
-		// shown tab across the stack's WHOLE box, and put a "[i/n]" counter in the
-		// viewport's top-left message so the stack is at least legible for now.
+		// mew draws no tab strip yet, so a stacked group reserves nothing
+		// (SetStackReserve defaults to 0) and the shown tab already fills its box.
+		// Until there's a real strip, put a "[i/n]" counter in the viewport's
+		// top-left message so a flat stack is at least legible.
 		rect := b.Rect
 		if st, ok := stackSel[b.Tile]; ok {
-			rect = st.rect
 			msg := fmt.Sprintf("[%d/%d]", st.index+1, st.count)
 			w.MessageTopInner = msg
 			if e.stackTabCounters == nil {
@@ -8037,20 +8034,18 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	layout.MainLayout = mains
 }
 
-// stackTabInfo is where a shown stack tab sits: the stack's whole box (used in
-// place of the tab's header-inset rect) and the tab's 1-based position within
-// the stack.
+// stackTabInfo is a shown stack tab's position within its stack (0-based index
+// and total tab count), used to stamp the "[i/n]" counter.
 type stackTabInfo struct {
-	rect         ifitfits.Rect
 	index, count int
 }
 
 // stackSelectedTabs maps the leaf handle of each FLAT stack's shown tab to its
-// stack box and tab position. Only flat stacks (every tab a single leaf) are
-// handled for now: a tab that is itself a split shows more than one leaf in the
-// box, which the whole-box reclaim would overlap — those wait for a real tab
-// strip. A stack's shown tab is flat when exactly one visible tile falls inside
-// the stack's box (its buried tabs are hidden, so Tiles omits them).
+// tab position. Only flat stacks (every tab a single leaf) are annotated: a tab
+// that is itself a split shows more than one leaf in the box and its selected
+// handle isn't a leaf tile, so it wouldn't match anyway — those wait for a real
+// tab strip. A stack's shown tab is flat when exactly one visible tile falls
+// inside the stack's box (its buried tabs are hidden, so Tiles omits them).
 func (e *Editor) stackSelectedTabs(vp *ifitfits.Viewport, tiles []ifitfits.Box) map[ifitfits.Handle]stackTabInfo {
 	stacks := vp.Stacks()
 	if len(stacks) == 0 {
@@ -8081,7 +8076,7 @@ func (e *Editor) stackSelectedTabs(vp *ifitfits.Viewport, tiles []ifitfits.Box) 
 		if n != 1 {
 			continue // the shown tab is a split, not a single leaf
 		}
-		out[s.Tabs[sel].Tile] = stackTabInfo{rect: s.Rect, index: sel, count: len(s.Tabs)}
+		out[s.Tabs[sel].Tile] = stackTabInfo{index: sel, count: len(s.Tabs)}
 	}
 	return out
 }
