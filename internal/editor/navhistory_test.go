@@ -128,9 +128,9 @@ func TestNavHistoryCommands(t *testing.T) {
 }
 
 // nav_history_prior's always=false gate: in an editable document, off a focused
-// link, it fails so a chain falls through. A read-only document already in
-// navigation mode passes even off a link — nothing there is editable, so the key
-// is free to mean "go back".
+// link, it fails so a chain falls through. A read-only document passes even off a
+// link and even out of browse mode — nothing there is editable, so the key is
+// free to mean "go back".
 func TestNavHistoryPriorGate(t *testing.T) {
 	e, w, _ := renderedEditorWithConfig(t, "one\ntwo\n", "[options]\n")
 	orig := w.Buffer
@@ -149,11 +149,11 @@ func TestNavHistoryPriorGate(t *testing.T) {
 		t.Fatal("a blocked gate must not navigate")
 	}
 
-	// Read-only + navigation mode: the gate passes off a link.
+	// Read-only passes on its own — no browse mode, caret off any link.
 	w.ViewState.ReadOnly = true
-	w.BrowseActive = true
+	w.BrowseActive = false
 	if !e.navHistory(-1, false) {
-		t.Fatal("read-only + nav mode must pass the gate")
+		t.Fatal("read-only must pass the gate regardless of browse mode")
 	}
 	if w.Buffer != orig {
 		t.Fatal("passing the gate must navigate back")

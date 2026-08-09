@@ -169,18 +169,18 @@ func (e *Editor) navHistory(dir int, always bool) bool {
 	return true
 }
 
-// navHistoryGatePasses is the always=false gate for nav_history_prior. It mirrors
-// nav_follow's focused-button gate — only the actively focused link button of the
-// FOCUSED viewport lets it act, so a fallthrough chain yields to editing — with
-// one relaxation: a READ-ONLY document already in navigation mode passes even when
-// the caret is not on a link. There is nothing to edit in a read-only document,
-// so the key is free to mean "go back" without first landing on a button.
+// navHistoryGatePasses is the always=false gate for nav_history_prior. It passes
+// in two cases: the caret is on the actively focused link button (browse mode,
+// caret on a link) — mirroring nav_follow's focused-button gate, so a fallthrough
+// chain yields to editing off a link — OR the document is read-only. There is
+// nothing to edit in a read-only document, so the key is free to mean "go back"
+// regardless of browse mode or caret position.
 //
 // The focused-button check is focusedLinkButton, which itself requires w to BE
 // the focused viewport (plus browse mode and the caret on a link), so a focused
 // link in some other open document can never satisfy this.
 func (e *Editor) navHistoryGatePasses(w *viewport.Viewport) bool {
-	if w.BrowseActive && e.viewportReadOnly(w) {
+	if e.viewportReadOnly(w) {
 		return true
 	}
 	return e.focusedLinkButton(w) != nil
