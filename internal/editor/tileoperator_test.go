@@ -35,12 +35,18 @@ func TestTileModeToggleAndPending(t *testing.T) {
 	if got := e.tileModeOrGo(); got != "split" {
 		t.Fatalf("after `viewport_split mode`, mode = %q, want split", got)
 	}
+	// "new" is an operator too.
+	e.PawScript.ExecuteAsync("viewport_new mode")
+	if got := e.tileModeOrGo(); got != "new" {
+		t.Fatalf("after `viewport_new mode`, mode = %q, want new", got)
+	}
+
 	// pending arms a one-shot without changing the mode.
 	e.PawScript.ExecuteAsync("viewport_swap pending")
 	if e.tilePending != "swap" {
 		t.Fatalf("pending = %q, want swap", e.tilePending)
 	}
-	if got := e.tileModeOrGo(); got != "split" {
+	if got := e.tileModeOrGo(); got != "new" {
 		t.Fatalf("arming pending must not change the mode, got %q", got)
 	}
 }

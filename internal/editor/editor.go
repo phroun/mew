@@ -133,7 +133,8 @@ type Editor struct {
 
 	// tileMode is the armed tiling operator that the directional dispatch
 	// commands (viewport_up/down/left/right) carry out: "go" (default, and the
-	// empty value — a focus-moving directional nav), "swap", "merge", or "split".
+	// empty value — a focus-moving directional nav), "swap", "merge", "split", or
+	// "new".
 	// It is set persistently by `viewport_<op> mode` (a toggle: re-selecting the
 	// active mode reverts to "go"). tilePending is a one-shot operator armed by
 	// `viewport_<op> pending` that overrides tileMode for the very next directional

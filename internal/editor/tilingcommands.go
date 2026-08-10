@@ -434,6 +434,8 @@ func (e *Editor) applyTileOp(ctx *pawscript.Context, vp *ifitfits.Viewport, t if
 		vp.Swap(t, d)
 	case "merge":
 		vp.Merge(t, d)
+	case "new":
+		return e.doSplit(vp, (*ifitfits.Viewport).New, t, d, "", false) != 0
 	case "split":
 		return e.splitDir(vp, t, d) != 0
 	default: // "go"
@@ -567,50 +569,42 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 	}
 
 	// --- Structure ---
-	// viewport_new / viewport_split: tile (idiom) + a required direction, with an
-	// optional ref. Given a ref, the new tile shows that existing viewport;
-	// without one, a FRESH main viewport is created showing the mew:/buffers list,
-	// so the new pane opens on a place to pick what to show rather than cloning the
-	// origin tile's content. Both return the new tile, stamped with our default
-	// minimums so it is not omitted on a modest workspace.
-	newSplit := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle) {
+	// viewport_new / viewport_split: tile (idiom) + a direction, with an optional
+	// ref. Given a ref, the new tile shows that existing viewport; without one, a
+	// FRESH main viewport is created showing the mew:/buffers list, so the new pane
+	// opens on a place to pick what to show rather than cloning the origin tile's
+	// content. Both return the new tile, stamped with our default minimums so it is
+	// not omitted on a modest workspace. Both are also tiling operators: in place
+	// of a direction they accept pending/mode to arm "new"/"split" for the
+	// directional dispatch keys.
+	splitBase := func(name, op string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle) {
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
 			vp, t, rest, ok := e.tileFront(ctx)
-			d, okD := tileArgDir(ctx, rest)
-			if !ok || !okD {
-				e.ShowWarning("Usage: " + usage)
+			if !ok {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>, [ref]")
 				return pawscript.BoolStatus(false)
 			}
+			d, meta, okD := tileDirArg(ctx, rest)
+			if !okD {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>, [ref]")
+				return pawscript.BoolStatus(false)
+			}
+			if meta != "" {
+				e.armTileOperator(op, meta)
+				return pawscript.BoolStatus(true)
+			}
 			ref, hasRef := tileArgStr(ctx, rest+1)
-			h := e.doSplit(vp, fn, t, d, ref, hasRef)
-			ctx.SetResult(uint64(h))
+			ctx.SetResult(uint64(e.doSplit(vp, fn, t, d, ref, hasRef)))
 			return pawscript.BoolStatus(true)
 		})
 	}
-	newSplit("viewport_new", "viewport_new [#tile], <direction>, [ref]", (*ifitfits.Viewport).New)
-	// viewport_split takes a direction (split that way, opening a buffers surface
-	// when no ref is given) OR a meta-token pending/mode that arms the "split"
-	// operator for the directional dispatch keys.
-	ps.RegisterCommand("viewport_split", func(ctx *pawscript.Context) pawscript.Result {
-		vp, t, rest, ok := e.tileFront(ctx)
-		if !ok {
-			e.ShowWarning("Usage: viewport_split [#tile], <direction|pending|mode>, [ref]")
-			return pawscript.BoolStatus(false)
-		}
-		d, meta, okD := tileDirArg(ctx, rest)
-		if !okD {
-			e.ShowWarning("Usage: viewport_split [#tile], <direction|pending|mode>, [ref]")
-			return pawscript.BoolStatus(false)
-		}
-		if meta != "" {
-			e.armTileOperator("split", meta)
-			return pawscript.BoolStatus(true)
-		}
-		ref, hasRef := tileArgStr(ctx, rest+1)
-		ctx.SetResult(uint64(e.doSplit(vp, (*ifitfits.Viewport).Split, t, d, ref, hasRef)))
-		return pawscript.BoolStatus(true)
-	})
-	// Fixed-direction split convenience family (mirrors viewport_swap_*).
+	splitBase("viewport_new", "new", (*ifitfits.Viewport).New)
+	splitBase("viewport_split", "split", (*ifitfits.Viewport).Split)
+	// Fixed-direction convenience families (mirror viewport_swap_*).
+	opDir("viewport_new_up", "new", ifitfits.Up)
+	opDir("viewport_new_down", "new", ifitfits.Down)
+	opDir("viewport_new_left", "new", ifitfits.Left)
+	opDir("viewport_new_right", "new", ifitfits.Right)
 	opDir("viewport_split_up", "split", ifitfits.Up)
 	opDir("viewport_split_down", "split", ifitfits.Down)
 	opDir("viewport_split_left", "split", ifitfits.Left)
