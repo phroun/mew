@@ -1,3 +1,5 @@
+==== About Key Chords and Sequences ====
+
 In music theory, a chord is more than one note played simultaneously.
 In computing, a key chord is defined as pressing (and releasing) one
 final key, while one or more other modifier keys are already being
