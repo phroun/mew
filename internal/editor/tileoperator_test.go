@@ -105,6 +105,36 @@ func TestTilePendingOneShot(t *testing.T) {
 	}
 }
 
+// TestNavResolvesPendingOnly: nav_up/down/left/right carry out an armed pending
+// tiling operator (consuming it), but a persistent mode alone does not hijack
+// them.
+func TestNavResolvesPendingOnly(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	focusMainViewport(e, "doc2", "two\n") // doc | doc2 ; doc2 active
+
+	// A persistent mode alone must NOT make nav_* act as a tiling op: with split
+	// mode set (no pending), nav_right does not add a tile.
+	e.PawScript.ExecuteAsync("viewport_split mode")
+	before := len(tileRefs(e))
+	e.PawScript.ExecuteAsync("nav_right")
+	if got := len(tileRefs(e)); got != before {
+		t.Fatalf("mode alone must not make nav_* split: %d -> %d", before, got)
+	}
+
+	// Arm split as a one-shot pending: nav_right now splits and consumes it.
+	e.PawScript.ExecuteAsync("viewport_split pending")
+	if e.tilePending != "split" {
+		t.Fatalf("pending = %q, want split", e.tilePending)
+	}
+	e.PawScript.ExecuteAsync("nav_right")
+	if got := len(tileRefs(e)); got != before+1 {
+		t.Fatalf("pending nav_right should split: %d -> %d", before, got)
+	}
+	if e.tilePending != "" {
+		t.Fatalf("nav_* must consume the pending, got %q", e.tilePending)
+	}
+}
+
 // TestSeekVsGoFamilies: viewport_seek_* is the raw directional (no focus move),
 // while viewport_go_* moves focus like viewport_go.
 func TestSeekVsGoFamilies(t *testing.T) {

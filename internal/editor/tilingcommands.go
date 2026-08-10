@@ -444,6 +444,22 @@ func (e *Editor) applyTileOp(ctx *pawscript.Context, vp *ifitfits.Viewport, t if
 	return true
 }
 
+// tilePendingNav lets nav_up/down/left/right double as the tiling-operator
+// dispatch, but ONLY while a one-shot pending operator is armed: it carries out
+// that operator in direction d on the active tile and consumes the pending,
+// reporting handled=true (with the op's result). With no pending armed it reports
+// handled=false so the caller runs its normal navigation — a persistent mode
+// alone never hijacks nav_*.
+func (e *Editor) tilePendingNav(ctx *pawscript.Context, d ifitfits.Direction) (handled, ok bool) {
+	if e.tilePending == "" {
+		return false, false
+	}
+	op := e.tilePending
+	e.tilePending = ""
+	vp := e.ensureTiler()
+	return true, e.applyTileOp(ctx, vp, vp.GetFocus(), op, d)
+}
+
 // doSplit runs viewport_split/new's create-or-clone placement for a fixed
 // direction: an explicit ref shows that viewport; otherwise a fresh buffers
 // surface is opened (and cleaned up if the split fails); the new tile gets mew's

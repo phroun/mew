@@ -1553,16 +1553,31 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("nav_start", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.navStart())
 	})
+	// When a tiling operator is armed as a one-shot (viewport_<op> pending), the
+	// four nav_* keys resolve that pending action in their direction instead of
+	// moving between links (a persistent mode does NOT hijack them — only pending).
 	ps.RegisterCommand("nav_down", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Down); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navVert(+1))
 	})
 	ps.RegisterCommand("nav_up", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Up); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navVert(-1))
 	})
 	ps.RegisterCommand("nav_right", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Right); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navHoriz(+1))
 	})
 	ps.RegisterCommand("nav_left", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Left); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navHoriz(-1))
 	})
 
