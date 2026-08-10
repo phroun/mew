@@ -266,6 +266,11 @@ func normalizeKey(key string) string {
 		} else if strings.HasPrefix(base, "A-") {
 			prefix += "A-"
 			base = base[2:]
+		} else if strings.HasPrefix(base, "G-") {
+			// Glyph (AltGr/Level3) modifier: carried over the terminal path once
+			// direct-key-handler decodes purfecterm's Glyph-modifier sequence.
+			prefix += "G-"
+			base = base[2:]
 		} else if strings.HasPrefix(base, "^") && len(base) > 1 {
 			// Control prefix - but only if there's something after it
 			prefix += "^"

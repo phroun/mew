@@ -889,6 +889,17 @@ func (sp *SequenceProcessor) getDefaultHandling(key string) string {
 		if len([]rune(key)) == 1 {
 			return "insert '" + escapeStringLiteral(key) + "'"
 		}
+		// A Glyph chord (the AltGr/Level3 modifier, prefix "G-") that no
+		// binding claimed inserts the composed character it carries: the
+		// graphical host forms the token from the AltGr-composed glyph, so
+		// "G-€" types "€" by default while a user can still bind e.g.
+		// `G-€ = insert 'EUR'` to intercept it. Unrolling is just dropping the
+		// prefix — the glyph rides in the token itself, so no lookup is needed.
+		if strings.HasPrefix(key, "G-") {
+			if glyph := key[2:]; len([]rune(glyph)) == 1 {
+				return "insert '" + escapeStringLiteral(glyph) + "'"
+			}
+		}
 		// An unmapped Meta combination reverse-maps to the character macOS
 		// Option would have typed, so bindings steal individual Option
 		// combos while the rest insert seamlessly (and Alt on any platform

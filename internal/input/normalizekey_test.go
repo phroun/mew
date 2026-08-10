@@ -34,6 +34,7 @@ func TestNormalizeKeyModifierPrefixes(t *testing.T) {
 		"s-Left":      "s-left",    // Super + named special
 		"C-Right":     "C-right",   // Control-named + special
 		"A-Up":        "A-up",      // Alt-named + special
+		"G-Home":      "G-home",    // Glyph (AltGr/Level3) + named special
 		"H-^A":        "H-^A",      // Hyper + caret control letter, left alone
 	}
 	for in, want := range cases {
