@@ -1863,18 +1863,20 @@ func (m *Manager) removalFocusTargetLocked(closed *Viewport) string {
 func (m *Manager) focusCycleTarget(offset int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.stepRingLocked(m.cyclablesLocked(), m.currentMainLocked(), offset)
+}
 
-	// Collect visible focus-eligible viewports in deterministic (ID) order. A
-	// viewport with CanFocus=false (e.g. Quick Help) is skipped as a cycle stop,
-	// though explicit focus can still reach it.
+// cyclablesLocked collects the viewports the focus switcher may stop on —
+// focus-eligible, visible, CanFocus, and passing the on-screen cycleVisible gate
+// — in deterministic (ID) order. A viewport with CanFocus=false (e.g. Quick
+// Help) is skipped as a cycle stop, though explicit focus can still reach it.
+// Caller holds m.mu.
+func (m *Manager) cyclablesLocked() []*Viewport {
 	var mains []*Viewport
 	for _, w := range m.viewports {
 		if w.FocusEligible() && w.Visible && w.CanFocus && (m.cycleVisible == nil || m.cycleVisible(w)) {
 			mains = append(mains, w)
 		}
-	}
-	if len(mains) == 0 {
-		return ""
 	}
 	for i := 0; i < len(mains)-1; i++ {
 		for j := i + 1; j < len(mains); j++ {
@@ -1883,36 +1885,120 @@ func (m *Manager) focusCycleTarget(offset int) string {
 			}
 		}
 	}
+	return mains
+}
 
-	// Locate the current position in the main cycle.
-	currentMain := m.lastMainViewport
-	if current := m.viewports[m.focusedViewportID]; current != nil {
-		if current.FocusEligible() {
-			currentMain = current
-		} else if current.ParentViewport != nil {
-			currentMain = current.ParentViewport
+// currentMainLocked resolves the "current main" for cycling: the focused
+// focus-eligible viewport, a focused prompt's parent standing in for it, or the
+// last-focused main. Caller holds m.mu.
+func (m *Manager) currentMainLocked() *Viewport {
+	current := m.lastMainViewport
+	if c := m.viewports[m.focusedViewportID]; c != nil {
+		if c.FocusEligible() {
+			current = c
+		} else if c.ParentViewport != nil {
+			current = c.ParentViewport
 		}
 	}
-	currentIndex := -1
-	if currentMain != nil {
-		for i, w := range mains {
-			if w.ID == currentMain.ID {
-				currentIndex = i
+	return current
+}
+
+// stepRingLocked locates current within ring and returns the id to focus after
+// stepping offset (wrapping), resolved through cycleResolveLocked to the target's
+// newest prompt buffer when it has one. Returns "" when the ring is empty or the
+// step lands back on the already-focused viewport. Caller holds m.mu.
+func (m *Manager) stepRingLocked(ring []*Viewport, current *Viewport, offset int) string {
+	if len(ring) == 0 {
+		return ""
+	}
+	idx := -1
+	if current != nil {
+		for i, w := range ring {
+			if w.ID == current.ID {
+				idx = i
 				break
 			}
 		}
 	}
-
-	targetIndex := (currentIndex + offset + len(mains)) % len(mains)
-	targetMain := mains[targetIndex]
-
-	// Resolve to the target main's newest prompt buffer, if it has one.
-	target := m.cycleResolveLocked(targetMain)
-
+	target := m.cycleResolveLocked(ring[(idx+offset+len(ring))%len(ring)])
 	if target.ID == m.focusedViewportID {
 		return ""
 	}
 	return target.ID
+}
+
+// zoneCycleTarget is focusCycleTarget restricted to the current main's zone (its
+// ViewportSet): only viewports sharing that set take part in the ring.
+func (m *Manager) zoneCycleTarget(offset int) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	current := m.currentMainLocked()
+	all := m.cyclablesLocked()
+	if current == nil {
+		return m.stepRingLocked(all, current, offset)
+	}
+	var ring []*Viewport
+	for _, w := range all {
+		if w.ViewportSet == current.ViewportSet {
+			ring = append(ring, w)
+		}
+	}
+	return m.stepRingLocked(ring, current, offset)
+}
+
+// zoneJumpTarget advances from the current main's zone to the next/prior zone
+// (by offset) among the visible zones — the distinct ViewportSets of the
+// currently cyclable viewports, in deterministic first-appearance (ID) order —
+// and returns the id to focus there: that zone's last-focused viewport when it
+// is still live, else its first visible member as a fallback. Returns "" when
+// there is no other zone to move to. Caller must not hold m.mu.
+func (m *Manager) zoneJumpTarget(offset int) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all := m.cyclablesLocked()
+	if len(all) == 0 {
+		return ""
+	}
+	curSet := ""
+	if current := m.currentMainLocked(); current != nil {
+		curSet = current.ViewportSet
+	}
+
+	// Distinct zones present, in first-appearance (ID) order.
+	var zones []string
+	seen := map[string]bool{}
+	for _, w := range all {
+		if !seen[w.ViewportSet] {
+			seen[w.ViewportSet] = true
+			zones = append(zones, w.ViewportSet)
+		}
+	}
+	zi := 0
+	for i, z := range zones {
+		if z == curSet {
+			zi = i
+			break
+		}
+	}
+	targetSet := zones[(zi+offset+len(zones))%len(zones)]
+	if targetSet == curSet {
+		return "" // only one zone present — nowhere else to go
+	}
+
+	// Prefer the zone's last-focused viewport (validated still-live); otherwise
+	// fall back to its first visible member (all is ID-sorted, so deterministic).
+	if fw := m.lastFocusedBySet[targetSet]; fw != nil {
+		if _, ok := m.viewports[fw.ID]; ok {
+			return m.cycleResolveLocked(fw).ID
+		}
+	}
+	for _, w := range all {
+		if w.ViewportSet == targetSet {
+			return m.cycleResolveLocked(w).ID
+		}
+	}
+	return ""
 }
 
 // cycleResolveLocked resolves a cycle-target main to what the focus switcher
@@ -1973,6 +2059,49 @@ func (m *Manager) FocusNextViewport() bool {
 // any other focus change.
 func (m *Manager) FocusPrevViewport() bool {
 	target := m.focusCycleTarget(-1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusNextInZone cycles focus to the next focusable viewport WITHIN the current
+// main's zone (ViewportSet), wrapping inside that set. Like FocusNextViewport but
+// it never crosses into another zone.
+func (m *Manager) FocusNextInZone() bool {
+	target := m.zoneCycleTarget(1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusPrevInZone cycles focus to the previous focusable viewport within the
+// current main's zone (ViewportSet), wrapping inside that set.
+func (m *Manager) FocusPrevInZone() bool {
+	target := m.zoneCycleTarget(-1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusNextZone advances to the NEXT zone (ViewportSet) among the visible zones
+// and focuses that zone's last-focused viewport (or its first visible member as
+// a fallback). Routed through SetFocus like any other focus change.
+func (m *Manager) FocusNextZone() bool {
+	target := m.zoneJumpTarget(1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusPrevZone advances to the PRIOR zone (ViewportSet) among the visible zones
+// and focuses that zone's last-focused viewport (or its first visible member as
+// a fallback).
+func (m *Manager) FocusPrevZone() bool {
+	target := m.zoneJumpTarget(-1)
 	if target == "" {
 		return false
 	}

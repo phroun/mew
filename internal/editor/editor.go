@@ -3314,9 +3314,11 @@ func (e *Editor) registerCommands() {
 
 	// Viewport navigation commands. These cycle only viewports currently on
 	// screen (SetCycleVisibleFilter), so they always land on an already-tiled
-	// pane — no adoptFocusInPlace needed.
+	// pane — no adoptFocusInPlace needed. They stay WITHIN the focused viewport's
+	// zone (its ViewportSet): cycling documents never jumps into the help world,
+	// and vice versa — zone_next / zone_prior move between zones.
 	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.ViewportManager.FocusNextViewport()
+		ok := e.ViewportManager.FocusNextInZone()
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -3324,7 +3326,27 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.ViewportManager.FocusPrevViewport()
+		ok := e.ViewportManager.FocusPrevInZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	// zone_next / zone_prior move focus to the NEXT / PRIOR zone (world/set): they
+	// take the focused main (non-prompt) viewport's ViewportSet, advance to the
+	// adjacent zone among the visible zones, and land on that zone's last-focused
+	// viewport (or its first visible member when the zone has no focus memory).
+	ps.RegisterCommand("zone_next", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusNextZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
+	})
+
+	ps.RegisterCommand("zone_prior", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusPrevZone()
 		if ok {
 			e.announceFocusedViewport()
 		}
