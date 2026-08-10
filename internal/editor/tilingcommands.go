@@ -435,9 +435,9 @@ func (e *Editor) applyTileOp(ctx *pawscript.Context, vp *ifitfits.Viewport, t if
 	case "merge":
 		vp.Merge(t, d)
 	case "new":
-		return e.doSplit(vp, (*ifitfits.Viewport).New, t, d, "", false) != 0
+		return e.splitFocus(ctx, vp, (*ifitfits.Viewport).New, t, d, "", false) != 0
 	case "split":
-		return e.splitDir(vp, t, d) != 0
+		return e.splitFocus(ctx, vp, (*ifitfits.Viewport).Split, t, d, "", false) != 0
 	default: // "go"
 		e.goToTile(ctx, vp, vp.Go(t, d))
 	}
@@ -485,10 +485,17 @@ func (e *Editor) doSplit(vp *ifitfits.Viewport, fn func(*ifitfits.Viewport, ifit
 	return h
 }
 
-// splitDir is the "split" operator: a viewport_split in direction d with no ref
-// (opening a buffers surface in the new tile).
-func (e *Editor) splitDir(vp *ifitfits.Viewport, t ifitfits.Handle, d ifitfits.Direction) ifitfits.Handle {
-	return e.doSplit(vp, (*ifitfits.Viewport).Split, t, d, "", false)
+// splitFocus runs a split/new placement (doSplit) and, when a new tile is
+// created, moves focus INTO it: the new pane becomes the active tile and its
+// viewport gains keyboard focus (via goToTile). This is what makes split/new —
+// unlike go/swap/merge — land the user on the pane they just created. Returns
+// the new tile handle (0 on failure).
+func (e *Editor) splitFocus(ctx *pawscript.Context, vp *ifitfits.Viewport, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle, t ifitfits.Handle, d ifitfits.Direction, ref string, hasRef bool) ifitfits.Handle {
+	h := e.doSplit(vp, fn, t, d, ref, hasRef)
+	if h != 0 {
+		e.goToTile(ctx, vp, h)
+	}
+	return h
 }
 
 // ---- registration ----
@@ -610,7 +617,7 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 				return pawscript.BoolStatus(true)
 			}
 			ref, hasRef := tileArgStr(ctx, rest+1)
-			ctx.SetResult(uint64(e.doSplit(vp, fn, t, d, ref, hasRef)))
+			ctx.SetResult(uint64(e.splitFocus(ctx, vp, fn, t, d, ref, hasRef)))
 			return pawscript.BoolStatus(true)
 		})
 	}

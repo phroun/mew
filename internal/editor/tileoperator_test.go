@@ -66,7 +66,8 @@ func TestTileDispatchGoAndSplit(t *testing.T) {
 		t.Fatalf("go-mode viewport_left should focus doc, got %q", got)
 	}
 
-	// Split mode: viewport_right splits the active tile, adding a tile.
+	// Split mode: viewport_right splits the active tile, adding a tile, and moves
+	// focus INTO the new pane (so the active tile is no longer "doc").
 	before := len(tileRefs(e))
 	e.PawScript.ExecuteAsync("viewport_split mode")
 	if res := e.PawScript.ExecuteAsync("viewport_right"); res != pawscript.BoolStatus(true) {
@@ -74,6 +75,9 @@ func TestTileDispatchGoAndSplit(t *testing.T) {
 	}
 	if after := len(tileRefs(e)); after != before+1 {
 		t.Fatalf("split-mode viewport_right should add a tile: %d -> %d", before, after)
+	}
+	if got := activeTileContent(e); got == "doc" {
+		t.Fatalf("split should focus the NEW pane, but active tile is still %q", got)
 	}
 }
 
