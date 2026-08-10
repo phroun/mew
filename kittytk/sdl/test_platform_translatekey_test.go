@@ -59,6 +59,10 @@ func TestTranslateKeyHyper(t *testing.T) {
 		// A single side of a modifier does NOT promote to Hyper.
 		{"single ctrl stays plain", 'x', sdl3.KMOD_LCTRL, "^X"},
 		{"altgr (single right alt) stays meta", 'x', sdl3.KMOD_RALT, "M-x"},
+		// AltGr / ISO_Level3_Shift (Glyph) yields the KEY_DOWN entirely — the
+		// composed character is delivered (and tagged G-) on the TextInput path.
+		{"glyph (KMOD_MODE) yields keydown", 'x', sdl3.KMOD_MODE, ""},
+		{"glyph + ctrl still yields", 'x', sdl3.KMOD_MODE | sdl3.KMOD_LCTRL, ""},
 	}
 	for _, c := range cases {
 		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod})

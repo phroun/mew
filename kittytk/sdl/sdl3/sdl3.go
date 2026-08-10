@@ -382,6 +382,7 @@ const (
 	KMOD_LGUI   = uint16(csdl.KMOD_LGUI)
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
+	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }
