@@ -54,6 +54,50 @@ func TestBrowseNestedMarkupMarkersHidden(t *testing.T) {
 	}
 }
 
+// Browse mode hides %%nowiki%% markers and shows the content verbatim — the
+// grammar never sub-parses links or emphasis inside it, so a bracketed run stays
+// literal rather than becoming a button, and a reserved character survives.
+func TestBrowseNowikiMarkersHidden(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // use the embedded grammar, not a dev ~/.mew shadow
+	e, w, out := renderedEditorWithConfig(t,
+		"a %%[[x]]%% b %%{%% c\n", "[options]\nsyntax=dokuwiki\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
+	w.BrowseActive = true
+	out.Reset()
+	e.performRender()
+	plain := stripANSI(out.String())
+	if strings.Contains(plain, "%") {
+		t.Fatalf("browse mode should hide the nowiki markers (no stray %%); got %q", plain)
+	}
+	if !strings.Contains(plain, "[[x]]") {
+		t.Fatalf("nowiki content should show verbatim, with the link suppressed; got %q", plain)
+	}
+	if !strings.Contains(plain, "{") {
+		t.Fatalf("nowiki literal brace should survive; got %q", plain)
+	}
+}
+
+// A link title decodes numeric / HTML entities, so a link can display the very
+// characters the link syntax reserves (| ] [ {) as clickable button text. The
+// target is left raw.
+func TestLinkTitleEntityDecode(t *testing.T) {
+	cases := []struct{ in, target, title string }{
+		{"[[keys#|&#93;]]", "keys#", "]"},
+		{"[[keys#|&#124;]]", "keys#", "|"},
+		{"[[keys#|&#91;]]", "keys#", "["},
+		{"[[keys#|&#123;]]", "keys#", "{"},
+		{"[[keys#|&#x5D;]]", "keys#", "]"}, // hex form
+		{"[[foo|&amp;]]", "foo", "&"},
+		{"[[plain|Title]]", "plain", "Title"}, // no entity: unchanged
+	}
+	for _, c := range cases {
+		gotTarget, gotTitle := parseDokuLink(c.in)
+		if gotTarget != c.target || gotTitle != c.title {
+			t.Errorf("parseDokuLink(%q) = (%q, %q), want (%q, %q)", c.in, gotTarget, gotTitle, c.target, c.title)
+		}
+	}
+}
+
 // Browse mode hides heading "=" and restyles by level: the equals go away, the
 // heading color paints, and the per-level bold/underline attributes apply.
 func TestBrowseHeadingLevels(t *testing.T) {

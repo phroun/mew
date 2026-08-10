@@ -2,6 +2,7 @@ package editor
 
 import (
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,6 +94,7 @@ const (
 	markupItalic
 	markupUnderline
 	markupHeading
+	markupMono // %%nowiki%% — markers hidden, content shown verbatim
 )
 
 // markupSpan is one such run on a line: its full doc-rune source range
@@ -740,6 +742,11 @@ func markupKindFor(cl string) (markupKind, bool) {
 		return markupUnderline, true
 	case strings.EqualFold(cl, "Heading"):
 		return markupHeading, true
+	case strings.EqualFold(cl, "Mono"):
+		// %%nowiki%%: the grammar colors the whole run (delimiters included) Mono
+		// and never sub-parses links/emphasis inside it, so browse mode just hides
+		// the %% markers and shows the content verbatim.
+		return markupMono, true
 	case strings.EqualFold(cl, "BoldItalic"),
 		strings.EqualFold(cl, "BoldUnderline"),
 		strings.EqualFold(cl, "ItalicUnderline"),
@@ -756,7 +763,7 @@ func doubledMarkerAt(runes []rune, i int) bool {
 		return false
 	}
 	r := runes[i]
-	return r == runes[i+1] && (r == '*' || r == '/' || r == '_')
+	return r == runes[i+1] && (r == '*' || r == '/' || r == '_' || r == '%')
 }
 
 // extractMarkupSpans finds the Bold/Italic/Underline (including the combined
@@ -857,7 +864,10 @@ func parseDokuLink(text string) (target, title string) {
 	if title == "" {
 		title = text
 	}
-	return target, title
+	// Decode numeric/HTML entities in the DISPLAY title so a link can show
+	// characters the link syntax itself reserves — e.g. [[keys#|&#93;]] renders a
+	// "]" button, [[keys#|&#124;]] a "|". The target is left raw.
+	return target, html.UnescapeString(title)
 }
 
 // syntaxLineColors returns per-rune SGR colors for one document line of w
