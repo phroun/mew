@@ -9,11 +9,13 @@ import (
 )
 
 // The desktop derives the graphical resize grip: a quarter of a
-// layout column, floored at 4 device pixels; zero on cell frames.
+// layout column, floored at whichever is larger of 3 device pixels or
+// a quarter cell width; zero on cell frames.
 func TestDesktopResizeGripDerivation(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
-	// Scale 2: quarter-column (2 units) x scale 2 = 4 units = 8 px.
+	// Scale 2: quarter-column (2 units) x scale 2 = 4 units = 8 px. The floor
+	// (max(ceil(3/2)=2, quarter-cell 2) = 2 units) does not bind.
 	px2, err := raster.NewScaled(640, 480, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -24,15 +26,16 @@ func TestDesktopResizeGripDerivation(t *testing.T) {
 		t.Errorf("scale 2 grip = %d units, want 4 (8 device px)", got)
 	}
 
-	// Scale 1: quarter-column x 1 = 2 units = 2 px < 4 px floor -> 4 units.
+	// Scale 1: quarter-column x 1 = 2 units = 2 px, below the floor
+	// max(3 device px = 3 units, quarter-cell = 2 units) = 3 units.
 	px1, err := raster.New(640, 480)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d1 := NewDesktop()
 	d1.SetBackend(px1)
-	if got := d1.GraphicalResizeGrip(); got != 4 {
-		t.Errorf("scale 1 grip = %d units, want 4 (4px floor)", got)
+	if got := d1.GraphicalResizeGrip(); got != 3 {
+		t.Errorf("scale 1 grip = %d units, want 3 (3px floor)", got)
 	}
 
 	// Cell backend: zero (the whole border cell is the grip there).

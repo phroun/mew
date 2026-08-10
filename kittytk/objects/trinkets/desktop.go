@@ -518,8 +518,8 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// Resize grip: on graphical frames only the outer sliver of a
 	// window edge resizes - a quarter of a layout column, scaled by
 	// the device scale so the physical grab target grows with the
-	// zoom, and never thinner than 4 device pixels - so edge trinkets
-	// stay clickable.
+	// zoom, floored at whichever is larger of 3 device pixels or a
+	// quarter of a cell width - so edge trinkets stay clickable.
 	d.resizeGrip = 0
 	if d.graphicalFrames {
 		scale := 1
@@ -527,8 +527,14 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 			scale = ds.Scale()
 		}
 		grip := rootMetrics.CellWidth / 4 * core.Unit(scale)
-		if minUnits := core.Unit((4 + scale - 1) / scale); grip < minUnits {
-			grip = minUnits
+		// Floor: at least 3 device pixels, and at least a quarter of a cell
+		// width, whichever is larger.
+		floor := core.Unit((3 + scale - 1) / scale) // ceil(3/scale) units == >= 3 device px
+		if quarterCell := rootMetrics.CellWidth / 4; quarterCell > floor {
+			floor = quarterCell
+		}
+		if grip < floor {
+			grip = floor
 		}
 		d.resizeGrip = grip
 	}
