@@ -1251,6 +1251,13 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			text := e.GetText()
+			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
+			// character here on the TextInput path, not on KEY_DOWN. When it is
+			// held, tag the produced glyph with a "G-" prefix so it reaches the
+			// keymap as a distinct, bindable chord (an unbound G-glyph then
+			// self-inserts the character — see the sequence processor). The mask
+			// is read live: the modifier is still down while its glyph composes.
+			glyph := glyphMod(sdl3.GetModState())
 			for _, ch := range text {
 				// On macOS, handle native Option key shortcuts by mapping them
 				// back into clear "M-key" syntax to ensure uniformity across environments.
@@ -1265,8 +1272,12 @@ func (p *Platform) pumpEvents() bool {
 						continue
 					}
 				}
+				key := string(ch)
+				if glyph {
+					key = "G-" + key
+				}
 				s.handler.Event(core.KeyPressEvent{
-					Key:  string(ch),
+					Key:  key,
 					Text: string(ch),
 				})
 			}
@@ -1723,14 +1734,110 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_F12:       "F12",
 }
 
+// glyphMod reports whether a modifier mask has AltGr / ISO_Level3_Shift active
+// — the "Glyph" level shift that reaches a key's third glyph plane (€, @, ä…).
+// It surfaces two ways: as KMOD_MODE on X11/Wayland layouts that carry AltGr,
+// and (only on Windows, where there is no KMOD_MODE) as the LCtrl+RAlt pair
+// AltGr sends there — distinguished from a deliberate Ctrl+Alt by requiring the
+// RIGHT Alt with no LEFT Alt, so a genuine Left-Ctrl+Left-Alt chord is untouched.
+func glyphMod(mod uint16) bool {
+	if mod&sdl3.KMOD_MODE != 0 {
+		return true
+	}
+	if runtime.GOOS == "windows" &&
+		mod&sdl3.KMOD_RALT != 0 && mod&sdl3.KMOD_LALT == 0 && mod&sdl3.KMOD_LCTRL != 0 {
+		return true
+	}
+	return false
+}
+
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
+//
+// Hyper has no native SDL modifier, so mew synthesizes it from a doubled
+// side modifier: holding BOTH the left and right Ctrl (or both Alt) keys
+// promotes the chord to Hyper. The doubled modifier is consumed by the
+// promotion; any single-side modifier still held keeps its normal role, so
+//
+//	LCtrl+RCtrl+X        -> H-X       (both Ctrl -> Hyper)
+//	LAlt+RAlt+X          -> H-X       (both Alt  -> Hyper)
+//	LAlt+RAlt+Ctrl+X     -> H-^X      (Hyper + a single Ctrl)
+//	LCtrl+RCtrl+Alt+X    -> H-M-x     (Hyper + a single Alt)
+//
+// AltGr reports as a single (right) Alt, so it never trips the both-Alt
+// promotion. Shift is deliberately left out — it is a text-producing
+// modifier, so a doubled Shift would hijack ordinary capital letters.
 func translateKey(sym sdl3.Keysym) string {
+	// AltGr / ISO_Level3_Shift (the Glyph modifier) is a text-producing level
+	// shift: the composed character arrives via TextInput, where it is tagged
+	// "G-" (see the TextInputEvent handler / glyphMod). Yield the KEY_DOWN so we
+	// do not also fire a competing chord — notably on Windows, where AltGr
+	// surfaces as LCtrl+RAlt and would otherwise read as "M-^<letter>".
+	if glyphMod(sym.Mod) {
+		return ""
+	}
+
+	bothCtrl := sym.Mod&sdl3.KMOD_LCTRL != 0 && sym.Mod&sdl3.KMOD_RCTRL != 0
+	bothAlt := sym.Mod&sdl3.KMOD_LALT != 0 && sym.Mod&sdl3.KMOD_RALT != 0
+	hyper := bothCtrl || bothAlt
+
 	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
 	alt := sym.Mod&sdl3.KMOD_ALT != 0
 	shift := sym.Mod&sdl3.KMOD_SHIFT != 0
 	gui := sym.Mod&sdl3.KMOD_GUI != 0
 
+	if hyper {
+		// The doubled modifier is spent on the Hyper promotion; a
+		// single-side Ctrl or Alt still contributes its normal role.
+		if bothCtrl {
+			ctrl = false
+		}
+		if bothAlt {
+			alt = false
+		}
+	}
+
+	base := encodeKey(sym, ctrl, alt, shift, gui)
+
+	if !hyper {
+		return base
+	}
+
+	if base == "" {
+		// The residual modifiers alone would defer to TextInput (a plain
+		// or shifted printable). Hyper is a real chord, so synthesize the
+		// bare key token here instead of dropping the keystroke.
+		if base = bareKey(sym, shift); base == "" {
+			return ""
+		}
+	}
+	return "H-" + base
+}
+
+// bareKey returns the unmodified key token for a keysym: a special-key name,
+// or the printable character (upper-cased when Shift is held, so the caseful
+// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
+// used only to give a Hyper chord a key to attach to when the residual
+// modifiers would otherwise have deferred the keystroke to TextInput.
+func bareKey(sym sdl3.Keysym, shift bool) string {
+	if name, ok := specialKeys[sym.Sym]; ok {
+		return name
+	}
+	if sym.Sym >= 32 && sym.Sym < 127 {
+		ch := rune(sym.Sym)
+		if shift && ch >= 'a' && ch <= 'z' {
+			return string(ch - 'a' + 'A')
+		}
+		return string(ch)
+	}
+	return ""
+}
+
+// encodeKey maps a keysym plus its effective modifier set to a D3 key string,
+// or "" when the TextInput path owns it (plain printable characters). The
+// modifier booleans are passed in rather than read from sym.Mod so translateKey
+// can strip the modifiers it has already spent on a Hyper promotion.
+func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
 		if alt {

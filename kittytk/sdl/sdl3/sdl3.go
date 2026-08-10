@@ -371,14 +371,18 @@ type Keysym struct {
 
 const (
 	KMOD_LSHIFT = uint16(csdl.KMOD_LSHIFT)
+	KMOD_RSHIFT = uint16(csdl.KMOD_RSHIFT)
 	KMOD_SHIFT  = uint16(csdl.KMOD_SHIFT)
 	KMOD_LCTRL  = uint16(csdl.KMOD_LCTRL)
+	KMOD_RCTRL  = uint16(csdl.KMOD_RCTRL)
 	KMOD_CTRL   = uint16(csdl.KMOD_CTRL)
 	KMOD_LALT   = uint16(csdl.KMOD_LALT)
+	KMOD_RALT   = uint16(csdl.KMOD_RALT)
 	KMOD_ALT    = uint16(csdl.KMOD_ALT)
 	KMOD_LGUI   = uint16(csdl.KMOD_LGUI)
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
+	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }

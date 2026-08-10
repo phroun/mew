@@ -22,3 +22,24 @@ func TestNormalizeKeySpace(t *testing.T) {
 		}
 	}
 }
+
+// The Hyper prefix (H-) and the other hyphenated modifier prefixes must be
+// stripped so a named special key underneath still normalizes to its mew token.
+func TestNormalizeKeyModifierPrefixes(t *testing.T) {
+	cases := map[string]string{
+		"H-x":         "H-x",       // Hyper + plain printable, left alone
+		"H-Down":      "H-down",    // Hyper + named special
+		"H-M-Down":    "H-M-down",  // Hyper + Meta + named special
+		"H-C-PageUp":  "H-C-pgup",  // Hyper + Control-named + special
+		"s-Left":      "s-left",    // Super + named special
+		"C-Right":     "C-right",   // Control-named + special
+		"A-Up":        "A-up",      // Alt-named + special
+		"G-Home":      "G-home",    // Glyph (AltGr/Level3) + named special
+		"H-^A":        "H-^A",      // Hyper + caret control letter, left alone
+	}
+	for in, want := range cases {
+		if got := normalizeKey(in); got != want {
+			t.Errorf("normalizeKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
