@@ -131,6 +131,16 @@ type Editor struct {
 	// ensureTiler and applyTilerGeometry.
 	tiler *ifitfits.Viewport
 
+	// tileMode is the armed tiling operator that the directional dispatch
+	// commands (viewport_up/down/left/right) carry out: "go" (default, and the
+	// empty value — a focus-moving directional nav), "swap", "merge", or "split".
+	// It is set persistently by `viewport_<op> mode` (a toggle: re-selecting the
+	// active mode reverts to "go"). tilePending is a one-shot operator armed by
+	// `viewport_<op> pending` that overrides tileMode for the very next directional
+	// press and then clears, restoring tileMode.
+	tileMode    string
+	tilePending string
+
 	// adoptFocusInPlace makes tilerFollowFocus reseat the FOCUSED tile onto a
 	// newly-focused untiled viewport instead of splitting a new tile for it. Set
 	// only for the brief span of a cycle to an existing viewport (buffer_next/
