@@ -1,12 +1,12 @@
 | __BUFFER QUICK HELP__   | [[keys#buffer_new|^B E]] make a new empty buffer     |
 |---------**HELP**--------| [[keys#buffer_open|^B O]] open a new buffer           |
 | [[keys#toggle_help|^B H]] toggle help    | [[keys#viewport_clone|^B 2]] clone (make a new viewport) |
-|---------**NAV**---------| [[keys#buffer_save|^B S]] save current buffer         |
-| [[keys#viewport_prior|^B P]] prior viewport | [[keys#buffer_save_as|^B B]] save & become               |
-| [[keys#viewport_next|^B N]] next viewport  | [[keys#buffer_save_all true|^B A]] save all buffers            |
-| [[keys#buffer_list|^B L]] list           | [[keys#buffer_duplicate|^B C]] copy (duplicate content)    |
-| [[keys#memo.main|^B M]] main viewport  | [[keys#buffer_write|^B W]] write a copy (export)       |
-| [[keys#cancel.viewport_close]] close viewport   | [[keys#buffer_undo|^B -]] undo (repeatable)           |
-|                         | [[keys#buffer_redo|^B =]] redo (repeatable)           |
-|                         | [[keys#buffer_revert|^B ~]] revert to last save         |
-|                         | [[keys#buffer_save_all , exit|^B X]] save all buffers then quit  |
+|------**TOP DOCK**-------| [[keys#buffer_save|^B S]] save current buffer         |
+| [[keys#stat_peek_up|^B U]] hide tools     | [[keys#buffer_save_as|^B B]] save & become               |
+| [[keys#stat_peek_down|^B V]] show more      | [[keys#buffer_save_all true|^B A]] save all buffers            |
+|---------**NAV**---------| [[keys#buffer_duplicate|^B C]] copy (duplicate content)    |
+| [[keys#viewport_prior|^B P]] prior viewport | [[keys#buffer_write|^B W]] write a copy (export)       |
+| [[keys#viewport_next|^B N]] next viewport  | [[keys#buffer_undo|^B -]] undo (repeatable)           |
+| [[keys#buffer_list|^B L]] list           | [[keys#buffer_redo|^B =]] redo (repeatable)           |
+| [[keys#memo.main|^B M]] main viewport  | [[keys#buffer_revert|^B ~]] revert to last save         |
+| [[keys#cancel.viewport_close]] close viewport   | [[keys#buffer_save_all , exit|^B X]] save all buffers then quit  |
