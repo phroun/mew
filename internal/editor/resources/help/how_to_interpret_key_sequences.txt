@@ -55,17 +55,17 @@ There are also several symbol and punctuation keys on most keyboards:
 
 First, lets cover the names of the special keys:
 
-[[keys#|esc]] - Escape, usually the top left key on your keyboard.
+[[keys#|esc]] — Escape, usually the top left key on your keyboard.
 
   - On international keyboards this may be labeled with
     the ⎋ symbol (circle with arrow pointing out the top left.)
 
-[[keys#|tab]] - Tab, to the left of the top row of letter keys.
+[[keys#|tab]] — Tab, to the left of the top row of letter keys.
 
   - On many keyboards this may be labeled with the
     ↹ symbol. (left and right arrows with vertical stops.)
 
-[[keys#|del]] / [[keys#|back]] - The key that removes the most recently typed character.
+[[keys#|del]] / [[keys#|back]] — The key that removes the most recently typed character.
 
   - On IBM PC compatible computers this is usually
     labeled "Backspace" or simply "<---"
@@ -73,7 +73,7 @@ First, lets cover the names of the special keys:
   - On Apple Macintosh computers this is labeled "delete"
     or ⌫ (left pointing tag with an X in it.)
 
-[[keys#|fdel]] - Called "forward delete", removes the next character past the cursor.
+[[keys#|fdel]] — Called "forward delete", removes the next character past the cursor.
 
   - On notebooks this is often achieved by holding "fn" while pressing
     the regular "Backspace" or "delete" key.
@@ -83,23 +83,23 @@ First, lets cover the names of the special keys:
   - On Apple or International keyboards, this is often
     represented by ⌦ (right pointing tag with an X in it.)
 
-[[keys#|return]] / [[keys#|enter]] - On the right end of the home-row, starts a new line.
+[[keys#|return]] / [[keys#|enter]] — On the right end of the home-row, starts a new line.
 
   - Computers with a numeric keypad may have an additional smaller key
     also labeled "enter" which is not the one being referred to in mew.
 
   - May be labeled ↩ or ⏎ (a down then left arrow with a ninety degree bend.)
 
-[[keys#|space]] - The long spacebar at the bottom edge of the keyboard.
+[[keys#|space]] — The long spacebar at the bottom edge of the keyboard.
 
   - Sometimes represented as the ⎵ symbol.
 
-[[keys#|left]], [[keys#|right]], [[keys#|up]], [[keys#|down]] - The Arrow Keys
+[[keys#|left]], [[keys#|right]], [[keys#|up]], [[keys#|down]] — The Arrow Keys
 
   - Usually near the bottom of the keyboard, on the right end of the row
     containing the spacebar.
 
-[[keys#|F1]] through [[keys#|F12]] - The numbered Function Keys.
+[[keys#|F1]] through [[keys#|F12]] — The numbered Function Keys.
 
   - On Apple Macintosh computers and most notebook PCs, you may need to
     hold down the "Fn" key while activating these in order to press the
