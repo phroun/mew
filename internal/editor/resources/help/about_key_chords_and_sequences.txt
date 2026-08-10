@@ -13,10 +13,10 @@ distinct problems:
      row, which harms creative flow and efficiency.
 
   3. There is no obvious way to organize shortcuts into groups or to
-     offer hints to the user, unless they resorting to browsing drop-down
+     offer hints to the user, unless they resort to browsing drop-down
      menus or help manuals.
 
-In 1978, Ron Barnaby's WordStar, a word processing application,
+In 1978, Rob Barnaby's WordStar, a word processing application,
 initially written for the CP/M operating system was published by
 MicroPro International Corporation, and when it was later ported
 to the IBM PC, it avoided these problems by leveraging **Key Sequences**
