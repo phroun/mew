@@ -1,0 +1,202 @@
+==== How to interpret Key Sequences ====
+
+=== Normal Keys ===
+
+= Alphanumeric Keys ==
+
+The numbers 1 through 9 and 0, and the letters A through Z are represented
+in the mew documentation with their basic symbol.  Letters are generally
+shown in uppercase, and only differentiated in places where a distinction
+is meaningful.
+
+The numbers 1 through 9 and 0 are matched with symbols that are produced
+by pressing the same key while holding in shift.  In mew, we often refer to
+this combination of shift and a number by simply referring to the symbol:
+
+[[keys#|!]] [[keys#|@]] [[keys#|#]] [[keys#|$]] [[keys#|%]] [[keys#|^]] [[keys#|&]] [[keys#|*]] [[keys#|(]] [[keys#|)]]
+[[keys#|1]] [[keys#|2]] [[keys#|3]] [[keys#|4]] [[keys#|5]] [[keys#|6]] [[keys#|7]] [[keys#|8]] [[keys#|9]] [[keys#|0]]
+
+== Symbol Keys ==
+
+There are also several symbol and punctuation keys on most keyboards:
+
+[[keys#|~]] tilde/wave       [[keys#|_]] underscore     [[keys#|+]] plus sign 
+[[keys#|`]] backtick         [[keys#|-]] hyphen         [[keys#|=]] equal sign 
+
+[[keys#|｛]] [[keys#|｝]] braces    [[keys#||]] pipe
+[[keys#|［]] [[keys#|］]] brackets  [[keys#|\]] backslash
+
+[[keys#|:]] colon            [[keys#|"]] typewriter double-quot
+[[keys#|;]] semicolon        [[keys#|']] typewriter single quote, typewriter apostrophe
+
+[[keys#|<]] less-than        [[keys#|>]] greater-than   [[keys#|?]] question-mark
+[[keys#|,]] comma            [[keys#|.]] period         [[keys#|/]] forward-slash
+
+=== Special Keys ===
+
+First, lets cover the names of the special keys:
+
+[[keys#|esc]] - Escape, usually the top left key on your keyboard.
+
+  - On international keyboards this may be labeled with
+    the ⎋ symbol (circle with arrow pointing out the top left.)
+
+[[keys#|tab]] - Tab, to the left of the top row of letter keys.
+
+  - On many keyboards this may be labele with the
+    ↹ symbol. (left and right arrows with vertical stops.)
+
+[[keys#|del]] / [[keys#|back]] - The key that removes the most recently typed character.
+
+  - On IBM PC compatible computers this is usually
+    labeled "Backspace" or simply "<---"
+
+  - On Apple Macintosh computers this is labeled "delete"
+    or ⌫ (left pointing tag with an X in it.)
+
+[[keys#|fdel]] - Called "forward delete", removes the next character past the cursor.
+
+  - On notebooks this is often achieved by holding "fn" while pressing
+    the regular "Backspace" or "delete" key.
+
+  - On IBM PC compatible computers this key is usually labeled "Del"
+
+  - On Apple or International keybords, this is often
+    represented by ⌦ (right pointing tag wth an X in it.)
+
+[[keys#|return]] / [[keys#|enter]] - On the right end of the home-row, starts a new line.
+
+  - Computers with a numeric keypad may have an additional smaller key
+    also labeled "enter" which is not the one being referred to in mew.
+
+  - May be labeled ↩ or ⏎ (a down then left arrow with a ninety degree bend.)
+
+[[keys#|space]] - The long spacebar at the bottom edge of the keyboard.
+
+  - Sometimes represented as the ⎵ symbol.
+
+[[keys#|left]], [[keys#|right|]], [[keys#|up]], [[keys#|down]] - The Arrow Keys
+
+  - Usually near the bottom of the keyboard, on the right end of the row
+    containing the spacebar.
+
+[[keys#|F1]] through [[keys#|F12]] - The numbered Function Keys.
+
+  - On Apple Macintosh computers and most notebook PCs, you may need to
+    hold down the "Fn" key while activating these in order to press the
+    actual "F" key, since a plain press may be mapped to special functions
+    such as brightness adjustment, media player, and volume control.
+
+=== Modifier keys: ===
+
+**"^"** or **"C-"** — The Control Key
+
+  - Often labeled ⌃ or ^ or Ctl or Ctrl.
+
+**"S-"** — The Shift Key
+
+  - Often labeled ⇧
+
+
+**"M-"** — The Meta Key
+
+  - Often labled ⎇ Alt or ⌥ Option.
+
+**"s-"** — The Super Key (or Command, or System)
+
+  – Often labeled ⌘, ❖ or ⊞.
+
+**"fn" - Function or Globe
+
+  - Often represented by 🌐.
+
+=== Chords: ===
+
+A chord is when one or more modifier key is held down while another
+regulr key is pressed:
+
+== The Control Key ==
+
+When combined with a letter, number, or symbol, shown as a ^ prefix:
+
+  - ^X = Ctrl+X
+  - ^/ = Ctrl+Slash
+  - ^3 = Ctrl+3
+
+When combined with named keys, we use the C- prefix:
+
+  - C-Down = Ctrl+Down Arrow
+  - C-F4 = Ctrl+F4 (4th Function Key)
+
+For historical reasons, several Control chords are equivalent to other keys
+or other chords.  See [[Historically Dead Chords]].
+
+== The Shift Key ==
+
+When combined with a letter, instead of prefixing with "S-", we show the
+lowercase form instead:
+
+    x = Shift+X
+
+You may observe and wonder at why this is opposite of what the Shift key
+actually does:
+
+Historically, many home computers had only uppercase glyphs before lowercase
+character sets were added (TRS-80, Apple 2 and 2+, Commodore PET), and since
+nearly all keyboards have the keys labeled with uppercase legends, and owing
+to the fact that nearly all shortcut keys are unshifted, it would look
+unfamiliar to write them all in lowercase, so we reserve the lowercase form
+to indicate "Shift" where a difference must be shown.
+
+Whenever Shift is combined with a number or symbol, we just show the
+resulting symbol:
+
+    # = Shift+3
+
+== The Combination of Control + Shift ==
+
+When combined with a letter, instead of prefixing with "C-S-", we simply
+show ^ with the lowercase form instead:
+
+    ^x = Ctrl+Shift+X
+
+When combined with a shifted number or shifted symbol, we just show ^ with
+the resulting symbol:
+
+    ^# = Ctrl+Shift+3
+    ^{ = Ctrl+Shift+[
+
+Historical keyboard circuits couldn't tell apart certain Control+Shift chords
+from plain Control chords.  See [[Historically Dead Chords]].
+
+== The Meta Key ==
+
+In the default **mew** control scheme, the Meta key is mostly unbound.
+
+In the few cases it is used, we offer "esc" prefixed alternatives instead.
+
+On the Windows NT graphical version of **mew**, we use it as an escape hatch
+in combination with several common patterns:
+
+  M-^X = Cut to Operating System Clipboard
+  M-^C = Copy to Operating System Clipboard
+  M-^V = Paste from Operating System Clipboard
+  M-^A = Select All
+  M-^- = Reduce Size
+  M-^= = Increase Size
+
+== The Super Key ==
+
+In the default **mew** control scheme, the Super key is mostly unbound.
+
+On the macOS graphical version of **mew**, we use it to support several common
+patterns:
+
+  s-X = Cut to Operating System Clipboard
+  s-C = Copy to Operating System Clipboard
+  s-V = Paste from Operating System Clipboard
+  s-A = Select All
+  s-H = Hide mew
+  s-- = Reduce Size
+  s-= = Increase Size
+ 

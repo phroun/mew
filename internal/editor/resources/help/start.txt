@@ -13,6 +13,8 @@ then press ENTER to follow it.
 
 [[What is mew?]] [[Why is mew so weird?]]
 
+[[How to interpret Key Sequences]]
+
 [[Moving the Cursor]]
 
 == Index of Topics ==
