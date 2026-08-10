@@ -1,5 +1,24 @@
 ==== How to interpret Key Sequences ====
 
+=== Sequences ===
+
+Most software today uses a combination of single keypresses (such as
+"Enter", "Delete" or "F1"), and a set of key CHORDS (such as Ctrl+B)
+to quickly access frequently used functions.
+
+By contrast, a **Key Sequence** is a series of chords or individual
+keys that are pressed in a certain order.
+
+**mew** makes use of both **Chords** and **Key Sequences**, and its default
+key mappings are organized into command families in much the same spirit
+as WordStar and JOE.  To learn more of the reasoning and history behind
+these ideas, see [[About Key Chords and Sequences]].
+
+To become good at **mew**, you will want a basic idea of how the
+**Key Sequence Processor** works, and an understanding of the conventions
+we have chosen to describe the Chords and Sequences in our help screens
+and manual.  The rest of this topic is devoted to that purpose:
+
 === Normal Keys ===
 
 == Alphanumeric Keys ==
@@ -93,21 +112,56 @@ First, lets cover the names of the special keys:
 
   - Often labeled ⌃ or ^ or Ctl or Ctrl.
 
+  - On traditional terminals this key was left of the letter "a", on the
+    home row.  Most modern computers place the relatively useless, and
+    highly accident-prone Caps Lock key there instead.  It is a common
+    modification to remap the Control back to the physical Caps Lock key
+    for improved ergonomics, but this must be done through the host
+    Operating System, and is not a built-in **mew** option.
+
 **"S-"** — The Shift Key
 
   - Often labeled ⇧
+
+  - Located on either end of the bottom row of letters.  The two Shift
+    keys are interchangeable in **mew**, so use the one that is easiest
+    to reach in combination with the desired key or keys.
 
 **"M-"** — The Meta Key
 
   - Often labeled ⎇ Alt or ⌥ Option.
 
+  - Usually located one or two keys left of the space bar.
+
+**"G-"** - The Glyph Key
+
+  - Used to produce third layer international symbols.
+
+  - Often labeled ⎇ AltGr.
+
+  - Labeled "Greek" (or "Front") on the legendary Space Cadet Keyboard.
+
 **"s-"** — The Super Key (or Command, or System)
 
   - Often labeled ⌘, ❖ or ⊞.
 
+  - Usually located one or two keys left of the space bar.
+
+  - Its function is mostly defined by the host Operating System.
+
+**"H-"** - The Hyper Key
+
+  - Only exists on the legendary Space Cadet Keyboard.
+
+  - The graphical versions of **mew** emulate it whenevert you hold either:
+    both the LEFT AND RIGHT Alt or Option keys at the same time,
+    or both the LEFT AND RIGHT Control keys at the same time.
+
 **"fn"** - Function or Globe
 
   - Often represented by 🌐.
+
+  - Usually located at the bottom left corner of the keyboard.
 
 === Chords: ===
 
@@ -132,14 +186,14 @@ or other chords.  See [[Historically Dead Chords]].
 
 == The Shift Key ==
 
-= Shifted Numbers and Symbols =
+__**Shifted Numbers and Symbols**__
 
 Whenever Shift is combined with a number or symbol, we just show the
 resulting symbol:
 
     # = Shift+3
 
-= Shifted Letters =
+__**Shifted Letters**__
 
 The **mew** keybinding system is case-insensitive by default.  However, if
 two bindings exist which differ only by case, then that set of bindings is
@@ -154,7 +208,8 @@ unfamiliar to write them all in lowercase, so the default **mew** configuration
 files and documentation regularly use UPPERCASE for keys, relying on the case
 insensitive matching rather than requiring "Shift", and the lowercase form is
 only used to indicate "Unshifted" in cases where two distinct bindings exist
-and a difference must be shown.
+and a difference must be shown, and in such cases the uppercase form is
+only accessible with Shift (or Caps Lock if you're nasty.)
 
 == The Combination of Control + Shift ==
 
@@ -163,7 +218,7 @@ Alphabetic Control keys are always shown in uppercase form.
 Traditional terminals could not differentiate between Control+Letter and
 Control+Shift+Letter.  Modern Terminals, with extended protocols, and the
 graphical versions of **mew**, do support a distinction of Control+Shift, but
-whn this is used with a letter we write out with the "S-" prefix:
+when this is used with a letter we write out with the "S-" prefix:
 
     S-^X = Shift+Control+X
 
@@ -189,8 +244,8 @@ in combination with several common patterns:
   M-^C = Copy to Operating System Clipboard
   M-^V = Paste from Operating System Clipboard
   M-^A = Select All
-  M-^- = Reduce Size
-  M-^= = Increase Size
+  M-^- (Meta+Minus) = Reduce Size
+  M-^= (Meta+Plus) = Increase Size
 
 == The Super Key ==
 
@@ -204,6 +259,9 @@ patterns:
   s-V = Paste from Operating System Clipboard
   s-A = Select All
   s-H = Hide mew
-  s-- = Reduce Size
-  s-= = Increase Size
- 
+  s-- (Super+Minus) = Reduce Size
+  s-= (Super+Plus) = Increase Size
+
+== The Hyper Key ==
+
+In the default **mew** control scheme, the Hyper key is unbound.
