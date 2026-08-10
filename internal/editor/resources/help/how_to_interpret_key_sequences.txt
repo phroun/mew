@@ -108,7 +108,7 @@ First, lets cover the names of the special keys:
 
 === Modifier keys: ===
 
-**"^"** or **"C-"** - The Control Key
+**"^"** or **"C-"** — The Control Key
 
   - Often labeled ⌃ or ^ or Ctl or Ctrl.
 
@@ -119,7 +119,7 @@ First, lets cover the names of the special keys:
     for improved ergonomics, but this must be done through the host
     Operating System, and is not a built-in **mew** option.
 
-**"S-"** - The Shift Key
+**"S-"** — The Shift Key
 
   - Often labeled ⇧
 
@@ -127,13 +127,13 @@ First, lets cover the names of the special keys:
     keys are interchangeable in **mew**, so use the one that is easiest
     to reach in combination with the desired key or keys.
 
-**"M-"** - The Meta Key
+**"M-"** — The Meta Key
 
   - Often labeled ⎇ Alt or ⌥ Option.
 
   - Usually located one or two keys left of the space bar.
 
-**"G-"** - The Glyph Key
+**"G-"** — The Glyph Key
 
   - Used to produce third layer international symbols.
 
@@ -141,7 +141,7 @@ First, lets cover the names of the special keys:
 
   - Labeled "Greek" (or "Front") on the legendary Space Cadet Keyboard.
 
-**"s-"** - The Super Key (or Command, or System)
+**"s-"** — The Super Key (or Command, or System)
 
   - Often labeled ⌘, ❖ or ⊞.
 
@@ -149,7 +149,7 @@ First, lets cover the names of the special keys:
 
   - Its function is mostly defined by the host Operating System.
 
-**"H-"** - The Hyper Key
+**"H-"** — The Hyper Key
 
   - Only exists on the legendary Space Cadet Keyboard.
 
@@ -157,7 +157,7 @@ First, lets cover the names of the special keys:
     both the LEFT AND RIGHT Alt or Option keys at the same time,
     or both the LEFT AND RIGHT Control keys at the same time.
 
-**"fn"** - Function or Globe
+**"fn"** — Function or Globe
 
   - Often represented by 🌐.
 
