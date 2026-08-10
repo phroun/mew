@@ -23,8 +23,8 @@ There are also several symbol and punctuation keys on most keyboards:
 [[keys#|~]] tilde/wave       [[keys#|_]] underscore     [[keys#|+]] plus sign 
 [[keys#|`]] backtick         [[keys#|-]] hyphen         [[keys#|=]] equal sign 
 
-[[keys#|｛]] [[keys#|｝]] braces    [[keys#||]] pipe
-[[keys#|［]] [[keys#|］]] brackets  [[keys#|\]] backslash
+[[keys#|&#123;]] [[keys#|&#125;]] braces    [[keys#|&#124;]] pipe
+[[keys#|&#91;]] [[keys#|&#93;]] brackets  [[keys#|\]] backslash
 
 [[keys#|:]] colon            [[keys#|"]] typewriter double-quote
 [[keys#|;]] semicolon        [[keys#|']] typewriter single quote, typewriter apostrophe
@@ -75,7 +75,7 @@ First, lets cover the names of the special keys:
 
   - Sometimes represented as the ⎵ symbol.
 
-[[keys#|left]], [[keys#|right|]], [[keys#|up]], [[keys#|down]] - The Arrow Keys
+[[keys#|left]], [[keys#|right]], [[keys#|up]], [[keys#|down]] - The Arrow Keys
 
   - Usually near the bottom of the keyboard, on the right end of the row
     containing the spacebar.
