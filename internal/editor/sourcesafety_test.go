@@ -298,9 +298,15 @@ func TestMewLockLifecycle(t *testing.T) {
 	e, _ := newTestEditor(t, "", "useEmacsLocks=false")
 	w := openInEditor(t, e, path)
 
+	// Lazy lock: nothing at open; the first edit claims it. ensureDeferredMewLock
+	// is exactly what trackEdit runs on that first edit.
+	if e.mewLocks[w.Buffer] != "" {
+		t.Fatal("mew lock must not be held at open (lazy)")
+	}
+	e.ensureDeferredMewLock(w.Buffer)
 	lockPath := e.mewLocks[w.Buffer]
 	if lockPath == "" {
-		t.Fatal("mew lock should be held after open")
+		t.Fatal("mew lock should be held after the first edit")
 	}
 	if !strings.HasPrefix(lockPath, filepath.Join(home, ".mew", "locks")) {
 		t.Fatalf("lock should live under ~/.mew/locks, got %s", lockPath)
@@ -328,6 +334,7 @@ func TestMewLockLifecycle(t *testing.T) {
 	os.WriteFile(otherLock, []byte("someone@elsewhere.4242\n"+other+"\n"), 0o644)
 
 	w2 := openInEditor(t, e, other)
+	e.ensureDeferredMewLock(w2.Buffer) // first edit tries to claim it
 	if e.mewLocks[w2.Buffer] != "" {
 		t.Fatal("foreign live lock must not be taken over")
 	}
@@ -346,6 +353,7 @@ func TestMewLockLifecycle(t *testing.T) {
 	os.WriteFile(staleLock, []byte(fmt.Sprintf("ghost@%s.4194301\n%s\n", host, stale)), 0o644)
 
 	w3 := openInEditor(t, e, stale)
+	e.ensureDeferredMewLock(w3.Buffer) // first edit claims it, replacing the stale lock
 	if e.mewLocks[w3.Buffer] != staleLock {
 		t.Fatal("stale lock should be taken over")
 	}

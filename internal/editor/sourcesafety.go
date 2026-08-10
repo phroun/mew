@@ -590,12 +590,11 @@ func (e *Editor) acquireMewLock(buf *buffer.Buffer, path string) (skipReason str
 	return ""
 }
 
-// deferMewLock records that buf's mew-native lock was deliberately not taken
-// at open because the open was read-only: a viewer holds no editing lock (the
-// emacs school — garland's emacs locks are lazy the same way, appearing only
-// on the first content mutation). The lock is acquired post-hoc by
-// ensureDeferredMewLock the moment read-only is turned off for the buffer —
-// the intent-to-edit boundary — and the foreign-lock warning moves there too.
+// deferMewLock records buf's path so the mew-native lock can be claimed lazily
+// on the first edit rather than at open — the emacs school (garland's emacs
+// locks are lazy the same way, appearing only on the first content mutation).
+// Every open defers; a viewer that never edits holds no lock and leaves none
+// behind.
 func (e *Editor) deferMewLock(buf *buffer.Buffer, path string) {
 	if !e.Config.UseLocks || buf == nil {
 		return
@@ -606,13 +605,12 @@ func (e *Editor) deferMewLock(buf *buffer.Buffer, path string) {
 	e.mewLockDeferred[buf] = path
 }
 
-// ensureDeferredMewLock acquires the mew-native lock for a buffer whose
-// acquisition was deferred by a read-only open. Called when read-only turns
-// off (set_option, option overlay). No-op for buffers that were never
-// deferred — the common editable open acquired at load time. Once editing
-// intent is declared the lock stays for the session, matching emacs (lock
-// until save) and vim (swapfile until close): re-enabling read-only does not
-// release it.
+// ensureDeferredMewLock claims the mew-native lock for a buffer on its first
+// edit (trackEdit) — reading, and respecting or taking over, any existing lock
+// as it goes. A no-op once held, or for a buffer that was never opened through
+// the lock path. Once claimed the lock stays for the session, matching emacs
+// (lock until save) and vim (swapfile until close): re-enabling read-only does
+// not release it.
 func (e *Editor) ensureDeferredMewLock(buf *buffer.Buffer) {
 	path, ok := e.mewLockDeferred[buf]
 	if !ok {
@@ -621,14 +619,6 @@ func (e *Editor) ensureDeferredMewLock(buf *buffer.Buffer) {
 	delete(e.mewLockDeferred, buf)
 	if reason := e.acquireMewLock(buf, path); reason != "" {
 		e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
-	}
-}
-
-// ensureAllDeferredMewLocks acquires every deferred lock — the global
-// read-only option was turned off, so every viewer became editable at once.
-func (e *Editor) ensureAllDeferredMewLocks() {
-	for buf := range e.mewLockDeferred {
-		e.ensureDeferredMewLock(buf)
 	}
 }
 

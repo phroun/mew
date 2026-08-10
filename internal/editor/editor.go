@@ -3924,19 +3924,13 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if !ok {
 			return false
 		}
+		// Read-only is a per-view flag that gates edits; it does not drive the
+		// lock. The mew lock is lazy — claimed on the first actual edit
+		// (trackEdit) — so toggling read-only never acquires or releases it.
 		if w != nil {
 			w.ViewState.ReadOnly = b
-			if !b {
-				// Read-only turned off: the intent-to-edit boundary. A lock
-				// deferred by a read-only open is acquired now (with any
-				// foreign-lock warning surfacing here rather than at open).
-				e.ensureDeferredMewLock(w.Buffer)
-			}
 		} else {
 			e.Config.ReadOnly = b
-			if !b {
-				e.ensureAllDeferredMewLocks()
-			}
 		}
 	case "insertcursor", "overwritecursor", "navigationcursor":
 		n, ok := parseInt(0)
@@ -5027,6 +5021,13 @@ func (e *Editor) trackEdit() {
 		// An edit re-engages caret following (edits also call ensureCursorVisible,
 		// but not every path does; make the re-engage unconditional here).
 		w.ViewState.ScrollDetached = false
+		// The mew lock is lazy: the first edit that leaves the buffer modified
+		// claims the deferred lock (matching garland's emacs locks). A no-op once
+		// held, or for a buffer that was never opened through the lock path. Runs
+		// before checkEditLock so any foreign lock it records is ready to prompt.
+		if w.Buffer != nil && w.Buffer.IsModified() {
+			e.ensureDeferredMewLock(w.Buffer)
+		}
 	}
 	e.lastEditKill = e.pendingKill
 	e.pendingKill = false
@@ -8193,16 +8194,12 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		// The content is virtualized through the host FileSystem, but a mew-native
 		// editing lock still coordinates multiple mew instances editing the same
 		// path (it is an OS-level advisory lock under ~/.mew or the project, not
-		// written through the host FS; it also records a live foreign lock so the
-		// first edit prompts). Emacs locks need the real file's directory and so
-		// are not available on this path. Any lock failure is surfaced.
-		// A READ-ONLY open takes no editing lock: acquisition (and its
-		// warnings) defer to the moment read-only is turned off.
-		if e.Config.ReadOnly {
-			e.deferMewLock(buf, filename)
-		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
-			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
-		}
+		// written through the host FS). Emacs locks need the real file's directory
+		// and so are not available on this path. The mew lock is LAZY, like
+		// garland's emacs locks: opening takes none — the lock (and any foreign /
+		// stale-lock handling) is acquired on the first edit (see trackEdit), so a
+		// viewer that never edits advertises nothing and never orphans a lock file.
+		e.deferMewLock(buf, filename)
 		return buf, nil
 	}
 	emacsLock, lockWarning := e.emacsLockDecision(filename)
@@ -8243,16 +8240,11 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !emacsLock {
 		// No emacs lock (config or git hygiene): fall back to a mew-native
 		// lock in the nearest .mew directory. Its most common catch is the
-		// user opening the same file in another mew viewport. A READ-ONLY open
-		// takes no editing lock — a viewer advertises nothing; acquisition
-		// (and its warnings) defer to the moment read-only is turned off.
-		// (Garland's emacs locks need no such deferral: they are lazy by
-		// contract, appearing only on the first content mutation.)
-		if e.Config.ReadOnly {
-			e.deferMewLock(buf, filename)
-		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
-			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
-		}
+		// user opening the same file in another mew viewport. Like the emacs
+		// lock it is LAZY — acquired on the first edit (trackEdit), not at open —
+		// so a viewer advertises nothing and never orphans a lock file; foreign /
+		// stale-lock handling happens at that first edit too.
+		e.deferMewLock(buf, filename)
 	}
 	if owner, ok := buf.SourceLockOwner(); ok && owner != "" {
 		e.noteBuffer(buf, "lock", fmt.Sprintf("%s is being edited by %s", filepath.Base(filename), owner), true)

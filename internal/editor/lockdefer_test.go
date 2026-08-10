@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// A read-only open takes no mew-native editing lock — a viewer advertises
-// nothing. The lock is acquired post-hoc at the intent-to-edit boundary: the
-// moment read-only is turned off. Re-enabling read-only afterwards does NOT
-// release it (editing intent was declared for the session), matching emacs
-// (lock until save) and vim (swapfile until close).
+// Opening takes no mew-native editing lock — a viewer advertises nothing. The
+// lock is claimed lazily on the FIRST EDIT (like garland's emacs locks), not at
+// open and not when read-only is toggled off. Re-enabling read-only afterwards
+// does NOT release it (editing intent was declared for the session), matching
+// emacs (lock until save) and vim (swapfile until close).
 func TestReadOnlyOpenDefersMewLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -33,15 +33,25 @@ func TestReadOnlyOpenDefersMewLock(t *testing.T) {
 		t.Fatal("the deferred lock should be recorded for post-hoc acquisition")
 	}
 
-	// Intent to edit: read-only off acquires the lock now.
+	// Turning read-only OFF no longer acquires the lock — under lazy locking only
+	// a real edit does; the deferral stays pending.
 	if !e.setOption(w, "readonly", "false") {
 		t.Fatal("set_option readonly false failed")
 	}
+	if e.mewLocks[w.Buffer] != "" {
+		t.Fatal("turning read-only off must NOT acquire the lock (only the first edit does)")
+	}
+	if e.mewLockDeferred[w.Buffer] == "" {
+		t.Fatal("the deferral should still be pending until the first edit")
+	}
+
+	// The first edit claims the deferred lock.
+	typeText(t, e, "Z")
 	if e.mewLocks[w.Buffer] == "" {
-		t.Fatal("turning read-only off must acquire the deferred lock")
+		t.Fatal("the first edit must acquire the deferred lock")
 	}
 	if _, err := os.Stat(lockFile); err != nil {
-		t.Fatalf("lock file should exist after read-only turns off: %v", err)
+		t.Fatalf("lock file should exist after the first edit: %v", err)
 	}
 	if _, still := e.mewLockDeferred[w.Buffer]; still {
 		t.Fatal("the deferral record should be consumed")
@@ -56,9 +66,9 @@ func TestReadOnlyOpenDefersMewLock(t *testing.T) {
 	}
 }
 
-// With a live foreign lock on the file, a read-only open stays silent — the
-// warning belongs to editing intent, not viewing. Turning read-only off
-// surfaces the "being edited by" notice and still respects the foreign lock.
+// With a live foreign lock on the file, opening stays silent — the warning
+// belongs to editing, not viewing. The first edit surfaces the "being edited
+// by" notice and still respects the foreign lock (no takeover).
 func TestReadOnlyOpenForeignLockNoticeDeferred(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -78,44 +88,37 @@ func TestReadOnlyOpenForeignLockNoticeDeferred(t *testing.T) {
 		t.Fatalf("a read-only open should raise no lock notice; got %v", e.bufNotices[w.Buffer])
 	}
 
-	if !e.setOption(w, "readonly", "false") {
-		t.Fatal("set_option readonly false failed")
-	}
+	// The first edit (lazy acquisition) surfaces the foreign-lock notice and
+	// still respects the live lock.
+	e.ensureDeferredMewLock(w.Buffer)
 	if len(e.bufNotices[w.Buffer]) == 0 {
-		t.Fatal("intent to edit should surface the foreign-lock notice")
+		t.Fatal("the first edit should surface the foreign-lock notice")
 	}
 	if e.mewLocks[w.Buffer] != "" {
 		t.Fatal("the live foreign lock must still be respected, not taken over")
 	}
 	if _, ok := e.foreignLocks[w.Buffer]; !ok {
-		t.Fatal("the foreign lock should be recorded so the first edit prompts")
+		t.Fatal("the foreign lock should be recorded so the edit prompts")
 	}
 }
 
-// Turning the GLOBAL read-only option off acquires every deferred lock —
-// each viewer became editable at once.
-func TestGlobalReadOnlyOffAcquiresAllDeferred(t *testing.T) {
+// Opening takes no lock; the first real edit (through the command path, firing
+// trackEdit) claims the deferred mew lock end-to-end.
+func TestFirstEditClaimsMewLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := t.TempDir()
-	a := filepath.Join(dir, "a.txt")
-	b := filepath.Join(dir, "b.txt")
-	os.WriteFile(a, []byte("a\n"), 0o644)
-	os.WriteFile(b, []byte("b\n"), 0o644)
+	path := filepath.Join(dir, "doc.txt")
+	os.WriteFile(path, []byte("x\n"), 0o644)
 
 	e, _ := newTestEditor(t, "", "useEmacsLocks=false")
-	e.Config.ReadOnly = true
-	wa := openInEditor(t, e, a)
-	wb := openInEditor(t, e, b)
-	if e.mewLocks[wa.Buffer] != "" || e.mewLocks[wb.Buffer] != "" {
-		t.Fatal("read-only opens must not take locks")
+	w := openInEditor(t, e, path)
+	if e.mewLocks[w.Buffer] != "" {
+		t.Fatal("no mew lock should be held at open (lazy)")
 	}
-
-	if !e.setOption(nil, "readonly", "false") {
-		t.Fatal("global set_option readonly false failed")
-	}
-	if e.mewLocks[wa.Buffer] == "" || e.mewLocks[wb.Buffer] == "" {
-		t.Fatal("global read-only off must acquire all deferred locks")
+	typeText(t, e, "Z")
+	if e.mewLocks[w.Buffer] == "" {
+		t.Fatal("the first edit should claim the mew lock")
 	}
 }
 

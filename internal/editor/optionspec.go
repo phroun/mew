@@ -157,12 +157,10 @@ func (e *Editor) applyResolvedOption(w *viewport.Viewport, key string) {
 	case "autoindent":
 		w.ViewState.AutoIndent = e.optBool(w, "autoindent", e.Config.AutoIndent)
 	case "readonly":
+		// Per-view flag only; it gates edits, not the lock. The mew lock is lazy
+		// (acquired on the first actual edit — see trackEdit), so toggling
+		// read-only never acquires or releases it.
 		w.ViewState.ReadOnly = e.optBool(w, "readonly", e.Config.ReadOnly)
-		if !w.ViewState.ReadOnly {
-			// An overlay resolving the viewport editable is intent-to-edit for
-			// a buffer whose lock a read-only open deferred.
-			e.ensureDeferredMewLock(w.Buffer)
-		}
 	case "linkbrowsing":
 		w.ViewState.LinkBrowsing = e.optBool(w, "linkbrowsing", e.Config.LinkBrowsing)
 		if !w.ViewState.LinkBrowsing {
