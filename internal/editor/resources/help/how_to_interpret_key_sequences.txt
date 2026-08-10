@@ -2,7 +2,7 @@
 
 === Normal Keys ===
 
-= Alphanumeric Keys ==
+== Alphanumeric Keys ==
 
 The numbers 1 through 9 and 0, and the letters A through Z are represented
 in the mew documentation with their basic symbol.  Letters are generally
@@ -26,7 +26,7 @@ There are also several symbol and punctuation keys on most keyboards:
 [[keys#|｛]] [[keys#|｝]] braces    [[keys#||]] pipe
 [[keys#|［]] [[keys#|］]] brackets  [[keys#|\]] backslash
 
-[[keys#|:]] colon            [[keys#|"]] typewriter double-quot
+[[keys#|:]] colon            [[keys#|"]] typewriter double-quote
 [[keys#|;]] semicolon        [[keys#|']] typewriter single quote, typewriter apostrophe
 
 [[keys#|<]] less-than        [[keys#|>]] greater-than   [[keys#|?]] question-mark
@@ -43,7 +43,7 @@ First, lets cover the names of the special keys:
 
 [[keys#|tab]] - Tab, to the left of the top row of letter keys.
 
-  - On many keyboards this may be labele with the
+  - On many keyboards this may be labeled with the
     ↹ symbol. (left and right arrows with vertical stops.)
 
 [[keys#|del]] / [[keys#|back]] - The key that removes the most recently typed character.
@@ -61,8 +61,8 @@ First, lets cover the names of the special keys:
 
   - On IBM PC compatible computers this key is usually labeled "Del"
 
-  - On Apple or International keybords, this is often
-    represented by ⌦ (right pointing tag wth an X in it.)
+  - On Apple or International keyboards, this is often
+    represented by ⌦ (right pointing tag with an X in it.)
 
 [[keys#|return]] / [[keys#|enter]] - On the right end of the home-row, starts a new line.
 
@@ -100,20 +100,20 @@ First, lets cover the names of the special keys:
 
 **"M-"** — The Meta Key
 
-  - Often labled ⎇ Alt or ⌥ Option.
+  - Often labeled ⎇ Alt or ⌥ Option.
 
 **"s-"** — The Super Key (or Command, or System)
 
-  – Often labeled ⌘, ❖ or ⊞.
+  - Often labeled ⌘, ❖ or ⊞.
 
-**"fn" - Function or Globe
+**"fn"** - Function or Globe
 
   - Often represented by 🌐.
 
 === Chords: ===
 
 A chord is when one or more modifier key is held down while another
-regulr key is pressed:
+regular key is pressed:
 
 == The Control Key ==
 
