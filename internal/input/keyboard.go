@@ -248,11 +248,23 @@ func normalizeKey(key string) string {
 	base := key
 
 	for {
-		if strings.HasPrefix(base, "M-") {
+		if strings.HasPrefix(base, "H-") {
+			prefix += "H-"
+			base = base[2:]
+		} else if strings.HasPrefix(base, "M-") {
 			prefix += "M-"
 			base = base[2:]
 		} else if strings.HasPrefix(base, "S-") {
 			prefix += "S-"
+			base = base[2:]
+		} else if strings.HasPrefix(base, "s-") {
+			prefix += "s-"
+			base = base[2:]
+		} else if strings.HasPrefix(base, "C-") {
+			prefix += "C-"
+			base = base[2:]
+		} else if strings.HasPrefix(base, "A-") {
+			prefix += "A-"
 			base = base[2:]
 		} else if strings.HasPrefix(base, "^") && len(base) > 1 {
 			// Control prefix - but only if there's something after it

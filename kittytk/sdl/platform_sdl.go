@@ -1725,12 +1725,82 @@ var specialKeys = map[sdl3.Keycode]string{
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
 // the TextInput path owns it (plain printable characters).
+//
+// Hyper has no native SDL modifier, so mew synthesizes it from a doubled
+// side modifier: holding BOTH the left and right Ctrl (or both Alt) keys
+// promotes the chord to Hyper. The doubled modifier is consumed by the
+// promotion; any single-side modifier still held keeps its normal role, so
+//
+//	LCtrl+RCtrl+X        -> H-X       (both Ctrl -> Hyper)
+//	LAlt+RAlt+X          -> H-X       (both Alt  -> Hyper)
+//	LAlt+RAlt+Ctrl+X     -> H-^X      (Hyper + a single Ctrl)
+//	LCtrl+RCtrl+Alt+X    -> H-M-x     (Hyper + a single Alt)
+//
+// AltGr reports as a single (right) Alt, so it never trips the both-Alt
+// promotion. Shift is deliberately left out — it is a text-producing
+// modifier, so a doubled Shift would hijack ordinary capital letters.
 func translateKey(sym sdl3.Keysym) string {
+	bothCtrl := sym.Mod&sdl3.KMOD_LCTRL != 0 && sym.Mod&sdl3.KMOD_RCTRL != 0
+	bothAlt := sym.Mod&sdl3.KMOD_LALT != 0 && sym.Mod&sdl3.KMOD_RALT != 0
+	hyper := bothCtrl || bothAlt
+
 	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
 	alt := sym.Mod&sdl3.KMOD_ALT != 0
 	shift := sym.Mod&sdl3.KMOD_SHIFT != 0
 	gui := sym.Mod&sdl3.KMOD_GUI != 0
 
+	if hyper {
+		// The doubled modifier is spent on the Hyper promotion; a
+		// single-side Ctrl or Alt still contributes its normal role.
+		if bothCtrl {
+			ctrl = false
+		}
+		if bothAlt {
+			alt = false
+		}
+	}
+
+	base := encodeKey(sym, ctrl, alt, shift, gui)
+
+	if !hyper {
+		return base
+	}
+
+	if base == "" {
+		// The residual modifiers alone would defer to TextInput (a plain
+		// or shifted printable). Hyper is a real chord, so synthesize the
+		// bare key token here instead of dropping the keystroke.
+		if base = bareKey(sym, shift); base == "" {
+			return ""
+		}
+	}
+	return "H-" + base
+}
+
+// bareKey returns the unmodified key token for a keysym: a special-key name,
+// or the printable character (upper-cased when Shift is held, so the caseful
+// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
+// used only to give a Hyper chord a key to attach to when the residual
+// modifiers would otherwise have deferred the keystroke to TextInput.
+func bareKey(sym sdl3.Keysym, shift bool) string {
+	if name, ok := specialKeys[sym.Sym]; ok {
+		return name
+	}
+	if sym.Sym >= 32 && sym.Sym < 127 {
+		ch := rune(sym.Sym)
+		if shift && ch >= 'a' && ch <= 'z' {
+			return string(ch - 'a' + 'A')
+		}
+		return string(ch)
+	}
+	return ""
+}
+
+// encodeKey maps a keysym plus its effective modifier set to a D3 key string,
+// or "" when the TextInput path owns it (plain printable characters). The
+// modifier booleans are passed in rather than read from sym.Mod so translateKey
+// can strip the modifiers it has already spent on a Hyper promotion.
+func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
 		if alt {
