@@ -49,12 +49,12 @@ func TestTextInputShiftArrowSelection(t *testing.T) {
 func TestTextInputShiftCtrlHomeEnd(t *testing.T) {
 	ti, _ := newClippedInput("hello world")
 	ti.SetCursorPosition(6)
-	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-a", Modifiers: core.ControlModifier | core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-^A", Modifiers: core.ControlModifier | core.ShiftModifier})
 	if got := ti.SelectedText(); got != "hello " {
 		t.Errorf("shift-ctrl-A = %q, want %q", got, "hello ")
 	}
 	ti.SetCursorPosition(6)
-	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-e", Modifiers: core.ControlModifier | core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-^E", Modifiers: core.ControlModifier | core.ShiftModifier})
 	if got := ti.SelectedText(); got != "world" {
 		t.Errorf("shift-ctrl-E = %q, want %q", got, "world")
 	}
@@ -81,7 +81,7 @@ func TestTextInputClipboardActions(t *testing.T) {
 	ti, clip := newClippedInput("hello world")
 	// Select "world".
 	ti.SetCursorPosition(6)
-	ti.HandleKeyPress(core.KeyPressEvent{Key: "C-S-e", Modifiers: core.ControlModifier | core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-^E", Modifiers: core.ControlModifier | core.ShiftModifier})
 	ti.Copy()
 	if clip.buf != "world" {
 		t.Errorf("copy put %q on clipboard, want %q", clip.buf, "world")

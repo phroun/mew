@@ -1897,18 +1897,32 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 		}
 
 		switch {
-		case ctrl && isLetter && !shift:
-			base := "^" + string(ch-'a'+'A')
-			if alt {
-				return "M-" + base
-			}
-			return base
-		case ctrl:
+		case ctrl && isLetter:
+			// Control is spelled with the caret when the key it pairs with is
+			// one the caret is natural for — a letter — and that choice
+			// follows the BASE KEY, never what else is held. So Ctrl+Shift+A
+			// is "S-^A", not "C-S-a": adding Shift does not change how Control
+			// is written. Shift has to be stated because "^A" already spent the
+			// letter's case on Control.
+			//
+			// Only a graphical host or a terminal speaking the kitty protocol
+			// can report this chord at all — a legacy terminal sends Ctrl+A's
+			// ASCII control code for both, with no room for a Shift bit.
 			prefix := ""
 			if alt {
 				prefix += "M-"
 			}
-			prefix += "C-"
+			if shift {
+				prefix += "S-"
+			}
+			return prefix + "^" + string(ch-'a'+'A')
+		case ctrl:
+			// Not caret-natural, so Control keeps its letter form — and sorts
+			// first in canonical order, ahead of Meta.
+			prefix := "C-"
+			if alt {
+				prefix += "M-"
+			}
 			if shift {
 				prefix += "S-"
 			}

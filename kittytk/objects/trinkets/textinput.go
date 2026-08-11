@@ -963,7 +963,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// intact (e.g. "S-Left") alongside the parsed modifier. Fold the
 	// prefix into the bare name so shift-extends the selection; the
 	// caret-anchor logic in each case reads Modifiers. Control/Meta
-	// spellings ("^A", "C-S-a") stay literal - they are matched whole.
+	// spellings ("^A", "S-^A") stay literal - they are matched whole.
 	key := event.Key
 	switch key {
 	case "S-Left", "S-Right", "S-Home", "S-End", "S-Up", "S-Down":
@@ -1105,16 +1105,21 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.Update()
 		return true
 
-	case "C-S-a", "C-S-A":
+	case "S-^A":
 		// Shift+Ctrl+A: extend the selection to the beginning (the
 		// anchor is wherever the caret was when the selection began).
+		//
+		// Spelled with the caret because the base key is a letter, which is
+		// what decides how Control is written. This used to read "C-S-a", the
+		// graphical host's old spelling, so it never fired under the terminal
+		// host — which has emitted "S-^A" all along.
 		t.cursorPos = 0
 		t.selEnd = 0
 		t.ensureCursorVisible()
 		t.Update()
 		return true
 
-	case "C-S-e", "C-S-E":
+	case "S-^E":
 		// Shift+Ctrl+E: extend the selection to the end.
 		t.cursorPos = len(t.text)
 		t.selEnd = t.cursorPos
