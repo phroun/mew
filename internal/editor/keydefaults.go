@@ -1,6 +1,34 @@
 package editor
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/phroun/key-sequence-processor/keyseq"
+)
+
+// mewAliasGroups are the interchangeable spellings for one key in mew's
+// vocabulary — the first entry is the name a key arrives under, the rest are
+// spellings a binding may use for it.
+//
+// These are mew's, not the processor's defaults: those speak
+// direct-key-handler's names (Tab, Return, Escape), while mew renames keys on
+// the way in (see internal/input) to the short lowercase tokens its binding
+// syntax and help topics are written in. Without this the control spellings
+// stop resolving — `^M` would not reach a `return` binding — silently, since
+// nothing errors when a binding merely fails to match.
+var mewAliasGroups = []keyseq.AliasGroup{
+	{"back", "^H", "backspace"},
+	{"tab", "^I"},
+	{"return", "enter", "^M"},
+	{"fdel", "delete"},
+	{"^space", "^2"},
+	{"esc", "escape", "^[", "^3"},
+	{"^\\", "^4"},
+	{"^]", "^5"},
+	{"^^", "^6"},
+	{"^_", "^7"},
+	{"del", "^8"},
+}
 
 // defaultCommandForKey answers what a key no binding claimed should do — the
 // floor the key sequence processor falls to once every precedence level has

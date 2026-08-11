@@ -68,3 +68,33 @@ func TestDefaultCommandMacOptionLayer(t *testing.T) {
 		t.Errorf("M-d with the layer off = %q, want no default", got)
 	}
 }
+
+// mew renames keys on the way in, so the processor's default aliases (which
+// speak direct-key-handler's Tab/Return/Escape) do not fit: without mew's own
+// groups the control spellings silently stop resolving — `^M` no longer
+// reaches a `return` binding, and nothing errors, because a binding that fails
+// to match just does nothing.
+func TestMewAliasGroupsResolveControlSpellings(t *testing.T) {
+	p := keyseq.NewProcessor(nil)
+	p.SetAliasGroups(mewAliasGroups)
+	p.SetMappings(map[string]string{
+		"return": "accept",
+		"back":   "erase",
+		"esc":    "cmd",
+		"tab":    "indent",
+		"fdel":   "del_forward",
+	})
+	cases := []struct{ pressed, want string }{
+		{"return", "accept"}, {"^M", "accept"}, {"enter", "accept"},
+		{"back", "erase"}, {"^H", "erase"}, {"backspace", "erase"},
+		{"esc", "cmd"}, {"^[", "cmd"}, {"escape", "cmd"}, {"^3", "cmd"},
+		{"tab", "indent"}, {"^I", "indent"},
+		{"fdel", "del_forward"}, {"delete", "del_forward"},
+	}
+	for _, c := range cases {
+		p.ClearActiveSequence()
+		if got := p.ProcessKey(c.pressed).Command; got != c.want {
+			t.Errorf("%q -> %q, want %q", c.pressed, got, c.want)
+		}
+	}
+}
