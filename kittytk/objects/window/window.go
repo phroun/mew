@@ -934,9 +934,49 @@ func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 	w.mu.Unlock()
 	if mb != nil {
 		mb.SetParent(w)
+		// Tab out of this bar into the window's own focus chain. The desktop's
+		// bar hands Tab to the dock; a window's bar has no dock beside it, so
+		// without this the key fell through to the focused trinket and a
+		// full-screen one swallowed it (see focusOutOfMenuBar).
+		if fo, ok := mb.(interface{ SetOnFocusOut(func(bool) bool) }); ok {
+			fo.SetOnFocusOut(w.focusOutOfMenuBar)
+		}
 	}
 	w.layoutContent()
 	w.Update()
+}
+
+// focusOutOfMenuBar moves focus off this window's own menu bar: Shift+Tab
+// (forward=false) back to the title bar, Tab forward to the first content
+// trinket. It mirrors where Tab lands when it walks off either end of the
+// content chain, so the bar sits between the title bar and the content in one
+// continuous cycle. Reports whether focus moved; a window with nothing
+// focusable to move to leaves the key alone rather than eating it.
+func (w *Window) focusOutOfMenuBar(forward bool) bool {
+	fm := w.FocusManager()
+	if !forward {
+		// Backward into the title bar - the blur item when it is enabled,
+		// matching Shift+Tab off the front of the content chain.
+		if w.hasKeyboardBlurEnabled() {
+			w.SetTitleFocus(TitleFocusBlur)
+		} else {
+			w.SetTitleFocus(TitleFocusTitle)
+		}
+		if fm != nil {
+			fm.ClearFocus()
+		}
+		w.Update()
+		return true
+	}
+	if fm == nil {
+		return false
+	}
+	w.SetTitleFocus(TitleFocusNone)
+	if !fm.FocusFirst() {
+		return false
+	}
+	w.Update()
+	return true
 }
 
 // WindowMenuBar returns the window's own menu bar (the chrome a detached

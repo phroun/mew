@@ -1852,6 +1852,14 @@ type MenuBar struct {
 	// Callback when Tab navigation should transfer to the dock
 	onFocusDock func()
 
+	// Callback when Tab navigation should leave a bar that has no dock to
+	// hand off to - a window's own menu bar (a detached main window's chrome,
+	// so solo and torn-off too). forward is false for Shift+Tab. Returns
+	// whether focus actually moved; when it doesn't, the key falls through
+	// rather than being swallowed. The desktop's bar leaves this nil and uses
+	// onFocusDock for both directions.
+	onFocusOut func(forward bool) bool
+
 	// Fallback scroll-timer + update wiring for dropdowns, used when the
 	// bar's parent doesn't provide them (a detached window's own menu bar,
 	// whose parent is the Window rather than the Desktop). The desktop
@@ -1905,6 +1913,16 @@ func (m *MenuBar) SetOnMenuOpen(callback func()) {
 // SetOnMenuDismiss sets a callback that is called when the menu bar is dismissed without action.
 func (m *MenuBar) SetOnMenuDismiss(callback func()) {
 	m.onMenuDismiss = callback
+}
+
+// SetOnFocusOut sets the handler for Tab (forward=true) and Shift+Tab
+// (forward=false) leaving a menu bar that has no dock to hand off to - a
+// window's own bar, which a detached, solo, or torn-off window carries. It
+// reports whether focus moved; false leaves the key unhandled. Windows wire
+// this in SetWindowMenuBar so Shift+Tab reaches the title bar and Tab reaches
+// the content, the same chain Tab walks off either end of.
+func (m *MenuBar) SetOnFocusOut(callback func(forward bool) bool) {
+	m.onFocusOut = callback
 }
 
 // SetOnFocusDock sets a callback for when Tab navigation should transfer to the dock.
@@ -2960,11 +2978,29 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Tab":
-		// Tab/Shift+Tab: transfer focus to dock (if available and no menu is open)
-		if m.activeMenu == nil && m.onFocusDock != nil {
+	case "Tab", "S-Tab", "Shift-Tab":
+		// Tab and Shift+Tab both leave the bar, but where to depends on whose
+		// bar it is. The desktop's bar hands either direction to the dock (the
+		// only other chrome out there). A window's own bar - which a detached,
+		// solo, or torn-off window carries, and which has no dock beside it -
+		// steps into that window's chain instead: back to the title bar,
+		// forward into the content. Without the second case both keys fell
+		// through to the focused trinket, and a full-screen one (the mew
+		// editor consumes every key) swallowed them, leaving the bar a focus
+		// trap you could enter with F10 but not Tab out of.
+		if m.activeMenu != nil {
+			break // a dropdown is open: Tab stays inside it
+		}
+		if m.onFocusDock != nil {
 			m.onFocusDock()
 			return true
+		}
+		if m.onFocusOut != nil {
+			forward := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
+			if m.onFocusOut(forward) {
+				m.CloseMenuWithoutRestore()
+				return true
+			}
 		}
 	}
 
