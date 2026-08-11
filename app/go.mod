@@ -28,7 +28,7 @@ require (
 	github.com/gogpu/wgpu v0.30.32 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/argwild v0.0.1 // indirect
-	github.com/phroun/direct-key-handler v0.3.13 // indirect
+	github.com/phroun/direct-key-handler v0.3.14 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/pawscript v0.2.12-alpha // indirect
 	github.com/phroun/purfecterm v0.2.40 // indirect

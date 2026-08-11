@@ -10,29 +10,115 @@ import (
 	"github.com/phroun/direct-key-handler/keyboard"
 )
 
-// keyNameMap maps handler key names to mew's expected key names.
-// These should match the primary names in the key alias groups in sequence.go
-var keyNameMap = map[string]string{
-	"Escape": "esc",
+// mewKeyNames is mew's key vocabulary, handed to direct-key-handler so keys
+// arrive already spelled the way bindings spell them. These are the primary
+// names of the key alias groups in sequence.go, and the names the help topics
+// document — mew's binding syntax, not display strings.
+//
+// Given to keyboard.Options.KeyNames rather than translated afterwards: the
+// handler builds a name from a keycode and modifier bits, so rewriting it here
+// meant re-parsing the prefixes it had just added, and matching on its
+// spelling meant a rename upstream broke mew silently (see the coverage test,
+// which fails if a key is left without a mew name).
+var mewKeyNames = map[keyboard.Key]string{
+	keyboard.KeyEscape: "esc",
 	// Space arrives as its literal character " " (printables are named by
 	// themselves), but a bare space can't be a token in mew's space-separated
-	// binding syntax — bindings must spell it "space" (e.g. "^B space"). Map the
-	// character to that word so a pressed spacebar matches, and modified forms
-	// ("M- " -> "M-space") fall out of the prefix logic below.
-	" ":         "space",
-	"Tab":       "tab",
-	"Enter":     "return",
-	"Backspace": "back", // Primary for {"back", "^H", "backspace"} group
-	"Up":        "up",
-	"Down":      "down",
-	"Left":      "left",
-	"Right":     "right",
-	"Home":      "home",
-	"End":       "end",
-	"Insert":    "ins",
-	"Delete":    "fdel", // Primary for {"fdel", "delete"} group
-	"PageUp":    "pgup",
-	"PageDown":  "pgdn",
+	// binding syntax — bindings must spell it "space" (e.g. "^B space").
+	keyboard.KeySpace:     "space",
+	keyboard.KeyTab:       "tab",
+	keyboard.KeyBackspace: "back", // Primary for {"back", "^H", "backspace"} group
+	keyboard.KeyUp:        "up",
+	keyboard.KeyDown:      "down",
+	keyboard.KeyLeft:      "left",
+	keyboard.KeyRight:     "right",
+	keyboard.KeyHome:      "home",
+	keyboard.KeyEnd:       "end",
+	keyboard.KeyInsert:    "ins",
+	keyboard.KeyDelete:    "fdel", // Primary for {"fdel", "delete"} group
+	keyboard.KeyPageUp:    "pgup",
+	keyboard.KeyPageDown:  "pgdn",
+
+	// The home-row key and the keypad's are distinct keys upstream. mew binds
+	// one "return": the help topic says as much ("Computers with a numeric
+	// keypad may have an additional smaller key also labeled enter which is not
+	// the one being referred to"), so fold them deliberately rather than
+	// leaving the keypad's to arrive under its own name and match by accident.
+	keyboard.KeyReturn:      "return",
+	keyboard.KeyKeypadEnter: "return",
+
+	// Function keys keep their upstream spelling: bindings write "F1".
+	keyboard.KeyF1: "F1", keyboard.KeyF2: "F2", keyboard.KeyF3: "F3",
+	keyboard.KeyF4: "F4", keyboard.KeyF5: "F5", keyboard.KeyF6: "F6",
+	keyboard.KeyF7: "F7", keyboard.KeyF8: "F8", keyboard.KeyF9: "F9",
+	keyboard.KeyF10: "F10", keyboard.KeyF11: "F11", keyboard.KeyF12: "F12",
+	keyboard.KeyF13: "F13", keyboard.KeyF14: "F14", keyboard.KeyF15: "F15",
+	keyboard.KeyF16: "F16", keyboard.KeyF17: "F17", keyboard.KeyF18: "F18",
+	keyboard.KeyF19: "F19", keyboard.KeyF20: "F20",
+
+	// Lock and system keys: lowercase, matching the rest of the vocabulary.
+	keyboard.KeyCapsLock:    "capslock",
+	keyboard.KeyScrollLock:  "scrolllock",
+	keyboard.KeyNumLock:     "numlock",
+	keyboard.KeyPrintScreen: "printscreen",
+	keyboard.KeyPause:       "pause",
+	keyboard.KeyMenu:        "menu",
+}
+
+// hostKeyNames maps direct-key-handler's own spellings to mew's, derived from
+// mewKeyNames so the vocabulary is still declared exactly once.
+//
+// The terminal path needs no such table — the handler is given mewKeyNames and
+// emits mew's names directly. A host feed does: an embedding host parses its
+// own key events and sends them through KeyFeed.SendKey under
+// direct-key-handler's naming (see docs/embedding-mew.md), so those arrive
+// unmapped and are translated here instead.
+var hostKeyNames = func() map[string]string {
+	m := make(map[string]string, len(mewKeyNames)+1)
+	for k, name := range mewKeyNames {
+		if def := k.DefaultName(); def != "" {
+			m[def] = name
+		}
+	}
+	// A host may send the spacebar as its literal character rather than by
+	// name; both have to reach the "space" token bindings are written with.
+	m[" "] = mewKeyNames[keyboard.KeySpace]
+	return m
+}()
+
+// normalizeHostKey converts a key name a host fed in (direct-key-handler's
+// naming) to mew's, preserving the modifier prefixes the host put in front of
+// it: "S-PageUp" becomes "S-pgup". A name mew has no entry for is passed
+// through unchanged.
+func normalizeHostKey(key string) string {
+	if mapped, ok := hostKeyNames[key]; ok {
+		return mapped
+	}
+	prefix, base := "", key
+	for {
+		matched := false
+		for _, p := range []string{"H-", "M-", "S-", "s-", "C-", "A-", "G-"} {
+			if strings.HasPrefix(base, p) {
+				prefix, base = prefix+p, base[2:]
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			// Control prefix, only when something follows it.
+			if strings.HasPrefix(base, "^") && len(base) > 1 {
+				prefix, base = prefix+"^", base[1:]
+				continue
+			}
+			break
+		}
+	}
+	if prefix != "" {
+		if mapped, ok := hostKeyNames[base]; ok {
+			return prefix + mapped
+		}
+	}
+	return key
 }
 
 // PasteChunk represents a chunk of pasted content.
@@ -111,6 +197,7 @@ func NewKeyboardHandler(input io.Reader, termOut io.Writer) *KeyboardHandler {
 		// of key events. That echo is redundant (we insert from the chunks) and,
 		// on a large paste, would overflow the Keys channel and drop events.
 		EmitPasteKeys: &noPasteKeys,
+		KeyNames:      mewKeyNames,
 	})
 
 	// Set up chunked paste callback for real-time paste processing
@@ -167,7 +254,7 @@ func (kh *KeyboardHandler) GetEvent() InputEvent {
 		case raw := <-kh.PasteChunks:
 			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
-			return InputEvent{Key: normalizeKey(key)}
+			return InputEvent{Key: key}
 		case fn := <-kh.actions:
 			return InputEvent{Do: fn}
 		}
@@ -228,65 +315,4 @@ func splitCompleteUTF8(b []byte) (complete, carry []byte) {
 	}
 	// No rune start within the last UTFMax bytes: malformed data, don't hold it.
 	return b, nil
-}
-
-// normalizeKey converts handler key names to mew's expected format.
-// Examples:
-//   - "Escape" → "esc"
-//   - "M-Left" → "M-left"
-//   - "S-PageUp" → "S-pgup"
-//   - "a", "A", "^A", "F1" → unchanged
-func normalizeKey(key string) string {
-	// Check for direct match first (e.g., "Escape", "Tab")
-	if mapped, ok := keyNameMap[key]; ok {
-		return mapped
-	}
-
-	// Handle modifier prefixes: M-, S-, ^, or combinations like S-M-, M-^, etc.
-	// Find the base key by stripping known prefixes
-	prefix := ""
-	base := key
-
-	for {
-		if strings.HasPrefix(base, "H-") {
-			prefix += "H-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "M-") {
-			prefix += "M-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "S-") {
-			prefix += "S-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "s-") {
-			prefix += "s-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "C-") {
-			prefix += "C-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "A-") {
-			prefix += "A-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "G-") {
-			// Glyph (AltGr/Level3) modifier: carried over the terminal path once
-			// direct-key-handler decodes purfecterm's Glyph-modifier sequence.
-			prefix += "G-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "^") && len(base) > 1 {
-			// Control prefix - but only if there's something after it
-			prefix += "^"
-			base = base[1:]
-		} else {
-			break
-		}
-	}
-
-	// If we extracted a prefix, try to normalize the base key
-	if prefix != "" {
-		if mapped, ok := keyNameMap[base]; ok {
-			return prefix + mapped
-		}
-	}
-
-	// No normalization needed
-	return key
 }
