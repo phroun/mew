@@ -579,6 +579,34 @@ func (w *Window) Restore() {
 	}
 }
 
+// RestoreInPlace clears a maximized state WITHOUT moving the window: its
+// current rect becomes its normal (floating) bounds. Restore() snaps back to
+// the saved pre-maximize rect, which is the wrong answer once the geometry has
+// already moved on — a torn/solo host whose OS window was edge-resized while
+// the window still believed it was maximized. Left maximized, such a window
+// paints the maximized frame (title bar only, no border stroke) around an
+// arbitrary rect and offers a restore button that would teleport it; adopting
+// the rect as normal makes it honest again, so the full frame and the maximize
+// button come back. No-op unless the window is maximized.
+func (w *Window) RestoreInPlace() {
+	w.mu.Lock()
+	if w.state != WindowStateMaximized {
+		w.mu.Unlock()
+		return
+	}
+	w.state = WindowStateNormal
+	w.stateBeforeMinimize = WindowStateNormal
+	w.normalBounds = w.Bounds()
+	handler := w.onStateChange
+	w.mu.Unlock()
+
+	w.Update()
+
+	if handler != nil {
+		handler(WindowStateNormal)
+	}
+}
+
 // keyboardTopSnapMaximize maximizes an in-surface window through its
 // maximize-request handler when it is already pressed against the top of
 // its client area - the keyboard equivalent of dragging the titlebar up
@@ -3394,7 +3422,18 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		w.Close()
 		return true
 	case "M-F10": // Alt+F10 - Maximize/Restore
-		if w.IsMaximized() {
+		// Through the maximize-request handler when one is set, exactly as the
+		// titlebar button does: a torn/solo host maps maximize onto its OS
+		// window (zoom to the work area), and calling Maximize() directly here
+		// would flip the window's state while leaving the host un-zoomed and
+		// the surface its old size — a half-maximized window that paints no
+		// border and can still be edge-resized.
+		w.mu.RLock()
+		maxHandler := w.onMaximizeRequest
+		w.mu.RUnlock()
+		if maxHandler != nil {
+			maxHandler()
+		} else if w.IsMaximized() {
 			w.Restore()
 		} else {
 			w.Maximize()

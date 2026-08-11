@@ -1058,6 +1058,40 @@ func (h *TearOffHost) dragMove() bool {
 	return true
 }
 
+// maximizedFillSlackPx is how far under the work area a window may sit and
+// still count as filling it — absorbing the rounding of a units/points/pixels
+// round-trip, so only a real shrink reads as one.
+const maximizedFillSlackPx = 4
+
+// healMaximizedDivergence un-maximizes a window whose surface no longer fills
+// the display's work area, adopting the size it actually has.
+//
+// The solo primary window is an OS-RESIZABLE window (created that way with a
+// title bar, its border stripped at runtime), so the window manager serves its
+// edges itself and a drag on one never reaches edgeAt — the check that keeps a
+// zoomed torn window (borderless from birth) from being resized at all. The
+// window therefore kept WindowStateMaximized at whatever size the OS gave it,
+// and a maximized-state window paints the maximized frame: title bar only, no
+// border stroke, a restore button that would teleport it, and no repaint of the
+// surface beyond the content. Reconciling here covers every route in, since
+// each one lands in Resized — the OS edge drag, a window-manager snap, or any
+// programmatic size that isn't the zoom itself.
+func (h *TearOffHost) healMaximizedDivergence() {
+	if h.native == nil || !h.win.IsMaximized() {
+		return
+	}
+	pw, ph := h.native.ScreenSizePx()
+	_, _, ww, wh := h.native.WorkAreaPx()
+	if pw <= 0 || ph <= 0 || ww <= 0 || wh <= 0 {
+		return
+	}
+	if pw >= ww-maximizedFillSlackPx && ph >= wh-maximizedFillSlackPx {
+		return // still filling the work area: genuinely maximized
+	}
+	h.zoomed = false
+	h.win.RestoreInPlace()
+}
+
 // beginResize arms an edge resize when the press lands within the
 // grip distance of the left, right, or bottom edge (the top edge is
 // the title bar). Returns false when the window is not resizable or
@@ -1072,6 +1106,15 @@ func (h *TearOffHost) beginResize(x, y core.Unit) bool {
 		// Interior press, or within the title row (drag, not resize).
 		return false
 	}
+	// A window still flagged maximized while this host is NOT zoomed is out of
+	// sync: something maximized it without going through ToggleZoom, so the OS
+	// surface never filled the work area and the edges stayed live (h.zoomed,
+	// checked above, is what suppresses them on a properly zoomed window).
+	// Resizing from there would leave a maximized-state window at an arbitrary
+	// rect — no border stroke, a restore button that teleports, and surface
+	// beyond the content left unpainted. Adopt the current rect as its normal
+	// bounds so it resizes as the ordinary window it now is.
+	h.win.RestoreInPlace()
 	h.resizing = true
 	h.resizeEdges = edges
 	h.startGX, h.startGY = h.global()
@@ -1318,6 +1361,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 		}
 	}
 	h.win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	h.healMaximizedDivergence()
 	h.win.Layout()
 	// While an edge-resize is in progress, keep the resize-edge highlight rects
 	// in step with the new size. resizeMove only asks the OS to resize; the new
