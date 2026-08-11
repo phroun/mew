@@ -51,7 +51,7 @@ func TestTUIMirroredTilesEachDrawTheirOwnBarHeight(t *testing.T) {
 			continue
 		}
 		checked++
-		col := mt.ScrollbarX + 1              // 1-based screen column
+		col := mt.ScrollbarX + 1                   // 1-based screen column
 		bottom := mt.ContentY + mt.ScrollbarTrackH // 1-based bottom row of this tile's track
 		if !hasBarGlyphAt(frame, col, bottom) {
 			t.Errorf("tile %d (col %d, ContentY=%d, TrackH=%d): no bar glyph at its bottom row %d — "+

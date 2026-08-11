@@ -3,8 +3,8 @@ package editor
 import (
 	"testing"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/keys"
 	"github.com/phroun/mew/internal/plugins"
 )
 
@@ -92,7 +92,7 @@ func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {
 // that is not a keys# reference (left verbatim by the engine).
 func TestTFCKeyResolver(t *testing.T) {
 	e := &Editor{}
-	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{"^B S": "buffer_save"})
 
 	res := e.tfcKeyResolver("<", ">") // ANSI stand-ins
@@ -118,7 +118,7 @@ func TestTFCKeyResolver(t *testing.T) {
 // The TFC engine resolves %keys#…% through the editor's resolver end to end.
 func TestExpandTFCResolvesKeysCode(t *testing.T) {
 	e := &Editor{}
-	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{"^B S": "buffer_save"})
 	got := plugins.ExpandTFC("Save with %keys_verbose#buffer_save%.", nil, e.tfcKeyResolver("", ""))
 	if got != "Save with Ctrl+B then S." {
@@ -132,7 +132,7 @@ func TestExpandTFCResolvesKeysCode(t *testing.T) {
 // closest end), with load-order precedence as the tie-break.
 func TestKeyBindingDisplay(t *testing.T) {
 	e := &Editor{}
-	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{
 		"^/":   "buffer_undo",
 		"^_":   "buffer_undo",
@@ -177,7 +177,7 @@ func TestKeyBindingDisplay(t *testing.T) {
 // back to a deterministic stand-in for "last": the greater sequence text.
 func TestKeyBindingDisplayBuiltinTieIsDeterministic(t *testing.T) {
 	e := &Editor{}
-	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{
 		"^/": "buffer_undo",
 		"^_": "buffer_undo",

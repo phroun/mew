@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/keys"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
@@ -1278,7 +1278,7 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 		}
 		// Show the keys as pressed: capture/override prefixes are precedence,
 		// not keystrokes, and a wildcard names no key at all.
-		if seq, ok := keys.DisplayKey(raw); ok {
+		if seq, ok := keyseq.DisplayKey(raw); ok {
 			seqs = append(seqs, seq)
 		}
 	}

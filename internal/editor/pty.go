@@ -1247,10 +1247,10 @@ func (e *Editor) notifyTerminalSurfaces() {
 	// rest are read-only mirrors. rectFor reads THIS tile's geometry (not the
 	// viewport's single-valued fields, which hold only the canonical tile).
 	type place struct {
-		id                    string
-		vp                    *viewport.Viewport
-		col, row, w, h        int
-		focusedTile           bool
+		id             string
+		vp             *viewport.Viewport
+		col, row, w, h int
+		focusedTile    bool
 	}
 	var places []place
 	// primaryIdx[id] is the index into places of that session's primary surface:

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/keys"
 )
 
 // A TFC-enabled transient expands %keys#…% codes to the live binding, wrapping
@@ -13,7 +13,7 @@ import (
 // the surrounding text returns to the bar's color.
 func TestExpandTransientTFC(t *testing.T) {
 	e := &Editor{}
-	e.KeyProcessor = keys.NewSequenceProcessor(nil)
+	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{"^K H": "help_toggle"})
 	e.LoadedConfig = config.DefaultConfig()
 

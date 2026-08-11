@@ -21,12 +21,12 @@ import (
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/input"
 	"github.com/phroun/mew/internal/jsf"
-	"github.com/phroun/mew/internal/keys"
 	"github.com/phroun/mew/internal/plugins"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
@@ -113,7 +113,7 @@ type Editor struct {
 	ViewportManager *viewport.Manager
 	LayoutManager   *viewport.LayoutManager
 	Renderer        *render.ScreenRenderer
-	KeyProcessor    *keys.SequenceProcessor
+	KeyProcessor    *keyseq.Processor
 	KeyHandler      input.Source
 	PawScript       *pawscript.PawScript
 	PromptMgr       *PromptManager
@@ -1291,7 +1291,8 @@ func New(cfg Config) (*Editor, error) {
 	e.registerCommands()
 
 	// Create key sequence processor with command executor
-	e.KeyProcessor = keys.NewSequenceProcessor(e.runBoundCommand)
+	e.KeyProcessor = keyseq.NewProcessor(e.runBoundCommand)
+	e.KeyProcessor.SetDefaultHandler(e.defaultCommandForKey)
 
 	// Input source: a host-supplied event feed when one was given, else a
 	// keyboard handler parsing the (possibly virtual) terminal byte stream.
@@ -1416,7 +1417,7 @@ func (e *Editor) KeyForCommand(command string) string {
 		if cmd != command {
 			continue
 		}
-		key, ok := keys.DisplayKey(raw)
+		key, ok := keyseq.DisplayKey(raw)
 		if !ok {
 			continue
 		}
@@ -4263,7 +4264,7 @@ func (e *Editor) runBoundCommand(key, command string) bool {
 }
 
 // dispatchKey routes one keyboard key through the sequence processor, which
-// resolves and RUNS its bindings (see keys.SequenceProcessor: capture levels
+// resolves and RUNS its bindings (see keyseq.Processor: capture levels
 // over the base set, wildcards under specifics, tried in precedence order
 // until one takes the key), then refreshes the sequence/QuickHelp/modebar
 // displays. Runs under renderMu (the serve loop's key branch, or a test
