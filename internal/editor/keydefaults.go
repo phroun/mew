@@ -45,6 +45,9 @@ var mewAliasGroups = []keyseq.AliasGroup{
 	{";", "semicolon"},
 	{":", "colon"},
 	{"|", "pipe"},
+	{",", "comma"},
+	{".", "period", "dot"},
+	{"#", "octothorpe"},
 }
 
 // defaultCommandForKey answers what a key no binding claimed should do — the
