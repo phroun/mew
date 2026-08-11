@@ -98,3 +98,39 @@ func TestMewAliasGroupsResolveControlSpellings(t *testing.T) {
 		}
 	}
 }
+
+// The punctuation spellings let a keymap name a key the binding syntax would
+// otherwise fight over: `-` is the modifier separator, so `M--` reads badly and
+// `^-` cannot even show where the modifier stops. Nothing arrives under these
+// names — they exist for the keymap side only.
+func TestMewSpellingsNamePunctuation(t *testing.T) {
+	p := keyseq.NewProcessor(nil)
+	p.SetAliasGroups(mewAliasGroups)
+	p.SetMappings(map[string]string{
+		"minus":        "shrink",
+		"M-equals":     "grow",
+		"^backslash":   "split",
+		"^K semicolon": "comment",
+		"pipe x":       "chain",
+	})
+	cases := []struct {
+		pressed []string
+		want    string
+	}{
+		{[]string{"-"}, "shrink"},
+		{[]string{"M-="}, "grow"},
+		{[]string{"^\\"}, "split"},
+		{[]string{"^K", ";"}, "comment"},
+		{[]string{"|", "x"}, "chain"},
+	}
+	for _, c := range cases {
+		p.ClearActiveSequence()
+		var got string
+		for _, k := range c.pressed {
+			got = p.ProcessKey(k).Command
+		}
+		if got != c.want {
+			t.Errorf("pressed %v -> %q, want %q", c.pressed, got, c.want)
+		}
+	}
+}

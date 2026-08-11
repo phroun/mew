@@ -28,6 +28,23 @@ var mewAliasGroups = []keyseq.AliasGroup{
 	{"^^", "^6"},
 	{"^_", "^7"},
 	{"del", "^8"},
+
+	// Word spellings for punctuation, so a binding can name a key the syntax
+	// it is written in would otherwise fight over. `-` is the modifier
+	// separator, so `M--` reads badly; `M-minus` says it plainly. Nothing ever
+	// arrives under these names — they are for the keymap side only.
+	{"-", "minus"},
+	{"+", "plus"},
+	{"=", "equals"},
+	{"'", "apos"},
+	{"\"", "quote"},
+	{"~", "tilde", "wave"},
+	{"`", "backtick"},
+	{"\\", "backslash"},
+	{"/", "slash"},
+	{";", "semicolon"},
+	{":", "colon"},
+	{"|", "pipe"},
 }
 
 // defaultCommandForKey answers what a key no binding claimed should do — the
