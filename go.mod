@@ -8,7 +8,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.15
 	github.com/phroun/garland v0.1.11
 	github.com/phroun/ifitfits v0.1.1
-	github.com/phroun/key-sequence-processor v0.1.2-0.20260811211903-fc82d2fe4f54
+	github.com/phroun/key-sequence-processor v0.1.2-0.20260811212446-f0ecb7bbc13b
 	github.com/phroun/kittytk v0.1.17-alpha
 	github.com/phroun/pawscript v0.2.12-alpha
 	golang.org/x/term v0.45.0
