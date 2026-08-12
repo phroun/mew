@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/phroun/key-sequence-processor/keyseq"
@@ -23,16 +24,46 @@ type KeyRegistry struct {
 	// bar is focused and steps a list otherwise, and both are true at once.
 	// A context keeps whichever of them the situation actually offers, so at
 	// most one survives anywhere it is asked.
-	bindings map[string][]string
+	bindings map[string][]binding
 	revision uint64
+	// serial counts bindings as they are ADDED, so every (key, command) pair
+	// carries where it came in the order. That is the answer to "several keys
+	// mean this, which one do I SHOW?": the newest, because the newest is the
+	// one that was configured last -- the defaults first, then the ini file
+	// over them, then whatever the host declared itself.
+	//
+	// It is registration order, deliberately not context-build order: a
+	// context is built and rebuilt constantly as focus moves, and which key a
+	// menu advertises must not depend on when someone last clicked something.
+	serial uint64
+}
+
+// binding is one meaning of one key, and when it was bound.
+type binding struct {
+	command string
+	serial  uint64
 }
 
 // NewKeyRegistry creates a registry from a key-to-command table. The name is
 // for diagnostics — "default", "purfecterm-captured" — and has no behaviour.
 func NewKeyRegistry(name string, bindings map[string][]string) *KeyRegistry {
-	r := &KeyRegistry{name: name, bindings: make(map[string][]string, len(bindings))}
-	for k, v := range bindings {
-		r.bindings[k] = append([]string(nil), v...)
+	r := &KeyRegistry{name: name, bindings: make(map[string][]binding, len(bindings))}
+	// A Go map has no order, and serials are an order, so the registry imposes
+	// one: keys ascending, each key's meanings in the order they are listed.
+	// It is arbitrary but STABLE, which is all a table of defaults needs -- the
+	// point of the serial is that anything bound later, by an ini file or a
+	// host, outranks everything here. Prefer() is how a caller says which
+	// spelling to show without changing what anything does.
+	keys := make([]string, 0, len(bindings))
+	for k := range bindings {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for _, cmd := range bindings[k] {
+			r.serial++
+			r.bindings[k] = append(r.bindings[k], binding{command: cmd, serial: r.serial})
+		}
 	}
 	return r
 }
@@ -68,7 +99,8 @@ func (r *KeyRegistry) Bind(key, command string) {
 	if command == "" {
 		delete(r.bindings, key)
 	} else {
-		r.bindings[key] = []string{command}
+		r.serial++
+		r.bindings[key] = []binding{{command: command, serial: r.serial}}
 	}
 	r.revision++
 }
@@ -81,35 +113,83 @@ func (r *KeyRegistry) AddBinding(key, command string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, c := range r.bindings[key] {
-		if c == command {
-			return
+	for _, b := range r.bindings[key] {
+		if b.command == command {
+			return // already means this; it keeps the serial it came in with
 		}
 	}
-	r.bindings[key] = append(r.bindings[key], command)
+	r.serial++
+	r.bindings[key] = append(r.bindings[key], binding{command: command, serial: r.serial})
 	r.revision++
 }
 
-// KeysFor returns every key bound to a command, in no particular order. A
-// command may have several keys, or none — the coarse window move is bound to
-// Ctrl, Meta and Super arrows alike, and a command nothing names is simply not
-// reachable from the keyboard.
+// Prefer binds a key to a command AND makes it the newest binding of that
+// command, which is to say the one shown wherever a command has to name a key.
+// It is the difference between "this key also does that" (AddBinding, which
+// leaves an existing pair's place in the order alone) and "this is the
+// spelling to advertise" -- a macOS host declaring the Command-key spelling of
+// Cut over the Control one, say, without unbinding either.
+func (r *KeyRegistry) Prefer(key, command string) {
+	if command == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.serial++
+	for i, b := range r.bindings[key] {
+		if b.command == command {
+			r.bindings[key][i].serial = r.serial
+			r.revision++
+			return
+		}
+	}
+	r.bindings[key] = append(r.bindings[key], binding{command: command, serial: r.serial})
+	r.revision++
+}
+
+// KeysFor returns every key bound to a command, NEWEST FIRST — the most
+// recently bound spelling leads, so a caller that wants one key can take the
+// first and a caller that wants them all still gets them all. A command may
+// have several keys, or none: the coarse window move is bound to Ctrl, Meta
+// and Super arrows alike, and a command nothing names is simply not reachable
+// from the keyboard.
 func (r *KeyRegistry) KeysFor(command string) []string {
 	if r == nil {
 		return nil
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var keys []string
-	for k, cmds := range r.bindings {
-		for _, c := range cmds {
-			if c == command {
-				keys = append(keys, k)
+	var found []binding
+	for k, bs := range r.bindings {
+		for _, b := range bs {
+			if b.command == command {
+				// The key travels as the command field; only the serial is
+				// wanted from the binding itself.
+				found = append(found, binding{command: k, serial: b.serial})
 				break
 			}
 		}
 	}
+	sort.Slice(found, func(i, j int) bool { return found[i].serial > found[j].serial })
+	keys := make([]string, 0, len(found))
+	for _, f := range found {
+		keys = append(keys, f.command)
+	}
 	return keys
+}
+
+// KeyForCommand returns the ONE key to show for a command: the newest binding
+// of it, or "" when nothing is bound. It is KeysFor's first entry, named for
+// what it is used for — a menu item advertising the key that runs it.
+//
+// A menu should prefer the KeyContext's answer, which is this narrowed to what
+// the situation actually offers; this one is for the callers with no context
+// in hand.
+func (r *KeyRegistry) KeyForCommand(command string) string {
+	if keys := r.KeysFor(command); len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
 }
 
 // A KeyContext is the set of actions available right now, ready to resolve a
@@ -123,6 +203,13 @@ type KeyContext struct {
 	proc     *keyseq.Processor
 	commands map[string]bool
 	revision uint64
+	// serials is the registration order of the bindings this context kept,
+	// carried over from the registry so the context can answer which key to
+	// SHOW for a command without going back to it. Keys added here later --
+	// the formed accelerators -- continue above everything the registry had,
+	// since they are the newest thing in the room.
+	serials map[string]uint64
+	added   uint64
 	// matched is the whole sequence the last successful Resolve consumed, not
 	// just its final key. A command that carries no identity of its own -- the
 	// menu accelerators all resolve to one command -- needs the key to say
@@ -148,18 +235,23 @@ func (r *KeyRegistry) BuildContext(commands []string) *KeyContext {
 		proc:     keyseq.NewProcessor(nil),
 		commands: set,
 		revision: r.Revision(),
+		serials:  map[string]uint64{},
 	}
 	mappings := map[string]string{}
 	if r != nil {
 		r.mu.RLock()
-		for k, cmds := range r.bindings {
+		for k, bs := range r.bindings {
 			// At most one of a key's meanings is on offer here; the rest
 			// belong to situations this is not. Where a trinket genuinely
 			// answers to several forms, its own case accepts them all and it
 			// decides from its state.
-			for _, c := range cmds {
-				if set[c] {
-					mappings[k] = c
+			for _, b := range bs {
+				if set[b.command] {
+					mappings[k] = b.command
+					ctx.serials[k] = b.serial
+					if b.serial > ctx.added {
+						ctx.added = b.serial
+					}
 					break
 				}
 			}
@@ -190,6 +282,40 @@ func (c *KeyContext) Add(key, command string) {
 	m := c.proc.GetAllMappings()
 	m[key] = command
 	c.proc.SetMappings(m)
+	c.added++
+	if c.serials == nil {
+		c.serials = map[string]uint64{}
+	}
+	c.serials[key] = c.added
+}
+
+// KeyForCommand returns the key to SHOW for a command here: of the keys bound
+// to it that this situation actually offers, the one bound most recently.
+//
+// This is the question a menu item asks. It never advertises a key the
+// situation cannot run -- a context carries only what is on offer, so a
+// binding that belongs to some other situation is not a candidate -- and among
+// the ones it can, the newest wins, which is the ini file over the defaults
+// and the host over both. Empty when nothing here runs the command.
+func (c *KeyContext) KeyForCommand(command string) string {
+	if c == nil || command == "" {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	best, bestSerial := "", uint64(0)
+	for key, cmd := range c.proc.GetAllMappings() {
+		if cmd != command {
+			continue
+		}
+		s := c.serials[key]
+		// Ties (a context assembled without serials) fall back to the greater
+		// spelling, so the answer is never a coin toss on map order.
+		if best == "" || s > bestSerial || (s == bestSerial && key > best) {
+			best, bestSerial = key, s
+		}
+	}
+	return best
 }
 
 // ClearAccelerators drops every formed accelerator from this context, leaving
@@ -451,6 +577,22 @@ var (
 	acceleratorChord = DefaultAcceleratorChord
 )
 
+// defaultDisplayPreference names the spelling to ADVERTISE where several
+// default keys mean the same thing and the table's own order would pick the
+// other one. It changes nothing about what any key does — both keys stay
+// bound, and both keep working — it only decides which one a menu shows.
+//
+// Only the cases worth an opinion are here. The rest take whatever order the
+// table gives them, which is arbitrary but stable, and anything a file or a
+// host binds later outranks all of it.
+var defaultDisplayPreference = map[string]string{
+	// F10 is the menu key every desktop shares; F2 is the one-handed
+	// alternative, reachable rather than canonical.
+	CmdAppMenu: "F10",
+	// The home row's key is the one people mean by "press enter".
+	CmdTrinketActivate: "Return",
+}
+
 // DefaultKeyRegistry returns the process-wide "default" registry, the one a
 // scope resolves against unless something overrides it.
 func DefaultKeyRegistry() *KeyRegistry {
@@ -458,6 +600,9 @@ func DefaultKeyRegistry() *KeyRegistry {
 	defer keymapMu.Unlock()
 	if defaultRegistry == nil {
 		defaultRegistry = NewKeyRegistry("default", defaultBindings)
+		for cmd, key := range defaultDisplayPreference {
+			defaultRegistry.Prefer(key, cmd)
+		}
 	}
 	return defaultRegistry
 }
@@ -479,8 +624,17 @@ func AcceleratorChord() string {
 // answers to are ordinary typing and are unaffected either way.
 func ApplyHostKeymap(mappings map[string]string, chord string) {
 	r := DefaultKeyRegistry()
-	for k, cmd := range mappings {
-		r.Bind(k, cmd)
+	// Applied in key order, so the serials a file's bindings land on are the
+	// same every run: what a menu advertises must not depend on Go's map
+	// iteration. (Every one of them still outranks every default, which is the
+	// part that matters -- the file is later than the table it overlays.)
+	keys := make([]string, 0, len(mappings))
+	for k := range mappings {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		r.Bind(k, mappings[k])
 	}
 	if chord != "" {
 		keymapMu.Lock()
