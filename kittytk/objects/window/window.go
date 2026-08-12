@@ -797,7 +797,10 @@ func (w *Window) SetActive(active bool) {
 	w.Update()
 }
 
-// Close attempts to close the window.
+// Close attempts to close the window, and reports whether it actually did. It
+// is an ATTEMPT throughout: this window's close handler may decline, and so
+// may any of its children, since a child left open over a closed parent is
+// not a window anyone can get back to.
 func (w *Window) Close() bool {
 	w.mu.RLock()
 	handler := w.onClose
@@ -810,14 +813,21 @@ func (w *Window) Close() bool {
 		return false
 	}
 
-	// Announce window closing for accessibility
-	if am := core.FindAccessibilityManager(w); am != nil {
-		am.AnnouncePolite(title + ", closed")
+	// Close child windows first. A child that declines cancels this close
+	// too: its own dialog is the one asking, and answering "don't close"
+	// there cannot mean the window behind it goes anyway. Children that
+	// already agreed stay closed, exactly as a refused application quit
+	// leaves the windows that agreed to it closed.
+	for _, child := range w.ChildWindows() {
+		if !child.Close() {
+			return false
+		}
 	}
 
-	// Close child windows first
-	for _, child := range w.ChildWindows() {
-		child.Close()
+	// Announce window closing for accessibility. After the children, so a
+	// close that a child cancels is never announced as having happened.
+	if am := core.FindAccessibilityManager(w); am != nil {
+		am.AnnouncePolite(title + ", closed")
 	}
 
 	// Remove from parent
