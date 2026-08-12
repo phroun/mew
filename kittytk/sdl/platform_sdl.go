@@ -1685,7 +1685,7 @@ func currentKeyModifiers() core.KeyModifiers {
 		mods |= core.AltModifier
 	}
 	if state&sdl3.KMOD_GUI != 0 {
-		mods |= core.MetaModifier
+		mods |= core.SuperModifier
 	}
 	return mods
 }

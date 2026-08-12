@@ -841,7 +841,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		handled = true
 	case core.KeyPressEvent:
 		if h.native != nil && (e.Key == "s-m" ||
-			(e.Modifiers&core.MetaModifier != 0 && e.Key == "m")) {
+			(e.Modifiers&core.SuperModifier != 0 && e.Key == "m")) {
 			// Cmd+M miniaturizes, like any macOS document window.
 			h.native.Minimize()
 			handled = true
