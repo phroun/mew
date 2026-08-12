@@ -87,6 +87,11 @@ func main() {
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
+	// The [mappings] section and [window] accelerator_chord overlay the
+	// toolkit's own keymap: the file says what it changes rather than
+	// restating the whole table.
+	core.ApplyHostKeymap(cfg.Mappings, cfg.AcceleratorChord)
+
 	// Command-line switches beat the file for this launch:
 	// --webgpu | --software | --renderer=NAME.
 	if parsed, err := argwild.Parse(); err == nil {

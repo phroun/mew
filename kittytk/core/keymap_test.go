@@ -162,3 +162,80 @@ func TestScopeRegistryInheritance(t *testing.T) {
 		t.Error("clearing an override should return the scope to inheriting")
 	}
 }
+
+// The toolkit carries its own keymap in Go, so it has a default registry with
+// no configuration file present at all.
+func TestDefaultRegistryHasTheToolkitKeymap(t *testing.T) {
+	r := DefaultKeyRegistry()
+	for key, want := range map[string]string{
+		"M-F4":  "window_close",
+		"F10":   "app_menu",
+		"Tab":   "focus_next",
+		"S-Tab": "focus_prior",
+	} {
+		ctx := r.BuildContext([]string{want})
+		ctx.Abandon()
+		if got := ctx.Resolve(key); got != want {
+			t.Errorf("%s -> %q, want %q", key, got, want)
+		}
+	}
+	// Several keys may share a command, as the coarse window move does.
+	if keys := r.KeysFor("window_move_up"); len(keys) != 3 {
+		t.Errorf("window_move_up has %d keys, want 3 (Ctrl, Meta, Super)", len(keys))
+	}
+}
+
+// A host's file OVERLAYS the toolkit keymap rather than replacing it, so a
+// user names only what they want changed. An empty command unbinds.
+func TestApplyHostKeymapOverlays(t *testing.T) {
+	r := DefaultKeyRegistry()
+	before := len(r.KeysFor("window_move_up"))
+
+	ApplyHostKeymap(map[string]string{
+		"M-F4":  "quit_everything", // rebind
+		"M-z":   "undo",            // add
+		"S-Tab": "",                // unbind
+	}, "")
+
+	ctx := r.BuildFullContext()
+	for key, want := range map[string]string{"M-F4": "quit_everything", "M-z": "undo"} {
+		ctx.Abandon()
+		if got := ctx.Resolve(key); got != want {
+			t.Errorf("%s -> %q, want %q", key, got, want)
+		}
+	}
+	ctx.Abandon()
+	if got := ctx.Resolve("S-Tab"); got != "" {
+		t.Errorf("S-Tab -> %q after unbinding, want nothing", got)
+	}
+	// Untouched entries survive: the file said what it changed, not everything.
+	ctx.Abandon()
+	if got := ctx.Resolve("F10"); got != "app_menu" {
+		t.Errorf("F10 -> %q, want app_menu: an overlay must not drop what it did not name", got)
+	}
+	if after := len(r.KeysFor("window_move_up")); after != before {
+		t.Errorf("window_move_up keys went %d -> %d across an unrelated overlay", before, after)
+	}
+
+	// Restore, so the shared default registry does not leak into other tests.
+	ApplyHostKeymap(map[string]string{
+		"M-F4": "window_close", "M-z": "", "S-Tab": "focus_prior",
+	}, "")
+}
+
+// A blank chord leaves the default in place; turning chord accelerators off is
+// done with a pattern that has no star in it.
+func TestApplyHostKeymapChord(t *testing.T) {
+	if got := AcceleratorChord(); got != DefaultAcceleratorChord {
+		t.Fatalf("chord starts at %q, want %q", got, DefaultAcceleratorChord)
+	}
+	ApplyHostKeymap(nil, "")
+	if got := AcceleratorChord(); got != DefaultAcceleratorChord {
+		t.Errorf("a blank chord changed it to %q", got)
+	}
+	ApplyHostKeymap(nil, "^X * Enter")
+	if got := AcceleratorChord(); got != "^X * Enter" {
+		t.Errorf("chord = %q, want the configured sequence", got)
+	}
+	ApplyHostKeymap(nil, DefaultAcceleratorChord)
+}

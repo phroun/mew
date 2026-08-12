@@ -199,3 +199,120 @@ func (c *KeyContext) Abandon() {
 // and a script that wants the Help menu should say so rather than pretend to
 // press a key. The leading underscore marks it internal.
 const CommandAppAccelerator = "_app_accel"
+
+// defaultBindings is the toolkit's own keymap — the same table the shipped
+// kittytk.ini writes out under [mappings], kept here so KittyTK has a default
+// registry with no configuration file present at all. The file overlays this
+// rather than replacing it, so a user names only what they want to change.
+//
+// Several keys may share a command: the coarse window move answers to Ctrl,
+// Meta and Super arrows alike, which is what the hand-written handler did
+// before these were bindings.
+var defaultBindings = map[string]string{
+	"M-F10":   "window_maximize_toggle",
+	"M-F4":    "window_close",
+	"F10":     "app_menu",
+	"C-Tab":   "window_next",
+	"C-S-Tab": "window_prior",
+	"M-Tab":   "window_next",
+	"M-S-Tab": "window_prior",
+	"s-M":     "app_minimize",
+	"s-Minus": "gui_scale_down",
+	"s-Plus":  "gui_scale_up",
+	"s-0":     "gui_scale_reset",
+	"Tab":     "focus_next",
+	"S-Tab":   "focus_prior",
+	"Esc":     "window_cancel_resize",
+	"Enter":   "trinket_activate",
+	"Space":   "trinket_activate",
+
+	"Up":    "window_move_fine_up",
+	"Down":  "window_move_fine_down",
+	"Left":  "window_move_fine_left",
+	"Right": "window_move_fine_right",
+
+	"S-Up":    "window_size_fine_up",
+	"S-Down":  "window_size_fine_down",
+	"S-Left":  "window_size_fine_left",
+	"S-Right": "window_size_fine_right",
+
+	"C-Up": "window_move_up", "M-Up": "window_move_up", "s-Up": "window_move_up",
+	"C-Down": "window_move_down", "M-Down": "window_move_down", "s-Down": "window_move_down",
+	"C-Left": "window_move_left", "M-Left": "window_move_left", "s-Left": "window_move_left",
+	"C-Right": "window_move_right", "M-Right": "window_move_right", "s-Right": "window_move_right",
+
+	"C-S-Up": "window_size_up", "M-S-Up": "window_size_up", "S-s-Up": "window_size_up",
+	"C-S-Down": "window_size_down", "M-S-Down": "window_size_down", "S-s-Down": "window_size_down",
+	"C-S-Left": "window_size_left", "M-S-Left": "window_size_left", "S-s-Left": "window_size_left",
+	"C-S-Right": "window_size_right", "M-S-Right": "window_size_right", "S-s-Right": "window_size_right",
+}
+
+// DefaultAcceleratorChord is the pattern menu accelerators are formed from
+// when nothing configures one.
+const DefaultAcceleratorChord = "M-*"
+
+var (
+	keymapMu         sync.Mutex
+	defaultRegistry  *KeyRegistry
+	acceleratorChord = DefaultAcceleratorChord
+)
+
+// DefaultKeyRegistry returns the process-wide "default" registry, the one a
+// scope resolves against unless something overrides it.
+func DefaultKeyRegistry() *KeyRegistry {
+	keymapMu.Lock()
+	defer keymapMu.Unlock()
+	if defaultRegistry == nil {
+		defaultRegistry = NewKeyRegistry("default", defaultBindings)
+	}
+	return defaultRegistry
+}
+
+// AcceleratorChord returns the pattern menu accelerators are formed from.
+func AcceleratorChord() string {
+	keymapMu.Lock()
+	defer keymapMu.Unlock()
+	return acceleratorChord
+}
+
+// ApplyHostKeymap overlays a host's configuration onto the default registry —
+// the [mappings] section and [window] accelerator_chord. Only the keys named
+// are touched, so a user's file says what it changes rather than restating the
+// whole table, and an empty command unbinds.
+//
+// A blank chord leaves the default in place; to turn chord accelerators off,
+// configure a pattern with no "*" in it. The bare letters a focused menu bar
+// answers to are ordinary typing and are unaffected either way.
+func ApplyHostKeymap(mappings map[string]string, chord string) {
+	r := DefaultKeyRegistry()
+	for k, cmd := range mappings {
+		r.Bind(k, cmd)
+	}
+	if chord != "" {
+		keymapMu.Lock()
+		acceleratorChord = chord
+		keymapMu.Unlock()
+	}
+}
+
+// BuildFullContext derives a context offering every command the registry
+// names. It is what a situation with nothing narrowing it looks like — and
+// for now that is every situation, since no trinket declares its own command
+// set yet. As they do, they will build narrower contexts from the same
+// registry and this becomes the desktop's own.
+func (r *KeyRegistry) BuildFullContext() *KeyContext {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	commands := make([]string, 0, len(r.bindings))
+	seen := map[string]bool{}
+	for _, c := range r.bindings {
+		if !seen[c] {
+			seen[c] = true
+			commands = append(commands, c)
+		}
+	}
+	r.mu.RUnlock()
+	return r.BuildContext(commands)
+}

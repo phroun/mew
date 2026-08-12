@@ -4022,6 +4022,11 @@ func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 	d.menuBar = menuBar
 	if menuBar != nil {
 		menuBar.SetParent(d)
+		// The bar forms its accelerators against the actions available right
+		// now, so a chord something else has claimed is not the accelerator's
+		// to take — and the letter shows muted instead of lying about working.
+		menuBar.SetAcceleratorChord(core.AcceleratorChord())
+		menuBar.SetKeyContext(core.DefaultKeyRegistry().BuildFullContext())
 		// Prepend system menu if we have one
 		if d.systemMenu != nil {
 			menuBar.InsertMenu(0, d.systemMenu)

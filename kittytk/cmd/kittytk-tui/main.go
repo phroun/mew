@@ -27,6 +27,11 @@ func main() {
 	// [tui] native knob, separate from the graphical host's [system] native.
 	cfg := hostcfg.Load()
 
+	// The [mappings] section and [window] accelerator_chord overlay the
+	// toolkit's own keymap: the file says what it changes rather than
+	// restating the whole table.
+	core.ApplyHostKeymap(cfg.Mappings, cfg.AcceleratorChord)
+
 	// [tui] native controls whether menu shortcuts render with macOS's native
 	// modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseTUIMacNativeShortcuts())
