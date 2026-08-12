@@ -49,9 +49,12 @@ func shortcutFont(base *core.Font) *core.Font {
 type MenuItem struct {
 	Text            string // Display text (with & removed, && converted to &)
 	rawText         string // Original text with & markup
-	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
-	acceleratorPos  int    // Position in display text where accelerator appears, -1 if none
-	Shortcut        core.Shortcut
+	acceleratorChar rune   // The chosen accelerator (lowercase), 0 if none
+	acceleratorPos  int    // Its position in the display text, -1 if none
+	// Every letter the label offers, in written order. Assignment is greedy
+	// across siblings, so a later item may fall back to a backup letter.
+	acceleratorCandidates []acceleratorCandidate
+	Shortcut              core.Shortcut
 	// ShortcutText is literal text for the item's shortcut column, printed
 	// exactly where a bound Shortcut would print. It exists for keys the
 	// TOOLKIT does not handle — a hosted application's own bindings, say —
@@ -89,22 +92,26 @@ type MenuItem struct {
 
 // NewMenuItem creates a new menu item.
 func NewMenuItem(text string) *MenuItem {
-	displayText, accel, pos := parseAcceleratorTitle(text)
+	displayText, accels := parseAcceleratorTitle(text)
+	accel, pos := firstAccelerator(accels)
 	return &MenuItem{
-		Text:            displayText,
-		rawText:         text,
-		acceleratorChar: accel,
-		acceleratorPos:  pos,
-		Enabled:         true,
-		id:              core.NextAutoCommandID(),
+		Text:                  displayText,
+		rawText:               text,
+		acceleratorCandidates: accels,
+		acceleratorChar:       accel,
+		acceleratorPos:        pos,
+		Enabled:               true,
+		id:                    core.NextAutoCommandID(),
 	}
 }
 
 // SetText sets the menu item text with accelerator parsing.
 func (m *MenuItem) SetText(text string) {
-	displayText, accel, pos := parseAcceleratorTitle(text)
+	displayText, accels := parseAcceleratorTitle(text)
+	accel, pos := firstAccelerator(accels)
 	m.rawText = text
 	m.Text = displayText
+	m.acceleratorCandidates = accels
 	m.acceleratorChar = accel
 	m.acceleratorPos = pos
 }
@@ -333,13 +340,15 @@ type Menu struct {
 
 	title           string // Display title (with & removed, && converted to &)
 	rawTitle        string // Original title with & markup
-	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
-	acceleratorPos  int    // Position in display title where accelerator appears, -1 if none
-	items           []*MenuItem
-	currentIndex    int
-	visible         bool
-	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
-	anchor          string // untagged menus: the well-known slot to sit after
+	acceleratorChar rune   // The chosen accelerator (lowercase), 0 if none
+	acceleratorPos  int    // Its position in the display title, -1 if none
+	// Every letter the title offers, in written order (see parseAcceleratorTitle).
+	acceleratorCandidates []acceleratorCandidate
+	items                 []*MenuItem
+	currentIndex          int
+	visible               bool
+	wellKnownID           string // system-level role tag (see MenuID* constants), "" if none
+	anchor                string // untagged menus: the well-known slot to sit after
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -391,14 +400,29 @@ type Menu struct {
 	accessibilityManager *core.AccessibilityManager
 }
 
-// parseAcceleratorTitle parses a title with & markup.
-// Returns: display title, accelerator character (lowercase), position in display title
-// Examples: "&File" -> "File", 'f', 0
+// acceleratorCandidate is one letter a title offers as its accelerator, and
+// where that letter sits in the display text.
+type acceleratorCandidate struct {
+	Char rune // lowercase
+	Pos  int  // index in the display text
+}
+
+// parseAcceleratorTitle parses a title with & markup and returns the display
+// text alongside every accelerator the title offers, in the order written.
 //
-//	"E&xit" -> "Exit", 'x', 1
-//	"Save && Exit" -> "Save & Exit", 0, -1
-func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
-	pos = -1
+// A title may mark more than one letter, which reads as a preference list:
+// "&Hel&p" offers 'h' first and 'p' as a backup. Assignment is greedy and
+// left to right — across the siblings at one level, each takes the first
+// letter no earlier sibling has claimed — so four items all marked "&A&B&C"
+// take A, B and C, and the fourth is left without one. A backup is what keeps
+// a menu reachable when its first choice is spoken for.
+//
+// Examples: "&File"        -> "File",        [{f 0}]
+//
+//	"E&xit"        -> "Exit",        [{x 1}]
+//	"&Hel&p"       -> "Help",        [{h 0} {p 3}]
+//	"Save && Exit" -> "Save & Exit", []
+func parseAcceleratorTitle(raw string) (display string, accels []acceleratorCandidate) {
 	runes := []rune(raw)
 	var result []rune
 
@@ -409,11 +433,11 @@ func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
 				result = append(result, '&')
 				i++ // Skip next &
 			} else if i+1 < len(runes) {
-				// Accelerator - next char is the accelerator
-				if pos < 0 { // Only use first accelerator
-					pos = len(result)
-					accel = rune(strings.ToLower(string(runes[i+1]))[0])
-				}
+				// Accelerator - next char is one of the offered letters
+				accels = append(accels, acceleratorCandidate{
+					Char: rune(strings.ToLower(string(runes[i+1]))[0]),
+					Pos:  len(result),
+				})
 				result = append(result, runes[i+1])
 				i++ // Skip the accelerator char (we already added it)
 			}
@@ -425,6 +449,15 @@ func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
 
 	display = string(result)
 	return
+}
+
+// firstAccelerator reports the leading candidate, which is what a title means
+// when nothing has claimed its letters yet. Zero and -1 when none is offered.
+func firstAccelerator(accels []acceleratorCandidate) (rune, int) {
+	if len(accels) == 0 {
+		return 0, -1
+	}
+	return accels[0].Char, accels[0].Pos
 }
 
 // textSegment is one styled run in a left-to-right sequence drawn by
@@ -463,14 +496,16 @@ func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, segs ...
 
 // NewMenu creates a new menu.
 func NewMenu(title string) *Menu {
-	displayTitle, accel, pos := parseAcceleratorTitle(title)
+	displayTitle, accels := parseAcceleratorTitle(title)
+	accel, pos := firstAccelerator(accels)
 	m := &Menu{
-		rawTitle:        title,
-		title:           displayTitle,
-		acceleratorChar: accel,
-		acceleratorPos:  pos,
-		currentIndex:    -1,
-		maxVisible:      0, // 0 = calculate from available space when shown
+		rawTitle:              title,
+		title:                 displayTitle,
+		acceleratorCandidates: accels,
+		acceleratorChar:       accel,
+		acceleratorPos:        pos,
+		currentIndex:          -1,
+		maxVisible:            0, // 0 = calculate from available space when shown
 	}
 	m.TrinketBase = *core.NewTrinketBase()
 	// Note: Menu doesn't call Init because it has a Show(x,y) method
@@ -556,9 +591,11 @@ func (m *Menu) Anchor() string { return m.anchor }
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {
-	displayTitle, accel, pos := parseAcceleratorTitle(title)
+	displayTitle, accels := parseAcceleratorTitle(title)
+	accel, pos := firstAccelerator(accels)
 	m.rawTitle = title
 	m.title = displayTitle
+	m.acceleratorCandidates = accels
 	m.acceleratorChar = accel
 	m.acceleratorPos = pos
 	m.SetAccessibleName(displayTitle)

@@ -159,6 +159,24 @@ type Config struct {
 	// entries resolve against the ini's directory.
 	FontsPath []string
 
+	// Mappings is the default key registry: a key or key sequence as the input
+	// layer reports it, mapped to the command it runs. Read from the
+	// [mappings] section, where — as in [fonts] — the names on the LEFT are
+	// DATA, so the section is read by section rather than by key name.
+	//
+	// Keys keep their case: "S-Tab" and "s-Tab" are Shift-Tab and Super-Tab,
+	// two different chords. Order within the file is not significant; a later
+	// line for the same key replaces an earlier one.
+	Mappings map[string]string
+
+	// AcceleratorChord is the pattern a menu accelerator is formed from, read
+	// from [window] accelerator_chord. The token "*" is replaced by a menu's
+	// mnemonic letter wherever it sits, so "M-*" forms "M-h" for &Help and
+	// "^X * Enter" forms "^X H Enter". Blank disables chord accelerators
+	// without touching the bare-letter mnemonics, which are ordinary typing
+	// handled by a focused menu bar and never enter a registry.
+	AcceleratorChord string
+
 	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
 	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
 	// at a comma-separated fallback list — the whole systematic font tree,
@@ -304,6 +322,21 @@ func apply(data []byte, cfg *Config) {
 			cfg.Fonts[origKey] = v
 			continue
 		}
+		// [mappings] is the other section whose keys are DATA — a key name, not
+		// a setting name — so it is read by section and the case is kept:
+		// "S-Tab" and "s-Tab" are two different chords. An empty value unbinds
+		// the key rather than being ignored, which is how a user turns a
+		// default off without having to know what it was.
+		if section == "mappings" {
+			if origKey == "" {
+				continue
+			}
+			if cfg.Mappings == nil {
+				cfg.Mappings = map[string]string{}
+			}
+			cfg.Mappings[origKey] = stripQuotes(val)
+			continue
+		}
 		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
 		// a comma-separated fallback list — the whole systematic font tree.
 		if strings.HasPrefix(key, "ui_") {
@@ -341,6 +374,8 @@ func apply(data []byte, cfg *Config) {
 		switch key {
 		case "title":
 			cfg.Title = val
+		case "accelerator_chord":
+			cfg.AcceleratorChord = stripQuotes(val)
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Width = n

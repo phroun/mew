@@ -527,3 +527,61 @@ wallpaper_filter = blurry
 		t.Error("a bad name changed the layout instead of leaving the default")
 	}
 }
+
+// [mappings] is a DATA section like [fonts]: the names on the left are keys as
+// the input layer reports them, not setting names, so it has to be read by
+// section. Read by key name instead, every binding would be an unrecognised
+// setting and silently dropped.
+func TestApplyReadsMappingsAsData(t *testing.T) {
+	var cfg Config
+	apply([]byte(`
+[window]
+accelerator_chord = M-*
+
+[mappings]
+M-F4 = window_close
+S-Tab = focus_prior
+s-Tab = something_else
+^K = block_menu
+Minus = gui_scale_down
+Enter =
+`), &cfg)
+
+	if cfg.AcceleratorChord != "M-*" {
+		t.Errorf("accelerator_chord = %q, want M-*", cfg.AcceleratorChord)
+	}
+	for k, want := range map[string]string{
+		"M-F4":  "window_close",
+		"S-Tab": "focus_prior",
+		"s-Tab": "something_else",
+		"^K":    "block_menu",
+		"Minus": "gui_scale_down",
+		"Enter": "", // an empty value unbinds rather than being ignored
+	} {
+		got, ok := cfg.Mappings[k]
+		if !ok {
+			t.Errorf("missing binding for %q", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q -> %q, want %q", k, got, want)
+		}
+	}
+
+	// Case is the difference between Shift and Super, so it must survive.
+	if cfg.Mappings["S-Tab"] == cfg.Mappings["s-Tab"] {
+		t.Error("S-Tab and s-Tab collapsed; case distinguishes Shift from Super")
+	}
+}
+
+// The chord pattern is free-form: "*" is a token substituted anywhere in a key
+// sequence, not a suffix, so a sequence pattern has to survive intact.
+func TestApplyKeepsAcceleratorChordVerbatim(t *testing.T) {
+	for _, pattern := range []string{"M-*", "^X * Enter", "^X ^M 2 2 7 *", ""} {
+		var cfg Config
+		apply([]byte("[window]\naccelerator_chord = "+pattern+"\n"), &cfg)
+		if cfg.AcceleratorChord != pattern {
+			t.Errorf("accelerator_chord = %q, want %q", cfg.AcceleratorChord, pattern)
+		}
+	}
+}
