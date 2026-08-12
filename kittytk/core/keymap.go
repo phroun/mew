@@ -335,7 +335,10 @@ var defaultBindings = map[string][]string{
 	"Backspace": {CmdTrinketDelPrior, CmdTrinketEnclosing},
 	"Delete":    {CmdTrinketDelNext},
 	"^U":        {CmdTrinketDelLine},
-	"^A":        {CmdTrinketBeg},
+	// ^A is the Emacs home cycle where a trinket offers it, and a plain
+	// beginning-of-line where it does not. First listed wins, so a text field
+	// -- which offers both -- gets the cycle, and a list gets the plain move.
+	"^A": {CmdTrinketBegOrSelectAll, CmdTrinketBeg},
 	"^E":        {CmdTrinketEnd},
 	"S-^A":      {CmdTrinketSelBeg},
 	"S-^E":      {CmdTrinketSelEnd},

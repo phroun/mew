@@ -14,6 +14,7 @@ import (
 // TextInput is a single-line text entry trinket.
 type TextInput struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	text        []rune
@@ -92,6 +93,20 @@ func NewTextInput() *TextInput {
 		maxLength: -1, // No limit
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	t.SetCommands(
+		// Caret movement, and its with-selection twin for each direction.
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketBegOrSelectAll,
+		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd,
+		// Editing.
+		core.CmdTrinketDelPrior, core.CmdTrinketDelNext, core.CmdTrinketDelLine,
+		core.CmdTrinketSelectAll,
+		// Enter submits. A text field offers no edit command -- it IS the
+		// editor -- so Enter falls through to activate here.
+		core.CmdTrinketActivate,
+	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTextInput)
@@ -959,24 +974,25 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Any keystroke makes the caret immediately visible.
 	t.resetCaretBlink()
 
-	// Both backends deliver navigation keys with their "S-" prefix
-	// intact (e.g. "S-Left") alongside the parsed modifier. Fold the
-	// prefix into the bare name so shift-extends the selection; the
-	// caret-anchor logic in each case reads Modifiers. Control/Meta
-	// spellings ("^A", "S-^A") stay literal - they are matched whole.
-	key := event.Key
-	switch key {
-	case "S-Left", "S-Right", "S-Home", "S-End", "S-Up", "S-Down":
-		event.Modifiers |= core.ShiftModifier
-		key = key[2:]
+	// Every movement has a with-selection twin, which is a modifier axis
+	// rather than a set of unrelated actions: the two forms share a case and
+	// differ only in whether the caret drags the anchor with it. This used to
+	// be a fold of the "S-" prefix into the bare name plus a read of the
+	// modifier bitfield; the command says it directly now.
+	cmd := t.KeyCommand(event.Key)
+	extend := false
+	switch cmd {
+	case core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketSelUp, core.CmdTrinketSelDown,
+		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd:
+		extend = true
 	}
 
-	// Handle special keys
-	switch key {
-	case "Left":
+	switch cmd {
+	case core.CmdTrinketItemLeft, core.CmdTrinketSelLeft:
 		if t.cursorPos > 0 {
 			t.cursorPos--
-			if event.Modifiers&core.ShiftModifier == 0 {
+			if !extend {
 				t.selStart = t.cursorPos
 				t.selEnd = t.cursorPos
 			} else {
@@ -984,7 +1000,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 			t.ensureCursorVisible()
 			t.Update()
-		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+		} else if !extend && t.HasSelection() {
 			// Caret already at the beginning: a plain Left can't move, so it
 			// just collapses any selection (leaving the caret at the start).
 			t.selStart = t.cursorPos
@@ -993,10 +1009,10 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right":
+	case core.CmdTrinketItemRight, core.CmdTrinketSelRight:
 		if t.cursorPos < len(t.text) {
 			t.cursorPos++
-			if event.Modifiers&core.ShiftModifier == 0 {
+			if !extend {
 				t.selStart = t.cursorPos
 				t.selEnd = t.cursorPos
 			} else {
@@ -1004,7 +1020,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 			t.ensureCursorVisible()
 			t.Update()
-		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+		} else if !extend && t.HasSelection() {
 			// Caret already at the end: a plain Right can't move, so it just
 			// collapses any selection (leaving the caret at the end).
 			t.selStart = t.cursorPos
@@ -1013,9 +1029,30 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBegOrSelectAll:
+		// The Emacs home cycle: already at the beginning with nothing
+		// selected selects all and puts the caret at the end. That is exactly
+		// the case where going to the beginning would do nothing at all, so
+		// the cycle costs the key nothing. Otherwise it is a plain move, which
+		// is why this falls through to the same body below.
+		if t.cursorPos == 0 && !t.HasSelection() {
+			t.selStart = 0
+			t.selEnd = len(t.text)
+			t.cursorPos = t.selEnd
+			t.ensureCursorVisible()
+			t.Update()
+			return true
+		}
 		t.cursorPos = 0
-		if event.Modifiers&core.ShiftModifier == 0 {
+		t.selStart = 0
+		t.selEnd = 0
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+
+	case core.CmdTrinketBeg, core.CmdTrinketSelBeg:
+		t.cursorPos = 0
+		if !extend {
 			t.selStart = 0
 			t.selEnd = 0
 		} else {
@@ -1025,9 +1062,9 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd, core.CmdTrinketSelEnd:
 		t.cursorPos = len(t.text)
-		if event.Modifiers&core.ShiftModifier == 0 {
+		if !extend {
 			t.selStart = t.cursorPos
 			t.selEnd = t.cursorPos
 		} else {
@@ -1037,21 +1074,21 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.Update()
 		return true
 
-	case "Backspace":
+	case core.CmdTrinketDelPrior:
 		t.backspace()
 		return true
 
-	case "Delete":
+	case core.CmdTrinketDelNext:
 		t.delete()
 		return true
 
-	case "Enter":
+	case core.CmdTrinketActivate:
 		if t.onReturnPressed != nil {
 			t.onReturnPressed()
 		}
 		return true
 
-	case "^U":
+	case core.CmdTrinketDelLine:
 		// Clear line
 		t.text = nil
 		t.cursorPos = 0
@@ -1061,71 +1098,11 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.textChanged()
 		return true
 
-	case "M-a":
+	case core.CmdTrinketSelectAll:
 		// Select all (Meta+A)
 		t.SelectAll()
 		return true
 
-	case "^A":
-		if event.Modifiers&core.ShiftModifier != 0 {
-			// Shift+Ctrl+A: extend the selection to the beginning.
-			t.cursorPos = 0
-			t.selEnd = 0
-			t.ensureCursorVisible()
-			t.Update()
-			return true
-		}
-		// Home cycle (Emacs C-a, with a convenience twist): a two-state toggle.
-		// Already at the beginning with nothing selected -> select all, caret to
-		// the end. Anywhere else (including with all selected) -> caret to the
-		// beginning, clearing any selection.
-		if t.cursorPos == 0 && !t.HasSelection() {
-			t.selStart = 0
-			t.selEnd = len(t.text)
-			t.cursorPos = t.selEnd
-		} else {
-			t.cursorPos = 0
-			t.selStart = 0
-			t.selEnd = 0
-		}
-		t.ensureCursorVisible()
-		t.Update()
-		return true
-
-	case "^E":
-		// Go to end (Emacs binding)
-		t.cursorPos = len(t.text)
-		if event.Modifiers&core.ShiftModifier == 0 {
-			t.selStart = t.cursorPos
-			t.selEnd = t.cursorPos
-		} else {
-			t.selEnd = t.cursorPos
-		}
-		t.ensureCursorVisible()
-		t.Update()
-		return true
-
-	case "S-^A":
-		// Shift+Ctrl+A: extend the selection to the beginning (the
-		// anchor is wherever the caret was when the selection began).
-		//
-		// Spelled with the caret because the base key is a letter, which is
-		// what decides how Control is written. This used to read "C-S-a", the
-		// graphical host's old spelling, so it never fired under the terminal
-		// host — which has emitted "S-^A" all along.
-		t.cursorPos = 0
-		t.selEnd = 0
-		t.ensureCursorVisible()
-		t.Update()
-		return true
-
-	case "S-^E":
-		// Shift+Ctrl+E: extend the selection to the end.
-		t.cursorPos = len(t.text)
-		t.selEnd = t.cursorPos
-		t.ensureCursorVisible()
-		t.Update()
-		return true
 	}
 
 	// Handle printable characters

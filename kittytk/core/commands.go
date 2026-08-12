@@ -65,6 +65,13 @@ const (
 	CmdTrinketPageNext    = "trinket_page_next"
 	CmdTrinketBeg         = "trinket_beg"
 	CmdTrinketEnd         = "trinket_end"
+	// Going to the beginning, EXCEPT when the caret is already there with
+	// nothing selected — the one case where going to the beginning would do
+	// nothing at all — where it selects everything instead. This is the Emacs
+	// home-cycle ^A does, and it is its own command rather than a wrinkle
+	// inside trinket_beg so that a plain Home stays a plain Home. Bound ahead
+	// of trinket_beg on the keys that want it, since first-listed wins.
+	CmdTrinketBegOrSelectAll = "trinket_beg_or_select_all"
 
 	// Extending a selection: every movement has a with-selection twin, which
 	// is a modifier axis rather than a set of unrelated actions.

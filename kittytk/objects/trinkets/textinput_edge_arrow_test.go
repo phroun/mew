@@ -44,19 +44,23 @@ func TestRightAtEndClearsSelection(t *testing.T) {
 
 // Shift+Left at the start (and Shift+Right at the end) must NOT collapse the
 // selection - they keep extending semantics (here, a no-op that preserves it).
+//
+// The keys are the composed strings ("S-Left"), which is what every backend
+// actually emits: the key string carries the modifiers and the bitfield is
+// derived from it, never the other way round.
 func TestShiftArrowAtEdgeKeepsSelection(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("hello")
 	n := len(ti.text)
 
 	ti.selStart, ti.selEnd, ti.cursorPos = 0, n, 0
-	ti.HandleKeyPress(core.KeyPressEvent{Key: "Left", Modifiers: core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Left", Modifiers: core.ShiftModifier})
 	if !ti.HasSelection() {
 		t.Error("Shift+Left at start should keep the selection")
 	}
 
 	ti.selStart, ti.selEnd, ti.cursorPos = 0, n, n
-	ti.HandleKeyPress(core.KeyPressEvent{Key: "Right", Modifiers: core.ShiftModifier})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Right", Modifiers: core.ShiftModifier})
 	if !ti.HasSelection() {
 		t.Error("Shift+Right at end should keep the selection")
 	}
