@@ -570,24 +570,14 @@ func (app *Application) filterEvent(event core.Event) bool {
 }
 
 // handleShortcut checks if a key event matches a global shortcut.
+//
+// ^Q and ^W used to be hardcoded here, quitting the process and closing the
+// active window. They are ordinary bindings now -- app_quit and window_close
+// -- so they belong to the keymap and reach every surface rather than only
+// this path. Leaving the hardcoded pair would have made ^Q mean something
+// different here than it means anywhere else: the whole process, rather than
+// one application.
 func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
-	// Handle common shortcuts directly using key handler format
-	switch event.Key {
-	case "^Q": // Ctrl+Q - Quit
-		app.Quit()
-		return true
-	case "^W": // Ctrl+W - Close window
-		app.mu.RLock()
-		wm := app.windowManager
-		app.mu.RUnlock()
-		if wm != nil {
-			if active := wm.ActiveWindow(); active != nil {
-				active.Close()
-				return true
-			}
-		}
-	}
-
 	// Check registered shortcuts using key handler format directly
 	app.mu.RLock()
 	shortcuts := app.shortcuts

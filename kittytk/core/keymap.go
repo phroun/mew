@@ -288,11 +288,11 @@ var defaultBindings = map[string][]string{
 	// The application-vs-window split every desktop draws the same way:
 	// M-F4 and ^Q end the APPLICATION, ^F4 and ^W close one WINDOW of it.
 	// (^F4 and C-F4 are the same key spelled two ways, as are ^Q and C-Q.)
-	"M-F4": {CmdAppQuit},
-	"^Q":    {CmdAppQuit},
-	"^F4":   {CmdWindowClose},
-	"^W":    {CmdWindowClose},
-	"F10":   {CmdAppMenu},
+	"M-F4":    {CmdAppQuit},
+	"^Q":      {CmdAppQuit},
+	"^F4":     {CmdWindowClose},
+	"^W":      {CmdWindowClose},
+	"F10":     {CmdAppMenu},
 	"M-Tab":   {CmdWindowNext},
 	"M-S-Tab": {CmdWindowPrior},
 	"C-Tab":   {CmdWindowMDINext},
@@ -334,8 +334,8 @@ var defaultBindings = map[string][]string{
 	"Left":  {CmdWindowMoveFineLeft, CmdWindowSizeFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior},
 	"Right": {CmdWindowMoveFineRight, CmdWindowSizeFineRight, CmdTrinketItemRight, CmdTrinketItemNext},
 
-	"S-Up":    {CmdWindowSizeFineUp, CmdTrinketSelUp},
-	"S-Down":  {CmdWindowSizeFineDown, CmdTrinketSelDown},
+	"S-Up":   {CmdWindowSizeFineUp, CmdTrinketSelUp, CmdTerminalScrollUp},
+	"S-Down": {CmdWindowSizeFineDown, CmdTrinketSelDown, CmdTerminalScrollDown},
 	// The shifted arrows also carry the classic tree movement, ahead of the
 	// generic item step: in an editable grid the plain arrows walk the
 	// edit-target column, and this is how collapse-or-walk-out keeps a key
@@ -346,11 +346,16 @@ var defaultBindings = map[string][]string{
 
 	"Home":   {CmdTrinketBeg},
 	"End":    {CmdTrinketEnd},
-	"S-Home": {CmdTrinketSelBeg},
-	"S-End":  {CmdTrinketSelEnd},
+	"S-Home": {CmdTrinketSelBeg, CmdTerminalScrollBeg},
+	"S-End":  {CmdTrinketSelEnd, CmdTerminalScrollEnd},
 
 	"PageUp":   {CmdTrinketPagePrior},
 	"PageDown": {CmdTrinketPageNext},
+	// The shifted paging keys belong to a terminal's scrollback alone --
+	// nothing else answers to them, which is why they are bound to one
+	// command rather than added to a list.
+	"S-PageUp":   {CmdTerminalScrollPagePrior},
+	"S-PageDown": {CmdTerminalScrollPageNext},
 
 	// Editing, where a trinket holds text.
 	"Backspace": {CmdTrinketDelPrior, CmdTrinketEnclosing},
@@ -359,11 +364,11 @@ var defaultBindings = map[string][]string{
 	// ^A is the Emacs home cycle where a trinket offers it, and a plain
 	// beginning-of-line where it does not. First listed wins, so a text field
 	// -- which offers both -- gets the cycle, and a list gets the plain move.
-	"^A": {CmdTrinketBegOrSelectAll, CmdTrinketBeg},
-	"^E":        {CmdTrinketEnd},
-	"S-^A":      {CmdTrinketSelBeg},
-	"S-^E":      {CmdTrinketSelEnd},
-	"M-a":       {CmdTrinketSelectAll},
+	"^A":   {CmdTrinketBegOrSelectAll, CmdTrinketBeg},
+	"^E":   {CmdTrinketEnd},
+	"S-^A": {CmdTrinketSelBeg},
+	"S-^E": {CmdTrinketSelEnd},
+	"M-a":  {CmdTrinketSelectAll},
 
 	// Trees.
 	"Plus":     {CmdTrinketExpand},

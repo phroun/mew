@@ -151,6 +151,19 @@ const (
 	// branch instead, which is what activate means there.
 	CmdTrinketEdit = "trinket_edit"
 
+	// A terminal's SCROLLBACK, which is its own thing and not a trinket
+	// movement: these move the VIEW over history the child process cannot see
+	// and never reach the child at all. They are separate names because a
+	// terminal is the one trinket whose job is to pass keys through, so a
+	// binding it shares with lists and trees would take a key away from
+	// everything else to give it to the scrollback.
+	CmdTerminalScrollUp        = "terminal_scroll_up"
+	CmdTerminalScrollDown      = "terminal_scroll_down"
+	CmdTerminalScrollPagePrior = "terminal_scroll_page_prior"
+	CmdTerminalScrollPageNext  = "terminal_scroll_page_next"
+	CmdTerminalScrollBeg       = "terminal_scroll_beg"
+	CmdTerminalScrollEnd       = "terminal_scroll_end"
+
 	// The rest.
 	CmdTrinketActivate = "trinket_activate"
 	CmdTrinketCancel   = "trinket_cancel"

@@ -14,6 +14,7 @@ import (
 // It provides a fully functional terminal within the TUI application.
 type PurfecTerm struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	// The underlying terminal emulator
@@ -94,6 +95,15 @@ func NewPurfecTerm() *PurfecTerm {
 		rows: 24,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	// The ONLY keys a terminal claims. Everything else is the child's, which
+	// is why the scrollback has its own command family rather than borrowing
+	// the trinket movement: sharing those names would take a key away from
+	// every list and tree to give it to a terminal's history.
+	t.SetCommands(
+		core.CmdTerminalScrollUp, core.CmdTerminalScrollDown,
+		core.CmdTerminalScrollPagePrior, core.CmdTerminalScrollPageNext,
+		core.CmdTerminalScrollBeg, core.CmdTerminalScrollEnd,
+	)
 	t.Init(t)
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTerminal)
@@ -879,7 +889,7 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// own local-key path no longer runs, so honour the Shift+nav keys here.
 	// Editor mode has no scrollback, so those keys pass through to the
 	// child (the editor) like any other key.
-	if !t.editorMode && t.handleScrollbackKey(event.Key) {
+	if !t.editorMode && t.handleScrollbackKey(t.KeyCommand(event.Key)) {
 		t.Update()
 		return true
 	}
@@ -894,26 +904,26 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	return true
 }
 
-// handleScrollbackKey processes the Shift-modified scrollback navigation
-// keys locally (they scroll the view, they are not sent to the child).
-// Returns true if the key was one of them.
-func (t *PurfecTerm) handleScrollbackKey(key string) bool {
+// handleScrollbackKey runs the scrollback navigation locally (it scrolls the
+// view, it is not sent to the child). Returns true if the command was one of
+// its own.
+func (t *PurfecTerm) handleScrollbackKey(cmd string) bool {
 	page := t.rows - 1
 	if page < 1 {
 		page = 1
 	}
-	switch key {
-	case "S-PageUp":
+	switch cmd {
+	case core.CmdTerminalScrollPagePrior:
 		t.ScrollUp(page)
-	case "S-PageDown":
+	case core.CmdTerminalScrollPageNext:
 		t.ScrollDown(page)
-	case "S-Up":
+	case core.CmdTerminalScrollUp:
 		t.ScrollUp(1)
-	case "S-Down":
+	case core.CmdTerminalScrollDown:
 		t.ScrollDown(1)
-	case "S-Home":
+	case core.CmdTerminalScrollBeg:
 		t.ScrollToTop()
-	case "S-End":
+	case core.CmdTerminalScrollEnd:
 		t.ScrollToBottom()
 	default:
 		return false
