@@ -388,7 +388,7 @@ func NewDesktop() *Desktop {
 	// Wire up Tab navigation between dock and menu bar
 	d.dockRow.SetOnFocusMenuBar(func() {
 		d.UnfocusDock()
-		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+		d.menuBar.ToggleMenuFocus()
 	})
 	d.menuBar.SetOnFocusDock(func() {
 		if !d.dockRow.IsEmpty() {
@@ -4206,7 +4206,7 @@ func (d *Desktop) PerformKeyboardBlur() {
 	}
 	// Then activate the menu bar
 	if d.menuBar != nil {
-		d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+		d.menuBar.ToggleMenuFocus()
 	}
 }
 
@@ -5074,7 +5074,8 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 		}
 	case core.CmdAppMenu:
 		if d.menuBar != nil {
-			return d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+			d.menuBar.ToggleMenuFocus()
+			return true
 		}
 	}
 	return false

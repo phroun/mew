@@ -2256,6 +2256,25 @@ func (m *MenuBar) SetKeyContext(ctx *core.KeyContext) {
 	m.InvalidateAccelerators()
 }
 
+// ToggleMenuFocus is what the menu key does: take the keyboard, or give it
+// back when the bar already had it.
+//
+// Exported so anything wanting the bar focused can SAY so, rather than
+// synthesising the keystroke that happens to mean it today. A host that
+// rebinds app_menu would leave a faked "F10" resolving to nothing, and the
+// bar would quietly stop answering.
+func (m *MenuBar) ToggleMenuFocus() {
+	if m.HasFocus() {
+		m.CloseMenuAndUnfocus()
+	} else {
+		m.SetFocus()
+		if m.currentIndex < 0 && len(m.menus) > 0 {
+			m.currentIndex = 0
+		}
+	}
+	m.Update()
+}
+
 // InvalidateAccelerators marks the assignment for recomputation — the menu
 // list changed, or the situation did.
 func (m *MenuBar) InvalidateAccelerators() {
@@ -3139,16 +3158,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdAppMenu:
-		// Toggle menu bar focus
-		if m.HasFocus() {
-			m.CloseMenuAndUnfocus()
-		} else {
-			m.SetFocus()
-			if m.currentIndex < 0 && len(m.menus) > 0 {
-				m.currentIndex = 0
-			}
-		}
-		m.Update()
+		m.ToggleMenuFocus()
 		return true
 
 	case core.CmdFocusNext, core.CmdFocusPrior:

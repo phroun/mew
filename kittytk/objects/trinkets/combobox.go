@@ -1628,9 +1628,7 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	switch c.KeyCommand(event.Key) {
 	case core.CmdTrinketActivate:
-		c.clickMode = true // Keyboard invocation opens in click mode
-		c.ShowPopup()
-		c.enterClickMode() // Ensure scroll offset is clamped for click mode
+		c.OpenFromKeyboard()
 		return true
 
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
@@ -1658,13 +1656,24 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketOpen:
-		c.clickMode = true // Keyboard invocation opens in click mode
-		c.ShowPopup()
-		c.enterClickMode() // Ensure scroll offset is clamped for click mode
+		c.OpenFromKeyboard()
 		return true
 	}
 
 	return false
+}
+
+// OpenFromKeyboard drops the list open the way a keyboard activation does, in
+// click mode with the scroll offset clamped for it.
+//
+// Exported so a trinket that wants a combo box open can SAY so, rather than
+// synthesising the keystroke that happens to mean it today: a host that
+// rebinds trinket_activate would leave a faked "Space" meaning nothing, and
+// the drop-down would silently stop opening.
+func (c *ComboBox) OpenFromKeyboard() {
+	c.clickMode = true
+	c.ShowPopup()
+	c.enterClickMode()
 }
 
 // handlePopupKeyPress handles key events when popup is open.

@@ -28,6 +28,10 @@ type FocusManager struct {
 	// Focus policy determines how focus behaves
 	wrapAround bool // Whether tab wraps from last to first
 
+	// keys resolves the two commands that walk the chain. Which key does
+	// that is a binding, not a constant.
+	keys TrinketKeys
+
 	// Callbacks
 	onFocusChanged func(old, new Trinket)
 
@@ -37,10 +41,12 @@ type FocusManager struct {
 
 // NewFocusManager creates a new focus manager for a trinket scope.
 func NewFocusManager(root Trinket) *FocusManager {
-	return &FocusManager{
+	fm := &FocusManager{
 		root:       root,
 		wrapAround: true,
 	}
+	fm.keys.SetCommands(CmdFocusNext, CmdFocusPrior)
+	return fm
 }
 
 // SetRoot sets the root trinket for this focus scope.
@@ -505,15 +511,14 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		}
 	}
 
-	// Trinket didn't handle it - do focus navigation for Tab keys
-	switch event.Key {
-	case "Tab":
-		if event.Modifiers&ShiftModifier != 0 {
-			return fm.FocusPrevious()
-		}
+	// Trinket didn't handle it - walk the focus chain. Which key does that is
+	// a binding like any other: this used to match "Tab" and two spellings of
+	// its shifted form, one of which nothing emits, and read the Shift bit out
+	// of the event to tell them apart.
+	switch fm.keys.KeyCommand(event.Key) {
+	case CmdFocusNext:
 		return fm.FocusNext()
-
-	case "S-Tab", "Shift-Tab":
+	case CmdFocusPrior:
 		return fm.FocusPrevious()
 	}
 

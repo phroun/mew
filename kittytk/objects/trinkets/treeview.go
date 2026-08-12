@@ -1079,7 +1079,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 			// Enter accepted the offer. (Tabbing to a choice cell
 			// from another column stays closed.)
 			if t.editCombo != nil {
-				t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
+				t.editCombo.OpenFromKeyboard()
 			}
 			return true
 		}
@@ -1100,7 +1100,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		if col := t.enterTargetColumn(); col != nil && col != treeKeyColumn &&
 			len(col.Enum) > 0 && t.headerZone == hzContent && t.startRowEdit() {
 			if t.editCombo != nil {
-				t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
+				t.editCombo.OpenFromKeyboard()
 			}
 			return true
 		}
