@@ -315,11 +315,16 @@ var defaultBindings = map[string][]string{
 	// The application-vs-window split every desktop draws the same way:
 	// M-F4 and ^Q end the APPLICATION, ^F4 and ^W close one WINDOW of it.
 	// (^F4 and C-F4 are the same key spelled two ways, as are ^Q and C-Q.)
-	"M-F4":    {CmdAppQuit},
-	"^Q":      {CmdAppQuit},
-	"^F4":     {CmdWindowClose},
-	"^W":      {CmdWindowClose},
+	"M-F4": {CmdAppQuit},
+	"^Q":   {CmdAppQuit},
+	"^F4":  {CmdWindowClose},
+	"^W":   {CmdWindowClose},
+	// The menu key twice over. F10 is the convention every desktop shares;
+	// F2 is there to be REACHABLE -- on a Mac every function key wants fn,
+	// which sits bottom-left, so F10 across at the far right is a two-handed
+	// press while F2 is on the same side of the keyboard.
 	"F10":     {CmdAppMenu},
+	"F2":      {CmdAppMenu},
 	"M-Tab":   {CmdWindowNext},
 	"M-S-Tab": {CmdWindowPrior},
 	"C-Tab":   {CmdWindowMDINext},

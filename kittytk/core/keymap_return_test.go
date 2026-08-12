@@ -25,3 +25,19 @@ func TestHomeRowReturnActivates(t *testing.T) {
 		t.Errorf("^M -> %q, want %q", got, CmdTrinketActivate)
 	}
 }
+
+// The menu key answers to two keys. F10 is the convention; F2 is there to be
+// reachable one-handed, since a Mac wants fn (bottom left) for every function
+// key and F10 sits at the far right.
+func TestTheMenuKeyHasAReachableSecondKey(t *testing.T) {
+	r := DefaultKeyRegistry()
+	for _, key := range []string{"F10", "F2"} {
+		ctx := r.BuildContext([]string{CmdAppMenu})
+		if got := ctx.Resolve(key); got != CmdAppMenu {
+			t.Errorf("%s -> %q, want %q", key, got, CmdAppMenu)
+		}
+	}
+	if keys := r.KeysFor(CmdAppMenu); len(keys) != 2 {
+		t.Errorf("app_menu has %d keys (%v), want 2", len(keys), keys)
+	}
+}
