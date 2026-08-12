@@ -16,97 +16,81 @@ import (
 // the window is sized to it so the text word-wraps rather than being hand-split.
 const welcomeWrapCols = 48
 
-// maybeShowWelcome opens the first-run welcome window when a graphical host
-// starts a not-yet-installed copy of mew on a platform with a self-installer
-// (Windows and macOS — elsewhere selfinstall reports the first run already done,
-// so nothing shows), and reports whether it did. The window explains what mew is
-// and offers two choices, in the "lame trinket" spirit (a label over a row of
-// real Buttons):
+// maybeShowWelcome shows the first-run welcome IN the app's own window when a
+// graphical host starts a not-yet-installed copy of mew on a platform with a
+// self-installer (Windows and macOS — elsewhere selfinstall reports the first
+// run already done, so nothing shows), and reports whether it took the window
+// over. It offers two choices, in the "lame trinket" spirit (wrapped copy over
+// a row of real Buttons):
 //
 //   - Install — copy mew into place (Start Menu + PATH on Windows, the
 //     Applications folder on macOS), launch the freshly installed copy, and quit
 //     this one.
-//   - Try — open the editor and get out of the way. Nothing is written, so an
-//     uninstalled copy keeps offering to install on each launch.
+//   - Try — put the editor back and get out of the way. Nothing is written, so
+//     an uninstalled copy keeps offering to install on each launch.
 //
-// The welcome is a GATE, not an overlay: it comes up over the bare desktop with
-// no editor behind it, and openEditor (the caller's "now actually start mew")
-// runs only on Try. Someone who chooses Install never asked for this session --
-// they asked for the installed copy, which is launched instead -- so a mew
-// window flashing up behind the question was answering it for them. Nothing of
-// the session is built until it is wanted: no window, no mew process inside it.
+// It is the window's CONTENT, not a dialog over it. mew runs solo — its window
+// IS the display — so a welcome floating above the editor had mew's own window
+// behind it, answering the question it was asking: someone who chooses Install
+// never wanted this session at all, and a window of the throwaway copy showing
+// underneath is at best noise. Replacing the content instead means one window
+// with nothing behind it, and the editor trinket never paints, so the mew
+// session inside it never starts until Try asks for it.
 //
-// It is a WINDOW of the application (AddWindow gives it the app id), and
-// WindowTypeModal, so the manager scopes it as an app modal: it floats and it
-// blocks, which is what a first-run gate is for. It needs no owner window --
-// there is none yet, and nothing else of the app is on screen to gate. Closing
-// goes through window.Close, which pops the modal stack for an app modal.
-func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, graphical bool, openEditor func()) bool {
-	if !graphical || !selfinstall.Available() || selfinstall.FirstRunDone() {
+// The window keeps its normal chrome - mew's title bar and menu bar - because
+// it IS mew's window; the menu items that drive the session simply have no
+// session to drive yet, and mew's Quit still works.
+func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool) bool {
+	if !graphical || !selfinstall.Available() || selfinstall.FirstRunDone() || root == nil {
 		return false
 	}
-	dlg := newWelcomeDialog(
-		"Welcome to mew",
-		welcomeLines(),
+	showWelcomeIn(desktop, application, root, launchArgs)
+	return true
+}
+
+// showWelcomeIn is the takeover itself, split from the first-run test above so
+// what it does to the window can be exercised on any platform. It remembers
+// what the window held and hands both answers a way back to it.
+func showWelcomeIn(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string) *welcomeContent {
+	editor := root.Content()
+	title := root.Title()
+
+	// Show mew: the window goes back to exactly what it was built as. Posted
+	// rather than run inline, so the welcome content is off the window before
+	// the editor takes its place (this runs from a button's own click).
+	showEditor := func() {
+		desktop.Post(func() {
+			root.SetTitle(title)
+			root.SetContent(editor)
+			desktop.RequestUpdate()
+		})
+	}
+
+	c := newWelcomeContent(welcomeLines(),
 		func() { // Install
 			exe, err := selfinstall.Install()
 			if err != nil {
 				// The install failed, so this copy IS the session after all:
-				// open the editor behind the error, or the window would be
-				// left with nothing to go back to.
-				showMewError(application, nil, "Install failed", err.Error())
-				openWhenIdle(desktop, openEditor)
+				// show the editor behind the error rather than leaving the
+				// welcome up with nothing it can still do.
+				showMewError(application, root, "Install failed", err.Error())
+				showEditor()
 				return
 			}
 			// Launch the freshly installed copy (with the same files) and bow
-			// out. Nothing was opened here, so there is nothing to close.
+			// out. Nothing was started here, so there is nothing to close --
+			// and nothing to ask, which is why this quit is the forced one.
 			if exe != "" {
 				_ = exec.Command(exe, launchArgs...).Start()
 			}
 			desktop.ForceQuit()
 		},
-		func() { openWhenIdle(desktop, openEditor) }, // Try — now open mew
-	)
-	application.AddWindow(&dlg.Window)
-	centerOnDesktop(desktop, &dlg.Window)
+		showEditor) // Try
+
+	root.SetTitle("Welcome to mew")
+	root.SetContent(c)
 	desktop.RequestUpdate()
-	return true
-}
-
-// centerOnDesktop puts win in the middle of the desktop's client area. The
-// manager positions an unplaced window by CASCADE, from the top-left corner,
-// which reads as a stray window rather than the one thing on screen -- and with
-// the editor held back until Try, the welcome IS the only thing on screen.
-func centerOnDesktop(desktop *trinkets.Desktop, win *window.Window) {
-	wm := desktop.WindowManager()
-	if wm == nil {
-		return
-	}
-	area := wm.ClientArea()
-	b := win.Bounds()
-	if area.Width <= 0 || area.Height <= 0 || b.Width <= 0 || b.Height <= 0 {
-		return
-	}
-	x := area.X + (area.Width-b.Width)/2
-	y := area.Y + (area.Height-b.Height)/2
-	if x < area.X {
-		x = area.X
-	}
-	if y < area.Y {
-		y = area.Y
-	}
-	win.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
-}
-
-// openWhenIdle runs fn on the next turn of the platform loop, so the welcome
-// window is closed and off the screen before the editor takes the display over
-// (solo mode re-homes it onto the primary surface). Falls back to running it
-// inline where there is no platform to post to.
-func openWhenIdle(desktop *trinkets.Desktop, fn func()) {
-	if fn == nil {
-		return
-	}
-	desktop.Post(fn)
+	return c
 }
 
 // welcomeLines is the explanatory copy shown in the welcome window, as
@@ -124,148 +108,15 @@ func welcomeLines() []string {
 	}
 }
 
-// showMewError pops a simple error dialog owned by the root editor (a window
-// modal that floats above and blocks it, like the welcome it replaces). The
-// MessageBox unregisters its modal on close, so no explicit CloseModal is needed.
+// showMewError pops a simple error dialog owned by the app's window (a window
+// modal that floats above and blocks it). The MessageBox unregisters its modal
+// on close, so no explicit CloseModal is needed.
 func showMewError(application *app.Application, root *window.Window, title, text string) {
 	mb := trinkets.NewMessageBox(title, text, trinkets.ButtonOK)
 	mb.SetIcon(trinkets.IconError)
 	mb.SetOwner(root)
 	application.AddWindow(&mb.Window)
 	mb.ResizeToFitContent()
-}
-
-// welcomeDialog is a modal window whose content is a paragraph of text over a
-// row of two buttons (Install / Try). It mirrors the toolkit's MessageBox: a
-// content trinket (welcomeContent) implementing Container so the framework routes
-// focus, keyboard, and mouse to the real Buttons.
-type welcomeDialog struct {
-	window.Window
-	content   *welcomeContent
-	onInstall func()
-	onTry     func()
-	answered  bool // the question is answered once, by whatever route
-}
-
-func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *welcomeDialog {
-	d := &welcomeDialog{onInstall: onInstall, onTry: onTry}
-	d.Window = *window.NewWindow(title)
-	d.SetType(window.WindowTypeModal)
-	d.SetFlags(window.WindowFlagNoResize)
-
-	c := &welcomeContent{paras: lines}
-	c.TrinketBase = *core.NewTrinketBase()
-	c.Init(c)
-	c.SetFocusPolicy(core.StrongFocus)
-
-	c.install = trinkets.NewButton("Install")
-	c.install.SetParent(c)
-	c.install.SetOnClick(d.doInstall)
-	c.try = trinkets.NewButton("Try")
-	c.try.SetParent(c)
-	c.try.SetOnClick(d.doTry)
-	c.buttons = []*trinkets.Button{c.install, c.try}
-
-	d.content = c
-	d.SetContent(c)
-	// Dismissing the window IS Try. The gate holds the editor back, so a
-	// welcome closed by its [x] rather than by a button would otherwise leave
-	// the desktop empty with nothing to open mew from.
-	d.SetOnClose(func() bool {
-		d.answer(d.onTry)
-		return true
-	})
-	d.calculateSize()
-	return d
-}
-
-// answer runs the chosen action, once. Every route ends in Close, which
-// answers Try in case nothing else had, so the guard is what keeps a chosen
-// Install from also being read as a dismissal.
-func (d *welcomeDialog) answer(fn func()) {
-	if d.answered {
-		return
-	}
-	d.answered = true
-	if fn != nil {
-		fn()
-	}
-}
-
-// doInstall / doTry run the wired action, then close the dialog. Closing an
-// app-scoped modal unregisters it from the manager's modal stack (the AddWindow
-// path ties unregistration to the window's close), so the desktop is clear
-// before the editor Try asked for opens onto it; the install path has already
-// launched the installed copy and quit.
-func (d *welcomeDialog) doInstall() {
-	d.answer(d.onInstall)
-	d.Close()
-}
-
-func (d *welcomeDialog) doTry() {
-	d.answer(d.onTry)
-	d.Close()
-}
-
-// HandleKeyPress maps the accept key to Install (the primary action) and Escape
-// to Try (dismiss), falling back to the window's default handling otherwise.
-//
-// Both spellings of accept: Return is the home-row key and Enter is the one on
-// the keypad. A dialog's default button answers to either, and naming only one
-// of them here would leave the other dead.
-func (d *welcomeDialog) HandleKeyPress(ev core.KeyPressEvent) bool {
-	switch ev.Key {
-	case "Return", "Enter":
-		d.doInstall()
-		return true
-	case "Escape":
-		d.doTry()
-		return true
-	}
-	return d.Window.HandleKeyPress(ev)
-}
-
-// calculateSize sizes the dialog to its text and button row, then adds the
-// window chrome — the same two-pass measure MessageBox uses so the content area
-// holds every line plus the buttons.
-func (d *welcomeDialog) calculateSize() {
-	m := d.EffectiveCellMetrics()
-	font := d.content.EffectiveFont()
-
-	// Wrap the copy to a fixed reading width, then size the window to that width
-	// so Paint (which wraps to its bounds) reproduces the very same lines. Text
-	// area = contentW - 2*textX (textX is a 2-column margin), so contentW is the
-	// wrap width plus a 2-column margin on each side.
-	textW := m.CellWidth * welcomeWrapCols
-	d.content.wrap(textW, font)
-	contentW := textW + m.CellWidth*4
-
-	// Never narrower than the button row (as the content paints it) plus slack.
-	var rowW core.Unit
-	for _, b := range d.content.buttons {
-		rowW += core.Unit(len(b.Text())+4) * m.CellWidth
-	}
-	if n := len(d.content.buttons); n > 1 {
-		rowW += core.Unit(n-1) * m.CellWidth
-	}
-	if minW := rowW + m.CellWidth*4; contentW < minW {
-		contentW = minW
-	}
-
-	// Height: top margin + wrapped lines + gap + button row + bottom margin.
-	contentH := core.Unit(len(d.content.wrapped)+4) * m.CellHeight
-
-	d.SetBounds(core.UnitRect{Width: contentW, Height: contentH})
-	cb := d.ContentBounds()
-	chromeW := contentW - cb.Width
-	chromeH := contentH - cb.Height
-	if chromeW < 0 {
-		chromeW = 0
-	}
-	if chromeH < 0 {
-		chromeH = 0
-	}
-	d.SetBounds(core.UnitRect{Width: contentW + chromeW, Height: contentH + chromeH})
 }
 
 // welcomeContent paints the explanatory text and lays out the two buttons, and
@@ -279,6 +130,58 @@ type welcomeContent struct {
 	install   *trinkets.Button
 	try       *trinkets.Button
 	buttons   []*trinkets.Button
+
+	onInstall func()
+	onTry     func()
+	answered  bool // the question is answered once, whichever route answers it
+}
+
+// newWelcomeContent builds the welcome as a content trinket: the copy over a
+// row of two real Buttons, so focus, keyboard activation and screen-reader
+// announcements are the toolkit's rather than hand-rolled.
+func newWelcomeContent(lines []string, onInstall, onTry func()) *welcomeContent {
+	c := &welcomeContent{paras: lines, onInstall: onInstall, onTry: onTry}
+	c.TrinketBase = *core.NewTrinketBase()
+	c.Init(c)
+	c.SetFocusPolicy(core.StrongFocus)
+
+	c.install = trinkets.NewButton("Install")
+	c.install.SetParent(c)
+	c.install.SetOnClick(func() { c.answer(c.onInstall) })
+	c.try = trinkets.NewButton("Try")
+	c.try.SetParent(c)
+	c.try.SetOnClick(func() { c.answer(c.onTry) })
+	c.buttons = []*trinkets.Button{c.install, c.try}
+	return c
+}
+
+// answer runs the chosen action, once: the two buttons and the keyboard reach
+// the same two answers, and the window is replaced by whichever runs first.
+func (c *welcomeContent) answer(fn func()) {
+	if c.answered {
+		return
+	}
+	c.answered = true
+	if fn != nil {
+		fn()
+	}
+}
+
+// HandleKeyPress answers from the keyboard: the accept key installs (the
+// primary action) and Escape tries. Both spellings of accept — Return is the
+// home-row key, Enter the keypad one — since naming only one would leave the
+// other dead. A focused Button answers for itself; this is the fallback for
+// when the content holds the focus.
+func (c *welcomeContent) HandleKeyPress(ev core.KeyPressEvent) bool {
+	switch ev.Key {
+	case "Return", "Enter":
+		c.answer(c.onInstall)
+		return true
+	case "Escape":
+		c.answer(c.onTry)
+		return true
+	}
+	return false
 }
 
 // wrap flows the paragraphs to textWidth (cached by width), so the copy is
@@ -361,6 +264,9 @@ func (c *welcomeContent) Layout()                             {}
 func (c *welcomeContent) LayoutManager() core.LayoutManager   { return nil }
 func (c *welcomeContent) SetLayoutManager(core.LayoutManager) {}
 
+// Paint centers the copy and the button row in the window. This IS the window
+// now rather than a dialog sized to its text, so the block sits in the middle
+// of whatever mew's window happens to be, at a fixed reading width.
 func (c *welcomeContent) Paint(p *core.Painter) {
 	bounds := c.Bounds()
 	m := c.EffectiveCellMetrics()
@@ -368,18 +274,38 @@ func (c *welcomeContent) Paint(p *core.Painter) {
 
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', st)
 
-	// Message text in the proportional font, word-wrapped to the text area.
+	// Message text in the proportional font, wrapped to a reading width (or to
+	// the window, when the window is the narrower of the two).
 	font := c.EffectiveFont()
-	textX := m.CellWidth * 2
-	c.wrap(bounds.Width-textX*2, font) // no-op when already wrapped to this width
-	lineY := m.CellHeight
+	textW := m.CellWidth * welcomeWrapCols
+	if avail := bounds.Width - m.CellWidth*4; avail > 0 && avail < textW {
+		textW = avail
+	}
+	c.wrap(textW, font) // no-op when already wrapped to this width
+
+	// The block is the copy, a blank line, and the button row (two rows tall).
+	blockH := core.Unit(len(c.wrapped)+3) * m.CellHeight
+	top := (bounds.Height - blockH) / 2
+	if top < m.CellHeight {
+		top = m.CellHeight
+	}
+	textX := (bounds.Width - textW) / 2
+	if textX < m.CellWidth {
+		textX = m.CellWidth
+	}
+	if m.CellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
+		textX = (textX / m.CellWidth) * m.CellWidth
+		top = (top / m.CellHeight) * m.CellHeight
+	}
+
+	lineY := top
 	for _, line := range c.wrapped {
 		p.DrawText(textX, lineY, line, st, font)
 		lineY += m.CellHeight
 	}
 
-	// Buttons centered as a row at the bottom.
-	c.layoutButtons(bounds, m)
+	// Buttons centered as a row under the copy.
+	c.layoutButtons(bounds, m, lineY+m.CellHeight)
 	for _, b := range c.buttons {
 		if !b.IsVisible() {
 			continue
@@ -389,9 +315,10 @@ func (c *welcomeContent) Paint(p *core.Painter) {
 	}
 }
 
-// layoutButtons positions the button row centered along the bottom, snapping the
-// origin to a whole column on cell surfaces so painted and hit-test bounds agree.
-func (c *welcomeContent) layoutButtons(bounds core.UnitRect, m core.CellMetrics) {
+// layoutButtons positions the button row centered at y, snapping the origin to a
+// whole column on cell surfaces so painted and hit-test bounds agree. y is
+// clamped so the row never runs off the bottom of a short window.
+func (c *welcomeContent) layoutButtons(bounds core.UnitRect, m core.CellMetrics, y core.Unit) {
 	widths := make([]core.Unit, len(c.buttons))
 	var row core.Unit
 	for i, b := range c.buttons {
@@ -408,7 +335,9 @@ func (c *welcomeContent) layoutButtons(bounds core.UnitRect, m core.CellMetrics)
 	if m.CellWidth > 0 && !core.FindSmoothPositioning(c.Self()) {
 		x = (x / m.CellWidth) * m.CellWidth
 	}
-	y := bounds.Height - m.CellHeight*2
+	if max := bounds.Height - m.CellHeight*2; y > max {
+		y = max
+	}
 	for i, b := range c.buttons {
 		b.SetBounds(core.UnitRect{X: x, Y: y, Width: widths[i], Height: m.CellHeight * 2})
 		x += widths[i] + m.CellWidth

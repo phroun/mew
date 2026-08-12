@@ -188,12 +188,10 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		// Opening the editor is a step of its own, because the first-run
 		// welcome comes BEFORE it: someone who chooses Install never wanted
 		// this session, so nothing of it is built until Try says otherwise.
-		openRoot := func() {
-			root = startRootWindow(desktop, application, launchArgs)
-			if ed, ok := root.Content().(*trinkets.Editor); ok {
-				ed.SetShowDesktop(showDesktop)
-				ed.SetHideDesktop(hideDesktop)
-			}
+		root = startRootWindow(desktop, application, launchArgs)
+		if ed, ok := root.Content().(*trinkets.Editor); ok {
+			ed.SetShowDesktop(showDesktop)
+			ed.SetHideDesktop(hideDesktop)
 		}
 		serveSocket(desktop, cfg)
 		// On the graphical host, bring our window to the front and focus it. A
@@ -203,13 +201,12 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		if graphical {
 			desktop.RaiseToFront()
 		}
-		// First-run welcome (graphical + Windows/macOS + not yet installed): a
-		// modal over the bare desktop offering Install or Try, with the editor
-		// held back until Try. No-op otherwise, where the editor opens now.
-		if maybeShowWelcome(desktop, application, launchArgs, graphical, openRoot) {
-			return
-		}
-		openRoot()
+		// First-run welcome (graphical + Windows/macOS + not yet installed):
+		// mew's own window shows the welcome INSTEAD of the editor until Try,
+		// so it is the only thing on screen with nothing behind it - and the
+		// editor never paints, so no mew session starts until it is wanted.
+		// No-op otherwise, where the editor is already what the window holds.
+		maybeShowWelcome(desktop, application, root, launchArgs, graphical)
 	})
 
 	// The about invoker posts to the platform thread (the native menu action
