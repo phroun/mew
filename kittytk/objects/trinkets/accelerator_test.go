@@ -270,7 +270,7 @@ func TestFormAcceleratorKey(t *testing.T) {
 // lit, and the live accelerators are published into the context so the chord
 // resolves to the internal accelerator command.
 func TestMenuBarPublishesLiveAccelerators(t *testing.T) {
-	reg := core.NewKeyRegistry("default", map[string]string{"Tab": "focus_next"})
+	reg := core.NewKeyRegistry("default", map[string][]string{"Tab": {"focus_next"}})
 	ctx := reg.BuildContext([]string{"focus_next"})
 
 	bar := NewMenuBar()
@@ -298,7 +298,7 @@ func TestMenuBarPublishesLiveAccelerators(t *testing.T) {
 // cannot fire, which is what stops an accelerator beating the binding it is
 // supposed to be yielding to.
 func TestMenuBarMutesClaimedChord(t *testing.T) {
-	reg := core.NewKeyRegistry("default", map[string]string{"M-h": "history_panel"})
+	reg := core.NewKeyRegistry("default", map[string][]string{"M-h": {"history_panel"}})
 	ctx := reg.BuildContext([]string{"history_panel"})
 
 	bar := NewMenuBar()
@@ -324,7 +324,7 @@ func TestMenuBarMutesClaimedChord(t *testing.T) {
 
 // A backup letter keeps a menu reachable when its first choice is claimed.
 func TestMenuBarUsesBackupLetter(t *testing.T) {
-	reg := core.NewKeyRegistry("default", map[string]string{"M-h": "history_panel"})
+	reg := core.NewKeyRegistry("default", map[string][]string{"M-h": {"history_panel"}})
 	ctx := reg.BuildContext([]string{"history_panel"})
 
 	bar := NewMenuBar()

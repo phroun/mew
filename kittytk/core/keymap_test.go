@@ -3,14 +3,14 @@ package core
 import "testing"
 
 func demoRegistry() *KeyRegistry {
-	return NewKeyRegistry("default", map[string]string{
-		"M-F4":  "window_close",
-		"C-Up":  "window_move_up",
-		"M-Up":  "window_move_up",
-		"s-Up":  "window_move_up",
-		"Tab":   "focus_next",
-		"S-Tab": "focus_prior",
-		"^K B":  "block_begin",
+	return NewKeyRegistry("default", map[string][]string{
+		"M-F4":  {"window_close"},
+		"C-Up":  {"window_move_up"},
+		"M-Up":  {"window_move_up"},
+		"s-Up":  {"window_move_up"},
+		"Tab":   {"focus_next"},
+		"S-Tab": {"focus_prior"},
+		"^K B":  {"block_begin"},
 	})
 }
 
@@ -306,11 +306,11 @@ func TestStatesCompound(t *testing.T) {
 // pending prefix is read off the processor before the key is fed to it, so the
 // sequence is reassembled at the moment it completes.
 func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
-	r := NewKeyRegistry("t", map[string]string{
-		"M-h":        CommandAppAccelerator,
-		"^X h Enter": CommandAppAccelerator,
-		"^X p Enter": CommandAppAccelerator,
-		"Tab":        "focus_next",
+	r := NewKeyRegistry("t", map[string][]string{
+		"M-h":        {CommandAppAccelerator},
+		"^X h Enter": {CommandAppAccelerator},
+		"^X p Enter": {CommandAppAccelerator},
+		"Tab":        {"focus_next"},
 	})
 	ctx := r.BuildContext([]string{CommandAppAccelerator, "focus_next"})
 
@@ -342,5 +342,55 @@ func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
 	ctx.Abandon()
 	if got := ctx.MatchedSequence(); got != "^X p Enter" {
 		t.Errorf("an abandoned chord changed the matched sequence to %q", got)
+	}
+}
+
+// One key means different things in different situations, and the registry is
+// not the place that decides which. "Up" nudges a window while its title bar
+// is focused and steps a list otherwise; both are true at once, and a context
+// keeps whichever meaning it offers.
+//
+// Without this a flat table would have to pick one, and every arrow key would
+// belong permanently to whichever situation was written down first.
+func TestOneKeyCanMeanSeveralThings(t *testing.T) {
+	r := DefaultKeyRegistry()
+
+	title := r.BuildStateContext(StateTitleBarFocused)
+	if got := title.Resolve("Up"); got != CmdWindowMoveFineUp {
+		t.Errorf("title-focused: Up -> %q, want %q", got, CmdWindowMoveFineUp)
+	}
+
+	// A list offers the item movement and nothing about windows, so the same
+	// key resolves to the other meaning.
+	list := r.BuildContext([]string{CmdTrinketItemPrior, CmdTrinketItemNext})
+	if got := list.Resolve("Up"); got != CmdTrinketItemPrior {
+		t.Errorf("a list: Up -> %q, want %q", got, CmdTrinketItemPrior)
+	}
+	list.Abandon()
+	if got := list.Resolve("Down"); got != CmdTrinketItemNext {
+		t.Errorf("a list: Down -> %q, want %q", got, CmdTrinketItemNext)
+	}
+
+	// And a situation offering neither leaves the key entirely alone.
+	none := r.BuildContext([]string{CmdWindowClose})
+	if got := none.Resolve("Up"); got != "" {
+		t.Errorf("Up -> %q where neither meaning is offered, want nothing", got)
+	}
+}
+
+// C-Tab and M-Tab are NOT the same command: one cycles MDI children inside a
+// window, the other cycles top-level windows. They were conflated.
+func TestMDICyclingIsNotWindowCycling(t *testing.T) {
+	ctx := DefaultKeyRegistry().BuildStateContext(StateNormal)
+	for key, want := range map[string]string{
+		"C-Tab":   CmdWindowMDINext,
+		"C-S-Tab": CmdWindowMDIPrior,
+		"M-Tab":   CmdWindowNext,
+		"M-S-Tab": CmdWindowPrior,
+	} {
+		ctx.Abandon()
+		if got := ctx.Resolve(key); got != want {
+			t.Errorf("%s -> %q, want %q", key, got, want)
+		}
 	}
 }

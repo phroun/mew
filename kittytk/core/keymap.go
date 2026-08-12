@@ -15,18 +15,24 @@ import (
 // A registry is not a dispatch mechanism. It answers what a key MEANS; who
 // acts on that meaning is the existing chain's business, unchanged.
 type KeyRegistry struct {
-	mu       sync.RWMutex
-	name     string
-	bindings map[string]string
+	mu   sync.RWMutex
+	name string
+	// bindings maps a key to every command it can mean. Several, because one
+	// key means different things in different situations and the registry is
+	// not the place that decides which: "Up" nudges a window while its title
+	// bar is focused and steps a list otherwise, and both are true at once.
+	// A context keeps whichever of them the situation actually offers, so at
+	// most one survives anywhere it is asked.
+	bindings map[string][]string
 	revision uint64
 }
 
 // NewKeyRegistry creates a registry from a key-to-command table. The name is
 // for diagnostics — "default", "purfecterm-captured" — and has no behaviour.
-func NewKeyRegistry(name string, bindings map[string]string) *KeyRegistry {
-	r := &KeyRegistry{name: name, bindings: make(map[string]string, len(bindings))}
+func NewKeyRegistry(name string, bindings map[string][]string) *KeyRegistry {
+	r := &KeyRegistry{name: name, bindings: make(map[string][]string, len(bindings))}
 	for k, v := range bindings {
-		r.bindings[k] = v
+		r.bindings[k] = append([]string(nil), v...)
 	}
 	return r
 }
@@ -55,14 +61,34 @@ func (r *KeyRegistry) Revision() uint64 {
 
 // Bind sets one binding. An empty command unbinds the key, which is how a user
 // turns a default off without having to know what it was.
+// Bind REPLACES everything a key means with one command. An empty command
+// unbinds it entirely, which is how a user turns a default off without having
+// to know what it was.
 func (r *KeyRegistry) Bind(key, command string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if command == "" {
 		delete(r.bindings, key)
 	} else {
-		r.bindings[key] = command
+		r.bindings[key] = []string{command}
 	}
+	r.revision++
+}
+
+// AddBinding gives a key one more meaning, for the situations that do not
+// overlap with the ones it already has.
+func (r *KeyRegistry) AddBinding(key, command string) {
+	if command == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.bindings[key] {
+		if c == command {
+			return
+		}
+	}
+	r.bindings[key] = append(r.bindings[key], command)
 	r.revision++
 }
 
@@ -77,9 +103,12 @@ func (r *KeyRegistry) KeysFor(command string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var keys []string
-	for k, c := range r.bindings {
-		if c == command {
-			keys = append(keys, k)
+	for k, cmds := range r.bindings {
+		for _, c := range cmds {
+			if c == command {
+				keys = append(keys, k)
+				break
+			}
 		}
 	}
 	return keys
@@ -125,9 +154,14 @@ func (r *KeyRegistry) BuildContext(commands []string) *KeyContext {
 	mappings := map[string]string{}
 	if r != nil {
 		r.mu.RLock()
-		for k, c := range r.bindings {
-			if set[c] {
-				mappings[k] = c
+		for k, cmds := range r.bindings {
+			// At most one of a key's meanings is on offer here; the rest
+			// belong to situations this is not.
+			for _, c := range cmds {
+				if set[c] {
+					mappings[k] = c
+					break
+				}
 			}
 		}
 		r.mu.RUnlock()
@@ -233,46 +267,89 @@ const CommandAppAccelerator = "_app_accel"
 // registry with no configuration file present at all. The file overlays this
 // rather than replacing it, so a user names only what they want to change.
 //
-// Several keys may share a command: the coarse window move answers to Ctrl,
-// Meta and Super arrows alike, which is what the hand-written handler did
-// before these were bindings.
-var defaultBindings = map[string]string{
-	"M-F10":   "window_maximize_toggle",
-	"M-F4":    "window_close",
-	"F10":     "app_menu",
-	"C-Tab":   "window_next",
-	"C-S-Tab": "window_prior",
-	"M-Tab":   "window_next",
-	"M-S-Tab": "window_prior",
-	"s-M":     "app_minimize",
-	"s-Minus": "gui_scale_down",
-	"s-Plus":  "gui_scale_up",
-	"s-0":     "gui_scale_reset",
-	"Tab":     "focus_next",
-	"S-Tab":   "focus_prior",
-	"Esc":     "window_cancel_resize",
-	"Enter":   "trinket_activate",
-	"Space":   "trinket_activate",
+// A key lists every command it can mean. "Up" nudges a window while its title
+// bar is focused and steps a list otherwise; both are true, and the situation
+// decides. A context keeps whichever meaning it offers, so at most one
+// survives anywhere the key is actually asked about.
+//
+// Several keys may also share ONE command: the coarse window move answers to
+// Ctrl, Meta and Super arrows alike, which is what the hand-written handler
+// did before these were bindings.
+var defaultBindings = map[string][]string{
+	// Windows and the desktop.
+	"M-F10":   {CmdWindowMaximizeToggle},
+	"M-F4":    {CmdWindowClose},
+	"F10":     {CmdAppMenu},
+	"M-Tab":   {CmdWindowNext},
+	"M-S-Tab": {CmdWindowPrior},
+	"C-Tab":   {CmdWindowMDINext},
+	"C-S-Tab": {CmdWindowMDIPrior},
+	"s-M":     {CmdAppMinimize},
+	"s-Minus": {CmdGUIScaleDown},
+	"s-Plus":  {CmdGUIScaleUp},
+	"s-0":     {CmdGUIScaleReset},
 
-	"Up":    "window_move_fine_up",
-	"Down":  "window_move_fine_down",
-	"Left":  "window_move_fine_left",
-	"Right": "window_move_fine_right",
+	// Focus, which belongs to no one trinket.
+	"Tab":   {CmdFocusNext},
+	"S-Tab": {CmdFocusPrior},
 
-	"S-Up":    "window_size_fine_up",
-	"S-Down":  "window_size_fine_down",
-	"S-Left":  "window_size_fine_left",
-	"S-Right": "window_size_fine_right",
+	// Keys that mean one thing to a window's title bar and another to
+	// whatever has focus otherwise.
+	"Esc":   {CmdWindowCancelResize, CmdTrinketCancel},
+	"Enter": {CmdTrinketActivate},
+	"Space": {CmdTrinketActivate},
 
-	"C-Up": "window_move_up", "M-Up": "window_move_up", "s-Up": "window_move_up",
-	"C-Down": "window_move_down", "M-Down": "window_move_down", "s-Down": "window_move_down",
-	"C-Left": "window_move_left", "M-Left": "window_move_left", "s-Left": "window_move_left",
-	"C-Right": "window_move_right", "M-Right": "window_move_right", "s-Right": "window_move_right",
+	"Up":    {CmdWindowMoveFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
+	"Down":  {CmdWindowMoveFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
+	"Left":  {CmdWindowMoveFineLeft, CmdTrinketCollapse, CmdTrinketItemLeft, CmdTrinketItemPrior},
+	"Right": {CmdWindowMoveFineRight, CmdTrinketExpand, CmdTrinketItemRight, CmdTrinketItemNext},
 
-	"C-S-Up": "window_size_up", "M-S-Up": "window_size_up", "S-s-Up": "window_size_up",
-	"C-S-Down": "window_size_down", "M-S-Down": "window_size_down", "S-s-Down": "window_size_down",
-	"C-S-Left": "window_size_left", "M-S-Left": "window_size_left", "S-s-Left": "window_size_left",
-	"C-S-Right": "window_size_right", "M-S-Right": "window_size_right", "S-s-Right": "window_size_right",
+	"S-Up":    {CmdWindowSizeFineUp, CmdTrinketSelUp},
+	"S-Down":  {CmdWindowSizeFineDown, CmdTrinketSelDown},
+	"S-Left":  {CmdWindowSizeFineLeft, CmdTrinketCollapse, CmdTrinketSelLeft},
+	"S-Right": {CmdWindowSizeFineRight, CmdTrinketExpand, CmdTrinketSelRight},
+
+	"Home":   {CmdTrinketBeg},
+	"End":    {CmdTrinketEnd},
+	"S-Home": {CmdTrinketSelBeg},
+	"S-End":  {CmdTrinketSelEnd},
+
+	"PageUp":   {CmdTrinketPagePrior},
+	"PageDown": {CmdTrinketPageNext},
+
+	// Editing, where a trinket holds text.
+	"Backspace": {CmdTrinketDelPrior, CmdTrinketEnclosing},
+	"Delete":    {CmdTrinketDelNext},
+	"^U":        {CmdTrinketDelLine},
+	"^A":        {CmdTrinketBeg},
+	"^E":        {CmdTrinketEnd},
+	"S-^A":      {CmdTrinketSelBeg},
+	"S-^E":      {CmdTrinketSelEnd},
+	"M-a":       {CmdTrinketSelectAll},
+
+	// Trees.
+	"Plus":     {CmdTrinketExpand},
+	"Minus":    {CmdTrinketCollapse},
+	"Asterisk": {CmdTrinketExpandAll},
+	"Slash":    {CmdTrinketCollapseAll},
+
+	// Dropping a combo box open.
+	"F4": {CmdTrinketOpen},
+
+	// The coarse window move and size, and the same step on a splitter, which
+	// is resizing something too.
+	"C-Up": {CmdWindowMoveUp, CmdTrinketScrollUp}, "M-Up": {CmdWindowMoveUp, CmdTrinketScrollUp, CmdTrinketOpen}, "s-Up": {CmdWindowMoveUp},
+	"C-Down": {CmdWindowMoveDown, CmdTrinketScrollDown}, "M-Down": {CmdWindowMoveDown, CmdTrinketScrollDown, CmdTrinketOpen}, "s-Down": {CmdWindowMoveDown},
+	"C-Left": {CmdWindowMoveLeft, CmdTrinketBeg}, "M-Left": {CmdWindowMoveLeft, CmdTrinketBeg}, "s-Left": {CmdWindowMoveLeft},
+	"C-Right": {CmdWindowMoveRight, CmdTrinketEnd}, "M-Right": {CmdWindowMoveRight, CmdTrinketEnd}, "s-Right": {CmdWindowMoveRight},
+
+	"C-S-Up": {CmdWindowSizeUp}, "M-S-Up": {CmdWindowSizeUp}, "S-s-Up": {CmdWindowSizeUp},
+	"C-S-Down": {CmdWindowSizeDown}, "M-S-Down": {CmdWindowSizeDown}, "S-s-Down": {CmdWindowSizeDown},
+	"C-S-Left": {CmdWindowSizeLeft}, "M-S-Left": {CmdWindowSizeLeft}, "S-s-Left": {CmdWindowSizeLeft},
+	"C-S-Right": {CmdWindowSizeRight}, "M-S-Right": {CmdWindowSizeRight}, "S-s-Right": {CmdWindowSizeRight},
+
+	"C-PageUp":   {CmdTrinketPagePrior},
+	"C-PageDown": {CmdTrinketPageNext},
 }
 
 // DefaultAcceleratorChord is the pattern menu accelerators are formed from
@@ -347,29 +424,23 @@ const (
 // a focused title bar still closes on M-F4.
 var stateCommands = map[UIState][]string{
 	StateNormal: {
-		"window_maximize_toggle",
-		"window_close",
-		"app_menu",
-		"window_next",
-		"window_prior",
-		"app_minimize",
-		"gui_scale_down",
-		"gui_scale_up",
-		"gui_scale_reset",
-		"focus_next",
-		"focus_prior",
-		"trinket_activate",
+		CmdWindowMaximizeToggle, CmdWindowClose, CmdAppMenu,
+		CmdWindowNext, CmdWindowPrior,
+		CmdWindowMDINext, CmdWindowMDIPrior,
+		CmdAppMinimize,
+		CmdGUIScaleDown, CmdGUIScaleUp, CmdGUIScaleReset,
+		CmdFocusNext, CmdFocusPrior,
 	},
 	StateTitleBarFocused: {
-		"window_cancel_resize",
-		"window_move_fine_up", "window_move_fine_down",
-		"window_move_fine_left", "window_move_fine_right",
-		"window_size_fine_up", "window_size_fine_down",
-		"window_size_fine_left", "window_size_fine_right",
-		"window_move_up", "window_move_down",
-		"window_move_left", "window_move_right",
-		"window_size_up", "window_size_down",
-		"window_size_left", "window_size_right",
+		CmdWindowCancelResize,
+		CmdWindowMoveFineUp, CmdWindowMoveFineDown,
+		CmdWindowMoveFineLeft, CmdWindowMoveFineRight,
+		CmdWindowSizeFineUp, CmdWindowSizeFineDown,
+		CmdWindowSizeFineLeft, CmdWindowSizeFineRight,
+		CmdWindowMoveUp, CmdWindowMoveDown,
+		CmdWindowMoveLeft, CmdWindowMoveRight,
+		CmdWindowSizeUp, CmdWindowSizeDown,
+		CmdWindowSizeLeft, CmdWindowSizeRight,
 	},
 }
 
