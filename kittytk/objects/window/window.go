@@ -2,7 +2,6 @@
 package window
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -75,6 +74,7 @@ const (
 // and optional Mac-like menu integration.
 type Window struct {
 	core.TrinketBase
+	core.TrinketKeys
 	mu sync.RWMutex
 
 	// Window properties
@@ -272,6 +272,24 @@ func NewWindow(title string) *Window {
 		maxHeight:   1<<30 - 1,
 	}
 	w.TrinketBase = *core.NewTrinketBase()
+	// A window's own vocabulary: the frame commands it always answers to, and
+	// the geometry family that belongs to a FOCUSED TITLE BAR -- sixteen
+	// bindings that exist in no other situation, which is why the title bar
+	// is a UI state rather than a trinket. Nothing here reaches the content;
+	// the focused trinket resolves its own keys against its own set.
+	w.SetCommands(
+		core.CmdWindowClose, core.CmdWindowMaximizeToggle, core.CmdAppMenu,
+		core.CmdFocusNext, core.CmdFocusPrior,
+		core.CmdTrinketActivate, core.CmdWindowCancelResize,
+		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
+		core.CmdWindowMoveFineLeft, core.CmdWindowMoveFineRight,
+		core.CmdWindowSizeFineUp, core.CmdWindowSizeFineDown,
+		core.CmdWindowSizeFineLeft, core.CmdWindowSizeFineRight,
+		core.CmdWindowMoveUp, core.CmdWindowMoveDown,
+		core.CmdWindowMoveLeft, core.CmdWindowMoveRight,
+		core.CmdWindowSizeUp, core.CmdWindowSizeDown,
+		core.CmdWindowSizeLeft, core.CmdWindowSizeRight,
+	)
 	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	w.focusManager = core.NewFocusManager(nil)
@@ -2752,7 +2770,7 @@ func (w *Window) performKeyboardBlur() {
 }
 
 // handleTitleBarKey handles keyboard input when title bar has focus.
-func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
+func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 	w.mu.RLock()
 	titleFocus := w.titleFocus
 	resizeEdges := w.resizeEdges
@@ -2762,22 +2780,8 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	metrics := w.frameCellMetrics()
 
 	// Handle navigation between title bar elements
-	switch event.Key {
-	case "Tab":
-		// Check if Shift is held - use same logic as S-Tab case
-		if event.Modifiers&core.ShiftModifier != 0 {
-			prev := w.prevTitleFocus(titleFocus)
-			if prev == titleFocus {
-				// At first title element, loop to content's last trinket
-				w.SetTitleFocus(TitleFocusNone)
-				if fm := w.FocusManager(); fm != nil {
-					fm.FocusLast()
-				}
-			} else {
-				w.SetTitleFocus(prev)
-			}
-			return true
-		}
+	switch cmd {
+	case core.CmdFocusNext:
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
@@ -2791,7 +2795,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "S-Tab", "Shift-Tab":
+	case core.CmdFocusPrior:
 		// Move to previous title element, or loop to content's last trinket
 		prev := w.prevTitleFocus(titleFocus)
 		if prev == titleFocus {
@@ -2805,7 +2809,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Escape":
+	case core.CmdWindowCancelResize:
 		// Exit title bar focus, return to content
 		w.SetTitleFocus(TitleFocusNone)
 		w.mu.Lock()
@@ -2816,7 +2820,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Activate focused button or confirm resize
 		switch titleFocus {
 		case TitleFocusClose:
@@ -2864,52 +2868,57 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	// Handle window movement and resizing when title has focus
 	if titleFocus == TitleFocusTitle {
 		bounds := w.Bounds()
-		hasShift := event.Modifiers&core.ShiftModifier != 0
-		hasCtrl := event.Modifiers&core.ControlModifier != 0
-		hasMeta := event.Modifiers&core.SuperModifier != 0
-		hasAlt := event.Modifiers&core.MegaModifier != 0
 
-		// Determine movement multiplier based on modifiers
-		// Alt/Meta/Ctrl increases horizontal by 10 chars, vertical by 4 lines
+		// The command says which direction, whether this moves or resizes,
+		// and how big the step is. This replaces a loop that peeled modifier
+		// prefixes off the key string in any order and then re-derived the
+		// same three facts from the leftovers -- a keymap answers all of it
+		// now, including for chords the peeler never knew about.
+		var key string
+		var resize, coarse bool
+		switch cmd {
+		case core.CmdWindowMoveFineLeft:
+			key = "Left"
+		case core.CmdWindowMoveFineRight:
+			key = "Right"
+		case core.CmdWindowMoveFineUp:
+			key = "Up"
+		case core.CmdWindowMoveFineDown:
+			key = "Down"
+		case core.CmdWindowMoveLeft:
+			key, coarse = "Left", true
+		case core.CmdWindowMoveRight:
+			key, coarse = "Right", true
+		case core.CmdWindowMoveUp:
+			key, coarse = "Up", true
+		case core.CmdWindowMoveDown:
+			key, coarse = "Down", true
+		case core.CmdWindowSizeFineLeft:
+			key, resize = "Left", true
+		case core.CmdWindowSizeFineRight:
+			key, resize = "Right", true
+		case core.CmdWindowSizeFineUp:
+			key, resize = "Up", true
+		case core.CmdWindowSizeFineDown:
+			key, resize = "Down", true
+		case core.CmdWindowSizeLeft:
+			key, resize, coarse = "Left", true, true
+		case core.CmdWindowSizeRight:
+			key, resize, coarse = "Right", true, true
+		case core.CmdWindowSizeUp:
+			key, resize, coarse = "Up", true, true
+		case core.CmdWindowSizeDown:
+			key, resize, coarse = "Down", true, true
+		default:
+			return false
+		}
+
+		// hasShift is what the bodies below call "this is a resize", which is
+		// what the shifted arrow always meant.
+		hasShift := resize
 		horizStep := metrics.CellWidth
 		vertStep := metrics.CellHeight
-		if hasMeta || hasAlt || hasCtrl {
-			horizStep = metrics.CellWidth * 10
-			vertStep = metrics.CellHeight * 4
-		}
-
-		// Normalize key names. Modifier prefixes can arrive in any order
-		// and in combination - the SDL backend emits arrows as e.g.
-		// "M-S-Left" (Alt+Shift), so stripping only the single leading
-		// prefix would leave "S-Left" and lose the resize. Peel every
-		// recognized prefix, whatever the order.
-		key := event.Key
-		for {
-			switch {
-			case strings.HasPrefix(key, "S-"):
-				hasShift = true
-				key = key[2:]
-			case strings.HasPrefix(key, "M-"), strings.HasPrefix(key, "A-"):
-				hasMeta = true
-				hasAlt = true
-				key = key[2:]
-			case strings.HasPrefix(key, "C-"):
-				hasCtrl = true
-				key = key[2:]
-			case strings.HasPrefix(key, "s-"):
-				hasMeta = true
-				key = key[2:]
-			default:
-			}
-			if !strings.HasPrefix(key, "S-") && !strings.HasPrefix(key, "M-") &&
-				!strings.HasPrefix(key, "A-") && !strings.HasPrefix(key, "C-") &&
-				!strings.HasPrefix(key, "s-") {
-				break
-			}
-		}
-		// Any large-step modifier (Alt/Meta/Ctrl) makes moves and resizes
-		// chunky.
-		if hasMeta || hasAlt || hasCtrl {
+		if coarse {
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
 		}
@@ -3112,29 +3121,6 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			}
 			return true
 
-		case "Enter", "Return", "KPEnter":
-			// Confirm resize - clear edges so next Shift+arrow starts fresh
-			// Also update resizeStartBounds to current bounds
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				w.resizeEdges = ResizeEdgeNone
-				w.resizeStartBounds = w.Bounds()
-			}
-			w.mu.Unlock()
-			return true
-
-		case "Escape", "Esc":
-			// Cancel resize - revert to bounds from when resize started
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				startBounds := w.resizeStartBounds
-				w.resizeEdges = ResizeEdgeNone
-				w.mu.Unlock()
-				w.requestKeyboardBounds(startBounds, false)
-			} else {
-				w.mu.Unlock()
-			}
-			return true
 		}
 	}
 
@@ -3373,8 +3359,14 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// The detached window's own menu bar owns keyboard navigation while it
 	// is focused (F10) or has a dropdown open, and F10 itself always goes
 	// to the bar so it can toggle that focus - matching the desktop bar.
+	// Resolved ONCE and used everywhere below: the menu key, the title bar's
+	// whole geometry model, Tab either way, and the frame commands. Feeding
+	// the sequence processor the same keystroke at each of those points would
+	// advance a chord's prefix once per check.
+	cmd := w.KeyCommand(event.Key)
+
 	if mb != nil {
-		menuActive := mb.HasFocus() || event.Key == "F10"
+		menuActive := mb.HasFocus() || cmd == core.CmdAppMenu
 		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
 			menuActive = true
 		}
@@ -3401,15 +3393,14 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// If title bar has focus, handle title bar keys
 	if titleFocus != TitleFocusNone {
-		if w.handleTitleBarKey(event) {
+		if w.handleTitleBarKey(event, cmd) {
 			return true
 		}
 	}
 
 	// Check if this is a Tab or Shift+Tab event
-	isShiftTab := event.Key == "S-Tab" || event.Key == "Shift-Tab" ||
-		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-	isTab := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
+	isShiftTab := cmd == core.CmdFocusPrior
+	isTab := cmd == core.CmdFocusNext
 
 	// For Tab/Shift+Tab, first give the focused trinket a chance to handle it.
 	// This is critical for containers like MDIPane that manage their own Tab navigation.
@@ -3472,11 +3463,11 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	}
 
 	// Handle window-specific keys
-	switch event.Key {
-	case "M-F4": // Alt+F4 - Close
+	switch cmd {
+	case core.CmdWindowClose:
 		w.Close()
 		return true
-	case "M-F10": // Alt+F10 - Maximize/Restore
+	case core.CmdWindowMaximizeToggle:
 		// Through the maximize-request handler when one is set, exactly as the
 		// titlebar button does: a torn/solo host maps maximize onto its OS
 		// window (zoom to the work area), and calling Maximize() directly here

@@ -10,7 +10,6 @@ import (
 	_ "image/png"  // wallpaper files
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,6 +96,7 @@ type ApplicationProvider interface {
 // managing multiple applications.
 type Desktop struct {
 	core.TrinketBase
+	core.TrinketKeys
 
 	// graphicalFrames reports whether the backend paints rounded
 	// window frames (core.RoundedRectDrawer); windows discover it via
@@ -355,6 +355,10 @@ func NewDesktop() *Desktop {
 		wallpaperChunkPx: 2,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
+	// The desktop itself claims only two: the key that summons the menu bar,
+	// and the one that dismisses it when the bar took focus without opening
+	// anything. Everything else belongs to a window or a trinket.
+	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel)
 	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
@@ -4559,8 +4563,9 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
-		// F10 toggles menu bar focus
-		if event.Key == "F10" {
+		cmd := d.KeyCommand(event.Key)
+		// The menu key summons the bar.
+		if cmd == core.CmdAppMenu {
 			// Deactivate the active window when invoking menu bar
 			if d.windowManager != nil && !d.menuBar.HasFocus() {
 				d.windowManager.DeactivateActiveWindow()
@@ -4568,18 +4573,19 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 			d.menuBar.HandleKeyPress(event)
 			return true
 		}
-		// Alt+letter (M-<letter>) for menu shortcuts
-		if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
-			if d.menuBar.HandleKeyPress(event) {
-				return true
-			}
+		// A formed chord accelerator. The bar compares the WHOLE formed
+		// sequence, so the mnemonic can sit anywhere in the pattern -- the
+		// old test here guessed at "M-" plus one letter and would have missed
+		// any other chord the keymap configured.
+		if d.menuBar.ActivateAcceleratorSequence(event.Key) {
+			return true
 		}
 		// If menu bar is active (menu open, or focused with accelerators showing), forward keys
 		if d.menuBar.ActiveMenu() != nil || (d.menuBar.HasFocus() && d.menuBar.AcceleratorsActive()) {
 			handled := d.menuBar.HandleKeyPress(event)
-			// If menu bar didn't handle Escape and has focus (no menu open),
-			// unfocus the menu bar
-			if !handled && event.Key == "Escape" && d.menuBar.HasFocus() {
+			// If the bar didn't handle the dismiss key and has focus (no menu
+			// open), unfocus the menu bar
+			if !handled && cmd == core.CmdTrinketCancel && d.menuBar.HasFocus() {
 				d.menuBar.CloseMenuAndUnfocus()
 				return true
 			}

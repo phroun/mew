@@ -6,11 +6,10 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// The SDL backend emits arrow keys with their modifier prefixes in a
-// fixed order (Alt, then Ctrl, then Shift), so Alt+Shift+Left arrives as
-// "M-S-Left" - the prefixes carried in the key string, not in the
-// Modifiers field. The titlebar key handler must peel every prefix,
-// whatever the order, so the combination still reads as a chunky resize.
+// Modifier prefixes are carried in the key string, and the canonical order
+// puts them in one arrangement whatever the backend - "M-S-Left" is Alt+Shift.
+// The keymap turns that whole string into window_size_left, a resize (Shift)
+// that is chunky (Alt), which is what this checks.
 func TestTitleKeyModifierOrderResize(t *testing.T) {
 	start := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100}
 
@@ -18,7 +17,7 @@ func TestTitleKeyModifierOrderResize(t *testing.T) {
 	chunky := NewWindow("chunky")
 	chunky.SetBounds(start)
 	chunky.SetTitleFocus(TitleFocusTitle)
-	chunky.handleTitleBarKey(core.KeyPressEvent{Key: "M-S-Left"})
+	titleKey(chunky, "M-S-Left")
 	got := chunky.Bounds()
 	if got == start {
 		t.Fatalf("M-S-Left did not resize the window (start %v)", start)
@@ -32,7 +31,7 @@ func TestTitleKeyModifierOrderResize(t *testing.T) {
 	single := NewWindow("single")
 	single.SetBounds(start)
 	single.SetTitleFocus(TitleFocusTitle)
-	single.handleTitleBarKey(core.KeyPressEvent{Key: "S-Left"})
+	titleKey(single, "S-Left")
 	singleDelta := single.Bounds().Width - start.Width
 	chunkyDelta := got.Width - start.Width
 	if singleDelta <= 0 {
@@ -61,7 +60,7 @@ func TestMaximizedKeyboardResizeShrinksInPlace(t *testing.T) {
 	maxed := w.Bounds()
 	w.SetTitleFocus(TitleFocusTitle)
 
-	w.handleTitleBarKey(core.KeyPressEvent{Key: "Left", Modifiers: core.ShiftModifier})
+	titleKey(w, "S-Left")
 
 	if w.IsMaximized() {
 		t.Error("Shift+Left should snap the window off maximized")
@@ -90,7 +89,7 @@ func TestMaximizedKeyboardMoveRestores(t *testing.T) {
 	m.MaximizeWindow(w)
 	w.SetTitleFocus(TitleFocusTitle)
 
-	w.handleTitleBarKey(core.KeyPressEvent{Key: "Left"})
+	titleKey(w, "Left")
 
 	if w.IsMaximized() {
 		t.Error("plain-arrow move should snap the window off maximized")
@@ -111,7 +110,7 @@ func TestKeyboardTopSnapMaximize(t *testing.T) {
 	m.AddWindow(atTop)
 	atTop.SetBounds(core.UnitRect{X: 100, Y: 0, Width: 200, Height: 100})
 	atTop.SetTitleFocus(TitleFocusTitle)
-	atTop.handleTitleBarKey(core.KeyPressEvent{Key: "Up"})
+	titleKey(atTop, "Up")
 	if !atTop.IsMaximized() {
 		t.Error("Up at the top edge should snap-maximize")
 	}
@@ -120,7 +119,7 @@ func TestKeyboardTopSnapMaximize(t *testing.T) {
 	m.AddWindow(mid)
 	mid.SetBounds(core.UnitRect{X: 100, Y: 200, Width: 200, Height: 100})
 	mid.SetTitleFocus(TitleFocusTitle)
-	mid.handleTitleBarKey(core.KeyPressEvent{Key: "Up"})
+	titleKey(mid, "Up")
 	if mid.IsMaximized() {
 		t.Error("Up from mid-screen should move, not maximize")
 	}

@@ -2772,13 +2772,13 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	}); ok && desktop != nil {
 		ctx := kc.KeyContext()
 		switch cmd := ctx.Resolve(event.Key); cmd {
-		case "window_next":
+		case core.CmdWindowNext:
 			m.CycleWindows(true)
 			return true
-		case "window_prior":
+		case core.CmdWindowPrior:
 			m.CycleWindows(false)
 			return true
-		case "app_menu", core.CommandAppAccelerator:
+		case core.CmdAppMenu, core.CommandAppAccelerator:
 			if kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
 				return true
 			}
