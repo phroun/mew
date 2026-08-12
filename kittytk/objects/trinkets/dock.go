@@ -20,6 +20,7 @@ type DockEntry struct {
 // It expands to multiple rows if needed and hides when empty.
 type DockRow struct {
 	core.TrinketBase
+	core.TrinketKeys
 
 	// Minimized window entries
 	entries []*DockEntry
@@ -45,6 +46,20 @@ func NewDockRow() *DockRow {
 		hoverIndex:    -1,
 	}
 	d.TrinketBase = *core.NewTrinketBase()
+	// A dock is a grid, so it means the two movement families SEPARATELY:
+	// left and right step one entry along the sequence, up and down cross a
+	// whole row. Both are declared, and each arrow reaches the one that points
+	// its way.
+	d.SetCommands(
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketItemUp, core.CmdTrinketItemDown,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketActivate,
+		// Tab walks the dock and hands off to the menu bar at either end,
+		// which is what focus_next/focus_prior mean here.
+		core.CmdFocusNext, core.CmdFocusPrior,
+	)
 	d.Init(d)
 	d.SetFocusPolicy(core.StrongFocus)
 	return d
@@ -315,22 +330,22 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	entriesPerRow := d.entriesPerRow()
 
-	switch event.Key {
-	case "Left":
+	switch d.KeyCommand(event.Key) {
+	case core.CmdTrinketItemLeft, core.CmdTrinketItemPrior:
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()
 		}
 		return true
 
-	case "Right":
+	case core.CmdTrinketItemRight, core.CmdTrinketItemNext:
 		if d.selectedIndex < len(d.entries)-1 {
 			d.selectedIndex++
 			d.Update()
 		}
 		return true
 
-	case "Up":
+	case core.CmdTrinketItemUp:
 		// Move to same column in previous row
 		if d.selectedIndex >= entriesPerRow {
 			d.selectedIndex -= entriesPerRow
@@ -338,7 +353,7 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemDown:
 		// Move to same column in next row
 		newIndex := d.selectedIndex + entriesPerRow
 		if newIndex < len(d.entries) {
@@ -347,37 +362,37 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Tab":
-		if event.Modifiers&core.ShiftModifier != 0 {
-			// Shift+Tab: move to previous item, or to menu bar if at start
-			if d.selectedIndex > 0 {
-				d.selectedIndex--
-				d.Update()
-			} else if d.onFocusMenuBar != nil {
-				d.onFocusMenuBar()
-			}
-		} else {
-			// Tab: move to next item, or to menu bar if at end
-			if d.selectedIndex < len(d.entries)-1 {
-				d.selectedIndex++
-				d.Update()
-			} else if d.onFocusMenuBar != nil {
-				d.onFocusMenuBar()
-			}
+	case core.CmdFocusPrior:
+		// Move to previous item, or to the menu bar if already at the start.
+		if d.selectedIndex > 0 {
+			d.selectedIndex--
+			d.Update()
+		} else if d.onFocusMenuBar != nil {
+			d.onFocusMenuBar()
 		}
 		return true
 
-	case "Home":
+	case core.CmdFocusNext:
+		// Move to next item, or to the menu bar if already at the end.
+		if d.selectedIndex < len(d.entries)-1 {
+			d.selectedIndex++
+			d.Update()
+		} else if d.onFocusMenuBar != nil {
+			d.onFocusMenuBar()
+		}
+		return true
+
+	case core.CmdTrinketBeg:
 		d.selectedIndex = 0
 		d.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		d.selectedIndex = len(d.entries) - 1
 		d.Update()
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Activate selected entry
 		if d.selectedIndex >= 0 && d.selectedIndex < len(d.entries) {
 			entry := d.entries[d.selectedIndex]

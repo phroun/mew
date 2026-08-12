@@ -114,6 +114,10 @@ func NewComboBox() *ComboBox {
 		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
 		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
 		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		// Only the dropped-open popup answers to these; the closed box has
+		// no case for them and lets them fall through as it always did.
+		core.CmdTrinketCancel,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
 	)
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
@@ -1673,14 +1677,14 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		return c.currentIndex
 	}
 
-	switch event.Key {
-	case "Escape":
+	switch c.KeyCommand(event.Key) {
+	case core.CmdTrinketCancel:
 		// Cancel - restore original and close
 		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Confirm selection - use hover index if set
 		selectedIndex := getEffectiveIndex()
 		if selectedIndex >= 0 {
@@ -1692,7 +1696,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.HidePopup()
 		return true
 
-	case "Up":
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		idx := getEffectiveIndex()
 		if idx > 0 {
 			c.hoverIndex = idx - 1
@@ -1702,7 +1706,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		idx := getEffectiveIndex()
 		if idx < len(c.items)-1 {
 			c.hoverIndex = idx + 1
@@ -1712,7 +1716,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		idx := getEffectiveIndex()
 		newIndex := idx - c.effectiveMaxVisible()
 		if newIndex < 0 {
@@ -1724,7 +1728,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.Update()
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		idx := getEffectiveIndex()
 		newIndex := idx + c.effectiveMaxVisible()
 		if newIndex >= len(c.items) {
@@ -1736,14 +1740,14 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.Update()
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		c.hoverIndex = 0
 		c.scrollOffset = 0
 		c.announceHoverItem()
 		c.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		c.hoverIndex = len(c.items) - 1
 		c.ensureVisible(len(c.items) - 1)
 		c.announceHoverItem()

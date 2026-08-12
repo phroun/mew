@@ -314,8 +314,13 @@ var defaultBindings = map[string][]string{
 	// no modifier at all. A title bar offers both families and takes the move,
 	// since that is listed first; a splitter offers only the size family and
 	// so is the only place the second meaning is ever reached.
-	"Up":   {CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
-	"Down": {CmdWindowMoveFineDown, CmdWindowSizeFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
+	// Each arrow names its own direction first and the sequence synonym
+	// second. A list means the two identically and shares one case, so the
+	// order costs it nothing; a GRID means them separately -- the dock's Up
+	// crosses a row where its Left steps one entry -- and there the arrow that
+	// points that way has to win.
+	"Up":   {CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemUp, CmdTrinketItemPrior},
+	"Down": {CmdWindowMoveFineDown, CmdWindowSizeFineDown, CmdTrinketItemDown, CmdTrinketItemNext},
 	// Collapse and expand belong to Minus and Plus alone. The arrows are the
 	// generic movement, which a tree happens to implement as
 	// collapse-or-walk-up -- so there is nothing here for the two to fight
