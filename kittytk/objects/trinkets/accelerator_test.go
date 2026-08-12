@@ -109,3 +109,133 @@ func lowerRune(r rune) string {
 	}
 	return string(r)
 }
+
+// candsOf builds one level's worth of candidate lists from raw titles.
+func candsOf(titles ...string) [][]acceleratorCandidate {
+	out := make([][]acceleratorCandidate, len(titles))
+	for i, t := range titles {
+		_, out[i] = parseAcceleratorTitle(t)
+	}
+	return out
+}
+
+// letters renders an assignment compactly: the letter, uppercased when it is
+// active, "-" when there is no underline at all.
+func letters(as []acceleratorAssignment) string {
+	s := ""
+	for _, a := range as {
+		switch {
+		case a.Char == 0:
+			s += "-"
+		case a.Active:
+			s += string(a.Char - 32)
+		default:
+			s += string(a.Char)
+		}
+	}
+	return s
+}
+
+// Four siblings all offering the same three letters take them in turn, and the
+// fourth is left without one.
+func TestAssignGreedyAcrossSiblings(t *testing.T) {
+	got := letters(assignAccelerators(candsOf("&A&B&C", "&A&B&C", "&A&B&C", "&A&B&C"), nil))
+	if got != "ABC-" {
+		t.Errorf("got %q, want %q", got, "ABC-")
+	}
+}
+
+// The ordinary case: distinct first letters, everything lit.
+func TestAssignDistinctLetters(t *testing.T) {
+	got := letters(assignAccelerators(candsOf("&File", "&Edit", "&View", "&Help"), nil))
+	if got != "FEVH" {
+		t.Errorf("got %q, want %q", got, "FEVH")
+	}
+}
+
+// A backup letter earns its keep against the CONTEXT, not just against
+// siblings: with the chord h would form already claimed, Help falls to p and
+// stays reachable.
+func TestAssignFallsToBackupOnContextClash(t *testing.T) {
+	clash := func(r rune) bool { return r == 'h' }
+	got := letters(assignAccelerators(candsOf("&File", "&Hel&p"), clash))
+	if got != "FP" {
+		t.Errorf("got %q, want %q", got, "FP")
+	}
+}
+
+// With no backup to fall to, the letter is still this item's — shown muted
+// rather than surrendered, so it comes back when the clash goes away.
+func TestAssignMutesWhenNoBackup(t *testing.T) {
+	clash := func(r rune) bool { return r == 'h' }
+	got := letters(assignAccelerators(candsOf("&File", "&Help"), clash))
+	if got != "Fh" {
+		t.Errorf("got %q, want %q", got, "Fh")
+	}
+	// ...and the same list un-mutes on its own once nothing claims the chord.
+	if got := letters(assignAccelerators(candsOf("&File", "&Help"), nil)); got != "FH" {
+		t.Errorf("with the clash gone: got %q, want %q", got, "FH")
+	}
+}
+
+// The two ways of missing out are different and must look different: a letter
+// a sibling took is not yours to advertise (no underline), while a letter the
+// context claimed still is (muted underline).
+func TestAssignDistinguishesSiblingFromContext(t *testing.T) {
+	// "Help" wants h; "History" wants h too and has no backup.
+	got := letters(assignAccelerators(candsOf("&Help", "&History"), nil))
+	if got != "H-" {
+		t.Errorf("sibling-consumed: got %q, want %q", got, "H-")
+	}
+	// Now the context owns h, so neither can use it — but the first still
+	// displays it, muted, and the second is still not entitled to it.
+	clash := func(r rune) bool { return r == 'h' }
+	if got := letters(assignAccelerators(candsOf("&Help", "&History"), clash)); got != "h-" {
+		t.Errorf("context-clashed: got %q, want %q", got, "h-")
+	}
+}
+
+// A muted letter is still claimed, so a later sibling cannot take it out from
+// under the item displaying it. Without that the display would reshuffle every
+// time an unrelated chord was claimed or released.
+func TestAssignMutedLetterStaysClaimed(t *testing.T) {
+	clash := func(r rune) bool { return r == 'h' }
+	// Help mutes on h; History must not then be handed h.
+	got := letters(assignAccelerators(candsOf("&Help", "&Histor&y"), clash))
+	if got != "hY" {
+		t.Errorf("got %q, want %q", got, "hY")
+	}
+}
+
+// A mixed miss: the first candidate belongs to a sibling and the second is
+// claimed by the context, so the muted underline goes on the second — the one
+// that would have worked.
+func TestAssignMutesTheLetterThatWouldHaveWorked(t *testing.T) {
+	clash := func(r rune) bool { return r == 'b' }
+	got := letters(assignAccelerators(candsOf("&A", "&A&B"), clash))
+	if got != "Ab" {
+		t.Errorf("got %q, want %q", got, "Ab")
+	}
+}
+
+// A title with no markup takes part in nothing and shows nothing.
+func TestAssignSkipsUnmarkedTitles(t *testing.T) {
+	got := letters(assignAccelerators(candsOf("&File", "Untitled", "&Edit"), nil))
+	if got != "F-E" {
+		t.Errorf("got %q, want %q", got, "F-E")
+	}
+}
+
+// Positions come back with the letter, so the painter knows where to underline
+// even when a backup moved it.
+func TestAssignReportsPosition(t *testing.T) {
+	clash := func(r rune) bool { return r == 'h' }
+	as := assignAccelerators(candsOf("&Hel&p"), clash)
+	if as[0].Char != 'p' || as[0].Pos != 3 || !as[0].Active {
+		t.Errorf("got %+v, want p at 3, active", as[0])
+	}
+	none := assignAccelerators(candsOf("&A", "&A"), nil)
+	if none[1].Char != 0 || none[1].Pos != -1 {
+		t.Errorf("no-underline case = %+v, want zero char and -1 pos", none[1])
+	}
+}

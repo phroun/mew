@@ -13,8 +13,8 @@ func TestArabicRenderContextCarriesMarks(t *testing.T) {
 	const fatha = 'َ'
 	base := 'ب' // beh (dual-joining), form irrelevant to the window's seq
 	cases := []struct {
-		name           string
-		kashL, kashR   bool
+		name         string
+		kashL, kashR bool
 	}{
 		{"isolated", false, false},
 		{"initial", true, false},
