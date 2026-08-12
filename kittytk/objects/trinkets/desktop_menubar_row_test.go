@@ -177,3 +177,93 @@ func TestShowDesktopDuringTheLoanIsHonoured(t *testing.T) {
 		t.Error("the loan was not given back")
 	}
 }
+
+// Clicking off an open dropdown, back into the app behind it, gives the row
+// back. The click closes the menu by a route that does NOT unfocus the bar --
+// so the bar read as focused while the window had the keyboard, and the row
+// stayed out with it. The bar is on screen over an app that has the keyboard
+// back, which is exactly the thing the loan is supposed to avoid.
+func TestClickingBackIntoTheAppGivesTheRowBack(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		open func(d *Desktop)
+	}{
+		{"dropdown", func(d *Desktop) { d.menuBar.OpenMenu(1) }},
+		{"submenu", func(d *Desktop) {
+			parent := d.menuBar.menus[1]
+			child := NewMenu("More")
+			child.AddItem(NewMenuItem("Deep"))
+			item := NewMenuItem("Recent")
+			item.SubMenu = child
+			parent.AddItem(item)
+			d.menuBar.OpenMenu(1)
+			parent.openSubMenu(item)
+		}},
+	} {
+		d, win := soleAppDesktop(t)
+		before := win.Bounds()
+
+		d.toggleMenuBarFromKey() // the menu key: bar takes the keyboard
+		c.open(d)
+		if !d.menuBarRowLent {
+			t.Fatalf("%s: precondition, the row should be on loan", c.name)
+		}
+
+		// A click in the app behind the menu.
+		d.dispatchEvent(core.MousePressEvent{X: 100, Y: 300, Button: core.LeftButton})
+
+		if d.menuBarRowLent {
+			t.Errorf("%s: the row stayed out after the click", c.name)
+		}
+		if d.menuBarShown() {
+			t.Errorf("%s: the bar is still on screen", c.name)
+		}
+		if got := win.Bounds(); got != before {
+			t.Errorf("%s: the app came back as %v, want %v", c.name, got, before)
+		}
+	}
+}
+
+// The bar KEEPS the row while it genuinely holds the keyboard: closing a
+// dropdown with the bar still focused and no window active is not letting go.
+func TestClosingADropdownKeepsTheRowWhileTheBarHoldsFocus(t *testing.T) {
+	d, _ := soleAppDesktop(t)
+	d.toggleMenuBarFromKey()
+	d.menuBar.OpenMenu(1)
+	d.menuBar.CloseMenu()
+
+	d.syncMenuBarRow()
+
+	if !d.menuBarRowLent {
+		t.Error("the row was taken back while the bar still had the keyboard")
+	}
+	if !d.menuBarShown() {
+		t.Error("the focused bar lost its row")
+	}
+}
+
+// A torn window that has yielded OS focus to the desktop stays QUASI-active --
+// still lit -- while the menu bar holds the keyboard. That is a legitimate
+// pairing, so the row must not be taken back for it. Quasi-active is a paint
+// state and nothing more: it leaves IsActive alone and never reaches the
+// manager, which is what deactivating cleared.
+func TestQuasiActiveWindowDoesNotEndTheLoan(t *testing.T) {
+	d, win := soleAppDesktop(t)
+	d.toggleMenuBarFromKey()
+	if !d.menuBarRowLent {
+		t.Fatal("precondition: the row should be on loan")
+	}
+	win.SetQuasiActive(true)
+	if !win.IsQuasiActive() {
+		t.Fatal("precondition: the window should be quasi-active")
+	}
+	if win.IsActive() {
+		t.Error("quasi-active must not make a window read as active")
+	}
+
+	d.syncMenuBarRow()
+
+	if !d.menuBarRowLent {
+		t.Error("a quasi-active window took the row from a bar that holds the keyboard")
+	}
+}

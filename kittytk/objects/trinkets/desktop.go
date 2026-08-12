@@ -1669,6 +1669,44 @@ func (d *Desktop) menuBarShown() bool {
 	return !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
 }
 
+// syncMenuBarRow gives a borrowed row back when the menu system is no longer
+// holding the keyboard.
+//
+// A click landing in a window closes the dropdown through CloseActiveMenu,
+// which is the window manager saying "get the menu out of the way before I
+// hand this click on". It closes the menu and nothing else -- the bar keeps
+// focus. So the bar read as focused while the window had the keyboard, and
+// the row stayed out with it: a menu bar on screen over an app that had the
+// keyboard back, which is the one thing the loan exists to avoid.
+//
+// The bar takes the keyboard by DEACTIVATING the active window, so a focused
+// bar with a window active is not really holding anything. Asking that
+// question here, where events land, means no dismissal route has to remember
+// to unfocus -- including any added later.
+//
+// The question is asked of the MANAGER's active window, which deactivating
+// cleared. A torn window that yielded OS focus to the desktop stays lit while
+// the bar holds the keyboard -- but that is quasi-active, a PAINT state
+// (renderActive) that touches neither IsActive nor the manager, so a
+// legitimately lit window cannot take the row back.
+func (d *Desktop) syncMenuBarRow() {
+	if d.menuBar == nil || !d.menuBarRowLent {
+		return
+	}
+	if d.menuBar.ActiveMenu() != nil {
+		return // a dropdown is still down: the bar has it
+	}
+	if d.windowManager == nil || d.windowManager.ActiveWindow() == nil {
+		return // nothing else has the keyboard, so the bar may keep it
+	}
+	// Unfocus rather than just handing the row back, so the bar's own state
+	// agrees with the screen: CloseMenuWithoutRestore leaves the window that
+	// took the keyboard in front, which is where the user just clicked.
+	d.menuBar.CloseMenuWithoutRestore()
+	// ...and if that route left the row out anyway, take it back regardless.
+	d.lendMenuBarRow(false)
+}
+
 // lendMenuBarRow gives the menu bar the top row it does not normally get on a
 // chrome-free single-app screen, and takes it back again.
 //
@@ -3490,6 +3528,10 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 	if d.filterEvent(event) {
 		return true
 	}
+
+	// A borrowed menu-bar row is given back as soon as the bar stops holding
+	// the keyboard, whatever route let go of it (see syncMenuBarRow).
+	defer d.syncMenuBarRow()
 
 	// Handle event based on type
 	switch e := event.(type) {
