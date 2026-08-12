@@ -6,9 +6,9 @@ import "testing"
 // this, which one do I show?" has an answer: the newest. A host that declares
 // its own spelling outranks the table it overlays, without unbinding anything.
 func TestNewestBindingIsTheOneShown(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{
-		"^Q":   {"app_quit"},
-		"M-F4": {"app_quit"},
+	r := NewKeyRegistry("test", []Binding{
+		{"M-F4", []string{"app_quit"}},
+		{"^Q", []string{"app_quit"}},
 	})
 
 	first := r.KeyForCommand("app_quit")
@@ -26,21 +26,50 @@ func TestNewestBindingIsTheOneShown(t *testing.T) {
 	}
 }
 
-// The serials of a table built from a Go map are arbitrary but STABLE: a map
-// has no order, so the registry imposes one rather than letting what a menu
-// advertises change between runs.
-func TestRegistryOrderIsStableAcrossBuilds(t *testing.T) {
+// A keymap is a LIST, and the order it is written in is part of what it says:
+// among several keys that mean one command, the last one written is the one
+// advertised for it. That is the whole reason it is not a map.
+func TestDeclarationOrderDecidesWhatIsShown(t *testing.T) {
+	table := []Binding{
+		{"C-F4", []string{"window_close"}},
+		{"^F4", []string{"window_close"}},
+		{"^W", []string{"window_close"}},
+	}
+	for i := 0; i < 25; i++ { // nothing here may depend on map iteration
+		if got := NewKeyRegistry("test", table).KeyForCommand("window_close"); got != "^W" {
+			t.Fatalf("build %d shows %q, want the last-written ^W", i, got)
+		}
+	}
+
+	// Written the other way round, the other one is advertised. Nothing about
+	// what the keys DO has changed - both still close the window.
+	reversed := []Binding{
+		{"^W", []string{"window_close"}},
+		{"C-F4", []string{"window_close"}},
+	}
+	r := NewKeyRegistry("test", reversed)
+	if got := r.KeyForCommand("window_close"); got != "C-F4" {
+		t.Errorf("KeyForCommand = %q, want C-F4 - it is written last here", got)
+	}
+	if keys := r.KeysFor("window_close"); len(keys) != 2 {
+		t.Errorf("KeysFor = %v, want both keys still bound", keys)
+	}
+}
+
+// A table built from an unordered map has no order to honor, so the registry
+// imposes one rather than letting what a menu advertises change between runs.
+func TestMapBuiltRegistryIsStableAcrossBuilds(t *testing.T) {
 	table := map[string][]string{
 		"^W":   {"window_close"},
 		"^F4":  {"window_close"},
 		"C-F4": {"window_close"},
 	}
-	want := NewKeyRegistry("test", table).KeyForCommand("window_close")
+	want := NewKeyRegistryFromMap("test", table).KeyForCommand("window_close")
 	if want == "" {
 		t.Fatal("nothing was bound")
 	}
 	for i := 0; i < 25; i++ { // map iteration order varies; the answer must not
-		if got := NewKeyRegistry("test", table).KeyForCommand("window_close"); got != want {
+		if got := NewKeyRegistryFromMap("test", table).KeyForCommand("window_close"); got != want {
 			t.Fatalf("build %d gave %q, want %q every time", i, got, want)
 		}
 	}
@@ -49,7 +78,7 @@ func TestRegistryOrderIsStableAcrossBuilds(t *testing.T) {
 // Bind REPLACES, and a replacement is a new binding: it takes the newest
 // serial, so rebinding a key is also declaring how it should be advertised.
 func TestBindTakesTheNewestSerial(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{"^Q": {"app_quit"}})
+	r := NewKeyRegistry("test", []Binding{{"^Q", []string{"app_quit"}}})
 	r.AddBinding("s-q", "app_quit")
 	if got := r.KeyForCommand("app_quit"); got != "s-q" {
 		t.Fatalf("KeyForCommand = %q, want s-q", got)
@@ -66,24 +95,19 @@ func TestBindTakesTheNewestSerial(t *testing.T) {
 // ALSO does something is not saying it should be advertised. Prefer is how a
 // caller says the second thing.
 func TestPreferPromotesWithoutRebinding(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{
-		"^X":  {"trinket_cut"},
-		"s-x": {"trinket_cut"},
+	r := NewKeyRegistry("test", []Binding{
+		{"s-x", []string{"trinket_cut"}},
+		{"^X", []string{"trinket_cut"}}, // written last, so shown
 	})
-	shown := r.KeyForCommand("trinket_cut")
-	other := "^X"
-	if shown == "^X" {
-		other = "s-x"
+
+	r.AddBinding("s-x", "trinket_cut") // already bound: nothing moves
+	if got := r.KeyForCommand("trinket_cut"); got != "^X" {
+		t.Errorf("AddBinding moved the order: %q, want ^X", got)
 	}
 
-	r.AddBinding(other, "trinket_cut") // already bound: nothing moves
-	if got := r.KeyForCommand("trinket_cut"); got != shown {
-		t.Errorf("AddBinding moved the order: %q, want %q", got, shown)
-	}
-
-	r.Prefer(other, "trinket_cut") // "advertise THIS one"
-	if got := r.KeyForCommand("trinket_cut"); got != other {
-		t.Errorf("Prefer did not promote: %q, want %q", got, other)
+	r.Prefer("s-x", "trinket_cut") // a macOS host: "advertise THIS one"
+	if got := r.KeyForCommand("trinket_cut"); got != "s-x" {
+		t.Errorf("Prefer did not promote: %q, want s-x", got)
 	}
 	if keys := r.KeysFor("trinket_cut"); len(keys) != 2 {
 		t.Errorf("Prefer bound an extra key: %v", keys)
@@ -93,9 +117,9 @@ func TestPreferPromotesWithoutRebinding(t *testing.T) {
 // A context answers the same question narrowed to what the situation OFFERS: a
 // menu never advertises a key that would do nothing here.
 func TestContextShowsOnlyWhatItOffers(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{
-		"^W":   {"window_close"},
-		"M-F4": {"app_quit"},
+	r := NewKeyRegistry("test", []Binding{
+		{"^W", []string{"window_close"}},
+		{"M-F4", []string{"app_quit"}},
 	})
 
 	ctx := r.BuildContext([]string{"window_close"})
@@ -112,10 +136,10 @@ func TestContextShowsOnlyWhatItOffers(t *testing.T) {
 // "Up" nudges a window with a title bar focused and steps a list otherwise;
 // only one of those is on offer at a time, and only that one may be shown.
 func TestContextIgnoresAKeysOtherMeanings(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{
-		"Up":    {"window_move_fine_up", "trinket_item_up"},
-		"C-Up":  {"trinket_item_up"},
-		"S-Tab": {"focus_prior"},
+	r := NewKeyRegistry("test", []Binding{
+		{"C-Up", []string{"trinket_item_up"}},
+		{"Up", []string{"window_move_fine_up", "trinket_item_up"}},
+		{"S-Tab", []string{"focus_prior"}},
 	})
 
 	// A title bar: Up means moving the window, so the list command has to fall
@@ -139,7 +163,7 @@ func TestContextIgnoresAKeysOtherMeanings(t *testing.T) {
 // The context carries the registry's order, so the newest binding wins there
 // too rather than the answer changing when a context happens to be rebuilt.
 func TestContextKeepsRegistrationOrder(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{"^Q": {"app_quit"}})
+	r := NewKeyRegistry("test", []Binding{{"^Q", []string{"app_quit"}}})
 	r.AddBinding("s-q", "app_quit")
 
 	ctx := r.BuildContext([]string{"app_quit"})
@@ -154,7 +178,7 @@ func TestContextKeepsRegistrationOrder(t *testing.T) {
 // An accelerator formed into a context is the newest thing in the room, and
 // does not disturb what the configured bindings advertise.
 func TestFormedAcceleratorsDoNotDisturbTheOrder(t *testing.T) {
-	r := NewKeyRegistry("test", map[string][]string{"^Q": {"app_quit"}})
+	r := NewKeyRegistry("test", []Binding{{"^Q", []string{"app_quit"}}})
 	ctx := r.BuildContext([]string{"app_quit"})
 
 	ctx.Add("M-h", CommandAppAccelerator)

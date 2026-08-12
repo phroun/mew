@@ -42,7 +42,7 @@ func TestRealClashStillMutesAnAccelerator(t *testing.T) {
 	mb.AddMenu(NewMenu("&Help"))
 	mb.SetAcceleratorChord("M-*")
 	// A registry where M-h means something the situation offers.
-	r := core.NewKeyRegistry("clash", map[string][]string{
+	r := core.NewKeyRegistryFromMap("clash", map[string][]string{
 		"M-h": {core.CmdAppMinimize},
 	})
 	mb.SetKeyContext(r.BuildContext([]string{core.CmdAppMinimize}))

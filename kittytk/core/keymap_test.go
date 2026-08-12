@@ -3,7 +3,7 @@ package core
 import "testing"
 
 func demoRegistry() *KeyRegistry {
-	return NewKeyRegistry("default", map[string][]string{
+	return NewKeyRegistryFromMap("default", map[string][]string{
 		"M-F4":  {"window_close"},
 		"C-Up":  {"window_move_up"},
 		"M-Up":  {"window_move_up"},
@@ -311,7 +311,7 @@ func TestStatesCompound(t *testing.T) {
 // pending prefix is read off the processor before the key is fed to it, so the
 // sequence is reassembled at the moment it completes.
 func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
-	r := NewKeyRegistry("t", map[string][]string{
+	r := NewKeyRegistryFromMap("t", map[string][]string{
 		"M-h":        {CommandAppAccelerator},
 		"^X h Return": {CommandAppAccelerator},
 		"^X p Return": {CommandAppAccelerator},
