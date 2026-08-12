@@ -239,7 +239,11 @@ type Window struct {
 	hoveredButton       TitleButton // Titlebar button under the pointer (plain hover)
 
 	// Title bar keyboard focus
-	titleFocus        TitleFocus    // Which title bar element has keyboard focus
+	titleFocus TitleFocus // Which title bar element has keyboard focus
+	// keyContext is what this window's keyboard currently offers, rebuilt when
+	// the UI state changes (see refreshKeyContext). Held per window so a
+	// change here cannot stale another window's.
+	keyContext        *core.KeyContext
 	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
 	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
 
@@ -934,6 +938,10 @@ func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 	w.mu.Unlock()
 	if mb != nil {
 		mb.SetParent(w)
+		// A solo or torn-off window carries its own bar, so it forms its own
+		// accelerators, against its own context. The desktop's bar does the
+		// same for the desktop; neither has to know about the other.
+		w.refreshKeyContext()
 		// Tab out of this bar into the window's own focus chain. The desktop's
 		// bar hands Tab to the dock; a window's bar has no dock beside it, so
 		// without this the key fell through to the focused trinket and a
@@ -2665,11 +2673,18 @@ func (w *Window) SetTitleFocus(focus TitleFocus) {
 	w.mu.Lock()
 	oldFocus := w.titleFocus
 	w.titleFocus = focus
+	stateChanged := (oldFocus == TitleFocusTitle) != (focus == TitleFocusTitle)
 	if focus == TitleFocusNone {
 		w.resizeEdges = ResizeEdgeNone // Clear resize state when leaving title bar
 	}
 	title := w.title
 	w.mu.Unlock()
+
+	// Entering or leaving the title bar changes which commands exist, so the
+	// context is rebuilt and the bar re-forms its accelerators against it.
+	if stateChanged {
+		w.refreshKeyContext()
+	}
 
 	// Announce titlebar element change for accessibility
 	if focus != oldFocus && focus != TitleFocusNone {
@@ -3891,4 +3906,52 @@ func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	local.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
 	local.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 	return handler.HandleMouseWheel(local)
+}
+
+// keyContextConsumer is a menu bar that forms accelerators. Declared
+// structurally so a window need not import the trinket package to hand its bar
+// a context.
+type keyContextConsumer interface {
+	SetAcceleratorChord(string)
+	SetKeyContext(*core.KeyContext)
+}
+
+// windowUIState reports which situation this window's keyboard is in. A title
+// bar is a MODE of the window rather than a trinket with focus, which is why
+// the state and not the focus chain is what a context is keyed on.
+func (w *Window) windowUIState() core.UIState {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.titleFocus == TitleFocusTitle {
+		return core.StateTitleBarFocused
+	}
+	return core.StateNormal
+}
+
+// refreshKeyContext rebuilds this window's context for its current state and
+// hands it to the window's own menu bar, if it has one.
+//
+// A window builds its own rather than sharing the desktop's, so a change here
+// cannot stale anything over there: the commonest structural event of all --
+// focus moving between windows -- costs no rebuild at all, because each
+// window's context is already built and still valid.
+func (w *Window) refreshKeyContext() {
+	ctx := core.DefaultKeyRegistry().BuildStateContext(w.windowUIState())
+
+	w.mu.Lock()
+	w.keyContext = ctx
+	mb := w.menuBar
+	w.mu.Unlock()
+
+	if c, ok := mb.(keyContextConsumer); ok {
+		c.SetAcceleratorChord(core.AcceleratorChord())
+		c.SetKeyContext(ctx)
+	}
+}
+
+// KeyContext returns the set of actions this window currently offers.
+func (w *Window) KeyContext() *core.KeyContext {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.keyContext
 }
