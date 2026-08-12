@@ -364,3 +364,67 @@ func TestMenuBarSiblingConsumedShowsNothing(t *testing.T) {
 		t.Errorf("History kept %q; with no letter of its own it should have none", history.acceleratorChar)
 	}
 }
+
+// A tree view separates two pairs the vocabulary could easily have merged.
+//
+// Enter begins the row edit; Space activates, which for a tree means expanding
+// or collapsing the branch — Space deliberately refuses to begin a text edit.
+// And the arrows are the generic movement, which a tree implements as
+// collapse-or-walk-up, while Minus and Plus collapse and expand WITHOUT
+// walking. One command each, four distinct behaviours.
+func TestTreeViewSeparatesEditFromActivateAndCollapseFromMovement(t *testing.T) {
+	tv := NewTreeView()
+	for key, want := range map[string]string{
+		"Enter": core.CmdTrinketEdit,
+		"Space": core.CmdTrinketActivate,
+		"Left":  core.CmdTrinketItemLeft,
+		"Right": core.CmdTrinketItemRight,
+		"Minus": core.CmdTrinketCollapse,
+		"Plus":  core.CmdTrinketExpand,
+	} {
+		tv.AbandonKeySequence()
+		if got := tv.KeyCommand(key); got != want {
+			t.Errorf("%s -> %q, want %q", key, got, want)
+		}
+	}
+}
+
+// A button offers no edit, so Enter falls through to activate there — the same
+// key, a different meaning, decided by what the trinket can do.
+func TestEnterEditsOrActivatesByTrinket(t *testing.T) {
+	b := NewButton("ok")
+	if got := b.KeyCommand("Enter"); got != core.CmdTrinketActivate {
+		t.Errorf("button Enter -> %q, want %q", got, core.CmdTrinketActivate)
+	}
+	tv := NewTreeView()
+	if got := tv.KeyCommand("Enter"); got != core.CmdTrinketEdit {
+		t.Errorf("tree Enter -> %q, want %q", got, core.CmdTrinketEdit)
+	}
+}
+
+// A left that never collapses. Unbound by default — the arrows are the generic
+// movement and a tree spends them on collapse-or-walk-up — so these exist to
+// be mapped by a keymap that would rather separate the two.
+func TestTreeViewColumnMovementNeverCollapses(t *testing.T) {
+	core.DefaultKeyRegistry().Bind("C-Left", core.CmdTrinketColumnLeft)
+	core.DefaultKeyRegistry().Bind("C-Right", core.CmdTrinketColumnRight)
+	defer func() {
+		core.DefaultKeyRegistry().Bind("C-Left", core.CmdWindowMoveLeft)
+		core.DefaultKeyRegistry().Bind("C-Right", core.CmdWindowMoveRight)
+	}()
+
+	tv := NewTreeView()
+	if got := tv.KeyCommand("C-Left"); got != core.CmdTrinketColumnLeft {
+		t.Errorf("C-Left -> %q, want %q", got, core.CmdTrinketColumnLeft)
+	}
+	tv.AbandonKeySequence()
+	if got := tv.KeyCommand("C-Right"); got != core.CmdTrinketColumnRight {
+		t.Errorf("C-Right -> %q, want %q", got, core.CmdTrinketColumnRight)
+	}
+
+	// With fewer than two editable columns there is nowhere to go, and the
+	// key is declined rather than silently swallowed.
+	if tv.moveEnterTargetColumn(1) {
+		t.Error("a tree with no editable columns reported a column move")
+	}
+}

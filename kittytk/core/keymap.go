@@ -302,19 +302,26 @@ var defaultBindings = map[string][]string{
 
 	// Keys that mean one thing to a window's title bar and another to
 	// whatever has focus otherwise.
-	"Esc":   {CmdWindowCancelResize, CmdTrinketCancel},
-	"Enter": {CmdTrinketActivate},
+	"Esc": {CmdWindowCancelResize, CmdTrinketCancel},
+	// Enter begins an edit where one is on offer and activates otherwise;
+	// Space only ever activates, which is why a tree's Space expands a branch
+	// where its Enter opens the row editor.
+	"Enter": {CmdTrinketEdit, CmdTrinketActivate},
 	"Space": {CmdTrinketActivate},
 
-	"Up":    {CmdWindowMoveFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
-	"Down":  {CmdWindowMoveFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
-	"Left":  {CmdWindowMoveFineLeft, CmdTrinketCollapse, CmdTrinketItemLeft, CmdTrinketItemPrior},
-	"Right": {CmdWindowMoveFineRight, CmdTrinketExpand, CmdTrinketItemRight, CmdTrinketItemNext},
+	"Up":   {CmdWindowMoveFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
+	"Down": {CmdWindowMoveFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
+	// Collapse and expand belong to Minus and Plus alone. The arrows are the
+	// generic movement, which a tree happens to implement as
+	// collapse-or-walk-up -- so there is nothing here for the two to fight
+	// over, and no precedence rule needed to separate them.
+	"Left":  {CmdWindowMoveFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior},
+	"Right": {CmdWindowMoveFineRight, CmdTrinketItemRight, CmdTrinketItemNext},
 
 	"S-Up":    {CmdWindowSizeFineUp, CmdTrinketSelUp},
 	"S-Down":  {CmdWindowSizeFineDown, CmdTrinketSelDown},
-	"S-Left":  {CmdWindowSizeFineLeft, CmdTrinketCollapse, CmdTrinketSelLeft},
-	"S-Right": {CmdWindowSizeFineRight, CmdTrinketExpand, CmdTrinketSelRight},
+	"S-Left":  {CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketItemLeft},
+	"S-Right": {CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketItemRight},
 
 	"Home":   {CmdTrinketBeg},
 	"End":    {CmdTrinketEnd},

@@ -160,6 +160,32 @@ func (t *TreeView) enterTargetColumn() *TreeColumn {
 	return col
 }
 
+// moveEnterTargetColumn walks the Enter target to the previous or next
+// editable column WITHOUT editing anything and without touching the tree's
+// structure, which is what a keymap wanting a "left that never collapses"
+// binds. It stops at the ends rather than wrapping, so holding the key cannot
+// silently cycle. Reports whether the target moved.
+func (t *TreeView) moveEnterTargetColumn(delta int) bool {
+	cols := t.editableColumns()
+	if len(cols) < 2 {
+		return false
+	}
+	at := 0
+	for i, c := range cols {
+		if c == t.editLastCol {
+			at = i
+			break
+		}
+	}
+	next := at + delta
+	if next < 0 || next >= len(cols) {
+		return false
+	}
+	t.editLastCol = cols[next]
+	t.Update()
+	return true
+}
+
 // startRowEdit enters row-edit mode on the current item, resuming the
 // last-edited column when it is still available, else the first
 // editable one. Returns false when there is nothing to edit.

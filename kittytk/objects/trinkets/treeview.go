@@ -76,6 +76,7 @@ func (t *TreeItem) Level() int {
 // TreeView displays a hierarchical tree of items.
 type TreeView struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	rootItems    []*TreeItem
@@ -214,6 +215,23 @@ func NewTreeView() *TreeView {
 		fitWidth:       true,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	t.SetCommands(
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		// Unbound by default: a keymap that wants a left which never
+		// collapses maps these instead of the arrows.
+		core.CmdTrinketColumnLeft, core.CmdTrinketColumnRight,
+		core.CmdTrinketScrollUp, core.CmdTrinketScrollDown,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		// Enter begins the row edit; Space activates, which for a tree means
+		// expanding or collapsing the branch.
+		core.CmdTrinketEdit, core.CmdTrinketActivate,
+		// Minus and Plus collapse and expand WITHOUT walking the tree, which
+		// is what separates them from the arrows.
+		core.CmdTrinketCollapse, core.CmdTrinketExpand, core.CmdTrinketExpandAll,
+	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTree)
@@ -881,14 +899,14 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	current := t.CurrentItem()
 
-	switch event.Key {
-	case "Up":
+	switch t.KeyCommand(event.Key) {
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if t.currentIndex > 0 {
 			t.SetCurrentIndex(t.currentIndex - 1)
 		}
 		return true
 
-	case "M-Up", "C-Up", "A-Up":
+	case core.CmdTrinketScrollUp:
 		// Jump by 5 items, scrolling to maintain relative position
 		if t.currentIndex > 0 {
 			delta := 5
@@ -907,13 +925,13 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if t.currentIndex < len(t.flatList)-1 {
 			t.SetCurrentIndex(t.currentIndex + 1)
 		}
 		return true
 
-	case "M-Down", "C-Down", "A-Down":
+	case core.CmdTrinketScrollDown:
 		// Jump by 5 items, scrolling to maintain relative position
 		if t.currentIndex < len(t.flatList)-1 {
 			delta := 5
@@ -940,7 +958,13 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Shift+Left/Right always mean the classic tree navigation, even
 	// on editable grids where the plain arrows rotate the Enter-target
 	// column (handleEditTargetKey lets shifted arrows through).
-	case "Left", "S-Left":
+	case core.CmdTrinketColumnLeft:
+		return t.moveEnterTargetColumn(-1)
+
+	case core.CmdTrinketColumnRight:
+		return t.moveEnterTargetColumn(1)
+
+	case core.CmdTrinketItemLeft:
 		if current != nil {
 			if current.Expanded && !current.IsLeaf() {
 				t.CollapseItem(current)
@@ -950,7 +974,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right", "S-Right":
+	case core.CmdTrinketItemRight:
 		if current != nil {
 			if !current.Expanded && !current.IsLeaf() {
 				t.ExpandItem(current)
@@ -960,19 +984,19 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		if len(t.flatList) > 0 {
 			t.SetCurrentIndex(0)
 		}
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		if len(t.flatList) > 0 {
 			t.SetCurrentIndex(len(t.flatList) - 1)
 		}
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
@@ -983,7 +1007,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.SetCurrentIndex(newIndex)
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
@@ -994,7 +1018,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.SetCurrentIndex(newIndex)
 		return true
 
-	case "Enter":
+	case core.CmdTrinketEdit:
 		// With editable columns, Enter opens the in-place row editor;
 		// without any, it behaves exactly like Space.
 		if t.startRowEdit() {
@@ -1017,7 +1041,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case " ", "Space":
+	case core.CmdTrinketActivate:
 		// On a CHOICE Enter-target, Space enters edit and pops the
 		// drop-down (a text target keeps Space's classic toggle -
 		// Space never begins a text edit).
@@ -1038,19 +1062,19 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "*":
+	case core.CmdTrinketExpandAll:
 		// Expand all
 		t.ExpandAll()
 		return true
 
-	case "-":
+	case core.CmdTrinketCollapse:
 		// Collapse current
 		if current != nil && !current.IsLeaf() {
 			t.CollapseItem(current)
 		}
 		return true
 
-	case "+":
+	case core.CmdTrinketExpand:
 		// Expand current
 		if current != nil && !current.IsLeaf() {
 			t.ExpandItem(current)

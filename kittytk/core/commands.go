@@ -55,10 +55,16 @@ const (
 	CmdTrinketItemDown  = "trinket_item_down"
 	CmdTrinketItemLeft  = "trinket_item_left"
 	CmdTrinketItemRight = "trinket_item_right"
-	CmdTrinketPagePrior = "trinket_page_prior"
-	CmdTrinketPageNext  = "trinket_page_next"
-	CmdTrinketBeg       = "trinket_beg"
-	CmdTrinketEnd       = "trinket_end"
+	// Crossing columns and NOTHING else, for a keymap that wants a left which
+	// never collapses. The arrows are the generic movement and a tree spends
+	// them on collapse-or-walk-up; these are unbound by default and exist to
+	// be mapped by anyone who would rather separate the two.
+	CmdTrinketColumnLeft  = "trinket_column_left"
+	CmdTrinketColumnRight = "trinket_column_right"
+	CmdTrinketPagePrior   = "trinket_page_prior"
+	CmdTrinketPageNext    = "trinket_page_next"
+	CmdTrinketBeg         = "trinket_beg"
+	CmdTrinketEnd         = "trinket_end"
 
 	// Extending a selection: every movement has a with-selection twin, which
 	// is a modifier axis rather than a set of unrelated actions.
@@ -93,6 +99,12 @@ const (
 	CmdTrinketDelPrior = "trinket_del_prior"
 	CmdTrinketDelNext  = "trinket_del_next"
 	CmdTrinketDelLine  = "trinket_del_line"
+
+	// Beginning an in-place edit, which is not the same as activating. A tree
+	// view's Enter opens the row editor where there is an editable column;
+	// its Space refuses to begin a TEXT edit and expands or collapses the
+	// branch instead, which is what activate means there.
+	CmdTrinketEdit = "trinket_edit"
 
 	// The rest.
 	CmdTrinketActivate = "trinket_activate"
