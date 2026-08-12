@@ -14,22 +14,22 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 		{"x", 0, "x"},
 		{"S-Tab", ShiftModifier, "Tab"},
 		{"C-Up", ControlModifier, "Up"},
-		{"M-x", MegaMetaModifier, "x"},
-		{"s-x", MetaModifier, "x"},
-		{"m-x", MicroMetaModifier, "x"},
+		{"M-x", MegaModifier, "x"},
+		{"s-x", SuperModifier, "x"},
+		{"m-x", MicroModifier, "x"},
 		{"H-x", HyperModifier, "x"},
 		{"G-€", GlyphModifier, "€"},
 
 		// The caret is Control too, and hugs the base key.
 		{"^A", ControlModifier, "A"},
 		{"S-^A", ShiftModifier | ControlModifier, "A"},
-		{"M-^A", MegaMetaModifier | ControlModifier, "A"},
+		{"M-^A", MegaModifier | ControlModifier, "A"},
 
 		// Stacks, in canonical order.
 		{"C-S-Up", ControlModifier | ShiftModifier, "Up"},
-		{"M-S-s-Left", MegaMetaModifier | ShiftModifier | MetaModifier, "Left"},
-		{"M-m-S-s-H-^A", MegaMetaModifier | MicroMetaModifier | ShiftModifier |
-			MetaModifier | HyperModifier | ControlModifier, "A"},
+		{"M-S-s-Left", MegaModifier | ShiftModifier | SuperModifier, "Left"},
+		{"M-m-S-s-H-^A", MegaModifier | MicroModifier | ShiftModifier |
+			SuperModifier | HyperModifier | ControlModifier, "A"},
 	} {
 		mods, name := ParseKeyModifiers(c.key)
 		if mods != c.mods || name != c.name {
@@ -39,12 +39,12 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 	}
 }
 
-// Three constants carry the word "Meta" and each needs its own bit. "M-" is
-// kitty's alt (MegaMetaModifier) and "m-" is kitty's meta (MicroMetaModifier)
-// — two X11 keysyms that have always produced the same bytes, so neither is
-// more genuinely Meta and both are named for the case of their prefix. "s-" is
-// Super/Command (MetaModifier), which is not on that scale at all and is only
-// called Meta because this toolkit always has.
+// Three prefixes sit close enough to be confused and each needs its own bit.
+// "M-" (MegaModifier) is the Alt key, which Emacs and every PC keyboard call
+// Meta; "m-" (MicroModifier) is the key X11 and the Space Cadet call Meta.
+// Both claims are good, so neither constant takes the name — they go by the
+// case of their prefix. "s-" is Super/Command (SuperModifier), a different key
+// entirely.
 func TestParseKeyModifiersKeepsTheMetasApart(t *testing.T) {
 	mega, _ := ParseKeyModifiers("M-x")
 	micro, _ := ParseKeyModifiers("m-x")

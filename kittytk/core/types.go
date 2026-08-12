@@ -199,29 +199,30 @@ type KeyModifiers int
 // corresponds to is in the comment; canonical spelling order is
 // C- G- M- m- S- s- H- ^ (see the key name documentation).
 //
-// Three of these have "Meta" in the name, and the middle one is the odd one
-// out — MetaModifier is Super/Command, which is not on the mega/micro scale at
-// all. It is spelled "s-" and it is simply what this toolkit has always called
-// that key.
+// Mega and Micro are two keys that both have a real claim to the name Meta.
 //
-// The other two are the kitty protocol's alt (bit 2) and meta (bit 32). Those
-// are two X11 keysyms that have always produced the same bytes: the Meta key
-// on a Space Cadet keyboard encoded as the 8th bit or an ESC prefix, and the
-// PC's Alt key was built to do exactly that, so a protocol that can see keys
-// rather than bytes has to report which one you pressed. Neither is more
-// genuinely Meta than the other, so they are named for the case of their
-// prefix rather than for a heritage argument: capital M is Mega, lowercase m
-// is Micro.
+// Emacs and forty years of PC keyboards call the Alt key Meta, and they are
+// not being loose about it: the Meta key on a Space Cadet keyboard encoded as
+// the 8th bit or an ESC prefix, and the PC's Alt key was built to do exactly
+// that. X11 and the Space Cadet call the OTHER one Meta, on the grounds that
+// it is the key actually labelled so. A terminal speaking the kitty protocol
+// reports keys rather than bytes, so it has to say which one you pressed even
+// though the encoding is identical.
+//
+// So neither constant is called Meta — not because neither deserves it, but
+// because both do. They take the case of their prefix instead: capital M is
+// Mega, lowercase m is Micro, which is also the easier thing to remember at
+// the point of use.
 const (
 	NoModifier KeyModifiers = 0
 
-	ShiftModifier     KeyModifiers = 1 << iota // "S-"
-	ControlModifier                            // "C-", and the caret form "^X"
-	MegaMetaModifier                           // "M-" — Alt, kitty bit 2
-	MetaModifier                               // "s-" — Super / Command (NOT mega/micro)
-	MicroMetaModifier                          // "m-" — Meta, kitty bit 32
-	HyperModifier                              // "H-" — kitty bit 16
-	GlyphModifier                              // "G-" — AltGr / ISO_Level3_Shift (private bit 256)
+	ShiftModifier   KeyModifiers = 1 << iota // "S-"
+	ControlModifier                          // "C-", and the caret form "^X"
+	MegaModifier                             // "M-" — Emacs Meta / PC Alt
+	SuperModifier                            // "s-" — Super / Command
+	MicroModifier                            // "m-" — Space Cadet Meta / X11 Meta
+	HyperModifier                            // "H-" — Hyper
+	GlyphModifier                            // "G-" — AltGr / ISO_Level3_Shift
 )
 
 // ParseKeyModifiers parses modifier prefixes from a key string.
@@ -233,7 +234,7 @@ func ParseKeyModifiers(key string) (KeyModifiers, string) {
 	for {
 		switch {
 		case len(remaining) > 2 && remaining[:2] == "M-":
-			mods |= MegaMetaModifier
+			mods |= MegaModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "C-":
 			mods |= ControlModifier
@@ -242,10 +243,10 @@ func ParseKeyModifiers(key string) (KeyModifiers, string) {
 			mods |= ShiftModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "s-":
-			mods |= MetaModifier
+			mods |= SuperModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "m-":
-			mods |= MicroMetaModifier
+			mods |= MicroModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "H-":
 			mods |= HyperModifier

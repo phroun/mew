@@ -1682,10 +1682,10 @@ func currentKeyModifiers() core.KeyModifiers {
 		mods |= core.ControlModifier
 	}
 	if state&sdl3.KMOD_ALT != 0 {
-		mods |= core.MegaMetaModifier
+		mods |= core.MegaModifier
 	}
 	if state&sdl3.KMOD_GUI != 0 {
-		mods |= core.MetaModifier
+		mods |= core.SuperModifier
 	}
 	return mods
 }
