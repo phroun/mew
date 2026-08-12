@@ -13,6 +13,7 @@ import (
 // TabTrinket displays multiple pages with tabs.
 type TabTrinket struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	tabs         []*Tab
@@ -79,6 +80,18 @@ func NewTabTrinket() *TabTrinket {
 		tabPosition:  TabsTop,
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	// A tab strip walks along one axis, so it answers to the arrows that
+	// point that way and to the sequence synonyms alike; the beginning/end
+	// pair is its first and last tab. The MDI cycle is Ctrl+Tab and
+	// Ctrl+PageUp/Down, which reach the innermost strip first -- an inner tab
+	// shadows the outer one when both would answer.
+	t.SetCommands(
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketItemUp, core.CmdTrinketItemDown,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdWindowMDINext, core.CmdWindowMDIPrior,
+	)
 	t.Init(t)
 	// TabTrinket can receive focus for tab bar keyboard navigation
 	t.SetFocusPolicy(core.TabFocus)
@@ -2750,52 +2763,52 @@ func (t *TabTrinket) paintContent(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
-	// When TabTrinket has focus, handle tab bar navigation
+	// Resolved ONCE: this handler asks twice (once for the tab bar, once for
+	// the MDI cycle after the content has had its turn) and feeding the same
+	// keystroke to the sequence processor twice would advance a chord's
+	// prefix by two.
+	cmd := t.KeyCommand(event.Key)
+
+	// When TabTrinket has focus, handle tab bar navigation. Only the axis the
+	// strip actually runs along answers; the other one falls through, so a
+	// vertical strip never swallows a horizontal arrow.
 	if t.HasFocus() {
 		// Determine navigation direction based on tab position
 		isVertical := t.tabPosition == TabsLeft || t.tabPosition == TabsRight
 
-		switch event.Key {
-		case "Left":
+		switch cmd {
+		case core.CmdTrinketItemLeft:
 			if !isVertical {
 				t.prevTabAndEnsureVisible()
 				return true
 			}
-		case "Right":
+		case core.CmdTrinketItemRight:
 			if !isVertical {
 				t.nextTabAndEnsureVisible()
 				return true
 			}
-		case "Up":
+		case core.CmdTrinketItemUp:
 			if isVertical {
 				t.prevTabAndEnsureVisible()
 				return true
 			}
-		case "Down":
+		case core.CmdTrinketItemDown:
 			if isVertical {
 				t.nextTabAndEnsureVisible()
 				return true
 			}
-		case "C-Left", "M-Left", "A-Left":
-			if !isVertical {
-				t.firstTab()
-				return true
-			}
-		case "C-Right", "M-Right", "A-Right":
-			if !isVertical {
-				t.lastTab()
-				return true
-			}
-		case "C-Up", "M-Up", "A-Up":
-			if isVertical {
-				t.firstTab()
-				return true
-			}
-		case "C-Down", "M-Down", "A-Down":
-			if isVertical {
-				t.lastTab()
-				return true
-			}
+		case core.CmdTrinketItemPrior:
+			t.prevTabAndEnsureVisible()
+			return true
+		case core.CmdTrinketItemNext:
+			t.nextTabAndEnsureVisible()
+			return true
+		case core.CmdTrinketBeg:
+			t.firstTab()
+			return true
+		case core.CmdTrinketEnd:
+			t.lastTab()
+			return true
 		}
 	}
 
@@ -2807,22 +2820,12 @@ func (t *TabTrinket) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	switch event.Key {
-	case "^Tab", "C-Tab":
-		// Next tab
+	switch cmd {
+	case core.CmdWindowMDINext:
 		t.nextTab()
 		return true
 
-	case "^S-Tab", "C-S-Tab":
-		// Previous tab
-		t.prevTab()
-		return true
-
-	case "^PageDown":
-		t.nextTab()
-		return true
-
-	case "^PageUp":
+	case core.CmdWindowMDIPrior:
 		t.prevTab()
 		return true
 	}

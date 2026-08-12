@@ -367,8 +367,11 @@ var defaultBindings = map[string][]string{
 	// is resizing something too.
 	// The modified arrows carry the coarse size the same way the bare ones
 	// carry the fine one, and for the same reason: a splitter's big step.
-	"C-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp}, "M-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketOpen}, "s-Up": {CmdWindowMoveUp},
-	"C-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown}, "M-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketOpen}, "s-Down": {CmdWindowMoveDown},
+	// The beginning/end meanings on the modified arrows are for whatever runs
+	// along that axis -- a tab bar's first and last tab -- and sit after the
+	// scroll, which is what a list means by the same key.
+	"C-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketBeg}, "M-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketOpen, CmdTrinketBeg}, "s-Up": {CmdWindowMoveUp},
+	"C-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketEnd}, "M-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketOpen, CmdTrinketEnd}, "s-Down": {CmdWindowMoveDown},
 	"C-Left": {CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}, "M-Left": {CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}, "s-Left": {CmdWindowMoveLeft},
 	"C-Right": {CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}, "M-Right": {CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}, "s-Right": {CmdWindowMoveRight},
 
@@ -377,8 +380,11 @@ var defaultBindings = map[string][]string{
 	"C-S-Left": {CmdWindowSizeLeft}, "M-S-Left": {CmdWindowSizeLeft}, "S-s-Left": {CmdWindowSizeLeft},
 	"C-S-Right": {CmdWindowSizeRight}, "M-S-Right": {CmdWindowSizeRight}, "S-s-Right": {CmdWindowSizeRight},
 
-	"C-PageUp":   {CmdTrinketPagePrior},
-	"C-PageDown": {CmdTrinketPageNext},
+	// The MDI meanings are the tab-strip cycle, which is what Ctrl+PageUp/Down
+	// does everywhere tabs exist. A scrolling trinket means the page step by
+	// the same key and is listed first, so nothing that scrolls changes.
+	"C-PageUp":   {CmdTrinketPagePrior, CmdWindowMDIPrior},
+	"C-PageDown": {CmdTrinketPageNext, CmdWindowMDINext},
 }
 
 // DefaultAcceleratorChord is the pattern menu accelerators are formed from
