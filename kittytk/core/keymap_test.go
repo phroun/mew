@@ -197,7 +197,7 @@ func TestApplyHostKeymapOverlays(t *testing.T) {
 		"S-Tab": "",                // unbind
 	}, "")
 
-	ctx := r.BuildFullContext()
+	ctx := r.BuildContext([]string{"quit_everything", "undo", "focus_prior", "app_menu"})
 	for key, want := range map[string]string{"M-F4": "quit_everything", "M-z": "undo"} {
 		ctx.Abandon()
 		if got := ctx.Resolve(key); got != want {

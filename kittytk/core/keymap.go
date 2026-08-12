@@ -294,25 +294,3 @@ func ApplyHostKeymap(mappings map[string]string, chord string) {
 		keymapMu.Unlock()
 	}
 }
-
-// BuildFullContext derives a context offering every command the registry
-// names. It is what a situation with nothing narrowing it looks like — and
-// for now that is every situation, since no trinket declares its own command
-// set yet. As they do, they will build narrower contexts from the same
-// registry and this becomes the desktop's own.
-func (r *KeyRegistry) BuildFullContext() *KeyContext {
-	if r == nil {
-		return nil
-	}
-	r.mu.RLock()
-	commands := make([]string, 0, len(r.bindings))
-	seen := map[string]bool{}
-	for _, c := range r.bindings {
-		if !seen[c] {
-			seen[c] = true
-			commands = append(commands, c)
-		}
-	}
-	r.mu.RUnlock()
-	return r.BuildContext(commands)
-}
