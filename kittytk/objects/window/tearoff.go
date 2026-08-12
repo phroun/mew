@@ -19,6 +19,10 @@ type TearOffHost struct {
 	win    *Window
 	surf   platform.Surface
 	native platform.NativeSurface
+	// minimizeKeys resolves the one key the HOST takes before the window
+	// sees it: miniaturizing is the OS window's business, not the toolkit
+	// window's, so it cannot go through win's own context.
+	minimizeKeys core.TrinketKeys
 	// ppu reports the LIVE device pixels-per-unit (font_size-aware, may be
 	// fractional). A getter, not a captured value: the host font zoom can
 	// change the ratio at any time, and a snapshot from tear-off time made
@@ -181,6 +185,7 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
+	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
 
 	// Popups from the torn window's trinkets open on this surface.
 	win.SetPopupController(h)
@@ -840,9 +845,11 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		}
 		handled = true
 	case core.KeyPressEvent:
-		if h.native != nil && (e.Key == "s-m" ||
-			(e.Modifiers&core.SuperModifier != 0 && e.Key == "m")) {
-			// Cmd+M miniaturizes, like any macOS document window.
+		// Cmd+M miniaturizes, like any macOS document window. Resolved
+		// through the keymap rather than matched against a spelling, so the
+		// binding is what decides -- and so it is the same binding a docked
+		// window minimizes on.
+		if h.native != nil && h.minimizeKeys.KeyCommand(e.Key) == core.CmdAppMinimize {
 			h.native.Minimize()
 			handled = true
 			break
