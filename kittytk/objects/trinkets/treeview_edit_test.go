@@ -348,9 +348,11 @@ func TestTreeArrowRotationEnsuresVisible(t *testing.T) {
 	}
 }
 
-// Shift+Left/Right keep the classic expand/collapse everywhere: on an
-// editable grid (where the plain arrows rotate the Enter-target) and
-// in either spelling ("S-Right" or Right + the shift modifier).
+// Shift+Left/Right keep the classic expand/collapse on an editable grid,
+// where the plain arrows rotate the Enter-target instead. They are a
+// different COMMAND there (trinket_expand_or_descend /
+// trinket_collapse_or_enclosing), which is what tells the two apart now that
+// nothing reads the Shift bit out of the event.
 func TestTreeShiftArrowsExpandCollapse(t *testing.T) {
 	tv := newEditableTree()
 	alpha := tv.RootItems()[0]
@@ -371,7 +373,7 @@ func TestTreeShiftArrowsExpandCollapse(t *testing.T) {
 	if !alpha.Expanded {
 		t.Fatal("S-Right did not expand the folder")
 	}
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Left", Modifiers: core.ShiftModifier})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Left", Modifiers: core.ShiftModifier})
 	if alpha.Expanded {
 		t.Fatal("shifted Left did not collapse the folder")
 	}

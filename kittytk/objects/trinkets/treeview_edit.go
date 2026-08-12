@@ -469,12 +469,19 @@ func (t *TreeView) stepEditRow(delta int) {
 // horizontal view conservatively. In an editable grid the plain
 // arrows belong to this; expand/collapse keeps Shift+Left/Right,
 // +/-, Space, and the mouse. Returns handled.
-func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
-	if event.Key != "Left" && event.Key != "Right" {
+//
+// The shifted arrows are simply a different COMMAND now
+// (trinket_collapse_or_enclosing / trinket_expand_or_descend), which is what
+// this used to decide by reading the Shift bit out of the event.
+func (t *TreeView) handleEditTargetKey(cmd string) bool {
+	delta := 0
+	switch cmd {
+	case core.CmdTrinketItemLeft:
+		delta = -1
+	case core.CmdTrinketItemRight:
+		delta = 1
+	default:
 		return false
-	}
-	if event.Modifiers&core.ShiftModifier != 0 {
-		return false // Shift+Left/Right are the classic expand/collapse
 	}
 	if !t.multiColumn() || t.rowEditing || t.headerZone != hzContent {
 		return false
@@ -482,10 +489,6 @@ func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
 	cols := t.editableColumns()
 	if len(cols) == 0 {
 		return false // not an editable grid: classic tree navigation
-	}
-	delta := 1
-	if event.Key == "Left" {
-		delta = -1
 	}
 	cur := t.enterTargetColumn()
 	idx := 0

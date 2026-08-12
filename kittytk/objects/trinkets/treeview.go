@@ -240,6 +240,10 @@ func NewTreeView() *TreeView {
 		// Minus and Plus collapse and expand WITHOUT walking the tree, which
 		// is what separates them from the arrows.
 		core.CmdTrinketCollapse, core.CmdTrinketExpand, core.CmdTrinketExpandAll,
+		// The classic arrow movement under its own name, which is what the
+		// SHIFTED arrows keep doing in an editable grid -- there the plain
+		// ones walk the edit-target column instead.
+		core.CmdTrinketCollapseOrEnclosing, core.CmdTrinketExpandOrDescend,
 		// The header focus zones and the row editor: Tab walks between the
 		// header stops (and between the editor's columns), Escape backs out
 		// of whichever of them is up. Neither reaches the content switch,
@@ -913,7 +917,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	}
 	// In an editable grid, Left/Right rotate the Enter-target column
 	// (the FocusedListItem cell) without opening the editor.
-	if t.handleEditTargetKey(event) {
+	if t.handleEditTargetKey(cmd) {
 		return true
 	}
 
@@ -1008,7 +1012,11 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdTrinketColumnRight:
 		return t.moveEnterTargetColumn(1)
 
-	case core.CmdTrinketItemLeft:
+	// One body, two commands, and they are the same act: collapse_or_enclosing
+	// IS what a left arrow has always done here. They are separate names only
+	// because item_left is also the grid's column walk, which handleEditTargetKey
+	// took above -- so anything reaching here means the classic movement.
+	case core.CmdTrinketItemLeft, core.CmdTrinketCollapseOrEnclosing:
 		if current != nil {
 			if current.Expanded && !current.IsLeaf() {
 				t.CollapseItem(current)
@@ -1018,7 +1026,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case core.CmdTrinketItemRight:
+	case core.CmdTrinketItemRight, core.CmdTrinketExpandOrDescend:
 		if current != nil {
 			if !current.Expanded && !current.IsLeaf() {
 				t.ExpandItem(current)

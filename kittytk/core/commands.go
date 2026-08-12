@@ -22,10 +22,10 @@ const (
 	// app off the desktop. The desktop itself survives -- it is the thing
 	// other apps are still running on -- unless there is no desktop to go
 	// back to, which is solo mode, and this was the last app left.
-	CmdAppQuit = "app_quit"
-	CmdGUIScaleDown         = "gui_scale_down"
-	CmdGUIScaleUp           = "gui_scale_up"
-	CmdGUIScaleReset        = "gui_scale_reset"
+	CmdAppQuit       = "app_quit"
+	CmdGUIScaleDown  = "gui_scale_down"
+	CmdGUIScaleUp    = "gui_scale_up"
+	CmdGUIScaleReset = "gui_scale_reset"
 
 	// Focus, which belongs to no one trinket.
 	CmdFocusNext  = "focus_next"
@@ -101,11 +101,23 @@ const (
 	// travel across columns. A trinket answering to both gives them separate
 	// cases and lets its context decide which is on offer, rather than
 	// folding them together because a single arrow happens to reach either.
-	CmdTrinketExpand      = "trinket_expand"
-	CmdTrinketCollapse    = "trinket_collapse"
-	CmdTrinketExpandAll   = "trinket_expand_all"
-	CmdTrinketCollapseAll = "trinket_collapse_all"
-	CmdTrinketEnclosing   = "trinket_enclosing"
+	CmdTrinketExpand   = "trinket_expand"
+	CmdTrinketCollapse = "trinket_collapse"
+	// The classic tree arrow, named so it can be reached on its own key.
+	// collapse_or_enclosing collapses an expanded branch and otherwise walks
+	// out to the enclosing one -- trinket_collapse plus trinket_enclosing in
+	// the order a tree has always done them; expand_or_descend is its mirror,
+	// expanding a closed branch and otherwise stepping into the first child.
+	//
+	// These exist because trinket_item_left means something ELSE in an
+	// editable grid, where the plain arrows walk the edit-target column. The
+	// shifted arrows keep the classic movement there, and needed a name of
+	// their own to say so.
+	CmdTrinketCollapseOrEnclosing = "trinket_collapse_or_enclosing"
+	CmdTrinketExpandOrDescend     = "trinket_expand_or_descend"
+	CmdTrinketExpandAll           = "trinket_expand_all"
+	CmdTrinketCollapseAll         = "trinket_collapse_all"
+	CmdTrinketEnclosing           = "trinket_enclosing"
 
 	// Editing, where a trinket holds text.
 	CmdTrinketDelPrior = "trinket_del_prior"

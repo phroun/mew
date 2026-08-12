@@ -336,8 +336,13 @@ var defaultBindings = map[string][]string{
 
 	"S-Up":    {CmdWindowSizeFineUp, CmdTrinketSelUp},
 	"S-Down":  {CmdWindowSizeFineDown, CmdTrinketSelDown},
-	"S-Left":  {CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketItemLeft},
-	"S-Right": {CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketItemRight},
+	// The shifted arrows also carry the classic tree movement, ahead of the
+	// generic item step: in an editable grid the plain arrows walk the
+	// edit-target column, and this is how collapse-or-walk-out keeps a key
+	// there. A trinket that does not offer it falls through to item_left as
+	// before.
+	"S-Left":  {CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseOrEnclosing, CmdTrinketItemLeft},
+	"S-Right": {CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketExpandOrDescend, CmdTrinketItemRight},
 
 	"Home":   {CmdTrinketBeg},
 	"End":    {CmdTrinketEnd},
