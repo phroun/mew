@@ -164,3 +164,51 @@ func TestCtrlWClosesOneWindowOnly(t *testing.T) {
 		t.Error("^W quit the desktop")
 	}
 }
+
+// Quitting is an ATTEMPT. A window that refuses to close -- the usual reason
+// being unsaved work, asked through its close handler -- cancels the quit,
+// and the application stays on the desktop rather than being torn off it with
+// a window still open.
+func TestAppQuitRespectsARefusedClose(t *testing.T) {
+	d := NewDesktop()
+	keep := window.NewWindow("Unsaved")
+	keep.SetOnClose(func() bool { return false })
+	app := &mockApp{name: "Demo", windows: []*window.Window{keep}}
+	d.AddApplication(app)
+	keep.SetParent(d)
+
+	keep.HandleKeyPress(core.KeyPressEvent{Key: "^Q"})
+
+	if got := len(d.Applications()); got != 1 {
+		t.Errorf("the application was removed despite a refused close (%d left)", got)
+	}
+	if !keep.IsVisible() {
+		t.Error("the window closed even though its handler refused")
+	}
+}
+
+// A refusal partway through stops there: the app keeps its place, and the
+// windows that already agreed to close stay closed (which is what every
+// desktop does -- the quit is abandoned, not rolled back).
+func TestAppQuitStopsAtTheFirstRefusal(t *testing.T) {
+	d := NewDesktop()
+	first := window.NewWindow("Saved")
+	second := window.NewWindow("Unsaved")
+	third := window.NewWindow("Untouched")
+	second.SetOnClose(func() bool { return false })
+	app := &mockApp{name: "Demo", windows: []*window.Window{first, second, third}}
+	d.AddApplication(app)
+	first.SetParent(d)
+
+	first.HandleKeyPress(core.KeyPressEvent{Key: "^Q"})
+
+	if got := len(d.Applications()); got != 1 {
+		t.Errorf("the application was removed despite a refusal (%d left)", got)
+	}
+	if first.IsVisible() {
+		t.Error("the window that agreed to close should have stayed closed")
+	}
+	if !second.IsVisible() || !third.IsVisible() {
+		t.Error("the refusal should stop the sweep where it stood")
+	}
+}

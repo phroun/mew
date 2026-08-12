@@ -2842,10 +2842,15 @@ func (d *Desktop) quitApplication(app ApplicationProvider) {
 		return
 	}
 
-	// Close all windows of this application
+	// ATTEMPT to close this application's own windows -- its child windows go
+	// with them, since a window closes its children first -- and NOTHING
+	// belonging to any other application. A window may refuse (the usual
+	// reason being unsaved work, asked through its close handler), and a
+	// refusal cancels the quit: the application stays on the desktop rather
+	// than being torn off it with a window still open.
 	for _, win := range app.Windows() {
-		if win != nil {
-			win.Close()
+		if win != nil && !win.Close() {
+			return
 		}
 	}
 
