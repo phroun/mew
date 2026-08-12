@@ -10,7 +10,7 @@ import (
 // The desktop's bar hands BOTH Tab and Shift+Tab to the dock - it is the only
 // other chrome out there, so direction doesn't change the destination.
 func TestMenuBarTabAndShiftTabReachDock(t *testing.T) {
-	for _, key := range []string{"Tab", "S-Tab", "Shift-Tab"} {
+	for _, key := range []string{"Tab", "S-Tab"} {
 		mb := NewMenuBar()
 		mb.AddMenu(NewMenu("&File"))
 		docked := 0
@@ -35,7 +35,6 @@ func TestMenuBarTabOutDirection(t *testing.T) {
 	}{
 		{"Tab", true},
 		{"S-Tab", false},
-		{"Shift-Tab", false},
 	}
 	for _, c := range cases {
 		mb := NewMenuBar()
@@ -55,16 +54,18 @@ func TestMenuBarTabOutDirection(t *testing.T) {
 	}
 }
 
-// Shift-carrying "Tab" counts as backward, matching how the window reads it.
-func TestMenuBarShiftModifierTabIsBackward(t *testing.T) {
+// The composed key string is what decides the direction. A backend that also
+// sets the Shift bit alongside "S-Tab" changes nothing - the bitfield is
+// derived from the string, never read instead of it.
+func TestMenuBarShiftTabIsBackward(t *testing.T) {
 	mb := NewMenuBar()
 	mb.AddMenu(NewMenu("&File"))
 	var got []bool
 	mb.SetOnFocusOut(func(forward bool) bool { got = append(got, forward); return true })
 
-	mb.HandleKeyPress(core.KeyPressEvent{Key: "Tab", Modifiers: core.ShiftModifier})
+	mb.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier})
 	if len(got) != 1 || got[0] {
-		t.Errorf("Tab+Shift focus-out %v, want [false]", got)
+		t.Errorf("S-Tab focus-out %v, want [false]", got)
 	}
 }
 

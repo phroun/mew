@@ -336,6 +336,7 @@ func standardEditItemRole(id string) bool {
 // Menu represents a dropdown menu.
 type Menu struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	title           string // Display title (with & removed, && converted to &)
@@ -508,6 +509,18 @@ func NewMenu(title string) *Menu {
 		maxVisible:            0, // 0 = calculate from available space when shown
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	// A dropped-down menu is a list that runs vertically, with Left and Right
+	// crossing between it and its submenus. The bare accelerator letters are
+	// NOT bindings -- they are ordinary typing matched against the item
+	// titles, which is why they are not declared here.
+	m.SetCommands(
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
+	)
 	// Note: Menu doesn't call Init because it has a Show(x,y) method
 	// with different signature than Trinket.Show()
 	m.SetFocusPolicy(core.StrongFocus)
@@ -1489,8 +1502,8 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	switch event.Key {
-	case "Up":
+	switch m.KeyCommand(event.Key) {
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		m.currentIndex = m.findPrevEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
@@ -1498,7 +1511,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		m.currentIndex = m.findNextEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
@@ -1506,14 +1519,14 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Left":
+	case core.CmdTrinketItemLeft:
 		if m.parentMenu != nil {
 			m.Hide()
 			return true
 		}
 		return false // Let menu bar handle it
 
-	case "Right":
+	case core.CmdTrinketItemRight:
 		item := m.CurrentItem()
 		if item != nil && item.SubMenu != nil {
 			m.openSubMenu(item)
@@ -1521,7 +1534,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return false // Let menu bar handle it
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		item := m.CurrentItem()
 		if item != nil {
 			if item.SubMenu != nil {
@@ -1532,7 +1545,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 			return true
 		}
 
-	case "Escape":
+	case core.CmdTrinketCancel:
 		if m.parentMenu != nil {
 			// Submenu - hide it and return to parent menu
 			m.Hide()
@@ -1542,21 +1555,21 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		// (MenuBar.CloseMenu will call Hide on us)
 		return false
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		m.currentIndex = m.findNextEnabled(-1)
 		m.scrollOffset = 0
 		m.closeSubMenu()
 		m.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		m.currentIndex = m.findPrevEnabled(0)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		m.scrollPageUp()
 		// Move current index to top of visible area
 		if m.currentIndex >= 0 {
@@ -1569,7 +1582,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		m.scrollPageDown()
 		// Move current index to bottom of visible area
 		if m.currentIndex >= 0 {
@@ -1844,6 +1857,7 @@ func (m *Menu) AccessibleInfo() core.AccessibleInfo {
 // MenuBar is a horizontal bar of menus.
 type MenuBar struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	menus        []*Menu
@@ -1950,6 +1964,20 @@ func NewMenuBar() *MenuBar {
 		showShortcuts: true,
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	// A menu bar runs horizontally, so Left and Right walk it; Down drops the
+	// current menu open, which is the same act as Enter or Space. F10 is the
+	// bar's own toggle, and Tab either way leaves it. The bare accelerator
+	// letters are ordinary typing matched against the menu titles, and the
+	// chord accelerators are FORMED from the configured pattern rather than
+	// bound, so neither is declared here.
+	m.SetCommands(
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemNext,
+		core.CmdTrinketItemDown,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
+		core.CmdAppMenu,
+		core.CmdFocusNext, core.CmdFocusPrior,
+	)
 	m.Init(m)
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenuBar)
@@ -3039,8 +3067,12 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	switch event.Key {
-	case "Left":
+	// Resolved once: the accelerator blocks below run after this switch and
+	// must not re-feed the same keystroke to the sequence processor.
+	cmd := m.KeyCommand(event.Key)
+
+	switch cmd {
+	case core.CmdTrinketItemLeft, core.CmdTrinketItemPrior:
 		if len(m.menus) > 0 {
 			newIndex := m.currentIndex - 1
 			if newIndex < 0 {
@@ -3057,7 +3089,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right":
+	case core.CmdTrinketItemRight, core.CmdTrinketItemNext:
 		if len(m.menus) > 0 {
 			newIndex := m.currentIndex + 1
 			if newIndex >= len(m.menus) {
@@ -3074,7 +3106,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter", " ", "Space", "Down":
+	case core.CmdTrinketActivate, core.CmdTrinketItemDown:
 		if m.currentIndex >= 0 {
 			if m.activeMenu != nil {
 				m.CloseMenu()
@@ -3089,7 +3121,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Escape":
+	case core.CmdTrinketCancel:
 		if m.activeMenu != nil {
 			// First escape: close menu but keep menu bar focused
 			m.CloseMenu()
@@ -3099,7 +3131,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "F10":
+	case core.CmdAppMenu:
 		// Toggle menu bar focus
 		if m.HasFocus() {
 			m.CloseMenuAndUnfocus()
@@ -3112,7 +3144,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Tab", "S-Tab", "Shift-Tab":
+	case core.CmdFocusNext, core.CmdFocusPrior:
 		// Tab and Shift+Tab both leave the bar, but where to depends on whose
 		// bar it is. The desktop's bar hands either direction to the dock (the
 		// only other chrome out there). A window's own bar - which a detached,
@@ -3130,8 +3162,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 			return true
 		}
 		if m.onFocusOut != nil {
-			forward := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
-			if m.onFocusOut(forward) {
+			if m.onFocusOut(cmd == core.CmdFocusNext) {
 				m.CloseMenuWithoutRestore()
 				return true
 			}

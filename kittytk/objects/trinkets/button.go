@@ -496,9 +496,15 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 
 // HandleKeyRelease handles key release.
 func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
-	switch event.Key {
-	case " ", "Space":
-		if b.spacePressed {
+	if !b.spacePressed {
+		return false
+	}
+	// A release is never fed to the sequence processor -- a chord is made of
+	// presses, and running the release through it would advance a pending
+	// prefix a second time -- so this asks the registry directly whether the
+	// key that came up is one that activates.
+	for _, k := range core.DefaultKeyRegistry().KeysFor(core.CmdTrinketActivate) {
+		if k == event.Key {
 			b.spacePressed = false
 			b.Update()
 			b.Click()
