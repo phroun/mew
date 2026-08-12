@@ -4209,8 +4209,34 @@ func (d *Desktop) SetLayoutManager(lm core.LayoutManager) {
 // bar's focus while leaving the window active and its trinket focused, so the
 // bar lit up over a window that still held the keyboard.
 func (d *Desktop) toggleMenuBarFromKey() {
+	d.summonMenuBarFromKey(false)
+}
+
+// helpMenuFromKey summons the bar and goes straight to Help. An application
+// with no Help menu gets exactly the menu key, so the binding is never dead.
+func (d *Desktop) helpMenuFromKey() {
+	d.summonMenuBarFromKey(true)
+}
+
+// summonMenuBarFromKey is the whole of what the menu key does: the bar takes
+// the keyboard, and the active window gives it up. help asks for the Help menu
+// to be dropped open on the way.
+func (d *Desktop) summonMenuBarFromKey(help bool) {
 	if d.menuBar == nil {
 		return
+	}
+	if help {
+		// Deactivate FIRST, exactly as below: the bar is about to hold the
+		// keyboard either way, and Help opening is not a reason to leave the
+		// window holding it.
+		if d.windowManager != nil && !d.menuBar.HasFocus() {
+			d.windowManager.DeactivateActiveWindow()
+		}
+		if d.menuBar.OpenHelpMenu() {
+			return
+		}
+		// No Help menu: fall through to the plain toggle, which is what the
+		// user would have got from the menu key.
 	}
 	// Only on the way IN: releasing the bar hands the keyboard back rather
 	// than deactivating anything.
@@ -4778,9 +4804,13 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Check if menu bar wants to handle keys
 	if d.menuBar != nil {
 		cmd := d.KeyCommand(event.Key)
-		// The menu key summons the bar.
+		// The menu key summons the bar; the help key goes on to Help.
 		if cmd == core.CmdAppMenu {
 			d.toggleMenuBarFromKey()
+			return true
+		}
+		if cmd == core.CmdAppHelp {
+			d.helpMenuFromKey()
 			return true
 		}
 		// A formed chord accelerator. The bar compares the WHOLE formed
@@ -5238,6 +5268,11 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 	case core.CmdAppMenu:
 		if d.menuBar != nil {
 			d.toggleMenuBarFromKey()
+			return true
+		}
+	case core.CmdAppHelp:
+		if d.menuBar != nil {
+			d.helpMenuFromKey()
 			return true
 		}
 	}

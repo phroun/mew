@@ -279,7 +279,7 @@ func NewWindow(title string) *Window {
 	// the focused trinket resolves its own keys against its own set.
 	w.SetCommands(
 		core.CmdWindowClose, core.CmdWindowMaximizeToggle, core.CmdAppMenu,
-		core.CmdAppQuit,
+		core.CmdAppHelp, core.CmdAppQuit,
 		core.CmdFocusNext, core.CmdFocusPrior,
 		core.CmdTrinketActivate, core.CmdWindowCancelResize,
 		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
@@ -3468,6 +3468,14 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	cmd := w.KeyCommand(event.Key)
 
 	if mb != nil {
+		// The help key goes straight to Help on this window's own bar; an app
+		// with no Help menu falls through to the plain menu key below.
+		if cmd == core.CmdAppHelp {
+			if h, ok := mb.(interface{ OpenHelpMenu() bool }); ok && h.OpenHelpMenu() {
+				return true
+			}
+			cmd = core.CmdAppMenu
+		}
 		menuActive := mb.HasFocus() || cmd == core.CmdAppMenu
 		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
 			menuActive = true

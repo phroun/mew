@@ -2778,7 +2778,7 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 		case core.CmdWindowPrior:
 			m.CycleWindows(false)
 			return true
-		case core.CmdAppMenu, core.CommandAppAccelerator:
+		case core.CmdAppMenu, core.CmdAppHelp, core.CommandAppAccelerator:
 			if kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
 				return true
 			}

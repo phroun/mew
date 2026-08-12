@@ -323,8 +323,10 @@ var defaultBindings = map[string][]string{
 	// F2 is there to be REACHABLE -- on a Mac every function key wants fn,
 	// which sits bottom-left, so F10 across at the far right is a two-handed
 	// press while F2 is on the same side of the keyboard.
-	"F10":     {CmdAppMenu},
-	"F2":      {CmdAppMenu},
+	"F10": {CmdAppMenu},
+	"F2":  {CmdAppMenu},
+	// Help, where every desktop puts it.
+	"F1":      {CmdAppHelp},
 	"M-Tab":   {CmdWindowNext},
 	"M-S-Tab": {CmdWindowPrior},
 	"C-Tab":   {CmdWindowMDINext},
@@ -511,7 +513,7 @@ const (
 // a focused title bar still closes on M-F4.
 var stateCommands = map[UIState][]string{
 	StateNormal: {
-		CmdWindowMaximizeToggle, CmdWindowClose, CmdAppMenu,
+		CmdWindowMaximizeToggle, CmdWindowClose, CmdAppMenu, CmdAppHelp,
 		CmdWindowNext, CmdWindowPrior,
 		CmdWindowMDINext, CmdWindowMDIPrior,
 		CmdAppMinimize, CmdAppQuit,

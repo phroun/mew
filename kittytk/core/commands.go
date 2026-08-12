@@ -17,7 +17,13 @@ const (
 	CmdWindowMDIPrior       = "window_mdi_prior"
 	CmdWindowCancelResize   = "window_cancel_resize"
 	CmdAppMenu              = "app_menu"
-	CmdAppMinimize          = "app_minimize"
+	// Summoning the bar and going straight to Help: the same act as app_menu,
+	// carried one step further -- the Help menu selected, scrolled into view,
+	// dropped open, and its first available item highlighted, as if the user
+	// had pressed the menu key and then Down. An application with no Help menu
+	// gets exactly app_menu, so the key is never dead.
+	CmdAppHelp     = "app_help"
+	CmdAppMinimize = "app_minimize"
 	// Quitting ONE application: it closes that app's windows and takes the
 	// app off the desktop. The desktop itself survives -- it is the thing
 	// other apps are still running on -- unless there is no desktop to go

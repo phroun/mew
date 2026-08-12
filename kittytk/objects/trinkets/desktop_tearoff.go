@@ -641,6 +641,14 @@ func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
 		// The menu key summons the app's bar, which lives in the main window.
 		// A child has no bar to focus of its own, so without this the key did
 		// nothing at all from a child.
+		// ...and straight to Help, which is the same bar one step further in.
+		if cmd == core.CmdAppHelp {
+			if h, ok := mb.(interface{ OpenHelpMenu() bool }); ok && h.OpenHelpMenu() {
+				d.SurfaceWindow(main)
+				return true
+			}
+			cmd = core.CmdAppMenu // no Help menu: the plain menu key
+		}
 		if cmd == core.CmdAppMenu {
 			if h, ok := mb.(interface {
 				HandleKeyPress(core.KeyPressEvent) bool

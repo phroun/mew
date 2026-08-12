@@ -3359,6 +3359,29 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// OpenHelpMenu drops the Help menu open with its first available item
+// highlighted, and reports whether there was one to open.
+//
+// Help is found by its well-known role rather than by its title, so it is
+// still Help in a localised menu bar. Everything else is what the keyboard
+// already does: the menu is scrolled into view, opened, and stepped into once,
+// which is the menu key followed by Down.
+func (m *MenuBar) OpenHelpMenu() bool {
+	for i, menu := range m.menus {
+		if menu == nil || menu.WellKnownID() != MenuIDHelp {
+			continue
+		}
+		m.SetFocus()
+		m.ensureMenuVisible(i)
+		m.OpenMenu(i)
+		if m.activeMenu != nil {
+			m.activeMenu.SelectFirstItem()
+		}
+		return true
+	}
+	return false
+}
+
 // SetOnFocusChanged installs an observer told each time the bar takes or gives
 // up the keyboard.
 func (m *MenuBar) SetOnFocusChanged(fn func(focused bool)) {
