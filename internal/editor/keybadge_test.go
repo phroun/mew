@@ -189,3 +189,42 @@ func TestKeyBindingDisplayBuiltinTieIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// A binding written with a capture/override prefix is filed under that RAW
+// spelling, while the badge shows the key as PRESSED. Provenance is looked up
+// by the raw spelling, so an override keeps the precedence it was configured
+// with: here the user's `capture ^/` outranks the built-in ^_ and wins the
+// "last configured" tie-break, even though the two are shown identically to
+// how they are pressed.
+//
+// Looking provenance up by the displayed key instead missed every prefixed
+// binding: it read as System/precedence 0 - a built-in - so a binding written
+// to outrank one could lose to it.
+func TestKeyBindingDisplayHonorsPrefixedProvenance(t *testing.T) {
+	e := &Editor{}
+	e.KeyProcessor = keyseq.NewProcessor(nil)
+	e.KeyProcessor.SetMappings(map[string]string{
+		"^_":         "buffer_undo", // built-in, no origin recorded
+		"capture ^/": "buffer_undo", // the user's, at a capture level
+	})
+	e.mappingOrigins = map[string]config.MappingOrigin{
+		"capture ^/": {Precedence: 7, Author: config.AuthorCustomized},
+	}
+
+	for i := 0; i < 20; i++ { // map iteration order varies; the answer must not
+		if got := e.keyBindingDisplay("buffer_undo", ""); got != "^/" {
+			t.Fatalf("badge = %q, want ^/ - the configured binding outranks the built-in", got)
+		}
+	}
+}
+
+// ...and the prefix itself is never shown: the badge is the key as pressed.
+func TestKeyBindingDisplayNeverShowsAPrefix(t *testing.T) {
+	e := &Editor{}
+	e.KeyProcessor = keyseq.NewProcessor(nil)
+	e.KeyProcessor.SetMappings(map[string]string{"override ^B S": "buffer_save"})
+
+	if got := e.keyBindingDisplay("buffer_save", ""); got != "^B S" {
+		t.Errorf("badge = %q, want ^B S with no level prefix", got)
+	}
+}

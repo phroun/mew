@@ -1271,15 +1271,16 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	if e.KeyProcessor == nil {
 		return preferred
 	}
-	var seqs []string
+	var seqs []keyCandidate
 	for raw, cmd := range e.KeyProcessor.GetAllMappings() {
 		if cmd != action {
 			continue
 		}
 		// Show the keys as pressed: capture/override prefixes are precedence,
-		// not keystrokes, and a wildcard names no key at all.
+		// not keystrokes, and a wildcard names no key at all. The RAW spelling
+		// travels alongside, because that is what provenance is filed under.
 		if seq, ok := keyseq.DisplayKey(raw); ok {
-			seqs = append(seqs, seq)
+			seqs = append(seqs, keyCandidate{seq: seq, raw: raw})
 		}
 	}
 	if len(seqs) == 0 {
@@ -1291,6 +1292,21 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	return e.chooseKeyBinding(seqs, preferred)
 }
 
+// keyCandidate is one key bound to the action a badge is resolving: the
+// spelling to SHOW, and the RAW mapping key it came from.
+//
+// The two differ whenever a binding carries a capture/override prefix, and the
+// difference matters here: the prefix is precedence rather than a keystroke, so
+// it must not be shown — but provenance is filed under the raw spelling, which
+// is what "last configured" is decided from. Looking provenance up by the
+// display spelling missed every prefixed binding, which then read as a built-in
+// (System, precedence 0) and could lose the tie-break to the very binding it
+// was written to outrank.
+type keyCandidate struct {
+	seq string // the key as pressed, shown in the badge
+	raw string // the mapping key as written, which provenance is keyed by
+}
+
 // chooseKeyBinding picks one key from seqs (all bound to the same action) to
 // display, ranking each key SEQUENCE against the author's given binding
 // (preferred): an exact key wins; else the key whose beginning matches
@@ -1298,37 +1314,39 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 // shares a start or end — the last-configured key. Precedence (then the
 // sequence text) breaks every tie: "the last one configured, or the last among
 // ties."
-func (e *Editor) chooseKeyBinding(seqs []string, preferred string) string {
+func (e *Editor) chooseKeyBinding(seqs []keyCandidate, preferred string) string {
 	// better reports whether a is the stronger "last configured" than b —
 	// higher precedence, and the greater sequence text as a deterministic
-	// stand-in for "last" when precedence ties (built-ins all sit at 0).
-	better := func(a, b string) bool {
-		oa, ob := e.originFor(a), e.originFor(b)
+	// stand-in for "last" when precedence ties (a mapping that never came
+	// through the config stream at all sits at 0).
+	better := func(a, b keyCandidate) bool {
+		oa, ob := e.originFor(a.raw), e.originFor(b.raw)
 		if oa.Precedence != ob.Precedence {
 			return oa.Precedence > ob.Precedence
 		}
-		return a > b
+		return a.seq > b.seq
 	}
 	if preferred != "" {
 		for _, s := range seqs {
-			if s == preferred {
-				return s // exact key match
+			if s.seq == preferred {
+				return s.seq // exact key match
 			}
 		}
 		// Longest shared beginning, then (only if none) longest shared end.
 		for _, suffix := range []bool{false, true} {
-			best, bestScore := "", 0
+			var best keyCandidate
+			bestScore := 0
 			for _, s := range seqs {
-				sc := sharedAffixLen(s, preferred, suffix)
+				sc := sharedAffixLen(s.seq, preferred, suffix)
 				if sc == 0 {
 					continue
 				}
-				if best == "" || sc > bestScore || (sc == bestScore && better(s, best)) {
+				if best.seq == "" || sc > bestScore || (sc == bestScore && better(s, best)) {
 					best, bestScore = s, sc
 				}
 			}
-			if best != "" {
-				return best
+			if best.seq != "" {
+				return best.seq
 			}
 		}
 	}
@@ -1339,7 +1357,7 @@ func (e *Editor) chooseKeyBinding(seqs []string, preferred string) string {
 			best = s
 		}
 	}
-	return best
+	return best.seq
 }
 
 // sharedAffixLen counts the runes a and b share from the front (suffix=false)
@@ -1364,10 +1382,12 @@ func sharedAffixLen(a, b string, suffix bool) int {
 	return count
 }
 
-// originFor returns the provenance of a bound key sequence, or the built-in
+// originFor returns the provenance of a RAW mapping key (the spelling as
+// written, capture/override prefixes and all — that is how the origins map is
+// keyed, in lockstep with the keymap itself), or the built-in
 // default (AuthorSystem, precedence 0) when the key carries no recorded origin.
-func (e *Editor) originFor(seq string) config.MappingOrigin {
-	if o, ok := e.mappingOrigins[seq]; ok {
+func (e *Editor) originFor(raw string) config.MappingOrigin {
+	if o, ok := e.mappingOrigins[raw]; ok {
 		return o
 	}
 	return config.MappingOrigin{Author: config.AuthorSystem}
