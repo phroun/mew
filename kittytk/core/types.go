@@ -198,16 +198,30 @@ type KeyModifiers int
 // The modifiers a key event can carry, one bit each. The prefix each one
 // corresponds to is in the comment; canonical spelling order is
 // C- G- M- m- S- s- H- ^ (see the key name documentation).
+//
+// Three of these have "Meta" in the name, and the middle one is the odd one
+// out — MetaModifier is Super/Command, which is not on the mega/micro scale at
+// all. It is spelled "s-" and it is simply what this toolkit has always called
+// that key.
+//
+// The other two are the kitty protocol's alt (bit 2) and meta (bit 32). Those
+// are two X11 keysyms that have always produced the same bytes: the Meta key
+// on a Space Cadet keyboard encoded as the 8th bit or an ESC prefix, and the
+// PC's Alt key was built to do exactly that, so a protocol that can see keys
+// rather than bytes has to report which one you pressed. Neither is more
+// genuinely Meta than the other, so they are named for the case of their
+// prefix rather than for a heritage argument: capital M is Mega, lowercase m
+// is Micro.
 const (
 	NoModifier KeyModifiers = 0
 
-	ShiftModifier      KeyModifiers = 1 << iota // "S-"
-	ControlModifier                             // "C-", and the caret form "^X"
-	AltModifier                                 // "M-" — the Meta a PC's Alt key induces
-	MetaModifier                                // "s-" — Super / Command
-	MetaProperModifier                          // "m-" — the separate Meta key
-	HyperModifier                               // "H-"
-	GlyphModifier                               // "G-" — AltGr / ISO_Level3_Shift
+	ShiftModifier     KeyModifiers = 1 << iota // "S-"
+	ControlModifier                            // "C-", and the caret form "^X"
+	MegaMetaModifier                           // "M-" — Alt, kitty bit 2
+	MetaModifier                               // "s-" — Super / Command (NOT mega/micro)
+	MicroMetaModifier                          // "m-" — Meta, kitty bit 32
+	HyperModifier                              // "H-" — kitty bit 16
+	GlyphModifier                              // "G-" — AltGr / ISO_Level3_Shift (private bit 256)
 )
 
 // ParseKeyModifiers parses modifier prefixes from a key string.
@@ -219,7 +233,7 @@ func ParseKeyModifiers(key string) (KeyModifiers, string) {
 	for {
 		switch {
 		case len(remaining) > 2 && remaining[:2] == "M-":
-			mods |= AltModifier
+			mods |= MegaMetaModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "C-":
 			mods |= ControlModifier
@@ -231,7 +245,7 @@ func ParseKeyModifiers(key string) (KeyModifiers, string) {
 			mods |= MetaModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "m-":
-			mods |= MetaProperModifier
+			mods |= MicroMetaModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "H-":
 			mods |= HyperModifier

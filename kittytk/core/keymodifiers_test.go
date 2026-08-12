@@ -14,21 +14,21 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 		{"x", 0, "x"},
 		{"S-Tab", ShiftModifier, "Tab"},
 		{"C-Up", ControlModifier, "Up"},
-		{"M-x", AltModifier, "x"},
+		{"M-x", MegaMetaModifier, "x"},
 		{"s-x", MetaModifier, "x"},
-		{"m-x", MetaProperModifier, "x"},
+		{"m-x", MicroMetaModifier, "x"},
 		{"H-x", HyperModifier, "x"},
 		{"G-€", GlyphModifier, "€"},
 
 		// The caret is Control too, and hugs the base key.
 		{"^A", ControlModifier, "A"},
 		{"S-^A", ShiftModifier | ControlModifier, "A"},
-		{"M-^A", AltModifier | ControlModifier, "A"},
+		{"M-^A", MegaMetaModifier | ControlModifier, "A"},
 
 		// Stacks, in canonical order.
 		{"C-S-Up", ControlModifier | ShiftModifier, "Up"},
-		{"M-S-s-Left", AltModifier | ShiftModifier | MetaModifier, "Left"},
-		{"M-m-S-s-H-^A", AltModifier | MetaProperModifier | ShiftModifier |
+		{"M-S-s-Left", MegaMetaModifier | ShiftModifier | MetaModifier, "Left"},
+		{"M-m-S-s-H-^A", MegaMetaModifier | MicroMetaModifier | ShiftModifier |
 			MetaModifier | HyperModifier | ControlModifier, "A"},
 	} {
 		mods, name := ParseKeyModifiers(c.key)
@@ -39,22 +39,23 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 	}
 }
 
-// Three prefixes crowd around the word "meta" and each needs its own bit:
-// "M-" is the Meta a PC's Alt key induces (AltModifier), "s-" is Super/Command
-// (MetaModifier, which is what this toolkit has always called it), and "m-" is
-// the separate Meta key a terminal can report on its own bit
-// (MetaProperModifier).
+// Three constants carry the word "Meta" and each needs its own bit. "M-" is
+// kitty's alt (MegaMetaModifier) and "m-" is kitty's meta (MicroMetaModifier)
+// — two X11 keysyms that have always produced the same bytes, so neither is
+// more genuinely Meta and both are named for the case of their prefix. "s-" is
+// Super/Command (MetaModifier), which is not on that scale at all and is only
+// called Meta because this toolkit always has.
 func TestParseKeyModifiersKeepsTheMetasApart(t *testing.T) {
-	alt, _ := ParseKeyModifiers("M-x")
-	metaProper, _ := ParseKeyModifiers("m-x")
+	mega, _ := ParseKeyModifiers("M-x")
+	micro, _ := ParseKeyModifiers("m-x")
 	super, _ := ParseKeyModifiers("s-x")
-	if alt == metaProper {
-		t.Error("M- and m- set the same bit; they are different modifiers")
+	if mega == micro {
+		t.Error("M- and m- set the same bit; they are different keysyms")
 	}
-	if super == metaProper {
+	if super == micro {
 		t.Error("s- and m- set the same bit; Super/Command is not the Meta key")
 	}
-	if alt&metaProper != 0 || super&metaProper != 0 || alt&super != 0 {
+	if mega&micro != 0 || super&micro != 0 || mega&super != 0 {
 		t.Error("the three overlap; each modifier needs its own bit")
 	}
 }

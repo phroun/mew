@@ -1800,7 +1800,7 @@ func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseFracX, prec
 		mods |= core.ShiftModifier
 	}
 	if ev.Alt {
-		mods |= core.AltModifier
+		mods |= core.MegaMetaModifier
 	}
 	if ev.Ctrl {
 		mods |= core.ControlModifier
