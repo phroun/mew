@@ -19,32 +19,31 @@ const welcomeWrapCols = 48
 // maybeShowWelcome opens the first-run welcome window when a graphical host
 // starts a not-yet-installed copy of mew on a platform with a self-installer
 // (Windows and macOS — elsewhere selfinstall reports the first run already done,
-// so nothing shows). The window explains what mew is and offers two choices, in
-// the "lame trinket" spirit (a label over a row of real Buttons):
+// so nothing shows), and reports whether it did. The window explains what mew is
+// and offers two choices, in the "lame trinket" spirit (a label over a row of
+// real Buttons):
 //
 //   - Install — copy mew into place (Start Menu + PATH on Windows, the
 //     Applications folder on macOS), launch the freshly installed copy, and quit
 //     this one.
-//   - Try — dismiss the window and drop through to the normal mew editor already
-//     running behind it. Nothing is written, so an uninstalled copy keeps
-//     offering to install on each launch.
+//   - Try — open the editor and get out of the way. Nothing is written, so an
+//     uninstalled copy keeps offering to install on each launch.
 //
-// It is presented as a WINDOW-level modal owned by the root editor: dlg.SetOwner
-// (root) before AddWindow. The owner matters — the window manager scopes modal
-// blocking by owner first, then app, else system (registerModalLocked). A modal
-// with no owner (and no app id) lands on the SYSTEM stack, which surfaces but
-// does not gate the solo editor's own surface — so it showed but didn't actually
-// block. Owning it by the editor makes it (a) an owned overlay that floats above
-// the editor in the z-order and (b) a window modal that blocks that editor. It is
-// still WindowTypeModal, not Dialog: a Dialog floats above its owner but blocks
-// nothing, and we want the first-run gate to block.
+// The welcome is a GATE, not an overlay: it comes up over the bare desktop with
+// no editor behind it, and openEditor (the caller's "now actually start mew")
+// runs only on Try. Someone who chooses Install never asked for this session --
+// they asked for the installed copy, which is launched instead -- so a mew
+// window flashing up behind the question was answering it for them. Nothing of
+// the session is built until it is wanted: no window, no mew process inside it.
 //
-// Closing goes through window.Close (the manager ties modal unregistration to the
-// window's close for owner/app modals, so the stack is popped cleanly) — unlike a
-// system modal, which needs WindowManager.CloseModal.
-func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool) {
+// It is a WINDOW of the application (AddWindow gives it the app id), and
+// WindowTypeModal, so the manager scopes it as an app modal: it floats and it
+// blocks, which is what a first-run gate is for. It needs no owner window --
+// there is none yet, and nothing else of the app is on screen to gate. Closing
+// goes through window.Close, which pops the modal stack for an app modal.
+func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, launchArgs []string, graphical bool, openEditor func()) bool {
 	if !graphical || !selfinstall.Available() || selfinstall.FirstRunDone() {
-		return
+		return false
 	}
 	dlg := newWelcomeDialog(
 		"Welcome to mew",
@@ -52,20 +51,62 @@ func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, r
 		func() { // Install
 			exe, err := selfinstall.Install()
 			if err != nil {
-				showMewError(application, root, "Install failed", err.Error())
+				// The install failed, so this copy IS the session after all:
+				// open the editor behind the error, or the window would be
+				// left with nothing to go back to.
+				showMewError(application, nil, "Install failed", err.Error())
+				openWhenIdle(desktop, openEditor)
 				return
 			}
-			// Launch the freshly installed copy (with the same files) and bow out.
+			// Launch the freshly installed copy (with the same files) and bow
+			// out. Nothing was opened here, so there is nothing to close.
 			if exe != "" {
 				_ = exec.Command(exe, launchArgs...).Start()
 			}
-			desktop.Quit()
+			desktop.ForceQuit()
 		},
-		func() {}, // Try — dismiss (doTry closes the dialog); the editor is behind us.
+		func() { openWhenIdle(desktop, openEditor) }, // Try — now open mew
 	)
-	dlg.SetOwner(root)
 	application.AddWindow(&dlg.Window)
+	centerOnDesktop(desktop, &dlg.Window)
 	desktop.RequestUpdate()
+	return true
+}
+
+// centerOnDesktop puts win in the middle of the desktop's client area. The
+// manager positions an unplaced window by CASCADE, from the top-left corner,
+// which reads as a stray window rather than the one thing on screen -- and with
+// the editor held back until Try, the welcome IS the only thing on screen.
+func centerOnDesktop(desktop *trinkets.Desktop, win *window.Window) {
+	wm := desktop.WindowManager()
+	if wm == nil {
+		return
+	}
+	area := wm.ClientArea()
+	b := win.Bounds()
+	if area.Width <= 0 || area.Height <= 0 || b.Width <= 0 || b.Height <= 0 {
+		return
+	}
+	x := area.X + (area.Width-b.Width)/2
+	y := area.Y + (area.Height-b.Height)/2
+	if x < area.X {
+		x = area.X
+	}
+	if y < area.Y {
+		y = area.Y
+	}
+	win.SetBounds(core.UnitRect{X: x, Y: y, Width: b.Width, Height: b.Height})
+}
+
+// openWhenIdle runs fn on the next turn of the platform loop, so the welcome
+// window is closed and off the screen before the editor takes the display over
+// (solo mode re-homes it onto the primary surface). Falls back to running it
+// inline where there is no platform to post to.
+func openWhenIdle(desktop *trinkets.Desktop, fn func()) {
+	if fn == nil {
+		return
+	}
+	desktop.Post(fn)
 }
 
 // welcomeLines is the explanatory copy shown in the welcome window, as
@@ -103,6 +144,7 @@ type welcomeDialog struct {
 	content   *welcomeContent
 	onInstall func()
 	onTry     func()
+	answered  bool // the question is answered once, by whatever route
 }
 
 func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *welcomeDialog {
@@ -126,33 +168,54 @@ func newWelcomeDialog(title string, lines []string, onInstall, onTry func()) *we
 
 	d.content = c
 	d.SetContent(c)
+	// Dismissing the window IS Try. The gate holds the editor back, so a
+	// welcome closed by its [x] rather than by a button would otherwise leave
+	// the desktop empty with nothing to open mew from.
+	d.SetOnClose(func() bool {
+		d.answer(d.onTry)
+		return true
+	})
 	d.calculateSize()
 	return d
 }
 
-// doInstall / doTry run the wired action, then close the dialog. Closing an
-// owner-scoped modal unregisters it from the manager's modal stack (the
-// AddWindow path ties unregistration to the window's close), so the editor
-// becomes interactive again after Try, and the install path has already quit.
-func (d *welcomeDialog) doInstall() {
-	if d.onInstall != nil {
-		d.onInstall()
+// answer runs the chosen action, once. Every route ends in Close, which
+// answers Try in case nothing else had, so the guard is what keeps a chosen
+// Install from also being read as a dismissal.
+func (d *welcomeDialog) answer(fn func()) {
+	if d.answered {
+		return
 	}
+	d.answered = true
+	if fn != nil {
+		fn()
+	}
+}
+
+// doInstall / doTry run the wired action, then close the dialog. Closing an
+// app-scoped modal unregisters it from the manager's modal stack (the AddWindow
+// path ties unregistration to the window's close), so the desktop is clear
+// before the editor Try asked for opens onto it; the install path has already
+// launched the installed copy and quit.
+func (d *welcomeDialog) doInstall() {
+	d.answer(d.onInstall)
 	d.Close()
 }
 
 func (d *welcomeDialog) doTry() {
-	if d.onTry != nil {
-		d.onTry()
-	}
+	d.answer(d.onTry)
 	d.Close()
 }
 
-// HandleKeyPress maps Enter to Install (the primary action) and Escape to Try
-// (dismiss), falling back to the window's default handling otherwise.
+// HandleKeyPress maps the accept key to Install (the primary action) and Escape
+// to Try (dismiss), falling back to the window's default handling otherwise.
+//
+// Both spellings of accept: Return is the home-row key and Enter is the one on
+// the keypad. A dialog's default button answers to either, and naming only one
+// of them here would leave the other dead.
 func (d *welcomeDialog) HandleKeyPress(ev core.KeyPressEvent) bool {
 	switch ev.Key {
-	case "Enter":
+	case "Return", "Enter":
 		d.doInstall()
 		return true
 	case "Escape":
