@@ -464,12 +464,6 @@ func (t *TreeView) headerStopLabel(idx int) string {
 	return fmt.Sprintf("%s column header, %s", name, state)
 }
 
-// isShiftTab matches both spellings of a backward Tab.
-func isShiftTab(event core.KeyPressEvent) bool {
-	return event.Key == "S-Tab" ||
-		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-}
-
 // handleHeaderFocusKey runs the header zones' keyboard model. Returns
 // handled; content-zone keys fall through to the tree's own handling.
 //
@@ -481,32 +475,35 @@ func isShiftTab(event core.KeyPressEvent) bool {
 //	        there exits down into the rows) - Left previous (before
 //	        the first -> bar) - Enter/Space activates (sort cycle,
 //	        or opens the chooser) - Escape -> bar
-func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
+func (t *TreeView) handleHeaderFocusKey(cmd string) bool {
 	if t.headerHeight() == 0 {
 		return false
 	}
-	shiftTab := isShiftTab(event)
+	// Enter resolves to the edit command and Space to activate; a header stop
+	// holds no text to edit, so both simply mean "act on this stop".
+	activate := cmd == core.CmdTrinketActivate || cmd == core.CmdTrinketEdit
 	switch t.headerZone {
 	case hzContent:
 		// S-Tab backs into the header bar instead of leaving the
 		// trinket; everything else is the content's business.
-		if shiftTab {
+		if cmd == core.CmdFocusPrior {
 			t.setHeaderZone(hzBar, 0)
 			return true
 		}
 		return false
 	case hzBar:
 		switch {
-		case shiftTab:
+		case cmd == core.CmdFocusPrior:
 			t.headerZone = hzContent // release backward out of the trinket
 			return false
-		case event.Key == "Tab":
+		case cmd == core.CmdFocusNext:
 			t.setHeaderZone(hzContent, 0)
 			return true
-		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+		case activate:
 			t.setHeaderZone(hzItems, 0)
 			return true
-		case event.Key == "Down" || event.Key == "Escape":
+		case cmd == core.CmdTrinketItemDown || cmd == core.CmdTrinketItemNext ||
+			cmd == core.CmdTrinketCancel:
 			t.setHeaderZone(hzContent, 0)
 			return true
 		}
@@ -514,28 +511,28 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 	case hzItems:
 		n := t.headerStopCount()
 		switch {
-		case shiftTab:
+		case cmd == core.CmdFocusPrior:
 			if t.headerFocusIdx == 0 {
 				t.setHeaderZone(hzItems, n-1) // wrap to the chooser end
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
 			}
 			return true
-		case event.Key == "Left":
+		case cmd == core.CmdTrinketItemLeft:
 			if t.headerFocusIdx == 0 {
 				t.setHeaderZone(hzBar, 0)
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
 			}
 			return true
-		case event.Key == "Tab" || event.Key == "Right":
+		case cmd == core.CmdFocusNext || cmd == core.CmdTrinketItemRight:
 			if t.headerFocusIdx+1 >= n {
 				t.setHeaderZone(hzContent, 0)
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx+1)
 			}
 			return true
-		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+		case activate:
 			seq := t.visibleColumns()
 			if t.headerFocusIdx >= len(seq) {
 				t.openColumnChooser(true)
@@ -544,7 +541,7 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 				t.announceHeaderZone() // re-announce the new sort state
 			}
 			return true
-		case event.Key == "Escape":
+		case cmd == core.CmdTrinketCancel:
 			t.setHeaderZone(hzBar, 0)
 			return true
 		}
@@ -1849,11 +1846,11 @@ func (t *TreeView) desktopAncestor() (*Desktop, bool) {
 // retains focus and forwards, exactly like the menu bar): navigation
 // and toggling go to the Menu, Escape dismisses, everything else is
 // swallowed while the menu is up.
-func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
+func (t *TreeView) handleChooserKey(event core.KeyPressEvent, cmd string) bool {
 	if !t.chooserOpen || t.chooserMenu == nil {
 		return false
 	}
-	if event.Key == "Escape" {
+	if cmd == core.CmdTrinketCancel {
 		t.closeColumnChooser()
 		return true
 	}

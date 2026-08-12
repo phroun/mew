@@ -75,13 +75,13 @@ func TestTreeHeaderFocusZones(t *testing.T) {
 
 	// S-Tab from content backs into the header bar; S-Tab again
 	// releases backward out of the trinket.
-	if !tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab", Modifiers: core.ShiftModifier}) {
+	if !tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier}) {
 		t.Error("content S-Tab should re-enter the header bar")
 	}
 	if tv.headerZone != hzBar {
 		t.Fatalf("zone after content S-Tab = %d, want hzBar", tv.headerZone)
 	}
-	if tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab", Modifiers: core.ShiftModifier}) {
+	if tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier}) {
 		t.Error("bar S-Tab must be released to the focus manager")
 	}
 
@@ -113,7 +113,7 @@ func TestTreeHeaderItemsShiftTabWraps(t *testing.T) {
 
 	tv.HandleFocusIn() // -> hzBar
 	key("Enter")       // -> hzItems, first stop
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab", Modifiers: core.ShiftModifier})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier})
 	last := tv.headerStopCount() - 1
 	if tv.headerZone != hzItems || tv.headerFocusIdx != last {
 		t.Fatalf("S-Tab at the first stop: zone=%d idx=%d, want items/%d",

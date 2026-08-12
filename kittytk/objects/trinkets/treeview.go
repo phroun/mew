@@ -240,6 +240,11 @@ func NewTreeView() *TreeView {
 		// Minus and Plus collapse and expand WITHOUT walking the tree, which
 		// is what separates them from the arrows.
 		core.CmdTrinketCollapse, core.CmdTrinketExpand, core.CmdTrinketExpandAll,
+		// The header focus zones and the row editor: Tab walks between the
+		// header stops (and between the editor's columns), Escape backs out
+		// of whichever of them is up. Neither reaches the content switch,
+		// which has no case for either.
+		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketCancel,
 	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
@@ -886,18 +891,24 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 // HandleKeyPress handles keyboard input.
 func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
+	// Resolved ONCE and handed down: this trinket asks in five places (the
+	// chooser, the row editor, the header zones, the edit target, and its own
+	// switch below) and feeding the sequence processor the same keystroke
+	// five times would advance a chord's prefix by five.
+	cmd := t.KeyCommand(event.Key)
+
 	// The open column-chooser menu takes keys first (the tree retains
 	// focus and forwards - the menu bar pattern).
-	if t.handleChooserKey(event) {
+	if t.handleChooserKey(event, cmd) {
 		return true
 	}
 	// The open row editor takes everything next (see treeview_edit.go).
-	if t.handleEditKey(event) {
+	if t.handleEditKey(event, cmd) {
 		return true
 	}
 	// The internal header focus zone consumes its navigation (including
 	// the content zone's S-Tab back into the bar) before content keys.
-	if t.handleHeaderFocusKey(event) {
+	if t.handleHeaderFocusKey(cmd) {
 		return true
 	}
 	// In an editable grid, Left/Right rotate the Enter-target column
@@ -908,7 +919,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	current := t.CurrentItem()
 
-	switch t.KeyCommand(event.Key) {
+	switch cmd {
 	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if t.currentIndex > 0 {
 			t.SetCurrentIndex(t.currentIndex - 1)
