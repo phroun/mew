@@ -59,8 +59,6 @@ func (r *KeyRegistry) Revision() uint64 {
 	return r.revision
 }
 
-// Bind sets one binding. An empty command unbinds the key, which is how a user
-// turns a default off without having to know what it was.
 // Bind REPLACES everything a key means with one command. An empty command
 // unbinds it entirely, which is how a user turns a default off without having
 // to know what it was.

@@ -21,6 +21,7 @@ import (
 // - Tile and cascade window arrangement
 type MDIPane struct {
 	core.TrinketBase
+	core.TrinketKeys
 	mu sync.RWMutex
 
 	// Background content trinket (shown behind windows)
@@ -106,6 +107,7 @@ func NewMDIPane() *MDIPane {
 		keyboardBlurChildren: true, // Default to enabling keyboard blur
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	m.SetCommands(core.CmdWindowMDINext, core.CmdWindowMDIPrior)
 	m.Init(m)
 	m.SetFocusPolicy(core.StrongFocus)
 	return m
@@ -1413,11 +1415,11 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RUnlock()
 
 	// Check for MDI-specific shortcuts (window switching)
-	switch event.Key {
-	case "M-Tab", "C-Tab":
+	switch m.KeyCommand(event.Key) {
+	case core.CmdWindowMDINext:
 		m.NextWindow()
 		return true
-	case "M-S-Tab", "C-S-Tab":
+	case core.CmdWindowMDIPrior:
 		m.PrevWindow()
 		return true
 	}

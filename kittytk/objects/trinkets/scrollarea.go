@@ -635,6 +635,7 @@ func (s *ScrollBar) AccessibleInfo() core.AccessibleInfo {
 // ScrollArea provides a scrollable viewport for a trinket.
 type ScrollArea struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	content       core.Trinket
@@ -674,6 +675,13 @@ func NewScrollArea() *ScrollArea {
 		vScrollBarPolicy: ScrollBarAsNeeded,
 	}
 	s.TrinketBase = *core.NewTrinketBase()
+	s.SetCommands(
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+	)
 	s.Init(s)
 	s.SetFocusPolicy(core.StrongFocus)
 	s.SetAccessibleRole(core.RoleGroup)
@@ -1370,29 +1378,29 @@ func (s *ScrollArea) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 	}
 
-	switch event.Key {
-	case "Up":
+	switch s.KeyCommand(event.Key) {
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		s.SetScrollY(s.scrollY - s.vScrollBar.SingleStep())
 		return true
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		s.SetScrollY(s.scrollY + s.vScrollBar.SingleStep())
 		return true
-	case "Left":
+	case core.CmdTrinketItemLeft:
 		s.SetScrollX(s.scrollX - s.hScrollBar.SingleStep())
 		return true
-	case "Right":
+	case core.CmdTrinketItemRight:
 		s.SetScrollX(s.scrollX + s.hScrollBar.SingleStep())
 		return true
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		s.SetScrollY(s.scrollY - s.vScrollBar.PageStep())
 		return true
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		s.SetScrollY(s.scrollY + s.vScrollBar.PageStep())
 		return true
-	case "Home":
+	case core.CmdTrinketBeg:
 		s.SetScrollY(0)
 		return true
-	case "End":
+	case core.CmdTrinketEnd:
 		s.SetScrollY(s.vScrollBar.Maximum())
 		return true
 	}
