@@ -76,6 +76,13 @@ const (
 	CmdTrinketScrollDown = "trinket_scroll_down"
 
 	// Trees and other things that nest.
+	//
+	// Expand and collapse are NOT synonyms for item_right and item_left, even
+	// where one key reaches both. They are the more specific meaning — a
+	// structural change to the tree — while the item movement is generic
+	// travel across columns. A trinket answering to both gives them separate
+	// cases and lets its context decide which is on offer, rather than
+	// folding them together because a single arrow happens to reach either.
 	CmdTrinketExpand      = "trinket_expand"
 	CmdTrinketCollapse    = "trinket_collapse"
 	CmdTrinketExpandAll   = "trinket_expand_all"
