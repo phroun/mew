@@ -252,7 +252,7 @@ func TestFormAcceleratorKey(t *testing.T) {
 	}{
 		{"M-*", 'h', "M-h"},
 		{"m-*", 'h', "m-h"},
-		{"^X * Enter", 'h', "^X h Enter"},
+		{"^X * Return", 'h', "^X h Return"},
 		{"^X ^M 2 2 7 *", 'h', "^X ^M 2 2 7 h"},
 		// No "*" forms nothing, which turns chord accelerators off without
 		// disturbing the bare letters a focused bar answers to.

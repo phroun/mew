@@ -577,7 +577,7 @@ Return =
 // The chord pattern is free-form: "*" is a token substituted anywhere in a key
 // sequence, not a suffix, so a sequence pattern has to survive intact.
 func TestApplyKeepsAcceleratorChordVerbatim(t *testing.T) {
-	for _, pattern := range []string{"M-*", "^X * Enter", "^X ^M 2 2 7 *", ""} {
+	for _, pattern := range []string{"M-*", "^X * Return", "^X ^M 2 2 7 *", ""} {
 		var cfg Config
 		apply([]byte("[window]\naccelerator_chord = "+pattern+"\n"), &cfg)
 		if cfg.AcceleratorChord != pattern {

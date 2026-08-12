@@ -172,7 +172,7 @@ type Config struct {
 	// AcceleratorChord is the pattern a menu accelerator is formed from, read
 	// from [window] accelerator_chord. The token "*" is replaced by a menu's
 	// mnemonic letter wherever it sits, so "M-*" forms "M-h" for &Help and
-	// "^X * Enter" forms "^X H Enter". Blank disables chord accelerators
+	// "^X * Return" forms "^X H Enter". Blank disables chord accelerators
 	// without touching the bare-letter mnemonics, which are ordinary typing
 	// handled by a focused menu bar and never enter a registry.
 	AcceleratorChord string

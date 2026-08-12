@@ -78,7 +78,7 @@ func assignAccelerators(siblings [][]acceleratorCandidate, clashes func(rune) bo
 //
 // The pattern is a whole key sequence with "*" standing in for the letter, and
 // the letter's slot is wherever the author put it — "M-*" forms "M-h", and
-// "^X * Enter" forms "^X h Enter". A pattern with no "*" forms nothing, which
+// "^X * Return" forms "^X h Return". A pattern with no "*" forms nothing, which
 // is how chord accelerators are turned off without disturbing the bare-letter
 // mnemonics a focused menu bar answers to.
 func formAcceleratorKey(pattern string, ch rune) string {
@@ -86,7 +86,7 @@ func formAcceleratorKey(pattern string, ch rune) string {
 		return ""
 	}
 	// The star is a character inside a token, not a token of its own: "M-*" is
-	// one key whose base is the star, while "^X * Enter" spends a whole slot
+	// one key whose base is the star, while "^X * Return" spends a whole slot
 	// on it. Substituting the character covers both without having to know
 	// which shape the author used.
 	if !strings.Contains(pattern, "*") {

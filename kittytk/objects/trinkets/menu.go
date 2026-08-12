@@ -3669,7 +3669,7 @@ func (m *MenuBar) AccessibleInfo() core.AccessibleInfo {
 // sequence, and reports whether one matched.
 //
 // The sequence is compared whole, so the mnemonic's position within the chord
-// does not matter: a pattern of "^X * Enter" forms "^X h Enter" for &Help and
+// does not matter: a pattern of "^X * Return" forms "^X h Return" for &Help and
 // the same substitution identifies it coming back. Only a live accelerator
 // answers — a muted one is not published and is not matched here either.
 func (m *MenuBar) ActivateAcceleratorSequence(seq string) bool {

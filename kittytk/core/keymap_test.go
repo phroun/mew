@@ -238,8 +238,8 @@ func TestApplyHostKeymapChord(t *testing.T) {
 	if got := AcceleratorChord(); got != DefaultAcceleratorChord {
 		t.Errorf("a blank chord changed it to %q", got)
 	}
-	ApplyHostKeymap(nil, "^X * Enter")
-	if got := AcceleratorChord(); got != "^X * Enter" {
+	ApplyHostKeymap(nil, "^X * Return")
+	if got := AcceleratorChord(); got != "^X * Return" {
 		t.Errorf("chord = %q, want the configured sequence", got)
 	}
 	ApplyHostKeymap(nil, DefaultAcceleratorChord)
@@ -313,8 +313,8 @@ func TestStatesCompound(t *testing.T) {
 func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
 	r := NewKeyRegistry("t", map[string][]string{
 		"M-h":        {CommandAppAccelerator},
-		"^X h Enter": {CommandAppAccelerator},
-		"^X p Enter": {CommandAppAccelerator},
+		"^X h Return": {CommandAppAccelerator},
+		"^X p Return": {CommandAppAccelerator},
 		"Tab":        {"focus_next"},
 	})
 	ctx := r.BuildContext([]string{CommandAppAccelerator, "focus_next"})
@@ -334,18 +334,18 @@ func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
 			t.Fatalf("%q resolved early to %q", k, got)
 		}
 	}
-	if got := ctx.Resolve("Enter"); got != CommandAppAccelerator {
-		t.Fatalf("^X p Enter -> %q", got)
+	if got := ctx.Resolve("Return"); got != CommandAppAccelerator {
+		t.Fatalf("^X p Return -> %q", got)
 	}
-	if got := ctx.MatchedSequence(); got != "^X p Enter" {
-		t.Errorf("matched %q, want the whole chord ^X p Enter", got)
+	if got := ctx.MatchedSequence(); got != "^X p Return" {
+		t.Errorf("matched %q, want the whole chord ^X p Return", got)
 	}
 
 	// A failed or incomplete match leaves the last successful one alone rather
 	// than reporting a half-typed chord.
 	ctx.Resolve("^X")
 	ctx.Abandon()
-	if got := ctx.MatchedSequence(); got != "^X p Enter" {
+	if got := ctx.MatchedSequence(); got != "^X p Return" {
 		t.Errorf("an abandoned chord changed the matched sequence to %q", got)
 	}
 }

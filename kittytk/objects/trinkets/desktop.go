@@ -4054,6 +4054,26 @@ func (d *Desktop) SetLayoutManager(lm core.LayoutManager) {
 	// Desktop uses custom layout, ignores layout manager
 }
 
+// toggleMenuBarFromKey is the whole of what the menu key does: the bar takes
+// the keyboard, and the active window gives it up.
+//
+// Both halves matter, and they used to live in only one of the two places the
+// key arrives. The window manager resolves the desktop's context ABOVE any
+// window, so that is the path a real keystroke takes -- and it toggled the
+// bar's focus while leaving the window active and its trinket focused, so the
+// bar lit up over a window that still held the keyboard.
+func (d *Desktop) toggleMenuBarFromKey() {
+	if d.menuBar == nil {
+		return
+	}
+	// Only on the way IN: releasing the bar hands the keyboard back rather
+	// than deactivating anything.
+	if d.windowManager != nil && !d.menuBar.HasFocus() {
+		d.windowManager.DeactivateActiveWindow()
+	}
+	d.menuBar.ToggleMenuFocus()
+}
+
 // wireMenuBarKeys gives a menu bar what it takes to form chord accelerators:
 // the configured pattern, and the context they are formed against.
 //
@@ -4613,11 +4633,7 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 		cmd := d.KeyCommand(event.Key)
 		// The menu key summons the bar.
 		if cmd == core.CmdAppMenu {
-			// Deactivate the active window when invoking menu bar
-			if d.windowManager != nil && !d.menuBar.HasFocus() {
-				d.windowManager.DeactivateActiveWindow()
-			}
-			d.menuBar.HandleKeyPress(event)
+			d.toggleMenuBarFromKey()
 			return true
 		}
 		// A formed chord accelerator. The bar compares the WHOLE formed
@@ -5074,7 +5090,7 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 		}
 	case core.CmdAppMenu:
 		if d.menuBar != nil {
-			d.menuBar.ToggleMenuFocus()
+			d.toggleMenuBarFromKey()
 			return true
 		}
 	}
