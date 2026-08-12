@@ -68,6 +68,21 @@ external reader).
 
 There is deliberately **no baseline `change`** (principle 1).
 
+## Host-side contract (Go methods, both builds)
+
+The trinket also carries a small Go method surface the embedding **host** uses
+directly — not protocol properties, because a host frame asks these questions
+of the editor it contains, in process:
+
+| method | meaning |
+|---|---|
+| `HasUnsavedWork() bool` | Is there work in here that closing would lose? mew answers for every buffer it holds open, including the ones stacked behind a link follow; the placeholder answers for an external edit in flight. |
+| `RequestClose() bool` | Ask the editor to close what it holds ON ITS OWN TERMS (mew: `session_close`, which raises mew's lose-changes prompt per modified buffer). Reports whether it TOOK the question on — if it did, the caller must not close the window, since the answer belongs to the user and arrives later as a `commit`. The placeholder always answers false: it runs no session that could hold a prompt open. |
+
+Together they are how a window refuses to close over unsaved work: the frame
+asks, the editor answers, and the close either happens now or becomes the
+editor's own question.
+
 ## Imperative commands (deferred)
 
 One-shot app→editor verbs — `save-now`, `reload`, `select-all`, `focus` — are

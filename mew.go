@@ -332,6 +332,19 @@ func WithEditState(fn func(readOnly bool)) Option {
 	return func(cfg *editor.Config) { cfg.EditState = fn }
 }
 
+// WithUnsavedState wires the session's unsaved-work state to the host: fn is
+// told whether ANY buffer this session holds open is modified — the active
+// ones and the work stacked behind a link follow alike — once at the first
+// render and thereafter on transitions.
+//
+// It is the question a host asks of a window it is about to close. A host that
+// frames the session should refuse that close while the answer is yes and run
+// the session_close command instead, so the work is asked about in mew's own
+// terms rather than discarded by the frame around it.
+func WithUnsavedState(fn func(unsaved bool)) Option {
+	return func(cfg *editor.Config) { cfg.UnsavedState = fn }
+}
+
 // PointerArrowSpan is one on-screen cell span that shows the arrow rather than
 // the I-beam even though it lies inside the I-beam rectangle — a browse-mode
 // link button (see WithPointerRegion).

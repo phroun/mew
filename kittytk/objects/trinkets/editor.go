@@ -197,6 +197,24 @@ func (e *Editor) KeyBinding(_, preferred string) string { return preferred }
 func (e *Editor) Option(string) string                  { return "" }
 func (e *Editor) QuickHelpOpen() bool                   { return false }
 
+// HasUnsavedWork reports whether the editor is holding work that closing it
+// would lose, so a window can refuse a close over it. The placeholder's stand-
+// in for a modified document is an external edit IN FLIGHT: from the click
+// that hands the text to the OS editor until the click that reads it back,
+// there is work out there that has not come home — which is the same question
+// mew answers about its modified buffers.
+func (e *Editor) HasUnsavedWork() bool { return e.editing }
+
+// RequestClose asks the editor to close what it holds on its own terms,
+// reporting whether it TOOK the question on (in which case the caller must not
+// close the window: the answer arrives later, as a commit).
+//
+// The placeholder never does. It runs no session that could hold a prompt
+// open, so it answers false — "nothing to ask, close me" — and a host that
+// cares about the in-flight edit reads HasUnsavedWork and asks in its own
+// voice. mew's editor (-tags mew) answers this properly.
+func (e *Editor) RequestClose() bool { return false }
+
 // --- Event-hook setters (bind) ---
 
 func (e *Editor) SetOnCommit(fn func(string)) { e.onCommit = fn }

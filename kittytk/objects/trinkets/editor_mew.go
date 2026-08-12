@@ -93,6 +93,12 @@ type Editor struct {
 	// (QuickHelpOpen).
 	helpOpen atomic.Bool
 
+	// unsaved mirrors whether ANY buffer the session holds open is modified
+	// (WithUnsavedState). It is the question a frame asks before closing this
+	// editor's window: work at stake is why a close is refused and answered
+	// with mew's own prompt instead (HasUnsavedWork, RequestClose).
+	unsaved atomic.Bool
+
 	// launchArgv, when set by the host, runs the session as a full mew
 	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
 	// taking precedence over filename/value/caret. A host seam, not an app
@@ -426,6 +432,12 @@ func (e *Editor) run() {
 		// "Quick Help" menu checkmark in sync (QuickHelpOpen).
 		mew.WithHelpState(func(open bool) {
 			e.helpOpen.Store(open)
+		}),
+		// Whether the session holds modified work anywhere - the active
+		// buffers and the work stacked behind a link follow alike - so a
+		// window holding this editor can refuse a close over it.
+		mew.WithUnsavedState(func(unsaved bool) {
+			e.unsaved.Store(unsaved)
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
@@ -777,6 +789,29 @@ func (e *Editor) Execute(cmd string) { e.execMew(cmd) }
 // (mirrored from mew via WithHelpState), so a host can keep a "Quick Help"
 // menu checkmark in sync with it.
 func (e *Editor) QuickHelpOpen() bool { return e.helpOpen.Load() }
+
+// HasUnsavedWork reports whether the session holds modified work — every
+// buffer it has open, including the ones stacked behind a link follow, not
+// just what is on screen (mirrored from mew via WithUnsavedState). A window
+// holding this editor asks before closing: this is the whole reason a close
+// becomes a question instead of an act.
+func (e *Editor) HasUnsavedWork() bool { return e.unsaved.Load() }
+
+// RequestClose asks the session to close everything it holds — mew's
+// session_close, which walks the viewports and raises mew's own lose-changes
+// prompt over each piece of unsaved work. It reports whether the session TOOK
+// the question on; when it did, the caller must NOT close the window, because
+// the answer belongs to the user and arrives later: a session that closes out
+// ends and fires commit, which is what closes the window for real.
+//
+// False means there was no live session to ask (before it starts, or after it
+// ends), so the caller may close outright.
+func (e *Editor) RequestClose() bool {
+	if e.port == nil {
+		return false
+	}
+	return e.port.Execute("session_close")
+}
 
 // Copy places mew's marked block on the system clipboard.
 func (e *Editor) Copy() { e.execMew("os_copy") }

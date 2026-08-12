@@ -461,6 +461,11 @@ type Editor struct {
 	// initial push has happened.
 	readOnlySent   bool
 	readOnlyPushed bool
+	// unsavedSent/unsavedPushed: the last "is there modified work anywhere in
+	// this session" answer pushed through Config.UnsavedState (see
+	// notifyUnsavedState).
+	unsavedSent   bool
+	unsavedPushed bool
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
@@ -781,6 +786,14 @@ type Config struct {
 	// affordances that mutate — its Edit-menu Cut, say. Called only on
 	// transitions, from the editor loop.
 	EditState func(readOnly bool)
+
+	// UnsavedState, when set, is told whether ANY buffer this session holds
+	// open is modified — the active ones and the work stacked behind a link
+	// follow alike — once at the first render and thereafter on transitions.
+	// A host asks this question of a window it is about to close: unsaved
+	// work is why a close must be refused and turned into a prompt rather
+	// than performed. Called from the render path.
+	UnsavedState func(unsaved bool)
 
 	// IdentityUser / IdentityHost / IdentityPID override the process identity
 	// mew stamps into native lock files and shows in the "being edited by"
@@ -1443,6 +1456,41 @@ func (e *Editor) renderColumnRuler(w *viewport.Viewport, screenWidth int) string
 
 // tokenTimeout converts a timeout option value (seconds, 0 = never) to a
 // PawScript token timeout (a non-positive duration disables the timeout).
+// promptedResult runs a command whose outcome may only be known after the user
+// answers a prompt. An answer that comes back before run returns is the
+// command's result outright; anything slower suspends the calling PawScript
+// sequence on a token and resumes it with the answer, so a script chained onto
+// this command waits for the human instead of racing them.
+//
+// A token that has expired (PawScript force-cleans them after the promptTimeout
+// option) takes its suspended sequence with it, so a late answer resolves
+// nothing and says so rather than half-succeeding.
+func (e *Editor) promptedResult(ctx *pawscript.Context, run func(func(bool))) pawscript.Result {
+	var (
+		token   string
+		settled bool
+		result  bool
+		expired atomic.Bool
+	)
+	run(func(ok bool) {
+		if token == "" {
+			settled, result = true, ok
+			return
+		}
+		if expired.Load() {
+			e.ShowWarning("Prompt timed out")
+			return
+		}
+		ctx.ResumeToken(token, ok)
+	})
+	if settled {
+		return pawscript.BoolStatus(result)
+	}
+	token = e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+		tokenTimeout(e.Config.PromptTimeout))
+	return pawscript.TokenResult(token)
+}
+
 func tokenTimeout(seconds int) time.Duration {
 	if seconds <= 0 {
 		return -1
@@ -2989,8 +3037,27 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.cloneCurrentViewport())
 	})
 
+	// viewport_close closes the focused viewport. A modified buffer asks
+	// first, and the question SUSPENDS the calling sequence on a token rather
+	// than reporting a success it has not had yet: `viewport_close &
+	// viewport_close` walks the viewports one at a time, and answering no
+	// stops the chain where it stood.
 	ps.RegisterCommand("viewport_close", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.closeCurrentBuffer())
+		return e.promptedResult(ctx, e.closeCurrentBufferThen)
+	})
+
+	// session_close closes every viewport there is, asking about each piece of
+	// unsaved work in turn, and ends the session once the last one goes. It is
+	// viewport_close repeated until there is nothing left to close - and, like
+	// a chain of them, it stops the moment one is declined.
+	//
+	// This is what a host runs when something tries to close the WINDOW a mew
+	// session lives in: the window refuses the close outright, runs this, and
+	// closes for real only if the session ends. So unsaved work is answered by
+	// mew's own prompt, in mew's own terms, instead of being lost to a frame
+	// that never asked.
+	ps.RegisterCommand("session_close", func(ctx *pawscript.Context) pawscript.Result {
+		return e.promptedResult(ctx, e.closeSessionThen)
 	})
 
 	// buffer_close closes the focused viewport's buffer from EVERYWHERE it is
@@ -7290,11 +7357,26 @@ func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	return true
 }
 
-// closeCurrentBuffer closes the current buffer viewport.
+// closeCurrentBuffer closes the current buffer viewport, reporting whether the
+// close is UNDERWAY: a modified buffer's close is underway while its prompt is
+// up, and its real outcome arrives later. Callers that need the outcome use
+// closeCurrentBufferThen.
 func (e *Editor) closeCurrentBuffer() bool {
+	underway := true
+	e.closeCurrentBufferThen(func(closed bool) { underway = closed })
+	return underway
+}
+
+// closeCurrentBufferThen closes the focused viewport and calls then with the
+// outcome: true when the viewport closed, false when it did not — nothing
+// closable, or the user answered the lose-changes prompt with no. then runs
+// before this returns EXCEPT when a prompt intervenes, which is the whole
+// reason the callback exists: closing is a question, not always an act.
+func (e *Editor) closeCurrentBufferThen(then func(closed bool)) {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Type == viewport.PromptViewport {
-		return false
+		then(false)
+		return
 	}
 
 	// Check for changes that would be lost. The viewport's active buffer is
@@ -7329,19 +7411,81 @@ func (e *Editor) closeCurrentBuffer() bool {
 
 		// Prompt for confirmation using PromptManager
 		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("04: LOSE CHANGES TO %s?", viewportName), true, func(accepted bool, confirmed bool) {
+			closed := false
 			if accepted && confirmed {
 				// User confirmed - close the buffer
-				e.finishCloseBuffer(viewportID)
+				closed = e.finishCloseBuffer(viewportID)
 			} else {
 				e.ShowNotification("Close cancelled")
 			}
 			e.RequestRender()
+			then(closed)
 		})
-		return true
+		return
 	}
 
 	// Not modified - close directly
-	return e.finishCloseBuffer(w.ID)
+	then(e.finishCloseBuffer(w.ID))
+}
+
+// closeSessionThen closes EVERY viewport in this session, one at a time, and
+// ends the session when the last one goes; it calls then with true when the
+// session is finished and false when a close was declined and the rest were
+// abandoned. Each modified buffer asks its own lose-changes question, and an
+// answer of no stops the sweep where it stands — a window that holds unsaved
+// work does not close, and nothing already agreed to is put back.
+//
+// This is what an embedding host's window-close runs: closing the window means
+// closing what is in it, on the editor's own terms and with the editor's own
+// prompts, rather than the frame deciding for the session inside it.
+func (e *Editor) closeSessionThen(then func(done bool)) {
+	// A backstop, not a policy: every step either closes a viewport or
+	// resurrects a buried buffer into one, both of which are finite, so the
+	// sweep converges. The counter is here so that a future step which does
+	// neither ends the loop instead of spinning the editor.
+	steps := 0
+	const maxSteps = 4096
+
+	var step func()
+	step = func() {
+		if len(e.contentViewports()) == 0 {
+			e.Running = false
+			then(true)
+			return
+		}
+		if steps++; steps > maxSteps {
+			then(false)
+			return
+		}
+		e.focusAContentViewport()
+		e.closeCurrentBufferThen(func(closed bool) {
+			switch {
+			case !closed:
+				then(false) // declined: abandon the sweep
+			case !e.Running:
+				then(true) // that was the last one; the session ended with it
+			default:
+				step()
+			}
+		})
+	}
+	step()
+}
+
+// focusAContentViewport puts the focus on a content viewport when it is
+// somewhere else (a prompt), so a sweep that closes "the current viewport"
+// always has one to close.
+func (e *Editor) focusAContentViewport() {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w != nil && w.Type != viewport.PromptViewport {
+		return
+	}
+	for _, c := range e.contentViewports() {
+		if c.Type != viewport.PromptViewport {
+			e.ViewportManager.FocusViewportAsCycle(c)
+			return
+		}
+	}
 }
 
 // bufferDisplayName is a short human name for a buffer: its filename's base,
@@ -7891,6 +8035,9 @@ func (e *Editor) performRender() {
 	// Push whether the built-in help viewport is open (a host syncs a "Quick
 	// Help" menu checkmark to it).
 	e.notifyHelpState()
+	// Push whether any open buffer is modified (a host asks before closing
+	// the window this session lives in).
+	e.notifyUnsavedState()
 
 	// Follow the cursor VERTICALLY only. Horizontal following is a "lock-in"
 	// action performed by cursor/edit commands, not by rendering, so a manual

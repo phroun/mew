@@ -555,6 +555,36 @@ func (e *Editor) notifyHelpState() {
 	}
 }
 
+// hasUnsavedWork reports whether ANY buffer this session holds open is
+// modified — every active binding plus everything stacked in a viewport's nav
+// history, which is the same set the data-safety paths (save-all, DEADCAT,
+// close liveness) enumerate. Work parked behind a link follow is unsaved work.
+func (e *Editor) hasUnsavedWork() bool {
+	for _, b := range e.openDocViewports() {
+		if b != nil && b.IsModified() {
+			return true
+		}
+	}
+	return false
+}
+
+// notifyUnsavedState tells the host (via Config.UnsavedState) whether the
+// session holds modified work, once at the first render and thereafter on
+// transitions. A host that frames this session in a window asks the question
+// when something tries to close it: with work at stake the close is refused
+// and answered with a prompt instead. Called from performRender.
+func (e *Editor) notifyUnsavedState() {
+	if e.Config.UnsavedState == nil {
+		return
+	}
+	unsaved := e.hasUnsavedWork()
+	if !e.unsavedPushed || unsaved != e.unsavedSent {
+		e.unsavedPushed = true
+		e.unsavedSent = unsaved
+		e.Config.UnsavedState(unsaved)
+	}
+}
+
 // parseMouseAt parses the "x,y" tail of a mouse position (1-based terminal
 // coordinates).
 func parseMouseAt(s string) (x, y int, ok bool) {
