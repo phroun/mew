@@ -219,3 +219,58 @@ func TestAppQuitStopsAtTheFirstRefusal(t *testing.T) {
 		t.Error("the refusal should stop the sweep where it stood")
 	}
 }
+
+// Shutting the desktop down is the same act as closing everything on it, so
+// it asks the same way: a window holding unsaved work refuses, and the quit is
+// abandoned with the desktop still up.
+func TestQuitIsRefusedByAWindowThatWillNotClose(t *testing.T) {
+	d := NewDesktop()
+	keep := window.NewWindow("Unsaved")
+	keep.SetOnClose(func() bool { return false })
+	app := &mockApp{name: "Demo", windows: []*window.Window{keep}}
+	d.AddApplication(app)
+
+	d.Quit()
+
+	if d.QuitRequested() {
+		t.Error("the desktop quit over a window that refused to close")
+	}
+	if !keep.IsVisible() {
+		t.Error("the refusing window was closed anyway")
+	}
+}
+
+// With nothing to object, quitting closes everything and goes through.
+func TestQuitClosesEveryWindowAndProceeds(t *testing.T) {
+	d := NewDesktop()
+	first := window.NewWindow("A")
+	second := window.NewWindow("B")
+	d.AddApplication(&mockApp{name: "Demo", windows: []*window.Window{first}})
+	d.AddApplication(&mockApp{name: "Other", windows: []*window.Window{second}})
+
+	d.Quit()
+
+	if !d.QuitRequested() {
+		t.Fatal("nothing refused; the desktop should have quit")
+	}
+	for _, w := range []*window.Window{first, second} {
+		if w.IsVisible() {
+			t.Errorf("%s survived the shutdown sweep", w.Title())
+		}
+	}
+}
+
+// ForceQuit is the door with no question behind it, for the paths where there
+// is nothing left to ask.
+func TestForceQuitIgnoresARefusal(t *testing.T) {
+	d := NewDesktop()
+	keep := window.NewWindow("Unsaved")
+	keep.SetOnClose(func() bool { return false })
+	d.AddApplication(&mockApp{name: "Demo", windows: []*window.Window{keep}})
+
+	d.ForceQuit()
+
+	if !d.QuitRequested() {
+		t.Error("ForceQuit must not be refusable")
+	}
+}

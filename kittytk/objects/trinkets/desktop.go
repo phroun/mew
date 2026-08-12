@@ -1201,7 +1201,9 @@ func (d *Desktop) SetDesktopEnvironment(on bool) {
 // was the frame around the application that just ended, and ends with it.
 func (d *Desktop) lastWindowClosed() {
 	if !d.IsDesktopEnvironment() {
-		d.Quit()
+		// Nothing is left to ask -- that is the circumstance this is -- so
+		// this quit goes through rather than sweeping an empty desktop.
+		d.ForceQuit()
 		return
 	}
 	d.revealAsDesktop()
@@ -3954,13 +3956,81 @@ func (d *Desktop) RequestUpdate() {
 	}
 }
 
-// Quit requests the desktop to quit.
+// Quit ASKS the desktop to quit: everything on it is closed first, and a
+// window that refuses -- the usual reason being unsaved work, asked through
+// its close handler -- abandons the quit. Shutting down is the same act as
+// closing every window, so it goes through the same door: a session that
+// wants to raise its own prompt gets to, and the desktop stays up while the
+// question is open.
+//
+// Like quitApplication, an abandoned quit is abandoned where it stood rather
+// than rolled back -- the windows that already agreed to close stay closed,
+// which is what every desktop does.
+//
+// ForceQuit is the unconditional form, for a caller that must not be refused.
 func (d *Desktop) Quit() {
 	d.QuitWithCode(0)
 }
 
-// QuitWithCode requests the desktop to quit with an exit code.
+// QuitWithCode is Quit with an exit code: it asks, and a refusal abandons it.
 func (d *Desktop) QuitWithCode(code int) {
+	if !d.closeEveryWindow() {
+		return
+	}
+	d.ForceQuitWithCode(code)
+}
+
+// ForceQuit ends the desktop without asking anything on it. It is for the
+// paths where there is nothing left to ask -- the last window has already
+// closed -- and for a caller that genuinely cannot be refused.
+func (d *Desktop) ForceQuit() {
+	d.ForceQuitWithCode(0)
+}
+
+// closeEveryWindow attempts to close everything on the desktop -- every
+// application's windows, whatever the window manager still holds, and the
+// windows living on their own torn-off surfaces -- and reports whether they
+// all agreed. It stops at the first refusal; child windows go with their
+// parents, since a window closes its children first.
+func (d *Desktop) closeEveryWindow() bool {
+	d.mu.RLock()
+	apps := append([]ApplicationProvider(nil), d.applications...)
+	hosts := append([]*window.TearOffHost(nil), d.tornHosts...)
+	wm := d.windowManager
+	d.mu.RUnlock()
+
+	seen := map[*window.Window]bool{}
+	var all []*window.Window
+	add := func(w *window.Window) {
+		if w != nil && !seen[w] {
+			seen[w] = true
+			all = append(all, w)
+		}
+	}
+	for _, a := range apps {
+		for _, w := range a.Windows() {
+			add(w)
+		}
+	}
+	if wm != nil {
+		for _, w := range wm.Windows() {
+			add(w)
+		}
+	}
+	for _, h := range hosts {
+		add(h.Window())
+	}
+
+	for _, w := range all {
+		if !w.Close() {
+			return false
+		}
+	}
+	return true
+}
+
+// ForceQuitWithCode is ForceQuit with an exit code.
+func (d *Desktop) ForceQuitWithCode(code int) {
 	d.mu.Lock()
 	d.exitCode = code
 	p := d.platform
