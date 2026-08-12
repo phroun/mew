@@ -94,7 +94,14 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
-	application.SetMenuBarContent(buildMenus(desktop, application, false))
+	// mew's own menus are held back while the first-run welcome has the window
+	// (see maybeShowWelcome): with no menus declared, the app's bar is the
+	// minimal set the desktop synthesizes - the app menu, with Quit - which is
+	// all a welcome has any use for. Try declares the real ones.
+	menusHeld := welcomeWanted(graphical)
+	if !menusHeld {
+		application.SetMenuBarContent(buildMenus(desktop, application, false))
+	}
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
 	// The sole-app chrome suppression (hide Ψ / menu bar / status bar for a lone
@@ -121,7 +128,9 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		multi := forceMulti || otherForegroundApps(desktop, application) > 0
 		if multi != application.MultiWindow() {
 			application.SetMultiWindow(multi)
-			application.SetMenuBarContent(buildMenus(desktop, application, multi))
+			if !menusHeld {
+				application.SetMenuBarContent(buildMenus(desktop, application, multi))
+			}
 		}
 		refitRoot(desktop, root)
 	}
@@ -206,7 +215,13 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		// so it is the only thing on screen with nothing behind it - and the
 		// editor never paints, so no mew session starts until it is wanted.
 		// No-op otherwise, where the editor is already what the window holds.
-		maybeShowWelcome(desktop, application, root, launchArgs, graphical)
+		maybeShowWelcome(desktop, application, root, launchArgs, graphical, func() {
+			// Try: mew's menus arrive with the editor. The desktop pushes them
+			// onto the window's own bar (it carries one while solo), so the
+			// minimal welcome bar becomes the real one.
+			menusHeld = false
+			application.SetMenuBarContent(buildMenus(desktop, application, application.MultiWindow()))
+		})
 	})
 
 	// The about invoker posts to the platform thread (the native menu action

@@ -94,7 +94,7 @@ func TestNoWelcomeLeavesTheWindowAlone(t *testing.T) {
 	content := w.Content()
 	title := w.Title()
 
-	if maybeShowWelcome(desktop, application, w, nil, false /* graphical */) {
+	if maybeShowWelcome(desktop, application, w, nil, false /* graphical */, func() {}) {
 		t.Fatal("the TUI host has no first-run welcome")
 	}
 	if w.Content() != content {
@@ -119,7 +119,8 @@ func TestWelcomeTakesTheWindowAndGivesItBack(t *testing.T) {
 	editor := w.Content()
 	title := w.Title()
 
-	c := showWelcomeIn(desktop, application, w, nil)
+	declared := 0
+	c := showWelcomeIn(desktop, application, w, nil, func() { declared++ })
 
 	if w.Content() != core.Trinket(c) {
 		t.Fatal("the welcome did not take the window over")
@@ -135,5 +136,42 @@ func TestWelcomeTakesTheWindowAndGivesItBack(t *testing.T) {
 	}
 	if w.Title() != title {
 		t.Errorf("window title = %q, want the editor's own %q", w.Title(), title)
+	}
+	if declared != 1 {
+		t.Errorf("mew's menus were declared %d times, want once - with the editor", declared)
+	}
+}
+
+// The menus are held back with the editor: while the welcome has the window the
+// app has declared none, so the bar it carries is the minimal set the desktop
+// synthesizes - its app menu, with Quit - which is all a welcome needs.
+func TestWelcomeCarriesNoDeclaredMenus(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, _ := raster.New(800, 600)
+	desktop := trinkets.NewDesktop()
+	desktop.SetBackend(px)
+	application := app.New(nil)
+
+	w := newEditorWindow(desktop, application, nil)
+	showWelcomeIn(desktop, application, w, nil, func() {
+		application.SetMenuBarContent(buildMenus(desktop, application, false))
+	})
+
+	if len(application.MenuBarContent()) != 0 {
+		t.Fatal("the welcome should be carrying no declared menus")
+	}
+}
+
+// Install is the answer that declares nothing: the menus, like the editor,
+// belong to a session this process is abandoning. (The action itself is not
+// run here - it would install mew on the machine running the tests.)
+func TestWelcomeInstallDeclaresNothing(t *testing.T) {
+	declared := 0
+	c := newWelcomeContent([]string{"hi"}, func() {}, func() { declared++ })
+
+	c.answer(c.onInstall)
+
+	if declared != 0 {
+		t.Error("Install must not bring in the menus of a session it is abandoning")
 	}
 }

@@ -4495,6 +4495,14 @@ func (d *Desktop) MenuBar() *MenuBar {
 // rebuilt the bar while the app still had no menus) - and the change
 // appears immediately instead of only after the next focus switch.
 func (d *Desktop) ActiveMenuBarContentChanged(who ApplicationProvider) {
+	// A DETACHED main window carries the app's own bar on its own surface,
+	// built when its chrome was attached and, until this, never rebuilt: an
+	// app that changed its menus while detached (or solo, which is the same
+	// thing on the primary surface) saw the change on the desktop's bar and
+	// nowhere the user was looking. That is any app's business, not only the
+	// active one's, so it happens before the active-app test below.
+	d.refreshDetachedMenuBar(who)
+
 	d.mu.RLock()
 	active := d.activeApp
 	d.mu.RUnlock()
@@ -4503,6 +4511,39 @@ func (d *Desktop) ActiveMenuBarContentChanged(who ApplicationProvider) {
 	}
 	d.updateMenuBarContent()
 	d.RequestUpdate()
+}
+
+// refreshDetachedMenuBar rebuilds the app's own menu bar (and status bar) on
+// its detached main window from the app's CURRENT content, and re-wires what
+// the window itself cannot provide. A no-op while the app's main window is
+// docked, where the desktop's own bar shows those menus and is rebuilt from
+// scratch on every composition.
+func (d *Desktop) refreshDetachedMenuBar(app ApplicationProvider) {
+	if app == nil {
+		return
+	}
+	win := app.MainWindow()
+	if win == nil || !win.IsDetached() {
+		return
+	}
+	d.attachMainWindowChrome(win)
+	// The detached bar's parent is the window, which has no timer system for
+	// its dropdowns' hover auto-scroll and no surface to repaint - the same
+	// wiring createTornHost and soloHostOnPrimary do for the bar they attach.
+	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
+		mb.SetScrollTimerStarter(func(interval time.Duration, cb func()) interface{ Stop() } {
+			return d.StartRepeatingTimer(interval, cb)
+		})
+		if host := d.hostForWindow(win); host != nil {
+			mb.SetRequestUpdate(host.Invalidate)
+		}
+	}
+	win.Layout()
+	if host := d.hostForWindow(win); host != nil {
+		host.Invalidate()
+		return
+	}
+	d.invalidateSurface()
 }
 
 // CloseActiveMenu closes any active dropdown menu.

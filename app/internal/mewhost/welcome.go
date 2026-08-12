@@ -37,21 +37,31 @@ const welcomeWrapCols = 48
 // with nothing behind it, and the editor trinket never paints, so the mew
 // session inside it never starts until Try asks for it.
 //
-// The window keeps its normal chrome - mew's title bar and menu bar - because
-// it IS mew's window; the menu items that drive the session simply have no
-// session to drive yet, and mew's Quit still works.
-func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool) bool {
-	if !graphical || !selfinstall.Available() || selfinstall.FirstRunDone() || root == nil {
+// The window keeps its own chrome - it IS mew's window - but not mew's menus:
+// the caller holds those back until Try (see welcomeWanted), so the welcome
+// carries the minimal bar the desktop synthesizes, with Quit on it. declareMenus
+// is what brings the real ones in, alongside the editor.
+func maybeShowWelcome(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, graphical bool, declareMenus func()) bool {
+	if !welcomeWanted(graphical) || root == nil {
 		return false
 	}
-	showWelcomeIn(desktop, application, root, launchArgs)
+	showWelcomeIn(desktop, application, root, launchArgs, declareMenus)
 	return true
+}
+
+// welcomeWanted reports whether this launch shows the first-run welcome: a
+// graphical host running a not-yet-installed copy on a platform with a
+// self-installer. Asked BEFORE anything is built, because what it answers
+// changes what gets built - the app declares no menus while the welcome holds
+// the window.
+func welcomeWanted(graphical bool) bool {
+	return graphical && selfinstall.Available() && !selfinstall.FirstRunDone()
 }
 
 // showWelcomeIn is the takeover itself, split from the first-run test above so
 // what it does to the window can be exercised on any platform. It remembers
 // what the window held and hands both answers a way back to it.
-func showWelcomeIn(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string) *welcomeContent {
+func showWelcomeIn(desktop *trinkets.Desktop, application *app.Application, root *window.Window, launchArgs []string, declareMenus func()) *welcomeContent {
 	editor := root.Content()
 	title := root.Title()
 
@@ -62,6 +72,9 @@ func showWelcomeIn(desktop *trinkets.Desktop, application *app.Application, root
 		desktop.Post(func() {
 			root.SetTitle(title)
 			root.SetContent(editor)
+			if declareMenus != nil {
+				declareMenus()
+			}
 			desktop.RequestUpdate()
 		})
 	}
