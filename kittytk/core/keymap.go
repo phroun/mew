@@ -793,6 +793,36 @@ type TrinketKeys struct {
 	ctx      *KeyContext
 	rev      uint64
 	built    bool
+	// owner is the trinket these keys belong to, which is how the registry in
+	// force where it SITS is found (see keyscope.go). Wired by TrinketBase.Init
+	// for anything that embeds both; a holder that is not a trinket -- a focus
+	// manager, a tear-off host -- says so itself.
+	owner Trinket
+	// reg is the registry the current context was built from, so a context
+	// built under one keymap is rebuilt when another comes into force. Focus
+	// moving into a trinket that took the keyboard for itself changes which
+	// registry answers without changing any registry's revision.
+	reg *KeyRegistry
+}
+
+// SetKeyOwner names the trinket these keys belong to, so they resolve through
+// the registry in force where it sits rather than the process-wide default.
+func (t *TrinketKeys) SetKeyOwner(owner Trinket) {
+	t.mu.Lock()
+	if t.owner != owner {
+		t.owner = owner
+		t.built = false
+	}
+	t.mu.Unlock()
+}
+
+// registry is the keymap these keys resolve against: the one in force where
+// the owning trinket sits, or the default when they belong to no trinket.
+func (t *TrinketKeys) registry() *KeyRegistry {
+	if t.owner == nil {
+		return DefaultKeyRegistry()
+	}
+	return FindKeyRegistry(t.owner)
 }
 
 // SetCommands declares everything this trinket can carry out. A key bound to
@@ -815,10 +845,11 @@ func (t *TrinketKeys) SetCommands(commands ...string) {
 func (t *TrinketKeys) KeyCommand(key string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	r := DefaultKeyRegistry()
-	if !t.built || t.rev != r.Revision() {
+	r := t.registry()
+	if !t.built || t.rev != r.Revision() || t.reg != r {
 		t.ctx = r.BuildContext(t.commands)
 		t.rev = r.Revision()
+		t.reg = r
 		t.built = true
 	}
 	return t.ctx.Resolve(key)

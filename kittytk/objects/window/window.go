@@ -4068,7 +4068,7 @@ func (w *Window) windowUIState() core.UIState {
 // focus moving between windows -- costs no rebuild at all, because each
 // window's context is already built and still valid.
 func (w *Window) refreshKeyContext() {
-	ctx := core.DefaultKeyRegistry().BuildStateContext(w.windowUIState())
+	ctx := core.FindKeyRegistry(w).BuildStateContext(w.windowUIState())
 
 	w.mu.Lock()
 	w.keyContext = ctx

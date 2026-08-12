@@ -503,7 +503,7 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	// presses, and running the release through it would advance a pending
 	// prefix a second time -- so this asks the registry directly whether the
 	// key that came up is one that activates.
-	for _, k := range core.DefaultKeyRegistry().KeysFor(core.CmdTrinketActivate) {
+	for _, k := range core.FindKeyRegistry(b).KeysFor(core.CmdTrinketActivate) {
 		if k == event.Key {
 			b.spacePressed = false
 			b.Update()

@@ -4463,7 +4463,7 @@ func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
 		return
 	}
 	mb.SetAcceleratorChord(core.AcceleratorChord())
-	d.keyContext = core.DefaultKeyRegistry().BuildStateContext(core.StateNormal)
+	d.keyContext = core.FindKeyRegistry(d).BuildStateContext(core.StateNormal)
 	mb.SetKeyContext(d.keyContext)
 	mb.SetOnFocusChanged(d.lendMenuBarRow)
 }

@@ -186,6 +186,7 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, resizeGrip: tearResizeGrip}
 	h.native, _ = surf.(platform.NativeSurface)
 	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
+	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
 
 	// Popups from the torn window's trinkets open on this surface.
 	win.SetPopupController(h)

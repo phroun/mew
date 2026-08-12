@@ -46,6 +46,10 @@ func NewFocusManager(root Trinket) *FocusManager {
 		wrapAround: true,
 	}
 	fm.keys.SetCommands(CmdFocusNext, CmdFocusPrior)
+	// Tab navigation belongs to the tree it manages, so it resolves through
+	// the registry in force there -- a subtree that took the keyboard for
+	// itself decides what Tab means inside it.
+	fm.keys.SetKeyOwner(root)
 	return fm
 }
 
