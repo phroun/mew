@@ -294,3 +294,72 @@ func ApplyHostKeymap(mappings map[string]string, chord string) {
 		keymapMu.Unlock()
 	}
 }
+
+// A UIState is a situation the keyboard can be in. It is what a context is
+// keyed on — not which trinket has focus, since the states that matter are not
+// all trinkets: a window's title bar is a mode of the window, and a dropped-
+// down menu is a mode of the bar.
+//
+// Nothing has to register anything. Each state's command set is what the code
+// handling that state already switches on; this table just says it in one
+// place instead of leaving it implicit in a gate somewhere.
+type UIState int
+
+const (
+	// StateNormal is the ordinary situation: a window or the desktop, with no
+	// mode claiming the keyboard.
+	StateNormal UIState = iota
+	// StateTitleBarFocused is a window whose title bar has focus, where the
+	// arrows move and size the window. Sixteen bindings exist only here —
+	// which is why this is a state and not a property of a trinket.
+	StateTitleBarFocused
+)
+
+// stateCommands lists what each state ADDS to StateNormal. States compound:
+// a focused title bar still closes on M-F4.
+var stateCommands = map[UIState][]string{
+	StateNormal: {
+		"window_maximize_toggle",
+		"window_close",
+		"app_menu",
+		"window_next",
+		"window_prior",
+		"app_minimize",
+		"gui_scale_down",
+		"gui_scale_up",
+		"gui_scale_reset",
+		"focus_next",
+		"focus_prior",
+		"trinket_activate",
+	},
+	StateTitleBarFocused: {
+		"window_cancel_resize",
+		"window_move_fine_up", "window_move_fine_down",
+		"window_move_fine_left", "window_move_fine_right",
+		"window_size_fine_up", "window_size_fine_down",
+		"window_size_fine_left", "window_size_fine_right",
+		"window_move_up", "window_move_down",
+		"window_move_left", "window_move_right",
+		"window_size_up", "window_size_down",
+		"window_size_left", "window_size_right",
+	},
+}
+
+// CommandsForState returns everything a state offers, its own additions on top
+// of the ordinary set.
+func CommandsForState(state UIState) []string {
+	out := append([]string(nil), stateCommands[StateNormal]...)
+	if state != StateNormal {
+		out = append(out, stateCommands[state]...)
+	}
+	return out
+}
+
+// BuildStateContext derives the context for a UI state: the bindings for the
+// commands that state offers, and nothing else. A key bound to something the
+// state cannot do stays unclaimed here, which is what keeps an arrow key from
+// being swallowed by a window-move binding that only applies with the title
+// bar focused.
+func (r *KeyRegistry) BuildStateContext(state UIState) *KeyContext {
+	return r.BuildContext(CommandsForState(state))
+}

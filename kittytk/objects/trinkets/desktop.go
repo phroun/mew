@@ -4022,19 +4022,14 @@ func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 	d.menuBar = menuBar
 	if menuBar != nil {
 		menuBar.SetParent(d)
-		// The chord accelerators are formed from comes from the registry, so
-		// [window] accelerator_chord reaches the bar.
-		//
-		// No key context yet, deliberately. A context is what THIS situation
-		// offers, and working that out means asking the participants — the
-		// desktop, the active window, the focused trinket — what commands they
-		// currently handle. None of them can say yet. Handing the bar every
-		// command in the registry instead would be a different thing wearing
-		// the same name: a context claiming "Up" for window_move_fine_up would
-		// eventually eat every arrow key on the desktop. Until the
-		// participants can declare, nil is the truthful answer, and nil claims
-		// nothing, so every accelerator is lit.
+		// The bar forms its accelerators against what the ordinary state
+		// offers, so a chord something else has claimed is not the
+		// accelerator's to take. Note this is the NORMAL state's set, not the
+		// whole registry: the sixteen window move and size bindings exist only
+		// with a title bar focused, so their arrows stay unclaimed here rather
+		// than being eaten on the desktop.
 		menuBar.SetAcceleratorChord(core.AcceleratorChord())
+		menuBar.SetKeyContext(core.DefaultKeyRegistry().BuildStateContext(core.StateNormal))
 		// Prepend system menu if we have one
 		if d.systemMenu != nil {
 			menuBar.InsertMenu(0, d.systemMenu)

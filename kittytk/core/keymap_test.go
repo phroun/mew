@@ -239,3 +239,64 @@ func TestApplyHostKeymapChord(t *testing.T) {
 	}
 	ApplyHostKeymap(nil, DefaultAcceleratorChord)
 }
+
+// A context is keyed on UI STATE, not on which trinket has focus — the states
+// that matter are not all trinkets. A title bar is a mode of the window.
+//
+// The sixteen window move and size bindings exist ONLY with the title bar
+// focused, which is exactly why a context has to be per state: an ordinary
+// desktop must leave the arrows alone rather than swallowing them.
+func TestStateContextGatesTheArrowsOnTitleFocus(t *testing.T) {
+	r := DefaultKeyRegistry()
+
+	normal := r.BuildStateContext(StateNormal)
+	for _, key := range []string{"Up", "Down", "S-Left", "C-Up", "M-S-Right"} {
+		normal.Abandon()
+		if got := normal.Resolve(key); got != "" {
+			t.Errorf("ordinary state resolved %s to %q; the arrows are not its to eat", key, got)
+		}
+		if normal.Claims(key) {
+			t.Errorf("ordinary state claims %s", key)
+		}
+	}
+
+	title := r.BuildStateContext(StateTitleBarFocused)
+	for key, want := range map[string]string{
+		"Up":        "window_move_fine_up",
+		"S-Left":    "window_size_fine_left",
+		"C-Up":      "window_move_up",
+		"M-S-Right": "window_size_right",
+		"Esc":       "window_cancel_resize",
+	} {
+		title.Abandon()
+		if got := title.Resolve(key); got != want {
+			t.Errorf("title-focused: %s -> %q, want %q", key, got, want)
+		}
+	}
+}
+
+// States compound: a focused title bar still closes on M-F4 and still reaches
+// the menu on F10.
+func TestStatesCompound(t *testing.T) {
+	title := DefaultKeyRegistry().BuildStateContext(StateTitleBarFocused)
+	for key, want := range map[string]string{
+		"M-F4": "window_close",
+		"F10":  "app_menu",
+		"Tab":  "focus_next",
+	} {
+		title.Abandon()
+		if got := title.Resolve(key); got != want {
+			t.Errorf("title-focused: %s -> %q, want %q", key, got, want)
+		}
+	}
+	// ...and the ordinary state does NOT gain the title bar's additions.
+	normal := CommandsForState(StateNormal)
+	for _, c := range normal {
+		if c == "window_move_up" {
+			t.Error("the ordinary state should not offer window_move_up")
+		}
+	}
+	if len(CommandsForState(StateTitleBarFocused)) <= len(normal) {
+		t.Error("the title bar state should add to the ordinary one, not replace it")
+	}
+}
