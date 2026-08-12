@@ -339,8 +339,12 @@ var defaultBindings = map[string][]string{
 	// Enter begins an edit where one is on offer and activates otherwise;
 	// Space only ever activates, which is why a tree's Space expands a branch
 	// where its Enter opens the row editor.
-	"Enter": {CmdTrinketEdit, CmdTrinketActivate},
-	"Space": {CmdTrinketActivate},
+	// The HOME ROW's key. It and the keypad's are two physical keys with two
+	// names -- keyseq deliberately does not alias them, and this is the one
+	// that was meant. Bind "Enter" as well to give the keypad the same
+	// meaning; nothing does so by default.
+	"Return": {CmdTrinketEdit, CmdTrinketActivate},
+	"Space":  {CmdTrinketActivate},
 
 	// The bare arrows also carry the FINE resize, for a splitter: nudging a
 	// divider is resizing, and a splitter is the one thing that resizes with

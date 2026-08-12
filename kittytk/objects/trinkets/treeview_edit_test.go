@@ -41,7 +41,7 @@ func TestTreeEnterWithoutEditableActsLikeSpace(t *testing.T) {
 	if !folder.Expanded {
 		t.Fatal("precondition: folder expanded")
 	}
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.rowEditing {
 		t.Fatal("row edit began with no editable columns")
 	}
@@ -58,7 +58,7 @@ func TestTreeRowEditLifecycle(t *testing.T) {
 	edits := 0
 	tv.SetOnCellEdited(func(item *TreeItem, col *TreeColumn, v string) { edits++ })
 
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
 		t.Fatalf("edit: rowEditing=%v col=%v, want size", tv.rowEditing, tv.editCol)
 	}
@@ -86,7 +86,7 @@ func TestTreeRowEditLifecycle(t *testing.T) {
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // back onto kind
 	tv.editBox.SetText("Document")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.rowEditing {
 		t.Fatal("Enter did not dismiss the row editor")
 	}
@@ -94,7 +94,7 @@ func TestTreeRowEditLifecycle(t *testing.T) {
 		t.Errorf("Enter did not commit the row: kind=%q", got)
 	}
 	// Re-entering resumes the column edited last (kind).
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("kind") {
 		t.Fatalf("re-enter: col=%v, want kind (remembered)", tv.editCol)
 	}
@@ -104,7 +104,7 @@ func TestTreeRowEditLifecycle(t *testing.T) {
 // Escape cancels: the cell keeps its original value.
 func TestTreeRowEditEscapeCancels(t *testing.T) {
 	tv := newEditableTree()
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.editBox.SetText("garbage")
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"})
 	if tv.rowEditing {
@@ -119,7 +119,7 @@ func TestTreeRowEditEscapeCancels(t *testing.T) {
 // neighboring row.
 func TestTreeRowEditUpDownContinues(t *testing.T) {
 	tv := newEditableTree()
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // onto kind
 	tv.editBox.SetText("Folder")
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
@@ -143,7 +143,7 @@ func TestTreeRowEditUpDownContinues(t *testing.T) {
 // through to tree navigation).
 func TestTreeRowEditForwardsTyping(t *testing.T) {
 	tv := newEditableTree()
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	// The prefill is selected; typing replaces it.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "x", Text: "x"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "y", Text: "y"})
@@ -162,7 +162,7 @@ func TestTreeRowEditForwardsTyping(t *testing.T) {
 // normally (here: selects the clicked row).
 func TestTreeRowEditClickOffAccepts(t *testing.T) {
 	tv := newEditableTree()
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.editBox.SetText("42 KB")
 	// Row 2 sits at y = header(16) + 2*16 + mid.
 	tv.HandleMousePress(core.MousePressEvent{X: 20, Y: 16 + 2*16 + 8, Button: core.LeftButton})
@@ -194,7 +194,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	tv.SetCurrentItem(child) // level 1
 	cw := tv.EffectiveCellMetrics().CellWidth
 
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // key column first
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // key column first
 	if tv.editCol != treeKeyColumn {
 		t.Fatal("precondition: editing the key column")
 	}
@@ -216,7 +216,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	// editor gets the same inset.
 	tv.SetShowKey(false)
 	tv.SetCurrentItem(child)
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.editCol != tv.ColumnByID("size") {
 		t.Fatalf("edit ring without key did not start on size")
 	}
@@ -262,7 +262,7 @@ func TestTreeArrowsRotateEnterTarget(t *testing.T) {
 		t.Fatal("rotation opened the editor")
 	}
 	// Enter now edits the rotated-to column.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("kind") {
 		t.Fatal("Enter did not edit the rotated-to column")
 	}
@@ -396,10 +396,10 @@ func TestTreeEditCommitScrollsIntoView(t *testing.T) {
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
 	tv.SetSorted(true, -1, false)
 	tv.SetCurrentIndex(0)
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.editBox.SetText("zzz-last")
 	tv.scrollOffset = 20 // the user wheels away mid-edit
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.currentIndex != 39 {
 		t.Fatalf("edited row index = %d, want 39", tv.currentIndex)
 	}
@@ -442,7 +442,7 @@ func TestTreeEditActorPassThrough(t *testing.T) {
 	}
 
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // header bar -> content
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // open the editor
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // open the editor
 	if !tv.rowEditing {
 		t.Fatal("precondition: row editor open")
 	}
@@ -481,7 +481,7 @@ func TestTreeEditContextMenu(t *testing.T) {
 	parent := NewPanel()
 	parent.SetPopupController(host)
 	tv.SetParent(parent)
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing {
 		t.Fatal("precondition: row editor open")
 	}
@@ -519,7 +519,7 @@ func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 
 	// Entering edit on Size (cells 21..31, view 29 wide, hScroll 0):
 	// the right edge is 2 cells past the view - scroll exactly 2.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing || tv.editCol != tv.ColumnByID("size") {
 		t.Fatal("precondition: editing size")
 	}
@@ -545,7 +545,7 @@ func TestTreeEditEnsuresColumnVisible(t *testing.T) {
 
 	// A pinned column is always in view: editing it never scrolls.
 	tv.SetFixedColumns(0, 1) // pin kind
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // onto pinned kind
 	if tv.editCol != tv.ColumnByID("kind") {
 		t.Fatal("Tab did not reach kind")

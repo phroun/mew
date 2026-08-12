@@ -54,7 +54,7 @@ func TestTearHandleHitTestAndActivate(t *testing.T) {
 	torn := false
 	win.SetOnTearRequest(func() { torn = true })
 	win.SetTitleFocus(TitleFocusTear)
-	titleKey(win, "Enter")
+	titleKey(win, "Return")
 	if !torn {
 		t.Error("Enter on the focused handle did not request tear")
 	}

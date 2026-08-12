@@ -298,7 +298,7 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 	// Down, Down, Enter toggles the second item - the hidden "kind".
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.ColumnByID("kind").Hidden {
 		t.Error("chooser keyboard toggle did not unhide the column")
 	}
@@ -311,7 +311,7 @@ func TestTreeColumnHiddenAndChooser(t *testing.T) {
 		t.Error("checkmark did not re-render in place")
 	}
 	// Toggle it right back without reopening.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.ColumnByID("kind").Hidden {
 		t.Error("second in-place toggle did not re-hide")
 	}

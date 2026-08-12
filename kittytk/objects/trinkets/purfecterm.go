@@ -2,6 +2,7 @@
 package trinkets
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
@@ -898,10 +899,35 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// the blink phase so the cursor shows immediately.
 	t.resetCursorBlink()
 
-	// Forward the key to the terminal
-	t.terminal.HandleKeyString(event.Key)
+	// Forward the key to the terminal, in the encoder's own vocabulary. It
+	// knows the keypad's "Enter" and not the home row's "Return", and its
+	// last resort for a name it does not know is to send the name's LETTERS
+	// -- so an untranslated "Return" typed the word into the child.
+	t.terminal.HandleKeyString(terminalKeyName(event.Key))
 	t.Update()
 	return true
+}
+
+// terminalKeyName renames a key into the terminal encoder's vocabulary.
+//
+// Only one name differs today: the encoder predates the home-row/keypad split
+// and calls the carriage return "Enter". Everything else is already the same
+// in both, and an unknown name is passed through unchanged.
+func terminalKeyName(key string) string {
+	prefix, base := "", key
+	for {
+		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||
+			strings.HasPrefix(base, "M-") || strings.HasPrefix(base, "C-") ||
+			strings.HasPrefix(base, "s-")) {
+			prefix, base = prefix+base[:2], base[2:]
+			continue
+		}
+		break
+	}
+	if base == "Return" {
+		return prefix + "Enter"
+	}
+	return key
 }
 
 // handleScrollbackKey runs the scrollback navigation locally (it scrolls the

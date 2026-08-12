@@ -174,7 +174,7 @@ func TestTreeChooserDimsSelection(t *testing.T) {
 	// and from a plain resting selection. (Editable column added here
 	// so Enter opens the editor.)
 	tv.ColumnByID("size").Editable = true
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if !tv.rowEditing {
 		t.Fatal("precondition: row editor open")
 	}
@@ -254,7 +254,7 @@ func TestTreeFocusedListRowAndTarget(t *testing.T) {
 			c.R, c.G, c.B, itR, itG, itB)
 	}
 	// While EDITING, the row under the editor wears FocusedListRow.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit Size
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit Size
 	paint()
 	c = b.Image().RGBAAt(150, 16+8) // key column, outside the editor
 	if c.R != rowR || c.G != rowG || c.B != rowB {

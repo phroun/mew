@@ -544,19 +544,19 @@ S-Tab = focus_prior
 s-Tab = something_else
 ^K = block_menu
 Minus = gui_scale_down
-Enter =
+Return =
 `), &cfg)
 
 	if cfg.AcceleratorChord != "M-*" {
 		t.Errorf("accelerator_chord = %q, want M-*", cfg.AcceleratorChord)
 	}
 	for k, want := range map[string]string{
-		"M-F4":  "window_close",
-		"S-Tab": "focus_prior",
-		"s-Tab": "something_else",
-		"^K":    "block_menu",
-		"Minus": "gui_scale_down",
-		"Enter": "", // an empty value unbinds rather than being ignored
+		"M-F4":   "window_close",
+		"S-Tab":  "focus_prior",
+		"s-Tab":  "something_else",
+		"^K":     "block_menu",
+		"Minus":  "gui_scale_down",
+		"Return": "", // an empty value unbinds rather than being ignored
 	} {
 		got, ok := cfg.Mappings[k]
 		if !ok {

@@ -7,7 +7,7 @@ import "sync"
 // Key names follow direct-key-handler conventions:
 //   - Control+letter: "^A", "^X", "^C", "^V" etc.
 //   - Special keys: "Left", "Right", "Up", "Down", "Home", "End",
-//     "Enter", "Tab", "Escape", "Backspace", "Delete",
+//     "Return", "Tab", "Escape", "Backspace", "Delete",
 //     "PageUp", "PageDown", "Insert"
 //   - Function keys: "F1", "F2", ... "F12"
 //   - Alt combinations: "M-" prefix (e.g., "M-x", "M-Tab")
@@ -132,9 +132,9 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionClearLine] = []string{"^U"}
 
 	// Activation
-	kb.bindings[ActionActivate] = []string{"Enter", " "}
+	kb.bindings[ActionActivate] = []string{"Return", " "}
 	kb.bindings[ActionCancel] = []string{"Escape"}
-	kb.bindings[ActionConfirm] = []string{"Enter"}
+	kb.bindings[ActionConfirm] = []string{"Return"}
 
 	// Focus
 	kb.bindings[ActionFocusNext] = []string{"Tab"}
@@ -147,7 +147,7 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionCollapseAll] = []string{"/"}
 
 	// Menu
-	kb.bindings[ActionMenuOpen] = []string{"Enter", " ", "Down"}
+	kb.bindings[ActionMenuOpen] = []string{"Return", " ", "Down"}
 	kb.bindings[ActionMenuClose] = []string{"Escape"}
 	kb.bindings[ActionMenuToggle] = []string{"F10"}
 

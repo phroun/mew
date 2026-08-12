@@ -375,7 +375,7 @@ func TestMenuBarSiblingConsumedShowsNothing(t *testing.T) {
 func TestTreeViewSeparatesEditFromActivateAndCollapseFromMovement(t *testing.T) {
 	tv := NewTreeView()
 	for key, want := range map[string]string{
-		"Enter": core.CmdTrinketEdit,
+		"Return": core.CmdTrinketEdit,
 		"Space": core.CmdTrinketActivate,
 		"Left":  core.CmdTrinketItemLeft,
 		"Right": core.CmdTrinketItemRight,
@@ -393,11 +393,11 @@ func TestTreeViewSeparatesEditFromActivateAndCollapseFromMovement(t *testing.T) 
 // key, a different meaning, decided by what the trinket can do.
 func TestEnterEditsOrActivatesByTrinket(t *testing.T) {
 	b := NewButton("ok")
-	if got := b.KeyCommand("Enter"); got != core.CmdTrinketActivate {
+	if got := b.KeyCommand("Return"); got != core.CmdTrinketActivate {
 		t.Errorf("button Enter -> %q, want %q", got, core.CmdTrinketActivate)
 	}
 	tv := NewTreeView()
-	if got := tv.KeyCommand("Enter"); got != core.CmdTrinketEdit {
+	if got := tv.KeyCommand("Return"); got != core.CmdTrinketEdit {
 		t.Errorf("tree Enter -> %q, want %q", got, core.CmdTrinketEdit)
 	}
 }

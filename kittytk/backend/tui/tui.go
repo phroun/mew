@@ -1408,7 +1408,7 @@ func (t *TUIBackend) handleKey(key string) {
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
 	// - Control+letter: "^A", "^X" etc.
-	// - Special keys: "Left", "Right", "Up", "Down", "Enter", "Tab", "Escape", etc.
+	// - Special keys: "Left", "Right", "Up", "Down", "Return", "Tab", "Escape", etc.
 	// - Function keys: "F1", "F2", ... "F12"
 	// - Alt combinations: "M-" prefix
 	// - Shift combinations: "S-" prefix

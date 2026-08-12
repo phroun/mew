@@ -1728,7 +1728,12 @@ func mapButton(b uint8) core.MouseButton {
 // specialKeys maps SDL keycodes to D3 key names (spellings match
 // core/keybindings.go).
 var specialKeys = map[sdl3.Keycode]string{
-	sdl3.K_RETURN:    "Enter",
+	// The home row's key and the keypad's are two PHYSICAL keys, and
+	// direct-key-handler -- the vocabulary this toolkit's key names are
+	// written in -- names them apart. Calling both "Enter" here made the two
+	// backends disagree about the home-row key, which the keymap then bound
+	// under only one of its two names.
+	sdl3.K_RETURN:    "Return",
 	sdl3.K_KP_ENTER:  "Enter",
 	sdl3.K_TAB:       "Tab",
 	sdl3.K_ESCAPE:    "Escape",

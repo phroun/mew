@@ -27,23 +27,23 @@ func TestTreeHeaderFocusZones(t *testing.T) {
 	}
 
 	// Enter drills in at the first stop (the key column caption).
-	key("Enter")
+	key("Return")
 	if tv.headerZone != hzItems || tv.headerFocusIdx != 0 {
 		t.Fatalf("after Enter: zone=%d idx=%d", tv.headerZone, tv.headerFocusIdx)
 	}
 
 	// Tab to the Size caption; Enter cycles its sort (ascending).
 	key("Tab")
-	key("Enter")
+	key("Return")
 	if sorted, by, desc := tv.Sorted(); !sorted || by != 0 || desc {
 		t.Errorf("keyboard sort state = %v/%d/%v", sorted, by, desc)
 	}
 	// Enter again: descending; a third time: unsorted.
-	key("Enter")
+	key("Return")
 	if _, _, desc := tv.Sorted(); !desc {
 		t.Errorf("second Enter should reverse")
 	}
-	key("Enter")
+	key("Return")
 	if sorted, _, _ := tv.Sorted(); sorted {
 		t.Errorf("third Enter should unsort")
 	}
@@ -54,7 +54,7 @@ func TestTreeHeaderFocusZones(t *testing.T) {
 	if tv.headerFocusIdx != 3 {
 		t.Fatalf("chooser stop idx = %d, want 3", tv.headerFocusIdx)
 	}
-	key("Enter")
+	key("Return")
 	if !tv.chooserOpen {
 		t.Fatal("Enter on the chooser stop did not open the menu")
 	}
@@ -112,7 +112,7 @@ func TestTreeHeaderItemsShiftTabWraps(t *testing.T) {
 	key := func(k string) { tv.HandleKeyPress(core.KeyPressEvent{Key: k}) }
 
 	tv.HandleFocusIn() // -> hzBar
-	key("Enter")       // -> hzItems, first stop
+	key("Return")       // -> hzItems, first stop
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier})
 	last := tv.headerStopCount() - 1
 	if tv.headerZone != hzItems || tv.headerFocusIdx != last {
