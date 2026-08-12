@@ -28,6 +28,9 @@
 //	                          ;        host's OS title bar (kittytk-sdl only)
 //	renderer     =            ; rendering backend: software (default) or webgpu
 //	                          ;   (webgpu requires building with -tags webgpu)
+//	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
+//	                          ;   … hints are tested against, overriding what the
+//	                          ;   session advertises (blank = detect)
 //	fonts_path   =            ; extra font search directories (comma list, relative
 //	                          ;   to this ini) the engine scans to find families by name
 //	ui_term      =            ; the ui-term terminal face (family or comma fallback
@@ -168,6 +171,13 @@ type Config struct {
 	// two different chords. Order within the file is not significant; a later
 	// line for the same key replaces an earlier one.
 	Mappings map[string]string
+
+	// HostType overrides the desktop environment the keymap's environment hints
+	// are tested against, read from [window] host_type. The session normally
+	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
+	// nothing, says the wrong thing, or where someone wants a Mac's keymap on
+	// a Linux desktop for the afternoon. Blank keeps whatever was detected.
+	HostType string
 
 	// AcceleratorChord is the pattern a menu accelerator is formed from, read
 	// from [window] accelerator_chord. The token "*" is replaced by a menu's
@@ -376,6 +386,8 @@ func apply(data []byte, cfg *Config) {
 			cfg.Title = val
 		case "accelerator_chord":
 			cfg.AcceleratorChord = stripQuotes(val)
+		case "host_type":
+			cfg.HostType = stripQuotes(val)
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Width = n

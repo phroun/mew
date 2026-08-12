@@ -91,6 +91,15 @@ func main() {
 	tuiOpts.OSC52Clipboard = cfg.UseTUIOSC52Clipboard()
 	tuiOpts.OSC52Paste = cfg.UseTUIOSC52Paste()
 
+	// Declare what kind of host this is before anything reads a keymap: the
+	// environment hints in a keymap ((mac), (only_gfx), (kde)...) are evaluated
+	// when a binding is added to a registry, and the toolkit cannot tell for
+	// itself whether this binary draws pixels or characters.
+	core.SetKeymapEnvironment(core.KeymapEnvironment{
+		Graphical: false,
+		Desktop:   cfg.HostType, // [window] host_type, or blank to detect
+	})
+
 	// Free the host's built-in accelerators before the desktop is created: the Ψ
 	// system menu is built inside NewDesktop and never rebuilt, so its Exit
 	// Desktop shortcut must be cleared first.

@@ -585,3 +585,22 @@ func TestApplyKeepsAcceleratorChordVerbatim(t *testing.T) {
 		}
 	}
 }
+
+// [window] host_type forces what the keymap's desktop hints ((kde), (gnome),
+// only_xfce, ...) are tested against, for a session that says nothing about
+// itself, says the wrong thing, or is being made to pretend for an afternoon.
+func TestApplyReadsHostType(t *testing.T) {
+	var cfg Config
+	apply([]byte("[window]\nhost_type = gnome\n"), &cfg)
+	if cfg.HostType != "gnome" {
+		t.Errorf("host_type = %q, want gnome", cfg.HostType)
+	}
+
+	// Unset means detect, which is the blank the environment reads as "ask
+	// the session" rather than "no desktop at all".
+	var bare Config
+	apply([]byte("[window]\ntitle = mew\n"), &bare)
+	if bare.HostType != "" {
+		t.Errorf("host_type = %q with nothing configured, want blank", bare.HostType)
+	}
+}

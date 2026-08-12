@@ -38,10 +38,26 @@ type KeyRegistry struct {
 	serial uint64
 }
 
-// boundCommand is one meaning of one key, and when it was bound.
+// boundCommand is one meaning of one key: what it does, when it was bound,
+// and what the environment hints on its line had to say about it.
 type boundCommand struct {
 	command string
 	serial  uint64
+	// weight is the environment preference (see keyhints.go): positive where
+	// the hints matched this environment, negative where they named another
+	// one, zero where the line said nothing about where it belongs. It
+	// outranks the serial, so a keymap's own (mac) line beats a later unhinted
+	// one on a Mac -- and loses to it everywhere else.
+	weight int
+}
+
+// outranks reports whether a should be advertised over b: the environment's
+// own spelling first, and among equals the one bound last.
+func (a boundCommand) outranks(b boundCommand) bool {
+	if a.weight != b.weight {
+		return a.weight > b.weight
+	}
+	return a.serial > b.serial
 }
 
 // A Binding is one LINE of a keymap: a key, and every command it can mean. A
@@ -63,13 +79,18 @@ func NewKeyRegistry(name string, bindings []Binding) *KeyRegistry {
 	// mean one command the last of them is the one advertised for it. A key
 	// may appear more than once (each line adds a meaning), and anything bound
 	// later still -- an ini file, a host -- outranks all of it.
+	env := CurrentKeymapEnvironment()
 	for _, b := range bindings {
+		key, weight, keep := keyHints(b.Key, env)
+		if !keep {
+			continue // required an environment this is not: not bound at all
+		}
 		for _, cmd := range b.Commands {
 			if cmd == "" {
 				continue
 			}
 			r.serial++
-			r.bindings[b.Key] = append(r.bindings[b.Key], boundCommand{command: cmd, serial: r.serial})
+			r.bindings[key] = append(r.bindings[key], boundCommand{command: cmd, serial: r.serial, weight: weight})
 		}
 	}
 	return r
@@ -120,13 +141,17 @@ func (r *KeyRegistry) Revision() uint64 {
 // unbinds it entirely, which is how a user turns a default off without having
 // to know what it was.
 func (r *KeyRegistry) Bind(key, command string) {
+	key, weight, keep := keyHints(key, CurrentKeymapEnvironment())
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if command == "" {
+	if command == "" || !keep {
+		// A binding this environment is not for is a binding it does not have.
+		// Unbinding it as well is deliberate: "(only_mac) ^W = something" says
+		// ^W is the Mac's, so off a Mac ^W is left to whatever else claims it.
 		delete(r.bindings, key)
 	} else {
 		r.serial++
-		r.bindings[key] = []boundCommand{{command: command, serial: r.serial}}
+		r.bindings[key] = []boundCommand{{command: command, serial: r.serial, weight: weight}}
 	}
 	r.revision++
 }
@@ -137,6 +162,10 @@ func (r *KeyRegistry) AddBinding(key, command string) {
 	if command == "" {
 		return
 	}
+	key, weight, keep := keyHints(key, CurrentKeymapEnvironment())
+	if !keep {
+		return // required an environment this is not
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, b := range r.bindings[key] {
@@ -145,7 +174,7 @@ func (r *KeyRegistry) AddBinding(key, command string) {
 		}
 	}
 	r.serial++
-	r.bindings[key] = append(r.bindings[key], boundCommand{command: command, serial: r.serial})
+	r.bindings[key] = append(r.bindings[key], boundCommand{command: command, serial: r.serial, weight: weight})
 	r.revision++
 }
 
@@ -159,17 +188,24 @@ func (r *KeyRegistry) Prefer(key, command string) {
 	if command == "" {
 		return
 	}
+	key, weight, keep := keyHints(key, CurrentKeymapEnvironment())
+	if !keep {
+		return // required an environment this is not
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.serial++
 	for i, b := range r.bindings[key] {
 		if b.command == command {
 			r.bindings[key][i].serial = r.serial
+			if weight > r.bindings[key][i].weight {
+				r.bindings[key][i].weight = weight
+			}
 			r.revision++
 			return
 		}
 	}
-	r.bindings[key] = append(r.bindings[key], boundCommand{command: command, serial: r.serial})
+	r.bindings[key] = append(r.bindings[key], boundCommand{command: command, serial: r.serial, weight: weight})
 	r.revision++
 }
 
@@ -189,14 +225,14 @@ func (r *KeyRegistry) KeysFor(command string) []string {
 	for k, bs := range r.bindings {
 		for _, b := range bs {
 			if b.command == command {
-				// The key travels as the command field; only the serial is
+				// The key travels as the command field; the rank is what is
 				// wanted from the binding itself.
-				found = append(found, boundCommand{command: k, serial: b.serial})
+				found = append(found, boundCommand{command: k, serial: b.serial, weight: b.weight})
 				break
 			}
 		}
 	}
-	sort.Slice(found, func(i, j int) bool { return found[i].serial > found[j].serial })
+	sort.Slice(found, func(i, j int) bool { return found[i].outranks(found[j]) })
 	keys := make([]string, 0, len(found))
 	for _, f := range found {
 		keys = append(keys, f.command)
@@ -229,13 +265,14 @@ type KeyContext struct {
 	proc     *keyseq.Processor
 	commands map[string]bool
 	revision uint64
-	// serials is the registration order of the bindings this context kept,
-	// carried over from the registry so the context can answer which key to
-	// SHOW for a command without going back to it. Keys added here later --
-	// the formed accelerators -- continue above everything the registry had,
-	// since they are the newest thing in the room.
-	serials map[string]uint64
-	added   uint64
+	// ranks is how the bindings this context kept were ordered in the registry
+	// -- environment preference and registration order both -- carried over so
+	// the context can answer which key to SHOW for a command without going
+	// back to it. Keys added here later (the formed accelerators) continue
+	// above everything the registry had, since they are the newest thing in
+	// the room.
+	ranks map[string]boundCommand
+	added uint64
 	// matched is the whole sequence the last successful Resolve consumed, not
 	// just its final key. A command that carries no identity of its own -- the
 	// menu accelerators all resolve to one command -- needs the key to say
@@ -261,7 +298,7 @@ func (r *KeyRegistry) BuildContext(commands []string) *KeyContext {
 		proc:     keyseq.NewProcessor(nil),
 		commands: set,
 		revision: r.Revision(),
-		serials:  map[string]uint64{},
+		ranks:    map[string]boundCommand{},
 	}
 	mappings := map[string]string{}
 	if r != nil {
@@ -274,7 +311,7 @@ func (r *KeyRegistry) BuildContext(commands []string) *KeyContext {
 			for _, b := range bs {
 				if set[b.command] {
 					mappings[k] = b.command
-					ctx.serials[k] = b.serial
+					ctx.ranks[k] = b
 					if b.serial > ctx.added {
 						ctx.added = b.serial
 					}
@@ -309,10 +346,10 @@ func (c *KeyContext) Add(key, command string) {
 	m[key] = command
 	c.proc.SetMappings(m)
 	c.added++
-	if c.serials == nil {
-		c.serials = map[string]uint64{}
+	if c.ranks == nil {
+		c.ranks = map[string]boundCommand{}
 	}
-	c.serials[key] = c.added
+	c.ranks[key] = boundCommand{command: command, serial: c.added}
 }
 
 // KeyForCommand returns the key to SHOW for a command here: of the keys bound
@@ -329,16 +366,17 @@ func (c *KeyContext) KeyForCommand(command string) string {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	best, bestSerial := "", uint64(0)
+	best, bestRank := "", boundCommand{}
 	for key, cmd := range c.proc.GetAllMappings() {
 		if cmd != command {
 			continue
 		}
-		s := c.serials[key]
-		// Ties (a context assembled without serials) fall back to the greater
+		rank := c.ranks[key]
+		// Ties (a context assembled without ranks) fall back to the greater
 		// spelling, so the answer is never a coin toss on map order.
-		if best == "" || s > bestSerial || (s == bestSerial && key > best) {
-			best, bestSerial = key, s
+		if best == "" || rank.outranks(bestRank) ||
+			(rank == bestRank && key > best) {
+			best, bestRank = key, rank
 		}
 	}
 	return best
