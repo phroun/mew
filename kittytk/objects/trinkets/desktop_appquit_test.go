@@ -110,3 +110,57 @@ func TestQuitOneOfTwoAppsInSoloModeKeepsRunning(t *testing.T) {
 		t.Error("another app still has a window: the display should stay up")
 	}
 }
+
+// The whole ^Q invariant in one place: it ends the APPLICATION, it does not
+// close just a window, and it does not take the desktop with it.
+func TestCtrlQEndsAppOnlyNotWindowNotDesktop(t *testing.T) {
+	d := NewDesktop()
+	winA := window.NewWindow("A")
+	winB := window.NewWindow("B")
+	app := &mockApp{name: "Demo", windows: []*window.Window{winA, winB}}
+	other := &mockApp{name: "Other", windows: []*window.Window{window.NewWindow("C")}}
+	d.AddApplication(app)
+	d.AddApplication(other)
+	winA.SetParent(d)
+
+	if !winA.HandleKeyPress(core.KeyPressEvent{Key: "^Q"}) {
+		t.Fatal("^Q was not handled")
+	}
+
+	// The whole application went, both of its windows with it...
+	if got := len(d.Applications()); got != 1 {
+		t.Errorf("%d applications remain, want 1 (the other app)", got)
+	}
+	for _, w := range []*window.Window{winA, winB} {
+		if w.IsVisible() {
+			t.Errorf("%s survived ^Q: the app's windows all close", w.Title())
+		}
+	}
+	// ...and the desktop did not.
+	if quitRequested(d) {
+		t.Error("^Q quit the desktop; it must only end the application")
+	}
+}
+
+// ^W is the other half of the split: one window, application untouched.
+func TestCtrlWClosesOneWindowOnly(t *testing.T) {
+	d := NewDesktop()
+	winA := window.NewWindow("A")
+	winB := window.NewWindow("B")
+	app := &mockApp{name: "Demo", windows: []*window.Window{winA, winB}}
+	d.AddApplication(app)
+	winA.SetParent(d)
+
+	if !winA.HandleKeyPress(core.KeyPressEvent{Key: "^W"}) {
+		t.Fatal("^W was not handled")
+	}
+	if got := len(d.Applications()); got != 1 {
+		t.Errorf("^W removed the application (%d left), it should close a window", got)
+	}
+	if winB.IsVisible() == false {
+		t.Error("^W closed a sibling window; it closes only the focused one")
+	}
+	if quitRequested(d) {
+		t.Error("^W quit the desktop")
+	}
+}
