@@ -190,3 +190,12 @@ func (c *KeyContext) Abandon() {
 	defer c.mu.Unlock()
 	c.proc.ClearActiveSequence()
 }
+
+// CommandAppAccelerator is the command a formed menu accelerator resolves to.
+//
+// It carries no identity: the KEY does that, and the menu bar looks up which
+// menu the letter belongs to exactly as it always has. Deliberately not
+// registered as a script command — it is a routing artifact, not a feature,
+// and a script that wants the Help menu should say so rather than pretend to
+// press a key. The leading underscore marks it internal.
+const CommandAppAccelerator = "_app_accel"

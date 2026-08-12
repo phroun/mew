@@ -3,6 +3,8 @@ package trinkets
 import (
 	"reflect"
 	"testing"
+
+	"github.com/phroun/kittytk/core"
 )
 
 // A title marks its accelerator with &, escapes a literal one as &&, and may
@@ -237,5 +239,128 @@ func TestAssignReportsPosition(t *testing.T) {
 	none := assignAccelerators(candsOf("&A", "&A"), nil)
 	if none[1].Char != 0 || none[1].Pos != -1 {
 		t.Errorf("no-underline case = %+v, want zero char and -1 pos", none[1])
+	}
+}
+
+// The pattern is a whole key sequence with "*" standing in for the letter, and
+// the letter's slot is wherever the author put it — not a prefix.
+func TestFormAcceleratorKey(t *testing.T) {
+	for _, c := range []struct {
+		pattern string
+		ch      rune
+		want    string
+	}{
+		{"M-*", 'h', "M-h"},
+		{"m-*", 'h', "m-h"},
+		{"^X * Enter", 'h', "^X h Enter"},
+		{"^X ^M 2 2 7 *", 'h', "^X ^M 2 2 7 h"},
+		// No "*" forms nothing, which turns chord accelerators off without
+		// disturbing the bare letters a focused bar answers to.
+		{"M-F4", 'h', ""},
+		{"", 'h', ""},
+		{"M-*", 0, ""},
+	} {
+		if got := formAcceleratorKey(c.pattern, c.ch); got != c.want {
+			t.Errorf("formAcceleratorKey(%q, %q) = %q, want %q", c.pattern, c.ch, got, c.want)
+		}
+	}
+}
+
+// End to end on a real bar: with nothing claiming the chords every menu is
+// lit, and the live accelerators are published into the context so the chord
+// resolves to the internal accelerator command.
+func TestMenuBarPublishesLiveAccelerators(t *testing.T) {
+	reg := core.NewKeyRegistry("default", map[string]string{"Tab": "focus_next"})
+	ctx := reg.BuildContext([]string{"focus_next"})
+
+	bar := NewMenuBar()
+	bar.SetAcceleratorChord("M-*")
+	bar.SetKeyContext(ctx)
+	for _, title := range []string{"&File", "&Edit", "&Help"} {
+		bar.AddMenu(NewMenu(title))
+	}
+
+	for _, m := range bar.menus {
+		if !bar.ShouldShowAccelerator(m) {
+			t.Errorf("%q should be lit with nothing claiming its chord", m.title)
+		}
+	}
+	for _, key := range []string{"M-f", "M-e", "M-h"} {
+		ctx.Abandon()
+		if got := ctx.Resolve(key); got != core.CommandAppAccelerator {
+			t.Errorf("%s -> %q, want %q", key, got, core.CommandAppAccelerator)
+		}
+	}
+}
+
+// A chord the context already claims mutes that menu: the letter keeps its
+// underline but loses the accelerator colour, and it is NOT published — so it
+// cannot fire, which is what stops an accelerator beating the binding it is
+// supposed to be yielding to.
+func TestMenuBarMutesClaimedChord(t *testing.T) {
+	reg := core.NewKeyRegistry("default", map[string]string{"M-h": "history_panel"})
+	ctx := reg.BuildContext([]string{"history_panel"})
+
+	bar := NewMenuBar()
+	bar.SetAcceleratorChord("M-*")
+	bar.SetKeyContext(ctx)
+	file, help := NewMenu("&File"), NewMenu("&Help")
+	bar.AddMenu(file)
+	bar.AddMenu(help)
+
+	if !bar.ShouldShowAccelerator(file) {
+		t.Error("File is unclaimed and should be lit")
+	}
+	if bar.ShouldShowAccelerator(help) {
+		t.Error("Help's chord is claimed; it should not be lit")
+	}
+	if !bar.ShouldUnderlineAccelerator(help) {
+		t.Error("Help's letter is still Help's and should keep its underline")
+	}
+	if got := ctx.Resolve("M-h"); got != "history_panel" {
+		t.Errorf("M-h -> %q, want history_panel: the accelerator must not take it", got)
+	}
+}
+
+// A backup letter keeps a menu reachable when its first choice is claimed.
+func TestMenuBarUsesBackupLetter(t *testing.T) {
+	reg := core.NewKeyRegistry("default", map[string]string{"M-h": "history_panel"})
+	ctx := reg.BuildContext([]string{"history_panel"})
+
+	bar := NewMenuBar()
+	bar.SetAcceleratorChord("M-*")
+	bar.SetKeyContext(ctx)
+	help := NewMenu("&Hel&p")
+	bar.AddMenu(help)
+
+	if !bar.ShouldShowAccelerator(help) {
+		t.Error("Help should be lit on its backup letter")
+	}
+	if help.acceleratorChar != 'p' {
+		t.Errorf("Help chose %q, want p", help.acceleratorChar)
+	}
+	ctx.Abandon()
+	if got := ctx.Resolve("M-p"); got != core.CommandAppAccelerator {
+		t.Errorf("M-p -> %q, want the accelerator command", got)
+	}
+}
+
+// A letter an earlier sibling took is not this menu's to advertise: no colour
+// and no underline, since the sibling is showing it lit on the same bar.
+func TestMenuBarSiblingConsumedShowsNothing(t *testing.T) {
+	bar := NewMenuBar()
+	bar.SetAcceleratorChord("M-*")
+	help, history := NewMenu("&Help"), NewMenu("&History")
+	bar.AddMenu(help)
+	bar.AddMenu(history)
+
+	if !bar.ShouldShowAccelerator(help) {
+		t.Error("the first Help should be lit")
+	}
+	if bar.ShouldUnderlineAccelerator(history) {
+		t.Error("History's letter belongs to Help; it should not be underlined at all")
+	}
+	if history.acceleratorChar != 0 {
+		t.Errorf("History kept %q; with no letter of its own it should have none", history.acceleratorChar)
 	}
 }

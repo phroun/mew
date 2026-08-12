@@ -1846,11 +1846,25 @@ type MenuBar struct {
 	core.TrinketBase
 	core.AccessibleTrinket
 
-	menus          []*Menu
-	currentIndex   int
-	activeMenu     *Menu
-	hoverIndex     int // Top-level item under the pointer (-1 = none)
-	hoverScrollBtn int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
+	menus        []*Menu
+	currentIndex int
+	activeMenu   *Menu
+
+	// acceleratorChord is the pattern a chord accelerator is formed from,
+	// with "*" standing in for a menu's mnemonic ([window] accelerator_chord).
+	acceleratorChord string
+	// keyContext is the set of actions available right now. Accelerators are
+	// formed against it: a chord it already claims is not the accelerator's to
+	// take. A nil context claims nothing, so accelerators are all live — which
+	// is how the toolkit behaves before a host installs one.
+	keyContext *core.KeyContext
+	// accelAssignments is the per-menu outcome, recomputed when the menu list
+	// changes or the context moves on.
+	accelAssignments []acceleratorAssignment
+	accelRevision    uint64
+	accelStale       bool
+	hoverIndex       int // Top-level item under the pointer (-1 = none)
+	hoverScrollBtn   int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
 
 	// modalBlocked reports whether this menu bar is disabled by a modal (the
 	// app it represents is modally blocked). A blocked bar shows no hover
@@ -2199,30 +2213,107 @@ func (m *MenuBar) clampScrollOffset() {
 
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
 // registered keybinding (e.g., Alt+key is used for something else).
-func (m *MenuBar) hasAcceleratorConflict(accel rune) bool {
-	if accel == 0 {
-		return false
-	}
-	// Check if M-<letter> is bound to any action
-	key := "M-" + string(accel)
-	action := core.DefaultKeyBindings.FindAction(key)
-	return action != ""
+// SetAcceleratorChord sets the pattern chord accelerators are formed from,
+// with "*" standing in for a menu's mnemonic. Blank forms none.
+func (m *MenuBar) SetAcceleratorChord(pattern string) {
+	m.acceleratorChord = pattern
+	m.InvalidateAccelerators()
 }
 
-// ShouldShowAccelerator returns whether the accelerator for a menu should be
-// highlighted in red. Returns true if:
-// - The menu bar has focus and no menu is dropped down, OR
-// - There is no keybinding conflict for this accelerator
+// SetKeyContext hands the bar the set of actions available right now, which is
+// what accelerators are formed against and what decides which of them are
+// live. A nil context claims nothing.
+func (m *MenuBar) SetKeyContext(ctx *core.KeyContext) {
+	m.keyContext = ctx
+	m.InvalidateAccelerators()
+}
+
+// InvalidateAccelerators marks the assignment for recomputation — the menu
+// list changed, or the situation did.
+func (m *MenuBar) InvalidateAccelerators() {
+	m.accelStale = true
+	m.Update()
+}
+
+// refreshAccelerators recomputes which letter each menu shows and whether it
+// is live, then publishes the live ones into the context.
+//
+// Staleness is a revision comparison rather than a subscription: the context
+// bumps a revision whenever it is rebuilt, and anything that repaints notices
+// on its own. Nothing has to remember to notify the menu bar, which is what
+// makes an accelerator light up by itself when the trinket that was claiming
+// its chord loses focus.
+func (m *MenuBar) refreshAccelerators() {
+	rev := m.keyContext.Revision()
+	if !m.accelStale && rev == m.accelRevision && len(m.accelAssignments) == len(m.menus) {
+		return
+	}
+	m.accelStale = false
+	m.accelRevision = rev
+
+	cands := make([][]acceleratorCandidate, len(m.menus))
+	for i, menu := range m.menus {
+		cands[i] = menu.acceleratorCandidates
+	}
+	pattern := m.acceleratorChord
+	ctx := m.keyContext
+	m.accelAssignments = assignAccelerators(cands, func(ch rune) bool {
+		key := formAcceleratorKey(pattern, ch)
+		return key != "" && ctx.Claims(key)
+	})
+
+	for i, menu := range m.menus {
+		a := m.accelAssignments[i]
+		// The chosen letter follows the assignment, so every existing lookup
+		// — the bare letters a focused bar answers to, accessibility — uses
+		// the letter that is actually underlined.
+		menu.acceleratorChar, menu.acceleratorPos = a.Char, a.Pos
+		if a.Active {
+			if key := formAcceleratorKey(pattern, a.Char); key != "" && ctx != nil {
+				ctx.Add(key, core.CommandAppAccelerator)
+			}
+		}
+	}
+}
+
+// acceleratorAssignmentFor returns the outcome for a menu, recomputing first
+// if the situation has moved on.
+func (m *MenuBar) acceleratorAssignmentFor(menu *Menu) acceleratorAssignment {
+	m.refreshAccelerators()
+	for i, mm := range m.menus {
+		if mm == menu && i < len(m.accelAssignments) {
+			return m.accelAssignments[i]
+		}
+	}
+	return acceleratorAssignment{Pos: -1}
+}
+
+// ShouldShowAccelerator reports whether a menu's accelerator is drawn in the
+// accelerator colour — that is, whether the chord actually reaches it.
+//
+// A focused bar with no menu down shows every accelerator lit regardless: the
+// bare letters it answers to are ordinary typing, not chords, so nothing can
+// have claimed them.
 func (m *MenuBar) ShouldShowAccelerator(menu *Menu) bool {
-	if menu.acceleratorChar == 0 {
+	a := m.acceleratorAssignmentFor(menu)
+	if a.Char == 0 {
 		return false
 	}
-	// Always show when menu bar is focused with no menu down
 	if m.acceleratorsActive {
 		return true
 	}
-	// Otherwise, only show if there's no keybinding conflict
-	return !m.hasAcceleratorConflict(menu.acceleratorChar)
+	return a.Active
+}
+
+// ShouldUnderlineAccelerator reports whether a menu's letter is marked at all.
+//
+// It is false only when an earlier sibling took every letter this menu offered
+// — that letter is not this menu's to advertise, and the sibling is showing it
+// lit on the same bar. A letter claimed by something in the CONTEXT is still
+// this menu's, so it stays marked and merely stops being coloured, and it
+// starts answering again on its own when the claim goes away.
+func (m *MenuBar) ShouldUnderlineAccelerator(menu *Menu) bool {
+	return m.acceleratorAssignmentFor(menu).Char != 0
 }
 
 // AcceleratorsActive returns whether accelerator highlighting is currently active.
@@ -2241,7 +2332,7 @@ func (m *MenuBar) setAcceleratorsActive(active bool) {
 // AddMenu adds a menu to the bar.
 func (m *MenuBar) AddMenu(menu *Menu) {
 	m.menus = append(m.menus, menu)
-	m.Update()
+	m.InvalidateAccelerators()
 }
 
 // InsertMenu inserts a menu at the given index.
@@ -2264,7 +2355,7 @@ func (m *MenuBar) RemoveMenu(menu *Menu) {
 			break
 		}
 	}
-	m.Update()
+	m.InvalidateAccelerators()
 }
 
 // Clear removes all menus.
@@ -2832,9 +2923,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		textX := x + metrics.CellWidth // Start after leading space
 		showAccel := m.ShouldShowAccelerator(menu)
 
-		// Draw text in parts: before accel, accel char, after accel
+		// Draw text in parts: before accel, accel char, after accel. A letter
+		// the chord no longer reaches keeps its underline in the ordinary text
+		// style, so the user can see whose it is and that it is not answering.
+		markAccel := showAccel || m.ShouldUnderlineAccelerator(menu)
+		if !showAccel {
+			accelStyle = s.Underline()
+		}
 		titleRunes := []rune(menu.title)
-		if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
+		if markAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
 			var segs []textSegment
 			if menu.acceleratorPos > 0 {
 				segs = append(segs, textSegment{string(titleRunes[:menu.acceleratorPos]), s})
@@ -3041,18 +3138,22 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	// Check Alt+key shortcuts (M-<letter> format, lowercase only - no shift)
-	if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
-		letter := event.Key[2]
-		// Only match lowercase (M-f not M-F) to avoid shift combinations
-		if letter >= 'a' && letter <= 'z' {
-			key := rune(letter)
-			for i, menu := range m.menus {
-				if menu.acceleratorChar == key {
-					m.SetFocus()
-					m.OpenMenu(i)
-					return true
-				}
+	// A formed chord accelerator. The display has always deferred to a clash;
+	// the dispatch did not, so a shadowed accelerator still fired and, being
+	// resolved above the active window, beat the very binding it was supposed
+	// to be yielding to. Both sides read the same assignment now, so an
+	// accelerator that is not lit does not answer.
+	if m.acceleratorChord != "" {
+		m.refreshAccelerators()
+		for i := range m.menus {
+			a := m.accelAssignments[i]
+			if !a.Active || a.Char == 0 {
+				continue
+			}
+			if formAcceleratorKey(m.acceleratorChord, a.Char) == event.Key {
+				m.SetFocus()
+				m.OpenMenu(i)
+				return true
 			}
 		}
 	}

@@ -1,5 +1,7 @@
 package trinkets
 
+import "strings"
+
 // acceleratorAssignment is the outcome for one item: which letter to underline,
 // where, and whether that letter currently reaches anything.
 type acceleratorAssignment struct {
@@ -70,4 +72,25 @@ func assignAccelerators(siblings [][]acceleratorCandidate, clashes func(rune) bo
 		taken[out[i].Char] = true
 	}
 	return out
+}
+
+// formAcceleratorKey substitutes a mnemonic into the accelerator chord pattern.
+//
+// The pattern is a whole key sequence with "*" standing in for the letter, and
+// the letter's slot is wherever the author put it — "M-*" forms "M-h", and
+// "^X * Enter" forms "^X h Enter". A pattern with no "*" forms nothing, which
+// is how chord accelerators are turned off without disturbing the bare-letter
+// mnemonics a focused menu bar answers to.
+func formAcceleratorKey(pattern string, ch rune) string {
+	if pattern == "" || ch == 0 {
+		return ""
+	}
+	// The star is a character inside a token, not a token of its own: "M-*" is
+	// one key whose base is the star, while "^X * Enter" spends a whole slot
+	// on it. Substituting the character covers both without having to know
+	// which shape the author used.
+	if !strings.Contains(pattern, "*") {
+		return ""
+	}
+	return strings.ReplaceAll(pattern, "*", string(ch))
 }
