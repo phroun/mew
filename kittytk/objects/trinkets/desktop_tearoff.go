@@ -616,8 +616,26 @@ func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
 		}
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
-		}); ok {
-			return sc.HandleShortcut(ev)
+		}); ok && sc.HandleShortcut(ev) {
+			return true
+		}
+		// ...and the app's menu ACCELERATORS too, not only its item
+		// shortcuts. A child carries no bar of its own, so without this a
+		// chord accelerator does nothing while the child has focus even
+		// though the app's menus are sitting in the main window.
+		//
+		// Resolved through the main window's context rather than matched by
+		// shape, so a multi-key pattern works: the context holds the prefix
+		// between keystrokes and reports the whole sequence when it lands,
+		// which is what says WHICH menu the accelerator was for.
+		if ctx := main.KeyContext(); ctx != nil {
+			if ctx.Resolve(ev.Key) == core.CommandAppAccelerator {
+				if bar, ok := mb.(interface {
+					ActivateAcceleratorSequence(string) bool
+				}); ok {
+					return bar.ActivateAcceleratorSequence(ctx.MatchedSequence())
+				}
+			}
 		}
 		return false
 	})

@@ -96,6 +96,12 @@ type KeyContext struct {
 	proc     *keyseq.Processor
 	commands map[string]bool
 	revision uint64
+	// matched is the whole sequence the last successful Resolve consumed, not
+	// just its final key. A command that carries no identity of its own -- the
+	// menu accelerators all resolve to one command -- needs the key to say
+	// which one fired, and for a chord that means the chord, not the last
+	// keystroke of it.
+	matched string
 }
 
 // BuildContext derives a context from the registry, carrying only the bindings
@@ -178,7 +184,29 @@ func (c *KeyContext) Resolve(key string) string {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.proc.ProcessKey(key).Command
+	pending := c.proc.GetActiveSequence()
+	cmd := c.proc.ProcessKey(key).Command
+	if cmd != "" {
+		if pending != "" {
+			c.matched = pending + " " + key
+		} else {
+			c.matched = key
+		}
+	}
+	return cmd
+}
+
+// MatchedSequence returns the whole sequence the last successful Resolve
+// consumed. It is how a command that carries no identity says which one it
+// was: every menu accelerator resolves to the same command, and the key is
+// what distinguishes them.
+func (c *KeyContext) MatchedSequence() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.matched
 }
 
 // Abandon drops a partly-typed sequence.

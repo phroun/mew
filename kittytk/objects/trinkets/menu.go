@@ -3616,3 +3616,29 @@ func (m *MenuBar) AccessibleInfo() core.AccessibleInfo {
 
 	return info
 }
+
+// ActivateAcceleratorSequence opens the menu whose formed accelerator is this
+// sequence, and reports whether one matched.
+//
+// The sequence is compared whole, so the mnemonic's position within the chord
+// does not matter: a pattern of "^X * Enter" forms "^X h Enter" for &Help and
+// the same substitution identifies it coming back. Only a live accelerator
+// answers — a muted one is not published and is not matched here either.
+func (m *MenuBar) ActivateAcceleratorSequence(seq string) bool {
+	if seq == "" || m.acceleratorChord == "" {
+		return false
+	}
+	m.refreshAccelerators()
+	for i := range m.menus {
+		a := m.accelAssignments[i]
+		if !a.Active || a.Char == 0 {
+			continue
+		}
+		if formAcceleratorKey(m.acceleratorChord, a.Char) == seq {
+			m.SetFocus()
+			m.OpenMenu(i)
+			return true
+		}
+	}
+	return false
+}

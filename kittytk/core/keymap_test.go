@@ -300,3 +300,47 @@ func TestStatesCompound(t *testing.T) {
 		t.Error("the title bar state should add to the ordinary one, not replace it")
 	}
 }
+
+// A command that carries no identity needs the KEY to say which one fired, and
+// for a chord that means the whole chord rather than its last keystroke. The
+// pending prefix is read off the processor before the key is fed to it, so the
+// sequence is reassembled at the moment it completes.
+func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
+	r := NewKeyRegistry("t", map[string]string{
+		"M-h":        CommandAppAccelerator,
+		"^X h Enter": CommandAppAccelerator,
+		"^X p Enter": CommandAppAccelerator,
+		"Tab":        "focus_next",
+	})
+	ctx := r.BuildContext([]string{CommandAppAccelerator, "focus_next"})
+
+	// Single key: the sequence is the key.
+	if got := ctx.Resolve("M-h"); got != CommandAppAccelerator {
+		t.Fatalf("M-h -> %q", got)
+	}
+	if got := ctx.MatchedSequence(); got != "M-h" {
+		t.Errorf("matched %q, want M-h", got)
+	}
+
+	// A chord: nothing matches until the last key, and then the WHOLE chord
+	// comes back — which is what tells the menu bar it was p and not h.
+	for _, k := range []string{"^X", "p"} {
+		if got := ctx.Resolve(k); got != "" {
+			t.Fatalf("%q resolved early to %q", k, got)
+		}
+	}
+	if got := ctx.Resolve("Enter"); got != CommandAppAccelerator {
+		t.Fatalf("^X p Enter -> %q", got)
+	}
+	if got := ctx.MatchedSequence(); got != "^X p Enter" {
+		t.Errorf("matched %q, want the whole chord ^X p Enter", got)
+	}
+
+	// A failed or incomplete match leaves the last successful one alone rather
+	// than reporting a half-typed chord.
+	ctx.Resolve("^X")
+	ctx.Abandon()
+	if got := ctx.MatchedSequence(); got != "^X p Enter" {
+		t.Errorf("an abandoned chord changed the matched sequence to %q", got)
+	}
+}

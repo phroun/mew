@@ -135,6 +135,10 @@ type Desktop struct {
 
 	// Menu bar at the top (Mac-style)
 	menuBar *MenuBar
+	// keyContext is what the desktop currently offers. The bar publishes its
+	// live accelerators into it, so a chord accelerator is RESOLVED rather
+	// than recognised by shape.
+	keyContext *core.KeyContext
 
 	// System menu (always present, upper-left)
 	systemMenu *Menu
@@ -4029,7 +4033,8 @@ func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 		// with a title bar focused, so their arrows stay unclaimed here rather
 		// than being eaten on the desktop.
 		menuBar.SetAcceleratorChord(core.AcceleratorChord())
-		menuBar.SetKeyContext(core.DefaultKeyRegistry().BuildStateContext(core.StateNormal))
+		d.keyContext = core.DefaultKeyRegistry().BuildStateContext(core.StateNormal)
+		menuBar.SetKeyContext(d.keyContext)
 		// Prepend system menu if we have one
 		if d.systemMenu != nil {
 			menuBar.InsertMenu(0, d.systemMenu)
@@ -4988,3 +4993,28 @@ func (s *StatusBar) HandleMousePress(event core.MousePressEvent) bool {
 
 // Verify Desktop implements KeyboardBlurChildrenProvider
 var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)
+
+// KeyContext returns the set of actions available on the desktop right now.
+// The menu bar publishes its live accelerators into this same context, which
+// is what lets a chord accelerator be RESOLVED rather than recognised by
+// shape — including a multi-key one, since the context holds the prefix.
+func (d *Desktop) KeyContext() *core.KeyContext {
+	return d.keyContext
+}
+
+// HandleResolvedCommand acts on a command the window manager already resolved,
+// so the key is fed to the context once rather than at every layer that might
+// care about it. seq is the whole sequence that matched.
+func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
+	switch cmd {
+	case core.CommandAppAccelerator:
+		if d.menuBar != nil {
+			return d.menuBar.ActivateAcceleratorSequence(seq)
+		}
+	case "app_menu":
+		if d.menuBar != nil {
+			return d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
+		}
+	}
+	return false
+}
