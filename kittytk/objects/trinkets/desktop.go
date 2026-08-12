@@ -3863,6 +3863,18 @@ func (d *Desktop) QuitWithCode(code int) {
 	}
 }
 
+// QuitRequested reports whether the desktop has been asked to exit. Distinct
+// from IsRunning, which is false before Run starts as well as after it ends --
+// this says the request was made, which is what a host wants to assert about.
+func (d *Desktop) QuitRequested() bool {
+	select {
+	case <-d.quitChan:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsRunning returns whether the desktop is running.
 func (d *Desktop) IsRunning() bool {
 	return d.running.Load()

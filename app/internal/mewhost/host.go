@@ -231,7 +231,7 @@ func otherForegroundApps(desktop *trinkets.Desktop, self *app.Application) int {
 // solo mode. Runs on the platform thread at startup (the surface and screen
 // bounds are ready), returning the root window.
 func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string) *window.Window {
-	root := newEditorWindow(desktop, application, launchArgs, true)
+	root := newEditorWindow(desktop, application, launchArgs)
 	application.AddWindow(root)
 	application.SetMainWindow(root)
 	// (Multi-window status is managed by BuildHost's applications-changed hook,
@@ -297,10 +297,10 @@ func serveSocket(desktop *trinkets.Desktop, cfg hostcfg.Config) {
 
 // newEditorWindow builds a window holding a mew `editor` trinket from protocol
 // text, then injects the launch argv (if any) through the editor's host seam so
-// mew runs its full command-line launch inside the trinket. When main, ending
-// the mew session (the editor's commit event) quits the host; a secondary
-// window just closes on session end.
-func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, argv []string, isMain bool) *window.Window {
+// mew runs its full command-line launch inside the trinket. Ending a mew
+// session (the editor's commit event) closes THAT window; the host ends when
+// the last one goes.
+func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, argv []string) *window.Window {
 	title := "mew"
 	if f := firstOperand(argv); f != "" {
 		title = "mew - " + f
@@ -330,16 +330,32 @@ sub edref commit
 			ed.SetLaunchArgv(argv)
 		}
 	}
-	// Session end (mew quit, or the placeholder's OK): quit the host from the
-	// root editor, otherwise just close this window.
+	// Session end (mew quit, or the placeholder's OK) closes THIS window,
+	// whichever window it is. The host outlives any one of them: it ends when
+	// mew has no windows left, not when the first one does.
+	//
+	// The root window used to quit the desktop outright, which was invisible
+	// while it was the only window and wrong the moment it was not: closing the
+	// root's last buffer took every other mew window down with it, and any
+	// other app on the desktop besides. Closing is a window's business;
+	// whether anything remains is the host's.
+	//
+	// Closing removes the window from the application synchronously (the app
+	// registers an on-closed observer when it takes the window), so the count
+	// below is the count after this window has gone.
 	dispatcher.On(reply.IDs["edref"], "commit", func(*protocol.Event) {
-		if isMain {
-			desktop.Quit()
-		} else {
-			w.Close()
-		}
+		endEditorSession(desktop, application, w)
 	})
 	return w
+}
+
+// endEditorSession is what a finished mew session does: close ITS window, and
+// end the host only if that was the last one mew had.
+func endEditorSession(desktop *trinkets.Desktop, application *app.Application, w *window.Window) {
+	w.Close()
+	if len(application.Windows()) == 0 {
+		desktop.Quit()
+	}
 }
 
 // firstOperand returns the first non-switch argument (a file) for the window
@@ -624,7 +640,7 @@ bar=new menubar children={%s
 	if multiWindow {
 		// New Window opens another (scratch) mew editor - a sub-mew of the host.
 		commands.Register("mew.window.new", func() {
-			application.AddWindow(newEditorWindow(desktop, application, nil, false))
+			application.AddWindow(newEditorWindow(desktop, application, nil))
 		})
 	}
 	commands.Register("mew.help.about", func() { showMewAbout(application) })

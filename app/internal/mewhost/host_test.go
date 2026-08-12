@@ -19,7 +19,7 @@ func TestRootEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	w := newEditorWindow(desktop, application, []string{"--syntax=go", "notes.txt"}, true)
+	w := newEditorWindow(desktop, application, []string{"--syntax=go", "notes.txt"})
 	if w == nil {
 		t.Fatal("newEditorWindow returned nil")
 	}
@@ -54,7 +54,7 @@ func TestScratchEditorWindowBuildsFromProtocol(t *testing.T) {
 	desktop := trinkets.NewDesktop()
 	application := app.New(nil)
 
-	w := newEditorWindow(desktop, application, nil, false)
+	w := newEditorWindow(desktop, application, nil)
 	if w == nil || w.Content() == nil {
 		t.Fatal("scratch editor window did not build")
 	}
@@ -231,5 +231,58 @@ func TestRawKeyInputAdvertisesItsKey(t *testing.T) {
 	}
 	if !found {
 		t.Error("no menu item carries the Raw Key Input action")
+	}
+}
+
+// Ending a mew session closes THAT window and nothing else. The host outlives
+// any one of them.
+//
+// The root window used to quit the desktop outright on session end. That was
+// invisible while it was the only window and wrong the moment it was not:
+// closing the root's last buffer took every other mew window down with it, and
+// any other app on the desktop besides.
+func TestSessionEndClosesOnlyItsOwnWindow(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+	desktop.AddApplication(application)
+
+	root := newEditorWindow(desktop, application, []string{"notes.txt"})
+	second := newEditorWindow(desktop, application, nil)
+	application.AddWindow(root)
+	application.AddWindow(second)
+	if got := len(application.Windows()); got != 2 {
+		t.Fatalf("precondition: %d windows, want 2", got)
+	}
+
+	// The ROOT's session ends first, with a peer still open.
+	endEditorSession(desktop, application, root)
+
+	if !second.IsVisible() {
+		t.Error("closing the root window took its peer with it")
+	}
+	if got := len(application.Windows()); got != 1 {
+		t.Errorf("%d windows remain, want 1", got)
+	}
+	if desktop.QuitRequested() {
+		t.Error("the host quit while a mew window was still open")
+	}
+}
+
+// ...and when the last one goes, the host does end.
+func TestHostEndsWhenTheLastWindowGoes(t *testing.T) {
+	desktop := trinkets.NewDesktop()
+	application := app.New(nil)
+	desktop.AddApplication(application)
+
+	only := newEditorWindow(desktop, application, []string{"notes.txt"})
+	application.AddWindow(only)
+
+	endEditorSession(desktop, application, only)
+
+	if got := len(application.Windows()); got != 0 {
+		t.Fatalf("%d windows remain, want 0", got)
+	}
+	if !desktop.QuitRequested() {
+		t.Error("the host did not end when its last window went")
 	}
 }

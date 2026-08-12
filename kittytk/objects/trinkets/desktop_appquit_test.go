@@ -7,16 +7,6 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 )
 
-// quitRequested reports whether the desktop has been asked to exit.
-func quitRequested(d *Desktop) bool {
-	select {
-	case <-d.quitChan:
-		return true
-	default:
-		return false
-	}
-}
-
 // M-F4 and ^Q end the APPLICATION the focused window belongs to: its windows
 // close and the app comes off the desktop. The window itself knows nothing
 // about applications - it walks up to the desktop, which owns the registry.
@@ -67,7 +57,7 @@ func TestQuitLastAppKeepsTheDesktop(t *testing.T) {
 
 	d.quitApplication(app)
 
-	if quitRequested(d) {
+	if d.QuitRequested() {
 		t.Error("quitting the last app should leave the desktop running")
 	}
 }
@@ -86,7 +76,7 @@ func TestQuitLastAppInSoloModeEndsTheDesktop(t *testing.T) {
 
 	d.quitApplication(app)
 
-	if !quitRequested(d) {
+	if !d.QuitRequested() {
 		t.Error("in solo mode the last app quitting should end the desktop")
 	}
 }
@@ -106,7 +96,7 @@ func TestQuitOneOfTwoAppsInSoloModeKeepsRunning(t *testing.T) {
 
 	d.quitApplication(first)
 
-	if quitRequested(d) {
+	if d.QuitRequested() {
 		t.Error("another app still has a window: the display should stay up")
 	}
 }
@@ -137,7 +127,7 @@ func TestCtrlQEndsAppOnlyNotWindowNotDesktop(t *testing.T) {
 		}
 	}
 	// ...and the desktop did not.
-	if quitRequested(d) {
+	if d.QuitRequested() {
 		t.Error("^Q quit the desktop; it must only end the application")
 	}
 }
@@ -160,7 +150,7 @@ func TestCtrlWClosesOneWindowOnly(t *testing.T) {
 	if winB.IsVisible() == false {
 		t.Error("^W closed a sibling window; it closes only the focused one")
 	}
-	if quitRequested(d) {
+	if d.QuitRequested() {
 		t.Error("^W quit the desktop")
 	}
 }
