@@ -156,7 +156,9 @@ func (r *KeyRegistry) BuildContext(commands []string) *KeyContext {
 		r.mu.RLock()
 		for k, cmds := range r.bindings {
 			// At most one of a key's meanings is on offer here; the rest
-			// belong to situations this is not.
+			// belong to situations this is not. Where a trinket genuinely
+			// answers to several forms, its own case accepts them all and it
+			// decides from its state.
 			for _, c := range cmds {
 				if set[c] {
 					mappings[k] = c
@@ -271,6 +273,13 @@ const CommandAppAccelerator = "_app_accel"
 // bar is focused and steps a list otherwise; both are true, and the situation
 // decides. A context keeps whichever meaning it offers, so at most one
 // survives anywhere the key is actually asked about.
+//
+// A trinket that can mean several of them by one key decides between them
+// itself, from its own state, exactly as it does today: a tree view's Left
+// collapses an expanded row and steps to the parent otherwise, and a
+// multi-column one crosses columns. Its case accepts every form that makes
+// sense for it and branches inside. Nothing about that moves into the
+// registry.
 //
 // Several keys may also share ONE command: the coarse window move answers to
 // Ctrl, Meta and Super arrows alike, which is what the hand-written handler
