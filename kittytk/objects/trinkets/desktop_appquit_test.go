@@ -46,11 +46,12 @@ func TestWindowCloseKeyLeavesTheApplication(t *testing.T) {
 	}
 }
 
-// Quitting the last app does NOT take the desktop with it: the desktop is
-// what the next app gets launched from, and it still has a menu bar and a
-// dock to offer.
-func TestQuitLastAppKeepsTheDesktop(t *testing.T) {
+// Quitting the last app does NOT take a DESKTOP ENVIRONMENT with it: that
+// desktop is a place in its own right - what the next app gets launched from,
+// with a menu bar and a dock to offer an empty screen.
+func TestQuitLastAppKeepsADesktopEnvironment(t *testing.T) {
 	d := NewDesktop()
+	d.SetDesktopEnvironment(true)
 	win := window.NewWindow("Doc")
 	app := &mockApp{name: "Demo", windows: []*window.Window{win}}
 	d.AddApplication(app)
@@ -58,12 +59,28 @@ func TestQuitLastAppKeepsTheDesktop(t *testing.T) {
 	d.quitApplication(app)
 
 	if d.QuitRequested() {
-		t.Error("quitting the last app should leave the desktop running")
+		t.Error("a desktop environment should outlive the last app on it")
 	}
 }
 
-// Solo mode is the exception: the app IS the display, so there is no desktop
-// to go back to and quitting the last app ends the process.
+// A desktop that is only the FRAME around one application is that application:
+// quitting it leaves nothing to show, so the process ends. This is the mew host
+// - launched to run mew, not to be a desktop.
+func TestQuitLastAppEndsAnApplicationsFrame(t *testing.T) {
+	d := NewDesktop()
+	win := window.NewWindow("Doc")
+	app := &mockApp{name: "Demo", windows: []*window.Window{win}}
+	d.AddApplication(app)
+
+	d.quitApplication(app)
+
+	if !d.QuitRequested() {
+		t.Error("the last app quitting should end a desktop that was only its frame")
+	}
+}
+
+// Solo mode is not the deciding fact and never was: the app IS the display,
+// but what ends the process is that there is no desktop environment behind it.
 func TestQuitLastAppInSoloModeEndsTheDesktop(t *testing.T) {
 	d := NewDesktop()
 	d.mu.Lock()

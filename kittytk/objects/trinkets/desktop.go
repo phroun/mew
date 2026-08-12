@@ -168,6 +168,22 @@ type Desktop struct {
 	// wallpaper - and the host quits when the last window closes.
 	solo bool
 
+	// desktopEnvironment: this desktop is a PLACE, not a frame around one
+	// application. An empty screen is a perfectly good state for it -- the
+	// wallpaper, a menu bar and a dock to launch the next app from -- so the
+	// last window closing reveals the desktop instead of ending the process.
+	//
+	// Two ways in, and the flag is latched rather than toggled because both
+	// are one-way facts about what this process IS:
+	//
+	//   - launched ALONE, with no application of its own (see RunOn). A host
+	//     that starts with an app is that app's frame, and goes when it goes;
+	//     a host that starts bare was run as a desktop environment.
+	//   - revealed later, by show_desktop / the `spawndesktop` verb. Asking
+	//     for the desktop is asking for somewhere to go back TO, which turns
+	//     an app's frame into a desktop environment after the fact.
+	desktopEnvironment bool
+
 	// Status bar at the bottom
 	statusBar *StatusBar
 
@@ -1159,6 +1175,80 @@ func (d *Desktop) IsSolo() bool {
 	return d.solo
 }
 
+// IsDesktopEnvironment reports whether this desktop is a destination in its
+// own right rather than the frame around one application -- launched with no
+// application of its own, or turned into one since by a desktop reveal. It is
+// the whole question behind "the last window closed, now what": a desktop
+// environment stays up and shows itself, anything else has nothing left to be.
+func (d *Desktop) IsDesktopEnvironment() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.desktopEnvironment
+}
+
+// SetDesktopEnvironment declares (or, with false, un-declares) this desktop a
+// desktop environment. A host calls it when it knows something RunOn cannot
+// see: the TUI mew host, say, whose show_desktop has no solo mode to exit and
+// reveals the desktop by other means.
+func (d *Desktop) SetDesktopEnvironment(on bool) {
+	d.mu.Lock()
+	d.desktopEnvironment = on
+	d.mu.Unlock()
+}
+
+// lastWindowClosed is what the desktop does when nothing is left on it. A
+// desktop environment shows itself -- that is what it is for. Anything else
+// was the frame around the application that just ended, and ends with it.
+func (d *Desktop) lastWindowClosed() {
+	if !d.IsDesktopEnvironment() {
+		d.Quit()
+		return
+	}
+	d.revealAsDesktop()
+}
+
+// revealAsDesktop takes the display back for the desktop after the last
+// application window has gone: solo mode ends (its chrome returns) and the
+// primary surface paints the desktop again. It is ExitSoloMode's job minus the
+// window -- that call re-homes the solo window as a torn one, and here there
+// is no window left to re-home -- so a closed-out solo host lands on the
+// wallpaper rather than a dead surface. No-op when not in solo mode.
+func (d *Desktop) revealAsDesktop() {
+	d.mu.RLock()
+	solo := d.solo
+	host := d.soloPrimaryHost
+	surf := d.surface
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if !solo {
+		return
+	}
+	// A live host still holding a window is ExitSoloMode's case, not ours.
+	if host != nil && host.Window() != nil {
+		d.ExitSoloMode()
+		return
+	}
+
+	if surf != nil {
+		if bt, ok := surf.(platform.BorderToggler); ok {
+			bt.SetBordered(true)
+		}
+		surf.SetHandler(&desktopSurfaceHandler{d: d})
+	}
+	d.mu.Lock()
+	d.solo = false
+	d.soloPrimaryHost = nil
+	d.mu.Unlock()
+
+	if surf != nil && wm != nil {
+		size := surf.Size()
+		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
+	}
+	d.updateMenuBarContent()
+	d.updateStatusBarContent()
+	d.Update()
+}
+
 // EnterSoloMode makes win the whole display. The desktop's own OS window
 // is reshaped into the app's window: its border is stripped (the app's
 // chrome is the only title bar) and win is hosted on that surface via a
@@ -1170,6 +1260,13 @@ func (d *Desktop) EnterSoloMode(win *window.Window) {
 	d.mu.Lock()
 	first := !d.solo
 	d.solo = true
+	// Solo mode is the exact opposite of a desktop environment: an
+	// application has taken the display over, so the display is that
+	// application and ends with it. This matters for a host that WAS a
+	// desktop environment - a bare display server a client then dials solo,
+	// or a desktop hidden again by hide_desktop - which stops being one for
+	// as long as the app owns the screen.
+	d.desktopEnvironment = false
 	wm := d.windowManager
 	d.mu.Unlock()
 
@@ -1241,6 +1338,10 @@ func (d *Desktop) ExitSoloMode() {
 	host.SetOnClosed(nil)
 	d.mu.Lock()
 	d.solo = false
+	// Revealing the desktop is asking for somewhere to go back to, so from
+	// here on this process is a desktop environment: the last window closing
+	// leaves the desktop showing rather than ending it.
+	d.desktopEnvironment = true
 	d.soloPrimaryHost = nil
 	for i, th := range d.tornHosts {
 		if th == host {
@@ -1315,6 +1416,10 @@ func (d *Desktop) EnterSoloFromDesktop() {
 		})
 		d.mu.Lock()
 		d.solo = true
+		// Hiding the desktop hands the display back to the app, which undoes
+		// what revealing it did: the app owns the screen again, so the screen
+		// is the app's again (see EnterSoloMode).
+		d.desktopEnvironment = false
 		d.mu.Unlock()
 		// Discard the window's own surface and host it on the primary,
 		// moving the primary to where the window was (reposition=true) so
@@ -1532,7 +1637,7 @@ func (d *Desktop) soloRebalance(primaryClosed bool) {
 		return
 	}
 	if len(hosts) == 0 && len(wm.Windows()) == 0 {
-		d.Quit()
+		d.lastWindowClosed()
 		return
 	}
 	if primaryClosed && !havePrimary {
@@ -2975,11 +3080,11 @@ func (d *Desktop) QuitApplicationOwning(win *window.Window) bool {
 // quitApplication closes one application's windows and takes it off the
 // desktop.
 //
-// The DESKTOP survives that, because it is the thing the other apps are
-// running on and the thing an empty screen still offers - a menu bar, a
-// dock, a place to launch the next app from. The one exception is solo
-// mode, where there is no desktop to go back to: the app IS the display,
-// so quitting the last one leaves nothing to show and ends the process.
+// Whether the DESKTOP survives that is a question about what this process is,
+// and it is only ever asked once nothing else is left on screen: a desktop
+// ENVIRONMENT (launched bare, or revealed since) is a place in its own right
+// and shows itself, while a desktop that was only ever the frame around this
+// one application has nothing to show and ends. See lastWindowClosed.
 func (d *Desktop) quitApplication(app ApplicationProvider) {
 	if app == nil {
 		return
@@ -3011,8 +3116,8 @@ func (d *Desktop) quitApplication(app ApplicationProvider) {
 	}
 	d.mu.RUnlock()
 
-	if !hasWindows && d.IsSolo() {
-		d.Quit()
+	if !hasWindows {
+		d.lastWindowClosed()
 	}
 }
 
@@ -3239,6 +3344,15 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 	d.platform = p
 	onStartup := d.onStartup
 	wm := d.windowManager
+	// Launched ALONE - no application of its own - is what it means to be run
+	// AS a desktop environment: there is nothing here but the desktop, so an
+	// empty screen is the point rather than the end. A host that registered an
+	// application before running is that application's frame instead, and goes
+	// when its last window does. (Apps that CONNECT later don't change this:
+	// the question is what this process was started to be.)
+	if len(d.applications) == 0 {
+		d.desktopEnvironment = true
+	}
 	d.mu.Unlock()
 
 	code := p.Run(func(pf platform.Platform) {
