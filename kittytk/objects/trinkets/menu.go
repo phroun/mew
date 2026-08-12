@@ -2285,6 +2285,13 @@ func (m *MenuBar) refreshAccelerators() {
 	}
 	pattern := m.acceleratorChord
 	ctx := m.keyContext
+	// Last time's accelerators go FIRST. The clash test below asks whether
+	// something has already claimed a chord, and an accelerator this bar
+	// formed itself is not something else -- leaving them in place made the
+	// bar read its own assignment as a clash and mute every accelerator it
+	// had, from the second refresh onward. This also drops entries for menus
+	// that have since gone.
+	ctx.ClearAccelerators()
 	m.accelAssignments = assignAccelerators(cands, func(ch rune) bool {
 		key := formAcceleratorKey(pattern, ch)
 		return key != "" && ctx.Claims(key)

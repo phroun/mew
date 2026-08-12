@@ -192,6 +192,33 @@ func (c *KeyContext) Add(key, command string) {
 	c.proc.SetMappings(m)
 }
 
+// ClearAccelerators drops every formed accelerator from this context, leaving
+// the configured bindings alone.
+//
+// The menu bar calls this before it works out which accelerators it can have,
+// because the question it asks -- has something CLAIMED this chord? -- must
+// not be answered by the accelerators it formed last time. Without it the bar
+// reads its own previous assignment as a clash and mutes every accelerator it
+// had. It also drops entries for menus that no longer exist.
+func (c *KeyContext) ClearAccelerators() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.proc.GetAllMappings()
+	changed := false
+	for k, cmd := range m {
+		if cmd == CommandAppAccelerator {
+			delete(m, k)
+			changed = true
+		}
+	}
+	if changed {
+		c.proc.SetMappings(m)
+	}
+}
+
 // Claims reports whether a key or sequence already resolves to something here.
 // This is what a menu accelerator asks before forming: a chord something else
 // has claimed is not the accelerator's to take.
