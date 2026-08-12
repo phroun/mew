@@ -18,6 +18,11 @@ const (
 	CmdWindowCancelResize   = "window_cancel_resize"
 	CmdAppMenu              = "app_menu"
 	CmdAppMinimize          = "app_minimize"
+	// Quitting ONE application: it closes that app's windows and takes the
+	// app off the desktop. The desktop itself survives -- it is the thing
+	// other apps are still running on -- unless there is no desktop to go
+	// back to, which is solo mode, and this was the last app left.
+	CmdAppQuit = "app_quit"
 	CmdGUIScaleDown         = "gui_scale_down"
 	CmdGUIScaleUp           = "gui_scale_up"
 	CmdGUIScaleReset        = "gui_scale_reset"

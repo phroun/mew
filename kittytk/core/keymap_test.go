@@ -168,7 +168,12 @@ func TestScopeRegistryInheritance(t *testing.T) {
 func TestDefaultRegistryHasTheToolkitKeymap(t *testing.T) {
 	r := DefaultKeyRegistry()
 	for key, want := range map[string]string{
-		"M-F4":  "window_close",
+		// The application/window split: M-F4 and ^Q end the app, ^F4 and
+		// ^W close one window. ^F4 and C-F4 are one key spelled two ways.
+		"M-F4":  "app_quit",
+		"^Q":    "app_quit",
+		"C-F4":  "window_close",
+		"^W":    "window_close",
 		"F10":   "app_menu",
 		"Tab":   "focus_next",
 		"S-Tab": "focus_prior",

@@ -284,9 +284,15 @@ const CommandAppAccelerator = "_app_accel"
 // did before these were bindings.
 var defaultBindings = map[string][]string{
 	// Windows and the desktop.
-	"M-F10":   {CmdWindowMaximizeToggle},
-	"M-F4":    {CmdWindowClose},
-	"F10":     {CmdAppMenu},
+	"M-F10": {CmdWindowMaximizeToggle},
+	// The application-vs-window split every desktop draws the same way:
+	// M-F4 and ^Q end the APPLICATION, ^F4 and ^W close one WINDOW of it.
+	// (^F4 and C-F4 are the same key spelled two ways, as are ^Q and C-Q.)
+	"M-F4": {CmdAppQuit},
+	"^Q":    {CmdAppQuit},
+	"^F4":   {CmdWindowClose},
+	"^W":    {CmdWindowClose},
+	"F10":   {CmdAppMenu},
 	"M-Tab":   {CmdWindowNext},
 	"M-S-Tab": {CmdWindowPrior},
 	"C-Tab":   {CmdWindowMDINext},
@@ -462,7 +468,7 @@ var stateCommands = map[UIState][]string{
 		CmdWindowMaximizeToggle, CmdWindowClose, CmdAppMenu,
 		CmdWindowNext, CmdWindowPrior,
 		CmdWindowMDINext, CmdWindowMDIPrior,
-		CmdAppMinimize,
+		CmdAppMinimize, CmdAppQuit,
 		CmdGUIScaleDown, CmdGUIScaleUp, CmdGUIScaleReset,
 		CmdFocusNext, CmdFocusPrior,
 	},

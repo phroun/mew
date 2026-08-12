@@ -2812,34 +2812,58 @@ func (d *Desktop) quitActiveApp() {
 	d.mu.RLock()
 	activeApp := d.activeApp
 	d.mu.RUnlock()
+	d.quitApplication(activeApp)
+}
 
-	if activeApp == nil {
+// QuitApplicationOwning ends the application that owns win, and reports
+// whether one was found. It is how a window reaches its application: the
+// window knows nothing about apps, and the desktop owns the registry.
+//
+// Satisfies the window package's applicationQuitter.
+func (d *Desktop) QuitApplicationOwning(win *window.Window) bool {
+	app := d.findApplicationForWindow(win)
+	if app == nil {
+		return false
+	}
+	d.quitApplication(app)
+	return true
+}
+
+// quitApplication closes one application's windows and takes it off the
+// desktop.
+//
+// The DESKTOP survives that, because it is the thing the other apps are
+// running on and the thing an empty screen still offers - a menu bar, a
+// dock, a place to launch the next app from. The one exception is solo
+// mode, where there is no desktop to go back to: the app IS the display,
+// so quitting the last one leaves nothing to show and ends the process.
+func (d *Desktop) quitApplication(app ApplicationProvider) {
+	if app == nil {
 		return
 	}
 
 	// Close all windows of this application
-	for _, win := range activeApp.Windows() {
+	for _, win := range app.Windows() {
 		if win != nil {
 			win.Close()
 		}
 	}
 
 	// Remove the application from the desktop
-	d.RemoveApplication(activeApp)
+	d.RemoveApplication(app)
 
 	// Check if there are any remaining windows across all applications
 	d.mu.RLock()
 	hasWindows := false
-	for _, app := range d.applications {
-		if len(app.Windows()) > 0 {
+	for _, a := range d.applications {
+		if len(a.Windows()) > 0 {
 			hasWindows = true
 			break
 		}
 	}
 	d.mu.RUnlock()
 
-	// If no windows remain, exit the desktop
-	if !hasWindows {
+	if !hasWindows && d.IsSolo() {
 		d.Quit()
 	}
 }
@@ -5017,7 +5041,7 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 		if d.menuBar != nil {
 			return d.menuBar.ActivateAcceleratorSequence(seq)
 		}
-	case "app_menu":
+	case core.CmdAppMenu:
 		if d.menuBar != nil {
 			return d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "F10"})
 		}

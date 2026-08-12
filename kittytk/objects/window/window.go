@@ -279,6 +279,7 @@ func NewWindow(title string) *Window {
 	// the focused trinket resolves its own keys against its own set.
 	w.SetCommands(
 		core.CmdWindowClose, core.CmdWindowMaximizeToggle, core.CmdAppMenu,
+		core.CmdAppQuit,
 		core.CmdFocusNext, core.CmdFocusPrior,
 		core.CmdTrinketActivate, core.CmdWindowCancelResize,
 		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
@@ -1012,6 +1013,32 @@ func (w *Window) WindowMenuBar() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.menuBar
+}
+
+// applicationQuitter is the desktop. Declared here rather than imported so
+// the dependency stays one-way: a window knows nothing about applications,
+// and the desktop, which owns them, answers the question.
+type applicationQuitter interface {
+	QuitApplicationOwning(win *Window) bool
+}
+
+// quitOwningApplication walks up for the desktop and asks it to end the
+// application this window belongs to. The walk works for a torn-off window
+// too: tearing removes it from the manager but leaves it parented to the
+// desktop, which is exactly the link needed here.
+func (w *Window) quitOwningApplication() bool {
+	var current any = w.Parent()
+	for current != nil {
+		if q, ok := current.(applicationQuitter); ok {
+			return q.QuitApplicationOwning(w)
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return false
+		}
+		current = t.Parent()
+	}
+	return false
 }
 
 // SetShortcutResolver installs a fallback accelerator handler, consulted
@@ -3467,6 +3494,12 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdWindowClose:
 		w.Close()
 		return true
+	case core.CmdAppQuit:
+		// Ending the APPLICATION, not this window. The desktop is the only
+		// thing that knows which app a window belongs to, so the window asks
+		// it; a window with no desktop above it has no application to end and
+		// lets the key fall through.
+		return w.quitOwningApplication()
 	case core.CmdWindowMaximizeToggle:
 		// Through the maximize-request handler when one is set, exactly as the
 		// titlebar button does: a torn/solo host maps maximize onto its OS
