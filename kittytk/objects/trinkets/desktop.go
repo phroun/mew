@@ -244,6 +244,13 @@ type Desktop struct {
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
 
+	// menuBarRowLent is true while the menu bar has BORROWED the top row on a
+	// screen where it is normally hidden (the chrome-free single-app case).
+	// lentBounds is what the windows looked like before, so giving the row
+	// back puts the screen exactly as it was.
+	menuBarRowLent bool
+	lentBounds     map[*window.Window]core.UnitRect
+
 	// aboutBox is the built-in About KittyTK dialog while it is open, so the
 	// R-key rotation easter egg can be gated to its focus (see
 	// aboutBoxFocused, wired onto the platform in RunOn). Cleared when the
@@ -1651,7 +1658,104 @@ func (d *Desktop) statusBarShown() bool {
 // on AND the sole-app chrome is being suppressed, in which case it too is
 // hidden (its row reclaimed) for a fully chrome-free single-app desktop.
 func (d *Desktop) menuBarShown() bool {
-	return d.menuBar != nil && !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
+	if d.menuBar == nil {
+		return false
+	}
+	// A borrowed row is a row: while the bar holds the keyboard it is on
+	// screen even where it is normally hidden (see lendMenuBarRow).
+	if d.menuBarRowLent {
+		return true
+	}
+	return !(d.hideMenuBarSoleApp && d.suppressSoleAppChrome())
+}
+
+// lendMenuBarRow gives the menu bar the top row it does not normally get on a
+// chrome-free single-app screen, and takes it back again.
+//
+// A lone full-screen app owns every row, the bar's included, so a focused bar
+// would otherwise have nowhere to draw and no way to show which menu the
+// arrows are on. Lending shortens the windows by that row and scoots them down
+// into what is left; giving it back restores the bounds they had, exactly, so
+// the screen returns to how it was rather than to a recomputed guess.
+//
+// This is deliberately NOT the show_desktop path. That one is the app
+// declaring itself multi-window, which brings the whole chrome back and stays
+// until the app says otherwise; this is one row, for as long as the bar holds
+// the keyboard, and it leaves the app's own idea of itself alone.
+func (d *Desktop) lendMenuBarRow(lend bool) {
+	if d.menuBar == nil || lend == d.menuBarRowLent {
+		return
+	}
+	if lend {
+		// Nothing to lend where the bar already has a row of its own.
+		if !d.hideMenuBarSoleApp || !d.suppressSoleAppChrome() {
+			return
+		}
+		wm := d.windowManager
+		if wm == nil {
+			return
+		}
+		d.lentBounds = make(map[*window.Window]core.UnitRect)
+		for _, w := range wm.Windows() {
+			d.lentBounds[w] = w.Bounds()
+		}
+		d.menuBarRowLent = true
+		d.fitWindowsToClientArea()
+		d.Update()
+		return
+	}
+
+	d.menuBarRowLent = false
+	for w, b := range d.lentBounds {
+		if w != nil {
+			w.SetBounds(b)
+		}
+	}
+	d.lentBounds = nil
+	// Restore first, then fit. If the chrome changed while the row was out on
+	// loan -- show_desktop turning the app multi-window, say -- the bounds
+	// from before are no longer the whole story, and fitting settles them
+	// against the client area as it is NOW rather than as it was.
+	d.fitWindowsToClientArea()
+	d.Update()
+}
+
+// fitWindowsToClientArea scoots every window down out of the chrome and
+// shortens whatever then hangs off the bottom. A maximized window takes the
+// client area whole; a floating one keeps where it is unless the chrome has
+// moved in over it.
+//
+// Down and shorter is the whole of it, because that is the only direction the
+// client area moves here: lending the menu bar its row takes the row off the
+// TOP, so a window at the top slides down by it and gives the same amount
+// back at the bottom, leaving its bottom edge where it was.
+func (d *Desktop) fitWindowsToClientArea() {
+	d.layoutChildren()
+	wm := d.windowManager
+	if wm == nil {
+		return
+	}
+	client := d.ClientArea()
+	for _, w := range wm.Windows() {
+		if w == nil {
+			continue
+		}
+		if w.IsMaximized() {
+			w.SetBounds(client)
+			continue
+		}
+		b := w.Bounds()
+		if b.Y < client.Y {
+			b.Y = client.Y
+		}
+		if over := (b.Y + b.Height) - (client.Y + client.Height); over > 0 {
+			b.Height -= over
+		}
+		if b.Height < 1 {
+			b.Height = 1
+		}
+		w.SetBounds(b)
+	}
 }
 
 // SetHideMenuBarForSoleApp toggles whether the desktop menu bar is also hidden
@@ -4097,6 +4201,7 @@ func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
 	mb.SetAcceleratorChord(core.AcceleratorChord())
 	d.keyContext = core.DefaultKeyRegistry().BuildStateContext(core.StateNormal)
 	mb.SetKeyContext(d.keyContext)
+	mb.SetOnFocusChanged(d.lendMenuBarRow)
 }
 
 // SetMenuBar sets the menu bar (displayed at the top of the screen).

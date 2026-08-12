@@ -1917,6 +1917,11 @@ type MenuBar struct {
 	// Callback when Tab navigation should transfer to the dock
 	onFocusDock func()
 
+	// onFocusChanged, when set, is told each time the bar takes or gives up
+	// the keyboard. The desktop uses it to lend the bar a row it does not
+	// normally get on a chrome-free single-app screen.
+	onFocusChanged func(focused bool)
+
 	// Callback when Tab navigation should leave a bar that has no dock to
 	// hand off to - a window's own menu bar (a detached main window's chrome,
 	// so solo and torn-off too). forward is false for Shift+Tab. Returns
@@ -3354,6 +3359,12 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// SetOnFocusChanged installs an observer told each time the bar takes or gives
+// up the keyboard.
+func (m *MenuBar) SetOnFocusChanged(fn func(focused bool)) {
+	m.onFocusChanged = fn
+}
+
 // HandleFocusIn is called when focus is gained.
 func (m *MenuBar) HandleFocusIn() {
 	if m.currentIndex < 0 && len(m.menus) > 0 {
@@ -3362,6 +3373,9 @@ func (m *MenuBar) HandleFocusIn() {
 	// Enable accelerator display when focused with no menu down
 	if m.activeMenu == nil {
 		m.acceleratorsActive = true
+	}
+	if m.onFocusChanged != nil {
+		m.onFocusChanged(true)
 	}
 	m.Update()
 }
@@ -3372,6 +3386,9 @@ func (m *MenuBar) HandleFocusOut() {
 	m.dragging = false
 	m.currentIndex = -1
 	m.acceleratorsActive = false
+	if m.onFocusChanged != nil {
+		m.onFocusChanged(false)
+	}
 	m.Update()
 }
 
