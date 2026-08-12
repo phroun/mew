@@ -309,14 +309,19 @@ var defaultBindings = map[string][]string{
 	"Enter": {CmdTrinketEdit, CmdTrinketActivate},
 	"Space": {CmdTrinketActivate},
 
-	"Up":   {CmdWindowMoveFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
-	"Down": {CmdWindowMoveFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
+	// The bare arrows also carry the FINE resize, for a splitter: nudging a
+	// divider is resizing, and a splitter is the one thing that resizes with
+	// no modifier at all. A title bar offers both families and takes the move,
+	// since that is listed first; a splitter offers only the size family and
+	// so is the only place the second meaning is ever reached.
+	"Up":   {CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemPrior, CmdTrinketItemUp},
+	"Down": {CmdWindowMoveFineDown, CmdWindowSizeFineDown, CmdTrinketItemNext, CmdTrinketItemDown},
 	// Collapse and expand belong to Minus and Plus alone. The arrows are the
 	// generic movement, which a tree happens to implement as
 	// collapse-or-walk-up -- so there is nothing here for the two to fight
 	// over, and no precedence rule needed to separate them.
-	"Left":  {CmdWindowMoveFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior},
-	"Right": {CmdWindowMoveFineRight, CmdTrinketItemRight, CmdTrinketItemNext},
+	"Left":  {CmdWindowMoveFineLeft, CmdWindowSizeFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior},
+	"Right": {CmdWindowMoveFineRight, CmdWindowSizeFineRight, CmdTrinketItemRight, CmdTrinketItemNext},
 
 	"S-Up":    {CmdWindowSizeFineUp, CmdTrinketSelUp},
 	"S-Down":  {CmdWindowSizeFineDown, CmdTrinketSelDown},
@@ -355,10 +360,12 @@ var defaultBindings = map[string][]string{
 
 	// The coarse window move and size, and the same step on a splitter, which
 	// is resizing something too.
-	"C-Up": {CmdWindowMoveUp, CmdTrinketScrollUp}, "M-Up": {CmdWindowMoveUp, CmdTrinketScrollUp, CmdTrinketOpen}, "s-Up": {CmdWindowMoveUp},
-	"C-Down": {CmdWindowMoveDown, CmdTrinketScrollDown}, "M-Down": {CmdWindowMoveDown, CmdTrinketScrollDown, CmdTrinketOpen}, "s-Down": {CmdWindowMoveDown},
-	"C-Left": {CmdWindowMoveLeft, CmdTrinketBeg}, "M-Left": {CmdWindowMoveLeft, CmdTrinketBeg}, "s-Left": {CmdWindowMoveLeft},
-	"C-Right": {CmdWindowMoveRight, CmdTrinketEnd}, "M-Right": {CmdWindowMoveRight, CmdTrinketEnd}, "s-Right": {CmdWindowMoveRight},
+	// The modified arrows carry the coarse size the same way the bare ones
+	// carry the fine one, and for the same reason: a splitter's big step.
+	"C-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp}, "M-Up": {CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketOpen}, "s-Up": {CmdWindowMoveUp},
+	"C-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown}, "M-Down": {CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketOpen}, "s-Down": {CmdWindowMoveDown},
+	"C-Left": {CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}, "M-Left": {CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}, "s-Left": {CmdWindowMoveLeft},
+	"C-Right": {CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}, "M-Right": {CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}, "s-Right": {CmdWindowMoveRight},
 
 	"C-S-Up": {CmdWindowSizeUp}, "M-S-Up": {CmdWindowSizeUp}, "S-s-Up": {CmdWindowSizeUp},
 	"C-S-Down": {CmdWindowSizeDown}, "M-S-Down": {CmdWindowSizeDown}, "S-s-Down": {CmdWindowSizeDown},

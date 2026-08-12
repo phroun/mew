@@ -12,6 +12,7 @@ import (
 // For horizontal splitters (vertical divider): │ with : handle
 type Splitter struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	// Child trinkets
@@ -47,6 +48,17 @@ func NewSplitter(orientation core.Orientation) *Splitter {
 		position:    0.5, // Default to 50/50 split
 	}
 	s.TrinketBase = *core.NewTrinketBase()
+	// A divider is not an "item" and nudging it is not moving a cursor, so a
+	// splitter borrows the window RESIZE vocabulary rather than pretending
+	// otherwise. The fine forms are its single step and the coarse ones its
+	// big step, which is the only reason the bare arrows carry a size meaning
+	// at all: nothing else resizes with no modifier held.
+	s.SetCommands(
+		core.CmdWindowSizeFineUp, core.CmdWindowSizeFineDown,
+		core.CmdWindowSizeFineLeft, core.CmdWindowSizeFineRight,
+		core.CmdWindowSizeUp, core.CmdWindowSizeDown,
+		core.CmdWindowSizeLeft, core.CmdWindowSizeRight,
+	)
 	s.Init(s)
 	s.SetFocusPolicy(core.StrongFocus) // Focusable for keyboard navigation
 	s.SetFurtive(true)                 // Furtive: no focus on click, skip for initial focus
@@ -790,44 +802,46 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 		}
 
-		// Handle arrow keys - plain keys use small step, prefixed keys use large step
-		switch event.Key {
-		case "Left":
+		// The fine size is the small step and the coarse size the large one.
+		// A step across the divider's own axis is all a splitter can do, so
+		// the wrong axis falls through untouched rather than being swallowed.
+		switch s.KeyCommand(event.Key) {
+		case core.CmdWindowSizeFineLeft:
 			if s.orientation == core.Horizontal {
 				s.adjustPosition(-smallStep)
 				return true
 			}
-		case "M-Left", "C-Left", "A-Left":
+		case core.CmdWindowSizeLeft:
 			if s.orientation == core.Horizontal {
 				s.adjustPosition(-largeStep)
 				return true
 			}
-		case "Right":
+		case core.CmdWindowSizeFineRight:
 			if s.orientation == core.Horizontal {
 				s.adjustPosition(smallStep)
 				return true
 			}
-		case "M-Right", "C-Right", "A-Right":
+		case core.CmdWindowSizeRight:
 			if s.orientation == core.Horizontal {
 				s.adjustPosition(largeStep)
 				return true
 			}
-		case "Up":
+		case core.CmdWindowSizeFineUp:
 			if s.orientation == core.Vertical {
 				s.adjustPosition(-smallStep)
 				return true
 			}
-		case "M-Up", "C-Up", "A-Up":
+		case core.CmdWindowSizeUp:
 			if s.orientation == core.Vertical {
 				s.adjustPosition(-largeStep)
 				return true
 			}
-		case "Down":
+		case core.CmdWindowSizeFineDown:
 			if s.orientation == core.Vertical {
 				s.adjustPosition(smallStep)
 				return true
 			}
-		case "M-Down", "C-Down", "A-Down":
+		case core.CmdWindowSizeDown:
 			if s.orientation == core.Vertical {
 				s.adjustPosition(largeStep)
 				return true
