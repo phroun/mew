@@ -117,3 +117,31 @@ func decodeMacOSOptionChar(r rune) (string, bool) {
 	decoded, ok := macOSOptionChars[r]
 	return decoded, ok
 }
+
+// macOSDeadKeys maps the composition a macOS dead-key Option chord opens back
+// to its M-key notation.
+//
+// Option+E, I, N, U and ` do not produce a character of their own: they arm an
+// accent for the NEXT keystroke, which macOS reports as an in-flight
+// composition rather than as text. That means they never reach
+// decodeMacOSOptionChar, whose input is composed text - so without this table
+// the accent picker opened over whatever had focus and the shortcut was lost.
+//
+// The composed text is the accent character itself, which is the same rune the
+// Option table already lists; this is a separate lookup only because the two
+// arrive by different routes.
+var macOSDeadKeys = map[string]string{
+	"´": "M-e", // acute
+	"ˆ": "M-i", // circumflex
+	"˜": "M-n", // tilde
+	"¨": "M-u", // diaeresis
+	"`": "M-`", // grave
+}
+
+// decodeMacOSDeadKey returns the M-key notation for a dead-key composition and
+// true, or "" and false for an ordinary input-method composition -- a CJK
+// candidate being typed, say, which must be left alone.
+func decodeMacOSDeadKey(composition string) (string, bool) {
+	key, ok := macOSDeadKeys[composition]
+	return key, ok
+}

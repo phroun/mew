@@ -637,13 +637,26 @@ func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
 		// shape, so a multi-key pattern works: the context holds the prefix
 		// between keystrokes and reports the whole sequence when it lands,
 		// which is what says WHICH menu the accelerator was for.
-		if ctx := main.KeyContext(); ctx != nil {
-			if ctx.Resolve(ev.Key) == core.CommandAppAccelerator {
-				if bar, ok := mb.(interface {
-					ActivateAcceleratorSequence(string) bool
-				}); ok {
-					return bar.ActivateAcceleratorSequence(ctx.MatchedSequence())
-				}
+		if bar, ok := mb.(interface {
+			ActivateAcceleratorSequence(string) bool
+		}); ok {
+			opened := false
+			if ctx := main.KeyContext(); ctx != nil &&
+				ctx.Resolve(ev.Key) == core.CommandAppAccelerator {
+				opened = bar.ActivateAcceleratorSequence(ctx.MatchedSequence())
+			}
+			// ...and the single-key form directly, which needs nothing
+			// published yet and so answers before anything has painted.
+			if !opened {
+				opened = bar.ActivateAcceleratorSequence(ev.Key)
+			}
+			if opened {
+				// The menu came down in the MAIN window, so that is where the
+				// keyboard has to go. Torn off, the main window is a different
+				// OS window entirely: leaving focus on the child would drop
+				// every arrow and Enter meant for the menu that just opened.
+				d.SurfaceWindow(main)
+				return true
 			}
 		}
 		return false

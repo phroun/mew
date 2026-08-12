@@ -1291,6 +1291,29 @@ func (p *Platform) pumpEvents() bool {
 			if s == nil || s.handler == nil {
 				continue
 			}
+			// ...except on macOS, where five of the Option chords are DEAD
+			// KEYS: Option+E, I, N, U and ` open a composition to accent the
+			// next character instead of producing a character of their own.
+			// Those arrive here rather than on the TextInput path, so the
+			// decoding that turns every other Option chord back into M-key
+			// never saw them and M-e opened an accent picker over whatever
+			// had focus. Decoded the same way, with Option still held, they
+			// are the shortcut the user pressed.
+			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
+				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
+					mods, name := core.ParseKeyModifiers(key)
+					text := ""
+					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
+						text = name
+					}
+					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
+					// Drop the composition the dead key opened, so the next
+					// character types plainly rather than wearing an accent
+					// from a keystroke that was meant as a shortcut.
+					_ = sdl3.ClearComposition(s.win.window)
+					continue
+				}
+			}
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
 				Start:  int(e.Start),

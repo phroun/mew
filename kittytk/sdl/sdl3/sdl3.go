@@ -456,6 +456,13 @@ func SetTextInputArea(w *Window, xPx, yPx, wPx, hPx, cursorPx int) error {
 // rather than anchoring on a stale rectangle.
 func ClearTextInputArea(w *Window) error { return w.w.SetTextInputArea(nil, 0) }
 
+// ClearComposition abandons whatever the input method is currently holding,
+// without committing it. Used where a composition turns out not to have been
+// text at all: a macOS dead-key Option chord arms an accent for the next
+// keystroke, and when that chord is a shortcut the armed accent has to go,
+// or the next character the user types wears it.
+func ClearComposition(w *Window) error { return w.w.ClearComposition() }
+
 // --- clipboard ---
 
 func SetClipboardText(text string) error { return csdl.SetClipboardText(text) }
