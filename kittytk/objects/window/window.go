@@ -3488,6 +3488,31 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 		}); ok && sc.HandleShortcut(event) {
 			return true
 		}
+		// ...and its chord ACCELERATORS, which are not item shortcuts and do
+		// not go through HandleShortcut. The bar publishes them into this
+		// window's context, so this is the only place that reads them back --
+		// above the focused trinket, exactly where the desktop resolves them
+		// for a docked window. Without it a window carrying its own bar drew
+		// its accelerators lit and then let the focused trinket eat the chord.
+		if bar, ok := mb.(interface {
+			ActivateAcceleratorSequence(string) bool
+		}); ok {
+			// The context knows the whole sequence, which is what carries a
+			// multi-key chord: it holds the prefix between keystrokes and
+			// reports the lot when it lands.
+			if ctx := w.KeyContext(); ctx != nil &&
+				ctx.Resolve(event.Key) == core.CommandAppAccelerator &&
+				bar.ActivateAcceleratorSequence(ctx.MatchedSequence()) {
+				return true
+			}
+			// ...and the bar itself for a single-key one, which needs no
+			// prefix held and so does not need to have been published yet.
+			// This is what makes the very first keystroke work, before
+			// anything has painted and put the accelerators in the context.
+			if bar.ActivateAcceleratorSequence(event.Key) {
+				return true
+			}
+		}
 	}
 	if shortcutResolver != nil && shortcutResolver(event) {
 		return true
