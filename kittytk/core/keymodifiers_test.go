@@ -15,8 +15,8 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 		{"S-Tab", ShiftModifier, "Tab"},
 		{"C-Up", ControlModifier, "Up"},
 		{"M-x", AltModifier, "x"},
-		{"s-x", SuperModifier, "x"},
-		{"m-x", MetaModifier, "x"},
+		{"s-x", MetaModifier, "x"},
+		{"m-x", MetaProperModifier, "x"},
 		{"H-x", HyperModifier, "x"},
 		{"G-€", GlyphModifier, "€"},
 
@@ -27,9 +27,9 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 
 		// Stacks, in canonical order.
 		{"C-S-Up", ControlModifier | ShiftModifier, "Up"},
-		{"M-S-s-Left", AltModifier | ShiftModifier | SuperModifier, "Left"},
-		{"M-m-S-s-H-^A", AltModifier | MetaModifier | ShiftModifier |
-			SuperModifier | HyperModifier | ControlModifier, "A"},
+		{"M-S-s-Left", AltModifier | ShiftModifier | MetaModifier, "Left"},
+		{"M-m-S-s-H-^A", AltModifier | MetaProperModifier | ShiftModifier |
+			MetaModifier | HyperModifier | ControlModifier, "A"},
 	} {
 		mods, name := ParseKeyModifiers(c.key)
 		if mods != c.mods || name != c.name {
@@ -39,19 +39,22 @@ func TestParseKeyModifiersKnowsEveryPrefix(t *testing.T) {
 	}
 }
 
-// M- and m- are different modifiers on different bits, and s- is Super rather
-// than Meta despite what the constant used to be called.
+// Three prefixes crowd around the word "meta" and each needs its own bit:
+// "M-" is the Meta a PC's Alt key induces (AltModifier), "s-" is Super/Command
+// (MetaModifier, which is what this toolkit has always called it), and "m-" is
+// the separate Meta key a terminal can report on its own bit
+// (MetaProperModifier).
 func TestParseKeyModifiersKeepsTheMetasApart(t *testing.T) {
 	alt, _ := ParseKeyModifiers("M-x")
-	meta, _ := ParseKeyModifiers("m-x")
+	metaProper, _ := ParseKeyModifiers("m-x")
 	super, _ := ParseKeyModifiers("s-x")
-	if alt == meta {
+	if alt == metaProper {
 		t.Error("M- and m- set the same bit; they are different modifiers")
 	}
-	if super == meta {
-		t.Error("s- and m- set the same bit; Super is not Meta")
+	if super == metaProper {
+		t.Error("s- and m- set the same bit; Super/Command is not the Meta key")
 	}
-	if alt&meta != 0 || super&meta != 0 || alt&super != 0 {
+	if alt&metaProper != 0 || super&metaProper != 0 || alt&super != 0 {
 		t.Error("the three overlap; each modifier needs its own bit")
 	}
 }

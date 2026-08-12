@@ -198,21 +198,16 @@ type KeyModifiers int
 // The modifiers a key event can carry, one bit each. The prefix each one
 // corresponds to is in the comment; canonical spelling order is
 // C- G- M- m- S- s- H- ^ (see the key name documentation).
-//
-// NOTE: MetaModifier used to be what "s-" set — that is, Super/Command. It is
-// now what "m-" sets: Meta proper, the separate modifier a terminal speaking
-// the kitty protocol reports on its own bit. Super/Command is SuperModifier,
-// which keeps the old bit value.
 const (
 	NoModifier KeyModifiers = 0
 
-	ShiftModifier   KeyModifiers = 1 << iota // "S-"
-	ControlModifier                          // "C-", and the caret form "^X"
-	AltModifier                              // "M-" — the Meta a PC's Alt key induces
-	SuperModifier                            // "s-" — Super / Command
-	MetaModifier                             // "m-" — Meta proper
-	HyperModifier                            // "H-"
-	GlyphModifier                            // "G-" — AltGr / ISO_Level3_Shift
+	ShiftModifier      KeyModifiers = 1 << iota // "S-"
+	ControlModifier                             // "C-", and the caret form "^X"
+	AltModifier                                 // "M-" — the Meta a PC's Alt key induces
+	MetaModifier                                // "s-" — Super / Command
+	MetaProperModifier                          // "m-" — the separate Meta key
+	HyperModifier                               // "H-"
+	GlyphModifier                               // "G-" — AltGr / ISO_Level3_Shift
 )
 
 // ParseKeyModifiers parses modifier prefixes from a key string.
@@ -233,10 +228,10 @@ func ParseKeyModifiers(key string) (KeyModifiers, string) {
 			mods |= ShiftModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "s-":
-			mods |= SuperModifier
+			mods |= MetaModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "m-":
-			mods |= MetaModifier
+			mods |= MetaProperModifier
 			remaining = remaining[2:]
 		case len(remaining) > 2 && remaining[:2] == "H-":
 			mods |= HyperModifier

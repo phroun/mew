@@ -2851,7 +2851,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		bounds := w.Bounds()
 		hasShift := event.Modifiers&core.ShiftModifier != 0
 		hasCtrl := event.Modifiers&core.ControlModifier != 0
-		hasMeta := event.Modifiers&core.SuperModifier != 0
+		hasMeta := event.Modifiers&core.MetaModifier != 0
 		hasAlt := event.Modifiers&core.AltModifier != 0
 
 		// Determine movement multiplier based on modifiers

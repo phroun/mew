@@ -53,7 +53,7 @@ func TestNoResizeWindowKeyboardMoveNotResize(t *testing.T) {
 		t.Errorf("Shift+arrow resized a NoResize window: %v", w.Bounds())
 	}
 	// Meta+Shift+arrow (large resize) is ignored too.
-	w.handleTitleBarKey(core.KeyPressEvent{Key: "Down", Modifiers: core.ShiftModifier | core.SuperModifier})
+	w.handleTitleBarKey(core.KeyPressEvent{Key: "Down", Modifiers: core.ShiftModifier | core.MetaModifier})
 	if w.Bounds() != start {
 		t.Errorf("Meta+Shift+arrow resized a NoResize window: %v", w.Bounds())
 	}
