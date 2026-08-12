@@ -801,7 +801,24 @@ func (w *Window) SetActive(active bool) {
 // is an ATTEMPT throughout: this window's close handler may decline, and so
 // may any of its children, since a child left open over a closed parent is
 // not a window anyone can get back to.
+//
+// When something declines, the window that did so is brought back to the
+// user's attention along with every window between here and it, innermost
+// last so it lands on top. A refusal the user cannot see is a window that
+// simply will not close for no visible reason.
 func (w *Window) Close() bool {
+	ok, blocker := w.attemptClose()
+	if !ok {
+		w.surfaceBlockingChain(blocker)
+	}
+	return ok
+}
+
+// attemptClose is Close without the surfacing, so a nested child refusal
+// surfaces ONCE from the outermost Close rather than once per level (which
+// would raise the parents last and bury the window actually asking). It
+// reports the innermost window that declined.
+func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
@@ -810,7 +827,7 @@ func (w *Window) Close() bool {
 	w.mu.RUnlock()
 
 	if handler != nil && !handler() {
-		return false
+		return false, w
 	}
 
 	// Close child windows first. A child that declines cancels this close
@@ -819,8 +836,8 @@ func (w *Window) Close() bool {
 	// already agreed stay closed, exactly as a refused application quit
 	// leaves the windows that agreed to it closed.
 	for _, child := range w.ChildWindows() {
-		if !child.Close() {
-			return false
+		if ok, blocker := child.attemptClose(); !ok {
+			return false, blocker
 		}
 	}
 
@@ -847,7 +864,55 @@ func (w *Window) Close() bool {
 		fn()
 	}
 
-	return true
+	return true, nil
+}
+
+// windowSurfacer is the desktop, which is the only thing that knows where a
+// window actually lives -- docked, minimized to the dock, or torn onto its own
+// OS surface, possibly minimized there too. Declared here rather than imported
+// so the dependency stays one-way.
+type windowSurfacer interface {
+	SurfaceWindow(win *Window)
+}
+
+// surfaceBlockingChain brings the window that refused back into view, together
+// with every window between this one and it. Outermost first so the innermost
+// -- the one actually asking the user something -- ends up on top.
+func (w *Window) surfaceBlockingChain(blocker *Window) {
+	if blocker == nil {
+		return
+	}
+	surfacer := w.findSurfacer()
+	if surfacer == nil {
+		return
+	}
+	// Walk up from the blocker to here, then surface in reverse.
+	chain := []*Window{blocker}
+	for p := blocker.ParentWindow(); p != nil; p = p.ParentWindow() {
+		chain = append(chain, p)
+		if p == w {
+			break
+		}
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		surfacer.SurfaceWindow(chain[i])
+	}
+}
+
+// findSurfacer walks up for the desktop.
+func (w *Window) findSurfacer() windowSurfacer {
+	var current any = w.Parent()
+	for current != nil {
+		if s, ok := current.(windowSurfacer); ok {
+			return s
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
 }
 
 // SetOnClose sets the close handler.

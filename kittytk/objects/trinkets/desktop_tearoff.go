@@ -431,6 +431,15 @@ func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 	}
 }
 
+// SurfaceWindow brings one window back to the user's attention, wherever it
+// lives. It is the window package's windowSurfacer: a close that something
+// declined uses it to raise the window that did the declining, which the
+// window itself cannot do -- only the desktop knows whether it is docked,
+// minimized to the dock, or torn onto an OS surface of its own.
+func (d *Desktop) SurfaceWindow(win *window.Window) {
+	d.surfaceModal(win)
+}
+
 // surfaceModal pulls a specific modal window to the front: if it is torn onto
 // its own OS surface, un-minimize it (OS-restore) and raise that surface back
 // over the window the user just clicked; otherwise (in-surface) restore it from

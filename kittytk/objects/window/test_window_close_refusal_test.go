@@ -2,6 +2,8 @@ package window
 
 import (
 	"testing"
+
+	"github.com/phroun/kittytk/core"
 )
 
 // A child window that declines to close cancels its parent's close. Its own
@@ -65,5 +67,67 @@ func TestWillingChildrenAllClose(t *testing.T) {
 		if w.IsVisible() {
 			t.Errorf("%s stayed open", w.Title())
 		}
+	}
+}
+
+// recordingSurfacer stands in for the desktop, noting what got raised and in
+// what order. It is a core.Container so a Window can parent to it.
+type recordingSurfacer struct {
+	*core.TrinketBase
+	raised []string
+}
+
+func (r *recordingSurfacer) Children() []core.Trinket            { return nil }
+func (r *recordingSurfacer) AddChild(core.Trinket)               {}
+func (r *recordingSurfacer) RemoveChild(core.Trinket)            {}
+func (r *recordingSurfacer) ChildAt(core.UnitPoint) core.Trinket { return nil }
+func (r *recordingSurfacer) Layout()                             {}
+func (r *recordingSurfacer) LayoutManager() core.LayoutManager   { return nil }
+func (r *recordingSurfacer) SetLayoutManager(core.LayoutManager) {}
+
+func (r *recordingSurfacer) SurfaceWindow(w *Window) {
+	r.raised = append(r.raised, w.Title())
+}
+
+// A refusal deep in the tree surfaces every window between the close and the
+// one that declined, OUTERMOST FIRST - so the window actually asking the user
+// something is raised last and lands on top of the ones it belongs to.
+func TestRefusalSurfacesTheChainInnermostLast(t *testing.T) {
+	desk := &recordingSurfacer{TrinketBase: core.NewTrinketBase()}
+	parent := NewWindow("Document")
+	child := NewWindow("Palette")
+	grandchild := NewWindow("Unsaved changes")
+	parent.SetParent(desk)
+	child.SetParentWindow(parent)
+	grandchild.SetParentWindow(child)
+	grandchild.SetOnClose(func() bool { return false })
+
+	if parent.Close() {
+		t.Fatal("Close reported success although a grandchild refused")
+	}
+	want := []string{"Document", "Palette", "Unsaved changes"}
+	if len(desk.raised) != len(want) {
+		t.Fatalf("raised %v, want %v", desk.raised, want)
+	}
+	for i := range want {
+		if desk.raised[i] != want[i] {
+			t.Fatalf("raised %v, want %v", desk.raised, want)
+		}
+	}
+}
+
+// Nothing is surfaced when nothing refused.
+func TestSuccessfulCloseSurfacesNothing(t *testing.T) {
+	desk := &recordingSurfacer{TrinketBase: core.NewTrinketBase()}
+	parent := NewWindow("Document")
+	child := NewWindow("Palette")
+	parent.SetParent(desk)
+	child.SetParentWindow(parent)
+
+	if !parent.Close() {
+		t.Fatal("Close reported failure with no refusal")
+	}
+	if len(desk.raised) != 0 {
+		t.Errorf("a clean close raised %v", desk.raised)
 	}
 }
