@@ -73,3 +73,36 @@ func TestChildAppShortcutLeavesFocusAlone(t *testing.T) {
 		t.Errorf("focus moved to %v for a key the main window did not act on", got.Title())
 	}
 }
+
+// The menu key summons the app's bar, and a child has no bar of its own -- the
+// app's is in the main window. Pressing it from a child must focus that bar
+// AND bring its window forward, which torn off is a different OS window.
+func TestChildAppMenuKeyFocusesTheMainWindowBar(t *testing.T) {
+	d := NewDesktop()
+	d.windowManager = window.NewWindowManager()
+	wm := d.windowManager
+	wm.SetDesktop(d)
+
+	main := window.NewWindow("KittyTK Demo")
+	mb := NewMenuBar()
+	mb.AddMenu(NewMenu("&View"))
+	main.SetWindowMenuBar(mb)
+
+	child := window.NewWindow("Protocol Demo")
+	child.SetContent(NewTextInput())
+
+	wm.AddWindow(main)
+	wm.AddWindow(child)
+	wm.ActivateWindow(child)
+	d.setChildShortcutResolver(child, main)
+
+	if !child.HandleKeyPress(core.KeyPressEvent{Key: "F10"}) {
+		t.Fatal("the menu key from the child was not handled")
+	}
+	if !mb.HasFocus() {
+		t.Error("the app's menu bar did not take focus")
+	}
+	if got := wm.ActiveWindow(); got != main {
+		t.Errorf("focus stayed on %v; the bar is in the main window", got.Title())
+	}
+}

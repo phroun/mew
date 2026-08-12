@@ -628,23 +628,41 @@ func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
 		}); ok && sc.HandleShortcut(ev) {
 			return true
 		}
+
+		// Resolved ONCE, here: the menu key and the accelerators both come out
+		// of the main window's context, and feeding it the same keystroke
+		// twice would advance a chord's prefix by two.
+		cmd, seq := "", ""
+		if ctx := main.KeyContext(); ctx != nil {
+			cmd = ctx.Resolve(ev.Key)
+			seq = ctx.MatchedSequence()
+		}
+
+		// The menu key summons the app's bar, which lives in the main window.
+		// A child has no bar to focus of its own, so without this the key did
+		// nothing at all from a child.
+		if cmd == core.CmdAppMenu {
+			if h, ok := mb.(interface {
+				HandleKeyPress(core.KeyPressEvent) bool
+			}); ok && h.HandleKeyPress(ev) {
+				d.SurfaceWindow(main)
+				return true
+			}
+		}
+
 		// ...and the app's menu ACCELERATORS too, not only its item
 		// shortcuts. A child carries no bar of its own, so without this a
 		// chord accelerator does nothing while the child has focus even
 		// though the app's menus are sitting in the main window.
 		//
-		// Resolved through the main window's context rather than matched by
-		// shape, so a multi-key pattern works: the context holds the prefix
-		// between keystrokes and reports the whole sequence when it lands,
-		// which is what says WHICH menu the accelerator was for.
+		// The context reports the whole matched sequence, so a multi-key
+		// pattern works: it holds the prefix between keystrokes and says
+		// WHICH menu the accelerator was for when it lands.
 		if bar, ok := mb.(interface {
 			ActivateAcceleratorSequence(string) bool
 		}); ok {
-			opened := false
-			if ctx := main.KeyContext(); ctx != nil &&
-				ctx.Resolve(ev.Key) == core.CommandAppAccelerator {
-				opened = bar.ActivateAcceleratorSequence(ctx.MatchedSequence())
-			}
+			opened := cmd == core.CommandAppAccelerator &&
+				bar.ActivateAcceleratorSequence(seq)
 			// ...and the single-key form directly, which needs nothing
 			// published yet and so answers before anything has painted.
 			if !opened {
