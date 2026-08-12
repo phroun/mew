@@ -12,6 +12,7 @@ import (
 // Button is a clickable button trinket.
 type Button struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	text         string
@@ -36,12 +37,19 @@ type Button struct {
 }
 
 // NewButton creates a new button with the given text.
+// buttonCommands is everything a button can carry out.
+var buttonCommands = []string{
+	core.CmdTrinketActivate,
+	core.CmdTrinketCancel,
+}
+
 func NewButton(text string) *Button {
 	b := &Button{
 		text:     text,
 		iconSize: style.IconSmall,
 	}
 	b.TrinketBase = *core.NewTrinketBase()
+	b.SetCommands(buttonCommands...)
 	b.Init(b) // Enable polymorphic focus handling
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
@@ -462,19 +470,15 @@ func (b *Button) HandleKeyPress(event core.KeyPressEvent) bool {
 		return false
 	}
 
-	switch event.Key {
-	case "Enter":
-		// Enter triggers with animation for visual feedback
+	switch b.KeyCommand(event.Key) {
+	case core.CmdTrinketActivate:
+		// Triggers with a brief press animation for visual feedback. (It
+		// used to latch pressed until a key-release event, but neither
+		// backend delivers key releases - the TUI cannot at all - so the
+		// button stuck depressed.)
 		b.AnimatePress()
 		return true
-	case " ", "Space":
-		// Space triggers like Enter, with the same brief press
-		// animation. (It used to latch pressed until a key-release
-		// event, but neither backend delivers key releases - the TUI
-		// cannot at all - so the button stuck depressed.)
-		b.AnimatePress()
-		return true
-	case "Escape":
+	case core.CmdTrinketCancel:
 		// Escape cancels space press first
 		if b.spacePressed {
 			b.spacePressed = false

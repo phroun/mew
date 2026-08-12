@@ -12,6 +12,7 @@ import (
 // ComboBox is a drop-down selection trinket.
 type ComboBox struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	items        []string
@@ -108,6 +109,12 @@ func NewComboBox() *ComboBox {
 		scrollHoverZone: 0,
 	}
 	c.TrinketBase = *core.NewTrinketBase()
+	c.SetCommands(
+		core.CmdTrinketActivate, core.CmdTrinketOpen,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+	)
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleComboBox)
@@ -1615,38 +1622,38 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 		return c.handlePopupKeyPress(event)
 	}
 
-	switch event.Key {
-	case " ", "Space", "Enter":
+	switch c.KeyCommand(event.Key) {
+	case core.CmdTrinketActivate:
 		c.clickMode = true // Keyboard invocation opens in click mode
 		c.ShowPopup()
 		c.enterClickMode() // Ensure scroll offset is clamped for click mode
 		return true
 
-	case "Up":
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if c.currentIndex > 0 {
 			c.SetCurrentIndex(c.currentIndex - 1)
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if c.currentIndex < len(c.items)-1 {
 			c.SetCurrentIndex(c.currentIndex + 1)
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		if len(c.items) > 0 {
 			c.SetCurrentIndex(0)
 		}
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		if len(c.items) > 0 {
 			c.SetCurrentIndex(len(c.items) - 1)
 		}
 		return true
 
-	case "F4", "M-Down":
+	case core.CmdTrinketOpen:
 		c.clickMode = true // Keyboard invocation opens in click mode
 		c.ShowPopup()
 		c.enterClickMode() // Ensure scroll offset is clamped for click mode

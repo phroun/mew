@@ -9,6 +9,7 @@ import (
 // Checkbox is a trinket with a checkable state.
 type Checkbox struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	text       string
@@ -38,6 +39,7 @@ func NewCheckbox(text string) *Checkbox {
 		checkState: Unchecked,
 	}
 	c.TrinketBase = *core.NewTrinketBase()
+	c.SetCommands(core.CmdTrinketActivate)
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleCheckbox)
@@ -252,8 +254,8 @@ func (c *Checkbox) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (c *Checkbox) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case " ", "Space", "Enter":
+	switch c.KeyCommand(event.Key) {
+	case core.CmdTrinketActivate:
 		c.Toggle()
 		return true
 	}

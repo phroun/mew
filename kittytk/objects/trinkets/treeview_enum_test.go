@@ -80,7 +80,7 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	}
 	// Space confirms the current highlight and KEEPS the edit session
 	// alive, leaving the closed-combo state to exercise below.
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv.editCombo.IsOpen() || !tv.rowEditing {
 		t.Fatal("popup Space should close the drop-down and keep editing")
 	}
@@ -95,12 +95,12 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 	}
 	// Space pops the drop-down; while open, Down+Space pick "Text" and
 	// KEEP the edit session alive (Enter there would commit the row).
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if !tv.editCombo.IsOpen() {
 		t.Fatal("Space did not open the drop-down")
 	}
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv.editCombo.IsOpen() {
 		t.Fatal("Space did not confirm/close the drop-down")
 	}
@@ -126,7 +126,7 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 func TestTreeEnumMagicEntry(t *testing.T) {
 	tv, _ := newEnumTree("weird")
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})     // confirm magic, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) // confirm magic, stay editing
 	if !tv.editComboMagic {
 		t.Fatal("unlisted stored value did not create the magic entry")
 	}
@@ -194,7 +194,7 @@ func TestTreeEnterPopsTargetedCombo(t *testing.T) {
 // never begins a text edit).
 func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if !tv.rowEditing || tv.editCombo == nil || !tv.editCombo.IsOpen() {
 		t.Fatal("Space on a choice target did not open the combo editor")
 	}
@@ -206,7 +206,7 @@ func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 	alpha.Expanded = true
 	tv2.rebuildFlatList()
 	tv2.SetCurrentIndex(0)
-	tv2.HandleKeyPress(core.KeyPressEvent{Key: " "})
+	tv2.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	if tv2.rowEditing {
 		t.Fatal("Space began a text edit; it must keep the classic toggle")
 	}
@@ -234,7 +234,7 @@ func TestTreeEnumEscapeCancels(t *testing.T) {
 	// dismisses without writing the confirmed-but-uncommitted choice.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Enter"}) // edit + popup
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // highlight "Text"
-	tv.HandleKeyPress(core.KeyPressEvent{Key: " "})     // confirm, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) // confirm, stay editing
 	if !tv.rowEditing || tv.editCombo.IsOpen() {
 		t.Fatal("precondition: live edit on a closed combo")
 	}

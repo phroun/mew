@@ -21,7 +21,7 @@ func TestSpaceActivatesWithoutSticking(t *testing.T) {
 	var clicked atomic.Int32
 	b.SetOnClick(func() { clicked.Add(1) })
 
-	if !b.HandleKeyPress(core.KeyPressEvent{Key: " "}) {
+	if !b.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) {
 		t.Fatal("space not handled")
 	}
 	if b.spacePressed {

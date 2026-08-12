@@ -471,3 +471,54 @@ func CommandsForState(state UIState) []string {
 func (r *KeyRegistry) BuildStateContext(state UIState) *KeyContext {
 	return r.BuildContext(CommandsForState(state))
 }
+
+// TrinketKeys is the small amount of state a trinket needs to resolve keys
+// through the registry instead of matching strings. Embed it, declare what the
+// trinket can do, and switch on the command.
+//
+// The context is built lazily and rebuilt when the registry moves on, which is
+// a revision comparison rather than a subscription — a trinket does not have
+// to be told that a binding changed, it notices the next time it is asked.
+type TrinketKeys struct {
+	mu       sync.Mutex
+	commands []string
+	ctx      *KeyContext
+	rev      uint64
+	built    bool
+}
+
+// SetCommands declares everything this trinket can carry out. A key bound to
+// anything else stays unclaimed here and falls through untouched, which is
+// what keeps a list from swallowing an arrow that belongs to a window.
+//
+// Declare every form that makes sense: where a trinket steps in one dimension
+// and does not care whether the word for it is "prior" or "up", offering both
+// lets either binding reach it.
+func (t *TrinketKeys) SetCommands(commands ...string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.commands = commands
+	t.built = false
+}
+
+// KeyCommand resolves a key to one of this trinket's commands, or "" when the
+// key means nothing here. A key that opens a longer sequence resolves to
+// nothing yet and the prefix is held.
+func (t *TrinketKeys) KeyCommand(key string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	r := DefaultKeyRegistry()
+	if !t.built || t.rev != r.Revision() {
+		t.ctx = r.BuildContext(t.commands)
+		t.rev = r.Revision()
+		t.built = true
+	}
+	return t.ctx.Resolve(key)
+}
+
+// AbandonKeySequence drops a partly-typed sequence.
+func (t *TrinketKeys) AbandonKeySequence() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ctx.Abandon()
+}

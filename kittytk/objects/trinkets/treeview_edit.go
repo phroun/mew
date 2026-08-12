@@ -808,7 +808,7 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	// the pointer came here to pick a value. (Keyboard entry leaves it
 	// closed so Tab and Up/Down can still pass to other cells/rows.)
 	if t.editCombo != nil {
-		t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: " "})
+		t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: "Space"})
 	}
 }
 
