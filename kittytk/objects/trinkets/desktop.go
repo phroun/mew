@@ -373,6 +373,7 @@ func NewDesktop() *Desktop {
 	// Create menu bar (always present in Desktop)
 	d.menuBar = NewMenuBar()
 	d.menuBar.SetParent(d)
+	d.wireMenuBarKeys(d.menuBar)
 	d.menuBar.AddMenu(d.systemMenu)
 	// The menu bar represents the active app; when that app (or the desktop)
 	// is modally blocked, the bar is disabled and must not highlight items.
@@ -4053,21 +4054,38 @@ func (d *Desktop) SetLayoutManager(lm core.LayoutManager) {
 	// Desktop uses custom layout, ignores layout manager
 }
 
+// wireMenuBarKeys gives a menu bar what it takes to form chord accelerators:
+// the configured pattern, and the context they are formed against.
+//
+// The bar forms them against what the ordinary state offers, so a chord
+// something else has claimed is not the accelerator's to take. Note this is
+// the NORMAL state's set, not the whole registry: the sixteen window move and
+// size bindings exist only with a title bar focused, so their arrows stay
+// unclaimed here rather than being eaten on the desktop.
+//
+// Every desktop bar goes through here, including the built-in one a desktop
+// always carries. Wiring only the bar handed to SetMenuBar left an
+// application that declares its menus through SetMenuBarContent -- which is
+// the ordinary way -- with a bar that had no chord and no context: its
+// accelerators drew LIT, because a nil context claims nothing, and were never
+// published, because there was nowhere to publish them. The chord did nothing
+// at all while the underlying key went through to whatever had focus.
+func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
+	if mb == nil {
+		return
+	}
+	mb.SetAcceleratorChord(core.AcceleratorChord())
+	d.keyContext = core.DefaultKeyRegistry().BuildStateContext(core.StateNormal)
+	mb.SetKeyContext(d.keyContext)
+}
+
 // SetMenuBar sets the menu bar (displayed at the top of the screen).
 // The system menu (ψ) is automatically prepended to the menu bar.
 func (d *Desktop) SetMenuBar(menuBar *MenuBar) {
 	d.menuBar = menuBar
 	if menuBar != nil {
 		menuBar.SetParent(d)
-		// The bar forms its accelerators against what the ordinary state
-		// offers, so a chord something else has claimed is not the
-		// accelerator's to take. Note this is the NORMAL state's set, not the
-		// whole registry: the sixteen window move and size bindings exist only
-		// with a title bar focused, so their arrows stay unclaimed here rather
-		// than being eaten on the desktop.
-		menuBar.SetAcceleratorChord(core.AcceleratorChord())
-		d.keyContext = core.DefaultKeyRegistry().BuildStateContext(core.StateNormal)
-		menuBar.SetKeyContext(d.keyContext)
+		d.wireMenuBarKeys(menuBar)
 		// Prepend system menu if we have one
 		if d.systemMenu != nil {
 			menuBar.InsertMenu(0, d.systemMenu)
@@ -5034,6 +5052,14 @@ var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)
 // is what lets a chord accelerator be RESOLVED rather than recognised by
 // shape — including a multi-key one, since the context holds the prefix.
 func (d *Desktop) KeyContext() *core.KeyContext {
+	// Bring the bar's accelerators into the context before anyone resolves
+	// against it. Publication happens when the assignment is recomputed,
+	// which otherwise waits for a paint -- so the first press of a chord
+	// after the menus change found nothing published and fell through to
+	// whatever had focus.
+	if d.menuBar != nil {
+		d.menuBar.refreshAccelerators()
+	}
 	return d.keyContext
 }
 
