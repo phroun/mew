@@ -100,6 +100,27 @@ const (
 	CmdTrinketDelNext  = "trinket_del_next"
 	CmdTrinketDelLine  = "trinket_del_line"
 
+	// Sorting and the column chooser. Before these, the only way to reach
+	// either from the keyboard was a long walk through the header focus zones,
+	// so every one of them is newly mappable rather than a rename of something
+	// that already had a key.
+	//
+	// The plain forms set a direction outright; the toggle forms turn that
+	// direction off again when it is already in force, so one key can do both.
+	// The mode forms walk the cycle a header activation walks: ascending,
+	// descending, off.
+	CmdTrinketSortAscending        = "trinket_sort_ascending"
+	CmdTrinketToggleSortAscending  = "trinket_toggle_sort_ascending"
+	CmdTrinketSortDescending       = "trinket_sort_descending"
+	CmdTrinketToggleSortDescending = "trinket_toggle_sort_descending"
+	CmdTrinketSortOff              = "trinket_sort_off"
+	CmdTrinketSortModeNext         = "trinket_sort_mode_next"
+	CmdTrinketSortModePrior        = "trinket_sort_mode_prior"
+	CmdTrinketChooser              = "trinket_chooser"
+
+	// Expanding or collapsing whichever it currently is, in one key.
+	CmdTrinketExpandedToggle = "trinket_expanded_toggle"
+
 	// Beginning an in-place edit, which is not the same as activating. A tree
 	// view's Enter opens the row editor where there is an editable column;
 	// its Space refuses to begin a TEXT edit and expands or collapses the

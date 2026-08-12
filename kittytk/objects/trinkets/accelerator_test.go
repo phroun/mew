@@ -428,3 +428,71 @@ func TestTreeViewColumnMovementNeverCollapses(t *testing.T) {
 		t.Error("a tree with no editable columns reported a column move")
 	}
 }
+
+// Sorting and the column chooser were reachable only by walking the header
+// focus zones. These make each step mappable on its own.
+func TestTreeViewSortCommands(t *testing.T) {
+	tv := NewTreeView()
+	tv.AddColumn(&TreeColumn{ID: "a", Caption: "A", Sortable: true})
+
+	// The plain forms set a direction outright.
+	tv.SortAscending()
+	if sorted, _, desc := tv.Sorted(); !sorted || desc {
+		t.Errorf("after SortAscending: sorted=%v descending=%v", sorted, desc)
+	}
+	tv.SortDescending()
+	if sorted, _, desc := tv.Sorted(); !sorted || !desc {
+		t.Errorf("after SortDescending: sorted=%v descending=%v", sorted, desc)
+	}
+	tv.SortOff()
+	if sorted, _, _ := tv.Sorted(); sorted {
+		t.Error("SortOff left the view sorted")
+	}
+
+	// The toggle forms apply, then clear when already in that direction, so
+	// one key does both.
+	tv.ToggleSortAscending()
+	if sorted, _, desc := tv.Sorted(); !sorted || desc {
+		t.Error("first ToggleSortAscending should sort ascending")
+	}
+	tv.ToggleSortAscending()
+	if sorted, _, _ := tv.Sorted(); sorted {
+		t.Error("second ToggleSortAscending should turn sorting off")
+	}
+
+	// The mode forms walk the cycle a header activation walks.
+	tv.SortModeNext() // off -> ascending
+	if sorted, _, desc := tv.Sorted(); !sorted || desc {
+		t.Error("SortModeNext from off should sort ascending")
+	}
+	tv.SortModeNext() // ascending -> descending
+	if _, _, desc := tv.Sorted(); !desc {
+		t.Error("SortModeNext from ascending should reverse")
+	}
+	tv.SortModeNext() // descending -> off
+	if sorted, _, _ := tv.Sorted(); sorted {
+		t.Error("SortModeNext from descending should turn sorting off")
+	}
+	// ...and prior walks it the other way.
+	tv.SortModePrior()
+	if sorted, _, desc := tv.Sorted(); !sorted || !desc {
+		t.Error("SortModePrior from off should sort descending")
+	}
+}
+
+// Every one of them is unbound by default: they exist to be mapped, and
+// mapping one is what makes it reachable.
+func TestSortCommandsAreUnboundByDefault(t *testing.T) {
+	r := core.DefaultKeyRegistry()
+	for _, cmd := range []string{
+		core.CmdTrinketSortAscending, core.CmdTrinketSortDescending,
+		core.CmdTrinketSortOff, core.CmdTrinketSortModeNext,
+		core.CmdTrinketSortModePrior, core.CmdTrinketChooser,
+		core.CmdTrinketExpandedToggle,
+		core.CmdTrinketColumnLeft, core.CmdTrinketColumnRight,
+	} {
+		if keys := r.KeysFor(cmd); len(keys) != 0 {
+			t.Errorf("%s is bound to %v by default; it should be mappable only", cmd, keys)
+		}
+	}
+}

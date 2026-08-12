@@ -222,6 +222,15 @@ func NewTreeView() *TreeView {
 		// Unbound by default: a keymap that wants a left which never
 		// collapses maps these instead of the arrows.
 		core.CmdTrinketColumnLeft, core.CmdTrinketColumnRight,
+		// Newly mappable: before these the only way to sort or reach the
+		// column chooser from the keyboard was a walk through the header
+		// focus zones. All unbound by default.
+		core.CmdTrinketExpandedToggle,
+		core.CmdTrinketSortAscending, core.CmdTrinketToggleSortAscending,
+		core.CmdTrinketSortDescending, core.CmdTrinketToggleSortDescending,
+		core.CmdTrinketSortOff,
+		core.CmdTrinketSortModeNext, core.CmdTrinketSortModePrior,
+		core.CmdTrinketChooser,
 		core.CmdTrinketScrollUp, core.CmdTrinketScrollDown,
 		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
 		core.CmdTrinketBeg, core.CmdTrinketEnd,
@@ -958,6 +967,30 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Shift+Left/Right always mean the classic tree navigation, even
 	// on editable grids where the plain arrows rotate the Enter-target
 	// column (handleEditTargetKey lets shifted arrows through).
+	case core.CmdTrinketExpandedToggle:
+		if current != nil && !current.IsLeaf() {
+			t.ToggleItem(current)
+			return true
+		}
+		return false
+
+	case core.CmdTrinketSortAscending:
+		return t.SortAscending()
+	case core.CmdTrinketSortDescending:
+		return t.SortDescending()
+	case core.CmdTrinketSortOff:
+		return t.SortOff()
+	case core.CmdTrinketToggleSortAscending:
+		return t.ToggleSortAscending()
+	case core.CmdTrinketToggleSortDescending:
+		return t.ToggleSortDescending()
+	case core.CmdTrinketSortModeNext:
+		return t.SortModeNext()
+	case core.CmdTrinketSortModePrior:
+		return t.SortModePrior()
+	case core.CmdTrinketChooser:
+		return t.OpenColumnChooser()
+
 	case core.CmdTrinketColumnLeft:
 		return t.moveEnterTargetColumn(-1)
 
