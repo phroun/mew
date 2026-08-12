@@ -28,6 +28,7 @@ require (
 	github.com/gogpu/naga v0.17.16 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
+	github.com/phroun/key-sequence-processor v0.1.3 // indirect
 	github.com/phroun/pawscript v0.2.12-alpha // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect

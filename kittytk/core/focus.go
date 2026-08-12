@@ -567,6 +567,37 @@ type FocusScope struct {
 
 	// Active child scope (if focus is in a child)
 	activeChild *FocusScope
+
+	// registry is this scope's key-to-command table, or nil to inherit the
+	// parent's. Almost every scope inherits: the registry is "default" unless
+	// something deliberately overrides it, which is what a trinket like
+	// purfecterm does when it wants the keyboard on its own terms.
+	registry *KeyRegistry
+}
+
+// SetRegistry gives this scope its own key registry. Passing nil returns the
+// scope to inheriting its parent's.
+func (fs *FocusScope) SetRegistry(r *KeyRegistry) {
+	fs.mu.Lock()
+	fs.registry = r
+	fs.mu.Unlock()
+}
+
+// Registry returns the registry in force for this scope: its own if it has
+// one, otherwise the nearest ancestor's. The chain is what makes the override
+// cascade fall out of the scope tree that already exists — a desktop registry
+// under a window's under a trinket's, each one only saying what it changes.
+func (fs *FocusScope) Registry() *KeyRegistry {
+	for s := fs; s != nil; {
+		s.mu.RLock()
+		r, parent := s.registry, s.parent
+		s.mu.RUnlock()
+		if r != nil {
+			return r
+		}
+		s = parent
+	}
+	return nil
 }
 
 // NewFocusScope creates a new focus scope for a trinket.
