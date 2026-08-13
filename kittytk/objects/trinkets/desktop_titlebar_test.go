@@ -35,9 +35,10 @@ func titlebarTestDesktop(t *testing.T, mode string, script func(d *Desktop, plat
 }
 
 // The themed frame (the default): the OS chrome is stripped at startup and
-// the desktop carries its own title bar row — one cell, above the menu bar
-// — so the client area starts two rows down and the menu bar's Bounds sit
-// on the second row.
+// the desktop carries its own title bar row — one cell, INSIDE the top of
+// the frame border it now reserves, like a window's — with the menu bar on
+// the next row and the client area inset by the border on every side (the
+// border is ADDITIONAL to the content, never over it).
 func TestThemedFrameStripsChromeAndCarriesATitleBar(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
 		surf := plat.surfaces[0]
@@ -45,14 +46,25 @@ func TestThemedFrameStripsChromeAndCarriesATitleBar(t *testing.T) {
 			t.Error("themed frame left the OS chrome on")
 		}
 		cell := d.EffectiveCellMetrics().CellHeight
+		b := d.hostFrameInset()
+		if b <= 0 {
+			t.Fatal("themed frame reserves no border")
+		}
 		if got := d.TitleBarHeight(); got != cell {
 			t.Errorf("TitleBarHeight = %v, want one cell (%v)", got, cell)
 		}
-		if got := d.ClientArea().Y; got != 2*cell {
-			t.Errorf("ClientArea.Y = %v, want title bar + menu bar (%v)", got, 2*cell)
+		area := d.ClientArea()
+		if area.Y != b+2*cell {
+			t.Errorf("ClientArea.Y = %v, want border + title bar + menu bar (%v)", area.Y, b+2*cell)
 		}
-		if got := d.menuBar.Bounds().Y; got != cell {
-			t.Errorf("menu bar Bounds.Y = %v, want below the title bar (%v)", got, cell)
+		if area.X != b {
+			t.Errorf("ClientArea.X = %v, want the reserved border (%v)", area.X, b)
+		}
+		if want := d.Bounds().Width - 2*b; area.Width != want {
+			t.Errorf("ClientArea.Width = %v, want inset by the border on both sides (%v)", area.Width, want)
+		}
+		if got := d.menuBar.Bounds().Y; got != b+cell {
+			t.Errorf("menu bar Bounds.Y = %v, want below border + title bar (%v)", got, b+cell)
 		}
 		// The window verbs the OS bar carried are on the Ψ menu now.
 		var found []string
@@ -104,16 +116,17 @@ func TestThemedFrameTranslatesTheMenuBar(t *testing.T) {
 		surf := plat.surfaces[0]
 		h := surf.handler
 		cell := d.EffectiveCellMetrics().CellHeight
+		bx, by := d.hostChromeOffset()
 
-		// Press on the Ψ title, second row (Y just past the title bar).
-		h.Event(core.MousePressEvent{X: 4, Y: cell + 4, Button: core.LeftButton})
+		// Press on the Ψ title, on the menu bar's (inset) row.
+		h.Event(core.MousePressEvent{X: bx + 2, Y: by + 4, Button: core.LeftButton})
 		if d.menuBar.ActiveMenu() == nil {
-			t.Fatal("menu-bar press one row down did not open a menu")
+			t.Fatal("menu-bar press on its row did not open a menu")
 		}
-		if got := d.ActiveMenuBounds().Y; got != 2*cell {
-			t.Errorf("dropdown top = %v, want below title bar + menu bar (%v)", got, 2*cell)
+		if got := d.ActiveMenuBounds().Y; got != by+cell {
+			t.Errorf("dropdown top = %v, want below the (inset) bar (%v)", got, by+cell)
 		}
-		h.Event(core.MouseReleaseEvent{X: 4, Y: cell + 4, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: bx + 2, Y: by + 4, Button: core.LeftButton})
 	})
 }
 
@@ -326,9 +339,10 @@ func TestTitleBarButtonsClickAndSlideAway(t *testing.T) {
 }
 
 // The chrome ring: Shift+Tab off the menu bar lands on the title bar's
-// last control and walks backward off to the dock side (the menu bar here,
-// with no dock); Tab off the bar's dockward side wraps to the title bar's
-// first control and walks forward off to the menu bar again.
+// last element — the TITLE itself — and walks backward through the
+// controls off to the dock side (the menu bar here, with no dock); Tab
+// off the bar's dockward side wraps to the first control and walks
+// forward through the title off to the menu bar again.
 func TestChromeRingWalksTheTitleBar(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
 		titleFocus := func() int {
@@ -341,13 +355,14 @@ func TestChromeRingWalksTheTitleBar(t *testing.T) {
 		if !d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) {
 			t.Fatal("S-Tab off the menu bar was not handled")
 		}
-		if got := titleFocus(); got != hostTitleButtonZoom {
-			t.Fatalf("S-Tab from the bar landed on %d, want the zoom (last) control", got)
+		if got := titleFocus(); got != hostTitleFocusTitle {
+			t.Fatalf("S-Tab from the bar landed on %d, want the title (last element)", got)
 		}
 		if d.menuBar.HasFocus() {
 			t.Error("menu bar kept focus after handing off to the title bar")
 		}
 
+		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // -> zoom
 		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // -> minimize
 		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // -> close
 		if got := titleFocus(); got != hostTitleButtonClose {
@@ -370,8 +385,9 @@ func TestChromeRingWalksTheTitleBar(t *testing.T) {
 		}
 		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // -> minimize
 		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // -> zoom
-		if got := titleFocus(); got != hostTitleButtonZoom {
-			t.Fatalf("walked forward to %d, want the zoom control", got)
+		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // -> title
+		if got := titleFocus(); got != hostTitleFocusTitle {
+			t.Fatalf("walked forward to %d, want the title", got)
 		}
 		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // off the end
 		if d.hostTitleFocused() {
@@ -379,6 +395,103 @@ func TestChromeRingWalksTheTitleBar(t *testing.T) {
 		}
 		if !d.menuBar.HasFocus() {
 			t.Error("forward exit did not land on the menu bar")
+		}
+	})
+}
+
+// The focused TITLE answers the window-geometry commands, like a window's:
+// arrows move the OS window (a cell fine, the coarse step with the coarse
+// commands), the size commands grow and shrink it, floored at the same
+// minimum the pointer gestures enforce.
+func TestFocusedTitleMovesAndResizesTheHostWindow(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		if !d.enterHostTitleFocus(false) {
+			t.Fatal("title bar refused keyboard focus")
+		}
+
+		// A fine move: one cell (8 units = 8px at scale 1) rightward.
+		d.HandleKeyPress(core.KeyPressEvent{Key: "Right"})
+		if surf.x != 58 || surf.y != 60 {
+			t.Errorf("fine move: origin (%d,%d), want (58,60)", surf.x, surf.y)
+		}
+		// Grow and shrink through the command vocabulary directly (which
+		// key spells a size command is the keymap's business, tested with
+		// the windows').
+		d.handleHostTitleGeometry(core.CmdWindowSizeFineRight)
+		if w, _ := surf.ScreenSizePx(); w != 808 {
+			t.Errorf("grow: width %d, want 808", w)
+		}
+		d.handleHostTitleGeometry(core.CmdWindowSizeFineLeft)
+		if w, _ := surf.ScreenSizePx(); w != 800 {
+			t.Errorf("shrink: width %d, want 800", w)
+		}
+		d.handleHostTitleGeometry(core.CmdWindowMoveDown) // coarse: 4 rows
+		if surf.y != 60+4*16 {
+			t.Errorf("coarse move: y=%d, want %d", surf.y, 60+4*16)
+		}
+	})
+}
+
+// The edge affordance and a button's hover can never light together: the
+// resize zones outrank the buttons (a press there resizes), so where they
+// overlap the button reads unhovered.
+func TestEdgeAffordanceOutranksButtonHover(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		h := plat.surfaces[0].handler
+
+		// Inside both the left-edge grab zone and the close button's slot.
+		h.Event(core.MouseMoveEvent{X: 3, Y: 8})
+		if d.hostHoverEdges() == 0 {
+			t.Fatal("left-edge zone did not claim the point")
+		}
+		d.mu.RLock()
+		hover := d.hostTitleHover
+		d.mu.RUnlock()
+		if hover != hostTitleButtonNone {
+			t.Errorf("button hover %d lit under the edge affordance, want none", hover)
+		}
+
+		// Clear of the edge zone, the button hovers normally.
+		h.Event(core.MouseMoveEvent{X: 10, Y: 8})
+		d.mu.RLock()
+		hover = d.hostTitleHover
+		d.mu.RUnlock()
+		if hover != hostTitleButtonClose {
+			t.Errorf("button hover = %d, want the close control", hover)
+		}
+	})
+}
+
+// A held button tracks the pointer: drifting off releases the pressed
+// visual (and drifting back re-arms it), so the paint's "pressed AND
+// still over it" reading is always truthful — and the release only fires
+// where the pointer actually is.
+func TestPressedButtonTracksPointerDrift(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+		hover := func() int {
+			d.mu.RLock()
+			defer d.mu.RUnlock()
+			return d.hostTitleHover
+		}
+
+		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		if hover() != hostTitleButtonMinimize {
+			t.Fatalf("press did not arm the minimize button (hover %d)", hover())
+		}
+		h.Event(core.MouseMoveEvent{X: 300, Y: 8, Buttons: core.LeftButton})
+		if hover() != hostTitleButtonNone {
+			t.Error("pressed visual stayed lit after the pointer drifted off")
+		}
+		h.Event(core.MouseMoveEvent{X: 30, Y: 8, Buttons: core.LeftButton})
+		if hover() != hostTitleButtonMinimize {
+			t.Error("pressed visual did not re-arm when the pointer drifted back")
+		}
+		h.Event(core.MouseReleaseEvent{X: 30, Y: 8, Button: core.LeftButton})
+		if !surf.minimized {
+			t.Error("release over the re-armed button did not fire it")
 		}
 	})
 }

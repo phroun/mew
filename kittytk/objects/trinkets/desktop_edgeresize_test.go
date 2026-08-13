@@ -58,8 +58,9 @@ func TestDesktopEdgeResizesTheHostWindow(t *testing.T) {
 		surf := plat.surfaces[0] // the desktop window: 800x480 units at (50,60), scale 1
 		h := surf.handler
 
-		// The grab rule with border 0 at ppu 1: max(0 + quarter cell 2, 3px)
-		// = 3 units. The corner reaches to the affordance width, 4 units.
+		// The grab rule at ppu 1 with the themed frame's reserved border
+		// (2 units): max(border + quarter cell, 3px) = 4 units. The corner
+		// reaches to the affordance width, border + half cell = 6 units.
 		h.Event(core.MouseMoveEvent{X: 798, Y: 240})
 		if edges := d.hostHoverEdges(); edges != window.ResizeEdgeRight {
 			t.Fatalf("hover at the right edge = %d, want right", edges)

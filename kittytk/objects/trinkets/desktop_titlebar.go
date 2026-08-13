@@ -1,6 +1,8 @@
 package trinkets
 
 import (
+	"math"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/platform"
@@ -40,13 +42,44 @@ type hostMoveState struct {
 
 // The title bar's controls, on the left like every title bar in the
 // system: [x][.][^]. The same constants serve as the bar's keyboard focus
-// states (none / one of the buttons).
+// states (none / a button / the title itself, which arrows then move and
+// Shift+arrows grow and shrink, exactly like a window's focused title).
 const (
 	hostTitleButtonNone = iota
 	hostTitleButtonClose
 	hostTitleButtonMinimize
 	hostTitleButtonZoom
+	hostTitleFocusTitle
 )
+
+// hostFrameInset is the frame border the themed desktop RESERVES around
+// its chrome and content, exactly as a window does ("the frame border
+// rests OUTSIDE the content coordinate system... a thicker border shrinks
+// the interior rather than overlapping it" — Window.contentBounds). Zero
+// in every other mode.
+//
+// Lock-free like themedFrameActive: it sits under layoutChildren, which
+// SetBackend reaches while holding d.mu.
+func (d *Desktop) hostFrameInset() core.Unit {
+	if !d.themedFrameActive() {
+		return 0
+	}
+	ppu := 1.0
+	if m, ok := d.backend.(core.UnitPixelMapper); ok {
+		if p := m.PxPerUnit(); p > 0 {
+			ppu = p
+		}
+	}
+	return core.Unit(math.Ceil(float64(core.ScaledWindowFrameBorderPx(ppu)) / ppu))
+}
+
+// hostChromeOffset is where the menu bar row begins: past the left border
+// and below the border + title row. (0,0) in the other frame modes, so
+// the pre-themed geometry is unchanged there.
+func (d *Desktop) hostChromeOffset() (x, y core.Unit) {
+	b := d.hostFrameInset()
+	return b, b + d.TitleBarHeight()
+}
 
 // The desktop frame's three states, themed like a window's: its own chrome
 // holding the keyboard is a focused window (double border), focus down in
@@ -157,10 +190,16 @@ func (d *Desktop) applyDesktopFrame(surf platform.Surface) {
 
 // hostTitleButtonAt returns the control under a surface-local point, or
 // hostTitleButtonNone. The buttons sit on the left in button-width slots
-// of three cells, like every title bar's controls.
+// of three cells, like every title bar's controls — inset past the
+// reserved frame border, inside which the title row sits.
 func (d *Desktop) hostTitleButtonAt(x, y core.Unit) int {
 	th := d.TitleBarHeight()
-	if th == 0 || y < 0 || y >= th || x < 0 {
+	if th == 0 {
+		return hostTitleButtonNone
+	}
+	b := d.hostFrameInset()
+	x, y = x-b, y-b
+	if y < 0 || y >= th || x < 0 {
 		return hostTitleButtonNone
 	}
 	bw := d.EffectiveCellMetrics().CellWidth * 3
@@ -190,9 +229,15 @@ func (d *Desktop) hostTitleButtonTrigger(btn int) {
 }
 
 // hostTitleHoverUpdate tracks which control the pointer is over, for the
-// hover highlight.
+// hover highlight. The desktop's own resize zones outrank the buttons —
+// a press there resizes (hostResizeBegin runs first), so the two hover
+// affordances must never light together: where the edge zone claims the
+// point, no button reads as hovered.
 func (d *Desktop) hostTitleHoverUpdate(x, y core.Unit) {
 	btn := d.hostTitleButtonAt(x, y)
+	if btn != hostTitleButtonNone && d.hostEdgeAt(x, y) != 0 {
+		btn = hostTitleButtonNone
+	}
 	d.mu.Lock()
 	changed := d.hostTitleHover != btn
 	d.hostTitleHover = btn
@@ -225,7 +270,10 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 		return false
 	}
 	th := d.TitleBarHeight()
-	if th == 0 || e.Y < 0 || e.Y >= th {
+	b := d.hostFrameInset()
+	// The title row sits inside the top border; the border band itself
+	// belongs to the resize zones (consulted before this).
+	if th == 0 || e.Y < b || e.Y >= b+th {
 		return false
 	}
 	// An open dropdown owns the next press anywhere on the surface (it is
@@ -256,12 +304,31 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 	return true
 }
 
-// hostMoveMove applies the pointer delta to the OS window's origin while
-// the drag is armed. Reports false when no gesture is in progress.
+// hostMoveMove owns the pointer stream while a title-bar gesture is in
+// progress: an armed BUTTON tracks the pointer — the pressed visual
+// releases when the pointer drifts off the button and re-arms when it
+// drifts back, exactly a button's capture semantics — and an armed DRAG
+// applies the delta to the OS window's origin. Reports false when
+// neither is in progress.
 func (d *Desktop) hostMoveMove(e core.MouseMoveEvent) bool {
 	d.mu.RLock()
+	pressed := d.hostTitlePressed
 	st := d.hostMove
 	d.mu.RUnlock()
+	if pressed != hostTitleButtonNone {
+		if e.Buttons&core.LeftButton == 0 {
+			// The release was missed (left the surface mid-press): disarm
+			// without firing.
+			d.mu.Lock()
+			d.hostTitlePressed = hostTitleButtonNone
+			d.mu.Unlock()
+			d.RequestUpdate()
+		}
+		// Hover keeps tracking under the held button, so the paint's
+		// "pressed AND still over it" test stays truthful.
+		d.hostTitleHoverUpdate(e.X, e.Y)
+		return true
+	}
 	if !st.active {
 		return false
 	}
@@ -457,6 +524,11 @@ func (d *Desktop) setHostTitleFocus(focus int) {
 				} else {
 					name = "zoom button"
 				}
+			case hostTitleFocusTitle:
+				d.mu.RLock()
+				title := d.hostTitle
+				d.mu.RUnlock()
+				name = title + ", title bar"
 			}
 			if name != "" {
 				am.AnnouncePolite(name)
@@ -467,10 +539,10 @@ func (d *Desktop) setHostTitleFocus(focus int) {
 }
 
 // enterHostTitleFocus lands the keyboard on the title bar from the chrome
-// ring: on the first control coming forward (Tab off the dock's end), the
-// last coming backward (Shift+Tab off the menu bar). Declines — reporting
-// false so the ring can fall through to its next stop — when there is no
-// themed title bar to land on.
+// ring: on the first element coming forward (Tab off the dock's end), the
+// last — the title itself — coming backward (Shift+Tab off the menu bar).
+// Declines — reporting false so the ring can fall through to its next
+// stop — when there is no themed title bar to land on.
 func (d *Desktop) enterHostTitleFocus(forward bool) bool {
 	if !d.themedFrameActive() {
 		return false
@@ -484,15 +556,17 @@ func (d *Desktop) enterHostTitleFocus(forward bool) bool {
 	if forward {
 		d.setHostTitleFocus(hostTitleButtonClose)
 	} else {
-		d.setHostTitleFocus(hostTitleButtonZoom)
+		d.setHostTitleFocus(hostTitleFocusTitle)
 	}
 	return true
 }
 
 // handleHostTitleKey is the title bar's keyboard when it holds focus:
-// Tab/Shift+Tab walk the controls and step off the ends of the chrome
-// ring (forward to the menu bar, backward to the dock), activate runs the
-// focused control, cancel drops the focus.
+// Tab/Shift+Tab walk close → minimize → zoom → title and step off the
+// ends of the chrome ring (forward to the menu bar, backward to the
+// dock), activate runs the focused control, cancel drops the focus — and
+// with the TITLE focused, arrows move the OS window and the size
+// commands grow and shrink it, exactly like a window's focused title.
 func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 	d.mu.RLock()
 	focus := d.hostTitleFocus
@@ -500,13 +574,16 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 	if focus == hostTitleButtonNone {
 		return false
 	}
-	switch d.KeyCommand(event.Key) {
+	cmd := d.KeyCommand(event.Key)
+	switch cmd {
 	case core.CmdFocusNext:
 		switch focus {
 		case hostTitleButtonClose:
 			d.setHostTitleFocus(hostTitleButtonMinimize)
 		case hostTitleButtonMinimize:
 			d.setHostTitleFocus(hostTitleButtonZoom)
+		case hostTitleButtonZoom:
+			d.setHostTitleFocus(hostTitleFocusTitle)
 		default:
 			// Off the forward end: the menu bar is next in the ring.
 			d.setHostTitleFocus(hostTitleButtonNone)
@@ -517,6 +594,8 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 		return true
 	case core.CmdFocusPrior:
 		switch focus {
+		case hostTitleFocusTitle:
+			d.setHostTitleFocus(hostTitleButtonZoom)
 		case hostTitleButtonZoom:
 			d.setHostTitleFocus(hostTitleButtonMinimize)
 		case hostTitleButtonMinimize:
@@ -539,7 +618,92 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 		d.setHostTitleFocus(hostTitleButtonNone)
 		return true
 	}
+	if focus == hostTitleFocusTitle {
+		return d.handleHostTitleGeometry(cmd)
+	}
 	return false
+}
+
+// handleHostTitleGeometry is the focused title's move/grow/shrink: the
+// same command vocabulary a window's focused title answers — plain
+// arrows move (fine = a cell, coarse = the window system's 10-column /
+// 4-row step), the size commands resize — applied to the OS window's
+// pixel geometry, with the same minimum the pointer gestures enforce.
+func (d *Desktop) handleHostTitleGeometry(cmd string) bool {
+	var dx, dy core.Unit
+	var resize, coarse bool
+	metrics := d.EffectiveCellMetrics()
+	switch cmd {
+	case core.CmdWindowMoveFineLeft:
+		dx = -metrics.CellWidth
+	case core.CmdWindowMoveFineRight:
+		dx = metrics.CellWidth
+	case core.CmdWindowMoveFineUp:
+		dy = -metrics.CellHeight
+	case core.CmdWindowMoveFineDown:
+		dy = metrics.CellHeight
+	case core.CmdWindowMoveLeft:
+		dx, coarse = -metrics.CellWidth, true
+	case core.CmdWindowMoveRight:
+		dx, coarse = metrics.CellWidth, true
+	case core.CmdWindowMoveUp:
+		dy, coarse = -metrics.CellHeight, true
+	case core.CmdWindowMoveDown:
+		dy, coarse = metrics.CellHeight, true
+	case core.CmdWindowSizeFineLeft:
+		dx, resize = -metrics.CellWidth, true
+	case core.CmdWindowSizeFineRight:
+		dx, resize = metrics.CellWidth, true
+	case core.CmdWindowSizeFineUp:
+		dy, resize = -metrics.CellHeight, true
+	case core.CmdWindowSizeFineDown:
+		dy, resize = metrics.CellHeight, true
+	case core.CmdWindowSizeLeft:
+		dx, resize, coarse = -metrics.CellWidth, true, true
+	case core.CmdWindowSizeRight:
+		dx, resize, coarse = metrics.CellWidth, true, true
+	case core.CmdWindowSizeUp:
+		dy, resize, coarse = -metrics.CellHeight, true, true
+	case core.CmdWindowSizeDown:
+		dy, resize, coarse = metrics.CellHeight, true, true
+	default:
+		return false
+	}
+	if coarse {
+		dx *= 10 // 10 columns
+		dy *= 4  // 4 rows
+	}
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	native, ok := surf.(platform.NativeSurface)
+	if !ok {
+		return true // focused title still owns the key
+	}
+	ppu := d.pxPerUnit()
+	if ppu <= 0 {
+		ppu = 1
+	}
+	pdx := int(math.Round(float64(dx) * ppu))
+	pdy := int(math.Round(float64(dy) * ppu))
+	if resize {
+		w, h := native.ScreenSizePx()
+		minW := int(math.Round(float64(metrics.CellWidth*12) * ppu))
+		minH := int(math.Round(float64(metrics.CellHeight*4) * ppu))
+		w += pdx
+		h += pdy
+		if w < minW {
+			w = minW
+		}
+		if h < minH {
+			h = minH
+		}
+		native.SetScreenSizePx(w, h)
+	} else {
+		x, y := native.ScreenPositionPx()
+		native.SetScreenPositionPx(x+pdx, y+pdy)
+	}
+	return true
 }
 
 // paintHostTitleBar draws the themed title bar: the toolkit's window-title
@@ -566,8 +730,13 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 	// blurred OS window dims.
 	lit := state != hostFrameInactive
 	titleStyle := scheme.GetWindowTitle(lit)
-	bar := core.UnitRect{Width: bounds.Width, Height: th}
-	p.FillRect(bar, ' ', titleStyle)
+	// The title row sits INSIDE the reserved frame border, like a
+	// window's ("the titlebar sits inside the top border"); the border
+	// band around it is painted by the frame stroke.
+	b := d.hostFrameInset()
+	barWidth := bounds.Width - 2*b
+	tp := p.WithOffset(b, b).WithClip(core.UnitRect{Width: barWidth, Height: th})
+	tp.FillRect(core.UnitRect{Width: barWidth, Height: th}, ' ', titleStyle)
 
 	// The controls, on the left like every title bar: [x][.][^] — exit
 	// desktop, minimize, zoom (a restore icon while zoomed).
@@ -587,22 +756,30 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 		isPressed := pressed == c.btn && hover == c.btn
 		isHovered := hover == c.btn && !isPressed && p.Graphical()
 		st := scheme.GetTitleBarButtonState(lit, focus == c.btn, isHovered, isPressed)
-		p.DrawCell(controlX, 0, '[', st)
-		p.DrawCell(controlX+metrics.CellWidth, 0, icon, st)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', st)
+		tp.DrawCell(controlX, 0, '[', st)
+		tp.DrawCell(controlX+metrics.CellWidth, 0, icon, st)
+		tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', st)
 		controlX += metrics.CellWidth * 3
 	}
 
 	if title == "" {
 		return
 	}
+	// A focused title wears the angle brackets, like a window's: the
+	// decoration IS the focus indication.
+	display := title
+	displayStyle := titleStyle
+	if focus == hostTitleFocusTitle {
+		display = "< " + title + " >"
+		displayStyle = scheme.GetTitleBarButton(lit, true, false)
+	}
 	font := d.EffectiveFont()
-	x := (bounds.Width - font.MeasureText(title)) / 2
+	x := (barWidth - font.MeasureText(display)) / 2
 	if x < controlX+metrics.CellWidth {
 		// Squeezed by the controls: pinned just past them, clipped at the bar.
 		x = controlX + metrics.CellWidth
 	}
-	p.WithClip(bar).DrawText(x, 0, title, titleStyle, font)
+	tp.DrawText(x, 0, display, displayStyle, font)
 }
 
 // paintHostFrame strokes the genuine window border around the themed

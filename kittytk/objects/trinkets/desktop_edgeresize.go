@@ -15,10 +15,10 @@ import (
 // which is thinner than the grab zone every window INSIDE the desktop gets —
 // so the easiest window to miss was the outermost one. The outer sliver of
 // the desktop surface now behaves like any window edge: the grab rule is
-// ResizeHitGrip with a border of zero (the desktop paints no frame of its
-// own; the OS chrome is outside the client area), the hover affordance is
-// the same translucent band at ResizeOverlayGrip width, and the corners
-// reach as far as the affordance.
+// ResizeHitGrip with the frame border the surface actually carries — the
+// themed frame's reserved border, or zero where the OS chrome sits outside
+// the client area — the hover affordance is the same translucent band at
+// ResizeOverlayGrip width, and the corners reach as far as the affordance.
 //
 // The press is applied the way TearOffHost applies one — global pointer
 // deltas onto the OS window's pixel geometry through platform.NativeSurface
@@ -73,17 +73,20 @@ func (d *Desktop) hostResizeParts() (platform.NativeSurface, platform.GlobalPoin
 }
 
 // hostEdgeAt is the desktop's own resize-edge answer for a surface-local
-// point: the same geometry a child window's edges use, with a border of
-// zero, so the zone is a bare quarter column (or 3 device pixels) and the
-// corners reach as far as the affordance bands.
+// point: the same geometry a child window's edges use, with the frame
+// border the surface actually carries — the reserved themed border, or
+// zero under an OS title bar — so the grab zone is the border plus a
+// quarter column (floored at 3 device pixels) and the corners reach as
+// far as the affordance bands, exactly the window rule.
 func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	if _, _, ok := d.hostResizeParts(); !ok {
 		return 0
 	}
 	b := d.Bounds()
+	border := d.hostFrameInset()
 	metrics := d.EffectiveCellMetrics()
-	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), 0)
-	corner := window.ResizeOverlayGrip(true, metrics, 0)
+	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border)
+	corner := window.ResizeOverlayGrip(true, metrics, border)
 	return window.ResizeEdgeAt(core.UnitRect{Width: b.Width, Height: b.Height},
 		x, y, metrics, grip, corner)
 }
@@ -282,7 +285,7 @@ func (d *Desktop) paintHostEdgeHover(p *core.Painter, bounds core.UnitRect) {
 	if edges == 0 {
 		return
 	}
-	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), 0)
+	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), d.hostFrameInset())
 	var rects []core.UnitRect
 	if edges&window.ResizeEdgeLeft != 0 {
 		rects = append(rects, core.UnitRect{Width: band, Height: bounds.Height})
