@@ -202,7 +202,53 @@ func NewEditor() *Editor {
 	// click re-focuses it. Same pattern the placeholder editor uses.
 	e.Init(e)
 	e.SetEditorMode(true)
+	e.SetKeyRegistry(capturedEditorKeys())
 	return e
+}
+
+// capturedKeys is the keymap a mew editor takes the keyboard on: mew's own
+// bindings are mew's business, so the toolkit keeps only the keys that reach
+// the HOST's chrome and leaves everything else to the guest.
+var (
+	capturedKeysOnce sync.Once
+	capturedKeys     *core.KeyRegistry
+)
+
+// capturedEditorKeys is the "captured" registry a mew editor declares.
+//
+// mew has a keymap of its own -- a whole editor's worth, with chords the
+// toolkit knows nothing about -- so while it holds the focus, the toolkit's
+// table must not take keys off the top of it: ^Q is mew's quit, ^W is mew's,
+// and a host that resolved them first would be answering for the wrong
+// program. Declaring a registry with almost nothing in it is how a trinket
+// says that (see core/keyscope.go): whatever is not bound here is not bound
+// anywhere above it either, and the keystroke arrives at mew.
+//
+// What it DOES keep is the way back out: the menu key and the help key, which
+// reach the host's own chrome and would otherwise be unreachable from the
+// keyboard while the editor has the focus. Their spellings are taken from the
+// live default registry rather than written out again, so a host that rebinds
+// the menu key in its ini keeps that binding here too. (Menu ACCELERATORS -
+// the M-* chords - need no help: the bar publishes those into whatever context
+// is current, so they keep working regardless of which registry built it.)
+//
+// Built once, on the first editor: by then a host has applied its own keymap,
+// so the spellings this copies are the ones actually in force.
+func capturedEditorKeys() *core.KeyRegistry {
+	capturedKeysOnce.Do(func() {
+		host := core.DefaultKeyRegistry()
+		var shared []core.Binding
+		for _, cmd := range []string{core.CmdAppMenu, core.CmdAppHelp} {
+			keys := host.KeysFor(cmd) // newest (most advertised) first
+			// Written back in the order the host had them, so the key this
+			// advertises for the command is the one the host advertises.
+			for i := len(keys) - 1; i >= 0; i-- {
+				shared = append(shared, core.Binding{Key: keys[i], Commands: []string{cmd}})
+			}
+		}
+		capturedKeys = core.NewKeyRegistry("captured", shared)
+	})
+	return capturedKeys
 }
 
 // --- Contract property setters (bound by editor_protocol_mew.go) ---
