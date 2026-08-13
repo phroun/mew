@@ -214,7 +214,7 @@ func TestKeyBindingDisplayBuiltinTieIsDeterministic(t *testing.T) {
 // A binding written with a capture/override prefix is filed under that RAW
 // spelling, while the badge shows the key as PRESSED. Provenance is looked up
 // by the raw spelling, so an override keeps the precedence it was configured
-// with: here the user's `capture ^/` outranks the built-in ^_ and wins the
+// with: here the user's `(capture) ^/` outranks the built-in ^_ and wins the
 // "last configured" tie-break, even though the two are shown identically to
 // how they are pressed.
 //
