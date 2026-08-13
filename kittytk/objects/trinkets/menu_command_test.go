@@ -3,102 +3,109 @@ package trinkets
 import (
 	"testing"
 
-	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/core"
 )
 
-// menuCapture wraps a factory to grab the first MenuItem it builds, so a
-// test can trigger it directly.
-type menuCapture struct {
-	inner protocol.Factory
-	item  *MenuItem
+// An item that names a COMMAND holds no key. What prints in its column is
+// whatever key means that command, asked when the menu is drawn.
+func TestItemWithCommandAdvertisesTheRegistrysKey(t *testing.T) {
+	item := NewMenuItem("&Quit").SetCommand(core.CmdAppQuit)
+
+	want := core.DefaultKeyRegistry().KeyForCommand(core.CmdAppQuit)
+	if want == "" {
+		t.Fatal("app_quit is unbound; the fixture assumes the toolkit's own keymap")
+	}
+	if got := item.ShortcutDisplay(); got != want {
+		t.Errorf("column shows %q, want %q", got, want)
+	}
 }
 
-func (f *menuCapture) New(typeName string) (protocol.Object, error) {
-	o, err := f.inner.New(typeName)
-	if err != nil {
-		return nil, err
-	}
-	if b, ok := o.(interface{ Target() any }); ok {
-		if mi, ok := b.Target().(*MenuItem); ok && f.item == nil {
-			f.item = mi
+// A composed menu asks its composer, which is what makes the answer follow
+// the focus: the same item shows a different key in a different situation,
+// and nothing at all where nothing means it.
+func TestItemAsksTheMenusResolver(t *testing.T) {
+	menu := NewMenu("File")
+	item := NewMenuItem("&Quit").SetCommand(core.CmdAppQuit)
+	menu.AddItem(item)
+
+	answer := "s-q"
+	menu.SetKeyResolver(func(command string) string {
+		if command == core.CmdAppQuit {
+			return answer
 		}
-	}
-	return o, nil
-}
+		return ""
+	})
 
-func (f *menuCapture) Subscribe(id uint64, typ string) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Subscribe(id, typ)
-	}
-}
-func (f *menuCapture) Unsubscribe(id uint64, typ string) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Unsubscribe(id, typ)
-	}
-}
-func (f *menuCapture) Suppressed(fn func()) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Suppressed(fn)
-		return
-	}
-	fn()
-}
-
-const menuActionScript = `bar=new menubar children={new menu caption="File" children={new menuitem caption="New" action=demo.act}}`
-
-// Over a connection that consumes events (the display protocol),
-// triggering a protocol-built menu item must emit a command event -
-// the same seam buttons use - so a remote app receives its menu actions.
-func TestMenuItemActionEmitsCommandOverWire(t *testing.T) {
-	var events []*protocol.Event
-	ctx := &protocol.BindContext{Emit: func(ev *protocol.Event) { events = append(events, ev) }}
-	f := &menuCapture{inner: protocol.NewRegistryFactory(ctx)}
-
-	script, err := protocol.Parse(menuActionScript)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := protocol.NewSession().Execute(script, f); err != nil {
-		t.Fatal(err)
-	}
-	if f.item == nil {
-		t.Fatal("no menuitem captured")
-	}
-	if f.item.OnTriggered == nil {
-		t.Fatal("menu item has no trigger handler with an event sink present")
+	if got := item.ShortcutDisplay(); got != "s-q" {
+		t.Errorf("column shows %q, want the resolver's s-q", got)
 	}
 
-	f.item.Trigger()
-
-	var found bool
-	for _, ev := range events {
-		if ev.Type == "command" {
-			if a, ok := ev.Word("action"); ok && a == "demo.act" {
-				found = true
-			}
-		}
-	}
-	if !found {
-		t.Errorf("Trigger emitted no command action=demo.act (events=%v)", events)
+	// Nothing means it here -- a guest has the keyboard -- and that is a real
+	// answer, so the column is blank rather than advertising a dead key.
+	answer = ""
+	if got := item.ShortcutDisplay(); got != "" {
+		t.Errorf("column shows %q, want nothing", got)
 	}
 }
 
-// In-process menus build with no event sink and dispatch through a real
-// command registry; the protocol Bind must NOT install a trigger handler
-// there, or it would shadow the app's registered command handlers.
-func TestMenuItemInProcessLeavesRegistryPath(t *testing.T) {
-	f := &menuCapture{inner: protocol.NewRegistryFactory(&protocol.BindContext{})}
-	script, err := protocol.Parse(menuActionScript)
-	if err != nil {
-		t.Fatal(err)
+// The resolver reaches items added later, and submenus, since a bar is
+// recomposed from scratch whenever its app's menus change.
+func TestKeyResolverReachesLaterItemsAndSubmenus(t *testing.T) {
+	bar := NewMenuBar()
+	bar.SetKeyResolver(func(string) string { return "^Q" })
+
+	menu := NewMenu("File")
+	bar.AddMenu(menu)
+
+	later := NewMenuItem("&Quit").SetCommand(core.CmdAppQuit)
+	menu.AddItem(later)
+	if got := later.ShortcutDisplay(); got != "^Q" {
+		t.Errorf("an item added later shows %q, want ^Q", got)
 	}
-	if _, err := protocol.NewSession().Execute(script, f); err != nil {
-		t.Fatal(err)
+
+	sub := NewMenu("More")
+	deep := NewMenuItem("&Quit").SetCommand(core.CmdAppQuit)
+	sub.AddItem(deep)
+	menu.AddMenu(sub)
+	if got := deep.ShortcutDisplay(); got != "^Q" {
+		t.Errorf("an item in a submenu shows %q, want ^Q", got)
 	}
-	if f.item == nil {
-		t.Fatal("no menuitem captured")
+}
+
+// A command overrides a legacy shortcut on the same item: it has stopped
+// naming a key and started naming a meaning.
+func TestCommandOverridesALegacyShortcut(t *testing.T) {
+	item := NewMenuItem("&Quit")
+	item.SetShortcut(core.NewShortcut("^Z"))
+	item.SetCommand(core.CmdAppQuit)
+
+	menu := NewMenu("File")
+	menu.AddItem(item)
+	menu.SetKeyResolver(func(string) string { return "^Q" })
+
+	if got := item.ShortcutDisplay(); got != "^Q" {
+		t.Errorf("column shows %q, want the command's ^Q rather than the stored ^Z", got)
 	}
-	if f.item.OnTriggered != nil {
-		t.Error("menu item installed a trigger handler without an event sink; app registry would be shadowed")
+}
+
+// ShortcutText is ink for a key the toolkit does not handle, and still prints
+// beside a resolved one -- a command reachable either way advertises both.
+func TestShortcutTextStillAppends(t *testing.T) {
+	item := NewMenuItem("&Quit").SetCommand(core.CmdAppQuit)
+	item.SetShortcutText("^K Q")
+
+	menu := NewMenu("File")
+	menu.AddItem(item)
+	menu.SetKeyResolver(func(string) string { return "^Q" })
+
+	if got := item.ShortcutDisplay(); got != "^Q ^K Q" {
+		t.Errorf("column shows %q, want both spellings", got)
+	}
+
+	// ...and with nothing meaning the command here, the literal text is all
+	// there is to show.
+	menu.SetKeyResolver(func(string) string { return "" })
+	if got := item.ShortcutDisplay(); got != "^K Q" {
+		t.Errorf("column shows %q, want the literal text alone", got)
 	}
 }

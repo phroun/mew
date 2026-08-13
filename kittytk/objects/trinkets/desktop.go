@@ -2848,7 +2848,13 @@ func (d *Desktop) attachMainWindowChrome(win *window.Window) {
 	if app == nil {
 		return
 	}
-	win.SetWindowMenuBar(d.buildDetachedMenuBar(app))
+	mb := d.buildDetachedMenuBar(app)
+	// A detached window carries its own bar, so its items advertise what THIS
+	// window offers -- its own focus, its own keymap in force.
+	mb.SetKeyResolver(func(command string) string {
+		return win.KeyContext().KeyForCommand(command)
+	})
+	win.SetWindowMenuBar(mb)
 	win.SetWindowStatusBar(d.buildDetachedStatusBar(app))
 }
 
@@ -4471,6 +4477,14 @@ func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
 	mb.SetAcceleratorChord(core.AcceleratorChord())
 	d.buildKeyContext()
 	mb.SetKeyContext(d.keyContext)
+	// What every item on this bar advertises: the key that means its command
+	// in the context the desktop currently has, which follows the focus. Asked
+	// afresh each time an item is drawn, so a rebinding, a platform's own
+	// spelling and a guest holding the keyboard all show through without
+	// anything having to rebuild the menus.
+	mb.SetKeyResolver(func(command string) string {
+		return d.KeyContext().KeyForCommand(command)
+	})
 	mb.SetOnFocusChanged(d.lendMenuBarRow)
 }
 

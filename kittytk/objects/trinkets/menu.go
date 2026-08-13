@@ -55,6 +55,22 @@ type MenuItem struct {
 	// across siblings, so a later item may fall back to a backup letter.
 	acceleratorCandidates []acceleratorCandidate
 	Shortcut              core.Shortcut
+	// Command is what this item MEANS, from the toolkit's command vocabulary
+	// (core.Cmd*), and is how an item advertises a key without holding one:
+	// the column is resolved from whatever keymap is in force where the FOCUS
+	// is, at the moment the menu is drawn. So one item shows the Command-key
+	// spelling on a Mac and the Control one elsewhere, shows nothing at all
+	// while something has taken the keyboard on its own terms, and follows a
+	// rebinding with no one having to tell it.
+	//
+	// A Command overrides a Shortcut on the same item: the item has stopped
+	// naming a key and started naming a meaning.
+	Command string
+	// keyResolver answers "what key means this command, here?" — installed by
+	// whoever composed the menu (a desktop's bar asks the desktop's context, a
+	// detached window's asks its own). Nil in a menu nobody composed, which
+	// falls back to the registry.
+	keyResolver func(command string) string
 	// ShortcutText is literal text for the item's shortcut column, printed
 	// exactly where a bound Shortcut would print. It exists for keys the
 	// TOOLKIT does not handle — a hosted application's own bindings, say —
@@ -159,7 +175,16 @@ func (m *MenuItem) SetID(id string) *MenuItem {
 // menu did not make room for.
 func (m *MenuItem) ShortcutDisplay() string {
 	bound := ""
-	if m.Shortcut != "" {
+	switch {
+	case m.Command != "":
+		// A command names a meaning, not a key: ask what key means it HERE.
+		// Nothing means it here is a real answer -- while a guest has the
+		// keyboard, this item genuinely has no key -- so the column is blank
+		// rather than advertising something that would not work.
+		if key := m.resolveCommandKey(); key != "" {
+			bound = core.Shortcut(key).DisplayString()
+		}
+	case m.Shortcut != "":
 		bound = m.Shortcut.DisplayString()
 	}
 	switch {
@@ -170,6 +195,24 @@ func (m *MenuItem) ShortcutDisplay() string {
 	default:
 		return m.ShortcutText
 	}
+}
+
+// resolveCommandKey asks what key means this item's command right now: the
+// composer's resolver where there is one, else the registry, which is the best
+// a menu nobody composed can do.
+func (m *MenuItem) resolveCommandKey() string {
+	if m.keyResolver != nil {
+		return m.keyResolver(m.Command)
+	}
+	return core.DefaultKeyRegistry().KeyForCommand(m.Command)
+}
+
+// SetCommand names what this item MEANS, so its key column is resolved rather
+// than stored (see the Command field). It replaces SetShortcut: an item that
+// names a command does not name a key.
+func (m *MenuItem) SetCommand(command string) *MenuItem {
+	m.Command = command
+	return m
 }
 
 // SetShortcutText sets literal text for the item's shortcut column (see
@@ -373,7 +416,11 @@ type Menu struct {
 
 	// Parent menu (for submenus)
 	parentMenu *Menu
-	parentItem *MenuItem
+	// keyResolver answers "which key means this command, here?" for this
+	// menu's items -- installed by whoever composed the menu (see
+	// SetKeyResolver), and handed on to items and submenus.
+	keyResolver func(command string) string
+	parentItem  *MenuItem
 
 	// Currently open submenu
 	activeSubMenu *Menu
@@ -628,6 +675,33 @@ func (m *Menu) AcceleratorPos() int {
 // AddItem adds an item to the menu.
 func (m *Menu) AddItem(item *MenuItem) {
 	m.items = append(m.items, item)
+	m.handKeyResolverTo(item)
+}
+
+// SetKeyResolver installs what this menu's items ask when they need to know
+// which key means their command right now. Whoever composed the menu knows
+// which context to ask -- a desktop's bar asks the desktop's, a detached
+// window's bar asks that window's -- and both of those follow the FOCUS, so
+// what an item advertises is what would actually happen if you pressed it.
+//
+// It reaches everything under the menu, submenus included, and everything
+// added later.
+func (m *Menu) SetKeyResolver(fn func(command string) string) {
+	m.keyResolver = fn
+	for _, item := range m.items {
+		m.handKeyResolverTo(item)
+	}
+}
+
+// handKeyResolverTo gives one item (and its submenu) this menu's resolver.
+func (m *Menu) handKeyResolverTo(item *MenuItem) {
+	if item == nil {
+		return
+	}
+	item.keyResolver = m.keyResolver
+	if item.SubMenu != nil && item.SubMenu != m {
+		item.SubMenu.SetKeyResolver(m.keyResolver)
+	}
 }
 
 // AddAction adds an action as a menu item.
@@ -1864,6 +1938,9 @@ type MenuBar struct {
 	currentIndex int
 	activeMenu   *Menu
 
+	// keyResolver answers "which key means this command, here?" for every item
+	// on this bar, handed down to its menus (see SetKeyResolver).
+	keyResolver func(command string) string
 	// acceleratorChord is the pattern a chord accelerator is formed from,
 	// with "*" standing in for a menu's mnemonic ([window] accelerator_chord).
 	acceleratorChord string
@@ -2391,7 +2468,23 @@ func (m *MenuBar) setAcceleratorsActive(active bool) {
 // AddMenu adds a menu to the bar.
 func (m *MenuBar) AddMenu(menu *Menu) {
 	m.menus = append(m.menus, menu)
+	if m.keyResolver != nil && menu != nil {
+		menu.SetKeyResolver(m.keyResolver)
+	}
 	m.InvalidateAccelerators()
+}
+
+// SetKeyResolver installs what every item on this bar asks when it needs to
+// know which key means its command right now (see Menu.SetKeyResolver). It
+// reaches the menus the bar has and the ones it is given later, which matters
+// because a bar is recomposed from scratch whenever its app's menus change.
+func (m *MenuBar) SetKeyResolver(fn func(command string) string) {
+	m.keyResolver = fn
+	for _, menu := range m.menus {
+		if menu != nil {
+			menu.SetKeyResolver(fn)
+		}
+	}
 }
 
 // InsertMenu inserts a menu at the given index.
