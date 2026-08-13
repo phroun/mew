@@ -88,3 +88,37 @@ func TestAcceleratorOpensMenuThroughBothDispatchPaths(t *testing.T) {
 		}
 	}
 }
+
+// A muted accelerator has lost its CHORD, not its letter. The two are
+// different affordances: the chord reaches the menu while the bar is not
+// focused, and the bare letter navigates once it is. So a menu that had to
+// yield its chord to the keymap is still one keystroke away from a focused
+// bar, and never becomes unreachable from the keyboard.
+func TestAMutedAcceleratorKeepsItsBareLetter(t *testing.T) {
+	mb := NewMenuBar()
+	mb.AddMenu(NewMenu("&Help"))
+	mb.SetAcceleratorChord("M-*")
+	r := core.NewKeyRegistryFromMap("clash", map[string][]string{
+		"M-h": {core.CmdAppMinimize},
+	})
+	mb.SetKeyContext(r.BuildContext([]string{core.CmdAppMinimize}))
+
+	mb.refreshAccelerators()
+	if mb.accelAssignments[0].Active {
+		t.Fatal("M-h is spoken for; the chord must yield")
+	}
+	if got := mb.accelAssignments[0].Char; got != 'h' {
+		t.Errorf("the muted menu carries %q, want h - the letter is not the chord", got)
+	}
+
+	// A focused bar answers to the bare letter, which is ordinary typing and
+	// clashes with no keymap.
+	mb.SetFocus()
+	mb.setAcceleratorsActive(true)
+	if !mb.HandleKeyPress(core.KeyPressEvent{Key: "h"}) {
+		t.Fatal("the focused bar did not answer to the bare letter")
+	}
+	if mb.ActiveMenu() == nil {
+		t.Error("bare h did not open the Help menu")
+	}
+}
