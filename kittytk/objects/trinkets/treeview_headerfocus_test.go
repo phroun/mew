@@ -112,7 +112,7 @@ func TestTreeHeaderItemsShiftTabWraps(t *testing.T) {
 	key := func(k string) { tv.HandleKeyPress(core.KeyPressEvent{Key: k}) }
 
 	tv.HandleFocusIn() // -> hzBar
-	key("Return")       // -> hzItems, first stop
+	key("Return")      // -> hzItems, first stop
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab", Modifiers: core.ShiftModifier})
 	last := tv.headerStopCount() - 1
 	if tv.headerZone != hzItems || tv.headerFocusIdx != last {

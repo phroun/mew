@@ -1410,7 +1410,7 @@ func (t *TUIBackend) handleKey(key string) {
 	// - Control+letter: "^A", "^X" etc.
 	// - Special keys: "Left", "Right", "Up", "Down", "Return", "Tab", "Escape", etc.
 	// - Function keys: "F1", "F2", ... "F12"
-	// - Alt combinations: "M-" prefix
+	// - Mega combinations: "M-" prefix
 	// - Shift combinations: "S-" prefix
 	mods, keyName := core.ParseKeyModifiers(key)
 

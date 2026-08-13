@@ -2,7 +2,6 @@
 package core
 
 import (
-	"strings"
 	"sync"
 )
 
@@ -152,7 +151,7 @@ func (a *Action) MatchesKey(event KeyPressEvent) bool {
 }
 
 // Shortcut represents a keyboard shortcut using the key handler format.
-// Examples: "^Q" (Ctrl+Q), "M-x" (Alt+x), "S-Tab" (Shift+Tab), "F1" (plain key)
+// Examples: "^Q" (Ctrl+Q), "M-x" (Mega+x), "S-Tab" (Shift+Tab), "F1" (plain key)
 type Shortcut string
 
 // NoShortcut represents the absence of a shortcut.
@@ -248,232 +247,15 @@ func MacNativeShortcuts() bool { return macNativeShortcuts }
 
 // DisplayString returns a human-readable representation of the shortcut
 // for display in menus and tooltips.
-// Uses compact notation: ^ for Ctrl, M- for Alt, S- for Shift - unless
-// macOS-native rendering is enabled, in which case modifiers become the
-// native glyphs ⌃⌥⇧⌘ in canonical order.
-func (s Shortcut) DisplayString() string {
-	if s == "" {
-		return ""
-	}
-	if macNativeShortcuts {
-		return s.macNativeDisplay()
-	}
-	// Return the key handler format directly - it's already compact and readable
-	return string(s)
-}
-
-// macNativeDisplay renders the shortcut with macOS modifier glyphs in the
-// canonical order Control, Option, Shift, Command (⌃⌥⇧⌘) followed by the key,
-// with no separators. Modifier mapping:
 //
-//	^ / C-  → ⌃ (Control)
-//	M- / A- → ⌥ (Option)
-//	S-      → ⇧ (Shift)
-//	s-      → ⌘ (Command)
+// Deprecated: a Shortcut is a key string like any other. Call DisplayKey.
+func (s Shortcut) DisplayString() string { return DisplayKey(string(s)) }
+
+// AccessibilityString returns a fully spelled-out representation of the
+// shortcut for screen reader announcements.
 //
-// A single uppercase letter after a hyphenated modifier implies Shift, matching
-// the notation elsewhere (M-a = Option+A, M-A = Option+Shift+A); caret notation
-// (^X) never implies Shift. The letter key is uppercased to match how macOS
-// menus present keys (⌘S, not ⌘s). Named keys (Tab, Delete, F1) and any
-// unrecognized modifier (H-) are passed through as-is.
-func (s Shortcut) macNativeDisplay() string {
-	const (
-		modControl = 1
-		modOption  = 2
-		modShift   = 4
-		modCommand = 8
-	)
-	str := string(s)
-	mods := 0
-	usedCaret := false
-	for len(str) > 0 {
-		if len(str) >= 2 {
-			switch str[:2] {
-			case "M-", "A-":
-				mods |= modOption
-				str = str[2:]
-				continue
-			case "C-":
-				mods |= modControl
-				str = str[2:]
-				continue
-			case "S-":
-				mods |= modShift
-				str = str[2:]
-				continue
-			case "s-":
-				mods |= modCommand
-				str = str[2:]
-				continue
-			case "H-": // Hyper has no macOS glyph; drop the prefix
-				str = str[2:]
-				continue
-			}
-		}
-		if str[0] == '^' {
-			mods |= modControl
-			usedCaret = true
-			str = str[1:]
-			continue
-		}
-		break
-	}
-
-	key := str
-	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !usedCaret {
-		// Uppercase letter after a hyphenated modifier implies Shift.
-		mods |= modShift
-	}
-	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
-		// macOS menus present letter keys uppercased.
-		key = strings.ToUpper(key)
-	}
-
-	var b strings.Builder
-	if mods&modControl != 0 {
-		b.WriteRune('⌃')
-	}
-	if mods&modOption != 0 {
-		b.WriteRune('⌥')
-	}
-	if mods&modShift != 0 {
-		b.WriteRune('⇧')
-	}
-	if mods&modCommand != 0 {
-		b.WriteRune('⌘')
-	}
-	b.WriteString(key)
-	return b.String()
-}
-
-// spokenKeyNames maps punctuation and whitespace keys to words a speech
-// engine can pronounce, so shortcuts like ^\ announce as "Control
-// Backslash" rather than a silent or literal glyph.
-var spokenKeyNames = map[string]string{
-	"\\": "Backslash",
-	"/":  "Slash",
-	"`":  "Backtick",
-	"~":  "Tilde",
-	"!":  "Exclamation",
-	"@":  "At Sign",
-	"#":  "Number Sign",
-	"$":  "Dollar Sign",
-	"%":  "Percent",
-	"^":  "Caret",
-	"&":  "Ampersand",
-	"*":  "Asterisk",
-	"(":  "Left Paren",
-	")":  "Right Paren",
-	"-":  "Minus",
-	"_":  "Underscore",
-	"=":  "Equals",
-	"+":  "Plus",
-	"[":  "Left Bracket",
-	"]":  "Right Bracket",
-	"{":  "Left Brace",
-	"}":  "Right Brace",
-	";":  "Semicolon",
-	":":  "Colon",
-	"'":  "Apostrophe",
-	"\"": "Quote",
-	",":  "Comma",
-	".":  "Period",
-	"<":  "Less Than",
-	">":  "Greater Than",
-	"?":  "Question Mark",
-	"|":  "Pipe",
-	" ":  "Space",
-}
-
-// AccessibilityString returns a fully spelled-out representation of the shortcut
-// for screen reader announcements.
-// Translates: M- → Meta, A- → Alt, C- → Control, ^ → Control, S- → Shift, s- → Super, H- → Hyper
-// Uppercase final letter implies Shift for hyphenated modifiers (e.g., M-O → Meta+Shift+O)
-// but NOT for ^ notation (^X is just Control+X, case is irrelevant with ^)
-func (s Shortcut) AccessibilityString() string {
-	if s == "" {
-		return ""
-	}
-
-	str := string(s)
-	var modifiers []string
-	hasExplicitShift := false
-	usedCaretNotation := false
-
-	// Parse modifier prefixes
-	for len(str) > 0 {
-		if len(str) >= 2 {
-			prefix := str[:2]
-			switch prefix {
-			case "M-":
-				modifiers = append(modifiers, "Meta")
-				str = str[2:]
-				continue
-			case "A-":
-				modifiers = append(modifiers, "Alt")
-				str = str[2:]
-				continue
-			case "C-":
-				modifiers = append(modifiers, "Control")
-				str = str[2:]
-				continue
-			case "S-":
-				modifiers = append(modifiers, "Shift")
-				hasExplicitShift = true
-				str = str[2:]
-				continue
-			case "s-":
-				modifiers = append(modifiers, "Super")
-				str = str[2:]
-				continue
-			case "H-":
-				modifiers = append(modifiers, "Hyper")
-				str = str[2:]
-				continue
-			}
-		}
-		// Check for ^ prefix (Control) - case of following letter doesn't imply shift
-		if len(str) >= 1 && str[0] == '^' {
-			modifiers = append(modifiers, "Control")
-			usedCaretNotation = true
-			str = str[1:]
-			continue
-		}
-		break
-	}
-
-	// The remaining string is the key
-	key := str
-
-	// Check if single letter key is uppercase (implies Shift)
-	// Only applies to hyphenated modifiers, NOT to ^ notation
-	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift && !usedCaretNotation {
-		modifiers = append(modifiers, "Shift")
-	}
-
-	// Spell out punctuation keys as words a speech engine can pronounce;
-	// a bare "\" or "/" would otherwise be announced as nothing (or a
-	// literal glyph), so the whole item failed to speak.
-	if spoken, ok := spokenKeyNames[key]; ok {
-		key = spoken
-	}
-
-	// Build the result with spaces (for natural speech)
-	if len(modifiers) == 0 {
-		return key
-	}
-
-	result := ""
-	for i, mod := range modifiers {
-		if i > 0 {
-			result += " "
-		}
-		result += mod
-	}
-	result += " " + key
-
-	return result
-}
+// Deprecated: a Shortcut is a key string like any other. Call SpeakKey.
+func (s Shortcut) AccessibilityString() string { return SpeakKey(string(s)) }
 
 // ActionGroup manages a collection of related actions.
 type ActionGroup struct {

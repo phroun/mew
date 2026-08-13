@@ -182,10 +182,10 @@ func (m *MenuItem) ShortcutDisplay() string {
 		// keyboard, this item genuinely has no key -- so the column is blank
 		// rather than advertising something that would not work.
 		if key := m.resolveCommandKey(); key != "" {
-			bound = core.Shortcut(key).DisplayString()
+			bound = core.DisplayKey(key)
 		}
 	case m.Shortcut != "":
-		bound = m.Shortcut.DisplayString()
+		bound = core.DisplayKey(string(m.Shortcut))
 	}
 	switch {
 	case bound != "" && m.ShortcutText != "":
@@ -990,7 +990,7 @@ func (m *Menu) announceCurrentItem() {
 		extras = append(extras, "submenu")
 	}
 	if item.Shortcut != "" {
-		extras = append(extras, item.Shortcut.AccessibilityString())
+		extras = append(extras, core.SpeakKey(string(item.Shortcut)))
 	}
 	if item.ShortcutText != "" {
 		extras = append(extras, item.ShortcutText)

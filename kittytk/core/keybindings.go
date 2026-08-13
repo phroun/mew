@@ -10,9 +10,9 @@ import "sync"
 //     "Return", "Tab", "Escape", "Backspace", "Delete",
 //     "PageUp", "PageDown", "Insert"
 //   - Function keys: "F1", "F2", ... "F12"
-//   - Alt combinations: "M-" prefix (e.g., "M-x", "M-Tab")
+//   - Mega combinations: "M-" prefix (e.g., "M-x", "M-Tab")
 //   - Shift combinations: "S-" prefix (e.g., "S-Tab", "S-Left")
-//   - Combined: "M-S-Tab" (Alt+Shift+Tab), "C-S-s" (Ctrl+Shift+s)
+//   - Combined: "M-S-Tab" (Mega+Shift+Tab), "C-S-s" (Ctrl+Shift+s)
 type KeyBindings struct {
 	mu       sync.RWMutex
 	bindings map[string][]string // action -> list of keys

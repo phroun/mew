@@ -69,7 +69,7 @@ func (e *Editor) verboseKeys(seq string) string {
 
 // verboseKeySequence spells a space-separated binding (e.g. "^B O") out for
 // beginners, for help pages written before the terse notation is introduced.
-// Modifiers spell out — ^ and C- become "Ctrl+", M- "Meta+", m- "Alt+", s-
+// Modifiers spell out — ^ and C- become "Ctrl+", M- "Meta+", m- "Micro+", s-
 // "Super+", G- "Glyph+", H- "Hyper+", and Shift attaches to the base key as
 // "Shift-" — and the keys of a chord are joined with "then", "followed by",
 // and "and finally" (see joinVerboseTerms).
@@ -197,7 +197,7 @@ var verboseModifiers = []struct{ prefix, word string }{
 	{"C-", "Ctrl+"},
 	{"G-", "Glyph+"},
 	{"M-", "Meta+"},
-	{"m-", "Alt+"},
+	{"m-", "Micro+"},
 	{"s-", "Super+"},
 	{"H-", "Hyper+"},
 }

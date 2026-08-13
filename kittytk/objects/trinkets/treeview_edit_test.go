@@ -441,7 +441,7 @@ func TestTreeEditActorPassThrough(t *testing.T) {
 		t.Fatal("TreeView must not be an unconditional editActor")
 	}
 
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // header bar -> content
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // header bar -> content
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // open the editor
 	if !tv.rowEditing {
 		t.Fatal("precondition: row editor open")

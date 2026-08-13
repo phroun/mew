@@ -126,7 +126,7 @@ func TestTreeEnumComboEditLifecycle(t *testing.T) {
 func TestTreeEnumMagicEntry(t *testing.T) {
 	tv, _ := newEnumTree("weird")
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) // confirm magic, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})  // confirm magic, stay editing
 	if !tv.editComboMagic {
 		t.Fatal("unlisted stored value did not create the magic entry")
 	}
@@ -220,7 +220,7 @@ func TestTreeSpacePopsTargetedCombo(t *testing.T) {
 // combo it dismisses too. Nothing is written either way.
 func TestTreeEnumEscapeCancels(t *testing.T) {
 	tv, _ := newEnumTree("png")
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})  // edit + popup
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Escape"}) // revert + cancel edit
 	if tv.rowEditing {
@@ -233,8 +233,8 @@ func TestTreeEnumEscapeCancels(t *testing.T) {
 	// Closed combo (a Space-confirm keeps the session alive): Escape
 	// dismisses without writing the confirmed-but-uncommitted choice.
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // highlight "Text"
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) // confirm, stay editing
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Space"})  // confirm, stay editing
 	if !tv.rowEditing || tv.editCombo.IsOpen() {
 		t.Fatal("precondition: live edit on a closed combo")
 	}
@@ -252,7 +252,7 @@ func TestTreeEnumEscapeCancels(t *testing.T) {
 func TestTreeEnumPopupEnterCommitsRow(t *testing.T) {
 	tv, _ := newEnumTree("png")
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // edit + popup
-	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})  // highlight "Text"
+	tv.HandleKeyPress(core.KeyPressEvent{Key: "Down"})   // highlight "Text"
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
 	if tv.rowEditing {
 		t.Fatal("popup Enter did not commit the row edit")

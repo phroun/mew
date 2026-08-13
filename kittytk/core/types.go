@@ -226,41 +226,9 @@ const (
 )
 
 // ParseKeyModifiers parses modifier prefixes from a key string.
-// Returns the modifiers and the remaining key name.
+// Returns the modifiers and the remaining key name. See parseKeyName, which
+// reads the same vocabulary everything else reads.
 func ParseKeyModifiers(key string) (KeyModifiers, string) {
-	var mods KeyModifiers
-	remaining := key
-
-	for {
-		switch {
-		case len(remaining) > 2 && remaining[:2] == "M-":
-			mods |= MegaModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "C-":
-			mods |= ControlModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "S-":
-			mods |= ShiftModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "s-":
-			mods |= SuperModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "m-":
-			mods |= MicroModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "H-":
-			mods |= HyperModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "G-":
-			mods |= GlyphModifier
-			remaining = remaining[2:]
-		default:
-			// Check for control character notation
-			if len(remaining) == 2 && remaining[0] == '^' {
-				mods |= ControlModifier
-				remaining = string(remaining[1])
-			}
-			return mods, remaining
-		}
-	}
+	mods, _, name := parseKeyName(key)
+	return mods, name
 }

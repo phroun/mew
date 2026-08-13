@@ -376,11 +376,11 @@ func TestTreeViewSeparatesEditFromActivateAndCollapseFromMovement(t *testing.T) 
 	tv := NewTreeView()
 	for key, want := range map[string]string{
 		"Return": core.CmdTrinketEdit,
-		"Space": core.CmdTrinketActivate,
-		"Left":  core.CmdTrinketItemLeft,
-		"Right": core.CmdTrinketItemRight,
-		"Minus": core.CmdTrinketCollapse,
-		"Plus":  core.CmdTrinketExpand,
+		"Space":  core.CmdTrinketActivate,
+		"Left":   core.CmdTrinketItemLeft,
+		"Right":  core.CmdTrinketItemRight,
+		"Minus":  core.CmdTrinketCollapse,
+		"Plus":   core.CmdTrinketExpand,
 	} {
 		tv.AbandonKeySequence()
 		if got := tv.KeyCommand(key); got != want {
