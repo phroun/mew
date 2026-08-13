@@ -243,7 +243,13 @@ type Window struct {
 	// keyContext is what this window's keyboard currently offers, rebuilt when
 	// the UI state changes (see refreshKeyContext). Held per window so a
 	// change here cannot stale another window's.
-	keyContext        *core.KeyContext
+	keyContext *core.KeyContext
+	// What the context above was built from, so a stale one is noticed at the
+	// point of use rather than needing everything that could change it to
+	// remember to say so.
+	keyContextReg     *core.KeyRegistry
+	keyContextRev     uint64
+	keyContextState   core.UIState
 	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
 	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
 
@@ -4068,10 +4074,15 @@ func (w *Window) windowUIState() core.UIState {
 // focus moving between windows -- costs no rebuild at all, because each
 // window's context is already built and still valid.
 func (w *Window) refreshKeyContext() {
-	ctx := core.FindKeyRegistry(w).BuildStateContext(w.windowUIState())
+	reg := w.FocusedKeyRegistry()
+	state := w.windowUIState()
+	ctx := reg.BuildStateContext(state)
 
 	w.mu.Lock()
 	w.keyContext = ctx
+	w.keyContextReg = reg
+	w.keyContextRev = reg.Revision()
+	w.keyContextState = state
 	mb := w.menuBar
 	w.mu.Unlock()
 
@@ -4081,8 +4092,29 @@ func (w *Window) refreshKeyContext() {
 	}
 }
 
-// KeyContext returns the set of actions this window currently offers.
+// FocusedKeyRegistry is the registry in force for whatever holds the focus in
+// this window (core.KeyRegistryFocuser). A window resolves its own frame
+// commands through it, so they stand down when the focus is inside a trinket
+// that took the keyboard on its own terms.
+func (w *Window) FocusedKeyRegistry() *core.KeyRegistry {
+	return core.FindFocusedKeyRegistry(w)
+}
+
+// KeyContext returns the set of actions this window currently offers,
+// rebuilding it first if the keymap behind it has moved on: the focus landing
+// inside a trinket with its own registry changes which keymap answers here,
+// and does so without changing any registry's revision.
 func (w *Window) KeyContext() *core.KeyContext {
+	w.mu.RLock()
+	ctx, reg, rev, state := w.keyContext, w.keyContextReg, w.keyContextRev, w.keyContextState
+	w.mu.RUnlock()
+
+	if ctx != nil && reg == w.FocusedKeyRegistry() &&
+		rev == reg.Revision() && state == w.windowUIState() {
+		return ctx
+	}
+	w.refreshKeyContext()
+
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.keyContext

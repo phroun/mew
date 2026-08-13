@@ -139,6 +139,12 @@ type Desktop struct {
 	// live accelerators into it, so a chord accelerator is RESOLVED rather
 	// than recognised by shape.
 	keyContext *core.KeyContext
+	// What the context above was built from: the registry in force where the
+	// FOCUS is, and its revision. Both are compared at the point of use, so a
+	// keymap coming into force is noticed without anything having to announce
+	// it (see refreshKeyContextIfStale).
+	keyContextReg *core.KeyRegistry
+	keyContextRev uint64
 
 	// System menu (always present, upper-left)
 	systemMenu *Menu
@@ -4463,7 +4469,7 @@ func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
 		return
 	}
 	mb.SetAcceleratorChord(core.AcceleratorChord())
-	d.keyContext = core.FindKeyRegistry(d).BuildStateContext(core.StateNormal)
+	d.buildKeyContext()
 	mb.SetKeyContext(d.keyContext)
 	mb.SetOnFocusChanged(d.lendMenuBarRow)
 }
@@ -5481,7 +5487,40 @@ var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)
 // The menu bar publishes its live accelerators into this same context, which
 // is what lets a chord accelerator be RESOLVED rather than recognised by
 // shape — including a multi-key one, since the context holds the prefix.
+// FocusedKeyRegistry is the registry in force for whatever holds the focus on
+// this desktop -- the active window's focused trinket, however deep
+// (core.KeyRegistryFocuser). The desktop resolves its own commands through it,
+// so they stand down while something has the keyboard on its own terms.
+func (d *Desktop) FocusedKeyRegistry() *core.KeyRegistry {
+	return core.FindFocusedKeyRegistry(d)
+}
+
+// buildKeyContext rebuilds the desktop's context and records what it was built
+// from, so staleness is a comparison at the point of use.
+func (d *Desktop) buildKeyContext() {
+	reg := d.FocusedKeyRegistry()
+	d.keyContext = reg.BuildStateContext(core.StateNormal)
+	d.keyContextReg = reg
+	d.keyContextRev = reg.Revision()
+}
+
+// refreshKeyContextIfStale rebuilds the context when the keymap behind it has
+// moved on -- the focus landing inside a trinket with its own registry changes
+// which keymap answers here, without changing any registry's revision -- and
+// hands the new one to the bar, which holds its own reference.
+func (d *Desktop) refreshKeyContextIfStale() {
+	if d.keyContext != nil && d.keyContextReg == d.FocusedKeyRegistry() &&
+		d.keyContextRev == d.keyContextReg.Revision() {
+		return
+	}
+	d.buildKeyContext()
+	if d.menuBar != nil {
+		d.menuBar.SetKeyContext(d.keyContext)
+	}
+}
+
 func (d *Desktop) KeyContext() *core.KeyContext {
+	d.refreshKeyContextIfStale()
 	// Bring the bar's accelerators into the context before anyone resolves
 	// against it. Publication happens when the assignment is recomputed,
 	// which otherwise waits for a paint -- so the first press of a chord

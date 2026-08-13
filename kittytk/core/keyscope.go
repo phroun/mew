@@ -61,3 +61,58 @@ func (w *TrinketBase) KeyRegistry() *KeyRegistry {
 	defer w.mu.RUnlock()
 	return w.keyRegistry
 }
+
+// A FocusedTrinketProvider names what currently holds the focus INSIDE it. A
+// desktop is one (the focus is inside whichever window is active); a window
+// answers through its FocusManager instead, which the walk below understands
+// too.
+type FocusedTrinketProvider interface {
+	FocusedTrinket() Trinket
+}
+
+// A KeyRegistryFocuser resolves keys against the registry in force where the
+// FOCUS is, rather than where it itself sits. A window and the desktop are
+// both this: their own accelerators must stand down when the focus is inside
+// something that took the keyboard, or the guest never sees the key.
+type KeyRegistryFocuser interface {
+	FocusedKeyRegistry() *KeyRegistry
+}
+
+// FindFocusedKeyRegistry returns the registry in force for whatever holds the
+// focus inside t -- down to the focused leaf, then up from there to the
+// nearest declaration. With nothing focused it answers for t itself.
+//
+// This is the question a window or the desktop asks. "Which keymap is in
+// force" is a property of where the FOCUS is, not of who is asking: a window
+// whose editor took the keyboard must not keep resolving ^Q against the
+// toolkit's table just because the window itself declared nothing.
+func FindFocusedKeyRegistry(t Trinket) *KeyRegistry {
+	if leaf := focusedLeaf(t); leaf != nil {
+		return FindKeyRegistry(leaf)
+	}
+	return FindKeyRegistry(t)
+}
+
+// focusedLeaf walks down from t to whatever actually holds the focus, through
+// however many nested focus scopes lie between (a desktop's active window, its
+// focused trinket, a pane inside that). Depth-bounded, because a tree that
+// somehow points at itself must not hang the keyboard.
+func focusedLeaf(t Trinket) Trinket {
+	current := t
+	for depth := 0; current != nil && depth < 32; depth++ {
+		var next Trinket
+		switch owner := current.(type) {
+		case FocusedTrinketProvider:
+			next = owner.FocusedTrinket()
+		case FocusManagerOwner:
+			if fm := owner.FocusManager(); fm != nil {
+				next = fm.FocusedTrinket()
+			}
+		}
+		if next == nil || next == current {
+			return current
+		}
+		current = next
+	}
+	return current
+}

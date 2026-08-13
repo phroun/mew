@@ -822,6 +822,14 @@ func (t *TrinketKeys) registry() *KeyRegistry {
 	if t.owner == nil {
 		return DefaultKeyRegistry()
 	}
+	// A window or the desktop resolves for where the FOCUS is, not for where
+	// it sits: its own frame commands stand down while something inside it has
+	// the keyboard on its own terms.
+	if f, ok := t.owner.(KeyRegistryFocuser); ok {
+		if r := f.FocusedKeyRegistry(); r != nil {
+			return r
+		}
+	}
 	return FindKeyRegistry(t.owner)
 }
 
