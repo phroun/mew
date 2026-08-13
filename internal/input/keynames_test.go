@@ -52,6 +52,12 @@ func TestNormalizeHostKey(t *testing.T) {
 		{"S-PageUp", "S-pgup"},
 		{"M-Left", "M-left"},
 		{"C-S-Home", "C-S-home"},
+		// Every modifier in the vocabulary peels, including the two readings
+		// of the meta lineage: M- is Mega and m- is Micro, two different keys
+		// with two different prefixes.
+		{"m-PageUp", "m-pgup"},
+		{"M-m-Home", "M-m-home"},
+		{"H-Delete", "H-fdel"},
 		{"F1", "F1"},   // unchanged: mew spells it the same way
 		{"a", "a"},     // printable, no entry
 		{"^K", "^K"},   // control chord, no entry

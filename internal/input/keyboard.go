@@ -97,7 +97,14 @@ func normalizeHostKey(key string) string {
 	prefix, base := "", key
 	for {
 		matched := false
-		for _, p := range []string{"H-", "M-", "S-", "s-", "C-", "A-", "G-"} {
+		// The modifier vocabulary, in canonical order. The order is for
+		// reading only -- every prefix is two characters and no two can match
+		// the same text, so at most one applies per pass whatever order they
+		// are tried in. Membership is what matters: m- (Micro) was missing, so
+		// a key spelled with it never had its prefix peeled and its base never
+		// reached the name table; A- was here and is not a modifier this
+		// vocabulary has. (^ is one character and is handled below.)
+		for _, p := range []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-"} {
 			if strings.HasPrefix(base, p) {
 				prefix, base = prefix+p, base[2:]
 				matched = true
