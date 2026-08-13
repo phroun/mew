@@ -69,9 +69,10 @@ func (e *Editor) verboseKeys(seq string) string {
 
 // verboseKeySequence spells a space-separated binding (e.g. "^B O") out for
 // beginners, for help pages written before the terse notation is introduced.
-// Modifiers spell out — ^ becomes "Ctrl+", M- "Meta+", s- "Super+", and Shift
-// attaches to the base key as "Shift-" — and the keys of a chord are joined
-// with "then", "followed by", and "and finally" (see joinVerboseTerms).
+// Modifiers spell out — ^ and C- become "Ctrl+", M- "Meta+", m- "Alt+", s-
+// "Super+", G- "Glyph+", H- "Hyper+", and Shift attaches to the base key as
+// "Shift-" — and the keys of a chord are joined with "then", "followed by",
+// and "and finally" (see joinVerboseTerms).
 //
 // Shift on a letter is shown only when it MATTERS: an explicit S- in the
 // binding, or a letter whose case is significant — i.e. the same binding with
@@ -159,9 +160,6 @@ func joinVerboseTerms(terms []string) string {
 // says whether the base letter's case encodes a real Shift (both cases bound).
 func verboseKeyToken(tok string, caseSignificant bool) string {
 	prefix, base := splitKeyToken(tok)
-	ctrl := strings.Contains(prefix, "^")
-	meta := strings.Contains(prefix, "M-")
-	super := strings.Contains(prefix, "s-")
 	shift := strings.Contains(prefix, "S-") // explicit Shift in the binding
 
 	// An uppercase letter means Shift only when its case is significant — the
@@ -171,15 +169,17 @@ func verboseKeyToken(tok string, caseSignificant bool) string {
 	}
 
 	var b strings.Builder
-	if ctrl {
-		b.WriteString("Ctrl+")
+	written := ""
+	for _, m := range verboseModifiers {
+		// ^ and C- are the same modifier spelled two ways, so a token carrying
+		// both says Ctrl once.
+		if strings.Contains(prefix, m.prefix) && m.word != written {
+			b.WriteString(m.word)
+			written = m.word
+		}
 	}
-	if meta {
-		b.WriteString("Meta+")
-	}
-	if super {
-		b.WriteString("Super+")
-	}
+	// Shift is written last because it attaches to the base key rather than
+	// standing on its own ("Meta+Shift-B").
 	if shift {
 		b.WriteString("Shift-")
 	}
@@ -187,23 +187,51 @@ func verboseKeyToken(tok string, caseSignificant bool) string {
 	return b.String()
 }
 
-// splitKeyToken peels the modifier prefixes (^, M-, S-, s-) off a token,
-// returning the accumulated prefix string and the bare base key.
+// verboseModifiers spells each modifier prefix out, in the order they are
+// written. The prefixes are distinguished by case (M- is Mega, m- is Micro —
+// two readings of the meta lineage, two different keys), so a Contains test
+// never confuses one for the other. S- is absent: Shift is written last, glued
+// to the base key.
+var verboseModifiers = []struct{ prefix, word string }{
+	{"^", "Ctrl+"},
+	{"C-", "Ctrl+"},
+	{"G-", "Glyph+"},
+	{"M-", "Meta+"},
+	{"m-", "Alt+"},
+	{"s-", "Super+"},
+	{"H-", "Hyper+"},
+}
+
+// keyModifierPrefixes is the modifier vocabulary in canonical order. Every
+// entry is two characters and no two can match the same text, so at most one
+// applies per pass and the order is for reading only. Membership is what
+// matters: a prefix missing here is never peeled, so its token keeps the raw
+// spelling ("C-x") where the whole point is to spell it out. (^ is one
+// character and is handled separately.)
+var keyModifierPrefixes = []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-"}
+
+// splitKeyToken peels the modifier prefixes (^ and keyModifierPrefixes) off a
+// token, returning the accumulated prefix string and the bare base key.
 func splitKeyToken(tok string) (prefix, base string) {
 	base = tok
 	for {
-		switch {
-		case strings.HasPrefix(base, "M-"):
-			prefix, base = prefix+"M-", base[2:]
-		case strings.HasPrefix(base, "S-"):
-			prefix, base = prefix+"S-", base[2:]
-		case strings.HasPrefix(base, "s-"):
-			prefix, base = prefix+"s-", base[2:]
-		case strings.HasPrefix(base, "^") && len(base) > 1:
-			prefix, base = prefix+"^", base[1:]
-		default:
-			return prefix, base
+		matched := false
+		for _, p := range keyModifierPrefixes {
+			if strings.HasPrefix(base, p) {
+				prefix, base = prefix+p, base[2:]
+				matched = true
+				break
+			}
 		}
+		if matched {
+			continue
+		}
+		// Control prefix, only when something follows it.
+		if strings.HasPrefix(base, "^") && len(base) > 1 {
+			prefix, base = prefix+"^", base[1:]
+			continue
+		}
+		return prefix, base
 	}
 }
 

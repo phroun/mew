@@ -68,6 +68,27 @@ func TestVerboseKeySequence(t *testing.T) {
 	}
 }
 
+// Every modifier in the vocabulary spells out. A prefix missing from the
+// peeling loop is not merely unspelled — it survives into the base key and is
+// printed raw ("C-x"), which is exactly what this helper exists to avoid.
+func TestVerboseKeySequenceSpellsEveryModifier(t *testing.T) {
+	none := func(string) bool { return false }
+	cases := []struct{ seq, want string }{
+		{"C-x", "Ctrl+X"},         // the long spelling of ^
+		{"G-€", "Glyph+€"},        // a Glyph chord carries its own character
+		{"m-pgup", "Alt+Page Up"}, // Micro, the other reading of meta
+		{"H-fdel", "Hyper+Delete"},
+		{"M-m-home", "Meta+Alt+Home"},   // Mega and Micro are different keys
+		{"C-S-home", "Ctrl+Shift-Home"}, // Shift still glues to the base
+		{"^C-x", "Ctrl+X"},              // both spellings of one modifier: said once
+	}
+	for _, c := range cases {
+		if got := verboseKeySequence(c.seq, none); got != c.want {
+			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
+		}
+	}
+}
+
 // When both case variants of a key are bound, the case disambiguates them and
 // Shift is shown for the uppercase one.
 func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {
