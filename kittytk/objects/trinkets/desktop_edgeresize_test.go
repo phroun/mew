@@ -164,3 +164,65 @@ func TestDesktopEdgeStandsDownOnCellSurfaces(t *testing.T) {
 		t.Errorf("cell surface answered %d at the edge, want 0", edges)
 	}
 }
+
+// The OS's own resize strip sits just OUTSIDE the client area, where no
+// surface events arrive — so when the pointer steps off across an edge, the
+// affordance would go dark exactly where resizing is still possible. The
+// leave handler reads the global pointer instead, keeps the band lit across
+// the combined strip, and a poll keeps it honest until the pointer returns
+// or wanders off.
+func TestAffordancePersistsIntoTheOSResizeStrip(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		surf := plat.surfaces[0] // client rect: 50,60 .. 850,540 in screen px
+		h := surf.handler
+
+		// Hover our inner sliver, then step off the right edge into the OS
+		// strip: the band must stay lit.
+		h.Event(core.MouseMoveEvent{X: 798, Y: 240})
+		plat.gx, plat.gy = 853, 300 // 3px past the client edge
+		h.Event(core.MouseLeaveEvent{})
+		if edges := d.hostHoverEdges(); edges != window.ResizeEdgeRight {
+			t.Fatalf("band after stepping into the OS strip = %d, want right", edges)
+		}
+
+		// Slide along the strip toward the bottom corner: both bits light.
+		plat.gy = 538
+		d.hostOutsidePoll()
+		if edges := d.hostHoverEdges(); edges != window.ResizeEdgeRight|window.ResizeEdgeBottom {
+			t.Fatalf("band near the outside corner = %d, want right|bottom", edges)
+		}
+
+		// Wander past the strip: the band clears and the poll retires.
+		plat.gx = 900
+		d.hostOutsidePoll()
+		if edges := d.hostHoverEdges(); edges != 0 {
+			t.Fatalf("band beyond the strip = %d, want none", edges)
+		}
+		d.mu.RLock()
+		timer := d.hostEdge.outsideTimer
+		d.mu.RUnlock()
+		if timer != nil {
+			t.Error("outside poll still armed after the pointer wandered off")
+		}
+
+		// Above the client area is the TITLE BAR on a decorated window — a
+		// move, not a resize — so leaving across the top lights nothing.
+		plat.gx, plat.gy = 400, 55
+		h.Event(core.MouseLeaveEvent{})
+		if edges := d.hostHoverEdges(); edges != 0 {
+			t.Fatalf("band in the title bar area = %d, want none", edges)
+		}
+
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
