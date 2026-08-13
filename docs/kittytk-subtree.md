@@ -58,6 +58,52 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.19 sync (record)
+
+v0.1.17-alpha -> **v0.1.19-alpha**, landing the keymap-registry work as PR
+[#32](https://github.com/phroun/kittytk/pull/32) plus the go.mod repair it
+needed as [#33](https://github.com/phroun/kittytk/pull/33).
+
+#32 is the KSP arc: key bindings become a `KeyRegistry` of keys to COMMANDS
+with a `KeyContext` per situation (resolution through key-sequence-processor,
+so chords and precedence levels come free); registries cascade down the
+trinket tree so a guest that takes the keyboard leaves the toolkit's bindings
+unresolvable while it has the focus; menu items name a command and ask what
+key means it HERE, so the answer follows the focus; environment hints
+(`(mac)`, `(only_mac)`) let one table describe every platform; and key names
+are read off ONE table by parsing, macOS-native display and the screen reader
+alike. It retired the parallel matcher (`Shortcut.Matches`, `ShortcutMap`,
+`DefaultShortcuts`, `Action.MatchesKey`, `ActionGroup.HandleKey`,
+`KeyBindings`' key lookups) and `Application`'s panicking event loop, which
+was the tree's only `go vet` complaint. 109 files, +9513/-1816, cut from our
+vendored tree.
+
+**New dependency — key-sequence-processor v0.1.5** (MIT, stdlib-only, so not
+a mew-only dep by the §2 licence test). Per fork-sync-policy §3 the PR sent
+this as a sentence rather than a go.mod diff, and **the `go get` landed after
+the tag instead of before it**: v0.1.18-alpha does not build at the default
+`-mod=readonly`, because `core/keymap.go` imports a module `go.mod` never
+required. #33 declares it (and `go mod tidy` promoted `golang.org/x/sys` from
+indirect to direct, its own correction of a pre-existing classification).
+**v0.1.18-alpha is permanently broken** — the module proxy caches immutably by
+version, so re-tagging could not have repaired it and v0.1.19-alpha is the
+fix. The verification lesson is worth keeping: check a candidate tag with
+`GOWORK=off go build ./...` at the DEFAULT `-mod=readonly`, never with
+`-mod=mod`, which resolves and writes the missing require on the fly and
+hides exactly this failure.
+
+Our side is otherwise a **pin-only** resync: every shared file is
+byte-identical to the tag, so nothing came back down. `Build` 17 -> **19**,
+kittytk's own go.mod keyseq v0.1.4 -> v0.1.5, root go.mod pin v0.1.17-alpha ->
+v0.1.19-alpha, app/go.mod pin v0.1.16-alpha -> v0.1.19-alpha (it had lagged a
+release), go.sum per module via `GOWORK=off go mod tidy`. The vendored tree
+also carries direct-key-handler v0.3.17 and purfecterm v0.2.40 where upstream
+sits at v0.3.12/v0.2.30 — those were NOT sent, and upstream builds and tests
+green at its own versions, so no bump was needed. The only remaining
+vendored<->upstream divergence is the mew boundary: the **25** `//go:build
+mew` files (the set has grown; `capture_relay_test.go` joined it) plus
+go.mod's mew require.
+
 ### The v0.1.7 sync (record)
 
 v0.1.5-alpha -> **v0.1.7-alpha** was done as a full content overlay (upstream
