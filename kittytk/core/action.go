@@ -134,22 +134,6 @@ func (a *Action) SetChecked(checked bool) {
 	}
 }
 
-// MatchesKey returns true if the key event matches any shortcut for this action.
-func (a *Action) MatchesKey(event KeyPressEvent) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.Shortcut.Matches(event) {
-		return true
-	}
-	for _, s := range a.AlternateShortcuts {
-		if s.Matches(event) {
-			return true
-		}
-	}
-	return false
-}
-
 // Shortcut represents a keyboard shortcut using the key handler format.
 // Examples: "^Q" (Ctrl+Q), "M-x" (Mega+x), "S-Tab" (Shift+Tab), "F1" (plain key)
 type Shortcut string
@@ -161,61 +145,6 @@ const NoShortcut Shortcut = ""
 // This is the primary way to create shortcuts.
 func NewShortcut(key string) Shortcut {
 	return Shortcut(key)
-}
-
-// Matches returns true if the key event matches this shortcut.
-// Control combinations have two accepted spellings - caret ("^X")
-// and prefix ("C-x") - so both sides are canonicalized before
-// comparing; "^\\" matches an event reported as "C-\\".
-func (s Shortcut) Matches(event KeyPressEvent) bool {
-	if s == "" {
-		return false
-	}
-	if event.Key == string(s) {
-		return true
-	}
-	return canonicalKeyString(event.Key) == canonicalKeyString(string(s))
-}
-
-// canonicalKeyString reduces a key-handler-format string to a single
-// canonical spelling: modifier prefixes are kept in encounter order,
-// and a Control modifier on a single-character key becomes caret
-// notation with letters uppercased ("C-h" -> "^H"). Control on a
-// named key stays in prefix form ("C-Up").
-func canonicalKeyString(k string) string {
-	mods := ""
-	rest := k
-	ctrl := false
-	for {
-		if len(rest) > 1 && rest[0] == '^' {
-			ctrl = true
-			rest = rest[1:]
-			continue
-		}
-		if len(rest) > 2 {
-			switch rest[:2] {
-			case "C-":
-				ctrl = true
-				rest = rest[2:]
-				continue
-			case "M-", "A-", "S-", "s-", "H-":
-				mods += rest[:2]
-				rest = rest[2:]
-				continue
-			}
-		}
-		break
-	}
-	if !ctrl {
-		return mods + rest
-	}
-	if len(rest) == 1 {
-		if c := rest[0]; c >= 'a' && c <= 'z' {
-			rest = string(c - 'a' + 'A')
-		}
-		return mods + "^" + rest
-	}
-	return mods + "C-" + rest
 }
 
 // String returns the shortcut in key handler format.
@@ -301,22 +230,6 @@ func (g *ActionGroup) All() []*Action {
 	return result
 }
 
-// HandleKey tries to match a key event against all actions.
-// Returns the matched action if found and triggered, nil otherwise.
-func (g *ActionGroup) HandleKey(event KeyPressEvent) *Action {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	for _, action := range g.actions {
-		if action.Enabled && action.MatchesKey(event) {
-			// Trigger outside lock to avoid deadlock
-			go action.Trigger()
-			return action
-		}
-	}
-	return nil
-}
-
 // ShortcutMap provides a way to customize keybindings.
 // It maps action IDs to shortcuts.
 type ShortcutMap struct {
@@ -369,28 +282,6 @@ func (m *ShortcutMap) Apply(group *ActionGroup) {
 		}
 		action.mu.Unlock()
 	}
-}
-
-// FindAction returns the action ID that matches the given shortcut.
-// Returns empty string if no match is found.
-func (m *ShortcutMap) FindAction(shortcut Shortcut) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for actionID, shortcuts := range m.bindings {
-		for _, s := range shortcuts {
-			if s == shortcut {
-				return actionID
-			}
-		}
-	}
-	return ""
-}
-
-// FindActionByKey returns the action ID that matches the given key string.
-// This is a convenience method that takes a key handler format string directly.
-func (m *ShortcutMap) FindActionByKey(key string) string {
-	return m.FindAction(Shortcut(key))
 }
 
 // StandardActions provides common action IDs.

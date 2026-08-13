@@ -118,6 +118,38 @@ func macNativeKeyDisplay(key string) string {
 	return b.String()
 }
 
+// SameKey reports whether two key spellings name the same keystroke.
+//
+// A key can be written more than one way and mean the same press. Control has
+// two accepted spellings, caret and prefix, so a chord declared "^\\" has to
+// match an event reported as "C-\\"; and Control folds a letter's case, so ^H
+// and C-h are one keystroke rather than two. Modifiers are compared as a SET,
+// so "M-^X" and "C-M-x" agree however they were ordered.
+//
+// Case is significant everywhere else: M-a and M-A are two bindings, told
+// apart by Shift.
+func SameKey(a, b string) bool {
+	if a == b {
+		return a != ""
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	aMods, _, aName := parseKeyName(a)
+	bMods, _, bName := parseKeyName(b)
+	if aMods != bMods {
+		return false
+	}
+	if aName == bName {
+		return true
+	}
+	// Control is the one modifier that folds case: a control chord is a byte
+	// below 0x20, which has no case to carry.
+	return aMods&ControlModifier != 0 &&
+		len(aName) == 1 && len(bName) == 1 &&
+		strings.EqualFold(aName, bName)
+}
+
 // spokenKeyNames maps punctuation and whitespace keys to words a speech
 // engine can pronounce, so shortcuts like ^\ announce as "Control
 // Backslash" rather than a silent or literal glyph.

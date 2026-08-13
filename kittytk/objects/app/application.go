@@ -514,10 +514,6 @@ func (app *Application) processEvents() {
 			return
 
 		case core.KeyPressEvent:
-			// Check global shortcuts first
-			if app.handleShortcut(e) {
-				continue
-			}
 			// Try focus manager
 			if fm.HandleKeyPress(e) {
 				continue
@@ -566,34 +562,6 @@ func (app *Application) filterEvent(event core.Event) bool {
 			return true
 		}
 	}
-	return false
-}
-
-// handleShortcut checks if a key event matches a global shortcut.
-//
-// ^Q and ^W used to be hardcoded here, quitting the process and closing the
-// active window. They are ordinary bindings now -- app_quit and window_close
-// -- so they belong to the keymap and reach every surface rather than only
-// this path. Leaving the hardcoded pair would have made ^Q mean something
-// different here than it means anywhere else: the whole process, rather than
-// one application.
-func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
-	// Check registered shortcuts using key handler format directly
-	app.mu.RLock()
-	shortcuts := app.shortcuts
-	app.mu.RUnlock()
-
-	if shortcuts == nil {
-		return false
-	}
-
-	// Direct lookup - key handler format is the source of truth
-	actionID := shortcuts.FindActionByKey(event.Key)
-	if actionID != "" {
-		// TODO: Trigger the action through action registry
-		return true
-	}
-
 	return false
 }
 

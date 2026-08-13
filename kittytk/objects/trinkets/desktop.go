@@ -3875,7 +3875,7 @@ func (d *Desktop) checkMenuItemShortcuts(menu *Menu, event core.KeyPressEvent) b
 		// Check if this item's shortcut matches. Trigger routes
 		// through the command registry (dispatch by stable ID), and
 		// keeps checkable-toggle semantics consistent with clicking.
-		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+		if item.Shortcut != "" && core.SameKey(string(item.Shortcut), event.Key) {
 			item.Trigger()
 			return true
 		}

@@ -208,32 +208,6 @@ func (kb *KeyBindings) Keys(action string) []string {
 	return kb.bindings[action]
 }
 
-// MatchesAction checks if a key matches any binding for an action.
-func (kb *KeyBindings) MatchesAction(action, key string) bool {
-	kb.mu.RLock()
-	defer kb.mu.RUnlock()
-	for _, k := range kb.bindings[action] {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
-
-// FindAction returns the action for a key, or empty string if none.
-func (kb *KeyBindings) FindAction(key string) string {
-	kb.mu.RLock()
-	defer kb.mu.RUnlock()
-	for action, keys := range kb.bindings {
-		for _, k := range keys {
-			if k == key {
-				return action
-			}
-		}
-	}
-	return ""
-}
-
 // AllBindings returns a copy of all bindings.
 func (kb *KeyBindings) AllBindings() map[string][]string {
 	kb.mu.RLock()

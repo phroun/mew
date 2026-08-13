@@ -2617,7 +2617,7 @@ func menuShortcutMatch(menu *Menu, event core.KeyPressEvent) bool {
 		if item == nil || item.Separator || !item.Enabled {
 			continue
 		}
-		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+		if item.Shortcut != "" && core.SameKey(string(item.Shortcut), event.Key) {
 			item.Trigger()
 			return true
 		}

@@ -108,3 +108,25 @@ func TestCapturedKeyboardKeepsTheKeyFromTheItem(t *testing.T) {
 		t.Error("^W reached the menu item although the guest had the keyboard")
 	}
 }
+
+// An item carrying a literal SPELLING rather than a command is still served,
+// which is what a protocol app declaring `shortcut "^N"` relies on. The two
+// accepted spellings of Control agree, so the declaration matches however the
+// backend reported the press.
+func TestBarHandlesALiteralShortcutInEitherSpelling(t *testing.T) {
+	for _, pressed := range []string{"^N", "C-n"} {
+		fired := 0
+		bar := NewMenuBar()
+		menu := NewMenu("File")
+		menu.AddItem(NewMenuItem("&New").SetShortcut(core.NewShortcut("^N")).
+			SetOnTriggered(func() { fired++ }))
+		bar.AddMenu(menu)
+
+		if !bar.HandleShortcut(core.KeyPressEvent{Key: pressed}) || fired != 1 {
+			t.Errorf("%s did not reach the item declared as ^N (fired %d)", pressed, fired)
+		}
+		if bar.HandleShortcut(core.KeyPressEvent{Key: "^Q"}) {
+			t.Errorf("%s: the bar claimed a key no item declares", pressed)
+		}
+	}
+}
