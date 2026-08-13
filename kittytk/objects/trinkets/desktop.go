@@ -103,6 +103,10 @@ type Desktop struct {
 	// core.FindGraphicalFrames to pick their client-area contract.
 	graphicalFrames bool
 
+	// hostEdge is the desktop's OWN resize-edge state: the OS window's grab
+	// zones, hover bands and drag gesture (see desktop_edgeresize.go).
+	hostEdge hostEdgeState
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -3220,6 +3224,13 @@ func (d *Desktop) updateCursor(x, y core.Unit) {
 	if !ok {
 		return
 	}
+	if edges := d.hostHoverEdges(); edges != 0 {
+		// The desktop's own edge zone claimed the point (hostHoverUpdate ran
+		// before the window manager saw the move); its cursor wins for the
+		// same reason its press does.
+		cc.SetCursor(window.ResizeCursorForEdge(edges))
+		return
+	}
 	cc.SetCursor(wm.CursorAt(x, y))
 }
 
@@ -3714,10 +3725,23 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.MousePressEvent:
+		// The desktop's own edge sliver is the outermost thing on the
+		// surface — like the OS resize border it extends — so it wins over
+		// anything corralled against the edge.
+		if d.hostResizeBegin(e) {
+			return true
+		}
 		return wm.HandleMousePress(e)
 
 	case core.MouseMoveEvent:
 		core.WheelPointerMoved()
+		// A desktop-edge resize in progress owns the pointer outright.
+		if d.hostResizeMove(e) {
+			return true
+		}
+		if e.Buttons == 0 {
+			d.hostHoverUpdate(e.X, e.Y)
+		}
 		handled := wm.HandleMouseMove(e)
 		// The resize cursor over a window edge is a hover affordance. While a
 		// button is held, a drag begun elsewhere is in progress: leave the
@@ -3735,6 +3759,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// the cursor to the arrow.
 		wm.ClearResizeHover()
 		wm.ClearHover()
+		d.hostHoverClear()
 		if d.menuBar != nil {
 			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 		}
@@ -3747,6 +3772,9 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.MouseReleaseEvent:
+		if d.hostResizeEnd(e) {
+			return true
+		}
 		return wm.HandleMouseRelease(e)
 
 	case core.MouseWheelEvent:
@@ -4955,6 +4983,9 @@ func (d *Desktop) Paint(p *core.Painter) {
 		statusPainter := p.WithOffset(0, y)
 		d.statusBar.Paint(statusPainter)
 	}
+
+	// The desktop's own resize affordance, over all of its chrome.
+	d.paintHostEdgeHover(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
 	// They must be rendered AFTER windows as separate layers for drop shadows.

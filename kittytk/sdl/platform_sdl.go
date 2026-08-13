@@ -2378,6 +2378,16 @@ func (s *sdlSurface) SetScreenSizePx(w, h int) {
 	}
 }
 
+// NativeZoomed implements platform.NativeZoomReporter: a maximized or
+// fullscreen OS window holds its geometry, so edge-resize grab zones on its
+// content stand down.
+func (s *sdlSurface) NativeZoomed() bool {
+	if s.closed || s.win.window == nil {
+		return false
+	}
+	return s.win.window.Flags()&(sdl3.WINDOW_MAXIMIZED|sdl3.WINDOW_FULLSCREEN) != 0
+}
+
 // WorkAreaPx implements platform.NativeSurface: the usable bounds of
 // the display the window occupies (the macOS option-zoom target).
 func (s *sdlSurface) WorkAreaPx() (int, int, int, int) {

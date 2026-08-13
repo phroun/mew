@@ -182,6 +182,7 @@ const (
 	WINDOW_BORDERLESS             = csdl.WINDOW_BORDERLESS
 	WINDOW_MINIMIZED              = csdl.WINDOW_MINIMIZED
 	WINDOW_MAXIMIZED              = csdl.WINDOW_MAXIMIZED
+	WINDOW_FULLSCREEN             = csdl.WINDOW_FULLSCREEN
 	WINDOW_METAL                  = csdl.WINDOW_METAL
 
 	// WINDOW_TRANSPARENT is the SDL3-only flag this whole migration was

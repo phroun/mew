@@ -1872,8 +1872,9 @@ func (w *Window) Paint(p *core.Painter) {
 	w.paintResizeHover(p, localBounds)
 }
 
-// resizeHoverAlpha is the opacity of the resize-edge hover highlight.
-const resizeHoverAlpha = 0.25
+// ResizeHoverAlpha is the opacity of the resize-edge hover highlight,
+// shared with the desktop's own edge bands so the two read as one system.
+const ResizeHoverAlpha = 0.25
 
 // SetResizeHoverRects sets the window-local rectangles highlighted while
 // the pointer hovers a resize edge (empty clears the highlight). Returns
@@ -2045,7 +2046,7 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 		// the geometry paints on, so the band reaches exactly the far edge.
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
-			255, 255, 255, resizeHoverAlpha)
+			255, 255, 255, ResizeHoverAlpha)
 	}
 }
 

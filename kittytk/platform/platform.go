@@ -122,6 +122,14 @@ type NativeSurface interface {
 	Close()
 }
 
+// NativeZoomReporter is an optional NativeSurface capability: whether the
+// OS window is currently maximized or fullscreen. Edge-resizing a filled
+// window makes no sense — the OS holds its geometry — so grab zones that
+// consult this stand down while it reports true.
+type NativeZoomReporter interface {
+	NativeZoomed() bool
+}
+
 // CursorController is an optional Platform capability: set the system
 // mouse cursor shape for the application. Platforms that don't implement
 // it keep the default arrow.
