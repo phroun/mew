@@ -308,34 +308,6 @@ type RoundedClipper interface {
 	SetRoundedClip(r UnitRect, radius Unit)
 }
 
-// ResizeGripProvider reports the window resize-grip thickness (in
-// units) for graphical frames: only the outer sliver of a window
-// edge acts as a resize handle (a quarter of a layout column, never
-// less than 4 device pixels), so trinkets living at the window's
-// edge remain clickable. Zero means the cell-frame behavior: the
-// whole border row/column is the grip (it IS the frame there).
-// The desktop provides it; window hosts discover it by ancestry
-// with FindResizeGrip.
-type ResizeGripProvider interface {
-	GraphicalResizeGrip() Unit
-}
-
-// FindResizeGrip walks up the trinket tree for a ResizeGripProvider.
-// Default (no provider found): 0 - classic full-cell grip zones.
-func FindResizeGrip(w Trinket) Unit {
-	for current := Trinket(w); current != nil; {
-		if p, ok := current.(ResizeGripProvider); ok {
-			return p.GraphicalResizeGrip()
-		}
-		parent := current.Parent()
-		if parent == nil {
-			return 0
-		}
-		current = parent
-	}
-	return 0
-}
-
 // GraphicalFrameProvider is the trinket-side carrier of the frame
 // mode: the desktop reports true when its backend paints rounded
 // window frames, and windows discover it by walking their ancestry

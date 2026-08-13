@@ -6,12 +6,38 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
+// graphicalDesktop is the minimum a window's ancestry has to answer for the
+// graphical resize rule to apply: which kind of frame the surface paints.
+// The manager used to be handed a grip WIDTH for this; it is one bit, and
+// FindGraphicalFrames already asks for it.
+type graphicalDesktop struct {
+	core.TrinketBase
+	kids []core.Trinket
+}
+
+func (g *graphicalDesktop) GraphicalWindowFrames() bool         { return true }
+func (g *graphicalDesktop) Children() []core.Trinket            { return g.kids }
+func (g *graphicalDesktop) AddChild(c core.Trinket)             { g.kids = append(g.kids, c) }
+func (g *graphicalDesktop) RemoveChild(core.Trinket)            {}
+func (g *graphicalDesktop) ChildAt(core.UnitPoint) core.Trinket { return nil }
+func (g *graphicalDesktop) Layout()                             {}
+func (g *graphicalDesktop) LayoutManager() core.LayoutManager   { return nil }
+func (g *graphicalDesktop) SetLayoutManager(core.LayoutManager) {}
+
+func newGraphicalManager() (*WindowManager, *Window) {
+	m, win := newPositioningManager(true)
+	d := &graphicalDesktop{}
+	d.Init(d)
+	m.SetDesktop(d)
+	win.SetParent(d)
+	return m, win
+}
+
 // Graphical frames narrow the resize grip to the outer edge sliver
 // so trinkets at the window edge stay clickable; cell frames keep the
 // classic full-cell zones.
 func TestResizeGripNarrowsEdgeZones(t *testing.T) {
-	m, win := newPositioningManager(true)
-	m.SetResizeGrip(2) // any non-zero value: it only says "graphical frame"
+	m, win := newGraphicalManager()
 
 	// The grab zone is a quarter column or 3 device pixels, whichever is
 	// bigger, border included (ResizeHitGrip). At ppu 1 with an 8-unit cell
@@ -36,8 +62,7 @@ func TestResizeGripNarrowsEdgeZones(t *testing.T) {
 // The bottom band narrows too: on cell frames a whole row grabbed
 // the bottom edge; with a grip only the outer sliver does.
 func TestResizeGripNarrowsBottomBand(t *testing.T) {
-	m, win := newPositioningManager(true)
-	m.SetResizeGrip(2)
+	m, win := newGraphicalManager()
 
 	// 5 units above the bottom edge (y=235 of 80..240): outside the
 	// grip - not a resize.
@@ -61,8 +86,7 @@ func TestResizeGripNarrowsBottomBand(t *testing.T) {
 // grip and dragging up grows the window and moves its top edge up, mirroring
 // the bottom edge. (The TUI reserves the top row for title dragging.)
 func TestTopGripResizesGraphical(t *testing.T) {
-	m, win := newPositioningManager(true)
-	m.SetResizeGrip(2)
+	m, win := newGraphicalManager()
 
 	// 1 unit below the top edge (y=81 of 80..240): within the grip.
 	// Drag up 13 units.
@@ -79,8 +103,7 @@ func TestTopGripResizesGraphical(t *testing.T) {
 // The top corner grabs both edges: dragging the top-left corner up-and-left
 // moves X and Y and grows both dimensions.
 func TestTopLeftCornerResizesGraphical(t *testing.T) {
-	m, win := newPositioningManager(true)
-	m.SetResizeGrip(2)
+	m, win := newGraphicalManager()
 
 	// Top-left corner (x=81 of 80..400, y=81 of 80..240): within both grips.
 	m.HandleMousePress(core.MousePressEvent{X: 81, Y: 81, Button: core.LeftButton})

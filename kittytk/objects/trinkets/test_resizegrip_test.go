@@ -8,46 +8,35 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 )
 
-// The desktop derives the graphical resize grip: a quarter of a
-// layout column, floored at whichever is larger of 3 device pixels or
-// a quarter cell width; zero on cell frames.
-func TestDesktopResizeGripDerivation(t *testing.T) {
+// What decides a window's resize-edge geometry is which KIND of frame the
+// surface paints, and nothing else. The desktop used to derive a grip WIDTH
+// here — a quarter column times the device scale, floored — and pass it down;
+// every consumer then compared it to zero and computed its own width from the
+// metrics, so the arithmetic was doing nothing but carrying one bit. The bit
+// already had a name.
+func TestDesktopReportsGraphicalFrames(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
-	// Scale 2: quarter-column (2 units) x scale 2 = 4 units = 8 px. The floor
-	// (max(ceil(3/2)=2, quarter-cell 2) = 2 units) does not bind.
-	px2, err := raster.NewScaled(640, 480, 2)
+	px, err := raster.NewScaled(640, 480, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := NewDesktop()
-	d.SetBackend(px2)
-	if got := d.GraphicalResizeGrip(); got != 4 {
-		t.Errorf("scale 2 grip = %d units, want 4 (8 device px)", got)
+	d.SetBackend(px)
+	if !d.GraphicalWindowFrames() {
+		t.Error("a pixel surface reports cell frames")
 	}
 
-	// Scale 1: quarter-column x 1 = 2 units = 2 px, below the floor
-	// max(3 device px = 3 units, quarter-cell = 2 units) = 3 units.
-	px1, err := raster.New(640, 480)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d1 := NewDesktop()
-	d1.SetBackend(px1)
-	if got := d1.GraphicalResizeGrip(); got != 3 {
-		t.Errorf("scale 1 grip = %d units, want 3 (3px floor)", got)
-	}
-
-	// Cell backend: zero (the whole border cell is the grip there).
 	dc := NewDesktop()
 	dc.SetBackend(&nullBackend{})
-	if got := dc.GraphicalResizeGrip(); got != 0 {
-		t.Errorf("cell frame grip = %d, want 0", got)
+	if dc.GraphicalWindowFrames() {
+		t.Error("a cell surface reports graphical frames")
 	}
 }
 
-// MDI panes inherit the grip through their ancestry.
-func TestMDIPaneInheritsResizeGrip(t *testing.T) {
+// MDI panes inherit the answer through their ancestry, which is how an
+// embedded pane's children get the same edges as the desktop's own windows.
+func TestMDIPaneInheritsGraphicalFrames(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, err := raster.NewScaled(640, 480, 2)
 	if err != nil {
@@ -60,7 +49,7 @@ func TestMDIPaneInheritsResizeGrip(t *testing.T) {
 	win := window.NewWindow("host")
 	win.SetContent(pane)
 	d.WindowManager().AddWindow(win)
-	if got := core.FindResizeGrip(pane.Self()); got != 4 {
-		t.Errorf("MDI pane grip = %d, want 4 (inherited from desktop)", got)
+	if !core.FindGraphicalFrames(pane.Self()) {
+		t.Error("MDI pane did not inherit graphical frames from the desktop")
 	}
 }

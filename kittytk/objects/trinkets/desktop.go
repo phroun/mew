@@ -103,10 +103,6 @@ type Desktop struct {
 	// core.FindGraphicalFrames to pick their client-area contract.
 	graphicalFrames bool
 
-	// resizeGrip is the graphical resize-handle thickness in units
-	// (0 on cell frames, where the whole border cell is the grip).
-	resizeGrip core.Unit
-
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -552,32 +548,7 @@ func (d *Desktop) SetBackend(backend core.RenderBackend) {
 	// this through the desktop via core.FindGraphicalFrames.
 	_, d.graphicalFrames = backend.(core.RoundedRectDrawer)
 
-	// Resize grip: on graphical frames only the outer sliver of a
-	// window edge resizes - a quarter of a layout column, scaled by
-	// the device scale so the physical grab target grows with the
-	// zoom, floored at whichever is larger of 3 device pixels or a
-	// quarter of a cell width - so edge trinkets stay clickable.
-	d.resizeGrip = 0
-	if d.graphicalFrames {
-		scale := 1
-		if ds, ok := backend.(core.DeviceScaler); ok && ds.Scale() > 0 {
-			scale = ds.Scale()
-		}
-		grip := rootMetrics.CellWidth / 4 * core.Unit(scale)
-		// Floor: at least 3 device pixels, and at least a quarter of a cell
-		// width, whichever is larger.
-		floor := core.Unit((3 + scale - 1) / scale) // ceil(3/scale) units == >= 3 device px
-		if quarterCell := rootMetrics.CellWidth / 4; quarterCell > floor {
-			floor = quarterCell
-		}
-		if grip < floor {
-			grip = floor
-		}
-		d.resizeGrip = grip
-	}
-
 	d.windowManager = window.NewWindowManager()
-	d.windowManager.SetResizeGrip(d.resizeGrip)
 	if sp, ok := backend.(core.SmoothPositioner); ok && sp.SmoothPositioning() {
 		// Pixel surfaces place windows at unit granularity; cell-grid
 		// surfaces keep the default snap-to-cell behavior.
@@ -837,14 +808,6 @@ func (d *Desktop) SetWallpaperChunk(px int) {
 	d.wallpaperChunkPx = px
 	d.mu.Unlock()
 	d.RequestUpdate()
-}
-
-// GraphicalResizeGrip implements core.ResizeGripProvider: the
-// resize-handle thickness for graphical frames (0 on cell frames).
-func (d *Desktop) GraphicalResizeGrip() core.Unit {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.resizeGrip
 }
 
 // GraphicalWindowFrames implements core.GraphicalFrameProvider: true
@@ -1557,7 +1520,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 	if cc, ok := plat.(platform.CursorController); ok {
 		host.SetCursorSetter(cc.SetCursor)
 	}
-	host.SetResizeGrip(d.resizeGrip)
+	host.SetGraphicalFrames(d.graphicalFrames)
 	host.SetOnFocus(func(focused bool) {
 		if focused {
 			d.windowFocusChanged(win)

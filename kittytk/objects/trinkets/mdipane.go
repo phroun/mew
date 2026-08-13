@@ -1018,15 +1018,17 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// The HIT zone follows the grab rule (quarter cell or 3 device px, border
 	// included); resizeGripFor stays the overlay's, which must not move.
 	metrics := m.EffectiveCellMetrics()
-	grip := window.ResizeHitGrip(core.FindResizeGrip(m.Self()), metrics,
-		core.FindPxPerUnit(m.Self()), core.FindFrameBorderUnits(win))
-	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip)
+	graphical := core.FindGraphicalFrames(m.Self())
+	border := core.FindFrameBorderUnits(win)
+	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
+	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
+		window.ResizeOverlayGrip(graphical, metrics, border))
 }
 
 // resizeGripFor is the effective resize-grip thickness for a child window
 // (the surface's grip capability, discovered by ancestry).
 func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
-	return window.ResizeOverlayGrip(core.FindResizeGrip(m.Self()),
+	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()),
 		m.EffectiveCellMetrics(), core.FindFrameBorderUnits(win))
 }
 

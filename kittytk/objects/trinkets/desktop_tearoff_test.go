@@ -514,15 +514,19 @@ func TestTornWindowResizeGripMatchesDesktop(t *testing.T) {
 
 	plat := &msPlatform{}
 	plat.script = func() {
-		if d.resizeGrip <= 0 {
-			t.Fatalf("desktop has no graphical resize grip (%d); test needs one", d.resizeGrip)
+		if !d.GraphicalWindowFrames() {
+			t.Fatal("desktop does not paint graphical frames; test needs one that does")
 		}
 		d.tearOffInPlace(win)
 		if len(d.tornHosts) == 0 {
 			t.Fatal("window did not tear off")
 		}
-		if got := d.tornHosts[0].ResizeGrip(); got != d.resizeGrip {
-			t.Errorf("torn window grip = %d, want the desktop grip %d", got, d.resizeGrip)
+		// A detached window's parent chain no longer reaches the desktop, so
+		// FindGraphicalFrames cannot answer for it — the desktop has to have
+		// pushed the answer in, or the torn window gets cell-frame edges on a
+		// pixel surface.
+		if !d.tornHosts[0].GraphicalFrames() {
+			t.Error("torn window did not inherit the desktop's graphical frames")
 		}
 		d.QuitWithCode(0)
 	}

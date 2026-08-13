@@ -330,7 +330,7 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// Match the desktop's in-surface resize-edge thickness so torn edges
 	// are the same width as docked ones (and don't overlap edge trinkets
 	// such as scrollbars).
-	host.SetResizeGrip(d.resizeGrip)
+	host.SetGraphicalFrames(d.graphicalFrames)
 
 	// A torn window still borrows the desktop's menu bar line: when its
 	// surface gains focus, point the menu bar at this window's app so the

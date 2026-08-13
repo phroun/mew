@@ -59,7 +59,7 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 	w := NewWindow("t")
 	small := core.UnitRect{Width: 100, Height: 60}
 	w.SetBounds(small)
-	h := &TearOffHost{win: w, resizeGrip: 4}
+	h := &TearOffHost{win: w, graphicalFrames: true}
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
@@ -83,7 +83,7 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	w := NewWindow("t")
 	w.SetBounds(core.UnitRect{Width: 100, Height: 60})
-	h := &TearOffHost{win: w, resizeGrip: 4}
+	h := &TearOffHost{win: w, graphicalFrames: true}
 	h.resizing = true
 	h.resizeEdges = resizeRight
 	h.refreshResizeHover()
@@ -128,7 +128,7 @@ func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
 	// "graphical frame" — so the overlap comes from the window being 4 wide,
 	// where the left zone (x<3) and the right zone (x>=1) cover each other.
 	w.SetBounds(core.UnitRect{Width: 4, Height: 4})
-	h := &TearOffHost{win: w, resizeGrip: 1}
+	h := &TearOffHost{win: w, graphicalFrames: true}
 
 	cases := []struct {
 		name      string
