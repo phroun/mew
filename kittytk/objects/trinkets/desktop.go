@@ -3759,9 +3759,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// the cursor to the arrow.
 		wm.ClearResizeHover()
 		wm.ClearHover()
-		// The pointer may have stepped off into the OS's own resize strip;
-		// keep the edge band lit across the boundary if so.
-		d.hostPointerLeft()
+		d.hostHoverClear()
 		if d.menuBar != nil {
 			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 		}

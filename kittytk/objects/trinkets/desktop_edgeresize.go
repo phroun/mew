@@ -2,7 +2,6 @@ package trinkets
 
 import (
 	"math"
-	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
@@ -43,20 +42,7 @@ type hostEdgeState struct {
 	startGX, startGY int // global pointer at press, device px
 	startX, startY   int // OS window origin at press, device px
 	startW, startH   int // OS window size at press, device px
-
-	// outsideTimer polls the global pointer while it sits in the OS's own
-	// resize strip just OUTSIDE the client area, where no surface events
-	// arrive, so the affordance stays lit across the whole combined edge
-	// instead of going dark at the client boundary.
-	outsideTimer *DesktopTimer
 }
-
-// osResizeMarginPx is how far outside the client area still reads as the
-// OS's own resize strip. The OS's true grab width is not queryable from
-// here and varies by platform (Windows ~8 device px, GNOME ~10); this is a
-// display hint for the affordance, not a hit zone — the OS answers the
-// actual press out there — so approximately right is right.
-const osResizeMarginPx = 10
 
 // hostResizeParts returns what the desktop-edge gesture needs, or ok=false
 // where the feature cannot run at all.
@@ -230,9 +216,6 @@ func applyHostResize(edges, startX, startY, startW, startH, dx, dy, minW, minH i
 // hostHoverUpdate re-derives the hovered desktop edge for a plain pointer
 // move (no gesture in progress), lighting or clearing the affordance bands.
 func (d *Desktop) hostHoverUpdate(x, y core.Unit) {
-	// A surface event means the pointer is back inside: the outside poll's
-	// job is over.
-	d.hostOutsideStop()
 	d.mu.RLock()
 	active := d.hostEdge.active
 	prev := d.hostEdge.hover
@@ -261,129 +244,6 @@ func (d *Desktop) hostHoverClear() {
 	}
 }
 
-// hostPointerLeft handles the pointer leaving the surface: if it stepped
-// off across an edge into the OS's own resize strip, keep that edge's band
-// lit and start the outside poll; anywhere else, the affordance clears as
-// it always did. Detecting the strip at all takes the global pointer —
-// events stop at the client boundary, which is exactly the problem.
-func (d *Desktop) hostPointerLeft() {
-	edges := 0
-	if _, _, ok := d.hostResizeParts(); ok {
-		edges = d.hostOutsideEdges()
-	}
-	if edges == 0 {
-		d.hostHoverClear()
-		return
-	}
-	d.mu.Lock()
-	changed := d.hostEdge.hover != edges
-	d.hostEdge.hover = edges
-	timer := d.hostEdge.outsideTimer
-	d.mu.Unlock()
-	if changed {
-		d.RequestUpdate()
-	}
-	if timer == nil {
-		t := d.StartRepeatingTimer(50*time.Millisecond, d.hostOutsidePoll)
-		d.mu.Lock()
-		d.hostEdge.outsideTimer = t
-		d.mu.Unlock()
-	}
-}
-
-// hostOutsidePoll re-derives the outside-strip hover between surface events.
-// It retires itself the moment the pointer is back inside (a move event owns
-// hover from there) or has wandered past the strip.
-func (d *Desktop) hostOutsidePoll() {
-	edges := 0
-	if _, _, ok := d.hostResizeParts(); ok {
-		edges = d.hostOutsideEdges()
-	}
-	d.mu.RLock()
-	prev := d.hostEdge.hover
-	d.mu.RUnlock()
-	if edges != prev {
-		d.mu.Lock()
-		d.hostEdge.hover = edges
-		d.mu.Unlock()
-		d.RequestUpdate()
-	}
-	if edges == 0 {
-		d.hostOutsideStop()
-	}
-}
-
-// hostOutsideStop retires the outside poll.
-func (d *Desktop) hostOutsideStop() {
-	d.mu.Lock()
-	t := d.hostEdge.outsideTimer
-	d.hostEdge.outsideTimer = nil
-	d.mu.Unlock()
-	if t != nil {
-		d.StopTimer(t)
-	}
-}
-
-// hostOutsideEdges reads the global pointer against the OS window's screen
-// rectangle: edge bits when it sits in the resize strip just outside the
-// client area, zero when it is inside (surface events own that) or beyond
-// the strip.
-//
-// The TOP strip is deliberately absent: on a decorated window the area just
-// above the client is the TITLE BAR — a move, not a resize — and the
-// borderless case (solo) never reaches this path at all. The sides run the
-// window's full height, and the bottom corners reach as far as the
-// affordance, matching the inside rule.
-func (d *Desktop) hostOutsideEdges() int {
-	native, gp, ok := d.hostResizeParts()
-	if !ok {
-		return 0
-	}
-	gx, gy := gp.GlobalPointerPx()
-	x, y := native.ScreenPositionPx()
-	w, h := native.ScreenSizePx()
-	if w <= 0 || h <= 0 {
-		return 0
-	}
-	ppu := d.pxPerUnit()
-	if ppu <= 0 {
-		ppu = 1
-	}
-	cornerPx := int(math.Round(float64(window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), 0)) * ppu))
-
-	const m = osResizeMarginPx
-	if gx < x-m || gx >= x+w+m || gy < y || gy >= y+h+m {
-		return 0 // beyond the strip (or above the client: the title bar's)
-	}
-	if gx >= x && gx < x+w && gy >= y && gy < y+h {
-		return 0 // back inside: surface events own hover here
-	}
-
-	edges := 0
-	if gx < x {
-		edges |= window.ResizeEdgeLeft
-	} else if gx >= x+w {
-		edges |= window.ResizeEdgeRight
-	}
-	if gy >= y+h {
-		edges |= window.ResizeEdgeBottom
-	}
-	// Corner reach, matching the inside rule: a side near the bottom takes
-	// the bottom too, and the bottom strip near a side takes that side.
-	if edges&(window.ResizeEdgeLeft|window.ResizeEdgeRight) != 0 &&
-		edges&window.ResizeEdgeBottom == 0 && gy >= y+h-cornerPx {
-		edges |= window.ResizeEdgeBottom
-	}
-	if edges == window.ResizeEdgeBottom {
-		if gx < x+cornerPx {
-			edges |= window.ResizeEdgeLeft
-		} else if gx >= x+w-cornerPx {
-			edges |= window.ResizeEdgeRight
-		}
-	}
-	return edges
-}
-
 // hostHoverEdges is what the cursor and the bands show right now.
 func (d *Desktop) hostHoverEdges() int {
 	d.mu.RLock()
@@ -400,6 +260,13 @@ func (d *Desktop) applyHostCursor(shape core.CursorShape) {
 		cc.SetCursor(shape)
 	}
 }
+
+// The affordance ends exactly where our authority does: at the client-area
+// boundary. The OS's own resize strip lies beyond it, its true width is not
+// queryable, and the pointer out there may in fact be over ANOTHER window —
+// so a band lit past the edge would be a promise this program cannot keep,
+// and a click on it could go somewhere else entirely. Better a dark strip
+// that resizes than a lit one that lies.
 
 // paintHostEdgeHover draws the desktop's own resize affordance: the same
 // translucent bands a window edge shows, along the hovered edges of the
