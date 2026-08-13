@@ -2393,9 +2393,20 @@ func (m *MenuBar) refreshAccelerators() {
 	// had, from the second refresh onward. This also drops entries for menus
 	// that have since gone.
 	ctx.ClearAccelerators()
+	// The keymap where this BAR sits, which is what decides whether a chord is
+	// already spoken for. Not the keymap in force where the focus is: an
+	// accelerator that moved to a different letter every time the focus
+	// changed would be worse than no accelerator at all.
+	reg := core.FindKeyRegistry(m)
 	m.accelAssignments = assignAccelerators(cands, func(ch rune) bool {
 		key := formAcceleratorKey(pattern, ch)
-		return key != "" && ctx.Claims(key)
+		if key == "" {
+			return false
+		}
+		// Claimed by this situation, or spoken for by the keymap at large --
+		// M-a means select-all whether or not anything is offering it here,
+		// and a menu that wants a chord takes one nothing else has.
+		return ctx.Claims(key) || reg.Binds(key)
 	})
 
 	for i, menu := range m.menus {

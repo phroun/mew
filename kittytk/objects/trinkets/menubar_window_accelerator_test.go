@@ -12,10 +12,41 @@ import (
 // same way the desktop does for a docked window.
 //
 // It published them into its own key context and then never read them back,
-// so the accelerator drew lit while the focused trinket ate the chord: M-a on
-// a window with an &Al&phabet menu selected all the text in a text field
-// instead of opening the menu.
+// so the accelerator drew lit while the focused trinket ate the chord.
+//
+// Which letter it lands on is the other half of the scheme: M-a already means
+// select-all in the keymap, so "&Al&phabet" does not take it. It takes its
+// backup candidate, and M-a goes on meaning what the keymap says it means.
 func TestWindowOwnMenuBarAcceleratorBeatsFocusedTrinket(t *testing.T) {
+	win := window.NewWindow("Protocol Demo")
+	mb := NewMenuBar()
+	menu := NewMenu("&Al&phabet")
+	mb.AddMenu(menu)
+	win.SetWindowMenuBar(mb)
+
+	ti := NewTextInput()
+	ti.SetText("hello world")
+	win.SetContent(ti)
+	ti.SetFocus()
+
+	if got := mb.acceleratorAssignmentFor(menu).Char; got != 'p' {
+		t.Fatalf("the menu took %q; M-a is spoken for, so it should fall back to p", got)
+	}
+
+	if !win.HandleKeyPress(core.KeyPressEvent{Key: "M-p"}) {
+		t.Fatal("M-p was not handled")
+	}
+	if mb.ActiveMenu() == nil {
+		t.Error("M-p did not open the Alphabet menu")
+	}
+	if got := ti.SelectedText(); got != "" {
+		t.Errorf("the focused text field ate the accelerator and selected %q", got)
+	}
+}
+
+// ...and the chord the menu did NOT take goes on doing what the keymap says:
+// M-a reaches the focused text field and selects everything in it.
+func TestUntakenChordStillMeansWhatTheKeymapSays(t *testing.T) {
 	win := window.NewWindow("Protocol Demo")
 	mb := NewMenuBar()
 	mb.AddMenu(NewMenu("&Al&phabet"))
@@ -26,14 +57,13 @@ func TestWindowOwnMenuBarAcceleratorBeatsFocusedTrinket(t *testing.T) {
 	win.SetContent(ti)
 	ti.SetFocus()
 
-	if !win.HandleKeyPress(core.KeyPressEvent{Key: "M-a"}) {
-		t.Fatal("M-a was not handled")
+	win.HandleKeyPress(core.KeyPressEvent{Key: "M-a"})
+
+	if mb.ActiveMenu() != nil {
+		t.Error("M-a opened a menu; the menu yielded that chord to the keymap")
 	}
-	if mb.ActiveMenu() == nil {
-		t.Error("M-a did not open the Alphabet menu")
-	}
-	if got := ti.SelectedText(); got != "" {
-		t.Errorf("the focused text field ate the accelerator and selected %q", got)
+	if got := ti.SelectedText(); got != "hello world" {
+		t.Errorf("the text field selected %q, want the whole line", got)
 	}
 }
 

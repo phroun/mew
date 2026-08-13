@@ -240,6 +240,24 @@ func (r *KeyRegistry) KeysFor(command string) []string {
 	return keys
 }
 
+// Binds reports whether this keymap gives a key any meaning at all, whatever
+// the situation. It is the question the menu bar asks before taking a chord
+// for an accelerator: a key the keymap has spoken for belongs to the keymap,
+// and the bar takes its next candidate letter instead.
+//
+// Deliberately not "does the current situation offer a command on it". That
+// answer moves as the focus moves, and an underline that wanders around the
+// menu bar as you click about is worse than an accelerator on the second-best
+// letter. The keymap is the same wherever you are, so the assignment is too.
+func (r *KeyRegistry) Binds(key string) bool {
+	if r == nil || key == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.bindings[key]) > 0
+}
+
 // KeyForCommand returns the ONE key to show for a command: the newest binding
 // of it, or "" when nothing is bound. It is KeysFor's first entry, named for
 // what it is used for — a menu item advertising the key that runs it.
