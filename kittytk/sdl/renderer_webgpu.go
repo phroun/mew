@@ -1067,6 +1067,25 @@ func (r *WebGPURenderer) RenderFrame(w *nativeWin, windows []*nativeWin, renderW
 	return r.Present(w, w.backend)
 }
 
+// displayBoundsOf is where a child window is DRAWN. A window whose container
+// runs a provisional corral (the WindowManager, an MDIPane) reports the
+// corralled rectangle through DisplayBounds; anything else -- a torn-off
+// window owning its own OS geometry, an overlay -- falls back to its plain
+// bounds.
+//
+// Positioning layers from Bounds() instead drew windows clean off the edge of
+// a shrunk desktop while hit-testing still corralled them, so a window was
+// unreachable where it appeared and clickable where it did not.
+func displayBoundsOf(child interface{}) core.UnitRect {
+	if db, ok := child.(interface{ DisplayBounds() core.UnitRect }); ok {
+		return db.DisplayBounds()
+	}
+	if wl, ok := child.(interface{ Bounds() core.UnitRect }); ok {
+		return wl.Bounds()
+	}
+	return core.UnitRect{}
+}
+
 // RenderFrameWithChildWindows implements per-child-window GPU compositing.
 // Each UI child window is rendered to its own GPU texture, then all textures
 // are composited together with Z-ordering, transforms, and effects.
@@ -1148,7 +1167,12 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			continue
 		}
 
-		bounds := win.Bounds()
+		// Where the CONTAINER draws it, not where it logically sits: a
+		// window left off-screen by a desktop shrink is corralled back into
+		// view, and the corral is provisional so growing the desktop again
+		// re-spreads it. The software paint loop asks the WindowManager for
+		// exactly this; a compositor has to ask the window.
+		bounds := displayBoundsOf(childIface)
 		if bounds.Width <= 0 || bounds.Height <= 0 {
 			continue
 		}
@@ -1523,8 +1547,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 		}
 
 		var winBounds core.UnitRect
-		if wl, isWin := childIface.(WindowLike); isWin {
-			winBounds = wl.Bounds()
+		if _, isWin := childIface.(WindowLike); isWin {
+			winBounds = displayBoundsOf(childIface)
 		}
 
 		haloActive := false

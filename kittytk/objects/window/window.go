@@ -223,6 +223,7 @@ type Window struct {
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
+	getDisplayBounds      func() core.UnitRect     // Returns where the container DRAWS this window (the corral)
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
 
 	// Button press tracking
@@ -1327,6 +1328,43 @@ func (w *Window) SetGetConstrainingBounds(handler func() core.UnitRect) {
 	w.mu.Lock()
 	w.getConstrainingBounds = handler
 	w.mu.Unlock()
+}
+
+// SetGetDisplayBounds installs the container's answer to "where is this
+// window actually drawn". A WindowManager or MDIPane sets it to its own
+// provisional corral, so a window left off-screen by a container shrink
+// reports the nudged-into-view rectangle without its logical bounds moving.
+//
+// It exists because the corral has to be readable from OUTSIDE the container
+// that computes it. The software paint loop asks the container directly, but a
+// GPU compositor is handed the windows themselves and positions each one as a
+// layer of its own -- and with no way to ask, it positioned from Bounds() and
+// drew windows clean off the edge of a shrunk desktop, while hit-testing (which
+// does go through the container) still corralled them. Draw and hit disagreed.
+//
+// Nil means "no container", which is the honest answer for a torn-off window
+// managing its own OS geometry: DisplayBounds is then just Bounds.
+func (w *Window) SetGetDisplayBounds(handler func() core.UnitRect) {
+	w.mu.Lock()
+	w.getDisplayBounds = handler
+	w.mu.Unlock()
+}
+
+// DisplayBounds is where this window is DRAWN and hit-tested: its logical
+// bounds corralled into its container's client area. It is the same rectangle
+// the container's own paint loop uses, because it is the container that
+// answers -- there is one corral, not two implementations of one.
+//
+// Equal to Bounds when the window fits, when nothing installed a delegate, and
+// while maximized (a maximized window already tracks the client area).
+func (w *Window) DisplayBounds() core.UnitRect {
+	w.mu.RLock()
+	getBounds := w.getDisplayBounds
+	w.mu.RUnlock()
+	if getBounds == nil {
+		return w.Bounds()
+	}
+	return getBounds()
 }
 
 // SetPopupController sets the popup controller for this window.

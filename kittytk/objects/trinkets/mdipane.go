@@ -310,6 +310,12 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 	win.SetGetConstrainingBounds(func() core.UnitRect {
 		return m.ClientArea()
 	})
+	// ...and where it is DRAWN: the same area with the provisional corral
+	// applied, so anything positioning the window from outside this pane
+	// (a compositor) agrees with the pane's own paint loop.
+	win.SetGetDisplayBounds(func() core.UnitRect {
+		return m.displayBounds(win)
+	})
 	win.SetOnCloseComplete(func() {
 		m.RemoveWindow(win)
 	})

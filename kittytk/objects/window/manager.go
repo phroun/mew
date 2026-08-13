@@ -797,6 +797,12 @@ func (m *WindowManager) AddWindow(win *Window) {
 	win.SetGetConstrainingBounds(func() core.UnitRect {
 		return m.ClientArea()
 	})
+	// ...and where it is DRAWN, which is that area with the provisional
+	// corral applied. A compositor positions each window itself and cannot
+	// ask the manager, so the manager tells the window.
+	win.SetGetDisplayBounds(func() core.UnitRect {
+		return m.displayBounds(win)
+	})
 
 	// Set popup controller on window and its content so trinkets can use overlays
 	win.SetPopupController(m)
