@@ -11,13 +11,15 @@ import (
 // classic full-cell zones.
 func TestResizeGripNarrowsEdgeZones(t *testing.T) {
 	m, win := newPositioningManager(true)
-	m.SetResizeGrip(2) // quarter-column at 2x scale
+	m.SetResizeGrip(2) // any non-zero value: it only says "graphical frame"
 
-	// 3 units inside the right edge (x=397 of 80..400): outside the
-	// 2-unit grip - NOT a resize; the press reaches the content.
-	m.HandleMousePress(core.MousePressEvent{X: 397, Y: 160, Button: core.LeftButton})
-	m.HandleMouseMove(core.MouseMoveEvent{X: 410, Y: 160})
-	m.HandleMouseRelease(core.MouseReleaseEvent{X: 410, Y: 160, Button: core.LeftButton})
+	// The grab zone is a quarter column or 3 device pixels, whichever is
+	// bigger, border included (ResizeHitGrip). At ppu 1 with an 8-unit cell
+	// that is 3 units, so x=396 of 80..400 is outside it and the press
+	// reaches the content.
+	m.HandleMousePress(core.MousePressEvent{X: 396, Y: 160, Button: core.LeftButton})
+	m.HandleMouseMove(core.MouseMoveEvent{X: 409, Y: 160})
+	m.HandleMouseRelease(core.MouseReleaseEvent{X: 409, Y: 160, Button: core.LeftButton})
 	if b := win.Bounds(); b.Width != 320 {
 		t.Errorf("press outside the grip resized the window: width %d", b.Width)
 	}

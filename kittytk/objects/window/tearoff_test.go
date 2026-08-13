@@ -94,7 +94,10 @@ func TestTearOffHostEdgeResize(t *testing.T) {
 	// right edge stays pinned.
 	gx, gy = 700, 380
 	rightEdge := surf.x + int(surf.size.Width)
-	h.Event(core.MousePressEvent{X: 3, Y: 50, Button: core.LeftButton})
+	// x=1: inside the 3-unit grab zone (3 device pixels at ppu 1, which beats
+	// a quarter cell). The zone is narrower than it was when it added the
+	// frame border on top of a scaled sliver.
+	h.Event(core.MousePressEvent{X: 1, Y: 50, Button: core.LeftButton})
 	gx = 680
 	h.Event(core.MouseMoveEvent{X: -17, Y: 50, Buttons: core.LeftButton})
 	if surf.size.Width != 260 {

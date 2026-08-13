@@ -444,6 +444,37 @@ func FindFrameBorderUnits(w Trinket) Unit {
 	return 0
 }
 
+// PxPerUnitProvider is the trinket-side carrier of the surface's
+// pixels-per-unit, so geometry expressed in DEVICE PIXELS (a minimum grab
+// width, say) can be converted honestly rather than assumed equal to the
+// integer device scale. The desktop reports its surface's ppu; a cell
+// surface has none and the walk falls back to 1.
+type PxPerUnitProvider interface {
+	SurfacePxPerUnit() float64
+}
+
+// FindPxPerUnit walks up from a trinket to the nearest surface that reports
+// pixels-per-unit, returning 1 when nothing does. ppu is font_size aware
+// (fontSize/12 x deviceScale), which is exactly why a device-pixel quantity
+// must be divided by IT and not by the device scale: the two agree only at
+// font size 12.
+func FindPxPerUnit(w Trinket) float64 {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(PxPerUnitProvider); ok {
+			if ppu := p.SurfacePxPerUnit(); ppu > 0 {
+				return ppu
+			}
+			return 1
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 1
+		}
+		current = parent
+	}
+	return 1
+}
+
 // SnapOriginSetter is an optional RenderBackend capability: anchor cell
 // snapping at a unit origin so content snaps relative to it (a window's
 // interior stays pixel-identical wherever the window sits). Cell surfaces

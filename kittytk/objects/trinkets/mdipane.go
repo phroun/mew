@@ -1015,14 +1015,19 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// Use the displayed (provisional-corralled) bounds so hover detection
 	// agrees with what the user sees and with the press path (which commits
 	// these bounds before detecting).
-	grip := m.resizeGripFor(win)
-	return window.ResizeEdgeAt(m.displayBounds(win), x, y, m.EffectiveCellMetrics(), grip)
+	// The HIT zone follows the grab rule (quarter cell or 3 device px, border
+	// included); resizeGripFor stays the overlay's, which must not move.
+	metrics := m.EffectiveCellMetrics()
+	grip := window.ResizeHitGrip(core.FindResizeGrip(m.Self()), metrics,
+		core.FindPxPerUnit(m.Self()), core.FindFrameBorderUnits(win))
+	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip)
 }
 
 // resizeGripFor is the effective resize-grip thickness for a child window
 // (the surface's grip capability, discovered by ancestry).
 func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
-	return window.EffectiveResizeGrip(win, core.FindResizeGrip(m.Self()))
+	return window.ResizeOverlayGrip(core.FindResizeGrip(m.Self()),
+		m.EffectiveCellMetrics(), core.FindFrameBorderUnits(win))
 }
 
 // setResizeHover shows the translucent white overlay along the given resize

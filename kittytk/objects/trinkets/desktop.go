@@ -861,6 +861,11 @@ func (d *Desktop) GraphicalWindowFrames() bool {
 // windows reserve it outside their content area. 0 on cell surfaces
 // (there the border already occupies a full cell). Rounded up so the
 // content always clears the drawn stroke.
+// SurfacePxPerUnit reports this desktop surface's pixels-per-unit, so
+// geometry specified in device pixels converts honestly (see
+// core.FindPxPerUnit).
+func (d *Desktop) SurfacePxPerUnit() float64 { return d.pxPerUnit() }
+
 func (d *Desktop) WindowFrameBorderUnits() core.Unit {
 	d.mu.RLock()
 	graphical := d.graphicalFrames

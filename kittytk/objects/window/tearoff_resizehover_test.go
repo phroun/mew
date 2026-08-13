@@ -122,11 +122,13 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 // so every handle stays reachable.
 func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
 	w := NewWindow("t")
-	// 60x60 window with a grip (40) far larger than half the window, so the
-	// left grip (x<42) and right grip (x>=18) overlap across most of it.
-	// effectiveGrip = resizeGrip + frameBorderUnits() (2 at ppu 1) = 42.
-	w.SetBounds(core.UnitRect{Width: 60, Height: 60})
-	h := &TearOffHost{win: w, resizeGrip: 40}
+	// A window small enough that the grab zones overlap. The hit grip is the
+	// rule's width (3 units here: 3 device pixels at ppu 1 beats a quarter of
+	// an 8-unit cell), NOT the configured resizeGrip, which now only says
+	// "graphical frame" — so the overlap comes from the window being 4 wide,
+	// where the left zone (x<3) and the right zone (x>=1) cover each other.
+	w.SetBounds(core.UnitRect{Width: 4, Height: 4})
+	h := &TearOffHost{win: w, resizeGrip: 1}
 
 	cases := []struct {
 		name      string
@@ -134,13 +136,13 @@ func TestEdgeAtSplitsOverlappingGrips(t *testing.T) {
 		wantHas   int
 		wantHasnt int
 	}{
-		// Horizontal overlap: midpoint is x=30.
-		{"left half -> left, not right", 20, 30, resizeLeft, resizeRight},
-		{"right half -> right, not left", 40, 30, resizeRight, resizeLeft},
-		// Vertical overlap: midpoint is y=30. Use x in the horizontal overlap
+		// Horizontal overlap: midpoint is x=2.
+		{"left half -> left, not right", 1, 2, resizeLeft, resizeRight},
+		{"right half -> right, not left", 2, 2, resizeRight, resizeLeft},
+		// Vertical overlap: midpoint is y=2. Use x in the horizontal overlap
 		// so only the vertical resolution is under test.
-		{"top half -> top, not bottom", 30, 20, resizeTop, resizeBottom},
-		{"bottom half -> bottom, not top", 30, 40, resizeBottom, resizeTop},
+		{"top half -> top, not bottom", 2, 1, resizeTop, resizeBottom},
+		{"bottom half -> bottom, not top", 2, 2, resizeBottom, resizeTop},
 	}
 	for _, c := range cases {
 		e := h.edgeAt(c.x, c.y)

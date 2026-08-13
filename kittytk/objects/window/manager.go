@@ -2,6 +2,7 @@
 package window
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -344,12 +345,65 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 	return edge
 }
 
-// EffectiveResizeGrip is the grab-zone thickness in units for `win`: the
-// base grip sliver plus the frame border (a thicker border makes a
-// proportionally thicker grip that also overlaps a little into content).
-// Shared so WindowManager and MDIPane compute the same grip.
-func EffectiveResizeGrip(win *Window, baseGrip core.Unit) core.Unit {
-	return baseGrip + core.FindFrameBorderUnits(win)
+// ResizeOverlayGrip is the thickness of the resize AFFORDANCE — the
+// translucent band drawn along the edge under the pointer: the frame border,
+// plus a flat half column BEYOND it.
+//
+// Note the opposite structure to ResizeHitGrip, which is border-INCLUSIVE.
+// That is the point rather than an inconsistency: the affordance is a visual
+// cue and is drawn over the border and a margin of content, while the grab
+// zone is kept as narrow as it can be so content stays reachable. The two
+// quantities are not meant to converge, and a later tidy-up that "unified"
+// them would either blind the affordance or swallow the content again.
+//
+// baseGrip only says which kind of frame this is, exactly as in ResizeHitGrip:
+// zero is the cell frame, where the whole border row/column is both the grab
+// and the affordance and ResizeEdgeRects' metrics defaults apply.
+func ResizeOverlayGrip(baseGrip core.Unit, metrics core.CellMetrics, border core.Unit) core.Unit {
+	if baseGrip <= 0 {
+		return 0
+	}
+	return border + metrics.CellWidth/2
+}
+
+// ResizeHitGrip is how far in from a window's outer edge a press starts a
+// RESIZE rather than reaching the content: a quarter of a layout column, or 3
+// device pixels, whichever is bigger — and the frame border counts toward
+// that, rather than being added on top of it.
+//
+// That last clause is the whole point. Bounds is the OUTER rectangle, so the
+// border already occupies the first `border` units of the zone; adding it
+// again pushed the grab a second border's width into content, and the first
+// clickable content pixel sat most of a cell inside the window. With the
+// border included, a fat border needs no content infringement at all, and a
+// border of zero still leaves the quarter-cell (or 3px) minimum to grab.
+//
+// The border is a FLOOR, not a cap: a border wider than the rule stays
+// grabbable along its whole width, since a frame with a dead inner strip
+// would be its own bug.
+//
+// baseGrip only says which kind of frame this is. Zero means the cell frame,
+// where the whole border row/column is the grip and the metrics defaults in
+// ResizeEdgeAt apply — this rule is graphical-only.
+//
+// Deliberately NOT the same quantity as EffectiveResizeGrip, which sizes the
+// visual affordance overlay. The overlay is correct as it stands and must not
+// move; only where a press is ANSWERED changes here.
+func ResizeHitGrip(baseGrip core.Unit, metrics core.CellMetrics, ppu float64, border core.Unit) core.Unit {
+	if baseGrip <= 0 {
+		return 0
+	}
+	if ppu <= 0 {
+		ppu = 1
+	}
+	grip := metrics.CellWidth / 4
+	if px := core.Unit(math.Ceil(3 / ppu)); px > grip {
+		grip = px
+	}
+	if border > grip {
+		grip = border
+	}
+	return grip
 }
 
 // ApplyResize computes the new bounds for a window resized from `original`
@@ -425,8 +479,10 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	m.mu.RLock()
 	baseGrip := m.resizeGrip
 	m.mu.RUnlock()
-	return ResizeEdgeAt(win.Bounds(), x, y, core.DefaultCellMetrics(),
-		EffectiveResizeGrip(win, baseGrip))
+	metrics := core.DefaultCellMetrics()
+	return ResizeEdgeAt(win.Bounds(), x, y, metrics,
+		ResizeHitGrip(baseGrip, metrics, core.FindPxPerUnit(win),
+			core.FindFrameBorderUnits(win)))
 }
 
 // resizeEdgeRects returns the window-local rectangles (one per set edge
@@ -437,14 +493,14 @@ func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
 	m.mu.RLock()
 	baseGrip := m.resizeGrip
 	m.mu.RUnlock()
-	return ResizeEdgeRects(win, edge, EffectiveResizeGrip(win, baseGrip))
+	return ResizeEdgeRects(win, edge, ResizeOverlayGrip(baseGrip,
+		core.DefaultCellMetrics(), core.FindFrameBorderUnits(win)))
 }
 
 // ResizeEdgeRects returns the window-local rectangles to highlight for the
-// given resize edge(s), sized to the effective grip (the border width plus
-// the grip sliver, matching ResizeEdgeAt) so the band covers the whole
-// outer border. Shared by the WindowManager and the MDIPane so both draw
-// the same resize overlay.
+// given resize edge(s), sized to the affordance thickness (see
+// ResizeOverlayGrip). Shared by the WindowManager and the MDIPane so both
+// draw the same resize overlay.
 func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
 	b := win.Bounds()
 	metrics := core.DefaultCellMetrics()
