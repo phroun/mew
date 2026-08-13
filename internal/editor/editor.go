@@ -1420,7 +1420,7 @@ func (e *Editor) caretHidden(w *viewport.Viewport) bool {
 }
 
 // KeyForCommand returns the key sequence bound to command, in the spelling a
-// user would press — capture/override level prefixes stripped, since the
+// user would press — (capture)/(override) level words stripped, since the
 // physical keys are the same at every level, and wildcard bindings skipped,
 // since "*" is not a key anyone can be told to press. When several keys map
 // to it the lexicographically-first is returned (stable); "" when the command
@@ -2517,7 +2517,7 @@ func (e *Editor) registerCommands() {
 	// tinput_key forwards THE KEY BEING DISPATCHED to the focused viewport's
 	// child process, encoded by the host's emulator — so application cursor
 	// mode and its kin decide the bytes (\x1b[A vs \x1bOA for Up), not a
-	// table here. This is what `capture * = tinput_key` in [pty::mappings]
+	// table here. This is what `(capture) * = tinput_key` in [pty::mappings]
 	// runs: the terminal's first claim on every key. Reports FALSE — declining
 	// the key — when there is no session, no host encoder, or the name encodes
 	// to nothing, which drops resolution to the next level down. An explicit

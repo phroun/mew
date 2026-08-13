@@ -74,8 +74,8 @@ func TestVerboseKeySequence(t *testing.T) {
 func TestVerboseKeySequenceSpellsEveryModifier(t *testing.T) {
 	none := func(string) bool { return false }
 	cases := []struct{ seq, want string }{
-		{"C-x", "Ctrl+X"},         // the long spelling of ^
-		{"G-€", "Glyph+€"},        // a Glyph chord carries its own character
+		{"C-x", "Ctrl+X"},           // the long spelling of ^
+		{"G-€", "Glyph+€"},          // a Glyph chord carries its own character
 		{"m-pgup", "Micro+Page Up"}, // the other reading of the meta lineage
 		{"H-fdel", "Hyper+Delete"},
 		{"M-m-home", "Meta+Micro+Home"}, // Mega and Micro are different keys
@@ -225,11 +225,11 @@ func TestKeyBindingDisplayHonorsPrefixedProvenance(t *testing.T) {
 	e := &Editor{}
 	e.KeyProcessor = keyseq.NewProcessor(nil)
 	e.KeyProcessor.SetMappings(map[string]string{
-		"^_":         "buffer_undo", // built-in, no origin recorded
-		"capture ^/": "buffer_undo", // the user's, at a capture level
+		"^_":           "buffer_undo", // built-in, no origin recorded
+		"(capture) ^/": "buffer_undo", // the user's, at a capture level
 	})
 	e.mappingOrigins = map[string]config.MappingOrigin{
-		"capture ^/": {Precedence: 7, Author: config.AuthorCustomized},
+		"(capture) ^/": {Precedence: 7, Author: config.AuthorCustomized},
 	}
 
 	for i := 0; i < 20; i++ { // map iteration order varies; the answer must not
@@ -243,9 +243,9 @@ func TestKeyBindingDisplayHonorsPrefixedProvenance(t *testing.T) {
 func TestKeyBindingDisplayNeverShowsAPrefix(t *testing.T) {
 	e := &Editor{}
 	e.KeyProcessor = keyseq.NewProcessor(nil)
-	e.KeyProcessor.SetMappings(map[string]string{"override ^B S": "buffer_save"})
+	e.KeyProcessor.SetMappings(map[string]string{"(override) ^B S": "buffer_save"})
 
 	if got := e.keyBindingDisplay("buffer_save", ""); got != "^B S" {
-		t.Errorf("badge = %q, want ^B S with no level prefix", got)
+		t.Errorf("badge = %q, want ^B S with no level word", got)
 	}
 }

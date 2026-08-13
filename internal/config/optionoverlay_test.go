@@ -226,9 +226,9 @@ func TestBuiltinClassRefinementsSurviveAUserConfig(t *testing.T) {
 	c := m.LoadFromString("[mappings:mew]\n^Q Q\t=viewport_close\n")
 	km, _ := c.ResolveMappingSet("mew", "pty", "", "", "mew", c.Mappings)
 	for _, tc := range []struct{ key, want string }{
-		{"capture *", "tinput_key"},
-		{"capture back", "tinput \"\x08\""},
-		{"capture del", "tinput \"\x08\""},
+		{"(capture) *", "tinput_key"},
+		{"(capture) back", "tinput \"\x08\""},
+		{"(capture) del", "tinput \"\x08\""},
 	} {
 		if km[tc.key] != tc.want {
 			t.Errorf("pty class %s = %q, want %q", tc.key, km[tc.key], tc.want)
@@ -236,7 +236,7 @@ func TestBuiltinClassRefinementsSurviveAUserConfig(t *testing.T) {
 	}
 	// Outside the class the capture layer is absent entirely.
 	base, _ := c.ResolveMappingSet("mew", "", "", "", "mew", c.Mappings)
-	if base["capture *"] != "" {
-		t.Errorf("capture * outside a terminal = %q, want unbound", base["capture *"])
+	if base["(capture) *"] != "" {
+		t.Errorf("(capture) * outside a terminal = %q, want unbound", base["(capture) *"])
 	}
 }

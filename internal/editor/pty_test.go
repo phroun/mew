@@ -623,7 +623,7 @@ func TestPTYClassKeyBindings(t *testing.T) {
 		e, w := newTestEditor(t, "ab\n")
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 		stub := newStubPTY()
-		// ^C reaches the child through the wildcard (capture * = tinput_key),
+		// ^C reaches the child through the wildcard ((capture) * = tinput_key),
 		// which asks the HOST to encode the key — supply the encoder the real
 		// host provides. back/del bypass it: their capture bindings send the
 		// \x08 byte directly, which is the point of naming them.
@@ -1424,7 +1424,7 @@ func TestArrowKeysReachTheChildThroughTheCapture(t *testing.T) {
 }
 
 // The reclaim idiom, end to end through real config and real PawScript:
-// "capture ^C = false" in a user's pty section gives ^C back to mew while a
+// "(capture) ^C = false" in a user's pty section gives ^C back to mew while a
 // terminal is focused — it skips the capture level (its own wildcard
 // included) and lands on ^C's classic floor, which closes the pty buffer.
 func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
@@ -1447,7 +1447,7 @@ func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
 	// in the stub, so one string proves both halves: no "<^C>" — the capture
 	// layer and its wildcard were skipped — and the level-0 binding ran.
 	e.reconcileFocusedOptions()
-	e.KeyProcessor.MapKey("capture ^C", "false")
+	e.KeyProcessor.MapKey("(capture) ^C", "false")
 	e.KeyProcessor.MapKey("^C", "tinput \"RECLAIMED\"")
 
 	e.dispatchKey("^C")

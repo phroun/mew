@@ -1839,7 +1839,7 @@ func (e *Editor) rawKeyToPTY(key string) bool { return e.sendKeyToPTY(key) }
 //
 // Two callers: rawKeyToPTY (a key claimed in advance by raw_key_input) and
 // the tinput_key command (a key the capture layer claims as it arrives —
-// `capture * = tinput_key` in [pty::mappings], the ordinary route).
+// `(capture) * = tinput_key` in [pty::mappings], the ordinary route).
 func (e *Editor) sendKeyToPTY(key string) bool {
 	if e.Config.TerminalSurfaces.Key == nil {
 		return false

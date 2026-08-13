@@ -1276,8 +1276,8 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 		if cmd != action {
 			continue
 		}
-		// Show the keys as pressed: capture/override prefixes are precedence,
-		// not keystrokes, and a wildcard names no key at all. The RAW spelling
+		// Show the keys as pressed: (capture)/(override) are precedence, not
+		// keystrokes, and a wildcard names no key at all. The RAW spelling
 		// travels alongside, because that is what provenance is filed under.
 		if seq, ok := keyseq.DisplayKey(raw); ok {
 			seqs = append(seqs, keyCandidate{seq: seq, raw: raw})
@@ -1295,11 +1295,11 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 // keyCandidate is one key bound to the action a badge is resolving: the
 // spelling to SHOW, and the RAW mapping key it came from.
 //
-// The two differ whenever a binding carries a capture/override prefix, and the
-// difference matters here: the prefix is precedence rather than a keystroke, so
-// it must not be shown — but provenance is filed under the raw spelling, which
+// The two differ whenever a binding carries a (capture)/(override) level word,
+// and the difference matters here: the word is precedence rather than a
+// keystroke, so it must not be shown — but provenance is filed under the raw spelling, which
 // is what "last configured" is decided from. Looking provenance up by the
-// display spelling missed every prefixed binding, which then read as a built-in
+// display spelling missed every levelled binding, which then read as a built-in
 // (System, precedence 0) and could lose the tie-break to the very binding it
 // was written to outrank.
 type keyCandidate struct {
@@ -1383,7 +1383,7 @@ func sharedAffixLen(a, b string, suffix bool) int {
 }
 
 // originFor returns the provenance of a RAW mapping key (the spelling as
-// written, capture/override prefixes and all — that is how the origins map is
+// written, (capture)/(override) level words and all — that is how the origins map is
 // keyed, in lockstep with the keymap itself), or the built-in
 // default (AuthorSystem, precedence 0) when the key carries no recorded origin.
 func (e *Editor) originFor(raw string) config.MappingOrigin {

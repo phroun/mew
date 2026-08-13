@@ -2661,8 +2661,8 @@ messages="\e[0;97;41m"                # bright white on red
 ^F      =search_forward
 
 # Inside a viewport running a terminal session (class "pty"), the terminal
-# has FIRST CLAIM on every key. "capture" lifts a binding one precedence
-# level above the ordinary keymap ("override" lifts two; they compound), and
+# has FIRST CLAIM on every key. "(capture)" lifts a binding one precedence
+# level above the ordinary keymap ("(override)" lifts two; they compound), and
 # "*" is the wildcard for any single key that nothing names more
 # specifically. tinput_key encodes the pressed key through the host's own
 # emulator — so application cursor mode and its kin decide the bytes — and
@@ -2673,8 +2673,8 @@ messages="\e[0;97;41m"                # bright white on red
 # single-key capture, and the held starter is passed to the child only if the
 # sequence comes to nothing; within a level a named key beats the wildcard;
 # and a capture bound to the false command RECLAIMS its key for the layers
-# below. So "capture ^C = false" here would give ^C back to mew while a
-# terminal is focused, and "capture capture X = ..." in a user config outbids
+# below. So "(capture) ^C = false" here would give ^C back to mew while a
+# terminal is focused, and "(capture) (capture) X = ..." in a user config outbids
 # all of this.
 #
 # del and back are named so they beat the wildcard: mew's erase keys send a
@@ -2694,11 +2694,11 @@ messages="\e[0;97;41m"                # bright white on red
 # for as long as a terminal has the focus; M-\ still passes any one of those
 # keys through, and outside a terminal they are untouched.
 [pty::mappings]
-capture *     =tinput_key
-capture esc   =tinput_key
-capture del   =tinput "\x08"
-capture back  =tinput "\x08"
-capture M-\\  =raw_key_input
+(capture) *     =tinput_key
+(capture) esc   =tinput_key
+(capture) del   =tinput "\x08"
+(capture) back  =tinput "\x08"
+(capture) M-\\  =raw_key_input
 `
 }
 
