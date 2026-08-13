@@ -3759,6 +3759,15 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		if d.handleShortcut(e) {
 			return true
 		}
+		// The themed title bar's keyboard focus outranks the focus
+		// manager: the title bar is desktop chrome, not a trinket, so no
+		// focus-manager scope carries it — without this, whatever trinket
+		// last held real focus (a full-screen editor, say) would keep
+		// eating the keys and the title bar would go dead the moment it
+		// was reached. Keys its handler declines still fall through.
+		if d.hostTitleFocused() && d.handleHostTitleKey(e) {
+			return true
+		}
 		// Try focus manager
 		if fm != nil && fm.HandleKeyPress(e) {
 			return true

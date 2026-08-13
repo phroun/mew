@@ -2,6 +2,7 @@ package trinkets
 
 import (
 	"math"
+	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
@@ -32,12 +33,17 @@ import (
 // offset painter, and the input paths translate event Y by the title
 // height on the way in.
 
-// hostMoveState is the themed title bar's drag-to-move gesture. Guarded by
+// hostMoveState is the themed title bar's drag-to-move gesture, plus the
+// double-click memory (a double-click on the drag area zooms, the same
+// convention the window manager applies to window title bars). Guarded by
 // Desktop.mu, like hostEdgeState.
 type hostMoveState struct {
 	active           bool
 	startGX, startGY int // global pointer at press, device px
 	startX, startY   int // OS window origin at press, device px
+
+	lastPressAt            time.Time // previous drag-area press, for double-click
+	lastPressX, lastPressY core.Unit
 }
 
 // The title bar's controls, on the left like every title bar in the
@@ -52,16 +58,32 @@ const (
 	hostTitleFocusTitle
 )
 
+// hostZoomedNow reports whether the desktop's OS window is filling the
+// screen zoomed right now — by its own Zoom or an OS maximize — which
+// restyles the frame the way a maximized window is styled: flush to the
+// edges, no border reserved, no frame stroke. Lock-free like
+// themedFrameActive (it sits under the same layout paths).
+func (d *Desktop) hostZoomedNow() bool {
+	if d.hostZoom.zoomed {
+		return true
+	}
+	if z, ok := d.surface.(platform.NativeZoomReporter); ok {
+		return z.NativeZoomed()
+	}
+	return false
+}
+
 // hostFrameInset is the frame border the themed desktop RESERVES around
 // its chrome and content, exactly as a window does ("the frame border
 // rests OUTSIDE the content coordinate system... a thicker border shrinks
 // the interior rather than overlapping it" — Window.contentBounds). Zero
-// in every other mode.
+// in every other mode, and zero while zoomed — a maximized window is
+// flush to the edges with no border.
 //
 // Lock-free like themedFrameActive: it sits under layoutChildren, which
 // SetBackend reaches while holding d.mu.
 func (d *Desktop) hostFrameInset() core.Unit {
-	if !d.themedFrameActive() {
+	if !d.themedFrameActive() || d.hostZoomedNow() {
 		return 0
 	}
 	ppu := 1.0
@@ -198,11 +220,14 @@ func (d *Desktop) hostTitleButtonAt(x, y core.Unit) int {
 		return hostTitleButtonNone
 	}
 	b := d.hostFrameInset()
-	x, y = x-b, y-b
+	cw := d.EffectiveCellMetrics().CellWidth
+	// The controls start one cell in from the (border-inset) left edge,
+	// exactly where a window's do ("Start after left border").
+	x, y = x-b-cw, y-b
 	if y < 0 || y >= th || x < 0 {
 		return hostTitleButtonNone
 	}
-	bw := d.EffectiveCellMetrics().CellWidth * 3
+	bw := cw * 3
 	switch {
 	case x < bw:
 		return hostTitleButtonClose
@@ -293,10 +318,30 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 	if !ok {
 		return false
 	}
+	// A double-click on the drag area zooms — the same convention (400ms,
+	// within a cell) the window manager applies to window title bars.
+	metrics := d.EffectiveCellMetrics()
+	now := time.Now()
+	d.mu.Lock()
+	st := &d.hostMove
+	isDouble := !st.lastPressAt.IsZero() &&
+		now.Sub(st.lastPressAt) < 400*time.Millisecond &&
+		e.X-st.lastPressX < metrics.CellWidth && st.lastPressX-e.X < metrics.CellWidth &&
+		e.Y-st.lastPressY < metrics.CellHeight && st.lastPressY-e.Y < metrics.CellHeight
+	if isDouble {
+		// Consumed: the next click starts fresh rather than tripling.
+		st.lastPressAt = time.Time{}
+		d.mu.Unlock()
+		d.hostZoomToggle()
+		return true
+	}
+	st.lastPressAt = now
+	st.lastPressX, st.lastPressY = e.X, e.Y
+	d.mu.Unlock()
+
 	gx, gy := gp.GlobalPointerPx()
 	x, y := native.ScreenPositionPx()
 	d.mu.Lock()
-	st := &d.hostMove
 	st.active = true
 	st.startGX, st.startGY = gx, gy
 	st.startX, st.startY = x, y
@@ -343,6 +388,11 @@ func (d *Desktop) hostMoveMove(e core.MouseMoveEvent) bool {
 		return true
 	}
 	gx, gy := gp.GlobalPointerPx()
+	if gx != st.startGX || gy != st.startGY {
+		// ACTUALLY dragging (not just a press): a moved window is an
+		// ordinary floating window again, not the zoom rectangle.
+		d.hostZoomForget()
+	}
 	native.SetScreenPositionPx(st.startX+gx-st.startGX, st.startY+gy-st.startGY)
 	return true
 }
@@ -461,12 +511,16 @@ func (d *Desktop) hostZoomToggle() {
 				r.Restore()
 			}
 		}
-		native.SetScreenPositionPx(st.prevX, st.prevY)
-		native.SetScreenSizePx(st.prevW, st.prevH)
 		d.mu.Lock()
 		d.hostZoom.zoomed = false
 		d.mu.Unlock()
-		d.RequestUpdate() // the zoom button's icon flips back
+		// Floating again: the corners round back before the frame redraws.
+		if sq, ok := surf.(platform.NativeShapeSquarer); ok {
+			sq.SetShapeSquared(false)
+		}
+		native.SetScreenPositionPx(st.prevX, st.prevY)
+		native.SetScreenSizePx(st.prevW, st.prevH)
+		d.RequestUpdate() // the zoom button's icon and the frame flip back
 		return
 	}
 	if osZoomed {
@@ -487,8 +541,34 @@ func (d *Desktop) hostZoomToggle() {
 	d.mu.Lock()
 	d.hostZoom = hostZoomState{zoomed: true, prevX: x, prevY: y, prevW: w, prevH: h}
 	d.mu.Unlock()
+	// A screen-filling window keeps the maximized convention: square
+	// corners, no shadow, no frame (hostFrameInset and paintHostFrame
+	// consult the zoom state). The OS won't call this a maximize — it is
+	// a plain move+resize — so the shape is squared by hand.
+	if sq, ok := surf.(platform.NativeShapeSquarer); ok {
+		sq.SetShapeSquared(true)
+	}
 	native.SetScreenPositionPx(ax, ay)
 	native.SetScreenSizePx(aw, ah)
+	d.RequestUpdate()
+}
+
+// hostZoomForget drops the zoom memory and re-rounds the corners: a manual
+// edge-resize or title-bar drag makes the window an ordinary floating
+// window again (its geometry no longer IS the zoom rectangle), so the
+// frame comes back and the next Zoom starts fresh instead of "restoring".
+func (d *Desktop) hostZoomForget() {
+	d.mu.Lock()
+	was := d.hostZoom.zoomed
+	d.hostZoom.zoomed = false
+	surf := d.surface
+	d.mu.Unlock()
+	if !was {
+		return
+	}
+	if sq, ok := surf.(platform.NativeShapeSquarer); ok {
+		sq.SetShapeSquared(false)
+	}
 	d.RequestUpdate()
 }
 
@@ -739,8 +819,9 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 	tp.FillRect(core.UnitRect{Width: barWidth, Height: th}, ' ', titleStyle)
 
 	// The controls, on the left like every title bar: [x][.][^] — exit
-	// desktop, minimize, zoom (a restore icon while zoomed).
-	controlX := core.Unit(0)
+	// desktop, minimize, zoom (a restore icon while zoomed) — starting one
+	// cell in from the (border-inset) edge, exactly where a window's do.
+	controlX := metrics.CellWidth
 	for _, c := range []struct {
 		btn  int
 		icon rune
@@ -773,11 +854,29 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 		display = "< " + title + " >"
 		displayStyle = scheme.GetTitleBarButton(lit, true, false)
 	}
+	// Centered when it fits between the controls and the right edge;
+	// otherwise pinned just past the controls and ellipsized to the bar,
+	// the same layout a window's paintTitleText produces.
 	font := d.EffectiveFont()
-	x := (barWidth - font.MeasureText(display)) / 2
-	if x < controlX+metrics.CellWidth {
-		// Squeezed by the controls: pinned just past them, clipped at the bar.
-		x = controlX + metrics.CellWidth
+	leftEdge := controlX + metrics.CellWidth
+	avail := barWidth - leftEdge
+	if avail <= 0 {
+		return
+	}
+	titleW := font.MeasureText(display)
+	if titleW > avail {
+		display = window.EllipsizeToWidth(display, avail, font)
+		if display == "" {
+			return
+		}
+		titleW = font.MeasureText(display)
+	}
+	x := (barWidth - titleW) / 2
+	if x < leftEdge {
+		x = leftEdge
+	}
+	if x+titleW > barWidth {
+		x = barWidth - titleW
 	}
 	tp.DrawText(x, 0, display, displayStyle, font)
 }
@@ -790,7 +889,9 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 // child window does, and the inactive color when the OS window blurs.
 // No-op unless the themed frame is active.
 func (d *Desktop) paintHostFrame(p *core.Painter, bounds core.UnitRect) {
-	if !d.themedFrameActive() {
+	// A zoomed window paints no frame at all — maximized style is flush
+	// edges with only the title row (see Window.paintMaximizedFrame).
+	if !d.themedFrameActive() || d.hostZoomedNow() {
 		return
 	}
 	scheme := d.GetScheme()

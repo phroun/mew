@@ -131,6 +131,12 @@ type nativeWin struct {
 	// never rounded (a plain bordered window).
 	wantRadiusPx int
 
+	// forceSquare squares the corners regardless of the maximize flag: the
+	// desktop's own Zoom fills the work area with a plain move+resize the
+	// OS never marks maximized, and a screen-filling window keeps the
+	// maximized convention (square, no shadow). Set via SetShapeSquared.
+	forceSquare bool
+
 	// appliedShapePx is the radius applyWindowShape last applied (-1 before its
 	// first call), so an ordinary resize — which changes neither the radius nor
 	// the maximized/borderless state — doesn't needlessly re-round the window
@@ -1506,7 +1512,7 @@ func (p *Platform) applyWindowShape(w *nativeWin) {
 		return // a plain window that is never rounded
 	}
 	flags := w.window.Flags()
-	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0
+	round := flags&sdl3.WINDOW_BORDERLESS != 0 && flags&sdl3.WINDOW_MAXIMIZED == 0 && !w.forceSquare
 	r := 0
 	if round {
 		r = p.shapeRadiusPx()
@@ -2334,6 +2340,17 @@ func (s *sdlSurface) SetBordered(bordered bool) {
 	// shadow, a re-bordered one squares and drops both (the OS chrome takes
 	// over). This is how the main window becomes rounded — it is born bordered
 	// and only shapeable once solo mode strips its border.
+	s.platform.applyWindowShape(s.win)
+}
+
+// SetShapeSquared implements platform.NativeShapeSquarer: a client-side
+// zoom that fills the screen squares the rounded corners (and drops the
+// shadow) exactly as an OS maximize does; restoring rounds them again.
+func (s *sdlSurface) SetShapeSquared(squared bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	s.win.forceSquare = squared
 	s.platform.applyWindowShape(s.win)
 }
 

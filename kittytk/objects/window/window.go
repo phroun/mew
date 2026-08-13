@@ -2651,6 +2651,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 // is three periods, not the "\u2026" glyph, matching the tab strip -
 // on cell surfaces it is three cells wide, and MeasureText adjusts
 // the need-for-ellipsis math on both surfaces.
+// EllipsizeToWidth is ellipsizeToWidth for callers outside the package:
+// the desktop's themed title bar lays out like a window title and trims
+// with the same ellipsis.
+func EllipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
+	return ellipsizeToWidth(s, avail, font)
+}
+
 func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	const ell = "..."
 	if font.MeasureText(s) <= avail {

@@ -141,6 +141,12 @@ func (d *Desktop) hostResizeMove(e core.MouseMoveEvent) bool {
 		return true
 	}
 	gx, gy := gp.GlobalPointerPx()
+	if gx != st.startGX || gy != st.startGY {
+		// ACTUALLY resizing (not just a press in the zone): a hand-resized
+		// window is an ordinary floating window again, not the zoom
+		// rectangle, so the frame returns and the next Zoom starts fresh.
+		d.hostZoomForget()
+	}
 	metrics := d.EffectiveCellMetrics()
 	ppu := d.pxPerUnit()
 	if ppu <= 0 {

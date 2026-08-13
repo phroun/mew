@@ -152,6 +152,15 @@ type NativeRestorer interface {
 	Restore()
 }
 
+// NativeShapeSquarer is an optional NativeSurface capability: force a
+// shaped (rounded) window's corners square, the way an OS maximize does.
+// The desktop's own Zoom is a plain move+resize the OS does not recognize
+// as a maximize, so it squares the corners itself while zoomed and
+// re-rounds them on restore.
+type NativeShapeSquarer interface {
+	SetShapeSquared(squared bool)
+}
+
 // Surface is one render target: per-surface size, damage, input.
 type Surface interface {
 	// Size returns the surface size in units.

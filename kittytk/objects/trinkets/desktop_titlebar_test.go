@@ -301,37 +301,38 @@ func TestTitleBarButtonsClickAndSlideAway(t *testing.T) {
 		surf := plat.surfaces[0]
 		h := surf.handler
 
-		// Button slots at 8px cells: [x] 0-23, [.] 24-47, [^] 48-71.
-		h.Event(core.MousePressEvent{X: 60, Y: 8, Button: core.LeftButton})
-		h.Event(core.MouseReleaseEvent{X: 60, Y: 8, Button: core.LeftButton})
+		// Button slots start one cell past the border-inset edge, like a
+		// window's: at border 2 and 8px cells, [x] 10-33, [.] 34-57, [^] 58-81.
+		h.Event(core.MousePressEvent{X: 70, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 70, Y: 8, Button: core.LeftButton})
 		if w, _ := surf.ScreenSizePx(); w != 1600 {
 			t.Errorf("zoom button click: width %d, want the work area's 1600", w)
 		}
-		h.Event(core.MousePressEvent{X: 60, Y: 8, Button: core.LeftButton})
-		h.Event(core.MouseReleaseEvent{X: 60, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 70, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 70, Y: 8, Button: core.LeftButton})
 		if w, _ := surf.ScreenSizePx(); w != 800 {
 			t.Errorf("second zoom click: width %d, want 800 restored", w)
 		}
 
 		// Slide-away cancels.
-		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 46, Y: 8, Button: core.LeftButton})
 		h.Event(core.MouseReleaseEvent{X: 300, Y: 8, Button: core.LeftButton})
 		if surf.minimized {
 			t.Error("slide-away release still minimized")
 		}
 		// A held button press does not drag the window.
 		plat.gx, plat.gy = 500, 300
-		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 46, Y: 8, Button: core.LeftButton})
 		plat.gx = 700
-		h.Event(core.MouseMoveEvent{X: 230, Y: 8, Buttons: core.LeftButton})
+		h.Event(core.MouseMoveEvent{X: 246, Y: 8, Buttons: core.LeftButton})
 		if surf.x != 50 {
 			t.Errorf("button press dragged the window to x=%d", surf.x)
 		}
-		h.Event(core.MouseReleaseEvent{X: 230, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 246, Y: 8, Button: core.LeftButton})
 
 		// A clean click on minimize miniaturizes.
-		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
-		h.Event(core.MouseReleaseEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 46, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 46, Y: 8, Button: core.LeftButton})
 		if !surf.minimized {
 			t.Error("minimize button click did not minimize")
 		}
@@ -440,10 +441,11 @@ func TestEdgeAffordanceOutranksButtonHover(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
 		h := plat.surfaces[0].handler
 
-		// Inside both the left-edge grab zone and the close button's slot.
-		h.Event(core.MouseMoveEvent{X: 3, Y: 8})
+		// Inside both the top-edge grab zone (border + quarter cell) and
+		// the close button's slot.
+		h.Event(core.MouseMoveEvent{X: 22, Y: 3})
 		if d.hostHoverEdges() == 0 {
-			t.Fatal("left-edge zone did not claim the point")
+			t.Fatal("top-edge zone did not claim the point")
 		}
 		d.mu.RLock()
 		hover := d.hostTitleHover
@@ -453,7 +455,7 @@ func TestEdgeAffordanceOutranksButtonHover(t *testing.T) {
 		}
 
 		// Clear of the edge zone, the button hovers normally.
-		h.Event(core.MouseMoveEvent{X: 10, Y: 8})
+		h.Event(core.MouseMoveEvent{X: 22, Y: 8})
 		d.mu.RLock()
 		hover = d.hostTitleHover
 		d.mu.RUnlock()
@@ -477,7 +479,7 @@ func TestPressedButtonTracksPointerDrift(t *testing.T) {
 			return d.hostTitleHover
 		}
 
-		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MousePressEvent{X: 46, Y: 8, Button: core.LeftButton})
 		if hover() != hostTitleButtonMinimize {
 			t.Fatalf("press did not arm the minimize button (hover %d)", hover())
 		}
@@ -485,13 +487,122 @@ func TestPressedButtonTracksPointerDrift(t *testing.T) {
 		if hover() != hostTitleButtonNone {
 			t.Error("pressed visual stayed lit after the pointer drifted off")
 		}
-		h.Event(core.MouseMoveEvent{X: 30, Y: 8, Buttons: core.LeftButton})
+		h.Event(core.MouseMoveEvent{X: 46, Y: 8, Buttons: core.LeftButton})
 		if hover() != hostTitleButtonMinimize {
 			t.Error("pressed visual did not re-arm when the pointer drifted back")
 		}
-		h.Event(core.MouseReleaseEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 46, Y: 8, Button: core.LeftButton})
 		if !surf.minimized {
 			t.Error("release over the re-armed button did not fire it")
+		}
+	})
+}
+
+// Double-clicking the title bar's drag area zooms, and double-clicking
+// again restores — the same convention window title bars follow — with
+// the zoomed frame styled like a maximized window: no reserved border, no
+// frame stroke, corners squared.
+func TestDoubleClickTitleBarZoomsAndRestores(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+		click := func() {
+			h.Event(core.MousePressEvent{X: 400, Y: 8, Button: core.LeftButton})
+			h.Event(core.MouseReleaseEvent{X: 400, Y: 8, Button: core.LeftButton})
+		}
+
+		click()
+		click()
+		if w, _ := surf.ScreenSizePx(); w != 1600 {
+			t.Fatalf("double-click did not zoom: width %d, want 1600", w)
+		}
+		if got := d.hostFrameInset(); got != 0 {
+			t.Errorf("zoomed frame still reserves a border of %v, want 0", got)
+		}
+		if got := d.ClientArea().X; got != 0 {
+			t.Errorf("zoomed client area still inset to X=%v, want flush 0", got)
+		}
+		if !surf.squaredShape {
+			t.Error("zoomed corners were not squared")
+		}
+
+		click()
+		click()
+		if w, _ := surf.ScreenSizePx(); w != 800 {
+			t.Fatalf("double-click did not restore: width %d, want 800", w)
+		}
+		if d.hostFrameInset() == 0 {
+			t.Error("restored frame reserves no border")
+		}
+		if surf.squaredShape {
+			t.Error("restored corners are still squared")
+		}
+	})
+}
+
+// A manual edge-resize of a zoomed window makes it an ordinary floating
+// window again the moment it actually resizes: the frame comes back, the
+// corners round, and the next Zoom starts fresh instead of "restoring".
+func TestManualResizeForgetsZoom(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+
+		d.hostZoomToggle()
+		if !surf.squaredShape {
+			t.Fatal("zoom did not square the corners")
+		}
+		// Drag the right edge in by 100px (surface is 1600 wide, zoomed).
+		plat.gx, plat.gy = 1599, 500
+		h.Event(core.MousePressEvent{X: 1599, Y: 500, Button: core.LeftButton})
+		plat.gx = 1499
+		h.Event(core.MouseMoveEvent{X: 1499, Y: 500, Buttons: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 1499, Y: 500, Button: core.LeftButton})
+
+		if surf.squaredShape {
+			t.Error("hand-resized window still has squared corners")
+		}
+		if d.hostFrameInset() == 0 {
+			t.Error("hand-resized window still reserves no border")
+		}
+		d.mu.RLock()
+		zoomed := d.hostZoom.zoomed
+		d.mu.RUnlock()
+		if zoomed {
+			t.Error("zoom memory survived a manual resize")
+		}
+	})
+}
+
+// Keys reach the focused title bar through the REAL dispatch (the
+// surface-handler path with shortcuts and the focus manager in front) —
+// the title bar is desktop chrome outside the focus manager, so its focus
+// must outrank whatever trinket last held real keyboard focus.
+func TestTitleFocusKeysArriveThroughDispatch(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+		titleFocus := func() int {
+			d.mu.RLock()
+			defer d.mu.RUnlock()
+			return d.hostTitleFocus
+		}
+
+		if !d.enterHostTitleFocus(false) {
+			t.Fatal("title bar refused keyboard focus")
+		}
+		h.Event(core.KeyPressEvent{Key: "S-Tab"})
+		if got := titleFocus(); got != hostTitleButtonZoom {
+			t.Fatalf("S-Tab through dispatch landed on %d, want zoom", got)
+		}
+		h.Event(core.KeyPressEvent{Key: "Tab"})
+		if got := titleFocus(); got != hostTitleFocusTitle {
+			t.Fatalf("Tab through dispatch landed on %d, want the title", got)
+		}
+		// The focused title's arrows also arrive through dispatch.
+		h.Event(core.KeyPressEvent{Key: "Right"})
+		if surf.x != 58 {
+			t.Errorf("arrow through dispatch moved the window to x=%d, want 58", surf.x)
 		}
 	})
 }
