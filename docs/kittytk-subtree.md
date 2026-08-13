@@ -58,6 +58,47 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.20 sync (record)
+
+v0.1.19-alpha -> **v0.1.20-alpha**, one bug fix as PR
+[#34](https://github.com/phroun/kittytk/pull/34): the provisional corral never
+reached the GPU compositing path, so shrinking the SDL/WebGPU desktop lost
+windows off the edge and growing it did not bring them back.
+
+Two paths position a window and only one knew about the corral.
+`WindowManager.Paint` (software renderer, TUI) asks `m.displayBounds`;
+`renderer_webgpu.go` composites each window as a layer of its own and read
+`win.Bounds()` through a locally-declared `WindowLike` interface — `grep
+displayBounds sdl/` found nothing. The corral was written in `3e79714`
+(2026-07-07) against the software paint loop, which was the only path then; the
+WebGPU renderer arrived in `ec5494f` (2026-08-03) with the v0.1.7 overlay of
+upstream's renderer migration. Nothing was deleted — a new path simply never
+learned about it.
+
+Two reasons it hid for a month. Every corral test drives `WindowManager` or
+`MDIPane` directly, and nothing asked where a window landed on the compositor;
+and `SoftwareRenderer.RenderFrameWithChildWindows` returns "child window
+compositing not supported" and falls back to the paint loop, so only the WebGPU
+path shows it — which is mew-sdl's default renderer (`hostconf.go` sets
+`cfg.Renderer = "webgpu"`, where upstream defaults to software).
+
+The tell: hit-testing DID go through the container, so a window off the edge
+was clickable at the corralled position and inert where it appeared. The fix
+makes the corral readable from outside the container — `Window.DisplayBounds`
+asks a delegate that `WindowManager` and `MDIPane` both point at their own
+`displayBounds`, so there is one corral rather than two implementations — and
+the new test asserts the window's answer and the container's are EQUAL, since
+that disagreement is the failure.
+
+**The lesson for the next sync is about test shape, not code.** A behavior
+implemented in one renderer and consumed by another needs an assertion at the
+seam BETWEEN them. Green unit tests either side of a boundary say nothing about
+the boundary.
+
+Pin-only on our side: every shared file byte-identical, `Build` 19 -> **20**,
+root and app go.mod pins v0.1.19-alpha -> v0.1.20-alpha, go.sum per module via
+`GOWORK=off go mod tidy`. No dependency change.
+
 ### The v0.1.19 sync (record)
 
 v0.1.17-alpha -> **v0.1.19-alpha**, landing the keymap-registry work as PR
