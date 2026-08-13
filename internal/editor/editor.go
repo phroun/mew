@@ -8542,6 +8542,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// Initial render
 	e.performRender()
 
+	// Anything the config files said that mew could not honor, beside the
+	// launch files. Before the evals, so an eval's own output buffer lands on
+	// top of it with the focus.
+	e.showStartupLog()
+
 	// Queue the launch --eval scripts (if any) as the first events the loop
 	// processes, so they run visually in the freshly rendered session.
 	e.startLaunchEvals()

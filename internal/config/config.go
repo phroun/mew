@@ -72,6 +72,12 @@ type Config struct {
 	// keyed by the same signature as MappingSets.
 	MappingSetOrigins map[string]map[string]MappingOrigin
 
+	// Warnings is what the config files said that mew could not honor: a
+	// mapping written with a level word that is no longer one, a hint nobody
+	// recognizes. The editor shows them in the startup log at launch. Empty on
+	// an ordinary start, which is why nothing appears.
+	Warnings []ConfigWarning
+
 	// Formats maps short format names / file extensions to the grammar that
 	// covers them (the [formats] section), e.g. js = javascript. Built-in
 	// defaults are merged first; a blank value removes an entry.
@@ -651,6 +657,11 @@ type Manager struct {
 	// includeRead, when set (legacy SetIncludeReader), overrides @include reads
 	// specifically; nil routes them through fio like everything else.
 	includeRead func(path string) ([]byte, error)
+
+	// warnings collects what the config files said that mew could not honor,
+	// in the order the lines were read. Drained onto the Config at the end of a
+	// load, and shown in the startup log (see warnings.go).
+	warnings []ConfigWarning
 }
 
 // NewManager creates a new config manager whose config tree is addressed with
@@ -977,6 +988,7 @@ var (
 // Load loads configuration from file.
 func (m *Manager) Load() (Config, error) {
 	config := DefaultConfig()
+	m.warnings = nil
 
 	// Read the user config; create the default when it is missing.
 	content, err := m.io().Read(m.configPath)
@@ -1012,6 +1024,8 @@ func (m *Manager) Load() (Config, error) {
 			}
 		}
 	}
+
+	config.Warnings = m.warnings
 	return config, nil
 }
 
@@ -1060,12 +1074,14 @@ func (m *Manager) LoadFromString(content string) Config {
 
 func (m *Manager) loadExpanded(content, base string) Config {
 	config := DefaultConfig()
+	m.warnings = nil
 	prec := 0
 	// A string-loaded config (host-supplied, or the generated default) has no
 	// mew: tree behind it to resolve `@include "defaults/…"` against, so inline
 	// the shipped resources from the binary first — the same source the built-in
 	// mappings baseline uses. Any remaining includes fall to disk expansion.
 	m.applyLayer(&config, expandEmbeddedIncludes(content), "<config>", base, false, &prec)
+	config.Warnings = m.warnings
 	return config
 }
 
@@ -1990,6 +2006,16 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 	origins := make(map[string]map[string]MappingOrigin)
 	var currentSection string
 
+	// Environment hints are evaluated as each mapping line is read, but the
+	// desktop they are tested against is a value from THIS parse ([window]
+	// host_type) and the file may put [window] after [mappings]. So the whole
+	// stream is looked at for it first: the answer has to exist before the
+	// first mapping line, not wherever the user happened to write it.
+	env := CurrentKeymapEnvironment()
+	if forced := scanHostType(lines); forced != "" {
+		env.Desktop = forced
+	}
+
 	for _, sl := range lines {
 		// Remove carriage returns for Windows line endings
 		line := strings.TrimSuffix(sl.Text, "\r")
@@ -2037,14 +2063,36 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 			key := m.unescapeValue(strings.TrimSpace(processedLine[:equalPos]))
 			value := m.unescapeValue(strings.TrimSpace(processedLine[equalPos+1:]))
 
+			// A key mapping's left side may carry environment hints, and they
+			// are resolved HERE, before the key becomes a map key: a hint is
+			// not part of the keystroke, and two platforms' spellings of one
+			// binding have to merge and override each other as if the hints
+			// were never written. A hint that disqualifies this environment
+			// drops the line outright — it is not bound, and no later layer
+			// inherits it. (Any mapping family, including a class-scoped one —
+			// the section name may lead with "<class>::", so ask the grammar,
+			// not the text.)
+			mapping := parseSectionHeader(currentSection).family == "mappings"
+			weight := 0
+			if mapping {
+				hinted, w, keep, unknown := KeyHints(key, env)
+				for _, word := range unknown {
+					m.warn(sl, "(%s) is not an environment hint mew knows, "+
+						"so %q binds a key nothing will press", word, hinted)
+				}
+				if !keep {
+					continue
+				}
+				key, weight = hinted, w
+				m.warnStaleLevelWords(sl, key)
+			}
+
 			result[currentSection][key] = value
 
 			// Record provenance for key mappings only. Precedence advances per
 			// mapping line so a key rebound later (in the same or a later layer)
 			// carries a higher ordinal than the one it shadows.
-			// (Any mapping family, including a class-scoped one — the section
-			// name may lead with "<class>::", so ask the grammar, not the text.)
-			if parseSectionHeader(currentSection).family == "mappings" {
+			if mapping {
 				*prec++
 				if origins[currentSection] == nil {
 					origins[currentSection] = make(map[string]MappingOrigin)
@@ -2054,6 +2102,7 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 					Line:       sl.Line,
 					Precedence: *prec,
 					Author:     resolveAuthor(sl.Author, defaultAuthor),
+					EnvWeight:  weight,
 				}
 			}
 		}

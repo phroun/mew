@@ -1316,11 +1316,21 @@ type keyCandidate struct {
 // ties."
 func (e *Editor) chooseKeyBinding(seqs []keyCandidate, preferred string) string {
 	// better reports whether a is the stronger "last configured" than b —
-	// higher precedence, and the greater sequence text as a deterministic
-	// stand-in for "last" when precedence ties (a mapping that never came
-	// through the config stream at all sits at 0).
+	// the environment's own spelling first, then higher precedence, then the
+	// greater sequence text as a deterministic stand-in for "last" when
+	// precedence ties (a mapping that never came through the config stream at
+	// all sits at 0).
+	//
+	// The environment outranks load order because it is a statement about THIS
+	// machine rather than about the file: a keymap that binds both s-c (mac)
+	// and ^C means both, and the Mac is meant to be told about the Mac one
+	// however the two happened to be ordered. It decides nothing but which key
+	// is shown — both are bound, and either one pressed still works.
 	better := func(a, b keyCandidate) bool {
 		oa, ob := e.originFor(a.raw), e.originFor(b.raw)
+		if oa.EnvWeight != ob.EnvWeight {
+			return oa.EnvWeight > ob.EnvWeight
+		}
 		if oa.Precedence != ob.Precedence {
 			return oa.Precedence > ob.Precedence
 		}

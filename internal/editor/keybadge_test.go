@@ -211,14 +211,14 @@ func TestKeyBindingDisplayBuiltinTieIsDeterministic(t *testing.T) {
 	}
 }
 
-// A binding written with a capture/override prefix is filed under that RAW
-// spelling, while the badge shows the key as PRESSED. Provenance is looked up
-// by the raw spelling, so an override keeps the precedence it was configured
+// A binding written with a (capture)/(override) level word is filed under that
+// RAW spelling, while the badge shows the key as PRESSED. Provenance is looked
+// up by the raw spelling, so a levelled binding keeps the precedence it was configured
 // with: here the user's `(capture) ^/` outranks the built-in ^_ and wins the
 // "last configured" tie-break, even though the two are shown identically to
 // how they are pressed.
 //
-// Looking provenance up by the displayed key instead missed every prefixed
+// Looking provenance up by the displayed key instead missed every levelled
 // binding: it read as System/precedence 0 - a built-in - so a binding written
 // to outrank one could lose to it.
 func TestKeyBindingDisplayHonorsPrefixedProvenance(t *testing.T) {
@@ -239,7 +239,7 @@ func TestKeyBindingDisplayHonorsPrefixedProvenance(t *testing.T) {
 	}
 }
 
-// ...and the prefix itself is never shown: the badge is the key as pressed.
+// ...and the level word itself is never shown: the badge is the key as pressed.
 func TestKeyBindingDisplayNeverShowsAPrefix(t *testing.T) {
 	e := &Editor{}
 	e.KeyProcessor = keyseq.NewProcessor(nil)
@@ -247,5 +247,37 @@ func TestKeyBindingDisplayNeverShowsAPrefix(t *testing.T) {
 
 	if got := e.keyBindingDisplay("buffer_save", ""); got != "^B S" {
 		t.Errorf("badge = %q, want ^B S with no level word", got)
+	}
+}
+
+// A binding hinted for THIS machine is what the badge shows, even against a
+// binding configured later. The environment is a statement about the machine
+// rather than about the file, so it outranks load order — and it decides
+// nothing else: both keys are bound, and either one pressed still works.
+func TestKeyBindingDisplayPrefersThisEnvironmentsSpelling(t *testing.T) {
+	e := &Editor{}
+	e.KeyProcessor = keyseq.NewProcessor(nil)
+	e.KeyProcessor.SetMappings(map[string]string{
+		"s-c": "clipboard_copy",
+		"^C":  "clipboard_copy",
+	})
+	// ^C is configured LATER, so load order alone would show it.
+	e.mappingOrigins = map[string]config.MappingOrigin{
+		"s-c": {Precedence: 1, EnvWeight: 1},
+		"^C":  {Precedence: 2},
+	}
+	for i := 0; i < 20; i++ { // map iteration order varies; the answer must not
+		if got := e.keyBindingDisplay("clipboard_copy", ""); got != "s-c" {
+			t.Fatalf("badge = %q, want s-c - this machine's own spelling outranks the later one", got)
+		}
+	}
+
+	// ...and somewhere the hint does not hold, the same table shows the other.
+	e.mappingOrigins = map[string]config.MappingOrigin{
+		"s-c": {Precedence: 1, EnvWeight: -1},
+		"^C":  {Precedence: 2},
+	}
+	if got := e.keyBindingDisplay("clipboard_copy", ""); got != "^C" {
+		t.Errorf("badge = %q, want ^C - the Mac spelling is demoted off a Mac", got)
 	}
 }
