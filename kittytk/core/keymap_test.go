@@ -312,10 +312,10 @@ func TestStatesCompound(t *testing.T) {
 // sequence is reassembled at the moment it completes.
 func TestMatchedSequenceReportsTheWholeChord(t *testing.T) {
 	r := NewKeyRegistryFromMap("t", map[string][]string{
-		"M-h":        {CommandAppAccelerator},
+		"M-h":         {CommandAppAccelerator},
 		"^X h Return": {CommandAppAccelerator},
 		"^X p Return": {CommandAppAccelerator},
-		"Tab":        {"focus_next"},
+		"Tab":         {"focus_next"},
 	})
 	ctx := r.BuildContext([]string{CommandAppAccelerator, "focus_next"})
 

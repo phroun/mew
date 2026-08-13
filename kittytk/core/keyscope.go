@@ -93,6 +93,15 @@ func FindFocusedKeyRegistry(t Trinket) *KeyRegistry {
 	return FindKeyRegistry(t)
 }
 
+// FocusedTrinketOf is whatever holds the focus inside t, or t itself when
+// nothing does. It is the far end of the chain a menu item asks along.
+func FocusedTrinketOf(t Trinket) Trinket {
+	if leaf := focusedLeaf(t); leaf != nil {
+		return leaf
+	}
+	return t
+}
+
 // focusedLeaf walks down from t to whatever actually holds the focus, through
 // however many nested focus scopes lie between (a desktop's active window, its
 // focused trinket, a pane inside that). Depth-bounded, because a tree that
@@ -115,4 +124,38 @@ func focusedLeaf(t Trinket) Trinket {
 		current = next
 	}
 	return current
+}
+
+// A KeyCommandAdvertiser can say which key means a command in ITS OWN context
+// — what it offers, not what anything around it offers. Every trinket carrying
+// TrinketKeys is one.
+type KeyCommandAdvertiser interface {
+	KeyForCommand(command string) string
+}
+
+// FindKeyForCommand asks the focus chain which key means a command, from the
+// trinket outward: the first context that OFFERS the command answers, and
+// nothing answering is a real answer (nothing here means it).
+//
+// This is what a menu item asks, and why the chain rather than one context:
+// Cut belongs to whatever has the keyboard, Quit belongs to the frame around
+// it, and one item in one menu may need either. Walking outward asks the most
+// specific first, which is also the one whose keymap is in force.
+func FindKeyForCommand(t Trinket, command string) string {
+	if command == "" {
+		return ""
+	}
+	for current := t; current != nil; {
+		if a, ok := current.(KeyCommandAdvertiser); ok {
+			if key := a.KeyForCommand(command); key != "" {
+				return key
+			}
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return ""
+		}
+		current = parent
+	}
+	return ""
 }

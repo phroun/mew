@@ -91,14 +91,15 @@ func TestTaggedItemsAdoptStandardBehaviour(t *testing.T) {
 		}
 	}
 
-	// Behaviour came across: each adopted item is wired and carries the host
-	// shortcut the synthesized one would have had.
+	// Behaviour came across: each adopted item is wired, and names the command
+	// the synthesized one would have named -- which is how it gets a key at
+	// all, resolved where the focus is rather than stamped on here.
 	for _, it := range []*MenuItem{cut, copyIt, paste, all} {
 		if it.OnTriggered == nil {
 			t.Errorf("%q adopted its role but has no handler", it.Text)
 		}
-		if it.Shortcut == "" {
-			t.Errorf("%q adopted its role but has no host shortcut", it.Text)
+		if it.Command == "" {
+			t.Errorf("%q adopted its role but names no command", it.Text)
 		}
 	}
 }

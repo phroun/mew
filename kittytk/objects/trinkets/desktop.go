@@ -438,11 +438,10 @@ func (d *Desktop) createSystemMenu() *Menu {
 	menu.AddItem(NewMenuItem("Desktop &Accessories").SetEnabled(false)) // Placeholder
 	menu.AddItem(NewSeparator())
 
-	// Exit Desktop - uses ActionExitDesktop keybinding
-	exitItem := NewMenuItem("E&xit Desktop")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionExitDesktop); len(keys) > 0 {
-		exitItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	// Exit Desktop. The item names what it MEANS; which key that is, and
+	// whether there is one here at all, is the keymap's business (and the
+	// focus's -- see MenuItem.Command).
+	exitItem := NewMenuItem("E&xit Desktop").SetCommand(core.CmdDesktopExit)
 	exitItem.SetOnTriggered(func() {
 		d.ExitDesktop()
 	})
@@ -2043,23 +2042,17 @@ func (d *Desktop) appendHideSection(menu *Menu, appName string, leadingSeparator
 	}
 
 	hideItem := NewMenuItem("&Hide " + appName)
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHide); len(keys) > 0 {
-		hideItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	hideItem.SetCommand(core.CmdAppHide)
 	hideItem.SetOnTriggered(func() { d.hideActiveApp() })
 	menu.AddItem(hideItem)
 
 	hideOthersItem := NewMenuItem("Hide &Others")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppHideOthers); len(keys) > 0 {
-		hideOthersItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	hideOthersItem.SetCommand(core.CmdAppHideOthers)
 	hideOthersItem.SetOnTriggered(func() { d.hideOtherApps() })
 	menu.AddItem(hideOthersItem)
 
 	showAllItem := NewMenuItem("&Show All")
-	if keys := core.DefaultKeyBindings.Keys(core.ActionAppShowAll); len(keys) > 0 {
-		showAllItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	showAllItem.SetCommand(core.CmdAppShowAll)
 	showAllItem.SetOnTriggered(func() { d.showAllApps() })
 	menu.AddItem(showAllItem)
 }
@@ -2076,9 +2069,7 @@ func (d *Desktop) appendQuitSection(menu *Menu, appName string) {
 	}
 
 	quitItem := NewMenuItem("&Quit " + appName)
-	if keys := core.DefaultKeyBindings.Keys(core.ActionQuit); len(keys) > 0 {
-		quitItem.SetShortcut(core.NewShortcut(keys[0]))
-	}
+	quitItem.SetCommand(core.CmdAppQuit)
 	quitItem.SetOnTriggered(func() { d.quitActiveApp() })
 	menu.AddItem(quitItem)
 }
@@ -2537,10 +2528,11 @@ func (d *Desktop) focusedEditActor() (editActor, bool) {
 // still synthesized and prepended as usual, so claiming some and not others
 // works.
 func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuItem) func() {
-	shortcut := func(it *MenuItem, action string) {
-		if keys := core.DefaultKeyBindings.Keys(action); len(keys) > 0 {
-			it.SetShortcut(core.NewShortcut(keys[0]))
-		}
+	// Each item names the command it IS. What key that is here -- if any -- is
+	// resolved when the menu is drawn, so these advertise the platform's own
+	// spelling and advertise nothing while something has taken the keyboard.
+	shortcut := func(it *MenuItem, command string) {
+		it.SetCommand(command)
 	}
 	// claim returns the app's item for a role, or a fresh one marked for
 	// prepending in the standard block.
@@ -2555,7 +2547,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	}
 
 	cut := claim(ItemIDCut, "Cu&t")
-	shortcut(cut, core.ActionCut)
+	shortcut(cut, core.CmdTrinketCut)
 	cut.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			if hasSelection(ea) {
@@ -2567,7 +2559,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	})
 
 	copyIt := claim(ItemIDCopy, "&Copy")
-	shortcut(copyIt, core.ActionCopy)
+	shortcut(copyIt, core.CmdTrinketCopy)
 	copyIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			if hasSelection(ea) {
@@ -2579,7 +2571,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	})
 
 	pasteIt := claim(ItemIDPaste, "&Paste")
-	shortcut(pasteIt, core.ActionPaste)
+	shortcut(pasteIt, core.CmdTrinketPaste)
 	pasteIt.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.Paste()
@@ -2592,7 +2584,7 @@ func (d *Desktop) appendStandardEditItems(menu *Menu, adopted map[string]*MenuIt
 	trio := len(synthesized)
 
 	selectAll := claim(ItemIDSelectAll, "Select &All")
-	shortcut(selectAll, core.ActionSelectAll)
+	shortcut(selectAll, core.CmdTrinketSelectAll)
 	selectAll.SetOnTriggered(func() {
 		if ea, ok := d.focusedEditActor(); ok {
 			ea.SelectAll()
@@ -2852,6 +2844,9 @@ func (d *Desktop) attachMainWindowChrome(win *window.Window) {
 	// A detached window carries its own bar, so its items advertise what THIS
 	// window offers -- its own focus, its own keymap in force.
 	mb.SetKeyResolver(func(command string) string {
+		if key := core.FindKeyForCommand(core.FocusedTrinketOf(win), command); key != "" {
+			return key
+		}
 		return win.KeyContext().KeyForCommand(command)
 	})
 	win.SetWindowMenuBar(mb)
@@ -4482,9 +4477,7 @@ func (d *Desktop) wireMenuBarKeys(mb *MenuBar) {
 	// afresh each time an item is drawn, so a rebinding, a platform's own
 	// spelling and a guest holding the keyboard all show through without
 	// anything having to rebuild the menus.
-	mb.SetKeyResolver(func(command string) string {
-		return d.KeyContext().KeyForCommand(command)
-	})
+	mb.SetKeyResolver(d.keyForCommandInFocus)
 	mb.SetOnFocusChanged(d.lendMenuBarRow)
 }
 
@@ -5507,6 +5500,18 @@ var _ core.KeyboardBlurChildrenProvider = (*Desktop)(nil)
 // so they stand down while something has the keyboard on its own terms.
 func (d *Desktop) FocusedKeyRegistry() *core.KeyRegistry {
 	return core.FindFocusedKeyRegistry(d)
+}
+
+// keyForCommandInFocus is what this desktop's menu items ask: which key means
+// this command where the FOCUS is. The chain answers first -- Cut belongs to
+// whatever has the keyboard, and only that trinket knows which key it hears it
+// on -- and the desktop's own context answers for the frame's commands, the
+// Quits and Hides no trinket offers.
+func (d *Desktop) keyForCommandInFocus(command string) string {
+	if key := core.FindKeyForCommand(core.FocusedTrinketOf(d), command); key != "" {
+		return key
+	}
+	return d.KeyContext().KeyForCommand(command)
 }
 
 // buildKeyContext rebuilds the desktop's context and records what it was built

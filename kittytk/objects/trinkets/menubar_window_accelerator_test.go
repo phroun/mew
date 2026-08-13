@@ -13,12 +13,12 @@ import (
 //
 // It published them into its own key context and then never read them back,
 // so the accelerator drew lit while the focused trinket ate the chord: M-a on
-// a window with an &Alphabet menu selected all the text in a text field
+// a window with an &Al&phabet menu selected all the text in a text field
 // instead of opening the menu.
 func TestWindowOwnMenuBarAcceleratorBeatsFocusedTrinket(t *testing.T) {
 	win := window.NewWindow("Protocol Demo")
 	mb := NewMenuBar()
-	mb.AddMenu(NewMenu("&Alphabet"))
+	mb.AddMenu(NewMenu("&Al&phabet"))
 	win.SetWindowMenuBar(mb)
 
 	ti := NewTextInput()
@@ -58,7 +58,7 @@ func TestWindowOwnMenuBarAcceleratorWorksBeforeFirstPaint(t *testing.T) {
 func TestWindowOwnMenuBarLetsOtherKeysThrough(t *testing.T) {
 	win := window.NewWindow("Protocol Demo")
 	mb := NewMenuBar()
-	mb.AddMenu(NewMenu("&Alphabet"))
+	mb.AddMenu(NewMenu("&Al&phabet"))
 	win.SetWindowMenuBar(mb)
 
 	ti := NewTextInput()

@@ -406,7 +406,7 @@ mb=new menubar children={
         new menuitem caption="&Tile" action=demo.window.tile
         new menuitem caption="&Cascade" action=demo.window.cascade
     }
-    new menu caption="&Alphabet" children={''']
+    new menu caption="&Al&phabet" children={''']
     for i in range(26):
         letter = chr(ord('A') + i)
         b.append('\n\t\tnew menuitem caption="&%s - Letter %s"' % (letter, letter))

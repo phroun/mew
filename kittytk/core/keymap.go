@@ -526,6 +526,21 @@ var defaultBindings = []Binding{
 	{"F10", []string{CmdAppMenu}},
 	// Help, where every desktop puts it.
 	{"F1", []string{CmdAppHelp}},
+	// Hiding, and leaving the desktop. These were the host's own accelerators
+	// before there was a registry to put them in, and they keep the keys they
+	// had. Show All has none, as it had none.
+	{"^H", []string{CmdAppHide}},
+	{"M-^H", []string{CmdAppHideOthers}},
+	{"M-^X", []string{CmdDesktopExit}},
+	// The clipboard, on whatever has the keyboard.
+	{"^X", []string{CmdTrinketCut}},
+	{"^C", []string{CmdTrinketCopy}},
+	{"^V", []string{CmdTrinketPaste}},
+	// Select All answers to M-a further down this table as well. s-a is the
+	// Mac's own spelling and was the one the host advertised everywhere, which
+	// is a thing a keymap can now say properly: bound on every platform, and
+	// the one SHOWN only where it is the native one.
+	{"(mac) s-a", []string{CmdTrinketSelectAll}},
 	{"M-Tab", []string{CmdWindowNext}},
 	{"M-S-Tab", []string{CmdWindowPrior}},
 	{"C-Tab", []string{CmdWindowMDINext}},
@@ -745,6 +760,13 @@ var stateCommands = map[UIState][]string{
 		CmdWindowNext, CmdWindowPrior,
 		CmdWindowMDINext, CmdWindowMDIPrior,
 		CmdAppMinimize, CmdAppQuit,
+		CmdAppHide, CmdAppHideOthers, CmdAppShowAll, CmdDesktopExit,
+		// The standard Edit menu's commands are deliberately NOT here. They
+		// act on whatever has the keyboard, so they belong to the focused
+		// trinket's context, not to the frame's -- and a frame that claimed
+		// them would take M-a away from the &Alphabet menu's accelerator. The
+		// Edit items resolve their keys through the focus chain instead (see
+		// FindKeyForCommand).
 		CmdGUIScaleDown, CmdGUIScaleUp, CmdGUIScaleReset,
 		CmdFocusNext, CmdFocusPrior,
 	},
@@ -864,6 +886,22 @@ func (t *TrinketKeys) KeyCommand(key string) string {
 }
 
 // AbandonKeySequence drops a partly-typed sequence.
+// KeyForCommand reports which key means a command in THIS trinket's context,
+// or "" when it does not offer the command at all. It is what a menu item's
+// column asks its way up the focus chain (see FindKeyForCommand).
+func (t *TrinketKeys) KeyForCommand(command string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	r := t.registry()
+	if !t.built || t.rev != r.Revision() || t.reg != r {
+		t.ctx = r.BuildContext(t.commands)
+		t.rev = r.Revision()
+		t.reg = r
+		t.built = true
+	}
+	return t.ctx.KeyForCommand(command)
+}
+
 func (t *TrinketKeys) AbandonKeySequence() {
 	t.mu.Lock()
 	defer t.mu.Unlock()

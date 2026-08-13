@@ -28,7 +28,18 @@ const (
 	// app off the desktop. The desktop itself survives -- it is the thing
 	// other apps are still running on -- unless there is no desktop to go
 	// back to, which is solo mode, and this was the last app left.
-	CmdAppQuit       = "app_quit"
+	CmdAppQuit = "app_quit"
+	// Hiding: the app's own windows go away and come back, and — the two that
+	// reach BEYOND the app — everyone else's do. Hide is something an
+	// application does to itself; Hide Others and Show All are things the
+	// SESSION does on its behalf, which is a distinction worth keeping in
+	// sight when these become utterable rather than merely bindable.
+	CmdAppHide       = "app_hide"
+	CmdAppHideOthers = "app_hide_others"
+	CmdAppShowAll    = "app_show_all"
+	// Leaving the desktop itself: the system menu's Exit Desktop, which ends
+	// the desktop rather than any application on it.
+	CmdDesktopExit   = "desktop_exit"
 	CmdGUIScaleDown  = "gui_scale_down"
 	CmdGUIScaleUp    = "gui_scale_up"
 	CmdGUIScaleReset = "gui_scale_reset"
@@ -93,6 +104,12 @@ const (
 	CmdTrinketSelBeg    = "trinket_sel_beg"
 	CmdTrinketSelEnd    = "trinket_sel_end"
 	CmdTrinketSelectAll = "trinket_select_all"
+	// The clipboard, which acts on the FOCUSED trinket through the same
+	// editActor capability select_all does — the standard Edit menu's items
+	// are these commands, and what they act on is whatever has the keyboard.
+	CmdTrinketCut   = "trinket_cut"
+	CmdTrinketCopy  = "trinket_copy"
+	CmdTrinketPaste = "trinket_paste"
 
 	// Scrolling WITHOUT moving the selection, which is why it is not an item
 	// movement.
