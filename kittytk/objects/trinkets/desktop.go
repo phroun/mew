@@ -121,6 +121,12 @@ type Desktop struct {
 	hostZoom      hostZoomState
 	hostUnfocused bool
 
+	// The title bar's controls: keyboard focus, pointer hover, and an
+	// armed press (hostTitleButton* values; see desktop_titlebar.go).
+	hostTitleFocus   int
+	hostTitleHover   int
+	hostTitlePressed int
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -401,7 +407,12 @@ func NewDesktop() *Desktop {
 	// The desktop itself claims only two: the key that summons the menu bar,
 	// and the one that dismisses it when the bar took focus without opening
 	// anything. Everything else belongs to a window or a trinket.
-	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel)
+	// The desktop's own key vocabulary: the menu key and cancel, plus the
+	// themed title bar's controls (Tab/Shift+Tab walk them, activate runs
+	// one) — a trinket resolves only the commands it declares, and the
+	// title bar is desktop chrome rather than a trinket of its own.
+	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel,
+		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketActivate)
 	d.Init(d)
 	d.SetFocusPolicy(core.NoFocus)
 	d.dockRow.SetParent(d)
@@ -428,12 +439,31 @@ func NewDesktop() *Desktop {
 	d.statusBar = NewStatusBar()
 	d.statusBar.SetParent(d)
 
-	// Wire up Tab navigation between dock and menu bar
-	d.dockRow.SetOnFocusMenuBar(func() {
+	// The keyboard ring around the desktop chrome: dock → title bar → menu
+	// bar going forward, and the reverse going back. The title-bar leg
+	// exists only under the themed frame (enterHostTitleFocus declines
+	// otherwise), so in the other modes this collapses to the old two-node
+	// dock ↔ menu bar ring.
+	d.dockRow.SetOnFocusMenuBar(func(forward bool) {
 		d.UnfocusDock()
+		if forward && d.enterHostTitleFocus(true) {
+			return
+		}
 		d.menuBar.ToggleMenuFocus()
 	})
-	d.menuBar.SetOnFocusDock(func() {
+	d.menuBar.SetOnFocusDock(func(forward bool) {
+		if forward {
+			if !d.dockRow.IsEmpty() {
+				d.FocusDock()
+				return
+			}
+			// No dock to land on: carry on round to the title bar.
+			d.enterHostTitleFocus(true)
+			return
+		}
+		if d.enterHostTitleFocus(false) {
+			return
+		}
 		if !d.dockRow.IsEmpty() {
 			d.FocusDock()
 		}
@@ -3808,11 +3838,14 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// The desktop's own edge sliver is the outermost thing on the
 		// surface — like the OS resize border it extends — so it wins over
 		// anything corralled against the edge.
+		// Any press moves the keyboard off the title bar's controls, the
+		// way clicking anywhere blurs a window's title focus.
+		d.setHostTitleFocus(hostTitleButtonNone)
 		if d.hostResizeBegin(e) {
 			return true
 		}
-		// The themed title bar's drag-to-move (the resize sliver above it
-		// was consulted first, like a torn window's).
+		// The themed title bar's controls and drag-to-move (the resize
+		// sliver above it was consulted first, like a torn window's).
 		if d.hostMoveBegin(e) {
 			return true
 		}
@@ -3830,6 +3863,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		if e.Buttons == 0 {
 			d.hostHoverUpdate(e.X, e.Y)
+			d.hostTitleHoverUpdate(e.X, e.Y)
 		}
 		handled := wm.HandleMouseMove(e)
 		// The resize cursor over a window edge is a hover affordance. While a
@@ -3849,6 +3883,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		wm.ClearResizeHover()
 		wm.ClearHover()
 		d.hostHoverClear()
+		d.hostTitleHoverClear()
 		if d.menuBar != nil {
 			d.menuBar.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 		}
@@ -4683,7 +4718,12 @@ func (d *Desktop) ActiveMenuBounds() core.UnitRect {
 // IsMenuBarActive returns true if the menu bar should capture keyboard events.
 // This is true when a menu is open, or when the menu bar is focused AND
 // actively showing accelerators (not just technically holding focus).
+// The themed title bar's keyboard focus captures the same way — the window
+// manager consults this before offering keys to the active window.
 func (d *Desktop) IsMenuBarActive() bool {
+	if d.hostTitleFocused() {
+		return true
+	}
 	if !d.menuBarShown() {
 		return false
 	}
@@ -5105,7 +5145,9 @@ func (d *Desktop) Paint(p *core.Painter) {
 		d.statusBar.Paint(statusPainter)
 	}
 
-	// The desktop's own resize affordance, over all of its chrome.
+	// The genuine window border around the themed surface, over the chrome
+	// like a window's re-stroked frame; then the resize affordance over all.
+	d.paintHostFrame(p, bounds)
 	d.paintHostEdgeHover(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
@@ -5200,6 +5242,14 @@ func (d *Desktop) HandleKeyPress(event core.KeyPressEvent) bool {
 				return true
 			}
 			return handled
+		}
+	}
+
+	// The themed title bar's keyboard focus: walk its controls, activate,
+	// or step off either end of the chrome ring.
+	if d.hostTitleFocused() {
+		if d.handleHostTitleKey(event) {
+			return true
 		}
 	}
 

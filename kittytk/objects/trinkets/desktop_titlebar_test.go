@@ -228,6 +228,161 @@ func TestThemedFrameStaysBorderlessAcrossSolo(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// Zoom must restore even when the window manager decided our work-area
+// fill was a maximize: the OS flag cannot gate the un-zoom. (Routing the
+// toggle through the resize gesture's parts — which stand down while the
+// OS reports the window zoomed — made the second Zoom a silent no-op.)
+func TestZoomRestoresEvenWhenOSCallsItMaximized(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		d.hostZoomToggle()
+		surf.zoomed = true // the WM marked the fill as a maximize
+		d.hostZoomToggle()
+		if surf.zoomed {
+			t.Error("restore did not ask the OS to release its maximize")
+		}
+		if surf.x != 50 || surf.y != 60 {
+			t.Errorf("restored origin (%d,%d), want (50,60)", surf.x, surf.y)
+		}
+		if w, h := surf.ScreenSizePx(); w != 800 || h != 480 {
+			t.Errorf("restored size %dx%d, want 800x480", w, h)
+		}
+	})
+}
+
+// The desktop frame's three states, themed like a window's: active while
+// its own chrome holds the keyboard (or nothing else does), quasi-active
+// while a child window does, inactive when the OS window blurs.
+func TestHostFrameStateFollowsFocus(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		h := plat.surfaces[0].handler
+		if got := d.hostFrameState(); got != hostFrameActive {
+			t.Errorf("empty focused desktop = %d, want active", got)
+		}
+		win := window.NewWindow("child")
+		win.SetBounds(core.UnitRect{X: 100, Y: 100, Width: 200, Height: 120})
+		d.WindowManager().AddWindow(win)
+		d.WindowManager().ActivateWindow(win)
+		if got := d.hostFrameState(); got != hostFrameQuasi {
+			t.Errorf("child window active = %d, want quasi-active", got)
+		}
+		h.Event(core.FocusEvent{Focused: false})
+		if got := d.hostFrameState(); got != hostFrameInactive {
+			t.Errorf("blurred OS window = %d, want inactive", got)
+		}
+		h.Event(core.FocusEvent{Focused: true})
+		if !d.enterHostTitleFocus(true) {
+			t.Fatal("title bar refused keyboard focus")
+		}
+		if got := d.hostFrameState(); got != hostFrameActive {
+			t.Errorf("title bar focused = %d, want active", got)
+		}
+	})
+}
+
+// The title bar's controls act on release over the same button, like a
+// window's: a click zooms or minimizes, a slide-away cancels, and a press
+// on a control never starts the drag.
+func TestTitleBarButtonsClickAndSlideAway(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+
+		// Button slots at 8px cells: [x] 0-23, [.] 24-47, [^] 48-71.
+		h.Event(core.MousePressEvent{X: 60, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 60, Y: 8, Button: core.LeftButton})
+		if w, _ := surf.ScreenSizePx(); w != 1600 {
+			t.Errorf("zoom button click: width %d, want the work area's 1600", w)
+		}
+		h.Event(core.MousePressEvent{X: 60, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 60, Y: 8, Button: core.LeftButton})
+		if w, _ := surf.ScreenSizePx(); w != 800 {
+			t.Errorf("second zoom click: width %d, want 800 restored", w)
+		}
+
+		// Slide-away cancels.
+		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 300, Y: 8, Button: core.LeftButton})
+		if surf.minimized {
+			t.Error("slide-away release still minimized")
+		}
+		// A held button press does not drag the window.
+		plat.gx, plat.gy = 500, 300
+		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		plat.gx = 700
+		h.Event(core.MouseMoveEvent{X: 230, Y: 8, Buttons: core.LeftButton})
+		if surf.x != 50 {
+			t.Errorf("button press dragged the window to x=%d", surf.x)
+		}
+		h.Event(core.MouseReleaseEvent{X: 230, Y: 8, Button: core.LeftButton})
+
+		// A clean click on minimize miniaturizes.
+		h.Event(core.MousePressEvent{X: 30, Y: 8, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 30, Y: 8, Button: core.LeftButton})
+		if !surf.minimized {
+			t.Error("minimize button click did not minimize")
+		}
+	})
+}
+
+// The chrome ring: Shift+Tab off the menu bar lands on the title bar's
+// last control and walks backward off to the dock side (the menu bar here,
+// with no dock); Tab off the bar's dockward side wraps to the title bar's
+// first control and walks forward off to the menu bar again.
+func TestChromeRingWalksTheTitleBar(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		titleFocus := func() int {
+			d.mu.RLock()
+			defer d.mu.RUnlock()
+			return d.hostTitleFocus
+		}
+
+		d.menuBar.ToggleMenuFocus()
+		if !d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) {
+			t.Fatal("S-Tab off the menu bar was not handled")
+		}
+		if got := titleFocus(); got != hostTitleButtonZoom {
+			t.Fatalf("S-Tab from the bar landed on %d, want the zoom (last) control", got)
+		}
+		if d.menuBar.HasFocus() {
+			t.Error("menu bar kept focus after handing off to the title bar")
+		}
+
+		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // -> minimize
+		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // -> close
+		if got := titleFocus(); got != hostTitleButtonClose {
+			t.Fatalf("walked back to %d, want the close control", got)
+		}
+		d.HandleKeyPress(core.KeyPressEvent{Key: "S-Tab"}) // off the end
+		if d.hostTitleFocused() {
+			t.Error("still title-focused after walking off the backward end")
+		}
+		if !d.menuBar.HasFocus() {
+			t.Error("backward exit did not land on the menu bar (no dock here)")
+		}
+
+		// Forward: Tab off the bar wraps (empty dock) to the first control.
+		if !d.menuBar.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) {
+			t.Fatal("Tab off the menu bar was not handled")
+		}
+		if got := titleFocus(); got != hostTitleButtonClose {
+			t.Fatalf("Tab from the bar landed on %d, want the close (first) control", got)
+		}
+		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // -> minimize
+		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // -> zoom
+		if got := titleFocus(); got != hostTitleButtonZoom {
+			t.Fatalf("walked forward to %d, want the zoom control", got)
+		}
+		d.HandleKeyPress(core.KeyPressEvent{Key: "Tab"}) // off the end
+		if d.hostTitleFocused() {
+			t.Error("still title-focused after walking off the forward end")
+		}
+		if !d.menuBar.HasFocus() {
+			t.Error("forward exit did not land on the menu bar")
+		}
+	})
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {

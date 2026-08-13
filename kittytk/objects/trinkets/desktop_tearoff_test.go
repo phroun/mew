@@ -22,6 +22,7 @@ type msSurface struct {
 	raised      bool
 	primary     bool // the loop-owning surface; like SDL, refuses Close
 	bordered    bool // OS title bar present (solo strips it, ExitSolo restores)
+	zoomed      bool // OS-maximized/fullscreen (NativeZoomReporter)
 	opts        platform.SurfaceOptions
 
 	// Platform text caret, as the desktop's frame last set it.
@@ -58,7 +59,8 @@ func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
 func (s *msSurface) Raise()                           { s.raised = true }
 func (s *msSurface) Minimized() bool                  { return s.minimized }
 func (s *msSurface) Minimize()                        { s.minimized = true }
-func (s *msSurface) Restore()                         { s.minimized = false } // NativeRestorer
+func (s *msSurface) NativeZoomed() bool               { return s.zoomed }
+func (s *msSurface) Restore()                         { s.minimized = false; s.zoomed = false } // NativeRestorer
 func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
 // SetScreenSizePx mimics the real platform: the size change reports

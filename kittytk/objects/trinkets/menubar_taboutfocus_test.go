@@ -7,20 +7,27 @@ import (
 	"github.com/phroun/kittytk/objects/window"
 )
 
-// The desktop's bar hands BOTH Tab and Shift+Tab to the dock - it is the only
-// other chrome out there, so direction doesn't change the destination.
+// The desktop's bar hands BOTH Tab and Shift+Tab off toward the rest of the
+// desktop chrome, reporting the direction so the desktop can pick the stop
+// (the dock, or the themed title bar on the backward leg).
 func TestMenuBarTabAndShiftTabReachDock(t *testing.T) {
-	for _, key := range []string{"Tab", "S-Tab"} {
+	for _, c := range []struct {
+		key     string
+		forward bool
+	}{
+		{"Tab", true},
+		{"S-Tab", false},
+	} {
 		mb := NewMenuBar()
 		mb.AddMenu(NewMenu("&File"))
-		docked := 0
-		mb.SetOnFocusDock(func() { docked++ })
+		var got []bool
+		mb.SetOnFocusDock(func(forward bool) { got = append(got, forward) })
 
-		if !mb.HandleKeyPress(core.KeyPressEvent{Key: key}) {
-			t.Errorf("%s: not handled", key)
+		if !mb.HandleKeyPress(core.KeyPressEvent{Key: c.key}) {
+			t.Errorf("%s: not handled", c.key)
 		}
-		if docked != 1 {
-			t.Errorf("%s: dock handoff ran %d times, want 1", key, docked)
+		if len(got) != 1 || got[0] != c.forward {
+			t.Errorf("%s: dock handoff %v, want [%v]", c.key, got, c.forward)
 		}
 	}
 }

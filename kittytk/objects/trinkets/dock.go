@@ -35,7 +35,7 @@ type DockRow struct {
 	hoverIndex int // Entry currently under the pointer (-1 = none)
 
 	// Focus transfer callback (called when Tab falls off either end)
-	onFocusMenuBar func()
+	onFocusMenuBar func(forward bool)
 }
 
 // NewDockRow creates a new dock row.
@@ -156,8 +156,12 @@ func (d *DockRow) SetEntryWidth(width int) {
 	d.Update()
 }
 
-// SetOnFocusMenuBar sets the callback for when Tab navigation should transfer to the menu bar.
-func (d *DockRow) SetOnFocusMenuBar(callback func()) {
+// SetOnFocusMenuBar sets the callback for when Tab navigation falls off
+// either end of the dock toward the rest of the desktop chrome. forward
+// reports the direction (Tab off the end true, Shift+Tab off the start
+// false), so the desktop can route through the themed title bar when one
+// is present rather than always to the menu bar.
+func (d *DockRow) SetOnFocusMenuBar(callback func(forward bool)) {
 	d.onFocusMenuBar = callback
 }
 
@@ -363,22 +367,22 @@ func (d *DockRow) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdFocusPrior:
-		// Move to previous item, or to the menu bar if already at the start.
+		// Move to previous item, or off the start of the dock (backward).
 		if d.selectedIndex > 0 {
 			d.selectedIndex--
 			d.Update()
 		} else if d.onFocusMenuBar != nil {
-			d.onFocusMenuBar()
+			d.onFocusMenuBar(false)
 		}
 		return true
 
 	case core.CmdFocusNext:
-		// Move to next item, or to the menu bar if already at the end.
+		// Move to next item, or off the end of the dock (forward).
 		if d.selectedIndex < len(d.entries)-1 {
 			d.selectedIndex++
 			d.Update()
 		} else if d.onFocusMenuBar != nil {
-			d.onFocusMenuBar()
+			d.onFocusMenuBar(true)
 		}
 		return true
 

@@ -1992,7 +1992,7 @@ type MenuBar struct {
 	onMenuDismiss func()
 
 	// Callback when Tab navigation should transfer to the dock
-	onFocusDock func()
+	onFocusDock func(forward bool)
 
 	// onFocusChanged, when set, is told each time the bar takes or gives up
 	// the keyboard. The desktop uses it to lend the bar a row it does not
@@ -2086,8 +2086,11 @@ func (m *MenuBar) SetOnFocusOut(callback func(forward bool) bool) {
 	m.onFocusOut = callback
 }
 
-// SetOnFocusDock sets a callback for when Tab navigation should transfer to the dock.
-func (m *MenuBar) SetOnFocusDock(callback func()) {
+// SetOnFocusDock sets a callback for when Tab navigation should transfer
+// out of the bar toward the rest of the desktop chrome. forward reports the
+// direction (Tab true, Shift+Tab false), so the desktop can route through
+// the themed title bar when one is present rather than always to the dock.
+func (m *MenuBar) SetOnFocusDock(callback func(forward bool)) {
 	m.onFocusDock = callback
 }
 
@@ -3324,7 +3327,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 			break // a dropdown is open: Tab stays inside it
 		}
 		if m.onFocusDock != nil {
-			m.onFocusDock()
+			m.onFocusDock(cmd == core.CmdFocusNext)
 			return true
 		}
 		if m.onFocusOut != nil {
