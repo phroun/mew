@@ -798,11 +798,16 @@ func TestSoloModePrimaryCloserPromotesPeer(t *testing.T) {
 // surface is re-bordered and reclaimed by the desktop, and the solo window
 // becomes an ordinary tearable torn-off window on its own surface at the
 // same screen rectangle (so it can be dragged in to dock).
+//
+// Pinned to native_titlebar: this test is about the solo lifecycle, and
+// re-bordering on exit is that mode's behavior. Under the themed default
+// the strip is permanent (TestThemedFrameStaysBorderlessAcrossSolo).
 func TestExitSoloModeRevealsDesktop(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
+	d.SetDesktopFrame(DesktopFrameNativeTitlebar)
 
 	main := window.NewWindow("Solo")
 	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
@@ -878,6 +883,9 @@ func TestReSoloFromDesktop(t *testing.T) {
 	px, _ := raster.New(800, 480)
 	d := NewDesktop()
 	d.SetBackend(px)
+	// native_titlebar: the border round-trip is this mode's story (the
+	// themed default never restores it).
+	d.SetDesktopFrame(DesktopFrameNativeTitlebar)
 
 	main := window.NewWindow("Solo")
 	app := &mockApp{name: "Solo", main: main, windows: []*window.Window{main}}
