@@ -5566,5 +5566,35 @@ func (d *Desktop) HandleResolvedCommand(cmd, seq string) bool {
 			return true
 		}
 	}
+	// Anything else may be a menu item's own command -- Quit, Hide, Exit
+	// Desktop, an application's. The key has already been resolved once, by
+	// the caller, and this takes that answer rather than matching a key again:
+	// a key spelling is not a menu item's business any more.
+	return d.activateMenuCommand(cmd)
+}
+
+// activateMenuCommand triggers the item that names cmd, looking where a menu
+// shortcut has always been looked for: the system menu first, then the active
+// application's own menus (its detached main window carries them itself, so
+// they are asked there when it has them).
+func (d *Desktop) activateMenuCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	if menuActivateCommand(d.systemMenu, cmd) {
+		return true
+	}
+
+	d.mu.RLock()
+	activeApp := d.activeApp
+	d.mu.RUnlock()
+	if activeApp == nil {
+		return false
+	}
+	for _, menu := range activeApp.MenuBarContent() {
+		if menuActivateCommand(menu, cmd) {
+			return true
+		}
+	}
 	return false
 }

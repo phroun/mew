@@ -3497,6 +3497,13 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// docked. A detached main window carries its own bar (mb); a torn-off
 	// child carries no chrome but borrows its app's bar via the resolver.
 	if mb != nil {
+		// An item that names a COMMAND is matched against the command this
+		// window already resolved, above -- the key is fed to the context once
+		// per keystroke, and asking again would advance a chord's prefix twice.
+		if ac, ok := mb.(interface{ ActivateCommand(string) bool }); ok &&
+			cmd != "" && ac.ActivateCommand(cmd) {
+			return true
+		}
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
 		}); ok && sc.HandleShortcut(event) {

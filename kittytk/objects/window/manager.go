@@ -2782,6 +2782,14 @@ func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 			if kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
 				return true
 			}
+		default:
+			// Whatever else the context made of it may be a menu item's own
+			// command -- Quit, Hide, an application's. The desktop looks; the
+			// key is not resolved a second time, because it has already been
+			// resolved once, here.
+			if cmd != "" && kc.HandleResolvedCommand(cmd, ctx.MatchedSequence()) {
+				return true
+			}
 		}
 	}
 

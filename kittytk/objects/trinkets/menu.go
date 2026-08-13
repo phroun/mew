@@ -2542,6 +2542,46 @@ func (m *MenuBar) IsMenuOpen() bool {
 	return m.activeMenu != nil
 }
 
+// ActivateCommand triggers the item on this bar that names the given command,
+// and reports whether one did. The command is one the caller ALREADY resolved:
+// a key is fed to a context once per keystroke, so this takes the answer
+// rather than asking again -- feeding it twice would advance a chord's prefix
+// twice and lose the chord.
+func (m *MenuBar) ActivateCommand(command string) bool {
+	if m == nil || command == "" {
+		return false
+	}
+	for _, menu := range m.menus {
+		if menuActivateCommand(menu, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// menuActivateCommand looks through a menu and its submenus for an available
+// item naming the command, and triggers the first it finds. Trigger routes
+// through the command registry exactly as a click does, so a key and a click
+// are the same act.
+func menuActivateCommand(menu *Menu, command string) bool {
+	if menu == nil || command == "" {
+		return false
+	}
+	for _, item := range menu.Items() {
+		if item == nil || item.Separator || !item.Enabled {
+			continue
+		}
+		if item.Command == command {
+			item.Trigger()
+			return true
+		}
+		if item.SubMenu != nil && menuActivateCommand(item.SubMenu, command) {
+			return true
+		}
+	}
+	return false
+}
+
 // HandleShortcut checks the bar's menus (recursively) for an item whose
 // accelerator matches the event and triggers it, returning true on a
 // match. This lets a detached window's own menu bar service its app
