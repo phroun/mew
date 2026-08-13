@@ -25,10 +25,10 @@ func TestDecorationPositionAfterInsert(t *testing.T) {
 		key      string
 		position int64
 	}{
-		{"start", 0},   // Before 'H'
-		{"mid", 5},     // After 'o', before space
-		{"space", 6},   // At 'W'
-		{"end", 11},    // EOF position
+		{"start", 0}, // Before 'H'
+		{"mid", 5},   // After 'o', before space
+		{"space", 6}, // At 'W'
+		{"end", 11},  // EOF position
 	}
 
 	for _, d := range decorations {
@@ -104,11 +104,11 @@ func TestDecorationPositionAfterDelete(t *testing.T) {
 
 	// Set decorations
 	decorations := map[string]int64{
-		"before_delete": 2,  // 'l' - before deleted range
-		"in_delete":     4,  // 'o' - inside deleted range (consolidated to deletion point)
-		"in_delete2":    5,  // ' ' - inside deleted range (consolidated to deletion point)
-		"at_end":        7,  // 'o' in World - at boundary of delete range
-		"after_delete":  9,  // 'l' in World - after deleted range
+		"before_delete": 2, // 'l' - before deleted range
+		"in_delete":     4, // 'o' - inside deleted range (consolidated to deletion point)
+		"in_delete2":    5, // ' ' - inside deleted range (consolidated to deletion point)
+		"at_end":        7, // 'o' in World - at boundary of delete range
+		"after_delete":  9, // 'l' in World - after deleted range
 	}
 
 	for key, position := range decorations {

@@ -106,8 +106,8 @@ func TestTUIDriftComposesDotsDageshKeepsLTR(t *testing.T) {
 		return out.String()
 	}
 
-	const shin, shinDot = 'ש', 'ׁ'      // U+05E9, U+05C1
-	const shinWithDot = rune(0xFB2A)    // shin folded with its shin dot
+	const shin, shinDot = 'ש', 'ׁ'       // U+05E9, U+05C1
+	const shinWithDot = rune(0xFB2A)     // shin folded with its shin dot
 	const dalet, dagesh = 'ד', 'ּ'       // U+05D3, U+05BC
 	const daletWithDagesh = rune(0xFB33) // dalet folded with its dagesh
 	const bet, sheva = 'ב', 'ְ'          // U+05D1, U+05B0

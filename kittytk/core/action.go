@@ -230,60 +230,6 @@ func (g *ActionGroup) All() []*Action {
 	return result
 }
 
-// ShortcutMap provides a way to customize keybindings.
-// It maps action IDs to shortcuts.
-type ShortcutMap struct {
-	mu       sync.RWMutex
-	bindings map[string][]Shortcut
-}
-
-// NewShortcutMap creates a new shortcut map.
-func NewShortcutMap() *ShortcutMap {
-	return &ShortcutMap{
-		bindings: make(map[string][]Shortcut),
-	}
-}
-
-// Set sets the shortcuts for an action using key handler format strings.
-func (m *ShortcutMap) Set(actionID string, keys ...string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	shortcuts := make([]Shortcut, len(keys))
-	for i, key := range keys {
-		shortcuts[i] = Shortcut(key)
-	}
-	m.bindings[actionID] = shortcuts
-}
-
-// Get returns the shortcuts for an action.
-func (m *ShortcutMap) Get(actionID string) []Shortcut {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.bindings[actionID]
-}
-
-// Apply applies this shortcut map to an action group.
-func (m *ShortcutMap) Apply(group *ActionGroup) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for actionID, shortcuts := range m.bindings {
-		action := group.Get(actionID)
-		if action == nil {
-			continue
-		}
-		action.mu.Lock()
-		if len(shortcuts) > 0 {
-			action.Shortcut = shortcuts[0]
-			action.AlternateShortcuts = shortcuts[1:]
-		} else {
-			action.Shortcut = NoShortcut
-			action.AlternateShortcuts = nil
-		}
-		action.mu.Unlock()
-	}
-}
-
 // StandardActions provides common action IDs.
 var StandardActions = struct {
 	// File actions
@@ -352,34 +298,4 @@ var StandardActions = struct {
 	FocusPrev: "focus.prev",
 	Escape:    "dialog.escape",
 	Confirm:   "dialog.confirm",
-}
-
-// DefaultShortcuts returns the default keyboard shortcuts.
-// All shortcuts use the key handler format directly.
-func DefaultShortcuts() *ShortcutMap {
-	m := NewShortcutMap()
-
-	// File - using key handler format: ^x = Ctrl+x
-	m.Set(StandardActions.New, "^N")
-	m.Set(StandardActions.Open, "^O")
-	m.Set(StandardActions.Save, "^S")
-	m.Set(StandardActions.SaveAs, "^S-S") // Ctrl+Shift+S
-	m.Set(StandardActions.Close, "^W")
-	m.Set(StandardActions.Quit, "^Q")
-
-	// Edit
-	m.Set(StandardActions.Undo, "^Z")
-	m.Set(StandardActions.Redo, "^S-Z", "^Y") // Ctrl+Shift+Z or Ctrl+Y
-	m.Set(StandardActions.Cut, "^X")
-	m.Set(StandardActions.Copy, "^C")
-	m.Set(StandardActions.Paste, "^V")
-	m.Set(StandardActions.Delete, "Delete")
-	m.Set(StandardActions.SelectAll, "M-a")
-	m.Set(StandardActions.Find, "^F")
-	m.Set(StandardActions.Replace, "^H")
-
-	// Note: Tab, S-Tab, Escape, Enter are handled by Window's FocusManager
-	// and dialog trinkets directly, not through the global shortcut system.
-
-	return m
 }
