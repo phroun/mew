@@ -162,6 +162,9 @@ func main() {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
+	// [window] desktop_frame: themed (the desktop paints its own title bar
+	// and handles its own moving/resizing), native_titlebar, or native.
+	desktop.SetDesktopFrame(cfg.DesktopFrame)
 	// The UI font stays one cell tall in UNITS (12); font_size makes it
 	// render larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})

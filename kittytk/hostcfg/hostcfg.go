@@ -172,6 +172,21 @@ type Config struct {
 	// line for the same key replaces an earlier one.
 	Mappings map[string]string
 
+	// DesktopFrame is how the graphical host's own OS window is framed, read
+	// from [window] desktop_frame:
+	//
+	//	themed          - no OS chrome; the desktop paints its own title bar
+	//	                  and handles moving and resizing itself, so the main
+	//	                  window matches the toolkit's windows (the default)
+	//	native_titlebar - the OS title bar and border, plus the desktop's own
+	//	                  in-client resize zones along the edges
+	//	native          - pure OS chrome; the desktop's own edge zones stand
+	//	                  down entirely
+	//
+	// A value that isn't one of these keeps the default rather than failing.
+	// The terminal host has no OS window and ignores it.
+	DesktopFrame string
+
 	// HostType overrides the desktop environment the keymap's environment hints
 	// are tested against, read from [window] host_type. The session normally
 	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
@@ -202,7 +217,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software"}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed"}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -388,6 +403,13 @@ func apply(data []byte, cfg *Config) {
 			cfg.AcceleratorChord = stripQuotes(val)
 		case "host_type":
 			cfg.HostType = stripQuotes(val)
+		case "desktop_frame":
+			// Main-window chrome: themed (default), native_titlebar, or
+			// native. A typo keeps the default rather than failing.
+			switch strings.ToLower(val) {
+			case "themed", "native_titlebar", "native":
+				cfg.DesktopFrame = strings.ToLower(val)
+			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Width = n

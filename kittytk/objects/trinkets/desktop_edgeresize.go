@@ -49,10 +49,13 @@ type hostEdgeState struct {
 func (d *Desktop) hostResizeParts() (platform.NativeSurface, platform.GlobalPointerPlatform, bool) {
 	d.mu.RLock()
 	graphical := d.graphicalFrames
+	frame := d.desktopFrameLocked()
 	surf := d.surface
 	plat := d.platform
 	d.mu.RUnlock()
-	if !graphical || surf == nil {
+	// desktop_frame=native: the OS chrome is the whole resize story, and the
+	// desktop's own zones stand down entirely.
+	if !graphical || surf == nil || frame == DesktopFrameNative {
 		return nil, nil, false
 	}
 	native, ok := surf.(platform.NativeSurface)

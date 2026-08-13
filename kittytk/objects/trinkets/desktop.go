@@ -107,6 +107,11 @@ type Desktop struct {
 	// zones, hover bands and drag gesture (see desktop_edgeresize.go).
 	hostEdge hostEdgeState
 
+	// desktopFrame is how the desktop's own OS window is framed: one of the
+	// DesktopFrame* modes ("" means the default, themed). Set once at startup
+	// from [window] desktop_frame; see SetDesktopFrame.
+	desktopFrame string
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -821,6 +826,54 @@ func (d *Desktop) GraphicalWindowFrames() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.graphicalFrames
+}
+
+// The desktop's own OS window can be framed three ways ([window]
+// desktop_frame). The strings are the config values verbatim.
+const (
+	// DesktopFrameThemed: no OS chrome at all. The desktop paints its own
+	// title bar in the toolkit's style and handles moving and resizing
+	// itself, so the main window is cohesive with every other window the
+	// toolkit draws. The default.
+	DesktopFrameThemed = "themed"
+	// DesktopFrameNativeTitlebar: the OS title bar and border, with the
+	// desktop's own resize zones along the client edges (the behavior
+	// before this knob existed).
+	DesktopFrameNativeTitlebar = "native_titlebar"
+	// DesktopFrameNative: pure OS chrome; the desktop's own edge zones
+	// stand down entirely.
+	DesktopFrameNative = "native"
+)
+
+// SetDesktopFrame chooses how the desktop's own OS window is framed (one
+// of the DesktopFrame* modes; anything else means the default, themed).
+// Call before RunOn — the mode is applied when the surface is created,
+// and an OS title bar cannot be honestly restored mid-session.
+func (d *Desktop) SetDesktopFrame(mode string) {
+	switch mode {
+	case DesktopFrameThemed, DesktopFrameNativeTitlebar, DesktopFrameNative:
+	default:
+		mode = DesktopFrameThemed
+	}
+	d.mu.Lock()
+	d.desktopFrame = mode
+	d.mu.Unlock()
+}
+
+// DesktopFrame reports the chosen frame mode (never "": the default is
+// DesktopFrameThemed).
+func (d *Desktop) DesktopFrame() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.desktopFrameLocked()
+}
+
+// desktopFrameLocked is DesktopFrame under a lock already held.
+func (d *Desktop) desktopFrameLocked() string {
+	if d.desktopFrame == "" {
+		return DesktopFrameThemed
+	}
+	return d.desktopFrame
 }
 
 // WindowFrameBorderUnits implements core.FrameBorderProvider: the frame

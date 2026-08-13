@@ -37,6 +37,7 @@ import (
 //	wallpaper_align =      ; center / left / right / top / bottom (combinable)
 //	wallpaper_filter =     ; crisp (nearest) / smooth (linear)
 //	wallpaper_scale =      ; float multiplier; blank/0 keeps the default
+//	desktop_frame  =       ; themed (default) / native_titlebar / native
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -147,6 +148,15 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 		switch strings.ToLower(v) {
 		case "software", "webgpu":
 			cfg.Renderer = strings.ToLower(v)
+		}
+	}
+	// desktop_frame: how the main OS window is framed — themed (the desktop
+	// paints its own title bar), native_titlebar, or native. Validated like
+	// renderer: a typo keeps the default rather than surprising at launch.
+	if v, ok := window["desktop_frame"]; ok {
+		switch strings.ToLower(v) {
+		case "themed", "native_titlebar", "native":
+			cfg.DesktopFrame = strings.ToLower(v)
 		}
 	}
 	// wallpaper: the image path plus its layout (mode / tile / align / filter /
