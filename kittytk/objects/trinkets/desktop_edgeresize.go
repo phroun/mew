@@ -91,6 +91,37 @@ func (d *Desktop) applyHostMinimumSize() {
 	ms.SetMinimumSizePx(w, h)
 }
 
+// paintableSurfacePx rounds a requested surface size DOWN to a size the
+// surface can actually paint: the largest pixel extent that is exactly
+// where some whole unit count lands on the snapped grid.
+//
+// A drag hands us an arbitrary pixel count, and the reported extent floors
+// (it must never point past the true edge), so an odd size leaves a last
+// column or row outside every unit — nothing paints it, the frame's
+// outermost stroke is clipped against it, and that edge reads thinner
+// than the other three. Asking for the paintable size below instead costs
+// at most a pixel of window and keeps the border one thickness all the
+// way round. Only whole-window SIZES go through this.
+func (d *Desktop) paintableSurfacePx(px int, vertical bool) int {
+	toUnit, toPx := d.HardPxToUnitX, d.HardUnitToPxX
+	if vertical {
+		toUnit, toPx = d.HardPxToUnitY, d.HardUnitToPxY
+	}
+	u := toUnit(px)
+	// The unmapper rounds to nearest, so step down until the unit extent
+	// fits, then take the pixels that extent actually paints.
+	for u > 0 && toPx(u) > px {
+		u--
+	}
+	if u <= 0 {
+		return px
+	}
+	if fit := toPx(u); fit > 0 {
+		return fit
+	}
+	return px
+}
+
 // hostEdgeAt is the desktop's own resize-edge answer for a surface-local
 // point: the same geometry a child window's edges use, with the frame
 // border the surface actually carries — the reserved themed border, or
@@ -175,6 +206,10 @@ func (d *Desktop) hostResizeMove(e core.MouseMoveEvent) bool {
 	minW, minH := window.MinHostSizePx(metrics, ppu)
 	x, y, w, h := applyHostResize(st.edges, st.startX, st.startY, st.startW, st.startH,
 		gx-st.startGX, gy-st.startGY, minW, minH)
+	// Round the dragged size DOWN to what the surface can paint, so no
+	// half-addressable pixel is left to clip the frame's outer stroke.
+	w = d.paintableSurfacePx(w, false)
+	h = d.paintableSurfacePx(h, true)
 	if st.edges&(window.ResizeEdgeLeft|window.ResizeEdgeTop) != 0 {
 		native.SetScreenPositionPx(x, y)
 	}
