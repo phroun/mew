@@ -715,6 +715,55 @@ type foreignKeyTrinket struct {
 	core.TrinketKeys
 }
 
+// The themed frame's own line survives beside a child window. The
+// quasi-active frame's visible line is a thin stroke inside the border
+// band; a window's first column is the client area's first column, and
+// while that line sat THERE the window covered it — in compositor mode
+// especially, where windows are layers over the desktop's base — taking
+// the frame away exactly where a window met it. The line belongs inside
+// the reserved band, so the client area starts past every part of it.
+func TestThemedFrameLineSurvivesBesideAWindow(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	px, err := raster.New(800, 480)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(px)
+
+	plat := &msPlatform{}
+	plat.script = func() {
+		wm := d.WindowManager()
+		win := window.NewWindow("w")
+		wm.AddWindow(win)
+		area := d.ClientArea()
+		// Flush against the client area's first column, and active — which
+		// puts the desktop in its quasi-active (thin-line) frame state.
+		win.SetBounds(core.UnitRect{X: area.X, Y: 100, Width: 300, Height: 200})
+		wm.ActivateWindow(win)
+		d.SetBounds(core.UnitRect{Width: 800, Height: 480})
+		wm.Paint(core.NewPainter(px))
+
+		img := px.Image()
+		column := func(x, y int) (uint32, uint32, uint32) {
+			r, g, b, _ := img.At(x, y).RGBA()
+			return r >> 8, g >> 8, b >> 8
+		}
+		// The frame's columns must read the same beside the window (y=150,
+		// which the window spans) as on an empty row (y=430).
+		for x := 0; x < int(area.X); x++ {
+			er, eg, eb := column(x, 430)
+			wr, wg, wb := column(x, 150)
+			if er != wr || eg != wg || eb != wb {
+				t.Errorf("frame column x=%d: beside the window %d,%d,%d, on an empty row %d,%d,%d",
+					x, wr, wg, wb, er, eg, eb)
+			}
+		}
+		d.QuitWithCode(0)
+	}
+	d.RunOn(plat)
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {

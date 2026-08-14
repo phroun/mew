@@ -56,12 +56,12 @@ func (s *msSurface) Close() {
 	}
 	s.closed = true
 }
-func (s *msSurface) SetOpacity(o float64)             { s.opacity = o }
-func (s *msSurface) Raise()                           { s.raised = true }
-func (s *msSurface) Minimized() bool                  { return s.minimized }
-func (s *msSurface) Minimize()                        { s.minimized = true }
-func (s *msSurface) NativeZoomed() bool               { return s.zoomed }
-func (s *msSurface) SetShapeSquared(b bool)           { s.squaredShape = b }
+func (s *msSurface) SetOpacity(o float64)   { s.opacity = o }
+func (s *msSurface) Raise()                 { s.raised = true }
+func (s *msSurface) Minimized() bool        { return s.minimized }
+func (s *msSurface) Minimize()              { s.minimized = true }
+func (s *msSurface) NativeZoomed() bool     { return s.zoomed }
+func (s *msSurface) SetShapeSquared(b bool) { s.squaredShape = b }
 
 // SetScreenRectPx implements platform.NativeRectSetter: one geometry
 // change, releasing any maximize (the real platform primes the restore

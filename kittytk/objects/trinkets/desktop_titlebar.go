@@ -878,18 +878,40 @@ func (d *Desktop) paintHostFrame(p *core.Painter, bounds core.UnitRect) {
 }
 
 // paintHostFrameInner is the thin inner line of the quasi-active frame,
-// one tab-stroke weight just inside the (vanished) outer band — the same
-// recipe as Window.paintSingleBorderInner.
+// one tab-stroke weight inside the (vanished) outer band — the same
+// recipe as Window.paintSingleBorderInner, with one difference that
+// matters here: a WINDOW re-strokes this line OVER its own content every
+// frame, but the desktop's frame belongs to the base layer and its child
+// windows paint after it (in compositor mode, as layers above it). So
+// the line must sit inside the band the client area already reserves,
+// not on the client area's first column — where it lived, and where the
+// windows' own first column covered it, taking the frame away exactly
+// where a window met it.
+//
+// It therefore strokes at the INNER EDGE of the reserved border: the
+// last of the border's own units, so the client area still begins on the
+// first column past every part of the frame.
 func (d *Desktop) paintHostFrameInner(p *core.Painter, local core.UnitRect) {
 	b := d.WindowFrameBorderUnits()
-	inner := core.UnitRect{X: b, Y: b, Width: local.Width - 2*b, Height: local.Height - 2*b}
-	radius := window.FrameCornerRadius() - b
-	if radius < 0 {
-		radius = 0
-	}
 	weight := p.UnitsToPx(1)
 	if weight < 1 {
 		weight = 1
+	}
+	// The stroke's own thickness in units, so it lands within the band
+	// however many pixels a unit spans at this zoom.
+	wUnits := core.Unit(math.Ceil(float64(weight) / d.pxPerUnit()))
+	if wUnits < 1 {
+		wUnits = 1
+	}
+	inset := b - wUnits
+	if inset < 0 {
+		inset = 0
+	}
+	inner := core.UnitRect{X: inset, Y: inset,
+		Width: local.Width - 2*inset, Height: local.Height - 2*inset}
+	radius := window.FrameCornerRadius() - inset
+	if radius < 0 {
+		radius = 0
 	}
 	p.StrokeRoundedRectWeight(inner, radius, weight, d.GetScheme().GetWindowBorder(true))
 }
