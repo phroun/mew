@@ -1603,10 +1603,14 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 		bt.SetBordered(false)
 	}
 
-	// Adopt the promoted window's screen placement.
+	// Adopt the promoted window's screen placement. Its rect came off
+	// another OS window, so it can land between units — round it to what
+	// this surface can paint rather than inheriting a thin edge.
 	if target != nil {
 		if target.w > 0 && target.h > 0 {
-			native.SetScreenSizePx(target.w, target.h)
+			native.SetScreenSizePx(
+				d.paintableSurfacePx(target.w, false),
+				d.paintableSurfacePx(target.h, true))
 		}
 		native.SetScreenPositionPx(target.x, target.y)
 	}
@@ -2849,7 +2853,12 @@ func (d *Desktop) arrangeTornAppWindows(app ApplicationProvider, cascade bool) {
 	// size, a WindowFlagNoMove window keeps its own position.
 	place := func(w *window.Window, n platform.NativeSurface, x, y, cw, ch int) {
 		if w.Flags()&window.WindowFlagNoResize == 0 {
-			n.SetScreenSizePx(cw, ch)
+			// Cell sizes are fractions of the work area, so they land
+			// wherever the arithmetic falls; ask for the extent below that
+			// the frame can actually paint.
+			n.SetScreenSizePx(
+				d.paintableSurfacePx(cw, false),
+				d.paintableSurfacePx(ch, true))
 		}
 		if w.Flags()&window.WindowFlagNoMove == 0 {
 			n.SetScreenPositionPx(x, y)

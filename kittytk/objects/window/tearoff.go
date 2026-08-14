@@ -1425,12 +1425,20 @@ func (h *TearOffHost) zoomToWorkArea() {
 	// Save the ACTUAL device-pixel size to restore, not a units->px
 	// reconversion: the surface is already sized on the hardened pitch, so
 	// reconverting would round-trip through the ratio and could restore a
-	// hair off. ScreenSizePx is the exact rect to put back.
+	// hair off. ScreenSizePx is the rect to put back — floored to a
+	// paintable extent, since the OS may have left the window between units
+	// and restoring that verbatim would restore a thin edge with it. The
+	// floor is identity on a size already on the grid, so this is still the
+	// exact rect wherever it matters.
 	pw, ph := h.native.ScreenSizePx()
-	h.zoomSaved = [4]int{x, y, pw, ph}
+	h.zoomSaved = [4]int{x, y, h.paintablePxX(pw), h.paintablePxY(ph)}
 	h.zoomed = true
 	h.win.Maximize()
 	h.native.SetScreenPositionPx(wx, wy)
+	// The work-area size itself is NOT rounded: a maximized window draws no
+	// rounded frame (window.go's graphicalFrame excludes WindowStateMaximized,
+	// as hostFrameInset does for the desktop), so there is no outer stroke to
+	// protect here — and shrinking it would leave the screen edge uncovered.
 	h.native.SetScreenSizePx(ww, wh)
 }
 

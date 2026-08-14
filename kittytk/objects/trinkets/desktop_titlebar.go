@@ -563,8 +563,17 @@ func (d *Desktop) hostZoomToggle() {
 	if aw <= 0 || ah <= 0 {
 		return
 	}
+	// Remember a PAINTABLE rect to come back to: the pre-zoom size is
+	// whatever the OS last left the window at, which can sit between units,
+	// and restoring it verbatim would restore the thin edge with it. This is
+	// a floor of the real pixels, not a units->px reconversion, so a size
+	// already on the grid is remembered exactly.
+	// Computed BEFORE the lock: paintableSurfacePx converts through
+	// HardPxToUnitX, which takes d.mu itself, and the mutex is not
+	// reentrant.
+	prevW, prevH := d.paintableSurfacePx(w, false), d.paintableSurfacePx(h, true)
 	d.mu.Lock()
-	d.hostZoom = hostZoomState{zoomed: true, prevX: x, prevY: y, prevW: w, prevH: h}
+	d.hostZoom = hostZoomState{zoomed: true, prevX: x, prevY: y, prevW: prevW, prevH: prevH}
 	d.mu.Unlock()
 	// A screen-filling window keeps the maximized convention: square
 	// corners, no shadow, no frame (hostFrameInset and paintHostFrame
@@ -574,6 +583,11 @@ func (d *Desktop) hostZoomToggle() {
 		sq.SetShapeSquared(true)
 	}
 	native.SetScreenPositionPx(ax, ay)
+	// The work-area size is deliberately NOT rounded to a paintable extent
+	// the way every other size we request is: zoomed, hostFrameInset is 0 and
+	// nothing strokes a frame, so there is no outer edge to protect — and
+	// rounding down would leave a sliver of screen uncovered by a window the
+	// user asked to fill it.
 	native.SetScreenSizePx(aw, ah)
 	d.RequestUpdate()
 }
@@ -792,7 +806,12 @@ func (d *Desktop) handleHostTitleGeometry(cmd string) bool {
 		if h < minH {
 			h = minH
 		}
-		native.SetScreenSizePx(w, h)
+		// The step is unit-derived but the size it lands on is the OS's
+		// current pixel count plus that step, so round to a paintable
+		// extent exactly as the pointer gesture does.
+		native.SetScreenSizePx(
+			d.paintableSurfacePx(w, false),
+			d.paintableSurfacePx(h, true))
 	} else {
 		x, y := native.ScreenPositionPx()
 		native.SetScreenPositionPx(x+pdx, y+pdy)
