@@ -58,6 +58,71 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.21 sync (record)
+
+v0.1.20-alpha -> **v0.1.21-alpha**, the desktop-chrome arc as PR
+[#35](https://github.com/phroun/kittytk/pull/35) (two commits): resize edges
+with an honest grab rule, then the desktop's own themed chrome, one title-bar
+kit, and three measured performance fixes.
+
+The delivery is worth recording for **how it nearly went wrong**, twice.
+
+**The stale-note trap.** A note carried across a context compaction said PR
+#35's branch still held a condemned affordance — code that lit the resize band
+while the pointer sat in what it GUESSED was the OS's resize strip, promising a
+resize this program cannot deliver over territory it does not control. Checking
+the PR, the head commit's **author date** (21:34) sat *before* the commit that
+introduced the affordance (21:44), which read as proof the note was stale — so
+the note was "corrected" and the plan changed. It was the correction that was
+wrong: the squashed commit had been **amended** at 21:45 and kept its original
+author date. The branch did contain the condemned code.
+
+What caught it was not re-reading the PR but `git apply --check` **refusing**:
+the delta computed from the wrong base did not apply. Diffing candidate bases
+against the branch content then showed `ab1b1c3`'s subtree byte-identical to
+it, which pinned the true base and put the revert back in the delivery. **A
+commit's author date says nothing about when its content was fixed.** Compare
+trees, not timestamps — and treat a patch that won't apply as evidence about
+the base, not an obstacle to force past.
+
+**The 9.5x nobody would have seen.** Window chrome had just started painting
+content, children and the title bar through the frame's rounded clip, so a
+status bar could not square off the corner it sat in. Correct, and invisible in
+every test. But the raster backend stood every fast path down on `hasRoundClip`
+alone — cached-glyph blits and both alpha composites fell to per-pixel
+visibility loops — so a clip that carves four small corners was charged for the
+whole surface: **7.4ms vs 0.78ms** on a busy 800x600 scene. `roundClipCovers`
+answers in six comparisons whether a rect lies in the uncut interior; the
+residual is 1.27x. It surfaced only because a performance pass was run *before*
+upstreaming rather than after, and only because the pass **measured** instead of
+reading the diff for suspicious-looking code. The other two finds (a font face
+allocated per metrics call; the title ellipsis measuring once per trimmed
+character, 36us and 148 allocations per title per frame) were the same story.
+
+Pin-only on our side, and unusually cleanly so: the vendored `Build` had already
+been run **ahead to 21** when the PR was opened (the v0.1.14/v0.1.15 precedent),
+so at tag time every shared file was byte-identical including `core/version.go`
+— the resync was the two `go.mod` pins v0.1.20-alpha -> v0.1.21-alpha and
+`go.sum` per module via `GOWORK=off go mod tidy`. No dependency change. Running
+the counter ahead at delivery time is worth repeating: it makes the resync a
+pin bump with nothing to reconcile.
+
+`go mod tidy` per module again left `kittytk/go.mod`'s `garland` indirect alone
+(v0.1.11) — it is `go work sync` that wrongly bumps it, as the v0.1.10/v0.1.13
+records note.
+
+**New shared interfaces**, all called out in the cover note so upstream could
+sweep for unimplemented test doubles: optional platform capabilities
+`NativeZoomReporter`, `NativeShapeSquarer`, `NativeRectSetter`,
+`NativeMinimumSizer`; `window.TitleControlsInsetProvider`; `core.SetTitleBarScale`
+/ `TitleBarScale`; and a `TitleBarScale` field on `hostcfg.Config`. All but the
+last two are opt-in type assertions, so an implementation lacking them keeps
+working and the feature simply stands down.
+
+The fork boundary is unchanged: the **25 `//go:build mew` files**, go.mod's mew
+require, and `garland/` (upstream's own in-repo mirror, which we neither own nor
+send).
+
 ### The v0.1.20 sync (record)
 
 v0.1.19-alpha -> **v0.1.20-alpha**, one bug fix as PR
