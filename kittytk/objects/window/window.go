@@ -1825,40 +1825,32 @@ func (w *Window) Paint(p *core.Painter) {
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	graphicalFrame := state != WindowStateMaximized && flags&WindowFlagFrameless == 0 &&
 		core.FindGraphicalFrames(w)
+	// ONE rounded clip region for everything the window draws inside its
+	// own outline — content, MDI children, and its own chrome. Each of
+	// those reaches the window's edges, and a square rectangle at a
+	// rounded corner spills into the curve: the status bar squared off
+	// the bottom corners and ate the frame there, while the content
+	// (which had this clip already) did not. Sharing one region rather
+	// than building three is also the cheap way to do it — the mask is
+	// set up once per window paint.
+	inside := p
+	if graphicalFrame {
+		inside = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+	}
+
 	if content != nil {
 		contentBounds := w.contentBounds()
-		contentBase := p
-		if graphicalFrame {
-			// Edge-to-edge content stays inside the frame's rounded
-			// outline (bottom corners in particular).
-			contentBase = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
-		}
-		contentPainter := contentBase.WithOffset(contentBounds.X, contentBounds.Y).
+		contentPainter := inside.WithOffset(contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
 			WithDenomination(outer, interior)
 		content.Paint(contentPainter)
-	}
-	if graphicalFrame {
-		// Content reaches the window edges, so the hairline border is
-		// re-stroked over it - the frame stays visible on all sides.
-		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
-		if frameBorder == style.BorderHeavy {
-			// Single border: the outer band disappears into the window
-			// background, then a thin inner line in the active border color
-			// sits just inside it.
-			bg := w.GetScheme().GetWindowBG(w.renderActive())
-			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
-			w.paintSingleBorderInner(p, localBounds)
-		} else {
-			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
-		}
 	}
 
 	// Paint child windows (within the content area, clipped)
 	if len(w.ChildWindows()) > 0 {
 		contentBounds := w.contentBounds()
 		// Create a painter clipped to the content area
-		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
+		contentPainter := inside.WithOffset(contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
 			WithDenomination(outer, interior)
 
@@ -1873,7 +1865,25 @@ func (w *Window) Paint(p *core.Painter) {
 
 	// Detached-window chrome: the menu bar (between title and content)
 	// and status bar (bottom edge), then the menu bar's dropdown on top.
-	w.paintChrome(p, outer, interior)
+	w.paintChrome(inside, outer, interior)
+
+	// The frame goes on LAST, over everything inside it — the same order
+	// the desktop paints its own chrome and then its frame, which is why
+	// that one's corners survive. Content and chrome reach the window's
+	// edges, so the border is re-stroked here rather than before them.
+	if graphicalFrame {
+		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
+		if frameBorder == style.BorderHeavy {
+			// Single border: the outer band disappears into the window
+			// background, then a thin inner line in the active border color
+			// sits just inside it.
+			bg := w.GetScheme().GetWindowBG(w.renderActive())
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
+			w.paintSingleBorderInner(p, localBounds)
+		} else {
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
+		}
+	}
 
 	// Resize-edge hover highlight: translucent white bands along the
 	// size-sensitive edge(s) under the pointer, clipped to the frame's
