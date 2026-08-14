@@ -1,8 +1,6 @@
 package trinkets
 
 import (
-	"math"
-
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/platform"
@@ -70,6 +68,27 @@ func (d *Desktop) hostResizeParts() (platform.NativeSurface, platform.GlobalPoin
 		return nil, nil, false
 	}
 	return native, gp, true
+}
+
+// applyHostMinimumSize tells the OS the smallest this window may become —
+// the same floor our own gestures clamp to (window.MinHostCols/Rows), so
+// a resize we do not drive (a native title bar's edges in the
+// native/native_titlebar frame modes, the window manager's own keyboard
+// resize or tiling) cannot pull the desktop — or, in solo mode, the app
+// filling this same surface — down to nothing.
+//
+// Called when the surface is created and again whenever the cell metrics
+// or zoom change, since the floor is measured in cells.
+func (d *Desktop) applyHostMinimumSize() {
+	d.mu.RLock()
+	surf := d.surface
+	d.mu.RUnlock()
+	ms, ok := surf.(platform.NativeMinimumSizer)
+	if !ok {
+		return
+	}
+	w, h := window.MinHostSizePx(d.EffectiveCellMetrics(), d.pxPerUnit())
+	ms.SetMinimumSizePx(w, h)
 }
 
 // hostEdgeAt is the desktop's own resize-edge answer for a surface-local
@@ -152,9 +171,8 @@ func (d *Desktop) hostResizeMove(e core.MouseMoveEvent) bool {
 	if ppu <= 0 {
 		ppu = 1
 	}
-	// Same minimum a torn window enforces: 12 columns by 4 rows.
-	minW := int(math.Round(float64(metrics.CellWidth*12) * ppu))
-	minH := int(math.Round(float64(metrics.CellHeight*4) * ppu))
+	// The same minimum every host surface enforces (window.MinHostCols/Rows).
+	minW, minH := window.MinHostSizePx(metrics, ppu)
 	x, y, w, h := applyHostResize(st.edges, st.startX, st.startY, st.startW, st.startH,
 		gx-st.startGX, gy-st.startGY, minW, minH)
 	if st.edges&(window.ResizeEdgeLeft|window.ResizeEdgeTop) != 0 {

@@ -24,6 +24,7 @@ type msSurface struct {
 	bordered     bool // OS title bar present (solo strips it, ExitSolo restores)
 	zoomed       bool // OS-maximized/fullscreen (NativeZoomReporter)
 	squaredShape bool // corners forced square (NativeShapeSquarer)
+	minW, minH   int  // OS-enforced floor (NativeMinimumSizer)
 	opts         platform.SurfaceOptions
 
 	// Platform text caret, as the desktop's frame last set it.
@@ -63,6 +64,11 @@ func (s *msSurface) Minimize()              { s.minimized = true }
 func (s *msSurface) NativeZoomed() bool     { return s.zoomed }
 func (s *msSurface) SetShapeSquared(b bool) { s.squaredShape = b }
 
+// SetMinimumSizePx implements platform.NativeMinimumSizer: the real
+// platform hands this to the OS; the fake records it and enforces it on
+// every size change, as the OS would.
+func (s *msSurface) SetMinimumSizePx(w, h int) { s.minW, s.minH = w, h }
+
 // SetScreenRectPx implements platform.NativeRectSetter: one geometry
 // change, releasing any maximize (the real platform primes the restore
 // target with this rectangle first, so the un-maximize animates here).
@@ -78,6 +84,12 @@ func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 
 // SetScreenSizePx mimics the real platform: the size change reports
 // back through Resized (scale 1: pixels are units).
 func (s *msSurface) SetScreenSizePx(w, h int) {
+	if s.minW > 0 && w < s.minW {
+		w = s.minW
+	}
+	if s.minH > 0 && h < s.minH {
+		h = s.minH
+	}
 	s.size = core.UnitSize{Width: core.Unit(w), Height: core.Unit(h)}
 	if s.handler != nil {
 		s.handler.Resized(s.size)

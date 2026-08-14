@@ -161,6 +161,15 @@ type NativeShapeSquarer interface {
 	SetShapeSquared(squared bool)
 }
 
+// NativeMinimumSizer is an optional NativeSurface capability: tell the OS
+// the smallest this window may become. Our own resize gestures clamp
+// themselves, but a resize we do NOT drive — a native title bar's edges,
+// the window manager's own keyboard resize or tiling — answers only to
+// the OS, and without this it will happily pull a window down to nothing.
+type NativeMinimumSizer interface {
+	SetMinimumSizePx(w, h int)
+}
+
 // NativeRectSetter is an optional NativeSurface capability: move AND
 // resize in one call, as one geometry change.
 //

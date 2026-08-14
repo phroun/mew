@@ -304,6 +304,29 @@ func TitleGeometryDelta(dir string, coarse bool, metrics core.CellMetrics) (dx, 
 	return 0, 0
 }
 
+// The smallest an OS-hosted window may be resized to: a window still has
+// to show something and stay grabbable. One rule for every surface we
+// resize ourselves — a torn-off window, a solo window on the primary
+// surface, and the desktop's own window — so none of them can be pulled
+// down to nothing while its siblings stop.
+const (
+	MinHostCols = 12
+	MinHostRows = 4
+)
+
+// MinHostSizePx is that minimum in device pixels at the given cell
+// metrics and pixels-per-unit: what a resize gesture clamps to, and what
+// the OS window itself is told so a resize we do NOT drive (a native
+// title bar's edges, a window manager's keyboard resize) cannot undercut
+// it either.
+func MinHostSizePx(metrics core.CellMetrics, ppu float64) (w, h int) {
+	if ppu <= 0 {
+		ppu = 1
+	}
+	return int(math.Round(float64(metrics.CellWidth*MinHostCols) * ppu)),
+		int(math.Round(float64(metrics.CellHeight*MinHostRows) * ppu))
+}
+
 // DoubleClickTracker is the title bars' double-click convention: a second
 // press within 400ms and one cell of the first fires and consumes the
 // memory (a third click starts fresh rather than tripling). Callers that

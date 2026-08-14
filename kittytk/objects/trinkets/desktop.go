@@ -3473,6 +3473,10 @@ func (d *Desktop) RunOn(p platform.Platform) int {
 		// system menu.
 		d.applyDesktopFrame(surface)
 		d.addHostWindowMenuItems()
+		// The OS-side floor for this window (and for the app that fills
+		// this same surface in solo mode): the same minimum our own
+		// resize gestures clamp to.
+		d.applyHostMinimumSize()
 		d.setupTearOff(pf, surface)
 
 		// Offer the rotation easter egg's focus gate to any platform that has

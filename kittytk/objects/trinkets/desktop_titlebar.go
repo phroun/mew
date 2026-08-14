@@ -783,8 +783,7 @@ func (d *Desktop) handleHostTitleGeometry(cmd string) bool {
 	pdy := int(math.Round(float64(dy) * ppu))
 	if resize {
 		w, h := native.ScreenSizePx()
-		minW := int(math.Round(float64(metrics.CellWidth*12) * ppu))
-		minH := int(math.Round(float64(metrics.CellHeight*4) * ppu))
+		minW, minH := window.MinHostSizePx(metrics, ppu)
 		w += pdx
 		h += pdy
 		if w < minW {

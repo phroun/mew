@@ -247,6 +247,12 @@ func (w *Window) Size() (int32, int32) {
 
 func (w *Window) SetSize(width, height int32) { _ = w.w.SetSize(width, height) }
 
+// SetMinimumSize floors what the OS will resize this window to, so a
+// resize the toolkit does not drive (a native title bar's edges, the
+// window manager's own keyboard resize or tiling) cannot undercut the
+// minimum our gestures clamp to.
+func (w *Window) SetMinimumSize(minW, minH int32) { _ = w.w.SetMinimumSize(minW, minH) }
+
 // SizeInPixels returns the client area in real device pixels (SDL screen
 // coordinates are points on a HiDPI display; the framebuffer/swapchain is sized
 // in pixels). Falls back to Size() if the pixel query fails.

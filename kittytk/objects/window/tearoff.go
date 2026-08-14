@@ -183,6 +183,14 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	onRedock func(globalX, globalY int, grabX, grabY core.Unit) bool) *TearOffHost {
 	h := &TearOffHost{win: win, surf: surf, ppu: ppu, global: global, onRedock: onRedock, graphicalFrames: true}
 	h.native, _ = surf.(platform.NativeSurface)
+	// The OS-side floor, matching what resizeMove clamps to: a resize we
+	// do not drive (the window manager's own keyboard resize or tiling)
+	// answers only to the OS.
+	if ms, ok := surf.(platform.NativeMinimumSizer); ok {
+		metrics := core.DefaultCellMetrics()
+		ms.SetMinimumSizePx(h.pxHardX(metrics.CellWidth*MinHostCols),
+			h.pxHardY(metrics.CellHeight*MinHostRows))
+	}
 	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
 	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
 
@@ -1244,8 +1252,9 @@ func (h *TearOffHost) resizeMove() bool {
 	gx, gy := h.global()
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
-	minW := h.pxHardX(metrics.CellWidth * 12)
-	minH := h.pxHardY(metrics.CellHeight * 4)
+	// The shared host minimum, on the hardened cell pitch this host sizes by.
+	minW := h.pxHardX(metrics.CellWidth * MinHostCols)
+	minH := h.pxHardY(metrics.CellHeight * MinHostRows)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {

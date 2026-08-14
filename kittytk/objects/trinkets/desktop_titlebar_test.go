@@ -799,6 +799,51 @@ func TestMaximizedChildControlsAlignWithTheHost(t *testing.T) {
 	})
 }
 
+// The desktop's window cannot be resized away to nothing: every path
+// that sizes it — the edge gesture, the focused title's keyboard resize
+// — stops at the same floor a torn-off window stops at, and the OS is
+// told that floor too, so a resize we do not drive (a native title bar's
+// edges, the window manager's own resize) cannot undercut it either. In
+// solo mode the app fills this same surface, so it inherits the floor.
+func TestHostWindowHasTheTornWindowMinimum(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+		metrics := d.EffectiveCellMetrics()
+		wantW, wantH := window.MinHostSizePx(metrics, d.pxPerUnit())
+		if wantW <= 0 || wantH <= 0 {
+			t.Fatalf("degenerate minimum %dx%d", wantW, wantH)
+		}
+
+		// The OS was told, at surface creation.
+		if surf.minW != wantW || surf.minH != wantH {
+			t.Errorf("OS minimum = %dx%d, want %dx%d", surf.minW, surf.minH, wantW, wantH)
+		}
+
+		// Drag the right/bottom corner far past the origin.
+		plat.gx, plat.gy = 849, 539
+		h.Event(core.MousePressEvent{X: 799, Y: 479, Button: core.LeftButton})
+		plat.gx, plat.gy = 49, 59
+		h.Event(core.MouseMoveEvent{X: 0, Y: 0, Buttons: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: 0, Y: 0, Button: core.LeftButton})
+		if w, hh := surf.ScreenSizePx(); w != wantW || hh != wantH {
+			t.Errorf("after a collapse drag: %dx%d, want the floor %dx%d", w, hh, wantW, wantH)
+		}
+
+		// The focused title's keyboard shrink stops at the same floor.
+		if !d.enterHostTitleFocus(false) {
+			t.Fatal("title bar refused keyboard focus")
+		}
+		for i := 0; i < 40; i++ {
+			d.handleHostTitleGeometry(core.CmdWindowSizeLeft)
+			d.handleHostTitleGeometry(core.CmdWindowSizeUp)
+		}
+		if w, hh := surf.ScreenSizePx(); w != wantW || hh != wantH {
+			t.Errorf("after keyboard shrinking: %dx%d, want the floor %dx%d", w, hh, wantW, wantH)
+		}
+	})
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {

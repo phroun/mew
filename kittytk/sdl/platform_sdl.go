@@ -2400,6 +2400,16 @@ func (s *sdlSurface) SetScreenSizePx(w, h int) {
 	}
 }
 
+// SetMinimumSizePx implements platform.NativeMinimumSizer: the floor the
+// OS itself enforces, so a resize we do not drive cannot undercut the
+// minimum our own gestures clamp to.
+func (s *sdlSurface) SetMinimumSizePx(w, h int) {
+	if s.closed || s.win == nil || s.win.window == nil || w <= 0 || h <= 0 {
+		return
+	}
+	s.win.window.SetMinimumSize(int32(w), int32(h))
+}
+
 // SetScreenRectPx implements platform.NativeRectSetter: move and resize as
 // ONE geometry change, priming the restore target before releasing a
 // maximize.
