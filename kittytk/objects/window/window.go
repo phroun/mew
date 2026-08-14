@@ -1879,9 +1879,16 @@ func (w *Window) Paint(p *core.Painter) {
 			// sits just inside it.
 			bg := w.GetScheme().GetWindowBG(w.renderActive())
 			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
-			w.paintSingleBorderInner(p, localBounds)
+			w.paintSingleBorderInner(p, localBounds, w.GetScheme().GetWindowBorder(true))
 		} else {
 			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
+			// Every border type closes on the same inner line, so the
+			// innermost band is never left to whatever happens to be under
+			// it. Only the SINGLE border makes that line a statement of its
+			// own (its outer band is painted out, so this is the frame the
+			// eye reads); the others draw it in their own border color, as
+			// the inner edge of the stroke they just laid down.
+			w.paintSingleBorderInner(p, localBounds, frameStyle)
 		}
 	}
 
@@ -2394,7 +2401,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 // in the window background (reading as no border), so this hairline in the
 // active border color - one tab-stroke weight thick - sits just inside it.
 // No-op on cell surfaces.
-func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect) {
+func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect, st style.CellStyle) {
 	b := core.FindFrameBorderUnits(w)
 	inner := core.UnitRect{
 		X:      b,
@@ -2410,7 +2417,7 @@ func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRe
 	if th < 1 {
 		th = 1
 	}
-	p.StrokeRoundedRectWeight(inner, radius, th, w.GetScheme().GetWindowBorder(true))
+	p.StrokeRoundedRectWeight(inner, radius, th, st)
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -2667,7 +2674,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// overlays them. The after-content re-stroke re-adds it over edge-to-edge
 	// content.
 	if rounded && border == style.BorderHeavy {
-		w.paintSingleBorderInner(p, localBounds)
+		w.paintSingleBorderInner(p, localBounds, w.GetScheme().GetWindowBorder(true))
 	}
 
 	// Fill content area with background. Skipped when the rounded

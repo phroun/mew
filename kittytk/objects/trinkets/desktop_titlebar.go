@@ -885,15 +885,24 @@ func (d *Desktop) paintHostFrame(p *core.Painter, bounds core.UnitRect) {
 	scheme := d.GetScheme()
 	local := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	radius := window.FrameCornerRadius()
+	// Every state closes on the same inner line, so the innermost band is
+	// never left to whatever is under it; only the QUASI state makes that
+	// line a statement of its own (its outer band is painted out, so the
+	// line is the frame the eye reads). The others draw it in their own
+	// border color, as the inner edge of the stroke they just laid down.
 	switch d.hostFrameState() {
 	case hostFrameActive:
-		p.StrokeRoundedRect(local, radius, style.BorderDouble, scheme.GetWindowBorder(true))
+		st := scheme.GetWindowBorder(true)
+		p.StrokeRoundedRect(local, radius, style.BorderDouble, st)
+		d.paintHostFrameInner(p, local, st)
 	case hostFrameQuasi:
 		bg := scheme.GetWindowBG(true)
 		p.StrokeRoundedRect(local, radius, style.BorderHeavy, scheme.GetWindowBorder(true).WithFg(bg))
-		d.paintHostFrameInner(p, local)
+		d.paintHostFrameInner(p, local, scheme.GetWindowBorder(true))
 	default:
-		p.StrokeRoundedRect(local, radius, style.BorderDouble, scheme.GetWindowBorder(false))
+		st := scheme.GetWindowBorder(false)
+		p.StrokeRoundedRect(local, radius, style.BorderDouble, st)
+		d.paintHostFrameInner(p, local, st)
 	}
 }
 
@@ -911,7 +920,7 @@ func (d *Desktop) paintHostFrame(p *core.Painter, bounds core.UnitRect) {
 // It therefore strokes at the INNER EDGE of the reserved border: the
 // last of the border's own units, so the client area still begins on the
 // first column past every part of the frame.
-func (d *Desktop) paintHostFrameInner(p *core.Painter, local core.UnitRect) {
+func (d *Desktop) paintHostFrameInner(p *core.Painter, local core.UnitRect, st style.CellStyle) {
 	b := d.WindowFrameBorderUnits()
 	weight := p.UnitsToPx(1)
 	if weight < 1 {
@@ -933,5 +942,5 @@ func (d *Desktop) paintHostFrameInner(p *core.Painter, local core.UnitRect) {
 	if radius < 0 {
 		radius = 0
 	}
-	p.StrokeRoundedRectWeight(inner, radius, weight, d.GetScheme().GetWindowBorder(true))
+	p.StrokeRoundedRectWeight(inner, radius, weight, st)
 }
