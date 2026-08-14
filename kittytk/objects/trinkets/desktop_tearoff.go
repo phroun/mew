@@ -716,8 +716,32 @@ func (d *Desktop) applicationForWindow(win *window.Window) ApplicationProvider {
 // In solo mode there is no desktop behind the app, so the main window's blur
 // has nowhere to go and the window keeps the keyboard rather than dropping
 // it into nothing.
-func (d *Desktop) BlurDetachedWindow(win *window.Window) {
+// CanBlurDetachedWindow implements the window package's detachedBlurrer: it
+// answers whether a torn window has anywhere to blur TO, so the control is
+// simply not offered when it would be inert.
+//
+// It is asked fresh on every layout rather than latched, which is what makes
+// the control correct itself: a solo app's main window has no desktop behind
+// it and no app window above it, so it offers no blur item - and the moment
+// show_desktop reveals a desktop, the same question answers yes and the item
+// is there.
+func (d *Desktop) CanBlurDetachedWindow(win *window.Window) bool {
 	if win == nil {
+		return false
+	}
+	if app := d.applicationForWindow(win); app != nil {
+		if main := app.MainWindow(); main != nil && main != win {
+			return true // its app's main window is above it
+		}
+	}
+	// Nothing above it but the desktop, which solo mode does not have.
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return !d.solo
+}
+
+func (d *Desktop) BlurDetachedWindow(win *window.Window) {
+	if win == nil || !d.CanBlurDetachedWindow(win) {
 		return
 	}
 	if app := d.applicationForWindow(win); app != nil {

@@ -291,6 +291,16 @@ type Desktop struct {
 	// a remaining window is promoted onto the primary surface.
 	soloPrimaryHost *window.TearOffHost
 
+	// soloTearSuppressed remembers every window whose tear/redock handle solo
+	// mode took away, and whether it had one BEFORE - there is nothing to dock
+	// back to while the desktop is hidden, so solo hides the handle on the
+	// primary window and on every peer it adopts. Revealing the desktop gives
+	// back exactly what was there, so a window that was never tearable in the
+	// first place stays that way. Without the memory a peer kept no handle for
+	// the rest of the session and could never dock to the desktop that had
+	// just appeared.
+	soloTearSuppressed map[*window.Window]bool
+
 	// menuBarRowLent is true while the menu bar has BORROWED the top row on a
 	// screen where it is normally hidden (the chrome-free single-app case).
 	// lentBounds is what the windows looked like before, so giving the row
@@ -1332,6 +1342,11 @@ func (d *Desktop) revealAsDesktop() {
 	d.soloPrimaryHost = nil
 	d.mu.Unlock()
 
+	// The window that was solo is gone, but its peers are not: they are torn
+	// onto their own surfaces with no handle, and there is a desktop to dock
+	// to now.
+	d.restoreSoloSuppressedTear()
+
 	if surf != nil && wm != nil {
 		size := surf.Size()
 		wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -1463,6 +1478,11 @@ func (d *Desktop) ExitSoloMode() {
 	// screen rectangle it occupied while solo (the primary surface's rect).
 	// The desktop origin is now that surface, so tearing at desktop unit
 	// (0,0) with the surface's size lands it exactly where it was.
+	// Every window solo mode stripped a handle from gets it back, not just
+	// this one: the peers adopted onto their own surfaces are still out there
+	// and now have a desktop to dock to.
+	d.restoreSoloSuppressedTear()
+
 	win.SetDetached(false) // createTornHost re-detaches and re-wires it
 	win.SetTearable(true)  // its redock handle returns; it can dock now
 	win.SetBounds(core.UnitRect{Width: size.Width, Height: size.Height})
@@ -1662,6 +1682,7 @@ func (d *Desktop) soloHostOnPrimaryAt(win *window.Window, target *screenRect) {
 		func() { d.surfaceBlockingModal(win) })
 
 	win.SetDetached(true)
+	d.noteSoloTearSuppressed(win, win.IsTearable())
 	win.SetTearable(false) // no tear/redock handle in solo
 	d.attachMainWindowChrome(win)
 	if mb, ok := win.WindowMenuBar().(*MenuBar); ok {
@@ -1691,9 +1712,53 @@ func (d *Desktop) soloAdoptWindow(win *window.Window) {
 	if !d.managesWindow(win) {
 		return
 	}
+	// Forced tearable only so the tear can happen; the handle then goes away
+	// because a solo peer has no desktop to dock back to. Remember what it
+	// really was, so revealing a desktop restores it rather than guessing.
+	d.noteSoloTearSuppressed(win, win.IsTearable())
 	win.SetTearable(true)
 	d.tearOffInPlace(win)
 	win.SetTearable(false)
+}
+
+// noteSoloTearSuppressed records that solo mode is about to take win's tear
+// handle away, and what the handle was before.
+func (d *Desktop) noteSoloTearSuppressed(win *window.Window, was bool) {
+	if win == nil {
+		return
+	}
+	d.mu.Lock()
+	if d.soloTearSuppressed == nil {
+		d.soloTearSuppressed = map[*window.Window]bool{}
+	}
+	// First note wins: a window adopted, promoted and re-adopted must come
+	// back to what it was before solo mode ever touched it, not to the
+	// suppressed value an intermediate step left behind.
+	if _, seen := d.soloTearSuppressed[win]; !seen {
+		d.soloTearSuppressed[win] = was
+	}
+	d.mu.Unlock()
+}
+
+// restoreSoloSuppressedTear gives back every tear/redock handle solo mode
+// took away. Called wherever the desktop becomes visible again: from then on
+// there IS somewhere to dock back to, for every app's windows and not just
+// the one that happened to be hosting the primary surface.
+func (d *Desktop) restoreSoloSuppressedTear() {
+	d.mu.Lock()
+	suppressed := d.soloTearSuppressed
+	d.soloTearSuppressed = nil
+	d.mu.Unlock()
+	// Strictly additive: give a handle BACK to windows that had one, and never
+	// take one away. A window that never declared itself tearable - a follower
+	// dialog, which docks with its app's main window rather than on its own -
+	// is left alone, and so is one whose app turned the flag on since, whose
+	// choice is newer than this memory.
+	for win, was := range suppressed {
+		if win != nil && was {
+			win.SetTearable(true)
+		}
+	}
 }
 
 // managesWindow reports whether win is currently in the window manager.

@@ -2920,7 +2920,19 @@ func (w *Window) HasTitleFocus() bool {
 }
 
 // hasKeyboardBlurEnabled returns true if the parent container has keyboard blur enabled.
+//
+// A TORN window is asked of the desktop instead: blurring one leaves the OS
+// window entirely (see performKeyboardBlur), so the control only makes sense
+// when there is another window or a desktop to land on. A solo app's main
+// window has neither, and an inert control in a title bar is worse than no
+// control at all.
 func (w *Window) hasKeyboardBlurEnabled() bool {
+	if w.IsDetached() {
+		if b := w.findDetachedBlurrer(); b != nil {
+			return b.CanBlurDetachedWindow(w)
+		}
+		return false
+	}
 	parent := w.Parent()
 	if parent == nil {
 		return false
@@ -2936,6 +2948,12 @@ func (w *Window) hasKeyboardBlurEnabled() bool {
 // desktop behind it at all. Declared here rather than imported so the
 // dependency stays one-way (as windowSurfacer is).
 type detachedBlurrer interface {
+	// CanBlurDetachedWindow reports whether this window has anywhere to blur
+	// TO. A solo app's main window does not: it fills the primary surface and
+	// there is no desktop behind it, so the control is not offered rather than
+	// offered and inert. It comes back by itself the moment a desktop appears,
+	// because the answer is asked fresh on every layout.
+	CanBlurDetachedWindow(win *Window) bool
 	BlurDetachedWindow(win *Window)
 }
 

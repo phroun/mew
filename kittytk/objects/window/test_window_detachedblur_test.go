@@ -13,6 +13,7 @@ type blurRecorder struct {
 	*core.TrinketBase
 	generic  int
 	detached []string
+	canBlur  bool
 }
 
 func (b *blurRecorder) Children() []core.Trinket            { return nil }
@@ -25,6 +26,10 @@ func (b *blurRecorder) SetLayoutManager(core.LayoutManager) {}
 
 func (b *blurRecorder) KeyboardBlurChildren() bool { return true }
 func (b *blurRecorder) PerformKeyboardBlur()       { b.generic++ }
+
+// canBlur is what the desktop answers for a torn window: false stands for
+// "solo main window, nothing above it".
+func (b *blurRecorder) CanBlurDetachedWindow(*Window) bool { return b.canBlur }
 func (b *blurRecorder) BlurDetachedWindow(w *Window) {
 	b.detached = append(b.detached, w.Title())
 }
@@ -54,6 +59,32 @@ func TestBlurRoutesByWhetherTheWindowIsTorn(t *testing.T) {
 	}
 	if len(desk.detached) != 1 || desk.detached[0] != "Document" {
 		t.Errorf("torn blur did not route to the desktop: %v", desk.detached)
+	}
+}
+
+// The blur control is only OFFERED to a torn window when there is somewhere
+// to blur to. A solo app's main window has no app window above it and no
+// desktop behind it, and an inert control in a title bar is worse than no
+// control. The answer is asked fresh, so revealing a desktop brings it back
+// with no state to reset.
+func TestTornBlurItemOfferedOnlyWhenItHasSomewhereToGo(t *testing.T) {
+	desk := &blurRecorder{TrinketBase: core.NewTrinketBase()}
+	win := NewWindow("Solo")
+	win.SetParent(desk)
+
+	// Docked, the container's own answer governs.
+	if !win.hasKeyboardBlurEnabled() {
+		t.Error("docked window was denied the blur item its container offers")
+	}
+
+	win.SetDetached(true)
+	desk.canBlur = false
+	if win.hasKeyboardBlurEnabled() {
+		t.Error("solo main window offered a blur item with nowhere to blur to")
+	}
+	desk.canBlur = true
+	if !win.hasKeyboardBlurEnabled() {
+		t.Error("blur item did not come back once there was somewhere to go")
 	}
 }
 
