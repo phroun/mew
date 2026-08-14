@@ -1502,6 +1502,14 @@ func (w *Window) frameCellMetrics() core.CellMetrics {
 	return core.DefaultCellMetrics()
 }
 
+// titleBarMetrics resolves this window's title-bar kit metrics, in the
+// FRAME denomination its chrome lays out in (the title bar sits above the
+// content area and is never sized in the interior denomination).
+func (w *Window) titleBarMetrics() TitleBarMetrics {
+	return TitleBarMetricsFor(w.frameCellMetrics(), core.FindPxPerUnit(w),
+		w.EffectiveFont(), core.FindGraphicalFrames(w))
+}
+
 // contentBounds returns the bounds for the content area. When the window
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
@@ -1524,7 +1532,9 @@ func (w *Window) contentBounds() core.UnitRect {
 		// title bar or a frame).
 		top := core.Unit(0)
 		if hasTitleBar(flags, state) {
-			top = metrics.CellHeight
+			// The (possibly scaled) title row height, from the kit —
+			// CellHeight at scale 1.0 and on every cell surface.
+			top = w.titleBarMetrics().RowH
 		}
 		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
 	case flags&WindowFlagFrameless != 0:

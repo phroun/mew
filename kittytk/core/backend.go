@@ -389,6 +389,26 @@ func ScaledWindowFrameBorderPx(ppu float64) int {
 // defaultWindowFrameBorderPx is the built-in frame stroke weight.
 const defaultWindowFrameBorderPx = 2
 
+// titleBarScale scales every GRAPHICAL title bar's height and content:
+// 1.0 is the classic full-cell row; 0.9 renders the bar at 90% of it —
+// ceiled to a full device pixel — with the fonts and controls scaled to
+// match. Cell (terminal) surfaces cannot subdivide a character cell and
+// always render at 1.0 regardless. Read by the title-bar kit
+// (objects/window/titlebar.go), which is the only place bars measure.
+var titleBarScale = 1.0
+
+// SetTitleBarScale sets the graphical title-bar scale; values at or below
+// zero restore 1.0.
+func SetTitleBarScale(s float64) {
+	if s <= 0 {
+		s = 1
+	}
+	titleBarScale = s
+}
+
+// TitleBarScale returns the current graphical title-bar scale.
+func TitleBarScale() float64 { return titleBarScale }
+
 // FrameBorderProvider is the trinket-side carrier of the graphical
 // window-frame border reservation: the desktop reports how many units the
 // frame border occupies (the device-pixel width converted at its
