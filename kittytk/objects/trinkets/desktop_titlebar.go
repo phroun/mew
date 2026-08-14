@@ -597,6 +597,27 @@ func (d *Desktop) hostZoomForget() {
 	d.RequestUpdate()
 }
 
+// TitleControlsInset implements window.TitleControlsInsetProvider: how
+// far the desktop's own title-bar controls sit from the origin of the
+// client area it hands its windows, so a MAXIMIZED window (which has no
+// border of its own to indent by) can line its controls up with them
+// instead of sitting one cell to their left.
+//
+// Zero whenever the desktop's own controls are flush or absent — while
+// zoomed (maximized style, controls at the edge), and in the frame modes
+// where the OS draws the title bar and the desktop has no controls of
+// its own to align with. Zero on a cell surface too: themedFrameActive
+// is false there, so the TUI keeps its flush maximized chrome exactly as
+// it was.
+func (d *Desktop) TitleControlsInset() core.Unit {
+	if !d.themedFrameActive() || d.hostZoomedNow() {
+		return 0
+	}
+	// The bar draws its controls one cell in from the (border-inset)
+	// edge, and the client area starts at that same border: one cell.
+	return d.hostTitleMetrics().CellW
+}
+
 // hostTitleFocused reports whether the themed title bar holds the keyboard.
 func (d *Desktop) hostTitleFocused() bool {
 	d.mu.RLock()

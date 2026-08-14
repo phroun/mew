@@ -2204,6 +2204,61 @@ func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Trinket, core.UnitRect,
 	return nil, core.UnitRect{}, false
 }
 
+// TitleControlsInsetProvider is an optional container capability: how far
+// the container's OWN title-bar controls sit from the origin of the area
+// it hands its children. A maximized child has no border of its own to
+// indent by, so its controls would start flush at that origin and sit one
+// cell left of the host's — visibly out of line on a themed desktop or an
+// unmaximized parent window. Asking the host closes the gap, and composes
+// through nesting: a host whose own controls are flush (it is itself
+// maximized or zoomed, or it draws no title bar at all) answers 0, and
+// the child stays flush too, which is already aligned.
+//
+// Graphical frames only — see maximizedControlInset.
+type TitleControlsInsetProvider interface {
+	TitleControlsInset() core.Unit
+}
+
+// TitleControlsInset implements TitleControlsInsetProvider for a window
+// hosting MDI children: the offset from the content area it gives them to
+// where its own controls are drawn.
+func (w *Window) TitleControlsInset() core.Unit {
+	if !core.FindGraphicalFrames(w) || !hasTitleBar(w.Flags(), w.State()) {
+		return 0
+	}
+	if w.State() == WindowStateMaximized {
+		// Flush to its own content origin, plus whatever ITS host asked
+		// for — so the alignment carries down a nested stack.
+		return w.maximizedControlInset()
+	}
+	// The normal frame draws its controls one cell in from the
+	// border-inset origin, and the content area starts at that same
+	// border: one cell apart.
+	return w.titleBarMetrics().CellW
+}
+
+// maximizedControlInset is where a MAXIMIZED window starts its title-bar
+// controls: flush at its own origin, unless its host draws controls
+// further in (a themed desktop, an unmaximized parent window), in which
+// case it matches them. Always 0 on a cell surface — a terminal's chrome
+// has no border to align across, and the TUI stays exactly as it was.
+func (w *Window) maximizedControlInset() core.Unit {
+	if !core.FindGraphicalFrames(w) {
+		return 0
+	}
+	if host, ok := w.Parent().(TitleControlsInsetProvider); ok && host != nil {
+		return host.TitleControlsInset()
+	}
+	return 0
+}
+
+// TitleControlsInsetForTest exposes maximizedControlInset — where this
+// window's maximized chrome starts its controls — so a host's alignment
+// can be asserted from the package that owns the host.
+func (w *Window) TitleControlsInsetForTest() core.Unit {
+	return w.maximizedControlInset()
+}
+
 // paintMaximizedFrame draws the title bar only (no side borders).
 func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle) {
@@ -2258,8 +2313,13 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
 	// through its own kit function (deliberately distinct per button; only
 	// the three-cell mechanics are shared).
+	//
+	// Flush at the origin, except where the host's own controls sit
+	// further in (a themed desktop, an unmaximized parent window): then
+	// they line up with those instead of one cell to their left. 0 on a
+	// cell surface, so the TUI is unchanged (see maximizedControlInset).
 	buttonWidth := tm.ButtonW
-	controlX := core.Unit(0)
+	controlX := w.maximizedControlInset()
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
@@ -2709,7 +2769,9 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// Control buttons are on the left
 	controlX := tm.CellW // Start after left border (for normal frame)
 	if state == WindowStateMaximized {
-		controlX = 0 // No border in maximized state
+		// No border in maximized state: flush, or aligned with the host's
+		// own controls where those sit further in (matches the paint).
+		controlX = w.maximizedControlInset()
 	}
 
 	buttonWidth := tm.ButtonW

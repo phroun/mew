@@ -764,6 +764,41 @@ func TestThemedFrameLineSurvivesBesideAWindow(t *testing.T) {
 	d.RunOn(plat)
 }
 
+// A MAXIMIZED child window lines its title-bar controls up with the
+// desktop's own, instead of sitting flush at the client origin one cell
+// to their left. The desktop answers where its controls are; when it is
+// itself zoomed (its controls flush at the edge) the child goes flush
+// too, which is already aligned.
+func TestMaximizedChildControlsAlignWithTheHost(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		cell := d.EffectiveCellMetrics().CellWidth
+		if got := d.TitleControlsInset(); got != cell {
+			t.Errorf("themed desktop inset = %v, want one cell (%v)", got, cell)
+		}
+
+		win := window.NewWindow("child")
+		d.WindowManager().AddWindow(win)
+		d.WindowManager().MaximizeWindow(win)
+		if !win.IsMaximized() {
+			t.Fatal("window did not maximize")
+		}
+		// The child asks its host — reachable through the trinket parent
+		// chain — and matches it.
+		if got := win.TitleControlsInsetForTest(); got != cell {
+			t.Errorf("maximized child's control inset = %v, want the host's %v", got, cell)
+		}
+
+		// Zoomed desktop: its own controls are flush, so the child's are too.
+		d.hostZoomToggle()
+		if got := d.TitleControlsInset(); got != 0 {
+			t.Errorf("zoomed desktop inset = %v, want 0 (controls flush)", got)
+		}
+		if got := win.TitleControlsInsetForTest(); got != 0 {
+			t.Errorf("child under a zoomed desktop = %v, want 0", got)
+		}
+	})
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
