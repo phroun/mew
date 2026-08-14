@@ -333,13 +333,12 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 		d.RequestUpdate()
 		return true
 	}
-	native, gp, ok := d.hostResizeParts()
-	if !ok {
-		return false
-	}
-	// A double-click on the drag area zooms — the kit's tracker, the same
-	// convention (400ms, within a cell, consume on fire) the window
-	// manager applies to window title bars.
+	// A double-click on the drag area zooms — and UN-zooms, like a window
+	// title bar's maximize/restore — via the kit's tracker (400ms, within
+	// a cell, consume on fire). Checked BEFORE the drag gesture's parts:
+	// hostResizeParts stands down while the OS reports the window zoomed
+	// (some window managers flag a work-area fill as a maximize), and
+	// un-zooming is precisely the action that must survive that state.
 	metrics := d.EffectiveCellMetrics()
 	d.mu.Lock()
 	st := &d.hostMove
@@ -347,6 +346,14 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 	d.mu.Unlock()
 	if isDouble {
 		d.hostZoomToggle()
+		return true
+	}
+
+	native, gp, ok := d.hostResizeParts()
+	if !ok {
+		// No drag to arm (the OS holds a maximized window's geometry), but
+		// the press was on OUR title bar: consume it so the double-click
+		// above keeps counting instead of the click leaking below.
 		return true
 	}
 

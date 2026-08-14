@@ -540,6 +540,32 @@ func TestDoubleClickTitleBarZoomsAndRestores(t *testing.T) {
 	})
 }
 
+// Double-clicking the title bar UN-zooms too — even when the window
+// manager marked the work-area fill as a maximize, which stands the drag
+// gesture down: the double-click is checked before the drag's parts, so
+// the restore (the action that must survive that state) still fires.
+func TestDoubleClickRestoresWhileOSCallsItMaximized(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+
+		d.hostZoomToggle()
+		surf.zoomed = true // the WM marked the fill as a maximize
+		click := func() {
+			h.Event(core.MousePressEvent{X: 400, Y: 8, Button: core.LeftButton})
+			h.Event(core.MouseReleaseEvent{X: 400, Y: 8, Button: core.LeftButton})
+		}
+		click()
+		click()
+		if w, _ := surf.ScreenSizePx(); w != 800 {
+			t.Errorf("double-click did not un-zoom: width %d, want 800", w)
+		}
+		if surf.zoomed {
+			t.Error("restore did not ask the OS to release its maximize")
+		}
+	})
+}
+
 // A manual edge-resize of a zoomed window makes it an ordinary floating
 // window again the moment it actually resizes: the frame comes back, the
 // corners round, and the next Zoom starts fresh instead of "restoring".
