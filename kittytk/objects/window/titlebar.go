@@ -38,7 +38,8 @@ type TitleBarMetrics struct {
 	CellW     core.Unit  // cell pitch the controls/text lay out on
 	ButtonW   core.Unit  // one control slot: three of those cells
 	YOff      core.Unit  // vertical centering of scaled glyphs in the row (0 at 1.0)
-	Font      *core.Font // title font (the given font at 1.0, size-scaled otherwise)
+	Font      *core.Font // title TEXT font (the given font at 1.0, size-scaled otherwise)
+	Mono      *core.Font // control-glyph font: the ui-term cell face at the scaled size — the buttons are MONOSPACED, the retro aesthetic DrawCell renders at 1.0
 	Graphical bool
 
 	base core.CellMetrics
@@ -97,6 +98,15 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 			}
 		}
 	}
+	// The controls' glyph face: ui-term, the terminal cell font, at the
+	// bar's point size — the buttons are monospaced (the retro aesthetic;
+	// DrawCell renders exactly this face at 1.0, where the font's pitch IS
+	// the cell width).
+	monoSize := 12
+	if tm.Font != nil {
+		monoSize = tm.Font.Size
+	}
+	tm.Mono = &core.Font{Name: "ui-term", Size: monoSize}
 	tm.ButtonW = tm.CellW * 3
 	return tm
 }
@@ -104,11 +114,13 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 // paintThreeCellButton is the shared mechanics of one [i] control: three
 // content cells at x. At scale 1.0 it is the classic per-cell draw,
 // bit-identical to the pre-kit painters; scaled, the slot is filled and
-// the whole "[i]" draws as ONE shaped run centered in the slot — the same
-// single-run lesson as the focused-title decoration: centering each glyph
-// separately by its own proportional width let narrow ink (an 'x', a '.')
-// sit differently against its brackets than wide ink, where one run
-// advances each character exactly from the edge the previous one ended on.
+// the whole "[i]" draws as one run in the MONO (ui-term) face centered in
+// the slot. Both halves of that matter and each was gotten wrong once:
+// per-glyph centering by proportional widths let narrow ink sit
+// differently against its brackets than wide ink (one run advances each
+// character exactly from the edge the previous one ended on), and the
+// proportional TITLE face lost the retro monospace the controls have at
+// 1.0, where DrawCell renders the cell font and its pitch IS the cell.
 func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon rune, st style.CellStyle) {
 	if tm.Scale == 1 {
 		p.DrawCell(x, 0, '[', st)
@@ -118,11 +130,11 @@ func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', st)
 	run := "[" + string(icon) + "]"
-	rx := x + (tm.ButtonW-tm.Font.MeasureText(run))/2
+	rx := x + (tm.ButtonW-tm.Mono.MeasureText(run))/2
 	if rx < x {
 		rx = x
 	}
-	p.DrawText(rx, tm.YOff, run, st, tm.Font)
+	p.DrawText(rx, tm.YOff, run, st, tm.Mono)
 }
 
 // PaintCloseButton draws the close control [x].
@@ -168,11 +180,11 @@ func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', titleSt)
 	g := string(glyph)
-	gx := x + (tm.ButtonW-tm.Font.MeasureText(g))/2
+	gx := x + (tm.ButtonW-tm.Mono.MeasureText(g))/2
 	if gx < x {
 		gx = x
 	}
-	p.DrawText(gx, tm.YOff, g, glyphSt, tm.Font)
+	p.DrawText(gx, tm.YOff, g, glyphSt, tm.Mono)
 }
 
 // PaintTitleBarText draws the (unfocused) title. Centered when a centered

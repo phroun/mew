@@ -44,6 +44,11 @@ func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 	if tm.Font.Size != 8 {
 		t.Errorf("font size = %d, want round(0.7×12) = 8", tm.Font.Size)
 	}
+	// The controls' glyph face stays the retro MONOSPACE: ui-term at the
+	// bar's point size, never the proportional title face.
+	if tm.Mono == nil || tm.Mono.Name != "ui-term" || tm.Mono.Size != 8 {
+		t.Errorf("control mono face = %+v, want ui-term at 8pt", tm.Mono)
+	}
 	// Glyph box 16×8/12 ≈ 10.67 units in a 12-unit row: the half-gap
 	// floors to 0 (rounding it up sat the text a unit too low).
 	if tm.YOff != 0 {
