@@ -663,6 +663,58 @@ func TestScaledTitleBarShrinksTheThemedRow(t *testing.T) {
 	})
 }
 
+// The focused title bar resolves its keys against the DEFAULT registry,
+// not the focused control's: an editor that brings its own keymap (mew)
+// may carry no trinket focus bindings at all, and following the focus
+// there — as the desktop's own KeyCommand deliberately does for menu
+// accelerators — left the title bar deaf the moment such a control was
+// focused.
+func TestTitleFocusSurvivesAForeignFocusedKeymap(t *testing.T) {
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		h := plat.surfaces[0].handler
+		titleFocus := func() int {
+			d.mu.RLock()
+			defer d.mu.RUnlock()
+			return d.hostTitleFocus
+		}
+
+		// A focused control whose registry speaks a foreign vocabulary:
+		// no focus_next, no focus_prior, nothing of the toolkit's table.
+		eater := &foreignKeyTrinket{}
+		eater.SetKeyRegistry(core.NewKeyRegistry("foreign", nil))
+		eater.SetParent(d)
+		eater.SetFocusPolicy(core.StrongFocus)
+		eater.Init(eater)
+		eater.SetFocus()
+
+		// The repro condition is real: the desktop's own focus-following
+		// resolution sees nothing for these keys...
+		if got := d.KeyCommand("S-Tab"); got != "" {
+			t.Fatalf("focus-following resolution unexpectedly answered %q — repro condition lost", got)
+		}
+
+		// ...and the title bar works anyway, through the whole dispatch.
+		if !d.enterHostTitleFocus(false) {
+			t.Fatal("title bar refused keyboard focus")
+		}
+		h.Event(core.KeyPressEvent{Key: "S-Tab"})
+		if got := titleFocus(); got != hostTitleButtonZoom {
+			t.Fatalf("S-Tab under a foreign focused keymap landed on %d, want zoom", got)
+		}
+		h.Event(core.KeyPressEvent{Key: "Tab"})
+		if got := titleFocus(); got != hostTitleFocusTitle {
+			t.Fatalf("Tab under a foreign focused keymap landed on %d, want the title", got)
+		}
+	})
+}
+
+// foreignKeyTrinket is a focusable stand-in for a control that brings its
+// own keymap (SetKeyRegistry) — the shape a mew editor has.
+type foreignKeyTrinket struct {
+	core.TrinketBase
+	core.TrinketKeys
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {

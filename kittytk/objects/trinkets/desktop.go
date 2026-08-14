@@ -127,6 +127,11 @@ type Desktop struct {
 	hostTitleHover   int
 	hostTitlePressed int
 
+	// hostTitleKeys resolves the focused title bar's keys against the
+	// DEFAULT registry (ownerless TrinketKeys), never the focused
+	// control's — see the SetCommands call in NewDesktop.
+	hostTitleKeys core.TrinketKeys
+
 	// Graphical wallpaper (classic MacOS style): an 8x8 two-color
 	// bitmap, each bit rendered as wallpaperChunkPx x wallpaperChunkPx
 	// device pixels. Tune via SetWallpaperPattern/SetWallpaperChunk.
@@ -407,15 +412,18 @@ func NewDesktop() *Desktop {
 	// The desktop itself claims only two: the key that summons the menu bar,
 	// and the one that dismisses it when the bar took focus without opening
 	// anything. Everything else belongs to a window or a trinket.
-	// The desktop's own key vocabulary: the menu key and cancel, plus the
-	// themed title bar's controls (Tab/Shift+Tab walk them, activate runs
-	// one) and the focused title's window-geometry commands (arrows move,
-	// the size commands grow and shrink, fine and coarse) — a trinket
-	// resolves only the commands it declares, and the title bar is desktop
-	// chrome rather than a trinket of its own. All of these act only while
-	// the title bar actually holds the keyboard.
-	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel,
-		core.CmdFocusNext, core.CmdFocusPrior, core.CmdTrinketActivate,
+	d.SetCommands(core.CmdAppMenu, core.CmdTrinketCancel)
+
+	// The themed title bar's own key scope. Deliberately OWNERLESS, which
+	// makes TrinketKeys resolve against the DEFAULT registry: while the
+	// title bar holds the keyboard, focus is on the desktop's chrome — NOT
+	// in the focused control, whose registry (a full-screen editor's, say)
+	// speaks its own vocabulary and may carry no trinket focus bindings at
+	// all. Resolving through d.KeyCommand followed the focus down there
+	// and went dead the moment such a control was focused.
+	d.hostTitleKeys.SetCommands(
+		core.CmdFocusNext, core.CmdFocusPrior,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
 		core.CmdWindowMoveFineLeft, core.CmdWindowMoveFineRight,
 		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
 		core.CmdWindowMoveLeft, core.CmdWindowMoveRight,

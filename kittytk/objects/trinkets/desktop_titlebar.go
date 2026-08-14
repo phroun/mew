@@ -672,7 +672,11 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 	if focus == hostTitleButtonNone {
 		return false
 	}
-	cmd := d.KeyCommand(event.Key)
+	// Resolved against the DEFAULT registry (hostTitleKeys is ownerless):
+	// the title bar IS what holds the keyboard, so the focused control's
+	// registry — which d.KeyCommand follows, and which may speak a
+	// vocabulary with no focus bindings at all — has no say here.
+	cmd := d.hostTitleKeys.KeyCommand(event.Key)
 	switch cmd {
 	case core.CmdFocusNext:
 		switch focus {
