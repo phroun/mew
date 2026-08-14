@@ -2931,8 +2931,50 @@ func (w *Window) hasKeyboardBlurEnabled() bool {
 	return false
 }
 
-// performKeyboardBlur calls the parent's PerformKeyboardBlur if available.
+// detachedBlurrer is the desktop, which is the only thing that knows what
+// sits ABOVE a torn window: the app it belongs to, and whether there is a
+// desktop behind it at all. Declared here rather than imported so the
+// dependency stays one-way (as windowSurfacer is).
+type detachedBlurrer interface {
+	BlurDetachedWindow(win *Window)
+}
+
+// findDetachedBlurrer walks up for the desktop. A torn window keeps its
+// parent pointer -- tearing off removes it from the manager's list, not
+// from the trinket tree -- so the walk still arrives.
+func (w *Window) findDetachedBlurrer() detachedBlurrer {
+	var current any = w.Parent()
+	for current != nil {
+		if b, ok := current.(detachedBlurrer); ok {
+			return b
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
+}
+
+// performKeyboardBlur hands the keyboard back to whatever contains this
+// window.
+//
+// Docked, that is the parent container: the desktop or MDI pane focuses its
+// menu bar, and the window is still on screen right beside it. TORN, the
+// containing surface holds this one window and nothing else, so the generic
+// path would focus a menu bar on a surface the user is not even looking at
+// while this window kept the OS focus. A torn window blurs up the OWNERSHIP
+// chain instead -- to its app's main window, or, if it is that main window,
+// to the desktop it was torn from -- which is where "out of this window"
+// actually leads when the window is a whole OS window.
 func (w *Window) performKeyboardBlur() {
+	if w.IsDetached() {
+		if b := w.findDetachedBlurrer(); b != nil {
+			b.BlurDetachedWindow(w)
+			return
+		}
+	}
 	parent := w.Parent()
 	if parent == nil {
 		return
