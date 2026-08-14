@@ -2705,13 +2705,31 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 		return s
 	}
 	runes := []rune(s)
-	for len(runes) > 0 {
-		runes = runes[:len(runes)-1]
-		if font.MeasureText(string(runes)+ell) <= avail {
-			return string(runes) + ell
+	// Binary search for the longest prefix that still fits with the
+	// ellipsis. Text is never NARROWER for having one more character in
+	// it - the assumption ellipsizing rests on to begin with - so "fits"
+	// is downward closed and this lands on the same prefix a scan from
+	// the full string would, in log(n) measurements instead of n. Every
+	// title bar in the system runs this on every paint, and a measurement
+	// is a shaping lookup keyed on a freshly built string.
+	lo, hi := 0, len(runes) // lo fits (as ""), hi does not
+	for lo < hi-1 {
+		mid := (lo + hi) / 2
+		if font.MeasureText(string(runes[:mid])+ell) <= avail {
+			lo = mid
+		} else {
+			hi = mid
 		}
 	}
-	return ""
+	if lo == 0 {
+		// Not even one character plus the ellipsis: the ellipsis alone
+		// only shows if it fits by itself.
+		if font.MeasureText(ell) <= avail {
+			return ell
+		}
+		return ""
+	}
+	return string(runes[:lo]) + ell
 }
 
 // tearHandleSlotX returns the X of the tear handle's button-width slot.
