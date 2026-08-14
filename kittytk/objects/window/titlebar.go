@@ -2,6 +2,7 @@ package window
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/phroun/kittytk/core"
@@ -33,13 +34,14 @@ import (
 // cell (non-graphical) surfaces the scale is pinned to 1.0: a terminal
 // cannot render seven tenths of a character cell.
 type TitleBarMetrics struct {
-	Scale     float64
-	RowH      core.Unit  // title row height in frame units (CellHeight at 1.0)
-	CellW     core.Unit  // cell pitch the controls/text lay out on
-	ButtonW   core.Unit  // one control slot: three of those cells
-	YOff      core.Unit  // vertical centering of scaled glyphs in the row (0 at 1.0)
-	Font      *core.Font // title TEXT font (the given font at 1.0, size-scaled otherwise)
-	Mono      *core.Font // control-glyph font: the ui-term cell face at the scaled size — the buttons are MONOSPACED, the retro aesthetic DrawCell renders at 1.0
+	Scale   float64
+	RowH    core.Unit  // title row height in frame units (CellHeight at 1.0)
+	CellW   core.Unit  // cell pitch the controls/text lay out on
+	ButtonW core.Unit  // one control slot: three of those cells
+	YOff    core.Unit  // vertical centering of scaled glyphs in the row (0 at 1.0)
+	Font    *core.Font // title TEXT font (the given font at 1.0, size-scaled otherwise)
+	Mono    *core.Font // control-glyph font: the ui-term cell face at the scaled size — the buttons are MONOSPACED, the retro aesthetic DrawCell renders at 1.0
+
 	Graphical bool
 
 	base core.CellMetrics
@@ -78,37 +80,94 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 	if scale != 1 {
 		tm.RowH = core.Unit(math.Ceil(scale * float64(metrics.CellHeight)))
 		tm.CellW = core.Unit(math.Ceil(scale * float64(metrics.CellWidth)))
-		if font != nil {
-			// Point size is resolution-independent; the scaled bar's text
-			// simply asks for a smaller face.
-			size := int(math.Round(scale * float64(font.Size)))
-			if size < 1 {
-				size = 1
-			}
-			scaled := *font
-			scaled.Size = size
-			tm.Font = &scaled
-			// The glyph box is CellHeight (in units) at the base point size
-			// and scales with it; center what remains of the row around it,
-			// FLOORING the slack — rounding the half-gap up sat the text a
-			// unit too low in the shortened row.
-			glyphH := float64(metrics.CellHeight) * float64(size) / float64(font.Size)
-			if off := core.Unit((float64(tm.RowH) - glyphH) / 2); off > 0 {
-				tm.YOff = off
-			}
+	}
+	// The two faces this bar draws with: the title text's, and ui-term for
+	// the monospaced controls. Both are a pure function of (source font,
+	// scale), so they come from a cache rather than being rebuilt — this
+	// runs from contentBounds and the hit tests as well as the painters,
+	// several times per window per frame, and allocating a face on each
+	// call put that garbage on the frame path.
+	tm.Font, tm.Mono = titleFaces(font, scale)
+	if scale != 1 && font != nil && tm.Font != nil {
+		// The glyph box is CellHeight (in units) at the base point size
+		// and scales with it; center what remains of the row around it,
+		// FLOORING the slack — rounding the half-gap up sat the text a
+		// unit too low in the shortened row.
+		glyphH := float64(metrics.CellHeight) * float64(tm.Font.Size) / float64(font.Size)
+		if off := core.Unit((float64(tm.RowH) - glyphH) / 2); off > 0 {
+			tm.YOff = off
 		}
 	}
-	// The controls' glyph face: ui-term, the terminal cell font, at the
-	// bar's point size — the buttons are monospaced (the retro aesthetic;
-	// DrawCell renders exactly this face at 1.0, where the font's pitch IS
-	// the cell width).
-	monoSize := 12
-	if tm.Font != nil {
-		monoSize = tm.Font.Size
-	}
-	tm.Mono = &core.Font{Name: "ui-term", Size: monoSize}
 	tm.ButtonW = tm.CellW * 3
 	return tm
+}
+
+// titleFacesKey identifies one (source font, scale) pair. core.Font is a
+// plain comparable value, so it keys the cache directly and a caller that
+// hands over an equal font by a different pointer still hits.
+type titleFacesKey struct {
+	src   core.Font
+	scale float64
+}
+
+type titleFacesPair struct{ text, mono *core.Font }
+
+var (
+	titleFacesMu    sync.RWMutex
+	titleFacesCache = map[titleFacesKey]titleFacesPair{}
+)
+
+// titleFacesCacheLimit bounds the cache against pathological churn (a
+// caller varying font size every frame); past it the map starts over
+// rather than growing without end. In practice a session holds one or two
+// entries: the UI face at the host's scale.
+const titleFacesCacheLimit = 64
+
+// titleFaces returns the title text face and the ui-term control face for
+// one (font, scale), building them once. At scale 1.0 the text face IS the
+// font passed in — no copy — and only the mono face is ever built.
+func titleFaces(font *core.Font, scale float64) (text, mono *core.Font) {
+	src := core.Font{Name: "ui-text", Size: 12}
+	if font != nil {
+		src = *font
+	}
+	key := titleFacesKey{src: src, scale: scale}
+
+	titleFacesMu.RLock()
+	pair, ok := titleFacesCache[key]
+	titleFacesMu.RUnlock()
+	if ok {
+		if font != nil && scale == 1 {
+			// Hand back the caller's own pointer at 1.0 (the cached text
+			// face is an equal value; the pointer identity is what the
+			// unscaled painters compare against).
+			return font, pair.mono
+		}
+		return pair.text, pair.mono
+	}
+
+	text = font
+	if scale != 1 {
+		size := int(math.Round(scale * float64(src.Size)))
+		if size < 1 {
+			size = 1
+		}
+		scaled := src
+		scaled.Size = size
+		text = &scaled
+	} else if text == nil {
+		f := src
+		text = &f
+	}
+	mono = &core.Font{Name: "ui-term", Size: text.Size}
+
+	titleFacesMu.Lock()
+	if len(titleFacesCache) >= titleFacesCacheLimit {
+		titleFacesCache = map[titleFacesKey]titleFacesPair{}
+	}
+	titleFacesCache[key] = titleFacesPair{text: text, mono: mono}
+	titleFacesMu.Unlock()
+	return text, mono
 }
 
 // paintThreeCellButton is the shared mechanics of one [i] control: three

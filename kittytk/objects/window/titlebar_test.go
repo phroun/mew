@@ -128,3 +128,41 @@ func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
 		t.Error("a second press one second later fired")
 	}
 }
+
+// The kit's metrics run from contentBounds and the hit tests as well as
+// the painters — several times per window per frame — so building them
+// must not allocate. It used to build both faces on every call, putting
+// that garbage straight on the frame path.
+func TestTitleBarMetricsDoesNotAllocatePerCall(t *testing.T) {
+	t.Cleanup(func() { core.SetTitleBarScale(1) })
+	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	font := &core.Font{Name: "ui-text", Size: 12}
+
+	for _, scale := range []float64{1, 0.7} {
+		core.SetTitleBarScale(scale)
+		// Warm the face cache, then measure the steady state.
+		TitleBarMetricsFor(cell, font, true)
+		got := testing.AllocsPerRun(200, func() {
+			tm := TitleBarMetricsFor(cell, font, true)
+			if tm.RowH <= 0 || tm.Mono == nil {
+				t.Fatal("metrics came back unusable")
+			}
+		})
+		if got != 0 {
+			t.Errorf("scale %v: %.1f allocations per call, want 0", scale, got)
+		}
+	}
+
+	// Both faces are still correct after caching: the text face keeps the
+	// caller's own font at 1.0, and the controls stay ui-term at the
+	// bar's size when scaled.
+	core.SetTitleBarScale(1)
+	if tm := TitleBarMetricsFor(cell, font, true); tm.Font != font {
+		t.Error("scale 1.0 no longer hands back the caller's own font pointer")
+	}
+	core.SetTitleBarScale(0.7)
+	tm := TitleBarMetricsFor(cell, font, true)
+	if tm.Font.Size != 8 || tm.Mono.Name != "ui-term" || tm.Mono.Size != 8 {
+		t.Errorf("scaled faces wrong: text %+v mono %+v", tm.Font, tm.Mono)
+	}
+}
