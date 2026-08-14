@@ -2386,8 +2386,44 @@ func (s *sdlSurface) SetScreenSizePx(w, h int) {
 		return
 	}
 	if s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0 {
+		// Prime the restore target BEFORE releasing the maximize: SDL
+		// keeps a windowed rectangle that the un-maximize animates to,
+		// and the one it holds may be stale. (See SetScreenRectPx, which
+		// does this for the position too.)
+		s.win.window.SetSize(int32(w), int32(h))
 		s.win.window.Restore()
 	}
+	s.win.window.SetSize(int32(w), int32(h))
+	pxW, pxH := s.win.window.SizeInPixels()
+	if pxW > 0 && pxH > 0 {
+		s.platform.liveResize(s.win.id, int(pxW), int(pxH))
+	}
+}
+
+// SetScreenRectPx implements platform.NativeRectSetter: move and resize as
+// ONE geometry change, priming the restore target before releasing a
+// maximize.
+//
+// Un-zooming a window the WM considers maximized used to animate to the
+// WM's own stored floating rectangle — which could be an era stale (a
+// solo-mode layout from before the desktop was revealed) — and only then
+// jump to the real destination as our writes landed. Writing the
+// destination while still maximized sets the rectangle SDL restores INTO,
+// so the single animation the user sees ends in the right place.
+func (s *sdlSurface) SetScreenRectPx(x, y, w, h int) {
+	if s.closed || s.win.window == nil || w <= 0 || h <= 0 {
+		return
+	}
+	maximized := s.win.window.Flags()&sdl3.WINDOW_MAXIMIZED != 0
+	if maximized {
+		// Prime, then release: these writes are the restore target, not
+		// the live geometry (a maximized window ignores them as geometry).
+		s.win.window.SetPosition(int32(x), int32(y))
+		s.win.window.SetSize(int32(w), int32(h))
+		s.win.window.Restore()
+	}
+	// Apply for real (idempotent when the restore already landed here).
+	s.win.window.SetPosition(int32(x), int32(y))
 	s.win.window.SetSize(int32(w), int32(h))
 	pxW, pxH := s.win.window.SizeInPixels()
 	if pxW > 0 && pxH > 0 {

@@ -522,13 +522,6 @@ func (d *Desktop) hostZoomToggle() {
 	d.mu.Unlock()
 
 	if st.zoomed {
-		// A geometry write is ignored while the OS holds the window
-		// maximized; release that first, then restore our remembered rect.
-		if osZoomed {
-			if r, ok := surf.(platform.NativeRestorer); ok {
-				r.Restore()
-			}
-		}
 		d.mu.Lock()
 		d.hostZoom.zoomed = false
 		d.mu.Unlock()
@@ -536,8 +529,22 @@ func (d *Desktop) hostZoomToggle() {
 		if sq, ok := surf.(platform.NativeShapeSquarer); ok {
 			sq.SetShapeSquared(false)
 		}
-		native.SetScreenPositionPx(st.prevX, st.prevY)
-		native.SetScreenSizePx(st.prevW, st.prevH)
+		// One geometry change, and — where the OS holds the window
+		// maximized — one that primes what the un-maximize animates INTO.
+		// Restoring first and writing the rectangle afterwards let the WM
+		// animate to its own stored floating rect (which can be stale, a
+		// layout from before the desktop was revealed) and then snap.
+		if rs, ok := surf.(platform.NativeRectSetter); ok {
+			rs.SetScreenRectPx(st.prevX, st.prevY, st.prevW, st.prevH)
+		} else {
+			if osZoomed {
+				if r, ok := surf.(platform.NativeRestorer); ok {
+					r.Restore()
+				}
+			}
+			native.SetScreenPositionPx(st.prevX, st.prevY)
+			native.SetScreenSizePx(st.prevW, st.prevH)
+		}
 		d.RequestUpdate() // the zoom button's icon and the frame flip back
 		return
 	}

@@ -62,6 +62,16 @@ func (s *msSurface) Minimized() bool                  { return s.minimized }
 func (s *msSurface) Minimize()                        { s.minimized = true }
 func (s *msSurface) NativeZoomed() bool               { return s.zoomed }
 func (s *msSurface) SetShapeSquared(b bool)           { s.squaredShape = b }
+
+// SetScreenRectPx implements platform.NativeRectSetter: one geometry
+// change, releasing any maximize (the real platform primes the restore
+// target with this rectangle first, so the un-maximize animates here).
+func (s *msSurface) SetScreenRectPx(x, y, w, h int) {
+	s.zoomed = false
+	s.x, s.y = x, y
+	s.SetScreenSizePx(w, h)
+}
+
 func (s *msSurface) Restore()                         { s.minimized = false; s.zoomed = false } // NativeRestorer
 func (s *msSurface) WorkAreaPx() (int, int, int, int) { return 0, 0, 1600, 1000 }
 
