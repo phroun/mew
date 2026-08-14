@@ -604,3 +604,29 @@ func TestApplyReadsHostType(t *testing.T) {
 		t.Errorf("host_type = %q with nothing configured, want blank", bare.HostType)
 	}
 }
+
+// titlebar_scale is a float knob that only accepts positive values: the
+// default is the classic full-cell row, and a typo or a nonsense value keeps
+// it rather than collapsing every title bar at launch.
+func TestApplyTitleBarScale(t *testing.T) {
+	if got := Defaults().TitleBarScale; got != 1 {
+		t.Errorf("default titlebar_scale = %v, want 1", got)
+	}
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.7", 0.7},
+		{"1", 1},
+		{"1.25", 1.25},
+		{"0", 1},        // zero is not a size
+		{"-0.5", 1},     // nor is a negative one
+		{"nonsense", 1}, // nor is a typo
+	} {
+		cfg := Defaults()
+		apply([]byte("[window]\ntitlebar_scale = "+c.val+"\n"), &cfg)
+		if cfg.TitleBarScale != c.want {
+			t.Errorf("titlebar_scale = %q: got %v, want %v", c.val, cfg.TitleBarScale, c.want)
+		}
+	}
+}

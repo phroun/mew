@@ -107,3 +107,30 @@ scale = 2 ; also a comment
 		t.Errorf("scale = %q, want 2 (comment stripped)", got)
 	}
 }
+
+// editor.conf reads titlebar_scale with the same rules as kittytk.ini: a
+// positive float applies, anything else keeps the classic 1.0.
+func TestApplyHostConfTitleBarScale(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.7", 0.7},
+		{"0", 1},
+		{"-2", 1},
+		{"nope", 1},
+	} {
+		sec := parseHostConfSections([]byte("[window]\ntitlebar_scale = " + c.val + "\n"))
+		cfg := hostcfg.Defaults()
+		applyHostConf(sec, &cfg)
+		if cfg.TitleBarScale != c.want {
+			t.Errorf("titlebar_scale = %q: got %v, want %v", c.val, cfg.TitleBarScale, c.want)
+		}
+	}
+	// An absent key keeps the default.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nwidth = 900\n")), &cfg)
+	if cfg.TitleBarScale != 1 {
+		t.Errorf("absent titlebar_scale = %v, want 1", cfg.TitleBarScale)
+	}
+}

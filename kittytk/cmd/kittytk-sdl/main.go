@@ -131,13 +131,12 @@ func main() {
 	// native modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
 
-	// DEMO: every graphical title bar (windows and the themed desktop) at
-	// 70% height, fonts and controls scaled to match — exercising the
-	// title-bar kit's scale knob. 1.0 is the classic full-cell row. The
-	// scale quantizes to the frame denomination's unit grid (option (c);
-	// a finer sweep may follow), and the TUI host stays at 1.0 — a
-	// terminal cannot subdivide a character cell.
-	core.SetTitleBarScale(0.7)
+	// [window] titlebar_scale: every graphical title bar (windows and the
+	// themed desktop) at this fraction of the classic full-cell row, fonts
+	// and controls scaled to match. 1.0 is the default. The scale quantizes
+	// to the frame denomination's unit grid, and the TUI host stays at 1.0
+	// regardless — a terminal cannot subdivide a character cell.
+	core.SetTitleBarScale(cfg.TitleBarScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {

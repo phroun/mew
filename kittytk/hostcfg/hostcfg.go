@@ -28,6 +28,10 @@
 //	                          ;        host's OS title bar (kittytk-sdl only)
 //	renderer     =            ; rendering backend: software (default) or webgpu
 //	                          ;   (webgpu requires building with -tags webgpu)
+//	desktop_frame =           ; main-window chrome: themed (default; the desktop
+//	                          ;   paints its own title bar) / native_titlebar / native
+//	titlebar_scale =          ; graphical title-bar height and content scale
+//	                          ;   (1.0 = classic full-cell row, the default)
 //	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
 //	                          ;   … hints are tested against, overriding what the
 //	                          ;   session advertises (blank = detect)
@@ -187,6 +191,15 @@ type Config struct {
 	// The terminal host has no OS window and ignores it.
 	DesktopFrame string
 
+	// TitleBarScale scales every GRAPHICAL title bar's height and its
+	// contents, read from [window] titlebar_scale. 1.0 (the default) is the
+	// classic full-cell row; 0.7 renders the bar at 70% of it, ceiled to a
+	// full device pixel, with the fonts and controls scaled to match. Values
+	// at or below zero, or that don't parse, keep 1.0. Cell surfaces cannot
+	// subdivide a character cell and always render at 1.0 regardless, so the
+	// terminal host ignores it.
+	TitleBarScale float64
+
 	// HostType overrides the desktop environment the keymap's environment hints
 	// are tested against, read from [window] host_type. The session normally
 	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
@@ -217,7 +230,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed"}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -409,6 +422,12 @@ func apply(data []byte, cfg *Config) {
 			switch strings.ToLower(val) {
 			case "themed", "native_titlebar", "native":
 				cfg.DesktopFrame = strings.ToLower(val)
+			}
+		case "titlebar_scale":
+			// Graphical title-bar height and content scale. A value that
+			// doesn't parse, or is zero or negative, keeps the classic 1.0.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.TitleBarScale = f
 			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
