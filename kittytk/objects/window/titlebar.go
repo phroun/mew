@@ -88,9 +88,11 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 			scaled.Size = size
 			tm.Font = &scaled
 			// The glyph box is CellHeight (in units) at the base point size
-			// and scales with it; center what remains of the row around it.
-			glyphH := core.Unit(int(metrics.CellHeight) * size / font.Size)
-			if off := (tm.RowH - glyphH) / 2; off > 0 {
+			// and scales with it; center what remains of the row around it,
+			// FLOORING the slack — rounding the half-gap up sat the text a
+			// unit too low in the shortened row.
+			glyphH := float64(metrics.CellHeight) * float64(size) / float64(font.Size)
+			if off := core.Unit((float64(tm.RowH) - glyphH) / 2); off > 0 {
 				tm.YOff = off
 			}
 		}
@@ -102,7 +104,11 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 // paintThreeCellButton is the shared mechanics of one [i] control: three
 // content cells at x. At scale 1.0 it is the classic per-cell draw,
 // bit-identical to the pre-kit painters; scaled, the slot is filled and
-// each glyph draws centered in its (scaled) cell with the scaled font.
+// the whole "[i]" draws as ONE shaped run centered in the slot — the same
+// single-run lesson as the focused-title decoration: centering each glyph
+// separately by its own proportional width let narrow ink (an 'x', a '.')
+// sit differently against its brackets than wide ink, where one run
+// advances each character exactly from the edge the previous one ended on.
 func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon rune, st style.CellStyle) {
 	if tm.Scale == 1 {
 		p.DrawCell(x, 0, '[', st)
@@ -111,14 +117,12 @@ func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon
 		return
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', st)
-	for i, g := range []string{"[", string(icon), "]"} {
-		cx := x + tm.CellW*core.Unit(i)
-		gx := cx + (tm.CellW-tm.Font.MeasureText(g))/2
-		if gx < cx {
-			gx = cx
-		}
-		p.DrawText(gx, tm.YOff, g, st, tm.Font)
+	run := "[" + string(icon) + "]"
+	rx := x + (tm.ButtonW-tm.Font.MeasureText(run))/2
+	if rx < x {
+		rx = x
 	}
+	p.DrawText(rx, tm.YOff, run, st, tm.Font)
 }
 
 // PaintCloseButton draws the close control [x].
@@ -164,10 +168,9 @@ func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', titleSt)
 	g := string(glyph)
-	cx := x + tm.CellW
-	gx := cx + (tm.CellW-tm.Font.MeasureText(g))/2
-	if gx < cx {
-		gx = cx
+	gx := x + (tm.ButtonW-tm.Font.MeasureText(g))/2
+	if gx < x {
+		gx = x
 	}
 	p.DrawText(gx, tm.YOff, g, glyphSt, tm.Font)
 }

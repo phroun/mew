@@ -44,9 +44,10 @@ func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 	if tm.Font.Size != 8 {
 		t.Errorf("font size = %d, want round(0.7×12) = 8", tm.Font.Size)
 	}
-	// Glyph box 16×8/12 = 10 units in a 12-unit row: centered one unit down.
-	if tm.YOff != 1 {
-		t.Errorf("YOff = %v, want 1", tm.YOff)
+	// Glyph box 16×8/12 ≈ 10.67 units in a 12-unit row: the half-gap
+	// floors to 0 (rounding it up sat the text a unit too low).
+	if tm.YOff != 0 {
+		t.Errorf("YOff = %v, want 0 (floored half-gap)", tm.YOff)
 	}
 }
 
