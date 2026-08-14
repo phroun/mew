@@ -45,6 +45,22 @@ func BenchmarkScenePartialCaret(b *testing.B) {
 	}
 }
 
+// The same scene inside a window's rounded clip region. Window chrome now
+// paints its content, children and title bar through this clip so nothing can
+// damage the frame's curved corners - which puts the rounded test on every
+// pixel of every window. Compare against BenchmarkSceneFull for its cost.
+func BenchmarkSceneRoundedClip(b *testing.B) {
+	be, _ := raster.New(800, 600)
+	p := core.NewPainter(be)
+	paintScene(p, 400) // warm the text cache
+	rp := core.NewPainter(be).
+		WithRoundedClipRegion(core.UnitRect{X: 0, Y: 0, Width: 800, Height: 600}, 6)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		paintScene(rp, 400)
+	}
+}
+
 // Cache-hit text draw: shows the struct key is allocation-free (-benchmem).
 func BenchmarkTextDrawCacheHit(b *testing.B) {
 	be, _ := raster.New(240, 40)

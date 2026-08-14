@@ -429,6 +429,29 @@ func (b *Backend) clipRejects(x0, y0, x1, y1 int) bool {
 	return false
 }
 
+// roundClipCovers reports whether the device rectangle [x0,x1) x [y0,y1) lies
+// wholly inside the rounded clip's UNCUT interior - within its rect and clear
+// of all four corner boxes - so every pixel of it passes the rounded test.
+// Callers use it to keep their unclipped fast paths: the rounded clip only
+// carves the corners, and window content is overwhelmingly nowhere near them.
+// Six comparisons, versus a per-pixel test over the whole run.
+func (b *Backend) roundClipCovers(x0, y0, x1, y1 int) bool {
+	if !b.hasRoundClip {
+		return true
+	}
+	if x0 < b.roundPxX0 || y0 < b.roundPxY0 || x1 > b.roundPxX1 || y1 > b.roundPxY1 {
+		return false
+	}
+	rad := b.roundPxRad
+	if rad <= 0 {
+		return true
+	}
+	// Every corner box sits in an end band of BOTH axes, so staying inside
+	// the middle band of either axis clears all four of them.
+	return (y0 >= b.roundPxY0+rad && y1 <= b.roundPxY1-rad) ||
+		(x0 >= b.roundPxX0+rad && x1 <= b.roundPxX1-rad)
+}
+
 // pointVisible applies every active clip constraint to a device
 // pixel: framebuffer bounds, the rectangular clip, and the rounded
 // clip's rect and corner arcs (hard-edged, pixel centers).
@@ -450,7 +473,9 @@ func (b *Backend) pointVisible(x, y int) bool {
 			return false
 		}
 		rad := b.roundPxRad
-		if rad > 0 {
+		// Only the two end bands of Y hold corner boxes; rows in the middle
+		// band are straight-edged and skip the corner search entirely.
+		if rad > 0 && (y < ry0+rad || y >= ry1-rad) {
 			// Inside a corner box: require the pixel center within
 			// the corner arc.
 			cx, cy := 0.0, 0.0
@@ -941,7 +966,8 @@ func (b *Backend) compositeRGBA(xPx, yPx int, src *image.RGBA) {
 	// rectangle to the framebuffer once so the inner loop needs no per-pixel
 	// visibility test - it walks the Pix slices directly. Any clip falls back
 	// to the per-pixel pointVisible test, but still via direct indexing.
-	noClip := !b.pxClipActive && !b.hasClip && !b.hasRoundClip
+	noClip := !b.pxClipActive && !b.hasClip &&
+		b.roundClipCovers(xPx, yPx, xPx+sw, yPx+sh)
 	col0, row0, col1, row1 := 0, 0, sw, sh
 	if noClip {
 		if xPx < 0 {
@@ -1007,7 +1033,8 @@ func (b *Backend) compositeMaskTintPx(xPx, yPx int, mask *image.RGBA, tr, tg, tb
 		return
 	}
 	dst := b.img
-	noClip := !b.pxClipActive && !b.hasClip && !b.hasRoundClip
+	noClip := !b.pxClipActive && !b.hasClip &&
+		b.roundClipCovers(xPx, yPx, xPx+sw, yPx+sh)
 	col0, row0, col1, row1 := 0, 0, sw, sh
 	if noClip {
 		if xPx < 0 {
@@ -1073,7 +1100,7 @@ func (b *Backend) blitRGBA(xPx, yPx int, src *image.RGBA) {
 	if b.clipRejects(xPx, yPx, xPx+sw, yPx+sh) {
 		return
 	}
-	fullyVisible := !b.hasRoundClip && !b.pxClipActive &&
+	fullyVisible := b.roundClipCovers(xPx, yPx, xPx+sw, yPx+sh) && !b.pxClipActive &&
 		b.pointVisible(xPx, yPx) && b.pointVisible(xPx+sw-1, yPx) &&
 		b.pointVisible(xPx, yPx+sh-1) && b.pointVisible(xPx+sw-1, yPx+sh-1)
 	if fullyVisible {
