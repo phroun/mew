@@ -1264,10 +1264,7 @@ func (h *TearOffHost) unitFromPxRaw(px int) core.Unit {
 // derive from our own unit bounds keep the geometry they had — those
 // already land on the grid by construction.
 func (h *TearOffHost) paintablePxX(px int) int {
-	u := h.unitHardX(px)
-	for u > 0 && h.pxHardX(u) > px {
-		u--
-	}
+	u := h.paintableUnitsX(px)
 	if u <= 0 {
 		return px
 	}
@@ -1278,10 +1275,7 @@ func (h *TearOffHost) paintablePxX(px int) int {
 }
 
 func (h *TearOffHost) paintablePxY(px int) int {
-	u := h.unitHardY(px)
-	for u > 0 && h.pxHardY(u) > px {
-		u--
-	}
+	u := h.paintableUnitsY(px)
 	if u <= 0 {
 		return px
 	}
@@ -1289,6 +1283,39 @@ func (h *TearOffHost) paintablePxY(px int) int {
 		return fit
 	}
 	return px
+}
+
+// paintableUnitsX / paintableUnitsY read a device-pixel extent back to the
+// largest whole unit count the surface can actually PAINT inside it: the
+// nearest-unit answer, stepped down while the extent it paints overruns the
+// pixels really there.
+//
+// Rounding to nearest alone answers one unit too MANY for an extent that
+// falls between units — at 2 device px per unit a 101px surface reads as 51
+// units, which is 102px of paint — and the frame then strokes its outer edge
+// against a column the surface does not have, so that edge reads a pixel
+// thin. Flooring the raw ratio instead sheds up to a unit every cycle and
+// drifts. Stepping down from nearest does neither: a surface sized to
+// pxHardX(W) still reads back as exactly W, because pxHardX(W) never
+// overruns itself and the loop does not run.
+//
+// A size WE asked for is already paintable (resizeMove rounds it), so this
+// matters for the sizes we do not choose: the OS's own configure events on
+// the primary surface, a compositor's adjustment, a work-area zoom.
+func (h *TearOffHost) paintableUnitsX(px int) core.Unit {
+	u := h.unitHardX(px)
+	for u > 0 && h.pxHardX(u) > px {
+		u--
+	}
+	return u
+}
+
+func (h *TearOffHost) paintableUnitsY(px int) core.Unit {
+	u := h.unitHardY(px)
+	for u > 0 && h.pxHardY(u) > px {
+		u--
+	}
+	return u
 }
 
 func (h *TearOffHost) resizeMove() bool {
@@ -1465,9 +1492,13 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// geometry wired it falls back to the platform-reported size.
 	if h.native != nil {
 		if pw, ph := h.native.ScreenSizePx(); pw > 0 && ph > 0 {
-			size = core.UnitSize{
-				Width:  h.unitHardX(pw),
-				Height: h.unitHardY(ph),
+			// The largest extent that FITS, not the nearest one: a size the
+			// OS chose (an app-switch configure, a corner drag the compositor
+			// adjusted, a work-area zoom) can fall between units, and rounding
+			// it up leaves the frame stroking an edge column the surface does
+			// not have. See paintableUnitsX.
+			if w, ht := h.paintableUnitsX(pw), h.paintableUnitsY(ph); w > 0 && ht > 0 {
+				size = core.UnitSize{Width: w, Height: ht}
 			}
 		}
 	}
