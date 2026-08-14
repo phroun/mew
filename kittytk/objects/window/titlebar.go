@@ -35,7 +35,6 @@ import (
 type TitleBarMetrics struct {
 	Scale     float64
 	RowH      core.Unit  // title row height in frame units (CellHeight at 1.0)
-	RowHPx    int        // the pixel-true scaled height (ceil(scale×cell×ppu)); RowH is this, rounded up onto the unit grid
 	CellW     core.Unit  // cell pitch the controls/text lay out on
 	ButtonW   core.Unit  // one control slot: three of those cells
 	YOff      core.Unit  // vertical centering of scaled glyphs in the row (0 at 1.0)
@@ -47,27 +46,25 @@ type TitleBarMetrics struct {
 
 // TitleBarMetricsFor resolves the title-bar geometry for one bar, in the
 // FRAME's own terms: metrics is the frame denomination's cell metrics
-// (frameCellMetrics for a window, the root metrics for the desktop) and
-// ppu how many device pixels one of those units paints as. The title bar
-// sits ABOVE the content area, so it is never sized in the content's
-// interior denomination — units are an arbitrary subdivision of a cell,
-// a layout tool of the area that declared them, and the chrome above owes
-// them nothing. graphical=false (a cell surface) pins the scale to 1.0.
+// (frameCellMetrics for a window, the root metrics for the desktop). The
+// title bar sits ABOVE the content area, so it is never sized in the
+// content's interior denomination — units are an arbitrary subdivision of
+// a cell, a layout tool of the area that declared them, and the chrome
+// above owes them nothing. graphical=false (a cell surface) pins the
+// scale to 1.0.
 //
-// The scaled row is sized in DEVICE PIXELS and ceiled there — "90% of the
-// height, ceiled to a full pixel" — which is RowHPx, the bar's true
-// height. RowH re-expresses it on the frame's integer unit grid, rounding
-// up again, so the layout below always clears the bar's pixels. Units
-// themselves are never treated as pixels: scaling them directly while
-// calling it a pixel ceil is exactly the units-for-pixels conflation the
-// resize-grip audit dug out.
-func TitleBarMetricsFor(metrics core.CellMetrics, ppu float64, font *core.Font, graphical bool) TitleBarMetrics {
+// QUANTIZATION, by explicit ruling ("do (c) for now"): the scaled row is
+// ceiled on the frame denomination's integer unit grid — core.Unit is an
+// integer, and a fraction in this system is a finer denomination, not a
+// fractional value — so 0.7 of a 16-unit cell lands on 12/16. The scale
+// is therefore only as fine as the frame's denomination can say, and a
+// unit is NOT a pixel: at zooms where a unit spans several device pixels
+// the realized fraction stays 12/16, not a pixel-exact 70%. A pixel-true
+// bar (or a finer frame denomination) is a future, broader sweep.
+func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical bool) TitleBarMetrics {
 	scale := core.TitleBarScale()
 	if !graphical {
 		scale = 1
-	}
-	if ppu <= 0 {
-		ppu = 1
 	}
 	tm := TitleBarMetrics{
 		Scale:     scale,
@@ -77,14 +74,9 @@ func TitleBarMetricsFor(metrics core.CellMetrics, ppu float64, font *core.Font, 
 		Graphical: graphical,
 		base:      metrics,
 	}
-	tm.RowHPx = int(math.Ceil(scale * float64(metrics.CellHeight) * ppu))
 	if scale != 1 {
-		scaleUp := func(u core.Unit) core.Unit {
-			px := math.Ceil(scale * float64(u) * ppu)
-			return core.Unit(math.Ceil(px / ppu))
-		}
-		tm.RowH = scaleUp(metrics.CellHeight)
-		tm.CellW = scaleUp(metrics.CellWidth)
+		tm.RowH = core.Unit(math.Ceil(scale * float64(metrics.CellHeight)))
+		tm.CellW = core.Unit(math.Ceil(scale * float64(metrics.CellWidth)))
 		if font != nil {
 			// Point size is resolution-independent; the scaled bar's text
 			// simply asks for a smaller face.
@@ -152,6 +144,32 @@ func PaintZoomButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, zoomed bo
 // PaintBlurButton draws the blur control [~] (exit the window's keyboard).
 func PaintBlurButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, st style.CellStyle) {
 	paintThreeCellButton(p, tm, x, '~', st)
+}
+
+// PaintTearHandleSlot draws the tear-off handle's three-cell slot at x:
+// bracketed like a control while keyboard-focused, otherwise the floating
+// glyph with its flanking cells filled in the title-bar background (so
+// the frame's top-border stroke does not peek through the gaps on either
+// side).
+func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph rune, focused bool, focusSt, titleSt, glyphSt style.CellStyle) {
+	if focused {
+		paintThreeCellButton(p, tm, x, glyph, focusSt)
+		return
+	}
+	if tm.Scale == 1 {
+		p.DrawCell(x, 0, ' ', titleSt)
+		p.DrawCell(x+tm.CellW, 0, glyph, glyphSt)
+		p.DrawCell(x+tm.CellW*2, 0, ' ', titleSt)
+		return
+	}
+	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', titleSt)
+	g := string(glyph)
+	cx := x + tm.CellW
+	gx := cx + (tm.CellW-tm.Font.MeasureText(g))/2
+	if gx < cx {
+		gx = cx
+	}
+	p.DrawText(gx, tm.YOff, g, glyphSt, tm.Font)
 }
 
 // PaintTitleBarText draws the (unfocused) title. Centered when a centered

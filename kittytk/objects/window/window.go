@@ -1506,8 +1506,7 @@ func (w *Window) frameCellMetrics() core.CellMetrics {
 // FRAME denomination its chrome lays out in (the title bar sits above the
 // content area and is never sized in the interior denomination).
 func (w *Window) titleBarMetrics() TitleBarMetrics {
-	return TitleBarMetricsFor(w.frameCellMetrics(), core.FindPxPerUnit(w),
-		w.EffectiveFont(), core.FindGraphicalFrames(w))
+	return TitleBarMetricsFor(w.frameCellMetrics(), w.EffectiveFont(), core.FindGraphicalFrames(w))
 }
 
 // contentBounds returns the bounds for the content area. When the window
@@ -1547,7 +1546,7 @@ func (w *Window) contentBounds() core.UnitRect {
 		// the border. A thicker border shrinks the interior rather than
 		// overlapping it.
 		b := core.FindFrameBorderUnits(w)
-		top := b + metrics.CellHeight
+		top := b + w.titleBarMetrics().RowH
 		if flags&WindowFlagNoTitle != 0 {
 			top = b
 		}
@@ -2205,25 +2204,6 @@ func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Trinket, core.UnitRect,
 	return nil, core.UnitRect{}, false
 }
 
-// paintFocusedTitleDecoration draws the keyboard-focused title as
-// "< title >" centered in innerWidth over a highlight foundation. It
-// shapes the whole thing as ONE run rather than cell brackets abutting a
-// proportional title: at a fractional font size the two rates diverge, so
-// placing the closing bracket at the title's re-snapped unit end left it
-// drifting right of where the glyphs actually finish. A single run ends
-// the bracket exactly on the title. On a cell surface each character still
-// occupies its own cell, so the classic look is unchanged.
-func (w *Window) paintFocusedTitleDecoration(p *core.Painter, innerWidth core.Unit, title string, s style.CellStyle, font *core.Font, cellHeight core.Unit) {
-	decorated := "< " + title + " >"
-	totalWidth := font.MeasureText(decorated)
-	startX := (innerWidth - totalWidth) / 2
-	if startX < 0 {
-		startX = 0
-	}
-	p.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: cellHeight}, ' ', s)
-	p.DrawText(startX, 0, decorated, s, font)
-}
-
 // paintMaximizedFrame draws the title bar only (no side borders).
 func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metrics core.CellMetrics,
 	title string, titleStyle, frameStyle style.CellStyle, border style.BorderStyle) {
@@ -2237,14 +2217,16 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
-	font := w.EffectiveFont()
+	// The title-bar kit: the (possibly scaled) row, cells and font every
+	// title bar in the system measures and paints with.
+	tm := w.titleBarMetrics()
 
 	// Fill title bar background
 	titleRect := core.UnitRect{
 		X:      0,
 		Y:      0,
 		Width:  bounds.Width,
-		Height: metrics.CellHeight,
+		Height: tm.RowH,
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
@@ -2273,18 +2255,17 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// so its icons must paint in the active style.
 	buttonActive := focused || border == style.BorderHeavy
 
-	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
-	// These are decorative buttons - use cell-based sizing (3 cells each)
-	buttonWidth := metrics.CellWidth * 3
+	// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
+	// through its own kit function (deliberately distinct per button; only
+	// the three-cell mechanics are shared).
+	buttonWidth := tm.ButtonW
 	controlX := core.Unit(0)
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
 		isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintCloseButton(p, tm, controlX, btnStyle)
 		controlX += buttonWidth
 	}
 	if flags&WindowFlagNoMinimize == 0 {
@@ -2292,9 +2273,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintMinimizeButton(p, tm, controlX, btnStyle)
 		controlX += buttonWidth
 	}
 	if canMaximize(flags) {
@@ -2302,15 +2281,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		var icon rune
-		if state == WindowStateMaximized {
-			icon = 'o' // Restore icon
-		} else {
-			icon = '^' // Maximize icon
-		}
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintZoomButton(p, tm, controlX, state == WindowStateMaximized, btnStyle)
 		controlX += buttonWidth
 	}
 
@@ -2319,31 +2290,27 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// stand in for it - so it isn't shoved aside; it returns on the next
 	// Tab / Shift+Tab focus change.
 	if titleFocus != TitleFocusTitle {
-		tearTitleW := font.MeasureText(title)
-		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
+		tearTitleW := tm.Font.MeasureText(title)
+		controlX = w.paintTearHandle(p, scheme, titleStyle, tm, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
 	}
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
 		// Title has focus - draw with decorative angle brackets, as one run.
 		titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-		w.paintFocusedTitleDecoration(p, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
+		PaintFocusedTitleDecoration(p, tm, titleRect.Width, title, titleDisplayStyle)
 	} else {
 		rightLimit := bounds.Width
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		w.paintTitleText(p, title, titleStyle, font, metrics, controlX, rightLimit, bounds.Width)
+		PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
 	}
 
 	// Draw blur button on far right when blur item is focused
-	// This is a decorative button - use cell-based sizing (3 cells)
 	if titleFocus == TitleFocusBlur {
 		blurBtnStyle := scheme.GetTitleBarButton(focused, true, false) // Focused button style
-		blurX := bounds.Width - buttonWidth                            // Position at far right
-		p.DrawCell(blurX, 0, '[', blurBtnStyle)
-		p.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
-		p.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
+		PaintBlurButton(p, tm, bounds.Width-buttonWidth, blurBtnStyle)
 	}
 
 	// Fill content area with background (same as normal frame).
@@ -2479,7 +2446,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// stay round). The cell path keeps the border color in those areas.
 	if rounded && flags&WindowFlagNoTitle == 0 {
 		b := core.FindFrameBorderUnits(w)
-		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + metrics.CellHeight}
+		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + w.titleBarMetrics().RowH}
 		fillStyle := titleStyle
 		if titleFocus == TitleFocusBlur {
 			// Blur item focused: the whole bar reads inactive on the graphical
@@ -2526,7 +2493,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	if rounded && titleFocus == TitleFocusBlur {
 		buttonFocused = false
 	}
-	font := w.EffectiveFont()
+	// The title-bar kit: the (possibly scaled) row, cells and font every
+	// title bar in the system measures and paints with.
+	tm := w.titleBarMetrics()
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
@@ -2540,18 +2509,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			tp = p.WithOffset(b, b)
 			innerW = bounds.Width - 2*b
 		}
-		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
-		// These are decorative buttons - use cell-based sizing (3 cells each)
-		buttonWidth := metrics.CellWidth * 3
-		controlX := metrics.CellWidth // Start after left border
+		// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
+		// through its own kit function (deliberately distinct per button;
+		// only the three-cell mechanics are shared).
+		buttonWidth := tm.ButtonW
+		controlX := tm.CellW // Start after left border
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
 			isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintCloseButton(tp, tm, controlX, btnStyle)
 			controlX += buttonWidth
 		}
 		if flags&WindowFlagNoMinimize == 0 {
@@ -2559,9 +2527,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 			isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintMinimizeButton(tp, tm, controlX, btnStyle)
 			controlX += buttonWidth
 		}
 		if canMaximize(flags) {
@@ -2569,15 +2535,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 			isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			var icon rune
-			if state == WindowStateMaximized {
-				icon = 'o' // Restore icon
-			} else {
-				icon = '^' // Maximize icon
-			}
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintZoomButton(tp, tm, controlX, state == WindowStateMaximized, btnStyle)
 			controlX += buttonWidth
 		}
 
@@ -2586,7 +2544,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			X:      0,
 			Y:      0,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: tm.RowH,
 		}
 
 		// Tear-off handle floats immediately left of the (centered) title,
@@ -2594,7 +2552,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// brackets stand in for it - so it isn't shoved aside; it returns on
 		// the next Tab / Shift+Tab focus change.
 		if titleFocus != TitleFocusTitle {
-			tearTitleW := font.MeasureText(title)
+			tearTitleW := tm.Font.MeasureText(title)
 			// On the graphical path a blur-focused bar reads fully inactive, so
 			// the tear/redock handle and the space around it take the inactive
 			// title colors too (matching a real inactive window frame).
@@ -2604,14 +2562,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 				tearStyle = scheme.GetWindowTitle(false)
 				tearActive = false
 			}
-			controlX = w.paintTearHandle(tp, scheme, tearStyle, metrics, controlX, innerW, tearTitleW, tearActive, titleFocus)
+			controlX = w.paintTearHandle(tp, scheme, tearStyle, tm, controlX, innerW, tearTitleW, tearActive, titleFocus)
 		}
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
 			// Title has focus - draw with decorative angle brackets, as one run.
 			titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-			w.paintFocusedTitleDecoration(tp, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
+			PaintFocusedTitleDecoration(tp, tm, titleRect.Width, title, titleDisplayStyle)
 		} else {
 			// Normal title or blur focused
 			titleDisplayStyle := titleStyle
@@ -2619,21 +2577,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 				// Blur item focused - use inactive title style for the title text
 				titleDisplayStyle = scheme.GetWindowTitle(false)
 			}
-			rightLimit := innerW - metrics.CellWidth
+			rightLimit := innerW - tm.CellW
 			if titleFocus == TitleFocusBlur {
-				rightLimit = innerW - metrics.CellWidth - buttonWidth
+				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			w.paintTitleText(tp, title, titleDisplayStyle, font, metrics, controlX, rightLimit, innerW)
+			PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
 		}
 
 		// Draw blur button on far right when blur item is focused
-		// This is a decorative button - use cell-based sizing (3 cells)
 		if titleFocus == TitleFocusBlur {
 			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
-			blurX := innerW - metrics.CellWidth - buttonWidth           // Position before right border
-			tp.DrawCell(blurX, 0, '[', blurBtnStyle)
-			tp.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
-			tp.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
+			PaintBlurButton(tp, tm, innerW-tm.CellW-buttonWidth, blurBtnStyle)
 		}
 	}
 
@@ -2683,37 +2637,6 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	return ""
 }
 
-// paintTitleText draws the (unfocused) titlebar title. Centered when
-// a centered title fits between the left buttons and the right limit
-// (the blur button when shown, else the right edge); otherwise its
-// left edge sits just past the buttons and the text ellipsizes so
-// the "..." butts against the right limit - the right side keeps no
-// mirrored reserve. A span of zero or less clips the title entirely.
-func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyle, font *core.Font, metrics core.CellMetrics, leftUsed, rightLimit, barWidth core.Unit) {
-	leftEdge := leftUsed + metrics.CellWidth
-	avail := rightLimit - leftEdge
-	if avail <= 0 || title == "" {
-		return
-	}
-	display := title
-	titleW := font.MeasureText(display)
-	if titleW > avail {
-		display = ellipsizeToWidth(title, avail, font)
-		if display == "" {
-			return
-		}
-		titleW = font.MeasureText(display)
-	}
-	x := (barWidth - titleW) / 2
-	if x < leftEdge {
-		x = leftEdge
-	}
-	if x+titleW > rightLimit {
-		x = rightLimit - titleW
-	}
-	p.DrawText(x, 0, display, ts, font)
-}
-
 // tearHandleSlotX returns the X of the tear handle's button-width slot.
 // The handle floats immediately left of where the title would center in
 // the bar, and only butts against the control buttons (controlsRight)
@@ -2734,7 +2657,7 @@ func tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth core.Unit) cor
 // the focused title element it draws [%]/[#] in the focused-button
 // style like the other buttons. Not tearable: controlsRight is returned
 // unchanged (title keeps its normal gap past the controls).
-func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, metrics core.CellMetrics, controlsRight, barWidth, titleW core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
+func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, tm TitleBarMetrics, controlsRight, barWidth, titleW core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
 	w.mu.RLock()
 	tearable := w.flags&WindowFlagTearable != 0
 	detached := w.detached
@@ -2742,31 +2665,18 @@ func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleSty
 	if tearable == false || !hasTitleBar(w.flags, w.State()) {
 		return controlsRight
 	}
-	buttonWidth := metrics.TextWidth(3)
-	handleX := tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth)
+	handleX := tearHandleSlotX(barWidth, controlsRight, titleW, tm.ButtonW)
 	glyph := '%'
 	if detached {
 		glyph = '#'
 	}
-	if titleFocus == TitleFocusTear {
-		st := scheme.GetTitleBarButton(windowActive, true, false)
-		p.DrawCell(handleX, 0, '[', st)
-		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
-		p.DrawCell(handleX+metrics.CellWidth*2, 0, ']', st)
-	} else {
-		btn := scheme.GetTitleBarButton(windowActive, false, false)
-		st := titleStyle.WithFg(btn.Fg)
-		// Fill the slot's flanking cells with the title-bar background so
-		// the frame's top-border stroke does not peek through the gaps
-		// on either side of the floating glyph.
-		p.DrawCell(handleX, 0, ' ', titleStyle)
-		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
-		p.DrawCell(handleX+metrics.CellWidth*2, 0, ' ', titleStyle)
-	}
+	focusSt := scheme.GetTitleBarButton(windowActive, true, false)
+	glyphSt := titleStyle.WithFg(scheme.GetTitleBarButton(windowActive, false, false).Fg)
+	PaintTearHandleSlot(p, tm, handleX, glyph, titleFocus == TitleFocusTear, focusSt, titleStyle, glyphSt)
 	// The title butts against the right edge of the handle slot; the
-	// -CellWidth cancels paintTitleText's +CellWidth gap so a centered
-	// title lands exactly one slot right of the handle.
-	return handleX + buttonWidth - metrics.CellWidth
+	// -CellW cancels PaintTitleBarText's +CellW gap so a centered title
+	// lands exactly one slot right of the handle.
+	return handleX + tm.ButtonW - tm.CellW
 }
 
 // buttonAtPosition returns which titlebar button is at the given local coordinates.
@@ -2779,7 +2689,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
-	metrics := w.frameCellMetrics()
+	tm := w.titleBarMetrics()
 
 	// The titlebar chrome sits inside the frame border (maximized has no
 	// side border); shift the hit-test into the same inner coordinate
@@ -2791,18 +2701,18 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	x -= inset
 	y -= inset
 
-	// Must be in titlebar
-	if !hasTitleBar(flags, state) || y < 0 || y >= metrics.CellHeight {
+	// Must be in titlebar (the kit's possibly-scaled row)
+	if !hasTitleBar(flags, state) || y < 0 || y >= tm.RowH {
 		return TitleButtonNone
 	}
 
 	// Control buttons are on the left
-	controlX := metrics.CellWidth // Start after left border (for normal frame)
+	controlX := tm.CellW // Start after left border (for normal frame)
 	if state == WindowStateMaximized {
 		controlX = 0 // No border in maximized state
 	}
 
-	buttonWidth := metrics.TextWidth(3)
+	buttonWidth := tm.ButtonW
 
 	// Check close button [x]
 	if flags&WindowFlagNoClose == 0 {
@@ -2829,10 +2739,12 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	}
 
 	// Check tear-off handle [%]/[#]. It floats immediately left of the
-	// centered title, so hit-test the same slot paintTearHandle draws. The
-	// handle is hidden while the title is focused, so it isn't hittable then.
+	// centered title, so hit-test the same slot paintTearHandle draws (with
+	// the kit's font, so a scaled bar's slot lands where its paint does).
+	// The handle is hidden while the title is focused, so it isn't hittable
+	// then.
 	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
-		titleW := w.EffectiveFont().MeasureText(title)
+		titleW := tm.Font.MeasureText(title)
 		// Inner width: the paint centers within the border-inset titlebar.
 		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {
@@ -3037,43 +2949,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		// and how big the step is. This replaces a loop that peeled modifier
 		// prefixes off the key string in any order and then re-derived the
 		// same three facts from the leftovers -- a keymap answers all of it
-		// now, including for chords the peeler never knew about.
-		var key string
-		var resize, coarse bool
-		switch cmd {
-		case core.CmdWindowMoveFineLeft:
-			key = "Left"
-		case core.CmdWindowMoveFineRight:
-			key = "Right"
-		case core.CmdWindowMoveFineUp:
-			key = "Up"
-		case core.CmdWindowMoveFineDown:
-			key = "Down"
-		case core.CmdWindowMoveLeft:
-			key, coarse = "Left", true
-		case core.CmdWindowMoveRight:
-			key, coarse = "Right", true
-		case core.CmdWindowMoveUp:
-			key, coarse = "Up", true
-		case core.CmdWindowMoveDown:
-			key, coarse = "Down", true
-		case core.CmdWindowSizeFineLeft:
-			key, resize = "Left", true
-		case core.CmdWindowSizeFineRight:
-			key, resize = "Right", true
-		case core.CmdWindowSizeFineUp:
-			key, resize = "Up", true
-		case core.CmdWindowSizeFineDown:
-			key, resize = "Down", true
-		case core.CmdWindowSizeLeft:
-			key, resize, coarse = "Left", true, true
-		case core.CmdWindowSizeRight:
-			key, resize, coarse = "Right", true, true
-		case core.CmdWindowSizeUp:
-			key, resize, coarse = "Up", true, true
-		case core.CmdWindowSizeDown:
-			key, resize, coarse = "Down", true, true
-		default:
+		// now, including for chords the peeler never knew about. The decode
+		// is the kit's (DecodeTitleGeometry), shared with the desktop's own
+		// title bar so the vocabulary cannot drift.
+		key, resize, coarse, ok := DecodeTitleGeometry(cmd)
+		if !ok {
 			return false
 		}
 
@@ -3708,14 +3588,13 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	state := w.state
 	w.mu.RUnlock()
 
-	metrics := w.frameCellMetrics()
-
 	// The titlebar chrome sits inside the frame border (offset down by the
-	// border), so the titlebar band runs [0, border+CellHeight) in window-
-	// local coordinates - not [0, CellHeight). Missing the border here would
-	// leave the bottom of the visible titlebar (and the bottoms of the
-	// titlebar buttons) routed to content. Maximized has no side border.
-	titleBand := metrics.CellHeight
+	// border), so the titlebar band runs [0, border+RowH) in window-local
+	// coordinates - not [0, RowH). Missing the border here would leave the
+	// bottom of the visible titlebar (and the bottoms of the titlebar
+	// buttons) routed to content. Maximized has no side border. RowH is the
+	// kit's (possibly scaled) title row height — CellHeight at scale 1.0.
+	titleBand := w.titleBarMetrics().RowH
 	if state != WindowStateMaximized {
 		titleBand += core.FindFrameBorderUnits(w)
 	}

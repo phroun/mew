@@ -73,6 +73,10 @@ func main() {
 	plat.SetFontSize(cfg.FontSize) // pixel size of a cell
 	core.SetWindowFrameBorderPx(cfg.BorderWidth)
 	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
+	// DEMO: every graphical title bar (windows and the themed desktop) at
+	// 70% height, fonts and controls scaled to match — the title-bar kit's
+	// scale knob; 1.0 is the classic full-cell row. (TUI stays 1.0.)
+	core.SetTitleBarScale(0.7)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {

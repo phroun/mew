@@ -113,10 +113,9 @@ type WindowManager struct {
 	resizeStartY   core.Unit
 	resizeOriginal core.UnitRect
 
-	// Double-click detection
-	lastClickTime   time.Time
-	lastClickX      core.Unit
-	lastClickY      core.Unit
+	// Double-click detection: the kit's tracker (400ms, one cell, consume
+	// on fire) plus the window identity, which the tracker doesn't know.
+	titleClicks     DoubleClickTracker
 	lastClickWindow *Window
 
 	// Focus-without-raise: track pressed window for conditional raise on release
@@ -2298,10 +2297,11 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 
 			// Check for title bar interaction - titlebar operations raise
 			// immediately. The titlebar sits below the top frame border, so
-			// the drag region covers the border AND the titlebar row.
+			// the drag region covers the border AND the titlebar row (the
+			// kit's possibly-scaled RowH).
 			metrics := core.DefaultCellMetrics()
 			titleTop := core.FindFrameBorderUnits(win)
-			if event.Y < bounds.Y+titleTop+metrics.CellHeight &&
+			if event.Y < bounds.Y+titleTop+win.titleBarMetrics().RowH &&
 				hasTitleBar(win.Flags(), win.State()) {
 
 				// Activate (focus + raise) for titlebar interaction
@@ -2335,27 +2335,21 @@ func (m *WindowManager) HandleMousePress(event core.MousePressEvent) bool {
 				if win.HandleMousePress(localEvent) {
 					// Window handled it (button click) - update click tracking but don't drag
 					m.mu.Lock()
-					m.lastClickTime = time.Now()
-					m.lastClickX = event.X
-					m.lastClickY = event.Y
+					m.titleClicks.Press(event.X, event.Y, metrics)
 					m.lastClickWindow = win
 					m.pressedWindow = nil
 					m.mu.Unlock()
 					return true
 				}
 
-				// Check for double-click on titlebar (for maximize/restore)
-				now := time.Now()
+				// Check for double-click on titlebar (for maximize/restore):
+				// the kit's tracker, reset when the target window changes so
+				// clicks on two different windows never pair up.
 				m.mu.Lock()
-				isDoubleClick := m.lastClickWindow == win &&
-					now.Sub(m.lastClickTime) < 400*time.Millisecond &&
-					abs(int(event.X-m.lastClickX)) < int(metrics.CellWidth) &&
-					abs(int(event.Y-m.lastClickY)) < int(metrics.CellHeight)
-
-				// Update last click info
-				m.lastClickTime = now
-				m.lastClickX = event.X
-				m.lastClickY = event.Y
+				if m.lastClickWindow != win {
+					m.titleClicks.Reset()
+				}
+				isDoubleClick := m.titleClicks.Press(event.X, event.Y, metrics)
 				m.lastClickWindow = win
 				m.mu.Unlock()
 

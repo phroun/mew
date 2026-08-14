@@ -2,7 +2,6 @@ package trinkets
 
 import (
 	"math"
-	"time"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
@@ -42,8 +41,10 @@ type hostMoveState struct {
 	startGX, startGY int // global pointer at press, device px
 	startX, startY   int // OS window origin at press, device px
 
-	lastPressAt            time.Time // previous drag-area press, for double-click
-	lastPressX, lastPressY core.Unit
+	// clicks is the kit's double-click tracker (400ms, one cell, consume
+	// on fire) — the same convention the window manager applies to window
+	// title bars, from the same code.
+	clicks window.DoubleClickTracker
 }
 
 // The title bar's controls, on the left like every title bar in the
@@ -167,14 +168,28 @@ func (d *Desktop) themedFrameActive() bool {
 	return native
 }
 
+// hostTitleMetrics resolves the themed bar's title-bar kit metrics — the
+// same kit every window title bar measures with, so the desktop's bar
+// scales (core.TitleBarScale) and lays out identically. Lock-free like
+// themedFrameActive: TitleBarHeight sits under layout paths that run
+// while d.mu is held (SetBackend seeds metrics inside the lock), so
+// d.font is read directly rather than through EffectiveFont's lock.
+func (d *Desktop) hostTitleMetrics() window.TitleBarMetrics {
+	f := d.font
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	return window.TitleBarMetricsFor(d.EffectiveCellMetrics(), f, d.graphicalFrames)
+}
+
 // TitleBarHeight is the height of the desktop's own themed title bar row:
-// one cell when the themed frame is active, 0 in every other mode (the
-// companion to MenuBarHeight, one row further out).
+// the kit's (possibly scaled) row when the themed frame is active, 0 in
+// every other mode (the companion to MenuBarHeight, one row further out).
 func (d *Desktop) TitleBarHeight() core.Unit {
 	if !d.themedFrameActive() {
 		return 0
 	}
-	return d.EffectiveCellMetrics().CellHeight
+	return d.hostTitleMetrics().RowH
 }
 
 // wantsNativeBorder reports whether the desktop's primary surface should
@@ -219,21 +234,25 @@ func (d *Desktop) hostTitleButtonAt(x, y core.Unit) int {
 	if th == 0 {
 		return hostTitleButtonNone
 	}
+	tm := d.hostTitleMetrics()
 	b := d.hostFrameInset()
-	cw := d.EffectiveCellMetrics().CellWidth
 	// The controls start one cell in from the (border-inset) left edge,
-	// exactly where a window's do ("Start after left border").
-	x, y = x-b-cw, y-b
+	// exactly where a window's do ("Start after left border") — and flush
+	// at the edge while zoomed, the maximized-frame convention.
+	lead := tm.CellW
+	if d.hostZoomedNow() {
+		lead = 0
+	}
+	x, y = x-b-lead, y-b
 	if y < 0 || y >= th || x < 0 {
 		return hostTitleButtonNone
 	}
-	bw := cw * 3
 	switch {
-	case x < bw:
+	case x < tm.ButtonW:
 		return hostTitleButtonClose
-	case x < bw*2:
+	case x < tm.ButtonW*2:
 		return hostTitleButtonMinimize
-	case x < bw*3:
+	case x < tm.ButtonW*3:
 		return hostTitleButtonZoom
 	}
 	return hostTitleButtonNone
@@ -318,26 +337,18 @@ func (d *Desktop) hostMoveBegin(e core.MousePressEvent) bool {
 	if !ok {
 		return false
 	}
-	// A double-click on the drag area zooms — the same convention (400ms,
-	// within a cell) the window manager applies to window title bars.
+	// A double-click on the drag area zooms — the kit's tracker, the same
+	// convention (400ms, within a cell, consume on fire) the window
+	// manager applies to window title bars.
 	metrics := d.EffectiveCellMetrics()
-	now := time.Now()
 	d.mu.Lock()
 	st := &d.hostMove
-	isDouble := !st.lastPressAt.IsZero() &&
-		now.Sub(st.lastPressAt) < 400*time.Millisecond &&
-		e.X-st.lastPressX < metrics.CellWidth && st.lastPressX-e.X < metrics.CellWidth &&
-		e.Y-st.lastPressY < metrics.CellHeight && st.lastPressY-e.Y < metrics.CellHeight
+	isDouble := st.clicks.Press(e.X, e.Y, metrics)
+	d.mu.Unlock()
 	if isDouble {
-		// Consumed: the next click starts fresh rather than tripling.
-		st.lastPressAt = time.Time{}
-		d.mu.Unlock()
 		d.hostZoomToggle()
 		return true
 	}
-	st.lastPressAt = now
-	st.lastPressX, st.lastPressY = e.X, e.Y
-	d.mu.Unlock()
 
 	gx, gy := gp.GlobalPointerPx()
 	x, y := native.ScreenPositionPx()
@@ -710,49 +721,14 @@ func (d *Desktop) handleHostTitleKey(event core.KeyPressEvent) bool {
 // 4-row step), the size commands resize — applied to the OS window's
 // pixel geometry, with the same minimum the pointer gestures enforce.
 func (d *Desktop) handleHostTitleGeometry(cmd string) bool {
-	var dx, dy core.Unit
-	var resize, coarse bool
+	// The kit's decode — the same vocabulary a window's focused title
+	// answers, so the two cannot drift — then the standard steps.
 	metrics := d.EffectiveCellMetrics()
-	switch cmd {
-	case core.CmdWindowMoveFineLeft:
-		dx = -metrics.CellWidth
-	case core.CmdWindowMoveFineRight:
-		dx = metrics.CellWidth
-	case core.CmdWindowMoveFineUp:
-		dy = -metrics.CellHeight
-	case core.CmdWindowMoveFineDown:
-		dy = metrics.CellHeight
-	case core.CmdWindowMoveLeft:
-		dx, coarse = -metrics.CellWidth, true
-	case core.CmdWindowMoveRight:
-		dx, coarse = metrics.CellWidth, true
-	case core.CmdWindowMoveUp:
-		dy, coarse = -metrics.CellHeight, true
-	case core.CmdWindowMoveDown:
-		dy, coarse = metrics.CellHeight, true
-	case core.CmdWindowSizeFineLeft:
-		dx, resize = -metrics.CellWidth, true
-	case core.CmdWindowSizeFineRight:
-		dx, resize = metrics.CellWidth, true
-	case core.CmdWindowSizeFineUp:
-		dy, resize = -metrics.CellHeight, true
-	case core.CmdWindowSizeFineDown:
-		dy, resize = metrics.CellHeight, true
-	case core.CmdWindowSizeLeft:
-		dx, resize, coarse = -metrics.CellWidth, true, true
-	case core.CmdWindowSizeRight:
-		dx, resize, coarse = metrics.CellWidth, true, true
-	case core.CmdWindowSizeUp:
-		dy, resize, coarse = -metrics.CellHeight, true, true
-	case core.CmdWindowSizeDown:
-		dy, resize, coarse = metrics.CellHeight, true, true
-	default:
+	dir, resize, coarse, ok := window.DecodeTitleGeometry(cmd)
+	if !ok {
 		return false
 	}
-	if coarse {
-		dx *= 10 // 10 columns
-		dy *= 4  // 4 rows
-	}
+	dx, dy := window.TitleGeometryDelta(dir, coarse, metrics)
 	d.mu.RLock()
 	surf := d.surface
 	d.mu.RUnlock()
@@ -805,7 +781,7 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 
 	state := d.hostFrameState()
 	scheme := d.GetScheme()
-	metrics := d.EffectiveCellMetrics()
+	tm := d.hostTitleMetrics()
 	// Quasi-active uses the ACTIVE title colors, like a window's; only a
 	// blurred OS window dims.
 	lit := state != hostFrameInactive
@@ -819,66 +795,40 @@ func (d *Desktop) paintHostTitleBar(p *core.Painter, bounds core.UnitRect) {
 	tp.FillRect(core.UnitRect{Width: barWidth, Height: th}, ' ', titleStyle)
 
 	// The controls, on the left like every title bar: [x][.][^] — exit
-	// desktop, minimize, zoom (a restore icon while zoomed) — starting one
-	// cell in from the (border-inset) edge, exactly where a window's do.
-	controlX := metrics.CellWidth
-	for _, c := range []struct {
-		btn  int
-		icon rune
-	}{
-		{hostTitleButtonClose, 'x'},
-		{hostTitleButtonMinimize, '.'},
-		{hostTitleButtonZoom, '^'},
-	} {
-		icon := c.icon
-		if c.btn == hostTitleButtonZoom && zoomed {
-			icon = 'o'
-		}
-		isPressed := pressed == c.btn && hover == c.btn
-		isHovered := hover == c.btn && !isPressed && p.Graphical()
-		st := scheme.GetTitleBarButtonState(lit, focus == c.btn, isHovered, isPressed)
-		tp.DrawCell(controlX, 0, '[', st)
-		tp.DrawCell(controlX+metrics.CellWidth, 0, icon, st)
-		tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', st)
-		controlX += metrics.CellWidth * 3
+	// desktop, minimize, zoom (a restore icon while zoomed) — each through
+	// its own kit function (deliberately distinct per button), starting one
+	// cell in from the (border-inset) edge exactly where a window's do, and
+	// flush at the edge while zoomed like a maximized frame's.
+	controlX := tm.CellW
+	if d.hostZoomedNow() {
+		controlX = 0
 	}
+	btnStyle := func(btn int) style.CellStyle {
+		isPressed := pressed == btn && hover == btn
+		isHovered := hover == btn && !isPressed && p.Graphical()
+		return scheme.GetTitleBarButtonState(lit, focus == btn, isHovered, isPressed)
+	}
+	window.PaintCloseButton(tp, tm, controlX, btnStyle(hostTitleButtonClose))
+	controlX += tm.ButtonW
+	window.PaintMinimizeButton(tp, tm, controlX, btnStyle(hostTitleButtonMinimize))
+	controlX += tm.ButtonW
+	window.PaintZoomButton(tp, tm, controlX, zoomed, btnStyle(hostTitleButtonZoom))
+	controlX += tm.ButtonW
 
 	if title == "" {
 		return
 	}
-	// A focused title wears the angle brackets, like a window's: the
-	// decoration IS the focus indication.
-	display := title
-	displayStyle := titleStyle
 	if focus == hostTitleFocusTitle {
-		display = "< " + title + " >"
-		displayStyle = scheme.GetTitleBarButton(lit, true, false)
-	}
-	// Centered when it fits between the controls and the right edge;
-	// otherwise pinned just past the controls and ellipsized to the bar,
-	// the same layout a window's paintTitleText produces.
-	font := d.EffectiveFont()
-	leftEdge := controlX + metrics.CellWidth
-	avail := barWidth - leftEdge
-	if avail <= 0 {
+		// The focused title wears the angle brackets — the REAL decoration
+		// every window title uses (one shaped run over a highlight
+		// foundation), not an approximation of it.
+		window.PaintFocusedTitleDecoration(tp, tm, barWidth, title, scheme.GetTitleBarButton(lit, true, false))
 		return
 	}
-	titleW := font.MeasureText(display)
-	if titleW > avail {
-		display = window.EllipsizeToWidth(display, avail, font)
-		if display == "" {
-			return
-		}
-		titleW = font.MeasureText(display)
-	}
-	x := (barWidth - titleW) / 2
-	if x < leftEdge {
-		x = leftEdge
-	}
-	if x+titleW > barWidth {
-		x = barWidth - titleW
-	}
-	tp.DrawText(x, 0, display, displayStyle, font)
+	// Centered when it fits between the controls and the right edge;
+	// otherwise pinned just past the controls and ellipsized against it,
+	// the same layout every window title gets.
+	window.PaintTitleBarText(tp, tm, title, titleStyle, controlX, barWidth, barWidth)
 }
 
 // paintHostFrame strokes the genuine window border around the themed

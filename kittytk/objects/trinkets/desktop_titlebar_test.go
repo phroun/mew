@@ -607,6 +607,36 @@ func TestTitleFocusKeysArriveThroughDispatch(t *testing.T) {
 	})
 }
 
+// At a 0.7 title-bar scale the desktop's themed bar shrinks with every
+// other title bar in the system: the row quantizes up on the unit grid
+// (12/16 of a cell), the client area gains the freed rows, and the
+// controls hit-test on the scaled slots.
+func TestScaledTitleBarShrinksTheThemedRow(t *testing.T) {
+	t.Cleanup(func() { core.SetTitleBarScale(1) })
+	core.SetTitleBarScale(0.7)
+	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
+		surf := plat.surfaces[0]
+		h := surf.handler
+		b := d.hostFrameInset()
+
+		if got := d.TitleBarHeight(); got != 12 {
+			t.Fatalf("TitleBarHeight = %v, want ceil(0.7×16) = 12", got)
+		}
+		cell := d.EffectiveCellMetrics().CellHeight
+		if got := d.ClientArea().Y; got != b+12+cell {
+			t.Errorf("ClientArea.Y = %v, want border + scaled bar + menu row (%v)", got, b+12+cell)
+		}
+		// Scaled slots: lead one scaled cell (6) past the border; minimize
+		// spans [b+6+18, b+6+36). Click its center.
+		x := b + 6 + 18 + 9
+		h.Event(core.MousePressEvent{X: x, Y: b + 6, Button: core.LeftButton})
+		h.Event(core.MouseReleaseEvent{X: x, Y: b + 6, Button: core.LeftButton})
+		if !surf.minimized {
+			t.Error("minimize click on the scaled slot did not minimize")
+		}
+	})
+}
+
 // Minimize on the Ψ menu miniaturizes the OS window.
 func TestHostMinimizeMiniaturizes(t *testing.T) {
 	titlebarTestDesktop(t, "", func(d *Desktop, plat *msPlatform) {
