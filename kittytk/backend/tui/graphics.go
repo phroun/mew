@@ -374,3 +374,21 @@ func writeSixelImage(sb *strings.Builder, img image.Image) {
 	}
 	sb.WriteString("\033\\") // ST
 }
+
+// CellPixelSize implements core.CellPixelSizer: the outer terminal's cell in
+// device pixels, as it answered CSI 16 t at startup. 0,0 until it does, and on
+// a terminal that never answers.
+//
+// The value is queried for this backend's own use (a ?1016 pixel mouse
+// coordinate is divided by it), but it is just as much the answer a program
+// hosted inside a pane needs for its OWN CSI 16 t: a picture is sized,
+// positioned and scaled entirely in these units, and a child told nothing can
+// draw nothing.
+func (t *TUIBackend) CellPixelSize() (int, int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.outerCellSizeOK || t.outerCellW <= 0 || t.outerCellH <= 0 {
+		return 0, 0
+	}
+	return t.outerCellW, t.outerCellH
+}

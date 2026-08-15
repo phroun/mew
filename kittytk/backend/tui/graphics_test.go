@@ -169,3 +169,64 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// The outer terminal's cell size is not just this backend's business: it is
+// the answer a program hosted in a pane needs for its OWN CSI 16 t.
+//
+// A child sizes, positions and scales every picture in pixels-per-cell, and
+// there is no other channel for geometry in the terminal protocols. Told
+// nothing, it draws nothing — which is precisely how chafa failed here for
+// every format at once while working on the graphical host, where the cell
+// comes from the font.
+func TestCellPixelSizeIsReportedOnceTheTerminalAnswers(t *testing.T) {
+	b := &TUIBackend{}
+	// Before the reply: unknown, and it says so rather than guessing.
+	if w, h := b.CellPixelSize(); w != 0 || h != 0 {
+		t.Errorf("cell size = %dx%d before the query was answered, want 0x0", w, h)
+	}
+
+	b.mu.Lock()
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.mu.Unlock()
+	if w, h := b.CellPixelSize(); w != 10 || h != 20 {
+		t.Errorf("cell size = %dx%d, want the outer terminal's 10x20", w, h)
+	}
+
+	// A terminal that replied with nonsense is still unknown: half a cell
+	// size is worse than none, because a child will believe it.
+	b.mu.Lock()
+	b.outerCellW, b.outerCellH = 0, 20
+	b.mu.Unlock()
+	if w, h := b.CellPixelSize(); w != 0 || h != 0 {
+		t.Errorf("cell size = %dx%d from a zero width, want 0x0", w, h)
+	}
+}
+
+// An image queued at a pixel anchor lands on the cell containing it, and only
+// when the outer terminal can draw pictures at all.
+func TestDrawImageQueuesByCellAndOnlyWhenSupported(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+
+	// No graphics protocol: dropped, not queued for a terminal that would
+	// print the escape as text.
+	b := &TUIBackend{}
+	b.mu.Lock()
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.mu.Unlock()
+	b.DrawImagePx(35, 45, img)
+	if n := len(b.pendingImages); n != 0 {
+		t.Errorf("queued %d images with no graphics protocol, want 0", n)
+	}
+
+	b.mu.Lock()
+	b.graphics = GraphicsKitty
+	b.mu.Unlock()
+	b.DrawImagePx(35, 45, img)
+	if n := len(b.pendingImages); n != 1 {
+		t.Fatalf("queued %d images, want 1", n)
+	}
+	if p := b.pendingImages[0]; p.col != 3 || p.row != 2 {
+		t.Errorf("anchored at cell (%d,%d), want (3,2) for pixel (35,45) at a 10x20 cell",
+			p.col, p.row)
+	}
+}

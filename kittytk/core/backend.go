@@ -209,6 +209,23 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
+// CellPixelSizer is an optional RenderBackend capability reporting how many
+// DEVICE PIXELS one cell of this surface covers — which a cell surface knows
+// only if it asked, and only a terminal host has anyone to ask.
+//
+// A graphical surface derives its cell from its own font and never needs this.
+// A TUI host does: it draws into somebody else's terminal, whose cell size is
+// that terminal's business, and it finds out by querying (CSI 16 t). The number
+// matters beyond its own layout, because a program hosted INSIDE such a surface
+// asks the same question of us and can do nothing about pictures without an
+// answer — no image can be sized, positioned, or scaled without it.
+//
+// Zero means the question has not been answered, which is the honest state
+// before the reply arrives and on a terminal that never sends one.
+type CellPixelSizer interface {
+	CellPixelSize() (w, h int)
+}
+
 // MaskTintDrawer is an optional RenderBackend capability: composite a
 // color-independent coverage mask (only its alpha is read) tinted with a solid
 // color. Lets a caller cache one grayscale glyph per shape and recolor it per
@@ -1011,6 +1028,19 @@ func (p *Painter) DisplayDensity() float64 {
 		}
 	}
 	return 1
+}
+
+// CellPixelSize reports the device pixels one cell of this surface covers, or
+// 0,0 when the backend does not know (see CellPixelSizer). A graphical surface
+// answers 0,0 and should be asked its font metrics instead; this exists for the
+// number a cell surface had to ask its host terminal for.
+func (p *Painter) CellPixelSize() (w, h int) {
+	if cs, ok := p.backend.(CellPixelSizer); ok {
+		if cw, ch := cs.CellPixelSize(); cw > 0 && ch > 0 {
+			return cw, ch
+		}
+	}
+	return 0, 0
 }
 
 // PxPerUnitF reports the fractional device pixels per unit, tracking

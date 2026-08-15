@@ -1,0 +1,168 @@
+package trinkets
+
+import (
+	"image"
+	"testing"
+
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+)
+
+// cellSurface is a minimal CELL backend: no pixels of its own, but it knows
+// what a cell measures on the terminal it draws into and it can pass an image
+// onward — which is exactly the shape of the TUI host.
+//
+// GraphicalMode is deliberately absent, so Painter.Graphical() is false and
+// PurfecTerm takes the text path. That is the whole point: this is the surface
+// where the pictures used to disappear.
+type cellSurface struct {
+	cellW, cellH int
+	images       []cellSurfaceImage
+}
+
+type cellSurfaceImage struct {
+	x, y core.Unit
+	img  image.Image
+}
+
+// CellPixelSize implements core.CellPixelSizer.
+func (c *cellSurface) CellPixelSize() (int, int) { return c.cellW, c.cellH }
+
+// DrawImage / DrawImagePx implement core.ImageDrawer.
+func (c *cellSurface) DrawImage(x, y core.Unit, img image.Image) {
+	c.images = append(c.images, cellSurfaceImage{x: x, y: y, img: img})
+}
+func (c *cellSurface) DrawImagePx(xPx, yPx int, img image.Image) {
+	c.images = append(c.images, cellSurfaceImage{x: core.Unit(xPx), y: core.Unit(yPx), img: img})
+}
+
+func (c *cellSurface) Init() error         { return nil }
+func (c *cellSurface) Shutdown()           {}
+func (c *cellSurface) Size() core.UnitSize { return core.UnitSize{Width: 640, Height: 400} }
+func (c *cellSurface) Metrics() core.CellMetrics {
+	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+}
+func (c *cellSurface) BeginFrame()                                          {}
+func (c *cellSurface) EndFrame()                                            {}
+func (c *cellSurface) Clear(style.CellStyle)                                {}
+func (c *cellSurface) SetClip(core.UnitRect)                                {}
+func (c *cellSurface) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
+func (c *cellSurface) DrawText(core.Unit, core.Unit, string, style.CellStyle, *core.Font) core.Unit {
+	return 0
+}
+func (c *cellSurface) DrawTextAligned(core.UnitRect, string, core.Alignment, core.Alignment, style.CellStyle, *core.Font) {
+}
+func (c *cellSurface) FillRect(core.UnitRect, rune, style.CellStyle)                     {}
+func (c *cellSurface) DrawRect(core.UnitRect, style.BorderStyle, style.CellStyle)        {}
+func (c *cellSurface) DrawHLine(core.Unit, core.Unit, core.Unit, rune, style.CellStyle)  {}
+func (c *cellSurface) DrawVLine(core.Unit, core.Unit, core.Unit, rune, style.CellStyle)  {}
+func (c *cellSurface) DrawBox(core.UnitRect, style.BorderStyle, string, style.CellStyle) {}
+func (c *cellSurface) PollEvent() core.Event                                             { return nil }
+func (c *cellSurface) WaitEvent() core.Event                                             { return nil }
+func (c *cellSurface) SetCursorVisible(bool)                                             {}
+func (c *cellSurface) SetCursorPosition(core.Unit, core.Unit)                            {}
+func (c *cellSurface) SetCursorStyle(int)                                                {}
+func (c *cellSurface) SupportsColor() bool                                               { return true }
+func (c *cellSurface) SupportsMouse() bool                                               { return true }
+func (c *cellSurface) SupportsUnicode() bool                                             { return true }
+func (c *cellSurface) ColorDepth() int                                                   { return 24 }
+func (c *cellSurface) GetClipboard() string                                              { return "" }
+func (c *cellSurface) SetClipboard(string)                                               {}
+func (c *cellSurface) Beep()                                                             {}
+
+// tuiTerm is a painted terminal on a cell surface, the terminal-host shape.
+func tuiTerm(t *testing.T, cellW, cellH int) (*PurfecTerm, *cellSurface) {
+	t.Helper()
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	c := &cellSurface{cellW: cellW, cellH: cellH}
+	p := core.NewPainter(c)
+	if p.Graphical() {
+		t.Fatal("the stub reported a graphical surface; this must exercise the text path")
+	}
+	term.Paint(p)
+	return term, c
+}
+
+// A child hosted on a CELL surface must still be told what a cell measures in
+// pixels, or it cannot draw a picture at all.
+//
+// Everything about an image is expressed in that one number — its size, its
+// placement, how many rows it reserves — and CSI 16 t is the only way to ask.
+// The graphical host answers from its font. The terminal host has no font of
+// its own; it has to pass on what the terminal IT draws into said, which the
+// backend already asked for its own reasons. While nothing forwarded that, a
+// child was told a cell is 0x0 and every graphics format failed at once —
+// which reads like broken protocol support and is really an unanswered
+// question.
+func TestTUIChildIsToldTheOuterCellSize(t *testing.T) {
+	term, _ := tuiTerm(t, 10, 20)
+	cw, ch := term.Terminal().Buffer().GetCellPixelSize()
+	if cw != 10 || ch != 20 {
+		t.Errorf("child was told a cell is %dx%d px, want the outer terminal's 10x20", cw, ch)
+	}
+	// The pointer unit follows it, as on every other surface: an app has one
+	// number to divide a ?1016 coordinate by.
+	if pw, ph := term.Terminal().Buffer().GetPointerPixelUnit(); pw != cw || ph != ch {
+		t.Errorf("pointer unit %dx%d drifted from the advertised cell %dx%d", pw, ph, cw, ch)
+	}
+
+	// And the pane's pixel window follows, so the PTY winsize carries pixels.
+	// A program that sizes its viewport from TIOCGWINSZ rather than asking
+	// gets nothing from a zero.
+	cols, rows := term.Terminal().GetSize()
+	wpx, hpx := term.ChildWindowPixels()
+	if wpx != cols*10 || hpx != rows*20 {
+		t.Errorf("child window = %dx%d px, want %dx%d for a %dx%d grid",
+			wpx, hpx, cols*10, rows*20, cols, rows)
+	}
+}
+
+// Until the outer terminal answers, nothing is advertised. A guess here is
+// worse than silence: the child would size a picture to it and be wrong.
+func TestTUIAdvertisesNothingBeforeTheTerminalAnswers(t *testing.T) {
+	term, _ := tuiTerm(t, 0, 0)
+	if cw, ch := term.Terminal().Buffer().GetCellPixelSize(); cw != 0 || ch != 0 {
+		t.Errorf("child was told a cell is %dx%d px with no answer from the terminal, want 0x0", cw, ch)
+	}
+	if wpx, hpx := term.ChildWindowPixels(); wpx != 0 || hpx != 0 {
+		t.Errorf("child window = %dx%d px with no cell size, want 0x0", wpx, hpx)
+	}
+}
+
+// An image the child placed reaches the surface, which on a terminal host is
+// what hands it to the outer terminal. The text path used to walk cells only
+// and never ask the buffer for images at all, so a picture was decoded,
+// placed, and silently dropped every frame.
+func TestTUIPlacedImageReachesTheSurface(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+
+	const anchorRow, anchorCol = 2, 3
+	term.Feed([]byte("\x1b[3;4H"))
+	term.Feed(sixelSolidBlock(24, 24, 100, 0, 100))
+	if n := len(term.Terminal().Buffer().GetImages()); n != 1 {
+		t.Fatalf("the emulator placed %d images, want 1", n)
+	}
+
+	c.images = nil
+	term.Paint(core.NewPainter(c))
+	if len(c.images) != 1 {
+		t.Fatalf("the surface received %d images, want 1: the text path dropped it", len(c.images))
+	}
+
+	// Anchored at the cell the child asked for, in units.
+	m := c.Metrics()
+	wantX, wantY := m.CellToUnitsX(anchorCol), m.CellToUnitsY(anchorRow)
+	if got := c.images[0]; got.x != wantX || got.y != wantY {
+		t.Errorf("image anchored at (%v,%v) units, want (%v,%v) for cell (%d,%d)",
+			got.x, got.y, wantX, wantY, anchorCol, anchorRow)
+	}
+	if b := c.images[0].img.Bounds(); b.Dx() != 24 || b.Dy() != 24 {
+		t.Errorf("image is %dx%d px, want the 24x24 the child sent: a cell surface "+
+			"passes pixels through untouched, having none of its own to scale to",
+			b.Dx(), b.Dy())
+	}
+}

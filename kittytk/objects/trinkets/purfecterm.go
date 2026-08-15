@@ -640,9 +640,15 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// updateTerminalSize no-ops when nothing changed.
 	t.updateTerminalSize()
 
+	// Tell the child how big a cell is in pixels, and paint whatever pictures
+	// it drew. Both need the OUTER terminal's cell size, which only a cell
+	// surface can supply and only by having asked for it.
+	t.pushCellPixelSizeTUI(p)
+
 	// Get terminal cells
 	cells := t.terminal.GetCells()
 	buf := t.terminal.Buffer()
+	t.renderImagesTUI(p, buf, metrics, bounds)
 
 	// Render each cell. The purfecterm grid is LOGICAL — one cell per
 	// character, a wide character occupying ONE cell with its visual width
