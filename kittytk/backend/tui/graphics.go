@@ -273,21 +273,38 @@ func (t *TUIBackend) flushImagesLocked() {
 	proto := t.graphics
 	imgs := t.pendingImages
 	t.pendingImages = nil
-	prev := t.shownImages
-	t.shownImages = imgs
 
-	if proto == GraphicsNone || (len(imgs) == 0 && len(prev) == 0) {
+	// What would actually go on screen: each picture minus whatever was
+	// painted over it. This is the unit of comparison, NOT the placement list.
+	//
+	// Comparing placements instead was wrong in a way only the app showed: open
+	// a menu over an unchanged picture and the placement list is identical, so
+	// the flush skipped — leaving the previous full-size placement on screen,
+	// on top of the menu it was supposed to be under. Occlusion is part of what
+	// is drawn, so it has to be part of what is compared.
+	var blocks []placedImage
+	for _, p := range imgs {
+		blocks = append(blocks, t.visibleBlocksLocked(p)...)
+	}
+	prev := t.shownImages
+	t.shownImages = blocks
+
+	if proto == GraphicsNone || (len(blocks) == 0 && len(prev) == 0) {
 		return
 	}
 
-	// Which pictures are NEW to the screen this frame. Everything else is
-	// already drawn where it belongs.
-	fresh := make([]bool, len(imgs))
-	setChanged := len(imgs) != len(prev)
-	for i := range imgs {
+	// Which blocks are NEW to the screen. seq is deliberately left out: it is
+	// an ordering stamp, not part of what the viewer sees, and comparing it
+	// would call every frame a change.
+	same := func(a, b placedImage) bool {
+		return a.col == b.col && a.row == b.row && a.img == b.img
+	}
+	fresh := make([]bool, len(blocks))
+	setChanged := len(blocks) != len(prev)
+	for i := range blocks {
 		seen := false
 		for j := range prev {
-			if imgs[i] == prev[j] {
+			if same(blocks[i], prev[j]) {
 				seen = true
 				break
 			}
@@ -299,15 +316,13 @@ func (t *TUIBackend) flushImagesLocked() {
 	}
 
 	// KITTY: a placement lives until it is deleted. Text painted over those
-	// cells composites against it rather than destroying it — which is the
-	// same persistence that makes an image survive a `clear`. So text damage
-	// is not a reason to send anything, and an unchanged set costs nothing at
-	// all, however busy the frame was.
+	// cells composites against it rather than destroying it — the same
+	// persistence that makes an image survive a `clear` — so text is no reason
+	// to send anything and an unchanged screen costs nothing at all.
 	//
 	// SIXEL: there is no placement, only pixels that became screen content.
-	// Text painted over them erases that part, so a picture has to go again —
-	// but only when the diff actually touched the cells it covers. A change on
-	// an unrelated row leaves it whole.
+	// Text painted over them erases that part, so a block goes again when the
+	// diff touched the cells it covers. A change elsewhere leaves it whole.
 	var sb strings.Builder
 	switch proto {
 	case GraphicsKitty:
@@ -318,38 +333,29 @@ func (t *TUIBackend) flushImagesLocked() {
 		if len(prev) > 0 {
 			sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
 		}
-		for _, p := range imgs {
-			for _, v := range t.visibleBlocksLocked(p) {
-				sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
-				writeKittyImage(&sb, v.img)
-			}
+		for _, v := range blocks {
+			sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
+			writeKittyImage(&sb, v.img)
 		}
 	case GraphicsSixel:
-		for i, p := range imgs {
-			if p.col < 0 || p.row < 0 {
-				continue
-			}
-			col, row, img := p.col, p.row, p.img
+		for i, v := range blocks {
 			if !fresh[i] {
-				// Sixel pixels are CELL CONTENT — an expensive glyph. What
-				// survives is whatever cells were not rewritten, so the repair
-				// is the damaged cells, not the whole picture.
-				c1, r1 := t.imageCellExtentLocked(p)
-				dc0, dr0, dc1, dr1, any := t.damagedRectLocked(p.col, p.row, c1, r1)
+				c1, r1 := t.imageCellExtentLocked(v)
+				dc0, dr0, dc1, dr1, any := t.damagedRectLocked(v.col, v.row, c1, r1)
 				if !any {
 					continue // still on screen, and nothing painted over it
 				}
-				if sub := t.cropToCellsLocked(p, dc0, dr0, dc1, dr1); sub != nil {
-					col, row, img = dc0, dr0, sub
+				// Sixel pixels are CELL CONTENT — an expensive glyph. The
+				// repair is the damaged cells, not the whole picture.
+				if sub := t.cropToCellsLocked(v, dc0, dr0, dc1, dr1); sub != nil {
+					v = placedImage{col: dc0, row: dr0, img: sub, seq: v.seq}
 				}
 			}
-			for _, v := range t.visibleBlocksLocked(placedImage{col: col, row: row, img: img, seq: p.seq}) {
-				if sb.Len() == 0 {
-					sb.WriteString("\0337")
-				}
-				sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
-				writeSixelImage(&sb, v.img)
+			if sb.Len() == 0 {
+				sb.WriteString("\0337")
 			}
+			sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
+			writeSixelImage(&sb, v.img)
 		}
 	}
 	if sb.Len() == 0 {

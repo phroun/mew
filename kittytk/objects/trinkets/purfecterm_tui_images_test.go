@@ -282,3 +282,52 @@ func TestTUIImagesAreHandedOverAfterTheText(t *testing.T) {
 			c.firstImage, c.lastCell)
 	}
 }
+
+// A picture scrolled partly off the top or left keeps the part still on screen.
+//
+// The outer terminal places a picture at a cell and draws all of it from there;
+// it cannot be told to start part way in. So the trimming has to happen here,
+// on the pixels, and dropping the whole thing instead — which this did — makes
+// a picture disappear outright the moment one corner leaves the view.
+func TestTUICropLeadingCellsTrimsRatherThanDrops(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+	p := core.NewPainter(c)
+	// 4 cells wide, 3 tall, at 10x20.
+	img := image.NewRGBA(image.Rect(0, 0, 40, 60))
+
+	for _, tc := range []struct {
+		name        string
+		col, row    int
+		wantW       int
+		wantH       int
+		wantDropped bool
+	}{
+		{name: "two cells off the left", col: -2, row: 3, wantW: 20, wantH: 60},
+		{name: "one row off the top", col: 5, row: -1, wantW: 40, wantH: 40},
+		{name: "both corners out", col: -1, row: -2, wantW: 30, wantH: 20},
+		{name: "entirely off the left", col: -4, row: 0, wantDropped: true},
+		{name: "entirely off the top", col: 0, row: -3, wantDropped: true},
+	} {
+		got := term.cropLeadingCells(p, img, tc.col, tc.row)
+		if tc.wantDropped {
+			if got != nil {
+				t.Errorf("%s: kept %v, want nothing left", tc.name, got.Bounds())
+			}
+			continue
+		}
+		if got == nil {
+			t.Errorf("%s: dropped the whole picture, want the visible part", tc.name)
+			continue
+		}
+		if w, h := got.Bounds().Dx(), got.Bounds().Dy(); w != tc.wantW || h != tc.wantH {
+			t.Errorf("%s: kept %dx%d px, want %dx%d", tc.name, w, h, tc.wantW, tc.wantH)
+		}
+	}
+
+	// With no cell size there is no way to measure the cut, and guessing would
+	// misplace the picture — so it is left to the caller to drop.
+	_, plain := tuiTerm(t, 0, 0)
+	if got := term.cropLeadingCells(core.NewPainter(plain), img, -1, 0); got != nil {
+		t.Error("cropped without knowing the cell size")
+	}
+}

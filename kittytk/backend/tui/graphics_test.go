@@ -609,3 +609,69 @@ func TestEarlierPaintDoesNotOccludeAnImage(t *testing.T) {
 		t.Errorf("the desktop underneath split the picture into %d blocks, want 1", len(got))
 	}
 }
+
+// A menu opening over an unchanged picture must redraw it, cropped.
+//
+// The placement list is identical in that frame — same picture, same anchor —
+// so comparing placements calls it a repeat and skips the flush, leaving the
+// PREVIOUS full-size placement on screen and on top of the menu it should be
+// under. What goes on screen is the visible blocks, so those are what a repeat
+// has to be judged on.
+func TestOcclusionChangeCountsAsAChange(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+
+	img := image.NewRGBA(image.Rect(0, 0, 40, 80)) // 4x4 cells
+	queue := func() {
+		b.pendingImages = []placedImage{{col: 2, row: 2, img: img, seq: 100}}
+	}
+
+	queue()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Fatal("the picture was never sent")
+	}
+
+	// The identical frame again: nothing to do.
+	out.Reset()
+	queue()
+	b.flushImagesLocked()
+	if out.Len() != 0 {
+		t.Errorf("an unchanged frame re-sent %d bytes", out.Len())
+	}
+
+	// A menu opens over its bottom-right. The placement list has not moved.
+	out.Reset()
+	for y := 4; y <= 5; y++ {
+		for x := 4; x <= 5; x++ {
+			b.cellSeq[y][x] = 200
+		}
+	}
+	queue()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Fatal("a menu opened over the picture and nothing was redrawn: the stale " +
+			"placement stays on screen, on top of the menu")
+	}
+	// It went again as two blocks, not one whole picture.
+	if n := strings.Count(out.String(), "\033_G"); n < 3 { // 1 delete + 2 placements
+		t.Errorf("emitted %d kitty commands, want a delete plus two blocks", n)
+	}
+
+	// And once the menu closes, the whole picture returns.
+	out.Reset()
+	for y := 4; y <= 5; y++ {
+		for x := 4; x <= 5; x++ {
+			b.cellSeq[y][x] = 0
+		}
+	}
+	queue()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Error("the picture was not restored when the menu closed")
+	}
+}

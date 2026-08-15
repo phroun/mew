@@ -151,8 +151,16 @@ func (t *PurfecTerm) renderImagesTUI(p *core.Painter, buf *purfecterm.Buffer, me
 			col := im.Col - horizOffset
 			row := im.Row + scrollOffset
 			if col < 0 || row < 0 {
-				continue // scrolled off the top or left; the outer terminal
-			} // has no way to clip a picture, so it must not be sent
+				// Scrolled partly off the top or left. Cut away the part that
+				// is gone and anchor what remains at the edge — dropping the
+				// whole picture instead, which this did, makes it disappear
+				// outright the moment one corner leaves the view.
+				cut := t.cropLeadingCells(p, img, col, row)
+				if cut == nil {
+					continue // entirely past the edge, or nothing to crop with
+				}
+				img, col, row = cut, max(col, 0), max(row, 0)
+			}
 			x, y := metrics.CellToUnitsX(col), metrics.CellToUnitsY(row)
 			if x >= bounds.Width || y >= bounds.Height {
 				continue
@@ -191,4 +199,32 @@ func (t *PurfecTerm) tuiImageFor(im *purfecterm.PlacedImage, prev []tuiImgEntry)
 	img := cloneRGBA(built)
 	t.tuiImgCache = append(t.tuiImgCache, tuiImgEntry{key: key, img: img})
 	return img
+}
+
+// cropLeadingCells removes the cells of an image that lie before the origin —
+// the part scrolled off the top or left — and returns what is left. nil when
+// nothing survives, or when the cell size is unknown and the cut cannot be
+// measured.
+//
+// The outer terminal places a picture at a cell and draws all of it from
+// there; it cannot be asked to start part way in. So the trimming has to
+// happen here, on the pixels, before it is handed over.
+func (t *PurfecTerm) cropLeadingCells(p *core.Painter, img *image.RGBA, col, row int) *image.RGBA {
+	cw, ch := p.CellPixelSize()
+	if cw <= 0 || ch <= 0 {
+		return nil
+	}
+	b := img.Bounds()
+	x0, y0 := b.Min.X, b.Min.Y
+	if col < 0 {
+		x0 += -col * cw
+	}
+	if row < 0 {
+		y0 += -row * ch
+	}
+	r := image.Rect(x0, y0, b.Max.X, b.Max.Y).Intersect(b)
+	if r.Empty() {
+		return nil
+	}
+	return img.SubImage(r).(*image.RGBA)
 }
