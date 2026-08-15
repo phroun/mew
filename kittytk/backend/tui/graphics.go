@@ -54,6 +54,10 @@ type placedImage struct {
 	img      image.Image
 }
 
+// ttyPixelSizeFn is the winsize probe, indirected so a test can supply an
+// answer without a terminal attached.
+var ttyPixelSizeFn = ttyPixelSize
+
 // TerminalGraphics reports the protocol this backend will use to show an
 // image on the outer terminal, one of the Graphics* constants.
 func (t *TUIBackend) TerminalGraphics() int {
@@ -387,8 +391,22 @@ func writeSixelImage(sb *strings.Builder, img image.Image) {
 func (t *TUIBackend) CellPixelSize() (int, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.outerCellSizeOK || t.outerCellW <= 0 || t.outerCellH <= 0 {
-		return 0, 0
+	if t.outerCellSizeOK && t.outerCellW > 0 && t.outerCellH > 0 {
+		return t.outerCellW, t.outerCellH
 	}
-	return t.outerCellW, t.outerCellH
+	// The escape query went unanswered. Ask the kernel instead: TIOCGWINSZ
+	// carries the window's PIXEL size beside its cell size, and a cell is one
+	// divided by the other. See ttyPixelSize for why this fails differently
+	// and is worth trying — an unanswered CSI 16 t is common (a multiplexer
+	// swallows the reply, a terminal ignores what it does not know) and used
+	// to leave a hosted child with no geometry at all, which is not a failure
+	// it can recover from: no image can be sized without it.
+	if t.cols > 0 && t.rows > 0 {
+		if wPx, hPx := ttyPixelSizeFn(t.fd); wPx > 0 && hPx > 0 {
+			if cw, ch := wPx/t.cols, hPx/t.rows; cw > 0 && ch > 0 {
+				return cw, ch
+			}
+		}
+	}
+	return 0, 0
 }

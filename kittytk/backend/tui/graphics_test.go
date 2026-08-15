@@ -230,3 +230,41 @@ func TestDrawImageQueuesByCellAndOnlyWhenSupported(t *testing.T) {
 			p.col, p.row)
 	}
 }
+
+// When the escape query goes unanswered, the cell size comes from the kernel's
+// winsize instead — and the reply still wins when it does arrive.
+//
+// The two channels fail differently, which is the whole reason both exist. A
+// CSI 16 t reply has to be recognised by the terminal AND survive the trip back
+// through whatever sits between; a multiplexer swallows it and a terminal that
+// does not know the sequence says nothing. TIOCGWINSZ asks the kernel about our
+// own tty and cannot be intercepted — though plenty of terminals leave the
+// pixel fields at zero, so neither channel alone is enough.
+func TestCellPixelSizeFallsBackToTheWinsize(t *testing.T) {
+	restore := ttyPixelSizeFn
+	t.Cleanup(func() { ttyPixelSizeFn = restore })
+	ttyPixelSizeFn = func(int) (int, int) { return 800, 500 } // 80x25 at 10x20
+
+	b := &TUIBackend{}
+	b.cols, b.rows = 80, 25
+	if w, h := b.CellPixelSize(); w != 10 || h != 20 {
+		t.Errorf("cell size = %dx%d from an 800x500 window on an 80x25 grid, want 10x20", w, h)
+	}
+
+	// The terminal's own answer is authoritative: the winsize division is
+	// whole-number and loses the remainder, where the reply is exact.
+	b.mu.Lock()
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 11, 23, true
+	b.mu.Unlock()
+	if w, h := b.CellPixelSize(); w != 11 || h != 23 {
+		t.Errorf("cell size = %dx%d, want the terminal's own 11x23 over the winsize", w, h)
+	}
+
+	// A terminal that fills in neither is still unknown, and says so.
+	ttyPixelSizeFn = func(int) (int, int) { return 0, 0 }
+	b2 := &TUIBackend{}
+	b2.cols, b2.rows = 80, 25
+	if w, h := b2.CellPixelSize(); w != 0 || h != 0 {
+		t.Errorf("cell size = %dx%d with neither channel answering, want 0x0", w, h)
+	}
+}
