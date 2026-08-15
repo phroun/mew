@@ -25,7 +25,11 @@ var mewAliasGroups = []keyseq.AliasGroup{
 	// directions — "del" erasing behind and "delete" ahead — the same
 	// near-homograph the vocabulary is otherwise built to avoid. Forward
 	// delete is spelled "fdel", and only that.
-	{"^space", "^2"},
+	// NUL is what Ctrl+Space and Ctrl+@ both send, so the legacy wire cannot
+	// tell them apart and all three spellings name that one input. "^@" is
+	// the one the byte path actually emits; without it a "^space" binding was
+	// reachable only under the kitty protocol, which reports the key.
+	{"^@", "^2", "^space"},
 	{"esc", "escape", "^[", "^3"},
 	{"^\\", "^4"},
 	{"^]", "^5"},

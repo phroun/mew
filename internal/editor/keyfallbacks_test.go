@@ -84,6 +84,93 @@ func TestBackAndDelDoNotFallBackToEachOther(t *testing.T) {
 	}
 }
 
+// Ctrl+Space is the one input whose spellings differ by WIRE rather than by
+// preference, so all four have to land together.
+//
+// The legacy path sends NUL, which Ctrl+@ sends too, and direct-key-handler
+// emits it as "^@" — it cannot know which key was struck. The kitty protocol
+// reports the key instead, so the same press arrives as "C-space" (mew's name
+// for KeySpace, under the C- prefix direct-key-handler emits). "^space" and
+// "^2" are spellings a keymap writes and nothing ever emits.
+//
+// "^@" was missing from the group, which left a "^space" binding working under
+// the kitty protocol and dead on the byte path — the kind of gap that reads as
+// "Ctrl+Space does nothing in some terminals".
+func TestCtrlSpaceResolvesFromEveryWireForm(t *testing.T) {
+	// The guarantee that matters: a keymap writes "^space", and BOTH wires
+	// reach it — "^@" from the byte path, "C-space" from the kitty protocol.
+	p := procKSP(map[string]string{"^space": "ctrl_space"})
+	for _, pressed := range []string{"^space", "^2", "^@", "C-space"} {
+		if got := pressKSP(t, p, pressed); got != "ctrl_space" {
+			t.Errorf("bound ^space, pressed %q -> %q, want ctrl_space", pressed, got)
+		}
+	}
+
+	// The three group members mesh in every direction, so a keymap may write
+	// whichever of them it likes.
+	for _, bound := range []string{"^space", "^2", "^@"} {
+		q := procKSP(map[string]string{bound: "cs"})
+		for _, pressed := range []string{"^space", "^2", "^@"} {
+			if got := pressKSP(t, q, pressed); got != "cs" {
+				t.Errorf("bound %q, pressed %q -> %q, want cs", bound, pressed, got)
+			}
+		}
+	}
+
+	// The group has not swallowed the plain spacebar: a modifier is part of a
+	// key's identity, not decoration.
+	r := procKSP(map[string]string{"space": "bare", "^space": "ctrl"})
+	if got := pressKSP(t, r, "space"); got != "bare" {
+		t.Errorf("space -> %q, want bare", got)
+	}
+	if got := pressKSP(t, r, "^@"); got != "ctrl" {
+		t.Errorf("^@ -> %q, want ctrl", got)
+	}
+}
+
+// The two mechanisms do NOT compose, and this pins that rather than hiding it.
+//
+// "C-space" reaches "^space" because they are the same base under interchangeable
+// Ctrl prefixes. "^2" and "^@" reach "^space" because the three are one alias
+// group. But "C-space" and "^2" reach each other by neither route: as tokens they
+// are prefix+"space" and prefix+"2", two different bases, and group membership is
+// per whole token.
+//
+// So a keymap that writes "^2" or "^@" instead of "^space" is dead under the
+// kitty protocol. "^space" is the spelling that works from both wires, which is
+// reason enough to write it; recorded here so that if the pairing is ever made
+// to compose, this test fails and says so deliberately.
+func TestCtrlPrefixAliasDoesNotComposeWithGroupMembership(t *testing.T) {
+	p := procKSP(map[string]string{"^2": "cs"})
+	if got := pressKSP(t, p, "C-space"); got != "" {
+		t.Errorf("bound ^2, pressed C-space -> %q; the two mechanisms now "+
+			"compose, so the comment above is stale", got)
+	}
+	q := procKSP(map[string]string{"C-space": "cs"})
+	if got := pressKSP(t, q, "^@"); got != "" {
+		t.Errorf("bound C-space, pressed ^@ -> %q; likewise", got)
+	}
+}
+
+// A modifier prefix peels, and the base's spellings resolve underneath it —
+// so "^space" is the "^" modifier on the key named "space", not one opaque
+// token. The same holds for every named key and for either Ctrl spelling,
+// which is what lets a keymap write "^pgup" while the wire delivers "C-pgup".
+func TestModifiersPeelAndBaseSpellingsResolveUnderThem(t *testing.T) {
+	for _, c := range []struct{ bound, pressed string }{
+		{"^minus", "^-"},      // word spelling bound, character pressed
+		{"^-", "^minus"},      // and the reverse
+		{"S-esc", "S-escape"}, // long spelling under a Shift prefix
+		{"C-pgup", "^pgup"},   // the two Ctrl prefixes reach each other
+		{"^pgup", "C-pgup"},
+	} {
+		p := procKSP(map[string]string{c.bound: "hit"})
+		if got := pressKSP(t, p, c.pressed); got != "hit" {
+			t.Errorf("bound %q, pressed %q -> %q, want hit", c.bound, c.pressed, got)
+		}
+	}
+}
+
 // CLAIM 5: what "back" and "del" actually share is the DEFAULT COMMAND floor,
 // which is not the alias mechanism at all. It answers only for a key no
 // binding claimed, so it can give two unrelated keys one meaning without
