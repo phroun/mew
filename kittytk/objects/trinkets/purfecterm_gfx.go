@@ -2810,6 +2810,19 @@ func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool
 	if data == nil {
 		return false
 	}
+	if core.MouseTracing() {
+		kind := "press"
+		if button&purfecterm.MouseMotionFlag != 0 {
+			kind = "motion"
+		} else if !press {
+			kind = "release"
+		}
+		// The advertised cell (CSI 16 t) is the modulus the guest divides the
+		// report by, so a report is only readable next to it.
+		unitW, unitH := buf.GetCellPixelSize()
+		core.MouseTracef("guest  %-7s btn=%-3d in=(%v,%v) enc=%d unit=%dx%d rep=(%d,%d) bytes=%q",
+			kind, button, x, y, buf.GetMouseEncodingMode(), unitW, unitH, repX, repY, data)
+	}
 	t.toChild(data)
 	return true
 }
@@ -2840,6 +2853,15 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	// the guest editor owns shift+click (extend-selection) itself.
 	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
+
+	// Logged before the branches, so a press that never reaches the child is
+	// distinguishable from one that reached it with the wrong coordinate —
+	// the guest line below is absent in the first case, present in the second.
+	if core.MouseTracing() {
+		core.MouseTracef("press  at=(%v,%v) cell=(%d,%d) btn=%v tracking=%d forward=%v shift=%v scrollbarLane=%v",
+			event.X, event.Y, cellX, cellY, event.Button,
+			buf.GetMouseTrackingMode(), forwardToPTY, hasShift, t.gfx.vDragging || t.gfx.hDragging)
+	}
 
 	if event.Button == core.RightButton {
 		if forwardToPTY {
