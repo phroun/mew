@@ -2265,15 +2265,11 @@ func withPixelWinsize(sess mew.PTYSession, windowPx func() (int, int)) mew.PTYSe
 }
 
 // childWindowPx is the child's window in DEVICE PIXELS, taken from the pane
-// that paints it (PurfecTerm.ContentPixelSize).
+// that paints it (PurfecTerm.ChildWindowPixels).
 //
-// Measured, never derived. Columns times the reported cell size looks like the
-// same quantity and is not: the grid is fitted on the UNSCALED cell while the
-// cell reported to the child is the SCALED one, and the scrollbar lane is
-// already out of the fit but not out of that product. A program that draws
-// pictures sizes its entire rendering from this, so either error shows up as a
-// page at the wrong scale spilling past the pane — which is what columns times
-// cells produced.
+// Measured, never derived — see that method for why columns times the
+// advertised cell is a different and larger quantity, and what the difference
+// costs a program that draws pictures.
 //
 // Any hosted terminal answers: they all take one font from TerminalFont() and
 // are laid out on one pitch. Zero before the first graphical paint, where the
@@ -2291,29 +2287,10 @@ func (e *Editor) childWindowPx() (int, int) {
 	if t == nil || t.Terminal() == nil {
 		return 0, 0
 	}
-	// The child's OWN grid times the cell it was told, both read from the
-	// same terminal. Not the cols/rows mew passes to Resize: those are the
-	// viewport measured on the HOST grid, which is a different pitch — the
-	// very overshoot SetLockstepPitch exists to keep out of the child's
-	// layout ("gaining phantom columns"). Multiplying host columns by the
-	// child's cell overstates the window by that difference, which grows
-	// with width, so a wider pane loses proportionally more off the right.
-	//
-	// These two agree with each other by construction, and the pointer path
-	// already reports against the same pair — which is why the mouse lands
-	// correctly even while the window size does not.
-	cols, rows := t.Terminal().GetSize()
-	cw, ch := t.Terminal().Buffer().GetCellPixelSize()
-	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
-		return 0, 0
-	}
-	// The child's window is the pane's device pixels, and it must stay that:
-	// awrit (and anything like it) makes an image of EXACTLY the size it is
-	// told, then lays out size/DSF css pixels inside it. Reporting fewer
-	// pixels shrinks the image, not the zoom -- measured: halving this
-	// halved the picture and left its density untouched.
-	//
-	// Correcting the density therefore cannot be done from here alone; see
-	// the note on oversampling in renderImagesGfx.
-	return cols * cw, rows * ch
+	// The pane's device pixels, and it must stay that: awrit (and anything
+	// like it) makes an image of EXACTLY the size it is told, then lays out
+	// size/DSF css pixels inside it. Reporting fewer pixels shrinks the
+	// image, not the zoom -- measured: halving this halved the picture and
+	// left its density untouched. Reporting MORE crops it at the pane edge.
+	return t.ChildWindowPixels()
 }

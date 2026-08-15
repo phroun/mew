@@ -113,72 +113,76 @@ func sgrReportX(s string) (int, bool) {
 	return x, true
 }
 
-// The child's pixel window must be its OWN grid times the cell it was told,
-// and both of those have to fit inside the pane that paints it.
+// The child's pixel window must be the pane's own pixels — exactly, once the
+// density it is quoted in is divided back out.
 //
-// The trap is that a hosted terminal runs on a different pitch from its host
-// (SetLockstepPitch exists for exactly that), so the cols mew measures on the
-// HOST grid are not the cols this terminal settled on. Multiplying host
-// columns by this terminal's cell overstates the window by a difference that
-// grows with width - a wider pane loses proportionally more off its right
-// edge, while the pointer, which reports against this same self-consistent
-// pair, stays accurate.
-func TestChildWindowPixelsFitThePane(t *testing.T) {
-	t.Cleanup(func() { core.SetTextMeasurer(nil) })
-	b, _ := raster.NewScaled(1200, 640, 2)
-	b.SetFontSize(10)
-	core.SetTextMeasurer(b)
-	d := NewDesktop()
-	d.SetBackend(b)
-	sz := b.Size()
-	d.SetBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
-	d.SetFont(&core.Font{Name: "ui-text", Size: 10})
-	d.WindowManager().SetScreenBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
+// Not columns times the advertised cell. Those two look like the same quantity
+// and are rounded against different things: the grid is fitted and PAINTED on
+// the exact fractional cell (a 11.67px row pitch, walked per row, so fifty rows
+// really do fit in 591px) while the cell the child is told must be whole, and
+// 50 x 12 is 600. A child sizes its whole rendering from what it is told, so
+// the 9px it cannot see are simply cut off — and the density scales the gap up
+// with everything else. The other rounding goes the other way and leaves a
+// strip of the pane the child never draws into.
+//
+// The measured extent has neither gap by construction, which is what this
+// pins: reported / density == the pane, to the pixel, at every combination of
+// magnification and screen density.
+func TestChildWindowPixelsAreExactlyThePane(t *testing.T) {
+	for _, c := range []struct {
+		scale   int
+		density float64
+	}{{1, 1}, {1, 2}, {2, 2}, {2, 1}} {
+		func() {
+			t.Cleanup(func() { core.SetTextMeasurer(nil) })
+			b, _ := raster.NewScaled(1200, 640, c.scale)
+			b.SetFontSize(10)
+			b.SetDisplayDensity(c.density)
+			core.SetTextMeasurer(b)
+			d := NewDesktop()
+			d.SetBackend(b)
+			sz := b.Size()
+			d.SetBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
+			d.SetFont(&core.Font{Name: "ui-text", Size: 10})
+			d.WindowManager().SetScreenBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
 
-	term := NewPurfecTerm()
-	if term.Terminal() == nil {
-		t.Skip("no embedded terminal")
-	}
-	term.SetFont(&core.Font{Name: "ui-text", Size: 10})
-	term.SetLockstepPitch(true) // how a hosted (mew) terminal is laid out
-	win := window.NewWindow("term")
-	win.SetContent(term)
-	d.WindowManager().AddWindow(win)
-	win.SetBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
-	win.SetActive(true)
-	win.Layout()
+			term := NewPurfecTerm()
+			if term.Terminal() == nil {
+				t.Skip("no embedded terminal")
+			}
+			term.SetFont(&core.Font{Name: "ui-text", Size: 10})
+			term.SetLockstepPitch(true) // how a hosted (mew) terminal is laid out
+			win := window.NewWindow("term")
+			win.SetContent(term)
+			d.WindowManager().AddWindow(win)
+			win.SetBounds(core.UnitRect{Width: sz.Width, Height: sz.Height})
+			win.SetActive(true)
+			win.Layout()
 
-	b.Clear(style.DefaultStyle())
-	term.Paint(core.NewPainter(b))
+			b.Clear(style.DefaultStyle())
+			term.Paint(core.NewPainter(b))
 
-	cols, rows := term.Terminal().GetSize()
-	cw, ch := term.Terminal().Buffer().GetCellPixelSize()
-	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
-		t.Fatalf("grid %dx%d cell %dx%d", cols, rows, cw, ch)
-	}
-	wpx, hpx := float64(cols*cw), float64(rows*ch)
-
-	// The window is stated in the child's OVERSAMPLED pixels: it is told a
-	// cell is deviceScale times its real size so it renders at the display's
-	// density, and the image it sends back is divided by the same factor on
-	// the way to the screen. So the thing that must fit the pane is the
-	// window after that division.
-	if f := term.gfx.oversample; f > 1 {
-		wpx /= f
-		hpx /= f
-	}
-
-	paneW, paneH := term.ContentPixelSize()
-	t.Logf("child %dx%d cells * %dx%d px / oversample %.2f = %.0fx%.0f; pane measures %dx%d",
-		cols, rows, cw, ch, term.gfx.oversample, wpx, hpx, paneW, paneH)
-
-	if paneW > 0 && int(wpx) > paneW {
-		t.Errorf("child window %.0fpx wide overflows the pane's %dpx", wpx, paneW)
-	}
-	if paneH > 0 && int(hpx) > paneH {
-		t.Errorf("child window %.0fpx tall overflows the pane's %dpx", hpx, paneH)
-	}
-	if surf := b.UnitToPxX(sz.Width) - b.UnitToPxX(0); int(wpx) > surf {
-		t.Errorf("child window %.0fpx wide overflows the surface's %dpx", wpx, surf)
+			paneW, paneH := term.ContentPixelSize()
+			if paneW <= 0 || paneH <= 0 {
+				t.Fatalf("scale=%d density=%v: pane measures %dx%d", c.scale, c.density, paneW, paneH)
+			}
+			wpx, hpx := term.ChildWindowPixels()
+			f := term.gfx.oversample
+			if f <= 0 {
+				t.Fatalf("scale=%d density=%v: oversample %v", c.scale, c.density, f)
+			}
+			if gotW, gotH := float64(wpx)/f, float64(hpx)/f; gotW != float64(paneW) || gotH != float64(paneH) {
+				t.Errorf("scale=%d density=%v: reported %dx%d / %v = %.1fx%.1f, want the pane's %dx%d",
+					c.scale, c.density, wpx, hpx, f, gotW, gotH, paneW, paneH)
+			}
+			// And it is quoted in the same pixels as the cell, so a client
+			// dividing one by the other counts the columns it really has.
+			cw, _ := term.Terminal().Buffer().GetCellPixelSize()
+			cols, _ := term.Terminal().GetSize()
+			if cw <= 0 || wpx/cw < cols {
+				t.Errorf("scale=%d density=%v: window %dpx / cell %dpx = %d columns, fewer than the %d it has",
+					c.scale, c.density, wpx, cw, wpx/max(cw, 1), cols)
+			}
+		}()
 	}
 }

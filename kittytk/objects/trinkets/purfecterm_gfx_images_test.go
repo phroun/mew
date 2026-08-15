@@ -707,3 +707,63 @@ func TestGfxOversampleFollowsTheScreenNotTheMagnification(t *testing.T) {
 		}
 	}
 }
+
+// The density goes INSIDE the rounding to whole pixels, not after it.
+//
+// A cell is rarely a whole number of device pixels — 14 units at 1.667 px/unit
+// is 23.33 — and the one we advertise has to be whole. Round it first and
+// multiply after and the slack is multiplied too: 23 becomes 46 where an exact
+// doubling wants 47. That is half a pixel per row of error, in the direction
+// that makes the child's window bigger than the pane, and it lands as content
+// cut off at the edge. Take the density first and round once and it is a
+// quarter of a pixel, in no particular direction.
+//
+// The other oversample tests cannot catch this: their cell divides evenly, so
+// both orders agree.
+func TestGfxOversampleRoundsAfterApplyingTheDensity(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(640, 400, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(10) // 2 * 10/12 = 1.667 px/unit: a deliberately fractional cell
+	b.SetDisplayDensity(2)
+	core.SetTextMeasurer(b)
+
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetFont(&core.Font{Name: "ui-text", Size: 10})
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	realW, realH := cellPx(term) // unrounded, in real device pixels
+	f := term.gfx.oversample
+	if f != 2 {
+		t.Fatalf("oversample = %v, want 2", f)
+	}
+	if realH == math.Trunc(realH) {
+		t.Skipf("cell height %v is whole; this test needs a fractional one to mean anything", realH)
+	}
+
+	gotW, gotH := term.Terminal().Buffer().GetCellPixelSize()
+	wantW := int(math.Round(realW * f))
+	wantH := int(math.Round(realH * f))
+	// What the discarded order would have produced, named so a failure says
+	// which mistake was made rather than only that a number is off.
+	doubleRounded := int(math.Round(math.Round(realH) * f))
+	if gotH != wantH {
+		if gotH == doubleRounded {
+			t.Errorf("advertised cell height %d px: the real %.3f was rounded to %v BEFORE "+
+				"the density was applied; want round(%.3f * %v) = %d",
+				gotH, realH, math.Round(realH), realH, f, wantH)
+		} else {
+			t.Errorf("advertised cell height = %d px, want round(%.3f * %v) = %d", gotH, realH, f, wantH)
+		}
+	}
+	if gotW != wantW {
+		t.Errorf("advertised cell width = %d px, want round(%.3f * %v) = %d", gotW, realW, f, wantW)
+	}
+}

@@ -2697,12 +2697,19 @@ func (t *PurfecTerm) pushCellPixelSizeGfx() {
 	if ppu <= 0 {
 		ppu = 1
 	}
-	cwPx := int(math.Round(float64(baseCW) * buf.GetHorizontalScale() * ppu))
-	chPx := int(math.Round(float64(baseCH) * buf.GetVerticalScale() * ppu))
-	if f := t.gfx.oversample; f > 1 {
-		cwPx = int(math.Round(float64(cwPx) * f))
-		chPx = int(math.Round(float64(chPx) * f))
+	// The density belongs INSIDE the rounding, not after it. A cell measuring
+	// 11.67 device pixels is advertised as 12 - a third of a pixel of slack per
+	// row, which the grid's own fit already has to live with - but round first
+	// and multiply after and that slack is multiplied too: 24 rather than the
+	// 23 an exact doubling wants. Over fifty rows the whole window overshoots
+	// the pane it is painted in, and whatever the child drew past the edge is
+	// simply cut off. So take the density first and round ONCE, at the end.
+	f := t.gfx.oversample
+	if f <= 0 {
+		f = 1
 	}
+	cwPx := int(math.Round(float64(baseCW) * buf.GetHorizontalScale() * ppu * f))
+	chPx := int(math.Round(float64(baseCH) * buf.GetVerticalScale() * ppu * f))
 	if cwPx > 0 && chPx > 0 {
 		t.gfx.advCW, t.gfx.advCH = cwPx, chPx
 		buf.SetCellPixelSize(cwPx, chPx)
@@ -3503,6 +3510,38 @@ func (t *PurfecTerm) ContentPixelSize() (int, int) {
 	w, h := t.gfx.contentWpx, t.gfx.contentHpx
 	if w <= 0 || h <= 0 {
 		return 0, 0
+	}
+	return int(math.Round(w)), int(math.Round(h))
+}
+
+// ChildWindowPixels is the window to report to a hosted child (the PTY's
+// ws_xpixel/ws_ypixel): the pane's MEASURED extent, expressed in the same
+// oversampled pixels the child's cell size is quoted in.
+//
+// Measured, never derived. Columns times the advertised cell looks like the
+// same quantity and is not, because the two are rounded against different
+// things: the grid is fitted on the exact fractional cell and PAINTED on it —
+// a 11.67px row pitch, walked per row, so fifty rows really do fit in 591px —
+// while the cell the child is told has to be a whole number, and 50 x 12 is
+// 600. The child believes the product, sizes its rendering to it, and the
+// difference is cut off at the pane's edge. Scaling by the density multiplies
+// that gap along with everything else.
+//
+// The measured extent has no such gap: it is the pixels that exist, and
+// dividing the returned window by the density gives them back exactly. The
+// window is then not a whole number of cells, which is ordinary — a terminal
+// window has always had leftover pixels below its last row.
+//
+// Zero before the first graphical paint, so a caller can decline to claim a
+// window rather than report one of no size.
+func (t *PurfecTerm) ChildWindowPixels() (int, int) {
+	w, h := t.gfx.contentWpx, t.gfx.contentHpx
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	if f := t.gfx.oversample; f > 1 {
+		w *= f
+		h *= f
 	}
 	return int(math.Round(w)), int(math.Round(h))
 }
