@@ -1603,7 +1603,21 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	case "MouseRelease":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
+	// Motion, with whichever button is held. direct-key-handler names the
+	// button in the event, and "MouseDrag" is its name for motion with NO
+	// button — the buttonless tracking a terminal sends under ?1003 — so that
+	// one carries no button rather than a default.
+	//
+	// Buttons went unset here, which made every motion look button-free to a
+	// trinket: a drag passing over a scrollbar lit its hover instead of
+	// clearing it, since the hover test is exactly "no button held".
+	case "MouseLeftDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
+	case "MouseMiddleDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
+	case "MouseRightDrag":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
+	case "MouseDrag":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":

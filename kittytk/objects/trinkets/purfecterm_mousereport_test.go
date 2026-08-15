@@ -55,3 +55,39 @@ func TestMouseReportRelay(t *testing.T) {
 		t.Fatalf("no reports with tracking off; got %q", got.String())
 	}
 }
+
+// A drag reports the button actually held.
+//
+// SGR motion sets bit 32 on the button code, so a left drag is 32, a middle
+// drag 33 and a right drag 34. The relay reported 32 for all three, telling a
+// guest every drag was a left drag — and a guest that distinguishes them
+// (paste on middle, a right-drag selection) acted on the wrong one.
+func TestDragReportsTheButtonActuallyHeld(t *testing.T) {
+	for _, c := range []struct {
+		btn  core.MouseButton
+		want string
+		what string
+	}{
+		{core.LeftButton, "\x1b[<32;1;1M", "left drag"},
+		{core.MiddleButton, "\x1b[<33;1;1M", "middle drag"},
+		{core.RightButton, "\x1b[<34;1;1M", "right drag"},
+	} {
+		term := NewPurfecTerm()
+		if term.Terminal() == nil {
+			t.Skip("no embedded terminal")
+		}
+		var got strings.Builder
+		term.SetInputSink(func(b []byte) { got.Write(b) })
+		term.Feed([]byte("\x1b[?1003h\x1b[?1006h"))
+
+		// The press is what the drag relay is licensed by, and what records
+		// which button is down.
+		term.HandleMousePress(core.MousePressEvent{X: 0, Y: 0, Button: c.btn})
+		got.Reset()
+		term.HandleMouseMove(core.MouseMoveEvent{X: 0, Y: 0, Buttons: c.btn})
+
+		if !strings.Contains(got.String(), c.want) {
+			t.Errorf("%s relayed %q, want it to contain %q", c.what, got.String(), c.want)
+		}
+	}
+}

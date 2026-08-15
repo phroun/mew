@@ -119,7 +119,13 @@ type purfecTermGfx struct {
 	lockstepPitch bool
 
 	// Local selection drag.
-	mouseDown      bool
+	mouseDown bool
+	// mouseDownBtn is the purfecterm button code of the press being held, so
+	// motion reports carry the button actually down. A drag reported as the
+	// left button whatever is held tells a guest the wrong thing: a middle- or
+	// right-drag arrives as a left-drag, and an application that acts on the
+	// difference — a paste-on-middle, a right-drag selection — acts wrongly.
+	mouseDownBtn   int
 	mouseDownX     int
 	mouseDownY     int
 	selecting      bool
@@ -2873,6 +2879,7 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
+			t.gfx.mouseDownBtn = purfecterm.MouseButtonRight
 			t.reportMouseGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 			return true
 		}
@@ -2886,12 +2893,14 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
+		t.gfx.mouseDownBtn = btn
 		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		return true
 	}
 
 	if event.Button == core.LeftButton {
 		t.gfx.mouseDown = true
+		t.gfx.mouseDownBtn = purfecterm.MouseButtonLeft
 		t.gfx.mouseDownX = cellX
 		t.gfx.mouseDownY = cellY
 		t.gfx.selectionMoved = false
@@ -2924,9 +2933,11 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 
 	if forwardToPTY {
 		if trackingMode == 1003 || (trackingMode == 1002 && t.gfx.mouseDown) {
+			// The button actually held, not always the left one: a guest that
+			// distinguishes a middle- or right-drag is told which it is.
 			btn := purfecterm.MouseButtonNone | purfecterm.MouseMotionFlag
 			if t.gfx.mouseDown {
-				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
+				btn = t.gfx.mouseDownBtn | purfecterm.MouseMotionFlag
 			}
 			t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		}
