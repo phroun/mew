@@ -2,6 +2,8 @@ package tui
 
 import (
 	"image"
+
+	"github.com/phroun/kittytk/core"
 	"image/color"
 	"strings"
 	"testing"
@@ -494,5 +496,116 @@ func TestITermVersionGatesKittyFallback(t *testing.T) {
 		if got := graphicsFromEnv(); got != c.want {
 			t.Errorf("iTerm2 %q -> %d, want %d", c.version, got, c.want)
 		}
+	}
+}
+
+// A picture is confined to the clip in force when it is drawn, the same clip
+// text obeys — otherwise it runs past the edge of the window that drew it and
+// keeps going, because nothing downstream knows where the window ended.
+func TestImageIsCroppedToTheClip(t *testing.T) {
+	b := &TUIBackend{cols: 80, rows: 25}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	// A window occupying cells (2,1)..(11,5): 10 cells wide, 5 tall.
+	b.clipRect = core.UnitRect{X: 16, Y: 16, Width: 80, Height: 80}
+
+	// An 8x8-cell picture anchored at (4,2) — it runs off the clip's bottom
+	// and right by 1 and 5 cells.
+	img := image.NewRGBA(image.Rect(0, 0, 80, 160))
+	b.queueImageLocked(4, 2, img)
+	if len(b.pendingImages) != 1 {
+		t.Fatalf("queued %d images, want 1", len(b.pendingImages))
+	}
+	got := b.pendingImages[0]
+	if got.col != 4 || got.row != 2 {
+		t.Errorf("anchor moved to (%d,%d), want (4,2): only the far edges are out", got.col, got.row)
+	}
+	if w := got.img.Bounds().Dx(); w != 80 {
+		t.Errorf("width %d px, want 80: cols 4..11 all fit the clip", w)
+	}
+	if h := got.img.Bounds().Dy(); h != 80 {
+		t.Errorf("height %d px, want 80: rows 2..5 fit, rows 6..9 are past the clip", h)
+	}
+
+	// Entirely outside: nothing queued at all.
+	b.pendingImages = nil
+	b.queueImageLocked(40, 20, image.NewRGBA(image.Rect(0, 0, 20, 20)))
+	if len(b.pendingImages) != 0 {
+		t.Errorf("queued %d images wholly outside the clip, want 0", len(b.pendingImages))
+	}
+}
+
+// A window painted over a picture takes those cells away from it.
+//
+// Trinkets paint back to front into one plane, so "on top" is "written later".
+// An image is queued rather than composited, so it has to ask after the fact —
+// and without asking, it is emitted over the very window that covers it.
+func TestImageIsOccludedByWhatIsPaintedOverIt(t *testing.T) {
+	b := &TUIBackend{cols: 80, rows: 25}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.dmgMin, b.dmgMax = make([]int, b.rows), make([]int, b.rows)
+	b.cellSeq = make([][]uint32, b.rows)
+	for y := range b.cellSeq {
+		b.cellSeq[y] = make([]uint32, b.cols)
+	}
+
+	// A 4x4-cell picture at (2,2), queued at paint order 100.
+	img := image.NewRGBA(image.Rect(0, 0, 40, 80))
+	p := placedImage{col: 2, row: 2, img: img, seq: 100}
+
+	// Nothing over it: one block, unsplit.
+	if got := b.visibleBlocksLocked(p); len(got) != 1 || got[0].img != img {
+		t.Fatalf("an unobstructed picture split into %d blocks, want 1 whole one", len(got))
+	}
+
+	// A window painted LATER across its bottom-right quarter.
+	for y := 4; y <= 5; y++ {
+		for x := 4; x <= 5; x++ {
+			b.cellSeq[y][x] = 200
+		}
+	}
+	blocks := b.visibleBlocksLocked(p)
+	if len(blocks) != 2 {
+		t.Fatalf("split into %d blocks, want 2 (the full rows above, the left half below)", len(blocks))
+	}
+	// Rows 2-3 survive whole; rows 4-5 keep only columns 2-3.
+	if blocks[0].row != 2 || blocks[0].col != 2 || blocks[0].img.Bounds().Dy() != 40 {
+		t.Errorf("first block at (%d,%d) %v, want rows 2-3 across the full width",
+			blocks[0].col, blocks[0].row, blocks[0].img.Bounds())
+	}
+	if blocks[1].row != 4 || blocks[1].col != 2 || blocks[1].img.Bounds().Dx() != 20 {
+		t.Errorf("second block at (%d,%d) %v, want rows 4-5 columns 2-3 only",
+			blocks[1].col, blocks[1].row, blocks[1].img.Bounds())
+	}
+
+	// Buried completely: nothing to draw.
+	for y := 2; y <= 5; y++ {
+		for x := 2; x <= 5; x++ {
+			b.cellSeq[y][x] = 200
+		}
+	}
+	if got := b.visibleBlocksLocked(p); len(got) != 0 {
+		t.Errorf("a fully covered picture produced %d blocks, want none", len(got))
+	}
+}
+
+// Content painted BEFORE the image does not occlude it — that is the desktop
+// the window sits on, not something covering it.
+func TestEarlierPaintDoesNotOccludeAnImage(t *testing.T) {
+	b := &TUIBackend{cols: 80, rows: 25}
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.cellSeq = make([][]uint32, b.rows)
+	for y := range b.cellSeq {
+		b.cellSeq[y] = make([]uint32, b.cols)
+		for x := range b.cellSeq[y] {
+			b.cellSeq[y][x] = 50 // the desktop, painted first
+		}
+	}
+	p := placedImage{col: 2, row: 2, img: image.NewRGBA(image.Rect(0, 0, 40, 80)), seq: 100}
+	if got := b.visibleBlocksLocked(p); len(got) != 1 {
+		t.Errorf("the desktop underneath split the picture into %d blocks, want 1", len(got))
 	}
 }

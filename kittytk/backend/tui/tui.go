@@ -91,6 +91,14 @@ type TUIBackend struct {
 	// THOSE cells - a change on an unrelated row is not a reason to re-send it.
 	dmgMin, dmgMax []int
 
+	// cellSeq is the paint ORDER of the last write to each cell this frame,
+	// and paintSeq the counter it comes from. Trinkets paint back to front, so
+	// a higher number is content drawn LATER and therefore on top. An image is
+	// queued rather than composited, so this is how the flush finds out which
+	// of its cells a window painted over afterwards.
+	cellSeq  [][]uint32
+	paintSeq uint32
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
@@ -470,6 +478,10 @@ func (t *TUIBackend) allocateBuffers() {
 	t.backBuffer = make([][]Cell, t.rows)
 	t.dmgMin = make([]int, t.rows)
 	t.dmgMax = make([]int, t.rows)
+	t.cellSeq = make([][]uint32, t.rows)
+	for y := range t.cellSeq {
+		t.cellSeq[y] = make([]uint32, t.cols)
+	}
 	t.frontLineAttr = make([]byte, t.rows)
 
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
@@ -503,9 +515,11 @@ func (t *TUIBackend) BeginFrame() {
 
 	// Clear back buffer
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
+	t.paintSeq = 0
 	for y := 0; y < t.rows; y++ {
 		for x := 0; x < t.cols; x++ {
 			t.backBuffer[y][x] = defaultCell
+			t.cellSeq[y][x] = 0
 		}
 	}
 
@@ -790,6 +804,16 @@ func (t *TUIBackend) setCell(col, row int, ch rune, s style.CellStyle) {
 		return
 	}
 	t.backBuffer[row][col] = Cell{Char: ch, Style: s}
+	t.touchCell(col, row)
+}
+
+// touchCell stamps a cell with the current paint order. Called wherever the
+// back buffer is written, so "who is on top" is answerable after the fact.
+func (t *TUIBackend) touchCell(col, row int) {
+	t.paintSeq++
+	if row >= 0 && row < len(t.cellSeq) && col >= 0 && col < len(t.cellSeq[row]) {
+		t.cellSeq[row][col] = t.paintSeq
+	}
 }
 
 // DrawCell draws a single character at the given position.
@@ -1008,6 +1032,7 @@ func (t *TUIBackend) setCellDWL(col, row int, c Cell) {
 		return
 	}
 	t.backBuffer[row][col] = c
+	t.touchCell(col, row)
 }
 
 // isAlphanumeric returns true if the character is a letter or digit.

@@ -52,6 +52,10 @@ const maxKittyChunk = 4096
 type placedImage struct {
 	col, row int // 0-based cell anchor
 	img      image.Image
+	// seq is the paint order when this was queued. Anything stamped LATER on
+	// a cell this image covers was painted on top of it — a window, a dialog,
+	// a trinket drawn after — and that cell must not show the picture.
+	seq uint32
 }
 
 // ttyPixelSizeFn is the winsize probe, indirected so a test can supply an
@@ -184,11 +188,51 @@ func (t *TUIBackend) DrawImage(x, y core.Unit, img image.Image) {
 	if t.graphics == GraphicsNone {
 		return
 	}
-	t.pendingImages = append(t.pendingImages, placedImage{
-		col: t.metrics.UnitsToCellX(x),
-		row: t.metrics.UnitsToCellY(y),
-		img: img,
-	})
+	t.queueImageLocked(t.metrics.UnitsToCellX(x), t.metrics.UnitsToCellY(y), img)
+}
+
+// queueImageLocked records a picture at a cell anchor, cropped to the clip in
+// force — the same clip setCell applies to text, which images bypassed
+// entirely. Without it a picture drawn in a window spills past the window's
+// edge and keeps going, because nothing downstream knows where the window
+// ended.
+func (t *TUIBackend) queueImageLocked(col, row int, img image.Image) {
+	cw, ch := t.cellPixelSizeLocked()
+	c0, r0, c1, r1 := t.clipCellsLocked()
+	b := img.Bounds()
+	if cw > 0 && ch > 0 && c1 >= c0 && r1 >= r0 {
+		// The cell rectangle the picture wants, intersected with the clip.
+		ic1 := col + (b.Dx()+cw-1)/cw - 1
+		ir1 := row + (b.Dy()+ch-1)/ch - 1
+		vc0, vr0 := max(col, c0), max(row, r0)
+		vc1, vr1 := min(ic1, c1), min(ir1, r1)
+		if vc1 < vc0 || vr1 < vr0 {
+			return // entirely outside the clip
+		}
+		if vc0 != col || vr0 != row || vc1 != ic1 || vr1 != ir1 {
+			sub := t.cropToCellsLocked(placedImage{col: col, row: row, img: img}, vc0, vr0, vc1, vr1)
+			if sub == nil {
+				return // cannot crop it, and uncropped it would spill
+			}
+			col, row, img = vc0, vr0, sub
+		}
+	}
+	t.paintSeq++
+	t.pendingImages = append(t.pendingImages, placedImage{col: col, row: row, img: img, seq: t.paintSeq})
+}
+
+// clipCellsLocked is the clip rectangle in whole cells. An empty clip means
+// none is set and everything is in bounds.
+func (t *TUIBackend) clipCellsLocked() (c0, r0, c1, r1 int) {
+	r := t.clipRect
+	if r.Width <= 0 || r.Height <= 0 {
+		return 0, 0, t.cols - 1, t.rows - 1
+	}
+	c0 = t.metrics.UnitsToCellX(r.X)
+	r0 = t.metrics.UnitsToCellY(r.Y)
+	c1 = t.metrics.UnitsToCellX(r.X+r.Width) - 1
+	r1 = t.metrics.UnitsToCellY(r.Y+r.Height) - 1
+	return c0, r0, c1, r1
 }
 
 // DrawImagePx implements core.ImageDrawer's device-pixel anchor. The outer
@@ -212,7 +256,7 @@ func (t *TUIBackend) DrawImagePx(xPx, yPx int, img image.Image) {
 		return
 	}
 	t.mu.Lock()
-	t.pendingImages = append(t.pendingImages, placedImage{col: xPx / cw, row: yPx / ch, img: img})
+	t.queueImageLocked(xPx/cw, yPx/ch, img)
 	t.mu.Unlock()
 }
 
@@ -275,11 +319,10 @@ func (t *TUIBackend) flushImagesLocked() {
 			sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
 		}
 		for _, p := range imgs {
-			if p.col < 0 || p.row < 0 {
-				continue
+			for _, v := range t.visibleBlocksLocked(p) {
+				sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
+				writeKittyImage(&sb, v.img)
 			}
-			sb.WriteString(fmt.Sprintf("\033[%d;%dH", p.row+1, p.col+1))
-			writeKittyImage(&sb, p.img)
 		}
 	case GraphicsSixel:
 		for i, p := range imgs {
@@ -300,11 +343,13 @@ func (t *TUIBackend) flushImagesLocked() {
 					col, row, img = dc0, dr0, sub
 				}
 			}
-			if sb.Len() == 0 {
-				sb.WriteString("\0337")
+			for _, v := range t.visibleBlocksLocked(placedImage{col: col, row: row, img: img, seq: p.seq}) {
+				if sb.Len() == 0 {
+					sb.WriteString("\0337")
+				}
+				sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
+				writeSixelImage(&sb, v.img)
 			}
-			sb.WriteString(fmt.Sprintf("\033[%d;%dH", row+1, col+1))
-			writeSixelImage(&sb, img)
 		}
 	}
 	if sb.Len() == 0 {
@@ -548,4 +593,91 @@ func (t *TUIBackend) cropToCellsLocked(p placedImage, dc0, dr0, dc1, dr1 int) im
 		return nil
 	}
 	return sub.SubImage(r)
+}
+
+// cellRun is an inclusive span of columns on one row.
+type cellRun struct{ c0, c1 int }
+
+// visibleBlocksLocked splits a placement into the rectangles of it that nothing
+// painted over, largest blocks first.
+//
+// Trinkets paint back to front into one cell plane, so "on top" is simply
+// "written later" — and an image, queued rather than composited, has to ask
+// after the fact. A cell stamped with a higher paint order than the image
+// carries something drawn above it: a window, a dialog, a menu. Sending the
+// picture for that cell would put it over the thing that covers it, which is
+// what an un-occluded image looks like on screen.
+//
+// Rows with identical visible runs are merged, so the ordinary case — a window
+// lying across one corner — costs two rectangles rather than one per row.
+// Returns the whole placement unsplit when nothing covers it.
+func (t *TUIBackend) visibleBlocksLocked(p placedImage) []placedImage {
+	if p.col < 0 || p.row < 0 {
+		return nil
+	}
+	c1, r1 := t.imageCellExtentLocked(p)
+	rowRuns := make([][]cellRun, 0, r1-p.row+1)
+	covered := false
+	for y := p.row; y <= r1; y++ {
+		var runs []cellRun
+		cur := cellRun{c0: -1}
+		for x := p.col; x <= c1; x++ {
+			over := y >= 0 && y < len(t.cellSeq) && x >= 0 && x < len(t.cellSeq[y]) &&
+				t.cellSeq[y][x] > p.seq
+			if over {
+				covered = true
+				if cur.c0 >= 0 {
+					runs = append(runs, cur)
+					cur = cellRun{c0: -1}
+				}
+				continue
+			}
+			if cur.c0 < 0 {
+				cur = cellRun{c0: x, c1: x}
+			} else {
+				cur.c1 = x
+			}
+		}
+		if cur.c0 >= 0 {
+			runs = append(runs, cur)
+		}
+		rowRuns = append(rowRuns, runs)
+	}
+	if !covered {
+		return []placedImage{p} // nothing on top: one placement, as before
+	}
+
+	var out []placedImage
+	for i := 0; i < len(rowRuns); {
+		if len(rowRuns[i]) == 0 {
+			i++
+			continue
+		}
+		// Merge the rows below that are covered identically.
+		j := i + 1
+		for j < len(rowRuns) && sameRuns(rowRuns[i], rowRuns[j]) {
+			j++
+		}
+		for _, r := range rowRuns[i] {
+			sub := t.cropToCellsLocked(p, r.c0, p.row+i, r.c1, p.row+j-1)
+			if sub == nil {
+				continue
+			}
+			out = append(out, placedImage{col: r.c0, row: p.row + i, img: sub, seq: p.seq})
+		}
+		i = j
+	}
+	return out
+}
+
+func sameRuns(a, b []cellRun) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
