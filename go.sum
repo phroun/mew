@@ -12,13 +12,13 @@ github.com/phroun/ifitfits v0.1.1 h1:5Wx4fNlWWYUsWgwbvB0+BxY+EvoNUdIeIc8SNFzrYBQ
 github.com/phroun/ifitfits v0.1.1/go.mod h1:UZJQJxEM6tiM0PY0tjmHlyq7kFOSzG1IgJDUtxwIXS4=
 github.com/phroun/key-sequence-processor v0.1.5 h1:tBbyO3x350+ElKxRi6uNQd9ZaHn6RKlO7kUMvG+xfzw=
 github.com/phroun/key-sequence-processor v0.1.5/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
-github.com/phroun/kittytk v0.1.21-alpha h1:rmbKk9SdBtsl1txeFiE592iw7nJQe8bz6zRlK/SmvVo=
-github.com/phroun/kittytk v0.1.21-alpha/go.mod h1:z2H0metBRzxcdmxK+acd3ictv7g8Tz4wptoOcHcQ53E=
+github.com/phroun/kittytk v0.1.23-alpha h1:b4omBYLoV64dwVFGhQ0HGclWKC7WYx1JjhCUUWxqOJ4=
+github.com/phroun/kittytk v0.1.23-alpha/go.mod h1:C+lSoLm0H3IyKuU2bdiGiViFVME8r/qvTHJ/gHdJN+0=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.45.0 h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=
 golang.org/x/term v0.45.0/go.mod h1:9aqxs0blBcrm/n0L9QW0aRVD+ktan8ssZromtqJC43w=
-golang.org/x/text v0.40.0 h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=
-golang.org/x/text v0.40.0/go.mod h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=
+golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
+golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
