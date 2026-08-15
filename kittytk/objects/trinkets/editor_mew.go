@@ -2270,8 +2270,24 @@ func (e *Editor) childWindowPx() (int, int) {
 		}
 	}
 	e.termMu.Unlock()
-	if t == nil {
+	if t == nil || t.Terminal() == nil {
 		return 0, 0
 	}
-	return t.ContentPixelSize()
+	// The child's OWN grid times the cell it was told, both read from the
+	// same terminal. Not the cols/rows mew passes to Resize: those are the
+	// viewport measured on the HOST grid, which is a different pitch — the
+	// very overshoot SetLockstepPitch exists to keep out of the child's
+	// layout ("gaining phantom columns"). Multiplying host columns by the
+	// child's cell overstates the window by that difference, which grows
+	// with width, so a wider pane loses proportionally more off the right.
+	//
+	// These two agree with each other by construction, and the pointer path
+	// already reports against the same pair — which is why the mouse lands
+	// correctly even while the window size does not.
+	cols, rows := t.Terminal().GetSize()
+	cw, ch := t.Terminal().Buffer().GetCellPixelSize()
+	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
+		return 0, 0
+	}
+	return cols * cw, rows * ch
 }

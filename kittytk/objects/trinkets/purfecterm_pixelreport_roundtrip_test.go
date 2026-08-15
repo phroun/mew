@@ -113,20 +113,17 @@ func sgrReportX(s string) (int, bool) {
 	return x, true
 }
 
-// The child's pixel window is the pane's MEASURED extent, and it is NOT
-// columns times the reported cell size. Two independent reasons:
+// The child's pixel window must be its OWN grid times the cell it was told,
+// and both of those have to fit inside the pane that paints it.
 //
-//   - the grid is fitted on the UNSCALED cell (contentWpx / (baseCW*ppu))
-//     while the size reported to the child is the SCALED one, so the product
-//     carries the horizontal scale the fit never applied;
-//   - the scrollbar lane is already out of the fitted extent, and not out of
-//     the product.
-//
-// A program that draws pictures sizes its whole rendering from this number,
-// so either error puts the page at the wrong scale and spills it past the
-// pane. Assert the measured extent fits within the widget and that the naive
-// product does not silently stand in for it.
-func TestContentPixelSizeIsMeasuredNotDerived(t *testing.T) {
+// The trap is that a hosted terminal runs on a different pitch from its host
+// (SetLockstepPitch exists for exactly that), so the cols mew measures on the
+// HOST grid are not the cols this terminal settled on. Multiplying host
+// columns by this terminal's cell overstates the window by a difference that
+// grows with width - a wider pane loses proportionally more off its right
+// edge, while the pointer, which reports against this same self-consistent
+// pair, stays accurate.
+func TestChildWindowPixelsFitThePane(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, _ := raster.NewScaled(1200, 640, 2)
 	b.SetFontSize(10)
@@ -154,28 +151,24 @@ func TestContentPixelSizeIsMeasuredNotDerived(t *testing.T) {
 	b.Clear(style.DefaultStyle())
 	term.Paint(core.NewPainter(b))
 
-	wpx, hpx := term.ContentPixelSize()
-	if wpx <= 0 || hpx <= 0 {
-		t.Fatalf("no content pixel size after a paint (%dx%d)", wpx, hpx)
-	}
-	// It must fit inside the surface it is painted on. A number larger than
-	// the widget is exactly the overflow this replaced.
-	if maxW := b.UnitToPxX(sz.Width) - b.UnitToPxX(0); wpx > maxW {
-		t.Errorf("content width %dpx exceeds the surface's %dpx", wpx, maxW)
-	}
-
-	// And it is a real measurement, not the product: the product uses the
-	// SCALED cell the child is told about, which the fit never applied.
 	cols, rows := term.Terminal().GetSize()
-	cellW, cellH := term.Terminal().Buffer().GetCellPixelSize()
-	t.Logf("measured=%dx%d product=%dx%d cols=%d rows=%d cell=%dx%d",
-		wpx, hpx, cols*cellW, rows*cellH, cols, rows, cellW, cellH)
-	if cols*cellW > wpx && cols*cellW > maxSurfaceW(b, sz.Width) {
-		t.Errorf("the product %dpx overflows the surface where the measurement %dpx does not",
-			cols*cellW, wpx)
+	cw, ch := term.Terminal().Buffer().GetCellPixelSize()
+	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
+		t.Fatalf("grid %dx%d cell %dx%d", cols, rows, cw, ch)
 	}
-}
+	wpx, hpx := cols*cw, rows*ch
 
-func maxSurfaceW(b *raster.Backend, w core.Unit) int {
-	return b.UnitToPxX(w) - b.UnitToPxX(0)
+	paneW, paneH := term.ContentPixelSize()
+	t.Logf("child %dx%d cells * %dx%d px = %dx%d; pane measures %dx%d",
+		cols, rows, cw, ch, wpx, hpx, paneW, paneH)
+
+	if paneW > 0 && wpx > paneW {
+		t.Errorf("child window %dpx wide overflows the pane's %dpx", wpx, paneW)
+	}
+	if paneH > 0 && hpx > paneH {
+		t.Errorf("child window %dpx tall overflows the pane's %dpx", hpx, paneH)
+	}
+	if surf := b.UnitToPxX(sz.Width) - b.UnitToPxX(0); wpx > surf {
+		t.Errorf("child window %dpx wide overflows the surface's %dpx", wpx, surf)
+	}
 }
