@@ -2289,30 +2289,13 @@ func (e *Editor) childWindowPx() (int, int) {
 	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
 		return 0, 0
 	}
-	wpx, hpx := float64(cols*cw), float64(rows*ch)
-
-	// Those are DEVICE pixels, and a program that lays a page out inside them
-	// needs the logical ones. Dividing by this terminal's pixels-per-unit
-	// removes exactly the two factors device pixels carry, because ppu is
-	// their product (scale x fontSize/12):
+	// The child's window is the pane's device pixels, and it must stay that:
+	// awrit (and anything like it) makes an image of EXACTLY the size it is
+	// told, then lays out size/DSF css pixels inside it. Reporting fewer
+	// pixels shrinks the image, not the zoom -- measured: halving this
+	// halved the picture and left its density untouched.
 	//
-	//   - the display's BACKING SCALE comes out, so a retina pane stops
-	//     reading as twice the room and the child's own device-scale factor
-	//     multiplies back to the pixels we actually blit;
-	//   - the user's ZOOM comes out, which is what makes zooming in enlarge
-	//     the child's content: a bigger zoom leaves fewer logical pixels in
-	//     the same pane, so the page inside them grows to match the text
-	//     around it.
-	//
-	// What is left is the pane in layout units - the one space in this system
-	// that is independent of both.
-	if ppu := t.PixelsPerUnit(); ppu > 0 {
-		wpx /= ppu
-		hpx /= ppu
-	}
-	w, h := int(math.Round(wpx)), int(math.Round(hpx))
-	if w <= 0 || h <= 0 {
-		return 0, 0
-	}
-	return w, h
+	// Correcting the density therefore cannot be done from here alone; see
+	// the note on oversampling in renderImagesGfx.
+	return cols * cw, rows * ch
 }
