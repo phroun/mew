@@ -126,12 +126,14 @@ type Editor struct {
 	termOut     chan string
 	termOutOnce sync.Once
 
-	// termGridWant is the LATEST grid each hosted surface has settled on,
+	// termGridWant is the LATEST window each hosted surface has settled on -
+	// cols, rows, and the pane's pixels, because the child is told all four and
+	// any of them can move without the others (see termGrid) -
 	// waiting to be told to mew. A latch rather than a queue entry because a
 	// grid is a fact, not an event: superseded values are worthless and the
 	// current one must not be dropped under pressure the way input bytes may
 	// be — a dropped grid leaves the guest wrapping forever.
-	termGridWant map[string][2]int
+	termGridWant map[string][4]int
 	termGridWake chan struct{}
 
 	// hostedKids are the child terminals parented to this editor (see
@@ -1787,15 +1789,26 @@ func (e *Editor) termGrid(id string, cols, rows int) {
 	if cols <= 0 || rows <= 0 {
 		return
 	}
+	// The child's window in PIXELS, read BEFORE the lock: childWindowPx takes
+	// termMu itself, and this mutex does not nest.
+	//
+	// It is part of the declaration and not merely a detail of it. A pane can
+	// change the pixels under an unchanged grid — the display density arriving
+	// after the first paint, a zoom step too small to gain or lose a column —
+	// and a latch keyed on cells alone calls that a repeat and drops it. The
+	// child is then left sizing its pictures to a window it no longer has.
+	pxW, pxH := e.childWindowPx()
+
 	e.termMu.Lock()
 	if e.termGridWant == nil {
-		e.termGridWant = make(map[string][2]int)
+		e.termGridWant = make(map[string][4]int)
 	}
-	if prev, ok := e.termGridWant[id]; ok && prev[0] == cols && prev[1] == rows {
+	want := [4]int{cols, rows, pxW, pxH}
+	if prev, ok := e.termGridWant[id]; ok && prev == want {
 		e.termMu.Unlock()
 		return
 	}
-	e.termGridWant[id] = [2]int{cols, rows}
+	e.termGridWant[id] = want
 	wake := e.termGridWake
 	e.termMu.Unlock()
 	if wake == nil {
@@ -2232,6 +2245,11 @@ func (s pxWinsizeSession) Resize(cols, rows int) error {
 	}
 	return s.PTYSession.Resize(cols, rows)
 }
+
+// WindowPx reports the pane's current pixel extent, so mew can tell whether a
+// resize declaring the same CELLS is nevertheless a real change to the child's
+// window. Same source as Resize uses, read at the same moment.
+func (s pxWinsizeSession) WindowPx() (int, int) { return s.windowPx() }
 
 // withPixelWinsize wraps sess so its resizes carry pixel dimensions, when the
 // session can accept them. Returns sess untouched when it cannot.

@@ -37,6 +37,7 @@ type Backend struct {
 	img      *image.RGBA
 	w, h     int              // pixels
 	scale    int              // device zoom: pixels per unit at the 12pt base font
+	density  float64          // the SCREEN's content scale, if the host knows it (see SetDisplayDensity)
 	fontSize int              // UI point size that sets the cell's pixel size (12 = base)
 	metrics  core.CellMetrics // root cell denomination (units per cell)
 
@@ -215,6 +216,26 @@ func (b *Backend) pxLen(u core.Unit) int {
 // targets) uses this; geometry uses px()/PxPerUnit() so it also tracks
 // font_size.
 func (b *Backend) Scale() int { return b.scale }
+
+// SetDisplayDensity records the PHYSICAL display's content scale, which only
+// the host can find out (from the window system) and which nothing in the
+// rendering derives. Zero or negative means unknown and is stored as such.
+//
+// Deliberately separate from Scale: that is how much this application chose to
+// magnify itself, this is what kind of screen it is on, and a user asking for
+// 1 on a HiDPI panel makes them differ. See core.DisplayDensityReporter for
+// why the distinction has to survive all the way out to a hosted child.
+func (b *Backend) SetDisplayDensity(d float64) {
+	if d <= 0 {
+		b.density = 0
+		return
+	}
+	b.density = d
+}
+
+// DisplayDensity implements core.DisplayDensityReporter. Zero when the host
+// never said — the Painter turns that into 1.
+func (b *Backend) DisplayDensity() float64 { return b.density }
 
 // PxPerUnit exposes the fractional pixels-per-unit (see pxPerUnit) so
 // the painter's device-pixel helpers place sub-unit fills where the

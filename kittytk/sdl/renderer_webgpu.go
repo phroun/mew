@@ -1218,6 +1218,8 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			}
 			backend.SetCellMetrics(metrics)
 			backend.SetFontSize(osWindow.backend.FontSize())
+			// The screen is the same one the parent window is on.
+			backend.SetDisplayDensity(osWindow.backend.DisplayDensity())
 
 			// Create GPU texture
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
@@ -1313,6 +1315,7 @@ func (r *WebGPURenderer) RenderFrameWithChildWindows(
 			surf.backend = newBackend
 			surf.backend.SetCellMetrics(metrics)
 			surf.backend.SetFontSize(osWindow.backend.FontSize())
+			surf.backend.SetDisplayDensity(osWindow.backend.DisplayDensity())
 
 			texture, err := r.device.CreateTexture(&wgpu.TextureDescriptor{
 				Usage:     wgpu.TextureUsageTextureBinding | wgpu.TextureUsageCopyDst,
@@ -2488,6 +2491,7 @@ func (r *WebGPURenderer) drawOverlay(
 	}
 	overlayBackend.SetCellMetrics(metrics)
 	overlayBackend.SetFontSize(osWindow.backend.FontSize())
+	overlayBackend.SetDisplayDensity(osWindow.backend.DisplayDensity())
 
 	// The overlay's Paint expects a painter at screen origin and offsets
 	// itself to its bounds; our backend covers only the overlay (plus

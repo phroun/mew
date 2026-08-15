@@ -107,6 +107,9 @@ func main() {
 	}
 
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
+	// [system] density: the physical screen's content scale. 0 = ask the
+	// window system. Distinct from scale, which is this app's own magnification.
+	plat.SetDisplayDensity(cfg.Density)
 
 	// [window] fps=true overlays the render frame rate on the OS title bar;
 	// vsync=false uncaps presents (lets fps read raw throughput).

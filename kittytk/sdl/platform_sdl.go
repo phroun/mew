@@ -27,9 +27,13 @@ type Platform struct {
 	title    string
 	appName  string // OS application name (macOS menu bar / task switcher); "" = SDL default
 	wPx, hPx int
-	scale    int              // device zoom: pixels per unit at 12pt; see SetScale
-	fontSize int              // UI point size that sets the cell pixel size (0 = 12pt base)
-	metrics  core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
+	scale    int // device zoom: pixels per unit at 12pt; see SetScale
+	fontSize int // UI point size that sets the cell pixel size (0 = 12pt base)
+	// density is the SCREEN's content scale, either configured or learned from
+	// SDL when the first window opens. Not scale: see SetDisplayDensity.
+	density    float64
+	densitySet bool             // an explicit SetDisplayDensity wins over what SDL reports
+	metrics    core.CellMetrics // root cell denomination for every surface (0 = raster default 8x16)
 
 	// defaultFontSize is the CONFIGURED font size (the SetFontSize value)
 	defaultFontSize int
@@ -245,6 +249,47 @@ func (p *Platform) SetScale(scale int) {
 	p.scale = scale
 }
 
+// SetDisplayDensity pins the PHYSICAL screen's content scale instead of taking
+// SDL's word for it. A value of 0 (the default) means auto: the first window to
+// open reports its display's scale and every surface inherits that.
+//
+// This is not SetScale. Scale is how much the application magnifies itself, a
+// preference with no bearing on the panel; this is what the panel is, and it is
+// needed only to agree with something OUTSIDE this process that can see the
+// same screen — a child process rendering pictures into a terminal pane sizes
+// its content by the density it reads from the window system, and nothing in
+// the terminal protocols carries that number either way. An override exists
+// because a remote display, a compositor that rounds, or a host with no window
+// at all can leave SDL's answer wrong or absent.
+func (p *Platform) SetDisplayDensity(d float64) {
+	if d <= 0 {
+		p.density, p.densitySet = 0, false
+		return
+	}
+	p.density, p.densitySet = d, true
+	if p.backend != nil {
+		p.backend.SetDisplayDensity(d)
+	}
+}
+
+// adoptWindowDensity learns the screen's content scale from a freshly created
+// window, unless it was configured. SDL can only answer once a window exists,
+// which is after the backend may already have been built — so this reaches back
+// and corrects it.
+func (p *Platform) adoptWindowDensity(w *sdl3.Window) {
+	if p.densitySet || w == nil {
+		return
+	}
+	s := float64(w.DisplayScale())
+	if s <= 0 {
+		return // SDL does not know; the Painter's default of 1 stands
+	}
+	p.density = s
+	if p.backend != nil {
+		p.backend.SetDisplayDensity(s)
+	}
+}
+
 func (p *Platform) SetCellMetrics(m core.CellMetrics) {
 	p.metrics = m
 }
@@ -263,6 +308,9 @@ func (p *Platform) applyMetrics(b *raster.Backend) {
 	}
 	if p.fontSize > 0 {
 		b.SetFontSize(p.fontSize)
+	}
+	if p.density > 0 {
+		b.SetDisplayDensity(p.density)
 	}
 }
 
@@ -512,6 +560,9 @@ func (p *Platform) createWindow(title string, x, y int32, wPx, hPx int, flags sd
 	if err != nil {
 		return nil, err
 	}
+	// The screen's content scale is only knowable once a window exists, and
+	// only from SDL. Learn it here, before anything paints.
+	p.adoptWindowDensity(w.window)
 
 	// The WebGPU presentation chain binds directly to the native window.
 	// The software renderer presents through SDL textures instead

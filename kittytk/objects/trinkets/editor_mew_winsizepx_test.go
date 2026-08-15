@@ -92,3 +92,24 @@ func TestSessionWithoutPixelSupportIsNotWrapped(t *testing.T) {
 // mewSess is an identity helper so the comparison above is between interface
 // values of the same dynamic type.
 func mewSess(s *fakeSess) interface{ Resize(int, int) error } { return s }
+
+// A session reports its pixel window so mew can tell a real change from a
+// repeat when the CELLS are identical.
+func TestWrappedSessionReportsItsPixelWindow(t *testing.T) {
+	s := &pixelSess{}
+	w, h := 553, 361
+	wrapped := withPixelWinsize(s, func() (int, int) { return w, h })
+	r, ok := wrapped.(interface{ WindowPx() (int, int) })
+	if !ok {
+		t.Fatal("the wrapped session cannot report a pixel window")
+	}
+	if gw, gh := r.WindowPx(); gw != 553 || gh != 361 {
+		t.Errorf("WindowPx = %dx%d, want 553x361", gw, gh)
+	}
+	// It is read live, not captured: the pane can change under an unchanged
+	// grid, which is the whole reason mew asks.
+	w, h = 553, 722
+	if gw, gh := r.WindowPx(); gw != 553 || gh != 722 {
+		t.Errorf("WindowPx = %dx%d after the pane changed, want 553x722", gw, gh)
+	}
+}

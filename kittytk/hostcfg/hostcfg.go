@@ -50,6 +50,14 @@
 //	token    =            ; optional shared secret
 //
 //	[system]
+//	density  =            ; the PHYSICAL screen's content scale (2 on a HiDPI
+//	                      ;   panel). Blank/0 = ask the window system. This is
+//	                      ;   NOT [window] scale, which is how large this app
+//	                      ;   draws itself: set scale=1 on a HiDPI screen and
+//	                      ;   the two differ. It exists so a child rendering
+//	                      ;   pictures into a terminal pane — which reads the
+//	                      ;   density from the window system on its own — is
+//	                      ;   sized to agree with us.
 //	native   =            ; graphical host menu-shortcut glyph style:
 //	                      ;   true = native glyphs (⌃⌥⇧⌘) only when the host OS is macOS
 //	                      ;   mac  = force native glyphs on any OS
@@ -96,10 +104,23 @@ const IniName = "kittytk.ini"
 // Config is the resolved launch configuration. Window fields apply only
 // to graphical hosts (kittytk-sdl); the terminal host ignores them.
 type Config struct {
-	Title       string // window title bar text
-	Width       int    // window width in pixels
-	Height      int    // window height in pixels
-	Scale       int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	Title  string // window title bar text
+	Width  int    // window width in pixels
+	Height int    // window height in pixels
+	Scale  int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	// Density is the PHYSICAL screen's content scale ([system] density),
+	// 0 = ask the window system. Not Scale: that is how large this
+	// application draws itself, a preference; this is what kind of panel it
+	// is on, and setting Scale to 1 on a HiDPI screen makes them differ.
+	//
+	// It is configurable at all because it has to be right for something
+	// this process cannot see: a child rendering pictures into a terminal
+	// pane (a browser, say) reads the density from the window system
+	// itself and sizes its content to it, and no terminal protocol carries
+	// that number in either direction. Where SDL cannot answer — a remote
+	// display, a compositor that rounds, a host with no window — this is
+	// the only way to agree with it.
+	Density     float64
 	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
 	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
 	ShowFPS     bool   // show the render frame rate in the graphical host's OS title bar
@@ -440,6 +461,13 @@ func apply(data []byte, cfg *Config) {
 		case "scale":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Scale = n
+			}
+		case "density":
+			// [system] density: the SCREEN's content scale, overriding what
+			// the window system reports. Zero or unparseable leaves it on
+			// auto rather than pinning a wrong number.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.Density = f
 			}
 		case "font_size":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {

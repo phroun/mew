@@ -458,16 +458,19 @@ func TestGfxKittyPlaceholderRendering(t *testing.T) {
 	}
 }
 
-// gfxImageTermScaled is gfxImageTerm on a HiDPI surface, where the terminal
-// oversamples: it tells the child a cell is deviceScale times its real size,
-// so the child renders at the display's true density.
-func gfxImageTermScaled(t *testing.T, scale int) (*PurfecTerm, *raster.Backend) {
+// gfxImageTermScaled is gfxImageTerm on a surface magnified by scale, standing
+// on a screen whose content scale is density. The two are given separately
+// BECAUSE they are separate: the magnification is what this application chose,
+// the density is what panel it is on, and every interesting case is one where
+// they differ.
+func gfxImageTermScaled(t *testing.T, scale int, density float64) (*PurfecTerm, *raster.Backend) {
 	t.Helper()
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.NewScaled(640, 400, scale)
 	if err != nil {
 		t.Fatal(err)
 	}
+	b.SetDisplayDensity(density)
 	core.SetTextMeasurer(b)
 
 	term := NewPurfecTerm()
@@ -480,8 +483,8 @@ func gfxImageTermScaled(t *testing.T, scale int) (*PurfecTerm, *raster.Backend) 
 	return term, b
 }
 
-// On a HiDPI surface the cell we ADVERTISE is deliberately larger than the one
-// we paint, by the device scale.
+// On a HiDPI SCREEN the cell we ADVERTISE is deliberately larger than the one
+// we paint, by the screen's density.
 //
 // The kitty protocol gives a terminal no way to state a display scale - a
 // client works density out purely from the pixels-per-cell it is told - so
@@ -490,17 +493,17 @@ func gfxImageTermScaled(t *testing.T, scale int) (*PurfecTerm, *raster.Backend) 
 // in it, which is precisely a device-pixel ratio of 2, and the image it sends
 // back is twice the size we draw it at.
 func TestGfxOversampledCellIsAdvertisedLarger(t *testing.T) {
-	const scale = 2
-	term, _ := gfxImageTermScaled(t, scale)
+	const scale, density = 2, 2.0
+	term, _ := gfxImageTermScaled(t, scale, density)
 	buf := term.Terminal().Buffer()
 
 	realW, realH := cellPx(term)
 	gotW, gotH := buf.GetCellPixelSize()
-	wantW := int(math.Round(math.Round(realW) * scale))
-	wantH := int(math.Round(math.Round(realH) * scale))
+	wantW := int(math.Round(math.Round(realW) * density))
+	wantH := int(math.Round(math.Round(realH) * density))
 	if gotW != wantW || gotH != wantH {
-		t.Errorf("advertised cell = %dx%d, want the real %vx%v times %d = %dx%d",
-			gotW, gotH, math.Round(realW), math.Round(realH), scale, wantW, wantH)
+		t.Errorf("advertised cell = %dx%d, want the real %vx%v times the density %v = %dx%d",
+			gotW, gotH, math.Round(realW), math.Round(realH), density, wantW, wantH)
 	}
 	// The pointer unit follows the advertised cell, so the mouse stays
 	// self-consistent through the oversample (it encodes in these units).
@@ -514,8 +517,8 @@ func TestGfxOversampledCellIsAdvertisedLarger(t *testing.T) {
 // halving is what turns the child's oversampled render into a crisp one rather
 // than a picture spilling past its pane.
 func TestGfxOversampledImageDrawsAtRealCellSize(t *testing.T) {
-	const scale = 2
-	term, b := gfxImageTermScaled(t, scale)
+	const scale, density = 2, 2.0
+	term, b := gfxImageTermScaled(t, scale, density)
 
 	realW, realH := cellPx(term)
 	rcw, rch := int(math.Round(realW)), int(math.Round(realH))
@@ -524,7 +527,7 @@ func TestGfxOversampledImageDrawsAtRealCellSize(t *testing.T) {
 	}
 	// Two advertised cells wide and tall - so four REAL cells of source
 	// pixels, which must land on two real cells of screen.
-	acw, ach := rcw*scale, rch*scale
+	acw, ach := rcw*int(density), rch*int(density)
 	imgW, imgH := acw*2, ach*2
 	pix := make([]byte, imgW*imgH*4)
 	for i := 0; i < len(pix); i += 4 {
@@ -664,6 +667,43 @@ func TestGfxDownscaleHonoursTheSourceRect(t *testing.T) {
 			if got := dst.RGBAAt(x, y).R; got != 200 {
 				t.Errorf("crop pixel (%d,%d) = %d, want 200: averaged from the wrong origin", x, y, got)
 			}
+		}
+	}
+}
+
+// The oversample follows the SCREEN, not this application's magnification.
+//
+// These two numbers were one number for a while, and it read correctly the
+// whole time a user's magnification happened to match their panel. It does not
+// have to. Someone on a HiDPI screen who asks for a magnification of 1 — "use
+// my real pixels, I will pick bigger fonts" — still has a child process that
+// asks the window system for the density, gets 2, and renders to it. Deriving
+// the correction from the magnification switches it off in exactly that case
+// and leaves every picture twice the size it should be, which is the same
+// symptom as having no correction at all.
+//
+// So: vary them independently, and check the advertised cell follows the panel.
+func TestGfxOversampleFollowsTheScreenNotTheMagnification(t *testing.T) {
+	for _, c := range []struct {
+		scale   int
+		density float64
+		want    float64
+	}{
+		{1, 2, 2}, // real pixels on a HiDPI panel: the case that was broken
+		{2, 2, 2}, // magnification matching the panel: the case that hid it
+		{2, 1, 1}, // a magnified view of an ordinary screen: no correction owed
+		{1, 1, 1},
+	} {
+		term, _ := gfxImageTermScaled(t, c.scale, c.density)
+		if got := term.gfx.oversample; got != c.want {
+			t.Errorf("scale=%d density=%v: oversample %v, want %v",
+				c.scale, c.density, got, c.want)
+		}
+		realW, _ := cellPx(term)
+		gotW, _ := term.Terminal().Buffer().GetCellPixelSize()
+		if want := int(math.Round(math.Round(realW) * c.want)); gotW != want {
+			t.Errorf("scale=%d density=%v: advertised cell %d px, want %d",
+				c.scale, c.density, gotW, want)
 		}
 	}
 }

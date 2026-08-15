@@ -436,6 +436,14 @@ type ptyState struct {
 	// the screen in place pushes a screenful into scrollback instead — on
 	// every frame, without bound.
 	gridCols, gridRows int
+	// gridPxW/gridPxH are the child's window in PIXELS as of the last resize
+	// we let through — the other half of what a PTY winsize carries, and the
+	// half a child drawing pictures sizes itself from. Kept because the pixels
+	// can move under an unchanged grid (a display density learned late, a zoom
+	// step that gains no column), and a resize suppressed as a repeat leaves
+	// such a child rendering to a window it no longer has. Zero until the
+	// session reports one.
+	gridPxW, gridPxH int
 	// placedCols/placedRows are the rectangle the declaration was made
 	// against. A declaration describes one rectangle; when the viewport is
 	// RESIZED the old answer is stale, so it is dropped and the rectangle
@@ -1410,6 +1418,24 @@ func (e *Editor) notifyTerminalSurfaces() {
 // and its own chrome, neither of which mew can see.
 //
 // Reports whether the session exists.
+// pixelWindowReporter is the optional half of a session that knows the child's
+// window in device pixels — the host wraps a PTY in one when it can measure the
+// pane (see the host's withPixelWinsize). A session without it carries cells
+// only, and its pixel window is reported as unknown.
+type pixelWindowReporter interface {
+	WindowPx() (int, int)
+}
+
+// sessionWindowPx is the child's pixel window, or 0x0 when the session cannot
+// say. Unknown compares equal to unknown, so a cells-only session dedupes on
+// its cells exactly as it always did.
+func sessionWindowPx(s PTYSession) (int, int) {
+	if r, ok := s.(pixelWindowReporter); ok {
+		return r.WindowPx()
+	}
+	return 0, 0
+}
+
 func (e *Editor) SetTerminalGrid(id string, cols, rows int) bool {
 	if cols <= 0 || rows <= 0 {
 		return false
@@ -1418,11 +1444,18 @@ func (e *Editor) SetTerminalGrid(id string, cols, rows int) bool {
 	var sess PTYSession
 	for _, st := range e.ptySessions {
 		if st.id == id {
-			if st.gridCols == cols && st.gridRows == rows {
+			// The window is cells AND pixels; a repeat is a repeat of both.
+			// The session knows the pixel half (the host measures it and the
+			// session fills it in on every resize), so ask it rather than
+			// assuming the cells speak for the whole window.
+			pxW, pxH := sessionWindowPx(st.sess)
+			if st.gridCols == cols && st.gridRows == rows &&
+				st.gridPxW == pxW && st.gridPxH == pxH {
 				e.ptyMu.Unlock()
 				return true // already there; do not wake the child again
 			}
 			st.gridCols, st.gridRows = cols, rows
+			st.gridPxW, st.gridPxH = pxW, pxH
 			sess = st.sess
 			break
 		}

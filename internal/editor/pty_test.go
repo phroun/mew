@@ -1782,3 +1782,58 @@ func TestPTYKilledWhenViewportRemoved(t *testing.T) {
 		t.Error("the session must be gone from the map after teardown")
 	}
 }
+
+// pixelStubPTY is a stubPTY that also reports a pixel window, the way a host
+// session wrapped against a measured pane does.
+type pixelStubPTY struct {
+	*stubPTY
+	pxW, pxH int
+}
+
+func (s *pixelStubPTY) WindowPx() (int, int) { return s.pxW, s.pxH }
+
+// A declaration that repeats the CELLS but carries different PIXELS is a real
+// change and must reach the child.
+//
+// The window a PTY carries is four numbers, and a program drawing pictures
+// sizes itself from the two this dedupe used to ignore. The pixels move under
+// a fixed grid whenever something changes the cell without changing how many
+// fit: a display density learned after the first paint, a zoom step too small
+// to gain a column. Suppressed as a repeat, the child keeps rendering to a
+// window it no longer has — at whatever size that window implied.
+func TestDeclaredGridRedeclaresWhenOnlyThePixelsMove(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	stub := &pixelStubPTY{stubPTY: newStubPTY(), pxW: 780, pxH: 552}
+	var opened string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(id string, _, _ int) { opened = id },
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
+	e.notifyTerminalSurfaces()
+	e.SetTerminalGrid(opened, 78, 24)
+	settled := stub.resizes
+
+	// Same grid, same pixels: a genuine repeat, and still suppressed.
+	e.SetTerminalGrid(opened, 78, 24)
+	if stub.resizes != settled {
+		t.Errorf("an identical declaration resized the child (%d -> %d)", settled, stub.resizes)
+	}
+
+	// Same grid, DOUBLE the pixels — the density arriving late.
+	stub.pxW, stub.pxH = 1560, 1104
+	e.SetTerminalGrid(opened, 78, 24)
+	if stub.resizes == settled {
+		t.Error("the pixel window doubled and the child was never told: " +
+			"suppressed as a repeat because only the cells were compared")
+	}
+	if stub.cols != 78 || stub.rows != 24 {
+		t.Errorf("child grid = %dx%d, want the unchanged 78x24", stub.cols, stub.rows)
+	}
+}

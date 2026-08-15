@@ -66,8 +66,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
 		os.Exit(1)
 	}
-	plat.SetAppName("mew")       // OS app name is "mew", not the binary's "mew-sdl"
-	plat.SetScale(cfg.Scale)     // device zoom: pixels per unit at the base font
+	plat.SetAppName("mew")   // OS app name is "mew", not the binary's "mew-sdl"
+	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
+	// [system] density: the physical screen's content scale. 0 = ask the
+	// window system. Distinct from scale, which is this app's own magnification.
+	plat.SetDisplayDensity(cfg.Density)
 	plat.SetShowFPS(cfg.ShowFPS) // [window] fps overlays the frame rate
 	plat.SetVSync(cfg.VSync)
 	plat.SetFontSize(cfg.FontSize) // pixel size of a cell

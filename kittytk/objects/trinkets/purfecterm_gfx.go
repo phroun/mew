@@ -97,7 +97,13 @@ type purfecTermGfx struct {
 	// It carries the DEVICE SCALE alone. The runtime zoom is deliberately not
 	// folded in: that would make one knob move both the text size and the
 	// child's content scale.
-	oversample   float64
+	oversample float64
+
+	// advCW/advCH are the cell size last ADVERTISED (what pushCellPixelSizeGfx
+	// wrote), kept so a paint can tell whether the child's pixel window moved
+	// under a grid that did not. Zero before the first push.
+	advCW, advCH int
+
 	hitKX, hitKY float64
 
 	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
@@ -362,15 +368,24 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
-	// The display's DENSITY only - the device scale, not the runtime zoom.
-	// This asks the child to render at the screen's real pixel density and
-	// nothing more; coupling its content to the +/- zoom is a separate
-	// decision, and mixing the two here would make one knob move two things.
+	// The SCREEN's density - not this application's magnification, and not the
+	// runtime zoom.
+	//
+	// The number that belongs here is the one the CHILD renders at, and a child
+	// drawing pictures for us is a separate process that asks the window system
+	// directly. So it follows the panel and nothing we chose: a user who sets a
+	// magnification of 1 on a HiDPI screen still has a child rendering at 2, and
+	// deriving this from our own scale silently switches the correction off in
+	// exactly that case, leaving the content twice the size it should be. The
+	// two numbers agree whenever the magnification happens to match the panel,
+	// which is the common setup and the reason this read right for a while.
 	t.gfx.oversample = 1
-	if ds := float64(p.DeviceScale()); ds > 1 {
+	if ds := p.DisplayDensity(); ds > 1 {
 		t.gfx.oversample = ds
 	}
+	prevCW, prevCH := t.gfx.advCW, t.gfx.advCH
 	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
+	cellMoved := t.gfx.advCW != prevCW || t.gfx.advCH != prevCH
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -415,10 +430,26 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
 		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
 		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
-		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
+		switch {
+		case fitCols <= 0 || fitRows <= 0:
+		case fitCols != t.cols || fitRows != t.rows:
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
 			t.emitResize(fitCols, fitRows)
+		case cellMoved:
+			// The grid did not move but the cell under it did, so the child's
+			// window in PIXELS changed while its window in CELLS did not.
+			// Nothing else will tell it: a resize keyed on cols/rows alone is
+			// silent here, and the child has no reason to re-ask.
+			//
+			// A picture is the whole difference. Changing the display density
+			// halves or doubles the cell we advertise at a fixed grid; a client
+			// that sized an image against the old one keeps drawing it, and it
+			// lands at the wrong size by exactly that ratio - twice as big
+			// going one way, half going the other. Re-emitting at the SAME
+			// cols and rows carries the new pixel window (the PTY winsize takes
+			// both), which is a real change to the child and a SIGWINCH.
+			t.emitResize(t.cols, t.rows)
 		}
 	}
 
@@ -2673,6 +2704,7 @@ func (t *PurfecTerm) pushCellPixelSizeGfx() {
 		chPx = int(math.Round(float64(chPx) * f))
 	}
 	if cwPx > 0 && chPx > 0 {
+		t.gfx.advCW, t.gfx.advCH = cwPx, chPx
 		buf.SetCellPixelSize(cwPx, chPx)
 		// The pointer unit is the SAME number, because the app has only one
 		// to divide by: whatever CSI 16 t says a cell measures is what it

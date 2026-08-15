@@ -264,6 +264,26 @@ func (w *Window) SizeInPixels() (int32, int32) {
 	return width, height
 }
 
+// DisplayScale reports the CONTENT scale of the display this window is on —
+// the factor the desktop environment expects UI to be drawn at, which on a
+// HiDPI panel is 2 and on an ordinary one is 1.
+//
+// It is not the window's own pixel density (SizeInPixels/Size, which is 1
+// unless the window asked for a high-density framebuffer) and it is nothing to
+// do with any scale the application chooses for itself. It is a fact about the
+// SCREEN, and it is the only way to learn what density a separate process
+// drawing into this display will render at — which a child sizing pictures for
+// us does, out of our sight.
+//
+// Zero when SDL cannot answer, so a caller can tell "unknown" from 1.
+func (w *Window) DisplayScale() float32 {
+	s, err := w.w.DisplayScale()
+	if err != nil || s <= 0 {
+		return 0
+	}
+	return s
+}
+
 func (w *Window) ID() (uint32, error) {
 	id, err := w.w.ID()
 	return uint32(id), err

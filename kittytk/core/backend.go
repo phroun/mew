@@ -226,6 +226,25 @@ type DeviceScaler interface {
 	Scale() int
 }
 
+// DisplayDensityReporter is an optional RenderBackend capability reporting the
+// PHYSICAL display's content scale — 2 on a HiDPI panel, 1 on an ordinary one.
+//
+// This is emphatically not DeviceScaler. That one is how much this application
+// magnifies itself, a preference; this one is a fact about the screen, and the
+// two are independent (a user may well ask for 1 on a HiDPI panel, which is
+// exactly the case that tells them apart).
+//
+// It matters because a SEPARATE process rendering pictures for us — a browser
+// in a terminal pane — reads the display's density from the window system
+// itself and sizes its content to it, entirely outside our sight. Nothing in
+// the terminal protocols carries that number in either direction, so the only
+// way to end up agreeing with such a child is to learn the same fact it did.
+// Deriving it from our own magnification instead looks right exactly when the
+// two happen to be equal.
+type DisplayDensityReporter interface {
+	DisplayDensity() float64
+}
+
 // UnitPixelMapper is an optional RenderBackend capability exposing the
 // backend's true (font_size-aware, possibly fractional and cell-snapped)
 // unit-to-device-pixel mapping, so the Painter's device-pixel helpers
@@ -971,6 +990,23 @@ func (p *Painter) FillRectPixelsAlpha(x, y Unit, offXPx, offYPx, wPx, hPx int, r
 func (p *Painter) DeviceScale() int {
 	if ds, ok := p.backend.(DeviceScaler); ok {
 		if s := ds.Scale(); s > 0 {
+			return s
+		}
+	}
+	return 1
+}
+
+// DisplayDensity reports the physical display's content scale (see
+// DisplayDensityReporter): 2 on a HiDPI panel, 1 on an ordinary one, and 1
+// when the backend does not know — a backend that cannot see a screen (an
+// off-screen raster, a terminal host) has no business claiming one.
+//
+// Use it only for agreeing with something OUTSIDE this process about density.
+// Everything internal — geometry, hairlines, cell metrics — uses DeviceScale
+// or PxPerUnitF, which describe how this application draws.
+func (p *Painter) DisplayDensity() float64 {
+	if d, ok := p.backend.(DisplayDensityReporter); ok {
+		if s := d.DisplayDensity(); s > 0 {
 			return s
 		}
 	}

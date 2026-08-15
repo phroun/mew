@@ -630,3 +630,30 @@ func TestApplyTitleBarScale(t *testing.T) {
 		}
 	}
 }
+
+// [system] density is the SCREEN's content scale, and it is deliberately
+// separate from [window] scale — the one case that proves it is a user who
+// asks for real pixels (scale 1) on a HiDPI panel (density 2). Nothing may
+// collapse the two.
+func TestApplyParsesDensityIndependentlyOfScale(t *testing.T) {
+	cfg := Defaults()
+	apply([]byte("[window]\nscale = 1\n\n[system]\ndensity = 2\n"), &cfg)
+	if cfg.Scale != 1 {
+		t.Errorf("scale = %d, want 1", cfg.Scale)
+	}
+	if cfg.Density != 2 {
+		t.Errorf("density = %v, want 2", cfg.Density)
+	}
+}
+
+// Absent, blank or unparseable leaves it at zero, which means "ask the window
+// system" — pinning a wrong number is worse than having none.
+func TestDensityDefaultsToAuto(t *testing.T) {
+	for _, ini := range []string{"", "density =\n", "density = nonsense\n", "density = 0\n", "density = -2\n"} {
+		cfg := Defaults()
+		apply([]byte(ini), &cfg)
+		if cfg.Density != 0 {
+			t.Errorf("%q: density = %v, want 0 (auto)", ini, cfg.Density)
+		}
+	}
+}
