@@ -21,6 +21,12 @@ type PurfecTerm struct {
 	// The underlying terminal emulator
 	terminal *cli.Terminal
 
+	// tuiImgCache holds the pixels handed to a CELL surface last frame, one
+	// entry per placement (see tuiImageFor). Only the terminal-host paint
+	// touches it; the graphical path composites straight from its scratch
+	// buffer and needs nothing kept.
+	tuiImgCache []tuiImgEntry
+
 	// Cached size in cells
 	cols, rows int
 

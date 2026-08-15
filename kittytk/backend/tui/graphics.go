@@ -215,7 +215,7 @@ func (t *TUIBackend) DrawImagePx(xPx, yPx int, img image.Image) {
 // repainted those cells is what erased them.
 // The caller already holds t.mu (EndFrame does, and writes the text diff
 // under it), so this must NOT take it again - sync.Mutex is not reentrant.
-func (t *TUIBackend) flushImagesLocked() {
+func (t *TUIBackend) flushImagesLocked(textChanged bool) {
 	proto := t.graphics
 	imgs := t.pendingImages
 	t.pendingImages = nil
@@ -226,7 +226,38 @@ func (t *TUIBackend) flushImagesLocked() {
 		return
 	}
 
+	// Nothing to do when the same pictures are already on screen and this
+	// frame's text diff wrote nothing that could have disturbed them.
+	//
+	// A frame is drawn on a heartbeat whether or not anything happened, and a
+	// picture is not a few bytes of text: re-transmitting one every frame
+	// pushes its whole payload down the pty forever, base64'd, for no change
+	// at all. Kitty placements persist until deleted, and sixel pixels are
+	// screen content that only a repaint of those cells can erase — so when
+	// neither the set nor the text moved, the screen is already correct.
+	same := !textChanged && len(imgs) == len(t.shownImages)
+	if same {
+		for i := range imgs {
+			if imgs[i] != t.shownImages[i] {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		t.shownImages = imgs
+		return
+	}
+	t.shownImages = imgs
+
 	var sb strings.Builder
+	// Save the cursor, because placing a picture means moving it. The caret
+	// was already positioned by the text diff just above, and leaving it
+	// parked wherever the last image was anchored puts the terminal's own
+	// cursor block on top of that image — a solid cell of it, in the corner.
+	// DECSC/DECRC restores the position (and the pen) once the pictures are
+	// out, so the caret ends the frame where the text layer put it.
+	sb.WriteString("\0337")
 	if proto == GraphicsKitty && had {
 		sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
 	}
@@ -242,9 +273,8 @@ func (t *TUIBackend) flushImagesLocked() {
 			writeSixelImage(&sb, p.img)
 		}
 	}
-	if sb.Len() > 0 {
-		t.write(sb.String())
-	}
+	sb.WriteString("\0338")
+	t.write(sb.String())
 }
 
 // writeKittyImage transmits and displays img at the cursor: RGBA direct

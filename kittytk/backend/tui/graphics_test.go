@@ -268,3 +268,106 @@ func TestCellPixelSizeFallsBackToTheWinsize(t *testing.T) {
 		t.Errorf("cell size = %dx%d with neither channel answering, want 0x0", w, h)
 	}
 }
+
+// Placing a picture means moving the cursor, so the flush has to put it back.
+//
+// The text diff positions the caret just before this runs. Leaving it parked
+// on the last image's anchor makes the terminal draw its own cursor block
+// there — a solid cell of it, in the corner of the picture.
+func TestImageFlushRestoresTheCursor(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out}
+	b.mu.Lock()
+	b.graphics = GraphicsSixel
+	b.pendingImages = []placedImage{{col: 4, row: 2, img: image.NewRGBA(image.Rect(0, 0, 2, 2))}}
+	b.mu.Unlock()
+
+	b.flushImagesLocked(true)
+	got := out.String()
+	if !strings.HasPrefix(got, "\0337") {
+		t.Errorf("the flush did not save the cursor first: %q", firstBytes(got))
+	}
+	if !strings.HasSuffix(got, "\0338") {
+		t.Errorf("the flush did not restore the cursor: it ends %q", lastBytes(got))
+	}
+	// And it really did move it, which is why the restore is needed.
+	if !strings.Contains(got, "\033[3;5H") {
+		t.Error("the image was not addressed to its cell")
+	}
+}
+
+func firstBytes(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+func lastBytes(s string) string {
+	if len(s) > 12 {
+		return s[len(s)-12:]
+	}
+	return s
+}
+
+// An idle frame must not re-transmit a picture that is already on screen.
+//
+// A frame is drawn on a heartbeat whether or not anything happened, and a
+// picture is not a few bytes of text — re-sending one every frame pushes its
+// whole base64 payload down the pty forever for no change at all. Kitty
+// placements persist until deleted and sixel pixels are screen content, so
+// when neither the images nor the text moved, the screen is already correct.
+func TestUnchangedImagesAreNotResentEveryFrame(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	place := func(b *TUIBackend) {
+		b.mu.Lock()
+		b.pendingImages = []placedImage{{col: 4, row: 2, img: img}}
+		b.mu.Unlock()
+	}
+
+	var out strings.Builder
+	b := &TUIBackend{output: &out}
+	b.mu.Lock()
+	b.graphics = GraphicsKitty
+	b.mu.Unlock()
+
+	place(b)
+	b.flushImagesLocked(true) // the frame that first drew it
+	first := out.Len()
+	if first == 0 {
+		t.Fatal("the image was never sent")
+	}
+
+	// An idle frame: same picture, no text written.
+	out.Reset()
+	place(b)
+	b.flushImagesLocked(false)
+	if out.Len() != 0 {
+		t.Errorf("an idle frame re-sent %d bytes for an unchanged picture", out.Len())
+	}
+
+	// Text moved: the diff may have painted over it, so it goes again.
+	out.Reset()
+	place(b)
+	b.flushImagesLocked(true)
+	if out.Len() == 0 {
+		t.Error("the picture was not redrawn after the text diff wrote over the screen")
+	}
+
+	// The picture itself moved: always goes again, idle or not.
+	out.Reset()
+	b.mu.Lock()
+	b.pendingImages = []placedImage{{col: 9, row: 2, img: img}}
+	b.mu.Unlock()
+	b.flushImagesLocked(false)
+	if out.Len() == 0 {
+		t.Error("a picture that moved was not re-sent")
+	}
+
+	// And it going away is a change too — the stale placement must be deleted.
+	out.Reset()
+	b.flushImagesLocked(false)
+	if !strings.Contains(out.String(), "\033_Ga=d,d=A\033\\") {
+		t.Errorf("the placement was not deleted when the picture went away: %q", out.String())
+	}
+}

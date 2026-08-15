@@ -17,9 +17,41 @@ package trinkets
 // drawing pictures does the only sensible thing with that: nothing at all.
 
 import (
+	"image"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/purfecterm"
 )
+
+// tuiImgKey identifies the pixels a placement resolves to. Everything
+// imageForBlitGfx reads to build them is in here, so two placements with equal
+// keys produce identical output.
+type tuiImgKey struct {
+	src            *purfecterm.SixelImage
+	sx, sy, sw, sh int
+	destW, destH   int
+}
+
+// tuiImgEntry is one cached, privately-owned rendering.
+type tuiImgEntry struct {
+	key tuiImgKey
+	img *image.RGBA
+}
+
+// tuiImgKeyFor reads a placement's identity without building anything.
+func tuiImgKeyFor(im *purfecterm.PlacedImage) tuiImgKey {
+	sx, sy, sw, sh := im.SourceRect()
+	dw, dh := im.DestSize()
+	return tuiImgKey{src: im.Image, sx: sx, sy: sy, sw: sw, sh: sh, destW: dw, destH: dh}
+}
+
+// cloneRGBA copies an image into storage of its own.
+func cloneRGBA(src *image.RGBA) *image.RGBA {
+	dst := image.NewRGBA(src.Rect)
+	copy(dst.Pix, src.Pix)
+	dst.Stride = src.Stride
+	return dst
+}
 
 // pushCellPixelSizeTUI gives the hosted child the outer terminal's cell size,
 // and records the pane's extent in those same pixels for the PTY winsize.
@@ -96,9 +128,13 @@ func (t *PurfecTerm) renderImagesTUI(p *core.Painter, buf *purfecterm.Buffer, me
 	}
 	scrollOffset := buf.GetEffectiveScrollOffset()
 	horizOffset := buf.GetHorizOffset()
+	// A fresh slice, not prev[:0]: they would share one backing array and
+	// each append would overwrite the entry it is about to be compared with.
+	prev := t.tuiImgCache
+	t.tuiImgCache = make([]tuiImgEntry, 0, len(prev)+len(below)+len(above))
 	for _, band := range [][]*purfecterm.PlacedImage{below, above} {
 		for _, im := range band {
-			img := t.imageForBlitGfx(im)
+			img := t.tuiImageFor(im, prev)
 			if img == nil {
 				continue
 			}
@@ -116,4 +152,35 @@ func (t *PurfecTerm) renderImagesTUI(p *core.Painter, buf *purfecterm.Buffer, me
 			p.DrawImage(x, y, img)
 		}
 	}
+}
+
+// tuiImageFor returns this placement's pixels, in storage of their own, reusing
+// the previous frame's copy when the placement resolves to the same thing.
+//
+// Both halves matter. imageForBlitGfx hands back a SHARED scratch buffer valid
+// only until the next call — the graphical path composites immediately and is
+// fine with that, but this one gives the image to a surface that emits it at
+// the END of the frame, by which time a second picture would have overwritten
+// the first and both would show the last one. So the result has to be copied.
+//
+// And the copy has to be the SAME copy while nothing changes. A frame is drawn
+// on a heartbeat whether or not anything happened; a fresh copy each time is a
+// pointer the surface has never seen, so it would re-transmit every picture
+// down the pty forever for no change at all. Holding the pointer steady is what
+// lets that comparison mean "unchanged".
+func (t *PurfecTerm) tuiImageFor(im *purfecterm.PlacedImage, prev []tuiImgEntry) *image.RGBA {
+	key := tuiImgKeyFor(im)
+	for i := range prev {
+		if prev[i].key == key {
+			t.tuiImgCache = append(t.tuiImgCache, prev[i])
+			return prev[i].img
+		}
+	}
+	built := t.imageForBlitGfx(im)
+	if built == nil {
+		return nil
+	}
+	img := cloneRGBA(built)
+	t.tuiImgCache = append(t.tuiImgCache, tuiImgEntry{key: key, img: img})
+	return img
 }

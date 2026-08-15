@@ -144,7 +144,12 @@ type TUIBackend struct {
 	graphics         int // Graphics{None,Kitty,Sixel}
 	graphicsAnswered bool
 	pendingImages    []placedImage
-	hadImages        bool // last frame placed images (kitty needs them deleted)
+	// shownImages is what the last flush actually put on screen, so an
+	// unchanged frame can be skipped rather than re-transmitted (see
+	// flushImagesLocked). Compared by value, which is why a queued image must
+	// be one nobody else will overwrite.
+	shownImages []placedImage
+	hadImages   bool // last frame placed images (kitty needs them deleted)
 
 	// Output writer
 	output io.Writer
@@ -718,7 +723,9 @@ func (t *TUIBackend) EndFrame() {
 	// and anything emitted before it would be painted over by text written
 	// afterwards. This is also the right order to read - the image sits on
 	// the row the text layer already made room for.
-	t.flushImagesLocked()
+	// body is the frame's TEXT: empty means the diff wrote nothing, so
+	// nothing can have erased a picture already on screen.
+	t.flushImagesLocked(body != "")
 }
 
 // Clear fills the entire surface with a style.

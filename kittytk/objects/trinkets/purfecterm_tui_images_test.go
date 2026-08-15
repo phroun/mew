@@ -166,3 +166,75 @@ func TestTUIPlacedImageReachesTheSurface(t *testing.T) {
 			b.Dx(), b.Dy())
 	}
 }
+
+// Two pictures in one frame must be two pictures.
+//
+// imageForBlitGfx hands back a shared scratch buffer, valid only until the next
+// call. The graphical path composites immediately and is fine with that; this
+// one hands the image to a surface that emits it at the END of the frame, so
+// without a copy the second placement overwrites the first and both come out
+// showing the last one.
+func TestTUITwoImagesInAFrameAreNotTheSameBuffer(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+
+	// PARTIAL alpha, so each goes through the real conversion into the shared
+	// scratch. A whole, unscaled, binary-alpha bitmap is wrapped where it lies
+	// with no copy - which Sixel always is, so a sixel pair would pass this
+	// test without ever touching the buffer it is about to prove is unsafe.
+	rgba := func(r, g, b byte) []byte {
+		pix := make([]byte, 12*12*4)
+		for i := 0; i < len(pix); i += 4 {
+			pix[i], pix[i+1], pix[i+2], pix[i+3] = r, g, b, 128
+		}
+		return pix
+	}
+	term.Feed([]byte("\x1b[2;1H"))
+	term.Feed(kittyRGBA(12, 12, rgba(255, 0, 0), ""))
+	term.Feed([]byte("\x1b[8;1H"))
+	term.Feed(kittyRGBA(12, 12, rgba(0, 0, 255), ""))
+	if n := len(term.Terminal().Buffer().GetImages()); n != 2 {
+		t.Skipf("the emulator placed %d images, want 2", n)
+	}
+
+	c.images = nil
+	term.Paint(core.NewPainter(c))
+	if len(c.images) != 2 {
+		t.Fatalf("the surface received %d images, want 2", len(c.images))
+	}
+	if c.images[0].img == c.images[1].img {
+		t.Fatal("both placements are the same buffer: the scratch was handed out twice, " +
+			"so both pictures show whichever was built last")
+	}
+	if got := c.images[0].img.At(2, 2); got == c.images[1].img.At(2, 2) {
+		t.Errorf("both pictures are the same colour (%v): the second overwrote the first", got)
+	}
+}
+
+// An unchanged picture keeps the SAME buffer from frame to frame.
+//
+// A frame is drawn on a heartbeat whether anything happened or not. The surface
+// decides what to re-transmit by comparing what it was handed against what it
+// last drew, so a fresh copy every frame is a pointer it has never seen and
+// every heartbeat re-sends the whole payload down the pty.
+func TestTUIUnchangedImageKeepsItsBufferAcrossFrames(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+	term.Feed([]byte("\x1b[2;1H"))
+	term.Feed(sixelSolidBlock(12, 12, 100, 0, 100))
+
+	c.images = nil
+	term.Paint(core.NewPainter(c))
+	if len(c.images) != 1 {
+		t.Fatalf("first frame: %d images, want 1", len(c.images))
+	}
+	first := c.images[0].img
+
+	c.images = nil
+	term.Paint(core.NewPainter(c)) // an idle repaint: nothing changed
+	if len(c.images) != 1 {
+		t.Fatalf("second frame: %d images, want 1", len(c.images))
+	}
+	if c.images[0].img != first {
+		t.Error("the picture was rebuilt on an idle frame, so the surface sees a " +
+			"buffer it has never been handed and re-sends the whole payload")
+	}
+}
