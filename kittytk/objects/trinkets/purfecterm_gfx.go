@@ -19,11 +19,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -127,6 +130,11 @@ type purfecTermGfx struct {
 	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
 	glyphPrev  map[purfecterm.GlyphCacheKey]*image.RGBA
 	overlayCur map[string]*image.RGBA
+
+	// Scratch for image blits that cannot be handed to the painter where they
+	// lie (a crop, a scale, or straight alpha that has to be premultiplied).
+	// Reused across images and frames; see imageScratchGfx.
+	imgScratch *image.RGBA
 }
 
 // coverMaskKey identifies a cached glyph COVERAGE mask - deliberately
@@ -325,7 +333,7 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
-	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
+	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -421,6 +429,13 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	behind, front := buf.GetSpritesForRendering()
 	t.renderSpritesGfx(painter, behind, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
 
+	// An image at a NEGATIVE z-index goes under the glyphs — that is what makes
+	// text-over-image work — so the two bands straddle the cell loop. Virtual
+	// placements (positioned by Unicode placeholder cells, not by their anchor)
+	// are not in either band; GetImagesByZ leaves them out.
+	imagesBelow, imagesAbove := buf.GetImagesByZ()
+	t.renderImagesGfx(painter, imagesBelow, cw, chh, ppu, scrollOffset, horizOffset)
+
 	focused := t.gfxFocused()
 	cursorLineWasRendered := false
 
@@ -442,6 +457,15 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		for x := 0; x < effectiveCols; x++ {
 			logicalX := x + horizOffset
 			cell := buf.GetVisibleCell(x, y)
+
+			// A kitty Unicode placeholder reserves the cell for a virtual image
+			// placement; the image is drawn into it from the resolved draw list
+			// (GetImagesByZ). The cell itself must not also paint a character:
+			// U+10EEEE is private-use, so whatever a font happens to have there
+			// would land on top of the image the cell exists to position.
+			if purfecterm.IsKittyPlaceholderCell(cell) {
+				cell.Char, cell.Combining = ' ', ""
+			}
 
 			cellVisualWidth := 1.0
 			if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
@@ -573,6 +597,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 
 	t.renderSpritesGfx(painter, front, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
+
+	// Cell-anchored bitmaps sit above the front sprites: an image is program
+	// output the text layer has already made room for, not chrome.
+	t.renderImagesGfx(painter, imagesAbove, cw, chh, ppu, scrollOffset, horizOffset)
 
 	// Screen splits overlay regions of the logical screen.
 	splits := buf.GetScreenSplitsSorted()
@@ -1608,6 +1636,137 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 	}
 }
 
+// renderImagesGfx blits cell-anchored bitmaps (Sixel, iTerm2 inline images, the
+// kitty graphics protocol) onto the text layer. An image is anchored at a screen
+// cell and scrolls with the text, so it lands on the cell grid the same way a
+// sprite does: scaled cell metrics, then the scroll and horizontal-offset shifts
+// renderSpritesGfx applies. Callers pass one z-order band at a time (see
+// Buffer.GetImagesByZ) — negative z under the glyphs, the rest over them.
+func (t *PurfecTerm) renderImagesGfx(p *core.Painter, images []*purfecterm.PlacedImage,
+	cw, chh, ppu float64, scrollOffsetY, horizOffsetX int) {
+
+	if len(images) == 0 {
+		return
+	}
+	cwPx := cw * ppu
+	chPx := chh * ppu
+	scrollPixelX := float64(horizOffsetX) * cwPx
+	scrollPixelY := float64(scrollOffsetY) * chPx
+
+	for _, im := range images {
+		img := t.imageForBlitGfx(im)
+		if img == nil {
+			continue
+		}
+		// Anchor at the floor pixel of the cell, like the sprite path: the
+		// bitmap has its own pixels and must not be resampled onto a rounded
+		// unit position.
+		pixelX := float64(im.Col)*cwPx - scrollPixelX
+		pixelY := float64(im.Row)*chPx + scrollPixelY
+		p.DrawImageOffset(0, 0, int(math.Floor(pixelX)), int(math.Floor(pixelY)), img)
+	}
+}
+
+// imageForBlitGfx turns a placement into device-pixel imagery the painter can
+// composite 1:1, applying the placement's source crop (the kitty protocol's
+// x/y/w/h) and its destination size (PlacedImage.DestSize — cell- or
+// percentage-sized placements resolve to pixels there, and those pixels are the
+// same device pixels this path draws in, so no further scale conversion).
+//
+// Alpha is the subtle part. A Bitmap carries STRAIGHT alpha; Go's image.RGBA is
+// premultiplied. The two coincide exactly when every pixel is 0 or 255 — which
+// Sixel guarantees and a browser's opaque frame usually satisfies — and that is
+// the case worth keeping cheap, since it is also the case where the image is
+// full-screen. So a whole, unscaled, binary-alpha bitmap is wrapped where it
+// lies with no copy; anything else (a PNG's soft edge, a kitty RGBA frame
+// composed to partial alpha, a crop, a scale) goes through a real conversion.
+//
+// The returned image may be a shared scratch buffer, valid only until the next
+// call: the painter composites synchronously, so a blit-then-next-image loop is
+// fine, but the result must not be retained.
+func (t *PurfecTerm) imageForBlitGfx(im *purfecterm.PlacedImage) *image.RGBA {
+	if im == nil || im.Image == nil {
+		return nil
+	}
+	si := im.Image
+	if si.W <= 0 || si.H <= 0 || len(si.RGBA) < si.W*si.H*4 {
+		return nil
+	}
+	src := &image.NRGBA{ // NRGBA, not RGBA: the decoder's alpha is straight
+		Pix:    si.RGBA[:si.W*si.H*4],
+		Stride: si.W * 4,
+		Rect:   image.Rect(0, 0, si.W, si.H),
+	}
+
+	sx, sy, sw, sh := im.SourceRect()
+	if sx < 0 {
+		sx = 0
+	}
+	if sy < 0 {
+		sy = 0
+	}
+	if sx >= si.W || sy >= si.H {
+		return nil
+	}
+	if sw <= 0 || sw > si.W-sx {
+		sw = si.W - sx
+	}
+	if sh <= 0 || sh > si.H-sy {
+		sh = si.H - sy
+	}
+	srcRect := image.Rect(sx, sy, sx+sw, sy+sh)
+
+	destW, destH := im.DestSize()
+	if destW <= 0 || destH <= 0 {
+		return nil
+	}
+
+	if srcRect == src.Rect && destW == sw && destH == sh && !hasPartialAlpha(src.Pix) {
+		return &image.RGBA{Pix: src.Pix, Stride: src.Stride, Rect: src.Rect}
+	}
+
+	dst := t.imageScratchGfx(destW, destH)
+	if destW == sw && destH == sh {
+		// Same size: an exact per-pixel conversion beats resampling, which
+		// would filter a 1:1 blit for nothing.
+		draw.Draw(dst, dst.Bounds(), src, srcRect.Min, draw.Src)
+	} else {
+		xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, srcRect, draw.Src, nil)
+	}
+	return dst
+}
+
+// hasPartialAlpha reports whether any pixel is neither fully opaque nor fully
+// transparent — the only case where straight and premultiplied bytes differ. It
+// stops at the first one, so the images that need conversion are found fast and
+// only a fully binary-alpha image pays for the whole scan.
+func hasPartialAlpha(pix []byte) bool {
+	for i := 3; i < len(pix); i += 4 {
+		if a := pix[i]; a != 0 && a != 0xff {
+			return true
+		}
+	}
+	return false
+}
+
+// imageScratchGfx returns a w x h premultiplied buffer for one blit, reusing the
+// last one when it is big enough. Image frames can be megabytes and arrive every
+// paint (an animation, or a browser rendering into the terminal); allocating per
+// frame would hand all of that to the GC. Nothing is cleared: both fill paths
+// write every pixel of the rect.
+func (t *PurfecTerm) imageScratchGfx(w, h int) *image.RGBA {
+	need := w * h * 4
+	s := t.gfx.imgScratch
+	if s == nil || cap(s.Pix) < need {
+		s = &image.RGBA{Pix: make([]byte, need)}
+		t.gfx.imgScratch = s
+	}
+	s.Pix = s.Pix[:need]
+	s.Stride = w * 4
+	s.Rect = image.Rect(0, 0, w, h)
+	return s
+}
+
 // ---------------------------------------------------------------
 // Screen splits
 // ---------------------------------------------------------------
@@ -2372,12 +2531,34 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 // remainder is the sub-cell position.
 const gfxCellSubUnits = 1000
 
-// pushCellPixelSizeGfx tells the hosted app that a cell is gfxCellSubUnits
-// "pixels" square (CSI 16 t). It is a constant — the synthetic grid, unlike
-// device pixels, does not move with font zoom — but is (re)asserted each paint
-// so a buffer rebuild never leaves it unset.
+// pushCellPixelSizeGfx pushes the two cell measurements the hosted app reads,
+// which are deliberately NOT the same number.
+//
+// The synthetic gfxCellSubUnits grid is the unit ?1016 pointer coordinates are
+// encoded in, and nothing else — SetPointerPixelUnit. The REAL device cell size
+// is what CSI 14 t / CSI 16 t must answer and what image geometry divides by: a
+// program sizes an image against it, and the emulator works out how many rows a
+// placement reserves the same way. Reporting the synthetic grid as the cell size
+// (as this did while the two shared one field) made every image compute as about
+// one cell tall, so the text under it collided with the pixels.
+//
+// Both are (re)asserted each paint. The pointer unit is a constant, but the real
+// cell size moves with font zoom, screen scale and the display's pixels-per-unit,
+// and a buffer rebuild would otherwise leave either unset.
 func (t *PurfecTerm) pushCellPixelSizeGfx() {
-	t.terminal.Buffer().SetCellPixelSize(gfxCellSubUnits, gfxCellSubUnits)
+	buf := t.terminal.Buffer()
+	buf.SetPointerPixelUnit(gfxCellSubUnits, gfxCellSubUnits)
+
+	baseCW, baseCH := t.cellDims()
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	cwPx := int(math.Round(float64(baseCW) * buf.GetHorizontalScale() * ppu))
+	chPx := int(math.Round(float64(baseCH) * buf.GetVerticalScale() * ppu))
+	if cwPx > 0 && chPx > 0 {
+		buf.SetCellPixelSize(cwPx, chPx)
+	}
 }
 
 // screenToPixelReportGfx maps trinket-unit coordinates onto the synthetic pixel
