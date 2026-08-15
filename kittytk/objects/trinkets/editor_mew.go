@@ -1986,10 +1986,15 @@ func (e *Editor) terminalKey(id string, key string) []byte {
 // mew's own normalizeKey; everything not listed (a character, ^C, F5) is
 // already the same in both.
 var mewToDKHKey = map[string]string{
-	"esc":    "Escape",
-	"space":  "Space",
-	"tab":    "Tab",
-	"return": "Enter",
+	"esc":   "Escape",
+	"space": "Space",
+	"tab":   "Tab",
+	// mew folds the keypad's Enter onto "return" (internal/input), so this
+	// side only ever has the home-row key to name — and upstream calls that
+	// "Return". It said "Enter" here, which is now the KEYPAD's name: harmless
+	// while purfecterm encoded both as CR, and wrong the moment it stopped,
+	// since mew's Enter would have started sending the keypad's SS3 M.
+	"return": "Return",
 	"back":   "Backspace",
 	"up":     "Up",
 	"down":   "Down",

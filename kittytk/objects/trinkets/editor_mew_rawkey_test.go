@@ -22,7 +22,10 @@ func TestDKHKeyName(t *testing.T) {
 		{"del", "Delete"},
 		{"fdel", "FDel"},
 		{"pgup", "PageUp"},
-		{"return", "Enter"},
+		// The home-row key, which upstream calls "Return". "Enter" is the
+		// keypad's — a different key, and one mew never has to name here
+		// because it folds the two on the way in.
+		{"return", "Return"},
 		{"space", "Space"},
 		{"S-tab", "S-Tab"},
 		{"M-up", "M-Up"},
