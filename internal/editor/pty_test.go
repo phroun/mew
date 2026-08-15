@@ -616,22 +616,34 @@ func TestPTYViewportClass(t *testing.T) {
 // through the [pty::mappings] defaults — and only while a session runs.
 func TestPTYClassKeyBindings(t *testing.T) {
 	for _, tc := range []struct{ key, want string }{
-		{"back", "\x08"},
-		{"del", "\x08"},
+		// As a terminal sends them: DEL for Backspace, CSI 3 ~ for forward
+		// Delete. They used to be named in [pty::mappings] and send a
+		// hardcoded ^H each, which is what Ctrl-H sends rather than what
+		// either key does — and one byte for two keys left a guest unable to
+		// tell them apart. A guest mapping terminal input to real key events
+		// read it as Ctrl-H and ignored it.
+		{"back", "\x7f"},
+		{"del", "\x1b[3~"},
 		{"^C", "\x03"},
 	} {
 		e, w := newTestEditor(t, "ab\n")
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 		stub := newStubPTY()
-		// ^C reaches the child through the wildcard ((capture) * = tinput_key),
-		// which asks the HOST to encode the key — supply the encoder the real
-		// host provides. back/del bypass it: their capture bindings send the
-		// \x08 byte directly, which is the point of naming them.
+		// EVERY key here reaches the child through the wildcard
+		// ((capture) * = tinput_key), which asks the HOST to encode it —
+		// so supply what the real host's emulator produces. Nothing is named
+		// in [pty::mappings] any more except esc, which is why the erase keys
+		// come out as a terminal sends them rather than as one byte for both.
 		e.Config.TerminalSurfaces = TerminalHooks{
 			Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 			Key: func(_ string, key string) []byte {
-				if key == "^C" {
+				switch key {
+				case "^C":
 					return []byte("\x03")
+				case "back":
+					return []byte("\x7f")
+				case "del", "fdel":
+					return []byte("\x1b[3~")
 				}
 				return nil
 			},

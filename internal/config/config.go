@@ -2735,6 +2735,15 @@ messages="\e[0;97;41m"                # bright white on red
 # to reach those keys at all. Naming it here puts it beside the wildcard
 # rather than under it, where a named key wins.
 #
+# Backspace and Delete are deliberately NOT named here. They were, sending a
+# hardcoded ^H for both, and that is wrong twice over: ^H is what Ctrl-H sends,
+# where a terminal sends DEL (\x7f) for Backspace and CSI 3 ~ for forward
+# Delete — and one byte for two keys leaves a guest unable to tell them apart.
+# readline and vim forgive it, because terminfo often maps erase to ^H; a guest
+# that maps terminal input to real key events does not, and reads it as Ctrl-H.
+# The wildcard already encodes both correctly through the host's emulator, which
+# is also what makes application-cursor mode and its kin come out right.
+#
 # esc is named for a third reason: naming a key SUPPRESSES lower levels'
 # chords that start with it. The wildcard alone could never claim Escape,
 # because esc X / esc y / esc j make it a prefix and a chord in progress
@@ -2745,8 +2754,6 @@ messages="\e[0;97;41m"                # bright white on red
 [pty::mappings]
 (capture) *     =tinput_key
 (capture) esc   =tinput_key
-(capture) del   =tinput "\x08"
-(capture) back  =tinput "\x08"
 (capture) M-\\  =raw_key_input
 `
 }
