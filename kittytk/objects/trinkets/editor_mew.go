@@ -2246,20 +2246,31 @@ func withPixelWinsize(sess mew.PTYSession, cellPx func() (int, int)) mew.PTYSess
 	return pxWinsizeSession{PTYSession: sess, px: px, cellPx: cellPx}
 }
 
-// childCellPx is one cell of the child's terminal in device pixels: the
-// toolkit cell scaled by the surface's pixels-per-unit, which is the same
-// pitch this editor's own text is painted on. Zero when there is no graphical
-// surface to measure against (a cell host, or before the trinket is placed).
+// childCellPx is one cell of the child's terminal in device pixels: the size
+// that terminal ADVERTISES, which is the same number it answers CSI 16 t with.
+//
+// Deliberately read rather than recomputed. A recomputation from this
+// trinket's own metrics has to reproduce every factor the terminal applied —
+// the base cell, its horizontal and vertical scale, and the surface's
+// pixels-per-unit — and getting one of them wrong scales the child's whole
+// rendering by that factor: it draws its page at the wrong size and overflows
+// the pane. The advertised size cannot disagree with itself.
+//
+// Any hosted terminal answers, because they all take one font from
+// e.TerminalFont() and so share a pitch. Zero before the first is placed, or
+// on a cell host with no device pixels to speak of.
 func (e *Editor) childCellPx() (int, int) {
-	ppu := core.FindPxPerUnit(e)
-	if ppu <= 0 {
+	e.termMu.Lock()
+	var t *PurfecTerm
+	for _, s := range e.termSurfaces {
+		if s != nil && s.term != nil {
+			t = s.term
+			break
+		}
+	}
+	e.termMu.Unlock()
+	if t == nil || t.Terminal() == nil {
 		return 0, 0
 	}
-	m := core.DefaultCellMetrics()
-	w := int(math.Round(float64(m.CellWidth) * ppu))
-	h := int(math.Round(float64(m.CellHeight) * ppu))
-	if w <= 0 || h <= 0 {
-		return 0, 0
-	}
-	return w, h
+	return t.Terminal().Buffer().GetCellPixelSize()
 }
