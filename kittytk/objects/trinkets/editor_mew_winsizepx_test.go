@@ -41,7 +41,10 @@ func (f *pixelSess) ResizeWithPixels(cols, rows, w, h int) error {
 // carries them.
 func TestResizeCarriesPixelWinsize(t *testing.T) {
 	s := &pixelSess{}
-	wrapped := withPixelWinsize(s, func() (int, int) { return 7, 15 })
+	// The pane's MEASURED extent, which is deliberately not cols*cellW: the
+	// grid is fitted on the unscaled cell and the scrollbar lane is already
+	// out of it, so the product would overstate both.
+	wrapped := withPixelWinsize(s, func() (int, int) { return 553, 361 })
 	if err := wrapped.Resize(80, 24); err != nil {
 		t.Fatal(err)
 	}
@@ -51,12 +54,12 @@ func TestResizeCarriesPixelWinsize(t *testing.T) {
 	if s.cols != 80 || s.rows != 24 {
 		t.Errorf("cells = %dx%d, want 80x24", s.cols, s.rows)
 	}
-	if s.pxW != 80*7 || s.pxH != 24*15 {
-		t.Errorf("pixels = %dx%d, want %dx%d", s.pxW, s.pxH, 80*7, 24*15)
+	if s.pxW != 553 || s.pxH != 361 {
+		t.Errorf("pixels = %dx%d, want the measured 553x361", s.pxW, s.pxH)
 	}
 }
 
-// Before the first paint there is no cell size to multiply. Reporting a
+// Before the first paint there is no measured extent. Reporting a
 // window of zero pixels is the very failure this exists to prevent, so the
 // cell-only call is used instead and the pixel fields keep whatever the PTY
 // already had.
@@ -75,7 +78,7 @@ func TestUnknownCellSizeFallsBackToCellsOnly(t *testing.T) {
 // older than v0.2.44 — is handed back untouched rather than wrapped.
 func TestSessionWithoutPixelSupportIsNotWrapped(t *testing.T) {
 	s := &fakeSess{}
-	if got := withPixelWinsize(s, func() (int, int) { return 7, 15 }); got != mewSess(s) {
+	if got := withPixelWinsize(s, func() (int, int) { return 553, 361 }); got != mewSess(s) {
 		t.Error("a session with no pixel resize was wrapped anyway")
 	}
 	if err := s.Resize(80, 24); err != nil {

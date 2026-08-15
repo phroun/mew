@@ -69,7 +69,17 @@ type purfecTermGfx struct {
 	// vpWpx/vpHpx are the widget's DEVICE extent as the outer system snapped
 	// it, and hitKX/hitKY the scale from a unit coordinate onto it.
 	vpWpx, vpHpx float64
-	hitKX, hitKY float64
+
+	// contentWpx/contentHpx are the device pixels the CHILD's grid actually
+	// occupies: the widget's snapped extent less whatever the scrollbar lane
+	// reserves. This is the honest answer to "how big is the child's window in
+	// pixels" — the same measured extent the lanes anchor to, not a product of
+	// a column count and a rate. Those two disagree: the grid fits on the
+	// UNSCALED cell (contentWpx / (baseCW*ppu)) while the cell size reported to
+	// the child is the SCALED one, so cols*cellPx overstates the width by the
+	// horizontal scale and by the reserved lane on top of it.
+	contentWpx, contentHpx float64
+	hitKX, hitKY           float64
 
 	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
 	// (round(units*ppu)) instead of the painter's cell-snapped UnitSpanPx. A
@@ -372,6 +382,9 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
 	// smaller) rect would resize the child under a read-only copy.
+	// Remember the child's true pixel window, for anything that has to tell
+	// the child how big it is in PIXELS (the PTY winsize) rather than cells.
+	t.gfx.contentWpx, t.gfx.contentHpx = float64(contentWpx), float64(contentHpx)
 	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
 		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
 		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
@@ -3323,4 +3336,23 @@ func (t *PurfecTerm) findPopupControllerTerm() core.PopupController {
 		}
 	}
 	return nil
+}
+
+// ContentPixelSize is the child's window in DEVICE PIXELS: the widget's
+// snapped extent less the scrollbar lane, which is the area the child's grid
+// is fitted into. Zero before the first graphical paint, and on a cell
+// surface, where there are no device pixels to report.
+//
+// This is what a PTY winsize's pixel half must carry. The tempting
+// alternative — columns times the reported cell size — is wrong twice over:
+// the grid is fitted on the UNSCALED cell while the reported cell is the
+// SCALED one, and the reserved lane is already out of the fit but not out of
+// the product. A program that draws pictures sizes its whole rendering from
+// this number, so it lands at the wrong scale and overflows the pane.
+func (t *PurfecTerm) ContentPixelSize() (int, int) {
+	w, h := t.gfx.contentWpx, t.gfx.contentHpx
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return int(math.Round(w)), int(math.Round(h))
 }

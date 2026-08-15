@@ -1029,7 +1029,7 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	// window reported as 0x0 pixels leaves it running and rendering nothing.
 	// That is exactly how a browser in the terminal (awrit) fails here while
 	// chafa, which only writes escapes, is fine.
-	sess = withPixelWinsize(sess, e.childCellPx)
+	sess = withPixelWinsize(sess, e.childWindowPx)
 	// Input written to the child wakes its caret: mew owns this session, so
 	// the trinket's own input path never sees it. See editor_mew_blink.go.
 	return e.wakeOnWrite(sess), nil
@@ -2213,13 +2213,13 @@ type pixelWinsizer interface {
 	ResizeWithPixels(cols, rows, widthPx, heightPx int) error
 }
 
-// pxWinsizeSession fills the pixel half of every resize from the surface's
-// current cell size, so ws_xpixel/ws_ypixel describe the same window
+// pxWinsizeSession fills the pixel half of every resize from the pane's
+// MEASURED device extent, so ws_xpixel/ws_ypixel describe the same window
 // ws_col/ws_row do.
 type pxWinsizeSession struct {
 	mew.PTYSession
-	px     pixelWinsizer
-	cellPx func() (int, int)
+	px       pixelWinsizer
+	windowPx func() (int, int)
 }
 
 // Resize carries both measurements. It falls back to the cell-only call when
@@ -2227,39 +2227,40 @@ type pxWinsizeSession struct {
 // reporting a window of zero pixels - which is the very thing this exists to
 // avoid.
 func (s pxWinsizeSession) Resize(cols, rows int) error {
-	if cw, ch := s.cellPx(); cw > 0 && ch > 0 {
-		return s.px.ResizeWithPixels(cols, rows, cols*cw, rows*ch)
+	if w, h := s.windowPx(); w > 0 && h > 0 {
+		return s.px.ResizeWithPixels(cols, rows, w, h)
 	}
 	return s.PTYSession.Resize(cols, rows)
 }
 
 // withPixelWinsize wraps sess so its resizes carry pixel dimensions, when the
 // session can accept them. Returns sess untouched when it cannot.
-func withPixelWinsize(sess mew.PTYSession, cellPx func() (int, int)) mew.PTYSession {
-	if sess == nil || cellPx == nil {
+func withPixelWinsize(sess mew.PTYSession, windowPx func() (int, int)) mew.PTYSession {
+	if sess == nil || windowPx == nil {
 		return sess
 	}
 	px, ok := sess.(pixelWinsizer)
 	if !ok {
 		return sess
 	}
-	return pxWinsizeSession{PTYSession: sess, px: px, cellPx: cellPx}
+	return pxWinsizeSession{PTYSession: sess, px: px, windowPx: windowPx}
 }
 
-// childCellPx is one cell of the child's terminal in device pixels: the size
-// that terminal ADVERTISES, which is the same number it answers CSI 16 t with.
+// childWindowPx is the child's window in DEVICE PIXELS, taken from the pane
+// that paints it (PurfecTerm.ContentPixelSize).
 //
-// Deliberately read rather than recomputed. A recomputation from this
-// trinket's own metrics has to reproduce every factor the terminal applied —
-// the base cell, its horizontal and vertical scale, and the surface's
-// pixels-per-unit — and getting one of them wrong scales the child's whole
-// rendering by that factor: it draws its page at the wrong size and overflows
-// the pane. The advertised size cannot disagree with itself.
+// Measured, never derived. Columns times the reported cell size looks like the
+// same quantity and is not: the grid is fitted on the UNSCALED cell while the
+// cell reported to the child is the SCALED one, and the scrollbar lane is
+// already out of the fit but not out of that product. A program that draws
+// pictures sizes its entire rendering from this, so either error shows up as a
+// page at the wrong scale spilling past the pane — which is what columns times
+// cells produced.
 //
-// Any hosted terminal answers, because they all take one font from
-// e.TerminalFont() and so share a pitch. Zero before the first is placed, or
-// on a cell host with no device pixels to speak of.
-func (e *Editor) childCellPx() (int, int) {
+// Any hosted terminal answers: they all take one font from TerminalFont() and
+// are laid out on one pitch. Zero before the first graphical paint, where the
+// resize falls back to cells only rather than claiming a zero-pixel window.
+func (e *Editor) childWindowPx() (int, int) {
 	e.termMu.Lock()
 	var t *PurfecTerm
 	for _, s := range e.termSurfaces {
@@ -2269,8 +2270,8 @@ func (e *Editor) childCellPx() (int, int) {
 		}
 	}
 	e.termMu.Unlock()
-	if t == nil || t.Terminal() == nil {
+	if t == nil {
 		return 0, 0
 	}
-	return t.Terminal().Buffer().GetCellPixelSize()
+	return t.ContentPixelSize()
 }
