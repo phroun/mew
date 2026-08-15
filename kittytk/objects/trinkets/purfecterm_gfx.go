@@ -1773,14 +1773,94 @@ func (t *PurfecTerm) imageForBlitGfx(im *purfecterm.PlacedImage) *image.RGBA {
 	}
 
 	dst := t.imageScratchGfx(destW, destH)
-	if destW == sw && destH == sh {
+	switch {
+	case destW == sw && destH == sh:
 		// Same size: an exact per-pixel conversion beats resampling, which
 		// would filter a 1:1 blit for nothing.
 		draw.Draw(dst, dst.Bounds(), src, srcRect.Min, draw.Src)
-	} else {
+	case boxDownscaleGfx(dst, src, srcRect):
+		// Averaged whole blocks; see boxDownscaleGfx.
+	default:
 		xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, srcRect, draw.Src, nil)
 	}
 	return dst
+}
+
+// boxDownscaleGfx averages each block of source pixels into one destination
+// pixel, when the blocks divide the source evenly enough to land exactly on
+// dst's size. Reports whether it ran; the caller resamples otherwise.
+//
+// This is the oversample path's own case (§ purfecTermGfx.oversample): an image
+// arrives at deviceScale times the size it is drawn at, so every destination
+// pixel is a whole 2x2 of source. ApproxBiLinear gets that particular ratio
+// right by coincidence — its 2x2 tap lands on block boundaries and weights both
+// samples equally, which IS the average — but it is a fixed 2x2 tap at every
+// ratio, so one pixel off exact (a 1125px-wide window halving to 563) leaves it
+// reading two of every four source pixels and dropping the rest. That aliases
+// hard: on a 1px checkerboard the tap's output varies ~20x more than the
+// average's. Blocks close the gap and cost less than the tap besides.
+//
+// The last block on each axis may be short; it averages what is there. Alpha is
+// summed premultiplied, which is what dst holds and the only weighting under
+// which a transparent pixel does not tint its neighbours.
+func boxDownscaleGfx(dst *image.RGBA, src *image.NRGBA, r image.Rectangle) bool {
+	sw, sh := r.Dx(), r.Dy()
+	dw, dh := dst.Rect.Dx(), dst.Rect.Dy()
+	if dw <= 0 || dh <= 0 || sw < dw || sh < dh {
+		return false // an upscale on either axis is not ours
+	}
+	kx := int(math.Round(float64(sw) / float64(dw)))
+	ky := int(math.Round(float64(sh) / float64(dh)))
+	if kx < 2 && ky < 2 {
+		return false // barely a downscale; a tap is as good and cheaper
+	}
+	if kx < 1 {
+		kx = 1
+	}
+	if ky < 1 {
+		ky = 1
+	}
+	if (sw+kx-1)/kx != dw || (sh+ky-1)/ky != dh {
+		return false // blocks would not land on dst
+	}
+
+	for y := 0; y < dh; y++ {
+		y0 := r.Min.Y + y*ky
+		y1 := y0 + ky
+		if y1 > r.Max.Y {
+			y1 = r.Max.Y
+		}
+		for x := 0; x < dw; x++ {
+			x0 := r.Min.X + x*kx
+			x1 := x0 + kx
+			if x1 > r.Max.X {
+				x1 = r.Max.X
+			}
+			var sr, sg, sb, sa, n uint32
+			for sy := y0; sy < y1; sy++ {
+				o := src.PixOffset(x0, sy)
+				for sx := x0; sx < x1; sx++ {
+					a := uint32(src.Pix[o+3])
+					sr += uint32(src.Pix[o+0]) * a / 255
+					sg += uint32(src.Pix[o+1]) * a / 255
+					sb += uint32(src.Pix[o+2]) * a / 255
+					sa += a
+					n++
+					o += 4
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			half := n / 2
+			o := dst.PixOffset(x, y)
+			dst.Pix[o+0] = byte((sr + half) / n)
+			dst.Pix[o+1] = byte((sg + half) / n)
+			dst.Pix[o+2] = byte((sb + half) / n)
+			dst.Pix[o+3] = byte((sa + half) / n)
+		}
+	}
+	return true
 }
 
 // hasPartialAlpha reports whether any pixel is neither fully opaque nor fully

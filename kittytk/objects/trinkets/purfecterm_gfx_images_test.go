@@ -3,6 +3,7 @@ package trinkets
 import (
 	"encoding/base64"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"strings"
@@ -556,5 +557,113 @@ func TestGfxOversampledImageDrawsAtRealCellSize(t *testing.T) {
 	}
 	if green(rcw/2, 2*rch+rch/2) {
 		t.Error("the image spilled below two real cells")
+	}
+}
+
+// The oversample path halves an image on its way to the screen, and what that
+// halving keeps is the whole of the source, not a sample of it.
+//
+// A 1px checkerboard is the honest test: averaged, every destination pixel is
+// the same mid-tone, because each covers one white pixel and one black. Sampled
+// - two of the four read, two dropped - the destination keeps the checker, at
+// half the frequency and full contrast. That second picture is the aliasing
+// this is here to prevent; it is also indistinguishable from a correct render
+// until the source has fine detail, which is exactly when it matters.
+func TestGfxDownscaleAveragesRatherThanSamples(t *testing.T) {
+	checker := func(w, h int) *image.NRGBA {
+		im := image.NewNRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := byte(0)
+				if (x+y)%2 == 0 {
+					v = 255
+				}
+				o := im.PixOffset(x, y)
+				im.Pix[o], im.Pix[o+1], im.Pix[o+2], im.Pix[o+3] = v, v, v, 255
+			}
+		}
+		return im
+	}
+
+	// Exactly halved, and one pixel off exactly halved: a window an odd number
+	// of pixels wide produces the second, and ApproxBiLinear's fixed 2x2 tap
+	// aliases badly there.
+	for _, c := range []struct{ srcW, srcH, dstW, dstH int }{
+		{64, 32, 32, 16},
+		{65, 33, 33, 17},
+	} {
+		src := checker(c.srcW, c.srcH)
+		dst := image.NewRGBA(image.Rect(0, 0, c.dstW, c.dstH))
+		if !boxDownscaleGfx(dst, src, src.Rect) {
+			t.Errorf("%dx%d -> %dx%d: declined to average", c.srcW, c.srcH, c.dstW, c.dstH)
+			continue
+		}
+		// The last row/column of an odd source is a half block, so it keeps
+		// the checker legitimately; the interior must be flat.
+		lo, hi := 255, 0
+		for y := 0; y < c.dstH-1; y++ {
+			for x := 0; x < c.dstW-1; x++ {
+				v := int(dst.RGBAAt(x, y).R)
+				if v < lo {
+					lo = v
+				}
+				if v > hi {
+					hi = v
+				}
+			}
+		}
+		if hi-lo > 2 {
+			t.Errorf("%dx%d -> %dx%d: interior ranges %d..%d, want one flat mid-tone: "+
+				"the checker survived, so pixels were dropped rather than averaged",
+				c.srcW, c.srcH, c.dstW, c.dstH, lo, hi)
+		}
+		if lo < 120 || hi > 136 {
+			t.Errorf("%dx%d -> %dx%d: mid-tone %d..%d, want ~128", c.srcW, c.srcH, c.dstW, c.dstH, lo, hi)
+		}
+	}
+}
+
+// Blocks only apply where they land exactly and actually reduce; everything
+// else stays with the resampler, which handles arbitrary ratios.
+func TestGfxDownscaleDeclinesWhereBlocksDoNotFit(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 64, 32))
+	for _, c := range []struct {
+		dstW, dstH int
+		why        string
+	}{
+		{128, 64, "an upscale"},
+		{50, 30, "a ratio under 2 on both axes"},
+		{20, 16, "blocks that miss dst's width"},
+	} {
+		dst := image.NewRGBA(image.Rect(0, 0, c.dstW, c.dstH))
+		if boxDownscaleGfx(dst, src, src.Rect) {
+			t.Errorf("64x32 -> %dx%d: averaged %s", c.dstW, c.dstH, c.why)
+		}
+	}
+}
+
+// A crop is downscaled from where it sits, not from the image's origin.
+func TestGfxDownscaleHonoursTheSourceRect(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			o := src.PixOffset(x, y)
+			v := byte(0)
+			if x >= 4 && y >= 4 {
+				v = 200 // only the bottom-right quadrant is lit
+			}
+			src.Pix[o], src.Pix[o+1], src.Pix[o+2], src.Pix[o+3] = v, v, v, 255
+		}
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	if !boxDownscaleGfx(dst, src, image.Rect(4, 4, 8, 8)) {
+		t.Fatal("declined the cropped 4x4 -> 2x2")
+	}
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			if got := dst.RGBAAt(x, y).R; got != 200 {
+				t.Errorf("crop pixel (%d,%d) = %d, want 200: averaged from the wrong origin", x, y, got)
+			}
+		}
 	}
 }
