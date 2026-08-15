@@ -1023,6 +1023,13 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Tell the child how big its window is in PIXELS as well as cells. A
+	// program drawing characters never asks; one drawing PICTURES sizes its
+	// viewport from TIOCGWINSZ rather than querying the terminal, and a
+	// window reported as 0x0 pixels leaves it running and rendering nothing.
+	// That is exactly how a browser in the terminal (awrit) fails here while
+	// chafa, which only writes escapes, is fine.
+	sess = withPixelWinsize(sess, e.childCellPx)
 	// Input written to the child wakes its caret: mew owns this session, so
 	// the trinket's own input path never sees it. See editor_mew_blink.go.
 	return e.wakeOnWrite(sess), nil
@@ -2196,4 +2203,63 @@ func tighten(span func(core.Unit, core.Unit) int, u core.Unit, targetPx int, up 
 		u = next
 	}
 	return u
+}
+
+// pixelWinsizer is the OPTIONAL other half of a session's Resize: the window
+// measured in device PIXELS as well as cells. purfecterm's PTY grew it in
+// v0.2.44; a session that predates it, or a Windows pseudoconsole (which has
+// no pixel field at all), simply does not have the method and is left alone.
+type pixelWinsizer interface {
+	ResizeWithPixels(cols, rows, widthPx, heightPx int) error
+}
+
+// pxWinsizeSession fills the pixel half of every resize from the surface's
+// current cell size, so ws_xpixel/ws_ypixel describe the same window
+// ws_col/ws_row do.
+type pxWinsizeSession struct {
+	mew.PTYSession
+	px     pixelWinsizer
+	cellPx func() (int, int)
+}
+
+// Resize carries both measurements. It falls back to the cell-only call when
+// the cell size is not known yet (before the first paint), rather than
+// reporting a window of zero pixels - which is the very thing this exists to
+// avoid.
+func (s pxWinsizeSession) Resize(cols, rows int) error {
+	if cw, ch := s.cellPx(); cw > 0 && ch > 0 {
+		return s.px.ResizeWithPixels(cols, rows, cols*cw, rows*ch)
+	}
+	return s.PTYSession.Resize(cols, rows)
+}
+
+// withPixelWinsize wraps sess so its resizes carry pixel dimensions, when the
+// session can accept them. Returns sess untouched when it cannot.
+func withPixelWinsize(sess mew.PTYSession, cellPx func() (int, int)) mew.PTYSession {
+	if sess == nil || cellPx == nil {
+		return sess
+	}
+	px, ok := sess.(pixelWinsizer)
+	if !ok {
+		return sess
+	}
+	return pxWinsizeSession{PTYSession: sess, px: px, cellPx: cellPx}
+}
+
+// childCellPx is one cell of the child's terminal in device pixels: the
+// toolkit cell scaled by the surface's pixels-per-unit, which is the same
+// pitch this editor's own text is painted on. Zero when there is no graphical
+// surface to measure against (a cell host, or before the trinket is placed).
+func (e *Editor) childCellPx() (int, int) {
+	ppu := core.FindPxPerUnit(e)
+	if ppu <= 0 {
+		return 0, 0
+	}
+	m := core.DefaultCellMetrics()
+	w := int(math.Round(float64(m.CellWidth) * ppu))
+	h := int(math.Round(float64(m.CellHeight) * ppu))
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return w, h
 }
