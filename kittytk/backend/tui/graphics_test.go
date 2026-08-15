@@ -282,7 +282,7 @@ func TestImageFlushRestoresTheCursor(t *testing.T) {
 	b.pendingImages = []placedImage{{col: 4, row: 2, img: image.NewRGBA(image.Rect(0, 0, 2, 2))}}
 	b.mu.Unlock()
 
-	b.flushImagesLocked(true)
+	b.flushImagesLocked()
 	got := out.String()
 	if !strings.HasPrefix(got, "\0337") {
 		t.Errorf("the flush did not save the cursor first: %q", firstBytes(got))
@@ -310,64 +310,113 @@ func lastBytes(s string) string {
 	return s
 }
 
-// An idle frame must not re-transmit a picture that is already on screen.
+// An idle frame must not re-transmit a picture that is already on screen, and
+// under kitty neither must a busy one.
 //
 // A frame is drawn on a heartbeat whether or not anything happened, and a
-// picture is not a few bytes of text — re-sending one every frame pushes its
-// whole base64 payload down the pty forever for no change at all. Kitty
-// placements persist until deleted and sixel pixels are screen content, so
-// when neither the images nor the text moved, the screen is already correct.
-func TestUnchangedImagesAreNotResentEveryFrame(t *testing.T) {
+// picture is not a few bytes of text. Kitty placements persist until deleted —
+// the same persistence that makes an image survive a `clear` — so text painted
+// over those cells composites against them rather than destroying them, and no
+// amount of text is a reason to send pixels again.
+func TestKittyImagesSurviveTextWithoutBeingResent(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
-	place := func(b *TUIBackend) {
-		b.mu.Lock()
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 80, rows: 25}
+	b.dmgMin = make([]int, b.rows)
+	b.dmgMax = make([]int, b.rows)
+	b.graphics = GraphicsKitty
+	place := func() {
 		b.pendingImages = []placedImage{{col: 4, row: 2, img: img}}
-		b.mu.Unlock()
 	}
 
-	var out strings.Builder
-	b := &TUIBackend{output: &out}
-	b.mu.Lock()
-	b.graphics = GraphicsKitty
-	b.mu.Unlock()
-
-	place(b)
-	b.flushImagesLocked(true) // the frame that first drew it
-	first := out.Len()
-	if first == 0 {
+	place()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
 		t.Fatal("the image was never sent")
 	}
 
-	// An idle frame: same picture, no text written.
+	// An idle frame.
 	out.Reset()
-	place(b)
-	b.flushImagesLocked(false)
+	place()
+	b.flushImagesLocked()
 	if out.Len() != 0 {
 		t.Errorf("an idle frame re-sent %d bytes for an unchanged picture", out.Len())
 	}
 
-	// Text moved: the diff may have painted over it, so it goes again.
+	// A busy frame that repainted the very cells the image sits on. Kitty does
+	// not care: the placement is still there, under or over the text per its z.
 	out.Reset()
-	place(b)
-	b.flushImagesLocked(true)
-	if out.Len() == 0 {
-		t.Error("the picture was not redrawn after the text diff wrote over the screen")
+	for y := range b.dmgMin {
+		b.dmgMin[y], b.dmgMax[y] = 0, b.cols-1
+	}
+	place()
+	b.flushImagesLocked()
+	if out.Len() != 0 {
+		t.Errorf("a text repaint re-sent %d bytes under kitty, where placements persist", out.Len())
 	}
 
-	// The picture itself moved: always goes again, idle or not.
+	// Moving it is a real change.
 	out.Reset()
-	b.mu.Lock()
 	b.pendingImages = []placedImage{{col: 9, row: 2, img: img}}
-	b.mu.Unlock()
-	b.flushImagesLocked(false)
+	b.flushImagesLocked()
 	if out.Len() == 0 {
 		t.Error("a picture that moved was not re-sent")
 	}
+}
 
-	// And it going away is a change too — the stale placement must be deleted.
+// Sixel has no placement to persist: the pixels ARE screen content, so text
+// painted over them erases that part. It goes again — but only when the diff
+// actually touched the cells it covers. A change on an unrelated row is not a
+// reason to re-transmit a picture.
+func TestSixelImageResentOnlyWhenItsOwnCellsAreRepainted(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 20, 40)) // 2x2 cells at 10x20
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 80, rows: 25}
+	b.dmgMin = make([]int, b.rows)
+	b.dmgMax = make([]int, b.rows)
+	b.graphics = GraphicsSixel
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	clearDamage := func() {
+		for y := range b.dmgMin {
+			b.dmgMin[y], b.dmgMax[y] = -1, -1
+		}
+	}
+	place := func() { b.pendingImages = []placedImage{{col: 4, row: 2, img: img}} }
+
+	clearDamage()
+	place()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Fatal("the image was never sent")
+	}
+
+	// Text on a row the picture does not reach.
 	out.Reset()
-	b.flushImagesLocked(false)
-	if !strings.Contains(out.String(), "\033_Ga=d,d=A\033\\") {
-		t.Errorf("the placement was not deleted when the picture went away: %q", out.String())
+	clearDamage()
+	b.markDamage(20, 0, 79)
+	place()
+	b.flushImagesLocked()
+	if out.Len() != 0 {
+		t.Errorf("text on an unrelated row re-sent %d bytes", out.Len())
+	}
+
+	// Text on the picture's rows but well to the right of it.
+	out.Reset()
+	clearDamage()
+	b.markDamage(2, 40, 79)
+	place()
+	b.flushImagesLocked()
+	if out.Len() != 0 {
+		t.Errorf("text on the same row but a distant column re-sent %d bytes", out.Len())
+	}
+
+	// Text ON it: the sixel pixels there were overwritten, so it goes again.
+	out.Reset()
+	clearDamage()
+	b.markDamage(3, 5, 5)
+	place()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Error("text painted over the picture did not cause it to be redrawn")
 	}
 }

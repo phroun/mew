@@ -215,66 +215,100 @@ func (t *TUIBackend) DrawImagePx(xPx, yPx int, img image.Image) {
 // repainted those cells is what erased them.
 // The caller already holds t.mu (EndFrame does, and writes the text diff
 // under it), so this must NOT take it again - sync.Mutex is not reentrant.
-func (t *TUIBackend) flushImagesLocked(textChanged bool) {
+func (t *TUIBackend) flushImagesLocked() {
 	proto := t.graphics
 	imgs := t.pendingImages
 	t.pendingImages = nil
-	had := t.hadImages
-	t.hadImages = len(imgs) > 0
+	prev := t.shownImages
+	t.shownImages = imgs
 
-	if proto == GraphicsNone || (len(imgs) == 0 && !had) {
+	if proto == GraphicsNone || (len(imgs) == 0 && len(prev) == 0) {
 		return
 	}
 
-	// Nothing to do when the same pictures are already on screen and this
-	// frame's text diff wrote nothing that could have disturbed them.
-	//
-	// A frame is drawn on a heartbeat whether or not anything happened, and a
-	// picture is not a few bytes of text: re-transmitting one every frame
-	// pushes its whole payload down the pty forever, base64'd, for no change
-	// at all. Kitty placements persist until deleted, and sixel pixels are
-	// screen content that only a repaint of those cells can erase — so when
-	// neither the set nor the text moved, the screen is already correct.
-	same := !textChanged && len(imgs) == len(t.shownImages)
-	if same {
-		for i := range imgs {
-			if imgs[i] != t.shownImages[i] {
-				same = false
+	// Which pictures are NEW to the screen this frame. Everything else is
+	// already drawn where it belongs.
+	fresh := make([]bool, len(imgs))
+	setChanged := len(imgs) != len(prev)
+	for i := range imgs {
+		seen := false
+		for j := range prev {
+			if imgs[i] == prev[j] {
+				seen = true
 				break
 			}
 		}
-	}
-	if same {
-		t.shownImages = imgs
-		return
-	}
-	t.shownImages = imgs
-
-	var sb strings.Builder
-	// Save the cursor, because placing a picture means moving it. The caret
-	// was already positioned by the text diff just above, and leaving it
-	// parked wherever the last image was anchored puts the terminal's own
-	// cursor block on top of that image — a solid cell of it, in the corner.
-	// DECSC/DECRC restores the position (and the pen) once the pictures are
-	// out, so the caret ends the frame where the text layer put it.
-	sb.WriteString("\0337")
-	if proto == GraphicsKitty && had {
-		sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
-	}
-	for _, p := range imgs {
-		if p.col < 0 || p.row < 0 {
-			continue
+		fresh[i] = !seen
+		if !seen {
+			setChanged = true
 		}
-		sb.WriteString(fmt.Sprintf("\033[%d;%dH", p.row+1, p.col+1))
-		switch proto {
-		case GraphicsKitty:
+	}
+
+	// KITTY: a placement lives until it is deleted. Text painted over those
+	// cells composites against it rather than destroying it — which is the
+	// same persistence that makes an image survive a `clear`. So text damage
+	// is not a reason to send anything, and an unchanged set costs nothing at
+	// all, however busy the frame was.
+	//
+	// SIXEL: there is no placement, only pixels that became screen content.
+	// Text painted over them erases that part, so a picture has to go again —
+	// but only when the diff actually touched the cells it covers. A change on
+	// an unrelated row leaves it whole.
+	var sb strings.Builder
+	switch proto {
+	case GraphicsKitty:
+		if !setChanged {
+			return
+		}
+		sb.WriteString("\0337")
+		if len(prev) > 0 {
+			sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
+		}
+		for _, p := range imgs {
+			if p.col < 0 || p.row < 0 {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("\033[%d;%dH", p.row+1, p.col+1))
 			writeKittyImage(&sb, p.img)
-		case GraphicsSixel:
+		}
+	case GraphicsSixel:
+		for i, p := range imgs {
+			if p.col < 0 || p.row < 0 {
+				continue
+			}
+			if !fresh[i] {
+				c1, r1 := t.imageCellExtentLocked(p)
+				if !t.damagedLocked(p.col, p.row, c1, r1) {
+					continue // still on screen, and nothing painted over it
+				}
+			}
+			if sb.Len() == 0 {
+				sb.WriteString("\0337")
+			}
+			sb.WriteString(fmt.Sprintf("\033[%d;%dH", p.row+1, p.col+1))
 			writeSixelImage(&sb, p.img)
 		}
 	}
+	if sb.Len() == 0 {
+		return
+	}
+	// The caret was placed by the text diff; putting a picture anywhere means
+	// moving it, and leaving it parked on the last image draws the terminal's
+	// cursor block in the corner of that image.
 	sb.WriteString("\0338")
 	t.write(sb.String())
+}
+
+// imageCellExtentLocked is the last cell an image covers, from its anchor. The
+// cell size may be unknown before the terminal answers, in which case the
+// picture is treated as covering its anchor row alone rather than guessing.
+func (t *TUIBackend) imageCellExtentLocked(p placedImage) (c1, r1 int) {
+	cw, ch := t.cellPixelSizeLocked()
+	b := p.img.Bounds()
+	if cw <= 0 || ch <= 0 {
+		return p.col, p.row
+	}
+	return p.col + (b.Dx()+cw-1)/cw - 1, p.row + (b.Dy()+ch-1)/ch - 1
 }
 
 // writeKittyImage transmits and displays img at the cursor: RGBA direct
@@ -421,6 +455,12 @@ func writeSixelImage(sb *strings.Builder, img image.Image) {
 func (t *TUIBackend) CellPixelSize() (int, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.cellPixelSizeLocked()
+}
+
+// cellPixelSizeLocked is CellPixelSize for callers that already hold t.mu —
+// the frame flush does, and sync.Mutex is not reentrant.
+func (t *TUIBackend) cellPixelSizeLocked() (int, int) {
 	if t.outerCellSizeOK && t.outerCellW > 0 && t.outerCellH > 0 {
 		return t.outerCellW, t.outerCellH
 	}

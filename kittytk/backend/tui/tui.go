@@ -85,6 +85,12 @@ type TUIBackend struct {
 	metrics core.CellMetrics
 
 	// Screen buffers (double buffering)
+	// dmgMin/dmgMax are the column range the text diff rewrote on each row
+	// this frame, -1 when the row was untouched. Images need it: sixel pixels
+	// are screen content, so a picture survives until text is painted over
+	// THOSE cells - a change on an unrelated row is not a reason to re-send it.
+	dmgMin, dmgMax []int
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
@@ -462,6 +468,8 @@ func (t *TUIBackend) RestoreTerminal() {
 func (t *TUIBackend) allocateBuffers() {
 	t.frontBuffer = make([][]Cell, t.rows)
 	t.backBuffer = make([][]Cell, t.rows)
+	t.dmgMin = make([]int, t.rows)
+	t.dmgMax = make([]int, t.rows)
 	t.frontLineAttr = make([]byte, t.rows)
 
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
@@ -546,6 +554,10 @@ func (t *TUIBackend) EndFrame() {
 	termX, termY := -1, -1 // where the terminal cursor sits (unknown)
 	penStyle := ""         // SGR last emitted ("" = unknown, always emit)
 
+	for y := range t.dmgMin {
+		t.dmgMin[y], t.dmgMax[y] = -1, -1
+	}
+
 	for y := 0; y < t.rows; y++ {
 		lineCleared := false
 
@@ -559,6 +571,7 @@ func (t *TUIBackend) EndFrame() {
 			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5\033[0m\033[2K", y+1))
 			t.frontLineAttr[y] = 0
 			lineCleared = true
+			t.markDamage(y, 0, t.cols-1)
 			termY, termX = y, 0
 			penStyle = "" // the [0m reset invalidated the tracked pen
 		}
@@ -578,6 +591,7 @@ func (t *TUIBackend) EndFrame() {
 				}
 			}
 			if changed {
+				t.markDamage(y, 0, t.cols-1)
 				sb.WriteString(fmt.Sprintf("\033[%d;1H\033#%c\033[0m\033[2K", y+1, mode))
 				penStyle = ""
 				for x := 0; x < t.cols; x++ {
@@ -653,6 +667,7 @@ func (t *TUIBackend) EndFrame() {
 				continue
 			}
 
+			t.markDamage(y, x, x+w-1)
 			if termY != y || termX != x {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 				termY, termX = y, x
@@ -723,9 +738,7 @@ func (t *TUIBackend) EndFrame() {
 	// and anything emitted before it would be painted over by text written
 	// afterwards. This is also the right order to read - the image sits on
 	// the row the text layer already made room for.
-	// body is the frame's TEXT: empty means the diff wrote nothing, so
-	// nothing can have erased a picture already on screen.
-	t.flushImagesLocked(body != "")
+	t.flushImagesLocked()
 }
 
 // Clear fills the entire surface with a style.
@@ -1689,4 +1702,37 @@ func detectColorDepth() int {
 
 	// Default to 16 colors
 	return 16
+}
+
+// markDamage records that the text diff rewrote cells [c0,c1] of row y.
+func (t *TUIBackend) markDamage(y, c0, c1 int) {
+	if y < 0 || y >= len(t.dmgMin) {
+		return
+	}
+	if c0 < 0 {
+		c0 = 0
+	}
+	if c1 > t.cols-1 {
+		c1 = t.cols - 1
+	}
+	if t.dmgMin[y] < 0 || c0 < t.dmgMin[y] {
+		t.dmgMin[y] = c0
+	}
+	if c1 > t.dmgMax[y] {
+		t.dmgMax[y] = c1
+	}
+}
+
+// damagedLocked reports whether the frame's text diff touched any cell of the
+// rectangle [c0,c1] x [r0,r1].
+func (t *TUIBackend) damagedLocked(c0, r0, c1, r1 int) bool {
+	for y := r0; y <= r1; y++ {
+		if y < 0 || y >= len(t.dmgMin) || t.dmgMin[y] < 0 {
+			continue
+		}
+		if t.dmgMin[y] <= c1 && t.dmgMax[y] >= c0 {
+			return true
+		}
+	}
+	return false
 }
