@@ -1,9 +1,0 @@
-=== How to Exit ===
-
-To exit mew, you need to close all of the open buffers.
-
-You can do this individually or all in one operation.
-
-To close an individual buffer WITHOUT SAVING, press [[keys#cancel.buffer_close]].
-
-To save all open buffers and then exit, press [[keys#buffer_save_all , exit]].

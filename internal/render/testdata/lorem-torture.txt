@@ -1,65 +1,0 @@
-=== mew renderer torture sample =========================
-Dense mix of the classes that broke rendering: C0 and C1
-controls, marks from scripts mew cannot render, marks on a
-base of the wrong script, marks with no base, invalid UTF-8.
-No row may overrun its window, lose text, or drift the caret.
-
---- dense mixed corruption ------------------------------
-Lorem ipsum dolor߫ sit amet,ั consectetur adipiscing֑ elit
-sed do eiusmod߬ tempor incididunt় ut labore֗ et dolore߮ magna
-Ut enim ad߭ minim veniam,ཱ quis nostrudְ exercitation ullamco߰
-laboris nisi ut߮ aliquip exီ ea commodoִ consequat duis߱ aute
-irure dolor in߰ reprehenderit in॑ voluptate velitׁ esse cillum߳
-dolore eu fugiat߱ nulla pariaturា excepteur sint֑ occaecat
-cupidatat non proident,߳ sunt in᪰ culpa qui֗ officia deserunt߬
-mollit anim id߫ est laborum꠆ sed utְ perspiciatis unde߭ omnis
-iste natus error߬ sit voluptatemั accusantium doloremqueִ
-laudantium, totam rem߭ aperiam eaque় ipsa quaeׁ ab illo߰
-inventore veritatis et߮ quasi architectoཱ beatae vitae֑ dicta
-sunt explicabo nemo߰ enim ipsamီ voluptatem quia֗ voluptas sit߳
-aspernatur aut odit߱ aut fugit,॑ sed quiaְ consequuntur magni߫
-dolores eos qui߳ ratione voluptatemា sequi nesciuntִ neque
-porro quisquam est,߫ qui dolorem᪰ ipsum quiaׁ dolor sit߭ amet
-consectetur, adipisci velit,߬ sed quia꠆ non numquam֑ eius modi߮
-tempora incidunt ut߭ labore etั dolore magnam֗ aliquam quaerat߰
-voluptatem ut enim߮ ad minima় veniam, quisְ nostrum ipsa߱ quae
-exercitationem ullam corporis߰ suscipit laboriosamཱ nisi autִ
-aliquid ex ea߱ commodi consequaturီ quis autemׁ vel eum߫ iure
-
---- marks with NO base (they open the line) -------------
-́acute opens this line with nothing to anchor onto
-ְniqqud opens this one
-߭an NKo tone opens this one
-́́́three stacked marks, still no base at all
-
---- C1 string introducers (each of these ate its line) --
-DCS  the rest of this line must still be here
-SOS  the rest of this line must still be here
-CSI  the rest of this line must still be here
-ST   the rest of this line must still be here
-OSC  the rest of this line must still be here
-PM   the rest of this line must still be here
-APC  the rest of this line must still be here
-
---- wide glyphs interleaved with offenders --------------
-CJK 日本語 then ߭ more 日本 and  tail text
-emoji 🙂 and 🚀߮ trailing text
-日֗ hebrew accent on a CJK base, then plain text
-tabs	and	controls	 mixed	 with wide 中
-
---- zero-width and bidi controls ------------------------
-zwsp​here zwj‍join bom﻿mark
-rlm‏ rlo‮ fsi⁦ here⁩ end
-
---- WELL-FORMED: these must still render perfectly ------
-pointed hebrew: שָׁלוֹם  עָלֵיכֶם
-arabic: السَلام  عَليكُم
-latin diacritics: résumé naïve cöoperate
-cyrillic: Приве́т   greek: καλημέρα
-cjk: 日本語と中文と한국어
-
---- invalid UTF-8 bytes ---------------------------------
-quis nostrud��) exercitation��� ullamco laboris��� nisi ut aliquip ex ea
-duis aute� irure� dolor� in� reprehenderit� velit esse
-excepteur� sint� occaecat� cupidatat non proident sunt in
-culpa� qui� officia� deserunt mollit anim id est laborum
