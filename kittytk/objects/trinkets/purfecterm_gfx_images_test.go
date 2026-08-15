@@ -456,3 +456,105 @@ func TestGfxKittyPlaceholderRendering(t *testing.T) {
 			n, 2*cellW*cellH)
 	}
 }
+
+// gfxImageTermScaled is gfxImageTerm on a HiDPI surface, where the terminal
+// oversamples: it tells the child a cell is deviceScale times its real size,
+// so the child renders at the display's true density.
+func gfxImageTermScaled(t *testing.T, scale int) (*PurfecTerm, *raster.Backend) {
+	t.Helper()
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(640, 400, scale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	term := NewPurfecTerm()
+	if term.Terminal() == nil {
+		t.Skip("terminal unavailable")
+	}
+	term.SetBounds(core.UnitRect{Width: 640, Height: 400})
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+	return term, b
+}
+
+// On a HiDPI surface the cell we ADVERTISE is deliberately larger than the one
+// we paint, by the device scale.
+//
+// The kitty protocol gives a terminal no way to state a display scale - a
+// client works density out purely from the pixels-per-cell it is told - so
+// claiming a bigger cell is the only way to ask for a denser rendering. A
+// browser told a cell is twice its real size lays out half as many css pixels
+// in it, which is precisely a device-pixel ratio of 2, and the image it sends
+// back is twice the size we draw it at.
+func TestGfxOversampledCellIsAdvertisedLarger(t *testing.T) {
+	const scale = 2
+	term, _ := gfxImageTermScaled(t, scale)
+	buf := term.Terminal().Buffer()
+
+	realW, realH := cellPx(term)
+	gotW, gotH := buf.GetCellPixelSize()
+	wantW := int(math.Round(math.Round(realW) * scale))
+	wantH := int(math.Round(math.Round(realH) * scale))
+	if gotW != wantW || gotH != wantH {
+		t.Errorf("advertised cell = %dx%d, want the real %vx%v times %d = %dx%d",
+			gotW, gotH, math.Round(realW), math.Round(realH), scale, wantW, wantH)
+	}
+	// The pointer unit follows the advertised cell, so the mouse stays
+	// self-consistent through the oversample (it encodes in these units).
+	if pw, ph := buf.GetPointerPixelUnit(); pw != gotW || ph != gotH {
+		t.Errorf("pointer unit %dx%d drifted from the advertised cell %dx%d", pw, ph, gotW, gotH)
+	}
+}
+
+// And the image that comes back is drawn at the size we PAINT, not the size it
+// was sent at: an image covering N advertised cells covers N real cells. That
+// halving is what turns the child's oversampled render into a crisp one rather
+// than a picture spilling past its pane.
+func TestGfxOversampledImageDrawsAtRealCellSize(t *testing.T) {
+	const scale = 2
+	term, b := gfxImageTermScaled(t, scale)
+
+	realW, realH := cellPx(term)
+	rcw, rch := int(math.Round(realW)), int(math.Round(realH))
+	if rcw <= 0 || rch <= 0 {
+		t.Fatalf("no real cell (%vx%v)", realW, realH)
+	}
+	// Two advertised cells wide and tall - so four REAL cells of source
+	// pixels, which must land on two real cells of screen.
+	acw, ach := rcw*scale, rch*scale
+	imgW, imgH := acw*2, ach*2
+	pix := make([]byte, imgW*imgH*4)
+	for i := 0; i < len(pix); i += 4 {
+		pix[i], pix[i+1], pix[i+2], pix[i+3] = 0, 255, 0, 255
+	}
+
+	term.Feed([]byte("\x1b[1;1H"))
+	// c/r place it across exactly two advertised cells, which is what a
+	// client sizing against the cell we reported would ask for.
+	term.Feed(kittyRGBA(imgW, imgH, pix, ",c=2,r=2"))
+	b.Clear(style.DefaultStyle())
+	term.Paint(core.NewPainter(b))
+
+	img := b.Image()
+	green := func(x, y int) bool {
+		c := img.RGBAAt(x, y)
+		return c.G > 200 && c.R < 80 && c.B < 80
+	}
+	// Inside two REAL cells: painted.
+	if !green(rcw/2, rch/2) {
+		t.Error("the image did not paint at its anchor")
+	}
+	if !green(2*rcw-2, 2*rch-2) {
+		t.Error("the image did not cover the two real cells it claims")
+	}
+	// Beyond them: NOT painted. Undivided, it would have spilled to four.
+	if green(2*rcw+rcw/2, rch/2) {
+		t.Errorf("the image spilled past two real cells - it was drawn at the "+
+			"advertised size (%dx%d) instead of the painted one", imgW, imgH)
+	}
+	if green(rcw/2, 2*rch+rch/2) {
+		t.Error("the image spilled below two real cells")
+	}
+}

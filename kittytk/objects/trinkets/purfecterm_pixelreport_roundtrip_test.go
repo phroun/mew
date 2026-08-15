@@ -156,19 +156,29 @@ func TestChildWindowPixelsFitThePane(t *testing.T) {
 	if cols <= 0 || rows <= 0 || cw <= 0 || ch <= 0 {
 		t.Fatalf("grid %dx%d cell %dx%d", cols, rows, cw, ch)
 	}
-	wpx, hpx := cols*cw, rows*ch
+	wpx, hpx := float64(cols*cw), float64(rows*ch)
+
+	// The window is stated in the child's OVERSAMPLED pixels: it is told a
+	// cell is deviceScale times its real size so it renders at the display's
+	// density, and the image it sends back is divided by the same factor on
+	// the way to the screen. So the thing that must fit the pane is the
+	// window after that division.
+	if f := term.gfx.oversample; f > 1 {
+		wpx /= f
+		hpx /= f
+	}
 
 	paneW, paneH := term.ContentPixelSize()
-	t.Logf("child %dx%d cells * %dx%d px = %dx%d; pane measures %dx%d",
-		cols, rows, cw, ch, wpx, hpx, paneW, paneH)
+	t.Logf("child %dx%d cells * %dx%d px / oversample %.2f = %.0fx%.0f; pane measures %dx%d",
+		cols, rows, cw, ch, term.gfx.oversample, wpx, hpx, paneW, paneH)
 
-	if paneW > 0 && wpx > paneW {
-		t.Errorf("child window %dpx wide overflows the pane's %dpx", wpx, paneW)
+	if paneW > 0 && int(wpx) > paneW {
+		t.Errorf("child window %.0fpx wide overflows the pane's %dpx", wpx, paneW)
 	}
-	if paneH > 0 && hpx > paneH {
-		t.Errorf("child window %dpx tall overflows the pane's %dpx", hpx, paneH)
+	if paneH > 0 && int(hpx) > paneH {
+		t.Errorf("child window %.0fpx tall overflows the pane's %dpx", hpx, paneH)
 	}
-	if surf := b.UnitToPxX(sz.Width) - b.UnitToPxX(0); wpx > surf {
-		t.Errorf("child window %dpx wide overflows the surface's %dpx", wpx, surf)
+	if surf := b.UnitToPxX(sz.Width) - b.UnitToPxX(0); int(wpx) > surf {
+		t.Errorf("child window %.0fpx wide overflows the surface's %dpx", wpx, surf)
 	}
 }

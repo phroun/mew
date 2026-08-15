@@ -79,7 +79,26 @@ type purfecTermGfx struct {
 	// the child is the SCALED one, so cols*cellPx overstates the width by the
 	// horizontal scale and by the reserved lane on top of it.
 	contentWpx, contentHpx float64
-	hitKX, hitKY           float64
+
+	// oversample is how much LARGER than life this terminal describes itself
+	// to the child: the cell it reports (CSI 16 t) and the pixel window it is
+	// given are both multiplied by it, and every image that comes back is
+	// divided by it again on the way to the screen.
+	//
+	// It exists because the kitty graphics protocol has no way for a terminal
+	// to state a display scale - a client derives density purely from the
+	// pixels-per-cell it is told - so the only way to ask for a denser
+	// rendering is to claim a bigger cell. A browser handed a cell twice the
+	// truth lays out half as many css pixels in it, which is exactly a
+	// device-pixel ratio of 2, and the image it sends back is twice the size
+	// we draw it at. Supersampling, and every client does it uniformly, so
+	// the halving on the way in is right for all of them.
+	//
+	// It carries the DEVICE SCALE alone. The runtime zoom is deliberately not
+	// folded in: that would make one knob move both the text size and the
+	// child's content scale.
+	oversample   float64
+	hitKX, hitKY float64
 
 	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
 	// (round(units*ppu)) instead of the painter's cell-snapped UnitSpanPx. A
@@ -343,6 +362,14 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
+	// The display's DENSITY only - the device scale, not the runtime zoom.
+	// This asks the child to render at the screen's real pixel density and
+	// nothing more; coupling its content to the +/- zoom is a separate
+	// decision, and mixing the two here would make one knob move two things.
+	t.gfx.oversample = 1
+	if ds := float64(p.DeviceScale()); ds > 1 {
+		t.gfx.oversample = ds
+	}
 	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
@@ -1730,6 +1757,13 @@ func (t *PurfecTerm) imageForBlitGfx(im *purfecterm.PlacedImage) *image.RGBA {
 	srcRect := image.Rect(sx, sy, sx+sw, sy+sh)
 
 	destW, destH := im.DestSize()
+	// DestSize is in the child's pixel space, which is oversample times ours
+	// (see purfecTermGfx.oversample): an image claiming N of the cells we
+	// ADVERTISED is drawn across N of the cells we actually paint.
+	if f := t.gfx.oversample; f > 1 {
+		destW = int(math.Round(float64(destW) / f))
+		destH = int(math.Round(float64(destH) / f))
+	}
 	if destW <= 0 || destH <= 0 {
 		return nil
 	}
@@ -2554,6 +2588,10 @@ func (t *PurfecTerm) pushCellPixelSizeGfx() {
 	}
 	cwPx := int(math.Round(float64(baseCW) * buf.GetHorizontalScale() * ppu))
 	chPx := int(math.Round(float64(baseCH) * buf.GetVerticalScale() * ppu))
+	if f := t.gfx.oversample; f > 1 {
+		cwPx = int(math.Round(float64(cwPx) * f))
+		chPx = int(math.Round(float64(chPx) * f))
+	}
 	if cwPx > 0 && chPx > 0 {
 		buf.SetCellPixelSize(cwPx, chPx)
 		// The pointer unit is the SAME number, because the app has only one
