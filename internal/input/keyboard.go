@@ -12,7 +12,7 @@ import (
 
 // mewKeyNames is mew's key vocabulary, handed to direct-key-handler so keys
 // arrive already spelled the way bindings spell them. These are the primary
-// names of the key alias groups in sequence.go, and the names the help topics
+// names of the key fallback groups in sequence.go, and the names the help topics
 // document — mew's binding syntax, not display strings.
 //
 // Given to keyboard.Options.KeyNames rather than translated afterwards: the

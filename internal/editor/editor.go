@@ -1305,7 +1305,7 @@ func New(cfg Config) (*Editor, error) {
 
 	// Create key sequence processor with command executor
 	e.KeyProcessor = keyseq.NewProcessor(e.runBoundCommand)
-	e.KeyProcessor.SetAliasGroups(mewAliasGroups)
+	e.KeyProcessor.SetFallbackGroups(mewFallbackGroups)
 	e.KeyProcessor.SetDefaultHandler(e.defaultCommandForKey)
 
 	// Input source: a host-supplied event feed when one was given, else a

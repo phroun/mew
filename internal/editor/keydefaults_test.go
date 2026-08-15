@@ -69,14 +69,14 @@ func TestDefaultCommandMacOptionLayer(t *testing.T) {
 	}
 }
 
-// mew renames keys on the way in, so the processor's default aliases (which
-// speak direct-key-handler's Tab/Return/Escape) do not fit: without mew's own
-// groups the control spellings silently stop resolving — `^M` no longer
+// mew renames keys on the way in, so the processor's default fallback groups
+// (which speak direct-key-handler's Tab/Return/Escape) do not fit: without
+// mew's own groups the control spellings silently stop resolving — `^M` no longer
 // reaches a `return` binding, and nothing errors, because a binding that fails
 // to match just does nothing.
-func TestMewAliasGroupsResolveControlSpellings(t *testing.T) {
+func TestMewFallbackGroupsResolveControlSpellings(t *testing.T) {
 	p := keyseq.NewProcessor(nil)
-	p.SetAliasGroups(mewAliasGroups)
+	p.SetFallbackGroups(mewFallbackGroups)
 	p.SetMappings(map[string]string{
 		"return": "accept",
 		"back":   "erase",
@@ -105,7 +105,7 @@ func TestMewAliasGroupsResolveControlSpellings(t *testing.T) {
 // names — they exist for the keymap side only.
 func TestMewSpellingsNamePunctuation(t *testing.T) {
 	p := keyseq.NewProcessor(nil)
-	p.SetAliasGroups(mewAliasGroups)
+	p.SetFallbackGroups(mewFallbackGroups)
 	p.SetMappings(map[string]string{
 		"minus":        "shrink",
 		"M-equals":     "grow",

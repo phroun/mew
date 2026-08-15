@@ -40,6 +40,8 @@ github.com/phroun/key-sequence-processor v0.1.5 h1:tBbyO3x350+ElKxRi6uNQd9ZaHn6R
 github.com/phroun/key-sequence-processor v0.1.5/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/key-sequence-processor v0.1.6 h1:iewm48mhWayKl3qx/T4vof10hlwnSg69fVkjLd9lO9M=
 github.com/phroun/key-sequence-processor v0.1.6/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
+github.com/phroun/key-sequence-processor v0.1.7-0.20260815213558-521849415ae5 h1:73Sd/UxjdZ6hXUL2DmEuUavwM8zbtoKHh1TTCbN8Cmw=
+github.com/phroun/key-sequence-processor v0.1.7-0.20260815213558-521849415ae5/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4E=
 github.com/phroun/mew v0.3.1-alpha/go.mod h1:PHVb21QCVxAAySalmb9lzu4BGCKG6mrlnVOAg+9Ju5g=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=

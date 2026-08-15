@@ -6,9 +6,11 @@ import (
 	"github.com/phroun/key-sequence-processor/keyseq"
 )
 
-// mewAliasGroups are the interchangeable spellings for one key in mew's
-// vocabulary — the first entry is the name a key arrives under, the rest are
-// spellings a binding may use for it.
+// mewFallbackGroups list the key tokens that FALL BACK to each other in mew's
+// vocabulary. They are not declared identical: the token as pressed is matched
+// first, so binding two members of a group keeps them apart, and a group only
+// says what to try next when the pressed token has no binding. The first entry
+// is the name a key arrives under.
 //
 // These are mew's, not the processor's defaults: those speak
 // direct-key-handler's names (Tab, Return, Escape), while mew renames keys on
@@ -16,7 +18,7 @@ import (
 // syntax and help topics are written in. Without this the control spellings
 // stop resolving — `^M` would not reach a `return` binding — silently, since
 // nothing errors when a binding merely fails to match.
-var mewAliasGroups = []keyseq.AliasGroup{
+var mewFallbackGroups = []keyseq.FallbackGroup{
 	{"back", "^H", "backspace"},
 	{"tab", "^I"},
 	{"return", "enter", "^M"},

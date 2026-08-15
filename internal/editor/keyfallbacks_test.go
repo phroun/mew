@@ -10,11 +10,11 @@ import (
 // one another — the mistake being to read a shared outcome as a shared
 // identity.
 //
-//  1. An ALIAS GROUP makes its members FALLBACKS for each other. Pressing one
-//     reaches another's binding only when the pressed spelling has none.
-//  2. Within a precedence level the order is exact spelling, then alias
-//     sibling, then wildcard (keyseq sequence.go). Exact-beats-fallback is a
-//     tie-break INSIDE a level; across levels the higher level simply wins.
+//  1. A FALLBACK GROUP makes its members fall back to each other. Pressing one
+//     reaches another's binding only when the pressed token has none of its own.
+//  2. Within a precedence level the order is exact token, then group member,
+//     then wildcard (keyseq sequence.go). Exact-beats-fallback is a tie-break
+//     INSIDE a level; across levels the higher level simply wins.
 //  3. defaultCommandForKey is mew's own floor, consulted only when no binding
 //     at any level claimed the key. It can give two unrelated keys the same
 //     meaning without making either a spelling of the other.
@@ -25,7 +25,7 @@ import (
 
 func procKSP(mappings map[string]string) *keyseq.Processor {
 	p := keyseq.NewProcessor(nil)
-	p.SetAliasGroups(mewAliasGroups)
+	p.SetFallbackGroups(mewFallbackGroups)
 	p.SetMappings(mappings)
 	return p
 }
@@ -36,7 +36,7 @@ func pressKSP(t *testing.T, p *keyseq.Processor, key string) string {
 	return p.ProcessKey(key).Command
 }
 
-// CLAIM 1: an alias member is a FALLBACK. With only "return" bound, pressing
+// CLAIM 1: a group member is a FALLBACK. With only "return" bound, pressing
 // "enter" reaches it — nothing else is bound, so the group is consulted.
 func TestFallbackFiresWhenTheSpellingIsUnbound(t *testing.T) {
 	p := procKSP(map[string]string{"return": "accept"})
@@ -48,7 +48,7 @@ func TestFallbackFiresWhenTheSpellingIsUnbound(t *testing.T) {
 }
 
 // CLAIM 2: it is NOT identity. Bind both, and each keeps its own command —
-// the exact spelling wins and the fallback is never consulted.
+// the exact token wins and the fallback is never consulted.
 func TestExactSpellingBeatsItsFallback(t *testing.T) {
 	p := procKSP(map[string]string{"return": "accept", "enter": "keypad_accept"})
 	for _, c := range []struct{ key, want string }{
@@ -131,7 +131,7 @@ func TestCtrlSpaceResolvesFromEveryWireForm(t *testing.T) {
 // The two mechanisms do NOT compose, and this pins that rather than hiding it.
 //
 // "C-space" reaches "^space" because they are the same base under interchangeable
-// Ctrl prefixes. "^2" and "^@" reach "^space" because the three are one alias
+// Ctrl prefixes. "^2" and "^@" reach "^space" because the three are one fallback
 // group. But "C-space" and "^2" reach each other by neither route: as tokens they
 // are prefix+"space" and prefix+"2", two different bases, and group membership is
 // per whole token.
@@ -140,7 +140,7 @@ func TestCtrlSpaceResolvesFromEveryWireForm(t *testing.T) {
 // kitty protocol. "^space" is the spelling that works from both wires, which is
 // reason enough to write it; recorded here so that if the pairing is ever made
 // to compose, this test fails and says so deliberately.
-func TestCtrlPrefixAliasDoesNotComposeWithGroupMembership(t *testing.T) {
+func TestCtrlPrefixSpellingDoesNotComposeWithGroupMembership(t *testing.T) {
 	p := procKSP(map[string]string{"^2": "cs"})
 	if got := pressKSP(t, p, "C-space"); got != "" {
 		t.Errorf("bound ^2, pressed C-space -> %q; the two mechanisms now "+
@@ -172,7 +172,7 @@ func TestModifiersPeelAndBaseSpellingsResolveUnderThem(t *testing.T) {
 }
 
 // CLAIM 5: what "back" and "del" actually share is the DEFAULT COMMAND floor,
-// which is not the alias mechanism at all. It answers only for a key no
+// which is not the fallback mechanism at all. It answers only for a key no
 // binding claimed, so it can give two unrelated keys one meaning without
 // making either a spelling of the other.
 func TestBackAndDelShareTheDefaultFloorNotAGroup(t *testing.T) {
