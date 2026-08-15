@@ -226,6 +226,23 @@ type CellPixelSizer interface {
 	CellPixelSize() (w, h int)
 }
 
+// MotionTracker is an optional RenderBackend capability: a surface that has to
+// ASK to be told about pointer motion.
+//
+// A graphical host is given every mouse move whether it wants one or not. A
+// terminal host is given only what it asked its own terminal for, and asking
+// for motion is a separate mode (?1003) from asking for clicks — so a trinket
+// that needs to follow the pointer without a button held has to say so, every
+// frame it still needs it. Hover is the obvious case; a hosted program that
+// turned on its own motion tracking is the one that made this necessary,
+// because the events it is waiting for do not otherwise exist.
+//
+// Requests are per FRAME and not sticky: a surface stops asking and the mode
+// goes away, which keeps a busy wire quiet when nothing is watching.
+type MotionTracker interface {
+	RequestMotionTracking()
+}
+
 // MaskTintDrawer is an optional RenderBackend capability: composite a
 // color-independent coverage mask (only its alpha is read) tinted with a solid
 // color. Lets a caller cache one grayscale glyph per shape and recolor it per
@@ -1041,6 +1058,15 @@ func (p *Painter) CellPixelSize() (w, h int) {
 		}
 	}
 	return 0, 0
+}
+
+// RequestMotionTracking asks the surface to deliver pointer motion for the rest
+// of this frame's lifetime (see MotionTracker). A backend that always has
+// motion ignores it, so callers need not ask what kind of host they are on.
+func (p *Painter) RequestMotionTracking() {
+	if mt, ok := p.backend.(MotionTracker); ok {
+		mt.RequestMotionTracking()
+	}
 }
 
 // PxPerUnitF reports the fractional device pixels per unit, tracking

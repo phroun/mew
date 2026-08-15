@@ -23,7 +23,12 @@ type cellSurface struct {
 	seq        int
 	lastCell   int
 	firstImage int
+	// motionAsked counts RequestMotionTracking calls (core.MotionTracker).
+	motionAsked int
 }
+
+// RequestMotionTracking implements core.MotionTracker.
+func (c *cellSurface) RequestMotionTracking() { c.motionAsked++ }
 
 type cellSurfaceImage struct {
 	x, y core.Unit
@@ -329,5 +334,50 @@ func TestTUICropLeadingCellsTrimsRatherThanDrops(t *testing.T) {
 	_, plain := tuiTerm(t, 0, 0)
 	if got := term.cropLeadingCells(core.NewPainter(plain), img, -1, 0); got != nil {
 		t.Error("cropped without knowing the cell size")
+	}
+}
+
+// A child in any-event tracking (?1003) needs the HOST to ask its own terminal
+// for motion, or the events it is waiting for never exist.
+//
+// A graphical host is handed every mouse move regardless. A terminal host gets
+// only what it asked for, and motion with no button held is a mode of its own —
+// so a hosted browser saw no hover at all, however correct everything
+// downstream was.
+func TestTUIChildMotionTrackingIsRequestedFromTheHost(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+
+	// No tracking: nothing asked for, so the wire stays quiet.
+	c.motionAsked = 0
+	term.Paint(core.NewPainter(c))
+	if c.motionAsked != 0 {
+		t.Errorf("asked for motion %d times with no child tracking", c.motionAsked)
+	}
+
+	// Button tracking only (?1000): the host already receives presses.
+	term.Feed([]byte("\x1b[?1000h"))
+	c.motionAsked = 0
+	term.Paint(core.NewPainter(c))
+	if c.motionAsked != 0 {
+		t.Errorf("asked for motion %d times for press-only tracking", c.motionAsked)
+	}
+
+	// Any-event tracking (?1003): now it must ask, every frame.
+	term.Feed([]byte("\x1b[?1003h"))
+	c.motionAsked = 0
+	term.Paint(core.NewPainter(c))
+	term.Paint(core.NewPainter(c))
+	if c.motionAsked != 2 {
+		t.Errorf("asked for motion %d times over two frames, want 2: the request "+
+			"lasts one frame, so it has to be repeated while the child still wants it",
+			c.motionAsked)
+	}
+
+	// The child turns it off: the host stops asking and the mode lapses.
+	term.Feed([]byte("\x1b[?1003l"))
+	c.motionAsked = 0
+	term.Paint(core.NewPainter(c))
+	if c.motionAsked != 0 {
+		t.Errorf("still asking for motion %d times after the child turned it off", c.motionAsked)
 	}
 }

@@ -802,3 +802,56 @@ func TestKittyPayloadIsCompressed(t *testing.T) {
 		t.Error("expected RGBA for a picture with partial alpha")
 	}
 }
+
+// Motion tracking is asked for per frame and only turned on while wanted.
+//
+// The outer terminal reports motion with no button held only under ?1003, so
+// without asking, those events do not exist and cannot be forwarded to anyone
+// — which is why a hosted browser saw no hover at all. It is off by default
+// because it is not free: every pixel the pointer crosses becomes a report.
+func TestMotionTrackingFollowsDemand(t *testing.T) {
+	var tty strings.Builder
+	b := &TUIBackend{ttyOut: &tty, cols: 10, rows: 5}
+	b.allocateBuffers()
+
+	// Nobody asked: nothing said.
+	b.BeginFrame()
+	b.mu.Lock()
+	b.applyMotionTrackingLocked()
+	b.mu.Unlock()
+	if tty.Len() != 0 {
+		t.Errorf("enabled motion with nothing asking: %q", tty.String())
+	}
+
+	// Someone asks: enabled once.
+	tty.Reset()
+	b.BeginFrame()
+	b.RequestMotionTracking()
+	b.mu.Lock()
+	b.applyMotionTrackingLocked()
+	b.mu.Unlock()
+	if got := tty.String(); got != "\033[?1003h" {
+		t.Errorf("wrote %q, want the enable", got)
+	}
+
+	// Still asking: nothing more on the wire.
+	tty.Reset()
+	b.BeginFrame()
+	b.RequestMotionTracking()
+	b.mu.Lock()
+	b.applyMotionTrackingLocked()
+	b.mu.Unlock()
+	if tty.Len() != 0 {
+		t.Errorf("re-enabled an already-enabled mode: %q", tty.String())
+	}
+
+	// Stops asking: turned back off, so the wire goes quiet again.
+	tty.Reset()
+	b.BeginFrame()
+	b.mu.Lock()
+	b.applyMotionTrackingLocked()
+	b.mu.Unlock()
+	if got := tty.String(); got != "\033[?1003l" {
+		t.Errorf("wrote %q, want the disable once nothing wanted motion", got)
+	}
+}

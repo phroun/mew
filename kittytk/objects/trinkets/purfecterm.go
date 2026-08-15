@@ -244,6 +244,11 @@ func (t *PurfecTerm) toChild(b []byte) {
 // owns this relay. With tracking OFF, everything falls through to the local
 // pseudo-key path (selection, scrollback) exactly as before.
 
+// mouseTrackAnyEvent is DECSET 1003: report motion whether or not a button is
+// held. 1000 is presses only and 1002 adds motion WHILE dragging; both of those
+// a terminal host already receives, so this is the one that needs asking for.
+const mouseTrackAnyEvent = 1003
+
 // mouseTracking reports the hosted app's mouse tracking and encoding modes
 // (0 = off).
 func (t *PurfecTerm) mouseTracking() (mode, enc int) {
@@ -650,6 +655,13 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// it drew. Both need the OUTER terminal's cell size, which only a cell
 	// surface can supply and only by having asked for it.
 	t.pushCellPixelSizeTUI(p)
+	// A child in any-event tracking is waiting for motion with no button
+	// held. On a cell surface those reports do not exist until the outer
+	// terminal is asked for them, so ask — every frame the child still wants
+	// them, since the request lasts one frame (core.MotionTracker).
+	if mode, _ := t.mouseTracking(); mode == mouseTrackAnyEvent {
+		p.RequestMotionTracking()
+	}
 
 	// Get terminal cells
 	cells := t.terminal.GetCells()

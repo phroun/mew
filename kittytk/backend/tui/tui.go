@@ -99,6 +99,14 @@ type TUIBackend struct {
 	cellSeq  [][]uint32
 	paintSeq uint32
 
+	// motionWanted is set during a frame by anything that needs pointer
+	// motion; motionOn is whether the outer terminal is currently sending it
+	// (?1003). Free motion is not enabled by default because it puts a report
+	// on the wire for every pixel the pointer crosses — it is turned on only
+	// while something is actually watching. See RequestMotionTracking.
+	motionWanted bool
+	motionOn     bool
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
@@ -438,7 +446,7 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable mouse. ?1016l first (harmless if it was never enabled) so the
 		// outer terminal drops back to cell reports before the rest go off.
 		if t.hasMouse {
-			t.writeTTY("\033[?1016l\033[?1006l\033[?1002l\033[?1000l")
+			t.writeTTY("\033[?1016l\033[?1006l\033[?1003l\033[?1002l\033[?1000l")
 		}
 
 		// Show cursor
@@ -516,6 +524,8 @@ func (t *TUIBackend) BeginFrame() {
 	// Clear back buffer
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
 	t.paintSeq = 0
+	// A request lasts one frame: whoever still needs motion asks again.
+	t.motionWanted = false
 	for y := 0; y < t.rows; y++ {
 		for x := 0; x < t.cols; x++ {
 			t.backBuffer[y][x] = defaultCell
@@ -753,6 +763,7 @@ func (t *TUIBackend) EndFrame() {
 	// afterwards. This is also the right order to read - the image sits on
 	// the row the text layer already made room for.
 	t.flushImagesLocked()
+	t.applyMotionTrackingLocked()
 }
 
 // Clear fills the entire surface with a style.
@@ -1779,4 +1790,32 @@ func (t *TUIBackend) damagedRectLocked(c0, r0, c1, r1 int) (dc0, dr0, dc1, dr1 i
 		any = true
 	}
 	return dc0, dr0, dc1, dr1, any
+}
+
+// RequestMotionTracking implements core.MotionTracker: something painting this
+// frame needs to follow the pointer with no button held.
+func (t *TUIBackend) RequestMotionTracking() {
+	t.mu.Lock()
+	t.motionWanted = true
+	t.mu.Unlock()
+}
+
+// applyMotionTrackingLocked turns ?1003 on or off to match this frame's
+// requests, and only when it actually changes.
+//
+// The mode is the difference between a hosted browser seeing hover and not
+// seeing it at all: without ?1003 the outer terminal reports motion only while
+// a button is held, so those events never reach us to forward. It is off by
+// default because it is not free — every pixel the pointer crosses becomes a
+// report on the wire — so it follows demand rather than being pinned on.
+func (t *TUIBackend) applyMotionTrackingLocked() {
+	if t.motionWanted == t.motionOn {
+		return
+	}
+	t.motionOn = t.motionWanted
+	if t.motionOn {
+		t.writeTTY("\033[?1003h")
+	} else {
+		t.writeTTY("\033[?1003l")
+	}
 }
