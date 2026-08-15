@@ -2820,8 +2820,8 @@ func (t *PurfecTerm) reportMouseGfx(button int, x, y core.Unit, press bool) bool
 		// The advertised cell (CSI 16 t) is the modulus the guest divides the
 		// report by, so a report is only readable next to it.
 		unitW, unitH := buf.GetCellPixelSize()
-		core.MouseTracef("guest  %-7s btn=%-3d in=(%v,%v) enc=%d unit=%dx%d rep=(%d,%d) bytes=%q",
-			kind, button, x, y, buf.GetMouseEncodingMode(), unitW, unitH, repX, repY, data)
+		core.MouseTracef("guest  %-7s who=%p btn=%-3d in=(%v,%v) enc=%d unit=%dx%d rep=(%d,%d) bytes=%q",
+			kind, t, button, x, y, buf.GetMouseEncodingMode(), unitW, unitH, repX, repY, data)
 	}
 	t.toChild(data)
 	return true
@@ -2857,8 +2857,15 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	// Logged before the branches, so a press that never reaches the child is
 	// distinguishable from one that reached it with the wrong coordinate —
 	// the guest line below is absent in the first case, present in the second.
+	//
+	// The identity and bounds are here because one outer click was observed
+	// arriving twice, resolved against two different origins. Whether that is
+	// two terminals each seeing the click once or one terminal seeing it twice
+	// is the whole question, and only the receiver's own identity answers it.
 	if core.MouseTracing() {
-		core.MouseTracef("press  at=(%v,%v) cell=(%d,%d) btn=%v tracking=%d forward=%v shift=%v scrollbarLane=%v",
+		b := t.Bounds()
+		core.MouseTracef("press  who=%p name=%q bounds=(%v,%v %vx%v) at=(%v,%v) cell=(%d,%d) btn=%v tracking=%d forward=%v shift=%v scrollbarLane=%v",
+			t, t.Name(), b.X, b.Y, b.Width, b.Height,
 			event.X, event.Y, cellX, cellY, event.Button,
 			buf.GetMouseTrackingMode(), forwardToPTY, hasShift, t.gfx.vDragging || t.gfx.hDragging)
 	}
