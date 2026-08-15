@@ -1539,9 +1539,22 @@ func (t *TUIBackend) handleKey(key string) {
 
 // handleMouseAction processes mouse action events from direct-key-handler.
 func (t *TUIBackend) handleMouseAction(key string) {
+	// One snapshot, under one lock: the stashed position AND the frame it is
+	// resolved against. The probe replies that set that frame land on the
+	// terminal's read path while events are being converted here, and its
+	// three fields only mean anything together — pixelMouse says to divide by
+	// a cell size that outerCell{W,H} supplies, so reading them at separate
+	// moments could pair a mode from after the flip with a size from before
+	// it. Taking them apart was also a data race outright, benign-looking or
+	// not. (t.metrics is written once at construction and never after.)
 	t.mu.Lock()
 	x := t.pendingMouseX
 	y := t.pendingMouseY
+	frame := outerMouseFrame{
+		pixelMouse: t.pixelMouse,
+		cellW:      t.outerCellW,
+		cellH:      t.outerCellH,
+	}
 	t.mu.Unlock()
 
 	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
@@ -1553,8 +1566,8 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	// Convert the raw 1-based coordinate to units (cell- or pixel-based
 	// depending on whether ?1016 is active — see outerToUnitsX/Y).
-	unitX := t.outerToUnitsX(x)
-	unitY := t.outerToUnitsY(y)
+	unitX := t.outerToUnitsX(x, frame)
+	unitY := t.outerToUnitsY(y, frame)
 
 	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
 	// 1-based, same conversion).
@@ -1570,8 +1583,8 @@ func (t *TUIBackend) handleMouseAction(key string) {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
 				x, y = dragX, dragY
 				src = "embedded"
-				unitX = t.outerToUnitsX(dragX)
-				unitY = t.outerToUnitsY(dragY)
+				unitX = t.outerToUnitsX(dragX, frame)
+				unitY = t.outerToUnitsY(dragY, frame)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
@@ -1640,34 +1653,42 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	}
 }
 
+// outerMouseFrame is the state a raw mouse coordinate is resolved against,
+// taken as one snapshot under the lock (see handleMouseAction). The three
+// fields are only meaningful together, so they travel together.
+type outerMouseFrame struct {
+	pixelMouse   bool // ?1016 is on, so the raw numbers are outer pixels
+	cellW, cellH int  // the outer terminal's cell size, in those pixels
+}
+
 // outerToUnitsX converts a raw 1-based mouse X coordinate to units. In the
 // default SGR mode the number is a 1-based cell column, so it maps to that
 // cell's left edge. Under ?1016 it is a 1-based OUTER PIXEL: the integer cell
 // index divides out, and the sub-cell remainder scales into a fraction of this
 // backend's cell width — the sub-cell position mew's nearest-edge caret uses.
-func (t *TUIBackend) outerToUnitsX(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellW > 0 {
+func (t *TUIBackend) outerToUnitsX(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellW > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellW
-		frac := px % t.outerCellW
-		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(t.outerCellW)
+		cell := px / f.cellW
+		frac := px % f.cellW
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(f.cellW)
 	}
 	return t.metrics.CellToUnitsX(raw - 1)
 }
 
 // outerToUnitsY is the vertical twin of outerToUnitsX.
-func (t *TUIBackend) outerToUnitsY(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellH > 0 {
+func (t *TUIBackend) outerToUnitsY(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellH > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellH
-		frac := px % t.outerCellH
-		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(t.outerCellH)
+		cell := px / f.cellH
+		frac := px % f.cellH
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(f.cellH)
 	}
 	return t.metrics.CellToUnitsY(raw - 1)
 }

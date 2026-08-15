@@ -22,15 +22,18 @@ var mewFallbackGroups = []keyseq.FallbackGroup{
 	{"back", "^H", "backspace"},
 	{"tab", "^I"},
 	{"return", "enter", "^M"},
-	// fdel has no long spelling on purpose. "delete" used to be one, which put
-	// mew's two erase names one suffix apart while meaning opposite
-	// directions — "del" erasing behind and "delete" ahead — the same
-	// near-homograph the vocabulary is otherwise built to avoid. Forward
-	// delete is spelled "fdel", and only that.
+	// fdel is absent, and deliberately: it has no long spelling. "delete" used
+	// to be one, which put mew's two erase names one suffix apart while meaning
+	// opposite directions — "del" erasing behind and "delete" ahead — the same
+	// near-homograph the vocabulary is otherwise built to avoid. Forward delete
+	// is written "fdel", and only that.
+
 	// NUL is what Ctrl+Space and Ctrl+@ both send, so the legacy wire cannot
-	// tell them apart and all three spellings name that one input. "^@" is
-	// the one the byte path actually emits; without it a "^space" binding was
-	// reachable only under the kitty protocol, which reports the key.
+	// tell those two chords apart, and this group is the fallback between them.
+	// "^@" and "^2" are KeyNames — things that actually arrive — while "^space"
+	// is a Spelling, a way to write the binding that nothing ever emits. "^@"
+	// is what the byte path delivers; without it here, a "^space" binding was
+	// reachable only under the kitty protocol, which reports the key instead.
 	{"^@", "^2", "^space"},
 	{"esc", "escape", "^[", "^3"},
 	{"^\\", "^4"},
