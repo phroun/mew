@@ -10,29 +10,27 @@ import (
 // verboseKeyNames maps mew's internal key-token names to the beginner-facing
 // spellings the keys_verbose# helper writes.
 var verboseKeyNames = map[string]string{
-	"esc":       "Esc",
-	"escape":    "Esc",
-	"space":     "Space",
-	"tab":       "Tab",
-	"return":    "Enter",
+	"esc":    "Esc",
+	"escape": "Esc",
+	"space":  "Space",
+	"tab":    "Tab",
+	// Every key gets its own word; none may borrow another's. return and enter
+	// are two keys, and del and fdel are two keys.
+	"return":    "Return",
 	"enter":     "Enter",
 	"back":      "Backspace",
 	"backspace": "Backspace",
-	// "del" is the DEL character, which is what the Backspace key sends on
-	// most terminals, and mew binds it beside "back" (keydefaults.go). Naming
-	// it "Delete" here told a beginner to press the wrong key — and taught the
-	// confusion the rest of this vocabulary exists to avoid.
-	"del":   "Backspace",
-	"fdel":  "Delete",
-	"up":    "Up",
-	"down":  "Down",
-	"left":  "Left",
-	"right": "Right",
-	"home":  "Home",
-	"end":   "End",
-	"ins":   "Insert",
-	"pgup":  "Page Up",
-	"pgdn":  "Page Down",
+	"del":       "Delete",
+	"fdel":      "FDel",
+	"up":        "Up",
+	"down":      "Down",
+	"left":      "Left",
+	"right":     "Right",
+	"home":      "Home",
+	"end":       "End",
+	"ins":       "Insert",
+	"pgup":      "Page Up",
+	"pgdn":      "Page Down",
 }
 
 // tfcKeyResolver builds a TFC (Text Format Control) resolver for the

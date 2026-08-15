@@ -77,7 +77,7 @@ func TestVerboseKeySequenceSpellsEveryModifier(t *testing.T) {
 		{"C-x", "Ctrl+X"},           // the long spelling of ^
 		{"G-€", "Glyph+€"},          // a Glyph chord carries its own character
 		{"m-pgup", "Micro+Page Up"}, // the other reading of the meta lineage
-		{"H-fdel", "Hyper+Delete"},
+		{"H-fdel", "Hyper+FDel"},
 		{"M-m-home", "Meta+Micro+Home"}, // Mega and Micro are different keys
 		{"C-S-home", "Ctrl+Shift-Home"}, // Shift still glues to the base
 		{"^C-x", "Ctrl+X"},              // both spellings of one modifier: said once
