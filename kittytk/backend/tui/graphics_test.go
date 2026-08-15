@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image"
 
 	"github.com/phroun/kittytk/core"
@@ -110,7 +111,7 @@ func solidImage(w, h int, c color.RGBA) *image.RGBA {
 // move the text layout the caller computed.
 func TestKittyEncodingShape(t *testing.T) {
 	var sb strings.Builder
-	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}))
+	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}), 1)
 	out := sb.String()
 	// f=24 rather than f=32: a solid opaque picture carries no alpha worth
 	// sending. TestKittyPayloadIsCompressed covers the choice between them.
@@ -135,7 +136,7 @@ func TestKittyChunksLargePayload(t *testing.T) {
 		seed = seed*1664525 + 1013904223
 		noise.Pix[i] = byte(seed >> 24)
 	}
-	writeKittyImage(&sb, noise)
+	writeKittyImage(&sb, noise, 1)
 	out := sb.String()
 	if n := strings.Count(out, "\033_G"); n < 2 {
 		t.Fatalf("large image was not chunked (%d commands)", n)
@@ -621,6 +622,66 @@ func TestEarlierPaintDoesNotOccludeAnImage(t *testing.T) {
 	}
 }
 
+// A frame must never leave the screen blank between the old picture and the
+// new one.
+//
+// Deleting everything and then transmitting is the obvious order and the wrong
+// one: the delete lands immediately, the payload takes dozens of chunks to
+// arrive, and the terminal renders through the gap. On content that changes
+// every frame — a video — that is a flicker between the picture and black,
+// worse the larger the window, because there is more payload to wait through.
+//
+// So a frame places into a FRESH set of ids, and only then removes the
+// previous generation.
+func TestKittyPlacesBeforeDeleting(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+
+	one := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	two := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	two.Set(1, 1, color.RGBA{255, 0, 0, 255}) // different pixels, so it re-sends
+
+	b.pendingImages = []placedImage{{col: 2, row: 2, img: one, seq: 100}}
+	b.flushImagesLocked()
+	first := out.String()
+	if strings.Contains(first, "d=A") {
+		t.Error("the first frame deleted every placement on the terminal")
+	}
+	if !strings.Contains(first, "a=T") {
+		t.Fatal("the first frame placed nothing")
+	}
+
+	out.Reset()
+	b.pendingImages = []placedImage{{col: 2, row: 2, img: two, seq: 100}}
+	b.flushImagesLocked()
+	got := out.String()
+
+	place := strings.Index(got, "a=T")
+	del := strings.Index(got, "a=d")
+	if place < 0 {
+		t.Fatal("the second frame placed nothing")
+	}
+	if del < 0 {
+		t.Fatal("the second frame never removed the first frame's image")
+	}
+	if del < place {
+		t.Error("the delete comes before the placement: the screen is blank for as " +
+			"long as the payload takes to arrive, which is the flicker")
+	}
+	if strings.Contains(got, "d=A") {
+		t.Error("still deleting EVERY placement rather than the ids it put there")
+	}
+	// And the new placement must not reuse an id it is about to delete.
+	if strings.Contains(got, fmt.Sprintf("i=%d,q=2,m", kittyIDBase)) &&
+		strings.Contains(got, fmt.Sprintf("a=d,d=I,i=%d", kittyIDBase)) {
+		t.Error("placed into the same id it then deleted")
+	}
+}
+
 // A menu opening over an unchanged picture must redraw it, cropped.
 //
 // The placement list is identical in that frame — same picture, same anchor —
@@ -776,7 +837,7 @@ func TestKittyPayloadIsCompressed(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	writeKittyImage(&sb, img)
+	writeKittyImage(&sb, img, 1)
 	got := sb.String()
 	if !strings.Contains(got, ",o=z") {
 		t.Error("the payload was not compressed (no o=z)")
@@ -794,7 +855,7 @@ func TestKittyPayloadIsCompressed(t *testing.T) {
 	// Partial alpha still goes as RGBA — dropping it would lose the blend.
 	img.SetRGBA(10, 10, color.RGBA{255, 0, 0, 128})
 	sb.Reset()
-	writeKittyImage(&sb, img)
+	writeKittyImage(&sb, img, 1)
 	if strings.Contains(sb.String(), "f=24") {
 		t.Error("a picture with partial alpha was sent as RGB, losing the alpha")
 	}

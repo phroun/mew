@@ -33,7 +33,7 @@ func realisticPage(w, h int) *image.RGBA {
 func TestFramePayloadIsNotMegabytes(t *testing.T) {
 	img := realisticPage(1090, 830)
 	var sb strings.Builder
-	writeKittyImage(&sb, img)
+	writeKittyImage(&sb, img, 1)
 	t.Logf("one full-window frame on the wire: %.2f MB", float64(sb.Len())/1e6)
 	if sb.Len() > 1<<20 {
 		t.Errorf("a single frame is %.2f MB on the wire", float64(sb.Len())/1e6)
@@ -45,6 +45,6 @@ func BenchmarkWriteKittyFrame(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var sb strings.Builder
-		writeKittyImage(&sb, img)
+		writeKittyImage(&sb, img, 1)
 	}
 }

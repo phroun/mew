@@ -49,6 +49,16 @@ const graphicsProbeID = 0x4B54 // "KT"
 // chunking above 4096 base64 bytes.
 const maxKittyChunk = 4096
 
+// Image ids are handed out from two alternating ranges so that a frame's
+// placements never share an id with the ones still on screen from the frame
+// before — see the kitty branch of flushImagesLocked. The stride bounds how
+// many blocks one frame can place before the ranges would meet; a frame is
+// normally one to three.
+const (
+	kittyIDBase   uint32 = 0x4B540000 // "KT" high half: distinctive, and ours
+	kittyIDStride uint32 = 4096
+)
+
 // placedImage is one image the paint pass asked for, waiting to be emitted
 // after the text diff (see flushImages).
 type placedImage struct {
@@ -331,14 +341,35 @@ func (t *TUIBackend) flushImagesLocked() {
 		if !setChanged {
 			return
 		}
+		// PLACE FIRST, DELETE AFTER, and never onto the ids still on screen.
+		//
+		// Deleting everything and then transmitting leaves the screen blank
+		// for as long as the payload takes to arrive — dozens of chunks for a
+		// full window, which the terminal renders through. On content that
+		// changes every frame, a video, that reads as flicker between the
+		// picture and black, and it gets worse as the window grows because
+		// there is more payload to wait through.
+		//
+		// So each frame draws into a FRESH set of ids: the new placement
+		// covers the old one at the same spot, and only then is the previous
+		// generation removed. There is no moment with nothing on screen, and
+		// two generations of ids mean a delete can never race a placement
+		// that is meant to survive it.
+		gen := t.kittyGen ^ 1
+		ids := make([]uint32, 0, len(blocks))
 		sb.WriteString("\0337")
-		if len(prev) > 0 {
-			sb.WriteString("\033_Ga=d,d=A\033\\") // delete every placement
-		}
-		for _, v := range blocks {
+		for k, v := range blocks {
+			id := kittyIDBase + uint32(gen)*kittyIDStride + uint32(k)
+			ids = append(ids, id)
 			sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
-			writeKittyImage(&sb, v.img)
+			writeKittyImage(&sb, v.img, id)
 		}
+		for _, old := range t.kittyShownIDs {
+			// d=I removes the placements AND frees the image data, which we
+			// re-transmit every time anyway.
+			fmt.Fprintf(&sb, "\033_Ga=d,d=I,i=%d,q=2\033\\", old)
+		}
+		t.kittyShownIDs, t.kittyGen = ids, gen
 	case GraphicsSixel:
 		for i, v := range blocks {
 			if !fresh[i] {
@@ -386,7 +417,7 @@ func (t *TUIBackend) imageCellExtentLocked(p placedImage) (c1, r1 int) {
 // payload, base64, chunked as the protocol requires (m=1 on every piece but
 // the last). C=1 keeps the cursor where it was, so the text layout the caller
 // computed is not disturbed by having drawn a picture.
-func writeKittyImage(sb *strings.Builder, img image.Image) {
+func writeKittyImage(sb *strings.Builder, img image.Image, id uint32) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w <= 0 || h <= 0 {
@@ -496,7 +527,11 @@ func writeKittyImage(sb *strings.Builder, img image.Image) {
 		}
 		sb.WriteString("\033_G")
 		if first {
-			fmt.Fprintf(sb, "a=T,f=%d,s=%d,v=%d,C=1,m=%d", format, w, h, more)
+			// i= names the image so it can be deleted precisely later, and
+			// q=2 suppresses the terminal's per-command acknowledgement —
+			// those come back as APC replies through the keyboard reader, and
+			// a frame is dozens of chunks.
+			fmt.Fprintf(sb, "a=T,f=%d,s=%d,v=%d,C=1,i=%d,q=2,m=%d", format, w, h, id, more)
 			if compressed {
 				sb.WriteString(",o=z")
 			}

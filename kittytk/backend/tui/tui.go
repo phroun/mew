@@ -107,6 +107,12 @@ type TUIBackend struct {
 	motionWanted bool
 	motionOn     bool
 
+	// kittyShownIDs are the image ids currently on screen and kittyGen which
+	// of the two id ranges they came from. A frame places into the OTHER
+	// range and then deletes these, so the screen is never empty in between.
+	kittyShownIDs []uint32
+	kittyGen      int
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
