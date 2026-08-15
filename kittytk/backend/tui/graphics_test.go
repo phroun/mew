@@ -420,3 +420,79 @@ func TestSixelImageResentOnlyWhenItsOwnCellsAreRepainted(t *testing.T) {
 		t.Error("text painted over the picture did not cause it to be redrawn")
 	}
 }
+
+// A sixel is cell content — an expensive glyph — so the repair for text
+// painted over it is the CELLS that were rewritten, not the whole picture.
+//
+// The emitter honours Bounds(), so a crop costs nothing extra to send; what it
+// saves is everything else. A one-cell overwrite in the corner of a big
+// picture used to re-transmit the entire thing.
+func TestSixelRepaintsOnlyTheDamagedCells(t *testing.T) {
+	// 8x4 cells at 10x20 px.
+	img := image.NewRGBA(image.Rect(0, 0, 80, 80))
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 80, rows: 25}
+	b.dmgMin, b.dmgMax = make([]int, b.rows), make([]int, b.rows)
+	b.graphics = GraphicsSixel
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	clear := func() {
+		for y := range b.dmgMin {
+			b.dmgMin[y], b.dmgMax[y] = -1, -1
+		}
+	}
+	place := func() { b.pendingImages = []placedImage{{col: 4, row: 2, img: img}} }
+
+	clear()
+	place()
+	b.flushImagesLocked()
+	whole := out.Len()
+	if whole == 0 {
+		t.Fatal("the image was never sent")
+	}
+
+	// One cell overwritten, two rows down and one column in.
+	out.Reset()
+	clear()
+	b.markDamage(3, 5, 5)
+	place()
+	b.flushImagesLocked()
+	patched := out.Len()
+	if patched == 0 {
+		t.Fatal("the damaged cell was not repaired")
+	}
+	if patched >= whole {
+		t.Errorf("a one-cell repair sent %d bytes against %d for the whole picture: "+
+			"it is re-transmitting everything", patched, whole)
+	}
+	// Addressed at the damaged cell, not the picture's anchor.
+	if !strings.Contains(out.String(), "\033[4;6H") {
+		t.Errorf("the patch was not addressed to the damaged cell (4;6): %q", out.String()[:24])
+	}
+}
+
+// iTerm2 renders kitty graphics from 3.5 on but does not answer the query we
+// probe with, so the environment has to speak for it — and only for versions
+// that can, since a wrong guess prints an escape sequence as text.
+func TestITermVersionGatesKittyFallback(t *testing.T) {
+	for _, c := range []struct {
+		version string
+		want    int
+	}{
+		{"3.5.0", GraphicsKitty},
+		{"3.6.9", GraphicsKitty},
+		{"4.0", GraphicsKitty},
+		{"3.4.23", GraphicsNone}, // too old: DA1 offers sixel instead
+		{"3.4", GraphicsNone},
+		{"2.9.9", GraphicsNone},
+		{"", GraphicsNone},
+		{"nonsense", GraphicsNone},
+	} {
+		t.Setenv("TERM_PROGRAM", "iTerm.app")
+		t.Setenv("TERM_PROGRAM_VERSION", c.version)
+		t.Setenv("KITTY_WINDOW_ID", "")
+		t.Setenv("TERM", "xterm-256color")
+		if got := graphicsFromEnv(); got != c.want {
+			t.Errorf("iTerm2 %q -> %d, want %d", c.version, got, c.want)
+		}
+	}
+}

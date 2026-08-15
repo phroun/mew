@@ -1723,16 +1723,35 @@ func (t *TUIBackend) markDamage(y, c0, c1 int) {
 	}
 }
 
-// damagedLocked reports whether the frame's text diff touched any cell of the
-// rectangle [c0,c1] x [r0,r1].
-func (t *TUIBackend) damagedLocked(c0, r0, c1, r1 int) bool {
+// damagedRectLocked returns the bounding box of the cells the frame's text diff
+// rewrote WITHIN the rectangle [c0,c1] x [r0,r1], and whether any were.
+func (t *TUIBackend) damagedRectLocked(c0, r0, c1, r1 int) (dc0, dr0, dc1, dr1 int, any bool) {
+	dc0, dr0, dc1, dr1 = c1, r1, c0, r0
 	for y := r0; y <= r1; y++ {
 		if y < 0 || y >= len(t.dmgMin) || t.dmgMin[y] < 0 {
 			continue
 		}
-		if t.dmgMin[y] <= c1 && t.dmgMax[y] >= c0 {
-			return true
+		lo, hi := t.dmgMin[y], t.dmgMax[y]
+		if lo > c1 || hi < c0 {
+			continue // this row's damage misses the rectangle entirely
 		}
+		if lo < c0 {
+			lo = c0
+		}
+		if hi > c1 {
+			hi = c1
+		}
+		if !any {
+			dr0 = y
+		}
+		dr1 = y
+		if lo < dc0 {
+			dc0 = lo
+		}
+		if hi > dc1 {
+			dc1 = hi
+		}
+		any = true
 	}
-	return false
+	return dc0, dr0, dc1, dr1, any
 }

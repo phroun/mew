@@ -135,6 +135,16 @@ func graphicsFromEnv() int {
 	switch strings.ToLower(os.Getenv("TERM_PROGRAM")) {
 	case "ghostty", "wezterm":
 		return GraphicsKitty
+	case "iterm.app":
+		// iTerm2 RENDERS kitty graphics from 3.5 on, but does not answer the
+		// query we probe with — so without this it lands on sixel while
+		// speaking the better protocol perfectly well. Version-gated because
+		// anything older genuinely cannot, and a wrong guess here prints an
+		// escape sequence as text into somebody's terminal.
+		if itermAtLeast35(os.Getenv("TERM_PROGRAM_VERSION")) {
+			return GraphicsKitty
+		}
+		return GraphicsNone // DA1 will offer sixel
 	}
 	term := strings.ToLower(os.Getenv("TERM"))
 	switch {
@@ -276,17 +286,25 @@ func (t *TUIBackend) flushImagesLocked() {
 			if p.col < 0 || p.row < 0 {
 				continue
 			}
+			col, row, img := p.col, p.row, p.img
 			if !fresh[i] {
+				// Sixel pixels are CELL CONTENT — an expensive glyph. What
+				// survives is whatever cells were not rewritten, so the repair
+				// is the damaged cells, not the whole picture.
 				c1, r1 := t.imageCellExtentLocked(p)
-				if !t.damagedLocked(p.col, p.row, c1, r1) {
+				dc0, dr0, dc1, dr1, any := t.damagedRectLocked(p.col, p.row, c1, r1)
+				if !any {
 					continue // still on screen, and nothing painted over it
+				}
+				if sub := t.cropToCellsLocked(p, dc0, dr0, dc1, dr1); sub != nil {
+					col, row, img = dc0, dr0, sub
 				}
 			}
 			if sb.Len() == 0 {
 				sb.WriteString("\0337")
 			}
-			sb.WriteString(fmt.Sprintf("\033[%d;%dH", p.row+1, p.col+1))
-			writeSixelImage(&sb, p.img)
+			sb.WriteString(fmt.Sprintf("\033[%d;%dH", row+1, col+1))
+			writeSixelImage(&sb, img)
 		}
 	}
 	if sb.Len() == 0 {
@@ -479,4 +497,55 @@ func (t *TUIBackend) cellPixelSizeLocked() (int, int) {
 		}
 	}
 	return 0, 0
+}
+
+// itermAtLeast35 reports whether an iTerm2 TERM_PROGRAM_VERSION is 3.5 or
+// newer, the release that added kitty graphics. Anything unparseable is
+// treated as older: the cost of guessing high is an escape sequence printed
+// as text, and the cost of guessing low is sixel, which still works.
+func itermAtLeast35(v string) bool {
+	major, rest, ok := strings.Cut(strings.TrimSpace(v), ".")
+	if !ok {
+		return false
+	}
+	maj, err := strconv.Atoi(major)
+	if err != nil {
+		return false
+	}
+	if maj != 3 {
+		return maj > 3
+	}
+	minorStr, _, _ := strings.Cut(rest, ".")
+	minor, err := strconv.Atoi(minorStr)
+	return err == nil && minor >= 5
+}
+
+// cropToCellsLocked returns the part of a placement covering cells
+// [dc0,dc1] x [dr0,dr1], or nil when it cannot be cropped (an unknown cell
+// size, or an image with no SubImage) and the whole thing must go instead.
+//
+// The crop is in the image's own pixels, clamped to its edges — the last cell
+// a picture touches is usually a partial one, since nothing makes an image an
+// exact multiple of the cell.
+func (t *TUIBackend) cropToCellsLocked(p placedImage, dc0, dr0, dc1, dr1 int) image.Image {
+	cw, ch := t.cellPixelSizeLocked()
+	if cw <= 0 || ch <= 0 {
+		return nil
+	}
+	sub, ok := p.img.(interface {
+		SubImage(image.Rectangle) image.Image
+	})
+	if !ok {
+		return nil
+	}
+	b := p.img.Bounds()
+	x0 := b.Min.X + (dc0-p.col)*cw
+	y0 := b.Min.Y + (dr0-p.row)*ch
+	x1 := b.Min.X + (dc1-p.col+1)*cw
+	y1 := b.Min.Y + (dr1-p.row+1)*ch
+	r := image.Rect(x0, y0, x1, y1).Intersect(b)
+	if r.Empty() {
+		return nil
+	}
+	return sub.SubImage(r)
 }
