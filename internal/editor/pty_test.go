@@ -622,8 +622,18 @@ func TestPTYClassKeyBindings(t *testing.T) {
 		// either key does — and one byte for two keys left a guest unable to
 		// tell them apart. A guest mapping terminal input to real key events
 		// read it as Ctrl-H and ignored it.
+		//
+		// The erase keys are three names for two keys, and the short one does
+		// not mean what its spelling suggests: "back" is Backspace, "fdel" is
+		// forward Delete, and "del" is not the Delete key at all — it is the
+		// ASCII DEL character (its alias group is {"del", "^8"}, and nothing
+		// arrives under it from the keyboard), which is what Backspace sends
+		// and which mew binds beside "back" (keydefaults.go). It therefore has
+		// to encode as Backspace; sending forward Delete for it would erase
+		// the wrong side of the cursor.
 		{"back", "\x7f"},
-		{"del", "\x1b[3~"},
+		{"del", "\x7f"},
+		{"fdel", "\x1b[3~"},
 		{"^C", "\x03"},
 	} {
 		e, w := newTestEditor(t, "ab\n")
@@ -640,9 +650,9 @@ func TestPTYClassKeyBindings(t *testing.T) {
 				switch key {
 				case "^C":
 					return []byte("\x03")
-				case "back":
+				case "back", "del":
 					return []byte("\x7f")
-				case "del", "fdel":
+				case "fdel":
 					return []byte("\x1b[3~")
 				}
 				return nil

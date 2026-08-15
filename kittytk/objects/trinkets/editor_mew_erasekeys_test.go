@@ -34,8 +34,10 @@ func TestEraseKeysEncodeAsATerminalSendsThem(t *testing.T) {
 		what   string
 	}{
 		{"back", "\x7f", "Backspace sends DEL"},
-		{"del", "\x1b[3~", "forward Delete sends CSI 3 ~"},
-		{"fdel", "\x1b[3~", "fdel is the same forward Delete"},
+		// del is mew's own name for backspace — its default binding is
+		// del_char_prior, the same as back — so it encodes the same way.
+		{"del", "\x7f", "del is backspace in mew's vocabulary"},
+		{"fdel", "\x1b[3~", "forward Delete sends CSI 3 ~"},
 	} {
 		sink = nil
 		term.Terminal().HandleKeyString(dkhKeyName(c.mewKey))
@@ -52,8 +54,9 @@ func TestEraseKeysEncodeAsATerminalSendsThem(t *testing.T) {
 	term.Terminal().HandleKeyString(dkhKeyName("back"))
 	back := string(sink)
 	sink = nil
-	term.Terminal().HandleKeyString(dkhKeyName("del"))
+	term.Terminal().HandleKeyString(dkhKeyName("fdel"))
 	if back == string(sink) {
-		t.Error("Backspace and Delete send the same bytes; a guest cannot tell them apart")
+		t.Error("backspace and forward delete send the same bytes; a guest cannot " +
+			"tell them apart, which is what one hardcoded byte for both did")
 	}
 }
