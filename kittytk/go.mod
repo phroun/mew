@@ -11,7 +11,7 @@ require (
 	github.com/gogpu/wgpu v0.30.32
 	github.com/phroun/argwild v0.0.1
 	github.com/phroun/direct-key-handler v0.3.20
-	github.com/phroun/key-sequence-processor v0.1.7-0.20260815213558-521849415ae5
+	github.com/phroun/key-sequence-processor v0.1.7
 	github.com/phroun/mew v0.3.1-alpha
 	github.com/phroun/purfecterm v0.2.48
 	golang.org/x/image v0.45.0
