@@ -112,6 +112,14 @@ func (t *PurfecTerm) pushCellPixelSizeTUI(p *core.Painter) {
 // picture by moving the cursor. The anchor is therefore the cell the graphical
 // path would have anchored to, with no sub-cell part.
 //
+// ORDER IS LOAD-BEARING: this runs AFTER the trinket has painted its own text.
+// A cell surface resolves "what is on top" by paint order, and a picture is
+// queued rather than composited, so it is taken to be covered by anything
+// written to its cells afterwards. Queued before the cell loop, a terminal's
+// own blank cells — the very ones the picture sits on — count as painted over
+// it, and every cell of it is suppressed. The picture then never appears at
+// all, which is a far worse failure than the spilling it was meant to fix.
+//
 // Z-ORDER IS NOT HONOURED, and cannot be. The graphical path straddles the cell
 // loop with the two bands GetImagesByZ returns, so a negative-z image paints
 // under the glyphs; here every picture is emitted after the whole frame's text,

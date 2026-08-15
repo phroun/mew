@@ -18,11 +18,17 @@ import (
 type cellSurface struct {
 	cellW, cellH int
 	images       []cellSurfaceImage
+	// seq counts draw calls, so a test can check what was painted AFTER what.
+	// The real backend resolves "on top" exactly this way.
+	seq        int
+	lastCell   int
+	firstImage int
 }
 
 type cellSurfaceImage struct {
 	x, y core.Unit
 	img  image.Image
+	seq  int
 }
 
 // CellPixelSize implements core.CellPixelSizer.
@@ -30,7 +36,11 @@ func (c *cellSurface) CellPixelSize() (int, int) { return c.cellW, c.cellH }
 
 // DrawImage / DrawImagePx implement core.ImageDrawer.
 func (c *cellSurface) DrawImage(x, y core.Unit, img image.Image) {
-	c.images = append(c.images, cellSurfaceImage{x: x, y: y, img: img})
+	c.seq++
+	if c.firstImage == 0 {
+		c.firstImage = c.seq
+	}
+	c.images = append(c.images, cellSurfaceImage{x: x, y: y, img: img, seq: c.seq})
 }
 func (c *cellSurface) DrawImagePx(xPx, yPx int, img image.Image) {
 	c.images = append(c.images, cellSurfaceImage{x: core.Unit(xPx), y: core.Unit(yPx), img: img})
@@ -42,11 +52,14 @@ func (c *cellSurface) Size() core.UnitSize { return core.UnitSize{Width: 640, He
 func (c *cellSurface) Metrics() core.CellMetrics {
 	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
 }
-func (c *cellSurface) BeginFrame()                                          {}
-func (c *cellSurface) EndFrame()                                            {}
-func (c *cellSurface) Clear(style.CellStyle)                                {}
-func (c *cellSurface) SetClip(core.UnitRect)                                {}
-func (c *cellSurface) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {}
+func (c *cellSurface) BeginFrame()           {}
+func (c *cellSurface) EndFrame()             {}
+func (c *cellSurface) Clear(style.CellStyle) {}
+func (c *cellSurface) SetClip(core.UnitRect) {}
+func (c *cellSurface) DrawCell(core.Unit, core.Unit, rune, style.CellStyle) {
+	c.seq++
+	c.lastCell = c.seq
+}
 func (c *cellSurface) DrawText(core.Unit, core.Unit, string, style.CellStyle, *core.Font) core.Unit {
 	return 0
 }
@@ -236,5 +249,36 @@ func TestTUIUnchangedImageKeepsItsBufferAcrossFrames(t *testing.T) {
 	if c.images[0].img != first {
 		t.Error("the picture was rebuilt on an idle frame, so the surface sees a " +
 			"buffer it has never been handed and re-sends the whole payload")
+	}
+}
+
+// Pictures must be handed over AFTER this trinket's own text.
+//
+// A cell surface decides what is on top by paint order, and a picture is queued
+// rather than composited — so it is taken to be covered by whatever is written
+// to its cells afterwards. Queued first, a terminal's own blank cells count as
+// painted over the picture and every cell of it is suppressed: the image
+// vanishes entirely rather than merely spilling.
+//
+// That is not a rule this file can enforce on its own, so it is pinned here.
+func TestTUIImagesAreHandedOverAfterTheText(t *testing.T) {
+	term, c := tuiTerm(t, 10, 20)
+	term.Feed([]byte("\x1b[2;1H"))
+	term.Feed(sixelSolidBlock(24, 24, 100, 0, 100))
+	term.Feed([]byte("\x1b[10;1Hsome text below it"))
+
+	c.images, c.seq, c.lastCell, c.firstImage = nil, 0, 0, 0
+	term.Paint(core.NewPainter(c))
+	if len(c.images) == 0 {
+		t.Fatal("no image reached the surface")
+	}
+	if c.lastCell == 0 {
+		t.Fatal("no text reached the surface; the ordering cannot be judged")
+	}
+	if c.firstImage < c.lastCell {
+		t.Errorf("the first image was handed over at step %d, before the last text cell at %d: "+
+			"a surface that resolves depth by paint order will treat the terminal's own "+
+			"cells as covering the picture and drop it entirely",
+			c.firstImage, c.lastCell)
 	}
 }

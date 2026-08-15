@@ -654,7 +654,9 @@ func (t *PurfecTerm) Paint(p *core.Painter) {
 	// Get terminal cells
 	cells := t.terminal.GetCells()
 	buf := t.terminal.Buffer()
-	t.renderImagesTUI(p, buf, metrics, bounds)
+	// Pictures are queued AFTER this trinket's own text — see the note in
+	// renderImagesTUI on why the order is load-bearing now.
+	defer t.renderImagesTUI(p, buf, metrics, bounds)
 
 	// Render each cell. The purfecterm grid is LOGICAL — one cell per
 	// character, a wide character occupying ONE cell with its visual width
