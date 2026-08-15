@@ -111,7 +111,7 @@ func solidImage(w, h int, c color.RGBA) *image.RGBA {
 // move the text layout the caller computed.
 func TestKittyEncodingShape(t *testing.T) {
 	var sb strings.Builder
-	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}), 1)
+	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}), 1, 0)
 	out := sb.String()
 	// f=24 rather than f=32: a solid opaque picture carries no alpha worth
 	// sending. TestKittyPayloadIsCompressed covers the choice between them.
@@ -136,7 +136,7 @@ func TestKittyChunksLargePayload(t *testing.T) {
 		seed = seed*1664525 + 1013904223
 		noise.Pix[i] = byte(seed >> 24)
 	}
-	writeKittyImage(&sb, noise, 1)
+	writeKittyImage(&sb, noise, 1, 0)
 	out := sb.String()
 	if n := strings.Count(out, "\033_G"); n < 2 {
 		t.Fatalf("large image was not chunked (%d commands)", n)
@@ -642,8 +642,13 @@ func TestKittyPlacesBeforeDeleting(t *testing.T) {
 	b.allocateBuffers()
 
 	one := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	// Wholly different, so it goes the FULL route rather than as a delta —
+	// which is what this test is about. TestKittyDeltaPatchesSmallChanges
+	// covers the other branch.
 	two := image.NewRGBA(image.Rect(0, 0, 40, 40))
-	two.Set(1, 1, color.RGBA{255, 0, 0, 255}) // different pixels, so it re-sends
+	for i := range two.Pix {
+		two.Pix[i] = 0xff
+	}
 
 	b.pendingImages = []placedImage{{col: 2, row: 2, img: one, seq: 100}}
 	b.flushImagesLocked()
@@ -837,7 +842,7 @@ func TestKittyPayloadIsCompressed(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	writeKittyImage(&sb, img, 1)
+	writeKittyImage(&sb, img, 1, 0)
 	got := sb.String()
 	if !strings.Contains(got, ",o=z") {
 		t.Error("the payload was not compressed (no o=z)")
@@ -855,7 +860,7 @@ func TestKittyPayloadIsCompressed(t *testing.T) {
 	// Partial alpha still goes as RGBA — dropping it would lose the blend.
 	img.SetRGBA(10, 10, color.RGBA{255, 0, 0, 128})
 	sb.Reset()
-	writeKittyImage(&sb, img, 1)
+	writeKittyImage(&sb, img, 1, 0)
 	if strings.Contains(sb.String(), "f=24") {
 		t.Error("a picture with partial alpha was sent as RGB, losing the alpha")
 	}
@@ -914,5 +919,129 @@ func TestMotionTrackingFollowsDemand(t *testing.T) {
 	b.mu.Unlock()
 	if got := tty.String(); got != "\033[?1003l" {
 		t.Errorf("wrote %q, want the disable once nothing wanted motion", got)
+	}
+}
+
+// A small change goes as a DELTA over what is already on screen, not as the
+// whole picture again.
+//
+// A page whose video region repaints, a caret blinking, a line of a terminal
+// changing: the frame is the same picture in the same place with some pixels
+// different. Sending the changed rectangle over the top costs a fraction of
+// re-transmitting everything, and the placement underneath holds the rest of
+// the picture on screen while it happens.
+func TestKittyDeltaPatchesSmallChanges(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+
+	// 20x10 cells at 10x20 px, with content that does not compress away to
+	// nothing — an empty picture is a few hundred bytes either way, and the
+	// comparison below would be measuring fixed overhead rather than payload.
+	base := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	seed := uint32(7)
+	for i := range base.Pix {
+		seed = seed*1664525 + 1013904223
+		base.Pix[i] = byte(seed >> 24)
+	}
+	b.pendingImages = []placedImage{{col: 1, row: 1, img: base, seq: 100}}
+	b.flushImagesLocked()
+	fullBytes := out.Len()
+	if fullBytes == 0 {
+		t.Fatal("the first frame sent nothing")
+	}
+
+	// Change one cell's worth, four cells in and two down.
+	patched := image.NewRGBA(base.Bounds())
+	copy(patched.Pix, base.Pix)
+	for y := 40; y < 60; y++ {
+		for x := 40; x < 50; x++ {
+			patched.SetRGBA(x, y, color.RGBA{255, 0, 0, 255})
+		}
+	}
+	out.Reset()
+	b.pendingImages = []placedImage{{col: 1, row: 1, img: patched, seq: 100}}
+	b.flushImagesLocked()
+	got := out.String()
+
+	if got == "" {
+		t.Fatal("the change was never sent")
+	}
+	if strings.Contains(got, "a=d") {
+		t.Error("a delta deleted something; the placement underneath must stay")
+	}
+	if !strings.Contains(got, "z=1") {
+		t.Error("the delta was not placed above the picture it patches")
+	}
+	// Addressed at the changed cell: col 1+4, row 1+2, one-based.
+	if !strings.Contains(got, "\033[4;6H") {
+		t.Errorf("delta not addressed to the changed cell (4;6): %q", got[:40])
+	}
+	if len(got) > fullBytes/4 {
+		t.Errorf("delta is %d bytes against %d for the whole picture: barely a saving",
+			len(got), fullBytes)
+	}
+}
+
+// Enough delta and it is cheaper to start over. Full-frame video reaches that
+// bound at once — every pixel really did change — and simply keeps sending
+// frames, which is the honest answer rather than a stack of layers.
+func TestKittyDeltaGivesUpOnLargeChanges(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+
+	base := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	b.pendingImages = []placedImage{{col: 1, row: 1, img: base, seq: 100}}
+	b.flushImagesLocked()
+
+	// Most of the picture changes: past the point where patching pays.
+	whole := image.NewRGBA(base.Bounds())
+	for i := range whole.Pix {
+		whole.Pix[i] = 0x7f
+	}
+	out.Reset()
+	b.pendingImages = []placedImage{{col: 1, row: 1, img: whole, seq: 100}}
+	b.flushImagesLocked()
+	got := out.String()
+	if !strings.Contains(got, "a=d") {
+		t.Error("a full re-send left the previous placement behind")
+	}
+	if strings.Contains(got, "z=1") {
+		t.Error("sent as a delta when most of the picture changed")
+	}
+}
+
+// A picture that MOVED cannot be patched: a delta means nothing over a
+// placement that is no longer where it was.
+func TestKittyDeltaRefusesWhenGeometryMoves(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+
+	base := image.NewRGBA(image.Rect(0, 0, 200, 200))
+	b.pendingImages = []placedImage{{col: 1, row: 1, img: base, seq: 100}}
+	b.flushImagesLocked()
+
+	moved := image.NewRGBA(base.Bounds())
+	copy(moved.Pix, base.Pix)
+	moved.SetRGBA(5, 5, color.RGBA{255, 0, 0, 255})
+	out.Reset()
+	b.pendingImages = []placedImage{{col: 7, row: 1, img: moved, seq: 100}}
+	b.flushImagesLocked()
+	if strings.Contains(out.String(), "z=1") {
+		t.Error("patched a picture that had moved")
+	}
+	if !strings.Contains(out.String(), "a=d") {
+		t.Error("the placement at the old position was left behind")
 	}
 }

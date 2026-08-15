@@ -49,14 +49,21 @@ const graphicsProbeID = 0x4B54 // "KT"
 // chunking above 4096 base64 bytes.
 const maxKittyChunk = 4096
 
-// Image ids are handed out from two alternating ranges so that a frame's
-// placements never share an id with the ones still on screen from the frame
-// before — see the kitty branch of flushImagesLocked. The stride bounds how
-// many blocks one frame can place before the ranges would meet; a frame is
-// normally one to three.
+// kittyIDBase starts a monotonically increasing id sequence — distinctive, and
+// unlikely to collide with anything else the terminal is holding. Counting up
+// rather than reusing means a placement issued this frame can never share an id
+// with one being deleted in the same frame.
+const kittyIDBase uint32 = 0x4B540000 // "KT" high half
+
+// A delta is only worth sending while it stays well under the cost of simply
+// re-sending the picture. maxPatchFraction bounds one delta against the frame
+// it patches, and maxPatchAreaRatio bounds the deltas ACCUMULATED since the
+// last full send against the same thing — layer enough patches and the terminal
+// is compositing a stack for no gain, so it is cheaper to start over.
 const (
-	kittyIDBase   uint32 = 0x4B540000 // "KT" high half: distinctive, and ours
-	kittyIDStride uint32 = 4096
+	maxPatchFraction  = 0.5
+	maxPatchAreaRatio = 2.0
+	maxPatchCount     = 64
 )
 
 // placedImage is one image the paint pass asked for, waiting to be emitted
@@ -341,35 +348,55 @@ func (t *TUIBackend) flushImagesLocked() {
 		if !setChanged {
 			return
 		}
-		// PLACE FIRST, DELETE AFTER, and never onto the ids still on screen.
+		// A DELTA first, when the frame is the same pictures in the same
+		// places with only some pixels different — a page whose video region
+		// repaints, a cursor blinking, a line of a terminal changing. Sending
+		// the changed rectangle over the top of what is already there beats
+		// re-transmitting everything, and the placement underneath keeps the
+		// rest of the picture on screen while it happens.
+		//
+		// It is worth it only while it stays cheap: one patch under half the
+		// frame, and the patches SINCE the last full send under twice it.
+		// Past that the terminal is compositing a stack of layers to no
+		// purpose and starting over is cheaper. Full-frame video reaches that
+		// bound immediately and simply keeps sending frames, which is correct
+		// — every pixel really did change.
+		if patches, ok := t.patchPlanLocked(blocks, prev); ok {
+			for _, v := range patches {
+				id := t.nextKittyIDLocked()
+				t.kittyPatchIDs = append(t.kittyPatchIDs, id)
+				t.kittyPatchArea += v.img.Bounds().Dx() * v.img.Bounds().Dy()
+				sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
+				// z=1: over the placement it is patching, which sits at 0.
+				writeKittyImage(&sb, v.img, id, 1)
+			}
+			break
+		}
+
+		// PLACE FIRST, DELETE AFTER.
 		//
 		// Deleting everything and then transmitting leaves the screen blank
 		// for as long as the payload takes to arrive — dozens of chunks for a
 		// full window, which the terminal renders through. On content that
-		// changes every frame, a video, that reads as flicker between the
-		// picture and black, and it gets worse as the window grows because
-		// there is more payload to wait through.
-		//
-		// So each frame draws into a FRESH set of ids: the new placement
-		// covers the old one at the same spot, and only then is the previous
-		// generation removed. There is no moment with nothing on screen, and
-		// two generations of ids mean a delete can never race a placement
-		// that is meant to survive it.
-		gen := t.kittyGen ^ 1
-		ids := make([]uint32, 0, len(blocks))
+		// changes every frame that reads as flicker between the picture and
+		// black, worse the larger the window because there is more payload to
+		// wait through. New ids come from a counter that only rises, so the
+		// delete that follows can never reach what was just placed.
+		stale := append(append([]uint32(nil), t.kittyBaseIDs...), t.kittyPatchIDs...)
+		bases := make([]uint32, 0, len(blocks))
 		sb.WriteString("\0337")
-		for k, v := range blocks {
-			id := kittyIDBase + uint32(gen)*kittyIDStride + uint32(k)
-			ids = append(ids, id)
+		for _, v := range blocks {
+			id := t.nextKittyIDLocked()
+			bases = append(bases, id)
 			sb.WriteString(fmt.Sprintf("\033[%d;%dH", v.row+1, v.col+1))
-			writeKittyImage(&sb, v.img, id)
+			writeKittyImage(&sb, v.img, id, 0)
 		}
-		for _, old := range t.kittyShownIDs {
-			// d=I removes the placements AND frees the image data, which we
-			// re-transmit every time anyway.
+		for _, old := range stale {
+			// d=I removes the placements AND frees the image data, which is
+			// re-transmitted every time anyway.
 			fmt.Fprintf(&sb, "\033_Ga=d,d=I,i=%d,q=2\033\\", old)
 		}
-		t.kittyShownIDs, t.kittyGen = ids, gen
+		t.kittyBaseIDs, t.kittyPatchIDs, t.kittyPatchArea = bases, nil, 0
 	case GraphicsSixel:
 		for i, v := range blocks {
 			if !fresh[i] {
@@ -417,7 +444,7 @@ func (t *TUIBackend) imageCellExtentLocked(p placedImage) (c1, r1 int) {
 // payload, base64, chunked as the protocol requires (m=1 on every piece but
 // the last). C=1 keeps the cursor where it was, so the text layout the caller
 // computed is not disturbed by having drawn a picture.
-func writeKittyImage(sb *strings.Builder, img image.Image, id uint32) {
+func writeKittyImage(sb *strings.Builder, img image.Image, id uint32, z int) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w <= 0 || h <= 0 {
@@ -531,7 +558,7 @@ func writeKittyImage(sb *strings.Builder, img image.Image, id uint32) {
 			// q=2 suppresses the terminal's per-command acknowledgement —
 			// those come back as APC replies through the keyboard reader, and
 			// a frame is dozens of chunks.
-			fmt.Fprintf(sb, "a=T,f=%d,s=%d,v=%d,C=1,i=%d,q=2,m=%d", format, w, h, id, more)
+			fmt.Fprintf(sb, "a=T,f=%d,s=%d,v=%d,C=1,i=%d,z=%d,q=2,m=%d", format, w, h, id, z, more)
 			if compressed {
 				sb.WriteString(",o=z")
 			}
@@ -854,4 +881,134 @@ func sameImage(a, b image.Image) bool {
 	}
 	ib, ok := identityOf(b)
 	return ok && ia == ib
+}
+
+// nextKittyIDLocked hands out the next image id. Monotonic on purpose: see
+// kittyIDBase.
+func (t *TUIBackend) nextKittyIDLocked() uint32 {
+	if t.kittyNextID < kittyIDBase {
+		t.kittyNextID = kittyIDBase
+	}
+	t.kittyNextID++
+	return t.kittyNextID
+}
+
+// patchPlanLocked works out whether this frame can be sent as deltas over what
+// is already on screen, and returns them if so.
+//
+// The frame has to be structurally IDENTICAL to the one before — same number of
+// blocks, each at the same cell and the same size — because a delta is only
+// meaningful over a placement that is still there and still where it was. Any
+// move, split, or resize goes the full route.
+//
+// Each block is then compared pixel for pixel with what was sent, and the
+// changed region rounded out to whole cells. A block with nothing changed
+// contributes nothing at all.
+func (t *TUIBackend) patchPlanLocked(blocks, prev []placedImage) ([]placedImage, bool) {
+	if len(blocks) == 0 || len(blocks) != len(prev) || len(t.kittyBaseIDs) != len(blocks) {
+		return nil, false
+	}
+	if len(t.kittyPatchIDs) >= maxPatchCount {
+		return nil, false
+	}
+	cw, ch := t.cellPixelSizeLocked()
+	if cw <= 0 || ch <= 0 {
+		return nil, false
+	}
+
+	var patches []placedImage
+	area, full := 0, 0
+	for i := range blocks {
+		a, b := prev[i], blocks[i]
+		if a.col != b.col || a.row != b.row || a.img.Bounds().Size() != b.img.Bounds().Size() {
+			return nil, false
+		}
+		oldRGBA, ok1 := a.img.(*image.RGBA)
+		newRGBA, ok2 := b.img.(*image.RGBA)
+		if !ok1 || !ok2 {
+			return nil, false
+		}
+		bb := newRGBA.Bounds()
+		full += bb.Dx() * bb.Dy()
+		r, changed := changedCellRect(oldRGBA, newRGBA, cw, ch)
+		if !changed {
+			continue
+		}
+		if float64(r.Dx()*r.Dy()) > maxPatchFraction*float64(bb.Dx()*bb.Dy()) {
+			return nil, false // this frame is most of the picture; just send it
+		}
+		area += r.Dx() * r.Dy()
+		sub, ok := newRGBA.SubImage(r).(*image.RGBA)
+		if !ok {
+			return nil, false
+		}
+		patches = append(patches, placedImage{
+			col: b.col + (r.Min.X-bb.Min.X)/cw,
+			row: b.row + (r.Min.Y-bb.Min.Y)/ch,
+			img: sub,
+			seq: b.seq,
+		})
+	}
+	if len(patches) == 0 {
+		return nil, false // nothing to draw, but the caller still owns the frame
+	}
+	if float64(t.kittyPatchArea+area) > maxPatchAreaRatio*float64(full) {
+		return nil, false // patched enough by now that starting over is cheaper
+	}
+	return patches, true
+}
+
+// changedCellRect is the region where two same-sized images differ, rounded out
+// to whole cells.
+//
+// Whole cells because that is the granularity a placement can be positioned at:
+// the terminal puts a picture at the cursor, so a delta lands on a cell
+// boundary or not at all. Rounding out costs at most a cell of extra pixels on
+// each side and saves carrying a sub-cell offset through everything.
+func changedCellRect(a, b *image.RGBA, cw, ch int) (image.Rectangle, bool) {
+	bounds := b.Bounds()
+	x0, y0 := bounds.Max.X, bounds.Max.Y
+	x1, y1 := bounds.Min.X, bounds.Min.Y
+	found := false
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		ra := a.Pix[a.PixOffset(bounds.Min.X, y):][:bounds.Dx()*4]
+		rb := b.Pix[b.PixOffset(bounds.Min.X, y):][:bounds.Dx()*4]
+		if string(ra) == string(rb) {
+			continue // whole row identical: the common case, and the cheap one
+		}
+		found = true
+		if y < y0 {
+			y0 = y
+		}
+		if y+1 > y1 {
+			y1 = y + 1
+		}
+		// Narrow the columns too — a caret blinking changes one row of a page
+		// but only a few pixels across it.
+		lo := 0
+		for lo < len(ra) && ra[lo] == rb[lo] {
+			lo++
+		}
+		hi := len(ra)
+		for hi > lo && ra[hi-1] == rb[hi-1] {
+			hi--
+		}
+		if px := bounds.Min.X + lo/4; px < x0 {
+			x0 = px
+		}
+		if px := bounds.Min.X + (hi+3)/4; px > x1 {
+			x1 = px
+		}
+	}
+	if !found {
+		return image.Rectangle{}, false
+	}
+	// Out to cell boundaries, measured from the image's own origin.
+	snapLo := func(v, origin, step int) int { return origin + ((v-origin)/step)*step }
+	snapHi := func(v, origin, step int) int { return origin + ((v-origin+step-1)/step)*step }
+	r := image.Rect(
+		snapLo(x0, bounds.Min.X, cw), snapLo(y0, bounds.Min.Y, ch),
+		snapHi(x1, bounds.Min.X, cw), snapHi(y1, bounds.Min.Y, ch),
+	).Intersect(bounds)
+	return r, !r.Empty()
 }

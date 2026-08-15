@@ -107,11 +107,17 @@ type TUIBackend struct {
 	motionWanted bool
 	motionOn     bool
 
-	// kittyShownIDs are the image ids currently on screen and kittyGen which
-	// of the two id ranges they came from. A frame places into the OTHER
-	// range and then deletes these, so the screen is never empty in between.
-	kittyShownIDs []uint32
-	kittyGen      int
+	// What kitty currently has on screen. kittyBaseIDs is one id per block,
+	// the full picture; kittyPatchIDs are the deltas layered over them since
+	// the last full send. kittyNextID only ever counts up, so a new placement
+	// can never collide with one being deleted in the same frame.
+	// kittyPatchArea is the pixel area patched since the last full send, which
+	// is what decides when patching has stopped being cheaper than starting
+	// over.
+	kittyBaseIDs   []uint32
+	kittyPatchIDs  []uint32
+	kittyPatchArea int
+	kittyNextID    uint32
 
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
