@@ -297,7 +297,7 @@ func (t *TUIBackend) flushImagesLocked() {
 	// an ordering stamp, not part of what the viewer sees, and comparing it
 	// would call every frame a change.
 	same := func(a, b placedImage) bool {
-		return a.col == b.col && a.row == b.row && a.img == b.img
+		return a.col == b.col && a.row == b.row && sameImage(a.img, b.img)
 	}
 	fresh := make([]bool, len(blocks))
 	setChanged := len(blocks) != len(prev)
@@ -686,4 +686,51 @@ func sameRuns(a, b []cellRun) bool {
 		}
 	}
 	return true
+}
+
+// imgIdentity says WHICH PIXELS an image refers to, rather than which wrapper
+// object refers to them.
+//
+// Cropping produces a new SubImage every time it is called, and a clipped
+// picture is re-cropped on every frame — so comparing the wrapper answers
+// "different" forever, and an unchanged picture is re-transmitted for as long
+// as it is on screen. A crop shares its parent's backing array, so the address
+// of the first byte together with the rectangle and stride identifies the
+// pixels themselves and is stable across frames.
+type imgIdentity struct {
+	pix    *uint8 // first byte of the shared backing array
+	rect   image.Rectangle
+	stride int
+}
+
+func identityOf(img image.Image) (imgIdentity, bool) {
+	switch m := img.(type) {
+	case *image.RGBA:
+		if len(m.Pix) == 0 {
+			return imgIdentity{}, false
+		}
+		return imgIdentity{pix: &m.Pix[0], rect: m.Rect, stride: m.Stride}, true
+	case *image.NRGBA:
+		if len(m.Pix) == 0 {
+			return imgIdentity{}, false
+		}
+		return imgIdentity{pix: &m.Pix[0], rect: m.Rect, stride: m.Stride}, true
+	}
+	return imgIdentity{}, false
+}
+
+// sameImage reports whether two images are the same pixels. It answers by
+// identity, never by content: pixels rewritten in place under an unchanged
+// wrapper read as unchanged here, which is why the thing that rewrites them
+// hands over a fresh buffer instead (see the trinket's image cache).
+func sameImage(a, b image.Image) bool {
+	if a == b {
+		return true
+	}
+	ia, ok := identityOf(a)
+	if !ok {
+		return false
+	}
+	ib, ok := identityOf(b)
+	return ok && ia == ib
 }

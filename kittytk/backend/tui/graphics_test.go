@@ -675,3 +675,70 @@ func TestOcclusionChangeCountsAsAChange(t *testing.T) {
 		t.Error("the picture was not restored when the menu closed")
 	}
 }
+
+// A CLIPPED picture that has not changed must not be re-transmitted.
+//
+// Cropping makes a new SubImage wrapper every time it runs, and a clipped
+// picture is re-cropped on every frame — so comparing wrappers answers
+// "different" forever and the whole payload goes again for as long as it is on
+// screen. Which is every picture in a window, since a window clips.
+func TestClippedImageIsNotResentEveryFrame(t *testing.T) {
+	var out strings.Builder
+	b := &TUIBackend{output: &out, cols: 40, rows: 20}
+	b.metrics = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	b.graphics = GraphicsKitty
+	b.outerCellW, b.outerCellH, b.outerCellSizeOK = 10, 20, true
+	b.allocateBuffers()
+	b.clipRect = core.UnitRect{X: 0, Y: 0, Width: 320, Height: 80} // 40x5 cells
+
+	img := image.NewRGBA(image.Rect(0, 0, 40, 160)) // 4x8 cells: 3 rows clipped off
+	frame := func() int {
+		out.Reset()
+		b.mu.Lock()
+		b.queueImageLocked(2, 2, img)
+		b.mu.Unlock()
+		b.flushImagesLocked()
+		return out.Len()
+	}
+
+	if first := frame(); first == 0 {
+		t.Fatal("the clipped picture was never sent")
+	}
+	if n := frame(); n != 0 {
+		t.Errorf("an unchanged clipped picture re-sent %d bytes", n)
+	}
+	if n := frame(); n != 0 {
+		t.Errorf("still re-sending on the third frame: %d bytes", n)
+	}
+
+	// Moving it is still a change.
+	out.Reset()
+	b.mu.Lock()
+	b.queueImageLocked(6, 2, img)
+	b.mu.Unlock()
+	b.flushImagesLocked()
+	if out.Len() == 0 {
+		t.Error("a clipped picture that moved was not re-sent")
+	}
+}
+
+// Identity is by pixels, not by wrapper: two crops of the same parent over the
+// same rectangle are the same picture, and over different rectangles are not.
+func TestSameImageComparesPixelsNotWrappers(t *testing.T) {
+	parent := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	r := image.Rect(10, 10, 30, 30)
+	a := parent.SubImage(r)
+	c := parent.SubImage(r) // a distinct wrapper over the same pixels
+	if a == c {
+		t.Skip("SubImage returned the same wrapper; the test cannot show anything")
+	}
+	if !sameImage(a, c) {
+		t.Error("two crops of the same parent over the same rectangle read as different")
+	}
+	if sameImage(a, parent.SubImage(image.Rect(0, 0, 20, 20))) {
+		t.Error("crops over different rectangles read as the same")
+	}
+	if sameImage(a, image.NewRGBA(r)) {
+		t.Error("a different buffer with the same bounds read as the same")
+	}
+}
