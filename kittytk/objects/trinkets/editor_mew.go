@@ -1688,6 +1688,18 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	e.applyHostedTileFrame(t, g, cw, ch)
 	fracX, fracY, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
 
+	// The middle of the round trip, which neither end's trace can show: the
+	// host reports the pointer to mew, mew decides which viewport it landed in
+	// and calls back here with a CHILD-LOCAL cell. A wrong cell arriving here
+	// is mew's routing; a right cell leaving here wrongly placed is the tile
+	// resolution or the sub-cell fraction below it.
+	if core.MouseTracing() {
+		core.MouseTracef("route  who=%p ev=(col=%d,row=%d act=%v btn=%v) tile=(col=%d,row=%d %dx%d valid=%v) ptr=(%v,%v valid=%v) frac=(%.3f,%.3f precise=%v)",
+			t, ev.Col, ev.Row, ev.Action, ev.Button,
+			g.col, g.row, g.width, g.height, g.valid,
+			px, py, pvalid, fracX, fracY, precise)
+	}
+
 	handled := dispatchHostedMouse(t, ev, fracX, fracY, precise)
 
 	e.termMu.Lock()

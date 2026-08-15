@@ -15,7 +15,10 @@ func TestDKHKeyName(t *testing.T) {
 		{"esc", "Escape"},
 		{"back", "Backspace"},
 		{"fdel", "Delete"},
-		{"del", "Delete"},
+		// "del" is not the Delete key however it is spelled — its alias group
+		// is {"del", "^8"}, the ASCII DEL character, and mew binds it beside
+		// "back" (see mewToDKHKey).
+		{"del", "Backspace"},
 		{"pgup", "PageUp"},
 		{"return", "Enter"},
 		{"space", "Space"},
