@@ -112,7 +112,9 @@ func TestKittyEncodingShape(t *testing.T) {
 	var sb strings.Builder
 	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}))
 	out := sb.String()
-	for _, want := range []string{"\033_G", "a=T", "f=32", "s=3", "v=2", "C=1", "m=0", "\033\\"} {
+	// f=24 rather than f=32: a solid opaque picture carries no alpha worth
+	// sending. TestKittyPayloadIsCompressed covers the choice between them.
+	for _, want := range []string{"\033_G", "a=T", "f=24", "s=3", "v=2", "C=1", "m=0", "\033\\"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("kitty payload missing %q: %q", want, out)
 		}
@@ -123,8 +125,17 @@ func TestKittyEncodingShape(t *testing.T) {
 // last — the protocol requires it, and a terminal drops an overlong one.
 func TestKittyChunksLargePayload(t *testing.T) {
 	var sb strings.Builder
-	// 64x64 RGBA is 16384 bytes -> ~21848 base64 chars -> 6 chunks.
-	writeKittyImage(&sb, solidImage(64, 64, color.RGBA{9, 9, 9, 255}))
+	// INCOMPRESSIBLE, so the payload is still large after o=z. A solid block
+	// used to make this test's point and no longer does: it compresses to a
+	// few hundred bytes and arrives in one chunk, which is the improvement
+	// working rather than the chunking breaking.
+	noise := image.NewRGBA(image.Rect(0, 0, 128, 128))
+	seed := uint32(12345)
+	for i := range noise.Pix {
+		seed = seed*1664525 + 1013904223
+		noise.Pix[i] = byte(seed >> 24)
+	}
+	writeKittyImage(&sb, noise)
 	out := sb.String()
 	if n := strings.Count(out, "\033_G"); n < 2 {
 		t.Fatalf("large image was not chunked (%d commands)", n)
@@ -740,5 +751,54 @@ func TestSameImageComparesPixelsNotWrappers(t *testing.T) {
 	}
 	if sameImage(a, image.NewRGBA(r)) {
 		t.Error("a different buffer with the same bounds read as the same")
+	}
+}
+
+// Kitty payloads go compressed, and drop the alpha channel when there is
+// nothing in it.
+//
+// Raw pixels base64'd is the most expensive thing this file does: a
+// full-window frame measures 4.83 MB on the wire that way, and every byte
+// crosses a pty and is decoded by the terminal before anything appears. A
+// picture that changes often — a browser in a pane — lives or dies on it.
+func TestKittyPayloadIsCompressed(t *testing.T) {
+	// Web-page-ish: flat background with text-like runs. Compresses well, as
+	// real screen content does; random noise would prove nothing.
+	img := image.NewRGBA(image.Rect(0, 0, 400, 300))
+	for y := 0; y < 300; y++ {
+		for x := 0; x < 400; x++ {
+			c := color.RGBA{13, 17, 23, 255}
+			if y%22 < 10 && x%9 < 5 {
+				c = color.RGBA{230, 237, 243, 255}
+			}
+			img.SetRGBA(x, y, c)
+		}
+	}
+
+	var sb strings.Builder
+	writeKittyImage(&sb, img)
+	got := sb.String()
+	if !strings.Contains(got, ",o=z") {
+		t.Error("the payload was not compressed (no o=z)")
+	}
+	if !strings.Contains(got, "f=24") {
+		t.Error("an opaque picture was sent as RGBA; the alpha channel is a quarter of it")
+	}
+	// The uncompressed form is 4 bytes a pixel, base64'd.
+	rawB64 := (400 * 300 * 4) * 4 / 3
+	if len(got) > rawB64/4 {
+		t.Errorf("payload is %d bytes against %d uncompressed: less than a 4x saving on "+
+			"content that compresses 30x", len(got), rawB64)
+	}
+
+	// Partial alpha still goes as RGBA — dropping it would lose the blend.
+	img.SetRGBA(10, 10, color.RGBA{255, 0, 0, 128})
+	sb.Reset()
+	writeKittyImage(&sb, img)
+	if strings.Contains(sb.String(), "f=24") {
+		t.Error("a picture with partial alpha was sent as RGB, losing the alpha")
+	}
+	if !strings.Contains(sb.String(), "f=32") {
+		t.Error("expected RGBA for a picture with partial alpha")
 	}
 }
