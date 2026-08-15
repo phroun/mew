@@ -187,6 +187,21 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 	setStr(service, "endpoint", &cfg.Endpoint)
 	setStr(service, "token", &cfg.Token)
 
+	// [system] density - the PHYSICAL screen's content scale, overriding what
+	// the window system reports. Blank, zero or unparseable leaves it on auto
+	// (0), because pinning a wrong number is worse than having none.
+	//
+	// Not [window] scale. That is how large mew draws itself; this is what kind
+	// of panel it is on, and asking for scale=1 on a HiDPI screen makes the two
+	// differ. It is here because a child rendering pictures into a terminal
+	// pane reads the density from the window system on its own, and nothing in
+	// the terminal protocols carries that number either way.
+	if v, ok := system["density"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.Density = f
+		}
+	}
+
 	// native is section-routed: [system] styles the graphical host's menu
 	// glyphs, [tui] the terminal host's; clipboard is [tui] only.
 	setStr(system, "native", &cfg.Native)
