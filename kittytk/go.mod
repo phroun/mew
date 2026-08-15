@@ -10,7 +10,7 @@ require (
 	github.com/gogpu/gputypes v0.5.1
 	github.com/gogpu/wgpu v0.30.32
 	github.com/phroun/argwild v0.0.1
-	github.com/phroun/direct-key-handler v0.3.17
+	github.com/phroun/direct-key-handler v0.3.18
 	github.com/phroun/key-sequence-processor v0.1.5
 	github.com/phroun/mew v0.3.1-alpha
 	github.com/phroun/purfecterm v0.2.45

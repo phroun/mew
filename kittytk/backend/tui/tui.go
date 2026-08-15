@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -134,6 +135,16 @@ type TUIBackend struct {
 	outerCellH      int  // outer terminal cell height in pixels
 	outerPixelOK    bool // DECRQM: ?1016 is recognized (settable)
 	outerCellSizeOK bool // CSI 16 t gave a usable cell pixel size
+
+	// Outer-terminal graphics (see graphics.go). The startup probe asks the
+	// real terminal whether it can draw a picture and in which protocol; a
+	// terminal that answers neither query falls back to what the environment
+	// says. Images the paint pass asks for are collected here and emitted
+	// after the text diff, since the screen is written as one flush.
+	graphics         int // Graphics{None,Kitty,Sixel}
+	graphicsAnswered bool
+	pendingImages    []placedImage
+	hadImages        bool // last frame placed images (kitty needs them deleted)
 
 	// Output writer
 	output io.Writer
@@ -355,6 +366,17 @@ func (t *TUIBackend) Init() error {
 		t.writeTTY("\033[?1016$p") // DECRQM: is SGR-Pixels mode recognized?
 		t.writeTTY("\033[16t")     // XTWINOPS: report the cell size in pixels
 	}
+
+	// Ask the same terminal whether it can draw a PICTURE, and in which
+	// protocol (see graphics.go). Asynchronous like the probes above: the
+	// answers arrive as APC:/DA1: keys. A terminal that ignores both is
+	// settled from the environment once the window has passed, so a
+	// multiplexer swallowing the replies still gets an answer.
+	t.probeGraphics()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		t.resolveGraphicsFallback()
+	}()
 
 	// Handle terminal resize
 	go t.handleResize()
@@ -691,6 +713,12 @@ func (t *TUIBackend) EndFrame() {
 	}
 
 	t.write(out.String())
+
+	// Pictures go last: the text diff addresses cells all over the screen,
+	// and anything emitted before it would be painted over by text written
+	// afterwards. This is also the right order to read - the image sits on
+	// the row the text layer already made room for.
+	t.flushImagesLocked()
 }
 
 // Clear fills the entire surface with a style.
@@ -1374,6 +1402,14 @@ func (t *TUIBackend) handleKey(key string) {
 	// would fall through and be misread as bogus keystrokes.
 	if strings.HasPrefix(key, "DECRPM:") {
 		t.handleDECRPM(key)
+		return
+	}
+	if strings.HasPrefix(key, "APC:") {
+		t.handleAPC(key)
+		return
+	}
+	if strings.HasPrefix(key, "DA1:") {
+		t.handleDA1(key)
 		return
 	}
 	if strings.HasPrefix(key, "WinOp:") {
