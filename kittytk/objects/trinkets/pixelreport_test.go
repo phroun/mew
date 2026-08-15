@@ -17,6 +17,11 @@ func TestPixelReportNoDrift(t *testing.T) {
 		adv = 9.4 // cell advance in units
 		ppu = 1.0 // 1 px per unit → advance*ppu = 9.4 px, non-integer
 		n   = 200 // wide screen, where uniform division would drift badly
+		// The modulus the report is encoded in: the cell size the app was
+		// told. A fine one is used here to exercise the fraction; the real
+		// value is the advertised device cell (see
+		// TestPixelReportDividesByTheAdvertisedCellSize).
+		unit = 1000
 	)
 	for col := 0; col < n; col++ {
 		left := cellBoundaryPx(float64(col)*adv, ppu)
@@ -32,13 +37,13 @@ func TestPixelReportNoDrift(t *testing.T) {
 			{center + 0.01, "right"},
 			{right - 0.01, "right"}, // just inside the painted right edge
 		} {
-			rep := pixelReportAxis(tc.pt, adv, ppu, n)
-			gotCol := rep / gfxCellSubUnits
+			rep := pixelReportAxis(tc.pt, adv, ppu, n, unit)
+			gotCol := rep / unit
 			if gotCol != col {
 				t.Fatalf("col %d, pt %.2f: report %d → cell %d (drift of %d)",
 					col, tc.pt, rep, gotCol, gotCol-col)
 			}
-			sub := rep % gfxCellSubUnits
+			sub := rep % unit
 			half := "left"
 			if sub >= 500 {
 				half = "right"
@@ -57,14 +62,15 @@ func TestPixelReportNoDrift(t *testing.T) {
 // one before the first stays on cell 0 — the report is always a real cell.
 func TestPixelReportClamps(t *testing.T) {
 	const (
-		adv = 8.0
-		ppu = 2.0
-		n   = 10
+		adv  = 8.0
+		ppu  = 2.0
+		n    = 10
+		unit = 16 // the advertised cell size the report is encoded in
 	)
-	if got := pixelReportAxis(-50, adv, ppu, n) / gfxCellSubUnits; got != 0 {
+	if got := pixelReportAxis(-50, adv, ppu, n, unit) / unit; got != 0 {
 		t.Errorf("far-left pointer → cell %d, want 0", got)
 	}
-	if got := pixelReportAxis(1e9, adv, ppu, n) / gfxCellSubUnits; got != n-1 {
+	if got := pixelReportAxis(1e9, adv, ppu, n, unit) / unit; got != n-1 {
 		t.Errorf("far-right pointer → cell %d, want %d", got, n-1)
 	}
 }

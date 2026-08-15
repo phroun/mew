@@ -187,11 +187,17 @@ func TestGfxCellPixelSizeIsRealDeviceSize(t *testing.T) {
 		t.Errorf("reported cell size = %dx%d px, want %dx%d",
 			gotW, gotH, int(math.Round(wantW)), int(math.Round(wantH)))
 	}
-	if gotW == gfxCellSubUnits || gotH == gfxCellSubUnits {
-		t.Errorf("cell size %dx%d is the synthetic ?1016 grid, not device pixels", gotW, gotH)
+	if gotW == 1000 || gotH == 1000 {
+		t.Errorf("cell size %dx%d is a synthetic grid, not device pixels", gotW, gotH)
 	}
-	if pw, ph := buf.GetPointerPixelUnit(); pw != gfxCellSubUnits || ph != gfxCellSubUnits {
-		t.Errorf("pointer pixel unit = %dx%d, want %d square", pw, ph, gfxCellSubUnits)
+	// The pointer unit is the SAME as the reported cell size, not a synthetic
+	// grid of its own. This assertion used to demand 1000 square, which is the
+	// half of the split that broke the mouse: the app has one number to divide
+	// a ?1016 coordinate by - the cell size CSI 16 t gave it - so a report
+	// encoded in any other unit lands the click off by the ratio between them.
+	// See TestPixelReportDividesByTheAdvertisedCellSize.
+	if pw, ph := buf.GetPointerPixelUnit(); pw != gotW || ph != gotH {
+		t.Errorf("pointer unit = %dx%d, want the advertised cell %dx%d", pw, ph, gotW, gotH)
 	}
 
 	// The size is reported so image geometry works: a bitmap taller than one
