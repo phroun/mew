@@ -3356,3 +3356,8 @@ func (t *PurfecTerm) ContentPixelSize() (int, int) {
 	}
 	return int(math.Round(w)), int(math.Round(h))
 }
+
+// PixelsPerUnit is this terminal's device pixels per layout unit: the product
+// of the display's backing scale and the user's zoom (scale x fontSize/12).
+// Zero before the first graphical paint.
+func (t *PurfecTerm) PixelsPerUnit() float64 { return t.gfx.ppu }
