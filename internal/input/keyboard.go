@@ -42,7 +42,7 @@ var mewKeyNames = map[keyboard.Key]string{
 	keyboard.KeyHome:     "home",
 	keyboard.KeyEnd:      "end",
 	keyboard.KeyInsert:   "ins",
-	keyboard.KeyDelete:   "fdel", // Primary for {"fdel", "delete"} group
+	keyboard.KeyDelete:   "fdel", // forward delete; no long spelling, see keydefaults.go
 	keyboard.KeyPageUp:   "pgup",
 	keyboard.KeyPageDown: "pgdn",
 

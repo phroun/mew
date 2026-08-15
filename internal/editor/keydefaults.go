@@ -20,7 +20,11 @@ var mewAliasGroups = []keyseq.AliasGroup{
 	{"back", "^H", "backspace"},
 	{"tab", "^I"},
 	{"return", "enter", "^M"},
-	{"fdel", "delete"},
+	// fdel has no long spelling on purpose. "delete" used to be one, which put
+	// mew's two erase names one suffix apart while meaning opposite
+	// directions — "del" erasing behind and "delete" ahead — the same
+	// near-homograph the vocabulary is otherwise built to avoid. Forward
+	// delete is spelled "fdel", and only that.
 	{"^space", "^2"},
 	{"esc", "escape", "^[", "^3"},
 	{"^\\", "^4"},

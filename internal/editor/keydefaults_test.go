@@ -89,7 +89,7 @@ func TestMewAliasGroupsResolveControlSpellings(t *testing.T) {
 		{"back", "erase"}, {"^H", "erase"}, {"backspace", "erase"},
 		{"esc", "cmd"}, {"^[", "cmd"}, {"escape", "cmd"}, {"^3", "cmd"},
 		{"tab", "indent"}, {"^I", "indent"},
-		{"fdel", "del_forward"}, {"delete", "del_forward"},
+		{"fdel", "del_forward"}, // "delete" is deliberately NOT a spelling for it
 	}
 	for _, c := range cases {
 		p.ClearActiveSequence()
