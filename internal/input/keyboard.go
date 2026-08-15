@@ -28,16 +28,23 @@ var mewKeyNames = map[keyboard.Key]string{
 	keyboard.KeySpace:     "space",
 	keyboard.KeyTab:       "tab",
 	keyboard.KeyBackspace: "back", // Primary for {"back", "^H", "backspace"} group
-	keyboard.KeyUp:        "up",
-	keyboard.KeyDown:      "down",
-	keyboard.KeyLeft:      "left",
-	keyboard.KeyRight:     "right",
-	keyboard.KeyHome:      "home",
-	keyboard.KeyEnd:       "end",
-	keyboard.KeyInsert:    "ins",
-	keyboard.KeyDelete:    "fdel", // Primary for {"fdel", "delete"} group
-	keyboard.KeyPageUp:    "pgup",
-	keyboard.KeyPageDown:  "pgdn",
+	// The other erase byte. Upstream names BS (8) and DEL (127) apart because
+	// a terminal sends one or the other for its backspace by lineage and it
+	// cannot know which — so mew, which has always had two names here, takes
+	// delivery of both rather than letting one arrive under upstream's
+	// spelling. "del" is the DEL character; both bind to del_char_prior
+	// (keydefaults.go), so they behave as the synonyms they are.
+	keyboard.KeyDEL:      "del", // Primary for {"del", "^8"} group
+	keyboard.KeyUp:       "up",
+	keyboard.KeyDown:     "down",
+	keyboard.KeyLeft:     "left",
+	keyboard.KeyRight:    "right",
+	keyboard.KeyHome:     "home",
+	keyboard.KeyEnd:      "end",
+	keyboard.KeyInsert:   "ins",
+	keyboard.KeyDelete:   "fdel", // Primary for {"fdel", "delete"} group
+	keyboard.KeyPageUp:   "pgup",
+	keyboard.KeyPageDown: "pgdn",
 
 	// The home-row key and the keypad's are distinct keys upstream. mew binds
 	// one "return": the help topic says as much ("Computers with a numeric

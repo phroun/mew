@@ -13,12 +13,14 @@ import (
 func TestDKHKeyName(t *testing.T) {
 	for _, tc := range []struct{ mew, want string }{
 		{"esc", "Escape"},
+		// The erase trio. Both vocabularies name three inputs, and the pairs
+		// are what matter rather than the words, which nearly rhyme: BS is
+		// back/Backspace, the DEL character is del/Delete, and forward delete
+		// is fdel/FDel. Reading "Delete" as the Delete key sends the cursor
+		// the wrong way.
 		{"back", "Backspace"},
-		{"fdel", "Delete"},
-		// "del" is not the Delete key however it is spelled — its alias group
-		// is {"del", "^8"}, the ASCII DEL character, and mew binds it beside
-		// "back" (see mewToDKHKey).
-		{"del", "Backspace"},
+		{"del", "Delete"},
+		{"fdel", "FDel"},
 		{"pgup", "PageUp"},
 		{"return", "Enter"},
 		{"space", "Space"},

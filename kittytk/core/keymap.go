@@ -632,8 +632,12 @@ var defaultBindings = []Binding{
 	{"S-PageDown", []string{CmdTerminalScrollPageNext}},
 
 	// Editing, where a trinket holds text.
+	// "Delete" is the DEL character and erases BEHIND, so it sits with
+	// Backspace; "FDel" is the key that erases ahead. A terminal picks which
+	// of the first two it sends, so both are bound.
 	{"Backspace", []string{CmdTrinketDelPrior, CmdTrinketEnclosing}},
-	{"Delete", []string{CmdTrinketDelNext}},
+	{"Delete", []string{CmdTrinketDelPrior, CmdTrinketEnclosing}},
+	{"FDel", []string{CmdTrinketDelNext}},
 	{"^U", []string{CmdTrinketDelLine}},
 	// ^A is the Emacs home cycle where a trinket offers it, and a plain
 	// beginning-of-line where it does not. First listed wins, so a text field

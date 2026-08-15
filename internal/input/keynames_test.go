@@ -43,7 +43,12 @@ func TestNormalizeHostKey(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Escape", "esc"},
 		{"PageUp", "pgup"},
-		{"Delete", "fdel"},
+		// The erase trio, which the two vocabularies spell in a way that reads
+		// as a trap: upstream's "Delete" is the DEL character and becomes
+		// mew's "del", while forward delete is "FDel" upstream and "fdel"
+		// here. Getting these backwards sends the cursor the wrong way.
+		{"FDel", "fdel"},
+		{"Delete", "del"},
 		{"Backspace", "back"},
 		{"Return", "return"}, // the home-row key
 		{"Enter", "return"},  // the keypad's, folded onto the same binding
@@ -57,11 +62,12 @@ func TestNormalizeHostKey(t *testing.T) {
 		// with two different prefixes.
 		{"m-PageUp", "m-pgup"},
 		{"M-m-Home", "M-m-home"},
-		{"H-Delete", "H-fdel"},
-		{"F1", "F1"},   // unchanged: mew spells it the same way
-		{"a", "a"},     // printable, no entry
-		{"^K", "^K"},   // control chord, no entry
-		{"G-€", "G-€"}, // Glyph chord carries its own character
+		{"H-Delete", "H-del"}, // prefixes peel off either erase name...
+		{"H-FDel", "H-fdel"},  // ...and off forward delete, which is a third key
+		{"F1", "F1"},          // unchanged: mew spells it the same way
+		{"a", "a"},            // printable, no entry
+		{"^K", "^K"},          // control chord, no entry
+		{"G-€", "G-€"},        // Glyph chord carries its own character
 	}
 	for _, c := range cases {
 		if got := normalizeHostKey(c.in); got != c.want {

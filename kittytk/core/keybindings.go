@@ -7,8 +7,11 @@ import "sync"
 // Key names follow direct-key-handler conventions:
 //   - Control+letter: "^A", "^X", "^C", "^V" etc.
 //   - Special keys: "Left", "Right", "Up", "Down", "Home", "End",
-//     "Return", "Tab", "Escape", "Backspace", "Delete",
-//     "PageUp", "PageDown", "Insert"
+//     "Return", "Tab", "Escape", "PageUp", "PageDown", "Insert"
+//   - Erase keys: "Backspace" (BS, 8) and "Delete" (DEL, 127) both erase
+//     BEHIND the cursor — they are one key on two lineages of terminal, and
+//     which byte arrives is the terminal's choice, not the user's, so bind
+//     both. "FDel" is the separate key that erases AHEAD.
 //   - Function keys: "F1", "F2", ... "F12"
 //   - Mega combinations: "M-" prefix (e.g., "M-x", "M-Tab")
 //   - Shift combinations: "S-" prefix (e.g., "S-Tab", "S-Left")
@@ -122,8 +125,12 @@ func (kb *KeyBindings) SetDefaults() {
 	kb.bindings[ActionSelectAll] = []string{"s-a"}
 
 	// Editing
-	kb.bindings[ActionBackspace] = []string{"Backspace", "^H"}
-	kb.bindings[ActionDelete] = []string{"Delete", "^D"}
+	// "Delete" binds beside "Backspace", not beside forward delete: it is the
+	// DEL character, which is what most terminals send for their backspace
+	// key. A binding on only one of the two is dead on half the terminals in
+	// use — and which half is not something the user chose.
+	kb.bindings[ActionBackspace] = []string{"Backspace", "Delete", "^H"}
+	kb.bindings[ActionDelete] = []string{"FDel", "^D"}
 	kb.bindings[ActionCut] = []string{"^X"}
 	kb.bindings[ActionCopy] = []string{"^C"}
 	kb.bindings[ActionPaste] = []string{"^V"}

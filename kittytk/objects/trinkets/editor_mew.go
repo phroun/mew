@@ -1998,17 +1998,15 @@ var mewToDKHKey = map[string]string{
 	"home":   "Home",
 	"end":    "End",
 	"ins":    "Insert",
-	"fdel":   "Delete",
-	// del is mew's BACKSPACE, not the Delete key, however it is spelled: its
-	// alias group is {"del", "^8"} — the ASCII DEL character, which is what
-	// Backspace sends — and no keyboard key arrives under it (the Delete key
-	// arrives as "fdel", whose group owns the long spelling "delete"). Its
-	// default binding says the same: del_char_prior, beside back, in
-	// keydefaults.go's `case "del", "back"`. Sending forward Delete for it
-	// would erase the wrong side of the cursor in every guest that tells the
-	// two apart — which is most of them, and the whole reason for encoding
-	// them distinctly.
-	"del":  "Backspace",
+	// The erase trio, which the two vocabularies spell almost alike and mean
+	// differently, so read the pairs rather than the words: mew's "del" is the
+	// ASCII DEL character (its alias group is {"del", "^8"}) and upstream
+	// calls that "Delete"; forward delete is "fdel" here and "FDel" there.
+	// Taking "Delete" for forward delete — as this map did while upstream
+	// still spelled it that way — erases the wrong side of the cursor in every
+	// guest that tells the two apart, which is most of them.
+	"del":  "Delete",
+	"fdel": "FDel",
 	"pgup": "PageUp",
 	"pgdn": "PageDown",
 }
