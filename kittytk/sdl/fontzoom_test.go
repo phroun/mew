@@ -36,7 +36,7 @@ func requireSDL(t *testing.T) {
 
 // The zoom chords: Command/Meta with "+"/"=" grows a point, "-" shrinks,
 // "0" returns to the configured default; keypad variants count; Shift rides
-// along ("+" IS Shift+"=" on common layouts); Ctrl or Alt in the chord makes
+// along ("+" IS Shift+"=" on common layouts); Ctrl or Mega in the chord makes
 // it an ordinary key again, as does a chord with no GUI modifier at all.
 func TestZoomTargetChords(t *testing.T) {
 	cases := []struct {
@@ -56,7 +56,7 @@ func TestZoomTargetChords(t *testing.T) {
 		{"right-gui works too", sdl3.Keysym{Sym: sdl3.K_EQUALS, Mod: sdl3.KMOD_RGUI}, 25, true},
 		{"no gui modifier", sdl3.Keysym{Sym: sdl3.K_EQUALS}, 0, false},
 		{"ctrl breaks the chord", guiKey(sdl3.K_EQUALS, sdl3.KMOD_LCTRL), 0, false},
-		{"alt breaks the chord", guiKey(sdl3.K_MINUS, sdl3.KMOD_LALT), 0, false},
+		{"mega breaks the chord", guiKey(sdl3.K_MINUS, sdl3.KMOD_LALT), 0, false},
 		{"other key", guiKey(sdl3.K_a, 0), 0, false},
 	}
 	for _, c := range cases {
@@ -79,7 +79,7 @@ func TestZoomChordActiveByPlatform(t *testing.T) {
 		windows bool
 		want    bool
 	}{
-		// Non-Windows: the Command/Meta (GUI) key, Shift free, Ctrl/Alt break it.
+		// Non-Windows: the Command/Super (GUI) key, Shift free, Ctrl/Mega break it.
 		{"other: gui", sdl3.KMOD_GUI, false, true},
 		{"other: gui+shift", sdl3.KMOD_GUI | sdl3.KMOD_SHIFT, false, true},
 		{"other: ctrl+shift is NOT the chord", ctrlShift, false, false},
@@ -89,7 +89,7 @@ func TestZoomChordActiveByPlatform(t *testing.T) {
 		{"win: ctrl alone", sdl3.KMOD_CTRL, true, false},
 		{"win: shift alone", sdl3.KMOD_SHIFT, true, false},
 		{"win: gui is NOT the chord", sdl3.KMOD_GUI, true, false},
-		{"win: ctrl+shift+alt broken", ctrlShift | sdl3.KMOD_ALT, true, false},
+		{"win: ctrl+shift+mega broken", ctrlShift | sdl3.KMOD_ALT, true, false},
 	}
 	for _, c := range cases {
 		if got := zoomChordActiveFor(c.mod, c.windows); got != c.want {

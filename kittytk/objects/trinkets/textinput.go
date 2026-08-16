@@ -1099,7 +1099,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketSelectAll:
-		// Select all (Meta+A)
+		// Select all (Mega+A)
 		t.SelectAll()
 		return true
 

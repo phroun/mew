@@ -7,13 +7,13 @@ import (
 )
 
 // Modifier prefixes are carried in the key string, and the canonical order
-// puts them in one arrangement whatever the backend - "M-S-Left" is Alt+Shift.
+// puts them in one arrangement whatever the backend - "M-S-Left" is Mega+Shift.
 // The keymap turns that whole string into window_size_left, a resize (Shift)
-// that is chunky (Alt), which is what this checks.
+// that is chunky (Mega), which is what this checks.
 func TestTitleKeyModifierOrderResize(t *testing.T) {
 	start := core.UnitRect{X: 100, Y: 100, Width: 200, Height: 100}
 
-	// Alt+Shift arrives as "M-S-Left": a resize (Shift) that is chunky (Alt).
+	// Mega+Shift arrives as "M-S-Left": a resize (Shift) that is chunky (Mega).
 	chunky := NewWindow("chunky")
 	chunky.SetBounds(start)
 	chunky.SetTitleFocus(TitleFocusTitle)
@@ -26,8 +26,8 @@ func TestTitleKeyModifierOrderResize(t *testing.T) {
 		t.Errorf("M-S-Left should expand the left edge (grow width): %v -> %v", start, got)
 	}
 
-	// A plain single-step "S-Left" grows by one cell; the Alt-prefixed form
-	// must grow by more, proving the Alt prefix registered as chunky.
+	// A plain single-step "S-Left" grows by one cell; the Mega-prefixed form
+	// must grow by more, proving the Mega prefix registered as chunky.
 	single := NewWindow("single")
 	single.SetBounds(start)
 	single.SetTitleFocus(TitleFocusTitle)
@@ -38,7 +38,7 @@ func TestTitleKeyModifierOrderResize(t *testing.T) {
 		t.Fatalf("S-Left did not resize (delta %d)", singleDelta)
 	}
 	if chunkyDelta <= singleDelta {
-		t.Errorf("Alt prefix should make the resize chunky: chunky=%d single=%d", chunkyDelta, singleDelta)
+		t.Errorf("Mega prefix should make the resize chunky: chunky=%d single=%d", chunkyDelta, singleDelta)
 	}
 }
 

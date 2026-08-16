@@ -38,7 +38,7 @@ func TestNoResizeWindowCannotMaximize(t *testing.T) {
 }
 
 // A NoResize window ignores keyboard resize (Shift is the resize
-// modifier) but still moves with plain / Meta arrows.
+// modifier) but still moves with plain / Mega arrows.
 func TestNoResizeWindowKeyboardMoveNotResize(t *testing.T) {
 	w := NewWindow("dlg")
 	w.SetFlags(WindowFlagNoResize)
@@ -52,10 +52,10 @@ func TestNoResizeWindowKeyboardMoveNotResize(t *testing.T) {
 	if w.Bounds() != start {
 		t.Errorf("Shift+arrow resized a NoResize window: %v", w.Bounds())
 	}
-	// Meta+Shift+arrow (large resize) is ignored too.
+	// Mega+Shift+arrow (large resize) is ignored too.
 	titleKey(w, "S-s-Down")
 	if w.Bounds() != start {
-		t.Errorf("Meta+Shift+arrow resized a NoResize window: %v", w.Bounds())
+		t.Errorf("Mega+Shift+arrow resized a NoResize window: %v", w.Bounds())
 	}
 
 	// A plain arrow still moves it, without changing its size.

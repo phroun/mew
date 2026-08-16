@@ -52,13 +52,13 @@ func TestTranslateKeyHyper(t *testing.T) {
 		{"both-alt letter", 'x', bothAlt, "H-x"},
 		{"both-ctrl shifted letter", 'x', bothCtrl | sdl3.KMOD_LSHIFT, "H-X"},
 		{"both-alt + single ctrl", 'x', bothAlt | sdl3.KMOD_LCTRL, "H-^X"},
-		{"both-ctrl + single alt", 'x', bothCtrl | sdl3.KMOD_LALT, "H-M-x"},
+		{"both-ctrl + single Mega key", 'x', bothCtrl | sdl3.KMOD_LALT, "H-M-x"},
 		{"both-ctrl special key", sdl3.K_DOWN, bothCtrl, "H-Down"},
-		{"both-ctrl + single alt special", sdl3.K_DOWN, bothCtrl | sdl3.KMOD_LALT, "H-M-Down"},
+		{"both-ctrl + single Mega key special", sdl3.K_DOWN, bothCtrl | sdl3.KMOD_LALT, "H-M-Down"},
 		{"both-ctrl digit", '5', bothCtrl, "H-5"},
 		// A single side of a modifier does NOT promote to Hyper.
 		{"single ctrl stays plain", 'x', sdl3.KMOD_LCTRL, "^X"},
-		{"altgr (single right alt) stays meta", 'x', sdl3.KMOD_RALT, "M-x"},
+		{"AltGr (a single right-hand cap) stays Mega", 'x', sdl3.KMOD_RALT, "M-x"},
 		// AltGr / ISO_Level3_Shift (Glyph) yields the KEY_DOWN entirely — the
 		// composed character is delivered (and tagged G-) on the TextInput path.
 		{"glyph (KMOD_MODE) yields keydown", 'x', sdl3.KMOD_MODE, ""},

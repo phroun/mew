@@ -2325,7 +2325,7 @@ func (m *MenuBar) clampScrollOffset() {
 }
 
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
-// registered keybinding (e.g., Alt+key is used for something else).
+// registered keybinding (e.g., Mega+key is used for something else).
 // SetAcceleratorChord sets the pattern chord accelerators are formed from,
 // with "*" standing in for a menu's mnemonic. Blank forms none.
 func (m *MenuBar) SetAcceleratorChord(pattern string) {

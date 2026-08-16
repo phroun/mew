@@ -13,7 +13,7 @@ func press(e *Editor, key string) {
 	}
 }
 
-// An unmapped Meta key re-inserts the macOS Option character; bindings
+// An unmapped Mega key re-inserts the macOS Option character; bindings
 // steal individual combos; false disables the layer.
 func TestMacOptionInsertFallback(t *testing.T) {
 	e, w := newTestEditor(t, "")
@@ -36,7 +36,7 @@ func TestMacOptionInsertFallback(t *testing.T) {
 		t.Fatalf("bound M-s must not insert, got %q", got)
 	}
 
-	// Unknown Meta combos still do nothing.
+	// Unknown Mega combos still do nothing.
 	press(e, "M-F1")
 	if got := docContent(w); got != "ß∂∞" {
 		t.Fatalf("unknown meta keys stay ignored, got %q", got)
@@ -81,7 +81,7 @@ func TestMacOptionDefaults(t *testing.T) {
 // individual M- combos while the rest insert seamlessly"), which M-j, M-f,
 // M-a and M-e have always made. M-\ joined them when raw_key_input moved
 // there, so Option+backslash no longer types « on macOS.
-func TestBoundMetaComboBeatsTheOptionLayer(t *testing.T) {
+func TestBoundMegaComboBeatsTheOptionLayer(t *testing.T) {
 	e, w := newTestEditor(t, "")
 	press(e, "M-\\")
 	if got := docContent(w); strings.Contains(got, "«") {

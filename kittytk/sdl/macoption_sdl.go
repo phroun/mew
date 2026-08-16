@@ -4,7 +4,7 @@ package sdl
 
 // macOS Option-key decoding.
 //
-// On macOS the Option key composes text rather than acting as a plain Meta
+// On macOS the Option key composes text rather than acting as a plain Mega
 // modifier: pressing Option+a produces the Unicode character "å", which SDL
 // delivers as a TextInput event. Left untranslated that character is simply
 // typed, so Meta shortcuts (Select All is M-a, etc.) never fire.
