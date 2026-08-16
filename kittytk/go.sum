@@ -60,6 +60,10 @@ github.com/phroun/purfecterm v0.2.48 h1:9jZ+wAsbTHs/YpocVyyiMv45kxZfsyAF/bRtqgs7
 github.com/phroun/purfecterm v0.2.48/go.mod h1:O0ZWjk3ARyyU2UizrG5tjtXKg3CKnu2jNSyUfzlhKJs=
 github.com/phroun/purfecterm v0.2.49 h1:hwqsEGH7PfauWjNjKhFhXLKcbFG3Uf4ewpfd3tNygzc=
 github.com/phroun/purfecterm v0.2.49/go.mod h1:O0ZWjk3ARyyU2UizrG5tjtXKg3CKnu2jNSyUfzlhKJs=
+github.com/phroun/purfecterm v0.2.50 h1:SO4h+GQ7mGKo/p7WVvKglTJUIeZKSGtBLrU70/O9XsY=
+github.com/phroun/purfecterm v0.2.50/go.mod h1:A2GO0tO8BcyPh9I8UyHlwyqhhrhIHl2jeMt0Q2pqrJU=
+github.com/phroun/purfecterm v0.2.51-0.20260816080328-5b8bf1e4cedb h1:xe+wGHilsIqhSpV1cqz+zxG7OdTUw2aldcAynIeT9/Y=
+github.com/phroun/purfecterm v0.2.51-0.20260816080328-5b8bf1e4cedb/go.mod h1:A2GO0tO8BcyPh9I8UyHlwyqhhrhIHl2jeMt0Q2pqrJU=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=

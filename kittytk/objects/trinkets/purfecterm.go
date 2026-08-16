@@ -937,6 +937,29 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	return true
 }
 
+// HandleKeyRelease forwards a key coming back up to the child.
+//
+// Without this the release stopped here. TrinketBase.HandleKeyRelease returns
+// false, and nothing overrode it, so a guest that had negotiated the kitty
+// keyboard protocol's event reporting — as a browser must, to know a held key
+// was let go — received presses only. The SDL backend has been dispatching
+// these events all along; they arrived one call short of the child.
+//
+// The event carries the bare key name, so the ":Release" marker is put back
+// here: that is the form direct-key-handler produces and the form purfecterm's
+// encoder reads. The emulator drops it again unless the child asked for event
+// reporting, so a child that wants nothing still sees nothing.
+//
+// Scrollback keys are deliberately not consulted. That gesture is decided on
+// the press, and running it again on the way up would scroll twice.
+func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	if t.terminal == nil {
+		return false
+	}
+	t.terminal.HandleKeyString(event.Key + ":Release")
+	return true
+}
+
 // handleScrollbackKey runs the scrollback navigation locally (it scrolls the
 // view, it is not sent to the child). Returns true if the command was one of
 // its own.

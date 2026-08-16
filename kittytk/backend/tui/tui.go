@@ -342,8 +342,14 @@ func (t *TUIBackend) Init() error {
 	// every row on the first present, exactly as it does after a resize.
 	t.needsLineClear = true
 
-	// Enable Kitty keyboard protocol for better key detection
-	t.writeTTY("\033[>1u")
+	// Enable Kitty keyboard protocol for better key detection.
+	//
+	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
+	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
+	// meant no release ever arrived here, so a hosted child that wanted them —
+	// a browser tracking a held key — could not be given what the terminal was
+	// never asked to send.
+	t.writeTTY("\033[>3u")
 
 	// Enable mouse if requested
 	if t.hasMouse {
@@ -1508,6 +1514,28 @@ func (t *TUIBackend) handleKey(key string) {
 		t.handleMouseAction(key)
 		return
 	}
+
+	// A key coming back UP. The outer terminal sends these only because Init
+	// asks for event reporting (the "2" in CSI > 3 u); before that they never
+	// arrived, and this backend produced no KeyReleaseEvent at all, so a hosted
+	// child that wanted them could not be given any.
+	//
+	// The suffix comes off here so Key holds the bare name, matching what the
+	// SDL backend puts in the same field. Whoever forwards to a child puts the
+	// marker back — see the PurfecTerm trinket.
+	//
+	// A repeat is deliberately left as a press: it IS another press, every
+	// consumer already treats it as one, and the distinction only matters to a
+	// child that negotiated event reporting for itself.
+	if base, isRelease := strings.CutSuffix(key, ":Release"); isRelease {
+		mods, _ := core.ParseKeyModifiers(base)
+		select {
+		case t.eventQueue <- core.KeyReleaseEvent{Key: base, Modifiers: mods}:
+		default:
+		}
+		return
+	}
+	key = strings.TrimSuffix(key, ":Repeat")
 
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
