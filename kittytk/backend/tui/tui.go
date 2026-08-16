@@ -297,6 +297,51 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	return t
 }
 
+// enterTerminalModes turns on every outer-terminal mode this backend runs
+// under. RestoreTerminal turns them off again in the mirror order, and the two
+// are a pair: a mode enabled here that is not disabled there outlives the
+// process and lands on the user's shell.
+//
+// Split out of Init so the ORDER can be tested. Init cannot be: it opens the
+// controlling terminal and starts a keyboard reader on os.Stdin, neither of
+// which a test has.
+func (t *TUIBackend) enterTerminalModes() {
+	// Enable mouse if requested
+	if t.hasMouse {
+		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
+	}
+
+	// Enter alternate screen
+	t.writeTTY("\033[?1049h")
+
+	// Enable Kitty keyboard protocol for better key detection.
+	//
+	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
+	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
+	// meant no release ever arrived here, so a hosted child that wanted them —
+	// a browser tracking a held key — could not be given what the terminal was
+	// never asked to send.
+	//
+	// AFTER the switch to the alternate screen, because the flag stack is
+	// per-screen and this is the screen the application runs on. Pushed before
+	// the switch it landed on the MAIN screen's stack, where nothing reads it:
+	// the outer terminal went on sending legacy keys for the whole session, so
+	// no release arrived however loudly this asked for one — and the push
+	// outlived us on the screen the shell came back to, which is how the first
+	// Ctrl+C after an exit printed "...9;5u" instead of interrupting.
+	t.writeTTY("\033[>3u")
+
+	// Enable bracketed paste. Without this the outer terminal ships a paste as
+	// a raw byte flood — indistinguishable from very fast typing — which
+	// direct-key-handler then surfaces one key at a time, overrunning the event
+	// queue and dropping characters on a large paste. With it on, a paste
+	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
+	t.writeTTY("\033[?2004h")
+
+	// Hide cursor initially
+	t.writeTTY("\033[?25l")
+}
+
 // Init initializes the terminal backend.
 func (t *TUIBackend) Init() error {
 	t.mu.Lock()
@@ -342,32 +387,7 @@ func (t *TUIBackend) Init() error {
 	// every row on the first present, exactly as it does after a resize.
 	t.needsLineClear = true
 
-	// Enable Kitty keyboard protocol for better key detection.
-	//
-	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
-	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
-	// meant no release ever arrived here, so a hosted child that wanted them —
-	// a browser tracking a held key — could not be given what the terminal was
-	// never asked to send.
-	t.writeTTY("\033[>3u")
-
-	// Enable mouse if requested
-	if t.hasMouse {
-		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
-	}
-
-	// Enter alternate screen
-	t.writeTTY("\033[?1049h")
-
-	// Enable bracketed paste. Without this the outer terminal ships a paste as
-	// a raw byte flood — indistinguishable from very fast typing — which
-	// direct-key-handler then surfaces one key at a time, overrunning the event
-	// queue and dropping characters on a large paste. With it on, a paste
-	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
-	t.writeTTY("\033[?2004h")
-
-	// Hide cursor initially
-	t.writeTTY("\033[?25l")
+	t.enterTerminalModes()
 
 	// The terminal is now ours. Join the set RestoreAll walks, so an exit path
 	// that never reaches Shutdown can still hand it back.
@@ -474,22 +494,20 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable bracketed paste (harmless if the terminal never enabled it).
 		t.writeTTY("\033[?2004l")
 
-		// Leave alternate screen
-		t.writeTTY("\033[?1049l")
-
-		// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
-		// because the flag stack is per-screen. Init pushes (\033[>1u) while
-		// still on the MAIN screen and only then switches to the alternate one,
-		// so a pop issued before switching back applies to the alternate
-		// screen's stack and leaves the main screen's push live. The shell
-		// inherits it and the first Ctrl+C prints an escape ("...9;5u")
-		// instead of interrupting.
+		// Pop the Kitty keyboard protocol - BEFORE leaving the alternate
+		// screen, because the flag stack is per-screen and the alternate
+		// screen's is the one Init pushed onto. Popping after the switch back
+		// would pop the MAIN screen's stack, which we never pushed, and leave
+		// our own push standing on the screen we just left.
 		//
 		// Popping an empty stack is a no-op, so this stays safe on a terminal
 		// that ignored the push. The explicit reset after it covers a terminal
 		// that honours the flags but not the stack.
 		t.writeTTY("\033[<u")
 		t.writeTTY("\033[=0;1u")
+
+		// Leave alternate screen
+		t.writeTTY("\033[?1049l")
 
 		// Reset colors
 		t.writeTTY("\033[0m")

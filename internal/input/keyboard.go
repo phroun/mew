@@ -232,10 +232,34 @@ func (kh *KeyboardHandler) SetDecodeMacOSOption(enabled bool) {
 	kh.handler.SetDecodeMacOSOption(enabled)
 }
 
+// keyEventReporting is the kitty keyboard protocol's "report event types"
+// flag, pushed on the terminal's flag stack for the length of the session.
+//
+// It is the ONLY flag asked for, and that is the whole point of asking. A key
+// coming back UP has no legacy encoding — there are no bytes for it — so a
+// terminal sends one only when an application has said it wants event types,
+// and mew never said so. Every release therefore stopped at mew's own front
+// door, and a child in one of mew's terminal panes could not be given what mew
+// was never sent: a browser hosted there saw keydown without keyup, forever.
+//
+// Disambiguation (flag 1) is deliberately NOT asked for. It would re-encode
+// presses that arrive as plain bytes today — Escape, Tab, Enter, Backspace and
+// every Control chord — which is a change to the wire mew has always read, for
+// no gain here. Event reporting on its own leaves the presses alone and adds
+// releases beside them: the one press that changes shape is F1, which an
+// emulator sends as CSI P rather than SS3 P once any flag is set, and which
+// direct-key-handler reads as F1 either way.
+const keyEventReporting = "\x1b[>2u"
+
 // Start begins listening for keyboard input.
 func (kh *KeyboardHandler) Start() error {
 	// Enable bracketed paste mode - terminal will wrap pastes with ESC[200~ ... ESC[201~
 	io.WriteString(kh.termOut, "\x1b[?2004h")
+
+	// Ask for key release events (see keyEventReporting). A terminal that does
+	// not implement the protocol ignores the sequence, and mew then runs
+	// exactly as it did before — presses only.
+	io.WriteString(kh.termOut, keyEventReporting)
 
 	return kh.handler.Start()
 }
@@ -243,6 +267,11 @@ func (kh *KeyboardHandler) Start() error {
 // Stop stops listening for keyboard input.
 func (kh *KeyboardHandler) Stop() {
 	kh.handler.Stop()
+
+	// Pop the keyboard flags this session pushed, so the shell mew hands the
+	// terminal back to is not left receiving events it never asked for.
+	// Popping an empty stack is a no-op on a terminal that ignored the push.
+	io.WriteString(kh.termOut, "\x1b[<u")
 
 	// Disable bracketed paste mode
 	io.WriteString(kh.termOut, "\x1b[?2004l")
@@ -268,11 +297,27 @@ func (kh *KeyboardHandler) GetEvent() InputEvent {
 		case raw := <-kh.PasteChunks:
 			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
-			return InputEvent{Key: key}
+			return InputEvent{Key: normalizeEventSuffix(key)}
 		case fn := <-kh.actions:
 			return InputEvent{Do: fn}
 		}
 	}
+}
+
+// normalizeEventSuffix folds a key REPEAT back into an ordinary press.
+//
+// Asking for event types (keyEventReporting) is what makes releases arrive; it
+// also makes a held key report ":Repeat" instead of another plain press. mew
+// has no repeat in its binding vocabulary — a held arrow key is meant to keep
+// moving the cursor, and it does that by the key arriving again — so a repeat
+// left marked would match no binding at all and holding a key would do nothing
+// after the first press. The marker comes off, and the repeat is the press it
+// has always been.
+//
+// A ":Release" is NOT touched. It is a different event, not a press wearing a
+// suffix, and it goes on to whoever can use it. See Editor.dispatchKey.
+func normalizeEventSuffix(key string) string {
+	return strings.TrimSuffix(key, ":Repeat")
 }
 
 // PostAction implements ActionPoster: fn is queued and later surfaced by

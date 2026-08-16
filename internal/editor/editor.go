@@ -4338,6 +4338,25 @@ func (e *Editor) runBoundCommand(key, command string) bool {
 // displays. Runs under renderMu (the serve loop's key branch, or a test
 // standing in for it).
 func (e *Editor) dispatchKey(key string) {
+	// A key coming back UP belongs to the child, or to nobody.
+	//
+	// It is not a keystroke in mew's sense: no binding is written against one,
+	// and the sequence processor must never see one, because it would count as
+	// the next key of a multi-key sequence — pressing ^X and letting go of it
+	// would end the sequence ^X was starting. So it is offered to the focused
+	// viewport's child and otherwise dropped here, before any of that.
+	//
+	// The child is why these are asked for at all (see input.keyEventReporting).
+	// A program that negotiated event reporting for itself — a browser, which
+	// cannot know a held key was let go without it — receives presses only if
+	// mew keeps its releases, and that is the whole of the bug this closes.
+	if strings.HasSuffix(key, ":Release") {
+		if e.sendKeyToPTY(key) {
+			e.RequestRender()
+		}
+		return
+	}
+
 	// Raw key input: this one keystroke was claimed for the child process
 	// running in the focused viewport, so mew's keymap does not see it at all.
 	// The arm is spent either way — a raw key with no terminal under it is

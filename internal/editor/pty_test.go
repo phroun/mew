@@ -1859,3 +1859,68 @@ func TestDeclaredGridRedeclaresWhenOnlyThePixelsMove(t *testing.T) {
 		t.Errorf("child grid = %dx%d, want the unchanged 78x24", stub.cols, stub.rows)
 	}
 }
+
+// A key coming back UP goes to the child, and nowhere else.
+//
+// mew has no release in its binding vocabulary, and the sequence processor must
+// never be shown one: it would count as the next key of a multi-key sequence,
+// so letting go of ^X would end the sequence ^X had just started. The release
+// exists for the child — a program that negotiated event reporting for itself,
+// as a browser must to know a held key was let go — so it is offered there and
+// otherwise dropped.
+func TestKeyReleaseGoesToTheChildAndNotTheKeymap(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		// The real host encodes through the child's own emulator, which sends a
+		// release only for a child that asked for one. Standing in for it here:
+		// the name arrives with its marker intact, which is the thing under test.
+		Key: func(_ string, key string) []byte {
+			if key == "up:Release" {
+				return []byte("\x1b[1;1:3A")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey("up:Release")
+	if got := stub.sent(); got != "\x1b[1;1:3A" {
+		t.Errorf("the child received %q, want the release; without it a hosted "+
+			"browser sees keydown and never keyup", got)
+	}
+	if got := docContent(w); got != "ab" {
+		t.Errorf("the release edited the buffer (%q)", got)
+	}
+
+	// A release mid-sequence must not be counted as the sequence's next key.
+	e.KeyProcessor.MapKey("^X ^S", "nop")
+	e.dispatchKey("^X")
+	before := e.KeyProcessor.GetActiveSequence()
+	if before == "" {
+		t.Fatal("^X did not start a sequence; the rest of this proves nothing")
+	}
+	e.dispatchKey("^X:Release")
+	if after := e.KeyProcessor.GetActiveSequence(); after != before {
+		t.Errorf("the sequence went from %q to %q when the key was let go", before, after)
+	}
+}
+
+// With no session under it a release is dropped, exactly as a key nothing
+// claimed is — it must not fall through to the keymap as an ordinary press.
+func TestKeyReleaseWithoutSessionIsDropped(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.reconcileFocusedOptions()
+	e.dispatchKey("back:Release")
+	if got := docContent(w); got != "ab" {
+		t.Errorf("back:Release with no session = %q; letting go of a key erased a "+
+			"character", got)
+	}
+}

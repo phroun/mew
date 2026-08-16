@@ -2016,8 +2016,23 @@ var mewToDKHKey = map[string]string{
 	"pgdn": "PageDown",
 }
 
+// keyEventSuffixes trail a name to say the event is something other than a
+// plain press. They decorate the name; they are not part of it, so a rename has
+// to put them back rather than fail to match around them.
+var keyEventSuffixes = []string{":Release", ":Repeat"}
+
 // dkhKeyName renames one key, modifier prefixes and all ("S-tab" -> "S-Tab").
+//
+// An event suffix is set aside and restored: "up:Release" is the Up key, and
+// without this it matched nothing in the table and travelled on under mew's own
+// spelling, which the emulator's encoder does not know — so the release of
+// every named key silently encoded to nothing.
 func dkhKeyName(key string) string {
+	for _, suffix := range keyEventSuffixes {
+		if base, found := strings.CutSuffix(key, suffix); found {
+			return dkhKeyName(base) + suffix
+		}
+	}
 	prefix, base := "", key
 	for {
 		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||

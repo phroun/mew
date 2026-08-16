@@ -960,6 +960,10 @@ func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	// Same as the press: HandleKeyString drops input the emulator believes
+	// unfocused, and this event only reaches a FOCUSED trinket, so say so
+	// rather than let the release depend on a press having set it first.
+	t.terminal.SetFocused(true)
 	if core.KeyTracing() {
 		core.KeyTracef("3 trinket  release key=%q flags=%d focused=%v",
 			event.Key, t.guestKeyboardFlags(), t.terminal.IsFocused())
