@@ -26,11 +26,20 @@ func TestControlOnShownKeysUsesTheCaret(t *testing.T) {
 	// for it with the US answers for the keys under test.
 	saved := shiftedShownKey
 	defer func() { shiftedShownKey = saved }()
+	// SDL scancodes are USB HID keyboard usage IDs: the "5" key is 34, "6" is
+	// 35, "a" is 4 and ";" is 51. They name a POSITION, which is why they are
+	// what a layout is asked about — Sym is already layout-mapped and cannot be.
+	const (
+		scanA         = 4
+		scan5         = 34
+		scan6         = 35
+		scanSemicolon = 51
+	)
 	shiftedShownKey = func(scancode uint32) rune {
 		switch scancode {
-		case 5: // stands for the "5" key
+		case scan5:
 			return '%'
-		case 6: // stands for the "6" key
+		case scan6:
 			return '^'
 		}
 		return 0
@@ -42,18 +51,18 @@ func TestControlOnShownKeysUsesTheCaret(t *testing.T) {
 		ctrl, alt, shift, gui bool
 		want                  string
 	}{
-		{"ctrl on a digit", sdl3.Keysym{Sym: '5', Scancode: 5}, true, false, false, false, "^5"},
+		{"ctrl on a digit", sdl3.Keysym{Sym: '5', Scancode: scan5}, true, false, false, false, "^5"},
 		{"ctrl+shift absorbs into the shown character",
-			sdl3.Keysym{Sym: '5', Scancode: 5}, true, false, true, false, "^%"},
-		{"ctrl+shift on six", sdl3.Keysym{Sym: '6', Scancode: 6}, true, false, true, false, "^^"},
+			sdl3.Keysym{Sym: '5', Scancode: scan5}, true, false, true, false, "^%"},
+		{"ctrl+shift on six", sdl3.Keysym{Sym: '6', Scancode: scan6}, true, false, true, false, "^^"},
 		{"meta keeps its prefix ahead of the caret",
-			sdl3.Keysym{Sym: '5', Scancode: 5}, true, true, false, false, "M-^5"},
-		{"ctrl on punctuation", sdl3.Keysym{Sym: ';', Scancode: 99}, true, false, false, false, "^;"},
+			sdl3.Keysym{Sym: '5', Scancode: scan5}, true, true, false, false, "M-^5"},
+		{"ctrl on punctuation", sdl3.Keysym{Sym: ';', Scancode: scanSemicolon}, true, false, false, false, "^;"},
 		// A letter was already caret-spelled and must stay so; there Shift has
 		// nowhere to go but a prefix, because the letter's case is already
 		// spent on Control.
-		{"ctrl on a letter", sdl3.Keysym{Sym: 'a', Scancode: 4}, true, false, false, false, "^A"},
-		{"ctrl+shift on a letter", sdl3.Keysym{Sym: 'a', Scancode: 4}, true, false, true, false, "S-^A"},
+		{"ctrl on a letter", sdl3.Keysym{Sym: 'a', Scancode: scanA}, true, false, false, false, "^A"},
+		{"ctrl+shift on a letter", sdl3.Keysym{Sym: 'a', Scancode: scanA}, true, false, true, false, "S-^A"},
 	} {
 		got := encodeKey(tc.sym, tc.ctrl, tc.alt, tc.shift, tc.gui)
 		if got != tc.want {
@@ -69,7 +78,7 @@ func TestShiftWithNoShiftedCharacterKeepsTheKey(t *testing.T) {
 	defer func() { shiftedShownKey = saved }()
 	shiftedShownKey = func(uint32) rune { return 0 }
 
-	if got := encodeKey(sdl3.Keysym{Sym: '5', Scancode: 5}, true, false, true, false); got != "^5" {
+	if got := encodeKey(sdl3.Keysym{Sym: '5', Scancode: 34}, true, false, true, false); got != "^5" {
 		t.Errorf("encodeKey with no layout answer = %q, want %q", got, "^5")
 	}
 }
