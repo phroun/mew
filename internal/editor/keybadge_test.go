@@ -74,11 +74,11 @@ func TestVerboseKeySequence(t *testing.T) {
 func TestVerboseKeySequenceSpellsEveryModifier(t *testing.T) {
 	none := func(string) bool { return false }
 	cases := []struct{ seq, want string }{
-		{"C-x", "Ctrl+X"},           // the long spelling of ^
-		{"G-€", "Glyph+€"},          // a Glyph chord carries its own character
-		{"m-pgup", "Micro+Page Up"}, // the other reading of the meta lineage
+		{"C-x", "Ctrl+X"},          // the long spelling of ^
+		{"G-€", "Glyph+€"},         // a Glyph chord carries its own character
+		{"m-pgup", "Meta+Page Up"}, // reads friendly: nothing else claims the word
 		{"H-fdel", "Hyper+FDel"},
-		{"M-m-home", "Meta+Micro+Home"}, // Mega and Micro are different keys
+		{"M-m-home", "Mega+Micro+Home"}, // both keys at once: one word cannot do
 		{"C-S-home", "Ctrl+Shift-Home"}, // Shift still glues to the base
 		{"^C-x", "Ctrl+X"},              // both spellings of one modifier: said once
 	}
@@ -279,5 +279,51 @@ func TestKeyBindingDisplayPrefersThisEnvironmentsSpelling(t *testing.T) {
 	}
 	if got := e.keyBindingDisplay("clipboard_copy", ""); got != "^C" {
 		t.Errorf("badge = %q, want ^C - the Mac spelling is demoted off a Mac", got)
+	}
+}
+
+// Mega and Micro read as the familiar "Meta" until both are bound, and are told
+// apart the moment they are.
+//
+// The rule tracks the key sequence processor rather than taste. M- and m- fall
+// back to each other there: bind one and either press reaches it, bind both and
+// they stay apart. So while only one is bound there is nothing a reader could
+// do with the distinction — and "Micro+X" would name a key most keyboards do
+// not have, when the one they do have works. Once both are bound the press
+// decides which binding runs, and the badge has to say which.
+func TestVerboseKeySequenceMetaDisambiguation(t *testing.T) {
+	only := func(string) bool { return false }
+	for _, c := range []struct{ seq, want, what string }{
+		{"M-x", "Meta+X", "only Mega bound"},
+		{"m-x", "Meta+X", "only Micro bound: the reachable key is still Meta"},
+	} {
+		if got := verboseKeySequence(c.seq, only); got != c.want {
+			t.Errorf("%s: verboseKeySequence(%q) = %q, want %q", c.what, c.seq, got, c.want)
+		}
+	}
+
+	// A keymap that binds both: the fallback no longer applies, so the words
+	// have to separate.
+	bound := map[string]bool{"M-x": true, "m-x": true}
+	both := func(s string) bool { return bound[s] }
+	for _, c := range []struct{ seq, want, what string }{
+		{"M-x", "Mega+X", "both bound: Mega named"},
+		{"m-x", "Micro+X", "both bound: Micro named"},
+	} {
+		if got := verboseKeySequence(c.seq, both); got != c.want {
+			t.Errorf("%s: verboseKeySequence(%q) = %q, want %q", c.what, c.seq, got, c.want)
+		}
+	}
+
+	// One token holding both is always disambiguated, whatever is bound:
+	// "Meta+Meta+Home" would say one word for two keys held together.
+	if got := verboseKeySequence("M-m-home", only); got != "Mega+Micro+Home" {
+		t.Errorf("both modifiers in one token = %q, want %q", got, "Mega+Micro+Home")
+	}
+
+	// Disambiguation is per chord, not global: binding both forms of x says
+	// nothing about y, which stays friendly.
+	if got := verboseKeySequence("M-y", both); got != "Meta+Y" {
+		t.Errorf("an unrelated chord = %q, want %q", got, "Meta+Y")
 	}
 }

@@ -70,10 +70,10 @@ func (e *Editor) verboseKeys(seq string) string {
 
 // verboseKeySequence spells a space-separated binding (e.g. "^B O") out for
 // beginners, for help pages written before the terse notation is introduced.
-// Modifiers spell out — ^ and C- become "Ctrl+", M- "Meta+", m- "Micro+", s-
-// "Super+", G- "Glyph+", H- "Hyper+", and Shift attaches to the base key as
-// "Shift-" — and the keys of a chord are joined with "then", "followed by",
-// and "and finally" (see joinVerboseTerms).
+// Modifiers spell out — ^ and C- become "Ctrl+", s- "Super+", G- "Glyph+", H-
+// "Hyper+", M- and m- both "Meta+" until both are bound (see metaSignificant),
+// and Shift attaches to the base key as "Shift-" — and the keys of a chord are
+// joined with "then", "followed by", and "and finally" (see joinVerboseTerms).
 //
 // Shift on a letter is shown only when it MATTERS: an explicit S- in the
 // binding, or a letter whose case is significant — i.e. the same binding with
@@ -87,7 +87,9 @@ func verboseKeySequence(seq string, isBound func(string) bool) string {
 	}
 	terms := make([]string, len(fields))
 	for i, f := range fields {
-		terms[i] = verboseKeyToken(f, caseSignificant(fields, i, isBound))
+		terms[i] = verboseKeyToken(f,
+			caseSignificant(fields, i, isBound),
+			metaSignificant(fields, i, isBound))
 	}
 	return joinVerboseTerms(terms)
 }
@@ -105,6 +107,58 @@ func caseSignificant(fields []string, i int, isBound func(string) bool) bool {
 		return false
 	}
 	return isBound(flipped)
+}
+
+// metaSignificant reports whether fields[i]'s token must name Mega or Micro
+// rather than the friendlier "Meta".
+//
+// The two fall back to each other in the key sequence processor: bind one and
+// either reaches it, bind both and they stay apart. So the moment a user needs
+// to be told WHICH key is the moment both are bound — before that, telling them
+// "Micro" would name a key most keyboards do not have, when pressing the one
+// they do have works. This is the same shape as caseSignificant above, asking
+// about the modifier prefix instead of the letter's case.
+//
+// A token carrying BOTH is significant whatever else is bound: "Meta+Meta+Home"
+// would say one word for two keys held at once.
+func metaSignificant(fields []string, i int, isBound func(string) bool) bool {
+	prefix, _ := splitKeyToken(fields[i])
+	mega := strings.Contains(prefix, "M-")
+	micro := strings.Contains(prefix, "m-")
+	if mega && micro {
+		return true
+	}
+	if !mega && !micro || isBound == nil {
+		return false
+	}
+	flipped, ok := flipTokenMeta(fields, i)
+	if !ok {
+		return false
+	}
+	return isBound(flipped)
+}
+
+// flipTokenMeta returns the full sequence with fields[i]'s Mega prefix swapped
+// for Micro or the reverse, or ok=false when the token carries neither.
+//
+// The swap is in place, which keeps the stack in canonical order: "M-" and "m-"
+// are adjacent in the rank (see keyseq's modifierRank), so nothing that sorted
+// before or after one sorts differently against the other.
+func flipTokenMeta(fields []string, i int) (string, bool) {
+	prefix, base := splitKeyToken(fields[i])
+	var flipped string
+	switch {
+	case strings.Contains(prefix, "M-"):
+		flipped = strings.Replace(prefix, "M-", "m-", 1)
+	case strings.Contains(prefix, "m-"):
+		flipped = strings.Replace(prefix, "m-", "M-", 1)
+	default:
+		return "", false
+	}
+	out := make([]string, len(fields))
+	copy(out, fields)
+	out[i] = flipped + base
+	return strings.Join(out, " "), true
 }
 
 // flipTokenLetter returns the full sequence with the letter of fields[i]'s base
@@ -158,8 +212,10 @@ func joinVerboseTerms(terms []string) string {
 }
 
 // verboseKeyToken renders one key token ("^B", "M-b", "S-tab"). caseSignificant
-// says whether the base letter's case encodes a real Shift (both cases bound).
-func verboseKeyToken(tok string, caseSignificant bool) string {
+// says whether the base letter's case encodes a real Shift (both cases bound);
+// metaSignificant says whether Mega and Micro must be named apart rather than
+// both reading as the familiar "Meta".
+func verboseKeyToken(tok string, caseSignificant, metaSignificant bool) string {
 	prefix, base := splitKeyToken(tok)
 	shift := strings.Contains(prefix, "S-") // explicit Shift in the binding
 
@@ -172,11 +228,16 @@ func verboseKeyToken(tok string, caseSignificant bool) string {
 	var b strings.Builder
 	written := ""
 	for _, m := range verboseModifiers {
+		word := m.word
+		// Mega and Micro both read as "Meta" until something needs them apart.
+		if !metaSignificant && (m.prefix == "M-" || m.prefix == "m-") {
+			word = "Meta+"
+		}
 		// ^ and C- are the same modifier spelled two ways, so a token carrying
 		// both says Ctrl once.
-		if strings.Contains(prefix, m.prefix) && m.word != written {
-			b.WriteString(m.word)
-			written = m.word
+		if strings.Contains(prefix, m.prefix) && word != written {
+			b.WriteString(word)
+			written = word
 		}
 	}
 	// Shift is written last because it attaches to the base key rather than
@@ -194,24 +255,26 @@ func verboseKeyToken(tok string, caseSignificant bool) string {
 // never confuses one for the other. S- is absent: Shift is written last, glued
 // to the base key.
 //
-// "M-" reads out as "Meta+" and that is DELIBERATE — do not "correct" it to
-// Mega. Mega is the name this code uses for the modifier, chosen because two
-// keys have a claim to Meta and neither could have it (see kittytk's
-// core.MegaModifier). On screen there is no such contest: a user pressing the
-// key under the Alt or Option cap has been told it is Meta for forty years,
-// and a badge reading "Mega+B" would name something they have never heard of.
-// The internal name settles an ambiguity between two keys; the printed word
-// only has to be recognised.
+// The words for "M-" and "m-" here are the DISAMBIGUATED ones. Neither is what
+// a reader normally sees: verboseKeyToken substitutes "Meta+" for both unless
+// metaSignificant says they have to be told apart.
 //
-// Micro keeps its own name here because nothing else was ever printed for it,
-// so there is no familiarity to preserve — and "Meta+" for both would put the
-// two keys back together in exactly the place a user is trying to tell them
-// apart.
+// Mega and Micro are neutral names the libraries need — direct-key-handler,
+// key-sequence-processor and kittytk are offered to anyone, and two keys have a
+// real claim to "Meta", so those take neither (see core.MegaModifier). mew is
+// not neutral: its default keymap binds one of them and not the other, and its
+// reader has been told for forty years that the key under the Alt or Option cap
+// is Meta. Naming it Mega on a badge would name something they have never seen,
+// to settle a contest they are not in.
+//
+// The contest only reaches them when both keys are actually bound, and then
+// the friendly word stops being usable — which is precisely the condition
+// metaSignificant tests.
 var verboseModifiers = []struct{ prefix, word string }{
 	{"^", "Ctrl+"},
 	{"C-", "Ctrl+"},
 	{"G-", "Glyph+"},
-	{"M-", "Meta+"},
+	{"M-", "Mega+"},
 	{"m-", "Micro+"},
 	{"s-", "Super+"},
 	{"H-", "Hyper+"},
