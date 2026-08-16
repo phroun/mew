@@ -81,6 +81,18 @@ type Platform struct {
 	// everywhere else. Nil means never (no host opted in).
 	rotationGate func() bool
 
+	// keyRepeat latches whether the KEY_DOWN just handled was SDL's auto-repeat
+	// of a held key, so the TextInput that follows it can say so.
+	//
+	// A printable key produces both events: KEY_DOWN carries the repeat bit but
+	// translateKey answers "" for it (the character belongs to the TextInput
+	// path), and TextInput carries the character but no bit. Neither event
+	// alone can report a held comma, and SDL delivers them in that order for
+	// the same physical press, so the bit waits here for the character to
+	// arrive. Without it a hosted browser was told a held key was struck again,
+	// with its repeat flag clear every time.
+	keyRepeat bool
+
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
@@ -1308,6 +1320,10 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			text := e.GetText()
+			// Spend the repeat bit the KEY_DOWN before this one left behind: it
+			// belongs to this character, and to no character after it.
+			repeat := p.keyRepeat
+			p.keyRepeat = false
 			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
 			// character here on the TextInput path, not on KEY_DOWN. When it is
 			// held, tag the produced glyph with a "G-" prefix so it reaches the
@@ -1325,7 +1341,9 @@ func (p *Platform) pumpEvents() bool {
 						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 							t = name
 						}
-						s.handler.Event(core.KeyPressEvent{Key: decoded, Modifiers: mods, Text: t})
+						s.handler.Event(core.KeyPressEvent{
+							Key: decoded, Modifiers: mods, Text: t, Repeat: repeat,
+						})
 						continue
 					}
 				}
@@ -1334,8 +1352,9 @@ func (p *Platform) pumpEvents() bool {
 					key = "G-" + key
 				}
 				s.handler.Event(core.KeyPressEvent{
-					Key:  key,
-					Text: string(ch),
+					Key:    key,
+					Text:   string(ch),
+					Repeat: repeat,
 				})
 			}
 		case *sdl3.TextEditingEvent:
@@ -1382,6 +1401,12 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Type == sdl3.KeyDown {
+				// Latch the repeat bit for the TextInput that may follow this
+				// key down (see Platform.keyRepeat). Done before the keys that
+				// get consumed below, so the latch always describes the last
+				// physical key down whether or not it produced a press.
+				p.keyRepeat = e.Repeat
+
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
 				// (WebGPU); works in plain-present AND compositor modes.
@@ -1430,7 +1455,9 @@ func (p *Platform) pumpEvents() bool {
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 						text = name
 					}
-					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
+					s.handler.Event(core.KeyPressEvent{
+						Key: key, Modifiers: mods, Text: text, Repeat: e.Repeat,
+					})
 				}
 			} else if e.Type == sdl3.KeyUp {
 				// Report release actions back to tracking vectors using the modifier

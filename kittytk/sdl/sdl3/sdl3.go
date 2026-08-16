@@ -538,6 +538,12 @@ type KeyboardEvent struct {
 	Type     uint32
 	WindowID uint32
 	Keysym   Keysym
+
+	// Repeat marks a KEY_DOWN the keyboard generated because the key is being
+	// HELD. SDL reports it and this adapter used to drop it, which left the
+	// platform layer unable to tell a held key from a drummed one and every
+	// consumer above it the same.
+	Repeat bool
 }
 
 type TextInputEvent struct {
@@ -641,6 +647,7 @@ func translate(ev *csdl.Event) Event {
 			Type:     typ,
 			WindowID: uint32(k.WindowID),
 			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod)},
+			Repeat:   k.Repeat,
 		}
 
 	case csdl.EVENT_TEXT_INPUT:

@@ -75,6 +75,39 @@ func TestPressAndReleaseDifferOnTheWire(t *testing.T) {
 	}
 }
 
+// A held key reaches the child marked as a repeat.
+//
+// The event says "repeat" in a field of its own while the emulator's encoder
+// reads the marker off the NAME, so this is the layer that has to put it back.
+// It did not, and neither backend even set the field — the TUI trimmed the
+// protocol's marker off the name and SDL never read its own repeat bit — so
+// every layer below this was correct and unreachable: mew stripped and
+// re-attached a marker that never arrived, and a hosted browser was told a held
+// key had been struck again, its repeat flag clear every time.
+func TestHeldKeyReachesTheChildAsARepeat(t *testing.T) {
+	flags := purfecterm.KeyboardDisambiguate | purfecterm.KeyboardReportEvents
+	term, out := newReleaseTestTerm(t, flags)
+
+	term.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a"})
+	first := out()
+
+	repTerm, repOut := newReleaseTestTerm(t, flags)
+	repTerm.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a", Repeat: true})
+	repeat := repOut()
+
+	if first == "" || repeat == "" {
+		t.Fatalf("press=%q repeat=%q, want both sent", first, repeat)
+	}
+	if first == repeat {
+		t.Errorf("a struck key and a held one both sent %q; the guest cannot tell "+
+			"a repeat from another press", first)
+	}
+	if !strings.Contains(repeat, ":2") {
+		t.Errorf("the repeat sent %q, which carries no event type; the protocol "+
+			"marks a repeat with :2", repeat)
+	}
+}
+
 // A child that never asked for release events is not sent any.
 //
 // Sending them unasked is how a keystroke appears to arrive twice, so the

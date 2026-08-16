@@ -598,6 +598,18 @@ type KeyPressEvent struct {
 	Key       string       // Key name from direct-key-handler
 	Modifiers KeyModifiers // Active modifiers
 	Text      string       // Printable text if any
+
+	// Repeat marks a press the keyboard generated because the key is being
+	// HELD, rather than struck again.
+	//
+	// It is a press either way, and every consumer that only wants to know a
+	// key happened can ignore this and be right. It is here for the ones that
+	// cannot: a browser in a hosted terminal reports a repeat as a keydown with
+	// its repeat flag set, and without this it has no way to tell a held key
+	// from a drummed one. Both backends produced repeats and neither said so —
+	// the TUI trimmed the protocol's marker off and SDL never read its own
+	// repeat bit — so a hosted guest was told the key was struck ten times.
+	Repeat bool
 }
 
 func (KeyPressEvent) isEvent() {}

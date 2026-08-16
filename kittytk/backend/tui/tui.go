@@ -1556,7 +1556,11 @@ func (t *TUIBackend) handleKey(key string) {
 		}
 		return
 	}
-	key = strings.TrimSuffix(key, ":Repeat")
+	// A REPEAT is a press, and it is also a repeat. The marker comes off the
+	// name — every consumer reads Key as a plain key, and one carrying a suffix
+	// would match nothing — but it is recorded on the event rather than thrown
+	// away, so a hosted guest that can read the distinction gets to.
+	key, repeated := strings.CutSuffix(key, ":Repeat")
 
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
@@ -1577,9 +1581,10 @@ func (t *TUIBackend) handleKey(key string) {
 		Key:       key,  // Full key string including modifier prefixes
 		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
+		Repeat:    repeated,
 	}
 	if core.KeyTracing() {
-		core.KeyTracef("1 tui      press   key=%q mods=%v", key, mods)
+		core.KeyTracef("1 tui      press   key=%q mods=%v repeat=%v", key, mods, repeated)
 	}
 
 	select {

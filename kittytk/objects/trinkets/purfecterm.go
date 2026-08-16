@@ -932,11 +932,23 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// encodes them apart — CR for the home row, SS3 M for the keypad — so the
 	// rename now does active harm: it would hand the home-row key the keypad's
 	// sequence, which is the confusion it was written to avoid, inverted.
+	//
+	// A HELD key says so on the way out. The event names the key and marks it a
+	// repeat separately; the emulator's encoder reads the marker off the name,
+	// the way direct-key-handler writes it, so it goes back on here — the same
+	// trade the release makes just below. A guest that negotiated nothing has
+	// the marker taken off again one layer down and receives the press a legacy
+	// terminal would have sent, so nothing regresses for a program that cannot
+	// read it.
+	key := event.Key
+	if event.Repeat {
+		key += ":Repeat"
+	}
 	if core.KeyTracing() {
 		core.KeyTracef("3 trinket  press   key=%q flags=%d focused=%v",
-			event.Key, t.guestKeyboardFlags(), t.terminal.IsFocused())
+			key, t.guestKeyboardFlags(), t.terminal.IsFocused())
 	}
-	t.terminal.HandleKeyString(event.Key)
+	t.terminal.HandleKeyString(key)
 	t.Update()
 	return true
 }

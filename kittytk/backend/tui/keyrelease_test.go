@@ -105,3 +105,48 @@ func TestPressesAreUnaffected(t *testing.T) {
 		}
 	}
 }
+
+// A held key becomes a press that SAYS it is a repeat.
+//
+// The marker came off the name and went nowhere: handleKey trimmed ":Repeat"
+// and dispatched a press indistinguishable from a struck key. Trimming the name
+// is right — every consumer reads Key as a plain key and one wearing a suffix
+// would match nothing — but the fact was the outer terminal's to report and
+// this backend's to pass on, and dropping it left a hosted browser unable to
+// tell a held key from a drummed one.
+func TestRepeatNamesBecomePressesThatSaySo(t *testing.T) {
+	b := &TUIBackend{
+		metrics:    core.DefaultCellMetrics(),
+		eventQueue: make(chan core.Event, 8),
+	}
+
+	for _, c := range []struct {
+		key    string
+		want   string
+		repeat bool
+		what   string
+	}{
+		{"a:Repeat", "a", true, "a held letter"},
+		{"M-Up:Repeat", "M-Up", true, "modifier prefixes stay on the name"},
+		{"a", "a", false, "a struck key is not a repeat"},
+	} {
+		b.handleKey(c.key)
+		select {
+		case ev := <-b.eventQueue:
+			kp, ok := ev.(core.KeyPressEvent)
+			if !ok {
+				t.Errorf("%s (%s): dispatched as %T, want KeyPressEvent", c.key, c.what, ev)
+				continue
+			}
+			if kp.Key != c.want {
+				t.Errorf("%s (%s): Key = %q, want %q — the marker belongs on the "+
+					"event, not the name", c.key, c.what, kp.Key, c.want)
+			}
+			if kp.Repeat != c.repeat {
+				t.Errorf("%s (%s): Repeat = %v, want %v", c.key, c.what, kp.Repeat, c.repeat)
+			}
+		default:
+			t.Errorf("%s (%s): nothing dispatched", c.key, c.what)
+		}
+	}
+}
