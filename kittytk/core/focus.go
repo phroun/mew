@@ -529,6 +529,27 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 	return false
 }
 
+// HandleKeyRelease hands a key coming back up to the focused trinket.
+//
+// There is no navigation fallback, unlike HandleKeyPress: focus cycling is
+// decided when Tab goes DOWN, and running it again on the way up would move
+// focus twice per keystroke. A release belongs to whatever was being typed
+// into, and if that cannot hold one there is nothing else to do with it.
+//
+// Releases only reach here at all when something upstream produces them — the
+// SDL backend always does; the TUI backend does once the outer terminal has
+// been asked for event reporting.
+func (fm *FocusManager) HandleKeyRelease(event KeyReleaseEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if focused == nil {
+		return false
+	}
+	return focused.HandleKeyRelease(event)
+}
+
 // HandleTextEditing hands an input method's in-flight composition to the
 // focused trinket. Unlike HandleKeyPress there is no navigation fallback:
 // a composition belongs to whatever is being typed into, and if that
@@ -845,6 +866,23 @@ func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandleKeyRelease routes a key coming back up to the active scope, the same
+// way HandlePaste routes pasted text.
+//
+// Nothing routed one before: this manager had a HandleKeyPress and no release
+// counterpart, as did every level below it, so a release dispatched by a
+// backend reached the desktop and stopped there.
+func (gfm *GlobalFocusManager) HandleKeyRelease(event KeyReleaseEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleKeyRelease(event)
 	}
 	return false
 }

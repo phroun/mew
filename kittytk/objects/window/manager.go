@@ -2823,6 +2823,22 @@ func (m *WindowManager) HandlePaste(event core.PasteEvent) bool {
 	return active.HandlePaste(event)
 }
 
+// HandleKeyRelease hands a key coming back up to the active window, the
+// fallback path when the focus manager's active scope did not claim it. Like
+// HandlePaste it has none of HandleKeyPress's routing: shortcuts, the menu bar
+// and the window-cycle keys are all decided on the press, and re-running them
+// on the way up would fire each of them twice.
+func (m *WindowManager) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleKeyRelease(event)
+}
+
 // HandleKeyPress processes keyboard events.
 func (m *WindowManager) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RLock()

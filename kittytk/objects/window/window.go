@@ -3530,6 +3530,20 @@ func (w *Window) HandlePaste(event core.PasteEvent) bool {
 	return fm.HandlePaste(event)
 }
 
+// HandleKeyRelease hands a key coming back up to whatever holds focus in this
+// window. None of HandleKeyPress's chrome applies — title-bar focus, the menu
+// bar, the shortcut resolver and pass-next-key all act on the press.
+func (w *Window) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleKeyRelease(event)
+}
+
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	w.mu.RLock()
 	fm := w.focusManager

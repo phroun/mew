@@ -3890,10 +3890,30 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 
 	case core.KeyReleaseEvent:
 		// When every modifier has gone up, lock in an in-progress window-cycle
-		// run's MRU order (the Alt-Tab "commit on release"). Only the graphical
-		// backend delivers releases; the WM ignores this on the TUI.
+		// run's MRU order (the Alt-Tab "commit on release"). The graphical
+		// backend has always delivered releases; the TUI one does too once the
+		// outer terminal has been asked for event reporting.
 		if e.Modifiers == 0 && wm != nil {
 			wm.NotifyModifiersReleased()
+		}
+
+		// Then route it onward, which nothing did: this case notified the
+		// window manager and returned false, so a release never reached a
+		// window, a focus scope or a trinket. Every level below had a
+		// HandleKeyPress and no HandleKeyRelease, so there was no path for one
+		// to travel even if this had tried.
+		//
+		// A hosted child that wants releases — a browser, which cannot know a
+		// held key was let go without them — was the thing this cost. It is
+		// routed like a paste rather than like a key press: straight to
+		// whatever holds focus, with no shortcuts, no menu bar and no
+		// window-cycle keys, because all of those are decided on the press and
+		// running them again on the way up would fire each of them twice.
+		if fm != nil && fm.HandleKeyRelease(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleKeyRelease(e)
 		}
 		return false
 
