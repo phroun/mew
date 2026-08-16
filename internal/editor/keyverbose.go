@@ -193,6 +193,20 @@ func verboseKeyToken(tok string, caseSignificant bool) string {
 // two readings of the meta lineage, two different keys), so a Contains test
 // never confuses one for the other. S- is absent: Shift is written last, glued
 // to the base key.
+//
+// "M-" reads out as "Meta+" and that is DELIBERATE — do not "correct" it to
+// Mega. Mega is the name this code uses for the modifier, chosen because two
+// keys have a claim to Meta and neither could have it (see kittytk's
+// core.MegaModifier). On screen there is no such contest: a user pressing the
+// key under the Alt or Option cap has been told it is Meta for forty years,
+// and a badge reading "Mega+B" would name something they have never heard of.
+// The internal name settles an ambiguity between two keys; the printed word
+// only has to be recognised.
+//
+// Micro keeps its own name here because nothing else was ever printed for it,
+// so there is no familiarity to preserve — and "Meta+" for both would put the
+// two keys back together in exactly the place a user is trying to tell them
+// apart.
 var verboseModifiers = []struct{ prefix, word string }{
 	{"^", "Ctrl+"},
 	{"C-", "Ctrl+"},
