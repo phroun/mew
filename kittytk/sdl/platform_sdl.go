@@ -1435,9 +1435,22 @@ func (p *Platform) pumpEvents() bool {
 			} else if e.Type == sdl3.KeyUp {
 				// Report release actions back to tracking vectors using the modifier
 				// states parsed immediately AFTER the key release event completes.
+				mods := currentKeyModifiers()
+
+				// translateKey yields "" for a plain printable key, because on the
+				// way DOWN that key belongs to the TextInput path — the character
+				// arrives as text, not as a chord. There is no TextInput on the way
+				// UP, so taking that answer left every letter's release nameless:
+				// "e" pressed, "" released. bareKey names the key itself, which is
+				// what a release is about; it exists for the same reason, to give a
+				// chord a key to attach to when TextInput would otherwise own it.
+				name := translateKey(e.Keysym)
+				if name == "" {
+					name = bareKey(e.Keysym, mods&core.ShiftModifier != 0)
+				}
 				rel := core.KeyReleaseEvent{
-					Key:       translateKey(e.Keysym),
-					Modifiers: currentKeyModifiers(),
+					Key:       name,
+					Modifiers: mods,
 				}
 				if core.KeyTracing() {
 					core.KeyTracef("1 sdl      release key=%q mods=%v", rel.Key, rel.Modifiers)
