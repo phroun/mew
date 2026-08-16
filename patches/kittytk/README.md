@@ -202,6 +202,44 @@ requirement (the vendored tree needs it only for the build-tagged
 `editor_mew.go`, which this patch excludes; the upstream module graph stays
 mew-free — verified zero references after apply).
 
+**UPDATE — LANDED upstream in KittyTK `v0.1.24-alpha`**: one PR,
+[#38](https://github.com/phroun/kittytk/pull/38), merged as `8d64ff9`. mew's
+`./kittytk` needed no re-sync — the subtree content was already identical to the
+tag apart from the fork boundary — so only the module pins moved
+(`go.mod`, `app/go.mod` to `v0.1.24-alpha`).
+
+Produced the modern way, by `git subtree split --prefix=kittytk` rather than a
+snapshot diff, then stripped: 26 `editor_mew*`/`editor_protocol_mew.go` files,
+`core/mousetrace.go` and its three call sites (live mew-side debug
+instrumentation, plus a `src` variable in `backend/tui/tui.go` that existed only
+to feed it), and the `github.com/phroun/mew` require. 46 files, +5,253/-195.
+
+Contents: terminal graphics on the TUI host (per-cell and per-protocol
+invalidation, payload compression 4.83 MB/frame to 0.03 MB, content-hash image
+identity, sixel as cell content), pixel geometry (the child's window in pixels,
+display density from the screen, `?1016` in the advertised cell size), mouse
+fixes (drag events carry the held button, one locked snapshot of position and
+cell metrics), and the erase-key and Mega/Micro modifier vocabulary.
+
+Dependency bumps carried: `direct-key-handler v0.3.21`, `purfecterm v0.2.49`
+(breaking: `MouseModAlt` to `MouseModMega`, `ModAlt` to `ModMega`, `ModMeta` to
+`ModMicro`), `key-sequence-processor v0.1.8`.
+
+Three interfaces added in `core/backend.go` — `CellPixelSizer`, `MotionTracker`,
+`DisplayDensityReporter` — all optional capabilities beside the existing
+`ImageDrawer`/`DeviceScaler`, so no upstream test double broke.
+
+`const Build` set to 24, derived from the tag per policy 2a. That repaired a
+drift rather than incrementing: the counter tracked its tags through
+`v0.1.21-alpha` and then stopped, with `v0.1.22-alpha` and `v0.1.23-alpha` both
+shipping 21. Two releases had gone out without the bump the policy exists to
+enforce; deriving from the tag is why it says to derive.
+
+One boundary leak caught before sending: a `gofmt -w` sweep in mew had realigned
+the comment columns in `garland/mark_edit_test.go`. garland is upstream-owned,
+so it was reverted on the sync branch — and afterwards in mew too, so the file
+stops reappearing in every future diff.
+
 ## Deliberately excluded (the mew boundary)
 
 - `objects/trinkets/editor_mew.go`, `editor_protocol_mew.go` — the mew-backed
