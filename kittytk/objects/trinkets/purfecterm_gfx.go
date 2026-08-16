@@ -2839,7 +2839,7 @@ func gfxMouseModifiers(mods core.KeyModifiers) int {
 		m |= purfecterm.MouseModShift
 	}
 	if mods&core.MegaModifier != 0 {
-		m |= purfecterm.MouseModAlt
+		m |= purfecterm.MouseModMega
 	}
 	if mods&core.ControlModifier != 0 {
 		m |= purfecterm.MouseModControl
