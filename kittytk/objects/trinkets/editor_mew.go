@@ -1978,6 +1978,22 @@ func (e *Editor) terminalKey(id string, key string) []byte {
 	s.pending = nil
 	s.draining = false
 	e.termMu.Unlock()
+
+	// The LAST hop, and the one the trace could not see. Every line above it
+	// reports the editor's own emulator — the one mew talks through — while the
+	// bytes a hosted child actually receives are encoded here, against that
+	// child's separately negotiated flags. Those flags decide the SHAPE of a
+	// key: without ReportAllKeys a shifted letter goes out as the bare byte "A"
+	// and carries no modifier, while a key with no legacy form goes out as CSI
+	// and carries one, which is exactly how shift can appear on some keys and
+	// not others.
+	if core.KeyTracing() {
+		flags := -1
+		if buf := tm.Buffer(); buf != nil {
+			flags = buf.KeyboardFlags()
+		}
+		core.KeyTracef("5 child    id=%s key=%q flags=%d -> %q", id, key, flags, out)
+	}
 	return out
 }
 
