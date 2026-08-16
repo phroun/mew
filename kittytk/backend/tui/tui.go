@@ -1529,6 +1529,9 @@ func (t *TUIBackend) handleKey(key string) {
 	// child that negotiated event reporting for itself.
 	if base, isRelease := strings.CutSuffix(key, ":Release"); isRelease {
 		mods, _ := core.ParseKeyModifiers(base)
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      release key=%q mods=%v", base, mods)
+		}
 		select {
 		case t.eventQueue <- core.KeyReleaseEvent{Key: base, Modifiers: mods}:
 		default:
@@ -1556,6 +1559,9 @@ func (t *TUIBackend) handleKey(key string) {
 		Key:       key,  // Full key string including modifier prefixes
 		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
+	}
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      press   key=%q mods=%v", key, mods)
 	}
 
 	select {

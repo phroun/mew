@@ -932,6 +932,10 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 	// encodes them apart — CR for the home row, SS3 M for the keypad — so the
 	// rename now does active harm: it would hand the home-row key the keypad's
 	// sequence, which is the confusion it was written to avoid, inverted.
+	if core.KeyTracing() {
+		core.KeyTracef("3 trinket  press   key=%q flags=%d focused=%v",
+			event.Key, t.guestKeyboardFlags(), t.terminal.IsFocused())
+	}
 	t.terminal.HandleKeyString(event.Key)
 	t.Update()
 	return true
@@ -956,8 +960,27 @@ func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	if core.KeyTracing() {
+		core.KeyTracef("3 trinket  release key=%q flags=%d focused=%v",
+			event.Key, t.guestKeyboardFlags(), t.terminal.IsFocused())
+	}
 	t.terminal.HandleKeyString(event.Key + ":Release")
 	return true
+}
+
+// guestKeyboardFlags reports the kitty keyboard enhancements the child has
+// negotiated, for the trace. Zero means it asked for nothing, in which case no
+// release can be sent to it however far the event travelled — that is the
+// protocol's rule, not a fault in this chain.
+func (t *PurfecTerm) guestKeyboardFlags() int {
+	if t.terminal == nil {
+		return -1
+	}
+	buf := t.terminal.Buffer()
+	if buf == nil {
+		return -1
+	}
+	return buf.KeyboardFlags()
 }
 
 // handleScrollbackKey runs the scrollback navigation locally (it scrolls the

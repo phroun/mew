@@ -1435,10 +1435,14 @@ func (p *Platform) pumpEvents() bool {
 			} else if e.Type == sdl3.KeyUp {
 				// Report release actions back to tracking vectors using the modifier
 				// states parsed immediately AFTER the key release event completes.
-				s.handler.Event(core.KeyReleaseEvent{
+				rel := core.KeyReleaseEvent{
 					Key:       translateKey(e.Keysym),
 					Modifiers: currentKeyModifiers(),
-				})
+				}
+				if core.KeyTracing() {
+					core.KeyTracef("1 sdl      release key=%q mods=%v", rel.Key, rel.Modifiers)
+				}
+				s.handler.Event(rel)
 			}
 		case *sdl3.MouseButtonEvent:
 			s := p.surfaceFor(e.WindowID)

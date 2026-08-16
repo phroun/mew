@@ -3909,6 +3909,10 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// whatever holds focus, with no shortcuts, no menu bar and no
 		// window-cycle keys, because all of those are decided on the press and
 		// running them again on the way up would fire each of them twice.
+		if core.KeyTracing() {
+			core.KeyTracef("2 desktop  release key=%q mods=%v fm=%v wm=%v",
+				e.Key, e.Modifiers, fm != nil, wm != nil)
+		}
 		if fm != nil && fm.HandleKeyRelease(e) {
 			return true
 		}
