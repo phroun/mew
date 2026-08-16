@@ -60,15 +60,14 @@ func TestSessionAsksForKeyEventsAndGivesThemBack(t *testing.T) {
 	}
 }
 
-// The release survives the trip from wire to key name, and the repeat is folded
-// back into the press it has always been.
+// Both markers survive the trip from wire to key name.
 //
-// Event reporting buys both at once: a held key starts reporting ":Repeat"
-// instead of another plain press. mew has no repeat in its binding vocabulary,
-// so a marked repeat would match nothing and holding an arrow key would stop
-// moving the cursor after the first press — the cost of asking for releases, if
-// the marker were left on.
-func TestReleaseArrivesAndRepeatBecomesAPress(t *testing.T) {
+// Event reporting buys them together: a held key starts reporting ":Repeat"
+// instead of another plain press. Neither is folded away here — mew's keymap
+// cannot read either one, but the child in a terminal pane can read both, and
+// the layer that cannot represent a thing is not the layer that gets to discard
+// it. Where each marker is set aside is Editor.dispatchKey's business.
+func TestReleaseAndRepeatArriveMarked(t *testing.T) {
 	// Release (:3) then repeat (:2), in both of the shapes the protocol uses:
 	// the "u" form for a text key and the cursor-key form for an arrow. The
 	// arrow is here because its family was the one that silently reported a
@@ -81,7 +80,7 @@ func TestReleaseArrivesAndRepeatBecomesAPress(t *testing.T) {
 	defer kh.handler.Stop()
 
 	got := keyNames(t, kh, 4)
-	want := []string{"a:Release", "a", "up:Release", "up"}
+	want := []string{"a:Release", "a:Repeat", "up:Release", "up:Repeat"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("key %d = %q, want %q (got %v)", i, got[i], want[i], got)

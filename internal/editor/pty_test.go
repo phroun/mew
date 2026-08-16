@@ -1924,3 +1924,65 @@ func TestKeyReleaseWithoutSessionIsDropped(t *testing.T) {
 			"character", got)
 	}
 }
+
+// A held key is a press to mew and a repeat to the child, in the same dispatch.
+//
+// Both halves matter and they pull opposite ways. Strip the marker everywhere
+// and a browser in the pane cannot tell a held key from a drummed one — it
+// reports repeat=false on every keydown, which is what it did. Keep the marker
+// everywhere and mew's keymap matches nothing, because it has no repeat token:
+// a held arrow key would move the cursor once and then stop.
+func TestHeldKeyRepeatsForMewAndIsMarkedForTheChild(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	var sawKeys []string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			sawKeys = append(sawKeys, key)
+			return []byte("x")
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey(",")
+	e.dispatchKey(",:Repeat")
+	want := []string{",", ",:Repeat"}
+	if len(sawKeys) != 2 || sawKeys[0] != want[0] || sawKeys[1] != want[1] {
+		t.Errorf("the child was handed %v, want %v — a held key must arrive marked", sawKeys, want)
+	}
+
+	// And the marker is gone again once the dispatch ends, so the NEXT press is
+	// not mistaken for a continuation of the hold.
+	e.dispatchKey(",")
+	if len(sawKeys) != 3 || sawKeys[2] != "," {
+		t.Errorf("the press after the hold arrived as %q, want \",\"", sawKeys[len(sawKeys)-1])
+	}
+}
+
+// With no terminal under it, a repeat is an ordinary press: it edits, moves and
+// fires bindings exactly as the first press did. This is what holding a key has
+// always done, and asking the terminal for event types must not take it away.
+func TestHeldKeyWithoutSessionActsLikeAPress(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey("x")
+	e.dispatchKey("x:Repeat")
+	e.dispatchKey("x:Repeat")
+	if got := docContent(w); got != "abxxx" {
+		t.Errorf("holding x typed %q, want \"abxxx\" — the repeats did nothing", got)
+	}
+
+	// A named key too, where the default handler is not the self-insert path.
+	e.dispatchKey("back:Repeat")
+	if got := docContent(w); got != "abxx" {
+		t.Errorf("holding back left %q, want \"abxx\"", got)
+	}
+}

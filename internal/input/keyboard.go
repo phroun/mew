@@ -242,6 +242,13 @@ func (kh *KeyboardHandler) SetDecodeMacOSOption(enabled bool) {
 // door, and a child in one of mew's terminal panes could not be given what mew
 // was never sent: a browser hosted there saw keydown without keyup, forever.
 //
+// Event types also mark a held key's ":Repeat", which arrives here untouched.
+// mew's keymap has no repeat in it and must not be shown one, but the child in
+// a terminal pane does — a browser reports a repeat as keydown with repeat set,
+// and cannot tell a held key from a drummed one without it. The marker is
+// therefore set aside and put back at the one boundary that can use it; see
+// Editor.dispatchKey.
+//
 // Disambiguation (flag 1) is deliberately NOT asked for. It would re-encode
 // presses that arrive as plain bytes today — Escape, Tab, Enter, Backspace and
 // every Control chord — which is a change to the wire mew has always read, for
@@ -297,27 +304,11 @@ func (kh *KeyboardHandler) GetEvent() InputEvent {
 		case raw := <-kh.PasteChunks:
 			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
-			return InputEvent{Key: normalizeEventSuffix(key)}
+			return InputEvent{Key: key}
 		case fn := <-kh.actions:
 			return InputEvent{Do: fn}
 		}
 	}
-}
-
-// normalizeEventSuffix folds a key REPEAT back into an ordinary press.
-//
-// Asking for event types (keyEventReporting) is what makes releases arrive; it
-// also makes a held key report ":Repeat" instead of another plain press. mew
-// has no repeat in its binding vocabulary — a held arrow key is meant to keep
-// moving the cursor, and it does that by the key arriving again — so a repeat
-// left marked would match no binding at all and holding a key would do nothing
-// after the first press. The marker comes off, and the repeat is the press it
-// has always been.
-//
-// A ":Release" is NOT touched. It is a different event, not a press wearing a
-// suffix, and it goes on to whoever can use it. See Editor.dispatchKey.
-func normalizeEventSuffix(key string) string {
-	return strings.TrimSuffix(key, ":Repeat")
 }
 
 // PostAction implements ActionPoster: fn is queued and later surfaced by

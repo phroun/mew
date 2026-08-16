@@ -69,3 +69,34 @@ func TestTerminalKeyEncodesAReleaseForANegotiatedChild(t *testing.T) {
 		t.Error("the press stopped encoding once the child negotiated")
 	}
 }
+
+// A held key reaches the child marked as a repeat, and a child that asked for
+// nothing still gets an ordinary press for it.
+//
+// The two answers are both right, and the difference is the negotiation. A
+// browser reports a repeat as keydown with repeat set and cannot tell a held
+// key from a drummed one without the marker; a program that never asked has no
+// way to read one and must not be sent something it cannot parse — a repeat is
+// a press to it, which is what a legacy terminal has always sent.
+func TestTerminalKeyMarksARepeatOnlyForANegotiatedChild(t *testing.T) {
+	e := NewEditor()
+	e.terminalOpen("pty1", 80, 24)
+
+	if got := string(e.terminalKey("pty1", "a:Repeat")); got != "a" {
+		t.Errorf("repeat to a child that negotiated nothing = %q, want the plain press %q", got, "a")
+	}
+
+	e.termMu.Lock()
+	s := e.termSurfaces["pty1"]
+	e.termMu.Unlock()
+	s.term.Feed([]byte("\x1b[>15u"))
+
+	for _, tc := range []struct{ key, want string }{
+		{"a:Repeat", "\x1b[97:65;1:2u"},
+		{"up:Repeat", "\x1b[1;1:2A"},
+	} {
+		if got := string(e.terminalKey("pty1", tc.key)); got != tc.want {
+			t.Errorf("terminalKey(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}

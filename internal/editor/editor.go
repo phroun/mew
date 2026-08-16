@@ -336,6 +336,15 @@ type Editor struct {
 	// commands within one dispatch. Empty outside key dispatch (menu
 	// actions, scripts), where tinput_key without an argument declines.
 	dispatchingKey string
+	// repeatingKey names the arriving key when it came in as a REPEAT — a held
+	// key, marked ":Repeat" by a terminal reporting event types. The marker is
+	// stripped before the key processor sees it, because mew's keymap has no
+	// repeat token and a held arrow key has to go on moving the cursor; it is
+	// put back by tinput_key alone, so the child in a terminal pane learns the
+	// key was held rather than struck again. Empty for an ordinary press, and
+	// compared against dispatchingKey so a sequence unwind — which runs several
+	// keys' commands within one dispatch — marks only the key that repeated.
+	repeatingKey string
 
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
@@ -2524,6 +2533,14 @@ func (e *Editor) registerCommands() {
 	// key name may be given as an argument for scripted use.
 	ps.RegisterCommand("tinput_key", func(ctx *pawscript.Context) pawscript.Result {
 		key := e.dispatchingKey
+		// Put back the repeat marker the dispatcher set aside, so the child
+		// learns the key was HELD rather than struck again (see dispatchKey).
+		// Only for the key that actually repeated: a sequence unwind runs
+		// several keys' commands within this one dispatch, and the earlier
+		// ones were separate presses.
+		if key != "" && key == e.repeatingKey {
+			key += ":Repeat"
+		}
 		if len(ctx.Args) > 0 {
 			if s, ok := argString(ctx, 0); ok && s != "" {
 				key = s
@@ -4361,12 +4378,32 @@ func (e *Editor) dispatchKey(key string) {
 	// running in the focused viewport, so mew's keymap does not see it at all.
 	// The arm is spent either way — a raw key with no terminal under it is
 	// simply an ordinary key, not a key held in reserve.
+	//
+	// The name goes as it arrived, repeat marker and all: this key is the
+	// child's, and the child is the one thing here that can read the marker.
 	if e.rawKeyArmed {
 		e.rawKeyArmed = false
 		if e.rawKeyToPTY(key) {
 			e.RequestRender()
 			return
 		}
+	}
+
+	// A REPEAT is a press to mew and a repeat to the child.
+	//
+	// Both are true at once and both matter. mew's keymap has no repeat token,
+	// so a marked name would match no binding and a held arrow key would move
+	// the cursor once and then stop — the marker has to come off before the key
+	// processor sees it. But a browser in a terminal pane reports a repeat as a
+	// keydown with repeat set, and cannot tell a held key from a drummed one
+	// without it — so tinput_key puts the marker back on the way out, and only
+	// for this key. Everything between behaves exactly as it does for a press,
+	// including a capture level a user has reclaimed the key from: that
+	// resolves to mew's own command, and goes on repeating.
+	if base, repeated := strings.CutSuffix(key, ":Repeat"); repeated {
+		key = base
+		e.repeatingKey = base
+		defer func() { e.repeatingKey = "" }()
 	}
 
 	// Arm the after-key pseudo-binding on the viewport that owns this key —
