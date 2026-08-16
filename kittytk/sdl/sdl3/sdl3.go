@@ -394,6 +394,27 @@ type Keycode = csdl.Keycode
 type Keysym struct {
 	Sym Keycode
 	Mod uint16
+
+	// Scancode is the PHYSICAL key, before any layout is applied. Sym is
+	// already layout-mapped but unshifted, so it cannot answer "what does this
+	// key produce with Shift held" — only the scancode plus a modifier state
+	// can, and only the layout knows. See ShiftedKey.
+	Scancode uint32
+}
+
+// ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
+// under a modifier state, and returns 0 when it produces no character.
+//
+// This is the only honest source for it. A table mapping '5' to '%' is a US
+// keyboard written down: correct there and wrong everywhere else, and this
+// toolkit already declines to guess elsewhere (AltGr composition and macOS
+// dead keys are both taken from the system rather than reconstructed).
+func ShiftedKey(scancode uint32, mod uint16) rune {
+	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
+	if k == 0 || k >= 0x110000 {
+		return 0
+	}
+	return rune(k)
 }
 
 const (
@@ -646,7 +667,7 @@ func translate(ev *csdl.Event) Event {
 		return &KeyboardEvent{
 			Type:     typ,
 			WindowID: uint32(k.WindowID),
-			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod)},
+			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod), Scancode: uint32(k.Scancode)},
 			Repeat:   k.Repeat,
 		}
 

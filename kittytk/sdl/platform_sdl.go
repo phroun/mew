@@ -1965,6 +1965,13 @@ func bareKey(sym sdl3.Keysym, shift bool) string {
 	return ""
 }
 
+// shiftedShownKey asks the layout what a physical key shows with Shift held,
+// returning 0 when it shows no character. A variable so a test can answer for
+// itself: the real one calls into SDL, which a test has not initialised.
+var shiftedShownKey = func(scancode uint32) rune {
+	return sdl3.ShiftedKey(scancode, sdl3.KMOD_SHIFT)
+}
+
 // encodeKey maps a keysym plus its effective modifier set to a D3 key string,
 // or "" when the TextInput path owns it (plain printable characters). The
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
@@ -2049,16 +2056,31 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			}
 			return prefix + "^" + string(ch-'a'+'A')
 		case ctrl:
-			// Not caret-natural, so Control keeps its letter form — and sorts
-			// first in canonical order, ahead of Meta.
-			prefix := "C-"
+			// Control on a SHOWN key takes the caret, against the character the
+			// key shows: Ctrl+5 is "^5" and Ctrl+Shift+5 is "^%". Shift is
+			// absorbed into that character rather than stated as a prefix,
+			// which is how this vocabulary spells every key that is shown
+			// rather than named — a named key takes prefixes instead ("C-Down",
+			// "S-Tab"), and that is the branch above.
+			//
+			// This said "C-" + the unshifted character, so Ctrl+Shift+5 came
+			// out "C-S-5": a spelling nothing else in the system produces or
+			// reads, invented here.
+			//
+			// The shown character comes from the LAYOUT, not from a table. Sym
+			// is unshifted, and a map turning '5' into '%' is a US keyboard
+			// written down — right there and wrong everywhere else.
+			shown := ch
+			if shift {
+				if r := shiftedShownKey(sym.Scancode); r >= 32 && r < 127 {
+					shown = r
+				}
+			}
+			prefix := ""
 			if alt {
 				prefix += "M-"
 			}
-			if shift {
-				prefix += "S-"
-			}
-			return prefix + string(ch)
+			return prefix + "^" + string(shown)
 		case alt:
 			// On macOS a bare Option+printable composes a character that
 			// SDL also delivers via TextInput, where we decode it back to
