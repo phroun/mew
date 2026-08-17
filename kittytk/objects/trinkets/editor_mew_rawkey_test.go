@@ -42,6 +42,39 @@ func TestDKHKeyName(t *testing.T) {
 	}
 }
 
+// EVERY modifier prefix crosses the boundary, not the three that happened to be
+// listed.
+//
+// The prefix list is a membership test, and an absent entry is a silence rather
+// than an error: the base never reaches the rename table, the key travels on
+// under mew's spelling, and the emulator's encoder — which knows only
+// upstream's — produces no bytes for it. So a keypad key, a Super chord, a
+// Micro chord and a Hyper chord were each dropped on the way into a terminal
+// viewport, with nothing to show that a keystroke had gone missing.
+func TestEveryModifierPrefixCrossesTheBoundary(t *testing.T) {
+	for _, tc := range []struct{ mew, want, what string }{
+		// The keypad, which the graphical host can now report at all.
+		{"P-home", "P-Home", "the pad's Home"},
+		{"P-begin", "P-Begin", "the pad's 5, unlocked"},
+		{"P-return", "P-Return", "mew folds the pad's Enter onto return"},
+		{"C-P-pgup", "C-P-PageUp", "stacked with Control"},
+		{"p-del", "p-Delete", "and the archaic pad prefix too"},
+		{"P-7", "P-7", "a shown pad key has no name to rename"},
+		// The prefixes that were missing before the keypad ever arrived.
+		{"s-home", "s-Home", "Super"},
+		{"m-pgup", "m-PageUp", "Micro"},
+		{"H-fdel", "H-FDel", "Hyper"},
+		{"G-up", "G-Up", "Glyph"},
+		// And an event suffix still survives the round trip.
+		{"P-home:Release", "P-Home:Release", "a pad release"},
+		{"s-end:Repeat", "s-End:Repeat", "a held Super chord"},
+	} {
+		if got := dkhKeyName(tc.mew); got != tc.want {
+			t.Errorf("%s: dkhKeyName(%q) = %q, want %q", tc.what, tc.mew, got, tc.want)
+		}
+	}
+}
+
 // terminalKey asks the emulator what a key means and hands back the bytes it
 // produced. The encoder is purfecterm's own, so a terminal inside mew and a
 // terminal on its own agree about what a key is on the wire.

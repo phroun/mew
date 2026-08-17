@@ -93,6 +93,18 @@ type Platform struct {
 	// with its repeat flag clear every time.
 	keyRepeat bool
 
+	// padTyped latches that the KEY_DOWN just handled was a keypad key already
+	// named as a chord, so the TextInput after it must be dropped.
+	//
+	// The pad's shown keys are text-producing: with NumLock on the 7 sends both
+	// a KEY_DOWN and the character "7". Every other text-producing key resolves
+	// that by having translateKey answer "" and letting TextInput own it — but a
+	// pad key cannot, because the whole point is to report WHICH 7 was struck,
+	// and the character has no room to say. So the chord is emitted on KEY_DOWN
+	// and the character it would also have produced is swallowed here; otherwise
+	// one press of the pad's 7 arrives as "P-7" and then again as "7".
+	padTyped bool
+
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
 
@@ -1324,6 +1336,13 @@ func (p *Platform) pumpEvents() bool {
 			// belongs to this character, and to no character after it.
 			repeat := p.keyRepeat
 			p.keyRepeat = false
+			// A keypad character has already been delivered as a chord on the
+			// KEY_DOWN, prefix and all. Dropping it here is what keeps one press
+			// from arriving twice (see Platform.padTyped).
+			if p.padTyped {
+				p.padTyped = false
+				continue
+			}
 			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
 			// character here on the TextInput path, not on KEY_DOWN. When it is
 			// held, tag the produced glyph with a "G-" prefix so it reaches the
@@ -1406,6 +1425,14 @@ func (p *Platform) pumpEvents() bool {
 				// get consumed below, so the latch always describes the last
 				// physical key down whether or not it produced a press.
 				p.keyRepeat = e.Repeat
+
+				// Same shape, opposite job: note that this key down was a pad
+				// key already reported as a chord, so the character SDL is
+				// about to send for it gets dropped rather than delivered a
+				// second time. Set on every key down, so it can never describe
+				// an earlier one.
+				_, _, padShown, isPad := keypadKey(e.Keysym, e.Keysym.Mod&sdl3.KMOD_NUM != 0)
+				p.padTyped = isPad && padShown
 
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
@@ -1834,8 +1861,10 @@ var specialKeys = map[sdl3.Keycode]string{
 	// written in -- names them apart. Calling both "Enter" here made the two
 	// backends disagree about the home-row key, which the keymap then bound
 	// under only one of its two names.
+	// The keypad's Enter is no longer here: every keypad key is named by
+	// POSITION in keypadKeys below, under the "P-" prefix, because a pad key
+	// and the main-cluster key it duplicates have to be tellable apart.
 	sdl3.K_RETURN:    "Return",
-	sdl3.K_KP_ENTER:  "Enter",
 	sdl3.K_TAB:       "Tab",
 	sdl3.K_ESCAPE:    "Escape",
 	sdl3.K_BACKSPACE: "Backspace",
@@ -1864,6 +1893,122 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_F10:      "F10",
 	sdl3.K_F11:      "F11",
 	sdl3.K_F12:      "F12",
+}
+
+// The keypad, by SCANCODE. An SDL scancode is a USB HID keyboard usage ID, so
+// these are physical positions and mean the same thing under every layout —
+// which is the whole reason the pad is read this way. Sym cannot do the job: it
+// is layout-mapped, and the two AS/400 keys share their characters with the
+// ordinary ones, so a character can never say which key was struck.
+const (
+	scanNumLock        = 83 // NumLock on a PC; the cap says "Clear" on a Mac
+	scanKPDivide       = 84
+	scanKPMultiply     = 85
+	scanKPMinus        = 86
+	scanKPPlus         = 87
+	scanKPEnter        = 88
+	scanKP1            = 89
+	scanKP2            = 90
+	scanKP3            = 91
+	scanKP4            = 92
+	scanKP5            = 93
+	scanKP6            = 94
+	scanKP7            = 95
+	scanKP8            = 96
+	scanKP9            = 97
+	scanKP0            = 98
+	scanKPPeriod       = 99
+	scanKPEquals       = 103 // an ordinary pad's equals
+	scanKPComma        = 133 // the comma above Enter: DEC LK201, AS/400, most USB pads
+	scanKPEqualsAS400  = 134 // the equals in that same column
+	scanInternational6 = 140 // a PC-98's comma, in the bottom row beside the period
+)
+
+// padKey is one keypad cap. Dual-legend caps carry two keys and NumLock decides
+// which: locked gives the digit, unlocked gives the navigation action. That is
+// the rule the caps themselves are printed with.
+//
+// shown says the base is a CHARACTER rather than a name, which decides how
+// Control is spelled against it — "P-^7", not "C-P-7" — and whether SDL will
+// also deliver the character on the TextInput path, where it has to be
+// suppressed so one press does not arrive twice.
+type padKey struct {
+	locked   string
+	unlocked string
+	shown    bool // true when the LOCKED form is a character
+}
+
+var keypadKeys = map[uint32]padKey{
+	// The operators and Enter ignore the lock: one key, one meaning.
+	scanKPDivide:   {"/", "/", true},
+	scanKPMultiply: {"*", "*", true},
+	scanKPMinus:    {"-", "-", true},
+	scanKPPlus:     {"+", "+", true},
+	scanKPEnter:    {"Enter", "Enter", false},
+
+	// The dual-legend caps.
+	scanKP0: {"0", "Insert", true},
+	scanKP1: {"1", "End", true},
+	scanKP2: {"2", "Down", true},
+	scanKP3: {"3", "PageDown", true},
+	scanKP4: {"4", "Left", true},
+	scanKP5: {"5", "Begin", true},
+	scanKP6: {"6", "Right", true},
+	scanKP7: {"7", "Home", true},
+	scanKP8: {"8", "Up", true},
+	scanKP9: {"9", "PageUp", true},
+	// The pad's own erase. It is a PAD ACTION, not forward delete: the cap says
+	// DEL and it sits on the pad, so it is named for where it is rather than
+	// for what a text editor would do with it.
+	scanKPPeriod: {".", "Delete", true},
+
+	scanKPEquals: {"=", "=", true},
+}
+
+// keypadKeys entries whose prefix is the ARCHAIC lowercase one. A pad character
+// that exists twice cannot have both keys spelled the same way, so the second
+// splits by case, exactly as Mega and Micro do.
+//
+// This is the channel that can finally tell them apart. A terminal cannot: the
+// kitty protocol reports one KP_SEPARATOR resolved from an xkb keysym, so every
+// pad comma in existence arrives collapsed onto a single code. Reading HID usage
+// IDs, the two are simply different numbers.
+var archaicPadKeys = map[uint32]padKey{
+	// The comma above Enter, which a DEC LK201 wears and an AS/400 column keeps
+	// beside its own equals — the pair at adjacent usages, 133 and 134.
+	scanKPComma:       {",", ",", true},
+	scanKPEqualsAS400: {"=", "=", true},
+}
+
+// keypadKey names the pad cap a keysym struck, reporting false for anything not
+// on the pad. numLock picks between a dual-legend cap's two keys.
+//
+// The prefix comes back separate from the base because Control has to be
+// written BETWEEN them — "P-^7" — so a caller that joined them first would only
+// have to take them apart again.
+func keypadKey(sym sdl3.Keysym, numLock bool) (prefix, base string, shown, ok bool) {
+	prefix = "P-"
+	k, found := keypadKeys[sym.Scancode]
+	if !found {
+		// A PC-98's comma is the plain "P-," — it is the bottom-row key beside
+		// the period, not the archaic one — and HID reaches it as
+		// International6 rather than as any keypad usage.
+		if sym.Scancode == scanInternational6 {
+			k, found = padKey{",", ",", true}, true
+		}
+	}
+	if !found {
+		if k, found = archaicPadKeys[sym.Scancode]; !found {
+			return "", "", false, false
+		}
+		prefix = "p-"
+	}
+	if numLock {
+		return prefix, k.locked, k.shown, true
+	}
+	// An unlocked dual-legend cap is a NAME, whatever the locked form was. The
+	// keys that ignore the lock keep whichever kind they already were.
+	return prefix, k.unlocked, k.shown && k.locked == k.unlocked, true
 }
 
 // glyphMod reports whether a modifier mask has AltGr / ISO_Level3_Shift active
@@ -1952,6 +2097,13 @@ func translateKey(sym sdl3.Keysym) string {
 // used only to give a Hyper chord a key to attach to when the residual
 // modifiers would otherwise have deferred the keystroke to TextInput.
 func bareKey(sym sdl3.Keysym, shift bool) string {
+	// The pad before specialKeys, for the reason encodeKey does the same: a Sym
+	// lookup would name an unlocked pad cap as the main cluster's key. This is
+	// also the path a RELEASE takes, so without it a pad key would come up
+	// under a different name than it went down.
+	if pad, base, _, ok := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); ok {
+		return pad + base
+	}
 	if name, ok := specialKeys[sym.Sym]; ok {
 		return name
 	}
@@ -1977,6 +2129,38 @@ var shiftedShownKey = func(scancode uint32) rune {
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
 // can strip the modifiers it has already spent on a Hyper promotion.
 func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
+	// The keypad first, and by scancode, so no later branch can claim a pad key
+	// under the main cluster's name. specialKeys is keyed by Sym, and an
+	// unlocked pad cap can arrive with the navigation Sym — which would have
+	// answered "Home" for the pad's Home, exactly the collision the prefix
+	// exists to prevent.
+	if pad, base, shown, ok := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); ok {
+		prefix := ""
+		if ctrl && !shown {
+			// A NAMED pad key takes "C-": a name has no character for the
+			// caret to sit against. "C-P-Home", not "P-^Home".
+			prefix += "C-"
+		}
+		if alt {
+			prefix += "M-"
+		}
+		if shift {
+			prefix += "S-"
+		}
+		if gui {
+			prefix += "s-"
+		}
+		if ctrl && shown {
+			// A SHOWN pad key takes the caret, written against the character:
+			// "P-^7". The pad prefix sits outside it, where the canonical order
+			// puts it — C- G- M- m- S- s- H- P- p- ^Key — and Shift stays a
+			// prefix rather than being absorbed, because a pad character has no
+			// shifted form to absorb it into.
+			return prefix + pad + "^" + base
+		}
+		return prefix + pad + base
+	}
+
 	if name, ok := specialKeys[sym.Sym]; ok {
 		prefix := ""
 		if alt {

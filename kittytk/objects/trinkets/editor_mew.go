@@ -2030,12 +2030,52 @@ var mewToDKHKey = map[string]string{
 	"fdel": "FDel",
 	"pgup": "PageUp",
 	"pgdn": "PageDown",
+
+	// The rest of the vocabulary, which differs only by case — mew spells its
+	// names lowercase and upstream capitalises them. Case is still a difference:
+	// this table is a lookup, so a missing entry means the key travels on as
+	// mew spelled it and the emulator's encoder, which knows only upstream's
+	// spelling, produces nothing for it.
+	//
+	// The lock and system keys were absent from the day this table was written;
+	// the keypad's Begin and the keys an American keyboard does not have joined
+	// them when the vocabulary grew.
+	"capslock":    "CapsLock",
+	"scrolllock":  "ScrollLock",
+	"numlock":     "NumLock",
+	"printscreen": "PrintScreen",
+	"pause":       "Pause",
+	"menu":        "Menu",
+	"power":       "Power",
+	"begin":       "Begin",
+	"zig":         "Zig",
+	"zag":         "Zag",
+	"ro":          "Ro",
+	"yen":         "Yen",
+	"kanalock":    "KanaLock",
+	"hangullock":  "HangulLock",
+	"henkan":      "Henkan",
+	"muhenkan":    "Muhenkan",
+	"hanja":       "Hanja",
 }
 
 // keyEventSuffixes trail a name to say the event is something other than a
 // plain press. They decorate the name; they are not part of it, so a rename has
 // to put them back rather than fail to match around them.
 var keyEventSuffixes = []string{":Release", ":Repeat"}
+
+// dkhNamePrefixes are the prefixes dkhKeyName sets aside before looking a base
+// name up, and puts back afterwards.
+//
+// Membership is the whole content of this list, and an absent prefix is not an
+// error but a silence: the base never reaches the table, the key travels on
+// under mew's own spelling, and the emulator's encoder — which knows only
+// upstream's — quietly produces no bytes for it. Only S-, M- and C- were here,
+// so "s-home", "m-pgup", "H-fdel", "G-€" and every keypad key were dropped on
+// their way into a terminal viewport. The list is the canonical order:
+// C- G- M- m- S- s- H- P- p- ^Key, with the caret left out because it is one
+// character and needs no separating.
+var dkhNamePrefixes = []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-", "P-", "p-"}
 
 // dkhKeyName renames one key, modifier prefixes and all ("S-tab" -> "S-Tab").
 //
@@ -2051,12 +2091,17 @@ func dkhKeyName(key string) string {
 	}
 	prefix, base := "", key
 	for {
-		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||
-			strings.HasPrefix(base, "M-") || strings.HasPrefix(base, "C-")) {
-			prefix, base = prefix+base[:2], base[2:]
-			continue
+		matched := false
+		for _, p := range dkhNamePrefixes {
+			if len(base) > len(p) && strings.HasPrefix(base, p) {
+				prefix, base = prefix+p, base[len(p):]
+				matched = true
+				break
+			}
 		}
-		break
+		if !matched {
+			break
+		}
 	}
 	if name, ok := mewToDKHKey[base]; ok {
 		return prefix + name

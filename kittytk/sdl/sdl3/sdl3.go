@@ -431,6 +431,12 @@ const (
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
 	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
+	// KMOD_NUM is the NumLock LATCH, not a held modifier. It decides which of
+	// two keys each dual-legend keypad cap is: locked gives the digit, unlocked
+	// gives the navigation action. Nothing else can answer that question —
+	// scancode names the position and Sym is layout-mapped, so the lock state
+	// has to come from here.
+	KMOD_NUM = uint16(csdl.KMOD_NUM)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }
