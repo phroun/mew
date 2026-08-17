@@ -68,19 +68,26 @@ func TestSessionAsksForKeyEventsAndGivesThemBack(t *testing.T) {
 // the layer that cannot represent a thing is not the layer that gets to discard
 // it. Where each marker is set aside is Editor.dispatchKey's business.
 func TestReleaseAndRepeatArriveMarked(t *testing.T) {
-	// Release (:3) then repeat (:2), in both of the shapes the protocol uses:
+	// Each key is PRESSED first. A release now reports the name its press was
+	// given, and one arriving alone is dropped as non-conformant — you cannot
+	// release a key you never pressed — so a bare release would test nothing
+	// but the dropping.
+	//
+	// Repeat (:2) then release (:3), in both of the shapes the protocol uses:
 	// the "u" form for a text key and the cursor-key form for an arrow. The
 	// arrow is here because its family was the one that silently reported a
 	// release as another PRESS, so a held arrow key moved the cursor twice.
-	input := strings.NewReader("\x1b[97;1:3u\x1b[97;1:2u\x1b[1;1:3A\x1b[1;1:2A")
+	input := strings.NewReader(
+		"\x1b[97;1u\x1b[97;1:2u\x1b[97;1:3u" +
+			"\x1b[1;1A\x1b[1;1:2A\x1b[1;1:3A")
 	kh := NewKeyboardHandler(input, &bytes.Buffer{})
 	if err := kh.handler.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer kh.handler.Stop()
 
-	got := keyNames(t, kh, 4)
-	want := []string{"a:Release", "a:Repeat", "up:Release", "up:Repeat"}
+	got := keyNames(t, kh, 6)
+	want := []string{"a", "a:Repeat", "a:Release", "up", "up:Repeat", "up:Release"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("key %d = %q, want %q (got %v)", i, got[i], want[i], got)
