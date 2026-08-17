@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -104,6 +105,23 @@ type Platform struct {
 	// and the character it would also have produced is swallowed here; otherwise
 	// one press of the pad's 7 arrives as "P-7" and then again as "7".
 	padTyped bool
+
+	// heldKeys remembers, per SCANCODE, the name reported when that key went
+	// down, so its release can be reported the same way instead of derived
+	// again from modifiers that have since moved on.
+	//
+	// Deriving again is wrong: a KEY_UP carries the modifier mask as it stands
+	// at that instant, so letting go of Control a few milliseconds before the
+	// letter — which is what fingers do — sent "^A" down and "a" up. Scancode
+	// is the identity because it is the physical key and nothing about it
+	// changes between the two events.
+	//
+	// padScancode carries the scancode of the KEY_DOWN forward to the
+	// SDLTextInput that may follow it. A printable's press is reported from
+	// there, and that event has no scancode of its own — the same gap keyRepeat
+	// and padTyped already bridge.
+	heldKeys    map[uint32]string
+	padScancode uint32
 
 	main *nativeWin
 	wins map[uint32]*nativeWin // by SDL window ID, main included
@@ -1319,6 +1337,12 @@ func (p *Platform) pumpEvents() bool {
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
 			case sdl3.WindowFocusLost:
+				// Anything still down is let go somewhere else now, and its
+				// KEY_UP will be delivered to whoever has the keyboard. Report
+				// the releases here or the presses stand forever — the one way
+				// dropping an unmatched release could strand a key. A browser
+				// does the same on blur.
+				p.releaseHeldKeys(s)
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
 			case sdl3.WindowMouseLeave:
@@ -1382,6 +1406,7 @@ func (p *Platform) pumpEvents() bool {
 						s.handler.Event(core.KeyPressEvent{
 							Key: decoded, Modifiers: mods, Text: t, Repeat: repeat,
 						})
+						p.holdKey(p.padScancode, decoded)
 						continue
 					}
 				}
@@ -1389,6 +1414,12 @@ func (p *Platform) pumpEvents() bool {
 				if glyph {
 					key = "G-" + key
 				}
+				// Hold it under the scancode of the KEY_DOWN this event
+				// followed. A printable's press is reported HERE, and this
+				// event carries no scancode, so without the latch every
+				// ordinary letter would go down unrecorded and its release
+				// would be dropped as an orphan.
+				p.holdKey(p.padScancode, key)
 				s.handler.Event(core.KeyPressEvent{
 					Key:    key,
 					Text:   string(ch),
@@ -1453,6 +1484,10 @@ func (p *Platform) pumpEvents() bool {
 				_, _, padShown, isPad := keypadKey(e.Keysym, e.Keysym.Mod&sdl3.KMOD_NUM != 0)
 				p.padTyped = isPad && padShown
 
+				// And carry this key's scancode to the SDLTextInput that may
+				// follow, which has none of its own (see Platform.heldKeys).
+				p.padScancode = e.Keysym.Scancode
+
 				// Check for rotation trigger (R key) - toggles on/off.
 				// Only supported by renderers with rotation capability
 				// (WebGPU); works in plain-present AND compositor modes.
@@ -1501,6 +1536,7 @@ func (p *Platform) pumpEvents() bool {
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 						text = name
 					}
+					p.holdKey(e.Keysym.Scancode, key)
 					s.handler.Event(core.KeyPressEvent{
 						Key: key, Modifiers: mods, Text: text, Repeat: e.Repeat,
 					})
@@ -1517,9 +1553,14 @@ func (p *Platform) pumpEvents() bool {
 				// "e" pressed, "" released. bareKey names the key itself, which is
 				// what a release is about; it exists for the same reason, to give a
 				// chord a key to attach to when SDLTextInput would otherwise own it.
-				name := translateKey(e.Keysym)
-				if name == "" {
-					name = bareKey(e.Keysym, mods&core.ShiftModifier != 0)
+				name, held := p.takeHeldKey(e.Keysym.Scancode)
+				if !held {
+					// Nothing was reported down for this key, so nothing
+					// downstream believes it is held and there is nothing to
+					// release. Dropping is safe precisely because the table
+					// holds what was EMITTED — deriving a name here instead is
+					// what produced releases that matched no press.
+					continue
 				}
 				rel := core.KeyReleaseEvent{
 					Key:       name,
@@ -1912,6 +1953,55 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_F10:      "F10",
 	sdl3.K_F11:      "F11",
 	sdl3.K_F12:      "F12",
+}
+
+// holdKey remembers a name as this physical key's, for the release to reuse.
+// A press always overwrites, so it can never inherit an older chord.
+func (p *Platform) holdKey(scancode uint32, name string) {
+	if name == "" {
+		return
+	}
+	if p.heldKeys == nil {
+		p.heldKeys = make(map[uint32]string)
+	}
+	p.heldKeys[scancode] = name
+}
+
+// takeHeldKey returns the name this key went down under and forgets it,
+// reporting false when nothing was recorded — which means no press was ever
+// reported for it, so there is nothing to release.
+func (p *Platform) takeHeldKey(scancode uint32) (string, bool) {
+	name, ok := p.heldKeys[scancode]
+	if ok {
+		delete(p.heldKeys, scancode)
+	}
+	return name, ok
+}
+
+// releaseHeldKeys reports a release for every key still down and forgets them.
+//
+// Called when the keyboard goes away rather than when a key comes up: the
+// KEY_UP for a key held across a focus change is delivered to whoever has the
+// keyboard now, so waiting for it means waiting forever. The order is by name
+// so a flush is repeatable — a map has none, and two runs of the same program
+// should not release in different orders.
+func (p *Platform) releaseHeldKeys(s *sdlSurface) {
+	if len(p.heldKeys) == 0 {
+		return
+	}
+	names := make([]string, 0, len(p.heldKeys))
+	for _, name := range p.heldKeys {
+		names = append(names, name)
+	}
+	p.heldKeys = make(map[uint32]string)
+	sort.Strings(names)
+	if s == nil || s.handler == nil {
+		return
+	}
+	mods := currentKeyModifiers()
+	for _, name := range names {
+		s.handler.Event(core.KeyReleaseEvent{Key: name, Modifiers: mods})
+	}
 }
 
 // The keypad, by SCANCODE. An SDL scancode is a USB HID keyboard usage ID, so
