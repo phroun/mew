@@ -5,14 +5,14 @@ package sdl
 // macOS Option-key decoding.
 //
 // On macOS the Option key composes text rather than acting as a plain Mega
-// modifier: pressing Option+a produces the Unicode character "å", which SDL
-// delivers as a TextInput event. Left untranslated that character is simply
+// modifier: pressing Option+a produces the Unicode character "å", which arrives
+// as an SDLTextInput event. Left untranslated that character is simply
 // typed, so Meta shortcuts (Select All is M-a, etc.) never fire.
 //
 // The TUI backend already solves this in the direct-key-handler, whose
 // gold-standard table maps each Option-composed character (US layout) back to
 // its "M-key" notation. We mirror that table verbatim here and apply it to
-// SDL's TextInput characters when running on macOS, so both backends emit the
+// the SDLTextInput characters when running on macOS, so both backends emit the
 // same key names for the same physical keystroke.
 
 // macOSOptionChars maps the Unicode characters a US-layout macOS keyboard

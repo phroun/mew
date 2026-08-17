@@ -60,7 +60,7 @@ func TestTranslateKeyHyper(t *testing.T) {
 		{"single ctrl stays plain", 'x', sdl3.KMOD_LCTRL, "^X"},
 		{"AltGr (a single right-hand cap) stays Mega", 'x', sdl3.KMOD_RALT, "M-x"},
 		// AltGr / ISO_Level3_Shift (Glyph) yields the KEY_DOWN entirely — the
-		// composed character is delivered (and tagged G-) on the TextInput path.
+		// composed character is delivered (and tagged G-) on the SDLTextInput path.
 		{"glyph (KMOD_MODE) yields keydown", 'x', sdl3.KMOD_MODE, ""},
 		{"glyph + ctrl still yields", 'x', sdl3.KMOD_MODE | sdl3.KMOD_LCTRL, ""},
 	}

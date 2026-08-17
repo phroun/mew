@@ -82,11 +82,11 @@ type Platform struct {
 	rotationGate func() bool
 
 	// keyRepeat latches whether the KEY_DOWN just handled was SDL's auto-repeat
-	// of a held key, so the TextInput that follows it can say so.
+	// of a held key, so the SDLTextInput that follows it can say so.
 	//
 	// A printable key produces both events: KEY_DOWN carries the repeat bit but
-	// translateKey answers "" for it (the character belongs to the TextInput
-	// path), and TextInput carries the character but no bit. Neither event
+	// translateKey answers "" for it (the character belongs to the SDLTextInput
+	// path), and SDLTextInput carries the character but no bit. Neither event
 	// alone can report a held comma, and SDL delivers them in that order for
 	// the same physical press, so the bit waits here for the character to
 	// arrive. Without it a hosted browser was told a held key was struck again,
@@ -94,11 +94,11 @@ type Platform struct {
 	keyRepeat bool
 
 	// padTyped latches that the KEY_DOWN just handled was a keypad key already
-	// named as a chord, so the TextInput after it must be dropped.
+	// named as a chord, so the SDLTextInput after it must be dropped.
 	//
 	// The pad's shown keys are text-producing: with NumLock on the 7 sends both
 	// a KEY_DOWN and the character "7". Every other text-producing key resolves
-	// that by having translateKey answer "" and letting TextInput own it — but a
+	// that by having translateKey answer "" and letting SDLTextInput own it — but a
 	// pad key cannot, because the whole point is to report WHICH 7 was struck,
 	// and the character has no room to say. So the chord is emitted on KEY_DOWN
 	// and the character it would also have produced is swallowed here; otherwise
@@ -1326,6 +1326,25 @@ func (p *Platform) pumpEvents() bool {
 				s.handler.Event(core.MouseLeaveEvent{})
 				s.Invalidate(core.UnitRect{})
 			}
+		// SDLTextInput: SDL's text event, and the name to use for it everywhere
+		// in this codebase. "TextInput" alone is the trinket (objects/trinkets)
+		// — a single-line editing control — and the two have nothing to do with
+		// each other, so the bare word is always the trinket and never this.
+		//
+		// SDL splits one keypress into two independent events. KEY_DOWN carries
+		// the scancode, the keysym and the repeat bit but no character;
+		// SDLTextInput carries the composed text but no key identity and no
+		// repeat bit. The split is deliberate on SDL's part, because text is
+		// what an input method, a dead key or a compose sequence produces, and
+		// one physical press can yield no characters, one, or several.
+		//
+		// So a plain or shifted printable is deliberately NOT reported on
+		// KEY_DOWN: translateKey answers "" and the character becomes a key
+		// press here instead. Chords and named keys go the other way, since
+		// SDLTextInput carries nothing for them. Anything that needs both
+		// halves of one press has to bridge the gap by hand — see keyRepeat,
+		// which carries the repeat bit forward into this event, and padTyped,
+		// which suppresses this event for a key already reported as a chord.
 		case *sdl3.TextInputEvent:
 			s := p.surfaceFor(e.WindowID)
 			if s == nil || s.handler == nil {
@@ -1344,7 +1363,7 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			// AltGr / ISO_Level3_Shift (the Glyph modifier) composes its
-			// character here on the TextInput path, not on KEY_DOWN. When it is
+			// character here on the SDLTextInput path, not on KEY_DOWN. When it is
 			// held, tag the produced glyph with a "G-" prefix so it reaches the
 			// keymap as a distinct, bindable chord (an unbound G-glyph then
 			// self-inserts the character — see the sequence processor). The mask
@@ -1389,7 +1408,7 @@ func (p *Platform) pumpEvents() bool {
 			// ...except on macOS, where five of the Option chords are DEAD
 			// KEYS: Option+E, I, N, U and ` open a composition to accent the
 			// next character instead of producing a character of their own.
-			// Those arrive here rather than on the TextInput path, so the
+			// Those arrive here rather than on the SDLTextInput path, so the
 			// decoding that turns every other Option chord back into M-key
 			// never saw them and M-e opened an accent picker over whatever
 			// had focus. Decoded the same way, with Option still held, they
@@ -1420,7 +1439,7 @@ func (p *Platform) pumpEvents() bool {
 				continue
 			}
 			if e.Type == sdl3.KeyDown {
-				// Latch the repeat bit for the TextInput that may follow this
+				// Latch the repeat bit for the SDLTextInput that may follow this
 				// key down (see Platform.keyRepeat). Done before the keys that
 				// get consumed below, so the latch always describes the last
 				// physical key down whether or not it produced a press.
@@ -1492,12 +1511,12 @@ func (p *Platform) pumpEvents() bool {
 				mods := currentKeyModifiers()
 
 				// translateKey yields "" for a plain printable key, because on the
-				// way DOWN that key belongs to the TextInput path — the character
-				// arrives as text, not as a chord. There is no TextInput on the way
+				// way DOWN that key belongs to the SDLTextInput path — the character
+				// arrives as text, not as a chord. There is no SDLTextInput on the way
 				// UP, so taking that answer left every letter's release nameless:
 				// "e" pressed, "" released. bareKey names the key itself, which is
 				// what a release is about; it exists for the same reason, to give a
-				// chord a key to attach to when TextInput would otherwise own it.
+				// chord a key to attach to when SDLTextInput would otherwise own it.
 				name := translateKey(e.Keysym)
 				if name == "" {
 					name = bareKey(e.Keysym, mods&core.ShiftModifier != 0)
@@ -1930,7 +1949,7 @@ const (
 //
 // shown says the base is a CHARACTER rather than a name, which decides how
 // Control is spelled against it — "P-^7", not "C-P-7" — and whether SDL will
-// also deliver the character on the TextInput path, where it has to be
+// also deliver the character on the SDLTextInput path, where it has to be
 // suppressed so one press does not arrive twice.
 type padKey struct {
 	locked   string
@@ -2029,7 +2048,7 @@ func glyphMod(mod uint16) bool {
 }
 
 // translateKey produces the D3 key string for a KEYDOWN, or "" when
-// the TextInput path owns it (plain printable characters).
+// the SDLTextInput path owns it (plain printable characters).
 //
 // Hyper has no native SDL modifier, so mew synthesizes it from a doubled
 // side modifier: holding BOTH the left and right Ctrl (or both Alt) keys
@@ -2046,7 +2065,7 @@ func glyphMod(mod uint16) bool {
 // modifier, so a doubled Shift would hijack ordinary capital letters.
 func translateKey(sym sdl3.Keysym) string {
 	// AltGr / ISO_Level3_Shift (the Glyph modifier) is a text-producing level
-	// shift: the composed character arrives via TextInput, where it is tagged
+	// shift: the composed character arrives via SDLTextInput, where it is tagged
 	// "G-" (see the TextInputEvent handler / glyphMod). Yield the KEY_DOWN so we
 	// do not also fire a competing chord — notably on Windows, where AltGr
 	// surfaces as LCtrl+RAlt and would otherwise read as "M-^<letter>".
@@ -2081,7 +2100,7 @@ func translateKey(sym sdl3.Keysym) string {
 	}
 
 	if base == "" {
-		// The residual modifiers alone would defer to TextInput (a plain
+		// The residual modifiers alone would defer to SDLTextInput (a plain
 		// or shifted printable). Hyper is a real chord, so synthesize the
 		// bare key token here instead of dropping the keystroke.
 		if base = bareKey(sym, shift); base == "" {
@@ -2095,7 +2114,7 @@ func translateKey(sym sdl3.Keysym) string {
 // or the printable character (upper-cased when Shift is held, so the caseful
 // hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
 // used only to give a Hyper chord a key to attach to when the residual
-// modifiers would otherwise have deferred the keystroke to TextInput.
+// modifiers would otherwise have deferred the keystroke to SDLTextInput.
 func bareKey(sym sdl3.Keysym, shift bool) string {
 	// The pad before specialKeys, for the reason encodeKey does the same: a Sym
 	// lookup would name an unlocked pad cap as the main cluster's key. This is
@@ -2125,7 +2144,7 @@ var shiftedShownKey = func(scancode uint32) rune {
 }
 
 // encodeKey maps a keysym plus its effective modifier set to a D3 key string,
-// or "" when the TextInput path owns it (plain printable characters). The
+// or "" when the SDLTextInput path owns it (plain printable characters). The
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
 // can strip the modifiers it has already spent on a Hyper promotion.
 func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
@@ -2267,16 +2286,16 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			return prefix + "^" + string(shown)
 		case alt:
 			// On macOS a bare Option+printable composes a character that
-			// SDL also delivers via TextInput, where we decode it back to
+			// arrives on SDLTextInput as well, where we decode it back to
 			// M-key (see the TextInputEvent handler). Defer to that path so
 			// the shortcut fires exactly once; elsewhere Alt is a plain Meta
-			// modifier and TextInput carries nothing, so emit M-key here.
+			// modifier and SDLTextInput carries nothing, so emit M-key here.
 			if runtime.GOOS == "darwin" {
 				return ""
 			}
 			return "M-" + string(ch)
 		case gui:
-			// Command-modified printables never arrive via TextInput;
+			// Command-modified printables never arrive via SDLTextInput;
 			// "s-" is the toolkit's Meta/Cmd prefix.
 			prefix := ""
 			if ctrl {
@@ -2287,7 +2306,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			}
 			return prefix + "s-" + string(ch)
 		default:
-			// Plain (possibly shifted) printable: TextInput delivers it.
+			// Plain (possibly shifted) printable: SDLTextInput delivers it.
 			return ""
 		}
 	}

@@ -212,7 +212,7 @@ func TestAPadKeyComesUpUnderTheNameItWentDownWith(t *testing.T) {
 
 // Nothing on the pad is left to the text path.
 //
-// Every other text-producing key answers "" here and lets TextInput deliver the
+// Every other text-producing key answers "" here and lets SDLTextInput deliver the
 // character. A pad key cannot: the point is to report WHICH 7 was struck, and a
 // bare "7" has no room to say. So every pad position must name itself on the way
 // down — and the ones that would ALSO have produced text are flagged, so the
