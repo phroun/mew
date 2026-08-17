@@ -31,6 +31,21 @@ var verboseKeyNames = map[string]string{
 	"ins":       "Insert",
 	"pgup":      "Page Up",
 	"pgdn":      "Page Down",
+	// The keypad's 5 with NumLock off, which reaches a badge as "Keypad Begin".
+	"begin": "Begin",
+	"power": "Power",
+	// Keys an American keyboard does not have. mew spells them lowercase like
+	// the rest of its vocabulary, but a badge is prose and these are proper
+	// names — the capitalisation is upstream's, not invented here.
+	"zig":        "Zig",
+	"zag":        "Zag",
+	"ro":         "Ro",
+	"yen":        "Yen",
+	"kanalock":   "KanaLock",
+	"hangullock": "HangulLock",
+	"henkan":     "Henkan",
+	"muhenkan":   "Muhenkan",
+	"hanja":      "Hanja",
 }
 
 // tfcKeyResolver builds a TFC (Text Format Control) resolver for the
@@ -278,6 +293,13 @@ var verboseModifiers = []struct{ prefix, word string }{
 	{"m-", "Micro+"},
 	{"s-", "Super+"},
 	{"H-", "Hyper+"},
+	// The keypad, which reads as a place rather than a held key: "Keypad Home"
+	// is what a person would say out loud, and the badge is for saying things
+	// out loud. Both cases get the same word — the lowercase form marks which
+	// of two duplicated pad keys a keyboard sent, a distinction that belongs in
+	// a keymap and means nothing to someone reading a menu.
+	{"P-", "Keypad "},
+	{"p-", "Keypad "},
 }
 
 // keyModifierPrefixes is the modifier vocabulary in canonical order. Every
@@ -286,7 +308,7 @@ var verboseModifiers = []struct{ prefix, word string }{
 // matters: a prefix missing here is never peeled, so its token keeps the raw
 // spelling ("C-x") where the whole point is to spell it out. (^ is one
 // character and is handled separately.)
-var keyModifierPrefixes = []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-"}
+var keyModifierPrefixes = []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-", "P-", "p-"}
 
 // splitKeyToken peels the modifier prefixes (^ and keyModifierPrefixes) off a
 // token, returning the accumulated prefix string and the bare base key.

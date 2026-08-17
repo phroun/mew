@@ -68,11 +68,74 @@ func TestNormalizeHostKey(t *testing.T) {
 		{"a", "a"},            // printable, no entry
 		{"^K", "^K"},          // control chord, no entry
 		{"G-€", "G-€"},        // Glyph chord carries its own character
+		// The keypad prefixes peel like the rest. A host that parses its own
+		// events sends upstream's spelling, so without these in the list the
+		// base never reaches the table and a keymap written against "P-home"
+		// would be handed "P-Home" and never fire.
+		{"P-Home", "P-home"},
+		{"p-Home", "p-home"},
+		{"C-P-PageUp", "C-P-pgup"},
+		{"P-Begin", "P-begin"},    // the pad's own base name
+		{"P-Enter", "P-return"},   // folded onto return, and still prefixed
+		{"S-P-Delete", "S-P-del"}, // the pad's erase, under mew's name for DEL
+		{"P-7", "P-7"},            // a shown pad key has no name to map
 	}
 	for _, c := range cases {
 		if got := normalizeHostKey(c.in); got != c.want {
 			t.Errorf("normalizeHostKey(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// The keys with no American character reach a keymap under mew's spelling.
+//
+// They cannot be bound as characters: their characters are taken. Zag prints
+// "<" and ">", which a US board puts on Shift+comma and Shift+period; Zig, Ro
+// and Yen print "\" and "|", which belong to the backslash key. So a keymap can
+// only name them, and the coverage test alone would accept ANY name — including
+// upstream's, which is the failure it exists to catch elsewhere. These are the
+// spellings a keymap is actually written against, so they are pinned.
+func TestTheKeysWithNoCharacterHaveMewNames(t *testing.T) {
+	for _, tc := range []struct {
+		key  keyboard.Key
+		want string
+	}{
+		{keyboard.KeyZig, "zig"},
+		{keyboard.KeyZag, "zag"},
+		{keyboard.KeyRo, "ro"},
+		{keyboard.KeyYen, "yen"},
+		{keyboard.KeyKanaLock, "kanalock"},
+		{keyboard.KeyHangulLock, "hangullock"},
+		{keyboard.KeyHenkan, "henkan"},
+		{keyboard.KeyMuhenkan, "muhenkan"},
+		{keyboard.KeyHanja, "hanja"},
+		{keyboard.KeyBegin, "begin"},
+		{keyboard.KeyPower, "power"},
+	} {
+		if got := mewKeyNames[tc.key]; got != tc.want {
+			t.Errorf("%v named %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// mew's names are its own, and no two keys may share one.
+//
+// The table folds Return and the keypad's Enter deliberately, which is the one
+// pair allowed to collide. Any OTHER collision means two physically distinct
+// keys arrive indistinguishable, and a binding for one silently answers the
+// other — the exact failure the whole vocabulary exists to prevent.
+func TestOnlyTheEnterKeysShareAName(t *testing.T) {
+	seen := make(map[string]keyboard.Key, len(mewKeyNames))
+	for _, k := range keyboard.AllKeys() {
+		name, ok := mewKeyNames[k]
+		if !ok {
+			continue
+		}
+		prev, dup := seen[name]
+		if dup && !(name == "return") {
+			t.Errorf("%v and %v are both named %q", prev, k, name)
+		}
+		seen[name] = k
 	}
 }
 

@@ -89,6 +89,39 @@ func TestVerboseKeySequenceSpellsEveryModifier(t *testing.T) {
 	}
 }
 
+// The keypad reads as a place, not as a held key.
+//
+// A badge is prose — it is what someone would say out loud — and nobody says
+// "P plus Home". They say "Keypad Home". Both cases of the prefix get the same
+// word: the lowercase form marks WHICH of two duplicated pad keys a keyboard
+// sent, which is a keymap's business and means nothing to someone reading a
+// menu. Without the prefix in the vocabulary at all, the badge would have shown
+// the raw token, "P-home", which is the one thing a spelled-out badge exists
+// not to do.
+func TestVerboseKeySequenceSpellsTheKeypad(t *testing.T) {
+	none := func(string) bool { return false }
+	for _, c := range []struct{ seq, want string }{
+		{"P-home", "Keypad Home"},
+		{"p-home", "Keypad Home"}, // the duplicate reads the same to a reader
+		{"P-begin", "Keypad Begin"},
+		{"P-return", "Keypad Return"},
+		{"C-P-pgup", "Ctrl+Keypad Page Up"},
+		{"P-7", "Keypad 7"},
+		// "Meta+", not "Mega+": with only one of the pair bound the friendly
+		// word is still usable, which is the rule everywhere else here.
+		{"M-P-del", "Meta+Keypad Delete"},
+		// The keys with no American character are proper names, and a badge
+		// that showed mew's lowercase token would read as a typo.
+		{"zig", "Zig"},
+		{"C-hanja", "Ctrl+Hanja"},
+		{"power", "Power"},
+	} {
+		if got := verboseKeySequence(c.seq, none); got != c.want {
+			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
+		}
+	}
+}
+
 // When both case variants of a key are bound, the case disambiguates them and
 // Shift is shown for the uppercase one.
 func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {

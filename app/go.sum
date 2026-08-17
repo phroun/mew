@@ -36,12 +36,16 @@ github.com/phroun/direct-key-handler v0.3.22-0.20260816171110-b90ad39f48b3 h1:2o
 github.com/phroun/direct-key-handler v0.3.22-0.20260816171110-b90ad39f48b3/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/direct-key-handler v0.3.22 h1:+b4FgoDBXJYNjbsz7gkpIfFqDC8uka64n0ZhU2PMxQI=
 github.com/phroun/direct-key-handler v0.3.22/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
+github.com/phroun/direct-key-handler v0.3.23 h1:s7BbD4gzer/iGXhFTAlYbY0esaTRXXciLhhn0Mlky2c=
+github.com/phroun/direct-key-handler v0.3.23/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4=
 github.com/phroun/garland v0.1.11/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
 github.com/phroun/key-sequence-processor v0.1.5 h1:tBbyO3x350+ElKxRi6uNQd9ZaHn6RKlO7kUMvG+xfzw=
 github.com/phroun/key-sequence-processor v0.1.5/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/key-sequence-processor v0.1.8 h1:LPsB/e/9QEWHJtOU7UiBPY3OvaJF33AAG1aWuCiNYi8=
 github.com/phroun/key-sequence-processor v0.1.8/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
+github.com/phroun/key-sequence-processor v0.1.9 h1:wwXOC4xcHMUm3t6AecVdnB97Bj0zRJLLpEEsDdJ8fMY=
+github.com/phroun/key-sequence-processor v0.1.9/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/kittytk v0.1.23-alpha h1:b4omBYLoV64dwVFGhQ0HGclWKC7WYx1JjhCUUWxqOJ4=
 github.com/phroun/kittytk v0.1.23-alpha/go.mod h1:C+lSoLm0H3IyKuU2bdiGiViFVME8r/qvTHJ/gHdJN+0=
 github.com/phroun/kittytk v0.1.24-alpha h1:8ceS6dfipeAXoJR6JzrOtZeQobBuFMAEPKp9NiZWa4Y=

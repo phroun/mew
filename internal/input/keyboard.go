@@ -70,6 +70,38 @@ var mewKeyNames = map[keyboard.Key]string{
 	keyboard.KeyPrintScreen: "printscreen",
 	keyboard.KeyPause:       "pause",
 	keyboard.KeyMenu:        "menu",
+	keyboard.KeyPower:       "power",
+
+	// The keypad's 5 with NumLock off. It arrives prefixed — "P-begin" — like
+	// every other pad key, but the base name is its own: it is the one key on
+	// the pad that duplicates nothing in the main cluster.
+	keyboard.KeyBegin: "begin",
+
+	// Keys an American keyboard does not have. They are here to be BOUND, not
+	// yet to insert: pressing one still produces no character, exactly as
+	// pressing Q on a Korean layout does not yet insert ᄈ. What the entry buys
+	// is that the key reaches a keymap under mew's spelling instead of
+	// upstream's, which is the only thing this table has ever been for.
+	//
+	// They need names at all because their characters are already spoken for.
+	// Zag prints "<" and ">", which on a US board are Shift+comma and
+	// Shift+period; Zig, Ro and Yen print "\" and "|", which belong to the
+	// backslash key. A DEC LK201 has both Zig and Zag, and settles the point:
+	// its comma and period do not shift to "<" and ">" at all, so which key
+	// those characters live on is a property of the keyboard, not of the
+	// character. Only a position can name them.
+	keyboard.KeyZig: "zig", // ISO, beside Return
+	keyboard.KeyZag: "zag", // ISO, between LeftShift and Z
+	keyboard.KeyRo:  "ro",  // JIS, beside RightShift
+	keyboard.KeyYen: "yen", // JIS, beside the erase key
+
+	// The input-method keys. The two locks latch a mode, as CapsLock does, and
+	// mew does not surface their state; the other three fire once.
+	keyboard.KeyKanaLock:   "kanalock",
+	keyboard.KeyHangulLock: "hangullock",
+	keyboard.KeyHenkan:     "henkan",   // converts the pending kana
+	keyboard.KeyMuhenkan:   "muhenkan", // commits it unconverted
+	keyboard.KeyHanja:      "hanja",    // converts the preceding Hangul
 }
 
 // hostKeyNames maps direct-key-handler's own spellings to mew's, derived from
@@ -111,7 +143,11 @@ func normalizeHostKey(key string) string {
 		// a key spelled with it never had its prefix peeled and its base never
 		// reached the name table; A- was here and is not a modifier this
 		// vocabulary has. (^ is one character and is handled below.)
-		for _, p := range []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-"} {
+		//
+		// P- and p- are the keypad, and they matter here for the same reason:
+		// a host feeding "P-Home" would otherwise miss the table entirely and
+		// deliver upstream's spelling, where the keymap expects "P-home".
+		for _, p := range []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-", "P-", "p-"} {
 			if strings.HasPrefix(base, p) {
 				prefix, base = prefix+p, base[2:]
 				matched = true
