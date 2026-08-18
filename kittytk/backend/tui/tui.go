@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -329,7 +330,27 @@ func (t *TUIBackend) enterTerminalModes() {
 	// no release arrived however loudly this asked for one — and the push
 	// outlived us on the screen the shell came back to, which is how the first
 	// Ctrl+C after an exit printed "...9;5u" instead of interrupting.
-	t.writeTTY("\033[>3u")
+	// Disambiguate (1) + ReportEvents (2) + ReportAllKeys (8).
+	//
+	// ReportAllKeys is what makes a keypad key arrive AS a keypad key. Without
+	// it a terminal sends any key that produces text as that text and nothing
+	// else, so the pad's 7 goes down as the byte "7" — indistinguishable from
+	// the main row's, carrying no identity at all — while its repeats and its
+	// release, which have no legacy form and must go as CSI u, carry keycode
+	// 57406 and name the pad. One key, reported as two different keys, with a
+	// release for a press nobody made.
+	//
+	// Disambiguate alone does not close this: it promotes the pad keys that
+	// produce NO text, which is why P-Enter, P-Home and the pad arrows were
+	// always right and only the locked pad was wrong. There is no narrower
+	// lever. The application-keypad mode that would have been keypad-only is
+	// parsed and discarded by kitty (screen_alternate_keypad_mode is an empty
+	// function), so this flag is the whole of the mechanism.
+	//
+	// The cost is that text stops arriving as text. Nothing here read it as
+	// text anyway — a key's name IS its character for a text key, and the
+	// KeyPressEvent's Text is derived from the name a few hundred lines below.
+	t.writeTTY("\033[>11u")
 
 	// Enable focus reporting. The outer terminal then sends CSI I and CSI O as
 	// it gains and loses focus, which is the only way this process can learn
@@ -1602,9 +1623,15 @@ func (t *TUIBackend) handleKey(key string) {
 	// - Shift combinations: "S-" prefix
 	mods, keyName := core.ParseKeyModifiers(key)
 
-	// Determine text content for printable characters
+	// Determine text content for printable characters.
+	//
+	// One RUNE, not one byte. Under ReportAllKeys the terminal sends no text at
+	// all and a key's name is the only place its character can come from — and
+	// a name is UTF-8, so a byte-length test silently dropped the text of every
+	// key outside ASCII the moment that flag went on.
 	var text string
-	if len(keyName) == 1 && keyName[0] >= 32 && keyName[0] < 127 {
+	if r, size := utf8.DecodeRuneInString(keyName); size == len(keyName) &&
+		r != utf8.RuneError && unicode.IsPrint(r) {
 		text = keyName
 	}
 

@@ -27,7 +27,11 @@ func TestKeyboardProtocolIsPushedAndPoppedInsideTheAltScreen(t *testing.T) {
 
 	got := up.String()
 	enter := strings.Index(got, "\033[?1049h") // switch to the alternate screen
-	push := strings.Index(got, "\033[>3u")     // push disambiguate + report-events
+	// Disambiguate + report-events + report-all-keys. The last is what makes a
+	// keypad key arrive as a keypad key: without it the pad's 7 goes down as
+	// the bare byte "7" and comes back up as keycode 57406, one key reported
+	// as two.
+	push := strings.Index(got, "\033[>11u")
 	if enter < 0 {
 		t.Fatal("startup never enters the alternate screen")
 	}
