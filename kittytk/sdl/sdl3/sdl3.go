@@ -437,6 +437,12 @@ const (
 	// scancode names the position and Sym is layout-mapped, so the lock state
 	// has to come from here.
 	KMOD_NUM = uint16(csdl.KMOD_NUM)
+	// KMOD_CAPS is the other latch, and it is here to be EXCLUDED. Nothing
+	// names a key from it; it is exposed so the rule that a latch is not a held
+	// modifier can be stated against the real bit rather than a literal. SDL
+	// carries a third (KMOD_SCROLL) and KanaLock and HangulLock are behind
+	// that, which is why the rule lists what a held modifier IS.
+	KMOD_CAPS = uint16(csdl.KMOD_CAPS)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }

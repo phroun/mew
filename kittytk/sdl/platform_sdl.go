@@ -120,7 +120,17 @@ type Platform struct {
 	// SDLTextInput that may follow it. A printable's press is reported from
 	// there, and that event has no scancode of its own — the same gap keyRepeat
 	// and padTyped already bridge.
-	heldKeys    map[uint32]string
+	heldKeys map[uint32]string
+
+	// padLock is what this host knows about the number pad's lock, and on a
+	// system that has no lock of its own it IS the lock. See padlock.go.
+	padLock *padLock
+
+	// OnNumLock is called when the pad's lock moves, with its new state. Not a
+	// key: the cap that moves it is eaten and no KeyPressEvent is dispatched
+	// for it. It fires on a system with no NumLock too, which is the one place
+	// an on-screen indicator has nothing else to read.
+	OnNumLock   func(on bool)
 	padScancode uint32
 
 	main *nativeWin
@@ -259,6 +269,7 @@ func New(title string, widthPx, heightPx int, rendererType string) (*Platform, e
 		wins:              map[uint32]*nativeWin{},
 		cursors:           map[core.CursorShape]*sdl3.Cursor{},
 		rotationStartTime: time.Now(),
+		padLock:           newPadLock(),
 	}, nil
 }
 
@@ -1469,6 +1480,23 @@ func (p *Platform) pumpEvents() bool {
 			if s == nil || s.handler == nil {
 				continue
 			}
+			if e.Type == sdl3.KeyDown || e.Type == sdl3.KeyUp {
+				// Correct the lock bit before anything reads it. Every namer
+				// below picks a dual-legend cap's meaning from KMOD_NUM, and on
+				// a system with no NumLock that bit is never set however locked
+				// the pad actually is. See padlock.go.
+				p.padLock.resolve(&e.Keysym)
+			}
+			if e.Type == sdl3.KeyDown && eatsLockCap(e.Keysym) {
+				// The lock cap alone is not a key: it moves the lock and is
+				// eaten. Nothing is held for it, so the KeyUp below drops its
+				// release on its own — a release is only reported for a press
+				// that was.
+				if changed, on := p.padLock.toggle(); changed && p.OnNumLock != nil {
+					p.OnNumLock(on)
+				}
+				continue
+			}
 			if e.Type == sdl3.KeyDown {
 				// Latch the repeat bit for the SDLTextInput that may follow this
 				// key down (see Platform.keyRepeat). Done before the keys that
@@ -2206,6 +2234,9 @@ func translateKey(sym sdl3.Keysym) string {
 // used only to give a Hyper chord a key to attach to when the residual
 // modifiers would otherwise have deferred the keystroke to SDLTextInput.
 func bareKey(sym sdl3.Keysym, shift bool) string {
+	if sym.Scancode == scanNumLock {
+		return "Clear"
+	}
 	// The pad before specialKeys, for the reason encodeKey does the same: a Sym
 	// lookup would name an unlocked pad cap as the main cluster's key. This is
 	// also the path a RELEASE takes, so without it a pad key would come up
@@ -2238,6 +2269,15 @@ var shiftedShownKey = func(scancode uint32) rune {
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
 // can strip the modifiers it has already spent on a Hyper promotion.
 func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
+	// The lock cap, which reaches here only WITH a modifier — alone it never
+	// gets this far (see padlock.go). Named before the pad, and unprefixed: it
+	// is a lock, filed with CapsLock and ScrollLock, and kitty puts it at 57360
+	// with them rather than in its 57399+ keypad block. Saying "P-Clear" here
+	// while the terminal host said "Clear" is exactly the split a keymap, being
+	// one file for both, cannot afford.
+	if sym.Scancode == scanNumLock {
+		return namedKeyPrefix(ctrl, alt, shift, gui) + "Clear"
+	}
 	// The keypad first, and by scancode, so no later branch can claim a pad key
 	// under the main cluster's name. specialKeys is keyed by Sym, and an
 	// unlocked pad cap can arrive with the navigation Sym — which would have
@@ -2271,20 +2311,10 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	}
 
 	if name, ok := specialKeys[sym.Sym]; ok {
-		prefix := ""
-		if alt {
-			prefix += "M-"
-		}
-		if ctrl {
-			prefix += "C-"
-		}
-		if shift {
-			prefix += "S-"
-		}
-		if gui {
-			prefix += "s-"
-		}
-		return prefix + name
+		// Canonical order, which this spelled M- before C- — so Ctrl+Mega+Escape
+		// came out "M-C-Escape" here and "C-M-Escape" from the terminal host,
+		// and a keymap written either way matched on one host only.
+		return namedKeyPrefix(ctrl, alt, shift, gui) + name
 	}
 
 	// Letters and printable symbols.
