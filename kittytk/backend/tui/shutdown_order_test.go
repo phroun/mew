@@ -63,3 +63,44 @@ func TestKeyboardProtocolIsPushedAndPoppedInsideTheAltScreen(t *testing.T) {
 		t.Error("no explicit flag reset for terminals honouring flags but not the stack")
 	}
 }
+
+// Focus reporting is enabled on the way in and disabled on the way out.
+//
+// The pairing is the whole point: a mode left on outlives this process and
+// lands on the user's shell, which would then be sent CSI I and CSI O on every
+// alt-tab and type them as text.
+//
+// It is enabled at all because of what happens to a key held across a focus
+// change. Its key-up is delivered to whoever has the keyboard now and never
+// arrives here, so without the notification the press stands for good in
+// anything tracking held keys — direct-key-handler releases them on the report,
+// and this is what makes the report come.
+func TestFocusReportingIsEnabledAndDisabledAsAPair(t *testing.T) {
+	var up strings.Builder
+	b := NewTUIBackend(TUIOptions{Output: io.Discard, EnableMouse: true})
+	b.ttyOut = &up
+	b.enterTerminalModes()
+	if !strings.Contains(up.String(), "\033[?1004h") {
+		t.Error("startup never enables focus reporting, so no focus report ever " +
+			"arrives and a key held across a blur is never released")
+	}
+
+	var down strings.Builder
+	b.ttyOut = &down
+	b.stopChan = make(chan struct{})
+	b.Shutdown()
+
+	got := down.String()
+	off := strings.Index(got, "\033[?1004l")
+	if off < 0 {
+		t.Fatal("shutdown never disables focus reporting; the shell inherits it " +
+			"and is sent CSI I / CSI O on every alt-tab")
+	}
+	// Before leaving the alternate screen, with the rest of the teardown: the
+	// order is not load-bearing the way the flag stack's is, but a mode turned
+	// off after the screen it was turned on for is a habit worth not forming.
+	if leave := strings.Index(got, "\033[?1049l"); leave >= 0 && off > leave {
+		t.Errorf("focus reporting disabled at %d, after the alt-screen exit at %d",
+			off, leave)
+	}
+}

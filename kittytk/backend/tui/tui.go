@@ -331,6 +331,17 @@ func (t *TUIBackend) enterTerminalModes() {
 	// Ctrl+C after an exit printed "...9;5u" instead of interrupting.
 	t.writeTTY("\033[>3u")
 
+	// Enable focus reporting. The outer terminal then sends CSI I and CSI O as
+	// it gains and loses focus, which is the only way this process can learn
+	// that the keyboard has gone elsewhere.
+	//
+	// It matters because of what happens to a key held across that moment: its
+	// key-up is delivered to whoever has the keyboard now and never arrives
+	// here, so without this notification the press would stand for good in
+	// anything tracking held keys. direct-key-handler releases them on the
+	// report; enabling the mode is what makes the report come.
+	t.writeTTY("\033[?1004h")
+
 	// Enable bracketed paste. Without this the outer terminal ships a paste as
 	// a raw byte flood — indistinguishable from very fast typing — which
 	// direct-key-handler then surfaces one key at a time, overrunning the event
@@ -406,6 +417,22 @@ func (t *TUIBackend) Init() error {
 	t.keyboard.OnKey = t.handleKey
 	t.keyboard.OnPaste = func(content []byte) {
 		t.deliverPaste(string(content))
+	}
+	// The outer terminal's focus, surfaced as the toolkit's own focus event so
+	// a trinket cannot tell which backend it is running under. The graphical
+	// host has always sent these; this one had no way to know, so an
+	// application hosted in a terminal never learned the window had been left.
+	//
+	// The keys held at that moment have already been released by the handler
+	// before this runs — their key-ups go to whoever has the keyboard now and
+	// never arrive here — so anything reacting to the focus change sees a
+	// keyboard with nothing down, which is the truth.
+	t.keyboard.OnFocus = func(focused bool) {
+		select {
+		case t.eventQueue <- core.FocusEvent{Focused: focused}:
+		default:
+			// Queue full, drop event
+		}
 	}
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
@@ -505,6 +532,10 @@ func (t *TUIBackend) RestoreTerminal() {
 		// that honours the flags but not the stack.
 		t.writeTTY("\033[<u")
 		t.writeTTY("\033[=0;1u")
+
+		// Focus reporting off. Left on, the shell that inherits this terminal
+		// is sent CSI I and CSI O on every alt-tab and types them as text.
+		t.writeTTY("\033[?1004l")
 
 		// Leave alternate screen
 		t.writeTTY("\033[?1049l")
