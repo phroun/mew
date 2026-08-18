@@ -38,6 +38,8 @@ const maxRows = 2000
 type viewer struct {
 	tree      *trinkets.TreeView
 	status    *trinkets.Label
+	modeLabel *trinkets.Label
+	modes     core.ModeSource
 	showMouse bool
 	seq       int
 }
@@ -48,13 +50,18 @@ func main() {
 	// The backend goes on FIRST — it seeds the desktop's cell metrics, and
 	// solo mode below sizes the window against them. This is the order the mew
 	// host uses for the same reason.
-	runDesktop := attachBackend(desktop)
+	//
+	// It also hands back whatever knows the keyboard's MODES, which is a
+	// different object on each host: the terminal backend itself, or the
+	// graphical platform behind the backend. That is the whole reason it is
+	// returned from here rather than reached for below.
+	runDesktop, modes := attachBackend(desktop)
 
 	application := app.New(nil)
 	application.SetName("keytest")
 	application.SetMultiWindow(false)
 
-	v := &viewer{}
+	v := &viewer{modes: modes}
 	root := window.NewWindow("KittyTK event viewer")
 	// A size to exist at before solo mode maximizes it — a window that starts
 	// at zero has nothing to lay the tree out against on the first frame.
@@ -124,6 +131,15 @@ func (v *viewer) build() core.Trinket {
 	v.status = trinkets.NewLabel("waiting for events")
 	controls.AddChild(v.status)
 
+	// The keyboard's standing states, which are not events and so appear in no
+	// row: the pad's lock, Caps Lock, and whether this window has the keyboard.
+	// A state the host cannot see is left out entirely rather than shown as
+	// off — the two are different facts, and which ones a host can see is one
+	// of the things worth comparing between the two builds.
+	v.modeLabel = trinkets.NewLabel("")
+	controls.AddChild(v.modeLabel)
+	v.refreshModes()
+
 	rootPanel := trinkets.NewPanel()
 	rootLayout := layout.NewBoxLayout(core.Vertical)
 	rootLayout.SetSpacing(1)
@@ -142,8 +158,47 @@ func (v *viewer) setStatus(s string) {
 	}
 }
 
+// refreshModes rewrites the mode line: "Num:on  Caps:off  Focus:on".
+//
+// Read from the host rather than accumulated from the events, so a state that
+// moved without an announcement — Caps Lock pressed while another window had
+// the keyboard — is right the moment anything else happens. The list is
+// whatever the host can answer for, so a mode the host or the application
+// published itself appears here with no code added.
+func (v *viewer) refreshModes() {
+	if v.modeLabel == nil {
+		return
+	}
+	if v.modes == nil {
+		v.modeLabel.SetText("modes: not reported by this host")
+		return
+	}
+	var parts []string
+	for _, m := range v.modes.Modes() {
+		parts = append(parts, capitalize(m.Name)+":"+m.Value)
+	}
+	if len(parts) == 0 {
+		v.modeLabel.SetText("modes: none known yet")
+		return
+	}
+	v.modeLabel.SetText(strings.Join(parts, "  "))
+}
+
+// capitalize titles a mode's token for display. The tokens are lowercase
+// because they are matched, not read; a status bar is read.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 // log appends one row for an event, or drops it when the mouse filter is off.
 func (v *viewer) log(ev core.Event) {
+	// Before the filter below: a mode can move on an event whose row is
+	// hidden, and the line should still be right.
+	v.refreshModes()
+
 	name, key, mods, repeat, text, detail, isMouse := describe(ev)
 	if isMouse && !v.showMouse {
 		return
@@ -225,6 +280,11 @@ func describe(ev core.Event) (name, key, mods, repeat, text, detail string, isMo
 			state = "gained"
 		}
 		return "Focus", "", "", "-", "", state, false
+
+	case core.ModeEvent:
+		// A state moved. The row records WHEN, which the mode line cannot
+		// show: the line is the state now, this is the moment it changed.
+		return "Mode", e.Name, "", "-", "", "now " + e.Value, false
 
 	case core.QuitEvent:
 		return "Quit", "", "", "-", "", "", false
