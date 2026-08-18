@@ -13,7 +13,7 @@ require (
 	github.com/phroun/direct-key-handler v0.3.28
 	github.com/phroun/key-sequence-processor v0.1.8
 	github.com/phroun/mew v0.3.1-alpha
-	github.com/phroun/purfecterm v0.2.51-0.20260816200945-02813eb5f5f4
+	github.com/phroun/purfecterm v0.2.51
 	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
