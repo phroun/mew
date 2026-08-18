@@ -41,6 +41,7 @@ func TestTranslateKeyHyper(t *testing.T) {
 	const (
 		bothCtrl = sdl3.KMOD_LCTRL | sdl3.KMOD_RCTRL
 		bothAlt  = sdl3.KMOD_LALT | sdl3.KMOD_RALT
+		bothGui  = sdl3.KMOD_LGUI | sdl3.KMOD_RGUI
 	)
 	cases := []struct {
 		name string
@@ -59,6 +60,15 @@ func TestTranslateKeyHyper(t *testing.T) {
 		{"both-ctrl special key", sdl3.K_DOWN, bothCtrl, "H-Down"},
 		{"both-ctrl + single Mega key special", sdl3.K_DOWN, bothCtrl | sdl3.KMOD_LALT, "M-H-Down"},
 		{"both-ctrl digit", '5', bothCtrl, "H-5"},
+		// Super doubles too: both Command caps, or both Windows caps. Like Ctrl
+		// and Alt it sits on both sides of the space bar, which is what makes
+		// holding the pair a gesture rather than an accident.
+		{"both-gui letter", 'x', bothGui, "H-x"},
+		{"both-gui special key", sdl3.K_DOWN, bothGui, "H-Down"},
+		{"both-gui + single ctrl", 'x', bothGui | sdl3.KMOD_LCTRL, "H-^X"},
+		{"both-ctrl + single Super", 'x', bothCtrl | sdl3.KMOD_LGUI, "s-H-x"},
+		// One side of Super is an ordinary Command chord and always was.
+		{"single gui stays Super", 'x', sdl3.KMOD_LGUI, "s-x"},
 		// A single side of a modifier does NOT promote to Hyper.
 		{"single ctrl stays plain", 'x', sdl3.KMOD_LCTRL, "^X"},
 		{"AltGr (a single right-hand cap) stays Mega", 'x', sdl3.KMOD_RALT, "M-x"},

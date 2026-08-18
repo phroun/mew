@@ -2173,14 +2173,20 @@ func glyphMod(mod uint16) bool {
 // promotes the chord to Hyper. The doubled modifier is consumed by the
 // promotion; any single-side modifier still held keeps its normal role, so
 //
-//	LCtrl+RCtrl+X        -> H-X       (both Ctrl -> Hyper)
-//	LAlt+RAlt+X          -> H-X       (both Alt  -> Hyper)
+//	LCtrl+RCtrl+X        -> H-X       (both Ctrl  -> Hyper)
+//	LAlt+RAlt+X          -> H-X       (both Alt   -> Hyper)
+//	LGui+RGui+X          -> H-x       (both Super -> Hyper)
 //	LAlt+RAlt+Ctrl+X     -> H-^X      (Hyper + a single Ctrl)
-//	LCtrl+RCtrl+Alt+X    -> H-M-x     (Hyper + a single Alt)
+//	LCtrl+RCtrl+Alt+X    -> M-H-x     (Hyper + a single Alt)
+//	LCtrl+RCtrl+Gui+X    -> s-H-x     (Hyper + a single Super)
 //
-// AltGr reports as a single (right) Alt, so it never trips the both-Alt
-// promotion. Shift is deliberately left out — it is a text-producing
-// modifier, so a doubled Shift would hijack ordinary capital letters.
+// All three double because all three are commonly present twice, one on
+// each side of the space bar, which is what makes holding both a gesture
+// rather than an accident. AltGr reports as a single (right) Alt, so it
+// never trips the both-Alt promotion. Shift is deliberately left out — it
+// is a text-producing modifier, so a doubled Shift would hijack the
+// capital letters most people type with both hands. Micro is left out
+// because a keyboard that has it at all rarely has two.
 func translateKey(sym sdl3.Keysym) string {
 	// AltGr / ISO_Level3_Shift (the Glyph modifier) is a text-producing level
 	// shift: the composed character arrives via SDLTextInput, where it is tagged
@@ -2193,7 +2199,8 @@ func translateKey(sym sdl3.Keysym) string {
 
 	bothCtrl := sym.Mod&sdl3.KMOD_LCTRL != 0 && sym.Mod&sdl3.KMOD_RCTRL != 0
 	bothAlt := sym.Mod&sdl3.KMOD_LALT != 0 && sym.Mod&sdl3.KMOD_RALT != 0
-	hyper := bothCtrl || bothAlt
+	bothGui := sym.Mod&sdl3.KMOD_LGUI != 0 && sym.Mod&sdl3.KMOD_RGUI != 0
+	hyper := bothCtrl || bothAlt || bothGui
 
 	ctrl := sym.Mod&sdl3.KMOD_CTRL != 0
 	alt := sym.Mod&sdl3.KMOD_ALT != 0
@@ -2208,6 +2215,9 @@ func translateKey(sym sdl3.Keysym) string {
 		}
 		if bothAlt {
 			alt = false
+		}
+		if bothGui {
+			gui = false
 		}
 	}
 
