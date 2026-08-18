@@ -48,10 +48,10 @@ func TestNumLockPicksWhichKeyThePadCapIs(t *testing.T) {
 		// delete: the cap says DEL and it lives on the pad.
 		{scanKPPeriod, "P-.", "P-Delete"},
 	} {
-		if got := encodeKey(pad(tc.scancode, true), false, false, false, false); got != tc.locked {
+		if got := encodeKey(pad(tc.scancode, true), false, false, false, false, false); got != tc.locked {
 			t.Errorf("scancode %d locked = %q, want %q", tc.scancode, got, tc.locked)
 		}
-		if got := encodeKey(pad(tc.scancode, false), false, false, false, false); got != tc.unlocked {
+		if got := encodeKey(pad(tc.scancode, false), false, false, false, false, false); got != tc.unlocked {
 			t.Errorf("scancode %d unlocked = %q, want %q", tc.scancode, got, tc.unlocked)
 		}
 	}
@@ -73,7 +73,7 @@ func TestTheLockDoesNotTouchTheOperators(t *testing.T) {
 		{scanKPEnter, "P-Enter"},
 	} {
 		for _, numLock := range []bool{true, false} {
-			if got := encodeKey(pad(tc.scancode, numLock), false, false, false, false); got != tc.want {
+			if got := encodeKey(pad(tc.scancode, numLock), false, false, false, false, false); got != tc.want {
 				t.Errorf("scancode %d with NumLock=%v = %q, want %q",
 					tc.scancode, numLock, got, tc.want)
 			}
@@ -86,7 +86,7 @@ func TestTheLockDoesNotTouchTheOperators(t *testing.T) {
 // written for Return.
 func TestTheHomeRowKeyIsUntouched(t *testing.T) {
 	sym := sdl3.Keysym{Sym: sdl3.K_RETURN, Scancode: 40}
-	if got := encodeKey(sym, false, false, false, false); got != "Return" {
+	if got := encodeKey(sym, false, false, false, false, false); got != "Return" {
 		t.Errorf("Return = %q, want %q", got, "Return")
 	}
 	// And the main cluster's navigation keys keep their bare names, since the
@@ -100,7 +100,7 @@ func TestTheHomeRowKeyIsUntouched(t *testing.T) {
 		{sdl3.K_UP, 82, "Up"},
 		{sdl3.K_DELETE, 76, "FDel"},
 	} {
-		got := encodeKey(sdl3.Keysym{Sym: tc.sym, Scancode: tc.scan}, false, false, false, false)
+		got := encodeKey(sdl3.Keysym{Sym: tc.sym, Scancode: tc.scan}, false, false, false, false, false)
 		if got != tc.want {
 			t.Errorf("main-cluster %v = %q, want %q", tc.want, got, tc.want)
 		}
@@ -128,7 +128,7 @@ func TestTheDuplicatedPadCharactersAreToldApart(t *testing.T) {
 		{scanInternational6, "P-,", "the PC-98 comma"},
 		{scanKPEquals, "P-=", "an ordinary pad's equals"},
 	} {
-		if got := encodeKey(pad(tc.scancode, true), false, false, false, false); got != tc.want {
+		if got := encodeKey(pad(tc.scancode, true), false, false, false, false, false); got != tc.want {
 			t.Errorf("%s (scancode %d) = %q, want %q", tc.what, tc.scancode, got, tc.want)
 		}
 	}
@@ -178,7 +178,7 @@ func TestControlOnThePadFollowsTheKey(t *testing.T) {
 		{pad(scanKP7, true), false, true, false, false, "M-P-7", "Mega"},
 		{pad(scanKP7, true), false, false, false, true, "s-P-7", "Super"},
 	} {
-		got := encodeKey(tc.sym, tc.ctrl, tc.alt, tc.shift, tc.gui)
+		got := encodeKey(tc.sym, tc.ctrl, tc.alt, tc.shift, tc.gui, false)
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.what, got, tc.want)
 		}
@@ -201,7 +201,7 @@ func TestAPadKeyComesUpUnderTheNameItWentDownWith(t *testing.T) {
 		{scanKPComma, true}, {scanInternational6, true},
 	} {
 		sym := pad(tc.scancode, tc.numLock)
-		down := encodeKey(sym, false, false, false, false)
+		down := encodeKey(sym, false, false, false, false, false)
 		up := bareKey(sym, false)
 		if down != up {
 			t.Errorf("scancode %d (NumLock=%v) went down as %q and came up as %q",
@@ -228,7 +228,7 @@ func TestEveryPadPositionNamesItselfAndFlagsItsText(t *testing.T) {
 	for scancode := range all {
 		for _, numLock := range []bool{true, false} {
 			sym := pad(scancode, numLock)
-			if got := encodeKey(sym, false, false, false, false); got == "" {
+			if got := encodeKey(sym, false, false, false, false, false); got == "" {
 				t.Errorf("scancode %d (NumLock=%v) yielded \"\"; it would be left "+
 					"to the text path, where the prefix is lost", scancode, numLock)
 			}

@@ -29,7 +29,7 @@ func TestTheLockCapIsEatenAloneAndNamedWhenModified(t *testing.T) {
 		{ctrl: true, alt: true, want: "C-M-Clear"},
 	} {
 		sym := sdl3.Keysym{Scancode: scanNumLock}
-		if got := encodeKey(sym, tc.ctrl, tc.alt, tc.shift, tc.gui); got != tc.want {
+		if got := encodeKey(sym, tc.ctrl, tc.alt, tc.shift, tc.gui, false); got != tc.want {
 			t.Errorf("encodeKey(lock cap) = %q, want %q", got, tc.want)
 		}
 	}
@@ -38,7 +38,7 @@ func TestTheLockCapIsEatenAloneAndNamedWhenModified(t *testing.T) {
 	// it at 57360 with them rather than in its 57399+ keypad block — and a
 	// keymap is one file for both hosts, so "P-Clear" here against "Clear"
 	// there is a split it cannot afford.
-	if got := encodeKey(sdl3.Keysym{Scancode: scanNumLock}, false, true, false, false); got != "M-Clear" {
+	if got := encodeKey(sdl3.Keysym{Scancode: scanNumLock}, false, true, false, false, false); got != "M-Clear" {
 		t.Errorf("the lock cap took a pad prefix: %q", got)
 	}
 }

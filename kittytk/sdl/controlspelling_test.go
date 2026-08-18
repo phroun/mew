@@ -64,7 +64,7 @@ func TestControlOnShownKeysUsesTheCaret(t *testing.T) {
 		{"ctrl on a letter", sdl3.Keysym{Sym: 'a', Scancode: scanA}, true, false, false, false, "^A"},
 		{"ctrl+shift on a letter", sdl3.Keysym{Sym: 'a', Scancode: scanA}, true, false, true, false, "S-^A"},
 	} {
-		got := encodeKey(tc.sym, tc.ctrl, tc.alt, tc.shift, tc.gui)
+		got := encodeKey(tc.sym, tc.ctrl, tc.alt, tc.shift, tc.gui, false)
 		if got != tc.want {
 			t.Errorf("%s: encodeKey(%q) = %q, want %q", tc.name, string(rune(tc.sym.Sym)), got, tc.want)
 		}
@@ -78,7 +78,7 @@ func TestShiftWithNoShiftedCharacterKeepsTheKey(t *testing.T) {
 	defer func() { shiftedShownKey = saved }()
 	shiftedShownKey = func(uint32) rune { return 0 }
 
-	if got := encodeKey(sdl3.Keysym{Sym: '5', Scancode: 34}, true, false, true, false); got != "^5" {
+	if got := encodeKey(sdl3.Keysym{Sym: '5', Scancode: 34}, true, false, true, false, false); got != "^5" {
 		t.Errorf("encodeKey with no layout answer = %q, want %q", got, "^5")
 	}
 }

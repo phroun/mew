@@ -2211,19 +2211,22 @@ func translateKey(sym sdl3.Keysym) string {
 		}
 	}
 
-	base := encodeKey(sym, ctrl, alt, shift, gui)
-
-	if !hyper {
+	// Hyper goes IN, not on. It used to be prepended to the finished string,
+	// which put it ahead of every modifier that outranks it: LCtrl+RCtrl+Mega+X
+	// came out "H-M-x" where the canonical order is "M-H-x", and the terminal
+	// host — which has the same promotion now — spells it the second way.
+	base := encodeKey(sym, ctrl, alt, shift, gui, hyper)
+	if base != "" || !hyper {
 		return base
 	}
 
-	if base == "" {
-		// The residual modifiers alone would defer to SDLTextInput (a plain
-		// or shifted printable). Hyper is a real chord, so synthesize the
-		// bare key token here instead of dropping the keystroke.
-		if base = bareKey(sym, shift); base == "" {
-			return ""
-		}
+	// The residual modifiers alone would defer to SDLTextInput (a plain or
+	// shifted printable). Hyper is a real chord, so synthesize the bare key
+	// token here instead of dropping the keystroke. Prepending is right in this
+	// one case and only this one: what bareKey returns carries no modifier
+	// prefix at all, and H- is the last of them before the key's own origin.
+	if base = bareKey(sym, shift); base == "" {
+		return ""
 	}
 	return "H-" + base
 }
@@ -2268,7 +2271,13 @@ var shiftedShownKey = func(scancode uint32) rune {
 // or "" when the SDLTextInput path owns it (plain printable characters). The
 // modifier booleans are passed in rather than read from sym.Mod so translateKey
 // can strip the modifiers it has already spent on a Hyper promotion.
-func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
+//
+// Hyper is one of them, and comes in rather than being glued on afterwards: it
+// outranks nothing and is outranked by M- and S-, so a caller prepending it to
+// a finished string puts it in front of modifiers that belong first. Every
+// prefix below is spelled by keyMods.prefix (see modifiers.go), which is the
+// only thing in this package that writes one.
+func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 	// The lock cap, which reaches here only WITH a modifier — alone it never
 	// gets this far (see padlock.go). Named before the pad, and unprefixed: it
 	// is a lock, filed with CapsLock and ScrollLock, and kitty puts it at 57360
@@ -2276,7 +2285,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	// while the terminal host said "Clear" is exactly the split a keymap, being
 	// one file for both, cannot afford.
 	if sym.Scancode == scanNumLock {
-		return namedKeyPrefix(ctrl, alt, shift, gui) + "Clear"
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + "Clear"
 	}
 	// The keypad first, and by scancode, so no later branch can claim a pad key
 	// under the main cluster's name. specialKeys is keyed by Sym, and an
@@ -2284,21 +2293,16 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	// answered "Home" for the pad's Home, exactly the collision the prefix
 	// exists to prevent.
 	if pad, base, shown, ok := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); ok {
-		prefix := ""
-		if ctrl && !shown {
-			// A NAMED pad key takes "C-": a name has no character for the
-			// caret to sit against. "C-P-Home", not "P-^Home".
-			prefix += "C-"
-		}
-		if alt {
-			prefix += "M-"
-		}
-		if shift {
-			prefix += "S-"
-		}
-		if gui {
-			prefix += "s-"
-		}
+		// A NAMED pad key takes "C-": a name has no character for the caret to
+		// sit against, so "C-P-Home" rather than "P-^Home". A SHOWN one spends
+		// Control on the caret below, and clears it here to say so.
+		prefix := keyMods{
+			ctrl:  ctrl && !shown,
+			mega:  alt,
+			shift: shift,
+			super: gui,
+			hyper: hyper,
+		}.prefix()
 		if ctrl && shown {
 			// A SHOWN pad key takes the caret, written against the character:
 			// "P-^7". The pad prefix sits outside it, where the canonical order
@@ -2311,10 +2315,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 	}
 
 	if name, ok := specialKeys[sym.Sym]; ok {
-		// Canonical order, which this spelled M- before C- — so Ctrl+Mega+Escape
-		// came out "M-C-Escape" here and "C-M-Escape" from the terminal host,
-		// and a keymap written either way matched on one host only.
-		return namedKeyPrefix(ctrl, alt, shift, gui) + name
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
 	}
 
 	// Letters and printable symbols.
@@ -2351,10 +2352,9 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 				name = "^@"
 			}
 			if name != "" {
-				if alt {
-					return "M-" + name
-				}
-				return name
+				// Shift is already spent choosing the name (^^ and ^_ are the
+				// shifted forms), and Control is spent on the caret in it.
+				return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + name
 			}
 		}
 
@@ -2370,14 +2370,8 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			// Only a graphical host or a terminal speaking the kitty protocol
 			// can report this chord at all — a legacy terminal sends Ctrl+A's
 			// ASCII control code for both, with no room for a Shift bit.
-			prefix := ""
-			if alt {
-				prefix += "M-"
-			}
-			if shift {
-				prefix += "S-"
-			}
-			return prefix + "^" + string(ch-'a'+'A')
+			return keyMods{mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() +
+				"^" + string(ch-'a'+'A')
 		case ctrl:
 			// Control on a SHOWN key takes the caret, against the character the
 			// key shows: Ctrl+5 is "^5" and Ctrl+Shift+5 is "^%". Shift is
@@ -2399,11 +2393,9 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 					shown = r
 				}
 			}
-			prefix := ""
-			if alt {
-				prefix += "M-"
-			}
-			return prefix + "^" + string(shown)
+			// Shift is absorbed into the shown character above, so it is not
+			// spelled again here.
+			return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^" + string(shown)
 		case alt:
 			// On macOS a bare Option+printable composes a character that
 			// arrives on SDLTextInput as well, where we decode it back to
@@ -2413,18 +2405,11 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui bool) string {
 			if runtime.GOOS == "darwin" {
 				return ""
 			}
-			return "M-" + string(ch)
+			return keyMods{mega: true, super: gui, hyper: hyper}.prefix() + string(ch)
 		case gui:
 			// Command-modified printables never arrive via SDLTextInput;
 			// "s-" is the toolkit's Meta/Cmd prefix.
-			prefix := ""
-			if ctrl {
-				prefix += "C-"
-			}
-			if shift {
-				prefix += "S-"
-			}
-			return prefix + "s-" + string(ch)
+			return keyMods{ctrl: ctrl, shift: shift, super: true, hyper: hyper}.prefix() + string(ch)
 		default:
 			// Plain (possibly shifted) printable: SDLTextInput delivers it.
 			return ""

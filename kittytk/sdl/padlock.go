@@ -125,23 +125,3 @@ func (l *padLock) locked() bool {
 func eatsLockCap(sym sdl3.Keysym) bool {
 	return sym.Scancode == scanNumLock && sym.Mod&heldModifiers == 0
 }
-
-// namedKeyPrefix spells the modifiers held with a NAMED key, in the canonical
-// order C- G- M- m- S- s- H-. A name has no character for Control's caret to
-// sit against, so Control stays a prefix here.
-func namedKeyPrefix(ctrl, alt, shift, gui bool) string {
-	prefix := ""
-	if ctrl {
-		prefix += "C-"
-	}
-	if alt {
-		prefix += "M-"
-	}
-	if shift {
-		prefix += "S-"
-	}
-	if gui {
-		prefix += "s-"
-	}
-	return prefix
-}
