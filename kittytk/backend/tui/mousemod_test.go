@@ -9,7 +9,7 @@ import (
 // Modifier-prefixed mouse pseudo-keys must dispatch as MOUSE events with
 // their modifiers attached — not fall through to the keyboard path or be
 // dropped as unknown. Terminals vary: iTerm2 forwards shifted/ctrl'd clicks
-// as "S-MouseRightPress" / "C-MouseRightPress", stock Terminal sends them
+// as "S-MouseRight" / "C-MouseRight", stock Terminal sends them
 // unprefixed; all three must produce the same press with the right bits.
 func TestModifiedMouseKeysDispatchAsMouse(t *testing.T) {
 	b := &TUIBackend{
@@ -34,22 +34,22 @@ func TestModifiedMouseKeysDispatchAsMouse(t *testing.T) {
 		}
 	}
 
-	if ev := press("MouseRightPress"); ev.Button != core.RightButton || ev.Modifiers != 0 {
+	if ev := press("MouseRight"); ev.Button != core.RightButton || ev.Modifiers != 0 {
 		t.Fatalf("plain right press: %+v", ev)
 	}
-	if ev := press("S-MouseRightPress"); ev.Button != core.RightButton || ev.Modifiers&core.ShiftModifier == 0 {
+	if ev := press("S-MouseRight"); ev.Button != core.RightButton || ev.Modifiers&core.ShiftModifier == 0 {
 		t.Fatalf("shifted right press must carry ShiftModifier: %+v", ev)
 	}
-	if ev := press("C-MouseRightPress"); ev.Button != core.RightButton || ev.Modifiers&core.ControlModifier == 0 {
+	if ev := press("C-MouseRight"); ev.Button != core.RightButton || ev.Modifiers&core.ControlModifier == 0 {
 		t.Fatalf("ctrl right press must carry ControlModifier: %+v", ev)
 	}
-	if ev := press("S-MouseLeftPress"); ev.Button != core.LeftButton || ev.Modifiers&core.ShiftModifier == 0 {
+	if ev := press("S-MouseLeft"); ev.Button != core.LeftButton || ev.Modifiers&core.ShiftModifier == 0 {
 		t.Fatalf("shifted left press must carry ShiftModifier: %+v", ev)
 	}
 
 	// A prefixed DRAG (position embedded in the action) dispatches as a
 	// move with modifiers.
-	b.handleKey("S-MouseLeftDrag@12,6")
+	b.handleKey("S-MouseDragLeft@12,6")
 	select {
 	case ev := <-b.eventQueue:
 		mv, ok := ev.(core.MouseMoveEvent)

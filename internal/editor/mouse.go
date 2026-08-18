@@ -14,8 +14,8 @@ import (
 
 // Mouse input (TUI). The key layer (direct-key-handler) decodes SGR/X10
 // mouse reports into pseudo-keys — "Mouse@x,y" (position, emitted before its
-// action), "MouseLeftPress"/"MouseLeftRelease"/"MouseScrollUp"/... and drags
-// as "MouseLeftDrag@x,y" — once the terminal is asked to report the mouse at
+// action), "MouseLeft"/"MouseLeft:Release"/"MouseScrollUp"/... and drags
+// as "MouseDragLeft@x,y" — once the terminal is asked to report the mouse at
 // all (see EnableMouseReporting; purfecterm answers the same DECSET trio by
 // routing mouse to the app instead of local selection).
 //
@@ -254,7 +254,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 	switch {
 	case strings.HasPrefix(base, "Mouse@"):
 		// Position only; already recorded above.
-	case base == "MouseLeftPress":
+	case base == "MouseLeft":
 		// Any modifier beyond shift on a left-click is a RIGHT-click
 		// alternative (some terminals never deliver a real right button —
 		// or reserve alt-click for themselves; ctrl/super+click covers
@@ -269,7 +269,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 		default:
 			e.mousePress(e.mouseX, e.mouseY, shift)
 		}
-	case strings.HasPrefix(base, "MouseLeftDrag@"):
+	case strings.HasPrefix(base, "MouseDragLeft@"):
 		if atOK {
 			switch {
 			case e.modebarNavCapture != 0:
@@ -280,7 +280,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 				e.mouseDrag(e.mouseX, e.mouseY)
 			}
 		}
-	case base == "MouseLeftRelease", base == "MouseRelease":
+	case base == "MouseLeft:Release":
 		switch {
 		case e.modebarNavCapture != 0:
 			e.modebarNavRelease(e.mouseX, e.mouseY)
@@ -289,7 +289,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 		default:
 			e.mouseRelease(e.mouseX, e.mouseY)
 		}
-	case base == "MouseRightPress":
+	case base == "MouseRight":
 		e.mouseRightPress(e.mouseX, e.mouseY)
 	case strings.HasPrefix(base, "MouseDrag@"):
 		// Plain motion, no button (all-motion tracking): hover. The position was

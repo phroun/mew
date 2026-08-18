@@ -299,7 +299,7 @@ func TestSplitScrollbarPressGrabsThePane(t *testing.T) {
 	}
 	bottomY := doc.ContentY + doc.ContentHeight // near the track bottom
 	send(fmt.Sprintf("Mouse@%d,%d", leftSb+1, bottomY))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	if doc.ViewState.ViewOffsetY == 0 {
 		t.Fatal("press on the LEFT tile's scrollbar did not scroll")
 	}

@@ -11,7 +11,7 @@ import (
 // editing area of the focused viewport: content cells pop (with the clicked
 // cell passed through), the line-number gutter and other viewports (the
 // modebar) do not, and the caret never moves.
-func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
+func TestMouseRightGatesOnEditingArea(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "hello\nworld\n")
 	w.ViewState.ShowLineNumbers = true
 	e.performRender() // establish geometry (ContentX/Y, gutter width)
@@ -25,7 +25,7 @@ func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 		if !e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", x, y)) {
 			t.Fatal("position pseudo-key should be consumed")
 		}
-		if !e.handleMouseKey("MouseRightPress") {
+		if !e.handleMouseKey("MouseRight") {
 			t.Fatal("right-press pseudo-key should be consumed")
 		}
 	}
@@ -73,13 +73,13 @@ func TestMouseRightPressGatesOnEditingArea(t *testing.T) {
 }
 
 // Without a host menu seam the right press is swallowed harmlessly.
-func TestMouseRightPressUnwired(t *testing.T) {
+func TestMouseRightUnwired(t *testing.T) {
 	e, w, _ := newRenderedEditor(t, "hello\n")
 	e.performRender()
 	if !e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", w.ContentX+1, w.ContentY+1)) {
 		t.Fatal("position pseudo-key should be consumed")
 	}
-	if !e.handleMouseKey("MouseRightPress") {
+	if !e.handleMouseKey("MouseRight") {
 		t.Fatal("right press should be consumed even with no menu seam")
 	}
 }

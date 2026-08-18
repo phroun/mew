@@ -1961,23 +1961,23 @@ func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bo
 		name = name[:i]
 	}
 	switch name {
-	case "MousePress", "MouseLeftPress":
+	case "MouseLeft":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonLeft
-	case "MouseMiddlePress":
+	case "MouseMiddle":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonMiddle
-	case "MouseRightPress":
+	case "MouseRight":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonRight
-	case "MouseRelease", "MouseLeftRelease":
+	case "MouseLeft:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonLeft
-	case "MouseMiddleRelease":
+	case "MouseMiddle:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonMiddle
-	case "MouseRightRelease":
+	case "MouseRight:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonRight
-	case "MouseLeftDrag":
+	case "MouseDragLeft":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonLeft
-	case "MouseMiddleDrag":
+	case "MouseDragMiddle":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonMiddle
-	case "MouseRightDrag":
+	case "MouseDragRight":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonRight
 	case "MouseDrag":
 		// All-motion tracking: movement with no button held.

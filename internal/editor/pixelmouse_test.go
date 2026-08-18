@@ -59,7 +59,7 @@ func TestPixelMouseHandshake(t *testing.T) {
 	}
 
 	// A non-report key is not ours.
-	if e3.handlePixelMouseReply("MouseLeftPress") {
+	if e3.handlePixelMouseReply("MouseLeft") {
 		t.Fatal("non-report key should not be consumed")
 	}
 

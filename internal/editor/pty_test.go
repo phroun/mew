@@ -299,7 +299,7 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 		}
 		asked, got = 0, TerminalMouse{}
 		e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
-		e.handleMouseKey("MouseLeftPress")
+		e.handleMouseKey("MouseLeft")
 		if asked == 0 {
 			t.Fatalf("tile %d: the press never reached the terminal (it fell through)", i)
 		}
@@ -309,7 +309,7 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 		if e.ptyMouseCapture == nil {
 			t.Errorf("tile %d: a terminal press should capture the gesture", i)
 		}
-		e.handleMouseKey("MouseLeftRelease")
+		e.handleMouseKey("MouseLeft:Release")
 		if e.ptyMouseCapture != nil {
 			t.Errorf("tile %d: the release should let the gesture go", i)
 		}
@@ -370,7 +370,7 @@ func TestPTYClickFocusesTheOtherViewport(t *testing.T) {
 		t.Fatal("doc2 has no tile on screen")
 	}
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 
 	if got := e.ViewportManager.GetFocusedViewport(); got != doc2 {
 		t.Fatalf("clicking doc2's terminal focused %s, want doc2", vpID(got))
@@ -739,7 +739,7 @@ func TestPTYMouseForwarding(t *testing.T) {
 	}
 
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("C-MouseLeftPress")
+	e.handleMouseKey("C-MouseLeft")
 	if gotID == "" {
 		t.Fatal("the host was never asked about the event")
 	}
@@ -771,10 +771,10 @@ func TestPTYMouseEventShapes(t *testing.T) {
 	}{
 		{[]string{"MouseScrollUp"}, TerminalMouseScrollUp, TerminalMouseButtonNone},
 		{[]string{"MouseScrollDown"}, TerminalMouseScrollDown, TerminalMouseButtonNone},
-		{[]string{"MouseLeftDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
+		{[]string{"MouseDragLeft@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
 		{[]string{"MouseDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
-		{[]string{"MouseRightPress"}, TerminalMousePress, TerminalMouseButtonRight},
-		{[]string{"MouseLeftRelease"}, TerminalMouseRelease, TerminalMouseButtonLeft},
+		{[]string{"MouseRight"}, TerminalMousePress, TerminalMouseButtonRight},
+		{[]string{"MouseLeft:Release"}, TerminalMouseRelease, TerminalMouseButtonLeft},
 	} {
 		e, w := newTestEditor(t, "x\n")
 		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
@@ -821,7 +821,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 	// Not tracking: asked, declined, and mew's own press ran.
 	e, _, asked := newHostedEditor(t, nil)
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 	if *asked != 1 {
 		t.Errorf("host asked %d times, want once", *asked)
 	}
@@ -832,7 +832,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 	// Outside the terminal's rectangle: never asked at all.
 	e2, _, asked2 := newHostedEditor(t, []byte{'x'})
 	e2.handleMouseKey("Mouse@2,3") // left of the content area
-	e2.handleMouseKey("MouseLeftPress")
+	e2.handleMouseKey("MouseLeft")
 	if *asked2 != 0 {
 		t.Errorf("a click outside the surface asked the host %d times, want none", *asked2)
 	}
@@ -1200,7 +1200,7 @@ func TestPTYMouseHandledWithoutBytes(t *testing.T) {
 	}
 
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 	if asked != 1 {
 		t.Fatalf("host asked %d times, want once", asked)
 	}

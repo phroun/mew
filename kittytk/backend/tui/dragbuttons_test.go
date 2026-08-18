@@ -41,9 +41,9 @@ func TestDragEventsCarryTheHeldButton(t *testing.T) {
 		want core.MouseButton
 		what string
 	}{
-		{"MouseLeftDrag@10,5", core.LeftButton, "left drag"},
-		{"MouseMiddleDrag@10,5", core.MiddleButton, "middle drag"},
-		{"MouseRightDrag@10,5", core.RightButton, "right drag"},
+		{"MouseDragLeft@10,5", core.LeftButton, "left drag"},
+		{"MouseDragMiddle@10,5", core.MiddleButton, "middle drag"},
+		{"MouseDragRight@10,5", core.RightButton, "right drag"},
 		{"MouseDrag@10,5", 0, "buttonless motion, which is what ?1003 sends"},
 	} {
 		if got := move(c.key).Buttons; got != c.want {

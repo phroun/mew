@@ -1578,7 +1578,7 @@ func (t *TUIBackend) handleKey(key string) {
 	}
 
 	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
-	// ("S-MouseRightPress" from a terminal that forwards shifted clicks, as
+	// ("S-MouseRight" from a terminal that forwards shifted clicks, as
 	// iTerm2 does), so the mouse-ness test looks past the prefixes.
 	if _, name := core.ParseKeyModifiers(key); strings.HasPrefix(name, "Mouse") {
 		t.handleMouseAction(key)
@@ -1672,7 +1672,7 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	}
 	t.mu.Unlock()
 
-	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
+	// Strip modifier prefixes ("S-MouseRight") into event modifiers.
 	// Terminals VARY in whether they forward modified clicks to the app —
 	// iTerm2 sends shift+clicks through (shifted), stock Terminal strips
 	// the shift — and a modified mouse event must reach the trinkets with
@@ -1684,7 +1684,7 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	unitX := t.outerToUnitsX(x, frame)
 	unitY := t.outerToUnitsY(y, frame)
 
-	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
+	// For drag events, position is embedded: MouseDragLeft@x,y (also raw
 	// 1-based, same conversion).
 	//
 	// Which of the two sources a gesture used is the thing the trace below
@@ -1713,37 +1713,29 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	var event core.Event
 
 	switch key {
-	case "MouseLeftPress":
+	case "MouseLeft":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddlePress":
+	case "MouseMiddle":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightPress":
+	case "MouseRight":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MousePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftRelease":
+	case "MouseLeft:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddleRelease":
+	case "MouseMiddle:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightRelease":
+	case "MouseRight:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MouseRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
 	// Motion, with whichever button is held. direct-key-handler names the
 	// button in the event, and "MouseDrag" is its name for motion with NO
 	// button — the buttonless tracking a terminal sends under ?1003 — so that
 	// one carries no button rather than a default.
-	//
-	// Buttons went unset here, which made every motion look button-free to a
-	// trinket: a drag passing over a scrollbar lit its hover instead of
-	// clearing it, since the hover test is exactly "no button held".
-	case "MouseLeftDrag":
+	case "MouseDragLeft":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
-	case "MouseMiddleDrag":
+	case "MouseDragMiddle":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
-	case "MouseRightDrag":
+	case "MouseDragRight":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
 	case "MouseDrag":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}

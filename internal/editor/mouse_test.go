@@ -40,19 +40,19 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 	}
 
 	// A plain click sets the caret to the clicked cell.
-	click("MouseLeftPress", 1) // the 'o' of "go"
+	click("MouseLeft", 1) // the 'o' of "go"
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != 1 {
 		t.Fatalf("click should set the caret; got %+v", got)
 	}
 	if e.mousePressed.active {
 		t.Fatal("a click outside any button must not arm the pressed state")
 	}
-	click("MouseLeftRelease", 1)
+	click("MouseLeft:Release", 1)
 
 	// Press ON the button (the display shows "go ⟨ other ⟩▐ now"; cell 5 is
 	// inside the button): pressed state arms, the caret parks in the span,
 	// and the pressed style paints.
-	click("MouseLeftPress", 5)
+	click("MouseLeft", 5)
 	if !e.mousePressed.active {
 		t.Fatal("pressing a button should arm the pressed state")
 	}
@@ -69,7 +69,7 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 
 	// Dragging off the button: the capture HOLDS but the pressed style
 	// reverts (the caret is still in the span, so the focused style shows).
-	if !e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(0)) + "," + itoa(row)) {
+	if !e.handleMouseKey("MouseDragLeft@" + itoa(colOf(0)) + "," + itoa(row)) {
 		t.Fatal("drag pseudo-key should be consumed")
 	}
 	if !e.mousePressed.active || e.mouseOnCaptured {
@@ -79,22 +79,22 @@ func TestMouseButtonPressDragFollow(t *testing.T) {
 		t.Fatal("dragged-off captured button should show the focused style")
 	}
 	// Dragging back on re-presses.
-	if !e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(5)) + "," + itoa(row)) {
+	if !e.handleMouseKey("MouseDragLeft@" + itoa(colOf(5)) + "," + itoa(row)) {
 		t.Fatal("drag pseudo-key should be consumed")
 	}
 	if !e.mousePressed.active || !e.mouseOnCaptured {
 		t.Fatal("dragging back on must re-press the captured button")
 	}
 	// Releasing OFF the captured button abandons the click.
-	e.handleMouseKey("MouseLeftDrag@" + itoa(colOf(0)) + "," + itoa(row))
-	click("MouseLeftRelease", 0)
+	e.handleMouseKey("MouseDragLeft@" + itoa(colOf(0)) + "," + itoa(row))
+	click("MouseLeft:Release", 0)
 	if e.mousePressed.active || w.Buffer != src {
 		t.Fatal("a release off the captured button must not follow")
 	}
 
 	// Press and release on the button: the follow triggers.
-	click("MouseLeftPress", 5)
-	click("MouseLeftRelease", 6)
+	click("MouseLeft", 5)
+	click("MouseLeft:Release", 6)
 	if e.mousePressed.active {
 		t.Fatal("release must clear the pressed state")
 	}
@@ -175,8 +175,8 @@ func TestMouseModalSafety(t *testing.T) {
 	row := w.ContentY + 1
 	col := w.ContentX + 1 + 5
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftPress")
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft")
+	e.handleMouseKey("MouseLeft:Release")
 	if e.ViewportManager.GetFocusedViewport() != pw {
 		t.Fatal("a click outside the prompt must not steal focus")
 	}
@@ -422,11 +422,11 @@ func TestMouseWorksInSpawnedViewport(t *testing.T) {
 		t.Fatalf("hit testing must prefer the focused viewport; got %v", hit.ID)
 	}
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 	if got := nw.CursorPos(); got.Line != 0 || got.Rune != 2 {
 		t.Fatalf("click in the spawned viewport should set its caret; got %+v", got)
 	}
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft:Release")
 }
 
 // Clicking PAST the end of a line whose last element is a button places the
@@ -445,7 +445,7 @@ func TestMouseClickPastEOLButton(t *testing.T) {
 	row := w.ContentY + 1
 	col := w.ContentX + 1 + 30 // well past the button
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 	if got := w.CursorPos(); got.Line != 0 || got.Rune != eol {
 		t.Fatalf("past-EOL click should park at EOL (%d); got %+v", eol, got)
 	}
@@ -453,7 +453,7 @@ func TestMouseClickPastEOLButton(t *testing.T) {
 		t.Fatal("past-EOL click must not capture the trailing button")
 	}
 	e.handleMouseKey("Mouse@" + itoa(col) + "," + itoa(row))
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft:Release")
 	if w.Buffer != src {
 		t.Fatal("past-EOL click must not follow")
 	}

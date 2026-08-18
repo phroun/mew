@@ -45,7 +45,7 @@ func TestScrollbarReservedAndInteractive(t *testing.T) {
 		}
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", barX, bottomY))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	if w.ViewState.ViewOffsetY == 0 {
 		t.Fatal("track press near the bottom did not scroll — the bar is painted but dead")
 	}
@@ -59,8 +59,8 @@ func TestScrollbarReservedAndInteractive(t *testing.T) {
 	// Dragging the thumb to the top of the track returns to line 0; the
 	// release ends the gesture without disturbing the position.
 	topY := w.ContentY + 1
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", barX, topY))
-	send("MouseLeftRelease")
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", barX, topY))
+	send("MouseLeft:Release")
 	if w.ViewState.ViewOffsetY != 0 {
 		t.Fatalf("drag to track top left ViewOffsetY=%d, want 0", w.ViewState.ViewOffsetY)
 	}
@@ -68,8 +68,8 @@ func TestScrollbarReservedAndInteractive(t *testing.T) {
 	// The capture is over: a later press in the content area is an ordinary
 	// text press, not a leaked scrollbar gesture.
 	send(fmt.Sprintf("Mouse@%d,%d", w.ContentX+2, w.ContentY+2))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 	if w.ViewState.ViewOffsetY != 0 {
 		t.Fatal("content press moved the scroll position after the bar gesture")
 	}
@@ -101,8 +101,8 @@ func TestScrollbarRTLMirrorsLeft(t *testing.T) {
 		}
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", 1, w.ContentY+w.ContentHeight))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 	if w.ViewState.ViewOffsetY == 0 {
 		t.Fatal("press in the RTL bar column did not scroll")
 	}
@@ -268,8 +268,8 @@ func TestScrollbarPressInertWhenDocumentFits(t *testing.T) {
 		}
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+1))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 
 	if w.ViewState.ViewOffsetY != 0 {
 		t.Fatalf("top = %d, want 0: a bar with no thumb scrolls nothing", w.ViewState.ViewOffsetY)
@@ -317,8 +317,8 @@ func TestScrollbarCornerShortensTrack(t *testing.T) {
 		}
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+w.ContentHeight))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 	if w.ViewState.ViewOffsetY == 0 {
 		t.Fatal("press on the corner row did not act as a track-bottom press")
 	}
@@ -397,8 +397,8 @@ func TestScrollbarHostDrawnPublishesAndYields(t *testing.T) {
 	// A press in the column is no longer mew's: the host owns it.
 	send := func(key string) { e.handleMouseKey(key) }
 	send(fmt.Sprintf("Mouse@%d,%d", w.ScrollbarX+1, w.ContentY+w.ContentHeight))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 	if w.ViewState.ViewOffsetY != 0 {
 		t.Error("mew hit-tested a bar the host owns")
 	}
