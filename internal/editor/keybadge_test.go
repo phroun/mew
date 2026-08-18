@@ -122,6 +122,28 @@ func TestVerboseKeySequenceSpellsTheKeypad(t *testing.T) {
 	}
 }
 
+// The lock and system keys read as their keycaps print them.
+//
+// A token with no entry falls through unchanged, so a missing one puts mew's
+// lowercase "printscreen" in the middle of a sentence.
+func TestVerboseKeySequenceSpellsTheLockAndSystemKeys(t *testing.T) {
+	none := func(string) bool { return false }
+	for _, c := range []struct{ seq, want string }{
+		{"capslock", "Caps Lock"},
+		{"scrolllock", "Scroll Lock"},
+		{"printscreen", "Print Screen"},
+		{"pause", "Pause"},
+		{"menu", "Menu"},
+		{"clear", "Clear"},
+		{"C-menu", "Ctrl+Menu"},
+		{"S-printscreen", "Shift-Print Screen"},
+	} {
+		if got := verboseKeySequence(c.seq, none); got != c.want {
+			t.Errorf("verboseKeySequence(%q) = %q, want %q", c.seq, got, c.want)
+		}
+	}
+}
+
 // When both case variants of a key are bound, the case disambiguates them and
 // Shift is shown for the uppercase one.
 func TestVerboseKeySequenceShiftDisambiguation(t *testing.T) {

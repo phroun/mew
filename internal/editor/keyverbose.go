@@ -40,6 +40,13 @@ var verboseKeyNames = map[string]string{
 	// the keyboards with no lock behind it, which is where the legend says
 	// Clear.
 	"clear": "Clear",
+	// Lock and system keys. mew's token runs the words together; a badge is
+	// prose, so it reads them as the keycap prints them.
+	"capslock":    "Caps Lock",
+	"scrolllock":  "Scroll Lock",
+	"printscreen": "Print Screen",
+	"pause":       "Pause",
+	"menu":        "Menu",
 	// Keys an American keyboard does not have. mew spells them lowercase like
 	// the rest of its vocabulary, but a badge is prose and these are proper
 	// names — the capitalisation is upstream's, not invented here.
