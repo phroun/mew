@@ -14,7 +14,8 @@ import (
 
 // Mouse input (TUI). The key layer (direct-key-handler) decodes SGR/X10
 // mouse reports into pseudo-keys — "Mouse@x,y" (position, emitted before its
-// action), "MouseLeft"/"MouseLeft:Release"/"MouseScrollUp"/... and drags
+// action and on its own when the pointer moves with no button down),
+// "MouseLeft"/"MouseLeft:Release"/"MouseScrollUp"/... and drags
 // as "MouseDragLeft@x,y" — once the terminal is asked to report the mouse at
 // all (see EnableMouseReporting; purfecterm answers the same DECSET trio by
 // routing mouse to the app instead of local selection).
@@ -253,7 +254,18 @@ func (e *Editor) handleMouseKey(key string) bool {
 
 	switch {
 	case strings.HasPrefix(base, "Mouse@"):
-		// Position only; already recorded above.
+		// The pointer is somewhere it was not, with no button down: hover. The
+		// position was already parsed AND pixel-converted at the top
+		// (e.mouseX/e.mouseY); reuse it rather than re-parsing the raw report,
+		// which is in PIXELS under SGR-Pixels (?1016) and would put hover far
+		// off the grid.
+		//
+		// A press arriving right behind this one hovers the same spot first,
+		// which is what the pointer did to get there.
+		if atOK {
+			e.mouseHoverAt(e.mouseX, e.mouseY)
+			e.modebarNavHoverAt(e.mouseX, e.mouseY)
+		}
 	case base == "MouseLeft":
 		// Any modifier beyond shift on a left-click is a RIGHT-click
 		// alternative (some terminals never deliver a real right button —
@@ -291,15 +303,6 @@ func (e *Editor) handleMouseKey(key string) bool {
 		}
 	case base == "MouseRight":
 		e.mouseRightPress(e.mouseX, e.mouseY)
-	case strings.HasPrefix(base, "MouseDrag@"):
-		// Plain motion, no button (all-motion tracking): hover. The position was
-		// already parsed AND pixel-converted at the top (e.mouseX/e.mouseY);
-		// reuse it rather than re-parsing the raw report, which is in PIXELS
-		// under SGR-Pixels (?1016) and would put hover far off the grid.
-		if atOK {
-			e.mouseHoverAt(e.mouseX, e.mouseY)
-			e.modebarNavHoverAt(e.mouseX, e.mouseY)
-		}
 	case base == "MouseScrollUp":
 		e.hScrollReset() // a vertical tick re-arms the sideways barrier
 		e.mouseScroll(e.mouseX, e.mouseY, -3)

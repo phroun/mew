@@ -80,17 +80,22 @@ func TestOuterPixelMouseCoordinateConversion(t *testing.T) {
 		t.Helper()
 		b.handleKey(pos)
 		b.handleKey(action)
-		select {
-		case ev := <-b.eventQueue:
-			mp, ok := ev.(core.MousePressEvent)
-			if !ok {
-				t.Fatalf("%s: dispatched as %T, want MousePressEvent", action, ev)
+		// The position report ahead of the press is the pointer arriving
+		// there, and dispatches as a move; the press is the event behind it.
+		var ev core.Event
+		for drained := false; !drained; {
+			select {
+			case e := <-b.eventQueue:
+				ev = e
+			default:
+				drained = true
 			}
-			return mp
-		default:
-			t.Fatalf("%s: no event dispatched", action)
-			return core.MousePressEvent{}
 		}
+		mp, ok := ev.(core.MousePressEvent)
+		if !ok {
+			t.Fatalf("%s: dispatched as %T, want MousePressEvent", action, ev)
+		}
+		return mp
 	}
 
 	// Cell mode: metrics 8x16, no pixel state. Mouse@3,2 → cell (2,1) left edge.

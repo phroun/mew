@@ -756,8 +756,11 @@ func TestPTYMouseForwarding(t *testing.T) {
 	if !got.Ctrl || got.Shift || got.Alt {
 		t.Errorf("modifiers = ctrl:%v shift:%v alt:%v, want ctrl only", got.Ctrl, got.Shift, got.Alt)
 	}
-	if stub.sent() != "\x1b[<0;1;1M" {
-		t.Errorf("session received %q, want the host's report bytes", stub.sent())
+	// Two reports, because the position report ahead of the press is the
+	// pointer having moved there and the child is told so first. This stub
+	// answers every event with the same bytes, so both come out alike.
+	if stub.sent() != "\x1b[<0;1;1M\x1b[<0;1;1M" {
+		t.Errorf("session received %q, want the motion and then the press", stub.sent())
 	}
 }
 
@@ -772,7 +775,7 @@ func TestPTYMouseEventShapes(t *testing.T) {
 		{[]string{"MouseScrollUp"}, TerminalMouseScrollUp, TerminalMouseButtonNone},
 		{[]string{"MouseScrollDown"}, TerminalMouseScrollDown, TerminalMouseButtonNone},
 		{[]string{"MouseDragLeft@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
-		{[]string{"MouseDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
+		{[]string{"Mouse@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
 		{[]string{"MouseRight"}, TerminalMousePress, TerminalMouseButtonRight},
 		{[]string{"MouseLeft:Release"}, TerminalMouseRelease, TerminalMouseButtonLeft},
 	} {
@@ -818,12 +821,13 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 		return e, w, &asked
 	}
 
-	// Not tracking: asked, declined, and mew's own press ran.
+	// Not tracking: asked, declined, and mew's own press ran. Asked twice —
+	// once for the pointer arriving at the cell, once for the press.
 	e, _, asked := newHostedEditor(t, nil)
 	e.handleMouseKey("Mouse@6,3")
 	e.handleMouseKey("MouseLeft")
-	if *asked != 1 {
-		t.Errorf("host asked %d times, want once", *asked)
+	if *asked != 2 {
+		t.Errorf("host asked %d times, want the motion and the press", *asked)
 	}
 	if !e.dragSel.active {
 		t.Error("a declined event should reach mew's own press handling")
@@ -1201,8 +1205,8 @@ func TestPTYMouseHandledWithoutBytes(t *testing.T) {
 
 	e.handleMouseKey("Mouse@6,3")
 	e.handleMouseKey("MouseLeft")
-	if asked != 1 {
-		t.Fatalf("host asked %d times, want once", asked)
+	if asked != 2 {
+		t.Fatalf("host asked %d times, want the motion and the press", asked)
 	}
 	if e.dragSel.active {
 		t.Error("mew ran its own press handling for an event the terminal took")

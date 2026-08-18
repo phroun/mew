@@ -1952,8 +1952,12 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 // handleMouseKey dispatches on, with its modifier prefixes already stripped —
 // as a terminal mouse event. Col and Row are the caller's to fill in.
 //
-// A bare "Mouse@x,y" is position only: it precedes an action and is not one,
-// so it reports false and the action that follows carries the position.
+// A bare "Mouse@x,y" is the pointer having moved with no button down. It also
+// precedes every other action, so a click sends the child a motion report to
+// the cell and then the press — which is what a terminal doing all-motion
+// tracking sends anyway, and what the pointer actually did. A child that asked
+// for less than that drops the motion at the encoder, where the mouse mode it
+// asked for is known.
 func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bool) {
 	ev := TerminalMouse{Shift: shift, Alt: alt, Ctrl: ctrl}
 	name := base
@@ -1979,8 +1983,8 @@ func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bo
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonMiddle
 	case "MouseDragRight":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonRight
-	case "MouseDrag":
-		// All-motion tracking: movement with no button held.
+	case "Mouse":
+		// The position report: movement with no button held.
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonNone
 	case "MouseScrollUp":
 		ev.Action = TerminalMouseScrollUp

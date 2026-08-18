@@ -206,7 +206,7 @@ func TestMouseHoverStyles(t *testing.T) {
 
 	row := w.ContentY + 1
 	over := func(cell int) {
-		e.handleMouseKey("MouseDrag@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
+		e.handleMouseKey("Mouse@" + itoa(w.ContentX+1+cell) + "," + itoa(row))
 	}
 
 	// Browse mode: hover over the button.

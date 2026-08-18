@@ -1574,7 +1574,12 @@ func (t *TUIBackend) handleKey(key string) {
 			t.pendingMouseY = y
 			t.mu.Unlock()
 		}
-		return // Position events don't generate UI events
+		// The pointer is somewhere it was not, which is a move — the only kind
+		// there is with no button held. An action arriving right behind this
+		// one resolves against the same position, so a click reads as a move to
+		// the spot and then the press, which is what the pointer did.
+		t.handleMouseAction("MouseMove")
+		return
 	}
 
 	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
@@ -1728,16 +1733,16 @@ func (t *TUIBackend) handleMouseAction(key string) {
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
 
 	// Motion, with whichever button is held. direct-key-handler names the
-	// button in the event, and "MouseDrag" is its name for motion with NO
-	// button — the buttonless tracking a terminal sends under ?1003 — so that
-	// one carries no button rather than a default.
+	// button in the event; motion with NO button is the bare position report
+	// this backend turns into "MouseMove" above, so that one carries no button
+	// rather than a default.
 	case "MouseDragLeft":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
 	case "MouseDragMiddle":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
 	case "MouseDragRight":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
-	case "MouseDrag":
+	case "MouseMove":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":

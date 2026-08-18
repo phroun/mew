@@ -17,21 +17,34 @@ func TestModifiedMouseKeysDispatchAsMouse(t *testing.T) {
 		eventQueue: make(chan core.Event, 8),
 	}
 
+	// The position report ahead of an action is the pointer arriving there,
+	// and dispatches as a move — so the action is the event behind it.
+	last := func(what string) core.Event {
+		t.Helper()
+		var ev core.Event
+		for {
+			select {
+			case e := <-b.eventQueue:
+				ev = e
+			default:
+				if ev == nil {
+					t.Fatalf("%s: no event dispatched (dropped)", what)
+				}
+				return ev
+			}
+		}
+	}
+
 	press := func(key string) core.MousePressEvent {
 		t.Helper()
 		b.handleKey("Mouse@10,5")
 		b.handleKey(key)
-		select {
-		case ev := <-b.eventQueue:
-			mp, ok := ev.(core.MousePressEvent)
-			if !ok {
-				t.Fatalf("%s: dispatched as %T, want MousePressEvent", key, ev)
-			}
-			return mp
-		default:
-			t.Fatalf("%s: no event dispatched (dropped)", key)
-			return core.MousePressEvent{}
+		ev := last(key)
+		mp, ok := ev.(core.MousePressEvent)
+		if !ok {
+			t.Fatalf("%s: dispatched as %T, want MousePressEvent", key, ev)
 		}
+		return mp
 	}
 
 	if ev := press("MouseRight"); ev.Button != core.RightButton || ev.Modifiers != 0 {
@@ -50,26 +63,16 @@ func TestModifiedMouseKeysDispatchAsMouse(t *testing.T) {
 	// A prefixed DRAG (position embedded in the action) dispatches as a
 	// move with modifiers.
 	b.handleKey("S-MouseDragLeft@12,6")
-	select {
-	case ev := <-b.eventQueue:
-		mv, ok := ev.(core.MouseMoveEvent)
-		if !ok || mv.Modifiers&core.ShiftModifier == 0 {
-			t.Fatalf("shifted drag: %T %+v", ev, ev)
-		}
-	default:
-		t.Fatal("shifted drag was dropped")
+	dragEv := last("shifted drag")
+	if mv, ok := dragEv.(core.MouseMoveEvent); !ok || mv.Modifiers&core.ShiftModifier == 0 {
+		t.Fatalf("shifted drag: %T %+v", dragEv, dragEv)
 	}
 
 	// Horizontal wheel events dispatch (they were previously unknown).
 	b.handleKey("Mouse@10,5")
 	b.handleKey("MouseScrollLeft")
-	select {
-	case ev := <-b.eventQueue:
-		wh, ok := ev.(core.MouseWheelEvent)
-		if !ok || wh.DeltaX != -1 {
-			t.Fatalf("scroll left: %T %+v", ev, ev)
-		}
-	default:
-		t.Fatal("horizontal wheel was dropped")
+	wheelEv := last("scroll left")
+	if wh, ok := wheelEv.(core.MouseWheelEvent); !ok || wh.DeltaX != -1 {
+		t.Fatalf("scroll left: %T %+v", wheelEv, wheelEv)
 	}
 }

@@ -8,12 +8,11 @@ import (
 
 // Motion carries the button being held, and buttonless motion carries none.
 //
-// direct-key-handler names the button in the drag event and reserves plain
-// "MouseDrag" for motion with NO button — the buttonless tracking a terminal
-// sends under ?1003. Buttons went unset for all four, so every motion looked
-// button-free to a trinket. The visible symptom was a scrollbar: its hover
-// test is exactly "no button held", so a drag passing over one lit it up
-// instead of clearing it.
+// direct-key-handler names the button in the drag event; motion with NO button
+// — the buttonless tracking a terminal sends under ?1003 — arrives as the bare
+// position report, since that is all such a move is. A trinket's hover test is
+// exactly "no button held", so a drag passing over a scrollbar must clear its
+// hover rather than light it.
 func TestDragEventsCarryTheHeldButton(t *testing.T) {
 	b := &TUIBackend{
 		metrics:    core.DefaultCellMetrics(),
@@ -44,7 +43,7 @@ func TestDragEventsCarryTheHeldButton(t *testing.T) {
 		{"MouseDragLeft@10,5", core.LeftButton, "left drag"},
 		{"MouseDragMiddle@10,5", core.MiddleButton, "middle drag"},
 		{"MouseDragRight@10,5", core.RightButton, "right drag"},
-		{"MouseDrag@10,5", 0, "buttonless motion, which is what ?1003 sends"},
+		{"Mouse@10,5", 0, "buttonless motion, which is what ?1003 sends"},
 	} {
 		if got := move(c.key).Buttons; got != c.want {
 			t.Errorf("%s: Buttons = %v, want %v", c.what, got, c.want)
