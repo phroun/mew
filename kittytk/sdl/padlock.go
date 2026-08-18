@@ -110,6 +110,22 @@ func (l *padLock) toggle() (changed bool, on bool) {
 	return true, l.on
 }
 
+// set writes the lock and reports whether it moved.
+//
+// The write stands where we own the state. Where the OS keeps a real latch it
+// is a BELIEF and the next key event overwrites it, which is honest: this
+// process cannot move the system's latch, and refusing the write outright
+// would leave a host unable to say what it had been asked to say.
+func (l *padLock) set(on bool) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.on == on {
+		return false
+	}
+	l.on = on
+	return true
+}
+
 // locked reports whether the pad's dual-legend caps currently mean their digits.
 // Answerable on every system, including those with no NumLock, where it is
 // permanently true — so a host can draw an indicator everywhere, which is most

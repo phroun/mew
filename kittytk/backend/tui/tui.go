@@ -455,6 +455,16 @@ func (t *TUIBackend) Init() error {
 			// Queue full, drop event
 		}
 	}
+	// Keyboard states — the pad's lock, Caps Lock, focus — as toolkit events,
+	// so a trinket drawing an indicator repaints when one moves. The states
+	// themselves are read through Modes(); this is only the nudge.
+	t.keyboard.OnMode = func(m keyboard.Mode) {
+		select {
+		case t.eventQueue <- core.ModeEvent{Mode: core.Mode{Name: m.Name, Value: m.Value}}:
+		default:
+			// Queue full, drop event
+		}
+	}
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
 		// here, not as keystrokes: keep the internal copy in sync and notify the

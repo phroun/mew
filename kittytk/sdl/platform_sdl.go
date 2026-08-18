@@ -126,11 +126,12 @@ type Platform struct {
 	// system that has no lock of its own it IS the lock. See padlock.go.
 	padLock *padLock
 
-	// OnNumLock is called when the pad's lock moves, with its new state. Not a
-	// key: the cap that moves it is eaten and no KeyPressEvent is dispatched
-	// for it. It fires on a system with no NumLock too, which is the one place
-	// an on-screen indicator has nothing else to read.
-	OnNumLock   func(on bool)
+	// modes is the rest of the keyboard states this host publishes — Caps
+	// Lock, focus, and whatever a host added itself. The pad's lock is not
+	// among them: padLock owns that one, for the key-naming path as well.
+	// See modes.go.
+	modes modeState
+
 	padScancode uint32
 
 	main *nativeWin
@@ -1347,6 +1348,17 @@ func (p *Platform) pumpEvents() bool {
 			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
+				// A latch can have moved while someone else had the keyboard,
+				// so this is the moment to look rather than to wait for a key.
+				if p.noteCapsLock(uint16(sdl3.GetModState())) {
+					p.announceMode(core.Mode{
+						Name:  core.ModeCapsLock,
+						Value: modeValue(sdl3.GetModState()&sdl3.KMOD_CAPS != 0),
+					})
+				}
+				if p.noteFocus(true) {
+					p.announceMode(core.Mode{Name: core.ModeFocus, Value: core.ModeOn})
+				}
 			case sdl3.WindowFocusLost:
 				// Anything still down is let go somewhere else now, and its
 				// KEY_UP will be delivered to whoever has the keyboard. Report
@@ -1356,6 +1368,9 @@ func (p *Platform) pumpEvents() bool {
 				p.releaseHeldKeys(s)
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
+				if p.noteFocus(false) {
+					p.announceMode(core.Mode{Name: core.ModeFocus, Value: core.ModeOff})
+				}
 			case sdl3.WindowMouseLeave:
 				// Pointer left the active boundary box: clear hover affordances.
 				s.handler.Event(core.MouseLeaveEvent{})
@@ -1486,14 +1501,23 @@ func (p *Platform) pumpEvents() bool {
 				// a system with no NumLock that bit is never set however locked
 				// the pad actually is. See padlock.go.
 				p.padLock.resolve(&e.Keysym)
+
+				// The other latch, which names no key here and is read only to
+				// be published. See modes.go.
+				if p.noteCapsLock(e.Keysym.Mod) {
+					p.announceMode(core.Mode{
+						Name:  core.ModeCapsLock,
+						Value: modeValue(e.Keysym.Mod&sdl3.KMOD_CAPS != 0),
+					})
+				}
 			}
 			if e.Type == sdl3.KeyDown && eatsLockCap(e.Keysym) {
 				// The lock cap alone is not a key: it moves the lock and is
 				// eaten. Nothing is held for it, so the KeyUp below drops its
 				// release on its own — a release is only reported for a press
 				// that was.
-				if changed, on := p.padLock.toggle(); changed && p.OnNumLock != nil {
-					p.OnNumLock(on)
+				if changed, on := p.padLock.toggle(); changed {
+					p.announceMode(core.Mode{Name: core.ModeNumLock, Value: modeValue(on)})
 				}
 				continue
 			}

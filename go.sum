@@ -14,6 +14,8 @@ github.com/phroun/direct-key-handler v0.3.31-0.20260818201614-5a1faf6fd881 h1:PZ
 github.com/phroun/direct-key-handler v0.3.31-0.20260818201614-5a1faf6fd881/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/direct-key-handler v0.3.31 h1:FDKQnaX6ZNn/L3YHCO5XhTuw5b+TNSolO2IiMuPFE5s=
 github.com/phroun/direct-key-handler v0.3.31/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
+github.com/phroun/direct-key-handler v0.3.32-0.20260818221507-8551a545ccaa h1:+n6BOTHi9IZWYrQ/IaW6aH2+d+i/63rA+9JaqLet37U=
+github.com/phroun/direct-key-handler v0.3.32-0.20260818221507-8551a545ccaa/go.mod h1:CWjFowE+EYo5s/OtQas+dE/QDKvm+UL+cnXoCxjnHns=
 github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4=
 github.com/phroun/garland v0.1.11/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
 github.com/phroun/ifitfits v0.1.1 h1:5Wx4fNlWWYUsWgwbvB0+BxY+EvoNUdIeIc8SNFzrYBQ=
