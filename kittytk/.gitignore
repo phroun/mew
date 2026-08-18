@@ -16,6 +16,14 @@
 # Built binaries (make build -> bin/)
 /bin/
 
+# Example binaries built in place. `go build ./examples/keytest` from this
+# directory drops a 60MB+ executable named for the package right here, and a
+# `git add -A` sweeps it into the commit — which is exactly how one reached
+# this repository once. The sync policy's fourth self-audit check exists to
+# catch binary blobs in a diff; this stops them getting that far.
+# (/demo and /demoapp are already covered above.)
+/keytest
+
 # Test binary
 *.test
 
