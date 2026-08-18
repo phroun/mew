@@ -2042,7 +2042,7 @@ var mewToDKHKey = map[string]string{
 	// them when the vocabulary grew.
 	"capslock":    "CapsLock",
 	"scrolllock":  "ScrollLock",
-	"numlock":     "NumLock",
+	"clear":       "Clear",
 	"printscreen": "PrintScreen",
 	"pause":       "Pause",
 	"menu":        "Menu",

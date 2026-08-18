@@ -64,9 +64,13 @@ var mewKeyNames = map[keyboard.Key]string{
 	keyboard.KeyF19: "F19", keyboard.KeyF20: "F20",
 
 	// Lock and system keys: lowercase, matching the rest of the vocabulary.
-	keyboard.KeyCapsLock:    "capslock",
-	keyboard.KeyScrollLock:  "scrolllock",
-	keyboard.KeyNumLock:     "numlock",
+	keyboard.KeyCapsLock:   "capslock",
+	keyboard.KeyScrollLock: "scrolllock",
+	// The pad's lock cap. Pressed alone it never arrives — upstream eats it and
+	// moves the pad's lock, which is what decides whether "P-7" or "P-home"
+	// comes through. This names it only when a modifier is held, where it is a
+	// key: an action worth binding, rather than a state we already track.
+	keyboard.KeyClear:       "clear",
 	keyboard.KeyPrintScreen: "printscreen",
 	keyboard.KeyPause:       "pause",
 	keyboard.KeyMenu:        "menu",

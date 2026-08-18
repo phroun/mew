@@ -34,6 +34,12 @@ var verboseKeyNames = map[string]string{
 	// The keypad's 5 with NumLock off, which reaches a badge as "Keypad Begin".
 	"begin": "Begin",
 	"power": "Power",
+	// The pad's lock cap, which only reaches a badge as a chord — pressed alone
+	// it is not a key at all but the pad's lock, and that decides whether the
+	// caps above it read "Keypad 7" or "Keypad Home". Named for what it does on
+	// the keyboards with no lock behind it, which is where the legend says
+	// Clear.
+	"clear": "Clear",
 	// Keys an American keyboard does not have. mew spells them lowercase like
 	// the rest of its vocabulary, but a badge is prose and these are proper
 	// names — the capitalisation is upstream's, not invented here.
