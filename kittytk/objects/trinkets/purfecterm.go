@@ -52,6 +52,26 @@ type PurfecTerm struct {
 	// Track which mouse button is currently held for drag events
 	heldButton core.MouseButton
 
+	// keyPressedToChild names the keys whose PRESS this child was actually
+	// handed, so a release can be matched to one.
+	//
+	// A press only reaches here if nothing above claimed it first — a menu
+	// accelerator, a window shortcut, the window-cycle keys — and this trinket
+	// then claims some of them itself, for scrollback. A release is routed
+	// like a paste instead: straight to whatever holds focus, past all of
+	// that, because those gestures are decided on the press and running them
+	// again on the way up would fire each of them twice.
+	//
+	// Both halves of that are right and together they are wrong, because the
+	// child ends up told a key it never saw pressed has been let go. That is
+	// the same fault as a press with no release, seen from the other side, and
+	// it is just as unreadable to a guest tracking held keys.
+	//
+	// Keyed by the name the press arrived under, which is the name its release
+	// carries back: direct-key-handler names a release for its press. The
+	// matching release consumes the entry, and losing focus clears the rest.
+	keyPressedToChild map[string]bool
+
 	// Debug callback for cell inspection
 	onCellClicked func(info CellDebugInfo)
 
@@ -949,6 +969,13 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 			key, t.guestKeyboardFlags(), t.terminal.IsFocused())
 	}
 	t.terminal.HandleKeyString(key)
+	// Written down so the release can be matched to it — see
+	// keyPressedToChild. Under the BARE name: the release names the key, not
+	// how long it was held.
+	if t.keyPressedToChild == nil {
+		t.keyPressedToChild = make(map[string]bool)
+	}
+	t.keyPressedToChild[event.Key] = true
 	t.Update()
 	return true
 }
@@ -967,11 +994,22 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 // reporting, so a child that wants nothing still sees nothing.
 //
 // Scrollback keys are deliberately not consulted. That gesture is decided on
-// the press, and running it again on the way up would scroll twice.
+// the press, and running it again on the way up would scroll twice — but a
+// scrollback key IS one the child was never handed, and its release is dropped
+// below for that reason rather than re-read here.
+//
+// The release goes only for a key whose press this child received (see
+// keyPressedToChild). Shift+PageUp scrolls and never reaches the guest; a menu
+// accelerator is taken before this trinket sees it at all. Sending their
+// releases anyway would tell the guest to let go of keys it was never holding.
 func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	if t.terminal == nil {
 		return false
 	}
+	if !t.keyPressedToChild[event.Key] {
+		return false
+	}
+	delete(t.keyPressedToChild, event.Key)
 	// Same as the press: HandleKeyString drops input the emulator believes
 	// unfocused, and this event only reaches a FOCUSED trinket, so say so
 	// rather than let the release depend on a press having set it first.
@@ -1131,6 +1169,11 @@ func (t *PurfecTerm) HandleFocusOut() {
 	if t.terminal != nil {
 		t.terminal.SetFocused(false)
 	}
+	// A key held while focus moves away comes up somewhere else, so its
+	// release will never arrive here to consume what the press wrote down.
+	// Forgetting the lot is what keeps that from answering, much later, for a
+	// release belonging to a different press of the same key.
+	t.keyPressedToChild = nil
 	t.Update()
 }
 

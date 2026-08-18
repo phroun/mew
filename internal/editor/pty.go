@@ -478,6 +478,25 @@ type ptyState struct {
 	// capture. Set from the --hidden switch and toggled at runtime by
 	// viewport_pty_hide / _show / _toggle.
 	hidden bool
+	// keyPressedToChild names the keys whose PRESS this child actually
+	// received, so a release can be matched to one.
+	//
+	// A press reaches the child only if mew's keymap did not claim it first: a
+	// bound chord runs its command and stops there. A release skips the keymap
+	// entirely, and must (see dispatchKey — no binding is written against one,
+	// and the sequence processor would count it as the next key of a
+	// sequence). Those two rules together handed the child a key-up for a key
+	// it was never told about — the same mismatch as a key-down with no
+	// key-up, wearing the other face. Every chord mew binds arrived at a
+	// hosted browser as a release out of nowhere.
+	//
+	// Keyed by the name the press arrived under, which is the name its release
+	// carries back: direct-key-handler names a release for its press, so ^B
+	// comes up "^B:Release" even if Control was let go first. The matching
+	// release consumes the entry, so a key held across a change of focus
+	// leaves at most one stale name behind, and the session's death takes the
+	// rest.
+	keyPressedToChild map[string]bool
 }
 
 // streams reports whether a rung captures live through the CaptureSink seam
@@ -1873,6 +1892,10 @@ func (e *Editor) rawKeyToPTY(key string) bool { return e.sendKeyToPTY(key) }
 // Two callers: rawKeyToPTY (a key claimed in advance by raw_key_input) and
 // the tinput_key command (a key the capture layer claims as it arrives —
 // `(capture) * = tinput_key` in [pty::mappings], the ordinary route).
+//
+// A RELEASE goes only if this child was told about the press — see
+// ptyState.keyPressedToChild. That is not a refinement of the encoding: it is
+// the difference between reporting a key and inventing one.
 func (e *Editor) sendKeyToPTY(key string) bool {
 	if e.Config.TerminalSurfaces.Key == nil {
 		return false
@@ -1881,8 +1904,27 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 	if w == nil || w.Buffer == nil {
 		return false
 	}
+	// The press and its release name the same key; the marker is what tells
+	// them apart, and a repeat is a press. Match on the bare name.
+	base, release := strings.CutSuffix(key, ":Release")
+	if !release {
+		base, _ = strings.CutSuffix(base, ":Repeat")
+	}
+
 	e.ptyMu.Lock()
 	st := e.ptySessions[w]
+	if st != nil && release {
+		// Consume the press this release belongs to, and decline outright if
+		// there is none: mew's keymap took that keystroke and the child never
+		// heard it go down. Consumed whether or not the bytes go out below, so
+		// a child that negotiated nothing (every release encodes to nothing
+		// there) does not accumulate names it can never use.
+		if !st.keyPressedToChild[base] {
+			e.ptyMu.Unlock()
+			return false
+		}
+		delete(st.keyPressedToChild, base)
+	}
 	e.ptyMu.Unlock()
 	if st == nil || st.hidden {
 		return false // hidden: the key edits the document as usual
@@ -1894,6 +1936,14 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 	if _, err := st.sess.Write(data); err != nil {
 		e.ShowWarning("Session write failed: " + err.Error())
 		return false
+	}
+	if !release {
+		e.ptyMu.Lock()
+		if st.keyPressedToChild == nil {
+			st.keyPressedToChild = make(map[string]bool)
+		}
+		st.keyPressedToChild[base] = true
+		e.ptyMu.Unlock()
 	}
 	return true
 }

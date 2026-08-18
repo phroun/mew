@@ -1878,7 +1878,10 @@ func TestKeyReleaseGoesToTheChildAndNotTheKeymap(t *testing.T) {
 		// release only for a child that asked for one. Standing in for it here:
 		// the name arrives with its marker intact, which is the thing under test.
 		Key: func(_ string, key string) []byte {
-			if key == "up:Release" {
+			switch key {
+			case "up":
+				return []byte("\x1b[A")
+			case "up:Release":
 				return []byte("\x1b[1;1:3A")
 			}
 			return nil
@@ -1890,10 +1893,13 @@ func TestKeyReleaseGoesToTheChildAndNotTheKeymap(t *testing.T) {
 	}
 	e.reconcileFocusedOptions()
 
+	// The press first: a release is only sent for a key the child was told
+	// about, so a release on its own proves nothing about the release path.
+	e.dispatchKey("up")
 	e.dispatchKey("up:Release")
-	if got := stub.sent(); got != "\x1b[1;1:3A" {
-		t.Errorf("the child received %q, want the release; without it a hosted "+
-			"browser sees keydown and never keyup", got)
+	if got := stub.sent(); got != "\x1b[A\x1b[1;1:3A" {
+		t.Errorf("the child received %q, want the press then the release; without "+
+			"the release a hosted browser sees keydown and never keyup", got)
 	}
 	if got := docContent(w); got != "ab" {
 		t.Errorf("the release edited the buffer (%q)", got)
@@ -1909,6 +1915,110 @@ func TestKeyReleaseGoesToTheChildAndNotTheKeymap(t *testing.T) {
 	e.dispatchKey("^X:Release")
 	if after := e.KeyProcessor.GetActiveSequence(); after != before {
 		t.Errorf("the sequence went from %q to %q when the key was let go", before, after)
+	}
+}
+
+// A key mew BOUND reaches the child neither way round.
+//
+// This is the first bug's mirror image, and it arrived the moment releases
+// started flowing. A press is offered to mew's keymap first and a bound chord
+// stops there — the child is never told the key went down. A release skips the
+// keymap entirely, by design, and so went straight through. The child was
+// therefore handed a key-up for a key it had never seen pressed, which is as
+// wrong as the key-down with no key-up that started all of this: a browser
+// tracking held keys was told to let go of a key it was never holding.
+//
+// Every chord mew binds did this, which is every ^-chord a terminal pane does
+// not claim first — so the noise was continuous, not occasional.
+func TestABoundKeySendsTheChildNeitherPressNorRelease(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		// Encode both halves, so a dropped release is the dispatcher's doing
+		// and not the encoder declining to spell one.
+		Key: func(_ string, key string) []byte {
+			switch key {
+			case "^B":
+				return []byte("\x02")
+			case "^B:Release":
+				return []byte("\x1b[98;5:3u")
+			case ",":
+				return []byte(",")
+			case ",:Release":
+				return []byte("\x1b[44;1:3u")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	// A comma is nobody's binding, so the pane's capture layer forwards it —
+	// and its release follows, because that one really was pressed. This half
+	// runs first: it is the control, and it has to hold before the bound key
+	// proves anything.
+	e.dispatchKey(",")
+	e.dispatchKey(",:Release")
+	if got := stub.sent(); got != ",\x1b[44;1:3u" {
+		t.Fatalf("an unbound key sent %q, want the press then the release: "+
+			"matching a release to its press must not cost the ordinary case", got)
+	}
+	control := stub.sent()
+
+	// ^B is mew's: a binding above the pane's capture level claims the press,
+	// so the child hears nothing go down.
+	e.KeyProcessor.MapKey("^B", "nop")
+	e.dispatchKey("^B")
+	if got := stub.sent(); got != control {
+		t.Fatalf("a bound key's press reached the child as %q; the rest of this "+
+			"test assumes the keymap took it", got[len(control):])
+	}
+	e.dispatchKey("^B:Release")
+	if got := stub.sent(); got != control {
+		t.Errorf("the child was sent %q for a key it never saw pressed", got[len(control):])
+	}
+}
+
+// A release is matched ONCE. The second one has no press behind it.
+//
+// A key cannot come up twice without going down in between, so a repeated
+// release is a mismatch like any other — and left unconsumed, one recorded
+// press would keep answering for every release of that key from then on,
+// which is the stale entry the matching exists to prevent.
+func TestARecordedPressAnswersForOneReleaseOnly(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			switch key {
+			case ",":
+				return []byte(",")
+			case ",:Release":
+				return []byte("\x1b[44;1:3u")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey(",")
+	e.dispatchKey(",:Release")
+	first := stub.sent()
+	e.dispatchKey(",:Release")
+	if got := stub.sent(); got != first {
+		t.Errorf("a second release sent %q on top of %q; one press answered twice",
+			got[len(first):], first)
 	}
 }
 

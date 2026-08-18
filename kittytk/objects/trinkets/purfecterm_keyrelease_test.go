@@ -36,10 +36,15 @@ func TestKeyReleaseReachesTheChild(t *testing.T) {
 	flags := purfecterm.KeyboardDisambiguate | purfecterm.KeyboardReportEvents
 	term, out := newReleaseTestTerm(t, flags)
 
+	// The press first: a release is only sent for a key this child was handed,
+	// so on its own it would prove the matching rule and not this path.
+	term.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a"})
+	pressed := out()
+
 	if !term.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"}) {
 		t.Fatal("HandleKeyRelease returned false; the release was not claimed")
 	}
-	got := out()
+	got := strings.TrimPrefix(out(), pressed)
 	if got == "" {
 		t.Fatal("a release produced no bytes; it stopped at the trinket")
 	}
@@ -60,9 +65,11 @@ func TestPressAndReleaseDifferOnTheWire(t *testing.T) {
 	pressTerm.HandleKeyPress(core.KeyPressEvent{Key: "Up"})
 
 	relTerm, relOut := newReleaseTestTerm(t, flags)
+	relTerm.HandleKeyPress(core.KeyPressEvent{Key: "Up"})
+	relPress := relOut()
 	relTerm.HandleKeyRelease(core.KeyReleaseEvent{Key: "Up"})
 
-	press, release := pressOut(), relOut()
+	press, release := pressOut(), strings.TrimPrefix(relOut(), relPress)
 	if press == "" || release == "" {
 		t.Fatalf("press=%q release=%q, want both sent", press, release)
 	}
@@ -114,17 +121,66 @@ func TestHeldKeyReachesTheChildAsARepeat(t *testing.T) {
 // emulator drops them — this test is here because the trinket now forwards
 // unconditionally and it is the layer below that decides.
 func TestReleaseIsNotSentToAChildThatDidNotAsk(t *testing.T) {
+	// Pressed first in both, so what is being tested is the negotiation and not
+	// the press-matching rule, which would drop an unpressed release anyway.
 	term, out := newReleaseTestTerm(t, 0)
+	term.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a"})
+	pressed := out()
 
 	term.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"})
-	if got := out(); got != "" {
+	if got := strings.TrimPrefix(out(), pressed); got != "" {
 		t.Errorf("a child that negotiated nothing was sent %q for a release", got)
 	}
 
 	// And with disambiguation alone, which is not event reporting.
 	term2, out2 := newReleaseTestTerm(t, purfecterm.KeyboardDisambiguate)
+	term2.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a"})
+	pressed2 := out2()
 	term2.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"})
-	if got := out2(); got != "" {
+	if got := strings.TrimPrefix(out2(), pressed2); got != "" {
 		t.Errorf("under disambiguation alone a release sent %q, want nothing", got)
+	}
+}
+
+// A key the child was never handed does not come back up at it either.
+//
+// This is the first bug's mirror image. A press reaches this trinket only if
+// nothing above claimed it — a menu accelerator, a window shortcut — and this
+// trinket claims some itself for scrollback. A release is routed past all of
+// that, straight to whatever holds focus, because those gestures are decided
+// on the press. Both rules are right; together they told a guest to let go of
+// keys it had never been told to hold.
+func TestAReleaseWithoutItsPressIsNotSent(t *testing.T) {
+	flags := purfecterm.KeyboardDisambiguate | purfecterm.KeyboardReportEvents
+	term, out := newReleaseTestTerm(t, flags)
+
+	if term.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"}) {
+		t.Error("a release with no press behind it was claimed")
+	}
+	if got := out(); got != "" {
+		t.Errorf("the child was sent %q for a key it never saw pressed", got)
+	}
+
+	// One press answers for one release, and no more: a key cannot come up
+	// twice without going down in between, and an entry left behind would keep
+	// answering for every later release of that name.
+	term.HandleKeyPress(core.KeyPressEvent{Key: "a", Text: "a"})
+	term.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"})
+	settled := out()
+	term.HandleKeyRelease(core.KeyReleaseEvent{Key: "a"})
+	if got := out(); got != settled {
+		t.Errorf("a second release sent %q; one press answered twice",
+			strings.TrimPrefix(got, settled))
+	}
+
+	// And a key still held when focus leaves is forgotten, so its press cannot
+	// answer for some later release of the same key.
+	term.HandleKeyPress(core.KeyPressEvent{Key: "b", Text: "b"})
+	term.HandleFocusOut()
+	held := out()
+	term.HandleKeyRelease(core.KeyReleaseEvent{Key: "b"})
+	if got := out(); got != held {
+		t.Errorf("a press left over from before the focus change sent %q",
+			strings.TrimPrefix(got, held))
 	}
 }
