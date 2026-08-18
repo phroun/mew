@@ -149,8 +149,14 @@ func TestMenuBarItemHover(t *testing.T) {
 
 // With a dropdown already open, hovering (button up) over a different
 // top-level menu drops that one down instead of merely highlighting it.
+//
+// A GRAPHICAL surface, where the pointer travels between clicks. A cell
+// surface reports a position only as the prelude to a click, so opening on it
+// would close the menu the click meant to open — see
+// TestCellSurfaceClickOpensTheOtherMenu.
 func TestMenuBarHoverSwitchesOpenMenu(t *testing.T) {
 	m := NewMenuBar()
+	m.graphicalCached = true
 	m.SetBounds(core.UnitRect{Width: 400, Height: 30})
 	file := NewMenu("File")
 	file.AddItem(NewMenuItem("New"))

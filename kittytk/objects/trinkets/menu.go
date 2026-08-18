@@ -1967,7 +1967,10 @@ type MenuBar struct {
 	hideCalendar  bool // when true, omit the right-hand date/time area
 
 	// graphicalCached records whether the last paint was on a pixel
-	// surface; measurement (dateTimeWidth) has no painter and reads it.
+	// surface; measurement (dateTimeWidth) has no painter and reads it, and
+	// so does everything about HOVER — which is a pointer affordance and does
+	// not exist on a cell surface, where the only "move" a click produces is
+	// the position report that precedes it.
 	graphicalCached bool
 
 	// Scroll state for overflow handling
@@ -2939,7 +2942,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		leftButtonX := dateTimeX - scrollButtonsWidth
 		if m.canScrollLeft() {
 			leftStyle := activeButtonStyle
-			if m.hoverScrollBtn == -1 {
+			if m.hoverScrollBtn == -1 && m.graphicalCached {
 				leftStyle = scheme.GetHoveredMenuBarButton()
 			}
 			p.DrawCell(leftButtonX, 0, '[', leftStyle)
@@ -2955,7 +2958,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		rightButtonX := leftButtonX + 3*metrics.CellWidth
 		if m.canScrollRight() {
 			rightStyle := activeButtonStyle
-			if m.hoverScrollBtn == 1 {
+			if m.hoverScrollBtn == 1 && m.graphicalCached {
 				rightStyle = scheme.GetHoveredMenuBarButton()
 			}
 			p.DrawCell(rightButtonX, 0, '[', rightStyle)
@@ -3010,7 +3013,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					s = scheme.GetFocusedMenuBarItem()
 					accelStyle = scheme.GetFocusedMenuBarMeta()
 				}
-			} else if i == m.hoverIndex {
+			} else if i == m.hoverIndex && m.graphicalCached {
 				s = scheme.GetHoveredMenuBar()
 				accelStyle = scheme.GetHoveredMenuBarMeta()
 			} else {
@@ -3109,7 +3112,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				s = scheme.GetFocusedMenuBarItem()
 				accelStyle = scheme.GetFocusedMenuBarMeta()
 			}
-		} else if i == m.hoverIndex {
+		} else if i == m.hoverIndex && m.graphicalCached {
 			s = scheme.GetHoveredMenuBar()
 			accelStyle = scheme.GetHoveredMenuBarMeta()
 		} else {
@@ -3654,8 +3657,17 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// A dropdown is already open, so hovering a different top-level menu
 		// drops it down instead of merely highlighting it - the same
 		// menu-to-menu switch the drag path performs, but without needing the
-		// button held. (Only graphical surfaces deliver bare hover moves.)
-		if m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) && m.menus[m.hoverIndex] != m.activeMenu {
+		// button held.
+		//
+		// GRAPHICAL SURFACES ONLY. A cell surface has no pointer travel to
+		// speak of: the position report that arrives before a click is the
+		// only "move" there is, so opening on it means the click that follows
+		// lands on a menu that is ALREADY open — and HandleMousePress reads
+		// that as the toggle it is, closing the menu the click was meant to
+		// open. What the user sees is a menu that refuses to open and a
+		// highlight where the dropdown should be.
+		if m.graphicalCached && m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) &&
+			m.menus[m.hoverIndex] != m.activeMenu {
 			m.OpenMenu(m.hoverIndex)
 			return true
 		}
