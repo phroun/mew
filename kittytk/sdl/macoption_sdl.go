@@ -2,6 +2,13 @@
 
 package sdl
 
+import (
+	"runtime"
+
+	"github.com/phroun/kittytk/core"
+	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
+)
+
 // macOS Option-key decoding.
 //
 // On macOS the Option key composes text rather than acting as a plain Mega
@@ -116,6 +123,134 @@ func decodeMacOSOptionChar(r rune) (string, bool) {
 	}
 	decoded, ok := macOSOptionChars[r]
 	return decoded, ok
+}
+
+// pendingOptionKey is an Option chord whose KEY_DOWN has been read but not yet
+// dispatched, because the character it composes has not arrived.
+//
+// macOS hands over both halves of the keystroke: the KEY_DOWN carries the
+// physical key and KMOD_ALT — which is what NAMES the chord, authoritatively —
+// and a TEXT_INPUT (or, for the five dead keys, a TEXT_EDITING) follows with
+// the character it composed. Waiting the one event costs nothing perceptible
+// and buys two things: the chord is dispatched with its character attached, so
+// the first press of it is as good as the hundredth, and the pairing is
+// observed rather than looked up.
+//
+// A chord that composes nothing is flushed unchanged, so nothing is lost by
+// waiting for a character that never comes.
+type pendingOptionKey struct {
+	key      string
+	scancode uint32
+	repeat   bool
+	surface  *sdlSurface
+}
+
+// macOptionMayCompose reports whether this key-down is one this platform
+// answers with a composed character, and so should be held for it.
+func macOptionMayCompose(sym sdl3.Keysym) bool {
+	return runtime.GOOS == "darwin" && optionComposes(sym)
+}
+
+// optionComposes reports whether the keystroke is the kind macOS composes for:
+// Option held on a printable key, with nothing else that would claim it first.
+//
+// The conditions mirror encodeKey's own alt branch. Ctrl and Command are
+// excluded because macOS composes nothing for those, so waiting for a character
+// there would only delay the chord until the next event flushed it. Kept apart
+// from the platform test so the conditions can be read — and tested — anywhere.
+func optionComposes(sym sdl3.Keysym) bool {
+	if sym.Mod&sdl3.KMOD_ALT == 0 {
+		return false
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI) != 0 {
+		return false
+	}
+	return sym.Sym >= 32 && sym.Sym < 127
+}
+
+// takePendingOption claims the held chord, if there is one.
+func (p *Platform) takePendingOption() *pendingOptionKey {
+	pending := p.pendingOption
+	p.pendingOption = nil
+	return pending
+}
+
+// dispatchOption sends a held chord with the character it composed, records
+// the pairing, and registers the press so its release names it the same.
+//
+// composed is empty when nothing was composed — the chord is still the
+// keystroke that happened, and is dispatched exactly as it would have been.
+func (p *Platform) dispatchOption(pending *pendingOptionKey, composed string) {
+	if pending == nil {
+		return
+	}
+	// What the keyboard composed is recorded before anything else: it is a
+	// fact about the keyboard, and stays true whether or not there is still a
+	// surface to deliver the keystroke to.
+	if composed != "" {
+		p.noteOptionChar(pending.key, composed)
+	}
+	if pending.surface == nil || pending.surface.handler == nil {
+		return
+	}
+	mods, name := core.ParseKeyModifiers(pending.key)
+	text := composed
+	if text == "" && len(name) == 1 && name[0] >= 32 && name[0] < 127 {
+		// Nothing composed: the chord types what the key itself shows, which
+		// is what every other platform does with Option held.
+		text = name
+	}
+	p.holdKey(pending.scancode, pending.key)
+	pending.surface.handler.Event(core.KeyPressEvent{
+		Key: pending.key, Modifiers: mods, Text: text, Repeat: pending.repeat,
+	})
+}
+
+// flushPendingOption dispatches a held chord that no composition followed.
+//
+// Called before any other event is handled and again when the queue drains, so
+// a chord that composes nothing waits for one event at most and never for an
+// idle keyboard.
+func (p *Platform) flushPendingOption() {
+	if pending := p.takePendingOption(); pending != nil {
+		p.dispatchOption(pending, "")
+	}
+}
+
+// noteOptionChar records what the keyboard composed for a chord.
+//
+// Written afresh every time: if the same chord starts composing something else
+// mid-session, the new character is what this keyboard does now, and the old
+// one was only ever a record of what it did before.
+func (p *Platform) noteOptionChar(chord, composed string) {
+	if chord == "" || composed == "" {
+		return
+	}
+	p.optionMu.Lock()
+	defer p.optionMu.Unlock()
+	if p.optionChars == nil {
+		p.optionChars = make(map[string]string)
+	}
+	p.optionChars[chord] = composed
+}
+
+// OptionChar implements core.OptionCharSource.
+func (p *Platform) OptionChar(chord string) (string, bool) {
+	p.optionMu.Lock()
+	defer p.optionMu.Unlock()
+	ch, ok := p.optionChars[chord]
+	return ch, ok
+}
+
+// OptionChars implements core.OptionCharSource.
+func (p *Platform) OptionChars() map[string]string {
+	p.optionMu.Lock()
+	defer p.optionMu.Unlock()
+	out := make(map[string]string, len(p.optionChars))
+	for k, v := range p.optionChars {
+		out[k] = v
+	}
+	return out
 }
 
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back

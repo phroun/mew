@@ -447,6 +447,15 @@ func (e *Editor) run() {
 		// its session goroutine; postUI marshals onto the desktop loop,
 		// where SetClipboard and the (possibly async) ReadClipboardAsync
 		// are safe. The paste delivery then marshals back into mew.
+		// What this keyboard was watched composing for an Option chord. The
+		// platform sees both halves of that keystroke and mew sees neither —
+		// it is handed the chord as bytes — so the answer has to travel.
+		mew.WithMacOptionObserved(func(chord string) (string, bool) {
+			if d := e.findDesktop(); d != nil {
+				return d.OptionChar(chord)
+			}
+			return "", false
+		}),
 		mew.WithClipboard(
 			func(s string) {
 				e.postUI(func() {

@@ -151,6 +151,20 @@ func WithClipboard(write func(text string), read func(deliver func(text string))
 	}
 }
 
+// WithMacOptionObserved supplies what the HOST has watched its own keyboard
+// compose for a chord ("M-a" -> "å"), consulted ahead of mew's built-in table
+// when an unbound Option combination types its character.
+//
+// A host that receives the composed character alongside the keystroke — the
+// graphical one, on macOS — knows what this machine actually produced. The
+// table is one keyboard from memory, and remains the answer for a host that
+// cannot see the pairing: a terminal is handed one or the other, never both.
+//
+// Return ok=false for a chord not observed, and mew falls back.
+func WithMacOptionObserved(lookup func(chord string) (string, bool)) Option {
+	return func(cfg *editor.Config) { cfg.MacOptionObserved = lookup }
+}
+
 // WithContextMenu is invoked when a right-click lands within the EDITING
 // AREA of the focused viewport (never the modebar, gutters, column ruler, or
 // title/message rows), with the click's 1-based terminal cell. The host pops

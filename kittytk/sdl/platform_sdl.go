@@ -132,6 +132,13 @@ type Platform struct {
 	// See modes.go.
 	modes modeState
 
+	// optionChars is what this keyboard has been WATCHED composing, by the
+	// chord that composed it, and pendingOption is the chord whose character
+	// has not arrived yet. See macoption_sdl.go.
+	optionMu      sync.Mutex
+	optionChars   map[string]string
+	pendingOption *pendingOptionKey
+
 	padScancode uint32
 
 	main *nativeWin
@@ -1327,9 +1334,23 @@ func (p *Platform) pumpEvents() bool {
 	for {
 		ev := sdl3.PollEvent()
 		if ev == nil {
+			// An Option chord still waiting for a character it turns out not
+			// to compose: the queue is empty, so nothing is coming. Dispatch
+			// it rather than hold it into an idle keyboard.
+			p.flushPendingOption()
 			return delivered
 		}
 		delivered = true
+		// Only the two text events answer a held Option chord. Anything else
+		// means no character is coming for it, and it goes first so the two
+		// keystrokes stay in the order they were made.
+		if p.pendingOption != nil {
+			switch ev.(type) {
+			case *sdl3.TextInputEvent, *sdl3.TextEditingEvent:
+			default:
+				p.flushPendingOption()
+			}
+		}
 		switch e := ev.(type) {
 		case *sdl3.QuitEvent:
 			if s := p.mainSurface(); s != nil && s.handler != nil {
@@ -1419,6 +1440,15 @@ func (p *Platform) pumpEvents() bool {
 			// self-inserts the character — see the sequence processor). The mask
 			// is read live: the modifier is still down while its glyph composes.
 			glyph := glyphMod(sdl3.GetModState())
+
+			// The character a held Option chord composed. The chord was named
+			// from its own key-down; this is what that keystroke produced, and
+			// the two are dispatched as the single keystroke they are.
+			if pending := p.takePendingOption(); pending != nil {
+				p.dispatchOption(pending, text)
+				continue
+			}
+
 			for _, ch := range text {
 				// On macOS, handle native Option key shortcuts by mapping them
 				// back into clear "M-key" syntax to ensure uniformity across environments.
@@ -1470,6 +1500,20 @@ func (p *Platform) pumpEvents() bool {
 			// never saw them and M-e opened an accent picker over whatever
 			// had focus. Decoded the same way, with Option still held, they
 			// are the shortcut the user pressed.
+			// A held Option chord whose key is one of the five dead ones: the
+			// composition IS what it produced, so the chord goes out with it
+			// and the pairing is recorded like any other. The chord was named
+			// from its key-down, so no dead-key table is consulted to know
+			// which key was pressed.
+			if pending := p.takePendingOption(); pending != nil {
+				p.dispatchOption(pending, e.GetText())
+				// Drop the composition the dead key opened, so the next
+				// character types plainly rather than wearing an accent from a
+				// keystroke that was meant as a shortcut.
+				_ = sdl3.ClearComposition(s.win.window)
+				continue
+			}
+
 			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
 				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
 					mods, name := core.ParseKeyModifiers(key)
@@ -1583,6 +1627,21 @@ func (p *Platform) pumpEvents() bool {
 					continue // Consumed by host zoom controller, skip dispatching
 				}
 				if key := translateKey(e.Keysym); key != "" {
+					// An Option chord on this platform is answered with a
+					// composed character on the very next event. Hold the chord
+					// for it, so it is dispatched WITH what it composed and the
+					// pairing is recorded from the keyboard rather than from a
+					// table. See macoption_sdl.go.
+					if macOptionMayCompose(e.Keysym) {
+						p.flushPendingOption()
+						p.pendingOption = &pendingOptionKey{
+							key:      key,
+							scancode: e.Keysym.Scancode,
+							repeat:   e.Repeat,
+							surface:  s,
+						}
+						continue
+					}
 					mods, name := core.ParseKeyModifiers(key)
 					text := ""
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
@@ -2431,14 +2490,16 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// spelled again here.
 			return keyMods{mega: alt, super: gui, hyper: hyper}.prefix() + "^" + string(shown)
 		case alt:
-			// On macOS a bare Option+printable composes a character that
-			// arrives on SDLTextInput as well, where we decode it back to
-			// M-key (see the TextInputEvent handler). Defer to that path so
-			// the shortcut fires exactly once; elsewhere Alt is a plain Meta
-			// modifier and SDLTextInput carries nothing, so emit M-key here.
-			if runtime.GOOS == "darwin" {
-				return ""
-			}
+			// The chord is named HERE, from the physical key and the modifier
+			// that is held — on every platform, macOS included.
+			//
+			// macOS also composes a character for it, which arrives a moment
+			// later on SDLTextInput. That character used to be what named the
+			// chord, by looking it up in a table of what a US keyboard
+			// composes; the key and its modifier are better evidence and are
+			// already in hand. The composition is not thrown away: the event
+			// loop holds this chord until it arrives, dispatches the two
+			// together, and remembers the pairing (see macoption_sdl.go).
 			return keyMods{mega: true, super: gui, hyper: hyper}.prefix() + string(ch)
 		case gui:
 			// Command-modified printables never arrive via SDLTextInput;
