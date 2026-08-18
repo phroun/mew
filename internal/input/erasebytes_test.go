@@ -76,6 +76,41 @@ func TestBothEraseBytesSurviveWithAndWithoutMega(t *testing.T) {
 	}
 }
 
+// A key typed as a byte still reports its release.
+//
+// This is the shape ordinary typing has in mew's terminal host, and it is
+// SPLIT: mew asks for event reporting without disambiguation, so a letter's
+// press arrives as the byte "l" while its release arrives as "CSI 108;1:3u".
+// Two channels, one key.
+//
+// It is tested here because here is where it matters and where it broke. A
+// change to how releases are matched dropped every one of these — every letter,
+// digit and symbol stopped reporting a key-up in a hosted browser — and nothing
+// in this repository noticed, because nothing had ever asserted that a byte
+// press and a sequence release belong to each other.
+func TestATypedKeyReportsItsRelease(t *testing.T) {
+	for _, tc := range []struct{ raw, press, release, what string }{
+		{"l\x1b[108;1:3u", "l", "l:Release", "a letter"},
+		{".\x1b[46;1:3u", ".", ".:Release", "punctuation"},
+		{"5\x1b[53;1:3u", "5", "5:Release", "a digit"},
+		// A capital's release names the BASE key — keycode 108 is "l" — with
+		// Shift in the modifier field, so the two halves only meet if the press
+		// was recorded under that same base.
+		{"L\x1b[108;2:3u", "L", "L:Release", "a capital"},
+		// A control byte is that same letter key held with Control.
+		{"\x0c\x1b[108;5:3u", "^L", "^L:Release", "a control chord"},
+		// And the chord is named for its PRESS: Control let go a moment before
+		// the letter, so the release carries no modifier, and it still comes up
+		// "^L:Release" rather than "l:Release".
+		{"\x0c\x1b[108;1:3u", "^L", "^L:Release", "Control released first"},
+	} {
+		got := feedBytes(t, tc.raw)
+		if len(got) != 2 || got[0] != tc.press || got[1] != tc.release {
+			t.Errorf("%s: %q -> %v, want [%s %s]", tc.what, tc.raw, got, tc.press, tc.release)
+		}
+	}
+}
+
 // The home-row key is "return" whichever byte or protocol carries it, and it
 // stays that way with Mega held. Upstream calls the bare key "Return" and the
 // keypad's "Enter"; mew folds the two, so both spellings have to land here.
