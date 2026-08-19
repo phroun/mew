@@ -1369,6 +1369,28 @@ func (p *Platform) pumpEvents() bool {
 			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
+				// Ask for text input again, now that this window holds the
+				// keyboard. It was asked for once when the window was made
+				// (see nativeWin creation), and SDL has believed it ever
+				// since — but the OS side of that state is bound to the view
+				// the system is actually consulting, and a window created
+				// before it had focus was never that view. The symptom is
+				// specific and easy to miss: keys work, typing works, and the
+				// input method's own surfaces do not. macOS's press-and-hold
+				// accent palette stays shut until the window has been left
+				// and re-entered once.
+				//
+				// The call is idempotent, and it sits here for the same
+				// reason the CapsLock read below does: focus is the moment
+				// something outside this process may have changed under us,
+				// so it is the moment to say it again rather than to wait for
+				// a key.
+				if s.win != nil && s.win.window != nil {
+					if err := sdl3.StartTextInput(s.win.window); err != nil && imeDebug {
+						fmt.Fprintf(os.Stderr,
+							"kittytk-ime: window %d restart on focus failed: %v\n", s.win.id, err)
+					}
+				}
 				// A latch can have moved while someone else had the keyboard,
 				// so this is the moment to look rather than to wait for a key.
 				if p.noteCapsLock(uint16(sdl3.GetModState())) {
@@ -1698,6 +1720,23 @@ func (p *Platform) pumpEvents() bool {
 			x, y := p.toUnits(e.X, e.Y, e.WindowID)
 			mods := currentKeyModifiers()
 			if e.Type == sdl3.MouseDown {
+				// Whatever the input method is holding, the user has just
+				// pointed somewhere else, and it goes. macOS's press-and-hold
+				// accent palette otherwise stays open over the click and
+				// follows the caret to wherever it lands, because the caret
+				// moving only re-anchors the palette (SetTextInputArea) and
+				// never closes it.
+				//
+				// This DISCARDS rather than commits, which is the only thing
+				// SDL offers. For the accent palette that is what was wanted —
+				// you clicked away, you did not want the accent. For a
+				// half-finished CJK composition it throws away characters
+				// already typed, where a native text view would have committed
+				// them. Discarding on any click is the chosen policy, not an
+				// oversight.
+				if s.win != nil && s.win.window != nil {
+					_ = sdl3.ClearComposition(s.win.window)
+				}
 				// Enable pointer capturing so dragging actions extend beyond window borders
 				// to allow continuous, lag-free native widget tear-out gestures.
 				_ = sdl3.CaptureMouse(true)
