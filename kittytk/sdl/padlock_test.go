@@ -34,10 +34,10 @@ func TestTheLockCapIsEatenAloneAndNamedWhenModified(t *testing.T) {
 		}
 	}
 
-	// Unprefixed. It is a lock, filed with CapsLock and ScrollLock — kitty puts
-	// it at 57360 with them rather than in its 57399+ keypad block — and a
-	// keymap is one file for both hosts, so "P-Clear" here against "Clear"
-	// there is a split it cannot afford.
+	// Unprefixed. It is a lock, filed with CapsLock and ScrollLock — the "kitty"
+	// protocol puts it at 57360 with them rather than in its 57399+ keypad block
+	// — and a keymap is one file for both hosts, so "P-Clear" here against
+	// "Clear" there is a split it cannot afford.
 	if got := encodeKey(sdl3.Keysym{Scancode: scanNumLock}, false, true, false, false, false); got != "M-Clear" {
 		t.Errorf("the lock cap took a pad prefix: %q", got)
 	}

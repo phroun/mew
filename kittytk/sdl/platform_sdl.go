@@ -2355,9 +2355,9 @@ var keypadKeys = map[uint32]padKey{
 // splits by case, exactly as Mega and Micro do.
 //
 // This is the channel that can finally tell them apart. A terminal cannot: the
-// kitty protocol reports one KP_SEPARATOR resolved from an xkb keysym, so every
-// pad comma in existence arrives collapsed onto a single code. Reading HID usage
-// IDs, the two are simply different numbers.
+// "kitty" protocol reports one KP_SEPARATOR resolved from an xkb keysym, so
+// every pad comma in existence arrives collapsed onto a single code. Reading
+// HID usage IDs, the two are simply different numbers.
 var archaicPadKeys = map[uint32]padKey{
 	// The comma above Enter, which a DEC LK201 wears and an AS/400 column keeps
 	// beside its own equals — the pair at adjacent usages, 133 and 134.
@@ -2536,12 +2536,12 @@ var shiftedShownKey = func(scancode uint32) rune {
 // prefix below is spelled by keyMods.prefix (see modifiers.go), which is the
 // only thing in this package that writes one.
 func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
-	// The lock cap, which reaches here only WITH a modifier — alone it never
-	// gets this far (see padlock.go). Named before the pad, and unprefixed: it
-	// is a lock, filed with CapsLock and ScrollLock, and kitty puts it at 57360
-	// with them rather than in its 57399+ keypad block. Saying "P-Clear" here
-	// while the terminal host said "Clear" is exactly the split a keymap, being
-	// one file for both, cannot afford.
+	// The lock cap, which reaches here only WITH a modifier — alone it never gets
+	// this far (see padlock.go). Named before the pad, and unprefixed: it is a
+	// lock, filed with CapsLock and ScrollLock, and the "kitty" protocol puts it
+	// at 57360 with them rather than in its 57399+ keypad block. Saying "P-Clear"
+	// here while the terminal host said "Clear" is exactly the split a keymap,
+	// being one file for both, cannot afford.
 	if sym.Scancode == scanNumLock {
 		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + "Clear"
 	}
@@ -2625,7 +2625,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// is written. Shift has to be stated because "^A" already spent the
 			// letter's case on Control.
 			//
-			// Only a graphical host or a terminal speaking the kitty protocol
+			// Only a graphical host or a terminal speaking the "kitty" protocol
 			// can report this chord at all — a legacy terminal sends Ctrl+A's
 			// ASCII control code for both, with no room for a Shift bit.
 			return keyMods{mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() +

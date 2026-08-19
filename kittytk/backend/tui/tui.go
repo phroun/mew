@@ -108,13 +108,12 @@ type TUIBackend struct {
 	motionWanted bool
 	motionOn     bool
 
-	// What kitty currently has on screen. kittyBaseIDs is one id per block,
-	// the full picture; kittyPatchIDs are the deltas layered over them since
-	// the last full send. kittyNextID only ever counts up, so a new placement
-	// can never collide with one being deleted in the same frame.
-	// kittyPatchArea is the pixel area patched since the last full send, which
-	// is what decides when patching has stopped being cheaper than starting
-	// over.
+	// What the "kitty" graphics protocol currently has on screen. kittyBaseIDs is
+	// one id per block, the full picture; kittyPatchIDs are the deltas layered
+	// over them since the last full send. kittyNextID only ever counts up, so a
+	// new placement can never collide with one being deleted in the same frame.
+	// kittyPatchArea is the pixel area patched since the last full send, which is
+	// what decides when patching has stopped being cheaper than starting over.
 	kittyBaseIDs   []uint32
 	kittyPatchIDs  []uint32
 	kittyPatchArea int
@@ -184,7 +183,9 @@ type TUIBackend struct {
 	// flushImagesLocked). Compared by value, which is why a queued image must
 	// be one nobody else will overwrite.
 	shownImages []placedImage
-	hadImages   bool // last frame placed images (kitty needs them deleted)
+	// hadImages says the last frame placed images, which "kitty" graphics
+	// needs deleted before the next set.
+	hadImages bool
 
 	// Output writer
 	output io.Writer
@@ -246,8 +247,8 @@ type TUIOptions struct {
 	// AlternateScreen uses the alternate screen buffer (default: true)
 	AlternateScreen bool
 
-	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the
-	// OSC 52 escape sequence (supported by iTerm2, xterm, kitty, wezterm,
+	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the OSC 52
+	// escape sequence (supported by iTerm2, xterm, the kitty terminal, wezterm,
 	// tmux with set-clipboard, ...). When false the host uses its own internal
 	// clipboard only. Default: true.
 	OSC52Clipboard bool
@@ -315,7 +316,7 @@ func (t *TUIBackend) enterTerminalModes() {
 	// Enter alternate screen
 	t.writeTTY("\033[?1049h")
 
-	// Enable Kitty keyboard protocol for better key detection.
+	// Enable the "kitty" keyboard protocol for better key detection.
 	//
 	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
 	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
@@ -342,10 +343,11 @@ func (t *TUIBackend) enterTerminalModes() {
 	//
 	// Disambiguate alone does not close this: it promotes the pad keys that
 	// produce NO text, which is why P-Enter, P-Home and the pad arrows were
-	// always right and only the locked pad was wrong. There is no narrower
-	// lever. The application-keypad mode that would have been keypad-only is
-	// parsed and discarded by kitty (screen_alternate_keypad_mode is an empty
-	// function), so this flag is the whole of the mechanism.
+	// always right and only the locked pad was wrong. There is no narrower lever.
+	// The application-keypad mode that would have been keypad-only is parsed and
+	// discarded by the kitty terminal, the protocol's own reference
+	// implementation (screen_alternate_keypad_mode, its handler for the mode,
+	// is an empty function), so this flag is the whole of the mechanism.
 	//
 	// The cost is that text stops arriving as text. Nothing here read it as
 	// text anyway — a key's name IS its character for a text key, and the
@@ -525,8 +527,8 @@ func (t *TUIBackend) Shutdown() {
 }
 
 // RestoreTerminal puts the terminal back the way it was found - mouse off,
-// cursor shown, alternate screen left, Kitty keyboard protocol popped, colours
-// reset - and does so at most once however many paths reach it.
+// cursor shown, alternate screen left, "kitty" keyboard protocol popped,
+// colours reset - and does so at most once however many paths reach it.
 //
 // It is separate from Shutdown, and exported, because the terminal is PROCESS
 // state, not backend state: whoever ends the process is responsible for it,
@@ -552,7 +554,7 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable bracketed paste (harmless if the terminal never enabled it).
 		t.writeTTY("\033[?2004l")
 
-		// Pop the Kitty keyboard protocol - BEFORE leaving the alternate
+		// Pop the "kitty" keyboard protocol - BEFORE leaving the alternate
 		// screen, because the flag stack is per-screen and the alternate
 		// screen's is the one Init pushed onto. Popping after the switch back
 		// would pop the MAIN screen's stack, which we never pushed, and leave
@@ -1876,9 +1878,9 @@ func (t *TUIBackend) maybeEnablePixelMouse() {
 // Mode changes have to reach somewhere they take effect, and they have to be
 // UNDONE through the same channel. Under `app > file` the enable would
 // otherwise reach the terminal (via /dev/tty) while the disable went into the
-// file, leaving raw/alt-screen/kitty-keys state set with nothing still running
-// to clear it. Content writes keep using write() and the configured output,
-// which is what redirection is for.
+// file, leaving raw/alt-screen/"kitty"-keyboard state set with nothing still
+// running to clear it. Content writes keep using write() and the configured
+// output, which is what redirection is for.
 func (t *TUIBackend) writeTTY(s string) {
 	if t.ttyOut != nil {
 		io.WriteString(t.ttyOut, s)

@@ -14,7 +14,7 @@ import (
 //
 // Keys reach it as escape sequences from the outer terminal, decoded by
 // direct-key-handler, so what this shows is what that terminal chose to send:
-// release and repeat events appear only if the terminal implements the kitty
+// release and repeat events appear only if the terminal implements the "kitty"
 // keyboard protocol, because there is no other way to express them. The modes
 // are the same story — Caps Lock is only known here because it rides in on a
 // keystroke, so the line stays blank until one arrives.

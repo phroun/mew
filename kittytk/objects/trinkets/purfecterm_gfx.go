@@ -85,7 +85,7 @@ type purfecTermGfx struct {
 	// given are both multiplied by it, and every image that comes back is
 	// divided by it again on the way to the screen.
 	//
-	// It exists because the kitty graphics protocol has no way for a terminal
+	// It exists because the "kitty" graphics protocol has no way for a terminal
 	// to state a display scale - a client derives density purely from the
 	// pixels-per-cell it is told - so the only way to ask for a denser
 	// rendering is to claim a bigger cell. A browser handed a cell twice the
@@ -535,11 +535,11 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			logicalX := x + horizOffset
 			cell := buf.GetVisibleCell(x, y)
 
-			// A kitty Unicode placeholder reserves the cell for a virtual image
-			// placement; the image is drawn into it from the resolved draw list
-			// (GetImagesByZ). The cell itself must not also paint a character:
-			// U+10EEEE is private-use, so whatever a font happens to have there
-			// would land on top of the image the cell exists to position.
+			// A "kitty" graphics Unicode placeholder reserves the cell for a virtual
+			// image placement; the image is drawn into it from the resolved draw list
+			// (GetImagesByZ). The cell itself must not also paint a character: U+10EEEE
+			// is private-use, so whatever a font happens to have there would land on
+			// top of the image the cell exists to position.
 			if purfecterm.IsKittyPlaceholderCell(cell) {
 				cell.Char, cell.Combining = ' ', ""
 			}
@@ -1722,12 +1722,13 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 	}
 }
 
-// renderImagesGfx blits cell-anchored bitmaps (Sixel, iTerm2 inline images, the
-// kitty graphics protocol) onto the text layer. An image is anchored at a screen
-// cell and scrolls with the text, so it lands on the cell grid the same way a
-// sprite does: scaled cell metrics, then the scroll and horizontal-offset shifts
-// renderSpritesGfx applies. Callers pass one z-order band at a time (see
-// Buffer.GetImagesByZ) — negative z under the glyphs, the rest over them.
+// renderImagesGfx blits cell-anchored bitmaps (Sixel, iTerm2 inline images,
+// the "kitty" graphics protocol) onto the text layer. An image is anchored at
+// a screen cell and scrolls with the text, so it lands on the cell grid the
+// same way a sprite does: scaled cell metrics, then the scroll and
+// horizontal-offset shifts renderSpritesGfx applies. Callers pass one z-order
+// band at a time (see Buffer.GetImagesByZ) — negative z under the glyphs, the
+// rest over them.
 func (t *PurfecTerm) renderImagesGfx(p *core.Painter, images []*purfecterm.PlacedImage,
 	cw, chh, ppu float64, scrollOffsetY, horizOffsetX int) {
 
@@ -1754,18 +1755,19 @@ func (t *PurfecTerm) renderImagesGfx(p *core.Painter, images []*purfecterm.Place
 }
 
 // imageForBlitGfx turns a placement into device-pixel imagery the painter can
-// composite 1:1, applying the placement's source crop (the kitty protocol's
+// composite 1:1, applying the placement's source crop (the "kitty" protocol's
 // x/y/w/h) and its destination size (PlacedImage.DestSize — cell- or
 // percentage-sized placements resolve to pixels there, and those pixels are the
 // same device pixels this path draws in, so no further scale conversion).
 //
-// Alpha is the subtle part. A Bitmap carries STRAIGHT alpha; Go's image.RGBA is
-// premultiplied. The two coincide exactly when every pixel is 0 or 255 — which
-// Sixel guarantees and a browser's opaque frame usually satisfies — and that is
-// the case worth keeping cheap, since it is also the case where the image is
-// full-screen. So a whole, unscaled, binary-alpha bitmap is wrapped where it
-// lies with no copy; anything else (a PNG's soft edge, a kitty RGBA frame
-// composed to partial alpha, a crop, a scale) goes through a real conversion.
+// Alpha is the subtle part. A Bitmap carries STRAIGHT alpha; Go's image.RGBA
+// is premultiplied. The two coincide exactly when every pixel is 0 or 255 —
+// which Sixel guarantees and a browser's opaque frame usually satisfies — and
+// that is the case worth keeping cheap, since it is also the case where the
+// image is full-screen. So a whole, unscaled, binary-alpha bitmap is wrapped
+// where it lies with no copy; anything else (a PNG's soft edge, a "kitty"
+// graphics RGBA frame composed to partial alpha, a crop, a scale) goes through
+// a real conversion.
 //
 // The returned image may be a shared scratch buffer, valid only until the next
 // call: the painter composites synchronously, so a blit-then-next-image loop is

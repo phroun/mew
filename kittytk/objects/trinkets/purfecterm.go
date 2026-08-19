@@ -992,7 +992,7 @@ func (t *PurfecTerm) HandleKeyPress(event core.KeyPressEvent) bool {
 // HandleKeyRelease forwards a key coming back up to the child.
 //
 // Without this the release stopped here. TrinketBase.HandleKeyRelease returns
-// false, and nothing overrode it, so a guest that had negotiated the kitty
+// false, and nothing overrode it, so a guest that had negotiated the "kitty"
 // keyboard protocol's event reporting — as a browser must, to know a held key
 // was let go — received presses only. The SDL backend has been dispatching
 // these events all along; they arrived one call short of the child.
@@ -1031,7 +1031,7 @@ func (t *PurfecTerm) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 	return true
 }
 
-// guestKeyboardFlags reports the kitty keyboard enhancements the child has
+// guestKeyboardFlags reports the "kitty" keyboard enhancements the child has
 // negotiated, for the trace. Zero means it asked for nothing, in which case no
 // release can be sent to it however far the event travelled — that is the
 // protocol's rule, not a fault in this chain.

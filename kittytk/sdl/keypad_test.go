@@ -109,7 +109,7 @@ func TestTheHomeRowKeyIsUntouched(t *testing.T) {
 
 // This is the channel that can tell the duplicated pad characters apart.
 //
-// A terminal cannot: the kitty protocol resolves one KP_SEPARATOR from an xkb
+// A terminal cannot: the "kitty" protocol resolves one KP_SEPARATOR from an xkb
 // keysym, so every pad comma in existence arrives collapsed onto a single code.
 // Reading HID usage IDs, they are simply different numbers — so the lowercase
 // prefix finally means something here, and it is the only place it can.

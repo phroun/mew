@@ -5,8 +5,8 @@ package trinkets
 // A graphical host rasterises the child's images itself (purfecterm_gfx.go). A
 // terminal host cannot: it owns no pixels. What it can do is hand them onward,
 // because the terminal IT is drawing into may speak a graphics protocol — and
-// the TUI backend does exactly that, emitting kitty or sixel after each frame's
-// text diff. This file is the half that feeds it.
+// the TUI backend does exactly that, emitting "kitty" graphics or sixel after
+// each frame's text diff. This file is the half that feeds it.
 //
 // The whole thing turns on one number. A child sizes, positions and scales
 // every picture in pixels-per-cell, and asks for it with CSI 16 t; nothing else

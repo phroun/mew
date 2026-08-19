@@ -43,16 +43,17 @@ const heldModifiers = sdl3.KMOD_SHIFT | sdl3.KMOD_CTRL | sdl3.KMOD_ALT |
 // says Clear — while X11, Wayland and Windows each keep one.
 //
 // It is SEEDED from the platform rather than measured, which the terminal host
-// does not have to do, and the difference is worth writing down. There, kitty
-// resolves a dual-legend cap for us: 57406 is the pad's 7 and 57423 is the same
-// cap's Home, so a digit arriving while the latch bit is clear proves there is
-// no latch, and it proves it on the first pad keystroke. SDL deliberately does
-// NOT resolve them — that is the entire reason keypadKey takes the lock as an
-// argument — so the same disagreement cannot be observed here. The seed is the
-// honest substitute, and an observation still overrules it: KMOD_NUM can only
-// be set by a real latch, so seeing it once settles the question for good and
-// gets the odd cases right (a Mac keyboard on Linux locks; a PC keyboard on a
-// Mac does not, because the OS is what lacks the function).
+// does not have to do, and the difference is worth writing down. There, the
+// "kitty" protocol resolves a dual-legend cap for us: 57406 is the pad's 7 and
+// 57423 is the same cap's Home, so a digit arriving while the latch bit is
+// clear proves there is no latch, and it proves it on the first pad keystroke.
+// SDL deliberately does NOT resolve them — that is the entire reason keypadKey
+// takes the lock as an argument — so the same disagreement cannot be observed
+// here. The seed is the honest substitute, and an observation still overrules
+// it: KMOD_NUM can only be set by a real latch, so seeing it once settles the
+// question for good and gets the odd cases right (a Mac keyboard on Linux
+// locks; a PC keyboard on a Mac does not, because the OS is what lacks the
+// function).
 type padLock struct {
 	mu       sync.Mutex
 	hasLatch bool

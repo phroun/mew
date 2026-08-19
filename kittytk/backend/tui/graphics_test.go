@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// The kitty query answers about our own probe id. A reply for someone else's
-// id, or a failure status, is not a yes.
+// The "kitty" graphics query answers about our own probe id. A reply for
+// someone else's id, or a failure status, is not a yes.
 func TestKittyProbeReplyIsAccepted(t *testing.T) {
 	for _, c := range []struct {
 		name, key string
@@ -49,21 +49,21 @@ func TestDA1SixelDetection(t *testing.T) {
 	}
 }
 
-// Kitty is preferred over sixel whichever reply lands first: it can place and
-// delete by id, where sixel only paints.
+// The "kitty" graphics protocol is preferred over sixel whichever reply lands
+// first: it can place and delete by id, where sixel only paints.
 func TestKittyWinsOverSixelEitherOrder(t *testing.T) {
 	b := &TUIBackend{}
 	b.handleDA1("DA1:62;4;22")
 	b.handleAPC("APC:Gi=19284;OK")
 	if got := b.TerminalGraphics(); got != GraphicsKitty {
-		t.Errorf("sixel then kitty -> %d, want kitty", got)
+		t.Errorf("sixel then \"kitty\" -> %d, want GraphicsKitty", got)
 	}
 
 	b = &TUIBackend{}
 	b.handleAPC("APC:Gi=19284;OK")
 	b.handleDA1("DA1:62;4;22")
 	if got := b.TerminalGraphics(); got != GraphicsKitty {
-		t.Errorf("kitty then sixel -> %d, want kitty", got)
+		t.Errorf("\"kitty\" then sixel -> %d, want GraphicsKitty", got)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestEnvFallbackOnlyWhenNothingAnswered(t *testing.T) {
 	b = &TUIBackend{} // answered nothing
 	b.resolveGraphicsFallback()
 	if got := b.TerminalGraphics(); got != GraphicsKitty {
-		t.Errorf("silent terminal -> %d, want the environment's kitty", got)
+		t.Errorf("silent terminal -> %d, want the environment's GraphicsKitty", got)
 	}
 }
 
@@ -106,9 +106,9 @@ func solidImage(w, h int, c color.RGBA) *image.RGBA {
 	return img
 }
 
-// The kitty encoding transmits and displays in one command, sized in source
-// pixels, leaving the cursor alone (C=1) so having drawn a picture does not
-// move the text layout the caller computed.
+// The "kitty" graphics encoding transmits and displays in one command, sized
+// in source pixels, leaving the cursor alone (C=1) so having drawn a picture
+// does not move the text layout the caller computed.
 func TestKittyEncodingShape(t *testing.T) {
 	var sb strings.Builder
 	writeKittyImage(&sb, solidImage(3, 2, color.RGBA{1, 2, 3, 255}), 1, 0)
@@ -117,7 +117,7 @@ func TestKittyEncodingShape(t *testing.T) {
 	// sending. TestKittyPayloadIsCompressed covers the choice between them.
 	for _, want := range []string{"\033_G", "a=T", "f=24", "s=3", "v=2", "C=1", "m=0", "\033\\"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("kitty payload missing %q: %q", want, out)
+			t.Errorf("\"kitty\" graphics payload missing %q: %q", want, out)
 		}
 	}
 }
@@ -325,13 +325,13 @@ func lastBytes(s string) string {
 }
 
 // An idle frame must not re-transmit a picture that is already on screen, and
-// under kitty neither must a busy one.
+// under the "kitty" graphics protocol neither must a busy one.
 //
 // A frame is drawn on a heartbeat whether or not anything happened, and a
-// picture is not a few bytes of text. Kitty placements persist until deleted —
-// the same persistence that makes an image survive a `clear` — so text painted
-// over those cells composites against them rather than destroying them, and no
-// amount of text is a reason to send pixels again.
+// picture is not a few bytes of text. "kitty" graphics placements persist
+// until deleted — the same persistence that makes an image survive a `clear` —
+// so text painted over those cells composites against them rather than
+// destroying them, and no amount of text is a reason to send pixels again.
 func TestKittyImagesSurviveTextWithoutBeingResent(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	var out strings.Builder
@@ -357,8 +357,9 @@ func TestKittyImagesSurviveTextWithoutBeingResent(t *testing.T) {
 		t.Errorf("an idle frame re-sent %d bytes for an unchanged picture", out.Len())
 	}
 
-	// A busy frame that repainted the very cells the image sits on. Kitty does
-	// not care: the placement is still there, under or over the text per its z.
+	// A busy frame that repainted the very cells the image sits on. The "kitty"
+	// graphics protocol does not care: the placement is still there, under or
+	// over the text per its z.
 	out.Reset()
 	for y := range b.dmgMin {
 		b.dmgMin[y], b.dmgMax[y] = 0, b.cols-1
@@ -366,7 +367,8 @@ func TestKittyImagesSurviveTextWithoutBeingResent(t *testing.T) {
 	place()
 	b.flushImagesLocked()
 	if out.Len() != 0 {
-		t.Errorf("a text repaint re-sent %d bytes under kitty, where placements persist", out.Len())
+		t.Errorf("a text repaint re-sent %d bytes under \"kitty\" graphics, "+
+			"where placements persist", out.Len())
 	}
 
 	// Moving it is a real change.
@@ -484,7 +486,7 @@ func TestSixelRepaintsOnlyTheDamagedCells(t *testing.T) {
 	}
 }
 
-// iTerm2 renders kitty graphics from 3.5 on but does not answer the query we
+// iTerm2 renders "kitty" graphics from 3.5 on but does not answer the query we
 // probe with, so the environment has to speak for it — and only for versions
 // that can, since a wrong guess prints an escape sequence as text.
 func TestITermVersionGatesKittyFallback(t *testing.T) {
@@ -736,7 +738,8 @@ func TestOcclusionChangeCountsAsAChange(t *testing.T) {
 	}
 	// It went again as two blocks, not one whole picture.
 	if n := strings.Count(out.String(), "\033_G"); n < 3 { // 1 delete + 2 placements
-		t.Errorf("emitted %d kitty commands, want a delete plus two blocks", n)
+		t.Errorf("emitted %d \"kitty\" graphics commands, want a delete plus "+
+			"two blocks", n)
 	}
 
 	// And once the menu closes, the whole picture returns.
@@ -820,8 +823,8 @@ func TestSameImageComparesPixelsNotWrappers(t *testing.T) {
 	}
 }
 
-// Kitty payloads go compressed, and drop the alpha channel when there is
-// nothing in it.
+// "kitty" graphics payloads go compressed, and drop the alpha channel when
+// there is nothing in it.
 //
 // Raw pixels base64'd is the most expensive thing this file does: a
 // full-window frame measures 4.83 MB on the wire that way, and every byte

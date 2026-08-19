@@ -6,11 +6,11 @@ package core
 // standing state that decides what other keys MEAN, and something on screen
 // usually has to say so. Status bars have shown CAPS and NUM since Lotus 1-2-3.
 //
-// Each host knows a different set — the terminal backend learns what the kitty
-// protocol tells it, a graphical host can ask the window system directly — so
-// the states are published under stable tokens with token values and a consumer
-// draws whichever it recognizes, however it likes. A host can publish a state
-// of its own with SetMode, and it is reported beside the rest.
+// Each host knows a different set — the terminal backend learns what the
+// "kitty" protocol tells it, a graphical host can ask the window system
+// directly — so the states are published under stable tokens with token values
+// and a consumer draws whichever it recognizes, however it likes. A host can
+// publish a state of its own with SetMode, and it is reported beside the rest.
 //
 // A state the host cannot determine is ABSENT rather than off. Those are two
 // different pictures on screen: "the lock is off" and "we cannot see the lock

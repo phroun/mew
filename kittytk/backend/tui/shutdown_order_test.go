@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// The Kitty keyboard flag stack is PER-SCREEN, so the push and the pop both
-// belong INSIDE the alternate screen — the screen the application actually runs
-// on.
+// The "kitty" keyboard flag stack is PER-SCREEN, so the push and the pop both
+// belong INSIDE the alternate screen — the screen the application actually
+// runs on.
 //
 // They used to straddle it: the push went out before ?1049h and the pop after
 // ?1049l, so both landed on the MAIN screen's stack. Nothing reads that stack
@@ -36,7 +36,7 @@ func TestKeyboardProtocolIsPushedAndPoppedInsideTheAltScreen(t *testing.T) {
 		t.Fatal("startup never enters the alternate screen")
 	}
 	if push < 0 {
-		t.Fatal("startup never pushes the Kitty keyboard protocol")
+		t.Fatal("startup never pushes the \"kitty\" keyboard protocol")
 	}
 	if push < enter {
 		t.Errorf("push at %d precedes the alt-screen switch at %d: it lands on the "+
@@ -56,7 +56,7 @@ func TestKeyboardProtocolIsPushedAndPoppedInsideTheAltScreen(t *testing.T) {
 		t.Fatal("shutdown never leaves the alternate screen")
 	}
 	if pop < 0 {
-		t.Fatal("shutdown never pops the Kitty keyboard protocol")
+		t.Fatal("shutdown never pops the \"kitty\" keyboard protocol")
 	}
 	if pop > leave {
 		t.Errorf("pop at %d follows the alt-screen exit at %d: it would pop the main "+

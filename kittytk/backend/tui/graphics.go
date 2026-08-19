@@ -10,7 +10,7 @@ package tui
 //
 // Two are supported, in preference order:
 //
-//   - the KITTY graphics protocol (APC _G), which places an image by id at
+//   - the "kitty" GRAPHICS protocol (APC _G), which places an image by id at
 //     the cursor and can delete it again, so a placement has a lifetime we
 //     can manage;
 //   - SIXEL (DCS q), which has no placement model at all - the pixels become
@@ -36,7 +36,7 @@ import (
 // The graphics protocol this backend will speak to the outer terminal.
 const (
 	GraphicsNone  = iota // no pictures; DrawImage is a no-op
-	GraphicsKitty        // kitty graphics protocol (APC _G)
+	GraphicsKitty        // the "kitty" graphics protocol (APC _G)
 	GraphicsSixel        // sixel (DCS q)
 )
 
@@ -94,9 +94,9 @@ func (t *TUIBackend) TerminalGraphics() int {
 // reader is running - so this must be called after Start(), exactly like the
 // pixel-mouse probe it sits beside.
 //
-// The kitty query transmits a 1x1 RGB image by direct payload and asks for
-// the result; a terminal that implements the protocol answers OK, and one
-// that does not answers nothing at all. DA1 comes second because its reply
+// The "kitty" graphics query transmits a 1x1 RGB image by direct payload and
+// asks for the result; a terminal that implements the protocol answers OK, and
+// one that does not answers nothing at all. DA1 comes second because its reply
 // is the fallback signal: attribute 4 means sixel.
 func (t *TUIBackend) probeGraphics() {
 	t.writeTTY("\033_Gi=" + strconv.Itoa(graphicsProbeID) +
@@ -105,7 +105,7 @@ func (t *TUIBackend) probeGraphics() {
 }
 
 // handleAPC consumes an "APC:<body>" reply. The only APC this backend asks
-// for is the kitty graphics query, whose success reply is "Gi=<id>;OK"; any
+// for is the "kitty" graphics query, whose success reply is "Gi=<id>;OK"; any
 // other status for our id (ENOTSUPP, EBADF, ...) is a terminal saying it
 // cannot, which is as useful an answer and equally final.
 func (t *TUIBackend) handleAPC(key string) {
@@ -121,15 +121,15 @@ func (t *TUIBackend) handleAPC(key string) {
 		return
 	}
 	t.mu.Lock()
-	// Kitty wins over a sixel answer that may already have arrived: it can
-	// place and delete by id, where sixel only paints.
+	// The "kitty" graphics protocol wins over a sixel answer that may already
+	// have arrived: it can place and delete by id, where sixel only paints.
 	t.graphics = GraphicsKitty
 	t.graphicsAnswered = true
 	t.mu.Unlock()
 }
 
 // handleDA1 consumes a "DA1:<attrs>" primary Device Attributes reply.
-// Attribute 4 is sixel. This never downgrades a kitty answer.
+// Attribute 4 is sixel. This never downgrades a "kitty" graphics answer.
 func (t *TUIBackend) handleDA1(key string) {
 	attrs := strings.Split(strings.TrimPrefix(key, "DA1:"), ";")
 	sixel := false
@@ -159,7 +159,7 @@ func graphicsFromEnv() int {
 	case "ghostty", "wezterm":
 		return GraphicsKitty
 	case "iterm.app":
-		// iTerm2 RENDERS kitty graphics from 3.5 on, but does not answer the
+		// iTerm2 RENDERS "kitty" graphics from 3.5 on, but does not answer the
 		// query we probe with — so without this it lands on sixel while
 		// speaking the better protocol perfectly well. Version-gated because
 		// anything older genuinely cannot, and a wrong guess here prints an
@@ -281,13 +281,13 @@ func (t *TUIBackend) DrawImagePx(xPx, yPx int, img image.Image) {
 
 // flushImagesLocked emits this frame's images, after the text diff.
 //
-// Kitty placements from the previous frame are deleted first: the protocol
-// keeps a placement alive until told otherwise, so without this an image that
-// moved or went away would stay on screen under the new one. Sixel has no
-// such notion - its pixels are already screen content, and the text diff that
-// repainted those cells is what erased them.
-// The caller already holds t.mu (EndFrame does, and writes the text diff
-// under it), so this must NOT take it again - sync.Mutex is not reentrant.
+// "kitty" graphics placements from the previous frame are deleted first: the
+// protocol keeps a placement alive until told otherwise, so without this an
+// image that moved or went away would stay on screen under the new one. Sixel
+// has no such notion - its pixels are already screen content, and the text
+// diff that repainted those cells is what erased them. The caller already
+// holds t.mu (EndFrame does, and writes the text diff under it), so this must
+// NOT take it again - sync.Mutex is not reentrant.
 func (t *TUIBackend) flushImagesLocked() {
 	proto := t.graphics
 	imgs := t.pendingImages
@@ -334,10 +334,10 @@ func (t *TUIBackend) flushImagesLocked() {
 		}
 	}
 
-	// KITTY: a placement lives until it is deleted. Text painted over those
-	// cells composites against it rather than destroying it — the same
-	// persistence that makes an image survive a `clear` — so text is no reason
-	// to send anything and an unchanged screen costs nothing at all.
+	// "kitty" GRAPHICS: a placement lives until it is deleted. Text painted over
+	// those cells composites against it rather than destroying it — the same
+	// persistence that makes an image survive a `clear` — so text is no reason to
+	// send anything and an unchanged screen costs nothing at all.
 	//
 	// SIXEL: there is no placement, only pixels that became screen content.
 	// Text painted over them erases that part, so a block goes again when the
@@ -699,7 +699,7 @@ func (t *TUIBackend) cellPixelSizeLocked() (int, int) {
 }
 
 // itermAtLeast35 reports whether an iTerm2 TERM_PROGRAM_VERSION is 3.5 or
-// newer, the release that added kitty graphics. Anything unparseable is
+// newer, the release that added "kitty" graphics. Anything unparseable is
 // treated as older: the cost of guessing high is an escape sequence printed
 // as text, and the cost of guessing low is sixel, which still works.
 func itermAtLeast35(v string) bool {

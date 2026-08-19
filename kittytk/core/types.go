@@ -205,7 +205,7 @@ type KeyModifiers int
 // not being loose about it: the Meta key on a Space Cadet keyboard encoded as
 // the 8th bit or an ESC prefix, and the PC's Alt key was built to do exactly
 // that. X11 and the Space Cadet call the OTHER one Meta, on the grounds that
-// it is the key actually labelled so. A terminal speaking the kitty protocol
+// it is the key actually labelled so. A terminal speaking the "kitty" protocol
 // reports keys rather than bytes, so it has to say which one you pressed even
 // though the encoding is identical.
 //

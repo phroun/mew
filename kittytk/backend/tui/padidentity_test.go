@@ -19,7 +19,8 @@ import (
 // NO text, which is exactly why P-Enter, P-Home and the pad arrows were always
 // right and only the LOCKED pad was wrong. Nor is there a narrower lever: the
 // application-keypad mode that would have been keypad-only is parsed and
-// discarded by kitty, whose screen_alternate_keypad_mode is an empty function.
+// discarded by the kitty terminal, the protocol's own reference
+// implementation, whose screen_alternate_keypad_mode handler is empty.
 func TestTheKeypadIsAskedToIdentifyItself(t *testing.T) {
 	const (
 		disambiguate  = 1

@@ -167,7 +167,7 @@ func cellPx(term *PurfecTerm) (w, h float64) {
 		float64(chU) * term.gfx.ppu * buf.GetVerticalScale()
 }
 
-// kittyRGBA builds a kitty graphics transmit-and-display command carrying raw
+// kittyRGBA builds a "kitty" graphics transmit-and-display command carrying raw
 // RGBA (f=32) pixels, with any extra keys the caller needs.
 func kittyRGBA(w, h int, pix []byte, extra string) []byte {
 	return []byte(fmt.Sprintf("\x1b_Ga=T,f=32,s=%d,v=%d%s;%s\x1b\\",
@@ -274,9 +274,10 @@ func TestGfxImagePartialAlphaBlend(t *testing.T) {
 	}
 }
 
-// A placement can ask to be drawn at a size that is not the size it was decoded
-// at - the kitty protocol's c= and r= size an image in CELLS. The renderer must
-// scale to PlacedImage.DestSize, in the same device pixels it draws in.
+// A placement can ask to be drawn at a size that is not the size it was
+// decoded at - the "kitty" protocol's c= and r= size an image in CELLS. The
+// renderer must scale to PlacedImage.DestSize, in the same device pixels it
+// draws in.
 func TestGfxImageScaledToCells(t *testing.T) {
 	term, b := gfxImageTerm(t)
 
@@ -316,7 +317,7 @@ func TestGfxImageScaledToCells(t *testing.T) {
 	}
 }
 
-// A source crop (the kitty protocol's x/y/w/h) shows only part of the stored
+// A source crop (the "kitty" protocol's x/y/w/h) shows only part of the stored
 // image, and the placement is the size of the CROP, not of the whole bitmap.
 func TestGfxImageSourceCrop(t *testing.T) {
 	term, b := gfxImageTerm(t)
@@ -486,7 +487,7 @@ func gfxImageTermScaled(t *testing.T, scale int, density float64) (*PurfecTerm, 
 // On a HiDPI SCREEN the cell we ADVERTISE is deliberately larger than the one
 // we paint, by the screen's density.
 //
-// The kitty protocol gives a terminal no way to state a display scale - a
+// The "kitty" protocol gives a terminal no way to state a display scale - a
 // client works density out purely from the pixels-per-cell it is told - so
 // claiming a bigger cell is the only way to ask for a denser rendering. A
 // browser told a cell is twice its real size lays out half as many css pixels
