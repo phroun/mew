@@ -939,17 +939,32 @@ func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
 	covers := e.preeditCovers
 	e.preeditCovers = 0
-	if event.Text == "" && covers == 0 {
-		// Nothing to put in and nothing to take out. The composition is still
-		// ended, which the empty update following this does.
-		return true
+	for _, cmd := range commitCommands(event.Text, covers) {
+		e.execMew(cmd)
 	}
-	// Comma-separated, which is how PawScript takes more than one argument
-	// (see mew's own `map <key>, <command>`). Without it the two run together
-	// into a single string and the count is lost inside the text.
-	e.execMew(fmt.Sprintf("replace_prior %d, '%s'", covers,
-		escapeMewLiteral(event.Text)))
 	return true
+}
+
+// commitCommands is what a finished composition tells mew to do, in order.
+//
+// Ending the composition comes FIRST and always. A commit ends one by
+// definition, and mew has to be told rather than left to infer it from a later
+// event: on the route where the palette is confirmed by number, the toolkit's
+// own composition is the only one there is and nothing follows the commit to
+// close it. Left standing, the letter underneath kept painting as provisional
+// text for good, with the typing running on past it.
+//
+// The replacement is comma-separated, which is how PawScript takes more than
+// one argument (see mew's own `map <key>, <command>`). Without it the two run
+// together into a single string and the count is lost inside the text.
+func commitCommands(text string, covers int) []string {
+	cmds := []string{"preedit ''"}
+	if text == "" && covers == 0 {
+		// Nothing to put in and nothing to take out.
+		return cmds
+	}
+	return append(cmds, fmt.Sprintf("replace_prior %d, '%s'",
+		covers, escapeMewLiteral(text)))
 }
 
 // escapeMewLiteral makes text safe inside a single-quoted PawScript literal, so
