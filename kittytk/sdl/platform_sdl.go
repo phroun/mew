@@ -1557,25 +1557,25 @@ func (p *Platform) pumpEvents() bool {
 			// are the shortcut the user pressed.
 			// A held Option chord whose key is one of the five dead ones: the
 			// composition IS what it produced, so the chord goes out with it
-			// and the pairing is recorded like any other. The chord was named
-			// from its key-down, so no dead-key table is consulted to know
-			// which key was pressed.
-			// A DEAD KEY's composition is that chord's own output, so the chord
-			// goes out with it and the pairing is recorded like any other.
+			// An Option chord that opened a composition is a DEAD KEY: Option+i
+			// arms a circumflex for the next keystroke. The chord itself is
+			// still reported — it was named from its own key-down, so M-i stays
+			// bindable — but it TYPED nothing, and the composition it armed is
+			// not its output.
 			//
-			// Only a dead key. Any held printable can meet a composition too —
-			// hold a letter down on macOS and its accent palette opens one —
-			// and that composition belongs to the input method taking the
-			// keystroke over, not to the key. Dispatching it here put a
-			// composed letter in after the one already typed, and clearing it
-			// fought the palette that had just opened.
+			// So it goes out with no text and nothing is recorded against it. A
+			// dead key that reported the accent as its own text had that accent
+			// inserted by anything falling through to what the chord types, and
+			// then the composition produced the accented character too:
+			// Option+i, u came out "ˆû".
+			//
+			// The composition is left standing rather than cleared, which is
+			// what lets the next keystroke compose against it — the "û" in that
+			// pair, arriving as ordinary committed text.
 			if p.pendingPress != nil && p.pendingPress.optionChord {
-				p.dispatchPendingPress(p.takePendingPress(), e.GetText())
-				// Drop the composition the dead key opened, so the next
-				// character types plainly rather than wearing an accent from a
-				// keystroke that was meant as a shortcut.
-				_ = sdl3.ClearComposition(s.win.window)
-				continue
+				p.dispatchPendingPress(p.takePendingPress(), "")
+				// Fall through: the composition is forwarded below like any
+				// other, so a trinket paints it as the in-flight preedit it is.
 			}
 			// An input method has taken this keystroke over. The press it was
 			// holding is not a keystroke any more — the composition below is —
@@ -1584,17 +1584,18 @@ func (p *Platform) pumpEvents() bool {
 
 			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
 				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
+					// The same keystroke as above, reached when its key-down
+					// was not seen — the chord is recovered from the accent it
+					// armed instead of from the key. It is reported the same
+					// way for the same reasons: no text of its own, and the
+					// composition left standing for the next keystroke to
+					// compose against.
 					mods, name := core.ParseKeyModifiers(key)
 					text := ""
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 						text = name
 					}
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
-					// Drop the composition the dead key opened, so the next
-					// character types plainly rather than wearing an accent
-					// from a keystroke that was meant as a shortcut.
-					_ = sdl3.ClearComposition(s.win.window)
-					continue
 				}
 			}
 			s.handler.Event(core.TextEditingEvent{

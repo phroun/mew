@@ -176,3 +176,31 @@ func TestOnlyADeadKeyClaimsAComposition(t *testing.T) {
 		}
 	}
 }
+
+// A dead key TYPED nothing, and nothing is recorded against it.
+//
+// Option+i arms a circumflex for the next keystroke. The chord is still
+// reported — it was named from its own key-down, so M-i stays bindable — but
+// the accent it armed is not its output. Recorded as its output, the accent was
+// inserted by anything falling through to what the chord types, and then the
+// composition produced the accented character as well: Option+i, u came out
+// "ˆû".
+func TestADeadKeyRecordsNoText(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.pendingPress = &pendingKeyPress{
+		key: "M-i", scancode: 8, surface: s, optionChord: true,
+	}
+
+	// What the pump does when a composition follows an Option chord.
+	p.dispatchPendingPress(p.takePendingPress(), "")
+
+	keys := h.keys()
+	if len(keys) != 1 || keys[0].Key != "M-i" {
+		t.Fatalf("dispatched %v, want one M-i", h.events)
+	}
+	if text, ok := p.KeyChordText("M-i"); ok {
+		t.Errorf("M-i recorded as typing %q; the accent it armed is not its output", text)
+	}
+}
