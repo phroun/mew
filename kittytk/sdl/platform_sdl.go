@@ -1744,6 +1744,19 @@ func (p *Platform) pumpEvents() bool {
 				if p.fontZoomKey(e.Keysym) {
 					continue // Consumed by host zoom controller, skip dispatching
 				}
+				// A dead key types nothing, and the press is the only moment
+				// that can be known: it produces no text for the answer to be
+				// recovered from later. Asked of the KEY, not of translateKey,
+				// which yields these key-downs entirely on this platform — so a
+				// record hung off its answer never ran. See macOptionChordFor.
+				if chord, ok := macOptionChordFor(e.Keysym); ok && isDeadKeyChord(chord) {
+					p.noteKeyChordTypesNothing(chord)
+				}
+				if imeDebug && translateKey(e.Keysym) == "" {
+					fmt.Fprintf(os.Stderr,
+						"kittytk-ime: key-down yielded (sym=%d mod=%#x) — no chord named here\n",
+						e.Keysym.Sym, e.Keysym.Mod)
+				}
 				if key := translateKey(e.Keysym); key != "" {
 					// A press whose text arrives in the next event is held for
 					// it, so it is dispatched WITH what it produced and the

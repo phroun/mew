@@ -343,6 +343,35 @@ var deadKeyChords = func() map[string]bool {
 // first few presses of each dead key misbehaving and then stopping.
 func isDeadKeyChord(chord string) bool { return deadKeyChords[chord] }
 
+// macOptionChordFor names the M- chord a macOS Option keystroke makes, from the
+// key and the modifier held.
+//
+// It exists because translateKey does not always get the chance. macOS can
+// report Option as a level-3 shift, and can report the key itself as the
+// character it composed — either of which makes translateKey yield the key-down
+// entirely and leave the chord to be recovered later from the text. That works
+// for a chord that produces text. A dead key produces none, so there is nothing
+// to recover it from, and the only moment it can be known is the press.
+//
+// Deliberately not a substitute for translateKey: it answers one narrow
+// question — which M- chord is this — for the one caller that has to ask before
+// anything has been produced.
+func macOptionChordFor(sym sdl3.Keysym) (string, bool) {
+	if runtime.GOOS != "darwin" {
+		return "", false
+	}
+	if sym.Mod&(sdl3.KMOD_ALT|sdl3.KMOD_MODE) == 0 {
+		return "", false
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI) != 0 {
+		return "", false
+	}
+	if sym.Sym < 32 || sym.Sym >= 127 {
+		return "", false
+	}
+	return "M-" + string(rune(sym.Sym)), true
+}
+
 // isArmedAccent reports whether text an Option chord produced is one of the
 // accents a dead key ARMS rather than types.
 //

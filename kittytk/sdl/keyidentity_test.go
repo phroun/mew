@@ -3,6 +3,7 @@
 package sdl
 
 import (
+	"runtime"
 	"testing"
 
 	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
@@ -258,5 +259,39 @@ func TestTheDeadKeysAreKnownByName(t *testing.T) {
 	// Read from the same table as the accents, so the two cannot disagree.
 	if len(deadKeyChords) != len(macOSDeadKeys) {
 		t.Errorf("%d chords from %d accents", len(deadKeyChords), len(macOSDeadKeys))
+	}
+}
+
+// A macOS Option chord can be named from the key alone.
+//
+// translateKey does not always get the chance: macOS can report Option as a
+// level-3 shift, and can report the key as the character it composed, either of
+// which makes translateKey yield the key-down and leave the chord to be
+// recovered from the text that follows. A dead key produces no text, so there
+// is nothing to recover it from, and the press is the only moment it can be
+// known.
+func TestNamingAMacOptionChordFromTheKey(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the naming is macOS's Option behaviour and answers false elsewhere")
+	}
+	for _, c := range []struct {
+		what string
+		sym  sdl3.Keysym
+		want string
+	}{
+		{"Option reported as Alt", sdl3.Keysym{Sym: 'i', Mod: sdl3.KMOD_LALT}, "M-i"},
+		{"Option reported as a level-3 shift", sdl3.Keysym{Sym: 'i', Mod: sdl3.KMOD_MODE}, "M-i"},
+		{"Control claims it first", sdl3.Keysym{Sym: 'i', Mod: sdl3.KMOD_LALT | sdl3.KMOD_LCTRL}, ""},
+		{"Command claims it first", sdl3.Keysym{Sym: 'i', Mod: sdl3.KMOD_LALT | sdl3.KMOD_LGUI}, ""},
+		{"no Option at all", sdl3.Keysym{Sym: 'i'}, ""},
+		{"a key with no character to name", sdl3.Keysym{Sym: sdl3.K_F1, Mod: sdl3.KMOD_LALT}, ""},
+	} {
+		got, ok := macOptionChordFor(c.sym)
+		if !ok {
+			got = ""
+		}
+		if got != c.want {
+			t.Errorf("%s: named %q, want %q", c.what, got, c.want)
+		}
 	}
 }
