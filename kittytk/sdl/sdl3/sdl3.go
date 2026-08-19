@@ -495,7 +495,34 @@ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
 // TextInputActive reports whether text events are enabled for a window.
 // Exists so a test can prove every window got StartTextInput, rather
 // than the absence showing up as "typing does nothing" in one window.
+//
+// It reports SDL's own flag, which is not the same question as whether the
+// OS is listening — see RestartTextInput.
 func TextInputActive(w *Window) bool { return w.w.TextInputActive() }
+
+// StopTextInput disables text events for a window. Exposed for
+// RestartTextInput, which is the only caller that wants it.
+func StopTextInput(w *Window) error { return w.w.StopTextInput() }
+
+// RestartTextInput turns text input off and straight back on.
+//
+// The off is the point. SDL_StartTextInput does nothing when a window's text
+// input is already active — it checks its own flag and returns — so once that
+// flag is set, every later call is a no-op no matter what has happened
+// underneath. On macOS the platform side of "start" is what attaches the
+// input-method responder to the focused window's view, and if that ran at a
+// moment the window was not yet the one with the keyboard, it did nothing
+// while SDL latched the flag on anyway. From then on the window has text
+// input by SDL's reckoning and no input method by the OS's: keys arrive,
+// typing works, and only the input method's own surfaces are missing.
+//
+// Going off and on again clears the flag so the second call is a real one.
+func RestartTextInput(w *Window) error {
+	if err := StopTextInput(w); err != nil {
+		return err
+	}
+	return StartTextInput(w)
+}
 
 // SetTextInputArea tells the OS where the caret is, in WINDOW pixels, so
 // an input method can put its candidate window under the text being

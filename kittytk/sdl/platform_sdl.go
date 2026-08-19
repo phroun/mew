@@ -1369,24 +1369,19 @@ func (p *Platform) pumpEvents() bool {
 			case sdl3.WindowFocusGained:
 				s.handler.Event(core.FocusEvent{Focused: true})
 				s.Invalidate(core.UnitRect{})
-				// Ask for text input again, now that this window holds the
+				// Set text input up again, now that this window holds the
 				// keyboard. It was asked for once when the window was made
 				// (see nativeWin creation), and SDL has believed it ever
-				// since — but the OS side of that state is bound to the view
-				// the system is actually consulting, and a window created
-				// before it had focus was never that view. The symptom is
-				// specific and easy to miss: keys work, typing works, and the
-				// input method's own surfaces do not. macOS's press-and-hold
-				// accent palette stays shut until the window has been left
-				// and re-entered once.
+				// since — which is the problem, not the reassurance: a plain
+				// StartTextInput would see that belief and return without
+				// doing anything. See sdl3.RestartTextInput.
 				//
-				// The call is idempotent, and it sits here for the same
-				// reason the CapsLock read below does: focus is the moment
-				// something outside this process may have changed under us,
-				// so it is the moment to say it again rather than to wait for
-				// a key.
+				// It sits here for the same reason the CapsLock read below
+				// does: focus is the moment something outside this process may
+				// have changed under us, so it is the moment to say it again
+				// rather than to wait for a key.
 				if s.win != nil && s.win.window != nil {
-					if err := sdl3.StartTextInput(s.win.window); err != nil && imeDebug {
+					if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
 						fmt.Fprintf(os.Stderr,
 							"kittytk-ime: window %d restart on focus failed: %v\n", s.win.id, err)
 					}
@@ -2857,11 +2852,17 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 		return
 	}
 
-	// Ask for text input again, before saying where it is. Only on the edge:
-	// this runs whenever the caret MOVES, which is most keystrokes, and a
-	// syscall per character is not what the caret position is for.
+	// Set text input up again, before saying where it is — really again, not
+	// the no-op a plain StartTextInput would be here (see
+	// sdl3.RestartTextInput). This is what reaches the first caret of a
+	// session, when the window was made and its text input claimed before the
+	// window was the one with the keyboard.
+	//
+	// Only on the edge: this runs whenever the caret MOVES, which is most
+	// keystrokes, and tearing the input method down and back up per character
+	// is not what a caret position is for.
 	if tookFocus {
-		if err := sdl3.StartTextInput(s.win.window); err != nil && imeDebug {
+		if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
 			fmt.Fprintf(os.Stderr,
 				"kittytk-ime: window %d restart on caret focus failed: %v\n", s.win.id, err)
 		}
