@@ -64,7 +64,7 @@ func TestTextInputShiftCtrlHomeEnd(t *testing.T) {
 func TestTextInputOverwriteSelection(t *testing.T) {
 	ti, clip := newClippedInput("hello")
 	ti.SelectAll()
-	ti.HandleKeyPress(core.KeyPressEvent{Text: "X"})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "X"})
 	if ti.Text() != "X" {
 		t.Errorf("typing over selection = %q, want %q", ti.Text(), "X")
 	}

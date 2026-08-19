@@ -1114,9 +1114,24 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	}
 
-	// Handle printable characters
-	if event.Text != "" && utf8.RuneCountInString(event.Text) == 1 {
-		t.insert(event.Text)
+	// Handle printable characters, in the order mew's own floor uses.
+	//
+	// A one-character KeyName IS the character: nothing needs looking up, and
+	// this is the answer wherever no host has watched the keyboard at all — the
+	// terminal backend, where a keystroke arrives already named and there is no
+	// second event to observe.
+	if utf8.RuneCountInString(event.Key) == 1 {
+		t.insert(event.Key)
+		return true
+	}
+
+	// Otherwise ask the host what this chord was watched typing. That is the
+	// case where the name cannot carry the answer — macOS Option, where M-a
+	// types "å" — and reading it off the event instead made this trinket depend
+	// on text riding along with a press it does not identify.
+	if text, ok := core.KeyChordTextFor(t, event.Key); ok &&
+		utf8.RuneCountInString(text) == 1 {
+		t.insert(text)
 		return true
 	}
 

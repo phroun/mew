@@ -223,6 +223,20 @@ type TextInputAreaSetter interface {
 	SetTextInputArea(x, y core.Unit, visible bool)
 }
 
+// TextInputEnabler is an optional Surface capability: turn text input on and
+// off. Distinct from the area, which says only WHERE — an input method whose
+// area is forgotten still opens, just at whatever corner the platform picks.
+//
+// Off is what stops it opening at all, and that is what belongs on a trinket
+// that does not type: a button holding focus has nothing for an accent palette
+// or a candidate list to compose for.
+//
+// Key events are unaffected. A press is named from the key, so a surface with
+// text input off still receives every keystroke under its own name.
+type TextInputEnabler interface {
+	SetTextInputEnabled(on bool)
+}
+
 // TextInputFrame is what a finished frame knows about where text is going.
 //
 // Two sources, deliberately kept apart. WHERE comes from paint, because that is
@@ -263,6 +277,18 @@ type TextInputFrame struct {
 func ApplyTextCaret(s Surface, f TextInputFrame) {
 	if s == nil {
 		return
+	}
+	// Text input itself follows focus, and only focus: whether text is going
+	// anywhere is not something a frame can answer, and Unknown leaves it as
+	// it was rather than guessing. This is what keeps an input method from
+	// opening over a trinket that does not type.
+	if enabler, ok := s.(TextInputEnabler); ok {
+		switch f.Sink {
+		case core.TextSinkPresent:
+			enabler.SetTextInputEnabled(true)
+		case core.TextSinkAbsent:
+			enabler.SetTextInputEnabled(false)
+		}
 	}
 	// The insertion point goes first and separately: a trinket that
 	// paints its own caret reports one without asking for a drawn caret

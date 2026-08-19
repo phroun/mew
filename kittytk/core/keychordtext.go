@@ -29,3 +29,32 @@ type KeyChordTextSource interface {
 	// or record what this keyboard does.
 	AllKeyChordText() map[string]string
 }
+
+// KeyChordTextFor asks the nearest host above a trinket what a chord typed.
+//
+// A trinket that types looks the text up rather than reading it off the event,
+// for the same reason the name comes from the key: the two are different
+// things, and only one of them identifies the keystroke. Written this way, a
+// trinket asks the same question mew's editor asks, of the same host, and gets
+// the same answer.
+//
+// No host above, or no observation, answers false — the caller then has a
+// keystroke it knows the name of and no text for, which is exactly what it has
+// when a key types nothing.
+func KeyChordTextFor(t Trinket, chord string) (string, bool) {
+	if t == nil || chord == "" {
+		return "", false
+	}
+	var current Container = t.Parent()
+	for current != nil {
+		if src, ok := current.(KeyChordTextSource); ok {
+			return src.KeyChordText(chord)
+		}
+		trinket, ok := current.(Trinket)
+		if !ok {
+			break
+		}
+		current = trinket.Parent()
+	}
+	return "", false
+}

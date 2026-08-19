@@ -27,7 +27,10 @@ type caretSurface struct {
 	visible []bool
 	style   int
 	moved   []areaCall
+	enabled []bool
 }
+
+func (s *caretSurface) SetTextInputEnabled(on bool) { s.enabled = append(s.enabled, on) }
 
 func (s *caretSurface) Size() core.UnitSize       { return core.UnitSize{} }
 func (s *caretSurface) Metrics() core.CellMetrics { return core.CellMetrics{} }
@@ -156,5 +159,48 @@ func TestDrawnCaretStillPlaced(t *testing.T) {
 	}
 	if len(s.visible) != 1 || !s.visible[0] {
 		t.Errorf("SetCursorVisible%v, want one true", s.visible)
+	}
+}
+
+// Text input itself follows focus, and nothing else.
+//
+// Withdrawing the area says only WHERE — an input method whose area is
+// forgotten still opens, at whatever corner the platform picks, which is
+// exactly what a focused button used to get. Off is what stops it opening.
+func TestTextInputFollowsFocusOnly(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		sink core.TextSinkState
+		want []bool
+	}{
+		{"a trinket that types turns it on", core.TextSinkPresent, []bool{true}},
+		{"one that does not turns it off", core.TextSinkAbsent, []bool{false}},
+		{"nothing known leaves it alone", core.TextSinkUnknown, nil},
+	} {
+		s := &caretSurface{}
+		ApplyTextCaret(s, TextInputFrame{Sink: c.sink, Complete: true})
+		if len(s.enabled) != len(c.want) {
+			t.Errorf("%s: SetTextInputEnabled%v, want %v", c.what, s.enabled, c.want)
+			continue
+		}
+		for i := range c.want {
+			if s.enabled[i] != c.want[i] {
+				t.Errorf("%s: SetTextInputEnabled%v, want %v", c.what, s.enabled, c.want)
+			}
+		}
+	}
+}
+
+// A frame reporting no position does not turn text input off. Where the caret
+// is and whether text is going anywhere are answered by different things, and
+// only the second one governs this.
+func TestSilenceDoesNotDisableTextInput(t *testing.T) {
+	s := &caretSurface{}
+	ApplyTextCaret(s, TextInputFrame{Sink: core.TextSinkPresent, Complete: true})
+	if len(s.enabled) != 1 || !s.enabled[0] {
+		t.Fatalf("SetTextInputEnabled%v, want one true", s.enabled)
+	}
+	if got, told := s.lastArea(); !told || got.visible {
+		t.Errorf("area = %+v told=%v, want the position withdrawn", got, told)
 	}
 }

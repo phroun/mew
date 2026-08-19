@@ -208,19 +208,6 @@ type nativeWin struct {
 	// flips to/from 0) still re-apply.
 	appliedShapePx int
 
-	// textInputPrimed records that this window's text input has been set up
-	// once for real — see sdl3.RestartTextInput and SetTextInputArea, which
-	// does it when a caret first appears.
-	//
-	// Once, and not again: a restart tears the input method down and builds it
-	// back up, which abandons anything it is holding. The caret edge that
-	// triggers it is "this frame asked for a caret and the last one did not",
-	// and a frame where the focused trinket simply did not repaint asks for
-	// nothing — so a heartbeat repaint can withdraw and restore the caret with
-	// no focus change behind it. Restarting on every one of those closed the
-	// press-and-hold palette a fraction of a second after it opened.
-	textInputPrimed bool
-
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 
@@ -1425,7 +1412,6 @@ func (p *Platform) pumpEvents() bool {
 				// window that has just taken the keyboard is not holding a
 				// composition for the restart to abandon.
 				if s.win != nil && s.win.window != nil {
-					s.win.textInputPrimed = true
 					if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
 						fmt.Fprintf(os.Stderr,
 							"kittytk-ime: window %d restart on focus failed: %v\n", s.win.id, err)
@@ -2424,18 +2410,20 @@ func bareKey(sym sdl3.Keysym, shift bool) string {
 		return name
 	}
 	if sym.Sym >= 32 && sym.Sym < 127 {
-		return shownPrintable(rune(sym.Sym), shift)
+		return layerAdjustedKeyName(rune(sym.Sym), shift)
 	}
 	return ""
 }
 
-// shownPrintable names a printable key from the key itself: the character it
-// shows, with Shift spent on the letter's case rather than stated as a prefix,
-// which is how this vocabulary spells every key that is SHOWN rather than named.
+// layerAdjustedKeyName names a printable key with its held layer applied: Shift
+// spent on the letter's case rather than stated as a prefix, which is how this
+// vocabulary spells every key that is SHOWN rather than named.
 //
-// One function, used by the press and by the release, so the two cannot drift
-// into naming the same key differently.
-func shownPrintable(ch rune, shift bool) string {
+// Shift is the only layer it applies today, and the name says where it grows.
+//
+// One function, called by the press and by the bare name, so the two cannot
+// drift into naming the same key differently.
+func layerAdjustedKeyName(ch rune, shift bool) string {
 	if shift && ch >= 'a' && ch <= 'z' {
 		return string(ch - 'a' + 'A')
 	}
@@ -2609,7 +2597,7 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// translateKey spends the doubled pair that formed it. That case
 			// used to be caught by a second pass over bareKey; it is named here
 			// now, with the prefix where the canonical order puts it.
-			return keyMods{hyper: hyper}.prefix() + shownPrintable(ch, shift)
+			return keyMods{hyper: hyper}.prefix() + layerAdjustedKeyName(ch, shift)
 		}
 	}
 	return ""
@@ -2819,6 +2807,13 @@ type sdlSurface struct {
 	caretVisible bool
 	caretX       core.Unit
 	caretY       core.Unit
+
+	// textInputOn is whether text input is on for this window, and
+	// textInputKnown whether that has ever been said. Unset is not "off": a
+	// window starts with text input claimed at creation, and the first answer
+	// from a focused trinket is what settles it. See SetTextInputEnabled.
+	textInputOn    bool
+	textInputKnown bool
 }
 
 func (s *sdlSurface) Size() core.UnitSize {
@@ -2899,11 +2894,6 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	if s.caretVisible == visible && (!visible || (s.caretX == x && s.caretY == y)) {
 		return // unchanged: no need to tell the OS again
 	}
-	// A caret appearing where there was none is a text-accepting trinket taking
-	// focus INSIDE the window — a TextInput, a terminal, the editor hosted in
-	// one. They report a caret only while focused, so this edge is that event
-	// and no new plumbing is needed to hear it.
-	tookFocus := visible && !s.caretVisible
 	s.caretVisible, s.caretX, s.caretY = visible, x, y
 
 	if !visible {
@@ -2928,27 +2918,6 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 		return
 	}
 
-	// Set text input up ONCE for real, before saying where it is — really set
-	// up, not the no-op a plain StartTextInput would be here (see
-	// sdl3.RestartTextInput). What this reaches is the first caret of a
-	// session: the window was made, and its text input claimed, before it was
-	// the window with the keyboard, so the platform attached nothing.
-	//
-	// Once per window, because a restart abandons whatever the input method is
-	// holding and this edge is not a reliable report of a focus change. It
-	// fires on "this frame asked for a caret and the last one did not", and a
-	// frame where the focused trinket did not repaint asks for nothing — so a
-	// blink or a heartbeat can produce the edge with no focus change behind it.
-	// A real focus change is handled where it is really known: the window
-	// taking the keyboard, in pumpEvents.
-	if tookFocus && !s.win.textInputPrimed {
-		s.win.textInputPrimed = true
-		if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
-			fmt.Fprintf(os.Stderr,
-				"kittytk-ime: window %d first caret restart failed: %v\n", s.win.id, err)
-		}
-	}
-
 	b := s.win.backend
 	if b == nil {
 		return
@@ -2968,6 +2937,45 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 		fmt.Fprintf(os.Stderr,
 			"kittytk-ime: window %d area unit=(%v,%v) px=(%d,%d %dx%d) active=%v err=%v\n",
 			s.win.id, x, y, x0, y0, wPx, hPx, sdl3.TextInputActive(s.win.window), err)
+	}
+}
+
+// SetTextInputEnabled implements platform.TextInputEnabler: turn text input on
+// or off for this window, following the focused trinket.
+//
+// On is a RESTART, not a start. SDL_StartTextInput returns early when its
+// per-window flag is already set, and that flag was set once when the window
+// was made — before the window was the one with the keyboard, so the platform
+// attached nothing while SDL recorded that it had. Going off and back on makes
+// the second call a real one. See sdl3.RestartTextInput.
+//
+// Off is what keeps an input method from opening over a trinket that does not
+// type. Key events are untouched by it: a press is named from the key, so every
+// keystroke still arrives under its own name with text input off.
+//
+// Acted on only when the answer changes — this is called from a finished frame,
+// which is often.
+func (s *sdlSurface) SetTextInputEnabled(on bool) {
+	if s.closed || s.win == nil || s.win.window == nil {
+		return
+	}
+	if s.textInputKnown && s.textInputOn == on {
+		return
+	}
+	s.textInputKnown, s.textInputOn = true, on
+
+	var err error
+	if on {
+		err = sdl3.RestartTextInput(s.win.window)
+	} else {
+		// Whatever it is holding goes with it — the same abandonment a click
+		// performs, and for the same reason.
+		_ = sdl3.ClearComposition(s.win.window)
+		err = sdl3.StopTextInput(s.win.window)
+	}
+	if imeDebug {
+		fmt.Fprintf(os.Stderr, "kittytk-ime: window %d text input on=%v err=%v\n",
+			s.win.id, on, err)
 	}
 }
 
