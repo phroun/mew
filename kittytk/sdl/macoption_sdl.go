@@ -270,10 +270,97 @@ func (p *Platform) flushPendingPress() {
 	// is dispatched whether or not anything came of it — M-e is the shortcut
 	// the user pressed either way.
 	if !pending.optionChord {
+		// And this is where that takeover becomes a fact worth keeping.
+		// Arming again on each repeat behind the palette is harmless: it is
+		// the same answer.
+		p.ime.armFor(pending)
 		return
 	}
 	p.dispatchPendingPress(pending, "")
 }
+
+// imeState tracks what an input method is doing to a keystroke that has
+// already been committed.
+//
+// It exists for macOS's press-and-hold accent palette, which is not a
+// composition at all in the ordinary sense: the held letter is COMMITTED the
+// moment the key goes down, and choosing an accent then has to remove a
+// character that is already in the document. A native client is told which one
+// through NSTextInputClient's replacementRange. SDL's composition event has no
+// field for it, so we are told nothing, and the count has to be inferred.
+//
+// The inference rests on an observation this platform already makes: a held
+// plain printable whose text never arrives has been TAKEN OVER by an input
+// method (see flushPendingPress). The character the palette will replace is the
+// one that key committed before the hold began, which is exactly one rune —
+// only plain printables are held for text.
+//
+// Both of the palette's two confirmations then land in the same place. Picking
+// by number arrives as a synthesized Backspace followed by the replacement,
+// picking with the arrows as marked text followed by the replacement; either
+// way the sink is told "replace one rune with this" and never has to know
+// which happened.
+type imeState struct {
+	// replace is how many committed runes the next commit replaces, and armed
+	// says whether an input method has taken a key over at all. They are
+	// separate because zero is a real answer: an ordinary composition replaces
+	// nothing.
+	armed   bool
+	replace int
+
+	// composing is whether a composition is in flight, from the first non-empty
+	// update to the empty one that ends it. It is what keeps a key-down from
+	// disarming: while the input method has the keyboard, the keystrokes
+	// driving its palette are not the user typing.
+	composing bool
+}
+
+// armFor records a takeover if this is the press that constitutes one, and
+// says whether it did.
+//
+// A REPEAT is what identifies it. The palette opens on the hold, so the presses
+// it swallows are the repeats behind it — the first press of that key committed
+// its character and was dispatched normally, and that character is the one the
+// palette will replace.
+//
+// The repeat test is what keeps a dead key's completion out. Option+i arms a
+// circumflex and the "u" that completes it is a FRESH press whose composition
+// arrives the same way; arming for that would delete the character before it.
+func (m *imeState) armFor(pending *pendingKeyPress) bool {
+	if pending == nil || pending.optionChord || !pending.repeat {
+		return false
+	}
+	// One rune: only plain printables are held for text, so the character the
+	// first press committed is exactly one.
+	m.armed, m.replace = true, 1
+	return true
+}
+
+// disarm forgets a takeover WITHOUT deleting anything, which is what a
+// cancelled palette needs: the letter the key committed is what the user typed
+// and it stays. Called wherever the input method loses the keystroke — a real
+// key, a click, focus leaving, text input being switched off.
+func (m *imeState) disarm() {
+	m.armed = false
+	m.replace = 0
+}
+
+// takeReplace spends the armed count on a commit, so a second commit does not
+// delete a second character.
+func (m *imeState) takeReplace() int {
+	replace := m.replace
+	m.armed = false
+	m.replace = 0
+	return replace
+}
+
+// holdsKeyboard reports whether an input method currently has the keystrokes.
+//
+// It answers both of the questions this state exists for, because they are the
+// same question. A key arriving now is the palette's rather than the
+// document's, and text arriving now is a COMMIT rather than ordinary typing —
+// a character chosen from a palette or a candidate list, with no key behind it.
+func (m *imeState) holdsKeyboard() bool { return m.armed || m.composing }
 
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back
 // to its M-key notation.

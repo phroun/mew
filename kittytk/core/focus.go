@@ -566,6 +566,21 @@ func (fm *FocusManager) HandleTextEditing(event TextEditingEvent) bool {
 	return false
 }
 
+// HandleTextCommit hands a finished composition to the focused trinket, the
+// same way HandleTextEditing hands it the provisional one. No navigation
+// fallback, for the same reason: a commit belongs to whatever is being typed
+// into, and nothing else could use it.
+func (fm *FocusManager) HandleTextCommit(event TextCommitEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(TextCommitHandler); ok {
+		return h.HandleTextCommit(event)
+	}
+	return false
+}
+
 // HandlePaste hands pasted text to the focused trinket. Like HandleTextEditing,
 // and for the same reason, there is no navigation fallback: a paste belongs to
 // whatever has focus, and a focused trinket that cannot hold one leaves nothing
@@ -866,6 +881,19 @@ func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandleTextCommit routes a finished composition to the active scope, the same
+// way HandleTextEditing routes the provisional one.
+func (gfm *GlobalFocusManager) HandleTextCommit(event TextCommitEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleTextCommit(event)
 	}
 	return false
 }

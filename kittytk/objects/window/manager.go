@@ -2809,6 +2809,20 @@ func (m *WindowManager) HandleTextEditing(event core.TextEditingEvent) bool {
 	return active.HandleTextEditing(event)
 }
 
+// HandleTextCommit hands a finished composition to the active window. Like
+// HandleTextEditing it has none of HandleKeyPress's routing: a commit is not a
+// key.
+func (m *WindowManager) HandleTextCommit(event core.TextCommitEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleTextCommit(event)
+}
+
 // HandlePaste hands pasted text to the active window, the fallback path when
 // the focus manager's active scope did not claim it. Like HandleTextEditing it
 // has none of HandleKeyPress's routing: a paste is not a key.

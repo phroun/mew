@@ -1408,6 +1408,21 @@ func (m *MDIPane) HandleTextEditing(event core.TextEditingEvent) bool {
 	return active.HandleTextEditing(event)
 }
 
+// HandleTextCommit forwards a finished composition to the active child window.
+// The pane is the focused trinket in ITS window's focus manager, so without
+// this the commit would stop here — the same reason HandleTextEditing
+// forwards.
+func (m *MDIPane) HandleTextCommit(event core.TextCommitEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextCommit(event)
+}
+
 // HandlePaste forwards pasted text to the active child window. The pane is the
 // focused trinket in ITS window's focus manager, so without this the paste
 // would stop here — the same reason HandleTextEditing forwards.

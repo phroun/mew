@@ -1366,6 +1366,57 @@ func (t *TextInput) HandleTextEditing(event core.TextEditingEvent) bool {
 	return true
 }
 
+// HandleTextCommit implements core.TextCommitHandler: it takes a finished
+// composition into the text.
+//
+// Replace is what makes this more than insert. macOS's press-and-hold palette
+// commits the held letter the moment the key goes down, so choosing an accent
+// has to remove a character that is already in the field — and the platform
+// reports how many runes that is, because the input method never tells us
+// directly. Without it the field keeps both: "o" and the "ò" that was meant to
+// replace it.
+//
+// The removal is a plain edit rather than a synthesized Backspace on purpose.
+// A Backspace would run whatever the user has bound to that key, which need
+// not be an erase at all.
+//
+// A read-only or disabled field declines, so the commit is dropped rather than
+// landing somewhere it could never be typed.
+func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+
+	// The composition is over whichever way this arrived, so the preedit goes
+	// before anything is measured against the caret. insert clears it too; this
+	// is here because the deletion below happens first and must not count
+	// provisional characters.
+	t.preedit = core.Preedit{}
+
+	if n := event.Replace; n > 0 {
+		// Only what is actually there, and only what is not already selected:
+		// a selection is deleted by insert, and taking these runes as well
+		// would erase text the composition was never replacing.
+		if t.selStart == t.selEnd {
+			if n > t.cursorPos {
+				n = t.cursorPos
+			}
+			if n > 0 {
+				t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
+				t.cursorPos -= n
+				t.selStart = t.cursorPos
+				t.selEnd = t.cursorPos
+			}
+		}
+	}
+
+	t.insert(event.Text)
+	t.resetCaretBlink()
+	t.ensureCursorVisible()
+	t.Update()
+	return true
+}
+
 // AccessibleInfo returns accessibility information.
 func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 	info := t.AccessibleTrinket.AccessibleInfo()

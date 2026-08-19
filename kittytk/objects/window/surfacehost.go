@@ -76,6 +76,8 @@ func (h *SurfaceHost) Event(ev core.Event) bool {
 		handled = h.win.HandleKeyRelease(e)
 	case core.TextEditingEvent:
 		handled = h.win.HandleTextEditing(e)
+	case core.TextCommitEvent:
+		handled = h.win.HandleTextCommit(e)
 	case core.MousePressEvent:
 		handled = h.win.HandleMousePress(e)
 	case core.MouseMoveEvent:
