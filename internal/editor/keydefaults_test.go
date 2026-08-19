@@ -135,12 +135,13 @@ func TestMewSpellingsNamePunctuation(t *testing.T) {
 	}
 }
 
-// A chord no binding claimed, and whose text mew cannot derive, types what the
-// HOST watched this keyboard produce for it.
+// A chord no binding claimed types what the HOST watched this keyboard produce
+// for it — every chord, a plain letter as much as a modified one.
 //
-// Asked last: the branches above already know what a plain character types and
-// what a glyph carries, so the observation answers only where mew has nothing
-// of its own to say.
+// Asked first. What mew can derive from a chord's own NAME is a good guess and
+// only a guess: right whenever a key types what it is called, with nothing in
+// the name to say when that stops being true. The host saw both halves of the
+// keystroke and mew sees neither.
 func TestUnboundChordTypesWhatTheHostObserved(t *testing.T) {
 	e, _ := newTestEditor(t, "")
 	e.Config.KeyChordText = func(chord string) (string, bool) {
@@ -148,26 +149,32 @@ func TestUnboundChordTypesWhatTheHostObserved(t *testing.T) {
 		case "s-q":
 			return "œ", true // a chord this layout does something with
 		case "a":
-			return "SHOULD NOT BE ASKED", true
+			return "ä", true // and a plain key it does something with too
 		case "G-€":
-			return "SHOULD NOT BE ASKED", true
+			return "€", true
 		}
 		return "", false
 	}
 
-	if got := e.defaultCommandForKey("s-q"); got != "insert 'œ'" {
-		t.Errorf("s-q -> %q, want the observed character", got)
+	for _, c := range []struct{ key, want string }{
+		{"s-q", "insert 'œ'"},
+		{"a", "insert 'ä'"},
+		{"G-€", "insert '€'"},
+	} {
+		if got := e.defaultCommandForKey(c.key); got != c.want {
+			t.Errorf("%s -> %q, want %q", c.key, got, c.want)
+		}
 	}
-	// mew derives these itself and must not reach for the observation.
-	if got := e.defaultCommandForKey("a"); got != "insert 'a'" {
-		t.Errorf("a -> %q, want mew's own plain insert", got)
+
+	// A chord the host never saw falls to what the name can carry.
+	if got := e.defaultCommandForKey("b"); got != "insert 'b'" {
+		t.Errorf("an unobserved plain key -> %q, want its own character", got)
 	}
-	if got := e.defaultCommandForKey("G-€"); got != "insert '€'" {
-		t.Errorf("G-€ -> %q, want the glyph the token carries", got)
+	if got := e.defaultCommandForKey("G-µ"); got != "insert 'µ'" {
+		t.Errorf("an unobserved glyph -> %q, want the glyph the token carries", got)
 	}
-	// A chord the host never saw is still unhandled.
 	if got := e.defaultCommandForKey("s-z"); got != "" {
-		t.Errorf("an unobserved chord -> %q, want nothing", got)
+		t.Errorf("an unobserved chord with nothing to derive -> %q, want nothing", got)
 	}
 }
 
