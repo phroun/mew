@@ -72,6 +72,10 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 	// Only a takeover of ours is ended (see cancelComposition), so a dead key's
 	// deliberately-standing composition is untouched — the "u" completing
 	// Option+i comes through here and must still find the circumflex waiting.
+	if p.ime.armed {
+		core.KeyTracef("1 sdl      ime     key %q (%s) ends the composition",
+			k.chord, k.origin)
+	}
 	p.cancelComposition(s)
 	if s == nil || s.handler == nil {
 		return

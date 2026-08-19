@@ -1534,9 +1534,11 @@ func (p *Platform) pumpEvents() bool {
 			// Reached only with no press held. A dead key's completion has one:
 			// Option+i then u composes "û" while this same flag stands, and
 			// that IS the u keystroke's own text, dispatched above.
+			core.KeyTracef("1 sdl      text    %q (armed=%v composing=%v covers=%d)",
+				text, p.ime.armed, p.ime.composing, p.ime.covers)
 			if p.ime.holdsKeyboard() {
+				core.KeyTracef("1 sdl      commit  text=%q covers=%d", text, p.ime.covers)
 				p.ime.spend()
-				core.KeyTracef("1 sdl      commit  text=%q", text)
 				if s.handler.Event(core.TextCommitEvent{Text: text}) {
 					continue
 				}

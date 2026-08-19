@@ -911,6 +911,8 @@ func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 	// meantime, so the two agree about the region without either being told
 	// twice.
 	e.preeditCovers = p.Covers
+	core.KeyTracef("2 mew      preedit %q caret=%d covers=%d",
+		string(p.Text), p.Caret, p.Covers)
 	e.execMew(fmt.Sprintf("preedit '%s', %d, %d",
 		escapeMewLiteral(string(p.Text)), p.Caret, p.Covers))
 	return true
@@ -939,6 +941,7 @@ func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
 	covers := e.preeditCovers
 	e.preeditCovers = 0
+	core.KeyTracef("2 mew      commit  %q covers=%d", event.Text, covers)
 	for _, cmd := range commitCommands(event.Text, covers) {
 		e.execMew(cmd)
 	}

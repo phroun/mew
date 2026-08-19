@@ -363,6 +363,7 @@ func (m *imeState) armFor(pending *pendingKeyPress) bool {
 	// One rune: only plain printables are held for text, so the character the
 	// first press committed is exactly one.
 	m.armed, m.covers = true, 1
+	core.KeyTracef("1 sdl      ime     OPEN over %q covers=1", pending.key)
 	return true
 }
 
@@ -399,6 +400,8 @@ func (p *Platform) cancelComposition(s *sdlSurface) {
 		p.ime.disarm()
 		return
 	}
+	core.KeyTracef("1 sdl      ime     CANCEL (covers=%d composing=%v)",
+		p.ime.covers, p.ime.composing)
 	// composing goes with it. It is set from the updates SDL sends, and a
 	// palette dismissed by a keystroke rather than confirmed produces no
 	// ending update at all — so left alone it stands true for good, and the
