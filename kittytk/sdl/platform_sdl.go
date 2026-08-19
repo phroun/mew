@@ -2891,6 +2891,21 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	s.caretVisible, s.caretX, s.caretY = visible, x, y
 
 	if !visible {
+		// The insertion point is gone — focus left everything that types, or a
+		// whole frame painted and none of it reported one. Whatever the input
+		// method is still holding goes with it.
+		//
+		// Forgetting the position is not enough on its own: it says where, and
+		// an accent palette or candidate list already open just moves to
+		// wherever the OS puts an unanchored one and stays there. This is the
+		// same abandonment a click performs, for the same reason — the text it
+		// was composing for is no longer being composed.
+		//
+		// Reached only on the transition, since the guard above returns early
+		// while nothing has changed.
+		if err := sdl3.ClearComposition(s.win.window); err != nil && imeDebug {
+			fmt.Fprintf(os.Stderr, "kittytk-ime: abandon failed: %v\n", err)
+		}
 		if err := sdl3.ClearTextInputArea(s.win.window); err != nil && imeDebug {
 			fmt.Fprintf(os.Stderr, "kittytk-ime: clear failed: %v\n", err)
 		}
