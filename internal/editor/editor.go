@@ -635,10 +635,10 @@ type Config struct {
 	// MacOptionKeys: "auto" / "true" / "false" (see config.GeneralConfig).
 	MacOptionKeys string
 
-	// MacOptionObserved is the HOST's answer to what its keyboard composed
-	// for a chord, asked before mew's table (see mew.WithMacOptionObserved).
-	// nil on a host that cannot see the pairing.
-	MacOptionObserved func(chord string) (string, bool)
+	// KeyChordText is the HOST's answer to what its keyboard typed for a
+	// chord, asked before mew's table (see mew.WithKeyChordText). nil on a
+	// host that cannot see the pairing.
+	KeyChordText func(chord string) (string, bool)
 
 	// FlipBidiForHost: "auto" (probe the terminal once, at first RTL content),
 	// "true", or "false" (see config.GeneralConfig.FlipBidiForHost).
@@ -1404,13 +1404,13 @@ func (e *Editor) applyMacOptionKeys() {
 	}
 	e.KeyProcessor.SetMacOptionInsert(insert)
 
-	// What the HOST watched its own keyboard compose outranks the table, and
-	// only while the layer is on: an observation is a better answer to the
-	// question, not a reason to answer one that was turned off.
+	// What the HOST watched its own keyboard type outranks the table, and only
+	// while the layer is on: an observation is a better answer to the question,
+	// not a reason to answer one that was turned off.
 	if insert {
-		e.KeyProcessor.SetMacOptionObserved(e.Config.MacOptionObserved)
+		e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 	} else {
-		e.KeyProcessor.SetMacOptionObserved(nil)
+		e.KeyProcessor.SetKeyChordText(nil)
 	}
 }
 

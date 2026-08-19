@@ -31,7 +31,7 @@ func (h *optionEventLog) keys() []core.KeyPressEvent {
 }
 
 // This host answers the capability an application type-asserts for.
-var _ core.OptionCharSource = (*Platform)(nil)
+var _ core.KeyChordTextSource = (*Platform)(nil)
 
 // pendingPlatform makes a platform holding one Option chord, as the key-down
 // path does before the character arrives.
@@ -61,7 +61,7 @@ func TestOptionChordCarriesWhatItComposed(t *testing.T) {
 	if keys[0].Key != "M-a" || keys[0].Text != "å" {
 		t.Errorf("dispatched %+v, want Key M-a with Text å", keys[0])
 	}
-	if ch, ok := p.OptionChar("M-a"); !ok || ch != "å" {
+	if ch, ok := p.KeyChordText("M-a"); !ok || ch != "å" {
 		t.Errorf("observed %q ok=%v for M-a, want å", ch, ok)
 	}
 	// And the press is registered under the key-down's scancode, so its
@@ -83,7 +83,7 @@ func TestOptionChordWithNoComposition(t *testing.T) {
 	if keys[0].Text != "a" {
 		t.Errorf("Text = %q, want the key's own character", keys[0].Text)
 	}
-	if _, ok := p.OptionChar("M-a"); ok {
+	if _, ok := p.KeyChordText("M-a"); ok {
 		t.Error("nothing was composed, so nothing should have been observed")
 	}
 	if p.pendingOption != nil {
@@ -100,26 +100,26 @@ func TestObservationOverwrites(t *testing.T) {
 	p.pendingOption = &pendingOptionKey{key: "M-a", scancode: 4}
 	p.dispatchOption(p.takePendingOption(), "ä")
 
-	if ch, _ := p.OptionChar("M-a"); ch != "ä" {
+	if ch, _ := p.KeyChordText("M-a"); ch != "ä" {
 		t.Errorf("M-a observed as %q, want the character it composes now", ch)
 	}
 }
 
 // The whole table is available, for a host that wants to show or record what
 // this keyboard does.
-func TestOptionCharsSnapshot(t *testing.T) {
+func TestAllKeyChordTextSnapshot(t *testing.T) {
 	p := &Platform{}
-	p.noteOptionChar("M-a", "å")
-	p.noteOptionChar("M-e", "´") // a dead key's composition counts too
+	p.noteKeyChordText("M-a", "å")
+	p.noteKeyChordText("M-e", "´") // a dead key's composition counts too
 
 	want := map[string]string{"M-a": "å", "M-e": "´"}
-	if got := p.OptionChars(); !reflect.DeepEqual(got, want) {
+	if got := p.AllKeyChordText(); !reflect.DeepEqual(got, want) {
 		t.Errorf("OptionChars = %v, want %v", got, want)
 	}
 
 	// A copy, so a caller cannot edit what the platform believes.
-	p.OptionChars()["M-a"] = "nonsense"
-	if ch, _ := p.OptionChar("M-a"); ch != "å" {
+	p.AllKeyChordText()["M-a"] = "nonsense"
+	if ch, _ := p.KeyChordText("M-a"); ch != "å" {
 		t.Errorf("the memo was changed through the snapshot: M-a = %q", ch)
 	}
 }

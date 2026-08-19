@@ -132,11 +132,11 @@ type Platform struct {
 	// See modes.go.
 	modes modeState
 
-	// optionChars is what this keyboard has been WATCHED composing, by the
-	// chord that composed it, and pendingOption is the chord whose character
-	// has not arrived yet. See macoption_sdl.go.
-	optionMu      sync.Mutex
-	optionChars   map[string]string
+	// chordText is what this keyboard has been WATCHED typing, by the chord
+	// that typed it (see keychordtext_sdl.go), and pendingOption is the Option
+	// chord whose character has not arrived yet (see macoption_sdl.go).
+	chordTextMu   sync.Mutex
+	chordText     map[string]string
 	pendingOption *pendingOptionKey
 
 	padScancode uint32

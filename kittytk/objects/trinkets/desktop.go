@@ -980,32 +980,32 @@ func (d *Desktop) Backend() core.RenderBackend {
 	return d.backend
 }
 
-// OptionChar returns the character this host has watched its own keyboard
-// compose for a chord ("M-a" -> "å"), and whether it has seen one.
+// KeyChordText returns the text this host has watched its own keyboard produce
+// for a chord ("M-a" -> "å"), and whether it has seen any.
 //
 // The observation belongs to whichever half of the host can see both the key
-// and the text it produced — the graphical platform, on macOS. A trinket
-// reaches it through here rather than through the platform directly, since the
-// platform is a build-tagged package it must not import. Nothing is observed on
-// a host that cannot see the pairing, and an application then falls back to
-// whatever table it carries. See core.OptionCharSource.
-func (d *Desktop) OptionChar(chord string) (string, bool) {
+// and the text it produced — the graphical platform. A trinket reaches it
+// through here rather than through the platform directly, since the platform is
+// a build-tagged package it must not import. Nothing is observed on a host that
+// cannot see the pairing, and an application then falls back to whatever table
+// it carries. See core.KeyChordTextSource.
+func (d *Desktop) KeyChordText(chord string) (string, bool) {
 	d.mu.RLock()
 	p := d.platform
 	d.mu.RUnlock()
-	if src, ok := p.(core.OptionCharSource); ok {
-		return src.OptionChar(chord)
+	if src, ok := p.(core.KeyChordTextSource); ok {
+		return src.KeyChordText(chord)
 	}
 	return "", false
 }
 
-// OptionChars returns every character-for-chord this host has observed.
-func (d *Desktop) OptionChars() map[string]string {
+// AllKeyChordText returns every text-for-chord this host has observed.
+func (d *Desktop) AllKeyChordText() map[string]string {
 	d.mu.RLock()
 	p := d.platform
 	d.mu.RUnlock()
-	if src, ok := p.(core.OptionCharSource); ok {
-		return src.OptionChars()
+	if src, ok := p.(core.KeyChordTextSource); ok {
+		return src.AllKeyChordText()
 	}
 	return nil
 }

@@ -188,7 +188,7 @@ func (p *Platform) dispatchOption(pending *pendingOptionKey, composed string) {
 	// fact about the keyboard, and stays true whether or not there is still a
 	// surface to deliver the keystroke to.
 	if composed != "" {
-		p.noteOptionChar(pending.key, composed)
+		p.noteKeyChordText(pending.key, composed)
 	}
 	if pending.surface == nil || pending.surface.handler == nil {
 		return
@@ -215,42 +215,6 @@ func (p *Platform) flushPendingOption() {
 	if pending := p.takePendingOption(); pending != nil {
 		p.dispatchOption(pending, "")
 	}
-}
-
-// noteOptionChar records what the keyboard composed for a chord.
-//
-// Written afresh every time: if the same chord starts composing something else
-// mid-session, the new character is what this keyboard does now, and the old
-// one was only ever a record of what it did before.
-func (p *Platform) noteOptionChar(chord, composed string) {
-	if chord == "" || composed == "" {
-		return
-	}
-	p.optionMu.Lock()
-	defer p.optionMu.Unlock()
-	if p.optionChars == nil {
-		p.optionChars = make(map[string]string)
-	}
-	p.optionChars[chord] = composed
-}
-
-// OptionChar implements core.OptionCharSource.
-func (p *Platform) OptionChar(chord string) (string, bool) {
-	p.optionMu.Lock()
-	defer p.optionMu.Unlock()
-	ch, ok := p.optionChars[chord]
-	return ch, ok
-}
-
-// OptionChars implements core.OptionCharSource.
-func (p *Platform) OptionChars() map[string]string {
-	p.optionMu.Lock()
-	defer p.optionMu.Unlock()
-	out := make(map[string]string, len(p.optionChars))
-	for k, v := range p.optionChars {
-		out[k] = v
-	}
-	return out
 }
 
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back
