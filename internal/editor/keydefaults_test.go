@@ -192,3 +192,48 @@ func TestObservationIsNotGatedByTheOptionSwitch(t *testing.T) {
 		t.Errorf("M-a -> %q, want the character this keyboard was seen typing", got)
 	}
 }
+
+// A modifier pressed by itself never reaches the keymap.
+//
+// The key layer reports these under the kitty protocol so something watching
+// the keyboard can see which cap went down. mew is not that something: no
+// binding is written against one, and the sequence processor must never see one
+// — it would count as the next key of a multi-key sequence, so holding Shift
+// mid-chord would end the chord.
+func TestBareModifierPressesAreNotKeystrokes(t *testing.T) {
+	for _, key := range []string{
+		"LMod:S", "RMod:C", "LMod:M", "RMod:m", "LMod:s", "Mod:H",
+	} {
+		if !isBareModifierKey(key) {
+			t.Errorf("%s was not recognized as a bare modifier", key)
+		}
+		e, w := newTestEditor(t, "")
+		e.dispatchKey(key)
+		if got := docContent(w); got != "" {
+			t.Errorf("%s put %q in the document", key, got)
+		}
+	}
+
+	// Chords and ordinary keys are untouched — the test is the prefix, and
+	// nothing else may match it.
+	for _, key := range []string{"M-a", "S-Tab", "a", "^K", "Mode", "Modem"} {
+		if isBareModifierKey(key) {
+			t.Errorf("%s was mistaken for a bare modifier", key)
+		}
+	}
+}
+
+// It is dropped before the sequence processor, so a chord in progress survives
+// the modifier being pressed part way through it.
+func TestBareModifierDoesNotBreakASequence(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.KeyProcessor.MapKey("^K X", "insert 'chord'")
+
+	e.dispatchKey("^K")
+	e.dispatchKey("LMod:S") // Shift goes down mid-chord
+	e.dispatchKey("X")
+
+	if got := docContent(w); got != "chord" {
+		t.Errorf("document = %q, want the chord to have completed", got)
+	}
+}

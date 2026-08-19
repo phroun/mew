@@ -4388,6 +4388,18 @@ func (e *Editor) dispatchKey(key string) {
 		return
 	}
 
+	// A modifier pressed BY ITSELF is not a keystroke in mew's sense either.
+	//
+	// The key layer reports these as their own events under the kitty protocol
+	// — "LMod:S" is the left Shift going down — so that something watching the
+	// keyboard can see which cap it was. mew is not that something: no binding
+	// is written against one, and the sequence processor must never see one,
+	// because it would count as the next key of a multi-key sequence. Holding
+	// Shift in the middle of ^K X would end the chord ^K started.
+	if isBareModifierKey(key) {
+		return
+	}
+
 	// Raw key input: this one keystroke was claimed for the child process
 	// running in the focused viewport, so mew's keymap does not see it at all.
 	// The arm is spent either way — a raw key with no terminal under it is

@@ -137,6 +137,21 @@ func (e *Editor) defaultCommandForKey(key string) string {
 	}
 }
 
+// isBareModifierKey reports whether a key name is a modifier reporting ITSELF
+// rather than a chord: "LMod:S" (left Shift), "RMod:C" (right Control),
+// "Mod:H" (a Hyper whose side the producer could not tell).
+//
+// The suffix is the modifier's own prefix letter, and the side leads because
+// which cap it was is the only thing such an event has to say.
+func isBareModifierKey(key string) bool {
+	for _, p := range []string{"LMod:", "RMod:", "Mod:"} {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // escapeStringLiteral escapes a string for use in a PawScript command string
 // literal, so a typed quote or backslash cannot break out of the insert.
 func escapeStringLiteral(s string) string {
