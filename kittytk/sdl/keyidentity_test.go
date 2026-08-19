@@ -232,3 +232,31 @@ func TestAnArmedAccentIsNotTypedText(t *testing.T) {
 		}
 	}
 }
+
+// A dead key is known to type nothing from the chord alone, before anything
+// has been produced.
+//
+// Waiting to learn it from the keystroke's output means never learning it when
+// there is no output — and macOS often delivers neither text nor a composition
+// for these, keeping the armed accent to itself. The chord then went out
+// unrecorded and a consumer fell through to a table, which inserted the accent.
+//
+// The signature was learning: the first presses of each dead key misbehaved and
+// later ones did not, because the first thing to record the chord fixed it from
+// then on, one chord at a time in the order they were pressed.
+func TestTheDeadKeysAreKnownByName(t *testing.T) {
+	for _, chord := range []string{"M-e", "M-i", "M-n", "M-u", "M-`"} {
+		if !isDeadKeyChord(chord) {
+			t.Errorf("%s is not known as a dead key", chord)
+		}
+	}
+	for _, chord := range []string{"M-a", "M-x", "a", "M-E"} {
+		if isDeadKeyChord(chord) {
+			t.Errorf("%s was taken for a dead key", chord)
+		}
+	}
+	// Read from the same table as the accents, so the two cannot disagree.
+	if len(deadKeyChords) != len(macOSDeadKeys) {
+		t.Errorf("%d chords from %d accents", len(deadKeyChords), len(macOSDeadKeys))
+	}
+}

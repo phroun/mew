@@ -316,6 +316,33 @@ func decodeMacOSDeadKey(composition string) (string, bool) {
 	return key, ok
 }
 
+// deadKeyChords is macOSDeadKeys read the other way: the chords that arm an
+// accent rather than typing one, by name.
+//
+// Built from the same table so the two cannot disagree about which five keys
+// these are.
+var deadKeyChords = func() map[string]bool {
+	chords := make(map[string]bool, len(macOSDeadKeys))
+	for _, chord := range macOSDeadKeys {
+		chords[chord] = true
+	}
+	return chords
+}()
+
+// isDeadKeyChord reports whether a chord is one of the five that arm an accent.
+//
+// Known from the chord alone, at the moment it is pressed, which is the point.
+// Waiting to learn it from what the keystroke produced means never learning it
+// at all when the keystroke produces nothing — and macOS often delivers neither
+// text nor a composition for these, keeping the armed accent to itself. The
+// chord then went out unrecorded, a consumer fell through to a table of what
+// such a chord types, and the accent was inserted.
+//
+// That failure was invisible after the first success: once anything recorded
+// the chord, every later press of it behaved, so the bug showed only as the
+// first few presses of each dead key misbehaving and then stopping.
+func isDeadKeyChord(chord string) bool { return deadKeyChords[chord] }
+
 // isArmedAccent reports whether text an Option chord produced is one of the
 // accents a dead key ARMS rather than types.
 //

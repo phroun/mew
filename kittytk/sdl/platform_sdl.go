@@ -1752,6 +1752,14 @@ func (p *Platform) pumpEvents() bool {
 					// KeyChordText for this chord sees this keystroke's answer.
 					// See macoption_sdl.go.
 					if keyAwaitsText(e.Keysym) {
+						// A dead key types nothing, and that is known from the
+						// chord itself — recorded HERE rather than waiting to
+						// learn it from what the keystroke produced, because
+						// macOS often produces nothing for these and keeps the
+						// armed accent to itself. See isDeadKeyChord.
+						if isDeadKeyChord(key) {
+							p.noteKeyChordTypesNothing(key)
+						}
 						p.flushPendingPress()
 						p.pendingPress = &pendingKeyPress{
 							key:         key,
