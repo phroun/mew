@@ -1569,7 +1569,7 @@ func (p *Platform) pumpEvents() bool {
 			// keystroke over, not to the key. Dispatching it here put a
 			// composed letter in after the one already typed, and clearing it
 			// fought the palette that had just opened.
-			if p.pendingPress != nil && p.pendingPress.deadKey {
+			if p.pendingPress != nil && p.pendingPress.optionChord {
 				p.dispatchPendingPress(p.takePendingPress(), e.GetText())
 				// Drop the composition the dead key opened, so the next
 				// character types plainly rather than wearing an accent from a
@@ -1704,11 +1704,11 @@ func (p *Platform) pumpEvents() bool {
 					if keyAwaitsText(e.Keysym) {
 						p.flushPendingPress()
 						p.pendingPress = &pendingKeyPress{
-							key:      key,
-							scancode: e.Keysym.Scancode,
-							repeat:   e.Repeat,
-							surface:  s,
-							deadKey:  macOptionMayCompose(e.Keysym),
+							key:         key,
+							scancode:    e.Keysym.Scancode,
+							repeat:      e.Repeat,
+							surface:     s,
+							optionChord: macOptionMayCompose(e.Keysym),
 						}
 						continue
 					}

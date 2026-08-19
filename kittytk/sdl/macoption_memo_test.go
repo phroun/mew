@@ -39,7 +39,7 @@ func pendingPlatform(chord string) (*Platform, *optionEventLog) {
 	h := &optionEventLog{}
 	s := &sdlSurface{handler: h}
 	p := &Platform{}
-	p.pendingPress = &pendingKeyPress{key: chord, scancode: 4, surface: s}
+	p.pendingPress = &pendingKeyPress{key: chord, scancode: 4, surface: s, optionChord: true}
 	return p, h
 }
 
@@ -97,7 +97,7 @@ func TestObservationOverwrites(t *testing.T) {
 	p, _ := pendingPlatform("M-a")
 	p.dispatchPendingPress(p.takePendingPress(), "å")
 
-	p.pendingPress = &pendingKeyPress{key: "M-a", scancode: 4}
+	p.pendingPress = &pendingKeyPress{key: "M-a", scancode: 4, optionChord: true}
 	p.dispatchPendingPress(p.takePendingPress(), "ä")
 
 	if ch, _ := p.KeyChordText("M-a"); ch != "ä" {

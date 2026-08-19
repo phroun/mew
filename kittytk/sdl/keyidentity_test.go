@@ -99,45 +99,50 @@ func TestWhichPressesWaitForText(t *testing.T) {
 	}
 }
 
-// A repeat that produced no text produced nothing.
+// A plain key that produced no text produced nothing.
 //
-// macOS suppresses the text while its press-and-hold palette is open and goes
-// on delivering repeat key-downs. Naming presses from the key made those
-// repeats real keystrokes, so a held key typed a run of characters behind the
-// palette — where before the character came only from the text event and a
-// repeat with no text was silence.
-func TestARepeatWithNoTextIsSilence(t *testing.T) {
-	h := &optionEventLog{}
-	s := &sdlSurface{handler: h}
-	p := &Platform{}
-	p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: true, surface: s}
+// macOS hands a held letter over as marked text rather than committing it, and
+// goes on delivering repeat key-downs behind its accent palette. Naming presses
+// from the key made those real keystrokes, so the drain committed the very
+// character the palette had opened to replace — and then one more per repeat.
+func TestAPlainKeyWithNoTextIsSilence(t *testing.T) {
+	for _, repeat := range []bool{false, true} {
+		h := &optionEventLog{}
+		s := &sdlSurface{handler: h}
+		p := &Platform{}
+		p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: repeat, surface: s}
 
-	p.flushPendingPress()
+		p.flushPendingPress()
 
-	if n := len(h.keys()); n != 0 {
-		t.Errorf("a repeat with no text dispatched %d keys: %v", n, h.events)
-	}
-	if p.pendingPress != nil {
-		t.Error("the press is still held after being flushed")
+		if n := len(h.keys()); n != 0 {
+			t.Errorf("repeat=%v: dispatched %d keys with no text: %v", repeat, n, h.events)
+		}
+		if p.pendingPress != nil {
+			t.Errorf("repeat=%v: the press is still held after being flushed", repeat)
+		}
 	}
 }
 
-// The FIRST press is not a repeat: a key that composes nothing still happened.
-func TestAFirstPressWithNoTextStillHappens(t *testing.T) {
+// An Option chord is not that. It is a CHORD that happens to compose, so the
+// keystroke stands whether or not anything came of it — M-e is the shortcut
+// the user pressed either way.
+func TestAnOptionChordStandsWithNoComposition(t *testing.T) {
 	h := &optionEventLog{}
 	s := &sdlSurface{handler: h}
 	p := &Platform{}
-	p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, surface: s}
+	p.pendingPress = &pendingKeyPress{
+		key: "M-e", scancode: 8, surface: s, optionChord: true,
+	}
 
 	p.flushPendingPress()
 
 	keys := h.keys()
-	if len(keys) != 1 || keys[0].Key != "e" {
-		t.Errorf("flushed %v, want one e", h.events)
+	if len(keys) != 1 || keys[0].Key != "M-e" {
+		t.Errorf("flushed %v, want one M-e", h.events)
 	}
 }
 
-// A composition that is not a dead key's own output does not become one.
+// A composition that is not an Option chord's own output does not become one.
 //
 // Any held printable can meet a composition — hold a letter down on macOS and
 // its accent palette opens one. That composition belongs to the input method
@@ -145,9 +150,9 @@ func TestAFirstPressWithNoTextStillHappens(t *testing.T) {
 // output put a composed letter in after the one already typed.
 func TestOnlyADeadKeyClaimsAComposition(t *testing.T) {
 	for _, c := range []struct {
-		what    string
-		deadKey bool
-		want    int
+		what        string
+		optionChord bool
+		want        int
 	}{
 		{"a dead key's composition is its own output", true, 1},
 		{"an ordinary held key's is not", false, 0},
@@ -156,12 +161,12 @@ func TestOnlyADeadKeyClaimsAComposition(t *testing.T) {
 		s := &sdlSurface{handler: h}
 		p := &Platform{}
 		p.pendingPress = &pendingKeyPress{
-			key: "M-e", scancode: 8, surface: s, deadKey: c.deadKey,
+			key: "M-e", scancode: 8, surface: s, optionChord: c.optionChord,
 		}
 		// What the pump does for a composition, without the SDL call it makes
 		// beside it: a dead key's press is dispatched with the composition, and
 		// anything else is dropped so the composition stands alone.
-		if p.pendingPress.deadKey {
+		if p.pendingPress.optionChord {
 			p.dispatchPendingPress(p.takePendingPress(), "´")
 		} else {
 			p.pendingPress = nil

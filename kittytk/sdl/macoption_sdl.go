@@ -149,17 +149,26 @@ type pendingKeyPress struct {
 	repeat   bool
 	surface  *sdlSurface
 
-	// deadKey marks a press that may ARM a composition rather than produce
-	// text: the five macOS Option dead keys, whose composition is the chord's
-	// own output and belongs to it.
+	// optionChord marks a macOS Option chord, where the keystroke is a CHORD
+	// that happens to compose — M-e is a shortcut whether or not an accent
+	// comes of it.
 	//
-	// Every other press can meet a composition too — hold a letter down on
-	// macOS and its accent palette opens one — and that composition is not the
-	// press's output. It belongs to the input method, which is taking the
-	// keystroke over. Telling the two apart is what this is for; without it,
-	// the palette's composition was dispatched as though the held key had
-	// typed it, and a composed letter appeared after the one already there.
-	deadKey bool
+	// A plain printable is the opposite: it is nothing but the text it makes.
+	// The distinction decides both of the questions asked when no text
+	// arrives, and both used to be answered the Option way for every key:
+	//
+	// A composition that follows it is the chord's own output, so the chord is
+	// dispatched carrying it. A composition following a plain key belongs to
+	// the input method taking that keystroke over — hold a letter down on
+	// macOS and its accent palette opens one — and dispatching it put a
+	// composed letter in after the one already there.
+	//
+	// And no text at all still leaves a chord to report, because the shortcut
+	// was pressed. A plain key with no text typed nothing: macOS hands a held
+	// letter over as marked text rather than committing it, so dispatching one
+	// at the drain committed the very character the palette had opened to
+	// replace.
+	optionChord bool
 }
 
 // macOptionMayCompose reports whether this key-down is one this platform
@@ -260,20 +269,20 @@ func (p *Platform) flushPendingPress() {
 	if pending == nil {
 		return
 	}
-	// A REPEAT that produced no text produced nothing.
+	// A plain key that produced no text produced NOTHING, and there is nothing
+	// to report.
 	//
-	// A repeat says "another one of these", and the only thing it can be
-	// another of is what the key types. When the text does not come, there was
-	// no another one — which is exactly what a held key does while an input
-	// method has the keystroke: macOS suppresses the text while its
-	// press-and-hold palette is open and goes on delivering repeat key-downs,
-	// so dispatching those inserted a run of characters behind the palette.
+	// A plain printable is only the text it makes. When the text does not come,
+	// an input method has the keystroke: macOS hands a held letter over as
+	// marked text rather than committing it, and goes on delivering repeat
+	// key-downs behind the palette. Dispatching those committed the very
+	// character the palette had opened to replace, and then went on committing
+	// one per repeat.
 	//
-	// The FIRST press is not a repeat and is dispatched as always: a key that
-	// composes nothing still happened, and the character it shows appears once
-	// before the palette opens, which is what the palette is offering to
-	// replace.
-	if pending.repeat {
+	// An Option chord is not that. It is a chord that happens to compose, so it
+	// is dispatched whether or not anything came of it — M-e is the shortcut
+	// the user pressed either way.
+	if !pending.optionChord {
 		return
 	}
 	p.dispatchPendingPress(pending, "")
