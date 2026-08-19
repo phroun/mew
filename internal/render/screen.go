@@ -1438,6 +1438,25 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		line = disp.Text
 	}
 
+	// An input method's composition is SYNTHESIZED into the line here, so
+	// everything below paints and measures it as ordinary text — the same
+	// bargain a control character strikes by being painted "^X" without the
+	// buffer holding two runes. Nothing downstream needs a preedit-aware twin
+	// of the column arithmetic; the runes are simply there, and the width model
+	// already knows what a rune is worth.
+	//
+	// Suppressed on a button-substituted line, exactly as marks are and for the
+	// same reason: doc positions inside a replaced span have no cells of their
+	// own to sit at.
+	preLo, preHi := 0, 0
+	if disp == nil {
+		line, preLo, preHi = w.PreeditSplice(docLine, line)
+	}
+	// Its own colour, defaulting to the one control-code substitutes use: it is
+	// the same statement — these cells are not the document — and a scheme that
+	// wants to say it differently can, without moving "^X" with it.
+	imeColor := sr.col(w, "ime")
+
 	textColor := sr.col(w, "text")
 	// Selection styling. On a flip host whose bidi reorder miscounts a
 	// background/reverse selection fill (codepoints vs cells) — Terminal.app,
@@ -1734,6 +1753,13 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// Get the appropriate base color for a rune position. A chrome cell's
 	// forced color wins outright — buttons keep their look through selections.
 	getBaseColor := func(runePos int) string {
+		// A composition outranks everything: it is not the document's text, so
+		// the document's syntax colours and selection have nothing to say about
+		// it. Reading it as ordinary text is exactly the confusion the colour
+		// exists to prevent — these characters may still change or vanish.
+		if runePos >= preLo && runePos < preHi {
+			return imeColor
+		}
 		forced := ""
 		if disp != nil && runePos >= 0 && runePos < len(disp.Forced) {
 			forced = disp.Forced[runePos]
@@ -2253,6 +2279,18 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 		// button's first cell). Identity when no buttons apply.
 		var curRune int
 		line, curRune = sr.displayCaretLine(w, raw, w.CursorPos().Rune)
+		// A composition is synthesized into the line the painter draws, so the
+		// caret has to be measured against the same line or it lands where the
+		// text used to be. Inside it, at the input method's OWN cursor: that is
+		// what shows progress through a long composition, and parking at either
+		// end would claim the composition is finished when it is not.
+		if line == raw {
+			var preLo, preHi int
+			line, preLo, preHi = w.PreeditSplice(w.CursorPos().Line, raw)
+			if preHi > preLo {
+				curRune = w.PreeditCaretRune(w.CursorPos().Line, w.CursorPos().Rune)
+			}
+		}
 		caretRune = curRune
 		visualColumn = sr.caretVisualColumn(line, curRune, w)
 	}

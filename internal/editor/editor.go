@@ -2355,6 +2355,51 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.replacePrior(n, text))
 	})
 
+	// preedit '<text>', <caret> shows what an input method is still composing:
+	// painted at the caret, not put in the document. An empty text ends it.
+	//
+	// Not stored, because storing it would mean un-storing it on every update —
+	// a Japanese input method rewrites the whole composition on each keystroke —
+	// and every one of those round trips would go through the undo history.
+	// It is synthesized into the line at paint time instead, the way a control
+	// character is painted "^X" without the buffer holding two runes.
+	//
+	// caret is the input method's own cursor within the text, which is what
+	// shows progress through a long composition. It defaults to the end.
+	ps.RegisterCommand("preedit", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		// A viewport running a child process paints the child's grid, not a
+		// document: there is no line to synthesize a composition into.
+		if e.focusedPTY() != nil {
+			return pawscript.BoolStatus(false)
+		}
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		if text == "" {
+			w.ClearPreedit()
+			e.RequestRender()
+			return pawscript.BoolStatus(true)
+		}
+		runes := []rune(text)
+		caret := len(runes)
+		if len(ctx.Args) > 1 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[1]))); err == nil {
+				caret = n
+			}
+		}
+		pos := w.CursorPos()
+		w.SetPreedit(viewport.Preedit{
+			Text: runes, Caret: caret, Line: pos.Line, Rune: pos.Rune,
+		})
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
 	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
 		if e.focusedPTY() != nil {
 			// A shell wants CR for Enter, not LF: that is what a terminal

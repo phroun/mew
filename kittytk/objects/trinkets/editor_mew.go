@@ -885,6 +885,26 @@ func (e *Editor) Paste() { e.execMew("os_paste") }
 // SelectAll marks the whole mew buffer as the block.
 func (e *Editor) SelectAll() { e.execMew("os_select_all") }
 
+// HandleTextEditing implements core.TextEditingHandler: it shows what an input
+// method is still composing, painted at mew's caret and not put in the
+// document.
+//
+// mew synthesizes it into the line when that line is prepared for display — the
+// same bargain a control character strikes by being painted "^X" without the
+// buffer holding two runes — so nothing provisional reaches the buffer or its
+// undo history. An input method rewrites the whole composition on every
+// keystroke, and each of those would otherwise be an edit to take back.
+//
+// The caret rides in because it is the input method's own, not mew's: it shows
+// how far through a long composition the user is, and parking at either end
+// would claim the composition was finished.
+func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
+	p := core.PreeditFrom(event)
+	e.execMew(fmt.Sprintf("preedit '%s', %d",
+		escapeMewLiteral(string(p.Text)), p.Caret))
+	return true
+}
+
 // HandleTextCommit implements core.TextCommitHandler: it takes a finished
 // composition into the document, replacing what it stands in for.
 //

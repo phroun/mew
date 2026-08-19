@@ -399,6 +399,10 @@ type Viewport struct {
 	// nav_cancel and by turning navigationMode off.
 	BrowseActive bool
 
+	// preedit is text an input method is composing at the caret: painted, not
+	// stored. See preedit.go.
+	preedit Preedit
+
 	// AfterKey is this viewport's after-key pseudo-binding: a PawScript command
 	// the editor runs each time a key's binding activity RESOLVES while this
 	// viewport owns the keyboard — after the bound (or fallthrough-insert)

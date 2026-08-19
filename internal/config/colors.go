@@ -48,6 +48,7 @@ var defaultGlobalColors = map[string]string{
 	"cursoroffscreen":     "\x1b[0;30;42m",   // black on green
 	"truncation":          "\x1b[0;37;41m",   // silver on red
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
+	"ime":                 "\x1b[4;33m",      // underlined yellow - a composition, not yet text
 	"marks":               "\x1b[0;91m",      // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue
