@@ -1751,15 +1751,21 @@ func (p *Platform) pumpEvents() bool {
 					// table — before the press goes out, so a consumer reading
 					// KeyChordText for this chord sees this keystroke's answer.
 					// See macoption_sdl.go.
+					// A dead key types nothing, and that is known from the
+					// chord itself — recorded HERE rather than waiting to learn
+					// it from what the keystroke produced, because macOS often
+					// produces nothing for these and keeps the armed accent to
+					// itself. See isDeadKeyChord.
+					//
+					// Before the press is held or not. It was inside the branch
+					// below, which is only reached when SDL follows the
+					// keystroke with text — and for these it frequently does
+					// not, so the record ran for the presses that needed it
+					// least and never for the ones that needed it at all.
+					if isDeadKeyChord(key) {
+						p.noteKeyChordTypesNothing(key)
+					}
 					if keyAwaitsText(e.Keysym) {
-						// A dead key types nothing, and that is known from the
-						// chord itself — recorded HERE rather than waiting to
-						// learn it from what the keystroke produced, because
-						// macOS often produces nothing for these and keeps the
-						// armed accent to itself. See isDeadKeyChord.
-						if isDeadKeyChord(key) {
-							p.noteKeyChordTypesNothing(key)
-						}
 						p.flushPendingPress()
 						p.pendingPress = &pendingKeyPress{
 							key:         key,
@@ -1774,6 +1780,10 @@ func (p *Platform) pumpEvents() bool {
 					text := ""
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 						text = name
+					}
+					if imeDebug {
+						fmt.Fprintf(os.Stderr,
+							"kittytk-ime: chord %q dispatched on its key-down (not held)\n", key)
 					}
 					p.holdKey(e.Keysym.Scancode, key)
 					s.handler.Event(core.KeyPressEvent{
