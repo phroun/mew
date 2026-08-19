@@ -237,3 +237,27 @@ func TestBareModifierDoesNotBreakASequence(t *testing.T) {
 		t.Errorf("document = %q, want the chord to have completed", got)
 	}
 }
+
+// A chord the host watched type NOTHING types nothing, and the table is not
+// asked.
+//
+// A dead key is the case: on macOS, Option+i arms a circumflex for the next
+// keystroke and produces no character of its own. The table says "ˆ", because
+// a table can only say what such a chord types on the keyboard it was written
+// from. Asked anyway, it inserted an accent this keyboard did not produce, and
+// the composed character arrived behind it — Option+i, u came out "ˆû".
+//
+// Observed-and-empty is a real answer. Only never-observed falls to the table.
+func TestAnObservedChordThatTypesNothingBeatsTheTable(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	e.Config.KeyChordText = func(chord string) (string, bool) {
+		if chord == "M-i" {
+			return "", true // watched; it typed nothing
+		}
+		return "", false
+	}
+
+	if got := e.defaultCommandForKey("M-i"); got != "" {
+		t.Errorf("M-i defaulted to %q; the host watched it type nothing", got)
+	}
+}

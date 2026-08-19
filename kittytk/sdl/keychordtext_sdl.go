@@ -30,6 +30,25 @@ func (p *Platform) noteKeyChordText(chord, text string) {
 	if chord == "" || text == "" {
 		return
 	}
+	p.record(chord, text)
+}
+
+// noteKeyChordTypesNothing records that a chord produced no text, which is not
+// the same as never having been seen.
+//
+// A dead key is the case: Option+i arms an accent and types nothing at all.
+// Left unrecorded, that chord looks unobserved, and a consumer falling back to
+// a TABLE of what such a chord types on some keyboard gets an answer where the
+// keyboard in front of it gave none — the accent inserted, and then the
+// composed character behind it.
+func (p *Platform) noteKeyChordTypesNothing(chord string) {
+	if chord == "" {
+		return
+	}
+	p.record(chord, "")
+}
+
+func (p *Platform) record(chord, text string) {
 	p.chordTextMu.Lock()
 	defer p.chordTextMu.Unlock()
 	if p.chordText == nil {

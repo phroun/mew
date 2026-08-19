@@ -22,7 +22,14 @@ package core
 // mid-session reports the new text from then on.
 type KeyChordTextSource interface {
 	// KeyChordText returns the text observed for a chord ("M-a"), and whether
-	// any has been observed.
+	// this chord has been OBSERVED — which is not the same as whether it typed
+	// anything.
+	//
+	// An observation of empty text is a real answer: this chord types nothing
+	// here. A dead key is the case — Option+i arms an accent and types nothing
+	// at all — and a consumer that reads the empty string as "never seen" falls
+	// back to a table of what such a chord types on some keyboard, and inserts
+	// an accent the keyboard in front of it did not produce.
 	KeyChordText(chord string) (string, bool)
 
 	// AllKeyChordText returns every observation, for a host that wants to show

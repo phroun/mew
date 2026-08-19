@@ -1573,6 +1573,11 @@ func (p *Platform) pumpEvents() bool {
 			// what lets the next keystroke compose against it — the "û" in that
 			// pair, arriving as ordinary committed text.
 			if p.pendingPress != nil && p.pendingPress.optionChord {
+				// Recorded as having typed NOTHING, which is a real
+				// observation and not the absence of one. A consumer that
+				// falls back to a table of what such a chord types would
+				// otherwise answer from the table and insert the accent.
+				p.noteKeyChordTypesNothing(p.pendingPress.key)
 				p.dispatchPendingPress(p.takePendingPress(), "")
 				// Fall through: the composition is forwarded below like any
 				// other, so a trinket paints it as the in-flight preedit it is.

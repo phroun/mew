@@ -103,35 +103,43 @@ func (e *Editor) defaultCommandForKey(key string) string {
 				return "insert '" + escapeStringLiteral(glyph) + "'"
 			}
 		}
-		// An unmapped Meta combination types the character macOS Option would
-		// have produced, so bindings steal individual Option combos while the
-		// rest insert seamlessly (and Alt on any platform gains the same
-		// mac-style character layer). The processor holds the table and the
-		// on/off switch — a keyboard fact — and reports nothing when the layer
-		// is off; spelling it as a command is mew's part.
-		if ch, ok := e.KeyProcessor.MacOptionChar(key); ok {
-			return "insert '" + escapeStringLiteral(ch) + "'"
-		}
-		// Anything else the HOST watched this keyboard type for this chord.
-		// Asked last, so it answers only where mew has nothing of its own to
-		// say: the branches above already know what a plain character types
-		// and what a glyph carries.
+		// What the HOST watched this keyboard type for this chord.
 		//
 		// What it catches is the chord whose text mew cannot derive from the
-		// chord's own name — which is every chord where the keyboard's layout
-		// or its composition rules had something to say. mew is handed the
-		// keystroke as bytes and never sees that; the host sees both halves.
+		// chord's own name — every chord where the keyboard's composition
+		// rules had something to say. mew is handed the keystroke as bytes and
+		// never sees that; the host sees both halves.
 		//
-		// Every chord, Mega included. The switch above governs the TABLE — a
+		// Every chord, Mega included. The switch below governs the TABLE — a
 		// guess about a keyboard nobody has looked at — and turning it off says
 		// "stop guessing", not "stop typing". A terminal with the layer off
 		// still types the character, because the character is what arrives
 		// there; a graphical host that stayed silent instead would be the odd
 		// one out, and silence is not what the user asked for.
+		//
+		// Asked BEFORE the table, because it is the same question answered by
+		// looking rather than by guessing, and because it can answer something
+		// the table cannot: that this chord types nothing. A dead key is that
+		// — Option+i arms an accent and types nothing at all — and the table,
+		// asked anyway, would say "ˆ" and insert an accent the keyboard did not
+		// produce, with the composed character arriving behind it.
 		if e.Config.KeyChordText != nil {
-			if text, ok := e.Config.KeyChordText(key); ok && text != "" {
+			if text, observed := e.Config.KeyChordText(key); observed {
+				if text == "" {
+					return ""
+				}
 				return "insert '" + escapeStringLiteral(text) + "'"
 			}
+		}
+		// Nothing watched it. An unmapped Meta combination then types the
+		// character macOS Option would have produced, so bindings steal
+		// individual Option combos while the rest insert seamlessly (and Mega
+		// on any platform gains the same mac-style character layer). The
+		// processor holds the table and the on/off switch — a keyboard fact —
+		// and reports nothing when the layer is off; spelling it as a command
+		// is mew's part.
+		if ch, ok := e.KeyProcessor.MacOptionChar(key); ok {
+			return "insert '" + escapeStringLiteral(ch) + "'"
 		}
 		return ""
 	}
