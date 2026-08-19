@@ -100,26 +100,39 @@ func TestWhichPressesWaitForText(t *testing.T) {
 	}
 }
 
-// A plain key that produced no text produced nothing.
+// A plain key REPEATING with no text produced nothing.
 //
 // macOS hands a held letter over as marked text rather than committing it, and
 // goes on delivering repeat key-downs behind its accent palette. Naming presses
 // from the key made those real keystrokes, so the drain committed the very
 // character the palette had opened to replace — and then one more per repeat.
-func TestAPlainKeyWithNoTextIsSilence(t *testing.T) {
-	for _, repeat := range []bool{false, true} {
+//
+// A FRESH press is not that, and used to be swallowed by the same rule: with a
+// palette up, reaching for "." or "/" dismisses it and types the character, and
+// that keystroke was eaten outright. It produced no text because the palette
+// held the keyboard for a moment, not because it produced nothing. So the
+// silence belongs to the repeats alone.
+func TestOnlyARepeatWithNoTextIsSilence(t *testing.T) {
+	for _, c := range []struct {
+		repeat bool
+		want   int
+	}{
+		{true, 0},  // the palette's own key, held down behind it
+		{false, 1}, // somebody typing
+	} {
 		h := &optionEventLog{}
 		s := &sdlSurface{handler: h}
 		p := &Platform{}
-		p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: repeat, surface: s}
+		p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: c.repeat, surface: s}
 
 		p.flushPendingPress()
 
-		if n := len(h.keys()); n != 0 {
-			t.Errorf("repeat=%v: dispatched %d keys with no text: %v", repeat, n, h.events)
+		if n := len(h.keys()); n != c.want {
+			t.Errorf("repeat=%v: dispatched %d keys, want %d: %v",
+				c.repeat, n, c.want, h.events)
 		}
 		if p.pendingPress != nil {
-			t.Errorf("repeat=%v: the press is still held after being flushed", repeat)
+			t.Errorf("repeat=%v: the press is still held after being flushed", c.repeat)
 		}
 	}
 }

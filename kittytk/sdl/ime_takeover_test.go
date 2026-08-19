@@ -142,3 +142,99 @@ func TestAFirstPressTakenOverOpensNothing(t *testing.T) {
 			"would replace the character before it")
 	}
 }
+
+// A FRESH press with a palette up is somebody TYPING, and it must not be eaten.
+//
+// The swallowing exists for the repeats behind a held key: each of those
+// committed a copy of the very character the palette had opened to replace.
+// A different key is not that. Reaching for "." or "/" dismisses the palette
+// and types the character, and swallowing it lost the keystroke outright — it
+// produced no text because the palette held the keyboard for a moment, not
+// because it produced nothing.
+func TestAFreshPressWithAPaletteUpIsStillTyped(t *testing.T) {
+	p, h := heldPlatform("o", true)
+	p.flushPendingPress() // the palette takes the held letter
+
+	// Now a different key, pressed once.
+	s := &sdlSurface{handler: h}
+	p.pendingPress = &pendingKeyPress{key: ".", scancode: 55, surface: s}
+	p.flushPendingPress()
+
+	var typed []string
+	for _, k := range h.keys() {
+		typed = append(typed, k.Key)
+	}
+	if len(typed) != 1 || typed[0] != "." {
+		t.Errorf("dispatched %v, want the \".\" that was pressed", typed)
+	}
+}
+
+// The repeats behind the palette's OWN key are still swallowed, which is the
+// case the swallowing was built for.
+func TestThePalettesOwnRepeatsAreStillSwallowed(t *testing.T) {
+	p, h := heldPlatform("o", true)
+	p.flushPendingPress()
+
+	s := &sdlSurface{handler: h}
+	for i := 0; i < 3; i++ {
+		p.pendingPress = &pendingKeyPress{key: "o", scancode: 18, surface: s, repeat: true}
+		p.flushPendingPress()
+	}
+
+	if n := len(h.keys()); n != 0 {
+		t.Errorf("dispatched %d presses from behind the palette, want none", n)
+	}
+}
+
+// A palette DISMISSED by typing sends no ending update of its own, so the
+// keystroke that dismissed it is what has to end the composition.
+//
+// Left standing, the letter under it kept painting as provisional text while
+// the typing ran on past it — "Hrllo. What?" with the "o" still underlined and
+// the composition armed behind everything that followed.
+func TestTypingOnEndsAPaletteThatWasNeverConfirmed(t *testing.T) {
+	p, h := heldPlatform("o", true)
+	p.flushPendingPress()
+	// SDL reported a composition, and then nothing more: the palette was
+	// dismissed rather than confirmed.
+	p.ime.composing = true
+
+	s := &sdlSurface{handler: h}
+	p.emitKeyPress(s, keyPress{chord: ".", produced: ".", observed: true, origin: "test"})
+
+	if p.ime.holdsKeyboard() {
+		t.Error("the composition outlived the keystroke that dismissed its palette")
+	}
+	last, ok := h.events[len(h.events)-1].(core.KeyPressEvent)
+	if !ok || last.Key != "." {
+		t.Errorf("last event %#v, want the keystroke itself", h.events[len(h.events)-1])
+	}
+	var ended bool
+	for _, ev := range h.events {
+		if c, ok := ev.(core.TextEditingEvent); ok && c.Text == "" {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Error("the sink was never told to end the composition, so the letter " +
+			"it was hiding stays painted as provisional")
+	}
+}
+
+// A composition this platform did NOT open is left alone. A dead key
+// deliberately leaves one standing for the next keystroke to compose against,
+// and the "u" completing Option+i arrives through the same door.
+func TestAKeystrokeLeavesADeadKeysCompositionStanding(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.ime.composing = true // SDL's own, from Option+i — nothing armed here
+
+	p.emitKeyPress(s, keyPress{chord: "u", produced: "û", observed: true, origin: "test"})
+
+	for _, ev := range h.events {
+		if _, ok := ev.(core.TextEditingEvent); ok {
+			t.Errorf("ended a composition that was not ours: %v", h.events)
+		}
+	}
+}

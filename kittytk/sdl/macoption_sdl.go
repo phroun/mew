@@ -287,7 +287,19 @@ func (p *Platform) flushPendingPress() {
 				Covers: p.ime.covers,
 			})
 		}
-		return
+		// Swallowed only if this press is the PALETTE'S OWN — a repeat of the
+		// key being held down behind it. That is the case the swallowing was
+		// for: those repeats each committed a copy of the very character the
+		// palette had opened to replace.
+		//
+		// A FRESH press is somebody typing. Reaching for "." or "/" with a
+		// palette up dismisses it and types the character, and swallowing that
+		// press ate the keystroke outright — it produced no text because the
+		// palette had the keyboard for a moment, not because it produced
+		// nothing.
+		if pending.repeat {
+			return
+		}
 	}
 	p.dispatchPendingPress(pending, "")
 }
@@ -381,9 +393,17 @@ func (m *imeState) spend() { m.disarm() }
 // it.
 func (p *Platform) cancelComposition(s *sdlSurface) {
 	if !p.ime.armed {
+		// Nothing of ours is standing. A composition SDL owns is left alone —
+		// a dead key deliberately leaves one open for the next keystroke to
+		// compose against.
 		p.ime.disarm()
 		return
 	}
+	// composing goes with it. It is set from the updates SDL sends, and a
+	// palette dismissed by a keystroke rather than confirmed produces no
+	// ending update at all — so left alone it stands true for good, and the
+	// cancel that should have run on the next key never would.
+	p.ime.composing = false
 	p.ime.disarm()
 	if s != nil && s.handler != nil {
 		s.handler.Event(core.TextEditingEvent{Start: -1, Length: -1})

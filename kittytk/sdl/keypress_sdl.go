@@ -60,17 +60,19 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 			p.noteKeyChordText(k.chord, k.produced)
 		}
 	}
-	// A keystroke reaching the application means the input method no longer
-	// has the keyboard: whatever palette was open is gone and nothing is
-	// waiting to be replaced. This DELETES NOTHING — the character the held
-	// key committed is what the user typed, and a cancelled palette leaves it
-	// exactly there.
+	// A keystroke reaching the application means the input method no longer has
+	// the keyboard: whatever palette was open is gone. This DELETES NOTHING —
+	// the character the held key committed is what the user typed, and a
+	// dismissed palette leaves it exactly there.
 	//
-	// Not while a composition is in flight: the keystrokes driving a candidate
-	// list belong to the input method, not to the document.
-	if !p.ime.composing {
-		p.cancelComposition(s)
-	}
+	// Unconditional, because the keys that drive an input method never arrive
+	// here: a candidate list's arrows, digits and Return are consumed by the
+	// input method itself. A key that reaches this far is one it did not take.
+	//
+	// Only a takeover of ours is ended (see cancelComposition), so a dead key's
+	// deliberately-standing composition is untouched — the "u" completing
+	// Option+i comes through here and must still find the circumflex waiting.
+	p.cancelComposition(s)
 	if s == nil || s.handler == nil {
 		return
 	}
