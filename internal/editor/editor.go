@@ -2310,6 +2310,43 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
 	})
 
+	// replace_prior <n>, '<text>' stands text in place of the n characters
+	// immediately before the caret. It exists for input methods, and macOS's
+	// press-and-hold accent palette above all: that palette COMMITS the held
+	// letter the moment the key goes down, so choosing an accent has to remove
+	// a character that is already in the document.
+	//
+	// The host says how many, because only the host can know. It watched the
+	// key commit the letter and watched an input method take the key over; mew
+	// sees the finished text and nothing about what it stands for.
+	//
+	// n of 0 is an ordinary insert, which is what every composition that
+	// appends rather than replaces sends — a CJK candidate, and every host that
+	// cannot know a replacement count at all.
+	ps.RegisterCommand("replace_prior", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 2 {
+			return pawscript.BoolStatus(false)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0])))
+		if err != nil || n < 0 {
+			return pawscript.BoolStatus(false)
+		}
+		text := fmt.Sprintf("%v", ctx.Args[1])
+		if sb, ok := ctx.Args[1].(pawscript.StoredBytes); ok {
+			text = string(sb.Data())
+		}
+		// A viewport running a child process has no document to replace in, and
+		// the erase cannot be forwarded either: the toolkit swallowed the
+		// platform's own Backspace, and re-synthesizing one for a child means
+		// guessing the erase character its line discipline expects. The text
+		// goes, the replacement does not — which is what this case did before
+		// the command existed.
+		if e.focusedPTY() != nil {
+			return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+		}
+		return pawscript.BoolStatus(e.replacePrior(n, text))
+	})
+
 	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
 		if e.focusedPTY() != nil {
 			// A shell wants CR for Enter, not LF: that is what a terminal
@@ -5267,6 +5304,59 @@ func (e *Editor) deleteCharBefore() {
 	// Clear ghost cursor and update ideal column after editing
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w) // edit locks in the horizontal view
+}
+
+// replacePrior stands text in place of the n characters immediately before the
+// caret, as ONE mutation.
+//
+// One matters. Picking an accent from the press-and-hold palette is a single
+// user action, and the state between its halves — the letter gone, the accented
+// one not yet arrived — is one nobody ever saw on screen. Caret.Overwrite is a
+// single overwrite mutation in the buffer's history, so undo steps from the
+// accented character straight back to the plain one.
+//
+// n is clamped to what is actually on this line before the caret, so the
+// replacement can never cross a line boundary. It never has to: the character a
+// palette replaces is the one its own key just typed.
+func (e *Editor) replacePrior(n int, text string) bool {
+	if e.contentLocked() {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	pos := w.CursorPos()
+	if n > pos.Rune {
+		n = pos.Rune
+	}
+	if n == 0 {
+		// Nothing to stand in for: an ordinary insert, and it keeps the
+		// coalescing an ordinary insert has.
+		e.insertText(text)
+		e.trackEdit()
+		e.editCoalesced = true
+		return true
+	}
+
+	runes := []rune(strings.TrimRight(w.Buffer.GetLine(pos.Line), "\n\r"))
+	if pos.Rune > len(runes) {
+		return false
+	}
+	replaced := len(string(runes[pos.Rune-n : pos.Rune]))
+
+	w.Buffer.BeginUserCommand("replace_prior")
+	w.Caret.Seek(pos.Line, pos.Rune-n)
+	w.Caret.Overwrite(int64(replaced), text)
+	// Overwrite leaves the caret where it was told to start, so the caller
+	// advances it — to the far side of what it just wrote.
+	w.Caret.Seek(pos.Line, pos.Rune-n+len([]rune(text)))
+	w.Buffer.EndUserCommand()
+
+	e.trackEdit()
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	return true
 }
 
 // deleteCharAt deletes the character at the cursor.

@@ -885,6 +885,47 @@ func (e *Editor) Paste() { e.execMew("os_paste") }
 // SelectAll marks the whole mew buffer as the block.
 func (e *Editor) SelectAll() { e.execMew("os_select_all") }
 
+// HandleTextCommit implements core.TextCommitHandler: it takes a finished
+// composition into the document, replacing what it stands in for.
+//
+// It goes by HostPort rather than down the keystroke wire, beside os_paste and
+// for the same reason. A commit is not a keystroke — the digit, arrow or Return
+// that chose the character belonged to the input method — so encoding it as
+// terminal bytes for the child to re-parse as keys would put it through a
+// keymap it has no business in, and there is nowhere in that stream to say how
+// many characters it replaces.
+//
+// Replace is what makes this more than typing. macOS's press-and-hold palette
+// commits the held letter the moment the key goes down, so choosing an accent
+// has to remove a character already in the document; the toolkit worked out how
+// many and mew is told. Without it the buffer keeps both.
+//
+// Always claimed, because the answer cannot come back: Execute is asynchronous
+// and reports only that the command was queued. Declining here would send the
+// text a second time as an ordinary keystroke.
+func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
+	if event.Text == "" && event.Replace == 0 {
+		return true
+	}
+	// Comma-separated, which is how PawScript takes more than one argument
+	// (see mew's own `map <key>, <command>`). Without it the two run together
+	// into a single string and the count is lost inside the text.
+	e.execMew(fmt.Sprintf("replace_prior %d, '%s'", event.Replace,
+		escapeMewLiteral(event.Text)))
+	return true
+}
+
+// escapeMewLiteral makes text safe inside a single-quoted PawScript literal, so
+// a composed quote or backslash cannot break out of the command being built.
+func escapeMewLiteral(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	return s
+}
+
 // CutEnabled overrides the embedded terminal's "never": a mew document's
 // block CAN be cut — unless the focused buffer is read-only (mirrored from
 // mew via WithEditState), in which case the Edit menu greys Cut out.
