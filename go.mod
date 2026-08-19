@@ -5,10 +5,10 @@ go 1.25.0
 require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/phroun/argwild v0.0.1
-	github.com/phroun/direct-key-handler v0.3.32
+	github.com/phroun/direct-key-handler v0.3.33
 	github.com/phroun/garland v0.1.11
 	github.com/phroun/ifitfits v0.1.1
-	github.com/phroun/key-sequence-processor v0.1.10-0.20260819113608-e19b44368555
+	github.com/phroun/key-sequence-processor v0.1.10
 	github.com/phroun/kittytk v0.1.24-alpha
 	github.com/phroun/pawscript v0.2.12-alpha
 	golang.org/x/term v0.45.0
