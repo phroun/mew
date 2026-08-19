@@ -1502,6 +1502,11 @@ func (p *Platform) pumpEvents() bool {
 				// Checked here as well as on the composition path because the
 				// accent comes by either route, and which one is not something
 				// to depend on.
+				if imeDebug {
+					fmt.Fprintf(os.Stderr,
+						"kittytk-ime: held %q met text %q (optionChord=%v armed=%v)\n",
+						pending.key, text, pending.optionChord, isArmedAccent(text))
+				}
 				if pending.optionChord && isArmedAccent(text) {
 					p.noteKeyChordTypesNothing(pending.key)
 					p.dispatchPendingPress(pending, "")
@@ -1516,6 +1521,23 @@ func (p *Platform) pumpEvents() bool {
 				// back into clear "M-key" syntax to ensure uniformity across environments.
 				if runtime.GOOS == "darwin" {
 					if decoded, ok := decodeMacOSOptionChar(ch); ok {
+						if imeDebug {
+							fmt.Fprintf(os.Stderr,
+								"kittytk-ime: text %q decoded to chord %q (no press was held)\n",
+								string(ch), decoded)
+						}
+						// Recorded, like every other chord that reaches a text
+						// event. This path had been recording nothing at all,
+						// so a chord that arrived here stayed UNOBSERVED — and
+						// a consumer falling back to a table of what such a
+						// chord types then answered from the table. For a dead
+						// key that meant inserting the accent it had only
+						// armed, with the composed character behind it.
+						if isArmedAccent(string(ch)) {
+							p.noteKeyChordTypesNothing(decoded)
+						} else {
+							p.noteKeyChordText(decoded, string(ch))
+						}
 						mods, name := core.ParseKeyModifiers(decoded)
 						t := ""
 						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
@@ -1586,6 +1608,14 @@ func (p *Platform) pumpEvents() bool {
 			// The composition is left standing rather than cleared, which is
 			// what lets the next keystroke compose against it — the "û" in that
 			// pair, arriving as ordinary committed text.
+			if imeDebug {
+				held := "none"
+				if p.pendingPress != nil {
+					held = p.pendingPress.key
+				}
+				fmt.Fprintf(os.Stderr,
+					"kittytk-ime: composition %q while holding %s\n", e.GetText(), held)
+			}
 			if p.pendingPress != nil && p.pendingPress.optionChord {
 				// Recorded as having typed NOTHING, which is a real
 				// observation and not the absence of one. A consumer that

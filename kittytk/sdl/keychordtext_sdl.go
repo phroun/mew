@@ -2,6 +2,11 @@
 
 package sdl
 
+import (
+	"fmt"
+	"os"
+)
+
 // What this keyboard was watched TYPING, by the chord that typed it.
 //
 // The window system hands over both halves of a keystroke that produces text:
@@ -49,6 +54,9 @@ func (p *Platform) noteKeyChordTypesNothing(chord string) {
 }
 
 func (p *Platform) record(chord, text string) {
+	if imeDebug {
+		fmt.Fprintf(os.Stderr, "kittytk-ime: chord %q recorded as typing %q\n", chord, text)
+	}
 	p.chordTextMu.Lock()
 	defer p.chordTextMu.Unlock()
 	if p.chordText == nil {
