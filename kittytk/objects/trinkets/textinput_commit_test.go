@@ -153,3 +153,41 @@ func TestCancellingBringsTheHiddenLetterBack(t *testing.T) {
 		t.Errorf("shown %q, want the plain letter back", string(runes))
 	}
 }
+
+// An input method ENDS its composition before delivering the finished text.
+//
+// macOS sends the empty update and then the commit, so a field that forgot what
+// the composition stood over on the way through would insert the accent instead
+// of replacing the letter chosen for it — "oô", with the palette having shown
+// "ô" the whole time it was up.
+func TestTheExtentSurvivesTheCompositionEnding(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ABCDo")
+	ti.SetCursorPosition(5)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ô", Start: -1, Length: -1, Covers: 1})
+
+	// Confirmed: the composition ends, and only then does the text arrive.
+	ti.HandleTextEditing(core.TextEditingEvent{Start: -1, Length: -1, Covers: 1})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "ô"})
+
+	if got := ti.Text(); got != "ABCDô" {
+		t.Errorf("text = %q, want the accent in the letter's place", got)
+	}
+}
+
+// A cancel reports covering NOTHING, which is what tells the extent apart from
+// a composition merely ending on its way to a commit. Whatever is typed next is
+// its own text and replaces nothing.
+func TestACancelClearsTheExtent(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ABCDo")
+	ti.SetCursorPosition(5)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ô", Start: -1, Length: -1, Covers: 1})
+
+	ti.HandleTextEditing(core.TextEditingEvent{Start: -1, Length: -1})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "X"})
+
+	if got := ti.Text(); got != "ABCDoX" {
+		t.Errorf("text = %q; a cancelled composition must replace nothing", got)
+	}
+}

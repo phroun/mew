@@ -110,7 +110,18 @@ func PreeditFrom(ev TextEditingEvent) Preedit {
 		p.Covers = 0
 	}
 	if n == 0 {
-		return Preedit{}
+		// Ended, but STILL STANDING OVER what it covered. An input method ends
+		// its composition before delivering the finished text — macOS sends the
+		// empty update and then the commit — so a sink that forgot the extent
+		// here would insert the accent instead of replacing the letter it was
+		// chosen for, and the field would read "oô".
+		//
+		// Nothing paints from this: Active() is false, so the covered text is
+		// visible again from this moment. What survives is only the answer to
+		// "what does the commit stand in for", and it survives exactly until
+		// something ends the composition for real — a cancel reports covering
+		// nothing, which clears it.
+		return Preedit{Covers: p.Covers}
 	}
 
 	clamp := func(i int) int {
