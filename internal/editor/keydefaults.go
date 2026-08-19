@@ -112,7 +112,48 @@ func (e *Editor) defaultCommandForKey(key string) string {
 		if ch, ok := e.KeyProcessor.MacOptionChar(key); ok {
 			return "insert '" + escapeStringLiteral(ch) + "'"
 		}
+		// Anything else the HOST watched this keyboard type for this chord.
+		// Asked last, so it answers only where mew has nothing of its own to
+		// say: the branches above already know what a plain character types
+		// and what a glyph carries.
+		//
+		// What it catches is the chord whose text mew cannot derive from the
+		// chord's own name — which is every chord where the keyboard's layout
+		// or its composition rules had something to say. mew is handed the
+		// keystroke as bytes and never sees that; the host sees both halves.
+		//
+		// A Mega chord is NOT among them, however well observed: the Option
+		// layer above has a switch of its own, and a user who turned it off
+		// asked for those combinations not to type. Answering here would give
+		// the character back through a door the switch does not cover.
+		if e.Config.KeyChordText != nil && !chordHasMega(key) {
+			if text, ok := e.Config.KeyChordText(key); ok && text != "" {
+				return "insert '" + escapeStringLiteral(text) + "'"
+			}
+		}
 		return ""
+	}
+}
+
+// chordHasMega reports whether a key token carries the Mega modifier, walking
+// the prefix run rather than searching the string — "M-" can appear inside a
+// key's own name, and only the prefixes are modifiers.
+func chordHasMega(key string) bool {
+	for {
+		matched := false
+		for _, p := range keyModifierPrefixes {
+			if !strings.HasPrefix(key, p) {
+				continue
+			}
+			if p == "M-" {
+				return true
+			}
+			key, matched = key[len(p):], true
+			break
+		}
+		if !matched {
+			return false
+		}
 	}
 }
 

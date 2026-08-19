@@ -134,3 +134,59 @@ func TestMewSpellingsNamePunctuation(t *testing.T) {
 		}
 	}
 }
+
+// A chord no binding claimed, and whose text mew cannot derive, types what the
+// HOST watched this keyboard produce for it.
+//
+// Asked last: the branches above already know what a plain character types and
+// what a glyph carries, so the observation answers only where mew has nothing
+// of its own to say.
+func TestUnboundChordTypesWhatTheHostObserved(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	e.Config.KeyChordText = func(chord string) (string, bool) {
+		switch chord {
+		case "s-q":
+			return "œ", true // a chord this layout does something with
+		case "a":
+			return "SHOULD NOT BE ASKED", true
+		case "G-€":
+			return "SHOULD NOT BE ASKED", true
+		}
+		return "", false
+	}
+
+	if got := e.defaultCommandForKey("s-q"); got != "insert 'œ'" {
+		t.Errorf("s-q -> %q, want the observed character", got)
+	}
+	// mew derives these itself and must not reach for the observation.
+	if got := e.defaultCommandForKey("a"); got != "insert 'a'" {
+		t.Errorf("a -> %q, want mew's own plain insert", got)
+	}
+	if got := e.defaultCommandForKey("G-€"); got != "insert '€'" {
+		t.Errorf("G-€ -> %q, want the glyph the token carries", got)
+	}
+	// A chord the host never saw is still unhandled.
+	if got := e.defaultCommandForKey("s-z"); got != "" {
+		t.Errorf("an unobserved chord -> %q, want nothing", got)
+	}
+}
+
+// The observation does not reach around the Option layer's switch.
+//
+// With macOptionKeys off the user has asked for Option NOT to type characters;
+// an M- chord must stay silent whatever the host observed.
+func TestObservationDoesNotBypassTheOptionSwitch(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	e.Config.MacOptionKeys = "false"
+	e.applyMacOptionKeys()
+	e.Config.KeyChordText = func(chord string) (string, bool) {
+		if chord == "M-a" {
+			return "å", true
+		}
+		return "", false
+	}
+
+	if got := e.defaultCommandForKey("M-a"); got != "" {
+		t.Errorf("M-a -> %q with the Option layer off, want nothing", got)
+	}
+}
