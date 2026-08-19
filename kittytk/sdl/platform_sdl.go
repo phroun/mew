@@ -1560,14 +1560,27 @@ func (p *Platform) pumpEvents() bool {
 			// and the pairing is recorded like any other. The chord was named
 			// from its key-down, so no dead-key table is consulted to know
 			// which key was pressed.
-			if pending := p.takePendingPress(); pending != nil {
-				p.dispatchPendingPress(pending, e.GetText())
+			// A DEAD KEY's composition is that chord's own output, so the chord
+			// goes out with it and the pairing is recorded like any other.
+			//
+			// Only a dead key. Any held printable can meet a composition too —
+			// hold a letter down on macOS and its accent palette opens one —
+			// and that composition belongs to the input method taking the
+			// keystroke over, not to the key. Dispatching it here put a
+			// composed letter in after the one already typed, and clearing it
+			// fought the palette that had just opened.
+			if p.pendingPress != nil && p.pendingPress.deadKey {
+				p.dispatchPendingPress(p.takePendingPress(), e.GetText())
 				// Drop the composition the dead key opened, so the next
 				// character types plainly rather than wearing an accent from a
 				// keystroke that was meant as a shortcut.
 				_ = sdl3.ClearComposition(s.win.window)
 				continue
 			}
+			// An input method has taken this keystroke over. The press it was
+			// holding is not a keystroke any more — the composition below is —
+			// and a repeat had nothing to say in the first place.
+			p.pendingPress = nil
 
 			if runtime.GOOS == "darwin" && sdl3.GetModState()&sdl3.KMOD_ALT != 0 {
 				if key, ok := decodeMacOSDeadKey(e.GetText()); ok {
@@ -1695,6 +1708,7 @@ func (p *Platform) pumpEvents() bool {
 							scancode: e.Keysym.Scancode,
 							repeat:   e.Repeat,
 							surface:  s,
+							deadKey:  macOptionMayCompose(e.Keysym),
 						}
 						continue
 					}

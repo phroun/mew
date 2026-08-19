@@ -148,6 +148,18 @@ type pendingKeyPress struct {
 	scancode uint32
 	repeat   bool
 	surface  *sdlSurface
+
+	// deadKey marks a press that may ARM a composition rather than produce
+	// text: the five macOS Option dead keys, whose composition is the chord's
+	// own output and belongs to it.
+	//
+	// Every other press can meet a composition too — hold a letter down on
+	// macOS and its accent palette opens one — and that composition is not the
+	// press's output. It belongs to the input method, which is taking the
+	// keystroke over. Telling the two apart is what this is for; without it,
+	// the palette's composition was dispatched as though the held key had
+	// typed it, and a composed letter appeared after the one already there.
+	deadKey bool
 }
 
 // macOptionMayCompose reports whether this key-down is one this platform

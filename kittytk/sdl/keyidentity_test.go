@@ -136,3 +136,38 @@ func TestAFirstPressWithNoTextStillHappens(t *testing.T) {
 		t.Errorf("flushed %v, want one e", h.events)
 	}
 }
+
+// A composition that is not a dead key's own output does not become one.
+//
+// Any held printable can meet a composition — hold a letter down on macOS and
+// its accent palette opens one. That composition belongs to the input method
+// taking the keystroke over, not to the key, and dispatching it as the key's
+// output put a composed letter in after the one already typed.
+func TestOnlyADeadKeyClaimsAComposition(t *testing.T) {
+	for _, c := range []struct {
+		what    string
+		deadKey bool
+		want    int
+	}{
+		{"a dead key's composition is its own output", true, 1},
+		{"an ordinary held key's is not", false, 0},
+	} {
+		h := &optionEventLog{}
+		s := &sdlSurface{handler: h}
+		p := &Platform{}
+		p.pendingPress = &pendingKeyPress{
+			key: "M-e", scancode: 8, surface: s, deadKey: c.deadKey,
+		}
+		// What the pump does for a composition, without the SDL call it makes
+		// beside it: a dead key's press is dispatched with the composition, and
+		// anything else is dropped so the composition stands alone.
+		if p.pendingPress.deadKey {
+			p.dispatchPendingPress(p.takePendingPress(), "´")
+		} else {
+			p.pendingPress = nil
+		}
+		if got := len(h.keys()); got != c.want {
+			t.Errorf("%s: dispatched %d keys, want %d: %v", c.what, got, c.want, h.events)
+		}
+	}
+}
