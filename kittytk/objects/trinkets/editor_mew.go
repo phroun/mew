@@ -979,13 +979,17 @@ func (e *Editor) HandleTextErase(event core.TextEraseEvent) bool {
 // one argument (see mew's own `map <key>, <command>`). Without it the two run
 // together into a single string and the count is lost inside the text.
 func commitCommands(text string, covers int) []string {
-	cmds := []string{"preedit ''"}
-	if text == "" && covers == 0 {
-		// Nothing to put in and nothing to take out.
-		return cmds
-	}
-	return append(cmds, fmt.Sprintf("replace_prior %d, '%s'",
-		covers, escapeMewLiteral(text)))
+	// preedit_commit, not replace_prior: mew tracks the composition's region
+	// with a cursor of its own, and that is what the finished text stands in
+	// for. Counting back from the caret gets it wrong the moment anything is
+	// typed while the palette is up — dismissing it by typing lands the
+	// keystroke first, and the accent then replaced THAT rather than the
+	// letter: "oò" with the keystroke eaten.
+	//
+	// The command ends the composition itself, so nothing has to follow it: on
+	// the route where the palette is confirmed by number no empty update ever
+	// arrives to do that.
+	return []string{fmt.Sprintf("preedit_commit '%s'", escapeMewLiteral(text))}
 }
 
 // escapeMewLiteral makes text safe inside a single-quoted PawScript literal, so

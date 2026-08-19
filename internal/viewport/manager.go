@@ -399,9 +399,11 @@ type Viewport struct {
 	// nav_cancel and by turning navigationMode off.
 	BrowseActive bool
 
-	// preedit is text an input method is composing at the caret: painted, not
-	// stored. See preedit.go.
-	preedit Preedit
+	// preedit is text an input method is composing: painted, not stored, and
+	// tracked by preeditAt — a cursor of this viewport's own, minted once and
+	// parked again on each composition. See preedit.go.
+	preedit   Preedit
+	preeditAt *buffer.Anchor
 
 	// AfterKey is this viewport's after-key pseudo-binding: a PawScript command
 	// the editor runs each time a key's binding activity RESOLVES while this
@@ -1762,6 +1764,7 @@ func (m *Manager) RemoveViewport(id string) bool {
 	// the active binding and every binding stacked in its nav history.
 	w.releaseBinding()
 	w.releaseNavHistory()
+	w.releasePreedit()
 
 	delete(m.viewports, id)
 

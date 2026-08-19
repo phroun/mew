@@ -2,50 +2,36 @@
 
 package trinkets
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// A commit ENDS the composition, and mew is told so rather than left to infer
-// it from a later event.
+// A commit tells mew to put the text where the COMPOSITION stood, not where
+// the caret happens to be.
 //
-// On the route where the palette is confirmed by number, the toolkit's own
-// composition is the only one there is: macOS synthesizes a Backspace and the
-// replacement, and reports no composition before or after. Nothing follows the
-// commit to close it, so the letter underneath kept painting as provisional
-// text for good — armed behind everything typed afterwards.
-func TestACommitEndsMewsCompositionFirst(t *testing.T) {
+// Dismissing a palette by typing lands the keystroke before the input method's
+// commit catches up, so counting back from the caret replaced that keystroke
+// rather than the letter — "oò" with the character eaten. mew tracks the
+// region with a cursor of its own, so the command names no count at all.
+//
+// It ends the composition itself, which matters on the route where the palette
+// is confirmed by number: no empty update ever arrives there to do it.
+func TestACommitIsAnchoredAndNeedsNoCount(t *testing.T) {
 	cmds := commitCommands("ò", 1)
 
-	if len(cmds) != 2 {
-		t.Fatalf("commit issued %v, want the ending and the replacement", cmds)
+	if len(cmds) != 1 {
+		t.Fatalf("commit issued %v, want one anchored command", cmds)
 	}
-	if !strings.HasPrefix(cmds[0], "preedit ") || !strings.Contains(cmds[0], "''") {
-		t.Errorf("first command %q, want the composition ended", cmds[0])
-	}
-	if cmds[1] != "replace_prior 1, 'ò'" {
-		t.Errorf("second command %q, want the accent replacing the letter", cmds[1])
+	if cmds[0] != "preedit_commit 'ò'" {
+		t.Errorf("command %q, want the text placed where the composition stood", cmds[0])
 	}
 }
 
-// A commit with nothing to put in and nothing to take out still ends the
-// composition — that is the whole of what it has to say.
+// An empty commit still ends the composition — that is the whole of what it has
+// to say.
 func TestAnEmptyCommitStillEndsTheComposition(t *testing.T) {
 	cmds := commitCommands("", 0)
 
-	if len(cmds) != 1 || !strings.Contains(cmds[0], "''") {
+	if len(cmds) != 1 || cmds[0] != "preedit_commit ''" {
 		t.Errorf("commit issued %v, want only the composition ended", cmds)
-	}
-}
-
-// A composition that stood over nothing commits as an ordinary insert, which is
-// what a CJK candidate confirming does.
-func TestACommitOverNothingJustInserts(t *testing.T) {
-	cmds := commitCommands("きょう", 0)
-
-	if len(cmds) != 2 || cmds[1] != "replace_prior 0, 'きょう'" {
-		t.Errorf("commit issued %v, want the text inserted over nothing", cmds)
 	}
 }
 
@@ -53,7 +39,7 @@ func TestACommitOverNothingJustInserts(t *testing.T) {
 func TestACommitEscapesWhatItCommits(t *testing.T) {
 	cmds := commitCommands("it's", 1)
 
-	if len(cmds) != 2 || cmds[1] != `replace_prior 1, 'it\'s'` {
+	if len(cmds) != 1 || cmds[0] != `preedit_commit 'it\'s'` {
 		t.Errorf("commit issued %v, want the quote escaped", cmds)
 	}
 }

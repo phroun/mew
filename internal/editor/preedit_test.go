@@ -21,9 +21,10 @@ func TestAPreeditIsPaintedAndNotStored(t *testing.T) {
 	if string(p.Text) != "きょう" || p.Caret != 3 {
 		t.Errorf("composition = %q caret %d, want きょう at 3", string(p.Text), p.Caret)
 	}
-	if p.Line != w.CursorPos().Line || p.Rune != w.CursorPos().Rune {
-		t.Errorf("composition parked at %d,%d, want the caret at %d,%d",
-			p.Line, p.Rune, w.CursorPos().Line, w.CursorPos().Rune)
+	line, from, ok := w.PreeditAt()
+	if !ok || line != w.CursorPos().Line || from != w.CursorPos().Rune {
+		t.Errorf("composition parked at %d,%d (ok=%v), want the caret at %d,%d",
+			line, from, ok, w.CursorPos().Line, w.CursorPos().Rune)
 	}
 }
 
@@ -121,5 +122,59 @@ func TestAPreeditCoversNoMoreThanIsBehindTheCaret(t *testing.T) {
 
 	if got := w.Preedit().Covers; got != 2 {
 		t.Errorf("covers = %d, want it clamped to the two characters behind the caret", got)
+	}
+}
+
+// A composition tracks its region with a cursor, so it still points at the
+// letter after something else is typed.
+//
+// This is the case that broke: arrow around in the palette so a replacement is
+// showing, then type to dismiss it. macOS commits the selection and the
+// keystroke lands first, so a region measured back from the caret named the
+// character that keystroke typed — the accent replaced THAT and the letter
+// stayed, "oò" with the "." eaten.
+func TestACompositionSurvivesTypingBesideIt(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "o"`)
+	e.executeCommand(`preedit 'ò', 1, 1`) // arrowed to an accent, standing over the "o"
+
+	e.executeCommand(`insert "."`) // dismissing keystroke lands first
+	e.executeCommand(`preedit_commit 'ò'`)
+
+	if got := docContent(w); got != "ò." {
+		t.Errorf("content = %q, want the accent in the letter's place and the "+
+			"typed character kept", got)
+	}
+	if w.Preedit().Active() {
+		t.Error("the commit did not end the composition")
+	}
+}
+
+// Committing with nothing standing over anything is an ordinary insert, which
+// is what a host that never opened a composition sends.
+func TestCommittingWithNoCompositionInserts(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "ab"`)
+
+	e.executeCommand(`preedit_commit 'きょう'`)
+
+	if got := docContent(w); got != "abきょう" {
+		t.Errorf("content = %q, want the text inserted at the caret", got)
+	}
+}
+
+// The numeric route: the palette types its selector, erases it, and commits.
+// The composition's cursor rides through all of it.
+func TestTheNumericRouteReplacesOnlyTheLetter(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "i"`)
+	e.executeCommand(`preedit 'i', 1, 1`) // opened over the letter it just typed
+
+	e.executeCommand(`insert "6"`)          // the palette's selector
+	e.executeCommand(`replace_prior 1, ''`) // and the palette taking it back out
+	e.executeCommand(`preedit_commit 'ĩ'`)
+
+	if got := docContent(w); got != "ĩ" {
+		t.Errorf("content = %q, want the accent alone", got)
 	}
 }

@@ -2406,15 +2406,30 @@ func (e *Editor) registerCommands() {
 				covers = n
 			}
 		}
-		pos := w.CursorPos()
-		if covers > pos.Rune {
-			covers = pos.Rune
-		}
-		w.SetPreedit(viewport.Preedit{
-			Text: runes, Caret: caret, Line: pos.Line, Rune: pos.Rune, Covers: covers,
-		})
+		w.SetPreedit(runes, caret, covers)
 		e.RequestRender()
 		return pawscript.BoolStatus(true)
+	})
+
+	// preedit_commit '<text>' takes a finished composition into the document,
+	// in place of THE REGION THE COMPOSITION STOOD OVER.
+	//
+	// Anchored, not measured from the caret, which is the whole reason it is
+	// its own command rather than a replace_prior. A composition is dismissed
+	// by typing: macOS commits whatever was selected in its palette and the
+	// keystroke that dismissed it lands first, so by the time this arrives the
+	// caret has moved past a character the composition never covered.
+	// Counting back from the caret replaced that character instead — the
+	// accent ate it and the letter stayed, "oò" with the "." gone.
+	//
+	// With no composition standing it is an ordinary insert, which is what a
+	// host that never opened one sends.
+	ps.RegisterCommand("preedit_commit", func(ctx *pawscript.Context) pawscript.Result {
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.preeditCommit(text))
 	})
 
 	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
@@ -5427,6 +5442,62 @@ func (e *Editor) replacePrior(n int, text string) bool {
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w)
 	return true
+}
+
+// preeditCommit puts text where the standing composition stood, and ends it.
+//
+// The composition's own position is what is replaced. It was recorded when the
+// composition opened, so it survives the caret moving on — which it does
+// whenever a palette is dismissed by typing, the keystroke landing before the
+// input method's commit catches up.
+//
+// Text the composition never covered is left exactly where it is, including
+// that keystroke: the caret ends up after it, where the person typing put it.
+func (e *Editor) preeditCommit(text string) bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil {
+		return false
+	}
+	p := w.Preedit()
+	line, from, anchored := w.PreeditAt()
+	w.ClearPreedit()
+
+	// A viewport running a child process has no document to place this in; the
+	// text goes to the child, as replace_prior's does.
+	if e.focusedPTY() != nil {
+		if p.Covers > 0 {
+			e.ptyEraseBefore(p.Covers)
+		}
+		return e.ptySendBytes([]byte(text))
+	}
+	if !anchored || p.Covers == 0 {
+		// Nothing was stood over, so there is nothing to stand in for.
+		return e.replacePrior(0, text)
+	}
+
+	pos := w.CursorPos()
+	// Where the caret sits relative to the region, so it can be put back after
+	// the text under it changes length. A caret inside the region lands at the
+	// end of what replaced it; one after the region keeps its distance from it.
+	trailing := 0
+	if pos.Line == line && pos.Rune > from+p.Covers {
+		trailing = pos.Rune - (from + p.Covers)
+	}
+
+	e.setCaret(w, line, from+p.Covers)
+	if !e.replacePrior(p.Covers, text) {
+		return false
+	}
+	after := w.CursorPos()
+	e.setCaret(w, after.Line, after.Rune+trailing)
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	return true
+}
+
+// setCaret parks the caret at a line and rune position.
+func (e *Editor) setCaret(w *viewport.Viewport, line, runePos int) {
+	w.SetCursorPos(viewport.Position{Line: line, Rune: runePos})
 }
 
 // deleteCharAt deletes the character at the cursor.

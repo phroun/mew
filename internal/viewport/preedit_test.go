@@ -1,19 +1,23 @@
 package viewport
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/phroun/mew/internal/buffer"
+)
 
 func composing(text string, caret, line, rune_ int) *Viewport {
 	return covering(text, caret, line, rune_, 0)
 }
 
-// covering makes a viewport composing over n committed runes — what macOS's
-// press-and-hold palette does, having committed the held letter before it
-// opened.
+// covering makes a viewport composing over n committed runes at a position —
+// what macOS's press-and-hold palette does, having committed the held letter
+// before it opened.
 func covering(text string, caret, line, rune_, n int) *Viewport {
-	w := &Viewport{}
-	w.SetPreedit(Preedit{
-		Text: []rune(text), Caret: caret, Line: line, Rune: rune_, Covers: n,
-	})
+	buf := buffer.NewFromString("aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc")
+	w := &Viewport{Buffer: buf, Caret: buf.NewCaret()}
+	w.SetCursorPos(Position{Line: line, Rune: rune_})
+	w.SetPreedit([]rune(text), caret, n)
 	return w
 }
 
