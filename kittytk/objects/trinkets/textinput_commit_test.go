@@ -18,8 +18,10 @@ func TestAPaletteCommitReplacesTheLetterItOpenedOver(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("ABCDo")
 	ti.SetCursorPosition(5)
+	// The palette opens OVER the letter its key just committed, and shows it.
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "o", Start: -1, Length: -1, Covers: 1})
 
-	if !ti.HandleTextCommit(core.TextCommitEvent{Text: "ò", Replace: 1}) {
+	if !ti.HandleTextCommit(core.TextCommitEvent{Text: "ò"}) {
 		t.Fatal("the field declined a commit it could take")
 	}
 	if got := ti.Text(); got != "ABCDò" {
@@ -51,9 +53,9 @@ func TestACommitEndsTheCompositionItFinishes(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("ABCDo")
 	ti.SetCursorPosition(5)
-	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1})
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
 
-	ti.HandleTextCommit(core.TextCommitEvent{Text: "ò", Replace: 1})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "ò"})
 
 	if ti.preedit.Active() {
 		t.Errorf("the preedit survived the commit: %q", string(ti.preedit.Text))
@@ -69,8 +71,9 @@ func TestReplaceCannotReachPastTheCaret(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("ab")
 	ti.SetCursorPosition(1)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "?", Start: -1, Length: -1, Covers: 9})
 
-	ti.HandleTextCommit(core.TextCommitEvent{Text: "X", Replace: 9})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "X"})
 
 	if got := ti.Text(); got != "Xb" {
 		t.Errorf("text = %q, want only the one rune before the caret gone", got)
@@ -83,8 +86,9 @@ func TestACommitOverASelectionTakesTheSelectionOnly(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("abcdef")
 	ti.SelectAll()
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "?", Start: -1, Length: -1, Covers: 1})
 
-	ti.HandleTextCommit(core.TextCommitEvent{Text: "X", Replace: 1})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "X"})
 
 	if got := ti.Text(); got != "X" {
 		t.Errorf("text = %q, want the selection replaced and nothing more", got)
@@ -98,10 +102,54 @@ func TestAReadOnlyFieldDeclinesACommit(t *testing.T) {
 	ti.SetText("locked")
 	ti.SetReadOnly(true)
 
-	if ti.HandleTextCommit(core.TextCommitEvent{Text: "ò", Replace: 1}) {
+	if ti.HandleTextCommit(core.TextCommitEvent{Text: "ò"}) {
 		t.Error("a read-only field accepted a commit")
 	}
 	if got := ti.Text(); got != "locked" {
 		t.Errorf("text = %q, want it untouched", got)
+	}
+}
+
+// While the palette is up, the letter it opened over is HIDDEN behind it.
+//
+// This is the half the commit alone never fixed: macOS commits the held letter
+// before opening, so a composition painted after it showed both at once —
+// "ABCDoò" for as long as the palette was up, where macOS shows one character
+// changing.
+func TestACompositionHidesWhatItOpenedOver(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ABCDo")
+	ti.SetCursorPosition(5)
+
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
+
+	runes, lo, hi, caret := ti.composedText()
+	if string(runes) != "ABCDò" {
+		t.Errorf("shown %q, want the accent in the letter's place", string(runes))
+	}
+	if lo != 4 || hi != 5 {
+		t.Errorf("composition spans [%d,%d), want [4,5) — where the letter was", lo, hi)
+	}
+	if caret != 5 {
+		t.Errorf("caret at %d, want 5 — past the composition", caret)
+	}
+}
+
+// Cancelling brings the letter back. Nothing was deleted to hide it, so ending
+// the composition is the whole of the undo.
+func TestCancellingBringsTheHiddenLetterBack(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ABCDo")
+	ti.SetCursorPosition(5)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
+
+	ti.HandleTextEditing(core.TextEditingEvent{Start: -1, Length: -1})
+
+	if got := ti.Text(); got != "ABCDo" {
+		t.Errorf("text = %q after cancelling, want the letter untouched", got)
+	}
+	runes, _, _, _ := ti.composedText()
+	if string(runes) != "ABCDo" {
+		t.Errorf("shown %q, want the plain letter back", string(runes))
 	}
 }

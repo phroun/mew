@@ -27,6 +27,24 @@ type TextEditingEvent struct {
 	Text   string
 	Start  int
 	Length int
+
+	// Covers is how many COMMITTED runes immediately before the composition
+	// this composition stands over — text already in the document that the
+	// input method has taken back to re-work, and that the composition hides
+	// while it stands.
+	//
+	// Normally 0: an ordinary composition builds text that was never there.
+	// macOS's press-and-hold palette is why it is not always: it commits the
+	// held letter the moment the key goes down and only then opens over it, so
+	// the letter is in the document and must be hidden while its alternatives
+	// are shown, then replaced by whichever is chosen. Reconversion — selecting
+	// a committed word and re-opening it — is the same fact with a bigger
+	// number.
+	//
+	// The extent is the composition's, not the commit's. A commit replaces
+	// whatever its composition covered, which the sink already knows, so
+	// nothing about the extent has to travel twice.
+	Covers int
 }
 
 func (TextEditingEvent) isEvent() {}
@@ -50,6 +68,10 @@ type TextEditingHandler interface {
 type Preedit struct {
 	// Text is the whole composition. Empty means no composition.
 	Text []rune
+
+	// Covers is how many committed runes before the composition it stands
+	// over and hides. See TextEditingEvent.Covers.
+	Covers int
 
 	// Caret is where the input method's own cursor sits, as a rune index
 	// into Text. Always in [0, len(Text)].
@@ -83,7 +105,10 @@ func (p Preedit) Active() bool { return len(p.Text) > 0 }
 func PreeditFrom(ev TextEditingEvent) Preedit {
 	runes := []rune(ev.Text)
 	n := len(runes)
-	p := Preedit{Text: runes, Caret: n}
+	p := Preedit{Text: runes, Caret: n, Covers: ev.Covers}
+	if p.Covers < 0 {
+		p.Covers = 0
+	}
 	if n == 0 {
 		return Preedit{}
 	}

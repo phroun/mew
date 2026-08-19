@@ -93,3 +93,33 @@ func TestAPreeditDeclinesInATerminalViewport(t *testing.T) {
 		t.Error("a composition was parked on a viewport showing a child's grid")
 	}
 }
+
+// The extent rides on the composition, and mew paints over what it covers.
+func TestAPreeditCoversWhatThePaletteOpenedOver(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "ABCDo"`)
+
+	e.executeCommand(`preedit 'ò', 1, 1`)
+
+	if got := docContent(w); got != "ABCDo" {
+		t.Errorf("document = %q; hiding must not touch the buffer", got)
+	}
+	display, lo, hi := w.PreeditSplice(0, "ABCDo")
+	if display != "ABCDò" || lo != 4 || hi != 5 {
+		t.Errorf("display = %q [%d,%d), want the accent in the letter's place",
+			display, lo, hi)
+	}
+}
+
+// A composition cannot stand over more than the caret has behind it on the
+// line — the count arrives from a host and is not trusted past what is there.
+func TestAPreeditCoversNoMoreThanIsBehindTheCaret(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "ab"`)
+
+	e.executeCommand(`preedit 'X', 1, 9`)
+
+	if got := w.Preedit().Covers; got != 2 {
+		t.Errorf("covers = %d, want it clamped to the two characters behind the caret", got)
+	}
+}

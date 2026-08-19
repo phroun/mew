@@ -3,8 +3,17 @@ package viewport
 import "testing"
 
 func composing(text string, caret, line, rune_ int) *Viewport {
+	return covering(text, caret, line, rune_, 0)
+}
+
+// covering makes a viewport composing over n committed runes — what macOS's
+// press-and-hold palette does, having committed the held letter before it
+// opened.
+func covering(text string, caret, line, rune_, n int) *Viewport {
 	w := &Viewport{}
-	w.SetPreedit(Preedit{Text: []rune(text), Caret: caret, Line: line, Rune: rune_})
+	w.SetPreedit(Preedit{
+		Text: []rune(text), Caret: caret, Line: line, Rune: rune_, Covers: n,
+	})
 	return w
 }
 
@@ -107,5 +116,74 @@ func TestAnOutOfRangeCaretIsClamped(t *testing.T) {
 
 	if got := w.Preedit().Caret; got != 2 {
 		t.Errorf("caret = %d, want it clamped to the composition's length", got)
+	}
+}
+
+// A composition stands OVER what it covers and hides it, rather than painting
+// in front of it.
+//
+// This is the half a replacement at commit time never fixed: macOS commits the
+// held letter before the palette opens, so a composition painted after it shows
+// both at once — "ABCDoò" for as long as the palette is up — where macOS shows
+// one character changing.
+func TestACompositionHidesWhatItCovers(t *testing.T) {
+	w := covering("ò", 1, 0, 5, 1)
+
+	got, lo, hi := w.PreeditSplice(0, "ABCDo")
+
+	if got != "ABCDò" {
+		t.Errorf("display line = %q, want the accent in the letter's place", got)
+	}
+	if lo != 4 || hi != 5 {
+		t.Errorf("composition spans [%d,%d), want [4,5) — where the letter was", lo, hi)
+	}
+}
+
+// Nothing is removed from the line the buffer holds: hiding is a painting
+// decision, and ending the composition shows the text again with no edit to
+// undo.
+func TestHidingTakesNothingFromTheDocument(t *testing.T) {
+	w := covering("ò", 1, 0, 5, 1)
+	w.ClearPreedit()
+
+	got, lo, hi := w.PreeditSplice(0, "ABCDo")
+	if got != "ABCDo" || lo != hi {
+		t.Errorf("display = %q [%d,%d), want the letter back untouched", got, lo, hi)
+	}
+}
+
+// The shift nets out what is hidden against what is shown: a composition
+// standing in one rune's place and showing three runes moves later text by two,
+// not by three.
+func TestTheShiftNetsOutWhatIsHidden(t *testing.T) {
+	w := covering("abc", 3, 0, 5, 1)
+
+	if got := w.PreeditShift(0, 5); got != 2 {
+		t.Errorf("shift = %d, want three shown less one hidden", got)
+	}
+	// A position before the hidden run is untouched by either.
+	if got := w.PreeditShift(0, 3); got != 0 {
+		t.Errorf("shift before the composition = %d, want 0", got)
+	}
+}
+
+// The caret is measured from where the composition STARTS, which is back at the
+// first rune it hides — not from the document position it was opened at.
+func TestTheCaretIsMeasuredFromTheCompositionsStart(t *testing.T) {
+	w := covering("ò", 1, 0, 5, 1)
+
+	if got := w.PreeditCaretRune(0, 5); got != 5 {
+		t.Errorf("caret at display rune %d, want 5 — past the one-rune accent", got)
+	}
+}
+
+// A composition covering more than the line holds clamps at its start rather
+// than reaching into the line before it.
+func TestCoveringMoreThanThereIsClampsAtTheLineStart(t *testing.T) {
+	w := covering("X", 1, 0, 2, 9)
+
+	got, lo, hi := w.PreeditSplice(0, "ab")
+	if got != "X" || lo != 0 || hi != 1 {
+		t.Errorf("display = %q [%d,%d), want the whole line stood over", got, lo, hi)
 	}
 }

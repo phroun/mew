@@ -88,6 +88,11 @@ type Editor struct {
 	// read-only buffer holds focus.
 	readOnlyFocused atomic.Bool
 
+	// preeditCovers is how many committed characters the standing composition
+	// was opened over. The commit that ends it replaces exactly those, and does
+	// not carry the number itself — see HandleTextEditing.
+	preeditCovers int
+
 	// helpOpen mirrors whether mew's built-in help window is open
 	// (WithHelpState), so a host can keep a "Quick Help" checkmark in sync
 	// (QuickHelpOpen).
@@ -900,8 +905,14 @@ func (e *Editor) SelectAll() { e.execMew("os_select_all") }
 // would claim the composition was finished.
 func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 	p := core.PreeditFrom(event)
-	e.execMew(fmt.Sprintf("preedit '%s', %d",
-		escapeMewLiteral(string(p.Text)), p.Caret))
+	// Remembered because the commit will need it and will not carry it: a
+	// composition replaces what it stood OVER, and this is the side that knows
+	// what that was. mew paints the composition over those characters in the
+	// meantime, so the two agree about the region without either being told
+	// twice.
+	e.preeditCovers = p.Covers
+	e.execMew(fmt.Sprintf("preedit '%s', %d, %d",
+		escapeMewLiteral(string(p.Text)), p.Caret, p.Covers))
 	return true
 }
 
@@ -915,22 +926,28 @@ func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 // keymap it has no business in, and there is nowhere in that stream to say how
 // many characters it replaces.
 //
-// Replace is what makes this more than typing. macOS's press-and-hold palette
-// commits the held letter the moment the key goes down, so choosing an accent
-// has to remove a character already in the document; the toolkit worked out how
-// many and mew is told. Without it the buffer keeps both.
+// What it stands in for is what the COMPOSITION covered, remembered from
+// HandleTextEditing rather than carried on this event. macOS's press-and-hold
+// palette commits the held letter the moment the key goes down, so choosing an
+// accent has to remove a character already in the document — and the extent of
+// that was settled when the composition opened, which is also when mew started
+// painting over it.
 //
 // Always claimed, because the answer cannot come back: Execute is asynchronous
 // and reports only that the command was queued. Declining here would send the
 // text a second time as an ordinary keystroke.
 func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
-	if event.Text == "" && event.Replace == 0 {
+	covers := e.preeditCovers
+	e.preeditCovers = 0
+	if event.Text == "" && covers == 0 {
+		// Nothing to put in and nothing to take out. The composition is still
+		// ended, which the empty update following this does.
 		return true
 	}
 	// Comma-separated, which is how PawScript takes more than one argument
 	// (see mew's own `map <key>, <command>`). Without it the two run together
 	// into a single string and the count is lost inside the text.
-	e.execMew(fmt.Sprintf("replace_prior %d, '%s'", event.Replace,
+	e.execMew(fmt.Sprintf("replace_prior %d, '%s'", covers,
 		escapeMewLiteral(event.Text)))
 	return true
 }

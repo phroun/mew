@@ -1440,10 +1440,10 @@ func (p *Platform) pumpEvents() bool {
 				// does the same on blur.
 				p.releaseHeldKeys(s)
 				// An input method holding this keyboard is not holding it any
-				// more. Forgotten rather than acted on: nothing was deleted, so
-				// the letter a palette had opened over simply stays.
+				// more. Nothing was deleted, so the letter a palette had opened
+				// over simply comes back.
 				p.ime.composing = false
-				p.ime.disarm()
+				p.cancelComposition(s)
 				s.handler.Event(core.FocusEvent{Focused: false})
 				s.Invalidate(core.UnitRect{})
 				if p.noteFocus(false) {
@@ -1535,9 +1535,9 @@ func (p *Platform) pumpEvents() bool {
 			// Option+i then u composes "û" while this same flag stands, and
 			// that IS the u keystroke's own text, dispatched above.
 			if p.ime.holdsKeyboard() {
-				replace := p.ime.takeReplace()
-				core.KeyTracef("1 sdl      commit  text=%q replace=%d", text, replace)
-				if s.handler.Event(core.TextCommitEvent{Text: text, Replace: replace}) {
+				p.ime.spend()
+				core.KeyTracef("1 sdl      commit  text=%q", text)
+				if s.handler.Event(core.TextCommitEvent{Text: text}) {
 					continue
 				}
 				// Nobody took it, so it goes on as ordinary typed text below —
@@ -1664,7 +1664,8 @@ func (p *Platform) pumpEvents() bool {
 			// routes to the same takeover: a composition arriving is a text
 			// event, so it keeps the held press from ever reaching the flush.
 			// This is the route the accent palette takes when it is driven with
-			// the arrow keys rather than by number.
+			// the arrow keys rather than by number. The composition below
+			// carries the extent either way.
 			p.ime.armFor(p.pendingPress)
 			p.pendingPress = nil
 
@@ -1689,11 +1690,16 @@ func (p *Platform) pumpEvents() bool {
 					})
 				}
 			}
-			core.KeyTracef("1 sdl      compose text=%q", e.GetText())
+			// Stamped with what the takeover opened over, which SDL knows
+			// nothing about: the input method took a letter that was already
+			// committed, and the sink has to hide it while showing the
+			// alternatives rather than painting them after it.
+			core.KeyTracef("1 sdl      compose text=%q covers=%d", e.GetText(), p.ime.covers)
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
 				Start:  int(e.Start),
 				Length: int(e.Length),
+				Covers: p.ime.covers,
 			})
 		case *sdl3.KeyboardEvent:
 			s := p.surfaceFor(e.WindowID)
@@ -1915,10 +1921,10 @@ func (p *Platform) pumpEvents() bool {
 					_ = sdl3.ClearComposition(s.win.window)
 				}
 				// And the takeover with it: the click cancelled the palette, so
-				// nothing is waiting to be replaced. The letter it had opened
-				// over stays, which is what cancelling means.
+				// the letter it had opened over comes back, exactly as it was
+				// typed. That is what cancelling means.
 				p.ime.composing = false
-				p.ime.disarm()
+				p.cancelComposition(s)
 				// Enable pointer capturing so dragging actions extend beyond window borders
 				// to allow continuous, lag-free native widget tear-out gestures.
 				_ = sdl3.CaptureMouse(true)
@@ -3121,7 +3127,7 @@ func (s *sdlSurface) SetTextInputEnabled(on bool) {
 		_ = sdl3.ClearComposition(s.win.window)
 		if s.platform != nil {
 			s.platform.ime.composing = false
-			s.platform.ime.disarm()
+			s.platform.cancelComposition(s)
 		}
 		err = sdl3.StopTextInput(s.win.window)
 	}

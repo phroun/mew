@@ -2355,8 +2355,16 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.replacePrior(n, text))
 	})
 
-	// preedit '<text>', <caret> shows what an input method is still composing:
-	// painted at the caret, not put in the document. An empty text ends it.
+	// preedit '<text>', <caret>, <covers> shows what an input method is still
+	// composing: painted at the caret, not put in the document. An empty text
+	// ends it.
+	//
+	// covers is how many committed characters before the caret the composition
+	// stands OVER and hides. macOS's press-and-hold palette commits the held
+	// letter before it opens, so without this the line shows the letter and the
+	// accent chosen to replace it side by side for as long as the palette is
+	// up. Nothing is deleted to hide it — ending the composition brings it
+	// straight back, which is what dismissing a palette means.
 	//
 	// Not stored, because storing it would mean un-storing it on every update —
 	// a Japanese input method rewrites the whole composition on each keystroke —
@@ -2392,9 +2400,18 @@ func (e *Editor) registerCommands() {
 				caret = n
 			}
 		}
+		covers := 0
+		if len(ctx.Args) > 2 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[2]))); err == nil && n > 0 {
+				covers = n
+			}
+		}
 		pos := w.CursorPos()
+		if covers > pos.Rune {
+			covers = pos.Rune
+		}
 		w.SetPreedit(viewport.Preedit{
-			Text: runes, Caret: caret, Line: pos.Line, Rune: pos.Rune,
+			Text: runes, Caret: caret, Line: pos.Line, Rune: pos.Rune, Covers: covers,
 		})
 		e.RequestRender()
 		return pawscript.BoolStatus(true)

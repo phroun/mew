@@ -923,9 +923,20 @@ func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
 		return display, at, at, at
 	}
 
+	// What the composition was opened OVER is hidden while it stands. macOS's
+	// palette commits the held letter and only then opens over it, so without
+	// this the field shows both at once — the letter and the accent that was
+	// chosen to take its place, side by side — for as long as the palette is
+	// up. Cancelling ends the composition and the letter is simply there
+	// again; nothing was deleted to hide it.
+	from := at - t.preedit.Covers
+	if from < 0 {
+		from = 0
+	}
+
 	pre := t.echo(t.preedit.Text)
 	out := make([]rune, 0, len(display)+len(pre))
-	out = append(out, display[:at]...)
+	out = append(out, display[:from]...)
 	out = append(out, pre...)
 	out = append(out, display[at:]...)
 
@@ -933,7 +944,7 @@ func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
 	if inner > len(pre) {
 		inner = len(pre)
 	}
-	return out, at, at + len(pre), at + inner
+	return out, from, from + len(pre), from + inner
 }
 
 // truncateToWidth truncates text to fit within the given width using font metrics.
@@ -1369,12 +1380,11 @@ func (t *TextInput) HandleTextEditing(event core.TextEditingEvent) bool {
 // HandleTextCommit implements core.TextCommitHandler: it takes a finished
 // composition into the text.
 //
-// Replace is what makes this more than insert. macOS's press-and-hold palette
-// commits the held letter the moment the key goes down, so choosing an accent
-// has to remove a character that is already in the field — and the platform
-// reports how many runes that is, because the input method never tells us
-// directly. Without it the field keeps both: "o" and the "ò" that was meant to
-// replace it.
+// The composition's own extent is what makes this more than insert. macOS's
+// press-and-hold palette commits the held letter the moment the key goes down,
+// so choosing an accent has to remove a character that is already in the field.
+// The composition has been standing over that character and hiding it, so the
+// region is already known here — nothing about it has to arrive on the event.
 //
 // The removal is a plain edit rather than a synthesized Backspace on purpose.
 // A Backspace would run whatever the user has bound to that key, which need
@@ -1387,13 +1397,18 @@ func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
 		return false
 	}
 
+	// What the composition covered is what this replaces. The count is not on
+	// the event and does not need to be: the field has been hiding those runes
+	// all along, so it already knows which ones the finished text stands for.
+	covers := t.preedit.Covers
+
 	// The composition is over whichever way this arrived, so the preedit goes
 	// before anything is measured against the caret. insert clears it too; this
 	// is here because the deletion below happens first and must not count
 	// provisional characters.
 	t.preedit = core.Preedit{}
 
-	if n := event.Replace; n > 0 {
+	if n := covers; n > 0 {
 		// Only what is actually there, and only what is not already selected:
 		// a selection is deleted by insert, and taking these runes as well
 		// would erase text the composition was never replacing.

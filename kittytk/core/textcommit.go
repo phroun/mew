@@ -14,28 +14,17 @@ package core
 // is still provisional. A sink that paints a preedit ends it on this event; a
 // sink that paints none sees only this one.
 //
+// It carries no extent either. A commit replaces whatever its composition
+// COVERED (see TextEditingEvent.Covers), which the sink has been painting all
+// along — so the region is already known where it is needed, and does not have
+// to be worked out again and sent a second time.
+//
 // Nothing about a commit belongs in the key-chord text memo. There is no chord
 // to record it against — holding "o" and picking "ò" from the palette must
 // never teach anything that the "o" chord types "ò".
 type TextCommitEvent struct {
 	// Text is the finished composition.
 	Text string
-
-	// Replace is how many runes IMMEDIATELY BEFORE THE CARET this text
-	// replaces. It counts COMMITTED runes only: any preedit is ended by this
-	// event and is not part of the count.
-	//
-	// Normally 0. macOS's press-and-hold accent palette is why it is not
-	// always: the held letter is committed the moment the key goes down, so
-	// choosing an accent has to remove a character that is already in the
-	// document. A native macOS client is told which one through
-	// NSTextInputClient's replacementRange; we are told through nothing at all,
-	// because SDL's composition event has no field to carry it. The platform
-	// layer infers the count instead, from the one thing it does observe.
-	//
-	// A host that cannot know this reports 0, which is the answer for every
-	// composition that appends rather than replaces.
-	Replace int
 }
 
 func (TextCommitEvent) isEvent() {}

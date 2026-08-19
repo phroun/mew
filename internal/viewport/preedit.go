@@ -33,6 +33,17 @@ type Preedit struct {
 	// that line. The composition follows the caret, so these are the caret's
 	// position at the moment the composition was last updated.
 	Line, Rune int
+
+	// Covers is how many COMMITTED runes immediately before that position the
+	// composition stands over, and HIDES while it stands.
+	//
+	// Normally 0: an ordinary composition builds text that was never in the
+	// document. macOS's press-and-hold palette is why it is not always — it
+	// commits the held letter the moment the key goes down and only then opens
+	// over it, so the letter has to be hidden while its alternatives are shown
+	// or the line reads "oò". Nothing is deleted to hide it: ending the
+	// composition brings it straight back, which is what cancelling means.
+	Covers int
 }
 
 // Active reports whether anything is being composed.
@@ -83,11 +94,18 @@ func (w *Viewport) PreeditSplice(docLine int, line string) (display string, lo, 
 	if at > len(runes) {
 		at = len(runes)
 	}
+	// What the composition covers is hidden behind it rather than painted in
+	// front of it. Nothing is removed from the line the buffer holds — this is
+	// the display line, and ending the composition shows the text again.
+	from := at - w.preedit.Covers
+	if from < 0 {
+		from = 0
+	}
 	out := make([]rune, 0, len(runes)+len(w.preedit.Text))
-	out = append(out, runes[:at]...)
+	out = append(out, runes[:from]...)
 	out = append(out, w.preedit.Text...)
 	out = append(out, runes[at:]...)
-	return string(out), at, at + len(w.preedit.Text)
+	return string(out), from, from + len(w.preedit.Text)
 }
 
 // PreeditShift is how many display runes a composition adds BEFORE a document
@@ -98,10 +116,12 @@ func (w *Viewport) PreeditSplice(docLine int, line string) (display string, lo, 
 // composition is painted at the caret, and text the caret was in front of stays
 // in front of it.
 func (w *Viewport) PreeditShift(docLine, docRune int) int {
-	if !w.PreeditOnLine(docLine) || docRune < w.preedit.Rune {
+	if !w.PreeditOnLine(docLine) || docRune < w.preedit.Rune-w.preedit.Covers {
 		return 0
 	}
-	return len(w.preedit.Text)
+	// What it hides comes off the shift: the composition stands in those runes'
+	// place rather than in front of them.
+	return len(w.preedit.Text) - w.preedit.Covers
 }
 
 // PreeditCaretRune is where the document caret paints on the display line while
@@ -111,5 +131,9 @@ func (w *Viewport) PreeditCaretRune(docLine, docRune int) int {
 	if !w.PreeditOnLine(docLine) || docRune != w.preedit.Rune {
 		return docRune + w.PreeditShift(docLine, docRune)
 	}
-	return docRune + w.preedit.Caret
+	from := w.preedit.Rune - w.preedit.Covers
+	if from < 0 {
+		from = 0
+	}
+	return from + w.preedit.Caret
 }

@@ -69,7 +69,7 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 	// Not while a composition is in flight: the keystrokes driving a candidate
 	// list belong to the input method, not to the document.
 	if !p.ime.composing {
-		p.ime.disarm()
+		p.cancelComposition(s)
 	}
 	if s == nil || s.handler == nil {
 		return
