@@ -14,6 +14,12 @@ package sdl
 // character "å", and an application that wants to type the character for an
 // unbound M-a would otherwise be guessing from a US-layout table. See
 // core.KeyChordTextSource.
+//
+// EVERY chord that types is recorded, though, not only the ones where the two
+// halves look different. "a" typing "a" is worth as little to look up as it
+// costs to store, and recording it uniformly is what leaves the table with no
+// rule about which chords belong in it and nothing to prune when one changes
+// its mind. What accumulates is a picture of this keyboard.
 
 // noteKeyChordText records what a chord produced.
 //

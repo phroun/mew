@@ -150,3 +150,26 @@ func TestWhichKeysWaitForACharacter(t *testing.T) {
 		}
 	}
 }
+
+// Plain typing is recorded too.
+//
+// The rule is "what the keyboard said it produced", not "what looked
+// interesting": a table with every chord in it needs no rule about which ones
+// belong, and nothing to prune when one changes.
+func TestPlainTypingIsRecorded(t *testing.T) {
+	p := &Platform{}
+	for _, c := range []struct{ chord, text string }{
+		{"a", "a"},   // unmodified
+		{"A", "A"},   // shifted
+		{"G-€", "€"}, // a glyph the layout composed
+		{"M-a", "å"}, // and the Option chord that started all this
+	} {
+		p.noteKeyChordText(c.chord, c.text)
+		if got, ok := p.KeyChordText(c.chord); !ok || got != c.text {
+			t.Errorf("%s = %q ok=%v, want %q", c.chord, got, ok, c.text)
+		}
+	}
+	if n := len(p.AllKeyChordText()); n != 4 {
+		t.Errorf("recorded %d chords, want all 4", n)
+	}
+}

@@ -1470,6 +1470,13 @@ func (p *Platform) pumpEvents() bool {
 				if glyph {
 					key = "G-" + key
 				}
+				// Every chord that types is recorded, not only the ones where
+				// the chord and its text look different. This event is the
+				// keyboard SAYING what it produced — the plain keys as much as
+				// the composed ones — and a table with every chord in it needs
+				// no rule about which ones belong and no pruning when one
+				// changes. See keychordtext_sdl.go.
+				p.noteKeyChordText(key, string(ch))
 				// Hold it under the scancode of the KEY_DOWN this event
 				// followed. A printable's press is reported HERE, and this
 				// event carries no scancode, so without the latch every
