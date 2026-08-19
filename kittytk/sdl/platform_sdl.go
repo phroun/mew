@@ -2843,6 +2843,11 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	if s.caretVisible == visible && (!visible || (s.caretX == x && s.caretY == y)) {
 		return // unchanged: no need to tell the OS again
 	}
+	// A caret appearing where there was none is a text-accepting trinket taking
+	// focus INSIDE the window — a TextInput, a terminal, the editor hosted in
+	// one. They report a caret only while focused, so this edge is that event
+	// and no new plumbing is needed to hear it.
+	tookFocus := visible && !s.caretVisible
 	s.caretVisible, s.caretX, s.caretY = visible, x, y
 
 	if !visible {
@@ -2850,6 +2855,16 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 			fmt.Fprintf(os.Stderr, "kittytk-ime: clear failed: %v\n", err)
 		}
 		return
+	}
+
+	// Ask for text input again, before saying where it is. Only on the edge:
+	// this runs whenever the caret MOVES, which is most keystrokes, and a
+	// syscall per character is not what the caret position is for.
+	if tookFocus {
+		if err := sdl3.StartTextInput(s.win.window); err != nil && imeDebug {
+			fmt.Fprintf(os.Stderr,
+				"kittytk-ime: window %d restart on caret focus failed: %v\n", s.win.id, err)
+		}
 	}
 
 	b := s.win.backend
