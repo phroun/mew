@@ -573,7 +573,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				bg = scheme.Selection
 			}
 
-			isCursor := cursorVisible && x == cursorVisibleX && y == cursorVisibleY && t.gfx.cursorBlinkOn
+			// Where the cursor IS, and whether it is being drawn this frame.
+			// Two questions, and only the second one blinks: the insertion
+			// point does not move when the cursor is in its off phase, and
+			// anything that reads it must not be told otherwise.
+			atCursorCell := cursorVisible && x == cursorVisibleX && y == cursorVisibleY
+			isCursor := atCursorCell && t.gfx.cursorBlinkOn
 			if isCursor && focused && cursorShape == 0 {
 				fg, bg = bg, fg // solid block cursor when focused
 			}
@@ -631,19 +636,26 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 			if isCursor {
 				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
+			}
 
-				// Report where the text is, so an input method can put its
-				// candidate window under the cursor: the CJK candidate
-				// list, macOS's press-and-hold accent picker, the emoji
-				// picker. Without it they open at a corner of the window.
-				//
-				// Only the position — this path DRAWS its own cursor just
-				// above, so asking for a platform caret as well would be
-				// asking for a second one. (The cell path does ask, because
-				// there the outer terminal draws it and nothing here can.)
-				if focused {
-					painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
-				}
+			// Report where the text is, so an input method can put its
+			// candidate window under the cursor: the CJK candidate list,
+			// macOS's press-and-hold accent picker, the emoji picker.
+			// Without it they open at a corner of the window.
+			//
+			// Only the position — this path DRAWS its own cursor just above,
+			// so asking for a platform caret as well would be asking for a
+			// second one. (The cell path does ask, because there the outer
+			// terminal draws it and nothing here can.)
+			//
+			// Reported at the cursor's cell whether or not the cursor is
+			// being drawn there this frame. It used to sit inside the drawn
+			// cursor's test, blink phase and all, so the insertion point was
+			// withdrawn and re-reported twice a second — and an input method
+			// asked to move that often is one being told, over and over, that
+			// the text it is composing for has gone away.
+			if atCursorCell && focused {
+				painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
 			}
 		}
 
