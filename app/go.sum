@@ -34,8 +34,8 @@ github.com/phroun/garland v0.1.11 h1:LinO36MzmNjwR4EGRErM3IM1BIz4b8ygzAbPZD0/fA4
 github.com/phroun/garland v0.1.11/go.mod h1:KHNTG2FATRg/DEWl5rn53nSmLdujrr5mBjl4McDcIP0=
 github.com/phroun/key-sequence-processor v0.1.10 h1:RsOBzqzWCpj1XWxhrgdb1fJ2tos9E0cQ46H4ENNVTlg=
 github.com/phroun/key-sequence-processor v0.1.10/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
-github.com/phroun/kittytk v0.1.24-alpha h1:8ceS6dfipeAXoJR6JzrOtZeQobBuFMAEPKp9NiZWa4Y=
-github.com/phroun/kittytk v0.1.24-alpha/go.mod h1:/ASXS23lCwrhh53ozHD1sj3FFXOOkjlEybCqLG2Oufo=
+github.com/phroun/kittytk v0.1.25-alpha h1:r61A/Rc6/3ILm1ucYAAy4WpOWxT8Uh7uc8rJaD6wTAk=
+github.com/phroun/kittytk v0.1.25-alpha/go.mod h1:mBEXJRr9/hGhYoPwW+BnHHU9ROCADyRAkaWRO7PTD+U=
 github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4E=
 github.com/phroun/mew v0.3.1-alpha/go.mod h1:PHVb21QCVxAAySalmb9lzu4BGCKG6mrlnVOAg+9Ju5g=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
