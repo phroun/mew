@@ -581,6 +581,19 @@ func (fm *FocusManager) HandleTextCommit(event TextCommitEvent) bool {
 	return false
 }
 
+// HandleTextErase hands an input method's erase to the focused trinket, the
+// same way HandleTextCommit hands it a finished composition.
+func (fm *FocusManager) HandleTextErase(event TextEraseEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(TextEraseHandler); ok {
+		return h.HandleTextErase(event)
+	}
+	return false
+}
+
 // HandlePaste hands pasted text to the focused trinket. Like HandleTextEditing,
 // and for the same reason, there is no navigation fallback: a paste belongs to
 // whatever has focus, and a focused trinket that cannot hold one leaves nothing
@@ -894,6 +907,18 @@ func (gfm *GlobalFocusManager) HandleTextCommit(event TextCommitEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleTextCommit(event)
+	}
+	return false
+}
+
+// HandleTextErase routes an input method's erase to the active scope.
+func (gfm *GlobalFocusManager) HandleTextErase(event TextEraseEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleTextErase(event)
 	}
 	return false
 }

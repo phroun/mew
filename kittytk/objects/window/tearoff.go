@@ -921,6 +921,8 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		handled = h.win.HandleTextEditing(e)
 	case core.TextCommitEvent:
 		handled = h.win.HandleTextCommit(e)
+	case core.TextEraseEvent:
+		handled = h.win.HandleTextErase(e)
 	case core.MousePressEvent:
 		if !h.ghost && h.popupsHandleMouse(e) {
 			handled = true

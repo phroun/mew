@@ -2823,6 +2823,18 @@ func (m *WindowManager) HandleTextCommit(event core.TextCommitEvent) bool {
 	return active.HandleTextCommit(event)
 }
 
+// HandleTextErase hands an input method's erase to the active window.
+func (m *WindowManager) HandleTextErase(event core.TextEraseEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() || m.isModalBlocked(active) {
+		return false
+	}
+	return active.HandleTextErase(event)
+}
+
 // HandlePaste hands pasted text to the active window, the fallback path when
 // the focus manager's active scope did not claim it. Like HandleTextEditing it
 // has none of HandleKeyPress's routing: a paste is not a key.

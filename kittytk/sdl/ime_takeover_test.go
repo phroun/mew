@@ -187,11 +187,17 @@ func TestThePalettesOwnRepeatsAreStillSwallowed(t *testing.T) {
 }
 
 // A palette DISMISSED by typing sends no ending update of its own, so the
-// keystroke that dismissed it is what has to end the composition.
+// typing is what has to end the composition.
 //
 // Left standing, the letter under it kept painting as provisional text while
 // the typing ran on past it — "Hrllo. What?" with the "o" still underlined and
 // the composition armed behind everything that followed.
+//
+// It takes two keystrokes, not one: the first could be the palette's own
+// selector (see TestThePalettesSelectorDoesNotEndTheTakeover), and a palette
+// only ever takes one. So the letter shows as provisional for a keystroke
+// longer than it should, and then rights itself — which is the price of the
+// two cases being indistinguishable until the second key arrives.
 func TestTypingOnEndsAPaletteThatWasNeverConfirmed(t *testing.T) {
 	p, h := heldPlatform("o", true)
 	p.flushPendingPress()
@@ -201,13 +207,10 @@ func TestTypingOnEndsAPaletteThatWasNeverConfirmed(t *testing.T) {
 
 	s := &sdlSurface{handler: h}
 	p.emitKeyPress(s, keyPress{chord: ".", produced: ".", observed: true, origin: "test"})
+	p.emitKeyPress(s, keyPress{chord: "W", produced: "W", observed: true, origin: "test"})
 
 	if p.ime.holdsKeyboard() {
-		t.Error("the composition outlived the keystroke that dismissed its palette")
-	}
-	last, ok := h.events[len(h.events)-1].(core.KeyPressEvent)
-	if !ok || last.Key != "." {
-		t.Errorf("last event %#v, want the keystroke itself", h.events[len(h.events)-1])
+		t.Error("the composition outlived the typing that ran on past it")
 	}
 	var ended bool
 	for _, ev := range h.events {
@@ -236,5 +239,82 @@ func TestAKeystrokeLeavesADeadKeysCompositionStanding(t *testing.T) {
 		if _, ok := ev.(core.TextEditingEvent); ok {
 			t.Errorf("ended a composition that was not ours: %v", h.events)
 		}
+	}
+}
+
+// The palette's SELECTOR does not end the takeover — it is part of it.
+//
+// Picking by number types the digit into the document and backspaces it, so
+// the digit arrives as an ordinary keystroke. Ending the takeover on it threw
+// the extent away before the palette's own accent turned up, and the accent
+// appended: "oœ". The composition grows to stand over the digit as well, since
+// the Backspace that would have removed it is swallowed.
+func TestThePalettesSelectorDoesNotEndTheTakeover(t *testing.T) {
+	p, h := heldPlatform("i", true)
+	p.flushPendingPress()
+	s := &sdlSurface{handler: h}
+
+	p.emitKeyPress(s, keyPress{chord: "6", produced: "6", observed: true, origin: "test"})
+
+	if !p.ime.holdsKeyboard() {
+		t.Fatal("the selector ended the takeover; the accent will append")
+	}
+	// The extent does NOT grow to take the digit in. The palette erases its own
+	// selector, and that erase arrives as its own event.
+	if got := p.ime.covers; got != 1 {
+		t.Errorf("composition covers %d, want just the letter", got)
+	}
+}
+
+// A keystroke that types NOTHING is never a selector: the palette's is a
+// character it puts in the document and takes back out.
+func TestAKeyThatTypesNothingEndsTheTakeover(t *testing.T) {
+	p, h := heldPlatform("o", true)
+	p.flushPendingPress()
+	s := &sdlSurface{handler: h}
+
+	p.emitKeyPress(s, keyPress{chord: "Escape", origin: "test"})
+
+	if p.ime.holdsKeyboard() {
+		t.Error("Escape left the takeover standing")
+	}
+}
+
+// The palette's Backspace is reported as an ERASE, not as the key it arrived
+// on.
+//
+// Nobody pressed Backspace: macOS types the selector digit and takes it back
+// out this way. Dispatching it as a keystroke would run whatever the user has
+// bound to that key, which need not be an erase at all.
+func TestThePalettesBackspaceIsAnEraseNotAKeystroke(t *testing.T) {
+	p, h := heldPlatform("i", true)
+	p.flushPendingPress()
+	s := &sdlSurface{handler: h}
+	p.emitKeyPress(s, keyPress{chord: "6", produced: "6", observed: true, origin: "test"})
+
+	before := len(h.events)
+	p.imeBackspace(s)
+
+	if n := len(h.keys()); n != 1 {
+		t.Errorf("dispatched %d keystrokes, want only the selector: %v", n, h.events)
+	}
+	var erased int
+	for _, ev := range h.events[before:] {
+		if e, ok := ev.(core.TextEraseEvent); ok {
+			erased = e.Count
+		}
+	}
+	if erased != 1 {
+		t.Errorf("erase count %d, want the one rune the palette put there", erased)
+	}
+	if !p.ime.holdsKeyboard() {
+		t.Error("the erase ended the takeover; the accent still has to replace the letter")
+	}
+	// And the composition goes back up behind it: the selector reached the sink
+	// as ordinary typed text, which ends a composition there.
+	last, ok := h.events[len(h.events)-1].(core.TextEditingEvent)
+	if !ok || last.Text != "i" || last.Covers != 1 {
+		t.Errorf("last event %#v, want the composition restored over the letter",
+			h.events[len(h.events)-1])
 	}
 }

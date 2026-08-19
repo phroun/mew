@@ -1432,6 +1432,47 @@ func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
 	return true
 }
 
+// HandleTextErase implements core.TextEraseHandler: it takes text back out on
+// an input method's behalf.
+//
+// A plain edit, not a synthesized Backspace, for the same reason the platform
+// sent this instead of the key it arrived on: a Backspace would run whatever
+// the user has bound to that key.
+//
+// A selection is deleted whole and the count ignored, the same rule a commit
+// follows: the selection is a region the user can see, and the count is about
+// text beside it.
+func (t *TextInput) HandleTextErase(event core.TextEraseEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+	if t.selStart != t.selEnd {
+		t.deleteSelection()
+		t.resetCaretBlink()
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+	}
+	n := event.Count
+	if n < 1 {
+		n = 1
+	}
+	if n > t.cursorPos {
+		n = t.cursorPos
+	}
+	if n == 0 {
+		return true
+	}
+	t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
+	t.cursorPos -= n
+	t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+	t.textChanged()
+	t.resetCaretBlink()
+	t.ensureCursorVisible()
+	t.Update()
+	return true
+}
+
 // AccessibleInfo returns accessibility information.
 func (t *TextInput) AccessibleInfo() core.AccessibleInfo {
 	info := t.AccessibleTrinket.AccessibleInfo()

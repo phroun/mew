@@ -1696,6 +1696,7 @@ func (p *Platform) pumpEvents() bool {
 			// nothing about: the input method took a letter that was already
 			// committed, and the sink has to hide it while showing the
 			// alternatives rather than painting them after it.
+			p.ime.shown = e.GetText()
 			core.KeyTracef("1 sdl      compose text=%q covers=%d", e.GetText(), p.ime.covers)
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
@@ -1726,18 +1727,7 @@ func (p *Platform) pumpEvents() bool {
 			}
 			if e.Type == sdl3.KeyDown && e.Keysym.Sym == sdl3.K_BACKSPACE &&
 				p.ime.holdsKeyboard() {
-				// The palette's own erase, not the user's. macOS commits a held
-				// letter immediately, so picking an accent BY NUMBER removes it
-				// by synthesizing a Backspace and typing the replacement after
-				// it — where picking with the arrows goes through marked text
-				// and synthesizes nothing.
-				//
-				// Swallowed rather than forwarded because it is not a key the
-				// user pressed, and dispatching it would run whatever they have
-				// bound to Backspace, which need not be an erase at all. The
-				// removal happens on the commit instead, as a replacement count
-				// the sink applies as a plain edit. Nothing is held for this
-				// press, so its release drops on its own.
+				p.imeBackspace(s)
 				continue
 			}
 			if e.Type == sdl3.KeyDown && eatsLockCap(e.Keysym) {

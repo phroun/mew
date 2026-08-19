@@ -3943,6 +3943,17 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		}
 		return false
 
+	case core.TextEraseEvent:
+		// An input method's erase goes where its composition went, and is
+		// routed the same way for the same reasons.
+		if fm != nil && fm.HandleTextErase(e) {
+			return true
+		}
+		if wm != nil {
+			return wm.HandleTextErase(e)
+		}
+		return false
+
 	case core.PasteEvent:
 		// Pasted text goes to whatever is focused and nowhere else — like a
 		// composition, not a key: no shortcuts, no menu bar, no window-cycle

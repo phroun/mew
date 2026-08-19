@@ -1423,6 +1423,19 @@ func (m *MDIPane) HandleTextCommit(event core.TextCommitEvent) bool {
 	return active.HandleTextCommit(event)
 }
 
+// HandleTextErase forwards an input method's erase to the active child window,
+// the same reason HandleTextCommit forwards.
+func (m *MDIPane) HandleTextErase(event core.TextEraseEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextErase(event)
+}
+
 // HandlePaste forwards pasted text to the active child window. The pane is the
 // focused trinket in ITS window's focus manager, so without this the paste
 // would stop here — the same reason HandleTextEditing forwards.

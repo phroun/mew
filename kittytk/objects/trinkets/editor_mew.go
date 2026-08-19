@@ -948,6 +948,24 @@ func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
 	return true
 }
 
+// HandleTextErase implements core.TextEraseHandler: it takes text back out on
+// an input method's behalf.
+//
+// replace_prior with nothing to put in, because that command already knows what
+// erasing means in either place mew shows: characters out of a document, or the
+// child's own erase byte down a terminal session. A key event would have run
+// whatever is bound to Backspace instead, which is the whole reason the toolkit
+// sent this rather than the key it arrived on.
+func (e *Editor) HandleTextErase(event core.TextEraseEvent) bool {
+	n := event.Count
+	if n < 1 {
+		n = 1
+	}
+	core.KeyTracef("2 mew      erase   %d", n)
+	e.execMew(fmt.Sprintf("replace_prior %d, ''", n))
+	return true
+}
+
 // commitCommands is what a finished composition tells mew to do, in order.
 //
 // Ending the composition comes FIRST and always. A commit ends one by

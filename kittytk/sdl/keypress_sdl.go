@@ -60,32 +60,38 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 			p.noteKeyChordText(k.chord, k.produced)
 		}
 	}
-	// A keystroke reaching the application means the input method no longer has
-	// the keyboard: whatever palette was open is gone. This DELETES NOTHING —
-	// the character the held key committed is what the user typed, and a
-	// dismissed palette leaves it exactly there.
-	//
-	// Unconditional, because the keys that drive an input method never arrive
-	// here: a candidate list's arrows, digits and Return are consumed by the
-	// input method itself. A key that reaches this far is one it did not take.
-	//
-	// Only a takeover of ours is ended (see cancelComposition), so a dead key's
-	// deliberately-standing composition is untouched — the "u" completing
-	// Option+i comes through here and must still find the circumflex waiting.
-	if p.ime.armed {
-		core.KeyTracef("1 sdl      ime     key %q (%s) ends the composition",
-			k.chord, k.origin)
-	}
-	p.cancelComposition(s)
-	if s == nil || s.handler == nil {
-		return
-	}
-
 	mods, name := core.ParseKeyModifiers(k.chord)
 	text := k.produced
 	if text == "" && len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 		// Nothing was produced, so the chord carries what the key itself shows.
 		text = name
+	}
+
+	// A keystroke reaching the application usually means the input method no
+	// longer has the keyboard: whatever palette was open is gone. Ending it
+	// DELETES NOTHING — the letter the held key committed is what the user
+	// typed, and a dismissed palette leaves it exactly there.
+	//
+	// The exception is the palette's own SELECTOR. Picking by number types the
+	// digit into the document and backspaces it, so that digit arrives here as
+	// an ordinary keystroke; ending the takeover on it threw away the extent
+	// before the palette's own accent turned up, and the accent appended:
+	// "oœ". A palette takes exactly one selector, so the first typed keystroke
+	// is spared and the second is somebody typing on.
+	//
+	// Only a takeover of ours is ended (see cancelComposition), so a dead key's
+	// deliberately-standing composition is untouched — the "u" completing
+	// Option+i comes through here and must still find the circumflex waiting.
+	selector := text != "" && p.ime.noteTyped()
+	if !selector {
+		if p.ime.armed {
+			core.KeyTracef("1 sdl      ime     key %q (%s) ends the composition",
+				k.chord, k.origin)
+		}
+		p.cancelComposition(s)
+	}
+	if s == nil || s.handler == nil {
+		return
 	}
 
 	core.KeyTracef("1 sdl      press   key=%q (%s)", k.chord, k.origin)
@@ -95,4 +101,8 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 	s.handler.Event(core.KeyPressEvent{
 		Key: k.chord, Modifiers: mods, Text: text, Repeat: k.repeat,
 	})
+
+	if selector {
+		core.KeyTracef("1 sdl      ime     selector %q kept the composition", k.chord)
+	}
 }

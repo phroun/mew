@@ -340,6 +340,19 @@ type imeState struct {
 	// disarming: while the input method has the keyboard, the keystrokes
 	// driving its palette are not the user typing.
 	composing bool
+
+	// shown is what the composition is displaying, kept because the palette's
+	// selector passes through the sink as ordinary typed text and ends the
+	// composition there — so it has to be put back once the selector is erased.
+	shown string
+
+	// typed is how many runes the palette has put in the document on its own
+	// behalf since it opened — its selector, which it erases again.
+	//
+	// Counted only to tell the palette's one selector apart from somebody
+	// typing on: it is NOT part of what the commit replaces, because the
+	// palette's own erase takes it back out (see TextEraseEvent).
+	typed int
 }
 
 // armFor records a takeover if this is the press that constitutes one, and
@@ -362,7 +375,7 @@ func (m *imeState) armFor(pending *pendingKeyPress) bool {
 	}
 	// One rune: only plain printables are held for text, so the character the
 	// first press committed is exactly one.
-	m.armed, m.covers = true, 1
+	m.armed, m.covers, m.shown = true, 1, pending.key
 	core.KeyTracef("1 sdl      ime     OPEN over %q covers=1", pending.key)
 	return true
 }
@@ -374,11 +387,71 @@ func (m *imeState) armFor(pending *pendingKeyPress) bool {
 func (m *imeState) disarm() {
 	m.armed = false
 	m.covers = 0
+	m.typed = 0
+	m.shown = ""
+}
+
+// noteTyped records a rune this platform put in the document on the palette's
+// behalf, and reports whether the palette is still plausibly open.
+//
+// The palette takes exactly ONE selector. A first typed keystroke while it is
+// open is that selector — macOS types it, backspaces it, and sends the accent —
+// so it does not end the composition. A SECOND is somebody typing on, which no
+// palette does, and ends it.
+//
+// Without the first exemption, picking by number cancelled the takeover before
+// its own accent arrived and the accent appended: "oœ". Without the second, a
+// palette dismissed by typing rather than confirmed never ended at all, and the
+// letter under it stayed painted as provisional text.
+func (m *imeState) noteTyped() bool {
+	if !m.armed {
+		return false
+	}
+	m.typed++
+	return m.typed == 1
 }
 
 // spend ends the takeover on a commit, so a second commit does not open over a
 // second character.
 func (m *imeState) spend() { m.disarm() }
+
+// imeBackspace reports the palette's own erase as what it MEANS, rather than as
+// the key it arrived on.
+//
+// Picking from the press-and-hold palette by number types the selector digit
+// into the document and takes it back out this way, because macOS expects the
+// base letter to be marked text it will replace itself. Nobody pressed
+// Backspace, so dispatching it as a keystroke would run whatever the user has
+// bound to that key — which need not be an erase at all — and the sink is the
+// only thing that knows what erasing means where it is: a character out of a
+// document, or the child's own erase byte down a terminal session.
+//
+// The takeover STANDS. The letter the palette opened over is still there and
+// still what the accent will replace; only the palette's own selector is being
+// taken back. And nothing is held for this press, so its release drops on its
+// own.
+func (p *Platform) imeBackspace(s *sdlSurface) {
+	core.KeyTracef("1 sdl      ime     erase 1 (the palette's own)")
+	if s == nil || s.handler == nil {
+		return
+	}
+	s.handler.Event(core.TextEraseEvent{Count: 1})
+
+	// And the composition goes back up. The selector reached the sink as
+	// ordinary typed text, which ENDS a composition there — that is what
+	// committed characters do — so by now the sink has forgotten what the
+	// palette is standing over. Restored once the selector is gone and the
+	// caret is back where the composition belongs, so the accent still has a
+	// region to replace.
+	if p.ime.armed {
+		s.handler.Event(core.TextEditingEvent{
+			Text:   p.ime.shown,
+			Start:  -1,
+			Length: -1,
+			Covers: p.ime.covers,
+		})
+	}
+}
 
 // cancelComposition ends a takeover AND tells the sink, which is what makes
 // cancelling whole.

@@ -191,3 +191,70 @@ func TestACancelClearsTheExtent(t *testing.T) {
 		t.Errorf("text = %q; a cancelled composition must replace nothing", got)
 	}
 }
+
+// An input method's erase takes text back out without being a keystroke, so
+// nothing bound to Backspace runs for it.
+func TestAnEraseTakesTextBackOut(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ab6")
+	ti.SetCursorPosition(3)
+
+	if !ti.HandleTextErase(core.TextEraseEvent{Count: 1}) {
+		t.Fatal("the field declined an erase it could take")
+	}
+	if got := ti.Text(); got != "ab" {
+		t.Errorf("text = %q, want the selector gone", got)
+	}
+	if got := ti.CursorPosition(); got != 2 {
+		t.Errorf("caret at %d, want 2", got)
+	}
+}
+
+// An erase cannot reach past the caret, and a count of zero still means one —
+// it arrives from a host and is not trusted into a panic.
+func TestAnEraseIsClamped(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("ab")
+	ti.SetCursorPosition(1)
+
+	ti.HandleTextErase(core.TextEraseEvent{Count: 9})
+
+	if got := ti.Text(); got != "b" {
+		t.Errorf("text = %q, want only what was behind the caret gone", got)
+	}
+}
+
+// The palette's whole numeric sequence: it opens over the letter, types its
+// selector, erases the selector, then commits the accent over the letter.
+func TestThePaletteConfirmedByNumberReplacesOnlyTheLetter(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("i")
+	ti.SetCursorPosition(1)
+
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "i", Start: -1, Length: -1, Covers: 1})
+	ti.insert("6") // the selector, typed as an ordinary keystroke — ends the
+	//                composition here, as committed characters do
+	ti.HandleTextErase(core.TextEraseEvent{Count: 1})
+	// The platform puts the composition back once the selector is gone.
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "i", Start: -1, Length: -1, Covers: 1})
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "ĩ"})
+
+	if got := ti.Text(); got != "ĩ" {
+		t.Errorf("text = %q, want the accent alone — no doubled letter, no selector", got)
+	}
+}
+
+// A read-only field declines an erase rather than losing text it could never
+// have been typed into.
+func TestAReadOnlyFieldDeclinesAnErase(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("locked")
+	ti.SetReadOnly(true)
+
+	if ti.HandleTextErase(core.TextEraseEvent{Count: 1}) {
+		t.Error("a read-only field accepted an erase")
+	}
+	if got := ti.Text(); got != "locked" {
+		t.Errorf("text = %q, want it untouched", got)
+	}
+}
