@@ -1489,10 +1489,24 @@ func (p *Platform) pumpEvents() bool {
 			// is read live: the modifier is still down while its glyph composes.
 			glyph := glyphMod(sdl3.GetModState())
 
-			// The character a held Option chord composed. The chord was named
-			// from its own key-down; this is what that keystroke produced, and
-			// the two are dispatched as the single keystroke they are.
+			// The character a held press produced. The key was named from its
+			// own key-down; this is what that keystroke typed, and the two are
+			// dispatched as the single keystroke they are.
 			if pending := p.takePendingPress(); pending != nil {
+				// Unless it is an accent a dead key ARMED, which is not text
+				// the chord typed — it is waiting for the next keystroke to
+				// wear it. Recorded as typed, anything falling through to what
+				// M-i types inserted the accent and the composed character
+				// arrived behind it: "ˆû".
+				//
+				// Checked here as well as on the composition path because the
+				// accent comes by either route, and which one is not something
+				// to depend on.
+				if pending.optionChord && isArmedAccent(text) {
+					p.noteKeyChordTypesNothing(pending.key)
+					p.dispatchPendingPress(pending, "")
+					continue
+				}
 				p.dispatchPendingPress(pending, text)
 				continue
 			}

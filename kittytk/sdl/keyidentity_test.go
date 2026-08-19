@@ -204,3 +204,31 @@ func TestADeadKeyRecordsNoText(t *testing.T) {
 		t.Errorf("M-i recorded as typing %q; the accent it armed is not its output", text)
 	}
 }
+
+// A dead key's accent is not typed text, whichever event carries it.
+//
+// The composition path was built because macOS reports these as an in-flight
+// composition. The same accent also arrives as ordinary committed text, and
+// there it was recorded as what the chord typed — so anything falling through
+// to what M-i types inserted the accent, and the next keystroke composed the
+// accented character behind it: "ˆû". The accent identifies the case, not the
+// event it came on.
+func TestAnArmedAccentIsNotTypedText(t *testing.T) {
+	for _, c := range []struct {
+		text  string
+		armed bool
+	}{
+		{"´", true},  // acute, Option+e
+		{"ˆ", true},  // circumflex, Option+i
+		{"˜", true},  // tilde, Option+n
+		{"¨", true},  // diaeresis, Option+u
+		{"`", true},  // grave
+		{"å", false}, // Option+a types a character of its own
+		{"û", false}, // and the accented character itself is ordinary text
+		{"", false},
+	} {
+		if got := isArmedAccent(c.text); got != c.armed {
+			t.Errorf("isArmedAccent(%q) = %v, want %v", c.text, got, c.armed)
+		}
+	}
+}

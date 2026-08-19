@@ -315,3 +315,20 @@ func decodeMacOSDeadKey(composition string) (string, bool) {
 	key, ok := macOSDeadKeys[composition]
 	return key, ok
 }
+
+// isArmedAccent reports whether text an Option chord produced is one of the
+// accents a dead key ARMS rather than types.
+//
+// Which event carries it is not something to depend on. The comment above says
+// macOS reports these as an in-flight composition, and that is what the
+// composition path was built for — but the same accent also arrives as ordinary
+// committed text, and then it was recorded as what the chord typed. Anything
+// falling through to what M-i types then inserted the accent, and the next
+// keystroke composed the accented character behind it: "ˆû".
+//
+// So the accent is what identifies the case, not the event it came on. A dead
+// key types nothing whichever way its accent is delivered.
+func isArmedAccent(text string) bool {
+	_, ok := macOSDeadKeys[text]
+	return ok
+}
