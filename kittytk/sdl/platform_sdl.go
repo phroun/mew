@@ -1526,28 +1526,20 @@ func (p *Platform) pumpEvents() bool {
 								"kittytk-ime: text %q decoded to chord %q (no press was held)\n",
 								string(ch), decoded)
 						}
-						// Recorded, like every other chord that reaches a text
-						// event. This path had been recording nothing at all,
-						// so a chord that arrived here stayed UNOBSERVED — and
-						// a consumer falling back to a table of what such a
-						// chord types then answered from the table. For a dead
-						// key that meant inserting the accent it had only
-						// armed, with the composed character behind it.
-						if isArmedAccent(string(ch)) {
-							p.noteKeyChordTypesNothing(decoded)
-						} else {
-							p.noteKeyChordText(decoded, string(ch))
+						produced := string(ch)
+						if isArmedAccent(produced) {
+							// An accent this chord ARMED, not one it typed.
+							produced = ""
 						}
-						mods, name := core.ParseKeyModifiers(decoded)
-						t := ""
-						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-							t = name
-						}
-						core.KeyTracef("1 sdl      press   key=%q (decoded from text %q)", decoded, string(ch))
-						s.handler.Event(core.KeyPressEvent{
-							Key: decoded, Modifiers: mods, Text: t, Repeat: repeat,
+						p.emitKeyPress(s, keyPress{
+							chord:    decoded,
+							produced: produced,
+							observed: true,
+							scancode: p.padScancode,
+							held:     true,
+							repeat:   repeat,
+							origin:   "decoded from text",
 						})
-						p.holdKey(p.padScancode, decoded)
 						continue
 					}
 				}
@@ -1561,18 +1553,19 @@ func (p *Platform) pumpEvents() bool {
 				// the composed ones — and a table with every chord in it needs
 				// no rule about which ones belong and no pruning when one
 				// changes. See keychordtext_sdl.go.
-				p.noteKeyChordText(key, string(ch))
-				// Hold it under the scancode of the KEY_DOWN this event
-				// followed. A printable's press is reported HERE, and this
-				// event carries no scancode, so without the latch every
-				// ordinary letter would go down unrecorded and its release
-				// would be dropped as an orphan.
-				p.holdKey(p.padScancode, key)
-				core.KeyTracef("1 sdl      press   key=%q (from text)", key)
-				s.handler.Event(core.KeyPressEvent{
-					Key:    key,
-					Text:   string(ch),
-					Repeat: repeat,
+				// Held under the scancode of the KEY_DOWN this event followed.
+				// A printable's press is reported HERE, and this event carries
+				// no scancode, so without the latch every ordinary letter would
+				// go down unrecorded and its release would be dropped as an
+				// orphan.
+				p.emitKeyPress(s, keyPress{
+					chord:    key,
+					produced: string(ch),
+					observed: true,
+					scancode: p.padScancode,
+					held:     true,
+					repeat:   repeat,
+					origin:   "from text",
 				})
 			}
 		case *sdl3.TextEditingEvent:
@@ -1641,23 +1634,17 @@ func (p *Platform) pumpEvents() bool {
 					// way for the same reasons: no text of its own, and the
 					// composition left standing for the next keystroke to
 					// compose against.
-					// Recorded as typing NOTHING, which is what a dead key
-					// does. This is the path the accent actually takes: the
-					// composition arrives with no press held — macOS delivers
-					// no key-down at all while it is composing — and the chord
-					// is recovered from the accent here. It went out
-					// unrecorded, so a consumer fell through to a table of what
-					// M-i types and inserted the accent, with the composed
-					// character behind it.
-					p.noteKeyChordTypesNothing(key)
-					mods, name := core.ParseKeyModifiers(key)
-					text := ""
-					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-						text = name
-					}
-					core.KeyTracef("1 sdl      press   key=%q (recovered from composition %q)",
-						key, e.GetText())
-					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
+					// macOS delivers no key-down while it is composing, so
+					// the chord is recovered from the accent it armed.
+					p.emitKeyPress(s, keyPress{
+						chord: key,
+						// A dead key types nothing, and this is where that is
+						// known: the composition is all it ever produces.
+						observed: true,
+						// No key-down happened and no key-up will, so there is
+						// nothing for a release to match.
+						origin: "recovered from composition",
+					})
 				}
 			}
 			core.KeyTracef("1 sdl      compose text=%q", e.GetText())
@@ -1803,19 +1790,14 @@ func (p *Platform) pumpEvents() bool {
 						}
 						continue
 					}
-					mods, name := core.ParseKeyModifiers(key)
-					text := ""
-					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-						text = name
-					}
-					if imeDebug {
-						fmt.Fprintf(os.Stderr,
-							"kittytk-ime: chord %q dispatched on its key-down (not held)\n", key)
-					}
-					core.KeyTracef("1 sdl      press   key=%q (key-down)", key)
-					p.holdKey(e.Keysym.Scancode, key)
-					s.handler.Event(core.KeyPressEvent{
-						Key: key, Modifiers: mods, Text: text, Repeat: e.Repeat,
+					p.emitKeyPress(s, keyPress{
+						chord: key,
+						// Nothing was produced to observe: this key is not one
+						// SDL follows with text.
+						scancode: e.Keysym.Scancode,
+						held:     true,
+						repeat:   e.Repeat,
+						origin:   "key-down",
 					})
 				}
 			} else if e.Type == sdl3.KeyUp {
@@ -2491,10 +2473,6 @@ func translateKey(sym sdl3.Keysym) string {
 	// which put it ahead of every modifier that outranks it: LCtrl+RCtrl+Mega+X
 	// came out "H-M-x" where the canonical order is "M-H-x", and the terminal
 	// host — which has the same promotion now — spells it the second way.
-	// Hyper needed a second pass here while encodeKey answered "" for a plain
-	// printable: H-x had no key to attach to, so bareKey supplied one and H-
-	// was prepended. encodeKey names printables itself now, so there is nothing
-	// left for that pass to catch.
 	return encodeKey(sym, ctrl, alt, shift, gui, hyper)
 }
 
@@ -2696,17 +2674,14 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// Plain (possibly shifted) printable, named here like every other
 			// key — from the key.
 			//
-			// This used to answer "" and let the SDLTextInput event name it,
-			// because the CHARACTER was being used as the name, so naming had
-			// to wait for the character to arrive. Identity is not text: the
-			// press already knows which key it is, every other branch here
-			// names it from the key, and holding one case back meant the name
-			// of an ordinary letter existed only if a text event followed.
+			// Identity is not text: the press already knows which key it is,
+			// and every other branch here names it from the key. Taking the
+			// name from the character instead would make an ordinary letter
+			// nameless until a text event followed it.
 			//
 			// Hyper can be the only modifier left when this is reached, since
-			// translateKey spends the doubled pair that formed it. That case
-			// used to be caught by a second pass over bareKey; it is named here
-			// now, with the prefix where the canonical order puts it.
+			// translateKey spends the doubled pair that formed it, so the
+			// prefix goes on here where the canonical order puts it.
 			return keyMods{hyper: hyper}.prefix() + layerAdjustedKeyName(ch, shift)
 		}
 	}

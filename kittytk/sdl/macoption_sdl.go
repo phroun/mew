@@ -5,7 +5,6 @@ package sdl
 import (
 	"runtime"
 
-	"github.com/phroun/kittytk/core"
 	sdl3 "github.com/phroun/kittytk/sdl/sdl3"
 )
 
@@ -154,20 +153,16 @@ type pendingKeyPress struct {
 	// comes of it.
 	//
 	// A plain printable is the opposite: it is nothing but the text it makes.
-	// The distinction decides both of the questions asked when no text
-	// arrives, and both used to be answered the Option way for every key:
+	// The distinction decides both of the questions asked when no text arrives:
 	//
 	// A composition that follows it is the chord's own output, so the chord is
 	// dispatched carrying it. A composition following a plain key belongs to
-	// the input method taking that keystroke over — hold a letter down on
-	// macOS and its accent palette opens one — and dispatching it put a
-	// composed letter in after the one already there.
+	// the input method taking that keystroke over — hold a letter down on macOS
+	// and its accent palette opens one — and is not the key's to report.
 	//
 	// And no text at all still leaves a chord to report, because the shortcut
 	// was pressed. A plain key with no text typed nothing: macOS hands a held
-	// letter over as marked text rather than committing it, so dispatching one
-	// at the drain committed the very character the palette had opened to
-	// replace.
+	// letter to its palette as marked text rather than committing it.
 	optionChord bool
 }
 
@@ -237,26 +232,17 @@ func (p *Platform) dispatchPendingPress(pending *pendingKeyPress, composed strin
 	if pending == nil {
 		return
 	}
-	// What the keyboard composed is recorded before anything else: it is a
-	// fact about the keyboard, and stays true whether or not there is still a
-	// surface to deliver the keystroke to.
-	if composed != "" {
-		p.noteKeyChordText(pending.key, composed)
-	}
-	if pending.surface == nil || pending.surface.handler == nil {
-		return
-	}
-	mods, name := core.ParseKeyModifiers(pending.key)
-	text := composed
-	if text == "" && len(name) == 1 && name[0] >= 32 && name[0] < 127 {
-		// Nothing composed: the chord types what the key itself shows, which
-		// is what every other platform does with Option held.
-		text = name
-	}
-	core.KeyTracef("1 sdl      press   key=%q (held, text %q)", pending.key, composed)
-	p.holdKey(pending.scancode, pending.key)
-	pending.surface.handler.Event(core.KeyPressEvent{
-		Key: pending.key, Modifiers: mods, Text: text, Repeat: pending.repeat,
+	p.emitKeyPress(pending.surface, keyPress{
+		chord: pending.key,
+		// Nothing composed leaves the memo alone rather than recording a
+		// silence: the text may simply not have come, and the chord still types
+		// what the key itself shows.
+		produced: composed,
+		observed: composed != "",
+		scancode: pending.scancode,
+		held:     true,
+		repeat:   pending.repeat,
+		origin:   "held",
 	})
 }
 

@@ -295,3 +295,56 @@ func TestNamingAMacOptionChordFromTheKey(t *testing.T) {
 		}
 	}
 }
+
+// The rules every reported keystroke follows, in the one place that holds them.
+//
+// Five sites have a keystroke to report — a key-down, a held press paired with
+// its text, text with no press behind it, an Option chord decoded from what it
+// produced, and a dead key recovered from the composition it armed. All five
+// answer to these.
+func TestReportingOneKeystroke(t *testing.T) {
+	press := func(k keyPress) (*Platform, *optionEventLog) {
+		h := &optionEventLog{}
+		p := &Platform{}
+		p.emitKeyPress(&sdlSurface{handler: h}, k)
+		return p, h
+	}
+
+	// What the keyboard produced is recorded, and empty IS a recording when
+	// the site says it observed one.
+	p, _ := press(keyPress{chord: "M-a", produced: "å", observed: true})
+	if text, ok := p.KeyChordText("M-a"); !ok || text != "å" {
+		t.Errorf("M-a observed as %q ok=%v, want å", text, ok)
+	}
+	p, _ = press(keyPress{chord: "M-i", observed: true})
+	if text, ok := p.KeyChordText("M-i"); !ok || text != "" {
+		t.Errorf("M-i observed as %q ok=%v, want an observation of nothing", text, ok)
+	}
+	// A site with nothing to say leaves the memo alone, which is not the same
+	// as saying the chord types nothing.
+	p, _ = press(keyPress{chord: "F1"})
+	if _, ok := p.KeyChordText("F1"); ok {
+		t.Error("a press that observed nothing wrote to the memo")
+	}
+
+	// The chord carries what was produced, or what its key shows when nothing
+	// was.
+	_, h := press(keyPress{chord: "M-a", produced: "å", observed: true})
+	if keys := h.keys(); len(keys) != 1 || keys[0].Text != "å" {
+		t.Errorf("dispatched %v, want Text å", h.events)
+	}
+	_, h = press(keyPress{chord: "M-i", observed: true})
+	if keys := h.keys(); len(keys) != 1 || keys[0].Text != "i" {
+		t.Errorf("dispatched %v, want the key's own character", h.events)
+	}
+
+	// A release names itself from the press only where a press was registered.
+	p, _ = press(keyPress{chord: "a", produced: "a", observed: true, scancode: 4, held: true})
+	if name, ok := p.takeHeldKey(4); !ok || name != "a" {
+		t.Errorf("held key = %q ok=%v, want a", name, ok)
+	}
+	p, _ = press(keyPress{chord: "M-i", observed: true, scancode: 4})
+	if _, ok := p.takeHeldKey(4); ok {
+		t.Error("a keystroke with no key-down behind it was registered for a release")
+	}
+}

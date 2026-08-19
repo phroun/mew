@@ -649,11 +649,8 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 			// terminal draws it and nothing here can.)
 			//
 			// Reported at the cursor's cell whether or not the cursor is
-			// being drawn there this frame. It used to sit inside the drawn
-			// cursor's test, blink phase and all, so the insertion point was
-			// withdrawn and re-reported twice a second — and an input method
-			// asked to move that often is one being told, over and over, that
-			// the text it is composing for has gone away.
+			// being drawn there this frame. Where the text is does not blink;
+			// only whether a cursor is painted over it does.
 			if atCursorCell && focused {
 				painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
 			}
