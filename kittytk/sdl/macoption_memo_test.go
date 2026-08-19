@@ -39,7 +39,7 @@ func pendingPlatform(chord string) (*Platform, *optionEventLog) {
 	h := &optionEventLog{}
 	s := &sdlSurface{handler: h}
 	p := &Platform{}
-	p.pendingOption = &pendingOptionKey{key: chord, scancode: 4, surface: s}
+	p.pendingPress = &pendingKeyPress{key: chord, scancode: 4, surface: s}
 	return p, h
 }
 
@@ -51,8 +51,8 @@ func pendingPlatform(chord string) (*Platform, *optionEventLog) {
 // the thing being decoded to find out which key was pressed.
 func TestOptionChordCarriesWhatItComposed(t *testing.T) {
 	p, h := pendingPlatform("M-a")
-	pending := p.takePendingOption()
-	p.dispatchOption(pending, "å")
+	pending := p.takePendingPress()
+	p.dispatchPendingPress(pending, "å")
 
 	keys := h.keys()
 	if len(keys) != 1 {
@@ -74,7 +74,7 @@ func TestOptionChordCarriesWhatItComposed(t *testing.T) {
 // A chord that composes nothing is still the keystroke that happened.
 func TestOptionChordWithNoComposition(t *testing.T) {
 	p, h := pendingPlatform("M-a")
-	p.flushPendingOption()
+	p.flushPendingPress()
 
 	keys := h.keys()
 	if len(keys) != 1 || keys[0].Key != "M-a" {
@@ -86,7 +86,7 @@ func TestOptionChordWithNoComposition(t *testing.T) {
 	if _, ok := p.KeyChordText("M-a"); ok {
 		t.Error("nothing was composed, so nothing should have been observed")
 	}
-	if p.pendingOption != nil {
+	if p.pendingPress != nil {
 		t.Error("the chord is still held after being flushed")
 	}
 }
@@ -95,10 +95,10 @@ func TestOptionChordWithNoComposition(t *testing.T) {
 // what this keyboard does NOW, not a record of what it once did.
 func TestObservationOverwrites(t *testing.T) {
 	p, _ := pendingPlatform("M-a")
-	p.dispatchOption(p.takePendingOption(), "å")
+	p.dispatchPendingPress(p.takePendingPress(), "å")
 
-	p.pendingOption = &pendingOptionKey{key: "M-a", scancode: 4}
-	p.dispatchOption(p.takePendingOption(), "ä")
+	p.pendingPress = &pendingKeyPress{key: "M-a", scancode: 4}
+	p.dispatchPendingPress(p.takePendingPress(), "ä")
 
 	if ch, _ := p.KeyChordText("M-a"); ch != "ä" {
 		t.Errorf("M-a observed as %q, want the character it composes now", ch)

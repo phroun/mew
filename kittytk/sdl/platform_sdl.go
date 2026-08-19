@@ -133,11 +133,11 @@ type Platform struct {
 	modes modeState
 
 	// chordText is what this keyboard has been WATCHED typing, by the chord
-	// that typed it (see keychordtext_sdl.go), and pendingOption is the Option
+	// that typed it (see keychordtext_sdl.go), and pendingPress is the Option
 	// chord whose character has not arrived yet (see macoption_sdl.go).
-	chordTextMu   sync.Mutex
-	chordText     map[string]string
-	pendingOption *pendingOptionKey
+	chordTextMu  sync.Mutex
+	chordText    map[string]string
+	pendingPress *pendingKeyPress
 
 	padScancode uint32
 
@@ -1377,18 +1377,18 @@ func (p *Platform) pumpEvents() bool {
 			// An Option chord still waiting for a character it turns out not
 			// to compose: the queue is empty, so nothing is coming. Dispatch
 			// it rather than hold it into an idle keyboard.
-			p.flushPendingOption()
+			p.flushPendingPress()
 			return delivered
 		}
 		delivered = true
 		// Only the two text events answer a held Option chord. Anything else
 		// means no character is coming for it, and it goes first so the two
 		// keystrokes stay in the order they were made.
-		if p.pendingOption != nil {
+		if p.pendingPress != nil {
 			switch ev.(type) {
 			case *sdl3.TextInputEvent, *sdl3.TextEditingEvent:
 			default:
-				p.flushPendingOption()
+				p.flushPendingPress()
 			}
 		}
 		switch e := ev.(type) {
@@ -1506,8 +1506,8 @@ func (p *Platform) pumpEvents() bool {
 			// The character a held Option chord composed. The chord was named
 			// from its own key-down; this is what that keystroke produced, and
 			// the two are dispatched as the single keystroke they are.
-			if pending := p.takePendingOption(); pending != nil {
-				p.dispatchOption(pending, text)
+			if pending := p.takePendingPress(); pending != nil {
+				p.dispatchPendingPress(pending, text)
 				continue
 			}
 
@@ -1574,8 +1574,8 @@ func (p *Platform) pumpEvents() bool {
 			// and the pairing is recorded like any other. The chord was named
 			// from its key-down, so no dead-key table is consulted to know
 			// which key was pressed.
-			if pending := p.takePendingOption(); pending != nil {
-				p.dispatchOption(pending, e.GetText())
+			if pending := p.takePendingPress(); pending != nil {
+				p.dispatchPendingPress(pending, e.GetText())
 				// Drop the composition the dead key opened, so the next
 				// character types plainly rather than wearing an accent from a
 				// keystroke that was meant as a shortcut.
@@ -1696,14 +1696,15 @@ func (p *Platform) pumpEvents() bool {
 					continue // Consumed by host zoom controller, skip dispatching
 				}
 				if key := translateKey(e.Keysym); key != "" {
-					// An Option chord on this platform is answered with a
-					// composed character on the very next event. Hold the chord
-					// for it, so it is dispatched WITH what it composed and the
+					// A press whose text arrives in the next event is held for
+					// it, so it is dispatched WITH what it produced and the
 					// pairing is recorded from the keyboard rather than from a
-					// table. See macoption_sdl.go.
-					if macOptionMayCompose(e.Keysym) {
-						p.flushPendingOption()
-						p.pendingOption = &pendingOptionKey{
+					// table — before the press goes out, so a consumer reading
+					// KeyChordText for this chord sees this keystroke's answer.
+					// See macoption_sdl.go.
+					if keyAwaitsText(e.Keysym) {
+						p.flushPendingPress()
+						p.pendingPress = &pendingKeyPress{
 							key:      key,
 							scancode: e.Keysym.Scancode,
 							repeat:   e.Repeat,
@@ -2394,27 +2395,20 @@ func translateKey(sym sdl3.Keysym) string {
 	// which put it ahead of every modifier that outranks it: LCtrl+RCtrl+Mega+X
 	// came out "H-M-x" where the canonical order is "M-H-x", and the terminal
 	// host — which has the same promotion now — spells it the second way.
-	base := encodeKey(sym, ctrl, alt, shift, gui, hyper)
-	if base != "" || !hyper {
-		return base
-	}
-
-	// The residual modifiers alone would defer to SDLTextInput (a plain or
-	// shifted printable). Hyper is a real chord, so synthesize the bare key
-	// token here instead of dropping the keystroke. Prepending is right in this
-	// one case and only this one: what bareKey returns carries no modifier
-	// prefix at all, and H- is the last of them before the key's own origin.
-	if base = bareKey(sym, shift); base == "" {
-		return ""
-	}
-	return "H-" + base
+	// Hyper needed a second pass here while encodeKey answered "" for a plain
+	// printable: H-x had no key to attach to, so bareKey supplied one and H-
+	// was prepended. encodeKey names printables itself now, so there is nothing
+	// left for that pass to catch.
+	return encodeKey(sym, ctrl, alt, shift, gui, hyper)
 }
 
 // bareKey returns the unmodified key token for a keysym: a special-key name,
 // or the printable character (upper-cased when Shift is held, so the caseful
-// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds). It is
-// used only to give a Hyper chord a key to attach to when the residual
-// modifiers would otherwise have deferred the keystroke to SDLTextInput.
+// hyphenated-modifier convention — H-a unshifted, H-A shifted — holds).
+//
+// The bare name, with no modifier prefix on it at all. Tests use it to state
+// what a key is called on its own, which is what a press and its release have
+// to agree on.
 func bareKey(sym sdl3.Keysym, shift bool) string {
 	if sym.Scancode == scanNumLock {
 		return "Clear"
@@ -2430,13 +2424,22 @@ func bareKey(sym sdl3.Keysym, shift bool) string {
 		return name
 	}
 	if sym.Sym >= 32 && sym.Sym < 127 {
-		ch := rune(sym.Sym)
-		if shift && ch >= 'a' && ch <= 'z' {
-			return string(ch - 'a' + 'A')
-		}
-		return string(ch)
+		return shownPrintable(rune(sym.Sym), shift)
 	}
 	return ""
+}
+
+// shownPrintable names a printable key from the key itself: the character it
+// shows, with Shift spent on the letter's case rather than stated as a prefix,
+// which is how this vocabulary spells every key that is SHOWN rather than named.
+//
+// One function, used by the press and by the release, so the two cannot drift
+// into naming the same key differently.
+func shownPrintable(ch rune, shift bool) string {
+	if shift && ch >= 'a' && ch <= 'z' {
+		return string(ch - 'a' + 'A')
+	}
+	return string(ch)
 }
 
 // shiftedShownKey asks the layout what a physical key shows with Shift held,
@@ -2592,8 +2595,21 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 			// "s-" is the toolkit's Meta/Cmd prefix.
 			return keyMods{ctrl: ctrl, shift: shift, super: true, hyper: hyper}.prefix() + string(ch)
 		default:
-			// Plain (possibly shifted) printable: SDLTextInput delivers it.
-			return ""
+			// Plain (possibly shifted) printable, named here like every other
+			// key — from the key.
+			//
+			// This used to answer "" and let the SDLTextInput event name it,
+			// because the CHARACTER was being used as the name, so naming had
+			// to wait for the character to arrive. Identity is not text: the
+			// press already knows which key it is, every other branch here
+			// names it from the key, and holding one case back meant the name
+			// of an ordinary letter existed only if a text event followed.
+			//
+			// Hyper can be the only modifier left when this is reached, since
+			// translateKey spends the doubled pair that formed it. That case
+			// used to be caught by a second pass over bareKey; it is named here
+			// now, with the prefix where the canonical order puts it.
+			return keyMods{hyper: hyper}.prefix() + shownPrintable(ch, shift)
 		}
 	}
 	return ""

@@ -125,20 +125,25 @@ func decodeMacOSOptionChar(r rune) (string, bool) {
 	return decoded, ok
 }
 
-// pendingOptionKey is an Option chord whose KEY_DOWN has been read but not yet
-// dispatched, because the character it composes has not arrived.
+// pendingKeyPress is a key press that has been NAMED but not yet dispatched,
+// because the text it produces has not arrived.
 //
-// macOS hands over both halves of the keystroke: the KEY_DOWN carries the
-// physical key and KMOD_ALT — which is what NAMES the chord, authoritatively —
-// and a TEXT_INPUT (or, for the five dead keys, a TEXT_EDITING) follows with
-// the character it composed. Waiting the one event costs nothing perceptible
-// and buys two things: the chord is dispatched with its character attached, so
-// the first press of it is as good as the hundredth, and the pairing is
-// observed rather than looked up.
+// SDL splits one keystroke in two: the KEY_DOWN carries the physical key and
+// the modifiers held, which is what names it, and a TEXT_INPUT (or, for a dead
+// key, a TEXT_EDITING) follows with whatever it produced. Waiting the one event
+// costs nothing perceptible and buys two things: the pairing is observed rather
+// than looked up, and — because the observation is recorded BEFORE the press is
+// dispatched — anything that reads KeyChordText for this chord sees this
+// keystroke's answer rather than the last one's. The first press of a chord is
+// as good as the hundredth.
 //
-// A chord that composes nothing is flushed unchanged, so nothing is lost by
-// waiting for a character that never comes.
-type pendingOptionKey struct {
+// A press that produces nothing is flushed unchanged, so nothing is lost by
+// waiting for text that never comes.
+//
+// It began as the macOS Option case and is general because that case was never
+// special: it was a press whose text arrives in a separate event, which is
+// every printable key.
+type pendingKeyPress struct {
 	key      string
 	scancode uint32
 	repeat   bool
@@ -149,6 +154,33 @@ type pendingOptionKey struct {
 // answers with a composed character, and so should be held for it.
 func macOptionMayCompose(sym sdl3.Keysym) bool {
 	return runtime.GOOS == "darwin" && optionComposes(sym)
+}
+
+// keyAwaitsText reports whether SDL will follow this key-down with text, and so
+// whether its press should be held until the text arrives.
+//
+// Two cases, and they are the same case. A macOS Option chord composes a
+// character; a plain or shifted printable produces the character it shows. Both
+// are a press whose text comes in the next event, and both want the text
+// recorded before the press goes out.
+//
+// Everything else — a named key, a Control chord, a Command chord — produces no
+// text at all and is dispatched where it is read.
+func keyAwaitsText(sym sdl3.Keysym) bool {
+	if macOptionMayCompose(sym) {
+		return true
+	}
+	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI|sdl3.KMOD_ALT) != 0 {
+		return false
+	}
+	// A pad cap is named from the key, prefix and all, and the text event it
+	// produces is thrown away (padTyped) so the one press does not arrive
+	// twice. There is no text coming that this press could wait for — waiting
+	// would strand it until some later event flushed it.
+	if _, _, _, isPad := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); isPad {
+		return false
+	}
+	return sym.Sym >= 32 && sym.Sym < 127
 }
 
 // optionComposes reports whether the keystroke is the kind macOS composes for:
@@ -168,19 +200,19 @@ func optionComposes(sym sdl3.Keysym) bool {
 	return sym.Sym >= 32 && sym.Sym < 127
 }
 
-// takePendingOption claims the held chord, if there is one.
-func (p *Platform) takePendingOption() *pendingOptionKey {
-	pending := p.pendingOption
-	p.pendingOption = nil
+// takePendingPress claims the held chord, if there is one.
+func (p *Platform) takePendingPress() *pendingKeyPress {
+	pending := p.pendingPress
+	p.pendingPress = nil
 	return pending
 }
 
-// dispatchOption sends a held chord with the character it composed, records
+// dispatchPendingPress sends a held chord with the character it composed, records
 // the pairing, and registers the press so its release names it the same.
 //
 // composed is empty when nothing was composed — the chord is still the
 // keystroke that happened, and is dispatched exactly as it would have been.
-func (p *Platform) dispatchOption(pending *pendingOptionKey, composed string) {
+func (p *Platform) dispatchPendingPress(pending *pendingKeyPress, composed string) {
 	if pending == nil {
 		return
 	}
@@ -206,14 +238,14 @@ func (p *Platform) dispatchOption(pending *pendingOptionKey, composed string) {
 	})
 }
 
-// flushPendingOption dispatches a held chord that no composition followed.
+// flushPendingPress dispatches a held chord that no composition followed.
 //
 // Called before any other event is handled and again when the queue drains, so
 // a chord that composes nothing waits for one event at most and never for an
 // idle keyboard.
-func (p *Platform) flushPendingOption() {
-	if pending := p.takePendingOption(); pending != nil {
-		p.dispatchOption(pending, "")
+func (p *Platform) flushPendingPress() {
+	if pending := p.takePendingPress(); pending != nil {
+		p.dispatchPendingPress(pending, "")
 	}
 }
 
