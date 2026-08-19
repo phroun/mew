@@ -1641,11 +1641,22 @@ func (p *Platform) pumpEvents() bool {
 					// way for the same reasons: no text of its own, and the
 					// composition left standing for the next keystroke to
 					// compose against.
+					// Recorded as typing NOTHING, which is what a dead key
+					// does. This is the path the accent actually takes: the
+					// composition arrives with no press held — macOS delivers
+					// no key-down at all while it is composing — and the chord
+					// is recovered from the accent here. It went out
+					// unrecorded, so a consumer fell through to a table of what
+					// M-i types and inserted the accent, with the composed
+					// character behind it.
+					p.noteKeyChordTypesNothing(key)
 					mods, name := core.ParseKeyModifiers(key)
 					text := ""
 					if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 						text = name
 					}
+					core.KeyTracef("1 sdl      press   key=%q (recovered from composition %q)",
+						key, e.GetText())
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
 			}
