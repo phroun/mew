@@ -1543,6 +1543,7 @@ func (p *Platform) pumpEvents() bool {
 						if len(name) == 1 && name[0] >= 32 && name[0] < 127 {
 							t = name
 						}
+						core.KeyTracef("1 sdl      press   key=%q (decoded from text %q)", decoded, string(ch))
 						s.handler.Event(core.KeyPressEvent{
 							Key: decoded, Modifiers: mods, Text: t, Repeat: repeat,
 						})
@@ -1567,6 +1568,7 @@ func (p *Platform) pumpEvents() bool {
 				// ordinary letter would go down unrecorded and its release
 				// would be dropped as an orphan.
 				p.holdKey(p.padScancode, key)
+				core.KeyTracef("1 sdl      press   key=%q (from text)", key)
 				s.handler.Event(core.KeyPressEvent{
 					Key:    key,
 					Text:   string(ch),
@@ -1647,6 +1649,7 @@ func (p *Platform) pumpEvents() bool {
 					s.handler.Event(core.KeyPressEvent{Key: key, Modifiers: mods, Text: text})
 				}
 			}
+			core.KeyTracef("1 sdl      compose text=%q", e.GetText())
 			s.handler.Event(core.TextEditingEvent{
 				Text:   e.GetText(),
 				Start:  int(e.Start),
@@ -1798,6 +1801,7 @@ func (p *Platform) pumpEvents() bool {
 						fmt.Fprintf(os.Stderr,
 							"kittytk-ime: chord %q dispatched on its key-down (not held)\n", key)
 					}
+					core.KeyTracef("1 sdl      press   key=%q (key-down)", key)
 					p.holdKey(e.Keysym.Scancode, key)
 					s.handler.Event(core.KeyPressEvent{
 						Key: key, Modifiers: mods, Text: text, Repeat: e.Repeat,

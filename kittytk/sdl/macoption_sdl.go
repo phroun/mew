@@ -253,6 +253,7 @@ func (p *Platform) dispatchPendingPress(pending *pendingKeyPress, composed strin
 		// is what every other platform does with Option held.
 		text = name
 	}
+	core.KeyTracef("1 sdl      press   key=%q (held, text %q)", pending.key, composed)
 	p.holdKey(pending.scancode, pending.key)
 	pending.surface.handler.Event(core.KeyPressEvent{
 		Key: pending.key, Modifiers: mods, Text: text, Repeat: pending.repeat,

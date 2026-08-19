@@ -3895,6 +3895,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		return true
 
 	case core.KeyPressEvent:
+		core.KeyTracef("2 desktop  press   key=%q mods=%v text=%q", e.Key, e.Modifiers, e.Text)
 		// Pass-next-key mode is handled above, before event filters.
 		// Check global shortcuts first
 		if d.handleShortcut(e) {
