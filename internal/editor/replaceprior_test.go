@@ -91,3 +91,83 @@ func TestReplacePriorRefusesANonsenseCount(t *testing.T) {
 		t.Errorf("content = %q, want it untouched", got)
 	}
 }
+
+// In a viewport running a child process the replacement is made the way a
+// person would make it: erase what it stands in for, then type the new text.
+//
+// The erase has to be sent, because nothing else will. The toolkit swallowed
+// the platform's own Backspace on the way in — it belonged to the accent
+// palette, not to the user — so without this the accent lands after the letter
+// it was chosen to replace.
+//
+// It goes as the child's own backspace, asked of the host's key translator
+// rather than chosen here: what backspace becomes on the wire is the terminal's
+// business, and only it knows what this child negotiated.
+func TestReplacePriorErasesThroughTheChildsOwnBackspace(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	stub := newStubPTY()
+	var asked []string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			asked = append(asked, key)
+			return []byte{0x7f}
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	e.executeCommand(`replace_prior 1, 'ò'`)
+
+	if len(asked) != 1 || asked[0] != "back" {
+		t.Errorf("host was asked to encode %v, want one \"back\"", asked)
+	}
+	if got := stub.sent(); got != "\x7fò" {
+		t.Errorf("child received %q, want the erase then the accent", got)
+	}
+}
+
+// A count of more than one erases that many times — one keystroke per
+// character, which is what a person holding backspace would send.
+func TestReplacePriorErasesOncePerCharacter(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(string, string) []byte { return []byte{0x08} },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	e.executeCommand(`replace_prior 3, 'X'`)
+
+	if got := stub.sent(); got != "\x08\x08\x08X" {
+		t.Errorf("child received %q, want three erases then the text", got)
+	}
+}
+
+// A child whose terminal encodes backspace to nothing still gets the text.
+// Losing the accent entirely would be worse than leaving the letter in front
+// of it.
+func TestReplacePriorStillTypesWhenTheEraseCannotBeEncoded(t *testing.T) {
+	e, _ := newTestEditor(t, "")
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(string, string) []byte { return nil },
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+
+	e.executeCommand(`replace_prior 1, 'ò'`)
+
+	if got := stub.sent(); got != "ò" {
+		t.Errorf("child received %q, want the accent even with no erase to send", got)
+	}
+}

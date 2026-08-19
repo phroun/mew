@@ -1948,6 +1948,51 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 	return true
 }
 
+// ptyEraseBefore sends the focused viewport's child n erase keystrokes — what
+// its terminal produces for mew's "back" — and reports whether they went.
+//
+// It exists so a replacement can remove what it stands in for when the text
+// under the caret belongs to a child process rather than to a buffer. macOS's
+// accent palette commits the held letter immediately, and the toolkit swallowed
+// the platform's own Backspace on the way in (it is the palette's erase, not a
+// key anyone pressed), so nothing removes that letter unless this does.
+//
+// Encoded through the host's key translator rather than by choosing a byte
+// here. What backspace becomes on the wire is the terminal's business — DEL or
+// BS, whatever the front end has always sent — and the translator is the one
+// place that knows what THIS child negotiated. Choosing here would be guessing
+// at a line discipline mew cannot see.
+//
+// Deliberately not sendKeyToPTY. This is an erase, not a keystroke: recording
+// it as a press the child was told about would leave a name waiting for a
+// release that never comes, and a later real release would be matched against
+// it — reporting a key nobody pressed, which is the one thing that path exists
+// to prevent.
+func (e *Editor) ptyEraseBefore(n int) bool {
+	if n <= 0 || e.Config.TerminalSurfaces.Key == nil {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil {
+		return false
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w]
+	e.ptyMu.Unlock()
+	if st == nil || st.hidden {
+		return false
+	}
+	data := e.Config.TerminalSurfaces.Key(st.id, "back")
+	if len(data) == 0 {
+		return false
+	}
+	erase := make([]byte, 0, len(data)*n)
+	for i := 0; i < n; i++ {
+		erase = append(erase, data...)
+	}
+	return e.ptySendBytes(erase)
+}
+
 // terminalMouseFromKey reads one of mew's mouse pseudo-keys — the vocabulary
 // handleMouseKey dispatches on, with its modifier prefixes already stripped —
 // as a terminal mouse event. Col and Row are the caller's to fill in.

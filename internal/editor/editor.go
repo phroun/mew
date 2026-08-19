@@ -2335,13 +2335,21 @@ func (e *Editor) registerCommands() {
 		if sb, ok := ctx.Args[1].(pawscript.StoredBytes); ok {
 			text = string(sb.Data())
 		}
-		// A viewport running a child process has no document to replace in, and
-		// the erase cannot be forwarded either: the toolkit swallowed the
-		// platform's own Backspace, and re-synthesizing one for a child means
-		// guessing the erase character its line discipline expects. The text
-		// goes, the replacement does not — which is what this case did before
-		// the command existed.
+		// A viewport running a child process has no document to replace in, so
+		// the replacement is made the way a person would make it: erase what it
+		// stands in for, then type the new text. The erase goes as the child's
+		// own backspace, encoded by the terminal that knows what this child
+		// negotiated (see ptyEraseBefore).
+		//
+		// It has to be sent, because nothing else will. The toolkit swallowed
+		// the platform's Backspace on the way in — it belonged to the palette,
+		// not to the user — so without this the accent lands after the letter
+		// it was chosen to replace.
+		//
+		// A child with no translator still gets the text. Losing the accent
+		// entirely would be worse than leaving the letter in front of it.
 		if e.focusedPTY() != nil {
+			e.ptyEraseBefore(n)
 			return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
 		}
 		return pawscript.BoolStatus(e.replacePrior(n, text))
