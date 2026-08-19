@@ -87,56 +87,21 @@ func (e *Editor) defaultCommandForKey(key string) string {
 	case "esc":
 		return "cmd"
 	default:
-		// What the HOST watched this keyboard type for this chord, asked first
-		// and for every chord — a plain letter as much as a Mega combination.
+		// What an unbound key TYPES, which the processor answers because every
+		// step of it is a keyboard fact: what the host watched this keyboard
+		// produce, what a one-character name carries, what a Glyph token
+		// carries, and what the macOS Option layer says. Spelling it as a
+		// command is mew's part — the vocabulary is mew's and the keyboard is
+		// not.
 		//
-		// The branches below derive the text from the chord's own NAME, which
-		// is a good guess and only a guess: it is right whenever a key types
-		// what it is called, and there is nothing in the name to say when that
-		// stops being true. The host saw both halves of the keystroke and mew
-		// sees neither, so where an observation exists it is the better answer
-		// to the same question.
-		//
-		// It can also answer something no derivation can: that this chord types
-		// nothing. A dead key is that — Option+i arms an accent and produces no
-		// character of its own — and a guess, made anyway, inserts one.
-		//
-		// Every chord, Mega included. The macOS Option switch below governs the
-		// TABLE, and turning it off says "stop guessing", not "stop typing".
-		if e.Config.KeyChordText != nil {
-			if text, observed := e.Config.KeyChordText(key); observed {
-				if text == "" {
-					return ""
-				}
-				return "insert '" + escapeStringLiteral(text) + "'"
+		// Known with EMPTY text is an answer: the key types nothing. A dead key
+		// is that, and reading it as "no answer" is what put an armed accent
+		// into the document ahead of the character it composed.
+		if text, known := e.KeyProcessor.TextForKey(key); known {
+			if text == "" {
+				return ""
 			}
-		}
-		// Nothing watched it, so derive what can be derived from the name.
-		//
-		// Insert a single typed character. A longer key is an unmapped named
-		// or modified key (e.g. "F1", "ins", "pgup").
-		if len([]rune(key)) == 1 {
-			return "insert '" + escapeStringLiteral(key) + "'"
-		}
-		// A Glyph chord (the AltGr/Level3 modifier, prefix "G-") that no
-		// binding claimed inserts the composed character it carries: the
-		// graphical host forms the token from the AltGr-composed glyph, so
-		// "G-€" types "€" by default while a user can still bind e.g.
-		// `G-€ = insert 'EUR'` to intercept it. Unrolling is just dropping the
-		// prefix — the glyph rides in the token itself, so no lookup is needed.
-		if strings.HasPrefix(key, "G-") {
-			if glyph := key[2:]; len([]rune(glyph)) == 1 {
-				return "insert '" + escapeStringLiteral(glyph) + "'"
-			}
-		}
-		// An unmapped Meta combination types the character macOS Option would
-		// have produced, so bindings steal individual Option combos while the
-		// rest insert seamlessly (and Mega on any platform gains the same
-		// mac-style character layer). The processor holds the table and the
-		// on/off switch — a keyboard fact — and reports nothing when the layer
-		// is off; spelling it as a command is mew's part.
-		if ch, ok := e.KeyProcessor.MacOptionChar(key); ok {
-			return "insert '" + escapeStringLiteral(ch) + "'"
+			return "insert '" + escapeStringLiteral(text) + "'"
 		}
 		return ""
 	}

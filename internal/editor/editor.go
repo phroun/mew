@@ -1404,14 +1404,11 @@ func (e *Editor) applyMacOptionKeys() {
 	}
 	e.KeyProcessor.SetMacOptionInsert(insert)
 
-	// What the HOST watched its own keyboard type outranks the table, and only
-	// while the layer is on: an observation is a better answer to the question,
-	// not a reason to answer one that was turned off.
-	if insert {
-		e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
-	} else {
-		e.KeyProcessor.SetKeyChordText(nil)
-	}
+	// What the HOST watched its own keyboard type outranks everything the
+	// processor would otherwise derive, and is installed whatever the switch
+	// says: the switch governs the TABLE, which is a guess about a keyboard
+	// nobody has looked at, and is no reason to withhold what was seen.
+	e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 }
 
 // renderModebar is the custom renderer for the modebar.

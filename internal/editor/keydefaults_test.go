@@ -155,6 +155,9 @@ func TestUnboundChordTypesWhatTheHostObserved(t *testing.T) {
 		}
 		return "", false
 	}
+	// The floor asks the PROCESSOR, which holds the precedence; the host's
+	// lookup reaches it the way the editor installs it.
+	e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 
 	for _, c := range []struct{ key, want string }{
 		{"s-q", "insert 'œ'"},
@@ -194,6 +197,9 @@ func TestObservationIsNotGatedByTheOptionSwitch(t *testing.T) {
 		}
 		return "", false
 	}
+	// The floor asks the PROCESSOR, which holds the precedence; the host's
+	// lookup reaches it the way the editor installs it.
+	e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 
 	if got := e.defaultCommandForKey("M-a"); got != "insert 'å'" {
 		t.Errorf("M-a -> %q, want the character this keyboard was seen typing", got)
@@ -263,6 +269,9 @@ func TestAnObservedChordThatTypesNothingBeatsTheTable(t *testing.T) {
 		}
 		return "", false
 	}
+	// The floor asks the PROCESSOR, which holds the precedence; the host's
+	// lookup reaches it the way the editor installs it.
+	e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 
 	if got := e.defaultCommandForKey("M-i"); got != "" {
 		t.Errorf("M-i defaulted to %q; the host watched it type nothing", got)

@@ -30,7 +30,7 @@ require (
 	github.com/phroun/argwild v0.0.1 // indirect
 	github.com/phroun/direct-key-handler v0.3.32 // indirect
 	github.com/phroun/garland v0.1.11 // indirect
-	github.com/phroun/key-sequence-processor v0.1.10-0.20260819000600-87fe10725f93 // indirect
+	github.com/phroun/key-sequence-processor v0.1.10-0.20260819113608-e19b44368555 // indirect
 	github.com/phroun/pawscript v0.2.12-alpha // indirect
 	github.com/phroun/purfecterm v0.2.52-0.20260819054657-0a89d0ec87be // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
