@@ -122,38 +122,18 @@ func (e *Editor) defaultCommandForKey(key string) string {
 		// or its composition rules had something to say. mew is handed the
 		// keystroke as bytes and never sees that; the host sees both halves.
 		//
-		// A Mega chord is NOT among them, however well observed: the Option
-		// layer above has a switch of its own, and a user who turned it off
-		// asked for those combinations not to type. Answering here would give
-		// the character back through a door the switch does not cover.
-		if e.Config.KeyChordText != nil && !chordHasMega(key) {
+		// Every chord, Mega included. The switch above governs the TABLE — a
+		// guess about a keyboard nobody has looked at — and turning it off says
+		// "stop guessing", not "stop typing". A terminal with the layer off
+		// still types the character, because the character is what arrives
+		// there; a graphical host that stayed silent instead would be the odd
+		// one out, and silence is not what the user asked for.
+		if e.Config.KeyChordText != nil {
 			if text, ok := e.Config.KeyChordText(key); ok && text != "" {
 				return "insert '" + escapeStringLiteral(text) + "'"
 			}
 		}
 		return ""
-	}
-}
-
-// chordHasMega reports whether a key token carries the Mega modifier, walking
-// the prefix run rather than searching the string — "M-" can appear inside a
-// key's own name, and only the prefixes are modifiers.
-func chordHasMega(key string) bool {
-	for {
-		matched := false
-		for _, p := range keyModifierPrefixes {
-			if !strings.HasPrefix(key, p) {
-				continue
-			}
-			if p == "M-" {
-				return true
-			}
-			key, matched = key[len(p):], true
-			break
-		}
-		if !matched {
-			return false
-		}
 	}
 }
 

@@ -171,11 +171,13 @@ func TestUnboundChordTypesWhatTheHostObserved(t *testing.T) {
 	}
 }
 
-// The observation does not reach around the Option layer's switch.
+// The observation answers whatever the switch says.
 //
-// With macOptionKeys off the user has asked for Option NOT to type characters;
-// an M- chord must stay silent whatever the host observed.
-func TestObservationDoesNotBypassTheOptionSwitch(t *testing.T) {
+// macOptionKeys governs the TABLE — a guess about a keyboard nobody looked at
+// — and turning it off says stop guessing, not stop typing. A terminal with the
+// layer off types the character anyway, because the character is what arrives
+// there; a graphical host that fell silent instead would be the odd one out.
+func TestObservationIsNotGatedByTheOptionSwitch(t *testing.T) {
 	e, _ := newTestEditor(t, "")
 	e.Config.MacOptionKeys = "false"
 	e.applyMacOptionKeys()
@@ -186,7 +188,7 @@ func TestObservationDoesNotBypassTheOptionSwitch(t *testing.T) {
 		return "", false
 	}
 
-	if got := e.defaultCommandForKey("M-a"); got != "" {
-		t.Errorf("M-a -> %q with the Option layer off, want nothing", got)
+	if got := e.defaultCommandForKey("M-a"); got != "insert 'å'" {
+		t.Errorf("M-a -> %q, want the character this keyboard was seen typing", got)
 	}
 }
