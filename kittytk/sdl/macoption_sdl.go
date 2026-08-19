@@ -244,9 +244,27 @@ func (p *Platform) dispatchPendingPress(pending *pendingKeyPress, composed strin
 // a chord that composes nothing waits for one event at most and never for an
 // idle keyboard.
 func (p *Platform) flushPendingPress() {
-	if pending := p.takePendingPress(); pending != nil {
-		p.dispatchPendingPress(pending, "")
+	pending := p.takePendingPress()
+	if pending == nil {
+		return
 	}
+	// A REPEAT that produced no text produced nothing.
+	//
+	// A repeat says "another one of these", and the only thing it can be
+	// another of is what the key types. When the text does not come, there was
+	// no another one — which is exactly what a held key does while an input
+	// method has the keystroke: macOS suppresses the text while its
+	// press-and-hold palette is open and goes on delivering repeat key-downs,
+	// so dispatching those inserted a run of characters behind the palette.
+	//
+	// The FIRST press is not a repeat and is dispatched as always: a key that
+	// composes nothing still happened, and the character it shows appears once
+	// before the palette opens, which is what the palette is offering to
+	// replace.
+	if pending.repeat {
+		return
+	}
+	p.dispatchPendingPress(pending, "")
 }
 
 // macOSDeadKeys maps the composition a macOS dead-key Option chord opens back

@@ -98,3 +98,41 @@ func TestWhichPressesWaitForText(t *testing.T) {
 		}
 	}
 }
+
+// A repeat that produced no text produced nothing.
+//
+// macOS suppresses the text while its press-and-hold palette is open and goes
+// on delivering repeat key-downs. Naming presses from the key made those
+// repeats real keystrokes, so a held key typed a run of characters behind the
+// palette — where before the character came only from the text event and a
+// repeat with no text was silence.
+func TestARepeatWithNoTextIsSilence(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, repeat: true, surface: s}
+
+	p.flushPendingPress()
+
+	if n := len(h.keys()); n != 0 {
+		t.Errorf("a repeat with no text dispatched %d keys: %v", n, h.events)
+	}
+	if p.pendingPress != nil {
+		t.Error("the press is still held after being flushed")
+	}
+}
+
+// The FIRST press is not a repeat: a key that composes nothing still happened.
+func TestAFirstPressWithNoTextStillHappens(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.pendingPress = &pendingKeyPress{key: "e", scancode: 8, surface: s}
+
+	p.flushPendingPress()
+
+	keys := h.keys()
+	if len(keys) != 1 || keys[0].Key != "e" {
+		t.Errorf("flushed %v, want one e", h.events)
+	}
+}
