@@ -208,6 +208,19 @@ type nativeWin struct {
 	// flips to/from 0) still re-apply.
 	appliedShapePx int
 
+	// textInputPrimed records that this window's text input has been set up
+	// once for real — see sdl3.RestartTextInput and SetTextInputArea, which
+	// does it when a caret first appears.
+	//
+	// Once, and not again: a restart tears the input method down and builds it
+	// back up, which abandons anything it is holding. The caret edge that
+	// triggers it is "this frame asked for a caret and the last one did not",
+	// and a frame where the focused trinket simply did not repaint asks for
+	// nothing — so a heartbeat repaint can withdraw and restore the caret with
+	// no focus change behind it. Restarting on every one of those closed the
+	// press-and-hold palette a fraction of a second after it opened.
+	textInputPrimed bool
+
 	// transparent marks a window with real per-pixel alpha (macOS)
 	transparent bool
 
@@ -1380,7 +1393,12 @@ func (p *Platform) pumpEvents() bool {
 				// does: focus is the moment something outside this process may
 				// have changed under us, so it is the moment to say it again
 				// rather than to wait for a key.
+				//
+				// Safe to do on every focus gain, unlike the caret edge: a
+				// window that has just taken the keyboard is not holding a
+				// composition for the restart to abandon.
 				if s.win != nil && s.win.window != nil {
+					s.win.textInputPrimed = true
 					if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
 						fmt.Fprintf(os.Stderr,
 							"kittytk-ime: window %d restart on focus failed: %v\n", s.win.id, err)
@@ -2852,19 +2870,24 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 		return
 	}
 
-	// Set text input up again, before saying where it is — really again, not
-	// the no-op a plain StartTextInput would be here (see
-	// sdl3.RestartTextInput). This is what reaches the first caret of a
-	// session, when the window was made and its text input claimed before the
-	// window was the one with the keyboard.
+	// Set text input up ONCE for real, before saying where it is — really set
+	// up, not the no-op a plain StartTextInput would be here (see
+	// sdl3.RestartTextInput). What this reaches is the first caret of a
+	// session: the window was made, and its text input claimed, before it was
+	// the window with the keyboard, so the platform attached nothing.
 	//
-	// Only on the edge: this runs whenever the caret MOVES, which is most
-	// keystrokes, and tearing the input method down and back up per character
-	// is not what a caret position is for.
-	if tookFocus {
+	// Once per window, because a restart abandons whatever the input method is
+	// holding and this edge is not a reliable report of a focus change. It
+	// fires on "this frame asked for a caret and the last one did not", and a
+	// frame where the focused trinket did not repaint asks for nothing — so a
+	// blink or a heartbeat can produce the edge with no focus change behind it.
+	// A real focus change is handled where it is really known: the window
+	// taking the keyboard, in pumpEvents.
+	if tookFocus && !s.win.textInputPrimed {
+		s.win.textInputPrimed = true
 		if err := sdl3.RestartTextInput(s.win.window); err != nil && imeDebug {
 			fmt.Fprintf(os.Stderr,
-				"kittytk-ime: window %d restart on caret focus failed: %v\n", s.win.id, err)
+				"kittytk-ime: window %d first caret restart failed: %v\n", s.win.id, err)
 		}
 	}
 
