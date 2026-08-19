@@ -40,8 +40,8 @@ github.com/phroun/mew v0.3.1-alpha h1:nZoCYsuBnrW73Ll7QuRYNhzOfCUng/breKzyR62Fk4
 github.com/phroun/mew v0.3.1-alpha/go.mod h1:PHVb21QCVxAAySalmb9lzu4BGCKG6mrlnVOAg+9Ju5g=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
-github.com/phroun/purfecterm v0.2.52-0.20260819052500-819e188a3fa0 h1:FzC+T1rJf3Yg2LvesdDsCmX+O+/BNme7d5SIbNS1m4A=
-github.com/phroun/purfecterm v0.2.52-0.20260819052500-819e188a3fa0/go.mod h1:A2GO0tO8BcyPh9I8UyHlwyqhhrhIHl2jeMt0Q2pqrJU=
+github.com/phroun/purfecterm v0.2.52-0.20260819054657-0a89d0ec87be h1:bn76U65hxUkXg3gt3ilq87g6DfAOjUYxWXg8iJI34dM=
+github.com/phroun/purfecterm v0.2.52-0.20260819054657-0a89d0ec87be/go.mod h1:A2GO0tO8BcyPh9I8UyHlwyqhhrhIHl2jeMt0Q2pqrJU=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c/go.mod h1:cNQ3dwVJtS5Hmnjxy6AgTPd0Inb3pW05ftPSX7NZO7Q=
 github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef h1:Ch6Q+AZUxDBCVqdkI8FSpFyZDtCVBc2VmejdNrm5rRQ=

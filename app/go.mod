@@ -32,7 +32,7 @@ require (
 	github.com/phroun/garland v0.1.11 // indirect
 	github.com/phroun/key-sequence-processor v0.1.10-0.20260819000600-87fe10725f93 // indirect
 	github.com/phroun/pawscript v0.2.12-alpha // indirect
-	github.com/phroun/purfecterm v0.2.52-0.20260819052500-819e188a3fa0 // indirect
+	github.com/phroun/purfecterm v0.2.52-0.20260819054657-0a89d0ec87be // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	golang.org/x/image v0.45.0 // indirect
