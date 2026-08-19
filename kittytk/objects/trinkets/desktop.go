@@ -3760,7 +3760,32 @@ func (h *desktopSurfaceHandler) Frame(painter *core.Painter) {
 	// owner here and applies the caret request itself — the same job SurfaceHost
 	// does in native one-window-per-surface mode. Without this a focused
 	// terminal would ask for the platform caret and nothing would place it.
-	platform.ApplyTextCaret(s, painter.TextCaretRequest())
+	platform.ApplyTextCaret(s, platform.TextInputFrame{
+		Caret:    painter.TextCaretRequest(),
+		Sink:     h.FocusedTextSink(),
+		Complete: painter.Complete(),
+	})
+}
+
+// FocusedTextSink implements platform.TextSinkReporter: whether the trinket
+// holding focus in the desktop's ACTIVE window types.
+//
+// The platform asks this on the compositing path, where it finishes the frame
+// itself and cannot see into the window tree; Frame above asks it for the same
+// reason one layer down. See platform.TextInputFrame.
+func (h *desktopSurfaceHandler) FocusedTextSink() core.TextSinkState {
+	d := h.d
+	d.mu.RLock()
+	wm := d.windowManager
+	d.mu.RUnlock()
+	if wm == nil {
+		return core.TextSinkUnknown
+	}
+	aw := wm.ActiveWindow()
+	if aw == nil {
+		return core.TextSinkUnknown
+	}
+	return core.FocusedTextSink(aw.FocusManager())
 }
 
 // FrameBase implements platform.BaseLayerPainter: it paints ONLY the

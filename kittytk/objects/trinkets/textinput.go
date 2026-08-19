@@ -180,6 +180,15 @@ func (t *TextInput) IsReadOnly() bool {
 	return t.readOnly
 }
 
+// AcceptsTextInput implements core.TextSink: this is the trinket that types.
+//
+// Not while it is read-only or disabled — a keystroke arriving there produces
+// no text, so an input method has nothing to compose FOR and should not be
+// left pointed at it.
+func (t *TextInput) AcceptsTextInput() bool {
+	return !t.readOnly && t.IsEnabled()
+}
+
 // SetReadOnly sets the read-only state.
 func (t *TextInput) SetReadOnly(readOnly bool) {
 	t.readOnly = readOnly

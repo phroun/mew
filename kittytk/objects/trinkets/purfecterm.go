@@ -352,6 +352,15 @@ func (t *PurfecTerm) focused() bool { return t.HasFocus() || t.embeddedFocus.Loa
 // the emulator's own focus reporting — a mirror must not disturb either.
 func (t *PurfecTerm) paintFocused() bool { return t.focused() && !t.mirrorPaint.Load() }
 
+// AcceptsTextInput implements core.TextSink: a terminal types, and so does
+// whatever is running in it — an editor hosted here is reached through this
+// trinket and has no separate say.
+//
+// Unconditional. A terminal with no child is still where keystrokes would go;
+// there is no read-only terminal, and an application that stops reading is not
+// something this side can see.
+func (t *PurfecTerm) AcceptsTextInput() bool { return true }
+
 // PaintMirror paints this terminal at the painter's position exactly as Paint
 // does, but as a read-only MIRROR: rendered unfocused (hollow cursor, no blink)
 // and WITHOUT requesting the platform caret, so a host can show one live

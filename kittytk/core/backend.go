@@ -724,6 +724,15 @@ type Painter struct {
 	clip      UnitRect
 	metrics   CellMetrics
 
+	// partial marks a frame painted for only part of the surface — the tree
+	// clipped to a damaged region rather than drawn whole. Derived painters
+	// copy it, so it reaches whoever finishes the frame.
+	//
+	// It is here for what a frame's SILENCE is worth. A complete frame that
+	// reported no insertion point has said there is none; a partial one has
+	// said nothing at all, and the difference is the whole of Complete().
+	partial bool
+
 	// Rounded clip region (screen coordinates; zero rect = none): an
 	// additional constraint beyond the rectangular clip, honored by
 	// backends implementing RoundedClipper. Window frames set it so

@@ -51,7 +51,18 @@ func (h *SurfaceHost) Invalidate() {
 func (h *SurfaceHost) Frame(p *core.Painter) {
 	p.ResetTextCaretRequest()
 	h.win.Paint(p)
-	platform.ApplyTextCaret(h.surface, p.TextCaretRequest())
+	platform.ApplyTextCaret(h.surface, platform.TextInputFrame{
+		Caret:    p.TextCaretRequest(),
+		Sink:     h.FocusedTextSink(),
+		Complete: p.Complete(),
+	})
+}
+
+// FocusedTextSink implements platform.TextSinkReporter: whether the trinket
+// holding focus in the hosted window types. It answers what the paint above
+// cannot — see platform.TextInputFrame.
+func (h *SurfaceHost) FocusedTextSink() core.TextSinkState {
+	return core.FocusedTextSink(h.win.FocusManager())
 }
 
 // Event implements platform.SurfaceHandler: surface coordinates ARE

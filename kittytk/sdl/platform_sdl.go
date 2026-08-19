@@ -252,6 +252,11 @@ type nativeWin struct {
 	frameCaret    core.TextCaret
 	frameCaretSet bool
 
+	// frameComplete is whether the last frame painted the whole surface, so
+	// the compositing path can tell a frame that reported no insertion point
+	// from one that merely did not paint the thing that reports it.
+	frameComplete bool
+
 	// baseCaret is the caret request from the BASE layer's own paint —
 	// desktop chrome, or a torn window's frame. The compositor seeds the
 	// frame's caret from it so chrome can hold the caret when no layer
@@ -958,10 +963,16 @@ func (p *Platform) paintBackend(w *nativeWin, forceFull, baseOnly bool) {
 	w.backend.BeginFrame()
 	painter := core.NewPainter(w.backend)
 	painter.ResetTextCaretRequest()
+	// What this frame does NOT say is only worth something when it painted
+	// everything. A damage-clipped frame may skip the very trinket that
+	// reports where text is being typed, and its silence must not be read as
+	// an answer. See core.Painter.Complete and platform.TextInputFrame.
+	w.frameComplete = full
 	if full {
 		frame(painter)
 	} else {
 		// Clip the whole tree to the damaged region
+		painter.MarkPartial()
 		frame(painter.WithClip(dmg))
 	}
 	w.backend.EndFrame()
@@ -1004,9 +1015,25 @@ func (p *Platform) presentWindow(w *nativeWin, forceFull bool) {
 				if err == nil {
 					// The compositor gathered the frame's caret from the
 					// layers; the surface is the platform's to talk to.
+					//
+					// Applied even when no layer claimed it. "Nothing asked"
+					// is one of the answers ApplyTextCaret weighs — against
+					// whether the frame was complete, and whether anything
+					// with focus types at all — and skipping the call here
+					// would decide it silently instead.
+					caret := core.TextCaret{}
 					if w.frameCaretSet {
-						platform.ApplyTextCaret(s, w.frameCaret)
+						caret = w.frameCaret
 					}
+					sink := core.TextSinkUnknown
+					if r, ok := s.handler.(platform.TextSinkReporter); ok {
+						sink = r.FocusedTextSink()
+					}
+					platform.ApplyTextCaret(s, platform.TextInputFrame{
+						Caret:    caret,
+						Sink:     sink,
+						Complete: w.frameComplete,
+					})
 					p.scheduleAnimationFrame(s)
 					return
 				}

@@ -237,6 +237,15 @@ func (h *TearOffHost) Window() *Window { return h.win }
 // Surface returns the hosted surface.
 func (h *TearOffHost) Surface() platform.Surface { return h.surf }
 
+// FocusedTextSink implements platform.TextSinkReporter: whether the trinket
+// holding focus in the torn-off window types. See platform.TextInputFrame.
+func (h *TearOffHost) FocusedTextSink() core.TextSinkState {
+	if h.win == nil {
+		return core.TextSinkUnknown
+	}
+	return core.FocusedTextSink(h.win.FocusManager())
+}
+
 // Invalidate requests a repaint of the hosted window. The desktop's
 // repaint tick calls it so animation (blinking carets, indeterminate
 // progress) keeps running in torn-off windows.
@@ -750,7 +759,13 @@ func (h *TearOffHost) Frame(p *core.Painter) {
 		return
 	}
 	p.ResetTextCaretRequest()
-	defer func() { platform.ApplyTextCaret(h.Surface(), p.TextCaretRequest()) }()
+	defer func() {
+		platform.ApplyTextCaret(h.Surface(), platform.TextInputFrame{
+			Caret:    p.TextCaretRequest(),
+			Sink:     h.FocusedTextSink(),
+			Complete: p.Complete(),
+		})
+	}()
 	h.win.Paint(p)
 	// A modally-blocked torn window is darkened, mirroring an in-surface
 	// window suppressed by a modal.
