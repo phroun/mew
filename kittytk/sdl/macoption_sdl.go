@@ -413,7 +413,16 @@ func (m *imeState) noteTyped() bool {
 
 // spend ends the takeover on a commit, so a second commit does not open over a
 // second character.
-func (m *imeState) spend() { m.disarm() }
+//
+// The composition goes with it. A commit IS the composition finishing, and an
+// input method that delivers one without the empty update that usually follows
+// would otherwise leave this standing true for good — and a key that types
+// nothing is swallowed while it stands (see emitKeyPress), so Return would stop
+// working for the rest of the session. Another update sets it again.
+func (m *imeState) spend() {
+	m.composing = false
+	m.disarm()
+}
 
 // imeBackspace reports the palette's own erase as what it MEANS, rather than as
 // the key it arrived on.

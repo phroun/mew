@@ -67,6 +67,28 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 		text = name
 	}
 
+	// A key that types NOTHING, arriving while a composition is in flight, is
+	// the INPUT METHOD'S: Return confirms the candidate, the arrows walk the
+	// list, Escape gives it up. macOS goes on delivering those key-downs from
+	// behind its candidate window even though it is consuming them itself, and
+	// dispatching them put a newline in the document for every Japanese word
+	// confirmed — the caret walking down the screen while the composition
+	// stayed exactly where it belonged.
+	//
+	// A key that TYPES is the user's, whatever is in flight, and goes through
+	// as it always has: the "." or "/" that dismisses a palette by typing, the
+	// digit that picks from one, the space that confirms, and the "u" that
+	// completes a dead key's Option+i. That is the whole of the line — text or
+	// no text — and it is drawn on `composing`, which is SDL SAYING a
+	// composition is up, rather than on the takeover this platform infers for
+	// the accent palette (see imeState.armed). An inference that went wrong
+	// would swallow every Return from here on.
+	if text == "" && p.ime.composing {
+		core.KeyTracef("1 sdl      ime     key %q (%s) is the input method's",
+			k.chord, k.origin)
+		return
+	}
+
 	// A keystroke reaching the application usually means the input method no
 	// longer has the keyboard: whatever palette was open is gone. Ending it
 	// DELETES NOTHING — the letter the held key committed is what the user
