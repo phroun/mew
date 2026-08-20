@@ -1455,7 +1455,17 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// Its own colour, defaulting to the one control-code substitutes use: it is
 	// the same statement — these cells are not the document — and a scheme that
 	// wants to say it differently can, without moving "^X" with it.
+	// Two of them, because a composition is not always one piece. A Japanese
+	// input method converts one CLAUSE at a time, and walking its candidate
+	// list rewrites that clause while the rest stays as it was typed: "らなに"
+	// becomes "羅なに", with "なに" still in kana because it is not the clause
+	// being converted. The clause wears the composition's own colour and the
+	// rest is dimmed to silver, still underlined — both are provisional, and
+	// only one is what the candidate keys are acting on. Undistinguished, the
+	// untouched clauses read as characters the composition failed to replace.
 	imeColor := sr.col(w, "ime")
+	imeRestColor := sr.col(w, "imeInactive")
+	clauseLo, clauseHi := w.PreeditClauseSpan(preLo, preHi)
 
 	textColor := sr.col(w, "text")
 	// Selection styling. On a flip host whose bidi reorder miscounts a
@@ -1758,6 +1768,12 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 		// it. Reading it as ordinary text is exactly the confusion the colour
 		// exists to prevent — these characters may still change or vanish.
 		if runePos >= preLo && runePos < preHi {
+			// No clause reported means the whole composition is the active
+			// material, which is every composition that is built rather than
+			// converted.
+			if clauseHi > clauseLo && (runePos < clauseLo || runePos >= clauseHi) {
+				return imeRestColor
+			}
 			return imeColor
 		}
 		forced := ""

@@ -2355,9 +2355,9 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.replacePrior(n, text))
 	})
 
-	// preedit '<text>', <caret>, <covers> shows what an input method is still
-	// composing: painted at the caret, not put in the document. An empty text
-	// ends it.
+	// preedit '<text>', <caret>, <covers>, <clauseStart>, <clauseLen> shows what
+	// an input method is still composing: painted at the caret, not put in the
+	// document. An empty text ends it.
 	//
 	// covers is how many committed characters before the caret the composition
 	// stands OVER and hides. macOS's press-and-hold palette commits the held
@@ -2374,6 +2374,13 @@ func (e *Editor) registerCommands() {
 	//
 	// caret is the input method's own cursor within the text, which is what
 	// shows progress through a long composition. It defaults to the end.
+	//
+	// clauseStart and clauseLen mark the segment being CONVERTED, when the
+	// input method distinguishes one. A Japanese composition is several
+	// clauses and a candidate list changes only the selected one — "らなに"
+	// converts to "羅なに" with the tail still in kana — so the clause is
+	// painted apart from the rest, which is what tells the untouched remainder
+	// from characters the composition failed to replace.
 	ps.RegisterCommand("preedit", func(ctx *pawscript.Context) pawscript.Result {
 		w := e.ViewportManager.GetFocusedViewport()
 		if w == nil {
@@ -2401,10 +2408,21 @@ func (e *Editor) registerCommands() {
 				covers = n
 			}
 		}
+		clauseStart, clauseLen := 0, 0
+		if len(ctx.Args) > 4 {
+			s, err1 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[3])))
+			n, err2 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[4])))
+			if err1 == nil && err2 == nil {
+				clauseStart, clauseLen = s, n
+			}
+		}
 		// Empty text goes through too, rather than clearing here: whether it
 		// ENDS the composition on its way to a commit or CANCELS it turns on
 		// the extent it still names, and SetPreedit is where that is decided.
-		w.SetPreedit(runes, caret, covers)
+		w.SetPreedit(viewport.Preedit{
+			Text: runes, Caret: caret, Covers: covers,
+			ClauseStart: clauseStart, ClauseLen: clauseLen,
+		})
 		e.RequestRender()
 		return pawscript.BoolStatus(true)
 	})

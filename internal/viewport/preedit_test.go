@@ -17,7 +17,7 @@ func covering(text string, caret, line, rune_, n int) *Viewport {
 	buf := buffer.NewFromString("aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc")
 	w := &Viewport{Buffer: buf, Caret: buf.NewCaret()}
 	w.SetCursorPos(Position{Line: line, Rune: rune_})
-	w.SetPreedit([]rune(text), caret, n)
+	w.SetPreedit(Preedit{Text: []rune(text), Caret: caret, Covers: n})
 	return w
 }
 
@@ -189,5 +189,56 @@ func TestCoveringMoreThanThereIsClampsAtTheLineStart(t *testing.T) {
 	got, lo, hi := w.PreeditSplice(0, "ab")
 	if got != "X" || lo != 0 || hi != 1 {
 		t.Errorf("display = %q [%d,%d), want the whole line stood over", got, lo, hi)
+	}
+}
+
+// converting makes a viewport composing with the clause an input method is
+// currently converting marked — what a Japanese candidate list changes, one
+// clause at a time, while the rest of the composition stays as it was typed.
+func converting(text string, start, length int) *Viewport {
+	buf := buffer.NewFromString("aaaaaaaaaa\nbbbbbbbbbb")
+	w := &Viewport{Buffer: buf, Caret: buf.NewCaret()}
+	w.SetCursorPos(Position{Line: 0, Rune: 2})
+	w.SetPreedit(Preedit{
+		Text: []rune(text), Caret: start + length,
+		ClauseStart: start, ClauseLen: length,
+	})
+	return w
+}
+
+// The clause is reported against the composition and answered against the
+// DISPLAY line, so the renderer can colour it without repeating the offset.
+func TestTheClauseLandsInTheDisplayLine(t *testing.T) {
+	w := converting("羅なに", 0, 1)
+
+	_, lo, hi := w.PreeditSplice(0, "ab")
+	if clauseLo, clauseHi := w.PreeditClauseSpan(lo, hi); clauseLo != 2 || clauseHi != 3 {
+		t.Errorf("clause at [%d,%d), want the first composed rune at [2,3)", clauseLo, clauseHi)
+	}
+}
+
+// No clause is the ordinary case — every composition that is BUILT rather than
+// converted reports none — and it means the composition is all one piece.
+func TestNoClauseIsAnEmptySpan(t *testing.T) {
+	w := converting("きょう", 0, 0)
+
+	_, lo, hi := w.PreeditSplice(0, "ab")
+	if clauseLo, clauseHi := w.PreeditClauseSpan(lo, hi); clauseLo != clauseHi {
+		t.Errorf("clause at [%d,%d), want nothing marked", clauseLo, clauseHi)
+	}
+}
+
+// A clause reaching past the composition is trimmed to it: the numbers arrive
+// from an input method through a host, in units the SDL3 documentation leaves
+// open, and are not trusted past what is there.
+func TestAClausePastTheCompositionIsTrimmed(t *testing.T) {
+	w := converting("羅なに", 2, 9)
+
+	if got := w.Preedit().ClauseLen; got != 1 {
+		t.Errorf("clause length = %d, want it trimmed to the one rune left", got)
+	}
+	_, lo, hi := w.PreeditSplice(0, "ab")
+	if clauseLo, clauseHi := w.PreeditClauseSpan(lo, hi); clauseLo != 4 || clauseHi != 5 {
+		t.Errorf("clause at [%d,%d), want the last composed rune at [4,5)", clauseLo, clauseHi)
 	}
 }

@@ -903,6 +903,12 @@ func (e *Editor) SelectAll() { e.execMew("os_select_all") }
 // The caret rides in because it is the input method's own, not mew's: it shows
 // how far through a long composition the user is, and parking at either end
 // would claim the composition was finished.
+//
+// So does the CLAUSE, for the same kind of reason. A Japanese composition is
+// several clauses and a candidate list converts one of them at a time, leaving
+// the others as they were typed — "らなに" becomes "羅なに", and the "なに" is
+// the input method's text rather than something left behind. mew paints the
+// clause apart from the rest, which is the only thing that says so.
 func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 	p := core.PreeditFrom(event)
 	// Remembered because the commit will need it and will not carry it: a
@@ -911,10 +917,11 @@ func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
 	// meantime, so the two agree about the region without either being told
 	// twice.
 	e.preeditCovers = p.Covers
-	core.KeyTracef("2 mew      preedit %q caret=%d covers=%d",
-		string(p.Text), p.Caret, p.Covers)
-	e.execMew(fmt.Sprintf("preedit '%s', %d, %d",
-		escapeMewLiteral(string(p.Text)), p.Caret, p.Covers))
+	core.KeyTracef("2 mew      preedit %q caret=%d covers=%d clause=%d+%d",
+		string(p.Text), p.Caret, p.Covers, p.ClauseStart, p.ClauseLen)
+	e.execMew(fmt.Sprintf("preedit '%s', %d, %d, %d, %d",
+		escapeMewLiteral(string(p.Text)), p.Caret, p.Covers,
+		p.ClauseStart, p.ClauseLen))
 	return true
 }
 

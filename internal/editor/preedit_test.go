@@ -232,3 +232,35 @@ func TestACancelGivesUpTheRegion(t *testing.T) {
 		t.Errorf("content = %q; a cancelled composition must replace nothing", got)
 	}
 }
+
+// The clause an input method is CONVERTING rides in with the composition.
+//
+// A Japanese composition is several clauses and a candidate list converts one
+// at a time: "らなに" becomes "羅なに", the tail still in kana because it is not
+// the clause being converted. mew paints the clause apart from the rest, and
+// without the numbers there is nothing to tell the untouched kana from
+// characters the composition failed to replace — which is how it first read.
+func TestAPreeditCarriesTheClauseBeingConverted(t *testing.T) {
+	e, w := newTestEditor(t, "")
+
+	e.executeCommand(`preedit '羅なに', 1, 0, 0, 1`)
+
+	p := w.Preedit()
+	if p.ClauseStart != 0 || p.ClauseLen != 1 {
+		t.Errorf("clause = %d+%d, want the first rune being converted",
+			p.ClauseStart, p.ClauseLen)
+	}
+}
+
+// A host that says nothing about clauses composes as it always did: the whole
+// composition is one piece, which is what every input method that builds text
+// rather than converting it reports.
+func TestAPreeditWithoutAClauseIsOnePiece(t *testing.T) {
+	e, w := newTestEditor(t, "")
+
+	e.executeCommand(`preedit 'きょう', 3`)
+
+	if p := w.Preedit(); p.ClauseLen != 0 {
+		t.Errorf("clause length = %d, want none marked", p.ClauseLen)
+	}
+}

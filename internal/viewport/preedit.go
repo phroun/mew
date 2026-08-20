@@ -32,6 +32,20 @@ type Preedit struct {
 	// lets an input method show progress through a long composition.
 	Caret int
 
+	// ClauseStart and ClauseLen mark the segment the input method is
+	// CONVERTING, as rune indices into Text. ClauseLen is 0 when it
+	// distinguishes none, which is every composition that is built rather than
+	// converted — an accent palette, a romaji run before conversion starts.
+	//
+	// A Japanese composition is not one word but several clauses, and a
+	// candidate list changes only the clause that is selected: cycling through
+	// candidates for "ら" leaves the "なに" after it in kana, and that
+	// remainder is the input method's text rather than anything left over. It
+	// is painted differently for exactly that reason — without the distinction
+	// the untouched clauses read as characters the composition failed to
+	// replace.
+	ClauseStart, ClauseLen int
+
 	// Covers is how many COMMITTED runes from the composition's own cursor it
 	// stands over, and HIDES while it stands.
 	//
@@ -71,11 +85,12 @@ func (w *Viewport) PreeditAt() (line, runePos int, ok bool) {
 // SetPreedit installs the composition to paint, or ends it when the text is
 // empty.
 //
-// covers is how many committed runes BEFORE THE CARET it stands over, which is
-// how an input method describes it — and the anchor is minted from that once,
-// when the composition opens. Later updates leave it where it is: the caret may
-// have moved on, and the region has not.
-func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
+// next.Covers is how many committed runes BEFORE THE CARET it stands over,
+// which is how an input method describes it — and the anchor is minted from
+// that once, when the composition opens. Later updates leave it where it is:
+// the caret may have moved on, and the region has not.
+func (w *Viewport) SetPreedit(next Preedit) {
+	text, caret, covers := next.Text, next.Caret, next.Covers
 	if len(text) == 0 {
 		// Empty with an extent is a composition ENDING on its way to a commit;
 		// empty with none is a cancel. The region survives the first and not
@@ -118,6 +133,26 @@ func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
 	}
 	w.preedit.Text = text
 	w.preedit.Caret = caret
+	// The clause rides on each update rather than being fixed at open: which
+	// segment is being converted is exactly what changes as the candidate list
+	// is walked.
+	w.preedit.ClauseStart, w.preedit.ClauseLen = clampSpan(next.ClauseStart, next.ClauseLen, len(text))
+}
+
+// clampSpan trims a start and length reported by an input method into [0, n],
+// so a host that counts in something other than runes produces a wrong-looking
+// clause rather than a slice out of range.
+func clampSpan(start, length, n int) (int, int) {
+	if length <= 0 || start >= n {
+		return 0, 0
+	}
+	if start < 0 {
+		start = 0
+	}
+	if start+length > n {
+		length = n - start
+	}
+	return start, length
 }
 
 // EndPreedit stops PAINTING a composition while leaving its region standing.
@@ -197,6 +232,30 @@ func (w *Viewport) PreeditSplice(docLine int, line string) (display string, lo, 
 	out = append(out, w.preedit.Text...)
 	out = append(out, runes[to:]...)
 	return string(out), from, from + len(w.preedit.Text)
+}
+
+// PreeditClauseSpan is where the clause being CONVERTED sits in a display line,
+// given the range [preLo, preHi) the composition occupies there (what
+// PreeditSplice returned).
+//
+// lo == hi means the input method distinguishes no clause, and the composition
+// is all one piece.
+func (w *Viewport) PreeditClauseSpan(preLo, preHi int) (lo, hi int) {
+	if w.preedit.ClauseLen <= 0 || preHi <= preLo {
+		return preLo, preLo
+	}
+	lo = preLo + w.preedit.ClauseStart
+	hi = lo + w.preedit.ClauseLen
+	if lo < preLo {
+		lo = preLo
+	}
+	if hi > preHi {
+		hi = preHi
+	}
+	if hi < lo {
+		hi = lo
+	}
+	return lo, hi
 }
 
 // PreeditShift is how many display runes a composition adds BEFORE a document
