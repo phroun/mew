@@ -562,6 +562,20 @@ type TextPixelDrawer interface {
 	DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *Font) int
 }
 
+// TextPixelMeasurer is an optional RenderBackend capability: the advance of a
+// string in device pixels, measured the way DrawTextPx paints it.
+//
+// MeasureText answers in whole units, which is the denomination trinkets are
+// laid out in and the wrong one for finding a position INSIDE a run. The
+// glyphs rasterize at the unsnapped pixels-per-unit, so a caret or a clip edge
+// placed by measuring a prefix in units and scaling afterwards rounds twice
+// and drifts off the glyphs it belongs between - visibly where a rune's
+// advance is a fraction of a unit, as a space's is beside CJK text. Cell
+// surfaces omit this: there is nothing finer than a cell to place there.
+type TextPixelMeasurer interface {
+	MeasureTextPx(s string, f *Font) int
+}
+
 // ClippedTextPixelDrawer is an optional RenderBackend capability: like
 // DrawTextPx, but only the device-pixel columns in [clipX0, clipX1) are
 // painted. It lets a caller draw one shaped run and reveal only part of it
@@ -966,6 +980,21 @@ func (p *Painter) DrawImageMaskTintOffset(x, y Unit, offXPx, offYPx int, mask *i
 	p.applyClip()
 	md.DrawImageMaskTintPx(ax+offXPx, ay+offYPx, mask, r, g, b)
 	return true
+}
+
+// MeasureTextPx is the advance of a string in device pixels, measured the way
+// DrawTextOffset paints it. Returns 0, false on cell surfaces, where the
+// caller falls back to measuring in whole units.
+//
+// Use it for anything that has to land INSIDE a run - a caret, a selection
+// edge, a composition's clip - rather than measuring in units and scaling:
+// see TextPixelMeasurer.
+func (p *Painter) MeasureTextPx(text string, font *Font) (int, bool) {
+	tm, ok := p.backend.(TextPixelMeasurer)
+	if !ok {
+		return 0, false
+	}
+	return tm.MeasureTextPx(text, font), true
 }
 
 // DrawTextOffset draws a string with its top-left at unit (x, y) plus a

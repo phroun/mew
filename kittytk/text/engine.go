@@ -103,6 +103,23 @@ type Line struct {
 	Ascent, Descent, Gap core.Unit
 	// Baseline is the line's baseline Y relative to the paragraph top.
 	Baseline core.Unit
+
+	// advance is Width before it was rounded to whole units, kept for
+	// measurement that has to land ON a glyph rather than near it. See
+	// Engine.MeasurePx.
+	advance fixed.Int26_6
+}
+
+// AdvancePx is the line's advance in device pixels at ppu pixels per unit,
+// scaled from the unrounded advance.
+//
+// Width rounds to whole units, which is the right denomination for laying
+// trinkets out and the wrong one for finding a position INSIDE a run: the
+// glyphs rasterize from this unrounded advance (text.Render places them at
+// ppu), so a caret placed from the rounded one drifts by up to half a unit
+// against the very glyphs it sits between.
+func (l *Line) AdvancePx(ppu float64) int {
+	return int(math.Round(float64(l.advance) / 64 * ppu))
 }
 
 // Height returns the vertical space the line occupies.
@@ -470,6 +487,18 @@ func (e *Engine) ShapeParagraph(p Paragraph, width core.Unit) *ShapedParagraph {
 		maxW = fixed.I(int(width))
 	}
 	cfg := shaping.WrapConfig{Direction: base}
+	if width <= 0 {
+		// Not wrapping: there is no soft break for trailing whitespace to hang
+		// past, so its spaces are part of the run and have to occupy their
+		// width. go-text zeroes the advance of a line's trailing whitespace by
+		// default — right at a break, where it would otherwise push the line
+		// wider than the column, and wrong for a run being measured.
+		//
+		// It cost exactly one space, and only where the run had a script change
+		// in it: "ab " measured wider than "ab", but "a日 " measured the same as
+		// "a日", so a caret that belonged after the space was painted before it.
+		cfg.DisableTrailingWhitespaceTrim = true
+	}
 	wrapped, _ := e.wrapper.WrapParagraphF(cfg, maxW, runes, shaping.NewSliceIterator(outs))
 
 	sp := &ShapedParagraph{Text: runes}
@@ -538,7 +567,7 @@ func buildLine(runs shaping.Line) Line {
 		}
 		line.Runs = append(line.Runs, r)
 	}
-	line.Width = core.Unit(pen.Round())
+	line.Width, line.advance = core.Unit(pen.Round()), pen
 	if line.Runes.Start == math.MaxInt {
 		line.Runes = RuneRange{}
 	}
@@ -556,6 +585,23 @@ func (e *Engine) ShapeRun(f *core.Font, s string) *ShapedParagraph {
 // s in font f, by real shaping (so it always agrees with painting).
 func (e *Engine) Measure(f *core.Font, s string) core.Unit {
 	return e.ShapeRun(f, s).Width()
+}
+
+// MeasurePx is Measure in device pixels at ppu pixels per unit.
+//
+// Not Measure scaled: the whole-unit rounding happens once, at the pixel, so
+// a position measured inside a run lands on the glyph the run paints there.
+// Measuring in units first and scaling afterwards rounds twice, and a caret
+// after a space beside CJK text — where the space's advance is a fraction of
+// a unit — came out short of the space it was meant to follow.
+func (e *Engine) MeasurePx(f *core.Font, s string, ppu float64) int {
+	widest := 0
+	for _, l := range e.ShapeRun(f, s).Lines {
+		if px := l.AdvancePx(ppu); px > widest {
+			widest = px
+		}
+	}
+	return widest
 }
 
 // LineHeight returns the line height of font f: exactly the font's

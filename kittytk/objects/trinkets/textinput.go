@@ -615,6 +615,16 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// prefixWidth is the width, in units and device pixels, of the visible
 	// text before display index d - measured against the whole stable run.
+	//
+	// The pixel answer is measured in PIXELS, not measured in units and
+	// scaled. MeasureText rounds to whole units, which is the denomination
+	// the field is laid out in and the wrong one for a position inside the
+	// run: the glyphs rasterize at the unsnapped pixels-per-unit, so rounding
+	// at the unit and again at the pixel drifts by up to half a unit against
+	// the very glyphs the caret sits between. It shows wherever a rune's
+	// advance is a fraction of a unit - a space beside CJK text is about two
+	// and a half - where the caret after a second space landed short of the
+	// space it was meant to follow.
 	prefixWidth := func(d int) (core.Unit, int) {
 		if d < 0 {
 			d = 0
@@ -622,7 +632,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		if d > n {
 			d = n
 		}
-		w := font.MeasureText(string(displayText[:d]))
+		run := string(displayText[:d])
+		w := font.MeasureText(run)
+		if px, ok := p.MeasureTextPx(run, font); ok {
+			return w, px
+		}
 		return w, p.UnitsToPx(w)
 	}
 

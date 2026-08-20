@@ -774,6 +774,14 @@ func (b *Backend) MeasureText(f *core.Font, s string) core.Unit {
 	return engine().Measure(f, s)
 }
 
+// MeasureTextPx implements core.TextPixelMeasurer: the advance in device
+// pixels, rounded once at the pixel rather than at the unit and again at the
+// pixel. It is what DrawTextPx lays its glyphs out by, so a caret measured
+// with it sits exactly where the run it names ends.
+func (b *Backend) MeasureTextPx(s string, f *core.Font) int {
+	return engine().MeasurePx(f, s, b.pxPerUnit())
+}
+
 // LineHeight implements core.TextMeasurer: Size * 4/3 units by the
 // engine's denomination (12pt = 16 units = one default cell row).
 func (b *Backend) LineHeight(f *core.Font) core.Unit {
