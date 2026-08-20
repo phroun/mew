@@ -124,27 +124,35 @@ func TestCompositionPaintsAtTheCaretInOneRun(t *testing.T) {
 	}
 }
 
+// activeColor is what a composition with no clause is painted in: ALL of it is
+// the material the input method is working on, so all of it wears the active
+// color. Only a composition that reports a clause has anything to dim.
+func activeColor(t *testing.T) style.Color {
+	t.Helper()
+	return NewTextInput().GetScheme().GetFocusedEditBoxIMEActiveClause().Fg
+}
+
 // The user-visible point of the whole feature: composed text is shown in
 // its own color, not the text color, because it belongs to the input
 // method rather than to the document.
 func TestCompositionPaintsInItsOwnColor(t *testing.T) {
 	f := composingInput(t, "ab", 1, core.TextEditingEvent{Text: "xyz", Start: -1, Length: -1})
 	rec := f.rec
-	imeColor := f.ti.GetScheme().GetFocusedEditBoxIME().Fg
+	composed := activeColor(t)
 	textColor := rec.runs[0].fg
 
-	if imeColor == textColor {
+	if composed == textColor {
 		t.Skip("this scheme composes in the text color; nothing to tell apart")
 	}
 	var found bool
 	for _, r := range rec.clipped {
-		if r.fg == imeColor {
+		if r.fg == composed {
 			found = true
 		}
 	}
 	if !found {
 		t.Errorf("no composition run in the composing color %v; clipped runs: %+v",
-			imeColor, rec.clipped)
+			composed, rec.clipped)
 	}
 }
 
@@ -153,9 +161,8 @@ func TestCompositionPaintsInItsOwnColor(t *testing.T) {
 // is a poor sole cue.
 func TestCompositionIsUnderlined(t *testing.T) {
 	f := composingInput(t, "ab", 1, core.TextEditingEvent{Text: "xyz", Start: -1, Length: -1})
-	imeColor := f.ti.GetScheme().GetFocusedEditBoxIME().Fg
 
-	if countRules(f, imeColor) == 0 {
+	if countRules(f, activeColor(t)) == 0 {
 		t.Errorf("no underline rule under the composition; fills: %+v", f.rec.fills)
 	}
 }
@@ -176,38 +183,48 @@ func countRules(f *composeFixture, c style.Color) int {
 	return n
 }
 
-// The segment an input method is actively converting gets its own color and
-// a rule twice as thick. Without a reported clause there is neither: the
-// composition is all one piece, which is what every input method that builds
-// text rather than converting it reports.
-func TestTheActiveClauseIsColoredAndUnderlinedTwice(t *testing.T) {
+// Reporting a clause is what DIMS the rest of the composition.
+//
+// A Japanese candidate list converts one clause at a time and leaves the
+// others as they were typed, so those need telling apart from the segment the
+// candidate keys are acting on. Nothing else reports a clause at all, and for
+// everything else the whole composition is the active material and is painted
+// as such — which is how mew spends the same two colors.
+func TestAClauseIsWhatDimsTheRestOfTheComposition(t *testing.T) {
 	scheme := NewTextInput().GetScheme()
-	clauseColor := scheme.GetFocusedEditBoxIMEActiveClause().Fg
-	if clauseColor == scheme.GetFocusedEditBoxIME().Fg {
-		t.Skip("this scheme paints a clause and its composition alike")
+	active, dimmed := scheme.GetFocusedEditBoxIMEActiveClause().Fg, scheme.GetFocusedEditBoxIME().Fg
+	if active == dimmed {
+		t.Skip("this scheme paints a clause and the rest alike")
+	}
+	hasRun := func(f *composeFixture, c style.Color) bool {
+		for _, r := range f.rec.clipped {
+			if r.fg == c {
+				return true
+			}
+		}
+		return false
 	}
 
 	plain := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: -1, Length: -1})
-	if got := countRules(plain, clauseColor); got != 0 {
-		t.Errorf("%d clause rules with no clause reported, want none", got)
+	if hasRun(plain, dimmed) {
+		t.Errorf("part of a clauseless composition was dimmed: %+v", plain.rec.clipped)
+	}
+	if got := countRules(plain, active); got != 1 {
+		t.Errorf("%d rules under a clauseless composition, want one even one", got)
 	}
 
 	clause := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: 0, Length: 2})
+	if !hasRun(clause, dimmed) {
+		t.Errorf("the clauses not being converted were not dimmed: %+v", clause.rec.clipped)
+	}
+	if !hasRun(clause, active) {
+		t.Errorf("no clause run in %v; clipped runs: %+v", active, clause.rec.clipped)
+	}
 	// Two of them, stacked: that IS the thicker rule, drawn as two thin ones
 	// so it shares the composition's baseline.
-	if got := countRules(clause, clauseColor); got != 2 {
+	if got := countRules(clause, active); got != 2 {
 		t.Errorf("%d clause rules, want the two that make the thick one: %+v",
 			got, clause.rec.fills)
-	}
-	// And the clause runs in its own color, re-colored over the composition.
-	var colored bool
-	for _, r := range clause.rec.clipped {
-		if r.fg == clauseColor {
-			colored = true
-		}
-	}
-	if !colored {
-		t.Errorf("no clause run in %v; clipped runs: %+v", clauseColor, clause.rec.clipped)
 	}
 }
 
