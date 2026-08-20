@@ -1059,14 +1059,23 @@ func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 		return t.scrollOffset
 	}
 
-	var accumulatedWidth core.Unit
-	for i, r := range displayText {
-		charWidth := font.MeasureText(string(r))
-		// Check if x is within this character's bounds
-		if x < accumulatedWidth+charWidth/2 {
+	// Measured as PREFIXES of the run, which is how the caret is placed
+	// (prefixWidth), so a click puts the caret where the click was.
+	//
+	// Summing each rune's width on its own rounds every one of them to a whole
+	// unit and the error compounds along the line - a space is about two and a
+	// half units beside CJK text, so every one of them was over-counted by
+	// half - and a rune measured alone is not the width it has in the run
+	// anyway.
+	var before core.Unit
+	for i := range displayText {
+		after := font.MeasureText(string(displayText[:i+1]))
+		// The nearer edge wins: past the middle of a character is the position
+		// after it.
+		if x < (before+after)/2 {
 			return t.scrollOffset + i
 		}
-		accumulatedWidth += charWidth
+		before = after
 	}
 	// x is past all characters
 	return t.scrollOffset + len(displayText)

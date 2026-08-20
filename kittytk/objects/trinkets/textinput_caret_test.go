@@ -81,8 +81,15 @@ func TestTextInputCaretMatchesGlyphBoundary(t *testing.T) {
 	if len(rec.texts) != 1 || rec.texts[0].s != "HelloWorld" || rec.texts[0].xPx != 0 {
 		t.Fatalf("expected one \"HelloWorld\" run at xPx=0, got %+v", rec.texts)
 	}
-	// The caret sits at the rasterized width of the prefix before the cursor.
-	wantPx := p.UnitsToPx(font.MeasureText("Hello"))
+	// The caret sits at the rasterized width of the prefix before the cursor -
+	// measured in PIXELS. Measuring in whole units and scaling afterwards
+	// rounds twice and answers 48 where the glyphs the run paints put the
+	// boundary at 49: units are the denomination the field is laid out in, not
+	// a promise about where a character sits.
+	wantPx, ok := p.MeasureTextPx("Hello", font)
+	if !ok {
+		t.Fatal("a raster surface reported no pixel measurement")
+	}
 	if rec.caretPx != wantPx {
 		t.Errorf("caret at %dpx, want the \"Hello\" prefix width %dpx", rec.caretPx, wantPx)
 	}
@@ -154,7 +161,10 @@ func TestTextInputSelectionAnchorStable(t *testing.T) {
 	// anchor's side (its left edge when the anchor is left of the caret, its
 	// right edge when the anchor is right of it).
 	check := func(name string, anchor int, carets []int) {
-		anchorPx := pnt.UnitsToPx(font.MeasureText(string([]rune("Hello World.")[:anchor])))
+		anchorPx, ok := pnt.MeasureTextPx(string([]rune("Hello World.")[:anchor]), font)
+		if !ok {
+			t.Fatal("a raster surface reported no pixel measurement")
+		}
 		var baseRun *recText
 		for _, caret := range carets {
 			rec := &recBackend{Backend: b}

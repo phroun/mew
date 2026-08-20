@@ -37,7 +37,12 @@ func Render(dst draw.Image, sp *ShapedParagraph, x, y core.Unit, pxPerUnit float
 			// renderer wants it as FontSize with PixScale applied on
 			// top, yielding crisp glyphs at the device resolution.
 			r.FontSize = float32(run.raw.Size) / 64
-			startX := int(math.Round(float64(int(x)+int(run.X)) * pxPerUnit))
+			// From the run's UNROUNDED origin: units are a layout
+			// granularity, not a promise about where a character sits, and
+			// rounding the origin to one before scaling moved every run after
+			// a script change off the pen the shaper gave it. Rounded once,
+			// here, at the pixel it is actually drawn on.
+			startX := int(math.Round(float64(x)*pxPerUnit)) + run.OriginPx(pxPerUnit)
 			r.DrawShapedRunAt(run.raw, dst, startX, baseY)
 		}
 	}

@@ -84,10 +84,25 @@ type Run struct {
 	Runes RuneRange
 	// RTL reports the run's resolved direction.
 	RTL bool
-	// X is the run's left edge within its line, Width its advance.
+	// X is the run's left edge within its line, Width its advance. Both are
+	// whole units, which is the denomination trinkets are LAID OUT in: it says
+	// how much room a run needs on a form, and it is deliberately coarse.
 	X, Width core.Unit
 
+	// x is the same left edge unrounded. Units are an arbitrary layout
+	// granularity and not a promise about where a character sits, so the
+	// PAINTER positions runs from this and rounds once, at the pixel. Rounding
+	// each run's origin to a unit first put every run after a script change up
+	// to half a unit off the pen the shaper gave it.
+	x fixed.Int26_6
+
 	raw shaping.Output // shaped glyphs; deliberately not exposed
+}
+
+// OriginPx is the run's left edge in device pixels at ppu pixels per unit,
+// scaled from the unrounded origin.
+func (r *Run) OriginPx(ppu float64) int {
+	return int(math.Round(float64(r.x) / 64 * ppu))
 }
 
 // Line is one wrapped line: runs stored in visual order (leftmost
@@ -545,6 +560,7 @@ func buildLine(runs shaping.Line) Line {
 			Runes: RuneRange{Start: out.Runes.Offset, End: out.Runes.Offset + out.Runes.Count},
 			RTL:   out.Direction.Progression() == di.TowardTopLeft,
 			X:     core.Unit(pen.Round()),
+			x:     pen,
 			raw:   out,
 		}
 		pen += out.Advance

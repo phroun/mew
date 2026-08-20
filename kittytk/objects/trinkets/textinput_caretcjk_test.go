@@ -102,3 +102,45 @@ func TestEqualCharactersAdvanceTheCaretEqually(t *testing.T) {
 		}
 	}
 }
+
+// Clicking at a character's own edge puts the caret at that character.
+//
+// The click resolves against the same PREFIX measurements the caret is placed
+// from, so the two agree. Summing each rune's width on its own instead rounds
+// every one of them to a whole unit, and the error compounds along the line -
+// a space beside CJK text is about two and a half, over-counted by half each
+// time, so clicking late in a line landed the caret earlier and earlier.
+func TestClickingAtACharactersEdgeSelectsThatCharacter(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(800, 40, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetFontSize(10)
+	core.SetTextMeasurer(b)
+
+	ti := NewTextInput()
+	ti.SetText("日 日 日 日 日 日 日 日")
+	font := ti.EffectiveFont()
+	runes := []rune(ti.Text())
+
+	for i := range runes {
+		lo := font.MeasureText(string(runes[:i]))
+		hi := font.MeasureText(string(runes[:i+1]))
+		// Just inside this character is this character.
+		if got := ti.findCharAtX(lo, font); got != i {
+			t.Errorf("a click at rune %d's own edge (%v) landed on %d", i, lo, got)
+		}
+		// Past its middle is the position AFTER it - which is where the caret
+		// would be painted, since both read the same prefix measurements.
+		if got := ti.findCharAtX((lo+hi)/2+1, font); got != i+1 {
+			t.Errorf("a click past rune %d's middle (%v of [%v,%v]) landed on %d, want %d",
+				i, (lo+hi)/2+1, lo, hi, got, i+1)
+		}
+	}
+	// And past the end is the end, including past a trailing space.
+	end := font.MeasureText(string(runes))
+	if got := ti.findCharAtX(end+1, font); got != len(runes) {
+		t.Errorf("a click past the last character landed on %d, want %d", got, len(runes))
+	}
+}
