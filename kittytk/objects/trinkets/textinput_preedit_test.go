@@ -189,7 +189,7 @@ func countRules(f *composeFixture, c style.Color) int {
 // others as they were typed, so those need telling apart from the segment the
 // candidate keys are acting on. Nothing else reports a clause at all, and for
 // everything else the whole composition is the active material and is painted
-// as such — which is how mew spends the same two colors.
+// as such.
 func TestAClauseIsWhatDimsTheRestOfTheComposition(t *testing.T) {
 	scheme := NewTextInput().GetScheme()
 	active, dimmed := scheme.GetFocusedEditBoxIMEActiveClause().Fg, scheme.GetFocusedEditBoxIMEInactive().Fg

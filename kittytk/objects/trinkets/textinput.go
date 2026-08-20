@@ -45,10 +45,11 @@ type TextInput struct {
 	preedit core.Preedit
 
 	// preeditAt is where the standing composition's region STARTS, and
-	// preeditStanding whether there is one. A plain index is enough where mew
-	// needs a garland cursor: this field owns every edit to its own runes, and
-	// the only edit made while a composition stands lands at the caret, which
-	// is at or past the region's end.
+	// preeditStanding whether there is one. A plain index is enough here: this
+	// field owns every edit to its own runes, and the only one made while a
+	// composition stands lands at the caret, which is at or past the region's
+	// end. A document taking edits from elsewhere needs a cursor that tracks
+	// them instead.
 	//
 	// The region outlives the PAINTING. An input method closes its composition
 	// before it delivers the finished text, and a keystroke that dismisses a
