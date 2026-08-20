@@ -85,6 +85,13 @@ type TUIBackend struct {
 	// Cell metrics for unit conversion
 	metrics core.CellMetrics
 
+	// The palette wait: how long a held text key's repeats are withheld, which
+	// key is being held, and when the hold was first seen. See
+	// TUIOptions.HoldOpensPalette.
+	holdWait  time.Duration
+	holdKey   string
+	holdSince time.Time
+
 	// Screen buffers (double buffering)
 	// dmgMin/dmgMax are the column range the text diff rewrote on each row
 	// this frame, -1 when the row was untouched. Images need it: sixel pixels
@@ -228,6 +235,15 @@ type TUIBackend struct {
 }
 
 // TUIOptions configures the TUI backend.
+// DefaultHoldOpensPalette is how long a held text key's repeats are withheld
+// by default, so a press-and-hold accent palette can be reached.
+//
+// Long enough to let go in, which is the whole requirement: the palette opens
+// on the hold and the person then has to release the key to use it. Shorter
+// than a deliberate hold-to-repeat, which is the other thing a held key means
+// and the reason this is not simply "drop every repeat".
+const DefaultHoldOpensPalette = time.Second
+
 type TUIOptions struct {
 	// Output is where to write terminal output (default: os.Stdout)
 	Output io.Writer
@@ -243,6 +259,21 @@ type TUIOptions struct {
 
 	// EnableMouse enables mouse input (default: true)
 	EnableMouse bool
+
+	// HoldOpensPalette is how long a held TEXT key's repeats are withheld, so
+	// that a press-and-hold accent palette can be used.
+	//
+	// macOS opens its palette on the hold, and the terminal goes on sending
+	// repeats from behind it — so the letter types itself over and over while
+	// the palette is up, and there is no moment early enough to let go in. The
+	// palette is not merely untidy then, it is unusable. Nothing in the
+	// terminal's key stream says a palette is open (the protocol has no way to
+	// report a composition), so the only thing that tells "held to open the
+	// palette" from "held to type twenty of these" is HOW LONG.
+	//
+	// Zero uses DefaultHoldOpensPalette. Negative disables the wait, which is
+	// what a host on a system with no such palette wants.
+	HoldOpensPalette time.Duration
 
 	// AlternateScreen uses the alternate screen buffer (default: true)
 	AlternateScreen bool
@@ -281,6 +312,9 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	if opts.Input == nil {
 		opts.Input = os.Stdin
 	}
+	if opts.HoldOpensPalette == 0 {
+		opts.HoldOpensPalette = DefaultHoldOpensPalette
+	}
 	if opts.CellMetrics.CellWidth == 0 {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
@@ -292,6 +326,7 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		stopChan:   make(chan struct{}),
 		colorDepth: opts.ColorDepth,
 		hasMouse:   opts.EnableMouse,
+		holdWait:   opts.HoldOpensPalette,
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
@@ -1671,6 +1706,35 @@ func (t *TUIBackend) handleKey(key string) {
 	// away, so a hosted guest that can read the distinction gets to.
 	key, repeated := strings.CutSuffix(key, ":Repeat")
 
+	// A held TEXT key's repeats wait, so a press-and-hold accent palette can be
+	// reached. macOS opens the palette on the hold and the terminal goes on
+	// repeating from behind it, so the letter types itself over and over while
+	// the palette is up — and there is no moment early enough to let go in.
+	// Without the wait the palette is not untidy, it is unusable.
+	//
+	// A TEXT key only. An arrow, a page key, a function key repeats because
+	// somebody is navigating, and holding one is the ordinary way to do it; no
+	// palette opens over those and delaying them would only make the host feel
+	// stuck. That asymmetry is the whole of the rule.
+	//
+	// Timed, because nothing else can tell the two apart. The graphical host
+	// infers the takeover from a held key whose text never arrives (see the SDL
+	// platform's flushPendingPress, which swallows exactly these repeats); a
+	// terminal reports no composition at all, so HOW LONG the key has been down
+	// is the only evidence there is. Past the wait the repeats flow: by then
+	// the hold means what a hold usually means.
+	if !repeated {
+		t.holdKey = ""
+	} else if t.holdWait > 0 && typesText(key) {
+		now := time.Now()
+		if t.holdKey != key {
+			t.holdKey, t.holdSince = key, now
+		}
+		if now.Sub(t.holdSince) < t.holdWait {
+			return
+		}
+	}
+
 	// Parse modifiers while keeping the full key string
 	// Key names follow direct-key-handler convention:
 	// - Control+letter: "^A", "^X" etc.
@@ -1707,6 +1771,17 @@ func (t *TUIBackend) handleKey(key string) {
 	default:
 		// Queue full, drop event
 	}
+}
+
+// typesText reports whether a key name is one that TYPES — a single printable
+// rune, which is what a text key is called in this vocabulary.
+//
+// Deliberately narrow. A chord ("^A", "M-x") is not a text key, a named key
+// ("Down", "F1", "Return") is not one either, and neither is a modifier
+// reporting itself. Only the keys an accent palette can open over.
+func typesText(key string) bool {
+	r, size := utf8.DecodeRuneInString(key)
+	return size == len(key) && r != utf8.RuneError && unicode.IsPrint(r)
 }
 
 // handleMouseAction processes mouse action events from direct-key-handler.
