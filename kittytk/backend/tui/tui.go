@@ -349,10 +349,24 @@ func (t *TUIBackend) enterTerminalModes() {
 	// implementation (screen_alternate_keypad_mode, its handler for the mode,
 	// is an empty function), so this flag is the whole of the mechanism.
 	//
-	// The cost is that text stops arriving as text. Nothing here read it as
-	// text anyway — a key's name IS its character for a text key, and the
-	// KeyPressEvent's Text is derived from the name a few hundred lines below.
-	t.writeTTY("\033[>11u")
+	// Disambiguation costs the text: with the keys reported as escape codes, a
+	// text key arrives as its KEYCODE and nothing says what it produced. A
+	// key's name is its character for most of them, so that passed unnoticed
+	// until the two differed — and a dead key is where they do. Option+i then
+	// "u" composes "û" and reports the U KEY, so a plain "u" went into the
+	// document while the same keystroke worked in a host that never asked for
+	// disambiguation at all.
+	//
+	// So flag 16 comes with it (11 + 16 = 27): report the associated text. The
+	// key layer reads it as what the key TYPED in preference to what the key is
+	// CALLED, and reports the protocol's keycode 0 — text the terminal received
+	// with no key behind it, which is what an input method commits — prefixed,
+	// as text rather than as a keystroke that never happened (see handleKey).
+	//
+	// Needs direct-key-handler v0.3.34 or newer. Before that the third field
+	// was ignored and keycode 0 read as keycode 1, which is the phantom
+	// keystroke this flag exists to avoid.
+	t.writeTTY("\033[>27u")
 
 	// Enable focus reporting. The outer terminal then sends CSI I and CSI O as
 	// it gains and loses focus, which is the only way this process can learn
