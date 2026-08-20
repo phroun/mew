@@ -125,71 +125,89 @@ func TestCompositionPaintsAtTheCaretInOneRun(t *testing.T) {
 }
 
 // The user-visible point of the whole feature: composed text is shown in
-// the CARET's color, not the text color, because it belongs to the input
+// its own color, not the text color, because it belongs to the input
 // method rather than to the document.
-func TestCompositionPaintsInTheCaretColor(t *testing.T) {
+func TestCompositionPaintsInItsOwnColor(t *testing.T) {
 	f := composingInput(t, "ab", 1, core.TextEditingEvent{Text: "xyz", Start: -1, Length: -1})
 	rec := f.rec
-	caretColor := f.ti.GetScheme().GetFocusedEditBoxBarCursor().Bg
+	imeColor := f.ti.GetScheme().GetFocusedEditBoxIME().Fg
 	textColor := rec.runs[0].fg
 
-	if caretColor == textColor {
-		t.Skip("this scheme's caret and text share a color; nothing to tell apart")
+	if imeColor == textColor {
+		t.Skip("this scheme composes in the text color; nothing to tell apart")
 	}
 	var found bool
 	for _, r := range rec.clipped {
-		if r.fg == caretColor {
+		if r.fg == imeColor {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("no composition run in the caret color %v; clipped runs: %+v", caretColor, rec.clipped)
+		t.Errorf("no composition run in the composing color %v; clipped runs: %+v",
+			imeColor, rec.clipped)
 	}
 }
 
 // And the other half of the convention: an underline under the composed
-// span, in that same caret color. Two signals rather than one, since
-// color alone is a poor sole cue.
+// span, in that same color. Two signals rather than one, since color alone
+// is a poor sole cue.
 func TestCompositionIsUnderlined(t *testing.T) {
 	f := composingInput(t, "ab", 1, core.TextEditingEvent{Text: "xyz", Start: -1, Length: -1})
-	rec, p := f.rec, f.p
-	caretColor := f.ti.GetScheme().GetFocusedEditBoxBarCursor().Bg
-	lineH := p.UnitsToPx(f.ti.EffectiveFont().LineHeight())
+	imeColor := f.ti.GetScheme().GetFocusedEditBoxIME().Fg
 
-	// A rule is a wide, thin fill near the bottom of the line - as
-	// opposed to the caret, which is a tall thin bar.
-	var rules int
-	for _, f := range rec.fills {
-		if f.bg == caretColor && f.hPx <= p.DeviceScale() && f.wPx > f.hPx && f.yPx >= lineH/2 {
-			rules++
-		}
-	}
-	if rules == 0 {
-		t.Errorf("no underline rule under the composition; fills: %+v", rec.fills)
+	if countRules(f, imeColor) == 0 {
+		t.Errorf("no underline rule under the composition; fills: %+v", f.rec.fills)
 	}
 }
 
-// The segment an input method is actively converting gets a second,
-// thicker rule. Without a reported clause there is just the one.
-func TestActiveClauseIsUnderlinedTwice(t *testing.T) {
-	plain := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: -1, Length: -1})
-	p := plain.p
-	caretColor := plain.ti.GetScheme().GetFocusedEditBoxBarCursor().Bg
-	lineH := p.UnitsToPx(plain.ti.EffectiveFont().LineHeight())
-
-	countRules := func(rec *preeditBackend) int {
-		n := 0
-		for _, fill := range rec.fills {
-			if fill.bg == caretColor && fill.hPx <= p.DeviceScale() && fill.wPx > fill.hPx && fill.yPx >= lineH/2 {
-				n++
-			}
+// countRules counts the underline rules drawn in one color: a wide, thin
+// fill near the bottom of the line, as opposed to the caret, which is a
+// tall thin bar.
+func countRules(f *composeFixture, c style.Color) int {
+	p := f.p
+	lineH := p.UnitsToPx(f.ti.EffectiveFont().LineHeight())
+	n := 0
+	for _, fill := range f.rec.fills {
+		if fill.bg == c && fill.hPx <= p.DeviceScale() && fill.wPx > fill.hPx &&
+			fill.yPx >= lineH/2 {
+			n++
 		}
-		return n
+	}
+	return n
+}
+
+// The segment an input method is actively converting gets its own color and
+// a rule twice as thick. Without a reported clause there is neither: the
+// composition is all one piece, which is what every input method that builds
+// text rather than converting it reports.
+func TestTheActiveClauseIsColoredAndUnderlinedTwice(t *testing.T) {
+	scheme := NewTextInput().GetScheme()
+	clauseColor := scheme.GetFocusedEditBoxIMEActiveClause().Fg
+	if clauseColor == scheme.GetFocusedEditBoxIME().Fg {
+		t.Skip("this scheme paints a clause and its composition alike")
+	}
+
+	plain := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: -1, Length: -1})
+	if got := countRules(plain, clauseColor); got != 0 {
+		t.Errorf("%d clause rules with no clause reported, want none", got)
 	}
 
 	clause := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: 0, Length: 2})
-	if got, want := countRules(clause.rec), countRules(plain.rec); got <= want {
-		t.Errorf("%d rules with a reported clause, %d without - the clause is not marked", got, want)
+	// Two of them, stacked: that IS the thicker rule, drawn as two thin ones
+	// so it shares the composition's baseline.
+	if got := countRules(clause, clauseColor); got != 2 {
+		t.Errorf("%d clause rules, want the two that make the thick one: %+v",
+			got, clause.rec.fills)
+	}
+	// And the clause runs in its own color, re-colored over the composition.
+	var colored bool
+	for _, r := range clause.rec.clipped {
+		if r.fg == clauseColor {
+			colored = true
+		}
+	}
+	if !colored {
+		t.Errorf("no clause run in %v; clipped runs: %+v", clauseColor, clause.rec.clipped)
 	}
 }
 

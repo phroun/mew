@@ -697,24 +697,32 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// 3. Mark the input method's composition. Two signals, because one is
 	// not enough: the underline is the convention every platform uses for
-	// "not committed yet", and the caret's own color says whose text this
-	// is - the input method is still holding it, the way it is still
-	// holding the caret. Drawn in the same overstrike style as the
-	// selection, re-coloring the SAME run through a pixel clip so the
-	// composed glyphs never shift as the composition grows.
+	// "not committed yet", and its own color says whose text this is - the
+	// input method is still holding it, the way it is still holding the
+	// caret. Drawn in the same overstrike style as the selection,
+	// re-coloring the SAME run through a pixel clip so the composed glyphs
+	// never shift as the composition grows.
 	if composing {
-		barStyle := scheme.GetFocusedEditBoxBarCursor()
-		// The bar caret is a FILLED rectangle, so its color is the
-		// style's background; as text that color has to become the
-		// foreground.
-		preStyle := s.WithFg(barStyle.Bg).WithBg(style.ColorTransparent)
+		imeStyle := scheme.GetFocusedEditBoxIME()
+		clauseStyle := scheme.GetFocusedEditBoxIMEActiveClause()
+		// Only the foreground is read: the composition is overstruck on
+		// whatever the field is already showing. A rule, being a filled
+		// rectangle, wants that same color as its background instead.
+		preStyle := s.WithFg(imeStyle.Fg).WithBg(style.ColorTransparent)
+		rule := func(c style.Color) style.CellStyle {
+			return style.DefaultStyle().WithBg(c)
+		}
 		loX, loPx := prefixWidth(preLo)
 		_, hiPx := prefixWidth(preHi)
 
 		// The active clause - the segment the input method is converting
-		// right now - is underscored twice as thick. Input methods that
-		// report no clause get one even underline across the whole
-		// composition, which is the common case.
+		// right now - gets its own color and is underscored twice as
+		// thick. A Japanese composition is several clauses and a candidate
+		// list converts one at a time, leaving the others as they were
+		// typed, so without the distinction those read as characters the
+		// composition failed to replace. Input methods that report no
+		// clause get one even underline across the whole composition,
+		// which is the common case.
 		clauseLo, clauseHi := preLo, preLo
 		if t.preedit.ClauseLen > 0 {
 			clauseLo = clampIdx(preLo + t.preedit.ClauseStart)
@@ -736,24 +744,31 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if ruleY < 0 {
 				ruleY = 0
 			}
-			p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin, barStyle)
+			p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin, rule(imeStyle.Fg))
 			if clauseHi > clauseLo {
 				_, cLoPx := prefixWidth(clauseLo)
 				_, cHiPx := prefixWidth(clauseHi)
+				// The clause re-colored over itself, by the same clip that
+				// drew the composition - so it changes color without being
+				// re-shaped as a run of its own.
+				p.DrawTextOffsetClipped(0, 0, 0, cLoPx, cHiPx, string(displayText),
+					s.WithFg(clauseStyle.Fg).WithBg(style.ColorTransparent), font)
+				p.FillRectPixels(0, 0, cLoPx, ruleY, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
 				if y := ruleY - thin; y >= 0 {
-					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, barStyle)
+					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
 				}
 			}
 		} else {
 			// Cell surfaces have no sub-cell rule to draw, so the
-			// underline is the attribute and the clause is what stands
-			// out - bold against the rest of the composition.
+			// underline is the attribute and the clause carries its color
+			// and bold weight instead of a thicker one.
 			cellStyle := preStyle.WithAttrs(style.StyleUnderline)
 			p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
 			if clauseHi > clauseLo {
 				cLoX, _ := prefixWidth(clauseLo)
 				p.DrawText(cLoX, 0, string(displayText[clauseLo:clauseHi]),
-					cellStyle.WithAttrs(style.StyleUnderline|style.StyleBold), font)
+					cellStyle.WithFg(clauseStyle.Fg).
+						WithAttrs(style.StyleUnderline|style.StyleBold), font)
 			}
 		}
 	}
