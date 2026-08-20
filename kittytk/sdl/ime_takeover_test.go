@@ -318,3 +318,68 @@ func TestThePalettesBackspaceIsAnEraseNotAKeystroke(t *testing.T) {
 			h.events[len(h.events)-1])
 	}
 }
+
+// Picking from the palette WITH THE MOUSE, before arrowing onto anything and
+// without a selector, backspaces the base letter instead — and that erase is
+// not the palette's to hand on.
+//
+// It types nothing on that route, so there is no selector to take back: what
+// macOS is removing is the character the composition already stands over. The
+// sink is hiding that character and the commit replaces it, so forwarding the
+// erase deleted the rune BEFORE the region as well. Holding the "i" of "Hi" and
+// clicking "ï" came out "ï".
+func TestThePalettesBackspaceIsSwallowedWhenItTypedNothing(t *testing.T) {
+	p, h := heldPlatform("i", true)
+	p.flushPendingPress()
+	s := &sdlSurface{handler: h}
+
+	before := len(h.events)
+	p.imeBackspace(s)
+
+	if got := h.events[before:]; len(got) != 0 {
+		t.Errorf("the erase reached the sink anyway: %v", got)
+	}
+	if !p.ime.holdsKeyboard() {
+		t.Error("swallowing the erase ended the takeover; the accent still has " +
+			"to replace the letter")
+	}
+	if got := p.ime.covers; got != 1 {
+		t.Errorf("composition covers %d, want the letter still stood over", got)
+	}
+}
+
+// The palette takes back what it put in, once each. A selector typed and then
+// erased leaves nothing owing, so a SECOND erase is the base letter's and is
+// swallowed like any other.
+func TestThePaletteTakesItsSelectorBackOnlyOnce(t *testing.T) {
+	p, h := heldPlatform("i", true)
+	p.flushPendingPress()
+	s := &sdlSurface{handler: h}
+	p.emitKeyPress(s, keyPress{chord: "6", produced: "6", observed: true, origin: "test"})
+
+	p.imeBackspace(s)
+	before := len(h.events)
+	p.imeBackspace(s)
+
+	for _, ev := range h.events[before:] {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Errorf("a second erase reached the sink: %v", h.events[before:])
+		}
+	}
+}
+
+// An ordinary composition's Backspace is the input method's own key for
+// shortening what it holds — it sends a new composition back, and nothing of
+// the document is being taken back.
+func TestBackspaceWhileComposingTakesNothingFromTheDocument(t *testing.T) {
+	h := &optionEventLog{}
+	s := &sdlSurface{handler: h}
+	p := &Platform{}
+	p.ime.composing = true
+
+	p.imeBackspace(s)
+
+	if len(h.events) != 0 {
+		t.Errorf("Backspace during a composition reached the sink: %v", h.events)
+	}
+}

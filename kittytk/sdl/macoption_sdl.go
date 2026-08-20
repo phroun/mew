@@ -411,6 +411,28 @@ func (m *imeState) noteTyped() bool {
 	return m.typed == 1
 }
 
+// takeBackTyped reports whether the palette has a rune of its OWN in the
+// document to take back, and spends it if so.
+//
+// It is what tells the palette's two erases apart. Picking by NUMBER types a
+// selector digit and backspaces that; picking with the MOUSE types nothing and
+// backspaces the base letter instead — the very character the composition
+// already stands over, which the sink is hiding and the commit is about to
+// replace. Forwarding that one as an erase deleted a rune the commit then
+// replaced as well, one character too many: "Hi" held on the "i" and clicked
+// came out "ï".
+//
+// Zero is also the answer while an ordinary composition is up, where Backspace
+// is the input method's own key for shortening what it holds. Nothing of the
+// document is being taken back there either.
+func (m *imeState) takeBackTyped() bool {
+	if m.typed <= 0 {
+		return false
+	}
+	m.typed--
+	return true
+}
+
 // spend ends the takeover on a commit, so a second commit does not open over a
 // second character.
 //
@@ -440,6 +462,15 @@ func (m *imeState) spend() {
 // taken back. And nothing is held for this press, so its release drops on its
 // own.
 func (p *Platform) imeBackspace(s *sdlSurface) {
+	if !p.ime.takeBackTyped() {
+		// Nothing of the palette's OWN is in the document, so this erase is
+		// aimed at the character it opened over — which the sink is already
+		// hiding behind the composition, and which the commit replaces. There
+		// is nothing here to take back: doing it anyway deleted the rune before
+		// the region as well, and "Hi" held on the "i" came out "ï".
+		core.KeyTracef("1 sdl      ime     erase swallowed (nothing of its own typed)")
+		return
+	}
 	core.KeyTracef("1 sdl      ime     erase 1 (the palette's own)")
 	if s == nil || s.handler == nil {
 		return
