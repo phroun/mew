@@ -1556,6 +1556,32 @@ func (t *TUIBackend) handleKey(key string) {
 	// Outer-terminal replies to our pixel-mouse probe (see Init). These are
 	// backend business, not app input, so consume them here — otherwise they
 	// would fall through and be misread as bogus keystrokes.
+	// Text the terminal received with no key behind it (the "kitty" protocol's
+	// keycode 0, direct-key-handler's keyboard.TextPrefix). An input method
+	// committing a composition is what sends it: the terminal owns the
+	// candidate list, so all that reaches this process is the text chosen.
+	//
+	// Raised as the COMMIT it is, which is the same event the graphical host
+	// raises for its own compositions — so a trinket handles both with one
+	// piece of code. Nothing is standing over anything here; the protocol has
+	// no way to report a composition in flight, so it lands as an insert.
+	//
+	// Never as a keystroke. A bare name in this stream means a key was pressed,
+	// and the text derivation below reads ONE rune from a name, so a commit
+	// spelled as a key would be a keystroke whose text is silently empty
+	// whenever it ran to more than one character - which is most of them.
+	if text, ok := strings.CutPrefix(key, "Text:"); ok {
+		if text != "" {
+			if core.KeyTracing() {
+				core.KeyTracef("1 tui      commit  text=%q", text)
+			}
+			select {
+			case t.eventQueue <- core.TextCommitEvent{Text: text}:
+			default:
+			}
+		}
+		return
+	}
 	if strings.HasPrefix(key, "DECRPM:") {
 		t.handleDECRPM(key)
 		return

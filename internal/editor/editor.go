@@ -8945,6 +8945,15 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			if e.handlePixelMouseReply(event.Key) {
 				continue
 			}
+			// Text the terminal received with no key behind it — an input
+			// method's commit — is put in the document, never dispatched as a
+			// keystroke. See committedtext.go.
+			if e.handleCommittedText(event.Key) {
+				if e.renderRequested.Load() {
+					e.performRender()
+				}
+				continue
+			}
 			// Mouse pseudo-keys (position/press/drag/release/scroll) never
 			// enter keymap dispatch; see mouse.go. They DO reach the render
 			// tail: a click's effect (caret, pressed button, a follow) must
