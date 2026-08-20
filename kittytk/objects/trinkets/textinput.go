@@ -44,6 +44,21 @@ type TextInput struct {
 	// ordinary typed characters). See core/preedit.go.
 	preedit core.Preedit
 
+	// preeditAt is where the standing composition's region STARTS, and
+	// preeditStanding whether there is one. A plain index is enough where mew
+	// needs a garland cursor: this field owns every edit to its own runes, and
+	// the only edit made while a composition stands lands at the caret, which
+	// is at or past the region's end.
+	//
+	// The region outlives the PAINTING. An input method closes its composition
+	// before it delivers the finished text, and a keystroke that dismisses a
+	// palette lands before the commit catches up — so a region measured back
+	// from the caret at commit time points at whatever was typed since, and one
+	// thrown away entirely leaves the commit appending. Both showed as a
+	// doubled letter.
+	preeditAt       int
+	preeditStanding bool
+
 	// Drag selection in progress (armed by a left press, extended by
 	// motion while the button is held).
 	selecting bool
@@ -312,12 +327,20 @@ func (t *TextInput) insert(text string) {
 		return
 	}
 
-	// Committed characters end whatever was being composed - this IS the
-	// commit, arriving as ordinary typed text. Clearing here rather than
+	// Committed characters end whatever was being PAINTED - this IS the
+	// commit, arriving as ordinary typed text. Cleared here rather than
 	// waiting for the empty TEXT_EDITING that usually follows means the
 	// preedit never briefly paints alongside the text it turned into,
 	// whichever order the platform sends the two events in.
-	t.preedit = core.Preedit{}
+	//
+	// Its REGION stands, though. A palette dismissed by typing lands the
+	// keystroke before the input method's commit catches up, and the accent
+	// still belongs where the composition was — throwing the region away here
+	// left the commit appending, "o.ò" for a letter that should have become
+	// "ò.". The platform gives the region up by cancelling, which it does
+	// whenever a keystroke ends a takeover; this is not the place to guess.
+	t.preedit.Text = nil
+	t.preedit.Caret = 0
 
 	// Delete selection first
 	t.deleteSelection()
@@ -929,22 +952,39 @@ func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
 	// chosen to take its place, side by side — for as long as the palette is
 	// up. Cancelling ends the composition and the letter is simply there
 	// again; nothing was deleted to hide it.
-	from := at - t.preedit.Covers
+	//
+	// Placed at the region rather than back from the caret: the caret may have
+	// moved on since the composition opened.
+	from := t.preeditAt
 	if from < 0 {
 		from = 0
+	}
+	if from > len(display) {
+		from = len(display)
+	}
+	to := from + t.preedit.Covers
+	if to > len(display) {
+		to = len(display)
 	}
 
 	pre := t.echo(t.preedit.Text)
 	out := make([]rune, 0, len(display)+len(pre))
 	out = append(out, display[:from]...)
 	out = append(out, pre...)
-	out = append(out, display[at:]...)
+	out = append(out, display[to:]...)
 
 	inner := t.preedit.Caret
 	if inner > len(pre) {
 		inner = len(pre)
 	}
-	return out, from, from + len(pre), from + inner
+	caret = from + inner
+	if at > to {
+		// The caret has moved past the composition — something was typed
+		// beside it. It keeps its distance from the region's end, over the
+		// composition's length rather than the covered text's.
+		caret = from + len(pre) + (at - to)
+	}
+	return out, from, from + len(pre), caret
 }
 
 // truncateToWidth truncates text to fit within the given width using font metrics.
@@ -1361,11 +1401,27 @@ func (t *TextInput) HandleTextEditing(event core.TextEditingEvent) bool {
 	}
 
 	next := core.PreeditFrom(event)
-	if !next.Active() && !t.preedit.Active() {
+	if !next.Active() && !t.preedit.Active() && !t.preeditStanding {
 		// Input methods send an empty update to end a composition, and
 		// some send one when nothing was composing at all. Repainting
 		// for that would wake the whole surface for no visible change.
 		return true
+	}
+	switch {
+	case next.Active() && !t.preeditStanding:
+		// Opening: the region is fixed here, from where the caret is now.
+		from := t.cursorPos - next.Covers
+		if from < 0 {
+			from, next.Covers = 0, t.cursorPos
+		}
+		t.preeditAt, t.preeditStanding = from, true
+	case !next.Active() && next.Covers == 0:
+		// A cancel says it covers NOTHING, which is what tells it apart from a
+		// composition merely ending on its way to a commit.
+		t.preeditStanding = false
+	case !next.Active():
+		// Ended, still standing over its region: keep Covers, stop painting.
+		next.Covers = t.preedit.Covers
 	}
 	t.preedit = next
 
@@ -1397,35 +1453,47 @@ func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
 		return false
 	}
 
-	// What the composition covered is what this replaces. The count is not on
-	// the event and does not need to be: the field has been hiding those runes
-	// all along, so it already knows which ones the finished text stands for.
-	covers := t.preedit.Covers
-
-	// The composition is over whichever way this arrived, so the preedit goes
-	// before anything is measured against the caret. insert clears it too; this
-	// is here because the deletion below happens first and must not count
-	// provisional characters.
+	// What the composition covered is what this replaces, at the REGION it
+	// stood on rather than back from the caret: the caret may have moved on
+	// since, and the accent still belongs where the letter was.
+	from, covers, standing := t.preeditAt, t.preedit.Covers, t.preeditStanding
 	t.preedit = core.Preedit{}
+	t.preeditStanding = false
 
-	if n := covers; n > 0 {
-		// Only what is actually there, and only what is not already selected:
-		// a selection is deleted by insert, and taking these runes as well
-		// would erase text the composition was never replacing.
-		if t.selStart == t.selEnd {
-			if n > t.cursorPos {
-				n = t.cursorPos
+	trailing := 0
+	if standing && covers > 0 && t.selStart == t.selEnd {
+		// Only what is actually there. A selection is left to insert, which
+		// deletes it — taking these runes as well would erase text beside the
+		// composition that it was never standing over.
+		if from < 0 {
+			from = 0
+		}
+		to := from + covers
+		if to > len(t.text) {
+			to = len(t.text)
+		}
+		if to > from {
+			// How much was typed BESIDE the composition, so the caret can be put
+			// back after it once the region's length changes.
+			if trailing = t.cursorPos - to; trailing < 0 {
+				trailing = 0
 			}
-			if n > 0 {
-				t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
-				t.cursorPos -= n
-				t.selStart = t.cursorPos
-				t.selEnd = t.cursorPos
-			}
+			t.text = append(t.text[:from], t.text[to:]...)
+			t.cursorPos = from
+			t.selStart, t.selEnd = t.cursorPos, t.cursorPos
 		}
 	}
 
 	t.insert(event.Text)
+	if trailing > 0 {
+		// Back to where the person typing left it, on the far side of what they
+		// typed while the palette was up.
+		t.cursorPos += trailing
+		if t.cursorPos > len(t.text) {
+			t.cursorPos = len(t.text)
+		}
+		t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+	}
 	t.resetCaretBlink()
 	t.ensureCursorVisible()
 	t.Update()

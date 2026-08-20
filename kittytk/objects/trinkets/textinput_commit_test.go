@@ -258,3 +258,60 @@ func TestAReadOnlyFieldDeclinesAnErase(t *testing.T) {
 		t.Errorf("text = %q, want it untouched", got)
 	}
 }
+
+// A composition's REGION outlives the typing beside it, so the finished text
+// still lands where the letter was.
+//
+// Arrow to a replacement, then type to dismiss: macOS commits the selection
+// and the keystroke lands first. A region measured back from the caret named
+// the character that keystroke typed, and one thrown away entirely left the
+// commit appending — "o.ò" for a letter that should have become "ò.".
+func TestTheRegionOutlivesTypingBesideIt(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("o")
+	ti.SetCursorPosition(1)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
+
+	ti.insert(".") // the dismissing keystroke, landing first
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "ò"})
+
+	if got := ti.Text(); got != "ò." {
+		t.Errorf("text = %q, want the accent in the letter's place and the typed "+
+			"character kept", got)
+	}
+	if got := ti.CursorPosition(); got != 2 {
+		t.Errorf("caret at %d, want 2 — where the person typing left it", got)
+	}
+}
+
+// Typing beside a composition stops it PAINTING at once, so the letter under it
+// is visible again even though the region stands.
+func TestTypingBesideACompositionStopsItPainting(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("o")
+	ti.SetCursorPosition(1)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
+
+	ti.insert(".")
+
+	runes, lo, hi, _ := ti.composedText()
+	if string(runes) != "o." || lo != hi {
+		t.Errorf("shown %q [%d,%d), want the plain text back", string(runes), lo, hi)
+	}
+}
+
+// A cancel gives the region up, so whatever is committed afterwards replaces
+// nothing.
+func TestACancelGivesUpTheRegionInAField(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("o")
+	ti.SetCursorPosition(1)
+	ti.HandleTextEditing(core.TextEditingEvent{Text: "ò", Start: -1, Length: -1, Covers: 1})
+
+	ti.HandleTextEditing(core.TextEditingEvent{Start: -1, Length: -1}) // covers 0: cancelled
+	ti.HandleTextCommit(core.TextCommitEvent{Text: "X"})
+
+	if got := ti.Text(); got != "oX" {
+		t.Errorf("text = %q; a cancelled composition must replace nothing", got)
+	}
+}
