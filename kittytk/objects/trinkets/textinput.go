@@ -703,14 +703,14 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// re-coloring the SAME run through a pixel clip so the composed glyphs
 	// never shift as the composition grows.
 	if composing {
-		imeStyle := scheme.GetFocusedEditBoxIME()
+		inactiveStyle := scheme.GetFocusedEditBoxIMEInactive()
 		clauseStyle := scheme.GetFocusedEditBoxIMEActiveClause()
 		// With NO clause reported the whole composition is the active
 		// material - every input method that builds text rather than
 		// converting it says nothing about clauses - so it wears the
 		// active color rather than the dimmer one. Only a composition
 		// that HAS a clause has anything to dim.
-		baseFg := imeStyle.Fg
+		baseFg := inactiveStyle.Fg
 		if t.preedit.ClauseLen <= 0 {
 			baseFg = clauseStyle.Fg
 		}

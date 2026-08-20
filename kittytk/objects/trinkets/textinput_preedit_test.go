@@ -192,7 +192,7 @@ func countRules(f *composeFixture, c style.Color) int {
 // as such — which is how mew spends the same two colors.
 func TestAClauseIsWhatDimsTheRestOfTheComposition(t *testing.T) {
 	scheme := NewTextInput().GetScheme()
-	active, dimmed := scheme.GetFocusedEditBoxIMEActiveClause().Fg, scheme.GetFocusedEditBoxIME().Fg
+	active, dimmed := scheme.GetFocusedEditBoxIMEActiveClause().Fg, scheme.GetFocusedEditBoxIMEInactive().Fg
 	if active == dimmed {
 		t.Skip("this scheme paints a clause and the rest alike")
 	}
