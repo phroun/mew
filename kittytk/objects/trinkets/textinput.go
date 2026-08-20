@@ -705,46 +705,41 @@ func (t *TextInput) Paint(p *core.Painter) {
 	if composing {
 		inactiveStyle := scheme.GetFocusedEditBoxIMEInactive()
 		clauseStyle := scheme.GetFocusedEditBoxIMEActiveClause()
-		// With NO clause reported the whole composition is the active
-		// material - every input method that builds text rather than
-		// converting it says nothing about clauses - so it wears the
-		// active color rather than the dimmer one. Only a composition
-		// that HAS a clause has anything to dim.
-		baseFg := inactiveStyle.Fg
-		if t.preedit.ClauseLen <= 0 {
-			baseFg = clauseStyle.Fg
-		}
 		// Only the foreground is read: the composition is overstruck on
 		// whatever the field is already showing. A rule, being a filled
 		// rectangle, wants that same color as its background instead.
-		preStyle := s.WithFg(baseFg).WithBg(style.ColorTransparent)
+		preStyle := s.WithFg(inactiveStyle.Fg).WithBg(style.ColorTransparent)
 		rule := func(c style.Color) style.CellStyle {
 			return style.DefaultStyle().WithBg(c)
 		}
 		loX, loPx := prefixWidth(preLo)
 		_, hiPx := prefixWidth(preHi)
 
-		// The active clause - the segment the input method is converting
-		// right now - keeps the active color while the rest of the
-		// composition is dimmed to the composing one, and is underscored
-		// twice as thick. A Japanese composition is several clauses and a
-		// candidate list converts one at a time, leaving the others as
-		// they were typed, so without the distinction those read as
-		// characters the composition failed to replace. Input methods that
-		// report no clause get one even underline across the whole
-		// composition, which is the common case.
-		clauseLo, clauseHi := preLo, preLo
+		// The ACTIVE span: the clause the input method is converting right
+		// now, in the active color and underscored twice as thick, against
+		// the rest of the composition dimmed to the inactive one.
+		//
+		// A Japanese composition is several clauses and a candidate list
+		// converts one at a time, leaving the others as they were typed, so
+		// without the distinction those read as characters the composition
+		// failed to replace. An input method that reports NO clause is
+		// working on all of it, and the whole composition is the active
+		// span - same color, same thick rule. Only a composition that has a
+		// clause has anything to dim, which is why the dimmed pass below is
+		// skipped outright when there is none: nothing of it would show,
+		// and drawing the same glyphs twice composites their edges twice.
+		clauseLo, clauseHi := preLo, preHi
 		if t.preedit.ClauseLen > 0 {
 			clauseLo = clampIdx(preLo + t.preedit.ClauseStart)
 			clauseHi = clampIdx(clauseLo + t.preedit.ClauseLen)
 		}
+		hasInactive := clauseLo > preLo || clauseHi < preHi
 
 		if usePx {
-			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), preStyle, font)
 			// Underline as an explicit rule rather than the font's own:
 			// it has to sit at a known offset below the line so the thick
-			// clause rule can share the same baseline, and a font
-			// underline gives no say in either.
+			// active rule can share the same baseline, and a font underline
+			// gives no say in either.
 			thin := p.DeviceScale()
 			if thin < 1 {
 				thin = 1
@@ -754,13 +749,20 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if ruleY < 0 {
 				ruleY = 0
 			}
-			p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin, rule(baseFg))
+			if hasInactive {
+				p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText),
+					preStyle, font)
+				p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin,
+					rule(inactiveStyle.Fg))
+			}
 			if clauseHi > clauseLo {
 				_, cLoPx := prefixWidth(clauseLo)
 				_, cHiPx := prefixWidth(clauseHi)
-				// The clause re-colored over itself, by the same clip that
-				// drew the composition - so it changes color without being
-				// re-shaped as a run of its own.
+				// Clipped from the WHOLE composition rather than drawn as
+				// its own run, so the active span changes color without
+				// being re-shaped - a substring shapes differently than the
+				// same characters mid-run, and it would jitter as the
+				// candidate list is walked.
 				p.DrawTextOffsetClipped(0, 0, 0, cLoPx, cHiPx, string(displayText),
 					s.WithFg(clauseStyle.Fg).WithBg(style.ColorTransparent), font)
 				p.FillRectPixels(0, 0, cLoPx, ruleY, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
@@ -770,10 +772,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 			}
 		} else {
 			// Cell surfaces have no sub-cell rule to draw, so the
-			// underline is the attribute and the clause carries its color
-			// and bold weight instead of a thicker one.
+			// underline is the attribute and the active span carries its
+			// color and bold weight instead of a thicker rule.
 			cellStyle := preStyle.WithAttrs(style.StyleUnderline)
-			p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+			if hasInactive {
+				p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+			}
 			if clauseHi > clauseLo {
 				cLoX, _ := prefixWidth(clauseLo)
 				p.DrawText(cLoX, 0, string(displayText[clauseLo:clauseHi]),

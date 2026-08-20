@@ -205,12 +205,16 @@ func TestAClauseIsWhatDimsTheRestOfTheComposition(t *testing.T) {
 		return false
 	}
 
+	// A composition that names no clause is ALL the active span, so it wears
+	// the active treatment whole - the color and the thick rule alike, drawn
+	// exactly as a clause is.
 	plain := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: -1, Length: -1})
 	if hasRun(plain, dimmed) {
 		t.Errorf("part of a clauseless composition was dimmed: %+v", plain.rec.clipped)
 	}
-	if got := countRules(plain, active); got != 1 {
-		t.Errorf("%d rules under a clauseless composition, want one even one", got)
+	if got := countRules(plain, active); got != 2 {
+		t.Errorf("%d rules under a clauseless composition, want the two that "+
+			"make the thick one: %+v", got, plain.rec.fills)
 	}
 
 	clause := composingInput(t, "", 0, core.TextEditingEvent{Text: "きょうは", Start: 0, Length: 2})
