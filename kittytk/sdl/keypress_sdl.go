@@ -79,6 +79,14 @@ func (p *Platform) emitKeyPress(s *sdlSurface, k keyPress) {
 	// "oœ". A palette takes exactly one selector, so the first typed keystroke
 	// is spared and the second is somebody typing on.
 	//
+	// Confirming with SPACE therefore leaves the space in the document, and
+	// that is deliberate rather than a case still to be closed: macOS erases
+	// the digit it types for a numeric pick and does not erase the space, so
+	// there is nothing to tell us it was a confirmation rather than a word
+	// ending. Keeping it is also what the person meant — a space is pressed to
+	// confirm because the word is finished, so the space they get is the space
+	// they were about to type. Do not "fix" this back into a swallow.
+	//
 	// Only a takeover of ours is ended (see cancelComposition), so a dead key's
 	// deliberately-standing composition is untouched — the "u" completing
 	// Option+i comes through here and must still find the circumflex waiting.
