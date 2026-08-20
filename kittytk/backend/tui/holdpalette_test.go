@@ -131,3 +131,28 @@ func TestANegativeWaitDisablesIt(t *testing.T) {
 		t.Errorf("dispatched %d repeats with the wait off, want both: %+v", len(got), got)
 	}
 }
+
+// Letting go ends the hold, so the NEXT hold of the same key asks the palette
+// question again.
+//
+// The wait is measured from when the hold was first seen. Left standing across
+// a release, a second hold of the same key found it already spent and repeated
+// at once — the palette could be reached once per key per session, which is
+// indistinguishable from it not working.
+func TestReleasingEndsTheWaitForTheNextHold(t *testing.T) {
+	b := held(50 * time.Millisecond)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat")
+	time.Sleep(60 * time.Millisecond)
+	b.handleKey("o:Repeat") // past the wait, flows
+	b.handleKey("o:Release")
+	drain(b)
+
+	// Second hold: its own wait, from now.
+	b.handleKey("o:Repeat")
+	if got := drain(b); len(got) != 0 {
+		t.Errorf("the second hold repeated at once (%+v); its wait must start "+
+			"over, or the palette is reachable only the first time", got)
+	}
+}

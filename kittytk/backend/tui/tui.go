@@ -1690,6 +1690,13 @@ func (t *TUIBackend) handleKey(key string) {
 	// consumer already treats it as one, and the distinction only matters to a
 	// child that negotiated event reporting for itself.
 	if base, isRelease := strings.CutSuffix(key, ":Release"); isRelease {
+		// The hold is over, so the next one asks the palette question again.
+		// Left standing, a second hold of the SAME key found its wait already
+		// spent and repeated at once — so the palette could be reached once per
+		// key per session and never again.
+		if t.holdKey == base {
+			t.holdKey = ""
+		}
 		mods, _ := core.ParseKeyModifiers(base)
 		if core.KeyTracing() {
 			core.KeyTracef("1 tui      release key=%q mods=%v", base, mods)
