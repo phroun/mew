@@ -405,6 +405,11 @@ type Viewport struct {
 	preedit   Preedit
 	preeditAt *buffer.Anchor
 
+	// preeditStanding is whether a composition still owns a region, which
+	// outlives the text being painted: an input method ends its composition
+	// before delivering the finished text.
+	preeditStanding bool
+
 	// AfterKey is this viewport's after-key pseudo-binding: a PawScript command
 	// the editor runs each time a key's binding activity RESOLVES while this
 	// viewport owns the keyboard — after the bound (or fallthrough-insert)

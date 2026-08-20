@@ -2388,11 +2388,6 @@ func (e *Editor) registerCommands() {
 		if len(ctx.Args) > 0 {
 			text = fmt.Sprintf("%v", ctx.Args[0])
 		}
-		if text == "" {
-			w.ClearPreedit()
-			e.RequestRender()
-			return pawscript.BoolStatus(true)
-		}
 		runes := []rune(text)
 		caret := len(runes)
 		if len(ctx.Args) > 1 {
@@ -2406,6 +2401,9 @@ func (e *Editor) registerCommands() {
 				covers = n
 			}
 		}
+		// Empty text goes through too, rather than clearing here: whether it
+		// ENDS the composition on its way to a commit or CANCELS it turns on
+		// the extent it still names, and SetPreedit is where that is decided.
 		w.SetPreedit(runes, caret, covers)
 		e.RequestRender()
 		return pawscript.BoolStatus(true)

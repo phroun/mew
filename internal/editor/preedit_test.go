@@ -178,3 +178,57 @@ func TestTheNumericRouteReplacesOnlyTheLetter(t *testing.T) {
 		t.Errorf("content = %q, want the accent alone", got)
 	}
 }
+
+// A composition ENDS before its text arrives, and the region has to outlive
+// that.
+//
+// macOS closes the composition and only then commits: the trace reads
+// preedit "" covers=1, then the accent. Clearing the region on the ending
+// update left the commit with nothing to replace, so it inserted instead —
+// "oǒ", after the palette had shown the right thing the whole time.
+func TestTheRegionOutlivesTheCompositionEnding(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "o"`)
+	e.executeCommand(`preedit 'ǒ', 1, 1`)
+
+	e.executeCommand(`preedit '', 0, 1`) // ended, still standing over the letter
+	e.executeCommand(`preedit_commit 'ǒ'`)
+
+	if got := docContent(w); got != "ǒ" {
+		t.Errorf("content = %q, want the accent in the letter's place", got)
+	}
+}
+
+// Nothing paints once it has ended, so the covered letter is visible again from
+// that moment — it is only WHERE the text goes that survives.
+func TestAnEndedCompositionPaintsNothing(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "o"`)
+	e.executeCommand(`preedit 'ǒ', 1, 1`)
+
+	e.executeCommand(`preedit '', 0, 1`)
+
+	if w.Preedit().Active() {
+		t.Error("an ended composition is still painting")
+	}
+	display, lo, hi := w.PreeditSplice(0, "o")
+	if display != "o" || lo != hi {
+		t.Errorf("display = %q [%d,%d), want the plain letter back", display, lo, hi)
+	}
+}
+
+// A cancel says it covers NOTHING, and that is what tells it apart from an
+// ending on the way to a commit. Whatever is committed after it replaces
+// nothing.
+func TestACancelGivesUpTheRegion(t *testing.T) {
+	e, w := newTestEditor(t, "")
+	e.executeCommand(`insert "o"`)
+	e.executeCommand(`preedit 'ǒ', 1, 1`)
+
+	e.executeCommand(`preedit '', 0, 0`) // cancelled
+	e.executeCommand(`preedit_commit 'X'`)
+
+	if got := docContent(w); got != "oX" {
+		t.Errorf("content = %q; a cancelled composition must replace nothing", got)
+	}
+}

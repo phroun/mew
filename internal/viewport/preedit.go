@@ -55,8 +55,13 @@ func (w *Viewport) Preedit() Preedit { return w.preedit }
 //
 // It reads a garland cursor, so it is still pointing at the same text after
 // anything else in the buffer has been edited.
+//
+// A composition that has ENDED but not yet been committed still has a region:
+// an input method closes its composition before delivering the finished text,
+// and the text has to land where the composition was. Nothing paints from it by
+// then (Active is false), so this outlives what is on screen.
 func (w *Viewport) PreeditAt() (line, runePos int, ok bool) {
-	if !w.preedit.Active() || w.preeditAt == nil {
+	if !w.preeditStanding || w.preeditAt == nil {
 		return 0, 0, false
 	}
 	line, runePos = w.preeditAt.LineRune()
@@ -72,7 +77,14 @@ func (w *Viewport) PreeditAt() (line, runePos int, ok bool) {
 // have moved on, and the region has not.
 func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
 	if len(text) == 0 {
-		w.ClearPreedit()
+		// Empty with an extent is a composition ENDING on its way to a commit;
+		// empty with none is a cancel. The region survives the first and not
+		// the second — see EndPreedit.
+		if covers > 0 && w.preeditStanding {
+			w.EndPreedit()
+		} else {
+			w.ClearPreedit()
+		}
 		return
 	}
 	if caret < 0 {
@@ -85,7 +97,7 @@ func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
 		covers = 0
 	}
 
-	if !w.preedit.Active() {
+	if !w.preeditStanding {
 		// Opening. The cursor is minted ONCE per viewport and parked again on
 		// each composition — garland adjusts every live cursor on every edit,
 		// so one per viewport is a cost worth paying and one per palette is
@@ -102,9 +114,24 @@ func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
 			w.preeditAt.SeekLineRune(pos.Line, from)
 		}
 		w.preedit.Covers = covers
+		w.preeditStanding = true
 	}
 	w.preedit.Text = text
 	w.preedit.Caret = caret
+}
+
+// EndPreedit stops PAINTING a composition while leaving its region standing.
+//
+// An input method closes its composition before it delivers the finished text —
+// macOS sends the empty update and only then the commit — so a viewport that
+// forgot the region here would insert the accent instead of replacing the
+// letter chosen for it, and the line would read "oǒ".
+//
+// What survives is only where the finished text goes. Nothing paints from it,
+// so the covered characters are visible again from this moment.
+func (w *Viewport) EndPreedit() {
+	w.preedit.Text = nil
+	w.preedit.Caret = 0
 }
 
 // ClearPreedit ends the composition without committing it.
@@ -112,7 +139,10 @@ func (w *Viewport) SetPreedit(text []rune, caret, covers int) {
 // The cursor stays: it is the viewport's, not this composition's, and parking
 // it again costs nothing where minting a fresh one on every palette would. It
 // is released with the viewport's other cursors (see releasePreedit).
-func (w *Viewport) ClearPreedit() { w.preedit = Preedit{} }
+func (w *Viewport) ClearPreedit() {
+	w.preedit = Preedit{}
+	w.preeditStanding = false
+}
 
 // releasePreedit gives up the composition's cursor, called where the viewport's
 // other tracking cursors are given up.
@@ -122,6 +152,7 @@ func (w *Viewport) releasePreedit() {
 		w.preeditAt = nil
 	}
 	w.preedit = Preedit{}
+	w.preeditStanding = false
 }
 
 // PreeditOnLine reports whether a composition is being painted into docLine.
