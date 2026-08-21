@@ -89,18 +89,17 @@ type TUIBackend struct {
 	// key is being held, and when the hold was first seen. See
 	// TUIOptions.HoldOpensPalette.
 	//
-	// holdArm names the key whose letter a palette has opened over, and
-	// holdPending holds what has been typed into that palette since — the
-	// selector keys, which belong to the palette rather than to the document
-	// and are only let through if no commit comes.
+	// holdArm names the key whose letter is still in the document with a
+	// palette possibly open over it, and holdExtra counts what has been typed
+	// into that palette since. Together they are what a commit takes back.
 	//
 	// holdArm outlives holdKey on purpose: letting go is how the palette gets
-	// used, so the release cannot be what ends this. See openHoldComposition.
-	holdWait    time.Duration
-	holdKey     string
-	holdSince   time.Time
-	holdArm     string
-	holdPending []core.Event
+	// used, so the release cannot be what ends this. See takeBackHeld.
+	holdWait  time.Duration
+	holdKey   string
+	holdSince time.Time
+	holdArm   string
+	holdExtra int
 
 	// Screen buffers (double buffering)
 	// dmgMin/dmgMax are the column range the text diff rewrote on each row
@@ -1594,16 +1593,16 @@ func (t *TUIBackend) deliverPaste(text string) {
 	// should not have to know that one terminal wraps it in a paste.
 	//
 	// Not left as a paste, because the two are not interchangeable at the far
-	// end: a composition's commit replaces what the composition covered, and a
-	// paste is an insert that knows nothing about it — the letter under the
-	// palette would be left standing with the accent after it.
+	// end: a trinket implements the composition handlers and the paste handler
+	// separately, and one that has the first and not the second would take the
+	// letter back and drop what was meant to replace it. Choosing by number
+	// left an empty document where "ö" belonged.
 	//
-	// Nothing but a withheld repeat opens a composition here, so an ordinary
-	// paste cannot be caught by it: it takes a text key held past the
-	// auto-repeat threshold with its repeats kept back. Everything else is
-	// delivered as what it is.
+	// Nothing but a withheld repeat ever arms this, so an ordinary paste cannot
+	// be caught by it: it takes a text key held past the auto-repeat threshold
+	// with its repeats kept back. Everything else is delivered as what it is.
 	if t.holdArm != "" {
-		t.spendHold()
+		t.takeBackHeld()
 		if core.KeyTracing() {
 			core.KeyTracef("1 tui      commit  text=%q (framed as a paste)", text)
 		}
@@ -1665,11 +1664,11 @@ func (t *TUIBackend) handleKey(key string) {
 	// whenever it ran to more than one character - which is most of them.
 	if text, ok := strings.CutPrefix(key, "Text:"); ok {
 		if text != "" {
-			// A commit is what a composition is FOR, so it spends the one a
-			// palette opened: the region it covered — the letter underneath —
-			// is what this text stands in for, and the selector keys held back
-			// for the palette go with it.
-			t.spendHold()
+			// Whatever a palette was open OVER comes back out first. A commit
+			// is the only thing that spends the take-back, which is what makes
+			// the count safe to keep: nothing is erased unless something
+			// arrived to replace it.
+			t.takeBackHeld()
 			if core.KeyTracing() {
 				core.KeyTracef("1 tui      commit  text=%q", text)
 			}
@@ -1819,27 +1818,25 @@ func (t *TUIBackend) handleKey(key string) {
 			}
 		} else {
 			// A text key starts a hold of its own, since any of them might be
-			// the next palette.
+			// the next palette. If a take-back is already standing it is also
+			// COUNTED, because a character typed while a palette is open
+			// belongs to the palette — the selector digit, which macOS types
+			// into the document and expects replaced along with the base
+			// letter.
 			//
-			// With a composition already standing it is HELD instead of typed.
-			// A character struck while a palette is open belongs to the palette
-			// — it is the selector, which chooses a candidate rather than
-			// putting a "4" in the document — and the commit that follows is
-			// the whole of what the gesture typed. Held rather than dropped,
-			// because the palette might not be there: nothing let it through if
-			// a commit comes, and everything does if one never does.
-			t.holdKey, t.holdSince = key, time.Now()
+			// Counting where guessing would be unsafe, because the count is
+			// only ever SPENT by a commit. Type on past a palette that was
+			// never there and none arrives, so nothing is taken back.
 			if t.holdArm != "" {
-				t.holdPending = append(t.holdPending, t.pressEvent(key, false))
-				return
+				t.holdExtra++
 			}
+			t.holdKey, t.holdSince = key, time.Now()
 		}
 	} else if key == t.holdKey && time.Since(t.holdSince) < t.holdWait {
 		// Withheld — and a withheld repeat is the only evidence a terminal
-		// gives that a palette opened, so it is what opens the composition.
+		// gives that a palette opened, so it is what arms the take-back.
 		if t.holdArm == "" {
 			t.holdArm = key
-			t.openHoldComposition()
 		}
 		if core.KeyTracing() {
 			core.KeyTracef("1 tui      hold    key=%q withheld", key)
@@ -1847,32 +1844,18 @@ func (t *TUIBackend) handleKey(key string) {
 		return
 	} else if key == t.holdKey {
 		// Past the wait, and the repeats flow. A hold that has got this far
-		// means what a hold usually means — type another one — so the letter it
-		// started with is not a palette's base character to be replaced.
+		// means what a hold usually means — type another one — so the letter
+		// it started with is not a palette's base character to be taken back.
 		t.endHold()
 	}
 
-	event := t.pressEvent(key, repeated)
-	if core.KeyTracing() {
-		core.KeyTracef("1 tui      press   key=%q mods=%v repeat=%v",
-			key, event.Modifiers, repeated)
-	}
-
-	select {
-	case t.eventQueue <- event:
-	default:
-		// Queue full, drop event
-	}
-}
-
-// pressEvent builds the event for a key going down, without dispatching it: a
-// press held back for a palette has to be built where it arrives and delivered
-// later unchanged.
-//
-// Key names follow direct-key-handler convention: "^A" for Control+letter, a
-// name for a special key ("Left", "Return", "Escape"), "F1" through "F12", and
-// the "M-" and "S-" prefixes for the modifiers.
-func (t *TUIBackend) pressEvent(key string, repeated bool) core.KeyPressEvent {
+	// Parse modifiers while keeping the full key string
+	// Key names follow direct-key-handler convention:
+	// - Control+letter: "^A", "^X" etc.
+	// - Special keys: "Left", "Right", "Up", "Down", "Return", "Tab", "Escape", etc.
+	// - Function keys: "F1", "F2", ... "F12"
+	// - Mega combinations: "M-" prefix
+	// - Shift combinations: "S-" prefix
 	mods, keyName := core.ParseKeyModifiers(key)
 
 	// Determine text content for printable characters.
@@ -1887,84 +1870,66 @@ func (t *TUIBackend) pressEvent(key string, repeated bool) core.KeyPressEvent {
 		text = keyName
 	}
 
-	return core.KeyPressEvent{
+	event := core.KeyPressEvent{
 		Key:       key,  // Full key string including modifier prefixes
 		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
 		Text:      text,
 		Repeat:    repeated,
 	}
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      press   key=%q mods=%v repeat=%v", key, mods, repeated)
+	}
+
+	select {
+	case t.eventQueue <- event:
+	default:
+		// Queue full, drop event
+	}
 }
 
-// openHoldComposition tells the app a palette has opened over the letter the
-// held key typed, as a composition standing on it.
+// takeBackHeld removes the letter a held key typed, just before the character
+// chosen out of the palette that opened over it arrives.
 //
-// This is the same shape the graphical host is handed for the same gesture, and
-// it is what Covers exists for: macOS commits the held letter the moment the key
-// goes down and only THEN opens over it, so the letter is in the document and
-// has to be hidden while its alternatives are shown, then replaced by whichever
-// is chosen. A terminal reports no composition of its own, but the gesture is
-// the same gesture, and the one moment it can be recognised is a withheld
-// repeat.
+// The graphical host never needs this: it is handed a real composition, so the
+// base letter sits inside its Covers — hidden while the palette is up and
+// replaced by the commit. A terminal reports no composition at all, so the
+// letter is really in the document by the time anything reveals that a palette
+// was ever open, and the only way to put things right is to take it back.
 //
-// Said as a REGION rather than as an erase counted back from the caret, because
-// a region is remembered and a count is not. The commit replaces whatever its
-// composition covered whenever it arrives; counting back means the answer
-// depends on what else reached the document first, and mew's own editor already
-// says so — "counting back from the caret gets it wrong the moment anything is
-// typed while the palette is up". Two producers feed that editor's main loop
-// and Go picks between them at random, so "the moment anything is typed" was
-// about half the time.
-func (t *TUIBackend) openHoldComposition() {
+// What arms it is a WITHHELD repeat, which is the single piece of evidence a
+// terminal gives that a palette opened: the key was held past the auto-repeat
+// threshold and the repeats were kept back, which is that gesture and no other.
+//
+// It takes back the palette's SELECTOR as well as the base letter. Choosing by
+// number types the digit into the document and macOS expects it replaced along
+// with the letter, without asking for it back the way the graphical host is
+// asked (there is no Backspace anywhere in the captures). Every ordinary
+// character typed while the take-back stands is counted for that reason, and
+// the count is safe to keep because only a commit ever spends it: type on past
+// a palette that was never there and nothing arrives to erase anything.
+//
+// The erase goes out as an erase rather than as a Backspace for the reason
+// TextEraseEvent exists at all — nobody pressed Backspace, and the sink is what
+// knows whether erasing here means a rune out of a document or a byte down a
+// terminal session.
+func (t *TUIBackend) takeBackHeld() {
+	if t.holdArm == "" {
+		return
+	}
+	count := 1 + t.holdExtra
+	t.endHold()
 	if core.KeyTracing() {
-		core.KeyTracef("1 tui      hold    composition over the letter it opened on")
+		core.KeyTracef("1 tui      hold    take back %d before the commit", count)
 	}
 	select {
-	case t.eventQueue <- core.TextEditingEvent{Covers: 1}:
+	case t.eventQueue <- core.TextEraseEvent{Count: count}:
 	default:
 	}
 }
 
-// endHold gives up the composition: whatever the palette opened over is
-// staying, and everything held back for it was ordinary typing after all.
-//
-// The pending keys go out in the order they arrived, ahead of whatever is being
-// dispatched now — they were struck first, and the only reason they waited is
-// that a palette might have claimed them.
+// endHold gives up the take-back: whatever the palette opened over is staying.
 func (t *TUIBackend) endHold() {
-	if t.holdArm == "" {
-		return
-	}
-	pending := t.holdPending
-	t.holdArm, t.holdPending = "", nil
-	if core.KeyTracing() {
-		core.KeyTracef("1 tui      hold    ended, releasing %d held key(s)", len(pending))
-	}
-	// The composition closes over nothing, which puts the letter back on its
-	// own. An empty one that covers nothing is how a composition ends.
-	select {
-	case t.eventQueue <- core.TextEditingEvent{}:
-	default:
-	}
-	for _, ev := range pending {
-		select {
-		case t.eventQueue <- ev:
-		default:
-		}
-	}
-}
-
-// spendHold ends the composition because its COMMIT has arrived. What was held
-// back is dropped: a selector chooses a candidate, and the commit is the whole
-// of what the gesture typed.
-func (t *TUIBackend) spendHold() {
-	if t.holdArm == "" {
-		return
-	}
-	if core.KeyTracing() && len(t.holdPending) > 0 {
-		core.KeyTracef("1 tui      hold    commit takes %d selector key(s) with it",
-			len(t.holdPending))
-	}
-	t.holdArm, t.holdPending = "", nil
+	t.holdArm, t.holdExtra = "", 0
 }
 
 // navigatesPalette reports whether a key is one an input method's own palette
