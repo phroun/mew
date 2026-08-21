@@ -18,6 +18,10 @@ github.com/phroun/kittytk v0.1.26-alpha h1:sW1ZWDwY3BFixTyYudHI1i4XWNXNunVXUDVbL
 github.com/phroun/kittytk v0.1.26-alpha/go.mod h1:mBEXJRr9/hGhYoPwW+BnHHU9ROCADyRAkaWRO7PTD+U=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
+github.com/phroun/purfecterm v0.2.54 h1:Tp7XhMYSWjVSMElOOTk+BPfjKX+i7ntcOQ2F2+2LS9o=
+github.com/phroun/purfecterm v0.2.54/go.mod h1:71wOySuSMLWMJzwUvhqqOvwX+voJaLSFl6Y7JHNW1wg=
+golang.org/x/image v0.45.0 h1:FMb1nTbH5H9vF55SriQHgFw5GnNL9Jg6L25BwXKzhB0=
+golang.org/x/image v0.45.0/go.mod h1:n62x/7RqlwXDvGsSU4u6IUTUf6KghUZ9Bt7cG/T9Fx4=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.45.0 h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=
