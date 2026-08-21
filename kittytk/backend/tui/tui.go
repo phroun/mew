@@ -1582,6 +1582,9 @@ func (t *TUIBackend) deliverPaste(text string) {
 	if text == "" {
 		return
 	}
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      paste   text=%q", text)
+	}
 	select {
 	case t.eventQueue <- core.PasteEvent{Text: text}:
 	case <-t.stopChan:
