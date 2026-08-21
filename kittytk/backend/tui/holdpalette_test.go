@@ -69,30 +69,26 @@ func TestRepeatsFlowOnceTheWaitHasPassed(t *testing.T) {
 	}
 }
 
-// The palette's RESULT wears the repeat marker too, and must not be mistaken
-// for the hold it came out of.
+// The palette's RESULT is a commit, and it arrives behind the take-back.
 //
-// The terminal reports the chosen character on the key that confirmed it, as an
-// event type 2: choosing ö arrives as "CSI 13;1:2;246u", which the key handler
-// names "ö:Repeat" because what a key TYPED outranks what it is called. It is a
-// repeat by the marker and a commit by every other measure, and withholding it
-// is indistinguishable from the palette doing nothing — the original letter is
-// all that is left behind.
-//
-// The held key's name is the thing that separates them: no key named ö is down.
-func TestThePaletteResultIsNotTheHeldKeyRepeating(t *testing.T) {
+// The terminal reports the chosen character in whatever shape it likes — on the
+// key that confirmed it, on a keycode nobody touched, or as bare text — and the
+// key handler marks all of them with the "Text:" prefix, because no modifier is
+// held and no cap on the keyboard says ö. Withholding it is indistinguishable
+// from the palette doing nothing: the original letter is all that is left.
+func TestThePaletteResultIsACommitBehindTheTakeBack(t *testing.T) {
 	b := held(time.Hour) // long enough that anything subject to it stays put
 
 	b.handleKey("o")        // the hold that opens the palette
 	b.handleKey("o:Repeat") // withheld, correctly
-	b.handleKey("ö:Repeat") // and this is what was chosen out of it
+	b.handleKey("Text:ö")   // and this is what was chosen out of it
 
 	got := drain(b)
 	if len(got) != 3 {
 		t.Fatalf("dispatched %d events, want the press, the take-back and the "+
 			"commit: %+v", len(got), got)
 	}
-	if kp, ok := got[2].(core.KeyPressEvent); !ok || kp.Key != "ö" {
+	if c, ok := got[2].(core.TextCommitEvent); !ok || c.Text != "ö" {
 		t.Errorf("dispatched %#v, want the chosen ö", got[2])
 	}
 }
@@ -109,7 +105,7 @@ func TestTheLetterAPaletteOpenedOverIsTakenBack(t *testing.T) {
 
 	b.handleKey("o")
 	b.handleKey("o:Repeat") // withheld — the only sign a palette opened
-	b.handleKey("ö:Repeat")
+	b.handleKey("Text:ö")
 
 	got := drain(b)
 	if len(got) < 2 {
@@ -134,7 +130,7 @@ func TestTheTakeBackOutlivesTheRelease(t *testing.T) {
 	b.handleKey("o")
 	b.handleKey("o:Repeat")
 	b.handleKey("o:Release")
-	b.handleKey("ö:Repeat")
+	b.handleKey("Text:ö")
 
 	for _, ev := range drain(b) {
 		if _, ok := ev.(core.TextEraseEvent); ok {
@@ -150,7 +146,7 @@ func TestTheTakeBackOutlivesTheRelease(t *testing.T) {
 func TestNothingIsTakenBackWithoutAHold(t *testing.T) {
 	b := held(time.Hour)
 
-	b.handleKey("û:Repeat")
+	b.handleKey("Text:û")
 
 	for _, ev := range drain(b) {
 		if _, ok := ev.(core.TextEraseEvent); ok {
@@ -159,18 +155,89 @@ func TestNothingIsTakenBackWithoutAHold(t *testing.T) {
 	}
 }
 
-// Typing on past the palette disarms it: the press says the letter is wanted.
-func TestAPressEndsTheTakeBack(t *testing.T) {
+// The palette's SELECTOR comes back out with the letter.
+//
+// Choosing by number types the digit into the document — "CSI 52;;52u", the 4
+// key reporting that it typed a 4 — and macOS expects it replaced along with
+// the base letter, without ever asking for it back. Take back only the letter
+// and the digit is left behind: holding "o" and picking option 4 read "o4ö".
+func TestTheSelectorTypedIntoThePaletteComesBackToo(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld — the palette opened
+	b.handleKey("4")        // its selector, typed into the document
+	b.handleKey("Text:ö")
+
+	for _, ev := range drain(b) {
+		if erase, ok := ev.(core.TextEraseEvent); ok {
+			if erase.Count != 2 {
+				t.Errorf("erased %d runes, want the letter and the selector",
+					erase.Count)
+			}
+			return
+		}
+	}
+	t.Error("no take-back at all")
+}
+
+// A key that types NOTHING ends it: Escape dismissing the palette leaves the
+// letter it opened over standing, and nothing is coming to replace it.
+func TestAKeyThatTypesNothingEndsTheTakeBack(t *testing.T) {
 	b := held(time.Hour)
 
 	b.handleKey("o")
 	b.handleKey("o:Repeat") // withheld
-	b.handleKey("e")        // typed on past whatever was open
-	b.handleKey("ö:Repeat")
+	b.handleKey("Escape")   // the palette dismissed
+	b.handleKey("Text:ö")   // some later composition, on its own account
 
 	for _, ev := range drain(b) {
 		if _, ok := ev.(core.TextEraseEvent); ok {
-			t.Fatal("took back a letter the user had already typed past")
+			t.Fatal("took back a letter after the palette had been dismissed")
+		}
+	}
+}
+
+// And so does an ordinary keystroke FINISHING — the release of a text key that
+// is not the one armed.
+//
+// This is what bounds the count. Every capture has the commit arriving before
+// the key that chose it comes up, so a release reaching here first means no
+// commit is coming: the character was somebody typing, and the letter before it
+// is theirs to keep.
+func TestAnOrdinaryKeystrokeFinishingEndsTheTakeBack(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld
+	b.handleKey("o:Release")
+	b.handleKey("e") // counted, in case a palette is still open
+	b.handleKey("e:Release")
+	b.handleKey("Text:ö") // a later composition, nothing to do with the hold
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("took back a letter the user had typed past and let go of")
+		}
+	}
+}
+
+// The armed key's own release is exempt, and a SECOND hold of it re-arms rather
+// than being counted as somebody typing on.
+func TestASecondHoldOfTheArmedKeyStillWithholds(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // armed
+	b.handleKey("o:Release")
+	drain(b)
+
+	b.handleKey("o")        // held again
+	b.handleKey("o:Repeat") // must be withheld, or the palette is unreachable
+
+	for _, ev := range drain(b) {
+		if kp, ok := ev.(core.KeyPressEvent); ok && kp.Repeat {
+			t.Fatal("the second hold repeated at once; its palette cannot be used")
 		}
 	}
 }
@@ -185,7 +252,7 @@ func TestRepeatsFlowingEndTheTakeBack(t *testing.T) {
 	b.handleKey("o:Repeat") // withheld
 	time.Sleep(30 * time.Millisecond)
 	b.handleKey("o:Repeat") // flows
-	b.handleKey("ö:Repeat")
+	b.handleKey("Text:ö")
 
 	for _, ev := range drain(b) {
 		if _, ok := ev.(core.TextEraseEvent); ok {
@@ -194,15 +261,20 @@ func TestRepeatsFlowingEndTheTakeBack(t *testing.T) {
 	}
 }
 
-// The same rule carries the dead key, which the terminal also marks as a
-// repeat: Mega+i then "u" arrives as "CSI 117;1:2;251u", named "û:Repeat".
-func TestADeadKeyCompletionIsNotAHeldKeyRepeating(t *testing.T) {
+// A dead key composes with no hold behind it — Mega+i then "u" arrives as
+// "CSI 117;1:2;251u" — so its completion is a commit and nothing else. It must
+// reach the app whole, and take nothing back on its way.
+func TestADeadKeyCompletionArrivesOnItsOwn(t *testing.T) {
 	b := held(time.Hour)
 
-	b.handleKey("û:Repeat")
+	b.handleKey("Text:û")
 
-	if got := drain(b); len(got) != 1 {
-		t.Errorf("dispatched %d events, want the completed û: %+v", len(got), got)
+	got := drain(b)
+	if len(got) != 1 {
+		t.Fatalf("dispatched %d events, want the completed û: %+v", len(got), got)
+	}
+	if c, ok := got[0].(core.TextCommitEvent); !ok || c.Text != "û" {
+		t.Errorf("dispatched %#v, want the û commit", got[0])
 	}
 }
 

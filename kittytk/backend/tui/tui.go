@@ -89,14 +89,17 @@ type TUIBackend struct {
 	// key is being held, and when the hold was first seen. See
 	// TUIOptions.HoldOpensPalette.
 	//
-	// holdTyped stands while the letter the hold TYPED is still in the document
-	// and a palette may still be open over it. It outlives holdKey on purpose:
-	// letting go of the key is how the palette gets used, so the release cannot
-	// be what ends this. See takeBackHeld.
+	// holdArm names the key whose letter is still in the document with a
+	// palette possibly open over it, and holdExtra counts what has been typed
+	// into that palette since. Together they are what a commit takes back.
+	//
+	// holdArm outlives holdKey on purpose: letting go is how the palette gets
+	// used, so the release cannot be what ends this. See takeBackHeld.
 	holdWait  time.Duration
 	holdKey   string
 	holdSince time.Time
-	holdTyped bool
+	holdArm   string
+	holdExtra int
 
 	// Screen buffers (double buffering)
 	// dmgMin/dmgMax are the column range the text diff rewrote on each row
@@ -1627,6 +1630,11 @@ func (t *TUIBackend) handleKey(key string) {
 	// whenever it ran to more than one character - which is most of them.
 	if text, ok := strings.CutPrefix(key, "Text:"); ok {
 		if text != "" {
+			// Whatever a palette was open OVER comes back out first. A commit
+			// is the only thing that spends the take-back, which is what makes
+			// the count safe to keep: nothing is erased unless something
+			// arrived to replace it.
+			t.takeBackHeld()
 			if core.KeyTracing() {
 				core.KeyTracef("1 tui      commit  text=%q", text)
 			}
@@ -1703,6 +1711,18 @@ func (t *TUIBackend) handleKey(key string) {
 		if t.holdKey == base {
 			t.holdKey = ""
 		}
+		// A text key letting go while a take-back stands, and it is not the key
+		// the take-back BELONGS to, is somebody typing rather than a palette
+		// producing anything. That is what bounds the count: every capture has
+		// the commit arriving before the key that chose it comes up, so a
+		// release reaching here first means no commit is coming.
+		//
+		// The armed key's own release is exempt, and has to be. Letting go is
+		// how the palette gets used — in every capture the held key comes up
+		// before the arrows that walk the palette, let alone the choice.
+		if t.holdArm != "" && base != t.holdArm && typesText(base) {
+			t.endHold()
+		}
 		mods, _ := core.ParseKeyModifiers(base)
 		if core.KeyTracing() {
 			core.KeyTracef("1 tui      release key=%q mods=%v", base, mods)
@@ -1747,16 +1767,34 @@ func (t *TUIBackend) handleKey(key string) {
 	// the commit and left the original letter standing, which is exactly what
 	// the palette looked like when it appeared to do nothing at all.
 	if !repeated {
-		// A press ends any previous hold, take-back and all: whatever the
-		// palette was open over, the user has typed on past it.
-		t.holdKey, t.holdTyped = "", false
-		if t.holdWait > 0 && typesText(key) {
+		if t.holdWait <= 0 || !typesText(key) {
+			// A key that types nothing ends the take-back. Escape dismissing
+			// the palette is this one, and so is any command key: the letter
+			// the palette opened over is staying, and nothing is coming to
+			// replace it.
+			t.endHold()
+		} else {
+			// A text key starts a hold of its own, since any of them might be
+			// the next palette. If a take-back is already standing it is also
+			// COUNTED, because a character typed while a palette is open
+			// belongs to the palette — the selector digit, which macOS types
+			// into the document and expects replaced along with the base
+			// letter.
+			//
+			// Counting where guessing would be unsafe, because the count is
+			// only ever SPENT by a commit. Type on past a palette that was
+			// never there and none arrives, so nothing is taken back.
+			if t.holdArm != "" {
+				t.holdExtra++
+			}
 			t.holdKey, t.holdSince = key, time.Now()
 		}
 	} else if key == t.holdKey && time.Since(t.holdSince) < t.holdWait {
 		// Withheld — and a withheld repeat is the only evidence a terminal
 		// gives that a palette opened, so it is what arms the take-back.
-		t.holdTyped = true
+		if t.holdArm == "" {
+			t.holdArm = key
+		}
 		if core.KeyTracing() {
 			core.KeyTracef("1 tui      hold    key=%q withheld", key)
 		}
@@ -1765,9 +1803,7 @@ func (t *TUIBackend) handleKey(key string) {
 		// Past the wait, and the repeats flow. A hold that has got this far
 		// means what a hold usually means — type another one — so the letter
 		// it started with is not a palette's base character to be taken back.
-		t.holdTyped = false
-	} else if t.holdTyped {
-		t.takeBackHeld()
+		t.endHold()
 	}
 
 	// Parse modifiers while keeping the full key string
@@ -1820,23 +1856,37 @@ func (t *TUIBackend) handleKey(key string) {
 // What arms it is a WITHHELD repeat, which is the single piece of evidence a
 // terminal gives that a palette opened: the key was held past the auto-repeat
 // threshold and the repeats were kept back, which is that gesture and no other.
-// It is disarmed by any press (the user typed on past whatever was open) and by
-// a repeat that is let THROUGH (past the wait a hold means ordinary repeating,
-// and its letter is not a base character to be replaced).
+//
+// It takes back the palette's SELECTOR as well as the base letter. Choosing by
+// number types the digit into the document and macOS expects it replaced along
+// with the letter, without asking for it back the way the graphical host is
+// asked (there is no Backspace anywhere in the captures). Every ordinary
+// character typed while the take-back stands is counted for that reason, and
+// the count is safe to keep because only a commit ever spends it: type on past
+// a palette that was never there and nothing arrives to erase anything.
 //
 // The erase goes out as an erase rather than as a Backspace for the reason
 // TextEraseEvent exists at all — nobody pressed Backspace, and the sink is what
 // knows whether erasing here means a rune out of a document or a byte down a
 // terminal session.
 func (t *TUIBackend) takeBackHeld() {
-	t.holdKey, t.holdTyped = "", false
+	if t.holdArm == "" {
+		return
+	}
+	count := 1 + t.holdExtra
+	t.endHold()
 	if core.KeyTracing() {
-		core.KeyTracef("1 tui      hold    take back the letter the palette opened over")
+		core.KeyTracef("1 tui      hold    take back %d before the commit", count)
 	}
 	select {
-	case t.eventQueue <- core.TextEraseEvent{Count: 1}:
+	case t.eventQueue <- core.TextEraseEvent{Count: count}:
 	default:
 	}
+}
+
+// endHold gives up the take-back: whatever the palette opened over is staying.
+func (t *TUIBackend) endHold() {
+	t.holdArm, t.holdExtra = "", 0
 }
 
 // typesText reports whether a key name is one that TYPES — a single printable
