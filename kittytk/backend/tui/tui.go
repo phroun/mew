@@ -1724,22 +1724,33 @@ func (t *TUIBackend) handleKey(key string) {
 	// palette opens over those and delaying them would only make the host feel
 	// stuck. That asymmetry is the whole of the rule.
 	//
-	// Timed, because nothing else can tell the two apart. The graphical host
+	// Timed, because nothing else can say WHEN the hold stops meaning "open the
+	// palette" and starts meaning "type this many of them". The graphical host
 	// infers the takeover from a held key whose text never arrives (see the SDL
 	// platform's flushPendingPress, which swallows exactly these repeats); a
-	// terminal reports no composition at all, so HOW LONG the key has been down
+	// terminal reports no composition at all, so how long the key has been down
 	// is the only evidence there is. Past the wait the repeats flow: by then
 	// the hold means what a hold usually means.
+	//
+	// The hold is started by the PRESS and by nothing else, because a repeat is
+	// a repeat OF a key that is down. Only the held key's own repeats are
+	// withheld, and that is what separates the palette from its RESULT: the
+	// terminal marks the chosen character as an event type 2 as well — Return
+	// confirming ö arrives as "CSI 13;1:2;246u", a repeat by the marker and a
+	// commit by every other measure. Keyed on the marker alone this withheld
+	// the commit and left the original letter standing, which is exactly what
+	// the palette looked like when it appeared to do nothing at all.
 	if !repeated {
-		t.holdKey = ""
-	} else if t.holdWait > 0 && typesText(key) {
-		now := time.Now()
-		if t.holdKey != key {
-			t.holdKey, t.holdSince = key, now
+		if t.holdWait > 0 && typesText(key) {
+			t.holdKey, t.holdSince = key, time.Now()
+		} else {
+			t.holdKey = ""
 		}
-		if now.Sub(t.holdSince) < t.holdWait {
-			return
+	} else if key == t.holdKey && time.Since(t.holdSince) < t.holdWait {
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      hold    key=%q withheld", key)
 		}
+		return
 	}
 
 	// Parse modifiers while keeping the full key string
