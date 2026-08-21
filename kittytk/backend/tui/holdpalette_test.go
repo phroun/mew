@@ -418,12 +418,18 @@ func TestEscapeStillEndsTheTakeBack(t *testing.T) {
 	}
 }
 
-// A palette that commits as a PASTE takes the letter back too.
+// A palette that commits as a PASTE is raised as the COMMIT it is.
 //
 // Ghostty delivers a press-and-hold palette's result as bracketed paste when it
 // is chosen by number or by click; the same gesture dismissed by TYPING arrives
 // as a key event with associated text. Only the second route took the letter
 // back, so choosing by number read "o4ö" and clicking read "oö".
+//
+// Left as a paste it fared worse than that. A trinket implements the
+// composition handlers and the paste handler separately — mew\'s editor has the
+// first three and no paste handler at all — so the take-back landed and the
+// text meant to replace it was dropped, leaving the document empty where the
+// accent belonged.
 func TestAPaletteThatCommitsAsAPasteTakesTheLetterBack(t *testing.T) {
 	b := held(time.Hour)
 
@@ -439,8 +445,10 @@ func TestAPaletteThatCommitsAsAPasteTakesTheLetterBack(t *testing.T) {
 				t.Errorf("erased %d runes, want the letter and the selector",
 					erase.Count)
 			}
-			if _, ok := got[i+1].(core.PasteEvent); !ok {
-				t.Errorf("after the take-back came %#v, want the paste", got[i+1])
+			c, ok := got[i+1].(core.TextCommitEvent)
+			if !ok || c.Text != "ö" {
+				t.Errorf("after the take-back came %#v, want the ö commit",
+					got[i+1])
 			}
 			return
 		}
