@@ -88,12 +88,109 @@ func TestThePaletteResultIsNotTheHeldKeyRepeating(t *testing.T) {
 	b.handleKey("ö:Repeat") // and this is what was chosen out of it
 
 	got := drain(b)
-	if len(got) != 2 {
-		t.Fatalf("dispatched %d events, want the press and the commit: %+v",
-			len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("dispatched %d events, want the press, the take-back and the "+
+			"commit: %+v", len(got), got)
 	}
-	if kp, ok := got[1].(core.KeyPressEvent); !ok || kp.Key != "ö" {
-		t.Errorf("dispatched %#v, want the chosen ö", got[1])
+	if kp, ok := got[2].(core.KeyPressEvent); !ok || kp.Key != "ö" {
+		t.Errorf("dispatched %#v, want the chosen ö", got[2])
+	}
+}
+
+// The letter the hold typed comes back OUT, so choosing from the palette
+// replaces it rather than following it.
+//
+// A terminal reports no composition, so unlike the graphical host — where the
+// base letter sits inside the commit's Covers and is never really typed — the
+// letter is in the document by the time anything reveals a palette was open
+// over it. Left there, holding "o" and choosing ö reads "oö".
+func TestTheLetterAPaletteOpenedOverIsTakenBack(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld — the only sign a palette opened
+	b.handleKey("ö:Repeat")
+
+	got := drain(b)
+	if len(got) < 2 {
+		t.Fatalf("dispatched %+v", got)
+	}
+	erase, ok := got[1].(core.TextEraseEvent)
+	if !ok {
+		t.Fatalf("second event %#v, want the take-back before the commit", got[1])
+	}
+	if erase.Count != 1 {
+		t.Errorf("erased %d runes, want the one letter the hold typed", erase.Count)
+	}
+}
+
+// Letting go is how the palette gets USED, so the release cannot end the
+// take-back. The terminal reports it before the choice is even made — in a
+// capture of this gesture the "o" release arrives ahead of the arrow keys that
+// walk the palette.
+func TestTheTakeBackOutlivesTheRelease(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat")
+	b.handleKey("o:Release")
+	b.handleKey("ö:Repeat")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			return
+		}
+	}
+	t.Error("no take-back after the release; the letter the palette opened " +
+		"over would be left standing in front of the chosen one")
+}
+
+// Nothing withheld, nothing to take back. A dead key composes without any hold
+// at all, and erasing on its account would eat whatever preceded it.
+func TestNothingIsTakenBackWithoutAHold(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("û:Repeat")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("took a rune back for a composition that opened over nothing")
+		}
+	}
+}
+
+// Typing on past the palette disarms it: the press says the letter is wanted.
+func TestAPressEndsTheTakeBack(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld
+	b.handleKey("e")        // typed on past whatever was open
+	b.handleKey("ö:Repeat")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("took back a letter the user had already typed past")
+		}
+	}
+}
+
+// And so does a repeat that is let THROUGH. Past the wait a hold means what a
+// hold usually means — type another one — so its letter is not a base character
+// waiting to be replaced.
+func TestRepeatsFlowingEndTheTakeBack(t *testing.T) {
+	b := held(20 * time.Millisecond)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld
+	time.Sleep(30 * time.Millisecond)
+	b.handleKey("o:Repeat") // flows
+	b.handleKey("ö:Repeat")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("took a rune back out of a run the user deliberately repeated")
+		}
 	}
 }
 
