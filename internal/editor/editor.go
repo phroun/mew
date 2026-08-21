@@ -1359,7 +1359,7 @@ func New(cfg Config) (*Editor, error) {
 				return ""
 			}
 			return value
-		})
+		}, e.hostPaste)
 	}
 
 	// Set up key mappings from config

@@ -955,6 +955,30 @@ func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
 	return true
 }
 
+// HandlePaste implements core.PasteHandler: text the host received as a paste
+// goes into the document.
+//
+// Nothing implemented this, so a bracketed paste the toolkit read off the wire
+// reached the focused editor and stopped: the routing hands a PasteEvent to the
+// focused trinket and asks whether it is a PasteHandler, and this one answered
+// no. Composed text framed as a paste — which is how one terminal delivers a
+// press-and-hold palette's result — was dropped the same way.
+//
+// Down the port's paste path rather than as a command built around the text, so
+// it arrives with what a paste is entitled to: line endings normalised, the
+// read-only gate checked where the insertion happens, and the whole of it in
+// ONE undo revision.
+//
+// Always claimed, for the same reason the commit above is: the answer cannot
+// come back, and declining would send the text a second time.
+func (e *Editor) HandlePaste(event core.PasteEvent) bool {
+	core.KeyTracef("2 mew      paste   %q", event.Text)
+	if e.port != nil {
+		e.port.Paste(event.Text)
+	}
+	return true
+}
+
 // HandleTextErase implements core.TextEraseHandler: it takes text back out on
 // an input method's behalf.
 //
