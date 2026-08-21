@@ -417,3 +417,48 @@ func TestEscapeStillEndsTheTakeBack(t *testing.T) {
 		}
 	}
 }
+
+// A palette that commits as a PASTE takes the letter back too.
+//
+// Ghostty delivers a press-and-hold palette's result as bracketed paste when it
+// is chosen by number or by click; the same gesture dismissed by TYPING arrives
+// as a key event with associated text. Only the second route took the letter
+// back, so choosing by number read "o4ö" and clicking read "oö".
+func TestAPaletteThatCommitsAsAPasteTakesTheLetterBack(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.handleKey("o:Repeat") // withheld — the palette opened
+	b.handleKey("4")        // its selector, typed into the document
+	b.deliverPaste("ö")
+
+	got := drain(b)
+	for i, ev := range got {
+		if erase, ok := ev.(core.TextEraseEvent); ok {
+			if erase.Count != 2 {
+				t.Errorf("erased %d runes, want the letter and the selector",
+					erase.Count)
+			}
+			if _, ok := got[i+1].(core.PasteEvent); !ok {
+				t.Errorf("after the take-back came %#v, want the paste", got[i+1])
+			}
+			return
+		}
+	}
+	t.Error("a paste committed with nothing taken back")
+}
+
+// An ordinary paste is not a palette. Nothing but a withheld repeat arms the
+// take-back, so pasting into a document takes nothing out of it.
+func TestAnOrdinaryPasteTakesNothingBack(t *testing.T) {
+	b := held(time.Hour)
+
+	b.handleKey("o")
+	b.deliverPaste("hello")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("an ordinary paste erased a character before itself")
+		}
+	}
+}

@@ -1582,6 +1582,18 @@ func (t *TUIBackend) deliverPaste(text string) {
 	if text == "" {
 		return
 	}
+	// A paste arriving with the take-back armed is a palette committing, not
+	// somebody pasting. Ghostty delivers a press-and-hold palette's result as
+	// bracketed paste when it is chosen by number or by click — the same
+	// gesture dismissed by TYPING comes through as a key event with associated
+	// text instead — so the letter the palette opened over has to come back out
+	// here too, or choosing by number reads "o4ö".
+	//
+	// Nothing but a withheld repeat ever arms this, so an ordinary paste cannot
+	// be caught by it: it takes a text key held past the auto-repeat threshold
+	// with its repeats kept back, and the arm is spent by the first thing that
+	// arrives to replace what was typed.
+	t.takeBackHeld()
 	if core.KeyTracing() {
 		core.KeyTracef("1 tui      paste   text=%q", text)
 	}
