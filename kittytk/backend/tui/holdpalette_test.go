@@ -96,8 +96,14 @@ func TestTheHoldOpensACompositionOverItsLetter(t *testing.T) {
 		t.Errorf("the composition covers %d runes, want the one the hold typed",
 			ed.Covers)
 	}
-	if ed.Text != "" {
-		t.Errorf("the composition holds %q, want nothing of its own", ed.Text)
+	// The letter itself, because a composition OPENS only with text of its own:
+	// empty text with an extent is a composition ending and with none it is a
+	// cancel, so one opened empty opened nothing and the commit behind it found
+	// no region to replace. macOS marks the held character while offering
+	// alternatives over it, which is exactly this.
+	if ed.Text != "o" {
+		t.Errorf("the composition holds %q, want the letter the palette marks",
+			ed.Text)
 	}
 }
 

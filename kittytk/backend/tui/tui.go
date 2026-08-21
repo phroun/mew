@@ -1918,8 +1918,23 @@ func (t *TUIBackend) openHoldComposition() {
 	if core.KeyTracing() {
 		core.KeyTracef("1 tui      hold    composition over the letter it opened on")
 	}
+	// The composition HOLDS the letter as well as covering it, which is what
+	// macOS shows: the character stays visible, marked, while its alternatives
+	// are offered over it. An empty composition is not an open one — empty text
+	// with an extent is a composition ENDING and with none it is a cancel (see
+	// the viewport's SetPreedit), so one opened empty did nothing at all and
+	// the commit that followed had no region to replace.
 	select {
-	case t.eventQueue <- core.TextEditingEvent{Covers: 1}:
+	//
+	// Start past the end and no clause: the caret sits after the letter, where
+	// the next keystroke would extend, and no part of it is singled out as the
+	// segment being converted — a palette offers alternatives for the whole of
+	// what it holds, which is one character.
+	case t.eventQueue <- core.TextEditingEvent{
+		Text:   t.holdArm,
+		Start:  len([]rune(t.holdArm)),
+		Covers: 1,
+	}:
 	default:
 	}
 }

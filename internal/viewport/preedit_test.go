@@ -242,3 +242,37 @@ func TestAClausePastTheCompositionIsTrimmed(t *testing.T) {
 		t.Errorf("clause at [%d,%d), want the last composed rune at [4,5)", clauseLo, clauseHi)
 	}
 }
+
+// A composition OPENS only with text of its own, and a palette's is the letter
+// it opened on.
+//
+// macOS's press-and-hold marks the held character while offering alternatives
+// over it, so the composition holds that character and covers the committed one
+// it was typed as. A host that sent the extent alone got no composition at all:
+// empty text with an extent is a composition ENDING and with none it is a
+// cancel, so an empty one opened nothing, and the commit behind it found no
+// region and landed as an ordinary insert — the letter left standing with the
+// accent after it.
+func TestAPaletteOpensItsCompositionOnTheLetterItMarks(t *testing.T) {
+	buf := buffer.NewFromString("aaaaaaaaaa")
+	w := &Viewport{Buffer: buf, Caret: buf.NewCaret()}
+	w.SetCursorPos(Position{Line: 0, Rune: 4})
+
+	// The extent alone, which is what a host sends when it knows only how many
+	// runes the palette stands over.
+	w.SetPreedit(Preedit{Covers: 1})
+	if _, _, ok := w.PreeditAt(); ok {
+		t.Fatal("an empty composition opened a region")
+	}
+
+	// The letter with it, which is what the palette is actually showing.
+	w.SetPreedit(Preedit{Text: []rune("a"), Caret: 1, Covers: 1})
+	line, runePos, ok := w.PreeditAt()
+	if !ok {
+		t.Fatal("no region after opening with the letter the palette marks")
+	}
+	if line != 0 || runePos != 3 {
+		t.Errorf("region starts at %d:%d, want 0:3 — the committed rune the "+
+			"palette opened over", line, runePos)
+	}
+}
