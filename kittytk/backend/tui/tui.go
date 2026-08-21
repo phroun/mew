@@ -1768,11 +1768,20 @@ func (t *TUIBackend) handleKey(key string) {
 	// the palette looked like when it appeared to do nothing at all.
 	if !repeated {
 		if t.holdWait <= 0 || !typesText(key) {
-			// A key that types nothing ends the take-back. Escape dismissing
-			// the palette is this one, and so is any command key: the letter
-			// the palette opened over is staying, and nothing is coming to
-			// replace it.
-			t.endHold()
+			// A key that types nothing ends the take-back — UNLESS it is one
+			// the palette itself uses. Escape dismissing it is the case this
+			// exists for: the letter it opened over is staying and nothing is
+			// coming to replace it.
+			//
+			// Walking the palette is not that. Some input methods want Tab
+			// before the arrows reach them and some do not, so whether the
+			// arrow press arrives here or is eaten by the palette varies by
+			// method and by terminal; treating one as "the user has moved on"
+			// meant the take-back survived on the methods that swallow it and
+			// died on the ones that do not, for the same gesture.
+			if !navigatesPalette(key) {
+				t.endHold()
+			}
 		} else {
 			// A text key starts a hold of its own, since any of them might be
 			// the next palette. If a take-back is already standing it is also
@@ -1887,6 +1896,29 @@ func (t *TUIBackend) takeBackHeld() {
 // endHold gives up the take-back: whatever the palette opened over is staying.
 func (t *TUIBackend) endHold() {
 	t.holdArm, t.holdExtra = "", 0
+}
+
+// navigatesPalette reports whether a key is one an input method's own palette
+// consumes — the caps you walk and confirm a candidate list with.
+//
+// They are tolerated rather than treated as the user moving on, because whether
+// the press even reaches us varies: some methods want Tab before the arrows go
+// to them, and a palette that has taken the keyboard swallows the press
+// entirely, so the same gesture arrives as a press on one method and as nothing
+// but a release on another.
+//
+// Escape is deliberately absent. It is how a palette is DISMISSED, and after it
+// the letter underneath is the user's to keep.
+//
+// Bare names only. A chord is somebody reaching for a command, whatever key it
+// is built on.
+func navigatesPalette(key string) bool {
+	switch key {
+	case "Up", "Down", "Left", "Right", "Tab", "Return",
+		"PageUp", "PageDown", "Home", "End":
+		return true
+	}
+	return false
 }
 
 // typesText reports whether a key name is one that TYPES — a single printable

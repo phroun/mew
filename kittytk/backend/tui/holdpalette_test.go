@@ -373,3 +373,47 @@ func TestReleasingEndsTheWaitForTheNextHold(t *testing.T) {
 			"over, or the palette is reachable only the first time", got)
 	}
 }
+
+// Walking the palette does not end the take-back.
+//
+// Whether an arrow press even reaches us varies by input method: some want Tab
+// before the arrows go to them, and a palette holding the keyboard swallows the
+// press entirely. Treating one as "the user has moved on" made the same gesture
+// work on the methods that swallow it and fail on the ones that do not.
+func TestWalkingThePaletteDoesNotEndTheTakeBack(t *testing.T) {
+	for _, key := range []string{"Left", "Right", "Up", "Down", "Tab", "Return",
+		"PageUp", "PageDown", "Home", "End"} {
+		b := held(time.Hour)
+		b.handleKey("o")
+		b.handleKey("o:Repeat") // armed
+		b.handleKey(key)
+		b.handleKey("Text:ö")
+
+		found := false
+		for _, ev := range drain(b) {
+			if _, ok := ev.(core.TextEraseEvent); ok {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s ended the take-back; the letter the palette opened "+
+				"over would be left in front of the chosen one", key)
+		}
+	}
+}
+
+// Escape is not one of them: it DISMISSES the palette, and the letter
+// underneath is the user's to keep.
+func TestEscapeStillEndsTheTakeBack(t *testing.T) {
+	b := held(time.Hour)
+	b.handleKey("o")
+	b.handleKey("o:Repeat")
+	b.handleKey("Escape")
+	b.handleKey("Text:ö")
+
+	for _, ev := range drain(b) {
+		if _, ok := ev.(core.TextEraseEvent); ok {
+			t.Fatal("took back a letter after the palette had been dismissed")
+		}
+	}
+}
