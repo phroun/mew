@@ -18,6 +18,8 @@ github.com/phroun/ifitfits v0.1.1 h1:5Wx4fNlWWYUsWgwbvB0+BxY+EvoNUdIeIc8SNFzrYBQ
 github.com/phroun/ifitfits v0.1.1/go.mod h1:UZJQJxEM6tiM0PY0tjmHlyq7kFOSzG1IgJDUtxwIXS4=
 github.com/phroun/key-sequence-processor v0.1.10 h1:RsOBzqzWCpj1XWxhrgdb1fJ2tos9E0cQ46H4ENNVTlg=
 github.com/phroun/key-sequence-processor v0.1.10/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
+github.com/phroun/key-sequence-processor v0.1.11 h1:M1vI3FlxcF9sxfeitRlJSFyLzYcvqU0R8mqu7KaDzYk=
+github.com/phroun/key-sequence-processor v0.1.11/go.mod h1:8UjN3+5vhWmbl+a4ydIX55XoriB4CScWh9T6s97xYxc=
 github.com/phroun/kittytk v0.1.26-alpha h1:sW1ZWDwY3BFixTyYudHI1i4XWNXNunVXUDVbL4z7qts=
 github.com/phroun/kittytk v0.1.26-alpha/go.mod h1:mBEXJRr9/hGhYoPwW+BnHHU9ROCADyRAkaWRO7PTD+U=
 github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52apsqj8Ig=
