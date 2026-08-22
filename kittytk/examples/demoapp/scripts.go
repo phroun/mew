@@ -392,7 +392,7 @@ mtab=new tab caption="MDI Demo" children={
 						new button caption="Tile" action=demo.mdi.tile
 						new button caption="Cascade" action=demo.mdi.cascade
 						new button caption="Next" action=demo.mdi.next
-						new button caption="Prev" action=demo.mdi.prev
+						new button caption="Prior" action=demo.mdi.prior
 					}
 					mdistatus=new label caption="Active: none"
 					new spacer

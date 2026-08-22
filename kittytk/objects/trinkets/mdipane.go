@@ -52,7 +52,7 @@ type MDIPane struct {
 	// buttons or by stepping the run.
 	cycleOrder []*window.Window
 
-	// cycling is true while a NextWindow/PrevWindow run is in progress (the
+	// cycling is true while a NextWindow/PriorWindow run is in progress (the
 	// cycleOrder stays frozen); lastCycleAt drives the idle lock-in.
 	cycling     bool
 	lastCycleAt time.Time
@@ -589,8 +589,8 @@ func (m *MDIPane) RaiseWindow(win *window.Window) {
 // NextWindow steps the M-Tab sequence forward.
 func (m *MDIPane) NextWindow() { m.cycle(true) }
 
-// PrevWindow steps the M-Tab sequence backward.
-func (m *MDIPane) PrevWindow() { m.cycle(false) }
+// PriorWindow steps the M-Tab sequence backward.
+func (m *MDIPane) PriorWindow() { m.cycle(false) }
 
 // cycle steps the window-cycle run one place in the given direction. It walks
 // the LIVE cycle sequence (so an added/removed child is handled automatically),
@@ -1461,7 +1461,7 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.NextWindow()
 		return true
 	case core.CmdWindowMDIPrior:
-		m.PrevWindow()
+		m.PriorWindow()
 		return true
 	}
 

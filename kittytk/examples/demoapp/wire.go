@@ -138,7 +138,7 @@ func (a *app) wireMDI() {
 	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
 	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
 	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
-	c.OnCommand("demo.mdi.prev", func() { _ = mdi.Set("prev") })
+	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Set("prior") })
 
 	entries := make(map[uint64]client.Handle) // window id -> dock entry
 	dropEntry := func(winID uint64) {

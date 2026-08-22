@@ -30,7 +30,7 @@ func mdiCycleSeq(m *MDIPane, forward bool, n int) []string {
 		if forward {
 			m.NextWindow()
 		} else {
-			m.PrevWindow()
+			m.PriorWindow()
 		}
 		seq = append(seq, m.ActiveWindow().Title())
 	}
@@ -50,7 +50,7 @@ func TestMDIForwardCycleTraversesAll(t *testing.T) {
 	}
 }
 
-// Backward MDI cycling (Prev) heads the other way, reaching the least recently
+// Backward MDI cycling (Prior) heads the other way, reaching the least recently
 // used first: A, B, C, then back to D.
 func TestMDIBackwardCycleTraversesAll(t *testing.T) {
 	m := newFourWindowMDI(t)
@@ -61,7 +61,7 @@ func TestMDIBackwardCycleTraversesAll(t *testing.T) {
 	}
 }
 
-// Stepping (as the parent's Next/Prev buttons do) must not commit the sequence:
+// Stepping (as the parent's Next/Prior buttons do) must not commit the sequence:
 // endCycleSession is what promotes the landing spot. Cycling forward to C then
 // committing makes a fresh forward step toggle back to D.
 func TestMDICommitOnInteraction(t *testing.T) {

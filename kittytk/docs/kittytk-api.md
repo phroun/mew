@@ -650,7 +650,7 @@ mdi.SetActiveWindow(childWindow)
 mdi.TileWindows()
 mdi.CascadeWindows()
 mdi.NextWindow()
-mdi.PrevWindow()
+mdi.PriorWindow()
 
 // Callbacks
 mdi.SetOnWindowMinimized(func(w *window.Window) { })
