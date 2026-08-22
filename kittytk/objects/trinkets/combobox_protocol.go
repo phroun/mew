@@ -18,6 +18,11 @@ import (
 
 func init() {
 	protocol.RegisterType("combobox", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"change": protocol.NewEventDesc("The selection changed.").
+				Field("trinket", "uint", "The combo box's object ID.").
+				Field("selected", "int", "Index of the newly selected item, or -1 for none."),
+		},
 		New: func() any { return NewComboBox() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*ComboBox).ObjectID())

@@ -63,6 +63,15 @@ func init() {
 				return nil
 			})).Tip("Font point size for the grid").Def("12"),
 		},
+		map[string]protocol.EventDesc{
+			"input": protocol.NewEventDesc("The user typed, pasted or moused at the terminal. The bytes are for the child process — under this model the application owns the child, so it is the application that writes them.").
+				Field("trinket", "uint", "The terminal's object ID.").
+				Field("data", "string", "The bytes to hand the child, verbatim."),
+			"resize": protocol.NewEventDesc("The terminal's character grid changed size, so the child needs a new window size.").
+				Field("trinket", "uint", "The terminal's object ID.").
+				Field("cols", "int", "Columns in the new grid.").
+				Field("rows", "int", "Rows in the new grid."),
+		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			t := w.(*PurfecTerm)

@@ -73,6 +73,7 @@ func init() {
 				return nil
 			})).Tip("Spacing between laid-out children"),
 		},
+		nil,
 		func(parent, child core.Trinket) error {
 			parent.(*Panel).AddChild(child)
 			return nil

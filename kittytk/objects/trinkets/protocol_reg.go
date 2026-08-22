@@ -104,11 +104,13 @@ func trinketID(w core.Trinket) uint64 {
 
 // regTrinket registers a trinket type whose targets are core.Trinkets.
 // bind, when non-nil, wires the trinket's event emission into the
-// connection (called once at construction).
-func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
+// connection (called once at construction); events describes what that
+// wiring emits, and is passed beside it so the pair is changed together.
+func regTrinket(name string, construct func() core.Trinket, props map[string]protocol.Property, events map[string]protocol.EventDesc, appendFn func(parent, child core.Trinket) error, bind func(ctx *protocol.BindContext, w core.Trinket)) {
 	spec := &protocol.TypeSpec{
-		New:   func() any { return construct() },
-		Props: props,
+		New:    func() any { return construct() },
+		Props:  props,
+		Events: events,
 		ID: func(t any) uint64 {
 			if w, ok := t.(interface{ ObjectID() core.ObjectID }); ok {
 				return uint64(w.ObjectID())

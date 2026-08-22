@@ -27,6 +27,11 @@ func (e *wireDockEntry) SetWireID(id uint64) { e.id = id }
 
 func init() {
 	protocol.RegisterType("dockentry", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"click": protocol.NewEventDesc("A docked entry was clicked — the gesture that restores a minimized window.").
+				Field("trinket", "uint", "The entry's object ID.").
+				Field("window", "uint", "The window the entry stands for."),
+		},
 		Virtual: true,
 		New:     func() any { return &wireDockEntry{} },
 		Bind: func(ctx *protocol.BindContext, target any) {

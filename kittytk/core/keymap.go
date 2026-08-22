@@ -639,9 +639,11 @@ var defaultBindings = []Binding{
 	{"Delete", []string{CmdTrinketDelPrior, CmdTrinketEnclosing}},
 	{"FDel", []string{CmdTrinketDelNext}},
 	{"^U", []string{CmdTrinketDelLine}},
-	// ^A is the Emacs home cycle where a trinket offers it, and a plain
-	// beginning-of-line where it does not. First listed wins, so a text field
-	// -- which offers both -- gets the cycle, and a list gets the plain move.
+	// ^A goes to the beginning, and selects everything when the caret is
+	// already there with nothing selected -- where a trinket offers that. It
+	// is a plain beginning-of-line where one does not. First listed wins, so a
+	// text field, which offers both, gets the pair, and a list gets the plain
+	// move.
 	{"^A", []string{CmdTrinketBegOrSelectAll, CmdTrinketBeg}},
 	{"^E", []string{CmdTrinketEnd}},
 	{"S-^A", []string{CmdTrinketSelBeg}},

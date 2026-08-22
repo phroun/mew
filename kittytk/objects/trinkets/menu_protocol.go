@@ -93,6 +93,10 @@ func init() {
 	})
 
 	protocol.RegisterType("menuitem", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"command": protocol.NewEventDesc("The item was chosen. Carries the command it names rather than the item's identity, because a command is what an application binds to and the same one may be reachable from several menus.").
+				Field("action", "word", "The command ID the item names."),
+		},
 		Virtual: true,
 		New:     func() any { return NewMenuItem("") },
 		// Over a connection that consumes events (the display protocol),

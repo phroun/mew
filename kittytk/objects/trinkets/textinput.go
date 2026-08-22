@@ -1143,11 +1143,11 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketBegOrSelectAll:
-		// The Emacs home cycle: already at the beginning with nothing
-		// selected selects all and puts the caret at the end. That is exactly
-		// the case where going to the beginning would do nothing at all, so
-		// the cycle costs the key nothing. Otherwise it is a plain move, which
-		// is why this falls through to the same body below.
+		// Already at the beginning with nothing selected selects all and puts
+		// the caret at the end. That is exactly the case where going to the
+		// beginning would do nothing at all, so the second meaning costs the
+		// key nothing. Otherwise it is a plain move, which is why this falls
+		// through to the same body below.
 		if t.cursorPos == 0 && !t.HasSelection() {
 			t.selStart = 0
 			t.selEnd = len(t.text)

@@ -89,10 +89,16 @@ const (
 	CmdTrinketEnd         = "trinket_end"
 	// Going to the beginning, EXCEPT when the caret is already there with
 	// nothing selected — the one case where going to the beginning would do
-	// nothing at all — where it selects everything instead. This is the Emacs
-	// home-cycle ^A does, and it is its own command rather than a wrinkle
-	// inside trinket_beg so that a plain Home stays a plain Home. Bound ahead
-	// of trinket_beg on the keys that want it, since first-listed wins.
+	// nothing at all — where it selects everything instead.
+	//
+	// The second meaning is free, because it only occupies the case where the
+	// first does nothing. It is here so that both habits reach something: a
+	// reader who types ^A for the beginning of the line gets it, and one who
+	// types it for select-all finds that too, without either having to know
+	// which convention this field follows. It is its own command rather than a
+	// wrinkle inside trinket_beg so that a plain Home stays a plain Home, and
+	// is bound ahead of trinket_beg on the keys that want it, since
+	// first-listed wins.
 	CmdTrinketBegOrSelectAll = "trinket_beg_or_select_all"
 
 	// Extending a selection: every movement has a with-selection twin, which

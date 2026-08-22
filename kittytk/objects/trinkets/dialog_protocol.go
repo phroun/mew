@@ -75,7 +75,9 @@ func init() {
 			}
 			m.SetIcon(icon)
 			return nil
-		})).OneOf("none", "information", "warning", "error", "question").Tip("Icon shown beside the message"),
+			// NewMessageBox leaves the icon zero, which is IconNone, so
+			// "none" is the actual default and not just a legal value.
+		})).OneOf("none", "information", "warning", "error", "question").Def("none").Tip("Icon shown beside the message"),
 	}
 	for name, flag := range buttonFlags {
 		name, flag := name, flag
@@ -94,6 +96,11 @@ func init() {
 	}
 
 	protocol.RegisterType("messagebox", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"finish": protocol.NewEventDesc("The message box was dismissed.").
+				Field("trinket", "uint", "The message box's object ID.").
+				Field("result", "word", "Which answer closed it."),
+		},
 		New: func() any { return NewMessageBox("", "", 0) },
 		ID: func(t any) uint64 {
 			return uint64(t.(*MessageBox).ObjectID())

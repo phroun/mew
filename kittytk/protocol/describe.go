@@ -68,12 +68,65 @@ type PropInfo struct {
 	Enum    []string
 }
 
-// TypeInfo describes one registered type and its type-specific props
-// (common props are reported once at the vocabulary level).
+// EventFieldDesc is one field an event record carries. It names itself,
+// so the same shape serves the registration and the described result —
+// unlike PropDesc, which takes its name from the map key.
+type EventFieldDesc struct {
+	// Name is the field's name in the event record.
+	Name string
+	// Kind is the value's wire type: uint, int, string, word, flag.
+	Kind string
+	// Doc is a brief, tooltip-length description of the field.
+	Doc string
+}
+
+// EventDesc is the queryable descriptor for one wire event: when it
+// fires, and what it carries.
+//
+// A type declares its events beside its properties, so one registration
+// is the source of both behavior and introspection — the arrangement
+// Property already has. Without this an event exists only as a string
+// literal inside a Bind closure, where nothing can ask about it and a
+// client has to read the host's source to learn the event even exists.
+type EventDesc struct {
+	// Doc is a brief description of when the event fires.
+	Doc string
+	// Fields are the record's fields, in the order they are documented.
+	Fields []EventFieldDesc
+}
+
+// NewEventDesc builds an EventDesc from its description; add fields with
+// Field.
+func NewEventDesc(doc string) EventDesc { return EventDesc{Doc: doc} }
+
+// Field appends one field to the descriptor and returns it for chaining.
+//
+// The append copies rather than growing in place. An EventDesc is a
+// value, written into map literals and passed around by copy, so a chain
+// continuing from a shared backing array would write over a sibling's
+// fields instead of its own.
+func (e EventDesc) Field(name, kind, doc string) EventDesc {
+	fields := make([]EventFieldDesc, len(e.Fields), len(e.Fields)+1)
+	copy(fields, e.Fields)
+	e.Fields = append(fields, EventFieldDesc{Name: name, Kind: kind, Doc: doc})
+	return e
+}
+
+// EventInfo is one event in a described vocabulary.
+type EventInfo struct {
+	Name   string
+	Doc    string
+	Fields []EventFieldDesc
+}
+
+// TypeInfo describes one registered type, its type-specific props, and
+// the events it emits (common props are reported once at the vocabulary
+// level).
 type TypeInfo struct {
 	Name    string
 	Virtual bool
 	Props   []PropInfo
+	Events  []EventInfo
 }
 
 // Vocabulary is the full introspection result: the common properties
@@ -100,9 +153,28 @@ func sortedPropInfos(props map[string]Property) []PropInfo {
 	return out
 }
 
+func sortedEventInfos(events map[string]EventDesc) []EventInfo {
+	if len(events) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(events))
+	for n := range events {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]EventInfo, 0, len(names))
+	for _, n := range names {
+		d := events[n]
+		out = append(out, EventInfo{Name: n, Doc: d.Doc, Fields: d.Fields})
+	}
+	return out
+}
+
 // DescribeVocabulary returns the registered wire vocabulary: common
-// properties plus every type, each with its type-specific properties.
-// Types and properties are sorted for deterministic output.
+// properties plus every type, each with its type-specific properties and
+// the events it emits. Types, properties and events are sorted for
+// deterministic output; an event's fields keep their declared order,
+// which is the order they are worth reading in.
 func DescribeVocabulary() *Vocabulary {
 	regMu.RLock()
 	defer regMu.RUnlock()
@@ -119,6 +191,7 @@ func DescribeVocabulary() *Vocabulary {
 			Name:    n,
 			Virtual: spec.Virtual,
 			Props:   sortedPropInfos(spec.Props),
+			Events:  sortedEventInfos(spec.Events),
 		})
 	}
 	return v
@@ -131,9 +204,13 @@ func DescribeVocabulary() *Vocabulary {
 //	propcommon name="enabled" kind=flag default="true" doc="..."
 //	proptype name="button" virtual=false
 //	prop of="button" name="caption" kind=string default="" doc="..." enum=""
+//	event of="button" name="click" doc="..."
+//	eventfield of="button" event="click" name="trinket" kind="uint" doc="..."
 //
-// Every property statement carries its owning type via of=. enum= is a
-// comma-separated list (empty unless kind is enum).
+// Every property and event statement carries its owning type via of=,
+// and an eventfield names its event as well, because the stream has no
+// nesting to carry that relationship. enum= is a comma-separated list
+// (empty unless kind is enum).
 func EncodeVocabulary(v *Vocabulary) string {
 	var sb strings.Builder
 	for _, p := range v.Common {
@@ -151,13 +228,37 @@ func EncodeVocabulary(v *Vocabulary) string {
 		for _, p := range t.Props {
 			writePropStmt(&sb, "prop", t.Name, p)
 		}
+		for _, e := range t.Events {
+			sb.WriteString("event of=")
+			sb.WriteString(Quote(t.Name))
+			sb.WriteString(" name=")
+			sb.WriteString(Quote(e.Name))
+			sb.WriteString(" doc=")
+			sb.WriteString(Quote(e.Doc))
+			sb.WriteByte('\n')
+			for _, f := range e.Fields {
+				sb.WriteString("eventfield of=")
+				sb.WriteString(Quote(t.Name))
+				sb.WriteString(" event=")
+				sb.WriteString(Quote(e.Name))
+				sb.WriteString(" name=")
+				sb.WriteString(Quote(f.Name))
+				sb.WriteString(" kind=")
+				sb.WriteString(Quote(f.Kind))
+				sb.WriteString(" doc=")
+				sb.WriteString(Quote(f.Doc))
+				sb.WriteByte('\n')
+			}
+		}
 	}
 	return sb.String()
 }
 
 // DecodeVocabulary parses the flat describe stream (the statements the
 // describe verb emits, one per line) back into a Vocabulary. Lines are
-// proptype/prop/propcommon statements; unknown lines are ignored.
+// proptype/prop/propcommon/event/eventfield statements; unknown lines
+// are ignored, so a newer host can add statement kinds without breaking
+// an older client.
 func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 	v := &Vocabulary{}
 	byType := map[string]int{} // type name -> index in v.Types
@@ -181,6 +282,35 @@ func DecodeVocabulary(lines []string) (*Vocabulary, error) {
 				of := stmtStr(st, "of")
 				if i, ok := byType[of]; ok {
 					v.Types[i].Props = append(v.Types[i].Props, stmtToPropInfo(st))
+				}
+			case "event":
+				of := stmtStr(st, "of")
+				if i, ok := byType[of]; ok {
+					v.Types[i].Events = append(v.Types[i].Events, EventInfo{
+						Name: stmtStr(st, "name"),
+						Doc:  stmtStr(st, "doc"),
+					})
+				}
+			case "eventfield":
+				// The event this belongs to was emitted just above it,
+				// so it is the last one recorded for that type — but say
+				// so by name rather than by position, since a stream may
+				// have been filtered or reordered on the way here.
+				i, ok := byType[stmtStr(st, "of")]
+				if !ok {
+					continue
+				}
+				evName := stmtStr(st, "event")
+				for j := range v.Types[i].Events {
+					if v.Types[i].Events[j].Name != evName {
+						continue
+					}
+					v.Types[i].Events[j].Fields = append(v.Types[i].Events[j].Fields, EventFieldDesc{
+						Name: stmtStr(st, "name"),
+						Kind: stmtStr(st, "kind"),
+						Doc:  stmtStr(st, "doc"),
+					})
+					break
 				}
 			}
 		}

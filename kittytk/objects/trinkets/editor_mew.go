@@ -119,6 +119,7 @@ type Editor struct {
 	// Event hooks, wired by the protocol bind.
 	onCommit func(value, filename string)
 	onCancel func()
+	onDirty  func(unsaved bool)
 
 	// port injects editor commands into the running mew session from UI
 	// threads (Edit-menu and context-menu items): each Execute marshals
@@ -273,6 +274,24 @@ func (e *Editor) SetCaret(s string)       { e.caret = s }
 
 func (e *Editor) SetOnCommit(fn func(value, filename string)) { e.onCommit = fn }
 func (e *Editor) SetOnCancel(fn func())                       { e.onCancel = fn }
+
+// SetOnDirty installs the observer for the session's unsaved-work state,
+// backing the wire's `dirty` event.
+//
+// It reports the SAME question HasUnsavedWork answers — whether ANY buffer
+// the session holds open is modified, the work stacked behind a link follow
+// included — because that is the only modified state mew publishes today
+// (mew.WithUnsavedState).
+//
+// That is broader than the app's own document, and the difference is
+// visible: follow a link out of the document the app opened, edit what you
+// land on, and `dirty` goes to 1 for a change the app cannot account for to
+// its user. The two questions have different audiences — HasUnsavedWork
+// guards a window close and SHOULD span every buffer, while `dirty` is read
+// by an app tracking the one document it handed over — so scoping this to
+// the launch document wants a per-document callback out of mew's editor
+// core. Until then, session-wide and documented is better than silent.
+func (e *Editor) SetOnDirty(fn func(unsaved bool)) { e.onDirty = fn }
 
 // SetFileSystem / SetMewFileSystem let a host (not the app) inject the brokered
 // filesystem for this session before it starts.
@@ -500,6 +519,14 @@ func (e *Editor) run() {
 		// window holding this editor can refuse a close over it.
 		mew.WithUnsavedState(func(unsaved bool) {
 			e.unsaved.Store(unsaved)
+			// Same transition, two consumers: the frame asks
+			// HasUnsavedWork before closing, and a subscribed app hears
+			// it as the wire's `dirty` event. mew calls this once at the
+			// first render and thereafter only on transitions, so this
+			// does not need its own edge detection.
+			if e.onDirty != nil {
+				e.onDirty(unsaved)
+			}
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.

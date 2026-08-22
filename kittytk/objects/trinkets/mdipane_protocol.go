@@ -52,6 +52,24 @@ func init() {
 	}
 
 	protocol.RegisterType("mdipane", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"active": protocol.NewEventDesc("The active child window changed, including to none.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The newly active window, or 0 when none is.").
+				Field("title", "string", "The active window's title; absent when none is active."),
+			"minimize": protocol.NewEventDesc("A child window was minimized to the dock.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The minimized window.").
+				Field("title", "string", "The window's title."),
+			"restore": protocol.NewEventDesc("A minimized child window was restored.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The restored window.").
+				Field("title", "string", "The window's title."),
+			"remove": protocol.NewEventDesc("A child window left the pane.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The window that left.").
+				Field("title", "string", "The window's title."),
+		},
 		New: func() any { return NewMDIPane() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*MDIPane).ObjectID())

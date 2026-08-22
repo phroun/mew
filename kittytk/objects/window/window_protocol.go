@@ -17,16 +17,22 @@ import (
 // Coordinates and sizes are in the desktop denomination (D8). The
 // single child is the window content; wrap several in a panel.
 func init() {
-	windowFlagProps := map[string]WindowFlags{
-		"frameless":    WindowFlagFrameless,
-		"no_title":     WindowFlagNoTitle,
-		"no_resize":    WindowFlagNoResize,
-		"no_move":      WindowFlagNoMove,
-		"no_close":     WindowFlagNoClose,
-		"no_minimize":  WindowFlagNoMinimize,
-		"no_maximize":  WindowFlagNoMaximize,
-		"stays_on_top": WindowFlagStaysOnTop,
-		"tearable":     WindowFlagTearable,
+	// Each flag carries its own description: these reach clients through
+	// `describe` and are what the documentation tables print, so "frameless
+	// behavior flag" tells a reader nothing they could not guess.
+	windowFlagProps := map[string]struct {
+		flag WindowFlags
+		doc  string
+	}{
+		"frameless":    {WindowFlagFrameless, "Draw no frame around the window."},
+		"no_title":     {WindowFlagNoTitle, "Draw no title bar."},
+		"no_resize":    {WindowFlagNoResize, "The user cannot resize the window."},
+		"no_move":      {WindowFlagNoMove, "The user cannot move the window."},
+		"no_close":     {WindowFlagNoClose, "The user cannot close the window."},
+		"no_minimize":  {WindowFlagNoMinimize, "The user cannot minimize the window."},
+		"no_maximize":  {WindowFlagNoMaximize, "The user cannot maximize the window."},
+		"stays_on_top": {WindowFlagStaysOnTop, "Keep the window above its peers."},
+		"tearable":     {WindowFlagTearable, "The window may be torn off to its own OS surface."},
 	}
 
 	props := map[string]protocol.Property{
@@ -140,8 +146,8 @@ func init() {
 		}).Tip("Window " + dim + " in desktop units")
 	}
 
-	for name, flag := range windowFlagProps {
-		name, flag := name, flag
+	for name, spec := range windowFlagProps {
+		name, flag, doc := name, spec.flag, spec.doc
 		props[name] = protocol.NewProperty("flag", func(_ *protocol.BindContext, target any, v *protocol.Value, f protocol.FlagState) error {
 			b, err := protocol.AsBool(name, v, f)
 			if err != nil {
@@ -154,10 +160,14 @@ func init() {
 				w.SetFlags(w.Flags() &^ flag)
 			}
 			return nil
-		}).Tip(name + " behavior flag").Def("false")
+		}).Tip(doc).Def("false")
 	}
 
 	protocol.RegisterType("window", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"window_closed": protocol.NewEventDesc("The window finished closing. It carries no trinket field because the window IS the subject.").
+				Field("window", "uint", "The closed window's object ID."),
+		},
 		New: func() any { return NewWindow("") },
 		ID: func(t any) uint64 {
 			return uint64(t.(*Window).ObjectID())
