@@ -222,6 +222,11 @@ type KeyboardHandler struct {
 	// actions carries closures posted from other goroutines (ActionPoster),
 	// surfaced by GetEvent as Do events so they run on the editor main loop.
 	actions chan func()
+
+	// pasteRun counts the chunks taken in a row by GetEvent's priority pass, so
+	// a long paste can be made to yield. Touched only from GetEvent, like
+	// pasteCarry, so it needs no locking.
+	pasteRun int
 }
 
 // NewKeyboardHandler creates a new keyboard handler reading from input and
@@ -324,30 +329,69 @@ func (kh *KeyboardHandler) Stop() {
 	io.WriteString(kh.termOut, "\x1b[?2004l")
 }
 
-// GetEvent waits for and returns either a key press or a paste chunk.
-// This allows the main loop to handle both types of input without blocking
-// on one while the other is available.
+// pasteRunBeforeYield is how many chunks the priority pass takes in a row
+// before anything else waiting gets a turn.
 //
-// Paste chunks are given priority over keys so a paste in progress is drained
-// promptly. Paste content never appears on the Keys channel (the handler runs
-// with EmitPasteKeys=false), so key events are always genuine keystrokes.
-func (kh *KeyboardHandler) GetEvent() InputEvent {
-	for {
-		// Priority pass: drain any already-queued paste chunk before blocking.
-		select {
-		case raw := <-kh.PasteChunks:
-			return kh.handlePasteChunk(raw)
-		default:
-		}
+// Chunks are 4096 bytes, so this is a quarter of a megabyte of paste between
+// yields — far too little to notice, and far too little for the key channel to
+// fill in. The number only has to be small enough that the backlog cannot
+// outrun the 256 events direct-key-handler holds; every value that does is
+// equally invisible at typing speed.
+const pasteRunBeforeYield = 16
 
+// GetEvent waits for and returns a key press, a paste chunk, or a posted
+// action. This allows the main loop to handle them without blocking on one
+// while another is available.
+//
+// Paste chunks are given priority so a paste in progress is drained promptly.
+// Paste content never appears on the Keys channel (the handler runs with
+// EmitPasteKeys=false), so key events are always genuine keystrokes.
+//
+// But the priority YIELDS, because it used to be absolute and that cost
+// keystrokes. A large paste keeps the channel non-empty — the main loop renders
+// and syncs per chunk, so it drains slower than a terminal delivers — and the
+// priority pass then won every time, so nothing else was served until the paste
+// finished. Keys piled up in direct-key-handler's channel, which holds 256 and
+// drops the OLDEST to make room, so a long enough paste silently discarded what
+// had been typed behind it. Escape during a paste did not arrive, and might not
+// arrive at all.
+//
+// So after a run of chunks, whatever else is waiting goes first — and keeps
+// going first until nothing is, which is what stops a backlog outrunning that
+// 256. Then the run starts over and the paste carries on.
+func (kh *KeyboardHandler) GetEvent() InputEvent {
+	// The run is spent: serve the backlog before any more paste. The run is
+	// NOT reset by taking one, so the next call comes straight back here and
+	// keeps draining; only finding nothing waiting ends the yield.
+	if kh.pasteRun >= pasteRunBeforeYield {
 		select {
-		case raw := <-kh.PasteChunks:
-			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
 			return InputEvent{Key: key}
 		case fn := <-kh.actions:
 			return InputEvent{Do: fn}
+		default:
+			kh.pasteRun = 0
 		}
+	}
+
+	// Priority pass: drain any already-queued paste chunk before blocking.
+	select {
+	case raw := <-kh.PasteChunks:
+		kh.pasteRun++
+		return kh.handlePasteChunk(raw)
+	default:
+	}
+
+	select {
+	case raw := <-kh.PasteChunks:
+		kh.pasteRun++
+		return kh.handlePasteChunk(raw)
+	case key := <-kh.handler.Keys:
+		kh.pasteRun = 0
+		return InputEvent{Key: key}
+	case fn := <-kh.actions:
+		kh.pasteRun = 0
+		return InputEvent{Do: fn}
 	}
 }
 
