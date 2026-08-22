@@ -26,6 +26,8 @@ github.com/phroun/pawscript v0.2.12-alpha h1:8uCXzv7vrWb090DLo0FlZQRZ5TLL648Nz52
 github.com/phroun/pawscript v0.2.12-alpha/go.mod h1:HrX9YJOxfwG8Q6NXjxsDmDmfQPsIrkrOcK1ps94h87s=
 github.com/phroun/purfecterm v0.2.54 h1:Tp7XhMYSWjVSMElOOTk+BPfjKX+i7ntcOQ2F2+2LS9o=
 github.com/phroun/purfecterm v0.2.54/go.mod h1:71wOySuSMLWMJzwUvhqqOvwX+voJaLSFl6Y7JHNW1wg=
+github.com/phroun/purfecterm v0.2.55 h1:0BiXrjD/WJUEGepdOD+RTKt1O3gmYXolevYPlHj4z7g=
+github.com/phroun/purfecterm v0.2.55/go.mod h1:h73M3We0YKjCYQAUCqQx+Y5zwj2TBV89yo9GD55CGwI=
 golang.org/x/image v0.45.0 h1:FMb1nTbH5H9vF55SriQHgFw5GnNL9Jg6L25BwXKzhB0=
 golang.org/x/image v0.45.0/go.mod h1:n62x/7RqlwXDvGsSU4u6IUTUf6KghUZ9Bt7cG/T9Fx4=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
