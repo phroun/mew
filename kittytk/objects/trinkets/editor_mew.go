@@ -2579,3 +2579,8 @@ func (e *Editor) childWindowPx() (int, int) {
 	// left its density untouched. Reporting MORE crops it at the pane edge.
 	return t.ChildWindowPixels()
 }
+
+// mewEditorSuppliedByTheMewDistribution satisfies the assertion upstream
+// makes under //go:build mew (editor_mew_required.go): the tag is only
+// meaningful where this file is present to supply the editor.
+const mewEditorSuppliedByTheMewDistribution = true
