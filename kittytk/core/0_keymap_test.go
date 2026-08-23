@@ -163,8 +163,8 @@ func TestScopeRegistryInheritance(t *testing.T) {
 	}
 }
 
-// The toolkit carries its own keymap in Go, so it has a default registry with
-// no configuration file present at all.
+// The toolkit carries its own keymap, parsed from DefaultKeymapConfig, so it
+// has a default registry with no configuration file present at all.
 func TestDefaultRegistryHasTheToolkitKeymap(t *testing.T) {
 	r := DefaultKeyRegistry()
 	for key, want := range map[string]string{
@@ -191,15 +191,16 @@ func TestDefaultRegistryHasTheToolkitKeymap(t *testing.T) {
 }
 
 // A host's file OVERLAYS the toolkit keymap rather than replacing it, so a
-// user names only what they want changed. An empty command unbinds.
+// user names only what they want changed and everything else stays.
 func TestApplyHostKeymapOverlays(t *testing.T) {
+	defer resetDefaultKeyRegistry()
 	r := DefaultKeyRegistry()
 	before := len(r.KeysFor("window_move_up"))
 
-	ApplyHostKeymap(map[string]string{
-		"M-F4":  "quit_everything", // rebind
-		"M-z":   "undo",            // add
-		"S-Tab": "",                // unbind
+	ApplyHostKeymap([]Binding{
+		{"M-F4", []string{"quit_everything"}}, // another meaning
+		{"M-z", []string{"undo"}},             // a key the table never named
+		{"S-Tab", []string{""}},               // unbind
 	}, "")
 
 	ctx := r.BuildContext([]string{"quit_everything", "undo", "focus_prior", "app_menu"})
@@ -222,10 +223,53 @@ func TestApplyHostKeymapOverlays(t *testing.T) {
 		t.Errorf("window_move_up keys went %d -> %d across an unrelated overlay", before, after)
 	}
 
-	// Restore, so the shared default registry does not leak into other tests.
-	ApplyHostKeymap(map[string]string{
-		"M-F4": "window_close", "M-z": "", "S-Tab": "focus_prior",
-	}, "")
+}
+
+// Every line of a file ADDS a meaning to its key; only a blank command takes
+// anything away. So a file that wants to say a key over from scratch blanks it
+// first, and a file that just names a key gains a meaning rather than losing
+// the ones the key already had.
+func TestApplyHostKeymapAddsAndOnlyBlankRemoves(t *testing.T) {
+	defer resetDefaultKeyRegistry()
+	r := DefaultKeyRegistry()
+
+	// No blank line: Space keeps everything it meant and gains one more, at
+	// the end, so the meanings it already had still win where both are offered.
+	ApplyHostKeymap(ParseKeymap("Space = trinket_open"), "")
+	ctx := r.BuildContext([]string{CmdTrinketTypeSpace, CmdTrinketOpen})
+	if got := ctx.Resolve("Space"); got != CmdTrinketTypeSpace {
+		t.Errorf("Space -> %q, want %s: an added meaning goes behind the ones already there", got, CmdTrinketTypeSpace)
+	}
+	ctx = r.BuildContext([]string{CmdTrinketOpen})
+	if got := ctx.Resolve("Space"); got != CmdTrinketOpen {
+		t.Errorf("Space -> %q for a context offering only open, want %s", got, CmdTrinketOpen)
+	}
+
+	// A blank command takes away everything the key meant, which is how the
+	// same file then says it over.
+	ApplyHostKeymap(ParseKeymap(`
+Space =
+Space = trinket_open
+`), "")
+	ctx = r.BuildContext([]string{CmdTrinketTypeSpace, CmdTrinketActivate, CmdTrinketOpen})
+	if got := ctx.Resolve("Space"); got != CmdTrinketOpen {
+		t.Errorf("Space -> %q after being blanked and said over, want %s", got, CmdTrinketOpen)
+	}
+
+}
+
+// A file may restate the WHOLE default and land exactly back on it: naming a
+// meaning a key already has changes nothing. That property is what lets
+// DefaultKeymapConfig be both the toolkit's default and a legal thing for a
+// user to write.
+func TestApplyingTheDefaultKeymapChangesNothing(t *testing.T) {
+	defer resetDefaultKeyRegistry()
+	r := DefaultKeyRegistry()
+	before := dumpCommands(r)
+	ApplyHostKeymap(ParseKeymap(DefaultKeymapConfig), "")
+	if after := dumpCommands(r); after != before {
+		t.Errorf("re-applying the default keymap changed the table:\n before %s\n after  %s", before, after)
+	}
 }
 
 // A blank chord leaves the default in place; turning chord accelerators off is
@@ -280,12 +324,13 @@ func TestStateContextGatesTheArrowsOnTitleFocus(t *testing.T) {
 	}
 }
 
-// States compound: a focused title bar still closes on M-F4 and still reaches
-// the menu on F10.
+// States compound: a focused title bar still quits on M-F4, still closes the
+// window on ^W, and still reaches the menu on F10.
 func TestStatesCompound(t *testing.T) {
 	title := DefaultKeyRegistry().BuildStateContext(StateTitleBarFocused)
 	for key, want := range map[string]string{
-		"M-F4": "window_close",
+		"M-F4": "app_quit",
+		"^W":   "window_close",
 		"F10":  "app_menu",
 		"Tab":  "focus_next",
 	} {
@@ -398,4 +443,18 @@ func TestMDICyclingIsNotWindowCycling(t *testing.T) {
 			t.Errorf("%s -> %q, want %q", key, got, want)
 		}
 	}
+}
+
+// resetDefaultKeyRegistry drops the process-wide default so the next caller
+// rebuilds it from DefaultKeymapConfig.
+//
+// A test that overlays a keymap onto the shared registry uses this rather than
+// trying to undo its own edits by hand. Undoing them by hand cannot work: a
+// key bound again takes a NEW serial, and the serial is what decides which of
+// a command's keys gets advertised, so the table comes back with the right
+// commands and the wrong answer to "what key does the menu show for this?".
+func resetDefaultKeyRegistry() {
+	keymapMu.Lock()
+	defaultRegistry = nil
+	keymapMu.Unlock()
 }
