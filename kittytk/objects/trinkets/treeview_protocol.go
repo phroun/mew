@@ -25,6 +25,30 @@ import (
 // visible-row index.
 func init() {
 	protocol.RegisterType("treeview", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"change": protocol.NewEventDesc("The current item moved.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("item", "uint", "The item now current.").
+				Field("selected", "int", "Row index of the current item among the visible rows."),
+			"activate": protocol.NewEventDesc("An item was activated — double-clicked, or Enter on the current item.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("item", "uint", "The activated item.").
+				Field("selected", "int", "Row index of the item among the visible rows."),
+			"expand": protocol.NewEventDesc("A branch opened or closed.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("item", "uint", "The branch item.").
+				Field("expanded", "flag", "Set when the branch opened, unset when it closed."),
+			"sort": protocol.NewEventDesc("The sort changed — a column header was used, or sorting was cleared.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("sorted", "flag", "Set while a sort is in force.").
+				Field("sortedby", "int", "Index of the column sorted on.").
+				Field("descending", "flag", "Set when the sort runs high to low."),
+			"edit": protocol.NewEventDesc("An in-place cell edit was committed.").
+				Field("trinket", "uint", "The tree's object ID.").
+				Field("item", "uint", "The edited item.").
+				Field("column", "int", "Index of the edited column.").
+				Field("value", "string", "The committed cell text."),
+		},
 		New: func() any { return NewTreeView() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*TreeView).ObjectID())

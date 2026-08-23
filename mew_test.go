@@ -83,8 +83,8 @@ func TestKeyFeedPaste(t *testing.T) {
 	}
 }
 
-// ^C on an unmodified last buffer runs cancel|buffer_close: cancel is a no-op
-// (no prompt), so buffer_close runs and, as the last buffer, exits the editor.
+// ^C on an unmodified last buffer runs cancel|viewport_close: cancel is a no-op
+// (no prompt), so viewport_close runs and, as the last buffer, exits the editor.
 func TestKeyFeedCtrlCExitsUnmodified(t *testing.T) {
 	got := runFeedSession(t, "hello\n", func(f *KeyFeed) {
 		f.SendKey("^C")
@@ -248,7 +248,7 @@ func TestKeyFeedKeySequence(t *testing.T) {
 	got := runFeedSession(t, "hello\n", func(f *KeyFeed) {
 		f.SendKey("^K")
 		f.SendKey("F")  // find prompt opens
-		f.SendKey("^C") // cancel the prompt (cancel|buffer_close cancels first)
+		f.SendKey("^C") // cancel the prompt (cancel|viewport_close cancels first)
 		f.Close()       // end the session
 	})
 	if got != "hello\n" {

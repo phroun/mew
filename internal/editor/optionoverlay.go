@@ -16,7 +16,9 @@ import (
 // stored: a viewport gains a terminal and loses it again while staying the same
 // viewport, and shows an ordinary document either side of that. An explicit
 // Class still wins — a prompt that happens to host a terminal is still that
-// prompt.
+// prompt. A generated mew: surface likewise derives its class by address (see
+// EffectiveClass), so its options and theming stay separate from a document
+// without sticking to the viewport.
 func (e *Editor) viewportClass(w *viewport.Viewport) string {
 	if w == nil {
 		return ""
@@ -24,7 +26,7 @@ func (e *Editor) viewportClass(w *viewport.Viewport) string {
 	if w.Class == "" && e.visibleSessionFor(w) != nil {
 		return ptyViewportClass
 	}
-	return w.Class
+	return w.EffectiveClass()
 }
 
 func (e *Editor) viewportType(w *viewport.Viewport) string {

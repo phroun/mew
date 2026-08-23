@@ -37,17 +37,17 @@ func TestMouseDragMarksBlock(t *testing.T) {
 	// Press at (0,1), no drag, release: no block appears.
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
-	send("MouseLeftRelease")
+	send("MouseLeft")
+	send("MouseLeft:Release")
 	if w.Buffer.HasBlockMarks() {
 		t.Fatal("a click without a drag must not mark a block")
 	}
 
 	// Press at (0,1), drag to (1,3): begin at origin, end at the drag cell.
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	dx, dy := screenAt(w, 1, 3)
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx, dy))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", dx, dy))
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 1 {
 		t.Fatalf("_block_begin: (%d,%d), want (0,1)", l, r)
 	}
@@ -60,7 +60,7 @@ func TestMouseDragMarksBlock(t *testing.T) {
 
 	// Drag on to (2,2): only the end moves.
 	dx2, dy2 := screenAt(w, 2, 2)
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx2, dy2))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", dx2, dy2))
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 1 {
 		t.Fatalf("_block_begin moved: (%d,%d)", l, r)
 	}
@@ -69,7 +69,7 @@ func TestMouseDragMarksBlock(t *testing.T) {
 	}
 
 	// Release: the block stays.
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	if l, r := mark(t, w, "_block_end"); l != 2 || r != 2 {
 		t.Fatalf("block should survive release: end (%d,%d)", l, r)
 	}
@@ -97,7 +97,7 @@ func TestMouseShiftClickExtends(t *testing.T) {
 
 	x, y := screenAt(w, 22, 4)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("S-MouseLeftPress")
+	send("S-MouseLeft")
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 2 {
 		t.Fatalf("_block_begin should anchor at the OLD caret: (%d,%d), want (0,2)", l, r)
 	}
@@ -110,14 +110,14 @@ func TestMouseShiftClickExtends(t *testing.T) {
 
 	// A drag continuing from the shift+click moves only the end.
 	dx, dy := screenAt(w, 23, 1)
-	send(fmt.Sprintf("S-MouseLeftDrag@%d,%d", dx, dy))
+	send(fmt.Sprintf("S-MouseDragLeft@%d,%d", dx, dy))
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 2 {
 		t.Fatalf("_block_begin must not move on the continuing drag: (%d,%d)", l, r)
 	}
 	if l, r := mark(t, w, "_block_end"); l != 23 || r != 1 {
 		t.Fatalf("_block_end after continuing drag: (%d,%d), want (23,1)", l, r)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // A held drag is CAPTURED: leaving the content area keeps adjusting the
@@ -133,32 +133,32 @@ func TestMouseDragCapturedOutsideContent(t *testing.T) {
 	// the beginning of line 1.
 	x, y := screenAt(w, 0, 2)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	_, gy := screenAt(w, 1, 0)
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 1, gy)) // x=1: over the line numbers
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", 1, gy)) // x=1: over the line numbers
 	if l, r := mark(t, w, "_block_end"); l != 1 || r != 0 {
 		t.Fatalf("gutter drag should pin to line start: end (%d,%d), want (1,0)", l, r)
 	}
 
 	// Drag BELOW the last text row: clamps to the last line (still tracking).
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, w.ContentY+w.ContentHeight+3))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, w.ContentY+w.ContentHeight+3))
 	if l, _ := mark(t, w, "_block_end"); l != 3 {
 		t.Fatalf("below-viewport drag should clamp to the last line: end line %d, want 3", l)
 	}
 
 	// Drag ABOVE the viewport (over the modebar): clamps to the first row.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 1, 0))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", 1, 0))
 	if l, r := mark(t, w, "_block_end"); l != 0 || r != 0 {
 		t.Fatalf("above-viewport gutter drag should clamp to (0,0): end (%d,%d)", l, r)
 	}
 
 	// Drag far past the RIGHT edge on row 2: clamps to that line's end.
 	_, ry := screenAt(w, 2, 0)
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", 500, ry))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", 500, ry))
 	if l, r := mark(t, w, "_block_end"); l != 2 || r != 4 {
 		t.Fatalf("past-right drag should clamp to line end: end (%d,%d), want (2,4)", l, r)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 
 	// The begin anchor never moved through all of it.
 	if l, r := mark(t, w, "_block_begin"); l != 0 || r != 2 {
@@ -182,7 +182,7 @@ func TestMousePressBelowDocSelectsFromEOF(t *testing.T) {
 		t.Fatalf("test setup: blank row %d outside the viewport", y)
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	// EOF: the trailing empty line (index 3), column 0.
 	if pos := w.CursorPos(); pos.Line != 3 || pos.Rune != 0 {
 		t.Fatalf("below-doc click should park at EOF: %+v", pos)
@@ -190,8 +190,8 @@ func TestMousePressBelowDocSelectsFromEOF(t *testing.T) {
 
 	// Drag upward to (1,1): the tail of the document is selected.
 	dx, dy := screenAt(w, 1, 1)
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx, dy))
-	send("MouseLeftRelease")
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", dx, dy))
+	send("MouseLeft:Release")
 	if l, r := mark(t, w, "_block_begin"); l != 3 || r != 0 {
 		t.Fatalf("_block_begin should anchor at EOF: (%d,%d), want (3,0)", l, r)
 	}
@@ -218,9 +218,9 @@ func TestMouseDragAutoScrollTick(t *testing.T) {
 	// Start a drag and park the pointer below the viewport's bottom edge.
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	belowY := w.ContentY + w.ContentHeight + 2
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, belowY))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, belowY))
 	if e.dragScroll.vert != 2 {
 		t.Fatalf("overshoot rows: %d, want 2", e.dragScroll.vert)
 	}
@@ -250,7 +250,7 @@ func TestMouseDragAutoScrollTick(t *testing.T) {
 
 	// Park the pointer ON the far (right) column of a long line: horizontal
 	// ticks ride scroll_right (8-column steps, the keyboard's own increment).
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+2))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+2))
 	if e.dragScroll.horiz == 0 {
 		t.Fatal("far-column park should engage horizontal overshoot")
 	}
@@ -261,7 +261,7 @@ func TestMouseDragAutoScrollTick(t *testing.T) {
 		t.Fatalf("horizontal tick should step by scroll_right's 8: %d, want %d", got, xBefore+8)
 	}
 
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	if e.dragScroll.stop != nil || e.dragScroll.vert != 0 {
 		t.Fatal("release must stop and clear the autoscroll state")
 	}
@@ -279,7 +279,7 @@ func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
 	w.SetCursorPos(viewport.Position{Line: 1, Rune: 2})
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("M-MouseLeftPress")
+	send("M-MouseLeft")
 	if popped != 1 {
 		t.Fatalf("alt+click should pop the context menu (popped=%d)", popped)
 	}
@@ -291,14 +291,14 @@ func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
 	lineCount := w.Buffer.GetLineCount()
 	by := w.ContentY + 1 + lineCount + 1
 	send(fmt.Sprintf("Mouse@%d,%d", x, by))
-	send("MouseRightPress")
+	send("MouseRight")
 	if popped != 2 {
 		t.Fatalf("below-doc right-click should pop the menu (popped=%d)", popped)
 	}
 
 	// And alt+click below the doc as well.
 	send(fmt.Sprintf("Mouse@%d,%d", x, by))
-	send("M-MouseLeftPress")
+	send("M-MouseLeft")
 	if popped != 3 {
 		t.Fatalf("below-doc alt+click should pop the menu (popped=%d)", popped)
 	}
@@ -307,22 +307,22 @@ func TestMouseAltClickAndBelowDocContextMenu(t *testing.T) {
 	// shift) triggers the menu too — terminals vary in which modified
 	// clicks they let through.
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("C-MouseLeftPress")
+	send("C-MouseLeft")
 	if popped != 4 {
 		t.Fatalf("ctrl+click should pop the menu (popped=%d)", popped)
 	}
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("S-C-MouseLeftPress")
+	send("S-C-MouseLeft")
 	if popped != 5 {
 		t.Fatalf("shift+ctrl+click should still pop the menu (popped=%d)", popped)
 	}
 	// Plain shift+click stays a selection extension, never a menu.
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("S-MouseLeftPress")
+	send("S-MouseLeft")
 	if popped != 5 {
 		t.Fatalf("plain shift+click must not pop the menu (popped=%d)", popped)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // Block provenance decides whether a plain click dissolves the block: a
@@ -338,24 +338,24 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	}
 	drag := func(line, cell int) {
 		x, y := screenAt(w, line, cell)
-		send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, y))
+		send(fmt.Sprintf("MouseDragLeft@%d,%d", x, y))
 	}
 
 	// Plain drag: transient. The next plain click dissolves the block.
-	press("MouseLeftPress", 0, 0)
+	press("MouseLeft", 0, 0)
 	drag(1, 2)
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	if !w.Buffer.MouseBlock() {
 		t.Fatal("a plain drag selection must set the mouse-block flag")
 	}
-	press("MouseLeftPress", 2, 1)
+	press("MouseLeft", 2, 1)
 	if w.Buffer.HasBlockMarks() {
 		t.Fatal("a plain click must dissolve a mouse-dragged block")
 	}
 	if w.Buffer.MouseBlock() {
 		t.Fatal("the flag must clear with the dissolved marks")
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 
 	// Keyboard-set marks: deliberate. A plain click leaves them.
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 0})
@@ -365,21 +365,21 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	if w.Buffer.MouseBlock() {
 		t.Fatal("keyboard-set marks must leave the mouse-block flag off")
 	}
-	press("MouseLeftPress", 2, 1)
-	send("MouseLeftRelease")
+	press("MouseLeft", 2, 1)
+	send("MouseLeft:Release")
 	if !w.Buffer.HasBlockMarks() {
 		t.Fatal("a plain click must NOT dissolve a keyboard-made block")
 	}
 
 	// A keyboard set_block_end ADJUSTING a mouse-dragged block also makes it
 	// deliberate.
-	press("MouseLeftPress", 0, 0)
+	press("MouseLeft", 0, 0)
 	drag(1, 1)
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	w.SetCursorPos(viewport.Position{Line: 2, Rune: 2})
 	e.executeCommand("set_block_end")
-	press("MouseLeftPress", 0, 3)
-	send("MouseLeftRelease")
+	press("MouseLeft", 0, 3)
+	send("MouseLeft:Release")
 	if !w.Buffer.HasBlockMarks() {
 		t.Fatal("a keyboard-adjusted block must survive a plain click")
 	}
@@ -388,18 +388,18 @@ func TestMouseBlockDissolvesOnClick(t *testing.T) {
 	// including a drag that continues the shift gesture.
 	w.Buffer.ClearBlockMarks()
 	w.SetCursorPos(viewport.Position{Line: 0, Rune: 1})
-	press("S-MouseLeftPress", 1, 3)
+	press("S-MouseLeft", 1, 3)
 	if w.Buffer.MouseBlock() {
 		t.Fatal("shift+click must leave the mouse-block flag OFF")
 	}
 	x, y := screenAt(w, 2, 2)
-	send(fmt.Sprintf("S-MouseLeftDrag@%d,%d", x, y))
+	send(fmt.Sprintf("S-MouseDragLeft@%d,%d", x, y))
 	if w.Buffer.MouseBlock() {
 		t.Fatal("a drag continuing a shift+click must keep the flag OFF")
 	}
-	send("MouseLeftRelease")
-	press("MouseLeftPress", 0, 0)
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
+	press("MouseLeft", 0, 0)
+	send("MouseLeft:Release")
 	if !w.Buffer.HasBlockMarks() {
 		t.Fatal("a shift+click selection must survive a plain click")
 	}
@@ -412,14 +412,14 @@ func TestMouseDragBelowLastLineSelectsToEOF(t *testing.T) {
 	press := func(line, cell int) {
 		x, y := screenAt(w, line, cell)
 		send(fmt.Sprintf("Mouse@%d,%d", x, y))
-		send("MouseLeftPress")
+		send("MouseLeft")
 	}
 	press(1, 1) // start mid-document
 
 	// Drag to a blank row below the last line, at a middle column.
 	lineCount := w.Buffer.GetLineCount()
 	belowY := w.ContentY + 1 + lineCount + 1
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+3, belowY))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", w.ContentX+3, belowY))
 
 	// The end lands at EOF (last line, end of line), regardless of the column.
 	last := lineCount - 1
@@ -427,7 +427,7 @@ func TestMouseDragBelowLastLineSelectsToEOF(t *testing.T) {
 	if l, r := mark(t, w, "_block_end"); l != last || r != endRune {
 		t.Fatalf("below-last-line drag: end (%d,%d), want (%d,%d)", l, r, last, endRune)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // Vertical edge autoscroll keeps progressing even once HORIZONTAL autoscroll
@@ -443,9 +443,9 @@ func TestMouseDragAutoScrollVerticalSurvivesHorizontal(t *testing.T) {
 
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	// Park the pointer past BOTH the bottom edge and the right edge.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+w.ContentHeight+2))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+w.ContentHeight+2))
 	if e.dragScroll.vert <= 0 || e.dragScroll.horiz <= 0 {
 		t.Fatalf("both overshoots should engage: vert=%d horiz=%d", e.dragScroll.vert, e.dragScroll.horiz)
 	}
@@ -465,7 +465,7 @@ func TestMouseDragAutoScrollVerticalSurvivesHorizontal(t *testing.T) {
 	if top2 <= top1 {
 		t.Fatalf("vertical autoscroll stalled after horizontal engaged: %d -> %d", top1, top2)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // One drag gesture is ONE undo step: however many cells the pointer crosses
@@ -477,15 +477,15 @@ func TestMouseDragIsOneUndoStep(t *testing.T) {
 
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	// A slow drag: several distinct cells, each a mark movement.
 	for _, cell := range []struct{ line, col int }{
 		{0, 2}, {0, 3}, {1, 1}, {1, 3}, {2, 2}, {3, 1},
 	} {
 		dx, dy := screenAt(w, cell.line, cell.col)
-		send(fmt.Sprintf("MouseLeftDrag@%d,%d", dx, dy))
+		send(fmt.Sprintf("MouseDragLeft@%d,%d", dx, dy))
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	if !w.Buffer.HasBlockMarks() {
 		t.Fatal("the drag should have marked a block")
 	}
@@ -506,12 +506,12 @@ func TestMouseDragAboveFirstLineSelectsToBOF(t *testing.T) {
 	e, w, send := dragHarness(t, "aaaa\nbbbb\ncccc\n") // lines 0..3 (3 is "")
 	x, y := screenAt(w, 2, 2)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress") // start mid-document, mid-line
+	send("MouseLeft") // start mid-document, mid-line
 
 	// The harness viewport begins on the grid's FIRST row, so no host can
 	// report a row above it: parking there is the up-edge gesture. Without the
 	// BOF rule the clamp would land on line 0 at the pointer's COLUMN.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+3, 1))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", w.ContentX+3, 1))
 	if l, r := mark(t, w, "_block_end"); l != 0 || r != 0 {
 		t.Fatalf("pinned-top drag: end (%d,%d), want (0,0)", l, r)
 	}
@@ -523,5 +523,5 @@ func TestMouseDragAboveFirstLineSelectsToBOF(t *testing.T) {
 		t.Fatalf("above-first-row drag: (%d,%d) ok=%v, want (0,0) ok=true", l, r, ok)
 	}
 	w.ContentY = 0
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }

@@ -15,6 +15,11 @@ func init() {
 			"text":        stringProp("text", (*TextInput).SetText).Tip("Editable content (server-authoritative)."),
 			"placeholder": stringProp("placeholder", (*TextInput).SetPlaceholder).Tip("Placeholder text shown when empty."),
 		},
+		map[string]protocol.EventDesc{
+			"change": protocol.NewEventDesc("The content changed through user editing — a typed character, a deletion, a paste, or a committed composition. A set from the client does not raise it.").
+				Field("trinket", "uint", "The field's object ID.").
+				Field("text", "string", "The full new content."),
+		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			t := w.(*TextInput)

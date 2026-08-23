@@ -2,7 +2,6 @@
 package core
 
 import (
-	"strings"
 	"sync"
 )
 
@@ -135,24 +134,8 @@ func (a *Action) SetChecked(checked bool) {
 	}
 }
 
-// MatchesKey returns true if the key event matches any shortcut for this action.
-func (a *Action) MatchesKey(event KeyPressEvent) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	if a.Shortcut.Matches(event) {
-		return true
-	}
-	for _, s := range a.AlternateShortcuts {
-		if s.Matches(event) {
-			return true
-		}
-	}
-	return false
-}
-
 // Shortcut represents a keyboard shortcut using the key handler format.
-// Examples: "^Q" (Ctrl+Q), "M-x" (Alt+x), "S-Tab" (Shift+Tab), "F1" (plain key)
+// Examples: "^Q" (Ctrl+Q), "M-x" (Mega+x), "S-Tab" (Shift+Tab), "F1" (plain key)
 type Shortcut string
 
 // NoShortcut represents the absence of a shortcut.
@@ -162,61 +145,6 @@ const NoShortcut Shortcut = ""
 // This is the primary way to create shortcuts.
 func NewShortcut(key string) Shortcut {
 	return Shortcut(key)
-}
-
-// Matches returns true if the key event matches this shortcut.
-// Control combinations have two accepted spellings - caret ("^X")
-// and prefix ("C-x") - so both sides are canonicalized before
-// comparing; "^\\" matches an event reported as "C-\\".
-func (s Shortcut) Matches(event KeyPressEvent) bool {
-	if s == "" {
-		return false
-	}
-	if event.Key == string(s) {
-		return true
-	}
-	return canonicalKeyString(event.Key) == canonicalKeyString(string(s))
-}
-
-// canonicalKeyString reduces a key-handler-format string to a single
-// canonical spelling: modifier prefixes are kept in encounter order,
-// and a Control modifier on a single-character key becomes caret
-// notation with letters uppercased ("C-h" -> "^H"). Control on a
-// named key stays in prefix form ("C-Up").
-func canonicalKeyString(k string) string {
-	mods := ""
-	rest := k
-	ctrl := false
-	for {
-		if len(rest) > 1 && rest[0] == '^' {
-			ctrl = true
-			rest = rest[1:]
-			continue
-		}
-		if len(rest) > 2 {
-			switch rest[:2] {
-			case "C-":
-				ctrl = true
-				rest = rest[2:]
-				continue
-			case "M-", "A-", "S-", "s-", "H-":
-				mods += rest[:2]
-				rest = rest[2:]
-				continue
-			}
-		}
-		break
-	}
-	if !ctrl {
-		return mods + rest
-	}
-	if len(rest) == 1 {
-		if c := rest[0]; c >= 'a' && c <= 'z' {
-			rest = string(c - 'a' + 'A')
-		}
-		return mods + "^" + rest
-	}
-	return mods + "C-" + rest
 }
 
 // String returns the shortcut in key handler format.
@@ -248,232 +176,15 @@ func MacNativeShortcuts() bool { return macNativeShortcuts }
 
 // DisplayString returns a human-readable representation of the shortcut
 // for display in menus and tooltips.
-// Uses compact notation: ^ for Ctrl, M- for Alt, S- for Shift - unless
-// macOS-native rendering is enabled, in which case modifiers become the
-// native glyphs ⌃⌥⇧⌘ in canonical order.
-func (s Shortcut) DisplayString() string {
-	if s == "" {
-		return ""
-	}
-	if macNativeShortcuts {
-		return s.macNativeDisplay()
-	}
-	// Return the key handler format directly - it's already compact and readable
-	return string(s)
-}
-
-// macNativeDisplay renders the shortcut with macOS modifier glyphs in the
-// canonical order Control, Option, Shift, Command (⌃⌥⇧⌘) followed by the key,
-// with no separators. Modifier mapping:
 //
-//	^ / C-  → ⌃ (Control)
-//	M- / A- → ⌥ (Option)
-//	S-      → ⇧ (Shift)
-//	s-      → ⌘ (Command)
+// Deprecated: a Shortcut is a key string like any other. Call DisplayKey.
+func (s Shortcut) DisplayString() string { return DisplayKey(string(s)) }
+
+// AccessibilityString returns a fully spelled-out representation of the
+// shortcut for screen reader announcements.
 //
-// A single uppercase letter after a hyphenated modifier implies Shift, matching
-// the notation elsewhere (M-a = Option+A, M-A = Option+Shift+A); caret notation
-// (^X) never implies Shift. The letter key is uppercased to match how macOS
-// menus present keys (⌘S, not ⌘s). Named keys (Tab, Delete, F1) and any
-// unrecognized modifier (H-) are passed through as-is.
-func (s Shortcut) macNativeDisplay() string {
-	const (
-		modControl = 1
-		modOption  = 2
-		modShift   = 4
-		modCommand = 8
-	)
-	str := string(s)
-	mods := 0
-	usedCaret := false
-	for len(str) > 0 {
-		if len(str) >= 2 {
-			switch str[:2] {
-			case "M-", "A-":
-				mods |= modOption
-				str = str[2:]
-				continue
-			case "C-":
-				mods |= modControl
-				str = str[2:]
-				continue
-			case "S-":
-				mods |= modShift
-				str = str[2:]
-				continue
-			case "s-":
-				mods |= modCommand
-				str = str[2:]
-				continue
-			case "H-": // Hyper has no macOS glyph; drop the prefix
-				str = str[2:]
-				continue
-			}
-		}
-		if str[0] == '^' {
-			mods |= modControl
-			usedCaret = true
-			str = str[1:]
-			continue
-		}
-		break
-	}
-
-	key := str
-	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !usedCaret {
-		// Uppercase letter after a hyphenated modifier implies Shift.
-		mods |= modShift
-	}
-	if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
-		// macOS menus present letter keys uppercased.
-		key = strings.ToUpper(key)
-	}
-
-	var b strings.Builder
-	if mods&modControl != 0 {
-		b.WriteRune('⌃')
-	}
-	if mods&modOption != 0 {
-		b.WriteRune('⌥')
-	}
-	if mods&modShift != 0 {
-		b.WriteRune('⇧')
-	}
-	if mods&modCommand != 0 {
-		b.WriteRune('⌘')
-	}
-	b.WriteString(key)
-	return b.String()
-}
-
-// spokenKeyNames maps punctuation and whitespace keys to words a speech
-// engine can pronounce, so shortcuts like ^\ announce as "Control
-// Backslash" rather than a silent or literal glyph.
-var spokenKeyNames = map[string]string{
-	"\\": "Backslash",
-	"/":  "Slash",
-	"`":  "Backtick",
-	"~":  "Tilde",
-	"!":  "Exclamation",
-	"@":  "At Sign",
-	"#":  "Number Sign",
-	"$":  "Dollar Sign",
-	"%":  "Percent",
-	"^":  "Caret",
-	"&":  "Ampersand",
-	"*":  "Asterisk",
-	"(":  "Left Paren",
-	")":  "Right Paren",
-	"-":  "Minus",
-	"_":  "Underscore",
-	"=":  "Equals",
-	"+":  "Plus",
-	"[":  "Left Bracket",
-	"]":  "Right Bracket",
-	"{":  "Left Brace",
-	"}":  "Right Brace",
-	";":  "Semicolon",
-	":":  "Colon",
-	"'":  "Apostrophe",
-	"\"": "Quote",
-	",":  "Comma",
-	".":  "Period",
-	"<":  "Less Than",
-	">":  "Greater Than",
-	"?":  "Question Mark",
-	"|":  "Pipe",
-	" ":  "Space",
-}
-
-// AccessibilityString returns a fully spelled-out representation of the shortcut
-// for screen reader announcements.
-// Translates: M- → Meta, A- → Alt, C- → Control, ^ → Control, S- → Shift, s- → Super, H- → Hyper
-// Uppercase final letter implies Shift for hyphenated modifiers (e.g., M-O → Meta+Shift+O)
-// but NOT for ^ notation (^X is just Control+X, case is irrelevant with ^)
-func (s Shortcut) AccessibilityString() string {
-	if s == "" {
-		return ""
-	}
-
-	str := string(s)
-	var modifiers []string
-	hasExplicitShift := false
-	usedCaretNotation := false
-
-	// Parse modifier prefixes
-	for len(str) > 0 {
-		if len(str) >= 2 {
-			prefix := str[:2]
-			switch prefix {
-			case "M-":
-				modifiers = append(modifiers, "Meta")
-				str = str[2:]
-				continue
-			case "A-":
-				modifiers = append(modifiers, "Alt")
-				str = str[2:]
-				continue
-			case "C-":
-				modifiers = append(modifiers, "Control")
-				str = str[2:]
-				continue
-			case "S-":
-				modifiers = append(modifiers, "Shift")
-				hasExplicitShift = true
-				str = str[2:]
-				continue
-			case "s-":
-				modifiers = append(modifiers, "Super")
-				str = str[2:]
-				continue
-			case "H-":
-				modifiers = append(modifiers, "Hyper")
-				str = str[2:]
-				continue
-			}
-		}
-		// Check for ^ prefix (Control) - case of following letter doesn't imply shift
-		if len(str) >= 1 && str[0] == '^' {
-			modifiers = append(modifiers, "Control")
-			usedCaretNotation = true
-			str = str[1:]
-			continue
-		}
-		break
-	}
-
-	// The remaining string is the key
-	key := str
-
-	// Check if single letter key is uppercase (implies Shift)
-	// Only applies to hyphenated modifiers, NOT to ^ notation
-	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' && !hasExplicitShift && !usedCaretNotation {
-		modifiers = append(modifiers, "Shift")
-	}
-
-	// Spell out punctuation keys as words a speech engine can pronounce;
-	// a bare "\" or "/" would otherwise be announced as nothing (or a
-	// literal glyph), so the whole item failed to speak.
-	if spoken, ok := spokenKeyNames[key]; ok {
-		key = spoken
-	}
-
-	// Build the result with spaces (for natural speech)
-	if len(modifiers) == 0 {
-		return key
-	}
-
-	result := ""
-	for i, mod := range modifiers {
-		if i > 0 {
-			result += " "
-		}
-		result += mod
-	}
-	result += " " + key
-
-	return result
-}
+// Deprecated: a Shortcut is a key string like any other. Call SpeakKey.
+func (s Shortcut) AccessibilityString() string { return SpeakKey(string(s)) }
 
 // ActionGroup manages a collection of related actions.
 type ActionGroup struct {
@@ -517,98 +228,6 @@ func (g *ActionGroup) All() []*Action {
 		}
 	}
 	return result
-}
-
-// HandleKey tries to match a key event against all actions.
-// Returns the matched action if found and triggered, nil otherwise.
-func (g *ActionGroup) HandleKey(event KeyPressEvent) *Action {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	for _, action := range g.actions {
-		if action.Enabled && action.MatchesKey(event) {
-			// Trigger outside lock to avoid deadlock
-			go action.Trigger()
-			return action
-		}
-	}
-	return nil
-}
-
-// ShortcutMap provides a way to customize keybindings.
-// It maps action IDs to shortcuts.
-type ShortcutMap struct {
-	mu       sync.RWMutex
-	bindings map[string][]Shortcut
-}
-
-// NewShortcutMap creates a new shortcut map.
-func NewShortcutMap() *ShortcutMap {
-	return &ShortcutMap{
-		bindings: make(map[string][]Shortcut),
-	}
-}
-
-// Set sets the shortcuts for an action using key handler format strings.
-func (m *ShortcutMap) Set(actionID string, keys ...string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	shortcuts := make([]Shortcut, len(keys))
-	for i, key := range keys {
-		shortcuts[i] = Shortcut(key)
-	}
-	m.bindings[actionID] = shortcuts
-}
-
-// Get returns the shortcuts for an action.
-func (m *ShortcutMap) Get(actionID string) []Shortcut {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.bindings[actionID]
-}
-
-// Apply applies this shortcut map to an action group.
-func (m *ShortcutMap) Apply(group *ActionGroup) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for actionID, shortcuts := range m.bindings {
-		action := group.Get(actionID)
-		if action == nil {
-			continue
-		}
-		action.mu.Lock()
-		if len(shortcuts) > 0 {
-			action.Shortcut = shortcuts[0]
-			action.AlternateShortcuts = shortcuts[1:]
-		} else {
-			action.Shortcut = NoShortcut
-			action.AlternateShortcuts = nil
-		}
-		action.mu.Unlock()
-	}
-}
-
-// FindAction returns the action ID that matches the given shortcut.
-// Returns empty string if no match is found.
-func (m *ShortcutMap) FindAction(shortcut Shortcut) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for actionID, shortcuts := range m.bindings {
-		for _, s := range shortcuts {
-			if s == shortcut {
-				return actionID
-			}
-		}
-	}
-	return ""
-}
-
-// FindActionByKey returns the action ID that matches the given key string.
-// This is a convenience method that takes a key handler format string directly.
-func (m *ShortcutMap) FindActionByKey(key string) string {
-	return m.FindAction(Shortcut(key))
 }
 
 // StandardActions provides common action IDs.
@@ -679,34 +298,4 @@ var StandardActions = struct {
 	FocusPrev: "focus.prev",
 	Escape:    "dialog.escape",
 	Confirm:   "dialog.confirm",
-}
-
-// DefaultShortcuts returns the default keyboard shortcuts.
-// All shortcuts use the key handler format directly.
-func DefaultShortcuts() *ShortcutMap {
-	m := NewShortcutMap()
-
-	// File - using key handler format: ^x = Ctrl+x
-	m.Set(StandardActions.New, "^N")
-	m.Set(StandardActions.Open, "^O")
-	m.Set(StandardActions.Save, "^S")
-	m.Set(StandardActions.SaveAs, "^S-S") // Ctrl+Shift+S
-	m.Set(StandardActions.Close, "^W")
-	m.Set(StandardActions.Quit, "^Q")
-
-	// Edit
-	m.Set(StandardActions.Undo, "^Z")
-	m.Set(StandardActions.Redo, "^S-Z", "^Y") // Ctrl+Shift+Z or Ctrl+Y
-	m.Set(StandardActions.Cut, "^X")
-	m.Set(StandardActions.Copy, "^C")
-	m.Set(StandardActions.Paste, "^V")
-	m.Set(StandardActions.Delete, "Delete")
-	m.Set(StandardActions.SelectAll, "M-a")
-	m.Set(StandardActions.Find, "^F")
-	m.Set(StandardActions.Replace, "^H")
-
-	// Note: Tab, S-Tab, Escape, Enter are handled by Window's FocusManager
-	// and dialog trinkets directly, not through the global shortcut system.
-
-	return m
 }

@@ -12,10 +12,7 @@ changes needed).
 > old name. No remote reconfiguration was needed to keep pushing to
 > `claude/project-survey-mr6k4v`. (A human clone should still update its
 > `origin` URL to the new name at leisure; GitHub's redirect covers it
-> either way.) This file covers the toolkit only; the `garland/` subtree is
-a separate self-contained module (`github.com/phroun/garland`) mirrored here
-for development and synced back to its own repo — it has its own docs under
-`garland/docs/`.
+> either way.)
 
 ## What KittyTK is
 
@@ -46,7 +43,6 @@ exist for **Go** (`client/`), **Python** (`python/`), and **C** (`c/`).
 | `core/`, `text/` | Shared primitives, text measurement/advance |
 | `hostcfg/` | Host auth stores (allow/deny, known hosts) |
 | `ptydriver/` | C pty driver for client-side terminal processes |
-| `garland/` | Rope text-buffer library (separate module — see its own docs) |
 
 ## Verification gates (run before every commit)
 
@@ -59,12 +55,16 @@ go test -tags sdl ./objects/...
 
 Visual work is proven with PNG captures from the SDL backend when relevant.
 
+New test files follow [TEST-NAMING.md](TEST-NAMING.md) — `0_<source>_test.go`
+for the tests of one source file, `00_<description>_test.go` for one that
+spans several. Read it before adding a test file rather than pattern-matching
+off a neighbour.
+
 ## Git conventions used this whole project
 
 - Branch: work on the designated `claude/...` branch; push with
   `git push -u origin <branch>`.
-- Run `git add`/`commit` from the **repo root** (running `git add garland/...`
-  with cwd inside `garland/` fails — recurring gotcha).
+- Run `git add`/`commit` from the **repo root**.
 - Commit messages end with the session's Co-Authored-By / Claude-Session
   trailers; never put model IDs in commits or code.
 
@@ -120,8 +120,9 @@ descriptions are from the running task list, not a fresh audit.
 
 ## Known long-horizon ideas (not scheduled)
 
-- Editor trinket built on garland (see `garland/docs/` for the buffer's
-  capabilities: in-place & lock-free save, integrity triage/rebase,
-  ephemeral cursors, decorations-as-marks; syntax highlighting sketch in
-  `garland/docs/syntax-highlighting-ideas.md` — ruling: sparse checkpoint
+- Editor trinket built on garland (`github.com/phroun/garland`, a separate
+  module — see its own docs for the buffer's capabilities: in-place &
+  lock-free save, integrity triage/rebase, ephemeral cursors,
+  decorations-as-marks; syntax highlighting sketch in
+  `docs/syntax-highlighting-ideas.md` there — ruling: sparse checkpoint
   state marks, not one per line).

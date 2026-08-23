@@ -7,11 +7,20 @@ then press ENTER to follow it.
 
 [[How to Navigate Help]]
 
-=== Index of Topics ==
+=== Getting Started with mew ===
 
 [[How to Exit]]
 
-[[Command Line Arguments
+[[What is mew?]] [[Why is mew so weird?]]
+
+[[How to interpret Key Sequences]]
 
 [[Moving the Cursor]]
 
+== Index of Topics ==
+
+[[Command Line Arguments]]
+
+[[options:Editor Options|Editor Options]] [[Editor Commands]]
+
+[[PawScript]]

@@ -25,7 +25,7 @@ import (
 // ^C reaches this through the cancel command, but ONLY while the progress toast
 // is up. A find has no prompt and no visible mode once its first search has
 // begun — ^L simply goes to the next match — so there is nothing for a cancel to
-// mean, and JOE has no such notion either. The one exception is the search that
+// mean. The one exception is the search that
 // outran its grace period and put a message on screen saying which key stops it:
 // that message is a promise, and it is the whole reason cancel looks here at all
 // (see cancelFind).
@@ -36,7 +36,7 @@ const findToastTag = "find_progress"
 
 // findToastMessage is the progress toast; its TFC code resolves to whatever key
 // is bound to cancel, which is exactly the key that stops the search.
-const findToastMessage = "Searching (%keys#cancel.buffer_close% to cancel)..."
+const findToastMessage = "Searching (%keys#cancel.viewport_close% to cancel)..."
 
 // searchToastGrace is how long a background scan may run before its progress
 // toast appears — shared by the find and the incremental search. Nearly every
@@ -143,7 +143,7 @@ func (fr *findRun) running() bool {
 // cancelable only while it is BOTH still scanning and showing the message that
 // told the user which key stops it — everything else about a find is
 // promptless and modeless, so a cancel there would have nothing to act on and
-// would only steal the key from buffer_close.
+// would only steal the key from viewport_close.
 func (fr *findRun) cancelable() bool {
 	return fr != nil && fr.toasted && fr.running()
 }
@@ -356,13 +356,13 @@ func (e *Editor) dropFindToast() {
 
 // cancelFind stops a background find that is ASKING to be stopped, reporting
 // whether there was one. The cancel command consults it before reporting
-// failure, so a long search underway does not lose the ^C chain to buffer_close
+// failure, so a long search underway does not lose the ^C chain to viewport_close
 // and its "LOSE CHANGES" question.
 //
 // The condition is narrow on purpose. A find is not a mode: it has no prompt
-// once the first search has begun, ^L simply goes to the next match, and JOE has
-// no notion of an ongoing find to abandon — so ^C there should fall through to
-// whatever else it is bound to, exactly as it did before background find existed.
+// once the first search has begun and ^L simply goes to the next match, so there
+// is no ongoing find to abandon — ^C there should fall through to whatever else
+// it is bound to, exactly as it did before background find existed.
 // The single exception is the search slow enough to have put a message on screen
 // naming the cancel key. That message is a promise to the user, and honouring it
 // is the entire reason this function exists.

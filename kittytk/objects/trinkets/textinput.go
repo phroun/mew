@@ -14,6 +14,7 @@ import (
 // TextInput is a single-line text entry trinket.
 type TextInput struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	text        []rune
@@ -42,6 +43,22 @@ type TextInput struct {
 	// part of text until the platform commits it (which arrives as
 	// ordinary typed characters). See core/preedit.go.
 	preedit core.Preedit
+
+	// preeditAt is where the standing composition's region STARTS, and
+	// preeditStanding whether there is one. A plain index is enough here: this
+	// field owns every edit to its own runes, and the only one made while a
+	// composition stands lands at the caret, which is at or past the region's
+	// end. A document taking edits from elsewhere needs a cursor that tracks
+	// them instead.
+	//
+	// The region outlives the PAINTING. An input method closes its composition
+	// before it delivers the finished text, and a keystroke that dismisses a
+	// palette lands before the commit catches up — so a region measured back
+	// from the caret at commit time points at whatever was typed since, and one
+	// thrown away entirely leaves the commit appending. Both showed as a
+	// doubled letter.
+	preeditAt       int
+	preeditStanding bool
 
 	// Drag selection in progress (armed by a left press, extended by
 	// motion while the button is held).
@@ -92,6 +109,20 @@ func NewTextInput() *TextInput {
 		maxLength: -1, // No limit
 	}
 	t.TrinketBase = *core.NewTrinketBase()
+	t.SetCommands(
+		// Caret movement, and its with-selection twin for each direction.
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketBegOrSelectAll,
+		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd,
+		// Editing.
+		core.CmdTrinketDelPrior, core.CmdTrinketDelNext, core.CmdTrinketDelLine,
+		core.CmdTrinketSelectAll,
+		// Enter submits. A text field offers no edit command -- it IS the
+		// editor -- so Enter falls through to activate here.
+		core.CmdTrinketActivate,
+	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
 	t.SetAccessibleRole(core.RoleTextInput)
@@ -163,6 +194,15 @@ func (t *TextInput) SetEchoMode(mode EchoMode) {
 // IsReadOnly returns whether the input is read-only.
 func (t *TextInput) IsReadOnly() bool {
 	return t.readOnly
+}
+
+// AcceptsTextInput implements core.TextSink: this is the trinket that types.
+//
+// Not while it is read-only or disabled — a keystroke arriving there produces
+// no text, so an input method has nothing to compose FOR and should not be
+// left pointed at it.
+func (t *TextInput) AcceptsTextInput() bool {
+	return !t.readOnly && t.IsEnabled()
 }
 
 // SetReadOnly sets the read-only state.
@@ -288,12 +328,20 @@ func (t *TextInput) insert(text string) {
 		return
 	}
 
-	// Committed characters end whatever was being composed - this IS the
-	// commit, arriving as ordinary typed text. Clearing here rather than
+	// Committed characters end whatever was being PAINTED - this IS the
+	// commit, arriving as ordinary typed text. Cleared here rather than
 	// waiting for the empty TEXT_EDITING that usually follows means the
 	// preedit never briefly paints alongside the text it turned into,
 	// whichever order the platform sends the two events in.
-	t.preedit = core.Preedit{}
+	//
+	// Its REGION stands, though. A palette dismissed by typing lands the
+	// keystroke before the input method's commit catches up, and the accent
+	// still belongs where the composition was — throwing the region away here
+	// left the commit appending, "o.ò" for a letter that should have become
+	// "ò.". The platform gives the region up by cancelling, which it does
+	// whenever a keystroke ends a takeover; this is not the place to guess.
+	t.preedit.Text = nil
+	t.preedit.Caret = 0
 
 	// Delete selection first
 	t.deleteSelection()
@@ -568,6 +616,16 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// prefixWidth is the width, in units and device pixels, of the visible
 	// text before display index d - measured against the whole stable run.
+	//
+	// The pixel answer is measured in PIXELS, not measured in units and
+	// scaled. MeasureText rounds to whole units, which is the denomination
+	// the field is laid out in and the wrong one for a position inside the
+	// run: the glyphs rasterize at the unsnapped pixels-per-unit, so rounding
+	// at the unit and again at the pixel drifts by up to half a unit against
+	// the very glyphs the caret sits between. It shows wherever a rune's
+	// advance is a fraction of a unit - a space beside CJK text is about two
+	// and a half - where the caret after a second space landed short of the
+	// space it was meant to follow.
 	prefixWidth := func(d int) (core.Unit, int) {
 		if d < 0 {
 			d = 0
@@ -575,7 +633,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 		if d > n {
 			d = n
 		}
-		w := font.MeasureText(string(displayText[:d]))
+		run := string(displayText[:d])
+		w := font.MeasureText(run)
+		if px, ok := p.MeasureTextPx(run, font); ok {
+			return w, px
+		}
 		return w, p.UnitsToPx(w)
 	}
 
@@ -650,36 +712,49 @@ func (t *TextInput) Paint(p *core.Painter) {
 
 	// 3. Mark the input method's composition. Two signals, because one is
 	// not enough: the underline is the convention every platform uses for
-	// "not committed yet", and the caret's own color says whose text this
-	// is - the input method is still holding it, the way it is still
-	// holding the caret. Drawn in the same overstrike style as the
-	// selection, re-coloring the SAME run through a pixel clip so the
-	// composed glyphs never shift as the composition grows.
+	// "not committed yet", and its own color says whose text this is - the
+	// input method is still holding it, the way it is still holding the
+	// caret. Drawn in the same overstrike style as the selection,
+	// re-coloring the SAME run through a pixel clip so the composed glyphs
+	// never shift as the composition grows.
 	if composing {
-		barStyle := scheme.GetFocusedEditBoxBarCursor()
-		// The bar caret is a FILLED rectangle, so its color is the
-		// style's background; as text that color has to become the
-		// foreground.
-		preStyle := s.WithFg(barStyle.Bg).WithBg(style.ColorTransparent)
+		inactiveStyle := scheme.GetFocusedEditBoxIMEInactive()
+		clauseStyle := scheme.GetFocusedEditBoxIMEActiveClause()
+		// Only the foreground is read: the composition is overstruck on
+		// whatever the field is already showing. A rule, being a filled
+		// rectangle, wants that same color as its background instead.
+		preStyle := s.WithFg(inactiveStyle.Fg).WithBg(style.ColorTransparent)
+		rule := func(c style.Color) style.CellStyle {
+			return style.DefaultStyle().WithBg(c)
+		}
 		loX, loPx := prefixWidth(preLo)
 		_, hiPx := prefixWidth(preHi)
 
-		// The active clause - the segment the input method is converting
-		// right now - is underscored twice as thick. Input methods that
-		// report no clause get one even underline across the whole
-		// composition, which is the common case.
-		clauseLo, clauseHi := preLo, preLo
+		// The ACTIVE span: the clause the input method is converting right
+		// now, in the active color and underscored twice as thick, against
+		// the rest of the composition dimmed to the inactive one.
+		//
+		// A Japanese composition is several clauses and a candidate list
+		// converts one at a time, leaving the others as they were typed, so
+		// without the distinction those read as characters the composition
+		// failed to replace. An input method that reports NO clause is
+		// working on all of it, and the whole composition is the active
+		// span - same color, same thick rule. Only a composition that has a
+		// clause has anything to dim, which is why the dimmed pass below is
+		// skipped outright when there is none: nothing of it would show,
+		// and drawing the same glyphs twice composites their edges twice.
+		clauseLo, clauseHi := preLo, preHi
 		if t.preedit.ClauseLen > 0 {
 			clauseLo = clampIdx(preLo + t.preedit.ClauseStart)
 			clauseHi = clampIdx(clauseLo + t.preedit.ClauseLen)
 		}
+		hasInactive := clauseLo > preLo || clauseHi < preHi
 
 		if usePx {
-			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), preStyle, font)
 			// Underline as an explicit rule rather than the font's own:
 			// it has to sit at a known offset below the line so the thick
-			// clause rule can share the same baseline, and a font
-			// underline gives no say in either.
+			// active rule can share the same baseline, and a font underline
+			// gives no say in either.
 			thin := p.DeviceScale()
 			if thin < 1 {
 				thin = 1
@@ -689,24 +764,40 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if ruleY < 0 {
 				ruleY = 0
 			}
-			p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin, barStyle)
+			if hasInactive {
+				p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText),
+					preStyle, font)
+				p.FillRectPixels(0, 0, loPx, ruleY, hiPx-loPx, thin,
+					rule(inactiveStyle.Fg))
+			}
 			if clauseHi > clauseLo {
 				_, cLoPx := prefixWidth(clauseLo)
 				_, cHiPx := prefixWidth(clauseHi)
+				// Clipped from the WHOLE composition rather than drawn as
+				// its own run, so the active span changes color without
+				// being re-shaped - a substring shapes differently than the
+				// same characters mid-run, and it would jitter as the
+				// candidate list is walked.
+				p.DrawTextOffsetClipped(0, 0, 0, cLoPx, cHiPx, string(displayText),
+					s.WithFg(clauseStyle.Fg).WithBg(style.ColorTransparent), font)
+				p.FillRectPixels(0, 0, cLoPx, ruleY, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
 				if y := ruleY - thin; y >= 0 {
-					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, barStyle)
+					p.FillRectPixels(0, 0, cLoPx, y, cHiPx-cLoPx, thin, rule(clauseStyle.Fg))
 				}
 			}
 		} else {
 			// Cell surfaces have no sub-cell rule to draw, so the
-			// underline is the attribute and the clause is what stands
-			// out - bold against the rest of the composition.
+			// underline is the attribute and the active span carries its
+			// color and bold weight instead of a thicker rule.
 			cellStyle := preStyle.WithAttrs(style.StyleUnderline)
-			p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+			if hasInactive {
+				p.DrawText(loX, 0, string(displayText[preLo:preHi]), cellStyle, font)
+			}
 			if clauseHi > clauseLo {
 				cLoX, _ := prefixWidth(clauseLo)
 				p.DrawText(cLoX, 0, string(displayText[clauseLo:clauseHi]),
-					cellStyle.WithAttrs(style.StyleUnderline|style.StyleBold), font)
+					cellStyle.WithFg(clauseStyle.Fg).
+						WithAttrs(style.StyleUnderline|style.StyleBold), font)
 			}
 		}
 	}
@@ -899,17 +990,45 @@ func (t *TextInput) composedText() (runes []rune, preLo, preHi, caret int) {
 		return display, at, at, at
 	}
 
+	// What the composition was opened OVER is hidden while it stands. macOS's
+	// palette commits the held letter and only then opens over it, so without
+	// this the field shows both at once — the letter and the accent that was
+	// chosen to take its place, side by side — for as long as the palette is
+	// up. Cancelling ends the composition and the letter is simply there
+	// again; nothing was deleted to hide it.
+	//
+	// Placed at the region rather than back from the caret: the caret may have
+	// moved on since the composition opened.
+	from := t.preeditAt
+	if from < 0 {
+		from = 0
+	}
+	if from > len(display) {
+		from = len(display)
+	}
+	to := from + t.preedit.Covers
+	if to > len(display) {
+		to = len(display)
+	}
+
 	pre := t.echo(t.preedit.Text)
 	out := make([]rune, 0, len(display)+len(pre))
-	out = append(out, display[:at]...)
+	out = append(out, display[:from]...)
 	out = append(out, pre...)
-	out = append(out, display[at:]...)
+	out = append(out, display[to:]...)
 
 	inner := t.preedit.Caret
 	if inner > len(pre) {
 		inner = len(pre)
 	}
-	return out, at, at + len(pre), at + inner
+	caret = from + inner
+	if at > to {
+		// The caret has moved past the composition — something was typed
+		// beside it. It keeps its distance from the region's end, over the
+		// composition's length rather than the covered text's.
+		caret = from + len(pre) + (at - to)
+	}
+	return out, from, from + len(pre), caret
 }
 
 // truncateToWidth truncates text to fit within the given width using font metrics.
@@ -941,14 +1060,23 @@ func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 		return t.scrollOffset
 	}
 
-	var accumulatedWidth core.Unit
-	for i, r := range displayText {
-		charWidth := font.MeasureText(string(r))
-		// Check if x is within this character's bounds
-		if x < accumulatedWidth+charWidth/2 {
+	// Measured as PREFIXES of the run, which is how the caret is placed
+	// (prefixWidth), so a click puts the caret where the click was.
+	//
+	// Summing each rune's width on its own rounds every one of them to a whole
+	// unit and the error compounds along the line - a space is about two and a
+	// half units beside CJK text, so every one of them was over-counted by
+	// half - and a rune measured alone is not the width it has in the run
+	// anyway.
+	var before core.Unit
+	for i := range displayText {
+		after := font.MeasureText(string(displayText[:i+1]))
+		// The nearer edge wins: past the middle of a character is the position
+		// after it.
+		if x < (before+after)/2 {
 			return t.scrollOffset + i
 		}
-		accumulatedWidth += charWidth
+		before = after
 	}
 	// x is past all characters
 	return t.scrollOffset + len(displayText)
@@ -959,24 +1087,25 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 	// Any keystroke makes the caret immediately visible.
 	t.resetCaretBlink()
 
-	// Both backends deliver navigation keys with their "S-" prefix
-	// intact (e.g. "S-Left") alongside the parsed modifier. Fold the
-	// prefix into the bare name so shift-extends the selection; the
-	// caret-anchor logic in each case reads Modifiers. Control/Meta
-	// spellings ("^A", "C-S-a") stay literal - they are matched whole.
-	key := event.Key
-	switch key {
-	case "S-Left", "S-Right", "S-Home", "S-End", "S-Up", "S-Down":
-		event.Modifiers |= core.ShiftModifier
-		key = key[2:]
+	// Every movement has a with-selection twin, which is a modifier axis
+	// rather than a set of unrelated actions: the two forms share a case and
+	// differ only in whether the caret drags the anchor with it. This used to
+	// be a fold of the "S-" prefix into the bare name plus a read of the
+	// modifier bitfield; the command says it directly now.
+	cmd := t.KeyCommand(event.Key)
+	extend := false
+	switch cmd {
+	case core.CmdTrinketSelLeft, core.CmdTrinketSelRight,
+		core.CmdTrinketSelUp, core.CmdTrinketSelDown,
+		core.CmdTrinketSelBeg, core.CmdTrinketSelEnd:
+		extend = true
 	}
 
-	// Handle special keys
-	switch key {
-	case "Left":
+	switch cmd {
+	case core.CmdTrinketItemLeft, core.CmdTrinketSelLeft:
 		if t.cursorPos > 0 {
 			t.cursorPos--
-			if event.Modifiers&core.ShiftModifier == 0 {
+			if !extend {
 				t.selStart = t.cursorPos
 				t.selEnd = t.cursorPos
 			} else {
@@ -984,7 +1113,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 			t.ensureCursorVisible()
 			t.Update()
-		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+		} else if !extend && t.HasSelection() {
 			// Caret already at the beginning: a plain Left can't move, so it
 			// just collapses any selection (leaving the caret at the start).
 			t.selStart = t.cursorPos
@@ -993,10 +1122,10 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right":
+	case core.CmdTrinketItemRight, core.CmdTrinketSelRight:
 		if t.cursorPos < len(t.text) {
 			t.cursorPos++
-			if event.Modifiers&core.ShiftModifier == 0 {
+			if !extend {
 				t.selStart = t.cursorPos
 				t.selEnd = t.cursorPos
 			} else {
@@ -1004,7 +1133,7 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 			}
 			t.ensureCursorVisible()
 			t.Update()
-		} else if event.Modifiers&core.ShiftModifier == 0 && t.HasSelection() {
+		} else if !extend && t.HasSelection() {
 			// Caret already at the end: a plain Right can't move, so it just
 			// collapses any selection (leaving the caret at the end).
 			t.selStart = t.cursorPos
@@ -1013,9 +1142,30 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBegOrSelectAll:
+		// Already at the beginning with nothing selected selects all and puts
+		// the caret at the end. That is exactly the case where going to the
+		// beginning would do nothing at all, so the second meaning costs the
+		// key nothing. Otherwise it is a plain move, which is why this falls
+		// through to the same body below.
+		if t.cursorPos == 0 && !t.HasSelection() {
+			t.selStart = 0
+			t.selEnd = len(t.text)
+			t.cursorPos = t.selEnd
+			t.ensureCursorVisible()
+			t.Update()
+			return true
+		}
 		t.cursorPos = 0
-		if event.Modifiers&core.ShiftModifier == 0 {
+		t.selStart = 0
+		t.selEnd = 0
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+
+	case core.CmdTrinketBeg, core.CmdTrinketSelBeg:
+		t.cursorPos = 0
+		if !extend {
 			t.selStart = 0
 			t.selEnd = 0
 		} else {
@@ -1025,9 +1175,9 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd, core.CmdTrinketSelEnd:
 		t.cursorPos = len(t.text)
-		if event.Modifiers&core.ShiftModifier == 0 {
+		if !extend {
 			t.selStart = t.cursorPos
 			t.selEnd = t.cursorPos
 		} else {
@@ -1037,21 +1187,21 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.Update()
 		return true
 
-	case "Backspace":
+	case core.CmdTrinketDelPrior:
 		t.backspace()
 		return true
 
-	case "Delete":
+	case core.CmdTrinketDelNext:
 		t.delete()
 		return true
 
-	case "Enter":
+	case core.CmdTrinketActivate:
 		if t.onReturnPressed != nil {
 			t.onReturnPressed()
 		}
 		return true
 
-	case "^U":
+	case core.CmdTrinketDelLine:
 		// Clear line
 		t.text = nil
 		t.cursorPos = 0
@@ -1061,71 +1211,33 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.textChanged()
 		return true
 
-	case "M-a":
-		// Select all (Meta+A)
+	case core.CmdTrinketSelectAll:
+		// Select all (Mega+A)
 		t.SelectAll()
 		return true
 
-	case "^A":
-		if event.Modifiers&core.ShiftModifier != 0 {
-			// Shift+Ctrl+A: extend the selection to the beginning.
-			t.cursorPos = 0
-			t.selEnd = 0
-			t.ensureCursorVisible()
-			t.Update()
-			return true
-		}
-		// Home cycle (Emacs C-a, with a convenience twist): a two-state toggle.
-		// Already at the beginning with nothing selected -> select all, caret to
-		// the end. Anywhere else (including with all selected) -> caret to the
-		// beginning, clearing any selection.
-		if t.cursorPos == 0 && !t.HasSelection() {
-			t.selStart = 0
-			t.selEnd = len(t.text)
-			t.cursorPos = t.selEnd
-		} else {
-			t.cursorPos = 0
-			t.selStart = 0
-			t.selEnd = 0
-		}
-		t.ensureCursorVisible()
-		t.Update()
-		return true
+	}
 
-	case "^E":
-		// Go to end (Emacs binding)
-		t.cursorPos = len(t.text)
-		if event.Modifiers&core.ShiftModifier == 0 {
-			t.selStart = t.cursorPos
-			t.selEnd = t.cursorPos
-		} else {
-			t.selEnd = t.cursorPos
+	// Handle printable characters, in the order mew's own floor uses.
+	//
+	// What the host watched this keyboard type comes first, and for every
+	// chord: it saw both halves of the keystroke and this trinket sees only the
+	// name. An observation of nothing is an answer too — a dead key arms an
+	// accent and produces no character — so a chord that was watched is settled
+	// here either way.
+	if text, observed := core.KeyChordTextFor(t, event.Key); observed {
+		if utf8.RuneCountInString(text) == 1 {
+			t.insert(text)
 		}
-		t.ensureCursorVisible()
-		t.Update()
-		return true
-
-	case "C-S-a", "C-S-A":
-		// Shift+Ctrl+A: extend the selection to the beginning (the
-		// anchor is wherever the caret was when the selection began).
-		t.cursorPos = 0
-		t.selEnd = 0
-		t.ensureCursorVisible()
-		t.Update()
-		return true
-
-	case "C-S-e", "C-S-E":
-		// Shift+Ctrl+E: extend the selection to the end.
-		t.cursorPos = len(t.text)
-		t.selEnd = t.cursorPos
-		t.ensureCursorVisible()
-		t.Update()
 		return true
 	}
 
-	// Handle printable characters
-	if event.Text != "" && utf8.RuneCountInString(event.Text) == 1 {
-		t.insert(event.Text)
+	// Nothing watched it. A one-character KeyName IS the character, which is
+	// the answer wherever there is no host to ask — the terminal backend, where
+	// a keystroke arrives already named and there is no second event to
+	// observe.
+	if utf8.RuneCountInString(event.Key) == 1 {
+		t.insert(event.Key)
 		return true
 	}
 
@@ -1342,16 +1454,140 @@ func (t *TextInput) HandleTextEditing(event core.TextEditingEvent) bool {
 	}
 
 	next := core.PreeditFrom(event)
-	if !next.Active() && !t.preedit.Active() {
+	if !next.Active() && !t.preedit.Active() && !t.preeditStanding {
 		// Input methods send an empty update to end a composition, and
 		// some send one when nothing was composing at all. Repainting
 		// for that would wake the whole surface for no visible change.
 		return true
 	}
+	switch {
+	case next.Active() && !t.preeditStanding:
+		// Opening: the region is fixed here, from where the caret is now.
+		from := t.cursorPos - next.Covers
+		if from < 0 {
+			from, next.Covers = 0, t.cursorPos
+		}
+		t.preeditAt, t.preeditStanding = from, true
+	case !next.Active() && next.Covers == 0:
+		// A cancel says it covers NOTHING, which is what tells it apart from a
+		// composition merely ending on its way to a commit.
+		t.preeditStanding = false
+	case !next.Active():
+		// Ended, still standing over its region: keep Covers, stop painting.
+		next.Covers = t.preedit.Covers
+	}
 	t.preedit = next
 
 	// Composing is typing: the caret should be solid and in view, the
 	// same as it is for a keystroke.
+	t.resetCaretBlink()
+	t.ensureCursorVisible()
+	t.Update()
+	return true
+}
+
+// HandleTextCommit implements core.TextCommitHandler: it takes a finished
+// composition into the text.
+//
+// The composition's own extent is what makes this more than insert. macOS's
+// press-and-hold palette commits the held letter the moment the key goes down,
+// so choosing an accent has to remove a character that is already in the field.
+// The composition has been standing over that character and hiding it, so the
+// region is already known here — nothing about it has to arrive on the event.
+//
+// The removal is a plain edit rather than a synthesized Backspace on purpose.
+// A Backspace would run whatever the user has bound to that key, which need
+// not be an erase at all.
+//
+// A read-only or disabled field declines, so the commit is dropped rather than
+// landing somewhere it could never be typed.
+func (t *TextInput) HandleTextCommit(event core.TextCommitEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+
+	// What the composition covered is what this replaces, at the REGION it
+	// stood on rather than back from the caret: the caret may have moved on
+	// since, and the accent still belongs where the letter was.
+	from, covers, standing := t.preeditAt, t.preedit.Covers, t.preeditStanding
+	t.preedit = core.Preedit{}
+	t.preeditStanding = false
+
+	trailing := 0
+	if standing && covers > 0 && t.selStart == t.selEnd {
+		// Only what is actually there. A selection is left to insert, which
+		// deletes it — taking these runes as well would erase text beside the
+		// composition that it was never standing over.
+		if from < 0 {
+			from = 0
+		}
+		to := from + covers
+		if to > len(t.text) {
+			to = len(t.text)
+		}
+		if to > from {
+			// How much was typed BESIDE the composition, so the caret can be put
+			// back after it once the region's length changes.
+			if trailing = t.cursorPos - to; trailing < 0 {
+				trailing = 0
+			}
+			t.text = append(t.text[:from], t.text[to:]...)
+			t.cursorPos = from
+			t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+		}
+	}
+
+	t.insert(event.Text)
+	if trailing > 0 {
+		// Back to where the person typing left it, on the far side of what they
+		// typed while the palette was up.
+		t.cursorPos += trailing
+		if t.cursorPos > len(t.text) {
+			t.cursorPos = len(t.text)
+		}
+		t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+	}
+	t.resetCaretBlink()
+	t.ensureCursorVisible()
+	t.Update()
+	return true
+}
+
+// HandleTextErase implements core.TextEraseHandler: it takes text back out on
+// an input method's behalf.
+//
+// A plain edit, not a synthesized Backspace, for the same reason the platform
+// sent this instead of the key it arrived on: a Backspace would run whatever
+// the user has bound to that key.
+//
+// A selection is deleted whole and the count ignored, the same rule a commit
+// follows: the selection is a region the user can see, and the count is about
+// text beside it.
+func (t *TextInput) HandleTextErase(event core.TextEraseEvent) bool {
+	if t.readOnly || !t.IsEnabled() {
+		return false
+	}
+	if t.selStart != t.selEnd {
+		t.deleteSelection()
+		t.resetCaretBlink()
+		t.ensureCursorVisible()
+		t.Update()
+		return true
+	}
+	n := event.Count
+	if n < 1 {
+		n = 1
+	}
+	if n > t.cursorPos {
+		n = t.cursorPos
+	}
+	if n == 0 {
+		return true
+	}
+	t.text = append(t.text[:t.cursorPos-n], t.text[t.cursorPos:]...)
+	t.cursorPos -= n
+	t.selStart, t.selEnd = t.cursorPos, t.cursorPos
+	t.textChanged()
 	t.resetCaretBlink()
 	t.ensureCursorVisible()
 	t.Update()

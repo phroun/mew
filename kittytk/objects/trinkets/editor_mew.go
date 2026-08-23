@@ -88,10 +88,21 @@ type Editor struct {
 	// read-only buffer holds focus.
 	readOnlyFocused atomic.Bool
 
+	// preeditCovers is how many committed characters the standing composition
+	// was opened over. The commit that ends it replaces exactly those, and does
+	// not carry the number itself — see HandleTextEditing.
+	preeditCovers int
+
 	// helpOpen mirrors whether mew's built-in help window is open
 	// (WithHelpState), so a host can keep a "Quick Help" checkmark in sync
 	// (QuickHelpOpen).
 	helpOpen atomic.Bool
+
+	// unsaved mirrors whether ANY buffer the session holds open is modified
+	// (WithUnsavedState). It is the question a frame asks before closing this
+	// editor's window: work at stake is why a close is refused and answered
+	// with mew's own prompt instead (HasUnsavedWork, RequestClose).
+	unsaved atomic.Bool
 
 	// launchArgv, when set by the host, runs the session as a full mew
 	// command-line launch (multi-file, per-file options, +N) via mew.EditArgv,
@@ -108,6 +119,7 @@ type Editor struct {
 	// Event hooks, wired by the protocol bind.
 	onCommit func(value, filename string)
 	onCancel func()
+	onDirty  func(unsaved bool)
 
 	// port injects editor commands into the running mew session from UI
 	// threads (Edit-menu and context-menu items): each Execute marshals
@@ -120,12 +132,14 @@ type Editor struct {
 	termOut     chan string
 	termOutOnce sync.Once
 
-	// termGridWant is the LATEST grid each hosted surface has settled on,
+	// termGridWant is the LATEST window each hosted surface has settled on -
+	// cols, rows, and the pane's pixels, because the child is told all four and
+	// any of them can move without the others (see termGrid) -
 	// waiting to be told to mew. A latch rather than a queue entry because a
 	// grid is a fact, not an event: superseded values are worthless and the
 	// current one must not be dropped under pressure the way input bytes may
 	// be — a dropped grid leaves the guest wrapping forever.
-	termGridWant map[string][2]int
+	termGridWant map[string][4]int
 	termGridWake chan struct{}
 
 	// hostedKids are the child terminals parented to this editor (see
@@ -196,7 +210,53 @@ func NewEditor() *Editor {
 	// click re-focuses it. Same pattern the placeholder editor uses.
 	e.Init(e)
 	e.SetEditorMode(true)
+	e.SetKeyRegistry(capturedEditorKeys())
 	return e
+}
+
+// capturedKeys is the keymap a mew editor takes the keyboard on: mew's own
+// bindings are mew's business, so the toolkit keeps only the keys that reach
+// the HOST's chrome and leaves everything else to the guest.
+var (
+	capturedKeysOnce sync.Once
+	capturedKeys     *core.KeyRegistry
+)
+
+// capturedEditorKeys is the "captured" registry a mew editor declares.
+//
+// mew has a keymap of its own -- a whole editor's worth, with chords the
+// toolkit knows nothing about -- so while it holds the focus, the toolkit's
+// table must not take keys off the top of it: ^Q is mew's quit, ^W is mew's,
+// and a host that resolved them first would be answering for the wrong
+// program. Declaring a registry with almost nothing in it is how a trinket
+// says that (see core/keyscope.go): whatever is not bound here is not bound
+// anywhere above it either, and the keystroke arrives at mew.
+//
+// What it DOES keep is the way back out: the menu key and the help key, which
+// reach the host's own chrome and would otherwise be unreachable from the
+// keyboard while the editor has the focus. Their spellings are taken from the
+// live default registry rather than written out again, so a host that rebinds
+// the menu key in its ini keeps that binding here too. (Menu ACCELERATORS -
+// the M-* chords - need no help: the bar publishes those into whatever context
+// is current, so they keep working regardless of which registry built it.)
+//
+// Built once, on the first editor: by then a host has applied its own keymap,
+// so the spellings this copies are the ones actually in force.
+func capturedEditorKeys() *core.KeyRegistry {
+	capturedKeysOnce.Do(func() {
+		host := core.DefaultKeyRegistry()
+		var shared []core.Binding
+		for _, cmd := range []string{core.CmdAppMenu, core.CmdAppHelp} {
+			keys := host.KeysFor(cmd) // newest (most advertised) first
+			// Written back in the order the host had them, so the key this
+			// advertises for the command is the one the host advertises.
+			for i := len(keys) - 1; i >= 0; i-- {
+				shared = append(shared, core.Binding{Key: keys[i], Commands: []string{cmd}})
+			}
+		}
+		capturedKeys = core.NewKeyRegistry("captured", shared)
+	})
+	return capturedKeys
 }
 
 // --- Contract property setters (bound by editor_protocol_mew.go) ---
@@ -214,6 +274,24 @@ func (e *Editor) SetCaret(s string)       { e.caret = s }
 
 func (e *Editor) SetOnCommit(fn func(value, filename string)) { e.onCommit = fn }
 func (e *Editor) SetOnCancel(fn func())                       { e.onCancel = fn }
+
+// SetOnDirty installs the observer for the session's unsaved-work state,
+// backing the wire's `dirty` event.
+//
+// It reports the SAME question HasUnsavedWork answers — whether ANY buffer
+// the session holds open is modified, the work stacked behind a link follow
+// included — because that is the only modified state mew publishes today
+// (mew.WithUnsavedState).
+//
+// That is broader than the app's own document, and the difference is
+// visible: follow a link out of the document the app opened, edit what you
+// land on, and `dirty` goes to 1 for a change the app cannot account for to
+// its user. The two questions have different audiences — HasUnsavedWork
+// guards a window close and SHOULD span every buffer, while `dirty` is read
+// by an app tracking the one document it handed over — so scoping this to
+// the launch document wants a per-document callback out of mew's editor
+// core. Until then, session-wide and documented is better than silent.
+func (e *Editor) SetOnDirty(fn func(unsaved bool)) { e.onDirty = fn }
 
 // SetFileSystem / SetMewFileSystem let a host (not the app) inject the brokered
 // filesystem for this session before it starts.
@@ -393,6 +471,15 @@ func (e *Editor) run() {
 		// its session goroutine; postUI marshals onto the desktop loop,
 		// where SetClipboard and the (possibly async) ReadClipboardAsync
 		// are safe. The paste delivery then marshals back into mew.
+		// What this keyboard was watched typing for a chord. The platform
+		// sees both halves of such a keystroke and mew sees neither — it is
+		// handed the chord as bytes — so the answer has to travel.
+		mew.WithKeyChordText(func(chord string) (string, bool) {
+			if d := e.findDesktop(); d != nil {
+				return d.KeyChordText(chord)
+			}
+			return "", false
+		}),
 		mew.WithClipboard(
 			func(s string) {
 				e.postUI(func() {
@@ -426,6 +513,20 @@ func (e *Editor) run() {
 		// "Quick Help" menu checkmark in sync (QuickHelpOpen).
 		mew.WithHelpState(func(open bool) {
 			e.helpOpen.Store(open)
+		}),
+		// Whether the session holds modified work anywhere - the active
+		// buffers and the work stacked behind a link follow alike - so a
+		// window holding this editor can refuse a close over it.
+		mew.WithUnsavedState(func(unsaved bool) {
+			e.unsaved.Store(unsaved)
+			// Same transition, two consumers: the frame asks
+			// HasUnsavedWork before closing, and a subscribed app hears
+			// it as the wire's `dirty` event. mew calls this once at the
+			// first render and thereafter only on transitions, so this
+			// does not need its own edge detection.
+			if e.onDirty != nil {
+				e.onDirty(unsaved)
+			}
 		}),
 		// The mouse-pointer affordance: an arrow over link buttons (and
 		// while one is captured), the I-beam otherwise. See CursorShapeAt.
@@ -778,6 +879,29 @@ func (e *Editor) Execute(cmd string) { e.execMew(cmd) }
 // menu checkmark in sync with it.
 func (e *Editor) QuickHelpOpen() bool { return e.helpOpen.Load() }
 
+// HasUnsavedWork reports whether the session holds modified work — every
+// buffer it has open, including the ones stacked behind a link follow, not
+// just what is on screen (mirrored from mew via WithUnsavedState). A window
+// holding this editor asks before closing: this is the whole reason a close
+// becomes a question instead of an act.
+func (e *Editor) HasUnsavedWork() bool { return e.unsaved.Load() }
+
+// RequestClose asks the session to close everything it holds — mew's
+// session_close, which walks the viewports and raises mew's own lose-changes
+// prompt over each piece of unsaved work. It reports whether the session TOOK
+// the question on; when it did, the caller must NOT close the window, because
+// the answer belongs to the user and arrives later: a session that closes out
+// ends and fires commit, which is what closes the window for real.
+//
+// False means there was no live session to ask (before it starts, or after it
+// ends), so the caller may close outright.
+func (e *Editor) RequestClose() bool {
+	if e.port == nil {
+		return false
+	}
+	return e.port.Execute("session_close")
+}
+
 // Copy places mew's marked block on the system clipboard.
 func (e *Editor) Copy() { e.execMew("os_copy") }
 
@@ -792,6 +916,150 @@ func (e *Editor) Paste() { e.execMew("os_paste") }
 
 // SelectAll marks the whole mew buffer as the block.
 func (e *Editor) SelectAll() { e.execMew("os_select_all") }
+
+// HandleTextEditing implements core.TextEditingHandler: it shows what an input
+// method is still composing, painted at mew's caret and not put in the
+// document.
+//
+// mew synthesizes it into the line when that line is prepared for display — the
+// same bargain a control character strikes by being painted "^X" without the
+// buffer holding two runes — so nothing provisional reaches the buffer or its
+// undo history. An input method rewrites the whole composition on every
+// keystroke, and each of those would otherwise be an edit to take back.
+//
+// The caret rides in because it is the input method's own, not mew's: it shows
+// how far through a long composition the user is, and parking at either end
+// would claim the composition was finished.
+//
+// So does the CLAUSE, for the same kind of reason. A Japanese composition is
+// several clauses and a candidate list converts one of them at a time, leaving
+// the others as they were typed — "らなに" becomes "羅なに", and the "なに" is
+// the input method's text rather than something left behind. mew paints the
+// clause apart from the rest, which is the only thing that says so.
+func (e *Editor) HandleTextEditing(event core.TextEditingEvent) bool {
+	p := core.PreeditFrom(event)
+	// Remembered because the commit will need it and will not carry it: a
+	// composition replaces what it stood OVER, and this is the side that knows
+	// what that was. mew paints the composition over those characters in the
+	// meantime, so the two agree about the region without either being told
+	// twice.
+	e.preeditCovers = p.Covers
+	core.KeyTracef("2 mew      preedit %q caret=%d covers=%d clause=%d+%d",
+		string(p.Text), p.Caret, p.Covers, p.ClauseStart, p.ClauseLen)
+	e.execMew(fmt.Sprintf("preedit '%s', %d, %d, %d, %d",
+		escapeMewLiteral(string(p.Text)), p.Caret, p.Covers,
+		p.ClauseStart, p.ClauseLen))
+	return true
+}
+
+// HandleTextCommit implements core.TextCommitHandler: it takes a finished
+// composition into the document, replacing what it stands in for.
+//
+// It goes by HostPort rather than down the keystroke wire, beside os_paste and
+// for the same reason. A commit is not a keystroke — the digit, arrow or Return
+// that chose the character belonged to the input method — so encoding it as
+// terminal bytes for the child to re-parse as keys would put it through a
+// keymap it has no business in, and there is nowhere in that stream to say how
+// many characters it replaces.
+//
+// What it stands in for is what the COMPOSITION covered, remembered from
+// HandleTextEditing rather than carried on this event. macOS's press-and-hold
+// palette commits the held letter the moment the key goes down, so choosing an
+// accent has to remove a character already in the document — and the extent of
+// that was settled when the composition opened, which is also when mew started
+// painting over it.
+//
+// Always claimed, because the answer cannot come back: Execute is asynchronous
+// and reports only that the command was queued. Declining here would send the
+// text a second time as an ordinary keystroke.
+func (e *Editor) HandleTextCommit(event core.TextCommitEvent) bool {
+	covers := e.preeditCovers
+	e.preeditCovers = 0
+	core.KeyTracef("2 mew      commit  %q covers=%d", event.Text, covers)
+	for _, cmd := range commitCommands(event.Text, covers) {
+		e.execMew(cmd)
+	}
+	return true
+}
+
+// HandlePaste implements core.PasteHandler: text the host received as a paste
+// goes into the document.
+//
+// Nothing implemented this, so a bracketed paste the toolkit read off the wire
+// reached the focused editor and stopped: the routing hands a PasteEvent to the
+// focused trinket and asks whether it is a PasteHandler, and this one answered
+// no. Composed text framed as a paste — which is how one terminal delivers a
+// press-and-hold palette's result — was dropped the same way.
+//
+// Down the port's paste path rather than as a command built around the text, so
+// it arrives with what a paste is entitled to: line endings normalised, the
+// read-only gate checked where the insertion happens, and the whole of it in
+// ONE undo revision.
+//
+// Always claimed, for the same reason the commit above is: the answer cannot
+// come back, and declining would send the text a second time.
+func (e *Editor) HandlePaste(event core.PasteEvent) bool {
+	core.KeyTracef("2 mew      paste   %q", event.Text)
+	if e.port != nil {
+		e.port.Paste(event.Text)
+	}
+	return true
+}
+
+// HandleTextErase implements core.TextEraseHandler: it takes text back out on
+// an input method's behalf.
+//
+// replace_prior with nothing to put in, because that command already knows what
+// erasing means in either place mew shows: characters out of a document, or the
+// child's own erase byte down a terminal session. A key event would have run
+// whatever is bound to Backspace instead, which is the whole reason the toolkit
+// sent this rather than the key it arrived on.
+func (e *Editor) HandleTextErase(event core.TextEraseEvent) bool {
+	n := event.Count
+	if n < 1 {
+		n = 1
+	}
+	core.KeyTracef("2 mew      erase   %d", n)
+	e.execMew(fmt.Sprintf("replace_prior %d, ''", n))
+	return true
+}
+
+// commitCommands is what a finished composition tells mew to do, in order.
+//
+// Ending the composition comes FIRST and always. A commit ends one by
+// definition, and mew has to be told rather than left to infer it from a later
+// event: on the route where the palette is confirmed by number, the toolkit's
+// own composition is the only one there is and nothing follows the commit to
+// close it. Left standing, the letter underneath kept painting as provisional
+// text for good, with the typing running on past it.
+//
+// The replacement is comma-separated, which is how PawScript takes more than
+// one argument (see mew's own `map <key>, <command>`). Without it the two run
+// together into a single string and the count is lost inside the text.
+func commitCommands(text string, covers int) []string {
+	// preedit_commit, not replace_prior: mew tracks the composition's region
+	// with a cursor of its own, and that is what the finished text stands in
+	// for. Counting back from the caret gets it wrong the moment anything is
+	// typed while the palette is up — dismissing it by typing lands the
+	// keystroke first, and the accent then replaced THAT rather than the
+	// letter: "oò" with the keystroke eaten.
+	//
+	// The command ends the composition itself, so nothing has to follow it: on
+	// the route where the palette is confirmed by number no empty update ever
+	// arrives to do that.
+	return []string{fmt.Sprintf("preedit_commit '%s'", escapeMewLiteral(text))}
+}
+
+// escapeMewLiteral makes text safe inside a single-quoted PawScript literal, so
+// a composed quote or backslash cannot break out of the command being built.
+func escapeMewLiteral(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\t", "\\t")
+	return s
+}
 
 // CutEnabled overrides the embedded terminal's "never": a mew document's
 // block CAN be cut — unless the focused buffer is read-only (mirrored from
@@ -942,6 +1210,13 @@ func (e *Editor) ptyProvider(req mew.PTYRequest) (mew.PTYSession, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Tell the child how big its window is in PIXELS as well as cells. A
+	// program drawing characters never asks; one drawing PICTURES sizes its
+	// viewport from TIOCGWINSZ rather than querying the terminal, and a
+	// window reported as 0x0 pixels leaves it running and rendering nothing.
+	// That is exactly how a browser in the terminal (awrit) fails here while
+	// chafa, which only writes escapes, is fine.
+	sess = withPixelWinsize(sess, e.childWindowPx)
 	// Input written to the child wakes its caret: mew owns this session, so
 	// the trinket's own input path never sees it. See editor_mew_blink.go.
 	return e.wakeOnWrite(sess), nil
@@ -1598,6 +1873,18 @@ func (e *Editor) terminalMouse(id string, ev mew.TerminalMouse) ([]byte, bool) {
 	e.applyHostedTileFrame(t, g, cw, ch)
 	fracX, fracY, precise := preciseHostedLocal(px, py, pvalid, col, row, cw, ch, ev)
 
+	// The middle of the round trip, which neither end's trace can show: the
+	// host reports the pointer to mew, mew decides which viewport it landed in
+	// and calls back here with a CHILD-LOCAL cell. A wrong cell arriving here
+	// is mew's routing; a right cell leaving here wrongly placed is the tile
+	// resolution or the sub-cell fraction below it.
+	if core.MouseTracing() {
+		core.MouseTracef("route  who=%p ev=(col=%d,row=%d act=%v btn=%v) tile=(col=%d,row=%d %dx%d valid=%v) ptr=(%v,%v valid=%v) frac=(%.3f,%.3f precise=%v)",
+			t, ev.Col, ev.Row, ev.Action, ev.Button,
+			g.col, g.row, g.width, g.height, g.valid,
+			px, py, pvalid, fracX, fracY, precise)
+	}
+
 	handled := dispatchHostedMouse(t, ev, fracX, fracY, precise)
 
 	e.termMu.Lock()
@@ -1699,15 +1986,26 @@ func (e *Editor) termGrid(id string, cols, rows int) {
 	if cols <= 0 || rows <= 0 {
 		return
 	}
+	// The child's window in PIXELS, read BEFORE the lock: childWindowPx takes
+	// termMu itself, and this mutex does not nest.
+	//
+	// It is part of the declaration and not merely a detail of it. A pane can
+	// change the pixels under an unchanged grid — the display density arriving
+	// after the first paint, a zoom step too small to gain or lose a column —
+	// and a latch keyed on cells alone calls that a repeat and drops it. The
+	// child is then left sizing its pictures to a window it no longer has.
+	pxW, pxH := e.childWindowPx()
+
 	e.termMu.Lock()
 	if e.termGridWant == nil {
-		e.termGridWant = make(map[string][2]int)
+		e.termGridWant = make(map[string][4]int)
 	}
-	if prev, ok := e.termGridWant[id]; ok && prev[0] == cols && prev[1] == rows {
+	want := [4]int{cols, rows, pxW, pxH}
+	if prev, ok := e.termGridWant[id]; ok && prev == want {
 		e.termMu.Unlock()
 		return
 	}
-	e.termGridWant[id] = [2]int{cols, rows}
+	e.termGridWant[id] = want
 	wake := e.termGridWake
 	e.termMu.Unlock()
 	if wake == nil {
@@ -1800,7 +2098,7 @@ func dispatchHostedMouse(t *PurfecTerm, ev mew.TerminalMouse, preciseFracX, prec
 		mods |= core.ShiftModifier
 	}
 	if ev.Alt {
-		mods |= core.AltModifier
+		mods |= core.MegaModifier
 	}
 	if ev.Ctrl {
 		mods |= core.ControlModifier
@@ -1865,6 +2163,22 @@ func (e *Editor) terminalKey(id string, key string) []byte {
 	s.pending = nil
 	s.draining = false
 	e.termMu.Unlock()
+
+	// The LAST hop, and the one the trace could not see. Every line above it
+	// reports the editor's own emulator — the one mew talks through — while the
+	// bytes a hosted child actually receives are encoded here, against that
+	// child's separately negotiated flags. Those flags decide the SHAPE of a
+	// key: without ReportAllKeys a shifted letter goes out as the bare byte "A"
+	// and carries no modifier, while a key with no legacy form goes out as CSI
+	// and carries one, which is exactly how shift can appear on some keys and
+	// not others.
+	if core.KeyTracing() {
+		flags := -1
+		if buf := tm.Buffer(); buf != nil {
+			flags = buf.KeyboardFlags()
+		}
+		core.KeyTracef("5 child    id=%s key=%q flags=%d -> %q", id, key, flags, out)
+	}
 	return out
 }
 
@@ -1873,10 +2187,15 @@ func (e *Editor) terminalKey(id string, key string) []byte {
 // mew's own normalizeKey; everything not listed (a character, ^C, F5) is
 // already the same in both.
 var mewToDKHKey = map[string]string{
-	"esc":    "Escape",
-	"space":  "Space",
-	"tab":    "Tab",
-	"return": "Enter",
+	"esc":   "Escape",
+	"space": "Space",
+	"tab":   "Tab",
+	// mew folds the keypad's Enter onto "return" (internal/input), so this
+	// side only ever has the home-row key to name — and upstream calls that
+	// "Return". It said "Enter" here, which is now the KEYPAD's name: harmless
+	// while purfecterm encoded both as CR, and wrong the moment it stopped,
+	// since mew's Enter would have started sending the keypad's SS3 M.
+	"return": "Return",
 	"back":   "Backspace",
 	"up":     "Up",
 	"down":   "Down",
@@ -1885,22 +2204,89 @@ var mewToDKHKey = map[string]string{
 	"home":   "Home",
 	"end":    "End",
 	"ins":    "Insert",
-	"fdel":   "Delete",
-	"del":    "Delete",
-	"pgup":   "PageUp",
-	"pgdn":   "PageDown",
+	// The erase trio, which the two vocabularies spell almost alike and mean
+	// differently, so read the pairs rather than the words: mew's "del" is the
+	// ASCII DEL character (its alias group is {"del", "^8"}) and upstream
+	// calls that "Delete"; forward delete is "fdel" here and "FDel" there.
+	// Taking "Delete" for forward delete — as this map did while upstream
+	// still spelled it that way — erases the wrong side of the cursor in every
+	// guest that tells the two apart, which is most of them.
+	"del":  "Delete",
+	"fdel": "FDel",
+	"pgup": "PageUp",
+	"pgdn": "PageDown",
+
+	// The rest of the vocabulary, which differs only by case — mew spells its
+	// names lowercase and upstream capitalises them. Case is still a difference:
+	// this table is a lookup, so a missing entry means the key travels on as
+	// mew spelled it and the emulator's encoder, which knows only upstream's
+	// spelling, produces nothing for it.
+	//
+	// The lock and system keys were absent from the day this table was written;
+	// the keypad's Begin and the keys an American keyboard does not have joined
+	// them when the vocabulary grew.
+	"capslock":    "CapsLock",
+	"scrolllock":  "ScrollLock",
+	"clear":       "Clear",
+	"printscreen": "PrintScreen",
+	"pause":       "Pause",
+	"menu":        "Menu",
+	"power":       "Power",
+	"begin":       "Begin",
+	"zig":         "Zig",
+	"zag":         "Zag",
+	"ro":          "Ro",
+	"yen":         "Yen",
+	"kanalock":    "KanaLock",
+	"hangullock":  "HangulLock",
+	"henkan":      "Henkan",
+	"muhenkan":    "Muhenkan",
+	"hanja":       "Hanja",
 }
 
+// keyEventSuffixes trail a name to say the event is something other than a
+// plain press. They decorate the name; they are not part of it, so a rename has
+// to put them back rather than fail to match around them.
+var keyEventSuffixes = []string{":Release", ":Repeat"}
+
+// dkhNamePrefixes are the prefixes dkhKeyName sets aside before looking a base
+// name up, and puts back afterwards.
+//
+// Membership is the whole content of this list, and an absent prefix is not an
+// error but a silence: the base never reaches the table, the key travels on
+// under mew's own spelling, and the emulator's encoder — which knows only
+// upstream's — quietly produces no bytes for it. Only S-, M- and C- were here,
+// so "s-home", "m-pgup", "H-fdel", "G-€" and every keypad key were dropped on
+// their way into a terminal viewport. The list is the canonical order:
+// C- G- M- m- S- s- H- P- p- ^Key, with the caret left out because it is one
+// character and needs no separating.
+var dkhNamePrefixes = []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-", "P-", "p-"}
+
 // dkhKeyName renames one key, modifier prefixes and all ("S-tab" -> "S-Tab").
+//
+// An event suffix is set aside and restored: "up:Release" is the Up key, and
+// without this it matched nothing in the table and travelled on under mew's own
+// spelling, which the emulator's encoder does not know — so the release of
+// every named key silently encoded to nothing.
 func dkhKeyName(key string) string {
+	for _, suffix := range keyEventSuffixes {
+		if base, found := strings.CutSuffix(key, suffix); found {
+			return dkhKeyName(base) + suffix
+		}
+	}
 	prefix, base := "", key
 	for {
-		if len(base) > 2 && (strings.HasPrefix(base, "S-") ||
-			strings.HasPrefix(base, "M-") || strings.HasPrefix(base, "C-")) {
-			prefix, base = prefix+base[:2], base[2:]
-			continue
+		matched := false
+		for _, p := range dkhNamePrefixes {
+			if len(base) > len(p) && strings.HasPrefix(base, p) {
+				prefix, base = prefix+p, base[len(p):]
+				matched = true
+				break
+			}
 		}
-		break
+		if !matched {
+			break
+		}
 	}
 	if name, ok := mewToDKHKey[base]; ok {
 		return prefix + name
@@ -2116,3 +2502,85 @@ func tighten(span func(core.Unit, core.Unit) int, u core.Unit, targetPx int, up 
 	}
 	return u
 }
+
+// pixelWinsizer is the OPTIONAL other half of a session's Resize: the window
+// measured in device PIXELS as well as cells. purfecterm's PTY grew it in
+// v0.2.44; a session that predates it, or a Windows pseudoconsole (which has
+// no pixel field at all), simply does not have the method and is left alone.
+type pixelWinsizer interface {
+	ResizeWithPixels(cols, rows, widthPx, heightPx int) error
+}
+
+// pxWinsizeSession fills the pixel half of every resize from the pane's
+// MEASURED device extent, so ws_xpixel/ws_ypixel describe the same window
+// ws_col/ws_row do.
+type pxWinsizeSession struct {
+	mew.PTYSession
+	px       pixelWinsizer
+	windowPx func() (int, int)
+}
+
+// Resize carries both measurements. It falls back to the cell-only call when
+// the cell size is not known yet (before the first paint), rather than
+// reporting a window of zero pixels - which is the very thing this exists to
+// avoid.
+func (s pxWinsizeSession) Resize(cols, rows int) error {
+	if w, h := s.windowPx(); w > 0 && h > 0 {
+		return s.px.ResizeWithPixels(cols, rows, w, h)
+	}
+	return s.PTYSession.Resize(cols, rows)
+}
+
+// WindowPx reports the pane's current pixel extent, so mew can tell whether a
+// resize declaring the same CELLS is nevertheless a real change to the child's
+// window. Same source as Resize uses, read at the same moment.
+func (s pxWinsizeSession) WindowPx() (int, int) { return s.windowPx() }
+
+// withPixelWinsize wraps sess so its resizes carry pixel dimensions, when the
+// session can accept them. Returns sess untouched when it cannot.
+func withPixelWinsize(sess mew.PTYSession, windowPx func() (int, int)) mew.PTYSession {
+	if sess == nil || windowPx == nil {
+		return sess
+	}
+	px, ok := sess.(pixelWinsizer)
+	if !ok {
+		return sess
+	}
+	return pxWinsizeSession{PTYSession: sess, px: px, windowPx: windowPx}
+}
+
+// childWindowPx is the child's window in DEVICE PIXELS, taken from the pane
+// that paints it (PurfecTerm.ChildWindowPixels).
+//
+// Measured, never derived — see that method for why columns times the
+// advertised cell is a different and larger quantity, and what the difference
+// costs a program that draws pictures.
+//
+// Any hosted terminal answers: they all take one font from TerminalFont() and
+// are laid out on one pitch. Zero before the first graphical paint, where the
+// resize falls back to cells only rather than claiming a zero-pixel window.
+func (e *Editor) childWindowPx() (int, int) {
+	e.termMu.Lock()
+	var t *PurfecTerm
+	for _, s := range e.termSurfaces {
+		if s != nil && s.term != nil {
+			t = s.term
+			break
+		}
+	}
+	e.termMu.Unlock()
+	if t == nil || t.Terminal() == nil {
+		return 0, 0
+	}
+	// The pane's device pixels, and it must stay that: awrit (and anything
+	// like it) makes an image of EXACTLY the size it is told, then lays out
+	// size/DSF css pixels inside it. Reporting fewer pixels shrinks the
+	// image, not the zoom -- measured: halving this halved the picture and
+	// left its density untouched. Reporting MORE crops it at the pane edge.
+	return t.ChildWindowPixels()
+}
+
+// mewEditorSuppliedByTheMewDistribution satisfies the assertion upstream
+// makes under //go:build mew (editor_mew_required.go): the tag is only
+// meaningful where this file is present to supply the editor.
+const mewEditorSuppliedByTheMewDistribution = true

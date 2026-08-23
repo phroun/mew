@@ -28,6 +28,10 @@ type FocusManager struct {
 	// Focus policy determines how focus behaves
 	wrapAround bool // Whether tab wraps from last to first
 
+	// keys resolves the two commands that walk the chain. Which key does
+	// that is a binding, not a constant.
+	keys TrinketKeys
+
 	// Callbacks
 	onFocusChanged func(old, new Trinket)
 
@@ -37,10 +41,16 @@ type FocusManager struct {
 
 // NewFocusManager creates a new focus manager for a trinket scope.
 func NewFocusManager(root Trinket) *FocusManager {
-	return &FocusManager{
+	fm := &FocusManager{
 		root:       root,
 		wrapAround: true,
 	}
+	fm.keys.SetCommands(CmdFocusNext, CmdFocusPrior)
+	// Tab navigation belongs to the tree it manages, so it resolves through
+	// the registry in force there -- a subtree that took the keyboard for
+	// itself decides what Tab means inside it.
+	fm.keys.SetKeyOwner(root)
+	return fm
 }
 
 // SetRoot sets the root trinket for this focus scope.
@@ -505,19 +515,39 @@ func (fm *FocusManager) HandleKeyPress(event KeyPressEvent) bool {
 		}
 	}
 
-	// Trinket didn't handle it - do focus navigation for Tab keys
-	switch event.Key {
-	case "Tab":
-		if event.Modifiers&ShiftModifier != 0 {
-			return fm.FocusPrevious()
-		}
+	// Trinket didn't handle it - walk the focus chain. Which key does that is
+	// a binding like any other: this used to match "Tab" and two spellings of
+	// its shifted form, one of which nothing emits, and read the Shift bit out
+	// of the event to tell them apart.
+	switch fm.keys.KeyCommand(event.Key) {
+	case CmdFocusNext:
 		return fm.FocusNext()
-
-	case "S-Tab", "Shift-Tab":
+	case CmdFocusPrior:
 		return fm.FocusPrevious()
 	}
 
 	return false
+}
+
+// HandleKeyRelease hands a key coming back up to the focused trinket.
+//
+// There is no navigation fallback, unlike HandleKeyPress: focus cycling is
+// decided when Tab goes DOWN, and running it again on the way up would move
+// focus twice per keystroke. A release belongs to whatever was being typed
+// into, and if that cannot hold one there is nothing else to do with it.
+//
+// Releases only reach here at all when something upstream produces them — the
+// SDL backend always does; the TUI backend does once the outer terminal has
+// been asked for event reporting.
+func (fm *FocusManager) HandleKeyRelease(event KeyReleaseEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if focused == nil {
+		return false
+	}
+	return focused.HandleKeyRelease(event)
 }
 
 // HandleTextEditing hands an input method's in-flight composition to the
@@ -532,6 +562,34 @@ func (fm *FocusManager) HandleTextEditing(event TextEditingEvent) bool {
 
 	if h, ok := focused.(TextEditingHandler); ok {
 		return h.HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandleTextCommit hands a finished composition to the focused trinket, the
+// same way HandleTextEditing hands it the provisional one. No navigation
+// fallback, for the same reason: a commit belongs to whatever is being typed
+// into, and nothing else could use it.
+func (fm *FocusManager) HandleTextCommit(event TextCommitEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(TextCommitHandler); ok {
+		return h.HandleTextCommit(event)
+	}
+	return false
+}
+
+// HandleTextErase hands an input method's erase to the focused trinket, the
+// same way HandleTextCommit hands it a finished composition.
+func (fm *FocusManager) HandleTextErase(event TextEraseEvent) bool {
+	fm.mu.RLock()
+	focused := fm.focusedTrinket
+	fm.mu.RUnlock()
+
+	if h, ok := focused.(TextEraseHandler); ok {
+		return h.HandleTextErase(event)
 	}
 	return false
 }
@@ -567,6 +625,37 @@ type FocusScope struct {
 
 	// Active child scope (if focus is in a child)
 	activeChild *FocusScope
+
+	// registry is this scope's key-to-command table, or nil to inherit the
+	// parent's. Almost every scope inherits: the registry is "default" unless
+	// something deliberately overrides it, which is what a trinket like
+	// purfecterm does when it wants the keyboard on its own terms.
+	registry *KeyRegistry
+}
+
+// SetRegistry gives this scope its own key registry. Passing nil returns the
+// scope to inheriting its parent's.
+func (fs *FocusScope) SetRegistry(r *KeyRegistry) {
+	fs.mu.Lock()
+	fs.registry = r
+	fs.mu.Unlock()
+}
+
+// Registry returns the registry in force for this scope: its own if it has
+// one, otherwise the nearest ancestor's. The chain is what makes the override
+// cascade fall out of the scope tree that already exists — a desktop registry
+// under a window's under a trinket's, each one only saying what it changes.
+func (fs *FocusScope) Registry() *KeyRegistry {
+	for s := fs; s != nil; {
+		s.mu.RLock()
+		r, parent := s.registry, s.parent
+		s.mu.RUnlock()
+		if r != nil {
+			return r
+		}
+		s = parent
+	}
+	return nil
 }
 
 // NewFocusScope creates a new focus scope for a trinket.
@@ -805,6 +894,48 @@ func (gfm *GlobalFocusManager) HandleTextEditing(event TextEditingEvent) bool {
 
 	if activeScope != nil {
 		return activeScope.Manager().HandleTextEditing(event)
+	}
+	return false
+}
+
+// HandleTextCommit routes a finished composition to the active scope, the same
+// way HandleTextEditing routes the provisional one.
+func (gfm *GlobalFocusManager) HandleTextCommit(event TextCommitEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleTextCommit(event)
+	}
+	return false
+}
+
+// HandleTextErase routes an input method's erase to the active scope.
+func (gfm *GlobalFocusManager) HandleTextErase(event TextEraseEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleTextErase(event)
+	}
+	return false
+}
+
+// HandleKeyRelease routes a key coming back up to the active scope, the same
+// way HandlePaste routes pasted text.
+//
+// Nothing routed one before: this manager had a HandleKeyPress and no release
+// counterpart, as did every level below it, so a release dispatched by a
+// backend reached the desktop and stopped there.
+func (gfm *GlobalFocusManager) HandleKeyRelease(event KeyReleaseEvent) bool {
+	gfm.mu.RLock()
+	activeScope := gfm.activeScope
+	gfm.mu.RUnlock()
+
+	if activeScope != nil {
+		return activeScope.Manager().HandleKeyRelease(event)
 	}
 	return false
 }

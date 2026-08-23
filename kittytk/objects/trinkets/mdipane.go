@@ -21,6 +21,7 @@ import (
 // - Tile and cascade window arrangement
 type MDIPane struct {
 	core.TrinketBase
+	core.TrinketKeys
 	mu sync.RWMutex
 
 	// Background content trinket (shown behind windows)
@@ -51,7 +52,7 @@ type MDIPane struct {
 	// buttons or by stepping the run.
 	cycleOrder []*window.Window
 
-	// cycling is true while a NextWindow/PrevWindow run is in progress (the
+	// cycling is true while a NextWindow/PriorWindow run is in progress (the
 	// cycleOrder stays frozen); lastCycleAt drives the idle lock-in.
 	cycling     bool
 	lastCycleAt time.Time
@@ -106,6 +107,7 @@ func NewMDIPane() *MDIPane {
 		keyboardBlurChildren: true, // Default to enabling keyboard blur
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	m.SetCommands(core.CmdWindowMDINext, core.CmdWindowMDIPrior)
 	m.Init(m)
 	m.SetFocusPolicy(core.StrongFocus)
 	return m
@@ -307,6 +309,12 @@ func (m *MDIPane) AddWindow(win *window.Window) {
 	})
 	win.SetGetConstrainingBounds(func() core.UnitRect {
 		return m.ClientArea()
+	})
+	// ...and where it is DRAWN: the same area with the provisional corral
+	// applied, so anything positioning the window from outside this pane
+	// (a compositor) agrees with the pane's own paint loop.
+	win.SetGetDisplayBounds(func() core.UnitRect {
+		return m.displayBounds(win)
 	})
 	win.SetOnCloseComplete(func() {
 		m.RemoveWindow(win)
@@ -581,8 +589,8 @@ func (m *MDIPane) RaiseWindow(win *window.Window) {
 // NextWindow steps the M-Tab sequence forward.
 func (m *MDIPane) NextWindow() { m.cycle(true) }
 
-// PrevWindow steps the M-Tab sequence backward.
-func (m *MDIPane) PrevWindow() { m.cycle(false) }
+// PriorWindow steps the M-Tab sequence backward.
+func (m *MDIPane) PriorWindow() { m.cycle(false) }
 
 // cycle steps the window-cycle run one place in the given direction. It walks
 // the LIVE cycle sequence (so an added/removed child is handled automatically),
@@ -1007,14 +1015,21 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// Use the displayed (provisional-corralled) bounds so hover detection
 	// agrees with what the user sees and with the press path (which commits
 	// these bounds before detecting).
-	grip := m.resizeGripFor(win)
-	return window.ResizeEdgeAt(m.displayBounds(win), x, y, m.EffectiveCellMetrics(), grip)
+	// The HIT zone follows the grab rule (quarter cell or 3 device px, border
+	// included); resizeGripFor stays the overlay's, which must not move.
+	metrics := m.EffectiveCellMetrics()
+	graphical := core.FindGraphicalFrames(m.Self())
+	border := core.FindFrameBorderUnits(win)
+	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
+	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
+		window.ResizeOverlayGrip(graphical, metrics, border))
 }
 
 // resizeGripFor is the effective resize-grip thickness for a child window
 // (the surface's grip capability, discovered by ancestry).
 func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
-	return window.EffectiveResizeGrip(win, core.FindResizeGrip(m.Self()))
+	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()),
+		m.EffectiveCellMetrics(), core.FindFrameBorderUnits(win))
 }
 
 // setResizeHover shows the translucent white overlay along the given resize
@@ -1393,6 +1408,34 @@ func (m *MDIPane) HandleTextEditing(event core.TextEditingEvent) bool {
 	return active.HandleTextEditing(event)
 }
 
+// HandleTextCommit forwards a finished composition to the active child window.
+// The pane is the focused trinket in ITS window's focus manager, so without
+// this the commit would stop here — the same reason HandleTextEditing
+// forwards.
+func (m *MDIPane) HandleTextCommit(event core.TextCommitEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextCommit(event)
+}
+
+// HandleTextErase forwards an input method's erase to the active child window,
+// the same reason HandleTextCommit forwards.
+func (m *MDIPane) HandleTextErase(event core.TextEraseEvent) bool {
+	m.mu.RLock()
+	active := m.activeWindow
+	m.mu.RUnlock()
+
+	if active == nil || active.IsMinimized() {
+		return false
+	}
+	return active.HandleTextErase(event)
+}
+
 // HandlePaste forwards pasted text to the active child window. The pane is the
 // focused trinket in ITS window's focus manager, so without this the paste
 // would stop here — the same reason HandleTextEditing forwards.
@@ -1413,12 +1456,12 @@ func (m *MDIPane) HandleKeyPress(event core.KeyPressEvent) bool {
 	m.mu.RUnlock()
 
 	// Check for MDI-specific shortcuts (window switching)
-	switch event.Key {
-	case "M-Tab", "C-Tab":
+	switch m.KeyCommand(event.Key) {
+	case core.CmdWindowMDINext:
 		m.NextWindow()
 		return true
-	case "M-S-Tab", "C-S-Tab":
-		m.PrevWindow()
+	case core.CmdWindowMDIPrior:
+		m.PriorWindow()
 		return true
 	}
 

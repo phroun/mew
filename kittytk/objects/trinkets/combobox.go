@@ -12,6 +12,7 @@ import (
 // ComboBox is a drop-down selection trinket.
 type ComboBox struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	items        []string
@@ -108,6 +109,16 @@ func NewComboBox() *ComboBox {
 		scrollHoverZone: 0,
 	}
 	c.TrinketBase = *core.NewTrinketBase()
+	c.SetCommands(
+		core.CmdTrinketActivate, core.CmdTrinketOpen,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		// Only the dropped-open popup answers to these; the closed box has
+		// no case for them and lets them fall through as it always did.
+		core.CmdTrinketCancel,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+	)
 	c.Init(c) // Enable polymorphic focus handling
 	c.SetFocusPolicy(core.StrongFocus)
 	c.SetAccessibleRole(core.RoleComboBox)
@@ -1615,45 +1626,54 @@ func (c *ComboBox) HandleKeyPress(event core.KeyPressEvent) bool {
 		return c.handlePopupKeyPress(event)
 	}
 
-	switch event.Key {
-	case " ", "Space", "Enter":
-		c.clickMode = true // Keyboard invocation opens in click mode
-		c.ShowPopup()
-		c.enterClickMode() // Ensure scroll offset is clamped for click mode
+	switch c.KeyCommand(event.Key) {
+	case core.CmdTrinketActivate:
+		c.OpenFromKeyboard()
 		return true
 
-	case "Up":
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if c.currentIndex > 0 {
 			c.SetCurrentIndex(c.currentIndex - 1)
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if c.currentIndex < len(c.items)-1 {
 			c.SetCurrentIndex(c.currentIndex + 1)
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		if len(c.items) > 0 {
 			c.SetCurrentIndex(0)
 		}
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		if len(c.items) > 0 {
 			c.SetCurrentIndex(len(c.items) - 1)
 		}
 		return true
 
-	case "F4", "M-Down":
-		c.clickMode = true // Keyboard invocation opens in click mode
-		c.ShowPopup()
-		c.enterClickMode() // Ensure scroll offset is clamped for click mode
+	case core.CmdTrinketOpen:
+		c.OpenFromKeyboard()
 		return true
 	}
 
 	return false
+}
+
+// OpenFromKeyboard drops the list open the way a keyboard activation does, in
+// click mode with the scroll offset clamped for it.
+//
+// Exported so a trinket that wants a combo box open can SAY so, rather than
+// synthesising the keystroke that happens to mean it today: a host that
+// rebinds trinket_activate would leave a faked "Space" meaning nothing, and
+// the drop-down would silently stop opening.
+func (c *ComboBox) OpenFromKeyboard() {
+	c.clickMode = true
+	c.ShowPopup()
+	c.enterClickMode()
 }
 
 // handlePopupKeyPress handles key events when popup is open.
@@ -1666,14 +1686,14 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		return c.currentIndex
 	}
 
-	switch event.Key {
-	case "Escape":
+	switch c.KeyCommand(event.Key) {
+	case core.CmdTrinketCancel:
 		// Cancel - restore original and close
 		c.SetCurrentIndex(c.originalIndex)
 		c.HidePopup()
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Confirm selection - use hover index if set
 		selectedIndex := getEffectiveIndex()
 		if selectedIndex >= 0 {
@@ -1685,7 +1705,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.HidePopup()
 		return true
 
-	case "Up":
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		idx := getEffectiveIndex()
 		if idx > 0 {
 			c.hoverIndex = idx - 1
@@ -1695,7 +1715,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		idx := getEffectiveIndex()
 		if idx < len(c.items)-1 {
 			c.hoverIndex = idx + 1
@@ -1705,7 +1725,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		idx := getEffectiveIndex()
 		newIndex := idx - c.effectiveMaxVisible()
 		if newIndex < 0 {
@@ -1717,7 +1737,7 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.Update()
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		idx := getEffectiveIndex()
 		newIndex := idx + c.effectiveMaxVisible()
 		if newIndex >= len(c.items) {
@@ -1729,14 +1749,14 @@ func (c *ComboBox) handlePopupKeyPress(event core.KeyPressEvent) bool {
 		c.Update()
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		c.hoverIndex = 0
 		c.scrollOffset = 0
 		c.announceHoverItem()
 		c.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		c.hoverIndex = len(c.items) - 1
 		c.ensureVisible(len(c.items) - 1)
 		c.announceHoverItem()

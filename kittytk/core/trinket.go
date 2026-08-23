@@ -356,6 +356,10 @@ type TrinketBase struct {
 	parent Container
 	app    *Application
 
+	// keyRegistry is this trinket's own keymap, or nil to inherit whatever its
+	// ancestors are using (see keyscope.go). Almost everything inherits.
+	keyRegistry *KeyRegistry
+
 	bounds     UnitRect
 	minSize    UnitSize
 	maxSize    UnitSize
@@ -406,8 +410,16 @@ func (w *TrinketBase) ObjectID() ObjectID {
 // proper polymorphic behavior (focus management, key forwarding, etc.).
 func (w *TrinketBase) Init(self Trinket) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.self = self
+	w.mu.Unlock()
+
+	// A trinket that also embeds TrinketKeys resolves its keys through the
+	// registry in force where it SITS, which it cannot find without knowing
+	// which trinket it belongs to. Wiring it here means every trinket that
+	// calls Init gets it, with no second thing to remember at each site.
+	if k, ok := self.(interface{ SetKeyOwner(Trinket) }); ok {
+		k.SetKeyOwner(self)
+	}
 }
 
 // Self returns the outer trinket reference, or w if not set.

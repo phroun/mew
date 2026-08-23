@@ -39,6 +39,7 @@ func init() {
 			})).Tip("Divider ratio (0.0-1.0)."),
 			"caption": stringProp("caption", (*Splitter).SetTitle).Tip("Optional divider title."),
 		},
+		nil,
 		func(parent, child core.Trinket) error {
 			s := parent.(*Splitter)
 			switch {

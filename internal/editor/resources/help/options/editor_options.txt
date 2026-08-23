@@ -1,0 +1,91 @@
+#!wiki=
+
+[[..|Return to Help Index]]
+
+=== Editor Options ===
+
+[[mappings]] [[macOptionKeys]]
+
+[[autoIndent]] [[insertMode]] [[deleteNewlineAsChar]]
+
+[[linkBrowsing]] [[navigationMode]]
+
+== Document Modes: ==
+
+[[direction]] (ltr*, rtl)   [[readOnly]] (default=OFF)
+
+[[syntaxOverrides]] (Override Project Default)
+
+[[syntaxDetect]] (default=ON)   [[syntax]] (default=c)
+
+[[wordWrap]] (default=OFF)
+
+[[pageSizeOptimal]] [[pageOverlapMinimum]] [[pageSizeStep]]
+
+[[tabSize]] (default=8)
+
+=== Search Options ===
+
+[[searchIgnoreCase]] [[searchWrap]] [[searchRegEx]]
+
+== View Options: ==
+
+[[showColumnRuler]] [[rulerShowsCursor]]
+
+[[showLineNumbers]]
+
+[[showBidi]] [[showInvisibles]] [[showMarks]]
+
+[[scrollbar]]
+
+== Quirks & Workarounds: ==
+
+[[rtlCombining]] (default=ON)
+
+[[flipBidiForHost]] (default=OFF; Used by Apple Terminal)
+
+[[rtlMarkMode]] (auto*, normal, compose, drift)
+
+== Bracket Matching Options: ==
+
+[[matchIgnoresSingleQuote]] 'strings'
+
+[[matchIgnoresDoubleQuote]] "strings"
+
+[[matchIgnoresSlashStar]] /* comments */
+
+[[matchIgnoresSlashSlash]] // comment
+
+[[matchIgnoresHash]] # comment
+
+[[matchIgnoresDoubleHyphen]] -- comment
+
+[[matchIgnoresSemicolon]] ; comment
+
+[[matchIgnoresPercent]] % comment
+
+== Style and Theme: ==
+
+[[insertCursor]] default=5
+
+[[overwriteCursor]] default=3
+
+[[navigationCursor]] default=2
+
+[[modebarLocation]] (top*, bottom)
+
+[[modebarInner]] default="%FN%"
+
+[[modebarDefault]] default="%FORTUNE%"
+
+[[modebarOuter]] default="Line:%LINE% Rune:%RUNE%"
+
+== System/Limits: ==
+
+[[maxRepeat]] (default 100: max iterations accepted by [[keys#repeat|^R]] command)
+
+[[killRingEntries]] (default 10: max deleted fragments kept for yank)
+
+[[promptTimeout]] (need to verify implementation)
+
+[[scriptTimeout]] (need to verify implementation)

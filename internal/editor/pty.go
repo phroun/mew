@@ -436,6 +436,14 @@ type ptyState struct {
 	// the screen in place pushes a screenful into scrollback instead — on
 	// every frame, without bound.
 	gridCols, gridRows int
+	// gridPxW/gridPxH are the child's window in PIXELS as of the last resize
+	// we let through — the other half of what a PTY winsize carries, and the
+	// half a child drawing pictures sizes itself from. Kept because the pixels
+	// can move under an unchanged grid (a display density learned late, a zoom
+	// step that gains no column), and a resize suppressed as a repeat leaves
+	// such a child rendering to a window it no longer has. Zero until the
+	// session reports one.
+	gridPxW, gridPxH int
 	// placedCols/placedRows are the rectangle the declaration was made
 	// against. A declaration describes one rectangle; when the viewport is
 	// RESIZED the old answer is stale, so it is dropped and the rectangle
@@ -470,6 +478,25 @@ type ptyState struct {
 	// capture. Set from the --hidden switch and toggled at runtime by
 	// viewport_pty_hide / _show / _toggle.
 	hidden bool
+	// keyPressedToChild names the keys whose PRESS this child actually
+	// received, so a release can be matched to one.
+	//
+	// A press reaches the child only if mew's keymap did not claim it first: a
+	// bound chord runs its command and stops there. A release skips the keymap
+	// entirely, and must (see dispatchKey — no binding is written against one,
+	// and the sequence processor would count it as the next key of a
+	// sequence). Those two rules together handed the child a key-up for a key
+	// it was never told about — the same mismatch as a key-down with no
+	// key-up, wearing the other face. Every chord mew binds arrived at a
+	// hosted browser as a release out of nowhere.
+	//
+	// Keyed by the name the press arrived under, which is the name its release
+	// carries back: direct-key-handler names a release for its press, so ^B
+	// comes up "^B:Release" even if Control was let go first. The matching
+	// release consumes the entry, so a key held across a change of focus
+	// leaves at most one stale name behind, and the session's death takes the
+	// rest.
+	keyPressedToChild map[string]bool
 }
 
 // streams reports whether a rung captures live through the CaptureSink seam
@@ -1247,10 +1274,10 @@ func (e *Editor) notifyTerminalSurfaces() {
 	// rest are read-only mirrors. rectFor reads THIS tile's geometry (not the
 	// viewport's single-valued fields, which hold only the canonical tile).
 	type place struct {
-		id                    string
-		vp                    *viewport.Viewport
-		col, row, w, h        int
-		focusedTile           bool
+		id             string
+		vp             *viewport.Viewport
+		col, row, w, h int
+		focusedTile    bool
 	}
 	var places []place
 	// primaryIdx[id] is the index into places of that session's primary surface:
@@ -1410,6 +1437,24 @@ func (e *Editor) notifyTerminalSurfaces() {
 // and its own chrome, neither of which mew can see.
 //
 // Reports whether the session exists.
+// pixelWindowReporter is the optional half of a session that knows the child's
+// window in device pixels — the host wraps a PTY in one when it can measure the
+// pane (see the host's withPixelWinsize). A session without it carries cells
+// only, and its pixel window is reported as unknown.
+type pixelWindowReporter interface {
+	WindowPx() (int, int)
+}
+
+// sessionWindowPx is the child's pixel window, or 0x0 when the session cannot
+// say. Unknown compares equal to unknown, so a cells-only session dedupes on
+// its cells exactly as it always did.
+func sessionWindowPx(s PTYSession) (int, int) {
+	if r, ok := s.(pixelWindowReporter); ok {
+		return r.WindowPx()
+	}
+	return 0, 0
+}
+
 func (e *Editor) SetTerminalGrid(id string, cols, rows int) bool {
 	if cols <= 0 || rows <= 0 {
 		return false
@@ -1418,11 +1463,18 @@ func (e *Editor) SetTerminalGrid(id string, cols, rows int) bool {
 	var sess PTYSession
 	for _, st := range e.ptySessions {
 		if st.id == id {
-			if st.gridCols == cols && st.gridRows == rows {
+			// The window is cells AND pixels; a repeat is a repeat of both.
+			// The session knows the pixel half (the host measures it and the
+			// session fills it in on every resize), so ask it rather than
+			// assuming the cells speak for the whole window.
+			pxW, pxH := sessionWindowPx(st.sess)
+			if st.gridCols == cols && st.gridRows == rows &&
+				st.gridPxW == pxW && st.gridPxH == pxH {
 				e.ptyMu.Unlock()
 				return true // already there; do not wake the child again
 			}
 			st.gridCols, st.gridRows = cols, rows
+			st.gridPxW, st.gridPxH = pxW, pxH
 			sess = st.sess
 			break
 		}
@@ -1839,7 +1891,11 @@ func (e *Editor) rawKeyToPTY(key string) bool { return e.sendKeyToPTY(key) }
 //
 // Two callers: rawKeyToPTY (a key claimed in advance by raw_key_input) and
 // the tinput_key command (a key the capture layer claims as it arrives —
-// `capture * = tinput_key` in [pty::mappings], the ordinary route).
+// `(capture) * = tinput_key` in [pty::mappings], the ordinary route).
+//
+// A RELEASE goes only if this child was told about the press — see
+// ptyState.keyPressedToChild. That is not a refinement of the encoding: it is
+// the difference between reporting a key and inventing one.
 func (e *Editor) sendKeyToPTY(key string) bool {
 	if e.Config.TerminalSurfaces.Key == nil {
 		return false
@@ -1848,8 +1904,27 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 	if w == nil || w.Buffer == nil {
 		return false
 	}
+	// The press and its release name the same key; the marker is what tells
+	// them apart, and a repeat is a press. Match on the bare name.
+	base, release := strings.CutSuffix(key, ":Release")
+	if !release {
+		base, _ = strings.CutSuffix(base, ":Repeat")
+	}
+
 	e.ptyMu.Lock()
 	st := e.ptySessions[w]
+	if st != nil && release {
+		// Consume the press this release belongs to, and decline outright if
+		// there is none: mew's keymap took that keystroke and the child never
+		// heard it go down. Consumed whether or not the bytes go out below, so
+		// a child that negotiated nothing (every release encodes to nothing
+		// there) does not accumulate names it can never use.
+		if !st.keyPressedToChild[base] {
+			e.ptyMu.Unlock()
+			return false
+		}
+		delete(st.keyPressedToChild, base)
+	}
 	e.ptyMu.Unlock()
 	if st == nil || st.hidden {
 		return false // hidden: the key edits the document as usual
@@ -1862,15 +1937,72 @@ func (e *Editor) sendKeyToPTY(key string) bool {
 		e.ShowWarning("Session write failed: " + err.Error())
 		return false
 	}
+	if !release {
+		e.ptyMu.Lock()
+		if st.keyPressedToChild == nil {
+			st.keyPressedToChild = make(map[string]bool)
+		}
+		st.keyPressedToChild[base] = true
+		e.ptyMu.Unlock()
+	}
 	return true
+}
+
+// ptyEraseBefore sends the focused viewport's child n erase keystrokes — what
+// its terminal produces for mew's "back" — and reports whether they went.
+//
+// It exists so a replacement can remove what it stands in for when the text
+// under the caret belongs to a child process rather than to a buffer. macOS's
+// accent palette commits the held letter immediately, and the toolkit swallowed
+// the platform's own Backspace on the way in (it is the palette's erase, not a
+// key anyone pressed), so nothing removes that letter unless this does.
+//
+// Encoded through the host's key translator rather than by choosing a byte
+// here. What backspace becomes on the wire is the terminal's business — DEL or
+// BS, whatever the front end has always sent — and the translator is the one
+// place that knows what THIS child negotiated. Choosing here would be guessing
+// at a line discipline mew cannot see.
+//
+// Deliberately not sendKeyToPTY. This is an erase, not a keystroke: recording
+// it as a press the child was told about would leave a name waiting for a
+// release that never comes, and a later real release would be matched against
+// it — reporting a key nobody pressed, which is the one thing that path exists
+// to prevent.
+func (e *Editor) ptyEraseBefore(n int) bool {
+	if n <= 0 || e.Config.TerminalSurfaces.Key == nil {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil {
+		return false
+	}
+	e.ptyMu.Lock()
+	st := e.ptySessions[w]
+	e.ptyMu.Unlock()
+	if st == nil || st.hidden {
+		return false
+	}
+	data := e.Config.TerminalSurfaces.Key(st.id, "back")
+	if len(data) == 0 {
+		return false
+	}
+	erase := make([]byte, 0, len(data)*n)
+	for i := 0; i < n; i++ {
+		erase = append(erase, data...)
+	}
+	return e.ptySendBytes(erase)
 }
 
 // terminalMouseFromKey reads one of mew's mouse pseudo-keys — the vocabulary
 // handleMouseKey dispatches on, with its modifier prefixes already stripped —
 // as a terminal mouse event. Col and Row are the caller's to fill in.
 //
-// A bare "Mouse@x,y" is position only: it precedes an action and is not one,
-// so it reports false and the action that follows carries the position.
+// A bare "Mouse@x,y" is the pointer having moved with no button down. It also
+// precedes every other action, so a click sends the child a motion report to
+// the cell and then the press — which is what a terminal doing all-motion
+// tracking sends anyway, and what the pointer actually did. A child that asked
+// for less than that drops the motion at the encoder, where the mouse mode it
+// asked for is known.
 func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bool) {
 	ev := TerminalMouse{Shift: shift, Alt: alt, Ctrl: ctrl}
 	name := base
@@ -1878,26 +2010,26 @@ func terminalMouseFromKey(base string, shift, alt, ctrl bool) (TerminalMouse, bo
 		name = name[:i]
 	}
 	switch name {
-	case "MousePress", "MouseLeftPress":
+	case "MouseLeft":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonLeft
-	case "MouseMiddlePress":
+	case "MouseMiddle":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonMiddle
-	case "MouseRightPress":
+	case "MouseRight":
 		ev.Action, ev.Button = TerminalMousePress, TerminalMouseButtonRight
-	case "MouseRelease", "MouseLeftRelease":
+	case "MouseLeft:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonLeft
-	case "MouseMiddleRelease":
+	case "MouseMiddle:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonMiddle
-	case "MouseRightRelease":
+	case "MouseRight:Release":
 		ev.Action, ev.Button = TerminalMouseRelease, TerminalMouseButtonRight
-	case "MouseLeftDrag":
+	case "MouseDragLeft":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonLeft
-	case "MouseMiddleDrag":
+	case "MouseDragMiddle":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonMiddle
-	case "MouseRightDrag":
+	case "MouseDragRight":
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonRight
-	case "MouseDrag":
-		// All-motion tracking: movement with no button held.
+	case "Mouse":
+		// The position report: movement with no button held.
 		ev.Action, ev.Button = TerminalMouseMotion, TerminalMouseButtonNone
 	case "MouseScrollUp":
 		ev.Action = TerminalMouseScrollUp

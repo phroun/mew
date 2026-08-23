@@ -69,7 +69,7 @@ func (f *EventFeed) Stop() {}
 // SendKey delivers one key event. It blocks while the editor is busy and
 // the feed's buffer is full, and reports false once the feed is closed.
 func (f *EventFeed) SendKey(name string) bool {
-	return f.send(InputEvent{Key: normalizeKey(name)})
+	return f.send(InputEvent{Key: normalizeHostKey(name)})
 }
 
 // SendPaste delivers one chunk of pasted content (copied, so the host may

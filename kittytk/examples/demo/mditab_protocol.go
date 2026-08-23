@@ -28,7 +28,7 @@ sp=new splitter orientation=vertical position=0.9 caption="Dock" children={
 					new button caption="Tile" action=demo.mdi.tile
 					new button caption="Cascade" action=demo.mdi.cascade
 					new button caption="Next" action=demo.mdi.next
-					new button caption="Prev" action=demo.mdi.prev
+					new button caption="Prior" action=demo.mdi.prior
 				}
 				status=new label caption="Active: none"
 				new spacer
@@ -69,7 +69,7 @@ func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ an
 	commands.Register("demo.mdi.tile", func() { _ = mdiH.Set("tile") })
 	commands.Register("demo.mdi.cascade", func() { _ = mdiH.Set("cascade") })
 	commands.Register("demo.mdi.next", func() { _ = mdiH.Set("next") })
-	commands.Register("demo.mdi.prev", func() { _ = mdiH.Set("prev") })
+	commands.Register("demo.mdi.prior", func() { _ = mdiH.Set("prior") })
 
 	// Dock choreography over events: minimize -> add an entry;
 	// restore/remove -> destroy it; entry click -> restore.

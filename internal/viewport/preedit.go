@@ -1,0 +1,291 @@
+package viewport
+
+// Text an input method is still composing: typed, shown, but not part of the
+// document.
+//
+// A Japanese input method builds "きょう" from three keystrokes and only hands
+// it over when it is confirmed; macOS's accent palette holds a letter's
+// alternatives the same way. Until then the characters belong to the input
+// method, and a buffer that stored them would have to un-store them on every
+// update — through the undo history, which is where the damage would be.
+//
+// So they are painted and not stored, the way a control character is painted
+// as "^X" without the buffer holding two runes. The composition is SYNTHESIZED
+// into the line at the caret when that line is prepared for display, and from
+// there it is ordinary text: the existing width model measures it, a wide
+// character counts two columns, and nothing needs a preedit-aware twin of the
+// column arithmetic.
+//
+// WHERE it sits is a garland cursor of the viewport's own, parked when the
+// composition opens. Not the caret, and not a remembered line and rune: a
+// composition outlives edits made while it stands. A palette dismissed by
+// typing puts the keystroke in before the input method's commit catches up, and
+// a position measured from the caret then points at the character that
+// keystroke typed — the accent replaced it and the letter stayed, "oò" with
+// the "." eaten. A cursor slides with the edit and still points at the letter.
+type Preedit struct {
+	// Text is the whole composition. Empty means nothing is being composed.
+	Text []rune
+
+	// Caret is the input method's own cursor, as a rune index into Text. The
+	// document caret paints there rather than at either end, which is what
+	// lets an input method show progress through a long composition.
+	Caret int
+
+	// ClauseStart and ClauseLen mark the segment the input method is
+	// CONVERTING, as rune indices into Text. ClauseLen is 0 when it
+	// distinguishes none, which is every composition that is built rather than
+	// converted — an accent palette, a romaji run before conversion starts.
+	//
+	// A Japanese composition is not one word but several clauses, and a
+	// candidate list changes only the clause that is selected: cycling through
+	// candidates for "ら" leaves the "なに" after it in kana, and that
+	// remainder is the input method's text rather than anything left over. It
+	// is painted differently for exactly that reason — without the distinction
+	// the untouched clauses read as characters the composition failed to
+	// replace.
+	ClauseStart, ClauseLen int
+
+	// Covers is how many COMMITTED runes from the composition's own cursor it
+	// stands over, and HIDES while it stands.
+	//
+	// Normally 0: an ordinary composition builds text that was never in the
+	// document. macOS's press-and-hold palette is why it is not always — it
+	// commits the held letter the moment the key goes down and only then opens
+	// over it, so the letter has to be hidden while its alternatives are shown
+	// or the line reads "oò". Nothing is deleted to hide it: ending the
+	// composition brings it straight back, which is what cancelling means.
+	Covers int
+}
+
+// Active reports whether anything is being composed.
+func (p Preedit) Active() bool { return len(p.Text) > 0 }
+
+// Preedit returns what this viewport is composing, if anything.
+func (w *Viewport) Preedit() Preedit { return w.preedit }
+
+// PreeditAt reports where the standing composition's region STARTS, and whether
+// there is one.
+//
+// It reads a garland cursor, so it is still pointing at the same text after
+// anything else in the buffer has been edited.
+//
+// A composition that has ENDED but not yet been committed still has a region:
+// an input method closes its composition before delivering the finished text,
+// and the text has to land where the composition was. Nothing paints from it by
+// then (Active is false), so this outlives what is on screen.
+func (w *Viewport) PreeditAt() (line, runePos int, ok bool) {
+	if !w.preeditStanding || w.preeditAt == nil {
+		return 0, 0, false
+	}
+	line, runePos = w.preeditAt.LineRune()
+	return line, runePos, true
+}
+
+// SetPreedit installs the composition to paint, or ends it when the text is
+// empty.
+//
+// next.Covers is how many committed runes BEFORE THE CARET it stands over,
+// which is how an input method describes it — and the anchor is minted from
+// that once, when the composition opens. Later updates leave it where it is:
+// the caret may have moved on, and the region has not.
+func (w *Viewport) SetPreedit(next Preedit) {
+	text, caret, covers := next.Text, next.Caret, next.Covers
+	if len(text) == 0 {
+		// Empty with an extent is a composition ENDING on its way to a commit;
+		// empty with none is a cancel. The region survives the first and not
+		// the second — see EndPreedit.
+		if covers > 0 && w.preeditStanding {
+			w.EndPreedit()
+		} else {
+			w.ClearPreedit()
+		}
+		return
+	}
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(text) {
+		caret = len(text)
+	}
+	if covers < 0 {
+		covers = 0
+	}
+
+	if !w.preeditStanding {
+		// Opening. The cursor is minted ONCE per viewport and parked again on
+		// each composition — garland adjusts every live cursor on every edit,
+		// so one per viewport is a cost worth paying and one per palette is
+		// not.
+		pos := w.CursorPos()
+		from := pos.Rune - covers
+		if from < 0 {
+			from, covers = 0, pos.Rune
+		}
+		if w.preeditAt == nil && w.Buffer != nil {
+			w.preeditAt = w.Buffer.NewAnchor()
+		}
+		if w.preeditAt != nil {
+			w.preeditAt.SeekLineRune(pos.Line, from)
+		}
+		w.preedit.Covers = covers
+		w.preeditStanding = true
+	}
+	w.preedit.Text = text
+	w.preedit.Caret = caret
+	// The clause rides on each update rather than being fixed at open: which
+	// segment is being converted is exactly what changes as the candidate list
+	// is walked.
+	w.preedit.ClauseStart, w.preedit.ClauseLen = clampSpan(next.ClauseStart, next.ClauseLen, len(text))
+}
+
+// clampSpan trims a start and length reported by an input method into [0, n],
+// so a host that counts in something other than runes produces a wrong-looking
+// clause rather than a slice out of range.
+func clampSpan(start, length, n int) (int, int) {
+	if length <= 0 || start >= n {
+		return 0, 0
+	}
+	if start < 0 {
+		start = 0
+	}
+	if start+length > n {
+		length = n - start
+	}
+	return start, length
+}
+
+// EndPreedit stops PAINTING a composition while leaving its region standing.
+//
+// An input method closes its composition before it delivers the finished text —
+// macOS sends the empty update and only then the commit — so a viewport that
+// forgot the region here would insert the accent instead of replacing the
+// letter chosen for it, and the line would read "oǒ".
+//
+// What survives is only where the finished text goes. Nothing paints from it,
+// so the covered characters are visible again from this moment.
+func (w *Viewport) EndPreedit() {
+	w.preedit.Text = nil
+	w.preedit.Caret = 0
+}
+
+// ClearPreedit ends the composition without committing it.
+//
+// The cursor stays: it is the viewport's, not this composition's, and parking
+// it again costs nothing where minting a fresh one on every palette would. It
+// is released with the viewport's other cursors (see releasePreedit).
+func (w *Viewport) ClearPreedit() {
+	w.preedit = Preedit{}
+	w.preeditStanding = false
+}
+
+// releasePreedit gives up the composition's cursor, called where the viewport's
+// other tracking cursors are given up.
+func (w *Viewport) releasePreedit() {
+	if w.preeditAt != nil {
+		w.preeditAt.Release()
+		w.preeditAt = nil
+	}
+	w.preedit = Preedit{}
+	w.preeditStanding = false
+}
+
+// PreeditOnLine reports whether a composition is being painted into docLine.
+func (w *Viewport) PreeditOnLine(docLine int) bool {
+	if !w.preedit.Active() {
+		return false
+	}
+	line, _, ok := w.PreeditAt()
+	return ok && line == docLine
+}
+
+// PreeditSplice returns the line as it should be DISPLAYED, with the
+// composition synthesized in over the region it stands on, and the rune range
+// [lo, hi) the composition occupies in that display line.
+//
+// lo == hi means nothing was spliced, and the line is returned unchanged — the
+// answer for every line but the one being composed on.
+//
+// Positions are clamped to the line, so a composition whose region has been
+// shortened out from under it paints at the end rather than out of range.
+func (w *Viewport) PreeditSplice(docLine int, line string) (display string, lo, hi int) {
+	if !w.PreeditOnLine(docLine) {
+		return line, 0, 0
+	}
+	runes := []rune(line)
+	_, from, _ := w.PreeditAt()
+	if from < 0 {
+		from = 0
+	}
+	if from > len(runes) {
+		from = len(runes)
+	}
+	// What the composition covers is hidden behind it rather than painted in
+	// front of it. Nothing is removed from the line the buffer holds — this is
+	// the display line, and ending the composition shows the text again.
+	to := from + w.preedit.Covers
+	if to > len(runes) {
+		to = len(runes)
+	}
+	out := make([]rune, 0, len(runes)+len(w.preedit.Text))
+	out = append(out, runes[:from]...)
+	out = append(out, w.preedit.Text...)
+	out = append(out, runes[to:]...)
+	return string(out), from, from + len(w.preedit.Text)
+}
+
+// PreeditClauseSpan is where the clause being CONVERTED sits in a display line,
+// given the range [preLo, preHi) the composition occupies there (what
+// PreeditSplice returned).
+//
+// lo == hi means the input method distinguishes no clause, and the composition
+// is all one piece.
+func (w *Viewport) PreeditClauseSpan(preLo, preHi int) (lo, hi int) {
+	if w.preedit.ClauseLen <= 0 || preHi <= preLo {
+		return preLo, preLo
+	}
+	lo = preLo + w.preedit.ClauseStart
+	hi = lo + w.preedit.ClauseLen
+	if lo < preLo {
+		lo = preLo
+	}
+	if hi > preHi {
+		hi = preHi
+	}
+	if hi < lo {
+		hi = lo
+	}
+	return lo, hi
+}
+
+// PreeditShift is how many display runes a composition adds BEFORE a document
+// position — the whole of the document-to-display mapping, since the
+// composition is one run at one place.
+//
+// What it hides comes off the shift: the composition stands in those runes'
+// place rather than in front of them.
+func (w *Viewport) PreeditShift(docLine, docRune int) int {
+	if !w.PreeditOnLine(docLine) {
+		return 0
+	}
+	_, from, _ := w.PreeditAt()
+	if docRune < from {
+		return 0
+	}
+	return len(w.preedit.Text) - w.preedit.Covers
+}
+
+// PreeditCaretRune is where the document caret paints on the display line while
+// a composition stands there: inside the composition, at the input method's own
+// cursor, when the caret is still in the region it covers. A caret that has
+// moved past the composition is merely shifted by it.
+func (w *Viewport) PreeditCaretRune(docLine, docRune int) int {
+	if !w.PreeditOnLine(docLine) {
+		return docRune
+	}
+	_, from, _ := w.PreeditAt()
+	if docRune >= from && docRune <= from+w.preedit.Covers {
+		return from + w.preedit.Caret
+	}
+	return docRune + w.PreeditShift(docLine, docRune)
+}

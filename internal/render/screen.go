@@ -72,19 +72,6 @@ type ScreenRenderer struct {
 	// consulted on frames that show the cursor. nil leaves the shape alone.
 	cursorStyleFn func(w *viewport.Viewport) int
 
-	// peekLabelFn expands a peek-indicator label through the modebar's %CODE%
-	// engine (so e.g. "[%SPU%]" resolves to the live stat_peek_up binding).
-	// nil leaves the configured label verbatim.
-	peekLabelFn func(raw string) string
-
-	// Peek indicators state
-	peekIndicators struct {
-		StatPeekUp     bool
-		StatPeekDown   bool
-		PromptPeekUp   bool
-		PromptPeekDown bool
-	}
-
 	// Terminal output and size query; virtualizable by hosts.
 	out    io.Writer
 	sizeFn func() (width, height int, err error)
@@ -97,7 +84,7 @@ type ScreenRenderer struct {
 	nativeStop        func() // uninstalls the native watcher, if installed
 
 	// Indicator glyphs/labels used to draw chrome (whitespace markers, gutter,
-	// cursor indicators, peek tab labels).
+	// cursor indicators).
 	indicators config.Indicators
 
 	// Layered color scheme; colors are resolved per viewport by class, buffer
@@ -275,7 +262,7 @@ func (sr *ScreenRenderer) SetColorScheme(cs config.ColorScheme) {
 // col resolves a named color for a viewport, cascading viewport class ->
 // buffer type -> global -> built-in defaults.
 func (sr *ScreenRenderer) col(w *viewport.Viewport, name string) string {
-	return sr.colorScheme.Resolve(w.Class, w.Type.Name(), name)
+	return sr.colorScheme.Resolve(w.EffectiveClass(), w.Type.Name(), name)
 }
 
 // NewScreenRenderer creates a new screen renderer targeting the real
@@ -392,13 +379,6 @@ func (sr *ScreenRenderer) LayoutEpoch() uint64 {
 
 func (sr *ScreenRenderer) SetSyntaxColorizer(colorizer func(w *viewport.Viewport, docLine int) []string) {
 	sr.syntaxColorizer = colorizer
-}
-
-// SetPeekLabelResolver sets the function that expands a peek-indicator label
-// through the modebar %CODE% engine (resolving codes like %SPU% to live key
-// bindings). nil leaves labels verbatim.
-func (sr *ScreenRenderer) SetPeekLabelResolver(fn func(raw string) string) {
-	sr.peekLabelFn = fn
 }
 
 // SetFlipBidiForHost re-emits RTL runs in logical order for host terminals
@@ -702,17 +682,11 @@ func (sr *ScreenRenderer) CaptureFrame(layout viewport.Layout) string {
 	return sb.String()
 }
 
-// paintFrame paints the whole layout into sr.frame — peek indicators, viewport
-// groups, ghost/secondary/real cursors — and applies the hardware-cursor
+// paintFrame paints the whole layout into sr.frame — viewport groups,
+// ghost/secondary/real cursors — and applies the hardware-cursor
 // visibility. The caller must hold renderMu and have called sr.frame.begin();
 // it presents the frame afterward. Shared by Render and CaptureFrame.
 func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
-	// Save peek indicator state
-	sr.peekIndicators.StatPeekUp = layout.NeedsStatPeekUp
-	sr.peekIndicators.StatPeekDown = layout.NeedsStatPeekDown
-	sr.peekIndicators.PromptPeekUp = layout.NeedsPromptPeekUp
-	sr.peekIndicators.PromptPeekDown = layout.NeedsPromptPeekDown
-
 	// Update viewport content properties
 	sr.updateViewportContentProperties(layout)
 
@@ -731,9 +705,6 @@ func (sr *ScreenRenderer) paintFrame(layout viewport.Layout) {
 			layout.MainLayout[i].StampGeometry()
 		}
 	}
-
-	// Render peek indicators
-	sr.renderPeekIndicators(layout)
 
 	// Render ghost cursor if present, then position real cursor
 	hideCursor := false
@@ -847,7 +818,7 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 		}
 
 		// Update line number width
-		if w.ViewState.ShowLineNumbers && w.Buffer != nil {
+		if w.LineNumbersVisible() && w.Buffer != nil {
 			lineCount := w.Buffer.GetLineCount()
 			if lineCount < 10 {
 				lineCount = 10
@@ -867,7 +838,7 @@ func (sr *ScreenRenderer) updateTileContentProperties(wl *viewport.ViewportLayou
 		// baseContentWidth used in renderContent); otherwise horizontal-scroll
 		// decisions that key off ContentWidth let the cursor run off the edge.
 		lineNumWidth := 0
-		if w.ViewState.ShowLineNumbers {
+		if w.LineNumbersVisible() {
 			lineNumWidth = w.LineNumWidth
 		}
 		// The viewport's horizontal paint frame (host-set; full screen by
@@ -1160,7 +1131,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 	fx, fw, atRight := sr.vpFrame(w)
 
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 
@@ -1227,7 +1198,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// buffer paints the corner cell's background without landing a glyph in
 		// it.
 		contentWidth := baseContentWidth
-		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.ViewState.ShowLineNumbers) &&
+		if atRight && screenY == sr.Height && !(sr.winRTL(w) && w.LineNumbersVisible()) &&
 			!(sbw > 0 && !sr.winRTL(w)) {
 			// An LTR scrollbar occupies the corner column itself (its glyph is
 			// simply skipped on that row, below), so the content stays full.
@@ -1303,7 +1274,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		// oversized and misaligned. The gutter width is rounded even in browse
 		// mode, so half as many cells (each drawn 2x) match the normal gutter
 		// exactly and still leave room for a marker.
-		if w.ViewState.ShowLineNumbers && !rtl {
+		if w.LineNumbersVisible() && !rtl {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
@@ -1346,7 +1317,7 @@ func (sr *ScreenRenderer) renderContent(w *viewport.Viewport, startY, height int
 		}
 
 		// RTL: the mirrored line-number gutter, between content and right margin.
-		if w.ViewState.ShowLineNumbers && rtl {
+		if w.LineNumbersVisible() && rtl {
 			sr.Write(lineNumbersColor)
 			switch {
 			case doubleWide:
@@ -1466,6 +1437,35 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	if disp != nil {
 		line = disp.Text
 	}
+
+	// An input method's composition is SYNTHESIZED into the line here, so
+	// everything below paints and measures it as ordinary text — the same
+	// bargain a control character strikes by being painted "^X" without the
+	// buffer holding two runes. Nothing downstream needs a preedit-aware twin
+	// of the column arithmetic; the runes are simply there, and the width model
+	// already knows what a rune is worth.
+	//
+	// Suppressed on a button-substituted line, exactly as marks are and for the
+	// same reason: doc positions inside a replaced span have no cells of their
+	// own to sit at.
+	preLo, preHi := 0, 0
+	if disp == nil {
+		line, preLo, preHi = w.PreeditSplice(docLine, line)
+	}
+	// Its own colour, defaulting to the one control-code substitutes use: it is
+	// the same statement — these cells are not the document — and a scheme that
+	// wants to say it differently can, without moving "^X" with it.
+	// Two of them, because a composition is not always one piece. A Japanese
+	// input method converts one CLAUSE at a time, and walking its candidate
+	// list rewrites that clause while the rest stays as it was typed: "らなに"
+	// becomes "羅なに", with "なに" still in kana because it is not the clause
+	// being converted. The clause wears the composition's own colour and the
+	// rest is dimmed to silver, still underlined — both are provisional, and
+	// only one is what the candidate keys are acting on. Undistinguished, the
+	// untouched clauses read as characters the composition failed to replace.
+	imeColor := sr.col(w, "ime")
+	imeRestColor := sr.col(w, "imeInactive")
+	clauseLo, clauseHi := w.PreeditClauseSpan(preLo, preHi)
 
 	textColor := sr.col(w, "text")
 	// Selection styling. On a flip host whose bidi reorder miscounts a
@@ -1763,6 +1763,19 @@ func (sr *ScreenRenderer) prepareLineForDisplay(line, lineEnding string, width, 
 	// Get the appropriate base color for a rune position. A chrome cell's
 	// forced color wins outright — buttons keep their look through selections.
 	getBaseColor := func(runePos int) string {
+		// A composition outranks everything: it is not the document's text, so
+		// the document's syntax colours and selection have nothing to say about
+		// it. Reading it as ordinary text is exactly the confusion the colour
+		// exists to prevent — these characters may still change or vanish.
+		if runePos >= preLo && runePos < preHi {
+			// No clause reported means the whole composition is the active
+			// material, which is every composition that is built rather than
+			// converted.
+			if clauseHi > clauseLo && (runePos < clauseLo || runePos >= clauseHi) {
+				return imeRestColor
+			}
+			return imeColor
+		}
 		forced := ""
 		if disp != nil && runePos >= 0 && runePos < len(disp.Forced) {
 			forced = disp.Forced[runePos]
@@ -2231,57 +2244,6 @@ func defectiveMarkForm(prev, r rune) (string, int) {
 	return s, substituteWidth(s)
 }
 
-// renderPeekIndicators renders peek indicators for scrolled dock viewports.
-// These hints live at the viewport-manager level, not inside any viewport, so
-// their colors resolve at the global level only (no class/type cascade).
-func (sr *ScreenRenderer) renderPeekIndicators(layout viewport.Layout) {
-	hintColor := sr.colorScheme.Resolve("", "", "hint")
-	resetColor := sr.colorScheme.Resolve("", "", "reset")
-	// Right-align the (configurable, variable-width) label near the right edge.
-	// Labels run through the modebar %CODE% engine first (e.g. "[%SPU%]" ->
-	// the live stat_peek_up binding).
-	draw := func(label string, y int) {
-		if sr.peekLabelFn != nil {
-			label = sr.peekLabelFn(label)
-		}
-		if label == "" {
-			return
-		}
-		sr.MoveCursor(sr.Width-len([]rune(label)), y)
-		sr.Write(hintColor + label + resetColor)
-	}
-
-	// Top pair: Esc U one line below the top edge (so it doesn't cover the
-	// modebar), Esc V on the last row of the top dock. When both are active
-	// and would land on the same row, Esc V takes priority.
-	if len(layout.TopLayout) > 0 {
-		upY := 2
-		lastTop := layout.TopLayout[len(layout.TopLayout)-1]
-		downY := lastTop.Y + lastTop.Height
-		if sr.peekIndicators.StatPeekUp && !(sr.peekIndicators.StatPeekDown && downY <= upY) {
-			draw(sr.indicators.StatPeekUp, upY)
-		}
-		if sr.peekIndicators.StatPeekDown {
-			draw(sr.indicators.StatPeekDown, downY)
-		}
-	}
-
-	// Bottom pair: Esc P on the first row of the bottom dock, Esc N on the
-	// last screen row. When both are active and would land on the same row,
-	// Esc P takes priority.
-	if len(layout.BottomLayout) > 0 {
-		firstBottom := layout.BottomLayout[0]
-		upY := firstBottom.Y + 1
-		downY := sr.Height
-		if sr.peekIndicators.PromptPeekDown && !(sr.peekIndicators.PromptPeekUp && upY >= downY) {
-			draw(sr.indicators.PromptPeekDown, downY)
-		}
-		if sr.peekIndicators.PromptPeekUp {
-			draw(sr.indicators.PromptPeekUp, upY)
-		}
-	}
-}
-
 // positionCursor positions the terminal cursor within a viewport. It returns true
 // if the hardware cursor should be hidden for this frame (used for the
 // right-edge off-screen "@", so the block cursor doesn't obscure the marker).
@@ -2333,6 +2295,18 @@ func (sr *ScreenRenderer) positionCursor(w *viewport.Viewport, layout *viewport.
 		// button's first cell). Identity when no buttons apply.
 		var curRune int
 		line, curRune = sr.displayCaretLine(w, raw, w.CursorPos().Rune)
+		// A composition is synthesized into the line the painter draws, so the
+		// caret has to be measured against the same line or it lands where the
+		// text used to be. Inside it, at the input method's OWN cursor: that is
+		// what shows progress through a long composition, and parking at either
+		// end would claim the composition is finished when it is not.
+		if line == raw {
+			var preLo, preHi int
+			line, preLo, preHi = w.PreeditSplice(w.CursorPos().Line, raw)
+			if preHi > preLo {
+				curRune = w.PreeditCaretRune(w.CursorPos().Line, w.CursorPos().Rune)
+			}
+		}
 		caretRune = curRune
 		visualColumn = sr.caretVisualColumn(line, curRune, w)
 	}
@@ -2448,7 +2422,7 @@ func (sr *ScreenRenderer) barCursorOnRTL(w *viewport.Viewport, line string, rune
 // It is the room the caret has to sit ONE column past the content's right edge,
 // which is where an insertion point after the rightmost character belongs.
 func (sr *ScreenRenderer) caretGutterSlack(w *viewport.Viewport) int {
-	if w == nil || !sr.winRTL(w) || !w.ViewState.ShowLineNumbers {
+	if w == nil || !sr.winRTL(w) || !w.LineNumbersVisible() {
 		return 0
 	}
 	gutter := w.LineNumWidth
@@ -3063,7 +3037,7 @@ func (sr *ScreenRenderer) caretRowGeom(w *viewport.Viewport, line string) (base,
 	// wrong width.
 	fx, fw, _ := sr.vpFrame(w)
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 	sbw := 0

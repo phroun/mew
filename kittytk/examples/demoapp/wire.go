@@ -121,6 +121,12 @@ func (a *app) wireMenus() {
 	c.OnCommand("demo.basic.cancel", func() { a.setStatus("Cancel button clicked!") })
 	c.OnCommand("demo.basic.apply", func() { a.setStatus("Apply button clicked!") })
 
+	// Nested menu. Both narrate to the status bar, which is the point: a
+	// trigger from four submenus down arrives as the same command event as
+	// one from the menu bar, carrying nothing about the depth it came from.
+	c.OnCommand("demo.nested.pick", func() { a.setStatus("Nested: ordinary item") })
+	c.OnCommand("demo.nested.deep", func() { a.setStatus("Nested: fired from level 4") })
+
 	// Help menu.
 	c.OnCommand("demo.help.about", func() { a.showAbout() })
 }
@@ -138,7 +144,7 @@ func (a *app) wireMDI() {
 	c.OnCommand("demo.mdi.tile", func() { _ = mdi.Set("tile") })
 	c.OnCommand("demo.mdi.cascade", func() { _ = mdi.Set("cascade") })
 	c.OnCommand("demo.mdi.next", func() { _ = mdi.Set("next") })
-	c.OnCommand("demo.mdi.prev", func() { _ = mdi.Set("prev") })
+	c.OnCommand("demo.mdi.prior", func() { _ = mdi.Set("prior") })
 
 	entries := make(map[uint64]client.Handle) // window id -> dock entry
 	dropEntry := func(winID uint64) {

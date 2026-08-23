@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Under SGR-Pixels (?1016) a plain-motion report (MouseDrag@) carries PIXELS.
+// Under SGR-Pixels (?1016) a plain-motion report (Mouse@) carries PIXELS.
 // Hover must use the position already pixel-converted at the top of
 // handleMouseKey, not re-parse the raw report as cells — otherwise the hover
 // lands far off the grid and the button never lights (the cursor still changes
@@ -29,7 +29,7 @@ func TestHoverUsesPixelConvertedPosition(t *testing.T) {
 	screenRow := w.ContentY + 1
 	px := (screenCol-1)*cw + cw/2
 	py := (screenRow-1)*ch + ch/2
-	e.handleMouseKey("MouseDrag@" + itoa(px) + "," + itoa(py))
+	e.handleMouseKey("Mouse@" + itoa(px) + "," + itoa(py))
 
 	if !e.mouseHovered.active {
 		t.Fatal("hover should latch over the button when the report is in pixels")
@@ -40,7 +40,7 @@ func TestHoverUsesPixelConvertedPosition(t *testing.T) {
 
 	// A pixel position off the button clears the hover.
 	offCol := w.ContentX + 1 + 15
-	e.handleMouseKey("MouseDrag@" + itoa((offCol-1)*cw+cw/2) + "," + itoa(py))
+	e.handleMouseKey("Mouse@" + itoa((offCol-1)*cw+cw/2) + "," + itoa(py))
 	if e.mouseHovered.active {
 		t.Fatal("hover should clear when the pixel position is off the button")
 	}

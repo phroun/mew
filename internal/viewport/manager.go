@@ -4,6 +4,7 @@ package viewport
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -225,6 +226,54 @@ func (w *Viewport) FocusEligible() bool {
 	return w != nil && w.Type != PromptViewport && !isChromeSet(w.ViewportSet)
 }
 
+// GenSurfacePrefix is the URL scheme prefix of mew's generated ("mew:")
+// surfaces — the buffers/viewports/closed listings produced on demand rather
+// than read from disk. The editor owns the scheme (see isGenPath and
+// gensurface.go); the viewport package recognizes it only by ADDRESS, so a
+// surface's display traits derive from the buffer it shows and never stick to
+// the viewport when the reader navigates back to a document.
+const GenSurfacePrefix = "mew:"
+
+// SurfaceClass is the styling class a viewport reports for a generated mew:
+// surface, letting a user theme these chrome-like listings ([surface.color.*],
+// [surface.*]) apart from ordinary document buffers. It is derived from the
+// buffer's address each frame, never stored, so navigating back to a document
+// reports that document's own class again.
+const SurfaceClass = "surface"
+
+// showsGenSurface reports whether the viewport currently shows a generated mew:
+// surface, keyed on the buffer's address alone so nothing sticks to the viewport.
+func (w *Viewport) showsGenSurface() bool {
+	return w != nil && w.Buffer != nil && strings.HasPrefix(w.Buffer.GetFilename(), GenSurfacePrefix)
+}
+
+// EffectiveClass is the viewport's styling/theming class: its explicit Class,
+// except a generated mew: surface (with no explicit class of its own) reports
+// SurfaceClass so it themes separately from documents. Color and focused-chrome
+// resolution reads this rather than Class directly; the editor layers the
+// pty-derived class on top for the option cascade (see viewportClass).
+func (w *Viewport) EffectiveClass() string {
+	if w == nil {
+		return ""
+	}
+	if w.Class == "" && w.showsGenSurface() {
+		return SurfaceClass
+	}
+	return w.Class
+}
+
+// LineNumbersVisible reports whether the line-number gutter should paint for
+// this viewport: its ShowLineNumbers view option, except that generated mew:
+// surfaces never show a gutter — they are chrome-like listings. Both the
+// renderer's gutter geometry and the editor's matching hit-test read this, so
+// paint and click agree.
+func (w *Viewport) LineNumbersVisible() bool {
+	if w == nil || !w.ViewState.ShowLineNumbers {
+		return false
+	}
+	return !w.showsGenSurface()
+}
+
 // DockPosition represents where a viewport is docked.
 type DockPosition int
 
@@ -350,6 +399,17 @@ type Viewport struct {
 	// nav_cancel and by turning navigationMode off.
 	BrowseActive bool
 
+	// preedit is text an input method is composing: painted, not stored, and
+	// tracked by preeditAt — a cursor of this viewport's own, minted once and
+	// parked again on each composition. See preedit.go.
+	preedit   Preedit
+	preeditAt *buffer.Anchor
+
+	// preeditStanding is whether a composition still owns a region, which
+	// outlives the text being painted: an input method ends its composition
+	// before delivering the finished text.
+	preeditStanding bool
+
 	// AfterKey is this viewport's after-key pseudo-binding: a PawScript command
 	// the editor runs each time a key's binding activity RESOLVES while this
 	// viewport owns the keyboard — after the bound (or fallthrough-insert)
@@ -415,6 +475,14 @@ type Viewport struct {
 	MinHeight int
 	MaxHeight int
 	Height    int
+	// MaxHeightFraction, when > 0, caps a docked viewport at a proportion of the
+	// mew area height (less 2 rows reserved for chrome): the effective max is
+	// floor((areaHeight-2) * MaxHeightFraction), recomputed by the layout each
+	// frame so it tracks resizes. Its preferred height IS that cap (it opens as
+	// tall as allowed, then negotiates down under pressure). A literal MaxHeight
+	// set alongside it is the hard ceiling — the effective cap is the smaller of
+	// the two.
+	MaxHeightFraction float64
 
 	IdealVisualColumn       int
 	GhostCursorVisualColumn int
@@ -1084,6 +1152,55 @@ func (w *Viewport) Unbury(buf *buffer.Buffer) {
 	w.navGrave = out
 }
 
+// newBinding mints a fresh viewBinding on buf with its own garland cursors and
+// an empty ring — the stack (parked) form of bindBuffer, for a binding placed in
+// history rather than made active.
+func newBinding(buf *buffer.Buffer) viewBinding {
+	b := viewBinding{Buffer: buf, ringNav: -1}
+	if buf == nil {
+		return b
+	}
+	b.caret = buf.NewCaret()
+	b.viewportAnchor = buf.NewAnchor()
+	b.lastEditPoint = buf.NewAnchor()
+	for i := range b.cursorRing {
+		b.cursorRing[i] = buf.NewAnchor()
+	}
+	return b
+}
+
+// ReplaceHistoryBuffer replaces every nav-history binding (back, forward, and
+// graveyard) whose buffer is `old` with a fresh binding on `repl`, releasing the
+// replaced binding's cursors so `old` stops tracking them, and stamping the given
+// view state (read-only / link-browse / browse-active) onto each new binding so
+// navigating back to it restores that state. The ACTIVE binding is left untouched
+// — callers handle the active view separately. Reports how many entries were
+// replaced.
+//
+// It drives both directions of the buffer_close tombstone feature: planting
+// mew:/closed tombstones over a closed buffer (read-only, link-browse), and
+// restoring the reopened buffer over those tombstones (its resolved doc state).
+func (w *Viewport) ReplaceHistoryBuffer(old, repl *buffer.Buffer, readOnly, linkBrowsing, browse bool) int {
+	n := 0
+	do := func(stack []viewBinding) {
+		for i := range stack {
+			if stack[i].Buffer == old {
+				stack[i].release()
+				b := newBinding(repl)
+				b.readOnly = readOnly
+				b.linkBrowsing = linkBrowsing
+				b.browseActive = browse
+				stack[i] = b
+				n++
+			}
+		}
+	}
+	do(w.navBack)
+	do(w.navFwd)
+	do(w.navGrave)
+	return n
+}
+
 // NavHistoryPrior returns to the binding the viewport most recently swapped
 // away from, moving the active binding onto the forward stack. Reports false
 // (no state change) when there is no back history, so command chains can
@@ -1209,8 +1326,6 @@ const (
 	EventCursorPositioned
 	EventGhostCursorSet
 	EventGhostCursorCleared
-	EventStatPeekChanged
-	EventPromptPeekChanged
 )
 
 // Event represents a viewport manager event.
@@ -1247,10 +1362,6 @@ type Manager struct {
 	// panes, side-by-side, etc.) instead of only showing the last-focused one.
 	lastNormalViewport *Viewport
 
-	// Peek offsets for viewing hidden viewports
-	StatPeek   int // For top-docked viewports
-	PromptPeek int // For bottom-docked viewports
-
 	// Viewport type counters for auto-naming
 	mainBufferCount   int
 	workBufferCount   int
@@ -1268,6 +1379,15 @@ type Manager struct {
 	// the focused viewport). It runs while m.mu is held, so it must not call back
 	// into the Manager.
 	mainFocusHook func(id string)
+
+	// cycleVisible, when set, further gates which focus-eligible viewports the
+	// focus SWITCHER (FocusNextViewport / FocusPrevViewport) stops on: it must
+	// return true for a viewport to be a cycle stop. The editor uses it to keep
+	// the switcher to viewports currently ON SCREEN (a main viewport only when a
+	// tile shows it), so cycling never lands on an untiled background buffer.
+	// Called with m.mu held from focusCycleTarget, so it must read only the
+	// passed viewport's fields and editor-side state — never re-enter the Manager.
+	cycleVisible func(w *Viewport) bool
 }
 
 // SetMainFocusHook registers a callback invoked (under the manager lock) whenever
@@ -1276,6 +1396,16 @@ type Manager struct {
 func (m *Manager) SetMainFocusHook(fn func(id string)) {
 	m.mu.Lock()
 	m.mainFocusHook = fn
+	m.mu.Unlock()
+}
+
+// SetCycleVisibleFilter registers the predicate that decides whether a
+// focus-eligible viewport is an on-screen cycle stop for the focus switcher.
+// Pass nil to clear (every focus-eligible viewport cycles). The predicate must
+// not re-enter the Manager (it runs under the lock).
+func (m *Manager) SetCycleVisibleFilter(fn func(w *Viewport) bool) {
+	m.mu.Lock()
+	m.cycleVisible = fn
 	m.mu.Unlock()
 }
 
@@ -1307,34 +1437,38 @@ func (m *Manager) emit(event Event) {
 
 // ViewportOptions configures a new viewport.
 type ViewportOptions struct {
-	ID              string
-	Type            ViewportType
-	Class           string
-	ViewportSet     string
-	Tag             string
-	Buffer          *buffer.Buffer
-	Dock            DockPosition
-	Priority        int
-	Visible         bool
-	MinHeight       int
-	MaxHeight       int
-	Height          int
-	ShowLineNumbers bool
-	ProtectNewlines bool
-	ShowInvisibles  bool
-	ShowBidi        bool
-	ShowMarks       string // "no" | "yes" | "all"
-	OverwriteMode   bool   // inverse of insertMode; zero value = insert
-	ReadOnly        bool
-	AutoIndent      bool // replicate the split line's indent on insert_newline
-	LinkBrowsing    bool // hyperlink layer (link colors, browse-mode buttons)
-	ShowRuler       bool
-	Scrollbar       bool // reserve the outer column for a vertical scrollbar
-	TabSize         int
-	SyntaxOverrides string // space-separated grammar flavors that skip the project folder
-	SetFocus        bool
-	CustomRenderer  string
-	AfterKey        string // after-key pseudo-binding (see Viewport.AfterKey)
+	ID          string
+	Type        ViewportType
+	Class       string
+	ViewportSet string
+	Tag         string
+	Buffer      *buffer.Buffer
+	Dock        DockPosition
+	Priority    int
+	Visible     bool
+	MinHeight   int
+	MaxHeight   int
+	Height      int
+	// MaxHeightFraction caps this viewport at a proportion of the mew area
+	// height (less 2 chrome rows) rather than a fixed MaxHeight; see the field of
+	// the same name on ViewportOptions.
+	MaxHeightFraction float64
+	ShowLineNumbers   bool
+	ProtectNewlines   bool
+	ShowInvisibles    bool
+	ShowBidi          bool
+	ShowMarks         string // "no" | "yes" | "all"
+	OverwriteMode     bool   // inverse of insertMode; zero value = insert
+	ReadOnly          bool
+	AutoIndent        bool // replicate the split line's indent on insert_newline
+	LinkBrowsing      bool // hyperlink layer (link colors, browse-mode buttons)
+	ShowRuler         bool
+	Scrollbar         bool // reserve the outer column for a vertical scrollbar
+	TabSize           int
+	SyntaxOverrides   string // space-separated grammar flavors that skip the project folder
+	SetFocus          bool
+	CustomRenderer    string
+	AfterKey          string // after-key pseudo-binding (see Viewport.AfterKey)
 
 	// Message bars
 	MessageTopInner     string
@@ -1436,6 +1570,7 @@ func (m *Manager) CreateViewport(opts ViewportOptions) string {
 		ScrollbarX:          -1, // no bar until the renderer lays one out
 		MinHeight:           minHeight,
 		MaxHeight:           opts.MaxHeight,
+		MaxHeightFraction:   opts.MaxHeightFraction,
 		Height:              height,
 		MessageTopInner:     opts.MessageTopInner,
 		MessageTopCenter:    opts.MessageTopCenter,
@@ -1634,6 +1769,7 @@ func (m *Manager) RemoveViewport(id string) bool {
 	// the active binding and every binding stacked in its nav history.
 	w.releaseBinding()
 	w.releaseNavHistory()
+	w.releasePreedit()
 
 	delete(m.viewports, id)
 
@@ -1739,18 +1875,20 @@ func (m *Manager) removalFocusTargetLocked(closed *Viewport) string {
 func (m *Manager) focusCycleTarget(offset int) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.stepRingLocked(m.cyclablesLocked(), m.currentMainLocked(), offset)
+}
 
-	// Collect visible focus-eligible viewports in deterministic (ID) order. A
-	// viewport with CanFocus=false (e.g. Quick Help) is skipped as a cycle stop,
-	// though explicit focus can still reach it.
+// cyclablesLocked collects the viewports the focus switcher may stop on —
+// focus-eligible, visible, CanFocus, and passing the on-screen cycleVisible gate
+// — in deterministic (ID) order. A viewport with CanFocus=false (e.g. Quick
+// Help) is skipped as a cycle stop, though explicit focus can still reach it.
+// Caller holds m.mu.
+func (m *Manager) cyclablesLocked() []*Viewport {
 	var mains []*Viewport
 	for _, w := range m.viewports {
-		if w.FocusEligible() && w.Visible && w.CanFocus {
+		if w.FocusEligible() && w.Visible && w.CanFocus && (m.cycleVisible == nil || m.cycleVisible(w)) {
 			mains = append(mains, w)
 		}
-	}
-	if len(mains) == 0 {
-		return ""
 	}
 	for i := 0; i < len(mains)-1; i++ {
 		for j := i + 1; j < len(mains); j++ {
@@ -1759,36 +1897,120 @@ func (m *Manager) focusCycleTarget(offset int) string {
 			}
 		}
 	}
+	return mains
+}
 
-	// Locate the current position in the main cycle.
-	currentMain := m.lastMainViewport
-	if current := m.viewports[m.focusedViewportID]; current != nil {
-		if current.FocusEligible() {
-			currentMain = current
-		} else if current.ParentViewport != nil {
-			currentMain = current.ParentViewport
+// currentMainLocked resolves the "current main" for cycling: the focused
+// focus-eligible viewport, a focused prompt's parent standing in for it, or the
+// last-focused main. Caller holds m.mu.
+func (m *Manager) currentMainLocked() *Viewport {
+	current := m.lastMainViewport
+	if c := m.viewports[m.focusedViewportID]; c != nil {
+		if c.FocusEligible() {
+			current = c
+		} else if c.ParentViewport != nil {
+			current = c.ParentViewport
 		}
 	}
-	currentIndex := -1
-	if currentMain != nil {
-		for i, w := range mains {
-			if w.ID == currentMain.ID {
-				currentIndex = i
+	return current
+}
+
+// stepRingLocked locates current within ring and returns the id to focus after
+// stepping offset (wrapping), resolved through cycleResolveLocked to the target's
+// newest prompt buffer when it has one. Returns "" when the ring is empty or the
+// step lands back on the already-focused viewport. Caller holds m.mu.
+func (m *Manager) stepRingLocked(ring []*Viewport, current *Viewport, offset int) string {
+	if len(ring) == 0 {
+		return ""
+	}
+	idx := -1
+	if current != nil {
+		for i, w := range ring {
+			if w.ID == current.ID {
+				idx = i
 				break
 			}
 		}
 	}
-
-	targetIndex := (currentIndex + offset + len(mains)) % len(mains)
-	targetMain := mains[targetIndex]
-
-	// Resolve to the target main's newest prompt buffer, if it has one.
-	target := m.cycleResolveLocked(targetMain)
-
+	target := m.cycleResolveLocked(ring[(idx+offset+len(ring))%len(ring)])
 	if target.ID == m.focusedViewportID {
 		return ""
 	}
 	return target.ID
+}
+
+// zoneCycleTarget is focusCycleTarget restricted to the current main's zone (its
+// ViewportSet): only viewports sharing that set take part in the ring.
+func (m *Manager) zoneCycleTarget(offset int) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	current := m.currentMainLocked()
+	all := m.cyclablesLocked()
+	if current == nil {
+		return m.stepRingLocked(all, current, offset)
+	}
+	var ring []*Viewport
+	for _, w := range all {
+		if w.ViewportSet == current.ViewportSet {
+			ring = append(ring, w)
+		}
+	}
+	return m.stepRingLocked(ring, current, offset)
+}
+
+// zoneJumpTarget advances from the current main's zone to the next/prior zone
+// (by offset) among the visible zones — the distinct ViewportSets of the
+// currently cyclable viewports, in deterministic first-appearance (ID) order —
+// and returns the id to focus there: that zone's last-focused viewport when it
+// is still live, else its first visible member as a fallback. Returns "" when
+// there is no other zone to move to. Caller must not hold m.mu.
+func (m *Manager) zoneJumpTarget(offset int) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all := m.cyclablesLocked()
+	if len(all) == 0 {
+		return ""
+	}
+	curSet := ""
+	if current := m.currentMainLocked(); current != nil {
+		curSet = current.ViewportSet
+	}
+
+	// Distinct zones present, in first-appearance (ID) order.
+	var zones []string
+	seen := map[string]bool{}
+	for _, w := range all {
+		if !seen[w.ViewportSet] {
+			seen[w.ViewportSet] = true
+			zones = append(zones, w.ViewportSet)
+		}
+	}
+	zi := 0
+	for i, z := range zones {
+		if z == curSet {
+			zi = i
+			break
+		}
+	}
+	targetSet := zones[(zi+offset+len(zones))%len(zones)]
+	if targetSet == curSet {
+		return "" // only one zone present — nowhere else to go
+	}
+
+	// Prefer the zone's last-focused viewport (validated still-live); otherwise
+	// fall back to its first visible member (all is ID-sorted, so deterministic).
+	if fw := m.lastFocusedBySet[targetSet]; fw != nil {
+		if _, ok := m.viewports[fw.ID]; ok {
+			return m.cycleResolveLocked(fw).ID
+		}
+	}
+	for _, w := range all {
+		if w.ViewportSet == targetSet {
+			return m.cycleResolveLocked(w).ID
+		}
+	}
+	return ""
 }
 
 // cycleResolveLocked resolves a cycle-target main to what the focus switcher
@@ -1849,6 +2071,49 @@ func (m *Manager) FocusNextViewport() bool {
 // any other focus change.
 func (m *Manager) FocusPrevViewport() bool {
 	target := m.focusCycleTarget(-1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusNextInZone cycles focus to the next focusable viewport WITHIN the current
+// main's zone (ViewportSet), wrapping inside that set. Like FocusNextViewport but
+// it never crosses into another zone.
+func (m *Manager) FocusNextInZone() bool {
+	target := m.zoneCycleTarget(1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusPrevInZone cycles focus to the previous focusable viewport within the
+// current main's zone (ViewportSet), wrapping inside that set.
+func (m *Manager) FocusPrevInZone() bool {
+	target := m.zoneCycleTarget(-1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusNextZone advances to the NEXT zone (ViewportSet) among the visible zones
+// and focuses that zone's last-focused viewport (or its first visible member as
+// a fallback). Routed through SetFocus like any other focus change.
+func (m *Manager) FocusNextZone() bool {
+	target := m.zoneJumpTarget(1)
+	if target == "" {
+		return false
+	}
+	return m.SetFocus(target)
+}
+
+// FocusPrevZone advances to the PRIOR zone (ViewportSet) among the visible zones
+// and focuses that zone's last-focused viewport (or its first visible member as
+// a fallback).
+func (m *Manager) FocusPrevZone() bool {
+	target := m.zoneJumpTarget(-1)
 	if target == "" {
 		return false
 	}
@@ -2025,72 +2290,6 @@ func (m *Manager) CreatePromptViewport(prompt, defaultValue string, callback fun
 	m.mu.Unlock()
 
 	return id
-}
-
-// StatPeekUp increases visibility of top dock viewports.
-func (m *Manager) StatPeekUp() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	topViewports := m.getViewportsByDockLocked(DockTop)
-	if m.StatPeek < len(topViewports)-1 {
-		m.StatPeek++
-		go m.emit(Event{
-			Type:     EventStatPeekChanged,
-			NewValue: m.StatPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// StatPeekDown decreases visibility of top dock viewports.
-func (m *Manager) StatPeekDown() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.StatPeek > 0 {
-		m.StatPeek--
-		go m.emit(Event{
-			Type:     EventStatPeekChanged,
-			NewValue: m.StatPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// PromptPeekUp increases visibility of bottom dock viewports.
-func (m *Manager) PromptPeekUp() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.PromptPeek > 0 {
-		m.PromptPeek--
-		go m.emit(Event{
-			Type:     EventPromptPeekChanged,
-			NewValue: m.PromptPeek,
-		})
-		return true
-	}
-	return false
-}
-
-// PromptPeekDown decreases visibility of bottom dock viewports.
-func (m *Manager) PromptPeekDown() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	bottomViewports := m.getViewportsByDockLocked(DockBottom)
-	if m.PromptPeek < len(bottomViewports)-1 {
-		m.PromptPeek++
-		go m.emit(Event{
-			Type:     EventPromptPeekChanged,
-			NewValue: m.PromptPeek,
-		})
-		return true
-	}
-	return false
 }
 
 // getViewportsByDockLocked is the internal version without locking.

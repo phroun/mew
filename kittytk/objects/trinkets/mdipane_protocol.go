@@ -52,6 +52,24 @@ func init() {
 	}
 
 	protocol.RegisterType("mdipane", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"active": protocol.NewEventDesc("The active child window changed, including to none.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The newly active window, or 0 when none is.").
+				Field("title", "string", "The active window's title; absent when none is active."),
+			"minimize": protocol.NewEventDesc("A child window was minimized to the dock.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The minimized window.").
+				Field("title", "string", "The window's title."),
+			"restore": protocol.NewEventDesc("A minimized child window was restored.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The restored window.").
+				Field("title", "string", "The window's title."),
+			"remove": protocol.NewEventDesc("A child window left the pane.").
+				Field("trinket", "uint", "The pane's object ID.").
+				Field("window", "uint", "The window that left.").
+				Field("title", "string", "The window's title."),
+		},
 		New: func() any { return NewMDIPane() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*MDIPane).ObjectID())
@@ -95,11 +113,16 @@ func init() {
 				m.SetBackgroundChar(runes[0])
 				return nil
 			})).Tip("Background fill character"),
-			"pattern":  boolProp("pattern", (*MDIPane).SetDrawPattern).Tip("Draw a pattern background").Def("false"),
-			"tile":     protocol.NewProperty("flag", mdiFlagAction("tile", (*MDIPane).TileWindows)).Tip("Tile the hosted windows"),
-			"cascade":  protocol.NewProperty("flag", mdiFlagAction("cascade", (*MDIPane).CascadeWindows)).Tip("Cascade the hosted windows"),
-			"next":     protocol.NewProperty("flag", mdiFlagAction("next", (*MDIPane).NextWindow)).Tip("Activate the next window"),
-			"prev":     protocol.NewProperty("flag", mdiFlagAction("prev", (*MDIPane).PrevWindow)).Tip("Activate the previous window"),
+			"pattern": boolProp("pattern", (*MDIPane).SetDrawPattern).Tip("Draw a pattern background").Def("false"),
+			"tile":    protocol.NewProperty("flag", mdiFlagAction("tile", (*MDIPane).TileWindows)).Tip("Tile the hosted windows"),
+			"cascade": protocol.NewProperty("flag", mdiFlagAction("cascade", (*MDIPane).CascadeWindows)).Tip("Cascade the hosted windows"),
+			"next":    protocol.NewProperty("flag", mdiFlagAction("next", (*MDIPane).NextWindow)).Tip("Activate the next window"),
+			// "prior", not "prev": the vocabulary pairs next with prior
+			// everywhere else it makes the distinction -- item_prior,
+			// page_prior, del_prior, sort_mode_prior -- and "prev"
+			// appeared here alone, on the wire and on the Go method
+			// both. Renamed together so the two never disagree.
+			"prior":    protocol.NewProperty("flag", mdiFlagAction("prior", (*MDIPane).PriorWindow)).Tip("Activate the prior window"),
 			"restore":  protocol.NewProperty("int", mdiWindowAction("restore", (*MDIPane).RestoreWindow)).Tip("Restore a hosted window by id"),
 			"minimize": protocol.NewProperty("int", mdiWindowAction("minimize", (*MDIPane).MinimizeWindow)).Tip("Minimize a hosted window by id"),
 			"remove":   protocol.NewProperty("int", mdiWindowAction("remove", (*MDIPane).RemoveWindow)).Tip("Close a hosted window by id"),

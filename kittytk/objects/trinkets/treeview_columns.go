@@ -464,12 +464,6 @@ func (t *TreeView) headerStopLabel(idx int) string {
 	return fmt.Sprintf("%s column header, %s", name, state)
 }
 
-// isShiftTab matches both spellings of a backward Tab.
-func isShiftTab(event core.KeyPressEvent) bool {
-	return event.Key == "S-Tab" ||
-		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-}
-
 // handleHeaderFocusKey runs the header zones' keyboard model. Returns
 // handled; content-zone keys fall through to the tree's own handling.
 //
@@ -481,32 +475,35 @@ func isShiftTab(event core.KeyPressEvent) bool {
 //	        there exits down into the rows) - Left previous (before
 //	        the first -> bar) - Enter/Space activates (sort cycle,
 //	        or opens the chooser) - Escape -> bar
-func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
+func (t *TreeView) handleHeaderFocusKey(cmd string) bool {
 	if t.headerHeight() == 0 {
 		return false
 	}
-	shiftTab := isShiftTab(event)
+	// Enter resolves to the edit command and Space to activate; a header stop
+	// holds no text to edit, so both simply mean "act on this stop".
+	activate := cmd == core.CmdTrinketActivate || cmd == core.CmdTrinketEdit
 	switch t.headerZone {
 	case hzContent:
 		// S-Tab backs into the header bar instead of leaving the
 		// trinket; everything else is the content's business.
-		if shiftTab {
+		if cmd == core.CmdFocusPrior {
 			t.setHeaderZone(hzBar, 0)
 			return true
 		}
 		return false
 	case hzBar:
 		switch {
-		case shiftTab:
+		case cmd == core.CmdFocusPrior:
 			t.headerZone = hzContent // release backward out of the trinket
 			return false
-		case event.Key == "Tab":
+		case cmd == core.CmdFocusNext:
 			t.setHeaderZone(hzContent, 0)
 			return true
-		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+		case activate:
 			t.setHeaderZone(hzItems, 0)
 			return true
-		case event.Key == "Down" || event.Key == "Escape":
+		case cmd == core.CmdTrinketItemDown || cmd == core.CmdTrinketItemNext ||
+			cmd == core.CmdTrinketCancel:
 			t.setHeaderZone(hzContent, 0)
 			return true
 		}
@@ -514,28 +511,28 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 	case hzItems:
 		n := t.headerStopCount()
 		switch {
-		case shiftTab:
+		case cmd == core.CmdFocusPrior:
 			if t.headerFocusIdx == 0 {
 				t.setHeaderZone(hzItems, n-1) // wrap to the chooser end
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
 			}
 			return true
-		case event.Key == "Left":
+		case cmd == core.CmdTrinketItemLeft:
 			if t.headerFocusIdx == 0 {
 				t.setHeaderZone(hzBar, 0)
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx-1)
 			}
 			return true
-		case event.Key == "Tab" || event.Key == "Right":
+		case cmd == core.CmdFocusNext || cmd == core.CmdTrinketItemRight:
 			if t.headerFocusIdx+1 >= n {
 				t.setHeaderZone(hzContent, 0)
 			} else {
 				t.setHeaderZone(hzItems, t.headerFocusIdx+1)
 			}
 			return true
-		case event.Key == "Enter" || event.Key == " " || event.Key == "Space":
+		case activate:
 			seq := t.visibleColumns()
 			if t.headerFocusIdx >= len(seq) {
 				t.openColumnChooser(true)
@@ -544,7 +541,7 @@ func (t *TreeView) handleHeaderFocusKey(event core.KeyPressEvent) bool {
 				t.announceHeaderZone() // re-announce the new sort state
 			}
 			return true
-		case event.Key == "Escape":
+		case cmd == core.CmdTrinketCancel:
 			t.setHeaderZone(hzBar, 0)
 			return true
 		}
@@ -1849,11 +1846,11 @@ func (t *TreeView) desktopAncestor() (*Desktop, bool) {
 // retains focus and forwards, exactly like the menu bar): navigation
 // and toggling go to the Menu, Escape dismisses, everything else is
 // swallowed while the menu is up.
-func (t *TreeView) handleChooserKey(event core.KeyPressEvent) bool {
+func (t *TreeView) handleChooserKey(event core.KeyPressEvent, cmd string) bool {
 	if !t.chooserOpen || t.chooserMenu == nil {
 		return false
 	}
-	if event.Key == "Escape" {
+	if cmd == core.CmdTrinketCancel {
 		t.closeColumnChooser()
 		return true
 	}
@@ -2411,5 +2408,126 @@ func (t *TreeView) scrollHorizontally(deltaCells int) bool {
 	}
 	t.hScroll = hs
 	t.Update()
+	return true
+}
+
+// sortCommandColumn is the column a sort command acts on: the header caption
+// the user is standing on when the header has focus, otherwise the column
+// already sorted, otherwise the key column (nil). It never picks a column that
+// declined to be sortable.
+func (t *TreeView) sortCommandColumn() (*TreeColumn, bool) {
+	if t.headerZone == hzItems {
+		if seq := t.visibleColumns(); t.headerFocusIdx < len(seq) {
+			col := seq[t.headerFocusIdx]
+			if col == nil || col.Sortable {
+				return col, true
+			}
+			return nil, false
+		}
+	}
+	if t.sorted && t.sortedBy >= 0 && t.sortedBy < len(t.columns) {
+		col := t.columns[t.sortedBy]
+		if col.Sortable {
+			return col, true
+		}
+		return nil, false
+	}
+	return nil, true // the key column, always sortable
+}
+
+// applySort sets the sort state and reports it, the same way activating a
+// header does — the trinket has already reordered its visual rows, so the
+// observer is being told, not asked.
+func (t *TreeView) applySort(col *TreeColumn, sorted, descending bool) bool {
+	by := t.columnIndex(col)
+	t.SetSorted(sorted, by, descending)
+	if t.onSortRequested != nil {
+		t.onSortRequested(sorted, by, descending)
+	}
+	return true
+}
+
+// SortAscending sorts the command column ascending. SortDescending is its
+// mirror, and SortOff returns to the application's own order.
+func (t *TreeView) SortAscending() bool {
+	col, ok := t.sortCommandColumn()
+	return ok && t.applySort(col, true, false)
+}
+
+func (t *TreeView) SortDescending() bool {
+	col, ok := t.sortCommandColumn()
+	return ok && t.applySort(col, true, true)
+}
+
+func (t *TreeView) SortOff() bool {
+	col, ok := t.sortCommandColumn()
+	return ok && t.applySort(col, false, false)
+}
+
+// ToggleSortAscending sorts ascending, or turns sorting off when this column
+// is already sorted that way — so one key both applies and clears. The
+// descending toggle is its mirror.
+func (t *TreeView) ToggleSortAscending() bool {
+	col, ok := t.sortCommandColumn()
+	if !ok {
+		return false
+	}
+	if t.sorted && t.sortedBy == t.columnIndex(col) && !t.sortDescending {
+		return t.applySort(col, false, false)
+	}
+	return t.applySort(col, true, false)
+}
+
+func (t *TreeView) ToggleSortDescending() bool {
+	col, ok := t.sortCommandColumn()
+	if !ok {
+		return false
+	}
+	if t.sorted && t.sortedBy == t.columnIndex(col) && t.sortDescending {
+		return t.applySort(col, false, false)
+	}
+	return t.applySort(col, true, true)
+}
+
+// SortModeNext walks the cycle a header activation walks — ascending,
+// descending, off — and SortModePrior walks it backwards.
+func (t *TreeView) SortModeNext() bool {
+	col, ok := t.sortCommandColumn()
+	if !ok {
+		return false
+	}
+	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	switch {
+	case !on:
+		return t.applySort(col, true, false)
+	case !t.sortDescending:
+		return t.applySort(col, true, true)
+	default:
+		return t.applySort(col, false, false)
+	}
+}
+
+func (t *TreeView) SortModePrior() bool {
+	col, ok := t.sortCommandColumn()
+	if !ok {
+		return false
+	}
+	on := t.sorted && t.sortedBy == t.columnIndex(col)
+	switch {
+	case !on:
+		return t.applySort(col, true, true)
+	case t.sortDescending:
+		return t.applySort(col, true, false)
+	default:
+		return t.applySort(col, false, false)
+	}
+}
+
+// OpenColumnChooser opens the [=] show/hide menu from the keyboard.
+func (t *TreeView) OpenColumnChooser() bool {
+	if !t.multiColumn() {
+		return false
+	}
+	t.openColumnChooser(true)
 	return true
 }

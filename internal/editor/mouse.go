@@ -14,8 +14,9 @@ import (
 
 // Mouse input (TUI). The key layer (direct-key-handler) decodes SGR/X10
 // mouse reports into pseudo-keys — "Mouse@x,y" (position, emitted before its
-// action), "MouseLeftPress"/"MouseLeftRelease"/"MouseScrollUp"/... and drags
-// as "MouseLeftDrag@x,y" — once the terminal is asked to report the mouse at
+// action and on its own when the pointer moves with no button down),
+// "MouseLeft"/"MouseLeft:Release"/"MouseScrollUp"/... and drags
+// as "MouseDragLeft@x,y" — once the terminal is asked to report the mouse at
 // all (see EnableMouseReporting; purfecterm answers the same DECSET trio by
 // routing mouse to the app instead of local selection).
 //
@@ -253,8 +254,19 @@ func (e *Editor) handleMouseKey(key string) bool {
 
 	switch {
 	case strings.HasPrefix(base, "Mouse@"):
-		// Position only; already recorded above.
-	case base == "MouseLeftPress":
+		// The pointer is somewhere it was not, with no button down: hover. The
+		// position was already parsed AND pixel-converted at the top
+		// (e.mouseX/e.mouseY); reuse it rather than re-parsing the raw report,
+		// which is in PIXELS under SGR-Pixels (?1016) and would put hover far
+		// off the grid.
+		//
+		// A press arriving right behind this one hovers the same spot first,
+		// which is what the pointer did to get there.
+		if atOK {
+			e.mouseHoverAt(e.mouseX, e.mouseY)
+			e.modebarNavHoverAt(e.mouseX, e.mouseY)
+		}
+	case base == "MouseLeft":
 		// Any modifier beyond shift on a left-click is a RIGHT-click
 		// alternative (some terminals never deliver a real right button —
 		// or reserve alt-click for themselves; ctrl/super+click covers
@@ -269,7 +281,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 		default:
 			e.mousePress(e.mouseX, e.mouseY, shift)
 		}
-	case strings.HasPrefix(base, "MouseLeftDrag@"):
+	case strings.HasPrefix(base, "MouseDragLeft@"):
 		if atOK {
 			switch {
 			case e.modebarNavCapture != 0:
@@ -280,7 +292,7 @@ func (e *Editor) handleMouseKey(key string) bool {
 				e.mouseDrag(e.mouseX, e.mouseY)
 			}
 		}
-	case base == "MouseLeftRelease", base == "MouseRelease":
+	case base == "MouseLeft:Release":
 		switch {
 		case e.modebarNavCapture != 0:
 			e.modebarNavRelease(e.mouseX, e.mouseY)
@@ -289,17 +301,8 @@ func (e *Editor) handleMouseKey(key string) bool {
 		default:
 			e.mouseRelease(e.mouseX, e.mouseY)
 		}
-	case base == "MouseRightPress":
+	case base == "MouseRight":
 		e.mouseRightPress(e.mouseX, e.mouseY)
-	case strings.HasPrefix(base, "MouseDrag@"):
-		// Plain motion, no button (all-motion tracking): hover. The position was
-		// already parsed AND pixel-converted at the top (e.mouseX/e.mouseY);
-		// reuse it rather than re-parsing the raw report, which is in PIXELS
-		// under SGR-Pixels (?1016) and would put hover far off the grid.
-		if atOK {
-			e.mouseHoverAt(e.mouseX, e.mouseY)
-			e.modebarNavHoverAt(e.mouseX, e.mouseY)
-		}
 	case base == "MouseScrollUp":
 		e.hScrollReset() // a vertical tick re-arms the sideways barrier
 		e.mouseScroll(e.mouseX, e.mouseY, -3)
@@ -555,6 +558,36 @@ func (e *Editor) notifyHelpState() {
 	}
 }
 
+// hasUnsavedWork reports whether ANY buffer this session holds open is
+// modified — every active binding plus everything stacked in a viewport's nav
+// history, which is the same set the data-safety paths (save-all, DEADCAT,
+// close liveness) enumerate. Work parked behind a link follow is unsaved work.
+func (e *Editor) hasUnsavedWork() bool {
+	for _, b := range e.openDocViewports() {
+		if b != nil && b.IsModified() {
+			return true
+		}
+	}
+	return false
+}
+
+// notifyUnsavedState tells the host (via Config.UnsavedState) whether the
+// session holds modified work, once at the first render and thereafter on
+// transitions. A host that frames this session in a window asks the question
+// when something tries to close it: with work at stake the close is refused
+// and answered with a prompt instead. Called from performRender.
+func (e *Editor) notifyUnsavedState() {
+	if e.Config.UnsavedState == nil {
+		return
+	}
+	unsaved := e.hasUnsavedWork()
+	if !e.unsavedPushed || unsaved != e.unsavedSent {
+		e.unsavedPushed = true
+		e.unsavedSent = unsaved
+		e.Config.UnsavedState(unsaved)
+	}
+}
+
 // parseMouseAt parses the "x,y" tail of a mouse position (1-based terminal
 // coordinates).
 func parseMouseAt(s string) (x, y int, ok bool) {
@@ -614,7 +647,7 @@ func (e *Editor) mouseHit(x, y int) (w *viewport.Viewport, docLine, runePos, car
 	// gutter (LTR); a double-width row shows half as many gutter cells and
 	// each content cell spans two physical columns.
 	lineNumWidth := 0
-	if w.ViewState.ShowLineNumbers {
+	if w.LineNumbersVisible() {
 		lineNumWidth = w.LineNumWidth
 	}
 	base := w.ContentX + 1 // first content CELL, 1-based

@@ -645,7 +645,7 @@ func TestNavKeymapAndCaretHide(t *testing.T) {
 	// what lets these chains fall through to editing when the caret is not on
 	// a link. Bare nav_next / nav_prior always act (^B tab / ^B S-tab).
 	for k, want := range map[string]string{
-		"^C":    "cancel|buffer_close",
+		"^C":    "cancel|viewport_close",
 		"S-tab": "nav_prior false|smart_unindent",
 	} {
 		if got := e.KeyProcessor.GetMapping(k); got != want {

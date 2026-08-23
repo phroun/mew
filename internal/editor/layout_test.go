@@ -36,6 +36,40 @@ func layoutHeights(l viewport.Layout) map[string]int {
 	return h
 }
 
+// A viewport with MaxHeightFraction sizes to floor((mewHeight-2) * fraction),
+// tracking the screen height rather than a fixed row count.
+func TestFractionalMaxHeightTracksScreen(t *testing.T) {
+	e, _ := newTestEditor(t, "hello\n")
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "F", Type: viewport.ToolViewport, Dock: viewport.DockTop,
+		Priority: 90, MinHeight: 2, MaxHeightFraction: 0.5,
+		Buffer: buffer.NewFromString("F\n"),
+	})
+	// floor((24-2)*0.5) = 11
+	if h := layoutHeights(e.LayoutManager.CalculateLayout(80, 24))["F"]; h != 11 {
+		t.Errorf("fractional cap at 24 rows = %d, want 11", h)
+	}
+	// floor((40-2)*0.5) = 19 — grows with the screen.
+	if h := layoutHeights(e.LayoutManager.CalculateLayout(80, 40))["F"]; h != 19 {
+		t.Errorf("fractional cap at 40 rows = %d, want 19", h)
+	}
+}
+
+// A literal MaxHeight given alongside the fraction is the hard ceiling: the
+// effective cap is the smaller of the proportion and the literal.
+func TestFractionalMaxHeightLiteralCeiling(t *testing.T) {
+	e, _ := newTestEditor(t, "hello\n")
+	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+		Visible: true, ID: "F", Type: viewport.ToolViewport, Dock: viewport.DockTop,
+		Priority: 90, MinHeight: 2, MaxHeight: 8, MaxHeightFraction: 0.5,
+		Buffer: buffer.NewFromString("F\n"),
+	})
+	// min(floor((24-2)*0.5)=11, literal 8) = 8
+	if h := layoutHeights(e.LayoutManager.CalculateLayout(80, 24))["F"]; h != 8 {
+		t.Errorf("literal ceiling should cap the proportion, got %d want 8", h)
+	}
+}
+
 // --- Modebar location ---
 
 func TestModebarTopDefault(t *testing.T) {

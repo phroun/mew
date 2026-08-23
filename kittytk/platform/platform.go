@@ -122,6 +122,14 @@ type NativeSurface interface {
 	Close()
 }
 
+// NativeZoomReporter is an optional NativeSurface capability: whether the
+// OS window is currently maximized or fullscreen. Edge-resizing a filled
+// window makes no sense — the OS holds its geometry — so grab zones that
+// consult this stand down while it reports true.
+type NativeZoomReporter interface {
+	NativeZoomed() bool
+}
+
 // CursorController is an optional Platform capability: set the system
 // mouse cursor shape for the application. Platforms that don't implement
 // it keep the default arrow.
@@ -142,6 +150,40 @@ type BorderToggler interface {
 // "Show All" to bring torn-off windows back.
 type NativeRestorer interface {
 	Restore()
+}
+
+// NativeShapeSquarer is an optional NativeSurface capability: force a
+// shaped (rounded) window's corners square, the way an OS maximize does.
+// The desktop's own Zoom is a plain move+resize the OS does not recognize
+// as a maximize, so it squares the corners itself while zoomed and
+// re-rounds them on restore.
+type NativeShapeSquarer interface {
+	SetShapeSquared(squared bool)
+}
+
+// NativeMinimumSizer is an optional NativeSurface capability: tell the OS
+// the smallest this window may become. Our own resize gestures clamp
+// themselves, but a resize we do NOT drive — a native title bar's edges,
+// the window manager's own keyboard resize or tiling — answers only to
+// the OS, and without this it will happily pull a window down to nothing.
+type NativeMinimumSizer interface {
+	SetMinimumSizePx(w, h int)
+}
+
+// NativeRectSetter is an optional NativeSurface capability: move AND
+// resize in one call, as one geometry change.
+//
+// It exists for un-zooming. Setting the position and the size separately
+// is two changes the window manager may animate independently, and where
+// the WM holds the window maximized it also has a stored "floating"
+// rectangle of its own — which can be stale (the geometry from before a
+// mode change, an era-old solo layout) — so a plain Restore animates to
+// THAT and only then gets corrected by our writes, visibly landing wrong
+// and snapping. An implementation must prime its restore target with the
+// destination rectangle BEFORE releasing the maximized state, so the one
+// animation the user sees ends where the window actually belongs.
+type NativeRectSetter interface {
+	SetScreenRectPx(x, y, w, h int)
 }
 
 // Surface is one render target: per-surface size, damage, input.
@@ -181,31 +223,105 @@ type TextInputAreaSetter interface {
 	SetTextInputArea(x, y core.Unit, visible bool)
 }
 
-// ApplyTextCaret pushes a frame's platform text-caret request to a surface
-// (see core.TextCaret). The shape goes first, so a caret about to be shown
-// appears already wearing it; no request hides the caret, which is what leaves
-// an unfocused terminal free to paint its own.
+// TextInputEnabler is an optional Surface capability: turn text input on and
+// off. Distinct from the area, which says only WHERE — an input method whose
+// area is forgotten still opens, just at whatever corner the platform picks.
+//
+// Off is what stops it opening at all, and that is what belongs on a trinket
+// that does not type: a button holding focus has nothing for an accent palette
+// or a candidate list to compose for.
+//
+// Key events are unaffected. A press is named from the key, so a surface with
+// text input off still receives every keystroke under its own name.
+type TextInputEnabler interface {
+	SetTextInputEnabled(on bool)
+}
+
+// TextInputFrame is what a finished frame knows about where text is going.
+//
+// Two sources, deliberately kept apart. WHERE comes from paint, because that is
+// the only place it is known: the insertion point sits at an accumulated pixel
+// advance through a line of glyphs, under this font at this zoom, and nothing
+// outside the paint pass can reproduce it. WHETHER comes from focus, because
+// paint cannot answer it — a frame that drew no caret may only have been
+// clipped to a damaged region, or caught the cursor in the dark half of a
+// blink.
+//
+// Conflating them is what made a blinking cursor look like text input going
+// away and coming back twice a second.
+type TextInputFrame struct {
+	// Caret is what the frame reported, if anything: position, and whether a
+	// platform-drawn caret was asked for.
+	Caret core.TextCaret
+
+	// Sink is what the frame's owner could determine about focus. Unknown is
+	// a real answer and means "do not act".
+	Sink core.TextSinkState
+
+	// Complete is whether the frame painted the whole surface, and so whether
+	// its silence is evidence. See core.Painter.Complete.
+	Complete bool
+}
+
+// ApplyTextCaret pushes a finished frame's text-input state to a surface.
 //
 // Every surface handler that finishes a frame calls this — the native
 // one-window-per-surface host and the desktop compositing many windows into one
 // surface alike — so the caret behaves the same in both modes.
-func ApplyTextCaret(s Surface, caret core.TextCaret) {
+//
+// The rule for withdrawing is the point of the whole type. An insertion point
+// is taken back only on evidence: focus is on something that does not type, or
+// a COMPLETE frame painted and none of it reported one (the caret is scrolled
+// out of view, or hidden). A partial frame that reported nothing has said
+// nothing, and what stands, stands.
+func ApplyTextCaret(s Surface, f TextInputFrame) {
 	if s == nil {
 		return
+	}
+	// Text input itself follows focus, and only focus: whether text is going
+	// anywhere is not something a frame can answer, and Unknown leaves it as
+	// it was rather than guessing. This is what keeps an input method from
+	// opening over a trinket that does not type.
+	if enabler, ok := s.(TextInputEnabler); ok {
+		switch f.Sink {
+		case core.TextSinkPresent:
+			enabler.SetTextInputEnabled(true)
+		case core.TextSinkAbsent:
+			enabler.SetTextInputEnabled(false)
+		}
 	}
 	// The insertion point goes first and separately: a trinket that
 	// paints its own caret reports one without asking for a drawn caret
 	// at all, so this must not hang off Visible.
 	if setter, ok := s.(TextInputAreaSetter); ok {
-		setter.SetTextInputArea(caret.X, caret.Y, caret.Requested())
+		switch {
+		case f.Sink == core.TextSinkAbsent:
+			setter.SetTextInputArea(0, 0, false)
+		case f.Caret.Requested():
+			setter.SetTextInputArea(f.Caret.X, f.Caret.Y, true)
+		case f.Complete:
+			setter.SetTextInputArea(0, 0, false)
+		}
 	}
-	if !caret.Visible {
-		s.SetCursorVisible(false)
+	if !f.Caret.Visible {
+		// Same evidence, same rule: a partial frame that drew no caret is
+		// not a surface being told to stop drawing one.
+		if f.Complete || f.Sink == core.TextSinkAbsent {
+			s.SetCursorVisible(false)
+		}
 		return
 	}
-	s.SetCursorStyle(caret.Style)
-	s.SetCursorPosition(caret.X, caret.Y)
+	s.SetCursorStyle(f.Caret.Style)
+	s.SetCursorPosition(f.Caret.X, f.Caret.Y)
 	s.SetCursorVisible(true)
+}
+
+// TextSinkReporter is an optional SurfaceHandler capability: answer whether the
+// trinket holding focus types. The platform asks a handler this when it is the
+// one finishing the frame (the compositing path), since focus lives in the
+// handler's tree and the platform cannot see it.
+type TextSinkReporter interface {
+	FocusedTextSink() core.TextSinkState
 }
 
 // SurfaceHandler receives a surface's callbacks, always on the

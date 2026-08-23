@@ -1,5 +1,11 @@
 === How to Navigate Help ===
 
-To return to the previous page, you can press the BACKSPACE key.
+To return to the previous page, you can press the BACKSPACE or DELETE key.
+
+To explore topics, use the arrow keys until you highlight the desired
+topic button, then press the ENTER or RETURN key.
+
+To switch between help and your document, while leaving help visible,
+you can press [[keys_verbose#zone_up|^B U]].
 
 [[start|Return to Help Index]]

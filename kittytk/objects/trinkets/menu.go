@@ -49,9 +49,28 @@ func shortcutFont(base *core.Font) *core.Font {
 type MenuItem struct {
 	Text            string // Display text (with & removed, && converted to &)
 	rawText         string // Original text with & markup
-	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
-	acceleratorPos  int    // Position in display text where accelerator appears, -1 if none
-	Shortcut        core.Shortcut
+	acceleratorChar rune   // The chosen accelerator (lowercase), 0 if none
+	acceleratorPos  int    // Its position in the display text, -1 if none
+	// Every letter the label offers, in written order. Assignment is greedy
+	// across siblings, so a later item may fall back to a backup letter.
+	acceleratorCandidates []acceleratorCandidate
+	Shortcut              core.Shortcut
+	// Command is what this item MEANS, from the toolkit's command vocabulary
+	// (core.Cmd*), and is how an item advertises a key without holding one:
+	// the column is resolved from whatever keymap is in force where the FOCUS
+	// is, at the moment the menu is drawn. So one item shows the Command-key
+	// spelling on a Mac and the Control one elsewhere, shows nothing at all
+	// while something has taken the keyboard on its own terms, and follows a
+	// rebinding with no one having to tell it.
+	//
+	// A Command overrides a Shortcut on the same item: the item has stopped
+	// naming a key and started naming a meaning.
+	Command string
+	// keyResolver answers "what key means this command, here?" — installed by
+	// whoever composed the menu (a desktop's bar asks the desktop's context, a
+	// detached window's asks its own). Nil in a menu nobody composed, which
+	// falls back to the registry.
+	keyResolver func(command string) string
 	// ShortcutText is literal text for the item's shortcut column, printed
 	// exactly where a bound Shortcut would print. It exists for keys the
 	// TOOLKIT does not handle — a hosted application's own bindings, say —
@@ -89,22 +108,26 @@ type MenuItem struct {
 
 // NewMenuItem creates a new menu item.
 func NewMenuItem(text string) *MenuItem {
-	displayText, accel, pos := parseAcceleratorTitle(text)
+	displayText, accels := parseAcceleratorTitle(text)
+	accel, pos := firstAccelerator(accels)
 	return &MenuItem{
-		Text:            displayText,
-		rawText:         text,
-		acceleratorChar: accel,
-		acceleratorPos:  pos,
-		Enabled:         true,
-		id:              core.NextAutoCommandID(),
+		Text:                  displayText,
+		rawText:               text,
+		acceleratorCandidates: accels,
+		acceleratorChar:       accel,
+		acceleratorPos:        pos,
+		Enabled:               true,
+		id:                    core.NextAutoCommandID(),
 	}
 }
 
 // SetText sets the menu item text with accelerator parsing.
 func (m *MenuItem) SetText(text string) {
-	displayText, accel, pos := parseAcceleratorTitle(text)
+	displayText, accels := parseAcceleratorTitle(text)
+	accel, pos := firstAccelerator(accels)
 	m.rawText = text
 	m.Text = displayText
+	m.acceleratorCandidates = accels
 	m.acceleratorChar = accel
 	m.acceleratorPos = pos
 }
@@ -152,8 +175,17 @@ func (m *MenuItem) SetID(id string) *MenuItem {
 // menu did not make room for.
 func (m *MenuItem) ShortcutDisplay() string {
 	bound := ""
-	if m.Shortcut != "" {
-		bound = m.Shortcut.DisplayString()
+	switch {
+	case m.Command != "":
+		// A command names a meaning, not a key: ask what key means it HERE.
+		// Nothing means it here is a real answer -- while a guest has the
+		// keyboard, this item genuinely has no key -- so the column is blank
+		// rather than advertising something that would not work.
+		if key := m.resolveCommandKey(); key != "" {
+			bound = core.DisplayKey(key)
+		}
+	case m.Shortcut != "":
+		bound = core.DisplayKey(string(m.Shortcut))
 	}
 	switch {
 	case bound != "" && m.ShortcutText != "":
@@ -163,6 +195,24 @@ func (m *MenuItem) ShortcutDisplay() string {
 	default:
 		return m.ShortcutText
 	}
+}
+
+// resolveCommandKey asks what key means this item's command right now: the
+// composer's resolver where there is one, else the registry, which is the best
+// a menu nobody composed can do.
+func (m *MenuItem) resolveCommandKey() string {
+	if m.keyResolver != nil {
+		return m.keyResolver(m.Command)
+	}
+	return core.DefaultKeyRegistry().KeyForCommand(m.Command)
+}
+
+// SetCommand names what this item MEANS, so its key column is resolved rather
+// than stored (see the Command field). It replaces SetShortcut: an item that
+// names a command does not name a key.
+func (m *MenuItem) SetCommand(command string) *MenuItem {
+	m.Command = command
+	return m
 }
 
 // SetShortcutText sets literal text for the item's shortcut column (see
@@ -329,17 +379,20 @@ func standardEditItemRole(id string) bool {
 // Menu represents a dropdown menu.
 type Menu struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	title           string // Display title (with & removed, && converted to &)
 	rawTitle        string // Original title with & markup
-	acceleratorChar rune   // The accelerator character (lowercase), 0 if none
-	acceleratorPos  int    // Position in display title where accelerator appears, -1 if none
-	items           []*MenuItem
-	currentIndex    int
-	visible         bool
-	wellKnownID     string // system-level role tag (see MenuID* constants), "" if none
-	anchor          string // untagged menus: the well-known slot to sit after
+	acceleratorChar rune   // The chosen accelerator (lowercase), 0 if none
+	acceleratorPos  int    // Its position in the display title, -1 if none
+	// Every letter the title offers, in written order (see parseAcceleratorTitle).
+	acceleratorCandidates []acceleratorCandidate
+	items                 []*MenuItem
+	currentIndex          int
+	visible               bool
+	wellKnownID           string // system-level role tag (see MenuID* constants), "" if none
+	anchor                string // untagged menus: the well-known slot to sit after
 
 	// Position when shown as popup
 	popupX, popupY core.Unit
@@ -363,7 +416,11 @@ type Menu struct {
 
 	// Parent menu (for submenus)
 	parentMenu *Menu
-	parentItem *MenuItem
+	// keyResolver answers "which key means this command, here?" for this
+	// menu's items -- installed by whoever composed the menu (see
+	// SetKeyResolver), and handed on to items and submenus.
+	keyResolver func(command string) string
+	parentItem  *MenuItem
 
 	// Currently open submenu
 	activeSubMenu *Menu
@@ -391,14 +448,29 @@ type Menu struct {
 	accessibilityManager *core.AccessibilityManager
 }
 
-// parseAcceleratorTitle parses a title with & markup.
-// Returns: display title, accelerator character (lowercase), position in display title
-// Examples: "&File" -> "File", 'f', 0
+// acceleratorCandidate is one letter a title offers as its accelerator, and
+// where that letter sits in the display text.
+type acceleratorCandidate struct {
+	Char rune // lowercase
+	Pos  int  // index in the display text
+}
+
+// parseAcceleratorTitle parses a title with & markup and returns the display
+// text alongside every accelerator the title offers, in the order written.
 //
-//	"E&xit" -> "Exit", 'x', 1
-//	"Save && Exit" -> "Save & Exit", 0, -1
-func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
-	pos = -1
+// A title may mark more than one letter, which reads as a preference list:
+// "&Hel&p" offers 'h' first and 'p' as a backup. Assignment is greedy and
+// left to right — across the siblings at one level, each takes the first
+// letter no earlier sibling has claimed — so four items all marked "&A&B&C"
+// take A, B and C, and the fourth is left without one. A backup is what keeps
+// a menu reachable when its first choice is spoken for.
+//
+// Examples: "&File"        -> "File",        [{f 0}]
+//
+//	"E&xit"        -> "Exit",        [{x 1}]
+//	"&Hel&p"       -> "Help",        [{h 0} {p 3}]
+//	"Save && Exit" -> "Save & Exit", []
+func parseAcceleratorTitle(raw string) (display string, accels []acceleratorCandidate) {
 	runes := []rune(raw)
 	var result []rune
 
@@ -409,11 +481,11 @@ func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
 				result = append(result, '&')
 				i++ // Skip next &
 			} else if i+1 < len(runes) {
-				// Accelerator - next char is the accelerator
-				if pos < 0 { // Only use first accelerator
-					pos = len(result)
-					accel = rune(strings.ToLower(string(runes[i+1]))[0])
-				}
+				// Accelerator - next char is one of the offered letters
+				accels = append(accels, acceleratorCandidate{
+					Char: rune(strings.ToLower(string(runes[i+1]))[0]),
+					Pos:  len(result),
+				})
 				result = append(result, runes[i+1])
 				i++ // Skip the accelerator char (we already added it)
 			}
@@ -425,6 +497,15 @@ func parseAcceleratorTitle(raw string) (display string, accel rune, pos int) {
 
 	display = string(result)
 	return
+}
+
+// firstAccelerator reports the leading candidate, which is what a title means
+// when nothing has claimed its letters yet. Zero and -1 when none is offered.
+func firstAccelerator(accels []acceleratorCandidate) (rune, int) {
+	if len(accels) == 0 {
+		return 0, -1
+	}
+	return accels[0].Char, accels[0].Pos
 }
 
 // textSegment is one styled run in a left-to-right sequence drawn by
@@ -463,16 +544,30 @@ func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, segs ...
 
 // NewMenu creates a new menu.
 func NewMenu(title string) *Menu {
-	displayTitle, accel, pos := parseAcceleratorTitle(title)
+	displayTitle, accels := parseAcceleratorTitle(title)
+	accel, pos := firstAccelerator(accels)
 	m := &Menu{
-		rawTitle:        title,
-		title:           displayTitle,
-		acceleratorChar: accel,
-		acceleratorPos:  pos,
-		currentIndex:    -1,
-		maxVisible:      0, // 0 = calculate from available space when shown
+		rawTitle:              title,
+		title:                 displayTitle,
+		acceleratorCandidates: accels,
+		acceleratorChar:       accel,
+		acceleratorPos:        pos,
+		currentIndex:          -1,
+		maxVisible:            0, // 0 = calculate from available space when shown
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	// A dropped-down menu is a list that runs vertically, with Left and Right
+	// crossing between it and its submenus. The bare accelerator letters are
+	// NOT bindings -- they are ordinary typing matched against the item
+	// titles, which is why they are not declared here.
+	m.SetCommands(
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
+	)
 	// Note: Menu doesn't call Init because it has a Show(x,y) method
 	// with different signature than Trinket.Show()
 	m.SetFocusPolicy(core.StrongFocus)
@@ -556,9 +651,11 @@ func (m *Menu) Anchor() string { return m.anchor }
 
 // SetTitle sets the menu title.
 func (m *Menu) SetTitle(title string) {
-	displayTitle, accel, pos := parseAcceleratorTitle(title)
+	displayTitle, accels := parseAcceleratorTitle(title)
+	accel, pos := firstAccelerator(accels)
 	m.rawTitle = title
 	m.title = displayTitle
+	m.acceleratorCandidates = accels
 	m.acceleratorChar = accel
 	m.acceleratorPos = pos
 	m.SetAccessibleName(displayTitle)
@@ -578,6 +675,33 @@ func (m *Menu) AcceleratorPos() int {
 // AddItem adds an item to the menu.
 func (m *Menu) AddItem(item *MenuItem) {
 	m.items = append(m.items, item)
+	m.handKeyResolverTo(item)
+}
+
+// SetKeyResolver installs what this menu's items ask when they need to know
+// which key means their command right now. Whoever composed the menu knows
+// which context to ask -- a desktop's bar asks the desktop's, a detached
+// window's bar asks that window's -- and both of those follow the FOCUS, so
+// what an item advertises is what would actually happen if you pressed it.
+//
+// It reaches everything under the menu, submenus included, and everything
+// added later.
+func (m *Menu) SetKeyResolver(fn func(command string) string) {
+	m.keyResolver = fn
+	for _, item := range m.items {
+		m.handKeyResolverTo(item)
+	}
+}
+
+// handKeyResolverTo gives one item (and its submenu) this menu's resolver.
+func (m *Menu) handKeyResolverTo(item *MenuItem) {
+	if item == nil {
+		return
+	}
+	item.keyResolver = m.keyResolver
+	if item.SubMenu != nil && item.SubMenu != m {
+		item.SubMenu.SetKeyResolver(m.keyResolver)
+	}
 }
 
 // AddAction adds an action as a menu item.
@@ -866,7 +990,7 @@ func (m *Menu) announceCurrentItem() {
 		extras = append(extras, "submenu")
 	}
 	if item.Shortcut != "" {
-		extras = append(extras, item.Shortcut.AccessibilityString())
+		extras = append(extras, core.SpeakKey(string(item.Shortcut)))
 	}
 	if item.ShortcutText != "" {
 		extras = append(extras, item.ShortcutText)
@@ -1452,8 +1576,8 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	switch event.Key {
-	case "Up":
+	switch m.KeyCommand(event.Key) {
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		m.currentIndex = m.findPrevEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
@@ -1461,7 +1585,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		m.currentIndex = m.findNextEnabled(m.currentIndex)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
@@ -1469,14 +1593,14 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "Left":
+	case core.CmdTrinketItemLeft:
 		if m.parentMenu != nil {
 			m.Hide()
 			return true
 		}
 		return false // Let menu bar handle it
 
-	case "Right":
+	case core.CmdTrinketItemRight:
 		item := m.CurrentItem()
 		if item != nil && item.SubMenu != nil {
 			m.openSubMenu(item)
@@ -1484,7 +1608,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return false // Let menu bar handle it
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		item := m.CurrentItem()
 		if item != nil {
 			if item.SubMenu != nil {
@@ -1495,7 +1619,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 			return true
 		}
 
-	case "Escape":
+	case core.CmdTrinketCancel:
 		if m.parentMenu != nil {
 			// Submenu - hide it and return to parent menu
 			m.Hide()
@@ -1505,21 +1629,21 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		// (MenuBar.CloseMenu will call Hide on us)
 		return false
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		m.currentIndex = m.findNextEnabled(-1)
 		m.scrollOffset = 0
 		m.closeSubMenu()
 		m.Update()
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		m.currentIndex = m.findPrevEnabled(0)
 		m.ensureVisible(m.currentIndex)
 		m.closeSubMenu()
 		m.Update()
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		m.scrollPageUp()
 		// Move current index to top of visible area
 		if m.currentIndex >= 0 {
@@ -1532,7 +1656,7 @@ func (m *Menu) HandleKeyPress(event core.KeyPressEvent) bool {
 		m.Update()
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		m.scrollPageDown()
 		// Move current index to bottom of visible area
 		if m.currentIndex >= 0 {
@@ -1807,13 +1931,31 @@ func (m *Menu) AccessibleInfo() core.AccessibleInfo {
 // MenuBar is a horizontal bar of menus.
 type MenuBar struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
-	menus          []*Menu
-	currentIndex   int
-	activeMenu     *Menu
-	hoverIndex     int // Top-level item under the pointer (-1 = none)
-	hoverScrollBtn int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
+	menus        []*Menu
+	currentIndex int
+	activeMenu   *Menu
+
+	// keyResolver answers "which key means this command, here?" for every item
+	// on this bar, handed down to its menus (see SetKeyResolver).
+	keyResolver func(command string) string
+	// acceleratorChord is the pattern a chord accelerator is formed from,
+	// with "*" standing in for a menu's mnemonic ([window] accelerator_chord).
+	acceleratorChord string
+	// keyContext is the set of actions available right now. Accelerators are
+	// formed against it: a chord it already claims is not the accelerator's to
+	// take. A nil context claims nothing, so accelerators are all live — which
+	// is how the toolkit behaves before a host installs one.
+	keyContext *core.KeyContext
+	// accelAssignments is the per-menu outcome, recomputed when the menu list
+	// changes or the context moves on.
+	accelAssignments []acceleratorAssignment
+	accelRevision    uint64
+	accelStale       bool
+	hoverIndex       int // Top-level item under the pointer (-1 = none)
+	hoverScrollBtn   int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
 
 	// modalBlocked reports whether this menu bar is disabled by a modal (the
 	// app it represents is modally blocked). A blocked bar shows no hover
@@ -1825,7 +1967,10 @@ type MenuBar struct {
 	hideCalendar  bool // when true, omit the right-hand date/time area
 
 	// graphicalCached records whether the last paint was on a pixel
-	// surface; measurement (dateTimeWidth) has no painter and reads it.
+	// surface; measurement (dateTimeWidth) has no painter and reads it, and
+	// so does everything about HOVER — which is a pointer affordance and does
+	// not exist on a cell surface, where the only "move" a click produces is
+	// the position report that precedes it.
 	graphicalCached bool
 
 	// Scroll state for overflow handling
@@ -1850,7 +1995,20 @@ type MenuBar struct {
 	onMenuDismiss func()
 
 	// Callback when Tab navigation should transfer to the dock
-	onFocusDock func()
+	onFocusDock func(forward bool)
+
+	// onFocusChanged, when set, is told each time the bar takes or gives up
+	// the keyboard. The desktop uses it to lend the bar a row it does not
+	// normally get on a chrome-free single-app screen.
+	onFocusChanged func(focused bool)
+
+	// Callback when Tab navigation should leave a bar that has no dock to
+	// hand off to - a window's own menu bar (a detached main window's chrome,
+	// so solo and torn-off too). forward is false for Shift+Tab. Returns
+	// whether focus actually moved; when it doesn't, the key falls through
+	// rather than being swallowed. The desktop's bar leaves this nil and uses
+	// onFocusDock for both directions.
+	onFocusOut func(forward bool) bool
 
 	// Fallback scroll-timer + update wiring for dropdowns, used when the
 	// bar's parent doesn't provide them (a detached window's own menu bar,
@@ -1891,6 +2049,20 @@ func NewMenuBar() *MenuBar {
 		showShortcuts: true,
 	}
 	m.TrinketBase = *core.NewTrinketBase()
+	// A menu bar runs horizontally, so Left and Right walk it; Down drops the
+	// current menu open, which is the same act as Enter or Space. F10 is the
+	// bar's own toggle, and Tab either way leaves it. The bare accelerator
+	// letters are ordinary typing matched against the menu titles, and the
+	// chord accelerators are FORMED from the configured pattern rather than
+	// bound, so neither is declared here.
+	m.SetCommands(
+		core.CmdTrinketItemLeft, core.CmdTrinketItemRight,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemNext,
+		core.CmdTrinketItemDown,
+		core.CmdTrinketActivate, core.CmdTrinketCancel,
+		core.CmdAppMenu,
+		core.CmdFocusNext, core.CmdFocusPrior,
+	)
 	m.Init(m)
 	m.SetFocusPolicy(core.StrongFocus)
 	m.SetAccessibleRole(core.RoleMenuBar)
@@ -1907,8 +2079,21 @@ func (m *MenuBar) SetOnMenuDismiss(callback func()) {
 	m.onMenuDismiss = callback
 }
 
-// SetOnFocusDock sets a callback for when Tab navigation should transfer to the dock.
-func (m *MenuBar) SetOnFocusDock(callback func()) {
+// SetOnFocusOut sets the handler for Tab (forward=true) and Shift+Tab
+// (forward=false) leaving a menu bar that has no dock to hand off to - a
+// window's own bar, which a detached, solo, or torn-off window carries. It
+// reports whether focus moved; false leaves the key unhandled. Windows wire
+// this in SetWindowMenuBar so Shift+Tab reaches the title bar and Tab reaches
+// the content, the same chain Tab walks off either end of.
+func (m *MenuBar) SetOnFocusOut(callback func(forward bool) bool) {
+	m.onFocusOut = callback
+}
+
+// SetOnFocusDock sets a callback for when Tab navigation should transfer
+// out of the bar toward the rest of the desktop chrome. forward reports the
+// direction (Tab true, Shift+Tab false), so the desktop can route through
+// the themed title bar when one is present rather than always to the dock.
+func (m *MenuBar) SetOnFocusDock(callback func(forward bool)) {
 	m.onFocusDock = callback
 }
 
@@ -2143,31 +2328,145 @@ func (m *MenuBar) clampScrollOffset() {
 }
 
 // hasAcceleratorConflict checks if a menu accelerator key conflicts with any
-// registered keybinding (e.g., Alt+key is used for something else).
-func (m *MenuBar) hasAcceleratorConflict(accel rune) bool {
-	if accel == 0 {
-		return false
-	}
-	// Check if M-<letter> is bound to any action
-	key := "M-" + string(accel)
-	action := core.DefaultKeyBindings.FindAction(key)
-	return action != ""
+// registered keybinding (e.g., Mega+key is used for something else).
+// SetAcceleratorChord sets the pattern chord accelerators are formed from,
+// with "*" standing in for a menu's mnemonic. Blank forms none.
+func (m *MenuBar) SetAcceleratorChord(pattern string) {
+	m.acceleratorChord = pattern
+	m.InvalidateAccelerators()
 }
 
-// ShouldShowAccelerator returns whether the accelerator for a menu should be
-// highlighted in red. Returns true if:
-// - The menu bar has focus and no menu is dropped down, OR
-// - There is no keybinding conflict for this accelerator
+// SetKeyContext hands the bar the set of actions available right now, which is
+// what accelerators are formed against and what decides which of them are
+// live. A nil context claims nothing.
+func (m *MenuBar) SetKeyContext(ctx *core.KeyContext) {
+	m.keyContext = ctx
+	m.InvalidateAccelerators()
+}
+
+// ToggleMenuFocus is what the menu key does: take the keyboard, or give it
+// back when the bar already had it.
+//
+// Exported so anything wanting the bar focused can SAY so, rather than
+// synthesising the keystroke that happens to mean it today. A host that
+// rebinds app_menu would leave a faked "F10" resolving to nothing, and the
+// bar would quietly stop answering.
+func (m *MenuBar) ToggleMenuFocus() {
+	if m.HasFocus() {
+		m.CloseMenuAndUnfocus()
+	} else {
+		m.SetFocus()
+		if m.currentIndex < 0 && len(m.menus) > 0 {
+			m.currentIndex = 0
+		}
+	}
+	m.Update()
+}
+
+// InvalidateAccelerators marks the assignment for recomputation — the menu
+// list changed, or the situation did.
+func (m *MenuBar) InvalidateAccelerators() {
+	m.accelStale = true
+	m.Update()
+}
+
+// refreshAccelerators recomputes which letter each menu shows and whether it
+// is live, then publishes the live ones into the context.
+//
+// Staleness is a revision comparison rather than a subscription: the context
+// bumps a revision whenever it is rebuilt, and anything that repaints notices
+// on its own. Nothing has to remember to notify the menu bar, which is what
+// makes an accelerator light up by itself when the trinket that was claiming
+// its chord loses focus.
+func (m *MenuBar) refreshAccelerators() {
+	rev := m.keyContext.Revision()
+	if !m.accelStale && rev == m.accelRevision && len(m.accelAssignments) == len(m.menus) {
+		return
+	}
+	m.accelStale = false
+	m.accelRevision = rev
+
+	cands := make([][]acceleratorCandidate, len(m.menus))
+	for i, menu := range m.menus {
+		cands[i] = menu.acceleratorCandidates
+	}
+	pattern := m.acceleratorChord
+	ctx := m.keyContext
+	// Last time's accelerators go FIRST. The clash test below asks whether
+	// something has already claimed a chord, and an accelerator this bar
+	// formed itself is not something else -- leaving them in place made the
+	// bar read its own assignment as a clash and mute every accelerator it
+	// had, from the second refresh onward. This also drops entries for menus
+	// that have since gone.
+	ctx.ClearAccelerators()
+	// The keymap where this BAR sits, which is what decides whether a chord is
+	// already spoken for. Not the keymap in force where the focus is: an
+	// accelerator that moved to a different letter every time the focus
+	// changed would be worse than no accelerator at all.
+	reg := core.FindKeyRegistry(m)
+	m.accelAssignments = assignAccelerators(cands, func(ch rune) bool {
+		key := formAcceleratorKey(pattern, ch)
+		if key == "" {
+			return false
+		}
+		// Claimed by this situation, or spoken for by the keymap at large --
+		// M-a means select-all whether or not anything is offering it here,
+		// and a menu that wants a chord takes one nothing else has.
+		return ctx.Claims(key) || reg.Binds(key)
+	})
+
+	for i, menu := range m.menus {
+		a := m.accelAssignments[i]
+		// The chosen letter follows the assignment, so every existing lookup
+		// — the bare letters a focused bar answers to, accessibility — uses
+		// the letter that is actually underlined.
+		menu.acceleratorChar, menu.acceleratorPos = a.Char, a.Pos
+		if a.Active {
+			if key := formAcceleratorKey(pattern, a.Char); key != "" && ctx != nil {
+				ctx.Add(key, core.CommandAppAccelerator)
+			}
+		}
+	}
+}
+
+// acceleratorAssignmentFor returns the outcome for a menu, recomputing first
+// if the situation has moved on.
+func (m *MenuBar) acceleratorAssignmentFor(menu *Menu) acceleratorAssignment {
+	m.refreshAccelerators()
+	for i, mm := range m.menus {
+		if mm == menu && i < len(m.accelAssignments) {
+			return m.accelAssignments[i]
+		}
+	}
+	return acceleratorAssignment{Pos: -1}
+}
+
+// ShouldShowAccelerator reports whether a menu's accelerator is drawn in the
+// accelerator colour — that is, whether the chord actually reaches it.
+//
+// A focused bar with no menu down shows every accelerator lit regardless: the
+// bare letters it answers to are ordinary typing, not chords, so nothing can
+// have claimed them.
 func (m *MenuBar) ShouldShowAccelerator(menu *Menu) bool {
-	if menu.acceleratorChar == 0 {
+	a := m.acceleratorAssignmentFor(menu)
+	if a.Char == 0 {
 		return false
 	}
-	// Always show when menu bar is focused with no menu down
 	if m.acceleratorsActive {
 		return true
 	}
-	// Otherwise, only show if there's no keybinding conflict
-	return !m.hasAcceleratorConflict(menu.acceleratorChar)
+	return a.Active
+}
+
+// ShouldUnderlineAccelerator reports whether a menu's letter is marked at all.
+//
+// It is false only when an earlier sibling took every letter this menu offered
+// — that letter is not this menu's to advertise, and the sibling is showing it
+// lit on the same bar. A letter claimed by something in the CONTEXT is still
+// this menu's, so it stays marked and merely stops being coloured, and it
+// starts answering again on its own when the claim goes away.
+func (m *MenuBar) ShouldUnderlineAccelerator(menu *Menu) bool {
+	return m.acceleratorAssignmentFor(menu).Char != 0
 }
 
 // AcceleratorsActive returns whether accelerator highlighting is currently active.
@@ -2186,7 +2485,23 @@ func (m *MenuBar) setAcceleratorsActive(active bool) {
 // AddMenu adds a menu to the bar.
 func (m *MenuBar) AddMenu(menu *Menu) {
 	m.menus = append(m.menus, menu)
-	m.Update()
+	if m.keyResolver != nil && menu != nil {
+		menu.SetKeyResolver(m.keyResolver)
+	}
+	m.InvalidateAccelerators()
+}
+
+// SetKeyResolver installs what every item on this bar asks when it needs to
+// know which key means its command right now (see Menu.SetKeyResolver). It
+// reaches the menus the bar has and the ones it is given later, which matters
+// because a bar is recomposed from scratch whenever its app's menus change.
+func (m *MenuBar) SetKeyResolver(fn func(command string) string) {
+	m.keyResolver = fn
+	for _, menu := range m.menus {
+		if menu != nil {
+			menu.SetKeyResolver(fn)
+		}
+	}
 }
 
 // InsertMenu inserts a menu at the given index.
@@ -2209,7 +2524,7 @@ func (m *MenuBar) RemoveMenu(menu *Menu) {
 			break
 		}
 	}
-	m.Update()
+	m.InvalidateAccelerators()
 }
 
 // Clear removes all menus.
@@ -2244,6 +2559,46 @@ func (m *MenuBar) IsMenuOpen() bool {
 	return m.activeMenu != nil
 }
 
+// ActivateCommand triggers the item on this bar that names the given command,
+// and reports whether one did. The command is one the caller ALREADY resolved:
+// a key is fed to a context once per keystroke, so this takes the answer
+// rather than asking again -- feeding it twice would advance a chord's prefix
+// twice and lose the chord.
+func (m *MenuBar) ActivateCommand(command string) bool {
+	if m == nil || command == "" {
+		return false
+	}
+	for _, menu := range m.menus {
+		if menuActivateCommand(menu, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// menuActivateCommand looks through a menu and its submenus for an available
+// item naming the command, and triggers the first it finds. Trigger routes
+// through the command registry exactly as a click does, so a key and a click
+// are the same act.
+func menuActivateCommand(menu *Menu, command string) bool {
+	if menu == nil || command == "" {
+		return false
+	}
+	for _, item := range menu.Items() {
+		if item == nil || item.Separator || !item.Enabled {
+			continue
+		}
+		if item.Command == command {
+			item.Trigger()
+			return true
+		}
+		if item.SubMenu != nil && menuActivateCommand(item.SubMenu, command) {
+			return true
+		}
+	}
+	return false
+}
+
 // HandleShortcut checks the bar's menus (recursively) for an item whose
 // accelerator matches the event and triggers it, returning true on a
 // match. This lets a detached window's own menu bar service its app
@@ -2268,7 +2623,7 @@ func menuShortcutMatch(menu *Menu, event core.KeyPressEvent) bool {
 		if item == nil || item.Separator || !item.Enabled {
 			continue
 		}
-		if item.Shortcut != "" && item.Shortcut.Matches(event) {
+		if item.Shortcut != "" && core.SameKey(string(item.Shortcut), event.Key) {
 			item.Trigger()
 			return true
 		}
@@ -2587,7 +2942,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		leftButtonX := dateTimeX - scrollButtonsWidth
 		if m.canScrollLeft() {
 			leftStyle := activeButtonStyle
-			if m.hoverScrollBtn == -1 {
+			if m.hoverScrollBtn == -1 && m.graphicalCached {
 				leftStyle = scheme.GetHoveredMenuBarButton()
 			}
 			p.DrawCell(leftButtonX, 0, '[', leftStyle)
@@ -2603,7 +2958,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		rightButtonX := leftButtonX + 3*metrics.CellWidth
 		if m.canScrollRight() {
 			rightStyle := activeButtonStyle
-			if m.hoverScrollBtn == 1 {
+			if m.hoverScrollBtn == 1 && m.graphicalCached {
 				rightStyle = scheme.GetHoveredMenuBarButton()
 			}
 			p.DrawCell(rightButtonX, 0, '[', rightStyle)
@@ -2658,7 +3013,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					s = scheme.GetFocusedMenuBarItem()
 					accelStyle = scheme.GetFocusedMenuBarMeta()
 				}
-			} else if i == m.hoverIndex {
+			} else if i == m.hoverIndex && m.graphicalCached {
 				s = scheme.GetHoveredMenuBar()
 				accelStyle = scheme.GetHoveredMenuBarMeta()
 			} else {
@@ -2757,7 +3112,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				s = scheme.GetFocusedMenuBarItem()
 				accelStyle = scheme.GetFocusedMenuBarMeta()
 			}
-		} else if i == m.hoverIndex {
+		} else if i == m.hoverIndex && m.graphicalCached {
 			s = scheme.GetHoveredMenuBar()
 			accelStyle = scheme.GetHoveredMenuBarMeta()
 		} else {
@@ -2777,9 +3132,15 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		textX := x + metrics.CellWidth // Start after leading space
 		showAccel := m.ShouldShowAccelerator(menu)
 
-		// Draw text in parts: before accel, accel char, after accel
+		// Draw text in parts: before accel, accel char, after accel. A letter
+		// the chord no longer reaches keeps its underline in the ordinary text
+		// style, so the user can see whose it is and that it is not answering.
+		markAccel := showAccel || m.ShouldUnderlineAccelerator(menu)
+		if !showAccel {
+			accelStyle = s.Underline()
+		}
 		titleRunes := []rune(menu.title)
-		if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
+		if markAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
 			var segs []textSegment
 			if menu.acceleratorPos > 0 {
 				segs = append(segs, textSegment{string(titleRunes[:menu.acceleratorPos]), s})
@@ -2887,8 +3248,12 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 	}
 
-	switch event.Key {
-	case "Left":
+	// Resolved once: the accelerator blocks below run after this switch and
+	// must not re-feed the same keystroke to the sequence processor.
+	cmd := m.KeyCommand(event.Key)
+
+	switch cmd {
+	case core.CmdTrinketItemLeft, core.CmdTrinketItemPrior:
 		if len(m.menus) > 0 {
 			newIndex := m.currentIndex - 1
 			if newIndex < 0 {
@@ -2905,7 +3270,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Right":
+	case core.CmdTrinketItemRight, core.CmdTrinketItemNext:
 		if len(m.menus) > 0 {
 			newIndex := m.currentIndex + 1
 			if newIndex >= len(m.menus) {
@@ -2922,7 +3287,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter", " ", "Space", "Down":
+	case core.CmdTrinketActivate, core.CmdTrinketItemDown:
 		if m.currentIndex >= 0 {
 			if m.activeMenu != nil {
 				m.CloseMenu()
@@ -2937,7 +3302,7 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Escape":
+	case core.CmdTrinketCancel:
 		if m.activeMenu != nil {
 			// First escape: close menu but keep menu bar focused
 			m.CloseMenu()
@@ -2947,39 +3312,51 @@ func (m *MenuBar) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "F10":
-		// Toggle menu bar focus
-		if m.HasFocus() {
-			m.CloseMenuAndUnfocus()
-		} else {
-			m.SetFocus()
-			if m.currentIndex < 0 && len(m.menus) > 0 {
-				m.currentIndex = 0
-			}
-		}
-		m.Update()
+	case core.CmdAppMenu:
+		m.ToggleMenuFocus()
 		return true
 
-	case "Tab":
-		// Tab/Shift+Tab: transfer focus to dock (if available and no menu is open)
-		if m.activeMenu == nil && m.onFocusDock != nil {
-			m.onFocusDock()
+	case core.CmdFocusNext, core.CmdFocusPrior:
+		// Tab and Shift+Tab both leave the bar, but where to depends on whose
+		// bar it is. The desktop's bar hands either direction to the dock (the
+		// only other chrome out there). A window's own bar - which a detached,
+		// solo, or torn-off window carries, and which has no dock beside it -
+		// steps into that window's chain instead: back to the title bar,
+		// forward into the content. Without the second case both keys fell
+		// through to the focused trinket, and a full-screen one (the mew
+		// editor consumes every key) swallowed them, leaving the bar a focus
+		// trap you could enter with F10 but not Tab out of.
+		if m.activeMenu != nil {
+			break // a dropdown is open: Tab stays inside it
+		}
+		if m.onFocusDock != nil {
+			m.onFocusDock(cmd == core.CmdFocusNext)
 			return true
+		}
+		if m.onFocusOut != nil {
+			if m.onFocusOut(cmd == core.CmdFocusNext) {
+				m.CloseMenuWithoutRestore()
+				return true
+			}
 		}
 	}
 
-	// Check Alt+key shortcuts (M-<letter> format, lowercase only - no shift)
-	if strings.HasPrefix(event.Key, "M-") && len(event.Key) == 3 {
-		letter := event.Key[2]
-		// Only match lowercase (M-f not M-F) to avoid shift combinations
-		if letter >= 'a' && letter <= 'z' {
-			key := rune(letter)
-			for i, menu := range m.menus {
-				if menu.acceleratorChar == key {
-					m.SetFocus()
-					m.OpenMenu(i)
-					return true
-				}
+	// A formed chord accelerator. The display has always deferred to a clash;
+	// the dispatch did not, so a shadowed accelerator still fired and, being
+	// resolved above the active window, beat the very binding it was supposed
+	// to be yielding to. Both sides read the same assignment now, so an
+	// accelerator that is not lit does not answer.
+	if m.acceleratorChord != "" {
+		m.refreshAccelerators()
+		for i := range m.menus {
+			a := m.accelAssignments[i]
+			if !a.Active || a.Char == 0 {
+				continue
+			}
+			if formAcceleratorKey(m.acceleratorChord, a.Char) == event.Key {
+				m.SetFocus()
+				m.OpenMenu(i)
+				return true
 			}
 		}
 	}
@@ -3132,6 +3509,35 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	return false
 }
 
+// OpenHelpMenu drops the Help menu open with its first available item
+// highlighted, and reports whether there was one to open.
+//
+// Help is found by its well-known role rather than by its title, so it is
+// still Help in a localised menu bar. Everything else is what the keyboard
+// already does: the menu is scrolled into view, opened, and stepped into once,
+// which is the menu key followed by Down.
+func (m *MenuBar) OpenHelpMenu() bool {
+	for i, menu := range m.menus {
+		if menu == nil || menu.WellKnownID() != MenuIDHelp {
+			continue
+		}
+		m.SetFocus()
+		m.ensureMenuVisible(i)
+		m.OpenMenu(i)
+		if m.activeMenu != nil {
+			m.activeMenu.SelectFirstItem()
+		}
+		return true
+	}
+	return false
+}
+
+// SetOnFocusChanged installs an observer told each time the bar takes or gives
+// up the keyboard.
+func (m *MenuBar) SetOnFocusChanged(fn func(focused bool)) {
+	m.onFocusChanged = fn
+}
+
 // HandleFocusIn is called when focus is gained.
 func (m *MenuBar) HandleFocusIn() {
 	if m.currentIndex < 0 && len(m.menus) > 0 {
@@ -3140,6 +3546,9 @@ func (m *MenuBar) HandleFocusIn() {
 	// Enable accelerator display when focused with no menu down
 	if m.activeMenu == nil {
 		m.acceleratorsActive = true
+	}
+	if m.onFocusChanged != nil {
+		m.onFocusChanged(true)
 	}
 	m.Update()
 }
@@ -3150,6 +3559,9 @@ func (m *MenuBar) HandleFocusOut() {
 	m.dragging = false
 	m.currentIndex = -1
 	m.acceleratorsActive = false
+	if m.onFocusChanged != nil {
+		m.onFocusChanged(false)
+	}
 	m.Update()
 }
 
@@ -3245,8 +3657,17 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// A dropdown is already open, so hovering a different top-level menu
 		// drops it down instead of merely highlighting it - the same
 		// menu-to-menu switch the drag path performs, but without needing the
-		// button held. (Only graphical surfaces deliver bare hover moves.)
-		if m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) && m.menus[m.hoverIndex] != m.activeMenu {
+		// button held.
+		//
+		// GRAPHICAL SURFACES ONLY. A cell surface has no pointer travel to
+		// speak of: the position report that arrives before a click is the
+		// only "move" there is, so opening on it means the click that follows
+		// lands on a menu that is ALREADY open — and HandleMousePress reads
+		// that as the toggle it is, closing the menu the click was meant to
+		// open. What the user sees is a menu that refuses to open and a
+		// highlight where the dropdown should be.
+		if m.graphicalCached && m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) &&
+			m.menus[m.hoverIndex] != m.activeMenu {
 			m.OpenMenu(m.hoverIndex)
 			return true
 		}
@@ -3441,4 +3862,30 @@ func (m *MenuBar) AccessibleInfo() core.AccessibleInfo {
 	}
 
 	return info
+}
+
+// ActivateAcceleratorSequence opens the menu whose formed accelerator is this
+// sequence, and reports whether one matched.
+//
+// The sequence is compared whole, so the mnemonic's position within the chord
+// does not matter: a pattern of "^X * Return" forms "^X h Return" for &Help and
+// the same substitution identifies it coming back. Only a live accelerator
+// answers — a muted one is not published and is not matched here either.
+func (m *MenuBar) ActivateAcceleratorSequence(seq string) bool {
+	if seq == "" || m.acceleratorChord == "" {
+		return false
+	}
+	m.refreshAccelerators()
+	for i := range m.menus {
+		a := m.accelAssignments[i]
+		if !a.Active || a.Char == 0 {
+			continue
+		}
+		if formAcceleratorKey(m.acceleratorChord, a.Char) == seq {
+			m.SetFocus()
+			m.OpenMenu(i)
+			return true
+		}
+	}
+	return false
 }

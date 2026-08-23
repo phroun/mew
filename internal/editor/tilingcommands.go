@@ -102,6 +102,14 @@ func (e *Editor) tilerFollowFocus(id string) {
 	if cur == 0 {
 		return
 	}
+	// Cycling onto an existing untiled viewport (adoptFocusInPlace) reseats the
+	// focused tile onto it, showing it in the current pane; otherwise — a command
+	// that just CREATED a viewport — split a fresh tile beside it, as before.
+	if e.adoptFocusInPlace {
+		vp.Set(cur, id)
+		vp.SetFocus(cur)
+		return
+	}
 	if nt := vp.New(cur, ifitfits.Right, id); nt != 0 {
 		vp.SetMetrics(nt, newTileMinW, newTileMinH, 0, 0)
 		vp.SetFocus(nt)
@@ -109,7 +117,7 @@ func (e *Editor) tilerFollowFocus(id string) {
 }
 
 // dismissTileFor closes any tiler tile whose ref is viewportID, so closing a mew
-// viewport (buffer_close) also removes the tile that held it. If the closed tile
+// viewport (viewport_close) also removes the tile that held it. If the closed tile
 // was the active one, the follow-up focus change repopulates through
 // tilerFollowFocus.
 func (e *Editor) dismissTileFor(viewportID string) {
@@ -270,6 +278,27 @@ func tileArgDir(ctx *pawscript.Context, i int) (ifitfits.Direction, bool) {
 	}
 }
 
+// tileDirArg parses the argument of an operator command (viewport_go /
+// viewport_swap / viewport_merge / viewport_split), which is either a real
+// direction OR one of the meta-tokens "pending" / "mode" that arm the operator
+// instead of running it. Returns (dir, meta, ok): meta is "" for a real
+// direction (dir valid), or "pending"/"mode" (dir unused). ok is false only when
+// the argument is missing or an unrecognized word.
+func tileDirArg(ctx *pawscript.Context, i int) (ifitfits.Direction, string, bool) {
+	s, has := tileArgStr(ctx, i)
+	if !has {
+		return 0, "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "pending":
+		return 0, "pending", true
+	case "mode":
+		return 0, "mode", true
+	}
+	d, ok := tileArgDir(ctx, i)
+	return d, "", ok
+}
+
 // tileArgState parses the tri-state (true, false, toggle) shared by the
 // toggling commands. A missing or unrecognized value defaults to Toggle, per
 // the library's convention.
@@ -326,6 +355,149 @@ func (e *Editor) tileFront(ctx *pawscript.Context) (*ifitfits.Viewport, ifitfits
 	return vp, h, rest, ok
 }
 
+// goToTile makes dest the active tile after a navigation: it becomes the #tile
+// default, and when the tile carries a live mew viewport ref, focus follows there
+// (driving lastMainViewport and the modebar) with the usual switch announcement.
+// Publishes dest as the command result. Shared by viewport_go and the focusing
+// tile_prior / tile_next cycle.
+func (e *Editor) goToTile(ctx *pawscript.Context, vp *ifitfits.Viewport, dest ifitfits.Handle) {
+	vp.SetFocus(dest)                                 // the destination is now the active tile
+	ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
+	if ref := vp.Content(dest); ref != "" {
+		if e.ViewportManager.GetViewport(ref) != nil {
+			e.ViewportManager.SetFocus(ref) // sets lastMainViewport, as a normal switch
+			e.announceFocusedViewport()
+		}
+	}
+	ctx.SetResult(uint64(dest))
+}
+
+// ---- tiling operator mode (go / swap / merge / split) ----
+
+// tileModeOrGo returns the persistent tiling mode, treating the empty value as
+// the default "go".
+func (e *Editor) tileModeOrGo() string {
+	if e.tileMode == "" {
+		return "go"
+	}
+	return e.tileMode
+}
+
+// takeTileOp returns the operator a directional dispatch (viewport_left, …)
+// should carry out: the one-shot pending operator when armed (consuming it, so
+// the next press falls back to the mode), else the persistent mode.
+func (e *Editor) takeTileOp() string {
+	if e.tilePending != "" {
+		op := e.tilePending
+		e.tilePending = ""
+		return op
+	}
+	return e.tileModeOrGo()
+}
+
+// armTileOperator handles the `viewport_<op> pending` / `viewport_<op> mode`
+// meta-directions: "pending" arms op as the one-shot operator; "mode" makes op
+// the persistent mode, toggling back to "go" when op is already the mode (so the
+// mode keys double as toggles). Choosing a mode also clears any pending arm.
+func (e *Editor) armTileOperator(op, meta string) {
+	switch meta {
+	case "pending":
+		e.tilePending = op
+		e.announceTileArm(op, true)
+	case "mode":
+		if e.tileModeOrGo() == op {
+			e.tileMode = "go"
+		} else {
+			e.tileMode = op
+		}
+		e.tilePending = ""
+		e.announceTileArm(e.tileModeOrGo(), false)
+	}
+}
+
+// announceTileArm surfaces the current arm as a transient notification so a
+// persistent mode (or a pending one-shot) is not an invisible state.
+func (e *Editor) announceTileArm(op string, pending bool) {
+	if pending {
+		e.ShowNotification("Tile: " + op + " (pending)")
+		return
+	}
+	e.ShowNotification("Tile mode: " + op)
+}
+
+// applyTileOp carries out tiling operator op in direction d on tile t: "go"
+// focus-moves there, "swap"/"merge" reorder against the neighbor, "split" opens
+// a new tile that way. Reports whether the op ran.
+func (e *Editor) applyTileOp(ctx *pawscript.Context, vp *ifitfits.Viewport, t ifitfits.Handle, op string, d ifitfits.Direction) bool {
+	switch op {
+	case "swap":
+		vp.Swap(t, d)
+	case "merge":
+		vp.Merge(t, d)
+	case "new":
+		return e.splitFocus(ctx, vp, (*ifitfits.Viewport).New, t, d, "", false) != 0
+	case "split":
+		return e.splitFocus(ctx, vp, (*ifitfits.Viewport).Split, t, d, "", false) != 0
+	default: // "go"
+		e.goToTile(ctx, vp, vp.Go(t, d))
+	}
+	return true
+}
+
+// tilePendingNav lets nav_up/down/left/right double as the tiling-operator
+// dispatch, but ONLY while a one-shot pending operator is armed: it carries out
+// that operator in direction d on the active tile and consumes the pending,
+// reporting handled=true (with the op's result). With no pending armed it reports
+// handled=false so the caller runs its normal navigation — a persistent mode
+// alone never hijacks nav_*.
+func (e *Editor) tilePendingNav(ctx *pawscript.Context, d ifitfits.Direction) (handled, ok bool) {
+	if e.tilePending == "" {
+		return false, false
+	}
+	op := e.tilePending
+	e.tilePending = ""
+	vp := e.ensureTiler()
+	return true, e.applyTileOp(ctx, vp, vp.GetFocus(), op, d)
+}
+
+// doSplit runs viewport_split/new's create-or-clone placement for a fixed
+// direction: an explicit ref shows that viewport; otherwise a fresh buffers
+// surface is opened (and cleaned up if the split fails); the new tile gets mew's
+// default minimums. Returns the new tile handle (0 on failure).
+func (e *Editor) doSplit(vp *ifitfits.Viewport, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle, t ifitfits.Handle, d ifitfits.Direction, ref string, hasRef bool) ifitfits.Handle {
+	var h ifitfits.Handle
+	switch {
+	case hasRef:
+		h = fn(vp, t, d, ref)
+	default:
+		if nw := e.newSurfaceViewport("buffers"); nw != nil {
+			h = fn(vp, t, d, nw.ID)
+			if h == 0 {
+				e.ViewportManager.RemoveViewport(nw.ID) // split failed: don't orphan the pane
+			}
+		} else {
+			h = fn(vp, t, d)
+		}
+	}
+	if h != 0 {
+		vp.SetMetrics(h, newTileMinW, newTileMinH, 0, 0)
+	}
+	return h
+}
+
+// splitFocus runs a split/new placement (doSplit) and, when a new tile is
+// created, moves focus INTO it: the new pane becomes the active tile and its
+// viewport gains keyboard focus (via goToTile). This is what makes split/new —
+// unlike go/swap/merge — land the user on the pane they just created. Returns
+// the new tile handle (0 on failure).
+func (e *Editor) splitFocus(ctx *pawscript.Context, vp *ifitfits.Viewport, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle, t ifitfits.Handle, d ifitfits.Direction, ref string, hasRef bool) ifitfits.Handle {
+	h := e.doSplit(vp, fn, t, d, ref, hasRef)
+	if h != 0 {
+		e.goToTile(ctx, vp, h)
+	}
+	return h
+}
+
 // ---- registration ----
 
 func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
@@ -359,19 +531,6 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			return pawscript.BoolStatus(true)
 		})
 	}
-	// tileDir: tile + a required direction.
-	tileDir := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction)) {
-		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
-			vp, t, rest, ok := e.tileFront(ctx)
-			d, okD := tileArgDir(ctx, rest)
-			if !ok || !okD {
-				e.ShowWarning("Usage: " + usage)
-				return pawscript.BoolStatus(false)
-			}
-			fn(vp, t, d)
-			return pawscript.BoolStatus(true)
-		})
-	}
 	// tileState: tile + an optional (true, false, toggle) state.
 	tileState := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.State)) {
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
@@ -384,36 +543,98 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 			return pawscript.BoolStatus(true)
 		})
 	}
-
-	// --- Structure ---
-	// viewport_new / viewport_split: tile (idiom) + a required direction, with an
-	// optional ref that otherwise clones the origin tile's ref. Both return the
-	// new tile, stamped with our default minimums so it is not omitted on a
-	// modest workspace.
-	newSplit := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle) {
+	// opCmd: an operator base command (viewport_go / viewport_swap /
+	// viewport_merge). Its argument is a direction (run op that way now) OR the
+	// meta-tokens pending/mode (arm op for the directional dispatch keys instead).
+	opCmd := func(name, op string) {
 		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
 			vp, t, rest, ok := e.tileFront(ctx)
-			d, okD := tileArgDir(ctx, rest)
-			if !ok || !okD {
-				e.ShowWarning("Usage: " + usage)
+			if !ok {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>")
 				return pawscript.BoolStatus(false)
 			}
-			var h ifitfits.Handle
-			if ref, okR := tileArgStr(ctx, rest+1); okR {
-				h = fn(vp, t, d, ref)
-			} else {
-				h = fn(vp, t, d)
+			d, meta, okD := tileDirArg(ctx, rest)
+			if !okD {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>")
+				return pawscript.BoolStatus(false)
 			}
-			if h != 0 {
-				vp.SetMetrics(h, newTileMinW, newTileMinH, 0, 0)
+			if meta != "" {
+				e.armTileOperator(op, meta)
+				return pawscript.BoolStatus(true)
 			}
-			ctx.SetResult(uint64(h))
+			return pawscript.BoolStatus(e.applyTileOp(ctx, vp, t, op, d))
+		})
+	}
+	// opDir: a fixed-direction convenience of an operator (viewport_go_left,
+	// viewport_split_up, …) — no direction argument, op and direction both baked.
+	opDir := func(name, op string, d ifitfits.Direction) {
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			vp, t, _, ok := e.tileFront(ctx)
+			if !ok {
+				e.ShowWarning("Usage: " + name + " [#tile]")
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.applyTileOp(ctx, vp, t, op, d))
+		})
+	}
+	// dispatch: a directional command (viewport_left, …) that carries out the
+	// currently armed operator — the one-shot pending one if set (consumed), else
+	// the persistent mode (default "go").
+	dispatch := func(name string, d ifitfits.Direction) {
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			vp, t, _, ok := e.tileFront(ctx)
+			if !ok {
+				e.ShowWarning("Usage: " + name + " [#tile]")
+				return pawscript.BoolStatus(false)
+			}
+			return pawscript.BoolStatus(e.applyTileOp(ctx, vp, t, e.takeTileOp(), d))
+		})
+	}
+
+	// --- Structure ---
+	// viewport_new / viewport_split: tile (idiom) + a direction, with an optional
+	// ref. Given a ref, the new tile shows that existing viewport; without one, a
+	// FRESH main viewport is created showing the mew:/buffers list, so the new pane
+	// opens on a place to pick what to show rather than cloning the origin tile's
+	// content. Both return the new tile, stamped with our default minimums so it is
+	// not omitted on a modest workspace. Both are also tiling operators: in place
+	// of a direction they accept pending/mode to arm "new"/"split" for the
+	// directional dispatch keys.
+	splitBase := func(name, op string, fn func(*ifitfits.Viewport, ifitfits.Handle, ifitfits.Direction, ...string) ifitfits.Handle) {
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			vp, t, rest, ok := e.tileFront(ctx)
+			if !ok {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>, [ref]")
+				return pawscript.BoolStatus(false)
+			}
+			d, meta, okD := tileDirArg(ctx, rest)
+			if !okD {
+				e.ShowWarning("Usage: " + name + " [#tile], <direction|pending|mode>, [ref]")
+				return pawscript.BoolStatus(false)
+			}
+			if meta != "" {
+				e.armTileOperator(op, meta)
+				return pawscript.BoolStatus(true)
+			}
+			ref, hasRef := tileArgStr(ctx, rest+1)
+			ctx.SetResult(uint64(e.splitFocus(ctx, vp, fn, t, d, ref, hasRef)))
 			return pawscript.BoolStatus(true)
 		})
 	}
-	newSplit("viewport_new", "viewport_new [#tile], <direction>, [ref]", (*ifitfits.Viewport).New)
-	newSplit("viewport_split", "viewport_split [#tile], <direction>, [ref]", (*ifitfits.Viewport).Split)
-	tileRet("viewport_close", "viewport_close [#tile]", (*ifitfits.Viewport).Close)
+	splitBase("viewport_new", "new", (*ifitfits.Viewport).New)
+	splitBase("viewport_split", "split", (*ifitfits.Viewport).Split)
+	// Fixed-direction convenience families (mirror viewport_swap_*).
+	opDir("viewport_new_up", "new", ifitfits.Up)
+	opDir("viewport_new_down", "new", ifitfits.Down)
+	opDir("viewport_new_left", "new", ifitfits.Left)
+	opDir("viewport_new_right", "new", ifitfits.Right)
+	opDir("viewport_split_up", "split", ifitfits.Up)
+	opDir("viewport_split_down", "split", ifitfits.Down)
+	opDir("viewport_split_left", "split", ifitfits.Left)
+	opDir("viewport_split_right", "split", ifitfits.Right)
+	// tile_close closes a TILE (not the mew viewport it holds — that is
+	// viewport_close).
+	tileRet("tile_close", "tile_close [#tile]", (*ifitfits.Viewport).Close)
 
 	// --- Navigation ---
 	// viewport_seek is the raw ifitfits navigation: it moves the caret goal and
@@ -428,48 +649,68 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 		ctx.SetResult(uint64(vp.Go(t, d)))
 		return pawscript.BoolStatus(true)
 	})
+	// viewport_seek_{up,down,left,right}: the raw directional seek — resolve the
+	// neighbor that way and return its handle, with NO focus move or #tile change
+	// (the old viewport_up/down/left/right behavior, now under the seek_ name).
+	tileRet("viewport_seek_up", "viewport_seek_up [#tile]", (*ifitfits.Viewport).Up)
+	tileRet("viewport_seek_down", "viewport_seek_down [#tile]", (*ifitfits.Viewport).Down)
+	tileRet("viewport_seek_left", "viewport_seek_left [#tile]", (*ifitfits.Viewport).Left)
+	tileRet("viewport_seek_right", "viewport_seek_right [#tile]", (*ifitfits.Viewport).Right)
 	// viewport_go is mew's navigation wrapper around viewport_seek: it seeks,
 	// makes the destination the new #tile default, and switches mew's view to the
 	// destination tile's content — the tile's ref is a mew viewport id, so
 	// focusing it drives lastMainViewport and the modebar exactly as an ordinary
 	// focus change would. When the destination tile carries a ref that is not a
 	// live viewport (e.g. an as-yet-unpopulated tile), the view is left as-is; the
-	// #tile default still follows the move.
-	ps.RegisterCommand("viewport_go", func(ctx *pawscript.Context) pawscript.Result {
-		vp, t, rest, ok := e.tileFront(ctx)
-		d, okD := tileArgDir(ctx, rest)
-		if !ok || !okD {
-			e.ShowWarning("Usage: viewport_go [#tile], <direction>")
+	// #tile default still follows the move. It also accepts pending/mode to arm
+	// "go" as the directional operator (the default mode).
+	opCmd("viewport_go", "go")
+	opDir("viewport_go_up", "go", ifitfits.Up)
+	opDir("viewport_go_down", "go", ifitfits.Down)
+	opDir("viewport_go_left", "go", ifitfits.Left)
+	opDir("viewport_go_right", "go", ifitfits.Right)
+	// viewport_{up,down,left,right}: carry out the ARMED tiling operator in that
+	// direction — a one-shot pending operator if set, else the persistent mode
+	// (default "go", i.e. a focus move). Set the mode/pending with
+	// viewport_<op> mode / viewport_<op> pending.
+	dispatch("viewport_up", ifitfits.Up)
+	dispatch("viewport_down", ifitfits.Down)
+	dispatch("viewport_left", ifitfits.Left)
+	dispatch("viewport_right", ifitfits.Right)
+	// tile_prior / tile_next cycle the tiles in reading order and GO there —
+	// updating the #tile default, focusing the destination tile's viewport, and
+	// announcing the switch — the reading-order analog of viewport_go (not a raw
+	// seek; viewport_seek prior/next is that). viewport_prior / viewport_next are
+	// the separate main-viewport focus-cycling commands.
+	ps.RegisterCommand("tile_prior", func(ctx *pawscript.Context) pawscript.Result {
+		vp, t, _, ok := e.tileFront(ctx)
+		if !ok {
+			e.ShowWarning("Usage: tile_prior [#tile]")
 			return pawscript.BoolStatus(false)
 		}
-		dest := vp.Go(t, d)
-		vp.SetFocus(dest)                                 // the destination is now the active tile
-		ctx.SetModuleObject(tileDefaultVar, uint64(dest)) // #tile follows the move
-		if ref := vp.Content(dest); ref != "" {
-			if e.ViewportManager.GetViewport(ref) != nil {
-				e.ViewportManager.SetFocus(ref) // sets lastMainViewport, as a normal switch
-				e.announceFocusedViewport()
-			}
-		}
-		ctx.SetResult(uint64(dest))
+		e.goToTile(ctx, vp, vp.Prior(t))
 		return pawscript.BoolStatus(true)
 	})
-	tileRet("viewport_up", "viewport_up [#tile]", (*ifitfits.Viewport).Up)
-	tileRet("viewport_down", "viewport_down [#tile]", (*ifitfits.Viewport).Down)
-	tileRet("viewport_left", "viewport_left [#tile]", (*ifitfits.Viewport).Left)
-	tileRet("viewport_right", "viewport_right [#tile]", (*ifitfits.Viewport).Right)
-	// viewport_prior / viewport_next are already mew commands (main-viewport
-	// focus cycling); the tiler's reading-order cycle is tile_prior / tile_next.
-	tileRet("tile_prior", "tile_prior [#tile]", (*ifitfits.Viewport).Prior)
-	tileRet("tile_next", "tile_next [#tile]", (*ifitfits.Viewport).Next)
+	ps.RegisterCommand("tile_next", func(ctx *pawscript.Context) pawscript.Result {
+		vp, t, _, ok := e.tileFront(ctx)
+		if !ok {
+			e.ShowWarning("Usage: tile_next [#tile]")
+			return pawscript.BoolStatus(false)
+		}
+		e.goToTile(ctx, vp, vp.Next(t))
+		return pawscript.BoolStatus(true)
+	})
 
 	// --- Move & reorder ---
-	tileDir("viewport_swap", "viewport_swap [#tile], <direction>", (*ifitfits.Viewport).Swap)
+	// viewport_swap / viewport_merge take a direction OR pending/mode (arming the
+	// operator for the directional dispatch keys); the _{up,down,left,right}
+	// convenience commands bake the direction in.
+	opCmd("viewport_swap", "swap")
 	tileOnly("viewport_swap_up", "viewport_swap_up [#tile]", (*ifitfits.Viewport).SwapUp)
 	tileOnly("viewport_swap_down", "viewport_swap_down [#tile]", (*ifitfits.Viewport).SwapDown)
 	tileOnly("viewport_swap_left", "viewport_swap_left [#tile]", (*ifitfits.Viewport).SwapLeft)
 	tileOnly("viewport_swap_right", "viewport_swap_right [#tile]", (*ifitfits.Viewport).SwapRight)
-	tileDir("viewport_merge", "viewport_merge [#tile], <direction>", (*ifitfits.Viewport).Merge)
+	opCmd("viewport_merge", "merge")
 	tileOnly("viewport_merge_up", "viewport_merge_up [#tile]", (*ifitfits.Viewport).MergeUp)
 	tileOnly("viewport_merge_down", "viewport_merge_down [#tile]", (*ifitfits.Viewport).MergeDown)
 	tileOnly("viewport_merge_left", "viewport_merge_left [#tile]", (*ifitfits.Viewport).MergeLeft)
@@ -483,8 +724,24 @@ func (e *Editor) registerTilingCommands(ps *pawscript.PawScript) {
 
 	// --- Stacks & tabs ---
 	tileState("viewport_stack", "viewport_stack [#tile], [true|false|toggle]", (*ifitfits.Viewport).Stack)
-	tileRet("viewport_tab_next", "viewport_tab_next [#tile]", (*ifitfits.Viewport).TabNext)
-	tileRet("viewport_tab_prior", "viewport_tab_prior [#tile]", (*ifitfits.Viewport).TabPrior)
+	// viewport_tab_next / viewport_tab_prior raise the next/prior tab in the stack
+	// and GO to it: TabNext/TabPrior return the newly-shown tab's focus entry (the
+	// leaf to land on), so — like tile_prior/next and viewport_go — focus follows
+	// there, driving lastMainViewport and the modebar. Without this the tab was
+	// raised but mew stayed focused on the old tab's viewport.
+	tabGo := func(name, usage string, fn func(*ifitfits.Viewport, ifitfits.Handle) ifitfits.Handle) {
+		ps.RegisterCommand(name, func(ctx *pawscript.Context) pawscript.Result {
+			vp, t, _, ok := e.tileFront(ctx)
+			if !ok {
+				e.ShowWarning("Usage: " + usage)
+				return pawscript.BoolStatus(false)
+			}
+			e.goToTile(ctx, vp, fn(vp, t))
+			return pawscript.BoolStatus(true)
+		})
+	}
+	tabGo("viewport_tab_next", "viewport_tab_next [#tile]", (*ifitfits.Viewport).TabNext)
+	tabGo("viewport_tab_prior", "viewport_tab_prior [#tile]", (*ifitfits.Viewport).TabPrior)
 	tileOnly("viewport_move_tab_next", "viewport_move_tab_next [#tile]", (*ifitfits.Viewport).MoveTabNext)
 	tileOnly("viewport_move_tab_prior", "viewport_move_tab_prior [#tile]", (*ifitfits.Viewport).MoveTabPrior)
 

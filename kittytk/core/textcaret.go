@@ -53,6 +53,56 @@ type caretSink struct {
 	caret TextCaret
 }
 
+// TextSink is a trinket that TYPES: one where a keystroke becomes text rather
+// than a command. A text input, a terminal, an editor hosted in one.
+//
+// It exists because the caret request above cannot answer this. That request is
+// made during PAINT, so its absence means "nothing drew an insertion point this
+// frame", which is not the same as "text is not going anywhere" — a frame
+// clipped to a damaged region, or one painted while a cursor was in the dark
+// half of its blink, reports nothing and means nothing by it. Whether text has
+// a destination is a question about focus, and focus is state.
+type TextSink interface {
+	// AcceptsTextInput reports whether keystrokes reaching this trinket
+	// become text. A trinket that is disabled, or read-only, says false.
+	AcceptsTextInput() bool
+}
+
+// TextSinkState is what the owner of a frame could determine about whether
+// text is going anywhere at all.
+//
+// Unknown is not "no". It is the same absence the mode tokens use: a caller
+// with no focus manager to ask has learned nothing, and acting on nothing —
+// telling the OS there is no insertion point — would be inventing an answer.
+type TextSinkState int
+
+const (
+	// TextSinkUnknown: there was nothing to ask.
+	TextSinkUnknown TextSinkState = iota
+	// TextSinkAbsent: focus is somewhere, and that somewhere does not type.
+	TextSinkAbsent
+	// TextSinkPresent: the trinket holding focus types.
+	TextSinkPresent
+)
+
+// FocusedTextSink asks a focus manager whether the trinket holding focus types.
+//
+// Nothing focused answers Absent rather than Unknown: a focus manager that has
+// been asked and holds nobody has given a real answer.
+func FocusedTextSink(fm *FocusManager) TextSinkState {
+	if fm == nil {
+		return TextSinkUnknown
+	}
+	focused := fm.FocusedTrinket()
+	if focused == nil {
+		return TextSinkAbsent
+	}
+	if sink, ok := focused.(TextSink); ok && sink.AcceptsTextInput() {
+		return TextSinkPresent
+	}
+	return TextSinkAbsent
+}
+
 // RequestTextCaret asks the platform to place its real text caret at local
 // (x, y) with the given DECSCUSR shape. Later requests replace earlier ones —
 // paint order decides, so whatever paints on top owns the caret. Out-of-range
@@ -95,6 +145,16 @@ func (p *Painter) TextCaretRequest() TextCaret {
 	}
 	return p.caret.caret
 }
+
+// MarkPartial records that this frame paints only a damaged region rather than
+// the whole surface. Called by the platform before it hands the painter to a
+// surface handler; derived painters carry it.
+func (p *Painter) MarkPartial() { p.partial = true }
+
+// Complete reports whether this frame painted the whole surface, and so
+// whether what it did NOT report is worth anything. A partial frame that
+// mentioned no insertion point has not said there is none.
+func (p *Painter) Complete() bool { return !p.partial }
 
 // ResetTextCaretRequest clears the frame's request. The surface host calls it
 // before painting so each frame decides afresh.

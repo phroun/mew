@@ -27,6 +27,14 @@ type MappingOrigin struct {
 	Line       int    // 1-based line within Source (0 when not from a file)
 	Precedence int    // monotonic load-order ordinal; higher = configured later
 	Author     string // @author in effect at Line, already defaulted (never "")
+
+	// EnvWeight is what this binding's environment hints said about the machine
+	// it is running on: positive where a hint matched (the native spelling
+	// here), negative where one matched some OTHER environment, zero for an
+	// unhinted binding. It outranks Precedence when choosing which of several
+	// keys for one action a badge shows, and it decides NOTHING else — both
+	// keys are bound, and either one pressed still works.
+	EnvWeight int
 }
 
 // SourcedLine is one physical config line tagged with where it came from (which

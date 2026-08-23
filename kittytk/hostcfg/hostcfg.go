@@ -28,6 +28,13 @@
 //	                          ;        host's OS title bar (kittytk-sdl only)
 //	renderer     =            ; rendering backend: software (default) or webgpu
 //	                          ;   (webgpu requires building with -tags webgpu)
+//	desktop_frame =           ; main-window chrome: themed (default; the desktop
+//	                          ;   paints its own title bar) / native_titlebar / native
+//	titlebar_scale =          ; graphical title-bar height and content scale
+//	                          ;   (1.0 = classic full-cell row, the default)
+//	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
+//	                          ;   … hints are tested against, overriding what the
+//	                          ;   session advertises (blank = detect)
 //	fonts_path   =            ; extra font search directories (comma list, relative
 //	                          ;   to this ini) the engine scans to find families by name
 //	ui_term      =            ; the ui-term terminal face (family or comma fallback
@@ -43,6 +50,14 @@
 //	token    =            ; optional shared secret
 //
 //	[system]
+//	density  =            ; the PHYSICAL screen's content scale (2 on a HiDPI
+//	                      ;   panel). Blank/0 = ask the window system. This is
+//	                      ;   NOT [window] scale, which is how large this app
+//	                      ;   draws itself: set scale=1 on a HiDPI screen and
+//	                      ;   the two differ. It exists so a child rendering
+//	                      ;   pictures into a terminal pane — which reads the
+//	                      ;   density from the window system on its own — is
+//	                      ;   sized to agree with us.
 //	native   =            ; graphical host menu-shortcut glyph style:
 //	                      ;   true = native glyphs (⌃⌥⇧⌘) only when the host OS is macOS
 //	                      ;   mac  = force native glyphs on any OS
@@ -89,10 +104,23 @@ const IniName = "kittytk.ini"
 // Config is the resolved launch configuration. Window fields apply only
 // to graphical hosts (kittytk-sdl); the terminal host ignores them.
 type Config struct {
-	Title       string // window title bar text
-	Width       int    // window width in pixels
-	Height      int    // window height in pixels
-	Scale       int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	Title  string // window title bar text
+	Width  int    // window width in pixels
+	Height int    // window height in pixels
+	Scale  int    // pixels per abstract unit (1 = small, 2 = crisp/large)
+	// Density is the PHYSICAL screen's content scale ([system] density),
+	// 0 = ask the window system. Not Scale: that is how large this
+	// application draws itself, a preference; this is what kind of panel it
+	// is on, and setting Scale to 1 on a HiDPI screen makes them differ.
+	//
+	// It is configurable at all because it has to be right for something
+	// this process cannot see: a child rendering pictures into a terminal
+	// pane (a browser, say) reads the density from the window system
+	// itself and sizes its content to it, and no terminal protocol carries
+	// that number in either direction. Where SDL cannot answer — a remote
+	// display, a compositor that rounds, a host with no window — this is
+	// the only way to agree with it.
+	Density     float64
 	FontSize    int    // UI font point size; sizes the desktop cell grid (12 = default)
 	BorderWidth int    // graphical window-frame border width in device pixels, reserved outside the content (0 = default)
 	ShowFPS     bool   // show the render frame rate in the graphical host's OS title bar
@@ -159,6 +187,55 @@ type Config struct {
 	// entries resolve against the ini's directory.
 	FontsPath []string
 
+	// Mappings is the default key registry: a key or key sequence as the input
+	// layer reports it, mapped to the command it runs. Read from the
+	// [mappings] section, where — as in [fonts] — the names on the LEFT are
+	// DATA, so the section is read by section rather than by key name.
+	//
+	// Keys keep their case: "S-Tab" and "s-Tab" are Shift-Tab and Super-Tab,
+	// two different chords. Order within the file is not significant; a later
+	// line for the same key replaces an earlier one.
+	Mappings map[string]string
+
+	// DesktopFrame is how the graphical host's own OS window is framed, read
+	// from [window] desktop_frame:
+	//
+	//	themed          - no OS chrome; the desktop paints its own title bar
+	//	                  and handles moving and resizing itself, so the main
+	//	                  window matches the toolkit's windows (the default)
+	//	native_titlebar - the OS title bar and border, plus the desktop's own
+	//	                  in-client resize zones along the edges
+	//	native          - pure OS chrome; the desktop's own edge zones stand
+	//	                  down entirely
+	//
+	// A value that isn't one of these keeps the default rather than failing.
+	// The terminal host has no OS window and ignores it.
+	DesktopFrame string
+
+	// TitleBarScale scales every GRAPHICAL title bar's height and its
+	// contents, read from [window] titlebar_scale. 1.0 (the default) is the
+	// classic full-cell row; 0.7 renders the bar at 70% of it, ceiled to a
+	// full device pixel, with the fonts and controls scaled to match. Values
+	// at or below zero, or that don't parse, keep 1.0. Cell surfaces cannot
+	// subdivide a character cell and always render at 1.0 regardless, so the
+	// terminal host ignores it.
+	TitleBarScale float64
+
+	// HostType overrides the desktop environment the keymap's environment hints
+	// are tested against, read from [window] host_type. The session normally
+	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
+	// nothing, says the wrong thing, or where someone wants a Mac's keymap on
+	// a Linux desktop for the afternoon. Blank keeps whatever was detected.
+	HostType string
+
+	// AcceleratorChord is the pattern a menu accelerator is formed from, read
+	// from [window] accelerator_chord. The token "*" is replaced by a menu's
+	// mnemonic letter wherever it sits, so "M-*" forms "M-h" for &Help and
+	// "^X * Return" forms "^X H Enter". Blank disables chord accelerators
+	// without touching the bare-letter mnemonics, which are ordinary typing
+	// handled by a focused menu bar and never enter a registry.
+	AcceleratorChord string
+
 	// FontAliases holds the [window] ui_* font-alias overrides: any key of the
 	// form ui_<...> re-points the font alias ui-<...> (underscores -> hyphens)
 	// at a comma-separated fallback list — the whole systematic font tree,
@@ -174,7 +251,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software"}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -304,6 +381,21 @@ func apply(data []byte, cfg *Config) {
 			cfg.Fonts[origKey] = v
 			continue
 		}
+		// [mappings] is the other section whose keys are DATA — a key name, not
+		// a setting name — so it is read by section and the case is kept:
+		// "S-Tab" and "s-Tab" are two different chords. An empty value unbinds
+		// the key rather than being ignored, which is how a user turns a
+		// default off without having to know what it was.
+		if section == "mappings" {
+			if origKey == "" {
+				continue
+			}
+			if cfg.Mappings == nil {
+				cfg.Mappings = map[string]string{}
+			}
+			cfg.Mappings[origKey] = stripQuotes(val)
+			continue
+		}
 		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
 		// a comma-separated fallback list — the whole systematic font tree.
 		if strings.HasPrefix(key, "ui_") {
@@ -341,6 +433,23 @@ func apply(data []byte, cfg *Config) {
 		switch key {
 		case "title":
 			cfg.Title = val
+		case "accelerator_chord":
+			cfg.AcceleratorChord = stripQuotes(val)
+		case "host_type":
+			cfg.HostType = stripQuotes(val)
+		case "desktop_frame":
+			// Main-window chrome: themed (default), native_titlebar, or
+			// native. A typo keeps the default rather than failing.
+			switch strings.ToLower(val) {
+			case "themed", "native_titlebar", "native":
+				cfg.DesktopFrame = strings.ToLower(val)
+			}
+		case "titlebar_scale":
+			// Graphical title-bar height and content scale. A value that
+			// doesn't parse, or is zero or negative, keeps the classic 1.0.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.TitleBarScale = f
+			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Width = n
@@ -352,6 +461,13 @@ func apply(data []byte, cfg *Config) {
 		case "scale":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.Scale = n
+			}
+		case "density":
+			// [system] density: the SCREEN's content scale, overriding what
+			// the window system reports. Zero or unparseable leaves it on
+			// auto rather than pinning a wrong number.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.Density = f
 			}
 		case "font_size":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {

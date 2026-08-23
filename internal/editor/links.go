@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
-	"github.com/phroun/mew/internal/keys"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
 	"github.com/phroun/mew/internal/viewport"
@@ -169,18 +169,18 @@ func (e *Editor) navHistory(dir int, always bool) bool {
 	return true
 }
 
-// navHistoryGatePasses is the always=false gate for nav_history_prior. It mirrors
-// nav_follow's focused-button gate — only the actively focused link button of the
-// FOCUSED viewport lets it act, so a fallthrough chain yields to editing — with
-// one relaxation: a READ-ONLY document already in navigation mode passes even when
-// the caret is not on a link. There is nothing to edit in a read-only document,
-// so the key is free to mean "go back" without first landing on a button.
+// navHistoryGatePasses is the always=false gate for nav_history_prior. It passes
+// in two cases: the caret is on the actively focused link button (browse mode,
+// caret on a link) — mirroring nav_follow's focused-button gate, so a fallthrough
+// chain yields to editing off a link — OR the document is read-only. There is
+// nothing to edit in a read-only document, so the key is free to mean "go back"
+// regardless of browse mode or caret position.
 //
 // The focused-button check is focusedLinkButton, which itself requires w to BE
 // the focused viewport (plus browse mode and the caret on a link), so a focused
 // link in some other open document can never satisfy this.
 func (e *Editor) navHistoryGatePasses(w *viewport.Viewport) bool {
-	if w.BrowseActive && e.viewportReadOnly(w) {
+	if e.viewportReadOnly(w) {
 		return true
 	}
 	return e.focusedLinkButton(w) != nil
@@ -1044,7 +1044,7 @@ func (e *Editor) lineDisplaySpans(w *viewport.Viewport, docLine int) ([]render.D
 	if w == nil || !w.BrowseActive || !w.ViewState.LinkBrowsing || w.Type == viewport.PromptViewport || w.Buffer == nil {
 		return nil, false
 	}
-	cls, typ := w.Class, w.Type.Name()
+	cls, typ := w.EffectiveClass(), w.Type.Name()
 	col := func(name string) string { return e.LoadedConfig.Colors.Resolve(cls, typ, name) }
 	raw := strings.TrimRight(w.Buffer.GetLine(docLine), "\n\r")
 	runes := []rune(raw)
@@ -1271,15 +1271,16 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	if e.KeyProcessor == nil {
 		return preferred
 	}
-	var seqs []string
+	var seqs []keyCandidate
 	for raw, cmd := range e.KeyProcessor.GetAllMappings() {
 		if cmd != action {
 			continue
 		}
-		// Show the keys as pressed: capture/override prefixes are precedence,
-		// not keystrokes, and a wildcard names no key at all.
-		if seq, ok := keys.DisplayKey(raw); ok {
-			seqs = append(seqs, seq)
+		// Show the keys as pressed: (capture)/(override) are precedence, not
+		// keystrokes, and a wildcard names no key at all. The RAW spelling
+		// travels alongside, because that is what provenance is filed under.
+		if seq, ok := keyseq.DisplayKey(raw); ok {
+			seqs = append(seqs, keyCandidate{seq: seq, raw: raw})
 		}
 	}
 	if len(seqs) == 0 {
@@ -1291,6 +1292,21 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 	return e.chooseKeyBinding(seqs, preferred)
 }
 
+// keyCandidate is one key bound to the action a badge is resolving: the
+// spelling to SHOW, and the RAW mapping key it came from.
+//
+// The two differ whenever a binding carries a (capture)/(override) level word,
+// and the difference matters here: the word is precedence rather than a
+// keystroke, so it must not be shown — but provenance is filed under the raw spelling, which
+// is what "last configured" is decided from. Looking provenance up by the
+// display spelling missed every levelled binding, which then read as a built-in
+// (System, precedence 0) and could lose the tie-break to the very binding it
+// was written to outrank.
+type keyCandidate struct {
+	seq string // the key as pressed, shown in the badge
+	raw string // the mapping key as written, which provenance is keyed by
+}
+
 // chooseKeyBinding picks one key from seqs (all bound to the same action) to
 // display, ranking each key SEQUENCE against the author's given binding
 // (preferred): an exact key wins; else the key whose beginning matches
@@ -1298,37 +1314,49 @@ func (e *Editor) keyBindingDisplay(action, preferred string) string {
 // shares a start or end — the last-configured key. Precedence (then the
 // sequence text) breaks every tie: "the last one configured, or the last among
 // ties."
-func (e *Editor) chooseKeyBinding(seqs []string, preferred string) string {
+func (e *Editor) chooseKeyBinding(seqs []keyCandidate, preferred string) string {
 	// better reports whether a is the stronger "last configured" than b —
-	// higher precedence, and the greater sequence text as a deterministic
-	// stand-in for "last" when precedence ties (built-ins all sit at 0).
-	better := func(a, b string) bool {
-		oa, ob := e.originFor(a), e.originFor(b)
+	// the environment's own spelling first, then higher precedence, then the
+	// greater sequence text as a deterministic stand-in for "last" when
+	// precedence ties (a mapping that never came through the config stream at
+	// all sits at 0).
+	//
+	// The environment outranks load order because it is a statement about THIS
+	// machine rather than about the file: a keymap that binds both s-c (mac)
+	// and ^C means both, and the Mac is meant to be told about the Mac one
+	// however the two happened to be ordered. It decides nothing but which key
+	// is shown — both are bound, and either one pressed still works.
+	better := func(a, b keyCandidate) bool {
+		oa, ob := e.originFor(a.raw), e.originFor(b.raw)
+		if oa.EnvWeight != ob.EnvWeight {
+			return oa.EnvWeight > ob.EnvWeight
+		}
 		if oa.Precedence != ob.Precedence {
 			return oa.Precedence > ob.Precedence
 		}
-		return a > b
+		return a.seq > b.seq
 	}
 	if preferred != "" {
 		for _, s := range seqs {
-			if s == preferred {
-				return s // exact key match
+			if s.seq == preferred {
+				return s.seq // exact key match
 			}
 		}
 		// Longest shared beginning, then (only if none) longest shared end.
 		for _, suffix := range []bool{false, true} {
-			best, bestScore := "", 0
+			var best keyCandidate
+			bestScore := 0
 			for _, s := range seqs {
-				sc := sharedAffixLen(s, preferred, suffix)
+				sc := sharedAffixLen(s.seq, preferred, suffix)
 				if sc == 0 {
 					continue
 				}
-				if best == "" || sc > bestScore || (sc == bestScore && better(s, best)) {
+				if best.seq == "" || sc > bestScore || (sc == bestScore && better(s, best)) {
 					best, bestScore = s, sc
 				}
 			}
-			if best != "" {
-				return best
+			if best.seq != "" {
+				return best.seq
 			}
 		}
 	}
@@ -1339,7 +1367,7 @@ func (e *Editor) chooseKeyBinding(seqs []string, preferred string) string {
 			best = s
 		}
 	}
-	return best
+	return best.seq
 }
 
 // sharedAffixLen counts the runes a and b share from the front (suffix=false)
@@ -1364,10 +1392,12 @@ func sharedAffixLen(a, b string, suffix bool) int {
 	return count
 }
 
-// originFor returns the provenance of a bound key sequence, or the built-in
+// originFor returns the provenance of a RAW mapping key (the spelling as
+// written, (capture)/(override) level words and all — that is how the origins map is
+// keyed, in lockstep with the keymap itself), or the built-in
 // default (AuthorSystem, precedence 0) when the key carries no recorded origin.
-func (e *Editor) originFor(seq string) config.MappingOrigin {
-	if o, ok := e.mappingOrigins[seq]; ok {
+func (e *Editor) originFor(raw string) config.MappingOrigin {
+	if o, ok := e.mappingOrigins[raw]; ok {
 		return o
 	}
 	return config.MappingOrigin{Author: config.AuthorSystem}

@@ -47,8 +47,9 @@ var defaultGlobalColors = map[string]string{
 	"cursorghost":         "\x1b[0;30;100m",  // black on dark gray
 	"cursoroffscreen":     "\x1b[0;30;42m",   // black on green
 	"truncation":          "\x1b[0;37;41m",   // silver on red
-	"hint":                "\x1b[0;97;44m",   // bright white on blue (peek hints)
 	"special":             "\x1b[33m",        // yellow fg - control code substitutes
+	"ime":                 "\x1b[4;33m",      // underlined yellow - a composition, not yet text
+	"imeinactive":         "\x1b[4;37m",      // underlined silver - a clause not being converted
 	"marks":               "\x1b[0;91m",      // bright red
 	"notes":               "\x1b[0;36;40m",   // cyan on black
 	"linenumbers":         "\x1b[1;96;44m",   // aqua on blue

@@ -58,6 +58,158 @@ A split of our tree differs from upstream by exactly the fork-only files above
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
 
+### The v0.1.21 sync (record)
+
+v0.1.20-alpha -> **v0.1.21-alpha**, the desktop-chrome arc as PR
+[#35](https://github.com/phroun/kittytk/pull/35) (two commits): resize edges
+with an honest grab rule, then the desktop's own themed chrome, one title-bar
+kit, and three measured performance fixes.
+
+The delivery is worth recording for **how it nearly went wrong**, twice.
+
+**The stale-note trap.** A note carried across a context compaction said PR
+#35's branch still held a condemned affordance — code that lit the resize band
+while the pointer sat in what it GUESSED was the OS's resize strip, promising a
+resize this program cannot deliver over territory it does not control. Checking
+the PR, the head commit's **author date** (21:34) sat *before* the commit that
+introduced the affordance (21:44), which read as proof the note was stale — so
+the note was "corrected" and the plan changed. It was the correction that was
+wrong: the squashed commit had been **amended** at 21:45 and kept its original
+author date. The branch did contain the condemned code.
+
+What caught it was not re-reading the PR but `git apply --check` **refusing**:
+the delta computed from the wrong base did not apply. Diffing candidate bases
+against the branch content then showed `ab1b1c3`'s subtree byte-identical to
+it, which pinned the true base and put the revert back in the delivery. **A
+commit's author date says nothing about when its content was fixed.** Compare
+trees, not timestamps — and treat a patch that won't apply as evidence about
+the base, not an obstacle to force past.
+
+**The 9.5x nobody would have seen.** Window chrome had just started painting
+content, children and the title bar through the frame's rounded clip, so a
+status bar could not square off the corner it sat in. Correct, and invisible in
+every test. But the raster backend stood every fast path down on `hasRoundClip`
+alone — cached-glyph blits and both alpha composites fell to per-pixel
+visibility loops — so a clip that carves four small corners was charged for the
+whole surface: **7.4ms vs 0.78ms** on a busy 800x600 scene. `roundClipCovers`
+answers in six comparisons whether a rect lies in the uncut interior; the
+residual is 1.27x. It surfaced only because a performance pass was run *before*
+upstreaming rather than after, and only because the pass **measured** instead of
+reading the diff for suspicious-looking code. The other two finds (a font face
+allocated per metrics call; the title ellipsis measuring once per trimmed
+character, 36us and 148 allocations per title per frame) were the same story.
+
+Pin-only on our side, and unusually cleanly so: the vendored `Build` had already
+been run **ahead to 21** when the PR was opened (the v0.1.14/v0.1.15 precedent),
+so at tag time every shared file was byte-identical including `core/version.go`
+— the resync was the two `go.mod` pins v0.1.20-alpha -> v0.1.21-alpha and
+`go.sum` per module via `GOWORK=off go mod tidy`. No dependency change. Running
+the counter ahead at delivery time is worth repeating: it makes the resync a
+pin bump with nothing to reconcile.
+
+`go mod tidy` per module again left `kittytk/go.mod`'s `garland` indirect alone
+(v0.1.11) — it is `go work sync` that wrongly bumps it, as the v0.1.10/v0.1.13
+records note.
+
+**New shared interfaces**, all called out in the cover note so upstream could
+sweep for unimplemented test doubles: optional platform capabilities
+`NativeZoomReporter`, `NativeShapeSquarer`, `NativeRectSetter`,
+`NativeMinimumSizer`; `window.TitleControlsInsetProvider`; `core.SetTitleBarScale`
+/ `TitleBarScale`; and a `TitleBarScale` field on `hostcfg.Config`. All but the
+last two are opt-in type assertions, so an implementation lacking them keeps
+working and the feature simply stands down.
+
+The fork boundary is unchanged: the **25 `//go:build mew` files**, go.mod's mew
+require, and `garland/` (upstream's own in-repo mirror, which we neither own nor
+send).
+
+### The v0.1.20 sync (record)
+
+v0.1.19-alpha -> **v0.1.20-alpha**, one bug fix as PR
+[#34](https://github.com/phroun/kittytk/pull/34): the provisional corral never
+reached the GPU compositing path, so shrinking the SDL/WebGPU desktop lost
+windows off the edge and growing it did not bring them back.
+
+Two paths position a window and only one knew about the corral.
+`WindowManager.Paint` (software renderer, TUI) asks `m.displayBounds`;
+`renderer_webgpu.go` composites each window as a layer of its own and read
+`win.Bounds()` through a locally-declared `WindowLike` interface — `grep
+displayBounds sdl/` found nothing. The corral was written in `3e79714`
+(2026-07-07) against the software paint loop, which was the only path then; the
+WebGPU renderer arrived in `ec5494f` (2026-08-03) with the v0.1.7 overlay of
+upstream's renderer migration. Nothing was deleted — a new path simply never
+learned about it.
+
+Two reasons it hid for a month. Every corral test drives `WindowManager` or
+`MDIPane` directly, and nothing asked where a window landed on the compositor;
+and `SoftwareRenderer.RenderFrameWithChildWindows` returns "child window
+compositing not supported" and falls back to the paint loop, so only the WebGPU
+path shows it — which is mew-sdl's default renderer (`hostconf.go` sets
+`cfg.Renderer = "webgpu"`, where upstream defaults to software).
+
+The tell: hit-testing DID go through the container, so a window off the edge
+was clickable at the corralled position and inert where it appeared. The fix
+makes the corral readable from outside the container — `Window.DisplayBounds`
+asks a delegate that `WindowManager` and `MDIPane` both point at their own
+`displayBounds`, so there is one corral rather than two implementations — and
+the new test asserts the window's answer and the container's are EQUAL, since
+that disagreement is the failure.
+
+**The lesson for the next sync is about test shape, not code.** A behavior
+implemented in one renderer and consumed by another needs an assertion at the
+seam BETWEEN them. Green unit tests either side of a boundary say nothing about
+the boundary.
+
+Pin-only on our side: every shared file byte-identical, `Build` 19 -> **20**,
+root and app go.mod pins v0.1.19-alpha -> v0.1.20-alpha, go.sum per module via
+`GOWORK=off go mod tidy`. No dependency change.
+
+### The v0.1.19 sync (record)
+
+v0.1.17-alpha -> **v0.1.19-alpha**, landing the keymap-registry work as PR
+[#32](https://github.com/phroun/kittytk/pull/32) plus the go.mod repair it
+needed as [#33](https://github.com/phroun/kittytk/pull/33).
+
+#32 is the KSP arc: key bindings become a `KeyRegistry` of keys to COMMANDS
+with a `KeyContext` per situation (resolution through key-sequence-processor,
+so chords and precedence levels come free); registries cascade down the
+trinket tree so a guest that takes the keyboard leaves the toolkit's bindings
+unresolvable while it has the focus; menu items name a command and ask what
+key means it HERE, so the answer follows the focus; environment hints
+(`(mac)`, `(only_mac)`) let one table describe every platform; and key names
+are read off ONE table by parsing, macOS-native display and the screen reader
+alike. It retired the parallel matcher (`Shortcut.Matches`, `ShortcutMap`,
+`DefaultShortcuts`, `Action.MatchesKey`, `ActionGroup.HandleKey`,
+`KeyBindings`' key lookups) and `Application`'s panicking event loop, which
+was the tree's only `go vet` complaint. 109 files, +9513/-1816, cut from our
+vendored tree.
+
+**New dependency — key-sequence-processor v0.1.5** (MIT, stdlib-only, so not
+a mew-only dep by the §2 licence test). Per fork-sync-policy §3 the PR sent
+this as a sentence rather than a go.mod diff, and **the `go get` landed after
+the tag instead of before it**: v0.1.18-alpha does not build at the default
+`-mod=readonly`, because `core/keymap.go` imports a module `go.mod` never
+required. #33 declares it (and `go mod tidy` promoted `golang.org/x/sys` from
+indirect to direct, its own correction of a pre-existing classification).
+**v0.1.18-alpha is permanently broken** — the module proxy caches immutably by
+version, so re-tagging could not have repaired it and v0.1.19-alpha is the
+fix. The verification lesson is worth keeping: check a candidate tag with
+`GOWORK=off go build ./...` at the DEFAULT `-mod=readonly`, never with
+`-mod=mod`, which resolves and writes the missing require on the fly and
+hides exactly this failure.
+
+Our side is otherwise a **pin-only** resync: every shared file is
+byte-identical to the tag, so nothing came back down. `Build` 17 -> **19**,
+kittytk's own go.mod keyseq v0.1.4 -> v0.1.5, root go.mod pin v0.1.17-alpha ->
+v0.1.19-alpha, app/go.mod pin v0.1.16-alpha -> v0.1.19-alpha (it had lagged a
+release), go.sum per module via `GOWORK=off go mod tidy`. The vendored tree
+also carries direct-key-handler v0.3.17 and purfecterm v0.2.40 where upstream
+sits at v0.3.12/v0.2.30 — those were NOT sent, and upstream builds and tests
+green at its own versions, so no bump was needed. The only remaining
+vendored<->upstream divergence is the mew boundary: the **25** `//go:build
+mew` files (the set has grown; `capture_relay_test.go` joined it) plus
+go.mod's mew require.
+
 ### The v0.1.7 sync (record)
 
 v0.1.5-alpha -> **v0.1.7-alpha** was done as a full content overlay (upstream

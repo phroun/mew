@@ -10,29 +10,169 @@ import (
 	"github.com/phroun/direct-key-handler/keyboard"
 )
 
-// keyNameMap maps handler key names to mew's expected key names.
-// These should match the primary names in the key alias groups in sequence.go
-var keyNameMap = map[string]string{
-	"Escape": "esc",
+// mewKeyNames is mew's key vocabulary, handed to direct-key-handler so keys
+// arrive already spelled the way bindings spell them. These are the primary
+// names of the key fallback groups in sequence.go, and the names the help topics
+// document — mew's binding syntax, not display strings.
+//
+// Given to keyboard.Options.KeyNames rather than translated afterwards: the
+// handler builds a name from a keycode and modifier bits, so rewriting it here
+// meant re-parsing the prefixes it had just added, and matching on its
+// spelling meant a rename upstream broke mew silently (see the coverage test,
+// which fails if a key is left without a mew name).
+var mewKeyNames = map[keyboard.Key]string{
+	keyboard.KeyEscape: "esc",
 	// Space arrives as its literal character " " (printables are named by
 	// themselves), but a bare space can't be a token in mew's space-separated
-	// binding syntax — bindings must spell it "space" (e.g. "^B space"). Map the
-	// character to that word so a pressed spacebar matches, and modified forms
-	// ("M- " -> "M-space") fall out of the prefix logic below.
-	" ":         "space",
-	"Tab":       "tab",
-	"Enter":     "return",
-	"Backspace": "back", // Primary for {"back", "^H", "backspace"} group
-	"Up":        "up",
-	"Down":      "down",
-	"Left":      "left",
-	"Right":     "right",
-	"Home":      "home",
-	"End":       "end",
-	"Insert":    "ins",
-	"Delete":    "fdel", // Primary for {"fdel", "delete"} group
-	"PageUp":    "pgup",
-	"PageDown":  "pgdn",
+	// binding syntax — bindings must spell it "space" (e.g. "^B space").
+	keyboard.KeySpace:     "space",
+	keyboard.KeyTab:       "tab",
+	keyboard.KeyBackspace: "back", // Primary for {"back", "^H", "backspace"} group
+	// The other erase byte. Upstream names BS (8) and DEL (127) apart because
+	// a terminal sends one or the other for its backspace by lineage and it
+	// cannot know which — so mew, which has always had two names here, takes
+	// delivery of both rather than letting one arrive under upstream's
+	// spelling. "del" is the DEL character; both bind to del_char_prior
+	// (keydefaults.go), so they behave as the synonyms they are.
+	keyboard.KeyDEL:      "del", // Primary for {"del", "^8"} group
+	keyboard.KeyUp:       "up",
+	keyboard.KeyDown:     "down",
+	keyboard.KeyLeft:     "left",
+	keyboard.KeyRight:    "right",
+	keyboard.KeyHome:     "home",
+	keyboard.KeyEnd:      "end",
+	keyboard.KeyInsert:   "ins",
+	keyboard.KeyDelete:   "fdel", // forward delete; no long spelling, see keydefaults.go
+	keyboard.KeyPageUp:   "pgup",
+	keyboard.KeyPageDown: "pgdn",
+
+	// The home-row key and the keypad's are distinct keys upstream. mew binds
+	// one "return": the help topic says as much ("Computers with a numeric
+	// keypad may have an additional smaller key also labeled enter which is not
+	// the one being referred to"), so fold them deliberately rather than
+	// leaving the keypad's to arrive under its own name and match by accident.
+	keyboard.KeyReturn:      "return",
+	keyboard.KeyKeypadEnter: "return",
+
+	// Function keys keep their upstream spelling: bindings write "F1".
+	keyboard.KeyF1: "F1", keyboard.KeyF2: "F2", keyboard.KeyF3: "F3",
+	keyboard.KeyF4: "F4", keyboard.KeyF5: "F5", keyboard.KeyF6: "F6",
+	keyboard.KeyF7: "F7", keyboard.KeyF8: "F8", keyboard.KeyF9: "F9",
+	keyboard.KeyF10: "F10", keyboard.KeyF11: "F11", keyboard.KeyF12: "F12",
+	keyboard.KeyF13: "F13", keyboard.KeyF14: "F14", keyboard.KeyF15: "F15",
+	keyboard.KeyF16: "F16", keyboard.KeyF17: "F17", keyboard.KeyF18: "F18",
+	keyboard.KeyF19: "F19", keyboard.KeyF20: "F20",
+
+	// Lock and system keys: lowercase, matching the rest of the vocabulary.
+	keyboard.KeyCapsLock:   "capslock",
+	keyboard.KeyScrollLock: "scrolllock",
+	// The pad's lock cap. Pressed alone it never arrives — upstream eats it and
+	// moves the pad's lock, which is what decides whether "P-7" or "P-home"
+	// comes through. This names it only when a modifier is held, where it is a
+	// key: an action worth binding, rather than a state we already track.
+	keyboard.KeyClear:       "clear",
+	keyboard.KeyPrintScreen: "printscreen",
+	keyboard.KeyPause:       "pause",
+	keyboard.KeyMenu:        "menu",
+	keyboard.KeyPower:       "power",
+
+	// The keypad's 5 with NumLock off. It arrives prefixed — "P-begin" — like
+	// every other pad key, but the base name is its own: it is the one key on
+	// the pad that duplicates nothing in the main cluster.
+	keyboard.KeyBegin: "begin",
+
+	// Keys an American keyboard does not have. They are here to be BOUND, not
+	// yet to insert: pressing one still produces no character, exactly as
+	// pressing Q on a Korean layout does not yet insert ᄈ. What the entry buys
+	// is that the key reaches a keymap under mew's spelling instead of
+	// upstream's, which is the only thing this table has ever been for.
+	//
+	// They need names at all because their characters are already spoken for.
+	// Zag prints "<" and ">", which on a US board are Shift+comma and
+	// Shift+period; Zig, Ro and Yen print "\" and "|", which belong to the
+	// backslash key. A DEC LK201 has both Zig and Zag, and settles the point:
+	// its comma and period do not shift to "<" and ">" at all, so which key
+	// those characters live on is a property of the keyboard, not of the
+	// character. Only a position can name them.
+	keyboard.KeyZig: "zig", // ISO, beside Return
+	keyboard.KeyZag: "zag", // ISO, between LeftShift and Z
+	keyboard.KeyRo:  "ro",  // JIS, beside RightShift
+	keyboard.KeyYen: "yen", // JIS, beside the erase key
+
+	// The input-method keys. The two locks latch a mode, as CapsLock does, and
+	// mew does not surface their state; the other three fire once.
+	keyboard.KeyKanaLock:   "kanalock",
+	keyboard.KeyHangulLock: "hangullock",
+	keyboard.KeyHenkan:     "henkan",   // converts the pending kana
+	keyboard.KeyMuhenkan:   "muhenkan", // commits it unconverted
+	keyboard.KeyHanja:      "hanja",    // converts the preceding Hangul
+}
+
+// hostKeyNames maps direct-key-handler's own spellings to mew's, derived from
+// mewKeyNames so the vocabulary is still declared exactly once.
+//
+// The terminal path needs no such table — the handler is given mewKeyNames and
+// emits mew's names directly. A host feed does: an embedding host parses its
+// own key events and sends them through KeyFeed.SendKey under
+// direct-key-handler's naming (see docs/embedding-mew.md), so those arrive
+// unmapped and are translated here instead.
+var hostKeyNames = func() map[string]string {
+	m := make(map[string]string, len(mewKeyNames)+1)
+	for k, name := range mewKeyNames {
+		if def := k.DefaultName(); def != "" {
+			m[def] = name
+		}
+	}
+	// A host may send the spacebar as its literal character rather than by
+	// name; both have to reach the "space" token bindings are written with.
+	m[" "] = mewKeyNames[keyboard.KeySpace]
+	return m
+}()
+
+// normalizeHostKey converts a key name a host fed in (direct-key-handler's
+// naming) to mew's, preserving the modifier prefixes the host put in front of
+// it: "S-PageUp" becomes "S-pgup". A name mew has no entry for is passed
+// through unchanged.
+func normalizeHostKey(key string) string {
+	if mapped, ok := hostKeyNames[key]; ok {
+		return mapped
+	}
+	prefix, base := "", key
+	for {
+		matched := false
+		// The modifier vocabulary, in canonical order. The order is for
+		// reading only -- every prefix is two characters and no two can match
+		// the same text, so at most one applies per pass whatever order they
+		// are tried in. Membership is what matters: m- (Micro) was missing, so
+		// a key spelled with it never had its prefix peeled and its base never
+		// reached the name table; A- was here and is not a modifier this
+		// vocabulary has. (^ is one character and is handled below.)
+		//
+		// P- and p- are the keypad, and they matter here for the same reason:
+		// a host feeding "P-Home" would otherwise miss the table entirely and
+		// deliver upstream's spelling, where the keymap expects "P-home".
+		for _, p := range []string{"C-", "G-", "M-", "m-", "S-", "s-", "H-", "P-", "p-"} {
+			if strings.HasPrefix(base, p) {
+				prefix, base = prefix+p, base[2:]
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			// Control prefix, only when something follows it.
+			if strings.HasPrefix(base, "^") && len(base) > 1 {
+				prefix, base = prefix+"^", base[1:]
+				continue
+			}
+			break
+		}
+	}
+	if prefix != "" {
+		if mapped, ok := hostKeyNames[base]; ok {
+			return prefix + mapped
+		}
+	}
+	return key
 }
 
 // PasteChunk represents a chunk of pasted content.
@@ -82,6 +222,11 @@ type KeyboardHandler struct {
 	// actions carries closures posted from other goroutines (ActionPoster),
 	// surfaced by GetEvent as Do events so they run on the editor main loop.
 	actions chan func()
+
+	// pasteRun counts the chunks taken in a row by GetEvent's priority pass, so
+	// a long paste can be made to yield. Touched only from GetEvent, like
+	// pasteCarry, so it needs no locking.
+	pasteRun int
 }
 
 // NewKeyboardHandler creates a new keyboard handler reading from input and
@@ -111,6 +256,7 @@ func NewKeyboardHandler(input io.Reader, termOut io.Writer) *KeyboardHandler {
 		// of key events. That echo is redundant (we insert from the chunks) and,
 		// on a large paste, would overflow the Keys channel and drop events.
 		EmitPasteKeys: &noPasteKeys,
+		KeyNames:      mewKeyNames,
 	})
 
 	// Set up chunked paste callback for real-time paste processing
@@ -131,10 +277,41 @@ func (kh *KeyboardHandler) SetDecodeMacOSOption(enabled bool) {
 	kh.handler.SetDecodeMacOSOption(enabled)
 }
 
+// keyEventReporting is the kitty keyboard protocol's "report event types"
+// flag, pushed on the terminal's flag stack for the length of the session.
+//
+// It is the ONLY flag asked for, and that is the whole point of asking. A key
+// coming back UP has no legacy encoding — there are no bytes for it — so a
+// terminal sends one only when an application has said it wants event types,
+// and mew never said so. Every release therefore stopped at mew's own front
+// door, and a child in one of mew's terminal panes could not be given what mew
+// was never sent: a browser hosted there saw keydown without keyup, forever.
+//
+// Event types also mark a held key's ":Repeat", which arrives here untouched.
+// mew's keymap has no repeat in it and must not be shown one, but the child in
+// a terminal pane does — a browser reports a repeat as keydown with repeat set,
+// and cannot tell a held key from a drummed one without it. The marker is
+// therefore set aside and put back at the one boundary that can use it; see
+// Editor.dispatchKey.
+//
+// Disambiguation (flag 1) is deliberately NOT asked for. It would re-encode
+// presses that arrive as plain bytes today — Escape, Tab, Enter, Backspace and
+// every Control chord — which is a change to the wire mew has always read, for
+// no gain here. Event reporting on its own leaves the presses alone and adds
+// releases beside them: the one press that changes shape is F1, which an
+// emulator sends as CSI P rather than SS3 P once any flag is set, and which
+// direct-key-handler reads as F1 either way.
+const keyEventReporting = "\x1b[>2u"
+
 // Start begins listening for keyboard input.
 func (kh *KeyboardHandler) Start() error {
 	// Enable bracketed paste mode - terminal will wrap pastes with ESC[200~ ... ESC[201~
 	io.WriteString(kh.termOut, "\x1b[?2004h")
+
+	// Ask for key release events (see keyEventReporting). A terminal that does
+	// not implement the protocol ignores the sequence, and mew then runs
+	// exactly as it did before — presses only.
+	io.WriteString(kh.termOut, keyEventReporting)
 
 	return kh.handler.Start()
 }
@@ -143,34 +320,78 @@ func (kh *KeyboardHandler) Start() error {
 func (kh *KeyboardHandler) Stop() {
 	kh.handler.Stop()
 
+	// Pop the keyboard flags this session pushed, so the shell mew hands the
+	// terminal back to is not left receiving events it never asked for.
+	// Popping an empty stack is a no-op on a terminal that ignored the push.
+	io.WriteString(kh.termOut, "\x1b[<u")
+
 	// Disable bracketed paste mode
 	io.WriteString(kh.termOut, "\x1b[?2004l")
 }
 
-// GetEvent waits for and returns either a key press or a paste chunk.
-// This allows the main loop to handle both types of input without blocking
-// on one while the other is available.
+// pasteRunBeforeYield is how many chunks the priority pass takes in a row
+// before anything else waiting gets a turn.
 //
-// Paste chunks are given priority over keys so a paste in progress is drained
-// promptly. Paste content never appears on the Keys channel (the handler runs
-// with EmitPasteKeys=false), so key events are always genuine keystrokes.
-func (kh *KeyboardHandler) GetEvent() InputEvent {
-	for {
-		// Priority pass: drain any already-queued paste chunk before blocking.
-		select {
-		case raw := <-kh.PasteChunks:
-			return kh.handlePasteChunk(raw)
-		default:
-		}
+// Chunks are 4096 bytes, so this is a quarter of a megabyte of paste between
+// yields — far too little to notice, and far too little for the key channel to
+// fill in. The number only has to be small enough that the backlog cannot
+// outrun the 256 events direct-key-handler holds; every value that does is
+// equally invisible at typing speed.
+const pasteRunBeforeYield = 16
 
+// GetEvent waits for and returns a key press, a paste chunk, or a posted
+// action. This allows the main loop to handle them without blocking on one
+// while another is available.
+//
+// Paste chunks are given priority so a paste in progress is drained promptly.
+// Paste content never appears on the Keys channel (the handler runs with
+// EmitPasteKeys=false), so key events are always genuine keystrokes.
+//
+// But the priority YIELDS, because it used to be absolute and that cost
+// keystrokes. A large paste keeps the channel non-empty — the main loop renders
+// and syncs per chunk, so it drains slower than a terminal delivers — and the
+// priority pass then won every time, so nothing else was served until the paste
+// finished. Keys piled up in direct-key-handler's channel, which holds 256 and
+// drops the OLDEST to make room, so a long enough paste silently discarded what
+// had been typed behind it. Escape during a paste did not arrive, and might not
+// arrive at all.
+//
+// So after a run of chunks, whatever else is waiting goes first — and keeps
+// going first until nothing is, which is what stops a backlog outrunning that
+// 256. Then the run starts over and the paste carries on.
+func (kh *KeyboardHandler) GetEvent() InputEvent {
+	// The run is spent: serve the backlog before any more paste. The run is
+	// NOT reset by taking one, so the next call comes straight back here and
+	// keeps draining; only finding nothing waiting ends the yield.
+	if kh.pasteRun >= pasteRunBeforeYield {
 		select {
-		case raw := <-kh.PasteChunks:
-			return kh.handlePasteChunk(raw)
 		case key := <-kh.handler.Keys:
-			return InputEvent{Key: normalizeKey(key)}
+			return InputEvent{Key: key}
 		case fn := <-kh.actions:
 			return InputEvent{Do: fn}
+		default:
+			kh.pasteRun = 0
 		}
+	}
+
+	// Priority pass: drain any already-queued paste chunk before blocking.
+	select {
+	case raw := <-kh.PasteChunks:
+		kh.pasteRun++
+		return kh.handlePasteChunk(raw)
+	default:
+	}
+
+	select {
+	case raw := <-kh.PasteChunks:
+		kh.pasteRun++
+		return kh.handlePasteChunk(raw)
+	case key := <-kh.handler.Keys:
+		kh.pasteRun = 0
+		return InputEvent{Key: key}
+	case fn := <-kh.actions:
+		kh.pasteRun = 0
+		return InputEvent{Do: fn}
 	}
 }
 
@@ -228,48 +449,4 @@ func splitCompleteUTF8(b []byte) (complete, carry []byte) {
 	}
 	// No rune start within the last UTFMax bytes: malformed data, don't hold it.
 	return b, nil
-}
-
-// normalizeKey converts handler key names to mew's expected format.
-// Examples:
-//   - "Escape" → "esc"
-//   - "M-Left" → "M-left"
-//   - "S-PageUp" → "S-pgup"
-//   - "a", "A", "^A", "F1" → unchanged
-func normalizeKey(key string) string {
-	// Check for direct match first (e.g., "Escape", "Tab")
-	if mapped, ok := keyNameMap[key]; ok {
-		return mapped
-	}
-
-	// Handle modifier prefixes: M-, S-, ^, or combinations like S-M-, M-^, etc.
-	// Find the base key by stripping known prefixes
-	prefix := ""
-	base := key
-
-	for {
-		if strings.HasPrefix(base, "M-") {
-			prefix += "M-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "S-") {
-			prefix += "S-"
-			base = base[2:]
-		} else if strings.HasPrefix(base, "^") && len(base) > 1 {
-			// Control prefix - but only if there's something after it
-			prefix += "^"
-			base = base[1:]
-		} else {
-			break
-		}
-	}
-
-	// If we extracted a prefix, try to normalize the base key
-	if prefix != "" {
-		if mapped, ok := keyNameMap[base]; ok {
-			return prefix + mapped
-		}
-	}
-
-	// No normalization needed
-	return key
 }

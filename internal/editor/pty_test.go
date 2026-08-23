@@ -224,7 +224,9 @@ func TestTerminalSurfaceMirrorsAcrossTiles(t *testing.T) {
 	}
 	e.ensureTiler()
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	// Explicit ref = the terminal viewport, so the split mirrors it across two
+	// tiles (without a ref the split opens a fresh mew:/buffers pane instead).
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, " + e.ViewportManager.GetFocusedViewport().ID)
 	e.performRender()
 
 	if len(placed) != 2 {
@@ -278,7 +280,9 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 	}
 	e.ensureTiler()
 	e.performRender()
-	e.PawScript.ExecuteAsync("viewport_split #tile, right")
+	// Explicit ref = the terminal viewport, so the split mirrors it across two
+	// tiles (without a ref the split opens a fresh mew:/buffers pane instead).
+	e.PawScript.ExecuteAsync("viewport_split #tile, right, " + e.ViewportManager.GetFocusedViewport().ID)
 	e.performRender()
 
 	if len(e.mainTiles) != 2 {
@@ -295,7 +299,7 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 		}
 		asked, got = 0, TerminalMouse{}
 		e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
-		e.handleMouseKey("MouseLeftPress")
+		e.handleMouseKey("MouseLeft")
 		if asked == 0 {
 			t.Fatalf("tile %d: the press never reached the terminal (it fell through)", i)
 		}
@@ -305,7 +309,7 @@ func TestPTYMousePressUsesPerTileGeometry(t *testing.T) {
 		if e.ptyMouseCapture == nil {
 			t.Errorf("tile %d: a terminal press should capture the gesture", i)
 		}
-		e.handleMouseKey("MouseLeftRelease")
+		e.handleMouseKey("MouseLeft:Release")
 		if e.ptyMouseCapture != nil {
 			t.Errorf("tile %d: the release should let the gesture go", i)
 		}
@@ -366,7 +370,7 @@ func TestPTYClickFocusesTheOtherViewport(t *testing.T) {
 		t.Fatal("doc2 has no tile on screen")
 	}
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", tile.ContentX+1, tile.ContentY+1))
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 
 	if got := e.ViewportManager.GetFocusedViewport(); got != doc2 {
 		t.Fatalf("clicking doc2's terminal focused %s, want doc2", vpID(got))
@@ -612,22 +616,44 @@ func TestPTYViewportClass(t *testing.T) {
 // through the [pty::mappings] defaults — and only while a session runs.
 func TestPTYClassKeyBindings(t *testing.T) {
 	for _, tc := range []struct{ key, want string }{
-		{"back", "\x08"},
-		{"del", "\x08"},
+		// As a terminal sends them: DEL for Backspace, CSI 3 ~ for forward
+		// Delete. They used to be named in [pty::mappings] and send a
+		// hardcoded ^H each, which is what Ctrl-H sends rather than what
+		// either key does — and one byte for two keys left a guest unable to
+		// tell them apart. A guest mapping terminal input to real key events
+		// read it as Ctrl-H and ignored it.
+		//
+		// The erase keys are three names for two keys, and the short one does
+		// not mean what its spelling suggests: "back" is Backspace, "fdel" is
+		// forward Delete, and "del" is not the Delete key at all — it is the
+		// ASCII DEL character (its alias group is {"del", "^8"}, and nothing
+		// arrives under it from the keyboard), which is what Backspace sends
+		// and which mew binds beside "back" (keydefaults.go). It therefore has
+		// to encode as Backspace; sending forward Delete for it would erase
+		// the wrong side of the cursor.
+		{"back", "\x7f"},
+		{"del", "\x7f"},
+		{"fdel", "\x1b[3~"},
 		{"^C", "\x03"},
 	} {
 		e, w := newTestEditor(t, "ab\n")
 		w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
 		stub := newStubPTY()
-		// ^C reaches the child through the wildcard (capture * = tinput_key),
-		// which asks the HOST to encode the key — supply the encoder the real
-		// host provides. back/del bypass it: their capture bindings send the
-		// \x08 byte directly, which is the point of naming them.
+		// EVERY key here reaches the child through the wildcard
+		// ((capture) * = tinput_key), which asks the HOST to encode it —
+		// so supply what the real host's emulator produces. Nothing is named
+		// in [pty::mappings] any more except esc, which is why the erase keys
+		// come out as a terminal sends them rather than as one byte for both.
 		e.Config.TerminalSurfaces = TerminalHooks{
 			Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
 			Key: func(_ string, key string) []byte {
-				if key == "^C" {
+				switch key {
+				case "^C":
 					return []byte("\x03")
+				case "back", "del":
+					return []byte("\x7f")
+				case "fdel":
+					return []byte("\x1b[3~")
 				}
 				return nil
 			},
@@ -713,7 +739,7 @@ func TestPTYMouseForwarding(t *testing.T) {
 	}
 
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("C-MouseLeftPress")
+	e.handleMouseKey("C-MouseLeft")
 	if gotID == "" {
 		t.Fatal("the host was never asked about the event")
 	}
@@ -730,8 +756,11 @@ func TestPTYMouseForwarding(t *testing.T) {
 	if !got.Ctrl || got.Shift || got.Alt {
 		t.Errorf("modifiers = ctrl:%v shift:%v alt:%v, want ctrl only", got.Ctrl, got.Shift, got.Alt)
 	}
-	if stub.sent() != "\x1b[<0;1;1M" {
-		t.Errorf("session received %q, want the host's report bytes", stub.sent())
+	// Two reports, because the position report ahead of the press is the
+	// pointer having moved there and the child is told so first. This stub
+	// answers every event with the same bytes, so both come out alike.
+	if stub.sent() != "\x1b[<0;1;1M\x1b[<0;1;1M" {
+		t.Errorf("session received %q, want the motion and then the press", stub.sent())
 	}
 }
 
@@ -745,10 +774,10 @@ func TestPTYMouseEventShapes(t *testing.T) {
 	}{
 		{[]string{"MouseScrollUp"}, TerminalMouseScrollUp, TerminalMouseButtonNone},
 		{[]string{"MouseScrollDown"}, TerminalMouseScrollDown, TerminalMouseButtonNone},
-		{[]string{"MouseLeftDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
-		{[]string{"MouseDrag@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
-		{[]string{"MouseRightPress"}, TerminalMousePress, TerminalMouseButtonRight},
-		{[]string{"MouseLeftRelease"}, TerminalMouseRelease, TerminalMouseButtonLeft},
+		{[]string{"MouseDragLeft@6,3"}, TerminalMouseMotion, TerminalMouseButtonLeft},
+		{[]string{"Mouse@6,3"}, TerminalMouseMotion, TerminalMouseButtonNone},
+		{[]string{"MouseRight"}, TerminalMousePress, TerminalMouseButtonRight},
+		{[]string{"MouseLeft:Release"}, TerminalMouseRelease, TerminalMouseButtonLeft},
 	} {
 		e, w := newTestEditor(t, "x\n")
 		w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 4, 2, 40, 10
@@ -792,12 +821,13 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 		return e, w, &asked
 	}
 
-	// Not tracking: asked, declined, and mew's own press ran.
+	// Not tracking: asked, declined, and mew's own press ran. Asked twice —
+	// once for the pointer arriving at the cell, once for the press.
 	e, _, asked := newHostedEditor(t, nil)
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("MouseLeftPress")
-	if *asked != 1 {
-		t.Errorf("host asked %d times, want once", *asked)
+	e.handleMouseKey("MouseLeft")
+	if *asked != 2 {
+		t.Errorf("host asked %d times, want the motion and the press", *asked)
 	}
 	if !e.dragSel.active {
 		t.Error("a declined event should reach mew's own press handling")
@@ -806,7 +836,7 @@ func TestPTYMouseFallsThrough(t *testing.T) {
 	// Outside the terminal's rectangle: never asked at all.
 	e2, _, asked2 := newHostedEditor(t, []byte{'x'})
 	e2.handleMouseKey("Mouse@2,3") // left of the content area
-	e2.handleMouseKey("MouseLeftPress")
+	e2.handleMouseKey("MouseLeft")
 	if *asked2 != 0 {
 		t.Errorf("a click outside the surface asked the host %d times, want none", *asked2)
 	}
@@ -1174,9 +1204,9 @@ func TestPTYMouseHandledWithoutBytes(t *testing.T) {
 	}
 
 	e.handleMouseKey("Mouse@6,3")
-	e.handleMouseKey("MouseLeftPress")
-	if asked != 1 {
-		t.Fatalf("host asked %d times, want once", asked)
+	e.handleMouseKey("MouseLeft")
+	if asked != 2 {
+		t.Fatalf("host asked %d times, want the motion and the press", asked)
 	}
 	if e.dragSel.active {
 		t.Error("mew ran its own press handling for an event the terminal took")
@@ -1420,7 +1450,7 @@ func TestArrowKeysReachTheChildThroughTheCapture(t *testing.T) {
 }
 
 // The reclaim idiom, end to end through real config and real PawScript:
-// "capture ^C = false" in a user's pty section gives ^C back to mew while a
+// "(capture) ^C = false" in a user's pty section gives ^C back to mew while a
 // terminal is focused — it skips the capture level (its own wildcard
 // included) and lands on ^C's classic floor, which closes the pty buffer.
 func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
@@ -1443,7 +1473,7 @@ func TestUserReclaimGivesAKeyBackToMew(t *testing.T) {
 	// in the stub, so one string proves both halves: no "<^C>" — the capture
 	// layer and its wildcard were skipped — and the level-0 binding ran.
 	e.reconcileFocusedOptions()
-	e.KeyProcessor.MapKey("capture ^C", "false")
+	e.KeyProcessor.MapKey("(capture) ^C", "false")
 	e.KeyProcessor.MapKey("^C", "tinput \"RECLAIMED\"")
 
 	e.dispatchKey("^C")
@@ -1776,5 +1806,297 @@ func TestPTYKilledWhenViewportRemoved(t *testing.T) {
 	}
 	if e.ptySessionFor(w) != nil {
 		t.Error("the session must be gone from the map after teardown")
+	}
+}
+
+// pixelStubPTY is a stubPTY that also reports a pixel window, the way a host
+// session wrapped against a measured pane does.
+type pixelStubPTY struct {
+	*stubPTY
+	pxW, pxH int
+}
+
+func (s *pixelStubPTY) WindowPx() (int, int) { return s.pxW, s.pxH }
+
+// A declaration that repeats the CELLS but carries different PIXELS is a real
+// change and must reach the child.
+//
+// The window a PTY carries is four numbers, and a program drawing pictures
+// sizes itself from the two this dedupe used to ignore. The pixels move under
+// a fixed grid whenever something changes the cell without changing how many
+// fit: a display density learned after the first paint, a zoom step too small
+// to gain a column. Suppressed as a repeat, the child keeps rendering to a
+// window it no longer has — at whatever size that window implied.
+func TestDeclaredGridRedeclaresWhenOnlyThePixelsMove(t *testing.T) {
+	e, w := newTestEditor(t, "x\n")
+	stub := &pixelStubPTY{stubPTY: newStubPTY(), pxW: 780, pxH: 552}
+	var opened string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open:  func(id string, _, _ int) { opened = id },
+		Feed:  func(string, []byte) []byte { return nil },
+		Place: func([]TerminalSurface) {},
+		Close: func(string) {},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	w.ContentX, w.ContentY, w.ContentWidth, w.ContentHeight = 0, 0, 80, 24
+	e.notifyTerminalSurfaces()
+	e.SetTerminalGrid(opened, 78, 24)
+	settled := stub.resizes
+
+	// Same grid, same pixels: a genuine repeat, and still suppressed.
+	e.SetTerminalGrid(opened, 78, 24)
+	if stub.resizes != settled {
+		t.Errorf("an identical declaration resized the child (%d -> %d)", settled, stub.resizes)
+	}
+
+	// Same grid, DOUBLE the pixels — the density arriving late.
+	stub.pxW, stub.pxH = 1560, 1104
+	e.SetTerminalGrid(opened, 78, 24)
+	if stub.resizes == settled {
+		t.Error("the pixel window doubled and the child was never told: " +
+			"suppressed as a repeat because only the cells were compared")
+	}
+	if stub.cols != 78 || stub.rows != 24 {
+		t.Errorf("child grid = %dx%d, want the unchanged 78x24", stub.cols, stub.rows)
+	}
+}
+
+// A key coming back UP goes to the child, and nowhere else.
+//
+// mew has no release in its binding vocabulary, and the sequence processor must
+// never be shown one: it would count as the next key of a multi-key sequence,
+// so letting go of ^X would end the sequence ^X had just started. The release
+// exists for the child — a program that negotiated event reporting for itself,
+// as a browser must to know a held key was let go — so it is offered there and
+// otherwise dropped.
+func TestKeyReleaseGoesToTheChildAndNotTheKeymap(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		// The real host encodes through the child's own emulator, which sends a
+		// release only for a child that asked for one. Standing in for it here:
+		// the name arrives with its marker intact, which is the thing under test.
+		Key: func(_ string, key string) []byte {
+			switch key {
+			case "up":
+				return []byte("\x1b[A")
+			case "up:Release":
+				return []byte("\x1b[1;1:3A")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	// The press first: a release is only sent for a key the child was told
+	// about, so a release on its own proves nothing about the release path.
+	e.dispatchKey("up")
+	e.dispatchKey("up:Release")
+	if got := stub.sent(); got != "\x1b[A\x1b[1;1:3A" {
+		t.Errorf("the child received %q, want the press then the release; without "+
+			"the release a hosted browser sees keydown and never keyup", got)
+	}
+	if got := docContent(w); got != "ab" {
+		t.Errorf("the release edited the buffer (%q)", got)
+	}
+
+	// A release mid-sequence must not be counted as the sequence's next key.
+	e.KeyProcessor.MapKey("^X ^S", "nop")
+	e.dispatchKey("^X")
+	before := e.KeyProcessor.GetActiveSequence()
+	if before == "" {
+		t.Fatal("^X did not start a sequence; the rest of this proves nothing")
+	}
+	e.dispatchKey("^X:Release")
+	if after := e.KeyProcessor.GetActiveSequence(); after != before {
+		t.Errorf("the sequence went from %q to %q when the key was let go", before, after)
+	}
+}
+
+// A key mew BOUND reaches the child neither way round.
+//
+// This is the first bug's mirror image, and it arrived the moment releases
+// started flowing. A press is offered to mew's keymap first and a bound chord
+// stops there — the child is never told the key went down. A release skips the
+// keymap entirely, by design, and so went straight through. The child was
+// therefore handed a key-up for a key it had never seen pressed, which is as
+// wrong as the key-down with no key-up that started all of this: a browser
+// tracking held keys was told to let go of a key it was never holding.
+//
+// Every chord mew binds did this, which is every ^-chord a terminal pane does
+// not claim first — so the noise was continuous, not occasional.
+func TestABoundKeySendsTheChildNeitherPressNorRelease(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		// Encode both halves, so a dropped release is the dispatcher's doing
+		// and not the encoder declining to spell one.
+		Key: func(_ string, key string) []byte {
+			switch key {
+			case "^B":
+				return []byte("\x02")
+			case "^B:Release":
+				return []byte("\x1b[98;5:3u")
+			case ",":
+				return []byte(",")
+			case ",:Release":
+				return []byte("\x1b[44;1:3u")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	// A comma is nobody's binding, so the pane's capture layer forwards it —
+	// and its release follows, because that one really was pressed. This half
+	// runs first: it is the control, and it has to hold before the bound key
+	// proves anything.
+	e.dispatchKey(",")
+	e.dispatchKey(",:Release")
+	if got := stub.sent(); got != ",\x1b[44;1:3u" {
+		t.Fatalf("an unbound key sent %q, want the press then the release: "+
+			"matching a release to its press must not cost the ordinary case", got)
+	}
+	control := stub.sent()
+
+	// ^B is mew's: a binding above the pane's capture level claims the press,
+	// so the child hears nothing go down.
+	e.KeyProcessor.MapKey("^B", "nop")
+	e.dispatchKey("^B")
+	if got := stub.sent(); got != control {
+		t.Fatalf("a bound key's press reached the child as %q; the rest of this "+
+			"test assumes the keymap took it", got[len(control):])
+	}
+	e.dispatchKey("^B:Release")
+	if got := stub.sent(); got != control {
+		t.Errorf("the child was sent %q for a key it never saw pressed", got[len(control):])
+	}
+}
+
+// A release is matched ONCE. The second one has no press behind it.
+//
+// A key cannot come up twice without going down in between, so a repeated
+// release is a mismatch like any other — and left unconsumed, one recorded
+// press would keep answering for every release of that key from then on,
+// which is the stale entry the matching exists to prevent.
+func TestARecordedPressAnswersForOneReleaseOnly(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			switch key {
+			case ",":
+				return []byte(",")
+			case ",:Release":
+				return []byte("\x1b[44;1:3u")
+			}
+			return nil
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey(",")
+	e.dispatchKey(",:Release")
+	first := stub.sent()
+	e.dispatchKey(",:Release")
+	if got := stub.sent(); got != first {
+		t.Errorf("a second release sent %q on top of %q; one press answered twice",
+			got[len(first):], first)
+	}
+}
+
+// With no session under it a release is dropped, exactly as a key nothing
+// claimed is — it must not fall through to the keymap as an ordinary press.
+func TestKeyReleaseWithoutSessionIsDropped(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.reconcileFocusedOptions()
+	e.dispatchKey("back:Release")
+	if got := docContent(w); got != "ab" {
+		t.Errorf("back:Release with no session = %q; letting go of a key erased a "+
+			"character", got)
+	}
+}
+
+// A held key is a press to mew and a repeat to the child, in the same dispatch.
+//
+// Both halves matter and they pull opposite ways. Strip the marker everywhere
+// and a browser in the pane cannot tell a held key from a drummed one — it
+// reports repeat=false on every keydown, which is what it did. Keep the marker
+// everywhere and mew's keymap matches nothing, because it has no repeat token:
+// a held arrow key would move the cursor once and then stop.
+func TestHeldKeyRepeatsForMewAndIsMarkedForTheChild(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	stub := newStubPTY()
+	var sawKeys []string
+	e.Config.TerminalSurfaces = TerminalHooks{
+		Open: func(string, int, int) {}, Feed: func(string, []byte) []byte { return nil },
+		Key: func(_ string, key string) []byte {
+			sawKeys = append(sawKeys, key)
+			return []byte("x")
+		},
+	}
+	e.Config.PTYProvider = func(PTYRequest) (PTYSession, error) { return stub, nil }
+	if !e.execRequest("bash", "") {
+		t.Fatal("exec failed")
+	}
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey(",")
+	e.dispatchKey(",:Repeat")
+	want := []string{",", ",:Repeat"}
+	if len(sawKeys) != 2 || sawKeys[0] != want[0] || sawKeys[1] != want[1] {
+		t.Errorf("the child was handed %v, want %v — a held key must arrive marked", sawKeys, want)
+	}
+
+	// And the marker is gone again once the dispatch ends, so the NEXT press is
+	// not mistaken for a continuation of the hold.
+	e.dispatchKey(",")
+	if len(sawKeys) != 3 || sawKeys[2] != "," {
+		t.Errorf("the press after the hold arrived as %q, want \",\"", sawKeys[len(sawKeys)-1])
+	}
+}
+
+// With no terminal under it, a repeat is an ordinary press: it edits, moves and
+// fires bindings exactly as the first press did. This is what holding a key has
+// always done, and asking the terminal for event types must not take it away.
+func TestHeldKeyWithoutSessionActsLikeAPress(t *testing.T) {
+	e, w := newTestEditor(t, "ab\n")
+	w.SetCursorPos(viewport.Position{Line: 0, Rune: 2})
+	e.reconcileFocusedOptions()
+
+	e.dispatchKey("x")
+	e.dispatchKey("x:Repeat")
+	e.dispatchKey("x:Repeat")
+	if got := docContent(w); got != "abxxx" {
+		t.Errorf("holding x typed %q, want \"abxxx\" — the repeats did nothing", got)
+	}
+
+	// A named key too, where the default handler is not the self-insert path.
+	e.dispatchKey("back:Repeat")
+	if got := docContent(w); got != "abxx" {
+		t.Errorf("holding back left %q, want \"abxx\"", got)
 	}
 }

@@ -45,9 +45,6 @@ type Application struct {
 	// Accessibility manager
 	accessibilityManager *core.AccessibilityManager
 
-	// Shortcut map for global shortcuts
-	shortcuts *core.ShortcutMap
-
 	// Theme
 	theme *style.Theme
 
@@ -73,9 +70,6 @@ type Application struct {
 	onIdle       func()
 	onActivate   func()
 	onDeactivate func()
-
-	// Event filters (processed before trinkets)
-	eventFilters []EventFilter
 
 	// Application name
 	name string
@@ -121,10 +115,6 @@ type Application struct {
 	savedStatusBarContent []trinkets.StatusSection
 }
 
-// EventFilter is a function that can intercept events before they reach trinkets.
-// Return true to consume the event (prevent further processing).
-type EventFilter func(event core.Event) bool
-
 // Timer represents a scheduled timer callback.
 type Timer struct {
 	ID       int
@@ -157,7 +147,6 @@ func New(backend core.RenderBackend) *Application {
 			app.RequestUpdate()
 		})
 		app.focusManager = core.NewGlobalFocusManager()
-		app.shortcuts = core.DefaultShortcuts()
 
 		// Connect accessibility to focus manager
 		app.focusManager.SetAccessibilityManager(app.accessibilityManager)
@@ -252,13 +241,6 @@ func (app *Application) AccessibilityManager() *core.AccessibilityManager {
 	return app.accessibilityManager
 }
 
-// Shortcuts returns the global shortcut map.
-func (app *Application) Shortcuts() *core.ShortcutMap {
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	return app.shortcuts
-}
-
 // Theme returns the current theme.
 func (app *Application) Theme() *style.Theme {
 	app.mu.RLock()
@@ -348,335 +330,6 @@ func (app *Application) SetOnIdle(handler func()) {
 	app.mu.Unlock()
 }
 
-// AddEventFilter adds an event filter.
-func (app *Application) AddEventFilter(filter EventFilter) {
-	app.mu.Lock()
-	app.eventFilters = append(app.eventFilters, filter)
-	app.mu.Unlock()
-}
-
-// Run starts the application event loop.
-// Returns the exit code when the application quits.
-func (app *Application) Run() int {
-	app.mu.Lock()
-	backend := app.backend
-	desktop := app.desktop
-	onStartup := app.onStartup
-	onShutdown := app.onShutdown
-	app.mu.Unlock()
-
-	if backend == nil {
-		return 1
-	}
-
-	// If we have a Desktop, delegate to it
-	if desktop != nil {
-		if d, ok := desktop.(*trinkets.Desktop); ok {
-			// Pass backend to Desktop
-			d.SetBackend(backend)
-
-			// Wire up Application callbacks through Desktop
-			d.SetOnStartup(func() {
-				// Update screen bounds for window manager
-				app.mu.Lock()
-				wm := app.windowManager
-				app.mu.Unlock()
-				size := backend.Size()
-				wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
-
-				// Mark Application as running
-				app.running.Store(true)
-
-				// Call Application's startup handler
-				if onStartup != nil {
-					onStartup()
-				}
-			})
-
-			d.SetOnShutdown(func() {
-				app.running.Store(false)
-				if onShutdown != nil {
-					onShutdown()
-				}
-			})
-
-			// Run via Desktop
-			return d.Run()
-		}
-	}
-
-	// Fallback: no Desktop, run directly (legacy mode)
-	// DEPRECATED: Application-centric event loop is legacy code.
-	// Applications should use Desktop.Run() instead.
-	// This code path will be removed in a future version.
-	panic("DEPRECATED: Application.Run() fallback mode is no longer supported. " +
-		"Applications must be associated with a Desktop and use Desktop.Run(). " +
-		"This legacy code path has been removed to simplify the architecture.")
-
-	/* Legacy code preserved for reference during refactoring:
-	if err := backend.Init(); err != nil {
-		return 1
-	}
-	defer backend.Shutdown()
-
-	app.mu.Lock()
-	wm := app.windowManager
-	app.mu.Unlock()
-
-	size := backend.Size()
-	wm.SetScreenBounds(core.UnitRect{Width: size.Width, Height: size.Height})
-
-	app.running.Store(true)
-	defer app.running.Store(false)
-
-	if onStartup != nil {
-		onStartup()
-	}
-
-	app.eventLoop()
-
-	app.mu.RLock()
-	exitCode := app.exitCode
-	app.mu.RUnlock()
-
-	if onShutdown != nil {
-		onShutdown()
-	}
-
-	return exitCode
-	*/
-
-	// Unreachable - panic above ensures we never get here
-	return 1
-}
-
-// eventLoop is the main event processing loop.
-// DEPRECATED: This is legacy code from Application-centric mode.
-// The Desktop now owns the event loop.
-func (app *Application) eventLoop() {
-	panic("DEPRECATED: Application.eventLoop() is no longer supported. Use Desktop.Run() instead.")
-	/* Legacy code:
-	for app.running.Load() {
-		app.processTimers()
-		app.processEvents()
-		app.render()
-	}
-	*/
-}
-
-// processEvents handles pending events.
-// DEPRECATED: This is legacy code from Application-centric mode.
-// The Desktop now owns event processing.
-func (app *Application) processEvents() {
-	app.mu.RLock()
-	backend := app.backend
-	wm := app.windowManager
-	fm := app.focusManager
-	onIdle := app.onIdle
-	app.mu.RUnlock()
-
-	// Process all pending events
-	for {
-		event := backend.PollEvent()
-		if event == nil {
-			// No more events
-			if onIdle != nil {
-				onIdle()
-			}
-
-			// Wait for next event or update request
-			select {
-			case <-app.quitChan:
-				return
-			case <-app.updateChan:
-				return
-			default:
-				// Wait briefly for events
-				event = app.waitEventWithTimeout(50 * time.Millisecond)
-				if event == nil {
-					return
-				}
-			}
-		}
-
-		// Run through event filters
-		if app.filterEvent(event) {
-			continue
-		}
-
-		// Handle event based on type
-		switch e := event.(type) {
-		case core.ResizeEvent:
-			wm.SetScreenBounds(core.UnitRect{Width: e.Width, Height: e.Height})
-
-		case core.QuitEvent:
-			app.running.Store(false)
-			return
-
-		case core.KeyPressEvent:
-			// Check global shortcuts first
-			if app.handleShortcut(e) {
-				continue
-			}
-			// Try focus manager
-			if fm.HandleKeyPress(e) {
-				continue
-			}
-			// Pass to window manager
-			wm.HandleKeyPress(e)
-
-		case core.MousePressEvent:
-			wm.HandleMousePress(e)
-
-		case core.MouseMoveEvent:
-			wm.HandleMouseMove(e)
-
-		case core.MouseReleaseEvent:
-			wm.HandleMouseRelease(e)
-		}
-	}
-}
-
-// waitEventWithTimeout waits for an event with a timeout.
-func (app *Application) waitEventWithTimeout(timeout time.Duration) core.Event {
-	app.mu.RLock()
-	backend := app.backend
-	app.mu.RUnlock()
-
-	// Simple polling with timeout
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		event := backend.PollEvent()
-		if event != nil {
-			return event
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return nil
-}
-
-// filterEvent runs an event through the filter chain.
-func (app *Application) filterEvent(event core.Event) bool {
-	app.mu.RLock()
-	filters := app.eventFilters
-	app.mu.RUnlock()
-
-	for _, filter := range filters {
-		if filter(event) {
-			return true
-		}
-	}
-	return false
-}
-
-// handleShortcut checks if a key event matches a global shortcut.
-func (app *Application) handleShortcut(event core.KeyPressEvent) bool {
-	// Handle common shortcuts directly using key handler format
-	switch event.Key {
-	case "^Q": // Ctrl+Q - Quit
-		app.Quit()
-		return true
-	case "^W": // Ctrl+W - Close window
-		app.mu.RLock()
-		wm := app.windowManager
-		app.mu.RUnlock()
-		if wm != nil {
-			if active := wm.ActiveWindow(); active != nil {
-				active.Close()
-				return true
-			}
-		}
-	}
-
-	// Check registered shortcuts using key handler format directly
-	app.mu.RLock()
-	shortcuts := app.shortcuts
-	app.mu.RUnlock()
-
-	if shortcuts == nil {
-		return false
-	}
-
-	// Direct lookup - key handler format is the source of truth
-	actionID := shortcuts.FindActionByKey(event.Key)
-	if actionID != "" {
-		// TODO: Trigger the action through action registry
-		return true
-	}
-
-	return false
-}
-
-// render redraws the screen.
-// DEPRECATED: This is legacy code from Application-centric mode.
-// The Desktop now owns rendering.
-func (app *Application) render() {
-	app.mu.RLock()
-	backend := app.backend
-	wm := app.windowManager
-	theme := app.theme
-	app.mu.RUnlock()
-
-	backend.BeginFrame()
-
-	// Clear with theme background
-	backend.Clear(theme.Normal)
-
-	// Create painter
-	painter := core.NewPainter(backend)
-
-	// Paint window manager (includes desktop and windows)
-	wm.Paint(painter)
-
-	backend.EndFrame()
-}
-
-// processTimers checks and fires due timers.
-// DEPRECATED: This is legacy code from Application-centric mode.
-// The Desktop now owns timer processing via Desktop.ProcessTimers().
-func (app *Application) processTimers() {
-	app.timerMutex.Lock()
-	now := time.Now()
-	var toFire []*Timer
-	var remaining []*Timer
-
-	for _, timer := range app.timers {
-		if timer.stopped {
-			continue
-		}
-
-		if now.After(timer.nextFire) || now.Equal(timer.nextFire) {
-			toFire = append(toFire, timer)
-			if timer.Repeat {
-				timer.nextFire = now.Add(timer.Interval)
-				remaining = append(remaining, timer)
-			}
-		} else {
-			remaining = append(remaining, timer)
-		}
-	}
-
-	app.timers = remaining
-	app.timerMutex.Unlock()
-
-	// Fire timers outside lock
-	for _, timer := range toFire {
-		if timer.Callback != nil {
-			timer.Callback()
-		}
-	}
-
-	// Also process Desktop timers if we have a Desktop
-	app.mu.RLock()
-	desktop := app.desktop
-	app.mu.RUnlock()
-	if desktop != nil {
-		if d, ok := desktop.(*trinkets.Desktop); ok {
-			d.ProcessTimers()
-		}
-	}
-}
-
 // RequestUpdate requests a screen update.
 func (app *Application) RequestUpdate() {
 	select {
@@ -735,18 +388,6 @@ func (app *Application) StopTimer(timer *Timer) {
 	if timer != nil {
 		timer.stopped = true
 	}
-}
-
-// ProcessEvents processes pending events without blocking.
-// Useful for modal dialogs or long-running operations.
-func (app *Application) ProcessEvents() {
-	app.processEvents()
-}
-
-// ProcessEventsAndRender processes events and renders.
-func (app *Application) ProcessEventsAndRender() {
-	app.processEvents()
-	app.render()
 }
 
 // Alert shows a simple message to the user.

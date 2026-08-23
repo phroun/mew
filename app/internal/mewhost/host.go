@@ -15,6 +15,7 @@ package mewhost
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
@@ -93,7 +94,14 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 	application := app.New(nil)
 	application.SetName("mew")
 	application.SetMultiWindow(false) // alone to start; the hook below tracks peers
-	application.SetMenuBarContent(buildMenus(desktop, application, false))
+	// mew's own menus are held back while the first-run welcome has the window
+	// (see maybeShowWelcome): with no menus declared, the app's bar is the
+	// minimal set the desktop synthesizes - the app menu, with Quit - which is
+	// all a welcome has any use for. Try declares the real ones.
+	menusHeld := welcomeWanted(graphical)
+	if !menusHeld {
+		application.SetMenuBarContent(buildMenus(desktop, application, false))
+	}
 	application.SetStatusBarContent(buildStatus(
 		`sb=new statusbar children={new section children={new span text="mew - a KittyTK host. Other apps can dock their own mew editors."}}`))
 	// The sole-app chrome suppression (hide Ψ / menu bar / status bar for a lone
@@ -120,7 +128,9 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		multi := forceMulti || otherForegroundApps(desktop, application) > 0
 		if multi != application.MultiWindow() {
 			application.SetMultiWindow(multi)
-			application.SetMenuBarContent(buildMenus(desktop, application, multi))
+			if !menusHeld {
+				application.SetMenuBarContent(buildMenus(desktop, application, multi))
+			}
 		}
 		refitRoot(desktop, root)
 	}
@@ -140,6 +150,12 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 				desktop.RaiseToFront()
 			} else {
 				forceMulti = true
+				// The TUI has no separate desktop surface to reveal, so it
+				// declares what the graphical host's ExitSoloMode declares for
+				// itself: this process is a desktop environment now. mew's
+				// last window closing leaves the desktop showing instead of
+				// ending the host.
+				desktop.SetDesktopEnvironment(true)
 				applyMulti()
 			}
 		})
@@ -150,6 +166,10 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 				desktop.EnterSoloFromDesktop()
 			} else {
 				forceMulti = false
+				// Hiding the desktop hands the display back to mew, the
+				// inverse of the declaration above (and of what the graphical
+				// host's EnterSoloFromDesktop does for itself).
+				desktop.SetDesktopEnvironment(false)
 				applyMulti()
 			}
 		})
@@ -174,6 +194,9 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 
 	// Windows are created once the screen bounds are known.
 	desktop.SetOnStartup(func() {
+		// Opening the editor is a step of its own, because the first-run
+		// welcome comes BEFORE it: someone who chooses Install never wanted
+		// this session, so nothing of it is built until Try says otherwise.
 		root = startRootWindow(desktop, application, launchArgs)
 		if ed, ok := root.Content().(*trinkets.Editor); ok {
 			ed.SetShowDesktop(showDesktop)
@@ -187,9 +210,18 @@ func BuildHost(desktop *trinkets.Desktop, cfg hostcfg.Config, launchArgs []strin
 		if graphical {
 			desktop.RaiseToFront()
 		}
-		// First-run welcome (graphical + Windows + not yet installed): a modal
-		// owned by the root editor offering Install or Try. No-op otherwise.
-		maybeShowWelcome(desktop, application, root, launchArgs, graphical)
+		// First-run welcome (graphical + Windows/macOS + not yet installed):
+		// mew's own window shows the welcome INSTEAD of the editor until Try,
+		// so it is the only thing on screen with nothing behind it - and the
+		// editor never paints, so no mew session starts until it is wanted.
+		// No-op otherwise, where the editor is already what the window holds.
+		maybeShowWelcome(desktop, application, root, launchArgs, graphical, func() {
+			// Try: mew's menus arrive with the editor. The desktop pushes them
+			// onto the window's own bar (it carries one while solo), so the
+			// minimal welcome bar becomes the real one.
+			menusHeld = false
+			application.SetMenuBarContent(buildMenus(desktop, application, application.MultiWindow()))
+		})
 	})
 
 	// The about invoker posts to the platform thread (the native menu action
@@ -231,7 +263,7 @@ func otherForegroundApps(desktop *trinkets.Desktop, self *app.Application) int {
 // solo mode. Runs on the platform thread at startup (the surface and screen
 // bounds are ready), returning the root window.
 func startRootWindow(desktop *trinkets.Desktop, application *app.Application, launchArgs []string) *window.Window {
-	root := newEditorWindow(desktop, application, launchArgs, true)
+	root := newEditorWindow(desktop, application, launchArgs)
 	application.AddWindow(root)
 	application.SetMainWindow(root)
 	// (Multi-window status is managed by BuildHost's applications-changed hook,
@@ -297,10 +329,10 @@ func serveSocket(desktop *trinkets.Desktop, cfg hostcfg.Config) {
 
 // newEditorWindow builds a window holding a mew `editor` trinket from protocol
 // text, then injects the launch argv (if any) through the editor's host seam so
-// mew runs its full command-line launch inside the trinket. When main, ending
-// the mew session (the editor's commit event) quits the host; a secondary
-// window just closes on session end.
-func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, argv []string, isMain bool) *window.Window {
+// mew runs its full command-line launch inside the trinket. Ending a mew
+// session (the editor's commit event) closes THAT window; the host ends when
+// the last one goes.
+func newEditorWindow(desktop *trinkets.Desktop, application *app.Application, argv []string) *window.Window {
 	title := "mew"
 	if f := firstOperand(argv); f != "" {
 		title = "mew - " + f
@@ -321,25 +353,90 @@ sub edref commit
 	byID, reply := execProtocol(script, ctx)
 
 	w := byID[reply.IDs["w"]].(*window.Window)
+	ed, _ := byID[reply.IDs["edref"]].(*trinkets.Editor)
 	// Hand mew the command line through the editor's host seam: the trinket runs
 	// mew.EditArgv, so per-file options, +N, and multi-file open all apply as in
 	// the plain build (one editor, first file focused, the rest as background
 	// buffers). Secondary windows get no argv - a scratch editor.
-	if len(argv) > 0 {
-		if ed, ok := byID[reply.IDs["edref"]].(*trinkets.Editor); ok {
-			ed.SetLaunchArgv(argv)
-		}
+	if len(argv) > 0 && ed != nil {
+		ed.SetLaunchArgv(argv)
 	}
-	// Session end (mew quit, or the placeholder's OK): quit the host from the
-	// root editor, otherwise just close this window.
+	// Session end (mew quit, or the placeholder's OK) closes THIS window,
+	// whichever window it is. The host outlives any one of them: it ends when
+	// mew has no windows left, not when the first one does.
+	//
+	// The root window used to quit the desktop outright, which was invisible
+	// while it was the only window and wrong the moment it was not: closing the
+	// root's last buffer took every other mew window down with it, and any
+	// other app on the desktop besides. Closing is a window's business;
+	// whether anything remains is the host's.
+	//
+	// Closing removes the window from the application synchronously (the app
+	// registers an on-closed observer when it takes the window), so the count
+	// below is the count after this window has gone.
+	//
+	// Until then the window REFUSES to close while the session holds unsaved
+	// work: closing a mew window means closing what is in it, which is mew's
+	// question to ask (session_close raises its own lose-changes prompt per
+	// modified buffer) and the user's to answer. So every close route - the
+	// [x] button, ^W, ^Q quitting the app, the desktop shutting down - either
+	// goes through mew or is turned away.
+	var sessionOver atomic.Bool
 	dispatcher.On(reply.IDs["edref"], "commit", func(*protocol.Event) {
-		if isMain {
-			desktop.Quit()
-		} else {
-			w.Close()
+		sessionOver.Store(true)
+		endEditorSession(desktop, application, w)
+	})
+	w.SetOnClose(func() bool {
+		if ed == nil {
+			return true
 		}
+		return allowEditorWindowClose(sessionOver.Load(), ed)
 	})
 	return w
+}
+
+// editorSession is the part of the editor trinket a window close asks about,
+// named so the decision below can be exercised without a live mew session.
+// Both editor builds satisfy it (the placeholder answers for an external edit
+// in flight; mew answers for its modified buffers).
+type editorSession interface {
+	HasUnsavedWork() bool
+	RequestClose() bool
+}
+
+// allowEditorWindowClose decides one mew window's close.
+//
+// Unsaved work does not veto the close so much as REDIRECT it: the window says
+// no for now and hands the question to the session, which asks the user in its
+// own terms (mew's lose-changes prompt, per modified buffer) and, if it closes
+// itself out, ends - and the end of the session is what closes the window, one
+// commit event later.
+//
+// sessionOver says that end has already happened, so the close arriving now IS
+// the session's own: there is nothing left to ask and it goes through.
+func allowEditorWindowClose(sessionOver bool, ed editorSession) bool {
+	switch {
+	case sessionOver:
+		return true
+	case !ed.HasUnsavedWork():
+		return true // nothing at stake; close outright
+	case ed.RequestClose():
+		return false // asked: the session's answer will close it, or not
+	default:
+		return true // no session to ask (never started, or already gone)
+	}
+}
+
+// endEditorSession is what a finished mew session does: close ITS window, and
+// end the host only if that was the last one mew had AND there is nothing for
+// the host to be without it. A desktop environment - launched bare, or turned
+// into one by show_desktop - is somewhere to go back to, so mew leaving it
+// reveals it rather than ending the process.
+func endEditorSession(desktop *trinkets.Desktop, application *app.Application, w *window.Window) {
+	w.Close()
+	if len(application.Windows()) == 0 && !desktop.IsDesktopEnvironment() {
+		desktop.Quit()
+	}
 }
 
 // firstOperand returns the first non-switch argument (a file) for the window
@@ -450,6 +547,7 @@ bar=new menubar children={%s
 	new menu caption="File Buffer" wellknown="file" children={
 		new menuitem caption="New &Empty Buffer" action=mew.buffer.new
 		new menuitem caption="&Open File Buffer..." action=mew.buffer.open
+		new menuitem caption="&List Buffers..." action=mew.buffer.list
 		new menuitem caption="Inse&rt File at Cursor..." action=mew.buffer.read
 		new menuitem caption="Dupli&cate Buffer" action=mew.buffer.duplicate
 		new menuitem caption="Close Prompt/Viewport" action=mew.buffer.close
@@ -623,7 +721,7 @@ bar=new menubar children={%s
 	if multiWindow {
 		// New Window opens another (scratch) mew editor - a sub-mew of the host.
 		commands.Register("mew.window.new", func() {
-			application.AddWindow(newEditorWindow(desktop, application, nil, false))
+			application.AddWindow(newEditorWindow(desktop, application, nil))
 		})
 	}
 	commands.Register("mew.help.about", func() { showMewAbout(application) })
@@ -675,9 +773,10 @@ var menuActions = map[string]menuAction{
 	// File Buffer
 	"mew.buffer.new":       {"buffer_new", "^B E"},
 	"mew.buffer.open":      {"buffer_open_file", "^B O"},
+	"mew.buffer.list":      {"buffer_list", "^B L"},
 	"mew.buffer.read":      {"buffer_insert_file", "^B R"},
 	"mew.buffer.duplicate": {"buffer_duplicate", "^B C"},
-	"mew.buffer.close":     {"cancel|buffer_close", "^C"},
+	"mew.buffer.close":     {"cancel|viewport_close", "^C"},
 	"mew.buffer.save":      {"buffer_save", "^B S"},
 	"mew.buffer.saveall":   {"buffer_save_all true", "^B A"},
 	// Two different operations, two items. buffer_save_as re-homes the buffer:

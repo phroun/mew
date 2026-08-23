@@ -72,6 +72,12 @@ type Config struct {
 	// keyed by the same signature as MappingSets.
 	MappingSetOrigins map[string]map[string]MappingOrigin
 
+	// Warnings is what the config files said that mew could not honor: a
+	// mapping written with a level word that is no longer one, a hint nobody
+	// recognizes. The editor shows them in the startup log at launch. Empty on
+	// an ordinary start, which is why nothing appears.
+	Warnings []ConfigWarning
+
 	// Formats maps short format names / file extensions to the grammar that
 	// covers them (the [formats] section), e.g. js = javascript. Built-in
 	// defaults are merged first; a blank value removes an entry.
@@ -275,7 +281,7 @@ func DefaultFormatPaths() map[string]map[string]string {
 }
 
 // Indicators holds the glyphs/labels used to draw editor chrome (ruler ticks,
-// whitespace markers, gutter/cursor indicators, peek tab labels). Configured via
+// whitespace markers, gutter/cursor indicators). Configured via
 // the [indicators] section.
 type Indicators struct {
 	RulerFill       string
@@ -297,10 +303,6 @@ type Indicators struct {
 	CursorOffScreen string
 	TruncationLeft  string
 	TruncationRight string
-	StatPeekUp      string
-	StatPeekDown    string
-	PromptPeekUp    string
-	PromptPeekDown  string
 	// Link-as-button chrome (browse mode): a button renders as
 	// ButtonLeft + title + ButtonRight + ButtonShadow, with the Focused*
 	// variants when the caret is inside the button.
@@ -332,10 +334,6 @@ func DefaultIndicators() Indicators {
 		CursorOffScreen: "@",
 		TruncationLeft:  "<",
 		TruncationRight: ">",
-		StatPeekUp:      "[%SPU%]",
-		StatPeekDown:    "[%SPD%]",
-		PromptPeekUp:    "[%PPU%]",
-		PromptPeekDown:  "[%PPD%]",
 
 		ButtonLeft:          " ",
 		ButtonRight:         " ",
@@ -659,6 +657,11 @@ type Manager struct {
 	// includeRead, when set (legacy SetIncludeReader), overrides @include reads
 	// specifically; nil routes them through fio like everything else.
 	includeRead func(path string) ([]byte, error)
+
+	// warnings collects what the config files said that mew could not honor,
+	// in the order the lines were read. Drained onto the Config at the end of a
+	// load, and shown in the startup log (see warnings.go).
+	warnings []ConfigWarning
 }
 
 // NewManager creates a new config manager whose config tree is addressed with
@@ -985,6 +988,7 @@ var (
 // Load loads configuration from file.
 func (m *Manager) Load() (Config, error) {
 	config := DefaultConfig()
+	m.warnings = nil
 
 	// Read the user config; create the default when it is missing.
 	content, err := m.io().Read(m.configPath)
@@ -1020,6 +1024,8 @@ func (m *Manager) Load() (Config, error) {
 			}
 		}
 	}
+
+	config.Warnings = m.warnings
 	return config, nil
 }
 
@@ -1068,12 +1074,14 @@ func (m *Manager) LoadFromString(content string) Config {
 
 func (m *Manager) loadExpanded(content, base string) Config {
 	config := DefaultConfig()
+	m.warnings = nil
 	prec := 0
 	// A string-loaded config (host-supplied, or the generated default) has no
 	// mew: tree behind it to resolve `@include "defaults/…"` against, so inline
 	// the shipped resources from the binary first — the same source the built-in
 	// mappings baseline uses. Any remaining includes fall to disk expansion.
 	m.applyLayer(&config, expandEmbeddedIncludes(content), "<config>", base, false, &prec)
+	config.Warnings = m.warnings
 	return config
 }
 
@@ -1464,10 +1472,6 @@ func (m *Manager) applyLayer(config *Config, content, source, base string, proje
 		set(&config.Indicators.CursorOffScreen, "cursorOffScreen")
 		set(&config.Indicators.TruncationLeft, "truncationLeft")
 		set(&config.Indicators.TruncationRight, "truncationRight")
-		set(&config.Indicators.StatPeekUp, "statPeekUp")
-		set(&config.Indicators.StatPeekDown, "statPeekDown")
-		set(&config.Indicators.PromptPeekUp, "promptPeekUp")
-		set(&config.Indicators.PromptPeekDown, "promptPeekDown")
 		set(&config.Indicators.ButtonLeft, "buttonLeft")
 		set(&config.Indicators.ButtonRight, "buttonRight")
 		set(&config.Indicators.ButtonShadow, "buttonShadow")
@@ -2002,6 +2006,16 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 	origins := make(map[string]map[string]MappingOrigin)
 	var currentSection string
 
+	// Environment hints are evaluated as each mapping line is read, but the
+	// desktop they are tested against is a value from THIS parse ([window]
+	// host_type) and the file may put [window] after [mappings]. So the whole
+	// stream is looked at for it first: the answer has to exist before the
+	// first mapping line, not wherever the user happened to write it.
+	env := CurrentKeymapEnvironment()
+	if forced := scanHostType(lines); forced != "" {
+		env.Desktop = forced
+	}
+
 	for _, sl := range lines {
 		// Remove carriage returns for Windows line endings
 		line := strings.TrimSuffix(sl.Text, "\r")
@@ -2049,14 +2063,36 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 			key := m.unescapeValue(strings.TrimSpace(processedLine[:equalPos]))
 			value := m.unescapeValue(strings.TrimSpace(processedLine[equalPos+1:]))
 
+			// A key mapping's left side may carry environment hints, and they
+			// are resolved HERE, before the key becomes a map key: a hint is
+			// not part of the keystroke, and two platforms' spellings of one
+			// binding have to merge and override each other as if the hints
+			// were never written. A hint that disqualifies this environment
+			// drops the line outright — it is not bound, and no later layer
+			// inherits it. (Any mapping family, including a class-scoped one —
+			// the section name may lead with "<class>::", so ask the grammar,
+			// not the text.)
+			mapping := parseSectionHeader(currentSection).family == "mappings"
+			weight := 0
+			if mapping {
+				hinted, w, keep, unknown := KeyHints(key, env)
+				for _, word := range unknown {
+					m.warn(sl, "(%s) is not an environment hint mew knows, "+
+						"so %q binds a key nothing will press", word, hinted)
+				}
+				if !keep {
+					continue
+				}
+				key, weight = hinted, w
+				m.warnStaleLevelWords(sl, key)
+			}
+
 			result[currentSection][key] = value
 
 			// Record provenance for key mappings only. Precedence advances per
 			// mapping line so a key rebound later (in the same or a later layer)
 			// carries a higher ordinal than the one it shadows.
-			// (Any mapping family, including a class-scoped one — the section
-			// name may lead with "<class>::", so ask the grammar, not the text.)
-			if parseSectionHeader(currentSection).family == "mappings" {
+			if mapping {
 				*prec++
 				if origins[currentSection] == nil {
 					origins[currentSection] = make(map[string]MappingOrigin)
@@ -2066,6 +2102,7 @@ func (m *Manager) parseSourced(lines []SourcedLine, defaultAuthor string, prec *
 					Line:       sl.Line,
 					Precedence: *prec,
 					Author:     resolveAuthor(sl.Author, defaultAuthor),
+					EnvWeight:  weight,
 				}
 			}
 		}
@@ -2484,11 +2521,6 @@ resources=
 
 [indicators]
 # Glyphs/labels used to draw editor chrome. Values are quoted.
-# The peek labels (statPeek*/promptPeek*) run through the same %CODE%
-# substitution engine as the modebar templates: %SPU% %SPD% %PPU% %PPD%
-# resolve to the key currently bound to stat_peek_up / stat_peek_down /
-# prompt_peek_up / prompt_peek_down, in the spelling the binding is stored
-# under, so the hint always matches the live keymap.
 rulerFill="░"
 rulerTick="."
 rulerMinor=":"
@@ -2506,10 +2538,6 @@ cursorGhost="|"
 cursorOffScreen="@"
 truncationLeft="<"
 truncationRight=">"
-statPeekUp="[%SPU%]"
-statPeekDown="[%SPD%]"
-promptPeekUp="[%PPU%]"
-promptPeekDown="[%PPD%]"
 # Link-as-button chrome (browse mode): a link renders as
 # buttonLeft + title + buttonRight + buttonShadow; the focused* variants
 # apply to the button the caret is inside.
@@ -2528,7 +2556,6 @@ invisibles="\e[0;1;40;90m"        # bright black / dark gray on black
 cursorGhost="\e[0;30;100m"        # black on dark gray
 cursorOffScreen="\e[0;30;42m"     # black on green
 truncation="\e[0;37;41m"          # silver on red
-hint="\e[0;97;44m"                # bright white on blue - peek indicator hints
 special="\e[33m"                  # yellow foreground - control code substitutes
 marks="\e[0;91m"                  # bright red
 notes="\e[0;36;40m"               # cyan on black
@@ -2663,10 +2690,6 @@ messages="\e[0;97;41m"                # bright white on red
 # now comes from defaults/keys_system.conf, included above. Only the keys that
 # are NOT in it stay here.
 ^K H    =help_toggle
-^@ U    =stat_peek_up
-^@ V    =stat_peek_down
-^@ P    =prompt_peek_up
-^@ N    =prompt_peek_down
 ^@ O    =editor_options
 ^@ ,    =viewport_prior
 ^@ .    =viewport_next
@@ -2687,8 +2710,8 @@ messages="\e[0;97;41m"                # bright white on red
 ^F      =search_forward
 
 # Inside a viewport running a terminal session (class "pty"), the terminal
-# has FIRST CLAIM on every key. "capture" lifts a binding one precedence
-# level above the ordinary keymap ("override" lifts two; they compound), and
+# has FIRST CLAIM on every key. "(capture)" lifts a binding one precedence
+# level above the ordinary keymap ("(override)" lifts two; they compound), and
 # "*" is the wildcard for any single key that nothing names more
 # specifically. tinput_key encodes the pressed key through the host's own
 # emulator — so application cursor mode and its kin decide the bytes — and
@@ -2699,8 +2722,8 @@ messages="\e[0;97;41m"                # bright white on red
 # single-key capture, and the held starter is passed to the child only if the
 # sequence comes to nothing; within a level a named key beats the wildcard;
 # and a capture bound to the false command RECLAIMS its key for the layers
-# below. So "capture ^C = false" here would give ^C back to mew while a
-# terminal is focused, and "capture capture X = ..." in a user config outbids
+# below. So "(capture) ^C = false" here would give ^C back to mew while a
+# terminal is focused, and "(capture) (capture) X = ..." in a user config outbids
 # all of this.
 #
 # del and back are named so they beat the wildcard: mew's erase keys send a
@@ -2712,6 +2735,15 @@ messages="\e[0;97;41m"                # bright white on red
 # to reach those keys at all. Naming it here puts it beside the wildcard
 # rather than under it, where a named key wins.
 #
+# Backspace and Delete are deliberately NOT named here. They were, sending a
+# hardcoded ^H for both, and that is wrong twice over: ^H is what Ctrl-H sends,
+# where a terminal sends DEL (\x7f) for Backspace and CSI 3 ~ for forward
+# Delete — and one byte for two keys leaves a guest unable to tell them apart.
+# readline and vim forgive it, because terminfo often maps erase to ^H; a guest
+# that maps terminal input to real key events does not, and reads it as Ctrl-H.
+# The wildcard already encodes both correctly through the host's emulator, which
+# is also what makes application-cursor mode and its kin come out right.
+#
 # esc is named for a third reason: naming a key SUPPRESSES lower levels'
 # chords that start with it. The wildcard alone could never claim Escape,
 # because esc X / esc y / esc j make it a prefix and a chord in progress
@@ -2720,11 +2752,9 @@ messages="\e[0;97;41m"                # bright white on red
 # for as long as a terminal has the focus; M-\ still passes any one of those
 # keys through, and outside a terminal they are untouched.
 [pty::mappings]
-capture *     =tinput_key
-capture esc   =tinput_key
-capture del   =tinput "\x08"
-capture back  =tinput "\x08"
-capture M-\\  =raw_key_input
+(capture) *     =tinput_key
+(capture) esc   =tinput_key
+(capture) M-\\  =raw_key_input
 `
 }
 

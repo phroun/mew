@@ -136,12 +136,12 @@ func TestConfirmShrinkCancels(t *testing.T) {
 	}
 }
 
-// The LOSE CHANGES confirmation on buffer_close answers to a single n:
+// The LOSE CHANGES confirmation on viewport_close answers to a single n:
 // the buffer stays open.
 func TestLoseChangesSingleKey(t *testing.T) {
 	e, w := newTestEditor(t, "hello\n")
 	e.executeCommand("insert 'x'")
-	e.executeCommand("buffer_close")
+	e.executeCommand("viewport_close")
 	if focusedPrompt(e) == nil {
 		t.Fatal("LOSE CHANGES prompt should be open")
 	}

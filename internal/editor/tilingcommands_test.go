@@ -84,6 +84,47 @@ func TestViewportSeekVsGo(t *testing.T) {
 	}
 }
 
+// TestViewportTabSwitchFocuses: raising the next/prior tab in a stack moves
+// focus (and the #tile default) to the newly-shown tab — so mew's active
+// viewport follows the tab switch, not just the tiler's selection.
+func TestViewportTabSwitchFocuses(t *testing.T) {
+	e, _, _ := newRenderedEditor(t, "one\n")
+	focusMainViewport(e, "doc2", "two\n") // doc | doc2 ; doc2 active
+	if got := len(tileRefs(e)); got != 2 {
+		t.Fatalf("want 2 tiles, got %d (%v)", got, tileRefs(e))
+	}
+
+	// Fold the two tiles into a tabbed stack; the active tab stays "doc2".
+	if res := e.PawScript.ExecuteAsync("viewport_stack #tile, true"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_stack: %v", res)
+	}
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_content")
+	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "doc2" {
+		t.Fatalf("after stack, active tab content = %q, want \"doc2\"", got)
+	}
+
+	// Raise the other tab: focus must FOLLOW to it (the reported bug).
+	if res := e.PawScript.ExecuteAsync("viewport_tab_prior #tile"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_tab_prior: %v", res)
+	}
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_content")
+	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "doc" {
+		t.Fatalf("after tab_prior, active tab content = %q, want \"doc\" (focus must follow the tab)", got)
+	}
+
+	// And back the other way with tab_next.
+	if res := e.PawScript.ExecuteAsync("viewport_tab_next #tile"); res != pawscript.BoolStatus(true) {
+		t.Fatalf("viewport_tab_next: %v", res)
+	}
+	e.performRender()
+	e.PawScript.ExecuteAsync("viewport_content")
+	if got := fmt.Sprintf("%v", e.PawScript.GetResultValue()); got != "doc2" {
+		t.Fatalf("after tab_next, active tab content = %q, want \"doc2\"", got)
+	}
+}
+
 // TestTilingSplitHashIdiom: an explicit leading #-symbol names the tile, an
 // omitted handle defaults to the active tile, and a missing direction fails.
 func TestTilingSplitHashIdiom(t *testing.T) {

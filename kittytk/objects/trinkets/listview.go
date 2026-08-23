@@ -27,6 +27,7 @@ func NewListItem(text string) *ListItem {
 // ListView displays a scrollable list of items.
 type ListView struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	items        []*ListItem
@@ -83,6 +84,14 @@ func NewListView() *ListView {
 		selectedItems: make(map[int]bool),
 	}
 	l.TrinketBase = *core.NewTrinketBase()
+	l.SetCommands(
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown,
+		core.CmdTrinketScrollUp, core.CmdTrinketScrollDown,
+		core.CmdTrinketPagePrior, core.CmdTrinketPageNext,
+		core.CmdTrinketBeg, core.CmdTrinketEnd,
+		core.CmdTrinketActivate, core.CmdTrinketSelectAll,
+	)
 	l.Init(l) // Enable polymorphic focus handling
 	l.SetFocusPolicy(core.StrongFocus)
 	l.SetAccessibleRole(core.RoleList)
@@ -670,14 +679,14 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 // HandleKeyPress handles keyboard input.
 func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case "Up":
+	switch l.KeyCommand(event.Key) {
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp:
 		if l.currentIndex > 0 {
 			l.SetCurrentIndex(l.currentIndex - 1)
 		}
 		return true
 
-	case "M-Up", "C-Up", "A-Up":
+	case core.CmdTrinketScrollUp:
 		// Jump by 5 items, scrolling to maintain relative position
 		if l.currentIndex > 0 {
 			delta := 5
@@ -696,13 +705,13 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Down":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown:
 		if l.currentIndex < len(l.items)-1 {
 			l.SetCurrentIndex(l.currentIndex + 1)
 		}
 		return true
 
-	case "M-Down", "C-Down", "A-Down":
+	case core.CmdTrinketScrollDown:
 		// Jump by 5 items, scrolling to maintain relative position
 		if l.currentIndex < len(l.items)-1 {
 			delta := 5
@@ -726,19 +735,19 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Home":
+	case core.CmdTrinketBeg:
 		if len(l.items) > 0 {
 			l.SetCurrentIndex(0)
 		}
 		return true
 
-	case "End":
+	case core.CmdTrinketEnd:
 		if len(l.items) > 0 {
 			l.SetCurrentIndex(len(l.items) - 1)
 		}
 		return true
 
-	case "PageUp":
+	case core.CmdTrinketPagePrior:
 		bounds := l.Bounds()
 		metrics := l.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
@@ -749,7 +758,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		l.SetCurrentIndex(newIndex)
 		return true
 
-	case "PageDown":
+	case core.CmdTrinketPageNext:
 		bounds := l.Bounds()
 		metrics := l.EffectiveCellMetrics()
 		pageSize := int(bounds.Height / metrics.CellHeight)
@@ -760,13 +769,13 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 		l.SetCurrentIndex(newIndex)
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		if l.currentIndex >= 0 && l.onItemActivated != nil {
 			l.onItemActivated(l.currentIndex)
 		}
 		return true
 
-	case "M-a":
+	case core.CmdTrinketSelectAll:
 		l.SelectAll()
 		return true
 	}

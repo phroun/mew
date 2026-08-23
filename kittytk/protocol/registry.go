@@ -265,6 +265,15 @@ type TypeSpec struct {
 	// wiring, same as their property registration. Optional.
 	Bind func(ctx *BindContext, target any)
 
+	// Events describes what Bind emits, keyed by event name, so the wire
+	// vocabulary answers for events the way it answers for properties.
+	// Optional; empty for a type that emits none.
+	//
+	// Bind does the emitting and this does the describing, so the two
+	// can drift. They are declared together for that reason: change one
+	// with the other in view.
+	Events map[string]EventDesc
+
 	// ID returns the target's stable object identity. Nil for Virtual
 	// types, which get factory-assigned virtual IDs.
 	ID func(target any) uint64

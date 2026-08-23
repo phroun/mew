@@ -151,6 +151,21 @@ func WithClipboard(write func(text string), read func(deliver func(text string))
 	}
 }
 
+// WithKeyChordText supplies what the HOST has watched its own keyboard type
+// for a chord ("M-a" -> "å"), consulted ahead of mew's built-in table when an
+// unbound Option combination types its character.
+//
+// A host that receives the text alongside the keystroke — the graphical one —
+// knows what this machine actually produced, under this layout and this
+// composition behaviour. The table is one keyboard from memory, and remains
+// the answer for a host that cannot see the pairing: a terminal is handed one
+// half or the other, never both.
+//
+// Return ok=false for a chord not observed, and mew falls back.
+func WithKeyChordText(lookup func(chord string) (string, bool)) Option {
+	return func(cfg *editor.Config) { cfg.KeyChordText = lookup }
+}
+
 // WithContextMenu is invoked when a right-click lands within the EDITING
 // AREA of the focused viewport (never the modebar, gutters, column ruler, or
 // title/message rows), with the click's 1-based terminal cell. The host pops
@@ -330,6 +345,19 @@ func WithRestoreHostTerminal(fn func()) Option {
 // Edit-menu Cut, say. Called only on transitions.
 func WithEditState(fn func(readOnly bool)) Option {
 	return func(cfg *editor.Config) { cfg.EditState = fn }
+}
+
+// WithUnsavedState wires the session's unsaved-work state to the host: fn is
+// told whether ANY buffer this session holds open is modified — the active
+// ones and the work stacked behind a link follow alike — once at the first
+// render and thereafter on transitions.
+//
+// It is the question a host asks of a window it is about to close. A host that
+// frames the session should refuse that close while the answer is yes and run
+// the session_close command instead, so the work is asked about in mew's own
+// terms rather than discarded by the frame around it.
+func WithUnsavedState(fn func(unsaved bool)) Option {
+	return func(cfg *editor.Config) { cfg.UnsavedState = fn }
 }
 
 // PointerArrowSpan is one on-screen cell span that shows the arrow rather than

@@ -27,6 +27,11 @@ func init() {
 				return nil
 			})).Tip("Radio group membership."),
 		},
+		map[string]protocol.EventDesc{
+			"toggle": protocol.NewEventDesc("The selected state changed. Selecting one button in a group unsets its siblings, so a group change raises this on more than one button.").
+				Field("trinket", "uint", "The radio button's object ID.").
+				Field("checked", "flag", "The new state."),
+		},
 		nil,
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			r := w.(*RadioButton)

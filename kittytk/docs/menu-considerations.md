@@ -52,7 +52,7 @@ An `MDIPane` trinket that:
 5. **Provides the MDI API**:
    - `AddWindow(w *Window)`, `RemoveWindow(w *Window)`
    - `ActiveWindow()`, `SetActiveWindow(w *Window)`
-   - `NextWindow()`, `PrevWindow()`
+   - `NextWindow()`, `PriorWindow()`
    - `Windows() []*Window` for external UI to query
    - `TileWindows()`, `CascadeWindows()`
    - Callbacks: `OnWindowAdded`, `OnWindowRemoved`, `OnActiveWindowChanged`

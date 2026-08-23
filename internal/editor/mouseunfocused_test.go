@@ -65,11 +65,11 @@ func TestUnfocusedClickFollowsLink(t *testing.T) {
 
 	x, y := helpButtonCell(hw)
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", x, y))
-	e.handleMouseKey("MouseLeftPress")
+	e.handleMouseKey("MouseLeft")
 	if e.ViewportManager.GetFocusedViewport() != main {
 		t.Fatal("pressing a link must not steal focus")
 	}
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft:Release")
 
 	if e.ViewportManager.GetFocusedViewport() != main {
 		t.Fatal("following a link must not steal focus")
@@ -123,8 +123,8 @@ func TestUnfocusedNonLinkClickFocuses(t *testing.T) {
 	// Click the plain second line (no link there).
 	x, y := hw.ContentX+3, hw.ContentY+2
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", x, y))
-	e.handleMouseKey("MouseLeftPress")
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft")
+	e.handleMouseKey("MouseLeft:Release")
 
 	if e.ViewportManager.GetFocusedViewport() != hw {
 		t.Fatal("a non-link click should focus the viewport like ^B N")
@@ -151,8 +151,8 @@ func TestUnfocusedClickSkipsNonCycleStops(t *testing.T) {
 
 	x, y := hw.ContentX+2, hw.ContentY+1
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", x, y))
-	e.handleMouseKey("MouseLeftPress")
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft")
+	e.handleMouseKey("MouseLeft:Release")
 	if e.ViewportManager.GetFocusedViewport() != main {
 		t.Fatal("clicking a non-cycle-stop viewport must not move focus")
 	}
@@ -177,8 +177,8 @@ func TestUnfocusedExceptionsBlockedByPrompt(t *testing.T) {
 
 	x, y := helpButtonCell(hw)
 	e.handleMouseKey(fmt.Sprintf("Mouse@%d,%d", x, y))
-	e.handleMouseKey("MouseLeftPress")
-	e.handleMouseKey("MouseLeftRelease")
+	e.handleMouseKey("MouseLeft")
+	e.handleMouseKey("MouseLeft:Release")
 	if hw.Buffer != before {
 		t.Fatal("a modal prompt must block the unfocused link follow")
 	}

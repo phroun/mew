@@ -160,6 +160,32 @@ func (t *TreeView) enterTargetColumn() *TreeColumn {
 	return col
 }
 
+// moveEnterTargetColumn walks the Enter target to the previous or next
+// editable column WITHOUT editing anything and without touching the tree's
+// structure, which is what a keymap wanting a "left that never collapses"
+// binds. It stops at the ends rather than wrapping, so holding the key cannot
+// silently cycle. Reports whether the target moved.
+func (t *TreeView) moveEnterTargetColumn(delta int) bool {
+	cols := t.editableColumns()
+	if len(cols) < 2 {
+		return false
+	}
+	at := 0
+	for i, c := range cols {
+		if c == t.editLastCol {
+			at = i
+			break
+		}
+	}
+	next := at + delta
+	if next < 0 || next >= len(cols) {
+		return false
+	}
+	t.editLastCol = cols[next]
+	t.Update()
+	return true
+}
+
 // startRowEdit enters row-edit mode on the current item, resuming the
 // last-edited column when it is still available, else the first
 // editable one. Returns false when there is nothing to edit.
@@ -443,12 +469,19 @@ func (t *TreeView) stepEditRow(delta int) {
 // horizontal view conservatively. In an editable grid the plain
 // arrows belong to this; expand/collapse keeps Shift+Left/Right,
 // +/-, Space, and the mouse. Returns handled.
-func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
-	if event.Key != "Left" && event.Key != "Right" {
+//
+// The shifted arrows are simply a different COMMAND now
+// (trinket_collapse_or_enclosing / trinket_expand_or_descend), which is what
+// this used to decide by reading the Shift bit out of the event.
+func (t *TreeView) handleEditTargetKey(cmd string) bool {
+	delta := 0
+	switch cmd {
+	case core.CmdTrinketItemLeft:
+		delta = -1
+	case core.CmdTrinketItemRight:
+		delta = 1
+	default:
 		return false
-	}
-	if event.Modifiers&core.ShiftModifier != 0 {
-		return false // Shift+Left/Right are the classic expand/collapse
 	}
 	if !t.multiColumn() || t.rowEditing || t.headerZone != hzContent {
 		return false
@@ -456,10 +489,6 @@ func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
 	cols := t.editableColumns()
 	if len(cols) == 0 {
 		return false // not an editable grid: classic tree navigation
-	}
-	delta := 1
-	if event.Key == "Left" {
-		delta = -1
 	}
 	cur := t.enterTargetColumn()
 	idx := 0
@@ -479,10 +508,13 @@ func (t *TreeView) handleEditTargetKey(event core.KeyPressEvent) bool {
 // handleEditKey routes keys while the row editor is up. Everything is
 // consumed: navigation belongs to the editor session, the rest belongs
 // to the editor trinket.
-func (t *TreeView) handleEditKey(event core.KeyPressEvent) bool {
+func (t *TreeView) handleEditKey(event core.KeyPressEvent, cmd string) bool {
 	if !t.rowEditing {
 		return false
 	}
+	// Enter resolves to the edit command here (the tree offers it, so it wins
+	// over activate): inside an open editor that means "commit and close".
+	commit := cmd == core.CmdTrinketEdit
 	if cb := t.editCombo; cb != nil {
 		if cb.IsOpen() {
 			// The open drop-down owns the keyboard until it closes:
@@ -492,31 +524,31 @@ func (t *TreeView) handleEditKey(event core.KeyPressEvent) bool {
 			// edit session alive for further changes.
 			cb.HandleKeyPress(event)
 			if !cb.IsOpen() {
-				switch event.Key {
-				case "Enter":
+				switch {
+				case commit:
 					t.endRowEdit(true)
-				case "Escape":
+				case cmd == core.CmdTrinketCancel:
 					t.endRowEdit(false)
 				}
 			}
 			return true
 		}
 		switch {
-		case event.Key == "Enter":
+		case commit:
 			t.endRowEdit(true)
-		case event.Key == "Escape":
+		case cmd == core.CmdTrinketCancel:
 			t.endRowEdit(false)
-		case isShiftTab(event):
+		case cmd == core.CmdFocusPrior:
 			t.stepEditColumn(-1)
-		case event.Key == "Tab":
+		case cmd == core.CmdFocusNext:
 			t.stepEditColumn(1)
-		case event.Key == "Up":
+		case cmd == core.CmdTrinketItemUp || cmd == core.CmdTrinketItemPrior:
 			// Row navigation, NOT value change - deliberately unlike
 			// a native closed combo, matching the text editor's flow.
 			t.stepEditRow(-1)
-		case event.Key == "Down":
+		case cmd == core.CmdTrinketItemDown || cmd == core.CmdTrinketItemNext:
 			t.stepEditRow(1)
-		case event.Key == " " || event.Key == "Space":
+		case cmd == core.CmdTrinketActivate:
 			cb.HandleKeyPress(event) // pops the drop-down open
 		}
 		return true // a closed choice cell types nothing
@@ -525,17 +557,17 @@ func (t *TreeView) handleEditKey(event core.KeyPressEvent) bool {
 		return false
 	}
 	switch {
-	case event.Key == "Enter":
+	case commit:
 		t.endRowEdit(true)
-	case event.Key == "Escape":
+	case cmd == core.CmdTrinketCancel:
 		t.endRowEdit(false)
-	case isShiftTab(event):
+	case cmd == core.CmdFocusPrior:
 		t.stepEditColumn(-1)
-	case event.Key == "Tab":
+	case cmd == core.CmdFocusNext:
 		t.stepEditColumn(1)
-	case event.Key == "Up":
+	case cmd == core.CmdTrinketItemUp || cmd == core.CmdTrinketItemPrior:
 		t.stepEditRow(-1)
-	case event.Key == "Down":
+	case cmd == core.CmdTrinketItemDown || cmd == core.CmdTrinketItemNext:
 		t.stepEditRow(1)
 	default:
 		t.editBox.HandleKeyPress(event)
@@ -808,7 +840,7 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	// the pointer came here to pick a value. (Keyboard entry leaves it
 	// closed so Tab and Up/Down can still pass to other cells/rows.)
 	if t.editCombo != nil {
-		t.editCombo.HandleKeyPress(core.KeyPressEvent{Key: " "})
+		t.editCombo.OpenFromKeyboard()
 	}
 }
 

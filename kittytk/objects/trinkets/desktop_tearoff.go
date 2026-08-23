@@ -330,7 +330,7 @@ func (d *Desktop) createTornHost(win *window.Window, deskUnitX, deskUnitY core.U
 	// Match the desktop's in-surface resize-edge thickness so torn edges
 	// are the same width as docked ones (and don't overlap edge trinkets
 	// such as scrollbars).
-	host.SetResizeGrip(d.resizeGrip)
+	host.SetGraphicalFrames(d.graphicalFrames)
 
 	// A torn window still borrows the desktop's menu bar line: when its
 	// surface gains focus, point the menu bar at this window's app so the
@@ -429,6 +429,15 @@ func (d *Desktop) surfaceAppModal(appID core.ObjectID) {
 	if wm := d.windowManager; wm != nil {
 		d.surfaceModal(wm.TopAppModal(appID))
 	}
+}
+
+// SurfaceWindow brings one window back to the user's attention, wherever it
+// lives. It is the window package's windowSurfacer: a close that something
+// declined uses it to raise the window that did the declining, which the
+// window itself cannot do -- only the desktop knows whether it is docked,
+// minimized to the dock, or torn onto an OS surface of its own.
+func (d *Desktop) SurfaceWindow(win *window.Window) {
+	d.surfaceModal(win)
 }
 
 // surfaceModal pulls a specific modal window to the front: if it is torn onto
@@ -616,8 +625,65 @@ func (d *Desktop) setChildShortcutResolver(child, main *window.Window) {
 		}
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
+		}); ok && sc.HandleShortcut(ev) {
+			return true
+		}
+
+		// Resolved ONCE, here: the menu key and the accelerators both come out
+		// of the main window's context, and feeding it the same keystroke
+		// twice would advance a chord's prefix by two.
+		cmd, seq := "", ""
+		if ctx := main.KeyContext(); ctx != nil {
+			cmd = ctx.Resolve(ev.Key)
+			seq = ctx.MatchedSequence()
+		}
+
+		// The menu key summons the app's bar, which lives in the main window.
+		// A child has no bar to focus of its own, so without this the key did
+		// nothing at all from a child.
+		// ...and straight to Help, which is the same bar one step further in.
+		if cmd == core.CmdAppHelp {
+			if h, ok := mb.(interface{ OpenHelpMenu() bool }); ok && h.OpenHelpMenu() {
+				d.SurfaceWindow(main)
+				return true
+			}
+			cmd = core.CmdAppMenu // no Help menu: the plain menu key
+		}
+		if cmd == core.CmdAppMenu {
+			if h, ok := mb.(interface {
+				HandleKeyPress(core.KeyPressEvent) bool
+			}); ok && h.HandleKeyPress(ev) {
+				d.SurfaceWindow(main)
+				return true
+			}
+		}
+
+		// ...and the app's menu ACCELERATORS too, not only its item
+		// shortcuts. A child carries no bar of its own, so without this a
+		// chord accelerator does nothing while the child has focus even
+		// though the app's menus are sitting in the main window.
+		//
+		// The context reports the whole matched sequence, so a multi-key
+		// pattern works: it holds the prefix between keystrokes and says
+		// WHICH menu the accelerator was for when it lands.
+		if bar, ok := mb.(interface {
+			ActivateAcceleratorSequence(string) bool
 		}); ok {
-			return sc.HandleShortcut(ev)
+			opened := cmd == core.CommandAppAccelerator &&
+				bar.ActivateAcceleratorSequence(seq)
+			// ...and the single-key form directly, which needs nothing
+			// published yet and so answers before anything has painted.
+			if !opened {
+				opened = bar.ActivateAcceleratorSequence(ev.Key)
+			}
+			if opened {
+				// The menu came down in the MAIN window, so that is where the
+				// keyboard has to go. Torn off, the main window is a different
+				// OS window entirely: leaving focus on the child would drop
+				// every arrow and Enter meant for the menu that just opened.
+				d.SurfaceWindow(main)
+				return true
+			}
 		}
 		return false
 	})
@@ -635,6 +701,81 @@ func (d *Desktop) applicationForWindow(win *window.Window) ApplicationProvider {
 		}
 	}
 	return nil
+}
+
+// BlurDetachedWindow implements the window package's detachedBlurrer: where
+// the blur control sends the keyboard when the window it leaves is TORN.
+//
+// A docked window's blur focuses the container's menu bar, which works
+// because the window is still on screen beside it. A torn window's surface
+// holds that one window and nothing else, so there is no "rest of the
+// surface" to fall back to - blurring has to leave the OS window entirely.
+// It goes up the OWNERSHIP chain: a secondary window returns to its app's
+// main window, and the main window returns to the desktop it was torn from.
+//
+// In solo mode there is no desktop behind the app, so the main window's blur
+// has nowhere to go and the window keeps the keyboard rather than dropping
+// it into nothing.
+// CanBlurDetachedWindow implements the window package's detachedBlurrer: it
+// answers whether a torn window has anywhere to blur TO, so the control is
+// simply not offered when it would be inert.
+//
+// It is asked fresh on every layout rather than latched, which is what makes
+// the control correct itself: a solo app's main window has no desktop behind
+// it and no app window above it, so it offers no blur item - and the moment
+// show_desktop reveals a desktop, the same question answers yes and the item
+// is there.
+func (d *Desktop) CanBlurDetachedWindow(win *window.Window) bool {
+	if win == nil {
+		return false
+	}
+	if app := d.applicationForWindow(win); app != nil {
+		if main := app.MainWindow(); main != nil && main != win {
+			return true // its app's main window is above it
+		}
+	}
+	// Nothing above it but the desktop, which solo mode does not have.
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return !d.solo
+}
+
+func (d *Desktop) BlurDetachedWindow(win *window.Window) {
+	if win == nil || !d.CanBlurDetachedWindow(win) {
+		return
+	}
+	if app := d.applicationForWindow(win); app != nil {
+		if main := app.MainWindow(); main != nil && main != win {
+			d.SurfaceWindow(main)
+			// SurfaceWindow raises a TORN main window's own surface, but a
+			// docked one it can only activate - that window lives on the
+			// desktop's surface, which has to be brought forward separately
+			// or the activation happens somewhere the user cannot see.
+			if d.tornHostForWindow(main) == nil {
+				d.raiseDesktopSurface()
+			}
+			return
+		}
+	}
+	// The app's own main window (or a window no app claims): the level above
+	// it is the desktop itself.
+	d.raiseDesktopSurface()
+}
+
+// raiseDesktopSurface brings the desktop's own OS window forward. A no-op in
+// solo mode, where the primary surface IS an application window and there is
+// no desktop behind it to return to.
+func (d *Desktop) raiseDesktopSurface() {
+	d.mu.RLock()
+	solo := d.solo
+	surf := d.surface
+	d.mu.RUnlock()
+	if solo || surf == nil {
+		return
+	}
+	if n, ok := surf.(platform.NativeSurface); ok {
+		n.Raise()
+	}
 }
 
 // redockInPlace re-docks a torn window to the desktop at its current

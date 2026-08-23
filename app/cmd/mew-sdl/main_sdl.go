@@ -66,13 +66,21 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create platform: %v\n", err)
 		os.Exit(1)
 	}
-	plat.SetAppName("mew")       // OS app name is "mew", not the binary's "mew-sdl"
-	plat.SetScale(cfg.Scale)     // device zoom: pixels per unit at the base font
+	plat.SetAppName("mew")   // OS app name is "mew", not the binary's "mew-sdl"
+	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
+	// [system] density: the physical screen's content scale. 0 = ask the
+	// window system. Distinct from scale, which is this app's own magnification.
+	plat.SetDisplayDensity(cfg.Density)
 	plat.SetShowFPS(cfg.ShowFPS) // [window] fps overlays the frame rate
 	plat.SetVSync(cfg.VSync)
 	plat.SetFontSize(cfg.FontSize) // pixel size of a cell
 	core.SetWindowFrameBorderPx(cfg.BorderWidth)
 	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
+	// [window] titlebar_scale: every graphical title bar (windows and the
+	// themed desktop) at this fraction of the classic full-cell row, fonts
+	// and controls scaled to match. 1.0 is the default. (TUI stays 1.0 —
+	// a terminal cannot subdivide a character cell.)
+	core.SetTitleBarScale(cfg.TitleBarScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
@@ -83,6 +91,15 @@ func main() {
 	// cross-platform clipboard integration for the graphical host.
 	backend.SetSystemClipboard(plat.Clipboard, plat.SetClipboard)
 
+	// Declare what kind of host this is before anything reads a keymap: the
+	// environment hints in a keymap ((mac), (only_gfx), (kde)...) are evaluated
+	// when a binding is added to a registry, and the toolkit cannot tell for
+	// itself whether this binary draws pixels or characters.
+	core.SetKeymapEnvironment(core.KeymapEnvironment{
+		Graphical: true,
+		Desktop:   cfg.HostType, // [window] host_type, or blank to detect
+	})
+
 	// Free the host's built-in accelerators before the desktop is created: the Ψ
 	// system menu is built inside NewDesktop and never rebuilt, so its Exit
 	// Desktop shortcut must be cleared first.
@@ -90,6 +107,11 @@ func main() {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
+	// [window] desktop_frame: themed (the desktop paints its own title bar
+	// and handles its own moving/resizing), native_titlebar, or native.
+	// The themed title bar shows the same [window] title the OS bar would.
+	desktop.SetDesktopFrame(cfg.DesktopFrame)
+	desktop.SetTitle(cfg.Title)
 	// The UI font stays one cell tall in UNITS (12); font_size makes it render
 	// larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})

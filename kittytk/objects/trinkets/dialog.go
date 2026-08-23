@@ -71,6 +71,7 @@ const (
 // MessageBox displays a message with buttons.
 type MessageBox struct {
 	window.Window
+	core.TrinketKeys
 
 	content *messageBoxContent
 	buttons DialogButton
@@ -148,6 +149,7 @@ func NewMessageBox(title, text string, buttons DialogButton) *MessageBox {
 	// Set as window content
 	m.SetContent(m.content)
 	m.calculateSize()
+	m.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel)
 	return m
 }
 
@@ -449,8 +451,8 @@ func (c *messageBoxContent) HandleMouseRelease(event core.MouseReleaseEvent) boo
 
 // HandleKeyPress handles keyboard input.
 func (m *MessageBox) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case "Escape":
+	switch m.KeyCommand(event.Key) {
+	case core.CmdTrinketCancel:
 		if m.buttons&ButtonCancel != 0 {
 			m.done(ResultCancel)
 		} else if m.buttons&ButtonNo != 0 {
@@ -458,7 +460,7 @@ func (m *MessageBox) HandleKeyPress(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter":
+	case core.CmdTrinketActivate:
 		if m.buttons&ButtonOK != 0 {
 			m.done(ResultOK)
 		} else if m.buttons&ButtonYes != 0 {
@@ -516,6 +518,7 @@ type FileFilter struct {
 // FileDialog provides file selection functionality.
 type FileDialog struct {
 	window.Window
+	core.TrinketKeys
 
 	mode          FileDialogMode
 	directory     string
@@ -559,6 +562,7 @@ func NewFileDialog(mode FileDialogMode) *FileDialog {
 	f.Window = *window.NewWindow(title)
 	f.SetType(window.WindowTypeModal)
 	f.setupUI()
+	f.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel, core.CmdTrinketEnclosing)
 	return f
 }
 
@@ -882,12 +886,12 @@ func (f *FileDialog) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (f *FileDialog) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case "Escape":
+	switch f.KeyCommand(event.Key) {
+	case core.CmdTrinketCancel:
 		f.reject()
 		return true
 
-	case "Enter":
+	case core.CmdTrinketActivate:
 		if f.fileList.HasFocus() && f.fileList.CurrentIndex() >= 0 {
 			f.itemActivated(f.fileList.CurrentIndex())
 			return true
@@ -895,7 +899,7 @@ func (f *FileDialog) HandleKeyPress(event core.KeyPressEvent) bool {
 		f.accept()
 		return true
 
-	case "Backspace":
+	case core.CmdTrinketEnclosing:
 		if !f.pathInput.HasFocus() && (f.fileNameInput == nil || !f.fileNameInput.HasFocus()) {
 			f.navigateTo(filepath.Dir(f.directory))
 			return true
@@ -934,6 +938,7 @@ func SelectDirectory(startDir string) string {
 // InputDialog shows a simple input dialog.
 type InputDialog struct {
 	window.Window
+	core.TrinketKeys
 
 	labelText    string
 	input        *TextInput
@@ -985,6 +990,7 @@ func NewInputDialog(title, label, defaultValue string) *InputDialog {
 		Height: metrics.CellHeight * 6,
 	})
 
+	d.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel)
 	return d
 }
 
@@ -1048,8 +1054,8 @@ func (d *InputDialog) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (d *InputDialog) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case "Escape":
+	switch d.KeyCommand(event.Key) {
+	case core.CmdTrinketCancel:
 		d.accepted = false
 		if d.onFinished != nil {
 			d.onFinished("", false)
@@ -1057,7 +1063,7 @@ func (d *InputDialog) HandleKeyPress(event core.KeyPressEvent) bool {
 		d.Close()
 		return true
 
-	case "Enter":
+	case core.CmdTrinketActivate:
 		d.result = d.input.Text()
 		d.accepted = true
 		if d.onFinished != nil {

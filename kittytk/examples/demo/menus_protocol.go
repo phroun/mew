@@ -82,7 +82,7 @@ bar=new menubar children={
 	new menu caption="&Window" wellknown="window" children={
 		new menuitem caption="&New Window" action=demo.window.new
 	}
-	new menu caption="&Alphabet" children={`)
+	new menu caption="&Al&phabet" children={`)
 	for i := 0; i < 26; i++ {
 		letter := string(rune('A' + i))
 		fmt.Fprintf(&b, "\n\t\tnew menuitem caption=\"&%s - Letter %s\"", letter, letter)

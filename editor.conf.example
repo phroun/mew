@@ -140,9 +140,7 @@ wordWrap=false
 # %FRAG% rope fragmentation count, %HEAP% heap usage, %LINE% 1-based line,
 # %RUNE% 1-based rune within the line, %COL% 1-based visual column (tabs
 # expanded), %LINEBYTE% byte offset within the line, %ABSBYTE% absolute byte
-# offset in the buffer. %SPU% %SPD% %PPU% %PPD% resolve to the key bound to
-# stat_peek_up / stat_peek_down / prompt_peek_up / prompt_peek_down (used by
-# the [indicators] peek labels, but valid in any template).
+# offset in the buffer.
 #modebarInner="%FN%"
 #modebarDefault="%FORTUNE%"
 #modebarOuter="Frag:%FRAG% Heap:%HEAP% Line:%LINE% Rune:%RUNE%"
@@ -163,14 +161,6 @@ moreRight=">"
 moreLeft="<"
 cursorGhost="|"
 cursorOffScreen="@"
-# The peek labels run through the modebar's %CODE% engine: %SPU% %SPD% %PPU%
-# %PPD% resolve to the key bound to stat_peek_up / stat_peek_down /
-# prompt_peek_up / prompt_peek_down (in the stored spelling), so the hint
-# tracks the live keymap. Plain text (e.g. "[Esc U]") still works.
-statPeekUp="[%SPU%]"
-statPeekDown="[%SPD%]"
-promptPeekUp="[%PPU%]"
-promptPeekDown="[%PPD%]"
 
 
 
@@ -250,15 +240,11 @@ row-2="^   M-      <       space       >      M- >>  left  down  right"
 ^K H	=help_toggle
 esc X	=cmd
 #^M	=accept|insert '\n'
-#^C	=cancel|buffer_close
+#^C	=cancel|viewport_close
 esc >	=scroll_right
 esc <	=scroll_left
 esc ]	=window_next
 esc [	=window_prior
-esc U	=stat_peek_up
-esc V	=stat_peek_down
-esc P	=prompt_peek_up
-esc N	=prompt_peek_down
 ^B	=go_char_prior
 left    =go_char_prior
 ^F	=go_char_next
@@ -313,7 +299,7 @@ esc esc	=set_mark
 ^J	=del_line_end
 ^Y	=del_line
 ^K N	=buffer_new
-^K Z	=buffer_close
+^K Z	=viewport_close
 ^-	=buffer_undo
 ^_	=buffer_undo
 ^+	=buffer_redo

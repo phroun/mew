@@ -195,41 +195,40 @@ const (
 // KeyModifiers represents active modifier keys.
 type KeyModifiers int
 
+// The modifiers a key event can carry, one bit each. The prefix each one
+// corresponds to is in the comment; canonical spelling order is
+// C- G- M- m- S- s- H- ^ (see the key name documentation).
+//
+// Mega and Micro are two keys that both have a real claim to the name Meta.
+//
+// Emacs and forty years of PC keyboards call the Alt key Meta, and they are
+// not being loose about it: the Meta key on a Space Cadet keyboard encoded as
+// the 8th bit or an ESC prefix, and the PC's Alt key was built to do exactly
+// that. X11 and the Space Cadet call the OTHER one Meta, on the grounds that
+// it is the key actually labelled so. A terminal speaking the "kitty" protocol
+// reports keys rather than bytes, so it has to say which one you pressed even
+// though the encoding is identical.
+//
+// So neither constant is called Meta — not because neither deserves it, but
+// because both do. They take the case of their prefix instead: capital M is
+// Mega, lowercase m is Micro, which is also the easier thing to remember at
+// the point of use.
 const (
-	NoModifier    KeyModifiers = 0
-	ShiftModifier KeyModifiers = 1 << iota
-	ControlModifier
-	AltModifier
-	MetaModifier
+	NoModifier KeyModifiers = 0
+
+	ShiftModifier   KeyModifiers = 1 << iota // "S-"
+	ControlModifier                          // "C-", and the caret form "^X"
+	MegaModifier                             // "M-" — Emacs Meta / PC Alt
+	SuperModifier                            // "s-" — Super / Command
+	MicroModifier                            // "m-" — Space Cadet Meta / X11 Meta
+	HyperModifier                            // "H-" — Hyper
+	GlyphModifier                            // "G-" — AltGr / ISO_Level3_Shift
 )
 
 // ParseKeyModifiers parses modifier prefixes from a key string.
-// Returns the modifiers and the remaining key name.
+// Returns the modifiers and the remaining key name. See parseKeyName, which
+// reads the same vocabulary everything else reads.
 func ParseKeyModifiers(key string) (KeyModifiers, string) {
-	var mods KeyModifiers
-	remaining := key
-
-	for {
-		switch {
-		case len(remaining) > 2 && remaining[:2] == "M-":
-			mods |= AltModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "C-":
-			mods |= ControlModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "S-":
-			mods |= ShiftModifier
-			remaining = remaining[2:]
-		case len(remaining) > 2 && remaining[:2] == "s-":
-			mods |= MetaModifier
-			remaining = remaining[2:]
-		default:
-			// Check for control character notation
-			if len(remaining) == 2 && remaining[0] == '^' {
-				mods |= ControlModifier
-				remaining = string(remaining[1])
-			}
-			return mods, remaining
-		}
-	}
+	mods, _, name := parseKeyName(key)
+	return mods, name
 }

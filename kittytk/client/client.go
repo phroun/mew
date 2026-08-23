@@ -8,7 +8,7 @@
 // one app may hold any number of connections. The package imports
 // ONLY the protocol package - it compiles with no knowledge of the
 // rendering side. In-process, the display side is the registered
-// trinket vocabulary reached through protocol.RegistryFactory; under
+// trinket vocabulary reached through the registry (inprocess.go); under
 // transport the same Conn speaks to a socket instead.
 package client
 
@@ -16,13 +16,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/wire"
 )
 
 // transport is how statements reach the display service: in-process
 // session execution, or a socket carrying protocol text (D22).
 type transport interface {
-	exec(src string) (*protocol.Reply, error)
+	exec(src string) (*wire.Reply, error)
 	close() error
 }
 
@@ -41,8 +41,8 @@ type Conn struct {
 	targets map[uint64]any
 
 	// App handlers by (object, event type) and by event type.
-	handlers     map[uint64]map[string][]func(*protocol.Event)
-	typeHandlers map[string][]func(*protocol.Event)
+	handlers     map[uint64]map[string][]func(*wire.Event)
+	typeHandlers map[string][]func(*wire.Event)
 
 	// Subscriptions already sent (avoid duplicate sub statements).
 	subs map[subKey]bool
@@ -68,7 +68,7 @@ type subKey struct {
 
 // objState is the replica of one object's class-B state.
 type objState struct {
-	checked  protocol.FlagState
+	checked  wire.FlagState
 	text     string
 	selected int
 	result   string
@@ -79,8 +79,8 @@ func newConn(dispatch func(commandID string)) *Conn {
 		types:        make(map[uint64]string),
 		state:        make(map[uint64]*objState),
 		targets:      make(map[uint64]any),
-		handlers:     make(map[uint64]map[string][]func(*protocol.Event)),
-		typeHandlers: make(map[string][]func(*protocol.Event)),
+		handlers:     make(map[uint64]map[string][]func(*wire.Event)),
+		typeHandlers: make(map[string][]func(*wire.Event)),
 		subs:         make(map[subKey]bool),
 		dispatch:     dispatch,
 		closed:       make(chan struct{}),
@@ -101,7 +101,7 @@ func (c *Conn) AppID() uint64 { return c.appID }
 // same syntax as any object: SetApp("multiwindow contextonly") sends
 // `set <appID> multiwindow contextonly`. It errors before the handshake has
 // assigned an app ID (in-process connections have none).
-func (c *Conn) SetApp(props string) (*protocol.Reply, error) {
+func (c *Conn) SetApp(props string) (*wire.Reply, error) {
 	if c.appID == 0 {
 		return nil, fmt.Errorf("SetApp: no application id (in-process connection)")
 	}
@@ -111,87 +111,9 @@ func (c *Conn) SetApp(props string) (*protocol.Reply, error) {
 // markClosed fires the Closed channel exactly once.
 func (c *Conn) markClosed() { c.closeOnce.Do(func() { close(c.closed) }) }
 
-// NewInProcess creates a connection whose display side is the
-// registered trinket vocabulary in this process. dispatch receives
-// action= command IDs (pass the application registry's Dispatch;
-// nil is allowed for connections that use no commands).
-func NewInProcess(dispatch func(commandID string)) *Conn {
-	c := newConn(dispatch)
-	// Commands arrive uniformly as command events (deliver invokes
-	// the dispatch sink), so the BindContext dispatch stays nil -
-	// FireAction still emits the event, and there is exactly one
-	// dispatch path in-process and remote alike.
-	ctx := &protocol.BindContext{
-		Emit: c.deliver,
-	}
-	factory := &recordingFactory{conn: c, inner: protocol.NewRegistryFactory(ctx)}
-	c.transport = &inProcessTransport{
-		session: protocol.NewSession(),
-		factory: factory,
-	}
-	return c
-}
-
-// inProcessTransport executes against the local session/factory.
-type inProcessTransport struct {
-	session *protocol.Session
-	factory protocol.Factory
-}
-
-func (t *inProcessTransport) exec(src string) (*protocol.Reply, error) {
-	script, err := protocol.Parse(src)
-	if err != nil {
-		return nil, err
-	}
-	return t.session.Execute(script, t.factory)
-}
-
-func (t *inProcessTransport) close() error { return nil }
-
-// recordingFactory interposes on construction to record each object's
-// type and (in-process) target into the replica tables.
-type recordingFactory struct {
-	conn  *Conn
-	inner protocol.Factory
-}
-
-func (f *recordingFactory) New(typeName string) (protocol.Object, error) {
-	o, err := f.inner.New(typeName)
-	if err != nil {
-		return nil, err
-	}
-	f.conn.mu.Lock()
-	f.conn.types[o.ID()] = typeName
-	if tg, ok := o.(interface{ Target() any }); ok {
-		f.conn.targets[o.ID()] = tg.Target()
-	}
-	f.conn.mu.Unlock()
-	return o, nil
-}
-
-// Forward EventControl to the inner factory (wrappers must not hide
-// the capability).
-func (f *recordingFactory) Subscribe(id uint64, typ string) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Subscribe(id, typ)
-	}
-}
-func (f *recordingFactory) Unsubscribe(id uint64, typ string) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Unsubscribe(id, typ)
-	}
-}
-func (f *recordingFactory) Suppressed(fn func()) {
-	if ec, ok := f.inner.(protocol.EventControl); ok {
-		ec.Suppressed(fn)
-		return
-	}
-	fn()
-}
-
 // Exec executes protocol text on this connection (one batch; the
 // remote transport appends the D22 end terminator).
-func (c *Conn) Exec(src string) (*protocol.Reply, error) {
+func (c *Conn) Exec(src string) (*wire.Reply, error) {
 	return c.transport.exec(src)
 }
 
@@ -199,12 +121,12 @@ func (c *Conn) Exec(src string) (*protocol.Reply, error) {
 // trinket types and, for each, the properties it accepts with each
 // property's kind, default, and a brief description. Common properties
 // (accepted by every non-virtual type) are reported once.
-func (c *Conn) Describe() (*protocol.Vocabulary, error) {
+func (c *Conn) Describe() (*wire.Vocabulary, error) {
 	reply, err := c.transport.exec("describe")
 	if err != nil {
 		return nil, err
 	}
-	return protocol.DecodeVocabulary(reply.Extra)
+	return wire.DecodeVocabulary(reply.Extra)
 }
 
 // Close releases the connection (closes the socket for remote
@@ -227,7 +149,7 @@ func (c *Conn) Build(src string) (*UI, error) {
 
 // deliver folds an event into the replica, then invokes handlers.
 // (BindContext already filtered by subscription and suppression.)
-func (c *Conn) deliver(ev *protocol.Event) {
+func (c *Conn) deliver(ev *wire.Event) {
 	id, _ := ev.Trinket()
 
 	c.mu.Lock()
@@ -258,7 +180,7 @@ func (c *Conn) deliver(ev *protocol.Event) {
 			dispatchAction = a
 		}
 	}
-	var fns []func(*protocol.Event)
+	var fns []func(*wire.Event)
 	if hs, ok := c.handlers[id]; ok {
 		fns = append(fns, hs[ev.Type]...)
 	}
@@ -291,11 +213,11 @@ func (c *Conn) ensureSub(id uint64, event string) {
 }
 
 // on registers an app handler and opens the event flow.
-func (c *Conn) on(id uint64, event string, fn func(*protocol.Event)) {
+func (c *Conn) on(id uint64, event string, fn func(*wire.Event)) {
 	c.ensureSub(id, event)
 	c.mu.Lock()
 	if c.handlers[id] == nil {
-		c.handlers[id] = make(map[string][]func(*protocol.Event))
+		c.handlers[id] = make(map[string][]func(*wire.Event))
 	}
 	c.handlers[id][event] = append(c.handlers[id][event], fn)
 	c.mu.Unlock()
@@ -307,7 +229,7 @@ func (c *Conn) on(id uint64, event string, fn func(*protocol.Event)) {
 // NewInProcess.
 func (c *Conn) OnCommand(action string, fn func()) {
 	c.mu.Lock()
-	c.typeHandlers["command"] = append(c.typeHandlers["command"], func(ev *protocol.Event) {
+	c.typeHandlers["command"] = append(c.typeHandlers["command"], func(ev *wire.Event) {
 		if a, ok := ev.Word("action"); ok && a == action {
 			fn()
 		}

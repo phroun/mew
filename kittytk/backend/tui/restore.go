@@ -3,12 +3,12 @@ package tui
 import "sync"
 
 // The terminal is PROCESS state. A TUI backend puts it into raw mode, the
-// alternate screen and the Kitty keyboard protocol, and something has to put
+// alternate screen and the "kitty" keyboard protocol, and something has to put
 // it back — but the code that ends the process is not always the code holding
 // the backend. An embedder's fatal-signal path is the usual case: mew dumps
 // its unsaved buffers and calls os.Exit, and os.Exit runs no deferred
 // teardown, so the backend's Shutdown never happens and the user is returned
-// to a shell in raw mode with kitty keys still on.
+// to a shell in raw mode with the "kitty" keyboard protocol still on.
 //
 // The registry closes that gap without the backend having to fight for signals
 // it does not own. Installing our own handler would race the embedder's: mew's

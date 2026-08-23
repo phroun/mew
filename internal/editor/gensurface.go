@@ -39,13 +39,24 @@ type genSurface struct {
 	// focused viewport's id), so the caret can land on it. "" when there is no
 	// such entry — the caret then falls back to the first link.
 	current func(e *Editor, w *viewport.Viewport) string
+	// focusPane makes following one of this surface's links focus the pane the
+	// surface is shown in FIRST. Set only for surfaces whose follow resolves its
+	// destination against the focused document viewport (surfaceTargetViewport) —
+	// the buffers and viewports lists — so a link activated in an unfocused pane
+	// acts on that pane, not on whatever else held focus. A mouse press on a link
+	// does not itself take focus, so without this the choice would land elsewhere.
+	focusPane bool
 }
 
 // genSurfaces is the registry. Add a surface by registering a render/follow
 // pair here.
 var genSurfaces = map[string]genSurface{
-	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget},
-	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget},
+	"buffers":   {render: (*Editor).renderBuffers, follow: (*Editor).followBuffer, current: (*Editor).currentBufferTarget, focusPane: true},
+	"viewports": {render: (*Editor).renderViewports, follow: (*Editor).followViewport, current: (*Editor).currentViewportTarget, focusPane: true},
+	// closed: the buffer_close tombstone. Baked per-buffer by newClosedPlaceholder
+	// (its Re-open link names the closed file); registered here so that link
+	// dispatches to followClosedReopen. render is the generic fallback only.
+	"closed": {render: (*Editor).renderClosed, follow: (*Editor).followClosedReopen, focusPane: true},
 }
 
 // genSurfaceName returns the surface name for a mew: URL ("mew:/buffers" ->
@@ -110,6 +121,28 @@ func (e *Editor) openGeneratedSurface(name string) bool {
 	return true
 }
 
+// newSurfaceViewport creates a fresh main-area document viewport already showing
+// the named generated surface (read-only, link-browse, caret on its first link),
+// and returns it — nil for an unregistered surface. Used to give a freshly
+// split/created tile its own pane (a buffers list to pick from) instead of
+// cloning the origin tile's content.
+func (e *Editor) newSurfaceViewport(name string) *viewport.Viewport {
+	s, ok := genSurfaces[name]
+	if !ok {
+		return nil
+	}
+	buf := e.lib.NewFromString(s.render(e))
+	buf.SetFilename("mew:/" + name)
+	buf.SetTransient(true) // navigating away from it releases it, as for any surface
+	w := e.createMainViewport(buf, nil, false)
+	w.ViewState.ReadOnly = true
+	w.ViewState.LinkBrowsing = true
+	w.BrowseActive = true
+	e.focusSurfaceEntry(w, "") // land on the first link so it opens ready to pick
+	e.ensureCursorVisible(w)
+	return w
+}
+
 // currentBufferTarget is the buffers-surface entry for the document being left:
 // its stable handle. "" when there is no ordinary document to return to (an
 // unbound viewport, or one already showing a generated surface).
@@ -170,7 +203,17 @@ func (e *Editor) followGeneratedSurfaceLink(w *viewport.Viewport, target string)
 	if name == "" {
 		return false, false
 	}
-	return genSurfaces[name].follow(e, target), true
+	s := genSurfaces[name]
+	// Most surface follows resolve their destination against the focused document
+	// viewport (surfaceTargetViewport), and a mouse press on a link does not take
+	// focus — so focus the surface's own pane first, making the choice land there
+	// rather than in whatever else held focus. Ordinary document/help links never
+	// reach here; they follow in place without moving focus. A future surface may
+	// opt out by leaving focusPane false.
+	if s.focusPane {
+		e.ViewportManager.SetFocus(w.ID)
+	}
+	return s.follow(e, target), true
 }
 
 // surfaceTargetViewport is the document viewport a generated surface navigates:
@@ -320,7 +363,12 @@ func (e *Editor) renderViewports() string {
 	b.WriteString("==== Open Viewports ====\n\n")
 	var rows int
 	for _, w := range e.ViewportManager.AllViewports() {
-		if w.Type == viewport.PromptViewport {
+		// Only surfaces the focus cycle actually stops on belong in the list:
+		// FocusEligible drops prompts and chrome (the modebar, transient
+		// toasts), and CanFocus drops the peek surfaces the ^B switcher skips
+		// (Quick Help) while keeping regular help — neither is somewhere a
+		// reader navigates to from this listing.
+		if !w.FocusEligible() || !w.CanFocus {
 			continue
 		}
 		rows++

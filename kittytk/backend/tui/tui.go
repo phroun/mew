@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/phroun/direct-key-handler/keyboard"
@@ -83,7 +85,57 @@ type TUIBackend struct {
 	// Cell metrics for unit conversion
 	metrics core.CellMetrics
 
+	// The palette wait: how long a held text key's repeats are withheld, which
+	// key is being held, and when the hold was first seen. See
+	// TUIOptions.HoldOpensPalette.
+	//
+	// holdArm names the key whose letter a palette has opened over, and
+	// holdPending holds what has been typed into that palette since — the
+	// selector keys, which belong to the palette rather than to the document
+	// and are only let through if no commit comes.
+	//
+	// holdArm outlives holdKey on purpose: letting go is how the palette gets
+	// used, so the release cannot be what ends this. See openHoldComposition.
+	holdWait    time.Duration
+	holdKey     string
+	holdSince   time.Time
+	holdArm     string
+	holdPending []core.Event
+
 	// Screen buffers (double buffering)
+	// dmgMin/dmgMax are the column range the text diff rewrote on each row
+	// this frame, -1 when the row was untouched. Images need it: sixel pixels
+	// are screen content, so a picture survives until text is painted over
+	// THOSE cells - a change on an unrelated row is not a reason to re-send it.
+	dmgMin, dmgMax []int
+
+	// cellSeq is the paint ORDER of the last write to each cell this frame,
+	// and paintSeq the counter it comes from. Trinkets paint back to front, so
+	// a higher number is content drawn LATER and therefore on top. An image is
+	// queued rather than composited, so this is how the flush finds out which
+	// of its cells a window painted over afterwards.
+	cellSeq  [][]uint32
+	paintSeq uint32
+
+	// motionWanted is set during a frame by anything that needs pointer
+	// motion; motionOn is whether the outer terminal is currently sending it
+	// (?1003). Free motion is not enabled by default because it puts a report
+	// on the wire for every pixel the pointer crosses — it is turned on only
+	// while something is actually watching. See RequestMotionTracking.
+	motionWanted bool
+	motionOn     bool
+
+	// What the "kitty" graphics protocol currently has on screen. kittyBaseIDs is
+	// one id per block, the full picture; kittyPatchIDs are the deltas layered
+	// over them since the last full send. kittyNextID only ever counts up, so a
+	// new placement can never collide with one being deleted in the same frame.
+	// kittyPatchArea is the pixel area patched since the last full send, which is
+	// what decides when patching has stopped being cheaper than starting over.
+	kittyBaseIDs   []uint32
+	kittyPatchIDs  []uint32
+	kittyPatchArea int
+	kittyNextID    uint32
+
 	frontBuffer [][]Cell
 	backBuffer  [][]Cell
 
@@ -135,6 +187,23 @@ type TUIBackend struct {
 	outerPixelOK    bool // DECRQM: ?1016 is recognized (settable)
 	outerCellSizeOK bool // CSI 16 t gave a usable cell pixel size
 
+	// Outer-terminal graphics (see graphics.go). The startup probe asks the
+	// real terminal whether it can draw a picture and in which protocol; a
+	// terminal that answers neither query falls back to what the environment
+	// says. Images the paint pass asks for are collected here and emitted
+	// after the text diff, since the screen is written as one flush.
+	graphics         int // Graphics{None,Kitty,Sixel}
+	graphicsAnswered bool
+	pendingImages    []placedImage
+	// shownImages is what the last flush actually put on screen, so an
+	// unchanged frame can be skipped rather than re-transmitted (see
+	// flushImagesLocked). Compared by value, which is why a queued image must
+	// be one nobody else will overwrite.
+	shownImages []placedImage
+	// hadImages says the last frame placed images, which "kitty" graphics
+	// needs deleted before the next set.
+	hadImages bool
+
 	// Output writer
 	output io.Writer
 
@@ -176,6 +245,15 @@ type TUIBackend struct {
 }
 
 // TUIOptions configures the TUI backend.
+// DefaultHoldOpensPalette is how long a held text key's repeats are withheld
+// by default, so a press-and-hold accent palette can be reached.
+//
+// Long enough to let go in, which is the whole requirement: the palette opens
+// on the hold and the person then has to release the key to use it. Shorter
+// than a deliberate hold-to-repeat, which is the other thing a held key means
+// and the reason this is not simply "drop every repeat".
+const DefaultHoldOpensPalette = time.Second
+
 type TUIOptions struct {
 	// Output is where to write terminal output (default: os.Stdout)
 	Output io.Writer
@@ -192,11 +270,26 @@ type TUIOptions struct {
 	// EnableMouse enables mouse input (default: true)
 	EnableMouse bool
 
+	// HoldOpensPalette is how long a held TEXT key's repeats are withheld, so
+	// that a press-and-hold accent palette can be used.
+	//
+	// macOS opens its palette on the hold, and the terminal goes on sending
+	// repeats from behind it — so the letter types itself over and over while
+	// the palette is up, and there is no moment early enough to let go in. The
+	// palette is not merely untidy then, it is unusable. Nothing in the
+	// terminal's key stream says a palette is open (the protocol has no way to
+	// report a composition), so the only thing that tells "held to open the
+	// palette" from "held to type twenty of these" is HOW LONG.
+	//
+	// Zero uses DefaultHoldOpensPalette. Negative disables the wait, which is
+	// what a host on a system with no such palette wants.
+	HoldOpensPalette time.Duration
+
 	// AlternateScreen uses the alternate screen buffer (default: true)
 	AlternateScreen bool
 
-	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the
-	// OSC 52 escape sequence (supported by iTerm2, xterm, kitty, wezterm,
+	// OSC52Clipboard mirrors Copy/Cut to the terminal's clipboard with the OSC 52
+	// escape sequence (supported by iTerm2, xterm, the kitty terminal, wezterm,
 	// tmux with set-clipboard, ...). When false the host uses its own internal
 	// clipboard only. Default: true.
 	OSC52Clipboard bool
@@ -229,6 +322,9 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	if opts.Input == nil {
 		opts.Input = os.Stdin
 	}
+	if opts.HoldOpensPalette == 0 {
+		opts.HoldOpensPalette = DefaultHoldOpensPalette
+	}
 	if opts.CellMetrics.CellWidth == 0 {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
@@ -240,11 +336,103 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 		stopChan:   make(chan struct{}),
 		colorDepth: opts.ColorDepth,
 		hasMouse:   opts.EnableMouse,
+		holdWait:   opts.HoldOpensPalette,
 		hasUnicode: true, // Assume Unicode support
 		osc52:      opts.OSC52Clipboard,
 		osc52Paste: opts.OSC52Paste,
 	}
 	return t
+}
+
+// enterTerminalModes turns on every outer-terminal mode this backend runs
+// under. RestoreTerminal turns them off again in the mirror order, and the two
+// are a pair: a mode enabled here that is not disabled there outlives the
+// process and lands on the user's shell.
+//
+// Split out of Init so the ORDER can be tested. Init cannot be: it opens the
+// controlling terminal and starts a keyboard reader on os.Stdin, neither of
+// which a test has.
+func (t *TUIBackend) enterTerminalModes() {
+	// Enable mouse if requested
+	if t.hasMouse {
+		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
+	}
+
+	// Enter alternate screen
+	t.writeTTY("\033[?1049h")
+
+	// Enable the "kitty" keyboard protocol for better key detection.
+	//
+	// Flag 1 is disambiguation; flag 2 is event reporting, which is what makes
+	// the outer terminal send key RELEASE and repeat at all. Asking for 1 alone
+	// meant no release ever arrived here, so a hosted child that wanted them —
+	// a browser tracking a held key — could not be given what the terminal was
+	// never asked to send.
+	//
+	// AFTER the switch to the alternate screen, because the flag stack is
+	// per-screen and this is the screen the application runs on. Pushed before
+	// the switch it landed on the MAIN screen's stack, where nothing reads it:
+	// the outer terminal went on sending legacy keys for the whole session, so
+	// no release arrived however loudly this asked for one — and the push
+	// outlived us on the screen the shell came back to, which is how the first
+	// Ctrl+C after an exit printed "...9;5u" instead of interrupting.
+	// Disambiguate (1) + ReportEvents (2) + ReportAllKeys (8).
+	//
+	// ReportAllKeys is what makes a keypad key arrive AS a keypad key. Without
+	// it a terminal sends any key that produces text as that text and nothing
+	// else, so the pad's 7 goes down as the byte "7" — indistinguishable from
+	// the main row's, carrying no identity at all — while its repeats and its
+	// release, which have no legacy form and must go as CSI u, carry keycode
+	// 57406 and name the pad. One key, reported as two different keys, with a
+	// release for a press nobody made.
+	//
+	// Disambiguate alone does not close this: it promotes the pad keys that
+	// produce NO text, which is why P-Enter, P-Home and the pad arrows were
+	// always right and only the locked pad was wrong. There is no narrower lever.
+	// The application-keypad mode that would have been keypad-only is parsed and
+	// discarded by the kitty terminal, the protocol's own reference
+	// implementation (screen_alternate_keypad_mode, its handler for the mode,
+	// is an empty function), so this flag is the whole of the mechanism.
+	//
+	// Disambiguation costs the text: with the keys reported as escape codes, a
+	// text key arrives as its KEYCODE and nothing says what it produced. A
+	// key's name is its character for most of them, so that passed unnoticed
+	// until the two differed — and a dead key is where they do. Option+i then
+	// "u" composes "û" and reports the U KEY, so a plain "u" went into the
+	// document while the same keystroke worked in a host that never asked for
+	// disambiguation at all.
+	//
+	// So flag 16 comes with it (11 + 16 = 27): report the associated text. The
+	// key layer reads it as what the key TYPED in preference to what the key is
+	// CALLED, and reports the protocol's keycode 0 — text the terminal received
+	// with no key behind it, which is what an input method commits — prefixed,
+	// as text rather than as a keystroke that never happened (see handleKey).
+	//
+	// Needs direct-key-handler v0.3.34 or newer. Before that the third field
+	// was ignored and keycode 0 read as keycode 1, which is the phantom
+	// keystroke this flag exists to avoid.
+	t.writeTTY("\033[>27u")
+
+	// Enable focus reporting. The outer terminal then sends CSI I and CSI O as
+	// it gains and loses focus, which is the only way this process can learn
+	// that the keyboard has gone elsewhere.
+	//
+	// It matters because of what happens to a key held across that moment: its
+	// key-up is delivered to whoever has the keyboard now and never arrives
+	// here, so without this notification the press would stand for good in
+	// anything tracking held keys. direct-key-handler releases them on the
+	// report; enabling the mode is what makes the report come.
+	t.writeTTY("\033[?1004h")
+
+	// Enable bracketed paste. Without this the outer terminal ships a paste as
+	// a raw byte flood — indistinguishable from very fast typing — which
+	// direct-key-handler then surfaces one key at a time, overrunning the event
+	// queue and dropping characters on a large paste. With it on, a paste
+	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
+	t.writeTTY("\033[?2004h")
+
+	// Hide cursor initially
+	t.writeTTY("\033[?25l")
 }
 
 // Init initializes the terminal backend.
@@ -292,26 +480,7 @@ func (t *TUIBackend) Init() error {
 	// every row on the first present, exactly as it does after a resize.
 	t.needsLineClear = true
 
-	// Enable Kitty keyboard protocol for better key detection
-	t.writeTTY("\033[>1u")
-
-	// Enable mouse if requested
-	if t.hasMouse {
-		t.writeTTY("\033[?1000h\033[?1002h\033[?1006h")
-	}
-
-	// Enter alternate screen
-	t.writeTTY("\033[?1049h")
-
-	// Enable bracketed paste. Without this the outer terminal ships a paste as
-	// a raw byte flood — indistinguishable from very fast typing — which
-	// direct-key-handler then surfaces one key at a time, overrunning the event
-	// queue and dropping characters on a large paste. With it on, a paste
-	// arrives framed (\x1b[200~ … \x1b[201~) and is delivered whole via OnPaste.
-	t.writeTTY("\033[?2004h")
-
-	// Hide cursor initially
-	t.writeTTY("\033[?25l")
+	t.enterTerminalModes()
 
 	// The terminal is now ours. Join the set RestoreAll walks, so an exit path
 	// that never reaches Shutdown can still hand it back.
@@ -330,6 +499,32 @@ func (t *TUIBackend) Init() error {
 	t.keyboard.OnKey = t.handleKey
 	t.keyboard.OnPaste = func(content []byte) {
 		t.deliverPaste(string(content))
+	}
+	// The outer terminal's focus, surfaced as the toolkit's own focus event so
+	// a trinket cannot tell which backend it is running under. The graphical
+	// host has always sent these; this one had no way to know, so an
+	// application hosted in a terminal never learned the window had been left.
+	//
+	// The keys held at that moment have already been released by the handler
+	// before this runs — their key-ups go to whoever has the keyboard now and
+	// never arrive here — so anything reacting to the focus change sees a
+	// keyboard with nothing down, which is the truth.
+	t.keyboard.OnFocus = func(focused bool) {
+		select {
+		case t.eventQueue <- core.FocusEvent{Focused: focused}:
+		default:
+			// Queue full, drop event
+		}
+	}
+	// Keyboard states — the pad's lock, Caps Lock, focus — as toolkit events,
+	// so a trinket drawing an indicator repaints when one moves. The states
+	// themselves are read through Modes(); this is only the nudge.
+	t.keyboard.OnMode = func(m keyboard.Mode) {
+		select {
+		case t.eventQueue <- core.ModeEvent{Mode: core.Mode{Name: m.Name, Value: m.Value}}:
+		default:
+			// Queue full, drop event
+		}
 	}
 	if t.osc52Paste {
 		// OSC 52 clipboard responses (replies to our read query) are delivered
@@ -356,6 +551,17 @@ func (t *TUIBackend) Init() error {
 		t.writeTTY("\033[16t")     // XTWINOPS: report the cell size in pixels
 	}
 
+	// Ask the same terminal whether it can draw a PICTURE, and in which
+	// protocol (see graphics.go). Asynchronous like the probes above: the
+	// answers arrive as APC:/DA1: keys. A terminal that ignores both is
+	// settled from the environment once the window has passed, so a
+	// multiplexer swallowing the replies still gets an answer.
+	t.probeGraphics()
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		t.resolveGraphicsFallback()
+	}()
+
 	// Handle terminal resize
 	go t.handleResize()
 
@@ -380,8 +586,8 @@ func (t *TUIBackend) Shutdown() {
 }
 
 // RestoreTerminal puts the terminal back the way it was found - mouse off,
-// cursor shown, alternate screen left, Kitty keyboard protocol popped, colours
-// reset - and does so at most once however many paths reach it.
+// cursor shown, alternate screen left, "kitty" keyboard protocol popped,
+// colours reset - and does so at most once however many paths reach it.
 //
 // It is separate from Shutdown, and exported, because the terminal is PROCESS
 // state, not backend state: whoever ends the process is responsible for it,
@@ -397,7 +603,7 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable mouse. ?1016l first (harmless if it was never enabled) so the
 		// outer terminal drops back to cell reports before the rest go off.
 		if t.hasMouse {
-			t.writeTTY("\033[?1016l\033[?1006l\033[?1002l\033[?1000l")
+			t.writeTTY("\033[?1016l\033[?1006l\033[?1003l\033[?1002l\033[?1000l")
 		}
 
 		// Show cursor
@@ -407,22 +613,24 @@ func (t *TUIBackend) RestoreTerminal() {
 		// Disable bracketed paste (harmless if the terminal never enabled it).
 		t.writeTTY("\033[?2004l")
 
-		// Leave alternate screen
-		t.writeTTY("\033[?1049l")
-
-		// Pop the Kitty keyboard protocol - AFTER leaving the alternate screen,
-		// because the flag stack is per-screen. Init pushes (\033[>1u) while
-		// still on the MAIN screen and only then switches to the alternate one,
-		// so a pop issued before switching back applies to the alternate
-		// screen's stack and leaves the main screen's push live. The shell
-		// inherits it and the first Ctrl+C prints an escape ("...9;5u")
-		// instead of interrupting.
+		// Pop the "kitty" keyboard protocol - BEFORE leaving the alternate
+		// screen, because the flag stack is per-screen and the alternate
+		// screen's is the one Init pushed onto. Popping after the switch back
+		// would pop the MAIN screen's stack, which we never pushed, and leave
+		// our own push standing on the screen we just left.
 		//
 		// Popping an empty stack is a no-op, so this stays safe on a terminal
 		// that ignored the push. The explicit reset after it covers a terminal
 		// that honours the flags but not the stack.
 		t.writeTTY("\033[<u")
 		t.writeTTY("\033[=0;1u")
+
+		// Focus reporting off. Left on, the shell that inherits this terminal
+		// is sent CSI I and CSI O on every alt-tab and types them as text.
+		t.writeTTY("\033[?1004l")
+
+		// Leave alternate screen
+		t.writeTTY("\033[?1049l")
 
 		// Reset colors
 		t.writeTTY("\033[0m")
@@ -435,6 +643,12 @@ func (t *TUIBackend) RestoreTerminal() {
 func (t *TUIBackend) allocateBuffers() {
 	t.frontBuffer = make([][]Cell, t.rows)
 	t.backBuffer = make([][]Cell, t.rows)
+	t.dmgMin = make([]int, t.rows)
+	t.dmgMax = make([]int, t.rows)
+	t.cellSeq = make([][]uint32, t.rows)
+	for y := range t.cellSeq {
+		t.cellSeq[y] = make([]uint32, t.cols)
+	}
 	t.frontLineAttr = make([]byte, t.rows)
 
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
@@ -468,9 +682,13 @@ func (t *TUIBackend) BeginFrame() {
 
 	// Clear back buffer
 	defaultCell := Cell{Char: ' ', Style: style.DefaultStyle()}
+	t.paintSeq = 0
+	// A request lasts one frame: whoever still needs motion asks again.
+	t.motionWanted = false
 	for y := 0; y < t.rows; y++ {
 		for x := 0; x < t.cols; x++ {
 			t.backBuffer[y][x] = defaultCell
+			t.cellSeq[y][x] = 0
 		}
 	}
 
@@ -519,6 +737,10 @@ func (t *TUIBackend) EndFrame() {
 	termX, termY := -1, -1 // where the terminal cursor sits (unknown)
 	penStyle := ""         // SGR last emitted ("" = unknown, always emit)
 
+	for y := range t.dmgMin {
+		t.dmgMin[y], t.dmgMax[y] = -1, -1
+	}
+
 	for y := 0; y < t.rows; y++ {
 		lineCleared := false
 
@@ -532,6 +754,7 @@ func (t *TUIBackend) EndFrame() {
 			sb.WriteString(fmt.Sprintf("\033[%d;1H\033#5\033[0m\033[2K", y+1))
 			t.frontLineAttr[y] = 0
 			lineCleared = true
+			t.markDamage(y, 0, t.cols-1)
 			termY, termX = y, 0
 			penStyle = "" // the [0m reset invalidated the tracked pen
 		}
@@ -551,6 +774,7 @@ func (t *TUIBackend) EndFrame() {
 				}
 			}
 			if changed {
+				t.markDamage(y, 0, t.cols-1)
 				sb.WriteString(fmt.Sprintf("\033[%d;1H\033#%c\033[0m\033[2K", y+1, mode))
 				penStyle = ""
 				for x := 0; x < t.cols; x++ {
@@ -626,6 +850,7 @@ func (t *TUIBackend) EndFrame() {
 				continue
 			}
 
+			t.markDamage(y, x, x+w-1)
 			if termY != y || termX != x {
 				sb.WriteString(fmt.Sprintf("\033[%d;%dH", y+1, x+1))
 				termY, termX = y, x
@@ -691,6 +916,13 @@ func (t *TUIBackend) EndFrame() {
 	}
 
 	t.write(out.String())
+
+	// Pictures go last: the text diff addresses cells all over the screen,
+	// and anything emitted before it would be painted over by text written
+	// afterwards. This is also the right order to read - the image sits on
+	// the row the text layer already made room for.
+	t.flushImagesLocked()
+	t.applyMotionTrackingLocked()
 }
 
 // Clear fills the entire surface with a style.
@@ -742,6 +974,16 @@ func (t *TUIBackend) setCell(col, row int, ch rune, s style.CellStyle) {
 		return
 	}
 	t.backBuffer[row][col] = Cell{Char: ch, Style: s}
+	t.touchCell(col, row)
+}
+
+// touchCell stamps a cell with the current paint order. Called wherever the
+// back buffer is written, so "who is on top" is answerable after the fact.
+func (t *TUIBackend) touchCell(col, row int) {
+	t.paintSeq++
+	if row >= 0 && row < len(t.cellSeq) && col >= 0 && col < len(t.cellSeq[row]) {
+		t.cellSeq[row][col] = t.paintSeq
+	}
 }
 
 // DrawCell draws a single character at the given position.
@@ -960,6 +1202,7 @@ func (t *TUIBackend) setCellDWL(col, row int, c Cell) {
 		return
 	}
 	t.backBuffer[row][col] = c
+	t.touchCell(col, row)
 }
 
 // isAlphanumeric returns true if the character is a letter or digit.
@@ -1340,6 +1583,40 @@ func (t *TUIBackend) deliverPaste(text string) {
 	if text == "" {
 		return
 	}
+	// A paste arriving with the take-back armed is a palette COMMITTING, and it
+	// is raised as the commit it is rather than as the paste it was framed as.
+	//
+	// Ghostty delivers a press-and-hold palette's result as bracketed paste
+	// when it is chosen by number or by click; the same gesture dismissed by
+	// TYPING comes through as a key event carrying the text. The wire says the
+	// same thing both ways and only the framing differs, so the framing is
+	// where it should be corrected — a trinket that can hold a composition
+	// should not have to know that one terminal wraps it in a paste.
+	//
+	// Not left as a paste, because the two are not interchangeable at the far
+	// end: a composition's commit replaces what the composition covered, and a
+	// paste is an insert that knows nothing about it — the letter under the
+	// palette would be left standing with the accent after it.
+	//
+	// Nothing but a withheld repeat opens a composition here, so an ordinary
+	// paste cannot be caught by it: it takes a text key held past the
+	// auto-repeat threshold with its repeats kept back. Everything else is
+	// delivered as what it is.
+	if t.holdArm != "" {
+		t.spendHold()
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      commit  text=%q (framed as a paste)", text)
+		}
+		select {
+		case t.eventQueue <- core.TextCommitEvent{Text: text}:
+		case <-t.stopChan:
+		}
+		return
+	}
+
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      paste   text=%q", text)
+	}
 	select {
 	case t.eventQueue <- core.PasteEvent{Text: text}:
 	case <-t.stopChan:
@@ -1372,8 +1649,47 @@ func (t *TUIBackend) handleKey(key string) {
 	// Outer-terminal replies to our pixel-mouse probe (see Init). These are
 	// backend business, not app input, so consume them here — otherwise they
 	// would fall through and be misread as bogus keystrokes.
+	// Text the terminal received with no key behind it (the "kitty" protocol's
+	// keycode 0, direct-key-handler's keyboard.TextPrefix). An input method
+	// committing a composition is what sends it: the terminal owns the
+	// candidate list, so all that reaches this process is the text chosen.
+	//
+	// Raised as the COMMIT it is, which is the same event the graphical host
+	// raises for its own compositions — so a trinket handles both with one
+	// piece of code. Nothing is standing over anything here; the protocol has
+	// no way to report a composition in flight, so it lands as an insert.
+	//
+	// Never as a keystroke. A bare name in this stream means a key was pressed,
+	// and the text derivation below reads ONE rune from a name, so a commit
+	// spelled as a key would be a keystroke whose text is silently empty
+	// whenever it ran to more than one character - which is most of them.
+	if text, ok := strings.CutPrefix(key, "Text:"); ok {
+		if text != "" {
+			// A commit is what a composition is FOR, so it spends the one a
+			// palette opened: the region it covered — the letter underneath —
+			// is what this text stands in for, and the selector keys held back
+			// for the palette go with it.
+			t.spendHold()
+			if core.KeyTracing() {
+				core.KeyTracef("1 tui      commit  text=%q", text)
+			}
+			select {
+			case t.eventQueue <- core.TextCommitEvent{Text: text}:
+			default:
+			}
+		}
+		return
+	}
 	if strings.HasPrefix(key, "DECRPM:") {
 		t.handleDECRPM(key)
+		return
+	}
+	if strings.HasPrefix(key, "APC:") {
+		t.handleAPC(key)
+		return
+	}
+	if strings.HasPrefix(key, "DA1:") {
+		t.handleDA1(key)
 		return
 	}
 	if strings.HasPrefix(key, "WinOp:") {
@@ -1394,36 +1710,152 @@ func (t *TUIBackend) handleKey(key string) {
 			t.pendingMouseY = y
 			t.mu.Unlock()
 		}
-		return // Position events don't generate UI events
+		// The pointer is somewhere it was not, which is a move — the only kind
+		// there is with no button held. An action arriving right behind this
+		// one resolves against the same position, so a click reads as a move to
+		// the spot and then the press, which is what the pointer did.
+		t.handleMouseAction("MouseMove")
+		return
 	}
 
 	// Check for mouse action events — which may arrive MODIFIER-PREFIXED
-	// ("S-MouseRightPress" from a terminal that forwards shifted clicks, as
+	// ("S-MouseRight" from a terminal that forwards shifted clicks, as
 	// iTerm2 does), so the mouse-ness test looks past the prefixes.
 	if _, name := core.ParseKeyModifiers(key); strings.HasPrefix(name, "Mouse") {
 		t.handleMouseAction(key)
 		return
 	}
 
-	// Parse modifiers while keeping the full key string
-	// Key names follow direct-key-handler convention:
-	// - Control+letter: "^A", "^X" etc.
-	// - Special keys: "Left", "Right", "Up", "Down", "Enter", "Tab", "Escape", etc.
-	// - Function keys: "F1", "F2", ... "F12"
-	// - Alt combinations: "M-" prefix
-	// - Shift combinations: "S-" prefix
-	mods, keyName := core.ParseKeyModifiers(key)
+	// A key coming back UP. The outer terminal sends these only because Init
+	// asks for event reporting (the "2" in CSI > 3 u); before that they never
+	// arrived, and this backend produced no KeyReleaseEvent at all, so a hosted
+	// child that wanted them could not be given any.
+	//
+	// The suffix comes off here so Key holds the bare name, matching what the
+	// SDL backend puts in the same field. Whoever forwards to a child puts the
+	// marker back — see the PurfecTerm trinket.
+	//
+	// A repeat is deliberately left as a press: it IS another press, every
+	// consumer already treats it as one, and the distinction only matters to a
+	// child that negotiated event reporting for itself.
+	if base, isRelease := strings.CutSuffix(key, ":Release"); isRelease {
+		// The hold is over, so the next one asks the palette question again.
+		// Left standing, a second hold of the SAME key found its wait already
+		// spent and repeated at once — so the palette could be reached once per
+		// key per session and never again.
+		if t.holdKey == base {
+			t.holdKey = ""
+		}
+		// A text key letting go while a take-back stands, and it is not the key
+		// the take-back BELONGS to, is somebody typing rather than a palette
+		// producing anything. That is what bounds the count: every capture has
+		// the commit arriving before the key that chose it comes up, so a
+		// release reaching here first means no commit is coming.
+		//
+		// The armed key's own release is exempt, and has to be. Letting go is
+		// how the palette gets used — in every capture the held key comes up
+		// before the arrows that walk the palette, let alone the choice.
+		if t.holdArm != "" && base != t.holdArm && typesText(base) {
+			t.endHold()
+		}
+		mods, _ := core.ParseKeyModifiers(base)
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      release key=%q mods=%v", base, mods)
+		}
+		select {
+		case t.eventQueue <- core.KeyReleaseEvent{Key: base, Modifiers: mods}:
+		default:
+		}
+		return
+	}
+	// A REPEAT is a press, and it is also a repeat. The marker comes off the
+	// name — every consumer reads Key as a plain key, and one carrying a suffix
+	// would match nothing — but it is recorded on the event rather than thrown
+	// away, so a hosted guest that can read the distinction gets to.
+	key, repeated := strings.CutSuffix(key, ":Repeat")
 
-	// Determine text content for printable characters
-	var text string
-	if len(keyName) == 1 && keyName[0] >= 32 && keyName[0] < 127 {
-		text = keyName
+	// A held TEXT key's repeats wait, so a press-and-hold accent palette can be
+	// reached. macOS opens the palette on the hold and the terminal goes on
+	// repeating from behind it, so the letter types itself over and over while
+	// the palette is up — and there is no moment early enough to let go in.
+	// Without the wait the palette is not untidy, it is unusable.
+	//
+	// A TEXT key only. An arrow, a page key, a function key repeats because
+	// somebody is navigating, and holding one is the ordinary way to do it; no
+	// palette opens over those and delaying them would only make the host feel
+	// stuck. That asymmetry is the whole of the rule.
+	//
+	// Timed, because nothing else can say WHEN the hold stops meaning "open the
+	// palette" and starts meaning "type this many of them". The graphical host
+	// infers the takeover from a held key whose text never arrives (see the SDL
+	// platform's flushPendingPress, which swallows exactly these repeats); a
+	// terminal reports no composition at all, so how long the key has been down
+	// is the only evidence there is. Past the wait the repeats flow: by then
+	// the hold means what a hold usually means.
+	//
+	// The hold is started by the PRESS and by nothing else, because a repeat is
+	// a repeat OF a key that is down. Only the held key's own repeats are
+	// withheld, and that is what separates the palette from its RESULT: the
+	// terminal marks the chosen character as an event type 2 as well — Return
+	// confirming ö arrives as "CSI 13;1:2;246u", a repeat by the marker and a
+	// commit by every other measure. Keyed on the marker alone this withheld
+	// the commit and left the original letter standing, which is exactly what
+	// the palette looked like when it appeared to do nothing at all.
+	if !repeated {
+		if t.holdWait <= 0 || !typesText(key) {
+			// A key that types nothing ends the take-back — UNLESS it is one
+			// the palette itself uses. Escape dismissing it is the case this
+			// exists for: the letter it opened over is staying and nothing is
+			// coming to replace it.
+			//
+			// Walking the palette is not that. Some input methods want Tab
+			// before the arrows reach them and some do not, so whether the
+			// arrow press arrives here or is eaten by the palette varies by
+			// method and by terminal; treating one as "the user has moved on"
+			// meant the take-back survived on the methods that swallow it and
+			// died on the ones that do not, for the same gesture.
+			if !navigatesPalette(key) {
+				t.endHold()
+			}
+		} else {
+			// A text key starts a hold of its own, since any of them might be
+			// the next palette.
+			//
+			// With a composition already standing it is HELD instead of typed.
+			// A character struck while a palette is open belongs to the palette
+			// — it is the selector, which chooses a candidate rather than
+			// putting a "4" in the document — and the commit that follows is
+			// the whole of what the gesture typed. Held rather than dropped,
+			// because the palette might not be there: nothing let it through if
+			// a commit comes, and everything does if one never does.
+			t.holdKey, t.holdSince = key, time.Now()
+			if t.holdArm != "" {
+				t.holdPending = append(t.holdPending, t.pressEvent(key, false))
+				return
+			}
+		}
+	} else if key == t.holdKey && time.Since(t.holdSince) < t.holdWait {
+		// Withheld — and a withheld repeat is the only evidence a terminal
+		// gives that a palette opened, so it is what opens the composition.
+		if t.holdArm == "" {
+			t.holdArm = key
+			t.openHoldComposition()
+		}
+		if core.KeyTracing() {
+			core.KeyTracef("1 tui      hold    key=%q withheld", key)
+		}
+		return
+	} else if key == t.holdKey {
+		// Past the wait, and the repeats flow. A hold that has got this far
+		// means what a hold usually means — type another one — so the letter it
+		// started with is not a palette's base character to be replaced.
+		t.endHold()
 	}
 
-	event := core.KeyPressEvent{
-		Key:       key,  // Full key string including modifier prefixes
-		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
-		Text:      text,
+	event := t.pressEvent(key, repeated)
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      press   key=%q mods=%v repeat=%v",
+			key, event.Modifiers, repeated)
 	}
 
 	select {
@@ -1433,14 +1865,178 @@ func (t *TUIBackend) handleKey(key string) {
 	}
 }
 
+// pressEvent builds the event for a key going down, without dispatching it: a
+// press held back for a palette has to be built where it arrives and delivered
+// later unchanged.
+//
+// Key names follow direct-key-handler convention: "^A" for Control+letter, a
+// name for a special key ("Left", "Return", "Escape"), "F1" through "F12", and
+// the "M-" and "S-" prefixes for the modifiers.
+func (t *TUIBackend) pressEvent(key string, repeated bool) core.KeyPressEvent {
+	mods, keyName := core.ParseKeyModifiers(key)
+
+	// Determine text content for printable characters.
+	//
+	// One RUNE, not one byte. Under ReportAllKeys the terminal sends no text at
+	// all and a key's name is the only place its character can come from — and
+	// a name is UTF-8, so a byte-length test silently dropped the text of every
+	// key outside ASCII the moment that flag went on.
+	var text string
+	if r, size := utf8.DecodeRuneInString(keyName); size == len(keyName) &&
+		r != utf8.RuneError && unicode.IsPrint(r) {
+		text = keyName
+	}
+
+	return core.KeyPressEvent{
+		Key:       key,  // Full key string including modifier prefixes
+		Modifiers: mods, // Also provide parsed modifiers for trinket convenience
+		Text:      text,
+		Repeat:    repeated,
+	}
+}
+
+// openHoldComposition tells the app a palette has opened over the letter the
+// held key typed, as a composition standing on it.
+//
+// This is the same shape the graphical host is handed for the same gesture, and
+// it is what Covers exists for: macOS commits the held letter the moment the key
+// goes down and only THEN opens over it, so the letter is in the document and
+// has to be hidden while its alternatives are shown, then replaced by whichever
+// is chosen. A terminal reports no composition of its own, but the gesture is
+// the same gesture, and the one moment it can be recognised is a withheld
+// repeat.
+//
+// Said as a REGION rather than as an erase counted back from the caret, because
+// a region is remembered and a count is not. The commit replaces whatever its
+// composition covered whenever it arrives; counting back means the answer
+// depends on what else reached the document first, and mew's own editor already
+// says so — "counting back from the caret gets it wrong the moment anything is
+// typed while the palette is up". Two producers feed that editor's main loop
+// and Go picks between them at random, so "the moment anything is typed" was
+// about half the time.
+func (t *TUIBackend) openHoldComposition() {
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      hold    composition over the letter it opened on")
+	}
+	// The composition HOLDS the letter as well as covering it, which is what
+	// macOS shows: the character stays visible, marked, while its alternatives
+	// are offered over it. An empty composition is not an open one — empty text
+	// with an extent is a composition ENDING and with none it is a cancel (see
+	// the viewport's SetPreedit), so one opened empty did nothing at all and
+	// the commit that followed had no region to replace.
+	select {
+	//
+	// Start past the end and no clause: the caret sits after the letter, where
+	// the next keystroke would extend, and no part of it is singled out as the
+	// segment being converted — a palette offers alternatives for the whole of
+	// what it holds, which is one character.
+	case t.eventQueue <- core.TextEditingEvent{
+		Text:   t.holdArm,
+		Start:  len([]rune(t.holdArm)),
+		Covers: 1,
+	}:
+	default:
+	}
+}
+
+// endHold gives up the composition: whatever the palette opened over is
+// staying, and everything held back for it was ordinary typing after all.
+//
+// The pending keys go out in the order they arrived, ahead of whatever is being
+// dispatched now — they were struck first, and the only reason they waited is
+// that a palette might have claimed them.
+func (t *TUIBackend) endHold() {
+	if t.holdArm == "" {
+		return
+	}
+	pending := t.holdPending
+	t.holdArm, t.holdPending = "", nil
+	if core.KeyTracing() {
+		core.KeyTracef("1 tui      hold    ended, releasing %d held key(s)", len(pending))
+	}
+	// The composition closes over nothing, which puts the letter back on its
+	// own. An empty one that covers nothing is how a composition ends.
+	select {
+	case t.eventQueue <- core.TextEditingEvent{}:
+	default:
+	}
+	for _, ev := range pending {
+		select {
+		case t.eventQueue <- ev:
+		default:
+		}
+	}
+}
+
+// spendHold ends the composition because its COMMIT has arrived. What was held
+// back is dropped: a selector chooses a candidate, and the commit is the whole
+// of what the gesture typed.
+func (t *TUIBackend) spendHold() {
+	if t.holdArm == "" {
+		return
+	}
+	if core.KeyTracing() && len(t.holdPending) > 0 {
+		core.KeyTracef("1 tui      hold    commit takes %d selector key(s) with it",
+			len(t.holdPending))
+	}
+	t.holdArm, t.holdPending = "", nil
+}
+
+// navigatesPalette reports whether a key is one an input method's own palette
+// consumes — the caps you walk and confirm a candidate list with.
+//
+// They are tolerated rather than treated as the user moving on, because whether
+// the press even reaches us varies: some methods want Tab before the arrows go
+// to them, and a palette that has taken the keyboard swallows the press
+// entirely, so the same gesture arrives as a press on one method and as nothing
+// but a release on another.
+//
+// Escape is deliberately absent. It is how a palette is DISMISSED, and after it
+// the letter underneath is the user's to keep.
+//
+// Bare names only. A chord is somebody reaching for a command, whatever key it
+// is built on.
+func navigatesPalette(key string) bool {
+	switch key {
+	case "Up", "Down", "Left", "Right", "Tab", "Return",
+		"PageUp", "PageDown", "Home", "End":
+		return true
+	}
+	return false
+}
+
+// typesText reports whether a key name is one that TYPES — a single printable
+// rune, which is what a text key is called in this vocabulary.
+//
+// Deliberately narrow. A chord ("^A", "M-x") is not a text key, a named key
+// ("Down", "F1", "Return") is not one either, and neither is a modifier
+// reporting itself. Only the keys an accent palette can open over.
+func typesText(key string) bool {
+	r, size := utf8.DecodeRuneInString(key)
+	return size == len(key) && r != utf8.RuneError && unicode.IsPrint(r)
+}
+
 // handleMouseAction processes mouse action events from direct-key-handler.
 func (t *TUIBackend) handleMouseAction(key string) {
+	// One snapshot, under one lock: the stashed position AND the frame it is
+	// resolved against. The probe replies that set that frame land on the
+	// terminal's read path while events are being converted here, and its
+	// three fields only mean anything together — pixelMouse says to divide by
+	// a cell size that outerCell{W,H} supplies, so reading them at separate
+	// moments could pair a mode from after the flip with a size from before
+	// it. Taking them apart was also a data race outright, benign-looking or
+	// not. (t.metrics is written once at construction and never after.)
 	t.mu.Lock()
 	x := t.pendingMouseX
 	y := t.pendingMouseY
+	frame := outerMouseFrame{
+		pixelMouse: t.pixelMouse,
+		cellW:      t.outerCellW,
+		cellH:      t.outerCellH,
+	}
 	t.mu.Unlock()
 
-	// Strip modifier prefixes ("S-MouseRightPress") into event modifiers.
+	// Strip modifier prefixes ("S-MouseRight") into event modifiers.
 	// Terminals VARY in whether they forward modified clicks to the app —
 	// iTerm2 sends shift+clicks through (shifted), stock Terminal strips
 	// the shift — and a modified mouse event must reach the trinkets with
@@ -1449,45 +2045,63 @@ func (t *TUIBackend) handleMouseAction(key string) {
 
 	// Convert the raw 1-based coordinate to units (cell- or pixel-based
 	// depending on whether ?1016 is active — see outerToUnitsX/Y).
-	unitX := t.outerToUnitsX(x)
-	unitY := t.outerToUnitsY(y)
+	unitX := t.outerToUnitsX(x, frame)
+	unitY := t.outerToUnitsY(y, frame)
 
-	// For drag events, position is embedded: MouseLeftDrag@x,y (also raw
+	// For drag events, position is embedded: MouseDragLeft@x,y (also raw
 	// 1-based, same conversion).
+	//
+	// Which of the two sources a gesture used is the thing the trace below
+	// exists to record: the stash is shared state a press depends on and a
+	// motion never touches, so it is the one place the two can diverge.
+	src := "stash"
 	if strings.Contains(key, "@") {
 		var dragX, dragY int
 		parts := strings.SplitN(key, "@", 2)
 		if len(parts) == 2 {
 			if _, err := fmt.Sscanf(parts[1], "%d,%d", &dragX, &dragY); err == nil {
-				unitX = t.outerToUnitsX(dragX)
-				unitY = t.outerToUnitsY(dragY)
+				x, y = dragX, dragY
+				src = "embedded"
+				unitX = t.outerToUnitsX(dragX, frame)
+				unitY = t.outerToUnitsY(dragY, frame)
 			}
 		}
 		key = parts[0] // Strip position from key for matching
 	}
 
+	if core.MouseTracing() {
+		core.MouseTracef("outer  %-18s raw=(%d,%d) via=%-8s pixelMouse=%v outerCell=%dx%d -> units=(%v,%v)",
+			key, x, y, src, t.pixelMouse, t.outerCellW, t.outerCellH, unitX, unitY)
+	}
+
 	var event core.Event
 
 	switch key {
-	case "MouseLeftPress":
+	case "MouseLeft":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddlePress":
+	case "MouseMiddle":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightPress":
+	case "MouseRight":
 		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MousePress":
-		event = core.MousePressEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftRelease":
+	case "MouseLeft:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
-	case "MouseMiddleRelease":
+	case "MouseMiddle:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.MiddleButton, Modifiers: mods}
-	case "MouseRightRelease":
+	case "MouseRight:Release":
 		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.RightButton, Modifiers: mods}
-	case "MouseRelease":
-		event = core.MouseReleaseEvent{X: unitX, Y: unitY, Button: core.LeftButton, Modifiers: mods}
 
-	case "MouseLeftDrag", "MouseMiddleDrag", "MouseRightDrag", "MouseDrag":
+	// Motion, with whichever button is held. direct-key-handler names the
+	// button in the event; motion with NO button is the bare position report
+	// this backend turns into "MouseMove" above, so that one carries no button
+	// rather than a default.
+	case "MouseDragLeft":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.LeftButton, Modifiers: mods}
+	case "MouseDragMiddle":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.MiddleButton, Modifiers: mods}
+	case "MouseDragRight":
+		event = core.MouseMoveEvent{X: unitX, Y: unitY, Buttons: core.RightButton, Modifiers: mods}
+	case "MouseMove":
 		event = core.MouseMoveEvent{X: unitX, Y: unitY, Modifiers: mods}
 
 	case "MouseScrollUp":
@@ -1510,34 +2124,42 @@ func (t *TUIBackend) handleMouseAction(key string) {
 	}
 }
 
+// outerMouseFrame is the state a raw mouse coordinate is resolved against,
+// taken as one snapshot under the lock (see handleMouseAction). The three
+// fields are only meaningful together, so they travel together.
+type outerMouseFrame struct {
+	pixelMouse   bool // ?1016 is on, so the raw numbers are outer pixels
+	cellW, cellH int  // the outer terminal's cell size, in those pixels
+}
+
 // outerToUnitsX converts a raw 1-based mouse X coordinate to units. In the
 // default SGR mode the number is a 1-based cell column, so it maps to that
 // cell's left edge. Under ?1016 it is a 1-based OUTER PIXEL: the integer cell
 // index divides out, and the sub-cell remainder scales into a fraction of this
 // backend's cell width — the sub-cell position mew's nearest-edge caret uses.
-func (t *TUIBackend) outerToUnitsX(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellW > 0 {
+func (t *TUIBackend) outerToUnitsX(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellW > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellW
-		frac := px % t.outerCellW
-		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(t.outerCellW)
+		cell := px / f.cellW
+		frac := px % f.cellW
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(f.cellW)
 	}
 	return t.metrics.CellToUnitsX(raw - 1)
 }
 
 // outerToUnitsY is the vertical twin of outerToUnitsX.
-func (t *TUIBackend) outerToUnitsY(raw int) core.Unit {
-	if t.pixelMouse && t.outerCellH > 0 {
+func (t *TUIBackend) outerToUnitsY(raw int, f outerMouseFrame) core.Unit {
+	if f.pixelMouse && f.cellH > 0 {
 		px := raw - 1
 		if px < 0 {
 			px = 0
 		}
-		cell := px / t.outerCellH
-		frac := px % t.outerCellH
-		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(t.outerCellH)
+		cell := px / f.cellH
+		frac := px % f.cellH
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(f.cellH)
 	}
 	return t.metrics.CellToUnitsY(raw - 1)
 }
@@ -1603,9 +2225,9 @@ func (t *TUIBackend) maybeEnablePixelMouse() {
 // Mode changes have to reach somewhere they take effect, and they have to be
 // UNDONE through the same channel. Under `app > file` the enable would
 // otherwise reach the terminal (via /dev/tty) while the disable went into the
-// file, leaving raw/alt-screen/kitty-keys state set with nothing still running
-// to clear it. Content writes keep using write() and the configured output,
-// which is what redirection is for.
+// file, leaving raw/alt-screen/"kitty"-keyboard state set with nothing still
+// running to clear it. Content writes keep using write() and the configured
+// output, which is what redirection is for.
 func (t *TUIBackend) writeTTY(s string) {
 	if t.ttyOut != nil {
 		io.WriteString(t.ttyOut, s)
@@ -1646,4 +2268,84 @@ func detectColorDepth() int {
 
 	// Default to 16 colors
 	return 16
+}
+
+// markDamage records that the text diff rewrote cells [c0,c1] of row y.
+func (t *TUIBackend) markDamage(y, c0, c1 int) {
+	if y < 0 || y >= len(t.dmgMin) {
+		return
+	}
+	if c0 < 0 {
+		c0 = 0
+	}
+	if c1 > t.cols-1 {
+		c1 = t.cols - 1
+	}
+	if t.dmgMin[y] < 0 || c0 < t.dmgMin[y] {
+		t.dmgMin[y] = c0
+	}
+	if c1 > t.dmgMax[y] {
+		t.dmgMax[y] = c1
+	}
+}
+
+// damagedRectLocked returns the bounding box of the cells the frame's text diff
+// rewrote WITHIN the rectangle [c0,c1] x [r0,r1], and whether any were.
+func (t *TUIBackend) damagedRectLocked(c0, r0, c1, r1 int) (dc0, dr0, dc1, dr1 int, any bool) {
+	dc0, dr0, dc1, dr1 = c1, r1, c0, r0
+	for y := r0; y <= r1; y++ {
+		if y < 0 || y >= len(t.dmgMin) || t.dmgMin[y] < 0 {
+			continue
+		}
+		lo, hi := t.dmgMin[y], t.dmgMax[y]
+		if lo > c1 || hi < c0 {
+			continue // this row's damage misses the rectangle entirely
+		}
+		if lo < c0 {
+			lo = c0
+		}
+		if hi > c1 {
+			hi = c1
+		}
+		if !any {
+			dr0 = y
+		}
+		dr1 = y
+		if lo < dc0 {
+			dc0 = lo
+		}
+		if hi > dc1 {
+			dc1 = hi
+		}
+		any = true
+	}
+	return dc0, dr0, dc1, dr1, any
+}
+
+// RequestMotionTracking implements core.MotionTracker: something painting this
+// frame needs to follow the pointer with no button held.
+func (t *TUIBackend) RequestMotionTracking() {
+	t.mu.Lock()
+	t.motionWanted = true
+	t.mu.Unlock()
+}
+
+// applyMotionTrackingLocked turns ?1003 on or off to match this frame's
+// requests, and only when it actually changes.
+//
+// The mode is the difference between a hosted browser seeing hover and not
+// seeing it at all: without ?1003 the outer terminal reports motion only while
+// a button is held, so those events never reach us to forward. It is off by
+// default because it is not free — every pixel the pointer crosses becomes a
+// report on the wire — so it follows demand rather than being pinned on.
+func (t *TUIBackend) applyMotionTrackingLocked() {
+	if t.motionWanted == t.motionOn {
+		return
+	}
+	t.motionOn = t.motionWanted
+	if t.motionOn {
+		t.writeTTY("\033[?1003h")
+	} else {
+		t.writeTTY("\033[?1003l")
+	}
 }

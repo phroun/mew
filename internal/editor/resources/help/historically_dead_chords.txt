@@ -1,0 +1,43 @@
+=== Historically Dead Chords ===
+
+The following keys don't support Control at all, and when combined
+with Control or Control+Shift, are the same as if they were simply
+pressed unmodified:
+
+  - Equal Sign "="
+  - Semicolon ";"
+  - Apostrophe "'"
+  - Comma ","
+  - Period "."
+  - Backspace/Delete
+  - Enter/Return
+  - Escape (But Ctrl+Shift+Esc is usually reserved by the Operating System.)
+
+The following Control chords are equivalent to other chords or to plain keys:
+
+  - ^2 = Ctrl+Spacebar
+  - ^3 = ^[ = Escape
+  - ^4 = ^\
+  - ^5 = ^]
+  - ^7 = ^/ = ^- (Ctrl+Minus) = ^_ (Ctrl+Shift+Minus)
+  - ^H = ^8 = ^? (Ctrl+Shift+Slash) = Backspace/Delete
+  - ^I = Tab
+  - ^M = Enter/Return
+
+Historically, keyboards couldn't tell apart certain Control+Shift chords from
+simple Control chords, so in practice, the following are interchangeable with
+other chords or keys:
+
+  - Ctrl+Shift+2 = ^2 = ^@ = Ctrl+Spacebar
+  - Ctrl+Shift+6 = ^6 = ^^
+  - Ctrl+Shift+Minus = Ctrl+Minus = ^7
+  - Ctrl+Shift+Slash = ^8 = ^H = Backspace/Delete
+  - Ctrl+Shift+1 = 1
+  - Ctrl+Shift+3 = 3
+  - Ctrl+Shift+4 = 4
+  - Ctrl+Shift+5 = 5
+  - Ctrl+Shift+7 = 7
+  - Ctrl+Shift+8 = 8
+  - Ctrl+Shift+9 = 9
+  - Ctrl+Shift+0 = 0
+

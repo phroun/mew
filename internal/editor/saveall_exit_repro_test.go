@@ -47,7 +47,7 @@ func TestSaveAllExitCancelMustNotExit(t *testing.T) {
 		t.Fatalf("expected a Save-as prompt for the unnamed buffer; got %+v", fw)
 	}
 
-	e.dispatchKey("^C") // real ^C == nav_cancel|cancel|buffer_close
+	e.dispatchKey("^C") // real ^C == nav_cancel|cancel|viewport_close
 
 	if !e.Running {
 		t.Fatal("cancelling the Save-as exited the editor — work lost")

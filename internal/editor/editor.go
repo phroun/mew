@@ -21,12 +21,12 @@ import (
 	"github.com/phroun/kittytk/hostterm"
 	"github.com/phroun/pawscript"
 
+	"github.com/phroun/key-sequence-processor/keyseq"
 	"github.com/phroun/mew/internal/bidi"
 	"github.com/phroun/mew/internal/buffer"
 	"github.com/phroun/mew/internal/config"
 	"github.com/phroun/mew/internal/input"
 	"github.com/phroun/mew/internal/jsf"
-	"github.com/phroun/mew/internal/keys"
 	"github.com/phroun/mew/internal/plugins"
 	"github.com/phroun/mew/internal/render"
 	"github.com/phroun/mew/internal/textwidth"
@@ -113,7 +113,7 @@ type Editor struct {
 	ViewportManager *viewport.Manager
 	LayoutManager   *viewport.LayoutManager
 	Renderer        *render.ScreenRenderer
-	KeyProcessor    *keys.SequenceProcessor
+	KeyProcessor    *keyseq.Processor
 	KeyHandler      input.Source
 	PawScript       *pawscript.PawScript
 	PromptMgr       *PromptManager
@@ -131,12 +131,38 @@ type Editor struct {
 	// ensureTiler and applyTilerGeometry.
 	tiler *ifitfits.Viewport
 
+	// tileMode is the armed tiling operator that the directional dispatch
+	// commands (viewport_up/down/left/right) carry out: "go" (default, and the
+	// empty value — a focus-moving directional nav), "swap", "merge", "split", or
+	// "new".
+	// It is set persistently by `viewport_<op> mode` (a toggle: re-selecting the
+	// active mode reverts to "go"). tilePending is a one-shot operator armed by
+	// `viewport_<op> pending` that overrides tileMode for the very next directional
+	// press and then clears, restoring tileMode.
+	tileMode    string
+	tilePending string
+
+	// adoptFocusInPlace makes tilerFollowFocus reseat the FOCUSED tile onto a
+	// newly-focused untiled viewport instead of splitting a new tile for it. Set
+	// only for the brief span of a cycle to an existing viewport (buffer_next/
+	// prior, viewport_next/prior), so cycling onto an untiled background buffer
+	// shows it in the current pane rather than growing the tiling — while the
+	// commands that CREATE a viewport (buffer_duplicate, viewport_clone, an eval
+	// or cross-root wiki page, startup) keep splitting a fresh tile as before.
+	adoptFocusInPlace bool
+
 	// mainTiles is the last frame's laid-out main-area tiles, retained for mouse
 	// hit-testing: geometry lives with the tile (a viewport can appear in several
 	// tiles, many-to-many), so a click is resolved against these per-tile frames
 	// rather than the viewport's own single-valued geometry. Written by
 	// performRender, read by viewportAt — both on the editor goroutine.
 	mainTiles []viewport.ViewportLayout
+
+	// stackTabCounters maps a viewport id to the "[i/n]" stack-tab counter
+	// applyTilerGeometry stamped into its top-left message last frame, so the
+	// next frame can clear a stale counter (a tab that was unstacked or is no
+	// longer the shown one) without disturbing a message set by anything else.
+	stackTabCounters map[string]string
 
 	// pageSizeSpec is the paging spec built from the three page options,
 	// rebuilt when any of them changes so page distance updates live.
@@ -310,6 +336,15 @@ type Editor struct {
 	// commands within one dispatch. Empty outside key dispatch (menu
 	// actions, scripts), where tinput_key without an argument declines.
 	dispatchingKey string
+	// repeatingKey names the arriving key when it came in as a REPEAT — a held
+	// key, marked ":Repeat" by a terminal reporting event types. The marker is
+	// stripped before the key processor sees it, because mew's keymap has no
+	// repeat token and a held arrow key has to go on moving the cursor; it is
+	// put back by tinput_key alone, so the child in a terminal pane learns the
+	// key was held rather than struck again. Empty for an ordinary press, and
+	// compared against dispatchingKey so a sequence unwind — which runs several
+	// keys' commands within one dispatch — marks only the key that repeated.
+	repeatingKey string
 
 	// Paste transaction state. A bracketed paste arrives as multiple chunks
 	// across several event-loop iterations; the whole paste is grouped into one
@@ -435,6 +470,11 @@ type Editor struct {
 	// initial push has happened.
 	readOnlySent   bool
 	readOnlyPushed bool
+	// unsavedSent/unsavedPushed: the last "is there modified work anywhere in
+	// this session" answer pushed through Config.UnsavedState (see
+	// notifyUnsavedState).
+	unsavedSent   bool
+	unsavedPushed bool
 
 	// Syntax highlighting (jsf grammars): the loader implements the search
 	// path and interns grammar instances; synCaches holds per-buffer line
@@ -594,6 +634,11 @@ type Config struct {
 
 	// MacOptionKeys: "auto" / "true" / "false" (see config.GeneralConfig).
 	MacOptionKeys string
+
+	// KeyChordText is the HOST's answer to what its keyboard typed for a
+	// chord, asked before mew's table (see mew.WithKeyChordText). nil on a
+	// host that cannot see the pairing.
+	KeyChordText func(chord string) (string, bool)
 
 	// FlipBidiForHost: "auto" (probe the terminal once, at first RTL content),
 	// "true", or "false" (see config.GeneralConfig.FlipBidiForHost).
@@ -755,6 +800,14 @@ type Config struct {
 	// affordances that mutate — its Edit-menu Cut, say. Called only on
 	// transitions, from the editor loop.
 	EditState func(readOnly bool)
+
+	// UnsavedState, when set, is told whether ANY buffer this session holds
+	// open is modified — the active ones and the work stacked behind a link
+	// follow alike — once at the first render and thereafter on transitions.
+	// A host asks this question of a window it is about to close: unsaved
+	// work is why a close must be refused and turned into a prompt rather
+	// than performed. Called from the render path.
+	UnsavedState func(unsaved bool)
 
 	// IdentityUser / IdentityHost / IdentityPID override the process identity
 	// mew stamps into native lock files and shows in the "being edited by"
@@ -1140,6 +1193,14 @@ func New(cfg Config) (*Editor, error) {
 	// tilerFollowFocus finds/reveals/creates the tile that holds it.
 	e.ViewportManager.SetMainFocusHook(e.tilerFollowFocus)
 
+	// The focus switcher (viewport_next / viewport_prior) cycles only viewports
+	// currently ON SCREEN: docked ones keep their own Visible flag, but a main
+	// viewport counts only while a tile shows it — so the switcher never lands on
+	// an untiled background buffer (buffer_next / buffer_prior still reach those).
+	e.ViewportManager.SetCycleVisibleFilter(func(w *viewport.Viewport) bool {
+		return w.Dock != viewport.DockNone || e.tiler == nil || e.viewportTiled(w.ID)
+	})
+
 	// Register configured fonts into the host font engine and apply the
 	// startup ui-term alias, before any painting resolves font names.
 	e.applyFontConfig()
@@ -1241,13 +1302,6 @@ func New(cfg Config) (*Editor, error) {
 		return w.Buffer != nil && e.visibleSessionFor(w) != nil
 	})
 
-	// Peek-indicator labels run through the shared TFC engine so codes like
-	// %SPU% resolve to the live peek-command bindings (and %keys#…% references
-	// resolve to live bindings too).
-	renderer.SetPeekLabelResolver(func(raw string) string {
-		return plugins.ExpandTFC(raw, e.peekBindingValues(), e.tfcKeyResolver("", ""))
-	})
-
 	// The shipped grammar pack resolves through the mew: tree's read-only
 	// system/embedded layers (no copy into ~/.mew), then load the configured
 	// grammar and give the renderer its per-line colorizer.
@@ -1264,7 +1318,9 @@ func New(cfg Config) (*Editor, error) {
 	e.registerCommands()
 
 	// Create key sequence processor with command executor
-	e.KeyProcessor = keys.NewSequenceProcessor(e.runBoundCommand)
+	e.KeyProcessor = keyseq.NewProcessor(e.runBoundCommand)
+	e.KeyProcessor.SetFallbackGroups(mewFallbackGroups)
+	e.KeyProcessor.SetDefaultHandler(e.defaultCommandForKey)
 
 	// Input source: a host-supplied event feed when one was given, else a
 	// keyboard handler parsing the (possibly virtual) terminal byte stream.
@@ -1303,7 +1359,7 @@ func New(cfg Config) (*Editor, error) {
 				return ""
 			}
 			return value
-		})
+		}, e.hostPaste)
 	}
 
 	// Set up key mappings from config
@@ -1347,36 +1403,19 @@ func (e *Editor) applyMacOptionKeys() {
 		kh.SetDecodeMacOSOption(decode)
 	}
 	e.KeyProcessor.SetMacOptionInsert(insert)
+
+	// What the HOST watched its own keyboard type outranks everything the
+	// processor would otherwise derive, and is installed whatever the switch
+	// says: the switch governs the TABLE, which is a guess about a keyboard
+	// nobody has looked at, and is no reason to withhold what was seen.
+	e.KeyProcessor.SetKeyChordText(e.Config.KeyChordText)
 }
 
 // renderModebar is the custom renderer for the modebar.
 func (e *Editor) renderModebar(w *viewport.Viewport, screenWidth int) string {
 	e.Modebar.SetActiveSequence(e.ActiveSequence)
 	e.Modebar.SetCompletions(e.activeCompletions)
-	e.Modebar.SetBindingValues(e.peekBindingValues())
 	return e.Modebar.RenderContent(w, screenWidth)
-}
-
-// peekBindingCommands maps the modebar engine's peek codes to the commands
-// whose live key binding they display.
-var peekBindingCommands = map[string]string{
-	"SPU": "stat_peek_up",
-	"SPD": "stat_peek_down",
-	"PPU": "prompt_peek_up",
-	"PPD": "prompt_peek_down",
-}
-
-// peekBindingValues resolves the peek %CODE%s (SPU/SPD/PPU/PPD) to the key
-// currently bound to each peek command, for the modebar substitution engine and
-// the peek-indicator labels. Mappings are editor-global today; the resolver
-// runs at render time, so if per-viewport keymaps are ever added the focused
-// viewport's map is the natural source.
-func (e *Editor) peekBindingValues() map[string]string {
-	vals := make(map[string]string, len(peekBindingCommands))
-	for code, cmd := range peekBindingCommands {
-		vals[code] = e.KeyForCommand(cmd)
-	}
-	return vals
 }
 
 // caretHidden reports whether the hardware caret should be withheld for a
@@ -1401,7 +1440,7 @@ func (e *Editor) caretHidden(w *viewport.Viewport) bool {
 }
 
 // KeyForCommand returns the key sequence bound to command, in the spelling a
-// user would press — capture/override level prefixes stripped, since the
+// user would press — (capture)/(override) level words stripped, since the
 // physical keys are the same at every level, and wildcard bindings skipped,
 // since "*" is not a key anyone can be told to press. When several keys map
 // to it the lexicographically-first is returned (stable); "" when the command
@@ -1412,7 +1451,7 @@ func (e *Editor) KeyForCommand(command string) string {
 		if cmd != command {
 			continue
 		}
-		key, ok := keys.DisplayKey(raw)
+		key, ok := keyseq.DisplayKey(raw)
 		if !ok {
 			continue
 		}
@@ -1437,6 +1476,41 @@ func (e *Editor) renderColumnRuler(w *viewport.Viewport, screenWidth int) string
 
 // tokenTimeout converts a timeout option value (seconds, 0 = never) to a
 // PawScript token timeout (a non-positive duration disables the timeout).
+// promptedResult runs a command whose outcome may only be known after the user
+// answers a prompt. An answer that comes back before run returns is the
+// command's result outright; anything slower suspends the calling PawScript
+// sequence on a token and resumes it with the answer, so a script chained onto
+// this command waits for the human instead of racing them.
+//
+// A token that has expired (PawScript force-cleans them after the promptTimeout
+// option) takes its suspended sequence with it, so a late answer resolves
+// nothing and says so rather than half-succeeding.
+func (e *Editor) promptedResult(ctx *pawscript.Context, run func(func(bool))) pawscript.Result {
+	var (
+		token   string
+		settled bool
+		result  bool
+		expired atomic.Bool
+	)
+	run(func(ok bool) {
+		if token == "" {
+			settled, result = true, ok
+			return
+		}
+		if expired.Load() {
+			e.ShowWarning("Prompt timed out")
+			return
+		}
+		ctx.ResumeToken(token, ok)
+	})
+	if settled {
+		return pawscript.BoolStatus(result)
+	}
+	token = e.PawScript.RequestToken(func(string) { expired.Store(true) }, "",
+		tokenTimeout(e.Config.PromptTimeout))
+	return pawscript.TokenResult(token)
+}
+
 func tokenTimeout(seconds int) time.Duration {
 	if seconds <= 0 {
 		return -1
@@ -1549,16 +1623,31 @@ func (e *Editor) registerCommands() {
 	ps.RegisterCommand("nav_start", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.navStart())
 	})
+	// When a tiling operator is armed as a one-shot (viewport_<op> pending), the
+	// four nav_* keys resolve that pending action in their direction instead of
+	// moving between links (a persistent mode does NOT hijack them — only pending).
 	ps.RegisterCommand("nav_down", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Down); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navVert(+1))
 	})
 	ps.RegisterCommand("nav_up", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Up); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navVert(-1))
 	})
 	ps.RegisterCommand("nav_right", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Right); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navHoriz(+1))
 	})
 	ps.RegisterCommand("nav_left", func(ctx *pawscript.Context) pawscript.Result {
+		if handled, ok := e.tilePendingNav(ctx, ifitfits.Left); handled {
+			return pawscript.BoolStatus(ok)
+		}
 		return pawscript.BoolStatus(e.navHoriz(-1))
 	})
 
@@ -1613,9 +1702,9 @@ func (e *Editor) registerCommands() {
 			return pawscript.BoolStatus(true)
 		}
 		// No prompt to dismiss. A find is not something to cancel: it has no
-		// prompt once its first search has begun, ^L just goes to the next
-		// match, and JOE has no such notion — so ^C falls through to whatever
-		// else it is bound to. The single exception is the search slow enough to
+		// prompt once its first search has begun and ^L just goes to the next
+		// match, so ^C falls through to whatever else it is bound to. The
+		// single exception is the search slow enough to
 		// have put a message on screen naming this very key; that message is a
 		// promise, and cancelFind is where it is kept.
 		if e.cancelFind() {
@@ -2221,6 +2310,144 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.bufferInsertArgs(ctx.Args))
 	})
 
+	// replace_prior <n>, '<text>' stands text in place of the n characters
+	// immediately before the caret. It exists for input methods, and macOS's
+	// press-and-hold accent palette above all: that palette COMMITS the held
+	// letter the moment the key goes down, so choosing an accent has to remove
+	// a character that is already in the document.
+	//
+	// The host says how many, because only the host can know. It watched the
+	// key commit the letter and watched an input method take the key over; mew
+	// sees the finished text and nothing about what it stands for.
+	//
+	// n of 0 is an ordinary insert, which is what every composition that
+	// appends rather than replaces sends — a CJK candidate, and every host that
+	// cannot know a replacement count at all.
+	ps.RegisterCommand("replace_prior", func(ctx *pawscript.Context) pawscript.Result {
+		if len(ctx.Args) < 2 {
+			return pawscript.BoolStatus(false)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[0])))
+		if err != nil || n < 0 {
+			return pawscript.BoolStatus(false)
+		}
+		text := fmt.Sprintf("%v", ctx.Args[1])
+		if sb, ok := ctx.Args[1].(pawscript.StoredBytes); ok {
+			text = string(sb.Data())
+		}
+		// A viewport running a child process has no document to replace in, so
+		// the replacement is made the way a person would make it: erase what it
+		// stands in for, then type the new text. The erase goes as the child's
+		// own backspace, encoded by the terminal that knows what this child
+		// negotiated (see ptyEraseBefore).
+		//
+		// It has to be sent, because nothing else will. The toolkit swallowed
+		// the platform's Backspace on the way in — it belonged to the palette,
+		// not to the user — so without this the accent lands after the letter
+		// it was chosen to replace.
+		//
+		// A child with no translator still gets the text. Losing the accent
+		// entirely would be worse than leaving the letter in front of it.
+		if e.focusedPTY() != nil {
+			e.ptyEraseBefore(n)
+			return pawscript.BoolStatus(e.ptySendBytes([]byte(text)))
+		}
+		return pawscript.BoolStatus(e.replacePrior(n, text))
+	})
+
+	// preedit '<text>', <caret>, <covers>, <clauseStart>, <clauseLen> shows what
+	// an input method is still composing: painted at the caret, not put in the
+	// document. An empty text ends it.
+	//
+	// covers is how many committed characters before the caret the composition
+	// stands OVER and hides. macOS's press-and-hold palette commits the held
+	// letter before it opens, so without this the line shows the letter and the
+	// accent chosen to replace it side by side for as long as the palette is
+	// up. Nothing is deleted to hide it — ending the composition brings it
+	// straight back, which is what dismissing a palette means.
+	//
+	// Not stored, because storing it would mean un-storing it on every update —
+	// a Japanese input method rewrites the whole composition on each keystroke —
+	// and every one of those round trips would go through the undo history.
+	// It is synthesized into the line at paint time instead, the way a control
+	// character is painted "^X" without the buffer holding two runes.
+	//
+	// caret is the input method's own cursor within the text, which is what
+	// shows progress through a long composition. It defaults to the end.
+	//
+	// clauseStart and clauseLen mark the segment being CONVERTED, when the
+	// input method distinguishes one. A Japanese composition is several
+	// clauses and a candidate list changes only the selected one — "らなに"
+	// converts to "羅なに" with the tail still in kana — so the clause is
+	// painted apart from the rest, which is what tells the untouched remainder
+	// from characters the composition failed to replace.
+	ps.RegisterCommand("preedit", func(ctx *pawscript.Context) pawscript.Result {
+		w := e.ViewportManager.GetFocusedViewport()
+		if w == nil {
+			return pawscript.BoolStatus(false)
+		}
+		// A viewport running a child process paints the child's grid, not a
+		// document: there is no line to synthesize a composition into.
+		if e.focusedPTY() != nil {
+			return pawscript.BoolStatus(false)
+		}
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		runes := []rune(text)
+		caret := len(runes)
+		if len(ctx.Args) > 1 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[1]))); err == nil {
+				caret = n
+			}
+		}
+		covers := 0
+		if len(ctx.Args) > 2 {
+			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[2]))); err == nil && n > 0 {
+				covers = n
+			}
+		}
+		clauseStart, clauseLen := 0, 0
+		if len(ctx.Args) > 4 {
+			s, err1 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[3])))
+			n, err2 := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", ctx.Args[4])))
+			if err1 == nil && err2 == nil {
+				clauseStart, clauseLen = s, n
+			}
+		}
+		// Empty text goes through too, rather than clearing here: whether it
+		// ENDS the composition on its way to a commit or CANCELS it turns on
+		// the extent it still names, and SetPreedit is where that is decided.
+		w.SetPreedit(viewport.Preedit{
+			Text: runes, Caret: caret, Covers: covers,
+			ClauseStart: clauseStart, ClauseLen: clauseLen,
+		})
+		e.RequestRender()
+		return pawscript.BoolStatus(true)
+	})
+
+	// preedit_commit '<text>' takes a finished composition into the document,
+	// in place of THE REGION THE COMPOSITION STOOD OVER.
+	//
+	// Anchored, not measured from the caret, which is the whole reason it is
+	// its own command rather than a replace_prior. A composition is dismissed
+	// by typing: macOS commits whatever was selected in its palette and the
+	// keystroke that dismissed it lands first, so by the time this arrives the
+	// caret has moved past a character the composition never covered.
+	// Counting back from the caret replaced that character instead — the
+	// accent ate it and the letter stayed, "oò" with the "." gone.
+	//
+	// With no composition standing it is an ordinary insert, which is what a
+	// host that never opened one sends.
+	ps.RegisterCommand("preedit_commit", func(ctx *pawscript.Context) pawscript.Result {
+		text := ""
+		if len(ctx.Args) > 0 {
+			text = fmt.Sprintf("%v", ctx.Args[0])
+		}
+		return pawscript.BoolStatus(e.preeditCommit(text))
+	})
+
 	ps.RegisterCommand("insert_newline", func(ctx *pawscript.Context) pawscript.Result {
 		if e.focusedPTY() != nil {
 			// A shell wants CR for Enter, not LF: that is what a terminal
@@ -2448,13 +2675,21 @@ func (e *Editor) registerCommands() {
 	// tinput_key forwards THE KEY BEING DISPATCHED to the focused viewport's
 	// child process, encoded by the host's emulator — so application cursor
 	// mode and its kin decide the bytes (\x1b[A vs \x1bOA for Up), not a
-	// table here. This is what `capture * = tinput_key` in [pty::mappings]
+	// table here. This is what `(capture) * = tinput_key` in [pty::mappings]
 	// runs: the terminal's first claim on every key. Reports FALSE — declining
 	// the key — when there is no session, no host encoder, or the name encodes
 	// to nothing, which drops resolution to the next level down. An explicit
 	// key name may be given as an argument for scripted use.
 	ps.RegisterCommand("tinput_key", func(ctx *pawscript.Context) pawscript.Result {
 		key := e.dispatchingKey
+		// Put back the repeat marker the dispatcher set aside, so the child
+		// learns the key was HELD rather than struck again (see dispatchKey).
+		// Only for the key that actually repeated: a sequence unwind runs
+		// several keys' commands within this one dispatch, and the earlier
+		// ones were separate presses.
+		if key != "" && key == e.repeatingKey {
+			key += ":Repeat"
+		}
 		if len(ctx.Args) > 0 {
 			if s, ok := argString(ctx, 0); ok && s != "" {
 				key = s
@@ -2883,8 +3118,8 @@ func (e *Editor) registerCommands() {
 	})
 
 	// block_filter pipes the marked block through a shell command and replaces it
-	// with the result (JOE's filter-block). The command may be given inline
-	// (block_filter sort -r); with none it prompts, recalling prior filter
+	// with the result. The command may be given inline (block_filter sort -r);
+	// with none it prompts, recalling prior filter
 	// commands. It is the ergonomic spelling of exec --stdin=block --stdout=block
 	// --stderr=block, so stdout and stderr both flow back into the block.
 	ps.RegisterCommand("block_filter", func(ctx *pawscript.Context) pawscript.Result {
@@ -2968,8 +3203,35 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.cloneCurrentViewport())
 	})
 
+	// viewport_close closes the focused viewport. A modified buffer asks
+	// first, and the question SUSPENDS the calling sequence on a token rather
+	// than reporting a success it has not had yet: `viewport_close &
+	// viewport_close` walks the viewports one at a time, and answering no
+	// stops the chain where it stood.
+	ps.RegisterCommand("viewport_close", func(ctx *pawscript.Context) pawscript.Result {
+		return e.promptedResult(ctx, e.closeCurrentBufferThen)
+	})
+
+	// session_close closes every viewport there is, asking about each piece of
+	// unsaved work in turn, and ends the session once the last one goes. It is
+	// viewport_close repeated until there is nothing left to close - and, like
+	// a chain of them, it stops the moment one is declined.
+	//
+	// This is what a host runs when something tries to close the WINDOW a mew
+	// session lives in: the window refuses the close outright, runs this, and
+	// closes for real only if the session ends. So unsaved work is answered by
+	// mew's own prompt, in mew's own terms, instead of being lost to a frame
+	// that never asked.
+	ps.RegisterCommand("session_close", func(ctx *pawscript.Context) pawscript.Result {
+		return e.promptedResult(ctx, e.closeSessionThen)
+	})
+
+	// buffer_close closes the focused viewport's buffer from EVERYWHERE it is
+	// referenced (viewport_close closes just the one viewport): active views
+	// mirror viewport_close and nav-history references become mew:/closed
+	// tombstones. Modified buffers prompt once first.
 	ps.RegisterCommand("buffer_close", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.closeCurrentBuffer())
+		return pawscript.BoolStatus(e.closeBufferEverywhere())
 	})
 
 	// buffer_revert seeks the buffer's history back to its last save point.
@@ -3102,7 +3364,7 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.cycleBuffer(1))
 	})
 
-	ps.RegisterCommand("buffer_prev", func(ctx *pawscript.Context) pawscript.Result {
+	ps.RegisterCommand("buffer_prior", func(ctx *pawscript.Context) pawscript.Result {
 		return pawscript.BoolStatus(e.cycleBuffer(-1))
 	})
 
@@ -3311,9 +3573,13 @@ func (e *Editor) registerCommands() {
 		return pawscript.BoolStatus(e.scrollViewHorizontal(e.ViewportManager.GetFocusedViewport(), +1))
 	})
 
-	// Viewport navigation commands
+	// Viewport navigation commands. These cycle only viewports currently on
+	// screen (SetCycleVisibleFilter), so they always land on an already-tiled
+	// pane — no adoptFocusInPlace needed. They stay WITHIN the focused viewport's
+	// zone (its ViewportSet): cycling documents never jumps into the help world,
+	// and vice versa — zone_next / zone_prior move between zones.
 	ps.RegisterCommand("viewport_next", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.ViewportManager.FocusNextViewport()
+		ok := e.ViewportManager.FocusNextInZone()
 		if ok {
 			e.announceFocusedViewport()
 		}
@@ -3321,28 +3587,31 @@ func (e *Editor) registerCommands() {
 	})
 
 	ps.RegisterCommand("viewport_prior", func(ctx *pawscript.Context) pawscript.Result {
-		ok := e.ViewportManager.FocusPrevViewport()
+		ok := e.ViewportManager.FocusPrevInZone()
 		if ok {
 			e.announceFocusedViewport()
 		}
 		return pawscript.BoolStatus(ok)
 	})
 
-	// Peek commands
-	ps.RegisterCommand("stat_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekUp())
+	// zone_next / zone_prior move focus to the NEXT / PRIOR zone (world/set): they
+	// take the focused main (non-prompt) viewport's ViewportSet, advance to the
+	// adjacent zone among the visible zones, and land on that zone's last-focused
+	// viewport (or its first visible member when the zone has no focus memory).
+	ps.RegisterCommand("zone_next", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusNextZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
 	})
 
-	ps.RegisterCommand("stat_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.StatPeekDown())
-	})
-
-	ps.RegisterCommand("prompt_peek_up", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekUp())
-	})
-
-	ps.RegisterCommand("prompt_peek_down", func(ctx *pawscript.Context) pawscript.Result {
-		return pawscript.BoolStatus(e.ViewportManager.PromptPeekDown())
+	ps.RegisterCommand("zone_prior", func(ctx *pawscript.Context) pawscript.Result {
+		ok := e.ViewportManager.FocusPrevZone()
+		if ok {
+			e.announceFocusedViewport()
+		}
+		return pawscript.BoolStatus(ok)
 	})
 
 	// Help toggle command
@@ -3890,19 +4159,13 @@ func (e *Editor) setOption(w *viewport.Viewport, name, value string) bool {
 		if !ok {
 			return false
 		}
+		// Read-only is a per-view flag that gates edits; it does not drive the
+		// lock. The mew lock is lazy — claimed on the first actual edit
+		// (trackEdit) — so toggling read-only never acquires or releases it.
 		if w != nil {
 			w.ViewState.ReadOnly = b
-			if !b {
-				// Read-only turned off: the intent-to-edit boundary. A lock
-				// deferred by a read-only open is acquired now (with any
-				// foreign-lock warning surfacing here rather than at open).
-				e.ensureDeferredMewLock(w.Buffer)
-			}
 		} else {
 			e.Config.ReadOnly = b
-			if !b {
-				e.ensureAllDeferredMewLocks()
-			}
 		}
 	case "insertcursor", "overwritecursor", "navigationcursor":
 		n, ok := parseInt(0)
@@ -4235,22 +4498,73 @@ func (e *Editor) runBoundCommand(key, command string) bool {
 }
 
 // dispatchKey routes one keyboard key through the sequence processor, which
-// resolves and RUNS its bindings (see keys.SequenceProcessor: capture levels
+// resolves and RUNS its bindings (see keyseq.Processor: capture levels
 // over the base set, wildcards under specifics, tried in precedence order
 // until one takes the key), then refreshes the sequence/QuickHelp/modebar
 // displays. Runs under renderMu (the serve loop's key branch, or a test
 // standing in for it).
 func (e *Editor) dispatchKey(key string) {
+	// A key coming back UP belongs to the child, or to nobody.
+	//
+	// It is not a keystroke in mew's sense: no binding is written against one,
+	// and the sequence processor must never see one, because it would count as
+	// the next key of a multi-key sequence — pressing ^X and letting go of it
+	// would end the sequence ^X was starting. So it is offered to the focused
+	// viewport's child and otherwise dropped here, before any of that.
+	//
+	// The child is why these are asked for at all (see input.keyEventReporting).
+	// A program that negotiated event reporting for itself — a browser, which
+	// cannot know a held key was let go without it — receives presses only if
+	// mew keeps its releases, and that is the whole of the bug this closes.
+	if strings.HasSuffix(key, ":Release") {
+		if e.sendKeyToPTY(key) {
+			e.RequestRender()
+		}
+		return
+	}
+
+	// A modifier pressed BY ITSELF is not a keystroke in mew's sense either.
+	//
+	// The key layer reports these as their own events under the kitty protocol
+	// — "LMod:S" is the left Shift going down — so that something watching the
+	// keyboard can see which cap it was. mew is not that something: no binding
+	// is written against one, and the sequence processor must never see one,
+	// because it would count as the next key of a multi-key sequence. Holding
+	// Shift in the middle of ^K X would end the chord ^K started.
+	if isBareModifierKey(key) {
+		return
+	}
+
 	// Raw key input: this one keystroke was claimed for the child process
 	// running in the focused viewport, so mew's keymap does not see it at all.
 	// The arm is spent either way — a raw key with no terminal under it is
 	// simply an ordinary key, not a key held in reserve.
+	//
+	// The name goes as it arrived, repeat marker and all: this key is the
+	// child's, and the child is the one thing here that can read the marker.
 	if e.rawKeyArmed {
 		e.rawKeyArmed = false
 		if e.rawKeyToPTY(key) {
 			e.RequestRender()
 			return
 		}
+	}
+
+	// A REPEAT is a press to mew and a repeat to the child.
+	//
+	// Both are true at once and both matter. mew's keymap has no repeat token,
+	// so a marked name would match no binding and a held arrow key would move
+	// the cursor once and then stop — the marker has to come off before the key
+	// processor sees it. But a browser in a terminal pane reports a repeat as a
+	// keydown with repeat set, and cannot tell a held key from a drummed one
+	// without it — so tinput_key puts the marker back on the way out, and only
+	// for this key. Everything between behaves exactly as it does for a press,
+	// including a capture level a user has reclaimed the key from: that
+	// resolves to mew's own command, and goes on repeating.
+	if base, repeated := strings.CutSuffix(key, ":Repeat"); repeated {
+		key = base
+		e.repeatingKey = base
+		defer func() { e.repeatingKey = "" }()
 	}
 
 	// Arm the after-key pseudo-binding on the viewport that owns this key —
@@ -4993,6 +5307,13 @@ func (e *Editor) trackEdit() {
 		// An edit re-engages caret following (edits also call ensureCursorVisible,
 		// but not every path does; make the re-engage unconditional here).
 		w.ViewState.ScrollDetached = false
+		// The mew lock is lazy: the first edit that leaves the buffer modified
+		// claims the deferred lock (matching garland's emacs locks). A no-op once
+		// held, or for a buffer that was never opened through the lock path. Runs
+		// before checkEditLock so any foreign lock it records is ready to prompt.
+		if w.Buffer != nil && w.Buffer.IsModified() {
+			e.ensureDeferredMewLock(w.Buffer)
+		}
 	}
 	e.lastEditKill = e.pendingKill
 	e.pendingKill = false
@@ -5084,6 +5405,115 @@ func (e *Editor) deleteCharBefore() {
 	// Clear ghost cursor and update ideal column after editing
 	e.afterHorizontalMovement(w)
 	e.ensureCursorVisible(w) // edit locks in the horizontal view
+}
+
+// replacePrior stands text in place of the n characters immediately before the
+// caret, as ONE mutation.
+//
+// One matters. Picking an accent from the press-and-hold palette is a single
+// user action, and the state between its halves — the letter gone, the accented
+// one not yet arrived — is one nobody ever saw on screen. Caret.Overwrite is a
+// single overwrite mutation in the buffer's history, so undo steps from the
+// accented character straight back to the plain one.
+//
+// n is clamped to what is actually on this line before the caret, so the
+// replacement can never cross a line boundary. It never has to: the character a
+// palette replaces is the one its own key just typed.
+func (e *Editor) replacePrior(n int, text string) bool {
+	if e.contentLocked() {
+		return false
+	}
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil || w.Buffer == nil {
+		return false
+	}
+	pos := w.CursorPos()
+	if n > pos.Rune {
+		n = pos.Rune
+	}
+	if n == 0 {
+		// Nothing to stand in for: an ordinary insert, and it keeps the
+		// coalescing an ordinary insert has.
+		e.insertText(text)
+		e.trackEdit()
+		e.editCoalesced = true
+		return true
+	}
+
+	runes := []rune(strings.TrimRight(w.Buffer.GetLine(pos.Line), "\n\r"))
+	if pos.Rune > len(runes) {
+		return false
+	}
+	replaced := len(string(runes[pos.Rune-n : pos.Rune]))
+
+	w.Buffer.BeginUserCommand("replace_prior")
+	w.Caret.Seek(pos.Line, pos.Rune-n)
+	w.Caret.Overwrite(int64(replaced), text)
+	// Overwrite leaves the caret where it was told to start, so the caller
+	// advances it — to the far side of what it just wrote.
+	w.Caret.Seek(pos.Line, pos.Rune-n+len([]rune(text)))
+	w.Buffer.EndUserCommand()
+
+	e.trackEdit()
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	return true
+}
+
+// preeditCommit puts text where the standing composition stood, and ends it.
+//
+// The composition's own position is what is replaced. It was recorded when the
+// composition opened, so it survives the caret moving on — which it does
+// whenever a palette is dismissed by typing, the keystroke landing before the
+// input method's commit catches up.
+//
+// Text the composition never covered is left exactly where it is, including
+// that keystroke: the caret ends up after it, where the person typing put it.
+func (e *Editor) preeditCommit(text string) bool {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w == nil {
+		return false
+	}
+	p := w.Preedit()
+	line, from, anchored := w.PreeditAt()
+	w.ClearPreedit()
+
+	// A viewport running a child process has no document to place this in; the
+	// text goes to the child, as replace_prior's does.
+	if e.focusedPTY() != nil {
+		if p.Covers > 0 {
+			e.ptyEraseBefore(p.Covers)
+		}
+		return e.ptySendBytes([]byte(text))
+	}
+	if !anchored || p.Covers == 0 {
+		// Nothing was stood over, so there is nothing to stand in for.
+		return e.replacePrior(0, text)
+	}
+
+	pos := w.CursorPos()
+	// Where the caret sits relative to the region, so it can be put back after
+	// the text under it changes length. A caret inside the region lands at the
+	// end of what replaced it; one after the region keeps its distance from it.
+	trailing := 0
+	if pos.Line == line && pos.Rune > from+p.Covers {
+		trailing = pos.Rune - (from + p.Covers)
+	}
+
+	e.setCaret(w, line, from+p.Covers)
+	if !e.replacePrior(p.Covers, text) {
+		return false
+	}
+	after := w.CursorPos()
+	e.setCaret(w, after.Line, after.Rune+trailing)
+	e.afterHorizontalMovement(w)
+	e.ensureCursorVisible(w)
+	return true
+}
+
+// setCaret parks the caret at a line and rune position.
+func (e *Editor) setCaret(w *viewport.Viewport, line, runePos int) {
+	w.SetCursorPos(viewport.Position{Line: line, Rune: runePos})
 }
 
 // deleteCharAt deletes the character at the cursor.
@@ -6857,8 +7287,9 @@ func (e *Editor) openFile(filename string) bool {
 		return false
 	}
 
-	// Create new main buffer viewport
-	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+	// Create the main buffer viewport UNfocused, then show it in the focused tile
+	// (replacing it) rather than spawning a new tile beside it.
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
 		Type:            viewport.DocViewport,
 		Buffer:          buf,
 		Dock:            viewport.DockNone,
@@ -6873,18 +7304,44 @@ func (e *Editor) openFile(filename string) bool {
 		ReadOnly:        e.Config.ReadOnly,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		Scrollbar:       e.Config.Scrollbar,
-		SetFocus:        true,
 	})
+	e.showInFocusedTile(e.ViewportManager.GetViewport(id))
 
 	e.RequestRender()
 	return true
 }
 
-// createNewBuffer creates a new empty buffer viewport.
+// showInFocusedTile makes w the content of the currently- (or most recently-)
+// focused main tile, replacing what was there, instead of letting the main-focus
+// hook (tilerFollowFocus) spawn a NEW tile beside it. This is what buffer_new /
+// buffer_open_file want: open in the current pane, not add one. With nothing
+// tiled yet it falls back to a plain focus, letting the hook seat the first tile
+// as usual. The viewport formerly in the tile stays open (in the buffer list),
+// just untiled.
+func (e *Editor) showInFocusedTile(w *viewport.Viewport) {
+	if w == nil {
+		return
+	}
+	vp := e.ensureTiler()
+	tile := vp.GetFocus()
+	if tile == 0 {
+		if ts := vp.Tiles(); len(ts) > 0 {
+			tile = ts[0].Tile
+		}
+	}
+	if tile != 0 {
+		vp.Set(tile, w.ID) // the focused tile now shows the new viewport
+	}
+	e.ViewportManager.SetFocus(w.ID) // the hook finds the reseated tile — no split
+}
+
+// createNewBuffer creates a new empty buffer, shown in the focused tile.
 func (e *Editor) createNewBuffer() {
 	buf := e.lib.New()
 
-	e.ViewportManager.CreateViewport(viewport.ViewportOptions{
+	// Created UNfocused: showInFocusedTile reseats the focused tile to it, so
+	// focusing it finds that tile rather than spawning a new one.
+	id := e.ViewportManager.CreateViewport(viewport.ViewportOptions{
 		Type:            viewport.DocViewport,
 		Buffer:          buf,
 		Dock:            viewport.DockNone,
@@ -6900,8 +7357,8 @@ func (e *Editor) createNewBuffer() {
 		AutoIndent:      e.Config.AutoIndent,
 		ShowRuler:       e.Config.ShowColumnRuler,
 		Scrollbar:       e.Config.Scrollbar,
-		SetFocus:        true,
 	})
+	e.showInFocusedTile(e.ViewportManager.GetViewport(id))
 
 	e.RequestRender()
 }
@@ -7226,16 +7683,31 @@ func (e *Editor) replaceBlockText(text, cmdName string) bool {
 	return true
 }
 
-// closeCurrentBuffer closes the current buffer viewport.
+// closeCurrentBuffer closes the current buffer viewport, reporting whether the
+// close is UNDERWAY: a modified buffer's close is underway while its prompt is
+// up, and its real outcome arrives later. Callers that need the outcome use
+// closeCurrentBufferThen.
 func (e *Editor) closeCurrentBuffer() bool {
+	underway := true
+	e.closeCurrentBufferThen(func(closed bool) { underway = closed })
+	return underway
+}
+
+// closeCurrentBufferThen closes the focused viewport and calls then with the
+// outcome: true when the viewport closed, false when it did not — nothing
+// closable, or the user answered the lose-changes prompt with no. then runs
+// before this returns EXCEPT when a prompt intervenes, which is the whole
+// reason the callback exists: closing is a question, not always an act.
+func (e *Editor) closeCurrentBufferThen(then func(closed bool)) {
 	w := e.ViewportManager.GetFocusedViewport()
 	if w == nil || w.Type == viewport.PromptViewport {
-		return false
+		then(false)
+		return
 	}
 
 	// Check for changes that would be lost. The viewport's active buffer is
 	// always at stake. Its stacked buffers are only at stake when the WINDOW
-	// itself will close — with a non-empty graveyard, buffer_close instead
+	// itself will close — with a non-empty graveyard, viewport_close instead
 	// resurrects the most recent burial into this viewport, so the history and
 	// graveyard survive intact.
 	resurrecting := len(w.GraveyardBuffers()) > 0
@@ -7265,19 +7737,81 @@ func (e *Editor) closeCurrentBuffer() bool {
 
 		// Prompt for confirmation using PromptManager
 		e.PromptMgr.PromptForConfirmation(fmt.Sprintf("04: LOSE CHANGES TO %s?", viewportName), true, func(accepted bool, confirmed bool) {
+			closed := false
 			if accepted && confirmed {
 				// User confirmed - close the buffer
-				e.finishCloseBuffer(viewportID)
+				closed = e.finishCloseBuffer(viewportID)
 			} else {
 				e.ShowNotification("Close cancelled")
 			}
 			e.RequestRender()
+			then(closed)
 		})
-		return true
+		return
 	}
 
 	// Not modified - close directly
-	return e.finishCloseBuffer(w.ID)
+	then(e.finishCloseBuffer(w.ID))
+}
+
+// closeSessionThen closes EVERY viewport in this session, one at a time, and
+// ends the session when the last one goes; it calls then with true when the
+// session is finished and false when a close was declined and the rest were
+// abandoned. Each modified buffer asks its own lose-changes question, and an
+// answer of no stops the sweep where it stands — a window that holds unsaved
+// work does not close, and nothing already agreed to is put back.
+//
+// This is what an embedding host's window-close runs: closing the window means
+// closing what is in it, on the editor's own terms and with the editor's own
+// prompts, rather than the frame deciding for the session inside it.
+func (e *Editor) closeSessionThen(then func(done bool)) {
+	// A backstop, not a policy: every step either closes a viewport or
+	// resurrects a buried buffer into one, both of which are finite, so the
+	// sweep converges. The counter is here so that a future step which does
+	// neither ends the loop instead of spinning the editor.
+	steps := 0
+	const maxSteps = 4096
+
+	var step func()
+	step = func() {
+		if len(e.contentViewports()) == 0 {
+			e.Running = false
+			then(true)
+			return
+		}
+		if steps++; steps > maxSteps {
+			then(false)
+			return
+		}
+		e.focusAContentViewport()
+		e.closeCurrentBufferThen(func(closed bool) {
+			switch {
+			case !closed:
+				then(false) // declined: abandon the sweep
+			case !e.Running:
+				then(true) // that was the last one; the session ended with it
+			default:
+				step()
+			}
+		})
+	}
+	step()
+}
+
+// focusAContentViewport puts the focus on a content viewport when it is
+// somewhere else (a prompt), so a sweep that closes "the current viewport"
+// always has one to close.
+func (e *Editor) focusAContentViewport() {
+	w := e.ViewportManager.GetFocusedViewport()
+	if w != nil && w.Type != viewport.PromptViewport {
+		return
+	}
+	for _, c := range e.contentViewports() {
+		if c.Type != viewport.PromptViewport {
+			e.ViewportManager.FocusViewportAsCycle(c)
+			return
+		}
+	}
 }
 
 // bufferDisplayName is a short human name for a buffer: its filename's base,
@@ -7353,38 +7887,60 @@ func (e *Editor) finishCloseBuffer(viewportID string) bool {
 	return true
 }
 
-// cycleBuffer switches to the next or previous buffer.
+// viewportTiled reports whether a main-area tile currently references the
+// viewport id — i.e. it is shown on screen. False when there is no tiler.
+func (e *Editor) viewportTiled(id string) bool {
+	if e.tiler == nil {
+		return false
+	}
+	for _, b := range e.tiler.Tiles() {
+		if b.Ref == id {
+			return true
+		}
+	}
+	return false
+}
+
+// cycleBuffer brings a NON-VISIBLE buffer into the focused pane. buffer_next /
+// buffer_prior walk the content viewports in `direction` and land on the first
+// one NOT currently shown in any tile — a buffer visible in a pane is reached
+// with viewport_next/prior instead, so the two commands partition the set with
+// no overlap. adoptFocusInPlace reseats the focused tile onto the buffer, rather
+// than splitting a new one. Reports false when nothing is hidden to bring in.
 func (e *Editor) cycleBuffer(direction int) bool {
-	mainBuffers := e.contentViewports()
-	if len(mainBuffers) <= 1 {
+	mains := e.contentViewports()
+	if len(mains) <= 1 {
 		return false
 	}
 
-	// Find current buffer index
 	currentID := ""
 	if w := e.ViewportManager.GetFocusedViewport(); w != nil {
 		currentID = w.ID
 	}
-
 	currentIndex := -1
-	for i, w := range mainBuffers {
+	for i, w := range mains {
 		if w.ID == currentID {
 			currentIndex = i
 			break
 		}
 	}
-
 	if currentIndex == -1 {
 		currentIndex = 0
 	}
 
-	// Calculate new index with wrap-around
-	newIndex := (currentIndex + direction + len(mainBuffers)) % len(mainBuffers)
-
-	// Focus the new buffer
-	e.ViewportManager.SetFocus(mainBuffers[newIndex].ID)
-	e.RequestRender()
-	return true
+	n := len(mains)
+	for step := 1; step <= n; step++ {
+		w := mains[((currentIndex+direction*step)%n+n)%n]
+		if w.ID == currentID || e.viewportTiled(w.ID) {
+			continue // self or an on-screen pane — skip
+		}
+		e.adoptFocusInPlace = true
+		e.ViewportManager.SetFocus(w.ID)
+		e.adoptFocusInPlace = false
+		e.RequestRender()
+		return true
+	}
+	return false
 }
 
 // contentViewports returns every content viewport — documents and tool surfaces
@@ -7701,7 +8257,7 @@ func (e *Editor) caretWantsPhantom(w *viewport.Viewport) bool {
 	// with line numbers off there is nothing past the content, and the bar
 	// clamps back onto the character, landing exactly where the caret one rune
 	// along would. The phantom gives it a cell of its own.
-	if caretRTL && col == vwContent-1 && !w.ViewState.ShowLineNumbers {
+	if caretRTL && col == vwContent-1 && !w.LineNumbersVisible() {
 		if shape := e.cursorStyleFor(w); shape == 5 || shape == 6 {
 			return true
 		}
@@ -7805,6 +8361,9 @@ func (e *Editor) performRender() {
 	// Push whether the built-in help viewport is open (a host syncs a "Quick
 	// Help" menu checkmark to it).
 	e.notifyHelpState()
+	// Push whether any open buffer is modified (a host asks before closing
+	// the window this session lives in).
+	e.notifyUnsavedState()
 
 	// Follow the cursor VERTICALLY only. Horizontal following is a "lock-in"
 	// action performed by cursor/edit commands, not by rendering, so a manual
@@ -7938,23 +8497,48 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 	vp := e.ensureTiler()
 	vp.SetWorkspace(float64(e.Renderer.Width), float64(layout.MainHeight))
 
+	tiles := vp.Tiles()
+	stackSel := e.stackSelectedTabs(vp, tiles)
+
+	// Clear last frame's stack-tab counters that no longer apply, leaving any
+	// message some other feature owns untouched (only clear our own text).
+	for id, msg := range e.stackTabCounters {
+		if w := e.ViewportManager.GetViewport(id); w != nil && w.MessageTopInner == msg {
+			w.MessageTopInner = ""
+		}
+	}
+	e.stackTabCounters = nil
+
 	focusedTile := vp.GetFocus()
 	mainTop := layout.TopHeight
 	mains := make([]viewport.ViewportLayout, 0, 4)
-	for _, b := range vp.Tiles() {
+	for _, b := range tiles {
 		w := e.ViewportManager.GetViewport(b.Ref)
 		if w == nil {
 			continue // empty/blank tile
+		}
+		// mew draws no tab strip yet, so a stacked group reserves nothing
+		// (SetStackReserve defaults to 0) and the shown tab already fills its box.
+		// Until there's a real strip, put a "[i/n]" counter in the viewport's
+		// top-left message so a flat stack is at least legible.
+		rect := b.Rect
+		if st, ok := stackSel[b.Tile]; ok {
+			msg := fmt.Sprintf("[%d/%d]", st.index+1, st.count)
+			w.MessageTopInner = msg
+			if e.stackTabCounters == nil {
+				e.stackTabCounters = make(map[string]string)
+			}
+			e.stackTabCounters[w.ID] = msg
 		}
 		// Snap each tile to integer cell edges by rounding its LEFT and RIGHT
 		// (and TOP/BOTTOM) edges, then taking the span. Rounding edges rather
 		// than truncating width keeps adjacent tiles flush and the rightmost/
 		// bottommost tile reaching the workspace edge, so a fractional split
 		// (e.g. an 81-column area halved) never leaves a one-cell gap.
-		x0 := int(math.Round(b.Rect.X))
-		x1 := int(math.Round(b.Rect.X + b.Rect.W))
-		y0 := int(math.Round(b.Rect.Y))
-		y1 := int(math.Round(b.Rect.Y + b.Rect.H))
+		x0 := int(math.Round(rect.X))
+		x1 := int(math.Round(rect.X + rect.W))
+		y0 := int(math.Round(rect.Y))
+		y1 := int(math.Round(rect.Y + rect.H))
 		// Geometry rides on the tile (this layout entry): a viewport shown in
 		// several tiles gets a distinct frame per tile, and the renderer applies
 		// each just before painting it. The viewport's own FrameX/FrameWidth are
@@ -7972,6 +8556,53 @@ func (e *Editor) applyTilerGeometry(layout *viewport.Layout) {
 		})
 	}
 	layout.MainLayout = mains
+}
+
+// stackTabInfo is a shown stack tab's position within its stack (0-based index
+// and total tab count), used to stamp the "[i/n]" counter.
+type stackTabInfo struct {
+	index, count int
+}
+
+// stackSelectedTabs maps the leaf handle of each FLAT stack's shown tab to its
+// tab position. Only flat stacks (every tab a single leaf) are annotated: a tab
+// that is itself a split shows more than one leaf in the box and its selected
+// handle isn't a leaf tile, so it wouldn't match anyway — those wait for a real
+// tab strip. A stack's shown tab is flat when exactly one visible tile falls
+// inside the stack's box (its buried tabs are hidden, so Tiles omits them).
+func (e *Editor) stackSelectedTabs(vp *ifitfits.Viewport, tiles []ifitfits.Box) map[ifitfits.Handle]stackTabInfo {
+	stacks := vp.Stacks()
+	if len(stacks) == 0 {
+		return nil
+	}
+	inside := func(r ifitfits.Rect, b ifitfits.Box) bool {
+		cx := b.Rect.X + b.Rect.W/2
+		cy := b.Rect.Y + b.Rect.H/2
+		return cx >= r.X && cx <= r.X+r.W && cy >= r.Y && cy <= r.Y+r.H
+	}
+	out := map[ifitfits.Handle]stackTabInfo{}
+	for _, s := range stacks {
+		sel := -1
+		for i, tb := range s.Tabs {
+			if tb.Selected {
+				sel = i
+			}
+		}
+		if sel < 0 {
+			continue
+		}
+		n := 0
+		for _, b := range tiles {
+			if inside(s.Rect, b) {
+				n++
+			}
+		}
+		if n != 1 {
+			continue // the shown tab is a split, not a single leaf
+		}
+		out[s.Tabs[sel].Tile] = stackTabInfo{index: sel, count: len(s.Tabs)}
+	}
+	return out
 }
 
 // Run starts the editor with an optional filename.
@@ -8038,16 +8669,12 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 		// The content is virtualized through the host FileSystem, but a mew-native
 		// editing lock still coordinates multiple mew instances editing the same
 		// path (it is an OS-level advisory lock under ~/.mew or the project, not
-		// written through the host FS; it also records a live foreign lock so the
-		// first edit prompts). Emacs locks need the real file's directory and so
-		// are not available on this path. Any lock failure is surfaced.
-		// A READ-ONLY open takes no editing lock: acquisition (and its
-		// warnings) defer to the moment read-only is turned off.
-		if e.Config.ReadOnly {
-			e.deferMewLock(buf, filename)
-		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
-			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
-		}
+		// written through the host FS). Emacs locks need the real file's directory
+		// and so are not available on this path. The mew lock is LAZY, like
+		// garland's emacs locks: opening takes none — the lock (and any foreign /
+		// stale-lock handling) is acquired on the first edit (see trackEdit), so a
+		// viewer that never edits advertises nothing and never orphans a lock file.
+		e.deferMewLock(buf, filename)
 		return buf, nil
 	}
 	emacsLock, lockWarning := e.emacsLockDecision(filename)
@@ -8088,16 +8715,11 @@ func (e *Editor) loadBuffer(filename string) (*buffer.Buffer, error) {
 	if !emacsLock {
 		// No emacs lock (config or git hygiene): fall back to a mew-native
 		// lock in the nearest .mew directory. Its most common catch is the
-		// user opening the same file in another mew viewport. A READ-ONLY open
-		// takes no editing lock — a viewer advertises nothing; acquisition
-		// (and its warnings) defer to the moment read-only is turned off.
-		// (Garland's emacs locks need no such deferral: they are lazy by
-		// contract, appearing only on the first content mutation.)
-		if e.Config.ReadOnly {
-			e.deferMewLock(buf, filename)
-		} else if reason := e.acquireMewLock(buf, filename); reason != "" {
-			e.noteBuffer(buf, "lock", "Editing lock unavailable: "+reason, true)
-		}
+		// user opening the same file in another mew viewport. Like the emacs
+		// lock it is LAZY — acquired on the first edit (trackEdit), not at open —
+		// so a viewer advertises nothing and never orphans a lock file; foreign /
+		// stale-lock handling happens at that first edit too.
+		e.deferMewLock(buf, filename)
 	}
 	if owner, ok := buf.SourceLockOwner(); ok && owner != "" {
 		e.noteBuffer(buf, "lock", fmt.Sprintf("%s is being edited by %s", filepath.Base(filename), owner), true)
@@ -8246,6 +8868,11 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 	// Initial render
 	e.performRender()
 
+	// Anything the config files said that mew could not honor, beside the
+	// launch files. Before the evals, so an eval's own output buffer lands on
+	// top of it with the focus.
+	e.showStartupLog()
+
 	// Queue the launch --eval scripts (if any) as the first events the loop
 	// processes, so they run visually in the freshly rendered session.
 	e.startLaunchEvals()
@@ -8316,6 +8943,15 @@ func (e *Editor) serve(buf *buffer.Buffer) (string, error) {
 			// The ?1016 SGR-pixels handshake replies (DECRPM/WinOp) are
 			// consumed here too, never typed.
 			if e.handlePixelMouseReply(event.Key) {
+				continue
+			}
+			// Text the terminal received with no key behind it — an input
+			// method's commit — is put in the document, never dispatched as a
+			// keystroke. See committedtext.go.
+			if e.handleCommittedText(event.Key) {
+				if e.renderRequested.Load() {
+					e.performRender()
+				}
 				continue
 			}
 			// Mouse pseudo-keys (position/press/drag/release/scroll) never
@@ -8703,9 +9339,10 @@ func (e *Editor) announceFocusedViewport() {
 	if name == "" {
 		name = w.ID
 	}
-	// Tagged so a rapid cycle (^B N / mouse focus) collapses to the latest
-	// "Switched to …" rather than stacking one per step.
-	e.ShowNotificationTagged("Switched to "+name, "switched_viewport")
+	// Tagged "navigate" so a rapid cycle (^B N / mouse focus) collapses to the
+	// latest "Switched to …", and so it shares the navigation family — a switch
+	// followed by a link jump replaces rather than stacks.
+	e.ShowNotificationTagged("Switched to "+name, "navigate")
 }
 
 // ShowError shows a transient error viewport at the bottom of the screen.
@@ -8866,6 +9503,12 @@ const helpViewportTag = "help"
 // either way, so helpViewport() still finds the slot.
 const helpViewportClass = "help"
 const quickHelpClass = "quickhelp"
+
+// helpMaxHeightFraction caps a regular (non-Quick) help page at half the mew
+// area height (less the 2 rows reserved for chrome): the layout resolves it live
+// as floor((mewHeight-2) * 0.5), so the cap tracks the terminal size instead of a
+// fixed row count. Quick Help ignores it and fits its content instead.
+const helpMaxHeightFraction = 0.5
 
 // quickHelpDocURL is the synthetic identity of the Quick Help buffer. It lives
 // in mew's GENERATED "mew:" scheme (not the box: storage tree), so it is never
@@ -9104,7 +9747,13 @@ func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 		hw.Class = quickHelpClass // distinct class for per-class config
 		hw.MessageTopCenter = ""  // no title bar: all MessageTop* empty hides the row
 		hw.CanFocus = false       // the focus switcher (^B N/^B P) skips the peek
+		hw.MaxHeightFraction = 0  // Quick Help fits its content, not a proportion
 		fit := quickHelpFitHeight(hw.Buffer)
+		// Height is the PREFERRED height and clampHeight only caps it DOWN to
+		// MaxHeight — it never grows a short preferred up to the max. So set the
+		// preferred to the fit itself (not just the ceiling), or Quick Help sits at
+		// its created default height instead of fitting its content.
+		hw.Height = fit
 		hw.MaxHeight = fit
 		if hw.MinHeight > fit {
 			hw.MinHeight = fit
@@ -9114,7 +9763,8 @@ func (e *Editor) applyHelpViewportChrome(hw *viewport.Viewport) {
 		hw.MessageTopCenter = "Help"
 		hw.CanFocus = true
 		hw.MinHeight = 4
-		hw.MaxHeight = 20
+		hw.MaxHeight = 0 // no literal ceiling; the proportional cap governs
+		hw.MaxHeightFraction = helpMaxHeightFraction
 	}
 }
 
@@ -9149,7 +9799,7 @@ func (e *Editor) createHelpViewport(buf *buffer.Buffer, focus bool) *viewport.Vi
 	opts.Dock = viewport.DockTop
 	opts.Priority = 100
 	opts.MinHeight = 4
-	opts.MaxHeight = 20
+	opts.MaxHeightFraction = helpMaxHeightFraction // proportional cap; no literal ceiling
 	opts.MessageTopCenter = "Help"
 	opts.Buffer = buf
 	opts.SetFocus = focus

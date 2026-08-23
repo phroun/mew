@@ -107,3 +107,65 @@ scale = 2 ; also a comment
 		t.Errorf("scale = %q, want 2 (comment stripped)", got)
 	}
 }
+
+// editor.conf reads titlebar_scale with the same rules as kittytk.ini: a
+// positive float applies, anything else keeps the classic 1.0.
+func TestApplyHostConfTitleBarScale(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.7", 0.7},
+		{"0", 1},
+		{"-2", 1},
+		{"nope", 1},
+	} {
+		sec := parseHostConfSections([]byte("[window]\ntitlebar_scale = " + c.val + "\n"))
+		cfg := hostcfg.Defaults()
+		applyHostConf(sec, &cfg)
+		if cfg.TitleBarScale != c.want {
+			t.Errorf("titlebar_scale = %q: got %v, want %v", c.val, cfg.TitleBarScale, c.want)
+		}
+	}
+	// An absent key keeps the default.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nwidth = 900\n")), &cfg)
+	if cfg.TitleBarScale != 1 {
+		t.Errorf("absent titlebar_scale = %v, want 1", cfg.TitleBarScale)
+	}
+}
+
+// [system] density overrides what the window system reports about the screen.
+//
+// mew reads editor.conf with ITS OWN key mapping, so a key added to the shared
+// Config and to upstream's parser is still inert here until it is mapped — which
+// is exactly how this one shipped doing nothing. The test is per-parser for that
+// reason.
+func TestApplyHostConfDensity(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"2", 2},
+		{"1.5", 1.5},
+		{"0", 0},    // auto
+		{"-2", 0},   // auto: a negative density is not a density
+		{"nope", 0}, // auto, rather than pinning a wrong number
+		{"", 0},     // auto
+	} {
+		sec := parseHostConfSections([]byte("[system]\ndensity = " + c.val + "\n"))
+		cfg := hostcfg.Defaults()
+		applyHostConf(sec, &cfg)
+		if cfg.Density != c.want {
+			t.Errorf("density = %q: got %v, want %v", c.val, cfg.Density, c.want)
+		}
+	}
+	// Absent leaves it on auto, and it is INDEPENDENT of scale - the one
+	// combination that proves the two are different quantities is a user who
+	// wants real pixels on a HiDPI panel.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nscale = 1\n\n[system]\ndensity = 2\n")), &cfg)
+	if cfg.Scale != 1 || cfg.Density != 2 {
+		t.Errorf("scale=%d density=%v, want scale 1 with density 2", cfg.Scale, cfg.Density)
+	}
+}

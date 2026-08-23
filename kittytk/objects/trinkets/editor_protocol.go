@@ -31,6 +31,16 @@ func init() {
 			"line_numbers": ignoredProp("bool").Def("default").Tip("Show line numbers (mew honors; placeholder ignores)."),
 			"caret":        ignoredProp("string").Tip("Cursor position line:col (mew honors; placeholder ignores)."),
 		},
+		map[string]protocol.EventDesc{
+			"commit": protocol.NewEventDesc("The editor's content was accepted.").
+				Field("trinket", "uint", "The editor's object ID.").
+				Field("value", "string", "The accepted content."),
+			"cancel": protocol.NewEventDesc("Editing was abandoned; the content is unchanged.").
+				Field("trinket", "uint", "The editor's object ID."),
+			"dirty": protocol.NewEventDesc("The unsaved-change count changed.").
+				Field("trinket", "uint", "The editor's object ID.").
+				Field("dirty", "int", "Outstanding unsaved changes; zero means clean."),
+		},
 		nil, // leaf: no children
 		func(ctx *protocol.BindContext, w core.Trinket) {
 			ed := w.(*Editor)

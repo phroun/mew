@@ -335,7 +335,7 @@ func TestSuppressRTLCombining(t *testing.T) {
 func TestSuppressRTLCombiningKeepsFoldablePointInComposeMode(t *testing.T) {
 	sr, w := testRenderer()
 	const shinDot, qamats = "ׁ", "ָ" // foldable point; non-foldable vowel
-	line := "ש" + shinDot + qamats         // shin + shin dot + qamats
+	line := "ש" + shinDot + qamats   // shin + shin dot + qamats
 	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
 	w.ViewState.SuppressRTLCombining = true
 
@@ -413,7 +413,7 @@ func TestFlipSelectionBarWhenCombiningSuppressed(t *testing.T) {
 	sr, w := testRenderer()
 	sr.frame.flipBidi = true
 	sr.frame.flipRideSafe = true // the ride-safe (Terminal.app) profile
-	line := "שָם" // pointed Hebrew (has an RTL combining mark)
+	line := "שָם"                // pointed Hebrew (has an RTL combining mark)
 	whole := selectionRange{startLine: 0, endLine: 0, startRune: 0, endRune: 50, exists: true}
 
 	// rtlCombining ON -> ride-safe selection (marks emitted, bar would drift).

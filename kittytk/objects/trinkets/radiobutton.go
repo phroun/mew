@@ -11,6 +11,7 @@ import (
 // RadioButton is a mutually exclusive option button.
 type RadioButton struct {
 	core.TrinketBase
+	core.TrinketKeys
 	core.AccessibleTrinket
 
 	text     string
@@ -28,6 +29,13 @@ func NewRadioButton(text string) *RadioButton {
 		text: text,
 	}
 	r.TrinketBase = *core.NewTrinketBase()
+	// A radio group steps in one dimension and does not care whether the word
+	// for it is prior/next, up/down or left/right - all three reach it.
+	r.SetCommands(
+		core.CmdTrinketActivate,
+		core.CmdTrinketItemPrior, core.CmdTrinketItemUp, core.CmdTrinketItemLeft,
+		core.CmdTrinketItemNext, core.CmdTrinketItemDown, core.CmdTrinketItemRight,
+	)
 	r.Init(r) // Enable polymorphic focus handling
 	r.SetFocusPolicy(core.StrongFocus)
 	r.SetAccessibleRole(core.RoleRadioButton)
@@ -195,16 +203,16 @@ func (r *RadioButton) Paint(p *core.Painter) {
 
 // HandleKeyPress handles keyboard input.
 func (r *RadioButton) HandleKeyPress(event core.KeyPressEvent) bool {
-	switch event.Key {
-	case " ", "Space", "Enter":
+	switch r.KeyCommand(event.Key) {
+	case core.CmdTrinketActivate:
 		r.SetChecked(true)
 		return true
-	case "Up", "Left":
+	case core.CmdTrinketItemPrior, core.CmdTrinketItemUp, core.CmdTrinketItemLeft:
 		if r.group != nil {
 			r.group.SelectPrevious()
 			return true
 		}
-	case "Down", "Right":
+	case core.CmdTrinketItemNext, core.CmdTrinketItemDown, core.CmdTrinketItemRight:
 		if r.group != nil {
 			r.group.SelectNext()
 			return true

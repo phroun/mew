@@ -182,6 +182,7 @@ const (
 	WINDOW_BORDERLESS             = csdl.WINDOW_BORDERLESS
 	WINDOW_MINIMIZED              = csdl.WINDOW_MINIMIZED
 	WINDOW_MAXIMIZED              = csdl.WINDOW_MAXIMIZED
+	WINDOW_FULLSCREEN             = csdl.WINDOW_FULLSCREEN
 	WINDOW_METAL                  = csdl.WINDOW_METAL
 
 	// WINDOW_TRANSPARENT is the SDL3-only flag this whole migration was
@@ -246,6 +247,12 @@ func (w *Window) Size() (int32, int32) {
 
 func (w *Window) SetSize(width, height int32) { _ = w.w.SetSize(width, height) }
 
+// SetMinimumSize floors what the OS will resize this window to, so a
+// resize the toolkit does not drive (a native title bar's edges, the
+// window manager's own keyboard resize or tiling) cannot undercut the
+// minimum our gestures clamp to.
+func (w *Window) SetMinimumSize(minW, minH int32) { _ = w.w.SetMinimumSize(minW, minH) }
+
 // SizeInPixels returns the client area in real device pixels (SDL screen
 // coordinates are points on a HiDPI display; the framebuffer/swapchain is sized
 // in pixels). Falls back to Size() if the pixel query fails.
@@ -255,6 +262,26 @@ func (w *Window) SizeInPixels() (int32, int32) {
 		return w.Size()
 	}
 	return width, height
+}
+
+// DisplayScale reports the CONTENT scale of the display this window is on —
+// the factor the desktop environment expects UI to be drawn at, which on a
+// HiDPI panel is 2 and on an ordinary one is 1.
+//
+// It is not the window's own pixel density (SizeInPixels/Size, which is 1
+// unless the window asked for a high-density framebuffer) and it is nothing to
+// do with any scale the application chooses for itself. It is a fact about the
+// SCREEN, and it is the only way to learn what density a separate process
+// drawing into this display will render at — which a child sizing pictures for
+// us does, out of our sight.
+//
+// Zero when SDL cannot answer, so a caller can tell "unknown" from 1.
+func (w *Window) DisplayScale() float32 {
+	s, err := w.w.DisplayScale()
+	if err != nil || s <= 0 {
+		return 0
+	}
+	return s
 }
 
 func (w *Window) ID() (uint32, error) {
@@ -367,18 +394,55 @@ type Keycode = csdl.Keycode
 type Keysym struct {
 	Sym Keycode
 	Mod uint16
+
+	// Scancode is the PHYSICAL key, before any layout is applied. Sym is
+	// already layout-mapped but unshifted, so it cannot answer "what does this
+	// key produce with Shift held" — only the scancode plus a modifier state
+	// can, and only the layout knows. See ShiftedKey.
+	Scancode uint32
+}
+
+// ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
+// under a modifier state, and returns 0 when it produces no character.
+//
+// This is the only honest source for it. A table mapping '5' to '%' is a US
+// keyboard written down: correct there and wrong everywhere else, and this
+// toolkit already declines to guess elsewhere (AltGr composition and macOS
+// dead keys are both taken from the system rather than reconstructed).
+func ShiftedKey(scancode uint32, mod uint16) rune {
+	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
+	if k == 0 || k >= 0x110000 {
+		return 0
+	}
+	return rune(k)
 }
 
 const (
 	KMOD_LSHIFT = uint16(csdl.KMOD_LSHIFT)
+	KMOD_RSHIFT = uint16(csdl.KMOD_RSHIFT)
 	KMOD_SHIFT  = uint16(csdl.KMOD_SHIFT)
 	KMOD_LCTRL  = uint16(csdl.KMOD_LCTRL)
+	KMOD_RCTRL  = uint16(csdl.KMOD_RCTRL)
 	KMOD_CTRL   = uint16(csdl.KMOD_CTRL)
 	KMOD_LALT   = uint16(csdl.KMOD_LALT)
+	KMOD_RALT   = uint16(csdl.KMOD_RALT)
 	KMOD_ALT    = uint16(csdl.KMOD_ALT)
 	KMOD_LGUI   = uint16(csdl.KMOD_LGUI)
 	KMOD_RGUI   = uint16(csdl.KMOD_RGUI)
 	KMOD_GUI    = uint16(csdl.KMOD_GUI)
+	KMOD_MODE   = uint16(csdl.KMOD_MODE) // AltGr / ISO_Level3_Shift (the Glyph modifier)
+	// KMOD_NUM is the NumLock LATCH, not a held modifier. It decides which of
+	// two keys each dual-legend keypad cap is: locked gives the digit, unlocked
+	// gives the navigation action. Nothing else can answer that question —
+	// scancode names the position and Sym is layout-mapped, so the lock state
+	// has to come from here.
+	KMOD_NUM = uint16(csdl.KMOD_NUM)
+	// KMOD_CAPS is the other latch, and it is here to be EXCLUDED. Nothing
+	// names a key from it; it is exposed so the rule that a latch is not a held
+	// modifier can be stated against the real bit rather than a literal. SDL
+	// carries a third (KMOD_SCROLL) and KanaLock and HangulLock are behind
+	// that, which is why the rule lists what a held modifier IS.
+	KMOD_CAPS = uint16(csdl.KMOD_CAPS)
 )
 
 func GetModState() uint16 { return uint16(csdl.GetModState()) }
@@ -431,7 +495,34 @@ func StartTextInput(w *Window) error { return w.w.StartTextInput() }
 // TextInputActive reports whether text events are enabled for a window.
 // Exists so a test can prove every window got StartTextInput, rather
 // than the absence showing up as "typing does nothing" in one window.
+//
+// It reports SDL's own flag, which is not the same question as whether the
+// OS is listening — see RestartTextInput.
 func TextInputActive(w *Window) bool { return w.w.TextInputActive() }
+
+// StopTextInput disables text events for a window. Exposed for
+// RestartTextInput, which is the only caller that wants it.
+func StopTextInput(w *Window) error { return w.w.StopTextInput() }
+
+// RestartTextInput turns text input off and straight back on.
+//
+// The off is the point. SDL_StartTextInput does nothing when a window's text
+// input is already active — it checks its own flag and returns — so once that
+// flag is set, every later call is a no-op no matter what has happened
+// underneath. On macOS the platform side of "start" is what attaches the
+// input-method responder to the focused window's view, and if that ran at a
+// moment the window was not yet the one with the keyboard, it did nothing
+// while SDL latched the flag on anyway. From then on the window has text
+// input by SDL's reckoning and no input method by the OS's: keys arrive,
+// typing works, and only the input method's own surfaces are missing.
+//
+// Going off and on again clears the flag so the second call is a real one.
+func RestartTextInput(w *Window) error {
+	if err := StopTextInput(w); err != nil {
+		return err
+	}
+	return StartTextInput(w)
+}
 
 // SetTextInputArea tells the OS where the caret is, in WINDOW pixels, so
 // an input method can put its candidate window under the text being
@@ -451,6 +542,13 @@ func SetTextInputArea(w *Window, xPx, yPx, wPx, hPx, cursorPx int) error {
 // caret to report. An input method then falls back to its own placement
 // rather than anchoring on a stale rectangle.
 func ClearTextInputArea(w *Window) error { return w.w.SetTextInputArea(nil, 0) }
+
+// ClearComposition abandons whatever the input method is currently holding,
+// without committing it. Used where a composition turns out not to have been
+// text at all: a macOS dead-key Option chord arms an accent for the next
+// keystroke, and when that chord is a shortcut the armed accent has to go,
+// or the next character the user types wears it.
+func ClearComposition(w *Window) error { return w.w.ClearComposition() }
 
 // --- clipboard ---
 
@@ -500,6 +598,12 @@ type KeyboardEvent struct {
 	Type     uint32
 	WindowID uint32
 	Keysym   Keysym
+
+	// Repeat marks a KEY_DOWN the keyboard generated because the key is being
+	// HELD. SDL reports it and this adapter used to drop it, which left the
+	// platform layer unable to tell a held key from a drummed one and every
+	// consumer above it the same.
+	Repeat bool
 }
 
 type TextInputEvent struct {
@@ -602,7 +706,8 @@ func translate(ev *csdl.Event) Event {
 		return &KeyboardEvent{
 			Type:     typ,
 			WindowID: uint32(k.WindowID),
-			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod)},
+			Keysym:   Keysym{Sym: k.Key, Mod: uint16(k.Mod), Scancode: uint32(k.Scancode)},
+			Repeat:   k.Repeat,
 		}
 
 	case csdl.EVENT_TEXT_INPUT:

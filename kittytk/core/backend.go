@@ -209,6 +209,40 @@ type ImageDrawer interface {
 	DrawImagePx(xPx, yPx int, img image.Image)
 }
 
+// CellPixelSizer is an optional RenderBackend capability reporting how many
+// DEVICE PIXELS one cell of this surface covers — which a cell surface knows
+// only if it asked, and only a terminal host has anyone to ask.
+//
+// A graphical surface derives its cell from its own font and never needs this.
+// A TUI host does: it draws into somebody else's terminal, whose cell size is
+// that terminal's business, and it finds out by querying (CSI 16 t). The number
+// matters beyond its own layout, because a program hosted INSIDE such a surface
+// asks the same question of us and can do nothing about pictures without an
+// answer — no image can be sized, positioned, or scaled without it.
+//
+// Zero means the question has not been answered, which is the honest state
+// before the reply arrives and on a terminal that never sends one.
+type CellPixelSizer interface {
+	CellPixelSize() (w, h int)
+}
+
+// MotionTracker is an optional RenderBackend capability: a surface that has to
+// ASK to be told about pointer motion.
+//
+// A graphical host is given every mouse move whether it wants one or not. A
+// terminal host is given only what it asked its own terminal for, and asking
+// for motion is a separate mode (?1003) from asking for clicks — so a trinket
+// that needs to follow the pointer without a button held has to say so, every
+// frame it still needs it. Hover is the obvious case; a hosted program that
+// turned on its own motion tracking is the one that made this necessary,
+// because the events it is waiting for do not otherwise exist.
+//
+// Requests are per FRAME and not sticky: a surface stops asking and the mode
+// goes away, which keeps a busy wire quiet when nothing is watching.
+type MotionTracker interface {
+	RequestMotionTracking()
+}
+
 // MaskTintDrawer is an optional RenderBackend capability: composite a
 // color-independent coverage mask (only its alpha is read) tinted with a solid
 // color. Lets a caller cache one grayscale glyph per shape and recolor it per
@@ -224,6 +258,25 @@ type MaskTintDrawer interface {
 // uses UnitPixelMapper instead.
 type DeviceScaler interface {
 	Scale() int
+}
+
+// DisplayDensityReporter is an optional RenderBackend capability reporting the
+// PHYSICAL display's content scale — 2 on a HiDPI panel, 1 on an ordinary one.
+//
+// This is emphatically not DeviceScaler. That one is how much this application
+// magnifies itself, a preference; this one is a fact about the screen, and the
+// two are independent (a user may well ask for 1 on a HiDPI panel, which is
+// exactly the case that tells them apart).
+//
+// It matters because a SEPARATE process rendering pictures for us — a browser
+// in a terminal pane — reads the display's density from the window system
+// itself and sizes its content to it, entirely outside our sight. Nothing in
+// the terminal protocols carries that number in either direction, so the only
+// way to end up agreeing with such a child is to learn the same fact it did.
+// Deriving it from our own magnification instead looks right exactly when the
+// two happen to be equal.
+type DisplayDensityReporter interface {
+	DisplayDensity() float64
 }
 
 // UnitPixelMapper is an optional RenderBackend capability exposing the
@@ -308,34 +361,6 @@ type RoundedClipper interface {
 	SetRoundedClip(r UnitRect, radius Unit)
 }
 
-// ResizeGripProvider reports the window resize-grip thickness (in
-// units) for graphical frames: only the outer sliver of a window
-// edge acts as a resize handle (a quarter of a layout column, never
-// less than 4 device pixels), so trinkets living at the window's
-// edge remain clickable. Zero means the cell-frame behavior: the
-// whole border row/column is the grip (it IS the frame there).
-// The desktop provides it; window hosts discover it by ancestry
-// with FindResizeGrip.
-type ResizeGripProvider interface {
-	GraphicalResizeGrip() Unit
-}
-
-// FindResizeGrip walks up the trinket tree for a ResizeGripProvider.
-// Default (no provider found): 0 - classic full-cell grip zones.
-func FindResizeGrip(w Trinket) Unit {
-	for current := Trinket(w); current != nil; {
-		if p, ok := current.(ResizeGripProvider); ok {
-			return p.GraphicalResizeGrip()
-		}
-		parent := current.Parent()
-		if parent == nil {
-			return 0
-		}
-		current = parent
-	}
-	return 0
-}
-
 // GraphicalFrameProvider is the trinket-side carrier of the frame
 // mode: the desktop reports true when its backend paints rounded
 // window frames, and windows discover it by walking their ancestry
@@ -417,6 +442,26 @@ func ScaledWindowFrameBorderPx(ppu float64) int {
 // defaultWindowFrameBorderPx is the built-in frame stroke weight.
 const defaultWindowFrameBorderPx = 2
 
+// titleBarScale scales every GRAPHICAL title bar's height and content:
+// 1.0 is the classic full-cell row; 0.9 renders the bar at 90% of it —
+// ceiled to a full device pixel — with the fonts and controls scaled to
+// match. Cell (terminal) surfaces cannot subdivide a character cell and
+// always render at 1.0 regardless. Read by the title-bar kit
+// (objects/window/titlebar.go), which is the only place bars measure.
+var titleBarScale = 1.0
+
+// SetTitleBarScale sets the graphical title-bar scale; values at or below
+// zero restore 1.0.
+func SetTitleBarScale(s float64) {
+	if s <= 0 {
+		s = 1
+	}
+	titleBarScale = s
+}
+
+// TitleBarScale returns the current graphical title-bar scale.
+func TitleBarScale() float64 { return titleBarScale }
+
 // FrameBorderProvider is the trinket-side carrier of the graphical
 // window-frame border reservation: the desktop reports how many units the
 // frame border occupies (the device-pixel width converted at its
@@ -442,6 +487,37 @@ func FindFrameBorderUnits(w Trinket) Unit {
 		current = parent
 	}
 	return 0
+}
+
+// PxPerUnitProvider is the trinket-side carrier of the surface's
+// pixels-per-unit, so geometry expressed in DEVICE PIXELS (a minimum grab
+// width, say) can be converted honestly rather than assumed equal to the
+// integer device scale. The desktop reports its surface's ppu; a cell
+// surface has none and the walk falls back to 1.
+type PxPerUnitProvider interface {
+	SurfacePxPerUnit() float64
+}
+
+// FindPxPerUnit walks up from a trinket to the nearest surface that reports
+// pixels-per-unit, returning 1 when nothing does. ppu is font_size aware
+// (fontSize/12 x deviceScale), which is exactly why a device-pixel quantity
+// must be divided by IT and not by the device scale: the two agree only at
+// font size 12.
+func FindPxPerUnit(w Trinket) float64 {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(PxPerUnitProvider); ok {
+			if ppu := p.SurfacePxPerUnit(); ppu > 0 {
+				return ppu
+			}
+			return 1
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 1
+		}
+		current = parent
+	}
+	return 1
 }
 
 // SnapOriginSetter is an optional RenderBackend capability: anchor cell
@@ -486,6 +562,20 @@ type TextPixelDrawer interface {
 	DrawTextPx(xPx, yPx int, s string, st style.CellStyle, f *Font) int
 }
 
+// TextPixelMeasurer is an optional RenderBackend capability: the advance of a
+// string in device pixels, measured the way DrawTextPx paints it.
+//
+// MeasureText answers in whole units, which is the denomination trinkets are
+// laid out in and the wrong one for finding a position INSIDE a run. The
+// glyphs rasterize at the unsnapped pixels-per-unit, so a caret or a clip edge
+// placed by measuring a prefix in units and scaling afterwards rounds twice
+// and drifts off the glyphs it belongs between - visibly where a rune's
+// advance is a fraction of a unit, as a space's is beside CJK text. Cell
+// surfaces omit this: there is nothing finer than a cell to place there.
+type TextPixelMeasurer interface {
+	MeasureTextPx(s string, f *Font) int
+}
+
 // ClippedTextPixelDrawer is an optional RenderBackend capability: like
 // DrawTextPx, but only the device-pixel columns in [clipX0, clipX1) are
 // painted. It lets a caller draw one shaped run and reveal only part of it
@@ -522,6 +612,18 @@ type KeyPressEvent struct {
 	Key       string       // Key name from direct-key-handler
 	Modifiers KeyModifiers // Active modifiers
 	Text      string       // Printable text if any
+
+	// Repeat marks a press the keyboard generated because the key is being
+	// HELD, rather than struck again.
+	//
+	// It is a press either way, and every consumer that only wants to know a
+	// key happened can ignore this and be right. It is here for the ones that
+	// cannot: a browser in a hosted terminal reports a repeat as a keydown with
+	// its repeat flag set, and without this it has no way to tell a held key
+	// from a drummed one. Both backends produced repeats and neither said so —
+	// the TUI trimmed the protocol's marker off and SDL never read its own
+	// repeat bit — so a hosted guest was told the key was struck ten times.
+	Repeat bool
 }
 
 func (KeyPressEvent) isEvent() {}
@@ -635,6 +737,15 @@ type Painter struct {
 	transform Transform
 	clip      UnitRect
 	metrics   CellMetrics
+
+	// partial marks a frame painted for only part of the surface — the tree
+	// clipped to a damaged region rather than drawn whole. Derived painters
+	// copy it, so it reaches whoever finishes the frame.
+	//
+	// It is here for what a frame's SILENCE is worth. A complete frame that
+	// reported no insertion point has said there is none; a partial one has
+	// said nothing at all, and the difference is the whole of Complete().
+	partial bool
 
 	// Rounded clip region (screen coordinates; zero rect = none): an
 	// additional constraint beyond the rectangular clip, honored by
@@ -871,6 +982,21 @@ func (p *Painter) DrawImageMaskTintOffset(x, y Unit, offXPx, offYPx int, mask *i
 	return true
 }
 
+// MeasureTextPx is the advance of a string in device pixels, measured the way
+// DrawTextOffset paints it. Returns 0, false on cell surfaces, where the
+// caller falls back to measuring in whole units.
+//
+// Use it for anything that has to land INSIDE a run - a caret, a selection
+// edge, a composition's clip - rather than measuring in units and scaling:
+// see TextPixelMeasurer.
+func (p *Painter) MeasureTextPx(text string, font *Font) (int, bool) {
+	tm, ok := p.backend.(TextPixelMeasurer)
+	if !ok {
+		return 0, false
+	}
+	return tm.MeasureTextPx(text, font), true
+}
+
 // DrawTextOffset draws a string with its top-left at unit (x, y) plus a
 // device-pixel offset, returning the advance in device pixels. Proportional
 // glyphs rasterize at the unsnapped pixels-per-unit, so laying successive
@@ -952,6 +1078,45 @@ func (p *Painter) DeviceScale() int {
 		}
 	}
 	return 1
+}
+
+// DisplayDensity reports the physical display's content scale (see
+// DisplayDensityReporter): 2 on a HiDPI panel, 1 on an ordinary one, and 1
+// when the backend does not know — a backend that cannot see a screen (an
+// off-screen raster, a terminal host) has no business claiming one.
+//
+// Use it only for agreeing with something OUTSIDE this process about density.
+// Everything internal — geometry, hairlines, cell metrics — uses DeviceScale
+// or PxPerUnitF, which describe how this application draws.
+func (p *Painter) DisplayDensity() float64 {
+	if d, ok := p.backend.(DisplayDensityReporter); ok {
+		if s := d.DisplayDensity(); s > 0 {
+			return s
+		}
+	}
+	return 1
+}
+
+// CellPixelSize reports the device pixels one cell of this surface covers, or
+// 0,0 when the backend does not know (see CellPixelSizer). A graphical surface
+// answers 0,0 and should be asked its font metrics instead; this exists for the
+// number a cell surface had to ask its host terminal for.
+func (p *Painter) CellPixelSize() (w, h int) {
+	if cs, ok := p.backend.(CellPixelSizer); ok {
+		if cw, ch := cs.CellPixelSize(); cw > 0 && ch > 0 {
+			return cw, ch
+		}
+	}
+	return 0, 0
+}
+
+// RequestMotionTracking asks the surface to deliver pointer motion for the rest
+// of this frame's lifetime (see MotionTracker). A backend that always has
+// motion ignores it, so callers need not ask what kind of host they are on.
+func (p *Painter) RequestMotionTracking() {
+	if mt, ok := p.backend.(MotionTracker); ok {
+		mt.RequestMotionTracking()
+	}
 }
 
 // PxPerUnitF reports the fractional device pixels per unit, tracking

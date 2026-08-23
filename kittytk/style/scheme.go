@@ -128,6 +128,17 @@ type Scheme struct {
 	FocusedEditBoxCursor          *CellStyle // black on white (cell block cursor)
 	FocusedEditBoxBarCursor       *CellStyle // bright white (graphical bar caret)
 	FocusedEditBoxFill            *CellStyle // white on cyan
+	// An input method's in-flight composition. ActiveClause is the segment it
+	// is CONVERTING right now — and is what a composition with no clause wears
+	// throughout, since all of such a one is the material being worked on.
+	// Inactive is therefore only ever seen beside a clause: it is the dimmed
+	// rest of a composition that has one.
+	//
+	// Only the foreground is read: the composition is overstruck on the field's
+	// own background so its glyphs never shift as it grows, and the underline
+	// rules are filled with the same colour.
+	FocusedEditBoxIMEInactive     *CellStyle // bright white on cyan (not being converted)
+	FocusedEditBoxIMEActiveClause *CellStyle // red on cyan (the composition, or its clause)
 	// Selection inside an edit box: the focused pair, the resting
 	// (unfocused) pair, and the resting pair on a dark pane.
 	FocusedEditBoxSelectionFG         *Color // black
@@ -433,6 +444,8 @@ func DefaultScheme() *Scheme {
 		FocusedEditBoxCursor:              ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorWhite)),
 		FocusedEditBoxBarCursor:           ptr(DefaultStyle().WithFg(ColorBlack).WithBg(ColorBrightWhite)),
 		FocusedEditBoxFill:                ptr(DefaultStyle().WithFg(ColorWhite).WithBg(ColorCyan)),
+		FocusedEditBoxIMEInactive:         ptr(DefaultStyle().WithFg(ColorBrightWhite).WithBg(ColorCyan)),
+		FocusedEditBoxIMEActiveClause:     ptr(DefaultStyle().WithFg(ColorRed).WithBg(ColorCyan)),
 		FocusedEditBoxSelectionFG:         colorPtr(ColorBlack),
 		FocusedEditBoxSelectionBG:         colorPtr(ColorWhite),
 		RestingEditBoxSelectionFG:         colorPtr(ColorWhite),
@@ -897,6 +910,35 @@ func (s *Scheme) GetEditBoxPlaceholder(pane PaneType) CellStyle {
 func (s *Scheme) GetFocusedEditBoxText() CellStyle   { return or(s.FocusedEditBoxText) }
 func (s *Scheme) GetFocusedEditBoxCursor() CellStyle { return or(s.FocusedEditBoxCursor) }
 func (s *Scheme) GetFocusedEditBoxFill() CellStyle   { return or(s.FocusedEditBoxFill) }
+
+// GetFocusedEditBoxIMEInactive returns the style for the part of a composition
+// that is NOT the clause being converted.
+//
+// It falls back to the bar caret's FILL, which is where this colour came from
+// before it had a name of its own: composed text belongs to the input method
+// the same way the caret does, so a scheme that only says what the caret looks
+// like still says something sensible here.
+func (s *Scheme) GetFocusedEditBoxIMEInactive() CellStyle {
+	if s.FocusedEditBoxIMEInactive != nil {
+		return *s.FocusedEditBoxIMEInactive
+	}
+	return DefaultStyle().WithFg(s.GetFocusedEditBoxBarCursor().Bg)
+}
+
+// GetFocusedEditBoxIMEActiveClause returns the style for the clause an input
+// method is CONVERTING right now — and for the whole of a composition that
+// names no clause, which is every one that builds text rather than converting
+// it. Nothing there is inactive, so nothing there is dimmed.
+//
+// It falls back to the composition's own style, which is what a scheme that
+// draws no distinction is asking for — the clause is then told apart by its
+// thicker underline alone, as it was before this colour existed.
+func (s *Scheme) GetFocusedEditBoxIMEActiveClause() CellStyle {
+	if s.FocusedEditBoxIMEActiveClause != nil {
+		return *s.FocusedEditBoxIMEActiveClause
+	}
+	return s.GetFocusedEditBoxIMEInactive()
+}
 
 // GetFocusedEditBoxBarCursor returns the color for the graphical bar
 // caret (a brighter white than the cell block cursor, for contrast),

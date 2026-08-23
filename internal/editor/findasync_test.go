@@ -121,18 +121,18 @@ func pretendSlowFind(e *Editor) *findRun {
 }
 
 // cancel stops a find that is SHOWING the message naming the cancel key, and
-// reports success so the ^C chain never falls through to buffer_close and its
+// reports success so the ^C chain never falls through to viewport_close and its
 // LOSE CHANGES question. That message is the whole warrant: the user was told
 // this key stops the search, so it must.
 func TestCancelStopsSearchOfferingTheKey(t *testing.T) {
 	e, _ := newTestEditor(t, "aa bb aa\n")
-	e.executeCommand("insert 'x'") // modified: buffer_close WOULD prompt
+	e.executeCommand("insert 'x'") // modified: viewport_close WOULD prompt
 	fr := pretendSlowFind(e)
 	if !fr.cancelable() {
 		t.Fatal("a search showing the cancel key should be cancelable")
 	}
 
-	e.dispatchKey("^C") // cancel|buffer_close
+	e.dispatchKey("^C") // cancel|viewport_close
 
 	if fr.stop == nil || !fr.stop.Load() {
 		t.Fatal("cancel should have told the find thread to stop")
@@ -144,7 +144,7 @@ func TestCancelStopsSearchOfferingTheKey(t *testing.T) {
 		t.Error("cancel should say the search was called off")
 	}
 	if focusedPrompt(e) != nil {
-		t.Fatal("cancel must not fall through to buffer_close's LOSE CHANGES prompt")
+		t.Fatal("cancel must not fall through to viewport_close's LOSE CHANGES prompt")
 	}
 }
 
@@ -167,7 +167,7 @@ func TestCompletedFindIsNotCancelable(t *testing.T) {
 		t.Fatal("cancelFind should report false once the search is over")
 	}
 	if res := e.PawScript.ExecuteAsync("cancel"); res != pawscript.BoolStatus(false) {
-		t.Fatalf("cancel = %v, want false so the ^C chain reaches buffer_close", res)
+		t.Fatalf("cancel = %v, want false so the ^C chain reaches viewport_close", res)
 	}
 	if hasNotification(e, "Search cancelled") {
 		t.Error("nothing was cancelled, so nothing should say so")
@@ -258,14 +258,14 @@ func TestFindPumpDiscardsCancelledResult(t *testing.T) {
 }
 
 // With no find running, cancel still reports failure so ^C reaches
-// buffer_close as it always has.
+// viewport_close as it always has.
 func TestCancelWithoutFindFallsThrough(t *testing.T) {
 	e, _ := newTestEditor(t, "aa\n")
 	if e.cancelFind() {
 		t.Fatal("cancelFind should report false with no find running")
 	}
 	if res := e.PawScript.ExecuteAsync("cancel"); res != pawscript.BoolStatus(false) {
-		t.Fatalf("cancel = %v, want false so the ^C chain reaches buffer_close", res)
+		t.Fatalf("cancel = %v, want false so the ^C chain reaches viewport_close", res)
 	}
 }
 

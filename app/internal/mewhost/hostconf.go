@@ -37,6 +37,9 @@ import (
 //	wallpaper_align =      ; center / left / right / top / bottom (combinable)
 //	wallpaper_filter =     ; crisp (nearest) / smooth (linear)
 //	wallpaper_scale =      ; float multiplier; blank/0 keeps the default
+//	desktop_frame  =       ; themed (default) / native_titlebar / native
+//	titlebar_scale =       ; graphical title-bar height and content scale
+//	                       ;   (1.0 = classic full-cell row, the default)
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -149,6 +152,23 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 			cfg.Renderer = strings.ToLower(v)
 		}
 	}
+	// desktop_frame: how the main OS window is framed — themed (the desktop
+	// paints its own title bar), native_titlebar, or native. Validated like
+	// renderer: a typo keeps the default rather than surprising at launch.
+	if v, ok := window["desktop_frame"]; ok {
+		switch strings.ToLower(v) {
+		case "themed", "native_titlebar", "native":
+			cfg.DesktopFrame = strings.ToLower(v)
+		}
+	}
+	// titlebar_scale: graphical title-bar height and content scale. 1.0 is
+	// the classic full-cell row; a value that doesn't parse, or is zero or
+	// negative, keeps it. The terminal host ignores it.
+	if v, ok := window["titlebar_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.TitleBarScale = f
+		}
+	}
 	// wallpaper: the image path plus its layout (mode / tile / align / filter /
 	// scale). Empty strings and a zero scale keep the built-in pattern and the
 	// layout defaults, so a partial [window] section need not restate them.
@@ -166,6 +186,21 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 	// [service] - the display endpoint and shared secret (both hosts).
 	setStr(service, "endpoint", &cfg.Endpoint)
 	setStr(service, "token", &cfg.Token)
+
+	// [system] density - the PHYSICAL screen's content scale, overriding what
+	// the window system reports. Blank, zero or unparseable leaves it on auto
+	// (0), because pinning a wrong number is worse than having none.
+	//
+	// Not [window] scale. That is how large mew draws itself; this is what kind
+	// of panel it is on, and asking for scale=1 on a HiDPI screen makes the two
+	// differ. It is here because a child rendering pictures into a terminal
+	// pane reads the density from the window system on its own, and nothing in
+	// the terminal protocols carries that number either way.
+	if v, ok := system["density"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.Density = f
+		}
+	}
 
 	// native is section-routed: [system] styles the graphical host's menu
 	// glyphs, [tui] the terminal host's; clipboard is [tui] only.

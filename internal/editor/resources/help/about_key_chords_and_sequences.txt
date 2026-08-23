@@ -1,0 +1,46 @@
+==== About Key Chords and Sequences ====
+
+In music theory, a chord is more than one note played simultaneously.
+In computing, a key chord is defined as pressing (and releasing) one
+final key, while one or more other modifier keys are already being
+held down.
+
+This concept is fine for casual computing, but it suffers from three
+distinct problems:
+
+  1. There are only 26 letter keys, so only a few shortcuts can have an
+     obvious mnemonic-device that helps facilitate their memory.
+
+  2. Many basic functions require removing the hands far from the home
+     row, which harms creative flow and efficiency.
+
+  3. There is no obvious way to organize shortcuts into groups or to
+     offer hints to the user, unless they resort to browsing drop-down
+     menus or help manuals.
+
+In 1978, Rob Barnaby's WordStar, a word processing application,
+initially written for the CP/M operating system was published by
+MicroPro International Corporation, and when it was later ported
+to the IBM PC, it avoided these problems by leveraging **Key Sequences**
+and using only a single Modifier Key, the Control key.
+
+WordStar's **Key Sequences** were grouped into families, and each
+family started with an initiator chord, such as Ctrl+K for "bloc__K__"
+or Ctrl+Q for "__Q__uick", followed by one or more additional keys to
+choose the specific command.  On-Screen Help was available, which could
+teach the user both the top-level initiator chords, as well as the
+potential completions available once the top-level initiator had been
+pressed, and importantly, this help could be turned off by experts,
+to reduce visual distraction while writing.
+
+WordStar offered a "non-document" mode which became popular amongst
+Computer Programmers as a "code editor", and many later text editors
+and popular programmer's IDEs took inspiration from it.
+
+Among these were Borland's Turbo Pascal IDE, made under the leadership
+of Anders Hejlsberg, and the venerable JOE (Joe's Own Editor), originally
+written and released by Joseph Allen in 1991.
+
+**mew** also makes use of **Chords** and **Key Sequences**, and its default
+key mappings are organized into command families in much the same spirit
+as WordStar and JOE.

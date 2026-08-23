@@ -2,7 +2,6 @@
 package window
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -75,6 +74,7 @@ const (
 // and optional Mac-like menu integration.
 type Window struct {
 	core.TrinketBase
+	core.TrinketKeys
 	mu sync.RWMutex
 
 	// Window properties
@@ -223,6 +223,7 @@ type Window struct {
 	onCloseComplete       func()                   // Called when window is closed, to remove from manager
 	onClosedObservers     []func()                 // Additional close observers (survive onCloseComplete reassignment)
 	getConstrainingBounds func() core.UnitRect     // Returns the client area for movement constraints
+	getDisplayBounds      func() core.UnitRect     // Returns where the container DRAWS this window (the corral)
 	popupController       core.PopupController     // Popup controller for ComboBox etc.
 
 	// Button press tracking
@@ -239,7 +240,17 @@ type Window struct {
 	hoveredButton       TitleButton // Titlebar button under the pointer (plain hover)
 
 	// Title bar keyboard focus
-	titleFocus        TitleFocus    // Which title bar element has keyboard focus
+	titleFocus TitleFocus // Which title bar element has keyboard focus
+	// keyContext is what this window's keyboard currently offers, rebuilt when
+	// the UI state changes (see refreshKeyContext). Held per window so a
+	// change here cannot stale another window's.
+	keyContext *core.KeyContext
+	// What the context above was built from, so a stale one is noticed at the
+	// point of use rather than needing everything that could change it to
+	// remember to say so.
+	keyContextReg     *core.KeyRegistry
+	keyContextRev     uint64
+	keyContextState   core.UIState
 	resizeEdges       int           // Which edges are being keyboard-resized (ResizeEdge* constants)
 	resizeStartBounds core.UnitRect // Bounds when resize operation started (for Escape to revert)
 
@@ -268,6 +279,25 @@ func NewWindow(title string) *Window {
 		maxHeight:   1<<30 - 1,
 	}
 	w.TrinketBase = *core.NewTrinketBase()
+	// A window's own vocabulary: the frame commands it always answers to, and
+	// the geometry family that belongs to a FOCUSED TITLE BAR -- sixteen
+	// bindings that exist in no other situation, which is why the title bar
+	// is a UI state rather than a trinket. Nothing here reaches the content;
+	// the focused trinket resolves its own keys against its own set.
+	w.SetCommands(
+		core.CmdWindowClose, core.CmdWindowMaximizeToggle, core.CmdAppMenu,
+		core.CmdAppHelp, core.CmdAppQuit,
+		core.CmdFocusNext, core.CmdFocusPrior,
+		core.CmdTrinketActivate, core.CmdWindowCancelResize,
+		core.CmdWindowMoveFineUp, core.CmdWindowMoveFineDown,
+		core.CmdWindowMoveFineLeft, core.CmdWindowMoveFineRight,
+		core.CmdWindowSizeFineUp, core.CmdWindowSizeFineDown,
+		core.CmdWindowSizeFineLeft, core.CmdWindowSizeFineRight,
+		core.CmdWindowMoveUp, core.CmdWindowMoveDown,
+		core.CmdWindowMoveLeft, core.CmdWindowMoveRight,
+		core.CmdWindowSizeUp, core.CmdWindowSizeDown,
+		core.CmdWindowSizeLeft, core.CmdWindowSizeRight,
+	)
 	w.Init(w)
 	w.SetFocusPolicy(core.StrongFocus)
 	w.focusManager = core.NewFocusManager(nil)
@@ -579,6 +609,34 @@ func (w *Window) Restore() {
 	}
 }
 
+// RestoreInPlace clears a maximized state WITHOUT moving the window: its
+// current rect becomes its normal (floating) bounds. Restore() snaps back to
+// the saved pre-maximize rect, which is the wrong answer once the geometry has
+// already moved on — a torn/solo host whose OS window was edge-resized while
+// the window still believed it was maximized. Left maximized, such a window
+// paints the maximized frame (title bar only, no border stroke) around an
+// arbitrary rect and offers a restore button that would teleport it; adopting
+// the rect as normal makes it honest again, so the full frame and the maximize
+// button come back. No-op unless the window is maximized.
+func (w *Window) RestoreInPlace() {
+	w.mu.Lock()
+	if w.state != WindowStateMaximized {
+		w.mu.Unlock()
+		return
+	}
+	w.state = WindowStateNormal
+	w.stateBeforeMinimize = WindowStateNormal
+	w.normalBounds = w.Bounds()
+	handler := w.onStateChange
+	w.mu.Unlock()
+
+	w.Update()
+
+	if handler != nil {
+		handler(WindowStateNormal)
+	}
+}
+
 // keyboardTopSnapMaximize maximizes an in-surface window through its
 // maximize-request handler when it is already pressed against the top of
 // its client area - the keyboard equivalent of dragging the titlebar up
@@ -746,8 +804,28 @@ func (w *Window) SetActive(active bool) {
 	w.Update()
 }
 
-// Close attempts to close the window.
+// Close attempts to close the window, and reports whether it actually did. It
+// is an ATTEMPT throughout: this window's close handler may decline, and so
+// may any of its children, since a child left open over a closed parent is
+// not a window anyone can get back to.
+//
+// When something declines, the window that did so is brought back to the
+// user's attention along with every window between here and it, innermost
+// last so it lands on top. A refusal the user cannot see is a window that
+// simply will not close for no visible reason.
 func (w *Window) Close() bool {
+	ok, blocker := w.attemptClose()
+	if !ok {
+		w.surfaceBlockingChain(blocker)
+	}
+	return ok
+}
+
+// attemptClose is Close without the surfacing, so a nested child refusal
+// surfaces ONCE from the outermost Close rather than once per level (which
+// would raise the parents last and bury the window actually asking). It
+// reports the innermost window that declined.
+func (w *Window) attemptClose() (bool, *Window) {
 	w.mu.RLock()
 	handler := w.onClose
 	closeComplete := w.onCloseComplete
@@ -756,17 +834,24 @@ func (w *Window) Close() bool {
 	w.mu.RUnlock()
 
 	if handler != nil && !handler() {
-		return false
+		return false, w
 	}
 
-	// Announce window closing for accessibility
+	// Close child windows first. A child that declines cancels this close
+	// too: its own dialog is the one asking, and answering "don't close"
+	// there cannot mean the window behind it goes anyway. Children that
+	// already agreed stay closed, exactly as a refused application quit
+	// leaves the windows that agreed to it closed.
+	for _, child := range w.ChildWindows() {
+		if ok, blocker := child.attemptClose(); !ok {
+			return false, blocker
+		}
+	}
+
+	// Announce window closing for accessibility. After the children, so a
+	// close that a child cancels is never announced as having happened.
 	if am := core.FindAccessibilityManager(w); am != nil {
 		am.AnnouncePolite(title + ", closed")
-	}
-
-	// Close child windows first
-	for _, child := range w.ChildWindows() {
-		child.Close()
 	}
 
 	// Remove from parent
@@ -786,7 +871,55 @@ func (w *Window) Close() bool {
 		fn()
 	}
 
-	return true
+	return true, nil
+}
+
+// windowSurfacer is the desktop, which is the only thing that knows where a
+// window actually lives -- docked, minimized to the dock, or torn onto its own
+// OS surface, possibly minimized there too. Declared here rather than imported
+// so the dependency stays one-way.
+type windowSurfacer interface {
+	SurfaceWindow(win *Window)
+}
+
+// surfaceBlockingChain brings the window that refused back into view, together
+// with every window between this one and it. Outermost first so the innermost
+// -- the one actually asking the user something -- ends up on top.
+func (w *Window) surfaceBlockingChain(blocker *Window) {
+	if blocker == nil {
+		return
+	}
+	surfacer := w.findSurfacer()
+	if surfacer == nil {
+		return
+	}
+	// Walk up from the blocker to here, then surface in reverse.
+	chain := []*Window{blocker}
+	for p := blocker.ParentWindow(); p != nil; p = p.ParentWindow() {
+		chain = append(chain, p)
+		if p == w {
+			break
+		}
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		surfacer.SurfaceWindow(chain[i])
+	}
+}
+
+// findSurfacer walks up for the desktop.
+func (w *Window) findSurfacer() windowSurfacer {
+	var current any = w.Parent()
+	for current != nil {
+		if s, ok := current.(windowSurfacer); ok {
+			return s
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
 }
 
 // SetOnClose sets the close handler.
@@ -906,9 +1039,53 @@ func (w *Window) SetWindowMenuBar(mb core.Trinket) {
 	w.mu.Unlock()
 	if mb != nil {
 		mb.SetParent(w)
+		// A solo or torn-off window carries its own bar, so it forms its own
+		// accelerators, against its own context. The desktop's bar does the
+		// same for the desktop; neither has to know about the other.
+		w.refreshKeyContext()
+		// Tab out of this bar into the window's own focus chain. The desktop's
+		// bar hands Tab to the dock; a window's bar has no dock beside it, so
+		// without this the key fell through to the focused trinket and a
+		// full-screen one swallowed it (see focusOutOfMenuBar).
+		if fo, ok := mb.(interface{ SetOnFocusOut(func(bool) bool) }); ok {
+			fo.SetOnFocusOut(w.focusOutOfMenuBar)
+		}
 	}
 	w.layoutContent()
 	w.Update()
+}
+
+// focusOutOfMenuBar moves focus off this window's own menu bar: Shift+Tab
+// (forward=false) back to the title bar, Tab forward to the first content
+// trinket. It mirrors where Tab lands when it walks off either end of the
+// content chain, so the bar sits between the title bar and the content in one
+// continuous cycle. Reports whether focus moved; a window with nothing
+// focusable to move to leaves the key alone rather than eating it.
+func (w *Window) focusOutOfMenuBar(forward bool) bool {
+	fm := w.FocusManager()
+	if !forward {
+		// Backward into the title bar - the blur item when it is enabled,
+		// matching Shift+Tab off the front of the content chain.
+		if w.hasKeyboardBlurEnabled() {
+			w.SetTitleFocus(TitleFocusBlur)
+		} else {
+			w.SetTitleFocus(TitleFocusTitle)
+		}
+		if fm != nil {
+			fm.ClearFocus()
+		}
+		w.Update()
+		return true
+	}
+	if fm == nil {
+		return false
+	}
+	w.SetTitleFocus(TitleFocusNone)
+	if !fm.FocusFirst() {
+		return false
+	}
+	w.Update()
+	return true
 }
 
 // WindowMenuBar returns the window's own menu bar (the chrome a detached
@@ -918,6 +1095,32 @@ func (w *Window) WindowMenuBar() core.Trinket {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.menuBar
+}
+
+// applicationQuitter is the desktop. Declared here rather than imported so
+// the dependency stays one-way: a window knows nothing about applications,
+// and the desktop, which owns them, answers the question.
+type applicationQuitter interface {
+	QuitApplicationOwning(win *Window) bool
+}
+
+// quitOwningApplication walks up for the desktop and asks it to end the
+// application this window belongs to. The walk works for a torn-off window
+// too: tearing removes it from the manager but leaves it parented to the
+// desktop, which is exactly the link needed here.
+func (w *Window) quitOwningApplication() bool {
+	var current any = w.Parent()
+	for current != nil {
+		if q, ok := current.(applicationQuitter); ok {
+			return q.QuitApplicationOwning(w)
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return false
+		}
+		current = t.Parent()
+	}
+	return false
 }
 
 // SetShortcutResolver installs a fallback accelerator handler, consulted
@@ -1127,6 +1330,43 @@ func (w *Window) SetGetConstrainingBounds(handler func() core.UnitRect) {
 	w.mu.Unlock()
 }
 
+// SetGetDisplayBounds installs the container's answer to "where is this
+// window actually drawn". A WindowManager or MDIPane sets it to its own
+// provisional corral, so a window left off-screen by a container shrink
+// reports the nudged-into-view rectangle without its logical bounds moving.
+//
+// It exists because the corral has to be readable from OUTSIDE the container
+// that computes it. The software paint loop asks the container directly, but a
+// GPU compositor is handed the windows themselves and positions each one as a
+// layer of its own -- and with no way to ask, it positioned from Bounds() and
+// drew windows clean off the edge of a shrunk desktop, while hit-testing (which
+// does go through the container) still corralled them. Draw and hit disagreed.
+//
+// Nil means "no container", which is the honest answer for a torn-off window
+// managing its own OS geometry: DisplayBounds is then just Bounds.
+func (w *Window) SetGetDisplayBounds(handler func() core.UnitRect) {
+	w.mu.Lock()
+	w.getDisplayBounds = handler
+	w.mu.Unlock()
+}
+
+// DisplayBounds is where this window is DRAWN and hit-tested: its logical
+// bounds corralled into its container's client area. It is the same rectangle
+// the container's own paint loop uses, because it is the container that
+// answers -- there is one corral, not two implementations of one.
+//
+// Equal to Bounds when the window fits, when nothing installed a delegate, and
+// while maximized (a maximized window already tracks the client area).
+func (w *Window) DisplayBounds() core.UnitRect {
+	w.mu.RLock()
+	getBounds := w.getDisplayBounds
+	w.mu.RUnlock()
+	if getBounds == nil {
+		return w.Bounds()
+	}
+	return getBounds()
+}
+
 // SetPopupController sets the popup controller for this window.
 // This is called by WindowManager when the window is added.
 func (w *Window) SetPopupController(pc core.PopupController) {
@@ -1262,6 +1502,13 @@ func (w *Window) frameCellMetrics() core.CellMetrics {
 	return core.DefaultCellMetrics()
 }
 
+// titleBarMetrics resolves this window's title-bar kit metrics, in the
+// FRAME denomination its chrome lays out in (the title bar sits above the
+// content area and is never sized in the interior denomination).
+func (w *Window) titleBarMetrics() TitleBarMetrics {
+	return TitleBarMetricsFor(w.frameCellMetrics(), w.EffectiveFont(), core.FindGraphicalFrames(w))
+}
+
 // contentBounds returns the bounds for the content area. When the window
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
@@ -1284,7 +1531,9 @@ func (w *Window) contentBounds() core.UnitRect {
 		// title bar or a frame).
 		top := core.Unit(0)
 		if hasTitleBar(flags, state) {
-			top = metrics.CellHeight
+			// The (possibly scaled) title row height, from the kit —
+			// CellHeight at scale 1.0 and on every cell surface.
+			top = w.titleBarMetrics().RowH
 		}
 		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
 	case flags&WindowFlagFrameless != 0:
@@ -1297,7 +1546,7 @@ func (w *Window) contentBounds() core.UnitRect {
 		// the border. A thicker border shrinks the interior rather than
 		// overlapping it.
 		b := core.FindFrameBorderUnits(w)
-		top := b + metrics.CellHeight
+		top := b + w.titleBarMetrics().RowH
 		if flags&WindowFlagNoTitle != 0 {
 			top = b
 		}
@@ -1576,40 +1825,32 @@ func (w *Window) Paint(p *core.Painter) {
 	localBounds := core.UnitRect{Width: bounds.Width, Height: bounds.Height}
 	graphicalFrame := state != WindowStateMaximized && flags&WindowFlagFrameless == 0 &&
 		core.FindGraphicalFrames(w)
+	// ONE rounded clip region for everything the window draws inside its
+	// own outline — content, MDI children, and its own chrome. Each of
+	// those reaches the window's edges, and a square rectangle at a
+	// rounded corner spills into the curve: the status bar squared off
+	// the bottom corners and ate the frame there, while the content
+	// (which had this clip already) did not. Sharing one region rather
+	// than building three is also the cheap way to do it — the mask is
+	// set up once per window paint.
+	inside := p
+	if graphicalFrame {
+		inside = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
+	}
+
 	if content != nil {
 		contentBounds := w.contentBounds()
-		contentBase := p
-		if graphicalFrame {
-			// Edge-to-edge content stays inside the frame's rounded
-			// outline (bottom corners in particular).
-			contentBase = p.WithRoundedClipRegion(localBounds, windowCornerRadius)
-		}
-		contentPainter := contentBase.WithOffset(contentBounds.X, contentBounds.Y).
+		contentPainter := inside.WithOffset(contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
 			WithDenomination(outer, interior)
 		content.Paint(contentPainter)
-	}
-	if graphicalFrame {
-		// Content reaches the window edges, so the hairline border is
-		// re-stroked over it - the frame stays visible on all sides.
-		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
-		if frameBorder == style.BorderHeavy {
-			// Single border: the outer band disappears into the window
-			// background, then a thin inner line in the active border color
-			// sits just inside it.
-			bg := w.GetScheme().GetWindowBG(w.renderActive())
-			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
-			w.paintSingleBorderInner(p, localBounds)
-		} else {
-			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
-		}
 	}
 
 	// Paint child windows (within the content area, clipped)
 	if len(w.ChildWindows()) > 0 {
 		contentBounds := w.contentBounds()
 		// Create a painter clipped to the content area
-		contentPainter := p.WithOffset(contentBounds.X, contentBounds.Y).
+		contentPainter := inside.WithOffset(contentBounds.X, contentBounds.Y).
 			WithClip(core.UnitRect{Width: contentBounds.Width, Height: contentBounds.Height}).
 			WithDenomination(outer, interior)
 
@@ -1624,7 +1865,32 @@ func (w *Window) Paint(p *core.Painter) {
 
 	// Detached-window chrome: the menu bar (between title and content)
 	// and status bar (bottom edge), then the menu bar's dropdown on top.
-	w.paintChrome(p, outer, interior)
+	w.paintChrome(inside, outer, interior)
+
+	// The frame goes on LAST, over everything inside it — the same order
+	// the desktop paints its own chrome and then its frame, which is why
+	// that one's corners survive. Content and chrome reach the window's
+	// edges, so the border is re-stroked here rather than before them.
+	if graphicalFrame {
+		frameStyle := w.GetScheme().GetWindowBorder(focused || isPassive)
+		if frameBorder == style.BorderHeavy {
+			// Single border: the outer band disappears into the window
+			// background, then a thin inner line in the active border color
+			// sits just inside it.
+			bg := w.GetScheme().GetWindowBG(w.renderActive())
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle.WithFg(bg))
+			w.paintSingleBorderInner(p, localBounds, w.GetScheme().GetWindowBorder(true))
+		} else {
+			p.StrokeRoundedRect(localBounds, windowCornerRadius, frameBorder, frameStyle)
+			// Every border type closes on the same inner line, so the
+			// innermost band is never left to whatever happens to be under
+			// it. Only the SINGLE border makes that line a statement of its
+			// own (its outer band is painted out, so this is the frame the
+			// eye reads); the others draw it in their own border color, as
+			// the inner edge of the stroke they just laid down.
+			w.paintSingleBorderInner(p, localBounds, frameStyle)
+		}
+	}
 
 	// Resize-edge hover highlight: translucent white bands along the
 	// size-sensitive edge(s) under the pointer, clipped to the frame's
@@ -1632,8 +1898,9 @@ func (w *Window) Paint(p *core.Painter) {
 	w.paintResizeHover(p, localBounds)
 }
 
-// resizeHoverAlpha is the opacity of the resize-edge hover highlight.
-const resizeHoverAlpha = 0.25
+// ResizeHoverAlpha is the opacity of the resize-edge hover highlight,
+// shared with the desktop's own edge bands so the two read as one system.
+const ResizeHoverAlpha = 0.25
 
 // SetResizeHoverRects sets the window-local rectangles highlighted while
 // the pointer hovers a resize edge (empty clears the highlight). Returns
@@ -1805,7 +2072,7 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 		// the geometry paints on, so the band reaches exactly the far edge.
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
-			255, 255, 255, resizeHoverAlpha)
+			255, 255, 255, ResizeHoverAlpha)
 	}
 }
 
@@ -1954,23 +2221,59 @@ func (w *Window) chromeMouseTarget(x, y core.Unit) (core.Trinket, core.UnitRect,
 	return nil, core.UnitRect{}, false
 }
 
-// paintFocusedTitleDecoration draws the keyboard-focused title as
-// "< title >" centered in innerWidth over a highlight foundation. It
-// shapes the whole thing as ONE run rather than cell brackets abutting a
-// proportional title: at a fractional font size the two rates diverge, so
-// placing the closing bracket at the title's re-snapped unit end left it
-// drifting right of where the glyphs actually finish. A single run ends
-// the bracket exactly on the title. On a cell surface each character still
-// occupies its own cell, so the classic look is unchanged.
-func (w *Window) paintFocusedTitleDecoration(p *core.Painter, innerWidth core.Unit, title string, s style.CellStyle, font *core.Font, cellHeight core.Unit) {
-	decorated := "< " + title + " >"
-	totalWidth := font.MeasureText(decorated)
-	startX := (innerWidth - totalWidth) / 2
-	if startX < 0 {
-		startX = 0
+// TitleControlsInsetProvider is an optional container capability: how far
+// the container's OWN title-bar controls sit from the origin of the area
+// it hands its children. A maximized child has no border of its own to
+// indent by, so its controls would start flush at that origin and sit one
+// cell left of the host's — visibly out of line on a themed desktop or an
+// unmaximized parent window. Asking the host closes the gap, and composes
+// through nesting: a host whose own controls are flush (it is itself
+// maximized or zoomed, or it draws no title bar at all) answers 0, and
+// the child stays flush too, which is already aligned.
+//
+// Graphical frames only — see maximizedControlInset.
+type TitleControlsInsetProvider interface {
+	TitleControlsInset() core.Unit
+}
+
+// TitleControlsInset implements TitleControlsInsetProvider for a window
+// hosting MDI children: the offset from the content area it gives them to
+// where its own controls are drawn.
+func (w *Window) TitleControlsInset() core.Unit {
+	if !core.FindGraphicalFrames(w) || !hasTitleBar(w.Flags(), w.State()) {
+		return 0
 	}
-	p.FillRect(core.UnitRect{X: startX, Width: totalWidth, Height: cellHeight}, ' ', s)
-	p.DrawText(startX, 0, decorated, s, font)
+	if w.State() == WindowStateMaximized {
+		// Flush to its own content origin, plus whatever ITS host asked
+		// for — so the alignment carries down a nested stack.
+		return w.maximizedControlInset()
+	}
+	// The normal frame draws its controls one cell in from the
+	// border-inset origin, and the content area starts at that same
+	// border: one cell apart.
+	return w.titleBarMetrics().CellW
+}
+
+// maximizedControlInset is where a MAXIMIZED window starts its title-bar
+// controls: flush at its own origin, unless its host draws controls
+// further in (a themed desktop, an unmaximized parent window), in which
+// case it matches them. Always 0 on a cell surface — a terminal's chrome
+// has no border to align across, and the TUI stays exactly as it was.
+func (w *Window) maximizedControlInset() core.Unit {
+	if !core.FindGraphicalFrames(w) {
+		return 0
+	}
+	if host, ok := w.Parent().(TitleControlsInsetProvider); ok && host != nil {
+		return host.TitleControlsInset()
+	}
+	return 0
+}
+
+// TitleControlsInsetForTest exposes maximizedControlInset — where this
+// window's maximized chrome starts its controls — so a host's alignment
+// can be asserted from the package that owns the host.
+func (w *Window) TitleControlsInsetForTest() core.Unit {
+	return w.maximizedControlInset()
 }
 
 // paintMaximizedFrame draws the title bar only (no side borders).
@@ -1986,14 +2289,16 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
-	font := w.EffectiveFont()
+	// The title-bar kit: the (possibly scaled) row, cells and font every
+	// title bar in the system measures and paints with.
+	tm := w.titleBarMetrics()
 
 	// Fill title bar background
 	titleRect := core.UnitRect{
 		X:      0,
 		Y:      0,
 		Width:  bounds.Width,
-		Height: metrics.CellHeight,
+		Height: tm.RowH,
 	}
 	p.FillRect(titleRect, ' ', titleStyle)
 
@@ -2022,18 +2327,22 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// so its icons must paint in the active style.
 	buttonActive := focused || border == style.BorderHeavy
 
-	// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
-	// These are decorative buttons - use cell-based sizing (3 cells each)
-	buttonWidth := metrics.CellWidth * 3
-	controlX := core.Unit(0)
+	// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
+	// through its own kit function (deliberately distinct per button; only
+	// the three-cell mechanics are shared).
+	//
+	// Flush at the origin, except where the host's own controls sit
+	// further in (a themed desktop, an unmaximized parent window): then
+	// they line up with those instead of one cell to their left. 0 on a
+	// cell surface, so the TUI is unchanged (see maximizedControlInset).
+	buttonWidth := tm.ButtonW
+	controlX := w.maximizedControlInset()
 	if flags&WindowFlagNoClose == 0 {
 		isFocused := titleFocus == TitleFocusClose
 		isPressed := pressedButton == TitleButtonClose && buttonHovered
 		isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintCloseButton(p, tm, controlX, btnStyle)
 		controlX += buttonWidth
 	}
 	if flags&WindowFlagNoMinimize == 0 {
@@ -2041,9 +2350,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintMinimizeButton(p, tm, controlX, btnStyle)
 		controlX += buttonWidth
 	}
 	if canMaximize(flags) {
@@ -2051,15 +2358,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 		isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 		isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 		btnStyle := scheme.GetTitleBarButtonState(buttonActive, isFocused, isHovered, isPressed)
-		var icon rune
-		if state == WindowStateMaximized {
-			icon = 'o' // Restore icon
-		} else {
-			icon = '^' // Maximize icon
-		}
-		p.DrawCell(controlX, 0, '[', btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
-		p.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+		PaintZoomButton(p, tm, controlX, state == WindowStateMaximized, btnStyle)
 		controlX += buttonWidth
 	}
 
@@ -2068,31 +2367,27 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// stand in for it - so it isn't shoved aside; it returns on the next
 	// Tab / Shift+Tab focus change.
 	if titleFocus != TitleFocusTitle {
-		tearTitleW := font.MeasureText(title)
-		controlX = w.paintTearHandle(p, scheme, titleStyle, metrics, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
+		tearTitleW := tm.Font.MeasureText(title)
+		controlX = w.paintTearHandle(p, scheme, titleStyle, tm, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
 	}
 
 	// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 	if titleFocus == TitleFocusTitle {
 		// Title has focus - draw with decorative angle brackets, as one run.
 		titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-		w.paintFocusedTitleDecoration(p, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
+		PaintFocusedTitleDecoration(p, tm, titleRect.Width, title, titleDisplayStyle)
 	} else {
 		rightLimit := bounds.Width
 		if titleFocus == TitleFocusBlur {
 			rightLimit = bounds.Width - buttonWidth
 		}
-		w.paintTitleText(p, title, titleStyle, font, metrics, controlX, rightLimit, bounds.Width)
+		PaintTitleBarText(p, tm, title, titleStyle, controlX, rightLimit, bounds.Width)
 	}
 
 	// Draw blur button on far right when blur item is focused
-	// This is a decorative button - use cell-based sizing (3 cells)
 	if titleFocus == TitleFocusBlur {
 		blurBtnStyle := scheme.GetTitleBarButton(focused, true, false) // Focused button style
-		blurX := bounds.Width - buttonWidth                            // Position at far right
-		p.DrawCell(blurX, 0, '[', blurBtnStyle)
-		p.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
-		p.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
+		PaintBlurButton(p, tm, bounds.Width-buttonWidth, blurBtnStyle)
 	}
 
 	// Fill content area with background (same as normal frame).
@@ -2106,7 +2401,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 // in the window background (reading as no border), so this hairline in the
 // active border color - one tab-stroke weight thick - sits just inside it.
 // No-op on cell surfaces.
-func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect) {
+func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect, st style.CellStyle) {
 	b := core.FindFrameBorderUnits(w)
 	inner := core.UnitRect{
 		X:      b,
@@ -2122,7 +2417,7 @@ func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRe
 	if th < 1 {
 		th = 1
 	}
-	p.StrokeRoundedRectWeight(inner, radius, th, w.GetScheme().GetWindowBorder(true))
+	p.StrokeRoundedRectWeight(inner, radius, th, st)
 }
 
 // paintNormalFrame draws the full window frame with borders.
@@ -2228,7 +2523,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// stay round). The cell path keeps the border color in those areas.
 	if rounded && flags&WindowFlagNoTitle == 0 {
 		b := core.FindFrameBorderUnits(w)
-		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + metrics.CellHeight}
+		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + w.titleBarMetrics().RowH}
 		fillStyle := titleStyle
 		if titleFocus == TitleFocusBlur {
 			// Blur item focused: the whole bar reads inactive on the graphical
@@ -2275,7 +2570,9 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	if rounded && titleFocus == TitleFocusBlur {
 		buttonFocused = false
 	}
-	font := w.EffectiveFont()
+	// The title-bar kit: the (possibly scaled) row, cells and font every
+	// title bar in the system measures and paints with.
+	tm := w.titleBarMetrics()
 
 	// Draw title if enabled
 	if flags&WindowFlagNoTitle == 0 {
@@ -2289,18 +2586,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			tp = p.WithOffset(b, b)
 			innerW = bounds.Width - 2*b
 		}
-		// Draw window controls on the LEFT: [x][.][^] or [x][.][o]
-		// These are decorative buttons - use cell-based sizing (3 cells each)
-		buttonWidth := metrics.CellWidth * 3
-		controlX := metrics.CellWidth // Start after left border
+		// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
+		// through its own kit function (deliberately distinct per button;
+		// only the three-cell mechanics are shared).
+		buttonWidth := tm.ButtonW
+		controlX := tm.CellW // Start after left border
 		if flags&WindowFlagNoClose == 0 {
 			isFocused := titleFocus == TitleFocusClose
 			isPressed := pressedButton == TitleButtonClose && buttonHovered
 			isHovered := hoveredButton == TitleButtonClose && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, 'x', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintCloseButton(tp, tm, controlX, btnStyle)
 			controlX += buttonWidth
 		}
 		if flags&WindowFlagNoMinimize == 0 {
@@ -2308,9 +2604,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isPressed := pressedButton == TitleButtonMinimize && buttonHovered
 			isHovered := hoveredButton == TitleButtonMinimize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, '.', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintMinimizeButton(tp, tm, controlX, btnStyle)
 			controlX += buttonWidth
 		}
 		if canMaximize(flags) {
@@ -2318,15 +2612,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			isPressed := pressedButton == TitleButtonMaximize && buttonHovered
 			isHovered := hoveredButton == TitleButtonMaximize && !isPressed && p.Graphical()
 			btnStyle := scheme.GetTitleBarButtonState(buttonFocused, isFocused, isHovered, isPressed)
-			var icon rune
-			if state == WindowStateMaximized {
-				icon = 'o' // Restore icon
-			} else {
-				icon = '^' // Maximize icon
-			}
-			tp.DrawCell(controlX, 0, '[', btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth, 0, icon, btnStyle)
-			tp.DrawCell(controlX+metrics.CellWidth*2, 0, ']', btnStyle)
+			PaintZoomButton(tp, tm, controlX, state == WindowStateMaximized, btnStyle)
 			controlX += buttonWidth
 		}
 
@@ -2335,7 +2621,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 			X:      0,
 			Y:      0,
 			Width:  innerW,
-			Height: metrics.CellHeight,
+			Height: tm.RowH,
 		}
 
 		// Tear-off handle floats immediately left of the (centered) title,
@@ -2343,7 +2629,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// brackets stand in for it - so it isn't shoved aside; it returns on
 		// the next Tab / Shift+Tab focus change.
 		if titleFocus != TitleFocusTitle {
-			tearTitleW := font.MeasureText(title)
+			tearTitleW := tm.Font.MeasureText(title)
 			// On the graphical path a blur-focused bar reads fully inactive, so
 			// the tear/redock handle and the space around it take the inactive
 			// title colors too (matching a real inactive window frame).
@@ -2353,14 +2639,14 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 				tearStyle = scheme.GetWindowTitle(false)
 				tearActive = false
 			}
-			controlX = w.paintTearHandle(tp, scheme, tearStyle, metrics, controlX, innerW, tearTitleW, tearActive, titleFocus)
+			controlX = w.paintTearHandle(tp, scheme, tearStyle, tm, controlX, innerW, tearTitleW, tearActive, titleFocus)
 		}
 
 		// Draw title text centered, with angle brackets and cyan bg if title has keyboard focus
 		if titleFocus == TitleFocusTitle {
 			// Title has focus - draw with decorative angle brackets, as one run.
 			titleDisplayStyle := scheme.GetTitleBarButton(focused, true, false)
-			w.paintFocusedTitleDecoration(tp, titleRect.Width, title, titleDisplayStyle, font, metrics.CellHeight)
+			PaintFocusedTitleDecoration(tp, tm, titleRect.Width, title, titleDisplayStyle)
 		} else {
 			// Normal title or blur focused
 			titleDisplayStyle := titleStyle
@@ -2368,21 +2654,17 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 				// Blur item focused - use inactive title style for the title text
 				titleDisplayStyle = scheme.GetWindowTitle(false)
 			}
-			rightLimit := innerW - metrics.CellWidth
+			rightLimit := innerW - tm.CellW
 			if titleFocus == TitleFocusBlur {
-				rightLimit = innerW - metrics.CellWidth - buttonWidth
+				rightLimit = innerW - tm.CellW - buttonWidth
 			}
-			w.paintTitleText(tp, title, titleDisplayStyle, font, metrics, controlX, rightLimit, innerW)
+			PaintTitleBarText(tp, tm, title, titleDisplayStyle, controlX, rightLimit, innerW)
 		}
 
 		// Draw blur button on far right when blur item is focused
-		// This is a decorative button - use cell-based sizing (3 cells)
 		if titleFocus == TitleFocusBlur {
 			blurBtnStyle := scheme.GetTitleBarButton(true, true, false) // Focused button style
-			blurX := innerW - metrics.CellWidth - buttonWidth           // Position before right border
-			tp.DrawCell(blurX, 0, '[', blurBtnStyle)
-			tp.DrawCell(blurX+metrics.CellWidth, 0, '~', blurBtnStyle)
-			tp.DrawCell(blurX+metrics.CellWidth*2, 0, ']', blurBtnStyle)
+			PaintBlurButton(tp, tm, innerW-tm.CellW-buttonWidth, blurBtnStyle)
 		}
 	}
 
@@ -2392,7 +2674,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// overlays them. The after-content re-stroke re-adds it over edge-to-edge
 	// content.
 	if rounded && border == style.BorderHeavy {
-		w.paintSingleBorderInner(p, localBounds)
+		w.paintSingleBorderInner(p, localBounds, w.GetScheme().GetWindowBorder(true))
 	}
 
 	// Fill content area with background. Skipped when the rounded
@@ -2410,50 +2692,44 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 // is three periods, not the "\u2026" glyph, matching the tab strip -
 // on cell surfaces it is three cells wide, and MeasureText adjusts
 // the need-for-ellipsis math on both surfaces.
+// EllipsizeToWidth is ellipsizeToWidth for callers outside the package:
+// the desktop's themed title bar lays out like a window title and trims
+// with the same ellipsis.
+func EllipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
+	return ellipsizeToWidth(s, avail, font)
+}
+
 func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	const ell = "..."
 	if font.MeasureText(s) <= avail {
 		return s
 	}
 	runes := []rune(s)
-	for len(runes) > 0 {
-		runes = runes[:len(runes)-1]
-		if font.MeasureText(string(runes)+ell) <= avail {
-			return string(runes) + ell
+	// Binary search for the longest prefix that still fits with the
+	// ellipsis. Text is never NARROWER for having one more character in
+	// it - the assumption ellipsizing rests on to begin with - so "fits"
+	// is downward closed and this lands on the same prefix a scan from
+	// the full string would, in log(n) measurements instead of n. Every
+	// title bar in the system runs this on every paint, and a measurement
+	// is a shaping lookup keyed on a freshly built string.
+	lo, hi := 0, len(runes) // lo fits (as ""), hi does not
+	for lo < hi-1 {
+		mid := (lo + hi) / 2
+		if font.MeasureText(string(runes[:mid])+ell) <= avail {
+			lo = mid
+		} else {
+			hi = mid
 		}
 	}
-	return ""
-}
-
-// paintTitleText draws the (unfocused) titlebar title. Centered when
-// a centered title fits between the left buttons and the right limit
-// (the blur button when shown, else the right edge); otherwise its
-// left edge sits just past the buttons and the text ellipsizes so
-// the "..." butts against the right limit - the right side keeps no
-// mirrored reserve. A span of zero or less clips the title entirely.
-func (w *Window) paintTitleText(p *core.Painter, title string, ts style.CellStyle, font *core.Font, metrics core.CellMetrics, leftUsed, rightLimit, barWidth core.Unit) {
-	leftEdge := leftUsed + metrics.CellWidth
-	avail := rightLimit - leftEdge
-	if avail <= 0 || title == "" {
-		return
-	}
-	display := title
-	titleW := font.MeasureText(display)
-	if titleW > avail {
-		display = ellipsizeToWidth(title, avail, font)
-		if display == "" {
-			return
+	if lo == 0 {
+		// Not even one character plus the ellipsis: the ellipsis alone
+		// only shows if it fits by itself.
+		if font.MeasureText(ell) <= avail {
+			return ell
 		}
-		titleW = font.MeasureText(display)
+		return ""
 	}
-	x := (barWidth - titleW) / 2
-	if x < leftEdge {
-		x = leftEdge
-	}
-	if x+titleW > rightLimit {
-		x = rightLimit - titleW
-	}
-	p.DrawText(x, 0, display, ts, font)
+	return string(runes[:lo]) + ell
 }
 
 // tearHandleSlotX returns the X of the tear handle's button-width slot.
@@ -2476,7 +2752,7 @@ func tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth core.Unit) cor
 // the focused title element it draws [%]/[#] in the focused-button
 // style like the other buttons. Not tearable: controlsRight is returned
 // unchanged (title keeps its normal gap past the controls).
-func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, metrics core.CellMetrics, controlsRight, barWidth, titleW core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
+func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleStyle style.CellStyle, tm TitleBarMetrics, controlsRight, barWidth, titleW core.Unit, windowActive bool, titleFocus TitleFocus) core.Unit {
 	w.mu.RLock()
 	tearable := w.flags&WindowFlagTearable != 0
 	detached := w.detached
@@ -2484,31 +2760,18 @@ func (w *Window) paintTearHandle(p *core.Painter, scheme *style.Scheme, titleSty
 	if tearable == false || !hasTitleBar(w.flags, w.State()) {
 		return controlsRight
 	}
-	buttonWidth := metrics.TextWidth(3)
-	handleX := tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth)
+	handleX := tearHandleSlotX(barWidth, controlsRight, titleW, tm.ButtonW)
 	glyph := '%'
 	if detached {
 		glyph = '#'
 	}
-	if titleFocus == TitleFocusTear {
-		st := scheme.GetTitleBarButton(windowActive, true, false)
-		p.DrawCell(handleX, 0, '[', st)
-		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
-		p.DrawCell(handleX+metrics.CellWidth*2, 0, ']', st)
-	} else {
-		btn := scheme.GetTitleBarButton(windowActive, false, false)
-		st := titleStyle.WithFg(btn.Fg)
-		// Fill the slot's flanking cells with the title-bar background so
-		// the frame's top-border stroke does not peek through the gaps
-		// on either side of the floating glyph.
-		p.DrawCell(handleX, 0, ' ', titleStyle)
-		p.DrawCell(handleX+metrics.CellWidth, 0, glyph, st)
-		p.DrawCell(handleX+metrics.CellWidth*2, 0, ' ', titleStyle)
-	}
+	focusSt := scheme.GetTitleBarButton(windowActive, true, false)
+	glyphSt := titleStyle.WithFg(scheme.GetTitleBarButton(windowActive, false, false).Fg)
+	PaintTearHandleSlot(p, tm, handleX, glyph, titleFocus == TitleFocusTear, focusSt, titleStyle, glyphSt)
 	// The title butts against the right edge of the handle slot; the
-	// -CellWidth cancels paintTitleText's +CellWidth gap so a centered
-	// title lands exactly one slot right of the handle.
-	return handleX + buttonWidth - metrics.CellWidth
+	// -CellW cancels PaintTitleBarText's +CellW gap so a centered title
+	// lands exactly one slot right of the handle.
+	return handleX + tm.ButtonW - tm.CellW
 }
 
 // buttonAtPosition returns which titlebar button is at the given local coordinates.
@@ -2521,7 +2784,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	titleFocus := w.titleFocus
 	w.mu.RUnlock()
 
-	metrics := w.frameCellMetrics()
+	tm := w.titleBarMetrics()
 
 	// The titlebar chrome sits inside the frame border (maximized has no
 	// side border); shift the hit-test into the same inner coordinate
@@ -2533,18 +2796,20 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	x -= inset
 	y -= inset
 
-	// Must be in titlebar
-	if !hasTitleBar(flags, state) || y < 0 || y >= metrics.CellHeight {
+	// Must be in titlebar (the kit's possibly-scaled row)
+	if !hasTitleBar(flags, state) || y < 0 || y >= tm.RowH {
 		return TitleButtonNone
 	}
 
 	// Control buttons are on the left
-	controlX := metrics.CellWidth // Start after left border (for normal frame)
+	controlX := tm.CellW // Start after left border (for normal frame)
 	if state == WindowStateMaximized {
-		controlX = 0 // No border in maximized state
+		// No border in maximized state: flush, or aligned with the host's
+		// own controls where those sit further in (matches the paint).
+		controlX = w.maximizedControlInset()
 	}
 
-	buttonWidth := metrics.TextWidth(3)
+	buttonWidth := tm.ButtonW
 
 	// Check close button [x]
 	if flags&WindowFlagNoClose == 0 {
@@ -2571,10 +2836,12 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	}
 
 	// Check tear-off handle [%]/[#]. It floats immediately left of the
-	// centered title, so hit-test the same slot paintTearHandle draws. The
-	// handle is hidden while the title is focused, so it isn't hittable then.
+	// centered title, so hit-test the same slot paintTearHandle draws (with
+	// the kit's font, so a scaled bar's slot lands where its paint does).
+	// The handle is hidden while the title is focused, so it isn't hittable
+	// then.
 	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
-		titleW := w.EffectiveFont().MeasureText(title)
+		titleW := tm.Font.MeasureText(title)
 		// Inner width: the paint centers within the border-inset titlebar.
 		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {
@@ -2597,11 +2864,18 @@ func (w *Window) SetTitleFocus(focus TitleFocus) {
 	w.mu.Lock()
 	oldFocus := w.titleFocus
 	w.titleFocus = focus
+	stateChanged := (oldFocus == TitleFocusTitle) != (focus == TitleFocusTitle)
 	if focus == TitleFocusNone {
 		w.resizeEdges = ResizeEdgeNone // Clear resize state when leaving title bar
 	}
 	title := w.title
 	w.mu.Unlock()
+
+	// Entering or leaving the title bar changes which commands exist, so the
+	// context is rebuilt and the bar re-forms its accelerators against it.
+	if stateChanged {
+		w.refreshKeyContext()
+	}
 
 	// Announce titlebar element change for accessibility
 	if focus != oldFocus && focus != TitleFocusNone {
@@ -2646,7 +2920,19 @@ func (w *Window) HasTitleFocus() bool {
 }
 
 // hasKeyboardBlurEnabled returns true if the parent container has keyboard blur enabled.
+//
+// A TORN window is asked of the desktop instead: blurring one leaves the OS
+// window entirely (see performKeyboardBlur), so the control only makes sense
+// when there is another window or a desktop to land on. A solo app's main
+// window has neither, and an inert control in a title bar is worse than no
+// control at all.
 func (w *Window) hasKeyboardBlurEnabled() bool {
+	if w.IsDetached() {
+		if b := w.findDetachedBlurrer(); b != nil {
+			return b.CanBlurDetachedWindow(w)
+		}
+		return false
+	}
 	parent := w.Parent()
 	if parent == nil {
 		return false
@@ -2657,8 +2943,56 @@ func (w *Window) hasKeyboardBlurEnabled() bool {
 	return false
 }
 
-// performKeyboardBlur calls the parent's PerformKeyboardBlur if available.
+// detachedBlurrer is the desktop, which is the only thing that knows what
+// sits ABOVE a torn window: the app it belongs to, and whether there is a
+// desktop behind it at all. Declared here rather than imported so the
+// dependency stays one-way (as windowSurfacer is).
+type detachedBlurrer interface {
+	// CanBlurDetachedWindow reports whether this window has anywhere to blur
+	// TO. A solo app's main window does not: it fills the primary surface and
+	// there is no desktop behind it, so the control is not offered rather than
+	// offered and inert. It comes back by itself the moment a desktop appears,
+	// because the answer is asked fresh on every layout.
+	CanBlurDetachedWindow(win *Window) bool
+	BlurDetachedWindow(win *Window)
+}
+
+// findDetachedBlurrer walks up for the desktop. A torn window keeps its
+// parent pointer -- tearing off removes it from the manager's list, not
+// from the trinket tree -- so the walk still arrives.
+func (w *Window) findDetachedBlurrer() detachedBlurrer {
+	var current any = w.Parent()
+	for current != nil {
+		if b, ok := current.(detachedBlurrer); ok {
+			return b
+		}
+		t, ok := current.(core.Trinket)
+		if !ok {
+			return nil
+		}
+		current = t.Parent()
+	}
+	return nil
+}
+
+// performKeyboardBlur hands the keyboard back to whatever contains this
+// window.
+//
+// Docked, that is the parent container: the desktop or MDI pane focuses its
+// menu bar, and the window is still on screen right beside it. TORN, the
+// containing surface holds this one window and nothing else, so the generic
+// path would focus a menu bar on a surface the user is not even looking at
+// while this window kept the OS focus. A torn window blurs up the OWNERSHIP
+// chain instead -- to its app's main window, or, if it is that main window,
+// to the desktop it was torn from -- which is where "out of this window"
+// actually leads when the window is a whole OS window.
 func (w *Window) performKeyboardBlur() {
+	if w.IsDetached() {
+		if b := w.findDetachedBlurrer(); b != nil {
+			b.BlurDetachedWindow(w)
+			return
+		}
+	}
 	parent := w.Parent()
 	if parent == nil {
 		return
@@ -2669,7 +3003,7 @@ func (w *Window) performKeyboardBlur() {
 }
 
 // handleTitleBarKey handles keyboard input when title bar has focus.
-func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
+func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 	w.mu.RLock()
 	titleFocus := w.titleFocus
 	resizeEdges := w.resizeEdges
@@ -2679,22 +3013,8 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	metrics := w.frameCellMetrics()
 
 	// Handle navigation between title bar elements
-	switch event.Key {
-	case "Tab":
-		// Check if Shift is held - use same logic as S-Tab case
-		if event.Modifiers&core.ShiftModifier != 0 {
-			prev := w.prevTitleFocus(titleFocus)
-			if prev == titleFocus {
-				// At first title element, loop to content's last trinket
-				w.SetTitleFocus(TitleFocusNone)
-				if fm := w.FocusManager(); fm != nil {
-					fm.FocusLast()
-				}
-			} else {
-				w.SetTitleFocus(prev)
-			}
-			return true
-		}
+	switch cmd {
+	case core.CmdFocusNext:
 		// Move to next title element or exit to content
 		next := w.nextTitleFocus(titleFocus)
 		if next == TitleFocusNone {
@@ -2708,7 +3028,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "S-Tab", "Shift-Tab":
+	case core.CmdFocusPrior:
 		// Move to previous title element, or loop to content's last trinket
 		prev := w.prevTitleFocus(titleFocus)
 		if prev == titleFocus {
@@ -2722,7 +3042,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Escape":
+	case core.CmdWindowCancelResize:
 		// Exit title bar focus, return to content
 		w.SetTitleFocus(TitleFocusNone)
 		w.mu.Lock()
@@ -2733,7 +3053,7 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 		}
 		return true
 
-	case "Enter", " ", "Space":
+	case core.CmdTrinketActivate:
 		// Activate focused button or confirm resize
 		switch titleFocus {
 		case TitleFocusClose:
@@ -2781,52 +3101,25 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 	// Handle window movement and resizing when title has focus
 	if titleFocus == TitleFocusTitle {
 		bounds := w.Bounds()
-		hasShift := event.Modifiers&core.ShiftModifier != 0
-		hasCtrl := event.Modifiers&core.ControlModifier != 0
-		hasMeta := event.Modifiers&core.MetaModifier != 0
-		hasAlt := event.Modifiers&core.AltModifier != 0
 
-		// Determine movement multiplier based on modifiers
-		// Alt/Meta/Ctrl increases horizontal by 10 chars, vertical by 4 lines
+		// The command says which direction, whether this moves or resizes,
+		// and how big the step is. This replaces a loop that peeled modifier
+		// prefixes off the key string in any order and then re-derived the
+		// same three facts from the leftovers -- a keymap answers all of it
+		// now, including for chords the peeler never knew about. The decode
+		// is the kit's (DecodeTitleGeometry), shared with the desktop's own
+		// title bar so the vocabulary cannot drift.
+		key, resize, coarse, ok := DecodeTitleGeometry(cmd)
+		if !ok {
+			return false
+		}
+
+		// hasShift is what the bodies below call "this is a resize", which is
+		// what the shifted arrow always meant.
+		hasShift := resize
 		horizStep := metrics.CellWidth
 		vertStep := metrics.CellHeight
-		if hasMeta || hasAlt || hasCtrl {
-			horizStep = metrics.CellWidth * 10
-			vertStep = metrics.CellHeight * 4
-		}
-
-		// Normalize key names. Modifier prefixes can arrive in any order
-		// and in combination - the SDL backend emits arrows as e.g.
-		// "M-S-Left" (Alt+Shift), so stripping only the single leading
-		// prefix would leave "S-Left" and lose the resize. Peel every
-		// recognized prefix, whatever the order.
-		key := event.Key
-		for {
-			switch {
-			case strings.HasPrefix(key, "S-"):
-				hasShift = true
-				key = key[2:]
-			case strings.HasPrefix(key, "M-"), strings.HasPrefix(key, "A-"):
-				hasMeta = true
-				hasAlt = true
-				key = key[2:]
-			case strings.HasPrefix(key, "C-"):
-				hasCtrl = true
-				key = key[2:]
-			case strings.HasPrefix(key, "s-"):
-				hasMeta = true
-				key = key[2:]
-			default:
-			}
-			if !strings.HasPrefix(key, "S-") && !strings.HasPrefix(key, "M-") &&
-				!strings.HasPrefix(key, "A-") && !strings.HasPrefix(key, "C-") &&
-				!strings.HasPrefix(key, "s-") {
-				break
-			}
-		}
-		// Any large-step modifier (Alt/Meta/Ctrl) makes moves and resizes
-		// chunky.
-		if hasMeta || hasAlt || hasCtrl {
+		if coarse {
 			horizStep = metrics.CellWidth * 10
 			vertStep = metrics.CellHeight * 4
 		}
@@ -3029,29 +3322,6 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent) bool {
 			}
 			return true
 
-		case "Enter", "Return", "KPEnter":
-			// Confirm resize - clear edges so next Shift+arrow starts fresh
-			// Also update resizeStartBounds to current bounds
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				w.resizeEdges = ResizeEdgeNone
-				w.resizeStartBounds = w.Bounds()
-			}
-			w.mu.Unlock()
-			return true
-
-		case "Escape", "Esc":
-			// Cancel resize - revert to bounds from when resize started
-			w.mu.Lock()
-			if w.resizeEdges != ResizeEdgeNone {
-				startBounds := w.resizeStartBounds
-				w.resizeEdges = ResizeEdgeNone
-				w.mu.Unlock()
-				w.requestKeyboardBounds(startBounds, false)
-			} else {
-				w.mu.Unlock()
-			}
-			return true
 		}
 	}
 
@@ -3245,6 +3515,35 @@ func (w *Window) HandleTextEditing(event core.TextEditingEvent) bool {
 	return fm.HandleTextEditing(event)
 }
 
+// HandleTextCommit forwards a finished composition straight to the focused
+// trinket, skipping the window's own key policy for the same reason
+// HandleTextEditing does: a commit is not a keystroke, so the menu bar and the
+// shortcut resolver have nothing to say about it.
+func (w *Window) HandleTextCommit(event core.TextCommitEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextCommit(event)
+}
+
+// HandleTextErase forwards an input method's erase straight to the focused
+// trinket, skipping the window's own key policy for the same reason
+// HandleTextCommit does: it is not a keystroke.
+func (w *Window) HandleTextErase(event core.TextEraseEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleTextErase(event)
+}
+
 // HandlePaste forwards pasted text straight to the focused trinket, skipping
 // the window's own key policy for the same reason HandleTextEditing does:
 // none of the menu bar, shortcut resolver, or title-bar focus has anything to
@@ -3258,6 +3557,20 @@ func (w *Window) HandlePaste(event core.PasteEvent) bool {
 		return false
 	}
 	return fm.HandlePaste(event)
+}
+
+// HandleKeyRelease hands a key coming back up to whatever holds focus in this
+// window. None of HandleKeyPress's chrome applies — title-bar focus, the menu
+// bar, the shortcut resolver and pass-next-key all act on the press.
+func (w *Window) HandleKeyRelease(event core.KeyReleaseEvent) bool {
+	w.mu.RLock()
+	fm := w.focusManager
+	w.mu.RUnlock()
+
+	if fm == nil {
+		return false
+	}
+	return fm.HandleKeyRelease(event)
 }
 
 func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
@@ -3290,8 +3603,22 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// The detached window's own menu bar owns keyboard navigation while it
 	// is focused (F10) or has a dropdown open, and F10 itself always goes
 	// to the bar so it can toggle that focus - matching the desktop bar.
+	// Resolved ONCE and used everywhere below: the menu key, the title bar's
+	// whole geometry model, Tab either way, and the frame commands. Feeding
+	// the sequence processor the same keystroke at each of those points would
+	// advance a chord's prefix once per check.
+	cmd := w.KeyCommand(event.Key)
+
 	if mb != nil {
-		menuActive := mb.HasFocus() || event.Key == "F10"
+		// The help key goes straight to Help on this window's own bar; an app
+		// with no Help menu falls through to the plain menu key below.
+		if cmd == core.CmdAppHelp {
+			if h, ok := mb.(interface{ OpenHelpMenu() bool }); ok && h.OpenHelpMenu() {
+				return true
+			}
+			cmd = core.CmdAppMenu
+		}
+		menuActive := mb.HasFocus() || cmd == core.CmdAppMenu
 		if o, ok := mb.(interface{ IsMenuOpen() bool }); ok && o.IsMenuOpen() {
 			menuActive = true
 		}
@@ -3306,10 +3633,42 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	// docked. A detached main window carries its own bar (mb); a torn-off
 	// child carries no chrome but borrows its app's bar via the resolver.
 	if mb != nil {
+		// An item that names a COMMAND is matched against the command this
+		// window already resolved, above -- the key is fed to the context once
+		// per keystroke, and asking again would advance a chord's prefix twice.
+		if ac, ok := mb.(interface{ ActivateCommand(string) bool }); ok &&
+			cmd != "" && ac.ActivateCommand(cmd) {
+			return true
+		}
 		if sc, ok := mb.(interface {
 			HandleShortcut(core.KeyPressEvent) bool
 		}); ok && sc.HandleShortcut(event) {
 			return true
+		}
+		// ...and its chord ACCELERATORS, which are not item shortcuts and do
+		// not go through HandleShortcut. The bar publishes them into this
+		// window's context, so this is the only place that reads them back --
+		// above the focused trinket, exactly where the desktop resolves them
+		// for a docked window. Without it a window carrying its own bar drew
+		// its accelerators lit and then let the focused trinket eat the chord.
+		if bar, ok := mb.(interface {
+			ActivateAcceleratorSequence(string) bool
+		}); ok {
+			// The context knows the whole sequence, which is what carries a
+			// multi-key chord: it holds the prefix between keystrokes and
+			// reports the lot when it lands.
+			if ctx := w.KeyContext(); ctx != nil &&
+				ctx.Resolve(event.Key) == core.CommandAppAccelerator &&
+				bar.ActivateAcceleratorSequence(ctx.MatchedSequence()) {
+				return true
+			}
+			// ...and the bar itself for a single-key one, which needs no
+			// prefix held and so does not need to have been published yet.
+			// This is what makes the very first keystroke work, before
+			// anything has painted and put the accelerators in the context.
+			if bar.ActivateAcceleratorSequence(event.Key) {
+				return true
+			}
 		}
 	}
 	if shortcutResolver != nil && shortcutResolver(event) {
@@ -3318,15 +3677,14 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	// If title bar has focus, handle title bar keys
 	if titleFocus != TitleFocusNone {
-		if w.handleTitleBarKey(event) {
+		if w.handleTitleBarKey(event, cmd) {
 			return true
 		}
 	}
 
 	// Check if this is a Tab or Shift+Tab event
-	isShiftTab := event.Key == "S-Tab" || event.Key == "Shift-Tab" ||
-		(event.Key == "Tab" && event.Modifiers&core.ShiftModifier != 0)
-	isTab := event.Key == "Tab" && event.Modifiers&core.ShiftModifier == 0
+	isShiftTab := cmd == core.CmdFocusPrior
+	isTab := cmd == core.CmdFocusNext
 
 	// For Tab/Shift+Tab, first give the focused trinket a chance to handle it.
 	// This is critical for containers like MDIPane that manage their own Tab navigation.
@@ -3389,12 +3747,29 @@ func (w *Window) HandleKeyPress(event core.KeyPressEvent) bool {
 	}
 
 	// Handle window-specific keys
-	switch event.Key {
-	case "M-F4": // Alt+F4 - Close
+	switch cmd {
+	case core.CmdWindowClose:
 		w.Close()
 		return true
-	case "M-F10": // Alt+F10 - Maximize/Restore
-		if w.IsMaximized() {
+	case core.CmdAppQuit:
+		// Ending the APPLICATION, not this window. The desktop is the only
+		// thing that knows which app a window belongs to, so the window asks
+		// it; a window with no desktop above it has no application to end and
+		// lets the key fall through.
+		return w.quitOwningApplication()
+	case core.CmdWindowMaximizeToggle:
+		// Through the maximize-request handler when one is set, exactly as the
+		// titlebar button does: a torn/solo host maps maximize onto its OS
+		// window (zoom to the work area), and calling Maximize() directly here
+		// would flip the window's state while leaving the host un-zoomed and
+		// the surface its old size — a half-maximized window that paints no
+		// border and can still be edge-resized.
+		w.mu.RLock()
+		maxHandler := w.onMaximizeRequest
+		w.mu.RUnlock()
+		if maxHandler != nil {
+			maxHandler()
+		} else if w.IsMaximized() {
 			w.Restore()
 		} else {
 			w.Maximize()
@@ -3413,14 +3788,13 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	state := w.state
 	w.mu.RUnlock()
 
-	metrics := w.frameCellMetrics()
-
 	// The titlebar chrome sits inside the frame border (offset down by the
-	// border), so the titlebar band runs [0, border+CellHeight) in window-
-	// local coordinates - not [0, CellHeight). Missing the border here would
-	// leave the bottom of the visible titlebar (and the bottoms of the
-	// titlebar buttons) routed to content. Maximized has no side border.
-	titleBand := metrics.CellHeight
+	// border), so the titlebar band runs [0, border+RowH) in window-local
+	// coordinates - not [0, RowH). Missing the border here would leave the
+	// bottom of the visible titlebar (and the bottoms of the titlebar
+	// buttons) routed to content. Maximized has no side border. RowH is the
+	// kit's (possibly scaled) title row height — CellHeight at scale 1.0.
+	titleBand := w.titleBarMetrics().RowH
 	if state != WindowStateMaximized {
 		titleBand += core.FindFrameBorderUnits(w)
 	}
@@ -3812,4 +4186,78 @@ func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 	local.X = core.ExchangeX(event.X-contentBounds.X, outer, interior)
 	local.Y = core.ExchangeY(event.Y-contentBounds.Y, outer, interior)
 	return handler.HandleMouseWheel(local)
+}
+
+// keyContextConsumer is a menu bar that forms accelerators. Declared
+// structurally so a window need not import the trinket package to hand its bar
+// a context.
+type keyContextConsumer interface {
+	SetAcceleratorChord(string)
+	SetKeyContext(*core.KeyContext)
+}
+
+// windowUIState reports which situation this window's keyboard is in. A title
+// bar is a MODE of the window rather than a trinket with focus, which is why
+// the state and not the focus chain is what a context is keyed on.
+func (w *Window) windowUIState() core.UIState {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.titleFocus == TitleFocusTitle {
+		return core.StateTitleBarFocused
+	}
+	return core.StateNormal
+}
+
+// refreshKeyContext rebuilds this window's context for its current state and
+// hands it to the window's own menu bar, if it has one.
+//
+// A window builds its own rather than sharing the desktop's, so a change here
+// cannot stale anything over there: the commonest structural event of all --
+// focus moving between windows -- costs no rebuild at all, because each
+// window's context is already built and still valid.
+func (w *Window) refreshKeyContext() {
+	reg := w.FocusedKeyRegistry()
+	state := w.windowUIState()
+	ctx := reg.BuildStateContext(state)
+
+	w.mu.Lock()
+	w.keyContext = ctx
+	w.keyContextReg = reg
+	w.keyContextRev = reg.Revision()
+	w.keyContextState = state
+	mb := w.menuBar
+	w.mu.Unlock()
+
+	if c, ok := mb.(keyContextConsumer); ok {
+		c.SetAcceleratorChord(core.AcceleratorChord())
+		c.SetKeyContext(ctx)
+	}
+}
+
+// FocusedKeyRegistry is the registry in force for whatever holds the focus in
+// this window (core.KeyRegistryFocuser). A window resolves its own frame
+// commands through it, so they stand down when the focus is inside a trinket
+// that took the keyboard on its own terms.
+func (w *Window) FocusedKeyRegistry() *core.KeyRegistry {
+	return core.FindFocusedKeyRegistry(w)
+}
+
+// KeyContext returns the set of actions this window currently offers,
+// rebuilding it first if the keymap behind it has moved on: the focus landing
+// inside a trinket with its own registry changes which keymap answers here,
+// and does so without changing any registry's revision.
+func (w *Window) KeyContext() *core.KeyContext {
+	w.mu.RLock()
+	ctx, reg, rev, state := w.keyContext, w.keyContextReg, w.keyContextRev, w.keyContextState
+	w.mu.RUnlock()
+
+	if ctx != nil && reg == w.FocusedKeyRegistry() &&
+		rev == reg.Revision() && state == w.windowUIState() {
+		return ctx
+	}
+	w.refreshKeyContext()
+
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.keyContext
 }

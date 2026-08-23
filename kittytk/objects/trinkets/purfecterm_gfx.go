@@ -19,11 +19,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -66,6 +69,41 @@ type purfecTermGfx struct {
 	// vpWpx/vpHpx are the widget's DEVICE extent as the outer system snapped
 	// it, and hitKX/hitKY the scale from a unit coordinate onto it.
 	vpWpx, vpHpx float64
+
+	// contentWpx/contentHpx are the device pixels the CHILD's grid actually
+	// occupies: the widget's snapped extent less whatever the scrollbar lane
+	// reserves. This is the honest answer to "how big is the child's window in
+	// pixels" — the same measured extent the lanes anchor to, not a product of
+	// a column count and a rate. Those two disagree: the grid fits on the
+	// UNSCALED cell (contentWpx / (baseCW*ppu)) while the cell size reported to
+	// the child is the SCALED one, so cols*cellPx overstates the width by the
+	// horizontal scale and by the reserved lane on top of it.
+	contentWpx, contentHpx float64
+
+	// oversample is how much LARGER than life this terminal describes itself
+	// to the child: the cell it reports (CSI 16 t) and the pixel window it is
+	// given are both multiplied by it, and every image that comes back is
+	// divided by it again on the way to the screen.
+	//
+	// It exists because the "kitty" graphics protocol has no way for a terminal
+	// to state a display scale - a client derives density purely from the
+	// pixels-per-cell it is told - so the only way to ask for a denser
+	// rendering is to claim a bigger cell. A browser handed a cell twice the
+	// truth lays out half as many css pixels in it, which is exactly a
+	// device-pixel ratio of 2, and the image it sends back is twice the size
+	// we draw it at. Supersampling, and every client does it uniformly, so
+	// the halving on the way in is right for all of them.
+	//
+	// It carries the DEVICE SCALE alone. The runtime zoom is deliberately not
+	// folded in: that would make one knob move both the text size and the
+	// child's content scale.
+	oversample float64
+
+	// advCW/advCH are the cell size last ADVERTISED (what pushCellPixelSizeGfx
+	// wrote), kept so a paint can tell whether the child's pixel window moved
+	// under a grid that did not. Zero before the first push.
+	advCW, advCH int
+
 	hitKX, hitKY float64
 
 	// lockstepPitch makes the viewport follow this terminal's OWN pixel pitch
@@ -81,7 +119,13 @@ type purfecTermGfx struct {
 	lockstepPitch bool
 
 	// Local selection drag.
-	mouseDown      bool
+	mouseDown bool
+	// mouseDownBtn is the purfecterm button code of the press being held, so
+	// motion reports carry the button actually down. A drag reported as the
+	// left button whatever is held tells a guest the wrong thing: a middle- or
+	// right-drag arrives as a left-drag, and an application that acts on the
+	// difference — a paste-on-middle, a right-drag selection — acts wrongly.
+	mouseDownBtn   int
 	mouseDownX     int
 	mouseDownY     int
 	selecting      bool
@@ -127,6 +171,11 @@ type purfecTermGfx struct {
 	glyphCur   map[purfecterm.GlyphCacheKey]*image.RGBA
 	glyphPrev  map[purfecterm.GlyphCacheKey]*image.RGBA
 	overlayCur map[string]*image.RGBA
+
+	// Scratch for image blits that cannot be handed to the painter where they
+	// lie (a crop, a scale, or straight alpha that has to be premultiplied).
+	// Reused across images and frames; see imageScratchGfx.
+	imgScratch *image.RGBA
 }
 
 // coverMaskKey identifies a cached glyph COVERAGE mask - deliberately
@@ -325,7 +374,24 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// scaled onto it, or the hit box drifts from the paint. hitK is that
 	// scale; it is 1 only when the two rates happen to coincide.
 	t.gfx.ppu = ppu
-	t.pushCellPixelSizeGfx() // assert the synthetic ?1016 cell size (CSI 16 t)
+	// The SCREEN's density - not this application's magnification, and not the
+	// runtime zoom.
+	//
+	// The number that belongs here is the one the CHILD renders at, and a child
+	// drawing pictures for us is a separate process that asks the window system
+	// directly. So it follows the panel and nothing we chose: a user who sets a
+	// magnification of 1 on a HiDPI screen still has a child rendering at 2, and
+	// deriving this from our own scale silently switches the correction off in
+	// exactly that case, leaving the content twice the size it should be. The
+	// two numbers agree whenever the magnification happens to match the panel,
+	// which is the common setup and the reason this read right for a while.
+	t.gfx.oversample = 1
+	if ds := p.DisplayDensity(); ds > 1 {
+		t.gfx.oversample = ds
+	}
+	prevCW, prevCH := t.gfx.advCW, t.gfx.advCH
+	t.pushCellPixelSizeGfx() // real cell size (CSI 16 t) + the ?1016 pointer unit
+	cellMoved := t.gfx.advCW != prevCW || t.gfx.advCH != prevCH
 	t.gfx.vpWpx, t.gfx.vpHpx = float64(vpFullWpx), float64(vpFullHpx)
 	t.gfx.hitKX, t.gfx.hitKY = 1, 1
 	if bounds.Width > 0 && ppu > 0 {
@@ -364,13 +430,32 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	// A MIRROR paint sizes nothing: it renders the grid the primary already set,
 	// clipped to its own rectangle. Re-fitting here from the mirror's (often
 	// smaller) rect would resize the child under a read-only copy.
+	// Remember the child's true pixel window, for anything that has to tell
+	// the child how big it is in PIXELS (the PTY winsize) rather than cells.
+	t.gfx.contentWpx, t.gfx.contentHpx = float64(contentWpx), float64(contentHpx)
 	if !t.mirrorPaint.Load() && baseCW > 0 && baseCH > 0 {
 		fitCols := clampGridDim(int(float64(contentWpx) / (float64(baseCW) * ppu)))
 		fitRows := clampGridDim(int(float64(contentHpx) / (float64(baseCH) * ppu)))
-		if fitCols > 0 && fitRows > 0 && (fitCols != t.cols || fitRows != t.rows) {
+		switch {
+		case fitCols <= 0 || fitRows <= 0:
+		case fitCols != t.cols || fitRows != t.rows:
 			t.cols, t.rows = fitCols, fitRows
 			t.terminal.Resize(fitCols, fitRows)
 			t.emitResize(fitCols, fitRows)
+		case cellMoved:
+			// The grid did not move but the cell under it did, so the child's
+			// window in PIXELS changed while its window in CELLS did not.
+			// Nothing else will tell it: a resize keyed on cols/rows alone is
+			// silent here, and the child has no reason to re-ask.
+			//
+			// A picture is the whole difference. Changing the display density
+			// halves or doubles the cell we advertise at a fixed grid; a client
+			// that sized an image against the old one keeps drawing it, and it
+			// lands at the wrong size by exactly that ratio - twice as big
+			// going one way, half going the other. Re-emitting at the SAME
+			// cols and rows carries the new pixel window (the PTY winsize takes
+			// both), which is a real change to the child and a SIGWINCH.
+			t.emitResize(t.cols, t.rows)
 		}
 	}
 
@@ -421,6 +506,13 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	behind, front := buf.GetSpritesForRendering()
 	t.renderSpritesGfx(painter, behind, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
 
+	// An image at a NEGATIVE z-index goes under the glyphs — that is what makes
+	// text-over-image work — so the two bands straddle the cell loop. Virtual
+	// placements (positioned by Unicode placeholder cells, not by their anchor)
+	// are not in either band; GetImagesByZ leaves them out.
+	imagesBelow, imagesAbove := buf.GetImagesByZ()
+	t.renderImagesGfx(painter, imagesBelow, cw, chh, ppu, scrollOffset, horizOffset)
+
 	focused := t.gfxFocused()
 	cursorLineWasRendered := false
 
@@ -442,6 +534,15 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 		for x := 0; x < effectiveCols; x++ {
 			logicalX := x + horizOffset
 			cell := buf.GetVisibleCell(x, y)
+
+			// A "kitty" graphics Unicode placeholder reserves the cell for a virtual
+			// image placement; the image is drawn into it from the resolved draw list
+			// (GetImagesByZ). The cell itself must not also paint a character: U+10EEEE
+			// is private-use, so whatever a font happens to have there would land on
+			// top of the image the cell exists to position.
+			if purfecterm.IsKittyPlaceholderCell(cell) {
+				cell.Char, cell.Combining = ' ', ""
+			}
 
 			cellVisualWidth := 1.0
 			if cell.CellWidth > 0 { // CellWidth is authoritative (see patches/purfecterm/PROTOCOL.md)
@@ -472,7 +573,12 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 				bg = scheme.Selection
 			}
 
-			isCursor := cursorVisible && x == cursorVisibleX && y == cursorVisibleY && t.gfx.cursorBlinkOn
+			// Where the cursor IS, and whether it is being drawn this frame.
+			// Two questions, and only the second one blinks: the insertion
+			// point does not move when the cursor is in its off phase, and
+			// anything that reads it must not be told otherwise.
+			atCursorCell := cursorVisible && x == cursorVisibleX && y == cursorVisibleY
+			isCursor := atCursorCell && t.gfx.cursorBlinkOn
 			if isCursor && focused && cursorShape == 0 {
 				fg, bg = bg, fg // solid block cursor when focused
 			}
@@ -530,19 +636,23 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 
 			if isCursor {
 				t.drawCursorOverlay(painter, scheme, focused, cursorShape, cellX, cellY, cellW, cellH, ppu)
+			}
 
-				// Report where the text is, so an input method can put its
-				// candidate window under the cursor: the CJK candidate
-				// list, macOS's press-and-hold accent picker, the emoji
-				// picker. Without it they open at a corner of the window.
-				//
-				// Only the position — this path DRAWS its own cursor just
-				// above, so asking for a platform caret as well would be
-				// asking for a second one. (The cell path does ask, because
-				// there the outer terminal draws it and nothing here can.)
-				if focused {
-					painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
-				}
+			// Report where the text is, so an input method can put its
+			// candidate window under the cursor: the CJK candidate list,
+			// macOS's press-and-hold accent picker, the emoji picker.
+			// Without it they open at a corner of the window.
+			//
+			// Only the position — this path DRAWS its own cursor just above,
+			// so asking for a platform caret as well would be asking for a
+			// second one. (The cell path does ask, because there the outer
+			// terminal draws it and nothing here can.)
+			//
+			// Reported at the cursor's cell whether or not the cursor is
+			// being drawn there this frame. Where the text is does not blink;
+			// only whether a cursor is painted over it does.
+			if atCursorCell && focused {
+				painter.RequestTextInputArea(core.Unit(math.Round(cellX)), core.Unit(math.Round(cellY)))
 			}
 		}
 
@@ -573,6 +683,10 @@ func (t *PurfecTerm) paintGraphical(p *core.Painter, bounds core.UnitRect) {
 	}
 
 	t.renderSpritesGfx(painter, front, buf, scheme, isDark, cw, chh, ppu, scrollOffset, horizOffset)
+
+	// Cell-anchored bitmaps sit above the front sprites: an image is program
+	// output the text layer has already made room for, not chrome.
+	t.renderImagesGfx(painter, imagesAbove, cw, chh, ppu, scrollOffset, horizOffset)
 
 	// Screen splits overlay regions of the logical screen.
 	splits := buf.GetScreenSplitsSorted()
@@ -1608,6 +1722,226 @@ func (t *PurfecTerm) renderSpritesGfx(p *core.Painter, sprites []*purfecterm.Spr
 	}
 }
 
+// renderImagesGfx blits cell-anchored bitmaps (Sixel, iTerm2 inline images,
+// the "kitty" graphics protocol) onto the text layer. An image is anchored at
+// a screen cell and scrolls with the text, so it lands on the cell grid the
+// same way a sprite does: scaled cell metrics, then the scroll and
+// horizontal-offset shifts renderSpritesGfx applies. Callers pass one z-order
+// band at a time (see Buffer.GetImagesByZ) — negative z under the glyphs, the
+// rest over them.
+func (t *PurfecTerm) renderImagesGfx(p *core.Painter, images []*purfecterm.PlacedImage,
+	cw, chh, ppu float64, scrollOffsetY, horizOffsetX int) {
+
+	if len(images) == 0 {
+		return
+	}
+	cwPx := cw * ppu
+	chPx := chh * ppu
+	scrollPixelX := float64(horizOffsetX) * cwPx
+	scrollPixelY := float64(scrollOffsetY) * chPx
+
+	for _, im := range images {
+		img := t.imageForBlitGfx(im)
+		if img == nil {
+			continue
+		}
+		// Anchor at the floor pixel of the cell, like the sprite path: the
+		// bitmap has its own pixels and must not be resampled onto a rounded
+		// unit position.
+		pixelX := float64(im.Col)*cwPx - scrollPixelX
+		pixelY := float64(im.Row)*chPx + scrollPixelY
+		p.DrawImageOffset(0, 0, int(math.Floor(pixelX)), int(math.Floor(pixelY)), img)
+	}
+}
+
+// imageForBlitGfx turns a placement into device-pixel imagery the painter can
+// composite 1:1, applying the placement's source crop (the "kitty" protocol's
+// x/y/w/h) and its destination size (PlacedImage.DestSize — cell- or
+// percentage-sized placements resolve to pixels there, and those pixels are the
+// same device pixels this path draws in, so no further scale conversion).
+//
+// Alpha is the subtle part. A Bitmap carries STRAIGHT alpha; Go's image.RGBA
+// is premultiplied. The two coincide exactly when every pixel is 0 or 255 —
+// which Sixel guarantees and a browser's opaque frame usually satisfies — and
+// that is the case worth keeping cheap, since it is also the case where the
+// image is full-screen. So a whole, unscaled, binary-alpha bitmap is wrapped
+// where it lies with no copy; anything else (a PNG's soft edge, a "kitty"
+// graphics RGBA frame composed to partial alpha, a crop, a scale) goes through
+// a real conversion.
+//
+// The returned image may be a shared scratch buffer, valid only until the next
+// call: the painter composites synchronously, so a blit-then-next-image loop is
+// fine, but the result must not be retained.
+func (t *PurfecTerm) imageForBlitGfx(im *purfecterm.PlacedImage) *image.RGBA {
+	if im == nil || im.Image == nil {
+		return nil
+	}
+	si := im.Image
+	if si.W <= 0 || si.H <= 0 || len(si.RGBA) < si.W*si.H*4 {
+		return nil
+	}
+	src := &image.NRGBA{ // NRGBA, not RGBA: the decoder's alpha is straight
+		Pix:    si.RGBA[:si.W*si.H*4],
+		Stride: si.W * 4,
+		Rect:   image.Rect(0, 0, si.W, si.H),
+	}
+
+	sx, sy, sw, sh := im.SourceRect()
+	if sx < 0 {
+		sx = 0
+	}
+	if sy < 0 {
+		sy = 0
+	}
+	if sx >= si.W || sy >= si.H {
+		return nil
+	}
+	if sw <= 0 || sw > si.W-sx {
+		sw = si.W - sx
+	}
+	if sh <= 0 || sh > si.H-sy {
+		sh = si.H - sy
+	}
+	srcRect := image.Rect(sx, sy, sx+sw, sy+sh)
+
+	destW, destH := im.DestSize()
+	// DestSize is in the child's pixel space, which is oversample times ours
+	// (see purfecTermGfx.oversample): an image claiming N of the cells we
+	// ADVERTISED is drawn across N of the cells we actually paint.
+	if f := t.gfx.oversample; f > 1 {
+		destW = int(math.Round(float64(destW) / f))
+		destH = int(math.Round(float64(destH) / f))
+	}
+	if destW <= 0 || destH <= 0 {
+		return nil
+	}
+
+	if srcRect == src.Rect && destW == sw && destH == sh && !hasPartialAlpha(src.Pix) {
+		return &image.RGBA{Pix: src.Pix, Stride: src.Stride, Rect: src.Rect}
+	}
+
+	dst := t.imageScratchGfx(destW, destH)
+	switch {
+	case destW == sw && destH == sh:
+		// Same size: an exact per-pixel conversion beats resampling, which
+		// would filter a 1:1 blit for nothing.
+		draw.Draw(dst, dst.Bounds(), src, srcRect.Min, draw.Src)
+	case boxDownscaleGfx(dst, src, srcRect):
+		// Averaged whole blocks; see boxDownscaleGfx.
+	default:
+		xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, srcRect, draw.Src, nil)
+	}
+	return dst
+}
+
+// boxDownscaleGfx averages each block of source pixels into one destination
+// pixel, when the blocks divide the source evenly enough to land exactly on
+// dst's size. Reports whether it ran; the caller resamples otherwise.
+//
+// This is the oversample path's own case (§ purfecTermGfx.oversample): an image
+// arrives at deviceScale times the size it is drawn at, so every destination
+// pixel is a whole 2x2 of source. ApproxBiLinear gets that particular ratio
+// right by coincidence — its 2x2 tap lands on block boundaries and weights both
+// samples equally, which IS the average — but it is a fixed 2x2 tap at every
+// ratio, so one pixel off exact (a 1125px-wide window halving to 563) leaves it
+// reading two of every four source pixels and dropping the rest. That aliases
+// hard: on a 1px checkerboard the tap's output varies ~20x more than the
+// average's. Blocks close the gap and cost less than the tap besides.
+//
+// The last block on each axis may be short; it averages what is there. Alpha is
+// summed premultiplied, which is what dst holds and the only weighting under
+// which a transparent pixel does not tint its neighbours.
+func boxDownscaleGfx(dst *image.RGBA, src *image.NRGBA, r image.Rectangle) bool {
+	sw, sh := r.Dx(), r.Dy()
+	dw, dh := dst.Rect.Dx(), dst.Rect.Dy()
+	if dw <= 0 || dh <= 0 || sw < dw || sh < dh {
+		return false // an upscale on either axis is not ours
+	}
+	kx := int(math.Round(float64(sw) / float64(dw)))
+	ky := int(math.Round(float64(sh) / float64(dh)))
+	if kx < 2 && ky < 2 {
+		return false // barely a downscale; a tap is as good and cheaper
+	}
+	if kx < 1 {
+		kx = 1
+	}
+	if ky < 1 {
+		ky = 1
+	}
+	if (sw+kx-1)/kx != dw || (sh+ky-1)/ky != dh {
+		return false // blocks would not land on dst
+	}
+
+	for y := 0; y < dh; y++ {
+		y0 := r.Min.Y + y*ky
+		y1 := y0 + ky
+		if y1 > r.Max.Y {
+			y1 = r.Max.Y
+		}
+		for x := 0; x < dw; x++ {
+			x0 := r.Min.X + x*kx
+			x1 := x0 + kx
+			if x1 > r.Max.X {
+				x1 = r.Max.X
+			}
+			var sr, sg, sb, sa, n uint32
+			for sy := y0; sy < y1; sy++ {
+				o := src.PixOffset(x0, sy)
+				for sx := x0; sx < x1; sx++ {
+					a := uint32(src.Pix[o+3])
+					sr += uint32(src.Pix[o+0]) * a / 255
+					sg += uint32(src.Pix[o+1]) * a / 255
+					sb += uint32(src.Pix[o+2]) * a / 255
+					sa += a
+					n++
+					o += 4
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			half := n / 2
+			o := dst.PixOffset(x, y)
+			dst.Pix[o+0] = byte((sr + half) / n)
+			dst.Pix[o+1] = byte((sg + half) / n)
+			dst.Pix[o+2] = byte((sb + half) / n)
+			dst.Pix[o+3] = byte((sa + half) / n)
+		}
+	}
+	return true
+}
+
+// hasPartialAlpha reports whether any pixel is neither fully opaque nor fully
+// transparent — the only case where straight and premultiplied bytes differ. It
+// stops at the first one, so the images that need conversion are found fast and
+// only a fully binary-alpha image pays for the whole scan.
+func hasPartialAlpha(pix []byte) bool {
+	for i := 3; i < len(pix); i += 4 {
+		if a := pix[i]; a != 0 && a != 0xff {
+			return true
+		}
+	}
+	return false
+}
+
+// imageScratchGfx returns a w x h premultiplied buffer for one blit, reusing the
+// last one when it is big enough. Image frames can be megabytes and arrive every
+// paint (an animation, or a browser rendering into the terminal); allocating per
+// frame would hand all of that to the GC. Nothing is cleared: both fill paths
+// write every pixel of the rect.
+func (t *PurfecTerm) imageScratchGfx(w, h int) *image.RGBA {
+	need := w * h * 4
+	s := t.gfx.imgScratch
+	if s == nil || cap(s.Pix) < need {
+		s = &image.RGBA{Pix: make([]byte, need)}
+		t.gfx.imgScratch = s
+	}
+	s.Pix = s.Pix[:need]
+	s.Stride = w * 4
+	s.Rect = image.Rect(0, 0, w, h)
+	return s
+}
+
 // ---------------------------------------------------------------
 // Screen splits
 // ---------------------------------------------------------------
@@ -2359,32 +2693,59 @@ func (t *PurfecTerm) screenToVisualCellGfx(x, y core.Unit) (col, row int) {
 	return col, row
 }
 
-// gfxCellSubUnits is the width AND height, in synthetic "pixels", of one cell
-// on the grid the hosted app reads under SGR-Pixels (?1016) — reported to it as
-// the cell size via CSI 16 t. Device pixels can't be used directly: a cell's
-// painted advance (baseCell*scale*ppu) is fractional, and its boundaries land
-// at round(col*advance) — a PER-cell rounding. Uniform division of a device
-// pixel by one integer cell size (col*round(advance)) diverges from that,
-// drifting up to a full cell by the far edge of a wide/tall screen. Instead the
-// report puts the exact cell index (from the same rounding walk the paint uses)
-// in the high digits and the sub-cell fraction in the low gfxCellSubUnits — so
-// the app's own uniform division recovers the cell with no drift and the
-// remainder is the sub-cell position.
-const gfxCellSubUnits = 1000
-
-// pushCellPixelSizeGfx tells the hosted app that a cell is gfxCellSubUnits
-// "pixels" square (CSI 16 t). It is a constant — the synthetic grid, unlike
-// device pixels, does not move with font zoom — but is (re)asserted each paint
-// so a buffer rebuild never leaves it unset.
+// pushCellPixelSizeGfx pushes the two cell measurements the hosted app reads,
+// which are deliberately NOT the same number.
+//
+// The REAL device cell size is what CSI 14 t / CSI 16 t must answer, what
+// image geometry divides by, AND the unit ?1016 pointer reports are encoded in: a
+// program sizes an image against it, and the emulator works out how many rows a
+// placement reserves the same way. Reporting the synthetic grid as the cell size
+// (as this did while the two shared one field) made every image compute as about
+// one cell tall, so the text under it collided with the pixels.
+//
+// Both are (re)asserted each paint. The pointer unit is a constant, but the real
+// cell size moves with font zoom, screen scale and the display's pixels-per-unit,
+// and a buffer rebuild would otherwise leave either unset.
 func (t *PurfecTerm) pushCellPixelSizeGfx() {
-	t.terminal.Buffer().SetCellPixelSize(gfxCellSubUnits, gfxCellSubUnits)
+	buf := t.terminal.Buffer()
+
+	baseCW, baseCH := t.cellDims()
+	ppu := t.gfx.ppu
+	if ppu <= 0 {
+		ppu = 1
+	}
+	// The density belongs INSIDE the rounding, not after it. A cell measuring
+	// 11.67 device pixels is advertised as 12 - a third of a pixel of slack per
+	// row, which the grid's own fit already has to live with - but round first
+	// and multiply after and that slack is multiplied too: 24 rather than the
+	// 23 an exact doubling wants. Over fifty rows the whole window overshoots
+	// the pane it is painted in, and whatever the child drew past the edge is
+	// simply cut off. So take the density first and round ONCE, at the end.
+	f := t.gfx.oversample
+	if f <= 0 {
+		f = 1
+	}
+	cwPx := int(math.Round(float64(baseCW) * buf.GetHorizontalScale() * ppu * f))
+	chPx := int(math.Round(float64(baseCH) * buf.GetVerticalScale() * ppu * f))
+	if cwPx > 0 && chPx > 0 {
+		t.gfx.advCW, t.gfx.advCH = cwPx, chPx
+		buf.SetCellPixelSize(cwPx, chPx)
+		// The pointer unit is the SAME number, because the app has only one
+		// to divide by: whatever CSI 16 t says a cell measures is what it
+		// applies to a ?1016 coordinate. Declaring a different pointer grid
+		// here (this asserted a fixed 1000) does not give the app a second
+		// number - it just makes our reports disagree with the cell size we
+		// advertised, by the ratio between them.
+		buf.SetPointerPixelUnit(cwPx, chPx)
+	}
 }
 
 // screenToPixelReportGfx maps trinket-unit coordinates onto the synthetic pixel
 // grid the hosted app reads under ?1016. Each axis is located by the SAME
 // per-cell rounding walk the paint uses (cellBoundaryPx), so the integer cell
 // never drifts from the glyph; the pointer's fraction across that one cell rides
-// in the low gfxCellSubUnits digits. 0-based, matching screenToVisualCellGfx.
+// in the low digits of the advertised cell size. 0-based, matching
+// screenToVisualCellGfx.
 func (t *PurfecTerm) screenToPixelReportGfx(x, y core.Unit) (px, py int) {
 	buf := t.terminal.Buffer()
 	baseCW, baseCH := t.cellDims()
@@ -2397,20 +2758,29 @@ func (t *PurfecTerm) screenToPixelReportGfx(x, y core.Unit) (px, py int) {
 	if ppu <= 0 {
 		ppu = 1
 	}
+	// The report is encoded in units of the cell size we ADVERTISE (CSI 16 t),
+	// because that is the number the app divides by to get the cell back. Any
+	// other modulus - a synthetic grid of our own choosing - lands the click
+	// wherever the ratio between the two happens to put it.
+	unitW, unitH := buf.GetCellPixelSize()
+	if unitW <= 0 || unitH <= 0 {
+		return 0, 0
+	}
 	ptx, pty := t.gfxPointerPx(x, y)
 	cols, rows := buf.GetSize()
-	return pixelReportAxis(ptx, cw, ppu, cols), pixelReportAxis(pty, chh, ppu, rows)
+	return pixelReportAxis(ptx, cw, ppu, cols, unitW), pixelReportAxis(pty, chh, ppu, rows, unitH)
 }
 
 // pixelReportAxis places a device-pixel coordinate pt on one axis of the
 // synthetic ?1016 grid. It walks to the cell containing pt exactly as
 // screenToVisualCellGfx does (boundaries rounded PER cell, cellBoundaryPx), then
 // measures pt's fraction across that cell's painted span. The result is
-// cell*gfxCellSubUnits + fraction, so dividing by gfxCellSubUnits recovers the
-// SAME cell the paint drew — no cumulative drift from a fractional advance —
-// while the remainder carries the sub-cell position. adv is the cell's unit
-// advance, ppu the pixels-per-unit, n the cell count on this axis.
-func pixelReportAxis(pt, adv, ppu float64, n int) int {
+// cell*unit + fraction, where unit is the cell size the app was told (CSI
+// 16 t): dividing by that recovers the SAME cell the paint drew — no
+// cumulative drift from a fractional advance — while the remainder carries the
+// sub-cell position. adv is the cell's unit advance, ppu the pixels-per-unit,
+// n the cell count on this axis, unit the advertised cell size in device px.
+func pixelReportAxis(pt, adv, ppu float64, n, unit int) int {
 	col := 0
 	for col+1 < n && pt >= cellBoundaryPx(float64(col+1)*adv, ppu) {
 		col++
@@ -2427,7 +2797,7 @@ func pixelReportAxis(pt, adv, ppu float64, n int) int {
 	if frac > 0.999999 {
 		frac = 0.999999
 	}
-	return col*gfxCellSubUnits + int(frac*gfxCellSubUnits)
+	return col*unit + int(frac*float64(unit))
 }
 
 // reportMouseGfx forwards a mouse event to the hosted app, choosing the
@@ -2466,8 +2836,8 @@ func gfxMouseModifiers(mods core.KeyModifiers) int {
 	if mods&core.ShiftModifier != 0 {
 		m |= purfecterm.MouseModShift
 	}
-	if mods&core.AltModifier != 0 {
-		m |= purfecterm.MouseModAlt
+	if mods&core.MegaModifier != 0 {
+		m |= purfecterm.MouseModMega
 	}
 	if mods&core.ControlModifier != 0 {
 		m |= purfecterm.MouseModControl
@@ -2488,9 +2858,14 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 	hasShift := event.Modifiers&core.ShiftModifier != 0 && !t.editorMode
 	forwardToPTY := !t.gfx.reportingDisabled && buf.GetMouseTrackingMode() != 0 && !hasShift
 
+	// Logged before the branches, so a press that never reaches the child is
+	// distinguishable from one that reached it with the wrong coordinate —
+	// the guest line below is absent in the first case, present in the second.
+	//
 	if event.Button == core.RightButton {
 		if forwardToPTY {
 			t.gfx.mouseDown = true
+			t.gfx.mouseDownBtn = purfecterm.MouseButtonRight
 			t.reportMouseGfx(purfecterm.MouseButtonRight|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 			return true
 		}
@@ -2504,12 +2879,14 @@ func (t *PurfecTerm) gfxMousePress(event core.MousePressEvent) bool {
 			btn = purfecterm.MouseButtonMiddle
 		}
 		t.gfx.mouseDown = true
+		t.gfx.mouseDownBtn = btn
 		t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		return true
 	}
 
 	if event.Button == core.LeftButton {
 		t.gfx.mouseDown = true
+		t.gfx.mouseDownBtn = purfecterm.MouseButtonLeft
 		t.gfx.mouseDownX = cellX
 		t.gfx.mouseDownY = cellY
 		t.gfx.selectionMoved = false
@@ -2542,9 +2919,11 @@ func (t *PurfecTerm) gfxMouseMove(event core.MouseMoveEvent) bool {
 
 	if forwardToPTY {
 		if trackingMode == 1003 || (trackingMode == 1002 && t.gfx.mouseDown) {
+			// The button actually held, not always the left one: a guest that
+			// distinguishes a middle- or right-drag is told which it is.
 			btn := purfecterm.MouseButtonNone | purfecterm.MouseMotionFlag
 			if t.gfx.mouseDown {
-				btn = purfecterm.MouseButtonLeft | purfecterm.MouseMotionFlag
+				btn = t.gfx.mouseDownBtn | purfecterm.MouseMotionFlag
 			}
 			t.reportMouseGfx(btn|gfxMouseModifiers(event.Modifiers), event.X, event.Y, true)
 		}
@@ -3141,3 +3520,59 @@ func (t *PurfecTerm) findPopupControllerTerm() core.PopupController {
 	}
 	return nil
 }
+
+// ContentPixelSize is the child's window in DEVICE PIXELS: the widget's
+// snapped extent less the scrollbar lane, which is the area the child's grid
+// is fitted into. Zero before the first graphical paint, and on a cell
+// surface, where there are no device pixels to report.
+//
+// This is what a PTY winsize's pixel half must carry. The tempting
+// alternative — columns times the reported cell size — is wrong twice over:
+// the grid is fitted on the UNSCALED cell while the reported cell is the
+// SCALED one, and the reserved lane is already out of the fit but not out of
+// the product. A program that draws pictures sizes its whole rendering from
+// this number, so it lands at the wrong scale and overflows the pane.
+func (t *PurfecTerm) ContentPixelSize() (int, int) {
+	w, h := t.gfx.contentWpx, t.gfx.contentHpx
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return int(math.Round(w)), int(math.Round(h))
+}
+
+// ChildWindowPixels is the window to report to a hosted child (the PTY's
+// ws_xpixel/ws_ypixel): the pane's MEASURED extent, expressed in the same
+// oversampled pixels the child's cell size is quoted in.
+//
+// Measured, never derived. Columns times the advertised cell looks like the
+// same quantity and is not, because the two are rounded against different
+// things: the grid is fitted on the exact fractional cell and PAINTED on it —
+// a 11.67px row pitch, walked per row, so fifty rows really do fit in 591px —
+// while the cell the child is told has to be a whole number, and 50 x 12 is
+// 600. The child believes the product, sizes its rendering to it, and the
+// difference is cut off at the pane's edge. Scaling by the density multiplies
+// that gap along with everything else.
+//
+// The measured extent has no such gap: it is the pixels that exist, and
+// dividing the returned window by the density gives them back exactly. The
+// window is then not a whole number of cells, which is ordinary — a terminal
+// window has always had leftover pixels below its last row.
+//
+// Zero before the first graphical paint, so a caller can decline to claim a
+// window rather than report one of no size.
+func (t *PurfecTerm) ChildWindowPixels() (int, int) {
+	w, h := t.gfx.contentWpx, t.gfx.contentHpx
+	if w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	if f := t.gfx.oversample; f > 1 {
+		w *= f
+		h *= f
+	}
+	return int(math.Round(w)), int(math.Round(h))
+}
+
+// PixelsPerUnit is this terminal's device pixels per layout unit: the product
+// of the display's backing scale and the user's zoom (scale x fontSize/12).
+// Zero before the first graphical paint.
+func (t *PurfecTerm) PixelsPerUnit() float64 { return t.gfx.ppu }

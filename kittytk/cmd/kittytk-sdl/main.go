@@ -87,6 +87,11 @@ func main() {
 	// configure the app without the command line. Env vars still override.
 	cfg := hostcfg.Load()
 
+	// The [mappings] section and [window] accelerator_chord overlay the
+	// toolkit's own keymap: the file says what it changes rather than
+	// restating the whole table.
+	core.ApplyHostKeymap(cfg.Mappings, cfg.AcceleratorChord)
+
 	// Command-line switches beat the file for this launch:
 	// --webgpu | --software | --renderer=NAME.
 	if parsed, err := argwild.Parse(); err == nil {
@@ -102,6 +107,9 @@ func main() {
 	}
 
 	plat.SetScale(cfg.Scale) // device zoom: pixels per unit at the base font
+	// [system] density: the physical screen's content scale. 0 = ask the
+	// window system. Distinct from scale, which is this app's own magnification.
+	plat.SetDisplayDensity(cfg.Density)
 
 	// [window] fps=true overlays the render frame rate on the OS title bar;
 	// vsync=false uncaps presents (lets fps read raw throughput).
@@ -125,6 +133,13 @@ func main() {
 	// [system] native controls whether menu shortcuts render with macOS's
 	// native modifier glyphs (⌃⌥⇧⌘) instead of the compact ^X/M-x notation.
 	core.SetMacNativeShortcuts(cfg.UseMacNativeShortcuts())
+
+	// [window] titlebar_scale: every graphical title bar (windows and the
+	// themed desktop) at this fraction of the classic full-cell row, fonts
+	// and controls scaled to match. 1.0 is the default. The scale quantizes
+	// to the frame denomination's unit grid, and the TUI host stays at 1.0
+	// regardless — a terminal cannot subdivide a character cell.
+	core.SetTitleBarScale(cfg.TitleBarScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
@@ -157,6 +172,11 @@ func main() {
 
 	desktop := trinkets.NewDesktop()
 	desktop.SetBackend(backend) // seeds root metrics from the raster font
+	// [window] desktop_frame: themed (the desktop paints its own title bar
+	// and handles its own moving/resizing), native_titlebar, or native.
+	// The themed title bar shows the same [window] title the OS bar would.
+	desktop.SetDesktopFrame(cfg.DesktopFrame)
+	desktop.SetTitle(cfg.Title)
 	// The UI font stays one cell tall in UNITS (12); font_size makes it
 	// render larger by growing the cell's pixel size, not its unit count.
 	desktop.SetFont(&core.Font{Name: "ui-text", Size: 12})

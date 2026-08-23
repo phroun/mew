@@ -22,11 +22,11 @@ func TestVertAutoscrollSurvivesHorizScroll(t *testing.T) {
 
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	belowY := w.ContentY + w.ContentHeight + 2
 
 	// Phase 1: vertical works.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, belowY))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, belowY))
 	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
 	top0 := w.ViewState.ViewOffsetY
 	e.dragScrollTick()
@@ -35,13 +35,13 @@ func TestVertAutoscrollSurvivesHorizScroll(t *testing.T) {
 	}
 
 	// Phase 2: park on the far column -> horizontal ticks (scroll_right).
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+2))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", w.ContentX+w.ContentWidth, w.ContentY+2))
 	e.dragScroll.since = e.dragScroll.since.Add(-time.Second)
 	e.dragScrollTick()
 	t.Logf("after horiz tick: offX=%d", w.ViewState.ViewOffsetX)
 
 	// Phase 3: back below the bottom -> vertical must still scroll.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, belowY))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, belowY))
 	if e.dragScroll.vert == 0 {
 		t.Fatalf("phase3: overshoot should re-engage; dragScroll=%+v dragSel=%+v", e.dragScroll, e.dragSel)
 	}
@@ -54,15 +54,15 @@ func TestVertAutoscrollSurvivesHorizScroll(t *testing.T) {
 	}
 
 	// Phase 4: release; new drag after a horizontal WHEEL scroll on the row.
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 	send(fmt.Sprintf("Mouse@%d,%d", x, w.ContentY+1))
 	for i := 0; i < 10; i++ {
 		send("MouseScrollRight") // wheel horizontal (barrier + steps)
 	}
 	t.Logf("after wheel horiz: offX=%d", w.ViewState.ViewOffsetX)
 	send(fmt.Sprintf("Mouse@%d,%d", x, w.ContentY+1))
-	send("MouseLeftPress")
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, belowY))
+	send("MouseLeft")
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, belowY))
 	if e.dragScroll.stop == nil {
 		t.Fatalf("phase4: ticker should be armed; dragScroll=%+v dragSel=%+v", e.dragScroll, e.dragSel)
 	}
@@ -97,9 +97,9 @@ func TestDragAutoscrollEngagesOnPinnedGridEdge(t *testing.T) {
 
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	// The pointer parks ON the last grid row — the host cannot report beyond.
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, gridBottom))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, gridBottom))
 	if e.dragScroll.vert != 1 {
 		t.Fatalf("parking on the grid's last row should read as +1 down overshoot; got %d", e.dragScroll.vert)
 	}
@@ -115,7 +115,7 @@ func TestDragAutoscrollEngagesOnPinnedGridEdge(t *testing.T) {
 	if w.ViewState.ViewOffsetY != topBefore+2 {
 		t.Fatalf("autoscroll should continue; top %d", w.ViewState.ViewOffsetY)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // The pinned-edge rule stays DORMANT when rows exist beyond the viewport (a
@@ -143,13 +143,13 @@ func TestDragAutoscrollDormantWhenRowsExistBeyond(t *testing.T) {
 
 	x, y := screenAt(w, 0, 1)
 	send(fmt.Sprintf("Mouse@%d,%d", x, y))
-	send("MouseLeftPress")
+	send("MouseLeft")
 	// Park on the viewport's LAST CONTENT row (not beyond it).
-	send(fmt.Sprintf("MouseLeftDrag@%d,%d", x, w.ContentY+w.ContentHeight))
+	send(fmt.Sprintf("MouseDragLeft@%d,%d", x, w.ContentY+w.ContentHeight))
 	if e.dragScroll.vert != 0 {
 		t.Fatalf("parking on the last content row with rows beyond must not engage; got %d", e.dragScroll.vert)
 	}
-	send("MouseLeftRelease")
+	send("MouseLeft:Release")
 }
 
 // Under direction=rtl, dragging past the far edge must reveal the line's

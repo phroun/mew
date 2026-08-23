@@ -52,6 +52,11 @@ func init() {
 	})
 
 	protocol.RegisterType("tabs", &protocol.TypeSpec{
+		Events: map[string]protocol.EventDesc{
+			"change": protocol.NewEventDesc("A different tab was selected.").
+				Field("trinket", "uint", "The tab strip's object ID.").
+				Field("selected", "int", "Index of the newly selected tab."),
+		},
 		New: func() any { return NewTabTrinket() },
 		ID: func(t any) uint64 {
 			return uint64(t.(*TabTrinket).ObjectID())
