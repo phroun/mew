@@ -122,6 +122,10 @@ func NewTextInput() *TextInput {
 		// Enter submits. A text field offers no edit command -- it IS the
 		// editor -- so Enter falls through to activate here.
 		core.CmdTrinketActivate,
+		// ...and offering activate is exactly why the space bar needs saying
+		// out loud: it shares a key with activate, and without this a space
+		// would submit instead of typing.
+		core.CmdTrinketTypeSpace,
 	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
@@ -1193,6 +1197,16 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 
 	case core.CmdTrinketDelNext:
 		t.delete()
+		return true
+
+	case core.CmdTrinketTypeSpace:
+		// The space bar, typed. It arrives as a command rather than as text
+		// because the key layer names it "Space" -- five runes, so the typing
+		// path below (which inserts a one-rune key name as itself) never sees
+		// a character to insert. Spell it here and hand it to the same insert
+		// as every other typed character, so selection replacement, the
+		// preedit reset and the change notification are the ordinary ones.
+		t.insert(" ")
 		return true
 
 	case core.CmdTrinketActivate:

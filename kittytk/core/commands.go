@@ -197,4 +197,19 @@ const (
 	CmdTrinketActivate = "trinket_activate"
 	CmdTrinketCancel   = "trinket_cancel"
 	CmdTrinketOpen     = "trinket_open"
+
+	// CmdTrinketTypeSpace is the space bar meaning a SPACE rather than an
+	// activation, for a trinket that accepts text.
+	//
+	// A trinket that types needs a command for this because the space bar does
+	// not arrive as a character: the key layer names it "Space", and a name
+	// five runes long is not the one-rune key the typing path inserts. So a
+	// trinket that accepts text claims this and spells the character itself,
+	// while one that only activates never claims it and keeps the space bar as
+	// its activation.
+	//
+	// Bound BEFORE trinket_activate on the same key, because a context takes
+	// the first of a key's meanings it is offered (see BuildContext): a text
+	// field offers both, and the one it wants is this.
+	CmdTrinketTypeSpace = "trinket_type_space"
 )

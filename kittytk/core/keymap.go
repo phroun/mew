@@ -576,8 +576,9 @@ var defaultBindings = []Binding{
 	// whatever has focus otherwise.
 	{"Esc", []string{CmdWindowCancelResize, CmdTrinketCancel}},
 	// Return begins an edit where one is on offer and activates otherwise;
-	// Space only ever activates, which is why a tree's Space expands a branch
-	// where its Return opens the row editor.
+	// Space types a space where the trinket accepts text and activates
+	// otherwise, which is why a tree's Space expands a branch where its Return
+	// opens the row editor.
 	//
 	// Return is the HOME ROW's key. It and the keypad's are two physical keys
 	// with two names -- keyseq deliberately does not alias them, and this is
@@ -586,7 +587,14 @@ var defaultBindings = []Binding{
 	//
 	// Space is written FIRST and Return second, so activation advertises
 	// Return: both do it, and Return is the one people mean by "press enter".
-	{"Space", []string{CmdTrinketActivate}},
+	//
+	// On the Space line, trinket_type_space is written BEFORE trinket_activate
+	// for the same reason Return writes edit before activate: a context takes
+	// the FIRST of a key's meanings that the trinket offers. A text field
+	// offers both -- it needs activate so Return can submit -- and typing is
+	// the one it means by the space bar. A button offers only activate and is
+	// untouched.
+	{"Space", []string{CmdTrinketTypeSpace, CmdTrinketActivate}},
 	{"Return", []string{CmdTrinketEdit, CmdTrinketActivate}},
 
 	// The bare arrows also carry the FINE resize, for a splitter: nudging a
