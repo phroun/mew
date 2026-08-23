@@ -1,6 +1,10 @@
 package core
 
-import "testing"
+import (
+	"sort"
+	"strings"
+	"testing"
+)
 
 func demoRegistry() *KeyRegistry {
 	return NewKeyRegistryFromMap("default", map[string][]string{
@@ -258,18 +262,77 @@ Space = trinket_open
 
 }
 
-// A file may restate the WHOLE default and land exactly back on it: naming a
-// meaning a key already has changes nothing. That property is what lets
-// DefaultKeymapConfig be both the toolkit's default and a legal thing for a
-// user to write.
+// A file may restate the WHOLE default and land back on it. Every serial is
+// reissued, but in the same order, so every ranking survives — both what each
+// key MEANS and which key each command ADVERTISES. That property is what lets
+// DefaultKeymapConfig be the toolkit's default and a legal thing for a user to
+// write at the same time.
 func TestApplyingTheDefaultKeymapChangesNothing(t *testing.T) {
 	defer resetDefaultKeyRegistry()
 	r := DefaultKeyRegistry()
-	before := dumpCommands(r)
+	meaningsBefore, keysBefore := dumpCommands(r), dumpAdvertised(r)
+
 	ApplyHostKeymap(ParseKeymap(DefaultKeymapConfig), "")
-	if after := dumpCommands(r); after != before {
-		t.Errorf("re-applying the default keymap changed the table:\n before %s\n after  %s", before, after)
+
+	if after := dumpCommands(r); after != meaningsBefore {
+		t.Errorf("re-applying the default changed what keys mean:\n before %s\n after  %s", meaningsBefore, after)
 	}
+	if after := dumpAdvertised(r); after != keysBefore {
+		t.Errorf("re-applying the default changed what commands advertise:\n before %s\n after  %s", keysBefore, after)
+	}
+}
+
+// Restating a binding is NOT a no-op: a line takes a fresh serial, because a
+// line's place is a statement about which key a command advertises, and it
+// means that in a user's file exactly as it does in DefaultKeymapConfig.
+//
+// The table writes Space before Return so that activation advertises Return. A
+// file that writes them the other way round says the opposite, and is heeded,
+// even though both keys already meant activate.
+func TestRestatingABindingMovesWhatIsAdvertised(t *testing.T) {
+	defer resetDefaultKeyRegistry()
+	r := DefaultKeyRegistry()
+	if got := r.KeyForCommand(CmdTrinketActivate); got != "Return" {
+		t.Fatalf("activation starts advertised as %q, want Return", got)
+	}
+
+	ApplyHostKeymap(ParseKeymap(`
+Return = trinket_activate
+Space = trinket_activate
+`), "")
+
+	if got := r.KeyForCommand(CmdTrinketActivate); got != "Space" {
+		t.Errorf("activation advertises %q, want Space: the file wrote it last", got)
+	}
+	// What the keys DO is untouched -- a restated line keeps its place in the
+	// key's own list of meanings.
+	ctx := r.BuildContext([]string{CmdTrinketTypeSpace, CmdTrinketActivate})
+	if got := ctx.Resolve("Space"); got != CmdTrinketTypeSpace {
+		t.Errorf("Space -> %q, want %s: restating must not reorder a key's meanings", got, CmdTrinketTypeSpace)
+	}
+}
+
+// dumpAdvertised renders the key each command names itself by -- the question
+// serials exist to answer.
+func dumpAdvertised(r *KeyRegistry) string {
+	r.mu.RLock()
+	commands := map[string]bool{}
+	for _, list := range r.bindings {
+		for _, bc := range list {
+			commands[bc.command] = true
+		}
+	}
+	r.mu.RUnlock()
+	names := make([]string, 0, len(commands))
+	for c := range commands {
+		names = append(names, c)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, c := range names {
+		b.WriteString(c + " " + r.KeyForCommand(c) + "\n")
+	}
+	return b.String()
 }
 
 // A blank chord leaves the default in place; turning chord accelerators off is

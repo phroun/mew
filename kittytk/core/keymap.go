@@ -542,11 +542,27 @@ func AcceleratorChord() string {
 //	Space = trinket_type_space
 //	Space = trinket_activate
 //
-// A key the file does not name keeps what it had, and a line naming a meaning
-// the key already has changes nothing (see AddBinding). So a file may restate
-// the whole table and land exactly back on it — which is what lets
-// DefaultKeymapConfig be both the default and a legal thing for a user to
-// write.
+// A key the file does not name keeps what it had.
+//
+// A line is applied with Prefer rather than AddBinding, so restating a binding
+// the registry already has is NOT a no-op: it takes a fresh serial. It has to,
+// because a line means the same thing in a user's file as it does in
+// DefaultKeymapConfig, and there a line's PLACE is a statement — among several
+// keys for one command, the last one written is the one menus advertise. A
+// file that writes
+//
+//	Return = trinket_activate
+//	Space  = trinket_activate
+//
+// is saying "advertise Space", and it says that whether or not both keys
+// already meant activate. Ignoring a restated line would make the same text
+// mean two different things depending on which side of the config boundary it
+// was written on.
+//
+// Where the line lands in the key's own list of meanings does not move, so
+// what a keystroke DOES is unchanged; only what a menu shows for the command
+// can change. Restating the whole table therefore lands back on it: every
+// serial is reissued, but in the same order, so every ranking survives.
 //
 // A blank chord leaves the default in place; to turn chord accelerators off,
 // configure a pattern with no "*" in it. The bare letters a focused menu bar
@@ -559,7 +575,7 @@ func ApplyHostKeymap(mappings []Binding, chord string) {
 				r.Bind(b.Key, "")
 				continue
 			}
-			r.AddBinding(b.Key, cmd)
+			r.Prefer(b.Key, cmd)
 		}
 	}
 	if chord != "" {
