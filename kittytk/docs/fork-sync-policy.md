@@ -67,9 +67,8 @@ var _ = mewEditorSuppliedByTheMewDistribution
 Nothing upstream declares that constant, so **building the mew-free tree with
 `-tags mew` fails**, naming what is missing. That is the point: the tag selects
 an editor that lives in your tree, and without this the tag built cleanly here
-and produced a host with no `editor` type registered at all — 33 types instead
-of 34, with nothing reported until a client's `new editor` came back "unknown
-trinket type".
+and produced a host with no `editor` type registered at all, with nothing
+reported until a client's `new editor` came back "unknown trinket type".
 
 Your side satisfies it. `editor_mew.go` declares:
 
