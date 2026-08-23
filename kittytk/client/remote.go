@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/wire"
 )
 
 // DisplayEnv is the environment variable naming the display endpoint.
@@ -83,9 +83,9 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	rt := &remoteTransport{
 		conn:    c,
 		nc:      nc,
-		scanner: protocol.NewScanner(nc),
+		scanner: wire.NewScanner(nc),
 		replies: make(chan replyOrError, 1),
-		events:  make(chan *protocol.Event, 256),
+		events:  make(chan *wire.Event, 256),
 	}
 	c.transport = rt
 
@@ -93,7 +93,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	// carries the server-assigned session id). The optional `solo` flag
 	// asks the display to run this app as the whole surface; the optional
 	// token authorizes the client (checked by the host when configured).
-	hello := fmt.Sprintf("hello version=1 app=%s", protocol.Quote(appName))
+	hello := fmt.Sprintf("hello version=1 app=%s", wire.Quote(appName))
 	if opts.Solo {
 		hello += " solo"
 	}
@@ -101,7 +101,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		hello += " multiwindow"
 	}
 	if tok := opts.token(); tok != "" {
-		hello += " token=" + protocol.Quote(tok)
+		hello += " token=" + wire.Quote(tok)
 	}
 	if _, err := nc.Write([]byte(hello + "\nend\n")); err != nil {
 		nc.Close()
@@ -114,7 +114,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: %w", err)
 	}
-	script, err := protocol.Parse(welcome)
+	script, err := wire.Parse(welcome)
 	if err != nil || len(script.Statements) == 0 || script.Statements[0].Verb != "welcome" {
 		nc.Close()
 		return nil, fmt.Errorf("handshake: unexpected response %q", welcome)
@@ -122,7 +122,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 	// The handshake carries this connection's Application ObjectID, so the app
 	// can address application-wide properties (see Conn.AppID / Conn.SetApp).
 	for _, a := range script.Statements[0].Args {
-		if a.Name == "app" && a.Value != nil && a.Value.Kind == protocol.NumberValue && a.Value.IsInt {
+		if a.Name == "app" && a.Value != nil && a.Value.Kind == wire.NumberValue && a.Value.IsInt {
 			c.appID = uint64(a.Value.Number)
 		}
 	}
@@ -134,7 +134,7 @@ func dial(ep endpoint, appName string, opts DialOptions) (*Conn, error) {
 }
 
 type replyOrError struct {
-	reply *protocol.Reply
+	reply *wire.Reply
 	err   error
 }
 
@@ -143,7 +143,7 @@ type replyOrError struct {
 type remoteTransport struct {
 	conn    *Conn
 	nc      net.Conn
-	scanner *protocol.Scanner
+	scanner *wire.Scanner
 
 	writeMu sync.Mutex
 	replies chan replyOrError
@@ -156,12 +156,12 @@ type remoteTransport struct {
 	// events are delivered on their own goroutine so a handler that
 	// executes statements (SetCaption inside OnToggle) cannot
 	// deadlock the reader that must route the reply.
-	events chan *protocol.Event
+	events chan *wire.Event
 
 	closeOnce sync.Once
 }
 
-func (t *remoteTransport) exec(src string) (*protocol.Reply, error) {
+func (t *remoteTransport) exec(src string) (*wire.Reply, error) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 
@@ -199,14 +199,14 @@ func (t *remoteTransport) readLoop() {
 		if err != nil {
 			return
 		}
-		script, err := protocol.Parse(text)
+		script, err := wire.Parse(text)
 		if err != nil {
 			continue // malformed inbound statement; skip
 		}
 		for _, stmt := range script.Statements {
 			switch stmt.Verb {
 			case "reply":
-				r, err := protocol.DecodeReply(stmt)
+				r, err := wire.DecodeReply(stmt)
 				if r != nil && len(t.pendingDesc) > 0 {
 					r.Extra = t.pendingDesc
 				}
@@ -216,7 +216,7 @@ func (t *remoteTransport) readLoop() {
 				t.pendingDesc = nil
 				msg := "display error"
 				for _, a := range stmt.Args {
-					if a.Name == "text" && a.Value != nil && a.Value.Kind == protocol.StringValue {
+					if a.Name == "text" && a.Value != nil && a.Value.Kind == wire.StringValue {
 						msg = a.Value.Str
 					}
 				}
@@ -225,7 +225,7 @@ func (t *remoteTransport) readLoop() {
 				// describe verb output: buffer until the reply arrives.
 				t.pendingDesc = append(t.pendingDesc, strings.TrimSpace(text))
 			case "event":
-				if ev, err := protocol.ParseEvent(text); err == nil {
+				if ev, err := wire.ParseEvent(text); err == nil {
 					t.events <- ev
 				}
 			}

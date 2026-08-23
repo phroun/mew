@@ -505,11 +505,76 @@ mb=new menubar children={
 	}
 	b.WriteString(`
 	}
+	new menu caption="&Nested" children={`)
+	b.WriteString(nestedMenuBody())
+	b.WriteString(`
+	}
 	new menu caption="&Help" wellknown="help" children={
 		new menuitem caption="&About" action=demo.help.about
 	}
 }
 `)
+	return b.String()
+}
+
+// nestedMenuBody is the body of the Nested menu: the submenu exercise.
+//
+// A submenu has no verb and no property of its own on the wire. An item that
+// is given children BECOMES one — menuitem's Append makes the Menu on the
+// first child and names it after the item — so the whole feature is spelled
+// by nesting children={} one level deeper than a menu already does.
+//
+// Four things worth having a case of:
+//
+//   - Plenty. Forty items is more than a submenu can show at once on a short
+//     display, which is where the height clamp and its scroll are.
+//   - Depth. Four levels, to see one submenu open from inside another and
+//     Left arrow walk back up the chain.
+//   - The ordinary item furniture — checkables, shortcuts, separators, a
+//     disabled item — INSIDE a submenu, since none of that is special-cased
+//     for the top level.
+//   - Something that actually fires, so a trigger from four levels down is
+//     seen to arrive as the same command event as one from the menu bar.
+func nestedMenuBody() string {
+	var b strings.Builder
+
+	b.WriteString("\n\t\tnew menuitem caption=\"&Ordinary Item\" action=demo.nested.pick")
+	b.WriteString("\n\t\tnew menuitem separator")
+
+	// A submenu long enough to need the height clamp.
+	b.WriteString("\n\t\tnew menuitem caption=\"&Many Items\" children={")
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&b, "\n\t\t\tnew menuitem caption=\"Item %d\"", i)
+		if i%8 == 0 && i != 40 {
+			b.WriteString("\n\t\t\tnew menuitem separator")
+		}
+	}
+	b.WriteString("\n\t\t}")
+
+	// Depth. The innermost item is the one wired to a handler.
+	b.WriteString(`
+		new menuitem caption="&Deeper" children={
+			new menuitem caption="Level &2" children={
+				new menuitem caption="Level &3" children={
+					new menuitem caption="Level &4 - the bottom" action=demo.nested.deep
+					new menuitem separator
+					new menuitem caption="Also at level 4"
+				}
+				new menuitem caption="Also at level 3"
+			}
+			new menuitem caption="Also at level 2"
+		}
+		new menuitem separator
+		new menuitem caption="&Furniture" children={
+			new menuitem caption="&Checkable" checkable
+			new menuitem caption="Checkable, &Checked" checkable checked
+			new menuitem separator
+			new menuitem caption="With a &Shortcut" shortcut="^9"
+			new menuitem caption="Shortcut &Text Only" shortcuttext="Cmd-Whatever"
+			new menuitem separator
+			new menuitem caption="&Disabled" enabled=false
+		}`)
+
 	return b.String()
 }
 

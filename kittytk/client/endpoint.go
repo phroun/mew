@@ -1,6 +1,6 @@
 package client
 
-// Transport addressing for the display protocol. The wire language is
+// Transport addressing for the display wire. The wire language is
 // identical over every transport; only the endpoint string and the
 // dial differ:
 //

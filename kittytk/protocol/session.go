@@ -36,15 +36,6 @@ type destroyer interface {
 	Destroy() error
 }
 
-// Reply reports server-assigned IDs for a request: top-level
-// correlation keys plus explicitly surfaced names (D11/D15). Extra
-// carries additional raw wire statements a verb wants delivered ahead
-// of the reply line (the describe verb's flat vocabulary stream, D24).
-type Reply struct {
-	IDs   map[string]uint64
-	Extra []string
-}
-
 // Session holds connection-scoped interpretation state: alias and
 // template dictionaries (D10/D14), plus — since D19's verbs — the
 // persistent key table and object table. Keys registered by one

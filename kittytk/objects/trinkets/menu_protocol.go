@@ -79,7 +79,9 @@ func init() {
 				}
 				m.SetAnchor(s)
 				return nil
-			})).Tip("Place this untagged menu after a well-known slot (e.g. after=file)"),
+				// Quoted in the example because the property is a string:
+				// after=file is rejected with "expected a quoted string".
+			})).Tip(`Place this untagged menu after a well-known slot (e.g. after="file")`),
 		},
 		Append: func(parent, child any) error {
 			m := parent.(*Menu)

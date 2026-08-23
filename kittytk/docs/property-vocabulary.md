@@ -316,7 +316,7 @@ literal for script builders (dynamic status updates).
 | children | {} | `window` children are hosted documents (spawn later with `set pane children={new window …}`); one non-window child is the background content |
 | `fill` | string (1 char) | Background fill character |
 | `pattern` | flag | Pattern background |
-| `tile`, `cascade`, `next`, `prev` | flag (action) | Window-management verbs as action properties |
+| `tile`, `cascade`, `next`, `prior` | flag (action) | Window-management verbs as action properties |
 | `restore`, `minimize`, `remove` | numeric (action) | Id-directed actions on a hosted window |
 
 Events: `minimize`/`restore`/`remove` with `window=` + `title=`;

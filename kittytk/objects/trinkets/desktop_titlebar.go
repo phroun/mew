@@ -478,9 +478,28 @@ func (d *Desktop) addHostWindowMenuItems() {
 			break
 		}
 	}
-	d.systemMenu.InsertItem(at, NewSeparator())
-	d.systemMenu.InsertItem(at+1, minItem)
-	d.systemMenu.InsertItem(at+2, zoomItem)
+	// Minimize and Zoom are a group of their own, so they want dividing from
+	// the group above AND from Exit below - but only where a rule is actually
+	// missing. Both neighbours are judged against the menu as it stands now,
+	// before anything is inserted:
+	//
+	//   above: a real item means a group to divide from. A rule means that
+	//          group is already closed; nothing at all means there is no
+	//          group above. Bringing one anyway drew a second rule under
+	//          createSystemMenu's own.
+	//   below: Exit is its own last group and needs dividing from Zoom. It is
+	//          easy to miss that this is needed, because the rule the menu
+	//          already carries gets used up ABOVE these items.
+	group := []*MenuItem{minItem, zoomItem}
+	if at > 0 && items[at-1] != nil && !items[at-1].Separator {
+		group = append([]*MenuItem{NewSeparator()}, group...)
+	}
+	if at < len(items) && items[at] != nil && !items[at].Separator {
+		group = append(group, NewSeparator())
+	}
+	for i, it := range group {
+		d.systemMenu.InsertItem(at+i, it)
+	}
 }
 
 // hostMinimize miniaturizes the desktop's OS window (the Ψ menu item).
