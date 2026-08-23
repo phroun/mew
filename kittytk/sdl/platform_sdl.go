@@ -2265,6 +2265,18 @@ var specialKeys = map[sdl3.Keycode]string{
 	sdl3.K_TAB:       "Tab",
 	sdl3.K_ESCAPE:    "Escape",
 	sdl3.K_BACKSPACE: "Backspace",
+	// The space bar is a NAMED key, the way direct-key-handler and the
+	// terminal backend both name it. It is printable, so without this entry
+	// encodeKey fell through to the printable branch and called it " " -- and
+	// the keymap binds "Space", so on this host the space bar resolved to no
+	// command at all. A text field types it anyway (a one-rune key name IS the
+	// character), which is why only the trinkets that ACT on it -- buttons,
+	// lists, trees, checkboxes -- went dead, and only here.
+	//
+	// Control keeps the character spelling: Ctrl+Space is the C0 byte NUL,
+	// which this vocabulary writes "^@" to match the terminal backend, so
+	// encodeKey skips this entry when Control is held.
+	' ': "Space",
 	// SDL reports KEYS, so there is no BS/DEL ambiguity to carry here: its
 	// delete key is forward delete, which is "FDel". "Delete" is the name of
 	// the DEL character, and a desktop has no such key to send.
@@ -2633,7 +2645,10 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 		return prefix + pad + base
 	}
 
-	if name, ok := specialKeys[sym.Sym]; ok {
+	// Ctrl+Space is the exception: it is the C0 byte NUL, spelled "^@" by the
+	// printable branch below to match the terminal backend, so the name is left
+	// to it. Every other spelling of the space bar takes the name.
+	if name, ok := specialKeys[sym.Sym]; ok && !(ctrl && sym.Sym == ' ') {
 		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
 	}
 
