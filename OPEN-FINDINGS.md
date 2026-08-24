@@ -20,7 +20,66 @@ sitting in mew's vendored `kittytk/`, and would go upstream.
 ## KittyTK — protocol / wire surface
 
 ### TextInput: put the interaction state on the wire
-**Title only.** No surviving detail on which state or why.
+*Researched 2026-08-24. This entry turned out to be two different things under
+one title; they want separate decisions.*
+
+**Where the entry came from.** `objects/trinkets/textinput_protocol.go:8-10`
+opens with:
+
+> Wire registration for TextInput (see docs/property-vocabulary.md).
+> cursor/selection/readonly/mask arrive with the set verb and event
+> slices (they are interaction state, not construction state).
+
+Directly below it, the Props map registers exactly two: `text` and
+`placeholder`. None of the four the comment names is there, and none is a
+common property either (the common set is `acc_name align bg column_units
+enabled fg font max_height max_width min_height min_width name row_units
+stretch visible` — verified). So the comment describes an intent, in the
+present tense, that was never carried out.
+
+**Three documents disagree with the code.**
+
+| Source | Says | Actually registered |
+|---|---|---|
+| `textinput_protocol.go:9` | cursor, selection, readonly, mask "arrive with the set verb" | none of them |
+| `docs/property-vocabulary.md:190-198` | `text`, `placeholder`, `cursor`, `selection_start`, `selection_end`, `readonly`, `mask` | `text`, `placeholder` |
+| `docs/d2-read-audit.md:37-38` | `readonly`, `mask`/echo mode, `max_length` are **class A, write-through** | absent from the wire |
+
+Class A means "state only the app ever changes, cached client-side, never
+crosses the wire to read". That classification presumes the property exists to
+be written in the first place.
+
+**Go API a wire client cannot reach:** `SetMaxLength`, `SetEchoMode` (four
+modes: `EchoNormal`, `EchoPassword`, `EchoPasswordOnEdit`, `EchoNoEcho`),
+`SetReadOnly` / `IsReadOnly`, `SetCursorPosition`, `SelectAll`,
+`SelectedText`, `HasSelection`.
+
+**The split that matters.** These are not one problem:
+
+1. **`readonly`, `mask`/echo mode, `max_length` — plain construction state,
+   simply missing.** Nothing deferred them; the audit filed them as class A and
+   moved on. A password field cannot be built over the wire at all today, which
+   is the sharp end of this. Each is a one-line `boolProp`/`intProp`
+   registration against a setter that already exists.
+
+2. **`cursor`, `selection_start`, `selection_end` — deliberately deferred.**
+   `docs/d2-read-audit.md:103-108` records them as C2 exception #3: *"`change`
+   carries `text=` only. Fine for v1 (most apps only need text); if an app
+   needs caret tracking, add `cursor=` to `change` or a `caret` event.
+   Deferred, recorded in the vocabulary doc."* That is a decision, not an
+   oversight — and the two named options (a field on `change` vs. its own
+   `caret` event) are still the open question. Reversing it needs the event
+   half designed, not just properties registered.
+
+**A third thing found while looking, not in the original entry: there is no
+submit event.** `SetOnReturnPressed` exists (`textinput.go:324`) and is used
+in-process by the file dialog (`dialog.go:576`), but the Bind function wires
+only `SetOnTextChanged`. `change` is the sole event textinput declares. So a
+wire client cannot learn the user pressed Return in a text field — the whole
+point of a single-line entry box in most dialogs. Unlike the caret, this is not
+recorded as deferred anywhere I could find.
+
+*Everything above verified against current code and docs.*
 
 ### Panel: give flex and grid a wire spelling
 **Title only.** Related surface: `objects/trinkets/panel_protocol.go:68` reaches
