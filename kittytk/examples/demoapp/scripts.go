@@ -242,11 +242,11 @@ new tab caption="Scroll Lists" children={
 	}
 }
 
-new tab caption="Text Fields" children={
-	new panel layout=vbox spacing=0 children={
+tf=new tab caption="Text Fields" children={
+	tfp=new panel layout=vbox spacing=0 children={
 		new label caption="Every option a textinput has, one per row."
-		new panel layout=hbox spacing=8 children={
-			new panel layout=vbox spacing=0 stretch=1 children={
+		tfrow=new panel layout=hbox spacing=8 children={
+			tfl=new panel layout=vbox spacing=0 stretch=1 children={
 				new label caption="Plain, with a placeholder:"
 				new textinput placeholder="Type here..."
 
@@ -262,7 +262,7 @@ new tab caption="Text Fields" children={
 				new label caption="max_length=8 - stops accepting at 8:"
 				new textinput placeholder="8 max" max_length=8
 			}
-			new panel layout=vbox spacing=0 stretch=1 children={
+			tfr=new panel layout=vbox spacing=0 stretch=1 children={
 				new label caption="echo=password - masked with the default bullet:"
 				new textinput text="hunter2" echo=password
 
@@ -278,11 +278,11 @@ new tab caption="Text Fields" children={
 
 				new label caption="Masked, and you choose the mask:"
 				tfmask=new textinput text="secret" echo=password
-				new panel layout=hbox spacing=8 children={
-					tfmb=new radiobutton caption="bullet" group=tfmask checked
-					tfms=new radiobutton caption="star" group=tfmask
-					tfmh=new radiobutton caption="hash" group=tfmask
-					tfmn=new radiobutton caption="show" group=tfmask
+				tfmrow=new panel layout=hbox spacing=8 children={
+					tfmb=new radiobutton caption="bullet" group=tfmaskg checked
+					tfms=new radiobutton caption="star" group=tfmaskg
+					tfmh=new radiobutton caption="hash" group=tfmaskg
+					tfmn=new radiobutton caption="show" group=tfmaskg
 				}
 			}
 		}
@@ -493,6 +493,13 @@ dpinl=w.t.det.dbox.drow.dpinl
 dpinr=w.t.det.dbox.drow.dpinr
 dledger=w.t.det.dbox.drow.dledger
 dlines=w.t.det.dbox.drow.dlines
+tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
+tfecho=w.t.tf.tfp.tfrow.tfr.tfecho
+tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
+tfmb=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmb
+tfms=w.t.tf.tfp.tfrow.tfr.tfmrow.tfms
+tfmh=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmh
+tfmn=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmn
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

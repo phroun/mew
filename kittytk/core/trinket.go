@@ -753,8 +753,6 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 		w.mu.Unlock()
 		return
 	}
-	wasFocused := w.focused
-	w.focused = true
 	app := w.app
 	parent := w.parent
 	self := w.self // Get the outer trinket reference
@@ -765,6 +763,25 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 	if self != nil {
 		focusTrinket = self
 	}
+
+	// A trinket that cannot HOLD focus does not TAKE it, however it was
+	// asked. The focus manager already refuses a disabled or hidden trinket
+	// (see FocusManager.canFocus), but this ran first and unconditionally:
+	// the trinket marked itself focused and announced HandleFocusIn, and only
+	// then did the manager decline to record it. A disabled field clicked
+	// with the mouse came up looking focused, caret and all, while Tab went
+	// on skipping it -- the two halves disagreeing about the same trinket.
+	//
+	// Checked here rather than only at the manager because SetFocus is public
+	// and a trinket may have no manager above it at all.
+	if !focusTrinket.IsEnabled() || !focusTrinket.IsVisible() {
+		return
+	}
+
+	w.mu.Lock()
+	wasFocused := w.focused
+	w.focused = true
+	w.mu.Unlock()
 
 	if !wasFocused {
 		// Call HandleFocusIn on the actual trinket (self) to get polymorphic behavior
