@@ -88,3 +88,78 @@ func TestReadOnlyCaretAtTheEndPaintsABlock(t *testing.T) {
 			got.R, got.G, got.B, r, g, bl)
 	}
 }
+
+// Which palette the block inverts, asserted on the decision rather than on
+// pixels: both foregrounds are black in the default scheme, so the block's
+// FILL is the same either way and only the glyph colour differs -- and
+// sampling a glyph's pixels is a test of the font, not of this.
+//
+// Over selected text it must be the selection's own pair. Inverting the
+// ordinary pair inside a highlight either vanishes into it or clashes with it,
+// and neither reads as "you are here".
+func TestBlockCaretInvertsWhateverItSitsOn(t *testing.T) {
+	text := style.DefaultStyle().WithFg(style.RGB(10, 10, 10)).WithBg(style.RGB(20, 20, 20))
+	sel := style.DefaultStyle().WithFg(style.RGB(30, 30, 30)).WithBg(style.RGB(40, 40, 40))
+	ground := style.RGB(50, 50, 50)
+
+	plain := blockCaretStyle(text, sel, ground, false)
+	if plain.Bg != text.Fg {
+		t.Errorf("outside a selection the block fills with %v, want the text ink %v", plain.Bg, text.Fg)
+	}
+	if plain.Fg != ground {
+		t.Errorf("outside a selection the glyph is %v, want the field ground %v", plain.Fg, ground)
+	}
+
+	inSel := blockCaretStyle(text, sel, ground, true)
+	if inSel.Bg != sel.Fg {
+		t.Errorf("inside a selection the block fills with %v, want the selection ink %v", inSel.Bg, sel.Fg)
+	}
+	if inSel.Fg != sel.Bg {
+		t.Errorf("inside a selection the glyph is %v, want the selection ground %v", inSel.Fg, sel.Bg)
+	}
+	// ...and the two are genuinely different, which is the whole point.
+	if plain == inSel {
+		t.Error("the block looks the same inside and outside a selection")
+	}
+}
+
+// The caret sits at one EDGE of a selection, never strictly inside it (the
+// span runs anchor to cursor), so the block covers a selected character
+// exactly when the caret is the LEFT edge. Selecting backwards puts it there.
+func TestSelectingBackwardsPutsTheCaretOnASelectedCharacter(t *testing.T) {
+	ti := NewTextInput()
+	ti.SetText("abcdef")
+	ti.SetReadOnly(true)
+	ti.SetCursorPosition(4)
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Left"})
+	ti.HandleKeyPress(core.KeyPressEvent{Key: "S-Left"})
+
+	if got := ti.CursorPosition(); got != 2 {
+		t.Fatalf("cursor = %d, want 2", got)
+	}
+	if got := ti.SelectedText(); got != "cd" {
+		t.Fatalf("selection = %q, want cd", got)
+	}
+	lo, hi := ti.selStart, ti.selEnd
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if !(ti.cursorPos >= lo && ti.cursorPos < hi) {
+		t.Errorf("cursor %d is not inside the selection [%d,%d)", ti.cursorPos, lo, hi)
+	}
+
+	// Selecting FORWARDS leaves it at the right edge, where the character it
+	// covers is past the selection and takes the ordinary colours.
+	fwd := NewTextInput()
+	fwd.SetText("abcdef")
+	fwd.SetCursorPosition(2)
+	fwd.HandleKeyPress(core.KeyPressEvent{Key: "S-Right"})
+	fwd.HandleKeyPress(core.KeyPressEvent{Key: "S-Right"})
+	lo, hi = fwd.selStart, fwd.selEnd
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if fwd.cursorPos >= lo && fwd.cursorPos < hi {
+		t.Errorf("selecting forwards left the cursor %d inside [%d,%d)", fwd.cursorPos, lo, hi)
+	}
+}

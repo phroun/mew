@@ -914,7 +914,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 					endX = caretX + blank
 					endPx = caretXPx + p.UnitsToPx(blank)
 				}
-				block := s.WithBg(s.Fg).WithFg(fillStyle.Bg)
+				// The caret is always at one EDGE of a selection (the span
+				// runs anchor to cursor), so the block covers a SELECTED
+				// character exactly when the caret is at the left edge, which
+				// is what selecting backwards leaves.
+				overSel := selLo >= 0 && cursorDisp >= selLo && cursorDisp < selHi
+				block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
 				if usePx {
 					p.FillRectPixels(0, 0, caretXPx, 0, endPx-caretXPx,
 						p.UnitsToPx(font.LineHeight()), block)
@@ -958,6 +963,21 @@ func (t *TextInput) Paint(p *core.Painter) {
 			}
 		}
 	}
+}
+
+// blockCaretStyle is the pair the read-only block inverts.
+//
+// It inverts whatever it is SITTING ON. Over selected text that is the
+// selection's own colours, not the field's: inverting the ordinary pair inside
+// a highlight either vanishes into it or clashes with it, and neither reads as
+// "you are here". The glyph takes the ground it is being lifted off -- the
+// selection's background there, the field's fill elsewhere -- so the character
+// stays legible in the hole the block makes.
+func blockCaretStyle(text, sel style.CellStyle, ground style.Color, overSelection bool) style.CellStyle {
+	if overSelection {
+		return sel.WithBg(sel.Fg).WithFg(sel.Bg)
+	}
+	return text.WithBg(text.Fg).WithFg(ground)
 }
 
 // caretVisible reports the blink state: visible whenever no blink
