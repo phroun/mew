@@ -39,10 +39,9 @@ func sameColor(c color.RGBA, want style.Color) bool {
 // A read-only field's caret is a BLOCK: the character it sits on is painted
 // with the text's colours reversed, so the cell's background becomes the ink.
 //
-// It came out as a bar. Skipping the pixel-bar branch was not enough --
-// DrawCaret draws a bar of its own on a pixel surface and reports that it
-// did, so the block fallback below it was never reached. The block is painted
-// outright now.
+// DrawCaret draws a bar of its own on a pixel surface and reports that it did,
+// so the block cannot come from letting a bar branch fall through: it is
+// painted outright.
 func TestReadOnlyCaretPaintsAnInvertedBlock(t *testing.T) {
 	b, ti := paintField(t, func(ti *TextInput) { ti.SetReadOnly(true) })
 

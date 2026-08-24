@@ -26,11 +26,11 @@ func propsOf(t *testing.T, typeName string) map[string]bool {
 
 // Banding is spelled "ledger", and only "ledger".
 //
-// A list used to answer to two names for it. Both set the same field and the
-// paint path had one branch, so the second name bought nothing and cost a
-// reader the question of whether they differed -- and a tree only ever had
-// "ledger", so a script moving a property between the two had to know which
-// name went where.
+// One name for one switch. A second name for it would set the same field and
+// reach the same single paint branch, buying nothing and costing a reader the
+// question of whether the two differ -- and a tree spells it "ledger", so a
+// script moving the property between the two would have to know which name
+// went where.
 func TestLedgerIsTheOnlyNameForBanding(t *testing.T) {
 	list := propsOf(t, "listview")
 	if !list["ledger"] {

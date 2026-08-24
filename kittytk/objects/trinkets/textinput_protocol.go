@@ -9,11 +9,9 @@ import (
 
 // Wire registration for TextInput (see docs/property-vocabulary.md).
 //
-// cursor, selection, readonly and mask are NOT here. The vocabulary doc lists
-// them and this comment used to claim they arrived with the set verb; neither
-// was true. See OPEN-FINDINGS.md -- readonly/mask/max_length are simply
-// missing, and cursor/selection were deliberately deferred (d2-read-audit.md,
-// C2 exception 3).
+// cursor, selection_start and selection_end are NOT here: they are deferred,
+// with the reasoning in d2-read-audit.md (C2 exception 3). The vocabulary doc
+// lists them; it is describing an intent rather than this table.
 func init() {
 	regTrinket("textinput",
 		func() core.Trinket { return NewTextInput() },

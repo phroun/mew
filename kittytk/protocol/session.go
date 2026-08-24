@@ -317,11 +317,10 @@ func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
 
 // checkEventName rejects an event the target cannot raise.
 //
-// A misspelled name used to be accepted and then simply never fire, which is
-// the worst answer available: the client is told nothing is wrong and waits
-// for an event that was never going to come. The registry already knows what
-// every type emits — it is the same table introspection reports — so the
-// answer is available at the moment the subscription is made.
+// A misspelled name accepted and then never firing is the worst answer
+// available: the client is told nothing is wrong and waits for an event that
+// was never going to come. The registry knows what every type emits — the
+// same table introspection reports — so the answer is available here.
 //
 // typeName is empty for `sub all`, and for an object the host registered
 // rather than the wire creating. Neither has one type to check against, so

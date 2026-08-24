@@ -9,16 +9,14 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// A disabled field sits on its CONTAINER's background, not on the edit box's.
+// A disabled field sits on its CONTAINER's background.
 //
-// The edit-box background is what says "you can work in here", and keeping it
-// under greyed ink said both things at once. It also put DisabledTextFG on a
-// ground nothing chose it against: one global ink, landing on the edit box's
-// blue, came out around 1.1:1 -- not dim, gone.
+// DisabledTextFG is the disabled counterpart to normal window text, so the
+// ground it is chosen against is the container's, not the edit box's.
 //
-// Asserted against a container whose background DIFFERS from the edit box's,
-// because in the default scheme they happen to be the same colour and a test
-// on the default would pass whichever background the field used.
+// Asserted against a container whose background DIFFERS from the edit box's:
+// in the default scheme the two are the same colour, and a test on the
+// default would pass whichever background the field used.
 func TestDisabledFieldPaintsOnItsContainersBackground(t *testing.T) {
 	b, err := raster.New(200, 16)
 	if err != nil {
@@ -66,13 +64,11 @@ func TestDisabledFieldPaintsOnItsContainersBackground(t *testing.T) {
 	}
 }
 
-// ...and it keeps the speckle, in the same greyed ink. A flat field reads as
-// an empty one; the texture says there IS a field here and it is not
-// available, which is two facts a blank rectangle cannot carry at once.
+// A disabled field is speckled. A flat rectangle says "empty"; the texture
+// says "a field, unavailable".
 //
-// Checked by rendering the same field enabled-unfocused (which is flat) and
-// disabled, and requiring the disabled one not to be a single flat colour the
-// way the plain one is.
+// Checked against an enabled unfocused field, which is flat: the disabled one
+// must not come out as the same single colour.
 func TestDisabledFieldKeepsTheSpeckle(t *testing.T) {
 	render := func(disabled bool) map[color.RGBA]int {
 		b, _ := raster.New(200, 16)

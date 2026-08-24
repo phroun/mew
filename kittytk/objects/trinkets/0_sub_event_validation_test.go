@@ -23,11 +23,10 @@ func runScript(t *testing.T, src string) error {
 
 // A subscription names an event the target actually raises, or it is refused.
 //
-// It used to be accepted whatever was written. A client that misspelled an
-// event got no complaint and then waited forever for something nothing was
-// ever going to raise -- the failure told it nothing was wrong. The registry
-// already knows what each type emits, being the same table `describe` reports
-// from, so the answer is available at the moment the subscription is made.
+// A misspelled name accepted in silence leaves the client waiting forever for
+// something nothing raises, told that nothing is wrong. The registry knows
+// what each type emits -- the same table `describe` reports from -- so the
+// answer is available at the moment the subscription is made.
 func TestSubRefusesAnEventTheTypeDoesNotRaise(t *testing.T) {
 	if err := runScript(t, `b=new button caption="ok"
 sub b clik`); err == nil {

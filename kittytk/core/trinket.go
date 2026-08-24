@@ -765,15 +765,12 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 	}
 
 	// A trinket that cannot HOLD focus does not TAKE it, however it was
-	// asked. The focus manager already refuses a disabled or hidden trinket
-	// (see FocusManager.canFocus), but this ran first and unconditionally:
-	// the trinket marked itself focused and announced HandleFocusIn, and only
-	// then did the manager decline to record it. A disabled field clicked
-	// with the mouse came up looking focused, caret and all, while Tab went
-	// on skipping it -- the two halves disagreeing about the same trinket.
-	//
-	// Checked here rather than only at the manager because SetFocus is public
-	// and a trinket may have no manager above it at all.
+	// asked. The same rule the focus manager applies (FocusManager.canFocus),
+	// checked here as well because SetFocus is public and reaches a trinket
+	// with no manager above it -- and because this runs BEFORE the manager
+	// sees the request, so leaving it to the manager alone would let the
+	// trinket mark itself focused and announce HandleFocusIn for a focus the
+	// manager then refuses to record.
 	if !focusTrinket.IsEnabled() || !focusTrinket.IsVisible() {
 		return
 	}

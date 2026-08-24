@@ -12,9 +12,7 @@ import (
 // that Return can submit -- so without a command of its own the space bar
 // resolved to trinket_activate and fired the submit handler, inserting nothing.
 // The key layer names the space bar "Space", five runes, so the typing path
-// (which inserts a one-rune key name as itself) never saw a character either.
-//
-// Nothing covered typing a space before, which is how it shipped.
+// (which inserts a one-rune key name as itself) sees no character either.
 func TestSpaceBarTypesASpace(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("ab")

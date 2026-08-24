@@ -578,21 +578,16 @@ func (t *TextInput) Paint(p *core.Painter) {
 	var s style.CellStyle
 	var fillChar rune = ' '
 	if !t.IsEnabled() {
-		// A disabled field sits on its CONTAINER's background, not on the
-		// edit box's. The edit-box background is what says "you can work in
-		// here", and keeping it under greyed ink said both things at once --
-		// and said neither well: DisabledTextFG is one global ink with no
-		// knowledge of what it lands on, and on the edit-box blue it came out
-		// at about 1.15:1, which is not dim, it is gone.
-		//
-		// Against the container the field stops claiming to be a place to
-		// type at all, and the ink is back on the ground the rest of the
-		// scheme's disabled text was chosen against.
+		// A disabled field sits on its CONTAINER's background. DisabledTextFG
+		// is the disabled counterpart to normal window text -- inherited through
+		// the window, beside FocusTextFG and HoverTextFG, and what
+		// DisabledLabelFG and DisabledButtonFG fall back to -- so the ground it
+		// is chosen against is the container's. The edit-box background is what
+		// says "you can work in here", which a disabled field does not.
 		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(inheritedBg)
-		// ...and it keeps the speckle, in the same greyed ink. A flat field
-		// reads as an empty one; the texture says there is a field here and
-		// it is not available, which is two facts a blank rectangle cannot
-		// carry at once.
+		// The speckle carries the rest: a flat rectangle says "empty", the
+		// texture says "a field, unavailable". Same ink as the text, so the
+		// whole thing reads as one hatched-out surface.
 		fillChar = '░'
 	} else if focused {
 		s = scheme.GetFocusedEditBoxText()
@@ -1877,12 +1872,10 @@ func (t *TextInput) contextMenuID() string {
 // to the matching Edit-menu action.
 func (t *TextInput) contextMenuItems() []termMenuItem {
 	// Cut and Paste CHANGE the content, so they are offered only where the
-	// content can change. A disabled or read-only field showed them anyway and
-	// they did nothing -- or, before the guards below, did something, which is
-	// how a disabled field turned out to be editable through its own menu.
+	// content can change; elsewhere they are greyed and inert.
 	//
 	// Copy and Select All only read, and reading a disabled field is the same
-	// as being able to select its text with the mouse, which one can.
+	// as selecting its text with the mouse, which one can.
 	edits := t.AcceptsTextInput()
 	return []termMenuItem{
 		{label: "Cut", action: t.Cut, disabled: !edits},

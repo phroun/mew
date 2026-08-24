@@ -32,9 +32,8 @@ func TestDisabledFieldShowsNoIBeam(t *testing.T) {
 }
 
 // A read-only field has a caret position, and moving through it moves that
-// position -- which is the state the caret exists to show. It used to be
-// painted for an editable field only, so a reader selecting or walking a
-// read-only field could not see where they were.
+// position -- which is the state the caret exists to show. A reader selecting
+// or walking one has to be able to see where they are.
 func TestReadOnlyFieldKeepsACaretPosition(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("navigate me")
