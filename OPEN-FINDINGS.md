@@ -19,13 +19,6 @@ sitting in mew's vendored `kittytk/`, and would go upstream.
 
 ## KittyTK — protocol / wire surface
 
-### ListView: retire `alternate_rows` in favour of `ledger`
-Two names for one switch. `objects/trinkets/listview_protocol.go:44-49` already
-says so in a comment — "alternate_rows and ledger are the SAME switch: both set
-… prefer ledger" — so the question is whether the older spelling can be removed
-or has to stay for compatibility.
-*Anchor verified. Scope decision not made.*
-
 ### TextInput: put the interaction state on the wire
 **Title only.** No surviving detail on which state or why.
 
@@ -165,7 +158,8 @@ Repo is ambiguous — the editor placeholder lives in the toolkit
 
 ## Not on this list
 
-Three things from the same task list are **done** and need no issue: the space bar
-command (`f0882e7`), the `regTrinket` events-param sync landmine, and `-tags mew`
-building a host with no editor. The SDL space-bar naming bug found while writing
+Four things from the same task list are **done** and need no issue: the space bar
+command (`f0882e7`), the `regTrinket` events-param sync landmine, `-tags mew`
+building a host with no editor, and retiring listview's `alternate_rows` in favour
+of `ledger`. The SDL space-bar naming bug found while writing
 this is fixed in `78ed16a`.
