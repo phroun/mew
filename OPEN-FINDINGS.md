@@ -20,8 +20,7 @@ sitting in mew's vendored `kittytk/`, and would go upstream.
 ## KittyTK — protocol / wire surface
 
 ### TextInput: `cursor` and `selection` on the wire
-*Researched 2026-08-24. The title used to cover four properties and an event;
-three properties and the event are done, and this is what is left.*
+*Researched 2026-08-24.*
 
 `docs/d2-read-audit.md:103-108` records the caret as C2 exception #3:
 *"`change` carries `text=` only. Fine for v1 (most apps only need text); if an
@@ -180,35 +179,3 @@ was launched on. **Title only** beyond that.
 A design note rather than a defect. **Title only.**
 Repo is ambiguous — the editor placeholder lives in the toolkit
 (`objects/trinkets/editor_mew*`) but the behaviour is mew's.
-
----
-
-## Not on this list
-
-These are **done** and need no issue.
-
-From the task list this file was written from: the space bar command
-(`f0882e7`), the `regTrinket` events-param sync landmine, `-tags mew` building
-a host with no editor, retiring listview's `alternate_rows` in favour of
-`ledger` (`55c3114`), and validating `sub`/`unsub` event names (`40ee186`). The
-SDL space-bar naming bug found while writing this is fixed in `78ed16a`.
-
-Since then, out of the TextInput entry above:
-
-- `readonly`, `max_length`, `echo` (`normal`/`password`/`none`) and `mask` are
-  registered (`ea6de01`). The vocabulary doc had `mask` as "flag or string"
-  with an explicit character while the paint path hardcoded a bullet, so the
-  character half could not have worked — a `maskChar` was added for it, and
-  turning masking on became `echo`, which also reaches "paint nothing", a mode
-  the flag spelling could not express.
-- A completion event exists (`96279c4`). `SetOnReturnPressed` was in-process
-  only and Bind wired just `SetOnTextChanged`, so `change` was the sole event
-  textinput declared and a wire client could watch every keystroke without ever
-  learning the person was finished. The callback is now `SetOnComplete` and
-  raises `complete`, carrying `trinket` and `text`.
-
-And found by live testing rather than from this list: a disabled trinket taking
-focus (`b39ce28`), a disabled field editable through its own context menu
-(`5408dea`), and the read-only caret, which is now a block that inverts
-whatever it sits on (`e540266`, `e1bb9c9`), over a disabled field painted in
-`DisabledTextFG` on its container's ground (`de42973`).
