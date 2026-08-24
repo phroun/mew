@@ -69,10 +69,6 @@ separator, and `Enabled` is implemented but has no wire property.
 ### Window: `type` reads as an enum but is registered as a string
 **Title only.** Presumably accepts any string and silently ignores unknown values.
 
-### Menu: registered non-virtual, but is not a trinket
-So common trinket properties fail against it with an internal error rather than a
-useful message. **Title only** beyond that.
-
 ### DockEntry: `window=` is captured at append time
 Retargeting an entry afterwards is silently ignored.
 Anchor: `objects/trinkets/dock_protocol.go:53` is where the `window` property is

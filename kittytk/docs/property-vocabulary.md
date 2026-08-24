@@ -361,7 +361,11 @@ Menus are data trees (G6): `menubar` collects `menu`s; a `menu`
 collects `menuitem`s; a menuitem with menuitem children grows a
 submenu. Activation is the slice-1 seam — `action=` is the item's
 command ID, bound into the application registry when the app installs
-the bar; no closures cross the wire. Item properties:
+the bar; no closures cross the wire.
+
+All three are virtual (data records), so they carry the properties below
+and no common ones. Surface a nested key (`fmid=bar.fm`) to get an id back
+and address a menu or an item later. Item properties:
 
 | Property | Type | Notes |
 |---|---|---|

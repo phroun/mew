@@ -50,11 +50,14 @@ func init() {
 		},
 	})
 
+	// Virtual, like the bar above it and the items below: a menu is a node
+	// in the data tree, not a trinket. A non-virtual type also offers the
+	// common properties (enabled, visible, fg, ...), and every one of those
+	// applies to a core.Trinket -- which *Menu is not, so each came back
+	// naming a Go type instead of saying the property does not apply.
 	protocol.RegisterType("menu", &protocol.TypeSpec{
-		New: func() any { return NewMenu("") },
-		ID: func(t any) uint64 {
-			return uint64(t.(*Menu).ObjectID())
-		},
+		Virtual: true,
+		New:     func() any { return NewMenu("") },
 		Props: map[string]protocol.Property{
 			"caption": protocol.NewProperty("string", wprop("caption", func(_ *protocol.BindContext, m *Menu, v *protocol.Value, f protocol.FlagState) error {
 				s, err := protocol.AsString("caption", v, f)
