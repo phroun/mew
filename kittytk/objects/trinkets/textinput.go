@@ -137,9 +137,16 @@ func NewTextInput() *TextInput {
 	return t
 }
 
-// CursorShape implements core.CursorProvider: an editable text field
-// shows the text I-beam while hovered.
+// CursorShape implements core.CursorProvider: a text field shows the I-beam
+// while hovered, unless it is DISABLED, where it shows the ordinary pointer.
+//
+// The I-beam is a promise that the pointer will do something here, and on a
+// disabled field it will not. A read-only field keeps it: its text can still
+// be selected with the mouse, which is exactly what the I-beam offers.
 func (t *TextInput) CursorShape() core.CursorShape {
+	if !t.IsEnabled() {
+		return core.CursorDefault
+	}
 	return core.CursorText
 }
 
@@ -629,7 +636,17 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// the text as the caret or selection swept through it. The caret and the
 	// selection are measured against this stable run and painted on top.
 	n := len(displayText)
-	showCaret := focused && !t.readOnly && core.FocusChainActive(t.Self())
+	// A read-only field still shows a caret. It has no insertion point, but
+	// it does have a position -- the text is selectable with the mouse and
+	// walkable with the arrows, and a reader with no caret cannot see where
+	// either of those left them.
+	//
+	// It is drawn as a BLOCK over the character rather than a bar between
+	// two, which is the shape mew uses for navigating rather than editing,
+	// and it says the difference without a word: a bar sits where text would
+	// go in, a block sits on the character you are at.
+	showCaret := focused && core.FocusChainActive(t.Self())
+	blockCaret := t.readOnly
 
 	clampIdx := func(d int) int {
 		if d < 0 {
@@ -852,8 +869,10 @@ func (t *TextInput) Paint(p *core.Painter) {
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
 			barStyle := scheme.GetFocusedEditBoxBarCursor()
 			// The graphical bar caret blinks (keystrokes restart the
-			// phase); the cell-surface block stays steady.
-			if p.Graphical() {
+			// phase); a block stays steady, on a cell surface and on a
+			// read-only field alike. A blink says "type here" and paces
+			// itself to a keystroke that is not coming.
+			if p.Graphical() && !blockCaret {
 				t.ensureCaretTimer()
 			}
 			// Tell the platform where the insertion point is, without
@@ -872,10 +891,17 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if composing {
 				areaX, _ = prefixWidth(preLo)
 			}
-			p.RequestTextInputArea(areaX, 0)
-			if !p.Graphical() || t.caretVisible() {
+			// Only where text can actually arrive: this is what an input
+			// method anchors its candidate window to, and a field that
+			// accepts nothing has nothing to compose for.
+			if t.AcceptsTextInput() {
+				p.RequestTextInputArea(areaX, 0)
+			}
+			if !p.Graphical() || blockCaret || t.caretVisible() {
 				drawn := false
-				if usePx {
+				// A read-only field skips the pixel bar and takes the block
+				// path below, which is the same one cell surfaces take.
+				if usePx && !blockCaret {
 					// Site the bar at the same accumulated pixel advance the
 					// glyphs painted at, so it sits exactly on the boundary
 					// before the cursor's character.
