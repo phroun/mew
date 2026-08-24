@@ -327,6 +327,66 @@ func RegisterCommonProperty(name string, p Property) {
 	regCommon[name] = p
 }
 
+// UniversalEvent is the one event every type may be subscribed to
+// regardless of what it declares.
+//
+// A command event flows unconditionally (see EmitEvent), so subscribing to it
+// is always meaningful even where the type's own table does not list it.
+const UniversalEvent = "command"
+
+// EventNames returns the events a registered type declares, sorted. It
+// returns nil for a name that is not registered, which a caller must tell
+// apart from a type that declares no events -- the two mean different things
+// when the answer is "did you spell this right?".
+func EventNames(typeName string) []string {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	spec, ok := regTypes[typeName]
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(spec.Events))
+	for n := range spec.Events {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TypeEmits reports whether a registered type declares an event. An
+// unregistered type answers false.
+func TypeEmits(typeName, event string) bool {
+	if event == UniversalEvent {
+		return true
+	}
+	regMu.RLock()
+	defer regMu.RUnlock()
+	spec, ok := regTypes[typeName]
+	if !ok {
+		return false
+	}
+	_, declared := spec.Events[event]
+	return declared
+}
+
+// AnyTypeEmits reports whether ANY registered type declares an event. It is
+// the question to ask about a subscription with no particular type behind it
+// -- `sub all click` names every trinket there is, so the event is well
+// spelled if anything at all raises it.
+func AnyTypeEmits(event string) bool {
+	if event == UniversalEvent {
+		return true
+	}
+	regMu.RLock()
+	defer regMu.RUnlock()
+	for _, spec := range regTypes {
+		if _, declared := spec.Events[event]; declared {
+			return true
+		}
+	}
+	return false
+}
+
 // RegisteredTypes returns the sorted names of registered types.
 func RegisteredTypes() []string {
 	regMu.RLock()

@@ -31,10 +31,6 @@ properties are currently spelled ad hoc.
 **Title only.** A design question, not a bug report — the entry records that the
 behaviour is undecided, not that it is wrong.
 
-### `sub`/`unsub` accept any event name without validating it
-**Title only.** Subscribing to a misspelled event presumably succeeds and then
-silently never fires.
-
 ### item: no separator, and `ListItem.Enabled` is unreachable from the wire
 Two things in one entry, both about list items: there is no way to spell a
 separator, and `Enabled` is implemented but has no wire property.
@@ -158,8 +154,8 @@ Repo is ambiguous — the editor placeholder lives in the toolkit
 
 ## Not on this list
 
-Four things from the same task list are **done** and need no issue: the space bar
+Five things from the same task list are **done** and need no issue: the space bar
 command (`f0882e7`), the `regTrinket` events-param sync landmine, `-tags mew`
-building a host with no editor, and retiring listview's `alternate_rows` in favour
-of `ledger`. The SDL space-bar naming bug found while writing
+building a host with no editor, retiring listview's `alternate_rows` in favour
+of `ledger`, and validating `sub`/`unsub` event names. The SDL space-bar naming bug found while writing
 this is fixed in `78ed16a`.

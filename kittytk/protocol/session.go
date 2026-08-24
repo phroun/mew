@@ -48,6 +48,11 @@ type Session struct {
 	templates map[string]*templateDef
 	keys      map[string]uint64
 	objects   map[uint64]Object
+	// objectTypes remembers the builtin each object was created as, so a
+	// subscription can be checked against what that type actually emits.
+	// Only `new` fills it in; an object handed in by Register is not in it,
+	// and a subscription on one falls back to the any-type check.
+	objectTypes map[uint64]string
 }
 
 type templateDef struct {
@@ -75,10 +80,11 @@ func (s *Session) Object(id uint64) (Object, bool) {
 // NewSession creates an empty session.
 func NewSession() *Session {
 	return &Session{
-		aliases:   make(map[string]string),
-		templates: make(map[string]*templateDef),
-		keys:      make(map[string]uint64),
-		objects:   make(map[uint64]Object),
+		aliases:     make(map[string]string),
+		templates:   make(map[string]*templateDef),
+		keys:        make(map[string]uint64),
+		objects:     make(map[uint64]Object),
+		objectTypes: make(map[uint64]string),
 	}
 }
 
@@ -247,6 +253,7 @@ func (s *Session) resolveTarget(verb string, args []*Arg) (Object, string, []*Ar
 // forget drops an object and every key that referenced it.
 func (s *Session) forget(id uint64) {
 	delete(s.objects, id)
+	delete(s.objectTypes, id)
 	for k, v := range s.keys {
 		if v == id {
 			delete(s.keys, k)
@@ -278,6 +285,10 @@ func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
 		}
 		id = obj.ID()
 	}
+	// What the target is, for checking the event names below. Empty when the
+	// target is `all`, or when the object was handed in by Register rather
+	// than created by `new` and so has no recorded type.
+	typeName := s.objectTypes[id]
 
 	events := args[1:]
 	if len(events) == 0 {
@@ -292,6 +303,9 @@ func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
 		if ev.Value != nil || ev.Flag != FlagTrue || ev.Name == "" {
 			return fmt.Errorf("%s: event names are bare words", verb)
 		}
+		if err := checkEventName(verb, typeName, ev.Name); err != nil {
+			return err
+		}
 		if verb == "sub" {
 			ec.Subscribe(id, ev.Name)
 		} else {
@@ -299,6 +313,36 @@ func (s *Session) subscribe(verb string, args []*Arg, f Factory) error {
 		}
 	}
 	return nil
+}
+
+// checkEventName rejects an event the target cannot raise.
+//
+// A misspelled name used to be accepted and then simply never fire, which is
+// the worst answer available: the client is told nothing is wrong and waits
+// for an event that was never going to come. The registry already knows what
+// every type emits — it is the same table introspection reports — so the
+// answer is available at the moment the subscription is made.
+//
+// typeName is empty for `sub all`, and for an object the host registered
+// rather than the wire creating. Neither has one type to check against, so
+// the test widens to "does anything raise this?", which still catches the
+// typo without inventing a rule about which trinket the client meant.
+func checkEventName(verb, typeName, event string) error {
+	if typeName == "" {
+		if AnyTypeEmits(event) {
+			return nil
+		}
+		return fmt.Errorf("%s: no type raises an event named %q", verb, event)
+	}
+	if TypeEmits(typeName, event) {
+		return nil
+	}
+	if names := EventNames(typeName); len(names) > 0 {
+		return fmt.Errorf("%s: %s raises no event named %q; it raises %s",
+			verb, typeName, event, strings.Join(names, ", "))
+	}
+	return fmt.Errorf("%s: %s raises no events at all, so it cannot raise %q",
+		verb, typeName, event)
 }
 
 // declareAliases handles `alias C="caption" ...`: targets are strings
@@ -397,6 +441,7 @@ func (s *Session) instantiate(args []*Arg, f Factory, st *execState, keyPath str
 		return nil, err
 	}
 	s.objects[obj.ID()] = obj
+	s.objectTypes[obj.ID()] = builtin
 
 	// Template properties first, instance properties after: later Set
 	// calls override earlier ones (scalars), and children concatenate
