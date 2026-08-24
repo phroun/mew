@@ -360,7 +360,10 @@ func (t *TextInput) SetOnComplete(handler func()) {
 
 // insert inserts text at the cursor position.
 func (t *TextInput) insert(text string) {
-	if t.readOnly {
+	// The innermost guard, where the content is actually changed. Enabled as
+	// well as writable: every typing path leads here, and a disabled field
+	// must not be editable down any of them.
+	if !t.AcceptsTextInput() {
 		return
 	}
 
@@ -1719,7 +1722,9 @@ func (t *TextInput) Copy() {
 
 // Cut copies the selected text to the clipboard and removes it.
 func (t *TextInput) Cut() {
-	if t.readOnly || !t.HasSelection() {
+	// Enabled as well as writable: this is public API and the context menu is
+	// not the only way in. Copy is deliberately not guarded -- it only reads.
+	if !t.AcceptsTextInput() || !t.HasSelection() {
 		return
 	}
 	t.Copy()
@@ -1733,7 +1738,7 @@ func (t *TextInput) Cut() {
 // resolves it and calls back - on the UI thread - when it is ready; SDL and
 // internal reads resolve immediately.
 func (t *TextInput) Paste() {
-	if t.readOnly {
+	if !t.AcceptsTextInput() {
 		return
 	}
 	if d := findDesktopFor(t.envAnchor()); d != nil {
@@ -1761,7 +1766,7 @@ func (t *TextInput) HandlePaste(event core.PasteEvent) bool {
 // pasteText inserts resolved clipboard text at the caret (newlines flattened to
 // spaces for the single-line flow).
 func (t *TextInput) pasteText(s string) {
-	if t.readOnly || s == "" {
+	if !t.AcceptsTextInput() || s == "" {
 		return
 	}
 	flat := make([]rune, 0, len(s))
@@ -1782,10 +1787,18 @@ func (t *TextInput) contextMenuID() string {
 // contextMenuItems builds the right-click menu, each item equivalent
 // to the matching Edit-menu action.
 func (t *TextInput) contextMenuItems() []termMenuItem {
+	// Cut and Paste CHANGE the content, so they are offered only where the
+	// content can change. A disabled or read-only field showed them anyway and
+	// they did nothing -- or, before the guards below, did something, which is
+	// how a disabled field turned out to be editable through its own menu.
+	//
+	// Copy and Select All only read, and reading a disabled field is the same
+	// as being able to select its text with the mouse, which one can.
+	edits := t.AcceptsTextInput()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut},
+		{label: "Cut", action: t.Cut, disabled: !edits},
 		{label: "Copy", action: t.Copy},
-		{label: "Paste", action: t.Paste},
+		{label: "Paste", action: t.Paste, disabled: !edits},
 		{separator: true},
 		{label: "Select All", action: t.SelectAll},
 	}
@@ -1901,7 +1914,9 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 					continue
 				}
 				st := bg
-				if i == t.menuHover {
+				if it.disabled {
+					st = bg.WithFg(style.RGB(150, 150, 150))
+				} else if i == t.menuHover {
 					st = hover
 					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
 				}
@@ -1918,6 +1933,9 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 				return false
 			}
 			idx := itemAt(event.Y - menuBounds.Y)
+			if idx >= 0 && items[idx].disabled {
+				idx = -1
+			}
 			if idx != t.menuHover {
 				t.menuHover = idx
 				t.Update()
@@ -1927,7 +1945,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		HandleMousePress: func(event core.MousePressEvent) bool {
 			idx := itemAt(event.Y - menuBounds.Y)
 			pc.UnregisterPopup(t.contextMenuID())
-			if idx >= 0 && items[idx].action != nil {
+			if idx >= 0 && !items[idx].disabled && items[idx].action != nil {
 				items[idx].action()
 			}
 			t.Update()
