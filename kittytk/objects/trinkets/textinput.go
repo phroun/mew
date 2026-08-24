@@ -578,7 +578,22 @@ func (t *TextInput) Paint(p *core.Painter) {
 	var s style.CellStyle
 	var fillChar rune = ' '
 	if !t.IsEnabled() {
-		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetEditBox(paneType).Bg)
+		// A disabled field sits on its CONTAINER's background, not on the
+		// edit box's. The edit-box background is what says "you can work in
+		// here", and keeping it under greyed ink said both things at once --
+		// and said neither well: DisabledTextFG is one global ink with no
+		// knowledge of what it lands on, and on the edit-box blue it came out
+		// at about 1.15:1, which is not dim, it is gone.
+		//
+		// Against the container the field stops claiming to be a place to
+		// type at all, and the ink is back on the ground the rest of the
+		// scheme's disabled text was chosen against.
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(inheritedBg)
+		// ...and it keeps the speckle, in the same greyed ink. A flat field
+		// reads as an empty one; the texture says there is a field here and
+		// it is not available, which is two facts a blank rectangle cannot
+		// carry at once.
+		fillChar = '░'
 	} else if focused {
 		s = scheme.GetFocusedEditBoxText()
 		// Use speckled fill character for focused state
