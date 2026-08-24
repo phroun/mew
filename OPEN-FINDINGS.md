@@ -84,10 +84,6 @@ A caller watching for expansion sees nothing when the whole tree opens at once.
 Anchor: `objects/trinkets/treeview.go:479` (`ExpandAll`), called from
 `treeview.go:1119`. *Anchor verified; event behaviour not re-verified.*
 
-### TreeView: duplicate column id silently shares one value slot
-Two columns declared with the same id write to the same place, with no complaint.
-**Title only** beyond that.
-
 ### MessageBox: Escape is swallowed but unanswered
 When there is no cancel button, or no buttons at all, Escape is consumed and the
 box neither closes nor answers. **Title only** beyond that.

@@ -124,8 +124,7 @@ func init() {
 				tv.AddRootItem(c.bind(tv))
 				return nil
 			case *wireColumn:
-				c.bind(tv)
-				return nil
+				return c.bind(tv)
 			case *wireCollection:
 				// A collection is packaging: adopt each member as if
 				// appended directly.
@@ -134,7 +133,9 @@ func init() {
 					if !ok {
 						return fmt.Errorf("treeview: collection members must be columns, got %T", m)
 					}
-					col.bind(tv)
+					if err := col.bind(tv); err != nil {
+						return err
+					}
 				}
 				return nil
 			}
