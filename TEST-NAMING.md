@@ -91,16 +91,19 @@ directions, so neither half of this can drift unnoticed:
 
 ---
 
-## Adopting it
+## Renaming an existing test file
 
-mew's own packages have not been converted yet; `kittytk/` has. Convert a
-package at a time, smallest first — the small ones settle how much
-differentiator is enough and which collaborations are really `00_` before you
-reach `internal/editor`, which holds more than half the test files in the tree.
+Every package follows this now, so the usual case is one file changing subject
+rather than a sweep. The care below is the same either way: **renaming a test
+file can drop it from the build without failing anything**, so prove it did not.
 
-Renaming a test file can drop it from the build without failing anything, so
-prove it did not. Snapshot the inventory first, under every configuration that
-selects different files:
+For a sweep, convert a package at a time, smallest first — the small ones settle
+how much differentiator is enough and which collaborations are really `00_`
+before you reach `internal/editor`, which holds more than half the test files in
+the tree.
+
+Snapshot the inventory first, under every configuration that selects different
+files:
 
 ```sh
 go test -list '.*' ./...                 | grep -E '^(Test|Benchmark|Fuzz|Example)' | sort > before.txt
@@ -124,8 +127,12 @@ reveals another cancel out. Finish with the direct checks:
 
 ```sh
 # Trailing GOOS/GOARCH word before _test.go
-find . -name '*_test.go' | grep -E '_(aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|netbsd|openbsd|plan9|solaris|wasip1|windows|zos|386|amd64|arm|arm64|loong64|mips|mips64|mips64le|mipsle|ppc64|ppc64le|riscv64|s390x|wasm)_test\.go$'
+find . -name '*_test.go' -not -path './patches/*' | grep -E '_(aix|android|darwin|dragonfly|freebsd|hurd|illumos|ios|js|linux|netbsd|openbsd|plan9|solaris|wasip1|windows|zos|386|amd64|arm|arm64|loong64|mips|mips64|mips64le|mipsle|ppc64|ppc64le|riscv64|s390x|wasm)_test\.go$'
 
 # Anything still unprefixed
-find . -name '*_test.go' -not -name '0_*' -not -name '00_*'
+find . -name '*_test.go' -not -name '0_*' -not -name '00_*' -not -path './patches/*'
 ```
+
+Both print nothing. `patches/` is excluded because it holds other projects'
+sources for patch authoring — `patches/purfecterm/_src` is purfecterm's tree,
+named by purfecterm's rules and ignored by Go anyway for its `_` directory.
