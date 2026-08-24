@@ -71,13 +71,12 @@ modes: `EchoNormal`, `EchoPassword`, `EchoPasswordOnEdit`, `EchoNoEcho`),
    `caret` event) are still the open question. Reversing it needs the event
    half designed, not just properties registered.
 
-**A third thing found while looking, not in the original entry: there is no
-submit event.** `SetOnReturnPressed` exists (`textinput.go:324`) and is used
-in-process by the file dialog (`dialog.go:576`), but the Bind function wires
-only `SetOnTextChanged`. `change` is the sole event textinput declares. So a
-wire client cannot learn the user pressed Return in a text field — the whole
-point of a single-line entry box in most dialogs. Unlike the caret, this is not
-recorded as deferred anywhere I could find.
+**A third thing was found while looking and is now DONE:** there was no
+completion event at all. `SetOnReturnPressed` existed and the file dialog used
+it in-process, but Bind wired only `SetOnTextChanged`, so `change` was the sole
+event textinput declared and a wire client could watch every keystroke without
+ever learning the person was finished. The callback is now `SetOnComplete` and
+raises a `complete` event carrying `trinket` and `text`.
 
 *Everything above verified against current code and docs.*
 

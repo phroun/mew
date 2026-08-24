@@ -573,7 +573,7 @@ func (f *FileDialog) setupUI() {
 	// Path input
 	f.pathInput = NewTextInput()
 	f.pathInput.SetText(f.directory)
-	f.pathInput.SetOnReturnPressed(func() {
+	f.pathInput.SetOnComplete(func() {
 		f.navigateTo(f.pathInput.Text())
 	})
 

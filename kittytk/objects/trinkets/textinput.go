@@ -30,8 +30,8 @@ type TextInput struct {
 	scrollOffset int
 
 	// Callbacks
-	onTextChanged   func(text string)
-	onReturnPressed func()
+	onTextChanged func(text string)
+	onComplete    func()
 
 	// Graphical caret blink: the bar toggles while focused and
 	// restarts visible on every keystroke. Without a running timer
@@ -321,9 +321,16 @@ func (t *TextInput) SetOnTextChanged(handler func(text string)) {
 	t.onTextChanged = handler
 }
 
-// SetOnReturnPressed sets the return pressed callback.
-func (t *TextInput) SetOnReturnPressed(handler func()) {
-	t.onReturnPressed = handler
+// SetOnComplete sets the callback for the field being COMPLETED: the person
+// typing has said they are done with it.
+//
+// One callback, because there is one gesture. Return reaches it, and so does
+// whatever else the keymap has made mean trinket_activate here -- the field
+// does not care which key it was, only that the content is finished. It is
+// not "submit": nothing is being sent anywhere, and a field completed is
+// still a field, still editable, still holding its text.
+func (t *TextInput) SetOnComplete(handler func()) {
+	t.onComplete = handler
 }
 
 // insert inserts text at the cursor position.
@@ -1210,8 +1217,16 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		return true
 
 	case core.CmdTrinketActivate:
-		if t.onReturnPressed != nil {
-			t.onReturnPressed()
+		// The field is COMPLETE: the person typing has said they are done.
+		//
+		// Reaching here at all is what the table's ordering decides. A field
+		// offers trinket_type_space and trinket_activate both, and a context
+		// takes the FIRST of a key's meanings the trinket offers -- so on
+		// Space, where the default writes type_space ahead of activate, the
+		// space bar types and never arrives here. That precedence belongs to
+		// the keymap and is stated there; nothing is re-decided at this end.
+		if t.onComplete != nil {
+			t.onComplete()
 		}
 		return true
 

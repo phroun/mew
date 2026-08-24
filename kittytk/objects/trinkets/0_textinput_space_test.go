@@ -20,8 +20,8 @@ func TestSpaceBarTypesASpace(t *testing.T) {
 	ti.SetText("ab")
 	ti.SetCursorPosition(2)
 
-	submitted := 0
-	ti.SetOnReturnPressed(func() { submitted++ })
+	completed := 0
+	ti.SetOnComplete(func() { completed++ })
 
 	if !ti.HandleKeyPress(core.KeyPressEvent{Key: "Space"}) {
 		t.Fatal("the field declined the space bar")
@@ -29,27 +29,27 @@ func TestSpaceBarTypesASpace(t *testing.T) {
 	if got := ti.Text(); got != "ab " {
 		t.Errorf("text = %q, want %q", got, "ab ")
 	}
-	if submitted != 0 {
-		t.Errorf("the space bar submitted %d time(s); it should only type", submitted)
+	if completed != 0 {
+		t.Errorf("the space bar completed the field %d time(s); it should only type", completed)
 	}
 	if got := ti.CursorPosition(); got != 3 {
 		t.Errorf("cursor = %d, want 3 — one rune in", got)
 	}
 }
 
-// Return still submits. A text field offers no edit command, so Return falls
+// Return still completes the field. A text field offers no edit command, so Return falls
 // through to activate -- the reason the field has to offer activate at all,
 // and therefore the reason the space bar needed saying out loud.
-func TestReturnStillSubmits(t *testing.T) {
+func TestReturnStillCompletes(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("ab")
 
-	submitted := 0
-	ti.SetOnReturnPressed(func() { submitted++ })
+	completed := 0
+	ti.SetOnComplete(func() { completed++ })
 
 	ti.HandleKeyPress(core.KeyPressEvent{Key: "Return"})
-	if submitted != 1 {
-		t.Errorf("Return submitted %d time(s), want 1", submitted)
+	if completed != 1 {
+		t.Errorf("Return completed the field %d time(s), want 1", completed)
 	}
 	if got := ti.Text(); got != "ab" {
 		t.Errorf("Return changed the text to %q", got)
