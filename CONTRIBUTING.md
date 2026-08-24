@@ -27,6 +27,13 @@ This is what lets fixes be merged into the single standard mew and lets mew move
 to a more permissive license (MIT- or FSF-style) later without having to track
 down every contributor for permission.
 
+## Naming test files
+
+Test files are named for the source file they test, so that `ls 0_buffer*`
+answers "what tests `buffer.go`?" and a source with no test beside it shows up
+as a gap in a listing you were already reading. The rule, its traps, and how it
+meets the `kittytk/` fork boundary are in [`TEST-NAMING.md`](TEST-NAMING.md).
+
 ## The syntax grammars are different
 
 The grammar files under [`internal/editor/syntax/`](internal/editor/syntax/) are
