@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
@@ -54,7 +55,7 @@ var mdiChildCount int
 var mdiDockSeq int
 
 func createMDIDemo(desktop *trinkets.Desktop, application *app.Application, _ any) core.Trinket {
-	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
+	conn := inprocess.New(func(id string) { application.Commands().Dispatch(id) })
 	ui, err := conn.Build(mdiTabScript)
 	if err != nil {
 		panic(fmt.Sprintf("mdi tab script: %v", err))

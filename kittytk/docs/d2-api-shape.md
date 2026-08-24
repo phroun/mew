@@ -235,10 +235,11 @@ The `client` package implements the slice-4 veneer contract — the
 app-facing purity layer P0 deferred:
 
 - **`client.Conn`** — instance-scoped (multi-display guardrail),
-  imports ONLY `protocol`: it compiles with zero knowledge of the
-  rendering side. `NewInProcess(dispatch)` wires the in-process
-  display (registered vocabulary via `RegistryFactory`); a remote
-  transport later slots in behind the same surface.
+  imports ONLY `wire`: it compiles with zero knowledge of the
+  rendering side, and carries none of the toolkit's dependencies.
+  Transports slot in behind `client.Transport`: `client.Dial` for a
+  socket, `inprocess.New(dispatch)` for the registered vocabulary in
+  this process (which is host code, hence its own package).
 - **Replica reads**: `Conn` interposes a recording factory (types +
   in-process targets) and folds subscribed events into per-object
   state BEFORE app handlers run — `Checkbox.State()`,

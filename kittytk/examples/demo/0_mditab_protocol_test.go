@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/objects/trinkets"
 )
 
 // The MDI tab script must build, surface its keys, and support the
 // spawn path (set-append of a window subtree).
 func TestMDITabScriptBuilds(t *testing.T) {
-	conn := client.NewInProcess(nil)
+	conn := inprocess.New(nil)
 	ui, err := conn.Build(mdiTabScript)
 	if err != nil {
 		t.Fatalf("build: %v", err)

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
-	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/inprocess"
 	_ "github.com/phroun/kittytk/objects/trinkets" // wire vocabulary registrations
 	"github.com/phroun/kittytk/objects/window"
 	"github.com/phroun/kittytk/style"
@@ -25,7 +25,7 @@ func TestRenderProtocolWindowToPNG(t *testing.T) {
 	}
 	b.Clear(style.DefaultStyle())
 
-	conn := client.NewInProcess(nil)
+	conn := inprocess.New(nil)
 	ui, err := conn.Build(`
 w=new window title="Graphical KittyTK" width=608 height=352 children={
 	p=new panel layout=vbox spacing=0 children={

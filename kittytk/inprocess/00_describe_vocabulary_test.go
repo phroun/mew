@@ -1,15 +1,15 @@
-package client_test
+package inprocess_test
 
 import (
 	"testing"
 
-	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/inprocess"
 )
 
 // Describe (D24) returns the host's wire vocabulary: common properties
 // plus each registered type with its properties' kind/default/doc.
 func TestDescribeVocabulary(t *testing.T) {
-	conn := client.NewInProcess(nil)
+	conn := inprocess.New(nil)
 	defer conn.Close()
 
 	vocab, err := conn.Describe()
@@ -63,7 +63,7 @@ func TestDescribeVocabulary(t *testing.T) {
 // non-empty description and a kind, so the vocabulary is fully
 // self-documenting.
 func TestDescribeCoverage(t *testing.T) {
-	conn := client.NewInProcess(nil)
+	conn := inprocess.New(nil)
 	defer conn.Close()
 	vocab, err := conn.Describe()
 	if err != nil {

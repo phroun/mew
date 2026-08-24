@@ -148,10 +148,30 @@ by mistake.
 
 ## KittyTK — structure
 
-### Separate the client shims from the toolkit
-Split the protocol by role, lift the in-process transport out, and give the Go
-shim its own module. The largest item on this list and the one most likely to
-have gone stale. **Title only** beyond that summary.
+### Give the client shim its own module
+*Researched 2026-08-24. The entry used to cover three things; two are done
+and this is the third, which is a decision rather than a refactor.*
+
+`client` now imports `wire` and the standard library, nothing else — a
+client-only build compiles two kittytk packages and no third-party code, and
+`00_client_imports_only_the_wire_test.go` holds it there. So the remaining
+question is only whether the shim gets its own `go.mod`.
+
+What it would buy: an application writing a KittyTK client stops carrying
+SDL3, webgpu, purego, purfecterm, garland and pawscript in its module graph,
+and stops inheriting their version constraints. On this fork it also stops
+carrying `github.com/phroun/mew` — though that half is fork-only, since the
+sync policy keeps mew out of upstream's `go.mod` entirely.
+
+What it would cost: it is two modules, not one, because `client` needs
+`wire`. Nested modules keep their import paths, so `wire/go.mod` (a leaf with
+no requires) and `client/go.mod` (requiring wire) work as they stand, with
+`replace` directives for local development and subdirectory tags
+(`wire/v0.1.x`, `client/v0.1.x`) for release. That is two more release
+cadences to run and three `go.mod` files for the subtree split to carry.
+
+Worth doing when there is an external client asking for it. Until then it is
+release overhead buying nothing measurable, and it stays one file away.
 
 ### Wiki: add the trinkets missing from the Home index
 Documentation gap. **Title only** — the list of which trinkets is not recorded.

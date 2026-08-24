@@ -1,4 +1,4 @@
-package client_test
+package inprocess_test
 
 // The veneer tested against the real in-process trinket vocabulary:
 // replica reads, write-through without echo, event folding order.
@@ -8,13 +8,14 @@ import (
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"
 )
 
 func build(t *testing.T, dispatch func(string), src string) (*client.Conn, *client.UI) {
 	t.Helper()
-	conn := client.NewInProcess(dispatch)
+	conn := inprocess.New(dispatch)
 	ui, err := conn.Build(src)
 	if err != nil {
 		t.Fatalf("build: %v", err)
