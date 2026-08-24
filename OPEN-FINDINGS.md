@@ -19,68 +19,27 @@ sitting in mew's vendored `kittytk/`, and would go upstream.
 
 ## KittyTK — protocol / wire surface
 
-### TextInput: put the interaction state on the wire
-*Researched 2026-08-24. This entry turned out to be two different things under
-one title; they want separate decisions.*
+### TextInput: `cursor` and `selection` on the wire
+*Researched 2026-08-24. The title used to cover four properties and an event;
+three properties and the event are done, and this is what is left.*
 
-**Where the entry came from.** `objects/trinkets/textinput_protocol.go:8-10`
-opens with:
+`docs/d2-read-audit.md:103-108` records the caret as C2 exception #3:
+*"`change` carries `text=` only. Fine for v1 (most apps only need text); if an
+app needs caret tracking, add `cursor=` to `change` or a `caret` event.
+Deferred, recorded in the vocabulary doc."*
 
-> Wire registration for TextInput (see docs/property-vocabulary.md).
-> cursor/selection/readonly/mask arrive with the set verb and event
-> slices (they are interaction state, not construction state).
+So this is a decision with an open follow-up rather than an oversight, and the
+two options it names are still the question. Reversing it needs the event half
+designed, not just properties registered — a `cursor` property a client can
+write but never read tells it nothing about where the caret went.
 
-Directly below it, the Props map registers exactly two: `text` and
-`placeholder`. None of the four the comment names is there, and none is a
-common property either (the common set is `acc_name align bg column_units
-enabled fg font max_height max_width min_height min_width name row_units
-stretch visible` — verified). So the comment describes an intent, in the
-present tense, that was never carried out.
+`docs/property-vocabulary.md:196-197` now carries `cursor`, `selection_start`
+and `selection_end` marked **not implemented** against this deferral, so the
+docs and the wire agree on their absence.
 
-**Three documents disagree with the code.**
-
-| Source | Says | Actually registered |
-|---|---|---|
-| `textinput_protocol.go:9` | cursor, selection, readonly, mask "arrive with the set verb" | none of them |
-| `docs/property-vocabulary.md:190-198` | `text`, `placeholder`, `cursor`, `selection_start`, `selection_end`, `readonly`, `mask` | `text`, `placeholder` |
-| `docs/d2-read-audit.md:37-38` | `readonly`, `mask`/echo mode, `max_length` are **class A, write-through** | absent from the wire |
-
-Class A means "state only the app ever changes, cached client-side, never
-crosses the wire to read". That classification presumes the property exists to
-be written in the first place.
-
-**Go API a wire client cannot reach:** `SetMaxLength`, `SetEchoMode` (four
-modes: `EchoNormal`, `EchoPassword`, `EchoPasswordOnEdit`, `EchoNoEcho`),
-`SetReadOnly` / `IsReadOnly`, `SetCursorPosition`, `SelectAll`,
+Go API a wire client still cannot reach: `SetCursorPosition`, `SelectAll`,
 `SelectedText`, `HasSelection`.
-
-**The split that matters.** These are not one problem:
-
-1. **`readonly`, `mask`/echo mode, `max_length` — DONE.** Registered as
-   `readonly`, `max_length`, `echo` (`normal`/`password`/`none`) and `mask`
-   (the character). The vocabulary doc had `mask` as "flag or string" with an
-   explicit character; the paint path hardcoded a bullet, so the character half
-   could not have worked — a `maskChar` was added for it, and turning masking
-   on became `echo`, which also reaches "paint nothing", a mode the flag
-   spelling could not express.
-
-2. **`cursor`, `selection_start`, `selection_end` — deliberately deferred.**
-   `docs/d2-read-audit.md:103-108` records them as C2 exception #3: *"`change`
-   carries `text=` only. Fine for v1 (most apps only need text); if an app
-   needs caret tracking, add `cursor=` to `change` or a `caret` event.
-   Deferred, recorded in the vocabulary doc."* That is a decision, not an
-   oversight — and the two named options (a field on `change` vs. its own
-   `caret` event) are still the open question. Reversing it needs the event
-   half designed, not just properties registered.
-
-**A third thing was found while looking and is now DONE:** there was no
-completion event at all. `SetOnReturnPressed` existed and the file dialog used
-it in-process, but Bind wired only `SetOnTextChanged`, so `change` was the sole
-event textinput declared and a wire client could watch every keystroke without
-ever learning the person was finished. The callback is now `SetOnComplete` and
-raises a `complete` event carrying `trinket` and `text`.
-
-*Everything above verified against current code and docs.*
+*Verified against current code and docs.*
 
 ### TextInput: `EchoPasswordOnEdit` is declared but does nothing
 `EchoPasswordOnEdit` is one of four `EchoMode` constants (`textinput.go:101`,
@@ -226,8 +185,30 @@ Repo is ambiguous — the editor placeholder lives in the toolkit
 
 ## Not on this list
 
-Five things from the same task list are **done** and need no issue: the space bar
-command (`f0882e7`), the `regTrinket` events-param sync landmine, `-tags mew`
-building a host with no editor, retiring listview's `alternate_rows` in favour
-of `ledger`, and validating `sub`/`unsub` event names. The SDL space-bar naming bug found while writing
-this is fixed in `78ed16a`.
+These are **done** and need no issue.
+
+From the task list this file was written from: the space bar command
+(`f0882e7`), the `regTrinket` events-param sync landmine, `-tags mew` building
+a host with no editor, retiring listview's `alternate_rows` in favour of
+`ledger` (`55c3114`), and validating `sub`/`unsub` event names (`40ee186`). The
+SDL space-bar naming bug found while writing this is fixed in `78ed16a`.
+
+Since then, out of the TextInput entry above:
+
+- `readonly`, `max_length`, `echo` (`normal`/`password`/`none`) and `mask` are
+  registered (`ea6de01`). The vocabulary doc had `mask` as "flag or string"
+  with an explicit character while the paint path hardcoded a bullet, so the
+  character half could not have worked — a `maskChar` was added for it, and
+  turning masking on became `echo`, which also reaches "paint nothing", a mode
+  the flag spelling could not express.
+- A completion event exists (`96279c4`). `SetOnReturnPressed` was in-process
+  only and Bind wired just `SetOnTextChanged`, so `change` was the sole event
+  textinput declared and a wire client could watch every keystroke without ever
+  learning the person was finished. The callback is now `SetOnComplete` and
+  raises `complete`, carrying `trinket` and `text`.
+
+And found by live testing rather than from this list: a disabled trinket taking
+focus (`b39ce28`), a disabled field editable through its own context menu
+(`5408dea`), and the read-only caret, which is now a block that inverts
+whatever it sits on (`e540266`, `e1bb9c9`), over a disabled field painted in
+`DisabledTextFG` on its container's ground (`de42973`).
