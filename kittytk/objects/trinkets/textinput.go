@@ -897,11 +897,39 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if t.AcceptsTextInput() {
 				p.RequestTextInputArea(areaX, 0)
 			}
-			if !p.Graphical() || blockCaret || t.caretVisible() {
+			if blockCaret {
+				// The block covers the character the caret sits BEFORE --
+				// the one it is "at" -- painted in that text's own colours
+				// reversed: the field's background becomes the ink and the
+				// ink becomes the ground. At the end of the text there is no
+				// character to cover, so it takes one space's worth of the
+				// interior instead and comes out the same size either way.
+				//
+				// Same two steps the selection uses: fill the span, then
+				// redraw the glyphs clipped into it, so the block sits on the
+				// same pixel advance the text was laid out at.
+				endX, endPx := prefixWidth(cursorDisp + 1)
+				if cursorDisp >= n {
+					blank := font.MeasureText(" ")
+					endX = caretX + blank
+					endPx = caretXPx + p.UnitsToPx(blank)
+				}
+				block := s.WithBg(s.Fg).WithFg(fillStyle.Bg)
+				if usePx {
+					p.FillRectPixels(0, 0, caretXPx, 0, endPx-caretXPx,
+						p.UnitsToPx(font.LineHeight()), block)
+					p.DrawTextOffsetClipped(0, 0, 0, caretXPx, endPx,
+						string(displayText), block.WithBg(style.ColorTransparent), font)
+				} else {
+					p.FillRect(core.UnitRect{X: caretX, Width: endX - caretX,
+						Height: bounds.Height}, ' ', block)
+					if cursorDisp < n {
+						p.DrawText(caretX, 0, string(displayText[cursorDisp]), block, font)
+					}
+				}
+			} else if !p.Graphical() || t.caretVisible() {
 				drawn := false
-				// A read-only field skips the pixel bar and takes the block
-				// path below, which is the same one cell surfaces take.
-				if usePx && !blockCaret {
+				if usePx {
 					// Site the bar at the same accumulated pixel advance the
 					// glyphs painted at, so it sits exactly on the boundary
 					// before the cursor's character.
