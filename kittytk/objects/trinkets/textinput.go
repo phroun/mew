@@ -21,6 +21,7 @@ type TextInput struct {
 	placeholder string
 	maxLength   int
 	echoMode    EchoMode
+	maskChar    rune // what EchoPassword paints; zero means the default bullet
 	readOnly    bool
 
 	// Cursor and selection
@@ -91,6 +92,9 @@ type TextInput struct {
 	embedHost   core.Trinket
 	embedOrigin func() core.UnitPoint
 }
+
+// defaultMaskChar is what a masked field paints when nothing says otherwise.
+const defaultMaskChar = '\u2022' // BULLET
 
 // EchoMode controls how text is displayed.
 type EchoMode int
@@ -177,6 +181,27 @@ func (t *TextInput) MaxLength() int {
 // SetMaxLength sets the maximum text length (-1 for no limit).
 func (t *TextInput) SetMaxLength(length int) {
 	t.maxLength = length
+}
+
+// SetMaskChar sets the character a masked field paints in place of each rune
+// it holds. Zero restores the default bullet.
+//
+// It is one character, not a string: the mask stands in for a rune, and a
+// multi-rune stand-in would make a masked field a different width from the
+// text behind it -- which leaks the length in a caret position and breaks the
+// column arithmetic besides.
+func (t *TextInput) SetMaskChar(r rune) {
+	t.maskChar = r
+	t.Update()
+}
+
+// MaskChar returns the character a masked field paints, the default bullet
+// included, so a caller never has to know about the zero value.
+func (t *TextInput) MaskChar() rune {
+	if t.maskChar == 0 {
+		return defaultMaskChar
+	}
+	return t.maskChar
 }
 
 // EchoMode returns the echo mode.
@@ -967,9 +992,10 @@ func (t *TextInput) getDisplayText() []rune {
 func (t *TextInput) echo(src []rune) []rune {
 	switch t.echoMode {
 	case EchoPassword:
+		mask := t.MaskChar()
 		result := make([]rune, len(src))
 		for i := range result {
-			result[i] = '•'
+			result[i] = mask
 		}
 		return result
 	case EchoNoEcho:

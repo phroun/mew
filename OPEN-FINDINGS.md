@@ -56,11 +56,13 @@ modes: `EchoNormal`, `EchoPassword`, `EchoPasswordOnEdit`, `EchoNoEcho`),
 
 **The split that matters.** These are not one problem:
 
-1. **`readonly`, `mask`/echo mode, `max_length` — plain construction state,
-   simply missing.** Nothing deferred them; the audit filed them as class A and
-   moved on. A password field cannot be built over the wire at all today, which
-   is the sharp end of this. Each is a one-line `boolProp`/`intProp`
-   registration against a setter that already exists.
+1. **`readonly`, `mask`/echo mode, `max_length` — DONE.** Registered as
+   `readonly`, `max_length`, `echo` (`normal`/`password`/`none`) and `mask`
+   (the character). The vocabulary doc had `mask` as "flag or string" with an
+   explicit character; the paint path hardcoded a bullet, so the character half
+   could not have worked — a `maskChar` was added for it, and turning masking
+   on became `echo`, which also reaches "paint nothing", a mode the flag
+   spelling could not express.
 
 2. **`cursor`, `selection_start`, `selection_end` — deliberately deferred.**
    `docs/d2-read-audit.md:103-108` records them as C2 exception #3: *"`change`
@@ -79,6 +81,18 @@ ever learning the person was finished. The callback is now `SetOnComplete` and
 raises a `complete` event carrying `trinket` and `text`.
 
 *Everything above verified against current code and docs.*
+
+### TextInput: `EchoPasswordOnEdit` is declared but does nothing
+`EchoPasswordOnEdit` is one of four `EchoMode` constants (`textinput.go:101`,
+documented "Show char briefly, then bullet"), but `echo()` switches only on
+`EchoPassword` and `EchoNoEcho` — the constant falls through to `default` and
+paints the text in the clear. A field set to it is not masked at all.
+
+Found while registering the echo modes on the wire. It is deliberately NOT one
+of the `echo` enum's words, because exposing it would put a spelling on the
+wire that silently does the opposite of what it says. Either implement it or
+delete the constant.
+*Verified against current code.*
 
 ### Panel: give flex and grid a wire spelling
 **Title only.** Related surface: `objects/trinkets/panel_protocol.go:68` reaches

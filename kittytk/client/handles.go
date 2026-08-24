@@ -130,7 +130,7 @@ func (cb Checkbox) OnToggle(fn func(protocol.FlagState)) {
 type TextInput struct{ Handle }
 
 func (u *UI) TextInput(name string) TextInput {
-	return TextInput{u.handle(name, "change")}
+	return TextInput{u.handle(name, "change", "complete")}
 }
 
 // Text returns the replica's text.
@@ -145,6 +145,20 @@ func (t TextInput) SetText(s string) error {
 // OnChange fires with the new text after user edits.
 func (t TextInput) OnChange(fn func(string)) {
 	t.On("change", func(ev *protocol.Event) {
+		if s, ok := ev.Text("text"); ok {
+			fn(s)
+		}
+	})
+}
+
+// OnComplete fires when the person typing says they are done with the field --
+// Return, or whatever else the keymap makes mean trinket_activate there. It
+// carries the content at that moment, so a handler need not read it back.
+//
+// Not a submit: the field is still a field afterwards, still editable, still
+// holding its text.
+func (t TextInput) OnComplete(fn func(string)) {
+	t.On("complete", func(ev *protocol.Event) {
 		if s, ok := ev.Text("text"); ok {
 			fn(s)
 		}

@@ -1,6 +1,8 @@
 package trinkets
 
 import (
+	"fmt"
+
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/protocol"
 )
@@ -18,6 +20,36 @@ func init() {
 		map[string]protocol.Property{
 			"text":        stringProp("text", (*TextInput).SetText).Tip("Editable content (server-authoritative)."),
 			"placeholder": stringProp("placeholder", (*TextInput).SetPlaceholder).Tip("Placeholder text shown when empty."),
+			"readonly":    boolProp("readonly", (*TextInput).SetReadOnly).Tip("Content can be read and selected but not edited.").Def("false"),
+			"max_length":  intProp("max_length", (*TextInput).SetMaxLength).Tip("Longest content the field accepts, in runes. -1 is no limit.").Def("-1"),
+			// echo is what the field PAINTS, which is not what it holds: the
+			// text property is the content either way, and a masked field is
+			// masked on screen only.
+			"echo": protocol.NewProperty("enum", wprop("echo", func(_ *protocol.BindContext, w core.Trinket, v *protocol.Value, f protocol.FlagState) error {
+				word, err := protocol.AsWord("echo", v, f)
+				if err != nil {
+					return err
+				}
+				mode, ok := map[string]EchoMode{
+					"normal":   EchoNormal,
+					"password": EchoPassword,
+					"none":     EchoNoEcho,
+				}[word]
+				if !ok {
+					return fmt.Errorf("echo: unknown value %q (normal, password, none)", word)
+				}
+				w.(*TextInput).SetEchoMode(mode)
+				return nil
+			})).OneOf("normal", "password", "none").Def("normal").
+				Tip("How the content is painted: normally, masked (see mask), or not at all. A masked field also reports itself as a password field to a screen reader."),
+			"mask": stringProp("mask", func(t *TextInput, s string) {
+				r := []rune(s)
+				if len(r) == 0 {
+					t.SetMaskChar(0) // back to the default bullet
+					return
+				}
+				t.SetMaskChar(r[0])
+			}).Tip("The single character echo=password paints for each rune. Blank restores the default bullet; only the first character is used.").Def("•"),
 		},
 		map[string]protocol.EventDesc{
 			"change": protocol.NewEventDesc("The content changed through user editing — a typed character, a deletion, a paste, or a committed composition. A set from the client does not raise it.").

@@ -390,6 +390,35 @@ func (a *app) wireDetails() {
 			_ = dtree.Set("!ledger")
 		}
 	})
+	// Text Fields: the two events a field raises, side by side. change
+	// fires per edit and complete once, when the person says they are done.
+	tfecho := ui.Object("tfecho")
+	watch := ui.TextInput("tfwatch")
+	watch.OnChange(func(s string) {
+		_ = tfecho.Set("caption=" + protocol.Quote("change: "+s))
+	})
+	watch.OnComplete(func(s string) {
+		_ = tfecho.Set("caption=" + protocol.Quote("COMPLETE: "+s))
+	})
+
+	// ...and the mask character, which is a property of the field rather
+	// than of the echo mode: switching to "show" turns masking off without
+	// disturbing which character it would have used. Written the way the
+	// other radio groups here are -- the raw toggle event, checking the
+	// flag, because a radio group reports every button that changed.
+	tfmask := ui.Object("tfmask")
+	setMask := func(arg string) func(*protocol.Event) {
+		return func(ev *protocol.Event) {
+			if ev.Flag("checked") == protocol.FlagTrue {
+				_ = tfmask.Set(arg)
+			}
+		}
+	}
+	ui.Object("tfmb").On("toggle", setMask(`echo=password mask="•"`))
+	ui.Object("tfms").On("toggle", setMask(`echo=password mask="*"`))
+	ui.Object("tfmh").On("toggle", setMask(`echo=password mask="#"`))
+	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
+
 	ui.Checkbox("dlines").OnToggle(func(s protocol.FlagState) {
 		if s == protocol.FlagTrue {
 			_ = dtree.Set("treelines")

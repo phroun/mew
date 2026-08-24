@@ -192,10 +192,12 @@ libraries decode it: Go `Conn.Describe()` → `protocol.Vocabulary`, Python
 |---|---|---|
 | `text` | string | The editable content (server-authoritative) |
 | `placeholder` | string | |
-| `cursor` | numeric | Caret position (rune index) |
-| `selection_start`, `selection_end` | numeric | |
-| `readonly` | flag | |
-| `mask` | flag or string | Password-style echo: bare = default mask char; `mask="*"` = explicit |
+| `readonly` | flag | Readable and selectable, not editable |
+| `max_length` | numeric | Longest content accepted, in runes; -1 is no limit |
+| `echo` | enum | `normal`, `password` (masked), `none` (paints nothing). A masked field reports itself as a password field to a screen reader |
+| `mask` | string | The single character `echo=password` paints per rune; blank restores the default bullet |
+| `cursor` | numeric | Caret position (rune index) — **not implemented**, see d2-read-audit C2/3 |
+| `selection_start`, `selection_end` | numeric | **not implemented**, same deferral |
 
 ### combobox
 | Property | Type | Notes |
