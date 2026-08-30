@@ -38,7 +38,7 @@ table as the project matures.
 
 Two carve-outs:
 
-- The syntax grammars under [`internal/editor/syntax/`](internal/editor/syntax/)
+- The syntax grammars under [`internal/editor/syntax/`](internal/editor/resources/syntax/)
   are separately **MIT licensed** (original works, not derived from JOE's GPL
   grammars) — reuse them freely under MIT.
 - Bundled third-party dependencies (all MIT / BSD-3-Clause) keep their own
