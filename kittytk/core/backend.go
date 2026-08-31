@@ -489,6 +489,33 @@ func FindFrameBorderUnits(w Trinket) Unit {
 	return 0
 }
 
+// FindFrameBorderUnitsIn is FindFrameBorderUnits stated in m's
+// denomination. The provider answers in ITS OWN units -- device pixels
+// divided by its surface's pixels-per-unit -- and a window whose frame
+// counts in another denomination spends a different number for the same
+// physical thickness. A top-level window's frame denomination IS the
+// desktop's, so the two agree there; an MDI child's is its pane's, which
+// follows whatever the host window's content was re-expressed to.
+//
+// Both axes come back because a unit is square only where the cell is: a
+// 16x16 denomination over an 8x16 desktop spends 4 units on the same
+// border across and 2 down.
+func FindFrameBorderUnitsIn(w Trinket, m CellMetrics) (x, y Unit) {
+	for current := Trinket(w); current != nil; {
+		if p, ok := current.(FrameBorderProvider); ok {
+			b := p.WindowFrameBorderUnits()
+			from := FindEffectiveCellMetrics(current)
+			return ExchangeX(b, from, m), ExchangeY(b, from, m)
+		}
+		parent := current.Parent()
+		if parent == nil {
+			return 0, 0
+		}
+		current = parent
+	}
+	return 0, 0
+}
+
 // PxPerUnitProvider is the trinket-side carrier of the surface's
 // pixels-per-unit, so geometry expressed in DEVICE PIXELS (a minimum grab
 // width, say) can be converted honestly rather than assumed equal to the

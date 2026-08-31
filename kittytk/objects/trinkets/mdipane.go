@@ -751,7 +751,7 @@ func (m *MDIPane) CascadeWindows() {
 	metrics := m.EffectiveCellMetrics()
 	// The cascade step includes the frame border, so each window's whole
 	// top chrome (border + titlebar) clears the one beneath it.
-	border := core.FindFrameBorderUnits(visibleWindows[0])
+	border, _ := core.FindFrameBorderUnitsIn(visibleWindows[0], metrics)
 	offset := metrics.CellWidth*2 + border
 
 	// Standard size for cascaded windows
@@ -1019,7 +1019,9 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// included); resizeGripFor stays the overlay's, which must not move.
 	metrics := m.EffectiveCellMetrics()
 	graphical := core.FindGraphicalFrames(m.Self())
-	border := core.FindFrameBorderUnits(win)
+	// The grips are built from CellWidth, so they take the border's column
+	// count -- the same axis the quarter- and half-column they add is on.
+	border, _ := core.FindFrameBorderUnitsIn(win, metrics)
 	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
 	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
 		window.ResizeOverlayGrip(graphical, metrics, border))
@@ -1028,8 +1030,9 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 // resizeGripFor is the effective resize-grip thickness for a child window
 // (the surface's grip capability, discovered by ancestry).
 func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
-	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()),
-		m.EffectiveCellMetrics(), core.FindFrameBorderUnits(win))
+	metrics := m.EffectiveCellMetrics()
+	border, _ := core.FindFrameBorderUnitsIn(win, metrics)
+	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()), metrics, border)
 }
 
 // setResizeHover shows the translucent white overlay along the given resize
@@ -1549,7 +1552,8 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 			// no offset.
 			titleBottom := metrics.CellHeight
 			if core.FindGraphicalFrames(win) {
-				titleBottom += core.FindFrameBorderUnits(win)
+				_, by := core.FindFrameBorderUnitsIn(win, metrics)
+				titleBottom += by
 			}
 			if event.Y < bounds.Y+titleBottom &&
 				win.Flags()&window.WindowFlagNoTitle == 0 {

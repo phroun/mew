@@ -35,13 +35,15 @@ const (
 	WindowFlagNoTitleWhenMaximized                         // No title bar (and no frame) WHILE maximized; normal chrome when restored
 )
 
-// windowCornerRadius is the corner radius (in units) of the graphical
-// window frame's single rounded-rect surface. Kept below the frame's
-// one-cell inset (8 units) so titlebar buttons and content never
-// overlap the curve; cell surfaces ignore it entirely.
+// windowCornerRadius is the corner radius of the graphical window frame's
+// single rounded-rect surface, in SCREEN units: the rounded-rect painter
+// transforms the rectangle but passes the radius straight through, so this
+// is stated in the surface's own denomination and never re-expressed into a
+// window's. Kept below the frame's one-cell inset (8 units) so titlebar
+// buttons and content never overlap the curve; cell surfaces ignore it.
 const windowCornerRadius core.Unit = 6
 
-// FrameCornerRadius reports the graphical frame's corner radius in
+// FrameCornerRadius reports the graphical frame's corner radius in screen
 // units, for hosts that shape OS windows around torn-off frames.
 func FrameCornerRadius() core.Unit { return windowCornerRadius }
 
@@ -1509,6 +1511,13 @@ func (w *Window) titleBarMetrics() TitleBarMetrics {
 	return TitleBarMetricsFor(w.frameCellMetrics(), w.EffectiveFont(), core.FindGraphicalFrames(w))
 }
 
+// frameBorder is the reserved frame border in the FRAME denomination, one
+// count per axis. The desktop reports the border in its own units; the two
+// are the same number only for a window the desktop itself holds.
+func (w *Window) frameBorder() (x, y core.Unit) {
+	return core.FindFrameBorderUnitsIn(w, w.frameCellMetrics())
+}
+
 // contentBounds returns the bounds for the content area. When the window
 // is detached and carries its own chrome, the menu bar (top) and status
 // bar (bottom) rows are reserved out of it (see reserveChrome).
@@ -1545,12 +1554,12 @@ func (w *Window) contentBounds() core.UnitRect {
 		// border AND the titlebar row; the sides and bottom reserve just
 		// the border. A thicker border shrinks the interior rather than
 		// overlapping it.
-		b := core.FindFrameBorderUnits(w)
-		top := b + w.titleBarMetrics().RowH
+		bx, by := w.frameBorder()
+		top := by + w.titleBarMetrics().RowH
 		if flags&WindowFlagNoTitle != 0 {
-			top = b
+			top = by
 		}
-		cb = core.UnitRect{X: b, Y: top, Width: bounds.Width - 2*b, Height: bounds.Height - top - b}
+		cb = core.UnitRect{X: bx, Y: top, Width: bounds.Width - 2*bx, Height: bounds.Height - top - by}
 	default:
 		// Cell frames: the border occupies a full cell on every side.
 		left, top, right, bottom := metrics.CellWidth, metrics.CellHeight, metrics.CellWidth, metrics.CellHeight
@@ -2446,14 +2455,18 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 // active border color - one tab-stroke weight thick - sits just inside it.
 // No-op on cell surfaces.
 func (w *Window) paintSingleBorderInner(p *core.Painter, localBounds core.UnitRect, st style.CellStyle) {
-	b := core.FindFrameBorderUnits(w)
+	bx, by := w.frameBorder()
 	inner := core.UnitRect{
-		X:      b,
-		Y:      b,
-		Width:  localBounds.Width - 2*b,
-		Height: localBounds.Height - 2*b,
+		X:      bx,
+		Y:      by,
+		Width:  localBounds.Width - 2*bx,
+		Height: localBounds.Height - 2*by,
 	}
-	radius := windowCornerRadius - b
+	// The radius is screen-space (StrokeRoundedRectWeight transforms the
+	// rect and passes the radius through), so the border it steps in by is
+	// the provider's own count -- not the frame-denominated bx above, which
+	// insets a rectangle the painter will transform.
+	radius := windowCornerRadius - core.FindFrameBorderUnits(w)
 	if radius < 0 {
 		radius = 0
 	}
@@ -2566,8 +2579,8 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 	// the border over it (clipped to the rounded outline so the top corners
 	// stay round). The cell path keeps the border color in those areas.
 	if rounded && flags&WindowFlagNoTitle == 0 {
-		b := core.FindFrameBorderUnits(w)
-		titleRect := core.UnitRect{Width: localBounds.Width, Height: b + w.titleBarMetrics().RowH}
+		_, by := w.frameBorder()
+		titleRect := core.UnitRect{Width: localBounds.Width, Height: by + w.titleBarMetrics().RowH}
 		fillStyle := titleStyle
 		if titleFocus == TitleFocusBlur {
 			// Blur item focused: the whole bar reads inactive on the graphical
@@ -2623,12 +2636,12 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// The titlebar chrome (title text + buttons) sits INSIDE the frame
 		// border: shift it in by the border and use the inner width. On cell
 		// surfaces the border reservation is 0, so this is a no-op.
-		b := core.FindFrameBorderUnits(w)
+		bx, by := w.frameBorder()
 		tp := p
 		innerW := bounds.Width
-		if b > 0 {
-			tp = p.WithOffset(b, b)
-			innerW = bounds.Width - 2*b
+		if bx > 0 || by > 0 {
+			tp = p.WithOffset(bx, by)
+			innerW = bounds.Width - 2*bx
 		}
 		// Draw window controls on the LEFT: [x][.][^] or [x][.][o] — each
 		// through its own kit function (deliberately distinct per button;
@@ -2833,12 +2846,12 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// The titlebar chrome sits inside the frame border (maximized has no
 	// side border); shift the hit-test into the same inner coordinate
 	// system paintNormalFrame draws it in.
-	inset := core.Unit(0)
+	insetX, insetY := core.Unit(0), core.Unit(0)
 	if state != WindowStateMaximized {
-		inset = core.FindFrameBorderUnits(w)
+		insetX, insetY = w.frameBorder()
 	}
-	x -= inset
-	y -= inset
+	x -= insetX
+	y -= insetY
 
 	// Must be in titlebar (the kit's possibly-scaled row)
 	if !hasTitleBar(flags, state) || y < 0 || y >= tm.RowH {
@@ -2887,7 +2900,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
 		titleW := tm.TitleWidth(title)
 		// Inner width: the paint centers within the border-inset titlebar.
-		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
+		handleX := tearHandleSlotX(w.Bounds().Width-2*insetX, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {
 			return TitleButtonTear
 		}
@@ -3840,7 +3853,8 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	// kit's (possibly scaled) title row height — CellHeight at scale 1.0.
 	titleBand := w.titleBarMetrics().RowH
 	if state != WindowStateMaximized {
-		titleBand += core.FindFrameBorderUnits(w)
+		_, by := w.frameBorder()
+		titleBand += by
 	}
 
 	// Check for title bar clicks

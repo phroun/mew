@@ -46,6 +46,16 @@ var barFrames = []core.CellMetrics{
 	{CellWidth: 4, CellHeight: 8},
 }
 
+// borderFrames adds a square cell: 16x16 over an 8x16 surface is where one
+// border count serving both axes stops working.
+var borderFrames = []core.CellMetrics{
+	{CellWidth: 8, CellHeight: 16},
+	{CellWidth: 16, CellHeight: 32},
+	{CellWidth: 32, CellHeight: 64},
+	{CellWidth: 4, CellHeight: 8},
+	{CellWidth: 16, CellHeight: 16},
+}
+
 // hostedWindow returns a tearable window whose frame counts in the given
 // denomination, sized 40 cells by 5 rows in that same currency.
 func hostedWindow(frame core.CellMetrics) *Window {
@@ -148,6 +158,106 @@ func TestTitleBarHitsWhatItPaintsAtEveryFrameDenomination(t *testing.T) {
 			if got != want {
 				t.Fatalf("frame %dx%d: column %d hits %v, want %v (what 8x16 hits)",
 					frame.CellWidth, frame.CellHeight, px, got, want)
+			}
+		}
+	}
+}
+
+// framedHost plays the desktop's part as well: it reports the frame border
+// in ITS OWN units, which is what Desktop.WindowFrameBorderUnits does (device
+// pixels divided by that surface's pixels-per-unit).
+type framedHost struct {
+	metricsHost
+	borderUnits core.Unit
+}
+
+func newFramedHost(m core.CellMetrics, border core.Unit) *framedHost {
+	h := &framedHost{borderUnits: border}
+	h.TrinketBase = *core.NewTrinketBase()
+	h.Init(h)
+	h.SetCellMetrics(&m)
+	return h
+}
+
+func (h *framedHost) WindowFrameBorderUnits() core.Unit { return h.borderUnits }
+func (h *framedHost) GraphicalWindowFrames() bool       { return true }
+func (h *framedHost) SurfacePxPerUnit() float64         { return 1 }
+func (h *framedHost) AddChild(c core.Trinket)           { h.kids = append(h.kids, c); c.SetParent(h) }
+
+// hostedFramedWindow puts the window two levels down: a surface that reports
+// the frame border in ITS units, then a pane that re-denominates. That is the
+// MDI topology -- the desktop provides the border, the pane provides the
+// denomination the child's chrome is drawn in.
+func hostedFramedWindow(frame core.CellMetrics) *Window {
+	surface := newFramedHost(barOuter, 2)
+	pane := newMetricsHost(frame)
+	surface.AddChild(pane)
+
+	w := NewWindow(barTitle)
+	w.SetFlags(w.Flags() | WindowFlagTearable)
+	pane.AddChild(w)
+	w.SetBounds(core.UnitRect{Width: 40 * frame.CellWidth, Height: 5 * frame.CellHeight})
+	w.Layout()
+	return w
+}
+
+// The border is one physical thickness, and every frame spends whatever its
+// own denomination makes that. FindFrameBorderUnits answers in the PROVIDER's
+// units, which for a top-level window is also the frame's -- so this stayed
+// hidden there -- and for an MDI child is the desktop's while the frame counts
+// in the pane's.
+//
+// Two counts, not one: a unit is square only where the cell is. Over an 8x16
+// surface a 16x16 frame spends four units on the border across and two down.
+func TestFrameBorderIsTheSameThicknessAtEveryFrameDenomination(t *testing.T) {
+	var baseX, baseY core.Unit
+	for _, frame := range borderFrames {
+		bx, by := hostedFramedWindow(frame).frameBorder()
+		gotX := core.ExchangeX(bx, frame, barOuter)
+		gotY := core.ExchangeY(by, frame, barOuter)
+
+		if baseX == 0 {
+			baseX, baseY = gotX, gotY
+			continue
+		}
+		if gotX != baseX || gotY != baseY {
+			t.Errorf("frame %dx%d reserves %dx%d units at 8x16, want %dx%d",
+				frame.CellWidth, frame.CellHeight, gotX, gotY, baseX, baseY)
+		}
+	}
+}
+
+// And the whole bordered frame, painted onto one surface: the border stroke,
+// the rounded corners, the title bar inside them. The corner radius is NOT
+// re-expressed -- the rounded-rect painter transforms the rectangle and passes
+// the radius through, so that number is screen-space -- and this is what says
+// so: denominating it too pulls the corners apart.
+func TestBorderedFramePaintsTheSameAtEveryFrameDenomination(t *testing.T) {
+	const W, H = 400, 120
+	var base *raster.Backend
+
+	for _, frame := range borderFrames {
+		b, err := raster.New(W, H)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.SetCellMetrics(barOuter)
+		b.Clear(style.DefaultStyle())
+
+		hostedFramedWindow(frame).Paint(core.NewPainter(b).WithDenomination(barOuter, frame))
+
+		if base == nil {
+			base = b
+			continue
+		}
+		for y := 0; y < H; y++ {
+			for x := 0; x < W; x++ {
+				if b.Image().RGBAAt(x, y) != base.Image().RGBAAt(x, y) {
+					t.Errorf("frame %dx%d: pixel (%d,%d) is %v, want %v (the 8x16 picture)",
+						frame.CellWidth, frame.CellHeight, x, y,
+						b.Image().RGBAAt(x, y), base.Image().RGBAAt(x, y))
+					y, x = H, W
+				}
 			}
 		}
 	}
