@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/phroun/kittytk/client"
 	"github.com/phroun/kittytk/protocol"
@@ -116,6 +118,76 @@ func (a *app) wireMainWindow() {
 	ui.Object("tfms").On("toggle", setMask(`echo=password mask="*"`))
 	ui.Object("tfmh").On("toggle", setMask(`echo=password mask="#"`))
 	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
+
+	a.wireDenomination(win)
+}
+
+// What the Denomination tab will apply. One unit per cell is the floor
+// because the cell conversions divide by it -- UnitsToCellX and its row
+// counterpart -- so zero is not a small denomination, it is a division by
+// zero. The ceiling is a demo's own limit rather than the model's.
+const (
+	denomMin = 1
+	denomMax = 64
+)
+
+// wireDenomination drives the window's own column_units and row_units --
+// the per-axis D8 spelling, which is what makes X and Y independent. The
+// Selection tab's grid checkbox reaches the same machinery through the
+// window's denomination property, but that one sets the row height alone
+// and resets the column to its default.
+func (a *app) wireDenomination(win client.Handle) {
+	ui := a.ui
+	echo := ui.Object("dnecho")
+	x := ui.TextInput("dnx")
+	y := ui.TextInput("dny")
+
+	say := func(s string) {
+		_ = echo.Set("caption=" + protocol.Quote(s))
+		a.setStatus(s)
+	}
+
+	// apply reads both fields, so pressing Return in either one commits
+	// the pair the person can see rather than half of it.
+	apply := func() {
+		cx, errX := strconv.Atoi(strings.TrimSpace(x.Text()))
+		cy, errY := strconv.Atoi(strings.TrimSpace(y.Text()))
+		switch {
+		case errX != nil || errY != nil:
+			say("Denomination: X and Y must both be whole numbers.")
+			return
+		case cx < denomMin || cx > denomMax || cy < denomMin || cy > denomMax:
+			say(fmt.Sprintf("Denomination: %d x %d is out of range (%d to %d).",
+				cx, cy, denomMin, denomMax))
+			return
+		}
+		if err := win.Set(fmt.Sprintf("column_units=%d row_units=%d", cx, cy)); err != nil {
+			say("Denomination: " + err.Error())
+			return
+		}
+		say(fmt.Sprintf("Denomination is now %d x %d.", cx, cy))
+	}
+
+	// Return in either field applies, which is what complete is for: the
+	// person saying they are done with the value, not every keystroke.
+	x.OnComplete(func(string) { apply() })
+	y.OnComplete(func(string) { apply() })
+	ui.Button("dnap").OnClick(apply)
+
+	// A preset fills the fields as well as applying, so the two never
+	// disagree about what the window is showing.
+	preset := func(cx, cy int) func() {
+		return func() {
+			_ = x.SetText(strconv.Itoa(cx))
+			_ = y.SetText(strconv.Itoa(cy))
+			apply()
+		}
+	}
+	ui.Button("dnd").OnClick(preset(8, 16))
+	ui.Button("dnh").OnClick(preset(4, 8))
+	ui.Button("dnt").OnClick(preset(16, 32))
+	ui.Button("dns").OnClick(preset(16, 16))
+	ui.Button("dnn").OnClick(preset(8, 32))
 }
 
 // wireMenus registers the primary application's command handlers. The

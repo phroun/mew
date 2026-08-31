@@ -289,6 +289,30 @@ tf=new tab caption="Text Fields" children={
 	}
 }
 
+dn=new tab caption="Denomination" children={
+	dnp=new panel layout=vbox spacing=8 children={
+		new label caption="Denomination is how many units make one character cell -- 8 wide by 16 tall by default. Setting it on this window re-expresses every unit inside it, so the whole page below changes size while the window does not."
+		new label caption="column_units is the X axis, row_units the Y. They are independent: a tall thin cell is 8 by 32, a squat one 16 by 8."
+		dnrow=new panel layout=hbox spacing=8 children={
+			new label caption="X:"
+			dnx=new textinput text="8" max_length=2
+			new label caption="Y:"
+			dny=new textinput text="16" max_length=2
+			dnap=new button caption="Apply" default
+		}
+		new label caption="Type in either field and press Return, or use Apply. Presets:"
+		dnpre=new panel layout=hbox spacing=8 children={
+			dnd=new button caption="8 x 16 (default)"
+			dnh=new button caption="4 x 8 (half)"
+			dnt=new button caption="16 x 32 (double)"
+			dns=new button caption="16 x 16 (square)"
+			dnn=new button caption="8 x 32 (narrow)"
+		}
+		dnecho=new label caption="Currently 8 x 16 (inherited -- no override set)."
+		new spacer
+	}
+}
+
 new tab caption="Progress" children={
 	new panel layout=vbox spacing=16 children={
 		new label caption="Horizontal Progress Bars:"
@@ -500,6 +524,15 @@ tfmb=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmb
 tfms=w.t.tf.tfp.tfrow.tfr.tfmrow.tfms
 tfmh=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmh
 tfmn=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmn
+dnx=w.t.dn.dnp.dnrow.dnx
+dny=w.t.dn.dnp.dnrow.dny
+dnap=w.t.dn.dnp.dnrow.dnap
+dnd=w.t.dn.dnp.dnpre.dnd
+dnh=w.t.dn.dnp.dnpre.dnh
+dnt=w.t.dn.dnp.dnpre.dnt
+dns=w.t.dn.dnp.dnpre.dns
+dnn=w.t.dn.dnp.dnpre.dnn
+dnecho=w.t.dn.dnp.dnecho
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

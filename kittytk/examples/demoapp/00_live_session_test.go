@@ -194,10 +194,16 @@ func TestDemoBuildsOverService(t *testing.T) {
 	// and merely look inert. Reading the names out of wire.go is blunt, but
 	// it is the only thing that fails when someone adds a control and
 	// forgets to surface it, which is exactly how this test got written.
-	for _, name := range wiredNames(t, "wireMainWindow") {
-		if ui.ID(name) == 0 {
-			t.Errorf("wire.go addresses %q but the script never surfaces it: "+
-				"its handle is id 0, so nothing it sets or subscribes will happen", name)
+	// Every function the main window's wiring reaches, not just the entry
+	// point: a helper split out of it addresses the same script and its
+	// names go unchecked otherwise.
+	for _, fn := range []string{"wireMainWindow", "wireDenomination"} {
+		for _, name := range wiredNames(t, fn) {
+			if ui.ID(name) == 0 {
+				t.Errorf("%s addresses %q but the script never surfaces it: "+
+					"its handle is id 0, so nothing it sets or subscribes will happen",
+					fn, name)
+			}
 		}
 	}
 
