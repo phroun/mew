@@ -191,6 +191,10 @@ func (p *Panel) SetBackground(s style.CellStyle) {
 	p.Update()
 }
 
+// panelWidthUnits is the width a panel with no layout manager asks for, in
+// units. See textInputWidthUnits.
+const panelWidthUnits core.Unit = 1
+
 // SizeHint returns the preferred size, denominated in the panel's
 // outer currency (interior needs are computed in interior units and
 // exchanged at the boundary).
@@ -200,9 +204,8 @@ func (p *Panel) SizeHint() core.UnitSize {
 	if p.layoutManager != nil {
 		sh = core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
 	} else {
-		font := p.EffectiveFont()
 		sh = core.ExchangeSize(core.UnitSize{
-			Width:  font.MeasureRunes(20), // 20 chars wide
+			Width:  panelWidthUnits,
 			Height: interior.TextHeight(10),
 		}, interior, outer)
 	}

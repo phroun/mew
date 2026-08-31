@@ -1212,12 +1212,15 @@ func (t *TabTrinket) handleVertScrollbarClick(y core.Unit, metrics core.CellMetr
 	}
 }
 
+// tabStripWidthUnits is the width a tab strip asks for when nothing sets
+// one, in units. See textInputWidthUnits.
+const tabStripWidthUnits core.Unit = 1
+
 // SizeHint returns the preferred size.
 func (t *TabTrinket) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(40), // 40 chars wide
+		Width:  tabStripWidthUnits,
 		Height: metrics.TextHeight(15),
 	}
 }

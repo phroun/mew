@@ -1157,12 +1157,15 @@ func (s *ScrollArea) updateScrollBars() {
 	s.vScrollBar.SetSingleStep(1)
 }
 
+// scrollAreaWidthUnits is the width a scroll area asks for when nothing sets
+// one, in units. See textInputWidthUnits.
+const scrollAreaWidthUnits core.Unit = 1
+
 // SizeHint returns the preferred size.
 func (s *ScrollArea) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
-	font := s.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(30), // 30 chars wide
+		Width:  scrollAreaWidthUnits,
 		Height: metrics.TextHeight(10),
 	}
 }

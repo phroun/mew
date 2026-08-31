@@ -631,12 +631,15 @@ func (t *TreeView) ensureVisible(index int) {
 	}
 }
 
+// treeViewWidthUnits is the width a tree asks for when nothing sets one, in
+// units. see textInputWidthUnits.
+const treeViewWidthUnits core.Unit = 1
+
 // SizeHint returns the preferred size.
 func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(40),  // Default width for 40 chars
+		Width:  treeViewWidthUnits,
 		Height: metrics.TextHeight(15), // 15 items visible
 	}
 }

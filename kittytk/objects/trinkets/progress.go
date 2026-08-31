@@ -169,9 +169,9 @@ func (p *ProgressBar) Advance(amount int) {
 }
 
 // SizeHint returns the preferred size.
-// progressBarWidthUnits is the width a horizontal progress bar asks for,
-// in units.
-const progressBarWidthUnits core.Unit = 160
+// progressBarWidthUnits is the width a horizontal bar asks for when nothing
+// sets one, in units. see textInputWidthUnits.
+const progressBarWidthUnits core.Unit = 1
 
 // SizeHint returns the preferred size.
 func (p *ProgressBar) SizeHint() core.UnitSize {
