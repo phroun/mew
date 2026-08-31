@@ -492,7 +492,6 @@ func (t *TextInput) textChanged() {
 // ensureCursorVisible scrolls to make the cursor visible.
 func (t *TextInput) ensureCursorVisible() {
 	bounds := t.Bounds()
-	font := t.EffectiveFont()
 	metrics := t.EffectiveCellMetrics()
 
 	if bounds.Width <= 0 {
@@ -517,7 +516,7 @@ func (t *TextInput) ensureCursorVisible() {
 	// Mid-text, keep the character the caret sits on visible.
 	var cursorWidth core.Unit
 	if caret < len(displayText) {
-		cursorWidth = font.MeasureText(string(displayText[caret]))
+		cursorWidth = t.MeasureText(string(displayText[caret]))
 	} else {
 		cursorWidth = metrics.CellWidth / 4
 		if cursorWidth < 1 {
@@ -536,7 +535,7 @@ func (t *TextInput) ensureCursorVisible() {
 			break
 		}
 		visibleText := string(displayText[start:end])
-		textWidth := font.MeasureText(visibleText)
+		textWidth := t.MeasureText(visibleText)
 
 		// Need room for text before cursor PLUS the cursor character itself
 		if textWidth+cursorWidth <= bounds.Width {
@@ -700,7 +699,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 			d = n
 		}
 		run := string(displayText[:d])
-		w := font.MeasureText(run)
+		w := t.MeasureText(run)
 		if px, ok := p.MeasureTextPx(run, font); ok {
 			return w, px
 		}
@@ -920,7 +919,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 				// same pixel advance the text was laid out at.
 				endX, endPx := prefixWidth(cursorDisp + 1)
 				if cursorDisp >= n {
-					blank := font.MeasureText(" ")
+					blank := t.MeasureText(" ")
 					endX = caretX + blank
 					endPx = caretXPx + p.UnitsToPx(blank)
 				}
@@ -1165,7 +1164,7 @@ func (t *TextInput) truncateToWidth(text []rune, maxWidth core.Unit, font *core.
 	result := make([]rune, 0, len(text))
 	var totalWidth core.Unit
 	for _, r := range text {
-		charWidth := font.MeasureText(string(r))
+		charWidth := t.MeasureText(string(r))
 		if totalWidth+charWidth > maxWidth {
 			break
 		}
@@ -1175,7 +1174,14 @@ func (t *TextInput) truncateToWidth(text []rune, maxWidth core.Unit, font *core.
 	return string(result)
 }
 
-// findCharAtX finds the character index at the given X position using font metrics.
+// findCharAtX finds the character index at the given X position using font
+// metrics.
+//
+// x arrives in this field's own denomination, so the prefixes it is compared
+// against have to be measured in that same denomination. Font.MeasureText
+// answers at the DEFAULT one, so inside a re-denominated window a click
+// resolved against prefixes of the wrong size and the caret landed several
+// characters from the pointer.
 func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 	displayText := t.getDisplayText()
 	if t.scrollOffset > 0 && t.scrollOffset < len(displayText) {
@@ -1194,7 +1200,7 @@ func (t *TextInput) findCharAtX(x core.Unit, font *core.Font) int {
 	// anyway.
 	var before core.Unit
 	for i := range displayText {
-		after := font.MeasureText(string(displayText[:i+1]))
+		after := t.MeasureText(string(displayText[:i+1]))
 		// The nearer edge wins: past the middle of a character is the position
 		// after it.
 		if x < (before+after)/2 {

@@ -250,10 +250,13 @@ func (b *Button) Click() {
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
 	metrics := b.EffectiveCellMetrics()
-	font := b.EffectiveFont()
 
-	// Calculate text width using font measurement
-	textWidth := font.MeasureText(b.text)
+	// Text measured in THIS button's denomination. Everything else here --
+	// the icon, the brackets, the shadow -- is stated in cells, which are a
+	// fixed physical size and need no adjusting; the caption was measured at
+	// the DEFAULT denomination, so inside a re-denominated window the button
+	// sized itself around a caption counted in units of the wrong size.
+	textWidth := b.MeasureText(b.text)
 
 	// Add icon width if present (icons use fixed width)
 	iconWidth := core.Unit(0)
@@ -349,7 +352,7 @@ func (b *Button) Paint(p *core.Painter) {
 		rightBracket = '>'
 	}
 	bracketWidth := metrics.CellWidth * 2 // Each bracket is 1 cell
-	textWidth := font.MeasureText(b.text)
+	textWidth := b.MeasureText(b.text)
 
 	// Icon handling
 	iconWidth := core.Unit(0)
