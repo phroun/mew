@@ -747,6 +747,17 @@ func (c *ComboBox) notifyIndexChanged() {
 	}
 }
 
+// displayText is what the closed box shows for text in avail units: the
+// value, cut to fit beside the arrow.
+//
+// Through the same function the tree and the list cut with. Cutting BYTES
+// here, as this did, drops half a rune off any multi-byte character, and
+// cutting with nothing appended leaves a word that just looks misspelled --
+// "ARJ Archive" came out "ARJ Archiv" with nothing to say it had been cut.
+func (c *ComboBox) displayText(text string, avail core.Unit) string {
+	return ellipsizeText(c.EffectiveFont(), c.EffectiveCellMetrics(), text, avail)
+}
+
 // SizeHint returns the preferred size.
 func (c *ComboBox) SizeHint() core.UnitSize {
 	metrics := c.EffectiveCellMetrics()
@@ -816,14 +827,8 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	arrowWidth := c.MeasureText(" ▼")
 	textAreaWidth := bounds.Width - arrowWidth
 
-	// Truncate text if needed to fit in text area
-	displayText := text
-	for c.MeasureText(displayText) > textAreaWidth && len(displayText) > 0 {
-		displayText = displayText[:len(displayText)-1]
-	}
-
 	// Draw text
-	p.DrawText(0, 0, displayText, s, font)
+	p.DrawText(0, 0, c.displayText(text, textAreaWidth), s, font)
 
 	// Draw dropdown arrow at the right
 	arrowX := bounds.Width - arrowWidth
