@@ -547,12 +547,17 @@ func (t *TextInput) ensureCursorVisible() {
 }
 
 // SizeHint returns the preferred size.
+// A text field's own size, in units.
+const (
+	textInputWidthUnits  core.Unit = 160
+	textInputHeightUnits core.Unit = 16
+)
+
+// SizeHint returns the preferred size.
 func (t *TextInput) SizeHint() core.UnitSize {
-	metrics := t.EffectiveCellMetrics()
-	// TextInput has a fixed size in units (160 wide x 16 tall) - does not scale with font
 	return core.UnitSize{
-		Width:  metrics.TextWidth(20),
-		Height: metrics.TextHeight(1),
+		Width:  textInputWidthUnits,
+		Height: textInputHeightUnits,
 	}
 }
 

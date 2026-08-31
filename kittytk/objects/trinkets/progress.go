@@ -169,18 +169,24 @@ func (p *ProgressBar) Advance(amount int) {
 }
 
 // SizeHint returns the preferred size.
+// A progress bar's own size, in units: long along its orientation, short
+// across it.
+const (
+	progressLongUnits  core.Unit = 160
+	progressShortUnits core.Unit = 16
+)
+
+// SizeHint returns the preferred size.
 func (p *ProgressBar) SizeHint() core.UnitSize {
-	metrics := p.EffectiveCellMetrics()
-	// ProgressBar draws block characters (░▓), not text - use cell-based sizing
 	if p.orientation == core.Horizontal {
 		return core.UnitSize{
-			Width:  metrics.TextWidth(20), // 20 cells wide
-			Height: metrics.TextHeight(1),
+			Width:  progressLongUnits,
+			Height: progressShortUnits,
 		}
 	}
 	return core.UnitSize{
-		Width:  metrics.TextWidth(2), // 2 cells wide
-		Height: metrics.TextHeight(10),
+		Width:  progressShortUnits,
+		Height: progressLongUnits,
 	}
 }
 
