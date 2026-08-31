@@ -492,6 +492,72 @@ mt=new tab caption="Terminal" children={
 	}
 }
 
+df=new tab caption="Defaults" children={
+	dfsa=new scrollarea stretch=1 align=fill children={
+		dfv=new panel layout=vbox spacing=0 children={
+			new label caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
+
+			new label caption="--- button"
+			new button caption="Button"
+			new label caption="--- checkbox"
+			new checkbox caption="Checkbox"
+			new label caption="--- radiobutton"
+			new radiobutton caption="Radio button" group=dfgroup
+			new label caption="--- label"
+			new label caption="Label"
+			new label caption="--- textinput"
+			new textinput placeholder="Text input"
+			new label caption="--- combobox"
+			new combobox children={
+				new item caption="Combo item one"
+				new item caption="Combo item two"
+			}
+			new label caption="--- progress"
+			new progress value=60
+			new label caption="--- separator"
+			new separator caption="Separator"
+			new label caption="--- spacer"
+			new spacer
+			new label caption="--- listview"
+			new listview children={
+				new item caption="List item one"
+				new item caption="List item two"
+				new item caption="List item three"
+			}
+			new label caption="--- treeview"
+			new treeview children={
+				new item caption="Tree item" children={
+					new item caption="Tree child"
+				}
+			}
+			new label caption="--- panel (no layout, bordered)"
+			new panel border
+			new label caption="--- scrollarea"
+			new scrollarea children={
+				new label caption="Scroll area content"
+			}
+			new label caption="--- splitter"
+			new splitter orientation=vertical children={
+				new label caption="Splitter first"
+				new label caption="Splitter second"
+			}
+			new label caption="--- tabs"
+			new tabs children={
+				new tab caption="One" children={new label caption="Tab one"}
+				new tab caption="Two" children={new label caption="Tab two"}
+			}
+			new label caption="--- editor"
+			new editor
+			new label caption="--- terminal"
+			new terminal
+			new label caption="--- dockrow"
+			new dockrow
+			new label caption="--- mdipane"
+			new mdipane
+		}
+	}
+}
+
 }
 }
 
