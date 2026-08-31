@@ -20,10 +20,11 @@ const (
 	// even this legible.
 	defaultTreeWidthCells = defaultSizeCells * 2
 
-	// defaultTabsWidthCells is what a tab strip asks for.
-	defaultTabsWidthCells = 12
+	// defaultWideWidthCells is what a tab strip, an editor and a terminal
+	// ask for across.
+	defaultWideWidthCells = 12
 
-	// defaultContainerHeightCells is what a tab strip, a scroll area and a
-	// panel ask for down the page.
+	// defaultContainerHeightCells is what a tab strip, a scroll area, a
+	// panel, an MDI pane, an editor and a terminal ask for down the page.
 	defaultContainerHeightCells = 5
 )

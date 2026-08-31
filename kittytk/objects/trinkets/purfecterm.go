@@ -568,12 +568,15 @@ func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
 	return m.CellWidth, m.CellHeight
 }
 
-// SizeHint returns the preferred size based on terminal dimensions.
+// SizeHint returns the size a terminal asks for when nothing sets one (see
+// defaultSizeCells). It used to report the current grid -- but the grid is
+// set FROM the bounds (updateTerminalSize), and a vertical box sets the
+// bounds from this, so the two only ever agreed with each other.
 func (t *PurfecTerm) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.TextWidth(t.cols),
-		Height: metrics.TextHeight(t.rows),
+		Width:  metrics.CellWidth * defaultWideWidthCells,
+		Height: metrics.CellHeight * defaultContainerHeightCells,
 	}
 }
 

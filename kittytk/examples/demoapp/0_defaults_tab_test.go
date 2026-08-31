@@ -81,6 +81,8 @@ func TestDefaultsTabShowsTheFallbackSizes(t *testing.T) {
 		"*trinkets.Panel":       {3, 5},
 		"*trinkets.TabTrinket":  {12, 5},
 		"*trinkets.MDIPane":     {3, 5},
+		"*trinkets.Editor":      {12, 5},
+		"*trinkets.PurfecTerm":  {12, 5},
 	}
 
 	specimens, m := defaultsSpecimens(t)
@@ -132,6 +134,10 @@ func specimenName(k core.Trinket) string {
 		return "*trinkets.TabTrinket"
 	case *trinkets.MDIPane:
 		return "*trinkets.MDIPane"
+	case *trinkets.Editor:
+		return "*trinkets.Editor"
+	case *trinkets.PurfecTerm:
+		return "*trinkets.PurfecTerm"
 	}
 	return ""
 }

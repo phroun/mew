@@ -389,8 +389,8 @@ func (e *Editor) Paint(p *core.Painter) {
 func (e *Editor) SizeHint() core.UnitSize {
 	m := e.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  m.TextWidth(40) + m.CellWidth*4,
-		Height: m.CellHeight * 8, // border + a few preview rows + button + border
+		Width:  m.CellWidth * defaultWideWidthCells,
+		Height: m.CellHeight * defaultContainerHeightCells,
 	}
 }
 
