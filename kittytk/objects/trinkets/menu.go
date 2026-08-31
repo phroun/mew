@@ -1015,15 +1015,19 @@ func (m *Menu) calculateSize() core.UnitSize {
 	// Calculate max width using font for text, cells for decorative elements
 	maxWidth := core.Unit(0)
 	for _, item := range m.items {
-		// Item text uses font measurement
-		itemWidth := font.MeasureText(item.Text)
+		// Item text uses font measurement, counted in THIS menu's
+		// denomination -- Font.MeasureText answers at the default one, which
+		// is a different currency the moment the menu sits in a window that
+		// carries an override. The cell-based padding around it needs no
+		// such treatment: a cell is a fixed physical size.
+		itemWidth := m.MeasureText(item.Text)
 
 		// Shortcut: spacing (3 cells) + shortcut text (font-based). Measure
 		// with the same font used to draw it (native mode swaps in Apple's
 		// face) so width and render never disagree.
 		if sc := item.ShortcutDisplay(); sc != "" {
 			itemWidth += metrics.CellWidth * 3 // spacing before shortcut
-			itemWidth += shortcutFont(font).MeasureText(sc)
+			itemWidth += shortcutFont(font).MeasureTextIn(sc, metrics)
 		}
 
 		// Submenu arrow (3 cells) - decorative
@@ -1062,10 +1066,20 @@ func (m *Menu) calculateSize() core.UnitSize {
 	}
 }
 
-// separatorBandUnits is the height a separator row occupies on graphical
-// (pixel) surfaces - a thin band (~6 device px at the usual 2x scale)
-// carrying a single hairline, rather than a full text row of dashes.
-const separatorBandUnits core.Unit = 3
+// separatorBandFraction gives the height a separator row occupies on
+// graphical (pixel) surfaces, as a fraction of a cell: 3/16, a thin band
+// (~6 device px at the usual 2x scale) carrying a single hairline, rather
+// than a full text row of dashes.
+//
+// Against a cell rather than as a raw unit count, so the band is the same
+// physical thickness whatever denomination the menu is counted in. Three
+// units was 3/16 of a cell only at the default denomination.
+func separatorBandUnits(metrics core.CellMetrics) core.Unit {
+	if h := metrics.CellHeight * 3 / 16; h > 0 {
+		return h
+	}
+	return 1
+}
 
 // graphicalSurface reports whether this dropdown paints on a pixel
 // surface, where separators shrink to a thin band and gain hairlines.
@@ -1184,7 +1198,7 @@ func (m *Menu) paintOuterStroke(p *core.Painter, size core.UnitSize, scale int, 
 // all rows on cell surfaces) is a full text row.
 func (m *Menu) rowHeightAt(idx int, graphical bool, cellHeight core.Unit) core.Unit {
 	if graphical && idx >= 0 && idx < len(m.items) && m.items[idx].Separator {
-		return separatorBandUnits
+		return separatorBandUnits(m.EffectiveCellMetrics())
 	}
 	return cellHeight
 }
@@ -1509,7 +1523,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		} else {
 			// No accelerator or disabled - draw entire text
 			p.DrawText(x, itemY, item.Text, contentStyle, font)
-			x += font.MeasureText(item.Text)
+			x += m.MeasureText(item.Text)
 		}
 
 		// Draw shortcut or submenu arrow at the right (in content area). The
@@ -1528,7 +1542,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			// measure and draw with that same font so the right-alignment is
 			// exact, and center the shorter line box within the item's row.
 			sf := shortcutFont(font)
-			shortcutWidth := sf.MeasureText(shortcutStr)
+			shortcutWidth := sf.MeasureTextIn(shortcutStr, metrics)
 			shortcutX := m.popupX + size.Width - shortcutWidth - rightPad
 			shortcutY := itemY
 			if sf != font {
