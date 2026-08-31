@@ -247,6 +247,21 @@ func (b *Button) Click() {
 	}
 }
 
+// buttonShadowOffset is how far the drop shadow falls, down and right: half
+// a cell's WIDTH, at the default denomination.
+//
+// The width, because a cell is narrower than it is tall and so it is the
+// limiting measure. A shadow thrown by the taller one would reach further
+// down than across and read as a smear rather than a shadow.
+//
+// One distance, and the same on both axes -- but saying that takes an
+// exchange per axis rather than one number used twice. A unit is square
+// only at the default denomination: a cell keeps its shape whatever it is
+// divided into, so dividing it 16 across and 16 down leaves units half as
+// wide as they are tall, and the same COUNT on each axis would then fall
+// half as far across as down.
+var buttonShadowOffset = core.DefaultCellMetrics().CellWidth / 2
+
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
 	metrics := b.EffectiveCellMetrics()
@@ -376,14 +391,8 @@ func (b *Button) Paint(p *core.Painter) {
 	// Pressed offset: on pixel surfaces the face scoots down-right to
 	// land exactly where the shadow rectangle was; cell surfaces keep
 	// the classic one-column shift.
-	// Half a column across, a quarter of a row down: at the default 8x16
-	// cell those are both four units, which is the same physical distance on
-	// each axis -- a square offset, which is what a drop shadow wants. Each
-	// axis has to be a fraction of ITS OWN cell to stay that way. Taken from
-	// the column width alone, the vertical offset doubled the moment a cell
-	// stopped being twice as tall as it is wide.
-	shadowOffX := metrics.CellWidth / 2
-	shadowOffY := metrics.CellHeight / 4
+	shadowOffX := core.ExchangeX(buttonShadowOffset, core.DefaultCellMetrics(), metrics)
+	shadowOffY := core.ExchangeY(buttonShadowOffset, core.DefaultCellMetrics(), metrics)
 	xOffset := core.Unit(0)
 	// Center the two-row button in any extra vertical space its layout gave it.
 	yOffset := b.vInset()
