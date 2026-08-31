@@ -69,13 +69,12 @@ func (l *Label) SetWordWrap(wrap bool) {
 // SizeHint returns the preferred size.
 func (l *Label) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
-	font := l.EffectiveFont()
 
 	// Split text by newlines to calculate proper dimensions
 	lines := strings.Split(l.text, "\n")
 	var maxWidth core.Unit
 	for _, line := range lines {
-		lineWidth := font.MeasureText(line)
+		lineWidth := l.MeasureText(line)
 		if lineWidth > maxWidth {
 			maxWidth = lineWidth
 		}
@@ -105,13 +104,13 @@ func (l *Label) HeightForWidth(width core.Unit) core.Unit {
 	if !l.wordWrap {
 		return l.SizeHint().Height
 	}
-	font := l.EffectiveFont()
-	lineCount := len(wrapText(l.text, width, font))
+	metrics := l.EffectiveCellMetrics()
+	lineCount := len(wrapText(l.text, width, l.EffectiveFont(), metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
 	// A text line occupies one grid row, in the container's denomination.
-	return core.Unit(lineCount) * l.EffectiveCellMetrics().CellHeight
+	return core.Unit(lineCount) * metrics.CellHeight
 }
 
 // Paint renders the label.
@@ -199,7 +198,7 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 		return
 	}
 
-	lines := wrapText(l.text, bounds.Width, l.EffectiveFont())
+	lines := wrapText(l.text, bounds.Width, l.EffectiveFont(), metrics)
 	y := core.Unit(0)
 
 	for i, line := range lines {
@@ -230,13 +229,17 @@ func (l *Label) AccessibleInfo() core.AccessibleInfo {
 // wrapText wraps text to the given width in units, breaking at word
 // boundaries and measuring candidate lines with the font. Words wider
 // than a full line fall back to character breaking.
-func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
+//
+// The width and the measurements are both in the caller's units, so metrics
+// is the caller's own cell metrics: a width counted at one denomination and
+// compared against text measured at another breaks in the wrong places.
+func wrapText(text string, maxWidth core.Unit, font *core.Font, metrics core.CellMetrics) []string {
 	if maxWidth <= 0 {
 		return nil
 	}
 
 	var lines []string
-	spaceWidth := font.MeasureText(" ")
+	spaceWidth := font.MeasureTextIn(" ", metrics)
 
 	for _, paragraph := range strings.Split(text, "\n") {
 		var currentLine strings.Builder
@@ -249,7 +252,7 @@ func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
 		}
 
 		for _, word := range strings.Fields(paragraph) {
-			wordWidth := font.MeasureText(word)
+			wordWidth := font.MeasureTextIn(word, metrics)
 
 			// Width if appended to the current line (with separating space)
 			joined := wordWidth
@@ -280,7 +283,7 @@ func wrapText(text string, maxWidth core.Unit, font *core.Font) []string {
 			// Word wider than a full line: break it by characters,
 			// placing at least one rune per line.
 			for _, r := range word {
-				runeWidth := font.MeasureText(string(r))
+				runeWidth := font.MeasureTextIn(string(r), metrics)
 				if currentWidth > 0 && currentWidth+runeWidth > maxWidth {
 					flush()
 				}

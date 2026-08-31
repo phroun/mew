@@ -176,7 +176,7 @@ func (c *Checkbox) HeightForWidth(width core.Unit) core.Unit {
 	}
 	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
-	lineCount := len(wrapText(c.text, width-metrics.CellWidth*4, font))
+	lineCount := len(wrapText(c.text, width-metrics.CellWidth*4, font, metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
@@ -246,7 +246,7 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	// wrapped lines hang under the text column.
 	textWidth := c.Bounds().Width - x
 	y := core.Unit(0)
-	for _, line := range wrapText(c.text, textWidth, font) {
+	for _, line := range wrapText(c.text, textWidth, font, metrics) {
 		p.DrawText(x, y, line, labelStyle, font)
 		y += metrics.CellHeight
 	}

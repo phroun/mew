@@ -238,7 +238,7 @@ func (e *Editor) refreshPreview() {
 		t = "(empty)"
 	}
 	if e.wrapWidth > 0 {
-		t = strings.Join(wrapText(t, e.wrapWidth, e.label.EffectiveFont()), "\n")
+		t = strings.Join(wrapText(t, e.wrapWidth, e.label.EffectiveFont(), e.label.EffectiveCellMetrics()), "\n")
 	}
 	e.label.SetText(t)
 	e.scroll.Layout() // re-measure content so the scroll range and preview refresh
