@@ -547,7 +547,6 @@ func (t *TabTrinket) calculateTabBarWidth() core.Unit {
 // - Separator: 4 chars if adjacent to selected (" \_ " or " _/ "), else 2 ("  ")
 func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 	if len(t.tabs) == 0 {
 		return 0
 	}
@@ -561,7 +560,7 @@ func (t *TabTrinket) calculateTotalTabsWidth() core.Unit {
 
 	for i, tab := range t.tabs {
 		// Tab text - use font measurement for accurate width
-		total += font.MeasureText(tab.Text)
+		total += t.MeasureText(tab.Text)
 
 		// Separator after tab: 4 if this or next tab is selected, else 2
 		sepWidth := 2
@@ -833,7 +832,7 @@ func (t *TabTrinket) paintTabShape(p *core.Painter, rowY, stripW, leadX, trailX,
 // number so the strip math connects.
 func (t *TabTrinket) overflowEllipsisWidth() core.Unit {
 	if core.FindSmoothPositioning(t.Self()) {
-		return t.EffectiveFont().MeasureText("...")
+		return t.MeasureText("...")
 	}
 	return t.EffectiveCellMetrics().TextWidth(3)
 }
@@ -879,7 +878,6 @@ func (t *TabTrinket) canScrollRight() bool {
 func (t *TabTrinket) isLastTabFullyVisible() bool {
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
 	if t.tabsNeedScrolling() {
@@ -949,7 +947,7 @@ func (t *TabTrinket) isLastTabFullyVisible() bool {
 			}
 		}
 		// Prefix and separator are decorative (cell-based), text is font-based
-		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 		x += tabSlotWidth
 
 		if x > availableWidth {
@@ -962,7 +960,7 @@ func (t *TabTrinket) isLastTabFullyVisible() bool {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
 				}
 				// nextIsSelected doesn't matter for last tab since there's no next tab
-				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 				essentialX := x - tabSlotWidth + essentialWidth
 				if essentialX <= availableWidth {
 					// Only non-essential trailing content cut off
@@ -1374,7 +1372,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 			sepWidth = 4 // " \_ " or " _/ "
 		}
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
-		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 
 		// For tabs with backslash/slash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
@@ -1384,7 +1382,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 		// We add 1 cell safety margin for boundary cases.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
-			textWidth := font.MeasureText(tab.Text)
+			textWidth := t.MeasureText(tab.Text)
 			var minCells core.Unit
 			if isSelected {
 				// Selected tabs: need 4 cells (space/> + backslash + 1 dot + margin) for ">\.."
@@ -1414,7 +1412,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				if isSelected {
 					essentialSepWidth = 2 // space/bracket + backslash are essential
 				}
-				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+				essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 				if x+essentialWidth <= availableWidth {
 					inGraceMargin = true
 				}
@@ -1483,11 +1481,11 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// normal path below).
 				graceStyle := s
 				if p.Graphical() && isSelected {
-					p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+					p.FillRect(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
 					graceStyle = s.WithBg(style.ColorTransparent)
 				}
 				p.DrawText(x, 0, tab.Text, graceStyle, font)
-				x += font.MeasureText(tab.Text)
+				x += t.MeasureText(tab.Text)
 				lastTextEndX = x // Track where text ends
 				lastSlashX = -1  // Reset slash tracking
 
@@ -1590,7 +1588,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				// When forcing internal ellipsis, ensure we actually truncate the text
 				// (don't show complete text followed by "..." which looks like external ellipsis)
 				if forceInternalEllipsis {
-					fullTextWidth := font.MeasureText(tab.Text)
+					fullTextWidth := t.MeasureText(tab.Text)
 					if maxTextWidth >= fullTextWidth {
 						// Reduce to force at least some truncation
 						maxTextWidth = fullTextWidth - metrics.CellWidth
@@ -1605,7 +1603,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 				charsToShow := 0
 				currentWidth := core.Unit(0)
 				for j, ch := range textRunes {
-					charWidth := font.MeasureText(string(ch))
+					charWidth := t.MeasureText(string(ch))
 					if currentWidth+charWidth > maxTextWidth {
 						break
 					}
@@ -1620,11 +1618,11 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 					// ellipsis/separator can't leak the bar color (pixel surfaces).
 					partStyle := s
 					if p.Graphical() && isSelected {
-						p.FillRect(core.UnitRect{X: x, Y: 0, Width: font.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+						p.FillRect(core.UnitRect{X: x, Y: 0, Width: t.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
 						partStyle = s.WithBg(style.ColorTransparent)
 					}
 					p.DrawText(x, 0, partialText, partStyle, font)
-					x += font.MeasureText(partialText)
+					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
 					lastTabStyle = s
@@ -1721,7 +1719,7 @@ func (t *TabTrinket) paintTopTabs(p *core.Painter, bounds core.UnitRect, scheme 
 
 		// Draw tab text using font-aware rendering
 		textStartX := x
-		textWidth := font.MeasureText(tab.Text)
+		textWidth := t.MeasureText(tab.Text)
 		// Solid tab-color foundation under the label and its trailing cell, so
 		// the sub-pixel seam between the proportional label (unsnapped rate)
 		// and the cell-based separator (cell rate) can't show the bar color
@@ -2088,7 +2086,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 			sepWidth = 3 // "_/ " or " \_"
 		}
 		// Calculate tab width: prefix and separator are cell-based, text uses font measurement
-		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 
 		// For tabs with slash/backslash separator when scrolling is needed, check if we can fit
 		// the minimum external ellipsis. If not, we must force internal ellipsis (truncate the text)
@@ -2098,7 +2096,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		// We use minCells = 4 to give a 1-cell safety margin for boundary cases.
 		forceInternalEllipsis := false
 		if needsScrolling && (isSelected || nextIsSelected) && tabIndex != len(t.tabs)-1 {
-			textWidth := font.MeasureText(tab.Text)
+			textWidth := t.MeasureText(tab.Text)
 			// Need separator char + slash/backslash + at least 1 dot + safety margin
 			// isSelected: _ + / + 1 dot + margin = 4
 			// nextIsSelected: space + \ + 1 dot + margin = 4
@@ -2180,7 +2178,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				// When forcing internal ellipsis, ensure we actually truncate the text
 				// (don't show complete text followed by "..." which looks like external ellipsis)
 				if forceInternalEllipsis {
-					fullTextWidth := font.MeasureText(tab.Text)
+					fullTextWidth := t.MeasureText(tab.Text)
 					if maxTextWidth >= fullTextWidth {
 						// Reduce to force at least some truncation
 						maxTextWidth = fullTextWidth - metrics.CellWidth
@@ -2195,7 +2193,7 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 				charsToShow := 0
 				currentWidth := core.Unit(0)
 				for j, ch := range textRunes {
-					charWidth := font.MeasureText(string(ch))
+					charWidth := t.MeasureText(string(ch))
 					if currentWidth+charWidth > maxTextWidth {
 						break
 					}
@@ -2209,11 +2207,11 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 					partialText := string(textRunes[:charsToShow])
 					bpartStyle := s
 					if p.Graphical() && isSelected {
-						p.FillRect(core.UnitRect{X: x, Y: tabY, Width: font.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+						p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(partialText) + metrics.CellWidth, Height: tabHeight}, ' ', s)
 						bpartStyle = s.WithBg(style.ColorTransparent)
 					}
 					p.DrawText(x, tabY, partialText, bpartStyle, font)
-					x += font.MeasureText(partialText)
+					x += t.MeasureText(partialText)
 					lastTextEndX = x
 					lastSlashX = -1 // Reset - no separator drawn in truncation path
 					lastTabWasSelected = false
@@ -2316,11 +2314,11 @@ func (t *TabTrinket) paintBottomTabs(p *core.Painter, bounds core.UnitRect, sche
 		// size (mirrors the top-tab path).
 		btextStyle := s
 		if p.Graphical() && isSelected {
-			p.FillRect(core.UnitRect{X: x, Y: tabY, Width: font.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
+			p.FillRect(core.UnitRect{X: x, Y: tabY, Width: t.MeasureText(tab.Text) + metrics.CellWidth, Height: tabHeight}, ' ', s)
 			btextStyle = s.WithBg(style.ColorTransparent)
 		}
 		p.DrawText(x, tabY, tab.Text, btextStyle, font)
-		x += font.MeasureText(tab.Text)
+		x += t.MeasureText(tab.Text)
 		lastTextEndX = x // Track where text ends
 		lastSlashX = -1  // Reset slash tracking
 		lastTabWasSelected = false
@@ -2597,12 +2595,12 @@ func (t *TabTrinket) paintLeftTabs(p *core.Painter, bounds core.UnitRect, scheme
 
 		// Truncate text if it doesn't fit
 		displayText := tab.Text
-		if font.MeasureText(displayText) > maxTextWidth {
+		if t.MeasureText(displayText) > maxTextWidth {
 			// Find how many characters fit
 			textRunes := []rune(tab.Text)
 			currentWidth := core.Unit(0)
 			for j, ch := range textRunes {
-				charWidth := font.MeasureText(string(ch))
+				charWidth := t.MeasureText(string(ch))
 				if currentWidth+charWidth > maxTextWidth {
 					displayText = string(textRunes[:j])
 					break
@@ -2682,12 +2680,12 @@ func (t *TabTrinket) paintRightTabs(p *core.Painter, bounds core.UnitRect, schem
 
 		// Truncate text if it doesn't fit
 		displayText := tab.Text
-		if font.MeasureText(displayText) > maxTextWidth {
+		if t.MeasureText(displayText) > maxTextWidth {
 			// Find how many characters fit
 			textRunes := []rune(tab.Text)
 			currentWidth := core.Unit(0)
 			for j, ch := range textRunes {
-				charWidth := font.MeasureText(string(ch))
+				charWidth := t.MeasureText(string(ch))
 				if currentWidth+charWidth > maxTextWidth {
 					displayText = string(textRunes[:j])
 					break
@@ -3035,7 +3033,6 @@ func (t *TabTrinket) HandleMousePress(event core.MousePressEvent) bool {
 
 func (t *TabTrinket) handleTabBarClick(x core.Unit) {
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 	bounds := t.Bounds()
 
 	// Check if clicking on left ellipse (scroll left by one and select that tab)
@@ -3147,7 +3144,7 @@ func (t *TabTrinket) handleTabBarClick(x core.Unit) {
 			}
 		}
 		// Prefix and separator are decorative (cell-based), text is font-based
-		textWidth := font.MeasureText(tab.Text)
+		textWidth := t.MeasureText(tab.Text)
 		tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + textWidth
 
 		// Check if this tab doesn't fully fit (partial tab with ellipsis)
@@ -3269,7 +3266,6 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 	// Check if tab is fully visible
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	font := t.EffectiveFont()
 
 	scrollButtonsWidth := core.Unit(0)
 	if t.tabsNeedScrolling() {
@@ -3345,7 +3341,7 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 				}
 			}
 			// Prefix and separator are decorative (cell-based), text is font-based
-			tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+			tabSlotWidth := core.Unit(prefixWidth+sepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 			x += tabSlotWidth
 
 			if i == index && x > availableWidth {
@@ -3357,7 +3353,7 @@ func (t *TabTrinket) ensureTabFullyVisible(index int) {
 					if isSelected {
 						essentialSepWidth = 2 // space/bracket + backslash are essential
 					}
-					essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + font.MeasureText(tab.Text)
+					essentialWidth := core.Unit(prefixWidth+essentialSepWidth)*metrics.CellWidth + t.MeasureText(tab.Text)
 					essentialX := x - tabSlotWidth + essentialWidth
 					if essentialX <= availableWidth {
 						// Essential content fits - consider it as fitting
