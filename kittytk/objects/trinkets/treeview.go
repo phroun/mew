@@ -747,7 +747,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 		if availableWidth < 0 {
 			availableWidth = 0
 		}
-		p.DrawText(x, itemY, ellipsizeText(font, item.Text, availableWidth), s, font)
+		p.DrawText(x, itemY, ellipsizeText(font, t.EffectiveCellMetrics(), item.Text, availableWidth), s, font)
 	}
 
 	// Draw scrollbar if needed

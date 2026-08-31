@@ -32,11 +32,11 @@ func TestEllipsizeText(t *testing.T) {
 	d.SetBackend(b)
 	font := d.EffectiveFont()
 
-	if got := ellipsizeText(font, "short", 400); got != "short" {
+	if got := ellipsizeText(font, core.DefaultCellMetrics(), "short", 400); got != "short" {
 		t.Errorf("fitting text changed: %q", got)
 	}
 	long := "a rather long caption"
-	got := ellipsizeText(font, long, 60)
+	got := ellipsizeText(font, core.DefaultCellMetrics(), long, 60)
 	if !strings.HasSuffix(got, "…") {
 		t.Errorf("graphical ellipsis missing: %q", got)
 	}
@@ -44,7 +44,7 @@ func TestEllipsizeText(t *testing.T) {
 		t.Errorf("ellipsized text still overflows: %q", got)
 	}
 	// Rune safety: multibyte text must not split mid-rune.
-	got = ellipsizeText(font, "ααααααααααααααα", 40)
+	got = ellipsizeText(font, core.DefaultCellMetrics(), "ααααααααααααααα", 40)
 	for _, r := range got {
 		if r == '�' {
 			t.Errorf("mid-rune split: %q", got)

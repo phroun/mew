@@ -986,13 +986,14 @@ func (t *TreeView) columnLayout() treeColLayout {
 func (t *TreeView) neededCells(col *TreeColumn) int {
 	font := t.EffectiveFont()
 	cw := t.EffectiveCellMetrics().CellWidth
-	maxW := font.MeasureText(col.Caption)
+	metrics := t.EffectiveCellMetrics()
+	maxW := font.MeasureTextIn(col.Caption, metrics)
 	if t.sortIndicatorFor(col) {
-		maxW += font.MeasureText(" ▲")
+		maxW += font.MeasureTextIn(" ▲", metrics)
 	}
 	host := t.treeHostColumn() == col // carries expander + indent
 	for _, it := range t.flatList {
-		w := font.MeasureText(col.displayValue(it.Value(col.ID)))
+		w := font.MeasureTextIn(col.displayValue(it.Value(col.ID)), metrics)
 		if host {
 			w += core.Unit(it.Level()*t.indentWidth+1+treeLeftPadCells) * cw
 		}
@@ -1144,7 +1145,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, "right")
 				// Keep the caption clear of the arrow.
 				capSp := sp
-				if room := font.MeasureText(arrow) + metrics.CellWidth; capSp.w > room {
+				if room := t.MeasureText(arrow) + metrics.CellWidth; capSp.w > room {
 					capSp.w -= room
 				}
 				t.drawAligned(cp, caption, capSp, 0, headerStyle, font, "left")
@@ -1310,7 +1311,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			// content, like a real combo box's arrow).
 			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
 				arrow := "▼"
-				ax := targetSegX + targetSegW - font.MeasureText(arrow)
+				ax := targetSegX + targetSegW - t.MeasureText(arrow)
 				if p.Graphical() {
 					ax -= 2
 				}
@@ -1547,14 +1548,18 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	if avail < 0 {
 		avail = 0
 	}
-	p.DrawText(x, itemY, ellipsizeText(font, text, avail), textStyle, font)
+	p.DrawText(x, itemY, ellipsizeText(font, t.EffectiveCellMetrics(), text, avail), textStyle, font)
 }
 
 // ellipsizeText fits text into avail, replacing a cut tail with an
 // ellipsis - "…" on pixel surfaces, the project's text-mode "..." on
 // cells. Rune-safe; returns the text unchanged when it already fits.
-func ellipsizeText(font *core.Font, text string, avail core.Unit) string {
-	if font.MeasureText(text) <= avail {
+//
+// avail is in the caller's units, so m is the caller's cell metrics: text
+// measured at one denomination and compared against room counted at another
+// cuts in the wrong place.
+func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.Unit) string {
+	if font.MeasureTextIn(text, m) <= avail {
 		return text
 	}
 	// The REAL ellipsis rune in both modes: in TUI it costs one cell
@@ -1562,9 +1567,9 @@ func ellipsizeText(font *core.Font, text string, avail core.Unit) string {
 	// Project-wide unification/configurability of this pattern is a
 	// planned later step.
 	ell := "…"
-	ellW := font.MeasureText(ell)
+	ellW := font.MeasureTextIn(ell, m)
 	runes := []rune(text)
-	for len(runes) > 0 && font.MeasureText(string(runes))+ellW > avail {
+	for len(runes) > 0 && font.MeasureTextIn(string(runes), m)+ellW > avail {
 		runes = runes[:len(runes)-1]
 	}
 	if len(runes) == 0 {
@@ -1585,8 +1590,8 @@ func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.
 	if avail < 0 {
 		avail = 0
 	}
-	text = ellipsizeText(font, text, avail)
-	tw := font.MeasureText(text)
+	text = ellipsizeText(font, metrics, text, avail)
+	tw := t.MeasureText(text)
 	x := sp.x
 	switch align {
 	case "right":

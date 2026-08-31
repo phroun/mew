@@ -477,15 +477,12 @@ func (l *ListView) Paint(p *core.Painter) {
 			x += metrics.CellWidth * 2
 		}
 
-		// Draw text using font-aware rendering
+		// Draw text, ellipsized to the room left beside the indicator and
+		// the icon -- through the same function the tree cuts its cells
+		// with, rather than a second way of doing it here.
 		font := l.EffectiveFont()
 		availableWidth := bounds.Width - x
-		displayText := item.Text
-		// Truncate if needed
-		for l.MeasureText(displayText) > availableWidth && len(displayText) > 0 {
-			displayText = displayText[:len(displayText)-1]
-		}
-		p.DrawText(x, itemY, displayText, s, font)
+		p.DrawText(x, itemY, ellipsizeText(font, metrics, item.Text, availableWidth), s, font)
 	}
 
 	// Vertical edge fades over the content (under the scrollbar).

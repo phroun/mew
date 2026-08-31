@@ -736,8 +736,8 @@ func (t *TreeView) treeCellEditZone(sp colSpan, item *TreeItem) (x0, w core.Unit
 		text = sp.col.displayValue(item.Value(sp.col.ID))
 	}
 	font := t.EffectiveFont()
-	shown := strings.TrimSuffix(ellipsizeText(font, text, avail), "…")
-	zone := font.MeasureText(shown)
+	shown := strings.TrimSuffix(ellipsizeText(font, metrics, text, avail), "…")
+	zone := t.MeasureText(shown)
 	if min := 2 * metrics.CellWidth; zone < min {
 		zone = min
 	}
