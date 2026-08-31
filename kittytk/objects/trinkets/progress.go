@@ -168,17 +168,13 @@ func (p *ProgressBar) Advance(amount int) {
 	p.SetValue(p.value + amount)
 }
 
-// SizeHint returns the preferred size.
-// progressBarWidthUnits is the width a horizontal bar asks for when nothing
-// sets one, in units. see textInputWidthUnits.
-const progressBarWidthUnits core.Unit = 1
-
-// SizeHint returns the preferred size.
+// SizeHint returns the preferred size. A horizontal bar's width is the
+// fallback for when nothing sets one (see defaultSizeCells).
 func (p *ProgressBar) SizeHint() core.UnitSize {
 	metrics := p.EffectiveCellMetrics()
 	if p.orientation == core.Horizontal {
 		return core.UnitSize{
-			Width:  progressBarWidthUnits,
+			Width:  metrics.CellWidth * defaultSizeCells,
 			Height: metrics.TextHeight(1),
 		}
 	}

@@ -6,25 +6,29 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// A list's width is a layout width: a count of denomination units, the same
-// number whatever the list holds and whatever face it draws with. It went
-// through Font.MeasureRunes -- thirty characters at eight units each, sixteen
-// for the double-width demo face -- which is a text measurement, and a layout
-// width is not text.
-func TestListViewWidthIsAUnitCount(t *testing.T) {
+// The size a list asks for when nothing sets one is three cells each way, in
+// the denomination of the surface it is painted on -- so it is the same
+// physical size whatever that denomination is, and it does not depend on the
+// face or on what the list holds. It used to be Font.MeasureRunes(30): a text
+// measurement, fixed at eight units per character, for a quantity that is
+// neither text nor a fixed unit count.
+func TestListViewAsksForThreeCellsWhenNothingSetsASize(t *testing.T) {
 	for _, m := range capDenominations {
 		l := NewListView()
 		l.SetCellMetrics(&m)
-		if got := l.SizeHint().Width; got != listViewWidthUnits {
-			t.Errorf("at %dx%d the list asks for %d units, want %d",
-				m.CellWidth, m.CellHeight, got, listViewWidthUnits)
+		got := l.SizeHint()
+		if got.Width != m.CellWidth*3 || got.Height != m.CellHeight*3 {
+			t.Errorf("at %dx%d the list asks for %dx%d units, want %dx%d",
+				m.CellWidth, m.CellHeight, got.Width, got.Height,
+				m.CellWidth*3, m.CellHeight*3)
 		}
 	}
-	// The face is not part of it either.
+	// The face is not part of it.
 	l := NewListView()
 	l.SetFont(core.FontTuesday12)
-	if got := l.SizeHint().Width; got != listViewWidthUnits {
-		t.Errorf("in Tuesday the list asks for %d units, want %d", got, listViewWidthUnits)
+	if got := l.SizeHint().Width; got != core.DefaultCellMetrics().CellWidth*3 {
+		t.Errorf("in Tuesday the list asks for %d units, want %d",
+			got, core.DefaultCellMetrics().CellWidth*3)
 	}
 }
 

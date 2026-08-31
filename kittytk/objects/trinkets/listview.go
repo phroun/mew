@@ -393,17 +393,13 @@ func (l *ListView) ensureVisible(index int) {
 	}
 }
 
-// listViewWidthUnits is the width a list asks for when nothing sets one, in
-// units. Still the old arbitrary 240 while the rest went to 1 (see
-// textInputWidthUnits): 0_listview_fontsize_proof_test.go asserts this
-// default is 30 cells, and that test is not mine to reinterpret.
-const listViewWidthUnits core.Unit = 240
-
-// SizeHint returns the preferred size: the width it asks for, and ten rows.
+// SizeHint returns the size a list asks for when nothing sets one: three
+// cells each way, in this surface's denomination (see defaultSizeCells).
 func (l *ListView) SizeHint() core.UnitSize {
+	metrics := l.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  listViewWidthUnits,
-		Height: l.EffectiveCellMetrics().TextHeight(10),
+		Width:  metrics.CellWidth * defaultSizeCells,
+		Height: metrics.CellHeight * defaultSizeCells,
 	}
 }
 

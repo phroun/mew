@@ -549,19 +549,13 @@ func (t *TextInput) ensureCursorVisible() {
 // SizeHint returns the preferred size.
 // textInputWidthUnits is the width a field asks for when nothing sets one,
 // in units.
-//
-// There is no width a field wants. The number is a fallback for the case
-// where nobody said, so it only has to be a number, and 1 says that rather
-// than dressing up an arbitrary one as a measurement. The trinkets that
-// size themselves this way -- a bar, a tree, a tab strip, a scroll area, a
-// panel with no layout -- all read the same.
-const textInputWidthUnits core.Unit = 1
-
-// SizeHint returns the preferred size: the width it asks for, and one row.
+// SizeHint returns the preferred size: the fallback width for when nothing
+// sets one (see defaultSizeCells), and one row.
 func (t *TextInput) SizeHint() core.UnitSize {
+	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  textInputWidthUnits,
-		Height: t.EffectiveCellMetrics().TextHeight(1),
+		Width:  metrics.CellWidth * defaultSizeCells,
+		Height: metrics.TextHeight(1),
 	}
 }
 

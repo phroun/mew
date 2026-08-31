@@ -11,10 +11,10 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// A ListView's default width is "30 characters" = 30 cells of the 8-wide
-// denomination = 240 units, at every font_size (font_size scales the
+// A ListView's default width is 3 cells = 24 units of the 8-wide
+// denomination, at every font_size (font_size scales the
 // pixels of those units, not the count). Render at 6pt and 12pt and
-// assert the box is 30 cells wide at either size (and physically larger
+// assert the box is 3 cells wide at either size (and physically larger
 // at 12pt, visible in the PNGs).
 func TestListViewWidthTracksFontSize(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
@@ -53,12 +53,12 @@ func TestListViewWidthTracksFontSize(t *testing.T) {
 		t.Logf("font_size=%d cell=%+v hint.Width=%d (%d cells) -> %s",
 			size, m, hint.Width, widthCells[size], out)
 	}
-	// ~30 cells wide at both sizes (not a fixed unit width).
+	// ~3 cells wide at both sizes (not a fixed unit width).
 	if widthCells[6] != widthCells[12] {
 		t.Errorf("ListView width in cells changed with font_size: 6pt=%d 12pt=%d cells",
 			widthCells[6], widthCells[12])
 	}
-	if widthCells[12] != 30 {
-		t.Errorf("ListView width = %d cells, want 30", widthCells[12])
+	if widthCells[12] != 3 {
+		t.Errorf("ListView width = %d cells, want 3", widthCells[12])
 	}
 }
