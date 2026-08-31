@@ -393,12 +393,14 @@ func (l *ListView) ensureVisible(index int) {
 	}
 }
 
-// SizeHint returns the preferred size.
+// listViewWidthUnits is the width a list asks for, in units.
+const listViewWidthUnits core.Unit = 240
+
+// SizeHint returns the preferred size: the width it asks for, and ten rows.
 func (l *ListView) SizeHint() core.UnitSize {
-	metrics := l.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  l.EffectiveFont().MeasureRunesIn(30, metrics), // 30 chars wide
-		Height: metrics.TextHeight(10),                        // 10 items visible
+		Width:  listViewWidthUnits,
+		Height: l.EffectiveCellMetrics().TextHeight(10),
 	}
 }
 

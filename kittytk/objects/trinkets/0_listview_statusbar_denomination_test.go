@@ -6,16 +6,26 @@ import (
 	"github.com/phroun/kittytk/core"
 )
 
-// A list view asks for thirty characters' width, and a character is one cell
-// -- so the number is however many units make thirty cells, in the list's own
-// denomination. Font.MeasureRunes fixes a rune at eight units (sixteen for the
-// double-width demo face), which is only right at 8x16.
-func TestListViewAsksForThirtyCharactersAtEveryDenomination(t *testing.T) {
-	sameWidthAtEveryDenomination(t, "list view", func(m core.CellMetrics) core.Trinket {
+// A list's width is a layout width: a count of denomination units, the same
+// number whatever the list holds and whatever face it draws with. It went
+// through Font.MeasureRunes -- thirty characters at eight units each, sixteen
+// for the double-width demo face -- which is a text measurement, and a layout
+// width is not text.
+func TestListViewWidthIsAUnitCount(t *testing.T) {
+	for _, m := range capDenominations {
 		l := NewListView()
 		l.SetCellMetrics(&m)
-		return l
-	})
+		if got := l.SizeHint().Width; got != listViewWidthUnits {
+			t.Errorf("at %dx%d the list asks for %d units, want %d",
+				m.CellWidth, m.CellHeight, got, listViewWidthUnits)
+		}
+	}
+	// The face is not part of it either.
+	l := NewListView()
+	l.SetFont(core.FontTuesday12)
+	if got := l.SizeHint().Width; got != listViewWidthUnits {
+		t.Errorf("in Tuesday the list asks for %d units, want %d", got, listViewWidthUnits)
+	}
 }
 
 // An item too long for the list is cut back until it fits the width left

@@ -30,24 +30,3 @@ func TestMeasureRunesIsFontSizeInvariant(t *testing.T) {
 		}
 	}
 }
-
-// MeasureRunesIn is MeasureRunes at the default denomination, which is the
-// only place the two are asked the same question: a rune is one cell, and a
-// cell is eight units there.
-func TestMeasureRunesInMatchesMeasureRunesAtTheDefault(t *testing.T) {
-	for _, f := range []*Font{
-		nil,
-		DefaultFont(),
-		FontMonday12,
-		FontTuesday12,
-		{Name: "ui-text", Size: 12},
-	} {
-		for _, n := range []int{0, 1, 2, 7, 30, 40} {
-			want := f.MeasureRunes(n)
-			if got := f.MeasureRunesIn(n, DefaultCellMetrics()); got != want {
-				t.Errorf("%v: MeasureRunesIn(%d, 8x16) = %d, MeasureRunes(%d) = %d",
-					f, n, got, n, want)
-			}
-		}
-	}
-}
