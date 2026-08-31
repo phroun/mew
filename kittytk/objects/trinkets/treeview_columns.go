@@ -1298,15 +1298,18 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			cp := p.WithClip(clip)
 			// A CHOICE Enter-target advertises its editor with the
 			// combo's down arrow at the right of the highlight, so the
-			// value is drawn in what is left BESIDE it -- the same
-			// reservation a sortable header makes for its sort arrow.
-			// Drawn to the full span it was the arrow that overlapped,
-			// since the arrow goes on afterwards.
+			// value is drawn in what is left BESIDE it. Drawn to the
+			// full span the arrow landed on the value instead.
+			//
+			// The room is " ▼" -- the arrow and one space before it,
+			// exactly what a real ComboBox holds back for its own arrow,
+			// so a cell reads the same whether the tree is drawing the
+			// hint or the editor is up over it.
 			choiceArrow := ""
 			textSp := sp
 			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
-				choiceArrow = "▼"
-				if room := t.MeasureText(choiceArrow) + metrics.CellWidth; textSp.w > room {
+				choiceArrow = choiceArrowGlyph
+				if room := t.choiceArrowRoom(); textSp.w > room {
 					textSp.w -= room
 				}
 			}
@@ -1754,6 +1757,19 @@ func (t *TreeView) chooserPopupID() string {
 // out in them -- not in the tree's, which is whatever the container holding
 // the tree re-denominated to. The controller's mapping is the only
 // conversion on offer, so one of this tree's cells is measured through it.
+// choiceArrowGlyph is the down arrow a CHOICE cell shows on the Enter target
+// to advertise its editor.
+const choiceArrowGlyph = "▼"
+
+// choiceArrowRoom is what a CHOICE cell holds back at its right for that
+// arrow: the arrow and one space before it, which is exactly what a ComboBox
+// holds back for its own. The two have to agree -- the same cell shows the
+// tree's hint at rest and a real ComboBox once the editor is up, and a value
+// that fits under one must fit under the other.
+func (t *TreeView) choiceArrowRoom() core.Unit {
+	return t.MeasureText(" " + choiceArrowGlyph)
+}
+
 func (t *TreeView) popupMetrics(pc core.PopupController) core.CellMetrics {
 	local := t.EffectiveCellMetrics()
 	origin := pc.MapToScreen(t.Self(), core.UnitPoint{})
