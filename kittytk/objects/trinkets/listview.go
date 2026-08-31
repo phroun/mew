@@ -39,8 +39,8 @@ type ListView struct {
 	selectedItems map[int]bool
 
 	// Appearance
-	alternateRowColors bool
-	showIcons          bool
+	ledger    bool
+	showIcons bool
 
 	// Mouse state
 	isDragging            bool
@@ -346,18 +346,12 @@ func (l *ListView) ClearSelection() {
 	}
 }
 
-// SetAlternateRowColors sets whether to use alternate row colors.
-func (l *ListView) SetAlternateRowColors(alternate bool) {
-	l.alternateRowColors = alternate
-	l.Update()
-}
-
 // SetLedger turns ledger banding on: non-selected rows alternate the
 // scheme's LedgerOdd/LedgerEven colors (1-based: the first row is
 // odd). Selection colors are untouched, and the blank area below the
 // last item keeps the plain list background.
 func (l *ListView) SetLedger(on bool) {
-	l.alternateRowColors = on
+	l.ledger = on
 	l.Update()
 }
 
@@ -443,7 +437,7 @@ func (l *ListView) Paint(p *core.Painter) {
 			} else {
 				s = scheme.GetSelectedListItem()
 			}
-		} else if l.alternateRowColors {
+		} else if l.ledger {
 			// Ledger banding (non-selected rows only), 1-based: the
 			// first row is odd.
 			if itemIndex%2 == 0 {

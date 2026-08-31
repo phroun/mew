@@ -3279,6 +3279,10 @@ type termMenuItem struct {
 	separator bool
 	action    func()
 	checked   func() bool
+	// disabled greys the item and makes it inert. An item a trinket cannot
+	// actually perform is better shown and refused than offered and silently
+	// ignored -- the second teaches the reader the menu lies.
+	disabled bool
 }
 
 func (t *PurfecTerm) contextMenuItems() []termMenuItem {

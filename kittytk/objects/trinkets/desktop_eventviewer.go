@@ -80,7 +80,9 @@ func (v *eventViewer) build() core.Trinket {
 		{ID: "text", Caption: "Text", Width: 8, Resizable: true, Optional: true},
 		{ID: "detail", Caption: "Detail", Width: 40, Resizable: true, Optional: true},
 	} {
-		v.tree.AddColumn(c)
+		// The ids are the literal above and all differ, so the only error
+		// AddColumn returns cannot arise here.
+		_ = v.tree.AddColumn(c)
 	}
 
 	// Mouse motion alone produces an event per pixel of travel, which buries

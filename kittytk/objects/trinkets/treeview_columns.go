@@ -198,10 +198,21 @@ parse:
 
 // --- TreeView column API ---
 
-// AddColumn appends a data column.
-func (t *TreeView) AddColumn(c *TreeColumn) {
+// AddColumn appends a data column. The ID must be one no column already
+// carries, blank included: cell values live in a map keyed by it
+// (TreeItem.SetValue), so two columns sharing an ID share one value per
+// item -- both cells show whatever was written last, and neither can hold
+// anything of its own. A column that wants no data of its own still needs
+// an ID nothing else uses.
+func (t *TreeView) AddColumn(c *TreeColumn) error {
+	if taken := t.ColumnByID(c.ID); taken != nil {
+		return fmt.Errorf("column id %q is already declared (as %q); "+
+			"columns sharing an id share one cell value per item",
+			c.ID, taken.Caption)
+	}
 	t.columns = append(t.columns, c)
 	t.Update()
+	return nil
 }
 
 // Columns returns the data columns (declared order, including hidden).

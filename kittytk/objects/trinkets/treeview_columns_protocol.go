@@ -104,15 +104,20 @@ func (c *wireColumn) refresh() {
 	}
 }
 
-// bind adopts the record into a treeview.
-func (c *wireColumn) bind(view *TreeView) {
+// bind adopts the record into a treeview. It fails when the id is one the
+// view already carries, so a client hears about the collision rather than
+// getting a column that shares another's cell values.
+func (c *wireColumn) bind(view *TreeView) error {
 	col := c.col // copy the accumulated definition
-	view.AddColumn(&col)
+	if err := view.AddColumn(&col); err != nil {
+		return err
+	}
 	c.live = &col
 	c.view = view
 	for _, cell := range c.cells {
 		cell.apply(c)
 	}
+	return nil
 }
 
 // wireCell is one column-major data value: item=<wire id> value="...".
@@ -245,7 +250,8 @@ func init() {
 				}
 				c.target().ID = w
 				return nil
-			})).Tip("Stable key cell values are stored under."),
+			})).Tip("Stable key cell values are stored under. Must differ from " +
+				"every other column's on the same treeview, blank included."),
 			"caption":   colString("caption", func(c *TreeColumn, s string) { c.Caption = s }).Tip("Header caption."),
 			"width":     colInt("width", func(c *TreeColumn, n int) { c.Width = n }).Tip("Width in text cells.").Def("8"),
 			"min_width": colInt("min_width", func(c *TreeColumn, n int) { c.MinWidth = n }).Tip("Minimum width in text cells.").Def("3"),

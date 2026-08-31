@@ -35,7 +35,7 @@ captions/text labels, `placeholder`, `wrap`, `tristate`, `checkable`,
 `max_length`, min/max sizes, `stretch`/`align` layout hints, fonts,
 `column_units`/`row_units`, `fg`/`bg`, panel `border`/`border_style`/
 `layout`/`spacing`, splitter `orientation`/`caption`, tabs
-`position`/`movable`/`closable`, listview `alternate_rows`, treeview
+`position`/`movable`/`closable`, listview/treeview `ledger`, treeview
 `indent_width`, progress `minimum`/`maximum`/`caption`/
 `indeterminate`, spacer size, window `title` + behavior flags,
 messagebox `title`/`text`/`icon`/button set, menu structure

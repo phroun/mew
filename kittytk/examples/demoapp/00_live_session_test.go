@@ -13,8 +13,11 @@ package main
 
 import (
 	"net"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +28,58 @@ import (
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/style"
 )
+
+// surfacedKeys reads the script's top-level surfacing statements -- the
+// `name=path.to.thing` lines that lift a nested key to where a client can
+// address it. Derived rather than listed, so adding a tab and forgetting to
+// surface its keys fails here instead of shipping a tab that does nothing.
+var surfacingLine = regexp.MustCompile(`(?m)^([A-Za-z_]\w*)=([A-Za-z_]\w*(?:\.\w+)+)\s*$`)
+
+func surfacedKeys(script string) []string {
+	var out []string
+	for _, m := range surfacingLine.FindAllStringSubmatch(script, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// wiredNames reads the names one wiring function addresses -- ui.Object("x"),
+// ui.TextInput("x") and friends. Every one has to be a key that function's
+// build script surfaced, or the handle is inert.
+//
+// Scoped to a single function on purpose: wire.go wires several different
+// builds (the protocol window, an MDI child, a secondary window), each with a
+// UI of its own, and a name from one build is nothing to another.
+var wiredName = regexp.MustCompile(`\bui\.[A-Z]\w*\("([^"]+)"\)`)
+
+func wiredNames(t *testing.T, funcName string) []string {
+	t.Helper()
+	src, err := os.ReadFile("wire.go")
+	if err != nil {
+		t.Fatalf("reading wire.go: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (a *app) "+funcName+"(")
+	if start < 0 {
+		t.Fatalf("wire.go has no %s", funcName)
+	}
+	body = body[start:]
+	if end := strings.Index(body, "\n}\n"); end > 0 {
+		body = body[:end]
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range wiredName.FindAllStringSubmatch(body, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			out = append(out, m[1])
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s addresses no names; the scan is broken", funcName)
+	}
+	return out
+}
 
 // nullBackend is a headless RenderBackend.
 type nullBackend struct{ mu sync.Mutex }
@@ -117,15 +172,32 @@ func TestDemoBuildsOverService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build main: %v", err)
 	}
-	// The deep surfacing paths must have resolved (tabs -> splitter ->
-	// scrollarea -> mdipane -> panel -> label).
-	for _, key := range []string{
-		"w", "tabs", "binput", "wfont", "dfont", "grid",
-		"bgdef", "bggreen", "bggray", "sbgdef", "sbggreen", "sbggray",
-		"mdi", "mdistatus", "mdidock", "mb", "sb",
-	} {
+	// Two checks, because there are two ways to get this wrong and only one
+	// of them is a bad path.
+	//
+	// First: every surfacing statement in the script must resolve. This
+	// catches a path that names something that moved or was renamed.
+	surfaced := surfacedKeys(mainBuildScript())
+	if len(surfaced) < 20 {
+		t.Fatalf("found %d surfacing statements, expected the script to have many more", len(surfaced))
+	}
+	for _, key := range append(surfaced, "w", "tabs", "mb", "sb") {
 		if ui.ID(key) == 0 {
-			t.Errorf("surfaced id %q missing", key)
+			t.Errorf("surfaced id %q missing — the path it names does not resolve", key)
+		}
+	}
+
+	// Second, and the one that actually bites: every name the WIRING asks
+	// for must be surfaced. A name that is not resolves to id 0, and id 0 is
+	// quiet -- handle() skips the subscription without a word, so the events
+	// never arrive and Set goes nowhere. A whole tab can be wired to nothing
+	// and merely look inert. Reading the names out of wire.go is blunt, but
+	// it is the only thing that fails when someone adds a control and
+	// forgets to surface it, which is exactly how this test got written.
+	for _, name := range wiredNames(t, "wireMainWindow") {
+		if ui.ID(name) == 0 {
+			t.Errorf("wire.go addresses %q but the script never surfaces it: "+
+				"its handle is id 0, so nothing it sets or subscribes will happen", name)
 		}
 	}
 

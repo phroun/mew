@@ -550,27 +550,48 @@ Return =
 	if cfg.AcceleratorChord != "M-*" {
 		t.Errorf("accelerator_chord = %q, want M-*", cfg.AcceleratorChord)
 	}
-	for k, want := range map[string]string{
-		"M-F4":   "window_close",
-		"S-Tab":  "focus_prior",
-		"s-Tab":  "something_else",
-		"^K":     "block_menu",
-		"Minus":  "gui_scale_down",
-		"Return": "", // an empty value unbinds rather than being ignored
-	} {
-		got, ok := cfg.Mappings[k]
-		if !ok {
-			t.Errorf("missing binding for %q", k)
-			continue
-		}
-		if got != want {
-			t.Errorf("%q -> %q, want %q", k, got, want)
+	// One entry per line, in the order the file wrote them — the order is what
+	// says which of a key's meanings comes first and which of a command's keys
+	// a menu advertises, so the section is a list and not a map. Case is the
+	// difference between Shift and Super, so it survives; and an empty value
+	// arrives as an empty command rather than being dropped, which is how a
+	// file unbinds.
+	want := []core.Binding{
+		{Key: "M-F4", Commands: []string{"window_close"}},
+		{Key: "S-Tab", Commands: []string{"focus_prior"}},
+		{Key: "s-Tab", Commands: []string{"something_else"}},
+		{Key: "^K", Commands: []string{"block_menu"}},
+		{Key: "Minus", Commands: []string{"gui_scale_down"}},
+		{Key: "Return", Commands: []string{""}},
+	}
+	if len(cfg.Mappings) != len(want) {
+		t.Fatalf("read %d bindings, want %d: %+v", len(cfg.Mappings), len(want), cfg.Mappings)
+	}
+	for i := range want {
+		if cfg.Mappings[i].Key != want[i].Key || cfg.Mappings[i].Commands[0] != want[i].Commands[0] {
+			t.Errorf("binding %d = %q -> %q, want %q -> %q", i,
+				cfg.Mappings[i].Key, cfg.Mappings[i].Commands[0],
+				want[i].Key, want[i].Commands[0])
 		}
 	}
+}
 
-	// Case is the difference between Shift and Super, so it must survive.
-	if cfg.Mappings["S-Tab"] == cfg.Mappings["s-Tab"] {
-		t.Error("S-Tab and s-Tab collapsed; case distinguishes Shift from Super")
+// A key written more than once means more than one thing, in the order
+// written. A map could not have carried that, which is why the section is read
+// as a list.
+func TestApplyKeepsRepeatedKeysInOrder(t *testing.T) {
+	var cfg Config
+	apply([]byte("[mappings]\nSpace =\nSpace = trinket_type_space\nSpace = trinket_activate\n"), &cfg)
+
+	want := []string{"", "trinket_type_space", "trinket_activate"}
+	if len(cfg.Mappings) != len(want) {
+		t.Fatalf("read %d lines for Space, want %d: %+v", len(cfg.Mappings), len(want), cfg.Mappings)
+	}
+	for i, w := range want {
+		if cfg.Mappings[i].Key != "Space" || cfg.Mappings[i].Commands[0] != w {
+			t.Errorf("line %d = %q -> %q, want Space -> %q", i,
+				cfg.Mappings[i].Key, cfg.Mappings[i].Commands[0], w)
+		}
 	}
 }
 

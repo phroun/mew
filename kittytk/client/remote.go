@@ -161,7 +161,7 @@ type remoteTransport struct {
 	closeOnce sync.Once
 }
 
-func (t *remoteTransport) exec(src string) (*wire.Reply, error) {
+func (t *remoteTransport) Exec(src string) (*wire.Reply, error) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
 
@@ -179,7 +179,7 @@ func (t *remoteTransport) exec(src string) (*wire.Reply, error) {
 	return r.reply, r.err
 }
 
-func (t *remoteTransport) close() error {
+func (t *remoteTransport) Close() error {
 	var err error
 	t.closeOnce.Do(func() { err = t.nc.Close() })
 	return err
@@ -189,7 +189,7 @@ func (t *remoteTransport) close() error {
 // pending exec; events queue for the event goroutine.
 func (t *remoteTransport) readLoop() {
 	defer func() {
-		t.close()
+		t.Close()
 		close(t.replies)
 		close(t.events)
 		t.conn.markClosed()

@@ -5,7 +5,7 @@
 **We always develop client/server functionality.** No application built on
 this toolkit should reach the UI except through the display protocol
 (D10-D22): it builds and drives its interface as protocol text over a
-connection, whether that connection is in-process (`client.NewInProcess`)
+connection, whether that connection is in-process (`inprocess.New`)
 or a socket to a display service (`client.Dial`). New capabilities are
 added as protocol vocabulary (properties, verbs, handshake options) plus
 the host-side handling that services them - never as an in-process-only

@@ -242,6 +242,53 @@ new tab caption="Scroll Lists" children={
 	}
 }
 
+tf=new tab caption="Text Fields" children={
+	tfp=new panel layout=vbox spacing=0 children={
+		new label caption="Every option a textinput has, one per row."
+		tfrow=new panel layout=hbox spacing=8 children={
+			tfl=new panel layout=vbox spacing=0 stretch=1 children={
+				new label caption="Plain, with a placeholder:"
+				new textinput placeholder="Type here..."
+
+				new label caption="Pre-filled, from text=:"
+				new textinput text="already typed"
+
+				new label caption="readonly - selectable, not editable:"
+				new textinput text="you can copy this but not change it" readonly
+
+				new label caption="!enabled - not reachable at all:"
+				new textinput text="disabled" !enabled
+
+				new label caption="max_length=8 - stops accepting at 8:"
+				new textinput placeholder="8 max" max_length=8
+			}
+			tfr=new panel layout=vbox spacing=0 stretch=1 children={
+				new label caption="echo=password - masked with the default bullet:"
+				new textinput text="hunter2" echo=password
+
+				new label caption="echo=password mask=\"*\" - masked with a star:"
+				new textinput text="hunter2" echo=password mask="*"
+
+				new label caption="echo=none - accepts typing, shows nothing:"
+				new textinput text="invisible" echo=none
+
+				new label caption="Live: change fires per edit, complete on Return."
+				tfwatch=new textinput placeholder="Type, then press Return..."
+				tfecho=new label caption="(nothing yet)"
+
+				new label caption="Masked, and you choose the mask:"
+				tfmask=new textinput text="secret" echo=password
+				tfmrow=new panel layout=hbox spacing=8 children={
+					tfmb=new radiobutton caption="bullet" group=tfmaskg checked
+					tfms=new radiobutton caption="star" group=tfmaskg
+					tfmh=new radiobutton caption="hash" group=tfmaskg
+					tfmn=new radiobutton caption="show" group=tfmaskg
+				}
+			}
+		}
+	}
+}
+
 new tab caption="Progress" children={
 	new panel layout=vbox spacing=16 children={
 		new label caption="Horizontal Progress Bars:"
@@ -446,6 +493,13 @@ dpinl=w.t.det.dbox.drow.dpinl
 dpinr=w.t.det.dbox.drow.dpinr
 dledger=w.t.det.dbox.drow.dledger
 dlines=w.t.det.dbox.drow.dlines
+tfwatch=w.t.tf.tfp.tfrow.tfr.tfwatch
+tfecho=w.t.tf.tfp.tfrow.tfr.tfecho
+tfmask=w.t.tf.tfp.tfrow.tfr.tfmask
+tfmb=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmb
+tfms=w.t.tf.tfp.tfrow.tfr.tfmrow.tfms
+tfmh=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmh
+tfmn=w.t.tf.tfp.tfrow.tfr.tfmrow.tfmn
 binput=w.t.b.bw.brow.input
 wfont=w.t.s.o.sp.c.wfont
 dfont=w.t.s.o.sp.c.dfont

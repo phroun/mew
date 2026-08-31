@@ -187,15 +187,22 @@ type Config struct {
 	// entries resolve against the ini's directory.
 	FontsPath []string
 
-	// Mappings is the default key registry: a key or key sequence as the input
-	// layer reports it, mapped to the command it runs. Read from the
-	// [mappings] section, where — as in [fonts] — the names on the LEFT are
-	// DATA, so the section is read by section rather than by key name.
+	// Mappings is the host's keymap: a key or key sequence as the input layer
+	// reports it, and the command it runs, ONE PER LINE and IN THE ORDER THE
+	// FILE WROTE THEM. Read from the [mappings] section, where — as in [fonts]
+	// — the names on the LEFT are DATA, so the section is read by section
+	// rather than by key name.
 	//
 	// Keys keep their case: "S-Tab" and "s-Tab" are Shift-Tab and Super-Tab,
-	// two different chords. Order within the file is not significant; a later
-	// line for the same key replaces an earlier one.
-	Mappings map[string]string
+	// two different chords.
+	//
+	// The order is significant, which is why this is a list. A key written
+	// several times means several things, in the order written, and the same
+	// key written by two different lines is not a mistake to be resolved but a
+	// keymap saying what it means — see core.ApplyHostKeymap, and
+	// core.DefaultKeymapConfig, which is the toolkit's own keymap written in
+	// exactly this language.
+	Mappings []core.Binding
 
 	// DesktopFrame is how the graphical host's own OS window is framed, read
 	// from [window] desktop_frame:
@@ -345,6 +352,9 @@ func stripQuotes(s string) string {
 // stray typo never prevents the host from starting.
 func apply(data []byte, cfg *Config) {
 	section := ""
+	// [mappings] is collected verbatim and parsed in one go at the end, by the
+	// same reader that reads the toolkit's own default keymap.
+	var keymapText strings.Builder
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(strings.TrimRight(raw, "\r"))
 		if line == "" || line[0] == ';' || line[0] == '#' {
@@ -382,18 +392,13 @@ func apply(data []byte, cfg *Config) {
 			continue
 		}
 		// [mappings] is the other section whose keys are DATA — a key name, not
-		// a setting name — so it is read by section and the case is kept:
-		// "S-Tab" and "s-Tab" are two different chords. An empty value unbinds
-		// the key rather than being ignored, which is how a user turns a
-		// default off without having to know what it was.
+		// a setting name — so it is read by section. Its lines are collected
+		// VERBATIM and handed to core.ParseKeymap below rather than being read
+		// here: the toolkit's own default keymap is written in this same
+		// language, and one reader for both is what keeps them from drifting.
 		if section == "mappings" {
-			if origKey == "" {
-				continue
-			}
-			if cfg.Mappings == nil {
-				cfg.Mappings = map[string]string{}
-			}
-			cfg.Mappings[origKey] = stripQuotes(val)
+			keymapText.WriteString(line)
+			keymapText.WriteByte('\n')
 			continue
 		}
 		// Any ui_* key re-points the font alias ui-* (underscores -> hyphens) at
@@ -527,6 +532,9 @@ func apply(data []byte, cfg *Config) {
 			// [window] fonts_path: extra font search directories (comma list).
 			cfg.FontsPath = append(cfg.FontsPath, splitList(val)...)
 		}
+	}
+	if keymapText.Len() > 0 {
+		cfg.Mappings = append(cfg.Mappings, core.ParseKeymap(keymapText.String())...)
 	}
 }
 

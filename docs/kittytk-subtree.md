@@ -21,20 +21,52 @@ Remote (add once per clone):
 
 Push `kittytk-sync` to a fork of phroun/kittytk and open a PR.
 
+**If the checkout is shallow, `subtree split` is unavailable** — it needs the
+history. Take the content delta instead and apply it to a worktree at upstream
+`main`; `git diff` against a tree-ish needs no history at all:
+
+    git worktree add /tmp/ktsync -b kittytk-<tag> kittytk-upstream/main
+    git diff <base-tag> <our-branch>:kittytk -- . "${EXCL[@]}" > /tmp/up.diff
+    git -C /tmp/ktsync apply --check /tmp/up.diff
+
+where `EXCL` is one `':(exclude)<path>'` per fork-only and upstream-owned file
+(the awk above, plus `go.mod`, `go.sum`, `README.md`). Excluding by **pathspec**
+rather than by filtering the diff text is what keeps the two lists in one place.
+See the v0.1.29 record for the run that established this.
+
 **Before pushing, drop our fork-only files from the split branch** — they must
 never reach upstream, because mew's licence is more restrictive than the
 KittyTK base:
 
-    objects/trinkets/editor_mew*.go          (all //go:build mew — 18 files, source + tests)
-    objects/trinkets/editor_protocol_mew.go
+    every .go file whose name spells `mew` as an underscore-delimited word
     go.mod / go.sum      (the github.com/phroun/mew require and its deps)
 
-The fork-only set has grown well past the three files this list used to name.
-As of the **v0.1.7-alpha** sync it is **19 Go files**: every `editor_mew*.go`
-(the //go:build mew editor implementation and its tests) plus
-`editor_protocol_mew.go`. Regenerate the exact list any time with:
+**The name carries the boundary, and it is a word, not a prefix.** Our test
+files carry a `0_`/`00_` sort prefix (see [`TEST-NAMING.md`](../TEST-NAMING.md)),
+so `editor_mew*` as a glob — which is what this list used to say — misses
+`0_editor_mew_blink_test.go` and every other mew test outright, and sends them
+upstream to refer to symbols that do not exist there. Split the base name on
+`_` and look for `mew`:
 
-    grep -rIl '//go:build mew' kittytk/objects
+    find kittytk -name '*.go' | awk -F/ '{n=$NF; sub(/\.go$/,"",n); split(n,a,"_");
+      for (i in a) if (a[i]=="mew") { print; break }}'
+
+That is **30 Go files** as of this writing: `editor_mew.go` and its parts,
+`editor_protocol_mew.go`, and every test of them.
+
+`grep -rIl '//go:build mew' kittytk/objects` is NOT the list, though it is the
+right cross-check. It sweeps in `editor.go` and `editor_protocol.go` (whose
+constraint is `!mew`) and `editor_tag_assert.go`, which carries the tag and is
+**upstream's** — deliberately not named for the word, so that a sync carries it
+rather than dropping it.
+
+The two have to agree, so a test asserts it in both directions rather than
+leaving it to be remembered:
+
+    (cd kittytk && go test -tags mew -run ForkBoundary ./objects/trinkets/)
+
+It is the first thing to run before a split, and the reason a mew-owned file
+whose name does not spell the word cannot reach a sync unnoticed.
 
 Upstream ships the complementary `//go:build !mew` placeholders
 (`editor.go`, `editor_protocol.go`) implementing the same contract. Changes to
@@ -57,6 +89,65 @@ A split of our tree differs from upstream by exactly the fork-only files above
 (19 Go files as of v0.1.7) plus the go.mod mew require — zero deletions. The
 deletions cannot be proposed because upstream's content simply sits where
 upstream put it.
+
+### The v0.1.29 sync (record)
+
+v0.1.28-alpha -> **v0.1.29-alpha**, the largest delivery since the keymap arc,
+as PR [#47](https://github.com/phroun/kittytk/pull/47): 60 files, +3327/-653.
+The keymap written in the configuration language rather than existing twice;
+the SDL space bar named as a key; text-field modes and a `complete` event on
+the wire; the disabled/read-only interaction state live testing found wrong;
+`sub`/`unsub` validating event names; `ledger`; `menu` registered virtual; a
+treeview column id that is its own; the client shim reduced to the wire
+language; and the test-naming policy with the fork boundary it corrected.
+
+**A shallow clone has no `git subtree split`.** The container's mew checkout
+was shallow, so the documented split was unavailable. What worked instead, and
+is worth keeping as the fallback: take the content delta `v0.1.28-alpha ->
+mew-dev:kittytk`, exclude the fork boundary and the upstream-owned module
+files **by pathspec** rather than by filtering diff text —
+
+    mapfile -t EXCL < excludes.txt      # ':(exclude)<path>' per line
+    git diff v0.1.28-alpha mew-dev:kittytk -- . "${EXCL[@]}"
+
+— and apply that to a worktree at upstream `main`. It applied on the first
+`git apply --check`. Two things made that safe rather than lucky: `git diff`
+against a tree-ish needs no history, and `core/version.go` was **not in the
+delta at all** (both sides read 28), so the worktree kept upstream's own
+counter untouched instead of the patch fighting it.
+
+**Upstream had already run the counter ahead**, which changed what "v0.1.29"
+meant. `main` sat at `v0.1.28-alpha` plus exactly the `Build` 28->29 bump and
+three dep bumps (`direct-key-handler` v0.3.38, `key-sequence-processor`
+v0.1.11, `purfecterm` v0.2.55). Our vendored `go.mod` already carried those
+same three versions byte-identical, so **there was no dependency bump to
+send** and `go.mod`/`go.sum` went untouched in the PR; `const Build` stayed at
+29 because our work joined that release rather than moving it. The §2a rule
+reads "bump it by one from upstream's current value" — when upstream has
+already bumped, the answer is to leave it alone, not to add another.
+
+**Three shared-interface breaks** were called out in the cover note so
+upstream could sweep: `TreeView.AddColumn` grew an `error` return (source-
+compatible, since Go does not force a returned error to be consumed);
+`client.NewInProcess` is **gone** in favour of `inprocess.New` (the one hard
+break); and `client` gained an exported transport seam (`Transport`,
+`NewWithTransport`, `Conn.Deliver`, `Conn.Record`). `menu` becoming virtual is
+wire-visible too — `describe` now reports it as such.
+
+The resync back down was **pin-only, and unusually clean**: every shared file
+byte-identical to the tag except `core/version.go`, so the whole of it was
+`Build` 28 -> **29**, the root pin v0.1.28-alpha -> v0.1.29-alpha, and
+`app/go.mod`'s pin v0.1.26-alpha -> v0.1.29-alpha (it had lagged three
+releases, as in the v0.1.19 record). `go.sum` per module via `GOWORK=off go
+mod tidy`, which again left `kittytk/go.mod`'s `garland` indirect at v0.1.11
+where `go work sync` would have moved it. `app/go.mod`'s indirects caught up
+with the pin, and `kittytk/go.sum` shed twelve superseded intermediate
+versions. Verified at the **default `-mod=readonly`** with `GOWORK=off` per
+the v0.1.19 lesson, not just inside the workspace.
+
+The fork boundary is unchanged in substance and restated in form: the **30
+`mew`-named Go files** (the word, not the `editor_mew` prefix — see
+[`TEST-NAMING.md`](../TEST-NAMING.md)) plus go.mod's mew require.
 
 ### The v0.1.21 sync (record)
 

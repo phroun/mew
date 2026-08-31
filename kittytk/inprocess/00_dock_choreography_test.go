@@ -1,4 +1,4 @@
-package client_test
+package inprocess_test
 
 // The MDI dock choreography the demo uses, end to end. The subtle
 // part: minimize arrives as a UI-initiated event, but restoring over

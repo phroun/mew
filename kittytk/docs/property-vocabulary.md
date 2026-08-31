@@ -192,10 +192,12 @@ libraries decode it: Go `Conn.Describe()` → `protocol.Vocabulary`, Python
 |---|---|---|
 | `text` | string | The editable content (server-authoritative) |
 | `placeholder` | string | |
-| `cursor` | numeric | Caret position (rune index) |
-| `selection_start`, `selection_end` | numeric | |
-| `readonly` | flag | |
-| `mask` | flag or string | Password-style echo: bare = default mask char; `mask="*"` = explicit |
+| `readonly` | flag | Readable and selectable, not editable |
+| `max_length` | numeric | Longest content accepted, in runes; -1 is no limit |
+| `echo` | enum | `normal`, `password` (masked), `none` (paints nothing). A masked field reports itself as a password field to a screen reader |
+| `mask` | string | The single character `echo=password` paints per rune; blank restores the default bullet |
+| `cursor` | numeric | Caret position (rune index) — **not implemented**, see d2-read-audit C2/3 |
+| `selection_start`, `selection_end` | numeric | **not implemented**, same deferral |
 
 ### combobox
 | Property | Type | Notes |
@@ -211,7 +213,7 @@ libraries decode it: Go `Conn.Describe()` → `protocol.Vocabulary`, Python
 |---|---|---|
 | children of `item` | {} | Children block (D13); the shared virtual `item` carries `caption` + `expanded` and nests for trees — one type serves combobox rows, list rows, and tree nodes |
 | `selected` | numeric | Selection (visible-row index for trees) |
-| `alternate_rows` | flag | listview |
+| `ledger` | flag | Band non-selected rows in the scheme ledger colors; listview and treeview spell it the same |
 | `indent_width` | numeric | treeview |
 | `multi_select` | flag | (future) |
 
@@ -359,7 +361,11 @@ Menus are data trees (G6): `menubar` collects `menu`s; a `menu`
 collects `menuitem`s; a menuitem with menuitem children grows a
 submenu. Activation is the slice-1 seam — `action=` is the item's
 command ID, bound into the application registry when the app installs
-the bar; no closures cross the wire. Item properties:
+the bar; no closures cross the wire.
+
+All three are virtual (data records), so they carry the properties below
+and no common ones. Surface a nested key (`fmid=bar.fm`) to get an id back
+and address a menu or an item later. Item properties:
 
 | Property | Type | Notes |
 |---|---|---|

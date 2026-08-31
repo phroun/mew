@@ -5,11 +5,15 @@
 // handlers run (the slice-4 veneer contract, docs/d2-read-audit.md).
 //
 // A Conn is instance-scoped, never global (multi-display guardrail):
-// one app may hold any number of connections. The package imports
-// ONLY the protocol package - it compiles with no knowledge of the
-// rendering side. In-process, the display side is the registered
-// trinket vocabulary reached through the registry (inprocess.go); under
-// transport the same Conn speaks to a socket instead.
+// one app may hold any number of connections. The package imports the
+// wire language and nothing else, so it compiles with no knowledge of
+// the rendering side and none of the toolkit's dependencies: an app
+// that only speaks the protocol carries only this.
+//
+// A remote Conn reaches a socket (remote.go). A Conn whose display side
+// is the trinket vocabulary in this same process is built on the
+// exported seam below by package inprocess, which is host code and
+// lives outside this package for that reason.
 package client
 
 import (
@@ -19,17 +23,17 @@ import (
 	"github.com/phroun/kittytk/wire"
 )
 
-// transport is how statements reach the display service: in-process
-// session execution, or a socket carrying protocol text (D22).
-type transport interface {
-	exec(src string) (*wire.Reply, error)
-	close() error
+// Transport is how statements reach the display service: a socket
+// carrying protocol text (D22), or a session executed in this process.
+type Transport interface {
+	Exec(src string) (*wire.Reply, error)
+	Close() error
 }
 
 // Conn is one connection to one display service.
 type Conn struct {
 	mu        sync.Mutex
-	transport transport
+	transport Transport
 
 	// Replica: per-object state folded from writes (class A) and
 	// subscribed events (class B).
@@ -74,6 +78,18 @@ type objState struct {
 	result   string
 }
 
+// NewWithTransport builds a Conn over t. dispatch receives action=
+// command IDs (nil is allowed for connections that use no commands).
+//
+// This is the seam a transport is written against: package inprocess
+// uses it, and so does an application supplying a transport of its own.
+// Applications talking to a display service want Dial instead.
+func NewWithTransport(t Transport, dispatch func(commandID string)) *Conn {
+	c := newConn(dispatch)
+	c.transport = t
+	return c
+}
+
 func newConn(dispatch func(commandID string)) *Conn {
 	return &Conn{
 		types:        make(map[uint64]string),
@@ -114,7 +130,7 @@ func (c *Conn) markClosed() { c.closeOnce.Do(func() { close(c.closed) }) }
 // Exec executes protocol text on this connection (one batch; the
 // remote transport appends the D22 end terminator).
 func (c *Conn) Exec(src string) (*wire.Reply, error) {
-	return c.transport.exec(src)
+	return c.transport.Exec(src)
 }
 
 // Describe queries the host's wire vocabulary (D24): the supported
@@ -122,7 +138,7 @@ func (c *Conn) Exec(src string) (*wire.Reply, error) {
 // property's kind, default, and a brief description. Common properties
 // (accepted by every non-virtual type) are reported once.
 func (c *Conn) Describe() (*wire.Vocabulary, error) {
-	reply, err := c.transport.exec("describe")
+	reply, err := c.transport.Exec("describe")
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +148,7 @@ func (c *Conn) Describe() (*wire.Vocabulary, error) {
 // Close releases the connection (closes the socket for remote
 // connections; no-op in-process).
 func (c *Conn) Close() error {
-	err := c.transport.close()
+	err := c.transport.Close()
 	c.markClosed()
 	return err
 }
@@ -145,6 +161,23 @@ func (c *Conn) Build(src string) (*UI, error) {
 		return nil, err
 	}
 	return &UI{conn: c, ids: reply.IDs}, nil
+}
+
+// Deliver folds an event into the replica, then invokes handlers. A
+// transport calls it for every event that reaches it; filtering by
+// subscription and by suppression has already happened upstream of here.
+func (c *Conn) Deliver(ev *wire.Event) { c.deliver(ev) }
+
+// Record notes what an object was constructed as. target is the real
+// constructed object where a transport has one to offer (in-process) and
+// nil where it does not (remote), and reaches an app through Handle.Target.
+func (c *Conn) Record(id uint64, typeName string, target any) {
+	c.mu.Lock()
+	c.types[id] = typeName
+	if target != nil {
+		c.targets[id] = target
+	}
+	c.mu.Unlock()
 }
 
 // deliver folds an event into the replica, then invokes handlers.

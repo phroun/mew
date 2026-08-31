@@ -27,7 +27,15 @@ func TestPlainPrintablesAreNamedFromTheKey(t *testing.T) {
 		{"shifted letter spends Shift on the case", 'x', sdl3.KMOD_LSHIFT, "X"},
 		{"digit", '5', 0, "5"},
 		{"punctuation", ';', 0, ";"},
-		{"space", ' ', 0, " "},
+		// A letter, a digit and a punctuation mark have no name but the
+		// character they show, so naming them from the key and naming them
+		// from the character come to the same string. The space bar is not
+		// like them: direct-key-handler calls it "Space" and so does the
+		// terminal backend, so " " here was the character's name standing in
+		// for the key's -- the very substitution this test forbids -- and the
+		// keymap, which binds "Space", resolved the space bar to nothing on
+		// this host. See 0_platform_sdl_spacebar_test.go.
+		{"space", ' ', 0, "Space"},
 	} {
 		got := translateKey(sdl3.Keysym{Sym: c.sym, Mod: c.mod})
 		if got != c.want {

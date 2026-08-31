@@ -497,208 +497,6 @@ func (c *KeyContext) Abandon() {
 // press a key. The leading underscore marks it internal.
 const CommandAppAccelerator = "_app_accel"
 
-// defaultBindings is the toolkit's own keymap — the same table the shipped
-// kittytk.ini writes out under [mappings], kept here so KittyTK has a default
-// registry with no configuration file present at all. The file overlays this
-// rather than replacing it, so a user names only what they want to change.
-//
-// A key lists every command it can mean. "Up" nudges a window while its title
-// bar is focused and steps a list otherwise; both are true, and the situation
-// decides. A context keeps whichever meaning it offers, so at most one
-// survives anywhere the key is actually asked about.
-//
-// A trinket that can mean several of them by one key decides between them
-// itself, from its own state, exactly as it does today: a tree view's Left
-// collapses an expanded row and steps to the parent otherwise, and a
-// multi-column one crosses columns. Its case accepts every form that makes
-// sense for it and branches inside. Nothing about that moves into the
-// registry.
-//
-// Several keys may also share ONE command: the coarse window move answers to
-// Ctrl, Meta and Super arrows alike, which is what the hand-written handler
-// did before these were bindings.
-//
-// It is a LIST, and the order matters at exactly one point: where several keys
-// mean the same command, the one written LAST is the one a menu advertises for
-// it. Both keep working -- the order decides what is SHOWN, never what runs --
-// so where the reading order and the conventional spelling disagree (F2 before
-// F10, Space before Return) the entry is placed to say which one to show and
-// the comment says why.
-var defaultBindings = []Binding{
-	// Windows and the desktop.
-	{"M-F10", []string{CmdWindowMaximizeToggle}},
-	// The application-vs-window split every desktop draws the same way:
-	// M-F4 and ^Q end the APPLICATION, ^F4 and ^W close one WINDOW of it.
-	// (^F4 and C-F4 are the same key spelled two ways, as are ^Q and C-Q.)
-	{"M-F4", []string{CmdAppQuit}},
-	{"^Q", []string{CmdAppQuit}},
-	{"^F4", []string{CmdWindowClose}},
-	{"^W", []string{CmdWindowClose}},
-	// The menu key twice over. F2 is there to be REACHABLE -- on a Mac every
-	// function key wants fn, which sits bottom-left, so F10 across at the far
-	// right is a two-handed press while F2 is on the same side of the
-	// keyboard. F10 is LAST because it is the convention every desktop shares,
-	// and last is what gets advertised: both open the menu, one is what a menu
-	// item says about itself.
-	{"F2", []string{CmdAppMenu}},
-	{"F10", []string{CmdAppMenu}},
-	// Help, where every desktop puts it.
-	{"F1", []string{CmdAppHelp}},
-	// Hiding, and leaving the desktop. These were the host's own accelerators
-	// before there was a registry to put them in, and they keep the keys they
-	// had. Show All has none, as it had none.
-	{"^H", []string{CmdAppHide}},
-	{"M-^H", []string{CmdAppHideOthers}},
-	{"M-^X", []string{CmdDesktopExit}},
-	// The clipboard, on whatever has the keyboard.
-	{"^X", []string{CmdTrinketCut}},
-	{"^C", []string{CmdTrinketCopy}},
-	{"^V", []string{CmdTrinketPaste}},
-	// Select All answers to M-a further down this table as well. s-a is the
-	// Mac's own spelling and was the one the host advertised everywhere, which
-	// is a thing a keymap can now say properly: bound on every platform, and
-	// the one SHOWN only where it is the native one.
-	{"(mac) s-a", []string{CmdTrinketSelectAll}},
-	{"M-Tab", []string{CmdWindowNext}},
-	{"M-S-Tab", []string{CmdWindowPrior}},
-	{"C-Tab", []string{CmdWindowMDINext}},
-	{"C-S-Tab", []string{CmdWindowMDIPrior}},
-	{"s-M", []string{CmdAppMinimize}},
-	{"s-Minus", []string{CmdGUIScaleDown}},
-	{"s-Plus", []string{CmdGUIScaleUp}},
-	{"s-0", []string{CmdGUIScaleReset}},
-
-	// Focus, which belongs to no one trinket.
-	{"Tab", []string{CmdFocusNext}},
-	{"S-Tab", []string{CmdFocusPrior}},
-
-	// Keys that mean one thing to a window's title bar and another to
-	// whatever has focus otherwise.
-	{"Esc", []string{CmdWindowCancelResize, CmdTrinketCancel}},
-	// Return begins an edit where one is on offer and activates otherwise;
-	// Space only ever activates, which is why a tree's Space expands a branch
-	// where its Return opens the row editor.
-	//
-	// Return is the HOME ROW's key. It and the keypad's are two physical keys
-	// with two names -- keyseq deliberately does not alias them, and this is
-	// the one that was meant. Bind "Enter" as well to give the keypad the same
-	// meaning; nothing does so by default.
-	//
-	// Space is written FIRST and Return second, so activation advertises
-	// Return: both do it, and Return is the one people mean by "press enter".
-	{"Space", []string{CmdTrinketActivate}},
-	{"Return", []string{CmdTrinketEdit, CmdTrinketActivate}},
-
-	// The bare arrows also carry the FINE resize, for a splitter: nudging a
-	// divider is resizing, and a splitter is the one thing that resizes with
-	// no modifier at all. A title bar offers both families and takes the move,
-	// since that is listed first; a splitter offers only the size family and
-	// so is the only place the second meaning is ever reached.
-	// Each arrow names its own direction first and the sequence synonym
-	// second. A list means the two identically and shares one case, so the
-	// order costs it nothing; a GRID means them separately -- the dock's Up
-	// crosses a row where its Left steps one entry -- and there the arrow that
-	// points that way has to win.
-	{"Up", []string{CmdWindowMoveFineUp, CmdWindowSizeFineUp, CmdTrinketItemUp, CmdTrinketItemPrior}},
-	{"Down", []string{CmdWindowMoveFineDown, CmdWindowSizeFineDown, CmdTrinketItemDown, CmdTrinketItemNext}},
-	// Collapse and expand belong to Minus and Plus alone. The arrows are the
-	// generic movement, which a tree happens to implement as
-	// collapse-or-walk-up -- so there is nothing here for the two to fight
-	// over, and no precedence rule needed to separate them.
-	{"Left", []string{CmdWindowMoveFineLeft, CmdWindowSizeFineLeft, CmdTrinketItemLeft, CmdTrinketItemPrior}},
-	{"Right", []string{CmdWindowMoveFineRight, CmdWindowSizeFineRight, CmdTrinketItemRight, CmdTrinketItemNext}},
-
-	{"S-Up", []string{CmdWindowSizeFineUp, CmdTrinketSelUp, CmdTerminalScrollUp}},
-	{"S-Down", []string{CmdWindowSizeFineDown, CmdTrinketSelDown, CmdTerminalScrollDown}},
-	// The shifted arrows also carry the classic tree movement, ahead of the
-	// generic item step: in an editable grid the plain arrows walk the
-	// edit-target column, and this is how collapse-or-walk-out keeps a key
-	// there. A trinket that does not offer it falls through to item_left as
-	// before.
-	{"S-Left", []string{CmdWindowSizeFineLeft, CmdTrinketSelLeft, CmdTrinketCollapseOrEnclosing, CmdTrinketItemLeft}},
-	{"S-Right", []string{CmdWindowSizeFineRight, CmdTrinketSelRight, CmdTrinketExpandOrDescend, CmdTrinketItemRight}},
-
-	{"Home", []string{CmdTrinketBeg}},
-	{"End", []string{CmdTrinketEnd}},
-	{"S-Home", []string{CmdTrinketSelBeg, CmdTerminalScrollBeg}},
-	{"S-End", []string{CmdTrinketSelEnd, CmdTerminalScrollEnd}},
-
-	{"PageUp", []string{CmdTrinketPagePrior}},
-	{"PageDown", []string{CmdTrinketPageNext}},
-	// The shifted paging keys belong to a terminal's scrollback alone --
-	// nothing else answers to them, which is why they are bound to one
-	// command rather than added to a list.
-	{"S-PageUp", []string{CmdTerminalScrollPagePrior}},
-	{"S-PageDown", []string{CmdTerminalScrollPageNext}},
-
-	// Editing, where a trinket holds text.
-	// "Delete" is the DEL character and erases BEHIND, so it sits with
-	// Backspace; "FDel" is the key that erases ahead. A terminal picks which
-	// of the first two it sends, so both are bound.
-	{"Backspace", []string{CmdTrinketDelPrior, CmdTrinketEnclosing}},
-	{"Delete", []string{CmdTrinketDelPrior, CmdTrinketEnclosing}},
-	{"FDel", []string{CmdTrinketDelNext}},
-	{"^U", []string{CmdTrinketDelLine}},
-	// ^A goes to the beginning, and selects everything when the caret is
-	// already there with nothing selected -- where a trinket offers that. It
-	// is a plain beginning-of-line where one does not. First listed wins, so a
-	// text field, which offers both, gets the pair, and a list gets the plain
-	// move.
-	{"^A", []string{CmdTrinketBegOrSelectAll, CmdTrinketBeg}},
-	{"^E", []string{CmdTrinketEnd}},
-	{"S-^A", []string{CmdTrinketSelBeg}},
-	{"S-^E", []string{CmdTrinketSelEnd}},
-	{"M-a", []string{CmdTrinketSelectAll}},
-
-	// Trees.
-	{"Plus", []string{CmdTrinketExpand}},
-	{"Minus", []string{CmdTrinketCollapse}},
-	{"Asterisk", []string{CmdTrinketExpandAll}},
-	{"Slash", []string{CmdTrinketCollapseAll}},
-
-	// Dropping a combo box open.
-	{"F4", []string{CmdTrinketOpen}},
-
-	// The coarse window move and size, and the same step on a splitter, which
-	// is resizing something too.
-	// The modified arrows carry the coarse size the same way the bare ones
-	// carry the fine one, and for the same reason: a splitter's big step.
-	// The beginning/end meanings on the modified arrows are for whatever runs
-	// along that axis -- a tab bar's first and last tab -- and sit after the
-	// scroll, which is what a list means by the same key.
-	{"C-Up", []string{CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketBeg}},
-	{"M-Up", []string{CmdWindowMoveUp, CmdWindowSizeUp, CmdTrinketScrollUp, CmdTrinketOpen, CmdTrinketBeg}},
-	{"s-Up", []string{CmdWindowMoveUp}},
-	{"C-Down", []string{CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketEnd}},
-	{"M-Down", []string{CmdWindowMoveDown, CmdWindowSizeDown, CmdTrinketScrollDown, CmdTrinketOpen, CmdTrinketEnd}},
-	{"s-Down", []string{CmdWindowMoveDown}},
-	{"C-Left", []string{CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}},
-	{"M-Left", []string{CmdWindowMoveLeft, CmdWindowSizeLeft, CmdTrinketBeg}},
-	{"s-Left", []string{CmdWindowMoveLeft}},
-	{"C-Right", []string{CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}},
-	{"M-Right", []string{CmdWindowMoveRight, CmdWindowSizeRight, CmdTrinketEnd}},
-	{"s-Right", []string{CmdWindowMoveRight}},
-
-	{"C-S-Up", []string{CmdWindowSizeUp}},
-	{"M-S-Up", []string{CmdWindowSizeUp}},
-	{"S-s-Up", []string{CmdWindowSizeUp}},
-	{"C-S-Down", []string{CmdWindowSizeDown}},
-	{"M-S-Down", []string{CmdWindowSizeDown}},
-	{"S-s-Down", []string{CmdWindowSizeDown}},
-	{"C-S-Left", []string{CmdWindowSizeLeft}},
-	{"M-S-Left", []string{CmdWindowSizeLeft}},
-	{"S-s-Left", []string{CmdWindowSizeLeft}},
-	{"C-S-Right", []string{CmdWindowSizeRight}},
-	{"M-S-Right", []string{CmdWindowSizeRight}},
-	{"S-s-Right", []string{CmdWindowSizeRight}},
-
-	// The MDI meanings are the tab-strip cycle, which is what Ctrl+PageUp/Down
-	// does everywhere tabs exist. A scrolling trinket means the page step by
-	// the same key and is listed first, so nothing that scrolls changes.
-	{"C-PageUp", []string{CmdTrinketPagePrior, CmdWindowMDIPrior}},
-	{"C-PageDown", []string{CmdTrinketPageNext, CmdWindowMDINext}},
-}
-
 // DefaultAcceleratorChord is the pattern menu accelerators are formed from
 // when nothing configures one.
 const DefaultAcceleratorChord = "M-*"
@@ -711,11 +509,16 @@ var (
 
 // DefaultKeyRegistry returns the process-wide "default" registry, the one a
 // scope resolves against unless something overrides it.
+//
+// It is PARSED from DefaultKeymapConfig, which is the toolkit's keymap written
+// in the configuration language rather than in Go. Nothing the default says is
+// therefore something a user's [mappings] section could not have said, and the
+// two cannot fall out of step, because there is only one of them.
 func DefaultKeyRegistry() *KeyRegistry {
 	keymapMu.Lock()
 	defer keymapMu.Unlock()
 	if defaultRegistry == nil {
-		defaultRegistry = NewKeyRegistry("default", defaultBindings)
+		defaultRegistry = NewKeyRegistry("default", ParseKeymap(DefaultKeymapConfig))
 	}
 	return defaultRegistry
 }
@@ -728,26 +531,52 @@ func AcceleratorChord() string {
 }
 
 // ApplyHostKeymap overlays a host's configuration onto the default registry —
-// the [mappings] section and [window] accelerator_chord. Only the keys named
-// are touched, so a user's file says what it changes rather than restating the
-// whole table, and an empty command unbinds.
+// the [mappings] section as ParseKeymap read it, and [window]
+// accelerator_chord — in the order the file wrote them.
+//
+// Every line ADDS a meaning to its key. Only a BLANK command takes anything
+// away, and it takes away everything the key meant, so a file that wants to
+// say a key over from scratch blanks it first:
+//
+//	Space =                     ; Space now means nothing
+//	Space = trinket_type_space
+//	Space = trinket_activate
+//
+// A key the file does not name keeps what it had.
+//
+// A line is applied with Prefer rather than AddBinding, so restating a binding
+// the registry already has is NOT a no-op: it takes a fresh serial. It has to,
+// because a line means the same thing in a user's file as it does in
+// DefaultKeymapConfig, and there a line's PLACE is a statement — among several
+// keys for one command, the last one written is the one menus advertise. A
+// file that writes
+//
+//	Return = trinket_activate
+//	Space  = trinket_activate
+//
+// is saying "advertise Space", and it says that whether or not both keys
+// already meant activate. Ignoring a restated line would make the same text
+// mean two different things depending on which side of the config boundary it
+// was written on.
+//
+// Where the line lands in the key's own list of meanings does not move, so
+// what a keystroke DOES is unchanged; only what a menu shows for the command
+// can change. Restating the whole table therefore lands back on it: every
+// serial is reissued, but in the same order, so every ranking survives.
 //
 // A blank chord leaves the default in place; to turn chord accelerators off,
 // configure a pattern with no "*" in it. The bare letters a focused menu bar
 // answers to are ordinary typing and are unaffected either way.
-func ApplyHostKeymap(mappings map[string]string, chord string) {
+func ApplyHostKeymap(mappings []Binding, chord string) {
 	r := DefaultKeyRegistry()
-	// Applied in key order, so the serials a file's bindings land on are the
-	// same every run: what a menu advertises must not depend on Go's map
-	// iteration. (Every one of them still outranks every default, which is the
-	// part that matters -- the file is later than the table it overlays.)
-	keys := make([]string, 0, len(mappings))
-	for k := range mappings {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		r.Bind(k, mappings[k])
+	for _, b := range mappings {
+		for _, cmd := range b.Commands {
+			if cmd == "" {
+				r.Bind(b.Key, "")
+				continue
+			}
+			r.Prefer(b.Key, cmd)
+		}
 	}
 	if chord != "" {
 		keymapMu.Lock()

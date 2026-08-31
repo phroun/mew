@@ -753,8 +753,6 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 		w.mu.Unlock()
 		return
 	}
-	wasFocused := w.focused
-	w.focused = true
 	app := w.app
 	parent := w.parent
 	self := w.self // Get the outer trinket reference
@@ -765,6 +763,22 @@ func (w *TrinketBase) setFocusInternal(scrollIntoView bool) {
 	if self != nil {
 		focusTrinket = self
 	}
+
+	// A trinket that cannot HOLD focus does not TAKE it, however it was
+	// asked. The same rule the focus manager applies (FocusManager.canFocus),
+	// checked here as well because SetFocus is public and reaches a trinket
+	// with no manager above it -- and because this runs BEFORE the manager
+	// sees the request, so leaving it to the manager alone would let the
+	// trinket mark itself focused and announce HandleFocusIn for a focus the
+	// manager then refuses to record.
+	if !focusTrinket.IsEnabled() || !focusTrinket.IsVisible() {
+		return
+	}
+
+	w.mu.Lock()
+	wasFocused := w.focused
+	w.focused = true
+	w.mu.Unlock()
 
 	if !wasFocused {
 		// Call HandleFocusIn on the actual trinket (self) to get polymorphic behavior

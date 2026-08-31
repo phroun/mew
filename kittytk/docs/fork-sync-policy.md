@@ -34,19 +34,38 @@ diverges in exactly these ways. A sync must respect all of them.
 
 ### Files that ARE yours — keep them on your side, never send them
 
-- `objects/trinkets/editor_mew*.go` — the editor and every test of it
-- `objects/trinkets/editor_protocol_mew.go`
+Every Go file whose name spells **`mew` as an underscore-delimited word**:
 
-The glob is the guard, so **give every mew-owned file a name that matches
-it**. A mew test named for something else slips through: `capture_relay_test.go`
+- `objects/trinkets/editor_mew.go` and its parts — `editor_mew_blink.go`,
+  `editor_mew_filter.go`, `editor_mew_linedisc.go`, `editor_mew_ptydiag.go`,
+  `editor_mew_scrollbar.go`, `editor_mew_pty_unix.go`,
+  `editor_mew_pty_windows.go`
+- `objects/trinkets/editor_protocol_mew.go`
+- every test of them — `0_editor_mew_scrollbar_test.go`,
+  `00_mew_login_shell_test.go`, and the rest
+
+**Match on the word, not on a prefix.** Split the base name on `_` and look for
+`mew`. A prefix glob like `editor_mew*` was the rule here once and it no longer
+holds: mew's test files carry a `0_`/`00_` sort prefix (see the fork's
+`TEST-NAMING.md`), so `0_editor_mew_blink_test.go` matches nothing a prefix
+glob offers while still being unmistakably mew's.
+
+The name is the guard, so **give every mew-owned file a name that spells the
+word**. A mew test named for something else slips through: `capture_relay_test.go`
 tested `captureRelay` in `editor_mew.go`, matched nothing here, and sat in the
 upstream repo referring to a symbol that does not exist there until it was
 noticed and renamed.
 
 The rule runs both ways: **an upstream-owned file must not be named to match
-the glob either**, or a sync will quietly refuse to carry it. That is why the
-assertion below is `editor_tag_assert.go` and not `editor_mew_required.go`,
-which was its first name.
+either**, or a sync will quietly refuse to carry it. That is why the assertion
+below is `editor_tag_assert.go` and not `editor_mew_required.go`, which was its
+first name.
+
+Since `//go:build mew` is what actually decides which files the mew build
+compiles, the name and the tag have to agree, and that is worth asserting
+rather than remembering. The fork carries a test that walks the tree and checks
+both directions, with `editor_tag_assert.go` as its one declared exception —
+upstream's file, upstream's tag, and deliberately not named for the word.
 
 These carry `//go:build mew` and import `github.com/phroun/mew`. Upstream ships
 the complementary `//go:build !mew` placeholders (`editor.go`,
@@ -148,8 +167,8 @@ git -C "$MINE" clean -xdn          # DRY RUN: show build junk. Then -xdf to remo
 
 diff -ruN \
   --exclude='.git' \
-  --exclude='editor_mew*.go' \
-  --exclude='editor_protocol_mew.go' \
+  --exclude='*_mew.go' \
+  --exclude='*_mew_*' \
   --exclude='patches' \
   --exclude='wiki' \
   --exclude='__pycache__' \
@@ -190,6 +209,10 @@ grep -E '^Binary files ' sync.diff && echo "JUNK — clean the tree"
 
 # 5. Sanity: removals shouldn't dwarf additions for a feature-forward sync.
 #    A huge negative line count means you're deleting things you don't own.
+
+# 6. Every mew-tagged file is named for the word, and nothing else is. Run this
+#    on YOUR tree, not on the diff -- it is what the excludes above rely on.
+go test -tags mew -run ForkBoundary ./objects/trinkets/
 ```
 
 For `go.mod`/`go.sum`, **do not diff the files**. Instead, send a plain-text
@@ -271,6 +294,6 @@ boundary, not upstream's.
 3. Exclude build artifacts and `__pycache__` from the diff.
 4. For deps, send a *sentence* ("bump X to vN"), not a `go.mod` diff — and
    never a mew require.
-5. Run the five self-audit `grep`s before sending.
+5. Run the six self-audit checks before sending.
 6. Long-term: adopt `git subtree` so the boundary is structural, not a set of
    `--exclude` flags you have to remember every time.

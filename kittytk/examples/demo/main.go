@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/client"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/display"
 	"github.com/phroun/kittytk/layout"
@@ -122,7 +123,7 @@ wcombo=root.combo
 // reads, write-through setters. No raw dispatcher, no sub statements
 // in the script - handles subscribe what they mirror.
 func createProtocolWindow(application *app.Application, desktop *trinkets.Desktop) *window.Window {
-	conn := client.NewInProcess(func(id string) { application.Commands().Dispatch(id) })
+	conn := inprocess.New(func(id string) { application.Commands().Dispatch(id) })
 	ui, err := conn.Build(protocolWindowScript)
 	if err != nil {
 		return nil

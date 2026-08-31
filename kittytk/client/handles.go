@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 
-	"github.com/phroun/kittytk/protocol"
+	"github.com/phroun/kittytk/wire"
 )
 
 // Handle is the generic typed reference to one display-side object.
@@ -33,7 +33,7 @@ func (h Handle) Destroy() error {
 }
 
 // On subscribes to an event from this object.
-func (h Handle) On(event string, fn func(*protocol.Event)) {
+func (h Handle) On(event string, fn func(*wire.Event)) {
 	h.c.on(h.id, event, fn)
 }
 
@@ -71,12 +71,12 @@ func (u *UI) Button(name string) Button { return Button{u.handle(name)} }
 
 // OnClick fires on click events from this button.
 func (b Button) OnClick(fn func()) {
-	b.On("click", func(*protocol.Event) { fn() })
+	b.On("click", func(*wire.Event) { fn() })
 }
 
 // SetCaption relabels the button.
 func (b Button) SetCaption(s string) error {
-	return b.Set("caption=" + protocol.Quote(s))
+	return b.Set("caption=" + wire.Quote(s))
 }
 
 // Label: display text.
@@ -86,7 +86,7 @@ func (u *UI) Label(name string) Label { return Label{u.handle(name)} }
 
 // SetCaption replaces the label text (write-through; no echo).
 func (l Label) SetCaption(s string) error {
-	return l.Set("caption=" + protocol.Quote(s))
+	return l.Set("caption=" + wire.Quote(s))
 }
 
 // Checkbox: tri-capable checked state, event-mirrored.
@@ -98,39 +98,39 @@ func (u *UI) Checkbox(name string) Checkbox {
 
 // State returns the replica's tri-state (FlagFalse until any toggle
 // or write).
-func (cb Checkbox) State() protocol.FlagState {
-	if s := cb.c.stateOf(cb.id).checked; s != protocol.FlagNone {
+func (cb Checkbox) State() wire.FlagState {
+	if s := cb.c.stateOf(cb.id).checked; s != wire.FlagNone {
 		return s
 	}
-	return protocol.FlagFalse
+	return wire.FlagFalse
 }
 
 // Checked is the two-state convenience over State.
-func (cb Checkbox) Checked() bool { return cb.State() == protocol.FlagTrue }
+func (cb Checkbox) Checked() bool { return cb.State() == wire.FlagTrue }
 
 // SetChecked writes through to the replica and the display.
 func (cb Checkbox) SetChecked(v bool) error {
 	st := cb.c.stateOf(cb.id)
 	arg := "checked"
 	if v {
-		st.checked = protocol.FlagTrue
+		st.checked = wire.FlagTrue
 	} else {
-		st.checked = protocol.FlagFalse
+		st.checked = wire.FlagFalse
 		arg = "!checked"
 	}
 	return cb.Set(arg)
 }
 
 // OnToggle fires with the new tri-state after user toggles.
-func (cb Checkbox) OnToggle(fn func(protocol.FlagState)) {
-	cb.On("toggle", func(ev *protocol.Event) { fn(ev.Flag("checked")) })
+func (cb Checkbox) OnToggle(fn func(wire.FlagState)) {
+	cb.On("toggle", func(ev *wire.Event) { fn(ev.Flag("checked")) })
 }
 
 // TextInput: editable text, event-mirrored.
 type TextInput struct{ Handle }
 
 func (u *UI) TextInput(name string) TextInput {
-	return TextInput{u.handle(name, "change")}
+	return TextInput{u.handle(name, "change", "complete")}
 }
 
 // Text returns the replica's text.
@@ -139,12 +139,26 @@ func (t TextInput) Text() string { return t.c.stateOf(t.id).text }
 // SetText writes through to the replica and the display.
 func (t TextInput) SetText(s string) error {
 	t.c.stateOf(t.id).text = s
-	return t.Set("text=" + protocol.Quote(s))
+	return t.Set("text=" + wire.Quote(s))
 }
 
 // OnChange fires with the new text after user edits.
 func (t TextInput) OnChange(fn func(string)) {
-	t.On("change", func(ev *protocol.Event) {
+	t.On("change", func(ev *wire.Event) {
+		if s, ok := ev.Text("text"); ok {
+			fn(s)
+		}
+	})
+}
+
+// OnComplete fires when the person typing says they are done with the field --
+// Return, or whatever else the keymap makes mean trinket_activate there. It
+// carries the content at that moment, so a handler need not read it back.
+//
+// Not a submit: the field is still a field afterwards, still editable, still
+// holding its text.
+func (t TextInput) OnComplete(fn func(string)) {
+	t.On("complete", func(ev *wire.Event) {
 		if s, ok := ev.Text("text"); ok {
 			fn(s)
 		}
@@ -170,7 +184,7 @@ func (s Selector) Select(index int) error {
 
 // OnChange fires with the new index on user selection.
 func (s Selector) OnChange(fn func(int)) {
-	s.On("change", func(ev *protocol.Event) {
+	s.On("change", func(ev *wire.Event) {
 		if n, ok := ev.Int("selected"); ok {
 			fn(n)
 		}
@@ -185,7 +199,7 @@ func (u *UI) Window(name string) Window { return Window{u.handle(name)} }
 // OnClosed fires after the window finishes closing (window_closed
 // carries window=, which subscription routing already honors).
 func (w Window) OnClosed(fn func()) {
-	w.On("window_closed", func(*protocol.Event) { fn() })
+	w.On("window_closed", func(*wire.Event) { fn() })
 }
 
 // Close closes the window (destroy verb).
@@ -193,5 +207,5 @@ func (w Window) Close() error { return w.Destroy() }
 
 // SetTitle retitles the window.
 func (w Window) SetTitle(s string) error {
-	return w.Set("title=" + protocol.Quote(s))
+	return w.Set("title=" + wire.Quote(s))
 }

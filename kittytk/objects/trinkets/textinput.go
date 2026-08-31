@@ -21,6 +21,7 @@ type TextInput struct {
 	placeholder string
 	maxLength   int
 	echoMode    EchoMode
+	maskChar    rune // what EchoPassword paints; zero means the default bullet
 	readOnly    bool
 
 	// Cursor and selection
@@ -30,8 +31,8 @@ type TextInput struct {
 	scrollOffset int
 
 	// Callbacks
-	onTextChanged   func(text string)
-	onReturnPressed func()
+	onTextChanged func(text string)
+	onComplete    func()
 
 	// Graphical caret blink: the bar toggles while focused and
 	// restarts visible on every keystroke. Without a running timer
@@ -92,6 +93,9 @@ type TextInput struct {
 	embedOrigin func() core.UnitPoint
 }
 
+// defaultMaskChar is what a masked field paints when nothing says otherwise.
+const defaultMaskChar = '\u2022' // BULLET
+
 // EchoMode controls how text is displayed.
 type EchoMode int
 
@@ -122,6 +126,10 @@ func NewTextInput() *TextInput {
 		// Enter submits. A text field offers no edit command -- it IS the
 		// editor -- so Enter falls through to activate here.
 		core.CmdTrinketActivate,
+		// ...and offering activate is exactly why the space bar needs saying
+		// out loud: it shares a key with activate, and without this a space
+		// would submit instead of typing.
+		core.CmdTrinketTypeSpace,
 	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
@@ -129,9 +137,16 @@ func NewTextInput() *TextInput {
 	return t
 }
 
-// CursorShape implements core.CursorProvider: an editable text field
-// shows the text I-beam while hovered.
+// CursorShape implements core.CursorProvider: a text field shows the I-beam
+// while hovered, unless it is DISABLED, where it shows the ordinary pointer.
+//
+// The I-beam is a promise that the pointer will do something here, and on a
+// disabled field it will not. A read-only field keeps it: its text can still
+// be selected with the mouse, which is exactly what the I-beam offers.
 func (t *TextInput) CursorShape() core.CursorShape {
+	if !t.IsEnabled() {
+		return core.CursorDefault
+	}
 	return core.CursorText
 }
 
@@ -173,6 +188,27 @@ func (t *TextInput) MaxLength() int {
 // SetMaxLength sets the maximum text length (-1 for no limit).
 func (t *TextInput) SetMaxLength(length int) {
 	t.maxLength = length
+}
+
+// SetMaskChar sets the character a masked field paints in place of each rune
+// it holds. Zero restores the default bullet.
+//
+// It is one character, not a string: the mask stands in for a rune, and a
+// multi-rune stand-in would make a masked field a different width from the
+// text behind it -- which leaks the length in a caret position and breaks the
+// column arithmetic besides.
+func (t *TextInput) SetMaskChar(r rune) {
+	t.maskChar = r
+	t.Update()
+}
+
+// MaskChar returns the character a masked field paints, the default bullet
+// included, so a caller never has to know about the zero value.
+func (t *TextInput) MaskChar() rune {
+	if t.maskChar == 0 {
+		return defaultMaskChar
+	}
+	return t.maskChar
 }
 
 // EchoMode returns the echo mode.
@@ -317,14 +353,24 @@ func (t *TextInput) SetOnTextChanged(handler func(text string)) {
 	t.onTextChanged = handler
 }
 
-// SetOnReturnPressed sets the return pressed callback.
-func (t *TextInput) SetOnReturnPressed(handler func()) {
-	t.onReturnPressed = handler
+// SetOnComplete sets the callback for the field being COMPLETED: the person
+// typing has said they are done with it.
+//
+// One callback, because there is one gesture. Return reaches it, and so does
+// whatever else the keymap has made mean trinket_activate here -- the field
+// does not care which key it was, only that the content is finished. It is
+// not "submit": nothing is being sent anywhere, and a field completed is
+// still a field, still editable, still holding its text.
+func (t *TextInput) SetOnComplete(handler func()) {
+	t.onComplete = handler
 }
 
 // insert inserts text at the cursor position.
 func (t *TextInput) insert(text string) {
-	if t.readOnly {
+	// The innermost guard, where the content is actually changed. Enabled as
+	// well as writable: every typing path leads here, and a disabled field
+	// must not be editable down any of them.
+	if !t.AcceptsTextInput() {
 		return
 	}
 
@@ -532,7 +578,17 @@ func (t *TextInput) Paint(p *core.Painter) {
 	var s style.CellStyle
 	var fillChar rune = ' '
 	if !t.IsEnabled() {
-		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(scheme.GetEditBox(paneType).Bg)
+		// A disabled field sits on its CONTAINER's background. DisabledTextFG
+		// is the disabled counterpart to normal window text -- inherited through
+		// the window, beside FocusTextFG and HoverTextFG, and what
+		// DisabledLabelFG and DisabledButtonFG fall back to -- so the ground it
+		// is chosen against is the container's. The edit-box background is what
+		// says "you can work in here", which a disabled field does not.
+		s = style.DefaultStyle().WithFg(scheme.GetDisabledTextFG()).WithBg(inheritedBg)
+		// The speckle carries the rest: a flat rectangle says "empty", the
+		// texture says "a field, unavailable". Same ink as the text, so the
+		// whole thing reads as one hatched-out surface.
+		fillChar = '░'
 	} else if focused {
 		s = scheme.GetFocusedEditBoxText()
 		// Use speckled fill character for focused state
@@ -590,7 +646,17 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// the text as the caret or selection swept through it. The caret and the
 	// selection are measured against this stable run and painted on top.
 	n := len(displayText)
-	showCaret := focused && !t.readOnly && core.FocusChainActive(t.Self())
+	// A read-only field still shows a caret. It has no insertion point, but
+	// it does have a position -- the text is selectable with the mouse and
+	// walkable with the arrows, and a reader with no caret cannot see where
+	// either of those left them.
+	//
+	// It is drawn as a BLOCK over the character rather than a bar between
+	// two, which is the shape mew uses for navigating rather than editing,
+	// and it says the difference without a word: a bar sits where text would
+	// go in, a block sits on the character you are at.
+	showCaret := focused && core.FocusChainActive(t.Self())
+	blockCaret := t.readOnly
 
 	clampIdx := func(d int) int {
 		if d < 0 {
@@ -813,8 +879,10 @@ func (t *TextInput) Paint(p *core.Painter) {
 			cursorStyle := scheme.GetFocusedEditBoxCursor()
 			barStyle := scheme.GetFocusedEditBoxBarCursor()
 			// The graphical bar caret blinks (keystrokes restart the
-			// phase); the cell-surface block stays steady.
-			if p.Graphical() {
+			// phase); a block stays steady, on a cell surface and on a
+			// read-only field alike. A blink says "type here" and paces
+			// itself to a keystroke that is not coming.
+			if p.Graphical() && !blockCaret {
 				t.ensureCaretTimer()
 			}
 			// Tell the platform where the insertion point is, without
@@ -833,8 +901,48 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if composing {
 				areaX, _ = prefixWidth(preLo)
 			}
-			p.RequestTextInputArea(areaX, 0)
-			if !p.Graphical() || t.caretVisible() {
+			// Only where text can actually arrive: this is what an input
+			// method anchors its candidate window to, and a field that
+			// accepts nothing has nothing to compose for.
+			if t.AcceptsTextInput() {
+				p.RequestTextInputArea(areaX, 0)
+			}
+			if blockCaret {
+				// The block covers the character the caret sits BEFORE --
+				// the one it is "at" -- painted in that text's own colours
+				// reversed: the field's background becomes the ink and the
+				// ink becomes the ground. At the end of the text there is no
+				// character to cover, so it takes one space's worth of the
+				// interior instead and comes out the same size either way.
+				//
+				// Same two steps the selection uses: fill the span, then
+				// redraw the glyphs clipped into it, so the block sits on the
+				// same pixel advance the text was laid out at.
+				endX, endPx := prefixWidth(cursorDisp + 1)
+				if cursorDisp >= n {
+					blank := font.MeasureText(" ")
+					endX = caretX + blank
+					endPx = caretXPx + p.UnitsToPx(blank)
+				}
+				// The caret is always at one EDGE of a selection (the span
+				// runs anchor to cursor), so the block covers a SELECTED
+				// character exactly when the caret is at the left edge, which
+				// is what selecting backwards leaves.
+				overSel := selLo >= 0 && cursorDisp >= selLo && cursorDisp < selHi
+				block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
+				if usePx {
+					p.FillRectPixels(0, 0, caretXPx, 0, endPx-caretXPx,
+						p.UnitsToPx(font.LineHeight()), block)
+					p.DrawTextOffsetClipped(0, 0, 0, caretXPx, endPx,
+						string(displayText), block.WithBg(style.ColorTransparent), font)
+				} else {
+					p.FillRect(core.UnitRect{X: caretX, Width: endX - caretX,
+						Height: bounds.Height}, ' ', block)
+					if cursorDisp < n {
+						p.DrawText(caretX, 0, string(displayText[cursorDisp]), block, font)
+					}
+				}
+			} else if !p.Graphical() || t.caretVisible() {
 				drawn := false
 				if usePx {
 					// Site the bar at the same accumulated pixel advance the
@@ -865,6 +973,21 @@ func (t *TextInput) Paint(p *core.Painter) {
 			}
 		}
 	}
+}
+
+// blockCaretStyle is the pair the read-only block inverts.
+//
+// It inverts whatever it is SITTING ON. Over selected text that is the
+// selection's own colours, not the field's: inverting the ordinary pair inside
+// a highlight either vanishes into it or clashes with it, and neither reads as
+// "you are here". The glyph takes the ground it is being lifted off -- the
+// selection's background there, the field's fill elsewhere -- so the character
+// stays legible in the hole the block makes.
+func blockCaretStyle(text, sel style.CellStyle, ground style.Color, overSelection bool) style.CellStyle {
+	if overSelection {
+		return sel.WithBg(sel.Fg).WithFg(sel.Bg)
+	}
+	return text.WithBg(text.Fg).WithFg(ground)
 }
 
 // caretVisible reports the blink state: visible whenever no blink
@@ -956,9 +1079,10 @@ func (t *TextInput) getDisplayText() []rune {
 func (t *TextInput) echo(src []rune) []rune {
 	switch t.echoMode {
 	case EchoPassword:
+		mask := t.MaskChar()
 		result := make([]rune, len(src))
 		for i := range result {
-			result[i] = '•'
+			result[i] = mask
 		}
 		return result
 	case EchoNoEcho:
@@ -1195,9 +1319,27 @@ func (t *TextInput) HandleKeyPress(event core.KeyPressEvent) bool {
 		t.delete()
 		return true
 
+	case core.CmdTrinketTypeSpace:
+		// The space bar, typed. It arrives as a command rather than as text
+		// because the key layer names it "Space" -- five runes, so the typing
+		// path below (which inserts a one-rune key name as itself) never sees
+		// a character to insert. Spell it here and hand it to the same insert
+		// as every other typed character, so selection replacement, the
+		// preedit reset and the change notification are the ordinary ones.
+		t.insert(" ")
+		return true
+
 	case core.CmdTrinketActivate:
-		if t.onReturnPressed != nil {
-			t.onReturnPressed()
+		// The field is COMPLETE: the person typing has said they are done.
+		//
+		// Reaching here at all is what the table's ordering decides. A field
+		// offers trinket_type_space and trinket_activate both, and a context
+		// takes the FIRST of a key's meanings the trinket offers -- so on
+		// Space, where the default writes type_space ahead of activate, the
+		// space bar types and never arrives here. That precedence belongs to
+		// the keymap and is stated there; nothing is re-decided at this end.
+		if t.onComplete != nil {
+			t.onComplete()
 		}
 		return true
 
@@ -1664,7 +1806,9 @@ func (t *TextInput) Copy() {
 
 // Cut copies the selected text to the clipboard and removes it.
 func (t *TextInput) Cut() {
-	if t.readOnly || !t.HasSelection() {
+	// Enabled as well as writable: this is public API and the context menu is
+	// not the only way in. Copy is deliberately not guarded -- it only reads.
+	if !t.AcceptsTextInput() || !t.HasSelection() {
 		return
 	}
 	t.Copy()
@@ -1678,7 +1822,7 @@ func (t *TextInput) Cut() {
 // resolves it and calls back - on the UI thread - when it is ready; SDL and
 // internal reads resolve immediately.
 func (t *TextInput) Paste() {
-	if t.readOnly {
+	if !t.AcceptsTextInput() {
 		return
 	}
 	if d := findDesktopFor(t.envAnchor()); d != nil {
@@ -1706,7 +1850,7 @@ func (t *TextInput) HandlePaste(event core.PasteEvent) bool {
 // pasteText inserts resolved clipboard text at the caret (newlines flattened to
 // spaces for the single-line flow).
 func (t *TextInput) pasteText(s string) {
-	if t.readOnly || s == "" {
+	if !t.AcceptsTextInput() || s == "" {
 		return
 	}
 	flat := make([]rune, 0, len(s))
@@ -1727,10 +1871,16 @@ func (t *TextInput) contextMenuID() string {
 // contextMenuItems builds the right-click menu, each item equivalent
 // to the matching Edit-menu action.
 func (t *TextInput) contextMenuItems() []termMenuItem {
+	// Cut and Paste CHANGE the content, so they are offered only where the
+	// content can change; elsewhere they are greyed and inert.
+	//
+	// Copy and Select All only read, and reading a disabled field is the same
+	// as selecting its text with the mouse, which one can.
+	edits := t.AcceptsTextInput()
 	return []termMenuItem{
-		{label: "Cut", action: t.Cut},
+		{label: "Cut", action: t.Cut, disabled: !edits},
 		{label: "Copy", action: t.Copy},
-		{label: "Paste", action: t.Paste},
+		{label: "Paste", action: t.Paste, disabled: !edits},
 		{separator: true},
 		{label: "Select All", action: t.SelectAll},
 	}
@@ -1846,7 +1996,9 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 					continue
 				}
 				st := bg
-				if i == t.menuHover {
+				if it.disabled {
+					st = bg.WithFg(style.RGB(150, 150, 150))
+				} else if i == t.menuHover {
 					st = hover
 					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
 				}
@@ -1863,6 +2015,9 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 				return false
 			}
 			idx := itemAt(event.Y - menuBounds.Y)
+			if idx >= 0 && items[idx].disabled {
+				idx = -1
+			}
 			if idx != t.menuHover {
 				t.menuHover = idx
 				t.Update()
@@ -1872,7 +2027,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		HandleMousePress: func(event core.MousePressEvent) bool {
 			idx := itemAt(event.Y - menuBounds.Y)
 			pc.UnregisterPopup(t.contextMenuID())
-			if idx >= 0 && items[idx].action != nil {
+			if idx >= 0 && !items[idx].disabled && items[idx].action != nil {
 				items[idx].action()
 			}
 			t.Update()
