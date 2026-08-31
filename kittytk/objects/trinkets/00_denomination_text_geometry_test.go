@@ -3,7 +3,9 @@ package trinkets
 import (
 	"testing"
 
+	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
 )
 
 // denominations covers the default plus a coarser and a finer one, which is
@@ -66,6 +68,75 @@ func TestButtonIsTheSameWidthAtEveryDenomination(t *testing.T) {
 		if d := got - want; d > 1 || d < -1 {
 			t.Errorf("at %dx%d the button wants %d units (at the default), want %d",
 				m.CellWidth, m.CellHeight, got, want)
+		}
+	}
+}
+
+// A button's drop shadow sits half a column across and a quarter of a row
+// down. At the default 8x16 cell both are four units, the same physical
+// distance on each axis, which is what makes the offset square -- and it has
+// to stay square whatever the cell's shape.
+//
+// Taken from the column width alone, as it was, the vertical offset was a
+// quarter of a row only while a cell was twice as tall as it is wide. On a
+// square cell it threw the shadow twice as far down as across.
+//
+// Read off the paint rather than recomputed: a test that restates the
+// formula agrees with any formula, including the wrong one.
+func TestButtonShadowIsSquareAtEveryDenomination(t *testing.T) {
+	const W, H = 160, 80
+	outer := core.DefaultCellMetrics()
+
+	var baseRight, baseBottom int
+	for _, interior := range denominations {
+		b, err := raster.New(W, H)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.SetCellMetrics(outer)
+		b.Clear(style.DefaultStyle())
+
+		d := NewDesktop()
+		d.SetBackend(b)
+		btn := NewButton("OK")
+		btn.SetParent(d)
+		btn.SetCellMetrics(&interior)
+		btn.SetBounds(core.UnitRect{
+			Width:  core.ExchangeX(80, outer, interior),
+			Height: core.ExchangeY(40, outer, interior),
+		})
+		btn.Paint(core.NewPainter(b).WithDenomination(outer, interior))
+
+		// The shadow is the furthest ink from the origin on each axis: the
+		// face paints over it, so what remains beyond the face IS the offset.
+		right, bottom := -1, -1
+		img := b.Image()
+		bg := img.RGBAAt(W-1, H-1)
+		for x := 0; x < W; x++ {
+			for y := 0; y < H; y++ {
+				if img.RGBAAt(x, y) != bg {
+					if x > right {
+						right = x
+					}
+					if y > bottom {
+						bottom = y
+					}
+				}
+			}
+		}
+		if right < 0 || bottom < 0 {
+			t.Fatalf("interior %dx%d painted nothing", interior.CellWidth, interior.CellHeight)
+		}
+		if baseRight == 0 {
+			baseRight, baseBottom = right, bottom
+			continue
+		}
+		// A pixel of slack each way: half a column of a 4-unit cell is 2
+		// units, and these fractions do not always land whole. The fault
+		// this guards against is a doubled offset, not a pixel.
+		if dx, dy := right-baseRight, bottom-baseBottom; dx > 1 || dx < -1 || dy > 1 || dy < -1 {
+			t.Errorf("interior %dx%d: button ink reaches (%d,%d) px, want (%d,%d)",
+				interior.CellWidth, interior.CellHeight, right, bottom, baseRight, baseBottom)
 		}
 	}
 }

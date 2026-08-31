@@ -1619,7 +1619,18 @@ func (w *Window) ClientArea() core.UnitRect {
 	if bottom < top {
 		bottom = top
 	}
-	return core.UnitRect{Y: top, Height: bottom - top}
+	// Bounds and the chrome rect are in the window's OUTER currency; the bar
+	// and its dropdown work in the interior one, which is what "that menu
+	// bar's local coordinate space" above means. Handing the outer number
+	// over unconverted let the dropdown divide a height in one currency by a
+	// row height in another, so it decided how many items fit -- and whether
+	// to scroll at all -- from a row count that was out by the ratio between
+	// them.
+	outer, interior := w.denominations()
+	return core.UnitRect{
+		Y:      core.ExchangeY(top, outer, interior),
+		Height: core.ExchangeY(bottom-top, outer, interior),
+	}
 }
 
 // denominations returns the grid-metrics currency of the window's own

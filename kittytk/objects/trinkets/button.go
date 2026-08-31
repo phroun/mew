@@ -376,14 +376,21 @@ func (b *Button) Paint(p *core.Painter) {
 	// Pressed offset: on pixel surfaces the face scoots down-right to
 	// land exactly where the shadow rectangle was; cell surfaces keep
 	// the classic one-column shift.
-	shadowOff := metrics.CellWidth / 2
+	// Half a column across, a quarter of a row down: at the default 8x16
+	// cell those are both four units, which is the same physical distance on
+	// each axis -- a square offset, which is what a drop shadow wants. Each
+	// axis has to be a fraction of ITS OWN cell to stay that way. Taken from
+	// the column width alone, the vertical offset doubled the moment a cell
+	// stopped being twice as tall as it is wide.
+	shadowOffX := metrics.CellWidth / 2
+	shadowOffY := metrics.CellHeight / 4
 	xOffset := core.Unit(0)
 	// Center the two-row button in any extra vertical space its layout gave it.
 	yOffset := b.vInset()
 	if showPressed {
 		if graphical {
-			xOffset = shadowOff
-			yOffset += shadowOff
+			xOffset = shadowOffX
+			yOffset += shadowOffY
 		} else {
 			xOffset = metrics.CellWidth
 		}
@@ -398,8 +405,8 @@ func (b *Button) Paint(p *core.Painter) {
 	// rendering of the same idea.
 	if graphical && !showPressed {
 		p.FillRect(core.UnitRect{
-			X:      shadowOff,
-			Y:      yOffset + shadowOff,
+			X:      shadowOffX,
+			Y:      yOffset + shadowOffY,
 			Width:  buttonWidth,
 			Height: metrics.CellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
