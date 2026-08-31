@@ -1217,8 +1217,8 @@ func (t *TabTrinket) handleVertScrollbarClick(y core.Unit, metrics core.CellMetr
 func (t *TabTrinket) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultSizeCells,
-		Height: metrics.TextHeight(15),
+		Width:  metrics.CellWidth * defaultTabsWidthCells,
+		Height: metrics.CellHeight * defaultContainerHeightCells,
 	}
 }
 

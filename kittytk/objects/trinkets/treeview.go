@@ -636,7 +636,7 @@ func (t *TreeView) ensureVisible(index int) {
 func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultSizeCells,
+		Width:  metrics.CellWidth * defaultTreeWidthCells,
 		Height: metrics.CellHeight * defaultSizeCells,
 	}
 }

@@ -1163,7 +1163,7 @@ func (s *ScrollArea) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	return core.UnitSize{
 		Width:  metrics.CellWidth * defaultSizeCells,
-		Height: metrics.TextHeight(10),
+		Height: metrics.CellHeight * defaultContainerHeightCells,
 	}
 }
 

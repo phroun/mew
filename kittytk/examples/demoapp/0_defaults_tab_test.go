@@ -10,7 +10,7 @@ import (
 )
 
 // defaultsSpecimens lays out the Defaults tab and returns the vbox holding one
-// of each trinket, plus the denomination it was laid out in.
+// of each trinket, with the denomination it was laid out in.
 func defaultsSpecimens(t *testing.T) ([]core.Trinket, core.CellMetrics) {
 	t.Helper()
 	conn := inprocess.New(nil)
@@ -36,8 +36,8 @@ func defaultsSpecimens(t *testing.T) ([]core.Trinket, core.CellMetrics) {
 	tabs.SetCurrentIndex(idx)
 	win.Layout()
 
-	// The tab holds a scroll area holding the vbox: the only panel down
-	// there with a specimen for every trinket in it.
+	// The tab holds a scroll area holding the vbox: the only panel down there
+	// with a specimen for every trinket in it.
 	var vbox core.Container
 	var dig func(core.Trinket)
 	dig = func(tr core.Trinket) {
@@ -61,72 +61,77 @@ func defaultsSpecimens(t *testing.T) ([]core.Trinket, core.CellMetrics) {
 	return vbox.Children(), core.FindEffectiveCellMetrics(vbox)
 }
 
-// The Defaults tab is where the fallback size is looked at, so it is also
-// where it is pinned. A trinket with nothing to derive a size from lands at
-// three cells -- deliberately too small to use, so a designer who forgot to
-// set one is told. Change defaultSizeCells and this is the test that says the
-// demo's canonical view of it moved.
-func TestDefaultsTabShowsTheFallbackSize(t *testing.T) {
+// fallbackSize is what a trinket that cannot size itself from its content asks
+// for, in cells. A zero height means the height is not a fallback -- a field
+// and a bar are one row, from their content.
+type fallbackSize struct{ widthCells, heightCells core.Unit }
+
+// The Defaults tab is where these are looked at, so it is where they are
+// pinned. They are deliberately too small to use: a trinket laid out at one of
+// them is a designer being told they forgot to give it a size. A tree asks for
+// twice the width because it draws expand and collapse hardware beside the
+// text; a tab strip asks for more again.
+func TestDefaultsTabShowsTheFallbackSizes(t *testing.T) {
+	want := map[string]fallbackSize{
+		"*trinkets.TextInput":   {3, 0},
+		"*trinkets.ProgressBar": {3, 0},
+		"*trinkets.ListView":    {3, 3},
+		"*trinkets.TreeView":    {6, 3},
+		"*trinkets.ScrollArea":  {3, 5},
+		"*trinkets.Panel":       {3, 5},
+		"*trinkets.TabTrinket":  {12, 5},
+		"*trinkets.MDIPane":     {3, 5},
+	}
+
 	specimens, m := defaultsSpecimens(t)
-
-	// The trinkets that cannot size themselves from their content, and
-	// whether the fallback covers the height too.
-	wantHeight := map[string]bool{"*trinkets.ListView": true, "*trinkets.TreeView": true}
 	seen := map[string]bool{}
-
 	for _, k := range specimens {
-		name := typeName(k)
-		if _, ok := wantHeight[name]; !ok && !fallbackWidthOnly[name] {
+		name := specimenName(k)
+		size, ok := want[name]
+		if !ok {
 			continue
 		}
 		seen[name] = true
+
 		b := k.Bounds()
-		if b.Width != m.CellWidth*3 {
-			t.Errorf("%s is %d units wide, want %d (three cells)", name, b.Width, m.CellWidth*3)
+		if b.Width != m.CellWidth*size.widthCells {
+			t.Errorf("%s is %d units wide, want %d (%d cells)",
+				name, b.Width, m.CellWidth*size.widthCells, size.widthCells)
 		}
-		if wantHeight[name] && b.Height != m.CellHeight*3 {
-			t.Errorf("%s is %d units tall, want %d (three cells)", name, b.Height, m.CellHeight*3)
+		if size.heightCells > 0 && b.Height != m.CellHeight*size.heightCells {
+			t.Errorf("%s is %d units tall, want %d (%d cells)",
+				name, b.Height, m.CellHeight*size.heightCells, size.heightCells)
 		}
 	}
 
-	for name := range fallbackWidthOnly {
-		if !seen[name] {
-			t.Errorf("the Defaults tab has no %s; it is meant to hold one of each", name)
-		}
-	}
-	for name := range wantHeight {
+	for name := range want {
 		if !seen[name] {
 			t.Errorf("the Defaults tab has no %s; it is meant to hold one of each", name)
 		}
 	}
 }
 
-// fallbackWidthOnly are the trinkets whose width falls back but whose height
-// comes from somewhere else (a row, or a row count this change did not touch).
-var fallbackWidthOnly = map[string]bool{
-	"*trinkets.TextInput":   true,
-	"*trinkets.ProgressBar": true,
-	"*trinkets.ScrollArea":  true,
-	"*trinkets.TabTrinket":  true,
-	"*trinkets.Panel":       true,
-}
-
-func typeName(k core.Trinket) string {
+// specimenName names the trinkets whose sizes this pins. Anything else in the
+// tab -- the labels, and everything that sizes itself from its content -- is
+// not one of them.
+func specimenName(k core.Trinket) string {
 	switch k.(type) {
 	case *trinkets.TextInput:
 		return "*trinkets.TextInput"
 	case *trinkets.ProgressBar:
 		return "*trinkets.ProgressBar"
-	case *trinkets.ScrollArea:
-		return "*trinkets.ScrollArea"
-	case *trinkets.TabTrinket:
-		return "*trinkets.TabTrinket"
-	case *trinkets.Panel:
-		return "*trinkets.Panel"
 	case *trinkets.ListView:
 		return "*trinkets.ListView"
 	case *trinkets.TreeView:
 		return "*trinkets.TreeView"
+	case *trinkets.ScrollArea:
+		return "*trinkets.ScrollArea"
+	case *trinkets.Panel:
+		return "*trinkets.Panel"
+	case *trinkets.TabTrinket:
+		return "*trinkets.TabTrinket"
+	case *trinkets.MDIPane:
+		return "*trinkets.MDIPane"
 	}
 	return ""
 }

@@ -1255,13 +1255,18 @@ func (m *MDIPane) SetLayoutManager(lm core.LayoutManager) {
 // SizeHint returns the preferred size.
 // If minimum size is set (via SetMinimumSize), returns that as the hint.
 // This allows the MDIPane to report a fixed size when embedded in a ScrollArea.
-// Otherwise returns the current bounds size.
+// Otherwise the fallback a panel uses (see defaultSizeCells): the pane holds
+// windows of its own and has nothing of its own to derive a size from.
 func (m *MDIPane) SizeHint() core.UnitSize {
 	minSize := m.MinimumSize()
 	if minSize.Width > 0 || minSize.Height > 0 {
 		return minSize
 	}
-	return m.Bounds().Size()
+	metrics := m.EffectiveCellMetrics()
+	return core.UnitSize{
+		Width:  metrics.CellWidth * defaultSizeCells,
+		Height: metrics.CellHeight * defaultContainerHeightCells,
+	}
 }
 
 // HandleFocusIn is called when MDIPane gains focus.

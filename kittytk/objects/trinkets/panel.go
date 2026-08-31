@@ -202,7 +202,7 @@ func (p *Panel) SizeHint() core.UnitSize {
 	} else {
 		sh = core.ExchangeSize(core.UnitSize{
 			Width:  interior.CellWidth * defaultSizeCells,
-			Height: interior.TextHeight(10),
+			Height: interior.CellHeight * defaultContainerHeightCells,
 		}, interior, outer)
 	}
 	if p.fixedWidth > 0 {
