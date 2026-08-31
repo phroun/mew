@@ -2176,13 +2176,25 @@ func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
 // Only the size crosses: the position is applied by WithOffset in outer
 // units, before the denomination changes.
 func inInterior(r core.UnitRect, outer, interior core.CellMetrics) core.UnitRect {
-	if outer.CellWidth < 1 || outer.CellHeight < 1 {
-		return core.UnitRect{Width: r.Width, Height: r.Height}
-	}
 	return core.UnitRect{
-		Width:  r.Width * interior.CellWidth / outer.CellWidth,
-		Height: r.Height * interior.CellHeight / outer.CellHeight,
+		Width:  core.ExchangeX(r.Width, outer, interior),
+		Height: core.ExchangeY(r.Height, outer, interior),
 	}
+}
+
+// chromeLocal converts a window-local mouse position into the coordinates
+// a chrome trinket in rect r actually works in: past the rect's origin,
+// then out of the outer denomination and into the interior one.
+//
+// It is the mirror of what paintChrome does -- WithOffset in outer units,
+// then WithDenomination -- and both halves are needed. Subtracting the
+// origin alone hands the bar a position in the window's currency while its
+// own geometry is in the interior's, so a click lands on whichever item
+// happens to sit at the same NUMBER in the wrong currency. The content path
+// has always exchanged; the chrome path did not.
+func chromeLocal(x, y core.Unit, r core.UnitRect, outer, interior core.CellMetrics) (core.Unit, core.Unit) {
+	return core.ExchangeX(x-r.X, outer, interior),
+		core.ExchangeY(y-r.Y, outer, interior)
 }
 
 // paintChrome paints the detached window's menu bar and status bar in
@@ -3841,9 +3853,9 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	// Detached-window chrome (menu bar / status bar) claims the click
 	// before content, and an open menu claims all clicks.
 	if target, r, owns := w.chromeMouseTarget(event.X, event.Y); owns {
+		outer, interior := w.denominations()
 		le := event
-		le.X -= r.X
-		le.Y -= r.Y
+		le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 		target.HandleMousePress(le)
 		return true
 	}
@@ -3968,9 +3980,9 @@ func (w *Window) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if h, ok := target.(interface {
 			HandleMouseMove(core.MouseMoveEvent) bool
 		}); ok {
+			outer, interior := w.denominations()
 			le := event
-			le.X -= r.X
-			le.Y -= r.Y
+			le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 			h.HandleMouseMove(le)
 		}
 		return true
@@ -4069,9 +4081,9 @@ func (w *Window) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 		if h, ok := target.(interface {
 			HandleMouseRelease(core.MouseReleaseEvent) bool
 		}); ok {
+			outer, interior := w.denominations()
 			le := event
-			le.X -= r.X
-			le.Y -= r.Y
+			le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 			h.HandleMouseRelease(le)
 		}
 		return true
@@ -4182,9 +4194,9 @@ func (w *Window) HandleMouseWheel(event core.MouseWheelEvent) bool {
 				open = o.IsMenuOpen()
 			}
 			if r := w.menuBarRect(); open || (!r.IsEmpty() && r.Contains(core.UnitPoint{X: event.X, Y: event.Y})) {
+				outer, interior := w.denominations()
 				le := event
-				le.X -= r.X
-				le.Y -= r.Y
+				le.X, le.Y = chromeLocal(event.X, event.Y, r, outer, interior)
 				if wh.HandleMouseWheel(le) {
 					return true
 				}
