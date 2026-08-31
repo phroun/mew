@@ -88,7 +88,7 @@ b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
 		new label caption="This is a demo of basic trinkets:"
 		brow=new panel layout=hbox spacing=8 children={
-			input=new textinput placeholder="Enter text here..." stretch=1
+			input=new textinput min_width=160 placeholder="Enter text here..." stretch=1
 			new button caption="Browse..."
 		}
 		new spacer
@@ -161,7 +161,7 @@ new tab caption="Lists" children={
 	new splitter orientation=horizontal position=0.5 children={
 		new panel layout=vbox children={
 			new label caption="ListView:"
-			new listview children={`)
+			new listview min_width=160 min_height=160 children={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -170,7 +170,7 @@ new tab caption="Lists" children={
 		}
 		new panel layout=vbox children={
 			new label caption="TreeView:"
-			new treeview children={` + indent(treeItemsScript, "\t\t\t\t") + `}
+			new treeview min_width=160 min_height=160 children={` + indent(treeItemsScript, "\t\t\t\t") + `}
 		}
 	}
 }
@@ -218,7 +218,7 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="ListView (scrollable container):"
-				new listview children={`)
+				new listview min_width=160 min_height=160 children={`)
 	for i := 1; i <= 20; i++ {
 		fmt.Fprintf(&b, "\n\t\t\t\t\tnew item caption=\"Item %d\"", i)
 	}
@@ -234,9 +234,9 @@ new tab caption="Scroll Lists" children={
 		new scrollarea children={
 			new panel layout=vbox children={
 				new label caption="TreeView (scrollable container):"
-				new treeview children={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
+				new treeview min_width=160 min_height=160 children={` + indent(treeItemsScript, "\t\t\t\t\t") + `}
 				new label caption="Extra content below TreeView:"
-				new textinput placeholder="Type something..."
+				new textinput min_width=160 placeholder="Type something..."
 			}
 		}
 	}
@@ -248,36 +248,36 @@ tf=new tab caption="Text Fields" children={
 		tfrow=new panel layout=hbox spacing=8 children={
 			tfl=new panel layout=vbox spacing=0 stretch=1 children={
 				new label caption="Plain, with a placeholder:"
-				new textinput placeholder="Type here..."
+				new textinput min_width=160 placeholder="Type here..."
 
 				new label caption="Pre-filled, from text=:"
-				new textinput text="already typed"
+				new textinput min_width=160 text="already typed"
 
 				new label caption="readonly - selectable, not editable:"
-				new textinput text="you can copy this but not change it" readonly
+				new textinput min_width=160 text="you can copy this but not change it" readonly
 
 				new label caption="!enabled - not reachable at all:"
-				new textinput text="disabled" !enabled
+				new textinput min_width=160 text="disabled" !enabled
 
 				new label caption="max_length=8 - stops accepting at 8:"
-				new textinput placeholder="8 max" max_length=8
+				new textinput min_width=160 placeholder="8 max" max_length=8
 			}
 			tfr=new panel layout=vbox spacing=0 stretch=1 children={
 				new label caption="echo=password - masked with the default bullet:"
-				new textinput text="hunter2" echo=password
+				new textinput min_width=160 text="hunter2" echo=password
 
 				new label caption="echo=password mask=\"*\" - masked with a star:"
-				new textinput text="hunter2" echo=password mask="*"
+				new textinput min_width=160 text="hunter2" echo=password mask="*"
 
 				new label caption="echo=none - accepts typing, shows nothing:"
-				new textinput text="invisible" echo=none
+				new textinput min_width=160 text="invisible" echo=none
 
 				new label caption="Live: change fires per edit, complete on Return."
-				tfwatch=new textinput placeholder="Type, then press Return..."
+				tfwatch=new textinput min_width=160 placeholder="Type, then press Return..."
 				tfecho=new label caption="(nothing yet)"
 
 				new label caption="Masked, and you choose the mask:"
-				tfmask=new textinput text="secret" echo=password
+				tfmask=new textinput min_width=160 text="secret" echo=password
 				tfmrow=new panel layout=hbox spacing=8 children={
 					tfmb=new radiobutton caption="bullet" group=tfmaskg checked
 					tfms=new radiobutton caption="star" group=tfmaskg
@@ -295,9 +295,9 @@ dn=new tab caption="Denomination" children={
 		new label caption="column_units is the X axis, row_units the Y. They are independent: a tall thin cell is 8 by 32, a squat one 16 by 8."
 		dnrow=new panel layout=hbox spacing=8 children={
 			new label caption="X:"
-			dnx=new textinput text="8" max_length=2
+			dnx=new textinput min_width=160 text="8" max_length=2
 			new label caption="Y:"
-			dny=new textinput text="16" max_length=2
+			dny=new textinput min_width=160 text="16" max_length=2
 			dnap=new button caption="Apply" default
 		}
 		new label caption="Type in either field and press Return, or use Apply. Presets:"
@@ -316,12 +316,12 @@ dn=new tab caption="Denomination" children={
 new tab caption="Progress" children={
 	new panel layout=vbox spacing=16 children={
 		new label caption="Horizontal Progress Bars:"
-		new progress value=25
-		new progress value=50
-		new progress value=75
-		new progress value=100
+		new progress min_width=160 value=25
+		new progress min_width=160 value=50
+		new progress min_width=160 value=75
+		new progress min_width=160 value=100
 		new label caption="Indeterminate Progress:"
-		new progress indeterminate
+		new progress min_width=160 indeterminate
 	}
 }
 
@@ -344,7 +344,7 @@ new tab caption="Bottom Tabs" children={
 		new tab caption="Third" children={
 			new panel layout=vbox children={
 				new label caption="Third tab with an input field:"
-				new textinput placeholder="Type here..."
+				new textinput min_width=160 placeholder="Type here..."
 			}
 		}
 	}
@@ -367,7 +367,7 @@ new tab caption="Vertical Tabs" children={
 			}
 			new tab caption="Third" children={
 				new panel layout=vbox children={
-					new textinput placeholder="Type here..."
+					new textinput min_width=160 placeholder="Type here..."
 				}
 			}`)
 	for _, name := range []string{"Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"} {
@@ -413,7 +413,7 @@ new tab caption="Vertical Tabs" children={
 
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
-		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
+		dtree=new treeview min_width=160 min_height=160 caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
@@ -770,7 +770,7 @@ pw=new window title="Protocol Demo" x=64 y=64 width=448 height=256 children={
 		pstatus=new label C="Interact below; events appear here."
 		new separator
 		cb=new checkbox C="Tri-state checkbox (watch the label above)" tristate
-		inp=new textinput placeholder="Type here..."
+		inp=new textinput min_width=160 placeholder="Type here..."
 		combo=new combobox children={new item C="Alpha"; new item C="Beta"; new item C="Gamma"} selected=0
 		btn=new button C="Dispatch demo.hello" action=demo.hello
 	}
@@ -790,7 +790,7 @@ dw%d=new window title="Demo Window" x=%d y=%d width=480 height=320 tearable chil
 	dsp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
 		dtp=new panel layout=vbox spacing=8 children={
 			new label caption="This is a child window."
-			new textinput placeholder="Type something..."
+			new textinput min_width=160 placeholder="Type something..."
 			dclose=new button caption="Close"
 		}
 		dterm=new terminal
@@ -821,7 +821,7 @@ w=new window title="App %d Window" x=%d y=%d width=480 height=320 tearable main 
 		tp=new panel layout=vbox spacing=8 children={
 			new label caption="This window belongs to Application #%d"
 			new label caption="Notice the menu bar and status bar change\nwhen this window is focused."
-			new textinput placeholder="Enter text here..."
+			new textinput min_width=160 placeholder="Enter text here..."
 			closebtn=new button caption="Close Window"
 		}
 		term=new terminal
@@ -855,7 +855,7 @@ func mdiChildScript(n int) string {
 set mdi children={d%d=new window title="Document %d" x=%d y=%d width=240 height=128 children={
 	p=new panel layout=vbox spacing=8 children={
 		new label caption="Document #%d"
-		new textinput placeholder="Enter document content..."
+		new textinput min_width=160 placeholder="Enter document content..."
 		bp=new panel layout=hbox spacing=8 children={
 			nb=new button caption="New"
 			cl=new button caption="Close"

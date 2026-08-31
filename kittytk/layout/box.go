@@ -151,6 +151,26 @@ func isInlineTrinket(w core.Trinket) bool {
 	return true
 }
 
+// itemSize is the size a box gives one item: not below min_width and
+// min_height, and otherwise whatever the trinket answers for itself.
+//
+// min_width and min_height are properties, set in units on any trinket
+// (docs/property-vocabulary.md). A box read only the trinket's own answer
+// and never the properties, so setting them on anything in a box changed
+// nothing -- the value was applied and then nothing consulted it.
+// GridLayout has always read them.
+func itemSize(w core.Trinket) core.UnitSize {
+	size := w.SizeHint()
+	min := w.MinimumSize()
+	if size.Width < min.Width {
+		size.Width = min.Width
+	}
+	if size.Height < min.Height {
+		size.Height = min.Height
+	}
+	return size
+}
+
 // Layout arranges children within the given bounds.
 func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if len(l.items) == 0 {
@@ -199,7 +219,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		stretchItems := make([]stretchItem, len(l.items))
 
 		for i, item := range l.items {
-			hint := item.Trinket.SizeHint()
+			hint := itemSize(item.Trinket)
 			policy := item.Trinket.SizePolicy()
 
 			minSize := hint.Height
@@ -207,6 +227,9 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			// real height at the width they will actually receive.
 			if h := itemHeightForWidth(item.Trinket, l.verticalItemWidth(rect.Width, item, metrics)); h > 0 {
 				minSize = h
+			}
+			if m := item.Trinket.MinimumSize().Height; minSize < m {
+				minSize = m
 			}
 
 			stretch := 0
@@ -290,7 +313,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 // alignItem adjusts item bounds based on alignment.
 func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitRect {
-	hint := item.Trinket.SizeHint()
+	hint := itemSize(item.Trinket)
 	policy := item.Trinket.SizePolicy()
 
 	if l.orientation == core.Horizontal {
@@ -402,7 +425,7 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 
 	stretchItems := make([]stretchItem, len(l.items))
 	for i, item := range l.items {
-		hint := item.Trinket.SizeHint()
+		hint := itemSize(item.Trinket)
 		policy := item.Trinket.SizePolicy()
 
 		stretch := 0
@@ -519,7 +542,7 @@ func (l *BoxLayout) SizeHint(container core.Container) core.UnitSize {
 	var width, height core.Unit
 
 	for _, item := range l.items {
-		hint := item.Trinket.SizeHint()
+		hint := itemSize(item.Trinket)
 
 		if l.orientation == core.Horizontal {
 			width += hint.Width
