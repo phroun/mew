@@ -102,6 +102,21 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 	return tm
 }
 
+// TitleWidth measures title text in the bar's own denomination -- the
+// frame's, the one RowH, CellW, ButtonW and every X the bar places are
+// counted in. Font.MeasureText answers in the default denomination
+// instead, which is the same width in a different currency and only
+// matches when the frame happens to be at 8x16.
+func (tm TitleBarMetrics) TitleWidth(text string) core.Unit {
+	return tm.Font.MeasureTextIn(text, tm.base)
+}
+
+// GlyphWidth measures a control's monospaced run -- "[x]", "[_]" -- in the
+// same terms, so it centers inside a ButtonW slot.
+func (tm TitleBarMetrics) GlyphWidth(text string) core.Unit {
+	return tm.Mono.MeasureTextIn(text, tm.base)
+}
+
 // titleFacesKey identifies one (source font, scale) pair. core.Font is a
 // plain comparable value, so it keys the cache directly and a caller that
 // hands over an equal font by a different pointer still hits.
@@ -189,7 +204,7 @@ func paintThreeCellButton(p *core.Painter, tm TitleBarMetrics, x core.Unit, icon
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', st)
 	run := "[" + string(icon) + "]"
-	rx := x + (tm.ButtonW-tm.Mono.MeasureText(run))/2
+	rx := x + (tm.ButtonW-tm.GlyphWidth(run))/2
 	if rx < x {
 		rx = x
 	}
@@ -239,7 +254,7 @@ func PaintTearHandleSlot(p *core.Painter, tm TitleBarMetrics, x core.Unit, glyph
 	}
 	p.FillRect(core.UnitRect{X: x, Width: tm.ButtonW, Height: tm.RowH}, ' ', titleSt)
 	g := string(glyph)
-	gx := x + (tm.ButtonW-tm.Mono.MeasureText(g))/2
+	gx := x + (tm.ButtonW-tm.GlyphWidth(g))/2
 	if gx < x {
 		gx = x
 	}
@@ -259,13 +274,13 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 		return
 	}
 	display := title
-	titleW := tm.Font.MeasureText(display)
+	titleW := tm.TitleWidth(display)
 	if titleW > avail {
-		display = ellipsizeToWidth(title, avail, tm.Font)
+		display = ellipsizeToWidth(title, avail, tm.Font, tm.base)
 		if display == "" {
 			return
 		}
-		titleW = tm.Font.MeasureText(display)
+		titleW = tm.TitleWidth(display)
 	}
 	x := (barWidth - titleW) / 2
 	if x < leftEdge {
@@ -289,7 +304,7 @@ func PaintTitleBarText(p *core.Painter, tm TitleBarMetrics, title string, ts sty
 // bar's focused title — a window's or the desktop's — draws through it.)
 func PaintFocusedTitleDecoration(p *core.Painter, tm TitleBarMetrics, innerWidth core.Unit, title string, s style.CellStyle) {
 	decorated := "< " + title + " >"
-	totalWidth := tm.Font.MeasureText(decorated)
+	totalWidth := tm.TitleWidth(decorated)
 	startX := (innerWidth - totalWidth) / 2
 	if startX < 0 {
 		startX = 0

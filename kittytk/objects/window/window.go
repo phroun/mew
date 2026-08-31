@@ -2411,7 +2411,7 @@ func (w *Window) paintMaximizedFrame(p *core.Painter, bounds core.UnitRect, metr
 	// stand in for it - so it isn't shoved aside; it returns on the next
 	// Tab / Shift+Tab focus change.
 	if titleFocus != TitleFocusTitle {
-		tearTitleW := tm.Font.MeasureText(title)
+		tearTitleW := tm.TitleWidth(title)
 		controlX = w.paintTearHandle(p, scheme, titleStyle, tm, controlX, bounds.Width, tearTitleW, buttonActive, titleFocus)
 	}
 
@@ -2673,7 +2673,7 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		// brackets stand in for it - so it isn't shoved aside; it returns on
 		// the next Tab / Shift+Tab focus change.
 		if titleFocus != TitleFocusTitle {
-			tearTitleW := tm.Font.MeasureText(title)
+			tearTitleW := tm.TitleWidth(title)
 			// On the graphical path a blur-focused bar reads fully inactive, so
 			// the tear/redock handle and the space around it take the inactive
 			// title colors too (matching a real inactive window frame).
@@ -2739,13 +2739,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 // EllipsizeToWidth is ellipsizeToWidth for callers outside the package:
 // the desktop's themed title bar lays out like a window title and trims
 // with the same ellipsis.
-func EllipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
-	return ellipsizeToWidth(s, avail, font)
+func EllipsizeToWidth(s string, avail core.Unit, font *core.Font, metrics core.CellMetrics) string {
+	return ellipsizeToWidth(s, avail, font, metrics)
 }
 
-func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
+func ellipsizeToWidth(s string, avail core.Unit, font *core.Font, metrics core.CellMetrics) string {
 	const ell = "..."
-	if font.MeasureText(s) <= avail {
+	if font.MeasureTextIn(s, metrics) <= avail {
 		return s
 	}
 	runes := []rune(s)
@@ -2759,7 +2759,7 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	lo, hi := 0, len(runes) // lo fits (as ""), hi does not
 	for lo < hi-1 {
 		mid := (lo + hi) / 2
-		if font.MeasureText(string(runes[:mid])+ell) <= avail {
+		if font.MeasureTextIn(string(runes[:mid])+ell, metrics) <= avail {
 			lo = mid
 		} else {
 			hi = mid
@@ -2768,7 +2768,7 @@ func ellipsizeToWidth(s string, avail core.Unit, font *core.Font) string {
 	if lo == 0 {
 		// Not even one character plus the ellipsis: the ellipsis alone
 		// only shows if it fits by itself.
-		if font.MeasureText(ell) <= avail {
+		if font.MeasureTextIn(ell, metrics) <= avail {
 			return ell
 		}
 		return ""
@@ -2885,7 +2885,7 @@ func (w *Window) buttonAtPosition(x, y core.Unit) TitleButton {
 	// The handle is hidden while the title is focused, so it isn't hittable
 	// then.
 	if flags&WindowFlagTearable != 0 && hasTitleBar(flags, state) && titleFocus != TitleFocusTitle {
-		titleW := tm.Font.MeasureText(title)
+		titleW := tm.TitleWidth(title)
 		// Inner width: the paint centers within the border-inset titlebar.
 		handleX := tearHandleSlotX(w.Bounds().Width-2*inset, controlX, titleW, buttonWidth)
 		if x >= handleX && x < handleX+buttonWidth {

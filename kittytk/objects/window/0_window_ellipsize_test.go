@@ -42,7 +42,7 @@ func TestEllipsizeMatchesLinearScan(t *testing.T) {
 		"日本語のタイトルです",                     // wide glyphs
 	} {
 		for avail := core.Unit(-4); avail <= 420; avail++ {
-			if got, want := ellipsizeToWidth(s, avail, f), linear(s, avail); got != want {
+			if got, want := ellipsizeToWidth(s, avail, f, core.DefaultCellMetrics()), linear(s, avail); got != want {
 				t.Fatalf("%q at avail %d: got %q, want %q", s, avail, got, want)
 			}
 		}
