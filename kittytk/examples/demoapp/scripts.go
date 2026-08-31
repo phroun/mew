@@ -74,7 +74,7 @@ func indent(s, prefix string) string {
 }
 
 // mainBuildScript is the whole primary application in one build: the
-// KittyTK Demo window (nine tabs), its menu bar and its status bar.
+// KittyTK Demo window and its tab gallery, its menu bar and its status bar.
 // The display adopts each top-level object - window, menubar, statusbar -
 // as the connection's application chrome.
 func mainBuildScript() string {
@@ -478,12 +478,28 @@ mtab=new tab caption="MDI Demo" children={
 	}
 }
 
+mt=new tab caption="Terminal" children={
+	mtsp=new splitter orientation=vertical position=0.3 caption="Terminal" children={
+		mtp=new panel layout=vbox spacing=8 children={
+			new label caption="A terminal surface in a tab, the same trinket the Demo Window and each secondary application embed." wrap
+			new label caption="Keystrokes leave as input events and the application writes them to a PTY it owns; the child's output comes back through feed=. The shell starts the first time this tab is shown." wrap
+			mtrow=new panel layout=hbox spacing=8 children={
+				mtclear=new button caption="Clear"
+				new spacer
+			}
+		}
+		mterm=new terminal
+	}
+}
+
 }
 }
 
 # Surface what the app-side handlers address, then open the event flows
 # they listen to (command flows regardless; toggles/changes need a sub).
 tabs=w.t
+mterm=w.t.mt.mtsp.mterm
+mtclear=w.t.mt.mtsp.mtp.mtrow.mtclear
 dtree=w.t.det.dbox.dtree
 dsizec=w.t.det.dbox.dtree.dsizec
 dkindc=w.t.det.dbox.dtree.dkindc

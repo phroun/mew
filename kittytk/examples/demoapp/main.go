@@ -1,7 +1,7 @@
 // Command demoapp is the full KittyTK demo as a display-protocol
 // APPLICATION: it links only client + protocol (no rendering backend),
 // dials a running KittyTK display service, and drives its entire UI - the
-// nine-tab trinket gallery, menu bars, status bar, the protocol-built
+// tabbed trinket gallery, menu bars, status bar, the protocol-built
 // window, terminal child windows, dialogs and MDI - over the socket.
 //
 //	terminal 1:  go run ./cmd/kittytk-tui             (or -tags sdl ./cmd/kittytk-sdl)
@@ -63,6 +63,9 @@ type app struct {
 	// Client-side PTYs backing this app's terminal surfaces, closed when
 	// the app quits.
 	drivers []*ptydriver.Driver
+
+	// Set once the Terminal tab has been opened and its shell started.
+	terminalStarted bool
 
 	quit     chan struct{}
 	quitOnce sync.Once

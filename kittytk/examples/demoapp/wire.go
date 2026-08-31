@@ -120,6 +120,38 @@ func (a *app) wireMainWindow() {
 	ui.Object("tfmn").On("toggle", setMask(`echo=normal`))
 
 	a.wireDenomination(win)
+	a.wireTerminalTab(tabs)
+}
+
+// terminalTabIndex is the Terminal tab's position in the main window's
+// strip. The change event reports an index, so the tab has to be named by
+// one; a test checks the caption at this index is still "Terminal".
+const terminalTabIndex = 12
+
+// wireTerminalTab drives the Terminal tab's surface. The PTY starts the
+// first time the tab is selected rather than at build: a shell is a child
+// process, and a tab nobody opened should not have one.
+func (a *app) wireTerminalTab(tabs client.Handle) {
+	ui := a.ui
+	term := ui.Object("mterm")
+
+	// ESC [ 2 J clears the screen, ESC [ H puts the cursor home -- fed in
+	// as if the child had written them, which is the only direction the
+	// display accepts.
+	ui.Button("mtclear").OnClick(func() {
+		_ = term.Set(`feed="\e[2J\e[H"`)
+	})
+
+	tabs.On("change", func(ev *protocol.Event) {
+		if i, ok := ev.Int("selected"); !ok || i != terminalTabIndex {
+			return
+		}
+		if a.terminalStarted {
+			return
+		}
+		a.terminalStarted = true
+		a.wireTerminal(term)
+	})
 }
 
 // What the Denomination tab will apply. One unit per cell is the floor
