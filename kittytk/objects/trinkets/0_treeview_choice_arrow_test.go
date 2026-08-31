@@ -40,6 +40,42 @@ func TestChoiceHintHoldsBackWhatAComboBoxDoes(t *testing.T) {
 	}
 }
 
+// A sortable header holds back the same room for its sort indicator, and
+// neededCells holds back the same again when it sizes a column to its
+// content -- so a caption the column was measured to hold is not then elided
+// by the paint. The header held back the arrow plus a whole CELL where the
+// width had been sized for the arrow plus a space, about a character more:
+// "Kind" came out "Ki…" in a column measured to show "Kin…" at worst.
+func TestSortArrowRoomMatchesWhatTheColumnWasSizedFor(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.New(200, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewDesktop()
+	d.SetBackend(b)
+
+	tv := NewTreeView()
+	tv.SetParent(d)
+
+	col := NewTreeColumn("kind", "Kind", 4)
+	col.Sortable = true
+	tv.AddColumn(col)
+	tv.SetSorted(true, 0, false)
+
+	// The width neededCells asks for, and the room the header paint leaves
+	// the caption inside it: the reservation, then drawAligned's own pad.
+	cw := tv.EffectiveCellMetrics().CellWidth
+	span := core.Unit(tv.neededCells(col)) * cw
+	room := span - tv.arrowRoom("▲") - cw/2
+
+	if got := ellipsizeText(tv.EffectiveFont(), tv.EffectiveCellMetrics(),
+		col.Caption, room); got != col.Caption {
+		t.Errorf("a column sized at %d units for %q shows %q: the paint holds back "+
+			"more than the width was measured for", span, col.Caption, got)
+	}
+}
+
 // And it follows the denomination, like every other width the tree counts.
 func TestChoiceArrowRoomFollowsTheDenomination(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })

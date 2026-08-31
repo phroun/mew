@@ -989,7 +989,7 @@ func (t *TreeView) neededCells(col *TreeColumn) int {
 	metrics := t.EffectiveCellMetrics()
 	maxW := font.MeasureTextIn(col.Caption, metrics)
 	if t.sortIndicatorFor(col) {
-		maxW += font.MeasureTextIn(" ▲", metrics)
+		maxW += t.arrowRoom("▲")
 	}
 	host := t.treeHostColumn() == col // carries expander + indent
 	for _, it := range t.flatList {
@@ -1145,7 +1145,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				t.drawAligned(cp, arrow, sp, 0, headerStyle, font, "right")
 				// Keep the caption clear of the arrow.
 				capSp := sp
-				if room := t.MeasureText(arrow) + metrics.CellWidth; capSp.w > room {
+				if room := t.arrowRoom(arrow); capSp.w > room {
 					capSp.w -= room
 				}
 				t.drawAligned(cp, caption, capSp, 0, headerStyle, font, "left")
@@ -1761,13 +1761,26 @@ func (t *TreeView) chooserPopupID() string {
 // to advertise its editor.
 const choiceArrowGlyph = "▼"
 
-// choiceArrowRoom is what a CHOICE cell holds back at its right for that
-// arrow: the arrow and one space before it, which is exactly what a ComboBox
-// holds back for its own. The two have to agree -- the same cell shows the
-// tree's hint at rest and a real ComboBox once the editor is up, and a value
-// that fits under one must fit under the other.
+// arrowRoom is what a cell or a header holds back at its right for an arrow
+// drawn over it: the arrow and one space before it.
+//
+// One answer for all of them. A sortable header reserves it for the sort
+// indicator, a CHOICE cell for the combo's down arrow, and neededCells for
+// both when it sizes a column to its content -- so a caption or a value the
+// column was sized to hold is not then elided by the paint. Holding back the
+// arrow plus a whole CELL, as the two paints did, is about a character more
+// than the width was sized for: "Kind" came out "Ki…" beside the sort arrow
+// in a column measured to fit "Kin…" at worst.
+func (t *TreeView) arrowRoom(glyph string) core.Unit {
+	return t.MeasureText(" " + glyph)
+}
+
+// choiceArrowRoom is arrowRoom for the combo's down arrow -- exactly what a
+// ComboBox holds back for its own. The two have to agree: the same cell shows
+// the tree's hint at rest and a real ComboBox once the editor is up, and a
+// value that fits under one must fit under the other.
 func (t *TreeView) choiceArrowRoom() core.Unit {
-	return t.MeasureText(" " + choiceArrowGlyph)
+	return t.arrowRoom(choiceArrowGlyph)
 }
 
 func (t *TreeView) popupMetrics(pc core.PopupController) core.CellMetrics {
