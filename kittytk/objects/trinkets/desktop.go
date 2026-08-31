@@ -6030,10 +6030,10 @@ func (s *StatusBar) Paint(p *core.Painter) {
 			var textW core.Unit
 			if len(section.Spans) > 0 {
 				for _, span := range section.Spans {
-					textW += font.MeasureText(span.Text)
+					textW += s.MeasureText(span.Text)
 				}
 			} else {
-				textW = font.MeasureText(section.Text)
+				textW = s.MeasureText(section.Text)
 			}
 			sectionWidth = textW + 2*metrics.CellWidth
 		} else {

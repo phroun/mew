@@ -396,10 +396,9 @@ func (l *ListView) ensureVisible(index int) {
 // SizeHint returns the preferred size.
 func (l *ListView) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
-	font := l.EffectiveFont()
 	return core.UnitSize{
-		Width:  font.MeasureRunes(30),  // Default width for 30 chars
-		Height: metrics.TextHeight(10), // 10 items visible
+		Width:  l.EffectiveFont().MeasureRunesIn(30, metrics), // 30 chars wide
+		Height: metrics.TextHeight(10),                        // 10 items visible
 	}
 }
 
@@ -482,7 +481,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		availableWidth := bounds.Width - x
 		displayText := item.Text
 		// Truncate if needed
-		for font.MeasureText(displayText) > availableWidth && len(displayText) > 0 {
+		for l.MeasureText(displayText) > availableWidth && len(displayText) > 0 {
 			displayText = displayText[:len(displayText)-1]
 		}
 		p.DrawText(x, itemY, displayText, s, font)

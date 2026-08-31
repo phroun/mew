@@ -284,6 +284,24 @@ func (f *Font) MeasureRunes(runeCount int) Unit {
 	return Unit(runeCount * perRune)
 }
 
+// MeasureRunesIn is MeasureRunes in m's denomination: a rune is one cell,
+// and a cell is m.CellWidth units by definition of the denomination. A
+// trinket sizing itself in "so many characters wide" wants this, because
+// the width it returns is spent in its own units.
+func (f *Font) MeasureRunesIn(runeCount int, m CellMetrics) Unit {
+	cw := m.CellWidth
+	if cw < 1 {
+		cw = DefaultCellMetrics().CellWidth
+	}
+	if f == nil {
+		f = DefaultFont()
+	}
+	if f.Name == "Tuesday" {
+		cw *= 2 // double-width demo face
+	}
+	return Unit(runeCount) * cw
+}
+
 // isAlphabetic returns true if the character is a letter or digit.
 func isAlphabetic(ch rune) bool {
 	// Basic Latin letters
