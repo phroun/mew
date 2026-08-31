@@ -523,7 +523,7 @@ type textSegment struct {
 // font size leaves a gap (or overlap) where the two rates diverge. On a
 // cell surface it falls back to whole-unit DrawText advances. Returns the
 // total advance in units.
-func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, segs ...textSegment) core.Unit {
+func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, metrics core.CellMetrics, segs ...textSegment) core.Unit {
 	_, usePx := p.DrawTextOffset(x, y, 0, 0, "", style.CellStyle{}, font)
 	total := core.Unit(0)
 	xPx := 0
@@ -537,7 +537,7 @@ func drawTextSegments(p *core.Painter, x, y core.Unit, font *core.Font, segs ...
 		} else {
 			p.DrawText(x+total, y, seg.text, seg.style, font)
 		}
-		total += font.MeasureText(seg.text)
+		total += font.MeasureTextIn(seg.text, metrics)
 	}
 	return total
 }
@@ -1505,7 +1505,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.acceleratorPos < len(textRunes)-1 {
 				segs = append(segs, textSegment{string(textRunes[item.acceleratorPos+1:]), contentStyle})
 			}
-			x += drawTextSegments(p, x, itemY, font, segs...)
+			x += drawTextSegments(p, x, itemY, font, m.EffectiveCellMetrics(), segs...)
 		} else {
 			// No accelerator or disabled - draw entire text
 			p.DrawText(x, itemY, item.Text, contentStyle, font)
@@ -2142,7 +2142,7 @@ func (m *MenuBar) dateTimeWidth() core.Unit {
 		return 0
 	}
 	if f := m.dateTimeFont(); f != nil {
-		return f.MeasureText(dateTimeFormat)
+		return f.MeasureTextIn(dateTimeFormat, m.EffectiveCellMetrics())
 	}
 	metrics := m.EffectiveCellMetrics()
 	// " Mon Jan 02 15:04 " = 18 chars
@@ -2803,19 +2803,24 @@ func (m *MenuBar) CloseMenuWithoutRestore() {
 }
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
-// menuBarLeftInset is the small left indent applied to the menu items on
-// graphical surfaces, so the outline stroke drawn around the active item
-// has its left edge clear of the very left pixel column. Clicks anywhere
-// in this indent still activate the first item (Fitts's law - see
-// HandleMousePress), so nothing on the left edge is dead. Zero on cell
-// surfaces, where there is no stroke and a sub-cell indent can't render.
-const menuBarLeftInset core.Unit = 2
+// menuBarLeftInsetCells is the small left indent applied to the menu items
+// on graphical surfaces, as a fraction of a cell: one quarter. It exists so
+// the outline stroke drawn around the active item has its left edge clear
+// of the very left pixel column. Clicks anywhere in this indent still
+// activate the first item (Fitts's law - see HandleMousePress), so nothing
+// on the left edge is dead. Zero on cell surfaces, where there is no stroke
+// and a sub-cell indent can't render.
+//
+// A cell, not a unit count: a cell is a fixed physical size at a given
+// zoom, so the indent is the same nudge whatever denomination the window
+// carries. Two units was a quarter-cell only at the default denomination.
+const menuBarLeftInsetCells core.Unit = 4
 
 // leftInset returns the item indent for the surface of the last paint:
-// menuBarLeftInset on graphical surfaces, 0 on cell surfaces.
+// a quarter cell on graphical surfaces, 0 on cell surfaces.
 func (m *MenuBar) leftInset() core.Unit {
 	if m.graphicalCached {
-		return menuBarLeftInset
+		return m.EffectiveCellMetrics().CellWidth / menuBarLeftInsetCells
 	}
 	return 0
 }
@@ -2838,12 +2843,10 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 // SizeHint returns the preferred size.
 func (m *MenuBar) SizeHint() core.UnitSize {
 	metrics := m.EffectiveCellMetrics()
-	font := m.EffectiveFont()
 
 	width := core.Unit(0)
 	for _, menu := range m.menus {
-		// Menu width: space (1 cell) + title (font) + space (1 cell)
-		width += metrics.CellWidth*2 + font.MeasureText(menu.title)
+		width += m.menuTitleWidth(menu.title)
 	}
 
 	return core.UnitSize{
@@ -2855,9 +2858,14 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 // menuTitleWidth returns the width of a menu title including surrounding spaces.
 func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	metrics := m.EffectiveCellMetrics()
-	font := m.EffectiveFont()
-	// Menu width: space (1 cell) + title (font) + space (1 cell)
-	return metrics.CellWidth*2 + font.MeasureText(title)
+	// Menu width: space (1 cell) + title (font) + space (1 cell).
+	//
+	// The pad is a cell, which is a fixed physical size at a given zoom, so
+	// it needs no adjusting. The title is proportional text, and MeasureText
+	// counts it in THIS bar's denomination -- Font.MeasureText answers at the
+	// default one, which is a different currency the moment a window carries
+	// an override, and the bar came out stretched by exactly that difference.
+	return metrics.CellWidth*2 + m.MeasureText(title)
 }
 
 // elidedTitlePrefix returns how many leading runes of a title fit within
@@ -2865,10 +2873,10 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 // surfaces, cell-width on terminals. The elided (last partially visible)
 // title must measure the same way it renders, or the prefix is cut at
 // the wrong glyph.
-func elidedTitlePrefix(font *core.Font, title []rune, budget core.Unit) int {
+func elidedTitlePrefix(font *core.Font, metrics core.CellMetrics, title []rune, budget core.Unit) int {
 	visible := 0
 	for visible < len(title) &&
-		font.MeasureText(string(title[:visible+1])) <= budget {
+		font.MeasureTextIn(string(title[:visible+1]), metrics) <= budget {
 		visible++
 	}
 	return visible
@@ -2880,15 +2888,14 @@ func elidedTitlePrefix(font *core.Font, title []rune, budget core.Unit) int {
 const ellipsisText = "..."
 
 func (m *MenuBar) ellipsisWidth() core.Unit {
-	return m.EffectiveFont().MeasureText(ellipsisText)
+	return m.MeasureText(ellipsisText)
 }
 
 // drawEllipsis paints the overflow marker in the menu bar's proportional
 // font at (x, 0) and returns its width.
 func (m *MenuBar) drawEllipsis(p *core.Painter, x core.Unit, s style.CellStyle) core.Unit {
-	font := m.EffectiveFont()
-	p.DrawText(x, 0, ellipsisText, s, font)
-	return font.MeasureText(ellipsisText)
+	p.DrawText(x, 0, ellipsisText, s, m.EffectiveFont())
+	return m.ellipsisWidth()
 }
 
 // Paint renders the menu bar (without dropdown - use PaintDropdown for that).
@@ -3046,7 +3053,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					if menu.acceleratorPos < len(titleRunes)-1 {
 						segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 					}
-					drawTextSegments(p, textX, 0, font, segs...)
+					drawTextSegments(p, textX, 0, font, metrics, segs...)
 				} else {
 					p.DrawText(textX, 0, menu.title, s, font)
 				}
@@ -3064,7 +3071,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				titleRunes := []rune(menu.title)
 
 				// Budget for title characters: leading space + prefix + "..."
-				visible := elidedTitlePrefix(font, titleRunes,
+				visible := elidedTitlePrefix(font, metrics, titleRunes,
 					remainingWidth-metrics.CellWidth-ellipsisWidth)
 
 				if visible > 0 {
@@ -3085,7 +3092,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					} else {
 						segs = []textSegment{{string(titleRunes[:visible]), s}}
 					}
-					advance := drawTextSegments(p, textX, 0, font, segs...)
+					advance := drawTextSegments(p, textX, 0, font, metrics, segs...)
 
 					// Draw ellipsis in the menu style (never accelerator color)
 					m.drawEllipsis(p, textX+advance, s)
@@ -3149,7 +3156,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			if menu.acceleratorPos < len(titleRunes)-1 {
 				segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 			}
-			drawTextSegments(p, textX, 0, font, segs...)
+			drawTextSegments(p, textX, 0, font, metrics, segs...)
 		} else {
 			// No accelerator - draw entire text
 			p.DrawText(textX, 0, menu.title, s, font)

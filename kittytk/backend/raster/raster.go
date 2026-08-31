@@ -774,6 +774,13 @@ func (b *Backend) MeasureText(f *core.Font, s string) core.Unit {
 	return engine().Measure(f, s)
 }
 
+// MeasureTextIn implements core.DenominatedTextMeasurer: the same shaped
+// advance, counted in the units of the denomination asked for. Converting
+// inside the engine keeps it to one rounding.
+func (b *Backend) MeasureTextIn(f *core.Font, s string, m core.CellMetrics) core.Unit {
+	return engine().MeasureIn(f, s, m)
+}
+
 // MeasureTextPx implements core.TextPixelMeasurer: the advance in device
 // pixels, rounded once at the pixel rather than at the unit and again at the
 // pixel. It is what DrawTextPx lays its glyphs out by, so a caret measured

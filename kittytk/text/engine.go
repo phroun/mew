@@ -603,6 +603,33 @@ func (e *Engine) Measure(f *core.Font, s string) core.Unit {
 	return e.ShapeRun(f, s).Width()
 }
 
+// MeasureIn is Measure expressed in the units of a given denomination.
+//
+// Denomination says how many units make one cell; the cell is the fixed
+// physical thing, so a higher denomination means smaller units and
+// therefore MORE of them for the same run of text. The text does not
+// change size -- only the currency it is counted in.
+//
+// Scaled from the UNROUNDED advance for the reason MeasurePx gives:
+// Measure has already rounded to whole units at the default denomination,
+// and scaling that rounds a second time. Text is proportional, so the
+// advance is a real quantity and there is no cell tally to count; the one
+// rounding belongs at the end, in the currency being asked for.
+func (e *Engine) MeasureIn(f *core.Font, s string, m core.CellMetrics) core.Unit {
+	cw := m.CellWidth
+	if cw < 1 {
+		cw = core.DefaultCellMetrics().CellWidth
+	}
+	base := float64(core.DefaultCellMetrics().CellWidth)
+	widest := 0.0
+	for _, l := range e.ShapeRun(f, s).Lines {
+		if a := float64(l.advance) / 64; a > widest {
+			widest = a
+		}
+	}
+	return core.Unit(math.Round(widest * float64(cw) / base))
+}
+
 // MeasurePx is Measure in device pixels at ppu pixels per unit.
 //
 // Not Measure scaled: the whole-unit rounding happens once, at the pixel, so

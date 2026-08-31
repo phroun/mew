@@ -2,6 +2,7 @@
 package core
 
 import (
+	"math"
 	"sync"
 
 	"github.com/phroun/kittytk/style"
@@ -18,6 +19,15 @@ import (
 type TextMeasurer interface {
 	MeasureText(f *Font, text string) Unit
 	LineHeight(f *Font) Unit
+}
+
+// DenominatedTextMeasurer is the optional extension a measurer implements
+// when it can answer in an arbitrary denomination rather than only the
+// default one. A measurer without it is asked at the default and its answer
+// scaled, which rounds twice; one with it converts inside its own shaping,
+// where the advance is still a real quantity.
+type DenominatedTextMeasurer interface {
+	MeasureTextIn(f *Font, text string, m CellMetrics) Unit
 }
 
 var (
@@ -172,6 +182,51 @@ func (f *Font) LineHeight() Unit {
 	}
 	// Text-based system: every line is one cell row (16 units).
 	return 16
+}
+
+// MeasureTextIn returns the width of text in the units of the given
+// denomination -- how many of THOSE units the same text occupies.
+//
+// Text is proportional and its physical size does not depend on the
+// denomination. The denomination is the currency the answer is counted in:
+// a cell is a fixed physical size, so a higher denomination divides it into
+// smaller units and the same text measures more of them.
+//
+// MeasureText is this at the default denomination, which is what every
+// caller that has not been told otherwise means.
+func (f *Font) MeasureTextIn(text string, m CellMetrics) Unit {
+	cw := m.CellWidth
+	if cw < 1 {
+		cw = DefaultCellMetrics().CellWidth
+	}
+	if d, ok := currentTextMeasurer().(DenominatedTextMeasurer); ok {
+		return d.MeasureTextIn(f, text, CellMetrics{CellWidth: cw, CellHeight: m.CellHeight})
+	}
+	if mm := currentTextMeasurer(); mm != nil {
+		// No denominated answer available: scale the default-denomination
+		// one. Rounds twice; the extension above exists to avoid it.
+		base := DefaultCellMetrics().CellWidth
+		return Unit(math.Round(float64(mm.MeasureText(f, text)) * float64(cw) / float64(base)))
+	}
+	if f == nil {
+		f = DefaultFont()
+	}
+
+	// The text-based system: one character occupies one cell, two for a
+	// wide one -- and a cell is cw units by definition of the denomination.
+	total := Unit(0)
+	isTuesday := f.Name == "Tuesday"
+	for _, ch := range text {
+		if isTuesday && isAlphabetic(ch) {
+			total += 2 * cw
+		} else {
+			total += cw
+		}
+		if isWideChar(ch) {
+			total += cw
+		}
+	}
+	return total
 }
 
 // MeasureText returns the width in units needed to display the given text.

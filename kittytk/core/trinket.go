@@ -1113,6 +1113,15 @@ func (w *TrinketBase) SetCellMetrics(m *CellMetrics) {
 	w.Update()
 }
 
+// MeasureText measures text in THIS trinket's denomination -- how many of
+// its units the text occupies. A trinket laying itself out against text it
+// will paint wants this rather than Font.MeasureText, which answers at the
+// default denomination and is therefore only correct for a subtree that
+// carries no override.
+func (w *TrinketBase) MeasureText(text string) Unit {
+	return w.EffectiveFont().MeasureTextIn(text, w.EffectiveCellMetrics())
+}
+
 // EffectiveCellMetrics returns the grid metrics to use for this trinket.
 // It checks this trinket, then walks up the parent chain, falling back
 // to DefaultCellMetrics.

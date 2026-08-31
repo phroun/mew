@@ -6058,7 +6058,7 @@ func (s *StatusBar) Paint(p *core.Painter) {
 				}
 				segs = append(segs, textSegment{span.Text, spanStyle})
 			}
-			drawTextSegments(slot, textX, 0, font, segs...)
+			drawTextSegments(slot, textX, 0, font, s.EffectiveCellMetrics(), segs...)
 		} else {
 			// Draw plain text
 			slot.DrawText(textX, 0, section.Text, statusBarStyle, font)

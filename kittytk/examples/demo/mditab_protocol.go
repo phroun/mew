@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/phroun/kittytk/client"
-	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/inprocess"
 	"github.com/phroun/kittytk/objects/app"
 	"github.com/phroun/kittytk/objects/trinkets"
 	"github.com/phroun/kittytk/protocol"

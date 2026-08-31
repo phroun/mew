@@ -2164,6 +2164,27 @@ func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
 	return rects
 }
 
+// inInterior restates a chrome rect's size in the interior denomination.
+//
+// The rect comes from the window's own geometry, which is in outer units,
+// and the bar that receives it paints through WithDenomination(outer,
+// interior) -- so handing the size over unconverted gives the bar a width
+// in one currency and a painter in another. A bar told it was 400 units
+// wide at an interior denomination of 16 against an outer 8 painted its
+// background across half the window.
+//
+// Only the size crosses: the position is applied by WithOffset in outer
+// units, before the denomination changes.
+func inInterior(r core.UnitRect, outer, interior core.CellMetrics) core.UnitRect {
+	if outer.CellWidth < 1 || outer.CellHeight < 1 {
+		return core.UnitRect{Width: r.Width, Height: r.Height}
+	}
+	return core.UnitRect{
+		Width:  r.Width * interior.CellWidth / outer.CellWidth,
+		Height: r.Height * interior.CellHeight / outer.CellHeight,
+	}
+}
+
 // paintChrome paints the detached window's menu bar and status bar in
 // their reserved rows, and the menu bar's dropdown on top of content.
 func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) {
@@ -2173,14 +2194,14 @@ func (w *Window) paintChrome(p *core.Painter, outer, interior core.CellMetrics) 
 	w.mu.RUnlock()
 
 	if r := w.menuBarRect(); mb != nil && !r.IsEmpty() {
-		mb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		mb.SetBounds(inInterior(r, outer, interior))
 		mp := p.WithOffset(r.X, r.Y).
 			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
 			WithDenomination(outer, interior)
 		mb.Paint(mp)
 	}
 	if r := w.statusBarRect(); sb != nil && !r.IsEmpty() {
-		sb.SetBounds(core.UnitRect{Width: r.Width, Height: r.Height})
+		sb.SetBounds(inInterior(r, outer, interior))
 		sp := p.WithOffset(r.X, r.Y).
 			WithClip(core.UnitRect{Width: r.Width, Height: r.Height}).
 			WithDenomination(outer, interior)
