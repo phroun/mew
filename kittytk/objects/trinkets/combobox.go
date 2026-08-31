@@ -750,20 +750,19 @@ func (c *ComboBox) notifyIndexChanged() {
 // SizeHint returns the preferred size.
 func (c *ComboBox) SizeHint() core.UnitSize {
 	metrics := c.EffectiveCellMetrics()
-	font := c.EffectiveFont()
 
 	// Calculate width based on longest item using font measurement
-	minWidth := font.MeasureText("----------") // Minimum 10 chars
+	minWidth := c.MeasureText("----------") // Minimum 10 chars
 	maxWidth := minWidth
 	for _, item := range c.items {
-		itemWidth := font.MeasureText(item)
+		itemWidth := c.MeasureText(item)
 		if itemWidth > maxWidth {
 			maxWidth = itemWidth
 		}
 	}
 
 	// Add space for dropdown arrow " ▼"
-	arrowWidth := font.MeasureText(" ▼")
+	arrowWidth := c.MeasureText(" ▼")
 
 	return core.UnitSize{
 		Width:  maxWidth + arrowWidth,
@@ -814,12 +813,12 @@ func (c *ComboBox) Paint(p *core.Painter) {
 	font := c.EffectiveFont()
 
 	// Calculate text area width (leave space for arrow)
-	arrowWidth := font.MeasureText(" ▼")
+	arrowWidth := c.MeasureText(" ▼")
 	textAreaWidth := bounds.Width - arrowWidth
 
 	// Truncate text if needed to fit in text area
 	displayText := text
-	for font.MeasureText(displayText) > textAreaWidth && len(displayText) > 0 {
+	for c.MeasureText(displayText) > textAreaWidth && len(displayText) > 0 {
 		displayText = displayText[:len(displayText)-1]
 	}
 

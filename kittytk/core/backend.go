@@ -1367,15 +1367,6 @@ func (p *Painter) Clear(r UnitRect, s style.CellStyle) {
 	p.FillRect(r, ' ', s)
 }
 
-// TextWidth returns the width needed for text in units using the specified font.
-// If font is nil, uses DefaultFont().
-func (p *Painter) TextWidth(text string, font *Font) Unit {
-	if font == nil {
-		font = DefaultFont()
-	}
-	return font.MeasureText(text)
-}
-
 // Size returns a size in units for the given cell dimensions.
 func (p *Painter) Size(cols, rows int) UnitSize {
 	return p.metrics.CellsToUnits(cols, rows)

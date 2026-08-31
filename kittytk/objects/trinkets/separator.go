@@ -97,11 +97,10 @@ func (s *LineSeparator) SetOrientation(o core.Orientation) {
 // SizeHint returns the preferred size.
 func (s *LineSeparator) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
-	font := s.EffectiveFont()
 	if s.orientation == core.Horizontal {
 		// Horizontal separator: 1 cell tall, width depends on title
-		titleWidth := font.MeasureText(s.title)
-		decorWidth := font.MeasureText("──  ──") // line stubs + title padding
+		titleWidth := s.MeasureText(s.title)
+		decorWidth := s.MeasureText("──  ──") // line stubs + title padding
 		return core.UnitSize{
 			Width:  titleWidth + decorWidth,
 			Height: metrics.CellHeight,
@@ -172,7 +171,7 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 	// Font metrics are screen-space (see ScreenHeightToLocal).
 	w := p.ScreenWidthToLocal(font.MeasureText(s.title))
 	h := p.ScreenHeightToLocal(font.LineHeight())
-	pad := core.Unit(6)
+	pad := p.ScreenWidthToLocal(6)
 	boxW := w + pad*2
 	if boxW > bounds.Width {
 		boxW = bounds.Width
@@ -201,7 +200,7 @@ func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.Unit
 	font := captionFont75(s.EffectiveFont())
 	h := p.ScreenHeightToLocal(font.LineHeight())
 	runes := []rune(s.title)
-	pad := core.Unit(4)
+	pad := p.ScreenHeightToLocal(4)
 	boxH := core.Unit(len(runes))*h + pad*2
 	if boxH > bounds.Height {
 		boxH = bounds.Height

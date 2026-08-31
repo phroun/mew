@@ -507,7 +507,7 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	// units so centering holds inside re-denominated interiors.
 	w := p.ScreenWidthToLocal(font.MeasureText(label))
 	h := p.ScreenHeightToLocal(font.LineHeight())
-	pad := core.Unit(4)
+	pad := p.ScreenWidthToLocal(4)
 	boxW := w + pad*2
 	if boxW > divider.Width {
 		boxW = divider.Width

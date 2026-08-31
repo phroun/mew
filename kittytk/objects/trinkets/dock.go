@@ -273,11 +273,11 @@ func (d *DockRow) Paint(p *core.Painter) {
 		interiorWidth := entryWidthUnits - 2*metrics.CellWidth
 
 		title := entry.Title
-		if font.MeasureText(title) > interiorWidth {
+		if d.MeasureText(title) > interiorWidth {
 			ellipsis := "…"
-			ellipsisW := font.MeasureText(ellipsis)
+			ellipsisW := d.MeasureText(ellipsis)
 			runes := []rune(title)
-			for len(runes) > 0 && font.MeasureText(string(runes))+ellipsisW > interiorWidth {
+			for len(runes) > 0 && d.MeasureText(string(runes))+ellipsisW > interiorWidth {
 				runes = runes[:len(runes)-1]
 			}
 			title = string(runes) + ellipsis
