@@ -478,18 +478,19 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 
 	if sp.orientation == core.Horizontal {
 		// Vertical band: hairline down the middle, broken by the ':'
-		// grab dots at the exact center. The dot/gap sizes are screen-space
-		// (so they survive re-denomination) but scale with the cell so they
-		// track font_size; the constants are the 8x16-baseline sizes.
-		metrics := sp.EffectiveCellMetrics()
+		// grab dots at the exact center. The gap and the dots are screen-space
+		// sizes converted into local units, the same as the hairlines above:
+		// a screen unit is a fixed number of device pixels at a given zoom, so
+		// these track font_size and stay put under re-denomination. The
+		// constants are the sizes in screen units.
 		lineX := divider.X + (divider.Width-hairW)/2
 		cx := divider.X + divider.Width/2
 		cy := divider.Y + divider.Height/2
-		gapHalf := atLeast(p.ScreenHeightToLocal(6)*metrics.CellHeight/16, hairH)
+		gapHalf := atLeast(p.ScreenHeightToLocal(6), hairH)
 		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: hairW, Height: cy - gapHalf - divider.Y}, ' ', line)
 		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: hairW, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
-		dotW := atLeast(p.ScreenWidthToLocal(2)*metrics.CellWidth/8, hairW)
-		dotH := atLeast(p.ScreenHeightToLocal(2)*metrics.CellHeight/16, hairH)
+		dotW := atLeast(p.ScreenWidthToLocal(2), hairW)
+		dotH := atLeast(p.ScreenHeightToLocal(2), hairH)
 		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
 		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
 		return
