@@ -87,8 +87,8 @@ t=new tabs children={
 b=new tab caption="Basic Trinkets" children={
 	bw=new panel layout=vbox spacing=0 children={
 		new label caption="This is a demo of basic trinkets:"
-		brow=new panel layout=hbox spacing=8 children={
-			input=new textinput min_width=160 placeholder="Enter text here..." stretch=1
+		brow=new panel layout=hbox spacing=8 align=fill children={
+			input=new textinput placeholder="Enter text here..." stretch=1
 			new button caption="Browse..."
 		}
 		new spacer
@@ -413,7 +413,7 @@ new tab caption="Vertical Tabs" children={
 
 det=new tab caption="Details" children={
 	dbox=new panel layout=vbox spacing=0 children={
-		dtree=new treeview min_width=160 min_height=160 caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
+		dtree=new treeview caption="Name" showheader sorted sortedby=-1 editable stretch=1 align=fill children={
 			dsizec=new column id=size caption="Size" width=10 align=right sortable sortproxy=4
 			dkindc=new column id=kind caption="Kind" width=14 sortable editable
 			dmodc=new column id=modified caption="Date Modified" width=24 sortable
