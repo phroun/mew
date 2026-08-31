@@ -1,6 +1,7 @@
 package trinkets
 
 import (
+	"image/color"
 	"testing"
 
 	"github.com/phroun/kittytk/backend/raster"
@@ -73,6 +74,63 @@ func TestSplitterGrabHandleIsTwoDotsOfOneScreenUnit(t *testing.T) {
 		if widest != 2 || rows != 4 {
 			t.Errorf("%dx%d: grab dots are %dpx across over %d rows, want 2 over 4",
 				m.CellWidth, m.CellHeight, widest, rows)
+		}
+	}
+}
+
+// bandInk returns the first and last device column of the ink in row y of the
+// splitter's band, measured against the band's own fill.
+func bandInk(img interface{ RGBAAt(x, y int) color.RGBA }, y int) (lo, hi int) {
+	band := img.RGBAAt(97, 3)
+	lo, hi = -1, -1
+	for x := 96; x < 104; x++ {
+		if img.RGBAAt(x, y) != band {
+			if lo < 0 {
+				lo = x
+			}
+			hi = x
+		}
+	}
+	return lo, hi
+}
+
+// The dots sit ON the hairline, so they have to share its center. The line was
+// centered by (Width-hairW)/2 and the dots placed at Width/2-dotW/2 -- two
+// halvings truncated on a grid whose coarseness is the denomination's, which
+// at 4x8 left the dots a whole local unit (two device pixels) to the right of
+// the line they straddle.
+func TestSplitterGrabDotsShareTheLinesCenter(t *testing.T) {
+	const W, H = 200, 120
+
+	for _, m := range []core.CellMetrics{
+		{CellWidth: 8, CellHeight: 16},
+		{CellWidth: 16, CellHeight: 32},
+		{CellWidth: 32, CellHeight: 64},
+		{CellWidth: 4, CellHeight: 8},
+		{CellWidth: 16, CellHeight: 16},
+	} {
+		b, err := raster.New(W, H)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.SetCellMetrics(capOuter)
+		b.Clear(style.DefaultStyle())
+		paintSideBySideSplitter(core.NewPainter(b).WithDenomination(capOuter, m), m)
+
+		img := b.Image()
+		lineLo, lineHi := bandInk(img, 10) // well above the handle
+		dotLo, dotHi := bandInk(img, 47)   // the upper dot
+		if lineLo < 0 || dotLo < 0 {
+			t.Fatalf("%dx%d: nothing painted (line %d..%d, dot %d..%d)",
+				m.CellWidth, m.CellHeight, lineLo, lineHi, dotLo, dotHi)
+		}
+		// Centers doubled, so half a pixel reads as 1 rather than rounding
+		// away. Half a pixel is the floor: a two-pixel dot cannot sit exactly
+		// centered on a one-pixel line, it has to overhang one side. Anything
+		// past that is the two halvings disagreeing.
+		if off := (lineLo + lineHi) - (dotLo + dotHi); off < -1 || off > 1 {
+			t.Errorf("%dx%d: line spans %d..%d but the dots span %d..%d -- %.1f pixels off center",
+				m.CellWidth, m.CellHeight, lineLo, lineHi, dotLo, dotHi, float64(off)/2)
 		}
 	}
 }

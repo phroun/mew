@@ -483,16 +483,22 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 		// a screen unit is a fixed number of device pixels at a given zoom, so
 		// these track font_size and stay put under re-denomination. The
 		// constants are the sizes in screen units.
-		lineX := divider.X + (divider.Width-hairW)/2
-		cx := divider.X + divider.Width/2
+		dotW := atLeast(p.ScreenWidthToLocal(2), hairW)
+		dotH := atLeast(p.ScreenHeightToLocal(2), hairH)
+		// The dots sit ON the line, so both are centered by the one
+		// expression. Centering the line on (Width-hairW)/2 while placing
+		// the dots at Width/2-dotW/2 truncates two different halvings on a
+		// grid whose coarseness is the denomination's: at 4x8 that put the
+		// dots a whole local unit -- two device pixels -- to the right of
+		// the line they are meant to straddle.
+		centered := func(w core.Unit) core.Unit { return divider.X + (divider.Width-w)/2 }
+		lineX := centered(hairW)
 		cy := divider.Y + divider.Height/2
 		gapHalf := atLeast(p.ScreenHeightToLocal(6), hairH)
 		p.FillRect(core.UnitRect{X: lineX, Y: divider.Y, Width: hairW, Height: cy - gapHalf - divider.Y}, ' ', line)
 		p.FillRect(core.UnitRect{X: lineX, Y: cy + gapHalf, Width: hairW, Height: divider.Y + divider.Height - cy - gapHalf}, ' ', line)
-		dotW := atLeast(p.ScreenWidthToLocal(2), hairW)
-		dotH := atLeast(p.ScreenHeightToLocal(2), hairH)
-		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
-		p.FillRect(core.UnitRect{X: cx - dotW/2, Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
+		p.FillRect(core.UnitRect{X: centered(dotW), Y: cy - dotH - hairH, Width: dotW, Height: dotH}, ' ', line)
+		p.FillRect(core.UnitRect{X: centered(dotW), Y: cy + hairH, Width: dotW, Height: dotH}, ' ', line)
 		return
 	}
 
