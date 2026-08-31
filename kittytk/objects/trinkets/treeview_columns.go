@@ -1296,6 +1296,20 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				}
 			}
 			cp := p.WithClip(clip)
+			// A CHOICE Enter-target advertises its editor with the
+			// combo's down arrow at the right of the highlight, so the
+			// value is drawn in what is left BESIDE it -- the same
+			// reservation a sortable header makes for its sort arrow.
+			// Drawn to the full span it was the arrow that overlapped,
+			// since the arrow goes on afterwards.
+			choiceArrow := ""
+			textSp := sp
+			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
+				choiceArrow = "▼"
+				if room := t.MeasureText(choiceArrow) + metrics.CellWidth; textSp.w > room {
+					textSp.w -= room
+				}
+			}
 			switch {
 			case sp.col == nil:
 				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, item.Text)
@@ -1304,19 +1318,15 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				// and indent (and is forced left-aligned for it).
 				t.paintTreeCell(cp, item, sp, itemY, s, cellStyle, metrics, font, sp.col.displayValue(item.Value(sp.col.ID)))
 			default:
-				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), sp, itemY, cellStyle, font, sp.col.Align)
+				t.drawAligned(cp, sp.col.displayValue(item.Value(sp.col.ID)), textSp, itemY, cellStyle, font, sp.col.Align)
 			}
-			// A CHOICE Enter-target advertises its editor: the combo's
-			// down arrow, right-aligned in the highlight (over the
-			// content, like a real combo box's arrow).
-			if targetSegW > 0 && enterCol != treeKeyColumn && len(enterCol.Enum) > 0 {
-				arrow := "▼"
-				ax := targetSegX + targetSegW - t.MeasureText(arrow)
+			if choiceArrow != "" {
+				ax := targetSegX + targetSegW - t.MeasureText(choiceArrow)
 				if p.Graphical() {
 					ax -= 2
 				}
 				if ax >= targetSegX {
-					cp.DrawText(ax, itemY, arrow, cellStyle, font)
+					cp.DrawText(ax, itemY, choiceArrow, cellStyle, font)
 				}
 			}
 		}
@@ -1656,7 +1666,11 @@ func (t *TreeView) paintChooserButton(p *core.Painter, lay treeColLayout, header
 		x := r.X + (r.Width-lineW)/2
 		fr, fg, fb := st.Fg.RGBComponents()
 		wPx := p.UnitSpanPxX(x, x+lineW)
-		gapPx := p.UnitsToPx(r.Height) / 5
+		// A fifth of the button's DEVICE height. UnitsToPx multiplies by
+		// the surface's pixels-per-unit and does not see this painter's
+		// denomination, so at any but the default it answered a unit count
+		// as if it were pixels and spread the three lines past the button.
+		gapPx := p.UnitSpanPxY(r.Y, r.Y+r.Height) / 5
 		if gapPx < 2 {
 			gapPx = 2
 		}
@@ -1735,6 +1749,22 @@ func (t *TreeView) chooserPopupID() string {
 // forwards keys (the menubar pattern), so Up/Down/Space/Escape work and
 // the menu's accessibility announcements fire. keyboard=true preselects
 // the first item for immediate arrow/space use.
+// popupMetrics is the denomination the popup layer counts in. A popup is
+// placed and painted in screen coordinates, so a menu opened from here lays
+// out in them -- not in the tree's, which is whatever the container holding
+// the tree re-denominated to. The controller's mapping is the only
+// conversion on offer, so one of this tree's cells is measured through it.
+func (t *TreeView) popupMetrics(pc core.PopupController) core.CellMetrics {
+	local := t.EffectiveCellMetrics()
+	origin := pc.MapToScreen(t.Self(), core.UnitPoint{})
+	cell := pc.MapToScreen(t.Self(), core.UnitPoint{X: local.CellWidth, Y: local.CellHeight})
+	screen := core.CellMetrics{CellWidth: cell.X - origin.X, CellHeight: cell.Y - origin.Y}
+	if screen.CellWidth < 1 || screen.CellHeight < 1 {
+		return local
+	}
+	return screen
+}
+
 func (t *TreeView) openColumnChooser(keyboard bool) {
 	pc := t.findTreePopupController()
 	if pc == nil {
@@ -1748,7 +1778,9 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 	m := NewMenu("Columns")
 	// Popup menus are not parented into the trinket tree; hand down the
 	// opener's display context (metrics + font), same as the menu bar.
-	m.inheritDisplayContext(t.EffectiveCellMetrics(), t.EffectiveFont())
+	// The menu bar is parented to the desktop, so its own denomination IS
+	// the popup layer's; a tree is not, so this hands down the layer's.
+	m.inheritDisplayContext(t.popupMetrics(pc), t.EffectiveFont())
 	m.setGraphicalHint(core.FindGraphicalFrames(t.Self()))
 	if d, ok := t.desktopAncestor(); ok {
 		m.SetAccessibilityManager(d.AccessibilityManager())
@@ -1765,12 +1797,17 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 		m.AddItem(item)
 	}
 
-	// Down-and-left from the button.
+	// Down-and-left from the button. Both of its corners go through the
+	// controller: the button's own width and height are the tree's, and
+	// everything below here is the popup layer's.
 	btn, _ := t.chooserButtonRect()
 	size := m.calculateSize()
 	btnOrigin := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X, Y: btn.Y})
-	btnScreen := core.UnitRect{X: btnOrigin.X, Y: btnOrigin.Y, Width: btn.Width, Height: btn.Height}
 	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X + btn.Width, Y: btn.Y + btn.Height})
+	btnScreen := core.UnitRect{
+		X: btnOrigin.X, Y: btnOrigin.Y,
+		Width: at.X - btnOrigin.X, Height: at.Y - btnOrigin.Y,
+	}
 	screen := pc.ScreenBounds()
 	x := at.X - size.Width
 	if x < screen.X {
