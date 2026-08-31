@@ -1,12 +1,12 @@
 package trinkets
 
-// defaultSizeCells is what a trinket asks for when nothing set a size: three
-// cells of the surface it is painted on, so the fallback is stated in that
-// surface's own denomination -- CellWidth and CellHeight are the units per
-// cell, so three cells is 3*CellWidth units across and 3*CellHeight down.
+// defaultSizeCells is the size a trinket asks for when nothing set one.
 //
-// Nothing derives these sizes. They are the answer to "how big do you want to
-// be" when nobody said, and the only thing that answer has to be is big
-// enough to see and to grab. A larger number would be an arbitrary one
-// pretending to be a measurement, which is what "thirty characters wide" was.
+// The size is a count of denomination units. It is written here as a count of
+// CELLS -- 3*CellWidth units across, 3*CellHeight down -- only because a
+// default cannot be derived any other way: the units are the surface's, and
+// nothing here can know what a designer would have specified in them.
+//
+// Three is deliberately too small to use. A trinket laid out this size is a
+// designer being told they forgot to give it one.
 const defaultSizeCells = 3

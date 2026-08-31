@@ -393,8 +393,8 @@ func (l *ListView) ensureVisible(index int) {
 	}
 }
 
-// SizeHint returns the size a list asks for when nothing sets one: three
-// cells each way, in this surface's denomination (see defaultSizeCells).
+// SizeHint returns the size a list asks for when nothing sets one (see
+// defaultSizeCells).
 func (l *ListView) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
 	return core.UnitSize{

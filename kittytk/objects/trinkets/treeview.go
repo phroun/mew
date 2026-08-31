@@ -631,8 +631,8 @@ func (t *TreeView) ensureVisible(index int) {
 	}
 }
 
-// SizeHint returns the size a tree asks for when nothing sets one: three
-// cells each way, in this surface's denomination (see defaultSizeCells).
+// SizeHint returns the size a tree asks for when nothing sets one (see
+// defaultSizeCells).
 func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
