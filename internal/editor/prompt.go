@@ -109,6 +109,12 @@ func (pm *PromptManager) PromptForFilenameFresh(action, defaultFilename string, 
 }
 
 // PromptForConfirmation prompts for a yes/no confirmation.
+//
+// Three outcomes, not two. Y or N is an answer; a blank input line is the
+// default, which is what a bare Enter gives; anything else is a cancel, the
+// same outcome as Escape. The prompt settles on ONE keystroke (see
+// confirmkey.go), so every key on the keyboard reaches this -- and a key
+// nobody meant to press must not be able to act.
 func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool, callback func(accepted bool, response bool)) {
 	defaultAnswer := "Y"
 	if !defaultValue {
@@ -135,7 +141,8 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 			return
 		}
 
-		// Parse response
+		// Blank is the default: Enter on the empty input line asks for
+		// whichever answer the prompt offered in capitals.
 		answer := strings.TrimSpace(cursorLineText)
 		if answer == "" {
 			answer = defaultAnswer
@@ -147,8 +154,13 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 		} else if normalizedAnswer == "N" || normalizedAnswer == "NO" {
 			callback(true, false)
 		} else {
-			// Invalid response - treat as default
-			callback(true, defaultValue)
+			// Anything else answered nothing, so the prompt is cancelled
+			// rather than settled. A single keystroke settles this prompt, so
+			// any key at all lands as an answer -- and reading an unrecognized
+			// one as the default means a mistyped key ACTS: the wrong finger on
+			// a "LOSE CHANGES?" whose default is yes threw the changes away.
+			// Cancel is the only reading that costs nothing to be wrong about.
+			callback(false, false)
 		}
 	}, "", 1, "")
 
@@ -162,6 +174,9 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 // input row. The prompt buffer is populated with the reachable answers — "y"
 // and "n" above the blank input line — so the arrows pick one and a bare
 // Enter takes the default.
+//
+// The outcomes are PromptForConfirmation's: an answer, the default, or a
+// cancel for anything else.
 func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, defaultValue bool, callback func(accepted, response bool)) {
 	defaultAnswer := "N"
 	if defaultValue {
@@ -182,7 +197,9 @@ func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, d
 		case "N", "NO":
 			callback(true, false)
 		default:
-			callback(true, defaultValue)
+			// Cancelled, not defaulted, for the reason PromptForConfirmation
+			// gives: an unrecognized key answered nothing.
+			callback(false, false)
 		}
 	}, "", 1, topMessage)
 

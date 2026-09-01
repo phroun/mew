@@ -155,3 +155,58 @@ func TestLoseChangesSingleKey(t *testing.T) {
 		t.Fatal("declining should keep the buffer open and focused")
 	}
 }
+
+// A key that is not an answer cancels; it never stands in for the default.
+//
+// One keystroke settles this prompt, so every key on the keyboard arrives here
+// as a candidate answer. Reading an unrecognized one as the default lets a
+// mistyped key ACT -- and on "04: LOSE CHANGES TO x?", whose default is yes,
+// acting means the changes are gone. Cancel costs nothing to be wrong about.
+func TestConfirmUnrecognizedKeyCancels(t *testing.T) {
+	for _, def := range []bool{true, false} {
+		e, _ := newTestEditor(t, "")
+		res := openConfirm(e, def)
+
+		e.dispatchKey("k")
+
+		if !res.settled {
+			t.Fatalf("default %v: an unrecognized key left the prompt open", def)
+		}
+		if res.accepted {
+			t.Fatalf("default %v: result = %+v, want cancelled", def, res)
+		}
+		if focusedPrompt(e) != nil {
+			t.Fatalf("default %v: prompt should be closed", def)
+		}
+	}
+}
+
+// The dangerous case in full: a mistyped key at the LOSE CHANGES prompt, whose
+// default is yes.
+//
+// Closing the LAST buffer quits instead of removing a viewport, so what a
+// confirmed yes does here is stop the editor -- which is why the assertion is
+// on Running and not on the viewport. Run() is what normally sets it, and the
+// test editor does not run, so it is set here to give the flag something to
+// change.
+func TestLoseChangesDoesNotQuitOnAMistypedKey(t *testing.T) {
+	e, w := newTestEditor(t, "hello\n")
+	e.Running = true
+	e.executeCommand("insert 'x'")
+	e.executeCommand("viewport_close")
+	if focusedPrompt(e) == nil {
+		t.Fatal("LOSE CHANGES prompt should be open")
+	}
+
+	e.dispatchKey("k")
+
+	if focusedPrompt(e) != nil {
+		t.Fatal("prompt should be closed")
+	}
+	if !e.Running {
+		t.Fatal("a mistyped key threw the changes away and quit")
+	}
+	if e.ViewportManager.GetFocusedViewport() != w {
+		t.Fatal("the buffer should still be focused")
+	}
+}
