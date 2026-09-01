@@ -36,7 +36,22 @@ import (
 
 // treeClickEditSlop is how far the pointer may travel between press
 // and release before the click stops counting as a click.
+//
+// A physical distance -- the wobble a hand puts into a click -- so it is
+// written in the DEFAULT denomination and exchanged into the tree's own by
+// clickEditSlop. A raw unit count would be a different distance in every tree:
+// half a cell across at 8x16 and an eighth at 32x64, so the same wobble read as
+// a click in one and a drag in the next.
 const treeClickEditSlop = core.Unit(4)
+
+// clickEditSlop is treeClickEditSlop in this tree's units, per axis. The two
+// answers differ wherever the denomination is not square, which is usually:
+// the same physical distance is fewer units across a cell than down one.
+func (t *TreeView) clickEditSlop() (dx, dy core.Unit) {
+	m := t.EffectiveCellMetrics()
+	d := core.DefaultCellMetrics()
+	return core.ExchangeX(treeClickEditSlop, d, m), core.ExchangeY(treeClickEditSlop, d, m)
+}
 
 // treeKeyColumn is the sentinel identifying the KEY (tree) column in
 // the edit ring. It never lives in t.columns and is never painted
@@ -829,7 +844,8 @@ func (t *TreeView) armClickEdit(event core.MouseReleaseEvent) {
 	if dy < 0 {
 		dy = -dy
 	}
-	if dx > treeClickEditSlop || dy > treeClickEditSlop {
+	slopX, slopY := t.clickEditSlop()
+	if dx > slopX || dy > slopY {
 		return // a drag, not a click
 	}
 	if t.rowEditing || t.CurrentItem() != item || !t.colEditable(col) {
