@@ -405,10 +405,16 @@ type Keysym struct {
 // ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
 // under a modifier state, and returns 0 when it produces no character.
 //
-// This is the only honest source for it. A table mapping '5' to '%' is a US
-// keyboard written down: correct there and wrong everywhere else, and this
-// toolkit already declines to guess elsewhere (AltGr composition and macOS
-// dead keys are both taken from the system rather than reconstructed).
+// A derivation, and it ranks below having watched. The canonical name of a key
+// that is SHOWN is the character it shows -- a, Z, 5, ! -- so where the window
+// system reports the character, that report is the name and nothing here is
+// consulted. This answers for the keystrokes it reports no character for: a
+// Control chord produces no text event, and "^%" still has to be spelled.
+//
+// The layout rather than a table, because a map turning '5' into '%' answers
+// for a US keyboard whatever is attached. Tables are not forbidden -- see
+// macOSOptionChars, which is one on purpose -- they rank last, under an
+// observation and under this.
 func ShiftedKey(scancode uint32, mod uint16) rune {
 	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
 	if k == 0 || k >= 0x110000 {
