@@ -11,10 +11,13 @@ import (
 type sizedTrinket struct {
 	core.TrinketBase
 	own core.UnitSize
+	// align is what this trinket asks for; left by default, because the tests
+	// below are about a minimum and a filled item's cross axis is the box's.
+	align core.Alignment
 }
 
 func newSizedTrinket(w, h core.Unit) *sizedTrinket {
-	s := &sizedTrinket{own: core.UnitSize{Width: w, Height: h}}
+	s := &sizedTrinket{own: core.UnitSize{Width: w, Height: h}, align: core.AlignLeft}
 	s.TrinketBase = *core.NewTrinketBase()
 	s.Init(s)
 	return s
@@ -28,7 +31,7 @@ func (s *sizedTrinket) SizeHint() core.UnitSize { return s.own }
 // had any say in. Left is the alignment that leaves the item its own size, so
 // it is the one that can show a minimum being applied.
 func (s *sizedTrinket) LayoutAlignment() (core.Alignment, bool) {
-	return core.AlignLeft, true
+	return s.align, true
 }
 
 // boxWith lays two items out in one box and returns their bounds.

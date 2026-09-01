@@ -100,6 +100,31 @@ func (m UnitMargins) Vertical() Unit {
 	return m.Top + m.Bottom
 }
 
+// StyleInsetProvider is the optional capability a trinket implements when part
+// of the size it asks for is DECORATION rather than content: a button's drop
+// shadow, and whatever else grows one later -- a glow, an outer stroke.
+//
+// The insets are what the trinket RESERVES, which is not what it paints. A
+// button reserves a whole cell to the right and a whole row below on both
+// surfaces, while the pixel path draws a softer shadow half a cell out. The
+// reservation is the number layout wants: it is the same on both surfaces, so a
+// row of trinkets lands identically whichever one is drawing, and it is a whole
+// row so the things beside it stay on the grid.
+//
+// In UNITS, not in cells, so a subtler decoration than a whole cell can be
+// stated when one arrives.
+type StyleInsetProvider interface {
+	StyleInsets() UnitMargins
+}
+
+// FindStyleInsets is what a trinket reserves for decoration, or nothing.
+func FindStyleInsets(w Trinket) UnitMargins {
+	if p, ok := w.(StyleInsetProvider); ok {
+		return p.StyleInsets()
+	}
+	return UnitMargins{}
+}
+
 // CellMetrics is a denomination: how many units subdivide one character cell.
 // A cell is a fixed physical size at a given zoom; the denomination says how
 // finely a layout may address inside it, and is set per subtree by the

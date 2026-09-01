@@ -287,13 +287,33 @@ func (b *Button) SizeHint() core.UnitSize {
 	}
 
 	// Brackets are decorative - use cell-based sizing (2 cells total)
-	// Plus 1 cell for drop shadow on the right
+	// Plus the drop shadow's reservation on the right (see StyleInsets)
 	bracketWidth := metrics.UnitsPerCellWidth * 2 // 1 cell each for left and right bracket
-	shadowWidth := metrics.UnitsPerCellWidth
+	insets := b.StyleInsets()
 
 	return core.UnitSize{
-		Width:  textWidth + iconWidth + bracketWidth + shadowWidth,
-		Height: metrics.TextHeight(2), // 2 rows: button + shadow row
+		Width:  textWidth + iconWidth + bracketWidth + insets.Horizontal(),
+		Height: metrics.TextHeight(1) + insets.Vertical(), // the cap, and the shadow below it
+	}
+}
+
+// StyleInsets is the room a button keeps for its drop shadow: a cell to the
+// right and a row below, the two edges it falls on.
+//
+// What it RESERVES, which is deliberately not what it paints. The pixel path
+// draws a softer shadow half a cell out; reserving the whole cell and the whole
+// row on both surfaces is what makes a row of trinkets land identically
+// whichever surface is drawing, and what keeps the trinkets beside a button on
+// the grid rather than half a row down from it.
+//
+// It is also what lets the size above be one row plus this, rather than two
+// rows with the second unaccounted for: a layout that cannot tell the cap from
+// the shadow aligns a one-row neighbour against both of them.
+func (b *Button) StyleInsets() core.UnitMargins {
+	metrics := b.EffectiveCellMetrics()
+	return core.UnitMargins{
+		Right:  metrics.UnitsPerCellWidth,
+		Bottom: metrics.UnitsPerCellHeight,
 	}
 }
 

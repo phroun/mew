@@ -249,6 +249,9 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		sizes = calculateStretch(rect.Height-totalSpacing, stretchItems)
 	}
 
+	// The line's decoration room, set aside before anything is aligned in it.
+	allowance := l.styleAllowance()
+
 	// Position trinkets
 	var pos core.Unit
 	if l.orientation == core.Horizontal {
@@ -306,14 +309,89 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		}
 
 		// Apply alignment within the item bounds
-		itemBounds = l.alignItem(item, itemBounds)
+		itemBounds = l.alignItem(item, itemBounds, allowance)
 		item.Trinket.SetBounds(itemBounds)
 	}
 }
 
-// alignItem adjusts item bounds based on alignment.
-func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitRect {
+// styleAllowance is the part of a line's cross-axis size that exists ONLY
+// because something in it reserves room for decoration -- the row a button's
+// drop shadow adds beneath a line of otherwise one-row trinkets.
+//
+// The line minus its tallest CONTENT. Where the tallest item is content (a list
+// three rows deep beside a button) the shadow already fits inside the line and
+// the answer is nothing: no one is being aligned around decoration, so none is
+// set aside. Where the button is what made the line tall, the answer is that
+// row, and it is kept out of the band its neighbours align in -- which is what
+// puts a one-row field level with the button's cap instead of half a row under
+// it.
+//
+// Trailing edges only, which is where the one decoration in this toolkit falls.
+// A leading inset would come off the other end and is not implemented.
+func (l *BoxLayout) styleAllowance() core.UnitMargins {
+	var outerW, outerH, contentW, contentH core.Unit
+	for _, item := range l.items {
+		hint := itemSize(item.Trinket)
+		ins := core.FindStyleInsets(item.Trinket)
+		if hint.Width > outerW {
+			outerW = hint.Width
+		}
+		if hint.Height > outerH {
+			outerH = hint.Height
+		}
+		if c := hint.Width - ins.Horizontal(); c > contentW {
+			contentW = c
+		}
+		if c := hint.Height - ins.Vertical(); c > contentH {
+			contentH = c
+		}
+	}
+	allow := core.UnitMargins{Right: outerW - contentW, Bottom: outerH - contentH}
+	if allow.Right < 0 {
+		allow.Right = 0
+	}
+	if allow.Bottom < 0 {
+		allow.Bottom = 0
+	}
+	return allow
+}
+
+// alignItem places an item in its allocation.
+//
+// Alignment happens inside the BAND -- the allocation less the line's
+// decoration room -- so what one trinket keeps for a shadow is not something
+// the others line up against. The item's own insets go back on afterwards, so
+// its decoration reaches into the room that was set aside for it.
+//
+// The result is not clamped to the allocation. An item aligned left already
+// takes its own size whether or not the box is wide enough to hold it -- a
+// panel that came out narrower than its contents still shows them -- and
+// clamping here would take that away.
+func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance core.UnitMargins) core.UnitRect {
+	ins := core.FindStyleInsets(item.Trinket)
+
+	band := bounds
+	band.Width -= allowance.Right
+	band.Height -= allowance.Bottom
+	if band.Width < 0 {
+		band.Width = 0
+	}
+	if band.Height < 0 {
+		band.Height = 0
+	}
+
+	out := l.alignContent(item, band, ins)
+
+	out.Width += ins.Horizontal()
+	out.Height += ins.Vertical()
+	return out
+}
+
+// alignContent aligns an item's CONTENT within the band it may use.
+func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins core.UnitMargins) core.UnitRect {
 	hint := itemSize(item.Trinket)
+	hint.Width -= ins.Horizontal()
+	hint.Height -= ins.Vertical()
 	policy := item.Trinket.SizePolicy()
 
 	if l.orientation == core.Horizontal {
