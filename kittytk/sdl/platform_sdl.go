@@ -2411,12 +2411,17 @@ const (
 
 // The keys that carry a name and no character at all.
 const (
-	scanPower      = 102
-	scanKanaLock   = 136
-	scanHenkan     = 138
-	scanMuhenkan   = 139
-	scanHangulLock = 144
-	scanHanja      = 145
+	scanCapsLock    = 57
+	scanPrintScreen = 70
+	scanScrollLock  = 71
+	scanPause       = 72
+	scanMenu        = 101 // HID calls the cap Application
+	scanPower       = 102
+	scanKanaLock    = 136
+	scanHenkan      = 138
+	scanMuhenkan    = 139
+	scanHangulLock  = 144
+	scanHanja       = 145
 )
 
 // gridKey is one key of the main cluster: what it is CALLED, in both layers.
@@ -2500,24 +2505,32 @@ func buildGridKeys() map[uint32]gridKey {
 // the reason gridKeys is. Every modifier goes on as a prefix, since there is no
 // character for a caret or a case change to act on.
 //
-// Nothing in the terminal host can produce them: there is no escape sequence for
-// a power key and no "kitty" keycode, so direct-key-handler carries the names
-// for this direction alone — a host that reads a scancode and needs a canonical
-// spelling to hand over. Inventing a word here is what those names exist to
-// prevent.
+// Four of them LATCH a mode and are named for the lock they are. A latch never
+// becomes a prefix — folding one into a key name would make every keystroke
+// typed under it miss its binding — so the lock is a key here and nothing more.
+// NumLock is the one that is NOT: it decides what eleven keypad caps are called,
+// so alone it is eaten and moves the lock, and only a modifier makes it the key
+// named "Clear" (see padlock.go). The remaining input-method keys fire once —
+// Henkan converts the pending kana, Muhenkan commits it unconverted, Hanja
+// converts the preceding Hangul.
 //
-// The two locks LATCH a mode and are named for the lock they are, the shape
-// CapsLock has. Neither becomes a prefix: folding a latch into a key name would
-// make every keystroke typed under it miss its binding. The other three fire
-// once — Henkan converts the pending kana, Muhenkan commits it unconverted,
-// Hanja converts the preceding Hangul.
+// Power and those three are ones nothing in the terminal host can produce:
+// there is no escape sequence and no "kitty" keycode for them, so
+// direct-key-handler carries their names for this direction alone — a host that
+// reads a scancode and needs a canonical spelling to hand over. Inventing a word
+// here is what those names exist to prevent.
 var silentKeys = map[uint32]string{
-	scanPower:      "Power",
-	scanKanaLock:   "KanaLock",
-	scanHangulLock: "HangulLock",
-	scanHenkan:     "Henkan",
-	scanMuhenkan:   "Muhenkan",
-	scanHanja:      "Hanja",
+	scanCapsLock:    "CapsLock",
+	scanScrollLock:  "ScrollLock",
+	scanPrintScreen: "PrintScreen",
+	scanPause:       "Pause",
+	scanMenu:        "Menu",
+	scanPower:       "Power",
+	scanKanaLock:    "KanaLock",
+	scanHangulLock:  "HangulLock",
+	scanHenkan:      "Henkan",
+	scanMuhenkan:    "Muhenkan",
+	scanHanja:       "Hanja",
 }
 
 // padKey is one keypad cap. Dual-legend caps carry two keys and NumLock decides

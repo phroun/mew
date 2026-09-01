@@ -39,12 +39,17 @@ const (
 	hidRo           = 135
 	hidYen          = 137
 
-	hidPower      = 102
-	hidKanaLock   = 136
-	hidHenkan     = 138
-	hidMuhenkan   = 139
-	hidHangulLock = 144
-	hidHanja      = 145
+	hidCapsLock    = 57
+	hidPrintScreen = 70
+	hidScrollLock  = 71
+	hidPause       = 72
+	hidMenu        = 101
+	hidPower       = 102
+	hidKanaLock    = 136
+	hidHenkan      = 138
+	hidMuhenkan    = 139
+	hidHangulLock  = 144
+	hidHanja       = 145
 )
 
 // The two layers of the main cluster, from the Regular Keys and Shifted Keys
@@ -233,6 +238,11 @@ func TestTheKeysThatTypeNothingAreStillNamed(t *testing.T) {
 		scancode uint32
 		want     string
 	}{
+		{hidCapsLock, "CapsLock"},
+		{hidScrollLock, "ScrollLock"},
+		{hidPrintScreen, "PrintScreen"},
+		{hidPause, "Pause"},
+		{hidMenu, "Menu"},
 		{hidPower, "Power"},
 		{hidKanaLock, "KanaLock"},
 		{hidHangulLock, "HangulLock"},
@@ -265,10 +275,24 @@ func TestTheKeysThatTypeNothingAreStillNamed(t *testing.T) {
 // not produce.
 func TestTheKeysThatTypeNothingDoNotWaitForText(t *testing.T) {
 	for _, scancode := range []uint32{
+		hidCapsLock, hidScrollLock, hidPrintScreen, hidPause, hidMenu,
 		hidPower, hidKanaLock, hidHangulLock, hidHenkan, hidMuhenkan, hidHanja,
 	} {
 		if keyAwaitsText(sdl3.Keysym{Scancode: scancode}) {
 			t.Errorf("scancode %d is held for text it never produces", scancode)
 		}
+	}
+}
+
+// The pad's lock is the one latch that is NOT among them.
+//
+// It decides what eleven keypad caps are called, so pressed alone it moves the
+// lock and is eaten; only a modifier makes it the key named "Clear" (see
+// padlock.go). Filed with the other latches it would become an ordinary key,
+// and pressing it would report one while silently changing what the pad's caps
+// answer to.
+func TestThePadsLockIsNotFiledWithTheOtherLatches(t *testing.T) {
+	if name, ok := silentKeys[scanNumLock]; ok {
+		t.Errorf("the pad's lock is filed as the key %q; it is the latch", name)
 	}
 }
