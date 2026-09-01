@@ -138,8 +138,15 @@ func TestConfirmShrinkCancels(t *testing.T) {
 
 // The LOSE CHANGES confirmation on viewport_close answers to a single n:
 // the buffer stays open.
+//
+// Closing the LAST buffer quits rather than removing a viewport, so a
+// confirmed yes here stops the editor and leaves the viewport where it was.
+// Running is therefore what tells the two answers apart; the focus check alone
+// holds either way. Run() is what normally sets it, and the test editor does
+// not run, so it is set here to give the flag something to change.
 func TestLoseChangesSingleKey(t *testing.T) {
 	e, w := newTestEditor(t, "hello\n")
+	e.Running = true
 	e.executeCommand("insert 'x'")
 	e.executeCommand("viewport_close")
 	if focusedPrompt(e) == nil {
@@ -150,6 +157,9 @@ func TestLoseChangesSingleKey(t *testing.T) {
 
 	if focusedPrompt(e) != nil {
 		t.Fatal("prompt should be closed")
+	}
+	if !e.Running {
+		t.Fatal("declining threw the changes away and quit")
 	}
 	if e.ViewportManager.GetFocusedViewport() != w {
 		t.Fatal("declining should keep the buffer open and focused")
