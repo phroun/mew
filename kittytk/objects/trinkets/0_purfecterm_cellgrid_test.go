@@ -8,14 +8,12 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// Across, a graphical target's terminal grid follows the real monospace
-// font's measured advance rather than the denomination's cell width: the
-// default (no explicit terminal font) would otherwise take an 8-unit pitch
-// while the glyphs render from the 7-wide "Monday" mono face, and the grid
-// and the font would disagree.
+// The terminal's grid is the FONT's, on both axes: the measured advance
+// across and the face's own line box down, at its point size.
 //
-// Down, a terminal row is a grid row like any other line of text, so it is
-// UnitsPerCellHeight units. Nothing about the font enters into it.
+// The default (no explicit terminal font) would otherwise take an 8-unit pitch
+// while the glyphs render from the 7-wide "Monday" mono face, and the grid and
+// the font would disagree.
 func TestTerminalGridFollowsFont(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.New(640, 400)
@@ -40,10 +38,9 @@ func TestTerminalGridFollowsFont(t *testing.T) {
 	if cw == 8 && wantCW != 8 {
 		t.Errorf("default grid still pinned to the 8-unit denomination")
 	}
-	// The terminal face is the surface's own size here, so a row is a whole
-	// grid row -- 16 units at the default denomination this test runs at.
+	// The default face's line box: 12pt fills 16 units by construction.
 	if ch != 16 {
-		t.Errorf("default grid height = %d, want one grid row (16)", ch)
+		t.Errorf("default grid height = %d, want the face's line box (16)", ch)
 	}
 }
 
@@ -136,31 +133,57 @@ func TestTerminalCellsTileWithoutSeams(t *testing.T) {
 	}
 }
 
-// A terminal row is one grid row, so its height in units is whatever the
-// denomination says a row is. Reading it from the font instead answered 16
-// everywhere: two rows tall inside a container at row_units=8, half a row at
-// row_units=32.
-func TestTerminalRowHeightFollowsTheDenomination(t *testing.T) {
+// The terminal's cell is the same size on the GLASS whatever denomination the
+// container around it counts in. Its pitch is the font's, and the font does not
+// change because a panel divides its cells more finely.
+//
+// The answer is therefore in default-denomination units and stays there: the
+// graphical path multiplies it by the backend's pixels-per-unit, which counts
+// those. Answering in the container's units instead scaled the terminal's whole
+// geometry by the container's denomination -- a 7x16 pixel cell became 14x32 at
+// 16x32 and 4x8 at 4x8, glyphs and all.
+func TestTerminalCellIsTheSameSizeAtEveryDenomination(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.New(640, 400)
 	if err != nil {
 		t.Fatal(err)
 	}
 	core.SetTextMeasurer(b)
+	outer := core.DefaultCellMetrics()
 
-	for _, rowUnits := range []core.Unit{8, 16, 32} {
+	var baseW, baseH core.Unit
+	for _, m := range []core.CellMetrics{
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+		{UnitsPerCellWidth: 12, UnitsPerCellHeight: 20},
+	} {
+		mm := m
 		pan := NewPanel()
-		pan.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: rowUnits})
+		pan.SetCellMetrics(&mm)
 		term := NewPurfecTerm()
 		pan.AddChild(term)
 		if term.Terminal() == nil {
 			t.Skip("terminal unavailable")
 		}
-		term.SetBounds(core.UnitRect{Width: 320, Height: 160})
+		term.SetBounds(core.UnitRect{
+			Width:  80 * m.UnitsPerCellWidth,
+			Height: 24 * m.UnitsPerCellHeight,
+		})
 
-		if _, ch := term.cellDims(); ch != rowUnits {
-			t.Errorf("at row_units=%d the terminal cell is %d units tall, want %d",
-				rowUnits, ch, rowUnits)
+		cw, ch := term.cellDims()
+		if baseW == 0 {
+			baseW, baseH = cw, ch
+			// The pitch is the font's own: the advance it draws "M" at.
+			p := core.NewPainter(b).WithDenomination(outer, mm)
+			if px, ok := p.MeasureTextPx("M", term.renderTermFont()); ok && int(cw) != px {
+				t.Fatalf("the cell is %d units across where the glyph advances %dpx", cw, px)
+			}
+			continue
+		}
+		if cw != baseW || ch != baseH {
+			t.Errorf("inside a container at %dx%d the terminal cell is %dx%d, want %dx%d",
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, cw, ch, baseW, baseH)
 		}
 	}
 }

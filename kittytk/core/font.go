@@ -190,6 +190,30 @@ func LineUnits(f, surface *Font, m CellMetrics) Unit {
 	return Unit(int(m.UnitsPerCellHeight) * f.Size / surface.Size)
 }
 
+// LineBudgetMeasurer is the optional extension a measurer implements when it
+// can answer a font's own line box. Satisfied by the pixel backends, whose
+// shaping engine derives the em size to fill it.
+type LineBudgetMeasurer interface {
+	LineHeight(f *Font) Unit
+}
+
+// FontLineBudget is the font's own line box in DEFAULT-denomination units --
+// Size * 4/3, so 12pt is 16, one default cell row -- or 0 where the render
+// target cannot answer.
+//
+// A font metric, not a row height. How many units a line of a LAYOUT occupies
+// is the denomination's answer and nothing to do with the font: see LineUnits.
+// This is for the one thing that needs the glyph box itself, a terminal's cell
+// grid, whose pitch is the font's and whose consumers convert it with the
+// backend's pixels-per-unit -- which counts default-denomination units too, so
+// the two agree.
+func FontLineBudget(f *Font) Unit {
+	if lb, ok := currentTextMeasurer().(LineBudgetMeasurer); ok {
+		return lb.LineHeight(f)
+	}
+	return 0
+}
+
 // MeasureTextIn returns the width of text in the units of the given
 // denomination -- how many of THOSE units the same text occupies.
 //
