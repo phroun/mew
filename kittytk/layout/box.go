@@ -370,6 +370,10 @@ func (l *BoxLayout) styleAllowance() core.UnitMargins {
 func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance core.UnitMargins) core.UnitRect {
 	ins := core.FindStyleInsets(item.Trinket)
 
+	// The band is what a FILLING item may take: decoration room is not room to
+	// grow into. Positional alignment gets the whole allocation instead -- a
+	// button centred in a three-row row puts its cap on the middle row and its
+	// shadow on the last, rather than centring the pair.
 	band := bounds
 	band.Width -= allowance.Right
 	band.Height -= allowance.Bottom
@@ -380,25 +384,43 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect, allowance 
 		band.Height = 0
 	}
 
-	out := l.alignContent(item, band, ins)
+	out := l.alignContent(item, bounds, band, ins)
 
-	out.Width += ins.Horizontal()
-	out.Height += ins.Vertical()
+	// Only on the CROSS axis, which is the one alignment placed from the
+	// content size. Along the main axis the allocation came from the sizing
+	// pass, which measured the whole trinket, decoration included -- adding it
+	// again there stretched a button in a vertical box by its own shadow row.
+	if l.orientation == core.Horizontal {
+		out.Height += ins.Vertical()
+	} else {
+		out.Width += ins.Horizontal()
+	}
 	return out
 }
 
-// alignContent aligns an item's CONTENT within the band it may use.
-func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins core.UnitMargins) core.UnitRect {
+// alignContent places an item's CONTENT: positioned within bounds, the whole
+// allocation, and grown no further than band when it fills.
+func (l *BoxLayout) alignContent(item *LayoutItem, bounds, band core.UnitRect, ins core.UnitMargins) core.UnitRect {
 	hint := itemSize(item.Trinket)
 	hint.Width -= ins.Horizontal()
 	hint.Height -= ins.Vertical()
 	policy := item.Trinket.SizePolicy()
+	align := item.Align
 
 	if l.orientation == core.Horizontal {
+		// A cross axis the trinket says is FIXED does not grow, whatever it is
+		// asked to do: a button's cap is one row and a field is one row, and a
+		// row three deep holds them at their own height rather than stretching
+		// them to it. Fill has nothing to fill, so it centres like the rest.
+		if policy.Vertical == core.SizeFixed && align == core.AlignFill {
+			align = core.AlignMiddle
+		}
+
 		// A trinket whose cross-axis policy is Expanding fills the
 		// allocation; alignment clamps only trinkets that don't want
 		// to grow (separators, text inputs vs. buttons, etc.).
 		if policy.Vertical == core.SizeExpanding {
+			bounds.Height = band.Height
 			return bounds
 		}
 
@@ -414,14 +436,17 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins cor
 		// every other value keeps the child's natural height, so a one-row
 		// text input beside a taller button asked for AlignMiddle stays one
 		// row instead of growing to the button's height, centered in it.
-		switch item.Align {
+		switch align {
 		case core.AlignFill:
-			// Fill available space - no adjustment needed
+			bounds.Height = band.Height
 		case core.AlignTop:
 			bounds.Height = height
 		case core.AlignBottom:
-			if height < bounds.Height {
-				bounds.Y += bounds.Height - height
+			// To the BAND's bottom edge: the row a shadow reserves is not a row
+			// to sit on. Middle below ignores the reservation instead, because
+			// the shadow is not in the middle and has no business moving it.
+			if height < band.Height {
+				bounds.Y += band.Height - height
 				bounds.Height = height
 			}
 		default: // AlignMiddle and unspecified
@@ -442,8 +467,13 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins cor
 			}
 		}
 	} else {
+		if policy.Horizontal == core.SizeFixed && align == core.AlignFill {
+			align = core.AlignCenter
+		}
+
 		// Cross-axis Expanding fills the allocation (see above).
 		if policy.Horizontal == core.SizeExpanding {
+			bounds.Width = band.Width
 			return bounds
 		}
 
@@ -455,9 +485,9 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins cor
 		}
 
 		// Horizontal alignment in vertical layout
-		switch item.Align {
+		switch align {
 		case core.AlignFill:
-			// Fill available space - no adjustment needed
+			bounds.Width = band.Width
 		case core.AlignLeft:
 			bounds.Width = hint.Width
 		case core.AlignCenter:
@@ -472,8 +502,11 @@ func (l *BoxLayout) alignContent(item *LayoutItem, bounds core.UnitRect, ins cor
 				bounds.Width = hint.Width
 			}
 		case core.AlignRight:
-			if hint.Width < bounds.Width {
-				bounds.X += bounds.Width - hint.Width
+			// To the BAND's right edge, so a right-aligned trinket leaves the
+			// column a neighbour's shadow falls in free -- and one with a
+			// shadow of its own puts its cap there and the shadow beyond it.
+			if hint.Width < band.Width {
+				bounds.X += band.Width - hint.Width
 				bounds.Width = hint.Width
 			}
 		}

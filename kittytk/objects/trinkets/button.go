@@ -54,6 +54,10 @@ func NewButton(text string) *Button {
 	b.SetFocusPolicy(core.StrongFocus)
 	b.SetAccessibleRole(core.RoleButton)
 	b.SetAccessibleName(text)
+	// A cap is one row of text and as wide as its caption; neither grows. Given
+	// a row three deep it sits in it rather than becoming a three-row slab, and
+	// a layout asked to fill has nothing here to fill.
+	b.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizeFixed))
 	return b
 }
 
