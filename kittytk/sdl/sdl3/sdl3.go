@@ -395,33 +395,12 @@ type Keysym struct {
 	Sym Keycode
 	Mod uint16
 
-	// Scancode is the PHYSICAL key, before any layout is applied. Sym is
-	// already layout-mapped but unshifted, so it cannot answer "what does this
-	// key produce with Shift held" — only the scancode plus a modifier state
-	// can, and only the layout knows. See ShiftedKey.
+	// Scancode is the PHYSICAL key, and it is what a KeyName comes from: a name
+	// is defined by the key's POSITION on the canonical grid and does not vary,
+	// while Sym is layout-mapped and answers with whatever the layout prints
+	// there. An SDL scancode is a USB HID usage ID, so it IS the position. See
+	// gridKeys and keypadKeys in the sdl package.
 	Scancode uint32
-}
-
-// ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
-// under a modifier state, and returns 0 when it produces no character.
-//
-// Layout text, and NOT a KeyName. A KeyName is defined by the key's POSITION on
-// the canonical grid and does not vary: the key at Row-2 column -4 is "1", and
-// "!" with Shift, whatever the attached keyboard prints on that cap (the
-// Regular Keys and Shifted Keys tables in the direct-key-handler wiki give both
-// layers for every position). Positions the grid has no character for are named
-// instead -- Zig, Zag, Ro, Yen.
-//
-// So naming a key from this answer names it differently on every layout, which
-// is the one thing a KeyName may not do. Scancode is what a name comes from,
-// the way the keypad reads one (see keypadKeys): an SDL scancode is a USB HID
-// usage ID, so it is the position itself.
-func ShiftedKey(scancode uint32, mod uint16) rune {
-	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
-	if k == 0 || k >= 0x110000 {
-		return 0
-	}
-	return rune(k)
 }
 
 const (

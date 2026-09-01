@@ -15,35 +15,11 @@ import (
 // written against the character the key shows, with Shift absorbed into that
 // character: Ctrl+5 is "^5" and Ctrl+Shift+5 is "^%". A key that is NAMED —
 // Down, Tab, F5 — takes prefixes instead: "C-Down".
-//
-// This branch used to emit "C-" plus the UNSHIFTED character for every shown
-// key, so Ctrl+Shift+5 came out "C-S-5": a spelling nothing else in the system
-// produces or reads, invented in this function. A binding written "^%" could
-// never match, and the graphical host disagreed with the terminal one about
-// what the same chord was called.
 func TestControlOnShownKeysUsesTheCaret(t *testing.T) {
-	// The layout answers for itself; SDL is not running in a test, so stand in
-	// for it with the US answers for the keys under test.
-	saved := shiftedShownKey
-	defer func() { shiftedShownKey = saved }()
-	// SDL scancodes are USB HID keyboard usage IDs: the "5" key is 34, "6" is
-	// 35, "a" is 4 and ";" is 51. They name a POSITION, which is why they are
-	// what a layout is asked about — Sym is already layout-mapped and cannot be.
 	const (
-		scanA         = 4
-		scan5         = 34
-		scan6         = 35
-		scanSemicolon = 51
+		scan5 = scan1 + 4
+		scan6 = scan1 + 5
 	)
-	shiftedShownKey = func(scancode uint32) rune {
-		switch scancode {
-		case scan5:
-			return '%'
-		case scan6:
-			return '^'
-		}
-		return 0
-	}
 
 	for _, tc := range []struct {
 		name                  string
@@ -71,14 +47,38 @@ func TestControlOnShownKeysUsesTheCaret(t *testing.T) {
 	}
 }
 
-// A shown key with no shifted character of its own keeps the one it has, rather
-// than losing the keystroke to a layout that answered nothing.
-func TestShiftWithNoShiftedCharacterKeepsTheKey(t *testing.T) {
-	saved := shiftedShownKey
-	defer func() { shiftedShownKey = saved }()
-	shiftedShownKey = func(uint32) rune { return 0 }
+// The layout does not get a say in the name.
+//
+// Sym is layout-mapped, so the same physical key reports a different one under
+// every layout: the key at the "a" position is Sym 'q' on AZERTY, and the key
+// at the "2" position shows a quotation mark on a German board rather than an
+// at-sign. A KeyName is defined by the POSITION, so all of those are the same
+// key with the same name, and a keymap written once holds everywhere.
+func TestTheLayoutDoesNotChangeTheName(t *testing.T) {
+	const scan2 = scan1 + 1
 
-	if got := encodeKey(sdl3.Keysym{Sym: '5', Scancode: 34}, true, false, true, false, false); got != "^5" {
-		t.Errorf("encodeKey with no layout answer = %q, want %q", got, "^5")
+	for _, tc := range []struct {
+		what     string
+		scancode uint32
+		syms     []sdl3.Keycode
+		shift    bool
+		want     string
+	}{
+		{"the a position", scanA, []sdl3.Keycode{'a', 'q', 'ф'}, false, "a"},
+		{"the a position, shifted", scanA, []sdl3.Keycode{'a', 'q', 'ф'}, true, "A"},
+		{"the 2 position", scan2, []sdl3.Keycode{'2', 'é', '"'}, false, "2"},
+		{"the 2 position, shifted", scan2, []sdl3.Keycode{'2', 'é', '"'}, true, "@"},
+		{"the semicolon position, shifted", scanSemicolon, []sdl3.Keycode{';', 'm', 'ö'}, true, ":"},
+	} {
+		for _, sym := range tc.syms {
+			mod := uint16(0)
+			if tc.shift {
+				mod = sdl3.KMOD_LSHIFT
+			}
+			got := translateKey(sdl3.Keysym{Sym: sym, Mod: mod, Scancode: tc.scancode})
+			if got != tc.want {
+				t.Errorf("%s reporting Sym %q: named %q, want %q", tc.what, rune(sym), got, tc.want)
+			}
+		}
 	}
 }

@@ -197,6 +197,21 @@ func keyAwaitsText(sym sdl3.Keysym) bool {
 	if _, _, _, isPad := keypadKey(sym, sym.Mod&sdl3.KMOD_NUM != 0); isPad {
 		return false
 	}
+	return producesText(sym)
+}
+
+// producesText reports whether a key-down is one the keyboard follows with a
+// character.
+//
+// The main cluster does, at every position -- including the four the grid names
+// rather than shows, which type their layout's own character (Zag prints "<" on
+// a German board) and are worth recording as typing it. Sym answers for
+// anything off the grid that still shows something, the space bar above all: it
+// is named "Space", so the memo is the only place its character can come from.
+func producesText(sym sdl3.Keysym) bool {
+	if _, onGrid := gridKeys[sym.Scancode]; onGrid {
+		return true
+	}
 	return sym.Sym >= 32 && sym.Sym < 127
 }
 
@@ -214,7 +229,7 @@ func optionComposes(sym sdl3.Keysym) bool {
 	if sym.Mod&(sdl3.KMOD_CTRL|sdl3.KMOD_GUI) != 0 {
 		return false
 	}
-	return sym.Sym >= 32 && sym.Sym < 127
+	return producesText(sym)
 }
 
 // takePendingPress claims the held chord, if there is one.
