@@ -700,6 +700,18 @@ func (t *TextInput) Paint(p *core.Painter) {
 	// advance is a fraction of a unit - a space beside CJK text is about two
 	// and a half - where the caret after a second space landed short of the
 	// space it was meant to follow.
+	//
+	// Where the painter cannot measure in pixels, the fallback maps the LOCAL
+	// width onto the device grid. UnitsToPx cannot: it converts from the
+	// default denomination, so inside a re-denominated interior it answers for
+	// a different unit than the one MeasureText counted -- the same run came
+	// out 15px at 4x8 and 58px at 16x32 where the truth was 29px throughout.
+	runPx := func(run string, w core.Unit) int {
+		if px, ok := p.MeasureTextPx(run, font); ok {
+			return px
+		}
+		return p.UnitSpanPxX(0, w)
+	}
 	prefixWidth := func(d int) (core.Unit, int) {
 		if d < 0 {
 			d = 0
@@ -709,10 +721,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 		}
 		run := string(displayText[:d])
 		w := t.MeasureText(run)
-		if px, ok := p.MeasureTextPx(run, font); ok {
-			return w, px
-		}
-		return w, p.UnitsToPx(w)
+		return w, runPx(run, w)
 	}
 
 	// Selection span (display indices) and the fixed anchor - the selection
@@ -929,7 +938,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 				if cursorDisp >= n {
 					blank := t.MeasureText(" ")
 					endX = caretX + blank
-					endPx = caretXPx + p.UnitsToPx(blank)
+					endPx = caretXPx + runPx(" ", blank)
 				}
 				// The caret is always at one EDGE of a selection (the span
 				// runs anchor to cursor), so the block covers a SELECTED

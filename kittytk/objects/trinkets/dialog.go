@@ -205,11 +205,17 @@ func (m *MessageBox) calculateSize() {
 	// per character - assuming a full cell per glyph makes the dialog far too
 	// wide on graphical surfaces. Reserve the icon gutter on the left (matching
 	// Paint's textX) and a margin on the right.
+	//
+	// The measurement is in THIS dialog's denomination, the one the gutter and
+	// the margin beside it are counted in. MeasureText answers in the default
+	// denomination, so the three were added together in two different
+	// currencies and the text's share of the width was the only one that did
+	// not follow the dialog.
 	leftGutter := metrics.UnitsPerCellWidth * 6
 	rightMargin := metrics.UnitsPerCellWidth * 4
 	var maxLineW core.Unit
 	for _, line := range lines {
-		if w := font.MeasureText(line); w > maxLineW {
+		if w := font.MeasureTextIn(line, metrics); w > maxLineW {
 			maxLineW = w
 		}
 	}
