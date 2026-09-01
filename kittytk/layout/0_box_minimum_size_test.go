@@ -22,6 +22,15 @@ func newSizedTrinket(w, h core.Unit) *sizedTrinket {
 
 func (s *sizedTrinket) SizeHint() core.UnitSize { return s.own }
 
+// LayoutAlignment is the align property, and these ask for left rather than
+// the fill every item gets by default: a filled item takes the whole box
+// across the cross axis, which is a size the box chose and not one the minimum
+// had any say in. Left is the alignment that leaves the item its own size, so
+// it is the one that can show a minimum being applied.
+func (s *sizedTrinket) LayoutAlignment() (core.Alignment, bool) {
+	return core.AlignLeft, true
+}
+
 // boxWith lays two items out in one box and returns their bounds.
 func boxWith(o core.Orientation, items ...core.Trinket) []core.UnitRect {
 	l := NewBoxLayout(o)

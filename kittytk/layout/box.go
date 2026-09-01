@@ -331,11 +331,11 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 			height = itemHeightForWidth(item.Trinket, bounds.Width)
 		}
 
-		// Vertical alignment in horizontal layout. Only AlignFill stretches
-		// the child to the row; every other value (including the default,
-		// unset alignment) keeps the child's natural height, so a one-row
-		// text input beside a taller button stays one row instead of growing
-		// to the button's height. The default centers it in the row.
+		// Vertical alignment in horizontal layout. AlignFill stretches the
+		// child to the row and is what an item gets when nothing sets align;
+		// every other value keeps the child's natural height, so a one-row
+		// text input beside a taller button asked for AlignMiddle stays one
+		// row instead of growing to the button's height, centered in it.
 		switch item.Align {
 		case core.AlignFill:
 			// Fill available space - no adjustment needed

@@ -13,11 +13,16 @@ type LayoutItem struct {
 }
 
 // NewLayoutItem creates a layout item with default properties.
+//
+// align defaults to fill, which is what the property's documentation says and
+// what AlignFill being the zero value of Alignment already says. The item takes
+// the whole of the box across the layout's cross axis; stretch, which is a
+// separate property, decides what it gets ALONG the axis.
 func NewLayoutItem(trinket core.Trinket) *LayoutItem {
 	return &LayoutItem{
 		Trinket: trinket,
 		Stretch: 0,
-		Align:   core.AlignLeft,
+		Align:   core.AlignFill,
 	}
 }
 

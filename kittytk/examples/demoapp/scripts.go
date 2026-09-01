@@ -495,65 +495,65 @@ mt=new tab caption="Terminal" children={
 df=new tab caption="Defaults" children={
 	dfsa=new scrollarea stretch=1 align=fill children={
 		dfv=new panel layout=vbox spacing=0 children={
-			new label caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
+			new label align=left caption="One of each trinket, with nothing setting a size on any of them.\nWhat you see is what each one asks for when nobody tells it.\n\nA trinket that can size itself from its own content does: a button\nfrom its caption, a label from its text, a combo box from its items.\nOne that cannot falls back to three cells, which is meant to look\nwrong -- it is how a trinket says nobody gave it a size."
 
-			new label caption="--- button"
-			new button caption="Button"
-			new label caption="--- checkbox"
-			new checkbox caption="Checkbox"
-			new label caption="--- radiobutton"
-			new radiobutton caption="Radio button" group=dfgroup
-			new label caption="--- label"
-			new label caption="Label"
-			new label caption="--- textinput"
-			new textinput placeholder="Text input"
-			new label caption="--- combobox"
-			new combobox children={
+			new label align=left caption="--- button"
+			new button align=left caption="Button"
+			new label align=left caption="--- checkbox"
+			new checkbox align=left caption="Checkbox"
+			new label align=left caption="--- radiobutton"
+			new radiobutton align=left caption="Radio button" group=dfgroup
+			new label align=left caption="--- label"
+			new label align=left caption="Label"
+			new label align=left caption="--- textinput"
+			new textinput align=left placeholder="Text input"
+			new label align=left caption="--- combobox"
+			new combobox align=left children={
 				new item caption="Combo item one"
 				new item caption="Combo item two"
 			}
-			new label caption="--- progress"
-			new progress value=60
-			new label caption="--- separator"
-			new separator caption="Separator"
-			new label caption="--- spacer"
-			new spacer
-			new label caption="--- listview"
-			new listview children={
+			new label align=left caption="--- progress"
+			new progress align=left value=60
+			new label align=left caption="--- separator"
+			new separator align=left caption="Separator"
+			new label align=left caption="--- spacer"
+			new spacer align=left
+			new label align=left caption="--- listview"
+			new listview align=left children={
 				new item caption="List item one"
 				new item caption="List item two"
 				new item caption="List item three"
 			}
-			new label caption="--- treeview"
-			new treeview children={
+			new label align=left caption="--- treeview"
+			new treeview align=left children={
 				new item caption="Tree item" children={
 					new item caption="Tree child"
 				}
 			}
-			new label caption="--- panel (no layout, bordered)"
-			new panel border
-			new label caption="--- scrollarea"
-			new scrollarea children={
+			new label align=left caption="--- panel (no layout, bordered)"
+			new panel align=left border
+			new label align=left caption="--- scrollarea"
+			new scrollarea align=left children={
 				new label caption="Scroll area content"
 			}
-			new label caption="--- splitter"
-			new splitter orientation=vertical children={
+			new label align=left caption="--- splitter"
+			new splitter align=left orientation=vertical children={
 				new label caption="Splitter first"
 				new label caption="Splitter second"
 			}
-			new label caption="--- tabs"
-			new tabs children={
+			new label align=left caption="--- tabs"
+			new tabs align=left children={
 				new tab caption="One" children={new label caption="Tab one"}
 				new tab caption="Two" children={new label caption="Tab two"}
 			}
-			new label caption="--- editor"
-			new editor
-			new label caption="--- terminal"
-			new terminal
-			new label caption="--- dockrow"
-			new dockrow
-			new label caption="--- mdipane"
-			new mdipane
+			new label align=left caption="--- editor"
+			new editor align=left
+			new label align=left caption="--- terminal"
+			new terminal align=left
+			new label align=left caption="--- dockrow"
+			new dockrow align=left
+			new label align=left caption="--- mdipane"
+			new mdipane align=left
 		}
 	}
 }

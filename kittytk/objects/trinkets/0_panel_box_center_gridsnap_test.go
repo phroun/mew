@@ -12,11 +12,16 @@ import (
 // next to a 2-row button) is drawn snapped to a row on a cell surface but
 // hit-tested at the raw half-row bounds, so clicks land a row off. The box
 // layout grid-snaps the centering offset to keep draw and hit together.
+//
+// The input asks for middle: an item gets fill unless it says otherwise, and a
+// filled item takes the whole row rather than being centered in it, so there
+// is no offset to snap.
 func TestHBoxCenteringSnapsToCellRow(t *testing.T) {
 	p := NewPanel()
 	p.SetLayoutManager(layout.NewBoxLayout(core.Horizontal))
 
 	input := NewTextInput() // one row tall
+	input.SetLayoutAlignment(core.AlignMiddle)
 	button := NewButton("Browse...")
 	p.AddChild(input)
 	p.AddChild(button)
