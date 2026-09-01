@@ -65,7 +65,7 @@ func TestSortArrowRoomMatchesWhatTheColumnWasSizedFor(t *testing.T) {
 
 	// The width neededCells asks for, and the room the header paint leaves
 	// the caption inside it: the reservation, then drawAligned's own pad.
-	cw := tv.EffectiveCellMetrics().CellWidth
+	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 	span := core.Unit(tv.neededCells(col)) * cw
 	room := span - tv.arrowRoom("▲") - cw/2
 
@@ -86,9 +86,9 @@ func TestChoiceArrowRoomFollowsTheDenomination(t *testing.T) {
 	d := NewDesktop()
 	d.SetBackend(b)
 
-	base := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	base := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	var want core.Unit
-	for _, m := range []core.CellMetrics{base, {CellWidth: 16, CellHeight: 32}, {CellWidth: 4, CellHeight: 8}} {
+	for _, m := range []core.CellMetrics{base, {UnitsPerCellWidth: 16, UnitsPerCellHeight: 32}, {UnitsPerCellWidth: 4, UnitsPerCellHeight: 8}} {
 		tv := NewTreeView()
 		tv.SetParent(d)
 		cm := m
@@ -100,7 +100,7 @@ func TestChoiceArrowRoomFollowsTheDenomination(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("at %dx%d the arrow room is %d units at 8x16, want %d",
-				m.CellWidth, m.CellHeight, got, want)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, got, want)
 		}
 	}
 }

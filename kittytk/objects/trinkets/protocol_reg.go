@@ -378,9 +378,9 @@ func unitsProp(name string, isColumn bool) protocol.Property {
 			m = *ov
 		}
 		if isColumn {
-			m.CellWidth = core.Unit(n)
+			m.UnitsPerCellWidth = core.Unit(n)
 		} else {
-			m.CellHeight = core.Unit(n)
+			m.UnitsPerCellHeight = core.Unit(n)
 		}
 		mw.SetCellMetrics(&m)
 		return nil

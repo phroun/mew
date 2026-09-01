@@ -26,7 +26,7 @@ func (f *fakeBackend) push(ev core.Event) {
 func (f *fakeBackend) Init() error { return nil }
 func (f *fakeBackend) Shutdown()   {}
 func (f *fakeBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (f *fakeBackend) Size() core.UnitSize { return core.UnitSize{Width: 640, Height: 320} }
 func (f *fakeBackend) BeginFrame() {

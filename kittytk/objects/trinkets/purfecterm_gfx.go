@@ -2263,7 +2263,7 @@ func (t *PurfecTerm) lanePx(ppu float64) (laneX, laneY float64) {
 		return lane, lane
 	}
 	m := t.EffectiveCellMetrics()
-	return float64(m.CellWidth), float64(m.CellHeight)
+	return float64(m.UnitsPerCellWidth), float64(m.UnitsPerCellHeight)
 }
 
 // gfxPointerPx converts an incoming pointer position (trinket units) into the
@@ -3327,7 +3327,7 @@ func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenu
 	// not this trinket's possibly re-denominated interior.
 	m := core.DefaultCellMetrics()
 	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
-		if s := sm.ScreenCellMetrics(); s.CellWidth > 0 && s.CellHeight > 0 {
+		if s := sm.ScreenCellMetrics(); s.UnitsPerCellWidth > 0 && s.UnitsPerCellHeight > 0 {
 			m = s
 		}
 	}
@@ -3338,10 +3338,10 @@ func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenu
 		}
 	}
 	return termMenuLayout{
-		rowH:   m.CellHeight,
-		sepH:   m.CellHeight, // a separator needs a full character row
-		width:  core.Unit(cols) * m.CellWidth,
-		indent: m.CellWidth, // one cell in
+		rowH:   m.UnitsPerCellHeight,
+		sepH:   m.UnitsPerCellHeight, // a separator needs a full character row
+		width:  core.Unit(cols) * m.UnitsPerCellWidth,
+		indent: m.UnitsPerCellWidth, // one cell in
 		// no sub-cell padding: rows land exactly on character rows
 	}
 }

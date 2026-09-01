@@ -82,7 +82,7 @@ const dwlCacheMax = 512
 // glyph its four columns.
 func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style.CellStyle, mode byte, cellWidth float64) int {
 	fg, bg := b.styleColors(s)
-	cellH := b.metrics.CellHeight
+	cellH := b.metrics.UnitsPerCellHeight
 
 	visual := cellWidth
 	if visual <= 0 {
@@ -93,7 +93,7 @@ func (b *Backend) DrawCellDWL(x, y core.Unit, ch rune, combining string, s style
 	}
 	// The box is the cell's visual width, doubled — cellVisualWidth * charWidth
 	// * 2.0, exactly as the GTK/Qt paths compute it.
-	adv := core.Unit(float64(b.metrics.CellWidth) * visual * 2)
+	adv := core.Unit(float64(b.metrics.UnitsPerCellWidth) * visual * 2)
 	cols := int(visual*2 + 0.5)
 	if cols < 1 {
 		cols = 1

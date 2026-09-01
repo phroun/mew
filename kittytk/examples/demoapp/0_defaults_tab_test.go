@@ -96,13 +96,13 @@ func TestDefaultsTabShowsTheFallbackSizes(t *testing.T) {
 		seen[name] = true
 
 		b := k.Bounds()
-		if b.Width != m.CellWidth*size.widthCells {
+		if b.Width != m.UnitsPerCellWidth*size.widthCells {
 			t.Errorf("%s is %d units wide, want %d (%d cells)",
-				name, b.Width, m.CellWidth*size.widthCells, size.widthCells)
+				name, b.Width, m.UnitsPerCellWidth*size.widthCells, size.widthCells)
 		}
-		if size.heightCells > 0 && b.Height != m.CellHeight*size.heightCells {
+		if size.heightCells > 0 && b.Height != m.UnitsPerCellHeight*size.heightCells {
 			t.Errorf("%s is %d units tall, want %d (%d cells)",
-				name, b.Height, m.CellHeight*size.heightCells, size.heightCells)
+				name, b.Height, m.UnitsPerCellHeight*size.heightCells, size.heightCells)
 		}
 	}
 

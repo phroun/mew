@@ -3,7 +3,7 @@ package trinkets
 // The size a trinket asks for when nothing set one.
 //
 // The size is a count of denomination units. These are written as counts of
-// CELLS -- so many * CellWidth across, so many * CellHeight down -- only
+// CELLS -- so many * UnitsPerCellWidth across, so many * UnitsPerCellHeight down -- only
 // because a default cannot be derived any other way: the units are the
 // surface's, and nothing here can know what a designer would have specified
 // in them.

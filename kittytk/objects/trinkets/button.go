@@ -260,7 +260,7 @@ func (b *Button) Click() {
 // divided into, so dividing it 16 across and 16 down leaves units half as
 // wide as they are tall, and the same COUNT on each axis would then fall
 // half as far across as down.
-var buttonShadowOffset = core.DefaultCellMetrics().CellWidth / 2
+var buttonShadowOffset = core.DefaultCellMetrics().UnitsPerCellWidth / 2
 
 // SizeHint returns the preferred size.
 func (b *Button) SizeHint() core.UnitSize {
@@ -282,14 +282,14 @@ func (b *Button) SizeHint() core.UnitSize {
 			iconWidth = metrics.TextWidth(5)
 		}
 		if len(b.text) > 0 {
-			iconWidth += metrics.CellWidth // Space between icon and text
+			iconWidth += metrics.UnitsPerCellWidth // Space between icon and text
 		}
 	}
 
 	// Brackets are decorative - use cell-based sizing (2 cells total)
 	// Plus 1 cell for drop shadow on the right
-	bracketWidth := metrics.CellWidth * 2 // 1 cell each for left and right bracket
-	shadowWidth := metrics.CellWidth
+	bracketWidth := metrics.UnitsPerCellWidth * 2 // 1 cell each for left and right bracket
+	shadowWidth := metrics.UnitsPerCellWidth
 
 	return core.UnitSize{
 		Width:  textWidth + iconWidth + bracketWidth + shadowWidth,
@@ -366,7 +366,7 @@ func (b *Button) Paint(p *core.Painter) {
 		leftBracket = '<'
 		rightBracket = '>'
 	}
-	bracketWidth := metrics.CellWidth * 2 // Each bracket is 1 cell
+	bracketWidth := metrics.UnitsPerCellWidth * 2 // Each bracket is 1 cell
 	textWidth := b.MeasureText(b.text)
 
 	// Icon handling
@@ -401,7 +401,7 @@ func (b *Button) Paint(p *core.Painter) {
 			xOffset = shadowOffX
 			yOffset += shadowOffY
 		} else {
-			xOffset = metrics.CellWidth
+			xOffset = metrics.UnitsPerCellWidth
 		}
 	}
 
@@ -417,7 +417,7 @@ func (b *Button) Paint(p *core.Painter) {
 			X:      shadowOffX,
 			Y:      yOffset + shadowOffY,
 			Width:  buttonWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', style.DefaultStyle().WithBg(shadowFg))
 	}
 
@@ -427,7 +427,7 @@ func (b *Button) Paint(p *core.Painter) {
 			X:      xOffset,
 			Y:      yOffset,
 			Width:  buttonWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 	}
 
@@ -439,10 +439,10 @@ func (b *Button) Paint(p *core.Painter) {
 
 		// Top half blocks on second row (shifted right by 1 cell)
 		// Calculate number of cells needed for the button width
-		shadowY := yOffset + metrics.CellHeight
-		numShadowCells := int((buttonWidth + metrics.CellWidth - 1) / metrics.CellWidth)
+		shadowY := yOffset + metrics.UnitsPerCellHeight
+		numShadowCells := int((buttonWidth + metrics.UnitsPerCellWidth - 1) / metrics.UnitsPerCellWidth)
 		for i := 0; i < numShadowCells; i++ {
-			p.DrawCell(metrics.CellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
+			p.DrawCell(metrics.UnitsPerCellWidth+metrics.CellToUnitsX(i), shadowY, '▀', shadowStyle)
 		}
 	}
 
@@ -456,7 +456,7 @@ func (b *Button) Paint(p *core.Painter) {
 		}
 
 		if textIcon.Width > 0 {
-			x := xOffset + metrics.CellWidth // After left bracket (1 cell)
+			x := xOffset + metrics.UnitsPerCellWidth // After left bracket (1 cell)
 			y := yOffset
 			for row := 0; row < textIcon.Height; row++ {
 				for col := 0; col < textIcon.Width; col++ {
@@ -473,12 +473,12 @@ func (b *Button) Paint(p *core.Painter) {
 
 	// Draw text using font
 	if b.text != "" {
-		textX := xOffset + metrics.CellWidth + iconWidth // After left bracket (1 cell)
+		textX := xOffset + metrics.UnitsPerCellWidth + iconWidth // After left bracket (1 cell)
 		p.DrawText(textX, yOffset, b.text, s, font)
 	}
 
 	// Draw right bracket/space (decorative - use DrawCell, not DrawText)
-	rightX := xOffset + buttonWidth - metrics.CellWidth // Before right edge (1 cell)
+	rightX := xOffset + buttonWidth - metrics.UnitsPerCellWidth // Before right edge (1 cell)
 	p.DrawCell(rightX, yOffset, rightBracket, s)
 }
 
@@ -542,15 +542,15 @@ func (b *Button) HandleKeyRelease(event core.KeyReleaseEvent) bool {
 func (b *Button) vInset() core.Unit {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
-	slack := bounds.Height - metrics.CellHeight*2
+	slack := bounds.Height - metrics.UnitsPerCellHeight*2
 	if slack <= 0 {
 		return 0
 	}
 	if core.FindSmoothPositioning(b.Self()) {
 		return slack / 2
 	}
-	rows := slack / metrics.CellHeight
-	return (rows / 2) * metrics.CellHeight
+	rows := slack / metrics.UnitsPerCellHeight
+	return (rows / 2) * metrics.UnitsPerCellHeight
 }
 
 // hitRect returns the button's local click/hover region. It follows the
@@ -562,12 +562,12 @@ func (b *Button) hitRect() core.UnitRect {
 	bounds := b.Bounds()
 	metrics := b.EffectiveCellMetrics()
 	top := b.vInset()
-	h := metrics.CellHeight * 2
+	h := metrics.UnitsPerCellHeight * 2
 	if top+h > bounds.Height {
 		h = bounds.Height - top
 	}
 	if core.FindGraphicalFrames(b.Self()) {
-		h -= metrics.CellHeight / 2
+		h -= metrics.UnitsPerCellHeight / 2
 	}
 	return core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: h}
 }

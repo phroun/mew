@@ -616,11 +616,11 @@ func (e *Engine) Measure(f *core.Font, s string) core.Unit {
 // advance is a real quantity and there is no cell tally to count; the one
 // rounding belongs at the end, in the currency being asked for.
 func (e *Engine) MeasureIn(f *core.Font, s string, m core.CellMetrics) core.Unit {
-	cw := m.CellWidth
+	cw := m.UnitsPerCellWidth
 	if cw < 1 {
-		cw = core.DefaultCellMetrics().CellWidth
+		cw = core.DefaultCellMetrics().UnitsPerCellWidth
 	}
-	base := float64(core.DefaultCellMetrics().CellWidth)
+	base := float64(core.DefaultCellMetrics().UnitsPerCellWidth)
 	widest := 0.0
 	for _, l := range e.ShapeRun(f, s).Lines {
 		if a := float64(l.advance) / 64; a > widest {

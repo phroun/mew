@@ -31,7 +31,7 @@ func (n *nullBackend) frameCount() int {
 func (n *nullBackend) Init() error { return nil }
 func (n *nullBackend) Shutdown()   {}
 func (n *nullBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (n *nullBackend) Size() core.UnitSize { return core.UnitSize{Width: 8 * 80, Height: 16 * 24} }
 func (n *nullBackend) BeginFrame() {

@@ -267,9 +267,9 @@ func abs(x int) int {
 // WindowManager and the embedded MDIPane both call it, so desktop and MDI
 // windows detect identical edges and corners.
 func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip, cornerReach core.Unit) int {
-	edgeThreshold := metrics.CellWidth
-	cornerThreshold := metrics.CellWidth * 2
-	bottomBand := metrics.CellHeight
+	edgeThreshold := metrics.UnitsPerCellWidth
+	cornerThreshold := metrics.UnitsPerCellWidth * 2
+	bottomBand := metrics.UnitsPerCellHeight
 	if grip > 0 {
 		edgeThreshold = grip
 		cornerThreshold = grip * 2
@@ -388,7 +388,7 @@ func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, border core.Uni
 	if !graphical {
 		return 0
 	}
-	return border + metrics.CellWidth/2
+	return border + metrics.UnitsPerCellWidth/2
 }
 
 // ResizeHitGrip is how far in from a window's outer edge a press starts a
@@ -420,7 +420,7 @@ func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, border
 	if ppu <= 0 {
 		ppu = 1
 	}
-	grip := border + metrics.CellWidth/4
+	grip := border + metrics.UnitsPerCellWidth/4
 	if px := core.Unit(math.Ceil(3 / ppu)); px > grip {
 		grip = px
 	}
@@ -456,8 +456,8 @@ func ApplyResize(original core.UnitRect, edge int, deltaX, deltaY core.Unit, met
 		nb = metrics.AlignRect(nb)
 	}
 
-	minWidth := metrics.CellWidth * 3
-	minHeight := metrics.CellHeight * 2
+	minWidth := metrics.UnitsPerCellWidth * 3
+	minHeight := metrics.UnitsPerCellHeight * 2
 	if nb.Width < minWidth {
 		if edge&ResizeEdgeLeft != 0 {
 			nb.X = original.X + original.Width - minWidth
@@ -521,8 +521,8 @@ func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
 func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
 	b := win.Bounds()
 	metrics := core.DefaultCellMetrics()
-	edgeThreshold := metrics.CellWidth
-	bottomBand := metrics.CellHeight
+	edgeThreshold := metrics.UnitsPerCellWidth
+	bottomBand := metrics.UnitsPerCellHeight
 	if grip > 0 {
 		edgeThreshold = grip
 		bottomBand = grip
@@ -1614,7 +1614,7 @@ func (m *WindowManager) beginBlockedTitleDrag(win *Window, event core.MousePress
 	}
 	metrics := core.DefaultCellMetrics()
 	titleTop := core.FindFrameBorderUnits(win)
-	if event.Y >= bounds.Y+titleTop+metrics.CellHeight {
+	if event.Y >= bounds.Y+titleTop+metrics.UnitsPerCellHeight {
 		return // below the title row
 	}
 	if win.buttonAtPosition(event.X-bounds.X, event.Y-bounds.Y) != TitleButtonNone {
@@ -1924,8 +1924,8 @@ func MapTrinketToScreen(trinket core.Trinket, local core.UnitPoint) core.UnitPoi
 				pm = core.FindEffectiveCellMetrics(pw)
 			}
 			scrollX, scrollY := scroller.ScrollOffset()
-			result.X -= core.Unit(scrollX) * pm.CellWidth
-			result.Y -= core.Unit(scrollY) * pm.CellHeight
+			result.X -= core.Unit(scrollX) * pm.UnitsPerCellWidth
+			result.Y -= core.Unit(scrollY) * pm.UnitsPerCellHeight
 		}
 
 		// Crossing a window's content boundary: content coordinates are
@@ -2006,7 +2006,7 @@ func (m *WindowManager) positionWindow(win *Window) {
 	if cascadeIndex < 0 {
 		cascadeIndex = 0
 	}
-	offset := core.Unit(cascadeIndex) * metrics.CellWidth * 2
+	offset := core.Unit(cascadeIndex) * metrics.UnitsPerCellWidth * 2
 
 	x := clientArea.X + offset
 	y := clientArea.Y + offset
@@ -2114,7 +2114,7 @@ func (m *WindowManager) CascadeWindows() {
 	// The cascade step includes the frame border, so each window's whole
 	// top chrome (border + titlebar) clears the one beneath it.
 	border := core.FindFrameBorderUnits(windows[0])
-	offset := metrics.CellWidth*2 + border
+	offset := metrics.UnitsPerCellWidth*2 + border
 
 	// Standard size for cascaded windows - align to cell boundaries
 	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)

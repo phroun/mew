@@ -24,7 +24,7 @@ type fakeSurface struct {
 
 func (s *fakeSurface) Size() core.UnitSize { return s.size }
 func (s *fakeSurface) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (s *fakeSurface) SetHandler(h platform.SurfaceHandler) { s.handler = h }
 func (s *fakeSurface) Invalidate(core.UnitRect)             { s.invalidated++ }
@@ -62,7 +62,7 @@ type nullPaintBackend struct{}
 func (nullPaintBackend) Init() error { return nil }
 func (nullPaintBackend) Shutdown()   {}
 func (nullPaintBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (nullPaintBackend) Size() core.UnitSize                                  { return core.UnitSize{Width: 640, Height: 320} }
 func (nullPaintBackend) BeginFrame()                                          {}

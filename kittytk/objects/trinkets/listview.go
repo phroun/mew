@@ -228,13 +228,13 @@ func (l *ListView) SetCurrentIndex(index int) {
 		// Calculate the visual Y position of this item (after internal scrolling)
 		// This is where the item appears on screen, relative to the ListView's bounds
 		visualRow := index - l.scrollOffset
-		itemY := core.Unit(visualRow) * metrics.CellHeight
+		itemY := core.Unit(visualRow) * metrics.UnitsPerCellHeight
 
 		itemRect := core.UnitRect{
 			X:      0,
 			Y:      itemY,
 			Width:  l.Bounds().Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}
 		l.ScrollRectIntoView(itemRect)
 	}
@@ -384,7 +384,7 @@ func (l *ListView) ensureVisible(index int) {
 
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
-	visibleCount := int(bounds.Height / metrics.CellHeight)
+	visibleCount := int(bounds.Height / metrics.UnitsPerCellHeight)
 
 	if index < l.scrollOffset {
 		l.scrollOffset = index
@@ -398,8 +398,8 @@ func (l *ListView) ensureVisible(index int) {
 func (l *ListView) SizeHint() core.UnitSize {
 	metrics := l.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultSizeCells,
-		Height: metrics.CellHeight * defaultSizeCells,
+		Width:  metrics.UnitsPerCellWidth * defaultSizeCells,
+		Height: metrics.UnitsPerCellHeight * defaultSizeCells,
 	}
 }
 
@@ -425,7 +425,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		}
 
 		item := l.items[itemIndex]
-		itemY := core.Unit(i) * metrics.CellHeight
+		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
 
 		// Determine style
 		var s style.CellStyle
@@ -457,7 +457,7 @@ func (l *ListView) Paint(p *core.Painter) {
 			X:      0,
 			Y:      itemY,
 			Width:  bounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
 		// Draw current indicator
@@ -465,7 +465,7 @@ func (l *ListView) Paint(p *core.Painter) {
 		if itemIndex == l.currentIndex && focused {
 			p.DrawCell(x, itemY, '▸', s)
 		}
-		x += metrics.CellWidth
+		x += metrics.UnitsPerCellWidth
 
 		// Draw icon if present
 		if l.showIcons && item.Icon != nil {
@@ -474,7 +474,7 @@ func (l *ListView) Paint(p *core.Painter) {
 				cell := item.Icon.Cells[0]
 				p.DrawCell(x, itemY, cell.Char, cell.Style)
 			}
-			x += metrics.CellWidth * 2
+			x += metrics.UnitsPerCellWidth * 2
 		}
 
 		// Draw text, ellipsized to the room left beside the indicator and
@@ -511,7 +511,7 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 	}
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
-	wtPx := p.UnitSpanPxY(0, metrics.CellHeight) // one row deep
+	wtPx := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight) // one row deep
 	if hvPx := p.UnitSpanPxY(0, bounds.Height); wtPx > hvPx/2 {
 		wtPx = hvPx / 2
 	}
@@ -519,7 +519,7 @@ func (l *ListView) paintVScrollFades(p *core.Painter, rowStyles []style.CellStyl
 		return
 	}
 	wPx := p.UnitSpanPxX(0, bounds.Width)
-	rowPx := p.UnitSpanPxY(0, metrics.CellHeight)
+	rowPx := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight)
 	totalPx := p.UnitSpanPxY(0, bounds.Height)
 	listBG := l.GetScheme().GetListBG()
 	bgAt := func(px int) style.Color {
@@ -551,7 +551,7 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 	metrics := l.EffectiveCellMetrics()
 	totalItems := len(l.items)
 
-	scrollbarX = bounds.Width - metrics.CellWidth
+	scrollbarX = bounds.Width - metrics.UnitsPerCellWidth
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -595,7 +595,7 @@ func (l *ListView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 // origin is the smooth (pointer-tracked) position.
 func (l *ListView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
 	metrics := l.EffectiveCellMetrics()
-	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	trackU = float64(core.Unit(visibleCount) * metrics.UnitsPerCellHeight)
 	totalItems := len(l.items)
 	if totalItems <= visibleCount || visibleCount <= 0 {
 		return trackU, trackU, 0
@@ -636,8 +636,8 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 	// popup lane.
 	if p.Graphical() {
 		trackU, thumbU, posU := l.scrollbarUnits(visibleCount)
-		laneX := l.Bounds().Width - metrics.CellWidth
-		stripeX := laneX + metrics.CellWidth/2
+		laneX := l.Bounds().Width - metrics.UnitsPerCellWidth
+		stripeX := laneX + metrics.UnitsPerCellWidth/2
 		p.FillRect(core.UnitRect{
 			X:      stripeX,
 			Y:      0,
@@ -647,7 +647,7 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
 			Y:      core.Unit(posU + 0.5),
-			Width:  metrics.CellWidth - 2,
+			Width:  metrics.UnitsPerCellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
 		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
 		return
@@ -657,13 +657,13 @@ func (l *ListView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 	// Draw scrollbar track
 	for i := 0; i < trackHeight; i++ {
-		y := core.Unit(i) * metrics.CellHeight
+		y := core.Unit(i) * metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '│', trackStyle)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := core.Unit(thumbStart+i) * metrics.CellHeight
+		y := core.Unit(thumbStart+i) * metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
@@ -741,7 +741,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdTrinketPagePrior:
 		bounds := l.Bounds()
 		metrics := l.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.CellHeight)
+		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := l.currentIndex - pageSize
 		if newIndex < 0 {
 			newIndex = 0
@@ -752,7 +752,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdTrinketPageNext:
 		bounds := l.Bounds()
 		metrics := l.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.CellHeight)
+		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := l.currentIndex + pageSize
 		if newIndex >= len(l.items) {
 			newIndex = len(l.items) - 1
@@ -780,7 +780,7 @@ func (l *ListView) HandleKeyPress(event core.KeyPressEvent) bool {
 func (l *ListView) visibleCount() int {
 	bounds := l.Bounds()
 	metrics := l.EffectiveCellMetrics()
-	n := int(bounds.Height / metrics.CellHeight)
+	n := int(bounds.Height / metrics.UnitsPerCellHeight)
 	if n < 0 {
 		n = 0
 	}
@@ -838,7 +838,7 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	// Check if click is on scrollbar
 	scrollbarX, thumbStart, thumbHeight, _ := l.scrollbarGeometry(l.visibleCount())
 	if event.X >= scrollbarX && len(l.items) > l.visibleCount() {
-		clickedRow := int(event.Y / metrics.CellHeight)
+		clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
 		// the unit-granular thumb.
@@ -898,11 +898,11 @@ func (l *ListView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Calculate which item was clicked
-	clickedRow := int(event.Y / metrics.CellHeight)
+	clickedRow := int(event.Y / metrics.UnitsPerCellHeight)
 	clickedIndex := l.scrollOffset + clickedRow
 
 	// Only start content drag if click is on a valid item
-	contentWidth := bounds.Width - metrics.CellWidth
+	contentWidth := bounds.Width - metrics.UnitsPerCellWidth
 	if event.X >= 0 && event.X < contentWidth && clickedIndex >= 0 && clickedIndex < len(l.items) {
 		// Start content drag - clear scrollbar drag flag
 		l.isDragging = true
@@ -935,7 +935,7 @@ func (l *ListView) overScrollbarThumb(x, y core.Unit) bool {
 		pos := float64(y)
 		return pos >= posU && pos < posU+thumbU
 	}
-	row := int(y / l.EffectiveCellMetrics().CellHeight)
+	row := int(y / l.EffectiveCellMetrics().UnitsPerCellHeight)
 	return row >= thumbStart && row < thumbStart+thumbHeight
 }
 
@@ -990,7 +990,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		currentRow := int(event.Y / metrics.CellHeight)
+		currentRow := int(event.Y / metrics.UnitsPerCellHeight)
 		rowDelta := currentRow - l.scrollbarDragStart
 
 		visibleCount := l.visibleCount()
@@ -1028,7 +1028,7 @@ func (l *ListView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	row := int(event.Y / metrics.CellHeight)
+	row := int(event.Y / metrics.UnitsPerCellHeight)
 	index := l.scrollOffset + row
 
 	// Clamp to valid range

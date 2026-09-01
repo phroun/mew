@@ -19,7 +19,7 @@ func TestMenuBarBlockedSuppressesHover(t *testing.T) {
 	mb.SetModalBlockedChecker(func() bool { return blocked })
 
 	// A point inside the first top-level item.
-	inFirst := core.MouseMoveEvent{X: mb.calculateMenuX(0) + core.DefaultCellMetrics().CellWidth, Y: 0}
+	inFirst := core.MouseMoveEvent{X: mb.calculateMenuX(0) + core.DefaultCellMetrics().UnitsPerCellWidth, Y: 0}
 
 	// Not blocked: hovering highlights the item.
 	mb.HandleMouseMove(inFirst)

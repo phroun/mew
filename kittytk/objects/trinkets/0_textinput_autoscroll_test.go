@@ -22,7 +22,7 @@ func TestTextInputDragAutoScrollBothDirections(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("The quick brown fox jumps over the lazy dog, twice over.")
 	m := ti.EffectiveCellMetrics()
-	ti.SetBounds(core.UnitRect{Width: m.CellWidth * 10, Height: m.CellHeight})
+	ti.SetBounds(core.UnitRect{Width: m.UnitsPerCellWidth * 10, Height: m.UnitsPerCellHeight})
 	ti.SetFocus()
 
 	// Scroll to the end, then arm a drag selection anchored there.
@@ -76,7 +76,7 @@ func TestTextInputAutoScrollSpeedScalesWithDistance(t *testing.T) {
 	ti := NewTextInput()
 	ti.SetText("The quick brown fox jumps over the lazy dog, twice over.")
 	m := ti.EffectiveCellMetrics()
-	ti.SetBounds(core.UnitRect{Width: m.CellWidth * 10, Height: m.CellHeight})
+	ti.SetBounds(core.UnitRect{Width: m.UnitsPerCellWidth * 10, Height: m.UnitsPerCellHeight})
 	ti.SetFocus()
 	ti.selecting = true
 
@@ -84,7 +84,7 @@ func TestTextInputAutoScrollSpeedScalesWithDistance(t *testing.T) {
 		ti.stopAutoScroll()
 		ti.cursorPos, ti.selStart, ti.selEnd = 20, 20, 20
 		before := ti.cursorPos
-		ti.HandleMouseMove(core.MouseMoveEvent{X: ti.Bounds().Width + overCells*m.CellWidth, Buttons: core.LeftButton})
+		ti.HandleMouseMove(core.MouseMoveEvent{X: ti.Bounds().Width + overCells*m.UnitsPerCellWidth, Buttons: core.LeftButton})
 		return ti.cursorPos - before
 	}
 

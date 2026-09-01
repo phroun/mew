@@ -9,13 +9,13 @@ import (
 
 const boxCaption = "Enable the experimental feature that reticulates splines"
 
-var boxOuter = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+var boxOuter = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 var boxDenominations = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 32, CellHeight: 64},
-	{CellWidth: 4, CellHeight: 8},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 }
 
 // captionRow lays a checkbox and a radio button side by side in a horizontal
@@ -58,11 +58,11 @@ func TestCaptionTrinketsAskForTheSameWidthAtEveryDenomination(t *testing.T) {
 		}
 		if gotC != baseC {
 			t.Errorf("checkbox at %dx%d asks for %d units at 8x16, want %d",
-				interior.CellWidth, interior.CellHeight, gotC, baseC)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, gotC, baseC)
 		}
 		if gotR != baseR {
 			t.Errorf("radio button at %dx%d asks for %d units at 8x16, want %d",
-				interior.CellWidth, interior.CellHeight, gotR, baseR)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, gotR, baseR)
 		}
 	}
 }
@@ -91,7 +91,7 @@ func TestCaptionTrinketsTakeAPressOnTheirRightHalf(t *testing.T) {
 		press(pressC)
 		if !c.IsChecked() {
 			t.Errorf("interior %dx%d: a press at %d missed the checkbox, which spans %d..%d",
-				interior.CellWidth, interior.CellHeight, pressC,
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, pressC,
 				core.ExchangeX(c.Bounds().X, interior, boxOuter),
 				core.ExchangeX(c.Bounds().X+c.Bounds().Width, interior, boxOuter))
 		}
@@ -99,7 +99,7 @@ func TestCaptionTrinketsTakeAPressOnTheirRightHalf(t *testing.T) {
 		press(pressR)
 		if !r.IsChecked() {
 			t.Errorf("interior %dx%d: a press at %d missed the radio button, which spans %d..%d",
-				interior.CellWidth, interior.CellHeight, pressR,
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, pressR,
 				core.ExchangeX(r.Bounds().X, interior, boxOuter),
 				core.ExchangeX(r.Bounds().X+r.Bounds().Width, interior, boxOuter))
 		}

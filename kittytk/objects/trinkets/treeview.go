@@ -356,13 +356,13 @@ func (t *TreeView) SetCurrentIndex(index int) {
 		// Calculate the visual Y position of this item (after internal scrolling)
 		// This is where the item appears on screen, relative to the TreeView's bounds
 		visualRow := index - t.scrollOffset
-		itemY := core.Unit(visualRow) * metrics.CellHeight
+		itemY := core.Unit(visualRow) * metrics.UnitsPerCellHeight
 
 		itemRect := core.UnitRect{
-			X:      core.Unit(contentStartCells) * metrics.CellWidth,
+			X:      core.Unit(contentStartCells) * metrics.UnitsPerCellWidth,
 			Y:      itemY,
-			Width:  core.Unit(actualContentCells) * metrics.CellWidth,
-			Height: metrics.CellHeight,
+			Width:  core.Unit(actualContentCells) * metrics.UnitsPerCellWidth,
+			Height: metrics.UnitsPerCellHeight,
 		}
 		t.ScrollRectIntoView(itemRect)
 	}
@@ -636,8 +636,8 @@ func (t *TreeView) ensureVisible(index int) {
 func (t *TreeView) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultTreeWidthCells,
-		Height: metrics.CellHeight * defaultSizeCells,
+		Width:  metrics.UnitsPerCellWidth * defaultTreeWidthCells,
+		Height: metrics.UnitsPerCellHeight * defaultSizeCells,
 	}
 }
 
@@ -656,13 +656,13 @@ func (t *TreeView) Paint(p *core.Painter) {
 	bgStyle := style.DefaultStyle().WithFg(scheme.GetListFG()).WithBg(scheme.GetListBG())
 	p.FillRect(core.UnitRect{Width: bounds.Width, Height: bounds.Height}, ' ', bgStyle)
 
-	visibleCount := int(bounds.Height / metrics.CellHeight)
+	visibleCount := int(bounds.Height / metrics.UnitsPerCellHeight)
 
 	// GUI: paint one extra partial row into any leftover strip rather
 	// than leaving it blank (never counted as visible for scrolling).
 	rows := visibleCount
 	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
-		core.Unit(visibleCount)*metrics.CellHeight < bounds.Height {
+		core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
 
@@ -674,7 +674,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 		}
 
 		item := t.flatList[itemIndex]
-		itemY := core.Unit(i) * metrics.CellHeight
+		itemY := core.Unit(i) * metrics.UnitsPerCellHeight
 		level := item.Level()
 
 		// Determine style
@@ -705,17 +705,17 @@ func (t *TreeView) Paint(p *core.Painter) {
 			X:      0,
 			Y:      itemY,
 			Width:  bounds.Width,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}, ' ', s)
 
 		// Calculate x position with indent (plus the left breathing pad)
-		x := core.Unit(level*t.indentWidth+treeLeftPadCells) * metrics.CellWidth
+		x := core.Unit(level*t.indentWidth+treeLeftPadCells) * metrics.UnitsPerCellWidth
 
 		// Connector lines fill the indent space (never widen it).
 		if t.treeLines {
 			for ci, r := range t.treeLinePrefix(item) {
 				if r != ' ' {
-					t.drawTreeLineCell(p, core.Unit(ci+treeLeftPadCells)*metrics.CellWidth, itemY, r, s, metrics)
+					t.drawTreeLineCell(p, core.Unit(ci+treeLeftPadCells)*metrics.UnitsPerCellWidth, itemY, r, s, metrics)
 				}
 			}
 		}
@@ -732,13 +732,13 @@ func (t *TreeView) Paint(p *core.Painter) {
 		} else {
 			p.DrawCell(x, itemY, ' ', s)
 		}
-		x += metrics.CellWidth
+		x += metrics.UnitsPerCellWidth
 
 		// Draw icon if present
 		if item.Icon != nil && len(item.Icon.Cells) > 0 {
 			cell := item.Icon.Cells[0]
 			p.DrawCell(x, itemY, cell.Char, cell.Style)
-			x += metrics.CellWidth * 2
+			x += metrics.UnitsPerCellWidth * 2
 		}
 
 		// Draw text using font-aware rendering
@@ -764,7 +764,7 @@ func (t *TreeView) Paint(p *core.Painter) {
 func (t *TreeView) visibleCount() int {
 	bounds := t.Bounds()
 	metrics := t.EffectiveCellMetrics()
-	n := int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.CellHeight)
+	n := int((bounds.Height - t.headerHeight() - t.footerHeight()) / metrics.UnitsPerCellHeight)
 	if n < 0 {
 		n = 0
 	}
@@ -778,7 +778,7 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 	metrics := t.EffectiveCellMetrics()
 	totalItems := len(t.flatList)
 
-	scrollbarX = bounds.Width - metrics.CellWidth
+	scrollbarX = bounds.Width - metrics.UnitsPerCellWidth
 	trackHeight = visibleCount
 
 	if totalItems <= visibleCount {
@@ -822,7 +822,7 @@ func (t *TreeView) scrollbarGeometry(visibleCount int) (scrollbarX core.Unit, th
 // origin is the smooth (pointer-tracked) position.
 func (t *TreeView) scrollbarUnits(visibleCount int) (trackU, thumbU, posU float64) {
 	metrics := t.EffectiveCellMetrics()
-	trackU = float64(core.Unit(visibleCount) * metrics.CellHeight)
+	trackU = float64(core.Unit(visibleCount) * metrics.UnitsPerCellHeight)
 	totalItems := len(t.flatList)
 	if totalItems <= visibleCount || visibleCount <= 0 {
 		return trackU, trackU, 0
@@ -868,11 +868,11 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 		// No track stripe: the hairline reads as another column
 		// divider next to the real ones. The bare thumb is the bar.
 		_, thumbU, posU := t.scrollbarUnits(visibleCount)
-		laneX := t.Bounds().Width - metrics.CellWidth
+		laneX := t.Bounds().Width - metrics.UnitsPerCellWidth
 		p.FillRect(core.UnitRect{
 			X:      laneX + 1,
 			Y:      headerH + core.Unit(posU+0.5),
-			Width:  metrics.CellWidth - 2,
+			Width:  metrics.UnitsPerCellWidth - 2,
 			Height: core.Unit(thumbU + 0.5),
 		}, ' ', thumbStyle.WithBg(thumbStyle.Fg))
 		return
@@ -882,13 +882,13 @@ func (t *TreeView) paintScrollbar(p *core.Painter, visibleCount int) {
 
 	// Draw scrollbar track (the ScrollArea's shaded fill, not a line).
 	for i := 0; i < trackHeight; i++ {
-		y := headerH + core.Unit(i)*metrics.CellHeight
+		y := headerH + core.Unit(i)*metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '░', trackStyle)
 	}
 
 	// Draw scrollbar thumb
 	for i := 0; i < thumbHeight; i++ {
-		y := headerH + core.Unit(thumbStart+i)*metrics.CellHeight
+		y := headerH + core.Unit(thumbStart+i)*metrics.UnitsPerCellHeight
 		p.DrawCell(scrollbarX, y, '█', thumbStyle)
 	}
 }
@@ -1051,7 +1051,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdTrinketPagePrior:
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.CellHeight)
+		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := t.currentIndex - pageSize
 		if newIndex < 0 {
 			newIndex = 0
@@ -1062,7 +1062,7 @@ func (t *TreeView) HandleKeyPress(event core.KeyPressEvent) bool {
 	case core.CmdTrinketPageNext:
 		bounds := t.Bounds()
 		metrics := t.EffectiveCellMetrics()
-		pageSize := int(bounds.Height / metrics.CellHeight)
+		pageSize := int(bounds.Height / metrics.UnitsPerCellHeight)
 		newIndex := t.currentIndex + pageSize
 		if newIndex >= len(t.flatList) {
 			newIndex = len(t.flatList) - 1
@@ -1191,7 +1191,7 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	// Check if click is on scrollbar
 	scrollbarX, thumbStart, thumbHeight, _ := t.scrollbarGeometry(t.visibleCount())
 	if event.X >= scrollbarX && len(t.flatList) > t.visibleCount() {
-		clickedRow := int(contentY / metrics.CellHeight)
+		clickedRow := int(contentY / metrics.UnitsPerCellHeight)
 
 		// Pixel surfaces anchor the drag to the grab point within
 		// the unit-granular thumb.
@@ -1251,11 +1251,11 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Calculate which item was clicked
-	clickedRow := int(contentY / metrics.CellHeight)
+	clickedRow := int(contentY / metrics.UnitsPerCellHeight)
 	clickedIndex := t.scrollOffset + clickedRow
 
 	// Only process if click is on a valid item
-	contentWidth := bounds.Width - metrics.CellWidth
+	contentWidth := bounds.Width - metrics.UnitsPerCellWidth
 	if event.X >= 0 && event.X < contentWidth && contentY >= 0 && clickedIndex >= 0 && clickedIndex < len(t.flatList) {
 		item := t.flatList[clickedIndex]
 		level := item.Level()
@@ -1279,8 +1279,8 @@ func (t *TreeView) HandleMousePress(event core.MousePressEvent) bool {
 				keyX = contentWidth // no tree host in view: no indicator hit
 			}
 		}
-		indicatorX := keyX + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.CellWidth
-		if event.X >= indicatorX && event.X < indicatorX+metrics.CellWidth {
+		indicatorX := keyX + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.UnitsPerCellWidth
+		if event.X >= indicatorX && event.X < indicatorX+metrics.UnitsPerCellWidth {
 			if !item.IsLeaf() {
 				t.ToggleItem(item)
 				return true
@@ -1361,7 +1361,7 @@ func (t *TreeView) overScrollbarThumb(x, y core.Unit) bool {
 		pos := float64(contentY)
 		return pos >= posU && pos < posU+thumbU
 	}
-	row := int(contentY / t.EffectiveCellMetrics().CellHeight)
+	row := int(contentY / t.EffectiveCellMetrics().UnitsPerCellHeight)
 	return row >= thumbStart && row < thumbStart+thumbHeight
 }
 
@@ -1439,7 +1439,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 			return true
 		}
 
-		currentRow := int(contentY / metrics.CellHeight)
+		currentRow := int(contentY / metrics.UnitsPerCellHeight)
 		rowDelta := currentRow - t.scrollbarDragStart
 
 		visibleCount := t.visibleCount()
@@ -1477,7 +1477,7 @@ func (t *TreeView) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return false
 	}
 
-	row := int(contentY / metrics.CellHeight)
+	row := int(contentY / metrics.UnitsPerCellHeight)
 	index := t.scrollOffset + row
 
 	// Clamp to valid range

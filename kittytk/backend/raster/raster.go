@@ -124,7 +124,7 @@ func NewScaled(widthPx, heightPx, scale int) (*Backend, error) {
 		h:        heightPx,
 		scale:    scale,
 		fontSize: 12,
-		metrics:  core.CellMetrics{CellWidth: 8, CellHeight: 16},
+		metrics:  core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
 	}
 	return b, nil
 }
@@ -154,8 +154,8 @@ func (b *Backend) cellPx(denom int) int {
 	return n * b.scale
 }
 
-func (b *Backend) cellWPx() int { return b.cellPx(int(b.metrics.CellWidth)) }
-func (b *Backend) cellHPx() int { return b.cellPx(int(b.metrics.CellHeight)) }
+func (b *Backend) cellWPx() int { return b.cellPx(int(b.metrics.UnitsPerCellWidth)) }
+func (b *Backend) cellHPx() int { return b.cellPx(int(b.metrics.UnitsPerCellHeight)) }
 
 // snapAxis converts a unit coordinate/length to device pixels along one
 // axis: whole denomination-cells map to exact cellPx multiples, the
@@ -173,10 +173,10 @@ func snapAxis(u core.Unit, denom, cellPx int) int {
 // pxX / pxY are the cell-snapped unit-to-pixel conversions for the two
 // axes. Positions and cell-aligned rect edges go through these.
 func (b *Backend) pxX(u core.Unit) int {
-	return b.snapOPxX + snapAxis(u-b.snapOX, int(b.metrics.CellWidth), b.cellWPx())
+	return b.snapOPxX + snapAxis(u-b.snapOX, int(b.metrics.UnitsPerCellWidth), b.cellWPx())
 }
 func (b *Backend) pxY(u core.Unit) int {
-	return b.snapOPxY + snapAxis(u-b.snapOY, int(b.metrics.CellHeight), b.cellHPx())
+	return b.snapOPxY + snapAxis(u-b.snapOY, int(b.metrics.UnitsPerCellHeight), b.cellHPx())
 }
 
 // SetSnapOrigin anchors cell snapping at unit (ux, uy): that point keeps
@@ -193,8 +193,8 @@ func (b *Backend) pxY(u core.Unit) int {
 func (b *Backend) SetSnapOrigin(ux, uy core.Unit) (core.Unit, core.Unit) {
 	prevX, prevY := b.snapOX, b.snapOY
 	b.snapOX, b.snapOY = ux, uy
-	b.snapOPxX = snapAxis(ux, int(b.metrics.CellWidth), b.cellWPx())
-	b.snapOPxY = snapAxis(uy, int(b.metrics.CellHeight), b.cellHPx())
+	b.snapOPxX = snapAxis(ux, int(b.metrics.UnitsPerCellWidth), b.cellWPx())
+	b.snapOPxY = snapAxis(uy, int(b.metrics.UnitsPerCellHeight), b.cellHPx())
 	return prevX, prevY
 }
 
@@ -318,11 +318,11 @@ func (b *Backend) Metrics() core.CellMetrics {
 // non-default root denomination. Call before Desktop.SetBackend so the
 // whole trinket tree picks it up.
 func (b *Backend) SetCellMetrics(m core.CellMetrics) {
-	if m.CellWidth < 1 {
-		m.CellWidth = 1
+	if m.UnitsPerCellWidth < 1 {
+		m.UnitsPerCellWidth = 1
 	}
-	if m.CellHeight < 1 {
-		m.CellHeight = 1
+	if m.UnitsPerCellHeight < 1 {
+		m.UnitsPerCellHeight = 1
 	}
 	b.metrics = m
 }
@@ -350,8 +350,8 @@ func unSnapAxisFloor(px, denom, cellPx int) int {
 // clock) landed past the true edge and clipped.
 func (b *Backend) Size() core.UnitSize {
 	return core.UnitSize{
-		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.CellWidth), b.cellWPx())),
-		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+		Width:  core.Unit(unSnapAxisFloor(b.w, int(b.metrics.UnitsPerCellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisFloor(b.h, int(b.metrics.UnitsPerCellHeight), b.cellHPx())),
 	}
 }
 
@@ -378,8 +378,8 @@ func unSnapAxisNearest(px, denom, cellPx int) int {
 // unit size round-trips exactly instead of shedding up to a unit per zoom.
 func (b *Backend) SizeRounded() core.UnitSize {
 	return core.UnitSize{
-		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.CellWidth), b.cellWPx())),
-		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.CellHeight), b.cellHPx())),
+		Width:  core.Unit(unSnapAxisNearest(b.w, int(b.metrics.UnitsPerCellWidth), b.cellWPx())),
+		Height: core.Unit(unSnapAxisNearest(b.h, int(b.metrics.UnitsPerCellHeight), b.cellHPx())),
 	}
 }
 
@@ -389,11 +389,11 @@ func (b *Backend) SizeRounded() core.UnitSize {
 // surface's device-pixel size back to units through these, so a surface
 // sized to UnitToPxX(W) reports exactly W. Implements core.UnitPixelUnmapper.
 func (b *Backend) PxToUnitX(px int) core.Unit {
-	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellWidth), b.cellWPx()))
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.UnitsPerCellWidth), b.cellWPx()))
 }
 
 func (b *Backend) PxToUnitY(px int) core.Unit {
-	return core.Unit(unSnapAxisNearest(px, int(b.metrics.CellHeight), b.cellHPx()))
+	return core.Unit(unSnapAxisNearest(px, int(b.metrics.UnitsPerCellHeight), b.cellHPx()))
 }
 
 func (b *Backend) BeginFrame() {}
@@ -800,9 +800,9 @@ func (b *Backend) LineHeight(f *core.Font) core.Unit {
 // only by the cell primitives (DrawCell, glyph tiling), never by
 // DrawText. At the default 8x16 denomination this is 8 (16 wide).
 func (b *Backend) cellAdvance(ch rune) core.Unit {
-	adv := b.metrics.CellWidth
+	adv := b.metrics.UnitsPerCellWidth
 	if isWide(ch) {
-		adv += b.metrics.CellWidth
+		adv += b.metrics.UnitsPerCellWidth
 	}
 	return adv
 }
@@ -866,7 +866,7 @@ func (b *Backend) drawRune(x, y core.Unit, ch rune, adv, cellH core.Unit, fg, bg
 // DrawText's shaped path below.
 func (b *Backend) DrawCell(x, y core.Unit, ch rune, s style.CellStyle) {
 	fg, bg := b.styleColors(s)
-	b.drawRune(x, y, ch, b.cellAdvance(ch), b.metrics.CellHeight, fg, bg,
+	b.drawRune(x, y, ch, b.cellAdvance(ch), b.metrics.UnitsPerCellHeight, fg, bg,
 		s.Attrs&style.StyleUnderline != 0, s.Bg == style.ColorTransparent)
 }
 
@@ -1280,7 +1280,7 @@ func (b *Backend) FillRect(r core.UnitRect, ch rune, s style.CellStyle) {
 			return
 		}
 		// Arbitrary fill character: tile the glyph one cell at a time.
-		cw, chH := b.metrics.CellWidth, b.metrics.CellHeight
+		cw, chH := b.metrics.UnitsPerCellWidth, b.metrics.UnitsPerCellHeight
 		for y := r.Y; y < r.Y+r.Height; y += chH {
 			for x := r.X; x < r.X+r.Width; x += cw {
 				b.drawRune(x, y, ch, cw, chH, fg, bg, false, s.Bg == style.ColorTransparent)

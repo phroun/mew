@@ -16,8 +16,8 @@ import (
 // hit-testing) match the column its content actually paints in. Smooth
 // (pixel) surfaces keep sub-column precision.
 func snapCellX(self core.Trinket, m core.CellMetrics, x core.Unit) core.Unit {
-	if m.CellWidth > 0 && !core.FindSmoothPositioning(self) {
-		x = (x / m.CellWidth) * m.CellWidth
+	if m.UnitsPerCellWidth > 0 && !core.FindSmoothPositioning(self) {
+		x = (x / m.UnitsPerCellWidth) * m.UnitsPerCellWidth
 	}
 	return x
 }
@@ -205,8 +205,8 @@ func (m *MessageBox) calculateSize() {
 	// per character - assuming a full cell per glyph makes the dialog far too
 	// wide on graphical surfaces. Reserve the icon gutter on the left (matching
 	// Paint's textX) and a margin on the right.
-	leftGutter := metrics.CellWidth * 6
-	rightMargin := metrics.CellWidth * 4
+	leftGutter := metrics.UnitsPerCellWidth * 6
+	rightMargin := metrics.UnitsPerCellWidth * 4
 	var maxLineW core.Unit
 	for _, line := range lines {
 		if w := font.MeasureText(line); w > maxLineW {
@@ -220,16 +220,16 @@ func (m *MessageBox) calculateSize() {
 	// dialog comfortably holds its OK button.
 	var rowWidth core.Unit
 	for _, btn := range m.content.buttonTrinkets {
-		rowWidth += core.Unit(len(btn.Text())+4) * metrics.CellWidth
+		rowWidth += core.Unit(len(btn.Text())+4) * metrics.UnitsPerCellWidth
 	}
 	if n := len(m.content.buttonTrinkets); n > 1 {
-		rowWidth += core.Unit(n-1) * metrics.CellWidth // inter-button gaps
+		rowWidth += core.Unit(n-1) * metrics.UnitsPerCellWidth // inter-button gaps
 	}
-	minW := rowWidth + metrics.CellWidth*4
-	if floor := metrics.CellWidth * 16; minW < floor {
+	minW := rowWidth + metrics.UnitsPerCellWidth*4
+	if floor := metrics.UnitsPerCellWidth * 16; minW < floor {
 		minW = floor
 	}
-	if maxW := metrics.CellWidth * 64; contentW > maxW {
+	if maxW := metrics.UnitsPerCellWidth * 64; contentW > maxW {
 		contentW = maxW
 	}
 	if contentW < minW {
@@ -243,7 +243,7 @@ func (m *MessageBox) calculateSize() {
 	// the button into). The window also spends rows on its title bar and frame,
 	// so measure that chrome and add it - otherwise the content area is short
 	// and the OK button rides up over the last line of text.
-	contentH := core.Unit(textHeight) * metrics.CellHeight
+	contentH := core.Unit(textHeight) * metrics.UnitsPerCellHeight
 
 	m.SetBounds(core.UnitRect{Width: contentW, Height: contentH})
 	cb := m.ContentBounds()
@@ -334,38 +334,38 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 	// Draw icon (indented two columns from the left edge so it isn't crowding
 	// the frame).
 	iconText := c.getIconText()
-	textY := metrics.CellHeight
+	textY := metrics.UnitsPerCellHeight
 	if iconText != "" {
-		p.DrawCell(metrics.CellWidth*3, textY, []rune(iconText)[0], contentStyle)
+		p.DrawCell(metrics.UnitsPerCellWidth*3, textY, []rune(iconText)[0], contentStyle)
 	}
 
 	// Draw message text in the proportional font, one DrawText per line. textX
 	// matches the icon indent plus the icon gutter (kept in sync with
 	// calculateSize's leftGutter).
 	font := c.EffectiveFont()
-	textX := metrics.CellWidth * 6
+	textX := metrics.UnitsPerCellWidth * 6
 	lineY := textY
 	for _, line := range strings.Split(c.text, "\n") {
 		p.DrawText(textX, lineY, line, contentStyle, font)
-		lineY += metrics.CellHeight
+		lineY += metrics.UnitsPerCellHeight
 	}
 
 	// Lay the buttons out at the bottom, centered as a row.
-	buttonY := bounds.Height - metrics.CellHeight*2
+	buttonY := bounds.Height - metrics.UnitsPerCellHeight*2
 
 	btnWidths := make([]core.Unit, len(c.buttonTrinkets))
 	rowWidth := core.Unit(0)
 	for i, btn := range c.buttonTrinkets {
-		btnWidths[i] = core.Unit(len(btn.Text())+4) * metrics.CellWidth
+		btnWidths[i] = core.Unit(len(btn.Text())+4) * metrics.UnitsPerCellWidth
 		rowWidth += btnWidths[i]
 	}
 	if n := len(c.buttonTrinkets); n > 1 {
-		rowWidth += core.Unit(n-1) * metrics.CellWidth // inter-button gaps
+		rowWidth += core.Unit(n-1) * metrics.UnitsPerCellWidth // inter-button gaps
 	}
 
 	buttonX := (bounds.Width - rowWidth) / 2
-	if buttonX < metrics.CellWidth {
-		buttonX = metrics.CellWidth
+	if buttonX < metrics.UnitsPerCellWidth {
+		buttonX = metrics.UnitsPerCellWidth
 	}
 	// Centering can land the row origin on a half column when the slack is an
 	// odd number of columns; the cell backend draws on whole columns, so snap
@@ -379,12 +379,12 @@ func (c *messageBoxContent) Paint(p *core.Painter) {
 			X:      buttonX,
 			Y:      buttonY,
 			Width:  btnWidth,
-			Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
+			Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
 		})
 		// Use a translated painter for the button at its position
 		btnPainter := p.WithOffset(buttonX, buttonY)
 		btn.Paint(btnPainter)
-		buttonX += btnWidth + metrics.CellWidth
+		buttonX += btnWidth + metrics.UnitsPerCellWidth
 	}
 }
 
@@ -616,8 +616,8 @@ func (f *FileDialog) setupUI() {
 
 	// Set size
 	f.SetBounds(core.UnitRect{
-		Width:  metrics.CellWidth * 60,
-		Height: metrics.CellHeight * 20,
+		Width:  metrics.UnitsPerCellWidth * 60,
+		Height: metrics.UnitsPerCellHeight * 20,
 	})
 
 	// Initial load
@@ -826,60 +826,60 @@ func (f *FileDialog) Paint(p *core.Painter) {
 	metrics := f.EffectiveCellMetrics()
 
 	// Layout trinkets manually
-	y := metrics.CellHeight * 2
+	y := metrics.UnitsPerCellHeight * 2
 
 	// Path label and input
-	p.DrawText(metrics.CellWidth*2, y, "Location:", f.Theme().Normal, nil)
+	p.DrawText(metrics.UnitsPerCellWidth*2, y, "Location:", f.Theme().Normal, nil)
 	f.pathInput.SetBounds(core.UnitRect{
-		X:      metrics.CellWidth * 12,
+		X:      metrics.UnitsPerCellWidth * 12,
 		Y:      y,
-		Width:  bounds.Width - metrics.CellWidth*14,
-		Height: metrics.CellHeight,
+		Width:  bounds.Width - metrics.UnitsPerCellWidth*14,
+		Height: metrics.UnitsPerCellHeight,
 	})
 	f.pathInput.Paint(p)
-	y += metrics.CellHeight + metrics.CellHeight/2
+	y += metrics.UnitsPerCellHeight + metrics.UnitsPerCellHeight/2
 
 	// File list
-	listHeight := bounds.Height - metrics.CellHeight*8
+	listHeight := bounds.Height - metrics.UnitsPerCellHeight*8
 	f.fileList.SetBounds(core.UnitRect{
-		X:      metrics.CellWidth * 2,
+		X:      metrics.UnitsPerCellWidth * 2,
 		Y:      y,
-		Width:  bounds.Width - metrics.CellWidth*4,
+		Width:  bounds.Width - metrics.UnitsPerCellWidth*4,
 		Height: listHeight,
 	})
 	f.fileList.Paint(p)
-	y += listHeight + metrics.CellHeight/2
+	y += listHeight + metrics.UnitsPerCellHeight/2
 
 	// File name input (for save dialog)
 	if f.fileNameInput != nil {
-		p.DrawText(metrics.CellWidth*2, y, "File name:", f.Theme().Normal, nil)
+		p.DrawText(metrics.UnitsPerCellWidth*2, y, "File name:", f.Theme().Normal, nil)
 		f.fileNameInput.SetBounds(core.UnitRect{
-			X:      metrics.CellWidth * 14,
+			X:      metrics.UnitsPerCellWidth * 14,
 			Y:      y,
-			Width:  bounds.Width - metrics.CellWidth*16,
-			Height: metrics.CellHeight,
+			Width:  bounds.Width - metrics.UnitsPerCellWidth*16,
+			Height: metrics.UnitsPerCellHeight,
 		})
 		f.fileNameInput.Paint(p)
-		y += metrics.CellHeight + metrics.CellHeight/2
+		y += metrics.UnitsPerCellHeight + metrics.UnitsPerCellHeight/2
 	}
 
 	// Buttons at bottom
-	buttonY := bounds.Height - metrics.CellHeight*2
-	buttonWidth := metrics.CellWidth * 10
+	buttonY := bounds.Height - metrics.UnitsPerCellHeight*2
+	buttonWidth := metrics.UnitsPerCellWidth * 10
 
 	f.okButton.SetBounds(core.UnitRect{
-		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth*2-metrics.CellWidth*4),
+		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth*2-metrics.UnitsPerCellWidth*4),
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
+		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
 	})
 	f.okButton.Paint(p)
 
 	f.cancelButton.SetBounds(core.UnitRect{
-		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth-metrics.CellWidth*2),
+		X:      snapCellX(f.Self(), metrics, bounds.Width-buttonWidth-metrics.UnitsPerCellWidth*2),
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
+		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
 	})
 	f.cancelButton.Paint(p)
 }
@@ -986,8 +986,8 @@ func NewInputDialog(title, label, defaultValue string) *InputDialog {
 	})
 
 	d.SetBounds(core.UnitRect{
-		Width:  metrics.CellWidth * 40,
-		Height: metrics.CellHeight * 6,
+		Width:  metrics.UnitsPerCellWidth * 40,
+		Height: metrics.UnitsPerCellHeight * 6,
 	})
 
 	d.SetCommands(core.CmdTrinketActivate, core.CmdTrinketCancel)
@@ -1018,36 +1018,36 @@ func (d *InputDialog) Paint(p *core.Painter) {
 	theme := d.Theme()
 
 	// Label
-	y := metrics.CellHeight * 2
-	p.DrawText(metrics.CellWidth*2, y, d.labelText, theme.Normal, nil)
+	y := metrics.UnitsPerCellHeight * 2
+	p.DrawText(metrics.UnitsPerCellWidth*2, y, d.labelText, theme.Normal, nil)
 
 	// Input
-	y += metrics.CellHeight
+	y += metrics.UnitsPerCellHeight
 	d.input.SetBounds(core.UnitRect{
-		X:      metrics.CellWidth * 2,
+		X:      metrics.UnitsPerCellWidth * 2,
 		Y:      y,
-		Width:  bounds.Width - metrics.CellWidth*4,
-		Height: metrics.CellHeight,
+		Width:  bounds.Width - metrics.UnitsPerCellWidth*4,
+		Height: metrics.UnitsPerCellHeight,
 	})
 	d.input.Paint(p)
 
 	// Buttons
-	buttonY := bounds.Height - metrics.CellHeight*2
-	buttonWidth := metrics.CellWidth * 10
+	buttonY := bounds.Height - metrics.UnitsPerCellHeight*2
+	buttonWidth := metrics.UnitsPerCellWidth * 10
 
 	d.okButton.SetBounds(core.UnitRect{
-		X:      snapCellX(d.Self(), metrics, bounds.Width/2-buttonWidth-metrics.CellWidth),
+		X:      snapCellX(d.Self(), metrics, bounds.Width/2-buttonWidth-metrics.UnitsPerCellWidth),
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
+		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
 	})
 	d.okButton.Paint(p)
 
 	d.cancelButton.SetBounds(core.UnitRect{
-		X:      snapCellX(d.Self(), metrics, bounds.Width/2+metrics.CellWidth),
+		X:      snapCellX(d.Self(), metrics, bounds.Width/2+metrics.UnitsPerCellWidth),
 		Y:      buttonY,
 		Width:  buttonWidth,
-		Height: metrics.CellHeight * 2, // buttons are two rows: face + shadow
+		Height: metrics.UnitsPerCellHeight * 2, // buttons are two rows: face + shadow
 	})
 	d.cancelButton.Paint(p)
 }

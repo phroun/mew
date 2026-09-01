@@ -21,7 +21,7 @@ func renderSelectedTabStrip(t *testing.T, denomW, denomH, fontSize, scale int) *
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.SetCellMetrics(core.CellMetrics{CellWidth: core.Unit(denomW), CellHeight: core.Unit(denomH)})
+	b.SetCellMetrics(core.CellMetrics{UnitsPerCellWidth: core.Unit(denomW), UnitsPerCellHeight: core.Unit(denomH)})
 	b.SetFontSize(fontSize)
 
 	d := NewDesktop()
@@ -35,7 +35,7 @@ func renderSelectedTabStrip(t *testing.T, denomW, denomH, fontSize, scale int) *
 	// Bounds in units: one row tall, wide enough that the two short tabs
 	// leave plain bar area on the right to probe the content-edge line.
 	m := b.Metrics()
-	tabs.SetBounds(core.UnitRect{X: m.CellWidth, Y: m.CellHeight, Width: m.CellWidth * 16, Height: m.CellHeight})
+	tabs.SetBounds(core.UnitRect{X: m.UnitsPerCellWidth, Y: m.UnitsPerCellHeight, Width: m.UnitsPerCellWidth * 16, Height: m.UnitsPerCellHeight})
 
 	b.Clear(style.DefaultStyle())
 	tabs.Paint(core.NewPainter(b))

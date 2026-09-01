@@ -51,7 +51,7 @@ func TestFocusedMenuBarBorrowsTheTopRow(t *testing.T) {
 		t.Error("the focused bar did not get a row to draw in")
 	}
 	lent := win.Bounds()
-	row := d.EffectiveCellMetrics().CellHeight
+	row := d.EffectiveCellMetrics().UnitsPerCellHeight
 	if lent.Y != before.Y+row {
 		t.Errorf("the app did not scoot down a row: Y %d -> %d (row=%d)", before.Y, lent.Y, row)
 	}
@@ -96,7 +96,7 @@ func TestBorrowedRowSurvivesRepeatedFocus(t *testing.T) {
 	d.menuBar.SetFocus()
 	d.menuBar.HandleFocusIn() // a second focus-in must not borrow twice
 	lent := win.Bounds()
-	row := d.EffectiveCellMetrics().CellHeight
+	row := d.EffectiveCellMetrics().UnitsPerCellHeight
 	if lent.Height != before.Height-row {
 		t.Errorf("borrowed twice: height %d, want %d", lent.Height, before.Height-row)
 	}

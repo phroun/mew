@@ -11,10 +11,10 @@ import (
 // denominations covers the default plus a coarser and a finer one, which is
 // the whole of what these two want to say.
 var denominations = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 4, CellHeight: 8},
-	{CellWidth: 32, CellHeight: 32},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 32},
 }
 
 // A click puts the caret between the characters it landed between, whatever
@@ -31,7 +31,7 @@ func TestTextInputClickFindsTheSameCharacterAtEveryDenomination(t *testing.T) {
 		ti := NewTextInput()
 		ti.SetCellMetrics(&m)
 		ti.SetText(text)
-		ti.SetBounds(core.UnitRect{Width: core.ExchangeX(400, core.DefaultCellMetrics(), m), Height: m.CellHeight})
+		ti.SetBounds(core.UnitRect{Width: core.ExchangeX(400, core.DefaultCellMetrics(), m), Height: m.UnitsPerCellHeight})
 
 		font := ti.EffectiveFont()
 		for _, want := range []int{0, 1, 5, 7, len(text)} {
@@ -40,7 +40,7 @@ func TestTextInputClickFindsTheSameCharacterAtEveryDenomination(t *testing.T) {
 			x := ti.MeasureText(text[:want])
 			if got := ti.findCharAtX(x, font); got != want {
 				t.Errorf("at %dx%d: a click at x=%d (before %q) found index %d, want %d",
-					m.CellWidth, m.CellHeight, x, text[:want], got, want)
+					m.UnitsPerCellWidth, m.UnitsPerCellHeight, x, text[:want], got, want)
 			}
 		}
 	}
@@ -67,7 +67,7 @@ func TestButtonIsTheSameWidthAtEveryDenomination(t *testing.T) {
 		}
 		if d := got - want; d > 1 || d < -1 {
 			t.Errorf("at %dx%d the button wants %d units (at the default), want %d",
-				m.CellWidth, m.CellHeight, got, want)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, got, want)
 		}
 	}
 }
@@ -125,7 +125,7 @@ func TestButtonShadowIsSquareAtEveryDenomination(t *testing.T) {
 			}
 		}
 		if right < 0 || bottom < 0 {
-			t.Fatalf("interior %dx%d painted nothing", interior.CellWidth, interior.CellHeight)
+			t.Fatalf("interior %dx%d painted nothing", interior.UnitsPerCellWidth, interior.UnitsPerCellHeight)
 		}
 		if baseRight == 0 {
 			baseRight, baseBottom = right, bottom
@@ -136,7 +136,7 @@ func TestButtonShadowIsSquareAtEveryDenomination(t *testing.T) {
 		// this guards against is a doubled offset, not a pixel.
 		if dx, dy := right-baseRight, bottom-baseBottom; dx > 1 || dx < -1 || dy > 1 || dy < -1 {
 			t.Errorf("interior %dx%d: button ink reaches (%d,%d) px, want (%d,%d)",
-				interior.CellWidth, interior.CellHeight, right, bottom, baseRight, baseBottom)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, right, bottom, baseRight, baseBottom)
 		}
 	}
 }

@@ -836,12 +836,12 @@ func (p *Painter) WithTransform(t Transform) *Painter {
 // rows/columns, re-expressed, so re-denomination is visually invariant.
 // Identity when the denominations match.
 func (p *Painter) WithDenomination(parent, child CellMetrics) *Painter {
-	if parent == child || child.CellWidth <= 0 || child.CellHeight <= 0 {
+	if parent == child || child.UnitsPerCellWidth <= 0 || child.UnitsPerCellHeight <= 0 {
 		return p
 	}
 	return p.WithTransform(Transform{
-		ScaleX: float64(parent.CellWidth) / float64(child.CellWidth),
-		ScaleY: float64(parent.CellHeight) / float64(child.CellHeight),
+		ScaleX: float64(parent.UnitsPerCellWidth) / float64(child.UnitsPerCellWidth),
+		ScaleY: float64(parent.UnitsPerCellHeight) / float64(child.UnitsPerCellHeight),
 	})
 }
 

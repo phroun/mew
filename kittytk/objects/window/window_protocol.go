@@ -115,7 +115,7 @@ func init() {
 				w.SetCellMetrics(nil)
 			} else {
 				m := core.DefaultCellMetrics()
-				m.CellHeight = core.Unit(n)
+				m.UnitsPerCellHeight = core.Unit(n)
 				w.SetCellMetrics(&m)
 			}
 			return nil

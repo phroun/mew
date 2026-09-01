@@ -51,7 +51,7 @@ func TestButtonGraphicalHitBoxExcludesBottomHalfRow(t *testing.T) {
 	b.SetParent(stub)
 	b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: 32})
 
-	half := b.EffectiveCellMetrics().CellHeight / 2
+	half := b.EffectiveCellMetrics().UnitsPerCellHeight / 2
 	bottom := core.Unit(32) - half // last row minus the excluded half-row
 	inside := bottom - 1           // just inside the hit box
 	dead := bottom + 1             // in the excluded bottom half-row
@@ -95,7 +95,7 @@ func TestButtonExtraVerticalSpaceCentersAndIsInert(t *testing.T) {
 	check := func(t *testing.T, parent core.Container) {
 		b := NewButton("OK")
 		b.SetParent(parent)
-		ch := b.EffectiveCellMetrics().CellHeight
+		ch := b.EffectiveCellMetrics().UnitsPerCellHeight
 		// Four rows tall - twice the intrinsic button height. Slack is two
 		// rows, so one row above and one below; the footprint is rows 1..3.
 		b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 4})
@@ -128,7 +128,7 @@ func TestButtonExtraVerticalSpaceCentersAndIsInert(t *testing.T) {
 func TestButtonCenteringQuantizesFavoringTop(t *testing.T) {
 	b := NewButton("OK")
 	b.SetParent(NewPanel()) // cell surface
-	ch := b.EffectiveCellMetrics().CellHeight
+	ch := b.EffectiveCellMetrics().UnitsPerCellHeight
 	// Three rows tall: one row of slack. It goes below, top inset is zero.
 	b.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 60, Height: ch * 3})
 	if b.vInset() != 0 {

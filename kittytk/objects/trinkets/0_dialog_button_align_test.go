@@ -27,7 +27,7 @@ func TestDialogButtonRowSnapsToCellGrid(t *testing.T) {
 	// Not parented to a smooth surface -> cell-surface layout. A 20-column
 	// content width leaves an odd (3-column) slack around the 17-column button
 	// row, so the raw origin is 1.5 columns.
-	m.content.SetBounds(core.UnitRect{Width: met.CellWidth * 20, Height: met.CellHeight * 8})
+	m.content.SetBounds(core.UnitRect{Width: met.UnitsPerCellWidth * 20, Height: met.UnitsPerCellHeight * 8})
 	if core.FindSmoothPositioning(m.content.Self()) {
 		t.Skip("content resolved to a smooth surface; cell-quantization not exercised")
 	}
@@ -36,9 +36,9 @@ func TestDialogButtonRowSnapsToCellGrid(t *testing.T) {
 	m.content.Paint(p)
 
 	for _, btn := range m.content.buttonTrinkets {
-		if x := btn.Bounds().X; x%met.CellWidth != 0 {
+		if x := btn.Bounds().X; x%met.UnitsPerCellWidth != 0 {
 			t.Errorf("button %q bounds.X=%d is not column-aligned (column=%d units)",
-				btn.Text(), x, met.CellWidth)
+				btn.Text(), x, met.UnitsPerCellWidth)
 		}
 	}
 }

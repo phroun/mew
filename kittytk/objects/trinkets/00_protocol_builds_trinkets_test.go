@@ -162,8 +162,8 @@ new label caption="dense" row_units=32 min_width=80 !enabled
 	if lbl.IsEnabled() {
 		t.Error("label should be disabled")
 	}
-	if got := lbl.EffectiveCellMetrics().CellHeight; got != 32 {
-		t.Errorf("row_units: CellHeight = %d, want 32", got)
+	if got := lbl.EffectiveCellMetrics().UnitsPerCellHeight; got != 32 {
+		t.Errorf("row_units: UnitsPerCellHeight = %d, want 32", got)
 	}
 	if got := lbl.MinimumSize().Width; got != 80 {
 		t.Errorf("min_width = %d, want 80", got)

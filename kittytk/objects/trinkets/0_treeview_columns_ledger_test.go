@@ -74,7 +74,7 @@ func TestTreeColumnNoDividerCellOnPixels(t *testing.T) {
 	// Same tree without a smooth ancestor: one divider cell between spans.
 	tv2 := newColumnsTree(60, 10)
 	lay2 := tv2.columnLayout()
-	cw := tv2.EffectiveCellMetrics().CellWidth
+	cw := tv2.EffectiveCellMetrics().UnitsPerCellWidth
 	if got := lay2.spans[1].x - (lay2.spans[0].x + lay2.spans[0].w); got != cw {
 		t.Errorf("TUI divider gap = %d, want one cell (%d)", got, cw)
 	}

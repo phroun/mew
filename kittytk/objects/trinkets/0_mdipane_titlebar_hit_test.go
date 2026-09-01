@@ -41,10 +41,10 @@ func TestMDITitleBarDragCoversBorderOffset(t *testing.T) {
 	}
 
 	// A point in the bottom strip of the titlebar: below the old cutoff
-	// (bounds.Y + CellHeight) but within the real titlebar
-	// (bounds.Y + border + CellHeight). Mid-width so it is not a resize
+	// (bounds.Y + UnitsPerCellHeight) but within the real titlebar
+	// (bounds.Y + border + UnitsPerCellHeight). Mid-width so it is not a resize
 	// grip.
-	y := 40 + metrics.CellHeight + border - 1
+	y := 40 + metrics.UnitsPerCellHeight + border - 1
 	pane.HandleMousePress(core.MousePressEvent{X: 40 + 160, Y: y, Button: core.LeftButton})
 
 	if pane.dragging != win {
@@ -77,8 +77,8 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 	// Minimize is the second control button after the close button; both
 	// sit inside the left border, offset by the frame border on graphical
 	// frames. Aim at its center.
-	bx := 40 + border + metrics.CellWidth + bw + bw/2
-	by := 40 + border + metrics.CellHeight/2
+	bx := 40 + border + metrics.UnitsPerCellWidth + bw + bw/2
+	by := 40 + border + metrics.UnitsPerCellHeight/2
 
 	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
 	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx, Y: by, Button: core.LeftButton})

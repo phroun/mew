@@ -188,8 +188,8 @@ func NewTearOffHost(win *Window, surf platform.Surface, ppu func() float64,
 	// answers only to the OS.
 	if ms, ok := surf.(platform.NativeMinimumSizer); ok {
 		metrics := core.DefaultCellMetrics()
-		ms.SetMinimumSizePx(h.pxHardX(metrics.CellWidth*MinHostCols),
-			h.pxHardY(metrics.CellHeight*MinHostRows))
+		ms.SetMinimumSizePx(h.pxHardX(metrics.UnitsPerCellWidth*MinHostCols),
+			h.pxHardY(metrics.UnitsPerCellHeight*MinHostRows))
 	}
 	h.minimizeKeys.SetCommands(core.CmdAppMinimize)
 	h.minimizeKeys.SetKeyOwner(win) // the torn window's own keymap, if it has one
@@ -505,7 +505,7 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 		edges |= resizeTop
 	} else if bottomZone {
 		edges |= resizeBottom
-	} else if y < core.DefaultCellMetrics().CellHeight {
+	} else if y < core.DefaultCellMetrics().UnitsPerCellHeight {
 		// Title row below the top grip: drag, not resize.
 		return 0
 	}
@@ -960,8 +960,8 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			metrics := core.DefaultCellMetrics()
 			now := time.Now()
 			if now.Sub(h.lastClickAt) < 400*time.Millisecond &&
-				e.X-h.lastClickX < metrics.CellWidth && h.lastClickX-e.X < metrics.CellWidth &&
-				e.Y-h.lastClickY < metrics.CellHeight && h.lastClickY-e.Y < metrics.CellHeight {
+				e.X-h.lastClickX < metrics.UnitsPerCellWidth && h.lastClickX-e.X < metrics.UnitsPerCellWidth &&
+				e.Y-h.lastClickY < metrics.UnitsPerCellHeight && h.lastClickY-e.Y < metrics.UnitsPerCellHeight {
 				h.lastClickAt = time.Time{}
 				h.ToggleZoom()
 			} else {
@@ -1111,7 +1111,7 @@ func (h *TearOffHost) dragMove() bool {
 		}
 		return true
 	}
-	if h.dragRestored && gy >= way+h.px(core.DefaultCellMetrics().CellHeight) {
+	if h.dragRestored && gy >= way+h.px(core.DefaultCellMetrics().UnitsPerCellHeight) {
 		// Pointer clearly below the top strip: re-arm the snap.
 		h.dragRestored = false
 	}
@@ -1342,8 +1342,8 @@ func (h *TearOffHost) resizeMove() bool {
 	dx, dy := gx-h.startGX, gy-h.startGY
 	metrics := core.DefaultCellMetrics()
 	// The shared host minimum, on the hardened cell pitch this host sizes by.
-	minW := h.pxHardX(metrics.CellWidth * MinHostCols)
-	minH := h.pxHardY(metrics.CellHeight * MinHostRows)
+	minW := h.pxHardX(metrics.UnitsPerCellWidth * MinHostCols)
+	minH := h.pxHardY(metrics.UnitsPerCellHeight * MinHostRows)
 
 	x, y, w, ht := h.startX, h.startY, h.startW, h.startH
 	if h.resizeEdges&resizeLeft != 0 {
@@ -1497,11 +1497,11 @@ func (h *TearOffHost) applyKeyboardBounds(b core.UnitRect) bool {
 func (h *TearOffHost) inTitleBar(x, y core.Unit) bool {
 	b := h.win.Bounds()
 	// The title bar is painted BELOW the top frame border, so its zone runs to
-	// frameBorder + CellHeight — matching the WindowManager (titleTop +
-	// CellHeight). Without the border term a wide border_width left only a thin
+	// frameBorder + UnitsPerCellHeight — matching the WindowManager (titleTop +
+	// UnitsPerCellHeight). Without the border term a wide border_width left only a thin
 	// draggable/double-click strip. The top resize grip (checked before this)
 	// owns the overlap at the very top.
-	th := core.DefaultCellMetrics().CellHeight + h.frameBorderUnits()
+	th := core.DefaultCellMetrics().UnitsPerCellHeight + h.frameBorderUnits()
 	return x >= 0 && x < b.Width && y >= 0 && y < th
 }
 

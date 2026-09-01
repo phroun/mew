@@ -518,7 +518,7 @@ func (t *TextInput) ensureCursorVisible() {
 	if caret < len(displayText) {
 		cursorWidth = t.MeasureText(string(displayText[caret]))
 	} else {
-		cursorWidth = metrics.CellWidth / 4
+		cursorWidth = metrics.UnitsPerCellWidth / 4
 		if cursorWidth < 1 {
 			cursorWidth = 1
 		}
@@ -554,7 +554,7 @@ func (t *TextInput) ensureCursorVisible() {
 func (t *TextInput) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultSizeCells,
+		Width:  metrics.UnitsPerCellWidth * defaultSizeCells,
 		Height: metrics.TextHeight(1),
 	}
 }
@@ -1551,7 +1551,7 @@ func (t *TextInput) autoScrollStep() {
 // so a far overshoot stays controllable.
 func (t *TextInput) autoScrollSpeed() int {
 	speed := 1
-	if cw := t.EffectiveCellMetrics().CellWidth; cw > 0 {
+	if cw := t.EffectiveCellMetrics().UnitsPerCellWidth; cw > 0 {
 		speed += int(t.scrollOverX / cw)
 	}
 	if speed > 12 {

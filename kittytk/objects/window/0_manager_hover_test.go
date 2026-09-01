@@ -12,8 +12,8 @@ func closeButtonCenter(w *Window) (core.Unit, core.Unit) {
 	metrics := w.frameCellMetrics()
 	inset := core.FindFrameBorderUnits(w)
 	b := w.Bounds()
-	x := b.X + inset + metrics.CellWidth + metrics.CellWidth/2
-	y := b.Y + inset + metrics.CellHeight/2
+	x := b.X + inset + metrics.UnitsPerCellWidth + metrics.UnitsPerCellWidth/2
+	y := b.Y + inset + metrics.UnitsPerCellHeight/2
 	return x, y
 }
 

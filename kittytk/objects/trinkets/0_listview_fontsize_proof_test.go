@@ -36,9 +36,9 @@ func TestListViewWidthTracksFontSize(t *testing.T) {
 			lv.AddItem(NewListItem("Item " + strconv.Itoa(i)))
 		}
 		hint := lv.SizeHint()
-		widthCells[size] = int(hint.Width / m.CellWidth)
+		widthCells[size] = int(hint.Width / m.UnitsPerCellWidth)
 
-		lv.SetBounds(core.UnitRect{Width: hint.Width, Height: 10 * m.CellHeight})
+		lv.SetBounds(core.UnitRect{Width: hint.Width, Height: 10 * m.UnitsPerCellHeight})
 		b.Clear(style.DefaultStyle())
 		lv.Paint(core.NewPainter(b))
 		out := filepath.Join(dir, "listview_"+strconv.Itoa(size)+".png")

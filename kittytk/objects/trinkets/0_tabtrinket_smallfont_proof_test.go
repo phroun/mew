@@ -36,7 +36,7 @@ func TestTabSmallFontLeadingCornerProof(t *testing.T) {
 		}
 		tabs.SetCurrentIndex(2)
 		m := b.Metrics()
-		tabs.SetBounds(core.UnitRect{X: 0, Y: 0, Width: m.CellWidth * 40, Height: m.CellHeight})
+		tabs.SetBounds(core.UnitRect{X: 0, Y: 0, Width: m.UnitsPerCellWidth * 40, Height: m.UnitsPerCellHeight})
 		b.Clear(style.DefaultStyle())
 		tabs.Paint(core.NewPainter(b))
 		out := filepath.Join(dir, "smallfont_fs"+strconv.Itoa(fs)+".png")

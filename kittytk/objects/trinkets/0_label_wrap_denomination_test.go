@@ -16,13 +16,13 @@ const wrapCaption = "The quick brown fox jumps over the lazy dog and then keeps 
 // whatever denomination that render counts in.
 const boxUnits core.Unit = 256
 
-var wrapOuter = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+var wrapOuter = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 var wrapDenominations = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 32, CellHeight: 64},
-	{CellWidth: 4, CellHeight: 8},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 }
 
 func newWrappedLabel(interior core.CellMetrics) (*Label, core.Unit) {
@@ -46,7 +46,7 @@ func TestWrappedLabelBreaksTheSameAtEveryDenomination(t *testing.T) {
 	base := -1
 	for _, interior := range wrapDenominations {
 		l, width := newWrappedLabel(interior)
-		lines := int(l.HeightForWidth(width) / interior.CellHeight)
+		lines := int(l.HeightForWidth(width) / interior.UnitsPerCellHeight)
 
 		if base == -1 {
 			base = lines
@@ -57,7 +57,7 @@ func TestWrappedLabelBreaksTheSameAtEveryDenomination(t *testing.T) {
 		}
 		if lines != base {
 			t.Errorf("interior %dx%d wrapped the caption to %d lines, want %d (what 8x16 gives)",
-				interior.CellWidth, interior.CellHeight, lines, base)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, lines, base)
 		}
 	}
 }
@@ -77,7 +77,7 @@ func TestLabelSizeHintWidthIsTheSameAtEveryDenomination(t *testing.T) {
 		}
 		if got != base {
 			t.Errorf("interior %dx%d asks for %d units at 8x16, want %d",
-				interior.CellWidth, interior.CellHeight, got, base)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, got, base)
 		}
 	}
 }
@@ -118,7 +118,7 @@ func TestWrappedLabelStaysInsideItsBoxAtEveryDenomination(t *testing.T) {
 		}
 		if overflow > 0 {
 			t.Errorf("interior %dx%d painted %d columns past the box's %dpx right edge, from px %d",
-				interior.CellWidth, interior.CellHeight, overflow, boxPx, firstX)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, overflow, boxPx, firstX)
 		}
 	}
 }

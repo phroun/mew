@@ -45,7 +45,7 @@ func TestDrawCellDWLDoublesGlyphWidth(t *testing.T) {
 		t.Fatal(err)
 	}
 	normal.DrawCell(0, 0, 'M', s)
-	nFirst, nLast, nCount := inkColumns(normal.Image(), 0, int(normal.metrics.CellHeight))
+	nFirst, nLast, nCount := inkColumns(normal.Image(), 0, int(normal.metrics.UnitsPerCellHeight))
 	if nCount == 0 {
 		t.Fatal("the ordinary cell drew nothing to compare against")
 	}
@@ -57,7 +57,7 @@ func TestDrawCellDWLDoublesGlyphWidth(t *testing.T) {
 	if got := wide.DrawCellDWL(0, 0, 'M', "", s, dwlModeDouble, 0); got != 2 {
 		t.Fatalf("DrawCellDWL consumed %d columns, want 2", got)
 	}
-	wFirst, wLast, wCount := inkColumns(wide.Image(), 0, int(wide.metrics.CellHeight))
+	wFirst, wLast, wCount := inkColumns(wide.Image(), 0, int(wide.metrics.UnitsPerCellHeight))
 	if wCount == 0 {
 		t.Fatal("the doubled cell drew nothing")
 	}
@@ -83,9 +83,9 @@ func TestDrawCellDWLCentresInTwoCells(t *testing.T) {
 	}
 	b.DrawCellDWL(0, 0, 'M', "", style.DefaultStyle(), dwlModeDouble, 0)
 
-	cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
+	cellW := b.pxX(b.metrics.UnitsPerCellWidth) - b.pxX(0)
 	boxW := 2 * cellW
-	first, last, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight))
+	first, last, count := inkColumns(b.Image(), 0, int(b.metrics.UnitsPerCellHeight))
 	if count == 0 {
 		t.Fatal("nothing drawn")
 	}
@@ -110,7 +110,7 @@ func TestDrawCellDHLHalvesDiffer(t *testing.T) {
 		}
 		b.DrawCellDWL(0, 0, 'M', "", s, mode, 0)
 		rows[mode] = b.Image()
-		if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight)); count == 0 {
+		if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.UnitsPerCellHeight)); count == 0 {
 			t.Fatalf("DECDHL mode %q drew nothing", mode)
 		}
 	}
@@ -137,7 +137,7 @@ func TestDrawCellDWLSpaceIsBlank(t *testing.T) {
 	if got := b.DrawCellDWL(0, 0, ' ', "", style.DefaultStyle(), dwlModeDouble, 0); got != 2 {
 		t.Fatalf("a doubled space should still consume 2 columns, got %d", got)
 	}
-	if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight)); count != 0 {
+	if _, _, count := inkColumns(b.Image(), 0, int(b.metrics.UnitsPerCellHeight)); count != 0 {
 		t.Errorf("a doubled space painted %d columns of ink", count)
 	}
 }
@@ -165,7 +165,7 @@ func TestDrawCellDWLHonoursFlexWidth(t *testing.T) {
 			t.Errorf("flex %.1f: consumed %d columns, want %d", c.flex, got, c.want)
 		}
 		// The background fill spans the whole doubled box.
-		cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
+		cellW := b.pxX(b.metrics.UnitsPerCellWidth) - b.pxX(0)
 		flex := c.flex
 		if flex <= 0 {
 			flex = 1
@@ -202,9 +202,9 @@ func TestDrawCellDWLSqueezesOverWideGlyph(t *testing.T) {
 	// than the two columns it is given, so it must be squeezed into them.
 	b.DrawCellDWL(0, 0, '日', "", style.DefaultStyle(), dwlModeDouble, 1.0)
 
-	cellW := b.pxX(b.metrics.CellWidth) - b.pxX(0)
+	cellW := b.pxX(b.metrics.UnitsPerCellWidth) - b.pxX(0)
 	boxW := 2 * cellW
-	first, last, count := inkColumns(b.Image(), 0, int(b.metrics.CellHeight))
+	first, last, count := inkColumns(b.Image(), 0, int(b.metrics.UnitsPerCellHeight))
 	if count == 0 {
 		t.Fatal("nothing drawn")
 	}

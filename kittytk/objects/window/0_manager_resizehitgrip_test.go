@@ -17,7 +17,7 @@ import (
 // border added on top of a zone measured from the outer edge, where the
 // border already sat.
 func TestResizeHitGripIsTheBorderPlusAQuarterCell(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 	for _, c := range []struct {
 		name   string
@@ -52,7 +52,7 @@ func TestResizeHitGripIsTheBorderPlusAQuarterCell(t *testing.T) {
 // The cell frame is untouched by any of this: there the whole border
 // row/column IS the grip, and ResizeEdgeAt's metrics defaults apply.
 func TestResizeHitGripLeavesTheCellFrameAlone(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	if got := ResizeHitGrip(false, cell, 1, 2); got != 0 {
 		t.Errorf("cell frame: ResizeHitGrip = %v, want 0 (metrics defaults apply)", got)
 	}
@@ -61,7 +61,7 @@ func TestResizeHitGripLeavesTheCellFrameAlone(t *testing.T) {
 // End to end: with the rule in force, content is clickable from the first
 // pixel past the border rather than most of a cell inside the window.
 func TestContentIsClickableJustPastTheBorder(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	bounds := core.UnitRect{X: 100, Y: 100, Width: 400, Height: 300}
 	// ppu 2, border 2: the 2-unit border plus a quarter cell (2 units).
 	grip := ResizeHitGrip(true, cell, 2, 2)
@@ -88,7 +88,7 @@ func TestContentIsClickableJustPastTheBorder(t *testing.T) {
 // here because the asymmetry looks like an inconsistency to anyone tidying
 // up, and collapsing it either blinds the affordance or swallows the content.
 func TestOverlayGripCoversTheBorderPlusHalfACell(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	for _, border := range []core.Unit{0, 2, 20} {
 		if got, want := ResizeOverlayGrip(true, cell, border), border+4; got != want {
 			t.Errorf("border %v: ResizeOverlayGrip = %v, want %v", border, got, want)

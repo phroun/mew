@@ -12,13 +12,13 @@ import (
 // capOuter is the denomination each render below is displayed through: at
 // 8x16 one unit is one device pixel, so widths stated in it read as physical
 // sizes. capDenominations is what the trinket's interior counts in.
-var capOuter = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+var capOuter = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 var capDenominations = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 32, CellHeight: 64},
-	{CellWidth: 4, CellHeight: 8},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 }
 
 // sameWidthAtEveryDenomination builds the trinket at each denomination and
@@ -35,7 +35,7 @@ func sameWidthAtEveryDenomination(t *testing.T, what string, build func(core.Cel
 		}
 		if got != base {
 			t.Errorf("%s at %dx%d asks for %d units at 8x16, want %d",
-				what, interior.CellWidth, interior.CellHeight, got, base)
+				what, interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, got, base)
 		}
 	}
 }
@@ -87,7 +87,7 @@ func TestComboBoxTakesAPressOnItsRightHalf(t *testing.T) {
 		p.HandleMousePress(core.MousePressEvent{X: pressX, Y: 8, Button: core.LeftButton})
 		if !c.HasFocus() {
 			t.Errorf("interior %dx%d: a press at %d missed the combo box, which spans %d..%d",
-				interior.CellWidth, interior.CellHeight, pressX,
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, pressX,
 				core.ExchangeX(c.Bounds().X, interior, capOuter),
 				core.ExchangeX(c.Bounds().X+c.Bounds().Width, interior, capOuter))
 		}
@@ -139,13 +139,13 @@ func sameInkColumns(t *testing.T, what string, paint func(*core.Painter, core.Ce
 		}
 		if len(got) != len(base) {
 			t.Errorf("%s at %dx%d painted %d ink columns, want %d (the 8x16 picture)",
-				what, interior.CellWidth, interior.CellHeight, len(got), len(base))
+				what, interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, len(got), len(base))
 			continue
 		}
 		for i := range base {
 			if got[i] != base[i] {
 				t.Errorf("%s at %dx%d: ink column %d at px %d, want %d",
-					what, interior.CellWidth, interior.CellHeight, i, got[i], base[i])
+					what, interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, i, got[i], base[i])
 				break
 			}
 		}
@@ -177,7 +177,7 @@ func samePixels(t *testing.T, what string, denominations []core.CellMetrics, pai
 			for x := 0; x < W; x++ {
 				if b.Image().RGBAAt(x, y) != base.Image().RGBAAt(x, y) {
 					t.Errorf("%s at %dx%d: pixel (%d,%d) is %v, want %v (the 8x16 picture)",
-						what, interior.CellWidth, interior.CellHeight, x, y,
+						what, interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, x, y,
 						b.Image().RGBAAt(x, y), base.Image().RGBAAt(x, y))
 					y, x = H, W
 				}
@@ -214,7 +214,7 @@ func TestDockEntryTitleElidesTheSameAtEveryDenomination(t *testing.T) {
 func paintCapSeparator(p *core.Painter, m core.CellMetrics) {
 	s := NewHSeparator("Appearance")
 	s.SetCellMetrics(&m)
-	s.SetBounds(core.UnitRect{Width: 300 * m.CellWidth / 8, Height: m.CellHeight})
+	s.SetBounds(core.UnitRect{Width: 300 * m.UnitsPerCellWidth / 8, Height: m.UnitsPerCellHeight})
 	s.Paint(p)
 }
 
@@ -222,7 +222,7 @@ func paintCapSplitter(p *core.Painter, m core.CellMetrics) {
 	sp := NewSplitter(core.Vertical)
 	sp.SetTitle("Panes")
 	sp.SetCellMetrics(&m)
-	sp.SetBounds(core.UnitRect{Width: 300 * m.CellWidth / 8, Height: 30 * m.CellHeight / 16})
+	sp.SetBounds(core.UnitRect{Width: 300 * m.UnitsPerCellWidth / 8, Height: 30 * m.UnitsPerCellHeight / 16})
 	sp.Paint(p)
 }
 
@@ -231,6 +231,6 @@ func paintCapDock(p *core.Painter, m core.CellMetrics) {
 	d.SetEntryWidth(16)
 	d.AddEntry(&DockEntry{Title: "A window title too long for the slot", WindowID: 1})
 	d.SetCellMetrics(&m)
-	d.SetBounds(core.UnitRect{Width: 300 * m.CellWidth / 8, Height: m.CellHeight})
+	d.SetBounds(core.UnitRect{Width: 300 * m.UnitsPerCellWidth / 8, Height: m.UnitsPerCellHeight})
 	d.Paint(p)
 }

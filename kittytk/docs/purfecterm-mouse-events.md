@@ -57,8 +57,8 @@ func (t *PurfecTerm) HandleMousePress(event core.MousePressEvent) bool {
 
     // Convert unit coordinates to 1-based cell coordinates for CLI adapter
     metrics := core.DefaultCellMetrics()
-    cellX := int(event.X/metrics.CellWidth) + 1
-    cellY := int(event.Y/metrics.CellHeight) + 1
+    cellX := int(event.X/metrics.UnitsPerCellWidth) + 1
+    cellY := int(event.Y/metrics.UnitsPerCellHeight) + 1
 
     // Send position update first
     t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
@@ -92,8 +92,8 @@ func (t *PurfecTerm) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 
     // Convert unit coordinates to 1-based cell coordinates
     metrics := core.DefaultCellMetrics()
-    cellX := int(event.X/metrics.CellWidth) + 1
-    cellY := int(event.Y/metrics.CellHeight) + 1
+    cellX := int(event.X/metrics.UnitsPerCellWidth) + 1
+    cellY := int(event.Y/metrics.UnitsPerCellHeight) + 1
 
     // Send position update first
     t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))
@@ -123,8 +123,8 @@ func (t *PurfecTerm) HandleMouseMove(event core.MouseMoveEvent) bool {
 
     // Convert unit coordinates to 1-based cell coordinates
     metrics := core.DefaultCellMetrics()
-    cellX := int(event.X/metrics.CellWidth) + 1
-    cellY := int(event.Y/metrics.CellHeight) + 1
+    cellX := int(event.X/metrics.UnitsPerCellWidth) + 1
+    cellY := int(event.Y/metrics.UnitsPerCellHeight) + 1
 
     // Check if any button is held for drag events
     if event.Buttons&core.LeftButton != 0 {
@@ -152,8 +152,8 @@ func (t *PurfecTerm) HandleMouseWheel(event core.MouseWheelEvent) bool {
 
     // Convert unit coordinates to 1-based cell coordinates
     metrics := core.DefaultCellMetrics()
-    cellX := int(event.X/metrics.CellWidth) + 1
-    cellY := int(event.Y/metrics.CellHeight) + 1
+    cellX := int(event.X/metrics.UnitsPerCellWidth) + 1
+    cellY := int(event.Y/metrics.UnitsPerCellHeight) + 1
 
     // Send position update first
     t.terminal.HandleKeyString(fmt.Sprintf("Mouse@%d,%d", cellX, cellY))

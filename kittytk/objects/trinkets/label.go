@@ -110,7 +110,7 @@ func (l *Label) HeightForWidth(width core.Unit) core.Unit {
 		lineCount = 1
 	}
 	// A text line occupies one grid row, in the container's denomination.
-	return core.Unit(lineCount) * metrics.CellHeight
+	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 
 // Paint renders the label.
@@ -164,7 +164,7 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 	}
 
 	// Calculate starting Y position based on vertical alignment
-	totalTextHeight := core.Unit(len(lines)) * metrics.CellHeight
+	totalTextHeight := core.Unit(len(lines)) * metrics.UnitsPerCellHeight
 	var startY core.Unit
 	if totalTextHeight < bounds.Height {
 		// Center vertically if text is shorter than bounds
@@ -178,14 +178,14 @@ func (l *Label) paintLines(p *core.Painter, bounds core.UnitRect, s style.CellSt
 		}
 
 		p.DrawTextAligned(
-			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.CellHeight},
+			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
 			line,
 			l.alignment,
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
 		)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
 }
 
@@ -207,14 +207,14 @@ func (l *Label) paintWrapped(p *core.Painter, bounds core.UnitRect, s style.Cell
 		}
 
 		p.DrawTextAligned(
-			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.CellHeight},
+			core.UnitRect{X: 0, Y: y, Width: bounds.Width, Height: metrics.UnitsPerCellHeight},
 			line,
 			l.alignment,
 			core.AlignTop,
 			s,
 			l.EffectiveFont(),
 		)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
 }
 

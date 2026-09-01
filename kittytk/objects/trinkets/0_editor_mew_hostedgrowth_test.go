@@ -341,7 +341,7 @@ func TestHostedSurfaceClipNeverCutsContent(t *testing.T) {
 
 			// Over-reveal stays bounded: within one host cell + the pad on
 			// each side, not swallowing the neighbours.
-			cellPxX := p.UnitSpanPxX(0, core.Unit(core.DefaultCellMetrics().CellWidth))
+			cellPxX := p.UnitSpanPxX(0, core.Unit(core.DefaultCellMetrics().UnitsPerCellWidth))
 			slack := cellPxX + 4
 			if cLeft-kLeft > slack || kRight-cRight > slack {
 				t.Errorf("size %d %v: clip [%d,%d] overshoots content [%d,%d] by more than a host cell",

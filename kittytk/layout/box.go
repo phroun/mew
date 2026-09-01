@@ -184,11 +184,11 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	metrics := l.effectiveMetrics(container)
 	var spacing core.Unit
 	if l.orientation == core.Horizontal {
-		// Round to CellWidth
-		spacing = core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
+		// Round to UnitsPerCellWidth
+		spacing = core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
 	} else {
-		// Round to CellHeight
-		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+		// Round to UnitsPerCellHeight
+		spacing = core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 	}
 
 	// For horizontal layout, calculate additional spacing for inline trinkets
@@ -196,17 +196,17 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 	if l.orientation == core.Horizontal && len(l.items) > 0 {
 		// Space before first inline trinket
 		if isInlineTrinket(l.items[0].Trinket) {
-			inlineSpacingTotal += metrics.CellWidth
+			inlineSpacingTotal += metrics.UnitsPerCellWidth
 		}
 		// Space between items where at least one is inline
 		for i := 0; i < len(l.items)-1; i++ {
 			if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-				inlineSpacingTotal += metrics.CellWidth
+				inlineSpacingTotal += metrics.UnitsPerCellWidth
 			}
 		}
 		// Space after last inline trinket
 		if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
-			inlineSpacingTotal += metrics.CellWidth
+			inlineSpacingTotal += metrics.UnitsPerCellWidth
 		}
 	}
 
@@ -255,7 +255,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 		pos = rect.X
 		// Add margin before first inline trinket
 		if len(l.items) > 0 && isInlineTrinket(l.items[0].Trinket) {
-			pos += metrics.CellWidth
+			pos += metrics.UnitsPerCellWidth
 		}
 	} else {
 		pos = rect.Y
@@ -277,7 +277,7 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 			// For inline trinkets, use inline spacing; for containers, use base spacing
 			if i < len(l.items)-1 {
 				if isInlineTrinket(item.Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-					pos += metrics.CellWidth // Inline spacing
+					pos += metrics.UnitsPerCellWidth // Inline spacing
 				} else {
 					pos += spacing // Container-to-container spacing
 				}
@@ -289,8 +289,8 @@ func (l *BoxLayout) Layout(container core.Container, bounds core.UnitRect) {
 
 			if inlineTrinket, ok := item.Trinket.(core.InlineTrinket); ok && inlineTrinket.IsInlineTrinket() {
 				// Add 1-cell horizontal margin on each side
-				itemX += metrics.CellWidth
-				itemWidth -= metrics.CellWidth * 2
+				itemX += metrics.UnitsPerCellWidth
+				itemWidth -= metrics.UnitsPerCellWidth * 2
 				if itemWidth < 0 {
 					itemWidth = 0
 				}
@@ -356,7 +356,7 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 				// the offset is already a whole number of rows there or rounds
 				// to the same row.
 				off := (bounds.Height - height) / 2
-				if ch := core.FindEffectiveCellMetrics(item.Trinket).CellHeight; ch > 0 {
+				if ch := core.FindEffectiveCellMetrics(item.Trinket).UnitsPerCellHeight; ch > 0 {
 					off = (off / ch) * ch
 				}
 				bounds.Y += off
@@ -387,7 +387,7 @@ func (l *BoxLayout) alignItem(item *LayoutItem, bounds core.UnitRect) core.UnitR
 				// Grid-snap the offset (see the vertical-centering note) so a
 				// cell surface draws and hit-tests the child in the same column.
 				off := (bounds.Width - hint.Width) / 2
-				if cw := core.FindEffectiveCellMetrics(item.Trinket).CellWidth; cw > 0 {
+				if cw := core.FindEffectiveCellMetrics(item.Trinket).UnitsPerCellWidth; cw > 0 {
 					off = (off / cw) * cw
 				}
 				bounds.X += off
@@ -449,7 +449,7 @@ func (l *BoxLayout) horizontalItemWidths(contentWidth core.Unit, metrics core.Ce
 // vertical layout (inline trinkets are inset one cell per side).
 func (l *BoxLayout) verticalItemWidth(contentWidth core.Unit, item *LayoutItem, metrics core.CellMetrics) core.Unit {
 	if isInlineTrinket(item.Trinket) {
-		contentWidth -= metrics.CellWidth * 2
+		contentWidth -= metrics.UnitsPerCellWidth * 2
 	}
 	if contentWidth < 0 {
 		contentWidth = 0
@@ -477,15 +477,15 @@ func (l *BoxLayout) inlineSpacingForItems(metrics core.CellMetrics) core.Unit {
 		return 0
 	}
 	if isInlineTrinket(l.items[0].Trinket) {
-		total += metrics.CellWidth
+		total += metrics.UnitsPerCellWidth
 	}
 	for i := 0; i < len(l.items)-1; i++ {
 		if isInlineTrinket(l.items[i].Trinket) || isInlineTrinket(l.items[i+1].Trinket) {
-			total += metrics.CellWidth
+			total += metrics.UnitsPerCellWidth
 		}
 	}
 	if isInlineTrinket(l.items[len(l.items)-1].Trinket) {
-		total += metrics.CellWidth
+		total += metrics.UnitsPerCellWidth
 	}
 	return total
 }
@@ -517,7 +517,7 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 
 	var height core.Unit
 	if l.orientation == core.Vertical {
-		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.CellHeight
+		spacing := core.Unit(metrics.UnitsToCellY(l.spacing)) * metrics.UnitsPerCellHeight
 		for i, item := range l.items {
 			height += itemHeightForWidth(item.Trinket, l.verticalItemWidth(contentWidth, item, metrics))
 			if i < len(l.items)-1 {
@@ -525,7 +525,7 @@ func (l *BoxLayout) HeightForWidth(width core.Unit) core.Unit {
 			}
 		}
 	} else {
-		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.CellWidth
+		spacing := core.Unit(metrics.UnitsToCellX(l.spacing)) * metrics.UnitsPerCellWidth
 		widths := l.horizontalItemWidths(contentWidth, metrics, spacing, l.inlineSpacingForItems(metrics))
 		for i, item := range l.items {
 			if h := itemHeightForWidth(item.Trinket, widths[i]); h > height {

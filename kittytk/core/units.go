@@ -100,28 +100,30 @@ func (m UnitMargins) Vertical() Unit {
 	return m.Top + m.Bottom
 }
 
-// CellMetrics defines how abstract units map to character cells (or pixels in GUI mode).
-// For text mode: a character cell might be 8x16 units (mimicking pixel dimensions).
-// For graphics mode: units might map 1:1 to pixels, or be scaled.
+// CellMetrics is a denomination: how many units subdivide one character cell.
+// A cell is a fixed physical size at a given zoom; the denomination says how
+// finely a layout may address inside it, and is set per subtree by the
+// column_units and row_units properties. 8x16 is only what a subtree gets when
+// nothing above it says otherwise.
 type CellMetrics struct {
-	// CellWidth is the width of one character cell in units.
-	// Default for TUI: 8 (like a typical 8-pixel wide character)
-	CellWidth Unit
+	// UnitsPerCellWidth is how many units span one character cell across --
+	// one grid column. The column_units property sets it.
+	UnitsPerCellWidth Unit
 
-	// CellHeight is the height of one character cell in units.
-	// Default for TUI: 16 (like a typical 16-pixel tall character)
-	CellHeight Unit
+	// UnitsPerCellHeight is how many units span one character cell down --
+	// one grid row. The row_units property sets it.
+	UnitsPerCellHeight Unit
 }
 
 // DefaultCellMetrics returns standard 8x16 cell metrics (typical terminal font proportions).
 func DefaultCellMetrics() CellMetrics {
-	return CellMetrics{CellWidth: 8, CellHeight: 16}
+	return CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 
 // SquareCellMetrics returns 1:1 cell metrics (each unit = one character cell).
 // Use this for simple text-mode layouts where you don't need sub-cell precision.
 func SquareCellMetrics() CellMetrics {
-	return CellMetrics{CellWidth: 1, CellHeight: 1}
+	return CellMetrics{UnitsPerCellWidth: 1, UnitsPerCellHeight: 1}
 }
 
 // UnitsToCell converts a unit coordinate to a cell coordinate.
@@ -135,63 +137,63 @@ func (m CellMetrics) UnitsToCell(units Unit, cellSize Unit) int {
 
 // UnitsToCellX converts a unit X coordinate to a cell column.
 func (m CellMetrics) UnitsToCellX(x Unit) int {
-	return m.UnitsToCell(x, m.CellWidth)
+	return m.UnitsToCell(x, m.UnitsPerCellWidth)
 }
 
 // UnitsToCellY converts a unit Y coordinate to a cell row.
 func (m CellMetrics) UnitsToCellY(y Unit) int {
-	return m.UnitsToCell(y, m.CellHeight)
+	return m.UnitsToCell(y, m.UnitsPerCellHeight)
 }
 
 // CellToUnitsX converts a cell column to unit X coordinate.
 func (m CellMetrics) CellToUnitsX(col int) Unit {
-	return Unit(col) * m.CellWidth
+	return Unit(col) * m.UnitsPerCellWidth
 }
 
 // CellToUnitsY converts a cell row to unit Y coordinate.
 func (m CellMetrics) CellToUnitsY(row int) Unit {
-	return Unit(row) * m.CellHeight
+	return Unit(row) * m.UnitsPerCellHeight
 }
 
 // UnitsToSize converts a unit size to cell dimensions (rounding up).
 func (m CellMetrics) UnitsToSize(size UnitSize) (cols, rows int) {
-	cols = int((size.Width + m.CellWidth - 1) / m.CellWidth)
-	rows = int((size.Height + m.CellHeight - 1) / m.CellHeight)
+	cols = int((size.Width + m.UnitsPerCellWidth - 1) / m.UnitsPerCellWidth)
+	rows = int((size.Height + m.UnitsPerCellHeight - 1) / m.UnitsPerCellHeight)
 	return
 }
 
 // CellsToUnits converts cell dimensions to unit size.
 func (m CellMetrics) CellsToUnits(cols, rows int) UnitSize {
 	return UnitSize{
-		Width:  Unit(cols) * m.CellWidth,
-		Height: Unit(rows) * m.CellHeight,
+		Width:  Unit(cols) * m.UnitsPerCellWidth,
+		Height: Unit(rows) * m.UnitsPerCellHeight,
 	}
 }
 
 // TextWidth returns the width in units needed to display text with given character count.
 func (m CellMetrics) TextWidth(charCount int) Unit {
-	return Unit(charCount) * m.CellWidth
+	return Unit(charCount) * m.UnitsPerCellWidth
 }
 
 // TextHeight returns the height in units for a given number of lines.
 func (m CellMetrics) TextHeight(lineCount int) Unit {
-	return Unit(lineCount) * m.CellHeight
+	return Unit(lineCount) * m.UnitsPerCellHeight
 }
 
 // CharsForWidth returns how many characters fit in the given width.
 func (m CellMetrics) CharsForWidth(width Unit) int {
-	if m.CellWidth <= 0 {
+	if m.UnitsPerCellWidth <= 0 {
 		return 0
 	}
-	return int(width / m.CellWidth)
+	return int(width / m.UnitsPerCellWidth)
 }
 
 // LinesForHeight returns how many lines fit in the given height.
 func (m CellMetrics) LinesForHeight(height Unit) int {
-	if m.CellHeight <= 0 {
+	if m.UnitsPerCellHeight <= 0 {
 		return 0
 	}
-	return int(height / m.CellHeight)
+	return int(height / m.UnitsPerCellHeight)
 }
 
 // RoundDownToCell rounds a unit value down to the nearest cell boundary.
@@ -204,12 +206,12 @@ func (m CellMetrics) RoundDownToCell(units Unit, cellSize Unit) Unit {
 
 // RoundDownToCellX rounds an X coordinate down to the nearest cell boundary.
 func (m CellMetrics) RoundDownToCellX(x Unit) Unit {
-	return m.RoundDownToCell(x, m.CellWidth)
+	return m.RoundDownToCell(x, m.UnitsPerCellWidth)
 }
 
 // RoundDownToCellY rounds a Y coordinate down to the nearest cell boundary.
 func (m CellMetrics) RoundDownToCellY(y Unit) Unit {
-	return m.RoundDownToCell(y, m.CellHeight)
+	return m.RoundDownToCell(y, m.UnitsPerCellHeight)
 }
 
 // AlignSize aligns width and height to cell boundaries (rounding down).
@@ -277,19 +279,19 @@ func FindEffectiveCellMetrics(w Trinket) CellMetrics {
 // `to` metrics: the same number of columns, re-expressed. Identity when
 // the denominations match.
 func ExchangeX(v Unit, from, to CellMetrics) Unit {
-	if from.CellWidth == to.CellWidth || from.CellWidth <= 0 || to.CellWidth <= 0 {
+	if from.UnitsPerCellWidth == to.UnitsPerCellWidth || from.UnitsPerCellWidth <= 0 || to.UnitsPerCellWidth <= 0 {
 		return v
 	}
-	return Unit(float64(v) * float64(to.CellWidth) / float64(from.CellWidth))
+	return Unit(float64(v) * float64(to.UnitsPerCellWidth) / float64(from.UnitsPerCellWidth))
 }
 
 // ExchangeY converts a Y-axis value denominated in `from` metrics into
 // `to` metrics: the same number of rows, re-expressed.
 func ExchangeY(v Unit, from, to CellMetrics) Unit {
-	if from.CellHeight == to.CellHeight || from.CellHeight <= 0 || to.CellHeight <= 0 {
+	if from.UnitsPerCellHeight == to.UnitsPerCellHeight || from.UnitsPerCellHeight <= 0 || to.UnitsPerCellHeight <= 0 {
 		return v
 	}
-	return Unit(float64(v) * float64(to.CellHeight) / float64(from.CellHeight))
+	return Unit(float64(v) * float64(to.UnitsPerCellHeight) / float64(from.UnitsPerCellHeight))
 }
 
 // ExchangeSize converts a size between denominations.

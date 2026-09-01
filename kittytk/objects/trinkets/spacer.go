@@ -55,7 +55,7 @@ func (s *Spacer) SizeHint() core.UnitSize {
 		return s.size
 	}
 	metrics := s.EffectiveCellMetrics()
-	return core.UnitSize{Width: metrics.CellWidth, Height: metrics.CellHeight}
+	return core.UnitSize{Width: metrics.UnitsPerCellWidth, Height: metrics.UnitsPerCellHeight}
 }
 
 // Paint renders the spacer (which is invisible - just takes up space).

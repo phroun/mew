@@ -23,10 +23,10 @@ func TestWindowClientAreaIsInTheMenuBarsCurrency(t *testing.T) {
 
 	var wantRows core.Unit
 	for _, interior := range []core.CellMetrics{
-		{CellWidth: 8, CellHeight: 16},
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 4, CellHeight: 8},
-		{CellWidth: 16, CellHeight: 16},
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 16},
 	} {
 		w := NewWindow("t")
 		w.SetDetached(true)
@@ -41,14 +41,14 @@ func TestWindowClientAreaIsInTheMenuBarsCurrency(t *testing.T) {
 
 		// How many of the bar's OWN rows fit -- the number the dropdown
 		// actually computes. It must not depend on the denomination.
-		rows := ca.Height / interior.CellHeight
+		rows := ca.Height / interior.UnitsPerCellHeight
 		if wantRows == 0 {
 			wantRows = rows
 			continue
 		}
 		if d := rows - wantRows; d > 1 || d < -1 {
 			t.Errorf("at interior %dx%d the client area holds %d rows, want %d",
-				interior.CellWidth, interior.CellHeight, rows, wantRows)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, rows, wantRows)
 		}
 	}
 }

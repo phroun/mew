@@ -35,7 +35,7 @@ import (
 // cannot render seven tenths of a character cell.
 type TitleBarMetrics struct {
 	Scale   float64
-	RowH    core.Unit  // title row height in frame units (CellHeight at 1.0)
+	RowH    core.Unit  // title row height in frame units (UnitsPerCellHeight at 1.0)
 	CellW   core.Unit  // cell pitch the controls/text lay out on
 	ButtonW core.Unit  // one control slot: three of those cells
 	YOff    core.Unit  // vertical centering of scaled glyphs in the row (0 at 1.0)
@@ -71,15 +71,15 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 	}
 	tm := TitleBarMetrics{
 		Scale:     scale,
-		RowH:      metrics.CellHeight,
-		CellW:     metrics.CellWidth,
+		RowH:      metrics.UnitsPerCellHeight,
+		CellW:     metrics.UnitsPerCellWidth,
 		Font:      font,
 		Graphical: graphical,
 		base:      metrics,
 	}
 	if scale != 1 {
-		tm.RowH = core.Unit(math.Ceil(scale * float64(metrics.CellHeight)))
-		tm.CellW = core.Unit(math.Ceil(scale * float64(metrics.CellWidth)))
+		tm.RowH = core.Unit(math.Ceil(scale * float64(metrics.UnitsPerCellHeight)))
+		tm.CellW = core.Unit(math.Ceil(scale * float64(metrics.UnitsPerCellWidth)))
 	}
 	// The two faces this bar draws with: the title text's, and ui-term for
 	// the monospaced controls. Both are a pure function of (source font,
@@ -89,11 +89,11 @@ func TitleBarMetricsFor(metrics core.CellMetrics, font *core.Font, graphical boo
 	// call put that garbage on the frame path.
 	tm.Font, tm.Mono = titleFaces(font, scale)
 	if scale != 1 && font != nil && tm.Font != nil {
-		// The glyph box is CellHeight (in units) at the base point size
+		// The glyph box is UnitsPerCellHeight (in units) at the base point size
 		// and scales with it; center what remains of the row around it,
 		// FLOORING the slack — rounding the half-gap up sat the text a
 		// unit too low in the shortened row.
-		glyphH := float64(metrics.CellHeight) * float64(tm.Font.Size) / float64(font.Size)
+		glyphH := float64(metrics.UnitsPerCellHeight) * float64(tm.Font.Size) / float64(font.Size)
 		if off := core.Unit((float64(tm.RowH) - glyphH) / 2); off > 0 {
 			tm.YOff = off
 		}
@@ -360,7 +360,7 @@ func DecodeTitleGeometry(cmd string) (dir string, resize, coarse, ok bool) {
 // TitleGeometryDelta turns a decoded direction into a unit delta at the
 // standard steps: one cell fine, the 10-column/4-row step coarse.
 func TitleGeometryDelta(dir string, coarse bool, metrics core.CellMetrics) (dx, dy core.Unit) {
-	h, v := metrics.CellWidth, metrics.CellHeight
+	h, v := metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight
 	if coarse {
 		h *= 10
 		v *= 4
@@ -397,8 +397,8 @@ func MinHostSizePx(metrics core.CellMetrics, ppu float64) (w, h int) {
 	if ppu <= 0 {
 		ppu = 1
 	}
-	return int(math.Round(float64(metrics.CellWidth*MinHostCols) * ppu)),
-		int(math.Round(float64(metrics.CellHeight*MinHostRows) * ppu))
+	return int(math.Round(float64(metrics.UnitsPerCellWidth*MinHostCols) * ppu)),
+		int(math.Round(float64(metrics.UnitsPerCellHeight*MinHostRows) * ppu))
 }
 
 // DoubleClickTracker is the title bars' double-click convention: a second
@@ -416,8 +416,8 @@ func (t *DoubleClickTracker) Press(x, y core.Unit, metrics core.CellMetrics) boo
 	now := time.Now()
 	isDouble := !t.at.IsZero() &&
 		now.Sub(t.at) < 400*time.Millisecond &&
-		x-t.x < metrics.CellWidth && t.x-x < metrics.CellWidth &&
-		y-t.y < metrics.CellHeight && t.y-y < metrics.CellHeight
+		x-t.x < metrics.UnitsPerCellWidth && t.x-x < metrics.UnitsPerCellWidth &&
+		y-t.y < metrics.UnitsPerCellHeight && t.y-y < metrics.UnitsPerCellHeight
 	if isDouble {
 		t.at = time.Time{}
 		return true

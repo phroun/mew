@@ -125,18 +125,18 @@ func (e *Editor) Layout() {
 	b := e.Bounds()
 	m := e.EffectiveCellMetrics()
 	interior := core.UnitRect{
-		X:      m.CellWidth,
-		Y:      m.CellHeight,
-		Width:  b.Width - 2*m.CellWidth,
-		Height: b.Height - 2*m.CellHeight,
+		X:      m.UnitsPerCellWidth,
+		Y:      m.UnitsPerCellHeight,
+		Width:  b.Width - 2*m.UnitsPerCellWidth,
+		Height: b.Height - 2*m.UnitsPerCellHeight,
 	}
 	e.box.Layout(e, interior)
 
 	// Re-wrap the preview to the scroll's viewport width (reserve a column for
 	// the vertical scrollbar) whenever that width changes.
-	w := e.scroll.Bounds().Width - m.CellWidth
-	if w < m.CellWidth {
-		w = m.CellWidth
+	w := e.scroll.Bounds().Width - m.UnitsPerCellWidth
+	if w < m.UnitsPerCellWidth {
+		w = m.UnitsPerCellWidth
 	}
 	if w != e.wrapWidth {
 		e.wrapWidth = w
@@ -389,8 +389,8 @@ func (e *Editor) Paint(p *core.Painter) {
 func (e *Editor) SizeHint() core.UnitSize {
 	m := e.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  m.CellWidth * defaultWideWidthCells,
-		Height: m.CellHeight * defaultContainerHeightCells,
+		Width:  m.UnitsPerCellWidth * defaultWideWidthCells,
+		Height: m.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 

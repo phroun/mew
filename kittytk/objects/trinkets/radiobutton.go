@@ -105,8 +105,8 @@ func (r *RadioButton) SetWordWrap(wrap bool) {
 func (r *RadioButton) SizeHint() core.UnitSize {
 	metrics := r.EffectiveCellMetrics()
 	// Indicator is decorative (3 cells), space is 1 cell, text is measured
-	indicatorWidth := metrics.CellWidth * 3 // "( )" = 3 cells
-	spaceWidth := metrics.CellWidth         // " " = 1 cell
+	indicatorWidth := metrics.UnitsPerCellWidth * 3 // "( )" = 3 cells
+	spaceWidth := metrics.UnitsPerCellWidth         // " " = 1 cell
 	textWidth := r.MeasureText(r.text)
 	return core.UnitSize{
 		Width:  indicatorWidth + spaceWidth + textWidth,
@@ -127,11 +127,11 @@ func (r *RadioButton) HeightForWidth(width core.Unit) core.Unit {
 	}
 	metrics := r.EffectiveCellMetrics()
 	font := r.EffectiveFont()
-	lineCount := len(wrapText(r.text, width-metrics.CellWidth*4, font, metrics))
+	lineCount := len(wrapText(r.text, width-metrics.UnitsPerCellWidth*4, font, metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * metrics.CellHeight
+	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 
 // IsInlineTrinket returns true to indicate this is a text-style trinket
@@ -178,12 +178,12 @@ func (r *RadioButton) Paint(p *core.Painter) {
 		middle = ' '
 	}
 	p.DrawCell(0, 0, '(', indicatorStyle)
-	p.DrawCell(metrics.CellWidth, 0, middle, indicatorStyle)
-	p.DrawCell(metrics.CellWidth*2, 0, ')', indicatorStyle)
+	p.DrawCell(metrics.UnitsPerCellWidth, 0, middle, indicatorStyle)
+	p.DrawCell(metrics.UnitsPerCellWidth*2, 0, ')', indicatorStyle)
 
 	// Draw space (decorative, 1 cell) and text (font-based)
-	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
-	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
+	p.DrawCell(metrics.UnitsPerCellWidth*3, 0, ' ', labelStyle) // Space after indicator
+	x := metrics.UnitsPerCellWidth * 4                          // After indicator + space (4 cells)
 
 	if !r.wordWrap {
 		p.DrawText(x, 0, r.text, labelStyle, font)
@@ -196,7 +196,7 @@ func (r *RadioButton) Paint(p *core.Painter) {
 	y := core.Unit(0)
 	for _, line := range wrapText(r.text, textWidth, font, metrics) {
 		p.DrawText(x, y, line, labelStyle, font)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
 }
 

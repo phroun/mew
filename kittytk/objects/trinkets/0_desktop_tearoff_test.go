@@ -882,7 +882,7 @@ func TestExitSoloModeRevealsDesktop(t *testing.T) {
 		// frame border), so the app's chrome peeks out rather than being fully
 		// covered by the desktop on top.
 		torn := plat.surfaces[1]
-		off := d.unitToPx(d.EffectiveCellMetrics().CellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
+		off := d.unitToPx(d.EffectiveCellMetrics().UnitsPerCellHeight + d.MenuBarHeight() + core.FindFrameBorderUnits(main))
 		if off <= 0 {
 			t.Fatalf("cascade offset should be positive, got %d", off)
 		}

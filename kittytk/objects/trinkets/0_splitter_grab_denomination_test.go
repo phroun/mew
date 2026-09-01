@@ -15,18 +15,19 @@ func paintSideBySideSplitter(p *core.Painter, m core.CellMetrics) {
 	sp := NewSplitter(core.Horizontal)
 	sp.SetCellMetrics(&m)
 	sp.SetBounds(core.UnitRect{
-		Width:  200 * m.CellWidth / 8,
-		Height: 100 * m.CellHeight / 16,
+		Width:  200 * m.UnitsPerCellWidth / 8,
+		Height: 100 * m.UnitsPerCellHeight / 16,
 	})
 	sp.Paint(p)
 }
 
 // The band's hairline and the grab dots are screen-space sizes converted into
 // local units, so they hold their physical size under re-denomination. The
-// dots were then multiplied by CellWidth/8 and CellHeight/16 as well, meant to
-// track font_size -- but those are the denomination, not the zoom, so the
-// handle grew with the denomination instead: two device pixels across and four
-// down at 8x16, four and eight at 16x32, eight and sixteen at 32x64.
+// dots were then multiplied by UnitsPerCellWidth/8 and UnitsPerCellHeight/16
+// as well, meant to track font_size -- but those are the denomination, not the
+// zoom, so the handle grew with the denomination instead: two device pixels
+// across and four down at 8x16, four and eight at 16x32, eight and sixteen at
+// 32x64.
 //
 // A screen unit is already a fixed number of device pixels at a given zoom, so
 // the conversion alone is what tracks font_size.
@@ -73,7 +74,7 @@ func TestSplitterGrabHandleIsTwoDotsOfOneScreenUnit(t *testing.T) {
 		}
 		if widest != 2 || rows != 4 {
 			t.Errorf("%dx%d: grab dots are %dpx across over %d rows, want 2 over 4",
-				m.CellWidth, m.CellHeight, widest, rows)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, widest, rows)
 		}
 	}
 }
@@ -103,11 +104,11 @@ func TestSplitterGrabDotsShareTheLinesCenter(t *testing.T) {
 	const W, H = 200, 120
 
 	for _, m := range []core.CellMetrics{
-		{CellWidth: 8, CellHeight: 16},
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 32, CellHeight: 64},
-		{CellWidth: 4, CellHeight: 8},
-		{CellWidth: 16, CellHeight: 16},
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 16},
 	} {
 		b, err := raster.New(W, H)
 		if err != nil {
@@ -122,7 +123,7 @@ func TestSplitterGrabDotsShareTheLinesCenter(t *testing.T) {
 		dotLo, dotHi := bandInk(img, 47)   // the upper dot
 		if lineLo < 0 || dotLo < 0 {
 			t.Fatalf("%dx%d: nothing painted (line %d..%d, dot %d..%d)",
-				m.CellWidth, m.CellHeight, lineLo, lineHi, dotLo, dotHi)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, lineLo, lineHi, dotLo, dotHi)
 		}
 		// Centers doubled, so half a pixel reads as 1 rather than rounding
 		// away. Half a pixel is the floor: a two-pixel dot cannot sit exactly
@@ -130,7 +131,7 @@ func TestSplitterGrabDotsShareTheLinesCenter(t *testing.T) {
 		// past that is the two halvings disagreeing.
 		if off := (lineLo + lineHi) - (dotLo + dotHi); off < -1 || off > 1 {
 			t.Errorf("%dx%d: line spans %d..%d but the dots span %d..%d -- %.1f pixels off center",
-				m.CellWidth, m.CellHeight, lineLo, lineHi, dotLo, dotHi, float64(off)/2)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, lineLo, lineHi, dotLo, dotHi, float64(off)/2)
 		}
 	}
 }

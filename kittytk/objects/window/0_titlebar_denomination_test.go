@@ -37,23 +37,23 @@ func (h *metricsHost) SetLayoutManager(core.LayoutManager) {}
 
 const barTitle = "A Document Window"
 
-var barOuter = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+var barOuter = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 var barFrames = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 32, CellHeight: 64},
-	{CellWidth: 4, CellHeight: 8},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 }
 
 // borderFrames adds a square cell: 16x16 over an 8x16 surface is where one
 // border count serving both axes stops working.
 var borderFrames = []core.CellMetrics{
-	{CellWidth: 8, CellHeight: 16},
-	{CellWidth: 16, CellHeight: 32},
-	{CellWidth: 32, CellHeight: 64},
-	{CellWidth: 4, CellHeight: 8},
-	{CellWidth: 16, CellHeight: 16},
+	{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+	{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+	{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+	{UnitsPerCellWidth: 16, UnitsPerCellHeight: 16},
 }
 
 // hostedWindow returns a tearable window whose frame counts in the given
@@ -64,8 +64,8 @@ func hostedWindow(frame core.CellMetrics) *Window {
 	w.SetFlags(w.Flags() | WindowFlagTearable)
 	host.AddChild(w)
 	w.SetBounds(core.UnitRect{
-		Width:  40 * frame.CellWidth,
-		Height: 5 * frame.CellHeight,
+		Width:  40 * frame.UnitsPerCellWidth,
+		Height: 5 * frame.UnitsPerCellHeight,
 	})
 	w.Layout()
 	return w
@@ -91,11 +91,11 @@ func TestTitleBarMeasuresInTheFrameDenomination(t *testing.T) {
 		}
 		if gotTitle != baseTitle {
 			t.Errorf("frame %dx%d measures the title at %d units at 8x16, want %d",
-				frame.CellWidth, frame.CellHeight, gotTitle, baseTitle)
+				frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, gotTitle, baseTitle)
 		}
 		if gotGlyph != baseGlyph {
 			t.Errorf("frame %dx%d measures a control glyph at %d units at 8x16, want %d",
-				frame.CellWidth, frame.CellHeight, gotGlyph, baseGlyph)
+				frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, gotGlyph, baseGlyph)
 		}
 	}
 }
@@ -126,7 +126,7 @@ func TestWindowFramePaintsTheSameAtEveryFrameDenomination(t *testing.T) {
 			for x := 0; x < W; x++ {
 				if b.Image().RGBAAt(x, y) != base.Image().RGBAAt(x, y) {
 					t.Errorf("frame %dx%d: pixel (%d,%d) is %v, want %v (the 8x16 picture)",
-						frame.CellWidth, frame.CellHeight, x, y,
+						frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, x, y,
 						b.Image().RGBAAt(x, y), base.Image().RGBAAt(x, y))
 					y, x = H, W
 				}
@@ -147,17 +147,17 @@ func TestTitleBarHitsWhatItPaintsAtEveryFrameDenomination(t *testing.T) {
 	// Walk the bar and record what the default frame answers at each column,
 	// then require every other denomination to answer the same at the same
 	// physical column.
-	for px := core.Unit(0); px < 40*barOuter.CellWidth; px += 2 {
-		want := base.buttonAtPosition(px, barOuter.CellHeight/2)
+	for px := core.Unit(0); px < 40*barOuter.UnitsPerCellWidth; px += 2 {
+		want := base.buttonAtPosition(px, barOuter.UnitsPerCellHeight/2)
 		for _, frame := range barFrames[1:] {
 			w := hostedWindow(frame)
 			got := w.buttonAtPosition(
 				core.ExchangeX(px, barOuter, frame),
-				core.ExchangeY(barOuter.CellHeight/2, barOuter, frame),
+				core.ExchangeY(barOuter.UnitsPerCellHeight/2, barOuter, frame),
 			)
 			if got != want {
 				t.Fatalf("frame %dx%d: column %d hits %v, want %v (what 8x16 hits)",
-					frame.CellWidth, frame.CellHeight, px, got, want)
+					frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, px, got, want)
 			}
 		}
 	}
@@ -196,7 +196,7 @@ func hostedFramedWindow(frame core.CellMetrics) *Window {
 	w := NewWindow(barTitle)
 	w.SetFlags(w.Flags() | WindowFlagTearable)
 	pane.AddChild(w)
-	w.SetBounds(core.UnitRect{Width: 40 * frame.CellWidth, Height: 5 * frame.CellHeight})
+	w.SetBounds(core.UnitRect{Width: 40 * frame.UnitsPerCellWidth, Height: 5 * frame.UnitsPerCellHeight})
 	w.Layout()
 	return w
 }
@@ -222,7 +222,7 @@ func TestFrameBorderIsTheSameThicknessAtEveryFrameDenomination(t *testing.T) {
 		}
 		if gotX != baseX || gotY != baseY {
 			t.Errorf("frame %dx%d reserves %dx%d units at 8x16, want %dx%d",
-				frame.CellWidth, frame.CellHeight, gotX, gotY, baseX, baseY)
+				frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, gotX, gotY, baseX, baseY)
 		}
 	}
 }
@@ -254,7 +254,7 @@ func TestBorderedFramePaintsTheSameAtEveryFrameDenomination(t *testing.T) {
 			for x := 0; x < W; x++ {
 				if b.Image().RGBAAt(x, y) != base.Image().RGBAAt(x, y) {
 					t.Errorf("frame %dx%d: pixel (%d,%d) is %v, want %v (the 8x16 picture)",
-						frame.CellWidth, frame.CellHeight, x, y,
+						frame.UnitsPerCellWidth, frame.UnitsPerCellHeight, x, y,
 						b.Image().RGBAAt(x, y), base.Image().RGBAAt(x, y))
 					y, x = H, W
 				}

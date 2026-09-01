@@ -41,14 +41,14 @@ func popupInk(b *raster.Backend, w, h, sampleX, sampleY int) []int {
 // popup came out too narrow or too wide around them.
 func TestMenuPaintsTheSameAtEveryDenomination(t *testing.T) {
 	const W, H = 320, 120
-	outer := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	outer := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 	var base []int
 	var baseW, baseH core.Unit
 	for _, interior := range []core.CellMetrics{
-		{CellWidth: 8, CellHeight: 16},
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 4, CellHeight: 8},
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 	} {
 		b, err := raster.New(W, H)
 		if err != nil {
@@ -79,7 +79,7 @@ func TestMenuPaintsTheSameAtEveryDenomination(t *testing.T) {
 			baseW = gotW
 		} else if d := gotW - baseW; d > 1 || d < -1 {
 			t.Errorf("interior %dx%d: popup is %d outer units wide, want %d",
-				interior.CellWidth, interior.CellHeight, gotW, baseW)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, gotW, baseW)
 		}
 
 		// Height too: it carries the separator band, which is a fraction of
@@ -93,7 +93,7 @@ func TestMenuPaintsTheSameAtEveryDenomination(t *testing.T) {
 			// at an 8-unit cell is 1.5 -- unrepresentable either way. The
 			// faults this guards against are tens of units, not one.
 			t.Errorf("interior %dx%d: popup is %d outer units tall, want %d",
-				interior.CellWidth, interior.CellHeight, gotH, baseH)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, gotH, baseH)
 		}
 
 		got := popupInk(b, W, H, 4, 4)
@@ -103,13 +103,13 @@ func TestMenuPaintsTheSameAtEveryDenomination(t *testing.T) {
 		}
 		if len(got) != len(base) {
 			t.Errorf("interior %dx%d painted %d ink columns, want %d (the 8x16 picture)",
-				interior.CellWidth, interior.CellHeight, len(got), len(base))
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, len(got), len(base))
 			continue
 		}
 		for i := range base {
 			if got[i] != base[i] {
 				t.Errorf("interior %dx%d: ink column %d at px %d, want %d",
-					interior.CellWidth, interior.CellHeight, i, got[i], base[i])
+					interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, i, got[i], base[i])
 				break
 			}
 		}

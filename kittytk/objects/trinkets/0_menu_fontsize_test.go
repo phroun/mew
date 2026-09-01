@@ -20,8 +20,8 @@ func TestMenuDropdownInheritsFontSize(t *testing.T) {
 		metrics core.CellMetrics
 		size    int
 	}{
-		{core.CellMetrics{CellWidth: 8, CellHeight: 16}, 12},
-		{core.CellMetrics{CellWidth: 12, CellHeight: 24}, 18},
+		{core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}, 12},
+		{core.CellMetrics{UnitsPerCellWidth: 12, UnitsPerCellHeight: 24}, 18},
 	}
 	for _, tc := range cases {
 		mb := NewMenuBar()
@@ -36,7 +36,7 @@ func TestMenuDropdownInheritsFontSize(t *testing.T) {
 		mb.AddMenu(edit)
 		idx := len(mb.menus) - 1
 
-		mb.SetBounds(core.UnitRect{Width: 400, Height: tc.metrics.CellHeight})
+		mb.SetBounds(core.UnitRect{Width: 400, Height: tc.metrics.UnitsPerCellHeight})
 		mb.OpenMenu(idx)
 
 		if got := edit.EffectiveCellMetrics(); got != tc.metrics {
@@ -113,7 +113,7 @@ func TestMenuDropdownFontSizeProof(t *testing.T) {
 			file.AddItem(NewMenuItem(it))
 		}
 		mb.AddMenu(file)
-		mb.SetBounds(core.UnitRect{Width: 360, Height: metrics.CellHeight})
+		mb.SetBounds(core.UnitRect{Width: 360, Height: metrics.UnitsPerCellHeight})
 		mb.OpenMenu(0)
 
 		heights[i] = file.DropdownBounds().Height

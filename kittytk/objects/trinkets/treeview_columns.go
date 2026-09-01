@@ -624,7 +624,7 @@ func (t *TreeView) drawTreeLineCell(p *core.Painter, x, y core.Unit, r rune, s s
 		p.DrawCell(x, y, r, s)
 		return
 	}
-	cw, ch := metrics.CellWidth, metrics.CellHeight
+	cw, ch := metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight
 	cx := x + cw/2 // the glyph's vertical stroke position
 	cy := y + ch/2 // the glyph's horizontal stroke position
 	fr, fg, fb := s.Fg.RGBComponents()
@@ -730,7 +730,7 @@ func (t *TreeView) headerHeight() core.Unit {
 	if !t.multiColumn() || !t.showHeader {
 		return 0
 	}
-	return t.EffectiveCellMetrics().CellHeight
+	return t.EffectiveCellMetrics().UnitsPerCellHeight
 }
 
 // footerHeight is the horizontal scrollbar band's height, reserved
@@ -744,9 +744,9 @@ func (t *TreeView) footerHeight() core.Unit {
 	}
 	metrics := t.EffectiveCellMetrics()
 	if core.FindGraphicalFrames(t.Self()) {
-		return metrics.CellWidth
+		return metrics.UnitsPerCellWidth
 	}
-	return metrics.CellHeight
+	return metrics.UnitsPerCellHeight
 }
 
 // colSpan is one visible column's placement for this paint/hit pass.
@@ -802,7 +802,7 @@ func (t *TreeView) anyVisibleData() bool {
 // and the non-fixed spans pan by hScroll cells.
 func (t *TreeView) columnLayout() treeColLayout {
 	metrics := t.EffectiveCellMetrics()
-	cw := metrics.CellWidth
+	cw := metrics.UnitsPerCellWidth
 	bounds := t.Bounds()
 	lay := treeColLayout{headerH: t.headerHeight()}
 	lay.contentW = bounds.Width - cw // scrollbar lane
@@ -985,7 +985,7 @@ func (t *TreeView) columnLayout() treeColLayout {
 // huge tree ever makes it hot.)
 func (t *TreeView) neededCells(col *TreeColumn) int {
 	font := t.EffectiveFont()
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	metrics := t.EffectiveCellMetrics()
 	maxW := font.MeasureTextIn(col.Caption, metrics)
 	if t.sortIndicatorFor(col) {
@@ -1179,7 +1179,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 	// overlays it). It never joins visibleCount, so the scrolling math
 	// does not treat the clipped row as visible.
 	if p.Graphical() && t.scrollOffset+visibleCount < len(t.flatList) &&
-		lay.headerH+core.Unit(visibleCount)*metrics.CellHeight < bounds.Height {
+		lay.headerH+core.Unit(visibleCount)*metrics.UnitsPerCellHeight < bounds.Height {
 		rows++
 	}
 	// Per-row fade colors for the horizontal-scroll edge fades: usually
@@ -1195,7 +1195,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			break
 		}
 		item := t.flatList[itemIndex]
-		itemY := lay.headerH + core.Unit(i)*metrics.CellHeight
+		itemY := lay.headerH + core.Unit(i)*metrics.UnitsPerCellHeight
 
 		// While the internal focus sits in the header (bar or drilled
 		// items), the column chooser menu is popped down, or the cell
@@ -1250,7 +1250,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 			if p.Graphical() {
 				rowW = bounds.Width
 			}
-			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: rowW, Height: metrics.CellHeight}, ' ', s)
+			p.FillRect(core.UnitRect{X: 0, Y: itemY, Width: rowW, Height: metrics.UnitsPerCellHeight}, ' ', s)
 		}
 
 		host := t.treeHostColumn()
@@ -1283,7 +1283,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 					segW = end - segX
 				}
 				if segW > 0 {
-					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segW, Height: metrics.CellHeight}, ' ', cellStyle)
+					p.FillRect(core.UnitRect{X: segX, Y: itemY, Width: segW, Height: metrics.UnitsPerCellHeight}, ' ', cellStyle)
 					targetSegX, targetSegW = segX, segW
 					// The segment under a fade zone retints that row's
 					// fade: blend toward the cell, not the row band.
@@ -1362,7 +1362,7 @@ func (t *TreeView) paintMulti(p *core.Painter) {
 				p.FillRectPixelsAlpha(sp.divX, 0, 0, 0,
 					1, p.UnitSpanPxY(0, divBottom), fr, fg, fb, 0.35)
 			} else {
-				for y := core.Unit(0); y < divBottom; y += metrics.CellHeight {
+				for y := core.Unit(0); y < divBottom; y += metrics.UnitsPerCellHeight {
 					st := divStyle
 					if y < lay.headerH {
 						st = st.Underline()
@@ -1410,7 +1410,7 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 		return
 	}
 	metrics := t.EffectiveCellMetrics()
-	wtPx := p.UnitSpanPxX(0, metrics.CellWidth*2)
+	wtPx := p.UnitSpanPxX(0, metrics.UnitsPerCellWidth*2)
 	if regionPx := p.UnitSpanPxX(lay.scrollL, lay.scrollR); wtPx > regionPx/2 {
 		wtPx = regionPx / 2
 	}
@@ -1433,8 +1433,8 @@ func (t *TreeView) paintHScrollFades(p *core.Painter, lay treeColLayout, headerS
 		y = lay.headerH
 	}
 	for i := range fadeL {
-		bands = append(bands, band{y, y + metrics.CellHeight, fadeL[i], fadeR[i]})
-		y += metrics.CellHeight
+		bands = append(bands, band{y, y + metrics.UnitsPerCellHeight, fadeL[i], fadeR[i]})
+		y += metrics.UnitsPerCellHeight
 	}
 	if y < bottom {
 		bands = append(bands, band{y, bottom, bgStyle.Bg, bgStyle.Bg})
@@ -1486,8 +1486,8 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 	// brightness below it); the footer bar overlays the deep end.
 	bottom := bounds.Height
 	regionPx := p.UnitSpanPxY(top, bottom)
-	rowDeep := p.UnitSpanPxY(0, metrics.CellHeight)
-	leftover := bottom - (top + core.Unit(t.visibleCount())*metrics.CellHeight)
+	rowDeep := p.UnitSpanPxY(0, metrics.UnitsPerCellHeight)
+	leftover := bottom - (top + core.Unit(t.visibleCount())*metrics.UnitsPerCellHeight)
 	if leftover < 0 {
 		leftover = 0
 	}
@@ -1533,12 +1533,12 @@ func (t *TreeView) paintVScrollFades(p *core.Painter, lay treeColLayout, rowBand
 // the span and always left-aligned.
 func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, itemY core.Unit, s, textStyle style.CellStyle, metrics core.CellMetrics, font *core.Font, text string) {
 	level := item.Level()
-	x := sp.x + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.CellWidth
+	x := sp.x + core.Unit(level*t.indentWidth+treeLeftPadCells)*metrics.UnitsPerCellWidth
 	// Connector lines fill the indent space (never widen it).
 	if t.treeLines {
 		for ci, r := range t.treeLinePrefix(item) {
 			if r != ' ' {
-				t.drawTreeLineCell(p, sp.x+core.Unit(ci+treeLeftPadCells)*metrics.CellWidth, itemY, r, s, metrics)
+				t.drawTreeLineCell(p, sp.x+core.Unit(ci+treeLeftPadCells)*metrics.UnitsPerCellWidth, itemY, r, s, metrics)
 			}
 		}
 	}
@@ -1551,11 +1551,11 @@ func (t *TreeView) paintTreeCell(p *core.Painter, item *TreeItem, sp colSpan, it
 	} else if t.treeLines {
 		p.DrawCell(x, itemY, '▪', s)
 	}
-	x += metrics.CellWidth
+	x += metrics.UnitsPerCellWidth
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {
 		cell := item.Icon.Cells[0]
 		p.DrawCell(x, itemY, cell.Char, cell.Style)
-		x += metrics.CellWidth * 2
+		x += metrics.UnitsPerCellWidth * 2
 	}
 	avail := sp.x + sp.w - x
 	if avail < 0 {
@@ -1598,7 +1598,7 @@ func ellipsizeText(font *core.Font, m core.CellMetrics, text string, avail core.
 // alignment, ellipsized to fit.
 func (t *TreeView) drawAligned(p *core.Painter, text string, sp colSpan, y core.Unit, s style.CellStyle, font *core.Font, align string) {
 	metrics := t.EffectiveCellMetrics()
-	pad := metrics.CellWidth / 2
+	pad := metrics.UnitsPerCellWidth / 2
 	avail := sp.w - pad
 	if avail < 0 {
 		avail = 0
@@ -1633,7 +1633,7 @@ func (t *TreeView) chooserButtonRect() (core.UnitRect, bool) {
 		return core.UnitRect{}, false
 	}
 	metrics := t.EffectiveCellMetrics()
-	w := metrics.CellWidth
+	w := metrics.UnitsPerCellWidth
 	if core.FindGraphicalFrames(t.Self()) {
 		w *= 2
 	}
@@ -1786,9 +1786,9 @@ func (t *TreeView) choiceArrowRoom() core.Unit {
 func (t *TreeView) popupMetrics(pc core.PopupController) core.CellMetrics {
 	local := t.EffectiveCellMetrics()
 	origin := pc.MapToScreen(t.Self(), core.UnitPoint{})
-	cell := pc.MapToScreen(t.Self(), core.UnitPoint{X: local.CellWidth, Y: local.CellHeight})
-	screen := core.CellMetrics{CellWidth: cell.X - origin.X, CellHeight: cell.Y - origin.Y}
-	if screen.CellWidth < 1 || screen.CellHeight < 1 {
+	cell := pc.MapToScreen(t.Self(), core.UnitPoint{X: local.UnitsPerCellWidth, Y: local.UnitsPerCellHeight})
+	screen := core.CellMetrics{UnitsPerCellWidth: cell.X - origin.X, UnitsPerCellHeight: cell.Y - origin.Y}
+	if screen.UnitsPerCellWidth < 1 || screen.UnitsPerCellHeight < 1 {
 		return local
 	}
 	return screen
@@ -1947,7 +1947,7 @@ func (t *TreeView) handleChooserKey(event core.KeyPressEvent, cmd string) bool {
 
 // dividerGrabZone is the horizontal grab band around a divider line.
 func (t *TreeView) dividerGrabZone() (grab0, grab1 core.Unit) {
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	if core.FindGraphicalFrames(t.Self()) {
 		return -cw / 2, cw / 2 // pixels: half a cell astride the line
 	}
@@ -1972,7 +1972,7 @@ func (t *TreeView) dividerGrabZone() (grab0, grab1 core.Unit) {
 // (into consumed slack), lines right of it stay put - none ever moves
 // contrary to the drag direction.
 func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	grab0, grab1 := t.dividerGrabZone()
 	for i, sp := range lay.spans {
 		if !lay.divVisible(sp) || x < sp.divX+grab0 || x >= sp.divX+grab1 {
@@ -2037,7 +2037,7 @@ func (t *TreeView) beginFitDrag(x core.Unit, lay treeColLayout) bool {
 // applyFitDrag recomputes both neighbor widths from the press-time
 // snapshot for the pointer's current position (idempotent per move).
 func (t *TreeView) applyFitDrag(x core.Unit) {
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	delta := int((x - t.colDragStartX) / cw) // + = rightward
 	if !t.colDragSlackRight {
 		// Slack pool (the auto key) LEFT of the line; the right
@@ -2276,7 +2276,7 @@ func (t *TreeView) handleMultiMove(event core.MouseMoveEvent) bool {
 		t.applyFitDrag(event.X)
 		return true
 	}
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	deltaCells := int((event.X - t.colDragStartX) / cw)
 	if t.colDragInvert {
 		deltaCells = -deltaCells
@@ -2330,7 +2330,7 @@ func (t *TreeView) hScrollbarGeometry(lay treeColLayout) (trackX0, trackX1, thum
 	if t.footerHeight() == 0 || lay.maxHScroll <= 0 {
 		return 0, 0, 0, 0, false
 	}
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	trackX0, trackX1 = lay.scrollL, lay.scrollR
 	trackCells := int((trackX1 - trackX0) / cw)
 	if trackCells <= 0 {
@@ -2386,10 +2386,10 @@ func (t *TreeView) paintHScrollbar(p *core.Painter, lay treeColLayout) {
 		return
 	}
 	// TUI track: the ScrollArea's shaded fill, not a line.
-	for x := trackX0; x < trackX1; x += metrics.CellWidth {
+	for x := trackX0; x < trackX1; x += metrics.UnitsPerCellWidth {
 		p.DrawCell(x, y, '░', trackStyle)
 	}
-	for x := thumbX0; x < thumbX1; x += metrics.CellWidth {
+	for x := thumbX0; x < thumbX1; x += metrics.UnitsPerCellWidth {
 		p.DrawCell(x, y, '█', thumbStyle)
 	}
 }
@@ -2431,9 +2431,9 @@ func (t *TreeView) handleHBarPress(event core.MousePressEvent) bool {
 		t.hbarDragStartX = event.X
 		t.hbarDragStartHS = t.hScroll
 	case event.X >= trackX0 && event.X < thumbX0:
-		t.scrollHorizontally(-int((trackX1 - trackX0) / t.EffectiveCellMetrics().CellWidth))
+		t.scrollHorizontally(-int((trackX1 - trackX0) / t.EffectiveCellMetrics().UnitsPerCellWidth))
 	case event.X >= thumbX1 && event.X < trackX1:
-		t.scrollHorizontally(int((trackX1 - trackX0) / t.EffectiveCellMetrics().CellWidth))
+		t.scrollHorizontally(int((trackX1 - trackX0) / t.EffectiveCellMetrics().UnitsPerCellWidth))
 	}
 	return true
 }
@@ -2449,7 +2449,7 @@ func (t *TreeView) handleHBarMove(event core.MouseMoveEvent) bool {
 		t.hbarDragging = false
 		return true
 	}
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	trackCells := int((trackX1 - trackX0) / cw)
 	thumbCells := int((thumbX1 - thumbX0) / cw)
 	scrollable := trackCells - thumbCells

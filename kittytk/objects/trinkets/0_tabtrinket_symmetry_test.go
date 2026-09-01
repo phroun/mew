@@ -92,7 +92,7 @@ func renderMidSelectedTab(t *testing.T, fs int) *image.RGBA {
 	// Make the strip (blue bar) fill the whole image width at every font size,
 	// so the only dark region inside the strip is the selected tab - the dark
 	// desktop lives strictly below the strip (full-width rows, filtered out).
-	tabs.SetBounds(core.UnitRect{X: 0, Y: 0, Width: m.CellWidth * 200, Height: m.CellHeight})
+	tabs.SetBounds(core.UnitRect{X: 0, Y: 0, Width: m.UnitsPerCellWidth * 200, Height: m.UnitsPerCellHeight})
 	b.Clear(style.DefaultStyle())
 	tabs.Paint(core.NewPainter(b))
 	return b.Image()

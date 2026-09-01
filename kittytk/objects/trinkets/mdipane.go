@@ -752,7 +752,7 @@ func (m *MDIPane) CascadeWindows() {
 	// The cascade step includes the frame border, so each window's whole
 	// top chrome (border + titlebar) clears the one beneath it.
 	border, _ := core.FindFrameBorderUnitsIn(visibleWindows[0], metrics)
-	offset := metrics.CellWidth*2 + border
+	offset := metrics.UnitsPerCellWidth*2 + border
 
 	// Standard size for cascaded windows
 	width := metrics.RoundDownToCellX(clientArea.Width * 3 / 4)
@@ -963,7 +963,7 @@ func (m *MDIPane) positionWindow(win *window.Window) {
 	if cascadeIndex < 0 {
 		cascadeIndex = 0
 	}
-	offset := core.Unit(cascadeIndex) * metrics.CellWidth * 2
+	offset := core.Unit(cascadeIndex) * metrics.UnitsPerCellWidth * 2
 
 	x := clientArea.X + offset
 	y := clientArea.Y + offset
@@ -1019,7 +1019,7 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// included); resizeGripFor stays the overlay's, which must not move.
 	metrics := m.EffectiveCellMetrics()
 	graphical := core.FindGraphicalFrames(m.Self())
-	// The grips are built from CellWidth, so they take the border's column
+	// The grips are built from UnitsPerCellWidth, so they take the border's column
 	// count -- the same axis the quarter- and half-column they add is on.
 	border, _ := core.FindFrameBorderUnitsIn(win, metrics)
 	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
@@ -1264,8 +1264,8 @@ func (m *MDIPane) SizeHint() core.UnitSize {
 	}
 	metrics := m.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultSizeCells,
-		Height: metrics.CellHeight * defaultContainerHeightCells,
+		Width:  metrics.UnitsPerCellWidth * defaultSizeCells,
+		Height: metrics.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 
@@ -1337,8 +1337,8 @@ func (m *MDIPane) Paint(p *core.Painter) {
 	if drawPattern {
 		// Draw pattern background (like Desktop)
 		bgStyle := scheme.GetDesktopFill()
-		for y := core.Unit(0); y < clientArea.Height; y += metrics.CellHeight {
-			for x := core.Unit(0); x < clientArea.Width; x += metrics.CellWidth {
+		for y := core.Unit(0); y < clientArea.Height; y += metrics.UnitsPerCellHeight {
+			for x := core.Unit(0); x < clientArea.Width; x += metrics.UnitsPerCellWidth {
 				ip.DrawCell(x, y, bgChar, bgStyle)
 			}
 		}
@@ -1555,7 +1555,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 			// titlebar's bottom (the top border above it is a resize edge,
 			// handled first). Cell frames draw the title on the top row, so
 			// no offset.
-			titleBottom := metrics.CellHeight
+			titleBottom := metrics.UnitsPerCellHeight
 			if core.FindGraphicalFrames(win) {
 				_, by := core.FindFrameBorderUnitsIn(win, metrics)
 				titleBottom += by
@@ -1586,8 +1586,8 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				m.mu.Lock()
 				isDoubleClick := m.lastClickWindow == win &&
 					now.Sub(m.lastClickTime) < 400*time.Millisecond &&
-					abs(int(event.X-m.lastClickX)) < int(metrics.CellWidth) &&
-					abs(int(event.Y-m.lastClickY)) < int(metrics.CellHeight)
+					abs(int(event.X-m.lastClickX)) < int(metrics.UnitsPerCellWidth) &&
+					abs(int(event.Y-m.lastClickY)) < int(metrics.UnitsPerCellHeight)
 				m.lastClickTime = now
 				m.lastClickX = event.X
 				m.lastClickY = event.Y

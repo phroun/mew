@@ -103,12 +103,12 @@ func (s *LineSeparator) SizeHint() core.UnitSize {
 		decorWidth := s.MeasureText("──  ──") // line stubs + title padding
 		return core.UnitSize{
 			Width:  titleWidth + decorWidth,
-			Height: metrics.CellHeight,
+			Height: metrics.UnitsPerCellHeight,
 		}
 	}
 	// Vertical separator: 1 cell wide, height depends on title
 	return core.UnitSize{
-		Width:  metrics.CellWidth,
+		Width:  metrics.UnitsPerCellWidth,
 		Height: metrics.TextHeight(5),
 	}
 }
@@ -218,7 +218,7 @@ func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.Unit
 
 // paintHorizontal draws: ────·· Title ··────
 func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
-	width := int(bounds.Width / metrics.CellWidth)
+	width := int(bounds.Width / metrics.UnitsPerCellWidth)
 	if width <= 0 {
 		return
 	}
@@ -257,7 +257,7 @@ func (s *LineSeparator) paintHorizontal(p *core.Painter, bounds core.UnitRect, l
 
 // paintVertical draws a vertical line with optional centered title.
 func (s *LineSeparator) paintVertical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle, metrics core.CellMetrics) {
-	height := int(bounds.Height / metrics.CellHeight)
+	height := int(bounds.Height / metrics.UnitsPerCellHeight)
 	if height <= 0 {
 		return
 	}

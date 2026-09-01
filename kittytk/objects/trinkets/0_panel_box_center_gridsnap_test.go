@@ -23,15 +23,15 @@ func TestHBoxCenteringSnapsToCellRow(t *testing.T) {
 
 	metrics := core.FindEffectiveCellMetrics(p.Self())
 	// A row two cells tall, so the one-row input would center half a row down.
-	p.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: metrics.CellHeight * 2})
+	p.SetBounds(core.UnitRect{X: 0, Y: 0, Width: 400, Height: metrics.UnitsPerCellHeight * 2})
 
 	y := input.Bounds().Y
-	if metrics.CellHeight > 0 && y%metrics.CellHeight != 0 {
-		t.Errorf("centered text input Y=%d is not on a cell-row boundary (CellHeight=%d)",
-			y, metrics.CellHeight)
+	if metrics.UnitsPerCellHeight > 0 && y%metrics.UnitsPerCellHeight != 0 {
+		t.Errorf("centered text input Y=%d is not on a cell-row boundary (UnitsPerCellHeight=%d)",
+			y, metrics.UnitsPerCellHeight)
 	}
 	// It must still be one row tall (not stretched to the button's height).
-	if h := input.Bounds().Height; h != metrics.CellHeight {
-		t.Errorf("text input height=%d, want one row (%d)", h, metrics.CellHeight)
+	if h := input.Bounds().Height; h != metrics.UnitsPerCellHeight {
+		t.Errorf("text input height=%d, want one row (%d)", h, metrics.UnitsPerCellHeight)
 	}
 }

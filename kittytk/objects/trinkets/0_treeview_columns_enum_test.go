@@ -366,7 +366,7 @@ func TestTreeDoubleClickEditableSuppressed(t *testing.T) {
 	tv.AddRootItem(top)
 	tv.SetBounds(core.UnitRect{Width: 480, Height: 160})
 
-	cw := tv.EffectiveCellMetrics().CellWidth
+	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 	lay := tv.columnLayout()
 	var sizeX, kindX, keyTextX, keyPadX core.Unit
 	for _, sp := range lay.spans {
@@ -452,7 +452,7 @@ func TestTreeKeyBlankCaptionEditZone(t *testing.T) {
 	tv.AddRootItem(blank)
 	tv.rebuildFlatList()
 	tv.SetCurrentItem(blank)
-	cw := tv.EffectiveCellMetrics().CellWidth
+	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 	lay := tv.columnLayout()
 	textX := lay.spans[0].x + core.Unit(1+treeLeftPadCells)*cw // level 0: pad, expander cell, then text
 	rowY := core.Unit(16 + 3*16 + 8)                           // blank sits at visual row 3

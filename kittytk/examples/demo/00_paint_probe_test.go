@@ -32,7 +32,7 @@ func newGridBackend(w, h int) *gridBackend {
 func (g *gridBackend) Init() error { return nil }
 func (g *gridBackend) Shutdown()   {}
 func (g *gridBackend) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (g *gridBackend) Size() core.UnitSize {
 	return core.UnitSize{Width: core.Unit(g.w * 8), Height: core.Unit(g.h * 16)}

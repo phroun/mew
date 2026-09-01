@@ -60,7 +60,7 @@ func TestGridToggleRoundTrips(t *testing.T) {
 	before := sp.Bounds()
 	beforePos := sp.Position()
 
-	win.SetCellMetrics(&core.CellMetrics{CellWidth: 8, CellHeight: 32})
+	win.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32})
 	win.Layout()
 	during := sp.Bounds()
 

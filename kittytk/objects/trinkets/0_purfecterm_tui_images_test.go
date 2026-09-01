@@ -55,7 +55,7 @@ func (c *cellSurface) Init() error         { return nil }
 func (c *cellSurface) Shutdown()           {}
 func (c *cellSurface) Size() core.UnitSize { return core.UnitSize{Width: 640, Height: 400} }
 func (c *cellSurface) Metrics() core.CellMetrics {
-	return core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	return core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 }
 func (c *cellSurface) BeginFrame()           {}
 func (c *cellSurface) EndFrame()             {}

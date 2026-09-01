@@ -27,11 +27,11 @@ func TestTileWindowsQuantizesToCellGrid(t *testing.T) {
 	met := core.DefaultCellMetrics()
 	for i, w := range m.Windows() {
 		b := w.Bounds()
-		if b.X%met.CellWidth != 0 || b.Y%met.CellHeight != 0 {
+		if b.X%met.UnitsPerCellWidth != 0 || b.Y%met.UnitsPerCellHeight != 0 {
 			t.Errorf("window %d origin (%d,%d) not on the cell grid (%dx%d)",
-				i, b.X, b.Y, met.CellWidth, met.CellHeight)
+				i, b.X, b.Y, met.UnitsPerCellWidth, met.UnitsPerCellHeight)
 		}
-		if b.Width%met.CellWidth != 0 || b.Height%met.CellHeight != 0 {
+		if b.Width%met.UnitsPerCellWidth != 0 || b.Height%met.UnitsPerCellHeight != 0 {
 			t.Errorf("window %d size (%dx%d) not a whole number of cells",
 				i, b.Width, b.Height)
 		}
@@ -59,8 +59,8 @@ func TestTileWindowsSmoothKeepsProportional(t *testing.T) {
 	met := core.DefaultCellMetrics()
 	for _, w := range m.Windows() {
 		b := w.Bounds()
-		if b.X%met.CellWidth != 0 || b.Y%met.CellHeight != 0 ||
-			b.Width%met.CellWidth != 0 || b.Height%met.CellHeight != 0 {
+		if b.X%met.UnitsPerCellWidth != 0 || b.Y%met.UnitsPerCellHeight != 0 ||
+			b.Width%met.UnitsPerCellWidth != 0 || b.Height%met.UnitsPerCellHeight != 0 {
 			offGrid = true
 		}
 	}

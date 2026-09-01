@@ -17,18 +17,18 @@ func TestListViewAsksForThreeCellsWhenNothingSetsASize(t *testing.T) {
 		l := NewListView()
 		l.SetCellMetrics(&m)
 		got := l.SizeHint()
-		if got.Width != m.CellWidth*3 || got.Height != m.CellHeight*3 {
+		if got.Width != m.UnitsPerCellWidth*3 || got.Height != m.UnitsPerCellHeight*3 {
 			t.Errorf("at %dx%d the list asks for %dx%d units, want %dx%d",
-				m.CellWidth, m.CellHeight, got.Width, got.Height,
-				m.CellWidth*3, m.CellHeight*3)
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, got.Width, got.Height,
+				m.UnitsPerCellWidth*3, m.UnitsPerCellHeight*3)
 		}
 	}
 	// The face is not part of it.
 	l := NewListView()
 	l.SetFont(core.FontTuesday12)
-	if got := l.SizeHint().Width; got != core.DefaultCellMetrics().CellWidth*3 {
+	if got := l.SizeHint().Width; got != core.DefaultCellMetrics().UnitsPerCellWidth*3 {
 		t.Errorf("in Tuesday the list asks for %d units, want %d",
-			got, core.DefaultCellMetrics().CellWidth*3)
+			got, core.DefaultCellMetrics().UnitsPerCellWidth*3)
 	}
 }
 
@@ -43,8 +43,8 @@ func TestListViewElidesAnItemTheSameAtEveryDenomination(t *testing.T) {
 		l.AddTextItem("Short")
 		l.SetCellMetrics(&m)
 		l.SetBounds(core.UnitRect{
-			Width:  30 * m.CellWidth,
-			Height: 3 * m.CellHeight,
+			Width:  30 * m.UnitsPerCellWidth,
+			Height: 3 * m.UnitsPerCellHeight,
 		})
 		l.Paint(p)
 	})
@@ -63,7 +63,7 @@ func TestStatusBarSectionsSitTheSameAtEveryDenomination(t *testing.T) {
 			{Text: "", Width: -1},
 		})
 		s.SetCellMetrics(&m)
-		s.SetBounds(core.UnitRect{Width: 40 * m.CellWidth, Height: m.CellHeight})
+		s.SetBounds(core.UnitRect{Width: 40 * m.UnitsPerCellWidth, Height: m.UnitsPerCellHeight})
 		s.Paint(p)
 	})
 }

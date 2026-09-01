@@ -481,7 +481,7 @@ func createMainWindow(desktop *trinkets.Desktop, application *app.Application) *
 	})
 	onToggle("grid", func(checked bool) {
 		if checked {
-			mainWindow.SetCellMetrics(&core.CellMetrics{CellWidth: 8, CellHeight: 32})
+			mainWindow.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32})
 		} else {
 			mainWindow.SetCellMetrics(nil) // Inherit from desktop
 		}

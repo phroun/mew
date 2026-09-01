@@ -245,12 +245,12 @@ func (s *Splitter) SetLayoutManager(layout core.LayoutManager) {
 func (s *Splitter) dividerThickness() core.Unit {
 	metrics := s.EffectiveCellMetrics()
 	if s.orientation == core.Horizontal {
-		return metrics.CellWidth
+		return metrics.UnitsPerCellWidth
 	}
 	if core.FindSmoothPositioning(s.Self()) {
-		return metrics.CellHeight / 2
+		return metrics.UnitsPerCellHeight / 2
 	}
-	return metrics.CellHeight
+	return metrics.UnitsPerCellHeight
 }
 
 // dividerBounds returns the bounds of the divider bar.
@@ -270,7 +270,7 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 		firstWidth := core.Unit(float64(totalWidth) * s.position)
 		if !smooth {
 			// Round to cell boundary
-			firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.CellWidth
+			firstWidth = core.Unit(metrics.UnitsToCellX(firstWidth)) * metrics.UnitsPerCellWidth
 		}
 
 		return core.UnitRect{
@@ -286,7 +286,7 @@ func (s *Splitter) dividerBounds() core.UnitRect {
 	firstHeight := core.Unit(float64(totalHeight) * s.position)
 	if !smooth {
 		// Round to cell boundary
-		firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.CellHeight
+		firstHeight = core.Unit(metrics.UnitsToCellY(firstHeight)) * metrics.UnitsPerCellHeight
 	}
 
 	return core.UnitRect{
@@ -337,8 +337,8 @@ func (s *Splitter) childBounds() (core.UnitRect, core.UnitRect) {
 func (s *Splitter) SizeHint() core.UnitSize {
 	metrics := s.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * 20,
-		Height: metrics.CellHeight * 5,
+		Width:  metrics.UnitsPerCellWidth * 20,
+		Height: metrics.UnitsPerCellHeight * 5,
 	}
 }
 
@@ -381,8 +381,8 @@ func (sp *Splitter) Paint(p *core.Painter) {
 			// Vertical divider bar with ':' handle
 			midY := bounds.Height / 2
 			// Round to cell boundary
-			midY = (midY / metrics.CellHeight) * metrics.CellHeight
-			for y := core.Unit(0); y < bounds.Height; y += metrics.CellHeight {
+			midY = (midY / metrics.UnitsPerCellHeight) * metrics.UnitsPerCellHeight
+			for y := core.Unit(0); y < bounds.Height; y += metrics.UnitsPerCellHeight {
 				ch := '│'
 				// Draw drag handle indicator in the middle
 				if y == midY {
@@ -392,7 +392,7 @@ func (sp *Splitter) Paint(p *core.Painter) {
 			}
 		} else {
 			// Horizontal divider bar: ────·· Title ··────
-			width := int(bounds.Width / metrics.CellWidth)
+			width := int(bounds.Width / metrics.UnitsPerCellWidth)
 			titleRunes := []rune(sp.title)
 			titleLen := len(titleRunes)
 
@@ -792,8 +792,8 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		if s.orientation == core.Horizontal {
 			totalWidth := float64(bounds.Width - s.dividerThickness()) // Subtract divider
 			if totalWidth > 0 {
-				smallStep = float64(metrics.CellWidth) / totalWidth
-				largeStep = float64(metrics.CellWidth*10) / totalWidth
+				smallStep = float64(metrics.UnitsPerCellWidth) / totalWidth
+				largeStep = float64(metrics.UnitsPerCellWidth*10) / totalWidth
 			} else {
 				smallStep = 0.02
 				largeStep = 0.1
@@ -801,8 +801,8 @@ func (s *Splitter) HandleKeyPress(event core.KeyPressEvent) bool {
 		} else {
 			totalHeight := float64(bounds.Height - s.dividerThickness())
 			if totalHeight > 0 {
-				smallStep = float64(metrics.CellHeight) / totalHeight
-				largeStep = float64(metrics.CellHeight*4) / totalHeight
+				smallStep = float64(metrics.UnitsPerCellHeight) / totalHeight
+				largeStep = float64(metrics.UnitsPerCellHeight*4) / totalHeight
 			} else {
 				smallStep = 0.02
 				largeStep = 0.1

@@ -373,7 +373,7 @@ func (p *Platform) SetFontSize(size int) {
 }
 
 func (p *Platform) applyMetrics(b *raster.Backend) {
-	if p.metrics.CellWidth > 0 && p.metrics.CellHeight > 0 {
+	if p.metrics.UnitsPerCellWidth > 0 && p.metrics.UnitsPerCellHeight > 0 {
 		b.SetCellMetrics(p.metrics)
 	}
 	if p.fontSize > 0 {
@@ -1967,7 +1967,7 @@ func (p *Platform) mainSurface() *sdlSurface {
 // cell), matching what every surface's backend reports: the configured
 // override or the default 8x16.
 func (p *Platform) rootDenomination() (int, int) {
-	w, h := int(p.metrics.CellWidth), int(p.metrics.CellHeight)
+	w, h := int(p.metrics.UnitsPerCellWidth), int(p.metrics.UnitsPerCellHeight)
 	if w < 1 {
 		w = 8
 	}
@@ -3085,8 +3085,8 @@ func (s *sdlSurface) SetTextInputArea(x, y core.Unit, visible bool) {
 	}
 	m := b.Metrics()
 	x0, y0 := b.UnitToPxX(x), b.UnitToPxY(y)
-	wPx := b.UnitToPxX(x+m.CellWidth) - x0
-	hPx := b.UnitToPxY(y+m.CellHeight) - y0
+	wPx := b.UnitToPxX(x+m.UnitsPerCellWidth) - x0
+	hPx := b.UnitToPxY(y+m.UnitsPerCellHeight) - y0
 	if wPx <= 0 {
 		wPx = 1
 	}

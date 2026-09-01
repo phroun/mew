@@ -1211,10 +1211,10 @@ func (w *Window) chromeHeights() (menuTop, statusBottom core.Unit) {
 	}
 	metrics := w.frameCellMetrics()
 	if mb != nil && mbVis {
-		menuTop = metrics.CellHeight
+		menuTop = metrics.UnitsPerCellHeight
 	}
 	if sb != nil && sbVis {
-		statusBottom = metrics.CellHeight
+		statusBottom = metrics.UnitsPerCellHeight
 	}
 	return
 }
@@ -1541,7 +1541,7 @@ func (w *Window) contentBounds() core.UnitRect {
 		top := core.Unit(0)
 		if hasTitleBar(flags, state) {
 			// The (possibly scaled) title row height, from the kit —
-			// CellHeight at scale 1.0 and on every cell surface.
+			// UnitsPerCellHeight at scale 1.0 and on every cell surface.
 			top = w.titleBarMetrics().RowH
 		}
 		cb = core.UnitRect{X: 0, Y: top, Width: bounds.Width, Height: bounds.Height - top}
@@ -1562,7 +1562,7 @@ func (w *Window) contentBounds() core.UnitRect {
 		cb = core.UnitRect{X: bx, Y: top, Width: bounds.Width - 2*bx, Height: bounds.Height - top - by}
 	default:
 		// Cell frames: the border occupies a full cell on every side.
-		left, top, right, bottom := metrics.CellWidth, metrics.CellHeight, metrics.CellWidth, metrics.CellHeight
+		left, top, right, bottom := metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight, metrics.UnitsPerCellWidth, metrics.UnitsPerCellHeight
 		cb = core.UnitRect{X: left, Y: top, Width: bounds.Width - left - right, Height: bounds.Height - top - bottom}
 	}
 
@@ -1622,7 +1622,7 @@ func (w *Window) ContentBounds() core.UnitRect {
 func (w *Window) ClientArea() core.UnitRect {
 	b := w.Bounds()
 	mbr := w.menuBarRect()
-	top := w.frameCellMetrics().CellHeight
+	top := w.frameCellMetrics().UnitsPerCellHeight
 	// Bottom edge of the surface in menu-bar-local coordinates.
 	bottom := b.Height - mbr.Y
 	if bottom < top {
@@ -2535,13 +2535,13 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 
 		// Draw corners in active color
 		p.DrawCell(0, 0, topLeft, activeFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, 0, topRight, activeFrameStyle)
-		p.DrawCell(0, localBounds.Height-metrics.CellHeight, bottomLeft, activeFrameStyle)
-		p.DrawCell(localBounds.Width-metrics.CellWidth, localBounds.Height-metrics.CellHeight, bottomRight, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, 0, topRight, activeFrameStyle)
+		p.DrawCell(0, localBounds.Height-metrics.UnitsPerCellHeight, bottomLeft, activeFrameStyle)
+		p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, localBounds.Height-metrics.UnitsPerCellHeight, bottomRight, activeFrameStyle)
 
 		// Draw top edge - first and last chars adjacent to corners in active color, rest dashed
-		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+		for x := metrics.UnitsPerCellWidth; x < localBounds.Width-metrics.UnitsPerCellWidth; x += metrics.UnitsPerCellWidth {
+			if x == metrics.UnitsPerCellWidth || x == localBounds.Width-2*metrics.UnitsPerCellWidth {
 				// Adjacent to corner - use active style with normal horizontal line
 				p.DrawCell(x, 0, horizLine, activeFrameStyle)
 			} else {
@@ -2550,23 +2550,23 @@ func (w *Window) paintNormalFrame(p *core.Painter, bounds core.UnitRect, metrics
 		}
 
 		// Draw bottom edge - first and last chars adjacent to corners in active color, rest dashed
-		for x := metrics.CellWidth; x < localBounds.Width-metrics.CellWidth; x += metrics.CellWidth {
-			if x == metrics.CellWidth || x == localBounds.Width-2*metrics.CellWidth {
+		for x := metrics.UnitsPerCellWidth; x < localBounds.Width-metrics.UnitsPerCellWidth; x += metrics.UnitsPerCellWidth {
+			if x == metrics.UnitsPerCellWidth || x == localBounds.Width-2*metrics.UnitsPerCellWidth {
 				// Adjacent to corner - use active style with normal horizontal line
-				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizLine, activeFrameStyle)
+				p.DrawCell(x, localBounds.Height-metrics.UnitsPerCellHeight, horizLine, activeFrameStyle)
 			} else {
-				p.DrawCell(x, localBounds.Height-metrics.CellHeight, horizDash, blurFrameStyle)
+				p.DrawCell(x, localBounds.Height-metrics.UnitsPerCellHeight, horizDash, blurFrameStyle)
 			}
 		}
 
 		// Draw left edge - all dashed
-		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
+		for y := metrics.UnitsPerCellHeight; y < localBounds.Height-metrics.UnitsPerCellHeight; y += metrics.UnitsPerCellHeight {
 			p.DrawCell(0, y, vertDash, blurFrameStyle)
 		}
 
 		// Draw right edge - all dashed
-		for y := metrics.CellHeight; y < localBounds.Height-metrics.CellHeight; y += metrics.CellHeight {
-			p.DrawCell(localBounds.Width-metrics.CellWidth, y, vertDash, blurFrameStyle)
+		for y := metrics.UnitsPerCellHeight; y < localBounds.Height-metrics.UnitsPerCellHeight; y += metrics.UnitsPerCellHeight {
+			p.DrawCell(localBounds.Width-metrics.UnitsPerCellWidth, y, vertDash, blurFrameStyle)
 		}
 	} else {
 		p.DrawRect(localBounds, border, frameStyle)
@@ -2803,7 +2803,7 @@ func tearHandleSlotX(barWidth, controlsRight, titleW, buttonWidth core.Unit) cor
 
 // paintTearHandle draws the tear-off handle (the %/# glyph) in a
 // button-width slot floating immediately left of the (centered) title,
-// and returns the leftUsed value paintTitleText expects (its +CellWidth
+// and returns the leftUsed value paintTitleText expects (its +UnitsPerCellWidth
 // gap lands the title just past the handle slot). The glyph carries the
 // button foreground over the title-bar background; when the handle is
 // the focused title element it draws [%]/[#] in the focused-button
@@ -3174,11 +3174,11 @@ func (w *Window) handleTitleBarKey(event core.KeyPressEvent, cmd string) bool {
 		// hasShift is what the bodies below call "this is a resize", which is
 		// what the shifted arrow always meant.
 		hasShift := resize
-		horizStep := metrics.CellWidth
-		vertStep := metrics.CellHeight
+		horizStep := metrics.UnitsPerCellWidth
+		vertStep := metrics.UnitsPerCellHeight
 		if coarse {
-			horizStep = metrics.CellWidth * 10
-			vertStep = metrics.CellHeight * 4
+			horizStep = metrics.UnitsPerCellWidth * 10
+			vertStep = metrics.UnitsPerCellHeight * 4
 		}
 
 		// A non-resizable window ignores keyboard resize (Shift is the
@@ -3458,12 +3458,12 @@ func ClampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.Cell
 // dock/status bar - the client area already excludes them), and at
 // least minVisibleColumns of width within it on each side.
 func clampWindowToClientArea(bounds, clientArea core.UnitRect, metrics core.CellMetrics) core.UnitRect {
-	minVisible := metrics.CellWidth * minVisibleColumns
+	minVisible := metrics.UnitsPerCellWidth * minVisibleColumns
 
 	if bounds.Y < clientArea.Y {
 		bounds.Y = clientArea.Y
 	}
-	maxY := clientArea.Y + clientArea.Height - metrics.CellHeight
+	maxY := clientArea.Y + clientArea.Height - metrics.UnitsPerCellHeight
 	if bounds.Y > maxY {
 		bounds.Y = maxY
 	}
@@ -3850,7 +3850,7 @@ func (w *Window) HandleMousePress(event core.MousePressEvent) bool {
 	// coordinates - not [0, RowH). Missing the border here would leave the
 	// bottom of the visible titlebar (and the bottoms of the titlebar
 	// buttons) routed to content. Maximized has no side border. RowH is the
-	// kit's (possibly scaled) title row height — CellHeight at scale 1.0.
+	// kit's (possibly scaled) title row height — UnitsPerCellHeight at scale 1.0.
 	titleBand := w.titleBarMetrics().RowH
 	if state != WindowStateMaximized {
 		_, by := w.frameBorder()
@@ -4179,8 +4179,8 @@ func (w *Window) SizeHint() core.UnitSize {
 
 	// Add frame
 	if flags&WindowFlagFrameless == 0 {
-		width += metrics.CellWidth * 2   // Left and right borders
-		height += metrics.CellHeight * 2 // Top and bottom borders
+		width += metrics.UnitsPerCellWidth * 2   // Left and right borders
+		height += metrics.UnitsPerCellHeight * 2 // Top and bottom borders
 	}
 
 	// Ensure minimum size

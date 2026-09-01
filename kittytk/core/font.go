@@ -195,17 +195,17 @@ func (f *Font) LineHeight() Unit {
 // MeasureText is this at the default denomination, which is what every
 // caller that has not been told otherwise means.
 func (f *Font) MeasureTextIn(text string, m CellMetrics) Unit {
-	cw := m.CellWidth
+	cw := m.UnitsPerCellWidth
 	if cw < 1 {
-		cw = DefaultCellMetrics().CellWidth
+		cw = DefaultCellMetrics().UnitsPerCellWidth
 	}
 	if d, ok := currentTextMeasurer().(DenominatedTextMeasurer); ok {
-		return d.MeasureTextIn(f, text, CellMetrics{CellWidth: cw, CellHeight: m.CellHeight})
+		return d.MeasureTextIn(f, text, CellMetrics{UnitsPerCellWidth: cw, UnitsPerCellHeight: m.UnitsPerCellHeight})
 	}
 	if mm := currentTextMeasurer(); mm != nil {
 		// No denominated answer available: scale the default-denomination
 		// one. Rounds twice; the extension above exists to avoid it.
-		base := DefaultCellMetrics().CellWidth
+		base := DefaultCellMetrics().UnitsPerCellWidth
 		return Unit(math.Round(float64(mm.MeasureText(f, text)) * float64(cw) / float64(base)))
 	}
 	if f == nil {

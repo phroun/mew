@@ -76,9 +76,9 @@ func TestDenominationPresetsSetBothAxes(t *testing.T) {
 		if ov == nil {
 			t.Fatalf("%s left no override", c.button)
 		}
-		if ov.CellWidth != c.x || ov.CellHeight != c.y {
+		if ov.UnitsPerCellWidth != c.x || ov.UnitsPerCellHeight != c.y {
 			t.Errorf("%s gave %dx%d, want %dx%d",
-				c.button, ov.CellWidth, ov.CellHeight, c.x, c.y)
+				c.button, ov.UnitsPerCellWidth, ov.UnitsPerCellHeight, c.x, c.y)
 		}
 	}
 }
@@ -94,7 +94,7 @@ func TestDenominationAppliesTypedValuesOnComplete(t *testing.T) {
 	a.press(t, "dnap")
 
 	ov := win.CellMetricsOverride()
-	if ov == nil || ov.CellWidth != 12 || ov.CellHeight != 20 {
+	if ov == nil || ov.UnitsPerCellWidth != 12 || ov.UnitsPerCellHeight != 20 {
 		t.Fatalf("override = %+v, want 12x20", ov)
 	}
 
@@ -102,7 +102,7 @@ func TestDenominationAppliesTypedValuesOnComplete(t *testing.T) {
 	_ = a.ui.TextInput("dnx").SetText("6")
 	_ = a.ui.TextInput("dny").SetText("6")
 	a.returnIn(t, "dny")
-	if ov := win.CellMetricsOverride(); ov == nil || ov.CellWidth != 6 || ov.CellHeight != 6 {
+	if ov := win.CellMetricsOverride(); ov == nil || ov.UnitsPerCellWidth != 6 || ov.UnitsPerCellHeight != 6 {
 		t.Errorf("Return in Y gave %+v, want 6x6 -- it must apply both fields", ov)
 	}
 }
@@ -127,7 +127,7 @@ func TestDenominationRefusesWhatWouldBreakTheWindow(t *testing.T) {
 		a.press(t, "dnap")
 
 		ov := win.CellMetricsOverride()
-		if ov == nil || ov.CellWidth != 8 || ov.CellHeight != 16 {
+		if ov == nil || ov.UnitsPerCellWidth != 8 || ov.UnitsPerCellHeight != 16 {
 			t.Errorf("%q x %q (%s) changed the window to %+v; it should have been refused",
 				bad.x, bad.y, bad.why, ov)
 		}
@@ -137,7 +137,7 @@ func TestDenominationRefusesWhatWouldBreakTheWindow(t *testing.T) {
 	_ = a.ui.TextInput("dnx").SetText("1")
 	_ = a.ui.TextInput("dny").SetText("1")
 	a.press(t, "dnap")
-	if ov := win.CellMetricsOverride(); ov == nil || ov.CellWidth != 1 || ov.CellHeight != 1 {
+	if ov := win.CellMetricsOverride(); ov == nil || ov.UnitsPerCellWidth != 1 || ov.UnitsPerCellHeight != 1 {
 		t.Errorf("1x1 gave %+v; one unit per cell is legal", ov)
 	}
 }

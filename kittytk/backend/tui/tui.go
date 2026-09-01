@@ -325,7 +325,7 @@ func NewTUIBackend(opts TUIOptions) *TUIBackend {
 	if opts.HoldOpensPalette == 0 {
 		opts.HoldOpensPalette = DefaultHoldOpensPalette
 	}
-	if opts.CellMetrics.CellWidth == 0 {
+	if opts.CellMetrics.UnitsPerCellWidth == 0 {
 		opts.CellMetrics = core.DefaultCellMetrics()
 	}
 
@@ -959,8 +959,8 @@ func (t *TUIBackend) cellFitsInClip(col, row int) bool {
 	x := t.metrics.CellToUnitsX(col)
 	y := t.metrics.CellToUnitsY(row)
 	// Check if cell end position is within clip (cell end = start + cell width)
-	cellEndX := x + t.metrics.CellWidth
-	cellEndY := y + t.metrics.CellHeight
+	cellEndX := x + t.metrics.UnitsPerCellWidth
+	cellEndY := y + t.metrics.UnitsPerCellHeight
 	return x >= t.clipRect.X && cellEndX <= t.clipRect.X+t.clipRect.Width &&
 		y >= t.clipRect.Y && cellEndY <= t.clipRect.Y+t.clipRect.Height
 }
@@ -1314,7 +1314,7 @@ func (t *TUIBackend) DrawTextAligned(bounds core.UnitRect, text string, hAlign, 
 			// Tuesday font: add space after alphabetic/numeric chars
 			// Only add the space if the cell fully fits within bounds,
 			// allowing "half" of a wide Tuesday character to be shown when truncated
-			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.CellWidth
+			cellEndX := t.metrics.CellToUnitsX(col) + t.metrics.UnitsPerCellWidth
 			if col < col2 && col >= col1 && cellEndX <= bounds.X+bounds.Width {
 				t.setCell(col, row, ' ', effectiveStyle)
 			}
@@ -2145,7 +2145,7 @@ func (t *TUIBackend) outerToUnitsX(raw int, f outerMouseFrame) core.Unit {
 		}
 		cell := px / f.cellW
 		frac := px % f.cellW
-		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.CellWidth/core.Unit(f.cellW)
+		return t.metrics.CellToUnitsX(cell) + core.Unit(frac)*t.metrics.UnitsPerCellWidth/core.Unit(f.cellW)
 	}
 	return t.metrics.CellToUnitsX(raw - 1)
 }
@@ -2159,7 +2159,7 @@ func (t *TUIBackend) outerToUnitsY(raw int, f outerMouseFrame) core.Unit {
 		}
 		cell := px / f.cellH
 		frac := px % f.cellH
-		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.CellHeight/core.Unit(f.cellH)
+		return t.metrics.CellToUnitsY(cell) + core.Unit(frac)*t.metrics.UnitsPerCellHeight/core.Unit(f.cellH)
 	}
 	return t.metrics.CellToUnitsY(raw - 1)
 }

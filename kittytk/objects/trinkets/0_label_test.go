@@ -123,7 +123,7 @@ func TestEffectiveCellMetricsInheritance(t *testing.T) {
 	}
 
 	// Container override is inherited by the child.
-	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	dense := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32}
 	p.SetCellMetrics(&dense)
 	if got := l.EffectiveCellMetrics(); got != dense {
 		t.Errorf("inherited: got %+v, want %+v", got, dense)
@@ -135,7 +135,7 @@ func TestEffectiveCellMetricsInheritance(t *testing.T) {
 	}
 
 	// A trinket-level override wins over the container's.
-	own := core.CellMetrics{CellWidth: 16, CellHeight: 16}
+	own := core.CellMetrics{UnitsPerCellWidth: 16, UnitsPerCellHeight: 16}
 	l.SetCellMetrics(&own)
 	if got := l.EffectiveCellMetrics(); got != own {
 		t.Errorf("own override: got %+v, want %+v", got, own)
@@ -164,7 +164,7 @@ func TestDenominationInvariance(t *testing.T) {
 	// checkbox still occupies exactly one row, so the panel's hint in
 	// its OUTER currency must not change — re-denomination is visually
 	// invariant; only the numbers inside the panel change meaning.
-	dense := core.CellMetrics{CellWidth: 8, CellHeight: 32}
+	dense := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32}
 	p.SetCellMetrics(&dense)
 
 	if got := c.SizeHint().Height; got != 32 {

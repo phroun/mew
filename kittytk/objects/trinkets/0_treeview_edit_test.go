@@ -192,7 +192,7 @@ func TestTreeKeyEditorRespectsIndent(t *testing.T) {
 	parent.AddChild(child)
 	tv.rebuildFlatList()
 	tv.SetCurrentItem(child) // level 1
-	cw := tv.EffectiveCellMetrics().CellWidth
+	cw := tv.EffectiveCellMetrics().UnitsPerCellWidth
 
 	tv.HandleKeyPress(core.KeyPressEvent{Key: "Return"}) // key column first
 	if tv.editCol != treeKeyColumn {

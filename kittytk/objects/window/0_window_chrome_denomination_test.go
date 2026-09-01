@@ -21,13 +21,13 @@ import (
 // paintChrome offsets in outer units and then changes denomination. The
 // mouse path has to do both as well, which is what chromeLocal is.
 func TestChromeMousePositionCrossesIntoTheInteriorDenomination(t *testing.T) {
-	outer := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	outer := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 	for _, interior := range []core.CellMetrics{
-		{CellWidth: 8, CellHeight: 16},
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 4, CellHeight: 8},
-		{CellWidth: 32, CellHeight: 32},
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+		{UnitsPerCellWidth: 32, UnitsPerCellHeight: 32},
 	} {
 		r := core.UnitRect{X: 2, Y: 3, Width: 400, Height: 16}
 
@@ -38,13 +38,13 @@ func TestChromeMousePositionCrossesIntoTheInteriorDenomination(t *testing.T) {
 		wantY := core.Unit(0)
 		if gotX != wantX || gotY != wantY {
 			t.Errorf("interior %dx%d: chromeLocal gave (%d,%d), want (%d,%d)",
-				interior.CellWidth, interior.CellHeight, gotX, gotY, wantX, wantY)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, gotX, gotY, wantX, wantY)
 		}
 
 		// The bar's own origin maps to its own origin, always.
 		if x, y := chromeLocal(r.X, r.Y, r, outer, interior); x != 0 || y != 0 {
 			t.Errorf("interior %dx%d: the bar's origin mapped to (%d,%d), want (0,0)",
-				interior.CellWidth, interior.CellHeight, x, y)
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, x, y)
 		}
 
 		// And a position stated in the interior currency lands inside the
@@ -53,7 +53,7 @@ func TestChromeMousePositionCrossesIntoTheInteriorDenomination(t *testing.T) {
 		bar := inInterior(r, outer, interior)
 		if x, _ := chromeLocal(r.X+r.Width-1, r.Y, r, outer, interior); x >= bar.Width {
 			t.Errorf("interior %dx%d: the bar's last outer column maps to %d, "+
-				"outside its own width %d", interior.CellWidth, interior.CellHeight, x, bar.Width)
+				"outside its own width %d", interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, x, bar.Width)
 		}
 	}
 }

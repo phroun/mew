@@ -153,8 +153,8 @@ func (c *Checkbox) SetWordWrap(wrap bool) {
 func (c *Checkbox) SizeHint() core.UnitSize {
 	metrics := c.EffectiveCellMetrics()
 	// Indicator is decorative (3 cells), space is 1 cell, text is measured
-	indicatorWidth := metrics.CellWidth * 3 // "[ ]" = 3 cells
-	spaceWidth := metrics.CellWidth         // " " = 1 cell
+	indicatorWidth := metrics.UnitsPerCellWidth * 3 // "[ ]" = 3 cells
+	spaceWidth := metrics.UnitsPerCellWidth         // " " = 1 cell
 	textWidth := c.MeasureText(c.text)
 	return core.UnitSize{
 		Width:  indicatorWidth + spaceWidth + textWidth,
@@ -175,11 +175,11 @@ func (c *Checkbox) HeightForWidth(width core.Unit) core.Unit {
 	}
 	metrics := c.EffectiveCellMetrics()
 	font := c.EffectiveFont()
-	lineCount := len(wrapText(c.text, width-metrics.CellWidth*4, font, metrics))
+	lineCount := len(wrapText(c.text, width-metrics.UnitsPerCellWidth*4, font, metrics))
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	return core.Unit(lineCount) * metrics.CellHeight
+	return core.Unit(lineCount) * metrics.UnitsPerCellHeight
 }
 
 // IsInlineTrinket returns true to indicate this is a text-style trinket
@@ -229,12 +229,12 @@ func (c *Checkbox) Paint(p *core.Painter) {
 		middle = '-'
 	}
 	p.DrawCell(0, 0, '[', indicatorStyle)
-	p.DrawCell(metrics.CellWidth, 0, middle, indicatorStyle)
-	p.DrawCell(metrics.CellWidth*2, 0, ']', indicatorStyle)
+	p.DrawCell(metrics.UnitsPerCellWidth, 0, middle, indicatorStyle)
+	p.DrawCell(metrics.UnitsPerCellWidth*2, 0, ']', indicatorStyle)
 
 	// Draw space (decorative, 1 cell) and text (font-based)
-	p.DrawCell(metrics.CellWidth*3, 0, ' ', labelStyle) // Space after indicator
-	x := metrics.CellWidth * 4                          // After indicator + space (4 cells)
+	p.DrawCell(metrics.UnitsPerCellWidth*3, 0, ' ', labelStyle) // Space after indicator
+	x := metrics.UnitsPerCellWidth * 4                          // After indicator + space (4 cells)
 
 	if !c.wordWrap {
 		p.DrawText(x, 0, c.text, labelStyle, font)
@@ -247,7 +247,7 @@ func (c *Checkbox) Paint(p *core.Painter) {
 	y := core.Unit(0)
 	for _, line := range wrapText(c.text, textWidth, font, metrics) {
 		p.DrawText(x, y, line, labelStyle, font)
-		y += metrics.CellHeight
+		y += metrics.UnitsPerCellHeight
 	}
 }
 

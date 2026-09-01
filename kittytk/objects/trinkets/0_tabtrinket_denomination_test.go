@@ -11,7 +11,7 @@ import (
 // The outer denomination every render below is displayed through: 8 units
 // across a cell, 16 down. A device pixel is therefore one unit at 8x16, and
 // the interior denomination is what varies.
-var denomOuter = core.CellMetrics{CellWidth: 8, CellHeight: 16}
+var denomOuter = core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 const (
 	denomStripCells = 50
@@ -43,8 +43,8 @@ func newDenomStrip(interior core.CellMetrics) *TabTrinket {
 	tabs.SetCurrentIndex(1)
 	tabs.SetCellMetrics(&interior)
 	tabs.SetBounds(core.UnitRect{
-		Width:  denomStripCells * interior.CellWidth,
-		Height: interior.CellHeight,
+		Width:  denomStripCells * interior.UnitsPerCellWidth,
+		Height: interior.UnitsPerCellHeight,
 	})
 	return tabs
 }
@@ -56,7 +56,7 @@ func newDenomStrip(interior core.CellMetrics) *TabTrinket {
 // cells, its labels are measured. Nothing it paints should move or resize.
 //
 // It moved. The cell-counted parts were multiplied by the strip's own
-// CellWidth and so followed the denomination, while the labels between them
+// UnitsPerCellWidth and so followed the denomination, while the labels between them
 // went through Font.MeasureText, which answers in default-denomination units.
 // At an interior denomination of 16 the labels came back at half the width the
 // gaps around them were placed at, and the tabs drifted out of step.
@@ -68,9 +68,9 @@ func TestTabStripPaintsTheSameAtEveryDenomination(t *testing.T) {
 	base := paintDenomStrip(t, denomOuter).Image()
 
 	for _, interior := range []core.CellMetrics{
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 32, CellHeight: 64},
-		{CellWidth: 4, CellHeight: 8},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 	} {
 		img := paintDenomStrip(t, interior).Image()
 
@@ -79,16 +79,16 @@ func TestTabStripPaintsTheSameAtEveryDenomination(t *testing.T) {
 		// thing entitled to a different thickness. Everything above it --
 		// every label, every tab shape -- has to land on the same pixels.
 		edgePx := 1
-		if px := int(denomOuter.CellHeight / interior.CellHeight); px > edgePx {
+		if px := int(denomOuter.UnitsPerCellHeight / interior.UnitsPerCellHeight); px > edgePx {
 			edgePx = px
 		}
-		rows := int(denomOuter.CellHeight) - edgePx
+		rows := int(denomOuter.UnitsPerCellHeight) - edgePx
 
 		for y := 0; y < rows; y++ {
 			for x := 0; x < denomSurfaceW; x++ {
 				if img.RGBAAt(x, y) != base.RGBAAt(x, y) {
 					t.Errorf("interior %dx%d: pixel (%d,%d) is %v, want %v (the 8x16 picture)",
-						interior.CellWidth, interior.CellHeight, x, y,
+						interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, x, y,
 						img.RGBAAt(x, y), base.RGBAAt(x, y))
 					y = rows // one report per denomination is enough
 					break
@@ -108,14 +108,14 @@ func TestTabStripPicksTheSameTabAtEveryDenomination(t *testing.T) {
 		want := -1
 		for _, interior := range []core.CellMetrics{
 			denomOuter,
-			{CellWidth: 16, CellHeight: 32},
-			{CellWidth: 32, CellHeight: 64},
-			{CellWidth: 4, CellHeight: 8},
+			{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+			{UnitsPerCellWidth: 32, UnitsPerCellHeight: 64},
+			{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 		} {
 			tabs := newDenomStrip(interior)
 			x := core.ExchangeX(px, denomOuter, interior)
 			tabs.HandleMousePress(core.MousePressEvent{
-				X: x, Y: interior.CellHeight / 2, Button: core.LeftButton,
+				X: x, Y: interior.UnitsPerCellHeight / 2, Button: core.LeftButton,
 			})
 			got := tabs.CurrentIndex()
 			if want == -1 {
@@ -124,7 +124,7 @@ func TestTabStripPicksTheSameTabAtEveryDenomination(t *testing.T) {
 			}
 			if got != want {
 				t.Errorf("px %d: interior %dx%d selected tab %d, want %d (what 8x16 selects)",
-					px, interior.CellWidth, interior.CellHeight, got, want)
+					px, interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, got, want)
 			}
 		}
 	}

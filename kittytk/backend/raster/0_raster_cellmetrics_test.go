@@ -17,8 +17,8 @@ func TestFontSizeLeavesDenominationAt8x16(t *testing.T) {
 	}
 	for _, size := range []int{6, 12, 18, 24} {
 		b.SetFontSize(size)
-		if m := b.Metrics(); m.CellWidth != 8 || m.CellHeight != 16 {
-			t.Fatalf("%dpt denomination = %dx%d, want 8x16", size, m.CellWidth, m.CellHeight)
+		if m := b.Metrics(); m.UnitsPerCellWidth != 8 || m.UnitsPerCellHeight != 16 {
+			t.Fatalf("%dpt denomination = %dx%d, want 8x16", size, m.UnitsPerCellWidth, m.UnitsPerCellHeight)
 		}
 	}
 }
@@ -30,15 +30,15 @@ func TestSetCellMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m := b.Metrics(); m.CellWidth != 8 || m.CellHeight != 16 {
+	if m := b.Metrics(); m.UnitsPerCellWidth != 8 || m.UnitsPerCellHeight != 16 {
 		t.Fatalf("default Metrics = %+v, want 8x16", m)
 	}
-	b.SetCellMetrics(core.CellMetrics{CellWidth: 10, CellHeight: 20})
-	if m := b.Metrics(); m.CellWidth != 10 || m.CellHeight != 20 {
+	b.SetCellMetrics(core.CellMetrics{UnitsPerCellWidth: 10, UnitsPerCellHeight: 20})
+	if m := b.Metrics(); m.UnitsPerCellWidth != 10 || m.UnitsPerCellHeight != 20 {
 		t.Fatalf("after set Metrics = %+v, want 10x20", m)
 	}
-	b.SetCellMetrics(core.CellMetrics{CellWidth: 0, CellHeight: 0})
-	if m := b.Metrics(); m.CellWidth != 1 || m.CellHeight != 1 {
+	b.SetCellMetrics(core.CellMetrics{UnitsPerCellWidth: 0, UnitsPerCellHeight: 0})
+	if m := b.Metrics(); m.UnitsPerCellWidth != 1 || m.UnitsPerCellHeight != 1 {
 		t.Fatalf("degenerate metrics = %+v, want clamped to 1x1", m)
 	}
 }

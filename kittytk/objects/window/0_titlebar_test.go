@@ -11,7 +11,7 @@ import (
 // cells, the same font pointer — so every pre-kit painter's output is
 // reproduced bit for bit.
 func TestTitleBarMetricsIdentityAtScaleOne(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, true)
 	if tm.RowH != 16 || tm.CellW != 8 || tm.ButtonW != 24 || tm.YOff != 0 {
@@ -29,7 +29,7 @@ func TestTitleBarMetricsIdentityAtScaleOne(t *testing.T) {
 func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
 	core.SetTitleBarScale(0.7)
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, true)
 	if tm.RowH != 12 {
@@ -61,7 +61,7 @@ func TestTitleBarMetricsQuantizeOnUnitGrid(t *testing.T) {
 func TestTitleBarMetricsPinCellSurfaces(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
 	core.SetTitleBarScale(0.7)
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 	tm := TitleBarMetricsFor(cell, font, false)
 	if tm.Scale != 1 || tm.RowH != 16 || tm.CellW != 8 || tm.Font != font {
@@ -90,7 +90,7 @@ func TestDecodeTitleGeometry(t *testing.T) {
 	if _, _, _, ok := DecodeTitleGeometry(core.CmdTrinketCancel); ok {
 		t.Error("a non-geometry command decoded as geometry")
 	}
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	if dx, dy := TitleGeometryDelta("Right", false, cell); dx != 8 || dy != 0 {
 		t.Errorf("fine right = (%v,%v), want (8,0)", dx, dy)
 	}
@@ -103,7 +103,7 @@ func TestDecodeTitleGeometry(t *testing.T) {
 // cell, consumes on fire (no tripling), and treats a press a cell away as
 // a fresh first click.
 func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	var tr DoubleClickTracker
 	if tr.Press(100, 50, cell) {
 		t.Error("first press fired")
@@ -135,7 +135,7 @@ func TestDoubleClickTrackerConsumesOnFire(t *testing.T) {
 // that garbage straight on the frame path.
 func TestTitleBarMetricsDoesNotAllocatePerCall(t *testing.T) {
 	t.Cleanup(func() { core.SetTitleBarScale(1) })
-	cell := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	font := &core.Font{Name: "ui-text", Size: 12}
 
 	for _, scale := range []float64{1, 0.7} {

@@ -103,7 +103,7 @@ func (t *TreeView) setCellValue(item *TreeItem, col *TreeColumn, v string) {
 // tree-hosting cell: the indent, the expander cell, and the icon
 // (when the item has one) - mirroring paintTreeCell exactly.
 func (t *TreeView) treeCellTextInset(item *TreeItem) core.Unit {
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	inset := core.Unit(item.Level()*t.indentWidth+1+treeLeftPadCells) * cw
 	if item.Icon != nil && len(item.Icon.Cells) > 0 {
 		inset += cw * 2
@@ -322,7 +322,7 @@ func (t *TreeView) ensureColVisible(col *TreeColumn) {
 		return
 	}
 	lay := t.columnLayout()
-	cw := t.EffectiveCellMetrics().CellWidth
+	cw := t.EffectiveCellMetrics().UnitsPerCellWidth
 	for _, sp := range lay.spans {
 		if !spanMatchesCol(sp, col) {
 			continue
@@ -600,12 +600,12 @@ func (t *TreeView) editorRect() (core.UnitRect, bool) {
 		if !spanMatchesCol(sp, t.editCol) {
 			continue
 		}
-		clip, ok := lay.spanClip(sp, metrics.CellHeight)
+		clip, ok := lay.spanClip(sp, metrics.UnitsPerCellHeight)
 		if !ok {
 			return core.UnitRect{}, false
 		}
-		y := lay.headerH + core.Unit(row)*metrics.CellHeight
-		r := core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.CellHeight}
+		y := lay.headerH + core.Unit(row)*metrics.UnitsPerCellHeight
+		r := core.UnitRect{X: clip.X, Y: y, Width: clip.Width, Height: metrics.UnitsPerCellHeight}
 		// A tree-hosting cell's editor starts where the caption TEXT
 		// starts - past the indent, expander, and icon - so it lines
 		// up with the value it replaces.
@@ -738,7 +738,7 @@ func (t *TreeView) treeCellEditZone(sp colSpan, item *TreeItem) (x0, w core.Unit
 	font := t.EffectiveFont()
 	shown := strings.TrimSuffix(ellipsizeText(font, metrics, text, avail), "…")
 	zone := t.MeasureText(shown)
-	if min := 2 * metrics.CellWidth; zone < min {
+	if min := 2 * metrics.UnitsPerCellWidth; zone < min {
 		zone = min
 	}
 	if zone > avail {
@@ -772,7 +772,7 @@ func (t *TreeView) editableColumnAt(x core.Unit, item *TreeItem) *TreeColumn {
 		} else if !col.Editable {
 			continue
 		}
-		clip, ok := lay.spanClip(sp, metrics.CellHeight)
+		clip, ok := lay.spanClip(sp, metrics.UnitsPerCellHeight)
 		if !ok || x < clip.X || x >= clip.X+clip.Width {
 			continue
 		}
@@ -799,7 +799,7 @@ func (t *TreeView) noteClickEditPress(event core.MousePressEvent) {
 		return
 	}
 	metrics := t.EffectiveCellMetrics()
-	row := t.scrollOffset + int((event.Y-headerH)/metrics.CellHeight)
+	row := t.scrollOffset + int((event.Y-headerH)/metrics.UnitsPerCellHeight)
 	if row != t.currentIndex || row < 0 || row >= len(t.flatList) {
 		return
 	}

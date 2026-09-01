@@ -154,7 +154,7 @@ func TestTreeColumnHostWhenKeyHidden(t *testing.T) {
 		t.Fatal("precondition: root expanded")
 	}
 	tv.HandleMousePress(core.MousePressEvent{
-		X: lay.spans[0].x + core.Unit(treeLeftPadCells)*tv.EffectiveCellMetrics().CellWidth + 2,
+		X: lay.spans[0].x + core.Unit(treeLeftPadCells)*tv.EffectiveCellMetrics().UnitsPerCellWidth + 2,
 		Y: tv.headerHeight() + 2, Button: core.LeftButton,
 	})
 	if root.Expanded {

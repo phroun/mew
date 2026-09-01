@@ -134,10 +134,10 @@ func (p *Panel) Layout() {
 		}
 		if p.border {
 			contentBounds = core.UnitRect{
-				X:      interior.CellWidth,
-				Y:      interior.CellHeight,
-				Width:  contentBounds.Width - 2*interior.CellWidth,
-				Height: contentBounds.Height - 2*interior.CellHeight,
+				X:      interior.UnitsPerCellWidth,
+				Y:      interior.UnitsPerCellHeight,
+				Width:  contentBounds.Width - 2*interior.UnitsPerCellWidth,
+				Height: contentBounds.Height - 2*interior.UnitsPerCellHeight,
 			}
 		}
 		p.layoutManager.Layout(p, contentBounds)
@@ -201,8 +201,8 @@ func (p *Panel) SizeHint() core.UnitSize {
 		sh = core.ExchangeSize(p.layoutManager.SizeHint(p), interior, outer)
 	} else {
 		sh = core.ExchangeSize(core.UnitSize{
-			Width:  interior.CellWidth * defaultSizeCells,
-			Height: interior.CellHeight * defaultContainerHeightCells,
+			Width:  interior.UnitsPerCellWidth * defaultSizeCells,
+			Height: interior.UnitsPerCellHeight * defaultContainerHeightCells,
 		}, interior, outer)
 	}
 	if p.fixedWidth > 0 {
@@ -246,11 +246,11 @@ func (p *Panel) HeightForWidth(width core.Unit) core.Unit {
 	inner := core.ExchangeX(width, outer, interior)
 	var chrome core.Unit
 	if p.border {
-		inner -= 2 * interior.CellWidth
+		inner -= 2 * interior.UnitsPerCellWidth
 		if inner < 0 {
 			inner = 0
 		}
-		chrome = 2 * interior.CellHeight
+		chrome = 2 * interior.UnitsPerCellHeight
 	}
 	return core.ExchangeY(hfw.HeightForWidth(inner)+chrome, interior, outer)
 }

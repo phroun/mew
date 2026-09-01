@@ -565,7 +565,7 @@ func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
 		}
 	}
 	m := t.EffectiveCellMetrics()
-	return m.CellWidth, m.CellHeight
+	return m.UnitsPerCellWidth, m.UnitsPerCellHeight
 }
 
 // SizeHint returns the size a terminal asks for when nothing sets one (see
@@ -575,8 +575,8 @@ func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
 func (t *PurfecTerm) SizeHint() core.UnitSize {
 	metrics := t.EffectiveCellMetrics()
 	return core.UnitSize{
-		Width:  metrics.CellWidth * defaultWideWidthCells,
-		Height: metrics.CellHeight * defaultContainerHeightCells,
+		Width:  metrics.UnitsPerCellWidth * defaultWideWidthCells,
+		Height: metrics.UnitsPerCellHeight * defaultContainerHeightCells,
 	}
 }
 
@@ -1262,7 +1262,7 @@ func (t *PurfecTerm) AccessibleInfo() core.AccessibleInfo {
 // cell holds a bar or a glyph.
 func (t *PurfecTerm) paintScrollbarsCell(p *core.Painter, bounds core.UnitRect) {
 	m := t.EffectiveCellMetrics()
-	cw, ch := m.CellWidth, m.CellHeight
+	cw, ch := m.UnitsPerCellWidth, m.UnitsPerCellHeight
 	if cw <= 0 || ch <= 0 {
 		return
 	}

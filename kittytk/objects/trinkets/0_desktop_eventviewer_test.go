@@ -273,10 +273,10 @@ func TestEventViewerIsCellAligned(t *testing.T) {
 			v    core.Unit
 			cell core.Unit
 		}{
-			{"width", b.Width, m.CellWidth},
-			{"height", b.Height, m.CellHeight},
-			{"x", b.X, m.CellWidth},
-			{"y", b.Y, m.CellHeight},
+			{"width", b.Width, m.UnitsPerCellWidth},
+			{"height", b.Height, m.UnitsPerCellHeight},
+			{"x", b.X, m.UnitsPerCellWidth},
+			{"y", b.Y, m.UnitsPerCellHeight},
 		} {
 			if c.v%c.cell != 0 {
 				t.Errorf("on a %dx%d desktop the viewer's %s is %d, which is %d "+
@@ -350,10 +350,10 @@ func TestEventViewerTreeIsCellAligned(t *testing.T) {
 			return
 		}
 		b := tr.Bounds()
-		if b.X%m.CellWidth != 0 || b.Y%m.CellHeight != 0 ||
-			b.Width%m.CellWidth != 0 || b.Height%m.CellHeight != 0 {
+		if b.X%m.UnitsPerCellWidth != 0 || b.Y%m.UnitsPerCellHeight != 0 ||
+			b.Width%m.UnitsPerCellWidth != 0 || b.Height%m.UnitsPerCellHeight != 0 {
 			t.Errorf("%s (%T) is off the %dx%d cell grid at %+v",
-				path, tr, m.CellWidth, m.CellHeight, b)
+				path, tr, m.UnitsPerCellWidth, m.UnitsPerCellHeight, b)
 		}
 		if ct, ok := tr.(core.Container); ok {
 			for i, c := range ct.Children() {
@@ -387,9 +387,9 @@ func TestEventViewerIsNotSnappedOnASmoothSurface(t *testing.T) {
 		t.Errorf("width = %d, want the exact cap %d - a smooth surface must "+
 			"not be snapped", b.Width, want)
 	}
-	if b.Width%m.CellWidth == 0 {
+	if b.Width%m.UnitsPerCellWidth == 0 {
 		t.Errorf("width %d happens to be cell-aligned, so this proves nothing; "+
 			"pick a desktop size whose cap is not a multiple of %d",
-			b.Width, m.CellWidth)
+			b.Width, m.UnitsPerCellWidth)
 	}
 }

@@ -53,7 +53,7 @@ func TestDockItemHover(t *testing.T) {
 	d.AddEntry(&DockEntry{Title: "two"})
 
 	metrics := d.EffectiveCellMetrics()
-	slot := core.Unit(d.entryWidth) * metrics.CellWidth
+	slot := core.Unit(d.entryWidth) * metrics.UnitsPerCellWidth
 
 	// Middle of the second slot.
 	d.HandleMouseMove(core.MouseMoveEvent{X: slot + slot/2, Y: 0})
@@ -62,7 +62,7 @@ func TestDockItemHover(t *testing.T) {
 	}
 
 	// Below the row: no entry.
-	d.HandleMouseMove(core.MouseMoveEvent{X: slot + slot/2, Y: metrics.CellHeight + 1})
+	d.HandleMouseMove(core.MouseMoveEvent{X: slot + slot/2, Y: metrics.UnitsPerCellHeight + 1})
 	if d.hoverIndex != -1 {
 		t.Errorf("hoverIndex = %d after leaving, want -1", d.hoverIndex)
 	}
@@ -135,13 +135,13 @@ func TestMenuBarItemHover(t *testing.T) {
 
 	// Somewhere well inside the first item's title.
 	metrics := m.EffectiveCellMetrics()
-	m.HandleMouseMove(core.MouseMoveEvent{X: m.leftInset() + metrics.CellWidth, Y: 0})
+	m.HandleMouseMove(core.MouseMoveEvent{X: m.leftInset() + metrics.UnitsPerCellWidth, Y: 0})
 	if m.hoverIndex != 0 {
 		t.Errorf("hoverIndex = %d, want 0", m.hoverIndex)
 	}
 
 	// Below the bar row: cleared.
-	m.HandleMouseMove(core.MouseMoveEvent{X: m.leftInset() + metrics.CellWidth, Y: metrics.CellHeight + 1})
+	m.HandleMouseMove(core.MouseMoveEvent{X: m.leftInset() + metrics.UnitsPerCellWidth, Y: metrics.UnitsPerCellHeight + 1})
 	if m.hoverIndex != -1 {
 		t.Errorf("hoverIndex = %d after leaving the bar, want -1", m.hoverIndex)
 	}

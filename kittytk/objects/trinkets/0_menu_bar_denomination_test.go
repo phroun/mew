@@ -47,13 +47,13 @@ func glyphColumns(b *raster.Backend, w, barW, rowPx int) []int {
 // was wrong.
 func TestMenuBarPaintsTheSameAtEveryDenomination(t *testing.T) {
 	const W, H = 420, 40
-	outer := core.CellMetrics{CellWidth: 8, CellHeight: 16}
+	outer := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 
 	var base []int
 	for _, interior := range []core.CellMetrics{
-		{CellWidth: 8, CellHeight: 16},
-		{CellWidth: 16, CellHeight: 32},
-		{CellWidth: 4, CellHeight: 8},
+		{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16},
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
 	} {
 		b, err := raster.New(W, H)
 		if err != nil {
@@ -68,7 +68,7 @@ func TestMenuBarPaintsTheSameAtEveryDenomination(t *testing.T) {
 			m.AddMenu(NewMenu(title))
 		}
 		m.SetCellMetrics(&interior)
-		m.SetBounds(core.UnitRect{Width: 400 * interior.CellWidth / outer.CellWidth, Height: interior.CellHeight})
+		m.SetBounds(core.UnitRect{Width: 400 * interior.UnitsPerCellWidth / outer.UnitsPerCellWidth, Height: interior.UnitsPerCellHeight})
 
 		p := core.NewPainter(b).WithDenomination(outer, interior)
 		m.Paint(p)
@@ -80,13 +80,13 @@ func TestMenuBarPaintsTheSameAtEveryDenomination(t *testing.T) {
 		}
 		if len(got) != len(base) {
 			t.Errorf("interior %dx%d painted %d ink columns, want %d (the 8x16 picture)",
-				interior.CellWidth, interior.CellHeight, len(got), len(base))
+				interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, len(got), len(base))
 			continue
 		}
 		for i := range base {
 			if got[i] != base[i] {
 				t.Errorf("interior %dx%d: ink column %d at px %d, want %d",
-					interior.CellWidth, interior.CellHeight, i, got[i], base[i])
+					interior.UnitsPerCellWidth, interior.UnitsPerCellHeight, i, got[i], base[i])
 				break
 			}
 		}

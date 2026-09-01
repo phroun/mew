@@ -39,7 +39,7 @@ func newGraphicalMenu() *Menu {
 // right items across the thin separator.
 func TestMenuGraphicalSeparatorLayout(t *testing.T) {
 	m := newGraphicalMenu()
-	cellH := m.EffectiveCellMetrics().CellHeight
+	cellH := m.EffectiveCellMetrics().UnitsPerCellHeight
 
 	// Height = 3 text rows + 1 thin separator band, not 4 full rows.
 	if got, full := m.calculateSize().Height, cellH*4; got >= full {
@@ -82,7 +82,7 @@ func TestMenuUnparentedGraphicalAfterPaint(t *testing.T) {
 	m.AddSeparator()
 	m.AddItem(NewMenuItem("Quit"))
 	m.Show(0, 0)
-	cellH := m.EffectiveCellMetrics().CellHeight
+	cellH := m.EffectiveCellMetrics().UnitsPerCellHeight
 
 	// Before any paint the orphan can't tell it's graphical.
 	if got := m.calculateSize().Height; got != cellH*4 {
