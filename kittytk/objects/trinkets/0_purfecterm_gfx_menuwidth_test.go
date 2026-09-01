@@ -79,3 +79,60 @@ func TestContextMenuWidthFollowsTheDenomination(t *testing.T) {
 		}
 	}
 }
+
+// A menu row is a grid row, and the thin bits between the rows are fractions of
+// a cell -- so all of them follow the denomination, and the menu is the same
+// shape on the glass wherever its units are counted.
+//
+// The graphical layout was written in raw units (16, 4, 2, 8), which are those
+// fractions only at 8x16: at 16x32 a row came out half a character tall.
+func TestContextMenuLayoutFollowsTheDenomination(t *testing.T) {
+	font := core.DefaultFont()
+	items := []termMenuItem{{label: "Copy"}, {separator: true}, {label: "Paste"}}
+
+	// Unchanged where it always was: the values this layout has always had.
+	at816 := termMenuLayoutFrom(true, font, core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}, items)
+	for _, c := range []struct {
+		what string
+		got  core.Unit
+		want core.Unit
+	}{
+		{"row", at816.rowH, 16},
+		{"separator band", at816.sepH, 4},
+		{"top padding", at816.padTop, 2},
+		{"indent", at816.indent, 8},
+	} {
+		if c.got != c.want {
+			t.Errorf("at 8x16 the %s is %d, want %d", c.what, c.got, c.want)
+		}
+	}
+
+	// And in step with the cell everywhere else.
+	for _, m := range []core.CellMetrics{
+		{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32},
+		{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8},
+		{UnitsPerCellWidth: 24, UnitsPerCellHeight: 48},
+	} {
+		lay := termMenuLayoutFrom(true, font, m, items)
+		if lay.rowH != m.UnitsPerCellHeight {
+			t.Errorf("at %dx%d a row is %d units, want one grid row (%d)",
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, lay.rowH, m.UnitsPerCellHeight)
+		}
+		if lay.sepH != m.UnitsPerCellHeight/4 {
+			t.Errorf("at %dx%d the separator band is %d units, want a quarter row (%d)",
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, lay.sepH, m.UnitsPerCellHeight/4)
+		}
+		if lay.indent != m.UnitsPerCellWidth {
+			t.Errorf("at %dx%d the indent is %d units, want one cell (%d)",
+				m.UnitsPerCellWidth, m.UnitsPerCellHeight, lay.indent, m.UnitsPerCellWidth)
+		}
+	}
+
+	// A text surface keeps its own rule: a row and a separator are both a full
+	// character row, because nothing there can be thinner than a character.
+	m := core.CellMetrics{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32}
+	if cell := termMenuLayoutFrom(false, font, m, items); cell.rowH != 32 || cell.sepH != 32 {
+		t.Errorf("on a text surface the rows are %dx%d, want a full row for both",
+			cell.rowH, cell.sepH)
+	}
+}

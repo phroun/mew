@@ -1949,19 +1949,18 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		return
 	}
 	items := t.contextMenuItems()
-	// The same presentation PurfecTerm's menu uses, sized the same way: the
-	// widest label as the font draws it, in the screen's denomination.
-	const menuIndent = core.Unit(8)
-	menuWidth := termMenuWidth(t.EffectiveFont(), termMenuScreenMetrics(pc), menuIndent, items)
+	// The same menu PurfecTerm opens, measured by the same function.
+	lay := termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
+		termMenuScreenMetrics(pc), items)
 	height := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
-			height += 4
+			height += lay.sepH
 		} else {
-			height += gfxMenuItemHeight
+			height += lay.rowH
 		}
 	}
-	height += 4 // padding
+	height += 2 * lay.padTop
 	// Screen placement: an embedded input maps through its HOST (its
 	// own parentless bounds mean nothing to the controller).
 	local := core.UnitPoint{X: event.X, Y: event.Y}
@@ -1974,21 +1973,21 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 	}
 	at := pc.MapToScreen(target, local)
 	screen := pc.ScreenBounds()
-	if at.X+menuWidth > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - menuWidth
+	if at.X+lay.width > screen.X+screen.Width {
+		at.X = screen.X + screen.Width - lay.width
 	}
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: menuWidth, Height: height}
+	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: lay.width, Height: height}
 	t.menuHover = -1
 
 	itemAt := func(y core.Unit) int {
-		pos := core.Unit(2)
+		pos := lay.padTop
 		for i, it := range items {
-			h := gfxMenuItemHeight
+			h := lay.rowH
 			if it.separator {
-				h = 4
+				h = lay.sepH
 			}
 			if y >= pos && y < pos+h {
 				if it.separator {
@@ -2014,12 +2013,15 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 				lineStyle := style.DefaultStyle().WithBg(t.GetScheme().GetMenuSeparator().Fg)
 				paintPopupOuterStroke(p, menuBounds, p.DeviceScale(), lineStyle, 0, 0, false)
 			}
-			pos := menuBounds.Y + 2
+			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {
-					p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
-						style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
-					pos += 4
+					inset := lay.indent / 2
+					p.FillRect(core.UnitRect{
+						X: menuBounds.X + inset, Y: pos + lay.sepH/2,
+						Width: menuBounds.Width - inset*2, Height: p.HairlineHeight(),
+					}, ' ', style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+					pos += lay.sepH
 					continue
 				}
 				st := bg
@@ -2027,14 +2029,14 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 					st = bg.WithFg(style.RGB(150, 150, 150))
 				} else if i == t.menuHover {
 					st = hover
-					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: gfxMenuItemHeight}, ' ', st)
+					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
 				}
 				// Explicit bg: transparent resolves to the terminal's dark
 				// default on the text backend (dark boxes behind the labels);
 				// the explicit bg equals the fill/hover color, so the
 				// graphical look is unchanged.
-				p.DrawText(menuBounds.X+menuIndent, pos, termMenuLabel(it), st, nil)
-				pos += gfxMenuItemHeight
+				p.DrawText(menuBounds.X+lay.indent, pos, termMenuLabel(it), st, nil)
+				pos += lay.rowH
 			}
 		},
 		HandleMouseMove: func(event core.MouseMoveEvent) bool {

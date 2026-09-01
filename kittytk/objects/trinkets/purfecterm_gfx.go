@@ -48,8 +48,7 @@ var arabicGeomOnce sync.Once
 const (
 	// Overlay lane thickness: one layout column, matching every other
 	// scrollbar in the toolkit.
-	gfxScrollbarLane  = core.Unit(8)
-	gfxMenuItemHeight = core.Unit(16) // context menu row height
+	gfxScrollbarLane = core.Unit(8)
 )
 
 // purfecTermGfx is the graphical-path state carried by PurfecTerm.
@@ -3373,15 +3372,24 @@ func termMenuWidth(font *core.Font, m core.CellMetrics, indent core.Unit, items 
 	return width
 }
 
-func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
-	m := termMenuScreenMetrics(pc)
-	if core.FindGraphicalFrames(t) {
-		const indent = core.Unit(8)
+// termMenuLayoutFrom measures a popup context menu in the denomination it will
+// be drawn in. PurfecTerm's menu and TextInput's are the same menu, so they are
+// measured by the same function.
+//
+// A row is a row on either surface: one grid row, which is what
+// UnitsPerCellHeight says. The graphical one differs in what it puts BETWEEN
+// the rows -- a thin separator band and a little padding, both fractions of a
+// cell rather than a full one -- and a cell is a fixed physical size, so
+// stating them against it is what keeps them that thickness at every
+// denomination. At 8x16 they are the 16, 4, 2 and 8 they have always been.
+func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, items []termMenuItem) termMenuLayout {
+	if graphical {
+		indent := m.UnitsPerCellWidth
 		return termMenuLayout{
-			rowH:      gfxMenuItemHeight,
-			sepH:      4,
-			width:     termMenuWidth(t.EffectiveFont(), m, indent, items),
-			padTop:    2,
+			rowH:      m.UnitsPerCellHeight,
+			sepH:      m.UnitsPerCellHeight / 4,
+			width:     termMenuWidth(font, m, indent, items),
+			padTop:    m.UnitsPerCellHeight / 8,
 			indent:    indent,
 			graphical: true,
 		}
@@ -3399,6 +3407,11 @@ func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenu
 		indent: m.UnitsPerCellWidth, // one cell in
 		// no sub-cell padding: rows land exactly on character rows
 	}
+}
+
+func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
+	return termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
+		termMenuScreenMetrics(pc), items)
 }
 
 // showTermItemsMenu opens a context menu of the given items as a popup
@@ -3471,8 +3484,11 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			for i, it := range items {
 				if it.separator {
 					if lay.graphical {
-						p.FillRect(core.UnitRect{X: menuBounds.X + 4, Y: pos + 2, Width: menuBounds.Width - 8, Height: 1}, ' ',
-							style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+						inset := lay.indent / 2
+						p.FillRect(core.UnitRect{
+							X: menuBounds.X + inset, Y: pos + lay.sepH/2,
+							Width: menuBounds.Width - inset*2, Height: p.HairlineHeight(),
+						}, ' ', style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
 					} else {
 						// Text cells: a full dim rule row.
 						p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.sepH}, '─',
