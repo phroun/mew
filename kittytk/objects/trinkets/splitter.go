@@ -464,17 +464,12 @@ func (sp *Splitter) paintDividerGraphical(p *core.Painter, divider core.UnitRect
 	line := dividerStyle.WithBg(dividerStyle.Fg)
 	p.FillRect(divider, ' ', dividerStyle)
 
-	// Hairline thickness and dot sizes are screen-space quantities:
-	// inside a re-denominated interior, a 1-local-unit line would
-	// scale below one pixel and vanish.
-	hairW := p.ScreenWidthToLocal(1)
-	if hairW < 1 {
-		hairW = 1
-	}
-	hairH := p.ScreenHeightToLocal(1)
-	if hairH < 1 {
-		hairH = 1
-	}
+	// Hairline thickness and dot sizes are screen-space quantities, so they
+	// hold their physical size under re-denomination. The hairlines go through
+	// HairlineWidth/Height, which also keeps them on the glass: the converted
+	// count can span no device pixel at all, and the line vanishes.
+	hairW := p.HairlineWidth()
+	hairH := p.HairlineHeight()
 
 	if sp.orientation == core.Horizontal {
 		// Vertical band: hairline down the middle, broken by the ':'

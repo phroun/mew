@@ -1949,6 +1949,10 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 		return
 	}
 	items := t.contextMenuItems()
+	// The same presentation PurfecTerm's menu uses, sized the same way: the
+	// widest label as the font draws it, in the screen's denomination.
+	const menuIndent = core.Unit(8)
+	menuWidth := termMenuWidth(t.EffectiveFont(), termMenuScreenMetrics(pc), menuIndent, items)
 	height := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
@@ -1970,13 +1974,13 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 	}
 	at := pc.MapToScreen(target, local)
 	screen := pc.ScreenBounds()
-	if at.X+gfxMenuWidth > screen.X+screen.Width {
-		at.X = screen.X + screen.Width - gfxMenuWidth
+	if at.X+menuWidth > screen.X+screen.Width {
+		at.X = screen.X + screen.Width - menuWidth
 	}
 	if at.Y+height > screen.Y+screen.Height {
 		at.Y = screen.Y + screen.Height - height
 	}
-	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: gfxMenuWidth, Height: height}
+	menuBounds := core.UnitRect{X: at.X, Y: at.Y, Width: menuWidth, Height: height}
 	t.menuHover = -1
 
 	itemAt := func(y core.Unit) int {
@@ -2029,7 +2033,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 				// default on the text backend (dark boxes behind the labels);
 				// the explicit bg equals the fill/hover color, so the
 				// graphical look is unchanged.
-				p.DrawText(menuBounds.X+8, pos, it.label, st, nil)
+				p.DrawText(menuBounds.X+menuIndent, pos, termMenuLabel(it), st, nil)
 				pos += gfxMenuItemHeight
 			}
 		},

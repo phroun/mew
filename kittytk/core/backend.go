@@ -1338,6 +1338,44 @@ func (p *Painter) ScreenWidthToLocal(w Unit) Unit {
 	return r.Width
 }
 
+// HairlineWidth is the thinnest local width that still paints, and
+// HairlineHeight is the same down the page.
+//
+// One screen unit converted into local units is the physical thickness wanted,
+// but the conversion answers in whole units and the count it lands on can span
+// no device pixel at all: inside an interior at column_units=12 a local unit is
+// two-thirds of a pixel, so a 1-unit fill paints NOTHING and the rule, the
+// divider, the line is simply absent. Clamping the unit count at 1 does not
+// reach it -- 1 was already the answer -- so the floor belongs on the pixels,
+// which is what these put it on.
+//
+// A separator's rule and a splitter's divider are drawn with these.
+func (p *Painter) HairlineWidth() Unit {
+	return p.hairline(p.ScreenWidthToLocal(1), func(u Unit) int { return p.UnitSpanPxX(0, u) })
+}
+
+// HairlineHeight is HairlineWidth for the Y axis.
+func (p *Painter) HairlineHeight() Unit {
+	return p.hairline(p.ScreenHeightToLocal(1), func(u Unit) int { return p.UnitSpanPxY(0, u) })
+}
+
+// hairline grows a local thickness until it spans a device pixel.
+//
+// It counts up rather than scaling: the span is the backend's own snapped
+// geometry, not a ratio to compute against, and the answer is a unit or two in
+// every denomination a surface is likely to carry. The cap is there so a
+// backend that reports no pixels for any span ends the loop rather than
+// running it out.
+func (p *Painter) hairline(u Unit, spanPx func(Unit) int) Unit {
+	if u < 1 {
+		u = 1
+	}
+	for i := 0; i < 64 && spanPx(u) < 1; i++ {
+		u++
+	}
+	return u
+}
+
 // DrawText draws a string using the specified font.
 // If font is nil, uses DefaultFont().
 func (p *Painter) DrawText(x, y Unit, text string, s style.CellStyle, font *Font) Unit {

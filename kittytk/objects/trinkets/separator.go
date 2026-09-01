@@ -158,10 +158,7 @@ func (s *LineSeparator) Paint(p *core.Painter) {
 // exactly-centered title in the 75% caption face.
 func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	hairH := p.ScreenHeightToLocal(1)
-	if hairH < 1 {
-		hairH = 1
-	}
+	hairH := p.HairlineHeight()
 	midY := (bounds.Height - hairH) / 2
 	if s.title == "" {
 		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: hairH}, ' ', line)
@@ -190,10 +187,7 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 // title runes in the 75% caption face.
 func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.UnitRect, lineStyle, titleStyle style.CellStyle) {
 	line := lineStyle.WithBg(lineStyle.Fg)
-	hairW := p.ScreenWidthToLocal(1)
-	if hairW < 1 {
-		hairW = 1
-	}
+	hairW := p.HairlineWidth()
 	midX := (bounds.Width - hairW) / 2
 	if s.title == "" {
 		p.FillRect(core.UnitRect{X: midX, Width: hairW, Height: bounds.Height}, ' ', line)

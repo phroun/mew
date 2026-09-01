@@ -50,7 +50,6 @@ const (
 	// scrollbar in the toolkit.
 	gfxScrollbarLane  = core.Unit(8)
 	gfxMenuItemHeight = core.Unit(16) // context menu row height
-	gfxMenuWidth      = core.Unit(150)
 )
 
 // purfecTermGfx is the graphical-path state carried by PurfecTerm.
@@ -3318,17 +3317,73 @@ type termMenuLayout struct {
 	graphical                         bool
 }
 
-func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
-	if core.FindGraphicalFrames(t) {
-		return termMenuLayout{rowH: gfxMenuItemHeight, sepH: 4, width: gfxMenuWidth, padTop: 2, indent: 8, graphical: true}
+// termMenuLabel is what an item actually draws. A checkable item keeps the
+// tick's room whether or not it is ticked, so ticking one does not shift its
+// text sideways.
+//
+// One function for the measuring and the painting, so a menu is never given a
+// width that does not hold the labels it goes on to draw.
+func termMenuLabel(it termMenuItem) string {
+	if it.checked == nil {
+		return it.label
 	}
-	// Popups are desktop-surface overlays: like the ComboBox popup, measure
-	// in the SCREEN's denomination (the popup controller's cell metrics),
-	// not this trinket's possibly re-denominated interior.
-	m := core.DefaultCellMetrics()
+	if it.checked() {
+		return "✓ " + it.label
+	}
+	return "  " + it.label
+}
+
+// termMenuScreenMetrics is the denomination a popup is measured in. Popups are
+// desktop-surface overlays: like the ComboBox popup, they follow the SCREEN's
+// cell metrics rather than the possibly re-denominated interior of the trinket
+// that opened them.
+func termMenuScreenMetrics(pc core.PopupController) core.CellMetrics {
 	if sm, ok := pc.(interface{ ScreenCellMetrics() core.CellMetrics }); ok {
 		if s := sm.ScreenCellMetrics(); s.UnitsPerCellWidth > 0 && s.UnitsPerCellHeight > 0 {
-			m = s
+			return s
+		}
+	}
+	return core.DefaultCellMetrics()
+}
+
+// termMenuWidth is a popup context menu's width: the widest label as the FONT
+// draws it, with the indent it is drawn at kept on the far side too.
+//
+// Menu.calculateSize sizes a dropdown this way -- measured text, cell-based
+// padding around it -- so a context menu and a menu-bar menu read as one menu
+// system. A fixed width cannot: it clips the labels that outgrow it, leaves a
+// gutter beside the ones that do not, and means a different number of columns
+// at every denomination.
+func termMenuWidth(font *core.Font, m core.CellMetrics, indent core.Unit, items []termMenuItem) core.Unit {
+	widest := core.Unit(0)
+	for _, it := range items {
+		if it.separator {
+			continue
+		}
+		if w := font.MeasureTextIn(termMenuLabel(it), m); w > widest {
+			widest = w
+		}
+	}
+	width := widest + indent*2
+	// Below this it reads as a mistake rather than a menu, so a handful of
+	// one-word items still gets a menu-shaped popup.
+	if floor := m.UnitsPerCellWidth * 12; width < floor {
+		width = floor
+	}
+	return width
+}
+
+func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
+	m := termMenuScreenMetrics(pc)
+	if core.FindGraphicalFrames(t) {
+		const indent = core.Unit(8)
+		return termMenuLayout{
+			rowH:      gfxMenuItemHeight,
+			sepH:      4,
+			width:     termMenuWidth(t.EffectiveFont(), m, indent, items),
+			padTop:    2,
+			indent:    indent,
+			graphical: true,
 		}
 	}
 	cols := 12
@@ -3431,14 +3486,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 					st = hover
 					p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.rowH}, ' ', st)
 				}
-				label := it.label
-				if it.checked != nil {
-					if it.checked() {
-						label = "✓ " + label
-					} else {
-						label = "  " + label
-					}
-				}
+				label := termMenuLabel(it)
 				// Draw with the style's EXPLICIT background: a transparent bg
 				// composites correctly on the graphical backend but resolves to
 				// the terminal's default (dark) background on the text backend,
