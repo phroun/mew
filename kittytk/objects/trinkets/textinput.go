@@ -572,6 +572,12 @@ func (t *TextInput) Paint(p *core.Painter) {
 	focused := t.HasFocus()
 	font := t.EffectiveFont()
 
+	// A field is one line of text tall, and a line is one grid row. The
+	// device-pixel fills below (highlight, block caret, bar caret) span that
+	// row, measured end to end so they land on the same device grid the
+	// glyphs beside them paint on.
+	rowHPx := p.UnitSpanPxY(0, t.EffectiveCellMetrics().UnitsPerCellHeight)
+
 	// Get inherited background color to determine pane type
 	inheritedBg := t.EffectiveBackgroundColor()
 	paneType := style.GetPaneType(inheritedBg)
@@ -769,7 +775,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 			}
 		}
 		if usePx {
-			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, p.UnitsToPx(font.LineHeight()), selStyle)
+			p.FillRectPixels(0, 0, loPx, 0, hiPx-loPx, rowHPx, selStyle)
 			selFg := selStyle.WithBg(style.ColorTransparent) // glyphs over the highlight
 			p.DrawTextOffsetClipped(0, 0, 0, loPx, hiPx, string(displayText), selFg, font)
 		} else {
@@ -827,8 +833,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 			if thin < 1 {
 				thin = 1
 			}
-			lineH := p.UnitsToPx(font.LineHeight())
-			ruleY := lineH - thin
+			ruleY := rowHPx - thin
 			if ruleY < 0 {
 				ruleY = 0
 			}
@@ -934,7 +939,7 @@ func (t *TextInput) Paint(p *core.Painter) {
 				block := blockCaretStyle(s, selStyle, fillStyle.Bg, overSel)
 				if usePx {
 					p.FillRectPixels(0, 0, caretXPx, 0, endPx-caretXPx,
-						p.UnitsToPx(font.LineHeight()), block)
+						rowHPx, block)
 					p.DrawTextOffsetClipped(0, 0, 0, caretXPx, endPx,
 						string(displayText), block.WithBg(style.ColorTransparent), font)
 				} else {
@@ -951,11 +956,11 @@ func (t *TextInput) Paint(p *core.Painter) {
 					// glyphs painted at, so it sits exactly on the boundary
 					// before the cursor's character.
 					drawn = p.FillRectPixels(0, 0, caretXPx, 0,
-						p.DeviceScale(), p.UnitsToPx(font.LineHeight()), barStyle)
+						p.DeviceScale(), rowHPx, barStyle)
 				}
 				if !drawn {
 					// Cell surfaces fall back to the reverse-video block.
-					if !p.DrawCaret(caretX, 0, font.LineHeight(), barStyle) {
+					if !p.DrawCaret(caretX, 0, t.EffectiveCellMetrics().UnitsPerCellHeight, barStyle) {
 						// The character under the block comes from the run
 						// actually on screen. Indexing the COMMITTED text
 						// by cursorPos agreed with this for as long as the

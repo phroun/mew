@@ -1546,7 +1546,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			shortcutX := m.popupX + size.Width - shortcutWidth - rightPad
 			shortcutY := itemY
 			if sf != font {
-				if dy := (font.LineHeight() - sf.LineHeight()) / 2; dy > 0 {
+				if dy := (metrics.UnitsPerCellHeight - core.LineUnits(sf, font, metrics)) / 2; dy > 0 {
 					shortcutY += dy
 				}
 			}
@@ -3192,7 +3192,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		}, ' ', dateTimeStyle)
 
 		if f := m.dateTimeFont(); f != nil {
-			y := (metrics.UnitsPerCellHeight - f.LineHeight()) / 2
+			y := (metrics.UnitsPerCellHeight - core.LineUnits(f, m.EffectiveFont(), metrics)) / 2
 			if y < 0 {
 				y = 0
 			}

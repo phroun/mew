@@ -167,10 +167,12 @@ func (s *LineSeparator) paintHorizontalGraphical(p *core.Painter, bounds core.Un
 		p.FillRect(core.UnitRect{Y: midY, Width: bounds.Width, Height: hairH}, ' ', line)
 		return
 	}
-	font := captionFont75(s.EffectiveFont())
-	// Font metrics are screen-space (see ScreenHeightToLocal).
+	base := s.EffectiveFont()
+	font := captionFont75(base)
+	// Width comes back screen-space (see ScreenWidthToLocal). The line the
+	// caption occupies is three quarters of a grid row, already local.
 	w := p.ScreenWidthToLocal(font.MeasureText(s.title))
-	h := p.ScreenHeightToLocal(font.LineHeight())
+	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
 	pad := p.ScreenWidthToLocal(6)
 	boxW := w + pad*2
 	if boxW > bounds.Width {
@@ -197,8 +199,9 @@ func (s *LineSeparator) paintVerticalGraphical(p *core.Painter, bounds core.Unit
 		p.FillRect(core.UnitRect{X: midX, Width: hairW, Height: bounds.Height}, ' ', line)
 		return
 	}
-	font := captionFont75(s.EffectiveFont())
-	h := p.ScreenHeightToLocal(font.LineHeight())
+	base := s.EffectiveFont()
+	font := captionFont75(base)
+	h := core.LineUnits(font, base, s.EffectiveCellMetrics())
 	runes := []rune(s.title)
 	pad := p.ScreenHeightToLocal(4)
 	boxH := core.Unit(len(runes))*h + pad*2

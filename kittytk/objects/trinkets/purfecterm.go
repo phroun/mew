@@ -548,23 +548,25 @@ func (t *PurfecTerm) renderTermFont() *core.Font {
 
 // cellDims returns the terminal's cell size in units.
 //
-// On graphical targets the grid must follow the real font: the cell is
-// the effective terminal font's measured advance width and line height
-// at its point size (answered by the render target - G1), so glyphs and
-// the grid share one pitch. On the text-based system a cell is a
-// character cell, so the inherited denomination (which a container may
-// override) governs - and there MeasureText answers in cell units
-// anyway, keeping the two paths identical for the default font.
+// Across, a graphical target must follow the real font, so the cell is the
+// effective terminal font's measured advance (answered by the render target
+// - G1, in the inherited denomination) and glyphs and grid share one pitch.
+// On the text-based system a character is a cell, so the denomination
+// governs directly.
+//
+// Down, a row of terminal text is a grid row, and a grid row is
+// UnitsPerCellHeight units -- scaled when SetTerminalFontSize has put the
+// terminal on a face deliberately larger or smaller than the surface's own,
+// which is the one thing that makes its rows a different height from the
+// rows around it.
 func (t *PurfecTerm) cellDims() (cw, ch core.Unit) {
+	m := t.EffectiveCellMetrics()
 	if core.HasTextMeasurer() {
 		f := t.renderTermFont()
-		cw = f.MeasureText("M")
-		ch = f.LineHeight()
-		if cw > 0 && ch > 0 {
-			return cw, ch
+		if w := f.MeasureTextIn("M", m); w > 0 {
+			return w, core.LineUnits(f, t.EffectiveFont(), m)
 		}
 	}
-	m := t.EffectiveCellMetrics()
 	return m.UnitsPerCellWidth, m.UnitsPerCellHeight
 }
 

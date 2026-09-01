@@ -22,8 +22,6 @@ func (wideIMeasurer) MeasureText(f *core.Font, text string) core.Unit {
 	return total
 }
 
-func (wideIMeasurer) LineHeight(*core.Font) core.Unit { return 16 }
-
 // The elided title's fit is measured in the SAME font it renders with.
 // A monospace (cells × cell-width) calculation cuts a proportional title
 // at the wrong glyph: too early for narrow letters, too late for wide

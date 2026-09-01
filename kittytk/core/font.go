@@ -18,7 +18,6 @@ import (
 // disagree.
 type TextMeasurer interface {
 	MeasureText(f *Font, text string) Unit
-	LineHeight(f *Font) Unit
 }
 
 // DenominatedTextMeasurer is the optional extension a measurer implements
@@ -53,8 +52,8 @@ func currentTextMeasurer() TextMeasurer {
 
 // HasTextMeasurer reports whether a graphical render target has installed
 // a text measurer - i.e. the process renders on a pixel backend where
-// MeasureText/LineHeight answer with real font metrics rather than
-// text-mode cell arithmetic. It is the process-wide graphical/text-mode
+// MeasureText answers with real font metrics rather than text-mode
+// cell arithmetic. It is the process-wide graphical/text-mode
 // signal (one render target per process).
 func HasTextMeasurer() bool {
 	return currentTextMeasurer() != nil
@@ -173,15 +172,22 @@ func DefaultFont() *Font {
 	return FontUIText12
 }
 
-// LineHeight returns the height of a line of text in units.
-// The answer comes from the render target: cell height on the
-// text-based system, font metrics on a graphical one.
-func (f *Font) LineHeight() Unit {
-	if m := currentTextMeasurer(); m != nil {
-		return m.LineHeight(f)
+// LineUnits is how many units one line of text occupies.
+//
+// A line is a grid row, and a grid row is UnitsPerCellHeight units: that is
+// what the denomination says. Point size does not enter into it -- it sets
+// how big the cell is on the glass, not how finely a layout divides it.
+//
+// The exception is a face deliberately smaller or larger than the one the
+// surface is laid out in: the 75% caption in a separator's title gap, the
+// 80% shortcut in a menu row, the menu bar's clock. Such a face fills that
+// same fraction of a row, which is what surface is for. Pass the same font
+// twice, or nil, for a full row.
+func LineUnits(f, surface *Font, m CellMetrics) Unit {
+	if f == nil || surface == nil || surface.Size <= 0 || f.Size == surface.Size {
+		return m.UnitsPerCellHeight
 	}
-	// Text-based system: every line is one cell row (16 units).
-	return 16
+	return Unit(int(m.UnitsPerCellHeight) * f.Size / surface.Size)
 }
 
 // MeasureTextIn returns the width of text in the units of the given

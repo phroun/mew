@@ -30,3 +30,43 @@ func TestMeasureRunesIsFontSizeInvariant(t *testing.T) {
 		}
 	}
 }
+
+// A line of text is a grid row, so it is UnitsPerCellHeight units -- the
+// denomination's answer, not the font's. Point size sets how big the cell is
+// on the glass; it does not change how many units divide it.
+func TestLineUnitsIsTheDenominationNotThePointSize(t *testing.T) {
+	base := &Font{Name: "ui-text", Size: 12}
+	huge := &Font{Name: "ui-text", Size: 48}
+
+	for _, rowUnits := range []Unit{1, 8, 16, 32} {
+		m := CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: rowUnits}
+		if got := LineUnits(base, base, m); got != rowUnits {
+			t.Errorf("row_units=%d: a line of the surface's own face = %d, want %d",
+				rowUnits, got, rowUnits)
+		}
+		// The surface laid out in the same face it renders: still one row.
+		if got := LineUnits(huge, huge, m); got != rowUnits {
+			t.Errorf("row_units=%d: 48pt everywhere = %d units, want one row (%d)",
+				rowUnits, got, rowUnits)
+		}
+		if got := LineUnits(nil, base, m); got != rowUnits {
+			t.Errorf("row_units=%d: no face named = %d, want one row (%d)",
+				rowUnits, got, rowUnits)
+		}
+	}
+}
+
+// A face deliberately off the surface's own size -- a 75% separator caption,
+// an 80% menu shortcut -- fills that fraction of the row, so the surface it
+// sits in still governs the scale.
+func TestLineUnitsScalesAFaceThatDiffersFromTheSurface(t *testing.T) {
+	base := &Font{Name: "ui-text", Size: 12}
+	caption := &Font{Name: "ui-text", Size: 9} // 75%
+
+	for _, tc := range []struct{ rowUnits, want Unit }{{8, 6}, {16, 12}, {32, 24}} {
+		m := CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: tc.rowUnits}
+		if got := LineUnits(caption, base, m); got != tc.want {
+			t.Errorf("row_units=%d: 75%% caption line = %d, want %d", tc.rowUnits, got, tc.want)
+		}
+	}
+}

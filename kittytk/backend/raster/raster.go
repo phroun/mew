@@ -789,8 +789,10 @@ func (b *Backend) MeasureTextPx(s string, f *core.Font) int {
 	return engine().MeasurePx(f, s, b.pxPerUnit())
 }
 
-// LineHeight implements core.TextMeasurer: Size * 4/3 units by the
-// engine's denomination (12pt = 16 units = one default cell row).
+// LineHeight is the font's line budget in default-denomination units
+// (Size * 4/3, so 12pt = 16 = one default cell row). It is a font metric,
+// not a layout answer: how many units a LINE occupies is the denomination's
+// UnitsPerCellHeight (see core.LineUnits).
 func (b *Backend) LineHeight(f *core.Font) core.Unit {
 	return engine().LineHeight(f)
 }

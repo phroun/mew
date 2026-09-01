@@ -8,12 +8,14 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// On a graphical target the terminal's cell grid must follow the real
-// monospace font's measured advance and line height - not the toolkit's
-// 8x16 unit denomination. Previously the default (no explicit terminal
-// font) inherited 8x16 while the glyphs rendered from the 7-wide "Monday"
-// mono face, so the grid pitch and the font disagreed. cellDims now
-// measures the effective font in both the default and explicit cases.
+// Across, a graphical target's terminal grid follows the real monospace
+// font's measured advance rather than the denomination's cell width: the
+// default (no explicit terminal font) would otherwise take an 8-unit pitch
+// while the glyphs render from the 7-wide "Monday" mono face, and the grid
+// and the font would disagree.
+//
+// Down, a terminal row is a grid row like any other line of text, so it is
+// UnitsPerCellHeight units. Nothing about the font enters into it.
 func TestTerminalGridFollowsFont(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 	b, err := raster.New(640, 400)
@@ -32,12 +34,16 @@ func TestTerminalGridFollowsFont(t *testing.T) {
 	// the default mono face, not the 8-unit denomination.
 	cw, ch := term.cellDims()
 	wantCW := term.TerminalFont().MeasureText("M")
-	wantCH := term.TerminalFont().LineHeight()
-	if cw != wantCW || ch != wantCH {
-		t.Errorf("default grid = %dx%d, want measured font %dx%d", cw, ch, wantCW, wantCH)
+	if cw != wantCW {
+		t.Errorf("default grid width = %d, want the measured font's %d", cw, wantCW)
 	}
 	if cw == 8 && wantCW != 8 {
 		t.Errorf("default grid still pinned to the 8-unit denomination")
+	}
+	// The terminal face is the surface's own size here, so a row is a whole
+	// grid row -- 16 units at the default denomination this test runs at.
+	if ch != 16 {
+		t.Errorf("default grid height = %d, want one grid row (16)", ch)
 	}
 }
 
@@ -127,5 +133,34 @@ func TestTerminalCellsTileWithoutSeams(t *testing.T) {
 	}
 	if seams > 0 {
 		t.Errorf("found %d dark seam pixels between colored cells (want 0)", seams)
+	}
+}
+
+// A terminal row is one grid row, so its height in units is whatever the
+// denomination says a row is. Reading it from the font instead answered 16
+// everywhere: two rows tall inside a container at row_units=8, half a row at
+// row_units=32.
+func TestTerminalRowHeightFollowsTheDenomination(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.New(640, 400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	for _, rowUnits := range []core.Unit{8, 16, 32} {
+		pan := NewPanel()
+		pan.SetCellMetrics(&core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: rowUnits})
+		term := NewPurfecTerm()
+		pan.AddChild(term)
+		if term.Terminal() == nil {
+			t.Skip("terminal unavailable")
+		}
+		term.SetBounds(core.UnitRect{Width: 320, Height: 160})
+
+		if _, ch := term.cellDims(); ch != rowUnits {
+			t.Errorf("at row_units=%d the terminal cell is %d units tall, want %d",
+				rowUnits, ch, rowUnits)
+		}
 	}
 }
