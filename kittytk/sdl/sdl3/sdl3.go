@@ -405,16 +405,17 @@ type Keysym struct {
 // ShiftedKey asks the CURRENT KEYBOARD LAYOUT what a physical key produces
 // under a modifier state, and returns 0 when it produces no character.
 //
-// A derivation, and it ranks below having watched. The canonical name of a key
-// that is SHOWN is the character it shows -- a, Z, 5, ! -- so where the window
-// system reports the character, that report is the name and nothing here is
-// consulted. This answers for the keystrokes it reports no character for: a
-// Control chord produces no text event, and "^%" still has to be spelled.
+// Layout text, and NOT a KeyName. A KeyName is defined by the key's POSITION on
+// the canonical grid and does not vary: the key at Row-2 column -4 is "1", and
+// "!" with Shift, whatever the attached keyboard prints on that cap (the
+// Regular Keys and Shifted Keys tables in the direct-key-handler wiki give both
+// layers for every position). Positions the grid has no character for are named
+// instead -- Zig, Zag, Ro, Yen.
 //
-// The layout rather than a table, because a map turning '5' into '%' answers
-// for a US keyboard whatever is attached. Tables are not forbidden -- see
-// macOSOptionChars, which is one on purpose -- they rank last, under an
-// observation and under this.
+// So naming a key from this answer names it differently on every layout, which
+// is the one thing a KeyName may not do. Scancode is what a name comes from,
+// the way the keypad reads one (see keypadKeys): an SDL scancode is a USB HID
+// usage ID, so it is the position itself.
 func ShiftedKey(scancode uint32, mod uint16) rune {
 	k := csdl.Scancode(scancode).KeyFrom(csdl.Keymod(mod), false)
 	if k == 0 || k >= 0x110000 {
