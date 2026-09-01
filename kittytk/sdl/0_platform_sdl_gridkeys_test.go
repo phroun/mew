@@ -38,6 +38,13 @@ const (
 	hidZag          = 100
 	hidRo           = 135
 	hidYen          = 137
+
+	hidPower      = 102
+	hidKanaLock   = 136
+	hidHenkan     = 138
+	hidMuhenkan   = 139
+	hidHangulLock = 144
+	hidHanja      = 145
 )
 
 // The two layers of the main cluster, from the Regular Keys and Shifted Keys
@@ -213,6 +220,55 @@ func TestEveryPositionWaitsForItsText(t *testing.T) {
 			if !keyAwaitsText(sym) {
 				t.Errorf("scancode %d (mod %#x) is not held for its text", scancode, mod)
 			}
+		}
+	}
+}
+
+// A power key and the input-method keys have a canonical name, and this host is
+// the only thing that can produce them: there is no escape sequence for them and
+// no "kitty" keycode, so the terminal host never emits one. Without a name here
+// they reached a keymap as nothing at all.
+func TestTheKeysThatTypeNothingAreStillNamed(t *testing.T) {
+	for _, c := range []struct {
+		scancode uint32
+		want     string
+	}{
+		{hidPower, "Power"},
+		{hidKanaLock, "KanaLock"},
+		{hidHangulLock, "HangulLock"},
+		{hidHenkan, "Henkan"},
+		{hidMuhenkan, "Muhenkan"},
+		{hidHanja, "Hanja"},
+	} {
+		sym := sdl3.Keysym{Scancode: c.scancode}
+		if got := translateKey(sym); got != c.want {
+			t.Errorf("scancode %d = %q, want %q", c.scancode, got, c.want)
+		}
+		// Named, so every modifier goes on as a prefix: there is no character
+		// for a caret or a case change to act on.
+		sym.Mod = sdl3.KMOD_LCTRL | sdl3.KMOD_LSHIFT
+		if got, want := translateKey(sym), "C-S-"+c.want; got != want {
+			t.Errorf("scancode %d modified = %q, want %q", c.scancode, got, want)
+		}
+		// A press and its release name the same key.
+		if got := bareKey(sdl3.Keysym{Scancode: c.scancode}, false); got != c.want {
+			t.Errorf("scancode %d bare = %q, want %q", c.scancode, got, c.want)
+		}
+	}
+}
+
+// And none of them is held for text, because none is coming.
+//
+// A press held for a character that never arrives waits until some later event
+// flushes it, which is the whole reason keyAwaitsText asks rather than assumes.
+// These keys are also the input method's own, so text is exactly what they do
+// not produce.
+func TestTheKeysThatTypeNothingDoNotWaitForText(t *testing.T) {
+	for _, scancode := range []uint32{
+		hidPower, hidKanaLock, hidHangulLock, hidHenkan, hidMuhenkan, hidHanja,
+	} {
+		if keyAwaitsText(sdl3.Keysym{Scancode: scancode}) {
+			t.Errorf("scancode %d is held for text it never produces", scancode)
 		}
 	}
 }

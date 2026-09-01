@@ -205,10 +205,17 @@ func keyAwaitsText(sym sdl3.Keysym) bool {
 //
 // The main cluster does, at every position -- including the four the grid names
 // rather than shows, which type their layout's own character (Zag prints "<" on
-// a German board) and are worth recording as typing it. Sym answers for
-// anything off the grid that still shows something, the space bar above all: it
-// is named "Space", so the memo is the only place its character can come from.
+// a German board) and are worth recording as typing it. The silent keys are the
+// ones that do not: a power key and the input-method keys have a name and no
+// character, so a press held for one would wait on text that is not coming.
+//
+// Sym answers for anything off the grid that still shows something, the space
+// bar above all: it is named "Space", so the memo is the only place its
+// character can come from.
 func producesText(sym sdl3.Keysym) bool {
+	if _, silent := silentKeys[sym.Scancode]; silent {
+		return false
+	}
 	if _, onGrid := gridKeys[sym.Scancode]; onGrid {
 		return true
 	}

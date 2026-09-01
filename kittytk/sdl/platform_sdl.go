@@ -2409,6 +2409,16 @@ const (
 	scanYen          = 137 // JIS, beside Delete
 )
 
+// The keys that carry a name and no character at all.
+const (
+	scanPower      = 102
+	scanKanaLock   = 136
+	scanHenkan     = 138
+	scanMuhenkan   = 139
+	scanHangulLock = 144
+	scanHanja      = 145
+)
+
 // gridKey is one key of the main cluster: what it is CALLED, in both layers.
 //
 // shown says the name is a character rather than a name, which decides how the
@@ -2445,10 +2455,11 @@ func (g gridKey) letter() bool {
 // is layout-mapped, so it answers with what the layout prints, which is a
 // different name on every layout and therefore no name at all.
 //
-// Zig, Zag, Ro and Yen are the positions the grid has no character for. Their
-// characters belong to other positions -- Zag prints "<" and ">" on a German
-// board, which are Shift+comma and Shift+period -- so naming them is the only
-// way a keymap can tell the two apart.
+// Zig, Zag, Ro and Yen are the positions the grid has no character for. They do
+// print one, but it belongs to another position -- Zag prints "<" and ">" on a
+// German board, which are Shift+comma and Shift+period -- so naming them is the
+// only way a keymap can tell the two apart. A key that prints nothing at all is
+// in silentKeys instead.
 var gridKeys = buildGridKeys()
 
 func buildGridKeys() map[uint32]gridKey {
@@ -2483,6 +2494,30 @@ func buildGridKeys() map[uint32]gridKey {
 		g[uint32(scanA+i)] = gridKey{string(lower), string(lower - 'a' + 'A'), true}
 	}
 	return g
+}
+
+// silentKeys are the positions that are keys and type nothing, by SCANCODE for
+// the reason gridKeys is. Every modifier goes on as a prefix, since there is no
+// character for a caret or a case change to act on.
+//
+// Nothing in the terminal host can produce them: there is no escape sequence for
+// a power key and no "kitty" keycode, so direct-key-handler carries the names
+// for this direction alone — a host that reads a scancode and needs a canonical
+// spelling to hand over. Inventing a word here is what those names exist to
+// prevent.
+//
+// The two locks LATCH a mode and are named for the lock they are, the shape
+// CapsLock has. Neither becomes a prefix: folding a latch into a key name would
+// make every keystroke typed under it miss its binding. The other three fire
+// once — Henkan converts the pending kana, Muhenkan commits it unconverted,
+// Hanja converts the preceding Hangul.
+var silentKeys = map[uint32]string{
+	scanPower:      "Power",
+	scanKanaLock:   "KanaLock",
+	scanHangulLock: "HangulLock",
+	scanHenkan:     "Henkan",
+	scanMuhenkan:   "Muhenkan",
+	scanHanja:      "Hanja",
 }
 
 // padKey is one keypad cap. Dual-legend caps carry two keys and NumLock decides
@@ -2676,6 +2711,9 @@ func bareKey(sym sdl3.Keysym, shift bool) string {
 	if g, ok := gridKeys[sym.Scancode]; ok {
 		return g.layerName(shift)
 	}
+	if name, ok := silentKeys[sym.Scancode]; ok {
+		return name
+	}
 	return ""
 }
 
@@ -2736,6 +2774,12 @@ func encodeKey(sym sdl3.Keysym, ctrl, alt, shift, gui, hyper bool) string {
 	// cluster below cannot be: the keys in it are the ones whose Sym is the
 	// same under every layout, so there is nothing for a layout to get wrong.
 	if name, ok := specialKeys[sym.Sym]; ok {
+		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
+	}
+
+	// The positions that are keys and type nothing (see silentKeys). Named, so
+	// every modifier goes on as a prefix.
+	if name, silent := silentKeys[sym.Scancode]; silent {
 		return keyMods{ctrl: ctrl, mega: alt, shift: shift, super: gui, hyper: hyper}.prefix() + name
 	}
 
