@@ -178,11 +178,15 @@ func (pm *PromptManager) PromptForConfirmation(message string, defaultValue bool
 // The outcomes are PromptForConfirmation's: an answer, the default, or a
 // cancel for anything else.
 func (pm *PromptManager) PromptForConfirmationTop(topMessage, question string, defaultValue bool, callback func(accepted, response bool)) {
+	// The default sits immediately above the blank input line, so one arrow-up
+	// reaches it -- the order PromptForConfirmation seeds.
 	defaultAnswer := "N"
+	initialContent := "y\nn\n"
 	if defaultValue {
 		defaultAnswer = "Y"
+		initialContent = "n\ny\n"
 	}
-	pm.promptForInput("(C) "+question, "y\nn\n", func(accepted bool, _, cursorLineText string) {
+	pm.promptForInput("(C) "+question, initialContent, func(accepted bool, _, cursorLineText string) {
 		if !accepted {
 			callback(false, false)
 			return

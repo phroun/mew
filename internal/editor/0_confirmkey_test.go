@@ -220,3 +220,39 @@ func TestLoseChangesDoesNotQuitOnAMistypedKey(t *testing.T) {
 		t.Fatal("the buffer should still be focused")
 	}
 }
+
+// The default sits one arrow-up from the input line, in both confirmations.
+//
+// PromptForConfirmationTop seeded the same two answers whichever way round the
+// default was, so arrowing up reached "n" even when the prompt was offering Y.
+func TestArrowUpReachesTheDefault(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		open func(*Editor, *confirmResult, bool)
+	}{
+		{"confirmation", func(e *Editor, res *confirmResult, def bool) {
+			e.PromptMgr.PromptForConfirmation("Q?", def, func(accepted, confirmed bool) {
+				res.settled, res.accepted, res.confirmed = true, accepted, confirmed
+			})
+		}},
+		{"top confirmation", func(e *Editor, res *confirmResult, def bool) {
+			e.PromptMgr.PromptForConfirmationTop("top", "Q?", def, func(accepted, confirmed bool) {
+				res.settled, res.accepted, res.confirmed = true, accepted, confirmed
+			})
+		}},
+	} {
+		for _, def := range []bool{true, false} {
+			e, _ := newTestEditor(t, "")
+			res := &confirmResult{}
+			c.open(e, res, def)
+
+			e.dispatchKey("up")
+			e.dispatchKey("return")
+
+			if !res.settled || !res.accepted || res.confirmed != def {
+				t.Errorf("%s, default %v: result = %+v, want the default back",
+					c.what, def, res)
+			}
+		}
+	}
+}
