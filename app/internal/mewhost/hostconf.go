@@ -40,6 +40,8 @@ import (
 //	desktop_frame  =       ; themed (default) / native_titlebar / native
 //	titlebar_scale =       ; graphical title-bar height and content scale
 //	                       ;   (1.0 = classic full-cell row, the default)
+//	menu_scale     =       ; menu bar / dropdown / context menu row height and
+//	                       ;   content scale (1.0 = the default)
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
