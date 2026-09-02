@@ -314,3 +314,53 @@ func TestMenuScaleReachesContextMenus(t *testing.T) {
 		t.Errorf("cell-surface context menu row %d, want the full cell %d", cell.rowH, m.UnitsPerCellHeight)
 	}
 }
+
+// A menu paints nothing outside itself at any scale.
+//
+// DrawCell paints a whole CELL of background whatever the row is worth, so
+// every raw one in a shortened row hung below it. On an interior row the next
+// row's fill covered the overflow; on the LAST row nothing did, and the space
+// drawn before an item's text left a cell-wide tab of menu background hanging
+// under the menu's bottom edge, starting exactly where the gutter ends.
+func TestMenuScalePaintsNothingBelowItself(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMenuScale(1) })
+	for _, scale := range []float64{1, 0.9, 0.5} {
+		b, err := raster.NewScaled(400, 300, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		core.SetTextMeasurer(b)
+		core.SetMenuScale(scale)
+
+		d := NewDesktop()
+		d.SetBackend(b)
+		d.SetBounds(core.UnitRect{Width: 400, Height: 300})
+		bar := NewMenuBar()
+		d.AddChild(bar)
+		m := NewMenu("File")
+		m.AddItem(NewMenuItem("Convert"))
+		m.AddItem(NewMenuItem("Swap case"))
+		bar.AddMenu(m)
+		m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+		m.setGraphicalHint(true)
+		m.Show(0, 20)
+
+		// A black ground, so anything the menu leaves outside itself shows.
+		b.Clear(style.DefaultStyle().WithBg(style.RGB(0, 0, 0)))
+		m.Paint(core.NewPainter(b))
+
+		p := core.NewPainter(b)
+		sz := m.calculateSize()
+		bottom := p.UnitSpanPxY(0, 20+sz.Height)
+		right := p.UnitSpanPxX(0, sz.Width) + 4
+		img := b.Image()
+		for y := bottom; y < bottom+5 && y < 300; y++ {
+			for x := 0; x < right; x++ {
+				if c := img.RGBAAt(x, y); int(c.R)+int(c.G)+int(c.B) > 60 {
+					t.Fatalf("scale %v: the menu painted at x=%d, %dpx below its own bottom edge",
+						scale, x, y-bottom)
+				}
+			}
+		}
+	}
+}

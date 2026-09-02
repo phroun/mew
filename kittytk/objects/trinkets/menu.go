@@ -1181,9 +1181,9 @@ func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSiz
 	}
 	// Center the three glyphs in the white content area only.
 	centerX := m.popupX + gutterWidth + (size.Width-gutterWidth)/2
-	p.DrawCell(centerX-mm.CellW*2, y, glyph, contentStyle)
-	p.DrawCell(centerX, y, glyph, contentStyle)
-	p.DrawCell(centerX+mm.CellW*2, y, glyph, contentStyle)
+	mm.DrawGlyph(p, centerX-mm.CellW*2, y, glyph, contentStyle)
+	mm.DrawGlyph(p, centerX, y, glyph, contentStyle)
+	mm.DrawGlyph(p, centerX+mm.CellW*2, y, glyph, contentStyle)
 }
 
 // paintOuterStroke draws the menu's 1-pixel outer frame with the edge
@@ -1497,7 +1497,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		x += mm.CellW * 2 // Move past checkmark + 1 gutter space
 
 		// Draw a space in content area before text
-		p.DrawCell(x, itemY, ' ', contentStyle)
+		mm.DrawGlyph(p, x, itemY, ' ', contentStyle)
 		x += mm.CellW
 
 		// Now draw text with accelerator highlighting using font-aware rendering
