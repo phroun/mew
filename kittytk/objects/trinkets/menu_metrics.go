@@ -202,7 +202,21 @@ func (m *Menu) menuMetrics() MenuMetrics {
 // dropdowns it opens so a title in the bar and the same text in the menu
 // below it are the same size.
 func (m *MenuBar) menuMetrics() MenuMetrics {
-	return MenuMetricsFor(m.EffectiveCellMetrics(), m.EffectiveFont(), m.graphicalCached)
+	return MenuMetricsFor(m.EffectiveCellMetrics(), m.EffectiveFont(), m.graphicalHere())
+}
+
+// graphicalHere reports whether the bar sits on a pixel surface. The bar's
+// own graphicalCached is PAINT state -- it records what the last painter
+// was -- and a row height is needed before that: a window reserves its
+// chrome at layout, and a bar asked then answered for a surface it had not
+// seen yet and gave back a full cell. Unlike a popup menu the bar is
+// parented, so the tree can be asked directly, and the cached value only
+// stands in once a paint has actually happened.
+func (m *MenuBar) graphicalHere() bool {
+	if m.graphicalCached {
+		return true
+	}
+	return core.FindGraphicalFrames(m.Self())
 }
 
 // DrawGlyph paints one of a menu's cell glyphs -- a checkmark, an item

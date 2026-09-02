@@ -29,12 +29,17 @@ func menuScaleBar(t *testing.T, scale float64, graphical bool) (*Desktop, *MenuB
 	core.SetMenuScale(scale)
 
 	d := NewDesktop()
-	d.SetBackend(b)
+	if graphical {
+		d.SetBackend(b)
+	} else {
+		// A real cell surface, not a flag: the bar asks its ancestry what it
+		// is sitting on, so faking the cached value proves nothing.
+		d.SetBackend(&nullBackend{})
+	}
 	d.SetBounds(core.UnitRect{Width: 800, Height: 600})
 
 	bar := NewMenuBar()
 	d.AddChild(bar)
-	bar.graphicalCached = graphical
 
 	file := NewMenu("&File")
 	file.AddItem(NewMenuItem("New"))
@@ -153,6 +158,10 @@ func TestMenuScaleStandsDownOnCellSurfaces(t *testing.T) {
 
 // A detached window carries its menu bar as chrome, and reserves the row the
 // bar states rather than a whole cell.
+//
+// The reservation happens at LAYOUT, before any paint, so a bar that answered
+// from paint state answered for a surface it had not seen yet and gave back a
+// full cell -- which is the arrangement mew runs in when its app is solo.
 func TestMenuScaleWindowChromeReservesTheBarsRow(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMenuScale(1) })
 	d, bar, _ := menuScaleBar(t, 0.9, true)
