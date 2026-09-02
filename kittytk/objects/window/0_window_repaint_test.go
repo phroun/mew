@@ -33,7 +33,7 @@ func TestWindowRevisionMovesForContentChanges(t *testing.T) {
 		{"the window is deactivated", func() { win.SetActive(false) }},
 		{"the tear halo goes up", func() { win.SetTearHighlight(true) }},
 		{"a resize edge is hovered", func() {
-			win.SetResizeHoverRects([]core.UnitRect{{Width: 6, Height: 120}})
+			win.SetResizeBandRects([]core.UnitRect{{Width: 6, Height: 120}})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestWindowRevisionHoldsStillWhenNothingChanges(t *testing.T) {
 	_ = win.Bounds()
 	_ = win.Title()
 	_ = win.IsMinimized()
-	win.SetResizeHoverRects(nil)
+	win.SetResizeBandRects(nil)
 
 	if got := win.SubtreeRepaintRevision(); got != rev {
 		t.Errorf("revision moved from %d to %d with nothing changed", rev, got)

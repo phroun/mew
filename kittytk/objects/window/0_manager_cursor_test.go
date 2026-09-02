@@ -62,7 +62,7 @@ func TestCursorAtResolvesEdgeAndContent(t *testing.T) {
 // A registered popup (combobox dropdown, context menu) floats above the
 // windows: over it CursorAt is the plain arrow - no resize cursor from a
 // window edge and no I-beam from window content underneath - and
-// updateResizeHover sets no edge highlight on the window beneath.
+// updateResizeBands sets no edge highlight on the window beneath.
 func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 	m := NewWindowManager()
 	w := NewWindow("w")
@@ -92,14 +92,14 @@ func TestOverlaySuppressesCursorAndResizeHover(t *testing.T) {
 	}
 
 	// The edge highlight must not appear under the popup either.
-	m.updateResizeHover(299, 160)
-	if len(w.ResizeHoverRects()) != 0 {
-		t.Errorf("resize highlight showed under popup: %v", w.ResizeHoverRects())
+	m.updateResizeBands(299, 160)
+	if len(w.ResizeBandRects()) != 0 {
+		t.Errorf("resize highlight showed under popup: %v", w.ResizeBandRects())
 	}
 
 	// Outside the popup, the edge highlight returns.
-	m.updateResizeHover(299, 110)
-	if len(w.ResizeHoverRects()) == 0 {
+	m.updateResizeBands(299, 110)
+	if len(w.ResizeBandRects()) == 0 {
 		t.Error("resize highlight should show on the edge outside the popup")
 	}
 }

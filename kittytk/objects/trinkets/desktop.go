@@ -4246,7 +4246,7 @@ func (d *Desktop) dispatchEvent(event core.Event) bool {
 		// Pointer left the desktop surface: drop any resize-edge highlight,
 		// clear per-widget hover in windows and the desktop chrome, and reset
 		// the cursor to the arrow.
-		wm.ClearResizeHover()
+		wm.ClearResizeBands()
 		wm.ClearHover()
 		d.hostHoverClear()
 		d.hostTitleHoverClear()
@@ -5533,7 +5533,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 	// The genuine window border around the themed surface, over the chrome
 	// like a window's re-stroked frame; then the resize affordance over all.
 	d.paintHostFrame(p, bounds)
-	d.paintHostEdgeHover(p, bounds)
+	d.paintHostEdgeBands(p, bounds)
 
 	// NOTE: Menu dropdowns and popups are NOT painted here in compositor mode!
 	// They must be rendered AFTER windows as separate layers for drop shadows.

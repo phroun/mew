@@ -92,7 +92,7 @@ func TestMDIMinimizeButtonFiresHandler(t *testing.T) {
 }
 
 // Resizing an MDI child window shows the translucent white edge overlay
-// (SetResizeHoverRects), the same one desktop windows get, and drops it on
+// (SetResizeBandRects), the same one desktop windows get, and drops it on
 // release.
 func TestMDIResizeShowsEdgeOverlay(t *testing.T) {
 	stub := &graphicalFrameStub{Panel: NewPanel(), border: 2}
@@ -109,17 +109,17 @@ func TestMDIResizeShowsEdgeOverlay(t *testing.T) {
 	bx := win.Bounds().X + win.Bounds().Width - 1
 	by := win.Bounds().Y + win.Bounds().Height - 1
 	pane.HandleMousePress(core.MousePressEvent{X: bx, Y: by, Button: core.LeftButton})
-	if len(win.ResizeHoverRects()) == 0 {
+	if len(win.ResizeBandRects()) == 0 {
 		t.Fatal("starting an MDI resize did not set the edge overlay")
 	}
 
 	// Drag keeps it; release drops it.
 	pane.HandleMouseMove(core.MouseMoveEvent{X: bx + 20, Y: by + 20, Buttons: core.LeftButton})
-	if len(win.ResizeHoverRects()) == 0 {
+	if len(win.ResizeBandRects()) == 0 {
 		t.Error("overlay vanished mid-resize")
 	}
 	pane.HandleMouseRelease(core.MouseReleaseEvent{X: bx + 20, Y: by + 20, Button: core.LeftButton})
-	if len(win.ResizeHoverRects()) != 0 {
+	if len(win.ResizeBandRects()) != 0 {
 		t.Error("overlay not cleared after the resize ended")
 	}
 }

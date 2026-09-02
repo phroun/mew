@@ -658,10 +658,10 @@ func (m *WindowManager) pointOverOverlay(x, y core.Unit) bool {
 	return false
 }
 
-// updateResizeHover highlights the size-sensitive edge(s) of the topmost
+// updateResizeBands highlights the size-sensitive edge(s) of the topmost
 // window under the pointer, clearing the highlight on every other window.
 // Called on mouse move when no drag or resize is in progress.
-func (m *WindowManager) updateResizeHover(x, y core.Unit) {
+func (m *WindowManager) updateResizeBands(x, y core.Unit) {
 	m.mu.RLock()
 	windows := make([]*Window, len(m.windows))
 	copy(windows, m.windows)
@@ -696,7 +696,7 @@ func (m *WindowManager) updateResizeHover(x, y core.Unit) {
 		if win == target && edge != ResizeEdgeNone {
 			rects = m.resizeEdgeRects(win, edge)
 		}
-		if win.SetResizeHoverRects(rects) {
+		if win.SetResizeBandRects(rects) {
 			changed = true
 		}
 	}
@@ -773,16 +773,16 @@ func (m *WindowManager) CursorAt(x, y core.Unit) core.CursorShape {
 	return win.CursorShapeAt(x-b.X, y-b.Y)
 }
 
-// ClearResizeHover removes the resize-edge highlight from every window.
+// ClearResizeBands removes the resize-edge highlight from every window.
 // Called when the pointer leaves the surface, so no stale band lingers.
-func (m *WindowManager) ClearResizeHover() {
+func (m *WindowManager) ClearResizeBands() {
 	m.mu.RLock()
 	windows := make([]*Window, len(m.windows))
 	copy(windows, m.windows)
 	m.mu.RUnlock()
 	changed := false
 	for _, win := range windows {
-		if win.SetResizeHoverRects(nil) {
+		if win.SetResizeBandRects(nil) {
 			changed = true
 		}
 	}
@@ -2530,7 +2530,7 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 		resizing.SetBounds(newBounds)
 		// Keep the edge highlight on the edge being dragged, tracking the
 		// window's new size instead of leaving it stale at the start bounds.
-		resizing.SetResizeHoverRects(m.resizeEdgeRects(resizing, resizeEdge))
+		resizing.SetResizeBandRects(m.resizeEdgeRects(resizing, resizeEdge))
 		m.RequestRepaint()
 		return true
 	}
@@ -2676,12 +2676,12 @@ func (m *WindowManager) HandleMouseMove(event core.MouseMoveEvent) bool {
 
 	// Not dragging or resizing in this manager. A held button means a gesture
 	// began elsewhere (a menu scrub, a selection drag) and is passing through:
-	// the resize-edge highlight is a hover affordance, so suppress it and drop
+	// the resize-edge cue belongs to a plain pointer, so suppress it and drop
 	// any lingering band. A plain move (no button) previews the edge.
 	if event.Buttons == 0 {
-		m.updateResizeHover(event.X, event.Y)
+		m.updateResizeBands(event.X, event.Y)
 	} else {
-		m.ClearResizeHover()
+		m.ClearResizeBands()
 	}
 
 	// Forward to desktop first (for menu bar drag navigation)

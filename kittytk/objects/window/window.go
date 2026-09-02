@@ -173,20 +173,22 @@ type Window struct {
 	// never be in the way of a lock the caller already holds.
 	repaintRev atomic.Uint64
 
-	// resizeHoverRects are window-local rectangles (one per hovered resize
-	// edge, two for a corner) that the frame highlights while the pointer
-	// is over a size-sensitive edge. Set by the window manager on hover.
-	resizeHoverRects []core.UnitRect
+	// resizeBandRects are window-local rectangles (one per lit resize edge,
+	// two for a corner) that the frame fills with the translucent cue. Cue
+	// only: what responds to a press is the resize edge, computed fresh from
+	// ResizeHitGrip, which never reads these. The host decides when to set
+	// them -- on a hover, and during a drag as well.
+	resizeBandRects []core.UnitRect
 
-	// resizeHoverEdges is the same highlight expressed as the EDGE MASK
+	// resizeBandEdges is the same highlight expressed as the EDGE MASK
 	// instead, with the band thickness that sizes it. Preferred, because the
 	// bands are derived from the window's bounds and those change under a
 	// live resize: computing rectangles up front bakes in whatever size the
 	// window had when the gesture began, and a window that then grows leaves
 	// its bands stranded mid-frame. The paint resolves the mask against the
 	// bounds it is actually painting, which cannot be stale.
-	resizeHoverEdges int
-	resizeHoverBand  EdgeThickness
+	resizeBandEdges     int
+	resizeBandThickness EdgeThickness
 
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
@@ -1912,29 +1914,28 @@ func (w *Window) Paint(p *core.Painter) {
 		}
 	}
 
-	// Resize-edge hover highlight: translucent white bands along the
-	// size-sensitive edge(s) under the pointer, clipped to the frame's
-	// rounded corners.
-	w.paintResizeHover(p, localBounds)
+	// Resize-edge cue: translucent white bands along the size-sensitive
+	// edge(s) the host has lit, clipped to the frame's rounded corners.
+	w.paintResizeBands(p, localBounds)
 }
 
-// ResizeHoverAlpha is the opacity of the resize-edge hover highlight,
-// shared with the desktop's own edge bands so the two read as one system.
-const ResizeHoverAlpha = 0.25
+// ResizeBandAlpha is the opacity of the resize-edge cue, shared with the
+// desktop's own edge bands so the two read as one system.
+const ResizeBandAlpha = 0.25
 
-// SetResizeHoverRects sets the window-local rectangles highlighted while
-// the pointer hovers a resize edge (empty clears the highlight). Returns
+// SetResizeBandRects sets the window-local rectangles the cue fills
+// (empty clears it). Returns
 // true when the set changed, so the caller can repaint only on change.
 //
-// Prefer SetResizeHoverEdges: rectangles fixed here go stale the moment the
+// Prefer SetResizeBandEdges: rectangles fixed here go stale the moment the
 // window resizes under the gesture that is drawing them.
-func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
+func (w *Window) SetResizeBandRects(rects []core.UnitRect) bool {
 	w.mu.Lock()
-	if sameRects(w.resizeHoverRects, rects) {
+	if sameRects(w.resizeBandRects, rects) {
 		w.mu.Unlock()
 		return false
 	}
-	w.resizeHoverRects = rects
+	w.resizeBandRects = rects
 	w.mu.Unlock()
 
 	// This changes what the window paints, and unlike most such setters
@@ -1946,7 +1947,7 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	return true
 }
 
-// SetResizeHoverEdges sets the highlight as an edge MASK plus the band
+// SetResizeBandEdges sets the highlight as an edge MASK plus the band
 // thickness, to be resolved against the window's bounds at paint time. Zero
 // edges clears it. Returns true when the state changed.
 //
@@ -1954,22 +1955,22 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 // back asynchronously, so any rectangle computed while the pointer moves is
 // built from the PREVIOUS bounds — which is how a growing window ends up with
 // its bands stranded in the middle of the frame.
-func (w *Window) SetResizeHoverEdges(edges int, band EdgeThickness) bool {
+func (w *Window) SetResizeBandEdges(edges int, band EdgeThickness) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.resizeHoverEdges == edges && w.resizeHoverBand == band {
+	if w.resizeBandEdges == edges && w.resizeBandThickness == band {
 		return false
 	}
-	w.resizeHoverEdges, w.resizeHoverBand = edges, band
+	w.resizeBandEdges, w.resizeBandThickness = edges, band
 	return true
 }
 
-// ResizeHoverRects returns the window-local resize-edge highlight
+// ResizeBandRects returns the window-local resize-edge highlight
 // rectangles currently set (nil when the overlay is off).
-func (w *Window) ResizeHoverRects() []core.UnitRect {
+func (w *Window) ResizeBandRects() []core.UnitRect {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.resizeHoverRects
+	return w.resizeBandRects
 }
 
 func sameRects(a, b []core.UnitRect) bool {
@@ -2075,11 +2076,11 @@ func (w *Window) PaintModalDim(p *core.Painter, localBounds core.UnitRect) {
 		0, 0, 0, modalDimAlpha)
 }
 
-// paintResizeHover fills the hovered resize edges with a translucent white
+// paintResizeBands fills the lit resize edges with a translucent white
 // band, clipped to the window's rounded corner radius. No-op on cell
 // surfaces (FillRectPixelsAlpha returns false there).
-func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
-	rects := w.resizeHoverBands(localBounds)
+func (w *Window) paintResizeBands(p *core.Painter, localBounds core.UnitRect) {
+	rects := w.resizeBands(localBounds)
 	if len(rects) == 0 {
 		return
 	}
@@ -2092,7 +2093,7 @@ func (w *Window) paintResizeHover(p *core.Painter, localBounds core.UnitRect) {
 		// the geometry paints on, so the band reaches exactly the far edge.
 		rp.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
 			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
-			255, 255, 255, ResizeHoverAlpha)
+			255, 255, 255, ResizeBandAlpha)
 	}
 }
 
@@ -2167,16 +2168,16 @@ func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*
 	return toLocal(menuBounds), toLocal(dd.ActiveMenuTitleBounds()), paint, true
 }
 
-// resizeHoverBands is the highlight resolved for a given window-local
+// resizeBands is the highlight resolved for a given window-local
 // bounds. An edge MASK is resolved here, against the bounds the caller is
 // actually painting — that is the whole point of storing a mask: a rectangle
 // fixed earlier carries the size the window had when the gesture began, and a
 // live resize is precisely when that stops being true. Explicit rectangles
 // (the older setter) are returned as they were given.
-func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
+func (w *Window) resizeBands(localBounds core.UnitRect) []core.UnitRect {
 	w.mu.RLock()
-	rects := w.resizeHoverRects
-	edges, band := w.resizeHoverEdges, w.resizeHoverBand
+	rects := w.resizeBandRects
+	edges, band := w.resizeBandEdges, w.resizeBandThickness
 	w.mu.RUnlock()
 	if edges != 0 {
 		return tornEdgeRects(localBounds, edges, band)

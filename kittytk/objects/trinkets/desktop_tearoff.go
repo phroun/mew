@@ -1071,7 +1071,7 @@ func (d *Desktop) adoptTornWindow(host *window.TearOffHost, x, y core.Unit, ghos
 	win.SetShortcutResolver(nil)
 	// Drop any torn-surface resize highlight; the desktop's own hover
 	// tracking takes over once docked.
-	win.SetResizeHoverRects(nil)
+	win.SetResizeBandRects(nil)
 	win.SetOnTearRequest(func() { d.tearOffInPlace(win) })
 	d.windowManager.AddWindow(win)
 	if win.IsMaximized() {

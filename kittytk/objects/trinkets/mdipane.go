@@ -1036,15 +1036,15 @@ func (m *MDIPane) affordanceBandFor(win *window.Window) window.EdgeThickness {
 	return window.ResizeAffordanceBand(core.FindGraphicalFrames(m.Self()), metrics, bx, by)
 }
 
-// setResizeHover shows the translucent white overlay along the given resize
+// setResizeBands shows the translucent white overlay along the given resize
 // edge(s) of win (window-local rects), the same highlight desktop windows
 // get from the WindowManager. edge == ResizeEdgeNone clears it.
-func (m *MDIPane) setResizeHover(win *window.Window, edge int) {
+func (m *MDIPane) setResizeBands(win *window.Window, edge int) {
 	if edge == window.ResizeEdgeNone {
-		win.SetResizeHoverRects(nil)
+		win.SetResizeBandRects(nil)
 		return
 	}
-	win.SetResizeHoverRects(window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win)))
+	win.SetResizeBandRects(window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win)))
 }
 
 // clearWindowHover clears any lingering per-widget hover on the window we
@@ -1057,11 +1057,11 @@ func (m *MDIPane) clearWindowHover() {
 	}
 }
 
-// updateResizeHover highlights the size-sensitive edge under the pointer on
+// updateResizeBands highlights the size-sensitive edge under the pointer on
 // the topmost child window and clears it on the others - the MDI equivalent
-// of WindowManager.updateResizeHover, called on plain moves (no drag). It
+// of WindowManager.updateResizeBands, called on plain moves (no drag). It
 // repaints only when a highlight actually changed.
-func (m *MDIPane) updateResizeHover(x, y core.Unit) {
+func (m *MDIPane) updateResizeBands(x, y core.Unit) {
 	m.mu.RLock()
 	windows := m.windows
 	m.mu.RUnlock()
@@ -1082,7 +1082,7 @@ func (m *MDIPane) updateResizeHover(x, y core.Unit) {
 				rects = window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win))
 			}
 		}
-		if win.SetResizeHoverRects(rects) {
+		if win.SetResizeBandRects(rects) {
 			changed = true
 		}
 	}
@@ -1544,7 +1544,7 @@ func (m *MDIPane) HandleMousePress(event core.MousePressEvent) bool {
 				m.resizeOriginal = bounds
 				m.pressedWindow = nil // Clear pressed window for resize
 				m.mu.Unlock()
-				m.setResizeHover(win, resizeEdge) // white overlay on the grabbed edge
+				m.setResizeBands(win, resizeEdge) // white overlay on the grabbed edge
 				return true
 			}
 
@@ -1677,7 +1677,7 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 			m.EffectiveCellMetrics(), !core.FindSmoothPositioning(m.Self()), m.ClientArea())
 
 		resizing.SetBounds(newBounds)
-		m.setResizeHover(resizing, resizeEdge) // overlay follows the new bounds
+		m.setResizeBands(resizing, resizeEdge) // overlay follows the new bounds
 		m.Update()
 		return true
 	}
@@ -1742,15 +1742,15 @@ func (m *MDIPane) HandleMouseMove(event core.MouseMoveEvent) bool {
 		return true
 	}
 
-	// No drag or resize in progress: keep the resize-edge hover overlay in
+	// No drag or resize in progress: keep the resize-edge cue in
 	// sync with the pointer (like desktop windows). A held button means a
 	// gesture began elsewhere and is passing through - the edge highlight is a
-	// hover affordance, so suppress it and clear any lingering band.
+	// cue for a plain pointer, so suppress it and clear any lingering band.
 	if event.Buttons == 0 {
-		m.updateResizeHover(event.X, event.Y)
+		m.updateResizeBands(event.X, event.Y)
 	} else {
 		// Off-surface point clears every window's edge overlay.
-		m.updateResizeHover(-1, -1)
+		m.updateResizeBands(-1, -1)
 	}
 
 	m.mu.RLock()
@@ -1887,7 +1887,7 @@ func (m *MDIPane) HandleMouseRelease(event core.MouseReleaseEvent) bool {
 	m.mu.Unlock()
 
 	if resizing != nil {
-		resizing.SetResizeHoverRects(nil) // drop the overlay when the resize ends
+		resizing.SetResizeBandRects(nil) // drop the overlay when the resize ends
 		m.Update()
 	}
 	if dragging != nil || resizing != nil {

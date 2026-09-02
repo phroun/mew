@@ -38,26 +38,26 @@ func TestResizeEdgeRects(t *testing.T) {
 	}
 }
 
-// SetResizeHoverRects reports a change only when the highlight set differs.
+// SetResizeBandRects reports a change only when the highlight set differs.
 func TestSetResizeHoverRectsChangeDetection(t *testing.T) {
 	w := NewWindow("w")
 	rects := []core.UnitRect{{Width: 8, Height: 100}}
 
-	if !w.SetResizeHoverRects(rects) {
+	if !w.SetResizeBandRects(rects) {
 		t.Error("first non-empty set should report a change")
 	}
-	if w.SetResizeHoverRects(rects) {
+	if w.SetResizeBandRects(rects) {
 		t.Error("setting the same rects should not report a change")
 	}
-	if !w.SetResizeHoverRects(nil) {
+	if !w.SetResizeBandRects(nil) {
 		t.Error("clearing should report a change")
 	}
-	if w.SetResizeHoverRects(nil) {
+	if w.SetResizeBandRects(nil) {
 		t.Error("clearing when already clear should not report a change")
 	}
 }
 
-// ClearResizeHover removes the highlight from every window (used on
+// ClearResizeBands removes the highlight from every window (used on
 // mouse-leave, when no move event arrives to clear it).
 func TestClearResizeHover(t *testing.T) {
 	m := NewWindowManager()
@@ -65,11 +65,11 @@ func TestClearResizeHover(t *testing.T) {
 	w.SetBounds(core.UnitRect{Width: 200, Height: 120})
 	m.AddWindow(w)
 
-	w.SetResizeHoverRects([]core.UnitRect{{Width: 8, Height: 120}})
-	m.ClearResizeHover()
+	w.SetResizeBandRects([]core.UnitRect{{Width: 8, Height: 120}})
+	m.ClearResizeBands()
 
 	// Already clear -> setting nil again reports no change.
-	if w.SetResizeHoverRects(nil) {
-		t.Error("ClearResizeHover left a stale highlight")
+	if w.SetResizeBandRects(nil) {
+		t.Error("ClearResizeBands left a stale highlight")
 	}
 }

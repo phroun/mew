@@ -54,7 +54,7 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 	}
 }
 
-// refreshResizeHover only acts during a resize, and keeps the ARMED edges —
+// refreshResizeBands only acts during a resize, and keeps the ARMED edges —
 // the pointer may have wandered off them, but the gesture still owns them.
 func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 	w := NewWindow("t")
@@ -64,15 +64,15 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
-	w.SetResizeHoverEdges(0, EdgeThickness{})
-	h.refreshResizeHover()
-	if len(w.resizeHoverBands(small)) != 0 {
+	w.SetResizeBandEdges(0, EdgeThickness{})
+	h.refreshResizeBands()
+	if len(w.resizeBands(small)) != 0 {
 		t.Fatal("no highlight should be set when no resize is in flight")
 	}
 
 	h.resizing = true
-	h.refreshResizeHover()
-	if got := w.resizeHoverBands(small); len(got) != 1 {
+	h.refreshResizeBands()
+	if got := w.resizeBands(small); len(got) != 1 {
 		t.Fatalf("the armed edge should be highlighted; got %d bands", len(got))
 	}
 }
@@ -87,12 +87,12 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	h := &TearOffHost{win: w, graphicalFrames: true}
 	h.resizing = true
 	h.resizeEdges = resizeRight
-	h.refreshResizeHover()
+	h.refreshResizeBands()
 
 	// The window's own bounds are deliberately left STALE here: this is the
 	// state a live resize is in when the frame is painted.
 	grown := core.UnitRect{Width: 300, Height: 60}
-	got := w.resizeHoverBands(grown)
+	got := w.resizeBands(grown)
 	if len(got) != 1 {
 		t.Fatalf("want one band, got %d", len(got))
 	}
@@ -109,8 +109,8 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 
 	// Explicit rectangles (the older setter) are still honoured verbatim.
 	w2 := NewWindow("t2")
-	w2.SetResizeHoverRects([]core.UnitRect{{X: 1, Y: 2, Width: 3, Height: 4}})
-	if got := w2.resizeHoverBands(grown); len(got) != 1 || got[0].X != 1 {
+	w2.SetResizeBandRects([]core.UnitRect{{X: 1, Y: 2, Width: 3, Height: 4}})
+	if got := w2.resizeBands(grown); len(got) != 1 || got[0].X != 1 {
 		t.Errorf("explicit rects should pass through unchanged: %+v", got)
 	}
 }

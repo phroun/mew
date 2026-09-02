@@ -555,16 +555,16 @@ func tornEdgeRects(b core.UnitRect, edges int, band EdgeThickness) []core.UnitRe
 	return rects
 }
 
-// refreshResizeHover re-arms the resize-edge highlight while a resize is in
+// refreshResizeBands re-arms the resize-edge highlight while a resize is in
 // flight (the hover path that normally sets it is skipped then). It publishes
 // the armed EDGES, not rectangles: the window's new size arrives back from
 // the OS asynchronously, so anything measured here would be a frame behind,
 // and the paint resolves the mask against the bounds it actually has.
-func (h *TearOffHost) refreshResizeHover() {
+func (h *TearOffHost) refreshResizeBands() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverEdges(h.resizeEdges, h.affordanceBand())
+	h.win.SetResizeBandEdges(h.resizeEdges, h.affordanceBand())
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -577,7 +577,7 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	for _, p := range h.popups {
 		b := p.Bounds
 		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-			h.win.SetResizeHoverEdges(0, EdgeThickness{})
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 			h.applyCursor(core.CursorDefault)
 			return
 		}
@@ -588,17 +588,17 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	// for free from CursorAt's ActiveMenuBounds test).
 	if b, _, _, ok := h.win.MenuDropdownLayer(); ok &&
 		x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-		h.win.SetResizeHoverEdges(0, EdgeThickness{})
+		h.win.SetResizeBandEdges(0, EdgeThickness{})
 		h.applyCursor(core.CursorDefault)
 		return
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverEdges(edges, h.affordanceBand())
+		h.win.SetResizeBandEdges(edges, h.affordanceBand())
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
-	h.win.SetResizeHoverEdges(0, EdgeThickness{})
+	h.win.SetResizeBandEdges(0, EdgeThickness{})
 	h.applyCursor(h.win.CursorShapeAt(x, y))
 }
 
@@ -1005,7 +1005,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// to move (the left and top bands are anchored at 0), which is why
 			// dragging a CORNER, where at least one band always moves, is
 			// where it shows.
-			h.refreshResizeHover()
+			h.refreshResizeBands()
 		} else if h.dragging {
 			handled = h.dragMove()
 		} else if e.Buttons == 0 {
@@ -1024,7 +1024,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// A button is held (a drag begun elsewhere passing over the frame):
 			// forward it and drop any lingering edge band.
 			handled = h.win.HandleMouseMove(e)
-			h.win.SetResizeHoverEdges(0, EdgeThickness{})
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
@@ -1058,7 +1058,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// reset the cursor. A live resize/drag keeps driving from the global
 		// pointer, so leave its highlight alone.
 		if !h.resizing && !h.dragging {
-			h.win.SetResizeHoverEdges(0, EdgeThickness{})
+			h.win.SetResizeBandEdges(0, EdgeThickness{})
 			h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 			h.applyCursor(core.CursorDefault)
 		}
@@ -1540,7 +1540,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverEdges(h.resizeEdges, h.affordanceBand())
+		h.win.SetResizeBandEdges(h.resizeEdges, h.affordanceBand())
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }
