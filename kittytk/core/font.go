@@ -214,6 +214,28 @@ func FontLineBudget(f *Font) Unit {
 	return 0
 }
 
+// BaselineMeasurer is the optional extension a measurer implements when it
+// can answer where a face's baseline sits. Satisfied by the pixel backends,
+// whose shaping engine has the face's real ascent.
+type BaselineMeasurer interface {
+	Baseline(f *Font) Unit
+}
+
+// FontBaseline is how far below the top of its line a face's baseline sits,
+// in DEFAULT-denomination units, or 0 where the render target cannot answer.
+//
+// What two faces of different sizes need to share a line. Centring the
+// smaller one's line BOX in the row is not the same thing and is not close
+// enough to pass: a box's ascent is not half of it, so the smaller face lands
+// off the line the bigger one sits on -- lower, in the usual case, by the
+// difference between half a box and a real ascent.
+func FontBaseline(f *Font) Unit {
+	if bm, ok := currentTextMeasurer().(BaselineMeasurer); ok {
+		return bm.Baseline(f)
+	}
+	return 0
+}
+
 // MeasureTextIn returns the width of text in the units of the given
 // denomination -- how many of THOSE units the same text occupies.
 //

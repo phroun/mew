@@ -797,6 +797,12 @@ func (b *Backend) LineHeight(f *core.Font) core.Unit {
 	return engine().LineHeight(f)
 }
 
+// Baseline implements core.BaselineMeasurer: the face's own baseline below
+// the top of its line, in default-denomination units.
+func (b *Backend) Baseline(f *core.Font) core.Unit {
+	return engine().Baseline(f)
+}
+
 // cellAdvance is the terminal-region advance for one rune: one cell of
 // the backend's current denomination (two for wide characters). Used
 // only by the cell primitives (DrawCell, glyph tiling), never by

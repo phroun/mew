@@ -394,3 +394,52 @@ func TestMenuScaleLeavesTheBarsLeftIndentAlone(t *testing.T) {
 		}
 	}
 }
+
+// Every face on a menu row sits on the row's ONE text line.
+//
+// A menu draws three sizes on the same row: the item's label in the body
+// face, the shortcut column in Apple's face at 80% when native shortcuts are
+// on, and the bar's clock in a mono face at 80%. They were each centred by
+// LINE BOX, which is not the same as sharing a line -- a box's ascent is not
+// half of it -- so the smaller faces sat off the label's baseline, far enough
+// that the shortcut's descenders were cut by the row below.
+//
+// Asserted as the rule, not the numbers: whatever faces are installed, each
+// one's offset plus its own baseline must land on the same line.
+func TestMenuScalePutsEveryFaceOnTheRowsBaseline(t *testing.T) {
+	t.Cleanup(func() {
+		core.SetTextMeasurer(nil)
+		core.SetMenuScale(1)
+		core.SetMacNativeShortcuts(false)
+	})
+	b, err := raster.NewScaled(300, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+	core.SetMacNativeShortcuts(true)
+
+	for _, scale := range []float64{1, 0.9, 0.5} {
+		core.SetMenuScale(scale)
+		mm := MenuMetricsFor(core.DefaultCellMetrics(), core.DefaultFont(), true)
+		clock := &core.Font{Name: core.FontMonday12.Name, Size: (mm.Font.Size*8 + 5) / 10}
+
+		want := mm.GlyphYOff(mm.Font) + core.FontBaseline(mm.Font)
+		for _, c := range []struct {
+			name string
+			f    *core.Font
+		}{
+			{"shortcut", shortcutFont(mm.Font)},
+			{"clock", clock},
+		} {
+			if core.FontBaseline(c.f) == 0 {
+				t.Skip("this target cannot answer for a baseline")
+			}
+			got := mm.GlyphYOff(c.f) + core.FontBaseline(c.f)
+			if got != want {
+				t.Errorf("scale %v: the %s face sits on line %d, the label on %d",
+					scale, c.name, got, want)
+			}
+		}
+	}
+}

@@ -122,13 +122,34 @@ func (mm MenuMetrics) glyphBox(f *core.Font) core.Unit {
 	return core.LineUnits(f, mm.src, mm.base)
 }
 
-// GlyphYOff centres a face inside a menu row: the body face, or one smaller
-// than it -- the shortcut column in macOS-native mode, the menu bar's clock.
-// The row is the SCALED one, since that is the space there is; the box is
-// the face's own, which does not depend on it.
+// GlyphYOff places a face on the row's own text line: the body face, or one
+// beside it in a different size -- the shortcut column in macOS-native mode,
+// the menu bar's clock. Returned as an offset from the row's top, so the
+// caller draws at itemY + this.
+//
+// BASELINE, not box. Two faces on one row share a line, and centring the
+// smaller one's line box in the row does not put it there: a box's ascent is
+// not half of it, so the smaller face sat below the line its neighbours were
+// on -- far enough that the descenders of Apple's shortcut face were cut off
+// by the row below. The offset is what it takes to put this face's baseline
+// where the body's is.
+//
+// Falls back to centring the box where the target cannot answer for a
+// baseline (a cell surface, a bare measurer), which is where it stood.
 func (mm MenuMetrics) GlyphYOff(f *core.Font) core.Unit {
 	if f == nil {
 		return mm.YOff
+	}
+	body, other := core.FontBaseline(mm.Font), core.FontBaseline(f)
+	if body > 0 && other > 0 {
+		off := mm.YOff + core.ExchangeY(body-other, core.DefaultCellMetrics(), mm.base)
+		if off < 0 {
+			off = 0
+		}
+		if off > mm.RowH {
+			off = mm.RowH
+		}
+		return off
 	}
 	if off := (mm.RowH - mm.glyphBox(f)) / 2; off > 0 {
 		return off

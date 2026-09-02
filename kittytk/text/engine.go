@@ -597,6 +597,19 @@ func (e *Engine) ShapeRun(f *core.Font, s string) *ShapedParagraph {
 	return e.ShapeParagraph(Paragraph{Text: s, Font: f}, 0)
 }
 
+// Baseline is where a face's baseline sits below the top of the line it is
+// drawn on, in units: the face's own ascent, scaled to the em that fills its
+// line budget. This is what makes two faces of different sizes share a line
+// -- centring their line BOXES does not, since a box's ascent is not half of
+// it, and the smaller face lands off the line the bigger one sits on.
+func (e *Engine) Baseline(f *core.Font) core.Unit {
+	sp := e.ShapeRun(f, "")
+	if sp == nil || len(sp.Lines) == 0 {
+		return 0
+	}
+	return sp.Lines[0].Baseline
+}
+
 // Measure is the fast simple tier's measurement: the advance width of
 // s in font f, by real shaping (so it always agrees with painting).
 func (e *Engine) Measure(f *core.Font, s string) core.Unit {
