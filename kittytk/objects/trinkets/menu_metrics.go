@@ -109,29 +109,28 @@ func (mm MenuMetrics) Width(text string, f *core.Font) core.Unit {
 	return f.MeasureTextIn(text, mm.base)
 }
 
-// glyphBox is how much of a ROW a face occupies, as core.LineUnits states it
-// for the unscaled row: the row height times the face's share of the body
-// point size.
+// glyphBox is how many units a face's line box occupies, which is what
+// core.LineUnits answers: the UNSCALED cell's row times the face's share of
+// the body point size.
+//
+// The unscaled row, not the scaled one. A shortened row holds a face
+// shortened by the same fraction, so measuring the face against the row it
+// is about to sit in applies the scale twice and reports a box smaller than
+// the glyphs are -- which then reads as slack, and the text is pushed down
+// out of the bottom of its own row.
 func (mm MenuMetrics) glyphBox(f *core.Font) core.Unit {
-	if f == nil || mm.src == nil || mm.src.Size <= 0 {
-		return mm.RowH
-	}
-	return core.Unit(int(mm.RowH) * f.Size / mm.src.Size)
+	return core.LineUnits(f, mm.src, mm.base)
 }
 
-// GlyphYOff centres a face that is smaller than the body face inside a menu
-// row -- the shortcut column in macOS-native mode, the menu bar's clock.
-// Against the SCALED row, so a shortcut stays centred in a shortened row
-// rather than being centred in a row the menu no longer has.
+// GlyphYOff centres a face inside a menu row: the body face, or one smaller
+// than it -- the shortcut column in macOS-native mode, the menu bar's clock.
+// The row is the SCALED one, since that is the space there is; the box is
+// the face's own, which does not depend on it.
 func (mm MenuMetrics) GlyphYOff(f *core.Font) core.Unit {
-	if f == nil || f == mm.Font {
+	if f == nil {
 		return mm.YOff
 	}
-	box := mm.RowH
-	if mm.Font != nil && mm.Font.Size > 0 {
-		box = core.Unit(int(mm.RowH) * f.Size / mm.Font.Size)
-	}
-	if off := (mm.RowH - box) / 2; off > 0 {
+	if off := (mm.RowH - mm.glyphBox(f)) / 2; off > 0 {
 		return off
 	}
 	return 0

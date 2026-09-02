@@ -6,6 +6,7 @@ import (
 	"github.com/phroun/kittytk/backend/raster"
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/objects/window"
+	"github.com/phroun/kittytk/style"
 )
 
 // [window] menu_scale sizes the menu bar, the dropdowns it opens and context
@@ -186,5 +187,93 @@ func TestMenuScaleWindowChromeReservesTheBarsRow(t *testing.T) {
 	}
 	if cell := bar.EffectiveCellMetrics(); got == cell.UnitsPerCellHeight {
 		t.Errorf("chrome reserved the whole cell (%d) for a shortened bar", got)
+	}
+}
+
+// menuRowInk paints a two-item dropdown at the given scale and reports the
+// row's height in device pixels and where the first row's text ink actually
+// lands inside it. Reading the paint, not the formula: the offset that put
+// the text wrong agreed with itself perfectly.
+func menuRowInk(t *testing.T, scale float64) (rowPx, inkTop, inkBottom int) {
+	t.Helper()
+	b, err := raster.NewScaled(400, 300, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+	core.SetMenuScale(scale)
+
+	d := NewDesktop()
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 400, Height: 300})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	m := NewMenu("File")
+	// Ascenders and descenders both, so the ink spans the face's whole box.
+	m.AddItem(NewMenuItem("Egpy"))
+	m.AddItem(NewMenuItem("Egpy"))
+	bar.AddMenu(m)
+	m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+	m.setGraphicalHint(true)
+	m.Show(0, 0)
+
+	b.Clear(style.DefaultStyle())
+	m.Paint(core.NewPainter(b))
+
+	mm := m.menuMetrics()
+	p := core.NewPainter(b)
+	rowPx = p.UnitSpanPxY(0, mm.RowH)
+	// The white CONTENT area only, clear of the gutter and its divider.
+	x0 := p.UnitSpanPxX(0, mm.CellW*3) + 3
+	x1 := p.UnitSpanPxX(0, m.calculateSize().Width) - 3
+
+	img := b.Image()
+	inkTop, inkBottom = -1, -1
+	for y := 0; y < rowPx; y++ {
+		for x := x0; x < x1; x++ {
+			if c := img.RGBAAt(x, y); int(c.R)+int(c.G)+int(c.B) < 600 {
+				if inkTop < 0 {
+					inkTop = y
+				}
+				inkBottom = y
+				break
+			}
+		}
+	}
+	if inkTop < 0 {
+		t.Fatalf("scale %v: no text ink found in the first row", scale)
+	}
+	return rowPx, inkTop, inkBottom
+}
+
+// An item's text sits in its row the same way at every scale. The row and
+// the face shrink together, so the space above the glyphs shrinks with them.
+//
+// The offset that centres the face in the row measured the face against the
+// SCALED row, which applies the scale twice: it reported a box smaller than
+// the glyphs are, read the difference as slack, and pushed the text down by
+// it. At 0.5 that put the ink 2 device pixels into an 8-pixel row and cut
+// the descenders off the bottom.
+func TestMenuScaleKeepsTextWhereItSitsInTheRow(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMenuScale(1) })
+
+	fullRow, fullTop, fullBottom := menuRowInk(t, 1)
+	for _, scale := range []float64{0.9, 0.5} {
+		row, top, bottom := menuRowInk(t, scale)
+		if row >= fullRow {
+			t.Fatalf("scale %v: row %dpx did not shorten below %dpx", scale, row, fullRow)
+		}
+		// Where the ink starts, as a share of the row, is what must hold.
+		want := fullTop * row / fullRow
+		if d := top - want; d < -1 || d > 1 {
+			t.Errorf("scale %v: text ink starts %dpx into a %dpx row; at 1.0 it starts %dpx into %dpx, so want about %dpx",
+				scale, top, row, fullTop, fullRow, want)
+		}
+		// And it still reaches the baseline rather than being clipped short
+		// of it -- the descenders are what the pushed-down text lost.
+		if wantB := fullBottom * row / fullRow; bottom < wantB-1 {
+			t.Errorf("scale %v: text ink ends at %dpx of a %dpx row, want about %dpx -- the bottom is clipped",
+				scale, bottom, row, wantB)
+		}
 	}
 }
