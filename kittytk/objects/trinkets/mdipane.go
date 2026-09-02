@@ -1019,20 +1019,20 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// included); resizeGripFor stays the overlay's, which must not move.
 	metrics := m.EffectiveCellMetrics()
 	graphical := core.FindGraphicalFrames(m.Self())
-	// The grips are built from UnitsPerCellWidth, so they take the border's column
-	// count -- the same axis the quarter- and half-column they add is on.
-	border, _ := core.FindFrameBorderUnitsIn(win, metrics)
-	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), border)
+	// Each grip is a pair, and so is the border it is built on: the column
+	// count carries the across half, the row count the down half.
+	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
+	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), bx, by)
 	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
-		window.ResizeOverlayGrip(graphical, metrics, border))
+		window.ResizeOverlayGrip(graphical, metrics, bx, by))
 }
 
 // resizeGripFor is the effective resize-grip thickness for a child window
 // (the surface's grip capability, discovered by ancestry).
-func (m *MDIPane) resizeGripFor(win *window.Window) core.Unit {
+func (m *MDIPane) resizeGripFor(win *window.Window) window.ResizeGrip {
 	metrics := m.EffectiveCellMetrics()
-	border, _ := core.FindFrameBorderUnitsIn(win, metrics)
-	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()), metrics, border)
+	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
+	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()), metrics, bx, by)
 }
 
 // setResizeHover shows the translucent white overlay along the given resize

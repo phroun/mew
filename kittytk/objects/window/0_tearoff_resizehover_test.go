@@ -15,7 +15,8 @@ import (
 // do not move. A CORNER always moves at least one band, which is where it
 // shows.
 func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
-	const grip = core.Unit(4)
+	const g = core.Unit(4)
+	grip := ResizeGrip{X: g, Y: g}
 	start := core.UnitRect{Width: 100, Height: 60}
 	grown := core.UnitRect{Width: 160, Height: 90}
 
@@ -29,14 +30,14 @@ func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 		t.Fatal("the corner's bands must move with the window; they did not")
 	}
 	// The right band tracks the new width, the bottom band the new height.
-	if after[0].X != grown.Width-grip {
-		t.Errorf("right band at X=%v, want %v", after[0].X, grown.Width-grip)
+	if after[0].X != grown.Width-g {
+		t.Errorf("right band at X=%v, want %v", after[0].X, grown.Width-g)
 	}
 	if after[0].Height != grown.Height {
 		t.Errorf("right band height %v, want the window's %v", after[0].Height, grown.Height)
 	}
-	if after[1].Y != grown.Height-grip {
-		t.Errorf("bottom band at Y=%v, want %v", after[1].Y, grown.Height-grip)
+	if after[1].Y != grown.Height-g {
+		t.Errorf("bottom band at Y=%v, want %v", after[1].Y, grown.Height-g)
 	}
 	if after[1].Width != grown.Width {
 		t.Errorf("bottom band width %v, want the window's %v", after[1].Width, grown.Width)
@@ -63,7 +64,7 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
-	w.SetResizeHoverEdges(0, 0)
+	w.SetResizeHoverEdges(0, ResizeGrip{})
 	h.refreshResizeHover()
 	if len(w.resizeHoverBands(small)) != 0 {
 		t.Fatal("no highlight should be set when no resize is in flight")
@@ -98,7 +99,7 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	// The band spans the effective grip (the resize sliver plus the painted
 	// frame border), the same width the grab zone uses — so it is measured from
 	// the painted width, not the stale bounds.
-	wantX := grown.Width - h.effectiveGrip()
+	wantX := grown.Width - h.effectiveGrip().X
 	if got[0].X != wantX {
 		t.Errorf("band at X=%v, want %v — it is pinned to the old width, not the painted one",
 			got[0].X, wantX)

@@ -22,31 +22,31 @@ func TestResizeEdgeAtSplitsOverlappingGrips(t *testing.T) {
 	// middle is clear of the top/bottom grips, isolating the horizontal split.
 	// Local midpoint is lx=20 (x=120).
 	hb := core.UnitRect{X: 100, Y: 50, Width: 40, Height: 100}
-	const grip = core.Unit(30)
-	if e := ResizeEdgeAt(hb, 115, 100, m, grip, 0); e&ResizeEdgeLeft == 0 || e&ResizeEdgeRight != 0 {
+	grip := ResizeGrip{X: 30, Y: 30}
+	if e := ResizeEdgeAt(hb, 115, 100, m, grip, ResizeGrip{}); e&ResizeEdgeLeft == 0 || e&ResizeEdgeRight != 0 {
 		t.Errorf("left half: edge=%b, want Left set, Right clear", e)
 	}
-	if e := ResizeEdgeAt(hb, 125, 100, m, grip, 0); e&ResizeEdgeRight == 0 || e&ResizeEdgeLeft != 0 {
+	if e := ResizeEdgeAt(hb, 125, 100, m, grip, ResizeGrip{}); e&ResizeEdgeRight == 0 || e&ResizeEdgeLeft != 0 {
 		t.Errorf("right half: edge=%b, want Right set, Left clear", e)
 	}
 
 	// Vertical overlap: a short window (H=40) with the same grip, wide enough
 	// (W=100) to isolate the vertical split. Local midpoint is ly=20 (y=70).
 	vb := core.UnitRect{X: 100, Y: 50, Width: 100, Height: 40}
-	if e := ResizeEdgeAt(vb, 150, 65, m, grip, 0); e&ResizeEdgeTop == 0 || e&ResizeEdgeBottom != 0 {
+	if e := ResizeEdgeAt(vb, 150, 65, m, grip, ResizeGrip{}); e&ResizeEdgeTop == 0 || e&ResizeEdgeBottom != 0 {
 		t.Errorf("top half: edge=%b, want Top set, Bottom clear", e)
 	}
-	if e := ResizeEdgeAt(vb, 150, 75, m, grip, 0); e&ResizeEdgeBottom == 0 || e&ResizeEdgeTop != 0 {
+	if e := ResizeEdgeAt(vb, 150, 75, m, grip, ResizeGrip{}); e&ResizeEdgeBottom == 0 || e&ResizeEdgeTop != 0 {
 		t.Errorf("bottom half: edge=%b, want Bottom set, Top clear", e)
 	}
 
 	// A far corner of a tiny window resolves to exactly one horizontal and one
 	// vertical edge (a clean diagonal), never both lefts-and-rights.
 	tiny := core.UnitRect{Width: 30, Height: 30}
-	if e := ResizeEdgeAt(tiny, 25, 25, m, grip, 0); e != (ResizeEdgeRight | ResizeEdgeBottom) {
+	if e := ResizeEdgeAt(tiny, 25, 25, m, grip, ResizeGrip{}); e != (ResizeEdgeRight | ResizeEdgeBottom) {
 		t.Errorf("bottom-right of tiny window: edge=%b, want Right|Bottom exactly", e)
 	}
-	if e := ResizeEdgeAt(tiny, 4, 4, m, grip, 0); e != (ResizeEdgeLeft | ResizeEdgeTop) {
+	if e := ResizeEdgeAt(tiny, 4, 4, m, grip, ResizeGrip{}); e != (ResizeEdgeLeft | ResizeEdgeTop) {
 		t.Errorf("top-left of tiny window: edge=%b, want Left|Top exactly", e)
 	}
 }
@@ -58,20 +58,20 @@ func TestResizeEdgeAtNormalWindowUnchanged(t *testing.T) {
 	m := core.DefaultCellMetrics()
 	b := core.UnitRect{Width: 200, Height: 200}
 
-	if e := ResizeEdgeAt(b, 3, 100, m, 8, 0); e != ResizeEdgeLeft {
+	if e := ResizeEdgeAt(b, 3, 100, m, ResizeGrip{X: 8, Y: 8}, ResizeGrip{}); e != ResizeEdgeLeft {
 		t.Errorf("left edge: edge=%b, want Left only", e)
 	}
-	if e := ResizeEdgeAt(b, 197, 100, m, 8, 0); e != ResizeEdgeRight {
+	if e := ResizeEdgeAt(b, 197, 100, m, ResizeGrip{X: 8, Y: 8}, ResizeGrip{}); e != ResizeEdgeRight {
 		t.Errorf("right edge: edge=%b, want Right only", e)
 	}
-	if e := ResizeEdgeAt(b, 100, 100, m, 8, 0); e != ResizeEdgeNone {
+	if e := ResizeEdgeAt(b, 100, 100, m, ResizeGrip{X: 8, Y: 8}, ResizeGrip{}); e != ResizeEdgeNone {
 		t.Errorf("interior: edge=%b, want None", e)
 	}
-	if e := ResizeEdgeAt(b, 3, 3, m, 8, 0); e != (ResizeEdgeLeft | ResizeEdgeTop) {
+	if e := ResizeEdgeAt(b, 3, 3, m, ResizeGrip{X: 8, Y: 8}, ResizeGrip{}); e != (ResizeEdgeLeft | ResizeEdgeTop) {
 		t.Errorf("top-left corner: edge=%b, want Left|Top", e)
 	}
 	// grip 0 (cell frame): the top row is the titlebar, not a resize edge.
-	if e := ResizeEdgeAt(b, 100, 0, m, 0, 0); e&ResizeEdgeTop != 0 {
+	if e := ResizeEdgeAt(b, 100, 0, m, ResizeGrip{}, ResizeGrip{}); e&ResizeEdgeTop != 0 {
 		t.Errorf("cell-frame top row should not be grabbable: edge=%b", e)
 	}
 }

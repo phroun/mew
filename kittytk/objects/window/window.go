@@ -186,7 +186,7 @@ type Window struct {
 	// its bands stranded mid-frame. The paint resolves the mask against the
 	// bounds it is actually painting, which cannot be stale.
 	resizeHoverEdges int
-	resizeHoverGrip  core.Unit
+	resizeHoverGrip  ResizeGrip
 
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
@@ -1954,7 +1954,7 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 // back asynchronously, so any rectangle computed while the pointer moves is
 // built from the PREVIOUS bounds — which is how a growing window ends up with
 // its bands stranded in the middle of the frame.
-func (w *Window) SetResizeHoverEdges(edges int, grip core.Unit) bool {
+func (w *Window) SetResizeHoverEdges(edges int, grip ResizeGrip) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.resizeHoverEdges == edges && w.resizeHoverGrip == grip {

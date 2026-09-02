@@ -177,9 +177,10 @@ func TestTornEdgeRects(t *testing.T) {
 	// handed. The torn host now derives that from ResizeOverlayGrip rather
 	// than a constant, so pick a width here and assert the shape.
 	const g core.Unit = 6
+	gr := ResizeGrip{X: g, Y: g}
 
 	// Bottom-right corner -> right band + bottom band.
-	got := tornEdgeRects(b, resizeRight|resizeBottom, g)
+	got := tornEdgeRects(b, resizeRight|resizeBottom, gr)
 	if len(got) != 2 {
 		t.Fatalf("corner: want 2 rects, got %d", len(got))
 	}
@@ -193,7 +194,7 @@ func TestTornEdgeRects(t *testing.T) {
 	}
 
 	// Top-left corner -> left band + top band.
-	got = tornEdgeRects(b, resizeLeft|resizeTop, g)
+	got = tornEdgeRects(b, resizeLeft|resizeTop, gr)
 	if len(got) != 2 {
 		t.Fatalf("top corner: want 2 rects, got %d", len(got))
 	}

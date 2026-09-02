@@ -16,7 +16,8 @@ import (
 // ResizeHitGrip with the frame border the surface actually carries — the
 // themed frame's reserved border, or zero where the OS chrome sits outside
 // the client area — the hover affordance is the same translucent band at
-// ResizeOverlayGrip width, and the corners reach as far as the affordance.
+// ResizeOverlayGrip thickness, and the corners reach as far as the
+// affordance.
 //
 // The press is applied the way TearOffHost applies one — global pointer
 // deltas onto the OS window's pixel geometry through platform.NativeSurface
@@ -135,8 +136,8 @@ func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	b := d.Bounds()
 	border := d.hostFrameInset()
 	metrics := d.EffectiveCellMetrics()
-	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border)
-	corner := window.ResizeOverlayGrip(true, metrics, border)
+	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border, border)
+	corner := window.ResizeOverlayGrip(true, metrics, border, border)
 	return window.ResizeEdgeAt(core.UnitRect{Width: b.Width, Height: b.Height},
 		x, y, metrics, grip, corner)
 }
@@ -344,19 +345,20 @@ func (d *Desktop) paintHostEdgeHover(p *core.Painter, bounds core.UnitRect) {
 	if edges == 0 {
 		return
 	}
-	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), d.hostFrameInset())
+	inset := d.hostFrameInset()
+	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), inset, inset)
 	var rects []core.UnitRect
 	if edges&window.ResizeEdgeLeft != 0 {
-		rects = append(rects, core.UnitRect{Width: band, Height: bounds.Height})
+		rects = append(rects, core.UnitRect{Width: band.X, Height: bounds.Height})
 	}
 	if edges&window.ResizeEdgeRight != 0 {
-		rects = append(rects, core.UnitRect{X: bounds.Width - band, Width: band, Height: bounds.Height})
+		rects = append(rects, core.UnitRect{X: bounds.Width - band.X, Width: band.X, Height: bounds.Height})
 	}
 	if edges&window.ResizeEdgeTop != 0 {
-		rects = append(rects, core.UnitRect{Width: bounds.Width, Height: band})
+		rects = append(rects, core.UnitRect{Width: bounds.Width, Height: band.Y})
 	}
 	if edges&window.ResizeEdgeBottom != 0 {
-		rects = append(rects, core.UnitRect{Y: bounds.Height - band, Width: bounds.Width, Height: band})
+		rects = append(rects, core.UnitRect{Y: bounds.Height - band.Y, Width: bounds.Width, Height: band.Y})
 	}
 	for _, r := range rects {
 		p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,

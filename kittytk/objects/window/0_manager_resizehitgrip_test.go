@@ -41,9 +41,11 @@ func TestResizeHitGripIsTheBorderPlusAQuarterCell(t *testing.T) {
 		// converted through ppu rather than through the integer scale.
 		{"tiny ppu: 3 device px floor", 0.25, 0, 12},
 	} {
-		got := ResizeHitGrip(true, cell, c.ppu, c.border)
-		if got != c.want {
-			t.Errorf("%s: ResizeHitGrip(ppu=%v, border=%v) = %v units, want %v",
+		// At the default cell a quarter column and an eighth of a row are the
+		// same two units, so both axes answer alike here.
+		got := ResizeHitGrip(true, cell, c.ppu, c.border, c.border)
+		if got.X != c.want || got.Y != c.want {
+			t.Errorf("%s: ResizeHitGrip(ppu=%v, border=%v) = %v units, want %v across and down",
 				c.name, c.ppu, c.border, got, c.want)
 		}
 	}
@@ -53,8 +55,8 @@ func TestResizeHitGripIsTheBorderPlusAQuarterCell(t *testing.T) {
 // row/column IS the grip, and ResizeEdgeAt's metrics defaults apply.
 func TestResizeHitGripLeavesTheCellFrameAlone(t *testing.T) {
 	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
-	if got := ResizeHitGrip(false, cell, 1, 2); got != 0 {
-		t.Errorf("cell frame: ResizeHitGrip = %v, want 0 (metrics defaults apply)", got)
+	if got := ResizeHitGrip(false, cell, 1, 2, 2); !got.Zero() {
+		t.Errorf("cell frame: ResizeHitGrip = %v, want zero (metrics defaults apply)", got)
 	}
 }
 
@@ -64,20 +66,20 @@ func TestContentIsClickableJustPastTheBorder(t *testing.T) {
 	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	bounds := core.UnitRect{X: 100, Y: 100, Width: 400, Height: 300}
 	// ppu 2, border 2: the 2-unit border plus a quarter cell (2 units).
-	grip := ResizeHitGrip(true, cell, 2, 2)
-	if grip != 4 {
-		t.Fatalf("grip = %v, want 4 (border + a quarter cell)", grip)
+	grip := ResizeHitGrip(true, cell, 2, 2, 2)
+	if grip.X != 4 {
+		t.Fatalf("grip = %v, want 4 across (border + a quarter cell)", grip.X)
 	}
 
 	// Inside the zone: resizes.
 	for _, dx := range []core.Unit{0, 1, 2, 3} {
-		if edge := ResizeEdgeAt(bounds, bounds.X+dx, bounds.Y+150, cell, grip, 0); edge == ResizeEdgeNone {
+		if edge := ResizeEdgeAt(bounds, bounds.X+dx, bounds.Y+150, cell, grip, ResizeGrip{}); edge == ResizeEdgeNone {
 			t.Errorf("x+%v: no resize edge, want the left grip", dx)
 		}
 	}
 	// Past it: content, a quarter cell beyond the border — not the
 	// five-eighths of a cell that three stacked errors used to produce.
-	if edge := ResizeEdgeAt(bounds, bounds.X+4, bounds.Y+150, cell, grip, 0); edge != ResizeEdgeNone {
+	if edge := ResizeEdgeAt(bounds, bounds.X+4, bounds.Y+150, cell, grip, ResizeGrip{}); edge != ResizeEdgeNone {
 		t.Errorf("x+4 (border + a quarter cell): edge bits %d, want content", edge)
 	}
 }
@@ -90,23 +92,72 @@ func TestContentIsClickableJustPastTheBorder(t *testing.T) {
 func TestOverlayGripCoversTheBorderPlusHalfACell(t *testing.T) {
 	cell := core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}
 	for _, border := range []core.Unit{0, 2, 20} {
-		if got, want := ResizeOverlayGrip(true, cell, border), border+4; got != want {
-			t.Errorf("border %v: ResizeOverlayGrip = %v, want %v", border, got, want)
+		got := ResizeOverlayGrip(true, cell, border, border)
+		if want := border + 4; got.X != want || got.Y != want {
+			t.Errorf("border %v: ResizeOverlayGrip = %v, want %v across and down", border, got, want)
 		}
 	}
 
 	// The cell frame keeps its own affordance: the whole border row/column,
 	// which ResizeEdgeRects derives from the metrics when the grip is zero.
-	if got := ResizeOverlayGrip(false, cell, 2); got != 0 {
-		t.Errorf("cell frame: ResizeOverlayGrip = %v, want 0 (metrics defaults)", got)
+	if got := ResizeOverlayGrip(false, cell, 2, 2); !got.Zero() {
+		t.Errorf("cell frame: ResizeOverlayGrip = %v, want zero (metrics defaults)", got)
 	}
 
 	// ...and it is wider than what actually grabs, at every ordinary border.
 	for _, border := range []core.Unit{0, 2} {
-		overlay := ResizeOverlayGrip(true, cell, border)
-		hit := ResizeHitGrip(true, cell, 1, border)
-		if overlay <= hit {
+		overlay := ResizeOverlayGrip(true, cell, border, border)
+		hit := ResizeHitGrip(true, cell, 1, border, border)
+		if overlay.X <= hit.X || overlay.Y <= hit.Y {
 			t.Errorf("border %v: affordance %v is not wider than the grab zone %v", border, overlay, hit)
+		}
+	}
+}
+
+// A resize band is a physical thickness, so the top and bottom bands are as
+// deep as the left and right ones are wide — at every denomination, not only
+// where a unit happens to be square.
+//
+// Both grips took the column count for both axes, and the band along the top
+// of an MDI child came out twice as thick as the one down its side wherever
+// a cell stopped being twice as tall as it is wide: 12 device pixels against
+// 6 at a square 16x16 denomination, and 24 against 6 at 16x8.
+//
+// Stated as an exchange rather than as the formula: the two counts are the
+// same distance when they buy the same number of DEFAULT units, which is the
+// denomination whose units are square. Recomputing half a column here would
+// agree with any formula, including the one that was wrong.
+func TestResizeGripsAreTheSameThicknessOnBothAxes(t *testing.T) {
+	d := core.DefaultCellMetrics()
+	// The frame border is already per-axis, so it arrives as a pair; these
+	// are what core.FindFrameBorderUnitsIn answers for a 2-unit border at
+	// the default denomination.
+	for _, c := range []struct {
+		m                core.CellMetrics
+		borderX, borderY core.Unit
+	}{
+		{core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 16}, 2, 2},
+		{core.CellMetrics{UnitsPerCellWidth: 16, UnitsPerCellHeight: 32}, 4, 4},
+		{core.CellMetrics{UnitsPerCellWidth: 4, UnitsPerCellHeight: 8}, 1, 1},
+		{core.CellMetrics{UnitsPerCellWidth: 16, UnitsPerCellHeight: 16}, 4, 2},
+		{core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 8}, 2, 1},
+		{core.CellMetrics{UnitsPerCellWidth: 16, UnitsPerCellHeight: 8}, 4, 1},
+		{core.CellMetrics{UnitsPerCellWidth: 8, UnitsPerCellHeight: 32}, 2, 4},
+	} {
+		for _, g := range []struct {
+			name string
+			grip ResizeGrip
+		}{
+			{"affordance", ResizeOverlayGrip(true, c.m, c.borderX, c.borderY)},
+			{"grab zone", ResizeHitGrip(true, c.m, 1, c.borderX, c.borderY)},
+		} {
+			across := core.ExchangeX(g.grip.X, c.m, d)
+			down := core.ExchangeY(g.grip.Y, c.m, d)
+			if across != down {
+				t.Errorf("%dx%d %s: %v units across is %v default units, %v down is %v",
+					c.m.UnitsPerCellWidth, c.m.UnitsPerCellHeight, g.name,
+					g.grip.X, across, g.grip.Y, down)
+			}
 		}
 	}
 }

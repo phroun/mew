@@ -254,10 +254,27 @@ func abs(x int) int {
 	return x
 }
 
+// ResizeGrip is a resize band's thickness stated per axis: X is how far in
+// a band along a vertical edge reaches ACROSS, Y how far in a band along a
+// horizontal edge reaches DOWN.
+//
+// Two numbers because a unit is square only where the cell is. The same
+// count spent on both axes is the same physical thickness at the default
+// 8x16 denomination and at every denomination proportional to it, and a
+// different one everywhere else: over an 8x16 surface a 16x16 subtree draws
+// twelve units as six pixels across and twelve down.
+type ResizeGrip struct {
+	X, Y core.Unit
+}
+
+// Zero reports the cell-frame grip, where the metrics defaults apply
+// instead: a whole column on the sides, a whole row top and bottom.
+func (g ResizeGrip) Zero() bool { return g.X <= 0 && g.Y <= 0 }
+
 // ResizeEdgeAt returns the resize edge bits for point (x, y) against a
 // window occupying `bounds` (all in the same coordinate space). `grip` is
 // the effective grab-zone thickness in units - the graphical grip sliver
-// plus any frame border; when it is 0 the cell-frame defaults from
+// plus any frame border; when it is zero the cell-frame defaults from
 // `metrics` apply (a full cell on the sides and bottom) and the top edge
 // is NOT grabbable (the top row is the titlebar, used for dragging). The
 // bottom and (when grabbable) top edges widen at the corners so diagonal
@@ -266,17 +283,23 @@ func abs(x int) int {
 // This is the single source of resize-edge geometry: the desktop
 // WindowManager and the embedded MDIPane both call it, so desktop and MDI
 // windows detect identical edges and corners.
-func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip, cornerReach core.Unit) int {
+func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics, grip, cornerReach ResizeGrip) int {
 	edgeThreshold := metrics.UnitsPerCellWidth
-	cornerThreshold := metrics.UnitsPerCellWidth * 2
-	bottomBand := metrics.UnitsPerCellHeight
-	if grip > 0 {
-		edgeThreshold = grip
-		cornerThreshold = grip * 2
-		bottomBand = grip
+	cornerThreshold := ResizeGrip{
+		X: metrics.UnitsPerCellWidth * 2,
+		Y: metrics.UnitsPerCellHeight * 2,
 	}
-	if cornerReach < cornerThreshold {
-		cornerReach = cornerThreshold
+	bottomBand := metrics.UnitsPerCellHeight
+	if !grip.Zero() {
+		edgeThreshold = grip.X
+		cornerThreshold = ResizeGrip{X: grip.X * 2, Y: grip.Y * 2}
+		bottomBand = grip.Y
+	}
+	if cornerReach.X < cornerThreshold.X {
+		cornerReach.X = cornerThreshold.X
+	}
+	if cornerReach.Y < cornerThreshold.Y {
+		cornerReach.Y = cornerThreshold.Y
 	}
 
 	lx := x - bounds.X
@@ -295,9 +318,9 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 	// threshold along a live top/bottom edge: that older form scaled off a
 	// grip that was itself a cell wide, and collapsed to nothing once the grip
 	// became the minimum it should always have been.
-	if grip > 0 {
-		nearLeft, nearRight := lx < cornerReach, lx >= bounds.Width-cornerReach
-		nearTop, nearBottom := ly < cornerReach, ly >= bounds.Height-cornerReach
+	if !grip.Zero() {
+		nearLeft, nearRight := lx < cornerReach.X, lx >= bounds.Width-cornerReach.X
+		nearTop, nearBottom := ly < cornerReach.Y, ly >= bounds.Height-cornerReach.Y
 		// A window too small for four distinct corners splits by the pointer's
 		// half, the same rule the edges use below.
 		if nearLeft && nearRight {
@@ -324,7 +347,7 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 
 	// Vertical grips. The top edge is only grabbable with a graphical grip
 	// (grip>0); with the cell frame the top row is the titlebar.
-	atTop := grip > 0 && ly < grip
+	atTop := !grip.Zero() && ly < grip.Y
 	atBottom := ly >= bounds.Height-bottomBand
 	// When the window is short enough (or its grip wide enough) that the top
 	// and bottom grips overlap, letting one always win strands the other
@@ -342,7 +365,7 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 	// bottom edge so the diagonal is easy to hit.
 	hThresh := edgeThreshold
 	if atTop || atBottom {
-		hThresh = cornerThreshold
+		hThresh = cornerThreshold.X
 	}
 	atLeft := lx < hThresh
 	atRight := lx >= bounds.Width-hThresh
@@ -372,7 +395,7 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 
 // ResizeOverlayGrip is the thickness of the resize AFFORDANCE — the
 // translucent band drawn along the edge under the pointer: the frame border,
-// plus a flat half column BEYOND it.
+// plus a flat half cell BEYOND it, per axis.
 //
 // Note the opposite structure to ResizeHitGrip, which is border-INCLUSIVE.
 // That is the point rather than an inconsistency: the affordance is a visual
@@ -384,11 +407,22 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 // graphical says which kind of frame this is, exactly as in ResizeHitGrip:
 // false is the cell frame, where the whole border row/column is both the grab
 // and the affordance and ResizeEdgeRects' metrics defaults apply.
-func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, border core.Unit) core.Unit {
+//
+// Half a column across, a quarter of a row down: both are four units at the
+// default 8x16 cell, which is the same distance on each axis, and each axis
+// has to be a fraction of ITS OWN cell to stay that way. Taken from the
+// column alone, the top and bottom bands were twice as thick as the side
+// ones the moment a cell stopped being twice as tall as it is wide -- 12
+// pixels against 6 at a square 16x16, 24 against 6 at 16x8. The border term
+// is already per-axis (core.FindFrameBorderUnitsIn).
+func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, borderX, borderY core.Unit) ResizeGrip {
 	if !graphical {
-		return 0
+		return ResizeGrip{}
 	}
-	return border + metrics.UnitsPerCellWidth/2
+	return ResizeGrip{
+		X: borderX + metrics.UnitsPerCellWidth/2,
+		Y: borderY + metrics.UnitsPerCellHeight/4,
+	}
 }
 
 // ResizeHitGrip is how far in from a window's outer edge a press starts a
@@ -413,16 +447,35 @@ func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, border core.Uni
 //
 // Deliberately NOT the same quantity as ResizeOverlayGrip, which sizes the
 // visual affordance: see there for why the two must not converge.
-func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, border core.Unit) core.Unit {
+//
+// A quarter column across, an eighth of a row down — two units either way at
+// the default 8x16 cell, and the same distance on each axis at any other,
+// which is the rule ResizeOverlayGrip follows one fraction coarser. The
+// three-pixel floor is per-axis for the same reason: three device pixels buy
+// a different number of units across than down.
+func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, borderX, borderY core.Unit) ResizeGrip {
 	if !graphical {
-		return 0
+		return ResizeGrip{}
 	}
 	if ppu <= 0 {
 		ppu = 1
 	}
-	grip := border + metrics.UnitsPerCellWidth/4
-	if px := core.Unit(math.Ceil(3 / ppu)); px > grip {
-		grip = px
+	d := core.DefaultCellMetrics()
+	grip := ResizeGrip{
+		X: borderX + metrics.UnitsPerCellWidth/4,
+		Y: borderY + metrics.UnitsPerCellHeight/8,
+	}
+	floorPx := func(denom, dDenom core.Unit) core.Unit {
+		if denom <= 0 || dDenom <= 0 {
+			return core.Unit(math.Ceil(3 / ppu))
+		}
+		return core.Unit(math.Ceil(3 * float64(denom) / (ppu * float64(dDenom))))
+	}
+	if px := floorPx(metrics.UnitsPerCellWidth, d.UnitsPerCellWidth); px > grip.X {
+		grip.X = px
+	}
+	if px := floorPx(metrics.UnitsPerCellHeight, d.UnitsPerCellHeight); px > grip.Y {
+		grip.Y = px
 	}
 	return grip
 }
@@ -501,8 +554,8 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 	graphical := core.FindGraphicalFrames(win)
 	border := core.FindFrameBorderUnits(win)
 	return ResizeEdgeAt(win.Bounds(), x, y, metrics,
-		ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(win), border),
-		ResizeOverlayGrip(graphical, metrics, border))
+		ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(win), border, border),
+		ResizeOverlayGrip(graphical, metrics, border, border))
 }
 
 // resizeEdgeRects returns the window-local rectangles (one per set edge
@@ -510,22 +563,23 @@ func (m *WindowManager) detectResizeEdge(win *Window, x, y core.Unit) int {
 // given resize edge, matching detectResizeEdge's thresholds. Used to
 // highlight the edge under the pointer.
 func (m *WindowManager) resizeEdgeRects(win *Window, edge int) []core.UnitRect {
+	border := core.FindFrameBorderUnits(win)
 	return ResizeEdgeRects(win, edge, ResizeOverlayGrip(core.FindGraphicalFrames(win),
-		core.DefaultCellMetrics(), core.FindFrameBorderUnits(win)))
+		core.DefaultCellMetrics(), border, border))
 }
 
 // ResizeEdgeRects returns the window-local rectangles to highlight for the
 // given resize edge(s), sized to the affordance thickness (see
 // ResizeOverlayGrip). Shared by the WindowManager and the MDIPane so both
 // draw the same resize overlay.
-func ResizeEdgeRects(win *Window, edge int, grip core.Unit) []core.UnitRect {
+func ResizeEdgeRects(win *Window, edge int, grip ResizeGrip) []core.UnitRect {
 	b := win.Bounds()
 	metrics := core.DefaultCellMetrics()
 	edgeThreshold := metrics.UnitsPerCellWidth
 	bottomBand := metrics.UnitsPerCellHeight
-	if grip > 0 {
-		edgeThreshold = grip
-		bottomBand = grip
+	if !grip.Zero() {
+		edgeThreshold = grip.X
+		bottomBand = grip.Y
 	}
 
 	var rects []core.UnitRect
