@@ -135,6 +135,44 @@ func TestApplyHostConfTitleBarScale(t *testing.T) {
 	}
 }
 
+// editor.conf reads menu_scale on titlebar_scale's terms.
+//
+// Per-parser for the reason the density test states: mew maps editor.conf's
+// keys itself, so menu_scale existing on hostcfg.Config and in upstream's
+// parser left it inert here -- which is how it shipped doing nothing, and the
+// note below had already said it would.
+func TestApplyHostConfMenuScale(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.9", 0.9},
+		{"0.5", 0.5},
+		{"0", 1},
+		{"-2", 1},
+		{"nope", 1},
+	} {
+		sec := parseHostConfSections([]byte("[window]\nmenu_scale = " + c.val + "\n"))
+		cfg := hostcfg.Defaults()
+		applyHostConf(sec, &cfg)
+		if cfg.MenuScale != c.want {
+			t.Errorf("menu_scale = %q: got %v, want %v", c.val, cfg.MenuScale, c.want)
+		}
+	}
+	// An absent key keeps the default, and the two scales are independent.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\ntitlebar_scale = 0.7\n")), &cfg)
+	if cfg.MenuScale != 1 {
+		t.Errorf("titlebar_scale moved menu_scale to %v", cfg.MenuScale)
+	}
+	cfg = hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nmenu_scale = 0.9\n")), &cfg)
+	if cfg.MenuScale != 0.9 || cfg.TitleBarScale != 1 {
+		t.Errorf("menu_scale 0.9 gave menu %v / titlebar %v, want 0.9 and 1",
+			cfg.MenuScale, cfg.TitleBarScale)
+	}
+}
+
 // [system] density overrides what the window system reports about the screen.
 //
 // mew reads editor.conf with ITS OWN key mapping, so a key added to the shared

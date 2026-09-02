@@ -81,6 +81,11 @@ func main() {
 	// and controls scaled to match. 1.0 is the default. (TUI stays 1.0 —
 	// a terminal cannot subdivide a character cell.)
 	core.SetTitleBarScale(cfg.TitleBarScale)
+	// [window] menu_scale: the menu bar, the dropdowns it opens and context
+	// menus at this fraction of the classic full-cell row, fonts and the
+	// cell-based gutters scaled to match. 1.0 is the default, and the TUI
+	// stands down to it for the same reason.
+	core.SetMenuScale(cfg.MenuScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {

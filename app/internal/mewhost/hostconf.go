@@ -169,6 +169,13 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 			cfg.TitleBarScale = f
 		}
 	}
+	// menu_scale: the menu bar, its dropdowns and context menus at this
+	// fraction of the classic full-cell row, on titlebar_scale's terms.
+	if v, ok := window["menu_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.MenuScale = f
+		}
+	}
 	// wallpaper: the image path plus its layout (mode / tile / align / filter /
 	// scale). Empty strings and a zero scale keep the built-in pattern and the
 	// layout defaults, so a partial [window] section need not restate them.
