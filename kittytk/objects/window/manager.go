@@ -395,7 +395,7 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 
 // ResizeOverlayGrip is the thickness of the resize AFFORDANCE — the
 // translucent band drawn along the edge under the pointer: the frame border,
-// plus a flat half cell BEYOND it, per axis.
+// plus a flat half column BEYOND it.
 //
 // Note the opposite structure to ResizeHitGrip, which is border-INCLUSIVE.
 // That is the point rather than an inconsistency: the affordance is a visual
@@ -408,20 +408,27 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 // false is the cell frame, where the whole border row/column is both the grab
 // and the affordance and ResizeEdgeRects' metrics defaults apply.
 //
-// Half a column across, a quarter of a row down: both are four units at the
-// default 8x16 cell, which is the same distance on each axis, and each axis
-// has to be a fraction of ITS OWN cell to stay that way. Taken from the
-// column alone, the top and bottom bands were twice as thick as the side
-// ones the moment a cell stopped being twice as tall as it is wide -- 12
-// pixels against 6 at a square 16x16, 24 against 6 at 16x8. The border term
-// is already per-axis (core.FindFrameBorderUnitsIn).
+// Half a column is a DISTANCE, and the band is that thick whichever edge it
+// lies along: the same across the sides as down the top and bottom. So it is
+// stated once, in the surface's own denomination — the reference the
+// geometry is snapped in, and the one whose units are square — and exchanged
+// onto each axis, rather than counted out of the local denomination twice.
+//
+// Half a column of the LOCAL cell spent on both axes is half a column across
+// and something else entirely down, since a unit is square only where the
+// cell is. The top and bottom bands of an MDI child came out at 12 device
+// pixels against the sides' 6 at a square 16x16 denomination, 24 against 6 at
+// 16x8, and 3 against 6 at 8x32. The border term is already a distance,
+// stated per axis by core.FindFrameBorderUnitsIn.
 func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, borderX, borderY core.Unit) ResizeGrip {
 	if !graphical {
 		return ResizeGrip{}
 	}
+	d := core.DefaultCellMetrics()
+	beyond := d.UnitsPerCellWidth / 2
 	return ResizeGrip{
-		X: borderX + metrics.UnitsPerCellWidth/2,
-		Y: borderY + metrics.UnitsPerCellHeight/4,
+		X: borderX + core.ExchangeX(beyond, d, metrics),
+		Y: borderY + core.ExchangeY(beyond, d, metrics),
 	}
 }
 
@@ -448,11 +455,16 @@ func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, borderX, border
 // Deliberately NOT the same quantity as ResizeOverlayGrip, which sizes the
 // visual affordance: see there for why the two must not converge.
 //
-// A quarter column across, an eighth of a row down — two units either way at
-// the default 8x16 cell, and the same distance on each axis at any other,
-// which is the rule ResizeOverlayGrip follows one fraction coarser. The
-// three-pixel floor is per-axis for the same reason: three device pixels buy
-// a different number of units across than down.
+// A quarter column is a distance too, and reaches the same way in from a
+// side as from the top: stated once in the surface's own denomination and
+// exchanged onto each axis, the same shape ResizeOverlayGrip takes one
+// fraction coarser. This travels with the affordance rather than apart from
+// it — the band is what advertises the zone, so a zone that reaches further
+// down than the band is drawn is a promise the window does not keep.
+//
+// The three-device-pixel floor converts per axis for the same reason: three
+// pixels buy a different number of units across than down, and it is ceiled
+// after the conversion so the floor is never rounded away.
 func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, borderX, borderY core.Unit) ResizeGrip {
 	if !graphical {
 		return ResizeGrip{}
@@ -461,20 +473,23 @@ func ResizeHitGrip(graphical bool, metrics core.CellMetrics, ppu float64, border
 		ppu = 1
 	}
 	d := core.DefaultCellMetrics()
+	beyond := d.UnitsPerCellWidth / 4
 	grip := ResizeGrip{
-		X: borderX + metrics.UnitsPerCellWidth/4,
-		Y: borderY + metrics.UnitsPerCellHeight/8,
+		X: borderX + core.ExchangeX(beyond, d, metrics),
+		Y: borderY + core.ExchangeY(beyond, d, metrics),
 	}
-	floorPx := func(denom, dDenom core.Unit) core.Unit {
-		if denom <= 0 || dDenom <= 0 {
+	// Three device pixels are 3/ppu units of the surface's denomination; an
+	// axis counting more finely than that spends proportionally more of them.
+	floor := func(denom, surface core.Unit) core.Unit {
+		if denom <= 0 || surface <= 0 {
 			return core.Unit(math.Ceil(3 / ppu))
 		}
-		return core.Unit(math.Ceil(3 * float64(denom) / (ppu * float64(dDenom))))
+		return core.Unit(math.Ceil(3 * float64(denom) / (ppu * float64(surface))))
 	}
-	if px := floorPx(metrics.UnitsPerCellWidth, d.UnitsPerCellWidth); px > grip.X {
+	if px := floor(metrics.UnitsPerCellWidth, d.UnitsPerCellWidth); px > grip.X {
 		grip.X = px
 	}
-	if px := floorPx(metrics.UnitsPerCellHeight, d.UnitsPerCellHeight); px > grip.Y {
+	if px := floor(metrics.UnitsPerCellHeight, d.UnitsPerCellHeight); px > grip.Y {
 		grip.Y = px
 	}
 	return grip

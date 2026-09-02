@@ -118,15 +118,16 @@ func TestOverlayGripCoversTheBorderPlusHalfACell(t *testing.T) {
 // deep as the left and right ones are wide — at every denomination, not only
 // where a unit happens to be square.
 //
-// Both grips took the column count for both axes, and the band along the top
-// of an MDI child came out twice as thick as the one down its side wherever
-// a cell stopped being twice as tall as it is wide: 12 device pixels against
-// 6 at a square 16x16 denomination, and 24 against 6 at 16x8.
+// Both grips counted half a column out of the LOCAL denomination and spent
+// that number on both axes, so the band along the top of an MDI child came
+// out twice as thick as the one down its side wherever a cell stopped being
+// twice as tall as it is wide: 12 device pixels against 6 at a square 16x16
+// denomination, 24 against 6 at 16x8, and 3 against 6 the other way at 8x32.
 //
 // Stated as an exchange rather than as the formula: the two counts are the
-// same distance when they buy the same number of DEFAULT units, which is the
-// denomination whose units are square. Recomputing half a column here would
-// agree with any formula, including the one that was wrong.
+// same distance when they buy the same number of units in the surface's own
+// denomination. Recomputing half a column here would agree with any formula,
+// including the one that was wrong.
 func TestResizeGripsAreTheSameThicknessOnBothAxes(t *testing.T) {
 	d := core.DefaultCellMetrics()
 	// The frame border is already per-axis, so it arrives as a pair; these
