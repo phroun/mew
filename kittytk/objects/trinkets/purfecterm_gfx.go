@@ -3314,6 +3314,12 @@ func (t *PurfecTerm) showContextMenu(event core.MousePressEvent) {
 type termMenuLayout struct {
 	rowH, sepH, width, padTop, indent core.Unit
 	graphical                         bool
+
+	// font is the face the labels draw in, and yOff where they sit in a row.
+	// nil at menu scale 1.0, where the painter's own default face is what
+	// these menus have always drawn with.
+	font *core.Font
+	yOff core.Unit
 }
 
 // termMenuLabel is what an item actually draws. A checkable item keeps the
@@ -3353,20 +3359,20 @@ func termMenuScreenMetrics(pc core.PopupController) core.CellMetrics {
 // system. A fixed width cannot: it clips the labels that outgrow it, leaves a
 // gutter beside the ones that do not, and means a different number of columns
 // at every denomination.
-func termMenuWidth(font *core.Font, m core.CellMetrics, indent core.Unit, items []termMenuItem) core.Unit {
+func termMenuWidth(mm MenuMetrics, indent core.Unit, items []termMenuItem) core.Unit {
 	widest := core.Unit(0)
 	for _, it := range items {
 		if it.separator {
 			continue
 		}
-		if w := font.MeasureTextIn(termMenuLabel(it), m); w > widest {
+		if w := mm.TextWidth(termMenuLabel(it)); w > widest {
 			widest = w
 		}
 	}
 	width := widest + indent*2
 	// Below this it reads as a mistake rather than a menu, so a handful of
 	// one-word items still gets a menu-shaped popup.
-	if floor := m.UnitsPerCellWidth * 12; width < floor {
+	if floor := mm.CellW * 12; width < floor {
 		width = floor
 	}
 	return width
@@ -3383,16 +3389,26 @@ func termMenuWidth(font *core.Font, m core.CellMetrics, indent core.Unit, items 
 // stating them against it is what keeps them that thickness at every
 // denomination. At 8x16 they are the 16, 4, 2 and 8 they have always been.
 func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, items []termMenuItem) termMenuLayout {
+	// A context menu is a menu, so it takes [window] menu_scale with the bar
+	// and the dropdowns -- one system, one knob. The kit pins the scale to
+	// 1.0 on a cell surface, which is where the branch below already stood.
+	mm := MenuMetricsFor(m, font, graphical)
 	if graphical {
-		indent := m.UnitsPerCellWidth
-		return termMenuLayout{
-			rowH:      m.UnitsPerCellHeight,
-			sepH:      m.UnitsPerCellHeight / 4,
-			width:     termMenuWidth(font, m, indent, items),
-			padTop:    m.UnitsPerCellHeight / 8,
+		indent := mm.CellW
+		lay := termMenuLayout{
+			rowH:      mm.RowH,
+			sepH:      mm.RowH / 4,
+			width:     termMenuWidth(mm, indent, items),
+			padTop:    mm.RowH / 8,
 			indent:    indent,
 			graphical: true,
 		}
+		if mm.Scale != 1 {
+			// At 1.0 the labels keep drawing in the painter's own face, with
+			// no offset, exactly as they always have.
+			lay.font, lay.yOff = mm.Font, mm.YOff
+		}
+		return lay
 	}
 	cols := 12
 	for _, it := range items {
@@ -3508,7 +3524,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 				// the terminal's default (dark) background on the text backend,
 				// leaving dark boxes behind the labels. The explicit bg equals
 				// the fill (or hover) color, so the graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos, label, st, nil)
+				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, label, st, lay.font)
 				pos += lay.rowH
 			}
 		},

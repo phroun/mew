@@ -14,13 +14,14 @@ import (
 func TestContextMenuWidthFollowsItsLabels(t *testing.T) {
 	m := core.DefaultCellMetrics()
 	font := core.DefaultFont()
+	mm := MenuMetricsFor(m, font, true)
 	const indent = core.Unit(8)
 
 	short := []termMenuItem{{label: "Cut"}, {label: "Copy"}}
 	long := []termMenuItem{{label: "Cut"}, {label: strings.Repeat("Paste and match style ", 2)}}
 
-	shortW := termMenuWidth(font, m, indent, short)
-	longW := termMenuWidth(font, m, indent, long)
+	shortW := termMenuWidth(mm, indent, short)
+	longW := termMenuWidth(mm, indent, long)
 	if longW <= shortW {
 		t.Errorf("a menu of long labels is %d wide and one of short labels %d; it does not follow them",
 			longW, shortW)
@@ -37,19 +38,19 @@ func TestContextMenuWidthFollowsItsLabels(t *testing.T) {
 	// A checkable item reserves the tick's room whether or not it is ticked,
 	// so ticking one does not widen the menu or shift its text.
 	off, on := false, true
-	offW := termMenuWidth(font, m, indent, []termMenuItem{{label: "Mouse Reporting", checked: func() bool { return off }}})
-	onW := termMenuWidth(font, m, indent, []termMenuItem{{label: "Mouse Reporting", checked: func() bool { return on }}})
+	offW := termMenuWidth(mm, indent, []termMenuItem{{label: "Mouse Reporting", checked: func() bool { return off }}})
+	onW := termMenuWidth(mm, indent, []termMenuItem{{label: "Mouse Reporting", checked: func() bool { return on }}})
 	if offW != onW {
 		t.Errorf("ticking an item changes the menu width: %d unticked, %d ticked", offW, onW)
 	}
 
 	// A menu of one short word is still menu-shaped.
-	if tiny := termMenuWidth(font, m, indent, []termMenuItem{{label: "Cut"}}); tiny < m.UnitsPerCellWidth*12 {
+	if tiny := termMenuWidth(mm, indent, []termMenuItem{{label: "Cut"}}); tiny < m.UnitsPerCellWidth*12 {
 		t.Errorf("a one-word menu is %d wide, under the %d floor", tiny, m.UnitsPerCellWidth*12)
 	}
 
 	// A separator has no label to measure and must not be read as one.
-	if got := termMenuWidth(font, m, indent, []termMenuItem{{separator: true}}); got != m.UnitsPerCellWidth*12 {
+	if got := termMenuWidth(mm, indent, []termMenuItem{{separator: true}}); got != m.UnitsPerCellWidth*12 {
 		t.Errorf("a menu of one separator is %d wide, want the floor %d", got, m.UnitsPerCellWidth*12)
 	}
 }
@@ -68,7 +69,7 @@ func TestContextMenuWidthFollowsTheDenomination(t *testing.T) {
 	} {
 		// The indent is a screen quantity, so it is counted in these units too.
 		indent := m.UnitsPerCellWidth
-		cells := termMenuWidth(font, m, indent, items) / m.UnitsPerCellWidth
+		cells := termMenuWidth(MenuMetricsFor(m, font, true), indent, items) / m.UnitsPerCellWidth
 		if base == 0 {
 			base = cells
 			continue

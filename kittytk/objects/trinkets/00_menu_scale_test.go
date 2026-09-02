@@ -277,3 +277,40 @@ func TestMenuScaleKeepsTextWhereItSitsInTheRow(t *testing.T) {
 		}
 	}
 }
+
+// A context menu is a menu, so it takes the same scale.
+//
+// It is NOT a trinkets.Menu: PurfecTerm, the mew editor and TextInput share
+// their own popup presentation (termMenuLayoutFrom), which measured straight
+// off the cell and so kept full-size rows while the bar and its dropdowns
+// shortened around it.
+func TestMenuScaleReachesContextMenus(t *testing.T) {
+	t.Cleanup(func() { core.SetMenuScale(1) })
+	m := core.DefaultCellMetrics()
+	font := core.DefaultFont()
+	items := []termMenuItem{{label: "Copy"}, {separator: true}, {label: "Paste and match style"}}
+
+	core.SetMenuScale(1)
+	full := termMenuLayoutFrom(true, font, m, items)
+	if full.font != nil || full.yOff != 0 {
+		t.Errorf("at 1.0 a context menu draws in the painter's own face with no offset; got %v / %d",
+			full.font, full.yOff)
+	}
+
+	core.SetMenuScale(0.5)
+	half := termMenuLayoutFrom(true, font, m, items)
+	if half.rowH >= full.rowH {
+		t.Errorf("context menu row %d did not shorten below %d", half.rowH, full.rowH)
+	}
+	if half.width >= full.width {
+		t.Errorf("context menu width %d did not shrink below %d", half.width, full.width)
+	}
+	if half.font == nil || half.font.Size >= font.Size {
+		t.Errorf("context menu labels draw at %v, want a face smaller than %dpt", half.font, font.Size)
+	}
+
+	// A cell surface stands down, as everywhere else.
+	if cell := termMenuLayoutFrom(false, font, m, items); cell.rowH != m.UnitsPerCellHeight {
+		t.Errorf("cell-surface context menu row %d, want the full cell %d", cell.rowH, m.UnitsPerCellHeight)
+	}
+}

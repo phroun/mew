@@ -2038,7 +2038,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 				// default on the text backend (dark boxes behind the labels);
 				// the explicit bg equals the fill/hover color, so the
 				// graphical look is unchanged.
-				p.DrawText(menuBounds.X+lay.indent, pos, termMenuLabel(it), st, nil)
+				p.DrawText(menuBounds.X+lay.indent, pos+lay.yOff, termMenuLabel(it), st, lay.font)
 				pos += lay.rowH
 			}
 		},
