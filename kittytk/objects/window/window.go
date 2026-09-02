@@ -1211,12 +1211,24 @@ func (w *Window) chromeHeights() (menuTop, statusBottom core.Unit) {
 	if !detached {
 		return 0, 0
 	}
-	metrics := w.frameCellMetrics()
+	outer := w.frameCellMetrics()
+	interior := core.FindEffectiveCellMetrics(w.Self())
 	if mb != nil && mbVis {
-		menuTop = metrics.UnitsPerCellHeight
+		// A bar that states its own row (core.MenuRowProvider) answers in ITS
+		// denomination -- the interior one it paints through, see paintChrome
+		// -- and its row is whatever core.MenuScale left it, which is not
+		// always a whole cell. The reservation is in the frame's currency, so
+		// the two exchange. Reserving a cell for a shortened bar leaves a dead
+		// strip below it that the bar does not answer for.
+		menuTop = outer.UnitsPerCellHeight
+		if rp, ok := mb.(core.MenuRowProvider); ok {
+			if h := rp.MenuRowHeight(); h > 0 {
+				menuTop = core.ExchangeY(h, interior, outer)
+			}
+		}
 	}
 	if sb != nil && sbVis {
-		statusBottom = metrics.UnitsPerCellHeight
+		statusBottom = outer.UnitsPerCellHeight
 	}
 	return
 }

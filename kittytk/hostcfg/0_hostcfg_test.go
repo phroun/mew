@@ -652,6 +652,38 @@ func TestApplyTitleBarScale(t *testing.T) {
 	}
 }
 
+// menu_scale is titlebar_scale's companion and takes the same values on the
+// same terms: the default is the classic full-cell row, and a nonsense value
+// keeps it rather than collapsing every menu at launch.
+func TestApplyMenuScale(t *testing.T) {
+	if got := Defaults().MenuScale; got != 1 {
+		t.Errorf("default menu_scale = %v, want 1", got)
+	}
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.9", 0.9},
+		{"1", 1},
+		{"1.25", 1.25},
+		{"0", 1},        // zero is not a size
+		{"-0.5", 1},     // nor is a negative one
+		{"nonsense", 1}, // nor is a typo
+	} {
+		cfg := Defaults()
+		apply([]byte("[window]\nmenu_scale = "+c.val+"\n"), &cfg)
+		if cfg.MenuScale != c.want {
+			t.Errorf("menu_scale = %q: got %v, want %v", c.val, cfg.MenuScale, c.want)
+		}
+	}
+	// The two knobs are independent: setting one does not move the other.
+	cfg := Defaults()
+	apply([]byte("[window]\nmenu_scale = 0.9\n"), &cfg)
+	if cfg.TitleBarScale != 1 {
+		t.Errorf("menu_scale moved titlebar_scale to %v", cfg.TitleBarScale)
+	}
+}
+
 // [system] density is the SCREEN's content scale, and it is deliberately
 // separate from [window] scale — the one case that proves it is a user who
 // asks for real pixels (scale 1) on a HiDPI panel (density 2). Nothing may

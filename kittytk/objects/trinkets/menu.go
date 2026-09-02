@@ -23,8 +23,8 @@ const (
 // menus have only a 1-pixel right stroke (not a whole char border), so this is
 // about three-quarters of a cell rather than the two cells cell/TUI menus
 // reserve.
-func graphicalMenuTrailingUnits(metrics core.CellMetrics) core.Unit {
-	return metrics.UnitsPerCellWidth * 3 / 4
+func graphicalMenuTrailingUnits(cellW core.Unit) core.Unit {
+	return cellW * 3 / 4
 }
 
 // shortcutFont returns the font used to draw a menu item's shortcut. In
@@ -585,9 +585,9 @@ func (m *Menu) SetMaxVisible(max int) {
 // This should be called before Show() to ensure proper scrolling behavior.
 // The menuY parameter is the Y position where the menu will be shown.
 func (m *Menu) SetAvailableHeight(availableHeight core.Unit) {
-	metrics := m.EffectiveCellMetrics()
+	mm := m.menuMetrics()
 	// Calculate how many items can fit, leaving room for scroll indicators if needed
-	maxRows := int(availableHeight / metrics.UnitsPerCellHeight)
+	maxRows := int(availableHeight / mm.RowH)
 	if maxRows < 3 {
 		maxRows = 3 // Minimum: 1 item + 2 scroll indicators
 	}
@@ -1009,8 +1009,7 @@ func (m *Menu) announceCurrentItem() {
 
 // calculateSize calculates the menu size.
 func (m *Menu) calculateSize() core.UnitSize {
-	metrics := m.EffectiveCellMetrics()
-	font := m.EffectiveFont()
+	mm := m.menuMetrics()
 
 	// Calculate max width using font for text, cells for decorative elements
 	maxWidth := core.Unit(0)
@@ -1020,19 +1019,19 @@ func (m *Menu) calculateSize() core.UnitSize {
 		// is a different currency the moment the menu sits in a window that
 		// carries an override. The cell-based padding around it needs no
 		// such treatment: a cell is a fixed physical size.
-		itemWidth := m.MeasureText(item.Text)
+		itemWidth := mm.TextWidth(item.Text)
 
 		// Shortcut: spacing (3 cells) + shortcut text (font-based). Measure
 		// with the same font used to draw it (native mode swaps in Apple's
 		// face) so width and render never disagree.
 		if sc := item.ShortcutDisplay(); sc != "" {
-			itemWidth += metrics.UnitsPerCellWidth * 3 // spacing before shortcut
-			itemWidth += shortcutFont(font).MeasureTextIn(sc, metrics)
+			itemWidth += mm.CellW * 3 // spacing before shortcut
+			itemWidth += mm.Width(sc, shortcutFont(mm.Font))
 		}
 
 		// Submenu arrow (3 cells) - decorative
 		if item.SubMenu != nil {
-			itemWidth += metrics.UnitsPerCellWidth * 3
+			itemWidth += mm.CellW * 3
 		}
 
 		if itemWidth > maxWidth {
@@ -1041,7 +1040,7 @@ func (m *Menu) calculateSize() core.UnitSize {
 	}
 
 	// Add padding (gutter: 3 cells, content space: 1 cell, right border: 1 cell)
-	maxWidth += metrics.UnitsPerCellWidth * 5
+	maxWidth += mm.CellW * 5
 
 	// Sum the heights of the visible item rows (thin separators on
 	// graphical surfaces are shorter than a text row), plus a full row
@@ -1054,10 +1053,10 @@ func (m *Menu) calculateSize() core.UnitSize {
 		if idx >= len(m.items) {
 			break
 		}
-		height += m.rowHeightAt(idx, g, metrics.UnitsPerCellHeight)
+		height += m.rowHeightAt(idx, g, mm.RowH)
 	}
 	if m.needsScrolling() {
-		height += 2 * metrics.UnitsPerCellHeight // one row per scroll indicator
+		height += 2 * mm.RowH // one row per scroll indicator
 	}
 
 	return core.UnitSize{
@@ -1071,11 +1070,12 @@ func (m *Menu) calculateSize() core.UnitSize {
 // (~6 device px at the usual 2x scale) carrying a single hairline, rather
 // than a full text row of dashes.
 //
-// Against a cell rather than as a raw unit count, so the band is the same
-// physical thickness whatever denomination the menu is counted in. Three
-// units was 3/16 of a cell only at the default denomination.
-func separatorBandUnits(metrics core.CellMetrics) core.Unit {
-	if h := metrics.UnitsPerCellHeight * 3 / 16; h > 0 {
+// Against the menu's ROW rather than as a raw unit count, so the band keeps
+// its proportion whatever denomination the menu is counted in and whatever
+// core.MenuScale shortens the row to. Three units was 3/16 of a cell only at
+// the default denomination.
+func separatorBandUnits(rowH core.Unit) core.Unit {
+	if h := rowH * 3 / 16; h > 0 {
 		return h
 	}
 	return 1
@@ -1172,18 +1172,18 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 // - with three indicator glyphs centered in the white content area
 // only. glyph is '^'/'v' when that direction can scroll, else '-' for a
 // blank bumper. No line-drawing characters.
-func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, metrics core.CellMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairStyle style.CellStyle, glyph rune) {
-	gutterWidth := metrics.UnitsPerCellWidth * 3
-	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: metrics.UnitsPerCellHeight}, ' ', gutterStyle)
-	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: metrics.UnitsPerCellHeight}, ' ', contentStyle)
+func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, mm MenuMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairStyle style.CellStyle, glyph rune) {
+	gutterWidth := mm.CellW * 3
+	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: mm.RowH}, ' ', gutterStyle)
+	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: mm.RowH}, ' ', contentStyle)
 	if g {
-		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, p.UnitSpanPxY(y, y+metrics.UnitsPerCellHeight), hairStyle)
+		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, p.UnitSpanPxY(y, y+mm.RowH), hairStyle)
 	}
 	// Center the three glyphs in the white content area only.
 	centerX := m.popupX + gutterWidth + (size.Width-gutterWidth)/2
-	p.DrawCell(centerX-metrics.UnitsPerCellWidth*2, y, glyph, contentStyle)
+	p.DrawCell(centerX-mm.CellW*2, y, glyph, contentStyle)
 	p.DrawCell(centerX, y, glyph, contentStyle)
-	p.DrawCell(centerX+metrics.UnitsPerCellWidth*2, y, glyph, contentStyle)
+	p.DrawCell(centerX+mm.CellW*2, y, glyph, contentStyle)
 }
 
 // paintOuterStroke draws the menu's 1-pixel outer frame with the edge
@@ -1196,11 +1196,11 @@ func (m *Menu) paintOuterStroke(p *core.Painter, size core.UnitSize, scale int, 
 // rowHeightAt returns the vertical space item idx occupies. Separators
 // collapse to a thin band on graphical surfaces; everything else (and
 // all rows on cell surfaces) is a full text row.
-func (m *Menu) rowHeightAt(idx int, graphical bool, unitsPerCellHeight core.Unit) core.Unit {
+func (m *Menu) rowHeightAt(idx int, graphical bool, rowH core.Unit) core.Unit {
 	if graphical && idx >= 0 && idx < len(m.items) && m.items[idx].Separator {
-		return separatorBandUnits(m.EffectiveCellMetrics())
+		return separatorBandUnits(rowH)
 	}
-	return unitsPerCellHeight
+	return rowH
 }
 
 // contentTopY returns the Y of the first item row (below the top scroll
@@ -1208,7 +1208,7 @@ func (m *Menu) rowHeightAt(idx int, graphical bool, unitsPerCellHeight core.Unit
 func (m *Menu) contentTopY() core.Unit {
 	y := m.popupY
 	if m.needsScrolling() {
-		y += m.EffectiveCellMetrics().UnitsPerCellHeight
+		y += m.menuMetrics().RowH
 	}
 	return y
 }
@@ -1216,11 +1216,11 @@ func (m *Menu) contentTopY() core.Unit {
 // itemTopY returns the top Y of a visible item, walking the variable row
 // heights of the items above it in the current scroll window.
 func (m *Menu) itemTopY(itemIndex int) core.Unit {
-	metrics := m.EffectiveCellMetrics()
+	mm := m.menuMetrics()
 	g := m.graphicalSurface()
 	y := m.contentTopY()
 	for i := m.scrollOffset; i < itemIndex && i < len(m.items); i++ {
-		y += m.rowHeightAt(i, g, metrics.UnitsPerCellHeight)
+		y += m.rowHeightAt(i, g, mm.RowH)
 	}
 	return y
 }
@@ -1229,14 +1229,14 @@ func (m *Menu) itemTopY(itemIndex int) core.Unit {
 // indicator, 2 bottom scroll indicator, 3 an item (itemIndex set).
 // It honors the variable row heights of thin separators.
 func (m *Menu) hitRow(y core.Unit) (kind, itemIndex int) {
-	metrics := m.EffectiveCellMetrics()
+	mm := m.menuMetrics()
 	g := m.graphicalSurface()
 	cur := m.popupY
 	if m.needsScrolling() {
-		if y >= cur && y < cur+metrics.UnitsPerCellHeight {
+		if y >= cur && y < cur+mm.RowH {
 			return 1, -1
 		}
-		cur += metrics.UnitsPerCellHeight
+		cur += mm.RowH
 	}
 	visible := m.visibleItemCount()
 	for i := 0; i < visible; i++ {
@@ -1244,13 +1244,13 @@ func (m *Menu) hitRow(y core.Unit) (kind, itemIndex int) {
 		if idx >= len(m.items) {
 			break
 		}
-		h := m.rowHeightAt(idx, g, metrics.UnitsPerCellHeight)
+		h := m.rowHeightAt(idx, g, mm.RowH)
 		if y >= cur && y < cur+h {
 			return 3, idx
 		}
 		cur += h
 	}
-	if m.needsScrolling() && y >= cur && y < cur+metrics.UnitsPerCellHeight {
+	if m.needsScrolling() && y >= cur && y < cur+mm.RowH {
 		return 2, -1
 	}
 	return 0, -1
@@ -1360,8 +1360,8 @@ func (m *Menu) Paint(p *core.Painter) {
 
 	scheme := m.GetScheme()
 	theme := m.Theme() // Still needed for DefaultBorder
-	metrics := m.EffectiveCellMetrics()
-	font := m.EffectiveFont()
+	mm := m.menuMetrics()
+	font := mm.Font
 	size := m.calculateSize()
 	needsScroll := m.needsScrolling()
 
@@ -1399,8 +1399,8 @@ func (m *Menu) Paint(p *core.Painter) {
 		if m.canScrollUp() {
 			glyph = '^'
 		}
-		m.paintScrollBumper(p, currentY, size, metrics, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
-		currentY += metrics.UnitsPerCellHeight
+		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
+		currentY += mm.RowH
 	}
 
 	// Draw visible items
@@ -1430,10 +1430,10 @@ func (m *Menu) Paint(p *core.Painter) {
 		}
 
 		// Gutter area: 3 cells (border + checkmark + 1 space)
-		gutterWidth := metrics.UnitsPerCellWidth * 3
+		gutterWidth := mm.CellW * 3
 
 		// Row height: separators collapse to a thin band on graphical.
-		rowH := m.rowHeightAt(itemIndex, g, metrics.UnitsPerCellHeight)
+		rowH := m.rowHeightAt(itemIndex, g, mm.RowH)
 
 		// Draw gutter background
 		p.FillRect(core.UnitRect{
@@ -1471,7 +1471,7 @@ func (m *Menu) Paint(p *core.Painter) {
 				}
 			} else {
 				// Cell surface: the dashed-row idiom, gutter + content.
-				for x := m.popupX + metrics.UnitsPerCellWidth; x < m.popupX+size.Width-metrics.UnitsPerCellWidth; x += metrics.UnitsPerCellWidth {
+				for x := m.popupX + mm.CellW; x < m.popupX+size.Width-mm.CellW; x += mm.CellW {
 					if x < m.popupX+gutterWidth {
 						p.DrawCell(x, itemY, '─', gutterStyle)
 					} else {
@@ -1483,22 +1483,22 @@ func (m *Menu) Paint(p *core.Painter) {
 			continue
 		}
 
-		x := m.popupX + metrics.UnitsPerCellWidth
+		x := m.popupX + mm.CellW
 
 		// Draw checkmark or icon in gutter area
 		if item.Checkable {
 			if item.Checked {
-				p.DrawCell(x, itemY, '✓', gutterStyle)
+				mm.DrawGlyph(p, x, itemY, '✓', gutterStyle)
 			}
 		} else if item.Icon != nil && len(item.Icon.Cells) > 0 {
 			cell := item.Icon.Cells[0]
-			p.DrawCell(x, itemY, cell.Char, cell.Style)
+			mm.DrawGlyph(p, x, itemY, cell.Char, cell.Style)
 		}
-		x += metrics.UnitsPerCellWidth * 2 // Move past checkmark + 1 gutter space
+		x += mm.CellW * 2 // Move past checkmark + 1 gutter space
 
 		// Draw a space in content area before text
 		p.DrawCell(x, itemY, ' ', contentStyle)
-		x += metrics.UnitsPerCellWidth
+		x += mm.CellW
 
 		// Now draw text with accelerator highlighting using font-aware rendering
 		var accelStyle style.CellStyle
@@ -1519,11 +1519,11 @@ func (m *Menu) Paint(p *core.Painter) {
 			if item.acceleratorPos < len(textRunes)-1 {
 				segs = append(segs, textSegment{string(textRunes[item.acceleratorPos+1:]), contentStyle})
 			}
-			x += drawTextSegments(p, x, itemY, font, m.EffectiveCellMetrics(), segs...)
+			x += drawTextSegments(p, x, itemY+mm.YOff, font, m.EffectiveCellMetrics(), segs...)
 		} else {
 			// No accelerator or disabled - draw entire text
-			p.DrawText(x, itemY, item.Text, contentStyle, font)
-			x += m.MeasureText(item.Text)
+			p.DrawText(x, itemY+mm.YOff, item.Text, contentStyle, font)
+			x += mm.TextWidth(item.Text)
 		}
 
 		// Draw shortcut or submenu arrow at the right (in content area). The
@@ -1531,25 +1531,20 @@ func (m *Menu) Paint(p *core.Painter) {
 		// edge on graphical surfaces (whose right border is a single pixel, not
 		// a full char cell), trimming the empty space to its right.
 		if item.SubMenu != nil {
-			arrowX := m.popupX + size.Width - metrics.UnitsPerCellWidth*2
-			p.DrawCell(arrowX, itemY, '▸', contentStyle)
+			arrowX := m.popupX + size.Width - mm.CellW*2
+			mm.DrawGlyph(p, arrowX, itemY, '▸', contentStyle)
 		} else if shortcutStr := item.ShortcutDisplay(); shortcutStr != "" {
-			rightPad := metrics.UnitsPerCellWidth * 2
+			rightPad := mm.CellW * 2
 			if p.Graphical() {
-				rightPad = graphicalMenuTrailingUnits(metrics)
+				rightPad = graphicalMenuTrailingUnits(mm.CellW)
 			}
 			// Native mode renders the shortcut in Apple's UI face at 80%;
 			// measure and draw with that same font so the right-alignment is
 			// exact, and center the shorter line box within the item's row.
 			sf := shortcutFont(font)
-			shortcutWidth := sf.MeasureTextIn(shortcutStr, metrics)
+			shortcutWidth := mm.Width(shortcutStr, sf)
 			shortcutX := m.popupX + size.Width - shortcutWidth - rightPad
-			shortcutY := itemY
-			if sf != font {
-				if dy := (metrics.UnitsPerCellHeight - core.LineUnits(sf, font, metrics)) / 2; dy > 0 {
-					shortcutY += dy
-				}
-			}
+			shortcutY := itemY + mm.GlyphYOff(sf)
 			shortcutStyle := contentStyle
 			if item.Enabled {
 				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
@@ -1566,7 +1561,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		if m.canScrollDown() {
 			glyph = 'v'
 		}
-		m.paintScrollBumper(p, currentY, size, metrics, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
+		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
 	}
 
 	// A 1-pixel frame just outside the menu, in the separator color,
@@ -2141,8 +2136,8 @@ func (m *MenuBar) dateTimeFont() *core.Font {
 		return nil
 	}
 	base := core.FontMonday12.Size
-	if ef := m.EffectiveFont(); ef != nil && ef.Size > 0 {
-		base = ef.Size // the desktop's font_size
+	if bf := m.menuMetrics().Font; bf != nil && bf.Size > 0 {
+		base = bf.Size // the desktop's font_size, at the menu scale
 	}
 	f := *core.FontMonday12    // monospace, deliberately not the UI face
 	f.Size = (base*8 + 5) / 10 // ~80% of the UI font size, rounded
@@ -2155,17 +2150,17 @@ func (m *MenuBar) dateTimeWidth() core.Unit {
 	if m.hideCalendar {
 		return 0
 	}
+	mm := m.menuMetrics()
 	if f := m.dateTimeFont(); f != nil {
-		return f.MeasureTextIn(dateTimeFormat, m.EffectiveCellMetrics())
+		return mm.Width(dateTimeFormat, f)
 	}
-	metrics := m.EffectiveCellMetrics()
 	// " Mon Jan 02 15:04 " = 18 chars
-	return 18 * metrics.UnitsPerCellWidth
+	return 18 * mm.CellW
 }
 
 // scrollButtonWidth returns the width of each scroll button.
 func (m *MenuBar) scrollButtonWidth() core.Unit {
-	return m.EffectiveCellMetrics().TextWidth(3) // [<] or [>]
+	return m.menuMetrics().CellW * 3 // [<] or [>]
 }
 
 // menusNeedScrolling returns true if menus don't fit and need scroll buttons.
@@ -2693,10 +2688,9 @@ func (m *MenuBar) OpenMenu(index int) {
 	}
 
 	// Calculate position (after scrolling so position is correct)
-	metrics := m.EffectiveCellMetrics()
 	itemX := m.calculateMenuX(index)
 	itemWidth := m.menuTitleWidth(m.menus[index].title)
-	y := metrics.UnitsPerCellHeight
+	y := m.menuMetrics().RowH
 
 	// Horizontal placement (popupX is in the menu bar's local space, where
 	// 0 is the surface's left edge and the bar spans its full width):
@@ -2834,7 +2828,7 @@ const menuBarLeftInsetCells core.Unit = 4
 // a quarter cell on graphical surfaces, 0 on cell surfaces.
 func (m *MenuBar) leftInset() core.Unit {
 	if m.graphicalCached {
-		return m.EffectiveCellMetrics().UnitsPerCellWidth / menuBarLeftInsetCells
+		return m.menuMetrics().CellW / menuBarLeftInsetCells
 	}
 	return 0
 }
@@ -2856,8 +2850,6 @@ func (m *MenuBar) calculateMenuX(index int) core.Unit {
 
 // SizeHint returns the preferred size.
 func (m *MenuBar) SizeHint() core.UnitSize {
-	metrics := m.EffectiveCellMetrics()
-
 	width := core.Unit(0)
 	for _, menu := range m.menus {
 		width += m.menuTitleWidth(menu.title)
@@ -2865,13 +2857,13 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 
 	return core.UnitSize{
 		Width:  width,
-		Height: metrics.UnitsPerCellHeight,
+		Height: m.menuMetrics().RowH,
 	}
 }
 
 // menuTitleWidth returns the width of a menu title including surrounding spaces.
 func (m *MenuBar) menuTitleWidth(title string) core.Unit {
-	metrics := m.EffectiveCellMetrics()
+	mm := m.menuMetrics()
 	// Menu width: space (1 cell) + title (font) + space (1 cell).
 	//
 	// The pad is a cell, which is a fixed physical size at a given zoom, so
@@ -2879,7 +2871,7 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	// counts it in THIS bar's denomination -- Font.MeasureText answers at the
 	// default one, which is a different currency the moment a window carries
 	// an override, and the bar came out stretched by exactly that difference.
-	return metrics.UnitsPerCellWidth*2 + m.MeasureText(title)
+	return mm.CellW*2 + mm.TextWidth(title)
 }
 
 // elidedTitlePrefix returns how many leading runes of a title fit within
@@ -2902,26 +2894,30 @@ func elidedTitlePrefix(font *core.Font, metrics core.CellMetrics, title []rune, 
 const ellipsisText = "..."
 
 func (m *MenuBar) ellipsisWidth() core.Unit {
-	return m.MeasureText(ellipsisText)
+	return m.menuMetrics().TextWidth(ellipsisText)
 }
 
 // drawEllipsis paints the overflow marker in the menu bar's proportional
 // font at (x, 0) and returns its width.
 func (m *MenuBar) drawEllipsis(p *core.Painter, x core.Unit, s style.CellStyle) core.Unit {
-	p.DrawText(x, 0, ellipsisText, s, m.EffectiveFont())
-	return m.ellipsisWidth()
+	mm := m.menuMetrics()
+	p.DrawText(x, mm.YOff, ellipsisText, s, mm.Font)
+	return mm.TextWidth(ellipsisText)
 }
 
 // Paint renders the menu bar (without dropdown - use PaintDropdown for that).
 func (m *MenuBar) Paint(p *core.Painter) {
 	bounds := m.Bounds()
 	scheme := m.GetScheme()
-	metrics := m.EffectiveCellMetrics()
-	font := m.EffectiveFont()
 
 	// Remember the surface kind for measurement paths (dateTimeWidth has
-	// no painter of its own).
+	// no painter of its own). Set before the kit resolves, since a cell
+	// surface pins the menu scale to 1.0.
 	m.graphicalCached = p.Graphical()
+
+	mm := m.menuMetrics()
+	metrics := m.EffectiveCellMetrics()
+	font := mm.Font
 
 	// A modally-blocked bar is disabled: drop any hover highlight even if the
 	// modal appeared without an intervening mouse move to clear it.
@@ -2966,29 +2962,29 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			if m.hoverScrollBtn == -1 && m.graphicalCached {
 				leftStyle = scheme.GetHoveredMenuBarButton()
 			}
-			p.DrawCell(leftButtonX, 0, '[', leftStyle)
-			p.DrawCell(leftButtonX+metrics.UnitsPerCellWidth, 0, '<', leftStyle)
-			p.DrawCell(leftButtonX+2*metrics.UnitsPerCellWidth, 0, ']', leftStyle)
+			mm.DrawGlyph(p, leftButtonX, 0, '[', leftStyle)
+			mm.DrawGlyph(p, leftButtonX+mm.CellW, 0, '<', leftStyle)
+			mm.DrawGlyph(p, leftButtonX+2*mm.CellW, 0, ']', leftStyle)
 		} else {
-			p.DrawCell(leftButtonX, 0, ' ', inactiveButtonStyle)
-			p.DrawCell(leftButtonX+metrics.UnitsPerCellWidth, 0, '<', inactiveButtonStyle)
-			p.DrawCell(leftButtonX+2*metrics.UnitsPerCellWidth, 0, ' ', inactiveButtonStyle)
+			mm.DrawGlyph(p, leftButtonX, 0, ' ', inactiveButtonStyle)
+			mm.DrawGlyph(p, leftButtonX+mm.CellW, 0, '<', inactiveButtonStyle)
+			mm.DrawGlyph(p, leftButtonX+2*mm.CellW, 0, ' ', inactiveButtonStyle)
 		}
 
 		// Draw right button: [>] when active, " > " when inactive
-		rightButtonX := leftButtonX + 3*metrics.UnitsPerCellWidth
+		rightButtonX := leftButtonX + 3*mm.CellW
 		if m.canScrollRight() {
 			rightStyle := activeButtonStyle
 			if m.hoverScrollBtn == 1 && m.graphicalCached {
 				rightStyle = scheme.GetHoveredMenuBarButton()
 			}
-			p.DrawCell(rightButtonX, 0, '[', rightStyle)
-			p.DrawCell(rightButtonX+metrics.UnitsPerCellWidth, 0, '>', rightStyle)
-			p.DrawCell(rightButtonX+2*metrics.UnitsPerCellWidth, 0, ']', rightStyle)
+			mm.DrawGlyph(p, rightButtonX, 0, '[', rightStyle)
+			mm.DrawGlyph(p, rightButtonX+mm.CellW, 0, '>', rightStyle)
+			mm.DrawGlyph(p, rightButtonX+2*mm.CellW, 0, ']', rightStyle)
 		} else {
-			p.DrawCell(rightButtonX, 0, ' ', inactiveButtonStyle)
-			p.DrawCell(rightButtonX+metrics.UnitsPerCellWidth, 0, '>', inactiveButtonStyle)
-			p.DrawCell(rightButtonX+2*metrics.UnitsPerCellWidth, 0, ' ', inactiveButtonStyle)
+			mm.DrawGlyph(p, rightButtonX, 0, ' ', inactiveButtonStyle)
+			mm.DrawGlyph(p, rightButtonX+mm.CellW, 0, '>', inactiveButtonStyle)
+			mm.DrawGlyph(p, rightButtonX+2*mm.CellW, 0, ' ', inactiveButtonStyle)
 		}
 	}
 
@@ -3052,11 +3048,11 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					X:      x,
 					Y:      0,
 					Width:  menuWidth,
-					Height: metrics.UnitsPerCellHeight,
+					Height: mm.RowH,
 				}, ' ', s)
 
 				// Draw title with accelerator highlighting using font-aware rendering
-				textX := x + metrics.UnitsPerCellWidth
+				textX := x + mm.CellW
 				titleRunes := []rune(menu.title)
 				if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
 					var segs []textSegment
@@ -3067,9 +3063,9 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					if menu.acceleratorPos < len(titleRunes)-1 {
 						segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 					}
-					drawTextSegments(p, textX, 0, font, metrics, segs...)
+					drawTextSegments(p, textX, mm.YOff, font, metrics, segs...)
 				} else {
-					p.DrawText(textX, 0, menu.title, s, font)
+					p.DrawText(textX, mm.YOff, menu.title, s, font)
 				}
 
 				// Draw the ellipsis after the menu (in normal style); the
@@ -3086,12 +3082,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 
 				// Budget for title characters: leading space + prefix + "..."
 				visible := elidedTitlePrefix(font, metrics, titleRunes,
-					remainingWidth-metrics.UnitsPerCellWidth-ellipsisWidth)
+					remainingWidth-mm.CellW-ellipsisWidth)
 
 				if visible > 0 {
 					// Draw space before text
-					p.DrawCell(x, 0, ' ', s)
-					textX := x + metrics.UnitsPerCellWidth
+					mm.DrawGlyph(p, x, 0, ' ', s)
+					textX := x + mm.CellW
 
 					// Accelerator highlighting splits the prefix into segments.
 					var segs []textSegment
@@ -3106,7 +3102,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					} else {
 						segs = []textSegment{{string(titleRunes[:visible]), s}}
 					}
-					advance := drawTextSegments(p, textX, 0, font, metrics, segs...)
+					advance := drawTextSegments(p, textX, mm.YOff, font, metrics, segs...)
 
 					// Draw ellipsis in the menu style (never accelerator color)
 					m.drawEllipsis(p, textX+advance, s)
@@ -3146,11 +3142,11 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			X:      x,
 			Y:      0,
 			Width:  menuWidth,
-			Height: metrics.UnitsPerCellHeight,
+			Height: mm.RowH,
 		}, ' ', s)
 
 		// Draw title with accelerator highlighting using font-aware rendering
-		textX := x + metrics.UnitsPerCellWidth // Start after leading space
+		textX := x + mm.CellW // Start after leading space
 		showAccel := m.ShouldShowAccelerator(menu)
 
 		// Draw text in parts: before accel, accel char, after accel. A letter
@@ -3170,10 +3166,10 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			if menu.acceleratorPos < len(titleRunes)-1 {
 				segs = append(segs, textSegment{string(titleRunes[menu.acceleratorPos+1:]), s})
 			}
-			drawTextSegments(p, textX, 0, font, metrics, segs...)
+			drawTextSegments(p, textX, mm.YOff, font, metrics, segs...)
 		} else {
 			// No accelerator - draw entire text
-			p.DrawText(textX, 0, menu.title, s, font)
+			p.DrawText(textX, mm.YOff, menu.title, s, font)
 		}
 
 		x += menuWidth
@@ -3188,18 +3184,14 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			X:      dateTimeX,
 			Y:      0,
 			Width:  dateTimeWidth,
-			Height: metrics.UnitsPerCellHeight,
+			Height: mm.RowH,
 		}, ' ', dateTimeStyle)
 
 		if f := m.dateTimeFont(); f != nil {
-			y := (metrics.UnitsPerCellHeight - core.LineUnits(f, m.EffectiveFont(), metrics)) / 2
-			if y < 0 {
-				y = 0
-			}
-			p.DrawText(dateTimeX, y, dateTimeStr, dateTimeStyle, f)
+			p.DrawText(dateTimeX, mm.GlyphYOff(f), dateTimeStr, dateTimeStyle, f)
 		} else {
 			for i, ch := range dateTimeStr {
-				p.DrawCell(dateTimeX+core.Unit(i)*metrics.UnitsPerCellWidth, 0, ch, dateTimeStyle)
+				mm.DrawGlyph(p, dateTimeX+core.Unit(i)*mm.CellW, 0, ch, dateTimeStyle)
 			}
 		}
 	}
@@ -3215,7 +3207,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			X:      m.calculateMenuX(m.currentIndex),
 			Y:      0,
 			Width:  m.menuTitleWidth(m.menus[m.currentIndex].title),
-			Height: metrics.UnitsPerCellHeight,
+			Height: mm.RowH,
 		}
 		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
 		paintPopupOuterStroke(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false)
@@ -3250,7 +3242,7 @@ func (m *MenuBar) ActiveMenuTitleBounds() core.UnitRect {
 		X:      m.calculateMenuX(m.currentIndex),
 		Y:      0,
 		Width:  m.menuTitleWidth(m.menus[m.currentIndex].title),
-		Height: m.EffectiveCellMetrics().UnitsPerCellHeight,
+		Height: m.menuMetrics().RowH,
 	}
 }
 
@@ -3414,7 +3406,6 @@ func (m *MenuBar) findMenuByAccelerator(key rune) int {
 
 // HandleMousePress handles mouse clicks.
 func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
-	metrics := m.EffectiveCellMetrics()
 	bounds := m.Bounds()
 
 	// Check active menu first - if clicking on an item in the dropdown
@@ -3425,7 +3416,7 @@ func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
 	}
 
 	// Check if click is in menu bar
-	if event.Y < metrics.UnitsPerCellHeight {
+	if event.Y < m.menuMetrics().RowH {
 		// Check for scroll button clicks if scrolling is needed
 		needsScrolling := m.menusNeedScrolling()
 		if needsScrolling {
@@ -3589,8 +3580,7 @@ func (m *MenuBar) HandleFocusOut() {
 // menuItemAt maps a pointer position to the top-level menu index under
 // it, or -1 when the pointer is not over a menu title within the bar row.
 func (m *MenuBar) menuItemAt(px, py core.Unit) int {
-	metrics := m.EffectiveCellMetrics()
-	if py < 0 || py >= metrics.UnitsPerCellHeight {
+	if py < 0 || py >= m.menuMetrics().RowH {
 		return -1
 	}
 	if px >= m.menusRightLimit() {
@@ -3625,8 +3615,7 @@ func (m *MenuBar) scrollButtonAt(px, py core.Unit) int {
 	if !m.menusNeedScrolling() {
 		return 0
 	}
-	metrics := m.EffectiveCellMetrics()
-	if py < 0 || py >= metrics.UnitsPerCellHeight {
+	if py < 0 || py >= m.menuMetrics().RowH {
 		return 0
 	}
 	bounds := m.Bounds()
@@ -3709,7 +3698,9 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		if dy < 0 {
 			dy = -dy
 		}
-		// Only start dragging if moved at least half a cell
+		// Only start dragging if moved at least half a cell. A pointer
+		// distance, not menu content, so it stays on the surface's own cell
+		// rather than following core.MenuScale.
 		if dx >= metrics.UnitsPerCellWidth/2 || dy >= metrics.UnitsPerCellHeight/2 {
 			m.dragging = true
 		} else {
@@ -3718,7 +3709,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 	}
 
 	// Check if mouse is in menu bar - switch menus and deselect dropdown item
-	if event.Y < metrics.UnitsPerCellHeight {
+	if event.Y < m.menuMetrics().RowH {
 		// Deselect current item in dropdown since we're back on the menu bar
 		if m.activeMenu != nil && m.activeMenu.currentIndex != -1 {
 			m.activeMenu.currentIndex = -1

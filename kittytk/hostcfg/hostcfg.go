@@ -32,6 +32,8 @@
 //	                          ;   paints its own title bar) / native_titlebar / native
 //	titlebar_scale =          ; graphical title-bar height and content scale
 //	                          ;   (1.0 = classic full-cell row, the default)
+//	menu_scale   =            ; graphical menu bar / dropdown / context menu row
+//	                          ;   height and content scale (1.0 = the default)
 //	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
 //	                          ;   … hints are tested against, overriding what the
 //	                          ;   session advertises (blank = detect)
@@ -228,6 +230,16 @@ type Config struct {
 	// terminal host ignores it.
 	TitleBarScale float64
 
+	// MenuScale scales every GRAPHICAL menu's row height and its contents --
+	// the menu bar, the dropdowns it opens, and context menus -- read from
+	// [window] menu_scale. 1.0 (the default) is the classic full-cell row;
+	// 0.9 renders the rows at 90% of it, ceiled to a whole unit of the
+	// denomination they count in, with the fonts and the cell-based gutters
+	// and pads scaled to match. Values at or below zero, or that don't
+	// parse, keep 1.0. Cell surfaces cannot subdivide a character cell and
+	// always render at 1.0 regardless, so the terminal host ignores it.
+	MenuScale float64
+
 	// HostType overrides the desktop environment the keymap's environment hints
 	// are tested against, read from [window] host_type. The session normally
 	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
@@ -258,7 +270,7 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1, MenuScale: 1}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -454,6 +466,11 @@ func apply(data []byte, cfg *Config) {
 			// doesn't parse, or is zero or negative, keeps the classic 1.0.
 			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
 				cfg.TitleBarScale = f
+			}
+		case "menu_scale":
+			// Graphical menu row height and content scale, on the same terms.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.MenuScale = f
 			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {

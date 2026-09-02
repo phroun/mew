@@ -462,6 +462,36 @@ func SetTitleBarScale(s float64) {
 // TitleBarScale returns the current graphical title-bar scale.
 func TitleBarScale() float64 { return titleBarScale }
 
+// menuScale scales every GRAPHICAL menu's rows and their contents: the menu
+// bar, the dropdowns it opens, and context menus. 1.0 is the classic
+// full-cell row; 0.9 renders the rows at 90% of it with the fonts and the
+// cell-based gutters and pads scaled to match. Cell (terminal) surfaces
+// cannot subdivide a character cell and always render at 1.0 regardless.
+// Read by the menu kit (objects/trinkets/menu_metrics.go), which is the only
+// place menus measure.
+var menuScale = 1.0
+
+// SetMenuScale sets the graphical menu scale; values at or below zero
+// restore 1.0.
+func SetMenuScale(s float64) {
+	if s <= 0 {
+		s = 1
+	}
+	menuScale = s
+}
+
+// MenuScale returns the current graphical menu scale.
+func MenuScale() float64 { return menuScale }
+
+// MenuRowProvider is the optional capability a chrome bar has when it can
+// state its own row height: the menu kit's row at the current MenuScale,
+// counted in the bar's OWN denomination. A window reserves that much for it
+// rather than assuming a whole cell, so a shortened bar leaves no dead strip
+// below it that nothing answers for. A bar that cannot say keeps the cell.
+type MenuRowProvider interface {
+	MenuRowHeight() Unit
+}
+
 // FrameBorderProvider is the trinket-side carrier of the graphical
 // window-frame border reservation: the desktop reports how many units the
 // frame border occupies (the device-pixel width converted at its

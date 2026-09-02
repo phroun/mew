@@ -141,6 +141,12 @@ func main() {
 	// regardless — a terminal cannot subdivide a character cell.
 	core.SetTitleBarScale(cfg.TitleBarScale)
 
+	// [window] menu_scale: the menu bar, its dropdowns and context menus at
+	// this fraction of the classic full-cell row, fonts and cell-based
+	// gutters scaled to match. Quantizes and stands down on the TUI host for
+	// the same reasons.
+	core.SetMenuScale(cfg.MenuScale)
+
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

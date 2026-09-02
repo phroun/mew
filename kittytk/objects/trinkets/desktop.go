@@ -5244,7 +5244,7 @@ func (d *Desktop) layoutChildren() {
 			X:      bx,
 			Y:      by,
 			Width:  innerW,
-			Height: metrics.UnitsPerCellHeight,
+			Height: d.MenuBarHeight(),
 		})
 	}
 
@@ -5310,7 +5310,7 @@ func (d *Desktop) ClientArea() core.UnitRect {
 	bottom := bounds.Height - bx
 
 	if d.menuBarShown() {
-		top += metrics.UnitsPerCellHeight
+		top += d.MenuBarHeight()
 	}
 	if d.statusBarShown() {
 		bottom -= metrics.UnitsPerCellHeight
@@ -5336,7 +5336,22 @@ func (d *Desktop) MenuBarHeight() core.Unit {
 	if !d.menuBarShown() {
 		return 0
 	}
-	return d.EffectiveCellMetrics().UnitsPerCellHeight
+	// The kit's (possibly scaled) row, the same one the bar paints and hit
+	// tests with -- reserving a full cell for a shortened bar would leave a
+	// dead strip below it that the bar does not answer for.
+	return d.hostMenuMetrics().RowH
+}
+
+// hostMenuMetrics resolves the desktop menu bar's kit metrics. Lock-free
+// like hostTitleMetrics, and for the same reason: MenuBarHeight sits under
+// layout paths that run while d.mu is held, so d.font is read directly
+// rather than through EffectiveFont's lock.
+func (d *Desktop) hostMenuMetrics() MenuMetrics {
+	f := d.font
+	if f == nil {
+		f = core.DefaultFont()
+	}
+	return MenuMetricsFor(d.EffectiveCellMetrics(), f, d.graphicalFrames)
 }
 
 // StatusBarHeight returns the height of the status bar area (0 when there is no
@@ -5495,7 +5510,7 @@ func (d *Desktop) Paint(p *core.Painter) {
 			X:      bx,
 			Y:      by,
 			Width:  innerW,
-			Height: metrics.UnitsPerCellHeight,
+			Height: d.MenuBarHeight(),
 		})
 		d.menuBar.Paint(p.WithOffset(bx, by))
 	}
@@ -5797,7 +5812,7 @@ func (d *Desktop) HandleMousePress(event core.MousePressEvent) bool {
 
 	// Check menu bar first - either in menu bar area or when menu is open.
 	if d.menuBar != nil {
-		if (event.Y >= by && event.Y < by+metrics.UnitsPerCellHeight) || d.menuBar.ActiveMenu() != nil {
+		if (event.Y >= by && event.Y < by+d.MenuBarHeight()) || d.menuBar.ActiveMenu() != nil {
 			// Cancel drags on other children
 			cancelDrag(d.statusBar)
 			cancelDrag(d.dockRow)
