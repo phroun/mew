@@ -16,8 +16,8 @@ import (
 // ResizeHitGrip with the frame border the surface actually carries — the
 // themed frame's reserved border, or zero where the OS chrome sits outside
 // the client area — the hover affordance is the same translucent band at
-// ResizeOverlayGrip thickness, and the corners reach as far as the
-// affordance.
+// ResizeOverlayGrip thickness, and the corners reach further in than the
+// side zones.
 //
 // The press is applied the way TearOffHost applies one — global pointer
 // deltas onto the OS window's pixel geometry through platform.NativeSurface
@@ -127,8 +127,8 @@ func (d *Desktop) paintableSurfacePx(px int, vertical bool) int {
 // point: the same geometry a child window's edges use, with the frame
 // border the surface actually carries — the reserved themed border, or
 // zero under an OS title bar — so the grab zone is the border plus a
-// quarter column (floored at 3 device pixels) and the corners reach as
-// far as the affordance bands, exactly the window rule.
+// quarter column (floored at 3 device pixels) and the corners reach
+// further in than the side zones, exactly the window rule.
 func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	if _, _, ok := d.hostResizeParts(); !ok {
 		return 0

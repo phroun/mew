@@ -446,9 +446,9 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 	corner := ResizeOverlayGrip(h.graphicalFrames, metrics, border, border)
 	edges := 0
 
-	// Corners reach as far as the AFFORDANCE, not as far as the grab: a
-	// diagonal target only as wide as the side zone is one nobody can hit.
-	// Same rule the docked path applies in ResizeEdgeAt.
+	// Corners reach further in than the side zones do: a diagonal target only
+	// as wide as a side zone is one nobody can hit. Same rule the docked path
+	// applies in ResizeEdgeAt.
 	if corner.X > grip.X || corner.Y > grip.Y {
 		nearL, nearR := x < corner.X, x >= b.Width-corner.X
 		nearT, nearB := y < corner.Y, y >= b.Height-corner.Y

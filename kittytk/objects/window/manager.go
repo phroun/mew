@@ -310,9 +310,8 @@ func ResizeEdgeAt(bounds core.UnitRect, x, y core.Unit, metrics core.CellMetrics
 
 	// The CORNERS reach further than the sides, and have to: the side zone is
 	// kept as narrow as it can be so content stays reachable, and a diagonal
-	// target that narrow is a target nobody can hit. The corner is the square
-	// where the two AFFORDANCE bands overlap — what is highlighted is what
-	// grabs — so it does not shrink when the grab rule does.
+	// target that narrow is a target nobody can hit. The reach is twice the
+	// grip, or whatever the caller asked for in cornerReach if that is more.
 	//
 	// It is checked first and whole, rather than by widening the horizontal
 	// threshold along a live top/bottom edge: that older form scaled off a
@@ -458,9 +457,7 @@ func ResizeOverlayGrip(graphical bool, metrics core.CellMetrics, borderX, border
 // A quarter column is a distance too, and reaches the same way in from a
 // side as from the top: stated once in the surface's own denomination and
 // exchanged onto each axis, the same shape ResizeOverlayGrip takes one
-// fraction coarser. This travels with the affordance rather than apart from
-// it — the band is what advertises the zone, so a zone that reaches further
-// down than the band is drawn is a promise the window does not keep.
+// fraction coarser.
 //
 // The three-device-pixel floor converts per axis for the same reason: three
 // pixels buy a different number of units across than down, and it is ceiled
