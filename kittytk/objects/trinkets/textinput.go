@@ -133,7 +133,10 @@ func NewTextInput() *TextInput {
 	)
 	t.Init(t) // Enable polymorphic focus handling
 	t.SetFocusPolicy(core.StrongFocus)
-	t.SetAccessibleRole(core.RoleTextInput)
+	// One line of text tall, and it cannot be more: given a row three deep it
+	// sits in it rather than stretching to it. Across is another matter -- a
+	// field is meant to take the width it is given.
+	t.SetSizePolicy(core.NewSizePolicy(core.SizePreferred, core.SizeFixed))
 	return t
 }
 

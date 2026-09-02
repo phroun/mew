@@ -38,7 +38,20 @@ func NewProgressBar() *ProgressBar {
 	p.Init(p)
 	p.SetFocusPolicy(core.NoFocus)
 	p.SetAccessibleRole(core.RoleProgressBar)
+	p.applyOrientationPolicy()
 	return p
+}
+
+// applyOrientationPolicy fixes the axis a bar does not grow along: a horizontal
+// bar is one line of text tall and cannot be more, however deep the row it is
+// put in, while it takes whatever width it is given. A vertical one is the same
+// the other way round -- two cells across, growing down the page.
+func (p *ProgressBar) applyOrientationPolicy() {
+	if p.orientation == core.Horizontal {
+		p.SetSizePolicy(core.NewSizePolicy(core.SizePreferred, core.SizeFixed))
+		return
+	}
+	p.SetSizePolicy(core.NewSizePolicy(core.SizeFixed, core.SizePreferred))
 }
 
 // Value returns the current value.
@@ -110,6 +123,7 @@ func (p *ProgressBar) Orientation() core.Orientation {
 // SetOrientation sets the orientation.
 func (p *ProgressBar) SetOrientation(orientation core.Orientation) {
 	p.orientation = orientation
+	p.applyOrientationPolicy()
 	p.Update()
 }
 
