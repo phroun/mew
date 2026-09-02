@@ -395,18 +395,18 @@ func TestMenuScaleLeavesTheBarsLeftIndentAlone(t *testing.T) {
 	}
 }
 
-// Every face on a menu row sits on the row's ONE text line.
+// A face beside the body face sits centred in the row: the shortcut column
+// in macOS-native mode, the menu bar's clock.
 //
-// A menu draws three sizes on the same row: the item's label in the body
-// face, the shortcut column in Apple's face at 80% when native shortcuts are
-// on, and the bar's clock in a mono face at 80%. They were each centred by
-// LINE BOX, which is not the same as sharing a line -- a box's ascent is not
-// half of it -- so the smaller faces sat off the label's baseline, far enough
-// that the shortcut's descenders were cut by the row below.
+// Neither of the rules this replaces put it there. Centring the smaller
+// face's line BOX carries descent the string may not use, and lands it half a
+// pixel low. Sharing the body's BASELINE is worse and was wrong in kind: the
+// body's ascenders fill the top of the row and a smaller face's do not, so a
+// shared baseline pins its ink to the bottom half -- two pixels low in a
+// sixteen-pixel row, which is how "^K _" came to hang under its own item.
 //
-// Asserted as the rule, not the numbers: whatever faces are installed, each
-// one's offset plus its own baseline must land on the same line.
-func TestMenuScalePutsEveryFaceOnTheRowsBaseline(t *testing.T) {
+// Read off the paint, since where the ink lands is the whole question.
+func TestMenuScaleCentresASmallerFaceInTheRow(t *testing.T) {
 	t.Cleanup(func() {
 		core.SetTextMeasurer(nil)
 		core.SetMenuScale(1)
@@ -419,26 +419,56 @@ func TestMenuScalePutsEveryFaceOnTheRowsBaseline(t *testing.T) {
 	core.SetTextMeasurer(b)
 	core.SetMacNativeShortcuts(true)
 
-	for _, scale := range []float64{1, 0.9, 0.5} {
+	// The ink a run leaves when drawn at off, as rows of the image.
+	inkCentre := func(f *core.Font, text string, off core.Unit) float64 {
+		b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+		core.NewPainter(b).DrawText(0, off, text,
+			style.DefaultStyle().WithFg(style.RGB(0, 0, 0)).WithBg(style.ColorTransparent), f)
+		img := b.Image()
+		first, last := -1, -1
+		for y := 0; y < 60; y++ {
+			for x := 0; x < 250; x++ {
+				if c := img.RGBAAt(x, y); int(c.R)+int(c.G)+int(c.B) < 400 {
+					if first < 0 {
+						first = y
+					}
+					last = y
+					break
+				}
+			}
+		}
+		if first < 0 {
+			t.Fatalf("no ink for %q", text)
+		}
+		return float64(first+last) / 2
+	}
+
+	for _, scale := range []float64{1, 0.9} {
 		core.SetMenuScale(scale)
 		mm := MenuMetricsFor(core.DefaultCellMetrics(), core.DefaultFont(), true)
 		clock := &core.Font{Name: core.FontMonday12.Name, Size: (mm.Font.Size*8 + 5) / 10}
-
-		want := mm.GlyphYOff(mm.Font) + core.FontBaseline(mm.Font)
 		for _, c := range []struct {
 			name string
 			f    *core.Font
+			text string
 		}{
-			{"shortcut", shortcutFont(mm.Font)},
-			{"clock", clock},
+			// An underscore is the case that showed it: all of its ink is at
+			// the very bottom of the face, so a rule that sits the face low
+			// puts the whole run under the row.
+			{"shortcut", shortcutFont(mm.Font), "^K _"},
+			{"clock", clock, "Mon 15:04"},
 		} {
 			if core.FontBaseline(c.f) == 0 {
 				t.Skip("this target cannot answer for a baseline")
 			}
-			got := mm.GlyphYOff(c.f) + core.FontBaseline(c.f)
-			if got != want {
-				t.Errorf("scale %v: the %s face sits on line %d, the label on %d",
-					scale, c.name, got, want)
+			// The row's own midpoint is the reference, and the strings are
+			// chosen without descenders so that midpoint is what the eye
+			// judges the run against.
+			want := float64(mm.RowH-1) / 2
+			got := inkCentre(c.f, c.text, mm.GlyphYOff(c.f))
+			if d := got - want; d < -1 || d > 1 {
+				t.Errorf("scale %v: the %s face centres its ink at %.1f in a %d-unit row, whose middle is %.1f",
+					scale, c.name, got, mm.RowH, want)
 			}
 		}
 	}

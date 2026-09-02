@@ -122,17 +122,24 @@ func (mm MenuMetrics) glyphBox(f *core.Font) core.Unit {
 	return core.LineUnits(f, mm.src, mm.base)
 }
 
-// GlyphYOff places a face on the row's own text line: the body face, or one
-// beside it in a different size -- the shortcut column in macOS-native mode,
-// the menu bar's clock. Returned as an offset from the row's top, so the
-// caller draws at itemY + this.
+// GlyphYOff sits a face in a menu row beside the body face: the shortcut
+// column in macOS-native mode, the menu bar's clock. Returned as an offset
+// from the row's top, so the caller draws at itemY + this.
 //
-// BASELINE, not box. Two faces on one row share a line, and centring the
-// smaller one's line box in the row does not put it there: a box's ascent is
-// not half of it, so the smaller face sat below the line its neighbours were
-// on -- far enough that the descenders of Apple's shortcut face were cut off
-// by the row below. The offset is what it takes to put this face's baseline
-// where the body's is.
+// What a smaller face beside a bigger one has to match is where its INK
+// sits, not where its baseline or its line box does, and the two smaller
+// faces here are labels standing in a row rather than text continuing a
+// line. Sharing the body's baseline pins their ink to the bottom half of the
+// row -- the body's ascenders fill the top and theirs do not -- which is
+// exactly how "^K _" came to hang under its own item. Centring their line
+// BOX is nearer but still low, since a box carries descent the string may
+// not use.
+//
+// A face's ink runs from near the top of its ascent down to its baseline, so
+// the centre of that block is half its baseline below the top. Two faces
+// share an ink centre when the smaller starts half the difference between
+// their baselines lower -- which is this, and which lands the clock exactly
+// on the label's ink centre and the shortcut within half a pixel of it.
 //
 // Falls back to centring the box where the target cannot answer for a
 // baseline (a cell surface, a bare measurer), which is where it stood.
@@ -142,7 +149,7 @@ func (mm MenuMetrics) GlyphYOff(f *core.Font) core.Unit {
 	}
 	body, other := core.FontBaseline(mm.Font), core.FontBaseline(f)
 	if body > 0 && other > 0 {
-		off := mm.YOff + core.ExchangeY(body-other, core.DefaultCellMetrics(), mm.base)
+		off := mm.YOff + core.ExchangeY((body-other)/2, core.DefaultCellMetrics(), mm.base)
 		if off < 0 {
 			off = 0
 		}
