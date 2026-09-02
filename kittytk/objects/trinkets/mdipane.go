@@ -1016,7 +1016,8 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	// agrees with what the user sees and with the press path (which commits
 	// these bounds before detecting).
 	// The HIT zone follows the grab rule (quarter cell or 3 device px, border
-	// included); resizeGripFor stays the overlay's, which must not move.
+	// included); affordanceBandFor stays the painted band's, which must not
+	// move.
 	metrics := m.EffectiveCellMetrics()
 	graphical := core.FindGraphicalFrames(m.Self())
 	// Each grip is a pair, and so is the border it is built on: the column
@@ -1024,15 +1025,15 @@ func (m *MDIPane) detectResizeEdge(win *window.Window, x, y core.Unit) int {
 	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
 	grip := window.ResizeHitGrip(graphical, metrics, core.FindPxPerUnit(m.Self()), bx, by)
 	return window.ResizeEdgeAt(m.displayBounds(win), x, y, metrics, grip,
-		window.ResizeOverlayGrip(graphical, metrics, bx, by))
+		window.ResizeAffordanceBand(graphical, metrics, bx, by))
 }
 
-// resizeGripFor is the effective resize-grip thickness for a child window
-// (the surface's grip capability, discovered by ancestry).
-func (m *MDIPane) resizeGripFor(win *window.Window) window.ResizeGrip {
+// affordanceBandFor is how thick the translucent band along a child window's
+// edges is (the surface's frame kind, discovered by ancestry).
+func (m *MDIPane) affordanceBandFor(win *window.Window) window.EdgeThickness {
 	metrics := m.EffectiveCellMetrics()
 	bx, by := core.FindFrameBorderUnitsIn(win, metrics)
-	return window.ResizeOverlayGrip(core.FindGraphicalFrames(m.Self()), metrics, bx, by)
+	return window.ResizeAffordanceBand(core.FindGraphicalFrames(m.Self()), metrics, bx, by)
 }
 
 // setResizeHover shows the translucent white overlay along the given resize
@@ -1043,7 +1044,7 @@ func (m *MDIPane) setResizeHover(win *window.Window, edge int) {
 		win.SetResizeHoverRects(nil)
 		return
 	}
-	win.SetResizeHoverRects(window.ResizeEdgeRects(win, edge, m.resizeGripFor(win)))
+	win.SetResizeHoverRects(window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win)))
 }
 
 // clearWindowHover clears any lingering per-widget hover on the window we
@@ -1078,7 +1079,7 @@ func (m *MDIPane) updateResizeHover(x, y core.Unit) {
 		var rects []core.UnitRect
 		if i == topmost {
 			if edge := m.detectResizeEdge(win, x, y); edge != window.ResizeEdgeNone {
-				rects = window.ResizeEdgeRects(win, edge, m.resizeGripFor(win))
+				rects = window.ResizeEdgeRects(win, edge, m.affordanceBandFor(win))
 			}
 		}
 		if win.SetResizeHoverRects(rects) {

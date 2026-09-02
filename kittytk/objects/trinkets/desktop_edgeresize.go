@@ -16,7 +16,7 @@ import (
 // ResizeHitGrip with the frame border the surface actually carries — the
 // themed frame's reserved border, or zero where the OS chrome sits outside
 // the client area — the hover affordance is the same translucent band at
-// ResizeOverlayGrip thickness, and the corners reach further in than the
+// ResizeAffordanceBand thickness, and the corners reach further in than the
 // side zones.
 //
 // The press is applied the way TearOffHost applies one — global pointer
@@ -137,9 +137,9 @@ func (d *Desktop) hostEdgeAt(x, y core.Unit) int {
 	border := d.hostFrameInset()
 	metrics := d.EffectiveCellMetrics()
 	grip := window.ResizeHitGrip(true, metrics, d.pxPerUnit(), border, border)
-	corner := window.ResizeOverlayGrip(true, metrics, border, border)
+	reach := window.ResizeAffordanceBand(true, metrics, border, border)
 	return window.ResizeEdgeAt(core.UnitRect{Width: b.Width, Height: b.Height},
-		x, y, metrics, grip, corner)
+		x, y, metrics, grip, reach)
 }
 
 // hostResizeBegin arms a desktop-edge resize when the press lands in the
@@ -346,7 +346,7 @@ func (d *Desktop) paintHostEdgeHover(p *core.Painter, bounds core.UnitRect) {
 		return
 	}
 	inset := d.hostFrameInset()
-	band := window.ResizeOverlayGrip(true, d.EffectiveCellMetrics(), inset, inset)
+	band := window.ResizeAffordanceBand(true, d.EffectiveCellMetrics(), inset, inset)
 	var rects []core.UnitRect
 	if edges&window.ResizeEdgeLeft != 0 {
 		rects = append(rects, core.UnitRect{Width: band.X, Height: bounds.Height})

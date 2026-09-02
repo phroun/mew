@@ -7,7 +7,7 @@ import (
 )
 
 // resizeEdgeRects produces one band per edge (two for a corner), sized to
-// the resize grip and spanning the window.
+// the affordance band and spanning the window.
 func TestResizeEdgeRects(t *testing.T) {
 	m := NewWindowManager()
 	w := NewWindow("w")

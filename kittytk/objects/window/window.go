@@ -179,14 +179,14 @@ type Window struct {
 	resizeHoverRects []core.UnitRect
 
 	// resizeHoverEdges is the same highlight expressed as the EDGE MASK
-	// instead, with the grip thickness that sizes it. Preferred, because the
+	// instead, with the band thickness that sizes it. Preferred, because the
 	// bands are derived from the window's bounds and those change under a
 	// live resize: computing rectangles up front bakes in whatever size the
 	// window had when the gesture began, and a window that then grows leaves
 	// its bands stranded mid-frame. The paint resolves the mask against the
 	// bounds it is actually painting, which cannot be stale.
 	resizeHoverEdges int
-	resizeHoverGrip  ResizeGrip
+	resizeHoverBand  EdgeThickness
 
 	// Detached main-window chrome, set by the desktop when the window is
 	// torn off: a menu bar between the title bar and content, and a
@@ -1946,7 +1946,7 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 	return true
 }
 
-// SetResizeHoverEdges sets the highlight as an edge MASK plus the grip
+// SetResizeHoverEdges sets the highlight as an edge MASK plus the band
 // thickness, to be resolved against the window's bounds at paint time. Zero
 // edges clears it. Returns true when the state changed.
 //
@@ -1954,13 +1954,13 @@ func (w *Window) SetResizeHoverRects(rects []core.UnitRect) bool {
 // back asynchronously, so any rectangle computed while the pointer moves is
 // built from the PREVIOUS bounds — which is how a growing window ends up with
 // its bands stranded in the middle of the frame.
-func (w *Window) SetResizeHoverEdges(edges int, grip ResizeGrip) bool {
+func (w *Window) SetResizeHoverEdges(edges int, band EdgeThickness) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.resizeHoverEdges == edges && w.resizeHoverGrip == grip {
+	if w.resizeHoverEdges == edges && w.resizeHoverBand == band {
 		return false
 	}
-	w.resizeHoverEdges, w.resizeHoverGrip = edges, grip
+	w.resizeHoverEdges, w.resizeHoverBand = edges, band
 	return true
 }
 
@@ -2176,10 +2176,10 @@ func (w *Window) MenuDropdownLayer() (bounds, anchor core.UnitRect, paint func(*
 func (w *Window) resizeHoverBands(localBounds core.UnitRect) []core.UnitRect {
 	w.mu.RLock()
 	rects := w.resizeHoverRects
-	edges, grip := w.resizeHoverEdges, w.resizeHoverGrip
+	edges, band := w.resizeHoverEdges, w.resizeHoverBand
 	w.mu.RUnlock()
 	if edges != 0 {
-		return tornEdgeRects(localBounds, edges, grip)
+		return tornEdgeRects(localBounds, edges, band)
 	}
 	return rects
 }

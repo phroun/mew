@@ -174,10 +174,10 @@ func TestTornCursorForEdge(t *testing.T) {
 func TestTornEdgeRects(t *testing.T) {
 	b := core.UnitRect{Width: 200, Height: 120}
 	// tornEdgeRects is pure geometry: it takes whatever thickness it is
-	// handed. The torn host now derives that from ResizeOverlayGrip rather
+	// handed. The torn host now derives that from ResizeAffordanceBand rather
 	// than a constant, so pick a width here and assert the shape.
 	const g core.Unit = 6
-	gr := ResizeGrip{X: g, Y: g}
+	gr := EdgeThickness{X: g, Y: g}
 
 	// Bottom-right corner -> right band + bottom band.
 	got := tornEdgeRects(b, resizeRight|resizeBottom, gr)

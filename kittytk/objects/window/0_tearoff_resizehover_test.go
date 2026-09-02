@@ -16,7 +16,7 @@ import (
 // shows.
 func TestResizeHoverBandsFollowTheWindow(t *testing.T) {
 	const g = core.Unit(4)
-	grip := ResizeGrip{X: g, Y: g}
+	grip := EdgeThickness{X: g, Y: g}
 	start := core.UnitRect{Width: 100, Height: 60}
 	grown := core.UnitRect{Width: 160, Height: 90}
 
@@ -64,7 +64,7 @@ func TestRefreshResizeHoverOnlyWhileResizing(t *testing.T) {
 
 	h.resizing = false
 	h.resizeEdges = resizeRight
-	w.SetResizeHoverEdges(0, ResizeGrip{})
+	w.SetResizeHoverEdges(0, EdgeThickness{})
 	h.refreshResizeHover()
 	if len(w.resizeHoverBands(small)) != 0 {
 		t.Fatal("no highlight should be set when no resize is in flight")
@@ -96,10 +96,9 @@ func TestResizeBandFollowsThePaintBounds(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want one band, got %d", len(got))
 	}
-	// The band spans the effective grip (the resize sliver plus the painted
-	// frame border), the same width the grab zone uses — so it is measured from
-	// the painted width, not the stale bounds.
-	wantX := grown.Width - h.effectiveGrip().X
+	// The band spans the affordance thickness (half a column plus the painted
+	// frame border) — measured from the painted width, not the stale bounds.
+	wantX := grown.Width - h.affordanceBand().X
 	if got[0].X != wantX {
 		t.Errorf("band at X=%v, want %v — it is pinned to the old width, not the painted one",
 			got[0].X, wantX)

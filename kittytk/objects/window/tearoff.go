@@ -390,17 +390,17 @@ func (h *TearOffHost) applyCursor(shape core.CursorShape) {
 // edgeAt returns the resize-edge bitmask for a window-local point, or 0
 // when the point starts no resize - mirroring beginResize (no resize in
 // the title row, on a non-resizable or zoomed window).
-// effectiveGrip is the AFFORDANCE thickness, per axis: the whole painted
-// frame border plus half a cell beyond it, matching docked windows
-// (ResizeOverlayGrip).
-// What a press actually grabs is narrower and border-inclusive — see
+// affordanceBand is how thick the translucent band is, per axis: the whole
+// painted frame border plus half a column beyond it, matching docked windows
+// (ResizeAffordanceBand).
+// What a press actually grabs is a separate quantity and narrower — see
 // ResizeHitGrip, used by edgeAt. FindFrameBorderUnits needs the desktop in the
 // parent chain, which a detached window lacks, so derive the border straight
 // from the live pixels-per-unit exactly as the desktop's
 // WindowFrameBorderUnits does (ceil(scaled border px / ppu)).
-func (h *TearOffHost) effectiveGrip() ResizeGrip {
+func (h *TearOffHost) affordanceBand() EdgeThickness {
 	border := h.frameBorderUnits()
-	return ResizeOverlayGrip(h.graphicalFrames, core.DefaultCellMetrics(), border, border)
+	return ResizeAffordanceBand(h.graphicalFrames, core.DefaultCellMetrics(), border, border)
 }
 
 // frameBorderUnits is the painted frame-border thickness in units, derived from
@@ -437,21 +437,21 @@ func (h *TearOffHost) edgeAt(x, y core.Unit) int {
 		return 0
 	}
 	b := h.win.Bounds()
-	// The HIT zone follows the grab rule; effectiveGrip stays the affordance
-	// overlay's, which must not move. A detached window has no desktop in its
+	// The HIT zone follows the grab rule; affordanceBand stays the painted
+	// band's, which must not move. A detached window has no desktop in its
 	// parent chain, so the border comes from its own live pixels-per-unit.
 	metrics := core.DefaultCellMetrics()
 	border := h.frameBorderUnits()
 	grip := ResizeHitGrip(h.graphicalFrames, metrics, h.pxPerUnit(), border, border)
-	corner := ResizeOverlayGrip(h.graphicalFrames, metrics, border, border)
+	reach := ResizeAffordanceBand(h.graphicalFrames, metrics, border, border)
 	edges := 0
 
 	// Corners reach further in than the side zones do: a diagonal target only
 	// as wide as a side zone is one nobody can hit. Same rule the docked path
 	// applies in ResizeEdgeAt.
-	if corner.X > grip.X || corner.Y > grip.Y {
-		nearL, nearR := x < corner.X, x >= b.Width-corner.X
-		nearT, nearB := y < corner.Y, y >= b.Height-corner.Y
+	if reach.X > grip.X || reach.Y > grip.Y {
+		nearL, nearR := x < reach.X, x >= b.Width-reach.X
+		nearT, nearB := y < reach.Y, y >= b.Height-reach.Y
 		if nearL && nearR {
 			nearL, nearR = 2*x < b.Width, 2*x >= b.Width
 		}
@@ -536,21 +536,21 @@ func tornCursorForEdge(edges int) core.CursorShape {
 }
 
 // tornEdgeRects returns the window-local highlight bands for the given
-// resize edges (one per edge, two for a corner), each the width of the
-// resize grip.
-func tornEdgeRects(b core.UnitRect, edges int, grip ResizeGrip) []core.UnitRect {
+// resize edges (one per edge, two for a corner), each the thickness of the
+// affordance band.
+func tornEdgeRects(b core.UnitRect, edges int, band EdgeThickness) []core.UnitRect {
 	var rects []core.UnitRect
 	if edges&resizeLeft != 0 {
-		rects = append(rects, core.UnitRect{Width: grip.X, Height: b.Height})
+		rects = append(rects, core.UnitRect{Width: band.X, Height: b.Height})
 	}
 	if edges&resizeRight != 0 {
-		rects = append(rects, core.UnitRect{X: b.Width - grip.X, Width: grip.X, Height: b.Height})
+		rects = append(rects, core.UnitRect{X: b.Width - band.X, Width: band.X, Height: b.Height})
 	}
 	if edges&resizeBottom != 0 {
-		rects = append(rects, core.UnitRect{Y: b.Height - grip.Y, Width: b.Width, Height: grip.Y})
+		rects = append(rects, core.UnitRect{Y: b.Height - band.Y, Width: b.Width, Height: band.Y})
 	}
 	if edges&resizeTop != 0 {
-		rects = append(rects, core.UnitRect{Width: b.Width, Height: grip.Y})
+		rects = append(rects, core.UnitRect{Width: b.Width, Height: band.Y})
 	}
 	return rects
 }
@@ -564,7 +564,7 @@ func (h *TearOffHost) refreshResizeHover() {
 	if !h.resizing || h.resizeEdges == 0 {
 		return
 	}
-	h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
+	h.win.SetResizeHoverEdges(h.resizeEdges, h.affordanceBand())
 }
 
 // updateHoverAndCursor refreshes the resize-edge highlight and the system
@@ -577,7 +577,7 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	for _, p := range h.popups {
 		b := p.Bounds
 		if x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-			h.win.SetResizeHoverEdges(0, ResizeGrip{})
+			h.win.SetResizeHoverEdges(0, EdgeThickness{})
 			h.applyCursor(core.CursorDefault)
 			return
 		}
@@ -588,17 +588,17 @@ func (h *TearOffHost) updateHoverAndCursor(x, y core.Unit) {
 	// for free from CursorAt's ActiveMenuBounds test).
 	if b, _, _, ok := h.win.MenuDropdownLayer(); ok &&
 		x >= b.X && y >= b.Y && x < b.X+b.Width && y < b.Y+b.Height {
-		h.win.SetResizeHoverEdges(0, ResizeGrip{})
+		h.win.SetResizeHoverEdges(0, EdgeThickness{})
 		h.applyCursor(core.CursorDefault)
 		return
 	}
 	edges := h.edgeAt(x, y)
 	if edges != 0 {
-		h.win.SetResizeHoverEdges(edges, h.effectiveGrip())
+		h.win.SetResizeHoverEdges(edges, h.affordanceBand())
 		h.applyCursor(tornCursorForEdge(edges))
 		return
 	}
-	h.win.SetResizeHoverEdges(0, ResizeGrip{})
+	h.win.SetResizeHoverEdges(0, EdgeThickness{})
 	h.applyCursor(h.win.CursorShapeAt(x, y))
 }
 
@@ -1024,7 +1024,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 			// A button is held (a drag begun elsewhere passing over the frame):
 			// forward it and drop any lingering edge band.
 			handled = h.win.HandleMouseMove(e)
-			h.win.SetResizeHoverEdges(0, ResizeGrip{})
+			h.win.SetResizeHoverEdges(0, EdgeThickness{})
 		}
 	case core.MouseReleaseEvent:
 		if !h.ghost && !h.resizing && !h.dragging && h.popupsHandleMouse(e) {
@@ -1058,7 +1058,7 @@ func (h *TearOffHost) Event(ev core.Event) bool {
 		// reset the cursor. A live resize/drag keeps driving from the global
 		// pointer, so leave its highlight alone.
 		if !h.resizing && !h.dragging {
-			h.win.SetResizeHoverEdges(0, ResizeGrip{})
+			h.win.SetResizeHoverEdges(0, EdgeThickness{})
 			h.win.HandleMouseMove(core.MouseMoveEvent{X: -1, Y: -1})
 			h.applyCursor(core.CursorDefault)
 		}
@@ -1540,7 +1540,7 @@ func (h *TearOffHost) Resized(size core.UnitSize) {
 	// recomputed accurately — otherwise they stay at the pre-resize position
 	// until the next hover recomputes them.
 	if h.resizing {
-		h.win.SetResizeHoverEdges(h.resizeEdges, h.effectiveGrip())
+		h.win.SetResizeHoverEdges(h.resizeEdges, h.affordanceBand())
 	}
 	h.surf.Invalidate(core.UnitRect{})
 }
