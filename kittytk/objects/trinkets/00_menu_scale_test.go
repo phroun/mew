@@ -364,3 +364,33 @@ func TestMenuScalePaintsNothingBelowItself(t *testing.T) {
 		}
 	}
 }
+
+// The bar's left indent is the window FRAME's thickness, and does not follow
+// core.MenuScale.
+//
+// What the indent clears is the frame beside it, which does not shrink
+// because the menus inside it do. Taken as a fraction of the menu's own
+// (scaled) cell it shrank with them -- one unit at 0.5 against a two-unit
+// border -- so the first item's outline stroke was clipped by the window
+// edge. It is a quarter of a cell at the default 2-pixel border, which is
+// what it has always been at 1.0.
+func TestMenuScaleLeavesTheBarsLeftIndentAlone(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil); core.SetMenuScale(1) })
+
+	var want core.Unit
+	for i, scale := range []float64{1, 0.9, 0.5} {
+		_, bar, _ := menuScaleBar(t, scale, true)
+		border, _ := core.FindFrameBorderUnitsIn(bar.Self(), bar.EffectiveCellMetrics())
+		got := bar.leftInset()
+		if got != border {
+			t.Errorf("scale %v: indent %d units, want the frame's %d", scale, got, border)
+		}
+		if i == 0 {
+			want = got
+			continue
+		}
+		if got != want {
+			t.Errorf("scale %v: indent moved to %d from the unscaled %d", scale, got, want)
+		}
+	}
+}

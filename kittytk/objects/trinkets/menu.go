@@ -2811,26 +2811,25 @@ func (m *MenuBar) CloseMenuWithoutRestore() {
 }
 
 // calculateMenuX calculates the x position of a menu (accounting for scroll offset).
-// menuBarLeftInsetCells is the small left indent applied to the menu items
-// on graphical surfaces, as a fraction of a cell: one quarter. It exists so
-// the outline stroke drawn around the active item has its left edge clear
-// of the very left pixel column. Clicks anywhere in this indent still
-// activate the first item (Fitts's law - see HandleMousePress), so nothing
-// on the left edge is dead. Zero on cell surfaces, where there is no stroke
-// and a sub-cell indent can't render.
+// leftInset is the small left indent applied to the menu items on graphical
+// surfaces: the window frame's own border thickness. It exists so the
+// outline stroke drawn around the active item has its left edge clear of the
+// frame beside it. Clicks anywhere in this indent still activate the first
+// item (Fitts's law - see HandleMousePress), so nothing on the left edge is
+// dead. Zero on cell surfaces, where there is no stroke and a sub-cell indent
+// cannot render.
 //
-// A cell, not a unit count: a cell is a fixed physical size at a given
-// zoom, so the indent is the same nudge whatever denomination the window
-// carries. Two units was a quarter-cell only at the default denomination.
-const menuBarLeftInsetCells core.Unit = 4
-
-// leftInset returns the item indent for the surface of the last paint:
-// a quarter cell on graphical surfaces, 0 on cell surfaces.
+// The FRAME's thickness, and so untouched by core.MenuScale. What the indent
+// clears is the frame, which does not shrink because the menus inside it do:
+// scaled down with them, it stopped clearing anything and the first item's
+// stroke was clipped by the window edge. It is a quarter of a cell at the
+// default 2-pixel border, which is what it has always been.
 func (m *MenuBar) leftInset() core.Unit {
-	if m.graphicalCached {
-		return m.menuMetrics().CellW / menuBarLeftInsetCells
+	if !m.graphicalHere() {
+		return 0
 	}
-	return 0
+	inset, _ := core.FindFrameBorderUnitsIn(m.Self(), m.EffectiveCellMetrics())
+	return inset
 }
 
 func (m *MenuBar) calculateMenuX(index int) core.Unit {
