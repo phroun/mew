@@ -1198,18 +1198,32 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 // - with three indicator glyphs centered in the white content area
 // only. glyph is '^'/'v' when that direction can scroll, else '-' for a
 // blank bumper. No line-drawing characters.
-func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, mm MenuMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairStyle style.CellStyle, glyph rune) {
+func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, mm MenuMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairColor style.Color, hairStyle style.CellStyle, glyph rune) {
 	gutterWidth := mm.CellW * 3
 	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: mm.RowH}, ' ', gutterStyle)
 	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: mm.RowH}, ' ', contentStyle)
 	if g {
-		p.FillRectPixels(m.popupX+gutterWidth, y, -1, 0, 1, p.UnitSpanPxY(y, y+mm.RowH), hairStyle)
+		paintGutterDivider(p, m.popupX+gutterWidth, y, p.UnitSpanPxY(y, y+mm.RowH), hairColor, hairStyle)
 	}
 	// Center the three glyphs in the white content area only.
 	centerX := m.popupX + gutterWidth + (size.Width-gutterWidth)/2
 	mm.DrawGlyph(p, centerX-mm.CellW*2, y, glyph, contentStyle)
 	mm.DrawGlyph(p, centerX, y, glyph, contentStyle)
 	mm.DrawGlyph(p, centerX+mm.CellW*2, y, glyph, contentStyle)
+}
+
+// paintGutterDivider draws the single-pixel rule down the right edge of a
+// menu's gutter, on the gutter's own last pixel column.
+//
+// Inked at MenuSeparatorAlpha over the gutter it sits on, like the rule
+// between two groups of items: a division between the gutter and the
+// content, not a line drawn down the menu. Opaque where the surface cannot
+// blend, since a divider nobody can see is worse than one drawn too strongly.
+func paintGutterDivider(p *core.Painter, x, y core.Unit, hPx int, hairColor style.Color, hairStyle style.CellStyle) {
+	r, g, b := hairColor.RGBComponents()
+	if !p.FillRectPixelsAlpha(x, y, -1, 0, 1, hPx, r, g, b, MenuSeparatorAlpha) {
+		p.FillRectPixels(x, y, -1, 0, 1, hPx, hairStyle)
+	}
 }
 
 // paintOuterStroke draws the menu's 1-pixel outer frame with the edge
@@ -1425,7 +1439,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		if m.canScrollUp() {
 			glyph = '^'
 		}
-		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
+		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairColor, hairStyle, glyph)
 		currentY += mm.RowH
 	}
 
@@ -1481,7 +1495,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		// row EXCEPT the focused one (its focus fill spans the gutter, so
 		// the divider would clash / is overwritten).
 		if g && itemIndex != m.currentIndex {
-			p.FillRectPixels(m.popupX+gutterWidth, itemY, -1, 0, 1, p.UnitSpanPxY(itemY, itemY+rowH), hairStyle)
+			paintGutterDivider(p, m.popupX+gutterWidth, itemY, p.UnitSpanPxY(itemY, itemY+rowH), hairColor, hairStyle)
 		}
 
 		if item.Separator {
@@ -1596,7 +1610,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		if m.canScrollDown() {
 			glyph = 'v'
 		}
-		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairStyle, glyph)
+		m.paintScrollBumper(p, currentY, size, mm, scheme.GetMenuGutter(), menuItemStyle, g, scale, hairColor, hairStyle, glyph)
 	}
 
 	// A 1-pixel frame just outside the menu, in the separator color,

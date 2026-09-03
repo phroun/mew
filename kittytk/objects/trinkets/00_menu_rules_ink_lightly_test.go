@@ -1,0 +1,87 @@
+package trinkets
+
+import (
+	"testing"
+
+	"github.com/phroun/kittytk/backend/raster"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+)
+
+// A menu's two rules -- the divider down the gutter's edge and the separator
+// between groups of items -- ink at MenuSeparatorAlpha over the background
+// they sit on, rather than at full strength. Drawn solid they read as lines
+// ruled through the menu; blended they read as divisions in it.
+func TestMenuRulesInkOverTheirBackground(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(300, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	d := NewDesktop()
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 300, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	m := NewMenu("File")
+	m.AddItem(NewMenuItem("Undo"))
+	m.AddSeparator()
+	m.AddItem(NewMenuItem("Redo"))
+	bar.AddMenu(m)
+	m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+	m.setGraphicalHint(true)
+	m.Show(0, 0)
+	b.Clear(style.DefaultStyle())
+	m.Paint(core.NewPainter(b))
+
+	sch := m.GetScheme()
+	hr, hg, hb := sch.GetMenuSeparator().Fg.RGBComponents()
+	mm := m.menuMetrics()
+	p := core.NewPainter(b)
+	img := b.Image()
+
+	// What a quarter of the rule's colour over a given background comes to.
+	//
+	// A QUARTER, written out rather than read from MenuSeparatorAlpha: taken
+	// from the constant, the expectation moves with the code and the test
+	// agrees with any strength at all, including full.
+	const wantAlpha = 0.25
+	blend := func(bg, ink uint8) int {
+		return int(float64(bg)*(1-wantAlpha) + float64(ink)*wantAlpha + 0.5)
+	}
+	near := func(got uint8, want int) bool { d := int(got) - want; return d >= -2 && d <= 2 }
+
+	// The gutter divider: the gutter's own last pixel column, on a row that
+	// is not the focused one (whose fill spans the gutter instead).
+	xDiv := p.UnitSpanPxX(0, mm.CellW*3) - 1
+	y := p.UnitSpanPxY(0, mm.RowH) / 4
+	gr, gg, gb := sch.GetMenuGutter().Bg.RGBComponents()
+	c := img.RGBAAt(xDiv, y)
+	if c.R == hr && c.G == hg && c.B == hb {
+		t.Errorf("the gutter divider is drawn solid (%d,%d,%d), not inked over the gutter", c.R, c.G, c.B)
+	}
+	if !near(c.R, blend(gr, hr)) || !near(c.G, blend(gg, hg)) || !near(c.B, blend(gb, hb)) {
+		t.Errorf("gutter divider = %d,%d,%d; a quarter of %d,%d,%d over the gutter's %d,%d,%d is %d,%d,%d",
+			c.R, c.G, c.B, hr, hg, hb, gr, gg, gb,
+			blend(gr, hr), blend(gg, hg), blend(gb, hb))
+	}
+
+	// The separator: its hairline, in the middle of the content area of the
+	// band between the two items.
+	sepTop := m.itemTopY(1)
+	bandPx := p.UnitSpanPxY(sepTop, sepTop+m.rowHeightAt(1, true, mm.RowH))
+	sy := p.UnitSpanPxY(0, sepTop) + (bandPx-1)/2
+	sx := p.UnitSpanPxX(0, mm.CellW*3) + 8
+	cr, cg, cb := sch.GetMenuSeparator().Bg.RGBComponents()
+	s := img.RGBAAt(sx, sy)
+	if s.R == hr && s.G == hg && s.B == hb {
+		t.Errorf("the separator rule is drawn solid (%d,%d,%d), not inked over the band", s.R, s.G, s.B)
+	}
+	if !near(s.R, blend(cr, hr)) || !near(s.G, blend(cg, hg)) || !near(s.B, blend(cb, hb)) {
+		t.Errorf("separator = %d,%d,%d; a quarter of %d,%d,%d over the band's %d,%d,%d is %d,%d,%d",
+			s.R, s.G, s.B, hr, hg, hb, cr, cg, cb,
+			blend(cr, hr), blend(cg, hg), blend(cb, hb))
+	}
+}
