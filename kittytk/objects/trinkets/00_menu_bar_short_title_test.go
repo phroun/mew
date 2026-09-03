@@ -1,0 +1,216 @@
+package trinkets
+
+import (
+	"testing"
+
+	"github.com/phroun/kittytk/backend/raster"
+	"github.com/phroun/kittytk/core"
+	"github.com/phroun/kittytk/style"
+)
+
+// shortTitleBar builds a desktop carrying a menu bar of one menu, on a pixel
+// surface so the bar has its frame indent and its strokes.
+func shortTitleBar(t *testing.T, title string) (*MenuBar, *raster.Backend) {
+	t.Helper()
+	b, err := raster.NewScaled(400, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	d := NewDesktop()
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 400, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	menu := NewMenu(title)
+	menu.AddItem(NewMenuItem("Something"))
+	bar.AddMenu(menu)
+	bar.SetBounds(core.UnitRect{Width: 400, Height: bar.menuMetrics().RowH})
+	return bar, b
+}
+
+// A title of one glyph takes the width of the dropdown's gutter less a unit,
+// and no title is narrower than that.
+//
+// Stated as the widths, since a caller reading menuTitleWidth is what the
+// paint, the hit test and the dropdown's placement all do.
+func TestShortMenuTitlesArePinnedToTheGutter(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	for _, c := range []struct {
+		title  string
+		pinned bool
+		why    string
+	}{
+		{"Ψ", true, "one glyph"},
+		{"☰", true, "one glyph"},
+		{"il", true, "narrower than the gutter"},
+		{"File", false, "wider than the gutter on its own"},
+		{"Format", false, "wider than the gutter on its own"},
+	} {
+		bar, _ := shortTitleBar(t, c.title)
+		mm := bar.menuMetrics()
+		want := mm.GutterWidth() - 1
+		got := bar.menuTitleWidth(c.title)
+
+		if c.pinned {
+			if got != want {
+				t.Errorf("%q (%s): width %d, want the gutter less a unit (%d)",
+					c.title, c.why, got, want)
+			}
+			continue
+		}
+		if got != mm.CellW*2+mm.TextWidth(c.title) {
+			t.Errorf("%q (%s): width %d, want the title and its two pads (%d)",
+				c.title, c.why, got, mm.CellW*2+mm.TextWidth(c.title))
+		}
+		if got <= want {
+			t.Errorf("%q was meant to be wider than the pin (%d) on its own, but is %d",
+				c.title, want, got)
+		}
+	}
+}
+
+// The point of the pin, read off the paint: the stroke down the right of an
+// open item and the rule down the right of its dropdown's gutter are the same
+// pixel column, so the item's edge runs on down through the menu.
+//
+// Both columns are found by looking at what was drawn. Computing either from
+// the widths would agree with any pinning rule, including one a pixel out.
+func TestPinnedItemEdgeMeetsTheGutterRule(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	bar, b := shortTitleBar(t, "Ψ")
+	bar.OpenMenu(0)
+	// A ground nothing in the chrome uses, so every dark pixel found below is
+	// something the bar or the menu actually drew.
+	b.Clear(style.DefaultStyle().WithBg(style.RGB(0, 255, 0)))
+	p := core.NewPainter(b)
+	bar.Paint(p)
+	bar.PaintDropdown(p)
+
+	mm := bar.menuMetrics()
+	img := b.Image()
+	lum := func(x, y int) int {
+		c := img.RGBAAt(x, y)
+		return int(c.R) + int(c.G) + int(c.B)
+	}
+
+	rowPx := p.UnitSpanPxY(0, mm.RowH)
+	popupPx := p.UnitSpanPxX(0, bar.activeMenu.popupX)
+	gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
+
+	// The item's right stroke: the last thing inked across the bar's row at
+	// the left end of the bar, well clear of the clock. The strokes are the
+	// separator colour and the title's ink sits between them.
+	stroke := -1
+	for x := 0; x < popupPx+gutterPx*2; x++ {
+		if lum(x, rowPx/2) < 120 {
+			stroke = x
+		}
+	}
+	if stroke < 0 {
+		t.Fatal("no stroke found across the open item's row")
+	}
+
+	// The gutter rule: the darkest column inside the gutter, past the
+	// dropdown's own left stroke and short of the label.
+	rule, darkest := -1, 1<<30
+	y := rowPx + rowPx/2
+	for x := popupPx + 1; x < popupPx+gutterPx+2; x++ {
+		if v := lum(x, y); v < darkest {
+			rule, darkest = x, v
+		}
+	}
+	if rule < 0 {
+		t.Fatal("no gutter rule found in the dropdown's row")
+	}
+
+	if stroke != rule {
+		t.Errorf("the open item's right stroke is at pixel column %d and the gutter rule at %d; they should be the same column",
+			stroke, rule)
+	}
+}
+
+// A pinned item's title is centred in it. The width no longer comes from the
+// title, so the cell of leading pad every other item draws with would sit the
+// glyph off to one side of a box that was sized for the gutter, not for it.
+func TestPinnedTitleIsCentredInItsItem(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	bar, b := shortTitleBar(t, "Ψ")
+	b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+	p := core.NewPainter(b)
+	bar.Paint(p)
+
+	mm := bar.menuMetrics()
+	itemX := bar.calculateMenuX(0)
+	width := bar.menuTitleWidth("Ψ")
+	left := p.UnitSpanPxX(0, itemX)
+	right := p.UnitSpanPxX(0, itemX+width)
+
+	// The item fills its own rect, so what counts as the title's ink is what
+	// differs from that fill -- sampled at the item's top-left, above where
+	// any glyph reaches.
+	img := b.Image()
+	fill := img.RGBAAt(left, 0)
+	rowPx := p.UnitSpanPxY(0, mm.RowH)
+	first, last := -1, -1
+	for x := left; x < right; x++ {
+		for y := 0; y < rowPx; y++ {
+			c := img.RGBAAt(x, y)
+			d := abs8(c.R, fill.R) + abs8(c.G, fill.G) + abs8(c.B, fill.B)
+			if d > 24 {
+				if first < 0 {
+					first = x
+				}
+				last = x
+				break
+			}
+		}
+	}
+	if first < 0 {
+		t.Fatal("the pinned title left no ink inside its item")
+	}
+
+	// Centred within a pixel: the ink's own margins on either side match.
+	if d := (first - left) - (right - 1 - last); d < -1 || d > 1 {
+		t.Errorf("the title inks [%d,%d] in an item spanning [%d,%d): %d px of margin on the left against %d on the right",
+			first, last, left, right, first-left, right-1-last)
+	}
+	// And it is inside the item, which is the other half of centring it.
+	if first < left || last >= right {
+		t.Errorf("the title inks [%d,%d], outside its item [%d,%d)", first, last, left, right)
+	}
+}
+
+// A terminal has no strokes to line up and lays its widths in whole cells, so
+// nothing is pinned there.
+func TestShortMenuTitlesAreNotPinnedOnCellSurfaces(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+
+	d := NewDesktop()
+	d.SetBackend(&nullBackend{})
+	d.SetBounds(core.UnitRect{Width: 400, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	bar.AddMenu(NewMenu("Ψ"))
+	bar.SetBounds(core.UnitRect{Width: 400, Height: bar.menuMetrics().RowH})
+
+	mm := bar.menuMetrics()
+	if mm.Graphical {
+		t.Fatal("precondition: this bar should be on a cell surface")
+	}
+	if got, want := bar.menuTitleWidth("Ψ"), mm.CellW*2+mm.TextWidth("Ψ"); got != want {
+		t.Errorf("cell surface: one-glyph title width %d, want the title and its two pads (%d)", got, want)
+	}
+}
+
+// abs8 is the distance between two colour components.
+func abs8(a, b uint8) int {
+	if a > b {
+		return int(a - b)
+	}
+	return int(b - a)
+}

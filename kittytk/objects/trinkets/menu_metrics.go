@@ -90,6 +90,12 @@ func MenuMetricsFor(metrics core.CellMetrics, font *core.Font, graphical bool) M
 	return mm
 }
 
+// GutterWidth is the band down the left of a dropdown that carries the
+// checkmarks and item icons: three cell pitches -- the frame, the mark
+// itself, and a space before the label -- with the divider rule on its last
+// pixel column.
+func (mm MenuMetrics) GutterWidth() core.Unit { return mm.CellW * 3 }
+
 // ceilUnit is one scaled length on the unit grid, never shorter than a unit:
 // a row that rounded to nothing would take the whole menu with it.
 func ceilUnit(scale float64, u core.Unit) core.Unit {

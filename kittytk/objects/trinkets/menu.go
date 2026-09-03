@@ -4,6 +4,7 @@ package trinkets
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/phroun/kittytk/core"
 	"github.com/phroun/kittytk/style"
@@ -1205,7 +1206,7 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 // only. glyph is '^'/'v' when that direction can scroll, else '-' for a
 // blank bumper. No line-drawing characters.
 func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, mm MenuMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairColor style.Color, hairStyle style.CellStyle, glyph rune) {
-	gutterWidth := mm.CellW * 3
+	gutterWidth := mm.GutterWidth()
 	paintGutterBackground(p, core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: mm.RowH}, gutterStyle, g)
 	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: mm.RowH}, ' ', contentStyle)
 	if g {
@@ -1501,8 +1502,7 @@ func (m *Menu) Paint(p *core.Painter) {
 			contentStyle = scheme.GetMenuItemText()
 		}
 
-		// Gutter area: 3 cells (border + checkmark + 1 space)
-		gutterWidth := mm.CellW * 3
+		gutterWidth := mm.GutterWidth()
 
 		// Row height: separators collapse to a thin band on graphical.
 		rowH := m.rowHeightAt(itemIndex, g, mm.RowH)
@@ -2969,6 +2969,9 @@ func (m *MenuBar) SizeHint() core.UnitSize {
 // menuTitleWidth returns the width of a menu title including surrounding spaces.
 func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	mm := m.menuMetrics()
+	if w, pinned := m.pinnedTitleWidth(mm, title); pinned {
+		return w
+	}
 	// Menu width: space (1 cell) + title (font) + space (1 cell).
 	//
 	// The pad is a cell, which is a fixed physical size at a given zoom, so
@@ -2977,6 +2980,51 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 	// default one, which is a different currency the moment a window carries
 	// an override, and the bar came out stretched by exactly that difference.
 	return mm.CellW*2 + mm.TextWidth(title)
+}
+
+// pinnedTitleWidth reports the width a short top-level title is held to, and
+// whether it is held to one at all.
+//
+// A title of a single glyph -- a Ψ, a hamburger -- takes the width of the
+// dropdown's gutter less one unit, and no title is ever narrower than that.
+// What that buys is one line: the stroke down the right of an open item is
+// drawn on the pixel column just past the item's fill, and the gutter divider
+// on the last pixel column of the gutter, so at a width of gutter-less-a-unit
+// the two are the same column and the item's right edge runs on down through
+// the menu as the gutter rule. It also stops a one-glyph title from painting
+// as a stub narrower than the menu that hangs from it.
+//
+// A unit, rather than a device pixel, because a width is what the bar lays
+// out and hit-tests in and the unit grid is the finest step it has. At the
+// default denomination that unit IS the pixel the two rules are drawn in.
+//
+// Graphical surfaces only: a terminal has no strokes to line up, and its
+// widths are whole cells.
+func (m *MenuBar) pinnedTitleWidth(mm MenuMetrics, title string) (core.Unit, bool) {
+	if !mm.Graphical {
+		return 0, false
+	}
+	pinned := mm.GutterWidth() - 1
+	if utf8.RuneCountInString(title) != 1 && mm.CellW*2+mm.TextWidth(title) >= pinned {
+		return 0, false
+	}
+	// Never narrower than the glyphs themselves, so pinning a title cannot
+	// push its own ink out past the item that carries it.
+	if ink := mm.TextWidth(title); ink > pinned {
+		pinned = ink
+	}
+	return pinned, true
+}
+
+// menuTitleTextX is where a top-level title's text begins in an item whose
+// left edge is at x: one cell in, or centred when the item's width was pinned
+// rather than measured from the title.
+func (m *MenuBar) menuTitleTextX(mm MenuMetrics, x core.Unit, title string) core.Unit {
+	if w, pinned := m.pinnedTitleWidth(mm, title); pinned {
+		// Floored: a position is never rounded up.
+		return x + (w-mm.TextWidth(title))/2
+	}
+	return x + mm.CellW
 }
 
 // elidedTitlePrefix returns how many leading runes of a title fit within
@@ -3157,7 +3205,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 				}, ' ', s)
 
 				// Draw title with accelerator highlighting using font-aware rendering
-				textX := x + mm.CellW
+				textX := m.menuTitleTextX(mm, x, menu.title)
 				titleRunes := []rune(menu.title)
 				if showAccel && menu.acceleratorPos >= 0 && menu.acceleratorPos < len(titleRunes) {
 					var segs []textSegment
@@ -3255,7 +3303,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 		}, ' ', s)
 
 		// Draw title with accelerator highlighting using font-aware rendering
-		textX := x + mm.CellW // Start after leading space
+		textX := m.menuTitleTextX(mm, x, menu.title)
 		showAccel := m.ShouldShowAccelerator(menu)
 
 		// Draw text in parts: before accel, accel char, after accel. A letter
