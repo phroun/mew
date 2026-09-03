@@ -3425,6 +3425,27 @@ func termMenuLayoutFrom(graphical bool, font *core.Font, m core.CellMetrics, ite
 	}
 }
 
+// paintTermMenuSeparator draws a context menu's rule between two groups of
+// items: a hairline inset from both edges, inked at MenuSeparatorAlpha over
+// whatever the menu's background is, so it reads as a division rather than as
+// a line drawn through the menu. Opaque where the surface cannot blend, since
+// a separator nobody can see is worse than one drawn too strongly.
+//
+// One function for PurfecTerm's menu and TextInput's, which are the same menu.
+func paintTermMenuSeparator(p *core.Painter, menuBounds core.UnitRect, pos core.Unit, lay termMenuLayout) {
+	inset := lay.indent / 2
+	x := menuBounds.X + inset
+	y := pos + lay.sepH/2
+	w := menuBounds.Width - inset*2
+	const r, g, b = 200, 200, 200
+	if !p.FillRectPixelsAlpha(x, y, 0, 0,
+		p.UnitSpanPxX(x, x+w), p.UnitSpanPxY(y, y+p.HairlineHeight()),
+		r, g, b, MenuSeparatorAlpha) {
+		p.FillRect(core.UnitRect{X: x, Y: y, Width: w, Height: p.HairlineHeight()},
+			' ', style.DefaultStyle().WithBg(style.RGB(r, g, b)))
+	}
+}
+
 func (t *PurfecTerm) termMenuLayoutFor(pc core.PopupController, items []termMenuItem) termMenuLayout {
 	return termMenuLayoutFrom(core.FindGraphicalFrames(t), t.EffectiveFont(),
 		termMenuScreenMetrics(pc), items)
@@ -3500,11 +3521,7 @@ func (t *PurfecTerm) showTermItemsMenu(local core.UnitPoint, items []termMenuIte
 			for i, it := range items {
 				if it.separator {
 					if lay.graphical {
-						inset := lay.indent / 2
-						p.FillRect(core.UnitRect{
-							X: menuBounds.X + inset, Y: pos + lay.sepH/2,
-							Width: menuBounds.Width - inset*2, Height: p.HairlineHeight(),
-						}, ' ', style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+						paintTermMenuSeparator(p, menuBounds, pos, lay)
 					} else {
 						// Text cells: a full dim rule row.
 						p.FillRect(core.UnitRect{X: menuBounds.X, Y: pos, Width: menuBounds.Width, Height: lay.sepH}, '─',

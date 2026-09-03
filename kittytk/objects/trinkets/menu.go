@@ -1493,7 +1493,16 @@ func (m *Menu) Paint(p *core.Painter) {
 				offY := (bandPx - 1) / 2
 				wPx := p.UnitSpanPxX(m.popupX+gutterWidth, m.popupX+size.Width) - 2*marginPx
 				if wPx > 0 {
-					p.FillRectPixels(m.popupX+gutterWidth, itemY, marginPx, offY, wPx, 1, hairStyle)
+					// Half-strength ink over the row's own background: a
+					// rule that divides the items without ruling a line
+					// through the menu. Opaque where the surface cannot
+					// blend, since a separator nobody can see is worse than
+					// one drawn too strongly.
+					hr, hg, hb := hairColor.RGBComponents()
+					if !p.FillRectPixelsAlpha(m.popupX+gutterWidth, itemY, marginPx, offY, wPx, 1,
+						hr, hg, hb, MenuSeparatorAlpha) {
+						p.FillRectPixels(m.popupX+gutterWidth, itemY, marginPx, offY, wPx, 1, hairStyle)
+					}
 				}
 			} else {
 				// Cell surface: the dashed-row idiom, gutter + content.

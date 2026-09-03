@@ -14,6 +14,13 @@ import (
 // (objects/window/titlebar.go) and follows its rulings, so a host that sets
 // both scales gets chrome that reads as one system.
 
+// MenuSeparatorAlpha is how strongly a menu's separator rule inks over the
+// background it sits on, on surfaces that can blend. Half: enough to read as
+// a division between groups of items, not enough to read as a line drawn
+// through the menu. Cell surfaces keep their dashed rule, having no alpha to
+// spend.
+const MenuSeparatorAlpha = 0.5
+
 // MenuMetrics is the resolved geometry of one menu row at the current
 // core.MenuScale: the row height, the cell pitch the gutters, checkmarks,
 // arrows and pads lay out on, and the face the text draws with. All lengths

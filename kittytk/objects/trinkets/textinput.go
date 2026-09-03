@@ -2019,11 +2019,7 @@ func (t *TextInput) showContextMenu(event core.MousePressEvent) {
 			pos := menuBounds.Y + lay.padTop
 			for i, it := range items {
 				if it.separator {
-					inset := lay.indent / 2
-					p.FillRect(core.UnitRect{
-						X: menuBounds.X + inset, Y: pos + lay.sepH/2,
-						Width: menuBounds.Width - inset*2, Height: p.HairlineHeight(),
-					}, ' ', style.DefaultStyle().WithBg(style.RGB(200, 200, 200)))
+					paintTermMenuSeparator(p, menuBounds, pos, lay)
 					pos += lay.sepH
 					continue
 				}
