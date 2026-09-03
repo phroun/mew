@@ -964,25 +964,10 @@ func (b *Backend) renderTextImage(f *core.Font, s string, fg, bg color.RGBA, und
 	sp := engine().ShapeRun(f, s)
 	w := sp.Width()
 	h := engine().LineHeight(f)
-
-	// The image has to hold what the run actually draws, which is not always
-	// what the FACE budgets for a line. A glyph that descends past the face's
-	// declared descender -- a bracket, most of them -- was cut off flat at the
-	// image's bottom edge, and cut there whatever room the row below had to
-	// spare, because the image ended before the row did.
-	ink := h
-	for i := range sp.Lines {
-		if e := sp.Lines[i].Baseline + sp.Lines[i].Descent; e > ink {
-			ink = e
-		}
-	}
-
 	// Proportional text is not cell-aligned: size and rasterize it at the
 	// unsnapped fractional pixels-per-unit.
-	img := image.NewRGBA(image.Rect(0, 0, b.pxLen(w), b.pxLen(ink)))
+	img := image.NewRGBA(image.Rect(0, 0, b.pxLen(w), b.pxLen(h)))
 	if opaque {
-		// The WHOLE image, overhang included: an opaque run is blitted, not
-		// composited, so a row left unfilled would land as opaque black.
 		for i := range img.Pix {
 			switch i % 4 {
 			case 0:
