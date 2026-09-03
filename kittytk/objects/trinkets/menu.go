@@ -1200,7 +1200,7 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 // blank bumper. No line-drawing characters.
 func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSize, mm MenuMetrics, gutterStyle, contentStyle style.CellStyle, g bool, scale int, hairColor style.Color, hairStyle style.CellStyle, glyph rune) {
 	gutterWidth := mm.CellW * 3
-	p.FillRect(core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: mm.RowH}, ' ', gutterStyle)
+	paintGutterBackground(p, core.UnitRect{X: m.popupX, Y: y, Width: gutterWidth, Height: mm.RowH}, gutterStyle, g)
 	p.FillRect(core.UnitRect{X: m.popupX + gutterWidth, Y: y, Width: size.Width - gutterWidth, Height: mm.RowH}, ' ', contentStyle)
 	if g {
 		paintGutterDivider(p, m.popupX+gutterWidth, y, p.UnitSpanPxY(y, y+mm.RowH), hairColor, hairStyle)
@@ -1210,6 +1210,27 @@ func (m *Menu) paintScrollBumper(p *core.Painter, y core.Unit, size core.UnitSiz
 	mm.DrawGlyph(p, centerX-mm.CellW*2, y, glyph, contentStyle)
 	mm.DrawGlyph(p, centerX, y, glyph, contentStyle)
 	mm.DrawGlyph(p, centerX+mm.CellW*2, y, glyph, contentStyle)
+}
+
+// paintGutterBackground fills a menu row's gutter span.
+//
+// On the graphical path the gutter's own colour is laid at MenuGutterAlpha
+// over the menu background already beneath it -- the whole-menu fill, white
+// in the usual scheme -- so the gutter reads as a shaded band of the menu
+// rather than a separate panel butted against it. blend is false where that
+// is not the gutter's colour to soften (a focused row's selection fill) or
+// where the surface cannot blend at all, and the fill is then solid, which
+// is where it stood.
+func paintGutterBackground(p *core.Painter, r core.UnitRect, st style.CellStyle, blend bool) {
+	if blend {
+		gr, gg, gb := st.Bg.RGBComponents()
+		if p.FillRectPixelsAlpha(r.X, r.Y, 0, 0,
+			p.UnitSpanPxX(r.X, r.X+r.Width), p.UnitSpanPxY(r.Y, r.Y+r.Height),
+			gr, gg, gb, MenuGutterAlpha) {
+			return
+		}
+	}
+	p.FillRect(r, ' ', st)
 }
 
 // paintGutterDivider draws the single-pixel rule down the right edge of a
@@ -1455,6 +1476,10 @@ func (m *Menu) Paint(p *core.Painter) {
 
 		// Determine style using scheme
 		var gutterStyle, contentStyle style.CellStyle
+		// A focused row's gutter carries the SELECTION's colour, not a
+		// gutter colour, so it is laid solid: softening a highlight is not
+		// what softening the gutter means.
+		gutterIsOwnColor := true
 		if item.Separator {
 			gutterStyle = scheme.GetMenuSeparatorGutter()
 			contentStyle = scheme.GetMenuSeparator()
@@ -1464,6 +1489,7 @@ func (m *Menu) Paint(p *core.Painter) {
 		} else if itemIndex == m.currentIndex {
 			gutterStyle = scheme.GetFocusedMenuItemText()
 			contentStyle = scheme.GetFocusedMenuItemText()
+			gutterIsOwnColor = false
 		} else {
 			gutterStyle = scheme.GetMenuGutter()
 			contentStyle = scheme.GetMenuItemText()
@@ -1476,12 +1502,12 @@ func (m *Menu) Paint(p *core.Painter) {
 		rowH := m.rowHeightAt(itemIndex, g, mm.RowH)
 
 		// Draw gutter background
-		p.FillRect(core.UnitRect{
+		paintGutterBackground(p, core.UnitRect{
 			X:      m.popupX,
 			Y:      itemY,
 			Width:  gutterWidth,
 			Height: rowH,
-		}, ' ', gutterStyle)
+		}, gutterStyle, g && gutterIsOwnColor)
 
 		// Draw content background
 		p.FillRect(core.UnitRect{

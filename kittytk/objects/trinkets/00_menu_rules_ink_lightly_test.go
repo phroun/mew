@@ -57,7 +57,11 @@ func TestMenuRulesInkOverTheirBackground(t *testing.T) {
 	// is not the focused one (whose fill spans the gutter instead).
 	xDiv := p.UnitSpanPxX(0, mm.CellW*3) - 1
 	y := p.UnitSpanPxY(0, mm.RowH) / 4
-	gr, gg, gb := sch.GetMenuGutter().Bg.RGBComponents()
+	// The gutter AS PAINTED, read from beside the divider: the gutter lays
+	// its own colour over the menu background at MenuGutterAlpha, so what the
+	// divider inks over is not the scheme's gutter colour.
+	beside := img.RGBAAt(xDiv-3, y)
+	gr, gg, gb := beside.R, beside.G, beside.B
 	c := img.RGBAAt(xDiv, y)
 	if c.R == hr && c.G == hg && c.B == hb {
 		t.Errorf("the gutter divider is drawn solid (%d,%d,%d), not inked over the gutter", c.R, c.G, c.B)
@@ -83,5 +87,70 @@ func TestMenuRulesInkOverTheirBackground(t *testing.T) {
 		t.Errorf("separator = %d,%d,%d; a quarter of %d,%d,%d over the band's %d,%d,%d is %d,%d,%d",
 			s.R, s.G, s.B, hr, hg, hb, cr, cg, cb,
 			blend(cr, hr), blend(cg, hg), blend(cb, hb))
+	}
+}
+
+// The gutter lays its own colour over the menu background at three quarters,
+// so it reads as a shaded band of the menu rather than a panel butted against
+// it -- graphical only, and never over a focused row, whose gutter carries
+// the SELECTION's colour and is not a gutter colour to soften.
+func TestMenuGutterInksOverTheMenuBackground(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	b, err := raster.NewScaled(300, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	d := NewDesktop()
+	d.SetBackend(b)
+	d.SetBounds(core.UnitRect{Width: 300, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	m := NewMenu("File")
+	m.AddItem(NewMenuItem("Undo"))
+	m.AddItem(NewMenuItem("Redo"))
+	bar.AddMenu(m)
+	m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+	m.setGraphicalHint(true)
+	m.Show(0, 0)
+	m.currentIndex = 1 // the second row is focused
+	b.Clear(style.DefaultStyle())
+	m.Paint(core.NewPainter(b))
+
+	sch := m.GetScheme()
+	mm := m.menuMetrics()
+	p := core.NewPainter(b)
+	img := b.Image()
+	// Clear of the divider on the right and the checkmark cell's glyphs.
+	x := p.UnitSpanPxX(0, mm.CellW*3) - 4
+	rowPx := p.UnitSpanPxY(0, mm.RowH)
+
+	// A THREE QUARTER lay, written out rather than read from
+	// MenuGutterAlpha: taken from the constant the expectation moves with the
+	// code and the test agrees with any strength at all.
+	const wantAlpha = 0.75
+	over := func(under, ink uint8) int {
+		return int(float64(under)*(1-wantAlpha) + float64(ink)*wantAlpha + 0.5)
+	}
+	near := func(got uint8, want int) bool { d := int(got) - want; return d >= -2 && d <= 2 }
+
+	gr, gg, gb := sch.GetMenuGutter().Bg.RGBComponents()
+	mr, mg, mb := sch.GetMenuItemText().Bg.RGBComponents()
+	c := img.RGBAAt(x, rowPx/4)
+	if c.R == gr && c.G == gg && c.B == gb {
+		t.Errorf("the gutter is laid solid (%d,%d,%d), not over the menu background", c.R, c.G, c.B)
+	}
+	if !near(c.R, over(mr, gr)) || !near(c.G, over(mg, gg)) || !near(c.B, over(mb, gb)) {
+		t.Errorf("gutter = %d,%d,%d; three quarters of %d,%d,%d over the menu's %d,%d,%d is %d,%d,%d",
+			c.R, c.G, c.B, gr, gg, gb, mr, mg, mb, over(mr, gr), over(mg, gg), over(mb, gb))
+	}
+
+	// The focused row's gutter is the selection, laid solid.
+	fr, fg, fb := sch.GetFocusedMenuItemText().Bg.RGBComponents()
+	f := img.RGBAAt(x, rowPx+rowPx/4)
+	if f.R != fr || f.G != fg || f.B != fb {
+		t.Errorf("the focused row's gutter is %d,%d,%d, want the selection's own %d,%d,%d",
+			f.R, f.G, f.B, fr, fg, fb)
 	}
 }

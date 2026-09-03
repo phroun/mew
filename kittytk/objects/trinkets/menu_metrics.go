@@ -21,6 +21,13 @@ import (
 // alpha to spend.
 const MenuSeparatorAlpha = 0.25
 
+// MenuGutterAlpha is how strongly a menu's gutter lays its own colour over
+// the menu background beneath it, on surfaces that can blend. Three
+// quarters: the gutter reads as a shaded band of the menu rather than a
+// separate panel butted against it. Cell surfaces fill it solid, having no
+// alpha to spend.
+const MenuGutterAlpha = 0.75
+
 // MenuMetrics is the resolved geometry of one menu row at the current
 // core.MenuScale: the row height, the cell pitch the gutters, checkmarks,
 // arrows and pads lay out on, and the face the text draws with. All lengths
