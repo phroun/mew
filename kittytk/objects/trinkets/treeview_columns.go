@@ -1830,6 +1830,7 @@ func (t *TreeView) openColumnChooser(keyboard bool) {
 	// controller: the button's own width and height are the tree's, and
 	// everything below here is the popup layer's.
 	btn, _ := t.chooserButtonRect()
+	m.prepareToShow() // before the size that places it
 	size := m.calculateSize()
 	btnOrigin := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X, Y: btn.Y})
 	at := pc.MapToScreen(t.Self(), core.UnitPoint{X: btn.X + btn.Width, Y: btn.Y + btn.Height})

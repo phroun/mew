@@ -440,6 +440,9 @@ type Menu struct {
 
 	// Callbacks
 	onAboutToShow func()
+	// prepared records that onAboutToShow has already run for this opening,
+	// so it runs exactly once however early the opener needs it.
+	prepared      bool
 	onAboutToHide func()
 	onItemPressed func() // Called when an item is pressed, signals MenuBar to enter drag mode
 	onWillTrigger func() // Called just before an item is triggered, to restore window focus
@@ -791,9 +794,7 @@ func (m *Menu) IsVisible() bool {
 
 // Show shows the menu at the given position.
 func (m *Menu) Show(x, y core.Unit) {
-	if m.onAboutToShow != nil {
-		m.onAboutToShow()
-	}
+	m.prepareToShow()
 
 	m.popupX = x
 	m.popupY = y
@@ -882,7 +883,32 @@ func (m *Menu) Hide() {
 
 	m.visible = false
 	m.currentIndex = -1
+	m.prepared = false
 	m.Update()
+}
+
+// prepareToShow runs the about-to-show handler, once per opening.
+//
+// A menu that fills or relabels itself in that handler decides its own SIZE
+// there, and its size is what its opener places it by -- whether a dropdown
+// clears the surface's right edge, where a submenu's left edge goes, how far
+// a chooser has to be pushed back on screen. Firing it inside Show, after the
+// opener had already measured, meant every one of those decisions was made
+// against the contents of the PREVIOUS opening: wrong the first time a menu
+// dropped, and right afterwards only because the handler had left the right
+// items behind.
+//
+// So the openers call this before they measure, and Show calls it too for
+// anything that shows a menu without measuring first. The flag clears on
+// Hide.
+func (m *Menu) prepareToShow() {
+	if m.prepared {
+		return
+	}
+	m.prepared = true
+	if m.onAboutToShow != nil {
+		m.onAboutToShow()
+	}
 }
 
 // SetOnAboutToShow sets the about to show callback.
@@ -1723,6 +1749,7 @@ func (m *Menu) openSubMenu(item *MenuItem) {
 	// The submenu shares this menu's surface kind, grid and font.
 	item.SubMenu.setGraphicalHint(m.graphicalSurface())
 	item.SubMenu.inheritDisplayContext(m.EffectiveCellMetrics(), m.EffectiveFont())
+	item.SubMenu.prepareToShow()
 
 	size := m.calculateSize()
 
@@ -2657,6 +2684,8 @@ func (m *MenuBar) OpenMenu(index int) {
 	// dropdown before it lays out.
 	m.activeMenu.setGraphicalHint(core.FindGraphicalFrames(m.Self()))
 	m.activeMenu.inheritDisplayContext(m.EffectiveCellMetrics(), m.EffectiveFont())
+	// Before anything measures it: the handler may change what is in it.
+	m.activeMenu.prepareToShow()
 	m.acceleratorsActive = false // Disable bar accelerators when menu is down
 
 	// Set up callback so when user presses on a menu item, we enter drag mode
