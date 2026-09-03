@@ -2324,53 +2324,36 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 	return true
 }
 
-// ensureMenuVisible adjusts scroll offset to make the given menu index visible.
+// ensureMenuVisible scrolls an overflowing bar as little as it can to bring
+// one menu's whole title into the run.
+//
+// Where the title lands and where the run ends are asked of the same two
+// things the bar paints and hit-tests with: calculateMenuX, which starts at
+// the frame indent and carries the "..." when anything is scrolled off to the
+// left, and menusRightLimit, which is the scroll buttons' left edge. Measured
+// on its own terms instead -- from zero rather than the indent -- this granted
+// the run the indent's worth of room it does not have, and could call a title
+// visible that the paint still clipped.
 func (m *MenuBar) ensureMenuVisible(index int) {
 	if index < 0 || index >= len(m.menus) || !m.menusNeedScrolling() {
 		return
 	}
 
-	// If menu is to the left of visible area, scroll left
+	// To the left of the run: that menu becomes the first one shown.
 	if index < m.scrollOffset {
 		m.scrollOffset = index
 		return
 	}
 
-	// Check if menu is visible from current scroll position
-	bounds := m.Bounds()
-
-	scrollButtonsWidth := m.scrollButtonWidth() * 2
-	leftEllipseWidth := core.Unit(0)
-	if m.scrollOffset > 0 {
-		leftEllipseWidth = m.ellipsisWidth() // "..."
-	}
-
-	availableWidth := bounds.Width - m.dateTimeWidth() - scrollButtonsWidth
-
-	// Calculate position of the target menu
-	x := leftEllipseWidth
-	for i := m.scrollOffset; i <= index; i++ {
-		menuWidth := m.menuTitleWidth(m.menus[i].title)
-		if i == index {
-			// Check if this menu fits
-			if x+menuWidth > availableWidth {
-				// Need to scroll right - increment scroll offset until it fits
-				for m.scrollOffset < index {
-					m.scrollOffset++
-					// Recalculate with new scroll offset
-					leftEllipseWidth = m.ellipsisWidth() // "..." (always present when scrolled)
-					x = leftEllipseWidth
-					for j := m.scrollOffset; j <= index; j++ {
-						mw := m.menuTitleWidth(m.menus[j].title)
-						if j == index && x+mw <= availableWidth {
-							return
-						}
-						x += mw
-					}
-				}
-			}
+	// Otherwise give up one menu at a time from the left until the whole
+	// title fits, and no more than that. Scrolling to the title's own index
+	// shows as much of it as the bar ever can, so that is where this stops
+	// whether it came to fit or not.
+	width := m.menuTitleWidth(m.menus[index].title)
+	for ; m.scrollOffset < index; m.scrollOffset++ {
+		if m.calculateMenuX(index)+width <= m.menusRightLimit() {
+			return
 		}
-		x += menuWidth
 	}
 }
 
