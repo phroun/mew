@@ -823,6 +823,12 @@ func (b *Backend) Baseline(f *core.Font) core.Unit {
 	return engine().Baseline(f)
 }
 
+// CapHeight implements core.CapHeightMeasurer: how far a capital's ink
+// reaches above the baseline, in default-denomination units.
+func (b *Backend) CapHeight(f *core.Font) core.Unit {
+	return engine().CapHeight(f)
+}
+
 // cellAdvance is the terminal-region advance for one rune: one cell of
 // the backend's current denomination (two for wide characters). Used
 // only by the cell primitives (DrawCell, glyph tiling), never by

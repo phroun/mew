@@ -83,13 +83,10 @@ func MenuMetricsFor(metrics core.CellMetrics, font *core.Font, graphical bool) M
 	mm.CellW = ceilUnit(scale, metrics.UnitsPerCellWidth)
 	mm.Font = menuFace(font, scale)
 	mm.Mono = &core.Font{Name: "ui-term", Size: mm.Font.Size}
-	// The body glyph box is UnitsPerCellHeight at the base point size and
-	// scales with it; centre what remains of the row around it, FLOORING the
-	// slack the way the title bar does -- rounding the half-gap up sits the
-	// text a unit low in the shortened row.
-	if off := (mm.RowH - mm.glyphBox(mm.Font)) / 2; off > 0 {
-		mm.YOff = off
-	}
+	// The body sits in the shortened row on the same terms as everything
+	// beside it: its capitals centred, and the box rule where the surface
+	// cannot say how tall a capital is.
+	mm.YOff = mm.GlyphYOff(mm.Font)
 	return mm
 }
 
@@ -137,33 +134,35 @@ func (mm MenuMetrics) glyphBox(f *core.Font) core.Unit {
 }
 
 // GlyphYOff sits a face in a menu row beside the body face: the shortcut
-// column in macOS-native mode, the menu bar's clock. Returned as an offset
-// from the row's top, so the caller draws at itemY + this.
+// column in macOS-native mode, the menu bar's clock, a checkmark. Returned
+// as an offset from the row's top, so the caller draws at itemY + this.
 //
-// What a smaller face beside a bigger one has to match is where its INK
-// sits, not where its baseline or its line box does, and the two smaller
-// faces here are labels standing in a row rather than text continuing a
-// line. Sharing the body's baseline pins their ink to the bottom half of the
-// row -- the body's ascenders fill the top and theirs do not -- which is
-// exactly how "^K _" came to hang under its own item. Centring their line
-// BOX is nearer but still low, since a box carries descent the string may
-// not use.
+// The basis is the height of a CAPITAL, measured once for the face. That is
+// the size of the type, and the three quantities that stand in for it are
+// each wrong in the same direction: a line box carries leading the letters
+// never use, a baseline says how far down the letters sit rather than how
+// tall they are, and the ink of a particular string depends on whether that
+// string happens to have a descender in it -- so a shortcut ending in "_"
+// centres differently from one ending in "]". Sharing the body's baseline is
+// wrong the same way, pinning a small face to the bottom half of the row
+// because the body's ascenders fill the top and its own do not, which is how
+// "^K _" came to hang under its own item.
 //
-// A face's ink runs from near the top of its ascent down to its baseline, so
-// the centre of that block is half its baseline below the top. Two faces
-// share an ink centre when the smaller starts half the difference between
-// their baselines lower -- which is this, and which lands the clock exactly
-// on the label's ink centre and the shortcut within half a pixel of it.
+// So: put the capital's block, which runs from a cap height above the
+// baseline down to the baseline, in the middle of the row. Written as halves
+// of a unit and floored once, a position never being ceiled.
 //
-// Falls back to centring the box where the target cannot answer for a
-// baseline (a cell surface, a bare measurer), which is where it stood.
+// Falls back to centring the line box where the target cannot answer for
+// these (a cell surface, a bare measurer), which is where it stood.
 func (mm MenuMetrics) GlyphYOff(f *core.Font) core.Unit {
 	if f == nil {
 		return mm.YOff
 	}
-	body, other := core.FontBaseline(mm.Font), core.FontBaseline(f)
-	if body > 0 && other > 0 {
-		off := mm.YOff + core.ExchangeY((body-other)/2, core.DefaultCellMetrics(), mm.base)
+	d := core.DefaultCellMetrics()
+	base := core.ExchangeY(core.FontBaseline(f), d, mm.base)
+	capH := core.ExchangeY(core.FontCapHeight(f), d, mm.base)
+	if base > 0 && capH > 0 {
+		off := floorHalf(mm.RowH - 2*base + capH)
 		if off < 0 {
 			off = 0
 		}
@@ -176,6 +175,13 @@ func (mm MenuMetrics) GlyphYOff(f *core.Font) core.Unit {
 		return off
 	}
 	return 0
+}
+
+// floorHalf halves a unit count downward, negatives included -- Go's integer
+// division truncates toward zero, which rounds a negative position UP and is
+// the bias this is here to avoid.
+func floorHalf(u core.Unit) core.Unit {
+	return core.Unit(math.Floor(float64(u) / 2))
 }
 
 // menuFaceKey identifies one (source font, scale) pair. core.Font is a plain

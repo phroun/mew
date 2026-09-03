@@ -236,6 +236,27 @@ func FontBaseline(f *Font) Unit {
 	return 0
 }
 
+// CapHeightMeasurer is the optional extension a measurer implements when it
+// can answer how tall a face's capitals are. Satisfied by the pixel backends.
+type CapHeightMeasurer interface {
+	CapHeight(f *Font) Unit
+}
+
+// FontCapHeight is how far a capital's ink reaches above the baseline, in
+// DEFAULT-denomination units, or 0 where the render target cannot answer.
+//
+// The size of the TYPE, which is what sitting one face beside another wants.
+// A line box carries leading the letters do not use; a baseline says nothing
+// about how tall they are; and the ink of a particular string depends on
+// whether that string has descenders in it. Measured once per face, from the
+// capital, none of those apply.
+func FontCapHeight(f *Font) Unit {
+	if cm, ok := currentTextMeasurer().(CapHeightMeasurer); ok {
+		return cm.CapHeight(f)
+	}
+	return 0
+}
+
 // MeasureTextIn returns the width of text in the units of the given
 // denomination -- how many of THOSE units the same text occupies.
 //

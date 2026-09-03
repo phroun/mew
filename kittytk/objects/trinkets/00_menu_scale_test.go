@@ -398,12 +398,17 @@ func TestMenuScaleLeavesTheBarsLeftIndentAlone(t *testing.T) {
 // A face beside the body face sits centred in the row: the shortcut column
 // in macOS-native mode, the menu bar's clock.
 //
-// Neither of the rules this replaces put it there. Centring the smaller
-// face's line BOX carries descent the string may not use, and lands it half a
-// pixel low. Sharing the body's BASELINE is worse and was wrong in kind: the
-// body's ascenders fill the top of the row and a smaller face's do not, so a
-// shared baseline pins its ink to the bottom half -- two pixels low in a
-// sixteen-pixel row, which is how "^K _" came to hang under its own item.
+// None of the rules this replaces put it there. Sharing the body's BASELINE
+// was wrong in kind -- the body's ascenders fill the top of the row and a
+// smaller face's do not, so a shared baseline pins its ink to the bottom half,
+// two pixels low in a sixteen-pixel row, which is how "^K _" came to hang
+// under its own item. Centring the line BOX carries leading the letters never
+// use. Half the difference between two baselines is a proxy for centring the
+// ink, and drifts as the two faces diverge: at the compounded native size, 7pt
+// against a 12pt body, it came out a unit and a half HIGH.
+//
+// The face's cap height is none of those -- it is the size of the type,
+// measured once -- and it lands every one of these within half a pixel.
 //
 // Read off the paint, since where the ink lands is the whole question.
 func TestMenuScaleCentresASmallerFaceInTheRow(t *testing.T) {
@@ -458,31 +463,113 @@ func TestMenuScaleCentresASmallerFaceInTheRow(t *testing.T) {
 			{"shortcut", shortcutFont(mm.Font, true), "^K _"},
 			{"clock", clock, "Mon 15:04"},
 		} {
-			if core.FontBaseline(c.f) == 0 {
-				t.Skip("this target cannot answer for a baseline")
+			if core.FontCapHeight(c.f) == 0 {
+				t.Skip("this target cannot answer for a cap height")
 			}
-			// The row's own midpoint is the reference, and the strings are
-			// chosen without descenders so that midpoint is what the eye
-			// judges the run against.
-			//
-			// The tolerance is not symmetric. Sitting LOW is the defect this
-			// guards -- a shortcut hanging under its own item -- and a unit
-			// is as far as that may go. Sitting high is the drift of the
-			// rule itself: it places by half the difference between two
-			// baselines, which is a proxy for centring their INK, and the
-			// proxy loosens as the two faces diverge. At the compounded
-			// native size, 7pt against a 12pt body, it comes out a unit and
-			// a half high. Closing that needs the face's cap height, which
-			// the engine does not expose yet.
+			// The row's own midpoint is the reference, within a unit
+			// either way -- these are runs of a few glyphs, so the ink of
+			// any one string sits a fraction off the type it is set in.
 			want := float64(mm.RowH-1) / 2
 			got := inkCentre(c.f, c.text, mm.GlyphYOff(c.f))
-			if got > want+1 {
-				t.Errorf("scale %v: the %s face centres its ink at %.1f, BELOW the middle of a %d-unit row (%.1f)",
-					scale, c.name, got, mm.RowH, want)
+			if d := got - want; d < -1 || d > 1 {
+				t.Errorf("scale %v: the %s face centres its ink at %.1f, %.1f off the middle of a %d-unit row (%.1f)",
+					scale, c.name, got, d, mm.RowH, want)
 			}
-			if got < want-2 {
-				t.Errorf("scale %v: the %s face centres its ink at %.1f, further above the middle of a %d-unit row (%.1f) than the rule's drift accounts for",
-					scale, c.name, got, mm.RowH, want)
+		}
+	}
+}
+
+// What is centred is the FACE, not the run: a capital's block, measured once
+// for the face, sits in the middle of the row, and every string set in that
+// face inherits the same offset.
+//
+// Centring each run on its own ink cannot do this. The ink of a run depends on
+// what is in it -- "^B ]" has a bracket reaching below the baseline, "^K _"
+// is an underscore sitting on the floor of the face, "ACE" has nothing under
+// the baseline at all -- so three shortcuts of one menu would each sit at a
+// different height, and none of them where the type belongs.
+func TestMenuGlyphOffsetIsPerFaceNotPerString(t *testing.T) {
+	t.Cleanup(func() {
+		core.SetTextMeasurer(nil)
+		core.SetMenuScale(1)
+		core.SetMacNativeShortcuts(false)
+	})
+	b, err := raster.NewScaled(300, 200, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.SetTextMeasurer(b)
+
+	// Where a capital's ink lands when the face is drawn at off.
+	capBand := func(f *core.Font, off core.Unit) (top, bottom int) {
+		b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+		core.NewPainter(b).DrawText(0, off, "M",
+			style.DefaultStyle().WithFg(style.RGB(0, 0, 0)).WithBg(style.ColorTransparent), f)
+		img := b.Image()
+		top, bottom = -1, -1
+		for y := 0; y < 60; y++ {
+			for x := 0; x < 60; x++ {
+				if c := img.RGBAAt(x, y); int(c.R)+int(c.G)+int(c.B) < 400 {
+					if top < 0 {
+						top = y
+					}
+					bottom = y
+					break
+				}
+			}
+		}
+		if top < 0 {
+			t.Fatalf("no ink for a capital at %dpt", f.Size)
+		}
+		return top, bottom
+	}
+
+	for _, scale := range []float64{1, 0.9, 0.75} {
+		core.SetMenuScale(scale)
+		mm := MenuMetricsFor(core.DefaultCellMetrics(), core.DefaultFont(), true)
+		for _, native := range []bool{false, true} {
+			core.SetMacNativeShortcuts(native)
+			f := shortcutFont(mm.Font, true)
+			if core.FontCapHeight(f) == 0 {
+				t.Skip("this target cannot answer for a cap height")
+			}
+			off := mm.GlyphYOff(f)
+
+			// The capital's block, centred in the row it is drawn in.
+			top, bottom := capBand(f, off)
+			centre := float64(top+bottom) / 2
+			want := float64(mm.RowH-1) / 2
+			// The bound is one-sided, and that is the rule rather than a
+			// slack: the offset is a POSITION and so is floored, which can
+			// only ever place the capital high. Anything at or below the
+			// row's middle means something ceiled on the way here.
+			if d := centre - want; d > 0 || d < -1 {
+				t.Errorf("scale %v native %v: the %dpt capital spans [%d,%d] of a %d-unit row, centred at %.1f rather than %.1f",
+					scale, native, f.Size, top, bottom, mm.RowH, centre, want)
+			}
+			// And it is inside the row, top and bottom.
+			if top < 0 || bottom >= int(mm.RowH) {
+				t.Errorf("scale %v native %v: the %dpt capital spans [%d,%d], outside its %d-unit row",
+					scale, native, f.Size, top, bottom, mm.RowH)
+			}
+
+			// And the one offset serves every run set in that face: a
+			// bracket that reaches under the baseline and an underscore
+			// that sits on the floor of the face both stay inside the row
+			// the capital was centred in.
+			for _, s := range []string{"^B ]", "^K _", "ACE"} {
+				b.Clear(style.DefaultStyle().WithBg(style.RGB(255, 255, 255)))
+				core.NewPainter(b).DrawText(0, off, s,
+					style.DefaultStyle().WithFg(style.RGB(0, 0, 0)).WithBg(style.ColorTransparent), f)
+				img := b.Image()
+				for y := int(mm.RowH); y < 60; y++ {
+					for x := 0; x < 200; x++ {
+						if c := img.RGBAAt(x, y); int(c.R)+int(c.G)+int(c.B) < 400 {
+							t.Fatalf("scale %v native %v: %q inks %d px below its own %d-unit row",
+								scale, native, s, y-int(mm.RowH)+1, mm.RowH)
+						}
+					}
+				}
 			}
 		}
 	}

@@ -626,6 +626,34 @@ func (e *Engine) Baseline(f *core.Font) core.Unit {
 	return sp.Lines[0].Baseline
 }
 
+// CapHeight is how far a capital's ink reaches above the baseline, in units:
+// the face's own cap height, scaled to the em that fills its line budget.
+//
+// This is the basis for sitting one face beside another. A face's line box
+// carries leading that its letters do not use, its baseline says nothing
+// about how tall they are, and the ink of any PARTICULAR string depends on
+// whether that string happens to have descenders -- none of the three is the
+// size of the type. The height of a capital is, measured once per face.
+//
+// The face declares it (OS/2 sCapHeight) or, on an older table, the library
+// measures the capital's own glyph box for it.
+func (e *Engine) CapHeight(f *core.Font) core.Unit {
+	face := e.db.resolve(f)
+	if face == nil {
+		return 0
+	}
+	cap := face.LineMetric(gtfont.CapHeight)
+	if cap <= 0 {
+		return 0
+	}
+	upem := face.Upem()
+	if upem == 0 {
+		return 0
+	}
+	scale := float64(emFor(face, f)) / float64(upem) / 64
+	return core.Unit(math.Round(float64(cap) * scale))
+}
+
 // Measure is the fast simple tier's measurement: the advance width of
 // s in font f, by real shaping (so it always agrees with painting).
 func (e *Engine) Measure(f *core.Font, s string) core.Unit {
