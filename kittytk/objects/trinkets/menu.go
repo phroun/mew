@@ -2741,8 +2741,29 @@ func menuShortcutMatch(menu *Menu, event core.KeyPressEvent) bool {
 	return false
 }
 
-// OpenMenu opens a menu by index.
-func (m *MenuBar) OpenMenu(index int) {
+// OpenMenu opens a menu by index, scrolling an overflowing bar to bring it
+// into view first. What a deliberate act does: a keystroke, an accelerator, a
+// press on a title.
+func (m *MenuBar) OpenMenu(index int) { m.openMenu(index, true) }
+
+// openMenuOnHover opens a menu the pointer merely PASSED OVER, leaving the
+// scroll offset where it is.
+//
+// Hovering must not scroll, because a scroll moves the titles out from under
+// a pointer that has not moved. The bar scrolls by whole menus, so bringing
+// an elided title fully into view overshoots by the width of whichever menu
+// fell off the left, everything shifts, and the next title slides into the
+// sliver at the right edge. The following move event -- a pixel of jitter is
+// enough -- lands on a different index and does it again: pointer travel per
+// menu advanced is nil, and a drag over the last visible title runs away to
+// the end of the bar.
+//
+// So a hover opens what is under the pointer and no more. The dropdown's own
+// placement copes with a title near the right edge, and reaching further
+// along an overflowing bar is what the [<] [>] buttons are for.
+func (m *MenuBar) openMenuOnHover(index int) { m.openMenu(index, false) }
+
+func (m *MenuBar) openMenu(index int, scrollIntoView bool) {
 	if index < 0 || index >= len(m.menus) {
 		return
 	}
@@ -2780,7 +2801,9 @@ func (m *MenuBar) OpenMenu(index int) {
 	})
 
 	// Ensure the menu is visible before opening (scroll if needed)
-	m.ensureMenuVisible(index)
+	if scrollIntoView {
+		m.ensureMenuVisible(index)
+	}
 
 	// Notify that a menu is opening
 	if m.onMenuOpen != nil {
@@ -3781,7 +3804,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 		// highlight where the dropdown should be.
 		if m.graphicalCached && m.hoverIndex >= 0 && m.hoverIndex < len(m.menus) &&
 			m.menus[m.hoverIndex] != m.activeMenu {
-			m.OpenMenu(m.hoverIndex)
+			m.openMenuOnHover(m.hoverIndex)
 			return true
 		}
 		// Just forward to menu for hover-based scrolling
@@ -3838,7 +3861,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 			}
 			if event.X >= left && event.X < x+menuWidth {
 				if m.activeMenu != menu {
-					m.OpenMenu(i)
+					m.openMenuOnHover(i)
 				}
 				return true
 			}
