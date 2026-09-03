@@ -2986,25 +2986,28 @@ func (m *MenuBar) menuTitleWidth(title string) core.Unit {
 // whether it is held to one at all.
 //
 // A title of a single glyph -- a Ψ, a hamburger -- takes the width of the
-// dropdown's gutter less one unit, and no title is ever narrower than that.
-// What that buys is one line: the stroke down the right of an open item is
-// drawn on the pixel column just past the item's fill, and the gutter divider
-// on the last pixel column of the gutter, so at a width of gutter-less-a-unit
-// the two are the same column and the item's right edge runs on down through
-// the menu as the gutter rule. It also stops a one-glyph title from painting
-// as a stub narrower than the menu that hangs from it.
+// dropdown's gutter, and no title is ever narrower than that.
 //
-// A unit, rather than a device pixel, because a width is what the bar lays
-// out and hit-tests in and the unit grid is the finest step it has. At the
-// default denomination that unit IS the pixel the two rules are drawn in.
+// What that buys is one line. The dropdown opens left-aligned to its item, so
+// an item of the gutter's width ends exactly where the gutter does; the gutter
+// carries its divider rule on its own last pixel column, and that column is
+// then the item's last pixel column too, so the item's right edge runs on down
+// through the menu as the gutter rule. It also stops a one-glyph title from
+// painting as a stub narrower than the menu that hangs from it.
 //
-// Graphical surfaces only: a terminal has no strokes to line up, and its
-// widths are whole cells.
+// The whole gutter, not the gutter less a hairline. A width is laid out in
+// UNITS, and a unit is a device pixel only at the default denomination -- take
+// one off and the item comes up a pixel short at scale 1, two at scale 2,
+// three at scale 3, because what was subtracted was a unit at every one of
+// them. The rule and the item's last column meet on their own.
+//
+// Graphical surfaces only: a terminal has no rules to line up, and its widths
+// are whole cells.
 func (m *MenuBar) pinnedTitleWidth(mm MenuMetrics, title string) (core.Unit, bool) {
 	if !mm.Graphical {
 		return 0, false
 	}
-	pinned := mm.GutterWidth() - 1
+	pinned := mm.GutterWidth()
 	if utf8.RuneCountInString(title) != 1 && mm.CellW*2+mm.TextWidth(title) >= pinned {
 		return 0, false
 	}

@@ -11,8 +11,15 @@ import (
 // shortTitleBar builds a desktop carrying a menu bar of one menu, on a pixel
 // surface so the bar has its frame indent and its strokes.
 func shortTitleBar(t *testing.T, title string) (*MenuBar, *raster.Backend) {
+	return shortTitleBarAt(t, title, 1)
+}
+
+// shortTitleBarAt is shortTitleBar at a given device scale. A unit is a device
+// pixel only at scale 1, and the pin is a width in units, so what it does at
+// the other scales is the whole question.
+func shortTitleBarAt(t *testing.T, title string, scale int) (*MenuBar, *raster.Backend) {
 	t.Helper()
-	b, err := raster.NewScaled(400, 200, 1)
+	b, err := raster.NewScaled(400*scale, 200*scale, scale)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +37,8 @@ func shortTitleBar(t *testing.T, title string) (*MenuBar, *raster.Backend) {
 	return bar, b
 }
 
-// A title of one glyph takes the width of the dropdown's gutter less a unit,
-// and no title is narrower than that.
+// A title of one glyph takes the width of the dropdown's gutter, and no title
+// is narrower than that.
 //
 // Stated as the widths, since a caller reading menuTitleWidth is what the
 // paint, the hit test and the dropdown's placement all do.
@@ -51,12 +58,12 @@ func TestShortMenuTitlesArePinnedToTheGutter(t *testing.T) {
 	} {
 		bar, _ := shortTitleBar(t, c.title)
 		mm := bar.menuMetrics()
-		want := mm.GutterWidth() - 1
+		want := mm.GutterWidth()
 		got := bar.menuTitleWidth(c.title)
 
 		if c.pinned {
 			if got != want {
-				t.Errorf("%q (%s): width %d, want the gutter less a unit (%d)",
+				t.Errorf("%q (%s): width %d, want the gutter's %d",
 					c.title, c.why, got, want)
 			}
 			continue
@@ -72,64 +79,72 @@ func TestShortMenuTitlesArePinnedToTheGutter(t *testing.T) {
 	}
 }
 
-// The point of the pin, read off the paint: the stroke down the right of an
-// open item and the rule down the right of its dropdown's gutter are the same
-// pixel column, so the item's edge runs on down through the menu.
+// The point of the pin, read off the paint: the rule down the right of a
+// dropdown's gutter falls on the last pixel column of the item that opened it,
+// so the item's right edge runs on down through the menu.
+//
+// AT EVERY DEVICE SCALE, which is the half of this that a single scale cannot
+// see. The pin is a width in UNITS and a unit is a device pixel only at scale
+// 1; a pin of the gutter less a unit lined the two up perfectly at scale 1 and
+// came up a pixel short at scale 2 and two pixels short at scale 3, since what
+// it took off was a unit at each of them.
 //
 // Both columns are found by looking at what was drawn. Computing either from
-// the widths would agree with any pinning rule, including one a pixel out.
+// the widths would agree with any pinning rule, including one a unit out.
 func TestPinnedItemEdgeMeetsTheGutterRule(t *testing.T) {
 	t.Cleanup(func() { core.SetTextMeasurer(nil) })
 
-	bar, b := shortTitleBar(t, "Ψ")
-	bar.OpenMenu(0)
-	// A ground nothing in the chrome uses, so every dark pixel found below is
-	// something the bar or the menu actually drew.
-	b.Clear(style.DefaultStyle().WithBg(style.RGB(0, 255, 0)))
-	p := core.NewPainter(b)
-	bar.Paint(p)
-	bar.PaintDropdown(p)
+	for _, scale := range []int{1, 2, 3} {
+		bar, b := shortTitleBarAt(t, "\u03a8", scale)
+		bar.OpenMenu(0)
+		// A ground nothing in the chrome uses, so every pixel read below is
+		// something the bar or the menu actually drew.
+		b.Clear(style.DefaultStyle().WithBg(style.RGB(0, 255, 0)))
+		p := core.NewPainter(b)
+		bar.Paint(p)
+		bar.PaintDropdown(p)
 
-	mm := bar.menuMetrics()
-	img := b.Image()
-	lum := func(x, y int) int {
-		c := img.RGBAAt(x, y)
-		return int(c.R) + int(c.G) + int(c.B)
-	}
+		mm := bar.menuMetrics()
+		img := b.Image()
+		rowPx := p.UnitSpanPxY(0, mm.RowH)
+		popupPx := p.UnitSpanPxX(0, bar.activeMenu.popupX)
+		gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
 
-	rowPx := p.UnitSpanPxY(0, mm.RowH)
-	popupPx := p.UnitSpanPxX(0, bar.activeMenu.popupX)
-	gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
-
-	// The item's right stroke: the last thing inked across the bar's row at
-	// the left end of the bar, well clear of the clock. The strokes are the
-	// separator colour and the title's ink sits between them.
-	stroke := -1
-	for x := 0; x < popupPx+gutterPx*2; x++ {
-		if lum(x, rowPx/2) < 120 {
-			stroke = x
+		// The item's fill, followed from a pixel inside its left edge to
+		// wherever it stops -- never from its width, which is the thing under
+		// test. Read along the top of the row, which is clear of the glyph.
+		barY := 0
+		fill := img.RGBAAt(popupPx+1, barY)
+		lastFilled := -1
+		for x := popupPx + 1; x < popupPx+gutterPx*2; x++ {
+			c := img.RGBAAt(x, barY)
+			if abs8(c.R, fill.R)+abs8(c.G, fill.G)+abs8(c.B, fill.B) > 24 {
+				break
+			}
+			lastFilled = x
 		}
-	}
-	if stroke < 0 {
-		t.Fatal("no stroke found across the open item's row")
-	}
-
-	// The gutter rule: the darkest column inside the gutter, past the
-	// dropdown's own left stroke and short of the label.
-	rule, darkest := -1, 1<<30
-	y := rowPx + rowPx/2
-	for x := popupPx + 1; x < popupPx+gutterPx+2; x++ {
-		if v := lum(x, y); v < darkest {
-			rule, darkest = x, v
+		if lastFilled < 0 {
+			t.Fatalf("scale %d: the open item left no fill across its row", scale)
 		}
-	}
-	if rule < 0 {
-		t.Fatal("no gutter rule found in the dropdown's row")
-	}
 
-	if stroke != rule {
-		t.Errorf("the open item's right stroke is at pixel column %d and the gutter rule at %d; they should be the same column",
-			stroke, rule)
+		// The gutter rule: the darkest column inside the gutter, past the
+		// dropdown's own left stroke and short of the label.
+		rule, darkest := -1, 1<<30
+		menuY := rowPx + rowPx/2
+		for x := popupPx + 1; x < popupPx+gutterPx+2; x++ {
+			c := img.RGBAAt(x, menuY)
+			if v := int(c.R) + int(c.G) + int(c.B); v < darkest {
+				rule, darkest = x, v
+			}
+		}
+		if rule < 0 {
+			t.Fatalf("scale %d: no gutter rule found in the dropdown's row", scale)
+		}
+
+		if lastFilled != rule {
+			t.Errorf("scale %d: the open item's fill ends at pixel column %d and the gutter rule is at %d; the rule should fall on the item's own last column",
+				scale, lastFilled, rule)
+		}
 	}
 }
 
