@@ -563,6 +563,18 @@ func (b *Backend) defaultColor(isFg bool) color.RGBA {
 func (b *Backend) styleColors(s style.CellStyle) (fg, bg color.RGBA) {
 	fg = b.rgba(s.Fg, true)
 	bg = b.rgba(s.Bg, false)
+	// StyleDim is an instruction a terminal carries out for itself, sent as
+	// SGR 2. There is no attribute to send here, only colours to choose, so
+	// the reduction is worked out: the ink let down toward the background
+	// behind it. Everything that asked for dim on this surface -- the
+	// desktop's fill, an inactive title, a button's shadow, a menu's shortcut
+	// column -- was drawing at full strength because nothing read the bit.
+	//
+	// Before the reverse swap, so what is dimmed is the INK, not whatever
+	// ends up behind it.
+	if s.Attrs&style.StyleDim != 0 {
+		fg.R, fg.G, fg.B = style.Dim(fg.R, fg.G, fg.B, bg.R, bg.G, bg.B)
+	}
 	if s.Attrs&style.StyleReverse != 0 {
 		fg, bg = bg, fg
 	}

@@ -17,16 +17,6 @@ const (
 	shortcutSizeDen = 5
 )
 
-// MenuShortcutInk is how much of an item's own text colour its shortcut
-// keeps on the graphical path, the rest being the background it sits on.
-//
-// The cell path says StyleDim and the terminal renders the reduced intensity
-// itself. The graphical backend honours no such attribute -- styleColors
-// reads StyleReverse and nothing else -- so a shortcut there drew in exactly
-// the item's colour, as loud as the item. This is that dimming, done where
-// the surface will not do it.
-const MenuShortcutInk = 0.6
-
 // graphicalMenuTrailingUnits is the small gap kept to the right of a
 // graphical menu's shortcut, between it and the menu's right edge. Graphical
 // menus have only a 1-pixel right stroke (not a whole char border), so this is
@@ -57,17 +47,6 @@ func shortcutFont(base *core.Font, graphical bool) *core.Font {
 		}
 	}
 	return &f
-}
-
-// shortcutInk is an item's text colour let down toward the background it sits
-// on, for a surface that will not honour StyleDim itself.
-func shortcutInk(st style.CellStyle) style.Color {
-	fr, fg, fb := st.Fg.RGBComponents()
-	br, bg, bb := st.Bg.RGBComponents()
-	mix := func(f, b uint8) int {
-		return int(float64(f)*MenuShortcutInk + float64(b)*(1-MenuShortcutInk) + 0.5)
-	}
-	return style.RGB(mix(fr, br), mix(fg, bg), mix(fb, bb))
 }
 
 // MenuItem represents an item in a menu.
@@ -1660,14 +1639,10 @@ func (m *Menu) Paint(p *core.Painter) {
 			shortcutY := itemY + mm.GlyphYOff(sf)
 			shortcutStyle := contentStyle
 			if item.Enabled {
-				// The attribute for a terminal, which renders the reduced
-				// intensity itself; the colour for a graphical surface, which
-				// honours no such attribute and would otherwise draw the
-				// shortcut as loud as the item it belongs to.
+				// Dim on either surface: a terminal renders the reduced
+				// intensity from the attribute, and a pixel surface works the
+				// colour out from it (see the raster backend's styleColors).
 				shortcutStyle = contentStyle.WithAttrs(style.StyleDim)
-				if g {
-					shortcutStyle = shortcutStyle.WithFg(shortcutInk(contentStyle))
-				}
 			}
 			p.DrawText(shortcutX, shortcutY, shortcutStr, shortcutStyle, sf)
 		}
