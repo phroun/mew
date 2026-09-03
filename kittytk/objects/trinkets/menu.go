@@ -1166,6 +1166,16 @@ func (m *Menu) SetStrokeGap(x, w core.Unit, bottom bool) {
 // merges with the control that opened the popup. Graphical only (a no-op
 // on cell surfaces, where FillRectPixels returns false).
 func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s style.CellStyle, gapX, gapW core.Unit, gapBottom bool) {
+	paintOuterStrokeRight(p, bounds, scale, s, gapX, gapW, gapBottom, 0)
+}
+
+// paintOuterStrokeRight is paintPopupOuterStroke with the right vertical
+// moved rightPx device pixels: 0 leaves it just outside the bounds with the
+// rest of the frame, -1 puts it ON the bounds' own last pixel column.
+//
+// The inset is for a frame whose right edge has to meet a line drawn INSIDE
+// something below it, which is where the two conventions differ by a pixel.
+func paintOuterStrokeRight(p *core.Painter, bounds core.UnitRect, scale int, s style.CellStyle, gapX, gapW core.Unit, gapBottom bool, rightPx int) {
 	x, y, w, h := bounds.X, bounds.Y, bounds.Width, bounds.Height
 	// Snap the spans to the grid the box fill paints on so the border
 	// lands exactly on the fill's edges (no over/undershoot at any
@@ -1174,7 +1184,7 @@ func paintPopupOuterStroke(p *core.Painter, bounds core.UnitRect, scale int, s s
 
 	// Left and right verticals span the full height plus both corners.
 	p.FillRectPixels(x, y, -1, -1, 1, hPx+2, s)
-	p.FillRectPixels(x+w, y, 0, -1, 1, hPx+2, s)
+	p.FillRectPixels(x+w, y, rightPx, -1, 1, hPx+2, s)
 
 	// Horizontal edges between the verticals; the gapped one is split.
 	drawEdge := func(edgeY core.Unit, offY int, gapped bool) {
@@ -3361,6 +3371,12 @@ func (m *MenuBar) Paint(p *core.Painter) {
 	// outline. Drawn before the dropdown (which paints later), so the
 	// dropdown covers the bottom edge; the top edge falls above the
 	// canvas. Graphical only.
+	//
+	// The right line goes ON the item's last pixel column rather than just
+	// past it, which is where the dropdown draws the rules INSIDE itself --
+	// so a pinned item's line and the gutter rule below it are one line and
+	// not two a pixel apart. The vertical overhangs a pixel below the row,
+	// so the bar's own bottom edge still meets it where it resumes.
 	if p.Graphical() && m.activeMenu != nil && m.activeMenu.visible &&
 		m.currentIndex >= 0 && m.currentIndex < len(m.menus) {
 		itemRect := core.UnitRect{
@@ -3370,7 +3386,7 @@ func (m *MenuBar) Paint(p *core.Painter) {
 			Height: mm.RowH,
 		}
 		lineStyle := style.DefaultStyle().WithBg(scheme.GetMenuSeparator().Fg)
-		paintPopupOuterStroke(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false)
+		paintOuterStrokeRight(p, itemRect, p.DeviceScale(), lineStyle, 0, 0, false, -1)
 	}
 }
 

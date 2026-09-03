@@ -79,9 +79,9 @@ func TestShortMenuTitlesArePinnedToTheGutter(t *testing.T) {
 	}
 }
 
-// The point of the pin, read off the paint: the rule down the right of a
-// dropdown's gutter falls on the last pixel column of the item that opened it,
-// so the item's right edge runs on down through the menu.
+// The point of the pin, read off the paint: the line down the right of an open
+// item and the rule down the right of its dropdown's gutter are one line, so
+// the item's right edge runs on down through the menu.
 //
 // AT EVERY DEVICE SCALE, which is the half of this that a single scale cannot
 // see. The pin is a width in UNITS and a unit is a device pixel only at scale
@@ -110,21 +110,23 @@ func TestPinnedItemEdgeMeetsTheGutterRule(t *testing.T) {
 		popupPx := p.UnitSpanPxX(0, bar.activeMenu.popupX)
 		gutterPx := p.UnitSpanPxX(0, mm.GutterWidth())
 
-		// The item's fill, followed from a pixel inside its left edge to
-		// wherever it stops -- never from its width, which is the thing under
-		// test. Read along the top of the row, which is clear of the glyph.
+		// The item's right line: follow its fill from a pixel inside the left
+		// edge and stop at the first column that is not fill, which is the
+		// line drawn over the fill's last column. Never from the width, which
+		// is half of what is under test. Read along the top of the row, which
+		// is clear of the glyph.
 		barY := 0
 		fill := img.RGBAAt(popupPx+1, barY)
-		lastFilled := -1
+		line := -1
 		for x := popupPx + 1; x < popupPx+gutterPx*2; x++ {
 			c := img.RGBAAt(x, barY)
 			if abs8(c.R, fill.R)+abs8(c.G, fill.G)+abs8(c.B, fill.B) > 24 {
+				line = x
 				break
 			}
-			lastFilled = x
 		}
-		if lastFilled < 0 {
-			t.Fatalf("scale %d: the open item left no fill across its row", scale)
+		if line < 0 {
+			t.Fatalf("scale %d: the open item's fill runs on with no line ending it", scale)
 		}
 
 		// The gutter rule: the darkest column inside the gutter, past the
@@ -141,9 +143,9 @@ func TestPinnedItemEdgeMeetsTheGutterRule(t *testing.T) {
 			t.Fatalf("scale %d: no gutter rule found in the dropdown's row", scale)
 		}
 
-		if lastFilled != rule {
-			t.Errorf("scale %d: the open item's fill ends at pixel column %d and the gutter rule is at %d; the rule should fall on the item's own last column",
-				scale, lastFilled, rule)
+		if line != rule {
+			t.Errorf("scale %d: the open item's right line is at pixel column %d and the gutter rule at %d; they should be one line",
+				scale, line, rule)
 		}
 	}
 }
