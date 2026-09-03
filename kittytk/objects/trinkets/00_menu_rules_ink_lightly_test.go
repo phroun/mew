@@ -214,3 +214,64 @@ func TestMenuCheckmarkDrawsOverTheGutter(t *testing.T) {
 		}
 	}
 }
+
+// cellRecorder is a CELL surface that remembers the cells drawn on it: what
+// a terminal receives, which is a character and the attributes that go with
+// it, rather than pixels to read back.
+type cellRecorder struct {
+	*nullBackend
+	cells []recordedCell
+}
+
+type recordedCell struct {
+	x, y core.Unit
+	ch   rune
+	st   style.CellStyle
+}
+
+func (c *cellRecorder) DrawCell(x, y core.Unit, ch rune, st style.CellStyle) {
+	c.cells = append(c.cells, recordedCell{x, y, ch, st})
+}
+
+// On a cell surface the tick carries its own background.
+//
+// A terminal cell holds ONE background attribute, so a transparent one does
+// not let the gutter through -- it is the terminal's own default cell, and
+// the tick sat in a hole in the gutter. The graphical rule does not travel.
+func TestMenuCheckmarkKeepsItsCellOnACellSurface(t *testing.T) {
+	t.Cleanup(func() { core.SetTextMeasurer(nil) })
+	rec := &cellRecorder{nullBackend: &nullBackend{}}
+
+	d := NewDesktop()
+	d.SetBackend(rec)
+	d.SetBounds(core.UnitRect{Width: 300, Height: 200})
+	bar := NewMenuBar()
+	d.AddChild(bar)
+	m := NewMenu("File")
+	ticked := NewMenuItem("Word Wrap")
+	ticked.SetCheckable(true)
+	ticked.SetChecked(true)
+	m.AddItem(ticked)
+	bar.AddMenu(m)
+	m.inheritDisplayContext(bar.EffectiveCellMetrics(), bar.EffectiveFont())
+	m.Show(0, 0)
+	m.Paint(core.NewPainter(rec))
+
+	want := m.GetScheme().GetMenuGutter().Bg
+	found := false
+	for _, c := range rec.cells {
+		if c.ch != '✓' {
+			continue
+		}
+		found = true
+		if c.st.Bg == style.ColorTransparent {
+			t.Errorf("the tick is drawn on a transparent cell, which is the terminal's own background, not the gutter's")
+		}
+		if c.st.Bg != want {
+			t.Errorf("the tick's cell background is %v, want the gutter's %v", c.st.Bg, want)
+		}
+	}
+	if !found {
+		t.Fatal("no tick was drawn")
+	}
+}

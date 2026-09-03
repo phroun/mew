@@ -1560,14 +1560,23 @@ func (m *Menu) Paint(p *core.Painter) {
 
 		x := m.popupX + mm.CellW
 
-		// Draw checkmark or icon in gutter area. The tick draws OVER the
-		// gutter rather than laying a cell of its own: the gutter's
-		// background is already there, and on the graphical path it is that
-		// colour blended over the menu, which a cell of the flat gutter
-		// colour would stamp back out around the tick.
+		// Draw checkmark or icon in gutter area. On the graphical path the
+		// tick draws OVER the gutter rather than laying a cell of its own:
+		// the gutter's background is already there, blended over the menu,
+		// which a cell of the flat gutter colour would stamp back out around
+		// the tick.
+		//
+		// Only there. A terminal cell holds ONE background attribute, so a
+		// transparent one is not the gutter showing through -- it is the
+		// terminal's own default cell, and the tick came out sitting in a
+		// hole in the gutter.
+		tickStyle := gutterStyle
+		if g {
+			tickStyle = gutterStyle.WithBg(style.ColorTransparent)
+		}
 		if item.Checkable {
 			if item.Checked {
-				mm.DrawGlyph(p, x, itemY, '✓', gutterStyle.WithBg(style.ColorTransparent))
+				mm.DrawGlyph(p, x, itemY, '✓', tickStyle)
 			}
 		} else if item.Icon != nil && len(item.Icon.Cells) > 0 {
 			cell := item.Icon.Cells[0]
