@@ -2079,6 +2079,13 @@ type MenuBar struct {
 	accelStale       bool
 	hoverIndex       int // Top-level item under the pointer (-1 = none)
 	hoverScrollBtn   int // Overflow scroll button under the pointer (-1 left, +1 right, 0 none)
+	// hoverX, hoverY is where the pointer last was, and hoverKnown whether it
+	// has been anywhere yet. Kept because the two above are answers to a
+	// QUESTION, and the question can be worth asking again with no new event
+	// to prompt it: scrolling the run moves the titles out from under a
+	// pointer that has not moved.
+	hoverX, hoverY core.Unit
+	hoverKnown     bool
 
 	// modalBlocked reports whether this menu bar is disabled by a modal (the
 	// app it represents is modally blocked). A blocked bar shows no hover
@@ -2351,6 +2358,7 @@ func (m *MenuBar) isLastMenuFullyVisible() bool {
 // the run the indent's worth of room it does not have, and could call a title
 // visible that the paint still clipped.
 func (m *MenuBar) ensureMenuVisible(index int) {
+	defer m.hoverFollowsScroll()()
 	if index < 0 || index >= len(m.menus) || !m.menusNeedScrolling() {
 		return
 	}
@@ -2373,6 +2381,45 @@ func (m *MenuBar) ensureMenuVisible(index int) {
 	}
 }
 
+// hoverFollowsScroll notes where the run is, and on return answers the
+// pointer again if it has moved. Deferred at the top of anything that can
+// scroll the bar:
+//
+//	defer m.hoverFollowsScroll()()
+//
+// Hover is the answer to "which title is under the pointer", and scrolling
+// changes that answer without the pointer moving and without any event to
+// prompt a fresh one -- so the highlight stayed on the title that used to be
+// there, which after a press on [>] is not even the one the press revealed.
+//
+// On the leaves that move the offset rather than at the handlers that call
+// them, so a scroll added later is covered by having scrolled at all.
+func (m *MenuBar) hoverFollowsScroll() func() {
+	was := m.scrollOffset
+	return func() {
+		if m.scrollOffset != was {
+			m.refreshHover()
+		}
+	}
+}
+
+// refreshHover asks where the pointer is again, from the last position it was
+// seen at, and answers exactly as a move to that position would have -- a
+// blocked bar included, since that one highlights nothing whatever is under
+// it. Only the paint reads anything into the answer, and only on a pixel
+// surface, hover being a pointer affordance.
+func (m *MenuBar) refreshHover() {
+	if !m.hoverKnown || m.isModalBlocked() {
+		return
+	}
+	hi, sb := m.menuItemAt(m.hoverX, m.hoverY), m.scrollButtonAt(m.hoverX, m.hoverY)
+	if hi == m.hoverIndex && sb == m.hoverScrollBtn {
+		return
+	}
+	m.hoverIndex, m.hoverScrollBtn = hi, sb
+	m.Update()
+}
+
 // announceCurrentMenu announces the currently selected menu for accessibility.
 func (m *MenuBar) announceCurrentMenu() {
 	if m.currentIndex < 0 || m.currentIndex >= len(m.menus) {
@@ -2389,6 +2436,7 @@ func (m *MenuBar) announceCurrentMenu() {
 // It ensures we don't have unnecessary empty space on the right when we could
 // show more menus, and resets to 0 when scrolling is no longer needed.
 func (m *MenuBar) clampScrollOffset() {
+	defer m.hoverFollowsScroll()()
 	// If no menus or scrolling not needed, reset to 0
 	if len(m.menus) == 0 || !m.menusNeedScrolling() {
 		m.scrollOffset = 0
@@ -3588,6 +3636,10 @@ func (m *MenuBar) findMenuByAccelerator(key rune) int {
 
 // HandleMousePress handles mouse clicks.
 func (m *MenuBar) HandleMousePress(event core.MousePressEvent) bool {
+	defer m.hoverFollowsScroll()()
+	// The press is where the pointer is, so the hover has a position to be
+	// answered from even where no move preceded it.
+	m.hoverX, m.hoverY, m.hoverKnown = event.X, event.Y, true
 	bounds := m.Bounds()
 
 	// Check active menu first - if clicking on an item in the dropdown
@@ -3816,6 +3868,8 @@ func (m *MenuBar) scrollButtonAt(px, py core.Unit) int {
 
 // HandleMouseMove handles mouse movement during drag.
 func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
+	m.hoverX, m.hoverY, m.hoverKnown = event.X, event.Y, true
+
 	// A modally-blocked bar is disabled: it never highlights an item under the
 	// pointer. Clear any lingering hover and stop before tracking a new one.
 	if m.isModalBlocked() {
@@ -3939,6 +3993,7 @@ func (m *MenuBar) HandleMouseMove(event core.MouseMoveEvent) bool {
 // HandleMouseRelease handles mouse release during drag.
 // HandleMouseWheel scrolls the active dropdown when it overflows.
 func (m *MenuBar) HandleMouseWheel(event core.MouseWheelEvent) bool {
+	defer m.hoverFollowsScroll()()
 	// An open dropdown OWNS the wheel: it scrolls its own items and the
 	// gesture never falls through to pan the bar underneath (those are
 	// two separate things). It is consumed even when the dropdown is too
