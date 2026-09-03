@@ -1266,9 +1266,15 @@ func paintGutterDivider(p *core.Painter, x, y core.Unit, hPx int, hairColor styl
 
 // paintOuterStroke draws the menu's 1-pixel outer frame with the edge
 // nearest its opening control gapped (see SetStrokeGap).
+//
+// The right line goes ON the menu's own last pixel column, the same
+// convention the bar item above it and the gutter rule inside it follow. A
+// dropdown too near the right of the surface opens to the LEFT of its item,
+// its right edge placed on the item's right edge, and drawing this one just
+// outside the menu put the two a pixel apart at every scale.
 func (m *Menu) paintOuterStroke(p *core.Painter, size core.UnitSize, scale int, s style.CellStyle) {
 	bounds := core.UnitRect{X: m.popupX, Y: m.popupY, Width: size.Width, Height: size.Height}
-	paintPopupOuterStroke(p, bounds, scale, s, m.strokeGapX, m.strokeGapW, m.strokeGapBottom)
+	paintOuterStrokeRight(p, bounds, scale, s, m.strokeGapX, m.strokeGapW, m.strokeGapBottom, -1)
 }
 
 // rowHeightAt returns the vertical space item idx occupies. Separators
