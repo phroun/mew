@@ -483,6 +483,42 @@ func SetMenuScale(s float64) {
 // MenuScale returns the current graphical menu scale.
 func MenuScale() float64 { return menuScale }
 
+// shortcutScale sizes a menu's shortcut column against the menu's body face:
+// 0.8 draws the shortcuts at four fifths of the item text, so the column
+// sits quietly beside it rather than competing with it. Graphical only -- a
+// terminal draws one size, its cell's. Read by the menu kit.
+var shortcutScale = 0.8
+
+// shortcutNativeScale is applied ON TOP of shortcutScale for the face
+// macOS-native mode swaps in: Apple's UI face renders visually larger than
+// the menu's own at the same point size, so it is taken down again. The two
+// compound, so the defaults put a native shortcut at 0.64 of the body.
+var shortcutNativeScale = 0.8
+
+// SetShortcutScale sets the menu shortcut column's size against the body
+// face; values at or below zero restore the default.
+func SetShortcutScale(s float64) {
+	if s <= 0 {
+		s = 0.8
+	}
+	shortcutScale = s
+}
+
+// ShortcutScale returns the menu shortcut column's size against the body face.
+func ShortcutScale() float64 { return shortcutScale }
+
+// SetShortcutNativeScale sets the further reduction applied to Apple's face
+// in macOS-native mode; values at or below zero restore the default.
+func SetShortcutNativeScale(s float64) {
+	if s <= 0 {
+		s = 0.8
+	}
+	shortcutNativeScale = s
+}
+
+// ShortcutNativeScale returns that further reduction.
+func ShortcutNativeScale() float64 { return shortcutNativeScale }
+
 // MenuRowProvider is the optional capability a chrome bar has when it can
 // state its own row height: the menu kit's row at the current MenuScale,
 // counted in the bar's OWN denomination. A window reserves that much for it

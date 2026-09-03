@@ -9,14 +9,6 @@ import (
 	"github.com/phroun/kittytk/style"
 )
 
-// shortcutSizeNum/Den scale a shortcut to 80% of the menu's body size, so the
-// column sits quietly beside the item text rather than competing with it.
-// Graphical only: a terminal draws one size, its cell's.
-const (
-	shortcutSizeNum = 4
-	shortcutSizeDen = 5
-)
-
 // graphicalMenuTrailingUnits is the small gap kept to the right of a
 // graphical menu's shortcut, between it and the menu's right edge. Graphical
 // menus have only a 1-pixel right stroke (not a whole char border), so this is
@@ -42,7 +34,17 @@ func shortcutFont(base *core.Font, graphical bool) *core.Font {
 		f.Name = core.MacShortcutFontFamily
 	}
 	if graphical {
-		if s := base.Size * shortcutSizeNum / shortcutSizeDen; s > 0 {
+		// The two scales COMPOUND: the menu's own reduction, and then the
+		// native face's on top of it, since Apple's face renders visually
+		// larger than the menu's at the same point size. At the defaults
+		// that is 0.8, or 0.64 in native mode.
+		scale := core.ShortcutScale()
+		if native {
+			scale *= core.ShortcutNativeScale()
+		}
+		// Floored, not rounded: a face let down to a fraction of another
+		// must not round back up into looking as loud as what it sits beside.
+		if s := int(float64(base.Size) * scale); s > 0 {
 			f.Size = s
 		}
 	}

@@ -34,6 +34,11 @@
 //	                          ;   (1.0 = classic full-cell row, the default)
 //	menu_scale   =            ; graphical menu bar / dropdown / context menu row
 //	                          ;   height and content scale (1.0 = the default)
+//	shortcut_scale =          ; menu shortcut column size against the item text
+//	                          ;   (0.8 = the default)
+//	shortcut_native_scale =   ; further reduction for Apple's face in [system]
+//	                          ;   native mode, compounded on shortcut_scale
+//	                          ;   (0.8 = the default, so 0.64 together)
 //	host_type    =            ; force the desktop the keymap's (kde) / (gnome) /
 //	                          ;   … hints are tested against, overriding what the
 //	                          ;   session advertises (blank = detect)
@@ -240,6 +245,20 @@ type Config struct {
 	// always render at 1.0 regardless, so the terminal host ignores it.
 	MenuScale float64
 
+	// ShortcutScale sizes a menu's shortcut column against the menu's body
+	// face, read from [window] shortcut_scale. 0.8 (the default) draws the
+	// shortcuts at four fifths of the item text. Graphical only: a terminal
+	// draws one size, its cell's. Values at or below zero, or that don't
+	// parse, keep the default.
+	ShortcutScale float64
+
+	// ShortcutNativeScale is applied ON TOP of ShortcutScale for the face
+	// macOS-native mode swaps in, read from [window] shortcut_native_scale.
+	// Apple's UI face renders visually larger than the menu's own at the same
+	// point size, so it is taken down again; the two compound, so the
+	// defaults put a native shortcut at 0.64 of the body.
+	ShortcutNativeScale float64
+
 	// HostType overrides the desktop environment the keymap's environment hints
 	// are tested against, read from [window] host_type. The session normally
 	// says what it is (XDG_CURRENT_DESKTOP), so this is for where it says
@@ -270,7 +289,8 @@ type Config struct {
 // Defaults returns the built-in configuration used when no ini is found
 // (and as the base every ini is applied onto).
 func Defaults() Config {
-	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1, MenuScale: 1}
+	return Config{Title: "KittyTK", Width: 1024, Height: 768, Scale: 2, FontSize: 12, VSync: true, Renderer: "software", DesktopFrame: "themed", TitleBarScale: 1, MenuScale: 1,
+		ShortcutScale: 0.8, ShortcutNativeScale: 0.8}
 }
 
 // SearchPaths returns the ordered candidate ini paths (see the package
@@ -471,6 +491,16 @@ func apply(data []byte, cfg *Config) {
 			// Graphical menu row height and content scale, on the same terms.
 			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
 				cfg.MenuScale = f
+			}
+		case "shortcut_scale":
+			// The shortcut column against the item text.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.ShortcutScale = f
+			}
+		case "shortcut_native_scale":
+			// Compounded on top of it for Apple's face.
+			if f, err := strconv.ParseFloat(val, 64); err == nil && f > 0 {
+				cfg.ShortcutNativeScale = f
 			}
 		case "width":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {

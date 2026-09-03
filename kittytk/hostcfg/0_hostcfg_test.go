@@ -684,6 +684,43 @@ func TestApplyMenuScale(t *testing.T) {
 	}
 }
 
+// shortcut_scale sizes the menu shortcut column against the item text, and
+// shortcut_native_scale is compounded on top of it for Apple's face. Both
+// default to 0.8, so a native shortcut lands at 0.64 of the body.
+func TestApplyShortcutScales(t *testing.T) {
+	d := Defaults()
+	if d.ShortcutScale != 0.8 || d.ShortcutNativeScale != 0.8 {
+		t.Errorf("defaults are %v / %v, want 0.8 / 0.8", d.ShortcutScale, d.ShortcutNativeScale)
+	}
+	for _, c := range []struct {
+		val              string
+		want, wantNative float64
+	}{
+		{"0.5", 0.5, 0.5},
+		{"1", 1, 1},
+		{"0", 0.8, 0.8},        // zero is not a size
+		{"-0.5", 0.8, 0.8},     // nor is a negative one
+		{"nonsense", 0.8, 0.8}, // nor is a typo
+	} {
+		cfg := Defaults()
+		apply([]byte("[window]\nshortcut_scale = "+c.val+"\n"), &cfg)
+		if cfg.ShortcutScale != c.want {
+			t.Errorf("shortcut_scale = %q: got %v, want %v", c.val, cfg.ShortcutScale, c.want)
+		}
+		cfg = Defaults()
+		apply([]byte("[window]\nshortcut_native_scale = "+c.val+"\n"), &cfg)
+		if cfg.ShortcutNativeScale != c.wantNative {
+			t.Errorf("shortcut_native_scale = %q: got %v, want %v", c.val, cfg.ShortcutNativeScale, c.wantNative)
+		}
+	}
+	// They are independent: setting one leaves the other alone.
+	cfg := Defaults()
+	apply([]byte("[window]\nshortcut_scale = 0.5\n"), &cfg)
+	if cfg.ShortcutNativeScale != 0.8 {
+		t.Errorf("shortcut_scale moved shortcut_native_scale to %v", cfg.ShortcutNativeScale)
+	}
+}
+
 // [system] density is the SCREEN's content scale, and it is deliberately
 // separate from [window] scale — the one case that proves it is a user who
 // asks for real pixels (scale 1) on a HiDPI panel (density 2). Nothing may

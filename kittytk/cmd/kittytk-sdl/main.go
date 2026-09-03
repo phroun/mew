@@ -147,6 +147,13 @@ func main() {
 	// the same reasons.
 	core.SetMenuScale(cfg.MenuScale)
 
+	// [window] shortcut_scale sizes a menu's shortcut column against the item
+	// text, and shortcut_native_scale takes Apple's face down again on top of
+	// it in native mode. They compound: 0.8 and 0.8 put a native shortcut at
+	// 0.64 of the body.
+	core.SetShortcutScale(cfg.ShortcutScale)
+	core.SetShortcutNativeScale(cfg.ShortcutNativeScale)
+
 	backend, err := plat.EnsureBackend()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

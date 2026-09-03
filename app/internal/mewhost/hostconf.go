@@ -42,6 +42,10 @@ import (
 //	                       ;   (1.0 = classic full-cell row, the default)
 //	menu_scale     =       ; menu bar / dropdown / context menu row height and
 //	                       ;   content scale (1.0 = the default)
+//	shortcut_scale =       ; menu shortcut column size against the item text
+//	                       ;   (0.8 = the default)
+//	shortcut_native_scale = ; further reduction for Apple's face in [system]
+//	                       ;   native mode, compounded (0.8, so 0.64 together)
 //
 //	[service]          ; both hosts
 //	endpoint =             ; blank = default; tcp://host:port, tls://…, or a socket path
@@ -176,6 +180,18 @@ func applyHostConf(sec map[string]map[string]string, cfg *hostcfg.Config) {
 	if v, ok := window["menu_scale"]; ok {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			cfg.MenuScale = f
+		}
+	}
+	// shortcut_scale: the menu shortcut column against the item text, and
+	// shortcut_native_scale compounded on top of it for Apple's face.
+	if v, ok := window["shortcut_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.ShortcutScale = f
+		}
+	}
+	if v, ok := window["shortcut_native_scale"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.ShortcutNativeScale = f
 		}
 	}
 	// wallpaper: the image path plus its layout (mode / tile / align / filter /

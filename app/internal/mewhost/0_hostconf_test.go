@@ -173,6 +173,41 @@ func TestApplyHostConfMenuScale(t *testing.T) {
 	}
 }
 
+// editor.conf reads the two shortcut scales, on menu_scale's terms.
+//
+// Per-parser for the reason the density test states: mew maps editor.conf's
+// keys itself, so a key that exists on hostcfg.Config and in upstream's
+// parser is inert here until it is mapped.
+func TestApplyHostConfShortcutScales(t *testing.T) {
+	for _, c := range []struct {
+		val  string
+		want float64
+	}{
+		{"0.5", 0.5},
+		{"1", 1},
+		{"0", 0.8},
+		{"-2", 0.8},
+		{"nope", 0.8},
+	} {
+		cfg := hostcfg.Defaults()
+		applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_scale = "+c.val+"\n")), &cfg)
+		if cfg.ShortcutScale != c.want {
+			t.Errorf("shortcut_scale = %q: got %v, want %v", c.val, cfg.ShortcutScale, c.want)
+		}
+		cfg = hostcfg.Defaults()
+		applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_native_scale = "+c.val+"\n")), &cfg)
+		if cfg.ShortcutNativeScale != c.want {
+			t.Errorf("shortcut_native_scale = %q: got %v, want %v", c.val, cfg.ShortcutNativeScale, c.want)
+		}
+	}
+	// Absent keys keep the defaults, and the two are independent.
+	cfg := hostcfg.Defaults()
+	applyHostConf(parseHostConfSections([]byte("[window]\nshortcut_scale = 0.5\n")), &cfg)
+	if cfg.ShortcutScale != 0.5 || cfg.ShortcutNativeScale != 0.8 {
+		t.Errorf("got %v / %v, want 0.5 / 0.8", cfg.ShortcutScale, cfg.ShortcutNativeScale)
+	}
+}
+
 // [system] density overrides what the window system reports about the screen.
 //
 // mew reads editor.conf with ITS OWN key mapping, so a key added to the shared

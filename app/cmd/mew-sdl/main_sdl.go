@@ -86,6 +86,11 @@ func main() {
 	// cell-based gutters scaled to match. 1.0 is the default, and the TUI
 	// stands down to it for the same reason.
 	core.SetMenuScale(cfg.MenuScale)
+	// [window] shortcut_scale sizes a menu's shortcut column against the item
+	// text; shortcut_native_scale takes Apple's face down again on top of it
+	// in native mode. They compound to 0.64 at the defaults.
+	core.SetShortcutScale(cfg.ShortcutScale)
+	core.SetShortcutNativeScale(cfg.ShortcutNativeScale)
 
 	backend, err := plat.EnsureBackend()
 	if err != nil {
