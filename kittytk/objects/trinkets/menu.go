@@ -3139,10 +3139,14 @@ func (m *MenuBar) Paint(p *core.Painter) {
 					} else {
 						segs = []textSegment{{string(titleRunes[:visible]), s}}
 					}
-					advance := drawTextSegments(p, textX, mm.YOff, font, metrics, segs...)
-
-					// Draw ellipsis in the menu style (never accelerator color)
-					m.drawEllipsis(p, textX+advance, s)
+					// The ellipsis rides in the SAME run as the prefix, in the
+					// menu style (never the accelerator colour). Placed by
+					// drawTextSegments' returned advance instead, it landed
+					// where the UNIT measurement said the text ended while the
+					// text had been drawn to where the PIXEL advance put it,
+					// and the bar showed through the difference.
+					segs = append(segs, textSegment{ellipsisText, s})
+					drawTextSegments(p, textX, mm.YOff, font, metrics, segs...)
 				} else if remainingWidth >= ellipsisWidth {
 					// Just show "..." to indicate more menus
 					m.drawEllipsis(p, x, menuBarStyle)

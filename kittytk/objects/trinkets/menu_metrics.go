@@ -267,6 +267,19 @@ func (mm MenuMetrics) DrawGlyph(p *core.Painter, x, y core.Unit, ch rune, st sty
 		p.DrawCell(x, y, ch, st)
 		return
 	}
+	// The CELL's background first, edge to edge, so the next cell's fill
+	// starts exactly where this one ends and a run of cells side by side
+	// cannot show a crack between them. DrawCell does this for free; a text
+	// run inks only its own advance, and a scaled face's advance is not the
+	// cell it stands in -- which is what opened gaps down the middle of
+	// "[<]" and made it read wider than it is.
+	p.FillRect(core.UnitRect{X: x, Y: y, Width: mm.CellW, Height: mm.RowH}, ' ', st)
+	// Then the glyph, centred in the cell it belongs to, the way the cell
+	// font's own pitch centres it at 1.0.
+	w := mm.Width(string(ch), mm.Mono)
+	if off := (mm.CellW - w) / 2; off > 0 {
+		x += off
+	}
 	p.DrawText(x, y+mm.GlyphYOff(mm.Mono), string(ch), st, mm.Mono)
 }
 
